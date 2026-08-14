@@ -1,0 +1,22 @@
+{
+  "name": "ecosistemas-de-conocimiento",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Multitenant content repository with a knowledgebase: document upload, RAG chat sessions, rated answers.",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "dev:web": "pnpm --filter @edc/web dev",
+    "dev:backend": "pnpm --filter @edc/backend dev",
+    "dev:ai": "pnpm --filter @edc/ai-service dev",
+    "infra:up": "docker compose up -d --wait",
+    "infra:down": "docker compose down",
+    "infra:reset": "docker compose down -v && docker compose up -d --wait"
+  }
+}

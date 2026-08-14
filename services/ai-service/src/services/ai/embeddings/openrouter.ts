@@ -1,0 +1,232 @@
+// OpenRouter embedding adapter — text-only, non-streaming.
+//
+// INVARIANT (companion to the chat-completion adapter at
+// `src/services/ai/router/adapters/openrouter.ts`): this is the ONLY file in
+// the tree that calls `fetch('https://openrouter.ai/api/v1/embeddings')`.
+// Anything that needs an embedding must route through here so cost tracking
+// and the future trace/usage writers see a single seam.
+//
+// OpenRouter exposes an OpenAI-compatible embeddings endpoint
+// (`POST /api/v1/embeddings`). Per plan/m3-m4-decisions.md §9 (OpenRouter
+// passthrough), we reuse the same `OPENROUTER_API_KEY`. If a future cost or
+// latency probe shows OpenRouter's embedding routing is materially worse
+// than calling OpenAI directly, the fallback path is:
+//   1. Set `OPENAI_API_KEY` in env.
+//   2. Switch `OPENROUTER_EMBEDDINGS_URL` below to
+//      `https://api.openai.com/v1/embeddings`.
+//   3. Strip the `openai/` prefix from the model string (OpenAI doesn't
+//      namespace its own models).
+// That swap is local to this file; the schema, types, and consumers above
+// don't change. Note this as a revision candidate for decision #9.
+//
+// Cost: `text-embedding-3-small` is $0.02 / 1M input tokens (decision §10).
+// Falls back to `priceForEmbedding()` for any other model in the price table.
+
+import { env } from '../../../config/env.js';
+import { priceForEmbedding } from '../router/task-profiles.js';
+import { isMockEmbeddingsEnabled, mockEmbedOne } from './mock-embed.js';
+
+// The embeddings endpoint is config-driven (`env.EMBEDDINGS_URL`) so the model
+// can be served by a managed provider in dev and a self-hosted box in prod with
+// no code change. Defaults to OpenRouter's OpenAI-compatible endpoint.
+const OPENROUTER_EMBEDDINGS_URL = env.EMBEDDINGS_URL;
+
+export interface EmbedOptions {
+  /** Provider/model id, e.g. `openai/text-embedding-3-small`. */
+  model: string;
+  /** A single string or an array of strings. The API returns one vector per input. */
+  input: string | string[];
+  /** Falls back to `env.OPENROUTER_API_KEY`, then `env.OPENAI_API_KEY`, when omitted. */
+  apiKey?: string;
+  signal?: AbortSignal;
+}
+
+export interface EmbedResult {
+  /** One vector per input, in submission order. */
+  embeddings: number[][];
+  /** Echo of the model the provider actually used. */
+  model: string;
+  usage: {
+    inputTokens: number;
+    estimatedCostUsd: number;
+  };
+}
+
+interface OpenRouterEmbeddingsApiResponse {
+  data?: Array<{ index?: number; embedding?: number[] | string }>;
+  model?: string;
+  usage?: {
+    prompt_tokens?: number;
+    total_tokens?: number;
+  };
+  error?: { message?: string; code?: string | number };
+}
+
+/** Typed error matching the chat-adapter's `OpenRouterHttpError` shape. */
+export class OpenRouterEmbeddingHttpError extends Error {
+  public readonly status: number;
+  public readonly code: string | number | undefined;
+  public readonly bodySnippet: string;
+  constructor(opts: { status: number; code?: string | number; message: string; bodySnippet?: string }) {
+    super(opts.message);
+    this.name = 'OpenRouterEmbeddingHttpError';
+    this.status = opts.status;
+    this.code = opts.code;
+    this.bodySnippet = opts.bodySnippet ?? '';
+  }
+}
+
+function resolveApiKey(opts: EmbedOptions): string {
+  const key = opts.apiKey ?? env.OPENROUTER_API_KEY ?? env.OPENAI_API_KEY;
+  if (!key) {
+    throw new Error(
+      'OpenRouter embedding API key missing: pass opts.apiKey or set OPENROUTER_API_KEY (preferred) / OPENAI_API_KEY env var.',
+    );
+  }
+  return key;
+}
+
+function appHeaders(apiKey: string): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+    'HTTP-Referer': process.env.OPENROUTER_APP_URL ?? 'https://ecosistemas-de-conocimiento.local',
+    'X-Title': 'edc ai-service Embeddings',
+  };
+}
+
+/**
+ * POST to OpenRouter's embeddings endpoint. Returns one vector per input,
+ * in submission order. Throws `OpenRouterEmbeddingHttpError` on non-OK HTTP
+ * or error envelopes.
+ */
+export async function callOpenRouterEmbedding(opts: EmbedOptions): Promise<EmbedResult> {
+  // Offline mock seam — gated by the same `MOCK_LLM=1` switch that swaps the
+  // chat-completion adapter (or the dedicated `MOCK_EMBEDDINGS=1` override).
+  // Short-circuits BEFORE the API-key check and the `fetch` below so RAG
+  // ingest/query work with zero network and zero spend, even with no key set.
+  // The real path is untouched when the flag is off.
+  if (isMockEmbeddingsEnabled()) {
+    return mockEmbedding(opts);
+  }
+
+  const apiKey = resolveApiKey(opts);
+  const body = {
+    model: opts.model,
+    input: opts.input,
+    // Force float arrays. Some OpenRouter-routed hosts (and the open models we
+    // now use, e.g. bge-m3) can return base64-packed floats otherwise, which
+    // this adapter deliberately rejects rather than decodes (see below).
+    encoding_format: 'float',
+  };
+
+  const res = await fetch(OPENROUTER_EMBEDDINGS_URL, {
+    method: 'POST',
+    headers: appHeaders(apiKey),
+    body: JSON.stringify(body),
+    signal: opts.signal,
+  });
+
+  const text = await res.text();
+  let parsed: OpenRouterEmbeddingsApiResponse;
+  try {
+    parsed = text ? (JSON.parse(text) as OpenRouterEmbeddingsApiResponse) : {};
+  } catch {
+    throw new OpenRouterEmbeddingHttpError({
+      status: res.status,
+      message: `OpenRouter embedding returned non-JSON (status=${res.status}): ${text.slice(0, 200)}`,
+      bodySnippet: text.slice(0, 200),
+    });
+  }
+
+  if (!res.ok || parsed.error) {
+    const msg = parsed?.error?.message ?? `HTTP ${res.status}`;
+    const code = parsed?.error?.code;
+    throw new OpenRouterEmbeddingHttpError({
+      status: res.status,
+      code,
+      message: `OpenRouter embedding error (${code ?? res.status}): ${msg}`,
+      bodySnippet: text.slice(0, 200),
+    });
+  }
+
+  const rawData = parsed.data ?? [];
+  const embeddings: number[][] = rawData
+    .slice()
+    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+    .map((row, i) => {
+      const e = row.embedding;
+      if (Array.isArray(e)) return e as number[];
+      if (typeof e === 'string') {
+        // Some providers return base64-packed floats; we don't decode them
+        // here in v1 — surface as an explicit error so callers know to flip
+        // the encoding back to "float".
+        throw new OpenRouterEmbeddingHttpError({
+          status: res.status,
+          message: `OpenRouter embedding row ${i} returned a non-array embedding (base64?). Set encoding_format=float on the request.`,
+          bodySnippet: text.slice(0, 200),
+        });
+      }
+      throw new OpenRouterEmbeddingHttpError({
+        status: res.status,
+        message: `OpenRouter embedding row ${i} missing 'embedding' field.`,
+        bodySnippet: text.slice(0, 200),
+      });
+    });
+
+  const model = parsed.model ?? opts.model;
+  const inputTokens = resolveInputTokens(parsed.usage, opts.input);
+  const estimatedCostUsd = priceForEmbedding(model, inputTokens);
+
+  return {
+    embeddings,
+    model,
+    usage: { inputTokens, estimatedCostUsd },
+  };
+}
+
+/**
+ * Offline mock embedding path. Returns one deterministic, unit-normalized
+ * 1024-dim vector per input (seeded from a hash of the text, so cosine top-K
+ * is stable across runs). Does NO network I/O.
+ *
+ * The `usage` object matches the real path's shape so the budget ledger and
+ * usage-readers (e.g. `src/workers/ingest.worker.ts`, which reads
+ * `usage.inputTokens` + `usage.estimatedCostUsd`) keep working. `inputTokens`
+ * is the same chars/4 estimate the real path falls back to; `estimatedCostUsd`
+ * is 0 — mock embeddings are free.
+ */
+function mockEmbedding(opts: EmbedOptions): EmbedResult {
+  const inputs = Array.isArray(opts.input) ? opts.input : [opts.input];
+  const embeddings = inputs.map((text) => mockEmbedOne(text));
+  const inputTokens = resolveInputTokens(undefined, opts.input);
+  return {
+    embeddings,
+    model: opts.model,
+    usage: { inputTokens, estimatedCostUsd: 0 },
+  };
+}
+
+/**
+ * Pick the input-token count from the upstream usage envelope; if neither
+ * `prompt_tokens` nor `total_tokens` is present, fall back to a chars/4
+ * estimate summed across every input string.
+ *
+ * Why: some OpenRouter-routed embedding providers omit `usage` entirely
+ * (Voyage and a few smaller hosts have shipped responses like that). The old
+ * behaviour of returning 0 silently under-reported every embedding's cost,
+ * which broke budget accounting on those routes. Chars/4 is the standard
+ * tokenizer-free estimate (OpenAI's docs cite it; close enough for cost
+ * tracking) and is deterministic from the request body, so the estimate is
+ * reproducible without an extra round-trip.
+ */
+function resolveInputTokens(
+  usage: OpenRouterEmbeddingsApiResponse['usage'],
+  input: EmbedOptions['input'],
+): number {
+  const fromProvider = usage?.prompt_tokens ?? usage?.total_tokens;
+  if (typeof fromProvider === 'number' && fromProvider > 0) return fromProvider;
+  const inputs = Array.isArray(input) ? input : [input];
+  const totalChars = inputs.reduce((acc, s) => acc + (typeof s === 'string' ? s.length : 0), 0);
+  return Math.ceil(totalChars / 4);
+}

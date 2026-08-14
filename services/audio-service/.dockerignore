@@ -1,0 +1,21 @@
+# Keep the build context tiny — it is copied to the daemon on every build.
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+.env.*
+!.env.example
+tests/
+docker-compose.fragment.yml
+README.md
+*.md
+# Generated audio fixtures — regenerate with scripts/make-fixtures.sh.
+tests/fixtures/*.wav
+tests/fixtures/*.mp3
+tests/fixtures/*.m4a
+tests/fixtures/*.ogg

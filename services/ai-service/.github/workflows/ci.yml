@@ -1,0 +1,46 @@
+# ⚠ NOT ACTIVE AT THIS PATH. GitHub Actions only reads workflows from the
+#   REPOSITORY ROOT `.github/workflows/`. This file is kept here as the
+#   ready-to-move definition of ai-service's CI — copy it to
+#   `<repo-root>/.github/workflows/ai-service-ci.yml` to turn it on.
+#
+# Unit lane only (no DB/Redis). The integration lane lives in `test.yml`.
+
+name: ai-service CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['services/ai-service/**', 'pnpm-lock.yaml']
+  pull_request:
+    paths: ['services/ai-service/**', 'pnpm-lock.yaml']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @edc/ai-service...
+      - run: pnpm --filter @edc/ai-service lint
+      - run: pnpm --filter @edc/ai-service typecheck
+      - run: pnpm --filter @edc/ai-service test
+      - run: pnpm --filter @edc/ai-service build
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # Build context is the REPO ROOT — see the header of the Dockerfile.
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/ai-service/Dockerfile
+          push: false
+          tags: edc-ai-service:ci

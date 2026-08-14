@@ -1,0 +1,31 @@
+-- bge-m3 learned-sparse retrieval leg (feat/bge-sparse).
+--
+-- ADDITIVE + GATED. The column and its index exist in every deployment, but are
+-- only ever WRITTEN (ingest) or READ (retrieve) when `SPARSE_ENABLED=true`. With
+-- the gate off nothing touches this column, so every existing ingest/retrieve
+-- path is byte-identical to before — exactly the posture the `text_search`
+-- (tsvector) leg keeps as the DEFAULT lexical leg. Sparse is the opt-in
+-- ALTERNATIVE lexical leg, not a replacement of the default.
+--
+-- Requires pgvector >= 0.7 for the `sparsevec` type (verified: local dev runs
+-- 0.8.2; the `pgvector/pgvector:pg16` image tracks the latest release).
+--
+-- Dimension = bge-m3's XLM-RoBERTa vocabulary size (250002). The sparse
+-- vector's non-zero indices are 1-based token ids (a 0-based token id `t` is
+-- stored at sparsevec index `t + 1`, since sparsevec indices start at 1). This
+-- vocabulary size is a property of the chosen sparse model; if the sparse model
+-- ever changes to one with a different vocabulary, this is a destructive
+-- column re-cut + reseed (dev-phase: acceptable), the same shape as the
+-- vector(1536)->vector(1024) recut.
+ALTER TABLE "chunks" ADD COLUMN IF NOT EXISTS "sparse_embedding" sparsevec(250002);--> statement-breakpoint
+-- HNSW over the sparse vector using the max-inner-product opclass
+-- (`sparsevec_ip_ops`) — a learned-sparse (SPLADE-style) leg scores by DOT
+-- PRODUCT, retrieved via pgvector's `<#>` (negative inner product; ascending
+-- order = most similar first, so the query does `... <#> $q` and negates the
+-- distance to recover the inner-product score). pgvector caps an *indexed*
+-- sparsevec at 1000 non-zero elements; bge-m3 chunk vectors sit well under that
+-- at our chunk sizes. The index is cheap while the column is all-NULL (gate
+-- off); its real build/maintenance cost is paid only once a corpus is ingested
+-- with `SPARSE_ENABLED=true`. `IF NOT EXISTS` so re-running against an already
+-- migrated dev DB is a no-op.
+CREATE INDEX IF NOT EXISTS "chunks_sparse_embedding_idx" ON "chunks" USING hnsw ("sparse_embedding" sparsevec_ip_ops);

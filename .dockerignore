@@ -1,0 +1,41 @@
+# Build context is the REPO ROOT for every image in this monorepo.
+# pnpm workspaces use `workspace:*` links, so a Dockerfile that only copies its
+# own package directory cannot resolve its dependencies. Keep the context lean
+# here instead.
+#
+# node_modules is a named volume at runtime — never copy it into an image.
+# .env files are injected at runtime via compose env_file, never built in.
+
+node_modules
+**/node_modules
+.pnpm-store
+
+dist
+build
+.next
+.svelte-kit
+.turbo
+*.tsbuildinfo
+
+.git
+.github
+.claude
+
+.env
+.env.*
+!.env.example
+
+coverage
+test-results
+playwright-report
+**/*.test.ts
+**/*.spec.ts
+
+*.log
+*.tgz
+.DS_Store
+
+# Local scratch and staging
+.staging-identity
+media
+db-backups

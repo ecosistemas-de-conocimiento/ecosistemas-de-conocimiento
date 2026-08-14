@@ -1,0 +1,514 @@
+/* =============================================================================
+   Ecosistemas de Conocimiento — sistema de diseño (fuente única de tokens)
+   =============================================================================
+
+   IDENTIDAD NEUTRA. Escala de grises fría + UN solo acento (azul institucional).
+   Sin degradados decorativos, sin tipografía de marca, sin hue de marca fuerte.
+   Es una herramienta de lectura y consulta documental: calma, legibilidad alta,
+   aire generoso.
+
+   CÓMO SE ORGANIZA (y cómo re-marcar en el futuro):
+
+     1. RAMPAS (--edc-ramp-*)  ← ÚNICO bloque que se toca para re-marcar
+     2. SEMÁNTICA CLARA         (:root)
+     3. SEMÁNTICA OSCURA        (prefers-color-scheme + [data-theme])
+     4. TOKENS NO CROMÁTICOS    (espacio, radio, tipografía, sombra, z, motion)
+     5. BASE                    (reset mínimo y estilos de elemento)
+
+   Para cambiar la identidad completa basta con reescribir el bloque 1 y, si el
+   acento cambia de luminancia, revalidar los contrastes (ver README.md).
+
+   ACCESIBILIDAD: todos los pares de texto/fondo del sistema están calculados,
+   no estimados. Los valores medidos están en README.md. Regla: 4.5:1 para texto
+   normal, 3:1 para texto grande y para bordes de controles.
+
+   TIPOGRAFÍA: pila del sistema. No se cargan webfonts (no hay pipeline de
+   assets ni red en tiempo de build).
+   ========================================================================== */
+
+/* -----------------------------------------------------------------------------
+   1. RAMPAS — el único bloque a editar para un re-skin
+   -------------------------------------------------------------------------- */
+
+:root {
+  /* Neutros fríos (hue ~215, croma muy bajo). Base de toda la interfaz. */
+  --edc-ramp-neutral-0: #ffffff;
+  --edc-ramp-neutral-25: #fafbfc;
+  --edc-ramp-neutral-50: #f5f6f8;
+  --edc-ramp-neutral-100: #eceef2;
+  --edc-ramp-neutral-200: #d7dbe1;
+  --edc-ramp-neutral-300: #b9bfc8;
+  --edc-ramp-neutral-400: #818892;
+  --edc-ramp-neutral-500: #6b7280;
+  --edc-ramp-neutral-600: #545c68;
+  --edc-ramp-neutral-700: #3f4650;
+  --edc-ramp-neutral-800: #2c3138;
+  --edc-ramp-neutral-900: #1b1f25;
+  --edc-ramp-neutral-950: #14171b;
+  --edc-ramp-neutral-1000: #0d1014;
+
+  /* Acento único: azul institucional apagado. Tono oscuro para modo claro,
+     tono luminoso para modo oscuro, tono medio para rellenos sólidos. */
+  --edc-ramp-accent-700: #1b476f;
+  --edc-ramp-accent-600: #245a8d;
+  --edc-ramp-accent-500: #35709f;
+  --edc-ramp-accent-400: #3a7aab;
+  --edc-ramp-accent-300: #6f9fd4;
+  --edc-ramp-accent-200: #8fb5e0;
+  --edc-ramp-accent-tint-light: #eaeff5;
+  --edc-ramp-accent-tint-dark: #1d2733;
+
+  /* Grafito: segundo tono del sistema. NO es un segundo color de marca; es el
+     neutro con énfasis, para que `tone-accent` lea como jerarquía y no como
+     otra identidad. */
+  --edc-ramp-graphite-700: #333d49;
+  --edc-ramp-graphite-600: #44505f;
+  --edc-ramp-graphite-500: #5c6a7d;
+  --edc-ramp-graphite-400: #647285;
+  --edc-ramp-graphite-300: #a8b3c2;
+  --edc-ramp-graphite-200: #c0c9d5;
+
+  /* Estados semánticos. Saturación contenida: informan, no decoran. */
+  --edc-ramp-success-700: #115436;
+  --edc-ramp-success-600: #176c44;
+  --edc-ramp-success-500: #20794e;
+  --edc-ramp-success-400: #237f52;
+  --edc-ramp-success-300: #4fae7c;
+
+  --edc-ramp-warning-700: #6e4800;
+  --edc-ramp-warning-600: #8a5a00;
+  --edc-ramp-warning-500: #966300;
+  --edc-ramp-warning-400: #9f6a00;
+  --edc-ramp-warning-300: #cf9a2f;
+
+  --edc-ramp-danger-700: #841f23;
+  --edc-ramp-danger-600: #a3282c;
+  --edc-ramp-danger-500: #bd3e3c;
+  --edc-ramp-danger-400: #c74a47;
+  --edc-ramp-danger-300: #ef7c74;
+}
+
+/* -----------------------------------------------------------------------------
+   2. SEMÁNTICA — tema claro (por defecto)
+   -------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: light;
+
+  /* --- Tipografía: pila del sistema, sin webfonts ------------------------ */
+  --edc-font-body:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji";
+  /* Sin tipografía de display propia: la jerarquía se hace con tamaño y peso. */
+  --edc-font-display: var(--edc-font-body);
+  --edc-font-sans: var(--edc-font-body);
+  --edc-font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+
+  /* --- Fondos y superficies --------------------------------------------- */
+  --edc-color-bg: var(--edc-ramp-neutral-50);
+  --edc-color-bg-soft: var(--edc-ramp-neutral-100);
+  --edc-color-surface: var(--edc-ramp-neutral-0);
+  --edc-color-surface-soft: var(--edc-ramp-neutral-50);
+  --edc-color-surface-strong: var(--edc-ramp-neutral-0);
+  --edc-color-surface-accent: var(--edc-ramp-accent-tint-light);
+
+  /* Superficies translúcidas de paneles (se usan con backdrop-filter). */
+  --edc-color-surface-glass: color-mix(in srgb, var(--edc-ramp-neutral-0) 88%, transparent);
+  --edc-color-surface-glass-strong: color-mix(in srgb, var(--edc-ramp-neutral-0) 96%, transparent);
+
+  /* --- Texto ------------------------------------------------------------- */
+  --edc-color-ink: var(--edc-ramp-neutral-950); /* títulos y texto fuerte  */
+  --edc-color-ink-body: var(--edc-ramp-neutral-800); /* cuerpo             */
+  --edc-color-ink-soft: var(--edc-ramp-neutral-600); /* secundario, labels */
+
+  /* --- Líneas -----------------------------------------------------------
+     `line` es el borde de controles (input, botón de icono, tabla): cumple 3:1
+     contra la superficie. `elevated-border` es el borde decorativo de tarjetas
+     y no transporta información, por eso puede ser suave. */
+  --edc-color-line: var(--edc-ramp-neutral-400);
+  --edc-color-line-strong: var(--edc-ramp-neutral-500);
+  --edc-color-elevated-border: var(--edc-ramp-neutral-200);
+
+  /* --- Acento y estados -------------------------------------------------- */
+  --edc-color-brand: var(--edc-ramp-accent-600);
+  --edc-color-brand-strong: var(--edc-ramp-accent-700);
+  --edc-color-accent: var(--edc-ramp-graphite-600);
+  --edc-color-accent-strong: var(--edc-ramp-graphite-700);
+  --edc-color-success: var(--edc-ramp-success-600);
+  --edc-color-warning: var(--edc-ramp-warning-600);
+  --edc-color-danger: var(--edc-ramp-danger-600);
+  --edc-color-signal: var(--edc-ramp-accent-600);
+  --edc-color-shadow: rgba(20, 23, 27, 0.12);
+
+  /* Color de texto sobre un relleno sólido del tono correspondiente.
+     Existe para que ningún componente tenga que escribir `color: #fff`.
+     Ver README §"Pendientes en componentes". */
+  --edc-color-on-brand: var(--edc-ramp-neutral-0);
+  --edc-color-on-accent: var(--edc-ramp-neutral-0);
+  --edc-color-on-success: var(--edc-ramp-neutral-0);
+  --edc-color-on-warning: var(--edc-ramp-neutral-0);
+  --edc-color-on-danger: var(--edc-ramp-neutral-0);
+  --edc-color-on-neutral: var(--edc-ramp-neutral-0);
+
+  /* --- Rellenos sólidos ("gradient-*" por compatibilidad de nombre) -------
+     Los degradados decorativos se retiraron. Estos tokens conservan el nombre
+     porque los consumen Button.svelte y +error.svelte, pero ahora son colores
+     planos. Un `background:` acepta un color igual que un gradiente. */
+  --edc-gradient-brand: var(--edc-color-brand);
+  --edc-gradient-brand-hover: var(--edc-color-brand-strong);
+  --edc-gradient-accent: var(--edc-color-accent);
+  --edc-gradient-accent-hover: var(--edc-color-accent-strong);
+  --edc-gradient-warning: var(--edc-ramp-warning-600);
+  --edc-gradient-danger: var(--edc-ramp-danger-600);
+
+  /* --- Rellenos suaves y contornos derivados -----------------------------
+     Se calculan con color-mix sobre los tonos de arriba: al cambiar la rampa
+     estos se recalculan solos. */
+  --edc-color-neutral-soft: color-mix(in srgb, var(--edc-color-ink-soft) 10%, transparent);
+  --edc-color-neutral-outline: color-mix(in srgb, var(--edc-color-line-strong) 85%, transparent);
+  --edc-color-brand-soft: color-mix(in srgb, var(--edc-color-brand) 12%, transparent);
+  --edc-color-brand-soft-strong: color-mix(in srgb, var(--edc-color-brand) 18%, transparent);
+  --edc-color-brand-outline: color-mix(in srgb, var(--edc-color-brand) 45%, var(--edc-color-line));
+  --edc-color-accent-soft: color-mix(in srgb, var(--edc-color-accent) 12%, transparent);
+  --edc-color-accent-soft-strong: color-mix(in srgb, var(--edc-color-accent) 18%, transparent);
+  --edc-color-accent-outline: color-mix(in srgb, var(--edc-color-accent) 45%, var(--edc-color-line));
+  --edc-color-success-soft: color-mix(in srgb, var(--edc-color-success) 16%, transparent);
+  --edc-color-success-outline: color-mix(in srgb, var(--edc-color-success) 45%, var(--edc-color-line));
+  --edc-color-warning-soft: color-mix(in srgb, var(--edc-color-warning) 18%, transparent);
+  --edc-color-warning-outline: color-mix(in srgb, var(--edc-color-warning) 45%, var(--edc-color-line));
+  --edc-color-danger-soft: color-mix(in srgb, var(--edc-color-danger) 14%, transparent);
+  --edc-color-danger-outline: color-mix(in srgb, var(--edc-color-danger) 45%, var(--edc-color-line));
+
+  /* Anillo de foco: casi opaco a propósito. Un anillo translúcido al 18% no
+     alcanza 3:1, y el foco de teclado es un requisito, no un adorno. */
+  --edc-focus-ring: color-mix(in srgb, var(--edc-color-brand) 85%, transparent);
+
+  /* --- Sombras: elevación discreta, sin brillos ni "glass" --------------- */
+  --edc-shadow-1:
+    0 1px 2px rgba(20, 23, 27, 0.05),
+    0 1px 3px rgba(20, 23, 27, 0.06);
+  --edc-shadow-2:
+    0 2px 4px rgba(20, 23, 27, 0.05),
+    0 6px 14px rgba(20, 23, 27, 0.08);
+  --edc-shadow-3:
+    0 4px 8px rgba(20, 23, 27, 0.06),
+    0 16px 32px rgba(20, 23, 27, 0.1);
+  --edc-shadow-hover:
+    0 2px 4px rgba(20, 23, 27, 0.06),
+    0 8px 18px rgba(20, 23, 27, 0.09);
+}
+
+/* -----------------------------------------------------------------------------
+   3. SEMÁNTICA — tema oscuro
+   -------------------------------------------------------------------------
+   Estrategia: el tema oscuro sólo redefine tokens semánticos, nunca rampas ni
+   tokens no cromáticos. Se aplica en dos lugares para cubrir los tres estados
+   posibles del usuario:
+     · `prefers-color-scheme: dark` sin [data-theme="light"]  → seguir al sistema
+     · `[data-theme="dark"]`                                  → elección explícita
+   Los dos bloques deben mantenerse idénticos.
+   -------------------------------------------------------------------------- */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --edc-color-bg: var(--edc-ramp-neutral-950);
+    --edc-color-bg-soft: #101317;
+    --edc-color-surface: var(--edc-ramp-neutral-900);
+    --edc-color-surface-soft: #21262d;
+    --edc-color-surface-strong: #272d35;
+    --edc-color-surface-accent: var(--edc-ramp-accent-tint-dark);
+
+    --edc-color-surface-glass: color-mix(in srgb, var(--edc-ramp-neutral-900) 88%, transparent);
+    --edc-color-surface-glass-strong: color-mix(in srgb, var(--edc-ramp-neutral-900) 96%, transparent);
+
+    --edc-color-ink: #f3f5f7;
+    --edc-color-ink-body: #dde2e8;
+    --edc-color-ink-soft: #a6aeb9;
+
+    --edc-color-line: #717b89;
+    --edc-color-line-strong: #8d97a4;
+    --edc-color-elevated-border: #333a43;
+
+    --edc-color-brand: var(--edc-ramp-accent-300);
+    --edc-color-brand-strong: var(--edc-ramp-accent-200);
+    --edc-color-accent: var(--edc-ramp-graphite-300);
+    --edc-color-accent-strong: var(--edc-ramp-graphite-200);
+    --edc-color-success: var(--edc-ramp-success-300);
+    --edc-color-warning: var(--edc-ramp-warning-300);
+    --edc-color-danger: var(--edc-ramp-danger-300);
+    --edc-color-signal: var(--edc-ramp-accent-300);
+    --edc-color-shadow: rgba(0, 0, 0, 0.55);
+
+    /* Sobre estos tonos claros el texto legible es oscuro, no blanco. */
+    --edc-color-on-brand: var(--edc-ramp-neutral-1000);
+    --edc-color-on-accent: var(--edc-ramp-neutral-1000);
+    --edc-color-on-success: var(--edc-ramp-neutral-1000);
+    --edc-color-on-warning: var(--edc-ramp-neutral-1000);
+    --edc-color-on-danger: var(--edc-ramp-neutral-1000);
+    --edc-color-on-neutral: var(--edc-ramp-neutral-950);
+
+    /* Rellenos sólidos: en oscuro NO usan el tono de texto. Los componentes
+       escriben `color: #ffffff` sobre estos fondos, así que aquí se eligen
+       tonos medios que mantienen el blanco a >=4.5:1 y la forma del botón a
+       >=3:1 contra la superficie. */
+    --edc-gradient-brand: var(--edc-ramp-accent-500);
+    --edc-gradient-brand-hover: var(--edc-ramp-accent-400);
+    --edc-gradient-accent: var(--edc-ramp-graphite-500);
+    --edc-gradient-accent-hover: var(--edc-ramp-graphite-400);
+    --edc-gradient-warning: var(--edc-ramp-warning-500);
+    --edc-gradient-danger: var(--edc-ramp-danger-500);
+
+    --edc-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
+    --edc-shadow-2: 0 2px 4px rgba(0, 0, 0, 0.45), 0 6px 14px rgba(0, 0, 0, 0.4);
+    --edc-shadow-3: 0 4px 8px rgba(0, 0, 0, 0.45), 0 16px 32px rgba(0, 0, 0, 0.45);
+    --edc-shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.45), 0 8px 18px rgba(0, 0, 0, 0.4);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --edc-color-bg: var(--edc-ramp-neutral-950);
+  --edc-color-bg-soft: #101317;
+  --edc-color-surface: var(--edc-ramp-neutral-900);
+  --edc-color-surface-soft: #21262d;
+  --edc-color-surface-strong: #272d35;
+  --edc-color-surface-accent: var(--edc-ramp-accent-tint-dark);
+
+  --edc-color-surface-glass: color-mix(in srgb, var(--edc-ramp-neutral-900) 88%, transparent);
+  --edc-color-surface-glass-strong: color-mix(in srgb, var(--edc-ramp-neutral-900) 96%, transparent);
+
+  --edc-color-ink: #f3f5f7;
+  --edc-color-ink-body: #dde2e8;
+  --edc-color-ink-soft: #a6aeb9;
+
+  --edc-color-line: #717b89;
+  --edc-color-line-strong: #8d97a4;
+  --edc-color-elevated-border: #333a43;
+
+  --edc-color-brand: var(--edc-ramp-accent-300);
+  --edc-color-brand-strong: var(--edc-ramp-accent-200);
+  --edc-color-accent: var(--edc-ramp-graphite-300);
+  --edc-color-accent-strong: var(--edc-ramp-graphite-200);
+  --edc-color-success: var(--edc-ramp-success-300);
+  --edc-color-warning: var(--edc-ramp-warning-300);
+  --edc-color-danger: var(--edc-ramp-danger-300);
+  --edc-color-signal: var(--edc-ramp-accent-300);
+  --edc-color-shadow: rgba(0, 0, 0, 0.55);
+
+  --edc-color-on-brand: var(--edc-ramp-neutral-1000);
+  --edc-color-on-accent: var(--edc-ramp-neutral-1000);
+  --edc-color-on-success: var(--edc-ramp-neutral-1000);
+  --edc-color-on-warning: var(--edc-ramp-neutral-1000);
+  --edc-color-on-danger: var(--edc-ramp-neutral-1000);
+  --edc-color-on-neutral: var(--edc-ramp-neutral-950);
+
+  --edc-gradient-brand: var(--edc-ramp-accent-500);
+  --edc-gradient-brand-hover: var(--edc-ramp-accent-400);
+  --edc-gradient-accent: var(--edc-ramp-graphite-500);
+  --edc-gradient-accent-hover: var(--edc-ramp-graphite-400);
+  --edc-gradient-warning: var(--edc-ramp-warning-500);
+  --edc-gradient-danger: var(--edc-ramp-danger-500);
+
+  --edc-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --edc-shadow-2: 0 2px 4px rgba(0, 0, 0, 0.45), 0 6px 14px rgba(0, 0, 0, 0.4);
+  --edc-shadow-3: 0 4px 8px rgba(0, 0, 0, 0.45), 0 16px 32px rgba(0, 0, 0, 0.45);
+  --edc-shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.45), 0 8px 18px rgba(0, 0, 0, 0.4);
+}
+
+/* -----------------------------------------------------------------------------
+   4. TOKENS NO CROMÁTICOS — idénticos en ambos temas
+   -------------------------------------------------------------------------- */
+
+:root {
+  /* --- Escala de espacio: paso base 0.25rem (4px) ------------------------ */
+  --edc-space-0: 0;
+  --edc-space-1: 0.25rem;
+  --edc-space-2: 0.5rem;
+  --edc-space-3: 0.75rem;
+  --edc-space-4: 1rem;
+  --edc-space-5: 1.25rem;
+  --edc-space-6: 1.5rem;
+  --edc-space-8: 2rem;
+  --edc-space-10: 2.5rem;
+  --edc-space-12: 3rem;
+  --edc-space-16: 4rem;
+
+  /* --- Radios: contenidos. Institucional, no redondeado de app de consumo. */
+  --edc-radius-0: 0;
+  --edc-radius-1: 0.25rem;
+  --edc-radius-2: 0.375rem;
+  --edc-radius-3: 0.5rem;
+  --edc-radius-pill: 999px;
+
+  /* --- Escala tipográfica: razón ~1.125 en cuerpo, más abierta en títulos.
+         `--edc-measure` acota el ancho de línea en textos largos. */
+  --edc-text-xs: 0.75rem;
+  --edc-text-sm: 0.8125rem;
+  --edc-text-md: 0.875rem;
+  --edc-text-base: 1rem;
+  --edc-text-lg: 1.125rem;
+  --edc-text-xl: 1.375rem;
+  --edc-text-2xl: 1.75rem;
+  --edc-text-3xl: 2.25rem;
+
+  --edc-leading-tight: 1.2;
+  --edc-leading-snug: 1.4;
+  --edc-leading-normal: 1.6; /* cuerpo: herramienta de lectura */
+  --edc-leading-loose: 1.75;
+
+  --edc-weight-regular: 400;
+  --edc-weight-medium: 500;
+  --edc-weight-semibold: 600;
+  --edc-weight-bold: 700;
+
+  --edc-tracking-tight: -0.01em;
+  --edc-tracking-normal: 0;
+  --edc-tracking-wide: 0.02em;
+
+  --edc-measure: 68ch;
+
+  /* --- Motion: corto y sin rebote. Nada expresivo. ----------------------- */
+  --edc-motion-fast: 120ms;
+  --edc-motion-base: 180ms;
+  --edc-motion-slow: 280ms;
+  --edc-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --edc-ease-expressive: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Hover sin desplazamiento: el "flotar" era parte de la identidad heredada.
+     Los componentes lo leen con fallback; aquí se fija el valor del sistema. */
+  --edc-interactive-hover-transform: none;
+
+  /* --- Capas ------------------------------------------------------------- */
+  --edc-z-base: 1;
+  --edc-z-sticky: 5;
+  --edc-z-overlay: 10;
+  --edc-z-popover: 20;
+  --edc-z-modal: 30;
+  --edc-z-toast: 40;
+
+  /* --- Puntos de quiebre (referencia; @media no acepta var()) ------------ */
+  --edc-breakpoint-sm: 40rem;
+  --edc-breakpoint-md: 64rem;
+  --edc-breakpoint-lg: 80rem;
+}
+
+/* -----------------------------------------------------------------------------
+   5. BASE — reset mínimo y estilos de elemento
+   -------------------------------------------------------------------------- */
+
+:where(*) {
+  box-sizing: border-box;
+}
+
+:where(html, body) {
+  margin: 0;
+  min-height: 100%;
+  /* Fondo plano. Los radiales de marca heredados se retiraron. */
+  background: var(--edc-color-bg);
+  color: var(--edc-color-ink-body);
+  font-family: var(--edc-font-body);
+}
+
+:where(body) {
+  padding: 0;
+  font-size: var(--edc-text-base);
+  line-height: var(--edc-leading-normal);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:where(h1, h2, h3, h4, h5, h6) {
+  color: var(--edc-color-ink);
+  font-family: var(--edc-font-display);
+  font-weight: var(--edc-weight-semibold);
+  line-height: var(--edc-leading-tight);
+  letter-spacing: var(--edc-tracking-tight);
+}
+
+:where(button, input, textarea, select) {
+  font: inherit;
+  color: inherit;
+}
+
+:where(img, svg, video, canvas) {
+  max-width: 100%;
+}
+
+:where(a) {
+  color: var(--edc-color-brand);
+  text-underline-offset: 0.15em;
+}
+
+:where(code, kbd, samp, pre) {
+  font-family: var(--edc-font-mono);
+}
+
+:where(hr) {
+  border: 0;
+  border-top: 1px solid var(--edc-color-elevated-border);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--edc-color-signal) 22%, transparent);
+  color: var(--edc-color-ink);
+}
+
+/* -----------------------------------------------------------------------------
+   Comportamiento interactivo compartido
+   -------------------------------------------------------------------------
+   OJO: la versión heredada de este archivo apuntaba sólo a
+   `[data-edc-interactive]`, pero Button.svelte e IconButton.svelte emiten
+   `data-interactive`. El bloque nunca hacía match, así que el anillo de foco
+   del sistema no se aplicaba a ningún componente. Se cubren los dos nombres.
+   -------------------------------------------------------------------------- */
+
+:where([data-interactive], [data-edc-interactive]) {
+  transition:
+    box-shadow var(--edc-motion-fast) var(--edc-ease-standard),
+    border-color var(--edc-motion-fast) var(--edc-ease-standard),
+    background var(--edc-motion-fast) var(--edc-ease-standard),
+    color var(--edc-motion-fast) var(--edc-ease-standard);
+}
+
+:where(
+    [data-interactive]:not([disabled]):not([aria-disabled="true"]),
+    [data-edc-interactive]:not([disabled]):not([aria-disabled="true"])
+  ) {
+  cursor: pointer;
+}
+
+:where(
+    [data-interactive]:not([disabled]):not([aria-disabled="true"]),
+    [data-edc-interactive]:not([disabled]):not([aria-disabled="true"])
+  ):hover {
+  transform: var(--edc-interactive-hover-transform, none);
+  box-shadow: var(--edc-interactive-hover-shadow, var(--edc-shadow-hover));
+}
+
+/* El foco de teclado es siempre visible y del mismo grosor, sin importar qué
+   sombra traiga el componente. */
+:where(
+    [data-interactive]:not([disabled]):not([aria-disabled="true"]),
+    [data-edc-interactive]:not([disabled]):not([aria-disabled="true"])
+  ):focus-visible {
+  outline: none;
+  box-shadow:
+    var(--edc-interactive-focus-shadow, var(--edc-interactive-hover-shadow, var(--edc-shadow-hover))),
+    0 0 0 3px var(--edc-focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(*, *::before, *::after) {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

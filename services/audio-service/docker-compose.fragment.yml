@@ -1,0 +1,174 @@
+# ⚠ THIS FILE IS A REFERENCE FRAGMENT, NOT A COMPOSE FILE TO RUN.
+#
+# The root `docker-compose.yml` is owned by someone else. Copy the two services,
+# the volume and the notes below into it. Nothing here touches any file outside
+# `services/audio-service/`.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# THE FIVE THINGS THAT WILL BITE YOU IF THEY ARE COPIED WRONG
+#
+# 1. There are THREE services, not two: the API, the transcription worker, and
+#    the CALLBACK worker. All from one image, differing only in `command`.
+#    🔴 Dropping the callback worker is silent: transcriptions still succeed,
+#    but no completion webhook is ever delivered, so the backend never learns a
+#    document is ready. It is a separate process because the transcription
+#    queue runs one job at a time with a job timeout measured in HOURS — a
+#    delivery sharing that queue would wait behind a running decode.
+# 2. `audio_work` MUST be mounted in the API and the transcription worker. The
+#    API writes the upload to disk and the worker reads it back. Without the
+#    shared volume every job fails with `source_missing`. (The callback worker
+#    touches no files and does not need it.)
+# 3. Both workers get `healthcheck: disable: true`. They have no HTTP listener,
+#    and the image's inherited curl healthcheck would mark them permanently
+#    unhealthy. The API's `/health/ready` is what reports on the transcription
+#    worker: it returns 503 until that worker publishes a heartbeat with the
+#    model loaded.
+# 4. `callbackSecret` inside `AUDIO_API_KEYS` MUST equal `CALLBACK_SECRET` in
+#    apps/backend. The backend verifies ai-service's and audio-service's
+#    callbacks with the SAME verifier and the SAME secret — that is deliberate
+#    (see services/audio-service/app/callbacks.py).
+# 5. `start_period` on the API healthcheck is short (30s) because the API loads
+#    no model. Do NOT copy bge-m3-service's 240s here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── HTTP API: validates, stores the upload, enqueues. No model in RAM. ──────
+  audio-service:
+    build:
+      context: ./services/audio-service
+      # Bake different weights for a leaner demo image:
+      #   args: { WHISPER_MODEL: small }
+      args:
+        WHISPER_MODEL: large-v3-turbo
+    image: edc-audio-service:local
+    restart: unless-stopped
+    ports:
+      # 8080 matches the assumption already recorded in
+      # `plan/deploy-and-local-demo.md`. The container honours `PORT`, so change
+      # both sides together if you want something else. The backend reaches it
+      # as http://audio-service:8080 on the compose network; this mapping is
+      # only for curl-ing it from the host.
+      - "8080:8080"
+    environment:
+      NODE_ENV: development
+      PORT: "8080"
+      LOG_LEVEL: INFO
+      # DB 2 keeps audio-service's keys visually separate from ai-service's
+      # BullMQ keys. They cannot actually collide (prefixes `audio:`/`arq:` vs
+      # `bull:`), so a shared DB is also fine.
+      REDIS_URL: redis://redis:6379/2
+      API_KEYS: ${AUDIO_API_KEYS}
+      # CPU locally. See the README for the GPU flip.
+      WHISPER_DEVICE: cpu
+      WHISPER_COMPUTE_TYPE: int8
+      WHISPER_MODEL: large-v3-turbo
+      WHISPER_LANGUAGE: es
+      AUDIO_WORK_DIR: /var/lib/audio-service
+    volumes:
+      - audio_work:/var/lib/audio-service
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Inherited from the image; repeated here so it is visible at a glance.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # ── Worker: holds the model, does the transcription. Same image. ───────────
+  audio-service-worker:
+    build:
+      context: ./services/audio-service
+      args:
+        WHISPER_MODEL: large-v3-turbo
+    image: edc-audio-service:local
+    restart: unless-stopped
+    command: ["arq", "app.worker.WorkerSettings"]
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: INFO
+      REDIS_URL: redis://redis:6379/2
+      API_KEYS: ${AUDIO_API_KEYS}
+      WHISPER_DEVICE: cpu
+      WHISPER_COMPUTE_TYPE: int8
+      WHISPER_MODEL: large-v3-turbo
+      WHISPER_LANGUAGE: es
+      AUDIO_WORK_DIR: /var/lib/audio-service
+      # Leave at 1 on CPU: one transcription already saturates every core.
+      MAX_CONCURRENT_JOBS: "1"
+    volumes:
+      - audio_work:/var/lib/audio-service
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # No HTTP listener here — see note 3 at the top of this file.
+      disable: true
+    # A CPU transcription will use every core it can get. Uncomment to stop it
+    # starving Postgres and the Next.js dev server on a laptop.
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "4.0"
+    #       memory: 6g
+
+  # ── Callback worker: delivers the signed webhooks. Same image, no model. ───
+  # 🔴 NOT OPTIONAL. Without it every transcription succeeds and no consumer is
+  # ever told. Starts in seconds and uses ~100 MB — it is separate because the
+  # transcription queue would head-of-line block it for hours.
+  audio-service-callbacks:
+    image: edc-audio-service:local
+    restart: unless-stopped
+    command: ["arq", "app.worker.CallbackWorkerSettings"]
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: INFO
+      REDIS_URL: redis://redis:6379/2
+      API_KEYS: ${AUDIO_API_KEYS}
+      # No WHISPER_* needed: this process never loads a model.
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+volumes:
+  # Transient audio: uploads awaiting transcription, plus per-job scratch. Both
+  # are deleted as soon as a transcript exists, and swept on a timer if a crash
+  # skipped that. Safe to `docker volume rm` at any time — you only lose
+  # in-flight jobs.
+  audio_work:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MODEL WEIGHTS: baked into the image, NOT a volume. On purpose.
+#
+# `scripts/bake_model.py` runs at build time and the Dockerfile then sets
+# HF_HUB_OFFLINE=1, so a container start never touches the network. This is why
+# `docker compose up` is fast and works offline.
+#
+# There is deliberately NO `audio_model_cache` volume in the list above. If you
+# add one at /opt/whisper-cache, Docker seeds it from the image on FIRST use
+# only — after that it is sticky, so a rebuild with a different WHISPER_MODEL
+# silently keeps serving the old weights until you `docker volume rm` it. Baked-
+# only avoids that whole class of confusion. To change models, rebuild:
+#
+#     docker compose build --build-arg WHISPER_MODEL=small audio-service
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# ROOT .env — add these
+#
+#   # 64 hex chars. MUST equal apps/backend's CALLBACK_SECRET.
+#   AUDIO_CALLBACK_SECRET=<64-hex>
+#   AUDIO_API_KEYS={"<audio-app-key>":{"org":"demo","project":"demo","role":"app","callbackSecret":"<same as AUDIO_CALLBACK_SECRET>"},"<audio-admin-key>":{"org":"demo","project":"demo","role":"admin"}}
+#
+# And on the `backend` service (owned by another agent — this is the ASK, not an
+# edit):
+#
+#   AUDIO_SERVICE_URL=http://audio-service:8080
+#   AUDIO_SERVICE_API_KEY=<audio-app-key>
+#
+# The backend already has CALLBACK_SECRET and PUBLIC_BACKEND_URL; both are
+# reused unchanged. See plan/audio-ingest-integration.md.
+# ─────────────────────────────────────────────────────────────────────────────

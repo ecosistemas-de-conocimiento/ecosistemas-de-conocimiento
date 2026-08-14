@@ -1,0 +1,19 @@
+/**
+ * `@edc/chat-engine` server wiring — adapter + AIClient shim + config.
+ * Server-only (under `$lib/server/`). The composer and message components
+ * import the kind registry separately via `$lib/engine/registry`, which is
+ * client-safe.
+ */
+
+export { CHAT_ENGINE_CONFIG, CHAT_KIND_REGISTRY, engineOrgId } from './config';
+export { makeEngineAIClient } from './aiClient';
+export {
+  buildChatUnitRequest,
+  partitionMessages,
+  PROMPT_TEMPLATE_USER_PROMPT,
+  TRANSCRIPT_DIRECTIVE,
+  type PartitionedPrompt,
+  type WireMessage,
+} from './wire';
+export { makeChatDomainAdapter, type ChatAdapterCtx } from './adapter';
+export { useRegistryPrompt, PROMPT_SOURCE_REGISTRY } from './promptSource';

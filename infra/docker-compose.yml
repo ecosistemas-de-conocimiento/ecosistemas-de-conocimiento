@@ -1,0 +1,564 @@
+# Ecosistemas de Conocimiento — LOCAL ONE-COMMAND DEMO
+# =============================================================================
+#
+#   cd infra && cp .env.example .env && docker compose up -d --wait
+#   open http://localhost:3000        (web)
+#        http://localhost:3002/admin  (Payload admin + identity provider)
+#
+# 🔴 NOTHING IN THIS FILE HAS BEEN RUN. It was authored from the Dockerfiles and
+#    source in this repo; no `docker compose up`, no `docker build`, no deploy.
+#    Treat every image tag, port and healthcheck as a design, not a measurement.
+#    The "Known to be wrong today" list at the bottom is the honest part.
+#
+# ─── Why this file lives in `infra/`, and what that costs ────────────────────
+# The build context is the REPO ROOT (`context: ..`), NOT this directory. Every
+# app here is a pnpm workspace member using `workspace:*` links, so the root
+# `pnpm-lock.yaml`, `pnpm-workspace.yaml` and `packages/` must be inside the
+# context or `pnpm install --frozen-lockfile` cannot resolve them.
+# `apps/web/Dockerfile` and `services/ai-service/Dockerfile` already carry the
+# warning in their headers.
+#
+# ⚠ CONSEQUENCE: Docker reads only the CONTEXT ROOT's `.dockerignore`. With the
+#   context at `..`, that is `<repo>/.dockerignore` — `apps/*/.dockerignore` is
+#   NOT consulted, so `apps/backend/.dockerignore` is dead weight today.
+#   The root `.dockerignore` is REQUIRED and is owned by the integrator, not by
+#   this file. It must exclude at minimum `.git`, `node_modules`,
+#   `**/node_modules`, `**/dist`, `.env`, `.env.*` — and it must NOT exclude
+#   `pnpm-lock.yaml`, `pnpm-workspace.yaml` or any `package.json`.
+#   🔴 `node_modules` is a NAMED VOLUME at runtime in the dev overlay — never
+#      bind it, never COPY it. That rule is
+#      the reason the ignore list exists at all.
+#
+# ⚠ CONSEQUENCE: if you move this file to the repo root, change every
+#   `context: ..` to `context: .` and every `env_file: .env` to
+#   `env_file: infra/.env`. Nothing else changes.
+#
+# ─── No GPU, no cloud credentials ───────────────────────────────────────────
+# The default profile runs with `MOCK_LLM=1` and `MOCK_EMBEDDINGS=1`, so the
+# stack boots and the UI is clickable with ZERO API keys. Retrieval returns
+# deterministic stub vectors — good enough to demo the shape of the product, not
+# its answer quality. To demo REAL answers, set `OPENROUTER_API_KEY` in `.env`
+# and flip `MOCK_LLM`/`MOCK_EMBEDDINGS` to 0. That is the only paid path.
+#
+# ─── THREE TIERS, because the full stack does NOT fit on a typical laptop ───
+# 🔴 Read this before promising anyone a demo. The honest arithmetic:
+#
+#   TIER 1 — "core", ~4 GB RAM. Everything except audio and the sidecars.
+#       docker compose up -d --wait postgres redis ai-service backend web
+#     Document upload, RAG chat, ratings, admin. Runs on an 8 GB machine.
+#
+#   TIER 2 — "product" (THE DEFAULT), ~8 GB RAM ceiling, ~5-6 GB resident.
+#       docker compose up -d --wait
+#     Adds audio-service. This is the whole product. Wants 16 GB.
+#     ⚠ The 4 GB audio limit is a CEILING reached only mid-transcription; it
+#       idles near 1 GB. But a 16 GB laptop also running a browser and an IDE
+#       will feel the transcription.
+#
+#   TIER 3 — "heavy", ~16 GB RAM ceiling. Adds self-hosted embeddings + rerank.
+#       docker compose --profile heavy up -d --wait
+#     🔴 DOES NOT FIT A 16 GB LAPTOP. bge-m3 and rerank hold a ~2.3 GB model
+#        each resident, permanently, plus ~3 GB EACH during the image BUILD.
+#        This tier is for a 32 GB workstation, or for the `dev` fleet box.
+#        On anything smaller, demo advanced RAG on the dev box and demo the
+#        product locally. That split is the recommendation, not a workaround.
+#
+# ⚠ All three figures are ESTIMATES derived from the limits set below and the
+#   model sizes stated in the sidecar Dockerfiles. Nothing was measured.
+#
+# =============================================================================
+
+name: edc
+
+# ─── Reusable fragments ─────────────────────────────────────────────────────
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DATA TIER
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  postgres:
+    # pgvector/pgvector ships stock Postgres + the `vector` extension files.
+    # ai-service REQUIRES it (its migration 0000 runs CREATE EXTENSION vector);
+    # Payload does not care, and shares the instance to save laptop RAM.
+    #
+    # 🔴 ONE SERVER, TWO DATABASES — and the second half is not negotiable.
+    #    Payload and Drizzle BOTH keep their migration ledger in schema
+    #    `public`. Point them at the same database and they clobber each
+    #    other's ledger: the symptom is a migration that reports "already
+    #    applied" and was not, or a table that vanishes. Separate databases,
+    #    shared server. The fleet does the same on the `data` box.
+    # ⚠ Pin the minor in the fleet. `pg16` floats and a silent major-compatible
+    #   minor bump on a data box is not something you want to discover at 3am.
+    image: pgvector/pgvector:pg16
+    <<: [*restart, *logging]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-edc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      # Deliberately `postgres`: the image skips CREATE DATABASE for that name,
+      # so BOTH application databases are created by the init script below and
+      # there is exactly one place that knows the list.
+      POSTGRES_DB: postgres
+      BACKEND_DB_NAME: ${BACKEND_DB_NAME:-edc_backend}
+      AI_DB_NAME: ${AI_DB_NAME:-edc_ai}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # ⚠ Runs ONCE, only against an empty volume. Editing it later does
+      #   nothing until `docker compose down -v`.
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      # 55432, not 5432, so the demo never fights a Postgres already running on
+      # the host. Matches the default in services/ai-service/.env.example.
+      - "${POSTGRES_HOST_PORT:-55432}:5432"
+    healthcheck:
+      # 🔴 THIS IS THE ONE THAT MATTERS. Payload's boot opens a connection
+      #    immediately and does schema push / migrations before it serves; if it
+      #    starts against a Postgres that is still in its init phase it crashes,
+      #    and under `restart: unless-stopped` it crash-LOOPS rather than
+      #    failing visibly. `pg_isready` against the real DB (not `postgres`)
+      #    is what makes `condition: service_healthy` below meaningful.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edc} -d ${BACKEND_DB_NAME:-edc_backend}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 1g }
+
+  redis:
+    # BullMQ queues (ai-service ingest + audio jobs) and the SSE fan-out bus.
+    # 🔴 The fan-out bus is NOT optional the moment there is
+    #    more than one replica: an in-process emitter silently produces stale
+    #    notifications instead of an error (ADR-0001 D4).
+    image: redis:7-alpine
+    <<: [*restart, *logging]
+    # appendonly so a `docker compose restart` does not drop queued jobs. This
+    # is a demo convenience, not a durability claim.
+    command: ["redis-server", "--appendonly", "yes", "--save", ""]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_HOST_PORT:-56379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # APPLICATION TIER
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  backend:
+    # Next.js + Payload CMS. Domain data AND the identity provider in one app.
+    #
+    # ✅ `apps/backend/Dockerfile` was rewritten for this monorepo while this
+    #    file was being written, and is now correct: repo-root context, pnpm,
+    #    no `REGISTRY_PAT`, no private registry scope, `ENV PORT=3002`.
+    #    ⚠ One residual difference from `services/ai-service/Dockerfile`: it
+    #      copies only FOUR workspace manifests (backend + the three packages),
+    #      not all six. pnpm validates `--frozen-lockfile` against EVERY
+    #      workspace manifest, so this may fail with "lockfile is not up to
+    #      date" — which reads like a lockfile problem and is not one. If the
+    #      build fails that way, add `apps/web/package.json` and
+    #      `services/ai-service/package.json` to its COPY list.
+    build:
+      context: ..
+      dockerfile: apps/backend/Dockerfile
+      args:
+        NODE_VERSION: "22"
+    <<: [*restart, *logging]
+    env_file: .env
+    environment:
+      # ── Runtime shape ──
+      NODE_ENV: production
+      # 🔴 EDC_ENV is the ENVIRONMENT NAME, and it is what gates seeding.
+      #    `apps/backend/src/seed/env-gate.ts`: boot-seed runs only for
+      #    EDC_ENV ∈ {local, dev}. NODE_ENV carries build semantics ONLY and is
+      #    `production` even on the deployed dev box. If the demo database comes
+      #    up empty, this variable is the first thing to check — an empty DB is
+      #    the gate WORKING.
+      EDC_ENV: local
+      PORT: "3002"
+      HOSTNAME: 0.0.0.0
+      # ── Datastore ──
+      # ⚠ DATABASE_URI (Payload's spelling), NOT DATABASE_URL (ai-service's).
+      #   They are different variables in the same stack. This has bitten people.
+      DATABASE_URI: postgres://${POSTGRES_USER:-edc}:${POSTGRES_PASSWORD}@postgres:5432/${BACKEND_DB_NAME:-edc_backend}
+      # 🔴 SCHEMA PUSH IS THE ONLY THING THAT CREATES TABLES TODAY.
+      #    `apps/backend/src/migrations/index.ts` exports an EMPTY array — the
+      #    two conflicting baselines from the merged apps were deleted, and the
+      #    replacement has not been cut yet. So `PAYLOAD_DISABLE_PUSH=1` right
+      #    now does not mean "use migrations", it means "have no schema".
+      #    ✅ For this LOCAL demo, push is correct and convenient.
+      #    🔴 For the fleet it is a blocking prerequisite, not a config choice:
+      #       a baseline migration must be cut BEFORE the first stage/prod
+      #       deploy. See infra/fleet/runbook.md §3.
+      PAYLOAD_DISABLE_PUSH: "0"
+      # ── Where it calls out to ──
+      AI_SERVICE_URL: http://ai-service:3000
+      # 🔴 THE CALLBACK PAIR. ai-service calls BACK to this URL when ingest
+      #    finishes. It must be an absolute origin reachable FROM the
+      #    ai-service container, so the compose service name — not localhost.
+      #    Callback path is /api/ai-service/callback.
+      #    ⚠ `PUBLIC_BACKEND_URL` and `CALLBACK_SECRET` must BOTH be set or
+      #      callbacks are silently OFF and every upload sits in `embedding`
+      #      forever. There is no error; that is what makes it expensive.
+      PUBLIC_BACKEND_URL: http://backend:3002
+      # `warn` not `strict`: in strict mode a 404 from ai-service's
+      # /v1/capabilities THROWS at boot. Fine on a laptop where versions can
+      # drift; the fleet should run `strict` so a version skew is loud.
+      AI_CAPABILITY_MODE: ${AI_CAPABILITY_MODE:-warn}
+      # ── CORS ──
+      # The browser talks to web on :3000 and to backend on :3002 directly, so
+      # backend must accept the web origin.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3002}
+      # ── Rate limiting ──
+      # 🔴 0 = trust NOBODY's X-Forwarded-For. Correct when the container is
+      #    reached directly, as it is here. Setting this above the real number
+      #    of proxies is a total, silent bypass of every per-IP limit
+      #    (apps/backend/src/endpoints/http.ts).
+      IDENTITY_TRUSTED_PROXY_HOPS: "0"
+    volumes:
+      # Payload's upload adapter is LOCAL DISK today (verified: no
+      # @payloadcms/storage-s3 in apps/backend/package.json, no S3 config in
+      # payload.config.ts). A named volume is what makes uploaded documents
+      # survive `docker compose restart`.
+      # 🔴 FLEET CONSEQUENCE, and it is a real one: local-disk uploads mean the
+      #    prod app tier CANNOT be scaled to two boxes — an upload written on
+      #    box A is a 404 on box B. See plan/deploy-and-local-demo.md §"Object
+      #    storage". This is the single biggest constraint on fleet shape.
+      - backend_media:/repo/apps/backend/media
+    ports:
+      - "${BACKEND_HOST_PORT:-3002}:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Not `service_healthy`: backend must tolerate ai-service being down
+      # (uploads queue, chat degrades). Requiring health here would make an
+      # ai-service problem look like a backend outage.
+      ai-service:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3002/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      # Payload's first boot generates the schema and runs the seed. Slow.
+      start_period: 120s
+      retries: 5
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 2g }
+
+  web:
+    # SvelteKit, adapter-node. `apps/web/Dockerfile` is ALREADY CORRECT for this
+    # compose file — repo-root context, no registry token, workspace-aware. It
+    # needs no changes.
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    <<: [*restart, *logging]
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOST: 0.0.0.0
+      # ⚠ These are read via `$env/dynamic/private` — RUNTIME env, not build
+      #   args, so one image serves every environment. Do NOT "optimise" them
+      #   into build args: Vite SPAs have to build one image per
+      #   environment precisely because `import.meta.env.VITE_*` is inlined at
+      #   build time. SvelteKit's dynamic/private avoids that trap; keep it.
+      #   🔴 Anything renamed to PUBLIC_* becomes build-time-inlined AND
+      #      client-visible. Never put a key behind a PUBLIC_ name.
+      AI_SERVICE_URL: http://ai-service:3000
+      CHAT_BACKEND_URL: http://backend:3002
+    ports:
+      - "${WEB_HOST_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_started
+      ai-service:
+        condition: service_started
+    healthcheck:
+      # By contract this route checks nothing downstream — a backend blip must
+      # not restart the frontend. (Stated in apps/web/Dockerfile.)
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1g }
+
+  ai-service:
+    # Fastify + Drizzle + BullMQ + pgvector. `services/ai-service/Dockerfile` is
+    # ALREADY CORRECT for this compose file and needs no changes.
+    #
+    # ⚠ Its CMD is `node dist/db/migrate.js && exec node dist/index.js` —
+    #   migrations run on EVERY container start, idempotently. That is why it
+    #   needs `postgres: service_healthy` and not merely `service_started`.
+    build:
+      context: ..
+      dockerfile: services/ai-service/Dockerfile
+    <<: [*restart, *logging]
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOST: 0.0.0.0
+      # ⚠ DATABASE_URL here; DATABASE_URI in backend. Not a typo.
+      DATABASE_URL: postgres://${POSTGRES_USER:-edc}:${POSTGRES_PASSWORD}@postgres:5432/${AI_DB_NAME:-edc_ai}
+      REDIS_URL: redis://redis:6379
+      # ── Advanced RAG: the two optional legs (profile `heavy`) ──
+      # Both default OFF, so pointing at a service that is not running is
+      # harmless: rerank degrades to a no-op on the fused order, and sparse
+      # falls back to the Postgres tsvector lexical leg. Flip the ENABLED flags
+      # in `.env` at the same time as you add `--profile heavy`.
+      # 🔴 These URLs are consumed VERBATIM — the `/rerank` and `/embed` paths
+      #    are part of the value, NOT appended by the client. Dropping the path
+      #    yields a 404 that the fallback silently swallows, so the feature
+      #    looks enabled and does nothing. Easy to get wrong; check it first.
+      RERANK_ENABLED: ${RERANK_ENABLED:-false}
+      RERANK_URL: http://rerank-service:8000/rerank
+      SPARSE_ENABLED: ${SPARSE_ENABLED:-false}
+      SPARSE_EMBED_URL: http://bge-m3-service:8000/embed
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${AI_SERVICE_HOST_PORT:-3001}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+    deploy:
+      resources:
+        # Embedding batches and BullMQ workers share this process.
+        limits: { cpus: "2.0", memory: 2g }
+
+  audio-service:
+    # 🔴 ASSUMED CONTRACT — this service DID NOT EXIST when this file was
+    #    written (`services/` contained only `ai-service/`). Another agent is
+    #    building it right now. Everything below is a SPECIFICATION for it, not
+    #    an observation of it. `docker compose build audio-service` fails until
+    #    `services/audio-service/Dockerfile` exists.
+    #
+    #    What I assumed, in the order it will break if I am wrong:
+    #      1. Dockerfile at `services/audio-service/Dockerfile`, repo-root
+    #         context (true for a Node service; a pure-Python service could use
+    #         its own directory as context and SHOULD, since it has no
+    #         `workspace:*` deps — if it does, change `context:` to
+    #         `../services/audio-service` and drop `dockerfile:`'s prefix).
+    #      2. HTTP on container port 8080, liveness at GET /health returning 200.
+    #      3. Model weights cached under /models, overridable by a variable.
+    #      4. It pulls work from Redis (BullMQ or its Python equivalent) and
+    #         pushes the finished transcript to ai-service's ingest endpoint —
+    #         it is NOT called synchronously by the browser, because a 40-minute
+    #         audio file transcribed on laptop CPU is a request nobody can hold
+    #         open.
+    #      5. ffmpeg is installed INSIDE the image, not mounted.
+    build:
+      context: ..
+      dockerfile: services/audio-service/Dockerfile
+    <<: [*restart, *logging]
+    env_file: .env
+    environment:
+      PORT: "8080"
+      HOST: 0.0.0.0
+      REDIS_URL: redis://redis:6379
+      AI_SERVICE_URL: http://ai-service:3000
+      # ── CPU-ONLY, and that is the whole point ──
+      # 🔴 The prototypes' ADR-0002 assumed a GPU box for transcription. That box
+      #    was never racked. Do not repeat the assumption: this must run on
+      #    ordinary CPU, here and in the fleet.
+      # faster-whisper (CTranslate2) on int8 is the CPU-viable family. `small`
+      # is the largest that is tolerable on a laptop; `medium` roughly triples
+      # the time and `large-v3` is not a demo, it is a coffee break.
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      WHISPER_DEVICE: cpu
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      WHISPER_MODEL_DIR: /models
+      # Spanish-language product — pinning the language skips autodetect, which
+      # is both faster and stops short clips being mis-detected as Portuguese.
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-es}
+      # Keep it under the CPU limit below or the container thrashes.
+      TRANSCRIBE_CONCURRENCY: "1"
+      OMP_NUM_THREADS: ${AUDIO_CPUS:-4}
+    volumes:
+      # 🔴 NAMED VOLUME, not a bind mount, and not baked into the image.
+      #    Whisper weights are 0.5–3 GB. Baking them (as bge-m3-service and
+      #    rerank-service do) makes the image enormous and the first build very
+      #    slow; a named volume downloads them ONCE and survives every
+      #    `docker compose down` that is not `-v`.
+      #    ⚠ TRADE-OFF, stated honestly: this means the FIRST audio upload on a
+      #      fresh machine blocks on a model download and needs network. If you
+      #      need a genuinely offline demo, pre-warm it:
+      #        docker compose run --rm audio-service <the service's warm command>
+      #      and see plan/deploy-and-local-demo.md §"Offline demo".
+      - whisper_models:/models
+    depends_on:
+      redis:
+        condition: service_healthy
+      ai-service:
+        condition: service_started
+    ports:
+      - "${AUDIO_HOST_PORT:-3003}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      # Generous: the model loads into RAM before the service reports ready, and
+      # on a cold volume it may be downloading.
+      start_period: 300s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          # 🔴 THE HEAVY ONE. Transcription is the only service here that will
+          #    saturate a laptop. These limits exist to keep the demo
+          #    RESPONSIVE while a file transcribes — without them, whisper eats
+          #    every core and the UI you are demoing goes unresponsive, which
+          #    looks like a product bug in front of an audience.
+          #    Raise AUDIO_CPUS/AUDIO_MEMORY in .env on a bigger machine.
+          cpus: "${AUDIO_CPUS:-4}"
+          memory: ${AUDIO_MEMORY:-4g}
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # OPTIONAL — self-hosted inference sidecars (profile: heavy)
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Both are CPU-only by design and BAKE their weights into the image at build
+  # time (see their Dockerfiles), so they need no model volume — but the build
+  # itself downloads ~2.3 GB each and needs ~3 GB RAM. Off by default.
+
+  bge-m3-service:
+    profiles: ["heavy"]
+    build:
+      # No workspace deps — its own directory is the correct, much smaller
+      # context. This is the exception to the repo-root rule above.
+      context: ../services/ai-service/bge-m3-service
+    <<: [*restart, *logging]
+    expose: ["8000"]
+    ports:
+      - "${BGE_HOST_PORT:-8001}:8000"
+    healthcheck:
+      # ⚠ /health is liveness; /ready reports 200 only AFTER the ~2.3 GB model
+      #   is loaded into RAM. Probe /ready, or ai-service starts calling a
+      #   service that is up and not yet answering.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 240s
+      retries: 3
+    deploy:
+      resources:
+        # One worker, one ~2.3 GB model copy in RAM (its Dockerfile is explicit
+        # that a second worker doubles that).
+        limits: { cpus: "4.0", memory: 4g }
+
+  rerank-service:
+    profiles: ["heavy"]
+    build:
+      context: ../services/ai-service/rerank-service
+    <<: [*restart, *logging]
+    expose: ["8000"]
+    ports:
+      - "${RERANK_HOST_PORT:-8002}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 240s
+      retries: 3
+    deploy:
+      resources:
+        limits: { cpus: "4.0", memory: 4g }
+
+# ═══════════════════════════════════════════════════════════════════════════
+volumes:
+  pg_data:          # Postgres cluster — both databases.
+  redis_data:       # BullMQ queue state (appendonly).
+  backend_media:    # Payload uploads. Local disk today; see §Object storage.
+  whisper_models:   # Transcription weights. Survives `down`, dies on `down -v`.
+
+networks:
+  default:
+    name: edc
+
+# =============================================================================
+# APPENDIX — things this file DEPENDS ON that I do not own
+# =============================================================================
+#
+# ─── Root `.dockerignore` — OWNED BY THE INTEGRATOR, already written ────────
+# Not mine to create. This compose file only depends on it excluding `.git`,
+# `node_modules`, `**/node_modules`, `**/dist` and every `.env` — and on it NOT
+# excluding `pnpm-lock.yaml`, `pnpm-workspace.yaml` or any `package.json`, all
+# of which the workspace-aware builds COPY explicitly.
+# ⚠ `infra/.env` must be excluded too, or it lands in an image layer.
+#
+# ─── Dockerfiles — status as of writing (NONE ARE MINE TO EDIT) ─────────────
+#  ✅ `apps/web/Dockerfile{,.dev}`          correct. Repo-root context, pnpm,
+#                                          no registry token. No change needed.
+#  ✅ `services/ai-service/Dockerfile{,.dev}`  correct. Copies all SIX workspace
+#                                          manifests — the reference to copy.
+#  ✅ `apps/backend/Dockerfile{,.dev}`      REWRITTEN mid-flight by another
+#                                          agent; now repo-root context, pnpm,
+#                                          `ENV PORT=3002`, no `REGISTRY_PAT`.
+#                                          One residual risk noted on the
+#                                          `backend` service above: it copies
+#                                          only four of six manifests.
+#  🔴 `services/audio-service/Dockerfile`   DOES NOT EXIST. Being built now.
+#
+# ⚠ `apps/backend/.dockerignore` and `apps/web/.dockerignore` are INERT — the
+#   context root is the repo root, so only `/.dockerignore` is read. Their
+#   entries (notably `src/payload-types.ts`, `media`) must live in the root one.
+#
+# ─── 🔴 `packages/*/dist` — nobody builds it ────────────────────────────────
+# `@edc/ai-client`, `@edc/chat-engine` and `@edc/identity-client` all publish
+# `main`/`types` pointing at `dist/`, and all three have their own `build`
+# script. **No Dockerfile runs `pnpm -r build`.** The app builds may resolve
+# them by chance (via source or a bundler) or may fail with
+# `ERR_MODULE_NOT_FOUND` on a bare `@edc/…` import. ⚠ **Unverified — I could
+# not build.** Whoever runs the first image build should check this first; the
+# fix is one `RUN pnpm --filter @edc/backend^... build` before the app build.
+#
+# ─── `apps/backend/docker-compose.yml` ──────────────────────────────────────
+# Superseded by this file. It stands up a SECOND Postgres on host 5433 with
+# `edc_backend_dev` — still plain
+# `postgres:16-alpine` with **no pgvector**, and still a competing instance.
+# Recommend DELETE, and repoint `apps/backend/package.json`'s
+# `docker:up`/`docker:down`/`docker:reset` at this file.
+#
+# ─── Known to be wrong / unverified today ───────────────────────────────────
+#  🔴 `docker compose up` will NOT succeed yet: `services/audio-service/` does
+#     not exist, so `build audio-service` fails. Everything else should build.
+#  🔴 `pnpm-lock.yaml` DOES NOT EXIST at the repo root. Every Dockerfile here
+#     uses `--frozen-lockfile`; ai-service's COPY has no `*` glob so it fails
+#     at COPY, the others fail at install. **Run a root `pnpm install` first.**
+#  🔴 The identity provider needs a signing keypair (`AUTH_PRIVATE_KEY` /
+#     `AUTH_PUBLIC_KEY` / `AUTH_KEY_ID` / `AUTH_ISSUER`). There is no default
+#     and none is generated automatically. Generate once with
+#     `pnpm --filter @edc/backend keygen` and paste into `.env` — see
+#     `.env.example` §3. Without it the app boots but cannot mint a token.
+#  ⚠ No image tag, port, healthcheck path or resource limit in this file has
+#     been executed. `/api/health` (backend, web), `/health` (ai-service),
+#     `/ready` (sidecars) are read from source, not curled.
+#  ⚠ Other agents are editing package scripts and env names concurrently. If a
+#     variable name here does not match the code, the code is right.

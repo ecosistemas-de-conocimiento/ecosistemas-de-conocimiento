@@ -1,0 +1,12 @@
+node_modules
+.next
+.env
+.env.local
+.env.docker
+*.log
+.git
+.DS_Store
+src/payload-types.ts
+tsconfig.tsbuildinfo
+media
+vitest.config.ts

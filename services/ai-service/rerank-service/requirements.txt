@@ -1,0 +1,35 @@
+# rerank-service dependencies. Kept byte-identical to bge-m3-service so the two
+# CPU siblings stay in lockstep (same FlagEmbedding / torch / transformers set).
+#
+# torch is installed FIRST from the CPU wheel index in the Dockerfile (so no CUDA
+# is ever resolved); it is also listed here so the version is pinned in one place.
+#
+# The transitive deps below are the MODEL-LOAD-CRITICAL set. They are pinned
+# explicitly because FlagEmbedding==1.3.4 only floor-pins them (transformers>=…),
+# so a rebuild months from now would otherwise resolve a newer, possibly
+# incompatible transformers/tokenizers and break at model-load. For a fully
+# reproducible image, capture a complete `pip freeze` lock from the first green
+# build and commit it as requirements.lock (see README → "Dependency pinning").
+
+# Web layer
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+
+# Model runtime. FlagEmbedding 1.3.x exposes FlagReranker(..., use_fp16=...) /
+# BGEM3FlagModel(..., use_fp16=...) and the compute_score / encode signatures the
+# services call.
+FlagEmbedding==1.3.4
+
+# CPU torch (installed from the CPU wheel index in the Dockerfile — no CUDA).
+# 2.4.1 has cp311 CPU wheels and works with the FlagEmbedding pin above.
+torch==2.4.1
+
+# ── Load-critical transitive pins (see header) ────────────────────────────────
+transformers==4.44.2
+tokenizers==0.19.1
+huggingface-hub==0.24.6
+safetensors==0.4.5
+sentence-transformers==3.0.1
+# Pin numpy to the 1.x ABI: the whole 2024-era torch/transformers/scipy set here
+# predates the numpy-2 ABI churn; 1.26.4 avoids import-time ABI breakage.
+numpy==1.26.4

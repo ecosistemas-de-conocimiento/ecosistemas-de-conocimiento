@@ -1,0 +1,13 @@
+node_modules
+.next
+.env
+.env.local
+*.log
+.DS_Store
+src/payload-types.ts
+tsconfig.tsbuildinfo
+
+# Payload media uploads written by the dev server (local file storage).
+# Production deployments mount a persistent volume; the path itself stays
+# out of git either way.
+/media/

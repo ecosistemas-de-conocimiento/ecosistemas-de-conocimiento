@@ -1,0 +1,25 @@
+# Local Postgres for @edc/backend.
+#
+# Host port 5433, not 5432, so it cannot collide with a Postgres already
+# running on the host or with another project's database.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: edc-backend-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-edc_backend_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-edc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-edc_local_dev}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - edc_backend_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edc} -d ${POSTGRES_DB:-edc_backend_dev}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  edc_backend_pg_data:

@@ -1,0 +1,56 @@
+# @edc/web — LOCAL DEV image (Vite hot-reload). Separate from `Dockerfile`.
+#
+# ⚠ BUILD CONTEXT IS THE REPO ROOT, not this directory:
+#     docker build -f apps/web/Dockerfile.dev -t edc-web-dev .
+#
+# The app depends on `@edc/ai-client` and `@edc/chat-engine` as `workspace:*`,
+# so the lockfile, the workspace manifest and `packages/` must be in the
+# context. No private registry, no install-time token.
+#
+# Runs `vite dev` against a bind-mounted source tree; node_modules should live
+# in NAMED VOLUMES (not bind-mounted) for speed and to avoid a host/container
+# binary mismatch — mount over /repo/node_modules and /repo/apps/web/node_modules.
+
+# syntax=docker/dockerfile:1
+
+ARG NODE_VERSION=22
+
+# pnpm via corepack (the workspace ROOT package.json pins packageManager).
+# Enable as root before dropping privileges.
+FROM node:${NODE_VERSION}-slim AS dev
+RUN corepack enable
+
+# Do everything as the stock non-root `node` user (uid 1000) so installed files
+# are node-owned from the start (no slow recursive chown).
+RUN mkdir -p /repo && chown node:node /repo
+USER node
+WORKDIR /repo
+# pnpm needs a writable home for its store/cache as the node user.
+ENV PNPM_HOME=/home/node/.local/share/pnpm
+ENV PATH="${PNPM_HOME}:${PATH}"
+
+# pnpm 9 blocks dependency build scripts by default; `pnpm-workspace.yaml` at
+# the root pins an explicit `onlyBuiltDependencies` allowlist.
+#
+# ⚠ `--frozen-lockfile` needs `pnpm-lock.yaml` to exist: run a root
+# `pnpm install` once before the first image build.
+COPY --chown=node:node . .
+RUN pnpm install --frozen-lockfile
+
+WORKDIR /repo/apps/web
+
+ENV NODE_ENV=development
+# File-watching across a bind mount on Linux is usually native + fast, but
+# enable polling so HMR never misses an edit inside the container. Read by
+# vite.config.ts.
+ENV CHOKIDAR_USEPOLLING=true
+
+# The dev-server port, read by vite.config.ts (`server.port`) and by EXPOSE
+# below. Passing `--port` on the CMD instead would silently override the config
+# file; setting PORT keeps one declaration and makes `docker run -e PORT=…` work.
+ENV PORT=5173
+EXPOSE ${PORT}
+
+# `--host 0.0.0.0` binds all interfaces so the host-published port reaches Vite.
+# It stays a flag because it has no env equivalent — unlike the port.
+CMD ["pnpm", "exec", "vite", "dev", "--host", "0.0.0.0"]

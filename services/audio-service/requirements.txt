@@ -1,0 +1,54 @@
+# audio-service runtime dependencies.
+#
+# NOTE: there is deliberately NO torch here. faster-whisper runs Whisper through
+# CTranslate2, a standalone C++ inference engine. That is what keeps this image
+# around 1.3 GB instead of the ~6 GB a WhisperX/pyannote stack costs, and it is
+# the main reason faster-whisper was chosen. See `app/transcriber.py`.
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+# FastAPI needs this for multipart/form-data — i.e. for the whole upload path.
+python-multipart==0.0.20
+pydantic==2.10.5
+pydantic-settings==2.7.1
+
+# Queue + store. arq is the asyncio-native Redis queue; see app/queue.py for why
+# it stands in for ai-service's BullMQ.
+arq==0.26.3
+redis==5.2.1
+
+# Callback delivery.
+httpx==0.28.1
+
+# ── ASR ──────────────────────────────────────────────────────────────────────
+faster-whisper==1.1.1
+
+# 🔴 THE TRANSITIVE PINS BELOW ARE LOad-BEARING. DO NOT DROP THEM TO "let pip
+# resolve it" — the image will stop building.
+#
+# `huggingface-hub<1.0` is the one that matters:
+#
+#   · faster-whisper 1.1.1 does a top-level `import requests` in
+#     `faster_whisper/utils.py`, but does NOT declare `requests` as a
+#     dependency. It got away with that because huggingface-hub 0.x depended
+#     on `requests` and pulled it in transitively.
+#   · huggingface-hub 1.x replaced `requests` with `httpx`. So an unpinned
+#     resolve installs hub 1.x, `requests` never lands, and the FIRST line of
+#     the Docker build that touches the model dies with
+#     `ModuleNotFoundError: No module named 'requests'`.
+#   · Adding `requests` alone is not enough: `download_model` also passes
+#     `tqdm_class=` to `snapshot_download` and catches
+#     `requests.exceptions.ConnectionError` — both 0.x-shaped.
+#
+# The rest are pinned for the reason this file claims and previously did not
+# deliver: a floating CTranslate2 / onnxruntime / av is an ABI change waiting to
+# be discovered at the worst possible moment, on an image that costs ~10 minutes
+# and 800 MB to rebuild.
+huggingface-hub==0.27.1
+ctranslate2==4.5.0
+tokenizers==0.21.0
+onnxruntime==1.20.1
+av==13.1.0
+# Pulled in by faster-whisper's own `import requests`; pinned here so it is
+# explicit rather than an accident of hub 0.x's dependency tree.
+requests==2.32.3

@@ -1,0 +1,14 @@
+# ⚠ INERT for the documented builds. Both Dockerfiles take the REPO ROOT as the
+# build context, and Docker only reads the context root's `.dockerignore` — so
+# these rules need to live in `/.dockerignore`, not here. Kept as the list of
+# what to exclude; delete once the root file covers it.
+node_modules
+build
+.svelte-kit
+dist
+.git
+.env
+.env.local
+.env.docker
+*.log
+.DS_Store

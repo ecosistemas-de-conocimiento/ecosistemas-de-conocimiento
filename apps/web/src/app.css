@@ -1,0 +1,27 @@
+@import './lib/design/tokens.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--edc-font-body);
+  color: var(--edc-color-ink);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--edc-color-line-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--edc-color-line-strong);
+  border-radius: 4px;
+}

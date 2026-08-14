@@ -1,0 +1,137 @@
+# Ecosistemas de Conocimiento — HOT-RELOAD OVERLAY
+# =============================================================================
+#
+#   cd infra
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --wait
+#
+# Or, once, so you can stop typing both files:
+#   export COMPOSE_FILE=docker-compose.yml:docker-compose.dev.yml
+#
+# ─── When to use which ──────────────────────────────────────────────────────
+# `docker-compose.yml` alone      → THE DEMO. Production images, self-contained,
+#                                    no host `node_modules` needed, nothing
+#                                    bind-mounted. What you show people.
+# + this overlay                  → DEVELOPMENT. `Dockerfile.dev` images, source
+#                                    bind-mounted, edits hot-reload.
+#
+# 🔴 UNVERIFIED, like everything else in `infra/`. Not run, not built.
+#
+# ─── The one thing that will cost you an afternoon ──────────────────────────
+# 🔴 EVERY workspace member that bind-mounts the repo needs TWO named volumes on
+#    node_modules: the ROOT one AND its own. A pnpm install is a farm of
+#    RELATIVE symlinks — `services/ai-service/node_modules/fastify` points at
+#    `../../node_modules/.pnpm/fastify@x/node_modules/fastify`. Mount only the
+#    package-level volume and every link dangles into the bind-mounted host
+#    tree; mount only the root one and the package's own links are shadowed.
+#    Both, always. This is not defensive — it is a documented failure.
+#
+# ⚠ The named volumes are SEEDED from the image on first `up`, and then never
+#   refreshed. After changing any `package.json`, you must:
+#       docker compose down -v            # or `docker volume rm edc_<name>`
+#   and rebuild. A stale node_modules volume presents as a module that is
+#   installed on the host and "missing" in the container.
+#
+# ⚠ Bind-mounting the repo means the CONTAINER runs your host's source. The
+#   host does NOT need `pnpm install` for this to work — deps come from the
+#   volumes — but if you have run one, the host `node_modules` is masked, not
+#   merged. Do not be surprised.
+
+name: edc
+
+services:
+
+  backend:
+    build:
+      context: ..
+      dockerfile: apps/backend/Dockerfile.dev
+    environment:
+      NODE_ENV: development
+      # `next dev` needs schema push; leave PAYLOAD_DISABLE_PUSH off.
+      PAYLOAD_DISABLE_PUSH: "0"
+    volumes:
+      - ..:/repo
+      - backend_root_node_modules:/repo/node_modules
+      - backend_app_node_modules:/repo/apps/backend/node_modules
+      # Keep uploads on the volume, not scattered into the bind-mounted host
+      # tree where they end up in `git status`.
+      - backend_media:/repo/apps/backend/media
+      # `.next` in the container, never on the host: a host-built `.next` and a
+      # container-built one differ in native binaries and poison each other.
+      - backend_next_cache:/repo/apps/backend/.next
+    healthcheck:
+      # `next dev` compiles on first request, so the first probe is slow.
+      start_period: 180s
+    deploy:
+      resources:
+        limits: { cpus: "3.0", memory: 3g }
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile.dev
+    environment:
+      NODE_ENV: development
+      # Read by vite.config.ts. Polling costs CPU but never misses an edit
+      # across a bind mount.
+      CHOKIDAR_USEPOLLING: "true"
+      PORT: "5173"
+    ports:
+      # Vite dev binds 5173, not 3000. Published on the same host port so the
+      # URL you demo does not change between modes.
+      - "${WEB_HOST_PORT:-3000}:5173"
+    volumes:
+      - ..:/repo
+      - web_root_node_modules:/repo/node_modules
+      - web_app_node_modules:/repo/apps/web/node_modules
+      - web_svelte_kit:/repo/apps/web/.svelte-kit
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5173/api/health >/dev/null || exit 1"]
+      start_period: 120s
+
+  ai-service:
+    build:
+      context: ..
+      dockerfile: services/ai-service/Dockerfile.dev
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+    volumes:
+      - ..:/repo
+      - ai_root_node_modules:/repo/node_modules
+      - ai_svc_node_modules:/repo/services/ai-service/node_modules
+    # 🔴 The PROD image runs `node dist/db/migrate.js && node dist/index.js`.
+    #    The DEV image's `pnpm run dev` does NOT necessarily run migrations, so
+    #    on a fresh volume the schema may be absent. Run them once by hand:
+    #        docker compose exec ai-service pnpm run db:migrate
+    #    (script name assumed — check services/ai-service/package.json.)
+
+  audio-service:
+    # 🔴 ASSUMED. No `services/audio-service/` existed when this was written.
+    #    If it is a Python container it has no pnpm symlink farm and therefore
+    #    needs NO node_modules volumes — just the source bind mount below and,
+    #    if it uses a virtualenv baked into the image, an exclusion volume on
+    #    that path so the bind mount does not shadow it.
+    build:
+      context: ..
+      dockerfile: services/audio-service/Dockerfile
+    volumes:
+      - ../services/audio-service:/app
+      - whisper_models:/models
+    environment:
+      # Smaller model in dev — iterate on the pipeline, not on transcription
+      # quality. `tiny` is roughly 10× faster than `small` and much worse.
+      WHISPER_MODEL: ${WHISPER_MODEL_DEV:-tiny}
+
+volumes:
+  # One pair per bind-mounting service. Named per-service rather than shared
+  # because each image installs a DIFFERENT `--filter <pkg>...` subset of the
+  # workspace — sharing one root volume would mean whichever container started
+  # last decides what every other container can import.
+  backend_root_node_modules:
+  backend_app_node_modules:
+  backend_next_cache:
+  web_root_node_modules:
+  web_app_node_modules:
+  web_svelte_kit:
+  ai_root_node_modules:
+  ai_svc_node_modules:

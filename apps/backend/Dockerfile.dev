@@ -1,0 +1,59 @@
+# @edc/backend — LOCAL DEV image (hot-reload).
+#
+# Separate from the production `Dockerfile`. This runs `next dev` against a
+# bind-mounted source tree; node_modules lives in NAMED VOLUMES (never bind
+# mounts) so host and container native binaries cannot collide.
+#
+# ⚠ BUILD CONTEXT IS THE REPO ROOT — this is a pnpm workspace member and its
+# `@edc/*` dependencies are `workspace:*` links to sibling directories.
+#
+# Build:
+#   docker build -f apps/backend/Dockerfile.dev -t edc-backend-dev:local .
+#
+# Compose should mount the repo at /repo, declare named volumes on
+# /repo/node_modules and /repo/apps/backend/node_modules, and publish the port
+# below. It should set NO `command` — the CMD at the bottom binds 0.0.0.0:$PORT.
+
+# syntax=docker/dockerfile:1
+
+ARG NODE_VERSION=22
+
+FROM node:${NODE_VERSION}-slim AS dev
+
+# Run as the stock non-root `node` user (uid 1000) so installed files are
+# node-owned from the start and there is no slow recursive chown.
+RUN mkdir -p /repo && chown node:node /repo
+USER node
+WORKDIR /repo
+RUN corepack enable || true
+
+# ⚠ `--ignore-scripts` disables dependency lifecycle scripts, so a compromised
+# transitive dependency cannot execute code at install time. Nothing in this
+# tree needs a native build step at install. If that changes, allowlist and
+# rebuild ONLY that package, and say so here.
+#
+# There is no .npmrc: the `@edc/*` packages are workspace members on disk, so
+# no private registry and no install-time token are involved.
+COPY --chown=node:node package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
+COPY --chown=node:node apps/backend/package.json ./apps/backend/
+COPY --chown=node:node packages/ai-client/package.json ./packages/ai-client/
+COPY --chown=node:node packages/chat-engine/package.json ./packages/chat-engine/
+COPY --chown=node:node packages/identity-client/package.json ./packages/identity-client/
+RUN pnpm install --frozen-lockfile --ignore-scripts
+
+# Baked source (compose overlays a bind mount for hot-reload; this copy is the
+# build-time fallback).
+COPY --chown=node:node . .
+
+WORKDIR /repo/apps/backend
+ENV NODE_ENV=development
+# Payload's interactive schema-push prompt has no TTY in a container, so the dev
+# server auto-pushes. Leave PAYLOAD_DISABLE_PUSH unset — push is what creates
+# the schema until the first baseline migration exists.
+ENV PORT=3002
+EXPOSE ${PORT}
+
+# `-H 0.0.0.0` binds all interfaces so the host-published port reaches the dev
+# server. It stays a flag because the Next CLI has no env equivalent for
+# hostname — unlike the port, which PORT above already sets.
+CMD ["pnpm", "exec", "next", "dev", "-H", "0.0.0.0"]

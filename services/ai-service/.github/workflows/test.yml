@@ -1,0 +1,65 @@
+# ⚠ NOT ACTIVE AT THIS PATH. GitHub Actions only reads workflows from the
+#   REPOSITORY ROOT `.github/workflows/`. This file is kept here as the
+#   ready-to-move definition of ai-service's integration lane — copy it to
+#   `<repo-root>/.github/workflows/ai-service-test.yml` to turn it on.
+
+name: ai-service integration
+
+on:
+  push:
+    branches: [main]
+    paths: ['services/ai-service/**', 'pnpm-lock.yaml']
+  pull_request:
+    paths: ['services/ai-service/**', 'pnpm-lock.yaml']
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ai_service
+          POSTGRES_PASSWORD: ai_service
+          POSTGRES_DB: ai_service
+        ports:
+          - 5432:5432
+        # Health-check the container so subsequent steps don't race the
+        # postgres boot. `pg_isready` is bundled in the pgvector image.
+        options: >-
+          --health-cmd "pg_isready -U ai_service -d ai_service"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # `src/test/integration-setup.ts` reads these and rebinds
+      # DATABASE_URL / REDIS_URL onto process.env before importing any module
+      # that touches `config/env.ts`.
+      TEST_DATABASE_URL: postgres://ai_service:ai_service@localhost:5432/ai_service
+      TEST_REDIS_URL: redis://localhost:6379
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @edc/ai-service...
+      - name: Run migrations
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: pnpm --filter @edc/ai-service db:migrate
+      - run: pnpm --filter @edc/ai-service test:integration

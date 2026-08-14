@@ -1,0 +1,445 @@
+/**
+ * THE RESOLVER. Rows in, one flat answer out.
+ *
+ * `/v1/identity/token`, `/v1/identity/me` and `/v1/identity/resolve` all call
+ * this file and put the result straight on the wire — so THIS FILE, not any
+ * collection, is the shape a consumer actually depends on.
+ *
+ * ── WHY THE ROLE MODEL IS CODE ───────────────────────────────────────────────
+ *
+ * The IdP this was lifted from resolved a FLEET-WIDE RBAC catalogue: four
+ * collections (`projects`, `permissions`, `roles`, `assignments`) letting each
+ * of four separate products define its own permission vocabulary, with
+ * per-assignment `extraPermissions` as an escape hatch.
+ *
+ * That machinery answers a question this product does not have. There is ONE
+ * product here. Its tenancy axis is the ORGANIZATION, and a person's standing
+ * in an organization is one of three things: they own it, they administer it,
+ * or they are a member of it. Modelling that as an editable catalogue of
+ * permission rows would mean an admin panel where you can define a role that
+ * grants `documents:delete` in an app that has exactly one delete button — a
+ * configuration surface with nothing real to configure, plus four tables, four
+ * sets of access rules and an N+1-shaped resolver to keep correct.
+ *
+ * So: **the role lives on the membership, and the role→permission map is
+ * CODE** (`ROLE_PERMISSIONS` below). Deleted: `projects` (the fleet catalogue),
+ * `permissions`, `roles`, `assignments`.
+ *
+ * ⚠ THE WIRE SHAPE IS UNCHANGED and must stay that way. `@edc/identity-client`
+ * consumes `ResolvedPrincipal` with a `projects` map and `ProjectGrant`
+ * `{ roles, permissions }`, and its `canInProject(principal, slug, perm)` is
+ * the check a consumer writes. In THIS product that map is keyed by
+ * ORGANIZATION SLUG. The field is still called `projects` because renaming it
+ * is a breaking change to a published client for a cosmetic gain — read it as
+ * "the scopes this principal has standing in".
+ *
+ * ── INVARIANTS THAT ARE LOAD-BEARING, NOT STYLISTIC ──────────────────────────
+ *
+ * ⚠ Output arrays are DEDUPLICATED AND SORTED. Two calls over the same rows
+ * must produce byte-identical JSON, or tokens stop being comparable and every
+ * downstream cache key churns for nothing.
+ *
+ * ⚠ Queries are BATCHED, never per-membership. Three round trips resolve a
+ * principal with any number of memberships. A loop with a query inside it would
+ * put N+1 on the login path.
+ *
+ * ⚠ GRANTS ONLY EVER ADD. There is no deny and no precedence order. Removing
+ * access means lowering a role or switching something off. Deny rules are where
+ * authorization systems become impossible to reason about.
+ *
+ * ⚠ DEACTIVATION IS THE REVOKE SWITCH, AT THREE LEVELS — `users.isActive`,
+ * `memberships.isActive`, `organizations.isActive`. Any one of them false and
+ * the grant resolves to nothing.
+ */
+
+import type { CollectionSlug, Payload, Where } from 'payload'
+
+// ---------------------------------------------------------------------------
+// The role model
+// ---------------------------------------------------------------------------
+
+/**
+ * The three ways to stand in an organization. Ordered least → most privileged;
+ * `ROLE_RANK` below depends on that order.
+ *
+ * ⚠ These strings are on the wire (`roles` in a token, `roles` in a grant) and
+ * in the database (`memberships.role`). Renaming one is a migration AND a
+ * client change.
+ */
+export const ORG_ROLES = ['member', 'admin', 'owner'] as const
+
+export type OrgRole = (typeof ORG_ROLES)[number]
+
+/** Highest wins when someone somehow holds two memberships in one org. */
+const ROLE_RANK: Record<OrgRole, number> = { member: 0, admin: 1, owner: 2 }
+
+export const DEFAULT_ORG_ROLE: OrgRole = 'member'
+
+export function isOrgRole(value: unknown): value is OrgRole {
+  return typeof value === 'string' && (ORG_ROLES as readonly string[]).includes(value)
+}
+
+/**
+ * Every permission this product recognises. The list is SHORT on purpose: each
+ * entry has to correspond to something the UI or the API actually gates, or it
+ * is decoration that will drift out of sync with the code silently.
+ */
+export const PERMISSIONS = {
+  /** See the organization's documents and their extracted text. */
+  documentsRead: 'documents:read',
+  /** Upload a document and enqueue it for ingestion. */
+  documentsWrite: 'documents:write',
+  /** Remove a document, and with it the answers grounded in it. */
+  documentsDelete: 'documents:delete',
+  /** Open a chat session and ask questions over the knowledgebase. */
+  chatUse: 'chat:use',
+  /** Star an assistant answer 1-5. */
+  ratingsWrite: 'ratings:write',
+  /** Add, remove and re-role people in the organization. */
+  membersManage: 'members:manage',
+  /** Rename the organization, deactivate it, change its settings. */
+  organizationManage: 'organization:manage',
+} as const
+
+export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]
+
+const MEMBER_PERMISSIONS: readonly Permission[] = [
+  PERMISSIONS.documentsRead,
+  PERMISSIONS.documentsWrite,
+  PERMISSIONS.chatUse,
+  PERMISSIONS.ratingsWrite,
+]
+
+const ADMIN_PERMISSIONS: readonly Permission[] = [
+  ...MEMBER_PERMISSIONS,
+  PERMISSIONS.documentsDelete,
+  PERMISSIONS.membersManage,
+]
+
+const OWNER_PERMISSIONS: readonly Permission[] = [
+  ...ADMIN_PERMISSIONS,
+  PERMISSIONS.organizationManage,
+]
+
+/**
+ * Role → effective permissions. THE map; nothing else expands a role.
+ *
+ * ⚠ Consumers receive a FLAT permission list and check membership in it. They
+ * never expand a role themselves. The moment two places expand roles
+ * independently they drift, and the drift is silent.
+ */
+export const ROLE_PERMISSIONS: Record<OrgRole, readonly Permission[]> = {
+  member: MEMBER_PERMISSIONS,
+  admin: ADMIN_PERMISSIONS,
+  owner: OWNER_PERMISSIONS,
+}
+
+/**
+ * What a PLATFORM ADMIN holds in every active organization.
+ *
+ * They run the installation, so the token says so explicitly rather than making
+ * each caller remember to special-case a flag it might forget to check.
+ */
+const PLATFORM_ADMIN_ROLE: OrgRole = 'owner'
+
+// ---------------------------------------------------------------------------
+// Wire types — mirror `@edc/identity-client`
+// ---------------------------------------------------------------------------
+
+export type ProjectGrant = { roles: string[]; permissions: string[] }
+
+export type ResolvedPrincipal = {
+  email: string
+  name: string | null
+  isPlatformAdmin: boolean
+  /**
+   * Keyed by ORGANIZATION SLUG. Named `projects` for wire compatibility with
+   * `@edc/identity-client` — see the file header.
+   *
+   * An organization the person has no active membership in is simply ABSENT;
+   * there are no empty placeholders to filter out downstream.
+   */
+  projects: Record<string, ProjectGrant>
+}
+
+// ---------------------------------------------------------------------------
+// Row shapes + small helpers
+// ---------------------------------------------------------------------------
+
+type Id = number | string
+
+type UserRow = {
+  id: Id
+  email: string
+  displayName?: string | null
+  isPlatformAdmin?: boolean | null
+  isActive?: boolean | null
+}
+
+type OrganizationRow = { id: Id; slug: string; isActive?: boolean | null }
+
+type MembershipRow = {
+  id: Id
+  user?: unknown
+  organization?: unknown
+  role?: unknown
+  isActive?: boolean | null
+}
+
+/** Map keys have to be stable whether Postgres hands back 7 or '7'. */
+const keyOf = (id: Id): string => String(id)
+
+/** A relationship is an id at depth 0 and a document deeper in. Take the id. */
+export function relationId(value: unknown): Id | null {
+  if (typeof value === 'number') return value
+  if (typeof value === 'string') return value === '' ? null : value
+  if (value && typeof value === 'object') {
+    const id = (value as { id?: unknown }).id
+    if (typeof id === 'number' || typeof id === 'string') return id
+  }
+  return null
+}
+
+const uniqueIds = (ids: Id[]): Id[] => {
+  const seen = new Map<string, Id>()
+  for (const id of ids) if (!seen.has(keyOf(id))) seen.set(keyOf(id), id)
+  return [...seen.values()]
+}
+
+/**
+ * Every read here runs with `overrideAccess: true`. Two reasons, both
+ * load-bearing: `isPlatformAdmin` is field-gated to admins (see `access/`) and
+ * would come back stripped, and the resolver answers for OTHER people — a
+ * service asking "what may ana do in acme" is not ana.
+ */
+/**
+ * ⚠ WHY `isActive: { equals: true }` AND NOT `{ not_equals: false }`.
+ *
+ * `not_equals: false` compiles to SQL `!= false`, and in SQL `NULL != false` is
+ * NULL, not true — so a row whose column is NULL is dropped anyway, and the
+ * looser-looking predicate silently behaves like the strict one. Rather than
+ * rely on that, every filter below asks for `= true` explicitly: an
+ * authorization gate should fail CLOSED and should read as if it does. Every
+ * `isActive` field carries `defaultValue: true`, so a row without it is an
+ * anomaly, and an anomaly resolving to "no access" is the outcome we want.
+ */
+async function findAll<T>(payload: Payload, collection: CollectionSlug, where: Where): Promise<T[]> {
+  const result = await payload.find({
+    collection,
+    where,
+    depth: 0,
+    pagination: false,
+    overrideAccess: true,
+  })
+  return result.docs as unknown as T[]
+}
+
+/** The user row, or null when there is no such person or they are switched off. */
+async function loadActiveUser(payload: Payload, email: string): Promise<UserRow | null> {
+  const normalized = email.trim().toLowerCase()
+  if (!normalized) return null
+
+  const rows = await findAll<UserRow>(payload, 'users', { email: { equals: normalized } })
+  const user = rows[0]
+  if (!user || user.isActive === false) return null
+  return user
+}
+
+function displayNameOf(user: UserRow): string | null {
+  const name = typeof user.displayName === 'string' ? user.displayName.trim() : ''
+  return name === '' ? null : name
+}
+
+/** Dedupe + sort, so two calls over the same rows are byte-identical. */
+const sortedGrant = (roles: string[], permissions: string[]): ProjectGrant => ({
+  roles: [...new Set(roles)].sort(),
+  permissions: [...new Set(permissions)].sort(),
+})
+
+/** The grant one role produces. The single expansion point. */
+export function grantForRole(role: OrgRole): ProjectGrant {
+  return sortedGrant([role], [...ROLE_PERMISSIONS[role]])
+}
+
+/** The role on a membership row, defaulting rather than throwing on junk. */
+function roleOf(membership: MembershipRow): OrgRole {
+  return isOrgRole(membership.role) ? membership.role : DEFAULT_ORG_ROLE
+}
+
+// ---------------------------------------------------------------------------
+// Resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * The ACTIVE organizations this user is an ACTIVE member of, with their role.
+ *
+ * Two queries, never one per membership. Exported because access control needs
+ * exactly this answer (see `access/index.ts` and `collections/Ratings.ts`) and
+ * a second, subtly different implementation of "which orgs may this person
+ * touch" is how a tenant leak gets written.
+ */
+export async function membershipsForUser(
+  payload: Payload,
+  userId: Id,
+): Promise<Array<{ organization: OrganizationRow; role: OrgRole }>> {
+  const memberships = await findAll<MembershipRow>(payload, 'memberships', {
+    and: [{ user: { equals: userId } }, { isActive: { equals: true } }],
+  })
+  if (memberships.length === 0) return []
+
+  const orgIds = uniqueIds(
+    memberships
+      .map((membership) => relationId(membership.organization))
+      .filter((id): id is Id => id !== null),
+  )
+  if (orgIds.length === 0) return []
+
+  const organizations = await findAll<OrganizationRow>(payload, 'organizations', {
+    and: [{ id: { in: orgIds } }, { isActive: { equals: true } }],
+  })
+  const byId = new Map(organizations.map((org) => [keyOf(org.id), org]))
+
+  // Highest role wins if two membership rows somehow point at the same org.
+  // (Uniqueness on (user, organization) is a hook, not a database constraint,
+  // so a raced double-insert is possible — see collections/hooks/compoundUnique.)
+  const best = new Map<string, { organization: OrganizationRow; role: OrgRole }>()
+  for (const membership of memberships) {
+    const orgId = relationId(membership.organization)
+    // Missing from the map = unknown org, or a deactivated one. Skip either.
+    const organization = orgId === null ? undefined : byId.get(keyOf(orgId))
+    if (!organization) continue
+
+    const role = roleOf(membership)
+    const existing = best.get(keyOf(organization.id))
+    if (!existing || ROLE_RANK[role] > ROLE_RANK[existing.role]) {
+      best.set(keyOf(organization.id), { organization, role })
+    }
+  }
+
+  return [...best.values()]
+}
+
+/**
+ * The ids of every organization a user may touch. The one query access control
+ * asks. Returns `[]` for a user with no active memberships — which callers must
+ * treat as "sees nothing", never as "sees everything".
+ */
+export async function organizationIdsForUser(payload: Payload, userId: Id): Promise<Id[]> {
+  const rows = await membershipsForUser(payload, userId)
+  return rows.map((row) => row.organization.id)
+}
+
+/**
+ * The same list, narrowed to organizations where the user holds AT LEAST
+ * `minRole`. This is what lets "admins manage members" and "owners rename the
+ * organization" be real rules rather than comments.
+ *
+ * ⚠ Comparison is by `ROLE_RANK`, not by string equality: asking for `admin`
+ * must include owners, or every owner-only account would silently lose the
+ * admin surface.
+ */
+export async function organizationIdsForUserWithMinRole(
+  payload: Payload,
+  userId: Id,
+  minRole: OrgRole,
+): Promise<Id[]> {
+  const rows = await membershipsForUser(payload, userId)
+  return rows
+    .filter((row) => ROLE_RANK[row.role] >= ROLE_RANK[minRole])
+    .map((row) => row.organization.id)
+}
+
+/**
+ * Everything one person may do, everywhere. `null` when the email belongs to
+ * nobody or to a deactivated account — callers should treat that as "no such
+ * principal", NOT as "a principal with no permissions". The two are different:
+ * the first is a 404/403, the second is a valid user who simply has not been
+ * added to an organization yet.
+ */
+export async function resolvePrincipal(
+  payload: Payload,
+  email: string,
+): Promise<ResolvedPrincipal | null> {
+  const user = await loadActiveUser(payload, email)
+  if (!user) return null
+
+  const isPlatformAdmin = user.isPlatformAdmin === true
+  const projects: Record<string, ProjectGrant> = {}
+
+  if (isPlatformAdmin) {
+    // Expanded across every ACTIVE organization, with no membership row needed.
+    const organizations = await findAll<OrganizationRow>(payload, 'organizations', {
+      isActive: { equals: true },
+    })
+    const grant = grantForRole(PLATFORM_ADMIN_ROLE)
+    for (const organization of organizations) {
+      projects[organization.slug] = { roles: [...grant.roles], permissions: [...grant.permissions] }
+    }
+    return {
+      email: user.email,
+      name: displayNameOf(user),
+      isPlatformAdmin: true,
+      projects,
+    }
+  }
+
+  for (const { organization, role } of await membershipsForUser(payload, user.id)) {
+    projects[organization.slug] = grantForRole(role)
+  }
+
+  return {
+    email: user.email,
+    name: displayNameOf(user),
+    isPlatformAdmin: false,
+    projects,
+  }
+}
+
+/**
+ * The same answer, narrowed to one organization — what a token request needs.
+ *
+ * `null` means NO ACCESS, and covers all four ways of having none: unknown or
+ * deactivated user, unknown or deactivated organization, and no active
+ * membership.
+ */
+export async function resolveForOrganization(
+  payload: Payload,
+  email: string,
+  organizationSlug: string,
+): Promise<ProjectGrant | null> {
+  const user = await loadActiveUser(payload, email)
+  if (!user) return null
+
+  const slug = organizationSlug.trim().toLowerCase()
+  if (!slug) return null
+
+  const organizations = await findAll<OrganizationRow>(payload, 'organizations', {
+    and: [{ slug: { equals: slug } }, { isActive: { equals: true } }],
+  })
+  const organization = organizations[0]
+  if (!organization) return null
+
+  if (user.isPlatformAdmin === true) return grantForRole(PLATFORM_ADMIN_ROLE)
+
+  const memberships = await findAll<MembershipRow>(payload, 'memberships', {
+    and: [
+      { user: { equals: user.id } },
+      { organization: { equals: organization.id } },
+      { isActive: { equals: true } },
+    ],
+  })
+  if (memberships.length === 0) return null
+
+  // Highest role wins — same rule as `membershipsForUser`, for the same reason.
+  let best: OrgRole = DEFAULT_ORG_ROLE
+  let found = false
+  for (const membership of memberships) {
+    const role = roleOf(membership)
+    if (!found || ROLE_RANK[role] > ROLE_RANK[best]) {
+      best = role
+      found = true
+    }
+  }
+
+  return grantForRole(best)
+}

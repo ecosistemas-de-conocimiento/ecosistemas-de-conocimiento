@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    // ES2022 transpile target (not ES2023): Node 22 needs no syntax downleveling,
+    // and the ES2023 *library* types still come from `lib` below. ES2023 as the
+    // target tripped esbuild-based tooling (drizzle-kit) which rejects that value.
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "sourceMap": true
+  },
+  "include": [
+    // NOTE: the typed client (`@edc/ai-client`) lives at the repo-root
+    // `packages/ai-client` and typechecks under its own tsconfig — it is
+    // deliberately NOT pulled in here.
+    "src/**/*",
+    "drizzle.config.ts",
+    "vitest.config.ts",
+    "vitest.smoke.config.ts",
+    "eslint.config.js",
+    "scripts/smoke.spec.ts"
+  ]
+}
