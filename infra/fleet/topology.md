@@ -32,7 +32,11 @@ proxy ~7 MiB. Their fleet-planning average was **~0.14 GB/container**. Our four 
 environment are well inside a cx33. 🔴 **Set a memory limit on every container anyway** — they
 suggest ~768m for a Payload backend, roughly 3.6× measured steady state. The cap is not there to
 protect that app; it is there to guarantee it can never starve its neighbours on the box. The one
-genuine exception is audio transcription, which is why `prod` is a cx43 (§4).
+genuine exception is the audio transcription worker (~1.5 GB idle, ~2.8 GB peak — §4).
+
+⚠ **`prod` is a cx43 for its vCPU count, not its RAM.** That is a correction to an earlier version of
+this document; the arithmetic and the reasoning are in §4. Audio's three containers fit an 8 GB box
+on memory. They do not fit its four shared vCPU without making the web tier feel it.
 
 ### Why four and not six
 
@@ -144,9 +148,12 @@ every target type. Their `builder` had to be *replaced* rather than rescaled for
    │ prod   (cx43, 16 GB)     │          │ nonprod (cx33, 8 GB)     │
    │  Traefik                 │          │  Traefik                 │
    │  web · backend           │          │  dev:   web·backend·ai   │
-   │  ai-service              │          │         ·audio           │
-   │  audio-service  ◄─ heavy │          │  stage: web·backend·ai   │
-   │  (bge-m3, rerank: later) │          │         ·audio           │
+   │  ai-service              │          │         ·audio ×3        │
+   │  audio-service     ─┐    │          │  stage: web·backend·ai   │
+   │  audio-svc-worker ◄─┼ CPU│          │         ·audio ×3        │
+   │  audio-svc-callbacks┘    │          │                          │
+   │  (bge-m3, rerank: later) │          │  🔴 6 audio containers   │
+   │     — see §4 "nonprod"   │
    └────────────┬─────────────┘          └────────────┬─────────────┘
                 │                                     │
                 └──────────────┬──────────────────────┘
@@ -266,38 +273,152 @@ scaled at the worst possible moment.
 
 ## 4. Where audio transcription runs
 
-**Recommendation: co-tenanted on `prod`, CPU-only, behind a queue with concurrency 1, with a hard
-cgroup CPU limit. Cost: the `prod` box goes cx33 → cx43, ≈ +$12/mo.**
+✅ **Revisited 2026-08-14 against the REAL service.** `services/audio-service/` did not exist when
+this section was first written; it does now, and I have re-done the arithmetic against its
+`README.md`, `Dockerfile` and `app/config.py`. **The recommendation survives. Two of its reasons do
+not, and one whole paragraph was wrong.**
 
-🔴 **Do not buy a GPU box.** The prototypes' `ADR-0002` assumed one for exactly this workload and
-**it was never racked** — the assumption survived in the plans long after it stopped being true, and
-downstream work was sized against hardware that did not exist. Hetzner's GPU offering is also not in
-the same price band as the entire fleet above.
+**Recommendation, unchanged: co-tenanted on `prod`, CPU-only, concurrency 1, hard cgroup CPU limit.
+Cost: `prod` goes cx33 → cx43, ≈ +$12/mo.**
 
-**Why co-tenanted rather than its own box:**
+### 🔴 What changed: the +$12/mo is for vCPU, not for RAM
+
+The original argument said `prod` needed to be a cx43 because audio is memory-hungry. **That was
+wrong, and it is worth correcting rather than quietly leaving in place** — someone sizing the next
+box from it would optimise the wrong resource.
+
+| | limit | idle | during a transcription |
+|---|---|---|---|
+| `audio-service` (API) | 512m | ~200 MB | ~250 MB |
+| `audio-service-worker` | 4g | ~1.5 GB | ~2.8 GB |
+| `audio-service-callbacks` | 256m | ~100 MB | ~100 MB |
+| **audio total** | | **~1.8 GB** | **~3.1 GB** |
+
+⚠ Estimates, from the weight sizes and the service's own README — not measured. But the shape is not
+in doubt: **~3 GB peak alongside ~0.9 GB of other app containers fits an 8 GB cx33 comfortably.**
+On RAM alone we would not need the upgrade.
+
+**The upgrade is still right, for a better reason: cx33 is 4 shared vCPU and cx43 is 8.** CPU is what
+transcription actually consumes, and it consumes all of it. Same money, correct justification.
+🔧 If the budget is genuinely tight, a cx33 with `WHISPER_CPU_THREADS=2` is a defensible fallback —
+it halves the throughput and protects the web tier, which is the right trade under pressure.
+
+### 🔴 What else changed: it is THREE containers, not one
+
+`audio-service` (API) · `audio-service-worker` (transcribes) · `audio-service-callbacks` (delivers
+the signed webhook). One image, three commands.
+
+**Omitting the callback worker is a silent, total product failure**: transcriptions succeed, no error
+is logged, and the document never becomes ready. It is a separate process on a separate queue because
+the transcription queue runs one job at a time with a **four-hour** job timeout, so a delivery
+sharing it would sit behind a running decode. Full detail in `env-manifests.md` §4.
+
+**Consequences for this topology:**
+
+- ⚠ **18 Coolify applications for a 3-environment fleet, not 12** (`runbook.md` §0).
+- 🔴 **The API and the worker must SHARE one volume** at `/var/lib/audio-service` — the API writes
+  the upload, the worker reads it back, and without the share every job fails `source_missing`.
+  Coolify's persistent storage is configured **per application**, so two apps sharing a named volume
+  is not the shape that page is built around. 🟡 **Verify it before the first stage deploy, and if it
+  does not work, deploy audio-service as ONE Coolify Docker-Compose application** with three services
+  and the volume declared inline. That also cuts three image builds to one.
+- The image is ~2.1 GB (weights baked in) and one image serves all three containers. With Coolify's
+  `docker_images_to_keep=2`, budget ~4 GB of disk per environment.
+
+### 🔴 Do not buy a GPU box — and this is now a stronger position, not a weaker one
+
+Do not size work against hardware that does not exist.
+
+✅ **The service we actually built reverses that assumption in code, not just in a document.** It is
+CPU-first by construction: no torch, no CUDA in the image, CTranslate2's CPU backend running the same
+weights. And it is not a dead end — if a GPU ever appears, it is **two environment variables on the
+worker container** (`WHISPER_DEVICE=cuda`, `WHISPER_COMPUTE_TYPE=float16`) plus a base-image swap in a
+GPU-specific build. No code change, no API change, no re-bake, roughly a 10× speedup. **We are
+choosing CPU, not being trapped on it.** That distinction is what makes deferring the box safe.
+
+### Why co-tenanted rather than its own box
 
 - Transcription is **bursty and asynchronous**. It is a queue consumer, not a request handler — the
-  browser uploads, gets a job id, and polls. Nothing user-facing blocks on it, so latency under
-  contention degrades gracefully instead of timing out.
+  browser uploads, gets a job id, and the callback lands later. Nothing user-facing blocks on it, so
+  latency under contention degrades gracefully instead of timing out.
 - One extra box is +$12/mo for isolation we can approximate with cgroup limits at $0.
 - The `bge-m3`/`rerank` sidecars are the *other* CPU-heavy tenants, and they are deferred (§1). If
   both land, revisit — three CPU-hungry tenants on one box is over the line.
 
-**What it costs, honestly:** ⚠ **estimate, not measured.** `faster-whisper` `small` at int8 on ~4
-shared vCPU runs roughly **2–4× realtime**, so an hour of audio is ~15–30 minutes of wall clock at
-100% of its CPU allotment. During that window, `prod` has meaningfully less CPU for everything else.
-The mitigations are all in the same direction:
+### What it costs, honestly
 
-- `TRANSCRIBE_CONCURRENCY=1` — one file at a time. Two concurrent transcriptions on a shared-vCPU
-  box is slower in total than doing them in sequence.
-- A hard CPU limit (`cpus: "4.0"` and `OMP_NUM_THREADS` matching it) so it cannot starve the web
-  tier. 🔴 Without this, a long upload makes the whole product look down.
-- Chunk long files and emit partial transcripts, so a 90-minute recording is not one 45-minute job
-  that fails atomically at minute 44.
+⚠ **Estimate, not measured**, from the service's own README:
 
-**When to move it to its own box:** when queue wait time becomes user-visible, or when a second
-tenant needs the same cores. That is a $12/mo change and a Coolify redeploy — cheap to defer, cheap
-to do.
+| weights | throughput on ~4 cores | an hour of audio |
+|---|---|---|
+| `small` | ~2–4× realtime | ~15–30 min |
+| `large-v3-turbo` (the fleet default) | **~1× realtime** | **~60 min** |
+
+🔴 **That second row is the number to plan around, and it is three times worse than the estimate this
+section originally carried.** The service's default weights are `large-v3-turbo`, chosen for Spanish
+accuracy, and on CPU they run at roughly real time. During that hour, `prod` has meaningfully less
+CPU for everything else. Mitigations, all in the same direction:
+
+- `MAX_CONCURRENT_JOBS=1` — one file at a time. Two concurrent transcriptions on a shared-vCPU box
+  are slower in total than doing them in sequence.
+- A hard CPU limit, with `WHISPER_CPU_THREADS` **equal to** the cgroup `cpus` value. 🔴 The default
+  is `0`, meaning "every core on the host" — which ignores the cgroup and is exactly how a long
+  upload makes the whole product look down.
+- ✅ Long files are already chunked at detected silences, not on a fixed grid, so a 90-minute
+  recording is not one atomic job that fails at minute 44. That is built, not a to-do.
+
+🟡 **Set an expectation with users, in the product copy.** A queue that takes as long as the
+recording is fine; a queue that takes as long as the recording *and says nothing* is a support
+ticket. The service emits `transcribe.progress` events specifically so the UI can show this — which
+is, again, why the callback worker is a separate process.
+
+### 🔴 `nonprod` is the tier audio actually pushes over a threshold — and it is not `prod`
+
+This is the finding I did **not** have before the service existed, and it is the one that would have
+bitten. `nonprod` co-tenants **two** environments, so it gets **six** audio containers, including
+**two model-holding workers**.
+
+| on `nonprod` (cx33, 8 GB) | idle | if both workers transcribe at once |
+|---|---|---|
+| dev: web+backend+ai | ~550 MB | ~550 MB |
+| dev: audio ×3 (`small` weights) | ~1.2 GB | ~2.1 GB |
+| stage: web+backend+ai | ~550 MB | ~550 MB |
+| stage: audio ×3 (`large-v3-turbo`) | ~1.8 GB | ~3.1 GB |
+| Traefik + OS | ~600 MB | ~600 MB |
+| **total** | **~4.7 GB** | **~6.9 GB of 8 GB** |
+
+⚠ Estimates. But ~6.9 GB of 8 GB is not headroom, it is the edge — and the
+failure mode here is precise: **a `dev` box can swap 1.2 GB for six days with nobody noticing.**
+A box at 86% does not fail, it gets slow, and slow is what goes unobserved.
+
+🟡 **Three ways to buy the headroom back. My recommendation is the first, and it is free:**
+
+1. ✅ **`WHISPER_MODEL=small` on `dev`, `large-v3-turbo` on `stage`** — which is what
+   `env-manifests.md` §4 already specifies. `stage` still rehearses prod's exact image; `dev` trades
+   accuracy for a faster loop, which is what dev is for. This is the table above and it fits.
+   🔴 **Do not "make dev match prod" for tidiness.** That is a +600 MB change on the tightest box in
+   the fleet, bought with nothing.
+2. 🔧 **Do not deploy audio to `stage` at all until it is a release gate.** Frees ~1.8 GB. Costs you
+   a rehearsal surface for the one service with the most fiddly deploy shape — which is exactly the
+   service you least want to first deploy straight to prod. **I would not take this one.**
+3. **`nonprod` cx33 → cx43, +$12/mo.** The honest answer if (1) is not enough. Take it when the
+   memory alert fires, not before.
+
+🔴 **Whichever you pick, the memory/swap alert on `nonprod` stops being a nice-to-have.** It was
+already item 1 of the growth path in §1; audio is what makes it load-bearing. `backups.md` §5.
+
+### When to move it to its own box
+
+When queue wait time becomes user-visible, or when a second tenant needs the same cores. That is a
+$12/mo change and a Coolify redeploy — cheap to defer, cheap to do.
+
+🟡 **The alternative I considered and rejected:** a managed transcription API (OpenAI Whisper API,
+Deepgram, etc.). It is cheaper below a few hundred hours/month and removes the sizing question
+entirely. I rejected it because the local demo requirement was explicitly *"no cloud credentials"*,
+and because audio recordings are the most sensitive artifact this product handles — shipping them to
+a third party is a decision that belongs to the org, not to an infra default. ⚠ **Now that the real
+throughput is ~1× realtime rather than 2–4×, this is worth re-asking sooner than I first thought.**
+It stays open decision #7 in §5.
 
 🟡 **The alternative I considered and rejected:** a managed transcription API (OpenAI Whisper API,
 Deepgram, etc.). It is cheaper below a few hundred hours/month and removes the sizing question

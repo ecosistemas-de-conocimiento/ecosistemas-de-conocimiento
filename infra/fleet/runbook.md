@@ -11,11 +11,26 @@ Companions: `topology.md` (what runs where) · `env-manifests.md` (variables) ·
 ## 0. The deploy model
 
 **Self-hosted Coolify, Dockerfile build pack, one Coolify "application" per service per
-environment.** Twelve applications total for a 3-environment fleet:
-`{web, backend, ai-service, audio-service} × {dev, stage, prod}`.
+environment.** 🔴 **Eighteen applications for a 3-environment fleet, not twelve:**
+
+```
+{web, backend, ai-service,
+ audio-service, audio-service-worker, audio-service-callbacks} × {dev, stage, prod}
+```
+
+🔴 **audio-service is THREE deployables from ONE image**, differing only in `command`. Dropping
+`audio-service-callbacks` is a silent, total product failure — transcriptions succeed, nothing errors,
+and no document ever becomes ready. `env-manifests.md` §4 has the full argument. Do not let the app
+count be "simplified" back to twelve.
+
+🟡 **Or deploy audio-service as ONE Coolify Docker-Compose application** with three services. That
+diverges from the one-app-per-service rule below, and here the divergence earns its keep: it solves
+the shared-volume problem (§below) and turns three near-identical 10-minute builds into one. **This
+is my recommendation; try it first.** The 18-app shape is the fallback if the compose build pack
+proves awkward.
 
 **Per-application settings that are NOT defaults.** API field names given, because provisioning by
-script is how you avoid 12 hand-clicked apps drifting apart. Endpoint:
+script is how you avoid 18 hand-clicked apps drifting apart. Endpoint:
 `POST /api/v1/applications/private-github-app` — note *private*-github-app, not `github-app`.
 
 | field | value | why |
@@ -23,23 +38,53 @@ script is how you avoid 12 hand-clicked apps drifting apart. Endpoint:
 | `build_pack` | `"dockerfile"` | not Nixpacks — these are hand-written multi-stage builds |
 | `base_directory` | `"/"` | 🔴 the build context must be the **repo root** |
 | `dockerfile_location` | `"/apps/web/Dockerfile"` etc. | ⚠ **resolved relative to `base_directory`. Do not double-prefix it.** |
-| `ports_exposes` | `3000` web · `3002` backend · `3000` ai-service · `8080` audio | must match the image's `ENV PORT` |
-| `health_check_enabled` | `true` | |
-| `health_check_path` | `/api/health` (web, backend) · `/health` (ai-service, audio) | 🔴 **liveness, NOT `/health/ready`.** §6 rule 2 |
+| `ports_exposes` | `3000` web · `3002` backend · `3000` ai-service · `8080` audio-service | must match the image's `ENV PORT`. ⚠ **the two audio workers expose NOTHING** — see below |
+| `health_check_enabled` | `true` — 🔴 **except `false` on `audio-service-worker` and `audio-service-callbacks`** | see the trap below |
+| `health_check_path` | `/api/health` (web, backend) · `/health` (ai-service, audio-service API) | 🔴 **liveness, NOT `/health/ready`.** §6 rule 2 |
 | `health_check_start_period` / `interval` / `retries` | `120` / `5` / `10` | ⚠ a from-empty baseline migration needs `300` / `10` / `20` instead — §3 |
 | `is_auto_deploy_enabled` | `false` **explicitly** for stage and prod | §2 |
 | `limits_memory` | per app | `topology.md` §1 |
 | `domains` | per env | ⚠ also null the auto-assigned `*.sslip.io` on internal-only apps — §7 |
 
+### 🔴 The healthcheck trap on the two audio workers
+
+`audio-service-worker` and `audio-service-callbacks` are **arq processes with no HTTP listener at
+all.** They cannot answer a health check of any kind.
+
+- 🔴 **Set `health_check_enabled: false` on both.** Leave it at the fleet default `true` and Coolify
+  probes a port nothing is listening on, marks the container permanently unhealthy, and **fails or
+  restart-loops the deploy** — for a container that is working perfectly.
+- ⚠ The image itself carries an inherited `HEALTHCHECK` that curls `/health`. It is disabled per
+  container in `infra/docker-compose.yml` (`healthcheck: {disable: true}`) for exactly this reason.
+  Whatever Coolify does must have the same effect.
+- ✅ **The transcription worker IS monitored — through the API.** `audio-service`'s `/health/ready`
+  returns **503 until a worker publishes a heartbeat with the model loaded.** That is the right probe
+  and it belongs on the uptime monitor, not on the restart policy (§6 rule 2).
+- ⚠ Consequence worth stating: **a dead callback worker is invisible to every health check in this
+  design.** It has no listener and the API's readiness does not check it. Monitor
+  `GET /health/queues` (dead-letter depths) or alert on `audio:callbacks` queue depth instead. 🔧
+  Cheap, and it closes the one remaining path to "transcribed fine, never delivered, nobody noticed."
+
+### Build-time variables
+
 🔴 **The build-time env flag is `is_buildtime`, and it DEFAULTS TO TRUE when omitted.** `is_build_time`
 (with the underscore) 422s. **Pass `is_buildtime: false` explicitly on every variable.** Getting this
 wrong bakes a runtime secret into image history.
 
-✅ **We have no legitimate build-time variables at all.** There is no private registry and nothing is
-framework-inlined (`apps/web` uses `$env/dynamic/private` throughout — audited: zero `PUBLIC_*`, zero
-`$env/static/*`, zero `import.meta.env` in `apps/web/src`). 🔴 **If a build arg for a credential ever
-appears, that is a regression** — the prototypes have an open, unresolved security issue from
-exactly that (secrets passed as Docker build ARGs and presumed leaked).
+✅ **We have exactly ONE legitimate build-time variable, and it is not a secret.** There is no private
+registry and nothing is framework-inlined (`apps/web` uses `$env/dynamic/private` throughout —
+audited: zero `PUBLIC_*`, zero `$env/static/*`, zero `import.meta.env` in `apps/web/src`).
+
+The exception is **`WHISPER_MODEL` on the three audio applications.** The weights are baked into the
+image at build time and the runtime sets `HF_HUB_OFFLINE=1`, so the model name must be **both** a
+build arg and a runtime variable, with **identical values** — a mismatch means the container tries to
+download at boot and dies. It is a model name, not a credential; in image history it is harmless.
+
+🔴 **State the rule as "no SECRET is ever a build ARG", not "no build ARGs".** Treat a secret passed as a Docker
+build ARG as leaked. A rule
+phrased as an absolute gets a legitimate exception carved into it and then erodes; a rule phrased
+about secrets does not. **Nothing in this fleet passes a credential as a build ARG, and that is the
+line that never moves.**
 
 ⚠ **Set everything at CREATION.** That endpoint accepts a much wider field set than the PATCH
 allowlist, so a field you skip may not be settable afterwards.
@@ -103,7 +148,23 @@ Do these in order. Steps 1–4 are once per fleet; 5–8 are once per applicatio
 8. **Persistent storage — do this before the first upload, not after:**
    - `backend` → volume on the Payload media path. 🔴 Without it, **every redeploy destroys every
      uploaded document.** This is the easiest way to lose customer data in this design.
-   - `audio-service` → volume on `/models`, or every redeploy re-downloads the Whisper weights.
+   - `audio-service` **and** `audio-service-worker` → **the SAME volume** at
+     `/var/lib/audio-service`. The API streams the upload to disk and the worker reads it back;
+     without the share, every job fails with `source_missing`.
+     ⚠ **Coolify configures persistent storage per application**, so two apps sharing one named
+     volume is not the shape that page is built around. 🟡 **Verify this before the first stage
+     deploy** — if it does not work, that is the reason to deploy audio-service as one Coolify
+     Docker-Compose application instead (§0).
+     ⚠ The contents are **transient** — uploads awaiting transcription and per-job scratch, deleted
+     the moment a transcript exists. Losing the volume loses in-flight jobs only, so it does **not**
+     belong in `backups.md`'s scope. `audio-service-callbacks` needs no volume at all.
+   - 🔴 **`audio-service` needs NO `/models` volume, and adding one is actively harmful.** An earlier
+     version of this runbook said it did; that was written before the service existed and it was
+     wrong. The weights are **baked into the image** and the runtime is offline (`HF_HUB_OFFLINE=1`),
+     so a redeploy re-downloads nothing. A named volume at `/opt/whisper-cache` would be seeded from
+     the image on **first use only** and then go sticky — so a rebuild with different weights would
+     silently keep serving the old ones until someone ran `docker volume rm`. Silent, and it looks
+     like the model change did not take.
 
 ### Then, before anyone calls it done
 
@@ -151,7 +212,23 @@ ai-service does not have fails **on arrival**, not gradually.
 dev is current, and a capability mode that defaults to `strict` **throws** on that 404. **Probe
 `/v1/capabilities` on the target environment before promoting anything that depends on it.**
 
-Within an environment: `ai-service` → `backend` → `audio-service` → `web`.
+Within an environment: `ai-service` → `backend` → **audio-service ×3** → `web`.
+
+⚠ **Within the audio trio the order does not matter, but the SET does.** All three, every time. A
+deploy that updates the API and the transcription worker and leaves an old
+`audio-service-callbacks` behind is the exact silent failure this runbook keeps warning about.
+🔧 If you deploy them as three separate Coolify apps, script the trio as one command so a human
+cannot deploy two of three.
+
+**Smoke test for audio, after every deploy** — `/health` alone proves nothing here:
+
+```
+GET /health/ready  on audio-service  →  200, NOT 503
+```
+
+🔴 **503 means the transcription worker is not up or has not loaded the model.** That is the whole
+point of the route. And it still says **nothing** about the callback worker — check
+`GET /health/queues` for dead-letter depth, or the `audio:callbacks` queue depth in Redis.
 
 ---
 
@@ -426,9 +503,15 @@ becomes public.
 ### Routing
 
 🔴 **Coolify auto-assigns a cosmetic `*.sslip.io` domain at application creation.** For any app that
-must NOT be publicly routed — for us that is **`ai-service` and `audio-service` in every
+must NOT be publicly routed — for us that is **`ai-service` and all THREE audio applications in every
 environment** — null it (`fqdn = NULL`). Otherwise an internal-only service quietly acquires a
 working public hostname, and nobody notices because nothing is broken.
+
+⚠ **`audio-service`'s API is the one to be careful about.** It is the only one of the three with a
+listener, and its `POST /v1/transcribe` accepts a **512 MiB** upload. Bearer auth is enforced, and
+the size cap runs in ASGI middleware *ahead of routing* precisely so an unauthenticated client cannot
+fill the disk and then collect a 401 — but a publicly routed transcription endpoint is still free
+CPU for anyone who finds it. Null the hostname; the backend reaches it over the private network.
 
 ### Control-plane self-lock
 
@@ -466,9 +549,13 @@ so `0.0.0.0/0` on that setting is recoverable, not reckless.
 
 Not mine to fix; listed so they are not lost.
 
-- 🔴 **No `pnpm-lock.yaml` at the repo root.** Every Dockerfile uses `--frozen-lockfile`.
-  `services/ai-service/Dockerfile` has no `*` glob on the COPY, so it fails at COPY rather than at
-  install. **Run a root `pnpm install` before any image build.**
+- ✅ **`pnpm-lock.yaml` now EXISTS at the repo root**, so every Dockerfile's `--frozen-lockfile` is
+  satisfiable. This was a 🔴 blocker in the previous revision. ⚠ Not verified by an actual build.
+  ✅ `services/audio-service` is deliberately **not** a pnpm workspace member — it has no
+  `package.json`, so the lockfile does not apply to it and its build context is its own directory,
+  not the repo root. 🔴 **Do not add a `package.json` to it "for consistency."** `pnpm-workspace.yaml`
+  globs `services/*`, so that would make it a workspace member and break
+  `pnpm install --frozen-lockfile` for every other app in the repo.
 - 🔴 **No baseline migration in `apps/backend`.** §3. Prerequisite of the first stage deploy.
 - 🔴 **No identity signing keypair anywhere.** `AUTH_PRIVATE_KEY` / `AUTH_PUBLIC_KEY` /
   `AUTH_KEY_ID` / `AUTH_ISSUER` have no defaults and nothing generates them.

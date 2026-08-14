@@ -62,6 +62,18 @@ and are a **different, deliberately laxer** set.
 | `AI_SERVICE_URL` | `http://ai-service-dev:3000` | `…-stage:3000` | `…-prod:3000` | ⚙ internal, not public |
 | `AI_SERVICE_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 must be a key in ai-service `API_KEYS` |
 | `AI_SERVICE_ADMIN_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 role `admin`; needed for corpus delete |
+| `AUDIO_SERVICE_URL` | `http://audio-service-dev:8080` | `…-stage:8080` | `…-prod:8080` | ⚙ internal, not public. ⚠ the API container, **not** a worker |
+| `AUDIO_SERVICE_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 the `role: app` key from audio-service's `API_KEYS` (§4). 🔧 a **different** key from `AI_SERVICE_API_KEY` |
+
+⚠ **Those two are FORWARD-LOOKING as of 2026-08-14.** `apps/backend/src` reads neither yet — grep
+for "AUDIO" returns nothing — and its callback route does not branch on `transcribe.*`; such an
+event is logged as unknown and 200'd. The names come from `plan/audio-ingest-integration.md` §3.5,
+and `infra/docker-compose.yml` already sets both. 🔴 **If the agent landing that work chooses
+different names, this row and two lines in the compose file change together.** Setting an unread
+variable costs nothing; the alternative is a fleet that silently does not ingest audio.
+
+✅ **`CALLBACK_SECRET` and `PUBLIC_BACKEND_URL` are reused unchanged for audio.** No new variable.
+One verifier (`src/lib/hmac.ts`), one secret, one callback path, two emitters — see §4.
 
 🔴 **The callback pair is the failure everyone hits once.** `PUBLIC_BACKEND_URL` **and**
 `CALLBACK_SECRET` must **both** be set, or ingest callbacks are silently OFF and **every upload sits
@@ -146,23 +158,132 @@ nothing and it means a leak is revocable without an outage.
 
 ---
 
-## 4. `audio-service`
+## 4. `audio-service` — 🔴 THREE deployables, not one
 
-🔴 **ASSUMED — the service did not exist when this was written.** Reconcile against its own README.
+✅ **Rewritten 2026-08-14 against the real service.** The previous version of this section was
+written before `services/audio-service/` existed and was wrong in every way that matters. Named
+variables the service does not read (`WHISPER_MODEL_DIR`, `TRANSCRIBE_CONCURRENCY`,
+`AI_SERVICE_URL`), prescribed a persistent `/models` volume the service does not want, and described
+**one** container where there are **three**. Recorded here rather than quietly deleted, because
+"the old manifest said `/models`" is the kind of thing that survives in someone's notes.
+
+### 🔴 One image, three processes. Omitting the third breaks the product silently.
+
+| Coolify app | command | loads the model | scales with |
+|---|---|---|---|
+| `audio-service` | image default (`uvicorn app.main:app`) | no | upload concurrency |
+| `audio-service-worker` | `arq app.worker.WorkerSettings` | **yes** | transcription throughput |
+| `audio-service-callbacks` | `arq app.worker.CallbackWorkerSettings` | no | webhook volume (rarely) |
+
+**If `audio-service-callbacks` is not deployed, transcriptions succeed and no webhook is ever
+delivered.** Nothing errors. The document simply never becomes ready, in every environment, forever.
+It is a separate process on a separate queue because the transcription queue runs **one job at a
+time with a four-hour job timeout** — a delivery sharing it would wait behind a running decode,
+which defeats the entire point of `transcribe.progress`.
+
+⚠ **So the fleet is 18 applications for 3 environments, not 12.** Update `runbook.md` §0's count in
+your head every time you read it.
+
+### Variables — identical on all three containers except where marked
 
 | var | dev | stage | prod | notes |
 |---|---|---|---|---|
-| `PORT` / `HOST` | `8080` / `0.0.0.0` | same | same | ⚙ |
-| `REDIS_URL` | same as ai-service dev | stage | prod | ⚙ shares the queue bus |
-| `AI_SERVICE_URL` | `http://ai-service-dev:3000` | … | … | ⚙ where transcripts are handed off |
-| `AI_SERVICE_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 its own key |
-| `WHISPER_MODEL` | `base` | `small` | `small` | ⚙ ⚠ prod ≠ dev on purpose: dev iterates on the pipeline |
+| `NODE_ENV` | `production` | `production` | `production` | ⚙ |
+| `PORT` / `HOST` | `8080` / `0.0.0.0` | same | same | ⚙ API container only; the workers have no listener |
+| `LOG_LEVEL` | `DEBUG` | `INFO` | `INFO` | 💤 ⚠ **Python level names** (`DEBUG`/`INFO`/…), not pino's lowercase ones |
+| `REDIS_URL` | `redis://<data>:6379/3` | `…/4` | `…/5` | ⚙ 🔴 **its own DB number, distinct from ai-service's.** Same rule, same reason: a dev job in the prod queue is undebuggable |
+| `API_KEYS` | `CHANGE_ME` (JSON) | `CHANGE_ME` | `CHANGE_ME` | 🔑 🔴 see below — same shape as ai-service's |
 | `WHISPER_DEVICE` | `cpu` | `cpu` | `cpu` | ⚙ 🔴 **there is no GPU box.** `topology.md` §4 |
-| `WHISPER_COMPUTE_TYPE` | `int8` | `int8` | `int8` | ⚙ |
-| `WHISPER_LANGUAGE` | `es` | `es` | `es` | ⚙ pinned — autodetect mislabels short Spanish clips |
-| `WHISPER_MODEL_DIR` | `/models` | same | same | ⚙ 🔴 needs a **persistent volume**, or every redeploy re-downloads |
-| `TRANSCRIBE_CONCURRENCY` | `1` | `1` | `1` | ⚙ 🔴 two at once on shared vCPU is slower in total |
-| `OMP_NUM_THREADS` | `2` | `2` | `4` | ⚙ must match the container CPU limit |
+| `WHISPER_COMPUTE_TYPE` | `int8` | `int8` | `int8` | ⚙ `float16` is the GPU value and the only other thing that would change |
+| `WHISPER_MODEL` | `small` | `large-v3-turbo` | `large-v3-turbo` | ⚙ 🔴 **must equal the image's `--build-arg WHISPER_MODEL`** — see below. `small` on dev is a faster loop, not a quality choice |
+| `WHISPER_LANGUAGE` | `es` | `es` | `es` | ⚙ pinned — autodetect mislabels short Spanish clips as Portuguese |
+| `WHISPER_CPU_THREADS` | `2` | `2` | `4` | ⚙ 🔴 **must match the container's CPU limit.** `0` means "every core on the host" and ignores the cgroup entirely |
+| `MAX_CONCURRENT_JOBS` | `1` | `1` | `1` | ⚙ 🔴 worker only. Two at once on shared vCPU is slower in total than one after the other |
+| `AUDIO_WORK_DIR` | `/var/lib/audio-service` | same | same | ⚙ 🔴 **must be the SAME SHARED VOLUME on the API and the worker.** See the storage note below |
+| `JOB_TIMEOUT_SECONDS` | `14400` | same | same | 💤 per attempt; must exceed the worst case for `MAX_DURATION_SECONDS` |
+| `TRANSCRIPT_TTL_SECONDS` | `86400` | same | same | 💤 🔴 after this the transcript is **gone** — the signed callback is the durable handoff and the consumer must persist on receipt |
+
+Everything else has a working default in `services/audio-service/app/config.py`, validated at boot,
+with an invalid value aborting the process **before** the listener binds. The full annotated list is
+`services/audio-service/.env.example`. 🔧 **Set only what you are changing** — a manifest that
+restates defaults goes stale silently.
+
+### 🔴 `API_KEYS` and the shared callback secret
+
+Same JSON shape as ai-service, parsed once at boot:
+
+```json
+{
+  "CHANGE_ME_audio_app_key":   {"org":"<org>","project":"edc","role":"app",  "callbackSecret":"CHANGE_ME_matches_backend_CALLBACK_SECRET"},
+  "CHANGE_ME_audio_admin_key": {"org":"<org>","project":"edc","role":"admin"}
+}
+```
+
+🔴 **`callbackSecret` must be ≥32 chars and must equal `apps/backend`'s `CALLBACK_SECRET` for the
+same environment — the SAME value ai-service uses.** This is not laziness: `apps/backend`'s
+`src/lib/hmac.ts` is **one verifier reading one variable**, and audio-service signs with exactly the
+same `X-AIService-Timestamp` / `-Signature` / `-Event` headers on purpose so no second verifier is
+needed. Verified in `services/audio-service/app/callbacks.py`.
+
+⚠ **A mismatch is silent, and it looks like a slow transcription.** The backend rejects every
+callback with a 401 and the document never becomes ready. Check this pairing FIRST whenever audio
+appears to hang — it and the ai-service pairing in §3 are the same class of failure and between them
+they account for most of the "it's still processing" reports you will ever get.
+
+🔧 **Issue audio's keys separately from ai-service's**, so a leak on one is revocable without
+taking the other down. It costs nothing.
+
+### 🔴 The build arg, and why `WHISPER_MODEL` is not a normal variable
+
+The model weights are **baked into the image** at build time (`scripts/bake_model.py`) and the
+runtime sets `HF_HUB_OFFLINE=1`. That is deliberate and good — a container start never touches the
+network, so a deploy cannot fail on a HuggingFace outage. The consequence:
+
+- 🔴 **`WHISPER_MODEL` in the env must equal `--build-arg WHISPER_MODEL` in the image, or the
+  container tries to download at boot and dies.** Changing the model is a **rebuild**, not an env
+  edit and a restart.
+- ⚠ In Coolify that means a **build variable and a runtime variable with the same name and the same
+  value**, which collides head-on with runbook.md §0's rule that `is_buildtime` must always be
+  `false`. **This is the one legitimate build-time variable in this fleet.** It is not a credential,
+  so baking it into image history is harmless. 🔴 The rule it must not weaken: *no **secret** is ever
+  a build ARG.* Keep that phrasing when you set it, so nobody generalises the exception.
+- 🔴 **There is deliberately NO volume at `/opt/whisper-cache`.** Docker seeds a named volume from
+  the image on **first use only**; after that it is sticky, so a rebuild with different weights would
+  silently keep serving the old ones until someone ran `docker volume rm`. The old version of this
+  manifest prescribed exactly that volume. It was wrong.
+
+### Persistent storage — 🔴 the fleet-specific problem this creates
+
+| app | mount | why |
+|---|---|---|
+| `audio-service` | `/var/lib/audio-service` | writes the upload to disk |
+| `audio-service-worker` | `/var/lib/audio-service` — **the same volume** | reads it back |
+| `audio-service-callbacks` | none | touches no files |
+
+🔴 **Without a shared volume between the API and the worker, every job fails with `source_missing`.**
+
+⚠ **And Coolify's persistent storage is configured PER APPLICATION.** Two applications mounting one
+named volume on the same server is not the shape that page is designed around. **Verify this works
+before the first stage deploy** — it is the single most likely thing in this document to be wrong.
+
+🟡 **If it does not, use Coolify's Docker Compose build pack for audio-service instead**: one
+application, three services, the shared volume declared in the compose file, and one build instead
+of three. It diverges from runbook.md §0's "one dockerfile app per service" rule, and here the
+divergence is earning its keep. **My recommendation is to start there rather than discover the
+volume problem on stage.**
+
+⚠ **The contents are transient, not precious.** Uploads awaiting transcription plus per-job scratch,
+both deleted the moment a transcript exists. Losing the volume loses in-flight jobs only. 🔧 So it
+does **not** need to be in `backups.md`'s scope — unlike the Payload media volume, which does.
+
+### Disk and build cost, for capacity planning
+
+- Image ≈ **2.1 GB** with `large-v3-turbo` weights baked in, ≈ 1.5 GB with `small`. ⚠ Estimate,
+  derived from the service's own "~1.3 GB without weights" plus the weight sizes.
+- **One image serves all three containers**, so that is paid once per environment — but Coolify keeps
+  `docker_images_to_keep=2`, so budget ~4 GB per environment on the box that runs it.
+- First build ≈ **10 minutes** and downloads the weights; needs ~2 GB free RAM during the bake. An
+  app-code-only rebuild is seconds, because the bake layer caches.
 
 ---
 

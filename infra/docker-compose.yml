@@ -7,8 +7,14 @@
 #
 # 🔴 NOTHING IN THIS FILE HAS BEEN RUN. It was authored from the Dockerfiles and
 #    source in this repo; no `docker compose up`, no `docker build`, no deploy.
-#    Treat every image tag, port and healthcheck as a design, not a measurement.
-#    The "Known to be wrong today" list at the bottom is the honest part.
+#    `docker compose config` PARSES it — that is the only thing verified.
+#    Treat every image tag, port, healthcheck and RAM figure as a design, not a
+#    measurement. The "Known to be wrong today" list at the bottom is the honest
+#    part.
+#
+# ─── 🔴 THE ONE THING NOT TO "SIMPLIFY": audio-service is THREE containers ──
+#    api + transcription worker + CALLBACK worker. Dropping the third breaks the
+#    product with no error message anywhere. Full argument in that section.
 #
 # ─── Why this file lives in `infra/`, and what that costs ────────────────────
 # The build context is the REPO ROOT (`context: ..`), NOT this directory. Every
@@ -40,30 +46,88 @@
 # its answer quality. To demo REAL answers, set `OPENROUTER_API_KEY` in `.env`
 # and flip `MOCK_LLM`/`MOCK_EMBEDDINGS` to 0. That is the only paid path.
 #
-# ─── THREE TIERS, because the full stack does NOT fit on a typical laptop ───
-# 🔴 Read this before promising anyone a demo. The honest arithmetic:
+# ─── THREE TIERS — REVISED 2026-08-14 against the real audio-service ────────
+# 🔴 Read this before promising anyone a demo.
 #
-#   TIER 1 — "core", ~4 GB RAM. Everything except audio and the sidecars.
+# ⚠ MY PREVIOUS VERSION OF THIS BLOCK WAS WRONG IN ITS FRAMING, and correcting
+#   it is more useful than defending it. It said audio was a RAM problem. It is
+#   not. RAM is the one resource this stack has plenty of. What audio actually
+#   costs is CPU, wall-clock, disk and build time — and those are the numbers
+#   that decide whether a live demo is a good idea.
+#
+# ── Per-container estimates. `limit` is set below; `resident` is a guess. ────
+#   service                  limit    idle       during a transcription
+#   postgres                 1g       ~150 MB    —
+#   redis                    512m     ~30 MB     —
+#   ai-service               2g       ~250 MB    —
+#   backend                  2g       ~250 MB    —
+#   web                      1g       ~50 MB     —
+#   audio-service (API)      512m     ~200 MB    ~250 MB
+#   audio-service-worker     4g       ~0.9 GB    ~1.8 GB   ← WHISPER_MODEL=small
+#                                     ~1.5 GB    ~2.8 GB   ← =large-v3-turbo
+#   audio-service-callbacks  256m     ~100 MB    ~100 MB
+#   bge-m3-service           4g       ~2.5 GB    (profile heavy)
+#   rerank-service           4g       ~2.5 GB    (profile heavy)
+#
+#   TIER 1 — "core". ~0.8 GB resident. Comfortable on an 8 GB machine.
 #       docker compose up -d --wait postgres redis ai-service backend web
-#     Document upload, RAG chat, ratings, admin. Runs on an 8 GB machine.
+#     Document upload, RAG chat, ratings, admin. Everything except audio.
 #
-#   TIER 2 — "product" (THE DEFAULT), ~8 GB RAM ceiling, ~5-6 GB resident.
+#   TIER 2 — "product" (THE DEFAULT). ~1.9 GB idle, ~2.8 GB mid-transcription
+#            at WHISPER_MODEL=small. Fits 8 GB; comfortable at 16 GB.
 #       docker compose up -d --wait
-#     Adds audio-service. This is the whole product. Wants 16 GB.
-#     ⚠ The 4 GB audio limit is a CEILING reached only mid-transcription; it
-#       idles near 1 GB. But a 16 GB laptop also running a browser and an IDE
-#       will feel the transcription.
+#     ✅ Audio does NOT push this tier over a RAM threshold. Three containers
+#        that together idle around 1.2 GB is not what breaks a laptop.
+#     🔴 What it DOES cost, and none of it is RAM:
+#        · DISK — the image is ~1.5 GB with `small` weights baked in, ~2.1 GB
+#          with `large-v3-turbo`. It is ONE image serving all three containers,
+#          so that is paid once, not three times.
+#        · FIRST BUILD — ~10 minutes, and it DOWNLOADS the weights (~250 MB for
+#          `small`, ~800 MB for `large-v3-turbo`). Needs ~2 GB free RAM during
+#          the bake. After that, an app-code edit rebuilds in seconds because
+#          the bake layer is cached. 🔴 The first build needs NETWORK; every
+#          container start afterwards does not.
+#        · CPU — see the wall-clock note below. This is the real one.
 #
-#   TIER 3 — "heavy", ~16 GB RAM ceiling. Adds self-hosted embeddings + rerank.
+#   TIER 3 — "heavy". ~7 GB resident. Adds self-hosted embeddings + rerank.
 #       docker compose --profile heavy up -d --wait
-#     🔴 DOES NOT FIT A 16 GB LAPTOP. bge-m3 and rerank hold a ~2.3 GB model
-#        each resident, permanently, plus ~3 GB EACH during the image BUILD.
-#        This tier is for a 32 GB workstation, or for the `dev` fleet box.
-#        On anything smaller, demo advanced RAG on the dev box and demo the
-#        product locally. That split is the recommendation, not a workaround.
+#     ⚠ CORRECTION to my earlier claim that this "does not fit a 16 GB laptop":
+#       ~7 GB resident does fit 16 GB on Linux. Two things still make it a bad
+#       idea, and they are both real:
+#        · The BUILDS, not the runtime: bge-m3 and rerank each need ~3 GB RAM
+#          while constructing their model, and the whisper bake wants ~2 GB.
+#        · On Docker Desktop (macOS/Windows) the VM's memory allocation is a
+#          HARD CAP and its default is often 8 GB — under which this tier OOMs
+#          with a message about the container, not about the VM. Raise it first.
+#     🟡 Recommendation unchanged: demo the product locally (tier 2), demo
+#        advanced RAG on the `dev` fleet box. That split is deliberate.
 #
-# ⚠ All three figures are ESTIMATES derived from the limits set below and the
-#   model sizes stated in the sidecar Dockerfiles. Nothing was measured.
+# ─── 🔴 WHAT A LIVE AUDIO DEMO ACTUALLY FEELS LIKE ──────────────────────────
+# CPU transcription is roughly REAL TIME. Not "fast enough" — real time.
+#
+#   WHISPER_MODEL=small (the default set below)  ≈ 2–4× realtime on ~4 cores
+#       → a 10-minute recording finishes in ~3–5 minutes.
+#   WHISPER_MODEL=large-v3-turbo (the service's own default)  ≈ 1× realtime
+#       → a 10-minute recording takes ~10 minutes. You will be standing there.
+#
+# 🟡 THEREFORE, AND SAY THIS OUT LOUD BEFORE ANYONE PRESSES UPLOAD:
+#    **Do not demo a 10-minute file live.** Keep a 60–90 SECOND Spanish fixture
+#    in the room — one voice, clean audio, something whose transcript you can
+#    read on screen. That finishes in well under a minute at `small` and it
+#    demonstrates the identical pipeline: upload → queue → transcript → signed
+#    callback → document ready → the RAG chat citing it.
+#    For a longer file, upload it BEFORE the meeting and show the finished
+#    document. Nothing about the flow is faked by doing that — transcription is
+#    an async queue by design, precisely because it is slow.
+#    🔴 What you must not do is start a long transcription in front of an
+#       audience and talk over it. The worker takes every core it is allowed
+#       (`AUDIO_CPUS`, default 4) and the UI you are demoing gets slower while
+#       it runs. That reads as a product bug. It is not one.
+#
+# ⚠ Every figure above is an ESTIMATE. Sources: the limits set in this file, the
+#   model sizes and timings stated in `services/audio-service/README.md`, the
+#   sidecar Dockerfiles, and the prototypes' measured per-container
+#   footprints. NOTHING HERE WAS MEASURED ON THIS STACK.
 #
 # =============================================================================
 
@@ -210,14 +274,31 @@ services:
       PAYLOAD_DISABLE_PUSH: "0"
       # ── Where it calls out to ──
       AI_SERVICE_URL: http://ai-service:3000
-      # 🔴 THE CALLBACK PAIR. ai-service calls BACK to this URL when ingest
-      #    finishes. It must be an absolute origin reachable FROM the
-      #    ai-service container, so the compose service name — not localhost.
-      #    Callback path is /api/ai-service/callback.
+      # 🔴 THE CALLBACK PAIR. ai-service AND audio-service both call BACK to
+      #    this URL. It must be an absolute origin reachable FROM those
+      #    containers, so the compose service name — not localhost.
+      #    Callback path is /api/ai-service/callback (verified:
+      #    apps/backend/src/lib/callbackConfig.ts, `CALLBACK_PATH`).
       #    ⚠ `PUBLIC_BACKEND_URL` and `CALLBACK_SECRET` must BOTH be set or
       #      callbacks are silently OFF and every upload sits in `embedding`
       #      forever. There is no error; that is what makes it expensive.
+      #    ✅ ONE verifier, ONE secret, TWO emitters. `src/lib/hmac.ts` checks
+      #      X-AIService-Timestamp / -Signature / -Event, and audio-service signs
+      #      with exactly those headers on purpose, so no new backend code is
+      #      needed to authenticate it — only a new `event` branch.
       PUBLIC_BACKEND_URL: http://backend:3002
+      # ── audio-service ──
+      # ⚠ FORWARD-LOOKING, and I am flagging it rather than hiding it: as of
+      #   2026-08-14 `apps/backend/src` reads NEITHER of these yet (grep for
+      #   "AUDIO" returns nothing), and its callback route does not branch on
+      #   `transcribe.*` — such an event is logged as unknown and 200'd. Another
+      #   agent is landing that work per `plan/audio-ingest-integration.md` §3.5,
+      #   which names exactly these two variables. They are set here now so the
+      #   compose file does not need a second edit; setting an unread variable
+      #   costs nothing, and the alternative is a demo that silently does not
+      #   ingest audio.
+      AUDIO_SERVICE_URL: http://audio-service:8080
+      AUDIO_SERVICE_API_KEY: ${AUDIO_SERVICE_API_KEY:?AUDIO_SERVICE_API_KEY is required}
       # `warn` not `strict`: in strict mode a 404 from ai-service's
       # /v1/capabilities THROWS at boot. Fine on a laptop where versions can
       # drift; the fleet should run `strict` so a version skew is loud.
@@ -323,6 +404,16 @@ services:
       # ⚠ DATABASE_URL here; DATABASE_URI in backend. Not a typo.
       DATABASE_URL: postgres://${POSTGRES_USER:-edc}:${POSTGRES_PASSWORD}@postgres:5432/${AI_DB_NAME:-edc_ai}
       REDIS_URL: redis://redis:6379
+      # 🔴 SAME DRIFT-PROOFING AS audio-service (see that section). The
+      #    `callbackSecret` is INTERPOLATED from the single `CALLBACK_SECRET`
+      #    variable rather than pasted into a JSON blob in `.env`, because a
+      #    pasted copy is the documented #1 failure in this stack: a mismatch
+      #    means every ingest callback is rejected and uploads sit in
+      #    `embedding` forever, with no error anywhere.
+      #    ⚠ This `environment:` value deliberately OVERRIDES anything named
+      #      `API_KEYS` in `.env` — Compose gives `environment:` precedence over
+      #      `env_file:`. That is why `.env.example` no longer defines it.
+      API_KEYS: '{"${AI_SERVICE_API_KEY:?AI_SERVICE_API_KEY is required}":{"org":"demo","project":"demo","role":"app","callbackSecret":"${CALLBACK_SECRET:?CALLBACK_SECRET is required}"},"${AI_SERVICE_ADMIN_API_KEY:-dev-key-admin}":{"org":"demo","project":"demo","role":"admin","callbackSecret":"${CALLBACK_SECRET}"}}'
       # ── Advanced RAG: the two optional legs (profile `heavy`) ──
       # Both default OFF, so pointing at a service that is not running is
       # harmless: rerank degrades to a no-op on the fused order, and sparse
@@ -354,92 +445,192 @@ services:
         # Embedding batches and BullMQ workers share this process.
         limits: { cpus: "2.0", memory: 2g }
 
+  # ═══════════════════════════════════════════════════════════════════════════
+  # AUDIO TRANSCRIPTION — 🔴 THREE CONTAINERS FROM ONE IMAGE. NOT ONE. NOT TWO.
+  # ═══════════════════════════════════════════════════════════════════════════
+  #
+  # ✅ Reconciled against the REAL service (2026-08-14): its `README.md`,
+  #    `Dockerfile`, `.env.example`, `app/config.py`, `app/worker.py` and the
+  #    `docker-compose.fragment.yml` its author left for this file. The previous
+  #    version of this block was a speculative placeholder written before the
+  #    service existed; everything in it that turned out to be wrong (a `/models`
+  #    volume, `WHISPER_MODEL_DIR`, `TRANSCRIBE_CONCURRENCY`, `AI_SERVICE_URL`,
+  #    a single container) has been deleted rather than adapted.
+  #
+  # ┌───────────────────────────────────────────────────────────────────────────┐
+  # │ 🔴 WHY THERE ARE THREE, AND WHAT HAPPENS IF YOU "SIMPLIFY" IT TO TWO      │
+  # │                                                                          │
+  # │   audio-service            uvicorn  — HTTP API. No model in RAM.         │
+  # │   audio-service-worker     arq WorkerSettings          — transcribes.    │
+  # │   audio-service-callbacks  arq CallbackWorkerSettings  — delivers hooks. │
+  # │                                                                          │
+  # │ DELETING `audio-service-callbacks` BREAKS NOTHING VISIBLY AND BREAKS THE │
+  # │ PRODUCT COMPLETELY. Transcriptions still succeed. No error is logged.    │
+  # │ The signed webhook is simply never delivered, so `apps/backend` is never │
+  # │ told the transcript exists and the document sits un-ready FOREVER.       │
+  # │                                                                          │
+  # │ It is a SEPARATE PROCESS ON A SEPARATE QUEUE on purpose. The             │
+  # │ transcription queue runs ONE job at a time with `job_timeout` of FOUR    │
+  # │ HOURS (`app/config.py: JOB_TIMEOUT_SECONDS`). A delivery sharing that    │
+  # │ queue would sit behind a running decode — which is precisely the case    │
+  # │ `transcribe.progress` events exist to report on. Sharing the queue makes │
+  # │ progress events impossible by construction.                              │
+  # │                                                                          │
+  # │ Same reasoning applies on the fleet: three Coolify apps (or one          │
+  # │ docker-compose app), never one. `infra/fleet/env-manifests.md` §4.       │
+  # └───────────────────────────────────────────────────────────────────────────┘
+  #
+  # ── The other four things that break silently if copied wrong ──────────────
+  # 1. `audio_work` MUST be mounted on the API **and** the transcription worker.
+  #    The API streams the upload to disk; the worker reads it back. Without the
+  #    shared volume every job fails with `source_missing`. The callback worker
+  #    touches no files and deliberately does not mount it.
+  # 2. Both workers set `healthcheck: disable: true`. They have NO HTTP listener,
+  #    and the image's inherited curl HEALTHCHECK would mark them permanently
+  #    unhealthy — which under `--wait` means `docker compose up` never returns.
+  #    The API's `/health/ready` is what reports on the transcription worker: it
+  #    503s until that worker publishes a heartbeat with the model loaded.
+  # 3. The image is OFFLINE at runtime (`HF_HUB_OFFLINE=1`) and the weights are
+  #    BAKED at build time. So `WHISPER_MODEL` must be identical in the build arg
+  #    and the environment, or the container tries to download at boot and dies.
+  #    That is why both read the SAME `${WHISPER_MODEL}` below. Change it in
+  #    `.env` and then `docker compose build` — an env-only change is a boot
+  #    failure, not a model switch.
+  # 4. `callbackSecret` inside `API_KEYS` must equal the backend's
+  #    `CALLBACK_SECRET`. It is not duplicated here — it is INTERPOLATED from the
+  #    one variable, so the two cannot drift. See §Shared secret in `.env.example`.
+
   audio-service:
-    # 🔴 ASSUMED CONTRACT — this service DID NOT EXIST when this file was
-    #    written (`services/` contained only `ai-service/`). Another agent is
-    #    building it right now. Everything below is a SPECIFICATION for it, not
-    #    an observation of it. `docker compose build audio-service` fails until
-    #    `services/audio-service/Dockerfile` exists.
-    #
-    #    What I assumed, in the order it will break if I am wrong:
-    #      1. Dockerfile at `services/audio-service/Dockerfile`, repo-root
-    #         context (true for a Node service; a pure-Python service could use
-    #         its own directory as context and SHOULD, since it has no
-    #         `workspace:*` deps — if it does, change `context:` to
-    #         `../services/audio-service` and drop `dockerfile:`'s prefix).
-    #      2. HTTP on container port 8080, liveness at GET /health returning 200.
-    #      3. Model weights cached under /models, overridable by a variable.
-    #      4. It pulls work from Redis (BullMQ or its Python equivalent) and
-    #         pushes the finished transcript to ai-service's ingest endpoint —
-    #         it is NOT called synchronously by the browser, because a 40-minute
-    #         audio file transcribed on laptop CPU is a request nobody can hold
-    #         open.
-    #      5. ffmpeg is installed INSIDE the image, not mounted.
-    build:
-      context: ..
-      dockerfile: services/audio-service/Dockerfile
+    # ── HTTP API. Validates, streams the upload to disk, enqueues. No model. ──
+    # ⚠ BUILD CONTEXT IS THE SERVICE DIRECTORY, not the repo root — the
+    #   exception to this file's rule, and correct: this is a Python service with
+    #   no `workspace:*` dependency and deliberately no `package.json`, so it
+    #   needs nothing from the root. (Its README explains why adding a
+    #   `package.json` would break `pnpm install --frozen-lockfile` for everyone
+    #   else.) A repo-root context here would ship the whole monorepo to the
+    #   daemon for nothing.
+    build: &audio-build
+      context: ../services/audio-service
+      args:
+        # 🔴 MUST equal the WHISPER_MODEL env value below. Same variable, once.
+        WHISPER_MODEL: ${WHISPER_MODEL:-small}
+    # One image, three containers. The tag is shared so Compose builds it ONCE.
+    image: edc-audio-service:local
     <<: [*restart, *logging]
-    env_file: .env
-    environment:
-      PORT: "8080"
-      HOST: 0.0.0.0
-      REDIS_URL: redis://redis:6379
-      AI_SERVICE_URL: http://ai-service:3000
+    environment: &audio-env
+      NODE_ENV: production
+      LOG_LEVEL: ${AUDIO_LOG_LEVEL:-INFO}
+      # DB 2 keeps audio-service's `audio:`/`arq:` keys visually separate from
+      # ai-service's `bull:` keys. They cannot actually collide; this is hygiene.
+      REDIS_URL: redis://redis:6379/2
+      # 🔴 THE SHARED SECRET, ASSEMBLED HERE SO IT CANNOT DRIFT.
+      #    audio-service's `API_KEYS` has the same shape as ai-service's:
+      #      apiKey -> {org, project, role, callbackSecret}
+      #    Its `callbackSecret` is verified by `apps/backend` with the SAME
+      #    verifier and the SAME `CALLBACK_SECRET` it uses for ai-service — that
+      #    sharing is deliberate (services/audio-service/app/callbacks.py).
+      #    ⚠ A mismatch is SILENT: the backend rejects every callback with a 401
+      #      and the document never becomes ready. So the secret is written in
+      #      exactly ONE place (`CALLBACK_SECRET` in .env) and interpolated into
+      #      both consumers. Never paste a literal secret into this JSON.
+      API_KEYS: '{"${AUDIO_SERVICE_API_KEY:?AUDIO_SERVICE_API_KEY is required}":{"org":"demo","project":"demo","role":"app","callbackSecret":"${CALLBACK_SECRET:?CALLBACK_SECRET is required}"},"${AUDIO_SERVICE_ADMIN_API_KEY:-dev-audio-key-admin}":{"org":"demo","project":"demo","role":"admin"}}'
       # ── CPU-ONLY, and that is the whole point ──
-      # 🔴 The prototypes' ADR-0002 assumed a GPU box for transcription. That box
-      #    was never racked. Do not repeat the assumption: this must run on
-      #    ordinary CPU, here and in the fleet.
-      # faster-whisper (CTranslate2) on int8 is the CPU-viable family. `small`
-      # is the largest that is tolerable on a laptop; `medium` roughly triples
-      # the time and `large-v3` is not a demo, it is a coffee break.
-      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      # 🔴 No GPU box is assumed for transcription. The service is built
+      #    CPU-first: `cuda` + `float16` is a two-variable flip if a GPU
+      #    ever appears, with no code change and no re-bake.
       WHISPER_DEVICE: cpu
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
-      WHISPER_MODEL_DIR: /models
-      # Spanish-language product — pinning the language skips autodetect, which
-      # is both faster and stops short clips being mis-detected as Portuguese.
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      # Spanish-language product. Pinning the language skips autodetect, which
+      # mis-detects short Spanish clips as Portuguese often enough to matter.
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-es}
-      # Keep it under the CPU limit below or the container thrashes.
-      TRANSCRIBE_CONCURRENCY: "1"
-      OMP_NUM_THREADS: ${AUDIO_CPUS:-4}
+      AUDIO_WORK_DIR: /var/lib/audio-service
     volumes:
-      # 🔴 NAMED VOLUME, not a bind mount, and not baked into the image.
-      #    Whisper weights are 0.5–3 GB. Baking them (as bge-m3-service and
-      #    rerank-service do) makes the image enormous and the first build very
-      #    slow; a named volume downloads them ONCE and survives every
-      #    `docker compose down` that is not `-v`.
-      #    ⚠ TRADE-OFF, stated honestly: this means the FIRST audio upload on a
-      #      fresh machine blocks on a model download and needs network. If you
-      #      need a genuinely offline demo, pre-warm it:
-      #        docker compose run --rm audio-service <the service's warm command>
-      #      and see plan/deploy-and-local-demo.md §"Offline demo".
-      - whisper_models:/models
+      # See note 1 above. Shared with audio-service-worker, and ONLY with it.
+      - audio_work:/var/lib/audio-service
     depends_on:
       redis:
         condition: service_healthy
-      ai-service:
-        condition: service_started
     ports:
+      # Container port 8080 (`PORT`, honoured by the image CMD). The backend
+      # reaches it as http://audio-service:8080 on the compose network; this
+      # mapping exists only so you can curl it from the host.
       - "${AUDIO_HOST_PORT:-3003}:8080"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health || exit 1"]
+      # ⚠ /health is LIVENESS and touches nothing — a Redis blip must not restart
+      #   the container. /health/ready is the one that 503s until a worker has
+      #   the model loaded; probe THAT by hand, not from here (rule 2,
+      #   infra/fleet/runbook.md §6).
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
       interval: 30s
-      timeout: 10s
-      # Generous: the model loads into RAM before the service reports ready, and
-      # on a cold volume it may be downloading.
-      start_period: 300s
-      retries: 5
+      timeout: 5s
+      # 30s, not 300s: this process loads NO model. Do not copy bge-m3's 240s.
+      start_period: 30s
+      retries: 3
+    deploy:
+      resources:
+        # Genuinely small — it is an I/O-bound uploader with one uvicorn worker.
+        limits: { cpus: "1.0", memory: 512m }
+
+  audio-service-worker:
+    # ── Holds the model. Does the transcription. THE heavy container. ─────────
+    build: *audio-build
+    image: edc-audio-service:local
+    <<: [*restart, *logging]
+    command: ["arq", "app.worker.WorkerSettings"]
+    environment:
+      <<: *audio-env
+      # 🔴 Leave at 1. One int8 transcription already saturates every core, and
+      #    two at once is SLOWER in total than doing them in sequence.
+      MAX_CONCURRENT_JOBS: "1"
+      # CTranslate2 intra-op threads. Must not exceed the cpus limit below or the
+      # container thrashes. 0 would mean "every core on the host", ignoring the
+      # cgroup — which is exactly how a demo machine locks up.
+      WHISPER_CPU_THREADS: ${AUDIO_CPUS:-4}
+    volumes:
+      - audio_work:/var/lib/audio-service
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # 🔴 NOT AN OVERSIGHT. No HTTP listener here; the image's inherited curl
+      #    healthcheck would fail forever and hang `up --wait`. See note 2.
+      disable: true
     deploy:
       resources:
         limits:
-          # 🔴 THE HEAVY ONE. Transcription is the only service here that will
-          #    saturate a laptop. These limits exist to keep the demo
-          #    RESPONSIVE while a file transcribes — without them, whisper eats
-          #    every core and the UI you are demoing goes unresponsive, which
-          #    looks like a product bug in front of an audience.
-          #    Raise AUDIO_CPUS/AUDIO_MEMORY in .env on a bigger machine.
+          # 🔴 THE ONLY LIMIT IN THIS FILE THAT PROTECTS THE DEMO ITSELF.
+          #    Without it, a transcription takes every core and the UI you are
+          #    demoing goes unresponsive — which looks like a product bug in
+          #    front of an audience. Raise AUDIO_CPUS/AUDIO_MEMORY in `.env` on
+          #    a bigger machine; keep WHISPER_CPU_THREADS equal to AUDIO_CPUS.
           cpus: "${AUDIO_CPUS:-4}"
           memory: ${AUDIO_MEMORY:-4g}
+
+  audio-service-callbacks:
+    # ── Delivers the HMAC-signed webhooks. Same image, no model, ~100 MB. ─────
+    # 🔴🔴 DO NOT DELETE THIS SERVICE. Read the box at the top of this section.
+    #      Removing it does not produce an error. It produces documents that
+    #      transcribe successfully and then never become ready, forever.
+    build: *audio-build
+    image: edc-audio-service:local
+    <<: [*restart, *logging]
+    command: ["arq", "app.worker.CallbackWorkerSettings"]
+    environment:
+      <<: *audio-env
+      # No WHISPER_* is needed — this process never loads a model — but they are
+      # inherited harmlessly from the anchor and keep the three containers'
+      # config identical, which is one less thing to diff at 3am.
+      # No AUDIO_WORK_DIR volume either: deliveries read from Redis, not disk.
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    deploy:
+      resources:
+        # Pure outbound HTTP. `CALLBACK_WORKER_MAX_JOBS` defaults to 8.
+        limits: { cpus: "0.5", memory: 256m }
 
   # ═══════════════════════════════════════════════════════════════════════════
   # OPTIONAL — self-hosted inference sidecars (profile: heavy)
@@ -496,7 +687,20 @@ volumes:
   pg_data:          # Postgres cluster — both databases.
   redis_data:       # BullMQ queue state (appendonly).
   backend_media:    # Payload uploads. Local disk today; see §Object storage.
-  whisper_models:   # Transcription weights. Survives `down`, dies on `down -v`.
+  # Transient audio only: the upload awaiting transcription, plus per-job
+  # scratch. Both are deleted the moment a transcript exists, and swept on a
+  # timer if a crash skipped that. Safe to `docker volume rm` at any time — you
+  # lose only in-flight jobs.
+  # 🔴 There is NO model-weights volume, and that is deliberate. The weights are
+  #    BAKED INTO THE IMAGE at build time (`scripts/bake_model.py`, then
+  #    `HF_HUB_OFFLINE=1`), so a container start never touches the network and
+  #    the demo works offline. A named volume at /opt/whisper-cache would be
+  #    seeded from the image on FIRST use only and then go sticky — so a rebuild
+  #    with a different WHISPER_MODEL would silently keep serving the OLD
+  #    weights until someone ran `docker volume rm`. The previous version of
+  #    this file had exactly that volume (`whisper_models:/models`); it was a
+  #    guess, and it was the wrong one.
+  audio_work:
 
 networks:
   default:
@@ -524,7 +728,16 @@ networks:
 #                                          One residual risk noted on the
 #                                          `backend` service above: it copies
 #                                          only four of six manifests.
-#  🔴 `services/audio-service/Dockerfile`   DOES NOT EXIST. Being built now.
+#  ✅ `services/audio-service/Dockerfile`   EXISTS AND IS REAL. Read, not
+#                                          assumed. Python 3.11-slim, ffmpeg +
+#                                          libgomp1 + curl, no torch, no CUDA,
+#                                          weights baked, `HF_HUB_OFFLINE=1`.
+#                                          🔴 Its context is the SERVICE dir,
+#                                          not the repo root — the deliberate
+#                                          exception to the rule above. It has
+#                                          no `package.json` on purpose, so it
+#                                          is NOT a pnpm workspace member and
+#                                          the lockfile does not apply to it.
 #
 # ⚠ `apps/backend/.dockerignore` and `apps/web/.dockerignore` are INERT — the
 #   context root is the repo root, so only `/.dockerignore` is read. Their
@@ -547,11 +760,20 @@ networks:
 # `docker:up`/`docker:down`/`docker:reset` at this file.
 #
 # ─── Known to be wrong / unverified today ───────────────────────────────────
-#  🔴 `docker compose up` will NOT succeed yet: `services/audio-service/` does
-#     not exist, so `build audio-service` fails. Everything else should build.
-#  🔴 `pnpm-lock.yaml` DOES NOT EXIST at the repo root. Every Dockerfile here
-#     uses `--frozen-lockfile`; ai-service's COPY has no `*` glob so it fails
-#     at COPY, the others fail at install. **Run a root `pnpm install` first.**
+#  ✅ `pnpm-lock.yaml` NOW EXISTS at the repo root (it did not when the first
+#     draft of this file was written). Every Dockerfile's `--frozen-lockfile` is
+#     therefore satisfiable. Not verified by an actual build.
+#  ✅ `services/audio-service/` NOW EXISTS and this file has been reconciled
+#     against it. The three-container shape, the `audio_work` volume, the baked
+#     weights and the `API_KEYS` shape are READ FROM ITS SOURCE, not assumed.
+#  🔴 `apps/backend` DOES NOT YET CONSUME `AUDIO_SERVICE_URL` /
+#     `AUDIO_SERVICE_API_KEY`, and its callback route does not branch on
+#     `transcribe.*` — it logs an unknown event and returns 200. So today the
+#     audio containers come up, accept an upload via curl, transcribe it and
+#     deliver a signed callback that the backend accepts and ignores. The
+#     end-to-end product path lands with `plan/audio-ingest-integration.md`.
+#     ⚠ This is the assumption in this file most likely to break: if that agent
+#       chooses different variable names, change the two lines on `backend`.
 #  🔴 The identity provider needs a signing keypair (`AUTH_PRIVATE_KEY` /
 #     `AUTH_PUBLIC_KEY` / `AUTH_KEY_ID` / `AUTH_ISSUER`). There is no default
 #     and none is generated automatically. Generate once with

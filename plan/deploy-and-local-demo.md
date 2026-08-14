@@ -3,7 +3,8 @@
 Guía humana. El detalle técnico vive en `infra/`.
 
 🔴 **Nada de esto se ha probado.** No corrí `docker compose up`. No construí una sola imagen. No
-desplegué nada. Todo aquí es diseño, escrito leyendo el código de este repo y la documentación de los
+desplegué nada. Lo único que sí corrí es `docker compose config`, que sólo dice que el archivo se lee
+bien. Todo lo demás es diseño, escrito leyendo el código de este repo y la documentación de los
 prototipos. Marco lo que asumí.
 
 ---
@@ -25,7 +26,17 @@ Luego abres:
 
 Entras con el correo y la contraseña que dejaste en `SEED_ADMIN_EMAIL` y `SEED_ADMIN_PASSWORD`.
 
-**Qué levanta:** web, backend, ai-service, audio-service, Postgres con pgvector, y Redis.
+**Qué levanta:** web, backend, ai-service, Postgres con pgvector, Redis, y **tres contenedores de
+audio** (no uno):
+
+- `audio-service` — la API. Recibe la subida, la guarda en disco y encola. No carga el modelo.
+- `audio-service-worker` — transcribe. Es el contenedor pesado, el que tiene el modelo en RAM.
+- `audio-service-callbacks` — entrega el webhook firmado de vuelta al backend.
+
+🔴 **Si dejas fuera `audio-service-callbacks` no se rompe nada visible y se rompe el producto
+completo.** La transcripción sí termina bien. No aparece ningún error, en ningún lado. Simplemente el
+aviso nunca se entrega, el backend nunca se entera de que el texto existe, y el documento se queda sin
+quedar listo. Para siempre.
 
 ### No necesitas credenciales de nube ni GPU
 
@@ -35,21 +46,65 @@ Entras con el correo y la contraseña que dejaste en `SEED_ADMIN_EMAIL` y `SEED_
 - ⚠ **Qué no ves:** calidad real de respuestas. La búsqueda es ruido. No demuestres calidad en este modo.
 - Para respuestas reales: pon `OPENROUTER_API_KEY` en `.env` y cambia los tres `MOCK_*` a 0.
 
-### 🔴 El demo completo no cabe en una laptop normal
+### 🔴 Los tres niveles, y qué cuesta de verdad el audio
 
-Esta es la parte incómoda. Hay tres niveles.
+⚠ **Corrijo aquí lo que yo mismo escribí antes.** La versión anterior de esta sección decía dos cosas
+falsas. Decía que el audio era un problema de RAM. No lo es. Y decía que el nivel 3 "no cabe en 16 GB".
+Sí cabe. Las corrijo, no las defiendo.
 
-| nivel | qué incluye | RAM | comando |
+Lo que el audio cuesta de verdad es **CPU, reloj de pared, disco y tiempo de construcción**. La RAM es
+justo el recurso que a este stack le sobra.
+
+| nivel | qué incluye | RAM residente | comando |
 |---|---|---|---|
-| **1 — núcleo** | todo menos audio y los sidecars | ~4 GB | `docker compose up -d --wait postgres redis ai-service backend web` |
-| **2 — producto** (por defecto) | + transcripción de audio | ~8 GB | `docker compose up -d --wait` |
-| **3 — RAG avanzado** | + embeddings y reranking propios | ~16 GB | `docker compose --profile heavy up -d --wait` |
+| **1 — núcleo** | todo menos audio y los sidecars | ~0.8 GB | `docker compose up -d --wait postgres redis ai-service backend web` |
+| **2 — producto** (por defecto) | + los tres contenedores de audio | ~1.9 GB en reposo, ~2.8 GB transcribiendo | `docker compose up -d --wait` |
+| **3 — RAG avanzado** | + embeddings y reranking propios | ~7 GB | `docker compose --profile heavy up -d --wait` |
 
-- ⚠ Las cifras son **estimadas**, sacadas de los límites que puse y del tamaño de los modelos. No medidas.
-- 🔴 **El nivel 3 no cabe en 16 GB.** Los dos servicios de modelos cargan ~2.3 GB cada uno de forma
-  permanente. Y la *construcción* de cada imagen pide ~3 GB más.
+- ⚠ Todas las cifras son **estimadas**, sacadas de los límites que puse y del tamaño de los modelos.
+  Ninguna está medida en este stack.
+- El nivel 2 asume `WHISPER_MODEL=small`. Cabe en 8 GB y va cómodo en 16 GB.
+- El nivel 3 con ~7 GB residentes **sí cabe en 16 GB en Linux.** Lo que de verdad duele son otras dos
+  cosas:
+  - 🔴 **Las construcciones, no la ejecución.** `bge-m3` y `rerank` piden ~3 GB de RAM cada uno mientras
+    construyen su modelo, y el horneado de whisper pide ~2 GB.
+  - 🔴 **En Docker Desktop (macOS/Windows) la memoria asignada a la VM es un techo duro**, y su valor por
+    defecto suele ser 8 GB. Debajo de eso el nivel 3 muere por falta de memoria — y el mensaje habla del
+    contenedor, no de la VM, así que buscas en el lugar equivocado. Sube ese número primero.
 - 🟡 **Mi recomendación:** demuestra el producto en tu laptop (nivel 2) y el RAG avanzado en la caja
   `dev` del fleet. Es una división a propósito, no un parche.
+
+### 🔴 Cómo se siente de verdad un demo de audio en vivo
+
+Esto es lo que hay que saber antes de prometerle un demo a alguien.
+
+La transcripción en CPU corre aproximadamente **en tiempo real**. No "suficientemente rápido": en tiempo
+real.
+
+- ⚠ **Estimado, no medido:** `WHISPER_MODEL=small` (el valor por defecto local) corre a ~2–4× tiempo real
+  en ~4 núcleos. Una grabación de 10 minutos termina en ~3–5 minutos.
+- ⚠ **Estimado, no medido:** `WHISPER_MODEL=large-v3-turbo` (el valor por defecto del propio servicio, y
+  el del fleet) corre a ~1× tiempo real. Una grabación de 10 minutos tarda ~10 minutos. Vas a estar ahí
+  parado, esperando.
+
+🟡 **Mi recomendación, dicha como recomendación: no demuestres un archivo de 10 minutos en vivo.**
+
+- Ten a la mano una **grabación de prueba en español de 60 a 90 segundos**. Una sola voz, audio limpio, y
+  una transcripción que puedas leer en pantalla.
+- Con `small` termina en bastante menos de un minuto.
+- Y demuestra exactamente el mismo camino: subida → cola → transcripción → callback firmado → documento
+  listo → el chat RAG citándolo. No estás enseñando una versión reducida.
+- Para algo más largo: **súbelo antes de la reunión** y enseña el documento ya terminado. Nada se está
+  falseando al hacer eso. La transcripción es una cola asíncrona *por diseño*, precisamente porque es
+  lenta.
+
+🔴 **Lo que no debes hacer:** arrancar una transcripción larga frente a un público y ponerte a hablar
+encima. El worker se lleva todos los núcleos que le permitas (`AUDIO_CPUS`, 4 por defecto) y la interfaz
+que estás demostrando se pone lenta mientras corre. Eso se lee como una falla del producto. No lo es.
+
+⚠ **La primera construcción del audio tarda ~10 minutos** y descarga los pesos del modelo (~250 MB con
+`small`). Necesita red. Después de eso, cada arranque de contenedor funciona sin internet. **Constrúyelo
+el día anterior, no durante el demo.**
 
 ### Si algo no arranca
 
@@ -59,21 +114,37 @@ Esta es la parte incómoda. Hay tres niveles.
   idéntico al `callbackSecret` dentro de `API_KEYS` de ai-service. Es el error número uno.
 - **Cambiaste un `package.json` y falta un módulo.** Los `node_modules` viven en volúmenes que sólo se
   llenan la primera vez. `docker compose down -v` y reconstruye.
+- **El audio se transcribe pero el documento nunca queda listo.** Hay dos causas, y las dos son
+  silenciosas: (a) el contenedor `audio-service-callbacks` no está corriendo; (b) `CALLBACK_SECRET` no
+  coincide con el `callbackSecret` que va dentro de `API_KEYS` de audio-service. Hoy
+  `infra/docker-compose.yml` **arma ese JSON a partir de la única variable `CALLBACK_SECRET`**, así que
+  ya no pueden separarse. Si ves esto, sospecha primero de (a).
+- **Cambiaste `WHISPER_MODEL` y el contenedor no arranca.** Los pesos están horneados dentro de la imagen
+  y en ejecución el contenedor no tiene red (`HF_HUB_OFFLINE=1`). Cambiar de modelo pide
+  `docker compose build audio-service`, no un reinicio.
 
 ### 🔴 Hoy el demo todavía no corre
 
-Cuatro cosas faltan. Ninguna es mía, todas son cortas.
+Dos de las cuatro cosas que faltaban ya se resolvieron. Quedan tres pendientes. Ninguna es mía, todas
+son cortas.
 
-1. 🔴 **No existe `pnpm-lock.yaml` en la raíz.** Todas las imágenes usan `--frozen-lockfile`. Corre
-   `pnpm install` una vez antes de construir cualquier cosa.
-2. 🔴 **No existe `services/audio-service/`.** Otro agente lo está construyendo. Mientras tanto,
-   levanta el nivel 1 o el nivel 2 sin ese servicio.
+1. ✅ **`pnpm-lock.yaml` ya existe en la raíz.** Era el bloqueo número uno; todas las imágenes usan
+   `--frozen-lockfile` y ahora sí lo pueden satisfacer. Resuelto.
+2. ✅ **`services/audio-service/` ya existe**, y `infra/docker-compose.yml` ya está reconciliado contra
+   el servicio real: los tres contenedores, el volumen compartido, los pesos horneados. Leído de su
+   código, no supuesto. Resuelto.
 3. 🔴 **El proveedor de identidad no tiene llaves.** Corre `pnpm --filter @edc/backend keygen` una vez
    y pega el resultado en `infra/.env`. No hay valor por defecto y nada lo genera solo. Sin esto la app
    arranca pero no puede emitir un token.
 4. ⚠ **Los paquetes de `packages/` publican desde `dist/`, y ningún Dockerfile corre `pnpm -r build`.**
    Puede que funcione por accidente o puede fallar con `ERR_MODULE_NOT_FOUND`. **No lo pude verificar.**
    Es lo primero que revisaría en la primera construcción.
+5. 🔴 **`apps/backend` todavía no usa `AUDIO_SERVICE_URL` ni `AUDIO_SERVICE_API_KEY`**, y su ruta de
+   callback no distingue los eventos `transcribe.*`: los registra como evento desconocido y responde 200.
+   O sea: hoy los contenedores de audio levantan y funcionan de punta a punta con `curl`, pero el camino
+   del producto (subir en la interfaz → documento listo) llega junto con
+   `plan/audio-ingest-integration.md`. El compose ya deja puestas las dos variables, así que cuando eso
+   aterrice no hay que editarlo otra vez.
 
 ✅ `apps/backend/Dockerfile` ya se arregló mientras yo escribía esto. Ya no es la imagen vieja.
 
@@ -127,16 +198,30 @@ hasta que alguien lo escriba. Les costó una evaluación de 1,591 líneas.
 
 ### Dónde corre la transcripción de audio
 
-**Recomendación: en la caja `prod`, en CPU, con un límite duro. Cuesta ~$12/mes más** (subir `prod` de
-8 GB a 16 GB).
+**Recomendación: en la caja `prod`, en CPU, con concurrencia 1 y un límite duro. Sin caja con GPU.
+Cuesta ~$12/mes más.** ✅ Esa recomendación no cambia.
 
-- 🔴 **No compres una caja con GPU.** El ADR de los prototipos asumió una para exactamente
-  esto y **nunca se rentó**. La suposición sobrevivió en sus planes mucho después de dejar de ser cierta.
+🔴 **Lo que sí cambia es la razón de subir de `cx33` a `cx43`, y la diferencia importa:** es por
+**número de vCPU, no por RAM.** Los tres contenedores de audio juntos ocupan ~1.7 GB en reposo y ~2.8 GB
+en su pico, que cabe de sobra en 8 GB. `cx33` trae 4 vCPU compartidos y `cx43` trae 8 — y la CPU es lo
+que la transcripción de verdad consume. Mismo dinero, mejor razón.
+
+- 🔴 **No compres una caja con GPU.**
+  ✅ El servicio está construido en CPU por diseño, y pasar a GPU son dos
+  variables (`WHISPER_DEVICE=cuda`, `WHISPER_COMPUTE_TYPE=float16`) si algún día aparece una. No nos
+  estamos cerrando la puerta.
 - La transcripción es una cola, no una petición web. El navegador sube y consulta después. Nada
   bloquea al usuario.
 - ⚠ **Estimado, no medido:** `faster-whisper` modelo `small` en int8 corre a ~2–4× tiempo real. Una hora
-  de audio son ~15–30 minutos de reloj.
+  de audio son ~15–30 minutos de reloj. El modelo por defecto del fleet, `large-v3-turbo`, corre a
+  ~1× tiempo real: una hora de audio es ~una hora de reloj.
 - 🔴 El límite de CPU no es opcional. Sin él, una subida larga hace que todo el producto parezca caído.
+- 🔴 **En el fleet son tres aplicaciones de Coolify por ambiente, no una.** Con 3 ambientes son **18
+  aplicaciones, no 12.** Es la consecuencia directa de que audio-service sean tres procesos.
+- 🟡 El almacenamiento persistente de Coolify se define **por aplicación**, pero la API y el worker de
+  transcripción tienen que **compartir** un mismo volumen en `/var/lib/audio-service`. Si eso no se puede
+  hacer, usa el build pack de Docker Compose de Coolify para audio-service. Detalle en
+  `infra/fleet/env-manifests.md` §4.
 - 🟡 **Alternativa que descarté:** una API de transcripción administrada. Es más barata a bajo volumen.
   La descarté porque pediste un demo sin credenciales de nube, y porque las grabaciones son lo más
   sensible que maneja este producto. **Vale la pena volver a preguntarlo si el volumen crece.**
@@ -235,17 +320,28 @@ Otros agentes estaban editando el repo mientras yo escribía esto.
 
 | asunción | riesgo si me equivoqué |
 |---|---|
-| `audio-service` expone `/health` en el puerto 8080 y toma trabajo de Redis | el healthcheck y el orden de arranque fallan |
-| `audio-service` guarda pesos en `/models` y trae ffmpeg adentro | cada despliegue vuelve a descargar el modelo |
-| `faster-whisper` en CPU corre a 2–4× tiempo real | la caja `prod` queda chica |
 | Los precios de las cajas `cx33` (sólo el de `prod` es real) | el presupuesto se mueve |
 | Que `packages/*/dist` se construye solo durante el build de cada app | `ERR_MODULE_NOT_FOUND` en la primera imagen |
+| Que `apps/backend` va a usar los nombres `AUDIO_SERVICE_URL` / `AUDIO_SERVICE_API_KEY` de `plan/audio-ingest-integration.md` §3.5 | si ese agente elige otros nombres, hay que cambiar dos renglones de `infra/docker-compose.yml` |
+
+**Las de audio ya no son asunciones.** Leí el servicio. Esto es lo que salió, incluido lo que tenía mal:
+
+- ✅ **`audio-service` expone `/health` en el puerto 8080 y toma trabajo de Redis.** Correcto,
+  verificado.
+- ⚠ **"`audio-service` guarda pesos en `/models` y trae ffmpeg adentro" — mitad equivocado.** ffmpeg sí
+  va dentro de la imagen ✅. Pero **no hay volumen `/models`**: los pesos se hornean dentro de la imagen a
+  propósito, y un volumen ahí se quedaría con la versión vieja después de reconstruir. Corregido.
+- ⚠ **"`faster-whisper` en CPU corre a 2–4× tiempo real" — cierto sólo para `small`.** El valor por
+  defecto del servicio, `large-v3-turbo`, corre a ~1× tiempo real.
 
 ✅ **Ya no son asunciones** (los verifiqué leyendo el código): el formato de `SERVICE_TOKENS`,
 `ORG_KEY=demo`, la reja `EDC_ENV`, que los sidecars hornean sus pesos, y que Payload no usa S3.
 
-**Nada fue ejecutado.** Ni un `docker build`, ni un `docker compose up`, ni un despliegue.
-Los archivos que escribí son `infra/**` y este documento.
+**Qué sí ejecuté, y qué no.** Corrí `docker compose config` sobre las tres variantes — base, base con la
+capa `dev`, y `--profile heavy` — y las tres se leen sin error. También verifiqué en la configuración
+resuelta que el mismo `CALLBACK_SECRET` llega al backend, a ai-service y a los tres contenedores de
+audio. **Eso es todo.** No corrí `docker build`, ni `docker compose up`, ni un despliegue. Los archivos
+que escribí son `infra/**` y este documento.
 
 ---
 
