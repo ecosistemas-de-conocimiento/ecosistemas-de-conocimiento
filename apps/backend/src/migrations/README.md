@@ -72,3 +72,34 @@ Not correctness, but every one of these is on a hot path:
   on every ingest event.
 - `ratings (organization)` and `ratings (message)` — tenant filter and the
   find-before-upsert.
+- `media (uploaded_by)` — the unconditional half of the media read constraint,
+  and the whole of its update/delete rule. It is checked on every file fetch,
+  including `GET /api/media/file/:filename`.
+- `media (organization)` — informational today (see `collections/Media.ts`), but
+  it is what an admin filters the file list by.
+
+## ⚠ New columns on `media`, and what they mean for existing rows
+
+`collections/Media.ts` gained `uploaded_by` and `organization`. Both are
+NULLABLE on purpose: `POST /api/media` carries only the file, so a multi-
+ecosistema uploader has no unambiguous organization, and server-side writes
+(`overrideAccess: true`, no user) have no uploader to stamp.
+
+🔴 **Any `media` row created before this change has `uploaded_by = NULL`, and a
+NULL matches neither the read constraint nor the update/delete one.** Those rows
+become invisible and undeletable to everyone except a platform admin. That is
+fail-closed and deliberate — the alternative is guessing an owner for a file
+whose owner was never recorded — but it means a database carried across this
+change needs a one-off backfill:
+
+```sql
+-- Derive the owner from the document that points at the file.
+UPDATE media m
+SET uploaded_by = d.uploaded_by, organization = d.organization
+FROM documents d
+WHERE d.media_file_id = m.id AND m.uploaded_by IS NULL;
+```
+
+Files no document points at cannot be backfilled this way and should be reviewed
+by hand or deleted. Nothing is deployed today, so no backfill is scheduled; this
+is recorded so the first real deployment does not discover it.
