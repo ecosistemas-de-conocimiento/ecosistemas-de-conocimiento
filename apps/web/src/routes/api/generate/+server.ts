@@ -19,6 +19,7 @@ import {
   useRegistryPrompt,
 } from '$lib/server/engine';
 import { fetchSessionCorpora } from '$lib/server/corpora';
+import { sessionEcosystemId } from '$lib/server/ecosystem';
 import { stampDraftProvenance } from '$lib/publication';
 import { prepareTurn, respond, type ContextRef, type ContextScope } from '@edc/chat-engine/core';
 
@@ -271,7 +272,15 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // ourselves — that is how a client reaches another ecosistema's corpus — and
   // we never retrieve without `asOf`, because unpublishing a document only
   // end-dates its chunks: an unscoped retrieve still returns them.
-  const { corpora, asOf, draftCorpus } = await fetchSessionCorpora(locals.token, body.sessionId);
+  // Alongside it: WHICH ecosistema this conversation is in, read off the
+  // session row (immutable, membership-checked on create). The deterministic
+  // summary names it, so taking "the first organization" would put another
+  // ecosistema's name and description into the turn for anyone with two
+  // memberships.
+  const [{ corpora, asOf, draftCorpus }, organizationId] = await Promise.all([
+    fetchSessionCorpora(locals.token, body.sessionId),
+    sessionEcosystemId(locals.token, body.sessionId),
+  ]);
   if (!asOf) {
     console.error(
       `[generate] no asOf for session ${body.sessionId}; answering WITHOUT retrieval ` +
@@ -284,6 +293,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     token: locals.token,
     sessionId: body.sessionId,
     corpora,
+    organizationId,
   });
   const engineAI = makeEngineAIClient(chatClient, {
     sessionId: body.sessionId,

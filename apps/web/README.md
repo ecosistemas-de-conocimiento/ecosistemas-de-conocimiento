@@ -25,6 +25,8 @@ No bearer token and no service URL ever reaches the browser.
 
 ## What's in the UI
 
+- **Ecosistema picker** — top of the sidebar, always visible. Which ecosistema
+  you are in, and a chooser when you belong to more than one. See below.
 - **Sessions sidebar** — create / select / rename / delete a chat.
 - **Chat pane** — streaming turns (SSE), with a non-streaming fallback, cancel
   mid-stream, and citation cards on grounded answers.
@@ -35,6 +37,61 @@ No bearer token and no service URL ever reaches the browser.
   of the session's documents.
 - **Answer rating** — 1–5 stars under every assistant answer. See below.
 - **Sign-in / sign-up** — Payload accounts, httpOnly cookie session.
+
+## Which ecosistema am I in?
+
+A user can belong to **more than one** ecosistema. The picker sits at the top of
+the sidebar and is never hidden — the collapsed rail keeps a two-letter badge —
+because whether a document is private or shared depends entirely on which
+ecosistema it lands in. With exactly one membership there is no chooser, only
+the name: a dropdown with one option teaches people to ignore the control that
+matters on the day they have two.
+
+| File | Role |
+| --- | --- |
+| `src/lib/ecosystems.ts` | the contract + every pure rule (resolve, validate, clear). No `$env`, no fetch — imported by both sides, unit-tested directly |
+| `src/lib/server/ecosystem.ts` | the I/O half: list memberships, resolve the cookie, read a session's ecosistema |
+| `src/routes/api/ecosistemas/+server.ts` | `GET` the list + resolved selection, `POST` to switch |
+| `src/lib/components/EcosystemPicker.svelte` | the control (sidebar, expanded + collapsed) |
+| `src/lib/components/NoEcosystem.svelte` | the zero-membership screen |
+| `src/lib/stores/app.svelte.ts` | `switchEcosystem()` — clear, then re-hydrate |
+
+**The choice lives in an httpOnly cookie** (`eco_selected`), not in
+`localStorage` and not on the user record. It is an *input to a server decision*
+— it picks the `organization` stamped on every new session, and therefore the
+corpora that session searches — so it has to arrive on the request that uses it.
+`localStorage` would put it on the wrong side of that boundary. A field on
+`users` would mean a backend migration for what is genuinely a per-device
+preference (two ecosistemas in two windows is a normal thing to want).
+
+⚠ **The cookie is a hint, never an authority.** Every read runs it through
+`resolveEcosystemSelection` against the membership list Payload just returned
+for this JWT, so a forged or stale value can only ever select an ecosistema the
+caller already belongs to — worst case it is ignored and rewritten. Three
+independent checks stand behind a switch: the store refuses an id outside the
+list it was given, the BFF `POST` answers **403 `not_a_member`**, and the backend
+re-checks it in `Sessions.beforeValidate` on create. The frontend is never the
+only guard.
+
+⚠ **`GET /api/sessions` filters by the selected ecosistema.** Payload's access
+rule is per *user*, so it returns conversations across every ecosistema someone
+belongs to — correct for access, wrong for the screen.
+
+🔴 **Switching clears everything the previous ecosistema put on screen** before
+anything from the new one arrives: conversations, messages, documents and the
+degraded banner. A stale document list under a new ecosistema's name is
+indistinguishable, to the person looking at it, from a real cross-tenant leak.
+Two mechanisms: `clearEcosystemScopedState()` blanks the state, and an **epoch
+counter** makes any read still in flight for the old ecosistema discard its own
+result when it lands. Adding a per-ecosistema field to the store means adding it
+to `EcosystemScopedState` too — the test serialises a populated state and greps
+it, so a forgotten field fails the build.
+
+**Zero memberships is a real state**, not an error: `NoEcosystem.svelte` says
+what it means and names the account to be added. It is shown only when we *know*
+the list is empty — a failed read renders the degraded banner instead, because
+telling someone with perfectly good access to go request access is worse than
+saying nothing.
 
 ## Draft vs published documents
 
@@ -180,6 +237,7 @@ work:
 src/
   lib/
     api.ts                client-side generate (sync + SSE stream)
+    ecosystems.ts         ecosistema picker contract + pure rules
     publication.ts        draft/published contract, copy + pure rules
     ratings.ts            answer-rating contract + pure helpers
     types.ts              Message / Session / WorkingDoc
@@ -190,8 +248,9 @@ src/
     server/               SERVER-ONLY: auth, aiService client, engine wiring,
                           health, degrade/deny
   routes/
-    api/                  the BFF: auth, sessions, messages, documents
-                          (+ publish), ratings, generate, context-search, health
+    api/                  the BFF: auth, ecosistemas, sessions, messages,
+                          documents (+ publish), ratings, generate,
+                          context-search, health
 ```
 
 Anything under `src/lib/server/` is server-only by SvelteKit convention — the

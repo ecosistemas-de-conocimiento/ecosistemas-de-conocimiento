@@ -23,6 +23,13 @@ import {
   parsePublicationStatus,
   publishGate,
 } from '../publication';
+import {
+  belongsTo,
+  clearEcosystemScopedState,
+  isStaleEpoch,
+  normalizeEcosystems,
+  type Ecosystem,
+} from '../ecosystems';
 
 /**
  * Map a BFF upload error code (see /api/sessions/[id]/documents +server.ts)
@@ -217,19 +224,102 @@ class AppStore {
   /** Doc IDs currently being polled — avoids racing hydration vs upload. */
   private pollingDocs = new Set<string>();
 
+  // ── ecosistema ─────────────────────────────────────────────────────────
+  /**
+   * The ecosistemas this user belongs to, as `GET /api/ecosistemas` reported
+   * them. Read-only reference data: the browser NEVER invents an id, and
+   * `switchEcosystem` refuses anything not in here before it even reaches the
+   * BFF (which checks again, as does the backend on session create).
+   */
+  ecosystems = $state<Ecosystem[]>([]);
+  /** The one currently selected. Resolved by the server, not by the client. */
+  ecosystemId = $state<string | null>(null);
+  /** True while a switch is in flight — the picker is disabled meanwhile. */
+  switchingEcosystem = $state(false);
+  /** False until `/api/ecosistemas` has answered once. */
+  ecosystemsReady = $state(false);
+  /** Set when the ecosistema list itself could not be read (backend down). */
+  ecosystemsUnavailable = $state(false);
+  /**
+   * 🔴 Bumped on every ecosistema switch. Reads capture it when they start and
+   * discard their result if it moved — otherwise a `/api/sessions` response for
+   * the OLD ecosistema, still in flight when the user switched, lands afterwards
+   * and repaints the sidebar with the previous tenant's conversations.
+   */
+  private ecoEpoch = 0;
+
   get active(): Session | null {
     if (!this.activeSessionId) return null;
     return this.sessions.find((s) => s.id === this.activeSessionId) ?? null;
   }
 
+  /** The selected ecosistema, for display. */
+  get ecosystem(): Ecosystem | null {
+    return this.ecosystems.find((e) => e.id === this.ecosystemId) ?? null;
+  }
+
+  /** A chooser is only worth showing when there is something to choose. */
+  get canSwitchEcosystem(): boolean {
+    return this.ecosystems.length > 1;
+  }
+
+  /**
+   * The zero-membership state — a real one, with its own screen. Deliberately
+   * false while the list is unreadable: "no perteneces a ningún ecosistema" is
+   * the wrong thing to tell someone whose backend is merely down.
+   */
+  get hasNoEcosystem(): boolean {
+    return this.ecosystemsReady && !this.ecosystemsUnavailable && this.ecosystems.length === 0;
+  }
+
+  private stale(epoch: number): boolean {
+    return isStaleEpoch(epoch, this.ecoEpoch);
+  }
+
+  /** Read the caller's ecosistemas + the server-resolved selection. */
+  private async loadEcosystems(epoch: number): Promise<void> {
+    try {
+      const data = await fetchJson<{
+        ecosistemas?: unknown;
+        selectedId?: string | null;
+        degraded?: boolean;
+      }>('/api/ecosistemas', { credentials: 'same-origin' });
+      if (this.stale(epoch)) return;
+      this.ecosystems = normalizeEcosystems(data?.ecosistemas);
+      this.ecosystemId = data?.selectedId ?? null;
+      this.ecosystemsUnavailable = Boolean(data?.degraded);
+    } catch (err) {
+      if (this.stale(epoch)) return;
+      console.warn('loadEcosystems failed', err);
+      this.ecosystems = [];
+      this.ecosystemId = null;
+      this.ecosystemsUnavailable = true;
+    } finally {
+      if (!this.stale(epoch)) this.ecosystemsReady = true;
+    }
+  }
+
   // ── hydration ──────────────────────────────────────────────────────────
   async hydrateFromServer(): Promise<void> {
+    const epoch = this.ecoEpoch;
     try {
+      // The ecosistema first: everything below is scoped to it, and the
+      // sessions read on the server needs the selection to filter by.
+      await this.loadEcosystems(epoch);
+      if (this.stale(epoch)) return;
+      if (this.ecosystemsUnavailable) this.degraded = { reason: 'unavailable' };
+      // Nothing to load, and nothing to auto-create. `+page.svelte` renders the
+      // "no perteneces a ningún ecosistema" screen off `hasNoEcosystem`.
+      if (this.ecosystems.length === 0) return;
+
       const data = await fetchJson<{
         docs: Record<string, unknown>[];
         degraded?: boolean;
         reason?: 'forbidden' | 'unavailable';
       }>('/api/sessions', { credentials: 'same-origin' });
+      // 🔴 The switch happened while this was on the wire. Everything below
+      // belongs to the previous ecosistema; drop it on the floor.
+      if (this.stale(epoch)) return;
       // Surface the non-fatal degraded signal (see `$lib/server/degrade.ts`).
       this.degraded = data?.degraded ? { reason: data.reason ?? 'unavailable' } : null;
       const list = (data?.docs ?? []).map(sessionFromBackend);
@@ -250,9 +340,76 @@ class AppStore {
       // Treat it as a non-fatal degraded read rather than rejecting the
       // hydration promise: the banner shows, the app boots on an empty state.
       console.warn('hydrateFromServer degraded', err);
-      this.degraded = { reason: 'unavailable' };
+      if (!this.stale(epoch)) this.degraded = { reason: 'unavailable' };
     } finally {
-      this.ready = true;
+      if (!this.stale(epoch)) this.ready = true;
+    }
+  }
+
+  /**
+   * 🔴 SWITCH ECOSISTEMA — and clear everything the previous one put on screen.
+   *
+   * Order matters and is the whole point:
+   *   1. refuse an id this user does not belong to (the BFF and the backend
+   *      check it again; the frontend is not allowed to be the only guard);
+   *   2. ask the server to select it — only IT can write the selection cookie;
+   *   3. bump the epoch, so any read still in flight for the old ecosistema is
+   *      discarded when it lands;
+   *   4. blank every ecosistema-scoped field BEFORE re-reading, so there is no
+   *      instant where the previous tenant's documents sit under the new
+   *      tenant's name. A stale list there is indistinguishable from a leak;
+   *   5. re-hydrate.
+   *
+   * A failed switch changes NOTHING: no clear, no epoch bump, no reload.
+   */
+  async switchEcosystem(id: string): Promise<boolean> {
+    if (this.switchingEcosystem) return false;
+    if (!id || id === this.ecosystemId) return false;
+    // The list came from the server; anything outside it is not this user's.
+    if (!belongsTo(this.ecosystems, id)) {
+      console.warn(`switchEcosystem refused ${id}: not one of this user's ecosistemas`);
+      return false;
+    }
+    this.switchingEcosystem = true;
+    try {
+      const data = await fetchJson<{ selected: Ecosystem; ecosistemas?: unknown }>(
+        '/api/ecosistemas',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id }),
+          credentials: 'same-origin',
+        },
+      );
+
+      this.ecoEpoch += 1;
+      clearEcosystemScopedState(this);
+      // Pollers for the old ecosistema's documents are now orphaned: their
+      // session is gone from `sessions`, so each one exits on its next tick.
+      // Drop the keys too, or a restarted poll would be swallowed by the guard.
+      this.pollingDocs.clear();
+
+      // Adopt the SERVER's answer, not the requested id.
+      this.ecosystemId = data?.selected?.id ?? this.ecosystemId;
+      const fresh = normalizeEcosystems(data?.ecosistemas);
+      if (fresh.length) this.ecosystems = fresh;
+
+      await this.hydrateFromServer();
+      return true;
+    } catch (err) {
+      console.error('switchEcosystem failed', err);
+      const code = (err as Error)?.message;
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo cambiar de ecosistema',
+        message:
+          code === 'not_a_member'
+            ? 'Ya no perteneces a ese ecosistema. Actualiza la página.'
+            : 'Inténtalo de nuevo en un momento. Sigues en el mismo ecosistema.',
+      });
+      return false;
+    } finally {
+      this.switchingEcosystem = false;
     }
   }
 
@@ -331,6 +488,9 @@ class AppStore {
 
   // ── session ops ────────────────────────────────────────────────────────
   async newSession(): Promise<string | null> {
+    // Nothing to create a conversation IN. The screen already says so; firing
+    // the request anyway would just add a toast on top of an explanation.
+    if (this.hasNoEcosystem) return null;
     try {
       const data = await fetchJson<{ doc: Record<string, unknown> }>('/api/sessions', {
         method: 'POST',
@@ -347,11 +507,21 @@ class AppStore {
       // A session must name the ecosistema it belongs to, and the BFF resolves
       // that from the user's memberships. No membership, no session — and the
       // user needs to be told, not left on a silently empty screen.
-      if ((err as Error)?.message === 'no_ecosystem') {
+      const code = (err as Error)?.message;
+      if (code === 'no_ecosystem') {
         toasts.push({
           kind: 'error',
           title: 'No perteneces a ningún ecosistema',
           message: 'Pide a quien administra el sistema que te agregue a uno.',
+        });
+        // Repaint the picker + the empty-state screen off fresh facts: the
+        // membership may have been revoked while this tab was open.
+        void this.loadEcosystems(this.ecoEpoch);
+      } else if (code === 'ecosystems_unavailable') {
+        toasts.push({
+          kind: 'error',
+          title: 'No se pudo confirmar tu ecosistema',
+          message: 'Inténtalo de nuevo en un momento.',
         });
       }
       return null;

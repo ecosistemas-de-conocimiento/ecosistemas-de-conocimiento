@@ -3,21 +3,50 @@ import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
 import { degradeListResponse } from '$lib/server/degrade';
 import { relationshipsToRefs } from '$lib/server/contextRefs';
+import { toBackendId } from '$lib/ecosystems';
+import { resolveEcosystem } from '$lib/server/ecosystem';
 
-// GET /api/sessions → list the current user's sessions, most-recent first.
+// GET /api/sessions → the current user's sessions IN THE SELECTED ECOSISTEMA,
+// most-recent first.
+//
+// 🔴 THE `organization` FILTER IS NOT AN OPTIMISATION. Payload's `ownOnly`
+// access rule returns every session this person owns, across every ecosistema
+// they belong to — correct for access, wrong for the screen. Without this
+// filter, switching ecosistema would leave the previous one's conversations in
+// the sidebar, and a user cannot tell that apart from a cross-tenant leak.
+// The id comes from `resolveEcosystem` (cookie → checked against memberships),
+// never from the query string.
+//
 // Fragile read: degrade a 403-on-empty-tenant / transient backend failure to
 // an empty list (with a `degraded` flag) instead of surfacing a hard error.
 //
 // `depth=1` so the polymorphic `contextScope` relationship is populated; we map
 // each session's `[{relationTo,value}]` back to the store's `{refs:[{kind,id,
 // label}]}` shape (CANONICAL ref-field contract).
-export const GET: RequestHandler = async ({ locals }) => {
+export const GET: RequestHandler = async ({ locals, cookies }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
-  const res = await backendFetch(
-    locals.token,
-    `/api/sessions?limit=200&sort=-lastUsedAt,-createdAt&depth=1`,
-    { method: 'GET' },
-  );
+
+  const { selected, ok } = await resolveEcosystem(cookies, locals.token);
+  if (!selected) {
+    // No ecosistema (or we could not find out). Either way there is nothing
+    // this user may legitimately see here, and an unfiltered read would show
+    // conversations from ecosistemas the picker is not pointing at.
+    return json(
+      ok
+        ? { docs: [], totalDocs: 0 }
+        : { docs: [], totalDocs: 0, degraded: true, reason: 'unavailable' },
+    );
+  }
+
+  const qs = new URLSearchParams({
+    'where[organization][equals]': String(toBackendId(selected.id)),
+    limit: '200',
+    sort: '-lastUsedAt,-createdAt',
+    depth: '1',
+  });
+  const res = await backendFetch(locals.token, `/api/sessions?${qs.toString()}`, {
+    method: 'GET',
+  });
   const body = (await res.json().catch(() => ({}))) as { docs?: Record<string, unknown>[] };
   if (Array.isArray(body.docs)) {
     for (const doc of body.docs) {
@@ -28,40 +57,9 @@ export const GET: RequestHandler = async ({ locals }) => {
   return json(out.body, { status: out.status });
 };
 
-/**
- * Resolve which ecosistema a new session belongs to.
- *
- * `sessions.organization` is REQUIRED on create, and a user can belong to
- * several ecosistemas — so somebody has to choose. It is resolved HERE, not
- * sent by the browser: Payload scopes `/api/organizations` to what this user
- * may read, so the list is already the user's own memberships and the client
- * never gets to name a tenant. (A client that can name an org is exactly the
- * cross-tenant hole the backend just closed on document-create.)
- *
- * ⚠ GAP: with more than one membership this silently takes the first. There is
- * no ecosistema picker in the UI yet — see the README. `limit=2` so the caller
- * can detect the ambiguity and log it.
- */
-async function resolveOrganizationId(
-  token: string | undefined,
-): Promise<{ id: number | string | null; ambiguous: boolean }> {
-  try {
-    const res = await backendFetch(token, '/api/organizations?limit=2&depth=0', {
-      method: 'GET',
-    });
-    if (!res.ok) return { id: null, ambiguous: false };
-    const body = (await res.json().catch(() => ({}))) as {
-      docs?: { id?: number | string }[];
-    };
-    const docs = body.docs ?? [];
-    return { id: docs[0]?.id ?? null, ambiguous: docs.length > 1 };
-  } catch {
-    return { id: null, ambiguous: false };
-  }
-}
-
-// POST /api/sessions → create a new session for the current user.
-export const POST: RequestHandler = async ({ locals, request }) => {
+// POST /api/sessions → create a new session for the current user, in the
+// ecosistema they have selected.
+export const POST: RequestHandler = async ({ locals, cookies, request }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
   let incoming: { title?: string; panelState?: unknown } = {};
   try {
@@ -70,17 +68,20 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     /* allow empty body */
   }
 
-  const { id: organization, ambiguous } = await resolveOrganizationId(locals.token);
-  if (organization == null) {
+  // `sessions.organization` is REQUIRED on create, and a user can belong to
+  // several ecosistemas — so somebody has to choose. The USER chooses, through
+  // the picker; the choice reaches us as a cookie and is re-checked against
+  // Payload's membership-scoped list on the way in (`resolveEcosystem`). The
+  // request body is never consulted: a client that can name an org is exactly
+  // the cross-tenant hole the backend closed on document-create.
+  const { selected, ok } = await resolveEcosystem(cookies, locals.token);
+  if (!selected) {
     // Better a clear refusal than a 400 from the backend's required-field
-    // validator, which the UI cannot explain to anyone.
-    return json({ error: 'no_ecosystem' }, { status: 409 });
-  }
-  if (ambiguous) {
-    console.warn(
-      `[sessions] user ${locals.user.id} belongs to more than one ecosistema; ` +
-        `defaulting the new session to ${organization}. Needs a picker.`,
-    );
+    // validator, which the UI cannot explain to anyone. `no_ecosystem` gets its
+    // own Spanish screen; an unverifiable read is a transient failure instead.
+    return json({ error: ok ? 'no_ecosystem' : 'ecosystems_unavailable' }, {
+      status: ok ? 409 : 503,
+    });
   }
 
   const now = new Date().toISOString();
@@ -88,8 +89,10 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     // Matches `UNTITLED_SESSION` in the store, which uses it as the sentinel
     // for auto-titling from the first message.
     title: incoming.title ?? 'Nueva conversación',
-    // REQUIRED by the backend. Resolved server-side; never taken from the body.
-    organization,
+    // ⚠ Sent EXPLICITLY, so the backend's `beforeValidate` compares it against
+    // this caller's memberships and rejects a foreign one instead of guessing.
+    // Omitting it only works for people with exactly one membership.
+    organization: toBackendId(selected.id),
     panelState: incoming.panelState ?? null,
     lastUsedAt: now,
   };

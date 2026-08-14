@@ -47,6 +47,17 @@ export interface ChatAdapterCtx {
    * when the caller does not retrieve (e.g. the context-search route).
    */
   corpora?: string[];
+  /**
+   * WHICH ecosistema this turn is about.
+   *
+   * ⚠ Not a client-supplied value: callers resolve it either from the session
+   * itself (`sessionEcosystemId`) or from the validated selection cookie
+   * (`resolveEcosystem`). Without it we fall back to "the first organization
+   * Payload returns", which is only correct for someone with exactly one
+   * membership — for anybody else the summary would name, and the `@`-mention
+   * menu would offer, an ecosistema other than the one they are working in.
+   */
+  organizationId?: string | number | null;
 }
 
 export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
@@ -61,11 +72,18 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
   }
 
   /**
-   * The caller's organization. Payload scopes `/api/organizations` to what the
-   * user may read, so "the first row" IS this user's tenant — the frontend
-   * never picks an org itself.
+   * The ecosistema this turn belongs to.
+   *
+   * When the caller resolved one (from the session, or from the selection
+   * cookie) we read exactly that row — Payload still refuses it if the caller
+   * is not a member, so a wrong id yields null rather than another tenant's
+   * name. Otherwise fall back to the first organization this user may read,
+   * which is unambiguous for the single-membership case.
    */
   async function findOrg(): Promise<OrgRow | null> {
+    if (ctx.organizationId != null && ctx.organizationId !== '') {
+      return findById<OrgRow>('organizations', ctx.organizationId);
+    }
     const body = await getJson<{ docs?: OrgRow[] }>('/api/organizations?limit=1&depth=0');
     return body?.docs?.[0] ?? null;
   }
@@ -90,6 +108,17 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
       if (want('org')) {
         tasks.push(
           (async () => {
+            // ⚠ Offer ONE ecosistema — the one this conversation is in. Someone
+            // who belongs to several would otherwise see all of them in the
+            // `@`-mention menu and could pull another ecosistema's description
+            // into a conversation filed under this one.
+            if (ctx.organizationId != null && ctx.organizationId !== '') {
+              const r = await findOrg();
+              if (r && (!q || r.name.toLowerCase().includes(q.toLowerCase()))) {
+                out.push({ kind: 'org', id: r.id, label: r.name, sublabel: 'Ecosistema' });
+              }
+              return;
+            }
             const body = await getJson<{ docs?: OrgRow[] }>(
               `/api/organizations?limit=5&depth=0${contains}`,
             );
