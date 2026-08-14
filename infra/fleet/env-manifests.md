@@ -64,6 +64,21 @@ and are a **different, deliberately laxer** set.
 | `AI_SERVICE_ADMIN_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 role `admin`; needed for corpus delete |
 | `AUDIO_SERVICE_URL` | `http://audio-service-dev:8080` | `…-stage:8080` | `…-prod:8080` | ⚙ internal, not public. ⚠ the API container, **not** a worker |
 | `AUDIO_SERVICE_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 the `role: app` key from audio-service's `API_KEYS` (§4). 🔧 a **different** key from `AI_SERVICE_API_KEY` |
+| `S3_ENDPOINT` | `http://rustfs:9000` | 🔴 *unset* | 🔴 *unset* | ⚙ ⚠ **dev only.** Private-network address of the store on `data`. §4b |
+| `S3_REGION` | `us-east-1` | 🔴 *unset* | 🔴 *unset* | ⚙ RustFS ignores it; the AWS SDK **requires** one to sign at all |
+| `S3_BUCKET` | `edc-dev` | 🔴 *unset* | 🔴 *unset* | ⚙ 🔴 not created by any env var — provisioning creates it. §4b |
+| `S3_ACCESS_KEY_ID` | `CHANGE_ME` | 🔴 *unset* | 🔴 *unset* | 🔑 ⚠ **a SCOPED user on dev, not root** — unlike the local demo. §4b |
+| `S3_SECRET_ACCESS_KEY` | `CHANGE_ME` | 🔴 *unset* | 🔴 *unset* | 🔑 `openssl rand -hex 32` |
+
+🔴 **The five `S3_*` rows are ALL-OR-NOTHING, and "unset" on stage and prod is the configuration,
+not an unfinished row.** The backend falls back to local disk when **all five are absent**. A partial
+set is the worst outcome: an app that half-believes in a store. ⚠ **Set nothing at all** on stage and
+prod rather than setting them to empty strings — "absent" and "empty" are not the same thing to every
+possible implementation of that check, and there is no reason to find out which one we have.
+
+⚠ **Why stage and prod are blank:** RustFS is approved for `local` and `dev` only (`topology.md` §3).
+Their engine is **open decision #9**. Until it is closed, stage and prod write uploads to the
+`backend` persistent volume, exactly as before.
 
 ⚠ **Those two are FORWARD-LOOKING as of 2026-08-14.** `apps/backend/src` reads neither yet — grep
 for "AUDIO" returns nothing — and its callback route does not branch on `transcribe.*`; such an
@@ -90,6 +105,14 @@ replicas: each gets its own budget, so the effective limit silently doubles. Not
 **Persistent storage (Coolify → Storages):** 🔴 mount a volume at the Payload media path
 (`/repo/apps/backend/media` in the image built per `infra/docker-compose.yml`). **Without this, every
 redeploy destroys every uploaded document.** `topology.md` §3.
+
+⚠ **Still required on `dev`, even though `dev` writes to RustFS.** Two reasons, both real: it is the
+fallback target if the `S3_*` variables are ever removed, and any code path still doing
+`fs.readFile(path.resolve(process.cwd(), 'media', …))` reads from it. The prototypes shipped **two
+such paths** after enabling S3 — one returned 502, the other **silently dropped images from
+exports**. 🔧 Grep `apps/backend` for `fs.readFile` and `process.cwd(), 'media'` before believing the
+switch is complete. 🔴 On stage and prod this volume is not a fallback at all; it is the only storage
+there is.
 
 ---
 
@@ -287,6 +310,91 @@ does **not** need to be in `backups.md`'s scope — unlike the Payload media vol
 
 ---
 
+## 4b. ☁ `rustfs` — object storage, 🔴 **`dev` ONLY**
+
+**One container, on the `data` box, serving the `dev` environment.** ✅ Everything in this section was
+measured against `rustfs/rustfs:1.0.0-rc.1` on 2026-08-14 — image pulled, stood up, probed with
+SigV4, torn down. Operational detail in `runbook.md` §8; the engine argument in `topology.md` §3.
+
+🔴 **There is no stage row and no prod row, and that is the decision.** RustFS ships 25 CVEs in 8
+months (7 at CVSS ≥ 9.0), flags every release `prerelease`, and has open issues for silent data loss
+on single-drive — our exact topology. `dev` holds nothing that cannot be recreated; a prod bucket
+holds a customer's only copy of their audio. **Open decision #9.**
+
+| var | dev | stage | prod | notes |
+|---|---|---|---|---|
+| `RUSTFS_ACCESS_KEY` | `CHANGE_ME` | — | — | 🔑 🔴 the **root** identity. Not the app's key — see below |
+| `RUSTFS_SECRET_KEY` | `CHANGE_ME` | — | — | 🔑 `openssl rand -hex 32` |
+| `RUSTFS_VOLUMES` | `/data` | — | — | ⚙ must match the persistent-storage mount |
+| `RUSTFS_ADDRESS` | `:9000` | — | — | ⚙ S3 API port. Console is on 9001 |
+
+⚠ **That is the complete list of variables this image reads.** ✅ Verified against the running
+container. In particular there is **no `RUSTFS_DEFAULT_BUCKET`** — 🔴 **do not carry that assumption
+across from Garage**, which does have `GARAGE_DEFAULT_BUCKET` and is the engine `topology.md` §3
+names for a self-hosted stage/prod.
+
+### 🔴 Root is NOT the app's credential on `dev` — this differs from the local demo on purpose
+
+`infra/.env.example` gives the local demo the **root** key as `S3_ACCESS_KEY_ID`, because every
+credential in that file is fake and the store binds to localhost. **On `dev` that trade stops paying.**
+
+- **Root stays with the operator.** The backend gets a **scoped user with an explicit policy**,
+  created by provisioning.
+- ⚠ **The built-in `readwrite` policy is NOT scoped** — it is `s3:*` on `arn:aws:s3:::*`. Its
+  apparent scoping came only from one-bucket-per-instance. Write a custom policy and include **both**
+  ARNs: `arn:aws:s3:::<bucket>` for bucket actions **and** `arn:aws:s3:::<bucket>/*` for object
+  actions. Omit either and you silently lose half the surface.
+- ✅ **Root rotation is an env change plus a restart.** Measured: restarting with a changed
+  `RUSTFS_ACCESS_KEY`/`_SECRET_KEY` on an **existing** volume makes the new key work and the old key
+  return `InvalidAccessKeyId`. No volume surgery.
+
+### 🔴 The IAM store is volume-resident, so provisioning is a boot-time job, not a setup step
+
+Nothing seeds a user or a policy from the environment. The scoped user and the bucket exist **only**
+after something creates them through the admin API against a running server, and then they live on
+the volume and nowhere else.
+
+- 🔴 **Provisioning must be idempotent and re-runnable on every boot.** ✅ This is cheap: measured,
+  `CreateBucket` on an existing bucket returns **200**, not 409.
+- 🔴 **A one-shot init container that exits is the recorded failure mode.** It runs once against an
+  empty volume and is absent on the day the store comes back wrong. Provisioning belongs in the
+  backend's startup path (`apps/backend/**`), which runs on every deploy.
+
+### Persistent storage and the backup gap
+
+| app | mount | contents |
+|---|---|---|
+| `rustfs` | `/data` | 🔴 **bucket data AND the IAM store**, including `users.json` |
+
+🔴 **`users.json` holds secret keys in CLEARTEXT.** A copy of this volume — a backup, a snapshot, a
+`docker cp` — is a copy of every key it ever issued. Encrypt and access-control it as a **credential
+store**, not as a pile of documents.
+
+🔴 **A volume restore recreates the buckets. It does NOT recreate a usable IAM store.** You get the
+keys as of snapshot time; anything issued or rotated since comes back dead, and the app then
+authenticates against a credential store that has silently moved backwards. ✅ **The mitigation is
+the idempotent provisioning above, not a better backup.** `backups.md` §2.
+
+⚠ **`dev` bucket data is deliberately out of backup scope** — it is reproducible test content.
+
+### Networking
+
+🔴 **Private network only. No Traefik route, no public hostname, no certificate.** The backend proxies
+every byte; nothing in a browser reaches the store. In Coolify, **null the auto-assigned `*.sslip.io`
+fqdn** (`runbook.md` §7) — an object store that quietly acquires a working public hostname is not
+broken, which is exactly why nobody notices.
+
+### Health checking
+
+🔴 **`health_check_enabled: false`, or point it at nothing that matters.** `/health` and
+`/health/ready` on RustFS are **liveness only and they lie about storage** — ✅ measured returning
+`{"status":"ok","ready":true,…}` on an empty store, and measured by the prototypes returning 200
+with `"ready":true` while **every** S3 call 503'd. 🔴 **The uptime monitor watches the BACKEND's
+readiness route**, whose `checks.storage` leg is a `HeadBucket` against the real bucket.
+`runbook.md` §8.
+
+---
+
 ## 5. Applies to every app
 
 | var | value | why |
@@ -376,7 +484,14 @@ state. 🔴 Never in a deployed environment.
 
 ## 7. Where these values come from — honesty note
 
-Every variable NAME above was read out of this repository's source
+⚠ **The five `S3_*` names are the ONE exception to the sentence below.** They were **not** read out of
+this repository — `apps/backend` has no S3 adapter yet. They are an **agreed contract** between this
+file and the agent landing that adapter: `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`,
+`S3_SECRET_ACCESS_KEY`, with "all five absent ⇒ local disk". 🔴 If the code lands with different
+names, §1's rows, §4b and `infra/.env.example` §7 change together. ✅ The `RUSTFS_*` names in §4b are
+**not** in that category — they were verified against the running image.
+
+Every other variable NAME above was read out of this repository's source
 (`grep -rhoE "process\.env\.[A-Z0-9_]+"` across `apps/backend/src`, plus `apps/web/src` and
 `services/ai-service/.env.example`). ⚠ **Values, defaults and the shapes of `SERVICE_TOKENS` and
 `API_KEYS` are inferred**, and other agents were editing these files concurrently. If a name here

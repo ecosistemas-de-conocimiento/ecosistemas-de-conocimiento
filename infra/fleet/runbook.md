@@ -109,12 +109,15 @@ invalidate every app's build cache.** Expect slower builds than a polyrepo. This
 
 ## 1. First-time setup
 
-Do these in order. Steps 1–4 are once per fleet; 5–8 are once per application.
+Do these in order. Steps 1–4 are once per fleet; 5–7 are the datastores; 8–9 are once per
+application; 10–11 close it out.
 
 ### Fleet
 
-1. **Provision the boxes** (`topology.md` §1). Private network between them. 🔴 Postgres and Redis on
-   `data` bind to the **private interface only** — never a published port.
+1. **Provision the boxes** (`topology.md` §1). Private network between them. 🔴 Postgres, Redis **and
+   RustFS** on `data` bind to the **private interface only** — never a published port. ⚠ RustFS is
+   the easiest of the three to get wrong, because Coolify hands every application a working public
+   hostname at creation and an object store answering on one looks fine (§7).
 2. **Install Coolify on `control`.** Immediately: back up its Postgres and copy its `APP_KEY` from
    `/data/coolify/source/.env` to a second location. 🔴 Without that key, a Coolify DB backup cannot
    decrypt a single secret and is worthless (`backups.md` §2).
@@ -139,15 +142,44 @@ Do these in order. Steps 1–4 are once per fleet; 5–8 are once per applicatio
 6. **Redis**, one instance (or one numbered DB) **per environment**. Colliding BullMQ queue names
    across environments produce a dev job running against prod data, which is not debuggable after
    the fact.
+7. 🔴 **RustFS — ONE container, `dev` bucket ONLY. Not stage. Not prod.** `rustfs/rustfs:1.0.0-rc.1`,
+   **pinned** — an RC behind a floating tag is how a stack ends up on an archived,
+   unpatched image such as `minio/minio:latest` without anyone deciding to.
+   - It lives on `data` because object storage is **state**. 🔴 **One instance, never one per app
+     box:** two instances behind a load balancer do not share data, they each hold half your uploads.
+   - 🔴 **Single node. Never two.** A 2-node object store fails writes while one node is down —
+     measured identically on Garage RF=2, SeaweedFS and 2-node MinIO. One node plus external
+     file-level replication (`rclone`) is the answer, for every engine.
+   - **Bind to the private network only**, exactly like Postgres and Redis. No Traefik route, no
+     public hostname, no Let's Encrypt certificate. The backend proxies the bytes; nothing in a
+     browser needs to reach the store. 🔴 In Coolify, **null the auto-assigned `*.sslip.io` fqdn**
+     (§7) — an object store that quietly acquires a working public hostname is not broken, which is
+     why nobody notices.
+   - **Memory limit 1 GB, set deliberately.** Open issue #2573: RustFS grows into whatever ceiling it
+     has. `topology.md` §1.
+   - 🔴 **Do NOT provision it with a one-shot init container.** Its IAM store is volume-resident and
+     no environment variable seeds a user or a policy. Provisioning must be **idempotent and
+     re-runnable on every boot** — §9.
+   - 🔴 **Stage and prod get NO RustFS**, and that is a decision with a written reason
+     (`topology.md` §3): 25 CVEs in 8 months, every release flagged `prerelease`, open silent
+     data-loss issues on single-drive. Their engine is **open decision #9**.
 
 ### Applications
 
-7. **Create the apps in DEPLOY ORDER** (§3) and set the env vars from `env-manifests.md` before the
+8. **Create the apps in DEPLOY ORDER** (§3) and set the env vars from `env-manifests.md` before the
    first deploy. An app that boots without `PAYLOAD_SECRET` or `OPENROUTER_API_KEY` fails in a way
    that looks like a build problem.
-8. **Persistent storage — do this before the first upload, not after:**
+9. **Persistent storage — do this before the first upload, not after:**
+   - `rustfs` (**`data` box, `dev` only**) → volume at `/data`. 🔴 It holds **two different things**:
+     the bucket data *and* the IAM store, including `users.json` with **secret keys in cleartext**.
+     Treat a copy of this volume as a copy of every credential it ever issued — encrypt it and
+     restrict it like a secrets store, not like a pile of documents. §9 and `backups.md` §2.
    - `backend` → volume on the Payload media path. 🔴 Without it, **every redeploy destroys every
      uploaded document.** This is the easiest way to lose customer data in this design.
+     ✅ **Still required on `dev` even with RustFS running**, and it is not belt-and-braces: it is
+     the fallback target when the five `S3_*` variables are absent, and it is where any un-migrated
+     `fs.readFile(process.cwd(), 'media', …)` code path still reads from. 🔴 On **stage and prod** it
+     is not a fallback at all — it is the only storage there is, until open decision #9 is closed.
    - `audio-service` **and** `audio-service-worker` → **the SAME volume** at
      `/var/lib/audio-service`. The API streams the upload to disk and the worker reads it back;
      without the share, every job fails with `source_missing`.
@@ -168,9 +200,9 @@ Do these in order. Steps 1–4 are once per fleet; 5–8 are once per applicatio
 
 ### Then, before anyone calls it done
 
-9. **Monitors + alerts** (`backups.md` §5), including the end-to-end test that the phone actually
+10. **Monitors + alerts** (`backups.md` §5), including the end-to-end test that the phone actually
    buzzes.
-10. **Backups + one restore drill** (`backups.md` §6).
+11. **Backups + one restore drill** (`backups.md` §6).
 
 ---
 
@@ -198,6 +230,12 @@ GET  /health/ready       on ai-service →  200 and "status":"ok"
 GET  /api/health         on web       →  200
 ```
 then log in to `/admin` and open one document.
+
+☁ **On `dev`, the storage leg is inside `backend`'s readiness body** — a `checks.storage` entry fed
+by a `HeadBucket` against the real bucket. 🔴 **Do not add a separate monitor on RustFS's own
+`/health`**; §8 explains why that would report green through a total storage outage. And 🔴 **open
+one document and confirm its BYTES DOWNLOAD**, not just that its row renders — a metadata row with
+missing bytes is exactly the failure S3 introduces and the only one this smoke test can catch.
 
 ⚠ **`"status":"ok"` in the body, not just a 200.** A `/api/health` can return 200
 through a **20-hour total outage**. A status code is not evidence.
@@ -555,7 +593,104 @@ so `0.0.0.0/0` on that setting is recoverable, not reckless.
 
 ---
 
-## 8. Known repo-level items that affect deploys
+## 8. ☁ RustFS operations — `dev` only, and the four things that will confuse you
+
+✅ **Everything in this section was measured against `rustfs/rustfs:1.0.0-rc.1` on 2026-08-14** — the
+image pulled, stood up on a throwaway port, probed with SigV4, torn down. It is the only section of
+this runbook backed by a running system rather than by reading.
+
+🔴 **Scope: `local` and `dev`. Stage and prod do not run RustFS**, and the reason is written out in
+`topology.md` §3 so it does not later read as an oversight. Their engine is **open decision #9**.
+
+### 1. 🔴 `/health` is a liar, and it has a reassuring name
+
+```
+GET /health  →  200  {"status":"ok","ready":true,"service":"rustfs-endpoint",…}
+```
+
+✅ Measured: that is the response **on an empty store that has never held a bucket**. The
+harder version also occurs — the same 200 with `"ready":true` while **every S3 call returns
+503**.
+
+- **What a `/health` check proves:** the process is up and something is listening. That is all.
+- **What it does not prove:** that a bucket exists, that a credential works, or that a PUT would
+  succeed. `/health/ready` is no better — the `ready` in the name is not a readiness signal.
+- ✅ **The real probe is `HeadBucket` against the real bucket**, and it lives in the **backend's**
+  readiness endpoint, not here. §6 rule 5: probe a dependency by doing the thing you need.
+  ✅ Measured: `HeadBucket` on the real bucket → **200**; on a bucket that does not exist → **404**,
+  so the two cases are distinguishable. ⚠ A `HeadBucket` **403** has **no response body**, so the
+  AWS SDK reports `err.name === 'Unknown'` — branch on `err.$metadata.httpStatusCode`, never on the
+  name.
+- 🔧 **Monitor the backend's readiness route. Never point an uptime monitor at RustFS's `/health`.**
+  Doing so buys a green dashboard through a total storage outage, which is the 20-hour incident with
+  a different logo on it.
+
+### 2. ⚠ "Cluster status is incomplete" on a single node — expected, not a bug to chase
+
+There is an issue filed the **same day as the RC** describing **exactly our shape**: a single-node
+deployment reporting *"Cluster status is incomplete"* after upgrading to `1.0.0-rc.1`.
+
+🔧 **Recognise it and move on.** We run a single node on purpose, S3 operations work, and this message
+is a cluster-view artifact rather than a storage fault. ⚠ Confirm with a `HeadBucket` + `PutObject`
+round trip rather than with the status text — that is the same rule as §6 rule 5, applied to the
+message you will actually be staring at.
+
+🔴 **And do not "fix" it by adding a second node.** A 2-node object store fails writes while one node
+is down — measured identically on Garage RF=2, SeaweedFS (`No writable volumes`) and 2-node MinIO.
+**One node plus external file-level replication.**
+
+### 3. 🔴 The IAM store is volume-resident, so provisioning must be re-runnable
+
+**Nothing seeds a user or a policy from the environment.** ✅ Verified against the running container:
+the only variables it reads are `RUSTFS_ACCESS_KEY`, `RUSTFS_SECRET_KEY`, `RUSTFS_VOLUMES`,
+`RUSTFS_ADDRESS`. There is no `RUSTFS_DEFAULT_BUCKET`. ⚠ **Garage has `GARAGE_DEFAULT_BUCKET` and
+RustFS does not** — do not carry that assumption across from `topology.md` §3.
+
+Therefore:
+
+- 🔴 **Provisioning runs on every boot and must be idempotent.** ✅ Measured, and it makes this easy:
+  `CreateBucket` on a bucket that already exists returns **200**, not 409.
+- 🔴 **A one-shot init container that exits is the wrong shape**, and it is the recorded failure: it
+  runs once against an empty volume and is not there on the day the store comes back wrong — after a
+  restore, after a `docker volume rm`, after a half-written store. The provisioning lives in the
+  backend (`apps/backend/**`), which starts on every deploy.
+- ✅ **Root credentials CAN be rotated through the environment on an existing volume.** Measured:
+  restarting with a changed `RUSTFS_ACCESS_KEY`/`_SECRET_KEY` on the same volume makes the new key
+  work and the old key return `InvalidAccessKeyId`. So a key rotation on `dev` is an env change plus
+  a restart — no volume surgery.
+- ⚠ **The built-in `readwrite` policy is NOT scoped** — it is `s3:*` on `arn:aws:s3:::*`. Its
+  apparent scoping came only from one-bucket-per-instance. Write a custom policy and include **both**
+  ARNs (`…:::<bucket>` for bucket actions **and** `…:::<bucket>/*` for object actions); omit either
+  and you silently lose half the surface.
+
+### 4. 🔴 The backup gap: a volume restore brings back buckets, not a usable IAM store
+
+| what | on the `/data` volume | after a volume restore |
+|---|---|---|
+| bucket data (the uploaded bytes) | yes | ✅ objects and buckets come back |
+| IAM store — users, keys, policies (`users.json`) | yes | 🔴 **you get the keys from snapshot time** |
+
+**A key issued or rotated since the snapshot comes back dead**, and the app then authenticates
+against a credential store that has silently moved backwards. It presents as "storage is broken",
+hours after the restore was called finished.
+
+✅ **The mitigation is (3), not a better backup** — idempotent provisioning converges the store
+without a human. ⚠ And `users.json` is **cleartext**, so the backup itself is a credential artifact:
+encrypt it, restrict it, and do not hand a copy of that volume to anyone you would not hand the keys
+to. `backups.md` §2.
+
+### Where to look when something is off
+
+| | |
+|---|---|
+| S3 API | port **9000** (`http://rustfs:9000` on the private network) |
+| Admin API | **same port**, under `/rustfs/admin/v3/…`, **signed exactly like S3** — 200 signed, 403 unsigned |
+| Console | port **9001**, at **`/rustfs/console/`** — ⚠ the trailing path is required; `:9001/` answers an S3 `AccessDenied` XML document, which looks broken and is not |
+| Memory | ⚠ open issue **#2573** — it grows toward its ceiling. Limit **1 GB**; an OOM here is that symptom, not a mystery. ✅ 102 MiB idle measured on an empty store |
+
+---
+
+## 9. Known repo-level items that affect deploys
 
 Not mine to fix; listed so they are not lost.
 

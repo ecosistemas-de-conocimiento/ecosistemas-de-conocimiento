@@ -14,7 +14,7 @@ sized for a small product. Every number is an estimate and is marked as one.
 | `control` | Coolify control plane **+ build runner** | cx33 | 8 GB | ~12 |
 | `prod` | production env: web, backend, ai-service, audio-service | cx43 | 16 GB | ~24 |
 | `nonprod` | dev + stage envs, co-tenanted | cx33 | 8 GB | ~12 |
-| `data` | Postgres (all envs) + Redis (all envs). **Nothing stateless.** | cx33 | 8 GB | ~12 |
+| `data` | Postgres (all envs) + Redis (all envs) + **RustFS (`dev` bucket only)**. **Nothing stateless.** | cx33 | 8 GB | ~12 |
 
 **≈ $55/month at catalogue prices**, plus ~$3/mo for backups and alerting (§ `backups.md`).
 Their complete 6-box prod fleet was ~$143/mo, so this is roughly a third of it.
@@ -33,6 +33,35 @@ environment are well inside a cx33. 🔴 **Set a memory limit on every container
 suggest ~768m for a Payload backend, roughly 3.6× measured steady state. The cap is not there to
 protect that app; it is there to guarantee it can never starve its neighbours on the box. The one
 genuine exception is the audio transcription worker (~1.5 GB idle, ~2.8 GB peak — §4).
+
+⚠ **RustFS is the second container where the limit is not a formality, and for the opposite reason.**
+Everything else on this fleet sits far below its cap and the cap exists to bound a runaway. RustFS
+**grows into whatever cap it is given** (open issue #2573), so the number chosen *is* the number
+consumed. Set **1 GB on `data`** and treat an OOM-kill as the known symptom rather than a surprise.
+✅ Measured idle on an empty store: **102 MiB** — that is the floor, not the expectation.
+
+### 🔴 `data` box budget, revisited with RustFS on it
+
+⚠ Estimates except where marked. Postgres **~59 MiB** measured (theirs) for a small database, but six
+databases plus shared buffers on a real workload is the number that grows.
+
+| on `data` (cx33, 8 GB) | limit | expected |
+|---|---|---|
+| Postgres 16 + pgvector, 6 databases | 2g | ~0.4–1.5 GB (grows with the corpus) |
+| Redis × 3 environments | 512m each | ~90 MB total |
+| **RustFS (`dev` bucket)** | **1g** | ✅ 102 MiB measured idle, **and it climbs toward the 1g cap** |
+| OS + Docker | — | ~600 MB |
+| **total** | | **~1.2–2.3 GB of 8 GB** |
+
+✅ **The `data` box stays a cx33.** RustFS costs it ~1 GB of ceiling on a box with ~5.7 GB spare, and
+`data` runs no app code competing for it. **This is the box where object storage is cheapest to put,
+which is a second reason it belongs here rather than on `nonprod`** — the first being that state
+lives with state.
+
+🔴 **The resource number that did NOT change is `nonprod`**, and that is the one to keep watching.
+§4's table still lands it at ~6.9 GB of 8 GB with both audio workers busy. **RustFS is deliberately
+not on that box.** Had it gone next to the `dev` app containers, it would have pushed the tightest
+box in the fleet by another gigabyte of ceiling for no benefit.
 
 ⚠ **`prod` is a cx43 for its vCPU count, not its RAM.** That is a correction to an earlier version of
 this document; the arithmetic and the reasoning are in §4. Audio's three containers fit an 8 GB box
@@ -90,7 +119,10 @@ touching a byte of data. It is the one piece of this topology I would not compro
 1. Memory/swap alert exists (see `backups.md` §5) — **before** any of the below. Their `dev` box
    swapped 1.2 GB for six days unnoticed.
 2. Split `builder` off `control` when build contention shows up.
-3. Object storage on `data` (§3) — **this is the gate on everything below it.**
+3. Object storage **for stage and prod** (§3) — **this is the gate on everything below it.**
+   ✅ Partly done: `dev` already has it (RustFS on `data`), so the *code path* is no longer the
+   blocker. 🔴 What remains is the engine decision for stage/prod, open decision #9. **RustFS on
+   `dev` does not discharge this item** — do not let a green `dev` bucket read as "storage: done".
 4. Second `prod` box + `lb11` (~$6/mo), active/active. **Only possible after (3).**
    🔴 **Before adding any second replica, grep for in-process state** — an event bus, a rate
    limiter, a session cache. Theirs had two (a `mitt` event bus and a per-process `Map` rate
@@ -165,9 +197,19 @@ every target type. Their `builder` had to be *replaced* rather than rescaled for
                   │    edc_backend_stage edc_ai_stage│
                   │    edc_backend_dev   edc_ai_dev  │
                   │  Redis (one instance PER ENV)    │
-                  │  [later] object storage          │
+                  │  rustfs  ← 🔴 dev BUCKET ONLY    │
+                  │    stage/prod storage: UNDECIDED │
                   └──────────────────────────────────┘
 ```
+
+🔴 **`rustfs` is ONE container on `data`, serving the `dev` environment only.** It is on the data
+tier and not on `nonprod` for the same reason Postgres is: object storage is *state*, and state lives
+on the box that runs no app code. **One instance, never one per app box** — two instances behind a
+load balancer do not share data, they just each hold half of your uploads.
+
+⚠ **It serves `dev` and nothing else.** Do not add a stage bucket to it "since it is already there".
+The whole argument in §3 is about what this engine is trusted to hold, and `stage` rehearses `prod` —
+pointing it at a store `prod` will never use defeats the point of having a `stage`.
 
 **One Postgres server, one database per app per environment.** 🔴 Payload and Drizzle both keep
 their migration ledger in schema `public`; sharing a database between them means each migration run
@@ -182,13 +224,55 @@ Access from a laptop goes through an SSH tunnel or Tailscale, never a published 
 
 ---
 
-## 3. 🔴 The constraint that shapes everything: uploads are on local disk
+## 3. 🔴 Object storage — RustFS on `dev`, and an OPEN DECISION for stage/prod
 
-✅ **Verified in this repo, not assumed.** `apps/backend/package.json` has no
-`@payloadcms/storage-s3`, and `apps/backend/src/payload.config.ts` configures no S3 adapter. Payload
-writes uploads to the container filesystem.
+**Status changed 2026-08-14.** This section used to say "uploads are on local disk everywhere, defer
+object storage." Half of that is now out of date and half of it is more true than before.
 
-**Consequences, in order of when they bite:**
+### What changed, and why
+
+**Audio.** Users upload PDFs, DOCX **and audio recordings**, and audio is **10–100× the size of a
+PDF**. Local-disk uploads were already the single biggest constraint on fleet shape; audio is what
+made them stop being viable at all, starting on a laptop. So object storage landed for **local and
+`dev`**, ahead of the deferral this section previously recommended.
+
+**The engine for local and dev is RustFS** (`rustfs/rustfs:1.0.0-rc.1`, pinned). ✅ **Verified live
+on that exact image, 2026-08-14** — not inferred from the evaluation below:
+
+| probe | result |
+|---|---|
+| `CreateBucket` / `HeadBucket` / `PutObject` / `GetObject`, SigV4 | **200** |
+| `HeadBucket` on a bucket that does not exist | **404** (so the readiness probe can distinguish) |
+| `CreateBucket` on a bucket that already exists | **200**, not 409 — ✅ **provisioning is naturally idempotent** |
+| root key rotated via `RUSTFS_ACCESS_KEY` on an EXISTING volume | ✅ **takes effect**; the old key then returns `InvalidAccessKeyId` |
+| admin API `GET /rustfs/admin/v3/info` | 200 signed, 403 unsigned — it is on the **S3 port**, signed like S3 |
+| console | **`:9001/rustfs/console/`** — the path is required; `:9001/` answers S3 `AccessDenied` XML |
+| idle memory, empty store, no limit | **102 MiB** |
+
+### 🔴 Why the line is drawn at `dev`, and what stage and prod will use
+
+**Write this out rather than letting it look like an oversight.** The exact wording, because it will
+be asked again:
+
+> **RustFS is approved for `local` and `dev` only. It is not approved for `stage` or `prod`, and
+> that is a decision, not a gap.** The engine passed every functional S3 test we ran, and it fails on
+> everything that is not functionality: **25 CVEs in 8 months, 7 of them at CVSS ≥ 9.0**, including a
+> hardcoded RPC secret shipped twice five months apart; **every one of its 100+ releases is flagged
+> `prerelease`**, including the one we pin; and it carries **open issues for silent data loss on
+> single-drive deployments**, which is exactly our topology. On a laptop and on `dev`, where every
+> object is reproducible and every credential is disposable, that is a bug budget we can afford and a
+> fast way to run the real S3 code path instead of a mock. On a box holding the only copy of a
+> customer's audio recording, it is not. **The stage/prod object store is OPEN DECISION #9 in §5.**
+> Nothing should be built that assumes it will be RustFS.
+
+⚠ **`stage` therefore does not rehearse prod's storage engine today**, and that is a real cost of
+leaving #9 open — `stage` exists precisely to rehearse prod. It is the reason to close the decision
+before the first stage deploy that touches uploads, not after.
+
+### The local-disk consequences — still live for stage and prod
+
+Until #9 is closed and implemented, `stage` and `prod` still write uploads to a container filesystem,
+so all three of these still apply **there**:
 
 1. **The prod app tier cannot be scaled to two boxes.** A document uploaded through box A is a 404
    through box B. This is why §1 recommends one prod box — it is not a cost decision, it is the only
@@ -199,7 +283,40 @@ writes uploads to the container filesystem.
 3. **Backups must cover that volume,** not just Postgres. A Postgres backup restores the *rows*
    describing a document whose bytes are gone.
 
-### 🔧 When you do add it: take MANAGED S3. Do not repeat their evaluation.
+✅ **The code path is no longer the blocker it was.** The backend's S3 adapter is written and
+exercised daily on `local` and `dev`, so switching stage/prod to a managed bucket becomes five
+environment variables rather than a migration. **That is the main thing running RustFS on `dev`
+buys us**, and it is worth saying plainly: the value is the rehearsal of the *code path*, not the
+engine.
+
+### 🔴 The RustFS-specific operational facts, all measured
+
+- ⚠ **`/health` and `/health/ready` are LIVENESS ONLY and they lie about storage.** ✅ Measured:
+  `/health` returns `{"status":"ok","ready":true,"service":"rustfs-endpoint",…}` on an empty store
+  that has never held a bucket. The harder version also occurs — 200 with
+  `"ready":true` while **every** S3 call returns 503. 🔴 **A monitor pointed at `/health` proves the
+  process is up and nothing else.** Probe `HeadBucket` against the real bucket instead
+  (`runbook.md` §6 rule 5). This is the 20-hour outage in a new place, and worse, because the
+  endpoint has a reassuring name.
+- 🔴 **The IAM store is volume-resident and nothing seeds it from the environment.** Only the single
+  **root** key pair (`RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY`) comes from env; users and policies
+  exist only after something creates them through the admin API against a running server. **So
+  provisioning must be idempotent and re-runnable on every boot.** 🔴 A one-shot init container that
+  exits is the recorded failure mode: it runs once against an empty volume and is not there on the
+  day the store comes back wrong.
+- ⚠ **`users.json` on the data volume holds secret keys in CLEARTEXT.** A copy of that volume — a
+  backup, a `docker cp`, a snapshot handed to someone — is a copy of every key it ever issued.
+- ⚠ **Set a memory limit deliberately.** Open issue **#2573**: RustFS's memory climbs toward its
+  container ceiling where other stores held far less. The limit is the number it will grow *into*,
+  not a cap that is never touched. We chose **1 GB** locally; 1 GB is also the right starting point
+  on `dev`. An OOM-kill here is the #2573 symptom, not a mystery.
+- ⚠ **Expect "Cluster status is incomplete" on a single node after 1.0.0-rc.1.** There is an issue
+  filed the same day as the RC describing **exactly our shape** — single-node reporting an incomplete
+  cluster after upgrading to this tag. 🔧 Recognise it; do not debug it from scratch. `runbook.md` §8.
+- 🔴 **Single node. Never two.** Covered in the universal rules below, and it applies to RustFS on
+  `dev` as much as to anything else.
+
+### 🔧 For stage and prod: take MANAGED S3. Do not repeat their evaluation.
 
 🟡 **This is my strongest recommendation in this document.** Stop self-hosting object storage in
 prod, move to managed S3, leaning Cloudflare R2. Only a definition of *sovereignty* as **own
@@ -216,11 +333,15 @@ with an unresolved Coolify config-file problem.
 **If an own-hardware requirement does turn out to exist**, the engine answer is **Garage**
 (`dxflrs/garage:v2.3.0`), single-node, on `data` — not RustFS and not MinIO:
 
-- 🔴 **RustFS was tested live and REJECTED.** It passed all 27 functional S3 tests and failed on
-  everything else: **25 CVEs in 8 months, 7 at CVSS ≥ 9.0**, including a hardcoded RPC secret
-  shipped twice five months apart; every one of its 100+ releases flagged `prerelease`; open issues
-  for silent data loss on single-drive, which is exactly this topology. ⚠ An older ADR of theirs
-  still names RustFS as the decision — **that ADR is stale**; the evaluation superseded it.
+- 🔴 **RustFS was tested live and REJECTED — for stage and prod.** It passed all 27 functional S3
+  tests and failed on everything else: **25 CVEs in 8 months, 7 at CVSS ≥ 9.0**, including a
+  hardcoded RPC secret shipped twice five months apart; every one of its 100+ releases flagged
+  `prerelease`; open issues for silent data loss on single-drive, which is exactly this topology.
+  ⚠ An older ADR of theirs still names RustFS as the decision — **that ADR is stale**; the evaluation
+  superseded it. ✅ **We run it on `local` and `dev` anyway, deliberately** — see the boxed wording
+  above. The rejection is about what an engine is trusted to *hold*, and `dev` holds nothing that
+  cannot be recreated. Do not read this bullet as "RustFS is banned"; read it as "RustFS never gets
+  a customer's only copy."
 - ⚠ **MinIO is not an option any more.** GitHub repo archived and read-only, `mc` archived, last
   release a CVE fix never published as a container image.
 - ✅ Garage self-bootstraps: `garage server --single-node --default-bucket`, seeded from
@@ -263,11 +384,47 @@ from exports**. "S3 is optional with a local-disk fallback" only holds if *every
 goes through the storage abstraction. **Grep for `fs.readFile` and `process.cwd(), 'media'` in
 `apps/backend` before believing it.**
 
-🟡 **My recommendation: defer object storage until either (a) a second prod box is needed, or
-(b) upload volume outgrows the `prod` disk.** Until then, one box plus a backed-up volume is
-strictly simpler and has strictly fewer failure modes. Just do not let anyone believe the app tier
-is horizontally scalable in the meantime — it is not, and that misunderstanding is how it gets
-scaled at the worst possible moment.
+🟡 **My recommendation, REVISED 2026-08-14 and narrowed rather than reversed: defer object storage
+ON STAGE AND PROD** until either (a) a second prod box is needed, or (b) upload volume outgrows the
+`prod` disk. Until then, one box plus a backed-up volume is strictly simpler and has strictly fewer
+failure modes. Just do not let anyone believe the app tier is horizontally scalable in the meantime —
+it is not, and that misunderstanding is how it gets scaled at the worst possible moment.
+
+⚠ **What changed my mind for local and `dev`, and it is not the same argument.** Deferring stage/prod
+storage is about *risk and ops burden on data we cannot lose*. Running RustFS on a laptop and on
+`dev` is about *exercising the S3 code path every day instead of on the morning of the migration*.
+The most expensive storage failure here is not an engine failure — it is **code paths
+still doing `fs.readFile(process.cwd(), 'media', …)` after S3 is switched on**, returning 502
+or silently dropping images from exports. That class of bug is found by running the S3 path
+daily, and by nothing else.
+
+### 🔴 The backup story for the `dev` bucket — the gap is the IAM store
+
+Two different things live on the RustFS data volume and they need different treatment:
+
+| what | on the volume | restore behaviour |
+|---|---|---|
+| **bucket data** — the uploaded bytes | yes | ✅ a volume restore brings the objects and the buckets back |
+| **IAM store** — users, access keys, policies (`users.json`) | yes | 🔴 **a volume restore does NOT give you a usable IAM store** |
+
+🔴 **State it plainly: restoring the volume recreates the buckets but not the IAM store as the app is
+currently configured against it.** You get the keys that existed *at snapshot time*. Any key issued
+or rotated since comes back dead, and the app then authenticates against a credential store that has
+silently moved backwards — which presents as "storage is broken" long after the restore is declared
+finished.
+
+✅ **The mitigation is provisioning, not backup.** The bucket-and-credential provisioning is
+idempotent and runs on every boot, so a restored, wiped or half-populated IAM store converges without
+a human. That is the property to protect — 🔴 **do not "optimise" provisioning into a one-shot init
+container that exits.** It runs once against an empty volume and is absent on the one day it matters.
+
+⚠ **And the volume itself is a secret.** `users.json` is cleartext, so a RustFS volume backup must be
+encrypted and access-controlled like a credential store, not like a pile of documents.
+`backups.md` §2 carries the full version.
+
+⚠ **`dev` bucket data is NOT in backup scope, deliberately.** It is reproducible test content. What
+the `dev` store is worth protecting *against* is silent corruption going unnoticed — which is the
+`HeadBucket` readiness probe's job, not a backup's.
 
 ---
 
@@ -441,3 +598,4 @@ budget question if transcription volume ever gets serious.**
 | 6 | **Uptime commitment** | 99% is 7.2 h/month of downtime; 99.9% is 43 minutes. ⚠ At a team size of one, a night-time failure can go unnoticed for 12+ hours — which caps what any amount of hardware can deliver. Do not promise 99.9% before there is an on-call answer. |
 | 7 | **Managed vs self-hosted transcription** | §4. Cost vs. data custody. |
 | 8 | **Who gets Coolify admin** | It is root on the whole fleet. |
+| 9 | 🔴 **The stage/prod object store** | §3. RustFS is approved for `local` and `dev` **only** and will not be promoted. The recommendation is managed S3 (Cloudflare R2, ~$0–1/mo, zero egress); the self-hosted answer is Garage `dxflrs/garage:v2.3.0`, single-node on `data`, **if and only if** a written own-hardware requirement exists. ⚠ Needs a human because the trigger is a *policy* question (data custody / sovereignty), not a technical one. ⚠ Until it is closed, `stage` does not rehearse `prod`'s storage engine. |
