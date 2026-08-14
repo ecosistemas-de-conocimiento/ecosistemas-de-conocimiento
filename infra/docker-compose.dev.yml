@@ -105,22 +105,61 @@ services:
     #        docker compose exec ai-service pnpm run db:migrate
     #    (script name assumed — check services/ai-service/package.json.)
 
+  # ── audio-service: THREE containers here too ───────────────────────────────
+  # ✅ Reconciled against the real service. It is Python, so there is no pnpm
+  #    symlink farm and NO node_modules volumes are needed — just the source
+  #    bind mount. `pip` installs into site-packages, not into /app, so the bind
+  #    mount shadows nothing. The source layout under /app already matches what
+  #    the image copies (`app/`, `scripts/`, `requirements.txt`).
+  #
+  # 🔴 THE ONE THING THAT WILL BITE YOU HERE, AND IT BIT THE PREVIOUS DRAFT:
+  #    you CANNOT switch models with an environment variable. The weights are
+  #    baked at build time and the runtime sets `HF_HUB_OFFLINE=1`, so a
+  #    container whose `WHISPER_MODEL` differs from its image's build arg cannot
+  #    download and DIES AT BOOT. The earlier version of this file set
+  #    `WHISPER_MODEL: tiny` as env only — that would have been a boot failure,
+  #    not a faster dev loop. Build arg AND env, from the same variable, always.
+  #
+  # ⚠ There is NO hot reload for this service. The image CMD runs uvicorn
+  #   without `--reload` and the workers are arq processes. The bind mount saves
+  #   you a rebuild, not a restart:
+  #       docker compose restart audio-service audio-service-worker \
+  #                              audio-service-callbacks
+  #   🔧 If you want real reload on the API, override its command:
+  #       command: ["sh","-c","exec uvicorn app.main:app --host 0.0.0.0 \
+  #                 --port 8080 --reload"]
+  #      Do NOT do that on the transcription worker — a reload mid-decode kills
+  #      the job and it dead-letters after JOB_MAX_TRIES.
+
   audio-service:
-    # 🔴 ASSUMED. No `services/audio-service/` existed when this was written.
-    #    If it is a Python container it has no pnpm symlink farm and therefore
-    #    needs NO node_modules volumes — just the source bind mount below and,
-    #    if it uses a virtualenv baked into the image, an exclusion volume on
-    #    that path so the bind mount does not shadow it.
-    build:
-      context: ..
-      dockerfile: services/audio-service/Dockerfile
+    build: &audio-build-dev
+      context: ../services/audio-service
+      args:
+        WHISPER_MODEL: ${WHISPER_MODEL_DEV:-small}
     volumes:
       - ../services/audio-service:/app
-      - whisper_models:/models
-    environment:
-      # Smaller model in dev — iterate on the pipeline, not on transcription
-      # quality. `tiny` is roughly 10× faster than `small` and much worse.
-      WHISPER_MODEL: ${WHISPER_MODEL_DEV:-tiny}
+      - audio_work:/var/lib/audio-service
+    environment: &audio-env-dev
+      NODE_ENV: development
+      LOG_LEVEL: DEBUG
+      # 🔴 Must equal the build arg above. Same variable, twice, on purpose.
+      WHISPER_MODEL: ${WHISPER_MODEL_DEV:-small}
+
+  audio-service-worker:
+    build: *audio-build-dev
+    volumes:
+      - ../services/audio-service:/app
+      - audio_work:/var/lib/audio-service
+    environment: *audio-env-dev
+
+  audio-service-callbacks:
+    # 🔴 STILL NOT OPTIONAL IN DEV. If you are debugging "the transcript
+    #    finished but nothing happened", check this container is running FIRST —
+    #    that symptom is exactly what its absence looks like.
+    build: *audio-build-dev
+    volumes:
+      - ../services/audio-service:/app
+    environment: *audio-env-dev
 
 volumes:
   # One pair per bind-mounting service. Named per-service rather than shared
