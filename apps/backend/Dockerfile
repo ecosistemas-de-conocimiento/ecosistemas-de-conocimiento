@@ -57,9 +57,14 @@ COPY --from=build /repo/node_modules /repo/node_modules
 COPY --from=build /repo/packages /repo/packages
 COPY --from=build /repo/apps/backend ./
 EXPOSE ${PORT}
-# ⚠ `start` is `next start` ONLY — it does NOT run `payload migrate`, because
-# there is no baseline migration yet and the schema is created by Payload's
-# push. See src/migrations/README.md: when the baseline lands, this becomes
-# `payload migrate && next start` and PAYLOAD_DISABLE_PUSH=1 goes into every
-# deployed environment, in the same change.
+# ✅ `start` is `payload migrate && next start`. The baseline migration exists
+# (src/migrations/20260814_205354_baseline.ts), so the schema is created and
+# advanced by migrations, NOT by Payload's schema push. Every deployed
+# environment must also carry PAYLOAD_DISABLE_PUSH=1 — see infra/fleet/
+# env-manifests.md §6 and src/migrations/README.md.
+#
+# 🔴 If `payload migrate` fails, the container never reaches `next start` and
+# the deploy fails loudly. That is the intended behaviour: booting an app
+# against a schema its migrations could not produce is the failure mode that
+# takes hours to diagnose.
 CMD ["pnpm", "start"]

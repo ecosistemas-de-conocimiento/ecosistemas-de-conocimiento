@@ -48,8 +48,14 @@ COPY --chown=node:node . .
 WORKDIR /repo/apps/backend
 ENV NODE_ENV=development
 # Payload's interactive schema-push prompt has no TTY in a container, so the dev
-# server auto-pushes. Leave PAYLOAD_DISABLE_PUSH unset — push is what creates
-# the schema until the first baseline migration exists.
+# server auto-pushes. PAYLOAD_DISABLE_PUSH is deliberately left unset HERE, and
+# only here: this image is the laptop demo, where the database is disposable and
+# a migration step would be friction for no benefit.
+# ⚠ A pushed database may be missing the baseline's four hand-written indexes,
+#   so a duplicate-rating race will not reproduce in this container even though
+#   it is blocked in dev/stage/prod. See src/migrations/README.md.
+# 🔴 The RUNTIME image (Dockerfile, not this one) does the opposite: migrations
+#   only, `payload migrate && next start`.
 ENV PORT=3002
 EXPOSE ${PORT}
 

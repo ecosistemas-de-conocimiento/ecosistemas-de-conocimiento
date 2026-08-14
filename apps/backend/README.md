@@ -198,9 +198,14 @@ per-document corpus delete, so promoting a document out of drafts stamps
 endpoint hands you one. A retrieve without it can still return retired
 documents.
 
-**There is no baseline migration.** The schema is created by Payload's push.
-[`src/migrations/README.md`](src/migrations/README.md) says how to generate the
-first one and lists three unique indexes that must go into it.
+**The baseline migration exists, and four of its indexes are hand-written.**
+Deployed environments run migrations only (`PAYLOAD_DISABLE_PUSH=1`); the local
+demo still runs on push. Three of those hand-written indexes are compound
+UNIQUE constraints that Payload's field config cannot express, and they are the
+only real lock behind de-duplication that is otherwise done in `beforeValidate`
+hooks. Push does not know about them and can drop them.
+[`src/migrations/README.md`](src/migrations/README.md) has the list and the
+reasoning.
 
 **The rate limiter is in-process.** N replicas allow N× every published limit.
 

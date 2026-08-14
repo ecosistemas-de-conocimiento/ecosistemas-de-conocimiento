@@ -1,105 +1,133 @@
-# Migrations — there is no baseline yet
+# Migrations — the baseline exists
 
-`index.ts` exports an empty array. That is the intended state right now, not an
-oversight.
+`20260814_205354_baseline.ts` is the first and, so far, only migration. It was
+cut on 2026-08-14, when every database in every environment was still empty —
+the only moment a baseline can be cut cleanly rather than reconciled.
 
-## Why it is empty
+This file used to say "there is no baseline yet" and describe how to make one.
+That history is preserved below under "How this got here", because the reasoning
+still matters the next time someone is tempted to regenerate it.
 
-This repo is a fresh start assembled from two Payload apps, each of which
-arrived with its own baseline migration describing its own schema. Those two
-baselines could not be sequenced together — they create overlapping tables
-(`users`, `projects`) with different shapes, and the second would fail against
-the first. Both were **deleted**, because the alternative is a migration history
-that describes a database nobody will ever have.
+## The rules now
 
-Nothing is deployed. There is no production data. The cheapest correct move is
-one clean baseline generated once the schema stops moving.
+🔴 **Push is off in every deployed environment.** `PAYLOAD_DISABLE_PUSH=1` in
+dev, stage and prod (`infra/fleet/env-manifests.md` §1 and §6). The backend's
+`start` script is `payload migrate && next start`, so a deploy applies pending
+migrations and fails loudly if it cannot.
 
-## How the schema gets created today
+✅ **Schema changes go through `payload migrate:create <name>`.** Change the
+collection config, run it against a database that is already at the current
+baseline, review the generated SQL, commit both the `.ts` and the `.json`
+snapshot. Payload rewrites `index.ts` for you.
 
-`src/payload.config.ts` runs with `push: true`. Payload diffs the config against
-the database and applies the difference at boot. That is fine for a local or dev
-database being recreated freely, and it is the ONLY thing creating tables right
-now.
+⚠ **The local demo still runs on push** (`infra/docker-compose.yml` sets
+`PAYLOAD_DISABLE_PUSH=0`). Convenient, and fine for a throwaway database — but
+see the next section before you trust a local database to behave like a
+deployed one.
 
-⚠ **Push is not safe on a database with data in it.** It will drop a column to
-match the config without asking anyone. Do not point a push-enabled build at
-anything you care about.
+## 🔴 Four indexes in the baseline are hand-written, and push does not know them
 
-## Generating the first baseline
+Payload's field config has no compound index, so these four were appended to the
+generated `up()` by hand, in a clearly-marked block at the bottom of the file:
 
-Do all four steps together. Doing the first without the rest leaves a deployed
-environment with no schema at all.
+| index | table | columns |
+|---|---|---|
+| `ratings_message_user_unq` | `ratings` | `message_id, user_id` |
+| `memberships_user_organization_unq` | `memberships` | `user_id, organization_id` |
+| `ai_service_callbacks_natural_key_unq` | `ai_service_callbacks` | `correlation_key, event_key, event` |
+| `documents_organization_publication_status_idx` | `documents` | `organization_id, publication_status` |
 
-1. Bring up an **empty** database and let a `pnpm dev` boot push the full
-   schema, so what you generate from is what the config actually says.
-2. `pnpm --filter @edc/backend payload migrate:create baseline`
-3. Add the generated file to `index.ts`.
-4. Flip the app to migrations-only, in the same change:
-   - set `PAYLOAD_DISABLE_PUSH=1` in every deployed environment;
-   - change the `start` script back to `payload migrate && next start`.
+Two consequences, both easy to trip over:
 
-## Add these to the baseline by hand
+1. **A regenerated baseline will not contain them.** They are not in the drizzle
+   schema Payload diffs against, so `migrate:create` cannot emit them. If this
+   baseline is ever regenerated, copy the block forward by hand.
+2. **A push-enabled boot can drop them.** Push reconciles the database toward
+   the drizzle schema. An index that is not in that schema is not something push
+   has any reason to keep. Nothing errors when they go — the ratings table just
+   starts accepting duplicate rows again.
 
-Payload has no compound-unique index in its collection config, so two
-constraints this code depends on are enforced in `beforeValidate` hooks today.
-A hook is a check, not a lock: two simultaneous inserts can both pass it.
+### Why the three `_unq` ones are correctness, not tuning
 
-When you write the baseline, add real partial unique indexes for:
+`collections/Ratings.ts`, `collections/Memberships.ts` and the callback receiver
+in `app/api/ai-service/callback/route.ts` all de-duplicate in application code:
+a `beforeValidate` hook, or a find-then-create. **A hook is a check, not a
+lock.** Two concurrent requests both read "no row exists", both pass, both
+write. Only the database can close that.
 
-- `memberships (user, organization)` — see `collections/Memberships.ts`
-- `ratings (message, user)` — see `collections/Ratings.ts`. This one is the more
-  important of the two: without it, two fast clicks on the star widget can
-  produce two rows for the same answer, and every average computed over the
-  table is quietly wrong.
-- `ai_service_callbacks (correlation_key, event_key, event)` — the callback
-  receiver's idempotency depends on an INSERT conflicting. Without the index
-  there is nothing to conflict with, and an ai-service retry re-runs the
-  dispatch.
+The application code stays exactly as it is — the hooks produce the readable
+error in the admin panel. The indexes close the race underneath them.
 
-The application code stays as it is: the hooks give a readable error in the
-admin panel, and the index closes the race underneath them.
+- `ratings (message_id, user_id)` is the one that matters most. Two fast clicks
+  on the star widget produce two rows for the same answer, silently, and every
+  average computed over the table is then wrong with no way to tell which row
+  the user meant.
+- `ai_service_callbacks (correlation_key, event_key, event)` is what makes the
+  callback receiver's idempotency real: it INSERTs and treats a unique violation
+  as "already processed". With no unique index there is nothing to conflict
+  with, so an ai-service retry re-runs the whole dispatch.
+  🔴 **The index NAME is part of the contract** — `route.ts` matches the string
+  `ai_service_callbacks_natural_key_unq` in the raw driver error. Renaming the
+  index silently narrows the dedupe to the other error shapes it checks for.
+- `memberships (user_id, organization_id)` keeps role resolution unambiguous.
 
-## Also worth an index
+⚠ They are plain `UNIQUE`, not partial. An earlier draft of this file called for
+"partial unique indexes"; a `WHERE` clause buys nothing, because every column
+involved is `NOT NULL`.
 
-Not correctness, but every one of these is on a hot path:
+### The "also worth an index" list was mostly already satisfied
 
-- `documents (organization, publication_status)` — the visibility constraint
-  `OR(uploaded_by = me, AND(publication_status = 'published', organization IN …))`
-  runs on every document list.
-- `documents (uploaded_by)` — the other half of the same OR.
-- `documents (publish_ingest_id)` — the callback receiver looks a row up by it
-  on every ingest event.
-- `ratings (organization)` and `ratings (message)` — tenant filter and the
-  find-before-upsert.
-- `media (uploaded_by)` — the unconditional half of the media read constraint,
-  and the whole of its update/delete rule. It is checked on every file fetch,
-  including `GET /api/media/file/:filename`.
-- `media (organization)` — informational today (see `collections/Media.ts`), but
-  it is what an admin filters the file list by.
+An earlier draft listed seven hot-path indexes to add by hand. Six of them
+already exist: Payload emits them from `index: true` on the field, verified
+against the real schema —
+
+`documents_organization_idx`, `documents_uploaded_by_idx`,
+`documents_publish_ingest_id_idx`, `ratings_organization_idx`,
+`ratings_message_idx`, `media_uploaded_by_idx`, `media_organization_idx`.
+
+Only the **composite** `documents (organization_id, publication_status)` was
+genuinely missing, and that is the fourth hand-written index above. It serves
+the `AND(publication_status = 'published', organization IN …)` branch of the
+document visibility constraint in one scan.
 
 ## ⚠ New columns on `media`, and what they mean for existing rows
 
-`collections/Media.ts` gained `uploaded_by` and `organization`. Both are
-NULLABLE on purpose: `POST /api/media` carries only the file, so a multi-
-ecosistema uploader has no unambiguous organization, and server-side writes
+`collections/Media.ts` has `uploaded_by` and `organization`. Both are NULLABLE
+on purpose: `POST /api/media` carries only the file, so a multi-ecosistema
+uploader has no unambiguous organization, and server-side writes
 (`overrideAccess: true`, no user) have no uploader to stamp.
 
-🔴 **Any `media` row created before this change has `uploaded_by = NULL`, and a
-NULL matches neither the read constraint nor the update/delete one.** Those rows
-become invisible and undeletable to everyone except a platform admin. That is
-fail-closed and deliberate — the alternative is guessing an owner for a file
-whose owner was never recorded — but it means a database carried across this
-change needs a one-off backfill:
+🔴 **A `media` row with `uploaded_by = NULL` matches neither the read constraint
+nor the update/delete one.** Such rows are invisible and undeletable to everyone
+except a platform admin. That is fail-closed and deliberate — the alternative is
+guessing an owner for a file whose owner was never recorded.
+
+Nothing was deployed when the baseline was cut, so the baseline creates these
+columns and no backfill is needed. Recorded here in case a database predating
+the baseline ever turns up:
 
 ```sql
 -- Derive the owner from the document that points at the file.
 UPDATE media m
-SET uploaded_by = d.uploaded_by, organization = d.organization
+SET uploaded_by_id = d.uploaded_by_id, organization_id = d.organization_id
 FROM documents d
-WHERE d.media_file_id = m.id AND m.uploaded_by IS NULL;
+WHERE d.media_file_id = m.id AND m.uploaded_by_id IS NULL;
 ```
 
 Files no document points at cannot be backfilled this way and should be reviewed
-by hand or deleted. Nothing is deployed today, so no backfill is scheduled; this
-is recorded so the first real deployment does not discover it.
+by hand or deleted.
+
+## How this got here
+
+This repo was assembled from two Payload apps, each of which arrived with its
+own baseline migration describing its own schema. Those two baselines could not
+be sequenced together — they create overlapping tables (`users`, `projects`)
+with different shapes, and the second would fail against the first. **Both were
+deleted**, because the alternative is a migration history that describes a
+database nobody will ever have.
+
+`index.ts` then exported an empty array on purpose until 2026-08-14, when the
+baseline was generated from an empty `edc_backend` that a push-enabled boot had
+just built from the config. It was verified by dropping and recreating that
+database, running `payload migrate`, and inserting deliberately conflicting rows
+through `psql` to confirm each unique index actually rejects the second write.

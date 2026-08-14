@@ -41,7 +41,7 @@ and are a **different, deliberately laxer** set.
 | `PORT` | `3002` | `3002` | `3002` | ⚙ must match Coolify's `ports_exposes` |
 | `DATABASE_URI` | `postgres://…@<data>:5432/edc_backend_dev` | `…/edc_backend_stage` | `…/edc_backend_prod` | 🔑 ⚠ **`URI`, not `URL`** |
 | `PAYLOAD_SECRET` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 `openssl rand -hex 32`, **distinct per env** |
-| `PAYLOAD_DISABLE_PUSH` | `1` | `1` | `1` | ⚙ 🔴 **ONLY after a baseline migration exists.** Setting it today gives you no schema at all. See §6 |
+| `PAYLOAD_DISABLE_PUSH` | `1` | `1` | `1` | ⚙ 🔴 **Required.** The baseline migration now exists, so this is live guidance, not a future plan. Unset = push, and push can drop the hand-written unique indexes. See §6 |
 | `AUTH_PRIVATE_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 🔴 PKCS#8 PEM, `\n`-escaped. **Distinct per env** — a shared key means a dev token is valid in prod |
 | `AUTH_PUBLIC_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | ⚙ SPKI PEM, served at `/.well-known/jwks.json` |
 | `AUTH_KEY_ID` | e.g. `edc-dev-1` | `edc-stage-1` | `edc-prod-1` | ⚙ the `kid`. Version it — key rotation depends on it |
@@ -315,32 +315,49 @@ next deploy**, and 3 more would have booted while silently mutating their own sc
 local push-heals on every boot while deployed environments migrate, so **local and deployed diverge
 silently** — invisible until a query hits a column that exists in one and not the other.
 
-**Fact 2 — 🔴 `apps/backend/src/migrations/index.ts` is EMPTY.** No baseline has been cut. Push is
-currently the only thing that creates a table.
+**Fact 2 — ✅ RESOLVED 2026-08-14. The baseline migration exists.**
+`apps/backend/src/migrations/20260814_205354_baseline.ts`, registered in `index.ts`. It was cut and
+verified against an empty `edc_backend`: dropped, recreated, `payload migrate`, 20 tables, one row in
+`payload_migrations`.
 
-**Therefore: setting `PAYLOAD_DISABLE_PUSH=1` today gives you an application with no schema.** The
-table above says `1` because that is where this must land, not because it is safe to set now.
+**Therefore `PAYLOAD_DISABLE_PUSH=1` is now correct and required in dev, stage and prod.** The
+sentence that used to live here — "setting it today gives you an application with no schema" — is no
+longer true and the opposite is now the risk.
 
-### The correct sequence — four steps, all together
+### The sequence — all four steps landed together
 
-1. Generate the baseline migration.
-2. Add it to `src/migrations/index.ts`.
-3. Set `PAYLOAD_DISABLE_PUSH=1` in dev, stage and prod.
-4. Change the backend's runtime command to `payload migrate && next start`.
+1. ✅ Baseline generated (`20260814_205354_baseline`).
+2. ✅ Registered in `apps/backend/src/migrations/index.ts`.
+3. ✅ `PAYLOAD_DISABLE_PUSH=1` in dev, stage and prod — the table in §1 above.
+4. ✅ Backend runtime command is `payload migrate && next start`
+   (`apps/backend/package.json` `start`; `apps/backend/Dockerfile` runs `pnpm start`).
 
-🔴 **All four or none.** (3) alone = no schema. (1)+(2) alone = push still on, which is the exact
-condition that broke their fleet. `apps/backend/src/migrations/README.md` documents this deliberately.
+🔴 **A THIRD REASON PUSH MUST STAY OFF, which did not exist before the baseline.** The baseline
+carries four indexes written by hand because Payload's field config cannot express them:
 
-🟡 **Recommendation: make cutting the baseline a prerequisite of the first `stage` deploy.** Every
-environment is empty right now, which is the only time a baseline can be cut cleanly. That window
-closes when the first real user appears and it does not reopen.
+| index | table | columns | why |
+|---|---|---|---|
+| `ratings_message_user_unq` | `ratings` | `message_id, user_id` | one rating per answer per person |
+| `memberships_user_organization_unq` | `memberships` | `user_id, organization_id` | one membership per person per org |
+| `ai_service_callbacks_natural_key_unq` | `ai_service_callbacks` | `correlation_key, event_key, event` | callback idempotency |
+| `documents_organization_publication_status_idx` | `documents` | `organization_id, publication_status` | hot path, not correctness |
 
-📝 **Separately, for whoever owns `payload.config.ts`:** invert the gate to
+None of them exist in the drizzle schema Payload diffs against, so **push can remove them**. Nothing
+errors when it does — the ratings table simply starts accepting duplicate rows again, and every
+average computed over it is quietly wrong. The three `_unq` ones are the only real lock behind
+`beforeValidate` hooks that are checks, not locks.
+
+📝 **Still open, for whoever owns `payload.config.ts`:** invert the gate to
 `push: process.env.PAYLOAD_ALLOW_PUSH === '1'`, so the safe behaviour is what you get by forgetting.
-Not my file — flagged here so it is not lost.
+Deferred, not done: `infra/docker-compose.yml` currently opts the local demo in with
+`PAYLOAD_DISABLE_PUSH=0`, so inverting the gate has to change that file in the same commit.
 
-✅ **The local demo keeps push ON and that stays correct**, baseline or not:
-`infra/docker-compose.yml` sets `PAYLOAD_DISABLE_PUSH=0` so a laptop needs no migration step.
+🟡 **The local demo still keeps push ON** — `infra/docker-compose.yml` sets `PAYLOAD_DISABLE_PUSH=0`
+so a laptop needs no migration step. That is still a reasonable default for a throwaway database, but
+it is no longer free: a pushed local database may be missing the four hand-written indexes above, so
+a duplicate-rating race will NOT reproduce locally and WILL be blocked in dev/stage/prod. If you are
+testing anything that depends on those constraints, run the laptop on migrations instead
+(`PAYLOAD_DISABLE_PUSH=1` plus `pnpm --filter @edc/backend migrate`).
 
 ---
 

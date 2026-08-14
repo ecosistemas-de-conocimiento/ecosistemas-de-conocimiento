@@ -199,16 +199,29 @@ export default buildConfig({
       connectionString: process.env.DATABASE_URI || '',
     },
     /**
-     * ⚠ SCHEMA PUSH IS ON BY DEFAULT, AND THAT IS DELIBERATE *FOR NOW*.
+     * ⚠ SCHEMA PUSH IS ON BY DEFAULT. That is now a LOCAL-ONLY convenience.
      *
-     * This repo has NO baseline migration yet — see `src/migrations/README.md`.
-     * Until one is generated, push is the only thing that creates the schema,
-     * so turning it off leaves every environment with an empty database.
+     * The baseline migration exists (`src/migrations/`), so migrations — not
+     * push — are what create and advance the schema. Every DEPLOYED
+     * environment sets `PAYLOAD_DISABLE_PUSH=1` (see
+     * `infra/fleet/env-manifests.md` §6) and runs `payload migrate` before
+     * `next start`. Push against a real database is how columns get dropped
+     * without anyone approving it.
      *
-     * 🔴 The moment a baseline exists, flip this to migrations-only
-     * (`PAYLOAD_DISABLE_PUSH=1` in every deployed environment) and make `start`
-     * run `payload migrate` first. Push against a real database is how columns
-     * get dropped without anyone approving it.
+     * 🔴 THE SECOND REASON PUSH MUST STAY OFF WHERE IT MATTERS. The baseline
+     * carries four indexes that are hand-written and therefore absent from the
+     * drizzle schema Payload diffs against — including the three compound
+     * UNIQUE indexes that are the only real lock behind the `beforeValidate`
+     * de-duplication hooks (`ratings`, `memberships`, `ai_service_callbacks`).
+     * Push reconciles the database toward that schema, so a push-enabled boot
+     * can remove them. Nothing errors; the ratings table just starts accepting
+     * duplicate rows again. See the comment block in the baseline migration.
+     *
+     * 📝 Worth doing later: invert this gate to
+     * `push: process.env.PAYLOAD_ALLOW_PUSH === '1'` so the safe behaviour is
+     * what you get by forgetting. Deferred here only because
+     * `infra/docker-compose.yml` currently opts the local demo IN via
+     * `PAYLOAD_DISABLE_PUSH=0`, and that file is owned elsewhere.
      */
     push: process.env.NODE_ENV !== 'test' && process.env.PAYLOAD_DISABLE_PUSH !== '1',
   }),

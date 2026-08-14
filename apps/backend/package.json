@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "next dev -p ${PORT:-3002}",
     "build": "next build",
-    "start": "next start -p ${PORT:-3002}",
+    "start": "payload migrate && next start -p ${PORT:-3002}",
     "typecheck": "tsc --noEmit",
     "generate:types": "payload generate:types",
     "generate:schema": "payload generate:db-schema",
