@@ -26,6 +26,9 @@ import { checkCallbackConfig } from './lib/callbackConfig'
 import { checkAudioServiceConfig } from './lib/audioClient'
 import { startSessionJanitor } from './lib/sessionJanitorScheduler'
 import { startTranscriptionJanitor } from './lib/transcriptionJanitor'
+import { describeStorageMode, resolveStorageMode } from './lib/storage/client'
+import { ensureStorageBucketAtBoot } from './lib/storage/ensureBucket'
+import { storagePlugins } from './lib/storage/plugin'
 import { seedAdmin } from './seed/admin'
 import { seedDemo } from './seed/demo'
 import { bootIgnoredOverrideWarning, resolveBootSeedDecision } from './seed/env-gate'
@@ -112,7 +115,35 @@ export default buildConfig({
    * configuration problem takes the admin panel down with it, and the admin
    * panel is where you would fix the problem.
    */
+  /**
+   * WHERE UPLOADED FILES GO. Empty when no `S3_*` variables are set, and that
+   * empty list IS the local-disk fallback: with no plugin, Payload leaves
+   * `media` on `./media/` exactly as before. See `lib/storage/plugin.ts` — and
+   * read the access-control contract at the top of it before changing anything
+   * there, because the plugin can be configured to hand out presigned URLs and
+   * that would bypass every rule in `collections/Media.ts`.
+   */
+  plugins: storagePlugins(),
   onInit: async (payload) => {
+    // 0. SAY WHICH STORAGE MODE THIS PROCESS CAME UP IN, first, before anything
+    //    can write a file. "Did this put my upload on disk or in the bucket"
+    //    must be answerable from the boot log alone. A PARTIAL S3 config logs at
+    //    ERROR here: it silently falls back to a container filesystem the next
+    //    redeploy throws away, which is the one failure nobody notices.
+    const storageMode = resolveStorageMode()
+    const storageLog = describeStorageMode(storageMode)
+    payload.logger[storageLog.level](storageLog.message)
+
+    // 0b. Make sure the bucket exists. Idempotent and re-runnable BY DESIGN —
+    //     RustFS keeps its IAM store on the data volume and no env var seeds it,
+    //     so provisioning is an operation that repeats, never an init container
+    //     that exits. Skips entirely on local disk; retries through the window
+    //     where RustFS's control plane is up but its storage layer still 503s;
+    //     then logs at ERROR and CONTINUES. It never throws — gating boot on
+    //     storage crash-loops every replica and takes down the admin panel you
+    //     would use to fix it. /api/health/ready carries that signal instead.
+    await ensureStorageBucketAtBoot(payload.logger)
+
     // 1. Is the ai-service ingest-callback round-trip actually configured HERE?
     //    The failure this catches is silent and total: documents are enqueued,
     //    nothing ever calls back, and every upload sits in `embedding` forever

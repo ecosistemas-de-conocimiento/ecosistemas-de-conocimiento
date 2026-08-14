@@ -40,6 +40,11 @@
  *    shared package later is a swap, not a redesign.
  */
 
+// The ONLY static import here, and deliberately a leaf: `storage/client` reads
+// `process.env` and nothing else. The AWS SDK stays behind a dynamic import
+// inside `getBucketOps`, so a local-disk boot never loads it.
+import { isStorageConfigured } from './storage/client'
+
 /** The two states. There is no third one — see Rule 1. */
 export type CheckStatus = 'ok' | 'down'
 
@@ -151,6 +156,25 @@ export function classifyError(err: unknown, depth = 0): ErrorCode {
   if (TIMEOUT_CODES.has(code)) return 'timeout'
   if (UNREACHABLE_CODES.has(code)) return 'unreachable'
 
+  /**
+   * AWS SDK errors carry the status on `$metadata`, never on `httpStatus`.
+   *
+   * 🔴 This branch reads a NUMBER out of a structured field and passes it
+   * through `httpCode`, which validates it is an integer 100–599. No string
+   * from the SDK — not `err.name`, not `err.message`, not the response body —
+   * is ever read here, so the redaction boundary holds. It matters because a
+   * `HeadBucket` failure is only distinguishable by status: 403 (forbidden or
+   * absent — the store will not say which), 404 (absent), 503 (storage layer
+   * down while the control plane is up, which is RustFS's signature failure).
+   */
+  const metaStatus = (e as { $metadata?: { httpStatusCode?: unknown } }).$metadata?.httpStatusCode
+  if (typeof metaStatus === 'number') {
+    const fromMetadata = httpCode(metaStatus)
+    // Fall through to `.cause` on a nonsense status rather than reporting
+    // `unknown` for an error whose real reason is one level down.
+    if (fromMetadata !== 'unknown') return fromMetadata
+  }
+
   // undici wraps the real socket error: `TypeError: fetch failed` with `.cause`.
   if (e.cause !== undefined && e.cause !== null) {
     const fromCause = classifyError(e.cause, depth + 1)
@@ -240,30 +264,82 @@ export async function probeAiService(baseUrl = process.env.AI_SERVICE_URL): Prom
 }
 
 /**
+ * storage — object storage, probed with a REAL S3 CALL.
+ *
+ * 🔴 WHY THIS DOES NOT CALL RUSTFS'S OWN `/health` OR `/health/ready`.
+ * Measured by the user against `rustfs/rustfs:1.0.0-rc.1`: both endpoints
+ * answer 200 — `/health/ready` reporting `"storage":{"ready":true}` — WHILE
+ * EVERY S3 CALL AGAINST THE SAME PROCESS RETURNS 503. That is Rule 4b's whole
+ * point, and the user's own notes call it "a prototype 20-hour outage in a new
+ * place, and worse because the endpoint has a reassuring name". So this probe
+ * does the thing: one `HeadBucket` on the real bucket with the real app
+ * credential. Rule 5 — bounded, cheap (~1ms), no data transferred, no
+ * rate-limit budget spent.
+ *
+ * ⚠ THE 403 AMBIGUITY, AND WHICH WAY WE CHOSE. In the S3 API generally, a
+ * `HeadBucket` 403 means either "this bucket is not yours" or "it does not
+ * exist and you may not find out" — the two are deliberately not distinguished.
+ *
+ *   DECISION: a 403 is `down`. It is NOT treated as healthy, and it is NOT
+ *   given its own fatal path distinct from any other failure.
+ *
+ *   WHY: both readings mean the same operational thing — THIS APP CANNOT SERVE
+ *   OR STORE FILES with the credential it has. Reporting `ok` on a 403 would be
+ *   a fabricated green of exactly the kind Rule 1 exists to prevent.
+ *
+ * ✅ MEASURED against `rustfs/rustfs:1.0.0-rc.1`, and better than the general
+ * case: this build DOES separate the two, so the reported code is actionable
+ * and each code has ONE operator action.
+ *
+ *   `http_404` — the bucket is genuinely absent. RustFS answers 404 (not 403)
+ *                for a missing bucket, with `err.name === 'NotFound'`.
+ *                → PROVISIONING HAS NOT RUN. `pnpm provision:storage`.
+ *   `http_403` — the credential or its policy is wrong. Measured with a bogus
+ *                key: 403, and `err.name` is the useless `'Unknown'` because a
+ *                HEAD carries no body to parse a code out of. This is also what
+ *                a wiped IAM volume looks like.
+ *                → RE-CREATE THE CREDENTIAL. A restart will not help.
+ *   `http_503` — storage layer down under a healthy control plane. RustFS's
+ *                signature failure, and the reason this probe exists.
+ *                → WAIT OR RESTART THE STORE.
+ *
+ * 🔴 Do NOT collapse 403 and 404 into one message. They are different fixes,
+ * and only the status code carries the difference — never `err.name`.
+ *
+ * ⚠ Undeclared when unset ⇒ the check is OMITTED, not reported healthy. With no
+ * `S3_ENDPOINT` this process stores files on local disk and there is no object
+ * storage that could be down; emitting `storage: {status:'ok'}` would let a
+ * monitor assert on a dependency the environment does not have.
+ */
+export async function probeStorage(): Promise<void> {
+  const { getBucketOps, getStorageBucket } = await import('./storage/client')
+  const ops = await getBucketOps()
+  await ops.headBucket(getStorageBucket())
+}
+
+/**
  * Rule 4 — the checks list is DERIVED from what the service actually wires up,
  * not hand-maintained. A hand-written list is correct exactly until the next
  * dependency is added and nobody updates it, which is the original bug.
  *
- * This backend wires exactly two:
+ * This backend wires three:
  *   - postgres via `DATABASE_URI` (`src/payload.config.ts`) — always required.
  *   - ai-service via `AI_SERVICE_URL` (`src/lib/aiClient.ts`) — always required
  *     under Rule 1a, declared even when unset so a LOST env var reports `down`
  *     rather than silently disappearing from `checks`.
- *
- * ⚠ There is NO object storage here: no `@payloadcms/storage-s3`
- *   dependency and no `S3_*` env var is read anywhere in `src/` (verified by
- *   grep). So no `storage` check is emitted — emitting a hardcoded `ok` would be
- *   a fabricated green, which is the failure mode this contract exists to stop.
- *   If storage is ever configured, add it HERE, probed with `HeadBucket` on the
- *   real bucket (Rule 4b), and branch on `err.$metadata.httpStatusCode` — a
- *   `HeadBucket` 403 has no response body, so the SDK reports
- *   `err.name === 'Unknown'`.
+ *   - storage via `S3_*` (`src/lib/storage/`) — declared ONLY when configured,
+ *     because "not configured" here is a real supported mode (local disk), not
+ *     a lost variable. Contrast ai-service above: there, unset is a fault.
  */
 export function declaredDependencies(): Dependency[] {
-  return [
+  const deps: Dependency[] = [
     { name: 'database', probe: probeDatabase },
     { name: 'ai-service', probe: probeAiService },
   ]
+  // Read through the storage module so there is exactly one definition of
+  // "configured", shared with the plugin wiring and the boot log.
+  if (isStorageConfigured()) deps.push({ name: 'storage', probe: probeStorage })
+  return deps
 }
 
 // ---------------------------------------------------------------------------
