@@ -23,7 +23,9 @@ import { tokenEndpoint } from './endpoints/token'
 
 import { checkAIServiceCapabilities } from './lib/capabilityCheck'
 import { checkCallbackConfig } from './lib/callbackConfig'
+import { checkAudioServiceConfig } from './lib/audioClient'
 import { startSessionJanitor } from './lib/sessionJanitorScheduler'
+import { startTranscriptionJanitor } from './lib/transcriptionJanitor'
 import { seedAdmin } from './seed/admin'
 import { seedDemo } from './seed/demo'
 import { bootIgnoredOverrideWarning, resolveBootSeedDecision } from './seed/env-gate'
@@ -118,6 +120,14 @@ export default buildConfig({
     //    capability check below throws. Never throws itself.
     checkCallbackConfig(payload.logger)
 
+    // 1b. Is audio transcription configured? Audio rides the SAME callback
+    //     round-trip (audio-service signs with the ai-service scheme on
+    //     purpose), so this only checks the two audio-specific vars. Unlike the
+    //     check above, a missing audio config is loud at runtime too — the row
+    //     fails visibly rather than hanging — but an operator should learn about
+    //     it at boot, not from a user. Never throws.
+    checkAudioServiceConfig(payload.logger)
+
     // 2. Does the ai-service in THIS environment have what this build needs?
     //    Ask before anything uses it, so a wrong promotion order fails at
     //    deploy time rather than leaving uploads stuck in `embedding`.
@@ -168,6 +178,17 @@ export default buildConfig({
     //    default (SESSION_JANITOR_ENABLED); the first sweep is one interval
     //    away so a deploy never reaps data the instant it boots.
     startSessionJanitor(payload)
+
+    // 6. Stalled-transcription sweep. ON by default, unlike the session
+    //    janitor: it only turns an invisible stuck state into a visible,
+    //    retryable failure — it never deletes anything.
+    //
+    //    🔴 It covers the one audio failure mode NO health check can see: if
+    //    audio-service's callback-worker container is not running, every
+    //    transcription succeeds and not one webhook is ever delivered, so the
+    //    document waits in `transcribing` forever and looks exactly like one
+    //    that is still working. See lib/transcriptionJanitor.ts.
+    startTranscriptionJanitor(payload)
   },
   secret: process.env.PAYLOAD_SECRET || '',
   typescript: {

@@ -249,3 +249,158 @@ describe('POST /api/sessions/[id]/documents — success', () => {
     });
   });
 });
+
+// ── Audio uploads ─────────────────────────────────────────────────────────
+//
+// Audio takes the SAME path as a PDF on purpose — same media upload, same
+// `documents` row, same webhook. The only thing this proxy decides is the
+// `kind`, and getting that wrong is expensive in one direction: a document
+// mislabelled as audio is handed to a transcriber that will spend CPU-hours
+// discovering it has no audio track.
+
+describe('POST /api/sessions/[id]/documents — audio', () => {
+  /**
+   * A multipart request whose `file` reports an arbitrary size.
+   *
+   * The size gate has to be exercised without allocating 200 MB, and a real
+   * `Request` round-trip re-reads the body and recomputes `size`, discarding a
+   * stubbed one. So hand the handler the parsed FormData directly.
+   */
+  function sizedMultipartRequest(file: File, size: number): Request {
+    Object.defineProperty(file, 'size', { value: size, configurable: true });
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return {
+      headers: new Headers({ 'content-type': 'multipart/form-data; boundary=vitest' }),
+      formData: async () => form,
+    } as unknown as Request;
+  }
+
+  function upstreamAccepts(mediaId = 777) {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ doc: { id: mediaId } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    mockedBackendFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ doc: { id: 1 } }), {
+        status: 201,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    return fetchSpy;
+  }
+
+  function createdBody(): Record<string, unknown> {
+    const init = mockedBackendFetch.mock.calls[0]![2] as RequestInit;
+    return JSON.parse(init.body as string) as Record<string, unknown>;
+  }
+
+  // 🔴 The Safari / Android case. A phone hands us an `.m4a` with an empty MIME
+  // type; rejecting it as `unsupported_kind` would break the single most likely
+  // way a user records a junta.
+  it('creates an .m4a with an empty MIME type as kind: audio', async () => {
+    upstreamAccepts();
+    const file = new File(['x'], 'junta.m4a', { type: '' });
+    const res = await POST(makeEvent({ request: multipartRequest(file) }));
+
+    expect(res.status).toBe(201);
+    expect(createdBody()).toMatchObject({
+      kind: 'audio',
+      mode: 'rag-retrieve',
+      ingestStatus: 'pending',
+    });
+  });
+
+  it('creates an audio/mpeg file as kind: audio', async () => {
+    upstreamAccepts();
+    const file = new File(['x'], 'entrevista.mp3', { type: 'audio/mpeg' });
+    const res = await POST(makeEvent({ request: multipartRequest(file) }));
+
+    expect(res.status).toBe(201);
+    expect(createdBody()).toMatchObject({ kind: 'audio' });
+  });
+
+  // ⚠ ORDERING. `isAudioUpload`'s extension fallback is deliberately generous,
+  // so the document branches must be checked first. If this flips, a PDF with an
+  // odd MIME type goes to the transcriber and costs CPU-hours to bounce.
+  it.each([
+    ['paper.pdf', 'application/pdf', 'pdf'],
+    ['paper.pdf', '', 'pdf'],
+    [
+      'acta.docx',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'docx',
+    ],
+    ['acta.docx', '', 'docx'],
+  ])('keeps %s (%p) as kind: %s — the audio branch must not capture it', async (
+    name,
+    type,
+    kind,
+  ) => {
+    upstreamAccepts();
+    const res = await POST(
+      makeEvent({ request: multipartRequest(new File(['x'], name, { type })) }),
+    );
+    expect(res.status).toBe(201);
+    expect(createdBody()).toMatchObject({ kind });
+  });
+
+  // The browser checks the size too, but the browser is not a security
+  // boundary: a body accepted here lands on the backend's disk before anything
+  // else can refuse it. So the refusal must happen before the upload starts.
+  it('rejects an oversize recording with 413 before touching the backend', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const file = new File(['x'], 'maraton.mp3', { type: 'audio/mpeg' });
+    const res = await POST(
+      makeEvent({ request: sizedMultipartRequest(file, 201 * 1024 * 1024) }),
+    );
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: 'file_too_large', kind: 'audio' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mockedBackendFetch).not.toHaveBeenCalled();
+  });
+
+  // The audio cap is a bigger cap, not a global one. A 25 MB PDF is still
+  // refused, and the same 25 MB as audio is fine — that asymmetry IS the change.
+  it('still refuses a 25 MB pdf at the document cap', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const file = new File(['x'], 'escaneo.pdf', { type: 'application/pdf' });
+    const res = await POST(
+      makeEvent({ request: sizedMultipartRequest(file, 25 * 1024 * 1024) }),
+    );
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: 'file_too_large', kind: 'pdf' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('accepts a 25 MB mp3, which the old cap would have refused', async () => {
+    upstreamAccepts();
+    const file = new File(['x'], 'junta.mp3', { type: 'audio/mpeg' });
+    const res = await POST(
+      makeEvent({ request: sizedMultipartRequest(file, 25 * 1024 * 1024) }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(createdBody()).toMatchObject({ kind: 'audio' });
+  });
+
+  // 🔴 TENANCY. The corpus and the owning ecosistema are derived server-side
+  // from the session. A client that could name one could file a recording into
+  // somebody else's ecosistema — and a transcript is the kind of document
+  // people would least like to misplace.
+  it('never names a corpus or an organization in the row it creates', async () => {
+    upstreamAccepts();
+    const file = new File(['x'], 'junta.m4a', { type: 'audio/mp4' });
+    await POST(makeEvent({ request: multipartRequest(file) }));
+
+    const init = mockedBackendFetch.mock.calls[0]![2] as RequestInit;
+    const raw = init.body as string;
+    expect(raw).not.toMatch(/corpus/i);
+    expect(raw).not.toMatch(/organi[sz]ation/i);
+    expect(raw).not.toMatch(/organizaci/i);
+  });
+});

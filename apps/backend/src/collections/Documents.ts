@@ -37,6 +37,27 @@ import {
  * The hook is idempotent on extraction (skipped if `extractedText` already
  * set) and on enqueue (skipped if `ingestId` already set). To force a
  * re-run, clear both fields then save the doc.
+ *
+ * ── AUDIO (`kind: 'audio'`) ──────────────────────────────────────────────────
+ *
+ * 🔴 AUDIO IS NOT A SECOND PIPELINE. It is a slower way of producing
+ * `extractedText` on the SAME row. Step 1 above is replaced by a round-trip to
+ * `services/audio-service`; steps 2 and 3 are the identical code, called
+ * unchanged from the `transcribe.completed` handler in the callback route:
+ *
+ *   afterChange → startTranscription → audio-service → transcribe.completed
+ *                                                    → extractedText
+ *                                                    → enqueueIngestForDoc  ← same fn
+ *
+ * Everything the ecosistema model already does to a document — draft privacy,
+ * publish (which re-embeds into the shared corpus), unpublish, retrieval
+ * scoping — therefore works on a transcript for free. If you find yourself
+ * writing a second function that talks to `/v1/ingest`, or naming a second
+ * corpus, stop: that is the wrong turn this design exists to prevent.
+ *
+ * ⚠ Transcription runs at roughly REAL TIME on CPU. A one-hour recording is a
+ * one-hour job. Nothing in this file may imply otherwise, and no state may be
+ * left dangling with no terminal transition — see the `ingestStatus` field.
  */
 
 /**
@@ -220,7 +241,36 @@ interface DocumentRow {
   extractedText?: string | null
   ingestId?: string | null
   ingestStatus?: string | null
+  ingestError?: string | null
+  transcribeId?: string | null
+  transcribeAttempt?: number | null
+  audioMeta?: AudioMeta | null
 }
+
+/**
+ * What we know about the recording behind an audio document.
+ *
+ * `durationSeconds` is populated at SUBMIT time (audio-service runs ffprobe
+ * inline and returns it on the 202), not at completion — which is what lets the
+ * UI say "esto tarda más o menos lo que dura la grabación" while the job is
+ * still running instead of after it finishes. The rest arrives with
+ * `transcribe.completed`.
+ *
+ * ⚠ `languageProbability` is the only visible signal of ASR confidence. The
+ * product's mitigation for "a transcript can contain errors presented as fact"
+ * is a label in the UI; this is the data behind it.
+ */
+export interface AudioMeta {
+  durationSeconds?: number | null
+  language?: string | null
+  languageProbability?: number | null
+  segmentCount?: number | null
+  model?: string | null
+  chunks?: number | null
+}
+
+/** The kinds whose text arrives through the extract → ingest pipeline. */
+const INGESTABLE_KINDS = new Set(['pdf', 'docx', 'audio'])
 
 function resolveId(raw: unknown): string | number | null {
   if (typeof raw === 'string' || typeof raw === 'number') return raw
@@ -248,7 +298,7 @@ const extractAndIngestHook: CollectionAfterChangeHook = async ({
 
   const row = doc as DocumentRow
   if (operation !== 'create' && operation !== 'update') return doc
-  if (row.kind !== 'pdf' && row.kind !== 'docx') return doc
+  if (!INGESTABLE_KINDS.has(String(row.kind))) return doc
 
   // Run async to avoid blocking the Payload response, AND defer one tick
   // so the create transaction is fully committed before we re-read the row
@@ -292,7 +342,7 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
     } | null
   }
   if (!fresh) return
-  if (fresh.kind !== 'pdf' && fresh.kind !== 'docx') return
+  if (!INGESTABLE_KINDS.has(String(fresh.kind))) return
 
   // ⚠ The corpus is keyed on (ecosistema, uploader), NOT on the session. A
   // document outlives the conversation it was uploaded into, and drafts are
@@ -317,6 +367,19 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
       return
     }
 
+    // 🔴 THE AUDIO FORK, AND THE `return` IS THE POINT OF IT.
+    //
+    // There is no text yet and there will not be for minutes-to-hours, so
+    // control must NOT reach `enqueueIngestForDoc` on this pass. It gets there
+    // from the `transcribe.completed` callback, which calls the very same
+    // function with the very same arguments. Falling through here would enqueue
+    // an empty document: ai-service would happily embed nothing, the row would
+    // go `ready`, and search would silently never find the recording.
+    if (fresh.kind === 'audio') {
+      await startTranscription({ payload, docId, fresh })
+      return
+    }
+
     await payload.update({
       collection: 'documents',
       id: docId as never,
@@ -326,13 +389,23 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
     })
 
     try {
-      extractedText = await extractText(payload, mediaId, fresh.kind)
+      extractedText = await extractText(
+        payload,
+        mediaId,
+        fresh.kind === 'docx' ? 'docx' : 'pdf',
+      )
     } catch (err) {
       console.error('[documents] extraction failed for doc', docId, err)
       await payload.update({
         collection: 'documents',
         id: docId as never,
-        data: { ingestStatus: 'failed' },
+        data: {
+          ingestStatus: 'failed',
+          ingestError: `extraction_failed: ${err instanceof Error ? err.message : String(err)}`.slice(
+            0,
+            500,
+          ),
+        },
         overrideAccess: true,
         context: { __skipDocsExtract: true },
       })
@@ -344,7 +417,10 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
       await payload.update({
         collection: 'documents',
         id: docId as never,
-        data: { ingestStatus: 'failed' },
+        data: {
+          ingestStatus: 'failed',
+          ingestError: 'empty_extraction: the file produced no text',
+        },
         overrideAccess: true,
         context: { __skipDocsExtract: true },
       })
@@ -388,7 +464,9 @@ export async function enqueueIngestForDoc(args: {
   await payload.update({
     collection: 'documents',
     id: docId as never,
-    data: { ingestStatus: 'embedding' },
+    // `ingestError: null` clears whatever a previous failed attempt left behind.
+    // A retry that succeeded must not keep showing the reason it failed before.
+    data: { ingestStatus: 'embedding', ingestError: null },
     overrideAccess: true,
     context: { __skipDocsExtract: true },
   })
@@ -474,11 +552,197 @@ export async function enqueueIngestForDoc(args: {
     await payload.update({
       collection: 'documents',
       id: docId as never,
-      data: { ingestStatus: 'failed' },
+      data: {
+        ingestStatus: 'failed',
+        ingestError: `ingest_enqueue_failed: ${err instanceof Error ? err.message : String(err)}`.slice(
+          0,
+          500,
+        ),
+      },
       overrideAccess: true,
       context: { __skipDocsExtract: true },
     })
   }
+}
+
+// ---------------------------------------------------------------------------
+// Audio → transcript
+// ---------------------------------------------------------------------------
+
+/**
+ * Hand one audio document to `services/audio-service` and record the job id.
+ *
+ * Split out and exported for the same reason as {@link enqueueIngestForDoc}: it
+ * can then be exercised without booting Payload or the `@payload-config` module
+ * graph, and the code under test is the code that runs.
+ *
+ * ⚠ THIS FUNCTION NEVER PRODUCES TEXT AND NEVER CALLS ai-service. It returns as
+ * soon as audio-service has accepted the job (HTTP 202). Everything after that
+ * arrives at `/api/ai-service/callback`.
+ *
+ * ⚠ NO RETRY LOOP HERE, deliberately. audio-service owns retries (its own
+ * schedule, plus a reconciler that turns a killed job into a real
+ * `transcribe.failed`). A retry from this side would pay for the same
+ * CPU-hours twice. A human retry goes through `POST /api/documents/:id/retry`,
+ * which bumps `transcribeAttempt` so the idempotency key changes.
+ */
+export async function startTranscription(args: {
+  payload: Pick<
+    Awaited<ReturnType<typeof import('payload').getPayload>>,
+    'update' | 'findByID'
+  >
+  docId: string | number
+  fresh: Pick<
+    DocumentRow,
+    'name' | 'kind' | 'mediaFile' | 'transcribeId' | 'transcribeAttempt' | 'organization' | 'uploadedBy'
+  >
+  /**
+   * Test seam. Production reads Payload's local media directory as a
+   * FILE-BACKED, LAZILY-READ blob — see {@link openMediaBlob}.
+   */
+  openMedia?: typeof openMediaBlob
+}): Promise<void> {
+  const { payload, docId, fresh } = args
+
+  // The afterChange hook re-fires on every save, including the saves this
+  // function makes. One job per document per attempt.
+  if (fresh.transcribeId) return
+
+  const fail = async (code: string, message: string): Promise<void> => {
+    console.error('[documents] transcription not started for doc', docId, code, message)
+    await payload.update({
+      collection: 'documents',
+      id: docId as never,
+      data: { ingestStatus: 'failed', ingestError: `${code}: ${message}`.slice(0, 500) },
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+  }
+
+  const mediaId = resolveId(fresh.mediaFile)
+  if (mediaId == null) return void (await fail('no_media', 'this document has no audio file'))
+
+  const { ingestCallbackUrl, missingCallbackConfig } = await import('@/lib/callbackConfig')
+  const callbackUrl = ingestCallbackUrl()
+  if (!callbackUrl) {
+    // 🔴 FAIL, DO NOT DEGRADE — and this is the one place audio diverges from
+    // the PDF path on purpose. A PDF with no callback still gets its text and
+    // its chunks; only the final status flip is lost. For audio the callback IS
+    // the delivery mechanism for the transcript, so without it the row would sit
+    // in `transcribing` forever with nothing anywhere able to move it. A visible
+    // failure the user can retry beats an honest-looking spinner that never ends.
+    return void (await fail(
+      'callbacks_not_configured',
+      `transcription needs the callback round-trip (missing: ${missingCallbackConfig().join(', ')})`,
+    ))
+  }
+
+  const { submitTranscription, TRANSCRIBE_LANGUAGE } = await import('@/lib/audioClient')
+
+  let media: Awaited<ReturnType<typeof openMediaBlob>>
+  try {
+    media = await (args.openMedia ?? openMediaBlob)(payload, mediaId)
+  } catch (err) {
+    return void (await fail(
+      'media_unreadable',
+      err instanceof Error ? err.message : String(err),
+    ))
+  }
+
+  // Visible BEFORE the network call, so a hanging audio-service still shows the
+  // user something true rather than looking like nothing happened.
+  await payload.update({
+    collection: 'documents',
+    id: docId as never,
+    data: { ingestStatus: 'transcribing', ingestError: null },
+    overrideAccess: true,
+    context: { __skipDocsExtract: true },
+  })
+
+  const attempt = Number(fresh.transcribeAttempt ?? 0) || 0
+  const result = await submitTranscription({
+    body: media.body,
+    filename: media.filename,
+    contentType: media.contentType,
+    // The join key back to this row. The callback echoes it as `externalId`.
+    externalId: String(docId),
+    title: fresh.name ?? null,
+    // ⚠ The attempt number is IN the key. audio-service dedupes on it within our
+    // (org, project), which is what makes a double-fire of the hook free — but
+    // it also means a retry reusing the key would silently re-adopt the failed
+    // job instead of transcribing again.
+    idempotencyKey: `doc-${docId}-a${attempt}`,
+    callbackUrl,
+    language: TRANSCRIBE_LANGUAGE,
+    // ⚠ DECORATIVE — log correlation only. audio-service does not and must not
+    // scope anything on these; see the header of `lib/audioClient.ts`.
+    metadata: {
+      docId: String(docId),
+      organizationId: String(resolveId(fresh.organization) ?? ''),
+      uploadedById: String(resolveId(fresh.uploadedBy) ?? ''),
+      kind: 'audio',
+    },
+  })
+
+  if (!result.ok) {
+    return void (await fail(result.code, result.message))
+  }
+
+  await payload.update({
+    collection: 'documents',
+    id: docId as never,
+    data: {
+      transcribeId: result.transcribeId,
+      transcribeAttempt: attempt,
+      // Known already: audio-service runs ffprobe inline before it answers 202.
+      // This is what lets the UI quote an honest wait instead of a spinner.
+      audioMeta: { durationSeconds: result.durationSeconds },
+    },
+    overrideAccess: true,
+    context: { __skipDocsExtract: true },
+  })
+  console.log(
+    `[documents] transcription started for doc ${docId} → transcribeId=${result.transcribeId}` +
+      (result.deduplicated ? ' (idempotency hit — re-adopted the existing job)' : ''),
+  )
+}
+
+/**
+ * Open a media row's bytes as a Blob.
+ *
+ * ⚠ `fs.openAsBlob` rather than `fs.readFile`: it is FILE-BACKED and read
+ * lazily as the request body streams, so a 200 MB recording never lands in the
+ * Next process's heap whole. `readFile` on the same file is an OOM waiting for
+ * a big enough upload.
+ *
+ * ⚠ `path.resolve(process.cwd(), 'media', …)` mirrors `extractText` exactly.
+ * That hardcoded location is Payload's default `staticDir` and is an EXISTING
+ * assumption, not one introduced here. It does mean the backend and
+ * audio-service must not be assumed to share a filesystem: we read the bytes and
+ * POST them.
+ */
+async function openMediaBlob(
+  payload: Pick<Awaited<ReturnType<typeof import('payload').getPayload>>, 'findByID'>,
+  mediaId: string | number,
+): Promise<{ body: Blob; filename: string; contentType: string | null }> {
+  const media = (await payload.findByID({
+    collection: 'media',
+    id: mediaId as never,
+    depth: 0,
+    overrideAccess: true,
+  })) as { filename?: string | null; mimeType?: string | null } | null
+
+  const filename = media?.filename
+  if (!filename) throw new Error(`media ${mediaId} has no filename`)
+
+  const path = await import('node:path')
+  const fs = await import('node:fs')
+  const filePath = path.resolve(process.cwd(), 'media', filename)
+  const contentType = media?.mimeType ?? null
+  const body = await fs.openAsBlob(filePath, {
+    type: contentType ?? 'application/octet-stream',
+  })
+  return { body, filename, contentType }
 }
 
 async function extractText(
@@ -654,6 +918,13 @@ export const Documents: CollectionConfig = {
         { label: 'Markdown', value: 'markdown' },
         { label: 'PDF', value: 'pdf' },
         { label: 'DOCX', value: 'docx' },
+        /**
+         * ⚠ An audio document's TEXT is a machine transcription. It is a
+         * first-class document — citable, publishable — and it can contain ASR
+         * errors presented as fact. `kind` is what the UI keys the
+         * "Transcripción automática" label off; do not let it be lost.
+         */
+        { label: 'Audio', value: 'audio' },
       ],
     },
     {
@@ -679,11 +950,38 @@ export const Documents: CollectionConfig = {
       type: 'upload',
       relationTo: 'media',
       admin: {
-        description: 'Used for kind=pdf or kind=docx.',
+        description:
+          'Used for kind=pdf, docx or audio. For audio it is also the PROVENANCE: a member who distrusts a quoted line can play the source recording.',
       },
     },
     { name: 'isPinned', type: 'checkbox', defaultValue: true },
     {
+      /**
+       * 🔴 THE PIPELINE STATE MACHINE, AND IT MUST STAY HONEST.
+       *
+       *   n/a          markdown note — no pipeline at all
+       *   pending      the row exists; nothing has happened yet
+       *   extracting   PDF/DOCX only. Synchronous, seconds.
+       *   transcribing AUDIO only. audio-service has the job. ⚠ ROUGHLY REAL
+       *                TIME ON CPU: a one-hour recording is a one-hour wait.
+       *   transcribed  the transcript is ON THE ROW but not embedded yet. A
+       *                real, observable state: if the process dies between
+       *                persisting the text and enqueuing the ingest, this is
+       *                where the row stops, and it says exactly what is true.
+       *   embedding    ai-service is chunking + embedding
+       *   ready        retrievable and citable
+       *   failed       terminal, with the reason in `ingestError`, and
+       *                RETRYABLE via POST /api/documents/:id/retry
+       *
+       * ⚠ `extracting` is NOT reused for audio. It belongs to the synchronous
+       * PDF/DOCX extractor, and borrowing it would tell an audio uploader their
+       * one-hour job is a two-second one.
+       *
+       * ⚠ EVERY NON-TERMINAL STATE HAS SOMETHING THAT WILL MOVE IT. `embedding`
+       * is moved by the ai-service callback; `transcribing` by audio-service,
+       * including its reconciler, which turns a worker killed mid-job into a
+       * real `transcribe.failed` rather than a row that waits forever.
+       */
       name: 'ingestStatus',
       type: 'select',
       required: true,
@@ -692,10 +990,28 @@ export const Documents: CollectionConfig = {
         { label: 'N/A (markdown)', value: 'n/a' },
         { label: 'Pending (queued)', value: 'pending' },
         { label: 'Extracting text', value: 'extracting' },
+        { label: 'Transcribing (audio, ~real time)', value: 'transcribing' },
+        { label: 'Transcribed (awaiting ingest)', value: 'transcribed' },
         { label: 'Embedding (awaiting ai-service)', value: 'embedding' },
         { label: 'Ready', value: 'ready' },
         { label: 'Failed', value: 'failed' },
       ],
+    },
+    {
+      /**
+       * Why the pipeline stopped, as `code: message`.
+       *
+       * ⚠ NOT decoration. A `failed` row with no reason is indistinguishable
+       * from a bug, and the user cannot tell "wrong file" from "our service is
+       * down" — the first they can fix, the second they should just retry. The
+       * leading code is stable and is what the frontend maps to Spanish copy.
+       */
+      name: 'ingestError',
+      type: 'textarea',
+      admin: {
+        readOnly: true,
+        description: 'Why the last ingest/transcription attempt failed. `code: message`.',
+      },
     },
     {
       name: 'ingestId',
@@ -705,11 +1021,53 @@ export const Documents: CollectionConfig = {
       },
     },
     {
+      /**
+       * The audio-service job id — the other join-back key.
+       *
+       * ⚠ Also the guard against a STALE callback. A retry mints a new job, and
+       * a late callback from the old one names the same `externalId`; the
+       * receiver only accepts a callback whose `transcribeId` matches this
+       * field. Without that check an abandoned attempt could overwrite a good
+       * transcript minutes after the fact.
+       */
+      name: 'transcribeId',
+      type: 'text',
+      index: true,
+      admin: { readOnly: true, description: 'audio-service transcribeId join-back key.' },
+    },
+    {
+      /**
+       * How many times transcription has been (re)started for this document.
+       *
+       * ⚠ It is IN the idempotency key we send audio-service. Retrying with the
+       * same key returns the ORIGINAL job — which after a genuine failure means
+       * the retry silently does nothing.
+       */
+      name: 'transcribeAttempt',
+      type: 'number',
+      defaultValue: 0,
+      admin: { readOnly: true, position: 'sidebar' },
+    },
+    {
+      /**
+       * Duration, detected language and ASR confidence for an audio document.
+       *
+       * `durationSeconds` lands at SUBMIT time, so the UI can quote a realistic
+       * wait while the job runs. The rest arrives with `transcribe.completed`.
+       */
+      name: 'audioMeta',
+      type: 'json',
+      admin: {
+        readOnly: true,
+        description: 'Recording metadata: duration, language, confidence, model, chunk count.',
+      },
+    },
+    {
       name: 'extractedText',
       type: 'textarea',
       admin: {
         description:
-          'Cached extraction output for pdf/docx so retries do not re-extract.',
+          'The document text: extracted for pdf/docx, TRANSCRIBED for audio. Cached so retries do not redo the work — which for audio is CPU-hours, not milliseconds.',
       },
     },
   ],
@@ -732,7 +1090,7 @@ export const Documents: CollectionConfig = {
      * Reported rather than half-built.
      */
   },
-  endpoints: [publishEndpoint(), unpublishEndpoint()],
+  endpoints: [publishEndpoint(), unpublishEndpoint(), retryIngestEndpoint()],
 }
 
 // ---------------------------------------------------------------------------
@@ -855,6 +1213,125 @@ function documentActionEndpoint(
  * temporal dead zone and the whole config would throw at import — taking the
  * server down at boot, before any of this ever ran.
  */
+// ---------------------------------------------------------------------------
+// POST /api/documents/:id/retry — re-run a FAILED ingest
+// ---------------------------------------------------------------------------
+
+/** The narrow slice of a row {@link planIngestRetry} reasons about. */
+export interface RetryableDocument {
+  kind?: string | null
+  ingestStatus?: string | null
+  extractedText?: string | null
+  transcribeAttempt?: number | null
+}
+
+/**
+ * 🔴 WHAT A RETRY ACTUALLY COSTS, decided as a pure function so it can be
+ * tested and so the rule is written in one place.
+ *
+ * ⚠ THE EXPENSIVE MISTAKE THIS AVOIDS: blindly clearing `extractedText` on
+ * every retry. If a transcript already exists and only the ai-service ingest
+ * failed, clearing it would throw away a finished transcription and re-run the
+ * recording through Whisper — CPU-hours, to redo work that succeeded. So:
+ *
+ *   · text already on the row → re-enqueue the INGEST only.
+ *   · no text                → start over, and bump `transcribeAttempt` so the
+ *                              idempotency key changes (an unchanged key makes
+ *                              audio-service hand back the failed job and the
+ *                              retry silently does nothing).
+ *
+ * Returns null when there is nothing to retry — a `ready` row, or a markdown
+ * note that never had a pipeline.
+ */
+export function planIngestRetry(doc: RetryableDocument): Record<string, unknown> | null {
+  if (!INGESTABLE_KINDS.has(String(doc.kind))) return null
+  // Only a TERMINAL failure is retryable. Re-running a job that is still going
+  // would double-transcribe and leave two callbacks racing for one row.
+  if (doc.ingestStatus !== 'failed') return null
+
+  const hasText = typeof doc.extractedText === 'string' && doc.extractedText.trim().length > 0
+  if (hasText) {
+    return { ingestStatus: 'pending', ingestError: null, ingestId: null }
+  }
+  return {
+    ingestStatus: 'pending',
+    ingestError: null,
+    ingestId: null,
+    transcribeId: null,
+    transcribeAttempt: (Number(doc.transcribeAttempt ?? 0) || 0) + 1,
+  }
+}
+
+/**
+ * Re-run the pipeline for a document whose ingest FAILED.
+ *
+ * ⚠ This is why `failed` is allowed to be a visible, terminal state instead of
+ * a silent revert to `pending`. The row keeps its reason (`ingestError`), the
+ * user sees it, and this endpoint is the way out. Nothing here retries by
+ * itself: the cost of a wrong automatic retry on a three-hour recording is
+ * three CPU-hours.
+ *
+ * The write is a plain `payload.update` with NO `__skipDocsExtract`, so the
+ * ordinary `afterChange` hook picks it up — the retry path and the first-upload
+ * path are the same code.
+ */
+function retryIngestEndpoint(): Endpoint {
+  return {
+    path: '/:id/retry',
+    method: 'post',
+    handler: async (req) => {
+      const json = (body: unknown, status: number): Response =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+          },
+        })
+      const fail = (status: number, message: string): Response =>
+        json({ errors: [{ message }] }, status)
+
+      const user = req.user
+      if (!user) return fail(401, 'Authentication required.')
+
+      const id = (req.routeParams as { id?: string } | undefined)?.id
+      if (!id) return fail(400, 'Missing document id.')
+
+      // ⚠ Read UNDER ACCESS CONTROL, like publish does. `visibleToCaller` 404s
+      // a document the caller may not see, so this cannot be used to probe ids.
+      const doc = (await req.payload
+        .findByID({
+          collection: 'documents',
+          id: id as never,
+          depth: 0,
+          overrideAccess: false,
+          user,
+          req,
+        })
+        .catch(() => null)) as unknown as (RetryableDocument & { uploadedBy?: unknown }) | null
+
+      if (!doc) return fail(404, 'No such document.')
+      if (String(relationId(doc.uploadedBy) ?? '') !== String(user.id)) {
+        return fail(403, 'Only the person who uploaded a document can retry it.')
+      }
+
+      const data = planIngestRetry(doc)
+      if (!data) {
+        return fail(409, 'This document has nothing to retry.')
+      }
+
+      await req.payload.update({
+        collection: 'documents',
+        id: id as never,
+        data,
+        overrideAccess: true,
+      })
+
+      return json({ ok: true, ingestStatus: 'pending' }, 202)
+    },
+  }
+}
+
 function publishEndpoint(): Endpoint {
   return documentActionEndpoint('publish')
 }

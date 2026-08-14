@@ -7,8 +7,15 @@ import type {
   PanelState,
   ContextScope,
 } from '../types';
+import type { AudioMeta } from '../types';
 import { toasts } from './toasts.svelte';
-import { MAX_UPLOAD_BYTES, formatBytes } from '../config';
+import { MAX_UPLOAD_BYTES, formatBytes, isAudioUpload, maxUploadBytesFor } from '../config';
+import {
+  isIngestStatus,
+  isTerminalIngest,
+  pollDeadlineMs,
+  pollIntervalMs,
+} from '../ingest';
 import { idOf, isRatableMessageId, isValidStars, ratingsByMessage } from '../ratings';
 import {
   isPublicationStatus,
@@ -22,18 +29,24 @@ import {
  * to user-facing toast copy. Unknown codes fall through to a generic message
  * so the UX still says something useful.
  */
-function uploadErrorToast(code: string, status: number): { title: string; message: string } {
+function uploadErrorToast(
+  code: string,
+  status: number,
+  limitBytes: number = MAX_UPLOAD_BYTES,
+): { title: string; message: string } {
   switch (code) {
     case 'file_too_large':
       return {
         title: 'El archivo es muy grande',
-        message: `El máximo es ${formatBytes(MAX_UPLOAD_BYTES)}. Prueba con un archivo más chico o divide el documento.`,
+        // The limit depends on what was being uploaded — audio gets a much
+        // larger one — so quote the cap that actually applied, not a constant.
+        message: `El máximo es ${formatBytes(limitBytes)}. Prueba con un archivo más chico, o con una grabación más corta.`,
       };
     case 'unsupported_media_type':
     case 'unsupported_kind':
       return {
         title: 'Tipo de archivo no admitido',
-        message: 'Por ahora solo aceptamos PDF y DOCX.',
+        message: 'Aceptamos PDF, DOCX y audio en MP3, M4A, WAV, OGG u OPUS.',
       };
     case 'unauthorized':
       return {
@@ -139,27 +152,10 @@ function messageFromBackend(row: Record<string, unknown>): Message {
   };
 }
 
-const INGEST_STATUSES: readonly IngestStatus[] = [
-  'n/a',
-  'pending',
-  'extracting',
-  'embedding',
-  'ready',
-  'failed',
-];
-
-function isIngestStatus(v: unknown): v is IngestStatus {
-  return typeof v === 'string' && (INGEST_STATUSES as readonly string[]).includes(v);
-}
-
-function isTerminalStatus(s: IngestStatus): boolean {
-  return s === 'ready' || s === 'failed' || s === 'n/a';
-}
-
 function docFromBackend(row: Record<string, unknown>): WorkingDoc {
   const kindRaw = row.kind as string | undefined;
   const kind: DocKind =
-    kindRaw === 'pdf' || kindRaw === 'docx' ? kindRaw : 'markdown';
+    kindRaw === 'pdf' || kindRaw === 'docx' || kindRaw === 'audio' ? kindRaw : 'markdown';
   const statusRaw = row.ingestStatus as string | undefined;
   const ingestStatus: IngestStatus = isIngestStatus(statusRaw) ? statusRaw : 'n/a';
   return {
@@ -170,6 +166,13 @@ function docFromBackend(row: Record<string, unknown>): WorkingDoc {
     updatedAt: parseDate(row.updatedAt ?? row.createdAt),
     kind,
     ingestStatus,
+    ingestError: typeof row.ingestError === 'string' ? row.ingestError : null,
+    // `audioMeta` is a JSON column: anything could be in it. Take it only when
+    // it is an object, so a malformed value cannot crash the duration chip.
+    audioMeta:
+      row.audioMeta && typeof row.audioMeta === 'object' && !Array.isArray(row.audioMeta)
+        ? (row.audioMeta as AudioMeta)
+        : null,
     // Missing/unknown reads as `draft` — the private reading. See
     // `parsePublicationStatus` for why that direction is the safe one.
     publicationStatus: parsePublicationStatus(row.publicationStatus),
@@ -308,7 +311,7 @@ class AppStore {
       // publish started before the reload must keep being watched, or the row
       // would sit on "Publicando…" forever with nothing driving it.
       for (const d of s.docs) {
-        if (!isTerminalStatus(d.ingestStatus)) {
+        if (!isTerminalIngest(d.ingestStatus)) {
           void this.pollDocStatus(sessionId, d.id);
         }
         if (!isTerminalPublication(d.publicationStatus)) {
@@ -656,11 +659,18 @@ class AppStore {
   async uploadDoc(sessionId: string, file: File): Promise<WorkingDoc | null> {
     // Client-side gate. Server enforces it too; this saves a round-trip and
     // gives the user a specific reason without a server 413.
-    if (file.size > MAX_UPLOAD_BYTES) {
+    //
+    // ⚠ The cap depends on the file: audio gets a much larger one, because 20 MB
+    // is roughly twenty minutes of speech and the recordings people want to
+    // upload are longer than that.
+    const cap = maxUploadBytesFor(file);
+    if (file.size > cap) {
       toasts.push({
         kind: 'error',
         title: 'El archivo es muy grande',
-        message: `"${file.name}" pesa ${formatBytes(file.size)}. El máximo es ${formatBytes(MAX_UPLOAD_BYTES)}.`,
+        message: isAudioUpload(file)
+          ? `"${file.name}" pesa ${formatBytes(file.size)}. El máximo para audio es ${formatBytes(cap)}. Prueba con una grabación más corta o comprímela.`
+          : `"${file.name}" pesa ${formatBytes(file.size)}. El máximo es ${formatBytes(cap)}.`,
       });
       return null;
     }
@@ -686,7 +696,7 @@ class AppStore {
           parsed && typeof parsed === 'object' && 'error' in parsed
             ? String((parsed as { error: unknown }).error)
             : `http_${res.status}`;
-        const copy = uploadErrorToast(code, res.status);
+        const copy = uploadErrorToast(code, res.status, cap);
         toasts.push({ kind: 'error', ...copy });
         console.error('uploadDoc failed', code);
         return null;
@@ -697,7 +707,7 @@ class AppStore {
       const s = this.sessions.find((x) => x.id === sessionId);
       if (s) s.docs.push(created);
       // Background poll until ingest reaches a terminal state.
-      if (!isTerminalStatus(created.ingestStatus)) {
+      if (!isTerminalIngest(created.ingestStatus)) {
         void this.pollDocStatus(sessionId, created.id);
       }
       return created;
@@ -712,18 +722,34 @@ class AppStore {
     }
   }
 
+  /**
+   * Watch one document's ingest status until it settles.
+   *
+   * ⚠ THE DEADLINE IS PER KIND, and that matters. 15 minutes is right for a PDF
+   * and wrong for audio by an order of magnitude: transcription runs at roughly
+   * real time on CPU, so a 40-minute recording is a 40-minute job. A 15-minute
+   * cap would abandon almost every real recording and the row would look stuck
+   * for no reason.
+   *
+   * ⚠ AND THE POLL IS ONLY A CONVENIENCE. The webhook updates the row
+   * server-side whether or not this loop is running, so giving up here — or
+   * closing the tab — loses nothing. The UI says so; see `$lib/ingest.ts`.
+   */
   private async pollDocStatus(sessionId: string, docId: string): Promise<void> {
     if (this.pollingDocs.has(docId)) return;
     this.pollingDocs.add(docId);
-    // Backoff: 2s, 5s, then 10s steady. The webhook flips the status
-    // server-side; we just surface it. Cap at 15 minutes — anything longer
-    // is broken upstream, not a slow happy path.
+    const kindNow =
+      this.sessions.find((x) => x.id === sessionId)?.docs.find((x) => x.id === docId)?.kind ??
+      'pdf';
+    // Backoff: 2s, 5s, then a steady interval. 30s for audio — 10s polling for
+    // four hours is ~1400 requests to learn one boolean.
     const schedule = [2000, 5000];
-    const deadline = Date.now() + 15 * 60_000;
+    const steady = pollIntervalMs(kindNow);
+    const deadline = Date.now() + pollDeadlineMs(kindNow);
     let i = 0;
     try {
       while (Date.now() < deadline) {
-        const wait = schedule[i] ?? 10_000;
+        const wait = schedule[i] ?? steady;
         i += 1;
         await new Promise((r) => setTimeout(r, wait));
         try {
@@ -742,13 +768,65 @@ class AppStore {
           // Document (or session) deleted while we waited — stop polling it.
           if (!d) return;
           d.ingestStatus = status;
-          if (isTerminalStatus(status)) return;
+          // Carry the reason and the recording metadata across too: a `failed`
+          // row without its `ingestError` can only say "algo falló", which is
+          // the message this whole feature exists to avoid.
+          d.ingestError = typeof body.ingestError === 'string' ? body.ingestError : null;
+          if (body.audioMeta && typeof body.audioMeta === 'object' && !Array.isArray(body.audioMeta)) {
+            d.audioMeta = body.audioMeta as AudioMeta;
+          }
+          if (isTerminalIngest(status)) return;
         } catch {
           /* keep polling */
         }
       }
     } finally {
       this.pollingDocs.delete(docId);
+    }
+  }
+
+  /**
+   * Re-run a FAILED ingest / transcription.
+   *
+   * ⚠ NOT optimistic about the outcome, only about the request: the row goes
+   * back to `pending` because the server said it accepted the re-run, and then
+   * the ordinary poll takes over. Painting anything further would be guessing.
+   */
+  async retryIngest(sessionId: string, docId: string): Promise<boolean> {
+    const s = this.sessions.find((x) => x.id === sessionId);
+    const d = s?.docs.find((x) => x.id === docId);
+    if (!d || d.retryPending) return false;
+    d.retryPending = true;
+    try {
+      const res = await fetch(`/api/documents/${docId}/retry`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (!res.ok) {
+        toasts.push({
+          kind: 'error',
+          title: 'No se pudo reintentar',
+          message:
+            res.status === 409
+              ? 'Este documento ya no está en error, no hay nada que reintentar.'
+              : 'Inténtalo de nuevo en un momento.',
+        });
+        return false;
+      }
+      d.ingestStatus = 'pending';
+      d.ingestError = null;
+      void this.pollDocStatus(sessionId, docId);
+      return true;
+    } catch (err) {
+      console.error('retryIngest failed', err);
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo conectar',
+        message: 'Revisa tu conexión e inténtalo de nuevo.',
+      });
+      return false;
+    } finally {
+      d.retryPending = false;
     }
   }
 

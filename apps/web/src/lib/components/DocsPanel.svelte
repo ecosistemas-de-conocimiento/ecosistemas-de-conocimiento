@@ -3,8 +3,21 @@
   import { app } from '$lib/stores/app.svelte';
   import { Button } from '$lib/primitives';
   import Markdown from './Markdown.svelte';
-  import type { IngestStatus, WorkingDoc } from '$lib/types';
+  import type { WorkingDoc } from '$lib/types';
   import { publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
+  import { UPLOAD_ACCEPT } from '$lib/config';
+  import {
+    audioDurationChip,
+    canRetryIngest,
+    ingestBadge,
+    ingestFailureCopy,
+    isTranscript,
+    publishConfirmCopy,
+    TRANSCRIBING_REASSURANCE,
+    TRANSCRIPT_PROVENANCE_LABEL,
+    TRANSCRIPT_PROVENANCE_TOOLTIP,
+    transcriptionEtaCopy,
+  } from '$lib/ingest';
 
   let expandedId = $state<string | null>(null);
   const previewIds = new SvelteSet<string>();
@@ -41,25 +54,17 @@
     }
   }
 
-  /** Badge label + tooltip for the per-doc ingest status (text extraction). */
-  function statusBadge(
-    status: IngestStatus | undefined,
-  ): { label: string; classes: string; title: string } | null {
-    if (!status || status === 'n/a') return null;
-    const pending = 'ingest-pending';
-    if (status === 'pending')
-      return { label: 'en cola', classes: pending, title: 'Esperando en la cola de procesamiento' };
-    if (status === 'extracting')
-      return { label: 'extrayendo…', classes: pending, title: 'Extrayendo el texto del documento' };
-    if (status === 'embedding')
-      return { label: 'indexando…', classes: pending, title: 'Calculando los vectores del documento' };
-    if (status === 'ready')
-      return { label: 'listo', classes: 'ingest-ready', title: 'Disponible para el chat' };
-    return {
-      label: 'error',
-      classes: 'ingest-failed',
-      title: 'No se pudo procesar. Bórralo y súbelo de nuevo.',
-    };
+  /**
+   * Badge label + tooltip for the per-doc ingest status.
+   *
+   * The copy itself lives in `$lib/ingest.ts` so it can be unit-tested — this
+   * repo has no component-test setup, and the transcription strings are exactly
+   * the ones that must not drift. Here we only map a tone to a CSS class.
+   */
+  function statusBadge(d: WorkingDoc) {
+    const badge = ingestBadge(d.ingestStatus, d.kind, d.audioMeta);
+    if (!badge) return null;
+    return { ...badge, classes: `ingest-${badge.tone}` };
   }
 
   /** The publish action's availability for one document, with its reason. */
@@ -77,7 +82,17 @@
    */
   async function publish(sessionId: string | undefined, d: WorkingDoc) {
     if (!sessionId) return;
+    // 🔴 THE ASR CONFIRMATION. Publishing a transcript puts machine-generated
+    // text into the ecosistema's shared corpus, where the assistant will quote
+    // it as fact to people who never heard the recording. The extra click is
+    // the agreed price of accepting transcripts as first-class documents.
+    if (!confirm(publishConfirmCopy(d.kind, d.title))) return;
     await app.publishDoc(sessionId, d.id);
+  }
+
+  async function retry(sessionId: string | undefined, d: WorkingDoc) {
+    if (!sessionId) return;
+    await app.retryIngest(sessionId, d.id);
   }
 
   // Per-doc debounce so typing into title/body doesn't fire a backend PATCH on
@@ -118,7 +133,7 @@
         <input
           bind:this={fileInput}
           type="file"
-          accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,.docx"
+          accept={UPLOAD_ACCEPT}
           class="hidden"
           onchange={onFileChosen}
         />
@@ -126,8 +141,8 @@
           class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft disabled:opacity-40"
           onclick={() => fileInput?.click()}
           disabled={uploading || !app.active}
-          title="Subir PDF o DOCX — se guardará como borrador, solo tú lo verás"
-          aria-label="Subir PDF o DOCX"
+          title="Subir documento o audio — PDF, DOCX, MP3, M4A, WAV, OGG u OPUS. Se guardará como borrador, solo tú lo verás."
+          aria-label="Subir documento o audio"
         >
           {#if uploading}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin">
@@ -247,8 +262,8 @@
               {#if d.kind && d.kind !== 'markdown'}
                 <span class="chip text-[9px] uppercase tracking-wider">{d.kind}</span>
               {/if}
-              {#if statusBadge(d.ingestStatus)}
-                {@const b = statusBadge(d.ingestStatus)!}
+              {#if statusBadge(d)}
+                {@const b = statusBadge(d)!}
                 <span
                   class="chip text-[9px] uppercase tracking-wider {b.classes}"
                   title={b.title}
@@ -297,6 +312,24 @@
                 </svg>
               </button>
             </div>
+
+            <!-- 🔴 PROVENANCE ROW — audio only, and not optional.
+                 This document's text was produced by a machine listening to a
+                 recording. It can be wrong, it can be cited in an answer, and it
+                 can be published to the whole ecosistema. Saying so on the card
+                 (not in a tooltip) is the mitigation that made accepting
+                 transcripts as first-class documents an acceptable trade. -->
+            {#if isTranscript(d.kind)}
+              {@const durationChip = audioDurationChip(d.audioMeta)}
+              <div class="flex items-center gap-2 px-2 pb-1 flex-wrap">
+                <span class="chip transcript-chip text-[9px]" title={TRANSCRIPT_PROVENANCE_TOOLTIP}>
+                  {TRANSCRIPT_PROVENANCE_LABEL}
+                </span>
+                {#if durationChip}
+                  <span class="chip text-[9px]">{durationChip}</span>
+                {/if}
+              </div>
+            {/if}
 
             <!-- Publication row. On its own line, never squeezed into the title
                  row: "solo tú lo ves" is the single most consequential thing on
@@ -373,24 +406,89 @@
               </div>
             {/if}
 
+            <!-- ⚠ THE HONEST WAIT. Transcription runs at roughly real time, so a
+                 one-hour recording is a one-hour job. Anything that implied
+                 "un momento…" here would make a working upload look broken and
+                 get re-uploaded — another hour of CPU for nothing. -->
+            {#if d.ingestStatus === 'transcribing'}
+              <div class="publish-progress" role="status">
+                {transcriptionEtaCopy(d.audioMeta)}
+                <span class="block mt-0.5">{TRANSCRIBING_REASSURANCE}</span>
+              </div>
+            {/if}
+
+            <!-- A failed ingest is never a silent revert: the reason stays on
+                 the card, in Spanish, with the way out next to it. -->
+            {#if d.ingestStatus === 'failed'}
+              {@const failure = ingestFailureCopy(d.ingestError)}
+              <div class="publish-failed">
+                <strong class="text-danger">{failure.title}.</strong>
+                {failure.message}
+                {#if canRetryIngest(d) && sid}
+                  <span class="block mt-1">
+                    <Button
+                      tone="warning"
+                      variant="outline"
+                      size="sm"
+                      label="Reintentar"
+                      loading={d.retryPending === true}
+                      disabled={d.retryPending === true}
+                      dataTestId={`retry-ingest-${d.id}`}
+                      onClick={() => retry(sid, d)}
+                    />
+                  </span>
+                {:else}
+                  <span class="block mt-0.5 text-ink-soft">
+                    Bórralo y súbelo de nuevo con un archivo distinto.
+                  </span>
+                {/if}
+              </div>
+            {/if}
+
             {#if isOpen}
               <div class="border-t border-elevated">
                 {#if d.kind !== 'markdown'}
                   <div class="px-3 py-3 text-xs text-ink-soft bg-surface-soft border-t border-elevated space-y-1">
                     <div>
                       <span class="font-medium text-ink">{d.kind.toUpperCase()}</span>
-                      — procesado para que el chat pueda consultarlo.
+                      {#if isTranscript(d.kind)}
+                        — se transcribe y luego se procesa para que el chat pueda
+                        consultarlo. El audio original se conserva como respaldo.
+                      {:else}
+                        — procesado para que el chat pueda consultarlo.
+                      {/if}
                     </div>
                     {#if d.ingestStatus === 'pending'}
                       <div>En cola. Participará en las respuestas cuando esté <span class="text-success">listo</span>.</div>
                     {:else if d.ingestStatus === 'extracting'}
                       <div>Extrayendo el texto del documento…</div>
+                    {:else if d.ingestStatus === 'transcribing'}
+                      <div>{transcriptionEtaCopy(d.audioMeta)}</div>
+                    {:else if d.ingestStatus === 'transcribed'}
+                      <div>Transcripción terminada. Falta indexarla para que el chat la consulte.</div>
                     {:else if d.ingestStatus === 'embedding'}
                       <div>Indexando el contenido…</div>
                     {:else if d.ingestStatus === 'failed'}
-                      <div class="text-danger">No se pudo procesar. Bórralo y súbelo de nuevo.</div>
+                      {@const failure = ingestFailureCopy(d.ingestError)}
+                      <div class="text-danger">{failure.title}. {failure.message}</div>
+                      {#if d.ingestError}
+                        <!-- The raw code + upstream message. Diagnostic, in
+                             English, deliberately below the Spanish
+                             explanation — useful in a bug report, never the
+                             primary thing the user reads. -->
+                        <div class="break-words opacity-70">Detalle: {d.ingestError}</div>
+                      {/if}
                     {:else if d.ingestStatus === 'ready'}
-                      <div>Disponible para el chat. Fíjalo para incluirlo en el siguiente mensaje.</div>
+                      <div>
+                        {#if isTranscript(d.kind)}
+                          Transcripción lista. Fíjala para incluirla en el siguiente mensaje.
+                        {:else}
+                          Disponible para el chat. Fíjalo para incluirlo en el siguiente mensaje.
+                        {/if}
+                      </div>
+                    {/if}
+                    {#if isTranscript(d.kind)}
+                      <div class="pt-1">{TRANSCRIPT_PROVENANCE_TOOLTIP}</div>
                     {/if}
                     <div class="pt-1">{pub.description}</div>
                   </div>
@@ -450,8 +548,10 @@
         <div class="text-center text-ink-soft text-xs p-6">
           Todavía no hay documentos en esta conversación.<br />
           Usa <span class="font-mono">+</span> para escribir una nota, o el ícono de
-          subida para adjuntar un <span class="font-mono">.pdf</span> o
-          <span class="font-mono">.docx</span>. Entran como borrador y solo tú los ves.
+          subida para adjuntar un <span class="font-mono">.pdf</span>, un
+          <span class="font-mono">.docx</span> o una grabación de audio
+          (<span class="font-mono">.mp3</span>, <span class="font-mono">.m4a</span>,
+          <span class="font-mono">.wav</span>). Entran como borrador y solo tú los ves.
         </div>
       {/if}
     </div>
@@ -525,6 +625,14 @@
     border-color: var(--edc-color-danger-outline);
     background: var(--edc-color-danger-soft);
     color: var(--edc-color-danger);
+  }
+  /* Provenance chip for a machine transcription. Neutral, not alarming — it is
+     a fact about where the text came from, not an error. */
+  .transcript-chip {
+    border-color: var(--edc-color-warning-outline);
+    color: var(--edc-color-warning);
+    text-transform: none;
+    letter-spacing: 0;
   }
 
   /* Publication badge. Themed from tokens, not Tailwind palette literals, so

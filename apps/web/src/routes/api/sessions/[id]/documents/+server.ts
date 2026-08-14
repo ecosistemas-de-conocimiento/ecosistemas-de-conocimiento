@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { backendFetch, backendUrl } from '$lib/server/auth';
 import { mapUpstreamMediaError } from '$lib/server/documents';
 import { degradeListResponse } from '$lib/server/degrade';
+import { isAudioUpload, maxUploadBytesFor } from '$lib/config';
 
 // GET /api/sessions/[id]/documents → all docs for this session.
 // Fragile read: degrade a 403/transient backend failure to an empty list.
@@ -26,12 +27,19 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 //
 // Two content-types depending on the kind being created:
 //   - application/json      → markdown working-doc (current M4 behaviour).
-//   - multipart/form-data   → PDF/DOCX upload (M6). The proxy first POSTs the
+//   - multipart/form-data   → PDF/DOCX/audio upload. The proxy first POSTs the
 //     binary to the backend's Payload media endpoint, then creates the
 //     `documents` row pointing at the freshly-uploaded media id. The
 //     `Documents` afterChange hook (the backend) takes it from there:
 //     extract → enqueue ingest → status updates land via the M5 webhook
 //     receiver.
+//
+// ⚠ AUDIO TAKES THE SAME PATH, on purpose. The only difference is that its
+// text comes from `services/audio-service` instead of an inline extractor, and
+// therefore arrives minutes-to-hours later via the same webhook. Nothing here
+// branches on it beyond naming the `kind`; there is no second pipeline and no
+// second corpus. The corpus is derived server-side either way and is never
+// named by this proxy.
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
 
@@ -51,10 +59,20 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     const isPinned = form.get('isPinned') !== 'false';
 
     // Infer kind from MIME if not provided.
-    let kind: 'pdf' | 'docx' | null = null;
-    if (kindRaw === 'pdf' || kindRaw === 'docx') {
-      kind = kindRaw;
-    } else if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+    //
+    // ⚠ PDF and DOCX are checked FIRST. `isAudioUpload` accepts `.mp4`/`.mov`
+    // (a phone recording's audio track is the point), and its extension
+    // fallback is deliberately generous — running it first would let a document
+    // with an odd MIME type fall into the audio branch and cost CPU-hours to
+    // find out.
+    //
+    // ⚠ THE CLIENT-SUPPLIED `kind` IS A HINT, NOT A DECISION. It used to be
+    // trusted outright, which let a caller post a PDF with `kind=audio` and send
+    // it straight to the transcriber — defeating the ordering above and costing
+    // CPU-minutes to discover. It is now only honoured when it AGREES with what
+    // the file actually looks like.
+    let kind: 'pdf' | 'docx' | 'audio' | null = null;
+    if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
       kind = 'pdf';
     } else if (
       file.type ===
@@ -62,9 +80,25 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       /\.docx$/i.test(file.name)
     ) {
       kind = 'docx';
+    } else if (isAudioUpload(file)) {
+      kind = 'audio';
     }
     if (!kind) {
       return json({ error: 'unsupported_kind' }, { status: 400 });
+    }
+    if (typeof kindRaw === 'string' && kindRaw && kindRaw !== kind) {
+      // The caller asked for something the file is not. Refuse rather than
+      // silently overriding: a client that thinks it uploaded audio and gets a
+      // PDF document back has a bug worth surfacing.
+      return json({ error: 'unsupported_kind', inferred: kind }, { status: 400 });
+    }
+
+    // Size gate, server-side. The browser checks too, but the browser is not a
+    // security boundary and a 200 MB body accepted here lands on the backend's
+    // local disk before anything can refuse it.
+    const cap = maxUploadBytesFor(file);
+    if (file.size > cap) {
+      return json({ error: 'file_too_large', limit: cap, kind }, { status: 413 });
     }
 
     // 1. Upload to the backend's Payload media endpoint. Payload's REST
@@ -129,7 +163,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     name?: string;
     bodyMarkdown?: string;
     isPinned?: boolean;
-    kind?: 'markdown' | 'pdf' | 'docx';
+    kind?: 'markdown' | 'pdf' | 'docx' | 'audio';
     mode?: 'full-text' | 'rag-retrieve';
   } = {};
   try {
