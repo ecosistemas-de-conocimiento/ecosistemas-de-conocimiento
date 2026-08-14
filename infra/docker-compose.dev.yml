@@ -46,8 +46,14 @@ services:
       dockerfile: apps/backend/Dockerfile.dev
     environment:
       NODE_ENV: development
-      # `next dev` needs schema push; leave PAYLOAD_DISABLE_PUSH off.
-      PAYLOAD_DISABLE_PUSH: "0"
+      # ✅ No push here either. Dockerfile.dev's CMD runs `payload migrate`
+      #    before `next dev`, so dev gets its schema the same way prod does.
+      #    Push used to be on here, and it silently dropped the baseline's four
+      #    hand-written indexes — meaning a duplicate-rating race could not be
+      #    reproduced locally but WAS blocked in dev/stage/prod. Local is the
+      #    one place that split hurts most.
+      #    Set PAYLOAD_ALLOW_PUSH=1 only to iterate on the schema, and cut a
+      #    migration afterwards rather than leaving the DB in that state.
     volumes:
       - ..:/repo
       - backend_root_node_modules:/repo/node_modules

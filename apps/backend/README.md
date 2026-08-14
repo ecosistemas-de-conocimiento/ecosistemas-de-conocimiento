@@ -199,11 +199,16 @@ endpoint hands you one. A retrieve without it can still return retired
 documents.
 
 **The baseline migration exists, and four of its indexes are hand-written.**
-Deployed environments run migrations only (`PAYLOAD_DISABLE_PUSH=1`); the local
-demo still runs on push. Three of those hand-written indexes are compound
-UNIQUE constraints that Payload's field config cannot express, and they are the
-only real lock behind de-duplication that is otherwise done in `beforeValidate`
-hooks. Push does not know about them and can drop them.
+Migrations create the schema in *every* environment now, the laptop demo
+included — both container entrypoints run `payload migrate` first. Schema push
+is opt-in (`PAYLOAD_ALLOW_PUSH=1`) and off everywhere by default. Three of those
+hand-written indexes are compound UNIQUE constraints that Payload's field config
+cannot express, and they are the only real lock behind de-duplication that is
+otherwise done in `beforeValidate` hooks. Push does not know about them and
+removes them without erroring, after which the ratings table quietly accepts
+duplicate rows and every average over it is wrong. That is why the gate is
+opt-in rather than opt-out: one forgotten variable should not be able to lose
+those locks silently.
 [`src/migrations/README.md`](src/migrations/README.md) has the list and the
 reasoning.
 

@@ -47,19 +47,31 @@ COPY --chown=node:node . .
 
 WORKDIR /repo/apps/backend
 ENV NODE_ENV=development
-# Payload's interactive schema-push prompt has no TTY in a container, so the dev
-# server auto-pushes. PAYLOAD_DISABLE_PUSH is deliberately left unset HERE, and
-# only here: this image is the laptop demo, where the database is disposable and
-# a migration step would be friction for no benefit.
-# ⚠ A pushed database may be missing the baseline's four hand-written indexes,
-#   so a duplicate-rating race will not reproduce in this container even though
-#   it is blocked in dev/stage/prod. See src/migrations/README.md.
-# 🔴 The RUNTIME image (Dockerfile, not this one) does the opposite: migrations
-#   only, `payload migrate && next start`.
+# ✅ No schema push here — this image runs migrations like the production one.
+# The push gate is opt-IN (PAYLOAD_ALLOW_PUSH=1), so push is off unless someone
+# deliberately turns it on, and the CMD below runs `payload migrate` first.
+# 🔴 This image used to leave push on, because the database is disposable and a
+#   migration step looked like friction for no benefit. It was not free: a
+#   pushed database is missing the baseline's four hand-written indexes, so a
+#   duplicate-rating race would NOT reproduce here while it WAS blocked in
+#   dev/stage/prod — the worst split, since local is where you reproduce things.
+# ⚠ If you set PAYLOAD_ALLOW_PUSH=1 to iterate on the schema, expect those four
+#   indexes to disappear, and cut a migration rather than leaving the database
+#   in that state. See src/migrations/README.md.
 ENV PORT=3002
 EXPOSE ${PORT}
 
+# `payload migrate` FIRST, exactly like the production image's `pnpm start`.
+#
+# 🔴 Dev used to get its schema from push instead. That silently dropped the
+# four hand-written indexes in the baseline — the compound UNIQUE constraints
+# behind ratings/memberships/callback de-duplication are absent from the drizzle
+# schema push reconciles against, so push removes them without erroring. The
+# effect was a duplicate-rating race that could not reproduce locally but was
+# blocked in dev/stage/prod: the worst possible split, because local is where
+# you would try to reproduce it.
+#
 # `-H 0.0.0.0` binds all interfaces so the host-published port reaches the dev
 # server. It stays a flag because the Next CLI has no env equivalent for
 # hostname — unlike the port, which PORT above already sets.
-CMD ["pnpm", "exec", "next", "dev", "-H", "0.0.0.0"]
+CMD ["sh", "-c", "pnpm exec payload migrate && exec pnpm exec next dev -H 0.0.0.0"]

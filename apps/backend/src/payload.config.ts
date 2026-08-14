@@ -199,30 +199,33 @@ export default buildConfig({
       connectionString: process.env.DATABASE_URI || '',
     },
     /**
-     * ⚠ SCHEMA PUSH IS ON BY DEFAULT. That is now a LOCAL-ONLY convenience.
+     * ⚠ SCHEMA PUSH IS OFF UNLESS YOU ASK FOR IT. The gate is opt-IN, so the
+     * safe behaviour is what you get by forgetting.
      *
      * The baseline migration exists (`src/migrations/`), so migrations — not
-     * push — are what create and advance the schema. Every DEPLOYED
-     * environment sets `PAYLOAD_DISABLE_PUSH=1` (see
-     * `infra/fleet/env-manifests.md` §6) and runs `payload migrate` before
-     * `next start`. Push against a real database is how columns get dropped
-     * without anyone approving it.
+     * push — create and advance the schema everywhere, local included. Both
+     * container entrypoints run `payload migrate` first: `pnpm start` in the
+     * production image, and the `CMD` in `Dockerfile.dev`. Nothing needs push
+     * to get a schema any more.
      *
-     * 🔴 THE SECOND REASON PUSH MUST STAY OFF WHERE IT MATTERS. The baseline
-     * carries four indexes that are hand-written and therefore absent from the
-     * drizzle schema Payload diffs against — including the three compound
-     * UNIQUE indexes that are the only real lock behind the `beforeValidate`
+     * 🔴 WHY THIS GATE IS OPT-IN RATHER THAN OPT-OUT. The baseline carries four
+     * indexes that are hand-written and therefore absent from the drizzle
+     * schema Payload diffs against — including the three compound UNIQUE
+     * indexes that are the only real lock behind the `beforeValidate`
      * de-duplication hooks (`ratings`, `memberships`, `ai_service_callbacks`).
      * Push reconciles the database toward that schema, so a push-enabled boot
      * can remove them. Nothing errors; the ratings table just starts accepting
-     * duplicate rows again. See the comment block in the baseline migration.
+     * duplicate rows again, and every average computed over it is quietly
+     * wrong. See the comment block in the baseline migration.
      *
-     * 📝 Worth doing later: invert this gate to
-     * `push: process.env.PAYLOAD_ALLOW_PUSH === '1'` so the safe behaviour is
-     * what you get by forgetting. Deferred here only because
-     * `infra/docker-compose.yml` currently opts the local demo IN via
-     * `PAYLOAD_DISABLE_PUSH=0`, and that file is owned elsewhere.
+     * A fail-open gate meant one forgotten variable in one environment was
+     * enough to lose those locks silently. That is the wrong direction to fail
+     * in, so an environment that wants push must now say so out loud.
+     *
+     * ⚠ Setting `PAYLOAD_ALLOW_PUSH=1` is for iterating on the schema locally.
+     * When you do, expect the four hand-written indexes to disappear, and cut
+     * a new migration rather than leaving the database in that state.
      */
-    push: process.env.NODE_ENV !== 'test' && process.env.PAYLOAD_DISABLE_PUSH !== '1',
+    push: process.env.NODE_ENV !== 'test' && process.env.PAYLOAD_ALLOW_PUSH === '1',
   }),
 })

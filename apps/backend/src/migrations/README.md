@@ -10,20 +10,32 @@ still matters the next time someone is tempted to regenerate it.
 
 ## The rules now
 
-🔴 **Push is off in every deployed environment.** `PAYLOAD_DISABLE_PUSH=1` in
-dev, stage and prod (`infra/fleet/env-manifests.md` §1 and §6). The backend's
-`start` script is `payload migrate && next start`, so a deploy applies pending
-migrations and fails loudly if it cannot.
+🔴 **Push is off everywhere, by default, and no variable is needed to keep it
+that way.** The gate in `payload.config.ts` is opt-IN —
+`push: process.env.NODE_ENV !== 'test' && process.env.PAYLOAD_ALLOW_PUSH === '1'`
+— so an environment that wants push has to say so out loud. It was opt-out until
+2026-08-14, which meant one forgotten variable in one environment was enough to
+lose the hand-written indexes below, silently. That is the wrong direction to
+fail in. The backend's `start` script is `payload migrate && next start`, so a
+deploy applies pending migrations and fails loudly if it cannot.
 
 ✅ **Schema changes go through `payload migrate:create <name>`.** Change the
 collection config, run it against a database that is already at the current
 baseline, review the generated SQL, commit both the `.ts` and the `.json`
 snapshot. Payload rewrites `index.ts` for you.
 
-⚠ **The local demo still runs on push** (`infra/docker-compose.yml` sets
-`PAYLOAD_DISABLE_PUSH=0`). Convenient, and fine for a throwaway database — but
-see the next section before you trust a local database to behave like a
-deployed one.
+✅ **The local demo runs on migrations too**, as of 2026-08-14.
+`apps/backend/Dockerfile.dev`'s `CMD` runs `pnpm exec payload migrate` before
+`next dev`, matching the production image's `pnpm start`, and neither compose
+file sets a push variable any more. It used to push, which was convenient for a
+throwaway database and not free: a pushed local database is missing the four
+hand-written indexes below, so a duplicate-rating race would **not** reproduce
+locally while it **was** blocked in dev/stage/prod. Local is exactly where you
+would try to reproduce it, so that was the worst possible split.
+
+🔧 `PAYLOAD_ALLOW_PUSH=1` is still there for iterating on the schema locally.
+Expect the four indexes to disappear while it is on, and cut a migration rather
+than leaving a database in that state.
 
 ## 🔴 Four indexes in the baseline are hand-written, and push does not know them
 

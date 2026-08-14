@@ -59,9 +59,13 @@ COPY --from=build /repo/apps/backend ./
 EXPOSE ${PORT}
 # ✅ `start` is `payload migrate && next start`. The baseline migration exists
 # (src/migrations/20260814_205354_baseline.ts), so the schema is created and
-# advanced by migrations, NOT by Payload's schema push. Every deployed
-# environment must also carry PAYLOAD_DISABLE_PUSH=1 — see infra/fleet/
-# env-manifests.md §6 and src/migrations/README.md.
+# advanced by migrations, NOT by Payload's schema push. No environment variable
+# is needed to get that: the push gate is opt-IN (PAYLOAD_ALLOW_PUSH=1), so push
+# is off unless someone deliberately turns it on. Do not turn it on here — push
+# removes the baseline's four hand-written indexes without erroring, including
+# the compound UNIQUE constraints behind ratings/memberships/callback
+# de-duplication. See infra/fleet/env-manifests.md §6 and
+# src/migrations/README.md.
 #
 # 🔴 If `payload migrate` fails, the container never reaches `next start` and
 # the deploy fails loudly. That is the intended behaviour: booting an app

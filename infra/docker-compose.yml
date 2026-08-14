@@ -262,16 +262,17 @@ services:
       # ⚠ DATABASE_URI (Payload's spelling), NOT DATABASE_URL (ai-service's).
       #   They are different variables in the same stack. This has bitten people.
       DATABASE_URI: postgres://${POSTGRES_USER:-edc}:${POSTGRES_PASSWORD}@postgres:5432/${BACKEND_DB_NAME:-edc_backend}
-      # 🔴 SCHEMA PUSH IS THE ONLY THING THAT CREATES TABLES TODAY.
-      #    `apps/backend/src/migrations/index.ts` exports an EMPTY array — the
-      #    two conflicting baselines from the merged apps were deleted, and the
-      #    replacement has not been cut yet. So `PAYLOAD_DISABLE_PUSH=1` right
-      #    now does not mean "use migrations", it means "have no schema".
-      #    ✅ For this LOCAL demo, push is correct and convenient.
-      #    🔴 For the fleet it is a blocking prerequisite, not a config choice:
-      #       a baseline migration must be cut BEFORE the first stage/prod
-      #       deploy. See infra/fleet/runbook.md §3.
-      PAYLOAD_DISABLE_PUSH: "0"
+      # ✅ MIGRATIONS CREATE THE SCHEMA — here, and in every environment.
+      #    The baseline exists (apps/backend/src/migrations/), and the image's
+      #    `pnpm start` runs `payload migrate` before `next start`. So this
+      #    demo comes up on exactly the schema the fleet runs.
+      #    🔴 Do NOT set PAYLOAD_ALLOW_PUSH here to "fix" a schema problem.
+      #       Push reconciles the database toward the drizzle schema, which does
+      #       NOT contain the four hand-written indexes in the baseline — the
+      #       compound UNIQUE constraints behind ratings/memberships/callback
+      #       de-duplication. Push removes them without erroring, and the
+      #       ratings table quietly starts accepting duplicates.
+      #       If the schema needs to change, cut a migration.
       # ── Where it calls out to ──
       AI_SERVICE_URL: http://ai-service:3000
       # 🔴 THE CALLBACK PAIR. ai-service AND audio-service both call BACK to

@@ -41,7 +41,7 @@ and are a **different, deliberately laxer** set.
 | `PORT` | `3002` | `3002` | `3002` | ⚙ must match Coolify's `ports_exposes` |
 | `DATABASE_URI` | `postgres://…@<data>:5432/edc_backend_dev` | `…/edc_backend_stage` | `…/edc_backend_prod` | 🔑 ⚠ **`URI`, not `URL`** |
 | `PAYLOAD_SECRET` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 `openssl rand -hex 32`, **distinct per env** |
-| `PAYLOAD_DISABLE_PUSH` | `1` | `1` | `1` | ⚙ 🔴 **Required.** The baseline migration now exists, so this is live guidance, not a future plan. Unset = push, and push can drop the hand-written unique indexes. See §6 |
+| `PAYLOAD_ALLOW_PUSH` | *unset* | *unset* | *unset* | ⚙ ✅ **Set nothing — the default is already correct.** The gate is opt-IN, so unset means migrations only. 🔴 Setting it to `1` in a deployed environment drops the hand-written unique indexes silently. See §6 |
 | `AUTH_PRIVATE_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 🔴 PKCS#8 PEM, `\n`-escaped. **Distinct per env** — a shared key means a dev token is valid in prod |
 | `AUTH_PUBLIC_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | ⚙ SPKI PEM, served at `/.well-known/jwks.json` |
 | `AUTH_KEY_ID` | e.g. `edc-dev-1` | `edc-stage-1` | `edc-prod-1` | ⚙ the `kid`. Version it — key rotation depends on it |
@@ -297,40 +297,46 @@ does **not** need to be in `backups.md`'s scope — unlike the Payload media vol
 
 ---
 
-## 6. 🔴 Schema push — the one thing to get right before the first deploy
+## 6. ✅ Schema push — closed 2026-08-14, and worth reading anyway
 
 **Two facts that have to be held together, because acting on either alone breaks something.**
 
-**Fact 1 — push is default-ON, and that is the prototypes' worst repeat failure.**
-`apps/backend/src/payload.config.ts` reads:
+**Fact 1 — push is now default-OFF, after being default-ON, a repeat source of failures.** `apps/backend/src/payload.config.ts` reads:
 
 ```ts
-push: process.env.NODE_ENV !== 'test' && process.env.PAYLOAD_DISABLE_PUSH !== '1'
+push: process.env.NODE_ENV !== 'test' && process.env.PAYLOAD_ALLOW_PUSH === '1'
 ```
 
-You get schema push unless someone remembers to opt out. They ran two repos on exactly this gate and
-two on the safer `PAYLOAD_ALLOW_PUSH === '1'` (default-off) form. **The default-ON repos were the 4×
-repeat offender** in an audit that found **9 of 22 environments would have failed to boot on their
-next deploy**, and 3 more would have booted while silently mutating their own schema. The mechanism:
-local push-heals on every boot while deployed environments migrate, so **local and deployed diverge
-silently** — invisible until a query hits a column that exists in one and not the other.
+An environment that wants push has to **say so**. Until 2026-08-14 the gate was the opposite —
+`PAYLOAD_DISABLE_PUSH !== '1'`, i.e. you got push unless someone remembered to opt out. Default-ON leaves
+environments that **fail to boot on their next deploy**, or that boot while silently mutating their
+own schema. The mechanism: local push-heals on every boot while deployed environments migrate, so **local and
+deployed diverge silently** — invisible until a query hits a column that exists in one and not the
+other.
 
-**Fact 2 — ✅ RESOLVED 2026-08-14. The baseline migration exists.**
+**Fact 2 — ✅ The baseline migration exists.**
 `apps/backend/src/migrations/20260814_205354_baseline.ts`, registered in `index.ts`. It was cut and
 verified against an empty `edc_backend`: dropped, recreated, `payload migrate`, 20 tables, one row in
 `payload_migrations`.
 
-**Therefore `PAYLOAD_DISABLE_PUSH=1` is now correct and required in dev, stage and prod.** The
-sentence that used to live here — "setting it today gives you an application with no schema" — is no
-longer true and the opposite is now the risk.
+**Therefore no push variable is required in any environment.** Not in dev, stage or prod, and not on
+a laptop. The correct configuration is the absence of configuration: leave `PAYLOAD_ALLOW_PUSH`
+unset and migrations create the schema. Two sentences that used to live here are both dead — "setting
+it today gives you an application with no schema" (false since the baseline), and "`PAYLOAD_DISABLE_PUSH=1`
+is required in dev, stage and prod" (false since the gate flipped). 🔴 **If you find
+`PAYLOAD_DISABLE_PUSH` set anywhere, it does nothing at all** — nothing reads it. Delete it rather
+than leaving it to look reassuring.
 
 ### The sequence — all four steps landed together
 
 1. ✅ Baseline generated (`20260814_205354_baseline`).
 2. ✅ Registered in `apps/backend/src/migrations/index.ts`.
-3. ✅ `PAYLOAD_DISABLE_PUSH=1` in dev, stage and prod — the table in §1 above.
+3. ✅ Push gate inverted to opt-in, so dev, stage and prod need **no** variable — the table in §1
+   above. This replaced "set `PAYLOAD_DISABLE_PUSH=1` in every deployed environment", which was the
+   same outcome bought with a per-environment step someone could forget.
 4. ✅ Backend runtime command is `payload migrate && next start`
-   (`apps/backend/package.json` `start`; `apps/backend/Dockerfile` runs `pnpm start`).
+   (`apps/backend/package.json` `start`; `apps/backend/Dockerfile` runs `pnpm start`), and
+   `apps/backend/Dockerfile.dev`'s `CMD` runs `payload migrate` before `next dev`.
 
 🔴 **A THIRD REASON PUSH MUST STAY OFF, which did not exist before the baseline.** The baseline
 carries four indexes written by hand because Payload's field config cannot express them:
@@ -347,17 +353,24 @@ errors when it does — the ratings table simply starts accepting duplicate rows
 average computed over it is quietly wrong. The three `_unq` ones are the only real lock behind
 `beforeValidate` hooks that are checks, not locks.
 
-📝 **Still open, for whoever owns `payload.config.ts`:** invert the gate to
-`push: process.env.PAYLOAD_ALLOW_PUSH === '1'`, so the safe behaviour is what you get by forgetting.
-Deferred, not done: `infra/docker-compose.yml` currently opts the local demo in with
-`PAYLOAD_DISABLE_PUSH=0`, so inverting the gate has to change that file in the same commit.
+✅ **DONE 2026-08-14 — the gate was inverted.** This section used to list that as future work, blocked
+on `infra/docker-compose.yml`, which opted the local demo in with `PAYLOAD_DISABLE_PUSH=0` and so had
+to change in the same commit. It did: `payload.config.ts` now reads `PAYLOAD_ALLOW_PUSH === '1'`, and
+neither `infra/docker-compose.yml` nor `infra/docker-compose.dev.yml` sets a push variable at all.
+**The safe behaviour is now what you get by forgetting**, which is the whole point — the indexes
+above are too quiet a thing to lose to a missing variable.
 
-🟡 **The local demo still keeps push ON** — `infra/docker-compose.yml` sets `PAYLOAD_DISABLE_PUSH=0`
-so a laptop needs no migration step. That is still a reasonable default for a throwaway database, but
-it is no longer free: a pushed local database may be missing the four hand-written indexes above, so
-a duplicate-rating race will NOT reproduce locally and WILL be blocked in dev/stage/prod. If you are
-testing anything that depends on those constraints, run the laptop on migrations instead
-(`PAYLOAD_DISABLE_PUSH=1` plus `pnpm --filter @edc/backend migrate`).
+✅ **The local demo runs on migrations too, and that was the other half of the fix.**
+`apps/backend/Dockerfile.dev`'s `CMD` runs `pnpm exec payload migrate` before `next dev`, mirroring
+the production image. Push on a laptop looked free — throwaway database, no migration step — and was
+not: a pushed local database is missing the four hand-written indexes above, so a duplicate-rating
+race would **not** reproduce locally while it **was** blocked in dev/stage/prod. That is the worst
+possible split, because local is where you would try to reproduce it. Every environment now builds
+its schema the same way.
+
+🔧 `PAYLOAD_ALLOW_PUSH=1` still exists for iterating on the schema locally. Expect the four indexes
+to vanish while it is on, and cut a migration afterwards rather than leaving a database in that
+state. 🔴 Never in a deployed environment.
 
 ---
 

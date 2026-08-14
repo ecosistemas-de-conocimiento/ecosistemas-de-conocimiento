@@ -242,31 +242,37 @@ point of the route. And it still says **nothing** about the callback worker — 
 | service | mechanism | when |
 |---|---|---|
 | `ai-service` | `CMD ["sh","-c","node dist/db/migrate.js && exec node dist/index.js"]` | **every container start**, idempotent — Drizzle skips applied ones |
-| `backend` (Payload) | `CMD ["pnpm","start"]` — **no migrate step, deliberately** | — |
+| `backend` (Payload) | `CMD ["pnpm","start"]` — and `start` is `payload migrate && next start` | **every container start**, idempotent — Payload skips applied ones |
 
-🔴 **`apps/backend` HAS NO MIGRATIONS AT ALL TODAY, AND THIS BLOCKS THE FIRST STAGE/PROD DEPLOY.**
+✅ **`apps/backend` HAS A BASELINE MIGRATION, cut 2026-08-14. It no longer blocks the first
+stage/prod deploy.**
 
-`apps/backend/src/migrations/index.ts` exports an **empty array**. The two conflicting baselines
-carried in from the merged apps were deleted and the replacement has not been cut. Schema push is the
-only thing creating tables.
+`apps/backend/src/migrations/20260814_205354_baseline.ts`, registered in `src/migrations/index.ts`.
+It was cut from an empty `edc_backend` and verified by dropping and recreating that database: 20
+tables, one row in `payload_migrations`. Migrations — not schema push — create and advance the schema
+in **every** environment now, the laptop demo included (`apps/backend/Dockerfile.dev`'s `CMD` runs
+`payload migrate` before `next dev`, mirroring the production image).
 
-⚠ **So do NOT "fix" this by adding `payload migrate` to the command.** It would be a no-op today, and
-`apps/backend/src/migrations/README.md` documents a deliberate **four-part change that must happen
-together**:
+This used to be a **four-part change that had to happen together**, documented as such in
+`apps/backend/src/migrations/README.md`. All four have landed:
 
-1. Generate the baseline migration.
-2. Add it to `src/migrations/index.ts`.
-3. Set `PAYLOAD_DISABLE_PUSH=1` in every deployed environment.
-4. Change the runtime command to `payload migrate && next start`.
+1. ✅ Baseline migration generated.
+2. ✅ Registered in `src/migrations/index.ts`.
+3. ✅ **The schema-push gate is safe by default, so there is now nothing to set per environment.**
+   `payload.config.ts` reads `PAYLOAD_ALLOW_PUSH === '1'` — opt-in, so push is off unless someone
+   asks for it. This step used to read "set `PAYLOAD_DISABLE_PUSH=1` in every deployed environment":
+   the same outcome, bought with a manual step in each environment that anyone could forget once.
+   Inverting the gate bought it for free. 🔴 Do not set `PAYLOAD_ALLOW_PUSH` anywhere in the fleet.
+4. ✅ Runtime command changed to `payload migrate && next start`.
 
-🔴 **Doing (3) without (1) and (2) leaves a deployed environment with NO SCHEMA.** Doing (1) and (2)
-without (3) leaves push still enabled, which is the exact default-ON condition that made the
-prototypes' environments diverge. **All four, or none.**
+🔴 **Why the ordering mattered — kept, because a re-cut baseline would face it again.** Turning push
+off before (1) and (2) leaves a deployed environment with **NO SCHEMA**. Doing (1) and (2) while push
+is still on leaves the exact default-ON condition that makes environments diverge.
+**All four, or none.**
 
-🟡 **Recommendation: treat cutting that baseline as a prerequisite of the first `stage` deploy, not
-as follow-up work.** We are still in the window where every environment is empty and a baseline can
-be cut cleanly — see the "drop-and-rebuild" note below. That window closes the moment a real user
-exists, and it does not reopen.
+🟡 **We are still in the window where every environment is empty**, so a baseline that ever has to be
+re-cut can still be handled by drop-and-rebuild — see the "drop-and-rebuild" note below. That window
+closes the moment a real user exists, and it does not reopen.
 
 ⚠ **`ai-service` keeps its ledger in `public.__drizzle_migrations`, not drizzle's default `drizzle`
 schema.** Deliberate, and guarded by a test. Irrelevant for a fresh database; it matters only if you
@@ -319,10 +325,14 @@ a crash-loop, and a crash-loop can run for **27 hours** before anyone notices.
   (`start_period=120, retries=10, interval=5`) was too tight; a from-empty baseline needs
   **`start_period=300, retries=20, interval=10`** or the very first deploy times out and rolls
   itself back — which looks like a migration failure and is not one.
-- 🔴 **`push` defaulting ON was the root cause of their repeat failures.** Ours defaults ON too
-  (`payload.config.ts`: `PAYLOAD_DISABLE_PUSH !== '1'`). ⚠ But turning it off is step 3 of the
-  four-part change above and is **actively harmful on its own** while `migrations/index.ts` is
-  empty. Full argument in `env-manifests.md` §6.
+- 🔴 **`push` defaulting ON was the root cause of their repeat failures.** ✅ Ours no longer does:
+  `payload.config.ts` reads `PAYLOAD_ALLOW_PUSH === '1'`, so push is off unless an environment opts
+  in, and no environment does. It was `PAYLOAD_DISABLE_PUSH !== '1'` until 2026-08-14, which meant
+  one forgotten variable in one environment silently reverted that environment to push. ⚠ The reason
+  this is worth being strict about: push reconciles the database toward the drizzle schema, and the
+  baseline's four hand-written indexes are not in that schema, so push removes them **without
+  erroring** — including the compound UNIQUE constraints behind ratings/memberships/callback
+  de-duplication. Full argument in `env-manifests.md` §6.
 
 ### 🔴 Migrations must live in the container CMD, not in a Coolify release command
 
@@ -556,7 +566,9 @@ Not mine to fix; listed so they are not lost.
   not the repo root. 🔴 **Do not add a `package.json` to it "for consistency."** `pnpm-workspace.yaml`
   globs `services/*`, so that would make it a workspace member and break
   `pnpm install --frozen-lockfile` for every other app in the repo.
-- 🔴 **No baseline migration in `apps/backend`.** §3. Prerequisite of the first stage deploy.
+- ✅ **The baseline migration in `apps/backend` exists** (`20260814_205354_baseline`), and schema push
+  is opt-in and off everywhere. This was a 🔴 blocker on the first stage deploy in the previous
+  revision. §3.
 - 🔴 **No identity signing keypair anywhere.** `AUTH_PRIVATE_KEY` / `AUTH_PUBLIC_KEY` /
   `AUTH_KEY_ID` / `AUTH_ISSUER` have no defaults and nothing generates them.
   `pnpm --filter @edc/backend keygen` prints a set. **One per environment.**

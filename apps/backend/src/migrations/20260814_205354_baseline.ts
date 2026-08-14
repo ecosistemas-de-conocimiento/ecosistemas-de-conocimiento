@@ -408,8 +408,11 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
    *      ever regenerated, they must be copied forward by hand.
    *   2. Schema push does not know about them. `push: true` reconciles the
    *      database against the drizzle schema, and an index that is not in that
-   *      schema is not something push will keep. This is one more reason
-   *      `PAYLOAD_DISABLE_PUSH=1` is set in every deployed environment — see
+   *      schema is not something push will keep. It goes without an error, and
+   *      the ratings table quietly starts accepting duplicates again. This is
+   *      why the push gate in `payload.config.ts` is opt-IN
+   *      (`PAYLOAD_ALLOW_PUSH === '1'`) rather than opt-out: forgetting a
+   *      variable must not be able to remove these — see
    *      `src/migrations/README.md`.
    *
    * ── Why they are here and not in the collections ──────────────────────────
