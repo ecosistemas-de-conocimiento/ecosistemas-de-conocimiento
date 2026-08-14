@@ -1,5 +1,14 @@
 /**
- * POST /api/ai-service/callback — receiver for ai-service webhook callbacks.
+ * POST /api/ai-service/callback — receiver for ai-service webhook callbacks,
+ * AND for `services/audio-service`'s transcription callbacks.
+ *
+ * ⚠ ONE ROUTE, ONE VERIFIER, ONE SECRET — and that is deliberate on BOTH sides.
+ * audio-service signs with `X-AIService-*` and the identical HMAC scheme
+ * (`services/audio-service/app/callbacks.py` says so in its header) precisely so
+ * this file grows `event` branches rather than a second verifier that would have
+ * to be kept in sync. Nothing in the verification code below changes for audio.
+ * `X-Callback-Source: audio-service` rides along for anyone who wants to branch
+ * on the emitter; we do not need to.
  *
  * Order (matters for security and latency):
  *   1. `await req.text()` — read the RAW body BEFORE any parse. Next.js's
@@ -38,6 +47,7 @@ import {
   CALLBACK_TIMESTAMP_HEADER,
   verifyCallbackSignature,
 } from '@/lib/hmac'
+import { relationId } from '@/lib/permissions'
 
 /**
  * Envelope shape — narrow mirror of `callback-contract.md`. Only the fields
@@ -75,6 +85,53 @@ type CallbackEnvelope =
       event: 'request.completed' | 'request.failed' | 'request.cancelled'
       requestId: string
     }
+  // ── audio-service (services/audio-service/app/callbacks.py) ───────────────
+  | {
+      event: 'transcribe.completed'
+      transcribeId: string
+      /** The `documents` row id we sent as `externalId`. The whole join. */
+      externalId?: string | null
+      title?: string | null
+      audio?: {
+        durationSeconds?: number
+        chunks?: number
+        filename?: string
+        contentType?: string
+        bytes?: number
+      }
+      transcript?: {
+        /**
+         * ⚠ `null` when `truncated` is true — over
+         * `CALLBACK_MAX_TRANSCRIPT_CHARS` (200k) audio-service omits the text
+         * rather than POSTing megabytes through a proxy that may cap it. Fetch
+         * it with `GET /v1/transcribe/:id` in that case.
+         */
+        text?: string | null
+        truncated?: boolean
+        characters?: number
+        language?: string
+        languageProbability?: number
+        segmentCount?: number
+        durationSeconds?: number
+      }
+      model?: { name?: string }
+      durationMs?: number
+      metadata?: Record<string, unknown> | null
+    }
+  | {
+      event: 'transcribe.failed'
+      transcribeId: string
+      externalId?: string | null
+      error?: { code?: string; message?: string }
+      attempts?: number
+    }
+  | {
+      event: 'transcribe.progress'
+      transcribeId: string
+      externalId?: string | null
+      chunksDone?: number
+      chunksTotal?: number
+    }
 
 interface NaturalKey {
   correlationKey: string
@@ -95,6 +152,17 @@ function naturalKeyFor(envelope: CallbackEnvelope): NaturalKey | null {
     case 'request.failed':
     case 'request.cancelled':
       return { correlationKey: envelope.requestId, eventKey: '' }
+    case 'transcribe.completed':
+    case 'transcribe.failed':
+      // Same shape as the ingest pair: the job id plus the consumer id.
+      return { correlationKey: envelope.transcribeId, eventKey: envelope.externalId ?? '' }
+    case 'transcribe.progress':
+      // ⚠ NOT `''`. Progress fires repeatedly for one job, and an empty
+      // eventKey would collide with the terminal event's key — the first
+      // progress callback would dedupe the completion away. A constant is
+      // enough because progress is a no-op: deduping several of them is fine,
+      // deduping the completion is data loss.
+      return { correlationKey: envelope.transcribeId, eventKey: 'progress' }
     default:
       return null
   }
@@ -256,7 +324,17 @@ async function dispatchCallback(
         await payload.update({
           collection: 'documents',
           id: docId as never,
-          data: { ingestStatus: envelope.event === 'ingest.completed' ? 'ready' : 'failed' },
+          data:
+            envelope.event === 'ingest.completed'
+              ? // Clear the reason a PREVIOUS attempt failed: a retry that
+                // succeeded must not keep showing the old error next to "Listo".
+                { ingestStatus: 'ready', ingestError: null }
+              : {
+                  ingestStatus: 'failed',
+                  ingestError: `${envelope.error?.code ?? 'ingest_failed'}: ${
+                    envelope.error?.message ?? 'ai-service reported a failure'
+                  }`.slice(0, 500),
+                },
           overrideAccess: true,
         })
         if (envelope.event === 'ingest.failed') {
@@ -280,6 +358,51 @@ async function dispatchCallback(
     case 'ingest.progress':
       // No-op — we don't track per-doc batch progress in the UI yet.
       return
+    case 'transcribe.completed':
+      await dispatchTranscribeCompleted(payload, envelope)
+      return
+    case 'transcribe.failed': {
+      const docId = documentIdFrom(envelope.externalId)
+      if (docId === null) {
+        console.warn('[callback] transcribe.failed with no usable externalId', envelope.transcribeId)
+        return
+      }
+      const doc = await readDocument(payload, docId)
+      if (!doc) return
+      // Same stale-attempt guard as the completed path. A `failed` from an
+      // abandoned earlier attempt must not knock over a retry that is running.
+      if (!transcribeIdMatches(doc, envelope.transcribeId)) {
+        console.warn(
+          '[callback] ignoring transcribe.failed from a superseded job for doc',
+          docId,
+          envelope.transcribeId,
+        )
+        return
+      }
+      const code = envelope.error?.code ?? 'transcription_failed'
+      const message = envelope.error?.message ?? 'audio-service reported a failure'
+      console.warn('[callback] transcription failed for doc', docId, code, message)
+      await payload.update({
+        collection: 'documents',
+        id: docId as never,
+        // ⚠ `failed` + a REASON, never a silent revert to `pending`. The user is
+        // shown the reason and offered POST /api/documents/:id/retry; a row that
+        // quietly went back to "queued" would look like it was still working.
+        data: { ingestStatus: 'failed', ingestError: `${code}: ${message}`.slice(0, 500) },
+        overrideAccess: true,
+        context: { __skipDocsExtract: true },
+      })
+      return
+    }
+    case 'transcribe.progress':
+      // No-op, exactly like `ingest.progress`.
+      //
+      // ⚠ Deliberate: a progress BAR that advances once every ten minutes is
+      // worse than an honest indeterminate state plus a realistic ETA, and the
+      // ETA we already have — `audioMeta.durationSeconds`, recorded at submit
+      // time — is the better number to show. Revisit only if the UI grows a
+      // genuine per-chunk display.
+      return
     default:
       // Generate events arrive accepted-and-deduped; no chat-side write path
       // exists yet (chat uses generate.sync, not generate.enqueue).
@@ -295,6 +418,202 @@ interface DocumentSnapshot {
   uploadedBy?: unknown
   publicationStatus?: unknown
   publishIngestId?: unknown
+  kind?: unknown
+  name?: unknown
+  extractedText?: unknown
+  ingestId?: unknown
+  transcribeId?: unknown
+}
+
+// ---------------------------------------------------------------------------
+// audio-service → documents
+// ---------------------------------------------------------------------------
+
+/**
+ * The `documents` row id an audio callback names.
+ *
+ * ⚠ `externalId` is ECHOED BACK BY audio-service, which means it is data we
+ * sent, round-tripped through another service. It names a row; it proves
+ * nothing about ownership. Everything about who owns the document — the
+ * ecosistema, the uploader, and therefore the corpus — is read from the ROW,
+ * never from the envelope. audio-service's echo of `metadata.organizationId` is
+ * for log correlation and is deliberately not consulted anywhere below.
+ */
+function documentIdFrom(externalId: string | null | undefined): string | number | null {
+  const raw = typeof externalId === 'string' ? externalId.trim() : ''
+  if (!raw) return null
+  return /^\d+$/.test(raw) ? Number(raw) : raw
+}
+
+async function readDocument(
+  payload: Awaited<ReturnType<typeof getPayload>>,
+  docId: string | number,
+): Promise<DocumentSnapshot | null> {
+  try {
+    return (await payload.findByID({
+      collection: 'documents',
+      id: docId as never,
+      depth: 0,
+      overrideAccess: true,
+    })) as unknown as DocumentSnapshot
+  } catch (err) {
+    console.error('[callback] no documents row for', docId, err)
+    return null
+  }
+}
+
+/**
+ * 🔴 IS THIS CALLBACK ABOUT THE JOB THE ROW IS ACTUALLY WAITING FOR?
+ *
+ * A retry mints a NEW audio-service job while the old one may still be alive
+ * (audio-service's retry schedule runs out past ten minutes, and its reconciler
+ * emits a terminal event for jobs nobody is watching). Both callbacks carry the
+ * same `externalId`. Without this check a late event from the superseded
+ * attempt could overwrite a good transcript, or fail a row that is succeeding.
+ *
+ * A row with no `transcribeId` at all accepts nothing: it never started a job,
+ * so any callback claiming to be its is not.
+ */
+function transcribeIdMatches(doc: DocumentSnapshot, transcribeId: string): boolean {
+  return typeof doc.transcribeId === 'string' && doc.transcribeId === transcribeId
+}
+
+/**
+ * 🔴 THE JOIN BACK INTO THE EXISTING PIPELINE. This is the whole point of the
+ * audio work: the transcript becomes `extractedText`, and then the SAME
+ * `enqueueIngestForDoc` that an uploaded PDF goes through is called, unchanged.
+ *
+ * It resolves `draftCorpus(organizationId, uploadedById)` itself from the row —
+ * so the transcript lands in the uploader's PRIVATE draft corpus and becomes
+ * shared only if the document is deliberately published. We pass no corpus name
+ * of our own; `lib/corpus.ts` is the only place one is derived, and it says so.
+ */
+async function dispatchTranscribeCompleted(
+  payload: Awaited<ReturnType<typeof getPayload>>,
+  envelope: Extract<CallbackEnvelope, { event: 'transcribe.completed' }>,
+): Promise<void> {
+  const docId = documentIdFrom(envelope.externalId)
+  if (docId === null) {
+    console.warn('[callback] transcribe.completed with no usable externalId', envelope.transcribeId)
+    return
+  }
+
+  const doc = await readDocument(payload, docId)
+  if (!doc) return
+  if (!transcribeIdMatches(doc, envelope.transcribeId)) {
+    console.warn(
+      '[callback] ignoring transcribe.completed from a superseded job for doc',
+      docId,
+      envelope.transcribeId,
+    )
+    return
+  }
+
+  // ⚠ Idempotency guard, because the `aiServiceCallbacks` composite UNIQUE index
+  // DOES NOT EXIST yet (no migration baseline), so the dedupe insert upstream is
+  // currently inert. Text on the row plus an ingestId means this already ran;
+  // running it again would enqueue a second ingest for the same document.
+  const alreadyDone =
+    typeof doc.extractedText === 'string' &&
+    doc.extractedText.trim().length > 0 &&
+    typeof doc.ingestId === 'string' &&
+    doc.ingestId.length > 0
+  if (alreadyDone) {
+    console.warn('[callback] transcribe.completed already applied to doc', docId, '— ignoring')
+    return
+  }
+
+  let text = typeof envelope.transcript?.text === 'string' ? envelope.transcript.text : ''
+  if (!text.trim()) {
+    // Either the transcript was truncated out of the webhook body (over
+    // CALLBACK_MAX_TRANSCRIPT_CHARS) or nothing was said. Ask before deciding.
+    const { fetchTranscriptText } = await import('@/lib/audioClient')
+    text = (await fetchTranscriptText(envelope.transcribeId)) ?? ''
+  }
+
+  const audioMeta = {
+    durationSeconds:
+      envelope.audio?.durationSeconds ?? envelope.transcript?.durationSeconds ?? null,
+    language: envelope.transcript?.language ?? null,
+    languageProbability: envelope.transcript?.languageProbability ?? null,
+    segmentCount: envelope.transcript?.segmentCount ?? null,
+    model: envelope.model?.name ?? null,
+    chunks: envelope.audio?.chunks ?? null,
+  }
+
+  if (!text.trim()) {
+    // A recording with no speech in it, or a transcript that expired from
+    // audio-service's Redis before we could fetch it. Either way there is
+    // nothing to embed, and an empty ingest would produce a `ready` document
+    // that matches nothing — a silent, permanent "why does search never find
+    // it". Fail it visibly instead.
+    console.warn('[callback] empty transcript for doc', docId, envelope.transcribeId)
+    await payload.update({
+      collection: 'documents',
+      id: docId as never,
+      data: {
+        ingestStatus: 'failed',
+        ingestError: 'empty_transcript: no speech was detected in the recording',
+        audioMeta,
+      },
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+    return
+  }
+
+  // `transcribed` before `embedding`: if the process dies between these two
+  // writes the row stops in a state that is TRUE — the text exists, nothing has
+  // been embedded — and `POST /api/documents/:id/retry` picks it up from there
+  // without re-transcribing.
+  await payload.update({
+    collection: 'documents',
+    id: docId as never,
+    data: {
+      extractedText: text,
+      audioMeta,
+      ingestStatus: 'transcribed',
+      ingestError: null,
+    },
+    overrideAccess: true,
+    context: { __skipDocsExtract: true },
+  })
+
+  const organizationId = relationId(doc.organization)
+  const uploadedById = relationId(doc.uploadedBy)
+  if (organizationId == null || uploadedById == null) {
+    // No ecosistema or no uploader means no corpus name can be derived. Refuse
+    // rather than guess: a guessed corpus is a cross-tenant write.
+    console.error(
+      '[callback] doc',
+      docId,
+      'has no organization/uploadedBy — cannot derive a corpus for the transcript',
+    )
+    await payload.update({
+      collection: 'documents',
+      id: docId as never,
+      data: {
+        ingestStatus: 'failed',
+        ingestError: 'no_tenant: the document has no ecosistema or uploader, so it has no corpus',
+      },
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+    return
+  }
+
+  const { enqueueIngestForDoc } = await import('@/collections/Documents')
+  await enqueueIngestForDoc({
+    payload,
+    docId,
+    organizationId,
+    uploadedById,
+    fresh: {
+      name: typeof doc.name === 'string' ? doc.name : null,
+      kind: typeof doc.kind === 'string' ? doc.kind : 'audio',
+    },
+    extractedText: text,
+  })
 }
 
 /**

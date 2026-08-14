@@ -46,15 +46,37 @@ export interface Message {
   ratingPending?: boolean;
 }
 
-export type DocKind = 'markdown' | 'pdf' | 'docx';
+export type DocKind = 'markdown' | 'pdf' | 'docx' | 'audio';
 
+/**
+ * The backend's `documents.ingestStatus`, mirrored exactly.
+ *
+ * `transcribing` and `transcribed` are audio-only. ⚠ `transcribing` is the one
+ * state in this union that can legitimately last HOURS — transcription runs at
+ * roughly real time on CPU — so nothing in the UI may render it as an
+ * about-to-finish spinner. See `$lib/ingest.ts`, which owns that copy.
+ */
 export type IngestStatus =
   | 'n/a'
   | 'pending'
   | 'extracting'
+  | 'transcribing'
+  | 'transcribed'
   | 'embedding'
   | 'ready'
   | 'failed';
+
+/** Recording metadata the backend records for `kind: 'audio'` documents. */
+export interface AudioMeta {
+  /** Known from the moment the job is accepted, so the UI can quote a wait. */
+  durationSeconds?: number | null;
+  language?: string | null;
+  /** ASR confidence in the detected language. The only confidence signal we get. */
+  languageProbability?: number | null;
+  segmentCount?: number | null;
+  model?: string | null;
+  chunks?: number | null;
+}
 
 export interface WorkingDoc {
   /** Server-issued id. */
@@ -77,8 +99,20 @@ export interface WorkingDoc {
   updatedAt: number;
   /** M6 — what storage path this doc takes. */
   kind: DocKind;
-  /** M6 — embedding-pipeline status for pdf/docx. `n/a` for markdown. */
+  /** M6 — embedding-pipeline status for pdf/docx/audio. `n/a` for markdown. */
   ingestStatus: IngestStatus;
+  /**
+   * Why the pipeline failed, as `code: message`.
+   *
+   * ⚠ Kept so a `failed` document can explain itself and be retried. A failure
+   * with no reason is indistinguishable from a bug, and the user cannot tell
+   * "wrong file" (they must fix it) from "the service was down" (just retry).
+   */
+  ingestError?: string | null;
+  /** Present for `kind: 'audio'`. Drives the ETA and the provenance chip. */
+  audioMeta?: AudioMeta | null;
+  /** UI-only state — a retry request is on the wire. Never sent to the server. */
+  retryPending?: boolean;
 }
 
 export interface Session {
