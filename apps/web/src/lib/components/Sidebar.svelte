@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from '$lib/stores/app.svelte';
+  import EcosystemPicker from './EcosystemPicker.svelte';
 
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
@@ -11,6 +12,8 @@
   <aside
     class="w-10 shrink-0 border-r border-line bg-surface flex flex-col items-center py-3 gap-2 backdrop-blur"
   >
+    <!-- Which ecosistema, even collapsed. See EcosystemPicker's header. -->
+    <EcosystemPicker collapsed />
     <button
       class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft"
       onclick={() => app.toggleSidebar()}
@@ -52,6 +55,7 @@
   </aside>
 {:else}
   <aside class="w-64 shrink-0 border-r border-line bg-surface flex flex-col backdrop-blur">
+    <EcosystemPicker />
     <div class="p-3 flex items-center justify-between border-b border-line">
       <h1 class="text-sm font-bold tracking-wide text-ink font-display">Conversaciones</h1>
       <div class="flex items-center gap-1">
