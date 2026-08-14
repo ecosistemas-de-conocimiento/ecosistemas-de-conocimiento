@@ -25,7 +25,12 @@ import { organizationIdsForUser, relationId } from '../lib/permissions'
  * `GET /api/media/file/:filename` as well as `GET /api/media/:id`. That is the
  * route that serves bytes, and it is the one that mattered.
  *
- * Local dev stores files under `./media/` per Payload's `staticDir` default.
+ * ⚠ WHERE THE BYTES LIVE IS NOW A RUNTIME DECISION, and it does not change one
+ * line of the rule above. With `S3_*` set, `@payloadcms/storage-s3` writes to
+ * the bucket and serves through the SAME `upload.handlers` chain, which Payload
+ * runs strictly AFTER `checkFileAccess`. With those vars absent, files land
+ * under `./media/` per Payload's `staticDir` default. See `lib/storage/plugin.ts`
+ * for the four plugin options that would break this and are therefore unset.
  */
 
 // ---------------------------------------------------------------------------
@@ -194,9 +199,25 @@ export const bindMediaToEcosystem: CollectionBeforeValidateHook = async ({
 }) => {
   const next = { ...(data ?? {}) } as Record<string, unknown>
   const user = req.user
-  if (!user) return next
-
   const original = (originalDoc ?? {}) as Record<string, unknown>
+
+  // ⚠ `prefix` IS IMMUTABLE FOR EVERYONE, overrideAccess writers included, and
+  // for a different reason than `uploadedBy`: it is not a permission, it is a
+  // RECORD OF WHERE THE BYTES ALREADY ARE. Rewriting it moves no object — it
+  // only stops the serve route computing the key the upload actually used, and
+  // the file 404s while sitting perfectly intact in the bucket.
+  if (operation !== 'create' && typeof original.prefix === 'string') {
+    next.prefix = original.prefix
+  }
+
+  if (!user) {
+    // Seed / ingest writes still get a deterministic key rather than dropping
+    // objects at the bucket root, where nothing can be accounted for.
+    if (operation === 'create') {
+      next.prefix = mediaObjectPrefix(relationId(next.organization), relationId(next.uploadedBy))
+    }
+    return next
+  }
 
   if (operation !== 'create') {
     next.uploadedBy = original.uploadedBy
@@ -216,7 +237,71 @@ export const bindMediaToEcosystem: CollectionBeforeValidateHook = async ({
     delete next.organization
   }
 
+  next.prefix = mediaObjectPrefix(relationId(next.organization), user.id)
+
   return next
+}
+
+// ---------------------------------------------------------------------------
+// The object key prefix
+// ---------------------------------------------------------------------------
+
+/**
+ * WHERE AN OBJECT LANDS IN THE BUCKET: `eco_{orgId}/u_{uploaderId}/{filename}`.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 🔴 THE PREFIX IS NOT AN ACCESS BOUNDARY. IT NEVER GRANTS OR DENIES ANYTHING.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Anyone holding a working bucket credential can read every key under every
+ * prefix — a prefix is a naming convention, not a wall. The ONLY thing standing
+ * between a user and someone else's file is `mediaVisibleToCaller` above,
+ * evaluated per request by Payload. If you ever find yourself reasoning "they
+ * can't reach it, it's under a different eco_ prefix", stop: that sentence is
+ * false, and it is exactly how a bucket-layout change becomes a data leak.
+ *
+ * ── WHY HAVE ONE AT ALL, THEN: OPERABILITY ─────────────────────────────────
+ *
+ * Everything below is a question that gets asked with a bucket listing, not a
+ * database query, usually while something is on fire:
+ *
+ *   · WHICH ECOSISTEMA IS EATING THE DISK. This whole migration happened
+ *     because audio is 10–100× a PDF. "Who is consuming the storage" stops
+ *     being answerable the moment every object sits in one flat namespace, and
+ *     a flat bucket cannot be summed per tenant without joining every key back
+ *     to a row.
+ *   · OFFBOARDING AN ECOSISTEMA is one prefix sweep instead of a paginated
+ *     `ListObjectsV2` over the whole bucket cross-referenced against Postgres.
+ *   · LIFECYCLE / RETENTION rules are expressed per prefix by every S3
+ *     implementation. Without one, no rule can distinguish tenants.
+ *   · ORPHANS ARE ATTRIBUTABLE. `POST /api/media` always precedes
+ *     `POST /api/documents`, so every file is briefly an orphan and stays one
+ *     forever if the second call fails. `u_{uploaderId}` says whose it was
+ *     without a lookup.
+ *
+ * ── WHY THE ECOSISTEMA SEGMENT IS BEST-EFFORT, AND WHY THAT IS FINE ────────
+ *
+ * `organization` on a media row is deliberately nullable: `POST /api/media`
+ * carries only the file, so a member of several ecosistemas leaves it unset
+ * (see `bindMediaToEcosystem`). Those objects land under `eco_none/`.
+ *
+ * 🔴 THIS IS PRECISELY WHY THE PREFIX COULD NEVER BE A SECURITY BOUNDARY EVEN
+ * IF SOMEONE WANTED IT TO BE: the field it is derived from is allowed to be
+ * null, and a nullable column is a terrible thing to hang a tenancy check on.
+ * As an operability label a partial answer is still useful — most uploads do
+ * carry an ecosistema, and `eco_none/` is itself a legible bucket of "needs
+ * attribution".
+ *
+ * ⚠ IT IS COMPUTED ONCE, AT CREATE, AND FROZEN. Both inputs are immutable after
+ * create, so the stored prefix always matches the key the upload really wrote.
+ */
+export function mediaObjectPrefix(
+  organizationId: number | string | null,
+  uploaderId: number | string | null,
+): string {
+  const eco = organizationId === null ? 'eco_none' : `eco_${organizationId}`
+  const uploader = uploaderId === null ? 'u_none' : `u_${uploaderId}`
+  return `${eco}/${uploader}`
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +399,34 @@ export const Media: CollectionConfig = {
         readOnly: true,
         description:
           'Derived on upload when unambiguous. Informational — the read rule goes through the owning document.',
+      },
+    },
+    {
+      /**
+       * The object-key prefix. See `mediaObjectPrefix` — OPERABILITY ONLY, and
+       * NOT an access boundary.
+       *
+       * ⚠ DECLARED HERE RATHER THAN LEFT TO THE PLUGIN, ON PURPOSE.
+       * `@payloadcms/plugin-cloud-storage` injects a `prefix` field of its own,
+       * but only when the plugin is active. Since this app runs with the plugin
+       * OFF on local disk and ON with S3, letting the plugin own the field would
+       * make the Postgres schema differ between the two modes — and schema push
+       * is off here, so the column would simply be missing in one of them and
+       * every insert would fail. Declaring it unconditionally keeps one schema
+       * and one migration. The plugin merges with an existing `prefix` field
+       * rather than replacing it (`plugin-cloud-storage/dist/fields/getFields.js`).
+       *
+       * ⚠ Read at serve time by `getFilePrefix`, which looks the row up by
+       * filename to rebuild the key. Stale value ⇒ the object 404s while sitting
+       * intact in the bucket. Hence the immutability in `bindMediaToEcosystem`.
+       */
+      name: 'prefix',
+      type: 'text',
+      index: true,
+      admin: {
+        readOnly: true,
+        description:
+          'Object-storage key prefix, derived on upload. Operability only — never an access boundary.',
       },
     },
     { name: 'alt', type: 'text' },
