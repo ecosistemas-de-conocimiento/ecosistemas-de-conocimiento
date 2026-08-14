@@ -167,6 +167,19 @@ services:
       - ../services/audio-service:/app
     environment: *audio-env-dev
 
+# ── ☁ rustfs: DELIBERATELY NOT OVERRIDDEN HERE ─────────────────────────────
+# It is the same pinned image in both modes and there is no source to bind-mount
+# — it is a third-party binary, not a workspace member. Overriding it would only
+# create a second place for its configuration to drift from the base file.
+# ⚠ ONE THING TO KNOW IN DEV, and it is the one that will confuse you: the
+#   uploads and the store's CREDENTIALS live on the same `rustfs_data` volume,
+#   so `docker compose down -v` — the command this overlay tells you to run
+#   after any `package.json` change — wipes both. That is fine BECAUSE the
+#   backend re-provisions the bucket and its user on every boot. 🔴 If uploads
+#   start failing with `InvalidAccessKeyId` or `NoSuchBucket` after a
+#   `down -v`, the provisioning is not re-runnable and that is the bug — not
+#   the volume. `infra/fleet/runbook.md` §8.
+
 volumes:
   # One pair per bind-mounting service. Named per-service rather than shared
   # because each image installs a DIFFERENT `--filter <pkg>...` subset of the

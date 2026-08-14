@@ -2,10 +2,14 @@
 
 Guía humana. El detalle técnico vive en `infra/`.
 
-🔴 **Nada de esto se ha probado.** No corrí `docker compose up`. No construí una sola imagen. No
-desplegué nada. Lo único que sí corrí es `docker compose config`, que sólo dice que el archivo se lee
-bien. Todo lo demás es diseño, escrito leyendo el código de este repo y la documentación de los
-prototipos. Marco lo que asumí.
+🔴 **Casi nada de esto se ha probado.** No corrí `docker compose up`. No construí una sola imagen. No
+desplegué nada. Lo que sí corrí es `docker compose config`, que sólo dice que el archivo se lee bien.
+
+✅ **Una excepción, y la marco donde aparece:** el almacén de archivos (RustFS) sí lo bajé, lo levanté
+en un puerto de prueba y lo probé de verdad — crear bucket, subir, bajar, rotar llaves, la consola.
+Después lo apagué y borré su volumen. Todo lo que diga ✅ **medido** sobre él es real. Lo demás sigue
+siendo diseño, escrito leyendo el código de este repo.
+Marco lo que asumí.
 
 ---
 
@@ -26,9 +30,17 @@ Luego abres:
 
 Entras con el correo y la contraseña que dejaste en `SEED_ADMIN_EMAIL` y `SEED_ADMIN_PASSWORD`.
 
-**Qué levanta:** web, backend, ai-service, Postgres con pgvector, Redis, y **tres contenedores de
-audio** (no uno):
+Y si quieres ver los archivos guardados con tus propios ojos:
 
+- `http://localhost:59001/rustfs/console/` — la consola del almacén de archivos.
+  ⚠ **La parte final de la dirección hace falta.** Si entras a `http://localhost:59001` a secas te
+  contesta con un error XML que parece que está roto. No lo está. ✅ Probado.
+
+**Qué levanta:** web, backend, ai-service, Postgres con pgvector, Redis, **RustFS** (el almacén de
+archivos), y **tres contenedores de audio** (no uno):
+
+- `rustfs` — guarda los archivos que sube la gente. Es un almacén compatible con S3, o sea que habla
+  el mismo idioma que Amazon S3 sin ser Amazon. Consola en `http://localhost:59001/rustfs/console/`.
 - `audio-service` — la API. Recibe la subida, la guarda en disco y encola. No carga el modelo.
 - `audio-service-worker` — transcribe. Es el contenedor pesado, el que tiene el modelo en RAM.
 - `audio-service-callbacks` — entrega el webhook firmado de vuelta al backend.
@@ -57,12 +69,14 @@ justo el recurso que a este stack le sobra.
 
 | nivel | qué incluye | RAM residente | comando |
 |---|---|---|---|
-| **1 — núcleo** | todo menos audio y los sidecars | ~0.8 GB | `docker compose up -d --wait postgres redis ai-service backend web` |
-| **2 — producto** (por defecto) | + los tres contenedores de audio | ~1.9 GB en reposo, ~2.8 GB transcribiendo | `docker compose up -d --wait` |
-| **3 — RAG avanzado** | + embeddings y reranking propios | ~7 GB | `docker compose --profile heavy up -d --wait` |
+| **1 — núcleo** | todo menos audio y los sidecars, **incluido el almacén de archivos** | ~0.9 GB | `docker compose up -d --wait postgres redis rustfs ai-service backend web` |
+| **2 — producto** (por defecto) | + los tres contenedores de audio | ~2.0 GB en reposo, ~2.9 GB transcribiendo | `docker compose up -d --wait` |
+| **3 — RAG avanzado** | + embeddings y reranking propios | ~7.1 GB | `docker compose --profile heavy up -d --wait` |
 
 - ⚠ Todas las cifras son **estimadas**, sacadas de los límites que puse y del tamaño de los modelos.
-  Ninguna está medida en este stack.
+  Ninguna está medida en este stack. ✅ **Una sola excepción:** el almacén de archivos consume
+  **102 MB en reposo**, y ese número sí lo medí con el contenedor corriendo.
+
 - El nivel 2 asume `WHISPER_MODEL=small`. Cabe en 8 GB y va cómodo en 16 GB.
 - El nivel 3 con ~7 GB residentes **sí cabe en 16 GB en Linux.** Lo que de verdad duele son otras dos
   cosas:
@@ -74,6 +88,35 @@ justo el recurso que a este stack le sobra.
 - 🟡 **Mi recomendación:** demuestra el producto en tu laptop (nivel 2) y el RAG avanzado en la caja
   `dev` del fleet. Es una división a propósito, no un parche.
 
+### ☁ Por qué el almacén de archivos está en el nivel 1 y no es opcional
+
+⚠ Fue una decisión real, con costo de los dos lados. Sube el nivel 1 en ~100 MB.
+
+- **Subir archivos es el producto.** Esto es un repositorio de contenidos. Un nivel que no puede
+  recibir un archivo no es un demo reducido: es otro producto. En el nivel 3 viven cosas que hacen la
+  búsqueda *mejor*; el almacén hace que la subida *exista*. No van en la misma bolsa.
+- 🔴 **Y la razón que decidió:** si lo pongo detrás de un interruptor opcional, quedan **dos
+  interruptores que tienen que estar de acuerdo** — el del contenedor y el de las variables que lee
+  el backend. Apagas uno y no el otro, y el backend queda apuntando a un almacén que nadie prendió.
+  Este stack ya tiene tres casos así documentados (el secreto de callback, el modelo de whisper, el
+  reranking) y en los tres la solución fue dejar **un solo interruptor**. Agregar un cuarto por
+  100 MB es mal negocio a cualquier precio.
+- 🔧 **El interruptor único que sí queda:** comenta las cinco líneas `S3_*` en `infra/.env` y el
+  backend vuelve a guardar en disco local, como antes.
+
+### 🔴 RustFS es para tu laptop y para `dev`. No para stage ni para producción.
+
+Esto no es un pendiente que se me olvidó: es una decisión, y la escribo aquí para que no parezca un
+descuido dentro de seis meses.
+
+- Pasa todas las pruebas de funcionamiento. ✅ Lo probé de verdad: crear bucket, subir, bajar, borrar.
+- Y falla en todo lo demás: **25 vulnerabilidades en 8 meses** (7 de gravedad crítica), **todas** sus
+  versiones marcadas como "prelanzamiento", y reportes abiertos de **pérdida silenciosa de datos** en
+  la configuración de un solo disco, que es justo la nuestra.
+- En una laptop y en `dev` todo lo que guarda se puede volver a generar. En producción sería la única
+  copia de la grabación de alguien. Ahí la cuenta no sale.
+- **Qué usará stage y producción: está sin decidir**, y es la decisión #8 en la lista de abajo. La
+  recomendación es S3 administrado (Cloudflare R2, ~$1/mes).
 ### 🔴 Cómo se siente de verdad un demo de audio en vivo
 
 Esto es lo que hay que saber antes de prometerle un demo a alguien.
@@ -119,6 +162,21 @@ el día anterior, no durante el demo.**
   coincide con el `callbackSecret` que va dentro de `API_KEYS` de audio-service. Hoy
   `infra/docker-compose.yml` **arma ese JSON a partir de la única variable `CALLBACK_SECRET`**, así que
   ya no pueden separarse. Si ves esto, sospecha primero de (a).
+- 🔴 **El contenedor `rustfs` dice que está sano y las subidas fallan igual.** No es contradicción:
+  su chequeo de salud **sólo prueba que el proceso está prendido**. Contesta "ok, listo" aunque el
+  almacén no sirva. ✅ Lo medí: contesta `{"status":"ok","ready":true}` sobre un almacén vacío que
+  nunca ha tenido un bucket. La prueba de verdad es pedirle el bucket real, y eso vive en la ruta de
+  salud del backend, no aquí. ⚠ **No pongas un monitor apuntando a la salud de `rustfs`**: te daría
+  luz verde durante una caída total.
+- **Las subidas fallan con "no such bucket".** El bucket **no lo crea el docker-compose**, y RustFS
+  no tiene ninguna variable de entorno que lo cree. ✅ Verificado contra el contenedor corriendo. Lo
+  crea el backend al arrancar, y lo hace cada vez, a propósito.
+- **Las subidas fallan con "InvalidAccessKeyId" después de cambiar una llave.** Cambiar
+  `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` en `.env` sí rota la llave del almacén ✅ (lo probé),
+  pero pide **reiniciar el contenedor**, no sólo guardar el archivo.
+- **Borraste el volumen y ahora nada autentica.** `docker compose down -v` borra los archivos **y
+  todas las credenciales** del almacén. Vuelven a crearse solas al arrancar el backend. Si no
+  vuelven, revisa que el paso de aprovisionamiento corra en **cada** arranque y no una sola vez.
 - **Cambiaste `WHISPER_MODEL` y el contenedor no arranca.** Los pesos están horneados dentro de la imagen
   y en ejecución el contenedor no tiene red (`HF_HUB_OFFLINE=1`). Cambiar de modelo pide
   `docker compose build audio-service`, no un reinicio.
@@ -178,11 +236,22 @@ código. Así puedes reconstruir, cambiar de tamaño o reemplazar `prod` sin toc
 no ensaya Coolify, ni TLS, ni el pipeline de construcción — y ahí es justo donde viven las fallas
 conocidas de este stack.
 
-### 🔴 La restricción que define todo: los archivos subidos viven en disco local
+### 🔴 Dónde viven los archivos subidos — cambió en `dev`, sigue igual en producción
 
-✅ **Verificado leyendo el código**, no asumido. Payload no tiene adaptador de S3 en este repo.
+Antes esta sección decía "los archivos viven en disco local, en todos lados". Hoy es medio cierto.
 
-Consecuencias, en orden de cuándo te pegan:
+**Qué cambió: el audio.** La gente sube PDF, DOCX **y grabaciones**, y una grabación pesa entre 10 y
+100 veces lo que un PDF. El disco local ya era la restricción más grande del diseño; el audio lo
+volvió inviable, empezando por la laptop. Por eso `dev` ya guarda en un almacén de objetos.
+
+| ambiente | dónde van los archivos |
+|---|---|
+| tu laptop | ✅ RustFS |
+| `dev` | ✅ RustFS, en la caja `data` |
+| `stage` | 🔴 disco local todavía |
+| `prod` | 🔴 disco local todavía |
+
+**En `stage` y `prod` siguen vivas las tres consecuencias de siempre:**
 
 1. **Producción no puede crecer a dos cajas.** Un documento subido por la caja A da 404 desde la caja B.
    Por eso recomiendo una sola caja de producción. No es ahorro, es la única forma correcta hoy.
@@ -191,10 +260,39 @@ Consecuencias, en orden de cuándo te pegan:
 3. **Los respaldos tienen que cubrir ese volumen**, no sólo Postgres. Un respaldo de Postgres restaura
    los renglones que describen un archivo cuyos bytes ya no existen.
 
-🟡 **Recomendación: pospón el almacenamiento de objetos** hasta que necesites una segunda caja de
-producción. Cuando lo hagas, **usa S3 administrado** (Cloudflare R2, ~$1/mes). Los prototipos
-lo auto-hospedaron sólo porque su dueño puso como requisito "hardware propio". Ese requisito no es nuestro
-hasta que alguien lo escriba. Les costó una evaluación de 1,591 líneas.
+🟡 **Recomendación, y la ajusto en vez de cambiarla: pospón el almacenamiento de objetos en `stage` y
+`prod`** hasta que necesites una segunda caja de producción. Cuando lo hagas, **usa S3 administrado**
+(Cloudflare R2, ~$1/mes). Sólo un requisito de "hardware propio" justificaría auto-hospedarlo.
+Ese requisito no es nuestro hasta que alguien lo escriba.
+
+⚠ **Por qué en `dev` sí y ahora, si en producción digo que esperes.** Son dos argumentos distintos y
+vale la pena no confundirlos. Posponerlo en producción es sobre **riesgo con datos que no se pueden
+perder**. Correrlo en `dev` es sobre **ejercitar el código de S3 todos los días** en vez de el día de
+la migración. La falla más cara que tuvieron ellos con esto no fue del almacén: fueron **dos pedazos
+de código que seguían leyendo del disco** después de prender S3 — uno daba error 502 y el otro
+**borraba imágenes de las exportaciones sin avisar**. Eso se encuentra usándolo a diario, y de
+ninguna otra forma.
+
+⚠ **Costo real de dejar la decisión #9 abierta:** hoy `stage` **no ensaya** el almacén que usará
+producción. Y `stage` existe justamente para ensayar. Es la razón para cerrarla antes del primer
+despliegue a stage que toque archivos, no después.
+
+### 🔴 El hueco de los respaldos del almacén: las credenciales
+
+El volumen de RustFS guarda **dos cosas distintas**: los archivos, y la lista de usuarios y llaves de
+acceso. Suena a detalle y no lo es.
+
+- 🔴 **Restaurar el volumen recupera los archivos y NO recupera una lista de llaves usable.** Te
+  devuelve las llaves que existían el día del respaldo. Una llave rotada después vuelve muerta, y la
+  app queda autenticándose contra una lista que **retrocedió en silencio**. Se ve como "el almacén
+  está roto", horas después de dar la restauración por terminada.
+- ✅ **La solución no es un respaldo mejor: es que el aprovisionamiento se pueda repetir.** El backend
+  vuelve a crear el bucket y su usuario **en cada arranque**, así que un almacén restaurado, borrado o
+  a medias se acomoda solo. 🔴 Lo que hay que cuidar es esa propiedad: si alguien lo "optimiza" a un
+  contenedor de inicio que corre una sola vez, este párrafo se convierte en una caída.
+- 🔴 **Y el archivo de llaves está en texto plano.** Copiar ese volumen es copiar todas las
+  credenciales que ha emitido. Cífralo, o no hagas la copia. Es también por qué **no respaldamos el
+  almacén de `dev`**: su contenido se puede regenerar, y una copia sin cifrar vale menos que el riesgo.
 
 ### Dónde corre la transcripción de audio
 
@@ -262,7 +360,9 @@ están en el documento.
 - 📝 **Alta disponibilidad.** Primero respaldos y alertas. Dos hechos: **la replicación no es respaldo** (un standby replica
   fielmente un `DROP TABLE`), y **un failover que nadie ve es una trampa** — te deja en una sola caja sin
   protección y la *segunda* falla ya no se sobrevive.
-- 📝 **Almacenamiento de objetos.** Hasta que haga falta una segunda caja de producción.
+- 📝 **Almacenamiento de objetos en `stage` y producción.** Hasta que haga falta una segunda caja de
+  producción. ✅ En tu laptop y en `dev` **ya está puesto** (RustFS). 🔴 Que `dev` esté verde **no
+  cierra** este pendiente — el motor de stage y producción sigue sin decidirse (decisión #8).
 - 📝 **Los sidecars de RAG avanzado** (`bge-m3`, `rerank`) en el fleet. Existen y funcionan; están
   apagados por defecto.
 - 📝 **Caja dedicada de construcción.** Es lo primero que se separa cuando las builds estorben.
@@ -298,19 +398,22 @@ Ordenadas por lo que bloquean.
 6. **Transcripción propia o administrada.** Costo contra custodia de las grabaciones.
    → **Recomiendo propia, en CPU.**
 7. **Destino de los respaldos:** B2 o R2. → **Recomiendo R2**, gratis a nuestro volumen.
-8. **Quién guarda la segunda copia de la llave `APP_KEY` de Coolify.** 🔴 Sin ella, un respaldo de
+8. 🔴 **Qué almacén de archivos usan `stage` y producción.** RustFS se queda en tu laptop y en `dev`,
+   y no sube de ahí. → **Recomiendo S3 administrado (Cloudflare R2)**, ~$1/mes y cero mantenimiento.
+   La alternativa auto-hospedada es Garage, y sólo tiene sentido **si existe un requisito escrito de
+   hardware propio**. ⚠ Es tuya y no mía porque el disparador es una pregunta de política —
+   soberanía y custodia de datos —, no una técnica. ⚠ Mientras siga abierta, `stage` no ensaya el
+   almacén de producción.
+9. **Quién guarda la segunda copia de la llave `APP_KEY` de Coolify.** 🔴 Sin ella, un respaldo de
    Coolify no descifra ni un secreto. No hay opción por defecto segura aquí.
-9. **Quién tiene admin de Coolify.** Es root sobre todo el fleet.
+10. **Quién tiene admin de Coolify.** Es root sobre todo el fleet.
 
 ### 🔧 Baratos, sólo di que sí
 
-10. **Mover `services/ai-service/.github/workflows/` a la raíz del repo.** GitHub sólo lee workflows de
+11. **Mover `services/ai-service/.github/workflows/` a la raíz del repo.** GitHub sólo lee workflows de
     `.github/workflows/` en la raíz. Ahí donde están, **CI no está corriendo.**
-11. **Borrar `apps/backend/docker-compose.yml`.** Levanta un segundo Postgres, sin pgvector, que
+12. **Borrar `apps/backend/docker-compose.yml`.** Levanta un segundo Postgres, sin pgvector, que
     compite con el de `infra/`.
-12. **Borrar `.staging-identity/`.** Es la copia de la app de identidad que ya se fusionó en
-    `apps/backend`. No es parte del workspace y está excluida del build. Tiene ~300 menciones a los
-    prototipos; borrar la carpeta las purga todas de un golpe.
 
 ---
 
@@ -323,6 +426,8 @@ Otros agentes estaban editando el repo mientras yo escribía esto.
 | Los precios de las cajas `cx33` (sólo el de `prod` es real) | el presupuesto se mueve |
 | Que `packages/*/dist` se construye solo durante el build de cada app | `ERR_MODULE_NOT_FOUND` en la primera imagen |
 | Que `apps/backend` va a usar los nombres `AUDIO_SERVICE_URL` / `AUDIO_SERVICE_API_KEY` de `plan/audio-ingest-integration.md` §3.5 | si ese agente elige otros nombres, hay que cambiar dos renglones de `infra/docker-compose.yml` |
+| 🔴 Que `apps/backend` va a leer `S3_ENDPOINT` / `S3_REGION` / `S3_BUCKET` / `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`, y que **si faltan las cinco** vuelve a guardar en disco local | es un acuerdo con el agente que está escribiendo esa parte, no algo que leí en el código: **hoy `apps/backend` todavía no tiene adaptador de S3**. Si elige otros nombres, cambian `infra/.env.example` §7 y dos bloques de comentario |
+| 🔴 Que el paso que crea el bucket y el usuario corre en **cada arranque** del backend | si corre una sola vez, un volumen restaurado o borrado deja el almacén sin credenciales y nadie lo repara solo |
 
 **Las de audio ya no son asunciones.** Leí el servicio. Esto es lo que salió, incluido lo que tenía mal:
 
@@ -335,13 +440,37 @@ Otros agentes estaban editando el repo mientras yo escribía esto.
   defecto del servicio, `large-v3-turbo`, corre a ~1× tiempo real.
 
 ✅ **Ya no son asunciones** (los verifiqué leyendo el código): el formato de `SERVICE_TOKENS`,
-`ORG_KEY=demo`, la reja `EDC_ENV`, que los sidecars hornean sus pesos, y que Payload no usa S3.
+`ORG_KEY=demo`, la reja `EDC_ENV`, y que los sidecars hornean sus pesos.
+
+⚠ **Una que se quedó vieja y la corrijo:** este documento decía "verificado: Payload no usa S3". Era
+cierto y sigue siendo cierto **hoy**, pero ya no es la meta. El adaptador de S3 está en camino, en el
+archivo de otro agente. Mientras no aterrice, `rustfs` levanta, contesta bien, guarda un almacén vacío,
+y **todas las subidas siguen yendo al disco local**. No está roto: está a medio conectar, a propósito,
+para no tener que editar el compose dos veces.
 
 **Qué sí ejecuté, y qué no.** Corrí `docker compose config` sobre las tres variantes — base, base con la
 capa `dev`, y `--profile heavy` — y las tres se leen sin error. También verifiqué en la configuración
 resuelta que el mismo `CALLBACK_SECRET` llega al backend, a ai-service y a los tres contenedores de
-audio. **Eso es todo.** No corrí `docker build`, ni `docker compose up`, ni un despliegue. Los archivos
-que escribí son `infra/**` y este documento.
+audio. No corrí `docker build`, ni `docker compose up`, ni un despliegue. Los archivos que escribí son
+`infra/**` y este documento.
+
+✅ **Y sí levanté el almacén de archivos de verdad**, en un puerto de prueba, no dentro del stack.
+Bajé `rustfs/rustfs:1.0.0-rc.1`, lo corrí, y esto es lo que salió — todo medido, nada supuesto:
+
+| lo que probé | resultado |
+|---|---|
+| crear bucket, subir archivo, bajarlo, pedir el bucket | ✅ todo 200, con firma S3 normal |
+| pedir un bucket que no existe | ✅ 404, o sea que la app puede distinguir los dos casos |
+| crear un bucket que ya existe | ✅ 200, no error — el aprovisionamiento se puede repetir sin trucos |
+| cambiar la llave raíz y reiniciar sobre el mismo volumen | ✅ la llave nueva sirve, la vieja queda muerta |
+| la consola | ✅ carga, pero en `/rustfs/console/`, no en la raíz |
+| su ruta de salud sobre un almacén vacío | 🔴 contesta `"ok"` y `"ready":true`. **Miente.** |
+| memoria en reposo, sin límite puesto | ✅ 102 MB |
+
+Después lo apagué y borré su volumen. ⚠ **Lo que NO probé:** cómo se porta con archivos de 100 MB o
+con varias subidas al mismo tiempo, ni el problema #2573 de memoria creciente, ni el mensaje de
+"cluster incompleto" que reportan para esta versión exacta en un solo nodo. Los tres están anotados en
+`infra/fleet/runbook.md` §8 para que se reconozcan y no se investiguen desde cero.
 
 ---
 

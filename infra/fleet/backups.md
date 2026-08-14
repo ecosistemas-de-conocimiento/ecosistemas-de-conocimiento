@@ -54,6 +54,57 @@ Four things, and two of them are the ones people forget.
 records. Losing it means some ingest jobs need re-triggering. Say that out loud rather than
 discovering it.
 
+⚠ **Not backed up, deliberately:** the **RustFS `/data` volume on the `data` box** — see §2b. It is
+`dev` only, and `dev` bucket contents are reproducible test content. 🔴 **That decision comes with a
+condition and a hazard, both in §2b. Read it before repeating "we don't back up dev" to anyone.**
+
+---
+
+## 2b. ☁ RustFS on `dev` — 🔴 the volume is a CREDENTIAL STORE, and a restore has a gap
+
+**New 2026-08-14.** `dev` writes uploads to RustFS on the `data` box (`topology.md` §3). Stage and
+prod still write to a local volume — RustFS is not approved for them, and their engine is open
+decision #9. So this section is about **`dev` only**, and it is here because two of its properties
+are counter-intuitive enough to cost someone a day.
+
+### 🔴 Property 1: two different kinds of thing share one volume
+
+| what lives on `/data` | what it is | if you lose it |
+|---|---|---|
+| **bucket data** | the uploaded PDFs / DOCX / audio | on `dev`: reproducible test content |
+| **IAM store** (`users.json`) | users, access keys, policies | 🔴 the app cannot authenticate at all |
+
+### 🔴 Property 2: a volume restore recreates the buckets and NOT a usable IAM store
+
+**Say this the plain way: restoring the volume gives you the credentials that existed at snapshot
+time.** Any key issued or rotated since comes back dead, and the app then authenticates against a
+credential store that has **silently moved backwards**. The symptom arrives hours after the restore
+is declared finished, and it looks like "storage is broken", not like "the restore was incomplete".
+
+✅ **The mitigation is not a better backup. It is idempotent provisioning.** The backend recreates
+the bucket and its scoped user on **every boot**, so a restored, wiped or half-populated store
+converges without a human. 🔴 **The thing to protect is that property** — if provisioning is ever
+"optimised" into a one-shot init container that exits, this gap becomes a real outage rather than a
+paragraph. `runbook.md` §8.
+
+### 🔴 The hazard: `users.json` is CLEARTEXT, so a backup of this volume is a leak
+
+If anyone does snapshot it — a Hetzner volume snapshot, a `docker cp`, a copy handed to a contractor
+— **that copy contains every secret key the store ever issued, in plaintext.** Encrypt and
+access-control it exactly like the Coolify `APP_KEY` in §2 item 4, or do not make the copy.
+
+⚠ **This is the reason "we don't back up dev storage" is the right call and still needs writing
+down.** The risk of an unencrypted convenience copy is higher than the value of the `dev` objects it
+would protect.
+
+### 🔴 And the one that transfers to stage/prod whatever engine wins decision #9
+
+Object storage does **not** inherit Postgres's backup story. §4's two-RPO trap applies with full
+force: a database restored to 5 minutes ago against a bucket restored to 60 minutes ago is a product
+holding **55 minutes of rows pointing at objects that do not exist**, reporting itself healthy.
+🔧 Whatever engine stage/prod ends up on, its bucket sync cadence must be decided **at the same time**
+as the Postgres RPO, not after.
+
 ---
 
 ## 3. The design, and the numbers it actually gives

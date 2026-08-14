@@ -5,12 +5,18 @@
 #   open http://localhost:3000        (web)
 #        http://localhost:3002/admin  (Payload admin + identity provider)
 #
-# 🔴 NOTHING IN THIS FILE HAS BEEN RUN. It was authored from the Dockerfiles and
-#    source in this repo; no `docker compose up`, no `docker build`, no deploy.
-#    `docker compose config` PARSES it — that is the only thing verified.
-#    Treat every image tag, port, healthcheck and RAM figure as a design, not a
-#    measurement. The "Known to be wrong today" list at the bottom is the honest
-#    part.
+# 🔴 ALMOST NOTHING IN THIS FILE HAS BEEN RUN. It was authored from the
+#    Dockerfiles and source in this repo; no `docker compose up`, no
+#    `docker build`, no deploy. `docker compose config` PARSES it — that is
+#    what is verified for every service except one.
+#    ✅ THE EXCEPTION IS `rustfs`. That image was pulled and stood up on a
+#       throwaway port on 2026-08-14, and its S3 API, admin API, console path,
+#       healthcheck body and idle memory were measured against the running
+#       container. Those specific lines are marked ✅ MEASURED where they
+#       appear. Nothing else here is.
+#    Treat every other image tag, port, healthcheck and RAM figure as a design,
+#    not a measurement. The "Known to be wrong today" list at the bottom is the
+#    honest part.
 #
 # ─── 🔴 THE ONE THING NOT TO "SIMPLIFY": audio-service is THREE containers ──
 #    api + transcription worker + CALLBACK worker. Dropping the third breaks the
@@ -59,6 +65,7 @@
 #   service                  limit    idle       during a transcription
 #   postgres                 1g       ~150 MB    —
 #   redis                    512m     ~30 MB     —
+#   rustfs                   1g       ~100 MB    —   ← ✅ MEASURED, empty store
 #   ai-service               2g       ~250 MB    —
 #   backend                  2g       ~250 MB    —
 #   web                      1g       ~50 MB     —
@@ -69,11 +76,16 @@
 #   bge-m3-service           4g       ~2.5 GB    (profile heavy)
 #   rerank-service           4g       ~2.5 GB    (profile heavy)
 #
-#   TIER 1 — "core". ~0.8 GB resident. Comfortable on an 8 GB machine.
-#       docker compose up -d --wait postgres redis ai-service backend web
+#   TIER 1 — "core". ~0.9 GB resident. Comfortable on an 8 GB machine.
+#       docker compose up -d --wait postgres redis rustfs ai-service backend web
 #     Document upload, RAG chat, ratings, admin. Everything except audio.
+#     ⚠ REVISED 2026-08-14 with rustfs added: +~100 MB measured resident, and
+#       +1 GB of ceiling. `rustfs` is IN this tier, not behind a profile — the
+#       argument is in §OBJECT STORAGE below and it is a real trade, not a
+#       formality. You can leave it off the command line: `backend`
+#       `depends_on` it, so Compose starts it either way.
 #
-#   TIER 2 — "product" (THE DEFAULT). ~1.9 GB idle, ~2.8 GB mid-transcription
+#   TIER 2 — "product" (THE DEFAULT). ~2.0 GB idle, ~2.9 GB mid-transcription
 #            at WHISPER_MODEL=small. Fits 8 GB; comfortable at 16 GB.
 #       docker compose up -d --wait
 #     ✅ Audio does NOT push this tier over a RAM threshold. Three containers
@@ -124,10 +136,48 @@
 #       (`AUDIO_CPUS`, default 4) and the UI you are demoing gets slower while
 #       it runs. That reads as a product bug. It is not one.
 #
-# ⚠ Every figure above is an ESTIMATE. Sources: the limits set in this file, the
-#   model sizes and timings stated in `services/audio-service/README.md`, the
-#   sidecar Dockerfiles, and the prototypes' measured per-container
-#   footprints. NOTHING HERE WAS MEASURED ON THIS STACK.
+# ⚠ Every figure above is an ESTIMATE, with ONE exception now: the rustfs idle
+#   number is measured (see below). Other sources: the limits set in this file,
+#   the model sizes and timings stated in `services/audio-service/README.md`,
+#   and the sidecar Dockerfiles. NOTHING ELSE HERE WAS MEASURED ON THIS STACK.
+#
+# ─── ☁ OBJECT STORAGE — WHY IT IS IN THE CORE TIER, NOT BEHIND A PROFILE ────
+# 🟡 This was a real decision with a cost on both sides. The call: **core**.
+#
+# THE CASE FOR A PROFILE: it is ~100 MB resident and 1 GB of ceiling on the
+# tier everyone claims fits 8 GB, for a capability a five-minute demo may never
+# touch. `heavy` exists precisely for "real but optional".
+#
+# 🔴 THE CASE FOR CORE, WHICH WON, AND THE SECOND REASON IS THE DECIDING ONE:
+#
+#  1. UPLOADS ARE THE PRODUCT. This is a content repository. A tier that
+#     cannot accept a file is not a reduced demo, it is a different product.
+#     `heavy` holds `bge-m3` and `rerank` — things that make retrieval BETTER.
+#     Storage makes it EXIST. Those do not belong in the same bucket.
+#     And it is audio that forced this: at 10–100× the size of a PDF, local
+#     disk stopped being viable, which is why we are here at all.
+#
+#  2. 🔴 A PROFILE WOULD PUT THE SERVICE AND ITS CONFIGURATION BEHIND TWO
+#     SEPARATE SWITCHES THAT MUST AGREE. Compose profiles gate SERVICES. They
+#     do not gate the `S3_*` variables the backend reads from `.env`. So
+#     `--profile storage` off + the variables still set = a backend pointed at
+#     a host that is not running: uploads fail against a store nobody started.
+#     Turning it on would mean remembering BOTH. This file already carries
+#     three documented instances of the same shape — the callback secret, the
+#     WHISPER_MODEL build-arg/env pair, the `RERANK_ENABLED`/URL pair — and in
+#     all three the fix was to collapse it to one switch. Adding a fourth
+#     two-switch trap, for 100 MB, is a bad trade at any RAM price.
+#
+#  ✅ The single switch that remains: comment the five `S3_*` lines out of
+#     `.env` and the backend falls back to local disk on the `backend_media`
+#     volume. `rustfs` still starts (it is `depends_on` of `backend`) and sits
+#     there idle at ~100 MB. 🔧 If that 100 MB matters, `docker compose stop
+#     rustfs` after the stack is up. That is the honest cost of this choice and
+#     it is the whole of it.
+#
+# ⚠ WHAT IT IS NOT: RustFS is LOCAL AND DEV ONLY. It is not going to stage or
+#   prod, and `infra/fleet/topology.md` §3 states why in one paragraph so it
+#   does not read as an oversight later.
 #
 # =============================================================================
 
@@ -222,6 +272,149 @@ services:
       resources:
         limits: { cpus: "1.0", memory: 512m }
 
+  rustfs:
+    # ── S3-compatible object storage. Payload's upload target. ────────────────
+    #
+    # WHY IT IS HERE AT ALL: users upload PDFs, DOCX and **audio**. Audio is
+    # 10–100× the size of a PDF, and that is what took local-disk uploads from
+    # "a fleet constraint" to "does not work". The `backend_media` volume below
+    # is still declared, and is still the fallback — see the `backend` service.
+    #
+    # 🔴 LOCAL AND DEV ONLY. NOT stage, NOT prod. This is a decision with a
+    #    reason, not an omission: RustFS ships 25 CVEs in 8 months (7 at
+    #    CVSS ≥ 9.0, including a hardcoded RPC secret shipped twice), every one
+    #    of its 100+ releases is flagged `prerelease`, and it has open issues
+    #    for silent data loss on single-drive — which is exactly this topology.
+    #    On a laptop and on `dev` that is a bug budget we can afford; on a box
+    #    holding a customer's only copy of their audio it is not.
+    #    The stage/prod engine is an OPEN DECISION — `infra/fleet/topology.md`
+    #    §3 argues for managed S3 (Cloudflare R2), with Garage as the
+    #    self-hosted answer if an own-hardware requirement turns up.
+    #
+    # 🔴 PINNED, and this is not pedantry. A floating tag such as
+    #    `minio/minio:latest` can leave a stack on an ARCHIVED,
+    #    unpatched image without anyone deciding to. An RC image behind a
+    #    floating tag is the same mistake with a faster clock.
+    image: rustfs/rustfs:1.0.0-rc.1
+    <<: [*restart, *logging]
+    environment:
+      # 🔴 THE ROOT CREDENTIALS, AND THEY ARE THE SAME VALUE THE APP USES.
+      #    Written ONCE in `.env` and interpolated into both sides here, exactly
+      #    like CALLBACK_SECRET, so the store's root key and the backend's
+      #    S3_ACCESS_KEY_ID physically cannot drift.
+      #    ⚠ WHY ROOT AND NOT A SCOPED USER: RustFS's IAM store lives on the
+      #      DATA VOLUME and NOTHING seeds a user or a policy from the
+      #      environment. Only these two root variables exist. A scoped user has
+      #      to be created through the admin API against a running server — that
+      #      is the provisioning script (`apps/backend/**`, another agent), and
+      #      until it has run, root is the only identity that exists. Local
+      #      demo: root is fine, every credential in `.env` is fake anyway.
+      #    ⚠ DEFAULTED, NOT `:?`-REQUIRED, AND THAT IS DELIBERATE. Every other
+      #      credential in this file uses `${VAR:?…}` so a missing value is a
+      #      loud failure. Here that would break the documented local-disk
+      #      fallback: turning object storage off means commenting all five
+      #      `S3_*` lines out of `.env`, and a `:?` guard would then refuse to
+      #      start the whole stack. So the store keeps a working root key even
+      #      when the app is not configured to use it. The value below is fake
+      #      and identical for everyone who clones this repo — same rule as the
+      #      rest of `.env.example`: safe only because this binds to localhost.
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY_ID:-edclocal}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_ACCESS_KEY:-edclocal_secret_not_for_any_real_env}
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: ":9000"
+    volumes:
+      # 🔴 THIS VOLUME HOLDS TWO DIFFERENT KINDS OF THING, and conflating them
+      #    is the backup mistake. (a) the bucket data — the actual uploaded
+      #    bytes; (b) the IAM store — users, access keys, policies.
+      #    ⚠ `users.json` inside it holds SECRET KEYS IN CLEARTEXT. Anyone with
+      #      read access to this volume, or to a copy of it, has every key it
+      #      has ever issued. Locally that is a fake key. On `dev` it is not,
+      #      and it is the reason a volume copy is a credential leak.
+      #    🔴 A volume RESTORE recreates the buckets and DOES NOT recreate the
+      #      IAM store as the app expects it — see infra/fleet/backups.md.
+      #      Provisioning must be re-runnable for exactly that reason.
+      - rustfs_data:/data
+    ports:
+      # 59000 / 59001, following the data tier's +50000 offset (Postgres 55432,
+      # Redis 56379). NOT 9000/9001 — those collide with php-fpm, Portainer, a
+      # developer's own MinIO, and half of Prometheus's ecosystem, and the whole
+      # point of the offset convention is that this demo never fights something
+      # already installed.
+      #   59000 → S3 API      (the backend reaches it as http://rustfs:9000)
+      #   59001 → web console (browse buckets by eye when something looks wrong)
+      # ✅ MEASURED, and it is not where you would guess: the console is served
+      #    at **http://localhost:59001/rustfs/console/** — the trailing path is
+      #    required. Port 59001 at `/` answers with an S3 `AccessDenied` XML
+      #    document, which reads like a broken console and is not one.
+      #    The admin API is on the S3 PORT, under /rustfs/admin/v3/… , and is
+      #    signed exactly like S3 (verified: `GET /rustfs/admin/v3/info` → 200
+      #    with SigV4, 403 without).
+      - "${RUSTFS_S3_HOST_PORT:-59000}:9000"
+      - "${RUSTFS_CONSOLE_HOST_PORT:-59001}:9001"
+    healthcheck:
+      # 🔴 READ THIS BEFORE YOU TRUST A GREEN CONTAINER.
+      #    `/health` and `/health/ready` on RustFS are LIVENESS ONLY, and they
+      #    ANSWER OK WHILE THE STORE IS UNUSABLE.
+      #    ✅ Measured on this exact image, 2026-08-14: `/health` returns
+      #       `{"status":"ok","ready":true,"service":"rustfs-endpoint",…}`
+      #       — a hardcoded-looking shape that reports `ready:true` before any
+      #       bucket exists and does not consult the store.
+      #    ✅ Also measured on RustFS: 200 from
+      #       `/health` with `"ready":true` while EVERY S3 call returned 503.
+      #    The field is named `ready` and it is not a readiness signal.
+      #
+      #    So what this healthcheck proves is EXACTLY ONE THING: the process is
+      #    up and something is listening on 9000. It proves nothing about
+      #    whether a bucket exists, whether credentials work, or whether a PUT
+      #    would succeed. It is wired anyway because `depends_on:
+      #    service_healthy` on `backend` then means "the port is bound" instead
+      #    of "the container was created", which removes a boot-time
+      #    ECONNREFUSED storm. That is its whole value.
+      #
+      #    ✅ THE REAL STORAGE PROBE IS `HeadBucket` AGAINST THE REAL BUCKET,
+      #       and it lives in the backend's readiness endpoint
+      #       (`apps/backend/**`, another agent's file). Measured
+      #       at p50 1.03 ms, and it caught every induced failure
+      #       that `/health` missed. `infra/fleet/runbook.md` §6 rule 5: probe a
+      #       dependency by DOING the thing you need, not by asking how it feels.
+      #    ⚠ This is how a 200 hides a 20-hour outage, and worse,
+      #      because the endpoint has a reassuring name.
+      #
+      # ✅ `CMD-SHELL` + `curl` is SAFE HERE, and that is worth stating because
+      #    it is not safe on every storage image. Verified inside this
+      #    container: `/usr/bin/curl`, `/usr/bin/wget` and `/usr/bin/nc` all
+      #    exist. 🔴 Garage — the engine `infra/fleet/topology.md` §3 names for
+      #    a self-hosted stage/prod — is `FROM scratch` with NO SHELL and NO
+      #    CURL, so a `CMD-SHELL` healthcheck cannot run there at all and must
+      #    be exec form (`["/garage","status"]`). Do not copy this line across
+      #    engines without checking.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          # ⚠ 1 GB, CHOSEN DELIBERATELY, AND THE NUMBER MATTERS MORE THAN USUAL.
+          #   RustFS open issue #2573: its memory use climbs toward whatever
+          #   ceiling the container has, where other stores held far less. So
+          #   the limit is not a safety net that will never be touched — it is
+          #   the number RustFS will grow into. Setting it high is not
+          #   generous, it is a decision to give away that much RAM.
+          #   1 GB is picked to be: comfortably above the multipart buffering a
+          #   100 MB audio upload needs (parts are ~5–16 MB), and low enough
+          #   that it cannot crowd out `audio-service-worker` (4 GB) on an 8 GB
+          #   laptop. It adds ~1 GB of CEILING to tier 1.
+          #   ✅ MEASURED idle on this image, empty store, no limit applied:
+          #      **102 MiB**. That is the floor, not the expectation — #2573 is
+          #      precisely the claim that the number does not stay there.
+          #   🔧 If RustFS gets OOM-killed under a real upload load, raise
+          #      RUSTFS_MEMORY rather than removing the limit — and note that an
+          #      OOM here IS the #2573 symptom, not a mystery.
+          memory: ${RUSTFS_MEMORY:-1g}
+
   # ═══════════════════════════════════════════════════════════════════════════
   # APPLICATION TIER
   # ═══════════════════════════════════════════════════════════════════════════
@@ -314,20 +507,55 @@ services:
       #    of proxies is a total, silent bypass of every per-IP limit
       #    (apps/backend/src/endpoints/http.ts).
       IDENTITY_TRUSTED_PROXY_HOPS: "0"
+      # ── ☁ OBJECT STORAGE ────────────────────────────────────────────────
+      # 🔴 THE FIVE `S3_*` VARIABLES ARE DELIBERATELY **NOT** LISTED HERE, AND
+      #    THAT IS THE WIRING, NOT AN OMISSION. They reach this container
+      #    through `env_file: .env` above — see `.env.example` §7, where all
+      #    five live with working local defaults.
+      #
+      #    WHY NOT HERE, given every other cross-service value in this file is:
+      #    the backend's contract is *"when all five are ABSENT, fall back to
+      #    local disk"*. Compose's `environment:` cannot express absent. Write
+      #    `S3_ENDPOINT: ${S3_ENDPOINT:-}` and an unset variable arrives as the
+      #    EMPTY STRING, which is a different thing, and whether the backend
+      #    treats it as off depends on how its check happens to be written.
+      #    Through `env_file`, commenting the line out in `.env` means the
+      #    variable is genuinely not in the container's environment. One
+      #    switch, no ambiguity, and the fallback is reachable by a developer
+      #    who wants it.
+      #    ⚠ The one thing this costs: `S3_ENDPOINT` must hold a
+      #      CONTAINER-NETWORK address (`http://rustfs:9000`), and it now sits
+      #      in the same file as host-side ports. Putting `localhost:59000`
+      #      there breaks every upload. `.env.example` says so loudly.
+      #    ⚠ `web` and `ai-service` also read `.env`, so they see the S3
+      #      credentials too. Already true of every value in that file, and
+      #      already flagged at the top of it. 🔴 In the fleet, only `backend`
+      #      gets them — `infra/fleet/env-manifests.md` §1.
     volumes:
-      # Payload's upload adapter is LOCAL DISK today (verified: no
-      # @payloadcms/storage-s3 in apps/backend/package.json, no S3 config in
-      # payload.config.ts). A named volume is what makes uploaded documents
-      # survive `docker compose restart`.
-      # 🔴 FLEET CONSEQUENCE, and it is a real one: local-disk uploads mean the
-      #    prod app tier CANNOT be scaled to two boxes — an upload written on
-      #    box A is a 404 on box B. See plan/deploy-and-local-demo.md §"Object
-      #    storage". This is the single biggest constraint on fleet shape.
+      # 🔴 STILL DECLARED, AND STILL LOAD-BEARING, EVEN WITH RUSTFS RUNNING.
+      #    It is the local-disk FALLBACK target: with the five `S3_*` variables
+      #    commented out of `.env`, Payload writes here exactly as before.
+      #    ⚠ Payload's S3 plugin sets `disableLocalStorage: true` when it is
+      #      enabled, so with S3 on, nothing new should land here — but any
+      #      code path still doing `fs.readFile(path.resolve(process.cwd(),
+      #      'media', …))` reads from this volume and will 404 or silently drop
+      #      content. Grep before believing the switch is complete.
+      #    🔧 Deleting this volume is a separate, later decision. Keeping it
+      #      costs nothing and it is the difference between a bad S3 day being
+      #      "revert one env var" and "revert one env var and restore a volume".
       - backend_media:/repo/apps/backend/media
     ports:
       - "${BACKEND_HOST_PORT:-3002}:3002"
     depends_on:
       postgres:
+        condition: service_healthy
+      # ⚠ `service_healthy` here buys ONE thing and it is worth being precise:
+      #   rustfs's healthcheck is liveness only (see that service), so this
+      #   waits until the S3 port is BOUND and nothing more. It removes a
+      #   boot-time ECONNREFUSED storm; it does NOT mean the bucket exists or
+      #   that a PUT would work. The backend must still tolerate an unusable
+      #   store at boot and report it through its OWN readiness route.
+      rustfs:
         condition: service_healthy
       # Not `service_healthy`: backend must tolerate ai-service being down
       # (uploads queue, chat degrades). Requiring health here would make an
@@ -687,7 +915,34 @@ services:
 volumes:
   pg_data:          # Postgres cluster — both databases.
   redis_data:       # BullMQ queue state (appendonly).
-  backend_media:    # Payload uploads. Local disk today; see §Object storage.
+  backend_media:    # Payload uploads — the LOCAL-DISK FALLBACK now. See §rustfs.
+
+  # ── ☁ rustfs_data — 🔴 TWO DIFFERENT THINGS LIVE IN HERE ────────────────
+  # 1. The BUCKET DATA. The uploaded PDFs, DOCX and audio. Precious.
+  # 2. The IAM STORE. Users, access keys, policies — including `users.json`,
+  #    which holds SECRET KEYS IN CLEARTEXT on disk. There is no env var that
+  #    seeds a user or a policy; the only thing the environment can set is the
+  #    single ROOT key pair. Everything else is created through the admin API
+  #    against a running server and then lives here and nowhere else.
+  #
+  # 🔴 THE BACKUP GAP, STATED PLAINLY: restoring this volume brings the buckets
+  #    back. It does NOT bring back an IAM store that matches whatever the app
+  #    is currently configured with — restore an older copy and you restore the
+  #    keys that were valid then. A key rotated since the snapshot comes back
+  #    dead, and the app authenticates against a store that has silently moved
+  #    backwards. `infra/fleet/backups.md` §2 carries the full version.
+  # ✅ THE MITIGATION IS PROVISIONING, NOT BACKUP. The bucket-and-credential
+  #    provisioning must be IDEMPOTENT and RE-RUNNABLE on every boot, so that a
+  #    restored, wiped or half-populated IAM store converges to the right shape
+  #    without a human. 🔴 A one-shot init container that exits is exactly the
+  #    approach recorded as failing: it runs once against an empty volume and is
+  #    never there on the day the store comes back wrong. That script is owned
+  #    by `apps/backend/**` (another agent); this file's job is only to make
+  #    sure the server is up, reachable and holding stable root credentials when
+  #    it runs.
+  # ⚠ `docker compose down -v` deletes uploads AND every issued credential.
+  rustfs_data:
+
   # Transient audio only: the upload awaiting transcription, plus per-job
   # scratch. Both are deleted the moment a transcript exists, and swept on a
   # timer if a crash skipped that. Safe to `docker volume rm` at any time — you
@@ -780,8 +1035,27 @@ networks:
 #     and none is generated automatically. Generate once with
 #     `pnpm --filter @edc/backend keygen` and paste into `.env` — see
 #     `.env.example` §3. Without it the app boots but cannot mint a token.
+#  🔴 `apps/backend` DOES NOT YET HAVE AN S3 ADAPTER. As of this edit the five
+#     `S3_*` variables in `.env.example` are read by NOTHING — no
+#     `@payloadcms/storage-s3` in `apps/backend/package.json`, no S3 config in
+#     `payload.config.ts`. Another agent is landing the adapter, the
+#     provisioning and the `HeadBucket` readiness probe. Until that lands,
+#     `rustfs` comes up, answers S3 correctly, holds an empty store, and every
+#     upload still goes to `backend_media`. ⚠ Same shape and same trade as the
+#     `AUDIO_SERVICE_*` note above: setting an unread variable costs nothing,
+#     and the alternative is a second edit to this file.
+#     🔴 If that agent picks different variable names, `.env.example` §7 and
+#        the `backend` comment block change together.
+#  ⚠ THE BUCKET IS NOT CREATED BY THIS FILE. RustFS has NO "default bucket"
+#     environment variable — verified against the running container; only
+#     `RUSTFS_ACCESS_KEY` / `_SECRET_KEY` / `_VOLUMES` / `_ADDRESS` exist.
+#     Creating `S3_BUCKET` is provisioning, and provisioning is the backend's.
+#     ⚠ Do not assume otherwise from the fleet doc: Garage — the engine
+#       `infra/fleet/topology.md` §3 names for self-hosted stage/prod — DOES
+#       have `GARAGE_DEFAULT_BUCKET`. RustFS does not.
 #  ⚠ No image tag, port, healthcheck path or resource limit in this file has
-#     been executed. `/api/health` (backend, web), `/health` (ai-service),
-#     `/ready` (sidecars) are read from source, not curled.
+#     been executed, WITH ONE EXCEPTION: `rustfs`, whose ✅ MEASURED notes are
+#     on the service itself. `/api/health` (backend, web), `/health`
+#     (ai-service), `/ready` (sidecars) are read from source, not curled.
 #  ⚠ Other agents are editing package scripts and env names concurrently. If a
 #     variable name here does not match the code, the code is right.
