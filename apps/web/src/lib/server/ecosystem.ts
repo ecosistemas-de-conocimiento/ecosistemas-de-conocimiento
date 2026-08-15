@@ -77,29 +77,74 @@ export interface EcosystemList {
 }
 
 /**
- * The caller's ecosistemas.
+ * The caller's ecosistemas — the ones they are a MEMBER of.
  *
- * `/api/organizations` is already scoped by Payload's `withinMyOrganizations`
- * access rule, so the answer IS this user's memberships — we never filter by a
- * client-supplied user or org. Sorted by name so the list, and therefore the
- * fallback "first" membership, is stable between requests.
+ * 🔴 THIS ASKS ABOUT MEMBERSHIP, NOT ABOUT READ ACCESS, and the difference is
+ * the whole reason this function is shaped the way it is.
+ *
+ * It used to list `/api/organizations` and rely on Payload's
+ * `withinMyOrganizations` access rule to scope the answer. That reasoning holds
+ * for every ordinary user — and breaks completely for a PLATFORM ADMIN, whose
+ * access rule short-circuits to "everything". On a system with 90 tenants the
+ * admin's picker was handed all 90, took the first, and every
+ * `POST /api/sessions` came back 400 `You do not belong to that ecosistema.`
+ * The product was unusable for exactly the account most likely to be demoing
+ * it, and perfectly fine for everyone else — so it survived every earlier test.
+ *
+ * "Which tenants may I read?" and "which tenants am I in?" are different
+ * questions that happen to have the same answer for most people. Ask the one we
+ * actually mean: filter memberships by the caller's own id rather than leaning
+ * on an access rule to do it implicitly.
+ *
+ * Costs one extra round trip to resolve who the caller is. Worth it — the
+ * alternative is decoding the JWT here, which puts a second, silently-diverging
+ * notion of identity in the frontend.
+ *
+ * Sorted by name so the list, and therefore the fallback "first" membership, is
+ * stable between requests.
  */
 export async function listEcosystems(token: string | undefined): Promise<EcosystemList> {
   try {
-    const res = await backendFetch(token, '/api/organizations?limit=100&depth=0&sort=name', {
-      method: 'GET',
+    const meRes = await backendFetch(token, '/api/users/me?depth=0', { method: 'GET' });
+    if (!meRes.ok) {
+      console.warn(`[ecosistemas] backend answered ${meRes.status} identifying the caller`);
+      return { list: [], ok: false };
+    }
+    const me = (await meRes.json().catch(() => ({}))) as { user?: { id?: unknown } | null };
+    const userId = me.user?.id;
+    if (userId == null || userId === '') {
+      // Authenticated but unidentifiable. Not the same as "no memberships" —
+      // stay quiet rather than telling someone they belong to nothing.
+      console.warn('[ecosistemas] /api/users/me returned no user id');
+      return { list: [], ok: false };
+    }
+
+    // ⚠ `depth=1` so each membership carries its organization row; the picker
+    // needs the name, not just the id.
+    const qs = new URLSearchParams({
+      'where[user][equals]': String(userId),
+      limit: '100',
+      depth: '1',
     });
+    const res = await backendFetch(token, `/api/memberships?${qs.toString()}`, { method: 'GET' });
     if (!res.ok) {
       // A 403 here is Payload's "empty tenant" answer in some shapes, so it is
       // not proof of a real authz problem — but it is also not proof of zero
       // memberships. Report it as a failed read and let the caller stay quiet.
-      console.warn(`[ecosistemas] backend answered ${res.status} listing organizations`);
+      console.warn(`[ecosistemas] backend answered ${res.status} listing memberships`);
       return { list: [], ok: false };
     }
     const body = (await res.json().catch(() => ({}))) as { docs?: unknown };
-    return { list: normalizeEcosystems(body.docs), ok: true };
+    const orgs = Array.isArray(body.docs)
+      ? body.docs
+          .map((m) => (m as { organization?: unknown } | null)?.organization)
+          .filter((o) => o != null)
+      : [];
+    const list = normalizeEcosystems(orgs);
+    list.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    return { list, ok: true };
   } catch (err) {
-    console.warn('[ecosistemas] organizations read failed', err);
+    console.warn('[ecosistemas] membership read failed', err);
     return { list: [], ok: false };
   }
 }

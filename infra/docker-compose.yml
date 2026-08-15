@@ -586,6 +586,24 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOST: 0.0.0.0
+      # 🔴 REQUIRED. SvelteKit's adapter-node refuses any POST whose `Origin`
+      #    header does not match `ORIGIN` exactly, and answers
+      #    `403 Cross-site POST form submissions are forbidden`.
+      #
+      #    ⚠ It only rejects FORM-encoded posts, which is what makes it so
+      #    confusing: JSON `fetch` calls sail through, so sign-in, chat, ratings
+      #    and session creation all worked while EVERY FILE UPLOAD returned 403.
+      #    The UI showed nothing — the document simply never appeared. Found by
+      #    the Playwright journey; nothing else in the stack noticed.
+      #
+      #    ⚠ It must be the URL THE BROWSER USES — the published host port, not
+      #    the container's internal 3000. Mismatching them is the same 403.
+      #
+      #    The prototypes hit this exact wall on a prototype's FE: all three
+      #    environments carried a stale prod ORIGIN and every POST 403'd until
+      #    it was set per environment. Same failure, written up in their
+      #    `ai-infra/coolify-operational.md`.
+      ORIGIN: http://localhost:${WEB_HOST_PORT:-3000}
       # ⚠ These are read via `$env/dynamic/private` — RUNTIME env, not build
       #   args, so one image serves every environment. Do NOT "optimise" them
       #   into build args: Vite SPAs have to build one image per
@@ -594,7 +612,7 @@ services:
       #   🔴 Anything renamed to PUBLIC_* becomes build-time-inlined AND
       #      client-visible. Never put a key behind a PUBLIC_ name.
       AI_SERVICE_URL: http://ai-service:3000
-      CHAT_BACKEND_URL: http://backend:3002
+      BACKEND_URL: http://backend:3002
     ports:
       - "${WEB_HOST_PORT:-3000}:3000"
     depends_on:

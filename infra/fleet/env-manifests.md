@@ -124,10 +124,10 @@ there is.
 | `PORT` / `HOST` | `3000` / `0.0.0.0` | same | same | ⚙ |
 | `AI_SERVICE_URL` | `http://ai-service-dev:3000` | `…-stage:3000` | `…-prod:3000` | ⚙ |
 | `AI_SERVICE_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 ⚠ may differ from backend's — issue a separate key per consumer so one can be revoked alone |
-| `CHAT_BACKEND_URL` | `http://backend-dev:3002` | `…-stage:3002` | `…-prod:3002` | ⚙ 🔴 **set it explicitly.** Its code default is `http://localhost:3002`, which inside a container means *this* container — a forgotten value fails confusingly, not obviously |
+| `BACKEND_URL` | `http://backend-dev:3002` | `…-stage:3002` | `…-prod:3002` | ⚙ 🔴 **set it explicitly.** Its code default is `http://localhost:3002`, which inside a container means *this* container — a forgotten value fails confusingly, not obviously |
 | `ORIGIN` | `https://dev.<domain>` | `https://stage.<domain>` | `https://<domain>` | ⚙ 🔴 **currently set nowhere.** adapter-node rejects cross-site form POSTs without it, and this app uses form actions + cookies. Alternative: `PROTOCOL_HEADER=x-forwarded-proto` + `HOST_HEADER=x-forwarded-host` |
 | `ORG_KEY` | `demo` | ⚠ decide | ⚠ decide | ⚙ tenant slug. ⚠ the code default is `edc` but the seed creates `demo` — they disagree, so always set it |
-| `CHAT_PROMPT_SOURCE` | *unset* | *unset* | *unset* | 💤 `registry` pulls prompts from ai-service |
+| `PROMPT_SOURCE` | *unset* | *unset* | *unset* | 💤 `registry` pulls prompts from ai-service |
 
 🔴 **All of these are RUNTIME env** (`$env/dynamic/private`), so **one image serves every
 environment** and promotion is a re-tag, not a rebuild. Two things must stay true for that:

@@ -61,12 +61,23 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-/** Two memberships, as Payload's membership-scoped list returns them. */
-function twoOrgs(): Response {
+/**
+ * Two memberships, in the shape the backend really answers with.
+ *
+ * ⚠ Path-aware on purpose. Resolving ecosistemas takes TWO reads — who am I
+ * (`/api/users/me`), then which memberships are mine — because "tenants I may
+ * read" and "tenants I belong to" diverge for a platform admin, whose access
+ * rule short-circuits to everything. A single blanket mock would answer both
+ * calls with the same body and hide exactly that.
+ */
+function twoOrgs(path?: string): Response {
+  if (String(path ?? '').startsWith('/api/users/me')) {
+    return jsonResponse({ user: { id: 7 } });
+  }
   return jsonResponse({
     docs: [
-      { id: 1, name: 'Ecosistema Norte', slug: 'norte' },
-      { id: 2, name: 'Ecosistema Sur', slug: 'sur' },
+      { id: 11, organization: { id: 1, name: 'Ecosistema Norte', slug: 'norte' } },
+      { id: 12, organization: { id: 2, name: 'Ecosistema Sur', slug: 'sur' } },
     ],
   });
 }
@@ -85,15 +96,20 @@ describe('GET /api/ecosistemas', () => {
   });
 
   it('never filters by a client-supplied user or org — the list is Payload-scoped', async () => {
-    mockedBackendFetch.mockImplementation(async () => twoOrgs());
+    mockedBackendFetch.mockImplementation(async (_t: unknown, p: string) => twoOrgs(String(p)));
     await GET(makeEvent({}));
     const path = decodeURIComponent(String(mockedBackendFetch.mock.calls[0]?.[1]));
-    expect(path.startsWith('/api/organizations?')).toBe(true);
-    expect(path).not.toContain('where[');
+    // ⚠ The memberships read DOES carry a `where[user][equals]` — that is the
+    // fix, not a leak: the id comes from `/api/users/me`, never from the client.
+    // What must never appear is a client-supplied user or org.
+    expect(path.startsWith('/api/users/me')).toBe(true);
+    const membershipPath = decodeURIComponent(String(mockedBackendFetch.mock.calls[1]?.[1]));
+    expect(membershipPath.startsWith('/api/memberships?')).toBe(true);
+    expect(membershipPath).toContain('where[user][equals]=7');
   });
 
   it('honours a stored selection that is a real membership', async () => {
-    mockedBackendFetch.mockImplementation(async () => twoOrgs());
+    mockedBackendFetch.mockImplementation(async (_t: unknown, p: string) => twoOrgs(String(p)));
     const cookies = makeCookies({ eco_selected: '2' });
     const res = await GET(makeEvent({ cookies }));
     const body = await res.json();
@@ -104,7 +120,7 @@ describe('GET /api/ecosistemas', () => {
   });
 
   it('🔴 ignores a stored id that is not a membership, and rewrites the cookie', async () => {
-    mockedBackendFetch.mockImplementation(async () => twoOrgs());
+    mockedBackendFetch.mockImplementation(async (_t: unknown, p: string) => twoOrgs(String(p)));
     const cookies = makeCookies({ eco_selected: '999' });
     const res = await GET(makeEvent({ cookies }));
     const body = await res.json();
@@ -115,13 +131,17 @@ describe('GET /api/ecosistemas', () => {
   });
 
   it('defaults to the first membership when nothing is stored', async () => {
-    mockedBackendFetch.mockImplementation(async () => twoOrgs());
+    mockedBackendFetch.mockImplementation(async (_t: unknown, p: string) => twoOrgs(String(p)));
     const res = await GET(makeEvent({}));
     expect((await res.json()).selectedId).toBe('1');
   });
 
   it('reports zero memberships as an empty list, not as degraded', async () => {
-    mockedBackendFetch.mockImplementation(async () => jsonResponse({ docs: [] }));
+    mockedBackendFetch.mockImplementation(async (_t: unknown, p: string) =>
+      String(p).startsWith('/api/users/me')
+        ? jsonResponse({ user: { id: 7 } })
+        : jsonResponse({ docs: [] }),
+    );
     const body = await (await GET(makeEvent({}))).json();
     expect(body).toEqual({ ecosistemas: [], selectedId: null });
   });
@@ -154,7 +174,7 @@ describe('POST /api/ecosistemas', () => {
   });
 
   it('selects a membership and remembers it', async () => {
-    mockedBackendFetch.mockImplementation(async () => twoOrgs());
+    mockedBackendFetch.mockImplementation(async (_t: unknown, p: string) => twoOrgs(String(p)));
     const cookies = makeCookies();
     const res = await POST(makeEvent({ cookies, body: { id: '2' } }));
     expect(res.status).toBe(200);
@@ -167,14 +187,14 @@ describe('POST /api/ecosistemas', () => {
   });
 
   it('accepts a numeric id as well as a string one', async () => {
-    mockedBackendFetch.mockImplementation(async () => twoOrgs());
+    mockedBackendFetch.mockImplementation(async (_t: unknown, p: string) => twoOrgs(String(p)));
     const res = await POST(makeEvent({ body: { id: 2 } }));
     expect(res.status).toBe(200);
     expect((await res.json()).selected.id).toBe('2');
   });
 
   it('🔴 REFUSES an ecosistema the caller does not belong to, and stores nothing', async () => {
-    mockedBackendFetch.mockImplementation(async () => twoOrgs());
+    mockedBackendFetch.mockImplementation(async (_t: unknown, p: string) => twoOrgs(String(p)));
     const cookies = makeCookies({ eco_selected: '1' });
     const res = await POST(makeEvent({ cookies, body: { id: '999' } }));
     expect(res.status).toBe(403);
@@ -188,13 +208,17 @@ describe('POST /api/ecosistemas', () => {
     // The read path falls back to the first membership; the WRITE path must not.
     // Answering 200 with somebody else's ecosistema selected is how a user ends
     // up publishing into a tenant they never chose.
-    mockedBackendFetch.mockImplementation(async () => twoOrgs());
+    mockedBackendFetch.mockImplementation(async (_t: unknown, p: string) => twoOrgs(String(p)));
     const res = await POST(makeEvent({ body: { id: '999' } }));
     expect(res.status).not.toBe(200);
   });
 
   it('409s `no_ecosystem` when the caller has no memberships', async () => {
-    mockedBackendFetch.mockImplementation(async () => jsonResponse({ docs: [] }));
+    mockedBackendFetch.mockImplementation(async (_t: unknown, p: string) =>
+      String(p).startsWith('/api/users/me')
+        ? jsonResponse({ user: { id: 7 } })
+        : jsonResponse({ docs: [] }),
+    );
     const res = await POST(makeEvent({ body: { id: '1' } }));
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe('no_ecosystem');

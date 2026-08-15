@@ -51,17 +51,26 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+/**
+ * Two MEMBERSHIPS, in the shape the backend really answers with.
+ *
+ * ⚠ Resolving ecosistemas takes two reads — `/api/users/me`, then memberships
+ * filtered by that id — because "tenants I may read" and "tenants I belong to"
+ * diverge for a platform admin, whose access rule short-circuits to everything.
+ */
+const ME = { user: { id: 7 } };
 const ORGS = {
   docs: [
-    { id: 1, name: 'Ecosistema Norte', slug: 'norte' },
-    { id: 2, name: 'Ecosistema Sur', slug: 'sur' },
+    { id: 11, organization: { id: 1, name: 'Ecosistema Norte', slug: 'norte' } },
+    { id: 12, organization: { id: 2, name: 'Ecosistema Sur', slug: 'sur' } },
   ],
 };
 
 /** Answer the organizations read with two memberships; anything else with `rest`. */
 function backendWith(rest: (path: string) => Response) {
   mockedBackendFetch.mockImplementation(async (_t: unknown, path: string) => {
-    if (String(path).startsWith('/api/organizations')) return jsonResponse(ORGS);
+    if (String(path).startsWith('/api/users/me')) return jsonResponse(ME);
+    if (String(path).startsWith('/api/memberships')) return jsonResponse(ORGS);
     return rest(String(path));
   });
 }
@@ -113,7 +122,9 @@ describe('GET /api/sessions', () => {
   });
 
   it('returns an empty list, and reads no sessions, with no memberships', async () => {
-    mockedBackendFetch.mockImplementation(async () => jsonResponse({ docs: [] }));
+    mockedBackendFetch.mockImplementation(async (_t: unknown, p: string) =>
+      String(p).startsWith('/api/users/me') ? jsonResponse(ME) : jsonResponse({ docs: [] }),
+    );
     const res = await GET(makeEvent({}));
     expect(await res.json()).toEqual({ docs: [], totalDocs: 0 });
     expect(calledPaths().some((p) => p.startsWith('/api/sessions?'))).toBe(false);
@@ -173,7 +184,9 @@ describe('POST /api/sessions', () => {
   });
 
   it('409s `no_ecosystem` with no memberships, and creates nothing', async () => {
-    mockedBackendFetch.mockImplementation(async () => jsonResponse({ docs: [] }));
+    mockedBackendFetch.mockImplementation(async (_t: unknown, p: string) =>
+      String(p).startsWith('/api/users/me') ? jsonResponse(ME) : jsonResponse({ docs: [] }),
+    );
     const res = await POST(makeEvent({}));
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe('no_ecosystem');
