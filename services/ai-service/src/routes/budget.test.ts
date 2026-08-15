@@ -22,6 +22,8 @@ import {
   usageLogs as UL_TABLE,
 } from '../db/schema/index.js';
 
+import { useBuildServer } from '../test/server-harness.js';
+
 interface DbState {
   budgetState: Record<string, unknown>[];
   llmConfigs: Record<string, unknown>[];
@@ -107,10 +109,10 @@ const APP_TOKEN = 'test-key';
 const ADMIN_TOKEN = 'admin-key';
 const ORG = 'test-org';
 
-async function makeApp() {
-  const { buildServer } = await import('../server.js');
-  return buildServer();
-}
+// `server.js` is imported ONCE per file, in `beforeAll` — importing it inside
+// the first test body cost that test ~3 s of module transform against vitest's
+// 5 s per-test budget. See `src/test/server-harness.ts`.
+const makeApp = useBuildServer();
 
 beforeEach(() => {
   dbState.budgetState = [];

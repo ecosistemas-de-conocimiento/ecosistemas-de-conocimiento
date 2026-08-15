@@ -9,11 +9,16 @@
 import { describe, expect, it } from 'vitest';
 
 import { SERVICE_CAPABILITIES } from '../capabilities.js';
+import { useBuildServer } from '../test/server-harness.js';
+
+// `server.js` is imported ONCE per file, in `beforeAll` — importing it inside
+// the first test body cost that test ~3 s of module transform against vitest's
+// 5 s per-test budget. See `src/test/server-harness.ts`.
+const makeApp = useBuildServer();
 
 describe('GET /v1/capabilities', () => {
   it('serves the document without a bearer token', async () => {
-    const { buildServer } = await import('../server.js');
-    const app = await buildServer();
+    const app = await makeApp();
     const res = await app.inject({ method: 'GET', url: '/v1/capabilities' });
 
     expect(res.statusCode).toBe(200);
@@ -24,8 +29,7 @@ describe('GET /v1/capabilities', () => {
   });
 
   it('forbids caching — a proxied answer could describe a previous deployment', async () => {
-    const { buildServer } = await import('../server.js');
-    const app = await buildServer();
+    const app = await makeApp();
     const res = await app.inject({ method: 'GET', url: '/v1/capabilities' });
 
     expect(res.headers['cache-control']).toBe('no-store');
@@ -214,8 +218,7 @@ const PROBES: Record<keyof typeof SERVICE_CAPABILITIES, Probe> = {
  * the evidence we want without standing up Postgres/Redis for a unit test.
  */
 async function expectRouteExists(method: 'GET' | 'POST', url: string): Promise<void> {
-  const { buildServer } = await import('../server.js');
-  const app = await buildServer();
+  const app = await makeApp();
   try {
     const res = await app.inject({ method, url, ...(method === 'POST' ? { payload: {} } : {}) });
     expect(res.statusCode, `${method} ${url} is not registered`).not.toBe(404);

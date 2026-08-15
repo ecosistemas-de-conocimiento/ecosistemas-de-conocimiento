@@ -7,6 +7,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useBuildServer } from '../test/server-harness.js';
+
 // One tenant, two roles + a second tenant to prove scope isolation.
 process.env.API_KEYS = JSON.stringify({
   'app-token': { org: 'test-org', project: 'test-project', role: 'app' },
@@ -24,10 +26,10 @@ vi.mock('../services/tenant/provision.js', () => ({
 
 vi.mock('../db/client.js', () => ({ db: { __stub: true } }));
 
-async function makeApp() {
-  const { buildServer } = await import('../server.js');
-  return buildServer();
-}
+// `server.js` is imported ONCE per file, in `beforeAll` — importing it inside
+// the first test body cost that test ~3 s of module transform against vitest's
+// 5 s per-test budget. See `src/test/server-harness.ts`.
+const makeApp = useBuildServer();
 
 beforeEach(() => {
   getTenantReadinessMock.mockReset();

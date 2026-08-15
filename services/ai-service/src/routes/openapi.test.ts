@@ -8,11 +8,18 @@
 import { describe, expect, it } from 'vitest';
 
 import { __resetOpenApiCacheForTests, getOpenApiDocument } from '../openapi/registry.js';
+import { useBuildServer } from '../test/server-harness.js';
+
+// `server.js` is imported ONCE per file, in `beforeAll` — importing it inside
+// the first test body cost that test ~3 s of module transform against vitest's
+// 5 s per-test budget. See `src/test/server-harness.ts`. The OpenAPI cache
+// reset stays per-test: it is cheap, and each run wants a fresh generation
+// pass.
+const buildServer = useBuildServer();
 
 async function makeApp() {
   // Reset between tests so each run picks up a fresh generation pass.
   __resetOpenApiCacheForTests();
-  const { buildServer } = await import('../server.js');
   return buildServer();
 }
 

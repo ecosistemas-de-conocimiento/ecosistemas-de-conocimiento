@@ -10,10 +10,8 @@
 // malformed SQL expression that only explodes in production.
 //
 // Same harness + skip semantics as `registry.test.ts`: throwaway
-// `pgvector/pgvector:pg16` container, skipped entirely when docker is absent.
-
-import { execSync, spawnSync } from 'node:child_process';
-import { setTimeout as delay } from 'node:timers/promises';
+// `pgvector/pgvector:pg16` container from `src/test/pg-container.ts`, on a
+// kernel-assigned host port, skipped entirely when docker is absent.
 
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
@@ -21,95 +19,48 @@ import type { FastifyInstance } from 'fastify';
 import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { hasDocker, startPostgres, stopContainer, type PgContainer } from '../test/pg-container.js';
+
+// Distinct from registry.test.ts's container — vitest runs test FILES in
+// parallel, so a shared container name would have them fighting each other.
+// The host PORT no longer needs coordinating: both are ephemeral.
 const CONTAINER_NAME = 'ai-svc-tenant-test';
-// Distinct from registry.test.ts's container/port — vitest runs test FILES in
-// parallel, so a shared port would flake. Overridable for the same
-// local-ecosystem-collision reason.
-const PG_PORT = Number(process.env.AI_SVC_TEST_TENANT_PG_PORT ?? 55433);
-const DB_URL = `postgres://postgres:postgres@127.0.0.1:${PG_PORT}/ai_service_test`;
 
 const APP_TOKEN = 'tenant-test-app';
 const ADMIN_TOKEN = 'tenant-test-admin';
 const ORG = 'tenant-test-org';
 const PROJECT = 'tenant-test-project';
 
-function hasDocker(): boolean {
-  const which = spawnSync('which', ['docker'], { stdio: 'ignore' });
-  if (which.status !== 0) return false;
-  const info = spawnSync('docker', ['info'], { stdio: 'ignore' });
-  return info.status === 0;
-}
-
 const DOCKER_AVAILABLE = hasDocker();
-
-async function waitForPg(timeoutMs = 60_000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const res = spawnSync('docker', [
-      'exec',
-      CONTAINER_NAME,
-      'pg_isready',
-      '-U',
-      'postgres',
-      '-d',
-      'ai_service_test',
-    ]);
-    if (res.status === 0) break;
-    await delay(250);
-  }
-  while (Date.now() < deadline) {
-    try {
-      const probe = postgres(DB_URL, { max: 1, connect_timeout: 2 });
-      await probe`select 1`;
-      await probe.end({ timeout: 2 });
-      return true;
-    } catch {
-      await delay(500);
-    }
-  }
-  return false;
-}
 
 describe.skipIf(!DOCKER_AVAILABLE)('tenant provisioning (integration)', () => {
   let app: FastifyInstance;
   let queryClient: ReturnType<typeof postgres>;
+  let container: PgContainer;
 
   beforeAll(async () => {
-    spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' });
-    execSync(
-      [
-        'docker run -d --rm',
-        `--name ${CONTAINER_NAME}`,
-        `-p ${PG_PORT}:5432`,
-        '-e POSTGRES_USER=postgres',
-        '-e POSTGRES_PASSWORD=postgres',
-        '-e POSTGRES_DB=ai_service_test',
-        'pgvector/pgvector:pg16',
-      ].join(' '),
-      { stdio: 'ignore' },
-    );
-    if (!(await waitForPg())) throw new Error('Postgres did not become ready in time');
+    container = await startPostgres(CONTAINER_NAME);
 
-    process.env.DATABASE_URL = DB_URL;
+    process.env.DATABASE_URL = container.url;
     process.env.API_KEYS = JSON.stringify({
       [APP_TOKEN]: { org: ORG, project: PROJECT, role: 'app' },
       [ADMIN_TOKEN]: { org: ORG, project: PROJECT, role: 'admin' },
     });
 
-    const migrateClient = postgres(DB_URL, { max: 1 });
+    const migrateClient = postgres(container.url, { max: 1 });
     await migrate(drizzle(migrateClient), { migrationsFolder: './drizzle' });
     await migrateClient.end();
 
     const { buildServer } = await import('../server.js');
     app = await buildServer();
-    queryClient = postgres(DB_URL, { max: 2 });
-  }, 60_000);
+    queryClient = postgres(container.url, { max: 2 });
+  }, 120_000);
 
   afterAll(async () => {
     await app?.close();
     await queryClient?.end({ timeout: 5 });
-    spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' });
-  });
+    stopContainer(CONTAINER_NAME);
+  }, 30_000);
 
   beforeEach(async () => {
     await queryClient`DELETE FROM budget_state`;
