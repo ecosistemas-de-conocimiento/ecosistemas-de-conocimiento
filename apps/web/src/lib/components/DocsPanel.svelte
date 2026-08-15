@@ -379,7 +379,15 @@
                   dataTestId={`publish-${d.id}`}
                   onClick={() => publish(sid, d)}
                 />
-              {:else if gate.reason && gate.reason !== 'already-published'}
+              {:else if gate.reason}
+                <!-- ⚠ `already-published` used to be excluded here, on the
+                     reading that the "Publicado" badge already says it. It does
+                     not: the badge is one word, and what a user needs to know is
+                     WHO CAN SEE THE DOCUMENT NOW. Every other blocked reason
+                     gets a sentence; the one state that changes visibility for
+                     other people was the only one that got none, and
+                     `publishBlockedCopy('already-published')` was exported,
+                     tested, and rendered nowhere. -->
                 <span class="text-[10px] text-ink-soft">{publishBlockedCopy(gate.reason)}</span>
               {/if}
             </div>
