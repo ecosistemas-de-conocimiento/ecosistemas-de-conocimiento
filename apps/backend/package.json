@@ -20,6 +20,7 @@
     "seed:demo": "payload run src/seed/demo.cli.ts",
     "provision:storage": "payload run scripts/provision-storage.ts",
     "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "lint": "next lint",
     "docker:up": "docker compose up -d --wait",
     "docker:down": "docker compose down",
