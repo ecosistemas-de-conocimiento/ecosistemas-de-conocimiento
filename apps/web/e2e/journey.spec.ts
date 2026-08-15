@@ -527,12 +527,31 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
   // ── 7. Publish, and confirm the UI stops calling it private ──────────────
   await test.step('publish a document and confirm the UI stops calling it private', async () => {
     // Whichever upload actually reached `ready` — `publishGate` only offers the
-    // button for an ingested document, so this locator IS the gate's verdict.
-    const card = docsPanel(page)
-      .locator('div.bg-surface-strong.shadow-1')
-      .filter({ has: page.locator('[data-testid^="publish-"]') })
-      .first();
-    if ((await card.count()) === 0) {
+    // button for an ingested document, so this search IS the gate's verdict.
+    //
+    // 🔴 RESOLVED TO A POSITION, ONCE, AND NOT KEPT AS A `filter({ has: publish })`
+    // LOCATOR. Playwright re-evaluates a filter on every query, and `publishGate`
+    // WITHDRAWS the publish button the instant the status leaves `draft`. A
+    // locator defined by that button therefore stops matching the card at the
+    // exact moment this step starts watching it: `observeStates` then samples an
+    // element that no longer resolves, records nothing, and reports "the badge
+    // never moved" for a publish that in fact completed. Measured — the document
+    // read `published` in the database while the run was still waiting.
+    //
+    // Cards never reorder (`app.svelte.ts` appends with `s.docs.push`) and
+    // nothing in this journey deletes one, so an index is stable for the rest of
+    // the step.
+    const allCards = docsPanel(page).locator('div.bg-surface-strong.shadow-1');
+    const cardCount = await allCards.count();
+    let publishableIndex = -1;
+    for (let i = 0; i < cardCount; i += 1) {
+      if (await allCards.nth(i).locator('[data-testid^="publish-"]').count()) {
+        publishableIndex = i;
+        break;
+      }
+    }
+    const card = docCard(page, publishableIndex < 0 ? 0 : publishableIndex);
+    if (publishableIndex < 0) {
       expect
         .soft(
           false,
@@ -638,6 +657,17 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
       .soft(sourcesBlock, 'the answer rendered with NO citation block')
       .toBeVisible({ timeout: 60_000 });
     if (await sourcesBlock.isVisible().catch(() => false)) {
+      // 🔴 THE LIST STARTS COLLAPSED, AND THAT IS THE APP'S CHOICE, NOT A BUG.
+      // `components/Message.svelte` passes `collapsibleSources` to the engine's
+      // `CitationCard` and does NOT pass `sourcesOpenByDefault`, so what renders
+      // first is a toggle reading "Fuentes consultadas (N)" — the count is
+      // visible, the passages are one click away, and the chat stays readable.
+      // A test that asserts the `<li>`s without pressing that button is
+      // asserting a different product. Press it, the way a reader does.
+      const toggle = sourcesBlock.getByTestId('citation-sources-toggle');
+      if ((await toggle.count()) && (await toggle.getAttribute('aria-expanded')) !== 'true') {
+        await toggle.click();
+      }
       await expect(page.getByTestId('citation-source').first()).toBeVisible();
       const sources = await page.getByTestId('citation-source').allTextContents();
       note('citations', sources.map((s) => s.replace(/\s+/g, ' ').trim()).join(' | '));

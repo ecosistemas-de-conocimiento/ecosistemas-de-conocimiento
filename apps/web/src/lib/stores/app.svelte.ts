@@ -552,6 +552,24 @@ class AppStore {
           title: 'No se pudo confirmar tu ecosistema',
           message: 'Inténtalo de nuevo en un momento.',
         });
+      } else {
+        // 🔴 EVERYTHING ELSE USED TO FAIL IN SILENCE, and the journey caught it:
+        // `newSession failed Error: HTTP 400`, nothing on screen. The BFF passes
+        // a backend rejection straight through, and Payload's body is
+        // `{ errors: [...] }` with no `error` key — so `fetchJson` produces the
+        // bare string `HTTP 400`, which matched neither branch above.
+        //
+        // The real trigger is a membership that stopped being valid between the
+        // BFF checking it and the backend re-checking it ("You do not belong to
+        // that ecosistema"), which is exactly what a revoked membership looks
+        // like from a tab that has been open a while. The user pressed "Nueva
+        // conversación" and got NOTHING: no conversation, no explanation, and a
+        // button that appeared to be broken. Say something, always.
+        toasts.push({
+          kind: 'error',
+          title: 'No se pudo crear la conversación',
+          message: 'Actualiza la página e inténtalo de nuevo.',
+        });
       }
       return null;
     }
