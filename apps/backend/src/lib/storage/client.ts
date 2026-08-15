@@ -184,6 +184,37 @@ export interface BucketOps {
   createBucket: (bucket: string) => Promise<void>
 }
 
+/**
+ * Read one object's bytes out of the bucket.
+ *
+ * 🔴 THIS EXISTS BECAUSE THE SERVER SOMETIMES NEEDS THE BYTES ITSELF, not just
+ * to serve them. Text extraction (pdf/docx) and audio transcription both have
+ * to hand the actual content to something else — `unpdf`, `mammoth`, or a
+ * multipart POST to audio-service. Before object storage those read straight off
+ * `./media/<filename>`; once uploads moved to S3 that path no longer exists and
+ * BOTH pipelines broke with `ENOENT` / "Unable to open file as blob".
+ *
+ * ⚠ This buffers the whole object in memory, which the disk path deliberately
+ * did not (`fs.openAsBlob` is file-backed and streams lazily). That is a real
+ * regression in peak memory and it is bounded only by the upload size cap. It
+ * is accepted here because the alternative — plumbing a stream all the way into
+ * undici's FormData — is a bigger change than the bug warrants, and because
+ * every consumer below needs a contiguous buffer anyway. If uploads ever get
+ * large enough for this to hurt, stream to a temp file and hand back a
+ * file-backed Blob rather than growing the heap.
+ */
+export async function getObjectBytes(
+  key: string,
+  bucket: string = getStorageBucket(),
+): Promise<{ bytes: Buffer; contentType: string | null }> {
+  const mod = await import('@aws-sdk/client-s3')
+  const client = new mod.S3Client(s3ClientConfig())
+  const res = await client.send(new mod.GetObjectCommand({ Bucket: bucket, Key: key }))
+  if (!res.Body) throw new Error(`object ${bucket}/${key} returned no body`)
+  const bytes = Buffer.from(await res.Body.transformToByteArray())
+  return { bytes, contentType: res.ContentType ?? null }
+}
+
 let cachedOps: BucketOps | null = null
 
 /**

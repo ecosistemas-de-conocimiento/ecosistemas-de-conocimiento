@@ -313,6 +313,16 @@ const extractAndIngestHook: CollectionAfterChangeHook = async ({
   return doc
 }
 
+/** A document row read at `depth: 1`, so `mediaFile` is the resolved row. */
+type DocumentRowWithMedia = DocumentRow & {
+  mediaFile?: {
+    id: number | string
+    filename?: string | null
+    mimeType?: string | null
+    filesize?: number | null
+  } | null
+}
+
 async function runExtractAndIngest(row: DocumentRow): Promise<void> {
   const docId = resolveId(row.id)
   if (docId == null) return
@@ -328,18 +338,54 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
 
   // Re-fetch with depth: 1 so `mediaFile` includes filename + mimeType.
   // Don't trust the partial `doc` passed to afterChange on `update` paths.
-  const fresh = (await payload.findByID({
-    collection: 'documents',
-    id: docId as never,
-    depth: 1,
-    overrideAccess: true,
-  })) as DocumentRow & {
-    mediaFile?: {
-      id: number | string
-      filename?: string | null
-      mimeType?: string | null
-      filesize?: number | null
-    } | null
+  //
+  // 🔴 THIS RETRIES, AND THE RETRY IS THE WHOLE FIX. Read this before
+  // "simplifying" it back to a single findByID.
+  //
+  // `afterChange` fires INSIDE Payload's create transaction. `setImmediate`
+  // defers one tick, which is not remotely enough — the transaction commits
+  // when the HTTP response completes, several ticks and one network round trip
+  // later. So the first read routinely lands before the row is visible on the
+  // no-transaction connection and `findByID` THROWS `Not Found` (it throws; it
+  // does not return null, which is why the `if (!fresh)` guard below never
+  // caught this).
+  //
+  // The symptom was total and silent: EVERY pdf/docx/audio upload logged
+  // "background extract+ingest failed <id> Not Found" once and stopped there.
+  // The row sat at `ingestStatus: 'pending'` forever, nothing was ever
+  // enqueued, ai-service never saw a single job, and the UI showed "en cola"
+  // with no error. Found by the first end-to-end run against the live stack;
+  // no unit test could see it, because they all pass a row that already exists.
+  //
+  // Payload has no after-commit hook, so a bounded retry is the honest fix.
+  // ~2.5s total is far longer than a commit needs and still fails loudly if the
+  // row genuinely does not exist.
+  const RETRY_DELAYS_MS = [25, 50, 100, 250, 500, 750, 800]
+  let fresh: DocumentRowWithMedia | null = null
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      fresh = (await payload.findByID({
+        collection: 'documents',
+        id: docId as never,
+        depth: 1,
+        overrideAccess: true,
+      })) as DocumentRowWithMedia
+      if (fresh) break
+    } catch (err) {
+      const last = attempt === RETRY_DELAYS_MS.length
+      if (last) {
+        console.error(
+          '[documents] doc',
+          docId,
+          `still not readable after ${RETRY_DELAYS_MS.reduce((a, b) => a + b, 0)}ms —`,
+          'giving up on extract+ingest',
+          err,
+        )
+        return
+      }
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]))
+    }
   }
   if (!fresh) return
   if (!INGESTABLE_KINDS.has(String(fresh.kind))) return
@@ -721,25 +767,64 @@ export async function startTranscription(args: {
  * audio-service must not be assumed to share a filesystem: we read the bytes and
  * POST them.
  */
-async function openMediaBlob(
+/**
+ * Read a media row's bytes, from wherever that row's bytes actually live.
+ *
+ * 🔴 THE ONE PLACE THAT KNOWS WHERE UPLOADS ARE STORED. Both the text-extract
+ * path and the audio-transcription path go through here, and they used to each
+ * hardcode `path.resolve(process.cwd(), 'media', filename)` instead.
+ *
+ * That assumption silently stopped being true when uploads moved to
+ * S3-compatible object storage: Payload no longer writes to `./media/`, so
+ * every pdf/docx extraction failed with ENOENT and every audio upload failed
+ * with "Unable to open file as blob". Neither had a test that could see it —
+ * the unit tests inject their own reader, and nothing exercised a real upload
+ * against a configured bucket until the first end-to-end run.
+ *
+ * ⚠ The S3 key is `${prefix}/${filename}`, NOT `filename`. The plugin writes
+ * the per-document prefix (`eco_{orgId}/u_{uploaderId}`) onto the media row and
+ * that is part of the key. Reading without it 404s on every object.
+ *
+ * Local disk remains supported and is still the no-config default, so a bare
+ * `pnpm dev` with no S3 variables behaves exactly as before.
+ */
+async function loadMediaBytes(
   payload: Pick<Awaited<ReturnType<typeof import('payload').getPayload>>, 'findByID'>,
   mediaId: string | number,
-): Promise<{ body: Blob; filename: string; contentType: string | null }> {
+): Promise<{ bytes: Buffer; filename: string; contentType: string | null }> {
   const media = (await payload.findByID({
     collection: 'media',
     id: mediaId as never,
     depth: 0,
     overrideAccess: true,
-  })) as { filename?: string | null; mimeType?: string | null } | null
+  })) as { filename?: string | null; mimeType?: string | null; prefix?: string | null } | null
 
   const filename = media?.filename
   if (!filename) throw new Error(`media ${mediaId} has no filename`)
+  const contentType = media?.mimeType ?? null
+
+  const { isStorageConfigured } = await import('@/lib/storage/client')
+  if (isStorageConfigured()) {
+    const { getObjectBytes } = await import('@/lib/storage/client')
+    const prefix = (media?.prefix ?? '').replace(/^\/+|\/+$/g, '')
+    const key = prefix ? `${prefix}/${filename}` : filename
+    const { bytes } = await getObjectBytes(key)
+    return { bytes, filename, contentType }
+  }
 
   const path = await import('node:path')
-  const fs = await import('node:fs')
+  const fs = await import('node:fs/promises')
   const filePath = path.resolve(process.cwd(), 'media', filename)
-  const contentType = media?.mimeType ?? null
-  const body = await fs.openAsBlob(filePath, {
+  const bytes = await fs.readFile(filePath)
+  return { bytes, filename, contentType }
+}
+
+async function openMediaBlob(
+  payload: Pick<Awaited<ReturnType<typeof import('payload').getPayload>>, 'findByID'>,
+  mediaId: string | number,
+): Promise<{ body: Blob; filename: string; contentType: string | null }> {
+  const { bytes, filename, contentType } = await loadMediaBytes(payload, mediaId)
+  const body = new Blob([new Uint8Array(bytes)], {
     type: contentType ?? 'application/octet-stream',
   })
   return { body, filename, contentType }
@@ -750,27 +835,11 @@ async function extractText(
   mediaId: string | number,
   kind: 'pdf' | 'docx',
 ): Promise<string> {
-  // Resolve the media row to get the absolute filesystem path Payload wrote
-  // it to. Payload's filename is the URL-safe stored name; staticDir resolves
-  // to `./media/<filename>` by default.
-  const media = (await payload.findByID({
-    collection: 'media',
-    id: mediaId as never,
-    depth: 0,
-    overrideAccess: true,
-  })) as { filename?: string | null; url?: string | null } | null
-  const filename = media?.filename
-  if (!filename) {
-    throw new Error(`media ${mediaId} has no filename`)
-  }
-
-  // Payload's `Media` collection uses the default staticDir (`./media/`)
-  // relative to the project root. Resolve via process.cwd() so dev + docker
-  // both land in the same place.
-  const path = await import('node:path')
-  const fs = await import('node:fs/promises')
-  const filePath = path.resolve(process.cwd(), 'media', filename)
-  const buffer = await fs.readFile(filePath)
+  // ⚠ Goes through `loadMediaBytes`, which knows whether this deployment keeps
+  // uploads on local disk or in the bucket. This function used to resolve
+  // `./media/<filename>` itself, which broke the moment object storage was
+  // enabled — see the header on `loadMediaBytes`.
+  const { bytes: buffer } = await loadMediaBytes(payload, mediaId)
 
   if (kind === 'pdf') {
     // Workaround for a known dev-only issue: `drizzle-kit` (transitive via
