@@ -32,14 +32,16 @@ vi.mock('../db/client.js', () => ({ db: {} }));
 
 import { CorpusNotFoundError } from '../services/rag/retrieve.js';
 
+import { useBuildServer } from '../test/server-harness.js';
+
 const APP_TOKEN = 'test-key';
 const ORG = 'test-org';
 const PROJECT = 'test-project';
 
-async function makeApp() {
-  const { buildServer } = await import('../server.js');
-  return buildServer();
-}
+// `server.js` is imported ONCE per file, in `beforeAll` — importing it inside
+// the first test body cost that test ~3 s of module transform against vitest's
+// 5 s per-test budget. See `src/test/server-harness.ts`.
+const makeApp = useBuildServer();
 
 beforeEach(() => {
   retrieveMock.mockReset();

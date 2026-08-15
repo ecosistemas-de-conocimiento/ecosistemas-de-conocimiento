@@ -20,6 +20,20 @@ export default defineConfig({
     // (vitest.integration.config.ts). Exclude them here so `pnpm test` keeps
     // its zero-dependency contract.
     exclude: ['**/*.integration.test.ts', '**/node_modules/**', '**/dist/**'],
+    // ⚠ `testTimeout` stays at vitest's strict 5 s default ON PURPOSE. A test
+    // that needs longer than that is telling you something, and raising the
+    // limit would only hide it.
+    //
+    // `hookTimeout` is the one that gets a real budget. The expensive work in
+    // this suite is one-time SETUP, not the tests: importing `src/server.ts`
+    // pulls in the whole route + service module graph (~3 s of transform on a
+    // cold worker) and the two docker-backed suites pull a Postgres container
+    // up. That used to be paid inside the first TEST of each file, which is
+    // why `pnpm -r test` produced a different failure on every run, always at
+    // almost exactly 5000 ms — see `TESTING.md`. The setup now lives in
+    // `beforeAll` (`src/test/server-harness.ts`), so it needs headroom on the
+    // hook clock for a machine running six workspaces at once.
+    hookTimeout: 60_000,
     env: {
       NODE_ENV: 'test',
       DATABASE_URL: 'postgres://localhost:5432/ai_service_test',

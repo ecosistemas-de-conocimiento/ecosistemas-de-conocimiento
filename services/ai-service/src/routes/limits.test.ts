@@ -6,6 +6,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { warmServerModule } from '../test/server-harness.js';
+
 // ---------------------------------------------------------------------------
 // Mock collaborators — must run before the dynamic buildServer import.
 // ---------------------------------------------------------------------------
@@ -57,6 +59,13 @@ vi.mock('../db/client.js', () => ({
 }));
 
 const APP_TOKEN = 'test-key';
+
+// This file cannot share one server import the way its siblings do — see
+// `makeApp()` — so instead the expensive transform is WARMED in `beforeAll`.
+// Later re-imports then only re-evaluate, which keeps the ~3 s module-graph
+// cost off the per-test clock and its 5 s timeout.
+// See `src/test/server-harness.ts`.
+warmServerModule();
 
 async function makeApp() {
   // Force a fresh module instance so each test starts with a clean

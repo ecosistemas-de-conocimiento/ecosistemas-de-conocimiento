@@ -2,15 +2,15 @@
 //
 // These tests need a real Postgres because they exercise transactions, the
 // partial-unique index on `registry_entries.is_active`, and the audit-row
-// writer. We spin up a throwaway `pgvector/pgvector:pg16` container on port
-// 55432 in `beforeAll` and tear it down in `afterAll`.
+// writer. `beforeAll` spins up a throwaway `pgvector/pgvector:pg16` container
+// on a kernel-assigned host port and `afterAll` tears it down — see
+// `src/test/pg-container.ts` for why the port is ephemeral rather than the
+// fixed 55432 this suite used to fight the local demo's Postgres over.
 //
 // If docker isn't available (e.g. CI without DinD), the whole suite is skipped
 // — environment problems shouldn't fail CI. The unit-level health tests still
-// run.
-
-import { execSync, spawnSync } from 'node:child_process';
-import { setTimeout as delay } from 'node:timers/promises';
+// run. A busy machine is NOT one of those problems any more: the suite runs
+// alongside a live local stack.
 
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -19,95 +19,26 @@ import type { FastifyInstance } from 'fastify';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { hasDocker, startPostgres, stopContainer, type PgContainer } from '../test/pg-container.js';
+
 const CONTAINER_NAME = 'ai-svc-registry-test';
-// Host port for the throwaway container. Overridable because 55432 is also the
-// port the repo's root docker-compose publishes for the shared pgvector service
-// — when that is up, `docker run -p 55432` fails with "port is already
-// allocated" and this whole suite errors out for an environment reason. Set
-// AI_SVC_TEST_PG_PORT to run it alongside a live local stack.
-const PG_PORT = Number(process.env.AI_SVC_TEST_PG_PORT ?? 55432);
-const DB_URL = `postgres://postgres:postgres@127.0.0.1:${PG_PORT}/ai_service_test`;
 
 const APP_TOKEN = 'reg-test-app';
 const ADMIN_TOKEN = 'reg-test-admin';
 
-function hasDocker(): boolean {
-  // `which docker` succeeds even when the daemon is dead; require `docker info`
-  // to be reachable too.
-  const which = spawnSync('which', ['docker'], { stdio: 'ignore' });
-  if (which.status !== 0) return false;
-  const info = spawnSync('docker', ['info'], { stdio: 'ignore' });
-  return info.status === 0;
-}
-
 const DOCKER_AVAILABLE = hasDocker();
-
-/**
- * Wait until the container's Postgres accepts connections, AND the externally
- * port-forwarded host:port can complete a `select 1` round-trip. Two stages
- * because `pg_isready` (inside the container) can succeed seconds before the
- * port-forwarded socket is fully usable — connecting too fast yields ECONNRESET.
- */
-async function waitForPg(timeoutMs = 60_000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-
-  // Stage 1: container-local readiness.
-  while (Date.now() < deadline) {
-    const res = spawnSync('docker', [
-      'exec',
-      CONTAINER_NAME,
-      'pg_isready',
-      '-U',
-      'postgres',
-      '-d',
-      'ai_service_test',
-    ]);
-    if (res.status === 0) break;
-    await delay(250);
-  }
-
-  // Stage 2: externally usable. Retry until a real query succeeds.
-  while (Date.now() < deadline) {
-    try {
-      const probe = postgres(DB_URL, { max: 1, connect_timeout: 2 });
-      await probe`select 1`;
-      await probe.end({ timeout: 2 });
-      return true;
-    } catch {
-      await delay(500);
-    }
-  }
-  return false;
-}
 
 describe.skipIf(!DOCKER_AVAILABLE)('registry routes (integration)', () => {
   let app: FastifyInstance;
   let queryClient: ReturnType<typeof postgres>;
+  let container: PgContainer;
 
   beforeAll(async () => {
-    // Kill any stray container from a previous interrupted run.
-    spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' });
-
-    execSync(
-      [
-        'docker run -d --rm',
-        `--name ${CONTAINER_NAME}`,
-        `-p ${PG_PORT}:5432`,
-        '-e POSTGRES_USER=postgres',
-        '-e POSTGRES_PASSWORD=postgres',
-        '-e POSTGRES_DB=ai_service_test',
-        'pgvector/pgvector:pg16',
-      ].join(' '),
-      { stdio: 'ignore' },
-    );
-
-    if (!(await waitForPg())) {
-      throw new Error('Postgres did not become ready in time');
-    }
+    container = await startPostgres(CONTAINER_NAME);
 
     // Override the env *before* importing the app modules — env validation
     // and the postgres pool both read `process.env.DATABASE_URL` at import.
-    process.env.DATABASE_URL = DB_URL;
+    process.env.DATABASE_URL = container.url;
     process.env.API_KEYS = JSON.stringify({
       [APP_TOKEN]: { org: 'demo', project: 'demo', role: 'app' },
       [ADMIN_TOKEN]: { org: 'demo', project: 'demo', role: 'admin' },
@@ -115,14 +46,14 @@ describe.skipIf(!DOCKER_AVAILABLE)('registry routes (integration)', () => {
 
     // Run migrations against the fresh DB on a one-shot client (the app's
     // shared pool comes up below).
-    const migrateClient = postgres(DB_URL, { max: 1 });
+    const migrateClient = postgres(container.url, { max: 1 });
     await migrate(drizzle(migrateClient), { migrationsFolder: './drizzle' });
     await migrateClient.end();
 
     const { buildServer } = await import('../server.js');
     app = await buildServer();
-    queryClient = postgres(DB_URL, { max: 2 });
-  }, 60_000);
+    queryClient = postgres(container.url, { max: 2 });
+  }, 120_000);
 
   afterAll(async () => {
     try {
@@ -135,7 +66,7 @@ describe.skipIf(!DOCKER_AVAILABLE)('registry routes (integration)', () => {
     } catch {
       /* ignore */
     }
-    spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' });
+    stopContainer(CONTAINER_NAME);
   }, 30_000);
 
   // -------------------------------------------------------------------------
