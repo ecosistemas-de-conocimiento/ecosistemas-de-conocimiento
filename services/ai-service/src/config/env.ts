@@ -269,6 +269,34 @@ export const isTest = env.NODE_ENV === 'test';
 export function validateProductionReadiness(): void {
   const key = env.OPENROUTER_API_KEY?.trim() ?? '';
 
+  /**
+   * ⚠ `MOCK_LLM=1` means no OpenRouter request is ever made — it is this
+   * project's single local-mock switch and it gates both the chat-completion
+   * adapter and embeddings. A key is therefore not merely optional under it,
+   * it is unused.
+   *
+   * This exemption exists because the local demo runs the PRODUCTION image
+   * (`NODE_ENV=production`) with the mocks on, which is the whole point: the
+   * stack must boot and be clickable with ZERO API keys. Without this branch
+   * the guard below fired first and the documented zero-key path could not
+   * start — the demo promised something the code refused to do.
+   *
+   * The guard still protects a real deployment, because a real deployment does
+   * not set `MOCK_LLM`. Turning the mocks on in production is itself the
+   * misconfiguration then, so say so loudly rather than silently.
+   */
+  const mocked = (process.env.MOCK_LLM ?? '').trim() === '1';
+  if (mocked) {
+    if (env.NODE_ENV === 'production') {
+      console.warn(
+        'MOCK_LLM=1 with NODE_ENV=production: no OpenRouter calls will be made and ' +
+          'every generated answer is a deterministic stub. This is correct for the ' +
+          'local demo image and WRONG for a real deployment — unset MOCK_LLM there.',
+      );
+    }
+    return;
+  }
+
   if (!key) {
     if (env.NODE_ENV === 'production') {
       console.error(

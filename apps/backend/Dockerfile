@@ -57,6 +57,25 @@ COPY --from=build /repo/node_modules /repo/node_modules
 COPY --from=build /repo/packages /repo/packages
 COPY --from=build /repo/apps/backend ./
 EXPOSE ${PORT}
+# 🔴 NO pnpm AT RUNTIME. DO NOT "simplify" the CMD below back to `pnpm start`.
+#
+# pnpm 11 runs a dependency-status check before any script, and that check
+# re-reads the WORKSPACE. This runtime stage deliberately carries only
+# `node_modules`, `packages/` and the backend itself — there is no root
+# `package.json` or `pnpm-workspace.yaml` — so the check sees a workspace of
+# exactly one package and dies with:
+#   "@edc/ai-client@workspace:*" is in the dependencies but no package named
+#   "@edc/ai-client" is present in the workspace
+# It then tries a full `pnpm install` inside the container and fails.
+#
+# The dependencies are installed and correct; only the check is wrong. It
+# presents as an install error at container start, which reads like a broken
+# image rather than a tooling default — hence this comment.
+#
+# `npm_config_verify_deps_before_run=false` does NOT fix it (pnpm reads that
+# setting from .npmrc, not the environment) — measured, not assumed. Invoking
+# the binaries directly sidesteps the whole thing and removes a package manager
+# from the runtime image, which is where it least belongs.
 # ✅ `start` is `payload migrate && next start`. The baseline migration exists
 # (src/migrations/20260814_205354_baseline.ts), so the schema is created and
 # advanced by migrations, NOT by Payload's schema push. No environment variable
@@ -71,4 +90,4 @@ EXPOSE ${PORT}
 # the deploy fails loudly. That is the intended behaviour: booting an app
 # against a schema its migrations could not produce is the failure mode that
 # takes hours to diagnose.
-CMD ["pnpm", "start"]
+CMD ["sh", "-c", "node_modules/.bin/payload migrate && exec node_modules/.bin/next start -p ${PORT:-3002}"]
