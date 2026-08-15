@@ -148,22 +148,84 @@ export interface CorpusMover {
 }
 
 /**
+ * 🔴 "IT WAS NEVER THERE" IS SUCCESS, NOT FAILURE.
+ *
+ * ai-service answers a `setDocumentValidity` for a corpus it does not have with
+ * `404 CORPUS_NOT_FOUND`, and for a document that corpus does not hold with
+ * `404 DOCUMENT_NOT_FOUND`. Both mean the same thing to a retirement: that
+ * document is not retrievable from that corpus. Which is the property the caller
+ * asked for.
+ *
+ * ⚠ THIS IS NOT DEFENSIVE PADDING — IT CLOSES A REPRODUCIBLE DEAD END. A corpus
+ * only exists at ai-service once something has been ingested into it, and only
+ * `INGESTABLE_KINDS` (pdf, docx, audio) are ever ingested. So a `kind:
+ * 'markdown'` note — the DEFAULT kind — has no draft corpus at all. Publishing
+ * one used to: enqueue into the shared corpus (fine), then throw on the retire,
+ * leaving the row at `publishing` with `ai-service request failed (status 404)`
+ * FOREVER. The document was in the ecosistema's shared corpus while the row
+ * claimed it was not published — retrievable by every colleague's chat, invisible
+ * in every colleague's document list, and impossible for the uploader to finish
+ * or undo. Found by `e2e/publish.e2e.ts`.
+ *
+ * ⚠ THE RESIDUAL RISK, STATED SO IT IS NOT DISCOVERED LATER: if the corpus NAME
+ * were ever computed wrongly, this would swallow the 404 and report a retirement
+ * that never happened, leaving the document live under its real name. That is
+ * why it warns rather than passing silently, and why every name still comes from
+ * `lib/corpus.ts` alone. A wrong name is a code bug, not a runtime state — and
+ * the behaviour it replaces (a permanently stuck publish) was not safer, only
+ * louder in the wrong place.
+ */
+function isAlreadyAbsent(err: unknown): boolean {
+  // Duck-typed on `status` rather than `instanceof NotFoundError`, so this file
+  // keeps depending on the structural `CorpusMover` above and stays testable
+  // with a plain fake client.
+  return Boolean(err) && typeof err === 'object' && (err as { status?: unknown }).status === 404
+}
+
+/**
  * Retire a document from a corpus: close its validity window at `now`.
  *
  * ⚠ NOT A DELETE. The chunks stay in the corpus and stay embedded; they simply
  * fall outside the window a retrieval with `asOf` will consider. Two
  * consequences worth stating: storage is not reclaimed, and a retrieval that
  * forgets `asOf` still sees the document. See the file header.
+ *
+ * ⚠ IDEMPOTENT. See {@link isAlreadyAbsent}: a 404 is treated as "already not
+ * retrievable there", which is also what makes a re-run of either transition
+ * safe after a partial failure.
  */
 async function retireFrom(
   client: CorpusMover,
   corpus: string,
   documentId: number | string,
   now: Date,
+  log?: RetireLogger,
 ): Promise<void> {
-  await client.admin.setDocumentValidity(corpus, String(documentId), {
-    validTo: now.toISOString(),
-  })
+  try {
+    await client.admin.setDocumentValidity(corpus, String(documentId), {
+      validTo: now.toISOString(),
+    })
+  } catch (err) {
+    if (!isAlreadyAbsent(err)) throw err
+    log?.warn(
+      { corpus, documentId: String(documentId) },
+      '[publish] nothing to retire — ai-service has no such corpus or document. ' +
+        'Treated as already retired. Verify the corpus name if this is unexpected.',
+    )
+  }
+}
+
+/** Just the one method of Payload's logger this file uses. */
+interface RetireLogger {
+  warn(obj: Record<string, unknown>, msg: string): void
+}
+
+function loggerOf(deps: RowDeps): RetireLogger | undefined {
+  const candidate = (deps.payload as unknown as { logger?: unknown }).logger
+  if (candidate && typeof (candidate as RetireLogger).warn === 'function') {
+    return candidate as RetireLogger
+  }
+  return undefined
 }
 
 /** What a transition that only writes the row needs. */
@@ -265,7 +327,7 @@ export async function confirmPublish(
   const { organizationId, userId } = idsOf(doc)
   const now = (deps.now ?? (() => new Date()))()
 
-  await retireFrom(deps.client, draftCorpus(organizationId, userId), doc.id, now)
+  await retireFrom(deps.client, draftCorpus(organizationId, userId), doc.id, now, loggerOf(deps))
 
   await deps.payload.update({
     collection: 'documents',
@@ -333,7 +395,12 @@ export async function unpublish(
   })
 
   // 🔴 Sharing stops HERE, before anything slow happens.
-  await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now)
+  //
+  // ⚠ A 404 is tolerated (see `isAlreadyAbsent`) and it is SAFE in this
+  // direction too: "the shared corpus does not hold this document" is exactly
+  // the guarantee unpublishing has to make. Failing instead would strand a
+  // document the user has already asked to stop sharing.
+  await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
 
   const corpus = draftCorpus(organizationId, userId)
   const result = await deps.client.ingest.enqueue({

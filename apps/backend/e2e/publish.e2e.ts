@@ -138,11 +138,21 @@ describe.skipIf(stackDown)('publish / unpublish', () => {
   it('a direct PATCH cannot mark a document published', async () => {
     // `publicationStatus` moves ONLY through the state machine; a column flip
     // would claim a document was shared with none of it in the shared corpus.
+    //
+    // ⚠ THE WRITE IS ACCEPTED AND THE FIELD IS IGNORED — that is the product
+    // rule (`bindDocumentToEcosystem` pins it to the stored value), and the
+    // status code is asserted EXACTLY. `toBeLessThan(500)` used to be the
+    // assertion here, and a 400 satisfies it: this test stayed green on a build
+    // where the whole document PATCH path was broken for everyone.
     const res = await apiJson(world.alice.caller, 'PATCH', `/api/documents/${docId}`, {
       publicationStatus: 'published',
+      name: `${world.ns} acta (edited)`,
     })
-    expect(res.status).toBeLessThan(500)
+    expect(res.status).toBe(200)
     const after = await apiGet(world.alice.caller, `/api/documents/${docId}?depth=0`)
+    // The ordinary field landed…
+    expect(after.body.name).toBe(`${world.ns} acta (edited)`)
+    // …and the privileged one did not.
     expect(after.body.publicationStatus).toBe('draft')
     expect((await apiGet(world.bob.caller, `/api/documents/${docId}`)).status).toBe(404)
   })

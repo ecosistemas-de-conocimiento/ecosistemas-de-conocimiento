@@ -145,16 +145,57 @@ describe('🔴 the client cannot choose its own scope', () => {
     expect(result.publicationStatus).toBe('draft')
   })
 
-  it('STRIPS publicationStatus from a client update', async () => {
+  it('PINS publicationStatus to the stored value on a client update', async () => {
     // Publication moves only through lib/publishDocument.ts, which writes with
     // overrideAccess and never reaches this hook.
+    //
+    // 🔴 THE ASSERTION IS `toBe('draft')`, NOT `toBeUndefined()`. Payload merges
+    // the body over the stored row before this hook runs, so removing the key
+    // does not ignore the client's value — it deletes a `required: true` field
+    // from the document about to be validated, and EVERY authenticated PATCH
+    // 400s, rename included. That is what the earlier `toBeUndefined()` version
+    // of this test asserted, and it is why the bug survived to the e2e suite.
     const result = await update(
       { publicationStatus: 'published', name: 'renamed.pdf' },
+      {
+        id: 1,
+        session: ANA_SESSION,
+        uploadedBy: ANA,
+        organization: ECO_A,
+        publicationStatus: 'draft',
+      },
+      ANA,
+    )
+    expect(result.publicationStatus).toBe('draft')
+    expect(result.name).toBe('renamed.pdf')
+  })
+
+  it('does not let a client value survive when no stored row was supplied', async () => {
+    // The degenerate case: Payload always hands `originalDoc` to an update, but
+    // if it ever did not, the client's value must still not get through.
+    const result = await update(
+      { publicationStatus: 'published' },
       { id: 1, session: ANA_SESSION, uploadedBy: ANA, organization: ECO_A },
       ANA,
     )
     expect(result.publicationStatus).toBeUndefined()
-    expect(result.name).toBe('renamed.pdf')
+  })
+
+  it('holds an IN-FLIGHT publication state across an unrelated edit', async () => {
+    // A rename during a publish must not roll the row back to `draft` — that
+    // would lose the state machine's place and hide an in-progress move.
+    const result = await update(
+      { name: 'renamed-mid-publish.pdf' },
+      {
+        id: 1,
+        session: ANA_SESSION,
+        uploadedBy: ANA,
+        organization: ECO_A,
+        publicationStatus: 'publishing',
+      },
+      ANA,
+    )
+    expect(result.publicationStatus).toBe('publishing')
   })
 
   it('keeps uploadedBy immutable across updates', async () => {
