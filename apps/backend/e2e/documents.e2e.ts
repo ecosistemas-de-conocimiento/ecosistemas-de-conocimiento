@@ -141,9 +141,15 @@ describe.skipIf(stackDown)('document ingest', () => {
 
   it('a re-save does not enqueue a second ingest (the hook is idempotent)', async () => {
     const before = await docState(world.alice.caller, docId)
-    await apiJson(world.alice.caller, 'PATCH', `/api/documents/${docId}`, {
+    const patch = await apiJson(world.alice.caller, 'PATCH', `/api/documents/${docId}`, {
       isPinned: false,
     })
+    // ⚠ ASSERTED, not ignored. This test used to fire the PATCH and look only at
+    // the ingest fields afterwards — so it passed green against a build where
+    // every PATCH 400'd and the re-save never happened at all. A test that
+    // cannot tell "the write was idempotent" from "the write was rejected" is
+    // asserting nothing.
+    expect(patch.status).toBe(200)
     await new Promise((r) => setTimeout(r, 4000))
     const after = await docState(world.alice.caller, docId)
     expect(after.ingestId).toBe(before.ingestId)

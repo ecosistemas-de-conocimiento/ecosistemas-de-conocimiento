@@ -173,7 +173,25 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
     // writes with `overrideAccess: true` and therefore never reaches this
     // branch. A client PATCHing it directly would mark a document shared
     // without any of its content being in the shared corpus.
-    delete next.publicationStatus
+    //
+    // 🔴 PIN IT TO THE STORED VALUE — DO NOT `delete` IT. Payload merges the
+    // incoming body over the stored row BEFORE `beforeValidate` runs, so `data`
+    // already carries the row's own `publicationStatus`. Deleting the key does
+    // not "ignore the client's value", it removes the field from the document
+    // being validated — and `publicationStatus` is `required: true`. The result
+    // was that EVERY authenticated PATCH on a document, including a plain
+    // rename, failed with `400 The following field is invalid: Publication
+    // Status`. Found by `e2e/documents.e2e.ts`.
+    //
+    // ⚠ Same shape as `uploadedBy` above, and for the same reason: an immutable
+    // field is held at its stored value, not erased. The `else` branch keeps a
+    // client-supplied value from surviving in the (Payload-internal) case where
+    // no original row was handed to the hook.
+    if (typeof original.publicationStatus === 'string') {
+      next.publicationStatus = original.publicationStatus
+    } else {
+      delete next.publicationStatus
+    }
   }
 
   // On update Payload sends only what changed, so fall back to the stored row.
