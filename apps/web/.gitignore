@@ -8,3 +8,9 @@ build
 
 # pnpm content-addressable store (created by in-container installs)
 .pnpm-store/
+
+# Playwright e2e artifacts (videos, traces, HTML report)
+e2e/.artifacts/
+e2e/.report/
+e2e/.artifacts/
+e2e/.report/
