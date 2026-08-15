@@ -13,6 +13,16 @@ export default defineConfig({
     // effect on a host-native `pnpm dev`.
     watch: {
       usePolling: process.env.CHOKIDAR_USEPOLLING === 'true',
+      // 🔴 NEVER WATCH PLAYWRIGHT'S OWN OUTPUT. `playwright.config.ts` writes
+      // videos, traces and screenshots into `e2e/.artifacts` — inside this
+      // package, so Vite's watcher sees them. Trace resources are `.html`,
+      // which Vite cannot hot-replace, so each one it noticed triggered a FULL
+      // PAGE RELOAD of the browser the test was driving. That corrupts the run
+      // (and, worse, silently hid the sign-in hydration bug, because a reload
+      // is exactly the manual workaround for it). Only bites when a dev server
+      // and `test:e2e` run together — which is the documented headed-debug
+      // workflow, so it bites at the worst moment.
+      ignored: ['**/e2e/.artifacts/**', '**/e2e/.report/**'],
     },
   },
   test: {

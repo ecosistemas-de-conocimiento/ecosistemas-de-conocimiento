@@ -300,6 +300,35 @@ class AppStore {
   }
 
   // ── hydration ──────────────────────────────────────────────────────────
+  /**
+   * Blank everything this signed-in visit put in memory.
+   *
+   * Called by the root layout when the app navigates BACK to an auth route
+   * (see `$lib/hydration.ts`). Sign-out is a full page load today, so in
+   * practice the store dies with the document — but the moment that becomes a
+   * client-side navigation, the next person to sign in on this tab would
+   * otherwise be looking at the previous person's conversations while their
+   * own load. Cheap insurance against the worst class of bug this app can
+   * have.
+   *
+   * ⚠ The ecosistema LIST is cleared too, unlike a `switchEcosystem` — that is
+   * the difference between changing tenant and changing user. `ecosystemsReady`
+   * goes back to false so the picker says "Cargando…" rather than naming a
+   * tenant nobody has been confirmed to belong to yet.
+   */
+  reset(): void {
+    clearEcosystemScopedState(this);
+    this.ecosystems = [];
+    this.ecosystemId = null;
+    this.ecosystemsReady = false;
+    this.ecosystemsUnavailable = false;
+    this.switchingEcosystem = false;
+    // Orphan any in-flight read: `stale()` makes each one drop its result
+    // instead of repainting the store we just blanked.
+    this.ecoEpoch += 1;
+    this.pollingDocs.clear();
+  }
+
   async hydrateFromServer(): Promise<void> {
     const epoch = this.ecoEpoch;
     try {
