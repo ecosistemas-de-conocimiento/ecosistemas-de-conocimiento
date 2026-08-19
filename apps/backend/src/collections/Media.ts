@@ -4,6 +4,7 @@ import type {
   CollectionConfig,
   Where,
 } from 'payload'
+import { ValidationError } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
 import { organizationIdsForUser, relationId } from '../lib/permissions'
@@ -191,6 +192,49 @@ export const mediaUploaderOnly: Access = ({ req: { user } }) => {
  * ⚠ Writes with `overrideAccess: true` and no user — the seed, the ingest
  * pipeline — pass through untouched, exactly as in `bindDocumentToEcosystem`.
  */
+/**
+ * The server-side upload size cap.
+ *
+ * 🔴 THE LAST GATE THAT ACTUALLY BINDS. The browser checks a size before it
+ * uploads, and the frontend's BFF checks again per kind — but neither is a
+ * security boundary. `POST /api/media` is a plain authenticated REST endpoint,
+ * so anything holding a session cookie can skip both and put an arbitrary
+ * number of bytes on this server's disk, or in the bucket at our cost.
+ *
+ * ⚠ ONE CAP FOR EVERY KIND, and it has to be the AUDIO one. This collection
+ * cannot see whether a file is "a document" or "a recording" in a way worth
+ * trusting, and a recording is legitimately 10-100x a PDF. Applying the
+ * document limit here would reject every real audio upload. The per-kind rule
+ * (20 MB documents, 200 MB audio) stays where the kind is actually known:
+ * `apps/web/src/lib/config.ts` and the BFF route that reads it.
+ *
+ * So this is a BACKSTOP, not the product rule. It stops the absurd case; the
+ * friendly per-kind message still comes from the layer above. Keep it in step
+ * with `MAX_AUDIO_UPLOAD_BYTES` — if they drift, the symptom is an upload that
+ * passes the frontend and is then refused here with a worse error.
+ */
+export const MAX_MEDIA_UPLOAD_BYTES = 200 * 1024 * 1024
+
+export const rejectOversizedUpload: CollectionBeforeValidateHook = ({ data, req }) => {
+  // `req.file` is what the multipart parser produced; a metadata-only PATCH has
+  // none and must pass straight through.
+  const size = (req as { file?: { size?: unknown } }).file?.size
+  if (typeof size !== 'number' || !Number.isFinite(size)) return data
+  if (size <= MAX_MEDIA_UPLOAD_BYTES) return data
+
+  const mb = (n: number) => Math.round(n / (1024 * 1024))
+  throw new ValidationError({
+    collection: 'media',
+    errors: [
+      {
+        path: 'file',
+        message: `This file is ${mb(size)} MB. The maximum is ${mb(MAX_MEDIA_UPLOAD_BYTES)} MB.`,
+      },
+    ],
+    req,
+  })
+}
+
 export const bindMediaToEcosystem: CollectionBeforeValidateHook = async ({
   data,
   operation,
@@ -372,6 +416,31 @@ export const Media: CollectionConfig = {
   },
   upload: {
     mimeTypes: [...MEDIA_MIME_TYPES],
+    /**
+     * 🔴 SIZE IS ENFORCED IN `beforeValidate` BELOW, not here — this Payload
+     * version exposes no typed per-collection size option, only `abortOnLimit`
+     * and friends on the app-level parser. Doing it in a hook is explicit and
+     * testable, and it cannot silently stop applying on an upgrade.
+     *
+     * THE LAST GATE THAT ACTUALLY BINDS. The browser checks a size before it
+     * uploads, and the BFF checks again per kind — but neither is a security
+     * boundary. `POST /api/media` is a plain authenticated REST endpoint, so
+     * anything with a session cookie can skip both and put an arbitrary number
+     * of bytes on this server's disk (or in the bucket, at our cost).
+     *
+     * ⚠ ONE CAP FOR EVERY KIND, and it has to be the AUDIO one. Payload applies
+     * `filesize` to the collection, not per mime type, and a recording is
+     * legitimately 10–100× a PDF. Setting the document limit here would reject
+     * every real audio upload; the per-kind distinction (20 MB documents,
+     * 200 MB audio) stays where it can see the kind, in
+     * `apps/web/src/lib/config.ts` and the BFF route that reads it.
+     *
+     * So this number is a BACKSTOP, not the product rule: it stops the absurd
+     * case, and the friendly per-kind message still comes from the layer above.
+     * Keep it in step with `MAX_AUDIO_UPLOAD_BYTES` — if they drift, the
+     * symptom is an audio upload that passes the frontend's check and is then
+     * refused here with a far less helpful error.
+     */
   },
   fields: [
     {
@@ -432,6 +501,6 @@ export const Media: CollectionConfig = {
     { name: 'alt', type: 'text' },
   ],
   hooks: {
-    beforeValidate: [bindMediaToEcosystem],
+    beforeValidate: [rejectOversizedUpload, bindMediaToEcosystem],
   },
 }

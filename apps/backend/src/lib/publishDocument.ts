@@ -64,6 +64,21 @@ import { draftCorpus, publishedCorpus } from './corpus'
  * a document stuck mid-transition is never accidentally exposed, it is only
  * temporarily not-yet-shared.
  */
+/**
+ * Postgres text-search config for a corpus created by the publish move — a
+ * `regconfig` name, not a locale code.
+ *
+ * 🔴 PUBLISHING IS USUALLY WHAT CREATES THE SHARED CORPUS. A draft lives in
+ * `eco-{org}-draft-{user}`; the first publish in an ecosistema is typically the
+ * first thing ever written to `eco-{org}`. So omitting this here is what would
+ * leave the SHARED corpus — the one every colleague searches — with no
+ * stemming, even though every draft corpus had it.
+ *
+ * Kept in step with the same constant in `collections/Documents.ts`, and read
+ * from the same env var so a deployment cannot set one and not the other.
+ */
+const CORPUS_LANGUAGE = process.env.CORPUS_LANGUAGE?.trim() || 'spanish'
+
 export const PUBLICATION_STATES = ['draft', 'publishing', 'published', 'unpublishing'] as const
 
 export type PublicationState = (typeof PUBLICATION_STATES)[number]
@@ -135,6 +150,8 @@ export interface CorpusMover {
     enqueue(req: {
       corpus: string
       documents: Array<{ id: string; text: string; title: string; metadata?: Record<string, unknown> }>
+      /** Postgres `regconfig` for a corpus created by THIS call. See CORPUS_LANGUAGE. */
+      language?: string
       callbackUrl?: string
     }): Promise<{ ingestId: string }>
   }
@@ -292,6 +309,7 @@ export async function beginPublish(
         },
       },
     ],
+    language: CORPUS_LANGUAGE,
     ...(deps.callbackUrl ? { callbackUrl: deps.callbackUrl } : {}),
   })
 
@@ -418,6 +436,7 @@ export async function unpublish(
         },
       },
     ],
+    language: CORPUS_LANGUAGE,
     ...(deps.callbackUrl ? { callbackUrl: deps.callbackUrl } : {}),
   })
 
@@ -444,4 +463,72 @@ export async function confirmUnpublish(
     overrideAccess: true,
     context: { __skipDocsExtract: true },
   })
+}
+
+/**
+ * Retire a document from BOTH of its possible corpora, because it is being
+ * deleted.
+ *
+ * 🔴 THIS CLOSES A REAL LEAK. Deleting a `documents` row used to remove it from
+ * the UI and leave its chunks embedded and retrievable. For a PUBLISHED
+ * document that is the bad one: the row is gone, the uploader believes it is
+ * gone, and the ecosistema's assistant keeps quoting it — with a citation that
+ * now points at nothing.
+ *
+ * ⚠ RETIRES FROM BOTH, deliberately, and does not consult
+ * `publicationStatus`. A row can be deleted mid-transition (`publishing` /
+ * `unpublishing`), when copies legitimately exist in both places at once, and a
+ * crash between the two publish steps can leave one behind in either. Guessing
+ * from the stored state is exactly how you leave the copy that mattered. A
+ * corpus that has no such document answers 404 and `retireFrom` already treats
+ * that as "already not retrievable there" — so retiring twice is cheap and
+ * always safe, while retiring once is a bet.
+ *
+ * ⚠ RETIREMENT IS NOT DELETION. ai-service has no per-document delete; this
+ * closes the chunk's validity window (`validTo: now`), which removes it from
+ * results ONLY for retrieves that pass `asOf`. Every caller in this repo does —
+ * `retrievalOptionsFor()` is the single place that says so and
+ * `GET /api/sessions/:id/corpora` hands it to the client rather than
+ * documenting it — but a future caller that forgets would see deleted documents
+ * come back. That is the weakest link in this design and it is worth knowing.
+ *
+ * Never throws. The row is already gone by the time this runs, so there is
+ * nothing to roll back and failing loudly would only turn a successful delete
+ * into an error the user cannot act on. It logs instead, and the document stays
+ * retrievable until someone retries — which is why the log line names the
+ * corpus and the id.
+ */
+export async function retireDeletedDocument(
+  deps: TransitionDeps,
+  doc: PublishableDocument,
+  now: Date = new Date(),
+): Promise<void> {
+  const organizationId = plainId(doc.organization)
+  const uploadedById = plainId(doc.uploadedBy)
+  const log = loggerOf(deps)
+
+  if (organizationId == null) {
+    log?.warn(
+      { documentId: String(doc.id) },
+      '[delete] document had no ecosistema — cannot name a corpus, so its chunks (if any) stay retrievable.',
+    )
+    return
+  }
+
+  const corpora = [publishedCorpus(organizationId)]
+  if (uploadedById != null) corpora.push(draftCorpus(organizationId, uploadedById))
+
+  for (const corpus of corpora) {
+    try {
+      await retireFrom(deps.client, corpus, doc.id, now, log)
+    } catch (err) {
+      // Keep going: the OTHER corpus is the one that might still be serving
+      // this document to colleagues, and one unreachable corpus must not stop
+      // us reaching it.
+      log?.warn(
+        { corpus, documentId: String(doc.id), err: String(err) },
+        '[delete] could not retire a deleted document — its chunks remain retrievable in this corpus.',
+      )
+    }
+  }
 }

@@ -1,6 +1,7 @@
 import type {
   Access,
   CollectionAfterChangeHook,
+  CollectionAfterDeleteHook,
   CollectionBeforeValidateHook,
   CollectionConfig,
   Endpoint,
@@ -287,6 +288,13 @@ export interface AudioMeta {
   chunks?: number | null
 }
 
+/**
+ * Postgres text-search config for new corpora — a `regconfig` name, not a
+ * locale code. Overridable for a deployment in another language; the product
+ * itself is Spanish end to end (UI, prompts, and `WHISPER_LANGUAGE=es`).
+ */
+const CORPUS_LANGUAGE = process.env.CORPUS_LANGUAGE?.trim() || 'spanish'
+
 /** The kinds whose text arrives through the extract → ingest pipeline. */
 const INGESTABLE_KINDS = new Set(['pdf', 'docx', 'audio'])
 
@@ -339,6 +347,37 @@ type DocumentRowWithMedia = DocumentRow & {
     mimeType?: string | null
     filesize?: number | null
   } | null
+}
+
+/**
+ * Retire a deleted document from its corpora.
+ *
+ * Runs AFTER the row is gone, so it can neither block nor undo the delete —
+ * that is the point. It reports, and never throws: turning a successful delete
+ * into an error the user cannot act on would be worse than the leak it is
+ * trying to close, and the leak is already logged with the corpus and id so it
+ * can be retried by hand.
+ */
+const retireDeletedDocumentHook: CollectionAfterDeleteHook = async ({ doc, req }) => {
+  const row = doc as { id?: unknown; organization?: unknown; uploadedBy?: unknown }
+  if (row?.id == null) return doc
+
+  try {
+    const { getAdminAIClient } = await import('@/lib/aiClient')
+    const { retireDeletedDocument } = await import('@/lib/publishDocument')
+    await retireDeletedDocument(
+      { payload: req.payload, client: getAdminAIClient() as never },
+      row as never,
+    )
+  } catch (err) {
+    // Includes "the AI service is not configured at all", which is a normal
+    // state for a local run with no admin key. Never fatal here.
+    req.payload.logger.warn(
+      { documentId: String(row.id), err: String(err) },
+      '[delete] could not retire the deleted document; its chunks may stay retrievable.',
+    )
+  }
+  return doc
 }
 
 async function runExtractAndIngest(row: DocumentRow): Promise<void> {
@@ -593,6 +632,27 @@ export async function enqueueIngestForDoc(args: {
           },
         },
       ],
+      /**
+       * 🔴 THE LEXICAL LEG'S STEMMING, and it is only honoured when the corpus
+       * is FIRST created.
+       *
+       * This is a Postgres text-search config name (`regconfig`), not an ISO
+       * locale: `'spanish'`, not `'es'`. Without it the corpus is created as
+       * `'simple'`, which does no stemming at all — so `acuerdo` does not match
+       * `acuerdos`, and `firmamos` does not match `firmar`.
+       *
+       * ⚠ It costs more here than it would in an English product. This is a
+       * Spanish-language repository, Spanish is heavily inflected, and half the
+       * corpus is TRANSCRIBED SPEECH — where people conjugate freely and rarely
+       * repeat a term in the exact form someone later searches for. Dense
+       * retrieval papers over some of it; the hybrid mode's lexical half simply
+       * misses.
+       *
+       * ⚠ APPLIED AT CREATION ONLY. A corpus that already exists keeps whatever
+       * it was made with — setting this does not retro-fix one. Existing
+       * corpora need `client.corpora.update`, or to be rebuilt.
+       */
+      language: CORPUS_LANGUAGE,
       ...(callbackUrl ? { callbackUrl } : {}),
     })
     // Don't overwrite ingestStatus here — we already set 'embedding' above,
@@ -1162,20 +1222,23 @@ export const Documents: CollectionConfig = {
     beforeValidate: [bindDocumentToEcosystem],
     afterChange: [extractAndIngestHook],
     /**
-     * ⚠ NO CORPUS CLEANUP ON DELETE, and this is now a REAL gap rather than a
-     * tolerated one.
+     * ✅ CORPUS CLEANUP ON DELETE. Deleting a row used to leave its chunks
+     * embedded and retrievable — the document vanished from the UI while the
+     * ecosistema's assistant kept quoting it, citing something nobody could
+     * open.
      *
-     * `@edc/ai-client` has no per-document corpus delete — only
+     * ⚠ `@edc/ai-client` still has no per-document DELETE — only
      * `deleteCorpus(name)`, which would take the whole ecosistema's shared
-     * corpus with it. So deleting a row here leaves its chunks embedded and
-     * retrievable.
+     * corpus with it. So this RETIRES instead: it closes the chunk's validity
+     * window, which removes it from every retrieve that passes `asOf`. See
+     * `retireDeletedDocument` for why that distinction matters.
      *
-     * 🔴 For a PUBLISHED document that is a genuine leak: the row is gone from
-     * the UI while the ecosistema's assistant keeps quoting it. Retiring it the
-     * way `lib/publishDocument.ts` does — `setDocumentValidity(..., validTo:
-     * now)` — is the available mitigation and is NOT wired up here yet.
-     * Reported rather than half-built.
+     * ⚠ `afterDelete`, not `beforeDelete`, on purpose: a document that could
+     * not be retired should still be deletable. The user asked for it gone, and
+     * refusing because a downstream service is unreachable would leave them
+     * stuck with a row they cannot remove. The failure is logged instead.
      */
+    afterDelete: [retireDeletedDocumentHook],
   },
   endpoints: [publishEndpoint(), unpublishEndpoint(), retryIngestEndpoint()],
 }
