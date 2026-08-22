@@ -81,9 +81,9 @@ describe('ratingsByMessage', () => {
       { id: 2, message: '11', stars: 3 },
       { id: 3, message: { id: 12 }, stars: 1 },
     ]);
-    expect(map.get('10')).toBe(5);
-    expect(map.get('11')).toBe(3);
-    expect(map.get('12')).toBe(1);
+    expect(map.get('10')?.stars).toBe(5);
+    expect(map.get('11')?.stars).toBe(3);
+    expect(map.get('12')?.stars).toBe(1);
     expect(map.size).toBe(3);
   });
 
@@ -96,11 +96,11 @@ describe('ratingsByMessage', () => {
       { id: 5, message: 14, stars: 4 },
     ]);
     expect(map.size).toBe(1);
-    expect(map.get('14')).toBe(4);
+    expect(map.get('14')?.stars).toBe(4);
   });
 
   it('coerces a numeric string from the JSON column', () => {
-    expect(ratingsByMessage([{ message: 20, stars: '2' }]).get('20')).toBe(2);
+    expect(ratingsByMessage([{ message: 20, stars: '2' }]).get('20')?.stars).toBe(2);
   });
 
   it('lets a later row win, so a duplicate pair resolves to one value', () => {
@@ -108,7 +108,7 @@ describe('ratingsByMessage', () => {
       { message: 30, stars: 2 },
       { message: 30, stars: 4 },
     ]);
-    expect(map.get('30')).toBe(4);
+    expect(map.get('30')?.stars).toBe(4);
   });
 
   it('returns an empty map for a degraded or malformed body', () => {
@@ -175,5 +175,31 @@ describe('nextStarFocus', () => {
     }
     expect(nextStarFocus(null, 'first')).toBe(1);
     expect(nextStarFocus(null, 'last')).toBe(5);
+  });
+});
+
+describe('ratingsByMessage — the reason travels too', () => {
+  it('🔴 keeps the preset reason, so a reload does not silently drop it', () => {
+    // Without this the stars survived a reload and the chip did not: the UI
+    // claimed no reason was given about a reason that was stored.
+    const map = ratingsByMessage([{ message: 40, stars: 2, reason: 'invented' }]);
+    expect(map.get('40')).toEqual({ stars: 2, reason: 'invented', comment: null });
+  });
+
+  it('keeps free text alongside `other`', () => {
+    const map = ratingsByMessage([
+      { message: 41, stars: 1, reason: 'other', comment: 'citó una ley derogada' },
+    ]);
+    expect(map.get('41')?.comment).toBe('citó una ley derogada');
+  });
+
+  it('treats a missing or empty reason as none', () => {
+    const map = ratingsByMessage([
+      { message: 42, stars: 5 },
+      { message: 43, stars: 5, reason: '', comment: '' },
+    ]);
+    expect(map.get('42')?.reason).toBeNull();
+    expect(map.get('43')?.reason).toBeNull();
+    expect(map.get('43')?.comment).toBeNull();
   });
 });

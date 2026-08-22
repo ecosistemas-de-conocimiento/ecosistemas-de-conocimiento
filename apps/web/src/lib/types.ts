@@ -42,6 +42,17 @@ export interface Message {
    * Assistant turns only — a user never rates their own prompt.
    */
   rating?: number | null;
+  /**
+   * The preset reason THIS user gave, or null. `'other'` means they chose the
+   * escape hatch, and `ratingComment` may then hold their words.
+   */
+  ratingReason?: string | null;
+  /**
+   * Free text, kept ONLY alongside `ratingReason === 'other'` — the backend
+   * refuses the pair otherwise, so a preset can never carry a contradicting
+   * sentence.
+   */
+  ratingComment?: string | null;
   /** UI-only state — a rating write is in flight. Never sent to the server. */
   ratingPending?: boolean;
 }

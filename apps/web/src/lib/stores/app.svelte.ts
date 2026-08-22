@@ -16,7 +16,14 @@ import {
   pollDeadlineMs,
   pollIntervalMs,
 } from '../ingest';
-import { idOf, isRatableMessageId, isValidStars, ratingsByMessage } from '../ratings';
+import {
+  idOf,
+  isRatableMessageId,
+  isReasonValidFor,
+  isValidStars,
+  ratingsByMessage,
+  type StoredRating,
+} from '../ratings';
 import {
   isPublicationStatus,
   isTerminalPublication,
@@ -465,7 +472,7 @@ class AppStore {
    * empty list, so the worst case is unpainted stars, never a broken thread.
    */
   private async loadRatings(sessionId: string): Promise<void> {
-    let byMessage = new Map<string, number>();
+    let byMessage = new Map<string, StoredRating>();
     try {
       const data = await fetchJson<{ docs: Record<string, unknown>[] }>(
         `/api/sessions/${sessionId}/ratings`,
@@ -480,7 +487,10 @@ class AppStore {
     const s = this.sessions.find((x) => x.id === sessionId);
     if (!s) return;
     for (const m of s.messages) {
-      m.rating = byMessage.get(m.id) ?? null;
+      const stored = byMessage.get(m.id);
+      m.rating = stored?.stars ?? null;
+      m.ratingReason = stored?.reason ?? null;
+      m.ratingComment = stored?.comment ?? null;
     }
   }
 
@@ -794,6 +804,121 @@ class AppStore {
       toasts.push({
         kind: 'error',
         title: 'No se guardó tu valoración',
+        message: 'Vuelve a intentarlo en un momento.',
+      });
+    } finally {
+      const current = find();
+      if (current) current.ratingPending = false;
+    }
+  }
+
+  /**
+   * Save WHY, on a message that already has a score.
+   *
+   * ⚠ Separate from `rateMessage` on purpose. The score is one click and should
+   * feel instant; the reason is a second, optional thought. Folding them into
+   * one call would mean either delaying the star until a reason arrives, or
+   * sending a half-formed rating twice.
+   *
+   * Sends the stars again because the backend validates the PAIR — a reason is
+   * only legal for the score it belongs to.
+   */
+  async rateReason(
+    sessionId: string,
+    messageId: string,
+    reason: string | null,
+    comment: string | null,
+  ): Promise<void> {
+    const find = (): Message | undefined =>
+      this.sessions.find((x) => x.id === sessionId)?.messages.find((m) => m.id === messageId);
+
+    const msg = find();
+    if (!msg || msg.role !== 'assistant') return;
+    if (!isRatableMessageId(msg.id)) return;
+    const stars = msg.rating;
+    // A reason with no score has nothing to attach to, and the backend would
+    // refuse it anyway.
+    if (!isValidStars(stars)) return;
+    if (!isReasonValidFor(stars, reason)) return;
+    if (msg.ratingPending) return;
+
+    const prevReason = msg.ratingReason ?? null;
+    const prevComment = msg.ratingComment ?? null;
+    const nextComment = reason === 'other' ? comment : null;
+    if (prevReason === reason && prevComment === nextComment) return;
+
+    msg.ratingReason = reason;
+    msg.ratingComment = nextComment;
+    msg.ratingPending = true;
+    try {
+      await fetchJson(`/api/sessions/${sessionId}/ratings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId, stars, reason, comment: nextComment }),
+        credentials: 'same-origin',
+        signal: AbortSignal.timeout(RATING_TIMEOUT_MS),
+      });
+    } catch (err) {
+      console.error('rateReason failed', err);
+      const current = find();
+      // Roll back only if ours is still what is on screen — see rateMessage.
+      if (current && current.ratingReason === reason) {
+        current.ratingReason = prevReason;
+        current.ratingComment = prevComment;
+      }
+      toasts.push({
+        kind: 'error',
+        title: 'No se guardó el motivo',
+        message: 'Tu valoración sí quedó guardada. Vuelve a intentar el motivo.',
+      });
+    } finally {
+      const current = find();
+      if (current) current.ratingPending = false;
+    }
+  }
+
+  /**
+   * Take a rating back entirely.
+   *
+   * ⚠ NOT the same as rating 1 star. "This answer was bad" and "I take back
+   * what I said" are different facts, and a 1-star row left by someone who
+   * meant to withdraw drags the average down for a judgement they no longer
+   * hold.
+   */
+  async unrateMessage(sessionId: string, messageId: string): Promise<void> {
+    const find = (): Message | undefined =>
+      this.sessions.find((x) => x.id === sessionId)?.messages.find((m) => m.id === messageId);
+
+    const msg = find();
+    if (!msg || msg.ratingPending) return;
+    if (msg.rating == null) return;
+
+    const prev = { rating: msg.rating, reason: msg.ratingReason ?? null, comment: msg.ratingComment ?? null };
+    msg.rating = null;
+    msg.ratingReason = null;
+    msg.ratingComment = null;
+    msg.ratingPending = true;
+    try {
+      await fetchJson(`/api/sessions/${sessionId}/ratings`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId }),
+        credentials: 'same-origin',
+        signal: AbortSignal.timeout(RATING_TIMEOUT_MS),
+      });
+    } catch (err) {
+      console.error('unrateMessage failed', err);
+      const current = find();
+      // Only restore if the row is still empty — a rating made while this was
+      // in flight is fresher than what we removed.
+      if (current && current.rating == null) {
+        current.rating = prev.rating;
+        current.ratingReason = prev.reason;
+        current.ratingComment = prev.comment;
+      }
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo quitar tu valoración',
         message: 'Vuelve a intentarlo en un momento.',
       });
     } finally {

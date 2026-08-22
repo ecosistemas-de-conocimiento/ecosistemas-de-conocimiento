@@ -114,8 +114,23 @@ export function nextStarFocus(from: number | null | undefined, move: StarMove): 
  * answer. Later rows win, so a duplicate (which the one-row-per-pair invariant
  * should prevent) resolves to the most recently returned one.
  */
-export function ratingsByMessage(docs: unknown): Map<string, number> {
-  const out = new Map<string, number>();
+/** Everything this user said about one answer. */
+export interface StoredRating {
+  stars: number;
+  reason: string | null;
+  comment: string | null;
+}
+
+/**
+ * Index the caller's ratings by message id.
+ *
+ * ⚠ Carries the REASON too, not only the score. Without it a reload showed the
+ * stars but silently dropped the chip the person had picked — so the UI said
+ * "no reason given" about a reason that was stored, and clicking a chip again
+ * rewrote a value that had never changed.
+ */
+export function ratingsByMessage(docs: unknown): Map<string, StoredRating> {
+  const out = new Map<string, StoredRating>();
   if (!Array.isArray(docs)) return out;
   for (const row of docs) {
     if (!row || typeof row !== 'object') continue;
@@ -124,7 +139,11 @@ export function ratingsByMessage(docs: unknown): Map<string, number> {
     if (!messageId) continue;
     const stars = typeof r.stars === 'number' ? r.stars : Number(r.stars);
     if (!isValidStars(stars)) continue;
-    out.set(messageId, stars);
+    out.set(messageId, {
+      stars,
+      reason: typeof r.reason === 'string' && r.reason ? r.reason : null,
+      comment: typeof r.comment === 'string' && r.comment ? r.comment : null,
+    });
   }
   return out;
 }
@@ -136,4 +155,68 @@ export function ratingsByMessage(docs: unknown): Map<string, number> {
  */
 export function isRatableMessageId(id: string): boolean {
   return Boolean(id) && !id.startsWith('local-');
+}
+
+// ---------------------------------------------------------------------------
+// WHY a score was given
+// ---------------------------------------------------------------------------
+
+/**
+ * The preset reasons, and their Spanish labels.
+ *
+ * 🔴 THE VALUES MUST MATCH THE BACKEND. They are the stored column
+ * (`ratings.reason`), and the backend rejects a value that is not in the list
+ * for that score — see `Ratings.ts > normalizeFeedback`. The labels are ours;
+ * the keys are a contract.
+ *
+ * ⚠ TWO LISTS, PICKED BY SCORE. "What went wrong" and "what worked" are
+ * different questions. Showing "se lo inventó" under a 5-star rating is noise,
+ * and one neutral list ends up phrased so vaguely that nobody picks anything.
+ * The split is at 4, same as the backend's.
+ */
+export const LOW_SCORE_REASONS = [
+  { value: 'not-grounded', label: 'Cita algo que la fuente no dice' },
+  { value: 'invented', label: 'Se lo inventó' },
+  { value: 'incomplete', label: 'Le faltó lo importante' },
+  { value: 'unclear', label: 'No se entiende' },
+  { value: 'wrong-language', label: 'Idioma o tono equivocado' },
+] as const;
+
+export const HIGH_SCORE_REASONS = [
+  { value: 'accurate', label: 'Coincide con la fuente' },
+  { value: 'well-sourced', label: 'Fácil de verificar' },
+  { value: 'clear', label: 'Se entiende bien' },
+  { value: 'complete', label: 'Respondió todo' },
+] as const;
+
+export const OTHER_REASON = 'other';
+export const OTHER_REASON_LABEL = 'Otro';
+
+export interface RatingReasonOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * The reasons offered for a score. `Otro` is always last, and always present —
+ * it is what lets someone disagree with the whole list instead of picking the
+ * least-wrong option.
+ */
+export function reasonsForStars(stars: number): RatingReasonOption[] {
+  const base = stars <= 3 ? LOW_SCORE_REASONS : HIGH_SCORE_REASONS;
+  return [...base, { value: OTHER_REASON, label: OTHER_REASON_LABEL }];
+}
+
+/** Is this reason offered for this score? Mirrors the backend's check. */
+export function isReasonValidFor(stars: number, reason: string | null | undefined): boolean {
+  if (!reason) return true; // no reason at all is always valid
+  return reasonsForStars(stars).some((r) => r.value === reason);
+}
+
+/**
+ * The prompt above the chips. Asks the question the score implies, so the
+ * chips read as answers rather than as a taxonomy.
+ */
+export function reasonPromptFor(stars: number): string {
+  return stars <= 3 ? '¿Qué salió mal?' : '¿Qué estuvo bien?';
 }
