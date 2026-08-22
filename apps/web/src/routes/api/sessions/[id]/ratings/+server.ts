@@ -66,7 +66,12 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
 
-  let incoming: { messageId?: unknown; stars?: unknown; comment?: unknown } = {};
+  let incoming: {
+    messageId?: unknown;
+    stars?: unknown;
+    reason?: unknown;
+    comment?: unknown;
+  } = {};
   try {
     incoming = (await request.json()) as typeof incoming;
   } catch {
@@ -80,6 +85,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!isValidStars(stars)) return json({ error: 'invalid_stars' }, { status: 400 });
 
   const comment = typeof incoming.comment === 'string' ? incoming.comment.trim() : '';
+  const reason = typeof incoming.reason === 'string' ? incoming.reason.trim() : '';
 
   // The session in the URL is written into the row, and the client chose it —
   // so prove the message actually belongs to it. Without this a client could
@@ -107,12 +113,74 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       message: coerceId(messageId),
       session: coerceId(String(params.id)),
       stars,
-      // Always sent, so clearing a comment actually clears it. An absent key
-      // would leave a stale comment attached to a changed rating.
+      // Both always sent, so changing a rating actually CLEARS the old
+      // feedback. An absent key would leave "se lo inventó" attached to a
+      // score the person just moved to 5 stars.
+      // ⚠ The backend rejects the pair if the reason does not belong to this
+      // score, or if there is free text without `other`. We forward and let it
+      // answer — duplicating that rule here is how the two drift apart.
+      reason: reason || null,
       comment: comment || null,
     }),
   });
 
   const out = await res.json().catch(() => ({}));
   return json(out, { status: res.status });
+};
+
+/**
+ * Remove your rating entirely.
+ *
+ * ⚠ NOT the same as rating 1 star. "This answer was bad" and "I take back what
+ * I said" are different facts, and a 1-star row left behind by someone who
+ * meant to withdraw drags every average down for a judgement they no longer
+ * hold.
+ *
+ * Deletes only YOUR row: the backend's delete rule is scoped to
+ * `user.equals(me)`, so this cannot remove a colleague's rating even with a
+ * guessed id. We still look the row up by message first, so the client never
+ * names a rating id at all.
+ */
+export const DELETE: RequestHandler = async ({ locals, params, request }) => {
+  if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
+
+  let incoming: { messageId?: unknown } = {};
+  try {
+    incoming = (await request.json()) as typeof incoming;
+  } catch {
+    return json({ error: 'invalid_json' }, { status: 400 });
+  }
+  const messageId = typeof incoming.messageId === 'string' ? incoming.messageId.trim() : '';
+  if (!messageId) return json({ error: 'message_required' }, { status: 400 });
+
+  // Find MY rating for this message. Payload scopes the read to the caller, so
+  // this cannot return anyone else's row.
+  const qs = new URLSearchParams({
+    'where[message][equals]': messageId,
+    limit: '1',
+    depth: '0',
+  });
+  const findRes = await backendFetch(locals.token, `/api/ratings?${qs.toString()}`, {
+    method: 'GET',
+  });
+  if (!findRes.ok) return json({ error: 'upstream_failed' }, { status: 502 });
+
+  const body = (await findRes.json().catch(() => ({}))) as { docs?: Array<{ id?: unknown }> };
+  const existingId = body.docs?.[0]?.id;
+  // ⚠ Already absent is SUCCESS, not 404. Two fast clicks on "quitar" should
+  // both leave the person with no rating, which is what they asked for.
+  if (existingId === undefined || existingId === null) {
+    return json({ ok: true, removed: false });
+  }
+
+  const res = await backendFetch(
+    locals.token,
+    `/api/ratings/${encodeURIComponent(String(existingId))}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    return json({ error: 'delete_failed', detail: detail.slice(0, 300) }, { status: res.status });
+  }
+  return json({ ok: true, removed: true });
 };

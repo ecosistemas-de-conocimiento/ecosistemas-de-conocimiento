@@ -5,7 +5,7 @@ vi.mock('$lib/server/auth', () => ({
   backendFetch: vi.fn(),
 }));
 
-import { GET, POST } from './+server';
+import { DELETE, GET, POST } from './+server';
 import { backendFetch } from '$lib/server/auth';
 
 type Locals = {
@@ -152,7 +152,7 @@ describe('POST /api/sessions/[id]/ratings', () => {
     expect(mockedBackendFetch.mock.calls[1]![2]).toMatchObject({ method: 'POST' });
     // Numeric ids go on the wire as numbers — Payload's relationship column is
     // bigint and rejects the string form.
-    expect(calledBody(1)).toEqual({ message: 7, session: 42, stars: 4, comment: null });
+    expect(calledBody(1)).toEqual({ message: 7, session: 42, stars: 4, reason: null, comment: null });
   });
 
   // The backend derives both from the session. A client that can name them can
@@ -181,7 +181,7 @@ describe('POST /api/sessions/[id]/ratings', () => {
         }),
       }),
     );
-    expect(calledBody(1)).toEqual({ message: 7, session: 42, stars: 4, comment: null });
+    expect(calledBody(1)).toEqual({ message: 7, session: 42, stars: 4, reason: null, comment: null });
   });
 
   it('refuses when the message belongs to another session', async () => {
@@ -209,16 +209,23 @@ describe('POST /api/sessions/[id]/ratings', () => {
       .mockResolvedValueOnce(jsonResponse({ id: 7, session: 42 }))
       .mockResolvedValueOnce(jsonResponse({ doc: { id: 88 } }));
     await POST(
-      makeEvent({ request: postRequest({ messageId: '7', stars: 5, comment: '  útil  ' }) }),
+      makeEvent({
+        request: postRequest({
+          messageId: '7',
+          stars: 5,
+          reason: 'other',
+          comment: '  útil  ',
+        }),
+      }),
     );
-    expect(calledBody(1)).toMatchObject({ stars: 5, comment: 'útil' });
+    expect(calledBody(1)).toMatchObject({ stars: 5, reason: 'other', comment: 'útil' });
 
     mockedBackendFetch.mockReset();
     mockedBackendFetch
       .mockResolvedValueOnce(jsonResponse({ id: 7, session: 42 }))
       .mockResolvedValueOnce(jsonResponse({ doc: { id: 88 } }));
     await POST(makeEvent({ request: postRequest({ messageId: '7', stars: 1 }) }));
-    expect(calledBody(1)).toMatchObject({ stars: 1, comment: null });
+    expect(calledBody(1)).toMatchObject({ stars: 1, reason: null, comment: null });
   });
 
   it('passes an upstream write failure through with its status', async () => {
@@ -227,5 +234,60 @@ describe('POST /api/sessions/[id]/ratings', () => {
       .mockResolvedValueOnce(jsonResponse({ errors: [{ message: 'nope' }] }, 403));
     const res = await POST(makeEvent({ request: postRequest({ messageId: '7', stars: 3 }) }));
     expect(res.status).toBe(403);
+  });
+});
+
+describe('DELETE /api/sessions/[id]/ratings', () => {
+  it('401s without a session', async () => {
+    const res = await DELETE(
+      makeEvent({ locals: { user: null }, request: postRequest({ messageId: '7' }) }),
+    );
+    expect(res.status).toBe(401);
+    expect(mockedBackendFetch).not.toHaveBeenCalled();
+  });
+
+  it('finds MY rating by message, then deletes it by id', async () => {
+    // The client never names a rating id — it names a message. That is what
+    // stops a guessed id reaching the delete at all.
+    mockedBackendFetch.mockImplementation(async (_t: unknown, path: string) =>
+      String(path).startsWith('/api/ratings?')
+        ? jsonResponse({ docs: [{ id: 99 }] })
+        : jsonResponse({}),
+    );
+
+    const res = await DELETE(makeEvent({ request: postRequest({ messageId: '7' }) }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, removed: true });
+
+    const paths = mockedBackendFetch.mock.calls.map((c) => decodeURIComponent(String(c[1])));
+    expect(paths[0]).toContain('where[message][equals]=7');
+    expect(paths[1]).toBe('/api/ratings/99');
+    expect((mockedBackendFetch.mock.calls[1]?.[2] as RequestInit)?.method).toBe('DELETE');
+  });
+
+  it('⚠ already absent is success, not 404', async () => {
+    // Two fast clicks on "quitar" should both leave the person with no rating,
+    // which is exactly what they asked for.
+    mockedBackendFetch.mockImplementation(async () => jsonResponse({ docs: [] }));
+    const res = await DELETE(makeEvent({ request: postRequest({ messageId: '7' }) }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, removed: false });
+  });
+
+  it('requires a messageId', async () => {
+    const res = await DELETE(makeEvent({ request: postRequest({}) }));
+    expect(res.status).toBe(400);
+    expect(mockedBackendFetch).not.toHaveBeenCalled();
+  });
+
+  it('reports an upstream refusal instead of claiming success', async () => {
+    mockedBackendFetch.mockImplementation(async (_t: unknown, path: string) =>
+      String(path).startsWith('/api/ratings?')
+        ? jsonResponse({ docs: [{ id: 99 }] })
+        : jsonResponse({ errors: [] }, 403),
+    );
+    const res = await DELETE(makeEvent({ request: postRequest({ messageId: '7' }) }));
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe('delete_failed');
   });
 });

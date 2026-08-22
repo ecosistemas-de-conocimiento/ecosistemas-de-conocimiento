@@ -68,6 +68,95 @@ export function normalizeStars(value: unknown): number | null {
   return n
 }
 
+/**
+ * WHY a score was given, as a countable value.
+ *
+ * 🔴 THE POINT IS THAT THESE CAN BE COUNTED. A free-text box tells you why one
+ * answer was bad, and only if somebody reads it. A fixed list tells you that
+ * 41% of low scores were "it cited something the source does not say" — which
+ * is the number that says whether retrieval is getting better or worse.
+ *
+ * ⚠ TWO LISTS, PICKED BY SCORE, because "what went wrong" and "what worked" are
+ * different questions. Offering `invented` under a 5-star rating is noise, and a
+ * single neutral list ends up phrased so vaguely that nobody picks anything.
+ * The split point is 4: 1-3 asks what went wrong, 4-5 asks what worked.
+ *
+ * `other` is the escape hatch and the ONLY value that unlocks free text — see
+ * `normalizeFeedback`. Everything a preset can express should be a preset;
+ * `other` exists so the list can be wrong without blocking the person.
+ */
+export const LOW_SCORE_REASONS = [
+  'not-grounded', // cites a source that does not say that
+  'invented', // made something up
+  'incomplete', // true, but left out what mattered
+  'unclear', // right, but hard to understand
+  'wrong-language', // answered in the wrong language / register
+] as const
+
+export const HIGH_SCORE_REASONS = [
+  'accurate', // matched the source
+  'well-sourced', // easy to check against the citation
+  'clear', // easy to understand
+  'complete', // covered what was asked
+] as const
+
+export const OTHER_REASON = 'other' as const
+
+export const RATING_REASONS = [
+  ...LOW_SCORE_REASONS,
+  ...HIGH_SCORE_REASONS,
+  OTHER_REASON,
+] as const
+
+export type RatingReason = (typeof RATING_REASONS)[number]
+
+/** The reasons offered for a given score. `other` is always last. */
+export function reasonsForStars(stars: number): readonly string[] {
+  return [...(stars <= 3 ? LOW_SCORE_REASONS : HIGH_SCORE_REASONS), OTHER_REASON]
+}
+
+export const REASON_ERROR = 'That reason does not exist for this score.'
+export const COMMENT_WITHOUT_OTHER_ERROR =
+  'Free text is only stored with the "other" reason. Pick "other", or drop the text.'
+
+export interface NormalizedFeedback {
+  reason: RatingReason | null
+  comment: string | null
+}
+
+/**
+ * Validate `reason` + `comment` together, for both write paths.
+ *
+ * ⚠ THEY CANNOT BE VALIDATED SEPARATELY. The rules are all about the pair:
+ *   · a reason must belong to the list for THAT score, or the counts mix
+ *     "what worked" into "what went wrong";
+ *   · free text is kept only with `other`, so a preset never carries a
+ *     contradicting sentence nobody will read;
+ *   · `other` with no text is allowed. Someone saying "none of these fit"
+ *     without elaborating is still a real signal, and refusing it would just
+ *     push them to pick a preset that is wrong.
+ *
+ * Returns `null` when the pair is invalid, with the reason in `error`.
+ */
+export function normalizeFeedback(
+  stars: number,
+  rawReason: unknown,
+  rawComment: unknown,
+): { ok: true; value: NormalizedFeedback } | { ok: false; error: string } {
+  const reason =
+    typeof rawReason === 'string' && rawReason.trim() ? (rawReason.trim() as RatingReason) : null
+  const commentText =
+    typeof rawComment === 'string' && rawComment.trim() ? rawComment.trim() : null
+
+  if (reason !== null && !reasonsForStars(stars).includes(reason)) {
+    return { ok: false, error: REASON_ERROR }
+  }
+  if (commentText !== null && reason !== OTHER_REASON) {
+    return { ok: false, error: COMMENT_WITHOUT_OTHER_ERROR }
+  }
+  return { ok: true, value: { reason, comment: reason === OTHER_REASON ? commentText : null } }
+}
+
 export const STARS_ERROR = `Stars must be a whole number between ${MIN_STARS} and ${MAX_STARS}.`
 
 type MessageShape = {
@@ -357,9 +446,34 @@ export const Ratings: CollectionConfig = {
       },
     },
     {
+      /**
+       * WHY, as a countable value. See `RATING_REASONS`.
+       *
+       * ⚠ Not `required`. A score with no reason is still a score, and forcing
+       * a reason would make people pick the first option to get past it — which
+       * poisons exactly the counts this field exists to produce.
+       */
+      name: 'reason',
+      type: 'select',
+      options: [...RATING_REASONS],
+      admin: {
+        description:
+          'Which preset reason the person chose. Valid values depend on the score: 1-3 offers the "what went wrong" list, 4-5 the "what worked" list. `other` is the only one that allows free text.',
+      },
+    },
+    {
+      /**
+       * ⚠ ONLY STORED WITH `reason: 'other'` — enforced in `normalizeFeedback`,
+       * which both write paths call. A preset that also carries a sentence is a
+       * contradiction nobody will read, and it would quietly turn the counts
+       * back into free text.
+       */
       name: 'comment',
       type: 'textarea',
-      admin: { description: 'Optional. Why this score — free text from the person rating.' },
+      admin: {
+        description:
+          'Free text, kept ONLY when `reason` is `other`. Optional even then — "none of these fit" is a real signal on its own.',
+      },
     },
   ],
   endpoints: [ratingUpsertEndpoint()],
@@ -423,7 +537,10 @@ function ratingUpsertEndpoint(): Endpoint {
       const stars = normalizeStars(body.stars)
       if (stars === null) return fail(400, STARS_ERROR)
 
-      const comment = typeof body.comment === 'string' ? body.comment : undefined
+      // `reason` and `comment` are validated as a PAIR — see normalizeFeedback.
+      const feedback = normalizeFeedback(stars, body.reason, body.comment)
+      if (!feedback.ok) return fail(400, feedback.error)
+      const { reason, comment } = feedback.value
 
       // Validate BEFORE writing so the caller gets one clear reason rather than
       // a Payload validation envelope assembled out of hook errors.
@@ -460,7 +577,14 @@ function ratingUpsertEndpoint(): Endpoint {
         ? await req.payload.update({
             collection: 'ratings',
             id: found.id as never,
-            data: { stars, ...(comment === undefined ? {} : { comment }) },
+            // ⚠ Written unconditionally, nulls included. A re-rate that moves
+            // 2 -> 5 must CLEAR the old "what went wrong" reason; spreading
+            // conditionally would leave `invented` sitting on a 5-star row.
+            // `as never` for the same reason the create below uses it:
+            // `src/payload-types.ts` is generated and does not yet carry
+            // `reason`. Regenerate it (`pnpm generate:types`) after the next
+            // image build and both casts can go.
+            data: { stars, reason, comment } as never,
             overrideAccess: false,
             user,
             req,
@@ -470,7 +594,8 @@ function ratingUpsertEndpoint(): Endpoint {
             data: {
               message: messageId,
               stars,
-              ...(comment === undefined ? {} : { comment }),
+              reason,
+              comment,
               ...(body.organization === undefined ? {} : { organization: body.organization }),
             } as never,
             overrideAccess: false,
