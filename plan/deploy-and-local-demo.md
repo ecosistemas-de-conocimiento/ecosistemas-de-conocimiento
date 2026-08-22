@@ -32,15 +32,15 @@ Entras con el correo y la contraseña que dejaste en `SEED_ADMIN_EMAIL` y `SEED_
 
 Y si quieres ver los archivos guardados con tus propios ojos:
 
-- `http://localhost:59001/rustfs/console/` — la consola del almacén de archivos.
-  ⚠ **La parte final de la dirección hace falta.** Si entras a `http://localhost:59001` a secas te
+- `http://localhost:45411/rustfs/console/` — la consola del almacén de archivos.
+  ⚠ **La parte final de la dirección hace falta.** Si entras a `http://localhost:45411` a secas te
   contesta con un error XML que parece que está roto. No lo está. ✅ Probado.
 
 **Qué levanta:** web, backend, ai-service, Postgres con pgvector, Redis, **RustFS** (el almacén de
 archivos), y **tres contenedores de audio** (no uno):
 
 - `rustfs` — guarda los archivos que sube la gente. Es un almacén compatible con S3, o sea que habla
-  el mismo idioma que Amazon S3 sin ser Amazon. Consola en `http://localhost:59001/rustfs/console/`.
+  el mismo idioma que Amazon S3 sin ser Amazon. Consola en `http://localhost:45411/rustfs/console/`.
 - `audio-service` — la API. Recibe la subida, la guarda en disco y encola. No carga el modelo.
 - `audio-service-worker` — transcribe. Es el contenedor pesado, el que tiene el modelo en RAM.
 - `audio-service-callbacks` — entrega el webhook firmado de vuelta al backend.

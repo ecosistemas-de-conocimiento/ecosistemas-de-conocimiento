@@ -117,14 +117,14 @@ export function requireEnv(name: string): string {
 }
 
 /** Base URLs. Overridable so the suite can be pointed at a non-default stack. */
-export const BACKEND_URL = (process.env.E2E_BACKEND_URL ?? 'http://localhost:3102').replace(
+export const BACKEND_URL = (process.env.E2E_BACKEND_URL ?? 'http://localhost:45402').replace(
   /\/+$/,
   '',
 )
-export const AI_SERVICE_URL = (process.env.E2E_AI_SERVICE_URL ?? 'http://localhost:3101').replace(
+export const AI_SERVICE_URL = (process.env.E2E_AI_SERVICE_URL ?? 'http://localhost:45401').replace(
   /\/+$/,
   '',
 )
 export const AUDIO_SERVICE_URL = (
-  process.env.E2E_AUDIO_SERVICE_URL ?? 'http://localhost:3103'
+  process.env.E2E_AUDIO_SERVICE_URL ?? 'http://localhost:45403'
 ).replace(/\/+$/, '')

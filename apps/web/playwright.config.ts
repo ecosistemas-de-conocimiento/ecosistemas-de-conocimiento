@@ -45,7 +45,7 @@ export default defineConfig({
   ],
 
   use: {
-    baseURL: process.env.EDC_WEB_URL ?? 'http://localhost:3100',
+    baseURL: process.env.EDC_WEB_URL ?? 'http://localhost:45400',
 
     // 🔴 The user asked for a video of the run, pass or fail.
     video: 'on',

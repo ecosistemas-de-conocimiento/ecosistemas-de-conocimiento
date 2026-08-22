@@ -22,7 +22,7 @@
 import type { ConfigReport } from '../src/eval/types.js';
 
 process.env.DATABASE_URL ??=
-  process.env.TEST_DATABASE_URL ?? 'postgres://ai_service:ai_service@localhost:55432/ai_service';
+  process.env.TEST_DATABASE_URL ?? 'postgres://ai_service:ai_service@localhost:45432/ai_service';
 process.env.REDIS_URL ??= process.env.TEST_REDIS_URL ?? 'redis://localhost:56379';
 process.env.NODE_ENV ??= 'test';
 process.env.LOG_LEVEL ??= 'silent';

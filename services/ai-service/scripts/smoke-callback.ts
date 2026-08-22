@@ -31,7 +31,7 @@
 //   pnpm --filter @edc/ai-service exec tsx scripts/smoke-callback.ts
 //
 // Env (with sensible defaults so a plain run works against `pnpm infra:up`):
-//   DATABASE_URL           postgres://ai_service:ai_service@localhost:55432/ai_service
+//   DATABASE_URL           postgres://ai_service:ai_service@localhost:45432/ai_service
 //   REDIS_URL              redis://localhost:56379
 
 import { createHmac, randomBytes } from 'node:crypto';
@@ -43,7 +43,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 // ---------------------------------------------------------------------------
 
 process.env.DATABASE_URL ??=
-  'postgres://ai_service:ai_service@localhost:55432/ai_service';
+  'postgres://ai_service:ai_service@localhost:45432/ai_service';
 process.env.REDIS_URL ??= 'redis://localhost:56379';
 process.env.NODE_ENV = 'development';
 process.env.LOG_LEVEL ??= 'warn';

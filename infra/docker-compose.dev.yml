@@ -84,7 +84,7 @@ services:
     ports:
       # Vite dev binds 5173, not 3000. Published on the same host port so the
       # URL you demo does not change between modes.
-      - "${WEB_HOST_PORT:-3000}:5173"
+      - "${WEB_HOST_PORT:-45400}:5173"
     volumes:
       - ..:/repo
       - web_root_node_modules:/repo/node_modules

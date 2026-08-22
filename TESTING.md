@@ -18,7 +18,7 @@ Current state, measured 2026-08-18: **1,811 passing, 0 skipped, 0 failing.**
 
 The 13 that used to show as skipped were `services/ai-service/src/routes/registry.test.ts`,
 and they were never really a skip: the suite published its throwaway Postgres on a
-**fixed host port 55432 — the same port `infra/docker-compose.yml` gives the local
+**fixed host port 45432 — the same port `infra/docker-compose.yml` gives the local
 demo**, so `docker run` failed with "port is already allocated" whenever the demo was
 up. Those containers now bind an ephemeral host port (`-p 0:5432`) and read the
 assignment back from `docker port`, so the suite runs alongside a live local stack.

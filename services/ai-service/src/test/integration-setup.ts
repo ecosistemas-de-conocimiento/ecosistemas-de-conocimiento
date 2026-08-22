@@ -20,10 +20,38 @@ import { beforeAll, beforeEach } from 'vitest';
 import postgres from 'postgres';
 import { sql } from 'drizzle-orm';
 
-const TEST_DATABASE_URL =
-  process.env.TEST_DATABASE_URL ??
-  'postgres://ai_service:ai_service@localhost:55432/ai_service';
-const TEST_REDIS_URL = process.env.TEST_REDIS_URL ?? 'redis://localhost:56379';
+/**
+ * 🔴 NO DEFAULT, DELIBERATELY. This file TRUNCATEs seven tables in `beforeEach`
+ * (see `truncateAll`), so whatever it points at gets wiped, repeatedly.
+ *
+ * It used to default to a fixed `localhost:55432` URL. That was dangerous for a
+ * reason no assertion here could catch: this developer's machine also runs
+ * ANOTHER local fleet whose Postgres range covers that port — and because that
+ * fleet runs a fork of THIS codebase, the credentials baked into the default
+ * would very likely have authenticated. Running the integration suite with the
+ * variable unset could therefore have truncated a different project's database.
+ *
+ * Repointing it at this project's own Postgres (45432) would only move the
+ * wipe: that database holds the local demo's real data. The correct target is a
+ * THROWAWAY database, and only the person running the suite knows which one —
+ * so ask, and refuse to guess.
+ */
+function requireThrowawayUrl(name: string, example: string): string {
+  const value = process.env[name]?.trim();
+  if (value) return value;
+  throw new Error(
+    `${name} is not set, and this suite WIPES the database it connects to.\n` +
+      `There is no default on purpose — a wrong guess truncates real data.\n` +
+      `Point it at a throwaway store, e.g.:\n  ${name}=${example}\n` +
+      `\`src/test/pg-container.ts\` can start one on an ephemeral port for you.`,
+  );
+}
+
+const TEST_DATABASE_URL = requireThrowawayUrl(
+  'TEST_DATABASE_URL',
+  'postgres://ai_service:ai_service@localhost:45499/ai_service_test',
+);
+const TEST_REDIS_URL = requireThrowawayUrl('TEST_REDIS_URL', 'redis://localhost:45498');
 
 // Expose to the app's env loader BEFORE any code reads it. `src/config/env.ts`
 // validates `process.env` once at module-import time, so this MUST run before
