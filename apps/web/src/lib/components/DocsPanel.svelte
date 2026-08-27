@@ -607,10 +607,12 @@
                   <div class="px-3 py-3 text-xs text-ink-soft bg-surface-soft border-t border-elevated space-y-1">
                     <div>
                       <span class="font-medium text-ink">{d.kind.toUpperCase()}</span>
-                      {#if isTranscript(d.kind)}
-                        — se transcribe y luego se procesa para que el chat pueda
-                        consultarlo. El audio original se conserva como respaldo.
-                      {:else}
+                      <!-- ⚠ No explanatory sentence for audio, on purpose. The
+                           states below already narrate what is happening
+                           ("Transcribiendo…", "Falta indexarla…"), so a standing
+                           description of the pipeline was instruction the reader
+                           did not ask for and could not act on. -->
+                      {#if !isTranscript(d.kind)}
                         — procesado para que el chat pueda consultarlo.
                       {/if}
                     </div>
