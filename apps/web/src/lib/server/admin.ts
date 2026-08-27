@@ -1,0 +1,483 @@
+/**
+ * The I/O half of the admin "Contribuciones" view.
+ *
+ * Reads one ecosistema's documents, people, ratings and usage out of Payload
+ * and hands them to the pure aggregation in
+ * `$lib/components/admin/summary.ts`. Nothing here formats anything; nothing
+ * there fetches anything.
+ *
+ * ── 🔴 THE TENANT TRAP, AND WHY EVERY QUERY IN THIS FILE CARRIES AN EXPLICIT
+ *    `organization` FILTER ─────────────────────────────────────────────────
+ *
+ * `Documents.visibleToCaller` (backend) returns a WHERE constraint for an
+ * ordinary user — and returns `true` outright for a platform admin. That is
+ * correct for the CMS, where an admin is supposed to see everything. It is a
+ * trap for this page: the only person allowed in here is exactly the person
+ * whose reads are NOT scoped. Ask Payload for "the documents" as an admin on
+ * this deployment and you get all 90 tenants' documents in one table, sorted
+ * by date, with no visible sign that anything is wrong.
+ *
+ * So access control is NOT used as a filter anywhere in this file. Every list
+ * below is filtered by `organization` in the query itself, against the
+ * ecosistema resolved from the caller's own memberships
+ * (`resolveEcosystem`). Two independent things then have to fail before a
+ * cross-tenant read happens, and one of them is visible in a URL.
+ *
+ * ⚠ `messages` has no `organization` column — it is scoped only through its
+ * session. It is therefore counted by session id, from the session list this
+ * file already scoped, and never by a direct unfiltered read. See
+ * `countMessages`.
+ *
+ * ── Reading cheaply ────────────────────────────────────────────────────────
+ *
+ * Every query uses Payload v3's `select` to name the fields it wants.
+ * `documents.extractedText` holds the full text of every PDF and every
+ * transcript in the ecosistema; a naive list read pulls megabytes of it into
+ * this process and then into the page. The one place it IS read (audio
+ * transcript sizes) reads it server-side, converts it to a character count,
+ * and throws the text away — see `withTranscriptSizes`.
+ */
+
+import { backendFetch } from '$lib/server/auth';
+import {
+  aggregateContributors,
+  parseDocRow,
+  parseRatingRow,
+  relationId,
+  summarizeAudio,
+  summarizeDocuments,
+  summarizeRatings,
+  type AdminDocRow,
+  type AdminPerson,
+  type AdminRatingRow,
+  type AudioSummary,
+  type ContributorRow,
+  type DocumentSummary,
+  type RatingsSummary,
+} from '$lib/components/admin/summary';
+
+// ── Caps ───────────────────────────────────────────────────────────────────
+
+/** Rows per backend request. Payload's own ceiling for a list read. */
+export const PAGE_SIZE = 100;
+
+/**
+ * How many pages of a collection this page will walk.
+ *
+ * ⚠ A cap, not a guess: an ecosistema with 40 000 documents must not turn one
+ * page view into 400 backend round trips. When the cap bites, the tiles keep
+ * showing the backend's real `totalDocs` and the tables say they are showing a
+ * sample — a truncated table labelled as truncated is fine, a truncated table
+ * presented as the whole truth is not.
+ */
+export const MAX_PAGES = 5;
+
+/** Audio documents whose transcript size we measure. See `withTranscriptSizes`. */
+export const MAX_TRANSCRIPT_READS = 40;
+
+// ── Query building (pure, so it can be asserted) ────────────────────────────
+
+/**
+ * `where[organization][equals]=<id>` plus whatever else the caller wants.
+ *
+ * 🔴 Every list read in this file goes through here. Centralising it is what
+ * makes "did we scope this?" a one-line check instead of an audit of five call
+ * sites — and it is the reason the tenant filter is testable at all.
+ */
+export function scopedQuery(
+  organizationId: string,
+  params: Record<string, string | number>,
+): string {
+  const qs = new URLSearchParams();
+  qs.set('where[organization][equals]', organizationId);
+  qs.set('depth', '0');
+  for (const [k, v] of Object.entries(params)) qs.set(k, String(v));
+  return qs.toString();
+}
+
+/** Turn a field list into Payload v3 `select[field]=true` pairs. */
+export function selectParams(fields: readonly string[]): Record<string, string> {
+  return Object.fromEntries(fields.map((f) => [`select[${f}]`, 'true']));
+}
+
+/**
+ * The document fields this page reads.
+ *
+ * ⚠ `extractedText` is deliberately absent. See the header.
+ */
+export const DOC_FIELDS = [
+  'name',
+  'kind',
+  'publicationStatus',
+  'ingestStatus',
+  'uploadedBy',
+  'audioMeta',
+  'createdAt',
+] as const;
+
+export const RATING_FIELDS = ['stars', 'reason', 'user', 'createdAt'] as const;
+
+// ── Paged reads ────────────────────────────────────────────────────────────
+
+interface PagedResult<T> {
+  rows: T[];
+  /** The backend's own count, which survives our page cap. */
+  totalDocs: number;
+  /** `true` ⇒ `rows` is a prefix of the collection, not all of it. */
+  truncated: boolean;
+  /** `false` ⇒ the read failed. NOT the same as "there is nothing". */
+  ok: boolean;
+}
+
+const EMPTY: PagedResult<never> = { rows: [], totalDocs: 0, truncated: false, ok: false };
+
+async function readPages<T>(
+  token: string | undefined,
+  collection: string,
+  query: (page: number) => string,
+  parse: (raw: unknown) => T | null,
+): Promise<PagedResult<T>> {
+  const rows: T[] = [];
+  let totalDocs = 0;
+  let truncated = false;
+  try {
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const res = await backendFetch(token, `/api/${collection}?${query(page)}`, { method: 'GET' });
+      if (!res.ok) {
+        console.warn(`[admin] backend answered ${res.status} reading ${collection}`);
+        // A partial read is still worth showing, but it must not be labelled
+        // complete — the caller renders `ok: false` as "no se pudo cargar".
+        return { rows, totalDocs, truncated, ok: false };
+      }
+      const body = (await res.json().catch(() => ({}))) as {
+        docs?: unknown;
+        totalDocs?: unknown;
+        hasNextPage?: unknown;
+      };
+      if (typeof body.totalDocs === 'number') totalDocs = body.totalDocs;
+      const docs = Array.isArray(body.docs) ? body.docs : [];
+      for (const raw of docs) {
+        const parsed = parse(raw);
+        if (parsed) rows.push(parsed);
+      }
+      if (body.hasNextPage !== true) return { rows, totalDocs, truncated: false, ok: true };
+      truncated = page === MAX_PAGES;
+    }
+    return { rows, totalDocs, truncated, ok: true };
+  } catch (err) {
+    console.warn(`[admin] read of ${collection} failed`, err);
+    return { ...EMPTY, rows, totalDocs };
+  }
+}
+
+// ── People ─────────────────────────────────────────────────────────────────
+
+/**
+ * Everyone in the ecosistema, from `memberships`.
+ *
+ * ⚠ Membership, not "users who can read this tenant". Same distinction that
+ * `$lib/server/ecosystem.ts` documents at length: for a platform admin the
+ * second question answers "all of them".
+ *
+ * `personName` is the membership's own display name; it wins over the user
+ * record because it is the name this ecosistema chose for that person.
+ */
+async function readMembers(
+  token: string | undefined,
+  organizationId: string,
+): Promise<PagedResult<AdminPerson>> {
+  return readPages<AdminPerson>(
+    token,
+    'memberships',
+    (page) =>
+      scopedQuery(organizationId, {
+        limit: PAGE_SIZE,
+        page,
+        ...selectParams(['user', 'personName', 'role', 'isActive']),
+      }),
+    (raw) => {
+      if (!raw || typeof raw !== 'object') return null;
+      const row = raw as Record<string, unknown>;
+      if (row.isActive === false) return null;
+      const id = relationId(row.user);
+      if (!id) return null;
+      const personName =
+        typeof row.personName === 'string' && row.personName.trim() ? row.personName.trim() : null;
+      return {
+        id,
+        name: personName ?? `Persona ${id}`,
+        email: null,
+        role: typeof row.role === 'string' ? row.role : null,
+        isMember: true,
+      };
+    },
+  );
+}
+
+/**
+ * Fill in display names and emails for a set of user ids.
+ *
+ * ⚠ NOT a general user list. `where[id][in]=…` with ids we already hold means
+ * this cannot enumerate the platform's users even though the caller is an
+ * admin whose access rules would allow it. The page shows the people of ONE
+ * ecosistema; the query says so.
+ *
+ * ⚠ `select` is narrow on purpose. A depth-1 read of `uploadedBy` returns the
+ * whole user row — including the live session-token list Payload keeps on it —
+ * and that would end up in the page's serialized data.
+ */
+async function hydratePeople(
+  token: string | undefined,
+  people: AdminPerson[],
+): Promise<AdminPerson[]> {
+  const ids = people.map((p) => p.id).filter(Boolean);
+  if (ids.length === 0) return people;
+  try {
+    const qs = new URLSearchParams({
+      'where[id][in]': ids.join(','),
+      limit: String(Math.min(ids.length, PAGE_SIZE * MAX_PAGES)),
+      depth: '0',
+      ...selectParams(['displayName', 'email']),
+    });
+    const res = await backendFetch(token, `/api/users?${qs.toString()}`, { method: 'GET' });
+    if (!res.ok) {
+      console.warn(`[admin] backend answered ${res.status} reading users`);
+      return people;
+    }
+    const body = (await res.json().catch(() => ({}))) as { docs?: unknown };
+    const byId = new Map<string, { name: string | null; email: string | null }>();
+    for (const raw of Array.isArray(body.docs) ? body.docs : []) {
+      if (!raw || typeof raw !== 'object') continue;
+      const row = raw as Record<string, unknown>;
+      const id = relationId(row.id);
+      if (!id) continue;
+      byId.set(id, {
+        name:
+          typeof row.displayName === 'string' && row.displayName.trim()
+            ? row.displayName.trim()
+            : null,
+        email: typeof row.email === 'string' ? row.email : null,
+      });
+    }
+    return people.map((p) => {
+      const found = byId.get(p.id);
+      if (!found) return p;
+      // The membership's `personName` is this ecosistema's own name for the
+      // person, so it wins; the user record only fills gaps.
+      const name = p.name.startsWith('Persona ') ? (found.name ?? found.email ?? p.name) : p.name;
+      return { ...p, name, email: found.email };
+    });
+  } catch (err) {
+    console.warn('[admin] user hydration failed', err);
+    return people;
+  }
+}
+
+// ── Audio transcripts ──────────────────────────────────────────────────────
+
+/**
+ * Measure how much text each recording turned into.
+ *
+ * 🔴 THE TEXT NEVER LEAVES THIS FUNCTION. `extractedText` is read, its length
+ * is taken, and the string is dropped. Every audio document in an ecosistema
+ * is somebody's draft until they publish it, and a draft is private to its
+ * uploader by the product's own visibility rule — an admin page that printed
+ * the transcript would quietly break that rule for the whole tenant.
+ *
+ * Capped at `MAX_TRANSCRIPT_READS` rows: this is the only expensive read on
+ * the page, and its value ("the recordings did become transcripts") is fully
+ * delivered by a sample.
+ */
+async function withTranscriptSizes(
+  token: string | undefined,
+  organizationId: string,
+  docs: AdminDocRow[],
+): Promise<AdminDocRow[]> {
+  const hasAudio = docs.some((d) => d.kind === 'audio');
+  if (!hasAudio) return docs;
+  try {
+    const qs = new URLSearchParams(
+      scopedQuery(organizationId, {
+        'where[kind][equals]': 'audio',
+        limit: MAX_TRANSCRIPT_READS,
+        sort: '-createdAt',
+        ...selectParams(['extractedText']),
+      }),
+    );
+    const res = await backendFetch(token, `/api/documents?${qs.toString()}`, { method: 'GET' });
+    if (!res.ok) {
+      console.warn(`[admin] backend answered ${res.status} sizing transcripts`);
+      return docs;
+    }
+    const body = (await res.json().catch(() => ({}))) as { docs?: unknown };
+    const sizes = new Map<string, number>();
+    for (const raw of Array.isArray(body.docs) ? body.docs : []) {
+      if (!raw || typeof raw !== 'object') continue;
+      const row = raw as Record<string, unknown>;
+      const id = relationId(row.id);
+      if (!id) continue;
+      sizes.set(id, typeof row.extractedText === 'string' ? row.extractedText.length : 0);
+    }
+    return docs.map((d) => (sizes.has(d.id) ? { ...d, transcriptChars: sizes.get(d.id)! } : d));
+  } catch (err) {
+    console.warn('[admin] transcript sizing failed', err);
+    return docs;
+  }
+}
+
+// ── Usage ──────────────────────────────────────────────────────────────────
+
+export interface UsageCounts {
+  sessions: number;
+  /** Null when we could not count them, or when the session list was capped. */
+  messages: number | null;
+  ok: boolean;
+}
+
+/**
+ * Conversations and messages in this ecosistema.
+ *
+ * ⚠ `messages` rows carry no `organization`; they are scoped only by their
+ * session. So they are counted with `where[session][in]=<the session ids we
+ * already scoped>`. If the session list hit the page cap, the message count
+ * would be a count over a prefix — which is not a smaller number, it is a
+ * WRONG number presented as a total. In that case it is reported as `null` and
+ * the tile is hidden.
+ */
+async function countUsage(
+  token: string | undefined,
+  organizationId: string,
+): Promise<UsageCounts> {
+  const sessions = await readPages<string>(
+    token,
+    'sessions',
+    (page) => scopedQuery(organizationId, { limit: PAGE_SIZE, page, ...selectParams(['id']) }),
+    (raw) => relationId((raw as { id?: unknown })?.id) || null,
+  );
+  if (!sessions.ok) return { sessions: sessions.totalDocs, messages: null, ok: false };
+  if (sessions.truncated || sessions.rows.length === 0) {
+    return { sessions: sessions.totalDocs, messages: null, ok: true };
+  }
+  try {
+    const qs = new URLSearchParams({
+      'where[session][in]': sessions.rows.join(','),
+      limit: '1',
+      depth: '0',
+      ...selectParams(['id']),
+    });
+    const res = await backendFetch(token, `/api/messages?${qs.toString()}`, { method: 'GET' });
+    if (!res.ok) return { sessions: sessions.totalDocs, messages: null, ok: true };
+    const body = (await res.json().catch(() => ({}))) as { totalDocs?: unknown };
+    return {
+      sessions: sessions.totalDocs,
+      messages: typeof body.totalDocs === 'number' ? body.totalDocs : null,
+      ok: true,
+    };
+  } catch (err) {
+    console.warn('[admin] message count failed', err);
+    return { sessions: sessions.totalDocs, messages: null, ok: true };
+  }
+}
+
+// ── The page payload ───────────────────────────────────────────────────────
+
+export interface AdminOverview {
+  /** The ecosistema everything below is scoped to. Shown in the header. */
+  ecosystem: { id: string; name: string };
+  documents: {
+    rows: AdminDocRow[];
+    summary: DocumentSummary;
+    /** Backend `totalDocs` — survives the page cap, so tiles stay honest. */
+    totalDocs: number;
+    truncated: boolean;
+    ok: boolean;
+  };
+  contributors: {
+    rows: ContributorRow[];
+    /** People with at least one document. */
+    active: number;
+    /** Current members of the ecosistema, contributing or not. */
+    members: number;
+    ok: boolean;
+  };
+  audio: AudioSummary;
+  ratings: { summary: RatingsSummary; totalDocs: number; truncated: boolean; ok: boolean };
+  usage: UsageCounts;
+}
+
+/**
+ * Everything the admin page renders, for ONE ecosistema.
+ *
+ * `organizationId` must come from `resolveEcosystem` — i.e. from the caller's
+ * own memberships — never from a query parameter. The route enforces that; see
+ * `routes/admin/+page.server.ts`.
+ *
+ * Each section degrades on its own. A ratings read that fails leaves the
+ * document table intact and marks only its own section as unreadable, because
+ * "the whole page is broken" and "one number is missing" are different things
+ * to tell someone.
+ */
+export async function loadAdminOverview(
+  token: string | undefined,
+  ecosystem: { id: string; name: string },
+): Promise<AdminOverview> {
+  const orgId = ecosystem.id;
+
+  const [docsResult, membersResult, ratingsResult, usage] = await Promise.all([
+    readPages<AdminDocRow>(
+      token,
+      'documents',
+      (page) =>
+        scopedQuery(orgId, {
+          limit: PAGE_SIZE,
+          page,
+          sort: '-createdAt',
+          ...selectParams(DOC_FIELDS),
+        }),
+      parseDocRow,
+    ),
+    readMembers(token, orgId),
+    readPages<AdminRatingRow>(
+      token,
+      'ratings',
+      (page) =>
+        scopedQuery(orgId, {
+          limit: PAGE_SIZE,
+          page,
+          sort: '-createdAt',
+          ...selectParams(RATING_FIELDS),
+        }),
+      parseRatingRow,
+    ),
+    countUsage(token, orgId),
+  ]);
+
+  const docs = await withTranscriptSizes(token, orgId, docsResult.rows);
+  const people = await hydratePeople(token, membersResult.rows);
+  const contributors = aggregateContributors(docs, people);
+
+  return {
+    ecosystem,
+    documents: {
+      rows: docs,
+      summary: summarizeDocuments(docs),
+      totalDocs: docsResult.totalDocs || docs.length,
+      truncated: docsResult.truncated,
+      ok: docsResult.ok,
+    },
+    contributors: {
+      rows: contributors,
+      active: contributors.filter((c) => c.total > 0).length,
+      members: people.length,
+      ok: membersResult.ok,
+    },
+    audio: summarizeAudio(docs),
+    ratings: {
+      summary: summarizeRatings(ratingsResult.rows),
+      totalDocs: ratingsResult.totalDocs || ratingsResult.rows.length,
+      truncated: ratingsResult.truncated,
+      ok: ratingsResult.ok,
+    },
+    usage,
+  };
+}

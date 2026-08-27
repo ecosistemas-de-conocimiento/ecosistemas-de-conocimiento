@@ -1,6 +1,22 @@
 <script lang="ts">
+  import { page } from '$app/stores';
   import { app } from '$lib/stores/app.svelte';
+  import { isPlatformAdmin } from '$lib/components/admin/summary';
   import EcosystemPicker from './EcosystemPicker.svelte';
+
+  /**
+   * Show the admin entry only to platform admins.
+   *
+   * ⚠ THIS IS A COURTESY, NOT A CONTROL. `/admin` gates itself server-side in
+   * its own `load` (see `routes/admin/+page.server.ts`); hiding the link only
+   * keeps the sidebar honest for everyone else. If this line were the whole
+   * protection, typing the URL would defeat it.
+   *
+   * Read off `$page.data.user`, which the root layout's server load supplies
+   * from the verified session — not off the app store, which is about the
+   * chat's state and knows nothing about roles.
+   */
+  const showAdmin = $derived(isPlatformAdmin($page.data.user));
 
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
@@ -52,6 +68,28 @@
         <path d="M12 5v14M5 12h14" />
       </svg>
     </button>
+    {#if showAdmin}
+      <a
+        href="/admin"
+        data-interactive
+        class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft"
+        title="Contribuciones"
+        aria-label="Contribuciones"
+      >
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M3 3v18h18M7 15V9m5 6V5m5 10v-4" />
+        </svg>
+      </a>
+    {/if}
   </aside>
 {:else}
   <aside class="w-64 shrink-0 border-r border-line bg-surface flex flex-col backdrop-blur">
@@ -140,6 +178,30 @@
         </div>
       {/each}
     </nav>
+
+    {#if showAdmin}
+      <a
+        href="/admin"
+        data-interactive
+        data-testid="admin-link"
+        class="mx-2 mb-1 flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-ink-soft hover:bg-surface-soft hover:text-ink"
+        title="Ver todo lo que ha reunido el ecosistema"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M3 3v18h18M7 15V9m5 6V5m5 10v-4" />
+        </svg>
+        <span class="truncate">Contribuciones</span>
+      </a>
+    {/if}
 
     <div class="border-t border-line p-2 flex items-center justify-between text-[10px] text-ink-soft">
       <span>guardado en el servidor</span>
