@@ -38,6 +38,7 @@
  * and throws the text away — see `withTranscriptSizes`.
  */
 
+import { normalizeEcosystems, type Ecosystem } from '$lib/ecosystems';
 import { backendFetch } from '$lib/server/auth';
 import {
   aggregateContributors,
@@ -480,4 +481,131 @@ export async function loadAdminOverview(
     },
     usage,
   };
+}
+
+// ── Oversight: every ecosistema, not just the caller's ─────────────────────
+
+/**
+ * 🔴 THE ONE READ IN THIS FILE THAT IS DELIBERATELY NOT TENANT-SCOPED.
+ *
+ * The owner's rule: *"admin es admin, no necesita ser miembro para ver todo, y
+ * no deberá poderse asignar."* Oversight — "I can review any ecosistema" — and
+ * participation — "I can upload, publish and chat over private drafts here" —
+ * are two different powers. This function is the oversight half, and it is the
+ * ONLY place in the product that lists tenants the caller may not belong to.
+ *
+ * ⚠ WHY THAT IS SAFE HERE AND NOWHERE ELSE:
+ *  · The route gates on `isPlatformAdmin` before calling it. Payload's
+ *    `Organizations.read` (`withinMyOrganizations('id')`) returns a bare `true`
+ *    for a platform admin and a membership constraint for everyone else — so an
+ *    ordinary account calling this would get its own ecosistemas back, not the
+ *    world. The gate is the control; the access rule is the floor.
+ *  · It returns NAMES AND IDS. Not documents, not text, not people. Picking one
+ *    then re-runs `loadAdminOverview`, which is scoped by `scopedQuery` exactly
+ *    as before.
+ *  · It writes NOTHING. In particular it must never touch the `eco_selected`
+ *    cookie: that cookie decides where this person's OWN uploads and
+ *    conversations land, and reviewing a tenant is not joining it. See
+ *    `routes/admin/+page.server.ts`.
+ *
+ * ⚠ NOT a membership list, and it must never be used as one. The main app's
+ * picker stays on `listEcosystems` (`$lib/server/ecosystem.ts`), which asks
+ * "which am I IN?". Swapping this in there is the bug that regressed the whole
+ * product once already: the admin's picker was handed all 90 tenants and every
+ * `POST /api/sessions` came back 400 "You do not belong to that ecosistema".
+ */
+export interface EcosystemDirectory {
+  rows: Ecosystem[];
+  /** The backend's own count for the current filter. Survives the page cap. */
+  totalDocs: number;
+  /** `true` ⇒ `rows` is a prefix. The search box then has to reach the server. */
+  truncated: boolean;
+  /** `false` ⇒ the read failed. NOT "there are no ecosistemas". */
+  ok: boolean;
+  /** The search that produced `rows`, echoed back so the input can show it. */
+  search: string;
+}
+
+/**
+ * `where` clauses for a search term.
+ *
+ * Matches NAME **or** SLUG, because most of the rows on this deployment are e2e
+ * litter whose slug (`e2e-be-…`) is the recognisable half and whose name is
+ * not. Typing what you can see has to work whichever half you can see.
+ *
+ * Payload's `like` is a case-insensitive substring match, so no wildcards are
+ * added by hand.
+ */
+export function ecosystemSearchParams(search: string): Record<string, string> {
+  const term = search.trim();
+  if (!term) return {};
+  return {
+    'where[or][0][name][like]': term,
+    'where[or][1][slug][like]': term,
+  };
+}
+
+/**
+ * Every ecosistema on the installation, optionally filtered.
+ *
+ * Reads ids, names and slugs only — `select` is narrow, so a 90-tenant list is
+ * a few kilobytes and carries nothing about anybody's content.
+ */
+export async function listAllEcosystems(
+  token: string | undefined,
+  search = '',
+): Promise<EcosystemDirectory> {
+  const term = search.trim();
+  const result = await readPages<Ecosystem>(
+    token,
+    'organizations',
+    (page) =>
+      new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        page: String(page),
+        depth: '0',
+        sort: 'name',
+        ...selectParams(['name', 'slug']),
+        ...ecosystemSearchParams(term),
+      }).toString(),
+    (raw) => normalizeEcosystems([raw])[0] ?? null,
+  );
+  return {
+    rows: result.rows,
+    totalDocs: result.totalDocs || result.rows.length,
+    truncated: result.truncated,
+    ok: result.ok,
+    search: term,
+  };
+}
+
+/**
+ * Is `id` a real ecosistema, and what is it called?
+ *
+ * ⚠ Resolved SEPARATELY from the list above, on purpose: the list may be
+ * filtered by a search term, and the ecosistema being reviewed must not stop
+ * existing because somebody typed in the search box. A direct read by id.
+ *
+ * Returns null when the row does not exist or cannot be read — the route then
+ * falls back rather than rendering one tenant's numbers under another's name.
+ */
+export async function readEcosystem(
+  token: string | undefined,
+  id: string,
+): Promise<Ecosystem | null> {
+  if (!id) return null;
+  try {
+    const qs = new URLSearchParams({ depth: '0', ...selectParams(['name', 'slug']) });
+    const res = await backendFetch(
+      token,
+      `/api/organizations/${encodeURIComponent(id)}?${qs.toString()}`,
+      { method: 'GET' },
+    );
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    return normalizeEcosystems([body])[0] ?? null;
+  } catch (err) {
+    console.warn('[admin] ecosystem lookup failed', err);
+    return null;
+  }
 }

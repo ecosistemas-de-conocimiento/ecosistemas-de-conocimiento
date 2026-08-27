@@ -5,6 +5,7 @@ import {
   belongsTo,
   clearEcosystemScopedState,
   ecosystemInitials,
+  ADMIN_OVERSIGHT_NOTE,
   ecosystemPickerView,
   findEcosystem,
   isStaleEpoch,
@@ -278,5 +279,90 @@ describe('ecosystemPickerView', () => {
         ecosystemPickerView({ ready: true, unavailable: false, current: B, count }).interactive,
       ).toBe(true);
     }
+  });
+});
+
+/**
+ * 🔴 THE COPY THAT STOPPED BEING TRUE ENOUGH.
+ *
+ * The seeded platform admin has exactly one membership, so the sidebar said
+ * "Es el único ecosistema al que perteneces." — accurate, and read by everyone
+ * as "this is all you can reach". It is not: an admin reviews all ~90
+ * ecosistemas from /admin without belonging to any of them.
+ *
+ * The fix is a SECOND line, not a reworded first one, because the two facts are
+ * about two different powers. Membership decides where this person's own
+ * uploads and conversations go — `Sessions.beforeValidate` still refuses
+ * anything else, admin or not. Oversight decides what they may review. Fusing
+ * them into one sentence is how someone comes away believing membership is what
+ * grants the oversight, and from there to "I'll just add myself" is one step —
+ * the step the backend now refuses (`refuseSelfAssignment`).
+ */
+describe('ecosystemPickerView — the platform admin copy', () => {
+  const base = { ready: true, unavailable: false, current: A } as const;
+
+  it('leaves the membership line alone — it is still the true thing about uploads', () => {
+    const view = ecosystemPickerView({ ...base, count: 1, platformAdmin: true });
+    expect(view.hint).toMatch(/único ecosistema/i);
+    expect(view.mode).toBe('single');
+    expect(view.interactive).toBe(false);
+  });
+
+  it('adds the oversight line, which says membership is not what grants it', () => {
+    const view = ecosystemPickerView({ ...base, count: 1, platformAdmin: true });
+    expect(view.adminNote).toBe(ADMIN_OVERSIGHT_NOTE);
+    // The load-bearing half of the sentence: reviewing does not require joining.
+    expect(view.adminNote).toMatch(/no seas miembro/i);
+  });
+
+  it('says nothing about admin powers to somebody who does not have them', () => {
+    for (const count of [0, 1, 3]) {
+      const current = count === 0 ? null : A;
+      expect(ecosystemPickerView({ ...base, current, count }).adminNote).toBeUndefined();
+      expect(
+        ecosystemPickerView({ ...base, current, count, platformAdmin: false }).adminNote,
+      ).toBeUndefined();
+    }
+  });
+
+  it('carries the note through the multi-membership case too', () => {
+    const view = ecosystemPickerView({ ...base, count: 4, platformAdmin: true });
+    expect(view.hint).toMatch(/Perteneces a 4 ecosistemas/);
+    expect(view.adminNote).toBe(ADMIN_OVERSIGHT_NOTE);
+    expect(view.interactive).toBe(true);
+  });
+
+  it('🔴 an admin with NO membership is told what they cannot do, not that it is a dead end', () => {
+    // "Todavía no perteneces a ningún ecosistema" reads as "you have no access".
+    // For an admin the true statement is narrower: no uploading, no chatting —
+    // and still full oversight.
+    const view = ecosystemPickerView({ ...base, current: null, count: 0, platformAdmin: true });
+    expect(view.mode).toBe('none');
+    expect(view.hint).toMatch(/no puedes subir ni conversar/i);
+    expect(view.adminNote).toBe(ADMIN_OVERSIGHT_NOTE);
+  });
+
+  it('⚠ stays quiet while loading or when the list could not be read', () => {
+    // Saying "you can review everything" before we know anything would be an
+    // answer where the honest state is "still asking".
+    expect(
+      ecosystemPickerView({ ready: false, unavailable: false, current: null, count: 0, platformAdmin: true })
+        .adminNote,
+    ).toBeUndefined();
+    expect(
+      ecosystemPickerView({ ready: true, unavailable: true, current: null, count: 0, platformAdmin: true })
+        .adminNote,
+    ).toBeUndefined();
+  });
+
+  it('changes the COPY only — never the list or the selection', () => {
+    // 🔴 The regression guard. The picker is membership-based on purpose: it
+    // decides where a session is created, and the backend rejects anything the
+    // caller does not belong to. An admin flag must not widen it.
+    const plain = ecosystemPickerView({ ...base, count: 1 });
+    const admin = ecosystemPickerView({ ...base, count: 1, platformAdmin: true });
+    expect(admin.value).toBe(plain.value);
+    expect(admin.mode).toBe(plain.mode);
+    expect(admin.interactive).toBe(plain.interactive);
   });
 });

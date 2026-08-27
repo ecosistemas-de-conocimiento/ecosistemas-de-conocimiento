@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   aggregateContributors,
   filterDocs,
+  filterEcosystems,
   foldText,
   formatDay,
   isPlatformAdmin,
@@ -411,5 +412,58 @@ describe('filterDocs / foldText', () => {
   it('combines filters', () => {
     expect(filterDocs(docs, { kind: 'pdf', published: false, query: 'anual' })).toHaveLength(1);
     expect(filterDocs(docs, { kind: 'pdf', published: true, query: 'anual' })).toHaveLength(0);
+  });
+});
+
+/**
+ * 🔴 FINDING ONE ECOSISTEMA AMONG ~90.
+ *
+ * The /admin selector lists EVERY ecosistema, because a platform admin reviews
+ * all of them without belonging to any — and on this deployment nearly all of
+ * them are e2e litter. Without a search that actually finds things the
+ * oversight surface is a 90-row scroll, and nobody uses it.
+ *
+ * The server sends the whole list (ids, names, slugs — a few kB), so this runs
+ * in the browser on every keystroke with no round trip.
+ */
+describe('filterEcosystems', () => {
+  const rows = [
+    { id: '1', name: 'Organización Demo', slug: 'demo' },
+    { id: '2', name: 'Ecosistema Norte', slug: 'norte' },
+    { id: '3', name: 'Prueba 41', slug: 'e2e-be-41' },
+    { id: '4', name: 'Prueba 42', slug: 'e2e-be-42' },
+    { id: '5', name: 'Sin clave', slug: null },
+  ];
+
+  it('an empty term is NO filter — not a filter that matches nothing', () => {
+    expect(filterEcosystems(rows, '')).toHaveLength(5);
+    expect(filterEcosystems(rows, '   ')).toHaveLength(5);
+  });
+
+  it('matches on the slug, which is the only readable half of the e2e litter', () => {
+    expect(filterEcosystems(rows, 'e2e-be').map((r) => r.id)).toEqual(['3', '4']);
+    expect(filterEcosystems(rows, 'e2e-be-42').map((r) => r.id)).toEqual(['4']);
+  });
+
+  it('matches on the name too', () => {
+    expect(filterEcosystems(rows, 'norte').map((r) => r.id)).toEqual(['2']);
+  });
+
+  it('⚠ ignores accents — nobody types "Organización" with the accent', () => {
+    expect(filterEcosystems(rows, 'organizacion').map((r) => r.id)).toEqual(['1']);
+    expect(filterEcosystems(rows, 'ORGANIZACIÓN').map((r) => r.id)).toEqual(['1']);
+  });
+
+  it('tolerates a row with no slug', () => {
+    expect(filterEcosystems(rows, 'sin clave').map((r) => r.id)).toEqual(['5']);
+  });
+
+  it('returns a copy, so a caller cannot mutate the list it was handed', () => {
+    const out = filterEcosystems(rows, '');
+    expect(out).not.toBe(rows);
+  });
+
+  it('an unmatched term returns nothing, and says so by being empty', () => {
+    expect(filterEcosystems(rows, 'zzz')).toEqual([]);
   });
 });
