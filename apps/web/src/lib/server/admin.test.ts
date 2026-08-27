@@ -21,8 +21,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const backendFetch = vi.fn();
 vi.mock('$lib/server/auth', () => ({ backendFetch: (...args: unknown[]) => backendFetch(...args) }));
 
-const { loadAdminOverview, scopedQuery, selectParams, DOC_FIELDS, MAX_PAGES, PAGE_SIZE } =
-  await import('./admin');
+const {
+  loadAdminOverview,
+  scopedQuery,
+  selectParams,
+  DOC_FIELDS,
+  MAX_PAGES,
+  PAGE_SIZE,
+  ecosystemSearchParams,
+  listAllEcosystems,
+  readEcosystem,
+} = await import('./admin');
 
 /** Every path `backendFetch` was called with, in order. */
 function urls(): string[] {
@@ -276,5 +285,154 @@ describe('loadAdminOverview — reading', () => {
     );
     const overview = await loadAdminOverview('tok', ECO);
     expect(overview.contributors.members).toBe(1);
+  });
+});
+
+/**
+ * 🔴 THE OVERSIGHT LIST — the one read here that is deliberately NOT scoped.
+ *
+ * "admin es admin, no necesita ser miembro para ver todo." A platform admin
+ * reviews every ecosistema, so this list has to reach every organization row.
+ * The tests below pin the two things that keeps it honest:
+ *
+ *  · it asks for NAMES AND SLUGS ONLY — never documents, never text, never the
+ *    people. Picking a row then re-enters `loadAdminOverview`, which is scoped
+ *    by `scopedQuery` exactly as the suite above asserts.
+ *  · it is a READ. Nothing about listing 90 tenants writes a selection, joins
+ *    one, or changes where this person's own uploads land.
+ */
+describe('listAllEcosystems', () => {
+  it('lists organizations with no organization filter — that is the point', () => {
+    // ⚠ The inverse of the assertion at the top of this file. Every OTHER read
+    // must carry `where[organization][equals]`; this one must not, or an admin
+    // can only ever review the ecosistemas they already belong to.
+    backendFetch.mockImplementation(router({ organizations: reply([{ id: 1, name: 'Uno' }]) }));
+    return listAllEcosystems('tok').then(() => {
+      const [url] = urls();
+      expect(url).toContain('/api/organizations?');
+      expect(url).not.toContain('where%5Borganization%5D');
+      expect(url).not.toContain('where[organization]');
+    });
+  });
+
+  it('reads names and slugs only — no content crosses this wire', async () => {
+    backendFetch.mockImplementation(router({ organizations: reply([]) }));
+    await listAllEcosystems('tok');
+    const [url = ''] = urls();
+    expect(url).toContain(encodeURIComponent('select[name]'));
+    expect(url).toContain(encodeURIComponent('select[slug]'));
+    expect(url).toContain('depth=0');
+    expect(url).toContain('sort=name');
+    expect(url).toContain(`limit=${PAGE_SIZE}`);
+  });
+
+  it('normalizes rows and reports the backend total', async () => {
+    backendFetch.mockImplementation(
+      router({
+        organizations: {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            docs: [
+              { id: 7, name: 'Organización Demo', slug: 'demo' },
+              { id: 8, name: '', slug: 'e2e-be-1' },
+              { name: 'sin id' },
+            ],
+            totalDocs: 90,
+            hasNextPage: false,
+          }),
+        },
+      }),
+    );
+    const dir = await listAllEcosystems('tok');
+    expect(dir.ok).toBe(true);
+    expect(dir.totalDocs).toBe(90);
+    expect(dir.rows.map((r) => r.id)).toEqual(['7', '8']);
+    // A blank name still has to be pickable — dropping the row would lock an
+    // admin out of a tenant over a cosmetic gap.
+    expect(dir.rows[1]?.name.length).toBeGreaterThan(0);
+  });
+
+  it('⚠ a failed read is `ok: false`, not an empty installation', async () => {
+    // Showing "todavía no hay ningún ecosistema" because the backend blinked
+    // tells an owner their platform is empty when it is merely unreachable.
+    backendFetch.mockImplementation(
+      router({ organizations: { ok: false, status: 502, json: async () => ({}) } }),
+    );
+    const dir = await listAllEcosystems('tok');
+    expect(dir.ok).toBe(false);
+    expect(dir.rows).toEqual([]);
+  });
+
+  it('reports truncation, so the UI can say the search must reach the server', async () => {
+    backendFetch.mockImplementation(
+      router({
+        organizations: {
+          ok: true,
+          status: 200,
+          json: async () => ({ docs: [{ id: 1, name: 'x' }], totalDocs: 9000, hasNextPage: true }),
+        },
+      }),
+    );
+    const dir = await listAllEcosystems('tok');
+    expect(dir.truncated).toBe(true);
+    expect(dir.totalDocs).toBe(9000);
+  });
+});
+
+describe('ecosystemSearchParams', () => {
+  it('matches name OR slug — most rows here are only recognisable by slug', () => {
+    // ~90 of the organizations on this deployment are e2e litter whose slug
+    // (`e2e-be-…`) is the only readable half.
+    expect(ecosystemSearchParams('e2e-be')).toEqual({
+      'where[or][0][name][like]': 'e2e-be',
+      'where[or][1][slug][like]': 'e2e-be',
+    });
+  });
+
+  it('an empty or blank term is NO filter, not a filter matching nothing', () => {
+    expect(ecosystemSearchParams('')).toEqual({});
+    expect(ecosystemSearchParams('   ')).toEqual({});
+  });
+
+  it('reaches the query string when a search is given', async () => {
+    backendFetch.mockImplementation(router({ organizations: reply([]) }));
+    await listAllEcosystems('tok', '  demo  ');
+    const [url = ''] = urls();
+    expect(url).toContain(`${encodeURIComponent('where[or][0][name][like]')}=demo`);
+    expect(url).toContain(`${encodeURIComponent('where[or][1][slug][like]')}=demo`);
+  });
+});
+
+describe('readEcosystem', () => {
+  it('resolves `?eco=` by id, independently of any search filter', async () => {
+    // ⚠ Separate from the list on purpose: typing in the search box must not
+    // make the ecosistema being reviewed stop existing.
+    backendFetch.mockImplementation(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 42, name: 'Ecosistema Sur', slug: 'sur' }),
+    }));
+    expect(await readEcosystem('tok', '42')).toEqual({ id: '42', name: 'Ecosistema Sur', slug: 'sur' });
+    expect(urls()[0]).toContain('/api/organizations/42?');
+  });
+
+  it('🔴 null for an id that does not exist — never a made-up name over real numbers', async () => {
+    // The failure this prevents: rendering one tenant's documents under a
+    // header naming a tenant that was never found.
+    backendFetch.mockImplementation(async () => ({ ok: false, status: 404, json: async () => ({}) }));
+    expect(await readEcosystem('tok', '999')).toBeNull();
+  });
+
+  it('does not call the backend for an empty id', async () => {
+    expect(await readEcosystem('tok', '')).toBeNull();
+    expect(backendFetch).not.toHaveBeenCalled();
+  });
+
+  it('survives a thrown transport error', async () => {
+    backendFetch.mockImplementation(async () => {
+      throw new Error('boom');
+    });
+    expect(await readEcosystem('tok', '1')).toBeNull();
   });
 });

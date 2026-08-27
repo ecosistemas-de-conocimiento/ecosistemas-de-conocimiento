@@ -11,10 +11,19 @@
    *
    * ⚠ The ecosistema's name is printed in the header on purpose. A page that
    * aggregates one tenant must SAY which tenant, or the first person to switch
-   * ecosistemas will read yesterday's numbers as today's.
+   * ecosistemas will read yesterday's numbers as today's. Now that switching is
+   * one click away — `EcosystemSwitcher` lists ALL of them — that stopped being
+   * a nicety and became the thing that keeps the numbers meaning anything.
+   *
+   * 🔴 OVERSIGHT, NOT PARTICIPATION. Everything below is metadata: that a
+   * document exists, who uploaded it, when, its kind and its state. No document
+   * text reaches this page, drafts included — see `$lib/server/admin.ts`. An
+   * admin reviews every ecosistema without joining one, and the backend makes
+   * sure they cannot join one either (`refuseSelfAssignment`).
    */
   import { PanelCard } from '$lib/primitives';
   import AudioPanel from '$lib/components/admin/AudioPanel.svelte';
+  import EcosystemSwitcher from '$lib/components/admin/EcosystemSwitcher.svelte';
   import ContributorsTable from '$lib/components/admin/ContributorsTable.svelte';
   import DocumentsTable from '$lib/components/admin/DocumentsTable.svelte';
   import RatingsPanel from '$lib/components/admin/RatingsPanel.svelte';
@@ -57,13 +66,28 @@
     <a class="back" href="/" data-interactive>Volver al chat</a>
   </header>
 
+  {#if data.state !== 'unavailable'}
+    <!-- 🔴 The oversight surface. Lists every ecosistema, not the caller's
+         memberships — that is the sidebar picker's job and it stays that way. -->
+    <EcosystemSwitcher
+      directory={data.directory}
+      selected={data.selected}
+      mine={data.mine}
+      notFound={data.notFound}
+    />
+  {/if}
+
   {#if data.state === 'unavailable'}
     <p class="notice">
       No pudimos leer los datos en este momento. Vuelve a intentarlo en un rato.
     </p>
   {:else if data.state === 'no-ecosystem'}
+    <!-- ⚠ NOT "no perteneces a ninguno" any more. An admin reviews every
+         ecosistema without belonging to one, so the only honest reason for an
+         empty page is that the installation genuinely has no tenants yet. -->
     <p class="notice">
-      No perteneces a ningún ecosistema, así que no hay contribuciones que mostrar.
+      Todavía no hay ningún ecosistema en la plataforma, así que no hay contribuciones que
+      mostrar.
     </p>
   {:else if overview}
     <section class="tiles">
@@ -151,7 +175,10 @@
       <RatingsPanel summary={overview.ratings.summary} />
     </PanelCard>
 
-    <PanelCard title="Todos los documentos" subtitle="El corpus completo del ecosistema.">
+    <PanelCard
+      title="Todos los documentos"
+      subtitle="El corpus completo del ecosistema. Solo el registro: quién lo subió, cuándo y en qué estado — nunca el contenido de un borrador."
+    >
       {#if !overview.documents.ok}
         <p class="notice small">No pudimos leer todos los documentos. La lista puede estar incompleta.</p>
       {:else if overview.documents.truncated}

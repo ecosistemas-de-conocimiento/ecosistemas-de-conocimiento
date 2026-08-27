@@ -533,3 +533,31 @@ export function lowScoreHeadline(summary: RatingsSummary): string | null {
   if (!top || top.share == null) return null;
   return `${top.share} % de las calificaciones bajas dicen: “${top.label}”.`;
 }
+
+// ── Finding one ecosistema among ~90 ───────────────────────────────────────
+
+/**
+ * The ecosistemas matching a typed term, by NAME or SLUG.
+ *
+ * ⚠ SLUG AS WELL AS NAME. Most rows on this deployment are e2e litter whose
+ * slug (`e2e-be-…`) is the only recognisable half; somebody clearing them out
+ * has to be able to type what they can see.
+ *
+ * Reuses `foldText`, so accents behave here exactly as they do in the document
+ * table — a person reaching for "Organización Demo" types `organizacion`, and a
+ * box that answers nothing is a box people stop using and scroll 90 rows
+ * instead.
+ *
+ * Pure and substring-based: at ~90 rows this runs on every keystroke in the
+ * browser with the whole list already in hand, so searching costs no round
+ * trip. An empty term returns the list untouched — "no filter" is not "no
+ * matches".
+ */
+export function filterEcosystems<T extends { name: string; slug?: string | null }>(
+  rows: readonly T[],
+  term: string,
+): T[] {
+  const needle = foldText(term);
+  if (!needle) return [...rows];
+  return rows.filter((row) => foldText(`${row.name} ${row.slug ?? ''}`).includes(needle));
+}
