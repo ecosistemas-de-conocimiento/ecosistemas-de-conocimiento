@@ -122,6 +122,19 @@ export interface WorkingDoc {
   ingestError?: string | null;
   /** Present for `kind: 'audio'`. Drives the ETA and the provenance chip. */
   audioMeta?: AudioMeta | null;
+  /**
+   * The machine transcription, as the backend stored it in
+   * `documents.extractedText`.
+   *
+   * ⚠ CARRIED FOR AUDIO ONLY, on purpose. Every upload has an `extractedText`,
+   * but a PDF's is already readable in the original file, while a transcript
+   * exists nowhere else the uploader can open. Keeping all of them would put
+   * every PDF's full text in the browser's memory to show nobody.
+   *
+   * ⚠ NOT EDITABLE and never PATCHed back: this mirrors what the ASR heard.
+   * Correcting it belongs to a feature that does not exist yet.
+   */
+  transcript?: string | null;
   /** UI-only state — a retry request is on the wire. Never sent to the server. */
   retryPending?: boolean;
 }

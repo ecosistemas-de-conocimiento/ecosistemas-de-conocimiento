@@ -179,3 +179,95 @@ export function clearEcosystemScopedState(state: EcosystemScopedState): void {
 export function isStaleEpoch(startedAt: number, current: number): boolean {
   return startedAt !== current;
 }
+
+// ---------------------------------------------------------------------------
+// The picker as a control — what it says, and whether it can be pressed
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 WHY THE ONE-MEMBERSHIP CASE IS NO LONGER PLAIN TEXT.
+ *
+ * The original call was that a dropdown with one option is noise. That part is
+ * still true — and `mode: 'single'` still refuses to render a chooser, because
+ * a disabled select implies alternatives that do not exist. What was wrong was
+ * the conclusion: dropping the CONTROL also dropped the FIELD, and a name in
+ * grey text next to a heading reads as decoration. Users could not find the
+ * feature at all, and this is the setting that decides who can read what they
+ * upload.
+ *
+ * So: always a field — a bordered value with a label — and only sometimes a
+ * chooser. `interactive` is the one bit that separates the two, and it is
+ * derived from the membership count alone, never from a styling preference.
+ */
+export type EcosystemPickerMode =
+  | 'loading'
+  | 'unavailable'
+  | 'none'
+  | 'single'
+  | 'multiple';
+
+export interface EcosystemPickerView {
+  mode: EcosystemPickerMode;
+  /** What the field shows as its value. Never empty. */
+  value: string;
+  /** One line under the field saying what this state means. */
+  hint: string;
+  /** Can the field be pressed to open a chooser? Only ever true for `multiple`. */
+  interactive: boolean;
+}
+
+export interface EcosystemPickerInput {
+  /** Has `/api/ecosistemas` answered once? */
+  ready: boolean;
+  /** Could the membership list not be read at all? */
+  unavailable: boolean;
+  /** The resolved ecosistema, or null. */
+  current: Ecosystem | null;
+  /** How many memberships this user has. */
+  count: number;
+}
+
+/**
+ * ⚠ THE ORDER OF THESE BRANCHES IS THE SAFETY BEHAVIOUR, not a style.
+ * `unavailable` is checked BEFORE `current`, so a backend that is merely down
+ * says "no disponible" and never "no perteneces a ningún ecosistema" — telling
+ * someone they have no ecosistema when we simply could not ask is the one wrong
+ * answer here.
+ */
+export function ecosystemPickerView(input: EcosystemPickerInput): EcosystemPickerView {
+  if (!input.ready) {
+    return { mode: 'loading', value: 'Cargando…', hint: 'Leyendo tus ecosistemas.', interactive: false };
+  }
+  if (input.unavailable) {
+    return {
+      mode: 'unavailable',
+      value: 'No disponible',
+      hint: 'No pudimos leer tus ecosistemas ahora mismo. Vuelve a intentarlo en un momento.',
+      interactive: false,
+    };
+  }
+  if (!input.current) {
+    return {
+      mode: 'none',
+      value: 'Ninguno',
+      hint: 'Todavía no perteneces a ningún ecosistema.',
+      interactive: false,
+    };
+  }
+  if (input.count > 1) {
+    return {
+      mode: 'multiple',
+      value: input.current.name,
+      hint: `Perteneces a ${input.count} ecosistemas. Toca para cambiar.`,
+      interactive: true,
+    };
+  }
+  return {
+    mode: 'single',
+    value: input.current.name,
+    // Says out loud why there is nothing to press. Without this line the field
+    // looks like a chooser that is not responding.
+    hint: 'Es el único ecosistema al que perteneces.',
+    interactive: false,
+  };
+}

@@ -187,6 +187,14 @@ function docFromBackend(row: Record<string, unknown>): WorkingDoc {
       row.audioMeta && typeof row.audioMeta === 'object' && !Array.isArray(row.audioMeta)
         ? (row.audioMeta as AudioMeta)
         : null,
+    // ⚠ The transcript, for audio only. `extractedText` is the field the
+    // transcription callback writes into, and for an audio document it is the
+    // ONLY copy of the text the uploader can read — the recording itself does
+    // not tell you what the machine heard. PDFs get no copy here: their text is
+    // in the file the user already has, and holding every PDF's full text in
+    // browser memory to show nobody is waste.
+    transcript:
+      kind === 'audio' && typeof row.extractedText === 'string' ? row.extractedText : null,
     // Missing/unknown reads as `draft` — the private reading. See
     // `parsePublicationStatus` for why that direction is the safe one.
     publicationStatus: parsePublicationStatus(row.publicationStatus),
@@ -1116,6 +1124,17 @@ class AppStore {
           d.ingestError = typeof body.ingestError === 'string' ? body.ingestError : null;
           if (body.audioMeta && typeof body.audioMeta === 'object' && !Array.isArray(body.audioMeta)) {
             d.audioMeta = body.audioMeta as AudioMeta;
+          }
+          // 🔴 PICK UP THE TRANSCRIPT AS SOON AS IT EXISTS. It lands on the row
+          // at `transcribed`, one whole step before `ready` — that gap is the
+          // embedding run, and it can be minutes. Waiting for `ready` to fetch
+          // the text would hide a finished transcription from the person who is
+          // sitting there watching for it.
+          //
+          // ⚠ Only ever ASSIGNED when the server sends a string. A poll that
+          // omits the field must not blank a transcript we already have.
+          if (d.kind === 'audio' && typeof body.extractedText === 'string') {
+            d.transcript = body.extractedText;
           }
           if (isTerminalIngest(status)) return;
         } catch {

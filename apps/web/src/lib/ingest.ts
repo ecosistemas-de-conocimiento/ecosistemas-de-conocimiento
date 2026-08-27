@@ -355,3 +355,165 @@ export function canRetryIngest(input: {
   if (input.ingestStatus !== 'failed') return false;
   return !ingestFailureCopy(input.ingestError).needsDifferentFile;
 }
+
+// ── The recording's own metadata ───────────────────────────────────────────
+
+/**
+ * Spanish names for the language codes audio-service actually returns. A code
+ * we do not know is shown AS THE CODE rather than hidden: "und" is honest,
+ * an empty chip is not.
+ */
+const AUDIO_LANGUAGE_NAMES: Record<string, string> = {
+  es: 'español',
+  en: 'inglés',
+  pt: 'portugués',
+  fr: 'francés',
+  de: 'alemán',
+  it: 'italiano',
+  ca: 'catalán',
+  eu: 'euskera',
+  gl: 'gallego',
+  nah: 'náhuatl',
+};
+
+export function audioLanguageLabel(code: string | null | undefined): string | null {
+  const raw = typeof code === 'string' ? code.trim().toLowerCase() : '';
+  if (!raw) return null;
+  return AUDIO_LANGUAGE_NAMES[raw] ?? raw;
+}
+
+/**
+ * 🔴 `languageProbability` IS THE ONLY CONFIDENCE SIGNAL THE PIPELINE GIVES US,
+ * and it is easy to over-read. It says how sure the model is about WHICH
+ * LANGUAGE it heard — not whether the words are right. Dropping it would leave
+ * the reader with no confidence signal at all; showing it without that sentence
+ * would leave them with a false one. So the number and the caveat travel
+ * together, always.
+ */
+export const AUDIO_CONFIDENCE_TOOLTIP =
+  'Es la seguridad con la que el sistema identificó el idioma, la única señal de confianza que da la transcripción. No mide si las palabras quedaron bien: eso solo se sabe leyéndola.';
+
+export function formatLanguageProbability(value: number | null | undefined): string | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  if (value <= 0 || value > 1) return null;
+  return `${Math.round(value * 100)}%`;
+}
+
+export interface AudioMetaChip {
+  label: string;
+  title: string;
+}
+
+/** `{ language: 'es', languageProbability: 0.98 }` → `español · 98% de certeza`. */
+export function audioLanguageChip(audioMeta: AudioMeta | null | undefined): AudioMetaChip | null {
+  const language = audioLanguageLabel(audioMeta?.language);
+  const probability = formatLanguageProbability(audioMeta?.languageProbability);
+  if (!language && !probability) return null;
+  if (!language) {
+    return { label: `${probability} de certeza en el idioma`, title: AUDIO_CONFIDENCE_TOOLTIP };
+  }
+  if (!probability) {
+    return {
+      label: language,
+      title: `Idioma detectado automáticamente: ${language}. Esta grabación no trae dato de certeza.`,
+    };
+  }
+  return {
+    label: `${language} · ${probability} de certeza`,
+    title: `Idioma detectado: ${language}. ${AUDIO_CONFIDENCE_TOOLTIP}`,
+  };
+}
+
+/** Every chip worth showing for one audio document, in reading order. */
+export function audioMetaChips(audioMeta: AudioMeta | null | undefined): AudioMetaChip[] {
+  const chips: AudioMetaChip[] = [];
+  const duration = audioDurationChip(audioMeta);
+  if (duration) {
+    chips.push({ label: duration, title: 'Duración de la grabación original.' });
+  }
+  const language = audioLanguageChip(audioMeta);
+  if (language) chips.push(language);
+  return chips;
+}
+
+// ── While the file is still going up ───────────────────────────────────────
+
+export interface UploadInFlightCopy {
+  title: string;
+  message: string;
+}
+
+/**
+ * ⚠ AUDIO AND PDF DO NOT DESERVE THE SAME SPINNER. A PDF is done when the
+ * spinner stops. A recording has barely started: the upload is the short part
+ * and the transcription that follows takes as long as the recording. A single
+ * shared "subiendo…" teaches people to expect the PDF timing for both, and then
+ * a working transcription looks broken.
+ */
+export function uploadInFlightCopy(isAudio: boolean): UploadInFlightCopy {
+  if (isAudio) {
+    return {
+      title: 'Subiendo la grabación…',
+      message:
+        'En cuanto termine de subir empieza la transcripción, que tarda más o menos lo que dura la grabación. No hace falta que esperes aquí.',
+    };
+  }
+  return {
+    title: 'Subiendo el documento…',
+    message: 'Se procesa en cuanto termine de subir; suele tardar poco.',
+  };
+}
+
+// ── Reading the transcript ─────────────────────────────────────────────────
+
+export const TRANSCRIPT_PREVIEW_SHOW = 'Ver transcripción';
+export const TRANSCRIPT_PREVIEW_HIDE = 'Ocultar transcripción';
+
+/**
+ * ⚠ THE REASON THE TRANSCRIPT IS READABLE AT ALL. Machine transcription makes
+ * mistakes, and this text is about to be quoted as fact to the whole
+ * ecosistema. A transcript nobody can inspect is worse than one they can.
+ */
+export const TRANSCRIPT_REVIEW_PROMPT =
+  'Léela antes de publicarla: si el audio se escuchaba mal, aquí se nota.';
+
+/**
+ * ⚠ "Léela antes de publicarla" is advice, and advice about a step already
+ * taken is noise that teaches people to skip the next sentence too. Once the
+ * transcript is shared it is dropped; the provenance warning beside it stays,
+ * because THAT is still true — a published transcript can still be wrong.
+ */
+export function transcriptReviewPrompt(publicationStatus: string): string | null {
+  return publicationStatus === 'draft' ? TRANSCRIPT_REVIEW_PROMPT : null;
+}
+
+/** Nothing to read yet, said without implying the transcript was lost. */
+export const TRANSCRIPT_UNAVAILABLE =
+  'Todavía no tenemos el texto aquí. Aparecerá en cuanto termine de procesarse.';
+
+/** `'hola que tal'` → `3 palabras`. Null for an empty transcript. */
+export function transcriptStatsCopy(text: string | null | undefined): string | null {
+  const words = typeof text === 'string' ? text.trim().split(/\s+/).filter(Boolean).length : 0;
+  if (words === 0) return null;
+  return words === 1 ? '1 palabra' : `${words.toLocaleString('es-MX')} palabras`;
+}
+
+// ── From "transcribed" to "in the ecosistema's documents" ──────────────────
+
+/**
+ * 🔴 THE MISSING HALF OF THE JOURNEY. The transcript being ready is not the end
+ * of anything the user wanted: it lands as a PRIVATE draft, and until somebody
+ * presses publish, nobody else in the ecosistema can read a word of it. The
+ * publish button existed; nothing ever said that reaching `listo` is the moment
+ * to press it. This is that sentence, and it only appears in that exact state.
+ */
+export function transcriptReadyCallToAction(input: {
+  kind: DocKind;
+  ingestStatus: IngestStatus;
+  publicationStatus: string;
+}): string | null {
+  if (!isTranscript(input.kind)) return null;
+  if (input.ingestStatus !== 'ready') return null;
+  if (input.publicationStatus !== 'draft') return null;
+  return 'La transcripción está lista y por ahora solo tú la ves. Revísala aquí abajo y publícala para que aparezca en los documentos de tu ecosistema.';
+}
