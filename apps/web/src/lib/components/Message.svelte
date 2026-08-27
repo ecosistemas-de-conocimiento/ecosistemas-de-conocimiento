@@ -5,7 +5,6 @@
   import { isRatableMessageId } from '$lib/ratings';
   import { app } from '$lib/stores/app.svelte';
   import {
-    draftCitationNotice,
     draftDocumentIds,
     markDraftCitations,
   } from '$lib/publication';
@@ -50,7 +49,6 @@
   const draftIds = $derived(draftDocumentIds(app.active?.docs ?? []));
   const marked = $derived(markDraftCitations(rawCitations, draftIds));
   const citations = $derived(marked.citations);
-  const draftNotice = $derived(draftCitationNotice(marked.draftCount));
   const hasCitations = $derived(isAssistant && !msg.error && citations.length > 0);
 
   // Rating is for ANSWERS only — never the user's own prompt, never a failed or
@@ -93,14 +91,6 @@
 
     {#if hasCitations}
       <div class="mt-2 pt-2 border-t border-elevated">
-        {#if draftNotice}
-          <p
-            class="draft-notice"
-            data-testid="draft-citation-notice"
-          >
-            ⚠ {draftNotice}
-          </p>
-        {/if}
         <CitationCard
           {citations}
           labels={CHAT_CITATION_LABELS}
@@ -124,14 +114,4 @@
      defined as a bare `var(--edc-…)`: that needs the `<alpha-value>` channel
      form, so those utilities silently produce NO colour. The design system
      ships `-soft` / `-outline` pairs for exactly this case — use them. */
-  .draft-notice {
-    margin-bottom: 0.5rem;
-    padding: 0.375rem 0.5rem;
-    border-radius: var(--edc-radius-1);
-    border: 1px solid var(--edc-color-warning-outline);
-    background: var(--edc-color-warning-soft);
-    color: var(--edc-color-ink);
-    font-size: 0.6875rem;
-    line-height: 1.35;
-  }
 </style>

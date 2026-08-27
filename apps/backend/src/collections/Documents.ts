@@ -629,6 +629,17 @@ export async function enqueueIngestForDoc(args: {
             organizationId: String(organizationId),
             kind: fresh.kind,
             publication: 'draft',
+            /**
+             * 🔴 THE CITATION'S HUMAN NAME. Without it `chat-engine` falls all
+             * the way back to the CORPUS NAME, and a source card in the UI reads
+             * "eco-1-draft-1" — internal plumbing shown to a user as if it were
+             * a document title.
+             *
+             * ⚠ The top-level `title` on the ingest document is NOT echoed back
+             * on retrieve; only `metadata` survives the round trip. So it has to
+             * be here as well, not instead.
+             */
+            title: fresh.name ?? 'Documento sin título',
           },
         },
       ],

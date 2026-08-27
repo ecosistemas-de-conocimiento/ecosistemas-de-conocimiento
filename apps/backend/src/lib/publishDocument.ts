@@ -306,6 +306,10 @@ export async function beginPublish(
           organizationId: String(organizationId),
           kind: doc.kind ?? 'unknown',
           publication: 'published',
+          // See the note on the draft ingest in `collections/Documents.ts`:
+          // only `metadata` survives the retrieve round trip, so the title has
+          // to travel here or citations fall back to the corpus name.
+          title: doc.name ?? 'Documento sin título',
         },
       },
     ],
