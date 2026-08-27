@@ -5,6 +5,7 @@ import {
   belongsTo,
   clearEcosystemScopedState,
   ecosystemInitials,
+  ecosystemPickerView,
   findEcosystem,
   isStaleEpoch,
   normalizeEcosystems,
@@ -195,5 +196,87 @@ describe('🔴 switching ecosistema clears everything the previous one put on sc
     const once = JSON.stringify(state);
     clearEcosystemScopedState(state as unknown as EcosystemScopedState);
     expect(JSON.stringify(state)).toBe(once);
+  });
+});
+
+describe('ecosystemPickerView', () => {
+  it('🔴 with ONE membership still renders a field — never bare text', () => {
+    // The regression this exists to prevent: the name rendered as a paragraph,
+    // and users could not tell the ecosistema selector existed at all. This is
+    // the control that decides who can read what they upload.
+    const view = ecosystemPickerView({ ready: true, unavailable: false, current: A, count: 1 });
+    expect(view.mode).toBe('single');
+    expect(view.value).toBe(A.name);
+    expect(view.hint).toMatch(/único ecosistema/i);
+  });
+
+  it('🔴 with ONE membership refuses to be pressable — no chooser with one option', () => {
+    // Honesty, the other half: a disabled dropdown would imply alternatives
+    // this person does not have.
+    const view = ecosystemPickerView({ ready: true, unavailable: false, current: A, count: 1 });
+    expect(view.interactive).toBe(false);
+  });
+
+  it('with several memberships it is a chooser, and says how many', () => {
+    const view = ecosystemPickerView({ ready: true, unavailable: false, current: A, count: 3 });
+    expect(view.mode).toBe('multiple');
+    expect(view.interactive).toBe(true);
+    expect(view.hint).toContain('3');
+  });
+
+  it('🔴 a failed read says "no disponible", never "no perteneces a ninguno"', () => {
+    // Telling someone they belong to no ecosistema when the backend is merely
+    // down is the one wrong answer here — it is a claim about their access.
+    const view = ecosystemPickerView({ ready: true, unavailable: true, current: null, count: 0 });
+    expect(view.mode).toBe('unavailable');
+    expect(view.hint).not.toMatch(/no perteneces/i);
+    expect(view.interactive).toBe(false);
+  });
+
+  it('keeps the degraded reading even if a stale current/count survived the failure', () => {
+    const view = ecosystemPickerView({ ready: true, unavailable: true, current: A, count: 4 });
+    expect(view.mode).toBe('unavailable');
+    expect(view.interactive).toBe(false);
+  });
+
+  it('says nothing about memberships until the list has answered once', () => {
+    const view = ecosystemPickerView({ ready: false, unavailable: false, current: null, count: 0 });
+    expect(view.mode).toBe('loading');
+    expect(view.interactive).toBe(false);
+    expect(view.hint).not.toMatch(/no perteneces|único/i);
+  });
+
+  it('has a real zero-membership state, distinct from the degraded one', () => {
+    const view = ecosystemPickerView({ ready: true, unavailable: false, current: null, count: 0 });
+    expect(view.mode).toBe('none');
+    expect(view.hint).toMatch(/no perteneces/i);
+  });
+
+  it('always has a value and a hint to show, in every state', () => {
+    const cases = [
+      { ready: false, unavailable: false, current: null, count: 0 },
+      { ready: true, unavailable: true, current: null, count: 0 },
+      { ready: true, unavailable: false, current: null, count: 0 },
+      { ready: true, unavailable: false, current: A, count: 1 },
+      { ready: true, unavailable: false, current: A, count: 2 },
+    ];
+    for (const input of cases) {
+      const view = ecosystemPickerView(input);
+      expect(view.value.trim().length).toBeGreaterThan(0);
+      expect(view.hint.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it('is pressable ONLY when there is more than one ecosistema to choose from', () => {
+    for (const count of [0, 1]) {
+      expect(
+        ecosystemPickerView({ ready: true, unavailable: false, current: A, count }).interactive,
+      ).toBe(false);
+    }
+    for (const count of [2, 9]) {
+      expect(
+        ecosystemPickerView({ ready: true, unavailable: false, current: B, count }).interactive,
+      ).toBe(true);
+    }
   });
 });

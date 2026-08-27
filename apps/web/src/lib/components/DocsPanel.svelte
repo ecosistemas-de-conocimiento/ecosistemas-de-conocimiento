@@ -5,24 +5,50 @@
   import Markdown from './Markdown.svelte';
   import type { WorkingDoc } from '$lib/types';
   import { publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
-  import { UPLOAD_ACCEPT } from '$lib/config';
+  import { isAudioUpload, UPLOAD_ACCEPT } from '$lib/config';
   import {
-    audioDurationChip,
+    audioMetaChips,
     canRetryIngest,
     ingestBadge,
     ingestFailureCopy,
     isTranscript,
     publishConfirmCopy,
+    transcriptReadyCallToAction,
+    transcriptReviewPrompt,
+    transcriptStatsCopy,
     TRANSCRIBING_REASSURANCE,
+    TRANSCRIPT_PREVIEW_HIDE,
+    TRANSCRIPT_PREVIEW_SHOW,
     TRANSCRIPT_PROVENANCE_LABEL,
     TRANSCRIPT_PROVENANCE_TOOLTIP,
+    TRANSCRIPT_UNAVAILABLE,
     transcriptionEtaCopy,
+    uploadInFlightCopy,
   } from '$lib/ingest';
 
   let expandedId = $state<string | null>(null);
   const previewIds = new SvelteSet<string>();
   let fileInput = $state<HTMLInputElement | null>(null);
   let uploading = $state(false);
+  /**
+   * ⚠ WHAT is going up, not just THAT something is. A PDF and a 40-minute
+   * recording get the same spinner otherwise, and they are not the same wait:
+   * for audio the upload is the short part and the transcription that follows
+   * takes as long as the recording. The copy for that lives in
+   * `uploadInFlightCopy`; this is the state it reads.
+   */
+  let uploadingFile = $state<{ name: string; isAudio: boolean } | null>(null);
+
+  /**
+   * Open the transcript of a document that is not expanded yet.
+   *
+   * The CTA sits on the COLLAPSED card, because that is where a person watching
+   * an upload is looking. "Revísala" has to actually take them to the text.
+   */
+  function openTranscript(id: string) {
+    expandedId = id;
+    previewIds.add(id);
+  }
 
   function toggle(id: string) {
     expandedId = expandedId === id ? null : id;
@@ -43,6 +69,7 @@
       return;
     }
     uploading = true;
+    uploadingFile = { name: file.name, isAudio: isAudioUpload(file) };
     try {
       // uploadDoc handles all error UX via toasts (size cap, server errors,
       // network failure). We just react to the success/failure result here.
@@ -50,6 +77,7 @@
       if (doc) expandedId = doc.id;
     } finally {
       uploading = false;
+      uploadingFile = null;
       input.value = ''; // allow re-selecting the same file
     }
   }
@@ -218,6 +246,38 @@
     </p>
 
     <div class="flex-1 overflow-y-auto p-2 space-y-2">
+      <!-- ⚠ THE UPLOAD, VISIBLE AS A ROW — not only as a spinner in the header.
+           A 60 MB recording takes real time to go up, and a spinner 300px away
+           from where the document will appear does not read as "your file is on
+           its way". For audio it also says, here and now, that the transcription
+           afterwards is the long part. -->
+      {#if uploadingFile}
+        {@const copy = uploadInFlightCopy(uploadingFile.isAudio)}
+        <div class="rounded-lg border border-dashed border-elevated bg-surface-strong px-2.5 py-2" role="status">
+          <div class="flex items-center gap-2">
+            <svg
+              class="animate-spin shrink-0 text-ink-soft"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="3"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+            <span class="text-xs font-medium text-ink">{copy.title}</span>
+            {#if uploadingFile.isAudio}
+              <span class="chip transcript-chip text-[9px]">audio</span>
+            {/if}
+          </div>
+          <p class="text-[10px] text-ink-soft mt-1 break-words">{uploadingFile.name}</p>
+          <p class="text-[10px] text-ink-soft mt-0.5 leading-snug">{copy.message}</p>
+        </div>
+      {/if}
+
       {#if (app.active?.docs.length ?? 0) > 0}
         {#each app.active?.docs ?? [] as d (d.id)}
           {@const isOpen = expandedId === d.id}
@@ -320,14 +380,17 @@
                  (not in a tooltip) is the mitigation that made accepting
                  transcripts as first-class documents an acceptable trade. -->
             {#if isTranscript(d.kind)}
-              {@const durationChip = audioDurationChip(d.audioMeta)}
               <div class="flex items-center gap-2 px-2 pb-1 flex-wrap">
                 <span class="chip transcript-chip text-[9px]" title={TRANSCRIPT_PROVENANCE_TOOLTIP}>
                   {TRANSCRIPT_PROVENANCE_LABEL}
                 </span>
-                {#if durationChip}
-                  <span class="chip text-[9px]">{durationChip}</span>
-                {/if}
+                <!-- Duration, detected language and the language-detection
+                     certainty. 🔴 `languageProbability` is the ONLY confidence
+                     number this pipeline produces; it stays, and it travels with
+                     the tooltip that says what it does and does not mean. -->
+                {#each audioMetaChips(d.audioMeta) as chip (chip.label)}
+                  <span class="chip text-[9px]" title={chip.title}>{chip.label}</span>
+                {/each}
               </div>
             {/if}
 
@@ -391,6 +454,32 @@
                 <span class="text-[10px] text-ink-soft">{publishBlockedCopy(gate.reason)}</span>
               {/if}
             </div>
+
+            <!-- 🔴 THE BRIDGE FROM "TRANSCRITO" TO "EN LOS DOCUMENTOS DEL
+                 ECOSISTEMA". Reaching `listo` felt like the end of the job and
+                 is not: the transcript is still a private draft that nobody
+                 else can read. The publish button was already right above this
+                 line, and nothing ever connected the two. This says the state
+                 out loud and puts the review one click away — review first,
+                 because the text is machine-made and publishing it is what
+                 makes it quotable to everyone. -->
+            {#if transcriptReadyCallToAction( { kind: d.kind, ingestStatus: d.ingestStatus, publicationStatus: d.publicationStatus } )}
+              {@const cta = transcriptReadyCallToAction({
+                kind: d.kind,
+                ingestStatus: d.ingestStatus,
+                publicationStatus: d.publicationStatus,
+              })}
+              <div class="transcript-cta">
+                <span class="block">{cta}</span>
+                <button
+                  class="transcript-cta-link"
+                  onclick={() => (isOpen && isPreview ? togglePreview(d.id) : openTranscript(d.id))}
+                  data-testid={`review-transcript-${d.id}`}
+                >
+                  {isOpen && isPreview ? TRANSCRIPT_PREVIEW_HIDE : TRANSCRIPT_PREVIEW_SHOW}
+                </button>
+              </div>
+            {/if}
 
             <!-- A failed publish is never a silent revert: it keeps a visible
                  explanation and the retry button above stays available. -->
@@ -456,6 +545,65 @@
             {#if isOpen}
               <div class="border-t border-elevated">
                 {#if d.kind !== 'markdown'}
+                  <!-- 🔴 READING THE TRANSCRIPT. Automatic transcription gets
+                       words wrong, and this text is about to be quoted as fact
+                       to everyone in the ecosistema. Until now it was stored,
+                       embedded and retrieved — and the one person who knows
+                       what was actually said could not read it.
+
+                       ⚠ Same tab pattern as the markdown note below, on
+                       purpose, and the same `previewIds` set drives both: the
+                       panel already taught "Vista previa" as the way to see a
+                       document's text. A second, different affordance for the
+                       same idea would be one pattern too many. -->
+                  {#if isTranscript(d.kind)}
+                    <div class="flex items-center gap-0 px-2 pt-1.5 text-[10px]">
+                      <button
+                        class="px-2 py-0.5 rounded-t border-x border-t {!isPreview
+                          ? 'border-elevated bg-surface-soft text-ink'
+                          : 'border-transparent text-ink-soft hover:text-ink'}"
+                        onclick={() => {
+                          if (isPreview) togglePreview(d.id);
+                        }}
+                      >
+                        Datos
+                      </button>
+                      <button
+                        class="px-2 py-0.5 rounded-t border-x border-t {isPreview
+                          ? 'border-elevated bg-surface-soft text-ink'
+                          : 'border-transparent text-ink-soft hover:text-ink'}"
+                        onclick={() => {
+                          if (!isPreview) togglePreview(d.id);
+                        }}
+                        data-testid={`transcript-tab-${d.id}`}
+                      >
+                        Transcripción
+                      </button>
+                    </div>
+                  {/if}
+
+                  {#if isTranscript(d.kind) && isPreview}
+                    {@const text = (d.transcript ?? '').trim()}
+                    {@const stats = transcriptStatsCopy(text)}
+                    <div class="bg-surface-soft border-t border-elevated px-3 py-3">
+                      <p class="text-[10px] text-ink-soft leading-snug">
+                        {TRANSCRIPT_PROVENANCE_TOOLTIP}
+                        {transcriptReviewPrompt(d.publicationStatus) ?? ''}
+                        {#if stats}<span class="block mt-0.5">{stats}</span>{/if}
+                      </p>
+                      {#if text}
+                        <!-- Plain text, not Markdown: an ASR transcript has no
+                             markup, and rendering it as Markdown would let a
+                             stray `#` or `*` silently reshape what was said. -->
+                        <p
+                          class="transcript-text mt-2 text-xs text-ink"
+                          data-testid={`transcript-text-${d.id}`}
+                        >{text}</p>
+                      {:else}
+                        <p class="mt-2 text-xs text-ink-soft italic">{TRANSCRIPT_UNAVAILABLE}</p>
+                      {/if}
+                    </div>
+                  {:else}
                   <div class="px-3 py-3 text-xs text-ink-soft bg-surface-soft border-t border-elevated space-y-1">
                     <div>
                       <span class="font-medium text-ink">{d.kind.toUpperCase()}</span>
@@ -500,6 +648,7 @@
                     {/if}
                     <div class="pt-1">{pub.description}</div>
                   </div>
+                  {/if}
                 {:else}
                 <div class="flex items-center gap-0 px-2 pt-1.5 text-[10px]">
                   <button
@@ -552,7 +701,11 @@
             {/if}
           </div>
         {/each}
-      {:else}
+      {:else if !uploadingFile}
+        <!-- ⚠ `!uploadingFile`: "todavía no hay documentos" directly under a
+             card that says "subiendo la grabación…" contradicts itself, and the
+             contradiction lands exactly when the user is least sure the upload
+             worked. -->
         <div class="text-center text-ink-soft text-xs p-6">
           Todavía no hay documentos en esta conversación.<br />
           Usa <span class="font-mono">+</span> para escribir una nota, o el ícono de
@@ -608,6 +761,38 @@
   .publish-progress {
     background: var(--edc-color-surface-soft);
     color: var(--edc-color-ink-soft);
+  }
+
+  /* The "transcript is ready, now share it" bridge. Success-toned: nothing
+     went wrong, there is simply one step left that the user has to take. */
+  .transcript-cta {
+    margin: 0 0.5rem 0.5rem;
+    padding: 0.375rem 0.5rem;
+    border-radius: var(--edc-radius-1);
+    border: 1px solid var(--edc-color-success-outline);
+    background: var(--edc-color-success-soft);
+    color: var(--edc-color-ink);
+    font-size: 0.625rem;
+    line-height: 1.4;
+  }
+  .transcript-cta-link {
+    margin-top: 0.25rem;
+    font-weight: 600;
+    color: var(--edc-color-brand);
+    text-decoration: underline;
+  }
+  .transcript-cta-link:hover {
+    color: var(--edc-color-brand-strong);
+  }
+
+  /* The transcript itself. `pre-wrap` keeps the ASR's own line breaks; the
+     scroll cap stops a two-hour recording from burying the rest of the panel. */
+  .transcript-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.55;
+    max-height: 22rem;
+    overflow-y: auto;
   }
 
   /* Small metadata chips (file kind, ingest progress). Decorative outline, so

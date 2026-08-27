@@ -9,12 +9,28 @@
    * badge for the same reason — collapsing the sidebar is a layout choice, not
    * consent to stop being told which tenant you are in.
    *
-   * ⚠ WITH EXACTLY ONE MEMBERSHIP THERE IS NO CHOOSER — just the name. A
-   * dropdown with one option is noise that teaches people to ignore the control
-   * that matters on the day they have two.
+   * 🔴 ONE MEMBERSHIP STILL GETS A FIELD, NEVER A FAKE CHOOSER.
+   *
+   * This used to render the name as plain text when there was nothing to
+   * choose. The reasoning — a dropdown with one option is noise — was right,
+   * and `ecosystemPickerView` still refuses to draw a chooser in that case.
+   * The conclusion was wrong: removing the control removed the FIELD too, and
+   * a grey name under a small heading reads as decoration. People could not
+   * find the feature at all.
+   *
+   * So the value now always sits in a bordered field with its initials badge,
+   * and only the `multiple` case is pressable. No disabled dropdown, no chevron
+   * that goes nowhere: a single membership says "es el único ecosistema al que
+   * perteneces" instead of pretending there is a choice.
+   *
+   * The safety behaviour is untouched and lives elsewhere: the selection is
+   * re-validated server-side against real memberships (`$lib/server/ecosystem`,
+   * `resolveEcosystemSelection`), switching blanks ecosistema-scoped state
+   * before new data lands (`app.switchEcosystem`), and an unreadable list shows
+   * `No disponible` rather than claiming zero memberships.
    */
   import { app } from '$lib/stores/app.svelte';
-  import { ecosystemInitials } from '$lib/ecosystems';
+  import { ecosystemInitials, ecosystemPickerView } from '$lib/ecosystems';
 
   let { collapsed = false }: { collapsed?: boolean } = $props();
 
@@ -22,7 +38,14 @@
 
   const current = $derived(app.ecosystem);
   const name = $derived(current?.name ?? '');
-  const many = $derived(app.canSwitchEcosystem);
+  const view = $derived(
+    ecosystemPickerView({
+      ready: app.ecosystemsReady,
+      unavailable: app.ecosystemsUnavailable,
+      current,
+      count: app.ecosystems.length,
+    }),
+  );
 
   async function choose(id: string) {
     open = false;
@@ -57,31 +80,25 @@
   </button>
 {:else}
   <div class="px-3 py-2.5 border-b border-line" data-ecosystem-picker>
-    <p class="text-[10px] uppercase tracking-wider text-ink-soft">Ecosistema</p>
+    <p class="text-[10px] uppercase tracking-wider text-ink-soft" id="eco-picker-label">
+      Ecosistema
+    </p>
 
-    {#if !app.ecosystemsReady}
-      <p class="text-sm text-ink-soft mt-0.5">Cargando…</p>
-    {:else if app.ecosystemsUnavailable}
-      <p class="text-sm text-ink-soft mt-0.5" title="No se pudo leer tu lista de ecosistemas">
-        No disponible
-      </p>
-    {:else if !current}
-      <p class="text-sm text-ink-soft mt-0.5">Ninguno</p>
-    {:else if !many}
-      <!-- One membership: the name, and nothing to press. -->
-      <p class="text-sm font-medium text-ink truncate mt-0.5" title={name}>{name}</p>
-    {:else}
-      <div class="relative mt-0.5">
+    {#if view.interactive}
+      <!-- Several memberships: the field IS the chooser. Same box as the
+           single-membership one, plus a chevron and a listbox. -->
+      <div class="relative mt-1">
         <button
-          class="w-full flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 -mx-2
-                 text-left hover:bg-surface-soft disabled:opacity-60"
+          class="eco-field eco-field-button"
           onclick={() => (open = !open)}
           disabled={app.switchingEcosystem}
           aria-haspopup="listbox"
           aria-expanded={open}
+          aria-labelledby="eco-picker-label"
           title={name}
         >
-          <span class="text-sm font-medium text-ink truncate">{name}</span>
+          <span class="eco-initials" aria-hidden="true">{ecosystemInitials(view.value)}</span>
+          <span class="text-sm font-medium text-ink truncate flex-1 text-left">{view.value}</span>
           <svg
             width="14"
             height="14"
@@ -92,6 +109,7 @@
             stroke-linecap="round"
             stroke-linejoin="round"
             class="shrink-0 text-ink-soft"
+            aria-hidden="true"
           >
             <path d="M6 9l6 6 6-6" />
           </svg>
@@ -122,10 +140,36 @@
           </ul>
         {/if}
       </div>
+    {:else}
+      <!-- 🔴 NOT A DISABLED DROPDOWN. A `<div>` with no chevron and no hover
+           state: it is a field showing a value, and the hint below says why
+           there is nothing to press. A greyed-out `<select>` here would imply
+           options this user does not have. -->
+      <div
+        class="eco-field eco-field-static"
+        class:eco-field-muted={view.mode !== 'single'}
+        aria-labelledby="eco-picker-label"
+        title={view.mode === 'single' ? name : view.hint}
+      >
+        {#if view.mode === 'single'}
+          <span class="eco-initials" aria-hidden="true">{ecosystemInitials(view.value)}</span>
+        {/if}
+        <span
+          class="text-sm truncate flex-1 {view.mode === 'single'
+            ? 'font-medium text-ink'
+            : 'text-ink-soft'}"
+        >
+          {view.value}
+        </span>
+      </div>
     {/if}
 
+    <!-- Says what this state means, in one line, always. Without it the field
+         either looks broken (nothing to press) or ambiguous (press for what?). -->
+    <p class="text-[10px] text-ink-soft mt-1 leading-snug">{view.hint}</p>
+
     {#if app.switchingEcosystem}
-      <p class="text-[10px] text-ink-soft mt-1">Cambiando de ecosistema…</p>
+      <p class="text-[10px] text-ink-soft mt-1" role="status">Cambiando de ecosistema…</p>
     {:else if current}
       <!-- The reason this control exists, said once, where the choice is made. -->
       <p class="text-[10px] text-ink-soft mt-1 leading-snug">
@@ -134,3 +178,56 @@
     {/if}
   </div>
 {/if}
+
+<style>
+  /* The field. Same box whether or not it can be pressed — that sameness is
+     the point: the setting is always visibly A SETTING. */
+  .eco-field {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    min-width: 0;
+    padding: 0.375rem 0.5rem;
+    border-radius: var(--edc-radius-1);
+    border: 1px solid var(--edc-color-line);
+    background: var(--edc-color-surface-soft);
+  }
+  .eco-field-button {
+    cursor: pointer;
+    text-align: left;
+  }
+  .eco-field-button:hover:not(:disabled) {
+    background: var(--edc-color-surface-accent);
+  }
+  .eco-field-button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--edc-focus-ring);
+  }
+  .eco-field-button:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  /* Not pressable: no cursor change, no hover. Nothing here invites a click. */
+  .eco-field-static {
+    cursor: default;
+  }
+  /* Loading / unavailable / none — a field with no value worth emphasising. */
+  .eco-field-muted {
+    border-style: dashed;
+    background: transparent;
+  }
+  .eco-initials {
+    flex-shrink: 0;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: var(--edc-radius-1);
+    background: var(--edc-color-surface-accent);
+    color: var(--edc-color-ink);
+    font-size: 0.5625rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+</style>

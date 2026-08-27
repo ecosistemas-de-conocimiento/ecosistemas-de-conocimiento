@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUDIO_CONFIDENCE_TOOLTIP,
   INGEST_STATUSES,
   TRANSCRIBING_REASSURANCE,
+  TRANSCRIPT_PREVIEW_HIDE,
+  TRANSCRIPT_PREVIEW_SHOW,
+  TRANSCRIPT_REVIEW_PROMPT,
+  TRANSCRIPT_UNAVAILABLE,
   TRANSCRIPT_PROVENANCE_LABEL,
   TRANSCRIPT_PROVENANCE_TOOLTIP,
   TRANSCRIPT_PUBLISH_WARNING,
   audioDurationChip,
+  audioLanguageChip,
+  audioLanguageLabel,
+  audioMetaChips,
   canRetryIngest,
+  formatLanguageProbability,
   formatDuration,
   ingestBadge,
   ingestErrorCode,
@@ -17,7 +26,11 @@ import {
   pollDeadlineMs,
   pollIntervalMs,
   publishConfirmCopy,
+  transcriptReadyCallToAction,
+  transcriptReviewPrompt,
+  transcriptStatsCopy,
   transcriptionEtaCopy,
+  uploadInFlightCopy,
 } from './ingest';
 
 /**
@@ -375,5 +388,155 @@ describe('audioDurationChip', () => {
 
   it('names the length of the recording', () => {
     expect(audioDurationChip({ durationSeconds: 1834 })).toBe('31 min de audio');
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// The audio journey, made visible
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('audioLanguageChip / audioMetaChips', () => {
+  it('names the language in Spanish and keeps the certainty number', () => {
+    const chip = audioLanguageChip({ language: 'es', languageProbability: 0.982 });
+    expect(chip?.label).toBe('español · 98% de certeza');
+  });
+
+  it('🔴 never shows the certainty number without saying what it measures', () => {
+    // `languageProbability` is the only confidence signal the pipeline gives,
+    // and it is about the LANGUAGE, not the words. A bare percentage next to a
+    // transcript reads as "98% of this text is right", which is false.
+    const chip = audioLanguageChip({ language: 'es', languageProbability: 0.98 });
+    expect(chip?.title).toContain(AUDIO_CONFIDENCE_TOOLTIP);
+    expect(AUDIO_CONFIDENCE_TOOLTIP).toMatch(/no mide si las palabras/i);
+  });
+
+  it('shows an unknown language code as itself rather than hiding it', () => {
+    expect(audioLanguageLabel('nl')).toBe('nl');
+    expect(audioLanguageLabel('  ES ')).toBe('español');
+    expect(audioLanguageLabel('')).toBeNull();
+    expect(audioLanguageLabel(null)).toBeNull();
+  });
+
+  it('drops a probability that is missing or out of range instead of inventing one', () => {
+    expect(formatLanguageProbability(0.5)).toBe('50%');
+    expect(formatLanguageProbability(1)).toBe('100%');
+    for (const bad of [null, undefined, 0, -0.2, 1.4, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(formatLanguageProbability(bad as number)).toBeNull();
+    }
+  });
+
+  it('still says something when only one half of the metadata arrived', () => {
+    expect(audioLanguageChip({ language: 'es' })?.label).toBe('español');
+    expect(audioLanguageChip({ languageProbability: 0.9 })?.label).toContain('90%');
+    expect(audioLanguageChip({})).toBeNull();
+    expect(audioLanguageChip(null)).toBeNull();
+  });
+
+  it('lists duration first, then language — and nothing at all for an empty meta', () => {
+    const chips = audioMetaChips({ durationSeconds: 45, language: 'es', languageProbability: 0.98 });
+    expect(chips.map((c) => c.label)).toEqual(['1 min de audio', 'español · 98% de certeza']);
+    expect(audioMetaChips(null)).toEqual([]);
+  });
+
+  it('every chip carries an explanation, so none of them is a bare number', () => {
+    for (const chip of audioMetaChips({ durationSeconds: 600, language: 'en', languageProbability: 0.7 })) {
+      expect(chip.title.length).toBeGreaterThan(10);
+    }
+  });
+});
+
+describe('uploadInFlightCopy', () => {
+  it('warns, while an audio upload is going up, that the long part comes after', () => {
+    const copy = uploadInFlightCopy(true);
+    expect(copy.title).toMatch(/grabación/i);
+    expect(copy.message).toMatch(/lo que dura la grabación/i);
+  });
+
+  it('🔴 never promises audio will be quick', () => {
+    expect(uploadInFlightCopy(true).message).not.toMatch(IMPLIES_ALMOST_DONE);
+    expect(uploadInFlightCopy(true).title).not.toMatch(IMPLIES_ALMOST_DONE);
+  });
+
+  it('is visibly a different message from the document one', () => {
+    const audio = uploadInFlightCopy(true);
+    const doc = uploadInFlightCopy(false);
+    expect(audio.title).not.toBe(doc.title);
+    expect(audio.message).not.toBe(doc.message);
+    // A PDF genuinely is quick; only that branch is allowed to say so.
+    expect(doc.message).toMatch(/poco/i);
+  });
+});
+
+describe('transcriptStatsCopy', () => {
+  it('counts words, singular and plural', () => {
+    expect(transcriptStatsCopy('hola')).toBe('1 palabra');
+    expect(transcriptStatsCopy('  hola   qué   tal ')).toBe('3 palabras');
+  });
+
+  it('says nothing rather than "0 palabras" when there is no text', () => {
+    for (const empty of ['', '   ', null, undefined]) {
+      expect(transcriptStatsCopy(empty)).toBeNull();
+    }
+  });
+});
+
+describe('transcriptReadyCallToAction', () => {
+  const base = { kind: 'audio' as const, ingestStatus: 'ready' as const, publicationStatus: 'draft' };
+
+  it('🔴 tells the user the last step is theirs: a ready transcript is still private', () => {
+    const cta = transcriptReadyCallToAction(base)!;
+    expect(cta).toMatch(/solo tú/i);
+    expect(cta).toMatch(/publíc/i);
+    expect(cta).toMatch(/ecosistema/i);
+  });
+
+  it('points at reviewing BEFORE publishing — the text is machine-made', () => {
+    expect(transcriptReadyCallToAction(base)).toMatch(/revísala/i);
+  });
+
+  it('stays quiet until the transcript actually exists', () => {
+    for (const status of ['pending', 'transcribing', 'transcribed', 'embedding', 'failed'] as const) {
+      expect(transcriptReadyCallToAction({ ...base, ingestStatus: status })).toBeNull();
+    }
+  });
+
+  it('stays quiet once there is nothing left to do', () => {
+    for (const pub of ['published', 'publishing', 'failed']) {
+      expect(transcriptReadyCallToAction({ ...base, publicationStatus: pub })).toBeNull();
+    }
+  });
+
+  it('never fires for a document that is not a transcript', () => {
+    for (const kind of ['pdf', 'docx', 'markdown'] as const) {
+      expect(transcriptReadyCallToAction({ ...base, kind })).toBeNull();
+    }
+  });
+});
+
+describe('the transcript-review copy', () => {
+  it('says the transcript can be wrong, wherever it is shown', () => {
+    expect(TRANSCRIPT_PROVENANCE_TOOLTIP).toMatch(/errores/i);
+    expect(TRANSCRIPT_REVIEW_PROMPT).toMatch(/lé[ea]la/i);
+  });
+
+  it('labels the two preview states differently, so the toggle reads as a toggle', () => {
+    expect(TRANSCRIPT_PREVIEW_SHOW).not.toBe(TRANSCRIPT_PREVIEW_HIDE);
+    expect(TRANSCRIPT_PREVIEW_SHOW).toMatch(/transcripción/i);
+  });
+
+  it('does not imply a missing transcript was lost', () => {
+    expect(TRANSCRIPT_UNAVAILABLE).not.toMatch(/error|falló|perdi/i);
+  });
+});
+
+describe('transcriptReviewPrompt', () => {
+  it('asks for a read while the transcript is still a private draft', () => {
+    expect(transcriptReviewPrompt('draft')).toBe(TRANSCRIPT_REVIEW_PROMPT);
+  });
+
+  it('stops asking once it is shared — advice about a step already taken is noise', () => {
+    for (const status of ['published', 'publishing', 'failed']) {
+      expect(transcriptReviewPrompt(status)).toBeNull();
+    }
   });
 });
