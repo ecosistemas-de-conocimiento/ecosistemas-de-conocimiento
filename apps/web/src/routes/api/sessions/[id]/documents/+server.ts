@@ -5,7 +5,15 @@ import { mapUpstreamMediaError } from '$lib/server/documents';
 import { degradeListResponse } from '$lib/server/degrade';
 import { isAudioUpload, maxUploadBytesFor } from '$lib/config';
 
-// GET /api/sessions/[id]/documents → all docs for this session.
+// GET /api/sessions/[id]/documents → all docs attached to this session.
+//
+// ⚠ `documents.session` is a `hasMany` relationship — one document can be
+// attached to several conversations at once. `where[session][equals]` reads as
+// "this conversation is somewhere in that list", which is exactly what we
+// want: the panel shows what is attached HERE, and the same row may also be
+// showing in another conversation's panel. Nothing is duplicated and nothing
+// is moved; see `documents/[docId]` for attach/detach.
+//
 // Fragile read: degrade a 403/transient backend failure to an empty list.
 export const GET: RequestHandler = async ({ locals, params }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
@@ -145,7 +153,12 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     const docRes = await backendFetch(locals.token, '/api/documents', {
       method: 'POST',
       body: JSON.stringify({
-        session: sessionId,
+        // ⚠ AN ARRAY, ALWAYS. `documents.session` is a `hasMany` relationship:
+        // one document can hang off several conversations. Creating one still
+        // attaches it to exactly ONE — the conversation it was uploaded into —
+        // but the wire shape is the list, not the scalar. See the sibling
+        // `documents/[docId]` route for how the list grows and shrinks.
+        session: [sessionId],
         kind,
         mode: 'rag-retrieve',
         name,
@@ -174,7 +187,8 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   const res = await backendFetch(locals.token, '/api/documents', {
     method: 'POST',
     body: JSON.stringify({
-      session: sessionId,
+      // ⚠ An array — see the multipart branch above. Same `hasMany` field.
+      session: [sessionId],
       kind: body.kind ?? 'markdown',
       mode: body.mode ?? 'full-text',
       name: body.name ?? 'Untitled document',

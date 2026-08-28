@@ -57,6 +57,19 @@ const run = () =>
 
 const wireArgs = (): Record<string, unknown> => enqueue.mock.calls[0]![0]
 
+/**
+ * ⚠ FIND THE UPDATE BY WHAT IT CARRIES, NOT BY ITS INDEX.
+ *
+ * The anonymisation gate writes the row's `anonymisationStatus` before the
+ * ingest ever starts (`n/a` for an ordinary `documento`), so the enqueue's own
+ * writes are no longer the first two. These assertions are about ORDER between
+ * two specific writes, not about their absolute position, and pinning them to
+ * `updates[0]` / `updates[1]` made a correct change look like a regression.
+ */
+const indexOfUpdate = (key: string): number =>
+  updates.findIndex((u) => Object.prototype.hasOwnProperty.call(
+    (u.data ?? {}) as Record<string, unknown>, key))
+
 beforeEach(() => {
   enqueue.mockClear()
   updates.length = 0
@@ -86,8 +99,11 @@ describe('enqueue with callbacks configured', () => {
     // hangs, otherwise a stuck upload looks like nothing ever happened.
     await run()
 
-    expect(updates[0]).toMatchObject({ data: { ingestStatus: 'embedding' } })
-    expect(updates[1]).toMatchObject({ data: { ingestId: 'ing_test_1' } })
+    const embeddingAt = indexOfUpdate('ingestStatus')
+    const ingestIdAt = indexOfUpdate('ingestId')
+    expect(updates[embeddingAt]).toMatchObject({ data: { ingestStatus: 'embedding' } })
+    expect(updates[ingestIdAt]).toMatchObject({ data: { ingestId: 'ing_test_1' } })
+    expect(embeddingAt).toBeLessThan(ingestIdAt)
     // Never flipped to a done state on the 202 — only the callback may do that.
     expect(JSON.stringify(updates)).not.toContain('ready')
   })
@@ -114,7 +130,9 @@ describe('enqueue with callbacks misconfigured — degrade, do not break ingesti
     expect(wireArgs()).not.toHaveProperty('callbackUrl')
     // The document is still enqueued and still gets embedded upstream.
     expect(wireArgs().corpus).toBe('eco-10-draft-3')
-    expect(updates[1]).toMatchObject({ data: { ingestId: 'ing_test_1' } })
+    expect(updates[indexOfUpdate('ingestId')]).toMatchObject({
+      data: { ingestId: 'ing_test_1' },
+    })
   })
 
   it('warns at the call site naming what is missing', async () => {

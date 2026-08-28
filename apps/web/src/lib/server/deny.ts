@@ -51,12 +51,33 @@ export interface NotFoundInput {
  */
 export function denyAccess(input: DenyAccessInput): never {
   throw error(403, {
-    message: input.message ?? "You don't have access to this.",
+    message:
+      input.message ??
+      'No tienes acceso a esto. Si crees que sí deberías tenerlo, pídeselo a quien administra tu ecosistema.',
     kind: 'access-denied',
     module: input.module,
     reason: input.reason,
     cta: input.cta,
   });
+}
+
+/**
+ * `entity` is a MACHINE word — it also becomes `module`, which logs and
+ * analytics group on, so it stays English and stable. Spanish copy needs a
+ * gendered noun phrase instead ("esa conversación", not "ese conversación"),
+ * hence this table. An unmapped entity falls back to a phrase that works
+ * without one, rather than printing the machine word at the user.
+ */
+const ENTITY_COPY: Record<string, string> = {
+  page: 'esa página',
+  chat: 'esa conversación',
+  session: 'esa conversación',
+  document: 'ese documento',
+  ecosystem: 'ese ecosistema',
+};
+
+function entityCopy(entity: string): string {
+  return ENTITY_COPY[entity] ?? 'lo que buscas';
 }
 
 /**
@@ -67,7 +88,7 @@ export function denyAccess(input: DenyAccessInput): never {
 export function notFound(input: NotFoundInput = {}): never {
   const entity = input.entity ?? 'page';
   throw error(404, {
-    message: input.message ?? `We couldn't find that ${entity}.`,
+    message: input.message ?? `No encontramos ${entityCopy(entity)}. Puede que se haya borrado, o que el enlace esté incompleto.`,
     kind: 'not-found',
     module: input.module ?? entity,
     cta: input.cta,

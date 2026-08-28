@@ -1,0 +1,266 @@
+<svelte:options runes={true} />
+
+<script lang="ts">
+  /**
+   * `/biblioteca/[id]` — read one published document or voz.
+   *
+   * 🔴 OPENING THIS IS NOT A NEW PERMISSION. "Publicado" already means "shared
+   * with everyone in this ecosistema"; a member reading one is what publishing
+   * was for. The check that it really is published, and really belongs to THIS
+   * ecosistema, happens server-side on the row itself
+   * (`isLibraryVisible`) — never here, and never by trusting the backend's own
+   * access rule, which is more generous than this page.
+   *
+   * 🔴 A TESTIMONIO HAS NO AUTHOR LINE, AND NOT BECAUSE THIS FILE HIDES ONE.
+   * The server does not send a name for one, so there is nothing here to
+   * render. The page says so out loud instead: an unexplained absence reads as
+   * missing data and sends people looking for the person.
+   */
+  import { page } from '$app/stores';
+  import {
+    formatLibraryDate,
+    isTestimony,
+    kindLabel,
+    LIBRARY_TRANSCRIPT_NOTE,
+    TESTIMONY_ANONYMITY_NOTE,
+    textStatsCopy,
+    type LibraryDocument,
+  } from '$lib/biblioteca';
+  import { audioMetaChips } from '$lib/ingest';
+  import type { AudioMeta } from '$lib/types';
+
+  let doc = $state<LibraryDocument | null>(null);
+  let ecosystemName = $state<string | null>(null);
+  let viewState = $state<'loading' | 'ready' | 'not-found' | 'unavailable'>('loading');
+
+  const id = $derived($page.params.id ?? '');
+
+  $effect(() => {
+    const target = id;
+    let cancelled = false;
+    viewState = 'loading';
+    fetch(`/api/biblioteca/${encodeURIComponent(target)}`, { credentials: 'same-origin' })
+      .then(async (res) => {
+        if (cancelled) return;
+        if (res.status === 404) {
+          viewState = 'not-found';
+          return;
+        }
+        if (!res.ok) {
+          viewState = 'unavailable';
+          return;
+        }
+        const body = (await res.json()) as {
+          doc: LibraryDocument;
+          ecosystem: { name: string } | null;
+        };
+        doc = body.doc;
+        ecosystemName = body.ecosystem?.name ?? null;
+        viewState = 'ready';
+      })
+      .catch(() => {
+        if (!cancelled) viewState = 'unavailable';
+      });
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  const label = $derived(doc ? kindLabel(doc.kind) : null);
+  const voice = $derived(doc ? isTestimony(doc.kind) : false);
+  /** A transcript is machine-written whether it is a voz or an ordinary audio. */
+  const machineWritten = $derived(doc ? doc.kind === 'audio' || doc.kind === 'testimonio' : false);
+</script>
+
+<svelte:head><title>{doc?.title ?? 'Biblioteca'} · Ecosistemas de Conocimiento</title></svelte:head>
+
+<div class="page text-ink">
+  <header class="head">
+    <a class="back" href="/biblioteca" data-interactive>← Biblioteca</a>
+  </header>
+
+  {#if viewState === 'loading'}
+    <p class="notice">Cargando…</p>
+  {:else if viewState === 'not-found'}
+    <!-- ⚠ One message for three different situations — no such document, not
+         published, not this ecosistema. Distinguishing them would confirm that
+         an id exists somewhere the reader cannot go. -->
+    <div class="empty">
+      <p class="empty-title">No encontramos esta publicación.</p>
+      <p class="notice">
+        Puede que ya no exista, o que no esté publicada en tu ecosistema. Solo aparece aquí
+        lo que alguien compartió con todo el ecosistema.
+      </p>
+    </div>
+  {:else if viewState === 'unavailable'}
+    <p class="notice">No pudimos abrir esta publicación en este momento. Inténtalo en un rato.</p>
+  {:else if doc && label}
+    <article>
+      <div class="card-top">
+        <span class="kind kind-{label.tone}" title={label.description}>{label.label}</span>
+        <span class="date">{formatLibraryDate(doc.createdAt)}</span>
+      </div>
+      <h1>{doc.title}</h1>
+      <p class="sub">{label.description}</p>
+
+      <div class="meta">
+        {#if voice}
+          <!-- 🔴 The anonymity is STATED. See the header. -->
+          <span class="anon">{TESTIMONY_ANONYMITY_NOTE}</span>
+        {:else if doc.contributor}
+          <span>Compartido por {doc.contributor}</span>
+        {/if}
+        {#if ecosystemName}
+          <span>Publicado en {ecosystemName}</span>
+        {/if}
+        {#if textStatsCopy(doc.text)}
+          <span>{textStatsCopy(doc.text)}</span>
+        {/if}
+      </div>
+
+      {#if doc.kind === 'audio'}
+        <div class="meta">
+          {#each audioMetaChips(doc.audioMeta as AudioMeta | null) as chip (chip.label)}
+            <span class="chip" title={chip.title}>{chip.label}</span>
+          {/each}
+        </div>
+      {/if}
+
+      {#if machineWritten}
+        <!-- 🔴 THE ASR LABEL, ON THE PAGE AND NOT IN A TOOLTIP. This text is
+             quoted as fact by the assistant to people who never heard the
+             recording. Saying a machine wrote it is the agreed price of
+             accepting transcripts as first-class sources — the same string the
+             uploader saw before they published it. -->
+        <p class="provenance">{LIBRARY_TRANSCRIPT_NOTE}</p>
+      {/if}
+
+      {#if doc.text.trim()}
+        <!-- Plain text, not Markdown: a transcript has no markup, and rendering
+             it as Markdown would let a stray `#` or `*` reshape what was said. -->
+        <p class="body" data-testid="library-document-text">{doc.text}</p>
+      {:else}
+        <p class="notice">Esta publicación no tiene texto para mostrar.</p>
+      {/if}
+    </article>
+  {/if}
+</div>
+
+<style>
+  .page {
+    min-height: 100vh;
+    max-width: 46rem;
+    margin: 0 auto;
+    padding: var(--edc-space-6) var(--edc-space-5) var(--edc-space-8);
+    display: grid;
+    gap: var(--edc-space-4);
+    align-content: start;
+  }
+  .head {
+    display: flex;
+    justify-content: flex-start;
+  }
+  .back {
+    padding: 0.4rem 0.85rem;
+    border-radius: var(--edc-radius-2);
+    border: 1px solid var(--edc-color-neutral-outline);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-decoration: none;
+    color: var(--edc-color-ink-soft);
+  }
+  .back:hover {
+    color: var(--edc-color-ink);
+    background: var(--edc-color-neutral-soft);
+  }
+  .card-top {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  h1 {
+    margin: 0.4rem 0 0.2rem;
+    font-family: var(--edc-font-display);
+    font-size: 1.6rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--edc-color-ink);
+  }
+  .sub {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--edc-color-ink-soft);
+  }
+  .meta {
+    margin: 0.6rem 0 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    font-size: 0.75rem;
+    color: var(--edc-color-ink-soft);
+  }
+  .anon {
+    font-style: italic;
+  }
+  .kind {
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--edc-radius-pill);
+    border: 1px solid var(--edc-color-elevated-border);
+    font-size: 0.68rem;
+    font-weight: 700;
+  }
+  .kind-voice {
+    border-color: var(--edc-color-accent-outline);
+    background: var(--edc-color-accent-soft);
+    color: var(--edc-color-accent-strong);
+  }
+  .kind-document {
+    background: var(--edc-color-surface-soft);
+    color: var(--edc-color-ink-soft);
+  }
+  .chip {
+    padding: 0.05rem 0.35rem;
+    border-radius: var(--edc-radius-1);
+    border: 1px solid var(--edc-color-elevated-border);
+    background: var(--edc-color-surface-soft);
+  }
+  .provenance {
+    margin: 0.9rem 0 0;
+    padding: 0.5rem 0.7rem;
+    border-radius: var(--edc-radius-2);
+    border: 1px solid var(--edc-color-warning-outline);
+    background: var(--edc-color-warning-soft);
+    color: var(--edc-color-ink);
+    font-size: 0.78rem;
+    line-height: 1.5;
+  }
+  .body {
+    margin: 1rem 0 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.7;
+    font-size: 0.92rem;
+    color: var(--edc-color-ink-body);
+  }
+  .notice {
+    margin: 0;
+    padding: 0.7rem 0.85rem;
+    border-radius: var(--edc-radius-2);
+    border: 1px solid var(--edc-color-elevated-border);
+    background: var(--edc-color-surface-soft);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: var(--edc-color-ink-body);
+  }
+  .empty {
+    display: grid;
+    gap: 0.5rem;
+    text-align: center;
+    padding: 1.5rem 0;
+  }
+  .empty-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+  }
+</style>

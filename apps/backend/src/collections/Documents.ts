@@ -10,8 +10,23 @@ import type {
 import { ValidationError } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
+import { ANONYMISATION_STATES } from '../lib/anonymiseDocument'
+import {
+  CONTENT_KINDS,
+  chunkMetadata,
+  contentKindOf,
+  titleFor,
+  DEFAULT_CONTENT_KIND,
+  isContentKind,
+  type ContentKind,
+} from '../lib/contentKind'
 import { assertSessionOwnedBy, SessionNotOwnedError } from '../lib/corpus'
-import { organizationIdsForUser, relationId } from '../lib/permissions'
+import {
+  organizationIdsForUser,
+  organizationIdsForUserWithPermission,
+  PERMISSIONS,
+  relationId,
+} from '../lib/permissions'
 import {
   beginPublish,
   NotPublishableError,
@@ -108,6 +123,21 @@ export const visibleToCaller: Access = async ({ req }) => {
 
 /** Only the uploader edits or removes a document. */
 /** Admin-panel labels. Exhaustive by type, so a new state forces a label. */
+/** Admin-panel labels. Exhaustive by type, so a new content kind forces one. */
+const CONTENT_KIND_LABELS: Record<ContentKind, string> = {
+  documento: 'Documento — una fuente subida por su autor',
+  testimonio: 'Testimonio (Voz) — palabras de otra persona, siempre anónimas',
+  conversacion: 'Conversación — un turno de chat ingerido al corpus',
+}
+
+/** Admin-panel labels for the gate's states. See the field for what they mean. */
+const ANONYMISATION_LABELS: Record<(typeof ANONYMISATION_STATES)[number], string> = {
+  'n/a': 'N/A — not gated content',
+  pending: 'Pending — the gate is running',
+  held: 'HELD — refused, not ingested',
+  ready: 'Ready — cleared the gate',
+}
+
 const PUBLICATION_LABELS: Record<PublicationState, string> = {
   draft: 'Draft — only you can see it',
   publishing: 'Publishing…',
@@ -195,27 +225,95 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
     }
   }
 
-  // On update Payload sends only what changed, so fall back to the stored row.
-  const sessionId = resolveId(next.session ?? original.session)
+  const sessionError = (message: string): ValidationError =>
+    new ValidationError({
+      collection: 'documents',
+      errors: [{ path: 'session', message }],
+      req,
+    })
 
-  if (sessionId != null) {
-    try {
-      const { organizationId } = await assertSessionOwnedBy(req.payload, sessionId, user.id)
-      next.session = sessionId
+  // On update Payload sends only what changed, so fall back to the stored row.
+  //
+  // ⚠ `session` IS PLURAL NOW, and the wire shape is not: Payload hands this
+  // hook a scalar id, an array, populated objects, or nulls, depending on
+  // whether the write came from the REST API, the admin panel or a
+  // `payload.update` call. Normalise before deciding anything.
+  const sessionIds = resolveIdList(next.session ?? original.session)
+
+  if (sessionIds.length > 0) {
+    // ⚠ EVERY id is checked. A single unowned session anywhere in the list is
+    // the same injection this hook exists to stop — see the header. Checking
+    // only the first, or only the ones that are new, would leave the hole open
+    // for the price of one extra array element.
+    let organizationId: string | number | null = null
+    let sawOne = false
+
+    for (const sessionId of sessionIds) {
+      let resolved: string | number | null
+      try {
+        ;({ organizationId: resolved } = await assertSessionOwnedBy(
+          req.payload,
+          sessionId,
+          user.id,
+        ))
+      } catch (err) {
+        if (err instanceof SessionNotOwnedError) throw sessionError(err.message)
+        throw err
+      }
+
+      // 🔴 ONE DOCUMENT, ONE ECOSISTEMA. `organization` is half of every corpus
+      // name this document touches, so a document attached to conversations in
+      // two ecosistemas has no single correct answer — and whichever one we
+      // picked, the other ecosistema's members would be chatting against a
+      // document filed under someone else's tenant.
+      if (!sawOne) {
+        organizationId = resolved
+        sawOne = true
+      } else if (String(organizationId ?? '') !== String(resolved ?? '')) {
+        throw sessionError(
+          'These conversations belong to different ecosistemas, so one document cannot be attached to both.',
+        )
+      }
+    }
+
+    next.session = sessionIds
+
+    if (operation === 'create') {
       // ⚠ The ecosistema is DERIVED, never accepted from the body. A
       // client-supplied `organization` would let a document be filed under a
       // tenant it does not belong to — and then published into that tenant's
       // shared corpus.
-      if (organizationId != null) next.organization = organizationId
-    } catch (err) {
-      if (err instanceof SessionNotOwnedError) {
-        throw new ValidationError({
-          collection: 'documents',
-          errors: [{ path: 'session', message: err.message }],
-          req,
-        })
+      if (organizationId != null) {
+        next.organization = organizationId
+      } else {
+        // A conversation with no ecosistema derives nothing. Drop whatever the
+        // body sent rather than letting it stand in: `organization` is
+        // `required: true`, so this fails the write with a readable error
+        // instead of filing the document under a tenant the caller chose.
+        delete next.organization
       }
-      throw err
+    } else {
+      // 🔴 THE TWO-STEP ATTACK, CLOSED. `organization` is immutable, so
+      // attaching a conversation from ANOTHER ecosistema to an existing
+      // document must be refused outright — silently pinning the old value
+      // would leave the row attached to a conversation whose members are not in
+      // its ecosistema, and the frontend would then retrieve across the
+      // boundary.
+      //
+      // A conversation with no ecosistema (`resolved === null`) carries no
+      // tenant to disagree with, and `organization` is pinned below regardless,
+      // so it cannot smuggle anything.
+      const storedOrganizationId = resolveId(original.organization)
+      if (
+        organizationId != null &&
+        storedOrganizationId != null &&
+        String(organizationId) !== String(storedOrganizationId)
+      ) {
+        throw sessionError(
+          'That conversation belongs to a different ecosistema than this document.',
+        )
+      }
+      next.organization = original.organization
     }
   } else if (operation === 'create') {
     // No session — an upload straight into the ecosistema, with no conversation
@@ -244,22 +342,157 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
     next.organization = original.organization
   }
 
+  // ⚠ LAST, because it needs the ecosistema this hook just derived. A permission
+  // is held IN an organization, so the check is meaningless before we know which
+  // one the row belongs to.
+  await enforceVocesUploadRights({ next, original, operation, req })
+
   return next
+}
+
+/**
+ * 🔴 WHO MAY FILE SOMEBODY ELSE'S WORDS.
+ *
+ * A `testimonio` — a Voz — is not the uploader's own material. It is a person's
+ * testimony, collected offline by an Investigador and filed under the
+ * Investigador's `uploadedBy`. Every one of them goes through the anonymisation
+ * gate and lands in the ecosistema's shared corpus as an anonymous voice.
+ *
+ * That is a different act from uploading a PDF you own, so it needs its own
+ * permission (`voces:upload`, held by Investigador and up) rather than riding on
+ * `documents:write`. A participant who set `contentKind: 'testimonio'` in a
+ * request body would otherwise be publishing an unattributable document into the
+ * shared corpus of their ecosistema.
+ *
+ * ⚠ `contentKind` IS IMMUTABLE AFTER CREATION, and that is the other half of the
+ * rule. Without it the check is a formality: create a `documento`, then PATCH it
+ * to `testimonio` and the gate has already been skipped, because the gate runs
+ * on the ingest that already happened. Worse, the ingested chunk would keep
+ * saying `kind: 'documento'` while the row claimed otherwise — and the chunk is
+ * the copy retrieval actually reads.
+ *
+ * ⚠ `conversacion` is NEVER accepted from a request body at all. Conversation
+ * chunks are produced by `lib/conversationIngest.ts` from `messages` rows; a
+ * `documents` row claiming to be one would be a hand-written chunk wearing the
+ * "this came from a previous answer" label that citations trust.
+ */
+async function enforceVocesUploadRights(args: {
+  next: Record<string, unknown>
+  original: Record<string, unknown>
+  operation: string
+  req: Parameters<CollectionBeforeValidateHook>[0]['req']
+}): Promise<void> {
+  const { next, original, operation, req } = args
+  const user = req.user
+  if (!user) return
+
+  const refuse = (message: string): never => {
+    throw new ValidationError({
+      collection: 'documents',
+      errors: [{ path: 'contentKind', message }],
+      req,
+    })
+  }
+
+  if (operation !== 'create') {
+    // Pinned to the stored value, not deleted — `contentKind` is `required`, and
+    // deleting the key fails validation on every PATCH. Same shape and same
+    // reason as `publicationStatus` above.
+    if (isContentKind(original.contentKind)) {
+      next.contentKind = original.contentKind
+      return
+    }
+    /**
+     * ⚠ NO STORED VALUE TO PIN TO. Payload merges the incoming body over the
+     * stored row BEFORE `beforeValidate`, so on a real update `next` already
+     * carries the row's own `contentKind` even when no `originalDoc` was handed
+     * to the hook. Falling back to it keeps ordinary edits working.
+     *
+     * 🔴 WHAT IT MUST NOT DO IS FALL BACK TO `documento`. That was the previous
+     * behaviour and it is fail-OPEN in the worst place in the design: a
+     * testimony silently reclassified as an ungated document makes
+     * `corpusTextFor` select `extractedText` instead of `redactedText`, and the
+     * next publish promotes the unredacted original into the shared corpus.
+     * With neither a stored value nor a usable merged one, we do not know what
+     * this row is — and "we do not know" resolves to "not yet", like every other
+     * uncertainty here.
+     */
+    if (isContentKind(next.contentKind)) return
+    // Neither side holds a readable kind. Write NOTHING and let the column keep
+    // whatever it has: this hook's job is to stop a client CHANGING the value,
+    // not to invent one. `contentKind` is a NOT NULL enum, so the database is
+    // the backstop, and the ingest and publish paths read the kind off the
+    // stored row rather than from anything decided here.
+    delete next.contentKind
+    return
+  }
+
+  const declared = isContentKind(next.contentKind) ? next.contentKind : DEFAULT_CONTENT_KIND
+  next.contentKind = declared
+
+  if (declared === 'documento') return
+
+  if (declared === 'conversacion') {
+    refuse(
+      'Las conversaciones entran al corpus solas, desde el chat. No se pueden subir como documento.',
+    )
+  }
+
+  if (isPlatformAdminUser(user)) return
+
+  const organizationId = relationId(next.organization)
+  if (organizationId === null) {
+    refuse('No se puede registrar una Voz sin saber a qué ecosistema pertenece.')
+  }
+
+  const allowed = await organizationIdsForUserWithPermission(
+    req.payload,
+    user.id,
+    PERMISSIONS.vocesUpload,
+  )
+  if (!allowed.some((id) => String(id) === String(organizationId))) {
+    refuse(
+      'Solo una persona con el rol de Investigador puede registrar una Voz en este ecosistema.',
+    )
+  }
 }
 
 interface DocumentRow {
   id: number | string
   kind?: string | null
   /**
-   * 🔴 WHAT the document is, and therefore a PRIVACY CONTROL. The corpus
-   * graph's person rule and its snippet rule both key off this column and
-   * nothing else — see the field definition below and
-   * `plan/adr-corpus-graph.md` §5.3, §7.3.4.
+   * ⚠ NOT `kind`. `kind` is the FILE FORMAT (pdf/docx/audio/markdown);
+   * `contentKind` is what the material IS (documento/testimonio/conversacion).
+   * See `lib/contentKind.ts` — confusing the two is how a testimony gets
+   * ingested without passing the anonymisation gate.
+   *
+   * ⚠ THE CORPUS GRAPH KEYS ITS PERSON RULE OFF THIS COLUMN TOO, so it is a
+   * privacy control for two features now, not one. A `testimonio` never
+   * produces `persona` entity nodes and never stores a snippet. That rule is
+   * a column lookup precisely so it can be audited rather than trusted —
+   * "is this a testimony?" is a SELECT, where "is this person public?" is a
+   * question to a model that fails open. See `lib/graph/` and
+   * `plan/adr-corpus-graph.md` §5.3.
    */
   contentKind?: string | null
+  /** The gate's output. The ONLY text a gated document is ever embedded from. */
+  redactedText?: string | null
+  anonymisationStatus?: string | null
   mode?: string | null
   name?: string | null
-  session?: number | string | { id: number | string } | null
+  /**
+   * ⚠ PLURAL. A document can be attached to several conversations at once —
+   * attaching SHARES it, it never moves it. Payload returns an array for a
+   * `hasMany` relationship (populated rows at `depth >= 1`, bare ids at
+   * `depth: 0`); the scalar arm is only there for the half-built rows a hook
+   * can be handed mid-write. Use {@link resolveIdList}, never `resolveId`.
+   */
+  session?:
+    | (number | string | { id: number | string } | null)[]
+    | number
+    | string
+    | { id: number | string }
+    | null
   organization?: number | string | { id: number | string } | null
   uploadedBy?: number | string | { id: number | string } | null
   publicationStatus?: string | null
@@ -311,6 +544,34 @@ function resolveId(raw: unknown): string | number | null {
     return resolveId((raw as { id: unknown }).id)
   }
   return null
+}
+
+/**
+ * Normalise a `hasMany` relationship value into a deduped list of ids.
+ *
+ * ⚠ A SINGLE FIELD, FIVE WIRE SHAPES. `documents.session` reaches this code as
+ * a bare id (a REST body written by hand, or a row from before it went plural),
+ * an array of ids (`depth: 0`), an array of populated rows (`depth >= 1`), a
+ * lone populated row, or null. Reading it with `resolveId` alone quietly
+ * returns null for every array form — which on this field would mean skipping
+ * the ownership check entirely.
+ *
+ * Nulls are dropped and duplicates collapse, compared as STRINGS so `1` and
+ * `'1'` are one session rather than two. Order is preserved.
+ */
+function resolveIdList(raw: unknown): (string | number)[] {
+  const items = Array.isArray(raw) ? raw : [raw]
+  const seen = new Set<string>()
+  const out: (string | number)[] = []
+  for (const item of items) {
+    const id = resolveId(item)
+    if (id == null) continue
+    const key = String(id)
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(id)
+  }
+  return out
 }
 
 /**
@@ -543,6 +804,31 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
   if (!fresh) return
   if (!INGESTABLE_KINDS.has(String(fresh.kind))) return
 
+  /**
+   * 🔴 A HELD ROW IS NOT RE-GATED BY AN ORDINARY SAVE.
+   *
+   * `afterChange` fires on every update, and the only other guard here is
+   * `if (fresh.ingestId)` — which a held document never has, because it never
+   * reached the enqueue. So RENAMING a held testimony used to re-run the whole
+   * gate: two more model calls, billed, and — because the detector IS a model —
+   * a chance of a DIFFERENT verdict. Rename it enough times and one of those
+   * runs comes back `ready`. That is an "ingest anyway" button nobody meant to
+   * build, and it made the header's promise ("re-running it will say no again")
+   * a claim the code did not keep.
+   *
+   * ⚠ The way out is `POST /api/documents/:id/retry`, which clears
+   * `anonymisationStatus` deliberately. One explicit path, not a side effect of
+   * editing a field.
+   */
+  if (fresh.anonymisationStatus === 'held') {
+    console.warn(
+      '[documents] doc',
+      docId,
+      'is HELD by the anonymisation gate — skipping. Use POST /api/documents/:id/retry to re-run it.',
+    )
+    return
+  }
+
   // ⚠ The corpus is keyed on (ecosistema, uploader), NOT on the session. A
   // document outlives the conversation it was uploaded into, and drafts are
   // private to their uploader rather than to a thread.
@@ -647,13 +933,7 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
   //
   //    🔴 FIRE-AND-FORGET, AND IT NEVER AFFECTS THIS FUNCTION'S OUTCOME. See
   //    `lib/graph/schedule.ts`: it arms a `setImmediate` and returns.
-  await scheduleGraphExtractionForDoc({
-    payload,
-    docId,
-    organizationId,
-    fresh,
-    extractedText,
-  })
+  await scheduleGraphExtractionForDoc({ payload, docId, organizationId, fresh })
 }
 
 /**
@@ -674,11 +954,60 @@ export async function scheduleGraphExtractionForDoc(args: {
   docId: string | number
   organizationId: string | number
   fresh: Pick<DocumentRow, 'name' | 'contentKind'>
-  extractedText: string
 }): Promise<void> {
-  const { payload, docId, organizationId, fresh, extractedText } = args
+  const { payload, docId, organizationId, fresh } = args
   try {
+    const { corpusTextFor } = await import('@/lib/anonymiseDocument')
     const { scheduleGraphExtraction } = await import('@/lib/graph/schedule')
+
+    /**
+     * 🔴 THE GRAPH READS THE SAME TEXT THE CORPUS GOT. NOT `extractedText`.
+     *
+     * This is the single most important line in the graph pipeline, and it used
+     * to be wrong. Callers have `extractedText` in hand and passing it here is
+     * the obvious thing to do — but for a `testimonio` that is the RAW,
+     * UN-SCRUBBED transcript. Extracting entities from it would put the names,
+     * places and organisations the anonymisation gate exists to remove into
+     * `graph_entities`, in a queryable table, permanently.
+     *
+     * The person rule would NOT have saved us: it only blocks `persona` nodes.
+     * A `lugar` and an `organizacion` from an un-scrubbed Voz identify someone
+     * just as well in a small ecosistema — which is the whole premise of the
+     * minimum-support threshold.
+     *
+     * `corpusTextFor` is the same helper `lib/publishDocument.ts` embeds from,
+     * so the graph and the corpus can never disagree about what a document
+     * says. It FAILS CLOSED: a gated document whose scrub has not cleared has
+     * no text to give, and we skip rather than reach for the original.
+     *
+     * ⚠ Ordering makes this safe: the gate runs and persists `redactedText`
+     * synchronously inside `enqueueIngestForDoc`, which every caller awaits
+     * before reaching here.
+     */
+    const row = (await payload.findByID({
+      collection: 'documents',
+      id: docId as never,
+      depth: 0,
+      overrideAccess: true,
+    })) as { contentKind?: unknown; extractedText?: unknown; redactedText?: unknown }
+
+    const corpusText = corpusTextFor(row)
+    if (!corpusText.ok) {
+      // Not a failure — a document we deliberately do not graph. `skipped` is
+      // terminal and truthful; `failed` would invite a retry that cannot help.
+      await payload.update({
+        collection: 'documents',
+        id: docId as never,
+        data: {
+          graphStatus: 'skipped',
+          graphError: `not_graphable: ${corpusText.reason}`.slice(0, 500),
+        },
+        overrideAccess: true,
+        context: { __skipDocsExtract: true },
+      })
+      return
+    }
+
     await payload.update({
       collection: 'documents',
       id: docId as never,
@@ -695,8 +1024,15 @@ export async function scheduleGraphExtractionForDoc(args: {
       // value; defaulting here would turn that safe direction into the unsafe
       // one.
       contentKind: fresh.contentKind ?? null,
-      text: extractedText,
-      title: fresh.name ?? null,
+      text: corpusText.text,
+      /**
+       * 🔴 NEVER `documents.name` FOR GATED CONTENT. It is free text the
+       * uploader typed, it never went through the gate, and "Testimonio de
+       * María López.mp3" is the case `lib/contentKind.ts` records as having
+       * nearly reached the shared corpus. `titleFor` gives gated material a
+       * neutral title; the graph surfaces titles, so it needs the same rule.
+       */
+      title: titleFor(contentKindOf(fresh), fresh.name),
     })
   } catch (err) {
     console.error('[graph] could not schedule extraction for doc', docId, err)
@@ -716,15 +1052,78 @@ export async function enqueueIngestForDoc(args: {
   /** Who uploaded it. The other half — drafts are PRIVATE per person. */
   uploadedById: string | number
   /**
-   * ⚠ `contentKind` IS PART OF THIS SLICE, not an optional extra. It rides into
-   * ai-service chunk metadata below so a retrieve can filter on
-   * `{ contentKind: 'testimonio' }`, and the graph pipeline reads the same
-   * column as its privacy control.
+   * ⚠ `contentKind` IS PART OF THIS SLICE, not an optional extra. It decides
+   * whether the anonymisation gate runs, and the graph pipeline reads the
+   * same column as its privacy control.
    */
   fresh: Pick<DocumentRow, 'name' | 'kind' | 'contentKind'>
   extractedText: string
+  /** Test seam for the anonymisation gate's model call. */
+  detector?: import('@/lib/anonymise/types').PersonDetector
 }): Promise<void> {
   const { payload, docId, organizationId, uploadedById, fresh, extractedText } = args
+  const contentKind = contentKindOf(fresh)
+
+  /**
+   * 🔴 THE ANONYMISATION GATE, AT THE ONE POINT EVERY PATH CONVERGES ON.
+   *
+   * PDF/DOCX extraction, the audio transcript arriving on a webhook, and the
+   * manual retry all reach ai-service through this function and no other. Put
+   * the gate anywhere upstream and the audio path — the slow asynchronous one
+   * nobody watches — is the one that would get missed.
+   *
+   * ⚠ A HOLD RETURNS. It does not throw, and it does not fall through to a
+   * "degraded" ingest. There is no per-document delete at ai-service, so
+   * ingesting a testimony whose scrub we are not sure about is close to
+   * permanent. The row keeps its `extractedText` and its reason; nothing is
+   * lost, it is simply not embedded.
+   */
+  const { anonymiseDocumentText } = await import('@/lib/anonymiseDocument')
+  const gated = await anonymiseDocumentText({
+    payload,
+    docId,
+    contentKind,
+    text: extractedText,
+    ...(args.detector ? { detector: args.detector } : {}),
+    // ⚠ Empty on purpose for a testimony. The people a Voz names — the speaker,
+    // their family, an official — are not users of this system, so no roster we
+    // hold contains them. Testimony redaction rests on the content scrub.
+    roster: [],
+  })
+
+  if (!gated.ok) {
+    console.warn(
+      `[documents] doc ${docId} HELD at the ${gated.stage} stage of the anonymisation gate — not ingested.`,
+    )
+    /**
+     * 🔴 SAY SO ON `ingestStatus` TOO, OR THE USER WATCHES A SPINNER FOREVER.
+     *
+     * `anonymisationStatus: 'held'` is the truthful record and an operator can
+     * see it — but the row was left at `extracting` (or `transcribing`), which
+     * is a NON-TERMINAL state with nothing left to move it. That breaks this
+     * file's own rule and looks, to the person who uploaded a testimony,
+     * exactly like an upload that is still working.
+     *
+     * ⚠ `failed`, so `planIngestRetry` will accept it. A hold is not something
+     * to retry blindly — re-running the gate on identical bytes costs two model
+     * calls for the same answer — but the person may well fix the source and
+     * ask again, and `POST /:id/retry` is the ONE explicit path for that.
+     * `runExtractAndIngest` refuses to re-gate a held row on any other save.
+     */
+    await payload.update({
+      collection: 'documents',
+      id: docId as never,
+      data: {
+        ingestStatus: 'failed',
+        ingestError: `anonymisation_held: ${gated.stage}: ${gated.reason}`.slice(0, 500),
+      },
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+    return
+  }
+
+  const corpusText = gated.text
 
   // From the UI's POV, the wait between enqueue and the ai-service callback
   // *is* the embedding phase (ai-service workers chunk + embed + upsert).
@@ -786,32 +1185,30 @@ export async function enqueueIngestForDoc(args: {
       documents: [
         {
           id: String(docId),
-          text: extractedText,
-          title: fresh.name ?? 'Untitled document',
-          metadata: {
+          // 🔴 THE GATE'S OUTPUT, NEVER `extractedText`. For a `documento` they
+          // are the same string; for a `testimonio` they are not, and sending
+          // the wrong one embeds the unredacted original into a corpus that has
+          // no per-document delete.
+          text: corpusText,
+          // ⚠ `titleFor`, not `fresh.name`. The top-level title is not echoed
+          // back on retrieve, but it IS stored at ai-service — and for a
+          // testimony the uploader's filename is exactly the identifier the
+          // gate just spent two model calls removing from the body.
+          title: titleFor(contentKind, fresh.name),
+          /**
+           * ⚠ BUILT BY `chunkMetadata`, NOT INLINE. It is the same builder the
+           * publish move uses, which is what stops `kind` from being silently
+           * dropped when a document is re-embedded into the shared corpus. See
+           * `lib/contentKind.ts`.
+           */
+          metadata: chunkMetadata({
             docId: String(docId),
-            organizationId: String(organizationId),
-            kind: fresh.kind,
-            /**
-             * WHAT it is, next to `kind`'s HOW it arrived. Rides along so a
-             * retrieve can filter on `{ contentKind: 'testimonio' }` without an
-             * ai-service change — chunk metadata is jsonb behind a GIN
-             * `jsonb_path_ops` index, and consumer keys win the merge.
-             */
-            contentKind: fresh.contentKind ?? 'documento',
+            organizationId,
+            contentKind,
+            format: fresh.kind,
             publication: 'draft',
-            /**
-             * 🔴 THE CITATION'S HUMAN NAME. Without it `chat-engine` falls all
-             * the way back to the CORPUS NAME, and a source card in the UI reads
-             * "eco-1-draft-1" — internal plumbing shown to a user as if it were
-             * a document title.
-             *
-             * ⚠ The top-level `title` on the ingest document is NOT echoed back
-             * on retrieve; only `metadata` survives the round trip. So it has to
-             * be here as well, not instead.
-             */
-            title: fresh.name ?? 'Documento sin título',
-          },
+            title: fresh.name,
+          }),
         },
       ],
       /**
@@ -1228,15 +1625,36 @@ export const Documents: CollectionConfig = {
     },
     {
       /**
-       * Where it was uploaded. OPTIONAL: a document belongs to the ecosistema
-       * and to its uploader, not to a conversation, and it must outlive any
-       * conversation it happened to be attached to.
+       * 🔴 WHICH CONVERSATIONS THIS DOCUMENT IS ATTACHED TO. Plural, and
+       * OPTIONAL.
+       *
+       * ⚠ ATTACHING IS SHARING, NEVER MOVING. Adding a second conversation does
+       * not detach the first — the same document can be in as many
+       * conversations as its owner wants. That is what makes the retrieval rule
+       * ("a DRAFT is only searchable from the conversations it is attached to")
+       * expressible without ever hiding a document from a conversation that was
+       * already using it.
+       *
+       * ⚠ Still OPTIONAL, and the document still OUTLIVES every conversation it
+       * is attached to. A document belongs to the ecosistema and to its
+       * uploader; a conversation is only where it happened to be used. Deleting
+       * a session leaves the row standing with one fewer attachment — see the
+       * hooks note on `collections/Sessions.ts`.
+       *
+       * ⚠ EVERY attached conversation must belong to the caller AND to the SAME
+       * ecosistema as the document. Both are enforced in
+       * `bindDocumentToEcosystem`, not here — a `hasMany` relationship field
+       * validates the target rows exist, nothing more.
        */
       name: 'session',
       type: 'relationship',
       relationTo: 'sessions',
+      hasMany: true,
       index: true,
-      admin: { description: 'The conversation this was uploaded into, if any.' },
+      admin: {
+        description:
+          'The conversations this document is attached to, if any. Attaching shares it with another conversation; it never moves it out of the ones it is already in.',
+      },
     },
     {
       name: 'kind',
@@ -1258,32 +1676,107 @@ export const Documents: CollectionConfig = {
     },
     {
       /**
-       * 🔴 WHAT THIS DOCUMENT IS, as opposed to `kind`, which is HOW it arrived.
-       * `kind` is a file format (pdf/docx/audio/markdown); this is the content
-       * type, and it is a PRIVACY CONTROL, not a label.
+       * 🔴 WHAT THIS MATERIAL *IS* — as opposed to what file it arrived in.
        *
-       * The corpus graph's person rule keys off this column and nothing else:
-       * a `testimonio` never produces `persona` nodes. That rule is a column
-       * lookup precisely so it can be audited instead of trusted — asking a
-       * model "is this person public?" is unreliable and fails open, asking
-       * "is this document a testimony?" is a SELECT. See
-       * `plan/adr-corpus-graph.md` § 5.3.
+       *   documento    a source somebody uploaded under their own name
+       *   testimonio   a Voz: someone's words, filed by an Investigador
+       *   conversacion a chat turn ingested back into the corpus
        *
-       * ⚠ `testimonio` has no producer yet — it arrives with the Investigador
-       * role (`plan/anonimizacion-y-voces.md` §3.4), and `conversacion` arrives
-       * with conversation ingestion (§3.0). The values exist now so the graph's
-       * rules and the library's filters are written once rather than twice.
+       * ⚠ NOT `kind`, WHICH IS THE FILE FORMAT. A `testimonio` is usually
+       * `kind: 'audio'`; a `documento` is usually `kind: 'pdf'`. Reading one for
+       * the other is how a testimony reaches a corpus unscrubbed.
+       *
+       * ⚠ AND THE CORPUS GRAPH READS IT. The person rule and the snippet rule
+       * both key off this column and nothing else (`lib/graph/`). Changing its
+       * values or its semantics silently weakens both.
+       *
+       * ⚠ IMMUTABLE, and gated on `voces:upload` at creation — see
+       * `enforceVocesUploadRights`. It decides whether the anonymisation gate
+       * runs, and the gate runs at ingest time, so a value that could change
+       * afterwards would be a value that could be changed AFTER the gate was
+       * skipped.
+       *
+       * 🔴 THERE IS NO SUBJECT FIELD NEXT TO THIS ONE, AND THAT IS DELIBERATE.
+       * A testimony is anonymous, full stop. We do not store who it came from —
+       * not a name, not a code, not a hidden column. The Investigador knows
+       * offline; the system never does. A stored subject is a re-identification
+       * map, which is the exact thing the anonymisation design refuses to keep,
+       * just living in a column instead. There is no consent-level field either:
+       * one rule means no default for a bulk upload to get wrong.
        */
       name: 'contentKind',
       type: 'select',
       required: true,
-      defaultValue: 'documento',
+      defaultValue: DEFAULT_CONTENT_KIND,
       index: true,
-      options: [
-        { label: 'Documento', value: 'documento' },
-        { label: 'Voz (testimonio)', value: 'testimonio' },
-        { label: 'Conversación', value: 'conversacion' },
-      ],
+      // Derived from CONTENT_KINDS so the column and the domain type cannot fall
+      // out of step; the labels are the only hand-written part.
+      options: CONTENT_KINDS.map((value) => ({ value, label: CONTENT_KIND_LABELS[value] })),
+    },
+    {
+      /**
+       * The gate's output, and the ONLY text a `testimonio` is ever embedded
+       * from.
+       *
+       * ⚠ BESIDE the original, never over it. `extractedText` stays as the
+       * record of what was actually said, access-controlled in Postgres and
+       * never sent to any corpus. Overwriting it would destroy the only copy of
+       * what the person gave.
+       */
+      name: 'redactedText',
+      type: 'textarea',
+      admin: {
+        readOnly: true,
+        description:
+          'What the anonymisation gate produced. This — not `extractedText` — is what gets embedded for a testimonio or a conversacion.',
+      },
+    },
+    {
+      /**
+       * 🔴 `held` IS NOT `failed`, AND THE DIFFERENCE IS THE POINT.
+       *
+       *   n/a      not gated: an ordinary `documento`
+       *   pending  the gate is running
+       *   held     🔴 THE GATE REFUSED. Not ingested, and there is no override.
+       *   ready    cleared; `redactedText` is populated
+       *
+       * `failed` deliberately does not appear. A failure invites a retry button;
+       * a hold means the gate looked at this and said no, and re-running it on
+       * the same bytes will say no again. ai-service has no per-document delete,
+       * so "ingest anyway" is not a state this product can offer.
+       */
+      name: 'anonymisationStatus',
+      type: 'select',
+      required: true,
+      defaultValue: 'n/a',
+      index: true,
+      options: ANONYMISATION_STATES.map((value) => ({ value, label: ANONYMISATION_LABELS[value] })),
+      admin: { position: 'sidebar' },
+    },
+    {
+      name: 'anonymisationError',
+      type: 'textarea',
+      admin: {
+        readOnly: true,
+        description:
+          'Which stage refused, and why. ⚠ Counts only — it never quotes the text that triggered the hold, because that would be a re-identification map.',
+      },
+    },
+    {
+      /**
+       * 🔴 COUNTS AND RULE NAMES ONLY. Never a removed string, never a mapping
+       * from `[Persona A]` back to anything. A report that carried the matches
+       * would be the re-identification map this whole design refuses to keep,
+       * filed under a friendlier name. Enforced in `lib/anonymise/gate.ts` and
+       * asserted in its tests.
+       */
+      name: 'anonymisationReport',
+      type: 'json',
+      admin: {
+        readOnly: true,
+        description:
+          'Per-stage counts of what the gate removed. Rule names and numbers — no removed text.',
+      },
     },
     {
       name: 'mode',
@@ -1674,6 +2167,7 @@ export interface RetryableDocument {
   ingestStatus?: string | null
   extractedText?: string | null
   transcribeAttempt?: number | null
+  anonymisationStatus?: string | null
 }
 
 /**
@@ -1700,9 +2194,22 @@ export function planIngestRetry(doc: RetryableDocument): Record<string, unknown>
   // would double-transcribe and leave two callbacks racing for one row.
   if (doc.ingestStatus !== 'failed') return null
 
+  /**
+   * ⚠ CLEARS THE ANONYMISATION HOLD, and this is the ONLY place that does.
+   *
+   * `runExtractAndIngest` refuses to re-gate a `held` row, so without this a
+   * retry would return 202 and then do nothing at all. Clearing it here is what
+   * makes "I fixed the source, try again" a deliberate act with a single entry
+   * point, instead of something a rename does by accident.
+   *
+   * ⚠ `redactedText` is NOT cleared. Either the gate held (so there is none) or
+   * it is about to be overwritten by the next run.
+   */
+  const clearHold = { anonymisationStatus: 'n/a', anonymisationError: null }
+
   const hasText = typeof doc.extractedText === 'string' && doc.extractedText.trim().length > 0
   if (hasText) {
-    return { ingestStatus: 'pending', ingestError: null, ingestId: null }
+    return { ingestStatus: 'pending', ingestError: null, ingestId: null, ...clearHold }
   }
   return {
     ingestStatus: 'pending',
@@ -1710,6 +2217,7 @@ export function planIngestRetry(doc: RetryableDocument): Record<string, unknown>
     ingestId: null,
     transcribeId: null,
     transcribeAttempt: (Number(doc.transcribeAttempt ?? 0) || 0) + 1,
+    ...clearHold,
   }
 }
 
@@ -1935,7 +2443,6 @@ function retryGraphEndpoint(): Endpoint {
         docId: id,
         organizationId,
         fresh: { name: doc.name ?? null, contentKind: doc.contentKind ?? null },
-        extractedText: doc.extractedText ?? '',
       })
 
       return json({ ok: true, graphStatus: 'pending' }, 202)

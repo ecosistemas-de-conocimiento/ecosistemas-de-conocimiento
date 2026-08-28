@@ -49,11 +49,108 @@ export async function fetchMe(token: string | undefined): Promise<BackendUser | 
   }
 }
 
+// ─── Failure vocabulary ────────────────────────────────────────────────────
+//
+// 🔴 Nothing the BACKEND writes may reach the sign-in or sign-up screen. Payload
+// answers in English ("The email or password provided is incorrect."), and a
+// thrown fetch answers with our plumbing ("fetch failed"). Both are useless to
+// the person typing, and the second one names our internals.
+//
+// So the network layer classifies the failure into one of these codes, keeps
+// the backend's own words in `detail` FOR THE SERVER LOG ONLY, and the routes
+// render `AUTH_ERROR_COPY[code]`. The set is deliberately fine-grained: a wrong
+// password, a locked account and an unreachable backend need three different
+// sentences, because they need three different actions from the user.
+
+export type AuthFailure =
+  /** Email/password pair rejected by the backend. */
+  | 'invalid-credentials'
+  /** Payload locked the account after too many failed attempts. */
+  | 'account-locked'
+  /** Sign-up: that email already has an account. */
+  | 'email-taken'
+  /** Sign-up: the address is not a valid email. */
+  | 'email-invalid'
+  /** Sign-up: `IDENTITY_ALLOWED_EMAIL_DOMAIN` fenced this address out. */
+  | 'email-domain'
+  /** The backend never answered — down, restarting, or no network. */
+  | 'unreachable'
+  /** The backend answered 5xx. */
+  | 'server'
+  /** The request body was not readable JSON. */
+  | 'bad-request'
+  /** Email or password left empty. */
+  | 'missing-fields'
+  /** Sign-up: password under the 8-character minimum. */
+  | 'password-too-short'
+  /** Sign-in failed for a reason we could not classify. */
+  | 'login-failed'
+  /** Sign-up failed for a reason we could not classify. */
+  | 'register-failed';
+
+/**
+ * The only auth copy the user ever sees. Spanish, `tú`, and every line says
+ * what happened AND what to do next — a message that leaves someone with no
+ * next move is the same as no message.
+ */
+export const AUTH_ERROR_COPY: Record<AuthFailure, string> = {
+  'invalid-credentials':
+    'El correo o la contraseña no coinciden. Revísalos e inténtalo de nuevo.',
+  'account-locked':
+    'Bloqueamos la cuenta un rato por varios intentos fallidos. Espera unos minutos y vuelve a intentarlo.',
+  'email-taken':
+    'Ya hay una cuenta con ese correo. Inicia sesión con ella o usa otro correo.',
+  'email-invalid': 'Ese correo no se ve bien. Revísalo; se escribe así: nombre@ejemplo.com.',
+  'email-domain':
+    'Ese correo no puede registrarse aquí. Usa el correo de tu institución o pide ayuda a quien administra la instalación.',
+  unreachable:
+    'No pudimos conectar con el servidor. Revisa tu conexión e inténtalo de nuevo en un momento.',
+  server:
+    'El servidor tuvo un problema. Inténtalo de nuevo en un momento; si sigue igual, avisa a quien administra la instalación.',
+  'bad-request': 'No pudimos leer lo que enviaste. Recarga la página e inténtalo de nuevo.',
+  'missing-fields': 'Escribe tu correo y tu contraseña.',
+  'password-too-short': 'La contraseña necesita al menos 8 caracteres. Escribe una más larga.',
+  'login-failed': 'No pudimos iniciar tu sesión. Inténtalo de nuevo en un momento.',
+  'register-failed': 'No pudimos crear tu cuenta. Inténtalo de nuevo en un momento.',
+};
+
+/** Spanish copy for a failure code. Never falls through to a raw string. */
+export function authErrorMessage(failure: AuthFailure): string {
+  return AUTH_ERROR_COPY[failure] ?? AUTH_ERROR_COPY['login-failed'];
+}
+
 export interface LoginResult {
   ok: boolean;
   token?: string;
   user?: BackendUser;
-  error?: string;
+  /** Machine code. Maps to Spanish copy; never rendered as-is. */
+  failure?: AuthFailure;
+  /** The backend's / runtime's own words. FOR LOGS ONLY — never rendered. */
+  detail?: string;
+}
+
+interface PayloadErrorBody {
+  errors?: {
+    message?: string;
+    data?: { errors?: { message?: string; path?: string }[] };
+  }[];
+  message?: string;
+}
+
+/**
+ * Every human-readable string Payload put in an error body: the top-level
+ * message plus the per-field ones a `ValidationError` nests under `data`.
+ * The field-level message is the specific one ("A user with the given email is
+ * already registered."), so classification needs both.
+ */
+function backendMessages(body: PayloadErrorBody): string {
+  const parts: string[] = [];
+  if (body.message) parts.push(body.message);
+  for (const e of body.errors ?? []) {
+    if (e.message) parts.push(e.message);
+    for (const f of e.data?.errors ?? []) if (f.message) parts.push(f.message);
+  }
+  return parts.join(' | ');
 }
 
 export async function loginWithBackend(
@@ -66,19 +163,29 @@ export async function loginWithBackend(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-    const body = (await res.json().catch(() => ({}))) as {
+    const body = (await res.json().catch(() => ({}))) as PayloadErrorBody & {
       token?: string;
       user?: BackendUser;
-      errors?: { message: string }[];
-      message?: string;
     };
     if (!res.ok || !body.token || !body.user) {
-      const msg = body.errors?.[0]?.message ?? body.message ?? `HTTP ${res.status}`;
-      return { ok: false, error: msg };
+      const detail = backendMessages(body) || `HTTP ${res.status}`;
+      // Payload answers 401 for BOTH a wrong password and a locked account,
+      // and only the sentence tells them apart — but "wait a few minutes" and
+      // "check your password" are opposite instructions, so we branch on it.
+      const failure: AuthFailure =
+        res.status >= 500
+          ? 'server'
+          : /locked/i.test(detail)
+            ? 'account-locked'
+            : res.status === 401 || res.status === 400
+              ? 'invalid-credentials'
+              : 'login-failed';
+      return { ok: false, failure, detail };
     }
     return { ok: true, token: body.token, user: body.user };
   } catch (err) {
-    return { ok: false, error: `Network: ${(err as Error).message}` };
+    // A thrown fetch means we never reached the backend at all.
+    return { ok: false, failure: 'unreachable', detail: (err as Error).message };
   }
 }
 
@@ -93,17 +200,28 @@ export async function registerWithBackend(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, displayName }),
     });
-    const body = (await res.json().catch(() => ({}))) as {
+    const body = (await res.json().catch(() => ({}))) as PayloadErrorBody & {
       doc?: BackendUser;
-      errors?: { message: string }[];
-      message?: string;
     };
     if (!res.ok || !body.doc) {
-      const msg = body.errors?.[0]?.message ?? body.message ?? `HTTP ${res.status}`;
-      return { ok: false, error: msg };
+      const detail = backendMessages(body) || `HTTP ${res.status}`;
+      // The three sign-up refusals a person can actually act on. Payload states
+      // each of them in a field-level message; `Users.beforeValidate` throws
+      // the domain-fence one ("Only @x addresses may sign up.").
+      const failure: AuthFailure =
+        res.status >= 500
+          ? 'server'
+          : /already registered/i.test(detail)
+            ? 'email-taken'
+            : /may sign up/i.test(detail)
+              ? 'email-domain'
+              : /valid email/i.test(detail)
+                ? 'email-invalid'
+                : 'register-failed';
+      return { ok: false, failure, detail };
     }
   } catch (err) {
-    return { ok: false, error: `Network: ${(err as Error).message}` };
+    return { ok: false, failure: 'unreachable', detail: (err as Error).message };
   }
   // Payload's create-user route returns the user but no JWT — follow with login
   // so the caller gets a session in one round-trip.

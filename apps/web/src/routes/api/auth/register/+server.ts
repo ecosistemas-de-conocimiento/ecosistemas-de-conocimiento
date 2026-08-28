@@ -4,6 +4,7 @@ import { dev } from '$app/environment';
 import {
   SESSION_COOKIE,
   SESSION_TTL_SECONDS,
+  authErrorMessage,
   registerWithBackend,
 } from '$lib/server/auth';
 
@@ -18,7 +19,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   try {
     body = (await request.json()) as Body;
   } catch {
-    return json({ error: 'Invalid JSON' }, { status: 400 });
+    return json({ error: authErrorMessage('bad-request') }, { status: 400 });
   }
   const email = (body.email ?? '').trim();
   const password = body.password ?? '';
@@ -26,15 +27,20 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     (body.displayName ?? '').trim() || email.split('@')[0] || email;
 
   if (!email || !password) {
-    return json({ error: 'Email and password required' }, { status: 400 });
+    return json({ error: authErrorMessage('missing-fields') }, { status: 400 });
   }
   if (password.length < 8) {
-    return json({ error: 'Password must be at least 8 characters' }, { status: 400 });
+    return json({ error: authErrorMessage('password-too-short') }, { status: 400 });
   }
 
   const result = await registerWithBackend(email, password, displayName);
   if (!result.ok || !result.token || !result.user) {
-    return json({ error: result.error ?? 'Registration failed' }, { status: 400 });
+    const failure = result.failure ?? 'register-failed';
+    // Same split as the login route: Payload's English (or a raw `fetch
+    // failed`) is logged, never returned.
+    console.warn(`[auth] register failed (${failure}): ${result.detail ?? 'sin detalle'}`);
+    const status = failure === 'unreachable' || failure === 'server' ? 503 : 400;
+    return json({ error: authErrorMessage(failure) }, { status });
   }
 
   cookies.set(SESSION_COOKIE, result.token, {

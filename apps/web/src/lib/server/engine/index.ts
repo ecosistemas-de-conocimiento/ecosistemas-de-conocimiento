@@ -6,7 +6,7 @@
  */
 
 export { CHAT_ENGINE_CONFIG, CHAT_KIND_REGISTRY, engineOrgId } from './config';
-export { makeEngineAIClient } from './aiClient';
+export { makeEngineAIClient, type EngineAIClientOptions } from './aiClient';
 export {
   buildChatUnitRequest,
   partitionMessages,

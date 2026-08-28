@@ -34,11 +34,36 @@ export interface SessionCorpora {
   corpora: string[];
   /**
    * The caller's OWN draft corpus, when the response identifies which of the
-   * corpora it is. Used to label cited drafts exactly — a citation carries the
-   * corpus it came from, so this identifies the user's private documents
-   * regardless of which session uploaded them. `null` when not identifiable.
+   * corpora it is. `null` when not identifiable.
+   *
+   * Used for two things, both in the generate route:
+   *   1. LABELLING. A citation carries the corpus it came from, so this is the
+   *      exact signal for "this source is a draft, only you can see it"
+   *      (`$lib/publication.stampDraftProvenance`).
+   *   2. NARROWING. ai-service gives each person ONE draft corpus spanning all
+   *      of their conversations, so `$lib/server/engine/aiClient` filters this
+   *      corpus's results down to the documents attached to the current
+   *      conversation. A draft belongs to the conversation it was uploaded
+   *      into; the ecosistema's published corpus is the global one.
    */
   draftCorpus: string | null;
+  /**
+   * The ecosistema's SHARED published corpus — the one corpus that is NOT
+   * narrowed to the current conversation.
+   *
+   * 🔴 THIS, NOT `draftCorpus`, DECIDES WHAT GETS NARROWED, and the asymmetry is
+   * deliberate. Deciding "narrow the corpus I recognise as the draft one" fails
+   * OPEN: the day the response stops being recognisable, every draft goes global
+   * again and the only symptom is wrong answers nobody traces back to here.
+   * Deciding "narrow everything except the corpus I recognise as shared" fails
+   * CLOSED: the same day, the caller loses their own drafts and says so out
+   * loud. Same house rule as `asOf` above — be wrong in the direction someone
+   * reports.
+   *
+   * `null` when the response did not identify one. See
+   * `$lib/server/engine/aiClient`, which then narrows every authorised corpus.
+   */
+  publishedCorpus: string | null;
   /**
    * Validity instant every retrieve must be scoped to. `null` means we could
    * not read one — callers MUST then skip retrieval, not retrieve unscoped.
@@ -58,7 +83,12 @@ function asNonEmptyString(v: unknown): string | null {
  * cannot read becomes an empty list with `asOf: null`.
  */
 export function parseCorporaResponse(raw: unknown): SessionCorpora {
-  const empty: SessionCorpora = { corpora: [], asOf: null, draftCorpus: null };
+  const empty: SessionCorpora = {
+    corpora: [],
+    asOf: null,
+    draftCorpus: null,
+    publishedCorpus: null,
+  };
   if (!raw || typeof raw !== 'object') return empty;
   const body = raw as Record<string, unknown>;
 
@@ -81,22 +111,41 @@ export function parseCorporaResponse(raw: unknown): SessionCorpora {
   push(body.ecosystemCorpus);
   push(body.ecoCorpus);
   push(body.draftCorpus);
+  // ⚠ `published` / `draft` are what the backend ACTUALLY sends today —
+  // `apps/backend/src/collections/Sessions.ts`, the `/corpora` handler, returns
+  // `{corpora, published, draft, asOf}`. The camelCase spellings above predate
+  // that endpoint being written and were guesses; they are kept because they
+  // cost nothing, but these two are the real contract.
+  push(body.published);
+  push(body.draft);
 
   const asOf =
     asNonEmptyString(body.asOf) ??
     asNonEmptyString((body as { as_of?: unknown }).as_of);
 
-  // Which of the two is the caller's own draft corpus? Prefer an explicit
-  // field; otherwise fall back to a name that says so. `null` when neither
-  // applies — the caller then labels drafts from the session's document list
-  // alone, which is a narrower but never a wrong signal.
-  const draftCorpus =
-    asNonEmptyString(body.draftCorpus) ??
-    asNonEmptyString((body as { draft_corpus?: unknown }).draft_corpus) ??
-    names.find((n) => /draft|borrador/i.test(n)) ??
+  // The ecosistema's shared corpus. Read the backend's own field first; the
+  // camelCase spellings are legacy guesses. NO name-shaped fallback here on
+  // purpose: guessing which corpus is the global one is precisely the guess
+  // that fails open (see `SessionCorpora.publishedCorpus`).
+  const publishedCorpus =
+    asNonEmptyString(body.published) ??
+    asNonEmptyString(body.publishedCorpus) ??
+    asNonEmptyString(body.ecosystemCorpus) ??
+    asNonEmptyString(body.ecoCorpus) ??
     null;
 
-  return { corpora: names, asOf, draftCorpus };
+  // The caller's own draft corpus. Used for LABELLING a citation "borrador,
+  // solo tú lo ves" (`$lib/publication.stampDraftProvenance`), not for deciding
+  // what to narrow — `publishedCorpus` does that. A miss here costs a missing
+  // label, which is why the loose name-shaped fallback is acceptable.
+  const draftCorpus =
+    asNonEmptyString(body.draft) ??
+    asNonEmptyString(body.draftCorpus) ??
+    asNonEmptyString((body as { draft_corpus?: unknown }).draft_corpus) ??
+    names.find((n) => n !== publishedCorpus && /draft|borrador/i.test(n)) ??
+    null;
+
+  return { corpora: names, asOf, draftCorpus, publishedCorpus };
 }
 
 export interface RetrieveBodyInput {

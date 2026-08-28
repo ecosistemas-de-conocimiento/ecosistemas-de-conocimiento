@@ -17,8 +17,20 @@
  *                        only uploaded documents are. The seam stays satisfied.
  *
  * The organization rides in the deterministic summary and in `resolveEntity`
- * for an explicit `@`-mention. Uploaded documents ARE retrieved (per-session
- * corpus).
+ * for an explicit `@`-mention.
+ *
+ * ── WHAT THE SUMMARY PROMISES, AND WHY IT IS NOW TRUE ────────────────────────
+ *
+ * The summary tells the model "los documentos adjuntos a esta conversación
+ * son…". It used to be a half-truth: it listed THIS conversation's documents
+ * while retrieval reached every draft the caller had ever uploaded, in any
+ * conversation. The model had no way to tell the two apart, so it would answer
+ * from a document it had just been told was not here.
+ *
+ * Retrieval is now two scopes that the summary can honestly describe:
+ *   · the ecosistema's PUBLISHED corpus — global, shared, every conversation.
+ *   · the caller's drafts, narrowed to the documents attached to THIS
+ *     conversation (`$lib/server/engine/aiClient`).
  */
 
 import type {
@@ -35,7 +47,12 @@ const REF_BLOCK_MAX = 3500;
 const SUMMARY_MAX = 4000;
 
 interface OrgRow { id: number; name: string; slug: string; description?: string | null }
-interface DocRow { id: number; name: string; kind?: string | null; ingestStatus?: string | null }
+interface DocRow {
+  id: number | string;
+  name: string;
+  kind?: string | null;
+  ingestStatus?: string | null;
+}
 
 export interface ChatAdapterCtx {
   token: string | undefined;
@@ -58,6 +75,18 @@ export interface ChatAdapterCtx {
    * menu would offer, an ecosistema other than the one they are working in.
    */
   organizationId?: string | number | null;
+  /**
+   * The documents attached to this conversation, ALREADY READ by the caller.
+   *
+   * The generate route reads this list anyway — the retrieval draft leg filters
+   * on it — so it hands it over instead of making the adapter fetch the same
+   * rows a second time on the same turn.
+   *
+   * ⚠ Optional on purpose. `routes/api/context-search/+server.ts` builds this
+   * adapter too, per keystroke, and has no such list; it must keep working, so
+   * the fetch below stays as the fallback.
+   */
+  documents?: readonly DocRow[];
 }
 
 export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
@@ -90,6 +119,37 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
 
   async function findById<T>(collection: string, id: number | string): Promise<T | null> {
     return getJson<T>(`/api/${collection}/${id}?depth=0`);
+  }
+
+  /**
+   * The documents attached to this conversation, optionally narrowed by name.
+   *
+   * Prefers the list the caller already read (`ctx.documents`) — the generate
+   * route fetches it for the retrieval filter, so re-fetching it here would be
+   * a second backend call for the same rows on the same turn. Falls back to a
+   * fetch for callers that have no list (the context-search route).
+   *
+   * ⚠ The fallback query must stay the same SHAPE as
+   * `$lib/server/sessionDocs.sessionDocumentsQuery` — that file's header
+   * explains why (`documents.session` is becoming `hasMany`). It differs only
+   * by the optional name filter, which is why it is not literally that call.
+   */
+  async function sessionDocuments(query: string, limit: number): Promise<DocRow[]> {
+    const q = query.trim().toLowerCase();
+    if (ctx.documents) {
+      const rows = q
+        ? ctx.documents.filter((d) => (d.name ?? '').toLowerCase().includes(q))
+        : ctx.documents;
+      return rows.slice(0, limit);
+    }
+    const qs = new URLSearchParams({
+      'where[and][0][session][equals]': ctx.sessionId,
+      limit: String(limit),
+      depth: '0',
+    });
+    if (query.trim()) qs.set('where[and][1][name][contains]', query.trim());
+    const body = await getJson<{ docs?: DocRow[] }>(`/api/documents?${qs.toString()}`);
+    return body?.docs ?? [];
   }
 
   return {
@@ -131,14 +191,7 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
       if (want('document')) {
         tasks.push(
           (async () => {
-            const qs = new URLSearchParams({
-              'where[and][0][session][equals]': ctx.sessionId,
-              limit: '8',
-              depth: '0',
-            });
-            if (q) qs.set('where[and][1][name][contains]', q);
-            const body = await getJson<{ docs?: DocRow[] }>(`/api/documents?${qs.toString()}`);
-            for (const r of body?.docs ?? []) {
+            for (const r of await sessionDocuments(q, 8)) {
               out.push({ kind: 'document', id: r.id, label: r.name, sublabel: 'Documento adjunto' });
             }
           })(),
@@ -182,6 +235,17 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
       // The ecosistema's shared corpus and the caller's own draft corpus, both
       // named by the backend. We pass them straight through — see
       // `ChatAdapterCtx.corpora` for why nothing is composed here.
+      //
+      // The two are not scoped alike, and the difference is enforced one layer
+      // down in `./aiClient`, not here:
+      //   · the ecosistema's PUBLISHED corpus is global — published documents
+      //     and testimonies are the shared brain, retrievable in every
+      //     conversation, forever. Nothing narrows it.
+      //   · the DRAFT corpus is per-person and spans all of that person's
+      //     conversations, so its results are narrowed to the documents
+      //     attached to THIS one. A draft belongs to the conversation it was
+      //     uploaded into.
+      //
       // `ResolvedCorpus` carries an optional `scopeId`; ours are tenant-level
       // (the ecosistema corpus and the caller's draft corpus), so there is no
       // single scope to attach.
@@ -206,16 +270,14 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
    * documents attached to this session, as clean text. The scope argument is
    * accepted for the engine's seam but carries no narrowing here — this product
    * has one level of tenancy, so every turn is organization-wide.
+   *
+   * The document list it names is now the SAME list the draft retrieval leg
+   * filters on, so the summary no longer promises the model something
+   * retrieval contradicts.
    */
   async function buildSummary(_scope: ContextScope): Promise<string> {
-    const [org, docsBody] = await Promise.all([
-      findOrg(),
-      getJson<{ docs?: DocRow[] }>(
-        `/api/documents?where[session][equals]=${encodeURIComponent(ctx.sessionId)}&limit=50&depth=0`,
-      ),
-    ]);
+    const [org, docs] = await Promise.all([findOrg(), sessionDocuments('', 50)]);
 
-    const docs = docsBody?.docs ?? [];
     const lines: string[] = [];
 
     if (org) {

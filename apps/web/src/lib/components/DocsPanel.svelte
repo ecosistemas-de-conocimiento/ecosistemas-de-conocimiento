@@ -16,6 +16,13 @@
     transcriptReadyCallToAction,
     transcriptReviewPrompt,
     transcriptStatsCopy,
+    transcriptEditGate,
+    transcriptEditBlockedCopy,
+    TRANSCRIPT_EDIT_CANCEL,
+    TRANSCRIPT_EDIT_INVITATION,
+    TRANSCRIPT_EDIT_REINDEX_NOTE,
+    TRANSCRIPT_EDIT_SAVE,
+    TRANSCRIPT_EDIT_START,
     TRANSCRIBING_REASSURANCE,
     TRANSCRIPT_PREVIEW_HIDE,
     TRANSCRIPT_PREVIEW_SHOW,
@@ -39,6 +46,89 @@
    */
   let uploadingFile = $state<{ name: string; isAudio: boolean } | null>(null);
 
+  // ── Traer un documento de otra conversación ─────────────────────────────
+  //
+  // A small, folded-away action on purpose. The normal path is "upload it
+  // here"; this covers the person who already uploaded the file last week and
+  // does not want to upload it twice. Giving it the visual weight of the
+  // upload button would advertise a corner case as a main road.
+  let pickerOpen = $state(false);
+  let pickerLoading = $state(false);
+  let available = $state<WorkingDoc[]>([]);
+  /** Which document is mid-attach — disables the list so a double click cannot double-fire. */
+  let attachingId = $state<string | null>(null);
+
+  async function refreshAvailable(sessionId: string) {
+    pickerLoading = true;
+    try {
+      available = await app.listAvailableDocs(sessionId);
+    } finally {
+      pickerLoading = false;
+    }
+  }
+
+  async function togglePicker() {
+    const s = app.active;
+    if (!s) return;
+    pickerOpen = !pickerOpen;
+    // Read on every open, never cached: the list is "what is NOT already here",
+    // and that changes the moment anything is attached, deleted or uploaded.
+    if (pickerOpen) await refreshAvailable(s.id);
+  }
+
+  async function attach(d: WorkingDoc) {
+    const s = app.active;
+    if (!s || attachingId) return;
+    attachingId = d.id;
+    try {
+      const ok = await app.attachDoc(s.id, d.id);
+      if (ok) {
+        // Drop it from the picker immediately — it is in the list below now,
+        // and leaving it here would invite a second, pointless click.
+        available = available.filter((x) => x.id !== d.id);
+        expandedId = d.id;
+      }
+    } finally {
+      attachingId = null;
+    }
+  }
+
+  /**
+   * Remove a document from THIS conversation.
+   *
+   * 🔴 NOT A DELETE, and the confirmation has to say so in as many words. The
+   * button next to it destroys the document everywhere; this one only takes it
+   * out of the conversation the user is looking at. Two irreversible-sounding
+   * actions on one row is exactly the place a person clicks the wrong one.
+   */
+  async function detach(sessionId: string | undefined, d: WorkingDoc) {
+    if (!sessionId) return;
+    const ok = confirm(
+      `¿Quitar "${d.title}" de esta conversación?\n\n` +
+        'El documento NO se borra. Sigue estando en las otras conversaciones donde lo agregaste, ' +
+        'y puedes volver a traerlo aquí cuando quieras.',
+    );
+    if (!ok) return;
+    await app.detachDoc(sessionId, d.id);
+  }
+
+  /**
+   * Is this document also in another conversation?
+   *
+   * The only distinction the data supports. The backend keeps one list of
+   * conversations per document and does not record which one it was uploaded
+   * into, so "attached here from elsewhere" and "uploaded here and also used
+   * elsewhere" look identical — and in both cases removing it here leaves the
+   * document standing somewhere else, which is what the action promises.
+   *
+   * A document that lives ONLY here gets no detach action: removing it would
+   * leave it in no conversation at all, which is indistinguishable from losing
+   * it. "Eliminar" is the honest verb for that.
+   */
+  function isSharedAcrossSessions(d: WorkingDoc): boolean {
+    return (d.sessionIds?.length ?? 0) > 1;
+  }
+
   /**
    * Open the transcript of a document that is not expanded yet.
    *
@@ -52,6 +142,42 @@
 
   function toggle(id: string) {
     expandedId = expandedId === id ? null : id;
+  }
+
+  /**
+   * 🔴 CORRECTING THE TRANSCRIPT — state only; the rule and the copy live in
+   * `$lib/ingest.ts` so they can be unit-tested, and the write lives in
+   * `app.saveTranscript`.
+   *
+   * ⚠ ONE document at a time, on purpose. Two open editors would mean two
+   * unsaved buffers a user can lose track of, and losing a correction someone
+   * typed by hand while listening to a recording is a bad thing to be casual
+   * about. Opening a second closes the first, which is visible.
+   *
+   * ⚠ NOT a new affordance beside the preview — it lives INSIDE the existing
+   * "Transcripción" tab. The panel already taught that tab as the way to see
+   * this text; correcting it is the same place, one button further in.
+   */
+  let editingTranscriptId = $state<string | null>(null);
+  let transcriptDraft = $state('');
+
+  function startTranscriptEdit(d: WorkingDoc) {
+    editingTranscriptId = d.id;
+    transcriptDraft = d.transcript ?? '';
+  }
+
+  function cancelTranscriptEdit() {
+    editingTranscriptId = null;
+    transcriptDraft = '';
+  }
+
+  async function saveTranscriptEdit(sessionId: string | undefined, d: WorkingDoc) {
+    if (!sessionId) return;
+    const ok = await app.saveTranscript(sessionId, d.id, transcriptDraft);
+    // ⚠ Only close on success. A failed save keeps the user's text in the box
+    // — throwing away a correction because the network blinked would be the
+    // one outcome worse than not offering the edit at all.
+    if (ok) cancelTranscriptEdit();
   }
 
   function togglePreview(id: string) {
@@ -244,6 +370,68 @@
       Todo lo que subas entra como <strong class="text-ink">borrador</strong>: solo tú lo ves.
       Puedes usarlo en el chat y publicarlo cuando esté listo.
     </p>
+
+    <!-- Traer un documento que ya existe. Deliberately small and folded away:
+         the everyday path is uploading a file here. This is for the person who
+         already subió el archivo en otra conversación y no quiere subirlo dos
+         veces. Nothing is copied ni movido — el mismo documento queda en las
+         dos conversaciones. -->
+    <div class="border-b border-elevated">
+      <button
+        class="attach-toggle"
+        onclick={togglePicker}
+        disabled={!app.active}
+        aria-expanded={pickerOpen}
+        aria-controls="docs-picker"
+        data-testid="open-attach-picker"
+      >
+        <span aria-hidden="true">{pickerOpen ? '−' : '+'}</span>
+        Usar un documento de otra conversación
+      </button>
+
+      {#if pickerOpen}
+        <div id="docs-picker" class="px-3 pb-2">
+          {#if pickerLoading}
+            <p class="text-[10px] text-ink-soft" role="status">Buscando tus documentos…</p>
+          {:else if available.length === 0}
+            <!-- Plain, and not an error: "no encontramos nada" is the normal
+                 answer for someone who only ever uploaded files here. -->
+            <p class="text-[10px] text-ink-soft leading-snug">
+              No hay documentos tuyos en otras conversaciones para agregar aquí. Sube
+              uno con el ícono de subida, o escribe una nota con
+              <span class="font-mono">+</span>.
+            </p>
+          {:else}
+            <p class="text-[10px] text-ink-soft leading-snug mb-1.5">
+              Elige uno. Se agrega a esta conversación sin salir de donde ya estaba:
+              es el mismo documento en los dos lados.
+            </p>
+            <ul class="space-y-1">
+              {#each available as a (a.id)}
+                {@const aPub = publicationBadge(a.publicationStatus)}
+                <li>
+                  <button
+                    class="attach-row"
+                    onclick={() => attach(a)}
+                    disabled={attachingId !== null}
+                    title={aPub.description}
+                    data-testid={`attach-${a.id}`}
+                  >
+                    <span class="attach-row-title">{a.title}</span>
+                    <span class="pub-badge pub-{aPub.tone} shrink-0">{aPub.label}</span>
+                    {#if attachingId === a.id}
+                      <span class="text-[10px] text-ink-soft shrink-0" role="status">
+                        Agregando…
+                      </span>
+                    {/if}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      {/if}
+    </div>
 
     <div class="flex-1 overflow-y-auto p-2 space-y-2">
       <!-- ⚠ THE UPLOAD, VISIBLE AS A ROW — not only as a spinner in the header.
@@ -453,6 +641,27 @@
                      tested, and rendered nowhere. -->
                 <span class="text-[10px] text-ink-soft">{publishBlockedCopy(gate.reason)}</span>
               {/if}
+
+              <!-- 🔴 QUITAR ≠ ELIMINAR. This takes the document out of THIS
+                   conversation and leaves it in the others. The trash icon on
+                   the row above destroys it everywhere. Written out in words,
+                   not hidden behind an icon: the whole risk here is that the
+                   two actions look alike, and an icon whose meaning lives in a
+                   tooltip is exactly how they would.
+
+                   Only shown when the document is in more than one
+                   conversation, so the action can always keep its promise —
+                   there is somewhere else for it to stay. -->
+              {#if sid && isSharedAcrossSessions(d)}
+                <button
+                  class="detach-link"
+                  onclick={() => detach(sid, d)}
+                  title="Quitar el documento de esta conversación. No se borra: sigue en las demás."
+                  data-testid={`detach-${d.id}`}
+                >
+                  Quitar de esta conversación
+                </button>
+              {/if}
             </div>
 
             <!-- 🔴 THE BRIDGE FROM "TRANSCRITO" TO "EN LOS DOCUMENTOS DEL
@@ -585,13 +794,60 @@
                   {#if isTranscript(d.kind) && isPreview}
                     {@const text = (d.transcript ?? '').trim()}
                     {@const stats = transcriptStatsCopy(text)}
+                    {@const editGate = transcriptEditGate({
+                      kind: d.kind,
+                      publicationStatus: d.publicationStatus,
+                      ingestStatus: d.ingestStatus,
+                      transcript: d.transcript,
+                    })}
+                    {@const isEditing = editingTranscriptId === d.id}
                     <div class="bg-surface-soft border-t border-elevated px-3 py-3">
                       <p class="text-[10px] text-ink-soft leading-snug">
                         {TRANSCRIPT_PROVENANCE_TOOLTIP}
                         {transcriptReviewPrompt(d.publicationStatus) ?? ''}
                         {#if stats}<span class="block mt-0.5">{stats}</span>{/if}
                       </p>
-                      {#if text}
+
+                      {#if isEditing}
+                        <!-- 🔴 THE CORRECTION BOX. Machine text, a person who
+                             heard the recording, and the one moment before it
+                             becomes the ecosistema's shared record. The
+                             invitation above the box says who wrote the text —
+                             people do not proofread what they think a human
+                             wrote — and the note under the button says that
+                             saving re-indexes, because a correction that left
+                             the chat quoting the old wording would be worse
+                             than no correction at all. -->
+                        <p class="edit-invite mt-2">{TRANSCRIPT_EDIT_INVITATION}</p>
+                        <textarea
+                          class="transcript-editor mt-2 w-full text-xs"
+                          bind:value={transcriptDraft}
+                          aria-label="Texto de la transcripción"
+                          data-testid={`transcript-editor-${d.id}`}
+                        ></textarea>
+                        <p class="text-[10px] text-ink-soft mt-1 leading-snug">
+                          {TRANSCRIPT_EDIT_REINDEX_NOTE}
+                        </p>
+                        <div class="flex items-center gap-2 mt-2">
+                          <Button
+                            tone="brand"
+                            variant="outline"
+                            size="sm"
+                            label={TRANSCRIPT_EDIT_SAVE}
+                            loading={d.transcriptSavePending === true}
+                            disabled={d.transcriptSavePending === true}
+                            dataTestId={`save-transcript-${d.id}`}
+                            onClick={() => saveTranscriptEdit(sid, d)}
+                          />
+                          <button
+                            class="text-[10px] text-ink-soft hover:text-ink underline"
+                            onclick={cancelTranscriptEdit}
+                            disabled={d.transcriptSavePending === true}
+                          >
+                            {TRANSCRIPT_EDIT_CANCEL}
+                          </button>
+                        </div>
+                      {:else if text}
                         <!-- Plain text, not Markdown: an ASR transcript has no
                              markup, and rendering it as Markdown would let a
                              stray `#` or `*` silently reshape what was said. -->
@@ -599,6 +855,22 @@
                           class="transcript-text mt-2 text-xs text-ink"
                           data-testid={`transcript-text-${d.id}`}
                         >{text}</p>
+                        {#if editGate.canEdit && sid}
+                          <button
+                            class="transcript-cta-link mt-2 text-[10px] block"
+                            onclick={() => startTranscriptEdit(d)}
+                            data-testid={`edit-transcript-${d.id}`}
+                          >
+                            {TRANSCRIPT_EDIT_START}
+                          </button>
+                        {:else if editGate.reason === 'published'}
+                          <!-- ⚠ Said, not silently omitted. A missing button
+                               reads as a missing feature; this says the text is
+                               frozen and why. -->
+                          <p class="text-[10px] text-ink-soft mt-2 leading-snug">
+                            {transcriptEditBlockedCopy(editGate.reason)}
+                          </p>
+                        {/if}
                       {:else}
                         <p class="mt-2 text-xs text-ink-soft italic">{TRANSCRIPT_UNAVAILABLE}</p>
                       {/if}
@@ -719,8 +991,15 @@
       {/if}
     </div>
 
-    <footer class="border-t border-elevated p-2 text-[10px] text-ink-soft">
-      Los documentos fijados se envían como contexto en cada mensaje.
+    <footer class="border-t border-elevated p-2 text-[10px] text-ink-soft space-y-1">
+      <div>Los documentos fijados se envían como contexto en cada mensaje.</div>
+      <!-- ⚠ THE WAY OUT OF THE CONVERSATION. This panel only ever shows one
+           conversation's files; everything the ecosistema has actually
+           published lives somewhere else, and until this link existed there was
+           no way to reach it from inside the app. -->
+      <a class="library-link" href="/biblioteca" data-interactive>
+        Ver la biblioteca del ecosistema →
+      </a>
     </footer>
   </aside>
 {/if}
@@ -735,6 +1014,80 @@
   }
   .pin-checkbox {
     accent-color: var(--edc-color-brand);
+  }
+
+  /* "Usar un documento de otra conversación" — a quiet, full-width disclosure.
+     Small on purpose: it is the exception, not the everyday path. */
+  .attach-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    width: 100%;
+    padding: 0.375rem 0.75rem;
+    font-size: 0.625rem;
+    text-align: left;
+    color: var(--edc-color-ink-soft);
+  }
+  .attach-toggle:hover:not(:disabled) {
+    color: var(--edc-color-ink);
+    background: var(--edc-color-surface-soft);
+  }
+  .attach-toggle:disabled {
+    opacity: 0.4;
+  }
+  .attach-toggle:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--edc-color-brand-outline);
+  }
+
+  /* One row of the picker. The whole row is the button, so the target is big
+     enough to hit without aiming. */
+  .attach-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    padding: 0.3rem 0.4rem;
+    border: 1px solid var(--edc-color-elevated-border);
+    border-radius: var(--edc-radius-1);
+    background: var(--edc-color-surface-strong);
+    text-align: left;
+  }
+  .attach-row:hover:not(:disabled) {
+    background: var(--edc-color-surface-soft);
+  }
+  .attach-row:disabled {
+    opacity: 0.5;
+  }
+  .attach-row:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--edc-focus-ring);
+  }
+  .attach-row-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.75rem;
+    color: var(--edc-color-ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* "Quitar de esta conversación". Deliberately NOT danger-toned — nothing is
+     destroyed — and deliberately worded rather than iconified, so it can never
+     be mistaken for the delete button on the row above. */
+  .detach-link {
+    font-size: 0.625rem;
+    color: var(--edc-color-ink-soft);
+    text-decoration: underline;
+  }
+  .detach-link:hover {
+    color: var(--edc-color-ink);
+  }
+  .detach-link:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--edc-focus-ring);
+    border-radius: var(--edc-radius-1);
   }
 
   /* Tailwind v3 cannot apply an opacity modifier (`bg-danger/10`,
@@ -795,6 +1148,48 @@
     line-height: 1.55;
     max-height: 22rem;
     overflow-y: auto;
+  }
+
+  .library-link {
+    display: inline-block;
+    font-weight: 600;
+    color: var(--edc-color-brand);
+    text-decoration: none;
+  }
+  .library-link:hover {
+    color: var(--edc-color-brand-strong);
+    text-decoration: underline;
+  }
+
+  /* The correction box. Same surface as the read view it replaces, so the text
+     does not jump when the editor opens — a person comparing what they heard
+     against what the machine wrote should not have to re-find their place. */
+  .transcript-editor {
+    background: var(--edc-color-surface);
+    color: var(--edc-color-ink);
+    border: 1px solid var(--edc-color-elevated-border);
+    border-radius: var(--edc-radius-1);
+    padding: 0.5rem;
+    min-height: 14rem;
+    max-height: 26rem;
+    resize: vertical;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    outline: none;
+  }
+  .transcript-editor:focus {
+    box-shadow: 0 0 0 3px var(--edc-focus-ring);
+  }
+  /* Warning-toned, like the "Transcripción automática" chip: this is a fact
+     about where the text came from, not an error. */
+  .edit-invite {
+    border: 1px solid var(--edc-color-warning-outline);
+    background: var(--edc-color-warning-soft);
+    color: var(--edc-color-ink);
+    border-radius: var(--edc-radius-1);
+    padding: 0.375rem 0.5rem;
+    font-size: 0.625rem;
+    line-height: 1.4;
   }
 
   /* Small metadata chips (file kind, ingest progress). Decorative outline, so

@@ -239,7 +239,7 @@ describe('runSessionJanitor — dry run', () => {
     expect(res.deleted).toBe(1) // "would delete" count
     expect(table).toHaveLength(2) // nothing actually removed
     expect(deleteCorpus).not.toHaveBeenCalled()
-  })
+  }, 30_000)
 })
 
 describe('runSessionJanitor — error isolation', () => {
@@ -295,6 +295,15 @@ describe('runSessionJanitor — overlap lock', () => {
 })
 
 describe('🔴 reaping a session must NOT delete any corpus', () => {
+  // ⚠ 30s, not the default 5s, and the reason is not slowness in the code under
+  // test. This is the only test in the file that does `await import(
+  // '../collections/Sessions')`, which pulls the whole collection config —
+  // Payload, its field definitions, and everything they import. Alone that
+  // costs ~0.5s; inside the full 44-file suite, competing for cores, it has
+  // been measured at 2.6s and once at 5.3s, which tripped the default timeout
+  // and failed this test on a machine under load. A regression guard that goes
+  // red when the laptop is busy trains people to re-run until green, which is
+  // exactly how a REAL corpus-deletion regression would get waved through.
   it('never calls deleteCorpus, however many sessions it sweeps', async () => {
     vi.stubEnv('AI_SERVICE_URL', 'http://ai-service.test')
     vi.stubEnv('AI_SERVICE_ADMIN_API_KEY', 'test-admin-key')

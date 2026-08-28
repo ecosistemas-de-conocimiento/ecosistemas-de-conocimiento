@@ -49,19 +49,65 @@ describe('parseCorporaResponse', () => {
       corpora: ['eco-7', 'draft-7-42'],
       asOf: '2026-08-14T00:00:00Z',
       draftCorpus: 'draft-7-42',
+      // No `published` field in this shape, so the shared corpus is not
+      // identifiable and retrieval narrows everything — see `publishedCorpus`.
+      publishedCorpus: null,
     });
   });
 
   it('reads an array of objects', () => {
     expect(
       parseCorporaResponse({ corpora: [{ name: 'eco-7' }, { corpus: 'draft-9' }], asOf: 't' }),
-    ).toEqual({ corpora: ['eco-7', 'draft-9'], asOf: 't', draftCorpus: 'draft-9' });
+    ).toEqual({
+      corpora: ['eco-7', 'draft-9'],
+      asOf: 't',
+      draftCorpus: 'draft-9',
+      publishedCorpus: null,
+    });
   });
 
   it('reads the flat two-field pairing', () => {
     expect(
       parseCorporaResponse({ ecosystemCorpus: 'eco-7', draftCorpus: 'draft-7-42', asOf: 't' }),
-    ).toEqual({ corpora: ['eco-7', 'draft-7-42'], asOf: 't', draftCorpus: 'draft-7-42' });
+    ).toEqual({
+      corpora: ['eco-7', 'draft-7-42'],
+      asOf: 't',
+      draftCorpus: 'draft-7-42',
+      publishedCorpus: 'eco-7',
+    });
+  });
+
+  // 🔴 THE REAL CONTRACT. `apps/backend/src/collections/Sessions.ts`, the
+  // `/corpora` handler, answers with exactly these field names. Every other
+  // spelling this function accepts is a legacy guess from before that endpoint
+  // was written. If this test breaks, retrieval scoping is wrong — not the test.
+  it('reads the shape the backend actually sends', () => {
+    expect(
+      parseCorporaResponse({
+        corpora: ['eco-1', 'eco-1-draft-1'],
+        published: 'eco-1',
+        draft: 'eco-1-draft-1',
+        asOf: '2026-08-28T00:00:00Z',
+      }),
+    ).toEqual({
+      corpora: ['eco-1', 'eco-1-draft-1'],
+      asOf: '2026-08-28T00:00:00Z',
+      draftCorpus: 'eco-1-draft-1',
+      publishedCorpus: 'eco-1',
+    });
+  });
+
+  it('never mistakes the shared corpus for the draft one', () => {
+    // `eco-1-draft-1` contains "draft", and so would a shared corpus in an
+    // ecosistema whose name happened to. The explicit fields settle it.
+    const parsed = parseCorporaResponse({
+      corpora: ['drafts-team', 'drafts-team-draft-9'],
+      published: 'drafts-team',
+      draft: 'drafts-team-draft-9',
+      asOf: 't',
+    });
+    expect(parsed.publishedCorpus).toBe('drafts-team');
+    expect(parsed.draftCorpus).toBe('drafts-team-draft-9');
   });
 
   it('accepts snake_case as_of', () => {

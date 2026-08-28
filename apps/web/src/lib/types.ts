@@ -107,6 +107,21 @@ export interface WorkingDoc {
   body: string;
   /** Mirrors the backend `documents.isPinned`. */
   includeInContext: boolean;
+  /**
+   * Every conversation this document is attached to, as ids.
+   *
+   * ⚠ ONE ROW, MANY CONVERSATIONS. `documents.session` is a `hasMany`
+   * relationship: the same document can be attached to several conversations
+   * at once, and it is the SAME document in each — not a copy. So this list is
+   * how the UI tells "this lives only here" from "this also lives elsewhere",
+   * which is the difference between offering "Eliminar" (destroys it) and
+   * "Quitar de esta conversación" (removes one entry from this list).
+   *
+   * Empty when the backend did not send the field — read as "we do not know",
+   * and the UI then falls back to the destructive-action-only view rather than
+   * offering a detach it cannot justify.
+   */
+  sessionIds: string[];
   updatedAt: number;
   /** M6 — what storage path this doc takes. */
   kind: DocKind;
@@ -131,12 +146,19 @@ export interface WorkingDoc {
    * exists nowhere else the uploader can open. Keeping all of them would put
    * every PDF's full text in the browser's memory to show nobody.
    *
-   * ⚠ NOT EDITABLE and never PATCHed back: this mirrors what the ASR heard.
-   * Correcting it belongs to a feature that does not exist yet.
+   * ⚠ EDITABLE ONLY WHILE THE DOCUMENT IS A DRAFT, and only by its uploader.
+   * A correction is PATCHed back through `/api/documents/[id]/transcript`,
+   * which also re-runs the ingest so retrieval stops answering from the old
+   * wording. Once the document is published the text is frozen: other people
+   * may already have read or cited it. See `transcriptEditGate` in
+   * `$lib/ingest.ts` for the rule and `$lib/stores/app.svelte.ts`
+   * (`saveTranscript`) for the write.
    */
   transcript?: string | null;
   /** UI-only state — a retry request is on the wire. Never sent to the server. */
   retryPending?: boolean;
+  /** UI-only state — a transcript correction is on the wire. Never sent. */
+  transcriptSavePending?: boolean;
 }
 
 export interface Session {

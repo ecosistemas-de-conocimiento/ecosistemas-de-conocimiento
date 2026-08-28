@@ -7,8 +7,30 @@
  * session. This sweep reaps "stale" sessions on a schedule.
  *
  * Cascade contract (do NOT bypass):
- *   - `messages` / `documents` child rows cascade via Postgres FK ON DELETE
- *     CASCADE (migration 20260519_010000).
+ *   - 🔴 NOTHING CASCADES. This block used to claim `messages` and `documents`
+ *     were removed by `ON DELETE CASCADE` in "migration 20260519_010000". That
+ *     migration no longer exists (squashed into the baseline) and the claim was
+ *     never true of the schema that shipped. Verified against the live
+ *     database, so a reader can stop guessing:
+ *
+ *       messages.session_id → sessions.id   ON DELETE SET NULL
+ *       ratings.session_id  → sessions.id   ON DELETE SET NULL
+ *       documents_rels.sessions_id → sessions.id   ON DELETE CASCADE
+ *
+ *     So reaping a conversation ORPHANS its messages and ratings — the rows
+ *     survive with a null `session`. ⚠ That is unbounded growth this sweep does
+ *     NOT reclaim, which matters because reclaiming it is the sweep's entire
+ *     purpose. Whether to start deleting them is an OPEN PRODUCT DECISION; do
+ *     not add cascade behaviour here on your own initiative.
+ *
+ *     `documents` are the one deliberate exception, and the cascade there does
+ *     NOT delete documents. `documents.session` is a `hasMany` relationship, so
+ *     the attachment lives in the `documents_rels` join table; deleting a
+ *     conversation deletes the ATTACHMENT ROW and leaves the document standing.
+ *     That is the intended contract — a document belongs to the ecosistema and
+ *     to its uploader, and it outlives every conversation it was attached to.
+ *     See `collections/Sessions.ts`, which is the comment that always matched
+ *     reality.
  *   - 🔴 NO CORPUS IS DELETED. It used to be: back when there was one corpus
  *     per conversation, `Sessions.afterDelete` dropped it. Under the ecosistema
  *     model the corpora are `eco-{orgId}` and `eco-{orgId}-draft-{userId}`,

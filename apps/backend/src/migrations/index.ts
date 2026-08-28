@@ -1,7 +1,9 @@
 import * as migration_20260814_205354_baseline from './20260814_205354_baseline';
 import * as migration_20260814_231500_media_prefix from './20260814_231500_media_prefix';
 import * as migration_20260822_071001_rating_reason from './20260822_071001_rating_reason';
-import * as migration_20260828_083851_corpus_graph from './20260828_083851_corpus_graph';
+import * as migration_20260828_080049_documents_session_hasmany from './20260828_080049_documents_session_hasmany';
+import * as migration_20260828_081504_voces_and_anonymisation from './20260828_081504_voces_and_anonymisation';
+import * as migration_20260828_091124_corpus_graph from './20260828_091124_corpus_graph';
 
 export const migrations = [
   {
@@ -20,8 +22,18 @@ export const migrations = [
     name: '20260822_071001_rating_reason',
   },
   {
-    up: migration_20260828_083851_corpus_graph.up,
-    down: migration_20260828_083851_corpus_graph.down,
-    name: '20260828_083851_corpus_graph'
+    up: migration_20260828_080049_documents_session_hasmany.up,
+    down: migration_20260828_080049_documents_session_hasmany.down,
+    name: '20260828_080049_documents_session_hasmany',
+  },
+  {
+    up: migration_20260828_081504_voces_and_anonymisation.up,
+    down: migration_20260828_081504_voces_and_anonymisation.down,
+    name: '20260828_081504_voces_and_anonymisation',
+  },
+  {
+    up: migration_20260828_091124_corpus_graph.up,
+    down: migration_20260828_091124_corpus_graph.down,
+    name: '20260828_091124_corpus_graph'
   },
 ];

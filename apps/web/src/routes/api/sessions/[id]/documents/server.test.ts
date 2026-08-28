@@ -240,7 +240,11 @@ describe('POST /api/sessions/[id]/documents — success', () => {
     expect(init.method).toBe('POST');
     const body = JSON.parse(init.body as string);
     expect(body).toMatchObject({
-      session: 42,
+      // ⚠ An ARRAY. `documents.session` is `hasMany`: one document can hang off
+      // several conversations. Creating one attaches it to exactly one, but the
+      // wire shape is the list — a scalar here would be rejected or, worse,
+      // silently coerced.
+      session: [42],
       kind: 'pdf',
       mode: 'rag-retrieve',
       mediaFile: 777,
@@ -402,5 +406,56 @@ describe('POST /api/sessions/[id]/documents — audio', () => {
     expect(raw).not.toMatch(/corpus/i);
     expect(raw).not.toMatch(/organi[sz]ation/i);
     expect(raw).not.toMatch(/organizaci/i);
+  });
+});
+
+// ── The `hasMany` session contract ────────────────────────────────────────
+//
+// 🔴 `documents.session` is a LIST on the backend, so one document can be
+// attached to several conversations at once — that is what makes "usar un
+// documento de otra conversación" possible without copying or moving the row.
+// Both create paths must send the list shape, not the scalar the field used to
+// be. See `documents/[docId]` for how the list grows and shrinks afterwards.
+
+describe('POST /api/sessions/[id]/documents — session is an array', () => {
+  it('sends session as a one-element array on the markdown/JSON path', async () => {
+    mockedBackendFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ doc: { id: 3, kind: 'markdown' } }), {
+        status: 201,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    const request = new Request('http://chat.test/api/sessions/42/documents', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Nota', bodyMarkdown: '# hola' }),
+    });
+    const res = await POST(makeEvent({ request }));
+
+    expect(res.status).toBe(201);
+    const init = mockedBackendFetch.mock.calls[0]![2] as RequestInit;
+    const body = JSON.parse(init.body as string) as { session: unknown };
+    expect(body.session).toEqual([42]);
+  });
+
+  it('coerces a non-numeric session id without wrapping it twice', async () => {
+    mockedBackendFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ doc: { id: 3 } }), {
+        status: 201,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    const request = new Request('http://chat.test/api/sessions/abc/documents', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Nota' }),
+    });
+    await POST(makeEvent({ request, sessionId: 'abc-123' }));
+
+    const init = mockedBackendFetch.mock.calls[0]![2] as RequestInit;
+    const body = JSON.parse(init.body as string) as { session: unknown };
+    expect(body.session).toEqual(['abc-123']);
   });
 });

@@ -1,6 +1,16 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
 
+  // ⚠ The server already answers in Spanish (`$lib/server/auth.ts`
+  // `AUTH_ERROR_COPY`), and it decides WHICH sentence — a wrong password, a
+  // locked account and a backend that is down each get their own. This file
+  // only prints what it is given. The two constants below are the client-side
+  // cases the server never sees, kept as literals because `$lib/server/*` is
+  // server-only by construction and cannot be imported here.
+  const CANNOT_REACH =
+    'No pudimos conectar con el servidor. Revisa tu conexión e inténtalo de nuevo en un momento.';
+  const GENERIC = 'No pudimos iniciar tu sesión. Inténtalo de nuevo en un momento.';
+
   let email = $state('');
   let password = $state('');
   let error = $state<string | null>(null);
@@ -18,12 +28,15 @@
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        error = body.error ?? 'Sign-in failed';
+        error = body.error ?? GENERIC;
         return;
       }
       await goto('/', { invalidateAll: true });
     } catch (err) {
-      error = `Network: ${(err as Error).message}`;
+      // 🔴 `err.message` is `fetch failed` / `Load failed` — our plumbing, not
+      // something a person can act on. It goes to the console, not the screen.
+      console.warn('[sign-in] la petición no salió:', (err as Error).message);
+      error = CANNOT_REACH;
     } finally {
       submitting = false;
     }
@@ -32,10 +45,10 @@
 
 <div class="h-screen w-full flex items-center justify-center text-ink">
   <form onsubmit={submit} class="w-full max-w-sm space-y-3 p-6" autocomplete="off">
-    <h1 class="text-base font-display font-bold text-ink">Sign in</h1>
+    <h1 class="text-base font-display font-bold text-ink">Inicia sesión</h1>
 
     <label class="block text-xs text-ink-soft">
-      Email
+      Correo electrónico
       <!-- svelte-ignore a11y_autofocus -->
       <input
         type="email"
@@ -50,7 +63,7 @@
     </label>
 
     <label class="block text-xs text-ink-soft">
-      Password
+      Contraseña
       <input
         type="password"
         name="password"
@@ -62,17 +75,19 @@
       />
     </label>
 
+    <!-- `role="alert"` so a screen reader reads the problem out loud instead of
+         leaving it silently on screen. -->
     {#if error}
-      <p class="text-sm text-danger">{error}</p>
+      <p class="text-sm text-danger" role="alert">{error}</p>
     {/if}
 
     <button type="submit" disabled={submitting} class="login-submit">
-      {submitting ? 'Signing in…' : 'Sign in'}
+      {submitting ? 'Entrando…' : 'Entrar'}
     </button>
 
     <p class="text-xs text-ink-soft pt-2">
-      No account?
-      <a href="/sign-up" class="underline hover:text-ink">Create one</a>
+      ¿Todavía no tienes cuenta?
+      <a href="/sign-up" class="underline hover:text-ink">Crea una</a>
     </p>
   </form>
 </div>

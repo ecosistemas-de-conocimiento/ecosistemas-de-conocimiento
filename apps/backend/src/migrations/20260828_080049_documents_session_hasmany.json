@@ -1,6 +1,4 @@
 {
-  "id": "6c922dbf-2db9-4cbd-b2f0-2ee3713d2950",
-  "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -935,12 +933,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "session_id": {
-          "name": "session_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
         "kind": {
           "name": "kind",
           "type": "enum_documents_kind",
@@ -948,14 +940,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'markdown'"
-        },
-        "content_kind": {
-          "name": "content_kind",
-          "type": "enum_documents_content_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'documento'"
         },
         "mode": {
           "name": "mode",
@@ -1008,32 +992,6 @@
         "ingest_id": {
           "name": "ingest_id",
           "type": "varchar",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "graph_status": {
-          "name": "graph_status",
-          "type": "enum_documents_graph_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'n/a'"
-        },
-        "graph_error": {
-          "name": "graph_error",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "graph_prompt_version": {
-          "name": "graph_prompt_version",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "graph_extracted_at": {
-          "name": "graph_extracted_at",
-          "type": "timestamp(3) with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -1138,71 +1096,11 @@
           "method": "btree",
           "with": {}
         },
-        "documents_session_idx": {
-          "name": "documents_session_idx",
-          "columns": [
-            {
-              "expression": "session_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "documents_content_kind_idx": {
-          "name": "documents_content_kind_idx",
-          "columns": [
-            {
-              "expression": "content_kind",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "documents_media_file_idx": {
           "name": "documents_media_file_idx",
           "columns": [
             {
               "expression": "media_file_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "documents_graph_status_idx": {
-          "name": "documents_graph_status_idx",
-          "columns": [
-            {
-              "expression": "graph_status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "documents_graph_prompt_version_idx": {
-          "name": "documents_graph_prompt_version_idx",
-          "columns": [
-            {
-              "expression": "graph_prompt_version",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1286,19 +1184,6 @@
           "onDelete": "set null",
           "onUpdate": "no action"
         },
-        "documents_session_id_sessions_id_fk": {
-          "name": "documents_session_id_sessions_id_fk",
-          "tableFrom": "documents",
-          "tableTo": "sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
         "documents_media_file_id_media_id_fk": {
           "name": "documents_media_file_id_media_id_fk",
           "tableFrom": "documents",
@@ -1310,6 +1195,137 @@
             "id"
           ],
           "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.documents_rels": {
+      "name": "documents_rels",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "order": {
+          "name": "order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "parent_id": {
+          "name": "parent_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "path": {
+          "name": "path",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sessions_id": {
+          "name": "sessions_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "documents_rels_order_idx": {
+          "name": "documents_rels_order_idx",
+          "columns": [
+            {
+              "expression": "order",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "documents_rels_parent_idx": {
+          "name": "documents_rels_parent_idx",
+          "columns": [
+            {
+              "expression": "parent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "documents_rels_path_idx": {
+          "name": "documents_rels_path_idx",
+          "columns": [
+            {
+              "expression": "path",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "documents_rels_sessions_id_idx": {
+          "name": "documents_rels_sessions_id_idx",
+          "columns": [
+            {
+              "expression": "sessions_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "documents_rels_parent_fk": {
+          "name": "documents_rels_parent_fk",
+          "tableFrom": "documents_rels",
+          "tableTo": "documents",
+          "columnsFrom": [
+            "parent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "documents_rels_sessions_fk": {
+          "name": "documents_rels_sessions_fk",
+          "tableFrom": "documents_rels",
+          "tableTo": "sessions",
+          "columnsFrom": [
+            "sessions_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -2593,563 +2609,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.graph_entities": {
-      "name": "graph_entities",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "type": {
-          "name": "type",
-          "type": "enum_graph_entities_type",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "label": {
-          "name": "label",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "canonical_key": {
-          "name": "canonical_key",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "aliases": {
-          "name": "aliases",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "graph_entities_organization_idx": {
-          "name": "graph_entities_organization_idx",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_entities_type_idx": {
-          "name": "graph_entities_type_idx",
-          "columns": [
-            {
-              "expression": "type",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_entities_canonical_key_idx": {
-          "name": "graph_entities_canonical_key_idx",
-          "columns": [
-            {
-              "expression": "canonical_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_entities_updated_at_idx": {
-          "name": "graph_entities_updated_at_idx",
-          "columns": [
-            {
-              "expression": "updated_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_entities_created_at_idx": {
-          "name": "graph_entities_created_at_idx",
-          "columns": [
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "graph_entities_organization_id_organizations_id_fk": {
-          "name": "graph_entities_organization_id_organizations_id_fk",
-          "tableFrom": "graph_entities",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.graph_mentions": {
-      "name": "graph_mentions",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "document_id": {
-          "name": "document_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "entity_id": {
-          "name": "entity_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "occurrences": {
-          "name": "occurrences",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
-        "snippet": {
-          "name": "snippet",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "graph_mentions_organization_idx": {
-          "name": "graph_mentions_organization_idx",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_mentions_document_idx": {
-          "name": "graph_mentions_document_idx",
-          "columns": [
-            {
-              "expression": "document_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_mentions_entity_idx": {
-          "name": "graph_mentions_entity_idx",
-          "columns": [
-            {
-              "expression": "entity_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_mentions_updated_at_idx": {
-          "name": "graph_mentions_updated_at_idx",
-          "columns": [
-            {
-              "expression": "updated_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_mentions_created_at_idx": {
-          "name": "graph_mentions_created_at_idx",
-          "columns": [
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "graph_mentions_organization_id_organizations_id_fk": {
-          "name": "graph_mentions_organization_id_organizations_id_fk",
-          "tableFrom": "graph_mentions",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "graph_mentions_document_id_documents_id_fk": {
-          "name": "graph_mentions_document_id_documents_id_fk",
-          "tableFrom": "graph_mentions",
-          "tableTo": "documents",
-          "columnsFrom": [
-            "document_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "graph_mentions_entity_id_graph_entities_id_fk": {
-          "name": "graph_mentions_entity_id_graph_entities_id_fk",
-          "tableFrom": "graph_mentions",
-          "tableTo": "graph_entities",
-          "columnsFrom": [
-            "entity_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.graph_relations": {
-      "name": "graph_relations",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "document_id": {
-          "name": "document_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "from_entity_id": {
-          "name": "from_entity_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "to_entity_id": {
-          "name": "to_entity_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "type": {
-          "name": "type",
-          "type": "enum_graph_relations_type",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "graph_relations_organization_idx": {
-          "name": "graph_relations_organization_idx",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_relations_document_idx": {
-          "name": "graph_relations_document_idx",
-          "columns": [
-            {
-              "expression": "document_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_relations_from_entity_idx": {
-          "name": "graph_relations_from_entity_idx",
-          "columns": [
-            {
-              "expression": "from_entity_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_relations_to_entity_idx": {
-          "name": "graph_relations_to_entity_idx",
-          "columns": [
-            {
-              "expression": "to_entity_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_relations_type_idx": {
-          "name": "graph_relations_type_idx",
-          "columns": [
-            {
-              "expression": "type",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_relations_updated_at_idx": {
-          "name": "graph_relations_updated_at_idx",
-          "columns": [
-            {
-              "expression": "updated_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "graph_relations_created_at_idx": {
-          "name": "graph_relations_created_at_idx",
-          "columns": [
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "graph_relations_organization_id_organizations_id_fk": {
-          "name": "graph_relations_organization_id_organizations_id_fk",
-          "tableFrom": "graph_relations",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "graph_relations_document_id_documents_id_fk": {
-          "name": "graph_relations_document_id_documents_id_fk",
-          "tableFrom": "graph_relations",
-          "tableTo": "documents",
-          "columnsFrom": [
-            "document_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "graph_relations_from_entity_id_graph_entities_id_fk": {
-          "name": "graph_relations_from_entity_id_graph_entities_id_fk",
-          "tableFrom": "graph_relations",
-          "tableTo": "graph_entities",
-          "columnsFrom": [
-            "from_entity_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "graph_relations_to_entity_id_graph_entities_id_fk": {
-          "name": "graph_relations_to_entity_id_graph_entities_id_fk",
-          "tableFrom": "graph_relations",
-          "tableTo": "graph_entities",
-          "columnsFrom": [
-            "to_entity_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.ai_service_callbacks": {
       "name": "ai_service_callbacks",
       "schema": "",
@@ -3510,24 +2969,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "graph_entities_id": {
-          "name": "graph_entities_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "graph_mentions_id": {
-          "name": "graph_mentions_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "graph_relations_id": {
-          "name": "graph_relations_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
         "ai_service_callbacks_id": {
           "name": "ai_service_callbacks_id",
           "type": "integer",
@@ -3731,51 +3172,6 @@
           "method": "btree",
           "with": {}
         },
-        "payload_locked_documents_rels_graph_entities_id_idx": {
-          "name": "payload_locked_documents_rels_graph_entities_id_idx",
-          "columns": [
-            {
-              "expression": "graph_entities_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "payload_locked_documents_rels_graph_mentions_id_idx": {
-          "name": "payload_locked_documents_rels_graph_mentions_id_idx",
-          "columns": [
-            {
-              "expression": "graph_mentions_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "payload_locked_documents_rels_graph_relations_id_idx": {
-          "name": "payload_locked_documents_rels_graph_relations_id_idx",
-          "columns": [
-            {
-              "expression": "graph_relations_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "payload_locked_documents_rels_ai_service_callbacks_id_idx": {
           "name": "payload_locked_documents_rels_ai_service_callbacks_id_idx",
           "columns": [
@@ -3929,45 +3325,6 @@
           "tableTo": "ratings",
           "columnsFrom": [
             "ratings_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "payload_locked_documents_rels_graph_entities_fk": {
-          "name": "payload_locked_documents_rels_graph_entities_fk",
-          "tableFrom": "payload_locked_documents_rels",
-          "tableTo": "graph_entities",
-          "columnsFrom": [
-            "graph_entities_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "payload_locked_documents_rels_graph_mentions_fk": {
-          "name": "payload_locked_documents_rels_graph_mentions_fk",
-          "tableFrom": "payload_locked_documents_rels",
-          "tableTo": "graph_mentions",
-          "columnsFrom": [
-            "graph_mentions_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "payload_locked_documents_rels_graph_relations_fk": {
-          "name": "payload_locked_documents_rels_graph_relations_fk",
-          "tableFrom": "payload_locked_documents_rels",
-          "tableTo": "graph_relations",
-          "columnsFrom": [
-            "graph_relations_id"
           ],
           "columnsTo": [
             "id"
@@ -4342,15 +3699,6 @@
         "audio"
       ]
     },
-    "public.enum_documents_content_kind": {
-      "name": "enum_documents_content_kind",
-      "schema": "public",
-      "values": [
-        "documento",
-        "testimonio",
-        "conversacion"
-      ]
-    },
     "public.enum_documents_mode": {
       "name": "enum_documents_mode",
       "schema": "public",
@@ -4371,18 +3719,6 @@
         "embedding",
         "ready",
         "failed"
-      ]
-    },
-    "public.enum_documents_graph_status": {
-      "name": "enum_documents_graph_status",
-      "schema": "public",
-      "values": [
-        "n/a",
-        "pending",
-        "extracting",
-        "ready",
-        "failed",
-        "skipped"
       ]
     },
     "public.enum_messages_role": {
@@ -4409,29 +3745,6 @@
         "complete",
         "other"
       ]
-    },
-    "public.enum_graph_entities_type": {
-      "name": "enum_graph_entities_type",
-      "schema": "public",
-      "values": [
-        "tema",
-        "lugar",
-        "evento",
-        "organizacion",
-        "persona"
-      ]
-    },
-    "public.enum_graph_relations_type": {
-      "name": "enum_graph_relations_type",
-      "schema": "public",
-      "values": [
-        "ocurre_en",
-        "participa_en",
-        "ubicado_en",
-        "parte_de",
-        "afecta_a",
-        "relacionado_con"
-      ]
     }
   },
   "schemas": {},
@@ -4443,5 +3756,7 @@
     "schemas": {},
     "tables": {},
     "columns": {}
-  }
+  },
+  "id": "d008d2de-f6cb-4c79-839a-c0ebc801d2df",
+  "prevId": "00000000-0000-0000-0000-000000000000"
 }

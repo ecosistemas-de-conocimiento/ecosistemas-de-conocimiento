@@ -47,6 +47,7 @@ import {
   CALLBACK_TIMESTAMP_HEADER,
   verifyCallbackSignature,
 } from '@/lib/hmac'
+import { messageIdFromExternalId } from '@/lib/conversationIngest'
 import { relationId } from '@/lib/permissions'
 
 /**
@@ -287,6 +288,23 @@ async function dispatchCallback(
       // `docId` is the consumer-supplied id from the original ingest request —
       // we set it to the Documents row id, so the join is direct.
       const docIdRaw = envelope.docId
+
+      /**
+       * 🔴 …EXCEPT FOR A CHAT TURN, WHICH IS NOT A `documents` ROW AT ALL.
+       *
+       * Conversation ingest sends one document per turn under the id
+       * `msg-{messageId}` (see `lib/conversationIngest.ts`). Without this branch
+       * every one of those callbacks would look up a `documents` row that does
+       * not exist, log "no documents row for msg-41", and leave the turn stuck
+       * in `embedding` forever with nothing able to move it.
+       */
+      const messageId = messageIdFromExternalId(docIdRaw)
+      if (messageId !== null) {
+        await dispatchConversationTurn(payload, messageId, envelope)
+        return
+      }
+
+
       const docId = /^\d+$/.test(docIdRaw) ? Number(docIdRaw) : docIdRaw
 
       // Read the row FIRST: whether this callback is the original draft ingest
@@ -411,6 +429,72 @@ async function dispatchCallback(
 }
 
 
+/**
+ * A chat turn's ingest finished (or did not). Move the `messages` row.
+ *
+ * ⚠ `__skipConversationIngest` on the write, or this status update re-fires the
+ * afterChange hook that starts a whole ingest run — and each run can cost model
+ * calls for the anonymisation gate.
+ *
+ * A `failed` turn goes back into the runnable set, so the next message in that
+ * conversation retries it. Nothing polls; the retry rides along with normal use,
+ * which is the right cadence for something nobody is waiting on.
+ */
+async function dispatchConversationTurn(
+  payload: Awaited<ReturnType<typeof getPayload>>,
+  messageId: number | string,
+  envelope: Extract<CallbackEnvelope, { event: 'ingest.completed' | 'ingest.failed' }>,
+): Promise<void> {
+  /**
+   * 🔴 IS THIS CALLBACK ABOUT THE RUN THE ROW IS ACTUALLY WAITING FOR?
+   *
+   * The same guard the audio path has (`transcribeIdMatches`), for the same
+   * reason. A turn can be enqueued more than once — a `failed` turn goes back
+   * into the runnable set and the next message in the thread retries it — and
+   * both runs' callbacks carry the same `msg-{id}`. Without this check a late
+   * callback from the SUPERSEDED run can mark a turn `failed` while the retry
+   * is succeeding, or claim `ingested` for a run that never landed.
+   *
+   * ⚠ A row with no `corpusIngestId` accepts nothing: it has not enqueued
+   * anything, so no callback can be about it.
+   */
+  const row = (await payload
+    .findByID({ collection: 'messages', id: messageId as never, depth: 0, overrideAccess: true })
+    .catch(() => null)) as { corpusIngestId?: unknown } | null
+
+  if (!row || typeof row.corpusIngestId !== 'string' || row.corpusIngestId !== envelope.ingestId) {
+    console.warn(
+      '[callback] ignoring an ingest callback from a superseded run for message',
+      messageId,
+      envelope.ingestId,
+    )
+    return
+  }
+
+  const data =
+    envelope.event === 'ingest.completed'
+      ? ({ corpusStatus: 'ingested', corpusError: null } as const)
+      : ({
+          corpusStatus: 'failed',
+          // Cleared so the next run's guard cannot be satisfied by a stale id.
+          corpusIngestId: null,
+          corpusError: `${envelope.error?.code ?? 'ingest_failed'}: ${
+            envelope.error?.message ?? 'ai-service reported a failure'
+          }`.slice(0, 500),
+        } as const)
+  try {
+    await payload.update({
+      collection: 'messages',
+      id: messageId as never,
+      data,
+      overrideAccess: true,
+      context: { __skipConversationIngest: true },
+    })
+  } catch (err) {
+    console.error('[callback] could not update messages row', messageId, err)
+  }
+}
+
 /** The slice of a documents row the callback dispatcher reasons about. */
 interface DocumentSnapshot {
   id: number | string
@@ -419,10 +503,14 @@ interface DocumentSnapshot {
   publicationStatus?: unknown
   publishIngestId?: unknown
   kind?: unknown
-  /** WHAT the document is. The corpus graph's person rule keys off it. */
+  /**
+   * What the material IS, as opposed to the file format. `lib/contentKind.ts`.
+   * ⚠ Also the corpus graph's person rule keys off it — see `lib/graph/`.
+   */
   contentKind?: unknown
   name?: unknown
   extractedText?: unknown
+  redactedText?: unknown
   ingestId?: unknown
   transcribeId?: unknown
 }
@@ -615,6 +703,13 @@ async function dispatchTranscribeCompleted(
     fresh: {
       name: typeof doc.name === 'string' ? doc.name : null,
       kind: typeof doc.kind === 'string' ? doc.kind : 'audio',
+      /**
+       * 🔴 CARRIED, NOT DEFAULTED. A Voz is normally a recording, so the audio
+       * path is the one a `testimonio` actually takes. Dropping `contentKind`
+       * here would let every testimony skip the anonymisation gate — the gate
+       * runs inside `enqueueIngestForDoc` and decides on this field — while the
+       * PDF path stayed correct and nothing looked wrong.
+       */
       contentKind: typeof doc.contentKind === 'string' ? doc.contentKind : null,
     },
     extractedText: text,
@@ -626,9 +721,15 @@ async function dispatchTranscribeCompleted(
   // hours. The transcript exists HERE, so extraction is armed HERE, from the
   // same function the pdf/docx path uses (ADR §5.1).
   //
-  // ⚠ Fire-and-forget, and it cannot fail this handler: `scheduleGraphExtractionForDoc`
-  // catches everything. A transcript that landed must not be reported as a
-  // failed callback because the graph could not be built from it.
+  // ⚠ Fire-and-forget, and it cannot fail this handler:
+  // `scheduleGraphExtractionForDoc` catches everything. A transcript that landed
+  // must not be reported as a failed callback because the graph could not be
+  // built from it.
+  //
+  // ⚠ NO TEXT IS PASSED. The graph pipeline re-reads the row and takes the SAME
+  // text the corpus got — `redactedText` for gated content, never the raw
+  // transcript. Handing it `text` here is exactly how the graph would come to
+  // hold what the anonymisation gate removed. See `lib/graph/extract.ts`.
   await scheduleGraphExtractionForDoc({
     payload,
     docId,
@@ -639,7 +740,6 @@ async function dispatchTranscribeCompleted(
       // is exactly the case where the person rule and the snippet rule bite.
       contentKind: typeof doc.contentKind === 'string' ? doc.contentKind : null,
     },
-    extractedText: text,
   })
 }
 
@@ -691,6 +791,37 @@ async function dispatchPublishMove(
       // and is retryable.
       const { getAdminAIClient } = await import('@/lib/aiClient')
       await confirmPublish(doc as never, { payload, client: getAdminAIClient() as never })
+
+      /**
+       * 🔴 THE RELEASE, AND THIS IS THE ONLY PLACE IT CAN CORRECTLY HAPPEN.
+       *
+       * The owner's rule: a conversation citing unpublished drafts is held, and
+       * when the LAST of those drafts is published the whole conversation goes
+       * in one run. "Published" means the shared-corpus copy is CONFIRMED —
+       * which is here, not at the `POST /publish` that merely enqueued it.
+       * Releasing at the endpoint would put chat turns in the ecosistema's
+       * corpus citing a document whose re-embed had not landed and might fail.
+       *
+       * ⚠ AFTER `confirmPublish`, never before: `releaseConversationsWaitingOn`
+       * re-reads `publicationStatus` to decide, and the flip to `published`
+       * happens inside that call.
+       *
+       * Never throws — a conversation that could not be embedded must not turn a
+       * successful publish into an error the user cannot act on.
+       */
+      const { releaseConversationsWaitingOn } = await import('@/lib/conversationIngest')
+      const { getAppAIClient } = await import('@/lib/aiClient')
+      const { ingestCallbackUrl } = await import('@/lib/callbackConfig')
+      try {
+        await releaseConversationsWaitingOn({
+          payload,
+          documentId: doc.id,
+          client: getAppAIClient() as never,
+          ...(ingestCallbackUrl() ? { callbackUrl: ingestCallbackUrl() as string } : {}),
+        })
+      } catch (err) {
+        console.warn('[callback] conversation release failed for doc', doc.id, err)
+      }
     } else {
       // Unpublish already retired the shared copy before this re-ingest was
       // enqueued, so there is nothing left to retire — just record the state.

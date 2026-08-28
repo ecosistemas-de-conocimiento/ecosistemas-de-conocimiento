@@ -54,6 +54,8 @@
 
 import type { Payload } from 'payload'
 
+import { corpusTextFor } from './anonymiseDocument'
+import { chunkMetadata, contentKindOf, titleFor } from './contentKind'
 import { draftCorpus, publishedCorpus } from './corpus'
 
 /**
@@ -107,10 +109,13 @@ export function retrievalOptionsFor(now: Date = new Date()): { asOf: string } {
 export interface PublishableDocument {
   id: number | string
   name?: string | null
+  /** The FILE FORMAT — pdf/docx/audio/markdown. Not what the material is. */
   kind?: string | null
-  /** WHAT it is (documento/testimonio/conversacion), next to `kind`'s HOW it arrived. */
+  /** What the material IS. See `lib/contentKind.ts`. */
   contentKind?: string | null
   extractedText?: string | null
+  /** The anonymisation gate's output. What a gated document is embedded from. */
+  redactedText?: string | null
   organization?: unknown
   uploadedBy?: unknown
   publicationStatus?: unknown
@@ -279,12 +284,30 @@ export async function beginPublish(
   deps: TransitionDeps,
 ): Promise<{ ingestId: string; corpus: string }> {
   const { organizationId } = idsOf(doc)
-  const text = typeof doc.extractedText === 'string' ? doc.extractedText.trim() : ''
-  if (!text) {
+  /**
+   * 🔴 THE GATE'S OUTPUT FOR A TESTIMONY, THE ORIGINAL FOR A DOCUMENT — and it
+   * is `corpusTextFor` that knows which. Reading `extractedText` here directly
+   * is the bug this call exists to prevent: publishing is what puts a document
+   * in front of the WHOLE ecosistema, so it is the worst possible moment to
+   * promote the unredacted original.
+   *
+   * ⚠ A gated row with no `redactedText` is REFUSED, not silently published
+   * from the original. That covers the real case: the draft ingest was HELD, so
+   * there is nothing cleared to share, and the publish must say so.
+   *
+   * ⚠ The gate is NOT re-run here. Two more model calls on text that has already
+   * been decided, with the chance of a different answer, is worse than either
+   * answer.
+   */
+  const selected = corpusTextFor(doc)
+  if (!selected.ok) {
     throw new NotPublishableError(
-      'This document has no extracted text yet, so it cannot be published. Wait for ingestion to finish, or re-upload it.',
+      selected.reason === 'no extracted text'
+        ? 'This document has no extracted text yet, so it cannot be published. Wait for ingestion to finish, or re-upload it.'
+        : `This document cannot be published: ${selected.reason}.`,
     )
   }
+  const text = selected.text
 
   const corpus = publishedCorpus(organizationId)
 
@@ -302,18 +325,26 @@ export async function beginPublish(
       {
         id: String(doc.id),
         text,
-        title: doc.name ?? 'Untitled document',
-        metadata: {
+        // ⚠ Neutral for gated content — see `titleFor`. A testimony's filename
+        // is free text and never went through the gate.
+        title: titleFor(contentKindOf(doc), doc.name),
+        /**
+         * 🔴 THE SAME BUILDER THE DRAFT INGEST USES, AND THAT IS THE WHOLE
+         * POINT. Publishing RE-EMBEDS the document into a different corpus, so
+         * it rebuilds the chunk metadata from scratch. Assembled inline, this
+         * object silently loses `contentKind` at exactly the moment the material
+         * becomes visible to the entire ecosistema — and then a citation can no
+         * longer say "this is a testimony" or "this came from a previous
+         * answer". See `lib/contentKind.ts`.
+         */
+        metadata: chunkMetadata({
           docId: String(doc.id),
-          organizationId: String(organizationId),
-          kind: doc.kind ?? 'unknown',
-          contentKind: doc.contentKind ?? 'documento',
+          organizationId,
+          contentKind: contentKindOf(doc),
+          format: doc.kind,
           publication: 'published',
-          // See the note on the draft ingest in `collections/Documents.ts`:
-          // only `metadata` survives the retrieve round trip, so the title has
-          // to travel here or citations fall back to the corpus name.
-          title: doc.name ?? 'Documento sin título',
-        },
+          title: doc.name,
+        }),
       },
     ],
     language: CORPUS_LANGUAGE,
@@ -403,12 +434,15 @@ export async function unpublish(
   deps: TransitionDeps,
 ): Promise<{ ingestId: string; corpus: string }> {
   const { organizationId, userId } = idsOf(doc)
-  const text = typeof doc.extractedText === 'string' ? doc.extractedText.trim() : ''
-  if (!text) {
+  // Same rule as `beginPublish`: the gate's output for gated content, the
+  // original for a plain document. Un-publishing is still a full re-embed.
+  const selected = corpusTextFor(doc)
+  if (!selected.ok) {
     throw new NotPublishableError(
-      'This document has no extracted text, so it cannot be moved back to drafts.',
+      'This document has no text that may be embedded, so it cannot be moved back to drafts.',
     )
   }
+  const text = selected.text
   const now = (deps.now ?? (() => new Date()))()
 
   await deps.payload.update({
@@ -434,14 +468,18 @@ export async function unpublish(
       {
         id: String(doc.id),
         text,
-        title: doc.name ?? 'Untitled document',
-        metadata: {
+        // ⚠ Neutral for gated content — see `titleFor`. A testimony's filename
+        // is free text and never went through the gate.
+        title: titleFor(contentKindOf(doc), doc.name),
+        // Same shared builder as every other ingest — see `beginPublish`.
+        metadata: chunkMetadata({
           docId: String(doc.id),
-          organizationId: String(organizationId),
-          kind: doc.kind ?? 'unknown',
-          contentKind: doc.contentKind ?? 'documento',
+          organizationId,
+          contentKind: contentKindOf(doc),
+          format: doc.kind,
           publication: 'draft',
-        },
+          title: doc.name,
+        }),
       },
     ],
     language: CORPUS_LANGUAGE,

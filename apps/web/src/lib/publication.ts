@@ -224,12 +224,23 @@ export interface CitationDocRef {
  * Metadata key stamped on a provenance chunk that came from the caller's own
  * draft corpus.
  *
- * ⚠ Why this exists in addition to the session document list: documents are
- * per-session, but retrieval reads the caller's WHOLE draft corpus. A draft
- * uploaded in another session would otherwise be cited with no label at all —
- * silently, which is the exact failure the labelling exists to prevent. The
- * corpus name is an exact, session-independent signal, and the server stamps
- * it at generation time so it persists with the answer.
+ * ⚠ Why this exists in addition to the session document list. Three reasons,
+ * and none of them went away when retrieval stopped reading the caller's whole
+ * draft corpus (`$lib/server/engine/aiClient` now narrows the draft leg to the
+ * documents attached to the current conversation):
+ *
+ *   1. RELOAD-PROOF. The stamp is written server-side, at generation time,
+ *      onto the persisted turn. The reader's later session document list is
+ *      irrelevant — an old answer keeps its labels.
+ *   2. A DOCUMENT CAN BE ATTACHED TO SEVERAL CONVERSATIONS. Reading an answer
+ *      from conversation A while sitting in conversation B, the local list
+ *      would not contain the cited draft and the citation would go unlabelled.
+ *   3. EXACT, not inferred. The corpus name says "this chunk came from the
+ *      caller's private drafts". Nothing else in the citation does.
+ *
+ * A draft cited with no label at all is the silent failure this labelling
+ * exists to prevent, so the signal that does not depend on the reader's current
+ * context is the one worth keeping.
  */
 export const DRAFT_PROVENANCE_FLAG = 'edcIsDraft';
 
@@ -290,7 +301,8 @@ export function markDraftCitations<T extends CitationDocRef>(
     const id = c.documentId == null ? '' : String(c.documentId);
     // Two independent signals, either one is enough:
     //  - the server stamped the chunk as coming from this user's draft corpus
-    //    (exact, and works across sessions);
+    //    (exact, and holds whichever conversation the answer is read in — a
+    //    document can be attached to more than one);
     //  - the document is in THIS session's list and is not published (the
     //    fallback for turns generated before the stamp existed).
     if (!isStampedDraftCitation(c) && (!id || !draftIds.has(id))) return c;
