@@ -288,4 +288,32 @@ describe('deterministicPass — domicilios', () => {
     expect(serialized).not.toContain('Portales')
     expect(serialized).not.toContain('03300')
   })
+  it('⚠ stays LINEAR on a whole transcript — these run on every document', () => {
+    /**
+     * 🔴 THE ADDRESS PATTERNS NEST A QUANTIFIER INSIDE AN ALTERNATION
+     * (`(?:\s+WORD){1,6}` on two arms), which is the shape catastrophic
+     * backtracking comes from. This stage runs on the FULL text of every
+     * testimony before the model ever sees it, so a pathological input would
+     * hang the ingest worker rather than merely be slow.
+     *
+     * What keeps it linear is the `{1,6}` CEILING — the run cannot grow with the
+     * input. Measured here rather than reasoned about, because the reasoning is
+     * exactly the kind that is quietly wrong after the next edit.
+     *
+     * The bound is deliberately loose (2s against a measured ~4ms) so this fails
+     * on a real blow-up and not on a loaded CI box.
+     */
+    const cases = [
+      'Calle ' + 'Morelos '.repeat(400),
+      'Calle ' + 'Morelos '.repeat(400) + '45',
+      'En la calle Morelos Zapata Juarez Hidalgo Allende '.repeat(400),
+      'calle ' + 'palabra '.repeat(400) + 'no. 45',
+      'Vivo en Calle Morelos No. 45, Col. Portales, C.P. 03300. '.repeat(2000),
+    ]
+    for (const text of cases) {
+      const started = performance.now()
+      run(text)
+      expect(performance.now() - started, `${text.length} chars`).toBeLessThan(2000)
+    }
+  })
 })
