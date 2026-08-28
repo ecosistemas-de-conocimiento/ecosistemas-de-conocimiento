@@ -19,6 +19,7 @@ import {
   useRegistryPrompt,
 } from '$lib/server/engine';
 import { fetchSessionCorpora } from '$lib/server/corpora';
+import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
 import { stampDraftProvenance } from '$lib/publication';
 import { prepareTurn, respond, type ContextRef, type ContextScope } from '@edc/chat-engine/core';
@@ -36,16 +37,32 @@ import { prepareTurn, respond, type ContextRef, type ContextScope } from '@edc/c
  * `$lib/server/engine/wire.ts`.
  *
  * Pipeline per turn:
- *   1. Build the Domain Adapter (organization + session documents).
- *   2. `prepareTurn()` — condense → deterministic summary → scoped retrieve
- *      (per-session corpus + ai-service `filter`) → resolve `@`-refs → assemble
- *      the user turn.
- *   3. Generate: sync (`respond`-style) or stream (drive the existing SSE proxy
+ *   1. Read the turn's scope from the backend ONCE — which corpora, as of
+ *      when, which ecosistema, and which documents are attached to this
+ *      conversation. One `Promise.all`, shared by everything below.
+ *   2. Build the Domain Adapter (ecosistema + this conversation's documents).
+ *   3. `prepareTurn()` — condense → deterministic summary → scoped retrieve →
+ *      resolve `@`-refs → assemble the user turn.
+ *   4. Generate: sync (`respond`-style) or stream (drive the existing SSE proxy
  *      with the engine-assembled messages).
- *   4. Persist the assistant turn (+ provenance) and round-trip the message id.
+ *   5. Persist the assistant turn (+ provenance) and round-trip the message id.
+ *
+ * ── WHAT A TURN CAN RETRIEVE ─────────────────────────────────────────────────
+ *
+ * Two scopes, and they are deliberately different:
+ *   · the ecosistema's PUBLISHED corpus — GLOBAL. Published documents and
+ *     testimonies are the shared brain: retrievable in every conversation, by
+ *     every member, forever. Nothing narrows it.
+ *   · the caller's DRAFT corpus — private to them, but ai-service gives them
+ *     ONE draft corpus across all of their conversations. So the draft leg is
+ *     narrowed to the documents attached to THIS conversation; a draft belongs
+ *     to the conversation it was uploaded into.
+ *
+ * Both rules live in `$lib/server/engine/aiClient`, which also refuses any
+ * corpus the backend did not authorise for this turn.
  *
  * Backward-compatible: a caller that omits `contextRefs`/`scope` still gets a
- * working turn (org-wide summary + per-session doc retrieval).
+ * working turn (ecosistema-wide summary + retrieval).
  */
 
 interface IncomingBody {
@@ -277,16 +294,27 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // summary names it, so taking "the first organization" would put another
   // ecosistema's name and description into the turn for anyone with two
   // memberships.
-  const [{ corpora, asOf, draftCorpus }, organizationId] = await Promise.all([
-    fetchSessionCorpora(locals.token, body.sessionId),
-    sessionEcosystemId(locals.token, body.sessionId),
-  ]);
+  // Alongside those: the documents attached to THIS conversation. Read once,
+  // in the same round trip, and used twice — the deterministic summary names
+  // them, and the draft retrieval leg filters on them. Reading it once is what
+  // keeps those two honest with each other: the summary used to list this
+  // conversation's documents while retrieval reached every draft the caller had
+  // ever uploaded anywhere, and the model could not tell them apart.
+  const [{ corpora, asOf, draftCorpus, publishedCorpus }, organizationId, sessionDocs] =
+    await Promise.all([
+      fetchSessionCorpora(locals.token, body.sessionId),
+      sessionEcosystemId(locals.token, body.sessionId),
+      fetchSessionDocs(locals.token, body.sessionId),
+    ]);
   if (!asOf) {
     console.error(
       `[generate] no asOf for session ${body.sessionId}; answering WITHOUT retrieval ` +
         'rather than risking unpublished content in the answer.',
     );
   }
+  // `null` when the list could not be read — NOT an empty set. The draft leg
+  // then retrieves nothing at all rather than guessing. See `$lib/server/sessionDocs`.
+  const sessionDocumentIds = sessionDocumentIdSet(sessionDocs);
 
   // Build the Domain Adapter + the engine's AIClient over this app's BFF client.
   const adapter = makeChatDomainAdapter({
@@ -294,11 +322,20 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     sessionId: body.sessionId,
     corpora,
     organizationId,
+    // Hand over the list we just read so the adapter does not fetch it again.
+    ...(sessionDocs.ok ? { documents: sessionDocs.docs } : {}),
   });
   const engineAI = makeEngineAIClient(chatClient, {
     sessionId: body.sessionId,
     signal: request.signal,
     asOf,
+    // Only what the backend authorised. Everything except the ecosistema's
+    // shared corpus is narrowed to this conversation's documents — stated as an
+    // exemption so an unreadable response loses context loudly instead of
+    // leaking drafts quietly. See `EngineAIClientOptions.publishedCorpus`.
+    allowedCorpora: corpora,
+    publishedCorpus,
+    sessionDocumentIds,
   });
 
   // The full engine turn spec (condense → summary → scoped retrieve → @-refs →
@@ -362,8 +399,8 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
         locals.token,
         body.sessionId,
         // Mark chunks that came from THIS user's draft corpus before the turn
-        // is persisted, so the citation stays labelled after a reload and in
-        // sessions other than the one that uploaded the document.
+        // is persisted, so the citation stays labelled after a reload — the
+        // corpus name is the exact signal, and it is only knowable here.
         stampDraftProvenance(prepared.provenance, draftCorpus),
         upstream.unit.systemPrompt,
       );

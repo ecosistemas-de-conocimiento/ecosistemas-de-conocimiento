@@ -166,6 +166,30 @@ function messageFromBackend(row: Record<string, unknown>): Message {
   };
 }
 
+/**
+ * Every id in a backend `hasMany` relationship value.
+ *
+ * ⚠ The wire shape is not one shape. `documents.session` comes back as an
+ * array of ids at `depth=0`, as an array of populated rows at higher depth, and
+ * as a bare scalar for a row written before the field went plural. Normalising
+ * here is what keeps `sessionIds.length` a trustworthy answer to "is this
+ * document in more than one conversation" — the question the detach action
+ * hangs off.
+ */
+function relationIds(raw: unknown): string[] {
+  const items = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+  const out: string[] = [];
+  for (const item of items) {
+    if (typeof item === 'string' || typeof item === 'number') {
+      out.push(String(item));
+    } else if (item && typeof item === 'object' && 'id' in item) {
+      const id = (item as { id?: unknown }).id;
+      if (typeof id === 'string' || typeof id === 'number') out.push(String(id));
+    }
+  }
+  return out;
+}
+
 function docFromBackend(row: Record<string, unknown>): WorkingDoc {
   const kindRaw = row.kind as string | undefined;
   const kind: DocKind =
@@ -177,6 +201,9 @@ function docFromBackend(row: Record<string, unknown>): WorkingDoc {
     title: typeof row.name === 'string' && row.name ? row.name : 'Documento sin título',
     body: typeof row.bodyMarkdown === 'string' ? row.bodyMarkdown : '',
     includeInContext: row.isPinned !== false,
+    // The conversations this row is attached to. Empty means "the backend did
+    // not tell us", which the UI reads as "assume it lives only here".
+    sessionIds: relationIds(row.session),
     updatedAt: parseDate(row.updatedAt ?? row.createdAt),
     kind,
     ingestStatus,
@@ -1373,6 +1400,104 @@ class AppStore {
       console.error('deleteDoc failed', err);
       s.docs = prev;
     }
+  }
+
+  // ── attach / detach ────────────────────────────────────────────────────
+  //
+  // 🔴 ONE DOCUMENT, MANY CONVERSATIONS. `documents.session` is a list on the
+  // backend. Attaching APPENDS this conversation to it; detaching REMOVES it.
+  // The document row is never copied and never moved — and `detachDoc` is NOT
+  // `deleteDoc`: it takes the document out of ONE conversation and leaves it
+  // standing everywhere else. They sit next to each other on purpose, so the
+  // difference is impossible to miss when reading either one.
+
+  /**
+   * The documents this user could bring into this conversation: their own,
+   * in this conversation's ecosistema, not already attached here.
+   *
+   * Returns `[]` on any failure — this feeds a picker, and an empty picker with
+   * a toast is a better answer than a broken one. Never touches `sessions`.
+   */
+  async listAvailableDocs(sessionId: string): Promise<WorkingDoc[]> {
+    try {
+      const data = await fetchJson<{ docs?: Record<string, unknown>[] }>(
+        `/api/sessions/${sessionId}/documents/available`,
+        { credentials: 'same-origin' },
+      );
+      return (data?.docs ?? []).map(docFromBackend);
+    } catch (err) {
+      console.error('listAvailableDocs failed', err);
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo abrir la lista',
+        message:
+          'No pudimos buscar tus documentos de otras conversaciones. Inténtalo de nuevo.',
+      });
+      return [];
+    }
+  }
+
+  /**
+   * Add an existing document to this conversation.
+   *
+   * ⚠ NOT OPTIMISTIC, and that matches `uploadDoc` / `newDoc` right above:
+   * only the server knows whether the backend accepted the attachment (it
+   * refuses a conversation you do not own, and refuses mixing ecosistemas), so
+   * the row is adopted from a fresh read rather than painted in advance.
+   */
+  async attachDoc(sessionId: string, docId: string): Promise<boolean> {
+    try {
+      await fetchJson(`/api/sessions/${sessionId}/documents/${docId}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+    } catch (err) {
+      console.error('attachDoc failed', err);
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo agregar el documento',
+        message: 'Inténtalo de nuevo. El documento sigue en las conversaciones donde ya estaba.',
+      });
+      return false;
+    }
+    await this.loadDocs(sessionId);
+    return true;
+  }
+
+  /**
+   * Take a document OUT of this conversation.
+   *
+   * 🔴 THIS IS NOT A DELETE. The document keeps existing: same text, same
+   * embeddings, same publication state, and it stays in every other
+   * conversation it was attached to. `deleteDoc` (above) is the one that
+   * destroys it.
+   *
+   * Optimistic + rollback, like `deleteDoc`, because the row leaving the panel
+   * is the whole feedback — then a refresh, so the local `sessionIds` of
+   * everything else match what the server now holds.
+   */
+  async detachDoc(sessionId: string, docId: string): Promise<boolean> {
+    const s = this.sessions.find((x) => x.id === sessionId);
+    if (!s) return false;
+    const prev = s.docs;
+    s.docs = s.docs.filter((d) => d.id !== docId);
+    try {
+      await fetchJson(`/api/sessions/${sessionId}/documents/${docId}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+    } catch (err) {
+      console.error('detachDoc failed', err);
+      s.docs = prev;
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo quitar el documento',
+        message: 'Sigue en esta conversación. Inténtalo de nuevo.',
+      });
+      return false;
+    }
+    await this.loadDocs(sessionId);
+    return true;
   }
 
   // ── UI ops ─────────────────────────────────────────────────────────────

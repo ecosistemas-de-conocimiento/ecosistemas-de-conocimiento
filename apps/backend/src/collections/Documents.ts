@@ -195,27 +195,95 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
     }
   }
 
-  // On update Payload sends only what changed, so fall back to the stored row.
-  const sessionId = resolveId(next.session ?? original.session)
+  const sessionError = (message: string): ValidationError =>
+    new ValidationError({
+      collection: 'documents',
+      errors: [{ path: 'session', message }],
+      req,
+    })
 
-  if (sessionId != null) {
-    try {
-      const { organizationId } = await assertSessionOwnedBy(req.payload, sessionId, user.id)
-      next.session = sessionId
+  // On update Payload sends only what changed, so fall back to the stored row.
+  //
+  // ⚠ `session` IS PLURAL NOW, and the wire shape is not: Payload hands this
+  // hook a scalar id, an array, populated objects, or nulls, depending on
+  // whether the write came from the REST API, the admin panel or a
+  // `payload.update` call. Normalise before deciding anything.
+  const sessionIds = resolveIdList(next.session ?? original.session)
+
+  if (sessionIds.length > 0) {
+    // ⚠ EVERY id is checked. A single unowned session anywhere in the list is
+    // the same injection this hook exists to stop — see the header. Checking
+    // only the first, or only the ones that are new, would leave the hole open
+    // for the price of one extra array element.
+    let organizationId: string | number | null = null
+    let sawOne = false
+
+    for (const sessionId of sessionIds) {
+      let resolved: string | number | null
+      try {
+        ;({ organizationId: resolved } = await assertSessionOwnedBy(
+          req.payload,
+          sessionId,
+          user.id,
+        ))
+      } catch (err) {
+        if (err instanceof SessionNotOwnedError) throw sessionError(err.message)
+        throw err
+      }
+
+      // 🔴 ONE DOCUMENT, ONE ECOSISTEMA. `organization` is half of every corpus
+      // name this document touches, so a document attached to conversations in
+      // two ecosistemas has no single correct answer — and whichever one we
+      // picked, the other ecosistema's members would be chatting against a
+      // document filed under someone else's tenant.
+      if (!sawOne) {
+        organizationId = resolved
+        sawOne = true
+      } else if (String(organizationId ?? '') !== String(resolved ?? '')) {
+        throw sessionError(
+          'These conversations belong to different ecosistemas, so one document cannot be attached to both.',
+        )
+      }
+    }
+
+    next.session = sessionIds
+
+    if (operation === 'create') {
       // ⚠ The ecosistema is DERIVED, never accepted from the body. A
       // client-supplied `organization` would let a document be filed under a
       // tenant it does not belong to — and then published into that tenant's
       // shared corpus.
-      if (organizationId != null) next.organization = organizationId
-    } catch (err) {
-      if (err instanceof SessionNotOwnedError) {
-        throw new ValidationError({
-          collection: 'documents',
-          errors: [{ path: 'session', message: err.message }],
-          req,
-        })
+      if (organizationId != null) {
+        next.organization = organizationId
+      } else {
+        // A conversation with no ecosistema derives nothing. Drop whatever the
+        // body sent rather than letting it stand in: `organization` is
+        // `required: true`, so this fails the write with a readable error
+        // instead of filing the document under a tenant the caller chose.
+        delete next.organization
       }
-      throw err
+    } else {
+      // 🔴 THE TWO-STEP ATTACK, CLOSED. `organization` is immutable, so
+      // attaching a conversation from ANOTHER ecosistema to an existing
+      // document must be refused outright — silently pinning the old value
+      // would leave the row attached to a conversation whose members are not in
+      // its ecosistema, and the frontend would then retrieve across the
+      // boundary.
+      //
+      // A conversation with no ecosistema (`resolved === null`) carries no
+      // tenant to disagree with, and `organization` is pinned below regardless,
+      // so it cannot smuggle anything.
+      const storedOrganizationId = resolveId(original.organization)
+      if (
+        organizationId != null &&
+        storedOrganizationId != null &&
+        String(organizationId) !== String(storedOrganizationId)
+      ) {
+        throw sessionError(
+          'That conversation belongs to a different ecosistema than this document.',
+        )
+      }
+      next.organization = original.organization
     }
   } else if (operation === 'create') {
     // No session — an upload straight into the ecosistema, with no conversation
@@ -252,7 +320,19 @@ interface DocumentRow {
   kind?: string | null
   mode?: string | null
   name?: string | null
-  session?: number | string | { id: number | string } | null
+  /**
+   * ⚠ PLURAL. A document can be attached to several conversations at once —
+   * attaching SHARES it, it never moves it. Payload returns an array for a
+   * `hasMany` relationship (populated rows at `depth >= 1`, bare ids at
+   * `depth: 0`); the scalar arm is only there for the half-built rows a hook
+   * can be handed mid-write. Use {@link resolveIdList}, never `resolveId`.
+   */
+  session?:
+    | (number | string | { id: number | string } | null)[]
+    | number
+    | string
+    | { id: number | string }
+    | null
   organization?: number | string | { id: number | string } | null
   uploadedBy?: number | string | { id: number | string } | null
   publicationStatus?: string | null
@@ -304,6 +384,34 @@ function resolveId(raw: unknown): string | number | null {
     return resolveId((raw as { id: unknown }).id)
   }
   return null
+}
+
+/**
+ * Normalise a `hasMany` relationship value into a deduped list of ids.
+ *
+ * ⚠ A SINGLE FIELD, FIVE WIRE SHAPES. `documents.session` reaches this code as
+ * a bare id (a REST body written by hand, or a row from before it went plural),
+ * an array of ids (`depth: 0`), an array of populated rows (`depth >= 1`), a
+ * lone populated row, or null. Reading it with `resolveId` alone quietly
+ * returns null for every array form — which on this field would mean skipping
+ * the ownership check entirely.
+ *
+ * Nulls are dropped and duplicates collapse, compared as STRINGS so `1` and
+ * `'1'` are one session rather than two. Order is preserved.
+ */
+function resolveIdList(raw: unknown): (string | number)[] {
+  const items = Array.isArray(raw) ? raw : [raw]
+  const seen = new Set<string>()
+  const out: (string | number)[] = []
+  for (const item of items) {
+    const id = resolveId(item)
+    if (id == null) continue
+    const key = String(id)
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(id)
+  }
+  return out
 }
 
 /**
@@ -1057,15 +1165,36 @@ export const Documents: CollectionConfig = {
     },
     {
       /**
-       * Where it was uploaded. OPTIONAL: a document belongs to the ecosistema
-       * and to its uploader, not to a conversation, and it must outlive any
-       * conversation it happened to be attached to.
+       * 🔴 WHICH CONVERSATIONS THIS DOCUMENT IS ATTACHED TO. Plural, and
+       * OPTIONAL.
+       *
+       * ⚠ ATTACHING IS SHARING, NEVER MOVING. Adding a second conversation does
+       * not detach the first — the same document can be in as many
+       * conversations as its owner wants. That is what makes the retrieval rule
+       * ("a DRAFT is only searchable from the conversations it is attached to")
+       * expressible without ever hiding a document from a conversation that was
+       * already using it.
+       *
+       * ⚠ Still OPTIONAL, and the document still OUTLIVES every conversation it
+       * is attached to. A document belongs to the ecosistema and to its
+       * uploader; a conversation is only where it happened to be used. Deleting
+       * a session leaves the row standing with one fewer attachment — see the
+       * hooks note on `collections/Sessions.ts`.
+       *
+       * ⚠ EVERY attached conversation must belong to the caller AND to the SAME
+       * ecosistema as the document. Both are enforced in
+       * `bindDocumentToEcosystem`, not here — a `hasMany` relationship field
+       * validates the target rows exist, nothing more.
        */
       name: 'session',
       type: 'relationship',
       relationTo: 'sessions',
+      hasMany: true,
       index: true,
-      admin: { description: 'The conversation this was uploaded into, if any.' },
+      admin: {
+        description:
+          'The conversations this document is attached to, if any. Attaching shares it with another conversation; it never moves it out of the ones it is already in.',
+      },
     },
     {
       name: 'kind',

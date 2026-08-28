@@ -189,8 +189,11 @@ describe('markDraftCitations', () => {
     expect(markDraftCitations([{ title: 'X', documentId: '10' }], drafts).draftCount).toBe(1);
   });
 
-  // The cross-session case: a draft uploaded in ANOTHER session is not in this
-  // session's document list, so only the server's stamp can catch it.
+  // Still reachable after the draft leg was narrowed to this conversation's
+  // documents: a document can be attached to SEVERAL conversations, and an
+  // answer generated in conversation A can be read while sitting in B. The
+  // local list is then missing the cited draft, and only the server's stamp —
+  // written at generation time, from the corpus name — can label it.
   it('marks a stamped citation even when the document is not in this session', () => {
     const { citations, draftCount } = markDraftCitations(
       [{ title: 'De otra sesión', documentId: 999, metadata: { [DRAFT_PROVENANCE_FLAG]: true } }],

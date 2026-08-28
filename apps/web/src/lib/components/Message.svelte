@@ -44,7 +44,13 @@
    * The draft set comes from this session's own document list: a draft is
    * visible only to its uploader, so any draft we can see here is ours. A
    * citation we cannot find in that list is left unmarked rather than called
-   * "published" — retrieval can reach documents outside this session.
+   * "published" — retrieval still reaches beyond this conversation's panel in
+   * two ways. PUBLISHED documents are the ecosistema's shared corpus and are
+   * searched from every conversation, whether or not they are attached to this
+   * one. And a DRAFT can be attached to several conversations at once, so one
+   * cited here may be listed in another conversation's panel too. Drafts that
+   * are attached somewhere else and NOT here are no longer reachable — a draft
+   * belongs to the conversations it was added to.
    */
   const draftIds = $derived(draftDocumentIds(app.active?.docs ?? []));
   const marked = $derived(markDraftCitations(rawCitations, draftIds));

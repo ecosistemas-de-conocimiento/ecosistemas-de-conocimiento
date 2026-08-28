@@ -12,7 +12,12 @@
 import { backendFetch } from '$lib/server/auth';
 import { parseCorporaResponse, type SessionCorpora } from './retrieval';
 
-const EMPTY: SessionCorpora = { corpora: [], asOf: null, draftCorpus: null };
+const EMPTY: SessionCorpora = {
+  corpora: [],
+  asOf: null,
+  draftCorpus: null,
+  publishedCorpus: null,
+};
 
 /**
  * `GET /api/sessions/:id/corpora` → the caller's corpora + the `asOf` clock.

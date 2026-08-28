@@ -107,6 +107,21 @@ export interface WorkingDoc {
   body: string;
   /** Mirrors the backend `documents.isPinned`. */
   includeInContext: boolean;
+  /**
+   * Every conversation this document is attached to, as ids.
+   *
+   * ⚠ ONE ROW, MANY CONVERSATIONS. `documents.session` is a `hasMany`
+   * relationship: the same document can be attached to several conversations
+   * at once, and it is the SAME document in each — not a copy. So this list is
+   * how the UI tells "this lives only here" from "this also lives elsewhere",
+   * which is the difference between offering "Eliminar" (destroys it) and
+   * "Quitar de esta conversación" (removes one entry from this list).
+   *
+   * Empty when the backend did not send the field — read as "we do not know",
+   * and the UI then falls back to the destructive-action-only view rather than
+   * offering a detach it cannot justify.
+   */
+  sessionIds: string[];
   updatedAt: number;
   /** M6 — what storage path this doc takes. */
   kind: DocKind;

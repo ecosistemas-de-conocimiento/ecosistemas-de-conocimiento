@@ -27,8 +27,17 @@ const DUAL = 4 // belongs to BOTH
 const NOBODY = 5 // no memberships
 
 const ANA_SESSION = 100
+/** Ana's SECOND conversation, same ecosistema. Attaching to both is SHARING. */
+const ANA_SESSION_2 = 102
 const BEN_SESSION = 101
 const CARLA_SESSION = 200
+/**
+ * Two conversations owned by ONE person in TWO different ecosistemas. The only
+ * way to reach the "different ecosistemas" branch without also failing the
+ * ownership check first — which is exactly why DUAL exists.
+ */
+const DUAL_SESSION_A = 300
+const DUAL_SESSION_B = 301
 
 const MEMBERSHIPS: Record<string, number[]> = {
   [ANA]: [ECO_A],
@@ -41,8 +50,11 @@ const MEMBERSHIPS: Record<string, number[]> = {
 function reqAs(userId: number | null): PayloadRequest {
   const sessions: Record<string, { user: number; organization: number }> = {
     [ANA_SESSION]: { user: ANA, organization: ECO_A },
+    [ANA_SESSION_2]: { user: ANA, organization: ECO_A },
     [BEN_SESSION]: { user: BEN, organization: ECO_A },
     [CARLA_SESSION]: { user: CARLA, organization: ECO_B },
+    [DUAL_SESSION_A]: { user: DUAL, organization: ECO_A },
+    [DUAL_SESSION_B]: { user: DUAL, organization: ECO_B },
   }
   return {
     user: userId === null ? null : { id: userId, isActive: true, isPlatformAdmin: false },
@@ -93,7 +105,10 @@ const update = (
 describe('uploading into your own conversation', () => {
   it('stamps the ecosistema, the uploader and the draft state', async () => {
     const result = await create({ session: ANA_SESSION, name: 'notes.pdf' }, ANA)
-    expect(result.session).toBe(ANA_SESSION)
+    // ⚠ ALWAYS AN ARRAY on the way out, even when the body sent a bare id. The
+    // frontend still posts a scalar in places, and normalising here is what
+    // keeps that working instead of storing a shape the reader cannot handle.
+    expect(result.session).toEqual([ANA_SESSION])
     expect(result.organization).toBe(ECO_A)
     expect(result.uploadedBy).toBe(ANA)
     // ⚠ Everything starts private. Sharing is a separate, deliberate act.
@@ -205,6 +220,158 @@ describe('🔴 the client cannot choose its own scope', () => {
       ANA,
     )
     expect(result.uploadedBy).toBe(ANA)
+  })
+})
+
+/**
+ * Run the hook and return the `ValidationError` it threw, or fail loudly.
+ *
+ * ⚠ Asserts on the ERROR PATH, not just "it threw". Every refusal below has to
+ * land on `session` so the frontend can put its Spanish copy next to the right
+ * control; a `rejects.toThrow()` on its own would pass just as happily if the
+ * hook blew up for an unrelated reason.
+ */
+async function refusal(
+  run: Promise<Record<string, unknown>>,
+): Promise<{ path: string; message: string }> {
+  try {
+    const result = await run
+    throw new Error(`expected a refusal, got ${JSON.stringify(result)}`)
+  } catch (err) {
+    const data = (err as { data?: { errors?: { path: string; message: string }[] } }).data
+    const first = data?.errors?.[0]
+    if (!first) throw err
+    return first
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+describe('🔴 attaching a document to SEVERAL conversations', () => {
+  it('accepts two conversations the caller owns in the same ecosistema', async () => {
+    // 🔴 ATTACHING IS SHARING, NOT MOVING. The second conversation is added to
+    // the first, never in place of it — that is the whole point of going
+    // plural, and it is what lets retrieval narrow a draft to its conversations
+    // without hiding it from one that was already using it.
+    const result = await create(
+      { session: [ANA_SESSION, ANA_SESSION_2], name: 'shared.pdf' },
+      ANA,
+    )
+    expect(result.session).toEqual([ANA_SESSION, ANA_SESSION_2])
+    expect(result.organization).toBe(ECO_A)
+  })
+
+  it('adds a conversation on update WITHOUT dropping the one already there', async () => {
+    const result = await update(
+      { session: [ANA_SESSION, ANA_SESSION_2] },
+      { id: 1, session: [ANA_SESSION], uploadedBy: ANA, organization: ECO_A },
+      ANA,
+    )
+    expect(result.session).toEqual([ANA_SESSION, ANA_SESSION_2])
+    expect(result.organization).toBe(ECO_A)
+  })
+
+  it('normalises populated rows and duplicates into a clean id list', async () => {
+    // Payload hands this hook bare ids, populated rows, or a mix, depending on
+    // where the write came from. A duplicate must not become two attachments.
+    const result = await create(
+      {
+        session: [{ id: ANA_SESSION }, ANA_SESSION, String(ANA_SESSION_2), null],
+        name: 'messy.pdf',
+      },
+      ANA,
+    )
+    expect(result.session).toEqual([ANA_SESSION, String(ANA_SESSION_2)])
+  })
+
+  it('🔴 REFUSES the whole write if ANY conversation in the list is not yours', async () => {
+    // The injection this hook exists to stop, hidden one element deep. Checking
+    // only the first id — or only the ids that are new — would reopen it for
+    // the price of one extra array element.
+    const one = await refusal(
+      create({ session: [ANA_SESSION, BEN_SESSION], name: 'planted.pdf' }, ANA),
+    )
+    expect(one.path).toBe('session')
+
+    const two = await refusal(
+      create({ session: [ANA_SESSION, CARLA_SESSION], name: 'planted.pdf' }, ANA),
+    )
+    expect(two.path).toBe('session')
+  })
+
+  it('🔴 REFUSES two conversations in DIFFERENT ecosistemas, even when you own both', async () => {
+    // `organization` is half of every corpus name this document touches, so a
+    // document in two ecosistemas has no single correct answer — and whichever
+    // one we picked, the other ecosistema would be chatting against a document
+    // filed under someone else's tenant.
+    const err = await refusal(
+      create({ session: [DUAL_SESSION_A, DUAL_SESSION_B], name: 'straddles.pdf' }, DUAL),
+    )
+    expect(err.path).toBe('session')
+    expect(err.message).toMatch(/different ecosistemas/i)
+  })
+})
+
+describe('🔴 the two-step attack: attaching a foreign conversation to an EXISTING document', () => {
+  it('REFUSES a conversation from another ecosistema, and does not move the document', async () => {
+    // DUAL owns both conversations, so the ownership check passes. The document
+    // is filed under ECO_A. Re-pointing it at a conversation in ECO_B has to
+    // fail here or the row ends up attached to a conversation whose members are
+    // not in its ecosistema — and retrieval would then cross the boundary.
+    const err = await refusal(
+      update(
+        { session: [DUAL_SESSION_B] },
+        { id: 1, session: [DUAL_SESSION_A], uploadedBy: DUAL, organization: ECO_A },
+        DUAL,
+      ),
+    )
+    expect(err.path).toBe('session')
+
+    // And the safe version of the same edit still works, with the ecosistema
+    // held at its stored value rather than re-derived from the body.
+    const ok = await update(
+      { session: [DUAL_SESSION_A], organization: ECO_B },
+      { id: 1, session: [DUAL_SESSION_A], uploadedBy: DUAL, organization: ECO_A },
+      DUAL,
+    )
+    expect(ok.organization).toBe(ECO_A)
+  })
+
+  it('REFUSES ADDING a foreign conversation alongside the legitimate one', async () => {
+    const err = await refusal(
+      update(
+        { session: [DUAL_SESSION_A, DUAL_SESSION_B] },
+        { id: 1, session: [DUAL_SESSION_A], uploadedBy: DUAL, organization: ECO_A },
+        DUAL,
+      ),
+    )
+    expect(err.path).toBe('session')
+  })
+
+  it('REFUSES an unowned conversation on update, list or not', async () => {
+    const err = await refusal(
+      update(
+        { session: [ANA_SESSION, CARLA_SESSION] },
+        { id: 1, session: [ANA_SESSION], uploadedBy: ANA, organization: ECO_A },
+        ANA,
+      ),
+    )
+    expect(err.path).toBe('session')
+  })
+})
+
+describe('detaching', () => {
+  it('lets the last conversation go, keeping the stored ecosistema', async () => {
+    // The document outlives every conversation it was attached to. An empty
+    // list must not strand it, and must not re-derive `organization` from a
+    // membership lookup that could now be ambiguous.
+    const result = await update(
+      { session: [] },
+      { id: 1, session: [ANA_SESSION], uploadedBy: ANA, organization: ECO_A },
+      ANA,
+    )
+    expect(result.session).toEqual([])
+    expect(result.organization).toBe(ECO_A)
   })
 })
 

@@ -198,10 +198,20 @@ export const Sessions: CollectionConfig = {
      * because a conversation was deleted would wipe the whole ecosistema's
      * knowledgebase, or every draft that person has. Do not re-add it.
      *
-     * ⚠ `messages` still cascade with the session (they are per-conversation by
-     * definition). `documents` do NOT: a document belongs to the ecosistema and
-     * to its uploader, and `documents.session` is optional precisely so a
-     * deleted conversation leaves the uploaded material standing.
+     * ⚠ `documents` do NOT go with the session: a document belongs to the
+     * ecosistema and to its uploader, and `documents.session` is optional
+     * precisely so a deleted conversation leaves the uploaded material
+     * standing.
+     *
+     * `documents.session` is `hasMany`, so the attachment lives in the
+     * `documents_rels` join table. Deleting a conversation cascades that JOIN
+     * ROW away — the attachment, not the document. Same guarantee as before,
+     * now expressed on the table that holds the fact.
+     *
+     * ⚠ `messages` and `ratings` do NOT cascade either, despite what
+     * `lib/sessionJanitor.ts` used to claim: their FKs are `ON DELETE SET
+     * NULL`, so they are orphaned rather than removed. Verified against the
+     * live schema; see the corrected note in that file.
      *
      * 📝 Per-document corpus cleanup on document delete is a separate, still
      * unbuilt problem — see the note on `Documents.hooks`.
