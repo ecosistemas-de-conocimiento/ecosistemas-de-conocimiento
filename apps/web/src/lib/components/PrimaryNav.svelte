@@ -34,7 +34,12 @@
     visibleNavItems,
   } from '$lib/nav';
 
-  const items = $derived(visibleNavItems($page.data.user));
+  // ⚠ Two arguments, two different sources. `user` carries `isPlatformAdmin`,
+  // a field on the backend's user record. `canReviewHolds` is an answer the
+  // root layout's server load computed for this request — see `$lib/nav.ts`.
+  const items = $derived(
+    visibleNavItems($page.data.user, { canReviewHolds: $page.data.canReviewHolds }),
+  );
   const pathname = $derived($page.url.pathname);
 </script>
 

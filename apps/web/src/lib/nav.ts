@@ -16,12 +16,14 @@
  *
  * ── ⚠ HIDING A LINK IS PRESENTATION, NOT ACCESS CONTROL ─────────────────────
  *
- * `visibleNavItems` drops `/admin` for people who are not platform admins. That
- * is politeness — it keeps the menu honest and stops a member clicking into a
- * refusal. The CONTROL is `routes/admin/+page.server.ts`, which calls
- * `denyAccess` on `!isPlatformAdmin(locals.user)` before it reads anything.
- * Anyone can type a URL; nothing in this file would stop them, and nothing in
- * this file is meant to.
+ * `visibleNavItems` drops `/admin` for people who are not platform admins, and
+ * `/revision` for people who may not review held documents. That is politeness —
+ * it keeps the menu honest and stops a member clicking into a refusal. The
+ * CONTROLS are `routes/admin/+page.server.ts` and
+ * `routes/revision/+page.server.ts`, which call `denyAccess` before they read
+ * anything, and behind those the backend, which answers 404 to a caller without
+ * `holds:review`. Anyone can type a URL; nothing in this file would stop them,
+ * and nothing in this file is meant to.
  */
 
 import { isPlatformAdmin } from '$lib/components/admin/summary';
@@ -43,13 +45,36 @@ export interface NavItem {
   hint: string;
   /** `true` ⇒ only platform admins see it. See the header. */
   adminOnly?: boolean;
+  /**
+   * `true` ⇒ only people who may review held documents see it.
+   *
+   * ⚠ NOT THE SAME QUESTION AS `adminOnly`, and it cannot be folded into it.
+   * `holds:review` belongs to the `investigador` role and up, PER ECOSISTEMA,
+   * and most people who have it are not platform admins. The flag is computed
+   * server-side in `routes/+layout.server.ts` by asking the backend for the
+   * caller's own permission list — never by expanding a role here. See
+   * `$lib/server/holds.ts`.
+   */
+  reviewerOnly?: boolean;
+}
+
+/**
+ * Capabilities the menu branches on, as resolved by the server.
+ *
+ * ⚠ Separate from `user` on purpose. `isPlatformAdmin` is a field the backend
+ * puts on the user record; `canReviewHolds` is an ANSWER the BFF computed for
+ * this request. Keeping them apart stops the second from looking like something
+ * the browser could set.
+ */
+export interface NavCapabilities {
+  canReviewHolds?: boolean;
 }
 
 /**
  * Every real destination in the app, in the order they are shown.
  *
- * ⚠ ONLY PAGES THAT EXIST. `/`, `/biblioteca` and `/admin` are the whole set of
- * signed-in destinations under `src/routes` — `/sign-in` and `/sign-up` are the
+ * ⚠ ONLY PAGES THAT EXIST. `/`, `/biblioteca`, `/revision` and `/admin` are the
+ * whole set of signed-in destinations under `src/routes` — `/sign-in` and `/sign-up` are the
  * way in, not sections, and `/biblioteca/[id]` is a detail view inside
  * Biblioteca rather than a section of its own. A menu entry for a page that
  * does not exist is worse than a missing menu: it teaches people the app is
@@ -67,6 +92,12 @@ export const NAV_ITEMS: readonly NavItem[] = [
     hint: 'Lo que tu ecosistema ha publicado.',
   },
   {
+    href: '/revision',
+    label: 'Revisión',
+    hint: 'Documentos que la anonimización detuvo.',
+    reviewerOnly: true,
+  },
+  {
     href: '/admin',
     label: 'Administración',
     hint: 'Las cifras del ecosistema y quién ha aportado.',
@@ -81,9 +112,16 @@ export const NAV_ITEMS: readonly NavItem[] = [
  * gets it from the verified session — and not off the chat's app store, which
  * is about conversations and knows nothing about roles.
  */
-export function visibleNavItems(user: unknown): NavItem[] {
+export function visibleNavItems(user: unknown, caps: NavCapabilities = {}): NavItem[] {
   const admin = isPlatformAdmin(user);
-  return NAV_ITEMS.filter((item) => !item.adminOnly || admin);
+  // 🔴 Literally `true`, nothing else — same rule as `isPlatformAdmin`. A
+  // truthy string from a garbled payload must not advertise a section.
+  const reviewer = caps.canReviewHolds === true;
+  return NAV_ITEMS.filter((item) => {
+    if (item.adminOnly && !admin) return false;
+    if (item.reviewerOnly && !reviewer) return false;
+    return true;
+  });
 }
 
 /**
@@ -119,8 +157,12 @@ function normalizePath(pathname: string): string {
  * two `aria-current="page"` links on one page is an accessibility bug, not a
  * cosmetic one.
  */
-export function currentNavItem(pathname: string, user: unknown): NavItem | null {
-  return visibleNavItems(user).find((item) => isCurrentSection(pathname, item.href)) ?? null;
+export function currentNavItem(
+  pathname: string,
+  user: unknown,
+  caps: NavCapabilities = {},
+): NavItem | null {
+  return visibleNavItems(user, caps).find((item) => isCurrentSection(pathname, item.href)) ?? null;
 }
 
 /**
