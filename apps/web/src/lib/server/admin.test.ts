@@ -207,6 +207,57 @@ describe('loadAdminOverview — the aggregate metrics', () => {
   });
 });
 
+describe('loadAdminOverview — chat usage', () => {
+  const usageBody = {
+    ok: true,
+    status: 200,
+    json: async () => ({
+      ecosystem: { id: '7', name: 'Ecosistema Demo', slug: 'demo' },
+      usage: {
+        conversations: 61,
+        conversationsWithMessages: 40,
+        messages: 64,
+        userTurns: 33,
+        assistantTurns: 31,
+        costUsd: 0.012,
+        pricedTurns: 31,
+        unpricedTurns: 0,
+        spans: { measured: 20, totalSeconds: 1000, averageSeconds: 50, longestSeconds: 300 },
+        models: [],
+        providers: [],
+        daily: [],
+      },
+    }),
+  };
+  const routeUsage = (usage: () => Promise<unknown>) => (_t: unknown, path: string) =>
+    String(path).startsWith('/api/metrics/usage') ? usage() : Promise.resolve(reply([]));
+
+  it('asks the backend aggregate for the ecosistema, by id', async () => {
+    backendFetch.mockImplementation(routeUsage(() => Promise.resolve(usageBody)));
+    await loadAdminOverview('tok', ECO);
+    expect(urls()).toContain('/api/metrics/usage?organization=7');
+  });
+
+  it('reports the ecosistema-wide totals the backend computed', async () => {
+    backendFetch.mockImplementation(routeUsage(() => Promise.resolve(usageBody)));
+    const overview = await loadAdminOverview('tok', ECO);
+    expect(overview.usage.ok).toBe(true);
+    expect(overview.usage.summary.conversations).toBe(61);
+    expect(overview.usage.summary.costUsd).toBeCloseTo(0.012);
+  });
+
+  it('reports a refusal or an outage as unknown, never as zero', async () => {
+    backendFetch.mockImplementation(
+      routeUsage(() => Promise.resolve({ ok: false, status: 404, json: async () => ({ errors: [] }) })),
+    );
+    expect((await loadAdminOverview('tok', ECO)).usage.ok).toBe(false);
+    backendFetch.mockImplementation(routeUsage(() => Promise.reject(new Error('ECONNREFUSED'))));
+    const overview = await loadAdminOverview('tok', ECO);
+    expect(overview.usage.ok).toBe(false);
+    expect(overview.documents.ok).toBe(true);
+  });
+});
+
 describe('loadAdminOverview — reading', () => {
   it('aggregates documents into the summary and the contributor rows', async () => {
     backendFetch.mockImplementation(

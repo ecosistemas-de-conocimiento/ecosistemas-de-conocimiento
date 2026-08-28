@@ -53,6 +53,9 @@ import {
   summarizeAudio,
   summarizeDocuments,
   summarizeRatings,
+  EMPTY_USAGE,
+  parseUsageSummary,
+  type UsageSummary,
   type AdminDocRow,
   type AdminPerson,
   type AdminRatingRow,
@@ -397,6 +400,52 @@ export async function fetchEcosystemMetrics(
 
 // ── The page payload ───────────────────────────────────────────────────────
 
+// ── Chat usage ─────────────────────────────────────────────────────────────
+
+export interface UsageRead {
+  /** The ecosistema's TOTAL chat usage. `EMPTY_USAGE` when `ok` is false. */
+  summary: UsageSummary;
+  /** `false` ⇒ refused, unreachable or nonsense. NOT "nobody chatted". */
+  ok: boolean;
+}
+
+/**
+ * `GET /api/metrics/usage?organization=<id>` — conversations, turns, cost,
+ * timings and models for the WHOLE ecosistema.
+ *
+ * 🔴 Computed by the backend (`lib/chatUsage.ts`) with an elevated read, for
+ * the same reason as `fetchEcosystemMetrics`: reading `sessions`/`messages`
+ * from here returns only the calling admin's own chats. Never "fix" this by
+ * reading those collections again. The response is an aggregate with no
+ * message text, and `parseUsageSummary` rebuilds it key by key.
+ *
+ * ⚠ COST, NOT TOKENS: ai-service stamps every token row with one
+ * deployment-wide `{org, project}`, so tokens cannot be split per ecosistema.
+ */
+export async function fetchChatUsage(
+  token: string | undefined,
+  organizationId: string,
+): Promise<UsageRead> {
+  const unavailable = { summary: EMPTY_USAGE, ok: false };
+  try {
+    const qs = new URLSearchParams({ organization: organizationId });
+    const res = await backendFetch(token, `/api/metrics/usage?${qs.toString()}`, { method: 'GET' });
+    if (!res.ok) {
+      console.warn(`[admin] backend answered ${res.status} computing chat usage`);
+      return unavailable;
+    }
+    const summary = parseUsageSummary(await res.json().catch(() => null));
+    if (!summary) {
+      console.warn('[admin] chat usage came back in an unexpected shape');
+      return unavailable;
+    }
+    return { summary, ok: true };
+  } catch (err) {
+    console.warn('[admin] chat usage read failed', err);
+    return unavailable;
+  }
+}
+
 export interface AdminOverview {
   /** The ecosistema everything below is scoped to. Shown in the header. */
   ecosystem: { id: string; name: string };
@@ -424,6 +473,8 @@ export interface AdminOverview {
    * `fetchEcosystemMetrics`.
    */
   metrics: EcosystemMetricsResult;
+  /** Chat usage for the whole ecosistema. Never message text. */
+  usage: UsageRead;
 }
 
 /**
@@ -444,7 +495,7 @@ export async function loadAdminOverview(
 ): Promise<AdminOverview> {
   const orgId = ecosystem.id;
 
-  const [docsResult, membersResult, ratingsResult, metrics] = await Promise.all([
+  const [docsResult, membersResult, ratingsResult, metrics, usage] = await Promise.all([
     readPages<AdminDocRow>(
       token,
       'documents',
@@ -471,6 +522,7 @@ export async function loadAdminOverview(
       parseRatingRow,
     ),
     fetchEcosystemMetrics(token, orgId),
+    fetchChatUsage(token, orgId),
   ]);
 
   const docs = await withTranscriptSizes(token, orgId, docsResult.rows);
@@ -500,6 +552,7 @@ export async function loadAdminOverview(
       ok: ratingsResult.ok,
     },
     metrics,
+    usage,
   };
 }
 

@@ -561,3 +561,224 @@ export function filterEcosystems<T extends { name: string; slug?: string | null 
   if (!needle) return [...rows];
   return rows.filter((row) => foldText(`${row.name} ${row.slug ?? ''}`).includes(needle));
 }
+
+// ── Chat usage ─────────────────────────────────────────────────────────────
+
+/**
+ * 🔴 WHAT AN ADMIN IS ALLOWED TO SEE OF A CONVERSATION: *that* it happened and
+ * what shape it had — never what was said.
+ *
+ * The aggregate is computed by the backend (`apps/backend/src/lib/chatUsage.ts`,
+ * `GET /api/metrics/usage`) with an elevated read, because `Sessions.read` /
+ * `Messages.read` are own-only and a read from here would count only the
+ * calling admin's own chats. Read that file's header before touching this.
+ *
+ * `parseUsageSummary` below is the web's own door: it REBUILDS the summary from
+ * known numeric keys plus model/provider names and dates, so even a backend
+ * that one day sent more could not push text into the page.
+ */
+
+/** A model or a provider, and how much traffic went through it. */
+export interface UsageBreakdownRow {
+  name: string;
+  turns: number;
+  costUsd: number;
+  /** Share of the generated turns. Null when there were none. */
+  share: number | null;
+}
+
+/** One day of activity. `day` is `YYYY-MM-DD`, UTC. */
+export interface UsageDayRow {
+  day: string;
+  /** Conversations whose FIRST turn fell on this day. */
+  conversations: number;
+  messages: number;
+  costUsd: number;
+}
+
+/**
+ * ⚠ WALL CLOCK BETWEEN THE FIRST AND LAST TURN — NOT TIME SPENT. The page
+ * labels it "de la primera a la última respuesta" for that reason. One-turn
+ * conversations are excluded from `measured`.
+ */
+export interface UsageSpans {
+  measured: number;
+  totalSeconds: number;
+  averageSeconds: number | null;
+  longestSeconds: number | null;
+}
+
+/** Mirrors the backend's `UsageSummary`. */
+export interface UsageSummary {
+  /** Every conversation in the ecosistema, with or without turns. */
+  conversations: number;
+  conversationsWithMessages: number;
+  messages: number;
+  userTurns: number;
+  assistantTurns: number;
+  turnsPerConversation: number | null;
+  /**
+   * 🔴 A FLOOR, NOT A TOTAL, whenever `unpricedTurns > 0`, and the page has to
+   * say so out loud. See `costIsComplete`.
+   */
+  costUsd: number;
+  pricedTurns: number;
+  unpricedTurns: number;
+  costIsComplete: boolean;
+  costPerTurn: number | null;
+  spans: UsageSpans;
+  /** Busiest first. */
+  models: UsageBreakdownRow[];
+  providers: UsageBreakdownRow[];
+  /** Oldest first. Days with no activity are omitted. */
+  daily: UsageDayRow[];
+  firstAt: string | null;
+  lastAt: string | null;
+}
+
+export const EMPTY_USAGE: UsageSummary = {
+  conversations: 0,
+  conversationsWithMessages: 0,
+  messages: 0,
+  userTurns: 0,
+  assistantTurns: 0,
+  turnsPerConversation: null,
+  costUsd: 0,
+  pricedTurns: 0,
+  unpricedTurns: 0,
+  costIsComplete: true,
+  costPerTurn: null,
+  spans: { measured: 0, totalSeconds: 0, averageSeconds: null, longestSeconds: null },
+  models: [],
+  providers: [],
+  daily: [],
+  firstAt: null,
+  lastAt: null,
+};
+
+const numOr = <T>(raw: unknown, fallback: T): number | T =>
+  typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : fallback;
+const rec = (raw: unknown): Record<string, unknown> =>
+  raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+const list = (raw: unknown): unknown[] => (Array.isArray(raw) ? raw : []);
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const isoOrNull = (raw: unknown): string | null =>
+  typeof raw === 'string' && !Number.isNaN(Date.parse(raw)) ? raw : null;
+
+function parseBreakdown(raw: unknown): UsageBreakdownRow[] {
+  return list(raw).flatMap((item) => {
+    const r = rec(item);
+    const name = typeof r.name === 'string' ? r.name.trim() : '';
+    // ⚠ Model ids are short identifiers. A long string here is not a model.
+    if (!name || name.length > 120) return [];
+    return [{ name, turns: numOr(r.turns, 0), costUsd: numOr(r.costUsd, 0), share: numOr(r.share, null) }];
+  });
+}
+
+/**
+ * The body of `GET /api/metrics/usage` → `UsageSummary`, or `null` when it is
+ * not that shape at all (rendered as "no pudimos leer", never as zero).
+ *
+ * 🔴 Rebuilt key by key. Nothing the backend sends is spread into the result.
+ */
+export function parseUsageSummary(raw: unknown): UsageSummary | null {
+  const body = rec(raw);
+  const u = body.usage;
+  if (!u || typeof u !== 'object' || typeof rec(u).conversations !== 'number') return null;
+  const usage = rec(u);
+  const spans = rec(usage.spans);
+  const unpricedTurns = numOr(usage.unpricedTurns, 0);
+  return {
+    conversations: numOr(usage.conversations, 0),
+    conversationsWithMessages: numOr(usage.conversationsWithMessages, 0),
+    messages: numOr(usage.messages, 0),
+    userTurns: numOr(usage.userTurns, 0),
+    assistantTurns: numOr(usage.assistantTurns, 0),
+    turnsPerConversation: numOr(usage.turnsPerConversation, null),
+    costUsd: numOr(usage.costUsd, 0),
+    pricedTurns: numOr(usage.pricedTurns, 0),
+    unpricedTurns,
+    costIsComplete: unpricedTurns === 0,
+    costPerTurn: numOr(usage.costPerTurn, null),
+    spans: {
+      measured: numOr(spans.measured, 0),
+      totalSeconds: numOr(spans.totalSeconds, 0),
+      averageSeconds: numOr(spans.averageSeconds, null),
+      longestSeconds: numOr(spans.longestSeconds, null),
+    },
+    models: parseBreakdown(usage.models),
+    providers: parseBreakdown(usage.providers),
+    daily: list(usage.daily).flatMap((item) => {
+      const r = rec(item);
+      if (typeof r.day !== 'string' || !DAY.test(r.day)) return [];
+      return [
+        {
+          day: r.day,
+          conversations: numOr(r.conversations, 0),
+          messages: numOr(r.messages, 0),
+          costUsd: numOr(r.costUsd, 0),
+        },
+      ];
+    }),
+    firstAt: isoOrNull(usage.firstAt),
+    lastAt: isoOrNull(usage.lastAt),
+  };
+}
+
+/**
+ * Dollars, in words an operator can read at a glance.
+ *
+ * ⚠ Deliberately NOT formatted as pesos. The figure arrives from ai-service in
+ * US dollars; rendering it with a `MXN` currency symbol would relabel a number
+ * without converting it, which is the worst single thing a money field can do.
+ * So it says USD, out loud, every time.
+ *
+ * ⚠ Sub-cent totals keep four decimals instead of rounding to `$0.00 USD`. On
+ * this deployment every real total is sub-cent, and a dashboard that reports
+ * zero when the answer is "not zero, just small" teaches people to ignore it.
+ */
+export function formatCostUsd(usd: number): string {
+  if (!Number.isFinite(usd) || usd <= 0) return '$0.00 USD';
+  return `$${usd.toFixed(usd < 0.01 ? 4 : 2)} USD`;
+}
+
+/**
+ * A span in Spanish: `45 s`, `1 min 19 s`, `12 min`, `2 h 5 min`.
+ *
+ * ⚠ NOT `formatDuration` from `$lib/ingest`. That one floors at one minute,
+ * which is right for a recording — nobody names a twenty-second upload — and
+ * wrong here. Most conversations last well under a minute, and rounding every
+ * one of them up to "1 min" erases the difference between a quick question and
+ * a real exchange, which is the one thing this number exists to show.
+ *
+ * ⚠ Seconds are kept below the hour mark for the same reason. A mean of 79
+ * seconds printed as "1 min" and a mean of 119 printed as "2 min" look like a
+ * doubling; they are 40 seconds apart. Above an hour the seconds stop carrying
+ * meaning and are dropped.
+ */
+export function formatSpan(seconds: number | null | undefined): string | null {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return null;
+  const total = Math.round(seconds);
+  if (total < 60) return `${total} s`;
+  if (total < 3600) {
+    const minutes = Math.floor(total / 60);
+    const rest = total % 60;
+    return rest === 0 ? `${minutes} min` : `${minutes} min ${rest} s`;
+  }
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.round((total % 3600) / 60);
+  return minutes === 0 ? `${hours} h` : `${hours} h ${minutes} min`;
+}
+
+/**
+ * A model id shortened for a narrow column:
+ * `deepseek/deepseek-chat-v3.1` → `deepseek-chat-v3.1`.
+ *
+ * ⚠ The full id stays available for the `title` attribute. Two providers can
+ * ship the same model name, and an operator comparing cost needs to be able to
+ * see which is which.
+ */
+export function shortModelName(model: string): string {
+  const slash = model.lastIndexOf('/');
+  return slash >= 0 && slash < model.length - 1 ? model.slice(slash + 1) : model;
+}

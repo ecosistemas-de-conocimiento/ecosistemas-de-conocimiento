@@ -19,6 +19,10 @@ import {
   summarizeAudio,
   summarizeDocuments,
   summarizeRatings,
+  formatCostUsd,
+  formatSpan,
+  parseUsageSummary,
+  shortModelName,
   type AdminDocRow,
   type AdminPerson,
   type AdminRatingRow,
@@ -465,5 +469,126 @@ describe('filterEcosystems', () => {
 
   it('an unmatched term returns nothing, and says so by being empty', () => {
     expect(filterEcosystems(rows, 'zzz')).toEqual([]);
+  });
+});
+
+// ── Chat usage ─────────────────────────────────────────────────────────────
+
+/**
+ * 🔴 The usage aggregate is computed by the backend (`lib/chatUsage.ts`, where
+ * its arithmetic is tested). This side only rebuilds it from the wire, and the
+ * rebuild is the web's own door against text reaching the page.
+ */
+describe('parseUsageSummary', () => {
+  const BODY = {
+    ecosystem: { id: '7', name: 'Acme', slug: 'acme' },
+    usage: {
+      conversations: 28,
+      conversationsWithMessages: 20,
+      messages: 45,
+      userTurns: 23,
+      assistantTurns: 22,
+      turnsPerConversation: 2.3,
+      costUsd: 0.0094,
+      pricedTurns: 22,
+      unpricedTurns: 0,
+      costIsComplete: true,
+      costPerTurn: 0.00043,
+      spans: { measured: 15, totalSeconds: 1185, averageSeconds: 79, longestSeconds: 400 },
+      models: [{ name: 'deepseek/deepseek-chat-v3.1', turns: 22, costUsd: 0.0094, share: 100 }],
+      providers: [{ name: 'openrouter', turns: 22, costUsd: 0.0094, share: 100 }],
+      daily: [{ day: '2026-08-27', conversations: 3, messages: 9, costUsd: 0.002 }],
+      firstAt: '2026-08-01T10:00:00.000Z',
+      lastAt: '2026-08-27T21:55:55.137Z',
+    },
+  };
+
+  it('reads the backend aggregate as-is', () => {
+    const s = parseUsageSummary(BODY)!;
+    expect(s.conversations).toBe(28);
+    expect(s.costUsd).toBeCloseTo(0.0094);
+    expect(s.spans.averageSeconds).toBe(79);
+    expect(s.models[0]!.name).toBe('deepseek/deepseek-chat-v3.1');
+    expect(s.daily).toEqual(BODY.usage.daily);
+  });
+
+  it('🔴 drops anything it does not know, so text cannot ride along', () => {
+    const leaky = {
+      ...BODY,
+      usage: {
+        ...BODY.usage,
+        content: 'El presupuesto participativo es de 1,250,000 pesos.',
+        sessions: [{ title: '¿Cuánto cobra la regidora?' }],
+        daily: [{ ...BODY.usage.daily[0], day: 'Acta de la sesión' }],
+        models: [{ name: 'x'.repeat(500), turns: 1 }],
+      },
+    };
+    const serialized = JSON.stringify(parseUsageSummary(leaky));
+    expect(serialized).not.toContain('presupuesto');
+    expect(serialized).not.toContain('regidora');
+    expect(serialized).not.toContain('Acta');
+    expect(serialized).not.toContain('xxxxx');
+  });
+
+  it('re-derives completeness from the unpriced count rather than trusting a flag', () => {
+    const s = parseUsageSummary({ usage: { ...BODY.usage, unpricedTurns: 2, costIsComplete: true } })!;
+    expect(s.costIsComplete).toBe(false);
+  });
+
+  it('returns null for something that is not a usage body — never a zero', () => {
+    expect(parseUsageSummary(null)).toBeNull();
+    expect(parseUsageSummary({ errors: [{ message: 'No such ecosistema.' }] })).toBeNull();
+  });
+});
+
+describe('formatCostUsd', () => {
+  it('says USD out loud, because the figure is not pesos', () => {
+    // 🔴 Relabelling dollars as MXN would change a number's meaning without
+    // converting it — the worst thing a money field can do.
+    expect(formatCostUsd(1.5)).toBe('$1.50 USD');
+  });
+
+  it('keeps four decimals below a cent, instead of reporting zero', () => {
+    expect(formatCostUsd(0.00936)).toBe('$0.0094 USD');
+  });
+
+  it('renders nothing as $0.00 USD, not NaN', () => {
+    expect(formatCostUsd(0)).toBe('$0.00 USD');
+    expect(formatCostUsd(Number.NaN)).toBe('$0.00 USD');
+  });
+});
+
+describe('formatSpan', () => {
+  it('⚠ keeps seconds — most conversations are shorter than a minute', () => {
+    expect(formatSpan(45)).toBe('45 s');
+    expect(formatSpan(0)).toBe('0 s');
+  });
+
+  it('⚠ keeps the seconds below an hour, so 79 s does not read as "1 min"', () => {
+    // "1 min" next to "2 min" looks like a doubling; they are 40 s apart.
+    expect(formatSpan(79)).toBe('1 min 19 s');
+    expect(formatSpan(747)).toBe('12 min 27 s');
+    expect(formatSpan(120)).toBe('2 min');
+  });
+
+  it('drops the seconds past an hour, where they stop meaning anything', () => {
+    expect(formatSpan(3600)).toBe('1 h');
+    expect(formatSpan(7500)).toBe('2 h 5 min');
+  });
+
+  it('returns null when there is nothing to say', () => {
+    expect(formatSpan(null)).toBeNull();
+    expect(formatSpan(-1)).toBeNull();
+  });
+});
+
+describe('shortModelName', () => {
+  it('drops the vendor prefix for a narrow column', () => {
+    expect(shortModelName('deepseek/deepseek-chat-v3.1')).toBe('deepseek-chat-v3.1');
+  });
+
+  it('leaves a bare name, and a trailing slash, alone', () => {
+    expect(shortModelName('gpt-4o-mini')).toBe('gpt-4o-mini');
+    expect(shortModelName('vendor/')).toBe('vendor/');
   });
 });

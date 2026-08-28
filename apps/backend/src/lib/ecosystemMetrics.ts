@@ -48,7 +48,7 @@
 import type { Payload, Where } from 'payload'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
-import { organizationIdsForUser } from './permissions'
+import { organizationIdsForUser, organizationIdsForUserWithMinRole, type OrgRole } from './permissions'
 import { MAX_STARS, MIN_STARS } from '../collections/Ratings'
 import { PUBLICATION_STATES, type PublicationState } from './publishDocument'
 
@@ -180,31 +180,39 @@ const SETTLED_INGEST_STATES = ['ready', 'n/a', 'failed'] as const
 // The entry point
 // ---------------------------------------------------------------------------
 
-type OrganizationRow = { id: Id; name?: unknown; slug?: unknown; isActive?: unknown }
+export type OrganizationRow = { id: Id; name?: unknown; slug?: unknown; isActive?: unknown }
 
 const text = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() !== '' ? value.trim() : null
 
 /**
- * Metrics for ONE ecosistema, for ONE caller.
+ * The ecosistema row, IF this caller may see its aggregates. Shared by every
+ * elevated aggregate endpoint (`ecosystemMetrics` here, `chatUsage` next door)
+ * so there is exactly one gate to audit.
  *
  * Throws `EcosystemNotVisibleError` for every refusal — unknown ecosistema,
- * deactivated ecosistema, deactivated account, and "you are not a member" all
- * produce the identical error. See that class for why.
+ * deactivated ecosistema, deactivated account, and "you are not a member" (or
+ * "not a member at `minRole`") all produce the identical error. See that class
+ * for why.
  *
  * ⚠ THE MEMBERSHIP CHECK IS NOT OPTIONAL AND CANNOT BE MOVED TO THE ROUTE.
  * Everything after it runs elevated. A caller who reaches the counting section
  * without passing this gate reads any tenant's numbers, and the numbers are
  * exactly what the tenancy model is protecting here.
  */
-export async function ecosystemMetrics(args: {
+export async function resolveVisibleEcosystem(args: {
   payload: Payload
   /** The ecosistema being asked about, as sent by the caller. Never trusted. */
   organizationId: Id
   /** The authenticated `users` row, or null/undefined when nobody is signed in. */
   user: unknown
-}): Promise<EcosystemMetrics> {
-  const { payload, organizationId, user } = args
+  /**
+   * The lowest membership role that may ask. Omitted = any active member.
+   * Platform admins pass regardless — they run the installation.
+   */
+  minRole?: OrgRole
+}): Promise<OrganizationRow> {
+  const { payload, organizationId, user, minRole } = args
 
   // Deactivation is the revoke switch (see `lib/permissions.ts`), so a switched
   // off account is refused before any read happens, elevated or not.
@@ -232,21 +240,49 @@ export async function ecosystemMetrics(args: {
   if (!organization) throw new EcosystemNotVisibleError()
 
   // 🔴 THE GATE. A platform admin may ask about any ecosistema; everybody else
-  // may ask only about ones they hold an ACTIVE membership in, at any role —
-  // this endpoint returns nothing a member is not already entitled to know
-  // about their own ecosistema, so gating it at `admin` would only push admins
-  // back onto the broken client-side count.
+  // may ask only about ones they hold an ACTIVE membership in, at `minRole` or
+  // above when one is given.
   if (!isPlatformAdminUser(user)) {
     const principalId = (user as { id?: Id } | null)?.id
     if (principalId === undefined || principalId === null) throw new EcosystemNotVisibleError()
 
-    const mine = await organizationIdsForUser(payload, principalId)
+    const mine = minRole
+      ? await organizationIdsForUserWithMinRole(payload, principalId, minRole)
+      : await organizationIdsForUser(payload, principalId)
     // ⚠ Compared as strings: Postgres hands ids back as `7` or `'7'` depending
     // on the path, and `7 !== '7'` would refuse a legitimate member.
     if (!new Set(mine.map(String)).has(String(organization.id))) {
       throw new EcosystemNotVisibleError()
     }
   }
+
+  return organization
+}
+
+/** The echo every aggregate carries, so a page can SAY which tenant it shows. */
+export const ecosystemEcho = (organization: OrganizationRow): EcosystemMetrics['ecosystem'] => ({
+  id: String(organization.id),
+  name: text(organization.name),
+  slug: text(organization.slug),
+})
+
+/**
+ * Metrics for ONE ecosistema, for ONE caller.
+ *
+ * Any active member may ask — this returns nothing a member is not already
+ * entitled to know about their own ecosistema, so gating it at `admin` would
+ * only push admins back onto the broken client-side count. See
+ * `resolveVisibleEcosystem` for the gate itself.
+ */
+export async function ecosystemMetrics(args: {
+  payload: Payload
+  /** The ecosistema being asked about, as sent by the caller. Never trusted. */
+  organizationId: Id
+  /** The authenticated `users` row, or null/undefined when nobody is signed in. */
+  user: unknown
+}): Promise<EcosystemMetrics> {
+  const { payload } = args
+  const organization = await resolveVisibleEcosystem(args)
 
   const orgId = organization.id
 
@@ -269,11 +305,7 @@ export async function ecosystemMetrics(args: {
   const starSum = byStars.reduce((sum, n, i) => sum + n * (MIN_STARS + i), 0)
 
   return {
-    ecosystem: {
-      id: String(organization.id),
-      name: text(organization.name),
-      slug: text(organization.slug),
-    },
+    ecosystem: ecosystemEcho(organization),
     conversations: { sessions, messages },
     documents: {
       total: documentsTotal,

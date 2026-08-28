@@ -16,26 +16,64 @@
     err?.kind ?? (status === 404 ? 'not-found' : status === 403 ? 'access-denied' : 'generic'),
   );
 
+  // ⚠ SPANISH, like the rest of the product. This page had shipped in English,
+  // which is worst exactly here: it is the screen a person reaches when
+  // something already went wrong, and reading it in another language turns a
+  // recoverable moment into "the site is broken".
+  //
+  // The wording is borrowed from copy the app already uses rather than invented
+  // — "Algo salió mal" and "Inténtalo de nuevo" from `$lib/stores/app.svelte.ts`,
+  // "Volver al chat" from the admin page's own escape hatch — so the same
+  // situation reads the same way wherever a user meets it.
   const title = $derived(
     kind === 'access-denied'
-      ? 'No access'
+      ? 'Sin acceso'
       : kind === 'not-found'
-        ? 'Not found'
-        : 'Something went wrong',
+        ? 'No encontramos esto'
+        : 'Algo salió mal',
+  );
+
+  /**
+   * ⚠ SvelteKit fills `error.message` itself for the errors IT raises — an
+   * unmatched route gets the literal string `Not Found`, an uncaught throw gets
+   * `Internal Error`. Those are framework defaults, not our copy, and they
+   * appear on exactly the two most common error screens. Trusting
+   * `err.message` blindly is how "No encontramos esto / Not Found" ends up on
+   * the page: a Spanish heading over an English body.
+   *
+   * So a message is used only when it is OURS — `$lib/server/deny.ts` always
+   * sets `kind`, SvelteKit never does. No `kind`, no borrowed message.
+   *
+   * ⚠ The last two entries are `$lib/server/deny.ts`'s OWN fallbacks, which are
+   * still English. A caller that passes real copy (every caller in the app
+   * today does) is unaffected; a caller that passes none now lands on the
+   * Spanish default below instead of shipping English. The proper fix is in
+   * `deny.ts` itself — this is the boundary refusing to render it either way.
+   */
+  const NOBODY_CHOSE_THIS = new Set([
+    // SvelteKit's own.
+    'Not Found',
+    'Internal Error',
+    // deny.ts's own fallbacks.
+    "You don't have access to this.",
+    "We couldn't find that page.",
+  ]);
+  const ownMessage = $derived(
+    err?.kind && err.message && !NOBODY_CHOSE_THIS.has(err.message) ? err.message : null,
   );
 
   const body = $derived(
-    err?.message ??
+    ownMessage ??
       (kind === 'access-denied'
-        ? "You don't have access to this."
+        ? 'No tienes acceso a esta sección.'
         : kind === 'not-found'
-          ? "We couldn't find that page."
-          : 'An unexpected error occurred. Please try again.'),
+          ? 'No encontramos esa página.'
+          : 'Ocurrió un error inesperado. Inténtalo de nuevo.'),
   );
 
   // Escape hatch: honour an explicit CTA from the thrown body, else send the
   // user somewhere safe (the chat home).
-  const cta = $derived(err?.cta ?? { label: 'Back to chat', href: '/' });
+  const cta = $derived(err?.cta ?? { label: 'Volver al chat', href: '/' });
 </script>
 
 <div class="boundary text-ink">

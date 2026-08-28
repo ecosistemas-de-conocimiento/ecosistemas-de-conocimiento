@@ -28,7 +28,8 @@
   import DocumentsTable from '$lib/components/admin/DocumentsTable.svelte';
   import RatingsPanel from '$lib/components/admin/RatingsPanel.svelte';
   import StatTile from '$lib/components/admin/StatTile.svelte';
-  import { plural, share } from '$lib/components/admin/summary';
+  import UsagePanel from '$lib/components/admin/UsagePanel.svelte';
+  import { formatCostUsd, plural, share } from '$lib/components/admin/summary';
   import { displayAverage } from '$lib/components/admin/metrics';
   import type { PageData } from './$types';
 
@@ -126,6 +127,19 @@
         value={metrics ? numbers.format(metrics.conversations.sessions) : '—'}
         hint={metrics ? `${numbers.format(metrics.conversations.messages)} mensajes` : undefined}
       />
+      <!-- ⚠ Cost, not tokens, and the panel below says why: ai-service records
+           tokens under one deployment-wide tenant, so they cannot be split per
+           ecosistema. Cost IS per message in our own rows. Ecosistema-wide,
+           from the backend's `/api/metrics/usage`. -->
+      <StatTile
+        label="Costo del chat"
+        value={overview.usage.ok ? formatCostUsd(overview.usage.summary.costUsd) : '—'}
+        hint={overview.usage.ok && !overview.usage.summary.costIsComplete
+          ? 'Mínimo: faltan respuestas sin dato de costo.'
+          : overview.usage.summary.costPerTurn != null
+            ? `${formatCostUsd(overview.usage.summary.costPerTurn)} por respuesta`
+            : undefined}
+      />
       <!-- ⚠ The count and the average come from the same aggregate endpoint,
            so they cover EVERY rating. The reason tables below are built from a
            capped sample of rating rows and say so when they are truncated —
@@ -181,6 +195,15 @@
         docs={overview.documents.rows}
         nameById={nameById}
       />
+    </PanelCard>
+
+    <!-- 🔴 Metadata only, computed by the backend over the WHOLE ecosistema and
+         returned with no message text in it. See `apps/backend/src/lib/chatUsage.ts`. -->
+    <PanelCard
+      title="Uso del chat"
+      subtitle="Cuánto se conversa, cuánto cuesta y con qué modelos. Nunca lo que se dijo."
+    >
+      <UsagePanel summary={overview.usage.summary} ok={overview.usage.ok} />
     </PanelCard>
 
     <PanelCard
