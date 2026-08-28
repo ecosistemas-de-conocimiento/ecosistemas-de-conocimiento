@@ -55,19 +55,31 @@ are* are different fields.
 document a testimony?" is a column lookup. Build it that way; it is the difference between a
 privacy rule you can audit and one you have to trust.
 
-## 🔴 Scope: this is a graph you LOOK AT, not GraphRAG
+## Scope: BOTH the graph view and GraphRAG
 
-Be explicit about this, because the two get conflated and the owner asked directly.
+Two deliverables over one extraction layer.
 
-- **In scope:** extract entities and relations, store them, and show them. An analysis and
-  navigation surface.
-- **NOT in scope:** feeding the graph back into retrieval. No entity-linked chunk selection, no
-  multi-hop context gathering, no community summaries. Answers do not get better as a result of
-  this work.
+1. **A graph you look at** — analysis and navigation.
+2. **GraphRAG** — the graph feeds retrieval. Decided and in scope now.
 
-The extraction layer is deliberately shared, so GraphRAG stays open as a later, separate decision.
-**Do not quietly start building it.** If you think the retrieval path should consume the graph, say
-so and let the owner decide — it changes the RAG architecture and its failure modes.
+**Owner's decisions on the retrieval half:**
+
+- **Always use both paths and fuse the results.** No routing, no per-question decision. Every answer
+  pays the graph cost, including "what does this PDF say".
+- **Silent fallback.** If the graph yields nothing, normal search answers and the user is not told.
+- **No formal evaluation.** Shipping on judgement rather than a measured comparison.
+
+🔴 **One thing you must build anyway, because those three together hide their own outcome:**
+always-on + silent fallback + no evaluation means the cost is certain and the benefit is invisible.
+**Log which path produced the context for each answer** — graph, vector, or both — and how many
+chunks each contributed. No UX change, negligible cost, and it is the only way anyone can later
+check whether the graph earns its place. Do not skip this on the grounds that no evaluation was
+asked for; it is what makes the decision reversible.
+
+⚠ Also state honestly in your ADR: GraphRAG wins on **global** questions ("what themes recur across
+testimonies") and adds latency and cost to **local** ones ("what does this document say"), which are
+most of what people actually ask. Fusing on every turn means local questions subsidise global ones.
+That is the owner's call; your job is to make the trade visible, not to relitigate it.
 
 ## Every ingested chunk carries a `kind`
 

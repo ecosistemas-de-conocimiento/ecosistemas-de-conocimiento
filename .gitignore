@@ -22,3 +22,9 @@ media/
 # Agent worktrees and local session state
 .claude/
 .cache/
+
+# e2e upload fixtures are BUILT from ../corpus-generativo, never committed.
+# `./scripts/corpus-fixtures.sh` writes them. Committing a copy would fork it
+# from a corpus that still gets regenerated.
+apps/backend/e2e/fixtures/
+apps/web/e2e/fixtures/

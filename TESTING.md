@@ -59,6 +59,61 @@ load average 34 — **1,811 passing, 0 failing, zero 5000 ms timeouts** every ti
 teaches everyone to re-run it until it passes, and a real regression then reads as
 "just the flaky one again". Sequential was the honest stopgap; this is the fix.
 
+## Upload fixtures come from `corpus-generativo`, and are not committed
+
+Every file the e2e suites upload is **built**, by:
+
+```bash
+./scripts/corpus-fixtures.sh      # run once, and again after a corpus update
+```
+
+It reads `../corpus-generativo` — a **separate repo**, 250 synthetic documents built to
+look like what this product actually receives — and writes three fixtures plus a
+`fixtures.json` manifest into `apps/backend/e2e/fixtures/` and `apps/web/e2e/fixtures/`.
+Both directories are gitignored.
+
+| Fixture | Source | Exercises |
+| --- | --- | --- |
+| `.pdf` | a long `testimonio`, rendered by `scripts/lib/txt_to_pdf.py` | `unpdf` extraction, multi-chunk ingest |
+| `.docx` | a `carta de presentación`, copied from the corpus untouched | `mammoth` extraction |
+| `.m4a` | a `testimonio` read aloud by Piper (`scripts/corpus-voices.sh`) | transcription → the same ingest path a PDF uses |
+
+**What this replaced, and why.** The old fixtures were invented here: two hand-written
+PDFs carrying nonsense canary words (`ZANAHORIA-E2E-BACKEND`, `NUBELIRIO`) and
+`es-clip.mp3`, a 45-second recording committed as a binary with no recorded provenance.
+They proved the plumbing moved bytes. They could not tell you whether the chunker,
+the retriever or the transcriber behave on **the shape of document we are really
+handed** — Spanish testimonies with place names, indigenous-language references,
+and words like `descacharrización` and `ovitrampa`.
+
+🔴 **Nothing in `e2e/` may hardcode a fixture filename or marker.** The corpus is
+regenerable (`gen_corpus.py`, seed `445`), so which document sorts first can change.
+Read `apps/backend/e2e/support/fixtures.ts` or `apps/web/e2e/fixtures.ts` instead.
+Each fixture carries a **marker** — the subject's name, unique across the corpus's 250
+documents — so "this exact name came back" can only mean the text travelled from that
+file, through extraction, onto the row.
+
+⚠ **The audio marker is not assertable.** It is a transcriber's guess at a spoken
+proper noun, and no ASR model spells `Valdés Colín` reliably. `markerIsAssertable: false`
+says so in the manifest. The audio assertions check that the transcript is real Spanish,
+not that it contains a particular word.
+
+⚠ **The voice is synthetic and sounds it.** Piper is a neural TTS with a Mexican Spanish
+voice, which is far better than the `espeak-ng` formant synthesis that
+`services/audio-service/scripts/make-fixtures.sh` uses — but it is still a machine
+reading, not a person in a room with background noise. A real recording remains the
+missing fixture.
+
+### What was deliberately left alone
+
+- **`services/ai-service/src/eval/fixtures/`** stays domain-free. ai-service ships
+  retrieval machinery for several products, and its own header says a fixture encoding
+  one consumer's subject matter would smuggle that consumer's domain into a shared
+  service. Corpus content must not go there.
+- **`services/audio-service/scripts/make-fixtures.sh`** stays on `espeak-ng`. Its test
+  asserts content-word recall against deliberately robotic speech, which is the *harder*
+  case. Making it prettier would weaken the test.
+
 ## Not covered by any of this
 
 - **No `docker build` has ever run.** Every Dockerfile is unverified.
