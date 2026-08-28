@@ -32,7 +32,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { PayloadRequest } from 'payload'
 
-import { bindDocumentToEcosystem } from './Documents'
+import { bindDocumentToEcosystem, planIngestRetry } from './Documents'
 
 const ECO_A = 10
 const ECO_B = 20
@@ -308,16 +308,41 @@ describe('🔴 contentKind is immutable after creation', () => {
     expect(patched.name).toBe('renombrado.pdf')
   })
 
-  it('falls back to `documento` on update when the stored value is junk', async () => {
-    // ⚠ The LEAST privileged reading. An unknown value is treated as an ordinary
-    // source document, never as a testimony — getting that backwards would let a
-    // typo'd row skip the gate.
+  it('🔴 writes NOTHING when the stored value is unreadable, rather than defaulting to `documento`', async () => {
+    // 🔴 THE FAIL-OPEN THIS REPLACES. Defaulting an unreadable kind to
+    // `documento` looks like the cautious choice and is the opposite: a
+    // testimony reclassified as an ordinary document makes `corpusTextFor`
+    // select `extractedText` instead of `redactedText`, and the next publish
+    // promotes the UNREDACTED original into the ecosistema's shared corpus —
+    // which has no per-document delete.
+    //
+    // This hook exists to stop a client CHANGING the kind, not to invent one.
+    // With nothing readable on either side it declines to write the field at
+    // all and leaves the NOT NULL column holding whatever it already had.
     const patched = await update(
       { name: 'x.pdf' },
       { id: 5, session: SESSION_OF[ANA], uploadedBy: ANA, organization: ECO_A, contentKind: 'vozzz' },
       ANA,
     )
-    expect(patched.contentKind).toBe('documento')
+    expect(patched).not.toHaveProperty('contentKind')
+  })
+
+  it('🔴 a client cannot downgrade a stored `testimonio` to `documento`', async () => {
+    // The escalation the immutability rule actually blocks: the gate runs at
+    // ingest time, so a kind that could change afterwards is a gate that can be
+    // skipped after the fact.
+    const patched = await update(
+      { name: 'x.pdf', contentKind: 'documento' },
+      {
+        id: 6,
+        session: SESSION_OF[ANA],
+        uploadedBy: ANA,
+        organization: ECO_A,
+        contentKind: 'testimonio',
+      },
+      ANA,
+    )
+    expect(patched.contentKind).toBe('testimonio')
   })
 })
 
@@ -332,5 +357,44 @@ describe('the default', () => {
   it('normalises a junk contentKind to `documento` rather than refusing', async () => {
     const result = await create({ contentKind: 'no-such-kind' }, ANA)
     expect(result.contentKind).toBe('documento')
+  })
+})
+
+describe('🔴 a hold is visible and has exactly one way out', () => {
+  it('a held document is retryable, and the retry is what clears the hold', () => {
+    // 🔴 THE TWO BUGS THIS PINS.
+    //
+    // (1) A hold used to leave `ingestStatus` at `extracting` / `transcribing` —
+    //     non-terminal states with nothing left to move them. To the person who
+    //     uploaded a testimony that is indistinguishable from an upload still
+    //     working, forever. It is now `failed` with a reason, which is true and
+    //     which `planIngestRetry` accepts.
+    //
+    // (2) `runExtractAndIngest` refuses to re-gate a `held` row on an ordinary
+    //     save. Before that, RENAMING a held testimony re-ran the whole gate —
+    //     two more model calls, and because the detector IS a model, a chance of
+    //     a different verdict. Rename it enough times and one run comes back
+    //     `ready`: an "ingest anyway" button nobody meant to build.
+    //
+    // So the ONLY way out is this explicit retry, and it must clear the hold or
+    // it would answer 202 and then do nothing at all.
+    expect(
+      planIngestRetry({
+        kind: 'audio',
+        ingestStatus: 'failed',
+        extractedText: 'el testimonio completo',
+        anonymisationStatus: 'held',
+      }),
+    ).toMatchObject({
+      ingestStatus: 'pending',
+      anonymisationStatus: 'n/a',
+      anonymisationError: null,
+    })
+  })
+
+  it('a row that is not terminally failed has nothing to retry', () => {
+    // Re-running a job that is still going would double-transcribe and leave two
+    // callbacks racing for one row.
+    expect(planIngestRetry({ kind: 'audio', ingestStatus: 'embedding' })).toBeNull()
   })
 })

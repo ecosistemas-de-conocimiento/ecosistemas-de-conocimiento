@@ -412,12 +412,35 @@ export const canReadRatingComment: FieldAccess = async ({ req, doc, data, siblin
   const organizationId = relationId(row.organization)
   if (organizationId === null) return false
 
-  const allowed = await organizationIdsForUserWithPermission(
-    req.payload,
-    user.id,
-    PERMISSIONS.ratingsReadComments,
-  )
-  return allowed.some((id) => String(id) === String(organizationId))
+  /**
+   * ⚠ MEMOIZED ON `req`, because field access runs ONCE PER DOCUMENT. A 100-row
+   * ratings page called this 100 times, and each call ran
+   * `organizationIdsForUserWithPermission` — two uncached queries — so listing
+   * ratings cost 200 extra round trips to answer one question whose answer
+   * cannot change within a request.
+   *
+   * The cache key includes the user id: `req` is per request, but a server-side
+   * caller can pass an explicit `user`, and answering for the wrong person is
+   * the one mistake this must not make.
+   */
+  // ⚠ `?? {}` because `req.context` is only guaranteed on a real Payload
+  // request. A caller without one simply gets no memoization, never a crash —
+  // an access check must not depend on a performance optimisation being present.
+  const cache = (req.context ?? {}) as { __ratingCommentOrgs?: Record<string, string[]> }
+  const cacheKey = String(user.id)
+  if (!cache.__ratingCommentOrgs) cache.__ratingCommentOrgs = {}
+  let allowed = cache.__ratingCommentOrgs[cacheKey]
+  if (!allowed) {
+    allowed = (
+      await organizationIdsForUserWithPermission(
+        req.payload,
+        user.id,
+        PERMISSIONS.ratingsReadComments,
+      )
+    ).map(String)
+    cache.__ratingCommentOrgs[cacheKey] = allowed
+  }
+  return allowed.includes(String(organizationId))
 }
 
 // ---------------------------------------------------------------------------

@@ -498,7 +498,12 @@ describe('🔴 the metadata every turn carries', () => {
     expect(meta.kind).toBe('conversacion')
     expect(meta.format).toBe('chat')
     expect(meta.sessionId).toBe(String(SESSION))
-    expect(meta.title).toBe('Sobre el acuerdo')
+    // 🔴 NOT the session title. `sessions.title` is generated from the first
+    // thing the person asked, so it is unredacted free text — "¿Puede Ana López
+    // pedir la prórroga?" would ride onto the citation card intact, past a gate
+    // that only ever read the message bodies.
+    expect(meta.title).toBe('Conversación')
+    expect(meta.title).not.toBe('Sobre el acuerdo')
     // No person id of any kind travels with a chunk.
     expect(meta).not.toHaveProperty('uploadedBy')
   })

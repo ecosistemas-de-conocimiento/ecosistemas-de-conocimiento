@@ -72,7 +72,41 @@ export function contentKindOf(row: { contentKind?: unknown } | null | undefined)
  * no speaker. For a `testimonio` that is the whole point (see
  * `lib/anonymise/`); for a `conversacion` it is the structural stage of the
  * gate. `organizationId` is a TENANT id, not a person.
+ *
+ * 🔴 …AND THAT INCLUDES THE TITLE, WHICH IS THE ONE THAT ALMOST GOT THROUGH.
+ * `documents.name` is free text typed by the uploader and `sessions.title` is
+ * derived from the first thing somebody asked. "Testimonio de María López.mp3"
+ * would have carried that name into the shared corpus and onto the citation
+ * card, past all four stages of a gate whose entire job is to remove it —
+ * because the gate reads the TEXT and never looked at the metadata. So gated
+ * content gets a NEUTRAL title here; see {@link titleFor}.
  */
+/**
+ * 🔴 A GATED CHUNK GETS A NEUTRAL TITLE. Not a stylistic choice.
+ *
+ * A `documento` is somebody's own material filed under their own name, so its
+ * title is theirs and travels with it. A `testimonio` is anonymous by design and
+ * a `conversacion` was written by someone who believed it was private — and both
+ * of those titles are FREE TEXT that never went through the gate:
+ * `documents.name` is whatever the Investigador typed on the upload form,
+ * `sessions.title` is generated from the first question somebody asked.
+ *
+ * Either one routinely contains exactly what the gate exists to remove, and it
+ * would land in the shared corpus and on the citation card looking official.
+ *
+ * ⚠ THE COST IS REAL AND WAS ACCEPTED: every Voz cites as "Testimonio", so a
+ * reader cannot tell two testimonies apart from the citation alone. That is the
+ * correct trade for anonymous material — a distinguishable title is, by
+ * definition, a handle on which person it came from. `metadata.docId` still
+ * identifies the row for anyone with access to it.
+ */
+export function titleFor(contentKind: ContentKind, name?: string | null): string {
+  if (contentKind === 'testimonio') return 'Testimonio'
+  if (contentKind === 'conversacion') return 'Conversación'
+  const trimmed = typeof name === 'string' ? name.trim() : ''
+  return trimmed === '' ? 'Documento sin título' : trimmed
+}
+
 export function chunkMetadata(args: {
   /** The `documents` row id, or the synthetic id of a conversation turn. */
   docId: string
@@ -83,11 +117,14 @@ export function chunkMetadata(args: {
   /** Which corpus this copy lives in. `draft` is private to one person. */
   publication: 'draft' | 'published'
   /**
-   * The citation's human name.
+   * The citation's human name, as the uploader typed it.
    *
    * 🔴 Without it `chat-engine` falls back to the CORPUS NAME and a source card
    * reads "eco-1-draft-1". The top-level `title` on an ingest document is NOT
    * echoed back on retrieve; only `metadata` survives the round trip.
+   *
+   * ⚠ USED ONLY FOR `documento`. For gated content it is REPLACED — see
+   * {@link titleFor}.
    */
   title?: string | null
   /**
@@ -104,7 +141,7 @@ export function chunkMetadata(args: {
     kind: args.contentKind,
     format: args.format ?? 'unknown',
     publication: args.publication,
-    title: args.title ?? 'Documento sin título',
+    title: titleFor(args.contentKind, args.title),
     ...(args.authoredBy ? { authoredBy: args.authoredBy } : {}),
     ...(args.sessionId === undefined ? {} : { sessionId: String(args.sessionId) }),
   }

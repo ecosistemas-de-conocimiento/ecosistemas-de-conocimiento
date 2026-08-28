@@ -163,7 +163,14 @@ describe('beginPublish — 🔴 the content kind survives the re-embed', () => {
     expect(result.corpus).toBe(PUBLISHED_CORPUS)
     expect(fake.calls[0]!.corpus).toBe(PUBLISHED_CORPUS)
     expect(fake.metadata().publication).toBe('published')
-    expect(fake.metadata().title).toBe('Voz de la asamblea')
+    // 🔴 A TESTIMONY DOES NOT CARRY ITS FILENAME INTO THE SHARED CORPUS.
+    // `documents.name` is free text the Investigador typed and it never went
+    // through the gate — "Testimonio de María López.mp3" would put the name on
+    // the citation card of an anonymous voice. The cost is that every Voz cites
+    // as "Testimonio"; that is the correct trade, because a distinguishable
+    // title is by definition a handle on whose words these are.
+    expect(fake.metadata().title).toBe('Testimonio')
+    expect(fake.metadata().title).not.toBe('Voz de la asamblea')
     expect(fake.metadata().organizationId).toBe(String(ORG))
   })
 

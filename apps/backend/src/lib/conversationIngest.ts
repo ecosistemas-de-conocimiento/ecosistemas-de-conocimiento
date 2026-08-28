@@ -57,7 +57,7 @@
 
 import type { Payload } from 'payload'
 
-import { chunkMetadata } from './contentKind'
+import { chunkMetadata, titleFor } from './contentKind'
 import { publishedCorpus } from './corpus'
 import { relationId } from './permissions'
 import type { PersonDetector } from './anonymise/types'
@@ -225,9 +225,22 @@ export async function citedUnpublishedDocumentIds(
   const cited = citedDocumentIds(messages)
   if (cited.length === 0) return []
 
+  /**
+   * ⚠ ONLY WELL-FORMED IDS REACH THE QUERY. `provenance` is a JSON blob written
+   * by the chat engine, so a malformed `documentId` is possible — and a
+   * non-numeric string handed to `where: { id: { in: … } }` against an integer
+   * column makes Postgres THROW, which would turn a bad citation into a crashed
+   * ingest run rather than a hold.
+   *
+   * ⚠ A rejected id is still counted as unpublished below, so junk HOLDS the
+   * conversation rather than releasing it. Fail-closed, as everywhere here.
+   */
+  const queryable = cited.filter((id) => typeof id === 'number' || /^[A-Za-z0-9_-]+$/.test(id))
+  if (queryable.length === 0) return cited
+
   const rows = await payload.find({
     collection: 'documents',
-    where: { id: { in: cited } },
+    where: { id: { in: queryable } },
     depth: 0,
     pagination: false,
     overrideAccess: true,
@@ -391,8 +404,45 @@ export async function ingestConversationTurns(args: {
     return { ...empty, waitingOn }
   }
 
+  /**
+   * 🔴 CLAIM THE TURNS BEFORE DOING ANYTHING SLOW.
+   *
+   * The trigger is an `afterChange` hook on `messages`, so a normal exchange
+   * fires it twice in quick succession — once for the question, once for the
+   * answer. The run in between takes SECONDS, because the anonymisation gate
+   * makes two model round trips per turn. Without a claim, the second run reads
+   * the first run's turns while they are still `pending` and enqueues them a
+   * second time: the embedding budget is spent twice, and whether that also
+   * duplicates chunks depends on ai-service's upsert semantics for a repeated
+   * external id — which is not a thing to bet a corpus on.
+   *
+   * `embedding` is not in `RUNNABLE_STATES`, so writing it here takes the turns
+   * out of every concurrent run's view.
+   *
+   * ⚠ THIS IS A CLAIM, NOT A LOCK. Two runs that read `outstanding` in the same
+   * instant can still both proceed — the window shrinks from seconds to
+   * microseconds, it does not close. Closing it properly needs a conditional
+   * UPDATE … WHERE corpus_status = 'pending', which Payload's update API cannot
+   * express. Worth knowing rather than discovering.
+   *
+   * ⚠ Every path out of here below RE-WRITES the status: `held-gate` when the
+   * gate refuses, `failed` when the enqueue throws, `embedding` again with the
+   * real ingest id on success. A turn must never be left claimed and forgotten.
+   */
+  await Promise.all(
+    outstanding.map((message) =>
+      writeMessage(payload, message.id, { corpusStatus: 'embedding', corpusError: null }),
+    ),
+  )
+
   const roster = await rosterForOrganization(payload, organizationId)
-  const title = typeof session.title === 'string' && session.title.trim() ? session.title : 'Conversación'
+  /**
+   * 🔴 NOT `session.title`. A session title is generated from the first thing
+   * the person asked, so it is unredacted free text — "¿Puede Ana López pedir
+   * la prórroga?" would land on the citation card intact, past a gate that only
+   * ever looked at the message bodies.
+   */
+  const title = titleFor('conversacion')
 
   const documents: Array<{
     id: string

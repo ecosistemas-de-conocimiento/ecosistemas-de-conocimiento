@@ -259,8 +259,12 @@ describe('planIngestRetry — 🔴 what a retry actually costs', () => {
       extractedText: 'la junta empezó a las diez',
       transcribeAttempt: 0,
     })
-    expect(plan).toEqual({ ingestStatus: 'pending', ingestError: null, ingestId: null })
+    expect(plan).toMatchObject({ ingestStatus: 'pending', ingestError: null, ingestId: null })
     expect(plan).not.toHaveProperty('transcribeId')
+    // ⚠ A retry is also the ONLY way out of an anonymisation hold, so it clears
+    // the gate's verdict — `runExtractAndIngest` refuses to re-gate a `held` row
+    // on any other save, which is what stops a rename from being a free retry.
+    expect(plan).toMatchObject({ anonymisationStatus: 'n/a', anonymisationError: null })
   })
 
   it('starts over, with a NEW idempotency key, when there is no text', () => {

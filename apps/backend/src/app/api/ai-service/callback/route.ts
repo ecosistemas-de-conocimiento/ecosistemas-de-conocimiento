@@ -304,6 +304,7 @@ async function dispatchCallback(
         return
       }
 
+
       const docId = /^\d+$/.test(docIdRaw) ? Number(docIdRaw) : docIdRaw
 
       // Read the row FIRST: whether this callback is the original draft ingest
@@ -444,11 +445,39 @@ async function dispatchConversationTurn(
   messageId: number | string,
   envelope: Extract<CallbackEnvelope, { event: 'ingest.completed' | 'ingest.failed' }>,
 ): Promise<void> {
+  /**
+   * 🔴 IS THIS CALLBACK ABOUT THE RUN THE ROW IS ACTUALLY WAITING FOR?
+   *
+   * The same guard the audio path has (`transcribeIdMatches`), for the same
+   * reason. A turn can be enqueued more than once — a `failed` turn goes back
+   * into the runnable set and the next message in the thread retries it — and
+   * both runs' callbacks carry the same `msg-{id}`. Without this check a late
+   * callback from the SUPERSEDED run can mark a turn `failed` while the retry
+   * is succeeding, or claim `ingested` for a run that never landed.
+   *
+   * ⚠ A row with no `corpusIngestId` accepts nothing: it has not enqueued
+   * anything, so no callback can be about it.
+   */
+  const row = (await payload
+    .findByID({ collection: 'messages', id: messageId as never, depth: 0, overrideAccess: true })
+    .catch(() => null)) as { corpusIngestId?: unknown } | null
+
+  if (!row || typeof row.corpusIngestId !== 'string' || row.corpusIngestId !== envelope.ingestId) {
+    console.warn(
+      '[callback] ignoring an ingest callback from a superseded run for message',
+      messageId,
+      envelope.ingestId,
+    )
+    return
+  }
+
   const data =
     envelope.event === 'ingest.completed'
       ? ({ corpusStatus: 'ingested', corpusError: null } as const)
       : ({
           corpusStatus: 'failed',
+          // Cleared so the next run's guard cannot be satisfied by a stale id.
+          corpusIngestId: null,
           corpusError: `${envelope.error?.code ?? 'ingest_failed'}: ${
             envelope.error?.message ?? 'ai-service reported a failure'
           }`.slice(0, 500),

@@ -44,6 +44,21 @@ import { MigrateUpArgs, MigrateDownArgs, sql } from '@payloadcms/db-postgres'
  * below anyone who manages people. `BEFORE 'admin'` keeps the column readable in
  * the same order.
  *
+ * 🔴 EVERY MESSAGE THAT ALREADY EXISTS IS BACKFILLED TO `skipped`, AND THAT
+ * LINE IS THE MOST IMPORTANT ONE IN THIS FILE.
+ *
+ * `corpus_status` defaults to `pending`, and `lib/conversationIngest.ts` treats
+ * `pending` as "outstanding, ingest it". Without the backfill, the FIRST new
+ * turn in any pre-existing conversation would make the whole thread outstanding
+ * — every historical message gated (two model calls each) and pushed into the
+ * ecosistema's shared corpus, silently, with nobody having asked for it. On a
+ * database with real chat history that is a large bill and an irreversible
+ * disclosure, since ai-service has no per-document delete.
+ *
+ * The owner's rule is about conversations as they happen. Retroactively
+ * ingesting everything anyone ever typed is a different decision, and not one
+ * this migration gets to make by leaving a default alone.
+ *
  * 🔴 `down()` NARROWS THE ROLE ENUM BACK TO THREE VALUES AND WILL FAIL — loudly,
  * on the `USING role::enum_memberships_role` cast — if ANY membership row still
  * holds `investigador`. That is the right failure: the alternative is a silent
@@ -70,7 +85,8 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   CREATE INDEX "documents_content_kind_idx" ON "documents" USING btree ("content_kind");
   CREATE INDEX "documents_anonymisation_status_idx" ON "documents" USING btree ("anonymisation_status");
   CREATE INDEX "messages_corpus_status_idx" ON "messages" USING btree ("corpus_status");
-  CREATE INDEX "messages_corpus_ingest_id_idx" ON "messages" USING btree ("corpus_ingest_id");`)
+  CREATE INDEX "messages_corpus_ingest_id_idx" ON "messages" USING btree ("corpus_ingest_id");
+  UPDATE "messages" SET "corpus_status" = 'skipped';`)
 }
 
 export async function down({ db, payload, req }: MigrateDownArgs): Promise<void> {

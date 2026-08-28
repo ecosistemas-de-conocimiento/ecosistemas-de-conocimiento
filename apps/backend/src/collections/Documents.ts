@@ -15,6 +15,7 @@ import {
   CONTENT_KINDS,
   chunkMetadata,
   contentKindOf,
+  titleFor,
   DEFAULT_CONTENT_KIND,
   isContentKind,
   type ContentKind,
@@ -331,9 +332,30 @@ async function enforceVocesUploadRights(args: {
     // reason as `publicationStatus` above.
     if (isContentKind(original.contentKind)) {
       next.contentKind = original.contentKind
-    } else {
-      next.contentKind = DEFAULT_CONTENT_KIND
+      return
     }
+    /**
+     * ⚠ NO STORED VALUE TO PIN TO. Payload merges the incoming body over the
+     * stored row BEFORE `beforeValidate`, so on a real update `next` already
+     * carries the row's own `contentKind` even when no `originalDoc` was handed
+     * to the hook. Falling back to it keeps ordinary edits working.
+     *
+     * 🔴 WHAT IT MUST NOT DO IS FALL BACK TO `documento`. That was the previous
+     * behaviour and it is fail-OPEN in the worst place in the design: a
+     * testimony silently reclassified as an ungated document makes
+     * `corpusTextFor` select `extractedText` instead of `redactedText`, and the
+     * next publish promotes the unredacted original into the shared corpus.
+     * With neither a stored value nor a usable merged one, we do not know what
+     * this row is — and "we do not know" resolves to "not yet", like every other
+     * uncertainty here.
+     */
+    if (isContentKind(next.contentKind)) return
+    // Neither side holds a readable kind. Write NOTHING and let the column keep
+    // whatever it has: this hook's job is to stop a client CHANGING the value,
+    // not to invent one. `contentKind` is a NOT NULL enum, so the database is
+    // the backstop, and the ingest and publish paths read the kind off the
+    // stored row rather than from anything decided here.
+    delete next.contentKind
     return
   }
 
@@ -577,6 +599,31 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
   if (!fresh) return
   if (!INGESTABLE_KINDS.has(String(fresh.kind))) return
 
+  /**
+   * 🔴 A HELD ROW IS NOT RE-GATED BY AN ORDINARY SAVE.
+   *
+   * `afterChange` fires on every update, and the only other guard here is
+   * `if (fresh.ingestId)` — which a held document never has, because it never
+   * reached the enqueue. So RENAMING a held testimony used to re-run the whole
+   * gate: two more model calls, billed, and — because the detector IS a model —
+   * a chance of a DIFFERENT verdict. Rename it enough times and one of those
+   * runs comes back `ready`. That is an "ingest anyway" button nobody meant to
+   * build, and it made the header's promise ("re-running it will say no again")
+   * a claim the code did not keep.
+   *
+   * ⚠ The way out is `POST /api/documents/:id/retry`, which clears
+   * `anonymisationStatus` deliberately. One explicit path, not a side effect of
+   * editing a field.
+   */
+  if (fresh.anonymisationStatus === 'held') {
+    console.warn(
+      '[documents] doc',
+      docId,
+      'is HELD by the anonymisation gate — skipping. Use POST /api/documents/:id/retry to re-run it.',
+    )
+    return
+  }
+
   // ⚠ The corpus is keyed on (ecosistema, uploader), NOT on the session. A
   // document outlives the conversation it was uploaded into, and drafts are
   // private to their uploader rather than to a thread.
@@ -726,6 +773,31 @@ export async function enqueueIngestForDoc(args: {
     console.warn(
       `[documents] doc ${docId} HELD at the ${gated.stage} stage of the anonymisation gate — not ingested.`,
     )
+    /**
+     * 🔴 SAY SO ON `ingestStatus` TOO, OR THE USER WATCHES A SPINNER FOREVER.
+     *
+     * `anonymisationStatus: 'held'` is the truthful record and an operator can
+     * see it — but the row was left at `extracting` (or `transcribing`), which
+     * is a NON-TERMINAL state with nothing left to move it. That breaks this
+     * file's own rule and looks, to the person who uploaded a testimony,
+     * exactly like an upload that is still working.
+     *
+     * ⚠ `failed`, so `planIngestRetry` will accept it. A hold is not something
+     * to retry blindly — re-running the gate on identical bytes costs two model
+     * calls for the same answer — but the person may well fix the source and
+     * ask again, and `POST /:id/retry` is the ONE explicit path for that.
+     * `runExtractAndIngest` refuses to re-gate a held row on any other save.
+     */
+    await payload.update({
+      collection: 'documents',
+      id: docId as never,
+      data: {
+        ingestStatus: 'failed',
+        ingestError: `anonymisation_held: ${gated.stage}: ${gated.reason}`.slice(0, 500),
+      },
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
     return
   }
 
@@ -796,7 +868,11 @@ export async function enqueueIngestForDoc(args: {
           // the wrong one embeds the unredacted original into a corpus that has
           // no per-document delete.
           text: corpusText,
-          title: fresh.name ?? 'Untitled document',
+          // ⚠ `titleFor`, not `fresh.name`. The top-level title is not echoed
+          // back on retrieve, but it IS stored at ai-service — and for a
+          // testimony the uploader's filename is exactly the identifier the
+          // gate just spent two model calls removing from the body.
+          title: titleFor(contentKind, fresh.name),
           /**
            * ⚠ BUILT BY `chunkMetadata`, NOT INLINE. It is the same builder the
            * publish move uses, which is what stops `kind` from being silently
@@ -1654,6 +1730,7 @@ export interface RetryableDocument {
   ingestStatus?: string | null
   extractedText?: string | null
   transcribeAttempt?: number | null
+  anonymisationStatus?: string | null
 }
 
 /**
@@ -1680,9 +1757,22 @@ export function planIngestRetry(doc: RetryableDocument): Record<string, unknown>
   // would double-transcribe and leave two callbacks racing for one row.
   if (doc.ingestStatus !== 'failed') return null
 
+  /**
+   * ⚠ CLEARS THE ANONYMISATION HOLD, and this is the ONLY place that does.
+   *
+   * `runExtractAndIngest` refuses to re-gate a `held` row, so without this a
+   * retry would return 202 and then do nothing at all. Clearing it here is what
+   * makes "I fixed the source, try again" a deliberate act with a single entry
+   * point, instead of something a rename does by accident.
+   *
+   * ⚠ `redactedText` is NOT cleared. Either the gate held (so there is none) or
+   * it is about to be overwritten by the next run.
+   */
+  const clearHold = { anonymisationStatus: 'n/a', anonymisationError: null }
+
   const hasText = typeof doc.extractedText === 'string' && doc.extractedText.trim().length > 0
   if (hasText) {
-    return { ingestStatus: 'pending', ingestError: null, ingestId: null }
+    return { ingestStatus: 'pending', ingestError: null, ingestId: null, ...clearHold }
   }
   return {
     ingestStatus: 'pending',
@@ -1690,6 +1780,7 @@ export function planIngestRetry(doc: RetryableDocument): Record<string, unknown>
     ingestId: null,
     transcribeId: null,
     transcribeAttempt: (Number(doc.transcribeAttempt ?? 0) || 0) + 1,
+    ...clearHold,
   }
 }
 

@@ -1,6 +1,16 @@
-import type { Access, CollectionAfterChangeHook, CollectionConfig, Where } from 'payload'
+import type {
+  Access,
+  CollectionAfterChangeHook,
+  CollectionBeforeValidateHook,
+  CollectionConfig,
+  Where,
+} from 'payload'
+import { ValidationError } from 'payload'
+
 import { MESSAGE_CORPUS_STATES } from '../lib/conversationIngest'
 import { CONTEXT_REF_RELATION_TO } from '../lib/contextRefs'
+import { assertSessionOwnedBy, SessionNotOwnedError } from '../lib/corpus'
+import { relationId } from '../lib/permissions'
 
 /**
  * Chat messages — one per turn (user, assistant, or system). Replaces the
@@ -27,7 +37,139 @@ const CORPUS_STATE_LABELS: Record<(typeof MESSAGE_CORPUS_STATES)[number], string
   embedding: 'Embedding — enqueued at ai-service',
   ingested: 'Ingested — in the ecosistema corpus',
   failed: 'Failed — will be retried on the next run',
-  skipped: 'Skipped — never eligible (system turn, or empty)',
+  skipped: 'Skipped — not eligible (system turn, empty, or predates conversation ingest)',
+}
+
+/**
+ * 🔴 THE WRITE GATE. Without it, `POST /api/messages` IS A CORPUS WRITE.
+ *
+ * ── THE HOLE THIS CLOSES, CONCRETELY ────────────────────────────────────────
+ *
+ * `create` access on this collection is "any signed-in user", because Payload's
+ * create-time check has no document to constrain against. That was harmless
+ * while a `messages` row was inert. It stopped being harmless the moment the
+ * `afterChange` hook below started pushing turns into the ecosistema's SHARED
+ * corpus, because two separate gaps then compose into one injection:
+ *
+ *   1. Nothing checked that `session` belonged to the caller. Session ids are
+ *      sequential integers, so ANOTHER ECOSISTEMA'S corpus is guessable.
+ *   2. `redactedText` and `corpusStatus` were `admin: { readOnly: true }` only —
+ *      a UI affordance, not access control. A request body could supply both.
+ *
+ * So `POST /api/messages { session: <someone else's>, role: 'assistant',
+ * content: 'x', redactedText: '<anything at all>' }` put attacker-chosen text
+ * into a stranger's shared corpus, labelled as a previous assistant answer,
+ * UNGATED — into a corpus with no per-document delete. Same class of bug as the
+ * one `bindDocumentToEcosystem` exists to close for `documents`, and worse,
+ * because there is no publish step in front of it.
+ *
+ * ⚠ IT IS A HOOK, NOT A UI RULE, for the same reason as everywhere else here:
+ * the REST API is the whole surface, and a `beforeValidate` hook runs on every
+ * write path Payload has.
+ *
+ * ⚠ Server-side writes (`overrideAccess: true`, no `req.user`) pass straight
+ * through. That is the ingest pipeline writing its own state, and there is
+ * nobody to impersonate.
+ */
+export const protectMessageCorpusState: CollectionBeforeValidateHook = async ({
+  data,
+  operation,
+  originalDoc,
+  req,
+}) => {
+  const next = { ...(data ?? {}) } as Record<string, unknown>
+  const user = req.user
+  if (!user) return next
+
+  const original = (originalDoc ?? {}) as Record<string, unknown>
+
+  /**
+   * 🔴 SERVER-OWNED, ALWAYS. Every one of these is either the gate's verdict or
+   * the corpus cursor. A client that can set `redactedText` skips the
+   * anonymisation gate outright; a client that can set `corpusStatus` decides
+   * what gets embedded and what gets re-embedded.
+   */
+  const SERVER_OWNED = [
+    'redactedText',
+    'corpusStatus',
+    'corpusIngestId',
+    'corpusError',
+    'anonymisationReport',
+  ] as const
+
+  for (const key of SERVER_OWNED) {
+    if (operation === 'create') {
+      // ⚠ Deleted, not pinned. `corpusStatus` is `required` with a
+      // `defaultValue`, so removing the key lets Payload apply the default —
+      // which is `pending`, the only correct starting point.
+      delete next[key]
+    } else if (key in original) {
+      // ⚠ Pinned to the stored value rather than deleted: `corpusStatus` is
+      // `required`, and deleting it on an update fails validation on every
+      // ordinary PATCH. Same shape and same reason as `publicationStatus` in
+      // `collections/Documents.ts`.
+      next[key] = original[key]
+    } else {
+      delete next[key]
+    }
+  }
+
+  // ⚠ THE SESSION IS PROVEN, NEVER TRUSTED. On update it is immutable outright:
+  // re-homing a turn would move which ecosistema's corpus it feeds, for a
+  // message that may already be embedded somewhere else.
+  const sessionId =
+    operation === 'create'
+      ? relationId(next.session)
+      : (relationId(original.session) ?? relationId(next.session))
+
+  if (sessionId === null) {
+    throw new ValidationError({
+      collection: 'messages',
+      errors: [{ path: 'session', message: 'A message must belong to a conversation.' }],
+      req,
+    })
+  }
+
+  try {
+    await assertSessionOwnedBy(req.payload, sessionId, user.id)
+  } catch (err) {
+    if (err instanceof SessionNotOwnedError) {
+      // Same message for "not yours" and "does not exist" — see `lib/corpus.ts`.
+      throw new ValidationError({
+        collection: 'messages',
+        errors: [{ path: 'session', message: err.message }],
+        req,
+      })
+    }
+    throw err
+  }
+  next.session = sessionId
+
+  /**
+   * ⚠ EDITING THE TEXT INVALIDATES THE REDACTION. `redactedText` is the gate's
+   * output for the OLD content; keeping it would embed a redaction of something
+   * the person no longer said.
+   *
+   * ⚠ Only while the turn is still ours to hold. Once it is `embedding` or
+   * `ingested` the chunk exists and there is no per-document delete, so
+   * resetting the cursor would append a SECOND copy rather than replacing the
+   * first. The honest outcome there is that the corpus keeps the older text;
+   * that is a property of retirement-not-deletion, not something this hook can
+   * fix.
+   */
+  if (
+    operation !== 'create' &&
+    'content' in next &&
+    next.content !== original.content &&
+    original.corpusStatus !== 'embedding' &&
+    original.corpusStatus !== 'ingested'
+  ) {
+    next.redactedText = null
+    next.corpusStatus = 'pending'
+    next.corpusError = null
+  }
+
+  return next
 }
 
 /**
@@ -226,6 +368,9 @@ export const Messages: CollectionConfig = {
     },
   ],
   hooks: {
+    // 🔴 FIRST AND ALWAYS. Without it the afterChange hook below is a corpus
+    // write anybody with an account can aim at anybody's ecosistema.
+    beforeValidate: [protectMessageCorpusState],
     afterChange: [ingestConversationHook],
   },
 }
