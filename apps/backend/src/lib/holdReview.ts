@@ -443,7 +443,14 @@ export async function decideOnHold(args: {
   const review = await payload.create({
     collection: 'anonymisation-reviews',
     data: {
-      document: documentId,
+      // 🔴 `row.id`, NOT `documentId`. `documentId` arrives from the URL, so an
+      // HTTP caller hands us the string `'86'`; `documents` has integer ids and
+      // Payload's relationship validation rejects a string outright. That made
+      // EVERY real approve and reject fail with a 500 while the unit tests
+      // passed, because they call this function with a number. `row.id` is the
+      // id Payload itself returned for the row we just validated — the right
+      // type by construction, and the right ROW by construction too.
+      document: row.id,
       organization: organizationId,
       reviewer: reviewerId,
       decision: decision === 'approve' ? 'approved' : 'rejected',

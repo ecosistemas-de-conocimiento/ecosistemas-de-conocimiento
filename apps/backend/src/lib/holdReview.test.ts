@@ -294,6 +294,36 @@ describe('holds — 🔴 approving is an audited override, and the only way out'
     expect(row.note).toBe('Revisado en campo.')
   })
 
+  // 🔴 THE REGRESSION THIS FILE MISSED ONCE, AND WHY.
+  //
+  // Every test around it passes `documentId: DOC`, a NUMBER. A real HTTP caller
+  // cannot: the id arrives from the URL, so the route hands this function the
+  // string `'86'`. That string went straight into the audit row's `document`
+  // relationship, `documents` has integer ids, and Payload refused it — so
+  // EVERY approve and reject failed with a 500 in production while this suite
+  // stayed green. The fix reads `row.id` (what Payload returned for the row we
+  // just validated) instead of the caller's parameter.
+  //
+  // These two tests exist to keep the string path exercised. Testing only the
+  // convenient type is how the bug survived review.
+  it('accepts a STRING id, the way an HTTP route always passes it', async () => {
+    const { payload, created, order } = fakePayload()
+    await decideOnHold({ payload, documentId: String(DOC), user: user(), decision: 'approve' })
+
+    expect(order).toEqual(['create:anonymisation-reviews', 'update:documents'])
+    // The relationship carries the row's own id, so it is a number even though
+    // the caller passed a string.
+    expect(created[0]!.document).toBe(DOC)
+  })
+
+  it('rejects with a STRING id too', async () => {
+    const { payload, created } = fakePayload()
+    await decideOnHold({ payload, documentId: String(DOC), user: user(), decision: 'reject' })
+
+    expect(created[0]!.document).toBe(DOC)
+    expect(created[0]!.decision).toBe('rejected')
+  })
+
   it('approving without an edit releases the GATE’S output, never the original', async () => {
     const { payload, updated, created } = fakePayload()
     await decideOnHold({ payload, documentId: DOC, user: user(), decision: 'approve' })
