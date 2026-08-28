@@ -1,6 +1,14 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
 
+  // ⚠ Same rule as `/sign-in`: the server picks the Spanish sentence (see
+  // `$lib/server/auth.ts` `AUTH_ERROR_COPY` — "ya hay una cuenta con ese
+  // correo" reads very differently from "el servidor no responde"). This file
+  // only prints it. These two literals cover what never reaches the server.
+  const CANNOT_REACH =
+    'No pudimos conectar con el servidor. Revisa tu conexión e inténtalo de nuevo en un momento.';
+  const GENERIC = 'No pudimos crear tu cuenta. Inténtalo de nuevo en un momento.';
+
   let email = $state('');
   let password = $state('');
   let displayName = $state('');
@@ -19,12 +27,14 @@
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        error = body.error ?? 'Sign-up failed';
+        error = body.error ?? GENERIC;
         return;
       }
       await goto('/', { invalidateAll: true });
     } catch (err) {
-      error = `Network: ${(err as Error).message}`;
+      // 🔴 `err.message` names our plumbing (`fetch failed`). Console, not screen.
+      console.warn('[sign-up] la petición no salió:', (err as Error).message);
+      error = CANNOT_REACH;
     } finally {
       submitting = false;
     }
@@ -33,22 +43,23 @@
 
 <div class="h-screen w-full flex items-center justify-center text-ink">
   <form onsubmit={submit} class="w-full max-w-sm space-y-3 p-6" autocomplete="off">
-    <h1 class="text-base font-display font-bold text-ink">Create account</h1>
+    <h1 class="text-base font-display font-bold text-ink">Crea tu cuenta</h1>
 
     <label class="block text-xs text-ink-soft">
-      Display name
+      Tu nombre
       <input
         type="text"
         name="displayName"
         bind:value={displayName}
         disabled={submitting}
-        placeholder="Optional"
+        placeholder="Opcional"
+        title="Así te verán las demás personas de tu ecosistema."
         class="login-input mt-1"
       />
     </label>
 
     <label class="block text-xs text-ink-soft">
-      Email
+      Correo electrónico
       <input
         type="email"
         name="email"
@@ -61,7 +72,7 @@
     </label>
 
     <label class="block text-xs text-ink-soft">
-      Password
+      Contraseña
       <input
         type="password"
         name="password"
@@ -72,20 +83,21 @@
         required
         class="login-input mt-1"
       />
-      <span class="text-[10px] text-ink-soft">At least 8 characters.</span>
+      <span class="text-[10px] text-ink-soft">Al menos 8 caracteres.</span>
     </label>
 
+    <!-- `role="alert"` so un lector de pantalla anuncia el problema. -->
     {#if error}
-      <p class="text-sm text-danger">{error}</p>
+      <p class="text-sm text-danger" role="alert">{error}</p>
     {/if}
 
     <button type="submit" disabled={submitting} class="login-submit">
-      {submitting ? 'Creating…' : 'Create account'}
+      {submitting ? 'Creando…' : 'Crear cuenta'}
     </button>
 
     <p class="text-xs text-ink-soft pt-2">
-      Already have one?
-      <a href="/sign-in" class="underline hover:text-ink">Sign in</a>
+      ¿Ya tienes cuenta?
+      <a href="/sign-in" class="underline hover:text-ink">Inicia sesión</a>
     </p>
   </form>
 </div>
