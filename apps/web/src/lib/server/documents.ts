@@ -29,3 +29,13 @@ export function mapUpstreamMediaError(
       };
   }
 }
+
+// ── The `documents.session` relationship ───────────────────────────────────
+//
+// 🔴 The readers for that relationship live in `$lib/documents` — NOT here,
+// and the reason is mechanical rather than aesthetic: the browser store needs
+// exactly the same reading (`docFromBackend` decides "is this document in more
+// than one conversation" from it), and SvelteKit refuses to bundle anything
+// under `$lib/server/**` into client code. Putting them here would have forced
+// a second copy into the store, which is the drift this extraction exists to
+// prevent. Server routes import them from `$lib/documents` like everyone else.

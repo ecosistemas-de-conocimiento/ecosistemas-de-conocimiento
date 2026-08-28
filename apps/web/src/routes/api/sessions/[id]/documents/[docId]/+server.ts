@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
+import { coerceRelationId, relationIds } from '$lib/documents';
 
 /**
  * Attach / detach ONE existing document to / from ONE conversation.
@@ -49,36 +50,12 @@ import { backendFetch } from '$lib/server/auth';
  */
 
 /**
- * Payload's relationship columns are `bigint` on the default Postgres adapter,
- * so a numeric id must go back on the wire as a NUMBER. Non-numeric ids (a
- * future uuid mode) pass through untouched. Same coercion as the sibling
- * `messages` / `ratings` routes.
+ * ⚠ `relationIds` and `coerceRelationId` live in `$lib/server/documents` —
+ * ONE reading of the `session` relationship, shared with the picker
+ * (`…/documents/available`) and with "Mis documentos" (`/api/documentos`).
+ * They used to be copied into each route, which is a silent way to lose every
+ * OTHER conversation a document is in.
  */
-function coerceId(raw: string): number | string {
-  return /^\d+$/.test(raw) ? Number(raw) : raw;
-}
-
-/**
- * Every id in a `hasMany` relationship value, whatever shape Payload sent.
- *
- * ⚠ Payload hands this back as a scalar, an array of ids, an array of
- * populated objects, or null, depending on depth and on how the row was last
- * written. Normalising before deciding anything is the difference between
- * appending to a list and replacing it.
- */
-function relationIds(raw: unknown): string[] {
-  const items = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-  const out: string[] = [];
-  for (const item of items) {
-    if (typeof item === 'string' || typeof item === 'number') {
-      out.push(String(item));
-    } else if (item && typeof item === 'object' && 'id' in item) {
-      const id = (item as { id?: unknown }).id;
-      if (typeof id === 'string' || typeof id === 'number') out.push(String(id));
-    }
-  }
-  return out;
-}
 
 interface DocRead {
   ok: boolean;
@@ -113,7 +90,7 @@ async function writeSessions(
 ): Promise<Response> {
   return backendFetch(token, `/api/documents/${encodeURIComponent(docId)}`, {
     method: 'PATCH',
-    body: JSON.stringify({ session: sessionIds.map(coerceId) }),
+    body: JSON.stringify({ session: sessionIds.map(coerceRelationId) }),
   });
 }
 
@@ -157,10 +134,15 @@ export const POST: RequestHandler = async ({ locals, params }) => {
  * is a success that writes nothing.
  *
  * ⚠ Detaching the LAST conversation is allowed and leaves a document with no
- * conversation at all — still owned, still in its ecosistema, but not listed in
- * any panel. The UI does not offer that (it only shows the detach action for a
- * document that is in more than one conversation), and the route stays
- * permissive rather than inventing a rule the backend does not have.
+ * conversation at all — still owned, still in its ecosistema, and retrievable
+ * by nothing. That used to be a state the UI refused to create: the detach
+ * action only appeared on a document that was in two or more conversations.
+ *
+ * It now appears on EVERY attached document, because there is finally somewhere
+ * for the document to land: `/documentos` ("Mis documentos") lists everything
+ * the caller owns, orphans first. The old gate did not prevent orphans — the
+ * backend, the e2e suite and a deleted conversation all make them — it only
+ * prevented anyone from SEEING them. The route was right to stay permissive.
  */
 export const DELETE: RequestHandler = async ({ locals, params }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });

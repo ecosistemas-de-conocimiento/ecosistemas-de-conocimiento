@@ -73,8 +73,8 @@ export interface NavCapabilities {
 /**
  * Every real destination in the app, in the order they are shown.
  *
- * ⚠ ONLY PAGES THAT EXIST. `/`, `/biblioteca`, `/grafo`, `/revision` and
- * `/admin` are the whole set of signed-in destinations under `src/routes` —
+ * ⚠ ONLY PAGES THAT EXIST. `/`, `/documentos`, `/biblioteca`, `/grafo`,
+ * `/revision` and `/admin` are the whole set of signed-in destinations under `src/routes` —
  * `/sign-in` and `/sign-up` are the way in, not sections, and
  * `/biblioteca/[id]` is a detail view inside Biblioteca rather than a section of
  * its own. A menu entry for a page that does not exist is worse than a missing
@@ -85,6 +85,22 @@ export const NAV_ITEMS: readonly NavItem[] = [
     href: '/',
     label: 'Conversaciones',
     hint: 'Pregunta y guarda lo que platicaste.',
+  },
+  {
+    href: '/documentos',
+    /**
+     * 🔴 The way back to a document that is in no conversation. Everything
+     * else lists documents per conversation, so without this entry a loose
+     * document is unreachable from the UI at all. Not gated on any role:
+     * everyone owns documents.
+     *
+     * ⚠ "Mis documentos", not a second "Biblioteca". The biblioteca is what the
+     * ecosistema has PUBLICADO — shared, everyone's. This is what YOU have,
+     * borradores and loose files included. The hint says so, because two
+     * entries about documents is exactly where someone opens the wrong one.
+     */
+    label: 'Mis documentos',
+    hint: 'Todo lo que subiste, aunque no esté en una conversación.',
   },
   {
     href: '/biblioteca',

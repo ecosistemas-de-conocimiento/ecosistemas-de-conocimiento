@@ -86,6 +86,13 @@ Evidence in the same database: **46 of 78 documents have `session_id IS NULL`**,
 all named `e2e-be-*` — left behind by the backend e2e suite deleting its
 sessions. They stayed in the draft corpora and kept answering.
 
+⚠ **Corrected in §6.** "Nulls its children" holds only for documents. For
+`messages` and `ratings` the column is `NOT NULL`, so `SET NULL` makes the
+DELETE fail instead. And `documents.session_id` itself is gone: since §5.1 the
+link lives in `documents_rels`, whose FKs say `ON DELETE CASCADE` — deleting a
+conversation drops the link row, never the document (baseline migration
+`20260908_092211`).
+
 ### 4b. A dead retrieve on every turn
 
 `packages/chat-engine/src/core/retrieve.ts:56` always appends
@@ -112,12 +119,79 @@ turn. Now short-circuited in the web shim (the shared package is untouched).
    staging for publication. This is the safe direction and it also stops the 46
    e2e orphans above from answering.
 
-## 6. Still open
+## 6. Borrar una conversación estaba roto — medido 2026-08-28
 
-- 🔴 **4a is not fixed.** Reaping a conversation still leaves its messages and
-  documents behind. Now they are invisible *and* unretrievable, which is better
-  than invisible and answering — but they accumulate forever, and their chunks
-  and vectors stay in ai-service, which has no per-document delete.
-- 📝 Re-ingesting drafts with a `sessionId` in their metadata would let
-  ai-service do the filtering, and would recover the retrieval slots the
-  over-fetch currently spends. Only worth it if the post-filter shows strain.
+Found while answering "what should the janitor do". It is not a janitor bug.
+
+Payload generated every `required: true` relationship as a **`NOT NULL` column whose
+foreign key says `ON DELETE SET NULL`**. Those two rules contradict each other, so the
+delete fails in the database:
+
+```
+ERROR: null value in column "session_id" of relation "messages"
+       violates not-null constraint
+```
+
+Five columns carry the defect (`pg_constraint` + `information_schema.columns`, live DB):
+
+| column | consequence |
+|---|---|
+| `messages.session_id` | cannot delete a conversation that has messages |
+| `ratings.session_id` | cannot delete a conversation that has ratings |
+| `ratings.message_id` | cannot delete a message that was rated |
+| `ratings.organization_id` | cannot delete an ecosistema that has ratings |
+| `ratings.user_id` | **cannot delete a user who ever rated an answer** |
+
+So `DELETE /api/sessions/:id` — which the UI calls (`app.svelte.ts:636`) — fails for every
+real conversation, and the janitor can reap only empty ones. The route's own comment
+describes a cascade "via afterDelete hook" that does not exist.
+
+Corroborating evidence in the same database: **46 documents orphaned, 0 messages orphaned.**
+Documents were nullable so `SET NULL` worked and they survived their deleted sessions.
+Messages were not, so sessions with messages were never deletable at all.
+
+### Decided (owner, 2026-08-28)
+
+**Deleting a conversation deletes its messages and its ratings too.** Implemented as a
+Payload `beforeDelete` hook on `sessions`, NOT by altering the foreign keys — Payload
+regenerates FK behaviour from the field config, and `migrations/README.md` records how
+hand-editing the schema broke the migration chain once already. Every real delete path
+(BFF route, janitor, admin panel) goes through `payload.delete`, so a hook covers all three.
+
+Order is load-bearing: **ratings before messages**, because `ratings.message_id` has the same
+defect.
+
+### 🔴 And deleting has to reach the corpus
+
+The Voces work merged the same day (`c0fea63`) ingests chat turns into
+**`eco-{orgId}` — the ecosistema's SHARED corpus**, one turn per message, keyed
+`msg-<id>`. `collections/Messages.ts` has no delete hook.
+
+Without wiring, deleting a conversation would leave every ingested turn answering other
+members' questions forever. So the hook retires them first, via the same
+`setDocumentValidity` path unpublishing a document already uses.
+
+⚠ **Retirement is not erasure.** It closes a validity window; the chunk and its vector
+remain, and they stop being returned only because every retrieve carries `asOf`. ai-service
+has no per-document delete. `plan/anonimizacion-y-voces.md` names this as the fact that
+should drive the design — it is now also the fact that limits what "borrar" can promise a
+user.
+
+## 7. Documents attached to nothing — decided
+
+A document attached to no conversation is unretrievable, and there was no screen that
+listed it. 46 already existed in dev. **Decided: build "Mis documentos"** — every document
+you own, with its conversations, and the plain-Spanish explanation that a loose document is
+not being read by the assistant. Nothing is auto-deleted. "Quitar de esta conversación" is
+therefore offered on every attached document, including the last one.
+
+## 8. Still open
+
+- 📝 **Three delete paths still broken**, same root cause, deliberately out of scope:
+  a rated message, an ecosistema with ratings, and **a user who ever rated an answer**.
+  The last is a data-protection problem: the account cannot be deleted.
+- 📝 The janitor is still disabled everywhere (`SESSION_JANITOR_ENABLED` is commented out in
+  `infra/.env.example`). It should now actually work — worth a `SESSION_JANITOR_DRY_RUN=1`
+  pass before arming it.
+- 📝 Re-ingesting drafts with a `sessionId` in their metadata would let ai-service filter
+  server-side and recover the retrieval slots the over-fetch spends. Only if it shows strain.

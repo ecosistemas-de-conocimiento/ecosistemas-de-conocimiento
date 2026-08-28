@@ -35,6 +35,7 @@ import {
   parsePublicationStatus,
   publishGate,
 } from '../publication';
+import { relationIds, relationSessions } from '../documents';
 import {
   belongsTo,
   clearEcosystemScopedState,
@@ -171,30 +172,6 @@ function messageFromBackend(row: Record<string, unknown>): Message {
   };
 }
 
-/**
- * Every id in a backend `hasMany` relationship value.
- *
- * ⚠ The wire shape is not one shape. `documents.session` comes back as an
- * array of ids at `depth=0`, as an array of populated rows at higher depth, and
- * as a bare scalar for a row written before the field went plural. Normalising
- * here is what keeps `sessionIds.length` a trustworthy answer to "is this
- * document in more than one conversation" — the question the detach action
- * hangs off.
- */
-function relationIds(raw: unknown): string[] {
-  const items = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-  const out: string[] = [];
-  for (const item of items) {
-    if (typeof item === 'string' || typeof item === 'number') {
-      out.push(String(item));
-    } else if (item && typeof item === 'object' && 'id' in item) {
-      const id = (item as { id?: unknown }).id;
-      if (typeof id === 'string' || typeof id === 'number') out.push(String(id));
-    }
-  }
-  return out;
-}
-
 function docFromBackend(row: Record<string, unknown>): WorkingDoc {
   const kindRaw = row.kind as string | undefined;
   const kind: DocKind =
@@ -235,6 +212,17 @@ function docFromBackend(row: Record<string, unknown>): WorkingDoc {
   };
 }
 
+/**
+ * The same document, plus the NAMES of the conversations it is attached to.
+ *
+ * Only `GET /api/documentos` ("Mis documentos") sends titles — it reads at
+ * `depth=1` for exactly this reason. Every other list is already inside one
+ * conversation and has nothing to name.
+ */
+function ownedDocFromBackend(row: Record<string, unknown>): WorkingDoc {
+  return { ...docFromBackend(row), attachedSessions: relationSessions(row.session) };
+}
+
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   const res = await fetch(input, init);
   const text = await res.text();
@@ -271,6 +259,27 @@ class AppStore {
   /** Doc IDs currently being polled — avoids racing hydration vs upload. */
   private pollingDocs = new Set<string>();
 
+  // ── Mis documentos ─────────────────────────────────────────────────────
+  //
+  // 🔴 EVERY OTHER DOCUMENT LIST IN THIS APP IS PER-CONVERSATION, and that is
+  // the hole this list fills. A document attached to no conversation is
+  // retrievable by nothing and listed nowhere — still owned, still stored,
+  // still embedded, and completely invisible. It is not an exotic state: a
+  // deleted conversation or a detached last one produces it. This is the one
+  // list that answers "what do I actually have".
+  //
+  // ⚠ Ecosistema-scoped, like `sessions` — the read filters by organization,
+  // so `clearEcosystemScopedState` blanks it on a switch.
+
+  /** The caller's own documents in the selected ecosistema. */
+  ownedDocs = $state<WorkingDoc[]>([]);
+  /** True while `loadOwnedDocs` is in flight. */
+  ownedDocsLoading = $state(false);
+  /** False until the list has been read once — "vacío" vs. "todavía no sé". */
+  ownedDocsReady = $state(false);
+  /** Set when the read itself failed. ⚠ NOT the same as an empty list. */
+  ownedDocsDegraded = $state<null | { reason: 'forbidden' | 'unavailable' }>(null);
+
   // ── ecosistema ─────────────────────────────────────────────────────────
   /**
    * The ecosistemas this user belongs to, as `GET /api/ecosistemas` reported
@@ -294,6 +303,24 @@ class AppStore {
    * and repaints the sidebar with the previous tenant's conversations.
    */
   private ecoEpoch = 0;
+
+  /**
+   * Every in-memory copy of one document.
+   *
+   * ⚠ THE SAME BACKEND ROW CAN BE IN SEVERAL LISTS AT ONCE: in each
+   * conversation it is attached to, and again in "Mis documentos". They are
+   * views of one thing, so a status change has to land on all of them —
+   * otherwise one panel keeps saying "Borrador · solo tú" about a document the
+   * whole ecosistema can already read.
+   */
+  private docsWithId(docId: string): WorkingDoc[] {
+    const out: WorkingDoc[] = [];
+    for (const s of this.sessions) {
+      for (const d of s.docs) if (d.id === docId) out.push(d);
+    }
+    for (const d of this.ownedDocs) if (d.id === docId) out.push(d);
+    return out;
+  }
 
   get active(): Session | null {
     if (!this.activeSessionId) return null;
@@ -1332,11 +1359,16 @@ class AppStore {
    *   3. poll until the server says `published` or `failed`.
    * A failed request changes no status at all, so there is nothing to roll back.
    */
-  async publishDoc(sessionId: string, docId: string): Promise<void> {
-    const find = (): WorkingDoc | undefined =>
-      this.sessions.find((x) => x.id === sessionId)?.docs.find((d) => d.id === docId);
+  async publishDoc(sessionId: string | null, docId: string): Promise<void> {
+    // ⚠ EVERY copy of this row, not one. The same document can be open in the
+    // conversation panel AND in "Mis documentos" at the same time — they are
+    // two views of one backend row, and a publish that repainted only the one
+    // that was clicked would leave the other reading "Borrador · solo tú" for a
+    // document the whole ecosistema can now see. That is the misreading
+    // `$lib/publication` exists to prevent.
+    const rows = (): WorkingDoc[] => this.docsWithId(docId);
 
-    const doc = find();
+    const doc = rows()[0];
     if (!doc || doc.publishRequestPending) return;
     // Same gate the button uses. Re-checked here because the store is the
     // thing that actually spends the tokens.
@@ -1345,7 +1377,7 @@ class AppStore {
     // Remembered so an unreadable answer cannot silently downgrade a `failed`
     // document to `draft` — see the anomaly branch below.
     const previous = doc.publicationStatus;
-    doc.publishRequestPending = true;
+    for (const r of rows()) r.publishRequestPending = true;
     try {
       const body = await fetchJson<{
         publicationStatus?: unknown;
@@ -1355,8 +1387,8 @@ class AppStore {
         credentials: 'same-origin',
         signal: AbortSignal.timeout(PUBLISH_REQUEST_TIMEOUT_MS),
       });
-      const current = find();
-      if (!current) return;
+      const current = rows();
+      if (current.length === 0) return;
       // Adopt the server's word, never an assumed `publishing`.
       const reported = parsePublicationStatus(body?.publicationStatus);
 
@@ -1374,9 +1406,11 @@ class AppStore {
         return;
       }
 
-      current.publicationStatus = reported;
-      current.publicationError =
-        typeof body?.publicationError === 'string' ? body.publicationError : null;
+      const error = typeof body?.publicationError === 'string' ? body.publicationError : null;
+      for (const r of current) {
+        r.publicationStatus = reported;
+        r.publicationError = error;
+      }
       if (!isTerminalPublication(reported)) {
         void this.pollPublication(sessionId, docId);
       } else if (reported === 'draft') {
@@ -1398,12 +1432,12 @@ class AppStore {
       });
     } finally {
       // Clear on BOTH the captured reference and a fresh lookup. If the user
-      // deleted the document mid-flight, `find()` misses — and `deleteDoc`'s
-      // rollback would then restore the very same object with the flag stuck
-      // true, leaving a permanently disabled button no timeout can recover.
+      // deleted the document mid-flight, the fresh lookup misses — and
+      // `deleteDoc`'s rollback would then restore the very same object with the
+      // flag stuck true, leaving a permanently disabled button no timeout can
+      // recover.
       doc.publishRequestPending = false;
-      const current = find();
-      if (current) current.publishRequestPending = false;
+      for (const r of rows()) r.publishRequestPending = false;
     }
   }
 
@@ -1416,7 +1450,7 @@ class AppStore {
    * rather than inventing `failed`: we genuinely do not know, and the next
    * session load re-reads the real state from the backend.
    */
-  private async pollPublication(sessionId: string, docId: string): Promise<void> {
+  private async pollPublication(sessionId: string | null, docId: string): Promise<void> {
     const key = `pub:${docId}`;
     if (this.pollingDocs.has(key)) return;
     this.pollingDocs.add(key);
@@ -1438,15 +1472,16 @@ class AppStore {
           // reason to keep waiting, NOT a reason to repaint the document.
           if (!isPublicationStatus(body.publicationStatus)) continue;
           const status = body.publicationStatus;
-          const d = this.sessions.find((x) => x.id === sessionId)?.docs.find(
-            (x) => x.id === docId,
-          );
+          const rows = this.docsWithId(docId);
           // The document (or its whole session) was deleted while we waited.
           // Stop, rather than polling a dead id for the rest of the hour.
-          if (!d) return;
-          d.publicationStatus = status;
-          d.publicationError =
+          if (rows.length === 0) return;
+          const error =
             typeof body.publicationError === 'string' ? body.publicationError : null;
+          for (const d of rows) {
+            d.publicationStatus = status;
+            d.publicationError = error;
+          }
           if (isTerminalPublication(status)) {
             if (status === 'published') {
               toasts.push({
@@ -1476,25 +1511,49 @@ class AppStore {
       // anything still non-terminal, and the guard at the top of this function
       // would otherwise swallow that restart.
       this.pollingDocs.delete(key);
-      await this.loadDocs(sessionId);
+      // ⚠ `sessionId` is null when the publish was started from "Mis
+      // documentos", which is not inside any conversation. Re-read whichever
+      // list this poll belongs to; both keep their current rows if the read
+      // also fails.
+      if (sessionId) await this.loadDocs(sessionId);
+      else await this.loadOwnedDocs();
     } finally {
       this.pollingDocs.delete(key);
     }
   }
 
-  async deleteDoc(sessionId: string, docId: string): Promise<void> {
-    const s = this.sessions.find((x) => x.id === sessionId);
-    if (!s) return;
-    const prev = s.docs;
-    s.docs = s.docs.filter((d) => d.id !== docId);
+  /**
+   * 🔴 THE DESTRUCTIVE ONE. This removes the document itself: its text, its
+   * embeddings, its publication state, and its row in every conversation it
+   * was ever attached to. `detachDoc` (below) is the one that only takes it out
+   * of a single conversation. They are one keystroke apart in this file on
+   * purpose — so nobody edits one believing it is the other.
+   *
+   * `sessionId` may be null: "Mis documentos" deletes from outside any
+   * conversation. The row disappears from every list that was holding it, and
+   * every one of them is restored if the backend refuses.
+   */
+  async deleteDoc(sessionId: string | null, docId: string): Promise<boolean> {
+    const before = this.sessions.map((s) => ({ session: s, docs: s.docs }));
+    const ownedBefore = this.ownedDocs;
+    for (const s of this.sessions) s.docs = s.docs.filter((d) => d.id !== docId);
+    this.ownedDocs = this.ownedDocs.filter((d) => d.id !== docId);
     try {
       await fetchJson(`/api/documents/${docId}`, {
         method: 'DELETE',
         credentials: 'same-origin',
       });
+      return true;
     } catch (err) {
       console.error('deleteDoc failed', err);
-      s.docs = prev;
+      for (const { session, docs } of before) session.docs = docs;
+      this.ownedDocs = ownedBefore;
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo eliminar el documento',
+        message: 'Sigue donde estaba. Inténtalo de nuevo.',
+      });
+      return false;
     }
   }
 
@@ -1593,6 +1652,77 @@ class AppStore {
       return false;
     }
     await this.loadDocs(sessionId);
+    return true;
+  }
+
+  // ── Mis documentos ─────────────────────────────────────────────────────
+
+  /**
+   * Read everything this person owns in the selected ecosistema.
+   *
+   * `filter: 'sueltos'` narrows it to the documents attached to NO conversation
+   * — the ones nothing can retrieve and nothing else lists. The server does the
+   * filtering; the browser names nothing but the word `sueltos`.
+   *
+   * ⚠ On failure the previous rows are KEPT and `ownedDocsDegraded` is set. A
+   * screen whose whole job is "nothing you own is hidden from you" must never
+   * answer a failed read with an empty list that reads as "you have nothing".
+   */
+  async loadOwnedDocs(filter: 'all' | 'sueltos' = 'all'): Promise<void> {
+    this.ownedDocsLoading = true;
+    try {
+      const qs = filter === 'all' ? '' : `?filter=${filter}`;
+      const data = await fetchJson<{
+        docs?: Record<string, unknown>[];
+        degraded?: boolean;
+        reason?: unknown;
+      }>(`/api/documentos${qs}`, { credentials: 'same-origin' });
+      this.ownedDocs = (data?.docs ?? []).map(ownedDocFromBackend);
+      this.ownedDocsDegraded = data?.degraded
+        ? { reason: data.reason === 'forbidden' ? 'forbidden' : 'unavailable' }
+        : null;
+      this.ownedDocsReady = true;
+    } catch (err) {
+      console.error('loadOwnedDocs failed', err);
+      this.ownedDocsDegraded = { reason: 'unavailable' };
+    } finally {
+      this.ownedDocsLoading = false;
+    }
+  }
+
+  /**
+   * Put one of my documents into one of my conversations, from OUTSIDE that
+   * conversation.
+   *
+   * 🔴 THE SAME ROUTE THE DOCS PANEL USES — `POST /api/sessions/[id]/documents/
+   * [docId]`. Attaching is attaching whichever screen it is started from, and a
+   * second endpoint for it would be a second place for the "append, never
+   * replace" rule to be got wrong. Nothing about the caller's location changes
+   * what the backend has to check.
+   *
+   * Not optimistic, for the same reason `attachDoc` is not: only the backend
+   * knows whether the conversation is really the caller's and whether the
+   * ecosistemas match. The list is re-read so the row's conversation names are
+   * the server's answer, not a guess.
+   */
+  async attachOwnedDoc(sessionId: string, docId: string, filter: 'all' | 'sueltos' = 'all'): Promise<boolean> {
+    try {
+      await fetchJson(`/api/sessions/${sessionId}/documents/${docId}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+    } catch (err) {
+      console.error('attachOwnedDoc failed', err);
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo agregar el documento',
+        message: 'Inténtalo de nuevo. El documento sigue donde estaba.',
+      });
+      return false;
+    }
+    // The conversation's own panel, if it happens to be loaded, and this list.
+    if (this.sessions.some((s) => s.id === sessionId)) await this.loadDocs(sessionId);
+    await this.loadOwnedDocs(filter);
     return true;
   }
 

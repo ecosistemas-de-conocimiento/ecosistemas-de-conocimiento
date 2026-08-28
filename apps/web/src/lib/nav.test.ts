@@ -12,9 +12,10 @@ const admin = { id: '1', isPlatformAdmin: true };
 const member = { id: '2', isPlatformAdmin: false };
 
 describe('the menu only offers pages that exist', () => {
-  it('covers the chat, the library, the graph and the admin view, and nothing else', () => {
+  it('covers the chat, my documents, the library, the graph and the admin view, and nothing else', () => {
     expect(NAV_ITEMS.map((i) => i.href)).toEqual([
       '/',
+      '/documentos',
       '/biblioteca',
       '/grafo',
       '/revision',
@@ -25,6 +26,7 @@ describe('the menu only offers pages that exist', () => {
   it('names every section in Spanish', () => {
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
       'Conversaciones',
+      'Mis documentos',
       'Biblioteca',
       'Conexiones',
       'Revisión',
@@ -67,7 +69,7 @@ describe('who sees the admin entry', () => {
   // ⚠ Presentation only — `routes/admin/+page.server.ts` is the control. This
   // asserts the menu stays honest, not that the page is protected.
   it('hides it from an ordinary member', () => {
-    expect(visibleNavItems(member).map((i) => i.href)).toEqual(['/', '/biblioteca', '/grafo']);
+    expect(visibleNavItems(member).map((i) => i.href)).toEqual(['/', '/documentos', '/biblioteca', '/grafo']);
   });
 
   // 🔴 THE GRAPH IS FOR EVERYONE, and this is the assertion that says so.

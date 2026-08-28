@@ -2,44 +2,55 @@
  * Session/message janitor.
  *
  * The ONLY unbounded-growth path in the chat system: a conversation thread
- * (`sessions`) plus its `messages` + uploaded-doc `documents` and the
- * associated ai-service corpus live forever unless a user manually deletes the
- * session. This sweep reaps "stale" sessions on a schedule.
+ * (`sessions`) plus its `messages` and `ratings` live forever unless a user
+ * manually deletes the session. This sweep reaps "stale" sessions on a
+ * schedule, and the cascade below is what makes the reaping real.
  *
  * Cascade contract (do NOT bypass):
- *   - 🔴 NOTHING CASCADES. This block used to claim `messages` and `documents`
- *     were removed by `ON DELETE CASCADE` in "migration 20260519_010000". That
- *     migration no longer exists (squashed into the baseline) and the claim was
- *     never true of the schema that shipped. Verified against the live
- *     database, so a reader can stop guessing:
+ *   - ✅ MESSAGES AND RATINGS ARE NOW RECLAIMED, and that is what makes this
+ *     sweep worth running. Nothing cascades in the DATABASE — the schema is
+ *     still, verified against the live database:
  *
  *       messages.session_id → sessions.id   ON DELETE SET NULL
  *       ratings.session_id  → sessions.id   ON DELETE SET NULL
  *       documents_rels.sessions_id → sessions.id   ON DELETE CASCADE
  *
- *     So reaping a conversation ORPHANS its messages and ratings — the rows
- *     survive with a null `session`. ⚠ That is unbounded growth this sweep does
- *     NOT reclaim, which matters because reclaiming it is the sweep's entire
- *     purpose. Whether to start deleting them is an OPEN PRODUCT DECISION; do
- *     not add cascade behaviour here on your own initiative.
+ *     and the first two are worse than they look: both columns are NOT NULL, so
+ *     `SET NULL` cannot fire and Postgres REFUSED the delete outright. This
+ *     sweep therefore reaped nothing at all from any conversation that had a
+ *     single message; each failure was logged and skipped, which is why it
+ *     looked like it was working.
  *
- *     `documents` are the one deliberate exception, and the cascade there does
- *     NOT delete documents. `documents.session` is a `hasMany` relationship, so
- *     the attachment lives in the `documents_rels` join table; deleting a
- *     conversation deletes the ATTACHMENT ROW and leaves the document standing.
- *     That is the intended contract — a document belongs to the ecosistema and
- *     to its uploader, and it outlives every conversation it was attached to.
- *     See `collections/Sessions.ts`, which is the comment that always matched
- *     reality.
+ *     `collections/Sessions.ts` now carries a `beforeDelete` hook that deletes
+ *     the ratings and then the messages (that order is load-bearing) through
+ *     Payload before the session row goes. Because the sweep deletes through
+ *     `payload.delete`, it gets that behaviour for free — the rows are really
+ *     gone, not orphaned, and the unbounded growth is really reclaimed.
+ *
+ *     ⚠ That hook also RETIRES the conversation's already-ingested turns from
+ *     the ecosistema's shared corpus (`eco-{orgId}`), so a reaped conversation
+ *     stops answering other members' questions. Retirement closes a validity
+ *     window; it does not erase the vector. See `collections/Sessions.ts`.
+ *
+ *     `documents` are the one deliberate exception and are NOT deleted.
+ *     `documents.session` is a `hasMany` relationship, so the attachment lives
+ *     in the `documents_rels` join table; deleting a conversation deletes the
+ *     ATTACHMENT ROW and leaves the document standing. That is the intended
+ *     contract — a document belongs to the ecosistema and to its uploader, and
+ *     it outlives every conversation it was attached to.
  *   - 🔴 NO CORPUS IS DELETED. It used to be: back when there was one corpus
  *     per conversation, `Sessions.afterDelete` dropped it. Under the ecosistema
  *     model the corpora are `eco-{orgId}` and `eco-{orgId}-draft-{userId}`,
  *     SHARED by every session — so reaping one stale conversation would take an
  *     entire ecosistema's knowledgebase with it, on a schedule, at 3am. Do not
- *     re-add corpus cleanup here. `sessionJanitor.test.ts` guards it.
+ *     re-add corpus cleanup here. Retiring ONE turn is not deleting a corpus;
+ *     do not let the `beforeDelete` hook talk you into the second.
+ *     `sessionJanitor.test.ts` and `collections/Sessions.cascade.test.ts` both
+ *     guard it.
  *   - We still delete through Payload's `payload.delete({ collection:
- *     'sessions', id })` rather than raw SQL, so any future `afterDelete` hook
- *     fires exactly as it does for a manual user delete.
+ *     'sessions', id })` rather than raw SQL, so `Sessions.beforeDelete` fires
+ *     exactly as it does for a manual user delete. Raw SQL here would bring the
+ *     failure back.
  *
  * Stale definition: a session is stale when its activity timestamp is older
  * than `ttlDays`. Activity timestamp = `lastUsedAt` when present (bumped by the
@@ -86,7 +97,7 @@ export interface JanitorResult {
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /** In-process, non-reentrant lock. Prevents an interval tick from overlapping a
- * still-running sweep (e.g. a slow ai-service making corpus deletes drag). */
+ * still-running sweep (e.g. a slow ai-service making turn retirements drag). */
 let running = false
 
 export const DEFAULTS: JanitorConfig = {

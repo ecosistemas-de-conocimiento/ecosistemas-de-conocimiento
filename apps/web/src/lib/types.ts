@@ -122,6 +122,21 @@ export interface WorkingDoc {
    * offering a detach it cannot justify.
    */
   sessionIds: string[];
+  /**
+   * The same conversations, NAMED — id plus title.
+   *
+   * ⚠ OPTIONAL, and only "Mis documentos" (`/documentos`) fills it in. Every
+   * other document list in the app is already inside one conversation, so it
+   * has nothing to tell you: it knows which conversation you are in. The
+   * `/documentos` screen is the one place where "this document is being used
+   * in Riego and Milpa" is the whole answer, and a list of numeric ids is not
+   * an answer a person can read.
+   *
+   * `undefined` means "nobody asked for titles", NOT "attached to nothing" —
+   * `sessionIds` is still the authority on that. A title may be empty when the
+   * backend sent the relationship unpopulated.
+   */
+  attachedSessions?: Array<{ id: string; title: string }>;
   updatedAt: number;
   /** M6 — what storage path this doc takes. */
   kind: DocKind;

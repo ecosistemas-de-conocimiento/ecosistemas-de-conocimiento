@@ -7,8 +7,11 @@
  *     stale sessions and spares the fresh ones (validated against an in-memory
  *     session table the fake `payload.find` filters).
  *   - CASCADE: deleting a stale session goes through `payload.delete` rather
- *     than raw SQL, so any `Sessions.afterDelete` hook fires for a reaped
- *     session exactly as it does for a manual delete.
+ *     than raw SQL, so `Sessions`' delete hooks fire for a reaped session
+ *     exactly as they do for a manual delete. What that cascade actually
+ *     deletes (ratings, then messages, then the session) is tested in
+ *     `collections/Sessions.cascade.test.ts`; here we only prove the sweep goes
+ *     through the hook-bearing path at all.
  *
  * 🔴 AND ONE THING THAT MUST *NOT* HAPPEN: reaping a session must never delete
  * a corpus. It used to, back when there was one corpus per conversation. Under

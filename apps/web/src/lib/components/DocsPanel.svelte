@@ -5,6 +5,11 @@
   import Markdown from './Markdown.svelte';
   import type { WorkingDoc } from '$lib/types';
   import { publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
+  import {
+    deleteConfirmCopy,
+    detachConfirmCopy,
+    detachHintCopy,
+  } from '$lib/documents';
   import { isAudioUpload, UPLOAD_ACCEPT } from '$lib/config';
   import {
     audioMetaChips,
@@ -111,33 +116,29 @@
    * button next to it destroys the document everywhere; this one only takes it
    * out of the conversation the user is looking at. Two irreversible-sounding
    * actions on one row is exactly the place a person clicks the wrong one.
+   *
+   * 🔴 THE ACTION IS NOW OFFERED ON EVERY ATTACHED DOCUMENT, including one that
+   * is in no other conversation. It used to be hidden in that case, on the
+   * reading that detaching the last conversation would leave the document
+   * "nowhere". It never left it nowhere — the row survives, owned and stored —
+   * it left it UNSEEN, because every document list in this app was
+   * per-conversation. `/documentos` is that missing list, so the action can
+   * finally keep a promise it could not make before: the copy names the place
+   * the document lands.
+   *
+   * The two cases get different sentences (`detachConfirmCopy`). Telling
+   * someone only "se quita" when this was the last conversation is how a
+   * person reads a detach as a delete.
    */
   async function detach(sessionId: string | undefined, d: WorkingDoc) {
     if (!sessionId) return;
-    const ok = confirm(
-      `¿Quitar "${d.title}" de esta conversación?\n\n` +
-        'El documento NO se borra. Sigue estando en las otras conversaciones donde lo agregaste, ' +
-        'y puedes volver a traerlo aquí cuando quieras.',
-    );
-    if (!ok) return;
+    if (!confirm(detachConfirmCopy(d.title, d.sessionIds?.length ?? 0))) return;
     await app.detachDoc(sessionId, d.id);
   }
 
-  /**
-   * Is this document also in another conversation?
-   *
-   * The only distinction the data supports. The backend keeps one list of
-   * conversations per document and does not record which one it was uploaded
-   * into, so "attached here from elsewhere" and "uploaded here and also used
-   * elsewhere" look identical — and in both cases removing it here leaves the
-   * document standing somewhere else, which is what the action promises.
-   *
-   * A document that lives ONLY here gets no detach action: removing it would
-   * leave it in no conversation at all, which is indistinguishable from losing
-   * it. "Eliminar" is the honest verb for that.
-   */
-  function isSharedAcrossSessions(d: WorkingDoc): boolean {
-    return (d.sessionIds?.length ?? 0) > 1;
+  /** How many conversations this document is in, as the row last read it. */
+  function attachedCount(d: WorkingDoc): number {
+    return d.sessionIds?.length ?? 0;
   }
 
   /**
@@ -552,7 +553,8 @@
               <button
                 class="text-ink-soft hover:text-danger p-0.5"
                 onclick={() => {
-                  if (sid && confirm(`¿Eliminar "${d.title}"?`)) app.deleteDoc(sid, d.id);
+                  if (sid && confirm(deleteConfirmCopy(d.title, attachedCount(d))))
+                    app.deleteDoc(sid, d.id);
                 }}
                 title="Eliminar documento"
                 aria-label="Eliminar documento"
@@ -656,20 +658,22 @@
               {/if}
 
               <!-- 🔴 QUITAR ≠ ELIMINAR. This takes the document out of THIS
-                   conversation and leaves it in the others. The trash icon on
-                   the row above destroys it everywhere. Written out in words,
-                   not hidden behind an icon: the whole risk here is that the
-                   two actions look alike, and an icon whose meaning lives in a
-                   tooltip is exactly how they would.
+                   conversation. The trash icon on the row above destroys it
+                   everywhere. Written out in words, not hidden behind an icon:
+                   the whole risk here is that the two actions look alike, and
+                   an icon whose meaning lives in a tooltip is exactly how they
+                   would.
 
-                   Only shown when the document is in more than one
-                   conversation, so the action can always keep its promise —
-                   there is somewhere else for it to stay. -->
-              {#if sid && isSharedAcrossSessions(d)}
+                   ⚠ Shown on EVERY attached document now, not only on one that
+                   is in two or more conversations. The old gate did not prevent
+                   documents with no conversation — it prevented anyone from
+                   seeing them. `/documentos` shows them, so the copy can name
+                   where this one goes. -->
+              {#if sid}
                 <button
                   class="detach-link"
                   onclick={() => detach(sid, d)}
-                  title="Quitar el documento de esta conversación. No se borra: sigue en las demás."
+                  title={detachHintCopy(attachedCount(d))}
                   data-testid={`detach-${d.id}`}
                 >
                   Quitar de esta conversación

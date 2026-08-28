@@ -151,6 +151,16 @@ export interface EcosystemScopedState {
   degraded: unknown;
   /** Nothing has been read for the new ecosistema yet. */
   ready: boolean;
+  /**
+   * "Mis documentos" — the caller's own documents in the ecosistema they were
+   * looking at. Scoped by `documents.organization`, so it belongs to the
+   * previous tenant the moment they switch.
+   */
+  ownedDocs: unknown[];
+  /** Nothing has been read for the new ecosistema yet — mirrors `ready`. */
+  ownedDocsReady: boolean;
+  /** That banner described the PREVIOUS ecosistema's read — mirrors `degraded`. */
+  ownedDocsDegraded: unknown;
 }
 
 /**
@@ -165,6 +175,9 @@ export function clearEcosystemScopedState(state: EcosystemScopedState): void {
   state.activeSessionId = null;
   state.degraded = null;
   state.ready = false;
+  state.ownedDocs = [];
+  state.ownedDocsReady = false;
+  state.ownedDocsDegraded = null;
 }
 
 /**

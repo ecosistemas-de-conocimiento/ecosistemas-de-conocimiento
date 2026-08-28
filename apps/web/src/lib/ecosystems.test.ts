@@ -133,6 +133,11 @@ function populatedFromEcosystemA() {
       },
     ],
     activeSessionId: 's-100',
+    // "Mis documentos": the caller's own documents in ecosistema A, including
+    // the loose ones no conversation is holding. Scoped by organization.
+    ownedDocs: [{ id: 'd-2', title: 'Padrón de beneficiarios Norte.pdf' }],
+    ownedDocsReady: true,
+    ownedDocsDegraded: { reason: 'forbidden' },
     degraded: { reason: 'forbidden' },
     ready: true,
     // Not ecosistema-scoped: pure layout preferences that survive on purpose.
@@ -150,6 +155,8 @@ const ECOSYSTEM_A_SECRETS = [
   'texto reservado',
   'd-1',
   'm-1',
+  'd-2',
+  'Padrón de beneficiarios Norte.pdf',
 ];
 
 describe('🔴 switching ecosistema clears everything the previous one put on screen', () => {
@@ -170,6 +177,8 @@ describe('🔴 switching ecosistema clears everything the previous one put on sc
     const state = populatedFromEcosystemA();
     clearEcosystemScopedState(state as unknown as EcosystemScopedState);
     expect(state.sessions).toEqual([]);
+    expect(state.ownedDocs).toEqual([]);
+    expect(state.ownedDocsDegraded).toBeNull();
     expect(state.activeSessionId).toBeNull();
     // The banner described a read of the PREVIOUS ecosistema.
     expect(state.degraded).toBeNull();
@@ -182,6 +191,7 @@ describe('🔴 switching ecosistema clears everything the previous one put on sc
     const state = populatedFromEcosystemA();
     clearEcosystemScopedState(state as unknown as EcosystemScopedState);
     expect(state.ready).toBe(false);
+    expect(state.ownedDocsReady).toBe(false);
   });
 
   it('leaves layout preferences alone — they belong to the person, not the tenant', () => {

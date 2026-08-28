@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
 import { degradeListResponse } from '$lib/server/degrade';
+import { relationIds } from '$lib/documents';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
 
 /**
@@ -77,21 +78,6 @@ function slimDoc(row: Record<string, unknown>): Record<string, unknown> {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
-}
-
-/** Every id in a `hasMany` relationship value, whatever shape Payload sent. */
-function relationIds(raw: unknown): string[] {
-  const items = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-  const out: string[] = [];
-  for (const item of items) {
-    if (typeof item === 'string' || typeof item === 'number') {
-      out.push(String(item));
-    } else if (item && typeof item === 'object' && 'id' in item) {
-      const id = (item as { id?: unknown }).id;
-      if (typeof id === 'string' || typeof id === 'number') out.push(String(id));
-    }
-  }
-  return out;
 }
 
 export const GET: RequestHandler = async ({ locals, params }) => {

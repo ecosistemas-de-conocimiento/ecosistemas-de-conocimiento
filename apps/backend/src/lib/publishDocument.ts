@@ -224,8 +224,15 @@ function isAlreadyAbsent(err: unknown): boolean {
  * ⚠ IDEMPOTENT. See {@link isAlreadyAbsent}: a 404 is treated as "already not
  * retrievable there", which is also what makes a re-run of either transition
  * safe after a partial failure.
+ *
+ * ⚠ EXPORTED, and not only for documents. `collections/Sessions.ts` retires the
+ * chat turns of a deleted conversation with it (external id `msg-<id>`, see
+ * `lib/conversationIngest.ts`). It is the ONLY retirement primitive in the
+ * repo, deliberately: the 404 rule above is subtle enough that a second
+ * implementation would get it wrong. Note that it THROWS on any non-404 — the
+ * never-throws policy belongs to `retireDeletedDocument`, its caller, not here.
  */
-async function retireFrom(
+export async function retireFrom(
   client: CorpusMover,
   corpus: string,
   documentId: number | string,
@@ -247,7 +254,7 @@ async function retireFrom(
 }
 
 /** Just the one method of Payload's logger this file uses. */
-interface RetireLogger {
+export interface RetireLogger {
   warn(obj: Record<string, unknown>, msg: string): void
 }
 

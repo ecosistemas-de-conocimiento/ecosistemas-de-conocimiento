@@ -1,14 +1,18 @@
 import type {
   Access,
+  CollectionBeforeDeleteHook,
   CollectionBeforeValidateHook,
   CollectionConfig,
   Endpoint,
+  Payload,
+  PayloadRequest,
   Where,
 } from 'payload'
 import { ValidationError } from 'payload'
 
 import { CONTEXT_REF_RELATION_TO } from '../lib/contextRefs'
 import { organizationIdsForUser, relationId } from '../lib/permissions'
+import type { CorpusMover } from '../lib/publishDocument'
 
 /**
  * Per-user chat sessions over the knowledgebase.
@@ -102,6 +106,246 @@ const stampOwnerAndEcosystem: CollectionBeforeValidateHook = async ({
   })
 }
 
+// ---------------------------------------------------------------------------
+// Deleting a conversation
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 DELETING A CONVERSATION DELETES ITS RATINGS AND ITS MESSAGES, and retires
+ * the turns that already reached the ecosistema's corpus. It deletes NOTHING
+ * else — no documents, and never a corpus.
+ *
+ * ── WHY THIS IS APPLICATION CODE AND NOT A MIGRATION ─────────────────────────
+ *
+ * Payload generates every `required: true` relationship as a NOT NULL column
+ * whose foreign key says `ON DELETE SET NULL`. Those two rules contradict each
+ * other, so Postgres refuses the parent delete outright:
+ *
+ *   ERROR: null value in column "session_id" of relation "messages"
+ *          violates not-null constraint
+ *
+ * Verified against the dev database (`messages.session_id`,
+ * `ratings.session_id`). Until this hook existed, `DELETE /api/sessions/:id`
+ * failed for every conversation that had a single message, and
+ * `lib/sessionJanitor.ts` reaped almost nothing.
+ *
+ * ⚠ DO NOT "FIX" IT BY ALTERING THE FOREIGN KEY.
+ *
+ *   · Payload regenerates the FK behaviour from the field config, so a
+ *     hand-altered constraint is silently reverted by the next
+ *     `payload migrate:create`. `src/migrations/README.md` records the time the
+ *     migration chain was already broken by exactly that kind of hand-editing.
+ *   · Every real delete path goes through `payload.delete` — the BFF route, the
+ *     janitor and the admin panel. One hook covers all three.
+ *
+ * ── ORDER IS LOAD-BEARING ────────────────────────────────────────────────────
+ *
+ *   1. RETIRE the ingested turns FIRST. Their external ids are derived from the
+ *      `messages` row ids (`msg-<id>`, `lib/conversationIngest.ts`). Once the
+ *      rows are gone nothing points at the corpus copies any more and they are
+ *      stranded, answering colleagues' questions from a conversation the owner
+ *      believes is deleted.
+ *   2. RATINGS BEFORE MESSAGES. `ratings.message_id` is NOT NULL with the same
+ *      `ON DELETE SET NULL` foreign key, so deleting a message that carries a
+ *      rating fails in exactly the same way. This is not guessable from reading
+ *      the code — the two deletes look independent and are not.
+ *   3. Messages last.
+ *
+ * ── FAILURE POLICY: ABORT, DO NOT LIMP ───────────────────────────────────────
+ *
+ * Anything that fails throws, and the session survives. A half-deleted
+ * conversation — rows gone, corpus copy still retrievable, or ratings orphaned
+ * — is the exact silent state this hook exists to prevent, and a failed delete
+ * is something the user can retry. `beforeDelete`, not `afterDelete`, for the
+ * same reason: by `afterDelete` the parent delete has already failed.
+ *
+ * ⚠ Payload's bulk `delete({ where })` does NOT throw on a per-row failure; it
+ * collects them into `result.errors`. `assertNoBulkErrors` below turns that
+ * back into an exception, which is the only reason the policy above is real.
+ *
+ * ── WHAT THIS MUST NEVER TOUCH ───────────────────────────────────────────────
+ *
+ * 🔴 NO CORPUS IS EVER DELETED. See the note on `hooks` below. The corpora are
+ * shared across an entire ecosistema; `deleteCorpus` here would wipe a
+ * knowledgebase. `Sessions.cascade.test.ts` and `lib/sessionJanitor.test.ts`
+ * both guard it.
+ *
+ * ⚠ DOCUMENTS ARE NOT DELETED. `documents.session` is `hasMany`, so the
+ * attachment lives in the `documents_rels` join table and
+ * `documents_rels_sessions_fk` is `ON DELETE CASCADE` — re-verified against the
+ * live schema on 2026-08-28. Deleting a conversation therefore removes the
+ * ATTACHMENT ROW and leaves the document standing, which is the whole point of
+ * making the field `hasMany`. A document belongs to the ecosistema and to its
+ * uploader and outlives every conversation it was attached to.
+ */
+
+/**
+ * The turn states whose text has reached, or is on its way to, the shared
+ * corpus.
+ *
+ * ⚠ `embedding` is in this list on purpose. That turn is mid-flight at
+ * ai-service: the ingest will land after we delete the row, so if we skip it
+ * the chunk arrives with nothing left pointing at it — unreachable garbage that
+ * still answers questions. Retiring it is idempotent and a 404 (it never
+ * arrived) is treated as success, so retiring one turn too many costs nothing.
+ */
+export const RETIRABLE_TURN_STATES = ['ingested', 'embedding'] as const
+
+export interface ConversationCascadeDeps {
+  payload: Payload
+  /** Passed through so every child delete joins the parent's transaction. */
+  req?: PayloadRequest
+  /**
+   * Acquired LAZILY and only when there is something to retire. A local run
+   * with no `AI_SERVICE_ADMIN_API_KEY` throws on construction, and a
+   * conversation that never reached the corpus must still be deletable there.
+   */
+  corpusClient?: () => Promise<CorpusMover>
+  now?: Date
+}
+
+async function adminCorpusClient(): Promise<CorpusMover> {
+  const { getAdminAIClient } = await import('@/lib/aiClient')
+  return getAdminAIClient() as unknown as CorpusMover
+}
+
+/**
+ * The cascade itself. Exported so it can be tested against a fake payload
+ * without booting Payload — see `Sessions.cascade.test.ts`.
+ */
+export async function deleteConversationChildren(
+  sessionId: number | string,
+  deps: ConversationCascadeDeps,
+): Promise<void> {
+  const { payload, req } = deps
+  const now = deps.now ?? new Date()
+
+  await retireIngestedTurns(sessionId, deps, now)
+
+  // ⚠ RATINGS FIRST. `ratings.message_id` is NOT NULL + ON DELETE SET NULL, so
+  // deleting a rated message before its rating fails the same way the session
+  // delete used to. Do not reorder these two.
+  assertNoBulkErrors(
+    'ratings',
+    sessionId,
+    await payload.delete({
+      collection: 'ratings',
+      where: { session: { equals: sessionId } },
+      depth: 0,
+      // ⚠ REQUIRED. The janitor runs as a system task with no `req.user`, and
+      // the default access on both collections is per-user — without this the
+      // delete would quietly match nothing and leave the session undeletable.
+      overrideAccess: true,
+      req,
+    }),
+  )
+
+  assertNoBulkErrors(
+    'messages',
+    sessionId,
+    await payload.delete({
+      collection: 'messages',
+      where: { session: { equals: sessionId } },
+      depth: 0,
+      overrideAccess: true,
+      req,
+    }),
+  )
+}
+
+/**
+ * Close the validity window on every turn of this conversation that reached the
+ * ecosistema's SHARED corpus (`eco-{orgId}`).
+ *
+ * ⚠ THIS IS NOT AN ERASURE, and the comment says so because the UI word is
+ * "delete". ai-service has no per-document delete; retirement stamps
+ * `validTo: now` and the chunk stops being RETURNED because every retrieve in
+ * this repo carries `asOf` (`retrievalOptionsFor()`, handed to the client by
+ * `GET /api/sessions/:id/corpora`). The vector and its text stay in the corpus.
+ * A future retrieve that forgets `asOf` would see them again. See the header of
+ * `lib/publishDocument.ts` — that is the weakest link in this design, not a
+ * detail of this hook.
+ */
+async function retireIngestedTurns(
+  sessionId: number | string,
+  deps: ConversationCascadeDeps,
+  now: Date,
+): Promise<void> {
+  const { payload, req } = deps
+
+  const turns = await payload.find({
+    collection: 'messages',
+    where: {
+      and: [
+        { session: { equals: sessionId } },
+        { corpusStatus: { in: [...RETIRABLE_TURN_STATES] } },
+      ],
+    },
+    depth: 0,
+    overrideAccess: true,
+    pagination: false,
+    req,
+  })
+
+  if (turns.docs.length === 0) return
+
+  const session = await payload.findByID({
+    collection: 'sessions',
+    id: sessionId,
+    depth: 0,
+    overrideAccess: true,
+    req,
+  })
+  const organizationId = relationId((session as { organization?: unknown })?.organization)
+
+  if (organizationId == null) {
+    // Unreachable in practice — `organization` is required and the column is
+    // NOT NULL. Refusing beats guessing: without the ecosistema id there is no
+    // corpus name, so we cannot retire, and deleting anyway would leave the
+    // turns retrievable forever with nothing pointing at them.
+    throw new Error(
+      `[sessions] refusing to delete session ${String(sessionId)}: it has ${turns.docs.length} ` +
+        'ingested turn(s) but no ecosistema, so no corpus name can be derived to retire them.',
+    )
+  }
+
+  const { publishedCorpus } = await import('@/lib/corpus')
+  const { turnExternalId } = await import('@/lib/conversationIngest')
+  const { retireFrom } = await import('@/lib/publishDocument')
+
+  const corpus = publishedCorpus(organizationId)
+  const client = await (deps.corpusClient ?? adminCorpusClient)()
+
+  for (const turn of turns.docs) {
+    // ⚠ Throws on anything but a 404. A 404 means "ai-service has no such
+    // corpus or document", which is the property we asked for, and `retireFrom`
+    // already tolerates it — see `isAlreadyAbsent` in `lib/publishDocument.ts`.
+    await retireFrom(client, corpus, turnExternalId(turn.id), now, payload.logger)
+  }
+}
+
+/** Turn Payload's silent per-row bulk-delete failures back into an exception. */
+function assertNoBulkErrors(
+  collection: string,
+  sessionId: number | string,
+  result: unknown,
+): void {
+  const errors =
+    (result as { errors?: Array<{ id?: unknown; message?: string }> } | null)?.errors ?? []
+  if (errors.length === 0) return
+  const detail = errors
+    .map((e) => `${String(e?.id ?? '?')}: ${e?.message ?? 'unknown error'}`)
+    .join('; ')
+  throw new Error(
+    `[sessions] could not delete ${errors.length} ${collection} row(s) for session ` +
+      `${String(sessionId)}; the conversation was left intact. ${detail}`,
+  )
+}
+
+const cascadeConversationDelete: CollectionBeforeDeleteHook = async ({ id, req }) => {
+  await deleteConversationChildren(id, { payload: req.payload, req })
+}
+
 export const Sessions: CollectionConfig = {
   slug: 'sessions',
   admin: {
@@ -189,33 +433,63 @@ export const Sessions: CollectionConfig = {
   hooks: {
     beforeValidate: [stampOwnerAndEcosystem],
     /**
-     * 🔴 DELETING A SESSION MUST NOT TOUCH ANY CORPUS. This hook used to call
-     * `deleteCorpus(threadCorpus(sessionId))`, back when there was one corpus
-     * per conversation.
+     * 🔴 DELETING A SESSION MUST NOT TOUCH ANY CORPUS. There used to be an
+     * `afterDelete` here calling `deleteCorpus(threadCorpus(sessionId))`, back
+     * when there was one corpus per conversation.
      *
      * Under the ecosistema model the corpora are `eco-{orgId}` and
      * `eco-{orgId}-draft-{userId}` — SHARED across every session. Deleting one
      * because a conversation was deleted would wipe the whole ecosistema's
-     * knowledgebase, or every draft that person has. Do not re-add it.
+     * knowledgebase, or every draft that person has. DO NOT RE-ADD IT. That
+     * prohibition still stands in full, and it is not weakened by the
+     * `beforeDelete` below: retiring a turn closes ONE document's validity
+     * window; deleting a corpus destroys everyone's. They are not the same
+     * operation and the second one has no caller in this repo.
      *
-     * ⚠ `documents` do NOT go with the session: a document belongs to the
-     * ecosistema and to its uploader, and `documents.session` is optional
-     * precisely so a deleted conversation leaves the uploaded material
-     * standing.
+     * ── WHAT `beforeDelete` DOES, AND WHY IT EXISTS ─────────────────────────
+     *
+     * `cascadeConversationDelete` (defined above this config, with the long
+     * rationale) runs three steps, in this order:
+     *
+     *   1. RETIRES every turn whose `corpusStatus` is `ingested` or
+     *      `embedding` from `eco-{orgId}` — the ecosistema's SHARED corpus, the
+     *      one every member retrieves from — by stamping `validTo: now` on
+     *      external id `msg-<messageId>`. Without this, "delete" would be a
+     *      lie: the rows would go and the anonymised turns would keep answering
+     *      colleagues' questions. ⚠ Retirement is NOT erasure; the chunk stops
+     *      being returned only because every retrieve carries `asOf`.
+     *   2. Deletes the session's `ratings`.
+     *   3. Deletes the session's `messages`.
+     *
+     * ⚠ Steps 2 and 3 are in that order because `ratings.message_id` is NOT
+     * NULL with an `ON DELETE SET NULL` foreign key. Reversing them breaks the
+     * delete.
+     *
+     * It exists because NOTHING cascades at the database level: `messages` and
+     * `ratings` both hold NOT NULL columns whose FKs say `ON DELETE SET NULL`,
+     * a contradiction Postgres resolves by refusing the delete. Every real
+     * delete path goes through `payload.delete`, so this hook covers the BFF
+     * route, the janitor and the admin panel alike.
+     *
+     * ⚠ `beforeDelete`, NOT `afterDelete`. By `afterDelete` the parent delete
+     * has already failed on the foreign key, so an `afterDelete` cascade can
+     * never run at all.
+     *
+     * ⚠ `documents` do NOT go with the session, and the hook deliberately does
+     * not touch them: a document belongs to the ecosistema and to its uploader,
+     * and it outlives every conversation it was attached to.
      *
      * `documents.session` is `hasMany`, so the attachment lives in the
-     * `documents_rels` join table. Deleting a conversation cascades that JOIN
-     * ROW away — the attachment, not the document. Same guarantee as before,
-     * now expressed on the table that holds the fact.
-     *
-     * ⚠ `messages` and `ratings` do NOT cascade either, despite what
-     * `lib/sessionJanitor.ts` used to claim: their FKs are `ON DELETE SET
-     * NULL`, so they are orphaned rather than removed. Verified against the
-     * live schema; see the corrected note in that file.
+     * `documents_rels` join table and `documents_rels_sessions_fk` is
+     * `ON DELETE CASCADE` (re-verified against the live schema, 2026-08-28).
+     * Deleting a conversation cascades that JOIN ROW away — the attachment, not
+     * the document. Same guarantee as before, now expressed on the table that
+     * holds the fact.
      *
      * 📝 Per-document corpus cleanup on document delete is a separate, still
      * unbuilt problem — see the note on `Documents.hooks`.
      */
+    beforeDelete: [cascadeConversationDelete],
   },
   endpoints: [sessionCorporaEndpoint()],
 }
