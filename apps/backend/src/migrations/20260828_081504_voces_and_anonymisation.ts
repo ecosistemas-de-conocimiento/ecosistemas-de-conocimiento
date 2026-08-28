@@ -43,6 +43,13 @@ import { MigrateUpArgs, MigrateDownArgs, sql } from '@payloadcms/db-postgres'
  * `investigador` must sit between `member` and `admin` — above a participant,
  * below anyone who manages people. `BEFORE 'admin'` keeps the column readable in
  * the same order.
+ *
+ * 🔴 `down()` NARROWS THE ROLE ENUM BACK TO THREE VALUES AND WILL FAIL — loudly,
+ * on the `USING role::enum_memberships_role` cast — if ANY membership row still
+ * holds `investigador`. That is the right failure: the alternative is a silent
+ * demotion of every Investigador to whatever the cast picked, and a role
+ * downgrade that nobody notices is worse than a migration that refuses. Re-role
+ * those people before rolling back.
  */
 export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   await db.execute(sql`

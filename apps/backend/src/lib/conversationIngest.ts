@@ -454,6 +454,27 @@ export async function ingestConversationTurns(args: {
 
   if (documents.length === 0) return { ...empty, heldByGate }
 
+  /**
+   * ⚠ NO CALLBACK CONFIGURED ⇒ `embedding` IS A STATE NOTHING WILL MOVE.
+   *
+   * The codebase's own invariant is that every non-terminal state has something
+   * that will move it. For a chat turn that something is the ai-service
+   * callback, and if the round trip is not configured it never arrives — so the
+   * turn sits at `embedding` for good. Same failure the document pipeline has
+   * (see `enqueueIngestForDoc`), and it gets the same treatment: say so loudly
+   * rather than degrading into a silent lie about the turn being ingested.
+   */
+  if (!args.callbackUrl) {
+    const { missingCallbackConfig } = await import('./callbackConfig')
+    console.warn(
+      '[conversation] ai-service callbacks not configured (' +
+        missingCallbackConfig().join(', ') +
+        `) — ${documents.length} turn(s) of session ${String(sessionId)} are being enqueued ` +
+        'WITHOUT a callbackUrl and will stay at corpusStatus="embedding" until an operator ' +
+        'fixes the config.',
+    )
+  }
+
   const corpus = publishedCorpus(organizationId)
 
   let ingestId: string
