@@ -238,12 +238,64 @@ describe('runAnonymisationGate — 🔴 the report is not a re-identification ma
     expect(result.report.model).toBe('static')
   })
 
-  it('keeps a hold report free of the text too', async () => {
+  it('keeps a hold REPORT free of the text too', async () => {
+    /**
+     * ⚠ THIS ASSERTS ON `result.report`, NOT ON THE WHOLE RESULT, AND THE
+     * NARROWING IS DELIBERATE — it used to stringify the entire object.
+     *
+     * A hold now also carries `redactedText`: the gate's best-effort output at
+     * the point of refusal, which by definition still contains whatever verify
+     * found. That is not a leak, it is the ONLY thing a human reviewer can act
+     * on — the alternative is handing them `extractedText`, the raw original.
+     * It is stored in its own `documents.heldText` column that no corpus path
+     * reads (see `lib/anonymiseDocument.ts`), and `lib/holdReview.ts` gates who
+     * may see it.
+     *
+     * The rule the counts-only invariant actually protects is unchanged and is
+     * what this asserts: THE REPORT is stored, shown in the admin panel and
+     * copied into the audit trail, and it must never quote a name.
+     */
     const result = await runAnonymisationGate(input(), { detector: throwingDetector(1) })
     if (result.status !== 'hold') throw new Error('expected hold')
-    const serialised = JSON.stringify(result)
+
+    const serialised = JSON.stringify({ report: result.report, reason: result.reason, stage: result.stage })
     expect(serialised).not.toContain('Lucía')
     expect(serialised).not.toContain('Ricardo')
+  })
+
+  it('🔴 the survivor spans are OFFSETS, never the strings they point at', async () => {
+    // The one new thing a hold carries besides the text. If these were strings
+    // they would be a re-identification map with a friendlier field name — and
+    // they are stored on the row, where the report's rule would then apply.
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Hablé con Ana Beltrán.' },
+      {
+        detector: staticDetector((text) =>
+          text.includes('[Persona ') ? [] : [{ text: 'Ana Beltrán', type: 'persona' as const }],
+        ),
+      },
+    )
+    // Nothing survived here, so assert the shape on a case where something does.
+    const held = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Hablé con Ana Beltrán.' },
+      {
+        detector: {
+          name: 'misses-then-finds',
+          detect: (() => {
+            let calls = 0
+            return async () => {
+              calls += 1
+              return calls === 1 ? [] : [{ text: 'Ana Beltrán', type: 'persona' as const }]
+            }
+          })(),
+        },
+      },
+    )
+
+    expect(result.status).toBe('ready')
+    if (held.status !== 'hold') throw new Error('expected hold')
+    expect(held.survivors).toEqual([{ start: 10, end: 21, type: 'persona' }])
+    expect(JSON.stringify(held.survivors)).not.toContain('Beltrán')
   })
 })
 

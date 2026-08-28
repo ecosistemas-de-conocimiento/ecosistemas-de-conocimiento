@@ -323,7 +323,26 @@ describe('🔴 anonymiseDocumentText — a hold means nothing was ingested', () 
     await run(fake, { contentKind: 'testimonio', text: HELD_TEXT, detector: missesThenFinds() })
 
     expect(fake.wrote('redactedText')).toBe(false)
-    expect(JSON.stringify(fake.updates)).not.toContain('[Persona A]')
+  })
+
+  it('🔴 the refused output goes to `heldText`, which NO corpus path reads', async () => {
+    /**
+     * THE OTHER HALF OF THE ASSERTION ABOVE, and the reason it is two columns
+     * rather than one.
+     *
+     * A reviewer cannot judge a hold without reading something, and the only
+     * alternative to the gate's own output is `extractedText` — the raw
+     * original. So the output IS stored. What makes that safe is WHICH column:
+     * `corpusTextFor` reads `redactedText`, so text sitting there would be
+     * published by the next publish with no gate run to catch it. `heldText` is
+     * read by `lib/holdReview.ts` and by nothing else.
+     */
+    const fake = fakePayload()
+    await run(fake, { contentKind: 'testimonio', text: HELD_TEXT, detector: missesThenFinds() })
+
+    expect(fake.last('anonymisationStatus')).toBe('held')
+    expect(String(fake.last('heldText'))).toContain('[Persona A]')
+    expect(fake.wrote('redactedText')).toBe(false)
   })
 
   it('records WHICH stage refused, so an operator can act on it', async () => {
@@ -434,10 +453,28 @@ describe('🔴 nothing written to the row carries the person’s name', () => {
     })
 
     expect(fake.last('anonymisationStatus')).toBe('held')
-    const written = JSON.stringify(fake.updates)
-    expect(written).not.toContain(NAME)
-    expect(written).not.toContain('María')
-    expect(written).not.toContain('Beltrán')
+
+    /**
+     * ⚠ ASSERTED ON THE TWO STORED-AND-DISPLAYED COLUMNS, NOT ON EVERY WRITE,
+     * and the narrowing is deliberate — this used to stringify all of them.
+     *
+     * `heldText` now carries the gate's refused output, which by definition
+     * still contains the name verify caught. That column exists so a human can
+     * fix it; it is access-gated and no corpus path reads it (see
+     * `lib/holdReview.ts` and the test above).
+     *
+     * The rule this test protects is about `anonymisationError` and
+     * `anonymisationReport`: those are shown in the admin panel and copied into
+     * the audit trail, so a name in either is a re-identification map with a
+     * different name on the door.
+     */
+    const displayed = JSON.stringify({
+      error: fake.last('anonymisationError'),
+      report: fake.last('anonymisationReport'),
+    })
+    expect(displayed).not.toContain(NAME)
+    expect(displayed).not.toContain('María')
+    expect(displayed).not.toContain('Beltrán')
   })
 })
 

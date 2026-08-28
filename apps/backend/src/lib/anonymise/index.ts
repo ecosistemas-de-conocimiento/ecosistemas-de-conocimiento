@@ -31,9 +31,11 @@ export type {
   DetectorFinding,
   GateInput,
   GateReport,
+  GateHold,
   GateResult,
   GateStage,
   GateStageReport,
   PersonDetector,
   RedactionCount,
+  SurvivorSpan,
 } from './types'

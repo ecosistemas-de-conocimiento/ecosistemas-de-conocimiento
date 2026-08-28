@@ -97,13 +97,59 @@ export interface GateReport {
   model?: string | null
 }
 
-export type GateResult =
-  | { status: 'ready'; redactedText: string; report: GateReport }
+/**
+ * WHERE THE VERIFY STAGE FOUND SOMETHING STILL STANDING — as OFFSETS into
+ * {@link GateHold.redactedText}, never as the text itself.
+ *
+ * 🔴 WHY OFFSETS ARE NOT A HOLE IN THE "COUNTS ONLY" RULE. That rule exists
+ * because a report that quoted what was REMOVED would rebuild the
+ * re-identification map the gate just destroyed. A survivor is the opposite
+ * case: it was NOT removed, so it is still sitting in `redactedText`, which is
+ * stored anyway because a reviewer has to read it. Pointing at a substring of a
+ * string we already hold adds no information — it only saves the reviewer from
+ * re-reading forty minutes of transcript hunting for the thing the model saw.
+ *
+ * ⚠ SO THE PAIRING IS LOAD-BEARING: these offsets are meaningful ONLY against
+ * the exact `redactedText` they came with. Never store them next to a different
+ * version of the text, and never put them in {@link GateReport}, which IS
+ * counts-only and is shown in places the text is not.
+ */
+export interface SurvivorSpan {
+  /** Index of the first character, into `redactedText`. */
+  start: number
+  /** Index one past the last character. */
+  end: number
+  /** The detector's category. A label, never the matched string. */
+  type: DetectorFinding['type']
+}
+
+/**
+ * 🔴 NOT AN ERROR — A REFUSAL TO INGEST. The caller must leave the content out
+ * of every corpus and record the reason. There is no "ingest anyway" and no
+ * `force` flag; the only way past a hold is a human review, which is audited.
+ */
+export interface GateHold {
+  status: 'hold'
+  stage: GateStage
+  reason: string
+  report: GateReport
   /**
-   * 🔴 NOT AN ERROR — A REFUSAL TO INGEST. The caller must leave the content
-   * out of every corpus and record the reason. There is no "ingest anyway".
+   * The best-effort redacted text AT THE POINT OF REFUSAL, when there is one.
+   *
+   * 🔴 THIS IS NOT SAFE TO INGEST AND MUST NEVER BE STORED IN `redactedText` ON
+   * A ROW. `corpusTextFor` reads that column and would publish this straight
+   * into the shared corpus — which is precisely what the hold refused. It exists
+   * for ONE purpose: giving a human reviewer something to read and correct. The
+   * `documents` row keeps it in its own column (`heldText`) for that reason.
+   *
+   * Absent for a `structural` hold, which produced no output at all.
    */
-  | { status: 'hold'; stage: GateStage; reason: string; report: GateReport }
+  redactedText?: string
+  /** Where verify found something still standing. Only ever set on a verify hold. */
+  survivors?: SurvivorSpan[]
+}
+
+export type GateResult = { status: 'ready'; redactedText: string; report: GateReport } | GateHold
 
 /**
  * What the gate is being asked to anonymise.

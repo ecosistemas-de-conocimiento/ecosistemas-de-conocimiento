@@ -76,8 +76,26 @@ export function mustPassAnonymisationGate(rawContentKind: unknown): boolean {
   return rawContentKind !== UNGATED_CONTENT_KIND
 }
 
-/** The statuses the gate can leave on a row. */
-export const ANONYMISATION_STATES = ['n/a', 'pending', 'held', 'ready'] as const
+/**
+ * The statuses the gate — or a human reviewing its refusal — can leave on a row.
+ *
+ *   n/a       not gated: an ordinary `documento`
+ *   pending   the gate is running
+ *   held      🔴 the gate refused. Not ingested. A human must look.
+ *   approved  🔴 a human released a hold. AUDITED, and the only way past one.
+ *   rejected  🔴 a human refused it. Terminal — never ingested, never re-gated.
+ *   ready     cleared the gate on its own; `redactedText` is populated
+ *
+ * ⚠ `failed` is still deliberately absent. See `collections/Documents.ts`.
+ */
+export const ANONYMISATION_STATES = [
+  'n/a',
+  'pending',
+  'held',
+  'approved',
+  'rejected',
+  'ready',
+] as const
 
 export type AnonymisationState = (typeof ANONYMISATION_STATES)[number]
 
@@ -124,6 +142,21 @@ export async function anonymiseDocumentText(args: {
   text: string
   detector?: PersonDetector
   /**
+   * 🔴 TEXT A HUMAN REVIEWER APPROVED. When present, THE GATE DOES NOT RUN.
+   *
+   * The row is already `approved` and its `redactedText` is what a reviewer
+   * cleared — possibly text they corrected by hand. Re-running the gate here
+   * would discard their decision, spend two model calls to do it, and could
+   * answer `ready` on the raw original, ingesting something nobody approved.
+   *
+   * ⚠ THE CALLER MUST TAKE THIS FROM THE STORED ROW, never from a request body.
+   * `documents.anonymisationStatus` and `documents.redactedText` are locked
+   * against API writes (`gateWritesOnly` in `collections/Documents.ts`), which
+   * is what makes reading them here safe. Passing caller-supplied text into this
+   * parameter would be an "ingest anyway" flag with a friendlier name.
+   */
+  approvedText?: string
+  /**
    * Known member names/emails. Meaningful for a `conversacion`; deliberately
    * empty for a `testimonio`, whose people are not users of this system at all.
    */
@@ -150,6 +183,14 @@ export async function anonymiseDocumentText(args: {
     // the row should not have to infer which one they are looking at.
     await write({ anonymisationStatus: 'n/a', anonymisationError: null })
     return { ok: true, text, report: null }
+  }
+
+  if (typeof args.approvedText === 'string') {
+    // 🔴 THE HUMAN OVERRIDE. Nothing is re-computed and nothing is re-written:
+    // `lib/holdReview.ts` already stored the text, flipped the status and wrote
+    // the audit row, in that order and in one place. This branch exists so the
+    // ingest path can carry that decision without a second opinion about it.
+    return { ok: true, text: args.approvedText, report: null }
   }
 
   await write({ anonymisationStatus: 'pending', anonymisationError: null })
@@ -181,6 +222,11 @@ export async function anonymiseDocumentText(args: {
     await write({
       anonymisationStatus: 'held',
       anonymisationError: `gate_crashed: ${reason}`.slice(0, 500),
+      // A crash produced no reviewable output. Cleared rather than left stale:
+      // showing a reviewer the text from a PREVIOUS run of a different code path
+      // is worse than showing them nothing.
+      heldText: null,
+      anonymisationSurvivors: null,
     })
     return { ok: false, stage: 'content', reason, report: null }
   }
@@ -193,6 +239,16 @@ export async function anonymiseDocumentText(args: {
       // would be a re-identification map with a different name on the door.
       anonymisationError: `${result.stage}: ${result.reason}`.slice(0, 500),
       anonymisationReport: result.report,
+      /**
+       * 🔴 THE GATE'S REFUSED OUTPUT GOES IN `heldText`, NOT `redactedText`.
+       *
+       * `corpusTextFor` reads `redactedText`. Writing the held text there would
+       * make the very next publish push the text the gate just refused into the
+       * ecosistema's shared corpus — and the gate is not re-run on that path, so
+       * nothing would catch it. The separate column is the whole defence.
+       */
+      heldText: result.redactedText ?? null,
+      anonymisationSurvivors: result.survivors ?? null,
     })
     return { ok: false, stage: result.stage, reason: result.reason, report: result.report }
   }
@@ -206,6 +262,10 @@ export async function anonymiseDocumentText(args: {
     anonymisationStatus: 'ready',
     anonymisationError: null,
     anonymisationReport: result.report,
+    // A clean run has nothing held. Clearing keeps a stale review from an
+    // earlier attempt off a row that has since passed.
+    heldText: null,
+    anonymisationSurvivors: null,
   })
 
   return { ok: true, text: result.redactedText, report: result.report }

@@ -5,6 +5,7 @@ import type {
   CollectionBeforeValidateHook,
   CollectionConfig,
   Endpoint,
+  FieldAccess,
   Where,
 } from 'payload'
 import { ValidationError } from 'payload'
@@ -135,6 +136,8 @@ const ANONYMISATION_LABELS: Record<(typeof ANONYMISATION_STATES)[number], string
   'n/a': 'N/A — not gated content',
   pending: 'Pending — the gate is running',
   held: 'HELD — refused, not ingested',
+  approved: 'APPROVED — a human released a hold (audited)',
+  rejected: 'REJECTED — a human refused it; never ingested',
   ready: 'Ready — cleared the gate',
 }
 
@@ -144,6 +147,38 @@ const PUBLICATION_LABELS: Record<PublicationState, string> = {
   published: 'Published — shared with the ecosistema',
   unpublishing: 'Unpublishing…',
 }
+
+/**
+ * 🔴 THE GATE'S OWN COLUMNS ARE NOT WRITABLE THROUGH THE API. BY ANYONE.
+ *
+ * ── THE HOLE THIS CLOSES ─────────────────────────────────────────────────────
+ *
+ * `documents.update` is `uploaderOnly`, so the person who uploaded a testimony
+ * may PATCH their own row. `admin: { readOnly: true }` on these fields is an
+ * ADMIN-PANEL hint and enforces nothing over REST. So without this, the uploader
+ * of a HELD Voz could send:
+ *
+ *     PATCH /api/documents/42
+ *     { "anonymisationStatus": "approved", "redactedText": "<the raw original>" }
+ *
+ * …and the afterChange hook would sail past every guard — `held` no longer
+ * matches, the approval branch is taken, the gate is skipped — and ingest the
+ * unredacted testimony into a corpus with no per-document delete. Every other
+ * control in this design (the fail-closed policy, the terminal `rejected`, the
+ * audit row) would still be exactly as written, and completely bypassed.
+ *
+ * ⚠ NOT EVEN A PLATFORM ADMIN. `false` for everybody, with no bypass, because
+ * "the person who runs the installation may hand-edit the redaction" is not a
+ * capability this product wants to have. Server-side writes use
+ * `overrideAccess: true` and are unaffected — that is the ONE path, and it runs
+ * through `lib/anonymiseDocument.ts` and `lib/holdReview.ts`, both of which
+ * write an outcome they computed rather than one they were handed.
+ *
+ * ⚠ `read` IS DELIBERATELY LEFT ALONE. These fields are how the uploader sees
+ * why their upload is stuck, and `visibleToCaller` already decides who sees the
+ * row at all.
+ */
+const gateWritesOnly: FieldAccess = () => false
 
 const uploaderOnly: Access = ({ req: { user } }) => {
   if (!user) return false
@@ -469,6 +504,7 @@ interface DocumentRow {
   contentKind?: string | null
   /** The gate's output. The ONLY text a gated document is ever embedded from. */
   redactedText?: string | null
+  heldText?: string | null
   anonymisationStatus?: string | null
   mode?: string | null
   name?: string | null
@@ -727,7 +763,31 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
     console.warn(
       '[documents] doc',
       docId,
-      'is HELD by the anonymisation gate — skipping. Use POST /api/documents/:id/retry to re-run it.',
+      'is HELD by the anonymisation gate — skipping. Review it at POST /api/holds/:id, or',
+      'POST /api/documents/:id/retry to re-run the gate on a fixed source.',
+    )
+    return
+  }
+
+  /**
+   * 🔴 A REJECTION IS TERMINAL, AND IT IS TERMINAL HERE FOR THE SAME REASON A
+   * HOLD IS.
+   *
+   * A human looked at this text and said no. Without this guard the next
+   * ordinary save — a rename, a session change, anything at all — would re-run
+   * the gate, and a probabilistic detector re-run enough times eventually
+   * answers `ready`. That is the "ingest anyway" button nobody meant to build,
+   * one state along from the one it was already closed for.
+   *
+   * ⚠ There is deliberately no way out of `rejected` in this file. Reversing a
+   * rejection is a second REVIEW, through `lib/holdReview.ts`, which writes a
+   * second audit row.
+   */
+  if (fresh.anonymisationStatus === 'rejected') {
+    console.warn(
+      '[documents] doc',
+      docId,
+      'was REJECTED by a reviewer — skipping. Only a new review can change that.',
     )
     return
   }
@@ -842,7 +902,16 @@ export async function enqueueIngestForDoc(args: {
   organizationId: string | number
   /** Who uploaded it. The other half — drafts are PRIVATE per person. */
   uploadedById: string | number
-  fresh: Pick<DocumentRow, 'name' | 'kind' | 'contentKind'>
+  /**
+   * ⚠ `anonymisationStatus` and `redactedText` are in this slice ONLY so the
+   * human-approval branch below can read them off the STORED row. Both columns
+   * are locked against API writes (`gateWritesOnly`), which is what makes
+   * trusting them here safe.
+   */
+  fresh: Pick<
+    DocumentRow,
+    'name' | 'kind' | 'contentKind' | 'anonymisationStatus' | 'redactedText'
+  >
   extractedText: string
   /** Test seam for the anonymisation gate's model call. */
   detector?: import('@/lib/anonymise/types').PersonDetector
@@ -883,6 +952,21 @@ export async function enqueueIngestForDoc(args: {
      */
     contentKind: fresh.contentKind,
     text: extractedText,
+    /**
+     * 🔴 THE HUMAN OVERRIDE, AND THE ONLY ONE.
+     *
+     * A reviewer approved this hold, so `redactedText` already holds the text
+     * THEY cleared — possibly text they edited by hand. Re-running the gate over
+     * `extractedText` would throw their decision away and, worse, could answer
+     * `ready` on the raw original and ingest something nobody approved.
+     *
+     * ⚠ It is read from the STORED status, which only `lib/holdReview.ts` can
+     * write (the field is locked against API updates — see its `access`). A
+     * client cannot set it and cannot reach this branch.
+     */
+    ...(fresh.anonymisationStatus === 'approved' && typeof fresh.redactedText === 'string'
+      ? { approvedText: fresh.redactedText }
+      : {}),
     ...(args.detector ? { detector: args.detector } : {}),
     // ⚠ Empty on purpose for a testimony. The people a Voz names — the speaker,
     // their family, an official — are not users of this system, so no roster we
@@ -1520,10 +1604,59 @@ export const Documents: CollectionConfig = {
        */
       name: 'redactedText',
       type: 'textarea',
+      // 🔴 See `gateWritesOnly`. `admin.readOnly` is a panel hint; this is the rule.
+      access: { create: gateWritesOnly, update: gateWritesOnly },
       admin: {
         readOnly: true,
         description:
           'What the anonymisation gate produced. This — not `extractedText` — is what gets embedded for a testimonio or a conversacion.',
+      },
+    },
+    {
+      /**
+       * 🔴 WHAT A REVIEWER READS. NEVER WHAT A CORPUS READS.
+       *
+       * The gate's best-effort output at the moment it REFUSED — redacted as far
+       * as it got, with (on a verify hold) something still standing in it. A
+       * reviewer cannot judge a hold without it: the alternative is handing them
+       * `extractedText`, the raw original, which is strictly worse.
+       *
+       * ⚠ IT IS A SEPARATE COLUMN FROM `redactedText` ON PURPOSE, and that is
+       * the whole safety argument. `corpusTextFor` reads `redactedText`; if the
+       * held text lived there, a publish would push the text the gate refused
+       * straight into the shared corpus, and nothing downstream re-runs the gate
+       * to catch it. Nothing reads this column except the review API.
+       *
+       * ⚠ Cleared when the hold is cleared — see `planIngestRetry`.
+       */
+      name: 'heldText',
+      type: 'textarea',
+      access: { create: gateWritesOnly, update: gateWritesOnly },
+      admin: {
+        readOnly: true,
+        description:
+          '⚠ El texto que la verificación RECHAZÓ. Sólo para revisión humana; nunca se ingiere.',
+      },
+    },
+    {
+      /**
+       * Where the verify stage found something still standing, as OFFSETS into
+       * `heldText`.
+       *
+       * 🔴 OFFSETS, NEVER STRINGS — see `SurvivorSpan` in `lib/anonymise/types.ts`
+       * for why that is not a loophole in the counts-only rule. Short version: a
+       * survivor was not removed, so it is already in `heldText`; pointing at it
+       * adds nothing and saves a reviewer from re-reading a whole transcript.
+       *
+       * ⚠ MEANINGFUL ONLY AGAINST THE `heldText` THEY ARRIVED WITH. The two are
+       * written together and cleared together, and nothing may update one alone.
+       */
+      name: 'anonymisationSurvivors',
+      type: 'json',
+      access: { create: gateWritesOnly, update: gateWritesOnly },
+      admin: {
+        readOnly: true,
+        description: 'Posiciones (no texto) de lo que la verificación encontró todavía presente.',
       },
     },
     {
@@ -1546,11 +1679,15 @@ export const Documents: CollectionConfig = {
       defaultValue: 'n/a',
       index: true,
       options: ANONYMISATION_STATES.map((value) => ({ value, label: ANONYMISATION_LABELS[value] })),
+      // 🔴 THE SINGLE MOST IMPORTANT LOCK IN THIS COLLECTION. A client that could
+      // write `approved` here would skip the gate outright — see `gateWritesOnly`.
+      access: { create: gateWritesOnly, update: gateWritesOnly },
       admin: { position: 'sidebar' },
     },
     {
       name: 'anonymisationError',
       type: 'textarea',
+      access: { create: gateWritesOnly, update: gateWritesOnly },
       admin: {
         readOnly: true,
         description:
@@ -1567,6 +1704,7 @@ export const Documents: CollectionConfig = {
        */
       name: 'anonymisationReport',
       type: 'json',
+      access: { create: gateWritesOnly, update: gateWritesOnly },
       admin: {
         readOnly: true,
         description:
@@ -1900,6 +2038,21 @@ export function planIngestRetry(doc: RetryableDocument): Record<string, unknown>
   if (doc.ingestStatus !== 'failed') return null
 
   /**
+   * 🔴 A HUMAN DECISION IS NOT A TECHNICAL FAILURE, AND RETRY MUST NOT ERASE ONE.
+   *
+   * A held row is left at `ingestStatus: 'failed'` so the uploader is not
+   * watching a spinner forever, which means a `rejected` or `approved` row is
+   * also `failed` and would otherwise land in the branch below — where
+   * `clearHold` resets the gate state to `n/a`. A reviewer's "no" would be
+   * undone by the uploader pressing retry, and their "yes" would be replaced by
+   * a fresh, differently-answered gate run.
+   *
+   * ⚠ THIS IS THE SAME BUG CLASS AS THE RENAME LOOP, one state along. Retry is
+   * for "I fixed the source"; a reviewed document has no source problem.
+   */
+  if (doc.anonymisationStatus === 'rejected' || doc.anonymisationStatus === 'approved') return null
+
+  /**
    * ⚠ CLEARS THE ANONYMISATION HOLD, and this is the ONLY place that does.
    *
    * `runExtractAndIngest` refuses to re-gate a `held` row, so without this a
@@ -1910,7 +2063,15 @@ export function planIngestRetry(doc: RetryableDocument): Record<string, unknown>
    * ⚠ `redactedText` is NOT cleared. Either the gate held (so there is none) or
    * it is about to be overwritten by the next run.
    */
-  const clearHold = { anonymisationStatus: 'n/a', anonymisationError: null }
+  const clearHold = {
+    anonymisationStatus: 'n/a',
+    anonymisationError: null,
+    // ⚠ Cleared with the hold. They describe a refusal that is being re-run, and
+    // leaving them would show a reviewer last time's survivors over this time's
+    // text — offsets into a string that no longer exists. See `SurvivorSpan`.
+    heldText: null,
+    anonymisationSurvivors: null,
+  }
 
   const hasText = typeof doc.extractedText === 'string' && doc.extractedText.trim().length > 0
   if (hasText) {

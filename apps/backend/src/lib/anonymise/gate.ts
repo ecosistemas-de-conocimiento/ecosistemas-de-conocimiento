@@ -65,6 +65,7 @@ import type {
   GateStageReport,
   PersonDetector,
   RedactionCount,
+  SurvivorSpan,
 } from './types'
 import { OMITTED_PLACEHOLDER } from './types'
 
@@ -173,6 +174,28 @@ function applyFindings(
   return { text: out, labels }
 }
 
+/**
+ * Every place a survivor occurs in the output, as offsets.
+ *
+ * ⚠ EVERY occurrence, not the first. A name the model missed usually appears
+ * more than once, and a reviewer who fixes only the highlighted one and approves
+ * would release the others.
+ */
+function survivorSpans(text: string, survivors: readonly DetectorFinding[]): SurvivorSpan[] {
+  const spans: SurvivorSpan[] = []
+  for (const finding of survivors) {
+    if (finding.text.length === 0) continue
+    let from = 0
+    for (;;) {
+      const at = text.indexOf(finding.text, from)
+      if (at === -1) break
+      spans.push({ start: at, end: at + finding.text.length, type: finding.type })
+      from = at + 1
+    }
+  }
+  return spans.sort((a, b) => a.start - b.start)
+}
+
 /** Failure CLASS of a thrown detector error. ⚠ Never the message, never the text. */
 function failureClassOf(err: unknown): string {
   const named = err as { failureClass?: unknown; name?: unknown }
@@ -197,11 +220,21 @@ export async function runAnonymisationGate(
     model: deps.detector.name,
   })
 
-  const hold = (stage: GateStage, reason: string): GateResult => ({
+  /**
+   * ⚠ `redactedText` ON A HOLD IS FOR A HUMAN TO READ, NOT FOR A CORPUS. See
+   * `GateHold` — storing it in a row's `redactedText` column would hand the
+   * publish path exactly the text this refusal was about.
+   */
+  const hold = (
+    stage: GateStage,
+    reason: string,
+    extra?: { redactedText?: string; survivors?: SurvivorSpan[] },
+  ): GateResult => ({
     status: 'hold',
     stage,
     reason,
     report: report(),
+    ...(extra ?? {}),
   })
 
   // ── 1. STRUCTURAL ─────────────────────────────────────────────────────────
@@ -241,9 +274,12 @@ export async function runAnonymisationGate(
     // 🔴 A detector that could not run is NOT "nothing to redact". See
     // `detector.ts`: the whole reason it throws instead of returning `[]` is to
     // land here.
+    // The deterministic output is real work already done and a reviewer can act
+    // on it, so it travels with the refusal even though the model never ran.
     return hold(
       'content',
       `No se pudo revisar el contenido con el modelo (${failureClassOf(err)}), así que no se ingirió nada.`,
+      { redactedText: deterministic.text },
     )
   }
 
@@ -271,6 +307,7 @@ export async function runAnonymisationGate(
     return hold(
       'verify',
       `No se pudo verificar el texto ya censurado (${failureClassOf(err)}), así que no se ingirió nada.`,
+      { redactedText: applied.text },
     )
   }
 
@@ -294,6 +331,12 @@ export async function runAnonymisationGate(
     return hold(
       'verify',
       `La verificación encontró ${real.length} dato(s) personal(es) que siguen en el texto, así que no se ingirió nada. Revisa el documento original.`,
+      {
+        redactedText: applied.text,
+        // 🔴 OFFSETS, NEVER THE STRINGS — and they only mean anything against the
+        // `redactedText` on this same object. See `SurvivorSpan`.
+        survivors: survivorSpans(applied.text, real),
+      },
     )
   }
 
