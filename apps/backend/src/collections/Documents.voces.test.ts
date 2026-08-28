@@ -398,3 +398,75 @@ describe('🔴 a hold is visible and has exactly one way out', () => {
     expect(planIngestRetry({ kind: 'audio', ingestStatus: 'embedding' })).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// A REVIEWED HOLD IS SETTLED
+// ---------------------------------------------------------------------------
+
+describe('🔴 a reviewer’s decision is the only override, and retry cannot undo it', () => {
+  /**
+   * ── THE BUG CLASS THESE PIN ──────────────────────────────────────────────
+   *
+   * A held row is left at `ingestStatus: 'failed'` on purpose, so the uploader
+   * is not watching a spinner forever. That means a REVIEWED row is also
+   * `failed`, and `planIngestRetry` would happily accept it and reset the gate
+   * state to `n/a` — undoing a reviewer's decision from the uploader's own retry
+   * button.
+   *
+   * This is the SAME bug as the rename loop, one state along: an accidental
+   * "ingest anyway" that nobody designed, reachable by pressing a button that
+   * means something else.
+   */
+
+  it('🔴 retry REFUSES a rejected document — a human said no, and that is not a failure to retry', () => {
+    expect(
+      planIngestRetry({
+        kind: 'audio',
+        ingestStatus: 'failed',
+        extractedText: 'el testimonio completo',
+        anonymisationStatus: 'rejected',
+      }),
+    ).toBeNull()
+  })
+
+  it('🔴 retry REFUSES an approved document — re-gating would replace what a human cleared', () => {
+    // Worse than losing the decision: the fresh gate run reads `extractedText`,
+    // the raw original, and a probabilistic detector can answer `ready` on it.
+    expect(
+      planIngestRetry({
+        kind: 'audio',
+        ingestStatus: 'failed',
+        extractedText: 'el testimonio completo',
+        anonymisationStatus: 'approved',
+      }),
+    ).toBeNull()
+  })
+
+  it('a still-HELD document stays retryable — "I fixed the source" is a real case', () => {
+    // The distinction is the point: a hold has had no human decision, so
+    // re-running the gate on corrected source is legitimate. A REVIEWED row has
+    // no source problem.
+    expect(
+      planIngestRetry({
+        kind: 'audio',
+        ingestStatus: 'failed',
+        extractedText: 'el testimonio corregido',
+        anonymisationStatus: 'held',
+      }),
+    ).not.toBeNull()
+  })
+
+  it('⚠ clearing a hold also clears the reviewable text and the survivor offsets', () => {
+    // They are offsets into a string that is about to be replaced. Left behind,
+    // they would show a reviewer last run's flags over this run's text — see
+    // `SurvivorSpan` in `lib/anonymise/types.ts`.
+    expect(
+      planIngestRetry({
+        kind: 'audio',
+        ingestStatus: 'failed',
+        extractedText: 'el testimonio corregido',
+        anonymisationStatus: 'held',
+      }),
+    ).toMatchObject({ heldText: null, anonymisationSurvivors: null })
+  })
+})

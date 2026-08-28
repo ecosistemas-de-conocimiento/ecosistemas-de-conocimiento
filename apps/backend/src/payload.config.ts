@@ -11,6 +11,7 @@ import { Ratings } from './collections/Ratings'
 import { Documents } from './collections/Documents'
 import { Media } from './collections/Media'
 import { AiServiceCallbacks } from './collections/AiServiceCallbacks'
+import { AnonymisationReviews } from './collections/AnonymisationReviews'
 import { Organizations } from './collections/Organizations'
 import { Teams } from './collections/Teams'
 import { Projects } from './collections/Projects'
@@ -90,6 +91,9 @@ export default buildConfig({
     Sessions,
     Messages,
     Ratings,
+    // 🔴 The audit trail for every human override of the anonymisation gate.
+    // Append-only; see the collection.
+    AnonymisationReviews,
     // Plumbing
     AiServiceCallbacks,
   ],

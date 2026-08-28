@@ -116,6 +116,12 @@ export interface PublishableDocument {
   extractedText?: string | null
   /** The anonymisation gate's output. What a gated document is embedded from. */
   redactedText?: string | null
+  /**
+   * 🔴 REQUIRED FOR GATED CONTENT. `corpusTextFor` refuses anything that is not
+   * `ready` or `approved`, because a non-empty `redactedText` alone is not proof
+   * the row cleared the gate — it can be left over from an earlier run that did.
+   */
+  anonymisationStatus?: string | null
   organization?: unknown
   uploadedBy?: unknown
   publicationStatus?: unknown
