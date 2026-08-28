@@ -15,6 +15,11 @@ import {
   isTerminalIngest,
   pollDeadlineMs,
   pollIntervalMs,
+  transcriptChanged,
+  transcriptEditGate,
+  TRANSCRIPT_EDIT_EMPTY_ERROR,
+  TRANSCRIPT_EDIT_SAVED_MESSAGE,
+  TRANSCRIPT_EDIT_SAVED_TITLE,
 } from '../ingest';
 import {
   idOf,
@@ -1188,6 +1193,97 @@ class AppStore {
       return false;
     } finally {
       d.retryPending = false;
+    }
+  }
+
+  /**
+   * Save a corrected transcript, and let the backend re-index it.
+   *
+   * 🔴 OPTIMISTIC ABOUT THE TEXT, NEVER ABOUT THE INDEX. The local `transcript`
+   * moves as soon as the server accepts the write — it is the user's own words
+   * and they are looking straight at them. `ingestStatus` moves only to
+   * `pending`, which is what the server actually said, and then the ordinary
+   * poll takes it the rest of the way. Painting `ready` here would tell someone
+   * the chat already answers with the correction while ai-service is still
+   * embedding it, which is the one lie this feature exists to prevent.
+   *
+   * ⚠ A no-op edit is refused before the request. Re-indexing is real work on a
+   * real queue, and spending it because someone opened the box and closed it
+   * again is waste with a visible cost — the row leaves `listo` for minutes.
+   */
+  async saveTranscript(
+    sessionId: string,
+    docId: string,
+    text: string,
+  ): Promise<boolean> {
+    const s = this.sessions.find((x) => x.id === sessionId);
+    const d = s?.docs.find((x) => x.id === docId);
+    if (!d || d.transcriptSavePending) return false;
+
+    // Same gate the UI uses, re-checked here because the store is what spends
+    // the request. The backend re-checks it again against a fresh row.
+    const gate = transcriptEditGate({
+      kind: d.kind,
+      publicationStatus: d.publicationStatus,
+      ingestStatus: d.ingestStatus,
+      transcript: d.transcript,
+    });
+    if (!gate.canEdit) return false;
+
+    if (!text.trim()) {
+      toasts.push({
+        kind: 'error',
+        title: 'Falta el texto',
+        message: TRANSCRIPT_EDIT_EMPTY_ERROR,
+      });
+      return false;
+    }
+    if (!transcriptChanged(d.transcript, text)) return true;
+
+    d.transcriptSavePending = true;
+    try {
+      const res = await fetch(`/api/documents/${docId}/transcript`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: text }),
+        credentials: 'same-origin',
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        toasts.push({
+          kind: 'error',
+          title: 'No se pudo guardar la corrección',
+          message:
+            body.error === 'already_published'
+              ? 'El documento ya se publicó, así que el texto ya no se edita.'
+              : body.error === 'ingest_in_progress'
+                ? 'El documento todavía se está procesando. Inténtalo cuando diga "listo".'
+                : body.error === 'not_uploader'
+                  ? 'Solo quien subió la grabación puede corregir su transcripción.'
+                  : 'Inténtalo de nuevo en un momento.',
+        });
+        return false;
+      }
+      d.transcript = text;
+      d.ingestStatus = 'pending';
+      d.ingestError = null;
+      toasts.push({
+        kind: 'success',
+        title: TRANSCRIPT_EDIT_SAVED_TITLE,
+        message: TRANSCRIPT_EDIT_SAVED_MESSAGE,
+      });
+      void this.pollDocStatus(sessionId, docId);
+      return true;
+    } catch (err) {
+      console.error('saveTranscript failed', err);
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo conectar',
+        message: 'Revisa tu conexión e inténtalo de nuevo.',
+      });
+      return false;
+    } finally {
+      d.transcriptSavePending = false;
     }
   }
 
