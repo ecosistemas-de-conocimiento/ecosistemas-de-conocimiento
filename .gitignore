@@ -21,3 +21,4 @@ media/
 
 # Agent worktrees and local session state
 .claude/
+.cache/
