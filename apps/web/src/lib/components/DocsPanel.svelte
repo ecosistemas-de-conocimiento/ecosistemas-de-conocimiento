@@ -993,13 +993,13 @@
 
     <footer class="border-t border-elevated p-2 text-[10px] text-ink-soft space-y-1">
       <div>Los documentos fijados se envían como contexto en cada mensaje.</div>
-      <!-- ⚠ THE WAY OUT OF THE CONVERSATION. This panel only ever shows one
-           conversation's files; everything the ecosistema has actually
-           published lives somewhere else, and until this link existed there was
-           no way to reach it from inside the app. -->
-      <a class="library-link" href="/biblioteca" data-interactive>
-        Ver la biblioteca del ecosistema →
-      </a>
+      <!-- ⚠ THE "Ver la biblioteca del ecosistema" LINK THAT USED TO SIT HERE
+           IS GONE ON PURPOSE. It was a stopgap for a missing menu: the library
+           was reachable only from inside a panel most people never opened.
+           Biblioteca is now a first-class entry in the primary navigation
+           (`$lib/components/PrimaryNav.svelte`), so re-adding a second door
+           here would put the same destination in two places and make neither
+           of them the one people learn. -->
     </footer>
   </aside>
 {/if}
@@ -1148,17 +1148,6 @@
     line-height: 1.55;
     max-height: 22rem;
     overflow-y: auto;
-  }
-
-  .library-link {
-    display: inline-block;
-    font-weight: 600;
-    color: var(--edc-color-brand);
-    text-decoration: none;
-  }
-  .library-link:hover {
-    color: var(--edc-color-brand-strong);
-    text-decoration: underline;
   }
 
   /* The correction box. Same surface as the read view it replaces, so the text

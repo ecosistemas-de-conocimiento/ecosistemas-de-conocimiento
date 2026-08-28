@@ -148,7 +148,7 @@
 
 <style>
   .page {
-    min-height: 100vh;
+    min-height: 100%;
     max-width: 46rem;
     margin: 0 auto;
     padding: var(--edc-space-6) var(--edc-space-5) var(--edc-space-8);

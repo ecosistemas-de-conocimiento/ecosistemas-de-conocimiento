@@ -156,7 +156,6 @@
         </p>
       {/if}
     </div>
-    <a class="back" href="/" data-interactive>Volver al chat</a>
   </header>
 
   <!-- 🔴 SAID ON THE PAGE, NOT IN A TOOLTIP. The commonest misreading of a
@@ -278,7 +277,7 @@
 
 <style>
   .page {
-    min-height: 100vh;
+    min-height: 100%;
     max-width: 60rem;
     margin: 0 auto;
     padding: var(--edc-space-6) var(--edc-space-5) var(--edc-space-8);
@@ -316,20 +315,6 @@
   }
   .sub strong {
     color: var(--edc-color-ink);
-  }
-  .back {
-    flex: none;
-    padding: 0.4rem 0.85rem;
-    border-radius: var(--edc-radius-2);
-    border: 1px solid var(--edc-color-neutral-outline);
-    font-size: 0.78rem;
-    font-weight: 700;
-    text-decoration: none;
-    color: var(--edc-color-ink-soft);
-  }
-  .back:hover {
-    color: var(--edc-color-ink);
-    background: var(--edc-color-neutral-soft);
   }
   .notice {
     margin: 0;
