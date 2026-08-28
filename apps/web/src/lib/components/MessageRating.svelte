@@ -122,6 +122,14 @@
 
   {#if rated && showOther}
     <div class="flex flex-col gap-1">
+      <!-- ⚠ ABOVE the box, not below it. A privacy notice under a textarea is
+           read after you have already typed, which is too late to be a choice.
+           The rest of a rating is a private number; this field is not, and the
+           person deserves to know that before they write. -->
+      <p class="text-ink-soft" data-testid={`rating-other-notice-${msg.id}`}>
+        Lo que escribas aquí lo pueden leer las personas que administran e
+        investigan en este ecosistema. No lo uses para datos privados.
+      </p>
       <label class="sr-only" for={`rating-other-${msg.id}`}>Cuéntanos qué pasó</label>
       <textarea
         id={`rating-other-${msg.id}`}
