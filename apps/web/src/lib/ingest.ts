@@ -515,5 +515,128 @@ export function transcriptReadyCallToAction(input: {
   if (!isTranscript(input.kind)) return null;
   if (input.ingestStatus !== 'ready') return null;
   if (input.publicationStatus !== 'draft') return null;
-  return 'La transcripción está lista y por ahora solo tú la ves. Revísala aquí abajo y publícala para que aparezca en los documentos de tu ecosistema.';
+  return 'La transcripción está lista y por ahora solo tú la ves. Revísala aquí abajo, corrige lo que haga falta y publícala para que aparezca en los documentos de tu ecosistema.';
 }
+
+// ── Correcting the transcript ──────────────────────────────────────────────
+
+/**
+ * 🔴 WHY A TRANSCRIPT IS EDITABLE AT ALL, AND WHY ONLY JUST HERE.
+ *
+ * The ASR mangles names, places and local terms — exactly the words a Spanish
+ * knowledge repository is most likely to be asked about. Until now the text was
+ * read-only: the one person who heard the recording could see the mistake and
+ * do nothing. Reading a wrong transcript and being unable to fix it is worse
+ * than not reading it, because it teaches people that the review step is
+ * theatre.
+ *
+ * ⚠ THE WINDOW IS THE DRAFT. Once a document is published it is in the
+ * ecosistema's shared corpus, other people have read it, and an answer may
+ * already cite it. Silently changing the text under a citation is a different
+ * and worse problem than an uncorrected typo, so the edit closes when the
+ * document is shared. Nothing here reopens it.
+ *
+ * ⚠ AND ONLY THE UPLOADER. Enforced by the backend (`update` access on
+ * `documents` is `uploadedBy`-scoped), and true by construction in the UI: a
+ * draft is visible ONLY to the person who uploaded it, so any draft in this
+ * user's own list is theirs. Same invariant `draftDocumentIds` relies on.
+ */
+export type TranscriptEditBlockedReason =
+  | 'not-a-transcript'
+  | 'published'
+  | 'in-progress'
+  | 'no-transcript';
+
+export interface TranscriptEditGateInput {
+  kind: DocKind;
+  publicationStatus: string;
+  ingestStatus: IngestStatus;
+  /** The text as it stands. Nothing to correct means nothing to edit. */
+  transcript?: string | null;
+}
+
+/**
+ * Whether the transcript may be corrected right now, and if not, why.
+ *
+ * ⚠ `publishing` and `failed` PUBLICATION states both block. `publishing` is
+ * mid-flight into the shared corpus and editing under it would race the copy
+ * being made; a `failed` publish is a document someone is actively trying to
+ * share. Only a plain `draft` is open.
+ */
+export function transcriptEditGate(input: TranscriptEditGateInput): {
+  canEdit: boolean;
+  reason: TranscriptEditBlockedReason | null;
+} {
+  if (!isTranscript(input.kind)) return { canEdit: false, reason: 'not-a-transcript' };
+  if (input.publicationStatus !== 'draft') return { canEdit: false, reason: 'published' };
+  // The pipeline must be at rest. Editing while audio-service or ai-service is
+  // still writing to this row would leave two writers racing for one column.
+  if (
+    input.ingestStatus !== 'ready' &&
+    input.ingestStatus !== 'transcribed' &&
+    input.ingestStatus !== 'failed'
+  ) {
+    return { canEdit: false, reason: 'in-progress' };
+  }
+  if (!(input.transcript ?? '').trim()) return { canEdit: false, reason: 'no-transcript' };
+  return { canEdit: true, reason: null };
+}
+
+/** Why the edit is unavailable, in words the user can act on. */
+export function transcriptEditBlockedCopy(reason: TranscriptEditBlockedReason): string {
+  switch (reason) {
+    case 'not-a-transcript':
+      return 'Este documento no es una transcripción.';
+    case 'published':
+      // ⚠ Says WHY, not just "no". "Ya está publicado" alone reads as an
+      // arbitrary rule; the reason is that other people may already cite it.
+      return 'Ya está publicado: otras personas pueden haberlo leído o citado, así que el texto ya no se edita.';
+    case 'in-progress':
+      return 'Espera a que termine de procesarse para corregir el texto.';
+    case 'no-transcript':
+      return 'Todavía no hay texto que corregir.';
+  }
+}
+
+/**
+ * ⚠ NOT OPTIONAL, and the reason the whole feature works. People do not proof
+ * text they believe a person wrote. Saying out loud that a machine wrote it,
+ * right where the cursor goes, is what turns "léela" into "revísala".
+ */
+export const TRANSCRIPT_EDIT_INVITATION =
+  'La escribió una máquina y puede tener errores: nombres, lugares o palabras locales. Corrígela aquí antes de publicarla.';
+
+export const TRANSCRIPT_EDIT_START = 'Corregir la transcripción';
+export const TRANSCRIPT_EDIT_SAVE = 'Guardar y volver a indexar';
+export const TRANSCRIPT_EDIT_CANCEL = 'Cancelar';
+
+/**
+ * 🔴 SAVING RE-INDEXES, AND THE USER IS TOLD SO BEFORE THEY PRESS IT.
+ *
+ * A correction that fixed the text on screen but left the chat answering from
+ * the old wording would be worse than no editing at all — the person would
+ * believe it was fixed and stop checking. Saving therefore re-runs the ingest,
+ * which takes a minute or two and is not free, so the button says what it does.
+ */
+export const TRANSCRIPT_EDIT_REINDEX_NOTE =
+  'Al guardar, el texto se vuelve a indexar para que el chat responda con la versión corregida. Tarda un par de minutos.';
+
+/** Nothing changed — do not spend an ingest on an identical string. */
+export function transcriptChanged(before: string | null | undefined, after: string): boolean {
+  return (before ?? '').trim() !== after.trim();
+}
+
+/**
+ * ⚠ An empty transcript is refused rather than saved. Clearing the text would
+ * embed an empty document: retrieval would find nothing, the row would still
+ * say `listo`, and the recording would silently disappear from every answer
+ * without anything looking broken. Deleting the document is the honest way to
+ * do that.
+ */
+export const TRANSCRIPT_EDIT_EMPTY_ERROR =
+  'La transcripción no puede quedar vacía. Si la grabación no sirve, borra el documento.';
+
+/** After a successful save: what happened, and what is still pending. */
+export const TRANSCRIPT_EDIT_SAVED_TITLE = 'Transcripción corregida';
+export const TRANSCRIPT_EDIT_SAVED_MESSAGE =
+  'Guardamos tu versión y la estamos volviendo a indexar. En cuanto diga "listo", el chat responderá con el texto corregido.';

@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   AUDIO_CONFIDENCE_TOOLTIP,
   INGEST_STATUSES,
+  TRANSCRIPT_EDIT_CANCEL,
+  TRANSCRIPT_EDIT_EMPTY_ERROR,
+  TRANSCRIPT_EDIT_INVITATION,
+  TRANSCRIPT_EDIT_REINDEX_NOTE,
+  TRANSCRIPT_EDIT_SAVE,
+  TRANSCRIPT_EDIT_SAVED_MESSAGE,
+  TRANSCRIPT_EDIT_START,
+  transcriptChanged,
+  transcriptEditBlockedCopy,
+  transcriptEditGate,
   TRANSCRIBING_REASSURANCE,
   TRANSCRIPT_PREVIEW_HIDE,
   TRANSCRIPT_PREVIEW_SHOW,
@@ -538,5 +548,115 @@ describe('transcriptReviewPrompt', () => {
     for (const status of ['published', 'publishing', 'failed']) {
       expect(transcriptReviewPrompt(status)).toBeNull();
     }
+  });
+});
+
+describe('transcriptEditGate', () => {
+  const editable = {
+    kind: 'audio' as const,
+    publicationStatus: 'draft',
+    ingestStatus: 'ready' as const,
+    transcript: 'lo que dijo la máquina',
+  };
+
+  it('opens for a draft transcript that has text and is at rest', () => {
+    expect(transcriptEditGate(editable)).toEqual({ canEdit: true, reason: null });
+  });
+
+  // 🔴 THE WINDOW IS THE DRAFT. Once shared, other people may already have read
+  // or cited it, and changing the text under a citation is worse than the typo.
+  it.each(['published', 'publishing', 'failed', 'unpublishing'])(
+    'closes once the document is %s',
+    (publicationStatus) => {
+      expect(transcriptEditGate({ ...editable, publicationStatus })).toEqual({
+        canEdit: false,
+        reason: 'published',
+      });
+    },
+  );
+
+  // A PDF's text is an extraction of a file the user already has; editing it
+  // would make the indexed text disagree with the document people can open.
+  it.each(['pdf', 'docx', 'markdown'] as const)('refuses a %s document', (kind) => {
+    expect(transcriptEditGate({ ...editable, kind }).reason).toBe('not-a-transcript');
+  });
+
+  // Two writers on one column is not a race worth having.
+  it.each(['pending', 'extracting', 'transcribing', 'embedding', 'n/a'] as const)(
+    'waits while the pipeline is at %s',
+    (ingestStatus) => {
+      expect(transcriptEditGate({ ...editable, ingestStatus }).reason).toBe('in-progress');
+    },
+  );
+
+  it.each(['ready', 'transcribed', 'failed'] as const)('opens at %s', (ingestStatus) => {
+    expect(transcriptEditGate({ ...editable, ingestStatus }).canEdit).toBe(true);
+  });
+
+  it.each([undefined, null, '', '   '])('has nothing to correct for %p', (transcript) => {
+    expect(transcriptEditGate({ ...editable, transcript }).reason).toBe('no-transcript');
+  });
+
+  it('gives every blocked reason words the user can act on', () => {
+    for (const reason of ['not-a-transcript', 'published', 'in-progress', 'no-transcript'] as const) {
+      expect(transcriptEditBlockedCopy(reason).length).toBeGreaterThan(0);
+    }
+  });
+
+  // ⚠ "Ya está publicado" alone reads as an arbitrary rule. The reason it is
+  // frozen is that other people may already be citing it — so the copy says so.
+  it('says WHY a published transcript is frozen, not only that it is', () => {
+    expect(transcriptEditBlockedCopy('published')).toMatch(/citado|leído/i);
+  });
+});
+
+describe('transcriptChanged', () => {
+  it('sees a real correction', () => {
+    expect(transcriptChanged('Juan Peres', 'Juan Pérez')).toBe(true);
+  });
+
+  // ⚠ Re-indexing is real work on a real queue, and it takes the row out of
+  // `listo` for minutes. Opening the editor and closing it must not spend one.
+  it.each([
+    ['same', 'same'],
+    [' same ', 'same'],
+    ['same', ' same  '],
+  ])('ignores a no-op edit (%p → %p)', (before, after) => {
+    expect(transcriptChanged(before, after)).toBe(false);
+  });
+
+  it('treats a missing previous transcript as a change', () => {
+    expect(transcriptChanged(null, 'algo')).toBe(true);
+    expect(transcriptChanged(undefined, '')).toBe(false);
+  });
+});
+
+describe('the transcript-editing copy', () => {
+  // 🔴 NOT OPTIONAL. People do not proofread text they believe a person wrote.
+  // Saying a machine wrote it, right where the cursor goes, is what turns
+  // "léela" into "revísala".
+  it('says the text is machine-made, right at the edit box', () => {
+    expect(TRANSCRIPT_EDIT_INVITATION).toMatch(/máquina/i);
+    expect(TRANSCRIPT_EDIT_INVITATION).toMatch(/errores/i);
+  });
+
+  // 🔴 A correction that left the chat quoting the old wording would be worse
+  // than no correction at all, so the button says what saving actually does.
+  it('warns that saving re-indexes, and says so on the button too', () => {
+    expect(TRANSCRIPT_EDIT_REINDEX_NOTE).toMatch(/indexa/i);
+    expect(TRANSCRIPT_EDIT_SAVE).toMatch(/indexar/i);
+    expect(TRANSCRIPT_EDIT_SAVED_MESSAGE).toMatch(/indexar|indexando/i);
+  });
+
+  it('labels the two buttons distinguishably', () => {
+    expect(TRANSCRIPT_EDIT_START).not.toBe(TRANSCRIPT_EDIT_SAVE);
+    expect(TRANSCRIPT_EDIT_CANCEL).not.toBe(TRANSCRIPT_EDIT_SAVE);
+  });
+
+  // Emptying the box would embed an empty document: retrieval finds nothing and
+  // the row still says `listo`. Deleting is the honest way to do that.
+  it('offers deletion instead of an empty transcript', () => {
+    expect(TRANSCRIPT_EDIT_EMPTY_ERROR).toMatch(/vacía/i);
+    expect(TRANSCRIPT_EDIT_EMPTY_ERROR).toMatch(/borra/i);
   });
 });

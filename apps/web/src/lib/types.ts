@@ -146,12 +146,19 @@ export interface WorkingDoc {
    * exists nowhere else the uploader can open. Keeping all of them would put
    * every PDF's full text in the browser's memory to show nobody.
    *
-   * ⚠ NOT EDITABLE and never PATCHed back: this mirrors what the ASR heard.
-   * Correcting it belongs to a feature that does not exist yet.
+   * ⚠ EDITABLE ONLY WHILE THE DOCUMENT IS A DRAFT, and only by its uploader.
+   * A correction is PATCHed back through `/api/documents/[id]/transcript`,
+   * which also re-runs the ingest so retrieval stops answering from the old
+   * wording. Once the document is published the text is frozen: other people
+   * may already have read or cited it. See `transcriptEditGate` in
+   * `$lib/ingest.ts` for the rule and `$lib/stores/app.svelte.ts`
+   * (`saveTranscript`) for the write.
    */
   transcript?: string | null;
   /** UI-only state — a retry request is on the wire. Never sent to the server. */
   retryPending?: boolean;
+  /** UI-only state — a transcript correction is on the wire. Never sent. */
+  transcriptSavePending?: boolean;
 }
 
 export interface Session {

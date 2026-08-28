@@ -16,6 +16,13 @@
     transcriptReadyCallToAction,
     transcriptReviewPrompt,
     transcriptStatsCopy,
+    transcriptEditGate,
+    transcriptEditBlockedCopy,
+    TRANSCRIPT_EDIT_CANCEL,
+    TRANSCRIPT_EDIT_INVITATION,
+    TRANSCRIPT_EDIT_REINDEX_NOTE,
+    TRANSCRIPT_EDIT_SAVE,
+    TRANSCRIPT_EDIT_START,
     TRANSCRIBING_REASSURANCE,
     TRANSCRIPT_PREVIEW_HIDE,
     TRANSCRIPT_PREVIEW_SHOW,
@@ -135,6 +142,42 @@
 
   function toggle(id: string) {
     expandedId = expandedId === id ? null : id;
+  }
+
+  /**
+   * 🔴 CORRECTING THE TRANSCRIPT — state only; the rule and the copy live in
+   * `$lib/ingest.ts` so they can be unit-tested, and the write lives in
+   * `app.saveTranscript`.
+   *
+   * ⚠ ONE document at a time, on purpose. Two open editors would mean two
+   * unsaved buffers a user can lose track of, and losing a correction someone
+   * typed by hand while listening to a recording is a bad thing to be casual
+   * about. Opening a second closes the first, which is visible.
+   *
+   * ⚠ NOT a new affordance beside the preview — it lives INSIDE the existing
+   * "Transcripción" tab. The panel already taught that tab as the way to see
+   * this text; correcting it is the same place, one button further in.
+   */
+  let editingTranscriptId = $state<string | null>(null);
+  let transcriptDraft = $state('');
+
+  function startTranscriptEdit(d: WorkingDoc) {
+    editingTranscriptId = d.id;
+    transcriptDraft = d.transcript ?? '';
+  }
+
+  function cancelTranscriptEdit() {
+    editingTranscriptId = null;
+    transcriptDraft = '';
+  }
+
+  async function saveTranscriptEdit(sessionId: string | undefined, d: WorkingDoc) {
+    if (!sessionId) return;
+    const ok = await app.saveTranscript(sessionId, d.id, transcriptDraft);
+    // ⚠ Only close on success. A failed save keeps the user's text in the box
+    // — throwing away a correction because the network blinked would be the
+    // one outcome worse than not offering the edit at all.
+    if (ok) cancelTranscriptEdit();
   }
 
   function togglePreview(id: string) {
@@ -751,13 +794,60 @@
                   {#if isTranscript(d.kind) && isPreview}
                     {@const text = (d.transcript ?? '').trim()}
                     {@const stats = transcriptStatsCopy(text)}
+                    {@const editGate = transcriptEditGate({
+                      kind: d.kind,
+                      publicationStatus: d.publicationStatus,
+                      ingestStatus: d.ingestStatus,
+                      transcript: d.transcript,
+                    })}
+                    {@const isEditing = editingTranscriptId === d.id}
                     <div class="bg-surface-soft border-t border-elevated px-3 py-3">
                       <p class="text-[10px] text-ink-soft leading-snug">
                         {TRANSCRIPT_PROVENANCE_TOOLTIP}
                         {transcriptReviewPrompt(d.publicationStatus) ?? ''}
                         {#if stats}<span class="block mt-0.5">{stats}</span>{/if}
                       </p>
-                      {#if text}
+
+                      {#if isEditing}
+                        <!-- 🔴 THE CORRECTION BOX. Machine text, a person who
+                             heard the recording, and the one moment before it
+                             becomes the ecosistema's shared record. The
+                             invitation above the box says who wrote the text —
+                             people do not proofread what they think a human
+                             wrote — and the note under the button says that
+                             saving re-indexes, because a correction that left
+                             the chat quoting the old wording would be worse
+                             than no correction at all. -->
+                        <p class="edit-invite mt-2">{TRANSCRIPT_EDIT_INVITATION}</p>
+                        <textarea
+                          class="transcript-editor mt-2 w-full text-xs"
+                          bind:value={transcriptDraft}
+                          aria-label="Texto de la transcripción"
+                          data-testid={`transcript-editor-${d.id}`}
+                        ></textarea>
+                        <p class="text-[10px] text-ink-soft mt-1 leading-snug">
+                          {TRANSCRIPT_EDIT_REINDEX_NOTE}
+                        </p>
+                        <div class="flex items-center gap-2 mt-2">
+                          <Button
+                            tone="brand"
+                            variant="outline"
+                            size="sm"
+                            label={TRANSCRIPT_EDIT_SAVE}
+                            loading={d.transcriptSavePending === true}
+                            disabled={d.transcriptSavePending === true}
+                            dataTestId={`save-transcript-${d.id}`}
+                            onClick={() => saveTranscriptEdit(sid, d)}
+                          />
+                          <button
+                            class="text-[10px] text-ink-soft hover:text-ink underline"
+                            onclick={cancelTranscriptEdit}
+                            disabled={d.transcriptSavePending === true}
+                          >
+                            {TRANSCRIPT_EDIT_CANCEL}
+                          </button>
+                        </div>
+                      {:else if text}
                         <!-- Plain text, not Markdown: an ASR transcript has no
                              markup, and rendering it as Markdown would let a
                              stray `#` or `*` silently reshape what was said. -->
@@ -765,6 +855,22 @@
                           class="transcript-text mt-2 text-xs text-ink"
                           data-testid={`transcript-text-${d.id}`}
                         >{text}</p>
+                        {#if editGate.canEdit && sid}
+                          <button
+                            class="transcript-cta-link mt-2 text-[10px] block"
+                            onclick={() => startTranscriptEdit(d)}
+                            data-testid={`edit-transcript-${d.id}`}
+                          >
+                            {TRANSCRIPT_EDIT_START}
+                          </button>
+                        {:else if editGate.reason === 'published'}
+                          <!-- ⚠ Said, not silently omitted. A missing button
+                               reads as a missing feature; this says the text is
+                               frozen and why. -->
+                          <p class="text-[10px] text-ink-soft mt-2 leading-snug">
+                            {transcriptEditBlockedCopy(editGate.reason)}
+                          </p>
+                        {/if}
                       {:else}
                         <p class="mt-2 text-xs text-ink-soft italic">{TRANSCRIPT_UNAVAILABLE}</p>
                       {/if}
@@ -885,8 +991,15 @@
       {/if}
     </div>
 
-    <footer class="border-t border-elevated p-2 text-[10px] text-ink-soft">
-      Los documentos fijados se envían como contexto en cada mensaje.
+    <footer class="border-t border-elevated p-2 text-[10px] text-ink-soft space-y-1">
+      <div>Los documentos fijados se envían como contexto en cada mensaje.</div>
+      <!-- ⚠ THE WAY OUT OF THE CONVERSATION. This panel only ever shows one
+           conversation's files; everything the ecosistema has actually
+           published lives somewhere else, and until this link existed there was
+           no way to reach it from inside the app. -->
+      <a class="library-link" href="/biblioteca" data-interactive>
+        Ver la biblioteca del ecosistema →
+      </a>
     </footer>
   </aside>
 {/if}
@@ -1035,6 +1148,48 @@
     line-height: 1.55;
     max-height: 22rem;
     overflow-y: auto;
+  }
+
+  .library-link {
+    display: inline-block;
+    font-weight: 600;
+    color: var(--edc-color-brand);
+    text-decoration: none;
+  }
+  .library-link:hover {
+    color: var(--edc-color-brand-strong);
+    text-decoration: underline;
+  }
+
+  /* The correction box. Same surface as the read view it replaces, so the text
+     does not jump when the editor opens — a person comparing what they heard
+     against what the machine wrote should not have to re-find their place. */
+  .transcript-editor {
+    background: var(--edc-color-surface);
+    color: var(--edc-color-ink);
+    border: 1px solid var(--edc-color-elevated-border);
+    border-radius: var(--edc-radius-1);
+    padding: 0.5rem;
+    min-height: 14rem;
+    max-height: 26rem;
+    resize: vertical;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    outline: none;
+  }
+  .transcript-editor:focus {
+    box-shadow: 0 0 0 3px var(--edc-focus-ring);
+  }
+  /* Warning-toned, like the "Transcripción automática" chip: this is a fact
+     about where the text came from, not an error. */
+  .edit-invite {
+    border: 1px solid var(--edc-color-warning-outline);
+    background: var(--edc-color-warning-soft);
+    color: var(--edc-color-ink);
+    border-radius: var(--edc-radius-1);
+    padding: 0.375rem 0.5rem;
+    font-size: 0.625rem;
+    line-height: 1.4;
   }
 
   /* Small metadata chips (file kind, ingest progress). Decorative outline, so
