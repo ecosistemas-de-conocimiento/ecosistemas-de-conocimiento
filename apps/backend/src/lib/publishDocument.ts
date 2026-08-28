@@ -108,6 +108,8 @@ export interface PublishableDocument {
   id: number | string
   name?: string | null
   kind?: string | null
+  /** WHAT it is (documento/testimonio/conversacion), next to `kind`'s HOW it arrived. */
+  contentKind?: string | null
   extractedText?: string | null
   organization?: unknown
   uploadedBy?: unknown
@@ -305,6 +307,7 @@ export async function beginPublish(
           docId: String(doc.id),
           organizationId: String(organizationId),
           kind: doc.kind ?? 'unknown',
+          contentKind: doc.contentKind ?? 'documento',
           publication: 'published',
           // See the note on the draft ingest in `collections/Documents.ts`:
           // only `metadata` survives the retrieve round trip, so the title has
@@ -436,6 +439,7 @@ export async function unpublish(
           docId: String(doc.id),
           organizationId: String(organizationId),
           kind: doc.kind ?? 'unknown',
+          contentKind: doc.contentKind ?? 'documento',
           publication: 'draft',
         },
       },

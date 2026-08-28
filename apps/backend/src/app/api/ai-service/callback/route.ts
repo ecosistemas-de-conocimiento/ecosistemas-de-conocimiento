@@ -419,6 +419,8 @@ interface DocumentSnapshot {
   publicationStatus?: unknown
   publishIngestId?: unknown
   kind?: unknown
+  /** WHAT the document is. The corpus graph's person rule keys off it. */
+  contentKind?: unknown
   name?: unknown
   extractedText?: unknown
   ingestId?: unknown
@@ -602,7 +604,9 @@ async function dispatchTranscribeCompleted(
     return
   }
 
-  const { enqueueIngestForDoc } = await import('@/collections/Documents')
+  const { enqueueIngestForDoc, scheduleGraphExtractionForDoc } = await import(
+    '@/collections/Documents'
+  )
   await enqueueIngestForDoc({
     payload,
     docId,
@@ -611,6 +615,29 @@ async function dispatchTranscribeCompleted(
     fresh: {
       name: typeof doc.name === 'string' ? doc.name : null,
       kind: typeof doc.kind === 'string' ? doc.kind : 'audio',
+      contentKind: typeof doc.contentKind === 'string' ? doc.contentKind : null,
+    },
+    extractedText: text,
+  })
+
+  // 🔴 THE AUDIO PATH'S CORPUS-GRAPH TRIGGER, and this is the only place it can
+  // go. `runExtractAndIngest` returns before its own trigger for `kind: 'audio'`
+  // — there is no text yet on that pass and there will not be for minutes to
+  // hours. The transcript exists HERE, so extraction is armed HERE, from the
+  // same function the pdf/docx path uses (ADR §5.1).
+  //
+  // ⚠ Fire-and-forget, and it cannot fail this handler: `scheduleGraphExtractionForDoc`
+  // catches everything. A transcript that landed must not be reported as a
+  // failed callback because the graph could not be built from it.
+  await scheduleGraphExtractionForDoc({
+    payload,
+    docId,
+    organizationId,
+    fresh: {
+      name: typeof doc.name === 'string' ? doc.name : null,
+      // 🔴 The column verbatim. A transcript is very often a `testimonio`, which
+      // is exactly the case where the person rule and the snippet rule bite.
+      contentKind: typeof doc.contentKind === 'string' ? doc.contentKind : null,
     },
     extractedText: text,
   })

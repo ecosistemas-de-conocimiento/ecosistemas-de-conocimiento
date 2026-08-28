@@ -250,6 +250,13 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
 interface DocumentRow {
   id: number | string
   kind?: string | null
+  /**
+   * 🔴 WHAT the document is, and therefore a PRIVACY CONTROL. The corpus
+   * graph's person rule and its snippet rule both key off this column and
+   * nothing else — see the field definition below and
+   * `plan/adr-corpus-graph.md` §5.3, §7.3.4.
+   */
+  contentKind?: string | null
   mode?: string | null
   name?: string | null
   session?: number | string | { id: number | string } | null
@@ -333,6 +340,95 @@ const extractAndIngestHook: CollectionAfterChangeHook = async ({
   setImmediate(() => {
     void runExtractAndIngest(row).catch((err) => {
       console.error('[documents] background extract+ingest failed', row.id, err)
+    })
+  })
+
+  return doc
+}
+
+/**
+ * 🔴 RECLASSIFYING A DOCUMENT MUST DESTROY THE GRAPH IT ALREADY PRODUCED.
+ *
+ * `contentKind` is a PRIVACY CONTROL, and the person rule and the snippet rule
+ * are applied AT EXTRACTION TIME. That leaves one obvious and entirely ordinary
+ * sequence unprotected:
+ *
+ *     upload as `documento`  →  extraction writes `persona` nodes and verbatim
+ *                               `snippet`s  →  someone corrects the field to
+ *                               `testimonio`
+ *
+ * Nothing in the extraction pipeline reacts to a column edit, and the backfill
+ * selects on `graphPromptVersion` and `graphStatus`, neither of which changes.
+ * So the person nodes and the quotations would simply STAY, on a row that is now
+ * a testimony — the exact state ADR §5.3 and §7.3.4 forbid, reached by a state
+ * change rather than by an extraction bug. ADR §10 names this as a residual risk
+ * whose "mitigation is that re-extraction after correcting the field removes
+ * them — but only if someone notices." This hook is the "someone notices" part.
+ *
+ * It does TWO things, and the order matters:
+ *
+ *   1. DELETES this document's mentions and relations IMMEDIATELY. That is the
+ *      part that actually removes the leaked snippets and person edges, and it
+ *      happens without waiting for anyone to run anything.
+ *   2. Clears `graphPromptVersion` and sets `graphStatus: 'pending'`, which
+ *      makes the row STALE so the backfill re-extracts it under the new rules.
+ *
+ * ⚠ IT DOES NOT RE-EXTRACT ON THE SPOT. Re-extraction is `deep`-tier inference,
+ * and a field edit is not a good trigger to spend money on — especially for a
+ * bulk correction over an Investigador's batch. Deleting is free, immediate and
+ * fail-safe; re-extracting is deliberate. The graph is briefly poorer, never
+ * briefly wrong.
+ *
+ * ⚠ Orphan entities left behind are swept by the backfill, not here, for the
+ * same reason the writer does not sweep: another document may still use them.
+ */
+const invalidateGraphOnContentKindChange: CollectionAfterChangeHook = async ({
+  doc,
+  previousDoc,
+  operation,
+  req,
+}) => {
+  if (operation !== 'update') return doc
+  const before = (previousDoc ?? {}) as { contentKind?: unknown }
+  const after = doc as { id?: unknown; contentKind?: unknown; organization?: unknown }
+  if (before.contentKind === undefined) return doc
+  if (before.contentKind === after.contentKind) return doc
+
+  const docId = resolveId(after.id)
+  const organizationId = resolveId(after.organization)
+  if (docId == null || organizationId == null) return doc
+
+  // Detached, like every other graph write: reclassifying a document must not
+  // fail because the graph cleanup did.
+  setImmediate(() => {
+    void (async () => {
+      // 🔴 Tenancy named explicitly on both deletes, as everywhere else.
+      const where: Where = {
+        and: [
+          { organization: { equals: organizationId } },
+          { document: { equals: docId } },
+        ],
+      }
+      await req.payload.delete({ collection: 'graphMentions', where, overrideAccess: true })
+      await req.payload.delete({ collection: 'graphRelations', where, overrideAccess: true })
+      await req.payload.update({
+        collection: 'documents',
+        id: docId as never,
+        data: {
+          graphStatus: 'pending',
+          graphError: null,
+          // Null makes the row match the backfill's staleness predicate.
+          graphPromptVersion: null,
+        },
+        overrideAccess: true,
+        context: { __skipDocsExtract: true },
+      })
+      console.log(
+        `[graph] doc ${docId} reclassified ${String(before.contentKind)} → ` +
+          `${String(after.contentKind)}: graph rows dropped, marked for re-extraction`,
+      )
+    })().catch((err) => {
+      console.error('[graph] could not invalidate the graph for reclassified doc', docId, err)
     })
   })
 
@@ -543,6 +639,68 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
   if (fresh.ingestId) return
 
   await enqueueIngestForDoc({ payload, docId, organizationId, uploadedById, fresh, extractedText })
+
+  // 3. The corpus graph, for the pdf/docx path. The audio path reaches the same
+  //    function from `app/api/ai-service/callback/route.ts`, after the
+  //    transcript has become `extractedText` — there is no text to extract from
+  //    on this pass for audio, which is why the fork above `return`s.
+  //
+  //    🔴 FIRE-AND-FORGET, AND IT NEVER AFFECTS THIS FUNCTION'S OUTCOME. See
+  //    `lib/graph/schedule.ts`: it arms a `setImmediate` and returns.
+  await scheduleGraphExtractionForDoc({
+    payload,
+    docId,
+    organizationId,
+    fresh,
+    extractedText,
+  })
+}
+
+/**
+ * Hand one document to the corpus-graph pipeline, without letting it touch the
+ * ingest path. `plan/adr-corpus-graph.md` §5.1.
+ *
+ * 🔴 EVERY FAILURE MODE ENDS HERE. A missing module, an unconfigured
+ * ai-service, a thrown constructor — all of it is caught and logged. Ingest
+ * already succeeded by the time this runs, and turning a successful upload into
+ * an error the user cannot act on would be strictly worse than a document with
+ * no graph.
+ *
+ * Exported so the audio callback path can call exactly this, rather than
+ * reimplementing the guard.
+ */
+export async function scheduleGraphExtractionForDoc(args: {
+  payload: Awaited<ReturnType<typeof import('payload').getPayload>>
+  docId: string | number
+  organizationId: string | number
+  fresh: Pick<DocumentRow, 'name' | 'contentKind'>
+  extractedText: string
+}): Promise<void> {
+  const { payload, docId, organizationId, fresh, extractedText } = args
+  try {
+    const { scheduleGraphExtraction } = await import('@/lib/graph/schedule')
+    await payload.update({
+      collection: 'documents',
+      id: docId as never,
+      data: { graphStatus: 'pending', graphError: null },
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+    scheduleGraphExtraction({
+      payload: payload as never,
+      docId,
+      organizationId,
+      // 🔴 The column verbatim, with NO `?? 'documento'` fallback. The person
+      // rule compares `=== 'documento'` and therefore fails CLOSED on a missing
+      // value; defaulting here would turn that safe direction into the unsafe
+      // one.
+      contentKind: fresh.contentKind ?? null,
+      text: extractedText,
+      title: fresh.name ?? null,
+    })
+  } catch (err) {
+    console.error('[graph] could not schedule extraction for doc', docId, err)
+  }
 }
 
 /**
@@ -557,7 +715,13 @@ export async function enqueueIngestForDoc(args: {
   organizationId: string | number
   /** Who uploaded it. The other half — drafts are PRIVATE per person. */
   uploadedById: string | number
-  fresh: Pick<DocumentRow, 'name' | 'kind'>
+  /**
+   * ⚠ `contentKind` IS PART OF THIS SLICE, not an optional extra. It rides into
+   * ai-service chunk metadata below so a retrieve can filter on
+   * `{ contentKind: 'testimonio' }`, and the graph pipeline reads the same
+   * column as its privacy control.
+   */
+  fresh: Pick<DocumentRow, 'name' | 'kind' | 'contentKind'>
   extractedText: string
 }): Promise<void> {
   const { payload, docId, organizationId, uploadedById, fresh, extractedText } = args
@@ -628,6 +792,13 @@ export async function enqueueIngestForDoc(args: {
             docId: String(docId),
             organizationId: String(organizationId),
             kind: fresh.kind,
+            /**
+             * WHAT it is, next to `kind`'s HOW it arrived. Rides along so a
+             * retrieve can filter on `{ contentKind: 'testimonio' }` without an
+             * ai-service change — chunk metadata is jsonb behind a GIN
+             * `jsonb_path_ops` index, and consumer keys win the merge.
+             */
+            contentKind: fresh.contentKind ?? 'documento',
             publication: 'draft',
             /**
              * 🔴 THE CITATION'S HUMAN NAME. Without it `chat-engine` falls all
@@ -1086,6 +1257,35 @@ export const Documents: CollectionConfig = {
       ],
     },
     {
+      /**
+       * 🔴 WHAT THIS DOCUMENT IS, as opposed to `kind`, which is HOW it arrived.
+       * `kind` is a file format (pdf/docx/audio/markdown); this is the content
+       * type, and it is a PRIVACY CONTROL, not a label.
+       *
+       * The corpus graph's person rule keys off this column and nothing else:
+       * a `testimonio` never produces `persona` nodes. That rule is a column
+       * lookup precisely so it can be audited instead of trusted — asking a
+       * model "is this person public?" is unreliable and fails open, asking
+       * "is this document a testimony?" is a SELECT. See
+       * `plan/adr-corpus-graph.md` § 5.3.
+       *
+       * ⚠ `testimonio` has no producer yet — it arrives with the Investigador
+       * role (`plan/anonimizacion-y-voces.md` §3.4), and `conversacion` arrives
+       * with conversation ingestion (§3.0). The values exist now so the graph's
+       * rules and the library's filters are written once rather than twice.
+       */
+      name: 'contentKind',
+      type: 'select',
+      required: true,
+      defaultValue: 'documento',
+      index: true,
+      options: [
+        { label: 'Documento', value: 'documento' },
+        { label: 'Voz (testimonio)', value: 'testimonio' },
+        { label: 'Conversación', value: 'conversacion' },
+      ],
+    },
+    {
       name: 'mode',
       type: 'select',
       required: true,
@@ -1180,6 +1380,84 @@ export const Documents: CollectionConfig = {
     },
     {
       /**
+       * 🔴 THE CORPUS-GRAPH PIPELINE'S STATE, and it exists for one reason:
+       * extraction has NOWHERE DURABLE TO RUN.
+       *
+       * There is no job queue in `apps/backend` (see `enqueueIngestForDoc`), so
+       * extraction is a `setImmediate` and a backend restart mid-run LOSES IT.
+       * That is not solved, it is made visible: this column is what turns a lost
+       * run into something an operator and the backfill can find, instead of a
+       * document that quietly contributes nothing to the graph forever.
+       *
+       *   n/a         never scheduled — a markdown note, or a row that predates
+       *               the graph
+       *   pending     scheduled; the deferred run has not started
+       *   extracting  windows are being sent to the model
+       *   ready       entities, mentions and relations are written
+       *   failed      terminal, reason in `graphError`, retryable via
+       *               POST /api/documents/:id/graph-retry
+       *   skipped     nothing to extract from (no usable text). NOT an error.
+       *
+       * ⚠ SEPARATE FROM `ingestStatus`, deliberately. They can and do disagree:
+       * a document can be `ready` for retrieval and `failed` for the graph. One
+       * shared column would force a graph failure to look like a broken upload.
+       */
+      name: 'graphStatus',
+      type: 'select',
+      required: true,
+      defaultValue: 'n/a',
+      index: true,
+      options: [
+        { label: 'N/A (sin grafo)', value: 'n/a' },
+        { label: 'En cola', value: 'pending' },
+        { label: 'Extrayendo', value: 'extracting' },
+        { label: 'Listo', value: 'ready' },
+        { label: 'Falló', value: 'failed' },
+        { label: 'Omitido (sin texto)', value: 'skipped' },
+      ],
+    },
+    {
+      /**
+       * Why extraction stopped, as `code: message` — the same shape as
+       * `ingestError`, so the frontend maps the leading code to Spanish copy the
+       * same way.
+       */
+      name: 'graphError',
+      type: 'textarea',
+      admin: {
+        readOnly: true,
+        description: 'Por qué falló la última extracción del grafo. `code: message`.',
+      },
+    },
+    {
+      /**
+       * 🔴 WHAT MAKES A CORPUS-WIDE RE-RUN POSSIBLE. Stamped with
+       * `GRAPH_PROMPT_VERSION` on every run.
+       *
+       * Changing the extraction prompt invalidates the entities it produced. A
+       * corpus with no stamp would be half-extracted by two different contracts
+       * with nothing able to tell the halves apart; the backfill selects on
+       * exactly this column (`lib/graph/backfill.ts`).
+       */
+      name: 'graphPromptVersion',
+      type: 'text',
+      index: true,
+      admin: {
+        readOnly: true,
+        description:
+          'Versión del prompt de extracción con la que se construyó el grafo de este documento.',
+      },
+    },
+    {
+      name: 'graphExtractedAt',
+      type: 'date',
+      admin: {
+        readOnly: true,
+        description: 'Cuándo terminó la última extracción del grafo.',
+      },
+    },
+    {
+      /**
        * The audio-service job id — the other join-back key.
        *
        * ⚠ Also the guard against a STALE callback. A retry mints a new job, and
@@ -1231,7 +1509,14 @@ export const Documents: CollectionConfig = {
   ],
   hooks: {
     beforeValidate: [bindDocumentToEcosystem],
-    afterChange: [extractAndIngestHook],
+    /**
+     * ⚠ `invalidateGraphOnContentKindChange` runs on EVERY update, and it is
+     * cheap: it returns immediately unless `contentKind` actually changed. It is
+     * NOT folded into `extractAndIngestHook` because that hook is guarded by
+     * `__skipDocsExtract`, which every internal status write sets — and a
+     * privacy invalidation must not be skippable by an internal write path.
+     */
+    afterChange: [extractAndIngestHook, invalidateGraphOnContentKindChange],
     /**
      * ✅ CORPUS CLEANUP ON DELETE. Deleting a row used to leave its chunks
      * embedded and retrievable — the document vanished from the UI while the
@@ -1251,7 +1536,12 @@ export const Documents: CollectionConfig = {
      */
     afterDelete: [retireDeletedDocumentHook],
   },
-  endpoints: [publishEndpoint(), unpublishEndpoint(), retryIngestEndpoint()],
+  endpoints: [
+    publishEndpoint(),
+    unpublishEndpoint(),
+    retryIngestEndpoint(),
+    retryGraphEndpoint(),
+  ],
 }
 
 // ---------------------------------------------------------------------------
@@ -1489,6 +1779,166 @@ function retryIngestEndpoint(): Endpoint {
       })
 
       return json({ ok: true, ingestStatus: 'pending' }, 202)
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/documents/:id/graph-retry — re-run the CORPUS-GRAPH extraction
+// ---------------------------------------------------------------------------
+
+/** The narrow slice of a row {@link planGraphRetry} reasons about. */
+export interface GraphRetryableDocument {
+  extractedText?: string | null
+  graphStatus?: string | null
+  /** Last write to the row — used to tell a live run from an abandoned one. */
+  updatedAt?: string | null
+  organization?: unknown
+  contentKind?: string | null
+  name?: string | null
+}
+
+/**
+ * 🔴 HOW LONG AN IN-FLIGHT EXTRACTION MAY LOOK ALIVE.
+ *
+ * ⚠ WITHOUT THIS, THE RETRY ENDPOINT CANNOT FIX THE ONE THING IT EXISTS FOR.
+ * The design's headline risk is that a backend restart mid-extraction loses the
+ * run (ADR §5.1), and the stated mitigation is "retry re-runs one document".
+ * But a lost run leaves the row at `graphStatus: 'extracting'` forever — there
+ * is no heartbeat and nothing else moves it — so a retry rule that simply
+ * refuses `extracting` refuses precisely the state it was built to rescue.
+ *
+ * 20 minutes is comfortably past a worst-case real run: `GRAPH_EXTRACT_MAX_WINDOWS`
+ * (8) windows, each bounded by `GRAPH_EXTRACT_TIMEOUT_MS` (180 s) ≈ 24 minutes
+ * at the absolute ceiling — but that ceiling means every window timed out, which
+ * is a failure, not progress. A run doing real work updates the row when it
+ * finishes; one that has not touched the row in 20 minutes is not coming back.
+ */
+export const GRAPH_STALE_RUN_MS = 20 * 60 * 1000
+
+function msSince(timestamp: unknown): number | null {
+  if (typeof timestamp !== 'string' || !timestamp) return null
+  const t = Date.parse(timestamp)
+  return Number.isFinite(t) ? Date.now() - t : null
+}
+
+/**
+ * May this document's graph be rebuilt right now, and why not?
+ *
+ * A pure function for the same reason `planIngestRetry` is one: the rule is
+ * written in one place and can be tested without an HTTP request.
+ *
+ * ⚠ THE RULE IS DELIBERATELY WIDER THAN `planIngestRetry`'S. Ingest retry
+ * demands a TERMINAL failure, because re-running a live transcription costs
+ * CPU-hours and leaves two callbacks racing for one row. Graph extraction has
+ * neither problem: a re-run replaces the document's mentions and relations
+ * wholesale in one transaction (ADR §5.5), so running it over a `ready` document
+ * is how you adopt a new prompt version on one document without a corpus-wide
+ * backfill.
+ *
+ * Two refusals remain, and both are real:
+ *   · a run that is IN FLIGHT AND RECENT (`pending` or `extracting`, touched
+ *     within {@link GRAPH_STALE_RUN_MS}). A second one would race the first's
+ *     wholesale replace and could interleave two documents' worth of writes.
+ *     ⚠ `pending` counts: between the status write and the `setImmediate`
+ *     firing there is a real window, and a retry landing in it arms two runs.
+ *   · no `extractedText` — there is nothing to extract from. The fix is an
+ *     ingest retry, not a graph retry, and saying so is more useful than
+ *     silently producing an empty graph.
+ *
+ * 🔴 A STALE in-flight row is ALLOWED THROUGH, and that is the point: a lost
+ * run parks at `extracting` with nothing to move it, so refusing that state
+ * unconditionally would make this endpoint useless for the exact failure the
+ * ADR built it to cover. See {@link GRAPH_STALE_RUN_MS}.
+ */
+export function planGraphRetry(doc: GraphRetryableDocument): { reason: string } | null {
+  const inFlight = doc.graphStatus === 'extracting' || doc.graphStatus === 'pending'
+  if (inFlight) {
+    const age = msSince(doc.updatedAt)
+    // An unreadable/absent timestamp is treated as STALE rather than as live:
+    // the alternative is a row that can never be retried, and a duplicate run
+    // is recoverable where a permanently stuck document is not.
+    if (age !== null && age < GRAPH_STALE_RUN_MS) {
+      return { reason: 'Ya se está construyendo el grafo de este documento.' }
+    }
+  }
+  const hasText = typeof doc.extractedText === 'string' && doc.extractedText.trim().length > 0
+  if (!hasText) {
+    return { reason: 'Este documento todavía no tiene texto del que extraer un grafo.' }
+  }
+  return null
+}
+
+/**
+ * Rebuild one document's contribution to the corpus graph.
+ *
+ * ⚠ THE ORDINARY `afterChange` HOOK CANNOT DO THIS. It drives the ingest
+ * pipeline, and for a document that already has text and an `ingestId` it
+ * returns early by design. So this endpoint schedules the extraction itself,
+ * through the same `scheduleGraphExtractionForDoc` seam the upload path uses.
+ *
+ * Returns 202 as soon as the run is armed. Poll `graphStatus`.
+ */
+function retryGraphEndpoint(): Endpoint {
+  return {
+    path: '/:id/graph-retry',
+    method: 'post',
+    handler: async (req) => {
+      const json = (body: unknown, status: number): Response =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+          },
+        })
+      const fail = (status: number, message: string): Response =>
+        json({ errors: [{ message }] }, status)
+
+      const user = req.user
+      if (!user) return fail(401, 'Authentication required.')
+
+      const id = (req.routeParams as { id?: string } | undefined)?.id
+      if (!id) return fail(400, 'Missing document id.')
+
+      // ⚠ Read UNDER ACCESS CONTROL, exactly like publish and retry.
+      // `visibleToCaller` 404s a document the caller may not see, so this
+      // cannot be used to probe ids.
+      const doc = (await req.payload
+        .findByID({
+          collection: 'documents',
+          id: id as never,
+          depth: 0,
+          overrideAccess: false,
+          user,
+          req,
+        })
+        .catch(() => null)) as unknown as (GraphRetryableDocument & { uploadedBy?: unknown }) | null
+
+      if (!doc) return fail(404, 'No such document.')
+      if (String(relationId(doc.uploadedBy) ?? '') !== String(user.id)) {
+        return fail(403, 'Only the person who uploaded a document can rebuild its graph.')
+      }
+
+      const refusal = planGraphRetry(doc)
+      if (refusal) return fail(409, refusal.reason)
+
+      const organizationId = relationId(doc.organization)
+      if (organizationId == null) {
+        // 🔴 No ecosistema means no tenant to scope the graph rows to. Refuse
+        // rather than guess: a guessed organization is a cross-tenant write.
+        return fail(409, 'This document has no ecosistema, so it has no graph scope.')
+      }
+
+      await scheduleGraphExtractionForDoc({
+        payload: req.payload,
+        docId: id,
+        organizationId,
+        fresh: { name: doc.name ?? null, contentKind: doc.contentKind ?? null },
+        extractedText: doc.extractedText ?? '',
+      })
+
+      return json({ ok: true, graphStatus: 'pending' }, 202)
     },
   }
 }

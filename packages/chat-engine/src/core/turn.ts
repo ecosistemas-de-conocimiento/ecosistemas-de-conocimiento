@@ -9,7 +9,7 @@
  * of the strings come from `EngineConfig` so a consumer can override them.
  */
 
-import type { EngineConfig } from './config.js';
+import { DEFAULT_ENGINE_CONFIG, type EngineConfig } from './config.js';
 import type { ChatHistoryRow, RetrievedChunk, SyncChatMessage, Provenance } from './types.js';
 
 /**
@@ -37,6 +37,19 @@ export interface BuildTurnArgs {
   history: ChatHistoryRow[];
   summaryText: string;
   retrievedMatches: RetrievedChunk[];
+  /**
+   * OPTIONAL pre-rendered structured-context block, produced by whatever
+   * `graphProvider` the consumer injected. OPAQUE to the engine: it is a
+   * string of already-formatted prose, and the engine never inspects, parses
+   * or knows what it describes.
+   *
+   * Rendered as its own labelled block right after the summary and BEFORE the
+   * retrieved block. It carries NO `[N]` markers: the citation ordinals are
+   * assigned by array index over `retrievedMatches` only, and this block must
+   * not disturb them. Absent/blank → the assembled turn is byte-identical to
+   * one built without the field at all.
+   */
+  graphContext?: string;
   inlineRefsText?: string;
   userMessage: string;
   teamInstructions?: string;
@@ -79,6 +92,18 @@ export function buildChatTurn(args: BuildTurnArgs): BuiltTurn {
   const contextBlocks: string[] = [];
   if (args.summaryText && args.summaryText.trim()) {
     contextBlocks.push(`${config.blockHeaders.summary}\n${args.summaryText}`);
+  }
+  // Optional structured/graph block — after the summary, BEFORE the retrieved
+  // chunks. Its position is deliberate (it frames the corpus before the
+  // individual passages) and it is header-only text: the `[N]` ordinals below
+  // are still assigned purely by index over `retrievedMatches`, so wiring a
+  // graph provider in cannot renumber a citation.
+  if (args.graphContext && args.graphContext.trim()) {
+    const graphHeader =
+      config.blockHeaders.graph ?? DEFAULT_ENGINE_CONFIG.blockHeaders.graph ?? '';
+    contextBlocks.push(
+      graphHeader ? `${graphHeader}\n${args.graphContext}` : args.graphContext,
+    );
   }
   if (args.retrievedMatches.length > 0) {
     contextBlocks.push(

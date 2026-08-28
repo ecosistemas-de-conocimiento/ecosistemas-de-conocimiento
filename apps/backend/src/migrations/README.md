@@ -37,17 +37,21 @@ would try to reproduce it, so that was the worst possible split.
 Expect the four indexes to disappear while it is on, and cut a migration rather
 than leaving a database in that state.
 
-## 🔴 Four indexes in the baseline are hand-written, and push does not know them
+## 🔴 Seven indexes are hand-written, and push does not know them
 
-Payload's field config has no compound index, so these four were appended to the
-generated `up()` by hand, in a clearly-marked block at the bottom of the file:
+Payload's field config has no compound index, so these were appended to a
+generated `up()` by hand, in a clearly-marked block at the bottom of the file.
+Four are in the baseline; three arrived with the corpus graph.
 
-| index | table | columns |
-|---|---|---|
-| `ratings_message_user_unq` | `ratings` | `message_id, user_id` |
-| `memberships_user_organization_unq` | `memberships` | `user_id, organization_id` |
-| `ai_service_callbacks_natural_key_unq` | `ai_service_callbacks` | `correlation_key, event_key, event` |
-| `documents_organization_publication_status_idx` | `documents` | `organization_id, publication_status` |
+| index | table | columns | migration |
+|---|---|---|---|
+| `ratings_message_user_unq` | `ratings` | `message_id, user_id` | baseline |
+| `memberships_user_organization_unq` | `memberships` | `user_id, organization_id` | baseline |
+| `ai_service_callbacks_natural_key_unq` | `ai_service_callbacks` | `correlation_key, event_key, event` | baseline |
+| `documents_organization_publication_status_idx` | `documents` | `organization_id, publication_status` | baseline |
+| `graph_entities_org_type_key_unq` | `graph_entities` | `organization_id, type, canonical_key` | `20260828_083851_corpus_graph` |
+| `graph_mentions_document_entity_unq` | `graph_mentions` | `document_id, entity_id` | `20260828_083851_corpus_graph` |
+| `graph_relations_document_edge_unq` | `graph_relations` | `document_id, from_entity_id, to_entity_id, type` | `20260828_083851_corpus_graph` |
 
 Two consequences, both easy to trip over:
 
@@ -82,6 +86,62 @@ error in the admin panel. The indexes close the race underneath them.
   `ai_service_callbacks_natural_key_unq` in the raw driver error. Renaming the
   index silently narrows the dedupe to the other error shapes it checks for.
 - `memberships (user_id, organization_id)` keeps role resolution unambiguous.
+
+### The three graph ones are correctness for the same reason
+
+`lib/graph/writer.ts` de-duplicates in application code too — a find-then-create
+for entities, a delete-then-insert for one document's mentions and relations —
+and the race is not hypothetical: re-extracting one document while the backfill
+sweeps the same ecosistema is the intended way to use both tools.
+`plan/adr-corpus-graph.md` §4.2.
+
+- `graph_entities (organization_id, type, canonical_key)` **is** node identity
+  (ADR §4.1, D5). Two concurrent extractions that both name "consulta previa"
+  would otherwise create two nodes, and every support count over the graph is
+  then split between them. That matters most for `GRAPH_MIN_SUPPORT` (§7.3.3),
+  where a split count can drop a legitimate edge below the visibility
+  threshold. The writer catches the losing INSERT and adopts the winner's row,
+  so this index is what makes that recovery possible instead of a duplicate.
+- `graph_mentions (document_id, entity_id)` keeps the table one row per
+  **pair**, not per occurrence. Support is a count of DISTINCT DOCUMENTS, so a
+  duplicated pair makes one document look like two independent sources.
+- `graph_relations (document_id, from_entity_id, to_entity_id, type)` keeps one
+  edge per document, for the same reason.
+  ⚠ It does **not** collapse a symmetric `A→B` / `B→A` pair — those are
+  genuinely different tuples. The writer orders the endpoints ascending for
+  `relacionado_con` before insert, and that ordering is what makes this index
+  cover the symmetric case too.
+
+Verified the same way the baseline's were: `payload migrate` against a scratch
+database, then deliberately conflicting `INSERT`s through `psql` to confirm each
+one rejects the second write (and that a different `type` with the same
+`canonical_key` is still allowed).
+
+## 🔴 The corpus-graph migration also REWRITES eight foreign keys by hand
+
+`migrate:create` emitted every graph foreign key as `ON DELETE set null`,
+against columns it declared `NOT NULL` in the same statement. Postgres applies
+the referential action first and only then checks the constraint, so the delete
+raises `23502 null value in column "document_id" violates not-null constraint`.
+
+Concretely: **`DELETE /api/documents/:id` 500s for any document extraction has
+touched** — and because the delete never completes, `retireDeletedDocumentHook`
+never runs either, so the document's chunks stay retrievable in ai-service while
+the user believes it is gone.
+
+A second `db.execute` block in `20260828_083851_corpus_graph.ts` drops and
+recreates all eight with `ON DELETE cascade`, which is both correct here (a
+mention is a statement *about* a document and is meaningless without it) and the
+existing house pattern — every pre-existing FK pointing at `documents` in the
+baseline is already `cascade`.
+
+⚠ **The `.json` snapshot still says `set null`,** because the snapshot is
+generated from Payload's drizzle schema and that is what the schema says. Same
+class of divergence as the hand-written indexes, and the same consequence: a
+`PAYLOAD_ALLOW_PUSH=1` boot can revert these to `set null` and re-break document
+deletion silently. Verified by `DELETE`ing a document with mentions and
+relations against the scratch database and confirming both cascade away while
+the shared `graph_entities` rows survive.
 
 ⚠ They are plain `UNIQUE`, not partial. An earlier draft of this file called for
 "partial unique indexes"; a `WHERE` clause buys nothing, because every column

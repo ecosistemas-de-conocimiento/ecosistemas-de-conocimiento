@@ -5,6 +5,8 @@
  *   condense (anaphora → standalone query)
  *     → scopeHierarchy (deterministic Tier-1 summary + retrieval corpora)
  *     → retrieve (corpora + per-thread corpus + ai-service `filter`)
+ *       ‖ optional graphProvider (same condensed query, run CONCURRENTLY)
+ *       → fuseMatches (RRF; a no-op merge when the graph path is absent)
  *     → resolveEntity for each @-mention ref (clean text)
  *     → buildChatTurn (USER-TURN INJECTION — the load-bearing invariant)
  *     → generate (sync) | streaming passthrough
@@ -25,8 +27,38 @@ import type { ContextRef, ContextScope } from './types.js';
 import type { DomainAdapter } from './adapter.js';
 import type { EngineConfig } from './config.js';
 import { condenseQuery } from './condense.js';
-import { retrieveContext } from './retrieve.js';
+import { fuseMatches, retrieveContext } from './retrieve.js';
 import { buildChatTurn } from './turn.js';
+
+/**
+ * What an optional second retrieval path contributes to a turn. Both fields
+ * are optional: a provider may contribute chunks, a prose block, both, or
+ * (returning `null`) nothing at all.
+ */
+export interface GraphProviderResult {
+  /** A second RANKED list of chunks, fused with the vector list via `fuseMatches`. */
+  chunks?: RetrievedChunk[];
+  /**
+   * A pre-rendered context block. OPAQUE to the engine — it is injected into
+   * the user turn verbatim under its own header and never inspected.
+   */
+  context?: string;
+}
+
+/**
+ * The optional graph-retrieval hook. Called with the CONDENSED query (so it
+ * benefits from step 1's anaphora rewrite), concurrently with the vector
+ * retrieve.
+ *
+ * The engine knows nothing about what is on the other side of this callback —
+ * no entities, no domain vocabulary, no transport. It is best-effort like
+ * every other context step: rejecting, hanging past the consumer's own timeout
+ * or matching nothing all produce a normal answer with no message to the user.
+ * Enforcing a timeout is the provider's job, not the engine's.
+ */
+export type GraphProvider = (
+  condensedQuery: string,
+) => Promise<GraphProviderResult | null>;
 
 export interface RespondArgs {
   config: EngineConfig;
@@ -65,6 +97,18 @@ export interface RespondArgs {
   retrievalFilter?: Record<string, string | number | boolean>;
 
   /**
+   * OPTIONAL second retrieval path (ADDITIVE; omit it and nothing changes).
+   * Runs CONCURRENTLY with `retrieveContext` — the latency of the extra call
+   * is the cost being managed, so it must not be serialised behind the vector
+   * retrieve — and is called with the condensed query. Its chunks are fused
+   * with the vector matches by `fuseMatches` (RRF); its `context` string rides
+   * into the user turn as its own labelled block.
+   *
+   * Fully opaque to the engine, and fully best-effort.
+   */
+  graphProvider?: GraphProvider;
+
+  /**
    * Persist the grounding passage of each retrieved chunk into the provenance
    * (drives the citation card's quoted `<blockquote>`). ADDITIVE (≥0.3.0);
    * forwarded verbatim to `buildChatTurn`. `true` (default) stores full text,
@@ -85,6 +129,11 @@ export interface PreparedTurn {
   retrievalQuery: string;
   /** The deterministic Tier-1 summary that rode in the user turn. */
   summaryText: string;
+  /**
+   * The optional graph block that rode in the user turn (for tracing). `''`
+   * when no `graphProvider` was supplied, or it contributed no block.
+   */
+  graphContext: string;
 }
 
 export interface RespondResult extends PreparedTurn {
@@ -135,6 +184,7 @@ export async function prepareTurn(args: RespondArgs): Promise<PreparedTurn> {
     teamInstructions,
     threadInstructions,
     retrievalFilter,
+    graphProvider,
     includePassageText,
   } = args;
 
@@ -162,16 +212,34 @@ export async function prepareTurn(args: RespondArgs): Promise<PreparedTurn> {
     /* best-effort: degrade to tenant-/thread-only context */
   }
 
-  // 3. Scoped retrieval (resolver corpora + per-thread corpus + filter).
-  const matches = await retrieveContext({
-    aiClient,
-    orgId,
-    fallbackScopeId: scopeId ?? orgId,
-    corpora,
-    threadId,
-    query: retrievalQuery,
-    ...(retrievalFilter ? { filter: retrievalFilter } : {}),
-  });
+  // 3. Scoped retrieval (resolver corpora + per-thread corpus + filter), and —
+  //    when the consumer injected one — the optional graph path, CONCURRENTLY.
+  //    Not sequentially: the graph path's extra round trip is the cost the ADR
+  //    manages, and running it alongside hides most of that latency.
+  //    Best-effort like every other step: `.catch(() => null)` means an
+  //    erroring, timing-out or empty-handed provider silently degrades to the
+  //    plain vector turn, with no message to the user.
+  const [vectorMatches, graph] = await Promise.all([
+    retrieveContext({
+      aiClient,
+      orgId,
+      fallbackScopeId: scopeId ?? orgId,
+      corpora,
+      threadId,
+      query: retrievalQuery,
+      ...(retrievalFilter ? { filter: retrievalFilter } : {}),
+    }),
+    graphProvider
+      ? Promise.resolve()
+          .then(() => graphProvider(retrievalQuery))
+          .catch(() => null)
+      : Promise.resolve(null),
+  ]);
+
+  // Fuse the two ranked lists. With no graph chunks this is byte-identical to
+  // the plain descending-score merge `retrieveContext` already returned.
+  const matches = fuseMatches(vectorMatches, graph?.chunks ?? []);
+  const graphContext = graph?.context?.trim() ? graph.context : '';
 
   // 4. Resolve @-mention refs into clean text (best-effort).
   const inlineRefsText = await resolveInlineRefs(adapter, inlineRefs);
@@ -182,6 +250,9 @@ export async function prepareTurn(args: RespondArgs): Promise<PreparedTurn> {
     history,
     summaryText,
     retrievedMatches: matches,
+    // Absent → `buildChatTurn` renders exactly what it rendered before the
+    // graph path existed.
+    ...(graphContext ? { graphContext } : {}),
     inlineRefsText,
     userMessage,
     teamInstructions,
@@ -189,7 +260,7 @@ export async function prepareTurn(args: RespondArgs): Promise<PreparedTurn> {
     ...(includePassageText !== undefined ? { includePassageText } : {}),
   });
 
-  return { messages, provenance, matches, retrievalQuery, summaryText };
+  return { messages, provenance, matches, retrievalQuery, summaryText, graphContext };
 }
 
 /**

@@ -80,6 +80,14 @@ export interface EngineConfig {
     summary: string;
     retrieved: string;
     inlineRefs: string;
+    /**
+     * Header for the OPTIONAL structured/graph context block (`graphContext`
+     * on `buildChatTurn`). Optional in the type so a consumer's existing
+     * config object literal still typechecks; `buildChatTurn` falls back to
+     * the default below when it is absent. The block only renders when a
+     * `graphContext` string is actually supplied.
+     */
+    graph?: string;
   };
 
   /** Header injected before team/thread custom instructions in the system prompt. */
@@ -122,6 +130,7 @@ export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
     summary: 'Contexto del proyecto/organización:',
     retrieved: 'Contexto recuperado de la base de conocimiento:',
     inlineRefs: 'Entidades citadas por el usuario (@):',
+    graph: 'Contexto del grafo de conocimiento:',
   },
   teamInstructionsHeader: 'Instrucciones del equipo para este asistente:',
   placeholderTitles: ['', 'chat', 'nuevo chat'],

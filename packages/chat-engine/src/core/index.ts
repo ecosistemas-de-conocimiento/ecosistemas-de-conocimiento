@@ -60,16 +60,29 @@ export {
   deriveTitleFromText,
 } from './title.js';
 
-// Retrieve orchestration
-export type { RetrieveContextArgs } from './retrieve.js';
-export { retrieveContext, threadCorpus } from './retrieve.js';
+// Retrieve orchestration + the pure two-list fusion (RRF)
+export type { RetrieveContextArgs, FuseMatchesOptions } from './retrieve.js';
+export {
+  retrieveContext,
+  threadCorpus,
+  fuseMatches,
+  DEFAULT_MERGED_CAP,
+  DEFAULT_PER_CORPUS_TOPK,
+  DEFAULT_RRF_K,
+} from './retrieve.js';
 
 // Turn assembly (the load-bearing invariant)
 export type { BuildTurnArgs, BuiltTurn } from './turn.js';
 export { buildChatTurn, buildSystemPrompt } from './turn.js';
 
 // Top-level orchestrator (condense → scope → retrieve → turn → generate)
-export type { RespondArgs, PreparedTurn, RespondResult } from './respond.js';
+export type {
+  RespondArgs,
+  PreparedTurn,
+  RespondResult,
+  GraphProvider,
+  GraphProviderResult,
+} from './respond.js';
 export { respond, prepareTurn } from './respond.js';
 
 // Generic corpus-sync scaffolding (the advanced-RAG ingest seam)

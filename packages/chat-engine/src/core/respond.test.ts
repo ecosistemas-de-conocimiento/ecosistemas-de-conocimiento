@@ -396,3 +396,300 @@ describe('corpus-sync', () => {
     expect(r.synced).toBe(0);
   });
 });
+
+// ── fuseMatches — RRF over two ranked lists ───────────────────────────────────
+
+import { fuseMatches, DEFAULT_MERGED_CAP } from './retrieve.js';
+import type { RetrievedChunk } from './types.js';
+import type { BuildTurnArgs } from './turn.js';
+import type { GraphProvider } from './respond.js';
+
+const chunk = (
+  chunkId: string,
+  score: number,
+  extra: Partial<RetrievedChunk> = {},
+): RetrievedChunk => ({
+  documentId: `doc-${chunkId}`,
+  chunkId,
+  score,
+  text: `text-${chunkId}`,
+  corpus: 'kb',
+  ...extra,
+});
+
+describe('fuseMatches — no graph leg is TODAY’s behaviour, exactly', () => {
+  it('with an empty graph list, returns the plain descending-score sort + cap', () => {
+    const vector = [
+      chunk('c', 0.30), chunk('a', 0.90), chunk('j', 0.05), chunk('b', 0.55),
+      chunk('e', 0.20), chunk('h', 0.10), chunk('d', 0.25), chunk('i', 0.07),
+      chunk('f', 0.15), chunk('g', 0.12),
+    ];
+    // Literally the expression `retrieveContext` used before fusion existed.
+    const today = [...vector].sort((a, b) => b.score - a.score).slice(0, 8);
+
+    const fused = fuseMatches(vector, []);
+    expect(fused).toEqual(today);
+    expect(fused.map((m) => m.chunkId)).toEqual(today.map((m) => m.chunkId));
+    expect(fused.length).toBe(DEFAULT_MERGED_CAP);
+  });
+
+  it('with an empty graph list, keeps ties in input order and does NOT dedupe', () => {
+    // Both invariants of the plain sort: `Array#sort` is stable, and nothing
+    // was ever deduped by chunkId on this path.
+    const vector = [chunk('t1', 0.5), chunk('t2', 0.5), chunk('t1', 0.5), chunk('t3', 0.9)];
+    const today = [...vector].sort((a, b) => b.score - a.score);
+    const fused = fuseMatches(vector, []);
+    expect(fused.map((m) => m.chunkId)).toEqual(today.map((m) => m.chunkId));
+    expect(fused.map((m) => m.chunkId)).toEqual(['t3', 't1', 't2', 't1']);
+  });
+
+  it('does not mutate either input array', () => {
+    const vector = [chunk('lo', 0.1), chunk('hi', 0.9)];
+    const graph = [chunk('g', 0.4)];
+    fuseMatches(vector, []);
+    fuseMatches(vector, graph);
+    expect(vector.map((m) => m.chunkId)).toEqual(['lo', 'hi']);
+    expect(graph.map((m) => m.chunkId)).toEqual(['g']);
+  });
+
+  it('honours a mergedCap override on both paths', () => {
+    const vector = [chunk('a', 0.9), chunk('b', 0.8), chunk('c', 0.7)];
+    expect(fuseMatches(vector, [], { mergedCap: 2 }).map((m) => m.chunkId)).toEqual(['a', 'b']);
+    expect(fuseMatches(vector, [chunk('d', 0.6)], { mergedCap: 2 }).length).toBe(2);
+  });
+});
+
+describe('fuseMatches — RRF when the graph leg has entries', () => {
+  it('a chunk ranked #2 in BOTH legs beats a chunk ranked #1 in one', () => {
+    // rrf(shared) = 1/62 + 1/62 > rrf(a) = rrf(c) = 1/61.
+    const vector = [chunk('a', 0.90), chunk('shared', 0.80)];
+    const graph = [chunk('c', 0.90), chunk('shared', 0.70)];
+    expect(fuseMatches(vector, graph).map((m) => m.chunkId)).toEqual(['shared', 'a', 'c']);
+  });
+
+  it('an unranked tie block does not outrank the other leg’s genuine #1', () => {
+    // Modified competition ranking: the 2-way tie shares the LAST rank of its
+    // group (2), so each member scores 1/62 < 1/61. Standard competition
+    // ranking (both at 1) or ordinal ranking (1 then 2) would put `a` first.
+    const vector = [chunk('a', 0.5), chunk('b', 0.5)];
+    const graph = [chunk('c', 0.9)];
+    expect(fuseMatches(vector, graph).map((m) => m.chunkId)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('dedupes by chunkId, keeping the richer record', () => {
+    const vector = [chunk('same', 0.9), chunk('v', 0.4)];
+    const graph = [
+      chunk('same', 0.3, { text: 'a much longer grounding passage', metadata: { path: 'graph' } }),
+    ];
+    const fused = fuseMatches(vector, graph);
+    expect(fused.filter((m) => m.chunkId === 'same').length).toBe(1);
+    const kept = fused.find((m) => m.chunkId === 'same')!;
+    expect(kept.metadata).toEqual({ path: 'graph' });
+    expect(kept.text).toBe('a much longer grounding passage');
+  });
+
+  it('orders by RRF but never rewrites a chunk’s own score', () => {
+    // `score` is persisted into provenance and rendered as a relevance % — it
+    // has to stay on the retriever's scale, not become ~0.03.
+    const fused = fuseMatches([chunk('v', 0.87)], [chunk('g', 0.61)]);
+    expect(fused.map((m) => m.score)).toEqual([0.87, 0.61]);
+  });
+
+  it('works with an empty vector leg (graph-only turn)', () => {
+    const fused = fuseMatches([], [chunk('g2', 0.4), chunk('g1', 0.8)]);
+    expect(fused.map((m) => m.chunkId)).toEqual(['g1', 'g2']);
+  });
+});
+
+// ── the optional graph block in the assembled turn ────────────────────────────
+
+describe('buildChatTurn — optional graph context block', () => {
+  const build = (extra: Partial<BuildTurnArgs> = {}) =>
+    buildChatTurn({
+      config: DEFAULT_ENGINE_CONFIG,
+      history: [{ role: 'user', content: 'hola' }, { role: 'assistant', content: 'qué tal' }],
+      summaryText: 'RESUMEN',
+      retrievedMatches: [
+        { documentId: 'd1', chunkId: 'c1', score: 0.5, text: 'CHUNK-A', corpus: 'corpus-x' },
+      ],
+      inlineRefsText: 'REF-TEXT',
+      userMessage: 'PREGUNTA',
+      ...extra,
+    });
+
+  it('absent/blank graphContext assembles a byte-identical turn', () => {
+    const baseline = build();
+    expect(build({ graphContext: undefined })).toEqual(baseline);
+    expect(build({ graphContext: '' })).toEqual(baseline);
+    expect(build({ graphContext: '   ' })).toEqual(baseline);
+    expect(baseline.messages[3]!.content).not.toContain('grafo');
+  });
+
+  it('renders after the summary and BEFORE the retrieved block', () => {
+    const c = build({ graphContext: 'GRAFO' }).messages[3]!.content;
+    expect(c).toContain('Contexto del grafo de conocimiento:\nGRAFO');
+    expect(c.indexOf('RESUMEN')).toBeLessThan(c.indexOf('GRAFO'));
+    expect(c.indexOf('GRAFO')).toBeLessThan(c.indexOf('Contexto recuperado'));
+  });
+
+  it('leaves the [N] citation ordinals and the provenance untouched', () => {
+    const baseline = build();
+    const withGraph = build({ graphContext: 'GRAFO' });
+    const c = withGraph.messages[3]!.content;
+    expect(c).toContain('[1] CHUNK-A');
+    // The graph block carries no ordinal of its own — the only [N] marker in
+    // the turn is still the one retrieved chunk's.
+    expect(c.match(/\[\d+\]/g)).toEqual(['[1]']);
+    expect(withGraph.provenance).toEqual(baseline.provenance);
+    expect(withGraph.messages.map((m) => m.role)).toEqual(baseline.messages.map((m) => m.role));
+  });
+
+  it('uses a consumer-supplied header, and falls back when the config omits one', () => {
+    const custom = {
+      ...DEFAULT_ENGINE_CONFIG,
+      blockHeaders: { ...DEFAULT_ENGINE_CONFIG.blockHeaders, graph: 'GRAPH BLOCK:' },
+    };
+    expect(build({ config: custom, graphContext: 'X' }).messages[3]!.content).toContain(
+      'GRAPH BLOCK:\nX',
+    );
+
+    // A pre-existing config literal with no `graph` header still labels the block.
+    const legacy = {
+      ...DEFAULT_ENGINE_CONFIG,
+      blockHeaders: {
+        summary: DEFAULT_ENGINE_CONFIG.blockHeaders.summary,
+        retrieved: DEFAULT_ENGINE_CONFIG.blockHeaders.retrieved,
+        inlineRefs: DEFAULT_ENGINE_CONFIG.blockHeaders.inlineRefs,
+      },
+    };
+    expect(build({ config: legacy, graphContext: 'X' }).messages[3]!.content).toContain(
+      'Contexto del grafo de conocimiento:\nX',
+    );
+  });
+});
+
+// ── prepareTurn — the optional graph retrieval path ───────────────────────────
+
+describe('prepareTurn — graphProvider', () => {
+  it('runs the provider CONCURRENTLY with the vector retrieve', async () => {
+    // The retrieve blocks on a gate only the graph provider can open. If the
+    // two ran sequentially this test would deadlock instead of failing.
+    let openGate!: () => void;
+    const gate = new Promise<void>((resolve) => { openGate = resolve; });
+    const order: string[] = [];
+
+    const ai = fakeAIClient({
+      retrieve: async () => {
+        order.push('retrieve:start');
+        await gate;
+        order.push('retrieve:end');
+        return { matches: [{ documentId: 'd', chunkId: 'v1', score: 0.9, text: 'V' }] };
+      },
+    });
+
+    const prepared = await prepareTurn({
+      ...baseArgs(),
+      aiClient: ai,
+      graphProvider: async () => {
+        order.push('graph:start');
+        openGate();
+        return { context: 'BLOQUE DEL GRAFO' };
+      },
+    });
+
+    expect(order).toEqual(['retrieve:start', 'graph:start', 'retrieve:end']);
+    expect(prepared.graphContext).toBe('BLOQUE DEL GRAFO');
+    expect(prepared.messages.at(-1)!.content).toContain('BLOQUE DEL GRAFO');
+  });
+
+  it('calls the provider with the CONDENSED query', async () => {
+    const seen: string[] = [];
+    const ai = fakeAIClient({
+      generateSync: async () => ({
+        text: 'consulta condensada', modelUsed: 'm', provider: 'p', costUsd: 0, traceId: 'c',
+      }),
+    });
+    await prepareTurn({
+      ...baseArgs(),
+      aiClient: ai,
+      history: [{ role: 'user', content: '¿qué proyectos tiene Plataforma?' }],
+      userMessage: '¿y de esos?',
+      graphProvider: async (q) => { seen.push(q); return null; },
+    });
+    expect(seen).toEqual(['consulta condensada']);
+  });
+
+  it('fuses the provider’s chunks into the matches + provenance', async () => {
+    const ai = fakeAIClient({
+      retrieve: async () => ({
+        matches: [{ documentId: 'd1', chunkId: 'v1', score: 0.9, text: 'VECTOR' }],
+      }),
+    });
+    const prepared = await prepareTurn({
+      ...baseArgs(),
+      aiClient: ai,
+      graphProvider: async () => ({
+        chunks: [{ documentId: 'd2', chunkId: 'g1', score: 0.5, text: 'GRAFO', corpus: 'kb' }],
+      }),
+    });
+    expect(prepared.matches.map((m) => m.chunkId)).toEqual(['v1', 'g1']);
+    expect(prepared.provenance?.chunks.map((c) => c.chunkId)).toEqual(['v1', 'g1']);
+    const userTurn = prepared.messages.at(-1)!.content;
+    expect(userTurn).toContain('[1] VECTOR');
+    expect(userTurn).toContain('[2] GRAFO');
+  });
+
+  it('silent fallback: a rejecting provider produces a normal turn', async () => {
+    const ai = fakeAIClient({
+      retrieve: async () => ({
+        matches: [{ documentId: 'd1', chunkId: 'v1', score: 0.9, text: 'VECTOR' }],
+      }),
+    });
+    const withoutGraph = await prepareTurn({ ...baseArgs(), aiClient: ai });
+    const rejected = await prepareTurn({
+      ...baseArgs(),
+      aiClient: ai,
+      graphProvider: async () => { throw new Error('graph down'); },
+    });
+    expect(rejected.messages).toEqual(withoutGraph.messages);
+    expect(rejected.matches).toEqual(withoutGraph.matches);
+    expect(rejected.graphContext).toBe('');
+  });
+
+  it('silent fallback: a synchronously throwing provider is caught too', async () => {
+    const boom = (() => { throw new Error('sync boom'); }) as unknown as GraphProvider;
+    const prepared = await prepareTurn({ ...baseArgs(), graphProvider: boom });
+    expect(prepared.graphContext).toBe('');
+    expect(prepared.messages.at(-1)!.role).toBe('user');
+  });
+
+  it('silent fallback: a provider that matches nothing changes nothing', async () => {
+    const ai = fakeAIClient({
+      retrieve: async () => ({
+        matches: [{ documentId: 'd1', chunkId: 'v1', score: 0.9, text: 'VECTOR' }],
+      }),
+    });
+    const withoutGraph = await prepareTurn({ ...baseArgs(), aiClient: ai });
+    for (const empty of [null, {}, { chunks: [] }, { chunks: [], context: '  ' }]) {
+      const prepared = await prepareTurn({
+        ...baseArgs(),
+        aiClient: ai,
+        graphProvider: async () => empty,
+      });
+      expect(prepared.messages).toEqual(withoutGraph.messages);
+      expect(prepared.matches).toEqual(withoutGraph.matches);
+      expect(prepared.graphContext).toBe('');
+    }
+  });
+
+  it('no graphProvider at all: the assembled turn is unchanged', async () => {
+    const ai = fakeAIClient({
+      retrieve: async () => ({
+        matches: [{ documentId: 'd1', chunkId: 'v1', score: 0.9, text: 'VECTOR' }],
+      }),
+    });
+    const prepared = await prepareTurn({ ...baseArgs(), aiClient: ai });
+    expect(prepared.graphContext).toBe('');
+    expect(prepared.messages.at(-1)!.content).not.toContain('grafo');
+  });
+});

@@ -9,6 +9,9 @@ import { Sessions } from './collections/Sessions'
 import { Messages } from './collections/Messages'
 import { Ratings } from './collections/Ratings'
 import { Documents } from './collections/Documents'
+import { GraphEntities } from './collections/GraphEntities'
+import { GraphMentions } from './collections/GraphMentions'
+import { GraphRelations } from './collections/GraphRelations'
 import { Media } from './collections/Media'
 import { AiServiceCallbacks } from './collections/AiServiceCallbacks'
 import { Organizations } from './collections/Organizations'
@@ -90,6 +93,20 @@ export default buildConfig({
     Sessions,
     Messages,
     Ratings,
+    /**
+     * The corpus graph. Written ONLY by the extraction pipeline
+     * (`lib/graph/writer.ts`); every create/update/delete access rule is
+     * `() => false`, platform admins included. See `plan/adr-corpus-graph.md`.
+     *
+     * 🔴 Three compound UNIQUE indexes on these tables are HAND-WRITTEN into the
+     * migration and are absent from the drizzle schema push diffs against — so a
+     * `PAYLOAD_ALLOW_PUSH=1` boot can silently drop them, and de-duplication
+     * goes back to being a check rather than a lock. Same trap as the four
+     * baseline indexes; see `src/migrations/README.md`.
+     */
+    GraphEntities,
+    GraphMentions,
+    GraphRelations,
     // Plumbing
     AiServiceCallbacks,
   ],
