@@ -25,6 +25,12 @@ declare global {
     }
     interface PageData {
       user: import('$lib/server/auth').BackendUser | null;
+      /**
+       * ⚠ Presentation only — it decides whether the menu offers `/revision`.
+       * The control is `routes/revision/+page.server.ts` plus the backend's
+       * 404. Computed in `routes/+layout.server.ts`.
+       */
+      canReviewHolds?: boolean;
     }
     // interface PageState {}
     // interface Platform {}

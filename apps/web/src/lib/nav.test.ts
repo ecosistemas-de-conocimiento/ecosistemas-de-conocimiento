@@ -13,13 +13,19 @@ const member = { id: '2', isPlatformAdmin: false };
 
 describe('the menu only offers pages that exist', () => {
   it('covers the chat, the library and the admin view, and nothing else', () => {
-    expect(NAV_ITEMS.map((i) => i.href)).toEqual(['/', '/biblioteca', '/admin']);
+    expect(NAV_ITEMS.map((i) => i.href)).toEqual([
+      '/',
+      '/biblioteca',
+      '/revision',
+      '/admin',
+    ]);
   });
 
   it('names every section in Spanish', () => {
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
       'Conversaciones',
       'Biblioteca',
+      'Revisión',
       'Administración',
     ]);
   });
@@ -46,6 +52,44 @@ describe('who sees the admin entry', () => {
     for (const user of [null, undefined, {}, { isPlatformAdmin: 'true' }, { isPlatformAdmin: 1 }]) {
       expect(visibleNavItems(user).map((i) => i.href)).not.toContain('/admin');
     }
+  });
+});
+
+describe('who sees the review queue', () => {
+  // ⚠ Presentation only. `routes/revision/+page.server.ts` is the control, and
+  // behind it the backend answers 404 to a caller without `holds:review`.
+  it('shows it to someone the server said may review holds', () => {
+    expect(visibleNavItems(member, { canReviewHolds: true }).map((i) => i.href)).toContain(
+      '/revision',
+    );
+  });
+
+  it('hides it from an ordinary member', () => {
+    expect(visibleNavItems(member).map((i) => i.href)).not.toContain('/revision');
+  });
+
+  // 🔴 The two questions are different: `holds:review` belongs to the
+  // investigador role and up, per ecosistema, and most people who have it are
+  // not platform admins. Being an admin must not be the way in, and being a
+  // reviewer must not open `/admin`.
+  it('does not conflate reviewing with being a platform admin', () => {
+    expect(visibleNavItems(admin).map((i) => i.href)).not.toContain('/revision');
+    expect(visibleNavItems(member, { canReviewHolds: true }).map((i) => i.href)).not.toContain(
+      '/admin',
+    );
+  });
+
+  it('hides it when the flag is missing, garbled or merely truthy', () => {
+    for (const caps of [{}, { canReviewHolds: undefined }, { canReviewHolds: 'true' }, { canReviewHolds: 1 }]) {
+      expect(
+        visibleNavItems(member, caps as { canReviewHolds?: boolean }).map((i) => i.href),
+      ).not.toContain('/revision');
+    }
+  });
+
+  it('marks the review section on a document inside it', () => {
+    expect(isCurrentSection('/revision/42', '/revision')).toBe(true);
+    expect(isCurrentSection('/revisiones', '/revision')).toBe(false);
   });
 });
 
