@@ -201,6 +201,24 @@ describe('PATCH /api/documents/[id]/transcript', () => {
     ).toBe(false);
   });
 
+  /**
+   * ⚠ NOT a micro-optimisation. Payload's default read selects every column, so
+   * an unselected read couples this route to the whole `documents` schema.
+   * Observed on the live stack mid-migration: a plain `GET /api/documents/:id`
+   * 500'd with `column "session_id" does not exist` while the same row read
+   * fine with an explicit `select`.
+   */
+  it('reads only the four fields the gate needs', async () => {
+    stack(EDITABLE);
+    await PATCH(makeEvent());
+    const path = mockedBackendFetch.mock.calls[0]![1] as string;
+    for (const f of ['kind', 'publicationStatus', 'ingestStatus', 'uploadedBy']) {
+      expect(path).toContain(`select%5B${f}%5D=true`);
+    }
+    expect(path).not.toContain('session');
+    expect(path).not.toContain('extractedText');
+  });
+
   it('URL-encodes the id into both upstream paths', async () => {
     stack(EDITABLE);
     await PATCH(makeEvent({ id: 'a b/../7' }));

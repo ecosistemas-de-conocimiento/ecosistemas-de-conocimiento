@@ -65,6 +65,24 @@ interface DocRow {
   uploadedBy?: unknown;
 }
 
+/**
+ * The four fields the gate reasons about, and nothing else.
+ *
+ * ⚠ NOT a micro-optimisation. Payload's default read selects every column, so
+ * an unselected read couples this route to the ENTIRE `documents` schema —
+ * including columns it never looks at. Observed on the live stack mid-migration:
+ * a plain `GET /api/documents/:id` 500'd with `column "session_id" does not
+ * exist` while the same row read fine with an explicit `select`. A route that
+ * only needs four fields should not break because a fifth one moved.
+ */
+const GATE_FIELDS = ['kind', 'publicationStatus', 'ingestStatus', 'uploadedBy'] as const;
+
+function gateQuery(): string {
+  const qs = new URLSearchParams({ depth: '0' });
+  for (const f of GATE_FIELDS) qs.set(`select[${f}]`, 'true');
+  return qs.toString();
+}
+
 function relationId(raw: unknown): string | null {
   if (typeof raw === 'string' || typeof raw === 'number') return String(raw);
   if (raw && typeof raw === 'object' && 'id' in raw) {
@@ -98,7 +116,7 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
   try {
     readRes = await backendFetch(
       locals.token,
-      `/api/documents/${encodeURIComponent(id)}?depth=0`,
+      `/api/documents/${encodeURIComponent(id)}?${gateQuery()}`,
       { method: 'GET' },
     );
   } catch (err) {
