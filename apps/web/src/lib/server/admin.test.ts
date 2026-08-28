@@ -98,7 +98,13 @@ describe('loadAdminOverview — scoping', () => {
     backendFetch.mockImplementation(router({}));
     await loadAdminOverview('tok', ECO);
 
-    const listReads = urls().filter((u) => !u.startsWith('/api/users?'));
+    // ⚠ Two exemptions, both deliberate. `/api/users` is scoped by an explicit
+    // id list instead (asserted below), and `/api/metrics/ecosystem` is not a
+    // list read at all — it names its ecosistema as `?organization=`, which the
+    // next test checks.
+    const listReads = urls().filter(
+      (u) => !u.startsWith('/api/users?') && !u.startsWith('/api/metrics/'),
+    );
     expect(listReads.length).toBeGreaterThan(0);
     for (const url of listReads) {
       expect(url, `unscoped read: ${url}`).toContain(
@@ -107,14 +113,20 @@ describe('loadAdminOverview — scoping', () => {
     }
   });
 
-  it('reads documents, memberships, ratings and sessions — all scoped', async () => {
+  it('reads documents, memberships and ratings — all scoped', async () => {
     backendFetch.mockImplementation(router({}));
     await loadAdminOverview('tok', ECO);
     const collections = new Set(urls().map((u) => u.split('?')[0]));
     expect(collections).toContain('/api/documents');
     expect(collections).toContain('/api/memberships');
     expect(collections).toContain('/api/ratings');
-    expect(collections).toContain('/api/sessions');
+  });
+
+  it('names the ecosistema on the aggregate metrics call', async () => {
+    backendFetch.mockImplementation(router({}));
+    await loadAdminOverview('tok', ECO);
+    const call = urls().find((u) => u.startsWith('/api/metrics/ecosystem'));
+    expect(call).toBe('/api/metrics/ecosystem?organization=7');
   });
 
   it('scopes the user read by id, so it cannot enumerate the platform', async () => {
@@ -130,38 +142,68 @@ describe('loadAdminOverview — scoping', () => {
     expect(overview.contributors.rows[0]!.person.email).toBe('ana@example.org');
   });
 
-  it('counts messages by the session ids it already scoped, never unfiltered', async () => {
-    // `messages` has no organization column. Counting them with a bare read
-    // would count every tenant's chat traffic.
-    backendFetch.mockImplementation(
-      router({ sessions: reply([{ id: 11 }, { id: 12 }]), messages: reply([], { totalDocs: 40 }) }),
+  /**
+   * 🔴 THE BUG THIS REPLACED. Conversations used to be counted here: list
+   * `sessions`, collect the ids, count `messages` by that list. `Sessions.read`
+   * is own-only and `Messages.read` is own-via-session with no platform-admin
+   * bypass, so Payload ANDed those rules into the query and answered with the
+   * CALLING ADMIN'S OWN chats. Plausible number, wrong number.
+   *
+   * These two assertions are the regression guard: the page must not read
+   * either collection at all any more.
+   */
+  it('never reads sessions or messages directly — those counts are always wrong here', async () => {
+    backendFetch.mockImplementation(router({}));
+    await loadAdminOverview('tok', ECO);
+    expect(urls().some((u) => u.startsWith('/api/sessions'))).toBe(false);
+    expect(urls().some((u) => u.startsWith('/api/messages'))).toBe(false);
+  });
+});
+
+describe('loadAdminOverview — the aggregate metrics', () => {
+  const metricsBody = {
+    ok: true,
+    status: 200,
+    json: async () => ({
+      ecosystem: { id: 7, name: 'Ecosistema Demo', slug: 'demo' },
+      conversations: { sessions: 33, messages: 48 },
+      documents: { total: 26, byPublicationStatus: {}, failed: 1, inProgress: 0 },
+      ratings: { total: 7, average: 4.25, byStars: [0, 1, 0, 2, 4] },
+    }),
+  };
+
+  it('reports the ecosistema-wide conversation counts, not the calling admin\'s', async () => {
+    backendFetch.mockImplementation((_t: unknown, path: string) =>
+      String(path).startsWith('/api/metrics/') ? Promise.resolve(metricsBody) : Promise.resolve(reply([])),
     );
     const overview = await loadAdminOverview('tok', ECO);
-    const messageRead = urls().find((u) => u.startsWith('/api/messages?'));
-    expect(messageRead).toContain(`${encodeURIComponent('where[session][in]')}=11%2C12`);
-    expect(overview.usage.messages).toBe(40);
+    expect(overview.metrics.ok).toBe(true);
+    expect(overview.metrics.metrics?.conversations).toEqual({ sessions: 33, messages: 48 });
+    expect(overview.metrics.metrics?.ratings.total).toBe(7);
   });
 
-  it('refuses to guess a message count when the session list was capped', async () => {
-    // A count over a prefix is not a smaller number, it is a wrong one.
-    backendFetch.mockImplementation((_t: unknown, path: string) => {
-      if (String(path).startsWith('/api/sessions')) {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: async () => ({
-            docs: Array.from({ length: PAGE_SIZE }, (_, i) => ({ id: i + 1 })),
-            totalDocs: 9999,
-            hasNextPage: true,
-          }),
-        });
-      }
-      return Promise.resolve(reply([]));
-    });
+  // ⚠ 404 here is "no such ecosistema, or not yours" — deliberately
+  // indistinguishable. Never zero.
+  it('reports a refusal as unknown rather than as an empty ecosistema', async () => {
+    backendFetch.mockImplementation((_t: unknown, path: string) =>
+      String(path).startsWith('/api/metrics/')
+        ? Promise.resolve({ ok: false, status: 404, json: async () => ({ errors: [] }) })
+        : Promise.resolve(reply([])),
+    );
     const overview = await loadAdminOverview('tok', ECO);
-    expect(overview.usage.sessions).toBe(9999);
-    expect(overview.usage.messages).toBeNull();
-    expect(urls().some((u) => u.startsWith('/api/messages'))).toBe(false);
+    expect(overview.metrics.ok).toBe(false);
+    expect(overview.metrics.metrics).toBeNull();
+  });
+
+  it('survives a thrown fetch without taking the rest of the page down', async () => {
+    backendFetch.mockImplementation((_t: unknown, path: string) =>
+      String(path).startsWith('/api/metrics/')
+        ? Promise.reject(new Error('ECONNREFUSED'))
+        : Promise.resolve(reply([{ id: 1, name: 'A.pdf', kind: 'pdf', uploadedBy: 4 }])),
+    );
+    const overview = await loadAdminOverview('tok', ECO);
+    expect(overview.metrics.ok).toBe(false);
+    expect(overview.documents.rows).toHaveLength(1);
   });
 });
 

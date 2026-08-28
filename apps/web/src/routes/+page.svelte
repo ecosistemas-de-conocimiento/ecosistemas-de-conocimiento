@@ -32,7 +32,7 @@
   });
 </script>
 
-<div class="h-screen w-full flex flex-col text-ink">
+<div class="flex-1 min-h-0 w-full flex flex-col text-ink">
   <DegradedBanner />
   {#if app.hasNoEcosystem}
     <!-- Nothing below this point makes sense without a tenant to scope it. -->

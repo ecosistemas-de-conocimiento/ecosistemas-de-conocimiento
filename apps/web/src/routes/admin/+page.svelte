@@ -29,12 +29,21 @@
   import RatingsPanel from '$lib/components/admin/RatingsPanel.svelte';
   import StatTile from '$lib/components/admin/StatTile.svelte';
   import { plural, share } from '$lib/components/admin/summary';
+  import { displayAverage } from '$lib/components/admin/metrics';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
   const overview = $derived(data.overview);
   const numbers = new Intl.NumberFormat('es-MX');
+
+  /**
+   * 🔴 Null means "we could not count", NOT zero. The tiles fed by this render
+   * `—`, because "0 conversaciones" is a claim an owner would act on and a
+   * failed read must never be able to make it.
+   */
+  const metrics = $derived(overview?.metrics.ok ? overview.metrics.metrics : null);
+  const ratingsAverage = $derived(displayAverage(metrics?.ratings.average ?? null));
 
   /** uploader id → name, so the tables don't each re-derive it. */
   const nameById = $derived(
@@ -63,7 +72,6 @@
         </p>
       {/if}
     </div>
-    <a class="back" href="/" data-interactive>Volver al chat</a>
   </header>
 
   {#if data.state !== 'unavailable'}
@@ -108,19 +116,24 @@
           ? `${overview.audio.durationLabel} de audio · ${plural(overview.audio.transcribed, 'transcrita', 'transcritas')}`
           : plural(overview.audio.transcribed, 'transcrita', 'transcritas')}
       />
+      <!-- 🔴 THE ONLY CORRECT SOURCE FOR THIS TILE. Counting conversations from
+           the browser's side of the wire returns the SIGNED-IN ADMIN'S OWN
+           chats, because sessions are private and Payload narrows the query
+           instead of refusing it. `data.overview.metrics` comes from the
+           backend's aggregate endpoint. See `$lib/server/admin.ts`. -->
       <StatTile
         label="Conversaciones"
-        value={overview.usage.ok ? numbers.format(overview.usage.sessions) : '—'}
-        hint={overview.usage.messages != null
-          ? `${numbers.format(overview.usage.messages)} mensajes`
-          : undefined}
+        value={metrics ? numbers.format(metrics.conversations.sessions) : '—'}
+        hint={metrics ? `${numbers.format(metrics.conversations.messages)} mensajes` : undefined}
       />
+      <!-- ⚠ The count and the average come from the same aggregate endpoint,
+           so they cover EVERY rating. The reason tables below are built from a
+           capped sample of rating rows and say so when they are truncated —
+           two different questions, two different sources, both labelled. -->
       <StatTile
         label="Calificaciones"
-        value={overview.ratings.ok ? numbers.format(overview.ratings.totalDocs) : '—'}
-        hint={overview.ratings.summary.average != null
-          ? `promedio ${overview.ratings.summary.average.toFixed(1)} de 5`
-          : undefined}
+        value={metrics ? numbers.format(metrics.ratings.total) : '—'}
+        hint={ratingsAverage ? `promedio ${ratingsAverage} de 5` : undefined}
       />
       {#if overview.documents.summary.failed > 0}
         <StatTile
@@ -138,6 +151,16 @@
         />
       {/if}
     </section>
+
+    {#if !overview.metrics.ok}
+      <!-- ⚠ Said out loud. A tile showing `—` with no explanation reads as
+           "cero" to most people, and that is the misreading this whole path
+           exists to prevent. -->
+      <p class="notice">
+        No pudimos contar las conversaciones ni las calificaciones de este ecosistema en este
+        momento. Los demás datos sí están al día.
+      </p>
+    {/if}
 
     <PanelCard
       title="Quién ha aportado"
@@ -194,7 +217,7 @@
 
 <style>
   .page {
-    min-height: 100vh;
+    min-height: 100%;
     max-width: 74rem;
     margin: 0 auto;
     padding: var(--edc-space-6) var(--edc-space-5) var(--edc-space-8);
@@ -232,20 +255,6 @@
   }
   .sub strong {
     color: var(--edc-color-ink);
-  }
-  .back {
-    flex: none;
-    padding: 0.4rem 0.85rem;
-    border-radius: var(--edc-radius-2);
-    border: 1px solid var(--edc-color-neutral-outline);
-    font-size: 0.78rem;
-    font-weight: 700;
-    text-decoration: none;
-    color: var(--edc-color-ink-soft);
-  }
-  .back:hover {
-    color: var(--edc-color-ink);
-    background: var(--edc-color-neutral-soft);
   }
   .tiles {
     display: grid;
