@@ -55,6 +55,27 @@ are* are different fields.
 document a testimony?" is a column lookup. Build it that way; it is the difference between a
 privacy rule you can audit and one you have to trust.
 
+## 🔴 Scope: this is a graph you LOOK AT, not GraphRAG
+
+Be explicit about this, because the two get conflated and the owner asked directly.
+
+- **In scope:** extract entities and relations, store them, and show them. An analysis and
+  navigation surface.
+- **NOT in scope:** feeding the graph back into retrieval. No entity-linked chunk selection, no
+  multi-hop context gathering, no community summaries. Answers do not get better as a result of
+  this work.
+
+The extraction layer is deliberately shared, so GraphRAG stays open as a later, separate decision.
+**Do not quietly start building it.** If you think the retrieval path should consume the graph, say
+so and let the owner decide — it changes the RAG architecture and its failure modes.
+
+## Every ingested chunk carries a `kind`
+
+`documento` · `testimonio` · `conversacion`. Assume it exists; if it does not yet, it is a
+prerequisite, not an optional extra. The graph's person rule keys off it (§ the person rule), views
+filter on it, and citations use it to say "this came from a previous answer" instead of presenting
+one as a source.
+
 ## What to design
 
 1. **Extraction** — one pass per document at ingest, producing typed entities and the relations

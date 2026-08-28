@@ -22,7 +22,11 @@ The second changes the first. A chat should be stripped of who said it. A testim
 - Ingestion is automatic and silent. There is no human in the loop to catch a bad redaction.
 - Isolation is by corpus name (`eco-{orgId}`, `eco-{orgId}-draft-{userId}`); ai-service cannot tell our tenants apart.
 - 🔴 **ai-service has no per-document delete.** Retirement closes a validity window; the chunk and its vector remain. So *ingesting something you should not have is close to irreversible.* This single fact should drive the design.
-- We hold the **membership roster** for each ecosistema: names, emails, `personName`. Deterministic redaction of *known* people is available and cheap.
+- We hold the **membership roster** for each ecosistema.
+  ⚠ **CORRECTED by the owner:** the roster is NOT the main lever. It helps for *conversations*,
+  where the speakers are members. It is close to useless for *testimonies*, where the people named
+  — the speaker themselves, their acquaintances, third parties — are typically not users of this
+  system at all. Testimony redaction has to be **content-based**, not dictionary-based.
 - The only LLM available today is hosted (OpenRouter). `bge-m3` and the reranker are self-hosted; there is no self-hosted generation model.
 
 **Unknown — needs an answer before building**
@@ -32,6 +36,21 @@ The second changes the first. A chat should be stripped of who said it. A testim
 - Retention: does an anonymised conversation ever expire?
 
 ## 3. Proposed approach
+
+### 3.0 When a conversation is ingested — owner's rule
+
+There is no "mark this conversation as done" button, and adding one would ask the user to do
+bookkeeping. So:
+
+- **A conversation that cites no unpublished drafts is ingested as it goes** — turn by turn, as
+  messages arrive.
+- **A conversation that cites unpublished drafts is held.** When the *last* of those drafts is
+  published, the whole conversation and its documents are ingested in the same run.
+
+⚠ **Ingest incrementally, never re-ingest the thread.** "On every message" must mean appending the
+new turns, not re-embedding the conversation from the start each time. Re-ingesting a 40-turn thread
+on turn 41 duplicates chunks, costs 40x the embedding budget, and leaves the corpus full of
+near-identical fragments that crowd out real documents in retrieval.
 
 ### 3.1 A gate, not a filter
 
@@ -59,10 +78,27 @@ Anonymisation is a **gate with a hold state**, not a transform in a pipeline. Be
    [ 6 persist     ]  store redactedText next to the original
           |
           v
-   [ 7 ingest      ]  into eco-{orgId}, metadata kind=conversation|voz
+   [ 7 ingest      ]  into eco-{orgId}, metadata kind=documento|testimonio|conversacion
 ```
 
-Stages 2 and 3 are deterministic and carry most of the value. Stage 4 handles what a dictionary cannot know. **Do not build 4 before 2 and 3 work** — a roster-based scrub is more reliable than an LLM at exactly the cases that matter most, because we *know* who is in the room.
+⚠ **The weight sits differently for each content type, and this is the correction that matters:**
+
+- For a **conversation**, stages 2–3 do most of the work. The speakers are members; we know them.
+- For a **testimony**, stage 4 does almost all of it. A Voz names the speaker, their family, their
+  neighbours, an official — people who are not in any roster we hold. A dictionary scrub barely
+  touches it.
+
+So testimonies cannot ship on deterministic redaction alone. Stage 4 is not an optional refinement
+there; it is the mechanism.
+
+### 3.1b Mark what each chunk IS
+
+Every ingested chunk carries `kind`: **documento**, **testimonio**, or **conversacion**.
+
+This is not bookkeeping. It is the field that lets retrieval and citations say *"this came from a
+previous answer"* rather than presenting it as a source; it is what the graph keys its person rule
+off (no person nodes from a `testimonio`); and it is what makes "show me only real documents"
+possible in any view. Without it all three become guesswork over text.
 
 ### 3.2 Redact, don't delete
 
@@ -76,12 +112,13 @@ Replace rather than remove, with stable pseudonyms **scoped to one conversation*
 
 Stage 4 sends the **un-anonymised** text to a hosted model. If the reason for anonymising is that this content is sensitive, then shipping it to a third party to be anonymised is a contradiction — one that is easy to miss because the *output* is clean.
 
-Three ways out, in order of preference:
-1. **Self-host the scrub model.** The GPU box is already planned. A small local model is enough for name/PII redaction; this is the job that most deserves to run on hardware you own.
-2. **Deterministic-only** (stages 2–3, no stage 4). Nothing leaves the box. Weaker on the unknown tail, but honest and cheap.
-3. **Accept the hosted call**, and say so plainly in the product's own words rather than in a config file.
+✅ **DECIDED by the owner:** not a concern during development, and the endpoint eventually lands on
+a physically controlled box. So build stage 4 now against the hosted model, behind an interface, and
+move it to the local model when that hardware exists.
 
-Until this is decided, **build stages 2–3 and leave 4 as a named, swappable stage.** The system works without it and is strictly safer.
+⚠ What this decision does NOT cover, and should be revisited before real testimonies are collected:
+the first genuine Voz from a real participant is the point at which "we don't care in dev" stops
+being true. That is a date, not a config change — put it on the roadmap rather than discovering it.
 
 ### 3.4 Investigador and Voces — the attribution axis
 
