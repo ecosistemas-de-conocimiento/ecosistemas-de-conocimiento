@@ -11,8 +11,8 @@
 
   const message = $derived(
     reason === 'forbidden'
-      ? "We couldn't load your existing chats just now — you can keep working and they'll reappear once access is restored."
-      : "We're having trouble reaching the server, so your chats may be incomplete. You can keep working; we'll sync when the connection is back.",
+      ? 'No pudimos cargar tus conversaciones anteriores. Puedes seguir trabajando: volverán a aparecer en cuanto se restablezca el acceso.'
+      : 'Estamos teniendo problemas para llegar al servidor, así que puede faltar alguna conversación. Puedes seguir trabajando: se sincroniza en cuanto vuelva la conexión.',
   );
 </script>
 
@@ -20,7 +20,9 @@
   <div class="banner" role="status" aria-live="polite">
     <span class="dot" aria-hidden="true"></span>
     <p class="msg">{message}</p>
-    <button class="dismiss" type="button" onclick={() => (dismissed = true)} aria-label="Dismiss">
+    <!-- El `aria-label` es lo único que oye quien usa lector de pantalla: el
+         botón solo dibuja una «×». Tiene que estar en español, como el resto. -->
+    <button class="dismiss" type="button" onclick={() => (dismissed = true)} aria-label="Cerrar aviso">
       ×
     </button>
   </div>

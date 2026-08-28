@@ -184,11 +184,11 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
   // ── 1. Sign in ───────────────────────────────────────────────────────────
   await test.step('sign in through the real form', async () => {
     await page.goto('/sign-in');
-    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Inicia sesión' })).toBeVisible();
 
     await page.locator('input[name="email"]').fill(email);
     await page.locator('input[name="password"]').fill(password);
-    await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.getByRole('button', { name: 'Entrar' }).click();
 
     // ⚠ Playwright's failure artefacts (`error-context.md`) capture an
     // accessibility snapshot that INCLUDES input values, so a failed sign-in
@@ -678,7 +678,7 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
   await test.step('sign out', async () => {
     await page.getByRole('button', { name: 'cerrar sesión' }).click();
     await page.waitForURL('**/sign-in');
-    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Inicia sesión' })).toBeVisible();
   });
 
   note(
