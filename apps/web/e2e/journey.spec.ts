@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { extname } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { adminCredentials, fixturesDir } from './env';
+import { adminCredentials } from './env';
+import { fixtureBytes, fixtures, type FixtureEntry } from './fixtures';
 
 /**
  * ONE coherent journey through the live stack, in a real browser, recorded.
@@ -26,6 +26,13 @@ import { adminCredentials, fixturesDir } from './env';
  *    chat-engine `CitationCard`. The literal Spanish strings below are the
  *    exported constants in `$lib/publication.ts` and `$lib/ingest.ts`.
  * 4. **No step is weakened to get green.** A failure here is a finding.
+ * 5. **The upload fixtures are not invented here.** They are BUILT out of
+ *    `../corpus-generativo` by `./scripts/corpus-fixtures.sh` — real documents
+ *    of the shape this product is actually handed. That corpus is a separate
+ *    repo and gets regenerated, which changes which document fills which slot,
+ *    so every filename, MIME type and marker word below is read from the
+ *    generated manifest through `./fixtures.ts` and none is ever written out
+ *    here as a literal.
  */
 
 const RUN_ID = `e2e-fe-${Date.now()}`;
@@ -38,6 +45,20 @@ const PUBLISH_FAILED_BADGE = 'No se pudo publicar';
 
 /** Copy that must appear verbatim — see `$lib/ingest.ts`. */
 const TRANSCRIPT_PROVENANCE_LABEL = 'Transcripción automática';
+
+/**
+ * The name one fixture is uploaded under.
+ *
+ * The `RUN_ID` prefix is what keeps parallel runs from colliding on a title;
+ * `role` says which slot in this journey the file fills. 🔴 The EXTENSION comes
+ * from the manifest and is never written out here — the corpus picks the
+ * container (today's recording is `.m4a`, where the retired fixture was an
+ * `.mp3`), and a name whose extension disagrees with its bytes is a different
+ * test from the one this file means to run.
+ */
+function uploadName(entry: FixtureEntry, role: string): string {
+  return `${RUN_ID}-${role}${extname(entry.file)}`;
+}
 
 interface Sample {
   text: string;
@@ -402,7 +423,17 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
   });
 
   // ── 5. Upload a document; it must read as a draft ────────────────────────
-  const pdfName = `${RUN_ID}-acta.pdf`;
+  //
+  // The manifest carries a third fixture, a `.docx` copied out of the corpus
+  // untouched, and this journey deliberately does NOT upload it. Everything
+  // downstream indexes cards by POSITION — `docCard(page, 0)` is this document,
+  // `1` the recording, and the publish step walks those same positions — so a
+  // third upload means reworking all of it for no browser-side behaviour that
+  // is not already exercised here. The `.docx` extraction path is covered by
+  // the backend e2e suite, which reads the same manifest shape out of its own
+  // `apps/backend/e2e/fixtures`.
+  const fx = fixtures();
+  const pdfName = uploadName(fx.pdf, 'documento');
 
   await test.step('upload a PDF and confirm it reads as a draft', async () => {
     const panel = docsPanel(page);
@@ -416,8 +447,8 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
     ]);
     await chooser.setFiles({
       name: pdfName,
-      mimeType: 'application/pdf',
-      buffer: readFileSync(join(fixturesDir, 'acta-ecosistema.pdf')),
+      mimeType: fx.pdf.mimeType,
+      buffer: fixtureBytes(fx.pdf),
     });
 
     const card = docCard(page, 0);
@@ -458,10 +489,10 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
   });
 
   // ── 6. Upload the Spanish recording and watch it through to ready ────────
-  const audioName = `${RUN_ID}-junta.mp3`;
+  const audioName = uploadName(fx.audio, 'grabacion');
   let audioElapsedMs = 0;
 
-  await test.step('upload a 45s Spanish recording and watch it transcribe', async () => {
+  await test.step('upload the Spanish recording and watch it transcribe', async () => {
     const panel = docsPanel(page);
     const [chooser] = await Promise.all([
       page.waitForEvent('filechooser'),
@@ -469,8 +500,8 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
     ]);
     await chooser.setFiles({
       name: audioName,
-      mimeType: 'audio/mpeg',
-      buffer: readFileSync(join(fixturesDir, 'es-clip.mp3')),
+      mimeType: fx.audio.mimeType,
+      buffer: fixtureBytes(fx.audio),
     });
 
     const card = docCard(page, 1);
@@ -483,9 +514,13 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
     // An audio upload is a draft like any other.
     await expect(pubBadge(card)).toHaveText(DRAFT_BADGE);
 
-    // Watch the pipeline. Budget: transcription was measured at ~9 s, but the
-    // client's own poll schedule is 2 s, 5 s, then 30 s for audio, so the UI
-    // can legitimately lag the backend by half a minute per hop.
+    // Watch the pipeline. Budget: the ~9 s figure this used to quote was MEASURED
+    // against the retired 45-second clip, which no longer exists. This fixture is
+    // a different and longer recording (see `durationSeconds` in the manifest) and
+    // its transcription has NOT been measured — so read the ceiling below as
+    // untested headroom, not as a bound anyone has observed. Either way the
+    // client's own poll schedule is 2 s, 5 s, then 30 s for audio, so the UI can
+    // legitimately lag the backend by half a minute per hop.
     const states = await observeStates(
       ingestChip(card),
       (t) => t === 'listo' || t === 'error',
@@ -494,7 +529,8 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
     audioElapsedMs = states.elapsedMs;
     note(
       'audio-ingest',
-      `${states.texts.join(' → ') || '(no chip ever appeared)'} in ${Math.round(states.elapsedMs / 1000)}s`,
+      `${fx.audio.durationSeconds ?? '?'}s of audio: ` +
+        `${states.texts.join(' → ') || '(no chip ever appeared)'} in ${Math.round(states.elapsedMs / 1000)}s`,
     );
 
     if (states.texts.includes('error')) {
@@ -635,12 +671,22 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
 
   // ── 8. Ask a question that cites the uploaded material ───────────────────
   await test.step('ask about the uploaded material and get a citation', async () => {
-    // Names material from BOTH uploads — the acta's verification keyword and
-    // the recording — so the question is answerable from whichever of the two
+    // Names material from BOTH uploads — the document's subject BY NAME, and the
+    // recording — so the question is answerable from whichever of the two
     // actually made it into a corpus.
+    //
+    // The name is the PDF fixture's `marker`, read from the manifest: it is
+    // unique across the corpus's 250 documents, so an answer grounded in it can
+    // only have been retrieved from the file THIS run uploaded.
+    //
+    // ⚠ THE RECORDING IS NAMED GENERICALLY, AND HAS TO STAY THAT WAY. Its own
+    // marker is a spoken proper noun, and `markerIsAssertable` is false on that
+    // entry precisely because no ASR model spells one reliably. Putting it in
+    // the question would make an ordinary Whisper spelling variant read as a
+    // retrieval failure.
     const cited =
-      `${RUN_ID} ¿qué dice el acta sobre NUBELIRIO y el presupuesto participativo, ` +
-      'y qué se acordó en la grabación de la junta?';
+      `${RUN_ID} ¿qué cuenta ${fx.pdf.marker} sobre su trabajo y qué dificultades ` +
+      'menciona? ¿y de qué habla la grabación que subí?';
     await page.getByTestId('composer-input').fill(cited);
     await page.getByTestId('composer-send').click();
 

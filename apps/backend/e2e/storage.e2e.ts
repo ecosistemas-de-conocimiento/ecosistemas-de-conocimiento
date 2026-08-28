@@ -19,27 +19,38 @@ import { beforeAll, describe, expect, it } from 'vitest'
 
 import { anonymous, apiGet, apiJson, fixtureBytes, pollUntil, uploadFixture } from './support/api'
 import { BACKEND_URL } from './support/env'
+import { fixtures, type FixtureEntry } from './support/fixtures'
 import { stackDown } from './support/stack'
 import { provisionWorld, type World } from './support/world'
 
-const FIXTURE = 'es-clip.mp3'
-/** The second block publishes a real document, and only ingestable kinds can be. */
-const PDF_FIXTURE = 'e2e-sample.pdf'
-
 describe.skipIf(stackDown)('object storage', () => {
   let world: World
+  let audio: FixtureEntry
   let filename: string
   let mediaId: number
   let bytes: Buffer
 
   beforeAll(async () => {
     world = await provisionWorld()
-    bytes = fixtureBytes(FIXTURE)
+    // 🔴 INSIDE the hook, never at module scope. `fixtures()` throws when the
+    // fixtures have not been built, and this suite is `skipIf(stackDown)` — a
+    // top-level call would turn a legitimate "I have no stack running" skip into
+    // a collection error before the skip is ever consulted.
+    //
+    // Nothing in this block cares that the fixture is audio — it only needs a
+    // file comfortably longer than the byte offsets the Range assertions below
+    // read at, and the recording is by far the largest of the three.
+    audio = fixtures().audio
+    bytes = fixtureBytes(audio.file)
     const up = await uploadFixture(
       world.alice.caller,
-      FIXTURE,
-      'audio/mpeg',
-      `${world.ns}-storage.mp3`,
+      audio.file,
+      audio.mimeType,
+      // ⚠ THE EXTENSION COMES FROM THE MANIFEST TOO. This used to end in a
+      // hardcoded `.mp3`; the recording is no longer an MP3, and a per-test name
+      // whose extension disagrees with the bytes is exactly the sort of thing
+      // that makes a storage bug look like a codec bug.
+      `${world.ns}-storage-${audio.file}`,
     )
     expect(up.status).toBe(201)
     mediaId = up.body.doc.id
@@ -76,7 +87,18 @@ describe.skipIf(stackDown)('object storage', () => {
     // Any 3xx here means `signedDownloads` (or a redirecting adapter) crept in.
     expect(res.status).toBeLessThan(300)
     expect(res.headers.get('location')).toBeNull()
-    expect(res.headers.get('content-type')).toContain('audio/mpeg')
+    // 🔴 AGAINST WHAT THE ROW STORED, NOT AGAINST WHAT WE UPLOADED. This block is
+    // about the BUCKET round trip: bytes in, same bytes and same declared type
+    // back out through the app. Whether Payload keeps a client's `audio/x-m4a`
+    // verbatim or normalises it (browsers alone offer four spellings for an
+    // `.m4a`) is a different subject with a different owner, and pinning the
+    // uploaded string here would make an upload-layer policy change surface as a
+    // storage failure. So: ask the row what it thinks the type is, then require
+    // the serve route to agree.
+    const row = await apiGet(world.alice.caller, `/api/media/${mediaId}?depth=0`)
+    const storedType = String(row.body.mimeType ?? '')
+    expect(storedType).toBeTruthy()
+    expect(res.headers.get('content-type')).toContain(storedType)
 
     const served = Buffer.from(await res.arrayBuffer())
     expect(served.length).toBe(bytes.length)
@@ -212,6 +234,8 @@ describe.skipIf(stackDown)('object storage', () => {
  */
 describe.skipIf(stackDown)('a published document\'s file follows its document', () => {
   let world: World
+  /** A PDF because this block PUBLISHES, and only an ingestable kind can be. */
+  let pdf: FixtureEntry
   let filename: string
   let bytes: Buffer
   let docId: number
@@ -230,13 +254,15 @@ describe.skipIf(stackDown)('a published document\'s file follows its document', 
 
   beforeAll(async () => {
     world = await provisionWorld()
-    bytes = fixtureBytes(PDF_FIXTURE)
+    // Inside the hook, for the same reason as the block above.
+    pdf = fixtures().pdf
+    bytes = fixtureBytes(pdf.file)
 
     const up = await uploadFixture(
       world.alice.caller,
-      PDF_FIXTURE,
-      'application/pdf',
-      `${world.ns}-shared.pdf`,
+      pdf.file,
+      pdf.mimeType,
+      `${world.ns}-shared-${pdf.file}`,
     )
     expect(up.status).toBe(201)
     filename = up.body.doc.filename

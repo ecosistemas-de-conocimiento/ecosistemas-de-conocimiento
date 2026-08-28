@@ -8,7 +8,8 @@
  *   POST /api/media                     the recording
  *   POST /api/documents kind=audio      the row
  *     → afterChange → startTranscription → audio-service   ingestStatus: transcribing
- *   audio-service transcribes (~real time on CPU; ~9s for this 45s clip)
+ *   audio-service transcribes (roughly real time on CPU; the clip's length
+ *                              comes from the fixture manifest, not from here)
  *   POST /api/ai-service/callback  transcribe.completed
  *     → extractedText on the row                            ingestStatus: transcribed
  *     → enqueueIngestForDoc  ← THE SAME FUNCTION A PDF USES  ingestStatus: embedding
@@ -20,17 +21,30 @@
  *
  * ⚠ BUDGET GENEROUSLY. Transcription runs at roughly real time on CPU, then the
  * ingest round-trip crosses two services and a webhook.
+ *
+ * ⚠ THE RECORDING IS BUILT, NOT COMMITTED. It is a corpus testimonio read aloud
+ * by `scripts/corpus-voices.sh`, and its filename, MIME type and duration all
+ * come from `support/fixtures.ts`. Nothing here may spell any of them out: the
+ * corpus is a separate repo and a regeneration swaps the clip.
  */
 
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { apiGet, apiJson, pollUntil, uploadFixture, type Caller } from './support/api'
 import { AUDIO_SERVICE_URL } from './support/env'
+import { fixtures, type FixtureEntry } from './support/fixtures'
 import { stackDown } from './support/stack'
 import { provisionWorld, type World } from './support/world'
 
-const CLIP = 'es-clip.mp3'
-/** Measured: ~9s of transcription for this 45s clip, plus embed + webhooks. */
+/**
+ * ⚠ NOT MEASURED AGAINST THE CURRENT CLIP. This used to read "measured: ~9s of
+ * transcription", and that number was real — for `es-clip.mp3`, a 45s recording
+ * that has since been retired. The clip now comes from the corpus and is longer
+ * (see `durationSeconds` in the manifest). Nobody has timed the new one, so the
+ * budget stays deliberately far above any plausible value rather than being
+ * tightened on a guess: transcription runs at roughly real time on CPU, and then
+ * the embed and two webhooks follow. Shrink it only with a measurement in hand.
+ */
 const TRANSCRIBE_BUDGET_MS = 240_000
 
 interface AudioState {
@@ -60,6 +74,7 @@ async function audioState(caller: Caller, id: number): Promise<AudioState> {
 
 describe.skipIf(stackDown)('audio transcription', () => {
   let world: World
+  let clip: FixtureEntry
   let docId: number
   let startedAt: number
   /** Filled by the first test; the later ones report against it. */
@@ -67,13 +82,21 @@ describe.skipIf(stackDown)('audio transcription', () => {
 
   beforeAll(async () => {
     world = await provisionWorld()
+    // 🔴 INSIDE the hook, never at module scope. `fixtures()` throws when the
+    // fixtures have not been built, and this suite is `skipIf(stackDown)` — a
+    // top-level call would turn a legitimate "I have no stack running" skip into
+    // a collection error before the skip is ever consulted.
+    clip = fixtures().audio
 
     const media = await uploadFixture(
       world.alice.caller,
-      CLIP,
-      'audio/mpeg',
-      `${world.ns}-clip.mp3`,
+      clip.file,
+      clip.mimeType,
+      `${world.ns}-${clip.file}`,
     )
+    // ⚠ The container format is whatever the corpus voices are rendered as, so
+    // the MIME comes from the manifest. It has to stay inside `MEDIA_MIME_TYPES`
+    // (Media.ts) or the upload 400s here, well before audio-service is reached.
     expect(media.status).toBe(201)
 
     startedAt = Date.now()
@@ -149,6 +172,13 @@ describe.skipIf(stackDown)('audio transcription', () => {
     const res = await apiGet(world.alice.caller, `/api/documents/${docId}?depth=0`)
     const text: string = res.body.extractedText ?? ''
     expect(text.trim().length).toBeGreaterThan(20)
+    // ⚠ DELIBERATELY NOT THE FIXTURE'S MARKER. The manifest carries one, but it
+    // is flagged `markerIsAssertable: false`: the marker is a spoken proper noun
+    // and no ASR model spells a name with accents the same way twice. Asserting
+    // it would make this test fail on a transcript that is perfectly good. It is
+    // in the manifest so a human reading a failure knows whose testimony this
+    // is, and for nothing else — hence the weaker, honest checks below.
+
     // Spanish, checked two independent ways rather than by trusting one field.
     const meta = res.body.audioMeta ?? {}
     expect(meta.language).toBe('es')
@@ -163,7 +193,19 @@ describe.skipIf(stackDown)('audio transcription', () => {
   it('records what it knows about the recording', async () => {
     const res = await apiGet(world.alice.caller, `/api/documents/${docId}?depth=0`)
     const meta = res.body.audioMeta ?? {}
-    expect(Number(meta.durationSeconds)).toBeGreaterThan(30)
+    // ⚠ AGAINST THE MANIFEST, NOT A MAGIC NUMBER. `> 30` passed for any clip
+    // longer than half a minute, including the wrong one; what actually matters
+    // is that the row carries the length of THIS recording. The two numbers come
+    // from different tools — ffprobe on the backend versus the fixture build —
+    // reading a container whose declared duration is itself rounded, and the
+    // transcriber may report its own slightly different total. A couple of
+    // seconds of slack absorbs that while still catching a row that picked up
+    // some other file's metadata.
+    const expectedSeconds = Number(clip.durationSeconds)
+    // Guards the manifest itself: a missing `durationSeconds` would otherwise
+    // arrive as NaN and make the comparison below fail for the wrong reason.
+    expect(expectedSeconds).toBeGreaterThan(0)
+    expect(Math.abs(Number(meta.durationSeconds) - expectedSeconds)).toBeLessThan(2)
     expect(Number(meta.segmentCount)).toBeGreaterThan(0)
     expect(typeof meta.model).toBe('string')
   })

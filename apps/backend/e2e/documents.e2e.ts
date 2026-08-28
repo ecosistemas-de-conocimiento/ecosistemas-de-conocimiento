@@ -12,17 +12,21 @@
  * ⚠ Every transition is ASYNCHRONOUS and happens in a `setImmediate` on the
  * server, so everything here polls. A stall is reported with the LAST observed
  * status and error, because "timed out" alone tells nobody which hop broke.
+ *
+ * ⚠ THE FIXTURES ARE BUILT, NOT COMMITTED, and nothing here may spell one out.
+ * Filenames, MIME types and marker words all come from `support/fixtures.ts`,
+ * which reads the manifest `scripts/corpus-fixtures.sh` writes. The corpus is a
+ * separate repo that gets regenerated, and a regeneration changes which document
+ * sorts first — a literal in this file would then fail for a reason that has
+ * nothing to do with the pipeline it is meant to be testing.
  */
 
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { apiGet, apiJson, pollUntil, uploadFixture, type Caller } from './support/api'
+import { fixtures, type FixtureEntry } from './support/fixtures'
 import { stackDown } from './support/stack'
 import { createTextDocument, provisionWorld, type World } from './support/world'
-
-const PDF = 'e2e-sample.pdf'
-/** The one word that can only have come from inside the PDF's content stream. */
-const PDF_MARKER = 'ZANAHORIA-E2E-BACKEND'
 
 interface DocState {
   ingestStatus?: string
@@ -45,20 +49,38 @@ async function docState(caller: Caller, id: number): Promise<DocState> {
   }
 }
 
+/**
+ * The WHOLE extracted text, untruncated.
+ *
+ * `docState` above deliberately clips to 200 characters, because it is what a
+ * poll timeout prints and an unbounded document dumped into a failure message
+ * helps nobody. A marker assertion needs the opposite, so it asks again.
+ */
+async function fullExtractedText(caller: Caller, id: number): Promise<string> {
+  const res = await apiGet(caller, `/api/documents/${id}?depth=0`)
+  return typeof res.body?.extractedText === 'string' ? res.body.extractedText : ''
+}
+
 const TERMINAL = new Set(['ready', 'failed'])
 
 describe.skipIf(stackDown)('document ingest', () => {
   let world: World
+  let pdf: FixtureEntry
   let docId: number
 
   beforeAll(async () => {
     world = await provisionWorld()
+    // 🔴 INSIDE the hook, never at module scope. `fixtures()` throws when the
+    // fixtures have not been built, and this suite is `skipIf(stackDown)` — a
+    // top-level call would turn a legitimate "I have no stack running" skip into
+    // a collection error before the skip is ever consulted.
+    pdf = fixtures().pdf
 
     const media = await uploadFixture(
       world.alice.caller,
-      PDF,
-      'application/pdf',
-      `${world.ns}-sample.pdf`,
+      pdf.file,
+      pdf.mimeType,
+      `${world.ns}-${pdf.file}`,
     )
     expect(media.status).toBe(201)
 
@@ -92,7 +114,20 @@ describe.skipIf(stackDown)('document ingest', () => {
       { timeoutMs: 60_000, intervalMs: 1500 },
     )
     expect(state.ingestError ?? null).toBeNull()
-    expect(state.extractedText).toContain(PDF_MARKER)
+    // The marker is the subject's NAME, unique across the corpus's 250
+    // documents. That uniqueness is the whole assertion: an ordinary Spanish
+    // word coming back would prove only that SOME text arrived, and a stubbed
+    // or cross-wired extractor could satisfy it. This name could only have come
+    // out of this file.
+    //
+    // ⚠ RE-READ, RATHER THAN ASSERTING ON `state`. `docState` truncates
+    // `extractedText` to 200 characters so a timeout message stays readable, and
+    // that truncation is not this test's business. Today's marker sits inside
+    // the first 200 characters, so both would pass — but the corpus is
+    // regenerable, and the first document it picks whose subject is named later
+    // than character 200 would fail here with a message showing text that
+    // plainly contains the name it says is missing.
+    expect(await fullExtractedText(world.alice.caller, docId)).toContain(pdf.marker)
   })
 
   it('🔴 reaches `ready`, which means the ai-service callback landed', async () => {
@@ -184,5 +219,86 @@ describe.skipIf(stackDown)('document ingest', () => {
   it('a colleague cannot retry, and gets 404 rather than 403', async () => {
     const res = await apiJson(world.bob.caller, 'POST', `/api/documents/${docId}/retry`)
     expect(res.status).toBe(404)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// DOCX — the same pipeline, a different extractor
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 THE DOCX BRANCH HAD NEVER BEEN RUN END TO END. `kind: 'docx'` is in
+ * `INGESTABLE_KINDS` and walks the identical route the block above walks, with
+ * exactly one line differing: `extractText` hands the bytes to `mammoth`
+ * instead of `unpdf`. That line is the entire risk. Everything downstream of it
+ * — enqueue, embed, callback, `ready` — is already covered by the PDF tests, so
+ * this block deliberately asserts the two things the PDF tests cannot borrow:
+ * that the Word file's own words reached the row, and that they then travelled
+ * the shared ingest to completion.
+ *
+ * ⚠ ITS OWN WORLD, ON PURPOSE. Folding this into the block above would put an
+ * untested upload inside the `beforeAll` that the tested path depends on, so a
+ * broken DOCX would fail the PDF tests too. That is the wrong way round: a new
+ * path must not be able to take a known-good one down with it.
+ */
+describe.skipIf(stackDown)('docx ingest', () => {
+  let world: World
+  let docx: FixtureEntry
+  let docId: number
+
+  beforeAll(async () => {
+    world = await provisionWorld()
+    // Inside the hook, for the same reason as the PDF block above.
+    docx = fixtures().docx
+
+    const media = await uploadFixture(
+      world.alice.caller,
+      docx.file,
+      docx.mimeType,
+      `${world.ns}-${docx.file}`,
+    )
+    // ⚠ A 400 here is most likely the MIME allowlist, not the extractor:
+    // `MEDIA_MIME_TYPES` has to carry the full
+    // `application/vnd.openxmlformats-…wordprocessingml.document` string, and
+    // that is the value the manifest hands us.
+    expect(media.status).toBe(201)
+
+    const doc = await apiJson(world.alice.caller, 'POST', '/api/documents', {
+      name: `${world.ns} carta docx`,
+      kind: 'docx',
+      mode: 'rag-retrieve',
+      mediaFile: media.body.doc.id,
+    })
+    expect(doc.status).toBe(201)
+    docId = doc.body.doc.id
+  }, 120_000)
+
+  it('🔴 extracts the text out of the uploaded DOCX and puts it on the row', async () => {
+    const state = await pollUntil(
+      'the DOCX text to be extracted',
+      () => docState(world.alice.caller, docId),
+      (s) =>
+        (typeof s.extractedText === 'string' && s.extractedText.trim().length > 0) ||
+        s.ingestStatus === 'failed',
+      { timeoutMs: 60_000, intervalMs: 1500 },
+    )
+    expect(state.ingestError ?? null).toBeNull()
+    // Same argument as the PDF marker, truncation included: unique name, read
+    // back untruncated.
+    expect(await fullExtractedText(world.alice.caller, docId)).toContain(docx.marker)
+  })
+
+  it('🔴 reaches `ready` — a DOCX rejoins the very ingest a PDF uses', async () => {
+    const state = await pollUntil(
+      'the DOCX ingest to reach a terminal state',
+      () => docState(world.alice.caller, docId),
+      (s) => TERMINAL.has(String(s.ingestStatus)),
+      { timeoutMs: 120_000, intervalMs: 2000 },
+    )
+    expect(state.ingestStatus).toBe('ready')
+    // As for the PDF: `ingestId` is the key ai-service echoes back, so it is the
+    // proof that `ready` was reported by the service rather than assumed here.
+    expect(typeof state.ingestId).toBe('string')
+    expect(state.ingestId).toBeTruthy()
   })
 })

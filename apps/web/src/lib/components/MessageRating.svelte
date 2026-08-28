@@ -127,8 +127,7 @@
            The rest of a rating is a private number; this field is not, and the
            person deserves to know that before they write. -->
       <p class="text-ink-soft" data-testid={`rating-other-notice-${msg.id}`}>
-        Lo que escribas aquí lo pueden leer las personas que administran e
-        investigan en este ecosistema. No lo uses para datos privados.
+        Esto no es privado: lo lee quien administra e investiga aquí.
       </p>
       <label class="sr-only" for={`rating-other-${msg.id}`}>Cuéntanos qué pasó</label>
       <textarea
