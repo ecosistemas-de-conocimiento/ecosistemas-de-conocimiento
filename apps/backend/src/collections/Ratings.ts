@@ -1,8 +1,19 @@
-import type { CollectionBeforeValidateHook, CollectionConfig, Endpoint, Payload } from 'payload'
+import type {
+  CollectionBeforeValidateHook,
+  CollectionConfig,
+  Endpoint,
+  FieldAccess,
+  Payload,
+} from 'payload'
 import { ValidationError } from 'payload'
 
-import { withinMyOrganizations } from '../access'
-import { organizationIdsForUser, relationId } from '../lib/permissions'
+import { isPlatformAdminUser, withinMyOrganizations } from '../access'
+import {
+  organizationIdsForUser,
+  organizationIdsForUserWithPermission,
+  PERMISSIONS,
+  relationId,
+} from '../lib/permissions'
 
 import { compoundUnique } from './hooks/compoundUnique'
 
@@ -355,6 +366,61 @@ const stampAndValidate: CollectionBeforeValidateHook = async ({
 }
 
 // ---------------------------------------------------------------------------
+// Who may READ the free text
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 THE COMMENT IS THE ONLY PART OF A RATING THAT CONTAINS SOMEBODY'S WORDS.
+ *
+ * `read` on this collection is TENANT-WIDE — an admin looking at answer quality
+ * needs their ecosistema's ratings. That is right for `stars` and `reason`,
+ * which are counts and name nobody. It was wrong for `comment`: it meant every
+ * member of an ecosistema could read every colleague's written complaint. The
+ * product does warn people this field is not private, which is honest, and
+ * "not private" was quietly being implemented as "published to your coworkers".
+ *
+ * So the field is narrowed to whoever holds `ratings:read-comments` IN THE
+ * ECOSISTEMA THE RATING BELONGS TO — Investigador and up — plus the person who
+ * wrote it.
+ *
+ * ⚠ FIELD access, not collection access, deliberately. Hiding the whole row
+ * would take the star counts with it and break the quality view for admins. A
+ * field gate lets Payload strip exactly one key from the response.
+ *
+ * ⚠ FAILS CLOSED. If the row's ecosistema cannot be determined from what Payload
+ * hands this callback, the answer is `false`. An undeterminable tenant is the
+ * one case where guessing is a disclosure.
+ *
+ * ⚠ `read` ONLY. Writing a comment is unchanged — the rater is authenticated and
+ * `normalizeFeedback` already decides whether the text is kept at all. Gating
+ * `create`/`update` here would stop people leaving the feedback in the first
+ * place, which is the opposite of the intent.
+ */
+export const canReadRatingComment: FieldAccess = async ({ req, doc, data, siblingData }) => {
+  const user = req.user
+  if (!user) return false
+  if (isPlatformAdminUser(user)) return true
+
+  const row = (doc ?? data ?? siblingData ?? {}) as Record<string, unknown>
+
+  // Your own note is always yours to read back. Without this a member who just
+  // wrote a comment would watch it vanish from the response on the next GET,
+  // which reads as data loss rather than as a privacy rule.
+  const author = relationId(row.user)
+  if (author !== null && String(author) === String(user.id)) return true
+
+  const organizationId = relationId(row.organization)
+  if (organizationId === null) return false
+
+  const allowed = await organizationIdsForUserWithPermission(
+    req.payload,
+    user.id,
+    PERMISSIONS.ratingsReadComments,
+  )
+  return allowed.some((id) => String(id) === String(organizationId))
+}
+
+// ---------------------------------------------------------------------------
 // The collection
 // ---------------------------------------------------------------------------
 
@@ -470,9 +536,12 @@ export const Ratings: CollectionConfig = {
        */
       name: 'comment',
       type: 'textarea',
+      // 🔴 The one part of a rating that is somebody's words. See
+      // `canReadRatingComment` for why this is a FIELD gate and not a row gate.
+      access: { read: canReadRatingComment },
       admin: {
         description:
-          'Free text, kept ONLY when `reason` is `other`. Optional even then — "none of these fit" is a real signal on its own.',
+          'Free text, kept ONLY when `reason` is `other`. Optional even then — "none of these fit" is a real signal on its own. Readable by its author and by Investigador-and-up in the same ecosistema.',
       },
     },
   ],

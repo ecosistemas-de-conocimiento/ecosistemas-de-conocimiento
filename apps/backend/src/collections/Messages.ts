@@ -1,4 +1,5 @@
-import type { Access, CollectionConfig, Where } from 'payload'
+import type { Access, CollectionAfterChangeHook, CollectionConfig, Where } from 'payload'
+import { MESSAGE_CORPUS_STATES } from '../lib/conversationIngest'
 import { CONTEXT_REF_RELATION_TO } from '../lib/contextRefs'
 
 /**
@@ -16,6 +17,80 @@ import { CONTEXT_REF_RELATION_TO } from '../lib/contextRefs'
 const ownViaSession: Access = ({ req: { user } }) => {
   if (!user) return false
   return { 'session.user': { equals: user.id } } satisfies Where
+}
+
+/** Admin-panel labels. Exhaustive by type, so a new state forces a label. */
+const CORPUS_STATE_LABELS: Record<(typeof MESSAGE_CORPUS_STATES)[number], string> = {
+  pending: 'Pending — not yet considered',
+  'held-drafts': 'HELD — the conversation cites an unpublished draft',
+  'held-gate': 'HELD — the anonymisation gate refused this turn',
+  embedding: 'Embedding — enqueued at ai-service',
+  ingested: 'Ingested — in the ecosistema corpus',
+  failed: 'Failed — will be retried on the next run',
+  skipped: 'Skipped — never eligible (system turn, or empty)',
+}
+
+/**
+ * 🔴 THE TRIGGER. A new turn arrives; whatever is outstanding gets appended.
+ *
+ * ⚠ `create` ONLY, AND GUARDED. Conversation ingest writes back to `messages`
+ * (status, `redactedText`), and those writes re-fire this hook. Without both the
+ * operation check and the context flag, one message would start a run that
+ * writes a status that starts a run — and each of those runs costs model calls.
+ *
+ * ⚠ Fired-and-forgotten through `setImmediate`, like the document ingest hook,
+ * for the same two reasons: the chat response must not wait on an embedding
+ * round trip, and the row has to be committed before a fresh Payload handle can
+ * read it back.
+ *
+ * ⚠ IT APPENDS. It does not re-ingest the thread — see `lib/conversationIngest.ts`,
+ * where that property is structural rather than a promise.
+ */
+const ingestConversationHook: CollectionAfterChangeHook = ({ doc, req, operation }) => {
+  const ctx = req.context as { __skipConversationIngest?: boolean } | undefined
+  if (ctx?.__skipConversationIngest) return doc
+  if (operation !== 'create') return doc
+
+  const sessionId = (doc as { session?: unknown }).session
+  const id =
+    typeof sessionId === 'number' || typeof sessionId === 'string'
+      ? sessionId
+      : sessionId && typeof sessionId === 'object'
+        ? ((sessionId as { id?: number | string }).id ?? null)
+        : null
+  if (id === null) return doc
+
+  setImmediate(() => {
+    void (async () => {
+      const { getPayload } = await import('payload')
+      const config = (await import('@payload-config')).default
+      const payload = await getPayload({ config })
+
+      const { getAppAIClient } = await import('@/lib/aiClient')
+      const { ingestConversationTurns } = await import('@/lib/conversationIngest')
+      const { ingestCallbackUrl } = await import('@/lib/callbackConfig')
+
+      let client
+      try {
+        client = getAppAIClient()
+      } catch {
+        // No ai-service configured — a normal state for a bare local run. The
+        // turns stay `pending` and the next run picks them up.
+        return
+      }
+
+      await ingestConversationTurns({
+        payload,
+        sessionId: id,
+        client: client as never,
+        ...(ingestCallbackUrl() ? { callbackUrl: ingestCallbackUrl() as string } : {}),
+      })
+    })().catch((err) => {
+      console.error('[messages] background conversation ingest failed for session', id, err)
+    })
+  })
+
+  return doc
 }
 
 export const Messages: CollectionConfig = {
@@ -87,5 +162,70 @@ export const Messages: CollectionConfig = {
           'Mirrors sessions.contextScope; empty when the turn cited nothing.',
       },
     },
+    {
+      /**
+       * 🔴 THE CURSOR THAT MAKES INGESTION APPEND-ONLY.
+       *
+       * "What is left to embed" is a query over this column, not a diff against
+       * something we remember. That is what stops turn 41 from re-embedding
+       * turns 1-40 — see `lib/conversationIngest.ts` for why that would be a
+       * 40x bill AND a worse corpus.
+       */
+      name: 'corpusStatus',
+      type: 'select',
+      required: true,
+      defaultValue: 'pending',
+      index: true,
+      options: MESSAGE_CORPUS_STATES.map((value) => ({
+        value,
+        label: CORPUS_STATE_LABELS[value],
+      })),
+      admin: { readOnly: true, position: 'sidebar' },
+    },
+    {
+      name: 'corpusIngestId',
+      type: 'text',
+      index: true,
+      admin: { readOnly: true, description: 'ai-service ingestId for this turn. Join-back key.' },
+    },
+    {
+      name: 'corpusError',
+      type: 'textarea',
+      admin: {
+        readOnly: true,
+        description:
+          'Why this turn is not in the corpus. ⚠ Counts and codes only — a hold never quotes the text that caused it.',
+      },
+    },
+    {
+      /**
+       * What the anonymisation gate produced for this turn.
+       *
+       * ⚠ BESIDE `content`, never over it. `content` stays exactly as the person
+       * typed it — it is their conversation and it is what the UI shows them.
+       * Only this is ever embedded.
+       */
+      name: 'redactedText',
+      type: 'textarea',
+      admin: {
+        readOnly: true,
+        description: 'The gate\'s output. This — not `content` — is what enters the corpus.',
+      },
+    },
+    {
+      /**
+       * 🔴 COUNTS AND RULE NAMES ONLY, never a removed string and never a map
+       * from `[Persona A]` back to anyone. See `lib/anonymise/types.ts`.
+       */
+      name: 'anonymisationReport',
+      type: 'json',
+      admin: {
+        readOnly: true,
+        description: 'Per-stage counts of what the gate removed. No removed text.',
+      },
+    },
   ],
+  hooks: {
+    afterChange: [ingestConversationHook],
+  },
 }
