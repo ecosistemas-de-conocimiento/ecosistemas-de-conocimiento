@@ -314,6 +314,54 @@ export const rateLimits = {
   resolvePerConsumer: (): number => envInt('IDENTITY_RATELIMIT_RESOLVE_CONSUMER_MAX', 600),
   serviceAuthFailurePerIp: (): number =>
     envInt('IDENTITY_RATELIMIT_SERVICE_AUTH_FAIL_IP_MAX', 20),
+
+  // --- corpus graph ----------------------------------------------------------
+  //
+  // 🔴 PER-USER AND PER-ORGANIZATION ONLY. THERE IS DELIBERATELY NO PER-IP
+  // BUCKET, and adding one "for consistency with the identity routes" would be
+  // a self-inflicted outage.
+  //
+  // Every graph request arrives from the WEB BFF, not from a browser:
+  // `apps/web/src/lib/server/auth.ts` → `backendFetch` sets `Authorization` and
+  // `Content-Type` and nothing else. It forwards no `X-Forwarded-For` and no
+  // `X-Real-IP`, so `clientIp(req)` (endpoints/http.ts) falls through to the
+  // literal string `'unknown'` for EVERY caller. A per-IP bucket would
+  // therefore be ONE GLOBAL BUCKET shared by every user of every ecosistema —
+  // the first busy tenant would 429 everybody else.
+  //
+  // The identity routes are different, and that is why they can have one: they
+  // are hit by browsers and by service clients directly, so their `clientIp`
+  // resolves to something real.
+  //
+  // ⚠ If the BFF ever starts forwarding the client IP, a per-IP bucket becomes
+  // correct here and should be added. Until then the user bucket is the one
+  // that identifies a caller, and the org bucket is what bounds the aggregate
+  // SQL cost for one tenant.
+
+  /** Browsing the graph: lists, then a node, then another node. */
+  graphViewPerUser: (): number => envInt('GRAPH_RATELIMIT_VIEW_USER_MAX', 120),
+
+  /**
+   * The GraphRAG leg, which runs on EVERY chat turn.
+   *
+   * ⚠ Set generously on purpose. This is not a spam surface — it is the normal
+   * path of a conversation, and a limit tight enough to be "safe" would show up
+   * as answers that silently lose their graph context (the fallback is silent by
+   * design, ADR §8.2). 60/min is already far past human conversation speed, and
+   * the generation the turn goes on to do is both slower and separately capped
+   * by ai-service.
+   */
+  graphRetrievePerUser: (): number => envInt('GRAPH_RATELIMIT_RETRIEVE_USER_MAX', 60),
+
+  /**
+   * A ceiling for one ecosistema across all its members.
+   *
+   * This is the bucket that actually bounds cost: the reads are aggregate
+   * `GROUP BY … HAVING` over one tenant's rows, so the thing worth limiting is
+   * total work per tenant, not per person. Generous enough that a whole team
+   * browsing at once never notices it.
+   */
+  graphPerOrganization: (): number => envInt('GRAPH_RATELIMIT_ORG_MAX', 600),
 }
 
 // --- checking ----------------------------------------------------------------

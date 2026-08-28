@@ -56,15 +56,24 @@ import type { GraphGenerateClient } from './extract'
 /**
  * How long one extraction window may take.
  *
- * ⚠ 180 s, against a MEASURED 120 s, is deliberate headroom rather than a
- * guess: the measurement is one call, on one deployment, on one document, and a
- * longer window or a busier provider moves it. It is an env var because the
- * right value is a property of the deployment, not of this code.
+ * 🔴 THIS MUST STAY ABOVE ai-service's `LLM_REQUEST_TIMEOUT_MS`. If the client
+ * aborts first, the server's answer — including the flags that say WHY it
+ * failed — is never seen, and every failure looks like a network fault.
+ *
+ * 660 s against a server cap of 600 s (raised from its 120 s default on
+ * 2026-08-28 precisely so extraction could complete; see `infra/.env`). The 60 s
+ * of headroom covers request queueing and the response trip, neither of which
+ * the server's own generation clock counts.
+ *
+ * ⚠ IT IS AN ENV VAR BECAUSE THE RIGHT VALUE IS A PROPERTY OF THE DEPLOYMENT.
+ * A deployment that leaves `LLM_REQUEST_TIMEOUT_MS` at 120 s should set this
+ * back down — a 660 s client against a 120 s server just waits 540 s longer to
+ * hear the same answer.
  */
 export const graphRequestTimeoutMs = (): number => {
   const raw = process.env.GRAPH_EXTRACT_TIMEOUT_MS
   const n = raw == null || raw.trim() === '' ? Number.NaN : Number(raw)
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 180_000
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 660_000
 }
 
 let cached: GraphGenerateClient | null = null

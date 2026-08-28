@@ -830,3 +830,113 @@ anything that is not a `documento` — so restoring it later is a schema change,
 Array caps came down to 15 entities / 20 relations in the same pass. Not because it fixed anything,
 but because it is the right shape: prompt rule 8 already asks in words for few good entities over
 many generic ones, and the schema now says the same thing.
+
+---
+
+## 14. ✅ Extraction WORKS — § 13 is resolved, and this is what changed
+
+§ 13 recorded extraction as blocked: the model runs at roughly 8 tokens/second on this deployment,
+and a complete `deep` answer needs about 440 s against ai-service's 120 s default cap. The owner
+pulled lever 1.
+
+### The change
+
+```
+infra/.env    LLM_REQUEST_TIMEOUT_MS=600000     # was commented out, i.e. the 120000 default
+```
+
+`ai-service` reads `.env` through compose's `env_file:`, so this needed only a container recreate —
+no compose edit.
+
+🔴 **And the client had to move with it.** `graphRequestTimeoutMs()` went from 180 s to **660 s**.
+`lib/graph/client.ts` already carried the rule — *"this timeout must stay ABOVE ai-service's"* — and
+it would have been violated the moment the server cap went to 600 s: the client would have aborted at
+180 s, the server's answer would never have been seen, and every failure would have looked like a
+network fault instead of a timeout. The 60 s of headroom covers request queueing and the response
+trip, neither of which the server's generation clock counts. There is now a test asserting the
+ordering rather than the number.
+
+### The measurement, after
+
+Same 809-character Spanish asamblea fragment, `contentKind: 'documento'`, default `deep` tier:
+
+| Run | Wall clock | Result |
+| --- | --- | --- |
+| 1 | **96,051 ms** | `windows: 1`, `windowsFailed: 0`, `truncated: false`, **15 entities**, 15 relations |
+| 2 | **72,428 ms** | `windows: 1`, `windowsFailed: 0`, `truncated: false`, **14 entities**, 11 relations |
+
+✅ **The Spanish is correct and the types are right**, which is what § 11 flagged as the biggest open
+risk and § 13 could only half-answer:
+
+```
+tema          acceso al agua potable          lugar   San Juan Copala
+tema          consulta previa                 lugar   Sierra Norte
+tema          desabasto de agua               lugar   Juxtlahuaca
+evento        sequía de 2023                  organizacion  Comisión Nacional del Agua
+evento        desplazamiento forzado          organizacion  Secretaría de Medio Ambiente
+```
+
+No English drift, no invented entities, no type confusion. **The risk § 11 named is retired.**
+
+⚠ **Relations resolve.** `mergeWindows` drops any edge whose endpoints do not resolve to an extracted
+entity (`if (!from || !to) continue` — ADR § 5.4's "a dangling edge is worse than a missing one"), so
+the 11–15 relations that survived are real edges, not orphans. Confirmed by reading the resolver
+rather than by spending a further call.
+
+⚠ **Still one document, one window, one deployment.** ~85 s per window means a full corpus pass over
+hundreds of documents is measured in hours, not minutes, and it is sequential per document with a
+concurrency cap of 2. That is a backfill you start and leave, not one you wait for.
+
+---
+
+## 15. Rate limiting on the graph routes
+
+§ 13's companion gap, now closed. Two buckets, and one deliberate omission that matters more than
+either of them.
+
+| Bucket | Default | Env |
+| --- | --- | --- |
+| per user, browsing (`view` + `entity`) | 120/min | `GRAPH_RATELIMIT_VIEW_USER_MAX` |
+| per user, `retrieve` (the GraphRAG leg) | 60/min | `GRAPH_RATELIMIT_RETRIEVE_USER_MAX` |
+| per ecosistema, all routes | 600/min | `GRAPH_RATELIMIT_ORG_MAX` |
+
+### 🔴 There is NO per-IP bucket, and adding one would be an outage
+
+`/token`, `/me` and `/resolve` all have one, so "add a per-IP bucket for consistency" is the obvious
+next change. It would take the product down.
+
+Every graph request arrives from the **web BFF**, not from a browser.
+`apps/web/src/lib/server/auth.ts` → `backendFetch` sets `Authorization` and `Content-Type` and
+nothing else — no `X-Forwarded-For`, no `X-Real-IP`. So `clientIp(req)` falls through to the literal
+string `'unknown'` for **every caller**, and a per-IP bucket would be one global counter shared by
+every user of every ecosistema. The first busy tenant would 429 everybody else.
+
+The identity routes are different, and that is why they can have one: they are hit by browsers and by
+service clients directly, so their `clientIp` resolves to something real.
+
+The reasoning is written on the buckets in `lib/rateLimit.ts`, because that is the file someone adding
+"one more bucket" would be looking at. A test asserts two different users do not share a bucket, so
+the mistake fails loudly rather than in production.
+
+### ⚠ A defect the tests caught in this very change
+
+The first implementation used ONE key, `graph:user:{id}`, and passed a different `limit` per route.
+That is not two allowances — it is **one counter read against whichever number the current route
+passed**, so browsing `/grafo` spent the chat path's budget.
+
+The failure mode would have been the worst available: GraphRAG dropping its context mid-conversation
+because the person had been clicking around the graph beforehand, and dropping it **silently**,
+because the fallback is silent by design (§ 8.2). Keys are now namespaced by route kind.
+
+The tenant ceiling stays deliberately shared across both routes: it exists to bound total
+aggregate-SQL work for one ecosistema, and that cost does not care which route asked.
+
+### What it does and does not protect
+
+Limits are counted **after** authorisation, like `/me` and `/token`, so a bucket is keyed on a verified
+user and a verified ecosistema rather than on anything a caller can assert. A request that fails
+authorisation is not counted — tested.
+
+⚠ Inherited from `lib/rateLimit.ts` and unchanged here: the counters are **in-process**, so N replicas
+allow N× every limit above. That module's header explains the seam for a shared store. This app runs
+one replica.

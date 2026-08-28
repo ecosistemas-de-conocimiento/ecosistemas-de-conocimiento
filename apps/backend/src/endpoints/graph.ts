@@ -32,14 +32,24 @@
  * ⚠ AN UNKNOWN ECOSISTEMA AND ONE YOU DO NOT BELONG TO GET THE SAME 403. Telling
  * them apart turns the parameter into an existence oracle over every tenant.
  *
- * ── ⚠ NO RATE LIMITING HERE, AND THAT IS A GAP, NOT A DECISION ─────────────
+ * ── RATE LIMITING: PER USER AND PER ECOSISTEMA, NEVER PER IP ───────────────
  *
- * `/token`, `/me` and `/resolve` are limited through `lib/rateLimit.ts`; these
- * routes are not, because adding a bucket means editing that module and this
- * change deliberately owns only three files. The reads are aggregate `GROUP BY`
- * work over one tenant's rows, bounded by the caps in `queries.ts`, so the
- * exposure is CPU rather than credentials. Worth a bucket when someone next
- * touches `rateLimit.ts`.
+ * The reads are aggregate `GROUP BY … HAVING` over one tenant's rows, so the
+ * exposure here is CPU rather than credentials, and the thing worth bounding is
+ * total work per tenant. Hence two buckets: one that identifies the caller and
+ * one that caps the ecosistema.
+ *
+ * 🔴 THERE IS NO PER-IP BUCKET, AND ADDING ONE WOULD BE AN OUTAGE. Every graph
+ * request arrives from the web BFF, which forwards no `X-Forwarded-For` — so
+ * `clientIp(req)` is the literal string `'unknown'` for every caller, and a
+ * per-IP bucket would be one global bucket shared by every user of every
+ * ecosistema. The full reasoning is on the buckets themselves in
+ * `lib/rateLimit.ts`; it is written there because that is where someone adding
+ * "one more bucket, for consistency" would be looking.
+ *
+ * ⚠ The limits are counted AFTER authorisation, like `/me` and `/token`, so the
+ * bucket is keyed on a verified user and a verified ecosistema rather than on
+ * anything a caller can assert.
  *
  * ── SPANISH ────────────────────────────────────────────────────────────────
  *
@@ -60,7 +70,15 @@ import {
   type GraphQueryPayload,
 } from '../lib/graph/queries'
 import { GRAPH_ENTITY_TYPES, type GraphEntityType } from '../lib/graph/types'
-import { errorResponse, getAuthenticatedUser, jsonResponse, queryParam, readJsonBody } from './http'
+import {
+  errorResponse,
+  getAuthenticatedUser,
+  guardRateLimit,
+  jsonResponse,
+  queryParam,
+  readJsonBody,
+} from './http'
+import { rateLimits } from '../lib/rateLimit'
 
 /**
  * ⚠ `no-store` ON EVERY RESPONSE. A graph answer is scoped to one ecosistema and
@@ -138,6 +156,57 @@ function isAuthorised(value: Authorised | Response): value is Authorised {
   return !(value instanceof Response)
 }
 
+/**
+ * Count one authorised graph request against its two buckets.
+ *
+ * Returns a `429` to hand straight back, or `null` to continue — the same shape
+ * `guardRateLimit` uses everywhere else.
+ *
+ * ⚠ `perUser` differs by route on purpose. Browsing is a person clicking, and
+ * `retrieve` is the GraphRAG leg on every chat turn — a shared limit would
+ * either throttle conversation or fail to bound browsing.
+ */
+async function guardGraph(
+  req: PayloadRequest,
+  organizationId: number,
+  kind: 'view' | 'retrieve',
+  perUser: number,
+): Promise<Response | null> {
+  const user = getAuthenticatedUser(req)
+  // Unreachable: every caller runs `authoriseOrganization` first, which 401s
+  // without a user. Belt and braces — a limiter that silently no-ops when it
+  // cannot identify the caller is worse than no limiter, because it looks like
+  // one.
+  if (!user) return errorResponse(401, 'Necesitas iniciar sesión.')
+
+  return guardRateLimit(req, [
+    /**
+     * 🔴 THE KEY IS NAMESPACED BY ROUTE KIND, AND IT HAS TO BE.
+     *
+     * `view` and `retrieve` have different limits on purpose. A SHARED key with
+     * two different limits is not two allowances — it is one counter read
+     * against whichever number the current route passed, so browsing spends the
+     * chat path's budget. A test caught exactly that.
+     *
+     * The consequence would have been the worst kind: GraphRAG dropping its
+     * context mid-conversation because the person had been clicking around
+     * `/grafo` beforehand, and dropping it SILENTLY, because the fallback is
+     * silent by design (ADR §8.2).
+     */
+    { scope: `graph:${kind}:user`, key: `graph:${kind}:user:${user.id}`, limit: perUser },
+    /**
+     * ⚠ The tenant ceiling is deliberately SHARED across both routes. It exists
+     * to bound total aggregate-SQL work for one ecosistema, and that cost does
+     * not care which route asked.
+     */
+    {
+      scope: 'graph:org',
+      key: `graph:org:${organizationId}`,
+      limit: rateLimits.graphPerOrganization(),
+    },
+  ])
+}
+
 /** The graph queries need only `db.drizzle`; `req.payload` supplies it. */
 const asQueryPayload = (req: PayloadRequest): GraphQueryPayload =>
   req.payload as unknown as GraphQueryPayload
@@ -164,6 +233,9 @@ export const graphViewEndpoint: Endpoint = {
   handler: async (req) => {
     const auth = await authoriseOrganization(req, queryParam(req, 'organization'))
     if (!isAuthorised(auth)) return auth
+
+    const limited = await guardGraph(req, auth.organizationId, 'view', rateLimits.graphViewPerUser())
+    if (limited) return limited
 
     const type = parseEntityType(queryParam(req, 'type'))
     if (type === undefined) {
@@ -199,6 +271,11 @@ export const graphEntityEndpoint: Endpoint = {
   handler: async (req) => {
     const auth = await authoriseOrganization(req, queryParam(req, 'organization'))
     if (!isAuthorised(auth)) return auth
+
+    // Same bucket as the lists: opening a node is part of browsing, and a
+    // person clicking through an ego-network does both in one sitting.
+    const limited = await guardGraph(req, auth.organizationId, 'view', rateLimits.graphViewPerUser())
+    if (limited) return limited
 
     const entityId = positiveIntParam((req.routeParams as { id?: string } | undefined)?.id)
     if (entityId === null) return errorResponse(400, 'Id de nodo inválido.')
@@ -243,6 +320,9 @@ export const graphRetrieveEndpoint: Endpoint = {
 
     const auth = await authoriseOrganization(req, body.organization)
     if (!isAuthorised(auth)) return auth
+
+    const limited = await guardGraph(req, auth.organizationId, 'retrieve', rateLimits.graphRetrievePerUser())
+    if (limited) return limited
 
     const raw = typeof body.query === 'string' ? body.query.trim() : ''
     if (raw === '') return errorResponse(400, 'Falta `query`: el texto a buscar en el grafo.')

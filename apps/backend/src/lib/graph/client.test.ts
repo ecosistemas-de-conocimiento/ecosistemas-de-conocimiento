@@ -41,7 +41,17 @@ describe('graphRequestTimeoutMs', () => {
   it('ignores a nonsense override rather than disabling the timeout', () => {
     for (const bad of ['', '   ', 'abc', '0', '-5']) {
       process.env.GRAPH_EXTRACT_TIMEOUT_MS = bad
-      expect(graphRequestTimeoutMs()).toBe(180_000)
+      expect(graphRequestTimeoutMs()).toBe(660_000)
     }
+  })
+
+  it('🔴 stays ABOVE ai-service’s own generation cap', () => {
+    // If the client aborts first, the server's answer — including the flags
+    // that say WHY it failed — is never seen, and every failure looks like a
+    // network fault. `infra/.env` sets LLM_REQUEST_TIMEOUT_MS=600000 so that
+    // extraction can finish at all; 660 s leaves a minute for queueing and the
+    // response trip, neither of which the server's generation clock counts.
+    delete process.env.GRAPH_EXTRACT_TIMEOUT_MS
+    expect(graphRequestTimeoutMs()).toBeGreaterThan(600_000)
   })
 })
