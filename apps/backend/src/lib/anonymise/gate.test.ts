@@ -246,3 +246,144 @@ describe('runAnonymisationGate — 🔴 the report is not a re-identification ma
     expect(serialised).not.toContain('Ricardo')
   })
 })
+
+// ---------------------------------------------------------------------------
+// DOMICILIOS, END TO END
+// ---------------------------------------------------------------------------
+
+describe('runAnonymisationGate — domicilios', () => {
+  /** A testimony with an address in it, of the shape that HELD in the live test. */
+  const CON_DOMICILIO = [
+    'Vivo en Calle Morelos No. 45, Col. Portales, C.P. 03300.',
+    'Mi hermana Lucía se quedó en calle morelos no. 45, col. portales, c.p. 03300.',
+  ].join('\n')
+
+  /**
+   * ⚠ A KNOWN LIMIT, WRITTEN DOWN RATHER THAN HIDDEN. The two lines above are
+   * the SAME address spelled two ways, so they fold to one key and share one
+   * label. A PARTIAL repeat — "Calle Morelos No. 45" on its own, without the
+   * colonia and the postal code — folds to a different key and gets its own
+   * label. That over-counts places, which is the safe direction: it never merges
+   * two real addresses into one, it only fails to notice that one address was
+   * written twice at different lengths.
+   */
+
+  it('🔴 removes the address in stage 2 and still returns ready', async () => {
+    // The measured failure this closes: the model missed a street address, and
+    // stage 4 held the document. Correct, and useless — the address should have
+    // been removed. Now it never reaches the model at all.
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: CON_DOMICILIO },
+      { detector: staticDetector([{ text: 'Lucía', type: 'persona' }]) },
+    )
+
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+
+    expect(result.redactedText).not.toContain('Morelos')
+    expect(result.redactedText).not.toContain('Portales')
+    expect(result.redactedText).not.toContain('03300')
+    expect(result.redactedText).toContain('[Domicilio A]')
+  })
+
+  it('🔴 the same address in two sentences gets the SAME label', async () => {
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: CON_DOMICILIO },
+      { detector: staticDetector([{ text: 'Lucía', type: 'persona' }]) },
+    )
+    if (result.status !== 'ready') throw new Error('expected ready')
+
+    // One house, said twice. Two `[Dato omitido]`s would erase that it was the
+    // same house; `[Domicilio B]` would claim it was a different one.
+    expect(result.redactedText).not.toContain('[Domicilio B]')
+    expect(result.report.addresses).toBe(1)
+  })
+
+  it('🔴 stage 4 does not HOLD on our own [Domicilio X] placeholder', async () => {
+    /**
+     * THE FAILURE THIS PINS IS TOTAL AND SILENT. The verify stage tells "a name
+     * the model missed" from "the word `Persona` inside our own placeholder" by
+     * matching a fixed placeholder set. Adding a placeholder shape without
+     * adding it to that set makes every successfully-redacted document HOLD —
+     * the safest possible failure, and a completely useless product.
+     *
+     * The detector below hands the placeholder itself back as a finding, which
+     * is exactly what a real detector does when it reads `[Domicilio A]` and
+     * decides it looks like a place.
+     */
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Vivo en Calle Morelos No. 45.' },
+      { detector: staticDetector([{ text: '[Domicilio A]', type: 'lugar' }]) },
+    )
+
+    expect(result.status).toBe('ready')
+  })
+
+  it('a `lugar` finding from the model shares the address namespace', async () => {
+    // One allocator, two stages — same rule as people. A place the regexes
+    // caught and a place the model caught must not both be `[Domicilio A]`
+    // unless they are the same place.
+    const result = await runAnonymisationGate(
+      {
+        contentKind: 'testimonio',
+        text: 'Vivo en Calle Morelos No. 45 y trabajo en la Clínica del Valle.',
+      },
+      { detector: staticDetector([{ text: 'Clínica del Valle', type: 'lugar' }]) },
+    )
+
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+
+    expect(result.redactedText).toContain('[Domicilio A]')
+    expect(result.redactedText).toContain('[Domicilio B]')
+    expect(result.redactedText).not.toContain('Clínica del Valle')
+    expect(result.report.addresses).toBe(2)
+  })
+
+  it('⚠ the report counts addresses and never quotes one', async () => {
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: CON_DOMICILIO },
+      { detector: staticDetector([{ text: 'Lucía', type: 'persona' }]) },
+    )
+    if (result.status !== 'ready') throw new Error('expected ready')
+
+    const serialized = JSON.stringify(result.report)
+    for (const leak of ['Morelos', 'Portales', '03300', 'Lucía']) {
+      expect(serialized, leak).not.toContain(leak)
+    }
+    expect(result.report.addresses).toBe(1)
+  })
+
+  it('⚠ an address the gate could not remove still HOLDS — verify is not weakened', async () => {
+    /**
+     * The owner's instruction was to REMOVE addresses, not to stop holding on
+     * them. A free-form address ("enfrente de la tienda de doña Mari") has no
+     * shape for stage 2 and can be missed by stage 3; when stage 4 then finds it
+     * standing in the output, holding is still the right answer.
+     *
+     * The detector here finds it only on the SECOND pass — a model that missed
+     * it going in and caught it coming out, which is the exact shape of the live
+     * failure.
+     */
+    const text = 'Vivo enfrente de la tienda de doña Mari.'
+    let calls = 0
+    const missesThenFinds: PersonDetector = {
+      name: 'misses-then-finds',
+      async detect() {
+        calls += 1
+        return calls === 1 ? [] : [{ text: 'enfrente de la tienda de doña Mari', type: 'lugar' }]
+      },
+    }
+
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text },
+      { detector: missesThenFinds },
+    )
+
+    expect(result.status).toBe('hold')
+    if (result.status !== 'hold') return
+    expect(result.stage).toBe('verify')
+    // ⚠ Counts only. The reason is stored on the row and shown to a reviewer.
+    expect(result.reason).not.toContain('Mari')
+  })
+})

@@ -69,6 +69,10 @@ vi.mock('@/lib/audioClient', async () => {
 const transcribingRow = (over: Record<string, unknown> = {}) => ({
   id: 42,
   kind: 'audio',
+  // ⚠ The FILE format above; what the material IS, here. Required on the fixture
+  // because the gate reads the raw value and fails closed — see
+  // `mustPassAnonymisationGate` in `lib/anonymiseDocument.ts`.
+  contentKind: 'documento',
   name: 'Junta de agosto',
   organization: 10,
   uploadedBy: 3,

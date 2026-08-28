@@ -50,7 +50,7 @@ import type { PersonDetector } from './anonymise/types'
 import {
   anonymiseDocumentText,
   corpusTextFor,
-  needsAnonymisation,
+  mustPassAnonymisationGate,
 } from './anonymiseDocument'
 
 const DOC_ID = 99
@@ -119,19 +119,54 @@ const run = (
 const findsTheName = () => staticDetector([{ text: NAME, type: 'persona' }])
 
 // ---------------------------------------------------------------------------
-// needsAnonymisation
+// mustPassAnonymisationGate — THE POLICY
 // ---------------------------------------------------------------------------
 
-describe('needsAnonymisation — which kinds go through the gate', () => {
+describe('mustPassAnonymisationGate — which content goes through the gate', () => {
   it('gates a testimonio and a conversacion, under the same rules', () => {
     // ⚠ There is deliberately no per-kind leniency knob: one rule means there is
     // no default for a bulk upload to get wrong.
-    expect(needsAnonymisation('testimonio')).toBe(true)
-    expect(needsAnonymisation('conversacion')).toBe(true)
+    expect(mustPassAnonymisationGate('testimonio')).toBe(true)
+    expect(mustPassAnonymisationGate('conversacion')).toBe(true)
   })
 
-  it('does not gate a documento — somebody’s own material, filed under their own name', () => {
-    expect(needsAnonymisation('documento')).toBe(false)
+  it('does NOT gate a documento — the owner: "docs uploaded should be kept in their original form"', () => {
+    expect(mustPassAnonymisationGate('documento')).toBe(false)
+  })
+
+  it('🔴 gates anything it cannot read — missing, null, empty, typo’d, wrong case', () => {
+    // THE FAIL-CLOSED FALLBACK, pinned. A row whose kind we cannot determine is
+    // not evidence that it is a plain document; it is evidence that we do not
+    // know. ai-service has no per-document delete, so "we do not know" has to
+    // cost a hold a human can clear, never an ingest nobody can undo.
+    //
+    // ⚠ A previous review caught exactly this fallback going the other way in
+    // the `contentKind` beforeValidate hook. Do not reintroduce it here.
+    for (const junk of [
+      undefined,
+      null,
+      '',
+      '   ',
+      'documentos',
+      'Documento',
+      'DOCUMENTO',
+      ' documento',
+      'testimonios',
+      'otra-cosa',
+      42,
+      {},
+      ['documento'],
+    ]) {
+      expect(mustPassAnonymisationGate(junk)).toBe(true)
+    }
+  })
+
+  it('🔴 the ungated set is exactly one value, so a NEW content kind is gated by default', () => {
+    // The allow-list shape is the safety property. A kind added to
+    // `CONTENT_KINDS` tomorrow and forgotten here is GATED, which costs a hold;
+    // the deny-list shape would have made it ungated, which costs a permanent
+    // ingest. Un-gating stays a deliberate edit with a reason attached.
+    expect(mustPassAnonymisationGate('un-tipo-que-no-existe-todavia')).toBe(true)
   })
 })
 
@@ -453,13 +488,31 @@ describe('corpusTextFor — the stored decision, never a re-run of the gate', ()
     expect(corpusTextFor({ contentKind: 'conversacion', extractedText: TESTIMONY }).ok).toBe(false)
   })
 
-  it('🔴 a junk contentKind is read as a documento, matching contentKindOf', () => {
-    // The two files must default the same way. If `corpusTextFor` ever defaulted
-    // to "gated", a typo’d row would become unpublishable instead of ordinary —
-    // a different bug, but the same class of silent divergence.
-    expect(corpusTextFor({ contentKind: 'testimonios', extractedText: 'contenido' })).toEqual({
-      ok: true,
-      text: 'contenido',
-    })
+  it('🔴 REFUSES a junk or missing contentKind — it does not fall back to "documento"', () => {
+    // 🔴 THIS TEST REPLACES ONE THAT ASSERTED THE OPPOSITE, and the reversal is
+    // the point. The old behaviour matched `contentKindOf`, which defaults junk
+    // to `documento` — correct for a citation label, fail-OPEN here. This
+    // function is the last thing standing between a publish and the shared
+    // corpus, and it is routinely handed objects assembled in code rather than
+    // rows out of Postgres, which is exactly where a `contentKind` goes missing
+    // without the NOT NULL enum noticing.
+    //
+    // The cost of being wrong in this direction is a document that refuses to
+    // publish until somebody sets its kind. The cost of being wrong the other
+    // way is an unredacted testimony in a corpus with no per-document delete.
+    for (const contentKind of [undefined, null, '', 'testimonios', 'Documento', 7]) {
+      const result = corpusTextFor({ contentKind, extractedText: TESTIMONY })
+      expect(result.ok).toBe(false)
+      expect(JSON.stringify(result)).not.toContain(NAME)
+    }
+  })
+
+  it('a junk contentKind that DOES have redactedText publishes the redacted copy', () => {
+    // Fail-closed means "gate it", not "brick it". A row we cannot classify is
+    // treated as gated material — and gated material that already cleared the
+    // gate is publishable, from `redactedText` like any other.
+    expect(
+      corpusTextFor({ contentKind: 'testimonios', extractedText: TESTIMONY, redactedText: 'limpio' }),
+    ).toEqual({ ok: true, text: 'limpio' })
   })
 })

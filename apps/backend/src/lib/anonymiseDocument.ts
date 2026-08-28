@@ -29,23 +29,51 @@
  * this and said no; retrying the identical text will say no again.
  */
 
-import { contentKindOf, type ContentKind } from './contentKind'
+import type { ContentKind } from './contentKind'
 import type { GateReport, PersonDetector } from './anonymise/types'
 
 /**
- * Which content kinds go through the gate.
+ * 🔴 THE ONE CONTENT KIND THAT IS NEVER GATED.
  *
- * ⚠ TESTIMONIES AND CONVERSATIONS RUN UNDER THE SAME RULES — the owner's
- * decision, on the grounds that a testimony is expected to be anonymous anyway.
- * There is no per-kind leniency knob here on purpose: one rule means there is no
- * default for a bulk upload to get wrong.
+ * The owner's decision, verbatim: *"docs uploaded should be kept in their
+ * original form."* An uploaded `documento` is somebody's own material, filed
+ * deliberately under their own name and expected back out of the corpus the way
+ * it went in. Scrubbing it would both corrupt the source and cost two model
+ * calls per PDF for nothing.
  *
- * A `documento` is somebody's own material, filed deliberately under their own
- * name. It is not scrubbed, and pretending otherwise would make every uploaded
- * PDF cost two model calls for nothing.
+ * ⚠ THE OTHER TWO RUN UNDER IDENTICAL RULES — also the owner's decision, on the
+ * grounds that a testimony is expected to be anonymous anyway. There is no
+ * per-kind leniency knob, because one rule means there is no default for a bulk
+ * upload to get wrong.
  */
-export function needsAnonymisation(contentKind: ContentKind): boolean {
-  return contentKind === 'testimonio' || contentKind === 'conversacion'
+export const UNGATED_CONTENT_KIND: ContentKind = 'documento'
+
+/**
+ * 🔴 THE ANONYMISATION POLICY. One function, one name, one place to read it.
+ *
+ * ── WHY IT TAKES `unknown` AND NOT A `ContentKind` ──────────────────────────
+ *
+ * Because the coercion is the bug. {@link contentKindOf} answers "what should we
+ * LABEL this row?" and defaults an unreadable value to `documento`, which is the
+ * right answer for a citation card. Feeding that answer to this decision turns
+ * it into "anything we cannot read is an ungated document" — fail-OPEN at the
+ * single point in the design where an ungated pass is close to irreversible
+ * (ai-service has no per-document delete).
+ *
+ * A previous review already caught exactly that fallback once, in the
+ * `contentKind` beforeValidate hook in `collections/Documents.ts`. This function
+ * exists so the same mistake cannot be made a second time by reaching for the
+ * convenient helper: it is phrased as an ALLOW-LIST OF ONE over the RAW value.
+ * `undefined`, `null`, `'documentos'`, `'Documento'` and any future kind nobody
+ * has taught this function about are all gated.
+ *
+ * ⚠ THAT MEANS ADDING A CONTENT KIND MAKES IT GATED BY DEFAULT, and un-gating it
+ * is a deliberate edit here with a reason attached. That direction is the whole
+ * point: a missing decision costs a hold a human can clear, never an ingest
+ * nobody can undo.
+ */
+export function mustPassAnonymisationGate(rawContentKind: unknown): boolean {
+  return rawContentKind !== UNGATED_CONTENT_KIND
 }
 
 /** The statuses the gate can leave on a row. */
@@ -83,7 +111,15 @@ interface Updater {
 export async function anonymiseDocumentText(args: {
   payload: Updater
   docId: string | number
-  contentKind: ContentKind
+  /**
+   * 🔴 THE RAW `documents.contentKind`, NOT `contentKindOf(row)`.
+   *
+   * Typed `unknown` on purpose so a caller cannot quietly hand over a coerced
+   * value: {@link mustPassAnonymisationGate} is the only thing allowed to read
+   * it, and it fails CLOSED on anything it does not recognise. See that
+   * function.
+   */
+  contentKind: unknown
   /** The unredacted text. Never leaves this process except through `detector`. */
   text: string
   detector?: PersonDetector
@@ -108,7 +144,7 @@ export async function anonymiseDocumentText(args: {
       context: { __skipDocsExtract: true },
     })
 
-  if (!needsAnonymisation(contentKind)) {
+  if (!mustPassAnonymisationGate(contentKind)) {
     // Recorded explicitly rather than left null. "This was never gated" and
     // "the gate has not run yet" are different facts, and an operator reading
     // the row should not have to infer which one they are looking at.
@@ -125,7 +161,13 @@ export async function anonymiseDocumentText(args: {
   try {
     result = await runAnonymisationGate(
       {
-        contentKind: contentKind === 'testimonio' ? 'testimonio' : 'conversacion',
+        // ⚠ `testimonio` IS THE DEFAULT ARM, and the direction matters. This only
+        // picks which sentence describes the material to the model; the rules
+        // are identical. But the `conversacion` prompt tells the model it is
+        // reading members of a community talking to each other, and an
+        // unrecognised kind is not evidence of that. `testimonio` is the arm
+        // that assumes nothing and holds no roster.
+        contentKind: contentKind === 'conversacion' ? 'conversacion' : 'testimonio',
         text,
         roster: args.roster ?? [],
       },
@@ -185,9 +227,12 @@ export function corpusTextFor(doc: {
   extractedText?: unknown
   redactedText?: unknown
 }): { ok: true; text: string } | { ok: false; reason: string } {
-  const kind = contentKindOf(doc as { contentKind?: unknown })
-
-  if (!needsAnonymisation(kind)) {
+  // 🔴 THE RAW VALUE, for the reason spelled out on `mustPassAnonymisationGate`.
+  // This function is the LAST thing standing between a publish and the shared
+  // corpus, and it is routinely handed objects assembled in code rather than
+  // rows straight out of Postgres — which is precisely where a `contentKind`
+  // goes missing without the database's NOT NULL enum noticing.
+  if (!mustPassAnonymisationGate(doc.contentKind)) {
     const raw = typeof doc.extractedText === 'string' ? doc.extractedText.trim() : ''
     return raw ? { ok: true, text: raw } : { ok: false, reason: 'no extracted text' }
   }

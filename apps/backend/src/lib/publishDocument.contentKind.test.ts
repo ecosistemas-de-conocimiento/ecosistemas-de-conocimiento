@@ -189,16 +189,34 @@ describe('beginPublish — 🔴 the content kind survives the re-embed', () => {
     expect(JSON.stringify(fake.metadata())).not.toContain(String(USER))
   })
 
-  it('defaults a row with a junk contentKind to `documento`, not to a testimony', async () => {
+  it('LABELS a row with a junk contentKind `documento` — while still GATING it', async () => {
+    /**
+     * 🔴 TWO DIFFERENT DEFAULTS, ON PURPOSE, AND THIS TEST PINS BOTH.
+     *
+     *   · The citation LABEL defaults to `documento` (`contentKindOf`). A
+     *     source card has to say something, and "documento" is the least
+     *     privileged reading — it never claims a row is a testimony.
+     *   · The GATE DECISION fails CLOSED (`mustPassAnonymisationGate`). An
+     *     unreadable kind is treated as gated material, so the text on the wire
+     *     comes from `redactedText` and never from `extractedText`.
+     *
+     * Reading the label's default as the gate's answer is precisely the
+     * fail-open bug a previous review caught in `collections/Documents.ts`.
+     * Hence `redactedText` below: without it this publish is REFUSED, which is
+     * the other half of the same rule and is covered in `anonymiseDocument.test.ts`.
+     */
     const { payload } = fakePayload()
     const fake = fakeClient()
 
     await beginPublish(
-      { ...PLAIN_DOC, contentKind: 'testimonios' },
+      { ...PLAIN_DOC, contentKind: 'testimonios', extractedText: RAW, redactedText: REDACTED },
       { payload, client: fake.client },
     )
 
     expect(fake.metadata().kind).toBe('documento')
+    // 🔴 The gate's answer, not the label's: the RAW text stayed home.
+    expect(fake.wire().text).toBe(REDACTED)
+    expect(JSON.stringify(fake.calls[0])).not.toContain(NAME)
   })
 })
 

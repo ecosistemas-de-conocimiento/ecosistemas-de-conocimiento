@@ -22,6 +22,7 @@ export { createPseudonymAllocator } from './pseudonyms'
 export type { PseudonymAllocator } from './pseudonyms'
 
 export {
+  ADDRESS_PLACEHOLDER_PREFIX,
   GATE_STAGES,
   OMITTED_PLACEHOLDER,
   PERSON_PLACEHOLDER_PREFIX,

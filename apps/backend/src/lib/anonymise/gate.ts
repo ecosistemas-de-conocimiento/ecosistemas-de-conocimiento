@@ -80,7 +80,7 @@ export interface GateDeps {
  * would HOLD on every document it successfully redacted — the safest possible
  * failure, and a completely useless product.
  */
-const PLACEHOLDER = /\[Dato omitido\]|\[Persona [A-Z]+\]/g
+const PLACEHOLDER = /\[Dato omitido\]|\[Persona [A-Z]+\]|\[Domicilio [A-Z]+\]/g
 
 function countsByLabel(entries: Iterable<string>): RedactionCount[] {
   const tally = new Map<string, number>()
@@ -136,14 +136,31 @@ function applyFindings(
   text: string,
   findings: readonly DetectorFinding[],
   allocate: (name: string) => string,
+  allocateAddress: (address: string) => string,
 ): { text: string; labels: string[] } {
   const ordered = [...findings].sort((a, b) => b.text.length - a.text.length)
   const labels: string[] = []
   let out = text
 
   for (const finding of ordered) {
+    /**
+     * 🔴 `lugar` GETS A LABEL, NOT A BAR, and it comes from the SAME allocator
+     * stage 2 used. A testimony that says the family moved out of one place and
+     * back into it is telling you something; `[Dato omitido]` twice erases
+     * whether it was the same place, and a second allocator would restart at `A`
+     * and claim it was not. Same argument as people, one namespace down.
+     *
+     * ⚠ The model's `lugar` covers "domicilios y lugares identificables", so a
+     * school can land under `[Domicilio X]`. That reads slightly wrong and is
+     * accepted: both are places whose identity we are removing, and splitting
+     * them would need the model to make a distinction its prompt never asked for.
+     */
     const replacement =
-      finding.type === 'persona' ? allocate(finding.text) : OMITTED_PLACEHOLDER
+      finding.type === 'persona'
+        ? allocate(finding.text)
+        : finding.type === 'lugar'
+          ? allocateAddress(finding.text)
+          : OMITTED_PLACEHOLDER
     // Split/join rather than a built RegExp: the finding is arbitrary user text
     // and `new RegExp(finding.text)` would either throw on a stray `(` or, worse,
     // silently match something else entirely.
@@ -176,6 +193,7 @@ export async function runAnonymisationGate(
   const report = (): GateReport => ({
     stages,
     pseudonyms: allocator.count,
+    addresses: allocator.addressCount,
     model: deps.detector.name,
   })
 
@@ -206,6 +224,9 @@ export async function runAnonymisationGate(
     text: structural.text,
     roster: input.roster,
     allocate: (name) => allocator.labelFor(name),
+    // 🔴 THE SAME ALLOCATOR STAGE 3 WILL USE. See the header — one allocator per
+    // document is the invariant, and addresses obey it exactly like people do.
+    allocateAddress: (address) => allocator.addressLabelFor(address),
   })
   stages.push({ stage: 'deterministic', removed: deterministic.removed })
 
@@ -226,7 +247,12 @@ export async function runAnonymisationGate(
     )
   }
 
-  const applied = applyFindings(deterministic.text, found, (name) => allocator.labelFor(name))
+  const applied = applyFindings(
+    deterministic.text,
+    found,
+    (name) => allocator.labelFor(name),
+    (address) => allocator.addressLabelFor(address),
+  )
   stages.push({ stage: 'content', removed: countsByLabel(applied.labels) })
 
   // ── 4. VERIFY ─────────────────────────────────────────────────────────────

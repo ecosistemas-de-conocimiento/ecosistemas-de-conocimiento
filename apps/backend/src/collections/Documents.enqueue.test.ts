@@ -51,7 +51,10 @@ const run = () =>
     docId: 42,
     organizationId: 10,
     uploadedById: 3,
-    fresh: { name: 'Acta.pdf', kind: 'pdf' },
+    // ⚠ `contentKind` is REQUIRED on a fixture now: the gate reads the raw value
+    // and fails closed on anything it does not recognise, so a row assembled
+    // without one is treated as gated material. See `mustPassAnonymisationGate`.
+    fresh: { name: 'Acta.pdf', kind: 'pdf', contentKind: 'documento' },
     extractedText: 'contenido extraído',
   })
 

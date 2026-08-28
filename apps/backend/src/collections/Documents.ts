@@ -868,7 +868,20 @@ export async function enqueueIngestForDoc(args: {
   const gated = await anonymiseDocumentText({
     payload,
     docId,
-    contentKind,
+    /**
+     * 🔴 THE RAW COLUMN, NOT `contentKind` ABOVE.
+     *
+     * `contentKind` is `contentKindOf(fresh)`, which coerces anything
+     * unreadable to `documento` — correct for the citation metadata further
+     * down, fail-OPEN for this decision. `mustPassAnonymisationGate` reads the
+     * raw value and gates everything it does not recognise. See it for the
+     * argument.
+     *
+     * ⚠ The two cannot diverge for a row that came out of Postgres —
+     * `documents.contentKind` is a NOT NULL enum. They diverge for objects
+     * assembled in code, which is exactly where `corpusTextFor` gets used.
+     */
+    contentKind: fresh.contentKind,
     text: extractedText,
     ...(args.detector ? { detector: args.detector } : {}),
     // ⚠ Empty on purpose for a testimony. The people a Voz names — the speaker,

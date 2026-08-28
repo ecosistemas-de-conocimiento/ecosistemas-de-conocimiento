@@ -67,6 +67,12 @@ export const DETERMINISTIC_LABELS = {
   url: 'url',
   arroba: 'arroba',
   numeroLargo: 'numero-largo',
+  /** A street line: a via publica, its name, and a number. */
+  domicilio: 'domicilio',
+  /** `C.P. 06700` on its own. */
+  codigoPostal: 'codigo-postal',
+  /** `Col. Portales`, `Mz. 4 Lt. 12`, `Alcaldía Benito Juárez`. */
+  asentamiento: 'asentamiento',
 } as const
 
 const COMBINING = '\\u0300-\\u036f'
@@ -143,12 +149,292 @@ const ARROBA = /(?<![\w.@])@[A-Za-z0-9_][A-Za-z0-9._]{0,28}[A-Za-z0-9_](?!\w)/g
  */
 const NUMERO_LARGO = /\d{8,}/g
 
+// ---------------------------------------------------------------------------
+// DOMICILIOS — the owner's decision: "addressess should be anonimized"
+// ---------------------------------------------------------------------------
+//
+// ── 🔴 WHY THE HIGHLY-PATTERNED HALF LIVES HERE AND NOT WITH THE MODEL ───────
+//
+// This started as a MEASURED failure, not a hunch. On a live test testimony the
+// gate HELD the document because a street address survived stage 3, and stage 4
+// caught it. Holding was the right outcome; the address surviving was not.
+//
+// The split we chose, and why:
+//
+//   · `C.P. 06700`, `Calle Morelos No. 45`, `Mz. 4 Lt. 12` are POSTAL NOTATION.
+//     They have a shape, the shape does not vary, and a regex that reads the
+//     shape is right every time and costs nothing. Handing them to a
+//     probabilistic detector means paying a model to re-derive a grammar we
+//     already know — and, as measured, occasionally getting it wrong.
+//   · "vivo enfrente de la tienda de doña Mari, subiendo por donde el tanque" is
+//     an address with no shape at all. No regex reaches it. It stays with the
+//     model, whose prompt names domicilios explicitly.
+//
+// ── 🔴 EVERY RULE BELOW NEEDS A STRUCTURAL ANCHOR. THAT IS THE WHOLE DESIGN ──
+//
+// Measured against the 250-document synthetic corpus (`corpus-generativo`),
+// which contains ZERO addresses and a great many address-shaped WORDS:
+//
+//     `calle`     20 hits / 16 docs — every one is `[se escucha ruido de calle]`
+//     `colonia`   365 hits / 159 docs — ~60% the common noun ("la colonia es
+//                 nuestra", "delegada de colonia"); the rest a neighbourhood
+//                 named in ordinary prose, never in address position
+//     `manzana`   19 hits / 19 docs — "las visitas por manzana", a walking route
+//     `camino`    39 hits / 37 docs — metaphor, every time
+//     `dirección` 26 hits / 22 docs — the school PRINCIPAL'S OFFICE
+//
+// A bare-keyword rule would have redacted two thirds of that corpus and removed
+// the thing those testimonies are ABOUT — the neighbourhood — while removing no
+// address, because there are none. So every rule here demands a companion token
+// prose does not produce: a house number, five postal digits, or an abbreviation
+// carrying its full stop.
+//
+// ⚠ THAT IS WHY SPELLED-OUT `colonia X` IS DELIBERATELY NOT A RULE. `Col.` is
+// postal notation; `colonia` is a word people say about where they live. The
+// abbreviation is matched here, the noun is left for the model to judge in
+// context. Do not "complete" this by adding the spelled-out form — it was left
+// out on evidence, not by oversight.
+
+/**
+ * `calle` → `[Cc][Aa][Ll][Ll][Ee]`. Regex metacharacters are escaped.
+ *
+ * 🔴 THIS EXISTS SO THE ADDRESS PATTERNS CAN DROP THE `i` FLAG, and that is not
+ * a style preference — it is a bug fix. Under `i`, `\p{Lu}` matches lower-case
+ * letters too, so "a capitalised word" silently became "any word" and the
+ * street-name run happily absorbed ordinary prose: `en la calle hay 20 casas`
+ * matched as an address. Spelling the case-insensitivity into the KEYWORDS
+ * instead lets `\p{Lu}` mean what it says in the NAMES.
+ *
+ * ⚠ Both cases, not just Title Case: a transcriber's caps lock produces
+ * `CALLE MORELOS`, which `pseudonyms.ts` already warns about for names.
+ */
+function anyCase(literal: string): string {
+  return [...literal]
+    .map((ch) => {
+      const upper = ch.toUpperCase()
+      const lower = ch.toLowerCase()
+      if (upper === lower) return escapeRegExp(ch)
+      return `[${upper}${lower}]`
+    })
+    .join('')
+}
+
+/** Longest first, so `calles` is offered before `calle`. */
+function anyCaseAlternation(literals: readonly string[]): string {
+  return [...literals]
+    .sort((a, b) => b.length - a.length)
+    .map(anyCase)
+    .join('|')
+}
+
+/**
+ * The vías públicas. Plain words — `anyCase` handles the casing and
+ * `escapeRegExp` handles the full stops, so there is no regex syntax to get
+ * wrong in this list.
+ */
+const VIAS = [
+  'calle', 'calles', 'avenida', 'avenidas', 'av.', 'blvd', 'blvd.', 'boulevard',
+  'calz.', 'calzada', 'calzadas', 'privada', 'privadas', 'priv.', 'andador',
+  'andadores', 'cerrada', 'cerradas', 'retorno', 'retornos', 'prolongación',
+  'prolongacion', 'circuito', 'circuitos', 'callejón', 'callejon', 'paseo',
+  'paseos', 'camino', 'caminos', 'carretera', 'carreteras', 'eje', 'ejes',
+]
+
+const TIPO_VIA = `(?:${anyCaseAlternation(VIAS)})`
+
+/**
+ * A word inside a street name, STRICT: capitalised, numeric, or a connector.
+ *
+ * Real street names are proper nouns — `Morelos`, `5 de Mayo`, `Emiliano
+ * Zapata`. Requiring the capital is what stops the run walking into a sentence.
+ */
+const PALABRA_NOMBRE = String.raw`(?:\p{Lu}[\p{L}\p{N}'’-]*|\d{1,4}|${anyCaseAlternation([
+  'de',
+  'del',
+  'la',
+  'las',
+  'los',
+  'el',
+  'y',
+])})`
+
+/**
+ * A word inside a street name, LOOSE: any word at all.
+ *
+ * ⚠ Only ever used on the arm that ALSO demands an explicit number marker
+ * (`No. 45`, `#45`, `s/n`). "calle morelos no. 45" is how a transcript comes
+ * back when nobody dictated the capitals, and the marker is what makes the
+ * looseness safe. Never combine this with the bare-number anchor.
+ */
+const PALABRA_LIBRE = String.raw`(?:[\p{L}][\p{L}\p{N}'’-]*|\d{1,4})`
+
+/** `45`, `45B`, `1450-B`. ⚠ The letter suffix keeps its hyphen — see below. */
+const SUFIJO_NUMERO = String.raw`(?:\s*-\s*[A-Za-z0-9]{1,3}|[A-Za-z])?`
+
+/**
+ * 🔴 THE ANCHOR, MARKED FORM. `No.` keeps its full stop on purpose — `no`
+ * without one is the commonest word in the language, and "Calle no me acuerdo
+ * cuál" would match. `s/n` (sin número) counts because it appears nowhere but in
+ * an address.
+ *
+ * ⚠ THE `45-B` SUFFIX MUST KEEP ITS HYPHEN, or it eats the next word. Written
+ * loosely as an optional space-then-letter it matched the `y` in "Calle Morelos
+ * No. 45 y volví…" and the redaction swallowed the conjunction. Measured, not
+ * hypothetical: it broke two tests in this directory.
+ */
+const NUMERO_MARCADO =
+  String.raw`(?:\s*,?\s*(?:${anyCaseAlternation([
+    'no.',
+    'núm',
+    'núm.',
+    'numero',
+    'número',
+    'núm.',
+  ])}|#)\s*\d{1,5}${SUFIJO_NUMERO}|\s*,?\s*${anyCase('s')}\s*\/\s*${anyCase('n')})` +
+  String.raw`(?![\p{L}\p{N}])`
+
+/** The marked form, or a bare number hanging off a capitalised street name. */
+const NUMERO_CUALQUIERA = String.raw`(?:${NUMERO_MARCADO}|\s+\d{1,5}${SUFIJO_NUMERO}(?![\p{L}\p{N}]))`
+
+/** `int. 3`, `interior 3`, `ext. 12`. An optional tail on a street line. */
+const NUMERO_INTERIOR = String.raw`(?:\s*,?\s*(?:${anyCaseAlternation([
+  'int',
+  'int.',
+  'interior',
+  'ext',
+  'ext.',
+  'exterior',
+])})\s*\d{1,4}[A-Za-z]?)?`
+
+/** The abbreviated settlement forms. See the header: abbreviations only. */
+const ASENTAMIENTO_ABREV = `(?:${anyCaseAlternation([
+  'col.',
+  'fracc.',
+  'fraccionamiento',
+  'u.h.',
+  'u. h.',
+  'unidad habitacional',
+])})`
+
+/**
+ * `, Col. Portales` hanging off a street line.
+ *
+ * ⚠ THE NAME USES THE LOOSE WORD, NOT THE STRICT ONE, and that is safe here for
+ * a reason the strict arm does not have: the `Col.` / `Fracc.` marker is already
+ * an anchor prose does not produce. Requiring a capital as well meant that
+ * `calle morelos no. 45, col. portales, c.p. 03300` — one address, dictated by a
+ * transcriber who used no capitals — came out as THREE labels instead of one.
+ */
+const COLA_ASENTAMIENTO = String.raw`(?:\s*,?\s*${ASENTAMIENTO_ABREV}\s*${PALABRA_LIBRE}(?:\s+${PALABRA_LIBRE}){0,4})?`
+
+/** `C.P.` / `CP` / `Código Postal`, always followed by exactly five digits. */
+const CP_TOKEN = String.raw`(?:${anyCaseAlternation([
+  'c.p.',
+  'c. p.',
+  'cp',
+  'código postal',
+  'codigo postal',
+])})\s*:?\s*\d{5}(?!\d)`
+
+/** `, C.P. 06700` hanging off a street line. */
+const COLA_CP = String.raw`(?:\s*,?\s*${CP_TOKEN})?`
+
+/**
+ * A whole street line, swallowed as ONE match.
+ *
+ * ⚠ TWO ARMS, AND THE PAIRING IS THE SAFETY PROPERTY:
+ *
+ *   · capitalised name + ANY number  — `Av. Emiliano Zapata 128`
+ *   · any words + MARKED number      — `calle morelos no. 45`
+ *
+ * Loose words with a bare number is the combination that matches
+ * "en la calle hay 20 casas", so it is the one combination not offered.
+ *
+ * ⚠ THE OPTIONAL TAILS ARE NOT COSMETIC. Without them
+ * `Calle Morelos No. 45, Col. Portales, C.P. 06700` matches three rules and
+ * comes out as `[Domicilio A], [Domicilio B], [Domicilio C]` — three places
+ * where the person named one. Greedy-but-anchored gives one label, which is what
+ * keeps the redacted sentence true to what was said.
+ */
+const DOMICILIO = new RegExp(
+  String.raw`(?<![\p{L}\p{N}])${TIPO_VIA}(?:` +
+    String.raw`(?:\s+${PALABRA_NOMBRE}){1,6}${NUMERO_CUALQUIERA}` +
+    String.raw`|(?:\s+${PALABRA_LIBRE}){1,6}${NUMERO_MARCADO}` +
+    String.raw`)${NUMERO_INTERIOR}${COLA_ASENTAMIENTO}${COLA_CP}`,
+  'gu',
+)
+
+/**
+ * A postal code standing alone.
+ *
+ * ⚠ Runs AFTER {@link DOMICILIO}, which has already eaten the ones attached to a
+ * street line — the same specific-before-greedy discipline as `email` before
+ * `numero-largo`.
+ */
+const CODIGO_POSTAL = new RegExp(String.raw`(?<![\p{L}\p{N}])${CP_TOKEN}`, 'gu')
+
+/**
+ * A settlement standing alone: `Col. Portales`, `Mz. 4 Lt. 12`,
+ * `Alcaldía Benito Juárez`.
+ *
+ * ⚠ `Alcaldía` / `Delegación` ARE included spelled out, unlike `colonia`, and the
+ * trade is named rather than hidden: "fui a la Alcaldía Benito Juárez a pedir
+ * agua" is an institution, not a home, and it will be redacted. That costs a
+ * little meaning. It buys the CDMX half of every address, which always carries
+ * one — and unlike `colonia`, the corpus measurement found ZERO prose uses of
+ * either word to weigh against it.
+ *
+ * ⚠ `Mz`/`Mza` REQUIRE a following number, because "las visitas por manzana" is
+ * a real sentence in that corpus and means a city block on a walking route.
+ */
+const ASENTAMIENTO = new RegExp(
+  String.raw`(?<![\p{L}\p{N}])(?:` +
+    // The dotted markers are postal notation, so the NAME after one may be
+    // lower-cased — see `COLA_ASENTAMIENTO`.
+    String.raw`${ASENTAMIENTO_ABREV}\s*${PALABRA_LIBRE}(?:\s+${PALABRA_LIBRE}){0,4}` +
+    // ⚠ `Alcaldía` / `Delegación` are ordinary words, so their name run keeps the
+    // STRICT word and must be a proper noun. Loose words behind a spelled-out
+    // keyword is the combination that walks into a sentence.
+    String.raw`|(?:${anyCaseAlternation([
+      'alcaldía',
+      'alcaldia',
+      'delegación',
+      'delegacion',
+      'del.',
+    ])})\s*${PALABRA_NOMBRE}(?:\s+${PALABRA_NOMBRE}){0,4}` +
+    String.raw`|(?:${anyCaseAlternation([
+      'mz',
+      'mz.',
+      'mza',
+      'mza.',
+      'manz',
+      'manz.',
+      'manzana',
+    ])})\s*\d{1,3}(?:\s*,?\s*(?:${anyCaseAlternation([
+      'lt',
+      'lt.',
+      'lote',
+    ])})\s*\d{1,3})?` +
+    String.raw`)`,
+  'gu',
+)
+
 export interface DeterministicArgs {
   text: string
   /** Members' names and emails. Empty is correct for a testimony — see header. */
   roster?: readonly string[]
   /** The document's allocator `labelFor`. Threaded in so stage 3 reuses the labels. */
   allocate: (name: string) => string
+  /**
+   * The document's allocator `addressLabelFor`.
+   *
+   * 🔴 THREADED IN FOR THE SAME REASON AS `allocate`, and it is not optional in
+   * spirit even though the signature tolerates its absence for the standalone
+   * helper below. An address the regexes catch in paragraph one and the model
+   * catches in paragraph three must come out as the SAME `[Domicilio A]`. Two
+   * allocators would restart at `A` and turn one house into two.
+   */
+  allocateAddress?: (address: string) => string
 }
 
 function pushCount(into: RedactionCount[], label: string, count: number): void {
@@ -161,6 +447,26 @@ function omit(text: string, re: RegExp): { text: string; count: number } {
   const out = text.replace(re, () => {
     count += 1
     return OMITTED_PLACEHOLDER
+  })
+  return { text: out, count }
+}
+
+/**
+ * Replace every match of `re` with a LABEL allocated from the match itself.
+ *
+ * ⚠ Unlike {@link omit}, the replacement depends on WHAT matched, so repeats
+ * share a label. That is the whole difference between `[Domicilio A]` and a
+ * redaction bar — see `types.ts`.
+ */
+function label(
+  text: string,
+  re: RegExp,
+  allocate: (matched: string) => string,
+): { text: string; count: number } {
+  let count = 0
+  const out = text.replace(re, (matched) => {
+    count += 1
+    return allocate(matched)
   })
   return { text: out, count }
 }
@@ -228,6 +534,27 @@ export function deterministicPass(args: DeterministicArgs): {
   out = arroba.text
   pushCount(removed, DETERMINISTIC_LABELS.arroba, arroba.count)
 
+  // ── Then the address rules. BEFORE `telefono` and `numero-largo`, which would
+  // otherwise claim the digits out of `C.P. 06700` and `Calle Morelos No. 45`
+  // and leave the street name standing next to a `[Dato omitido]` — the exact
+  // half-eaten failure the header warns about, one family down.
+  //
+  // ⚠ `DOMICILIO` runs FIRST of the three so a full street line is swallowed as
+  // ONE match with one label. `CODIGO_POSTAL` and `ASENTAMIENTO` then only see
+  // the fragments that stood alone.
+  const allocateAddress = args.allocateAddress ?? ((matched: string) => matched)
+  const domicilio = label(out, DOMICILIO, allocateAddress)
+  out = domicilio.text
+  pushCount(removed, DETERMINISTIC_LABELS.domicilio, domicilio.count)
+
+  const cp = label(out, CODIGO_POSTAL, allocateAddress)
+  out = cp.text
+  pushCount(removed, DETERMINISTIC_LABELS.codigoPostal, cp.count)
+
+  const asentamiento = label(out, ASENTAMIENTO, allocateAddress)
+  out = asentamiento.text
+  pushCount(removed, DETERMINISTIC_LABELS.asentamiento, asentamiento.count)
+
   const telefono = omit(out, TELEFONO)
   out = telefono.text
   pushCount(removed, DETERMINISTIC_LABELS.telefono, telefono.count)
@@ -252,5 +579,10 @@ export function deterministicPassStandalone(
   roster?: readonly string[],
 ): { text: string; removed: RedactionCount[] } {
   const allocator = createPseudonymAllocator()
-  return deterministicPass({ text, roster, allocate: (n) => allocator.labelFor(n) })
+  return deterministicPass({
+    text,
+    roster,
+    allocate: (n) => allocator.labelFor(n),
+    allocateAddress: (a) => allocator.addressLabelFor(a),
+  })
 }

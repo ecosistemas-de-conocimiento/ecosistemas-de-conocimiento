@@ -86,6 +86,13 @@ export interface GateReport {
   stages: GateStageReport[]
   /** How many distinct people got a `[Persona X]` label in THIS document. */
   pseudonyms: number
+  /**
+   * How many distinct addresses got a `[Domicilio X]` label in THIS document.
+   *
+   * ⚠ A COUNT, like everything else here. Never the addresses. Optional so a
+   * report stored before addresses were handled still parses.
+   */
+  addresses?: number
   /** Which model did the content scrub, for provenance. Null when stubbed. */
   model?: string | null
 }
@@ -122,7 +129,15 @@ export interface GateInput {
 export interface DetectorFinding {
   /** The exact substring as it appears in the text. */
   text: string
-  /** `persona` becomes `[Persona X]`; everything else becomes `[Dato omitido]`. */
+  /**
+   * `persona` becomes `[Persona X]`, `lugar` becomes `[Domicilio X]`, and
+   * everything else becomes `[Dato omitido]`.
+   *
+   * ⚠ `lugar` SHARES THE ADDRESS ALLOCATOR WITH STAGE 2 on purpose — same
+   * argument as people: an address the regexes caught in one paragraph and the
+   * model caught in another has to come out as the SAME label, or the redaction
+   * invents two houses where the testimony described one.
+   */
   type: 'persona' | 'lugar' | 'contacto' | 'identificador' | 'otro'
 }
 
@@ -158,6 +173,23 @@ export interface PersonDetector {
 
 /** What a person's name is replaced by. Index 0 → `[Persona A]`. */
 export const PERSON_PLACEHOLDER_PREFIX = '[Persona '
+
+/**
+ * What an ADDRESS is replaced by. Index 0 → `[Domicilio A]`.
+ *
+ * 🔴 A LABEL, NOT A REDACTION BAR, for the same reason people get one. The
+ * owner's decision was *"addressess should be anonimized"*, and the cheap way to
+ * obey it is a blanket `[Dato omitido]`. That destroys the testimony: a Voz that
+ * says "me mudé de [Dato omitido] a [Dato omitido] y luego volví a
+ * [Dato omitido]" no longer records whether the person came back to the SAME
+ * place. Labels keep the structure of what was said while removing the address
+ * itself — exactly the trade `pseudonyms.ts` makes for names.
+ *
+ * ⚠ SAME LIFETIME RULE AS `[Persona X]`: stable within one document, deliberately
+ * meaningless between documents. A `[Domicilio A]` that meant the same house
+ * across the corpus would let a reader collect every testimony from one street.
+ */
+export const ADDRESS_PLACEHOLDER_PREFIX = '[Domicilio '
 
 /** What a non-person identifier is replaced by. Deliberately not enumerated. */
 export const OMITTED_PLACEHOLDER = '[Dato omitido]'

@@ -42,7 +42,7 @@
  * backwards.
  */
 
-import { PERSON_PLACEHOLDER_PREFIX } from './types'
+import { ADDRESS_PLACEHOLDER_PREFIX, PERSON_PLACEHOLDER_PREFIX } from './types'
 
 /** Alphabet for the label suffix. After `Z` it rolls over to `AA`, `AB`, … */
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -82,11 +82,46 @@ export function normaliseName(name: string): string {
     .trim()
 }
 
+/**
+ * Fold an ADDRESS to its bucket key.
+ *
+ * ⚠ HARSHER THAN {@link normaliseName}, and it has to be. An address is written
+ * a different way every time it is said: `C.P. 06700` / `CP 06700`,
+ * `Calle Morelos No. 45` / `calle morelos no 45`, with and without the commas a
+ * transcriber guessed at. Punctuation is therefore dropped entirely, not just
+ * folded — otherwise the same house collects three labels and the redacted text
+ * says the person moved twice.
+ *
+ * ⚠ One-way and lossy, exactly like the name fold. Nothing here reconstructs an
+ * address; it only decides whether two strings are the same place.
+ */
+export function normaliseAddress(address: string): string {
+  return address
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+}
+
 export interface PseudonymAllocator {
   /** The label for this name in THIS document. Stable within it, only within it. */
   labelFor(name: string): string
+  /**
+   * The label for this ADDRESS in THIS document. Same contract as
+   * {@link labelFor}, separate sequence — `[Domicilio A]` and `[Persona A]` are
+   * unrelated and both start at `A`.
+   *
+   * 🔴 A SEPARATE COUNTER, NOT A SHARED ONE. Sharing the sequence would let the
+   * count of `[Persona X]` labels leak how many addresses were found and vice
+   * versa, and would make the report's `pseudonyms` number — which an admin
+   * reads as "how many people are in this testimony" — silently wrong.
+   */
+  addressLabelFor(address: string): string
   /** How many distinct people have been labelled so far. Goes in the report. */
   readonly count: number
+  /** How many distinct addresses have been labelled so far. Goes in the report. */
+  readonly addressCount: number
 }
 
 /**
@@ -96,21 +131,31 @@ export interface PseudonymAllocator {
  */
 export function createPseudonymAllocator(): PseudonymAllocator {
   const assigned = new Map<string, string>()
+  const addresses = new Map<string, string>()
+
+  /** One bucket-and-label loop, so the two namespaces cannot drift apart. */
+  const labeller =
+    (into: Map<string, string>, prefix: string, fold: (raw: string) => string) =>
+    (raw: string): string => {
+      const key = fold(raw)
+      const existing = into.get(key)
+      if (existing !== undefined) return existing
+      // Built from the constants in `types.ts` so the gate's "is this string one
+      // of OUR placeholders?" check in stage 4 can never drift out of step with
+      // the strings this allocator actually emits.
+      const label = `${prefix}${labelSuffix(into.size)}]`
+      into.set(key, label)
+      return label
+    }
 
   return {
-    labelFor(name: string): string {
-      const key = normaliseName(name)
-      const existing = assigned.get(key)
-      if (existing !== undefined) return existing
-      // Built from the constant in `types.ts` so the gate's "is this string one of
-      // OUR placeholders?" check in stage 4 can never drift out of step with the
-      // strings this allocator actually emits.
-      const label = `${PERSON_PLACEHOLDER_PREFIX}${labelSuffix(assigned.size)}]`
-      assigned.set(key, label)
-      return label
-    },
+    labelFor: labeller(assigned, PERSON_PLACEHOLDER_PREFIX, normaliseName),
+    addressLabelFor: labeller(addresses, ADDRESS_PLACEHOLDER_PREFIX, normaliseAddress),
     get count(): number {
       return assigned.size
+    },
+    get addressCount(): number {
+      return addresses.size
     },
   }
 }
