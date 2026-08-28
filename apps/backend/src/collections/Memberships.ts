@@ -93,6 +93,14 @@ export const refuseSelfAssignment: CollectionBeforeValidateHook = ({
 /** Admin-panel labels. Exhaustive by type, so adding a role forces a label. */
 const ROLE_LABELS: Record<OrgRole, string> = {
   member: 'Member — read, upload, chat, rate answers',
+  /**
+   * ⚠ "On behalf of other people" is the whole role, and it is worth spelling
+   * out in the label an admin reads while granting it: the Investigador becomes
+   * `uploadedBy` for material whose words belong to someone the system will
+   * never know the name of. See `PERMISSIONS.vocesUpload`.
+   */
+  investigador:
+    'Investigador — the above, plus upload documents and Voces on behalf of other people, and read rating comments',
   admin: 'Admin — the above, plus manage people and delete documents',
   owner: 'Owner — the above, plus manage the organization itself',
 }

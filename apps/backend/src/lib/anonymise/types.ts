@@ -1,0 +1,163 @@
+/**
+ * THE ANONYMISATION GATE — its contract.
+ *
+ * ── 🔴 WHY A GATE WITH A HOLD STATE, AND NOT A BEST-EFFORT TRANSFORM ─────────
+ *
+ * `@edc/ai-client` HAS NO PER-DOCUMENT DELETE. Retirement closes a validity
+ * window (`setDocumentValidity`); the chunk and its vector stay in the corpus
+ * forever. So ingesting something we should not have is close to IRREVERSIBLE.
+ *
+ * That single fact decides the shape of everything here: every failure mode must
+ * end in **"not ingested yet"**, never in "ingested, mostly scrubbed". A
+ * transform has no way to say "I am not sure"; a gate does, and it is called
+ * {@link GateResult} `status: 'hold'`.
+ *
+ * ── WHAT RUNS, AND WHAT ACTUALLY DOES THE WORK ───────────────────────────────
+ *
+ *   1 structural     drop author ids, coarsen timestamps        deterministic
+ *   2 deterministic  emails, phones, CURP/RFC, roster names      deterministic
+ *   3 content        the model DETECTS people and identifiers    probabilistic
+ *   4 verify         a second detection pass over the OUTPUT     probabilistic
+ *
+ * ⚠ THE WEIGHT SITS COMPLETELY DIFFERENTLY FOR THE TWO CONTENT TYPES, and this
+ * is the owner's correction to an earlier design that got it wrong:
+ *
+ *   · In a CONVERSATION the speakers are members of the ecosistema, so we hold
+ *     a roster and stage 2 does real work.
+ *   · In a TESTIMONY the people named — the speaker, their family, a neighbour,
+ *     an official — are NOT USERS OF THIS SYSTEM AT ALL. No roster contains
+ *     them. A dictionary scrub barely touches a Voz.
+ *
+ * 🔴 SO TESTIMONY REDACTION IS STAGE 3. It is the mechanism, not a refinement.
+ * Do not ship testimony redaction on dictionary matching.
+ *
+ * ── 🔴 THE MODEL DETECTS; THIS CODE REPLACES ─────────────────────────────────
+ *
+ * Stage 3 does NOT ask the model to rewrite the text. It asks for a JSON list of
+ * the strings that identify someone, and the replacement is done here. Two
+ * reasons, both concrete:
+ *
+ *   · A rewriting model can silently drop, reorder or invent sentences, and
+ *     nobody would notice — the output looks clean either way, which is exactly
+ *     the failure §3.3 of the plan warns about.
+ *   · Detection is CHECKABLE. Running the same detector over the output is a
+ *     real verification (stage 4); running a rewriter twice is not.
+ *
+ * ── REDACT BY REPLACEMENT, AND NEVER STABLY ACROSS DOCUMENTS ─────────────────
+ *
+ * People become `[Persona A]`, `[Persona B]`, stable WITHIN one document and
+ * deliberately NOT across documents. Stable pseudonyms across a corpus let
+ * someone follow "Persona A" from document to document and re-identify them by
+ * behaviour — which is worse than the names, because it looks safe.
+ *
+ * 🔴 NO RE-IDENTIFICATION MAP IS STORED, ANYWHERE. {@link GateReport} carries
+ * COUNTS and PATTERN NAMES only — never a removed string, never a mapping from a
+ * pseudonym back to anything. A stored map defeats the anonymisation the moment
+ * it leaks, and no product feature needs one. Auditing is served by the original
+ * rows, which already exist and are already access-controlled.
+ */
+
+/** The gate's stages, in order. A hold names the one it stopped at. */
+export const GATE_STAGES = ['structural', 'deterministic', 'content', 'verify'] as const
+
+export type GateStage = (typeof GATE_STAGES)[number]
+
+/**
+ * What one stage removed. **Counts only.**
+ *
+ * 🔴 `label` is the name of a RULE (`email`, `persona`, `telefono`), never the
+ * text that matched. See the header: a report that carried the matched strings
+ * would be the re-identification map this design refuses to keep, filed under a
+ * friendlier name.
+ */
+export interface RedactionCount {
+  label: string
+  count: number
+}
+
+export interface GateStageReport {
+  stage: GateStage
+  removed: RedactionCount[]
+  /** Human-readable note for the admin panel. Must contain no removed text. */
+  note?: string
+}
+
+export interface GateReport {
+  stages: GateStageReport[]
+  /** How many distinct people got a `[Persona X]` label in THIS document. */
+  pseudonyms: number
+  /** Which model did the content scrub, for provenance. Null when stubbed. */
+  model?: string | null
+}
+
+export type GateResult =
+  | { status: 'ready'; redactedText: string; report: GateReport }
+  /**
+   * 🔴 NOT AN ERROR — A REFUSAL TO INGEST. The caller must leave the content
+   * out of every corpus and record the reason. There is no "ingest anyway".
+   */
+  | { status: 'hold'; stage: GateStage; reason: string; report: GateReport }
+
+/**
+ * What the gate is being asked to anonymise.
+ *
+ * ⚠ `contentKind` does NOT change the rules. The owner decided testimonies and
+ * conversations run under the SAME gate, on the grounds that a testimony is
+ * expected to be anonymous anyway. It is carried only so the model prompt can
+ * describe the material accurately, and so the report says what was scrubbed.
+ */
+export interface GateInput {
+  contentKind: 'testimonio' | 'conversacion'
+  text: string
+  /**
+   * Known names and emails of the ecosistema's members, for stage 2.
+   *
+   * ⚠ Useful for a CONVERSATION, close to useless for a TESTIMONY — see the
+   * header. Passing an empty array for a testimony is correct, not a shortcut.
+   */
+  roster?: readonly string[]
+}
+
+/** One finding from the detector: a literal string that identifies someone. */
+export interface DetectorFinding {
+  /** The exact substring as it appears in the text. */
+  text: string
+  /** `persona` becomes `[Persona X]`; everything else becomes `[Dato omitido]`. */
+  type: 'persona' | 'lugar' | 'contacto' | 'identificador' | 'otro'
+}
+
+/**
+ * 🔴 THE SEAM THE MODEL LIVES BEHIND.
+ *
+ * Today this is ai-service `/v1/generate/sync`, which reaches OpenRouter. The
+ * owner's endpoint will later be a box they physically control — SAME CALL,
+ * different base URL. That is the whole reason this is an interface: swapping
+ * the deployment must not touch the gate.
+ *
+ * ⚠ AND IT IS THE ONE PLACE THE UNREDACTED TEXT LEAVES THIS PROCESS. Stage 3
+ * sends the RAW text to a hosted model in order to find out what to hide, which
+ * is a contradiction that is easy to miss because the OUTPUT is clean. The owner
+ * accepted it for development explicitly. ⚠ It stops being acceptable at the
+ * first Voz from a real participant — that is a DATE on the roadmap, not a
+ * config change.
+ */
+export interface PersonDetector {
+  /** Stable name of the model behind this detector, for the report. */
+  readonly name: string
+  /**
+   * Find every string in `text` that identifies a person.
+   *
+   * ⚠ MUST THROW rather than return `[]` when it could not run. An empty list
+   * means "nothing to redact" and would let unscrubbed text through the gate;
+   * a throw becomes a HOLD, which is the safe answer to "we do not know".
+   */
+  detect(args: { text: string; contentKind: 'testimonio' | 'conversacion' }): Promise<
+    DetectorFinding[]
+  >
+}
+
+/** What a person's name is replaced by. Index 0 → `[Persona A]`. */
+export const PERSON_PLACEHOLDER_PREFIX = '[Persona '
+
+/** What a non-person identifier is replaced by. Deliberately not enumerated. */
+export const OMITTED_PLACEHOLDER = '[Dato omitido]'

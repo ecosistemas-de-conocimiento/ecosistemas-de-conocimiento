@@ -59,19 +59,40 @@ import type { CollectionSlug, Payload, Where } from 'payload'
 // ---------------------------------------------------------------------------
 
 /**
- * The three ways to stand in an organization. Ordered least → most privileged;
+ * The four ways to stand in an organization. Ordered least → most privileged;
  * `ROLE_RANK` below depends on that order.
  *
  * ⚠ These strings are on the wire (`roles` in a token, `roles` in a grant) and
  * in the database (`memberships.role`). Renaming one is a migration AND a
  * client change.
+ *
+ * ── WHY `investigador` SITS BETWEEN `member` AND `admin` ─────────────────────
+ *
+ * An Investigador collects material from people who are NOT users of this
+ * system — they upload documents and Voces (testimonies) on somebody else's
+ * behalf, and they read the free-text behind low ratings to understand what the
+ * corpus is missing. That is MORE than a participant does.
+ *
+ * It is emphatically LESS than an admin: an Investigador manages nobody, deletes
+ * nothing, and is scoped to ONE ecosistema like any other membership. Ranking it
+ * below `admin` is what keeps `withinMyOrganizationsWithRole('admin')` — the
+ * gate on member management — meaning exactly what it meant before.
+ *
+ * ⚠ THE RANK IS NOT COSMETIC. `organizationIdsForUserWithMinRole` compares by
+ * rank, so inserting a role in the wrong slot silently hands it (or denies it)
+ * every rank-gated surface at once.
  */
-export const ORG_ROLES = ['member', 'admin', 'owner'] as const
+export const ORG_ROLES = ['member', 'investigador', 'admin', 'owner'] as const
 
 export type OrgRole = (typeof ORG_ROLES)[number]
 
 /** Highest wins when someone somehow holds two memberships in one org. */
-const ROLE_RANK: Record<OrgRole, number> = { member: 0, admin: 1, owner: 2 }
+const ROLE_RANK: Record<OrgRole, number> = {
+  member: 0,
+  investigador: 1,
+  admin: 2,
+  owner: 3,
+}
 
 export const DEFAULT_ORG_ROLE: OrgRole = 'member'
 
@@ -99,6 +120,34 @@ export const PERMISSIONS = {
   membersManage: 'members:manage',
   /** Rename the organization, deactivate it, change its settings. */
   organizationManage: 'organization:manage',
+  /**
+   * 🔴 UPLOAD SOMEBODY ELSE'S WORDS. What separates an Investigador from a
+   * participant on the upload surface.
+   *
+   * `documents:write` means "file MY material". This means "file material that
+   * came from someone who is not on this platform" — a Voz (`contentKind:
+   * 'testimonio'`), or a document collected in the field. `uploadedBy` stays the
+   * Investigador, because it records WHO PERFORMED THE UPLOAD; the words are
+   * somebody else's and the system deliberately never learns whose.
+   *
+   * ⚠ It is a separate permission and not a free consequence of `documents:write`
+   * because every testimony goes through the anonymisation gate and lands in the
+   * shared corpus as an anonymous voice. That is a different act from uploading
+   * a PDF you own, and a participant should not perform it by accident.
+   */
+  vocesUpload: 'voces:upload',
+  /**
+   * Read `ratings.comment` — the free text behind the `other` reason.
+   *
+   * ⚠ THIS USED TO BE IMPLICIT AND WIDE. `ratings` read access is tenant-wide,
+   * so until this permission existed every member of an ecosistema could read
+   * every colleague's written complaint about an answer. The UI warns people the
+   * field is not private, which is honest, but "not private" was being read as
+   * "published to everyone you work with". Narrowing it to Investigador and up
+   * is the point of the permission; the star counts stay tenant-wide, because
+   * those are what an admin needs and they name nobody.
+   */
+  ratingsReadComments: 'ratings:read-comments',
 } as const
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]
@@ -110,8 +159,25 @@ const MEMBER_PERMISSIONS: readonly Permission[] = [
   PERMISSIONS.ratingsWrite,
 ]
 
-const ADMIN_PERMISSIONS: readonly Permission[] = [
+/**
+ * ⚠ A SUPERSET OF `member`, NOT A SIDEWAYS ROLE. An Investigador participates in
+ * their ecosistema exactly like anybody else — same chat, same published
+ * documents, same drafts — and additionally files other people's material and
+ * reads rating comments. Nothing is taken away, and the read surface is
+ * membership-scoped, so they see the ecosistema's published corpus like a member
+ * does and no more.
+ */
+const INVESTIGADOR_PERMISSIONS: readonly Permission[] = [
   ...MEMBER_PERMISSIONS,
+  PERMISSIONS.vocesUpload,
+  PERMISSIONS.ratingsReadComments,
+]
+
+const ADMIN_PERMISSIONS: readonly Permission[] = [
+  // ⚠ Built on INVESTIGADOR, not on MEMBER. `ROLE_RANK` says admin outranks
+  // investigador, and a rank that does not come with the lower role's grants is
+  // a lie that shows up as an admin being refused something a colleague can do.
+  ...INVESTIGADOR_PERMISSIONS,
   PERMISSIONS.documentsDelete,
   PERMISSIONS.membersManage,
 ]
@@ -130,6 +196,7 @@ const OWNER_PERMISSIONS: readonly Permission[] = [
  */
 export const ROLE_PERMISSIONS: Record<OrgRole, readonly Permission[]> = {
   member: MEMBER_PERMISSIONS,
+  investigador: INVESTIGADOR_PERMISSIONS,
   admin: ADMIN_PERMISSIONS,
   owner: OWNER_PERMISSIONS,
 }
@@ -346,6 +413,30 @@ export async function organizationIdsForUserWithMinRole(
   const rows = await membershipsForUser(payload, userId)
   return rows
     .filter((row) => ROLE_RANK[row.role] >= ROLE_RANK[minRole])
+    .map((row) => row.organization.id)
+}
+
+/**
+ * The organizations where this user holds `permission`.
+ *
+ * ⚠ ASK BY PERMISSION, NOT BY RANK, for anything that is not a strict ladder.
+ * `organizationIdsForUserWithMinRole` is the right question for "who manages
+ * members" — that genuinely is a ladder. It is the WRONG question for "who may
+ * file a Voz", because the answer is a property of the role, and encoding it as
+ * `minRole: 'investigador'` bakes the current rank order into the call site. The
+ * day a role is inserted or reordered, a rank-phrased check silently changes
+ * meaning while a permission-phrased one does not.
+ *
+ * Same two queries as every other resolver here; no per-membership round trip.
+ */
+export async function organizationIdsForUserWithPermission(
+  payload: Payload,
+  userId: Id,
+  permission: Permission,
+): Promise<Id[]> {
+  const rows = await membershipsForUser(payload, userId)
+  return rows
+    .filter((row) => ROLE_PERMISSIONS[row.role].includes(permission))
     .map((row) => row.organization.id)
 }
 
