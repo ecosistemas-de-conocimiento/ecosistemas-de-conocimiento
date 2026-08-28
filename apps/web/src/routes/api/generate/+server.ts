@@ -21,6 +21,7 @@ import {
 import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
+import { makeGraphProvider } from '$lib/server/graph';
 import { stampDraftProvenance } from '$lib/publication';
 import { prepareTurn, respond, type ContextRef, type ContextScope } from '@edc/chat-engine/core';
 
@@ -338,6 +339,35 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     sessionDocumentIds,
   });
 
+  // 🔴 THE SECOND RETRIEVAL PATH — GraphRAG (ADR §8).
+  //
+  // Runs CONCURRENTLY with the vector retrieve inside `prepareTurn`, called
+  // with the CONDENSED query, and fused by RRF. It contributes two things: a
+  // deterministic Spanish block summarising the ecosistema's graph (no model
+  // call — this is where the win on GLOBAL questions comes from, e.g. "¿qué
+  // temas se repiten entre los testimonios?"), and at most ONE extra
+  // ai-service retrieve widened by the graph's own terms.
+  //
+  // ⚠ IT READS THE ECOSISTEMA'S PUBLISHED CORPUS, and says so by naming it.
+  // Everything except that corpus is narrowed to this conversation's documents
+  // (see `makeEngineAIClient`), so a graph leg that did not declare its scope
+  // would be silently narrowed and its hits would simply vanish.
+  //
+  // `null` when the conversation has no readable ecosistema — the turn then
+  // carries no `graphProvider` at all and is byte-identical to today's.
+  // Everything else about it is best-effort: the engine wraps the call in
+  // `.catch(() => null)`, so an unreachable or slow graph produces a normal
+  // answer with no message to the user (ADR §8.2).
+  const graphProvider = makeGraphProvider({
+    token: locals.token,
+    organizationId,
+    aiClient: engineAI,
+    orgId: engineOrgId(),
+    scopeId: body.sessionId,
+    corpora,
+    publishedCorpus,
+  });
+
   // The full engine turn spec (condense → summary → scoped retrieve → @-refs →
   // user-turn injection). Identical shape for both transports: the streaming
   // branch runs `prepareTurn` (context only) and drives the SSE proxy itself;
@@ -356,6 +386,9 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     history,
     userMessage,
     inlineRefs: body.contextRefs ?? [],
+    // Omitted entirely when there is no ecosistema to scope a graph read to,
+    // so the engine takes exactly the code path it took before GraphRAG.
+    ...(graphProvider ? { graphProvider } : {}),
     // Persist each chunk's grounding passage so the canonical CitationCard can
     // quote it. Cap the stored text to keep the provenance JSON column lean.
     includePassageText: 1200,

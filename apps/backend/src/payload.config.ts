@@ -19,6 +19,7 @@ import { Teams } from './collections/Teams'
 import { Projects } from './collections/Projects'
 import { Memberships } from './collections/Memberships'
 
+import { graphEndpoints } from './endpoints/graph'
 import { jwksEndpoint } from './endpoints/jwks'
 import { meEndpoint } from './endpoints/me'
 import { resolveEndpoint } from './endpoints/resolve'
@@ -119,8 +120,16 @@ export default buildConfig({
    * `/api/.well-known/jwks.json`; `next.config.ts` rewrites the bare root path
    * onto it, because every JWT verifier fetches exactly the root URL. That
    * rewrite is load-bearing — deleting it breaks verification everywhere.
+   *
+   * 🔴 `graphEndpoints` (`/api/graph/*`) IS THE ONLY READ PATH TO THE GRAPH. The
+   * three collections above are `read: () => false` for everyone, because
+   * Payload access control can express one of ADR §6's three gates and the other
+   * two are a JOIN to `documents` and a `HAVING`. Both live in SQL in
+   * `lib/graph/queries.ts`, which is what these three routes call. Re-opening
+   * `read` on a graph collection would restore the side door those routes exist
+   * to close.
    */
-  endpoints: [jwksEndpoint, meEndpoint, resolveEndpoint, tokenEndpoint],
+  endpoints: [jwksEndpoint, meEndpoint, resolveEndpoint, tokenEndpoint, ...graphEndpoints],
   editor: lexicalEditor(),
   /**
    * ⚠ THIS HOOK IS THE BOOT TIER. Everything here fires AUTOMATICALLY on every

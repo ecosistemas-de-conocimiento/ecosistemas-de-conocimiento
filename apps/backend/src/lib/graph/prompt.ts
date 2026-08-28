@@ -93,7 +93,7 @@ export function graphResponseSchema(allowPersona: boolean): Record<string, unkno
     properties: {
       entidades: {
         type: 'array',
-        maxItems: 40,
+        maxItems: 15,
         items: {
           type: 'object',
           additionalProperties: false,
@@ -102,13 +102,12 @@ export function graphResponseSchema(allowPersona: boolean): Record<string, unkno
             tipo: { enum: entityTypes },
             etiqueta: { type: 'string', minLength: 2, maxLength: 120 },
             menciones: { type: 'integer', minimum: 1 },
-            fragmento: { type: 'string', maxLength: 300 },
           },
         },
       },
       relaciones: {
         type: 'array',
-        maxItems: 60,
+        maxItems: 20,
         items: {
           type: 'object',
           additionalProperties: false,
@@ -197,12 +196,10 @@ export function graphPromptTemplate(allowPersona: boolean): string {
     '   etiqueta.',
     '4. No inventes nada. Toda entidad debe estar sustentada en este fragmento.',
     '5. `menciones` es cuántas veces aparece la entidad EN ESTE FRAGMENTO.',
-    '6. `fragmento` es una cita LITERAL del texto, de 300 caracteres como máximo,',
-    '   que justifique por qué la entidad está ahí.',
-    '7. `desde` y `hacia` deben coincidir EXACTAMENTE con una `etiqueta` de tu',
+    '6. `desde` y `hacia` deben coincidir EXACTAMENTE con una `etiqueta` de tu',
     '   propia lista `entidades`. No relaciones nada que no hayas extraído.',
     allowPersona ? PERSONA_RULE_ALLOWED : PERSONA_RULE_FORBIDDEN,
-    '9. Prefiere pocas entidades buenas a muchas genéricas. Máximo 40 entidades',
+    '8. Prefiere pocas entidades buenas a muchas genéricas. Máximo 15 entidades',
     '   y 60 relaciones.',
     '',
     'TÍTULO DEL DOCUMENTO: {{{titulo}}}',
@@ -228,14 +225,70 @@ export function graphPromptTemplate(allowPersona: boolean): string {
  * request level beats the registry, which would defeat the floor's whole point.
  * `deep` is ADR §5.2's tier — ~3500 output tokens, 2 validation passes.
  */
+const EFFORT_LEVELS = ['quick', 'standard', 'deep', 'maximum'] as const
+export type GraphEffortLevel = (typeof EFFORT_LEVELS)[number]
+
+/**
+ * The effort tier one extraction window runs at.
+ *
+ * 🔴 MEASURED, AND THE REASON THIS IS A KNOB AT ALL. At `deep`, ONE window over
+ * a ~1.2k-character Spanish document did not finish: ai-service answered 200 at
+ * exactly 120,008 ms with no `parsed`, which is its own `LLM_REQUEST_TIMEOUT_MS`
+ * default firing mid-generation. `deep` runs TWO validation passes over ~3500
+ * output tokens, so the cost is in the OUTPUT, not the input.
+ *
+ * ⚠ THAT IS WHY SHRINKING `GRAPH_EXTRACT_WINDOW_CHARS` DOES NOT RESCUE IT — the
+ * document that timed out was already tiny. Halving an input that was never the
+ * bottleneck buys nothing and doubles the number of calls. The two levers that
+ * work are this tier and ai-service's own timeout.
+ *
+ * ── 🔴 THREE MEASUREMENTS, AND WHAT THEY RULE OUT ─────────────────────────
+ *
+ * Against the local ai-service on 2026-08-28, one window over an 809-character
+ * Spanish asamblea fragment:
+ *
+ *   · `deep`      — 120,008 ms, no `parsed`. That is ai-service's own
+ *                   `LLM_REQUEST_TIMEOUT_MS` default firing mid-generation.
+ *   · `standard`  — 82 s, then 85 s, then 96 s across three schema sizes. Every
+ *                   one returned well-formed Spanish that was CUT OFF mid-array:
+ *                   the 800-token output cap, not the clock.
+ *
+ * ⚠ Shrinking the schema did NOT help. Entity cap 40 → 25 → 15 changed nothing,
+ * because the model generates until it is cut off rather than honouring
+ * `maxItems`. Shrinking `GRAPH_EXTRACT_WINDOW_CHARS` cannot help either — the
+ * document that failed was already tiny.
+ *
+ * 🔴 THE BINDING CONSTRAINT IS THE MODEL'S SPEED ON THIS DEPLOYMENT: roughly
+ * 8 tokens/second. A complete answer needs the ~3500-token `deep` budget, and
+ * 3500 tokens at 8 tok/s is ~440 s — well past the 120 s cap. No combination of
+ * prompt, schema or window fixes that. The levers are OUTSIDE this file:
+ *
+ *   1. raise ai-service's `LLM_REQUEST_TIMEOUT_MS` to ~600 s, or
+ *   2. point extraction at a faster model, or
+ *   3. run it against a deployment that is not this one.
+ *
+ * The default stays `deep` DELIBERATELY, even though it currently fails. It is
+ * the tier the ADR specifies, it is the only tier whose token budget can hold a
+ * complete answer, and it is the tier that starts working the moment lever 1 is
+ * pulled. `standard` would fail too — and would keep failing after the timeout
+ * was raised, because its ceiling is tokens rather than seconds, which is a far
+ * more confusing thing to debug.
+ */
+export function graphEffortLevel(): GraphEffortLevel {
+  const raw = process.env.GRAPH_EXTRACT_EFFORT?.trim()
+  return (EFFORT_LEVELS as readonly string[]).includes(raw ?? '')
+    ? (raw as GraphEffortLevel)
+    : 'deep'
+}
+
 export function graphBuiltInSpec(allowPersona: boolean): {
   promptTemplate: string
   responseSchema: Record<string, unknown>
-  effortLevel: 'deep'
+  effortLevel: GraphEffortLevel
 } {
   return {
     promptTemplate: graphPromptTemplate(allowPersona),
     responseSchema: graphResponseSchema(allowPersona),
-    effortLevel: 'deep',
+    effortLevel: graphEffortLevel(),
   }
 }

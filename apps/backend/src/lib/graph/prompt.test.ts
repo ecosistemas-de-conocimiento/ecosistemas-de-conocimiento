@@ -65,10 +65,33 @@ describe('graphResponseSchema', () => {
   })
 
   it('caps the arrays, so one runaway response cannot fill a document', () => {
+    // ⚠ 15/20 rather than the original 40/60, and the reason is measured: a
+    // complete answer has to fit the output-token budget of ONE call, and on
+    // the deployment this was measured against the model generates until it is
+    // cut off rather than honouring `maxItems`. Lowering the cap did not by
+    // itself rescue extraction (see `graphEffortLevel`), but a smaller schema
+    // is the right shape regardless — 15 good entities per window beat 40
+    // generic ones, which is what rule 8 of the prompt asks for in words.
     const schema = graphResponseSchema(true)
     const props = schema.properties as Record<string, Record<string, unknown>>
-    expect(props.entidades.maxItems).toBe(40)
-    expect(props.relaciones.maxItems).toBe(60)
+    expect(props.entidades.maxItems).toBe(15)
+    expect(props.relaciones.maxItems).toBe(20)
+  })
+
+  it('🔴 asks for NO verbatim quotation — nothing to leak, by construction', () => {
+    // `fragmento` used to carry a literal quote justifying each entity. It is
+    // gone from every schema variant. ADR §7.3.4 already refused to STORE one
+    // for a testimonio on the grounds that a verbatim quotation is the most
+    // direct re-identification surface in the design; not asking for one at all
+    // is the stronger version of the same rule, and it removes the conditional
+    // that someone could later get backwards.
+    for (const allowPersona of [true, false]) {
+      const schema = graphResponseSchema(allowPersona)
+      const props = schema.properties as Record<string, Record<string, unknown>>
+      const item = props.entidades.items as Record<string, Record<string, unknown>>
+      expect(Object.keys(item.properties)).not.toContain('fragmento')
+    }
+    expect(JSON.stringify(graphResponseSchema(true))).not.toContain('fragmento')
   })
 })
 

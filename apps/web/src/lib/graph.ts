@@ -1,0 +1,1002 @@
+/**
+ * El grafo del corpus — la copia en español, el vocabulario y las reglas puras.
+ *
+ * Sibling of `$lib/biblioteca.ts` and `$lib/publication.ts`, same shape and the
+ * same reason: `apps/web` runs vitest in a `node` environment with no DOM, so
+ * nothing that lives inside a `.svelte` file can be asserted by a test. Every
+ * rule a refactor could quietly break — the ranking, the accent fold, the
+ * radial geometry, the Spanish copy, and the paragraph the chat turn is fed —
+ * therefore lives here as a plain module with `graph.test.ts` next to it. The
+ * components under `lib/components/graph/` only lay the results out.
+ *
+ * ## 🔴 WHAT THIS SURFACE IS (ADR §7.1)
+ *
+ * ONE view, and every role sees the same thing. There is deliberately no
+ * unprotected internal view: the minimum-support threshold, the published-only
+ * scope and the person rule apply to a platform admin exactly as they apply to
+ * a member. What differs by role is WHICH ecosistema you can look at, never
+ * what the graph shows about it.
+ *
+ * ## 🔴 THE FOUR LISTS, AND WHY `persona` IS NOT ONE OF THEM
+ *
+ * ADR §7.2 enumerates the view as temas · lugares · eventos · organizaciones.
+ * `persona` exists in the backend's vocabulary — a `documento` may legitimately
+ * produce person nodes — but a RANKED LIST OF PEOPLE across an ecosistema's
+ * corpus is the single most re-identification-adjacent surface the design could
+ * offer, and §7.3 spends its whole argument on not building that. So the view
+ * drops the type entirely: not from the lists only, but from the ego-network
+ * neighbours too, because a name excluded from one and shown in the other is
+ * excluded from neither.
+ *
+ * ⚠ It is ONE predicate (`isViewableEntityType`), applied where the response is
+ * parsed, so the day someone decides differently it is a one-line change with a
+ * test that fails loudly — not an audit of every component.
+ *
+ * ## 🔴 A TESTIMONIO'S TITLE IS TAKEN, NEVER IMPROVED
+ *
+ * The backend hands back already-neutralised document titles. Nothing here
+ * looks up the "real" name of a document, and nothing should: the original file
+ * name is free text that never passed the anonymisation gate. See
+ * `GraphDocument.title`.
+ */
+
+import { foldText } from '$lib/components/admin/summary';
+
+/** Re-exported so graph code has one import surface for the accent fold. */
+export { foldText };
+
+// ── Vocabulary ─────────────────────────────────────────────────────────────
+
+/**
+ * The backend's entity types (`apps/backend/src/lib/graph/types.ts`).
+ *
+ * ⚠ Spanish values, English identifiers — the house convention, and here it
+ * also means the stored value is the same string the extraction prompt showed
+ * the model, so nothing translates a category on the way through.
+ */
+export const GRAPH_ENTITY_TYPES = ['tema', 'lugar', 'evento', 'organizacion', 'persona'] as const;
+export type GraphEntityType = (typeof GRAPH_ENTITY_TYPES)[number];
+
+/** The four lists the view shows, in the order it shows them (ADR §7.2). */
+export const GRAPH_VIEW_TYPES = ['tema', 'lugar', 'evento', 'organizacion'] as const;
+export type GraphViewType = (typeof GRAPH_VIEW_TYPES)[number];
+
+export function isGraphEntityType(value: unknown): value is GraphEntityType {
+  return typeof value === 'string' && (GRAPH_ENTITY_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * 🔴 THE ONE PREDICATE THE VIEW'S PERSON RULE HANGS OFF. See the module header.
+ *
+ * Fails CLOSED: an unknown type is not viewable. A category the backend adds
+ * tomorrow does not appear in this product until someone decides it should.
+ */
+export function isViewableEntityType(value: unknown): value is GraphViewType {
+  return typeof value === 'string' && (GRAPH_VIEW_TYPES as readonly string[]).includes(value);
+}
+
+export const GRAPH_RELATION_TYPES = [
+  'ocurre_en',
+  'participa_en',
+  'ubicado_en',
+  'parte_de',
+  'afecta_a',
+  'relacionado_con',
+] as const;
+export type GraphRelationType = (typeof GRAPH_RELATION_TYPES)[number];
+
+/** `documents.contentKind` — a privacy control, not a label (ADR §0, §3). */
+export const CONTENT_KINDS = ['documento', 'testimonio', 'conversacion'] as const;
+export type ContentKind = (typeof CONTENT_KINDS)[number];
+
+// ── Shapes, as the BFF hands them to the browser ───────────────────────────
+
+export interface GraphEntity {
+  id: string;
+  type: GraphViewType;
+  label: string;
+  /** Distinct PUBLISHED documents this entity appears in. Never a mention count. */
+  support: number;
+}
+
+export interface GraphNeighbour {
+  entity: GraphEntity;
+  relationType: GraphRelationType;
+  support: number;
+}
+
+export interface GraphDocument {
+  id: string;
+  /**
+   * 🔴 ALREADY NEUTRALISED BY THE BACKEND. Rendered exactly as received. Never
+   * re-resolved against the documents collection — see the module header.
+   */
+  title: string;
+  contentKind: ContentKind | null;
+}
+
+export interface GraphView {
+  entities: GraphEntity[];
+  /**
+   * How many entities the minimum-support threshold withheld. Surfaced to the
+   * reader verbatim: a number we hold and do not show is a number that makes an
+   * empty screen look like a bug.
+   */
+  hidden: number;
+  /**
+   * The threshold itself, when the backend names it. `null` → the copy says
+   * "muy pocos documentos" instead of naming a number it does not know.
+   */
+  minSupport: number | null;
+  /**
+   * 🔴 HOW THE TWO EMPTY GRAPHS ARE TOLD APART. Published documents in this
+   * ecosistema, counted without reference to the graph at all.
+   *
+   * `entities: []` means one of two completely different things — "nobody has
+   * published anything yet" or "everything published is still below the
+   * threshold" — and they need different Spanish. The first is answered by
+   * publishing something; the second by publishing MORE. `null` when the
+   * backend did not say, in which case the copy falls back to the threshold
+   * wording, which is the more common case and the less alarming one.
+   */
+  publishedDocuments: number | null;
+}
+
+export interface GraphEntityDetail {
+  entity: GraphEntity;
+  neighbours: GraphNeighbour[];
+  documents: GraphDocument[];
+}
+
+/** One edge of `POST /api/graph/retrieve`, endpoints named by entity id. */
+export interface GraphEdge {
+  fromId: string;
+  toId: string;
+  relationType: GraphRelationType;
+  support: number;
+}
+
+/** The GraphRAG payload. `terms` drives the ONE expansion retrieve. */
+export interface GraphRetrieval {
+  entities: GraphEntity[];
+  edges: GraphEdge[];
+  documents: GraphDocument[];
+  terms: string[];
+  /**
+   * Every entity named anywhere in the payload — the seeds PLUS both endpoints
+   * of every edge.
+   *
+   * 🔴 NOT THE SAME LIST AS `entities`, AND THE DIFFERENCE IS LOAD-BEARING.
+   * `entities` is the seeds: what the query actually matched. `edges` reaches
+   * ONE HOP OUT of them, so an edge's far endpoint is usually NOT a seed. An
+   * index built from `entities` alone therefore resolves almost no neighbours,
+   * and the context block quietly loses the one thing it is for — "X se conecta
+   * con Y" — while still looking well-formed.
+   *
+   * Optional so a hand-built `GraphRetrieval` (a test fixture) still typechecks;
+   * `graphContextParagraph` falls back to `entities` when it is absent.
+   */
+  nodes?: GraphEntity[];
+}
+
+/** The connection currently selected in the view, with its shared documents. */
+export interface SelectedEdge {
+  entity: GraphEntity;
+  relationType: GraphRelationType;
+  /** Published documents where BOTH entities appear. See `sharedDocuments`. */
+  documents: GraphDocument[];
+  /** `false` ⇒ the neighbour's own read failed. NOT "there are none". */
+  ok: boolean;
+}
+
+/**
+ * Everything `/grafo` renders.
+ *
+ * ⚠ IT LIVES HERE, NOT IN `+page.server.ts`. SvelteKit rejects any export from
+ * a `+page.server.ts` other than `load`, `actions` and its own options, and it
+ * does so at REQUEST time — the page 500s with "Invalid export" while
+ * `svelte-check` says nothing. A type-only export happens to be erased before
+ * that check ever sees it, but "happens to be erased" is not a rule anyone
+ * should have to remember. Same footgun `/admin` records in its own header.
+ */
+export interface GrafoPageData {
+  state: 'ready' | 'no-ecosystem' | 'unavailable';
+  ecosystem: { id: string; name: string } | null;
+  view: GraphView;
+  /**
+   * `false` ⇒ the graph read FAILED. ⚠ Load-bearing: an empty graph because the
+   * backend blinked must never be rendered as "aún no hay suficientes
+   * documentos publicados". One is an outage; the other is a sentence about
+   * this ecosistema's corpus.
+   */
+  viewOk: boolean;
+  entity: GraphEntityDetail | null;
+  entityState: 'none' | 'ok' | 'not-found' | 'unavailable';
+  edge: SelectedEdge | null;
+}
+
+// ── Tolerant parsing ───────────────────────────────────────────────────────
+//
+// ⚠ The backend endpoints were built in a parallel lane against a written
+// contract, so these parsers accept the contract's spelling AND the obvious
+// neighbouring ones (`from`/`fromId`/`source`, `type`/`relationType`). A field
+// we cannot read degrades that ONE row to absent rather than throwing away the
+// response — a graph missing an edge is a smaller failure than a page that
+// will not load, and the graph path is best-effort by design (ADR §8.2).
+
+function str(v: unknown): string | null {
+  if (typeof v === 'string' && v.trim()) return v.trim();
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  return null;
+}
+
+function count(v: unknown): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+function toRelationType(v: unknown): GraphRelationType {
+  return typeof v === 'string' && (GRAPH_RELATION_TYPES as readonly string[]).includes(v)
+    ? (v as GraphRelationType)
+    : 'relacionado_con';
+}
+
+function toContentKind(v: unknown): ContentKind | null {
+  return typeof v === 'string' && (CONTENT_KINDS as readonly string[]).includes(v)
+    ? (v as ContentKind)
+    : null;
+}
+
+function idOf(raw: unknown): string | null {
+  const direct = str(raw);
+  if (direct) return direct;
+  if (raw && typeof raw === 'object' && 'id' in raw) return str((raw as { id?: unknown }).id);
+  return null;
+}
+
+/**
+ * One entity row. `null` when it has no id, no label, or a type the view does
+ * not show — see `isViewableEntityType`.
+ */
+export function parseGraphEntity(raw: unknown): GraphEntity | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const row = raw as Record<string, unknown>;
+  const id = str(row.id);
+  const label = str(row.label) ?? str(row.name);
+  if (!id || !label || !isViewableEntityType(row.type)) return null;
+  return { id, type: row.type, label, support: count(row.support ?? row.documentCount) };
+}
+
+export function parseGraphDocument(raw: unknown): GraphDocument | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const row = raw as Record<string, unknown>;
+  const id = str(row.id);
+  if (!id) return null;
+  // ⚠ The fallback is a generic noun, never a file name reconstructed from
+  // somewhere else. A missing title stays a missing title.
+  const title = str(row.title) ?? str(row.name) ?? 'Documento sin título';
+  return { id, title, contentKind: toContentKind(row.contentKind) };
+}
+
+export function parseGraphView(raw: unknown): GraphView {
+  const body = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const entities = (Array.isArray(body.entities) ? body.entities : [])
+    .map(parseGraphEntity)
+    .filter((e): e is GraphEntity => e !== null);
+  const minSupport = count(body.minSupport);
+  // ⚠ `0` is a real answer here ("nothing published yet"), so absence has to be
+  // distinguished from zero rather than folded into it by `count`.
+  const published =
+    body.publishedDocuments === undefined || body.publishedDocuments === null
+      ? null
+      : count(body.publishedDocuments);
+  return {
+    entities: rankEntities(entities),
+    hidden: count(body.hidden),
+    minSupport: minSupport > 0 ? minSupport : null,
+    publishedDocuments: published,
+  };
+}
+
+export function parseGraphNeighbour(raw: unknown): GraphNeighbour | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const row = raw as Record<string, unknown>;
+  const entity = parseGraphEntity(row.entity ?? row);
+  if (!entity) return null;
+  // ⚠ ABSENT AND ZERO ARE DIFFERENT. An edge with no support of its own falls
+  // back to the entity's, but a support the backend actually sent is taken as
+  // sent — otherwise a `0` would silently be redrawn as the entity's full
+  // count, and the ego network would show a fat spoke for a thin edge.
+  const declared =
+    row.support === undefined || row.support === null ? null : count(row.support);
+  return {
+    entity,
+    relationType: toRelationType(row.relationType),
+    support: declared ?? entity.support,
+  };
+}
+
+export function parseGraphEntityDetail(raw: unknown): GraphEntityDetail | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const body = raw as Record<string, unknown>;
+  const entity = parseGraphEntity(body.entity);
+  if (!entity) return null;
+  const neighbours = (Array.isArray(body.neighbours) ? body.neighbours : [])
+    .map(parseGraphNeighbour)
+    .filter((n): n is GraphNeighbour => n !== null);
+  const documents = (Array.isArray(body.documents) ? body.documents : [])
+    .map(parseGraphDocument)
+    .filter((d): d is GraphDocument => d !== null);
+  return { entity, neighbours: rankNeighbours(neighbours), documents };
+}
+
+export function parseGraphEdge(raw: unknown): GraphEdge | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const row = raw as Record<string, unknown>;
+  const fromId = idOf(row.fromId ?? row.from ?? row.source);
+  const toId = idOf(row.toId ?? row.to ?? row.target);
+  if (!fromId || !toId || fromId === toId) return null;
+  return {
+    fromId,
+    toId,
+    relationType: toRelationType(row.relationType ?? row.type),
+    support: count(row.support),
+  };
+}
+
+export function parseGraphRetrieval(raw: unknown): GraphRetrieval {
+  const body = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const entities = (Array.isArray(body.entities) ? body.entities : [])
+    .map(parseGraphEntity)
+    .filter((e): e is GraphEntity => e !== null);
+  const edges = (Array.isArray(body.edges) ? body.edges : [])
+    .map(parseGraphEdge)
+    .filter((e): e is GraphEdge => e !== null);
+  const documents = (Array.isArray(body.documents) ? body.documents : [])
+    .map(parseGraphDocument)
+    .filter((d): d is GraphDocument => d !== null);
+  const terms = (Array.isArray(body.terms) ? body.terms : [])
+    .map((t) => str(t))
+    .filter((t): t is string => t !== null);
+
+  // The full node index — seeds plus both endpoints of every edge. See
+  // `GraphRetrieval.nodes` for why building it from `entities` alone silently
+  // empties the context block's "se conecta con" clause.
+  // 🔴 Endpoints go through `parseGraphEntity` like everything else, so a
+  // `persona` endpoint is dropped here too and can never reach the prompt.
+  const nodes = new Map<string, GraphEntity>();
+  for (const e of entities) nodes.set(e.id, e);
+  for (const raw of Array.isArray(body.edges) ? body.edges : []) {
+    if (!raw || typeof raw !== 'object') continue;
+    const row = raw as Record<string, unknown>;
+    for (const end of [row.from, row.to, row.source, row.target]) {
+      const parsed = parseGraphEntity(end);
+      if (parsed && !nodes.has(parsed.id)) nodes.set(parsed.id, parsed);
+    }
+  }
+
+  return { entities: rankEntities(entities), edges, documents, terms, nodes: [...nodes.values()] };
+}
+
+// ── Ranking and search ─────────────────────────────────────────────────────
+
+/**
+ * Support descending, then label A→Z in Spanish collation.
+ *
+ * ⚠ The tie-break is not cosmetic. Two entities with the same support must come
+ * back in the same order on every render, or the "ranked list" the ADR promises
+ * reshuffles itself while someone is reading it.
+ */
+export function rankEntities(entities: readonly GraphEntity[]): GraphEntity[] {
+  return [...entities].sort(
+    (a, b) => b.support - a.support || a.label.localeCompare(b.label, 'es'),
+  );
+}
+
+export function rankNeighbours(neighbours: readonly GraphNeighbour[]): GraphNeighbour[] {
+  return [...neighbours].sort(
+    (a, b) =>
+      b.support - a.support ||
+      b.entity.support - a.entity.support ||
+      a.entity.label.localeCompare(b.entity.label, 'es'),
+  );
+}
+
+/**
+ * Accent- and case-insensitive filter over the labels.
+ *
+ * ⚠ Not a nicety in a Spanish product: someone typing `migracion` must find
+ * `Migración`, because that is how people type when they are in a hurry, and a
+ * filter that silently returns nothing reads as "eso no está en el grafo".
+ */
+export function filterEntities(entities: readonly GraphEntity[], query: string): GraphEntity[] {
+  const needle = foldText(query);
+  if (!needle) return [...entities];
+  return entities.filter((e) => foldText(e.label).includes(needle));
+}
+
+/** The four lists, always all four, always in ADR order — empty ones included. */
+export function groupByType(
+  entities: readonly GraphEntity[],
+): Array<{ type: GraphViewType; entities: GraphEntity[] }> {
+  return GRAPH_VIEW_TYPES.map((type) => ({
+    type,
+    entities: entities.filter((e) => e.type === type),
+  }));
+}
+
+// ── Copy ───────────────────────────────────────────────────────────────────
+
+/** The tab / list heading. Plural, because it names a list. */
+export function typeListLabel(type: GraphViewType): string {
+  switch (type) {
+    case 'tema':
+      return 'Temas';
+    case 'lugar':
+      return 'Lugares';
+    case 'evento':
+      return 'Eventos';
+    case 'organizacion':
+      return 'Organizaciones';
+  }
+}
+
+/** The chip on one entity. Singular, because it names a thing. */
+export function typeChipLabel(type: GraphViewType): string {
+  switch (type) {
+    case 'tema':
+      return 'tema';
+    case 'lugar':
+      return 'lugar';
+    case 'evento':
+      return 'evento';
+    case 'organizacion':
+      return 'organización';
+  }
+}
+
+/** What each list is, in one sentence. On the page, not in a tooltip. */
+export function typeListHint(type: GraphViewType): string {
+  switch (type) {
+    case 'tema':
+      return 'De qué se habla en el material publicado.';
+    case 'lugar':
+      return 'Lugares que se mencionan.';
+    case 'evento':
+      return 'Hechos y procesos con un momento propio.';
+    case 'organizacion':
+      return 'Instituciones, colectivos y dependencias.';
+  }
+}
+
+export function relationLabel(relation: GraphRelationType): string {
+  switch (relation) {
+    case 'ocurre_en':
+      return 'ocurre en';
+    case 'participa_en':
+      return 'participa en';
+    case 'ubicado_en':
+      return 'está en';
+    case 'parte_de':
+      return 'es parte de';
+    case 'afecta_a':
+      return 'afecta a';
+    case 'relacionado_con':
+      return 'se relaciona con';
+  }
+}
+
+/**
+ * `12` → `aparece en 12 documentos`.
+ *
+ * ⚠ Singular/plural is decided here rather than in a template because
+ * "1 documentos" is the kind of thing that reads fine right up until the day it
+ * does not.
+ */
+export function supportCopy(support: number): string {
+  const n = Math.max(0, Math.floor(support));
+  if (n === 0) return 'sin documentos que lo respalden';
+  if (n === 1) return 'aparece en 1 documento';
+  return `aparece en ${n.toLocaleString('es-MX')} documentos`;
+}
+
+/** Short form for tight places (the neighbour chip, the SVG tooltip). */
+export function supportShort(support: number): string {
+  const n = Math.max(0, Math.floor(support));
+  return n === 1 ? '1 documento' : `${n.toLocaleString('es-MX')} documentos`;
+}
+
+/**
+ * How a supporting document is labelled.
+ *
+ * 🔴 A TESTIMONIO AND A DOCUMENTO MUST NOT LOOK THE SAME — the same rule
+ * `$lib/biblioteca.ts` states for the library. A reader weighing a connection
+ * needs to know whether its evidence is a file somebody wrote or a person's
+ * words, gathered and anonymised, without having to guess.
+ */
+export function contentKindLabel(
+  kind: ContentKind | null,
+): { label: string; tone: 'voice' | 'document' } {
+  switch (kind) {
+    case 'testimonio':
+      return { label: 'Voz', tone: 'voice' };
+    case 'conversacion':
+      return { label: 'Conversación', tone: 'document' };
+    default:
+      return { label: 'Documento', tone: 'document' };
+  }
+}
+
+export const GRAPH_KICKER = 'Grafo';
+export const GRAPH_TITLE = 'Cómo se conecta lo que publica tu ecosistema';
+
+/**
+ * ⚠ Said on the page, not in a tooltip. Two misreadings are common and both are
+ * costly: that the graph covers everything (it covers what has been PUBLISHED),
+ * and that a missing connection means it does not exist (it may exist and sit
+ * below the threshold).
+ */
+export const GRAPH_SCOPE_NOTE =
+  'Aquí solo entra lo publicado. Los borradores, incluidos los tuyos, no cuentan. ' +
+  'Y una conexión aparece solo cuando varios documentos distintos la respaldan.';
+
+/**
+ * 🔴 THE EMPTY STATE THE ADR NAMES, WORD FOR WORD (§7.3.3).
+ *
+ * In a young ecosistema the graph is genuinely empty, and that is the design
+ * working. A blank canvas reads as broken and sends someone to report a bug, so
+ * the screen says what happened instead of showing nothing.
+ */
+export const GRAPH_EMPTY_THRESHOLD =
+  'Aún no hay suficientes documentos publicados para mostrar conexiones';
+
+export const GRAPH_EMPTY_THRESHOLD_HINT =
+  'No es un error. Una conexión se muestra solo cuando varios documentos publicados ' +
+  'distintos la respaldan, para que un solo testimonio nunca pueda señalar a alguien.';
+
+export const GRAPH_EMPTY_NOTHING_PUBLISHED = 'Tu ecosistema todavía no ha publicado nada';
+
+export const GRAPH_EMPTY_NOTHING_PUBLISHED_HINT =
+  'Cuando alguien publique un documento o una voz, aquí empezarán a aparecer los temas, ' +
+  'lugares, eventos y organizaciones que se repiten entre ellos.';
+
+/**
+ * 🔴 TWO EMPTY GRAPHS, TWO DIFFERENT SENTENCES.
+ *
+ * "Nobody has published anything yet" and "everything published is still below
+ * the threshold" look identical on screen and are fixed by different actions —
+ * publish something, versus publish more. Telling someone the second when the
+ * first is true is a small lie that sends them looking for a bug. The backend
+ * sends `publishedDocuments` precisely so this can be answered honestly.
+ *
+ * ⚠ Unknown falls back to the threshold wording: it is the commoner case, and
+ * it does not accuse an ecosistema of being empty when we simply did not ask.
+ */
+export function emptyGraphCopy(view: GraphView): { title: string; hint: string } {
+  if (view.publishedDocuments === 0) {
+    return { title: GRAPH_EMPTY_NOTHING_PUBLISHED, hint: GRAPH_EMPTY_NOTHING_PUBLISHED_HINT };
+  }
+  return { title: GRAPH_EMPTY_THRESHOLD, hint: GRAPH_EMPTY_THRESHOLD_HINT };
+}
+
+export const GRAPH_NO_RESULTS = 'Nada coincide con lo que buscas.';
+
+export const GRAPH_UNAVAILABLE =
+  'No pudimos leer el grafo en este momento. Vuelve a intentarlo en un rato.';
+
+export const GRAPH_NO_ECOSYSTEM =
+  'Todavía no perteneces a ningún ecosistema, así que no hay un grafo que mostrar. ' +
+  'Pídele acceso a quien administra tu ecosistema.';
+
+export const GRAPH_SEARCH_HINT =
+  'La búsqueda es por nombre. No importan los acentos ni las mayúsculas.';
+
+export const GRAPH_PICK_ENTITY =
+  'Elige un tema, lugar, evento u organización para ver con qué se conecta.';
+
+export const GRAPH_NO_NEIGHBOURS =
+  'Todavía no hay conexiones que mostrar para esto. Aparecerán cuando varios ' +
+  'documentos publicados las respalden.';
+
+export const GRAPH_ENTITY_UNAVAILABLE =
+  'No pudimos leer las conexiones de esta entidad. Vuelve a intentarlo en un rato.';
+
+/**
+ * ⚠ Says "ya no aparece", not "no existe". An entity drops out of the graph
+ * when a document is unpublished or when it falls back under the threshold, and
+ * both are normal. "No existe" would read as a broken link.
+ */
+export const GRAPH_ENTITY_NOT_FOUND =
+  'Eso ya no aparece en el grafo de tu ecosistema. Pudo dejar de cumplir el mínimo ' +
+  'de documentos, o el documento que lo respaldaba dejó de estar publicado.';
+
+export const GRAPH_EDGE_DOCS_TITLE = 'Documentos donde aparecen los dos';
+
+/**
+ * ⚠ HONEST ABOUT WHAT THE LIST IS. The backend exposes documents per ENTITY,
+ * not per edge, so this is the intersection of two entity lists — a superset of
+ * the documents that actually evidence the relation. Calling it "los documentos
+ * que sustentan esta conexión" would claim more than we can show.
+ */
+export const GRAPH_EDGE_DOCS_HINT =
+  'Documentos publicados en los que aparecen los dos. De ahí sale la conexión.';
+
+/**
+ * ⚠ TWO DIFFERENT SENTENCES, AND THEY MUST NOT BE MERGED. "We found none" is a
+ * fact about this ecosistema; "we could not read them" is a fact about our
+ * backend. Saying the first when the second is true tells someone their corpus
+ * is thinner than it is.
+ */
+export const GRAPH_EDGE_DOCS_EMPTY =
+  'No encontramos documentos publicados donde aparezcan los dos.';
+
+export const GRAPH_EDGE_DOCS_UNAVAILABLE =
+  'No pudimos leer los documentos de esta conexión. Vuelve a intentarlo en un rato.';
+
+/** Heading over one entity's own supporting documents, when no edge is picked. */
+export function entityDocsTitle(label: string): string {
+  return `Dónde aparece ${label}`;
+}
+
+export const GRAPH_ENTITY_DOCS_HINT =
+  'Documentos publicados del ecosistema donde se menciona.';
+
+export const GRAPH_ENTITY_DOCS_EMPTY = 'No hay documentos publicados que listar aquí.';
+
+/** Turn a neighbour into the new centre of the picture. */
+export const GRAPH_RECENTRE_LABEL = 'Ver sus conexiones';
+
+export const GRAPH_CLEAR_EDGE_LABEL = 'Quitar la selección';
+
+export const GRAPH_TESTIMONY_NOTE = 'Testimonio anónimo: el sistema no guarda quién lo contó.';
+
+/**
+ * How many entities the threshold withheld — said out loud, never swallowed.
+ *
+ * `null` when nothing was hidden, so the caller renders nothing rather than a
+ * reassuring "0 ocultas" line nobody needs.
+ */
+export function hiddenCopy(hidden: number, minSupport: number | null): string | null {
+  const n = Math.max(0, Math.floor(hidden));
+  if (n === 0) return null;
+  // ⚠ Subject AND verb agree with the count. "1 entidad … aparecen" is the
+  // exact sort of seam that makes a careful sentence read as machine output.
+  const subject =
+    n === 1
+      ? 'Hay 1 entidad que no se muestra'
+      : `Hay ${n.toLocaleString('es-MX')} entidades que no se muestran`;
+  const verb = n === 1 ? 'aparece' : 'aparecen';
+  const because =
+    minSupport && minSupport > 1
+      ? `porque ${verb} en menos de ${minSupport} documentos publicados`
+      : `porque ${verb} en muy pocos documentos publicados`;
+  return `${subject} ${because}. Es a propósito: protege a quien contó algo una sola vez.`;
+}
+
+/** Human count of what a filtered list is currently showing. */
+export function resultsSummary(input: {
+  total: number;
+  shown: number;
+  filtered: boolean;
+}): string {
+  if (input.total === 0) return input.filtered ? GRAPH_NO_RESULTS : GRAPH_EMPTY_THRESHOLD;
+  // ⚠ The noun agrees with the TOTAL, which is the number it follows:
+  // "1 de 12 entidades", never "1 de 12 entidad". Same rule as
+  // `$lib/biblioteca.resultsSummary`.
+  const noun = input.total === 1 ? 'entidad' : 'entidades';
+  if (!input.filtered || input.shown >= input.total) {
+    return `${input.total.toLocaleString('es-MX')} ${noun}`;
+  }
+  return `${input.shown.toLocaleString('es-MX')} de ${input.total.toLocaleString('es-MX')} ${noun}`;
+}
+
+// ── The ego network: deterministic radial geometry ──────────────────────────
+//
+// 🔴 NO PHYSICS, NO LAYOUT JITTER, NO CHARTING DEPENDENCY (ADR §7.2). The
+// purpose of this picture is ANALYSIS: someone comes back tomorrow and needs to
+// see the same shape they saw today, and needs to compare two entities by
+// looking at them. A force-directed layout gives a different picture on every
+// render and a hairball at 400 nodes; it is the wrong tool for both jobs.
+
+/** One hop, and never more than this many neighbours (ADR §7.2). */
+export const EGO_MAX_NEIGHBOURS = 20;
+
+const EGO_RADIUS = 150;
+/** Vertical fraction of the circle the columns use. < 1 keeps labels apart. */
+const EGO_SPREAD = 0.92;
+/** Room for a label on each side. */
+const EGO_LABEL_GUTTER = 132;
+const EGO_MARGIN = 30;
+const EGO_NODE_MIN_R = 5;
+const EGO_NODE_MAX_R = 11;
+const EGO_HUB_R = 15;
+/** Labels are truncated, not shrunk: 11px text stays legible, 8px does not. */
+const EGO_LABEL_MAX = 20;
+const EGO_HUB_LABEL_MAX = 24;
+
+export interface EgoNode {
+  id: string;
+  label: string;
+  /** `label`, truncated for the SVG. The full label lives in the list below it. */
+  displayLabel: string;
+  type: GraphViewType;
+  support: number;
+  relationType: GraphRelationType;
+  x: number;
+  y: number;
+  r: number;
+  labelX: number;
+  labelY: number;
+  labelAnchor: 'start' | 'end';
+  /** Edge thickness, 1–3, by support. Thicker = more documents behind it. */
+  strokeWidth: number;
+}
+
+export interface EgoLayout {
+  width: number;
+  height: number;
+  hub: {
+    x: number;
+    y: number;
+    r: number;
+    label: string;
+    displayLabel: string;
+    labelY: number;
+  };
+  nodes: EgoNode[];
+}
+
+/** Round so the same input always produces byte-identical SVG output. */
+function round(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+export function truncateLabel(label: string, max: number): string {
+  return label.length <= max ? label : `${label.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
+}
+
+/**
+ * The neighbours the picture is allowed to draw: viewable types only, ranked,
+ * capped at `EGO_MAX_NEIGHBOURS`.
+ *
+ * 🔴 The type filter is repeated here on purpose even though parsing already
+ * applied it. It is one line, and it means the picture cannot draw a person
+ * node even if a future response shape slips one past the parser.
+ */
+export function egoNeighbours(neighbours: readonly GraphNeighbour[]): GraphNeighbour[] {
+  return rankNeighbours(neighbours.filter((n) => isViewableEntityType(n.entity.type))).slice(
+    0,
+    EGO_MAX_NEIGHBOURS,
+  );
+}
+
+/**
+ * Lay a one-hop ego network out as two vertical arcs of one circle.
+ *
+ * ⚠ WHY NOT EVENLY SPACED AROUND THE WHOLE CIRCLE. Because the labels are
+ * horizontal text. Twenty nodes at even angles crowd four or five of them into
+ * the top and bottom of the circle, where their labels sit on top of each other
+ * and the picture is unreadable at exactly the size we ship it. Splitting the
+ * ranked neighbours alternately left/right, and choosing each angle so the
+ * VERTICAL positions come out evenly spaced, keeps every node exactly on the
+ * circle — still radial, still straight spokes — while guaranteeing no two
+ * labels can collide, for any n up to the cap.
+ *
+ * The strongest neighbours land at the top of each column, so rank is readable
+ * without counting.
+ */
+export function egoLayout(centre: GraphEntity, neighbours: readonly GraphNeighbour[]): EgoLayout {
+  const rows = egoNeighbours(neighbours);
+  const width = EGO_RADIUS * 2 + EGO_LABEL_GUTTER * 2;
+  const height = EGO_RADIUS * 2 * EGO_SPREAD + EGO_MARGIN * 2;
+  const cx = width / 2;
+  const cy = height / 2;
+
+  const supports = rows.map((n) => n.support);
+  const maxSupport = supports.length ? Math.max(...supports) : 0;
+  const minSupport = supports.length ? Math.min(...supports) : 0;
+  const span = maxSupport - minSupport;
+  const scale = (support: number): number => (span === 0 ? 0.5 : (support - minSupport) / span);
+
+  // Alternate right/left so the two strongest sit at the top of each column.
+  const sides: Array<{ dir: 1 | -1; rows: GraphNeighbour[] }> = [
+    { dir: 1, rows: [] },
+    { dir: -1, rows: [] },
+  ];
+  rows.forEach((n, i) => sides[i % 2]!.rows.push(n));
+
+  const nodes: EgoNode[] = [];
+  for (const side of sides) {
+    const m = side.rows.length;
+    side.rows.forEach((neighbour, i) => {
+      // `frac` walks -1 → 1 down the column; a single node sits on the axis.
+      const frac = m === 1 ? 0 : (i / (m - 1)) * 2 - 1;
+      const sinT = frac * EGO_SPREAD;
+      const cosT = Math.sqrt(Math.max(0, 1 - sinT * sinT));
+      const r = EGO_NODE_MIN_R + (EGO_NODE_MAX_R - EGO_NODE_MIN_R) * scale(neighbour.support);
+      const x = cx + side.dir * EGO_RADIUS * cosT;
+      const y = cy + EGO_RADIUS * sinT;
+      nodes.push({
+        id: neighbour.entity.id,
+        label: neighbour.entity.label,
+        displayLabel: truncateLabel(neighbour.entity.label, EGO_LABEL_MAX),
+        type: neighbour.entity.type,
+        support: neighbour.support,
+        relationType: neighbour.relationType,
+        x: round(x),
+        y: round(y),
+        r: round(r),
+        labelX: round(x + side.dir * (r + 7)),
+        labelY: round(y),
+        labelAnchor: side.dir === 1 ? 'start' : 'end',
+        strokeWidth: round(1 + 2 * scale(neighbour.support)),
+      });
+    });
+  }
+
+  return {
+    width,
+    height,
+    hub: {
+      x: round(cx),
+      y: round(cy),
+      r: EGO_HUB_R,
+      label: centre.label,
+      displayLabel: truncateLabel(centre.label, EGO_HUB_LABEL_MAX),
+      labelY: round(cy + EGO_HUB_R + 16),
+    },
+    nodes,
+  };
+}
+
+/** Screen-reader description of the picture. The SVG is `role="img"`. */
+export function egoDescription(centre: GraphEntity, drawn: number): string {
+  if (drawn === 0) return `${centre.label} no tiene conexiones que mostrar.`;
+  const noun = drawn === 1 ? 'conexión' : 'conexiones';
+  return `${centre.label}, ${supportCopy(centre.support)}, con ${drawn} ${noun} a un paso.`;
+}
+
+// ── Supporting documents for an edge ───────────────────────────────────────
+
+/**
+ * The published documents in which BOTH entities appear.
+ *
+ * ⚠ AN APPROXIMATION, AND THE COPY SAYS SO (`GRAPH_EDGE_DOCS_HINT`). The
+ * backend exposes documents per ENTITY, not per edge, so this intersection is a
+ * superset of the documents that evidence the relation. It is the honest thing
+ * the contract makes computable, and both inputs already passed published-only
+ * and minimum support, so it can never show more than the two entity views
+ * already do.
+ *
+ * Deterministic: the order of `a` is preserved, duplicates dropped.
+ */
+export function sharedDocuments(
+  a: readonly GraphDocument[],
+  b: readonly GraphDocument[],
+): GraphDocument[] {
+  const inB = new Set(b.map((d) => d.id));
+  const seen = new Set<string>();
+  return a.filter((d) => {
+    if (!inB.has(d.id) || seen.has(d.id)) return false;
+    seen.add(d.id);
+    return true;
+  });
+}
+
+// ── GraphRAG: the query expansion and the context block ────────────────────
+
+/** Expansion terms kept, and the total characters they may add. */
+export const MAX_EXPANSION_TERMS = 8;
+export const MAX_EXPANSION_CHARS = 200;
+
+/**
+ * The condensed query, widened by the graph's neighbour labels.
+ *
+ * 🔴 RETURNS THE QUERY UNCHANGED WHEN NOTHING NEW SURVIVES, and the provider
+ * then SKIPS the extra retrieve entirely. An expansion that adds no term is the
+ * same query over the same corpus the vector leg already ran: identical
+ * results, and the second `POST /v1/retrieve` bought nothing. ADR §8.4 puts the
+ * bill for GraphRAG on local questions; not paying it twice for nothing is the
+ * one saving available without changing the design.
+ *
+ * Terms already present in the query (accent-insensitively) are dropped for the
+ * same reason.
+ */
+export function expandGraphQuery(query: string, terms: readonly string[]): string {
+  const base = query.trim();
+  const haystack = foldText(base);
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  let budget = MAX_EXPANSION_CHARS;
+  for (const raw of terms) {
+    const term = typeof raw === 'string' ? raw.trim() : '';
+    if (!term) continue;
+    const folded = foldText(term);
+    if (!folded || seen.has(folded)) continue;
+    if (haystack.includes(folded)) continue;
+    if (term.length + 1 > budget) continue;
+    seen.add(folded);
+    kept.push(term);
+    budget -= term.length + 1;
+    if (kept.length >= MAX_EXPANSION_TERMS) break;
+  }
+  return kept.length === 0 ? base : `${base} ${kept.join(' ')}`;
+}
+
+/** How many entities and neighbours the context block names. */
+export const CONTEXT_MAX_ENTITIES = 8;
+export const CONTEXT_MAX_NEIGHBOURS = 3;
+
+/**
+ * 🔴 THE DETERMINISTIC SPANISH BLOCK — WHERE THE GLOBAL-QUESTION WIN COMES FROM
+ * (ADR §8.1, G2).
+ *
+ * NO MODEL CALL. *"¿Qué temas se repiten entre los testimonios?"* is answered
+ * by an aggregate over the whole published corpus that no top-8 chunk set
+ * contains; the graph already holds that aggregate, so the honest thing is to
+ * state it, not to ask a model to guess it back from five passages.
+ *
+ * ⚠ The counts are DOCUMENTS, not mentions, and the paragraph says so. A model
+ * handed a bare number describes it as "frequency", and the reader then hears
+ * "mentioned 12 times" about an entity that appears once in each of 12 files.
+ *
+ * ⚠ NO DOCUMENT TITLES. The block names entities, types, support counts and
+ * neighbours — nothing else. Titles would add a per-turn re-identification
+ * surface for nothing the aggregate does not already give.
+ *
+ * Returns `''` when there is nothing to say; the provider then contributes no
+ * block at all rather than an empty header.
+ */
+export function graphContextParagraph(retrieval: GraphRetrieval): string {
+  const entities = rankEntities(retrieval.entities).slice(0, CONTEXT_MAX_ENTITIES);
+  if (entities.length === 0) return '';
+
+  // 🔴 The index spans the SEEDS PLUS the edge endpoints. `edges` reaches one
+  // hop out, so a neighbour is usually not a seed — see `GraphRetrieval.nodes`.
+  const byId = new Map(
+    [...retrieval.entities, ...(retrieval.nodes ?? [])].map((e) => [e.id, e]),
+  );
+  const neighboursOf = (id: string): Array<{ entity: GraphEntity; support: number }> => {
+    // ⚠ DEDUPED BY ENTITY, not by edge. The same pair can be joined by two rows
+    // — `A→B` and `B→A`, or two different relation types — and listing the
+    // neighbour twice would both read as a mistake and burn two of the three
+    // slots this block has. The strongest edge wins.
+    const best = new Map<string, number>();
+    for (const edge of retrieval.edges) {
+      const otherId = edge.fromId === id ? edge.toId : edge.toId === id ? edge.fromId : null;
+      if (!otherId) continue;
+      const entity = byId.get(otherId);
+      if (!entity) continue;
+      const support = edge.support || entity.support;
+      const seen = best.get(otherId);
+      if (seen === undefined || support > seen) best.set(otherId, support);
+    }
+    return [...best.entries()]
+      .map(([otherId, support]) => ({ entity: byId.get(otherId)!, support }))
+      .sort((a, b) => b.support - a.support || a.entity.label.localeCompare(b.entity.label, 'es'))
+      .slice(0, CONTEXT_MAX_NEIGHBOURS);
+  };
+
+  const lines = entities.map((e) => {
+    const head = `- ${e.label} (${typeChipLabel(e.type)}): ${supportCopy(e.support)}.`;
+    const near = neighboursOf(e.id);
+    if (near.length === 0) return head;
+    const rendered = near
+      .map((n) => `${n.entity.label} (${typeChipLabel(n.entity.type)}, ${supportShort(n.support)})`)
+      .join('; ');
+    return `${head} Se conecta con: ${rendered}.`;
+  });
+
+  return [
+    'Resumen del grafo de conocimiento del ecosistema, calculado sobre TODO el ' +
+      'material publicado (no sobre los fragmentos de abajo). Las cifras cuentan ' +
+      'documentos publicados distintos, no menciones. Solo aparecen entidades y ' +
+      'conexiones que varios documentos respaldan.',
+    '',
+    ...lines,
+    '',
+    'Usa este resumen para responder preguntas generales sobre qué se repite en el ' +
+      'corpus o qué aparece junto a qué. Para afirmaciones puntuales, apóyate en los ' +
+      'fragmentos recuperados.',
+  ].join('\n');
+}

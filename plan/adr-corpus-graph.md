@@ -750,3 +750,83 @@ existing `documents.session_id` into the new `documents_rels` join table *before
 Payload runs migrations in name order, each in its own transaction, so either ordering is safe here —
 but only because `content_kind` touches no column that migration moves. Re-check that if either
 migration is edited before landing.
+
+---
+
+## 13. 🔴 Extraction does not currently run, and this is what was measured
+
+§ 11 named "extraction quality in Spanish" as the biggest open risk and said it needed a real run.
+Four real calls were made against the local ai-service on 2026-08-28. The risk is no longer
+unmeasured — it is **blocked**, for a reason that is not in this repository.
+
+### The measurements
+
+One window, an 809-character Spanish asamblea fragment, `contentKind: 'documento'` (the widest
+schema, so the slowest case):
+
+| Tier | Schema caps | Result |
+| --- | --- | --- |
+| `deep` | 40 / 60, with `fragmento` | **120,008 ms**, no `parsed` |
+| `standard` | 40 / 60, with `fragmento` | 82,378 ms, well-formed Spanish, **cut off mid-array** |
+| `standard` | 25 / 30, no `fragmento` | 84,819 ms, **cut off mid-array** |
+| `standard` | 15 / 20, no `fragmento` | 96,236 ms, **cut off mid-array** |
+
+`120,008 ms` is ai-service's own `LLM_REQUEST_TIMEOUT_MS` default (`config/env.ts:208`) firing
+mid-generation. The three `standard` runs never hit the clock — they hit the 800-token output cap.
+
+### What this rules out
+
+⚠ **Shrinking the schema does not help.** 40 → 25 → 15 entities changed nothing. The model generates
+until it is cut off rather than honouring `maxItems`, which is a validation constraint and not a
+generation one.
+
+⚠ **Shrinking `GRAPH_EXTRACT_WINDOW_CHARS` does not help either**, and § 5.2's framing of it as a
+lever was wrong. The document that failed was 809 characters — already far below any window size.
+Halving an input that was never the bottleneck buys nothing and doubles the call count.
+
+🔴 **The binding constraint is the model's speed on this deployment: roughly 8 tokens/second.** A
+complete answer needs the ~3500-token `deep` budget. 3500 tokens at 8 tok/s is about 440 seconds,
+against a 120-second cap. No prompt, schema or window change closes a 3.7× gap.
+
+### The levers, all outside this code
+
+1. Raise ai-service's `LLM_REQUEST_TIMEOUT_MS` to ~600 s.
+2. Point extraction at a faster model (`modelOverride` on the spec).
+3. Run it against a deployment that is not this one.
+
+The default tier stays `deep` **deliberately, even though it currently fails**, and
+`GRAPH_EXTRACT_EFFORT` exists to change it. `deep` is the only tier whose token budget can hold a
+complete answer, and it starts working the moment lever 1 is pulled. `standard` fails too — and would
+keep failing *after* the timeout was raised, because its ceiling is tokens rather than seconds. That
+is a far more confusing thing to debug, so shipping it as the default would be a trap.
+
+### ✅ The one genuinely good thing these calls showed
+
+Every response was **well-formed Spanish with the right vocabulary and the right types** —
+`acceso al agua potable` (tema), `San Juan Copala` (lugar), `sequía de 2023` (evento),
+`construcción del acueducto` (evento), `consulta previa` (tema). No English drift, no invented
+entities, no type confusion. The prompt and the schema are sound; only the budget is wrong. That
+retires the *other* half of § 11's biggest risk.
+
+### 13.1 `fragmento` is gone from the schema — § 5.4 and § 7.3.4 amended
+
+The response schema asked each entity for `fragmento`, a literal quotation justifying it, which the
+writer stored as `graph_mentions.snippet` for a `documento` and dropped for a `testimonio`.
+
+**It is now not requested at all, in any variant.** The output-budget argument for removing it did not
+survive measurement (removing it changed nothing). The privacy argument did, and it was always the
+stronger one:
+
+> § 7.3.4 refused to *store* a quotation for a testimonio because a verbatim quotation is the most
+> direct re-identification surface in the design. Not *asking* for one is the same rule without the
+> conditional — and a conditional is a thing a later change can get backwards. Nothing to leak, by
+> construction.
+
+⚠ **The cost, and it is real:** the graph can no longer show "why is this entity here" for an ordinary
+document either. That was a genuine affordance for an analysis tool. `graph_mentions.snippet` and the
+writer's content-kind gate are kept as belt-and-braces, and the queries layer still asserts NULL for
+anything that is not a `documento` — so restoring it later is a schema change, not a redesign.
+
+Array caps came down to 15 entities / 20 relations in the same pass. Not because it fixed anything,
+but because it is the right shape: prompt rule 8 already asks in words for few good entities over
+many generic ones, and the schema now says the same thing.
