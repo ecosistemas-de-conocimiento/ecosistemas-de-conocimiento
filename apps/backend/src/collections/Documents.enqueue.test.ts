@@ -54,7 +54,15 @@ const run = () =>
     // ⚠ `contentKind` is REQUIRED on a fixture now: the gate reads the raw value
     // and fails closed on anything it does not recognise, so a row assembled
     // without one is treated as gated material. See `mustPassAnonymisationGate`.
-    fresh: { name: 'Acta.pdf', kind: 'pdf', contentKind: 'documento' },
+    fresh: {
+      name: 'Acta.pdf',
+      kind: 'pdf',
+      contentKind: 'documento',
+      // 🔴 A REQUIRED KEY. `enqueueIngestForDoc` refuses a `held`/`rejected` row
+      // and honours an `approved` one, and the type makes it impossible for a
+      // caller to omit the field — which is how the audio path lost it.
+      anonymisationStatus: null,
+    },
     extractedText: 'contenido extraído',
   })
 
@@ -187,5 +195,73 @@ describe('🔴 the corpus an upload lands in', () => {
       organizationId: '10',
       publication: 'draft',
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 🔴 A SETTLED ROW NEVER REACHES THE GATE, WHICHEVER DOOR IT COMES THROUGH
+// ---------------------------------------------------------------------------
+
+describe('🔴 enqueueIngestForDoc refuses a settled row', () => {
+  /**
+   * ── WHY THE GUARD IS HERE AND NOT IN `runExtractAndIngest` ────────────────
+   *
+   * It used to be one level up, in `runExtractAndIngest`. But
+   * `dispatchTranscribeCompleted` — the audio callback — calls
+   * `enqueueIngestForDoc` DIRECTLY, so a replayed `transcribe.completed` walked
+   * straight past it. That callback's idempotency guard needs an `ingestId`,
+   * which a held row never got, so the replay was not short-circuited either.
+   *
+   * The result: a REJECTED testimony re-ran a probabilistic gate, and a `ready`
+   * verdict would have ingested it — into a corpus with no per-document delete.
+   * Exactly the failure `lib/anonymiseDocument.ts` opens by warning about: "the
+   * one that got forgotten would be the audio path".
+   */
+  const settled = (anonymisationStatus: string) => ({
+    payload: fakePayload as unknown as Parameters<typeof enqueueIngestForDoc>[0]['payload'],
+    docId: 42,
+    organizationId: 10,
+    uploadedById: 3,
+    fresh: {
+      name: 'Voz de la asamblea',
+      kind: 'audio',
+      contentKind: 'testimonio',
+      anonymisationStatus,
+      extractedText: 'el testimonio completo',
+    },
+    extractedText: 'el testimonio completo',
+  })
+
+  it('refuses a REJECTED row — a human said no, and a replay must not re-ask', async () => {
+    await enqueueIngestForDoc(settled('rejected'))
+    expect(enqueue).not.toHaveBeenCalled()
+  })
+
+  it('refuses a HELD row — re-running the gate is what a review is for', async () => {
+    await enqueueIngestForDoc(settled('held'))
+    expect(enqueue).not.toHaveBeenCalled()
+  })
+
+  it('🔴 honours an APPROVED row: ingests the human’s text, and never re-gates', async () => {
+    // Without the field on the slice, `fresh.anonymisationStatus` was
+    // `undefined` on the audio path, the approval branch never fired, and a
+    // replay silently discarded what a reviewer had cleared — replacing it with
+    // whatever a fresh gate run produced from the RAW original.
+    await enqueueIngestForDoc({
+      ...settled('approved'),
+      fresh: {
+        name: 'Voz de la asamblea',
+        kind: 'audio',
+        contentKind: 'testimonio',
+        anonymisationStatus: 'approved',
+        redactedText: 'Lo que [Persona A] aprobó.',
+      },
+      extractedText: 'El original, con María López en él.',
+    })
+
+    expect(enqueue).toHaveBeenCalledTimes(1)
+    const wire = JSON.stringify(enqueue.mock.calls[0]![0])
+    expect(wire).toContain('Lo que [Persona A] aprobó.')
+    expect(wire).not.toContain('María López')
   })
 })

@@ -38,7 +38,7 @@
 
 import type { CollectionConfig } from 'payload'
 
-import { isPlatformAdminUser } from '../access'
+import { isActiveUser, isPlatformAdminUser } from '../access'
 import { organizationIdsForUserWithPermission, PERMISSIONS } from '../lib/permissions'
 
 /** What a reviewer decided. Two outcomes, no third. */
@@ -68,6 +68,13 @@ export const AnonymisationReviews: CollectionConfig = {
     read: async ({ req }) => {
       const user = req.user
       if (!user) return false
+      // ⚠ DEACTIVATION IS THE REVOKE SWITCH, and it has to bite here like it does
+      // everywhere else (`access/index.ts`, `lib/holdReview.ts`).
+      // `membershipsForUser` filters inactive memberships and organizations but
+      // NOT a deactivated user, so without this a switched-off Investigador with
+      // a live session could still read the audit log — who released which
+      // document, plus the reviewer's free-text note.
+      if (!isActiveUser(user)) return false
       if (isPlatformAdminUser(user)) return true
       const ids = await organizationIdsForUserWithPermission(
         req.payload,

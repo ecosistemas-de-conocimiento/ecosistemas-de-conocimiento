@@ -459,12 +459,37 @@ export async function decideOnHold(args: {
     overrideAccess: true,
   })
 
-  if (decision === 'reject') {
-    await payload.update({
+  /**
+   * ⚠ THE WRITE IS CONDITIONAL ON THE ROW STILL BEING HELD.
+   *
+   * Two reviewers can both pass `loadHeldRow` and then both write. The terminal
+   * state is the same either way, so this is not a correctness hole — but a
+   * `where` that still names `anonymisationStatus: 'held'` makes the SECOND
+   * write a no-op instead of silently overwriting the first reviewer's decision
+   * with a different one (approve racing reject).
+   *
+   * ⚠ The audit rows are NOT deduplicated, and that is the safe direction: two
+   * entries for one release is confusing, one release with no entry is the thing
+   * this whole file exists to prevent.
+   */
+  const settle = (data: Record<string, unknown>, context?: Record<string, unknown>) =>
+    payload.update({
       collection: 'documents',
-      id: documentId as never,
-      data: {
+      where: { and: [{ id: { equals: documentId } }, HELD] },
+      data: data as never,
+      overrideAccess: true,
+      ...(context ? { context } : {}),
+    })
+
+  if (decision === 'reject') {
+    await settle(
+      {
         anonymisationStatus: 'rejected',
+        // 🔴 CLEARED. A rejected row can still be carrying a `redactedText` from
+        // an earlier run that cleared the gate (ready → ingest failed → retry →
+        // held → rejected). Leaving it there makes "never ingested" false: the
+        // publish path reads that column, and the gate does not run on it.
+        redactedText: null,
         // ⚠ `heldText` is CLEARED on a rejection. Somebody decided this text
         // should not exist in a reviewable form; keeping it around for the next
         // curious reviewer would make the rejection cosmetic.
@@ -472,12 +497,11 @@ export async function decideOnHold(args: {
         anonymisationSurvivors: null,
         ingestError: 'anonymisation_rejected: a reviewer refused this document.',
       },
-      overrideAccess: true,
       // ⚠ Suppress the extract+ingest hook. `rejected` is terminal and the hook
       // would refuse anyway, but a re-entrant run that does nothing still costs a
       // read and muddies the logs.
-      context: { __skipDocsExtract: true },
-    })
+      { __skipDocsExtract: true },
+    )
 
     return {
       id: String(documentId),
@@ -496,20 +520,15 @@ export async function decideOnHold(args: {
    * the same code, which is why there is no second, subtly-different ingest to
    * keep correct.
    */
-  await payload.update({
-    collection: 'documents',
-    id: documentId as never,
-    data: {
-      redactedText: approvedText,
-      anonymisationStatus: 'approved',
-      anonymisationError: null,
-      heldText: null,
-      anonymisationSurvivors: null,
-      ingestStatus: 'pending',
-      ingestError: null,
-      ingestId: null,
-    },
-    overrideAccess: true,
+  await settle({
+    redactedText: approvedText,
+    anonymisationStatus: 'approved',
+    anonymisationError: null,
+    heldText: null,
+    anonymisationSurvivors: null,
+    ingestStatus: 'pending',
+    ingestError: null,
+    ingestId: null,
   })
 
   return {

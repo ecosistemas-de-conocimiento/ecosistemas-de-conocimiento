@@ -214,6 +214,11 @@ function anyCase(literal: string): string {
       const upper = ch.toUpperCase()
       const lower = ch.toLowerCase()
       if (upper === lower) return escapeRegExp(ch)
+      // ⚠ `toUpperCase` CAN RETURN MORE THAN ONE CHARACTER — `ß` → `SS`,
+      // `ﬁ` → `FI`. Splicing that into a character class gives `[SSß]`, which
+      // matches a bare `S`. No word in the lists below hits this today; the
+      // guard is here so the next keyword someone adds cannot.
+      if (upper.length !== 1 || lower.length !== 1) return `[${escapeRegExp(ch)}]`
       return `[${upper}${lower}]`
     })
     .join('')
@@ -237,26 +242,71 @@ const VIAS = [
   'calz.', 'calzada', 'calzadas', 'privada', 'privadas', 'priv.', 'andador',
   'andadores', 'cerrada', 'cerradas', 'retorno', 'retornos', 'prolongación',
   'prolongacion', 'circuito', 'circuitos', 'callejón', 'callejon', 'paseo',
-  'paseos', 'camino', 'caminos', 'carretera', 'carreteras', 'eje', 'ejes',
+  'paseos', 'carretera', 'carreteras', 'eje', 'ejes',
 ]
+
+/**
+ * ⚠ `camino` / `caminos` ARE DELIBERATELY ABSENT, on the corpus measurement.
+ * 39 occurrences across 37 documents and every single one is a metaphor — "este
+ * camino lo he hecho junto a mi hermana", "que no se le caiga la mitad en el
+ * camino". Keeping it matched `el camino de Dios 40 años después` and
+ * `camino de regreso a la casa número 3`, which redacts the sentence and leaves
+ * the reader with a testimony that no longer says anything.
+ *
+ * The cost is a literal `Camino Real 12`, which the model still sees and can
+ * still flag as `lugar`. That is the right side of the trade: over-redaction
+ * here destroys the material these testimonies are about.
+ */
 
 const TIPO_VIA = `(?:${anyCaseAlternation(VIAS)})`
 
 /**
+ * The separator between the parts of an address: optional whitespace, an
+ * optional comma, optional whitespace.
+ *
+ * 🔴 WRITTEN UNAMBIGUOUSLY, AND THE SHAPE IS A ReDoS FIX. The obvious spelling
+ * — `\s*,?\s*` — puts two `\s*` either side of an optional token, so a run of
+ * *n* spaces can be split between them *n* ways. When the literal after the
+ * separator then fails, the engine tries every split. That is QUADRATIC, and
+ * four of these tails hang off `DOMICILIO`.
+ *
+ * Measured on Node 24, one pass over `'Calle Morelos No. 45' + ' '.repeat(n) + 'x'`:
+ * 16k spaces → 0.7s, 32k → 2.8s, 64k → 10.8s, 100k → 26.2s. This stage runs
+ * synchronously on whole transcripts and PDF/DOCX extracts, on the server
+ * thread — and long whitespace runs are something PDF extraction produces BY
+ * ACCIDENT, so it does not even need an attacker.
+ *
+ * `\s*(?:,\s*)?` has exactly one way to match any given input, so it is linear.
+ * ⚠ Do not "simplify" it back.
+ */
+const SEP = String.raw`\s*(?:,\s*)?`
+
+/**
  * A word inside a street name, STRICT: capitalised, numeric, or a connector.
+ *
+ * 🔴 THE CONNECTORS CARRY A TRAILING BOUNDARY, AND WITHOUT IT THEY SHRED WORDS.
+ * `de` is an alternative in a group with nothing after it, so on
+ * "Col. Portales y despues de eso" it matched the first two letters of
+ * `despues` and the redaction came back as `[Domicilio A]spues de eso`. Measured,
+ * not hypothetical.
+ *
+ * ⚠ `y` IS NOT A CONNECTOR HERE, on purpose. It is grammatically one, but in
+ * practice it is the word that joins an address to the NEXT CLAUSE — "Col.
+ * Portales y ahí vivía mi tía Rosa" — so accepting it made the run walk out of
+ * the address and into the sentence. `Calle Ruiz y Flores` loses its second half
+ * to the model; that is the cheaper mistake.
  *
  * Real street names are proper nouns — `Morelos`, `5 de Mayo`, `Emiliano
  * Zapata`. Requiring the capital is what stops the run walking into a sentence.
  */
-const PALABRA_NOMBRE = String.raw`(?:\p{Lu}[\p{L}\p{N}'’-]*|\d{1,4}|${anyCaseAlternation([
+const PALABRA_NOMBRE = String.raw`(?:\p{Lu}[\p{L}\p{N}'’-]*|\d{1,4}|(?:${anyCaseAlternation([
   'de',
   'del',
   'la',
   'las',
   'los',
   'el',
-  'y',
-])})`
+])})(?![\p{L}\p{N}]))`
 
 /**
  * A word inside a street name, LOOSE: any word at all.
@@ -283,21 +333,22 @@ const SUFIJO_NUMERO = String.raw`(?:\s*-\s*[A-Za-z0-9]{1,3}|[A-Za-z])?`
  * hypothetical: it broke two tests in this directory.
  */
 const NUMERO_MARCADO =
-  String.raw`(?:\s*,?\s*(?:${anyCaseAlternation([
+  String.raw`(?:${SEP}(?:${anyCaseAlternation([
     'no.',
     'núm',
     'núm.',
-    'numero',
-    'número',
-    'núm.',
-  ])}|#)\s*\d{1,5}${SUFIJO_NUMERO}|\s*,?\s*${anyCase('s')}\s*\/\s*${anyCase('n')})` +
+    // ⚠ `numero` / `número` SPELLED OUT ARE NOT MARKERS. "la casa número 3",
+    // "el expediente número 12" are ordinary Spanish, and with the loose arm's
+    // any-word run in front of them the pair matched whole clauses. `núm` is
+    // the abbreviation and only ever appears in an address.
+  ])}|#)\s*\d{1,5}${SUFIJO_NUMERO}|${SEP}${anyCase('s')}\s*\/\s*${anyCase('n')})` +
   String.raw`(?![\p{L}\p{N}])`
 
 /** The marked form, or a bare number hanging off a capitalised street name. */
 const NUMERO_CUALQUIERA = String.raw`(?:${NUMERO_MARCADO}|\s+\d{1,5}${SUFIJO_NUMERO}(?![\p{L}\p{N}]))`
 
 /** `int. 3`, `interior 3`, `ext. 12`. An optional tail on a street line. */
-const NUMERO_INTERIOR = String.raw`(?:\s*,?\s*(?:${anyCaseAlternation([
+const NUMERO_INTERIOR = String.raw`(?:${SEP}(?:${anyCaseAlternation([
   'int',
   'int.',
   'interior',
@@ -319,13 +370,24 @@ const ASENTAMIENTO_ABREV = `(?:${anyCaseAlternation([
 /**
  * `, Col. Portales` hanging off a street line.
  *
- * ⚠ THE NAME USES THE LOOSE WORD, NOT THE STRICT ONE, and that is safe here for
- * a reason the strict arm does not have: the `Col.` / `Fracc.` marker is already
- * an anchor prose does not produce. Requiring a capital as well meant that
+ * ⚠ THE FIRST NAME WORD IS LOOSE, THE REST ARE STRICT, and the split is doing
+ * real work at both ends.
+ *
+ * Loose first: requiring a capital there meant
  * `calle morelos no. 45, col. portales, c.p. 03300` — one address, dictated by a
  * transcriber who used no capitals — came out as THREE labels instead of one.
+ * The `Col.` / `Fracc.` marker is an anchor prose does not produce, so one loose
+ * word behind it is safe.
+ *
+ * 🔴 STRICT AFTER THAT, because a greedy run of FIVE loose words has no
+ * terminator and walks straight into the sentence. Measured:
+ * `"Calle Morelos No. 45, Col. Portales y ahí vivía mi tía Rosa"` matched
+ * through `…y ahí vivía mi`, leaving `[Domicilio A] tía Rosa`. Worse than the
+ * lost words: the match differs per occurrence, so the same colonia collects
+ * `[Domicilio A]`, `[Domicilio B]`, … — which defeats the entire reason these
+ * are labels and not redaction bars.
  */
-const COLA_ASENTAMIENTO = String.raw`(?:\s*,?\s*${ASENTAMIENTO_ABREV}\s*${PALABRA_LIBRE}(?:\s+${PALABRA_LIBRE}){0,4})?`
+const COLA_ASENTAMIENTO = String.raw`(?:${SEP}${ASENTAMIENTO_ABREV}\s*${PALABRA_LIBRE}(?:\s+${PALABRA_NOMBRE}){0,4})?`
 
 /** `C.P.` / `CP` / `Código Postal`, always followed by exactly five digits. */
 const CP_TOKEN = String.raw`(?:${anyCaseAlternation([
@@ -337,7 +399,7 @@ const CP_TOKEN = String.raw`(?:${anyCaseAlternation([
 ])})\s*:?\s*\d{5}(?!\d)`
 
 /** `, C.P. 06700` hanging off a street line. */
-const COLA_CP = String.raw`(?:\s*,?\s*${CP_TOKEN})?`
+const COLA_CP = String.raw`(?:${SEP}${CP_TOKEN})?`
 
 /**
  * A whole street line, swallowed as ONE match.
@@ -391,7 +453,7 @@ const ASENTAMIENTO = new RegExp(
   String.raw`(?<![\p{L}\p{N}])(?:` +
     // The dotted markers are postal notation, so the NAME after one may be
     // lower-cased — see `COLA_ASENTAMIENTO`.
-    String.raw`${ASENTAMIENTO_ABREV}\s*${PALABRA_LIBRE}(?:\s+${PALABRA_LIBRE}){0,4}` +
+    String.raw`${ASENTAMIENTO_ABREV}\s*${PALABRA_LIBRE}(?:\s+${PALABRA_NOMBRE}){0,4}` +
     // ⚠ `Alcaldía` / `Delegación` are ordinary words, so their name run keeps the
     // STRICT word and must be a proper noun. Loose words behind a spelled-out
     // keyword is the combination that walks into a sentence.
@@ -410,7 +472,7 @@ const ASENTAMIENTO = new RegExp(
       'manz',
       'manz.',
       'manzana',
-    ])})\s*\d{1,3}(?:\s*,?\s*(?:${anyCaseAlternation([
+    ])})\s*\d{1,3}(?:${SEP}(?:${anyCaseAlternation([
       'lt',
       'lt.',
       'lote',

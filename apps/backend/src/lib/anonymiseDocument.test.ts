@@ -211,7 +211,10 @@ describe('anonymiseDocumentText — a documento is passed through, not scrubbed'
     expect(calls).toBe(0)
   })
 
-  it('never writes redactedText for an ungated kind', async () => {
+  it('never TOUCHES redactedText for an ungated kind', async () => {
+    // ⚠ `wrote`, not `last`. For a `documento` the column is never mentioned at
+    // all — the gate does not run, so there is nothing to clear. That is a
+    // different fact from the HOLD path, which writes an explicit `null`.
     const fake = fakePayload()
     await run(fake, { contentKind: 'documento', detector: findsTheName() })
     expect(fake.wrote('redactedText')).toBe(false)
@@ -322,7 +325,13 @@ describe('🔴 anonymiseDocumentText — a hold means nothing was ingested', () 
     const fake = fakePayload()
     await run(fake, { contentKind: 'testimonio', text: HELD_TEXT, detector: missesThenFinds() })
 
-    expect(fake.wrote('redactedText')).toBe(false)
+    // ⚠ ASSERTED AS "NEVER A TEXT", NOT "NEVER WRITTEN". The hold branch now
+    // writes `redactedText: null` on purpose — a row can be carrying a redaction
+    // from an EARLIER run that cleared the gate (ready → ingest failed → retry →
+    // holds this time), and leaving that behind makes the row publishable while
+    // it reads `held`. Clearing it is the fix; the invariant is that no TEXT
+    // lands there.
+    expect(fake.last('redactedText')).toBeNull()
   })
 
   it('🔴 the refused output goes to `heldText`, which NO corpus path reads', async () => {
@@ -342,7 +351,7 @@ describe('🔴 anonymiseDocumentText — a hold means nothing was ingested', () 
 
     expect(fake.last('anonymisationStatus')).toBe('held')
     expect(String(fake.last('heldText'))).toContain('[Persona A]')
-    expect(fake.wrote('redactedText')).toBe(false)
+    expect(fake.last('redactedText')).toBeNull()
   })
 
   it('records WHICH stage refused, so an operator can act on it', async () => {
@@ -383,7 +392,7 @@ describe('🔴 anonymiseDocumentText — failure ends in `held`, never in a pass
 
     expect(result.ok).toBe(false)
     expect(fake.last('anonymisationStatus')).toBe('held')
-    expect(fake.wrote('redactedText')).toBe(false)
+    expect(fake.last('redactedText')).toBeNull()
   })
 
   it('🔴 an UNEXPECTED crash inside the gate holds too, and says so', async () => {
@@ -407,7 +416,7 @@ describe('🔴 anonymiseDocumentText — failure ends in `held`, never in a pass
     expect(result.ok).toBe(false)
     expect(fake.last('anonymisationStatus')).toBe('held')
     expect(String(fake.last('anonymisationError'))).toContain('gate_crashed')
-    expect(fake.wrote('redactedText')).toBe(false)
+    expect(fake.last('redactedText')).toBeNull()
   })
 
   it('🔴 a detector that finds nothing at all still cannot leak the name', async () => {
@@ -503,6 +512,7 @@ describe('corpusTextFor — the stored decision, never a re-run of the gate', ()
       contentKind: 'testimonio',
       extractedText: TESTIMONY,
       redactedText: 'Ayer conversé con [Persona A] sobre el agua.',
+      anonymisationStatus: 'ready',
     })
     expect(result).toEqual({ ok: true, text: 'Ayer conversé con [Persona A] sobre el agua.' })
     expect(JSON.stringify(result)).not.toContain(NAME)
@@ -549,7 +559,84 @@ describe('corpusTextFor — the stored decision, never a re-run of the gate', ()
     // treated as gated material — and gated material that already cleared the
     // gate is publishable, from `redactedText` like any other.
     expect(
-      corpusTextFor({ contentKind: 'testimonios', extractedText: TESTIMONY, redactedText: 'limpio' }),
+      corpusTextFor({
+        contentKind: 'testimonios',
+        extractedText: TESTIMONY,
+        redactedText: 'limpio',
+        anonymisationStatus: 'ready',
+      }),
     ).toEqual({ ok: true, text: 'limpio' })
+  })
+})
+
+describe('corpusTextFor — 🔴 a STALE redaction is not a cleared one', () => {
+  /**
+   * ── THE FIVE-STEP BUG THIS CLOSES ────────────────────────────────────────
+   *
+   * 1. The gate runs `ready`. `redactedText` = v1. Ingest enqueued.
+   * 2. The ai-service ingest fails → `ingestStatus: 'failed'`.
+   * 3. The uploader hits `POST /api/documents/:id/retry`. `clearHold` resets the
+   *    gate state — and USED TO LEAVE v1 IN PLACE.
+   * 4. The re-run HOLDS (the detector is a model; the same bytes can get a
+   *    different verdict). The row now reads `held` while still carrying v1.
+   * 5. Publish. `corpusTextFor` asked only "is `redactedText` non-empty?", so v1
+   *    went into the ecosistema's shared, undeletable corpus — and the gate does
+   *    not re-run on the publish path, so nothing downstream would notice.
+   *
+   * A reviewer REJECTING at step 4 landed in the same place: "never ingested"
+   * was not true of a row that had once been `ready`.
+   *
+   * ⚠ TWO DEFENCES, BOTH KEPT ON PURPOSE. The hold, reject and retry paths now
+   * clear the column, AND this function consults the status. Either alone would
+   * work; one of the two being forgotten in a future edit is exactly how the bug
+   * arrived, and this is the last thing standing before a permanent corpus.
+   */
+  const STALE = {
+    contentKind: 'testimonio' as const,
+    extractedText: TESTIMONY,
+    redactedText: 'la redacción de la corrida anterior',
+  }
+
+  it('🔴 REFUSES a held row that still carries an older run’s redaction', () => {
+    const result = corpusTextFor({ ...STALE, anonymisationStatus: 'held' })
+    expect(result.ok).toBe(false)
+  })
+
+  it('🔴 REFUSES a rejected row for the same reason', () => {
+    expect(corpusTextFor({ ...STALE, anonymisationStatus: 'rejected' }).ok).toBe(false)
+  })
+
+  it('🔴 REFUSES `pending`, `n/a` and a missing status on gated content', () => {
+    // `n/a` on a testimonio is nonsense — it means the row was reclassified
+    // after the gate ran — and nonsense resolves to "not yet", like every other
+    // uncertainty here.
+    for (const anonymisationStatus of ['pending', 'n/a', undefined, null, '', 'aprobado']) {
+      expect(corpusTextFor({ ...STALE, anonymisationStatus }).ok, String(anonymisationStatus)).toBe(
+        false,
+      )
+    }
+  })
+
+  it('publishes on `ready` — the gate’s own verdict', () => {
+    expect(corpusTextFor({ ...STALE, anonymisationStatus: 'ready' })).toEqual({
+      ok: true,
+      text: 'la redacción de la corrida anterior',
+    })
+  })
+
+  it('publishes on `approved` — a human’s verdict, recorded in the audit trail', () => {
+    expect(corpusTextFor({ ...STALE, anonymisationStatus: 'approved' })).toEqual({
+      ok: true,
+      text: 'la redacción de la corrida anterior',
+    })
+  })
+
+  it('⚠ an ungated `documento` is unaffected — it has no status to check', () => {
+    // The status gate applies only to gated content. A plain upload is published
+    // from `extractedText` and never had a gate verdict to carry.
+    expect(corpusTextFor({ contentKind: 'documento', extractedText: 'contenido' })).toEqual({
+      ok: true,
+      text: 'contenido',
+    })
   })
 })

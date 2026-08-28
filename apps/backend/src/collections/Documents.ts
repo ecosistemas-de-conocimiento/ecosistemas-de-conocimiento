@@ -167,12 +167,18 @@ const PUBLICATION_LABELS: Record<PublicationState, string> = {
  * control in this design (the fail-closed policy, the terminal `rejected`, the
  * audit row) would still be exactly as written, and completely bypassed.
  *
- * ⚠ NOT EVEN A PLATFORM ADMIN. `false` for everybody, with no bypass, because
- * "the person who runs the installation may hand-edit the redaction" is not a
- * capability this product wants to have. Server-side writes use
- * `overrideAccess: true` and are unaffected — that is the ONE path, and it runs
- * through `lib/anonymiseDocument.ts` and `lib/holdReview.ts`, both of which
- * write an outcome they computed rather than one they were handed.
+ * ⚠ NOT EVEN A PLATFORM ADMIN, THROUGH THIS COLLECTION. `false` for everybody,
+ * with no role bypass. Server-side writes use `overrideAccess: true` and are
+ * unaffected — that is the ONE path, and it runs through
+ * `lib/anonymiseDocument.ts` and `lib/holdReview.ts`.
+ *
+ * ⚠ WHAT THIS DOES *NOT* CLAIM, so nobody reads a guarantee that is not here: a
+ * platform admin can still hand-edit a redaction and release it, because
+ * `holds:review` resolves to every ecosistema for them and `decideOnHold`
+ * accepts a corrected `text`. That is a REVIEW — deliberate, and written to
+ * `anonymisation-reviews` with their name on it. The property this lock provides
+ * is narrower and is the one that matters: no route reaches these columns
+ * WITHOUT an audit row.
  *
  * ⚠ `read` IS DELIBERATELY LEFT ALONE. These fields are how the uploader sees
  * why their upload is stuck, and `visibleToCaller` already decides who sees the
@@ -887,7 +893,22 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
   // 2. Enqueue ingest — skip if already enqueued (idempotent re-saves).
   if (fresh.ingestId) return
 
-  await enqueueIngestForDoc({ payload, docId, organizationId, uploadedById, fresh, extractedText })
+  await enqueueIngestForDoc({
+    payload,
+    docId,
+    organizationId,
+    uploadedById,
+    // ⚠ Spread and then PIN the gate fields. `fresh` has them optional, and the
+    // parameter deliberately requires the key — see `enqueueIngestForDoc`. This
+    // spelling is what makes "did this caller think about the gate state?"
+    // visible at the call site instead of inferred from a structural match.
+    fresh: {
+      ...fresh,
+      anonymisationStatus: fresh.anonymisationStatus ?? null,
+      redactedText: fresh.redactedText ?? null,
+    },
+    extractedText,
+  })
 }
 
 /**
@@ -903,21 +924,64 @@ export async function enqueueIngestForDoc(args: {
   /** Who uploaded it. The other half — drafts are PRIVATE per person. */
   uploadedById: string | number
   /**
-   * ⚠ `anonymisationStatus` and `redactedText` are in this slice ONLY so the
-   * human-approval branch below can read them off the STORED row. Both columns
-   * are locked against API writes (`gateWritesOnly`), which is what makes
-   * trusting them here safe.
+   * 🔴 `anonymisationStatus` IS A REQUIRED KEY, NOT AN OPTIONAL ONE, AND THAT IS
+   * A BUG FIX.
+   *
+   * The terminal-state guards used to live in `runExtractAndIngest`, one level
+   * ABOVE this function — but `dispatchTranscribeCompleted` (the audio callback)
+   * calls THIS function directly and builds its `fresh` slice by hand. With the
+   * key optional, it simply omitted the field, and a replayed
+   * `transcribe.completed` re-ran the gate on a REJECTED document and discarded
+   * the text of an APPROVED one. That is precisely the failure
+   * `lib/anonymiseDocument.ts` warns about: "the one that got forgotten would be
+   * the audio path".
+   *
+   * So the guard moved down here, to the choke point every path actually
+   * converges on, and the type makes supplying the field unavoidable. `null` and
+   * `undefined` are both accepted values — the KEY is what is mandatory, so
+   * adding a fourth caller is a compile error until someone decides what it
+   * should pass.
+   *
+   * ⚠ Both columns are locked against API writes (`gateWritesOnly`), which is
+   * what makes trusting a value read off the stored row safe here.
    */
-  fresh: Pick<
-    DocumentRow,
-    'name' | 'kind' | 'contentKind' | 'anonymisationStatus' | 'redactedText'
-  >
+  fresh: Pick<DocumentRow, 'name' | 'kind' | 'contentKind'> & {
+    anonymisationStatus: string | null | undefined
+    redactedText?: string | null
+  }
   extractedText: string
   /** Test seam for the anonymisation gate's model call. */
   detector?: import('@/lib/anonymise/types').PersonDetector
 }): Promise<void> {
   const { payload, docId, organizationId, uploadedById, fresh, extractedText } = args
   const contentKind = contentKindOf(fresh)
+
+  /**
+   * 🔴 A SETTLED ROW NEVER REACHES THE GATE, AND THE CHECK LIVES HERE BECAUSE
+   * HERE IS WHERE EVERY PATH CONVERGES.
+   *
+   *   held      the gate refused and no human has looked yet
+   *   rejected  a human looked and said no
+   *
+   * `runExtractAndIngest` refuses these too, but it is only ONE of the callers.
+   * The audio callback reaches this function directly, and a replayed
+   * `transcribe.completed` (its idempotency guard needs an `ingestId`, which a
+   * held row never got) would otherwise re-run a PROBABILISTIC gate on a
+   * rejected document — and a `ready` verdict would ingest it. Rename it, replay
+   * it, retry it: same accidental "ingest anyway" button, three different doors.
+   *
+   * ⚠ The way out of a hold is `POST /api/holds/:id` (audited) or, for a fixed
+   * source, `POST /api/documents/:id/retry`. There is no way out of `rejected`
+   * except a new review.
+   */
+  if (fresh.anonymisationStatus === 'held' || fresh.anonymisationStatus === 'rejected') {
+    console.warn(
+      '[documents] doc',
+      docId,
+      `is ${fresh.anonymisationStatus.toUpperCase()} — refusing to ingest. Only a review can change that.`,
+    )
+    return
+  }
 
   /**
    * 🔴 THE ANONYMISATION GATE, AT THE ONE POINT EVERY PATH CONVERGES ON.
@@ -2060,12 +2124,21 @@ export function planIngestRetry(doc: RetryableDocument): Record<string, unknown>
    * makes "I fixed the source, try again" a deliberate act with a single entry
    * point, instead of something a rename does by accident.
    *
-   * ⚠ `redactedText` is NOT cleared. Either the gate held (so there is none) or
-   * it is about to be overwritten by the next run.
+   * 🔴 `redactedText` IS CLEARED TOO, AND THE COMMENT THAT USED TO SIT HERE WAS
+   * WRONG. It claimed "either the gate held (so there is none) or it is about to
+   * be overwritten by the next run".
+   *
+   * The first half is false: a row that ran `ready` and then FAILED at
+   * ai-service still carries its redaction, and that row is exactly the one this
+   * path exists for. The second half only holds if the next run succeeds — if it
+   * HOLDS instead, the stale text survives on a row that now reads `held`, and
+   * `corpusTextFor` would share it on the next publish. Reachable in five
+   * ordinary steps, and permanent once it lands.
    */
   const clearHold = {
     anonymisationStatus: 'n/a',
     anonymisationError: null,
+    redactedText: null,
     // ⚠ Cleared with the hold. They describe a refusal that is being re-run, and
     // leaving them would show a reviewer last time's survivors over this time's
     // text — offsets into a string that no longer exists. See `SurvivorSpan`.

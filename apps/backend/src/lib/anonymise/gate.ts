@@ -327,7 +327,9 @@ export async function runAnonymisationGate(
     // ⚠ THE COUNT, NEVER THE STRINGS. This reason is stored on the row and shown
     // in the admin panel; quoting the surviving names would put them straight
     // back into the database the gate just kept them out of. Whoever reviews the
-    // hold has access to the ORIGINAL text, which is where they should read it.
+    // hold reads `redactedText` below, with `survivors` marking where the model
+    // saw something — ⚠ NOT the original, which `lib/holdReview.ts` deliberately
+    // never returns.
     return hold(
       'verify',
       `La verificación encontró ${real.length} dato(s) personal(es) que siguen en el texto, así que no se ingirió nada. Revisa el documento original.`,

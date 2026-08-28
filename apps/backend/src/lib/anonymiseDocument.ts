@@ -222,6 +222,10 @@ export async function anonymiseDocumentText(args: {
     await write({
       anonymisationStatus: 'held',
       anonymisationError: `gate_crashed: ${reason}`.slice(0, 500),
+      // 🔴 CLEARED. See the hold branch below — a `redactedText` left over from
+      // an earlier successful run is publishable, and nothing on the publish
+      // path re-reads the status.
+      redactedText: null,
       // A crash produced no reviewable output. Cleared rather than left stale:
       // showing a reviewer the text from a PREVIOUS run of a different code path
       // is worse than showing them nothing.
@@ -239,6 +243,18 @@ export async function anonymiseDocumentText(args: {
       // would be a re-identification map with a different name on the door.
       anonymisationError: `${result.stage}: ${result.reason}`.slice(0, 500),
       anonymisationReport: result.report,
+      /**
+       * 🔴 CLEARED, AND THIS IS A REAL REACHABLE BUG, NOT TIDINESS.
+       *
+       * A row can already carry a `redactedText` from an EARLIER run that
+       * cleared the gate: run one is `ready`, the ai-service ingest then fails,
+       * the uploader retries, and the re-run — the detector is a model — holds
+       * this time. Without this line the row is `held` while still holding run
+       * one's redaction, and `corpusTextFor` asks only "is `redactedText`
+       * non-empty?". The next publish would push it into the shared, undeletable
+       * corpus, and the gate is not re-run on that path to catch it.
+       */
+      redactedText: null,
       /**
        * 🔴 THE GATE'S REFUSED OUTPUT GOES IN `heldText`, NOT `redactedText`.
        *
@@ -286,6 +302,8 @@ export function corpusTextFor(doc: {
   contentKind?: unknown
   extractedText?: unknown
   redactedText?: unknown
+  /** 🔴 Consulted for gated content — see below. */
+  anonymisationStatus?: unknown
 }): { ok: true; text: string } | { ok: false; reason: string } {
   // 🔴 THE RAW VALUE, for the reason spelled out on `mustPassAnonymisationGate`.
   // This function is the LAST thing standing between a publish and the shared
@@ -297,8 +315,22 @@ export function corpusTextFor(doc: {
     return raw ? { ok: true, text: raw } : { ok: false, reason: 'no extracted text' }
   }
 
+  /**
+   * 🔴 THE STATUS, NOT JUST THE COLUMN. BELT AND BRACES, DELIBERATELY.
+   *
+   * This used to ask only "is `redactedText` non-empty?", which is true of a row
+   * that cleared the gate ONCE and has since been held or rejected. The hold
+   * branch above now clears the column, so the two checks agree — and they are
+   * both here on purpose, because this function is the last thing standing
+   * between a publish and a corpus with no per-document delete, and one of the
+   * two being forgotten in a future edit is exactly how this bug arrived.
+   *
+   * `ready` is the gate's own verdict; `approved` is a human's, recorded in
+   * `anonymisation-reviews`. Nothing else may be published.
+   */
+  const status = typeof doc.anonymisationStatus === 'string' ? doc.anonymisationStatus : ''
   const redacted = typeof doc.redactedText === 'string' ? doc.redactedText.trim() : ''
-  if (!redacted) {
+  if (!redacted || (status !== 'ready' && status !== 'approved')) {
     return {
       ok: false,
       reason:

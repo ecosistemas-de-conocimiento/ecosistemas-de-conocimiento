@@ -73,6 +73,10 @@ const TESTIMONY: PublishableDocument = {
   contentKind: 'testimonio',
   extractedText: RAW,
   redactedText: REDACTED,
+  // 🔴 Load-bearing. `corpusTextFor` now checks the STATUS as well as the
+  // column: a `redactedText` left over from an earlier `ready` run is not proof
+  // that THIS row cleared the gate. See `lib/anonymiseDocument.ts`.
+  anonymisationStatus: 'ready',
   organization: ORG,
   uploadedBy: USER,
 }
@@ -209,7 +213,13 @@ describe('beginPublish — 🔴 the content kind survives the re-embed', () => {
     const fake = fakeClient()
 
     await beginPublish(
-      { ...PLAIN_DOC, contentKind: 'testimonios', extractedText: RAW, redactedText: REDACTED },
+      {
+        ...PLAIN_DOC,
+        contentKind: 'testimonios',
+        extractedText: RAW,
+        redactedText: REDACTED,
+        anonymisationStatus: 'ready',
+      },
       { payload, client: fake.client },
     )
 

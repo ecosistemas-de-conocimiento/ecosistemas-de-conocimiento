@@ -381,7 +381,11 @@ describe('holds — 🔴 approving is an audited override, and the only way out'
     const write = updated[0]!.data
     expect(write.anonymisationStatus).toBe('rejected')
     expect(write.heldText).toBeNull()
-    expect(write).not.toHaveProperty('redactedText')
+    // 🔴 `redactedText` is CLEARED, not merely left alone. A rejected row can
+    // still be carrying a redaction from an earlier run that cleared the gate,
+    // and the publish path reads that column without re-running the gate — so
+    // "never ingested" is only true if the column is emptied.
+    expect(write.redactedText).toBeNull()
   })
 
   it('🔴 a rejection cannot be re-decided through this API', async () => {
