@@ -1010,3 +1010,56 @@ this can ever return is `GRAPH_MIN_SUPPORT` documents. It cannot point at one te
 ⚠ No snippet on the edge list, and not merely because a test forbids it: `graph_mentions.snippet` is
 keyed on `(document, entity)`, so an edge has two candidate quotations and neither is evidence *of the
 edge*.
+
+---
+
+## 17. § 7.2 AMENDED — `persona` is shown, and why that is safe
+
+Owner decision, 2026-08-29. § 7.2 enumerated the view as **four** ranked lists — temas, lugares,
+eventos, organizaciones — and the implementation hid `persona` entities from the lists and from
+ego-network neighbours. **It now shows five.** A person appears like any other type.
+
+### Why this does not weaken § 7.3
+
+The re-identification argument never rested on hiding people from the view. It rests on three things,
+all untouched:
+
+1. 🔴 **A person node cannot come from a testimonio.** Not "is filtered out of" — *cannot be produced*.
+   `personaAllowed(contentKind)` is `contentKind === 'documento'` and therefore fails closed on a null
+   or unknown value; the response schema for gated content omits `persona` from its `tipo` enum
+   entirely, so the model has no way to express one; and an unconditional post-filter drops any that
+   appear regardless. Three layers, all keyed on a **column** rather than a model's judgement.
+2. 🔴 **Minimum support applies unchanged.** A person named in one or two published documents does not
+   appear at all — the same threshold that stops "the testimony that mentions both X and Y".
+3. 🔴 **Published-only applies unchanged**, and no snippet is ever stored for a testimonio.
+
+So a person in this view is a **cited author or a named official in a public report** — Foucault in a
+bibliography, not a participant in a Voz. That was always the design (§ 1.2.2); § 7.2 was more
+cautious than the extraction rule required, and the owner has closed the gap.
+
+⚠ § 7.3.1 stays exactly as written. It is an **extraction** rule — "no person nodes from a testimony"
+— and that is where it still lives and still holds. What changed is only whether the view draws the
+person nodes extraction was always allowed to produce.
+
+⚠ `isViewableEntityType` was **kept**, now admitting all five types, rather than deleted in favour of
+`isGraphEntityType`. It still fails closed on a type the backend adds tomorrow, and it remains the one
+seam to change if this is ever revisited. The two predicates answer different questions — one is the
+wire contract, one is a view decision — and are allowed to diverge again.
+
+### 17.1 Two things worth knowing about the view as shipped
+
+🟡 **The nav label is "Conexiones", not "Grafo".** `$lib/nav.ts` states its own rule — plain Spanish
+nouns, no jargon, for readers who do not have that vocabulary — and *grafo* is a maths term. The
+route is still `/grafo`. One constant each (`nav.ts` and `GRAPH_KICKER`) flips it back if the owner
+prefers the technical word.
+
+🔴 **A real bug found while wiring the `?eco=` switcher, worth recording because it was silent.**
+`navigate()` rebuilt the URL from scratch, so a platform admin's first click on any entity dropped
+`?eco=` and **re-scoped the page to a different ecosistema with no error** — just a different graph.
+There are now two opposite URL rules, both pure and tested: switching ecosistema clears the entity
+selection; selecting an entity keeps the ecosistema.
+
+🟡 An admin's default ecosistema on `/grafo` is their own resolved membership rather than the first
+organisation in the list, deliberately diverging from `/admin`: `/grafo` has a member reading of
+itself and `/admin` does not, so the menu and the page would otherwise disagree about which
+ecosistema you are in.
