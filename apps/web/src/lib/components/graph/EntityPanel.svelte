@@ -24,7 +24,9 @@
     GRAPH_CLEAR_EDGE_LABEL,
     GRAPH_EDGE_DOCS_EMPTY,
     GRAPH_EDGE_DOCS_HINT,
+    GRAPH_EDGE_DOCS_HINT_APPROX,
     GRAPH_EDGE_DOCS_TITLE,
+    GRAPH_EDGE_DOCS_TITLE_APPROX,
     GRAPH_EDGE_DOCS_UNAVAILABLE,
     GRAPH_ENTITY_DOCS_EMPTY,
     GRAPH_ENTITY_DOCS_HINT,
@@ -58,8 +60,25 @@
   let { detail, edge, onSelectEdge, onRecentre }: Props = $props();
 
   const documents = $derived(edge ? edge.documents : detail.documents);
-  const docsTitle = $derived(edge ? GRAPH_EDGE_DOCS_TITLE : entityDocsTitle(detail.entity.label));
-  const docsHint = $derived(edge ? GRAPH_EDGE_DOCS_HINT : GRAPH_ENTITY_DOCS_HINT);
+  // 🔴 THE WORDING FOLLOWS `edge.exact`. With per-edge evidence from
+  // `graph_relations` we may say these documents SUSTAIN the connection; with
+  // only the intersection of two entity lists we may say the two entities
+  // APPEAR in them, and no more. Showing the confident sentence over the
+  // approximate list is the failure nobody could spot by looking at it.
+  const docsTitle = $derived(
+    edge
+      ? edge.exact
+        ? GRAPH_EDGE_DOCS_TITLE
+        : GRAPH_EDGE_DOCS_TITLE_APPROX
+      : entityDocsTitle(detail.entity.label),
+  );
+  const docsHint = $derived(
+    edge
+      ? edge.exact
+        ? GRAPH_EDGE_DOCS_HINT
+        : GRAPH_EDGE_DOCS_HINT_APPROX
+      : GRAPH_ENTITY_DOCS_HINT,
+  );
   // ⚠ "We found none" and "we could not read them" are different sentences.
   // Saying the first when the second is true tells someone their ecosistema has
   // less in it than it does.

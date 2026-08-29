@@ -199,6 +199,12 @@ describe('the credential rules', () => {
 
     expect(created).toHaveLength(1)
     expect(created[0].email).toBe(DEFAULT_SEED_ADMIN_EMAIL)
+    // 🔴 The default must be an address Payload's own `email` validation
+    // ACCEPTS. It was `admin@localhost` once; Payload rejects a bare hostname,
+    // so a fresh boot with only `SEED_ADMIN_PASSWORD` set created no admin —
+    // and therefore no seeded documents, since every one needs an uploader.
+    // The symptom was an empty demo, which points nowhere near this line.
+    expect(DEFAULT_SEED_ADMIN_EMAIL).toMatch(/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i)
   })
 
   it('creates the bootstrap account as an ACTIVE platform admin', async () => {

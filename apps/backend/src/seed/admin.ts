@@ -47,8 +47,20 @@ import { currentAppEnv } from './env-gate'
  * Do not turn that read into a gate.
  */
 
-/** Used when `SEED_ADMIN_EMAIL` is unset. An address, never a credential. */
-export const DEFAULT_SEED_ADMIN_EMAIL = 'admin@localhost'
+/**
+ * Used when `SEED_ADMIN_EMAIL` is unset. An address, never a credential.
+ *
+ * 🔴 NOT `admin@localhost`, which is what this used to be. Payload's `email`
+ * field validation REJECTS a bare hostname, so on a fresh database with
+ * `SEED_ADMIN_PASSWORD` set but no `SEED_ADMIN_EMAIL`, the admin was never
+ * created — measured, HTTP 400 "Please enter a valid email address". And
+ * because every seeded document needs an `uploadedBy`, nothing else got seeded
+ * either. The failure looked like an empty demo, not like a bad default.
+ *
+ * `.test` is reserved by RFC 2606 and can never be a real domain, so this
+ * cannot accidentally address a live mailbox.
+ */
+export const DEFAULT_SEED_ADMIN_EMAIL = 'admin@ecosistemas.test'
 
 export async function seedAdmin(payload: Payload): Promise<void> {
   // Observed for the log only. NOT consulted in any decision below.

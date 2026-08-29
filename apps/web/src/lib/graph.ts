@@ -141,6 +141,19 @@ export interface GraphNeighbour {
   entity: GraphEntity;
   relationType: GraphRelationType;
   support: number;
+  /**
+   * The published documents that EVIDENCE THIS EDGE — not the ones the two
+   * entities happen to share. `graph_relations` holds one row per
+   * `(document, from, to, type)`, so this is the real answer rather than the
+   * intersection that used to stand in for it.
+   *
+   * ⚠ `null` MEANS THE BACKEND DID NOT SEND THE FIELD, which is different from
+   * an empty list. Absent ⇒ fall back to the old intersection. Empty ⇒ the
+   * backend really found none, which should not happen (an edge exists only
+   * when at least `GRAPH_MIN_SUPPORT` documents evidence it) and is shown as
+   * "none" rather than papered over.
+   */
+  documents: GraphDocument[] | null;
 }
 
 export interface GraphDocument {
@@ -221,8 +234,19 @@ export interface GraphRetrieval {
 export interface SelectedEdge {
   entity: GraphEntity;
   relationType: GraphRelationType;
-  /** Published documents where BOTH entities appear. See `sharedDocuments`. */
+  /** The documents behind this edge. What they MEAN depends on `exact`. */
   documents: GraphDocument[];
+  /**
+   * 🔴 `true` ⇒ these documents evidence THIS EDGE, from `graph_relations`.
+   * `false` ⇒ they are the intersection of the two entities' document lists, a
+   * SUPERSET, because the backend did not send per-edge evidence.
+   *
+   * ⚠ THE COPY MUST FOLLOW THIS FLAG. `GRAPH_EDGE_DOCS_*` and their `_APPROX`
+   * counterparts are a pair for exactly this reason: showing the confident
+   * sentence over approximate data is the one failure mode here that is worse
+   * than showing nothing, because nobody can tell by looking.
+   */
+  exact: boolean;
   /** `false` ⇒ the neighbour's own read failed. NOT "there are none". */
   ok: boolean;
 }
@@ -359,6 +383,11 @@ export function parseGraphNeighbour(raw: unknown): GraphNeighbour | null {
     entity,
     relationType: toRelationType(row.relationType),
     support: declared ?? entity.support,
+    // Absent stays `null`; see the field comment. `Array.isArray` is the whole
+    // distinction, so an older backend degrades instead of showing "none".
+    documents: Array.isArray(row.documents)
+      ? row.documents.map(parseGraphDocument).filter((d): d is GraphDocument => d !== null)
+      : null,
   };
 }
 
@@ -706,15 +735,26 @@ export const GRAPH_ENTITY_NOT_FOUND =
   'Eso ya no aparece en el grafo de tu ecosistema. Pudo dejar de cumplir el mínimo ' +
   'de documentos, o el documento que lo respaldaba dejó de estar publicado.';
 
-export const GRAPH_EDGE_DOCS_TITLE = 'Documentos donde aparecen los dos';
+export const GRAPH_EDGE_DOCS_TITLE = 'Documentos que sustentan esta conexión';
 
 /**
- * ⚠ HONEST ABOUT WHAT THE LIST IS. The backend exposes documents per ENTITY,
- * not per edge, so this is the intersection of two entity lists — a superset of
- * the documents that actually evidence the relation. Calling it "los documentos
- * que sustentan esta conexión" would claim more than we can show.
+ * ✅ THE CLAIM IS NOW TRUE. This used to say "los documentos en los que aparecen
+ * los dos", because the backend exposed documents per ENTITY and the list was an
+ * intersection — a superset of what actually evidenced the relation. The backend
+ * now answers per EDGE from `graph_relations`, so the stronger sentence is the
+ * accurate one.
+ *
+ * ⚠ If `GraphNeighbour.documents` is ever `null` again (an older backend), the
+ * caller falls back to the intersection and MUST fall back to the old wording
+ * with it. A true sentence over approximate data is the failure this pair of
+ * constants exists to prevent.
  */
 export const GRAPH_EDGE_DOCS_HINT =
+  'Documentos publicados que sustentan esta conexión.';
+
+/** The wording for the fallback, when only the intersection is computable. */
+export const GRAPH_EDGE_DOCS_TITLE_APPROX = 'Documentos donde aparecen los dos';
+export const GRAPH_EDGE_DOCS_HINT_APPROX =
   'Documentos publicados en los que aparecen los dos. De ahí sale la conexión.';
 
 /**

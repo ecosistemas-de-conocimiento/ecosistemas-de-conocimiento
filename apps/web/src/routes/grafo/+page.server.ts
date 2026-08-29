@@ -173,11 +173,21 @@ export const load: PageServerLoad = async ({ locals, cookies, url }): Promise<Gr
       ? {
           entity: neighbour.entity,
           relationType: neighbour.relationType,
+          // 🔴 PREFER THE REAL PER-EDGE EVIDENCE. `neighbours[].documents` comes
+          // from `graph_relations` and answers "which documents evidence THIS
+          // edge". The intersection below is the old approximation and stays
+          // only as a fallback for a backend that does not send the field —
+          // with `exact: false`, so the copy tells the truth either way.
           documents:
-            edgeResult?.state === 'ok'
-              ? sharedDocuments(detail.documents, edgeResult.detail.documents)
-              : [],
-          ok: edgeResult?.state === 'ok',
+            neighbour.documents !== null
+              ? neighbour.documents
+              : edgeResult?.state === 'ok'
+                ? sharedDocuments(detail.documents, edgeResult.detail.documents)
+                : [],
+          exact: neighbour.documents !== null,
+          // The neighbour's own read only matters for the fallback; with
+          // per-edge evidence in hand the centre's response is the whole answer.
+          ok: neighbour.documents !== null || edgeResult?.state === 'ok',
         }
       : null;
 
