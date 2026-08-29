@@ -5,11 +5,11 @@
    * `/grafo` — la vista del grafo del corpus.
    *
    * 🔴 EVERY DECISION THAT MATTERS IS SERVER-SIDE. The tenant scope, the
-   * published-only rule, the minimum-support threshold and the fact that a
-   * person never appears are all settled before a row is serialised
-   * (`+page.server.ts`, `$lib/server/graph.ts`, and the backend). This file
-   * renders what it is given and names nothing: no user, no organization, no
-   * corpus.
+   * published-only rule, the minimum-support threshold and the rule that a
+   * person node can only come from a `documento` are all settled before a row
+   * is serialised (`+page.server.ts`, `$lib/server/graph.ts`, and the backend).
+   * This file renders what it is given and names nothing: no user, no
+   * organization, no corpus.
    *
    * 🔴 THE EMPTY GRAPH SAYS SO (ADR §7.3.3). In a young ecosistema the graph is
    * genuinely empty, because a connection needs several published documents
@@ -23,22 +23,25 @@
    * `.svelte` file.
    */
   import { goto } from '$app/navigation';
-  import { navigating } from '$app/stores';
+  import { navigating, page } from '$app/stores';
+  import EcosystemScope from '$lib/components/graph/EcosystemScope.svelte';
   import EntityLists from '$lib/components/graph/EntityLists.svelte';
   import EntityPanel from '$lib/components/graph/EntityPanel.svelte';
   import {
     emptyGraphCopy,
     filterEntities,
+    graphEntityHref,
+    GRAPH_SUBTITLE_LEAD,
     GRAPH_ENTITY_NOT_FOUND,
     GRAPH_ENTITY_UNAVAILABLE,
     GRAPH_KICKER,
-    GRAPH_NO_ECOSYSTEM,
     GRAPH_PICK_ENTITY,
     GRAPH_SCOPE_NOTE,
     GRAPH_SEARCH_HINT,
     GRAPH_TITLE,
     GRAPH_UNAVAILABLE,
     hiddenCopy,
+    noEcosystemCopy,
     resultsSummary,
     type GrafoPageData,
   } from '$lib/graph';
@@ -63,20 +66,39 @@
    * reasoning as `/biblioteca`'s filters and `/admin`'s `?eco=`.
    */
   function navigate(entidad: string | null, conexion: string | null) {
-    const params = new URLSearchParams();
-    if (entidad) params.set('entidad', entidad);
-    if (entidad && conexion) params.set('conexion', conexion);
-    const qs = params.toString();
-    void goto(qs ? `/grafo?${qs}` : '/grafo', {
+    // 🔴 The scope params ride along. Rebuilding the URL without them drops a
+    // platform admin's `?eco=` on their first click and quietly re-scopes the
+    // page to a different ecosistema. See `graphEntityHref`.
+    void goto(graphEntityHref(entidad, conexion, scopeParams), {
       keepFocus: true,
       noScroll: true,
     });
   }
 
   const selectedId = $derived(data.entity?.entity.id ?? null);
+
+  /**
+   * ⚠ `data.scope` is `null` for everybody who is not a platform admin — "no
+   * picker", not "an empty picker". It also decides WHICH "no ecosistema"
+   * sentence is shown: an admin must not be told to go ask for access.
+   */
+  const scope = $derived(data.scope);
+
+  /**
+   * The scope half of the URL, echoed back on every in-page navigation.
+   *
+   * ⚠ Read off `$page.url`, not off `data.scope`: `?eco=` may name an ecosistema
+   * and `?q=` a search the server did not have to change, and what has to
+   * survive a click is what the ADDRESS BAR says, not what we resolved it to.
+   */
+  const scopeParams = $derived(
+    scope
+      ? { eco: $page.url.searchParams.get('eco'), q: $page.url.searchParams.get('q') }
+      : {},
+  );
 </script>
 
-<svelte:head><title>Grafo · Ecosistemas de Conocimiento</title></svelte:head>
+<svelte:head><title>{GRAPH_KICKER} · Ecosistemas de Conocimiento</title></svelte:head>
 
 <div class="page text-ink">
   <header class="head">
@@ -84,11 +106,23 @@
       <p class="kicker">{GRAPH_KICKER}</p>
       <h1>{GRAPH_TITLE}</h1>
       {#if data.ecosystem}
-        <p class="sub">Temas, lugares, eventos y organizaciones de <strong>{data.ecosystem.name}</strong>.</p>
+        <!-- ⚠ The enumeration comes from `$lib/graph.ts`, not from this
+             template: it lists the entity types, and a list that drifts out of
+             step with `GRAPH_VIEW_TYPES` is the silent kind of wrong. Only the
+             ecosistema's name is composed here, so it can be bolded — it is
+             the one word on this line a reader scans for. -->
+        <p class="sub">{GRAPH_SUBTITLE_LEAD} <strong>{data.ecosystem.name}</strong>.</p>
       {/if}
     </div>
-    <a class="back" href="/" data-interactive>Volver al chat</a>
   </header>
+
+  <!-- 🔴 SCOPE, NEVER CONTENT (ADR §7.1). Platform admins only, and all it does
+       is choose which ecosistema the page is describing. Rendered ABOVE the
+       state branches on purpose: an admin who is looking at an empty or
+       unreadable ecosistema still needs the control to switch away from it. -->
+  {#if scope}
+    <EcosystemScope {scope} selected={data.ecosystem} />
+  {/if}
 
   <!-- 🔴 Said on the page, not in a tooltip. Two misreadings are common: that
        the graph covers everything, and that a missing connection means it does
@@ -96,7 +130,10 @@
   <p class="notice">{GRAPH_SCOPE_NOTE}</p>
 
   {#if data.state === 'no-ecosystem'}
-    <p class="notice">{GRAPH_NO_ECOSYSTEM}</p>
+    <!-- ⚠ Two different sentences. A member is told to ask for access; an admin
+         is told the installation has no ecosistema — telling THEM to ask for
+         access sends them to themselves. See `noEcosystemCopy`. -->
+    <p class="notice">{noEcosystemCopy(scope !== null)}</p>
   {:else if data.state === 'unavailable' || !data.viewOk}
     <!-- ⚠ An outage is not an empty ecosistema, and must not read like one. -->
     <p class="notice">{GRAPH_UNAVAILABLE}</p>
@@ -208,21 +245,6 @@
   .sub strong {
     color: var(--edc-color-ink);
   }
-  .back {
-    flex: none;
-    padding: 0.4rem 0.85rem;
-    border-radius: var(--edc-radius-2);
-    border: 1px solid var(--edc-color-neutral-outline);
-    font-size: 0.78rem;
-    font-weight: 700;
-    text-decoration: none;
-    color: var(--edc-color-ink-soft);
-  }
-  .back:hover {
-    color: var(--edc-color-ink);
-    background: var(--edc-color-neutral-soft);
-  }
-
   .notice {
     margin: 0;
     padding: 0.7rem 0.85rem;

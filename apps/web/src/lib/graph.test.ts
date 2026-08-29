@@ -13,12 +13,20 @@ import {
   expandGraphQuery,
   filterEntities,
   GRAPH_EMPTY_NOTHING_PUBLISHED,
+  GRAPH_EMPTY_NOTHING_PUBLISHED_HINT,
   GRAPH_EMPTY_THRESHOLD,
   GRAPH_ENTITY_TYPES,
+  GRAPH_NO_ECOSYSTEM,
+  GRAPH_NO_ECOSYSTEM_ADMIN,
   GRAPH_NO_RESULTS,
+  GRAPH_PICK_ENTITY,
   GRAPH_RELATION_TYPES,
+  GRAPH_SWITCHER_SCOPE_NOTE,
   GRAPH_VIEW_TYPES,
   graphContextParagraph,
+  graphEcosystemHref,
+  graphEntityHref,
+  graphSubtitle,
   groupByType,
   hiddenCopy,
   isGraphEntityType,
@@ -37,10 +45,13 @@ import {
   relationLabel,
   resultsSummary,
   sharedDocuments,
+  noEcosystemCopy,
   supportCopy,
   supportShort,
+  switcherCountCopy,
   truncateLabel,
   typeChipLabel,
+  typeListHint,
   typeListLabel,
   type ContentKind,
   type EgoLayout,
@@ -73,7 +84,14 @@ const doc = (id: string, title = `Documento ${id}`): GraphDocument => ({
   contentKind: null,
 });
 
-/** A raw response row for the type the view refuses to show. */
+/**
+ * A raw `persona` response row.
+ *
+ * WARN A name like this can ONLY have come from a `documento` -- a cited author
+ * or a named official in a public report. The extraction gate keys on
+ * `contentKind` and fails closed, so no testimonio can produce one. See the
+ * describe block below.
+ */
 const PERSONA_ROW = { id: 'p1', type: 'persona', label: 'Ana Ruiz Mendoza', support: 12 };
 
 /** `n` neighbours with strictly decreasing support, so ranking is unambiguous. */
@@ -98,39 +116,60 @@ const layoutNumbers = (l: EgoLayout): number[] => [
 
 // ── The person rule ────────────────────────────────────────────────────────
 
-describe('🔴 the person rule — persona never reaches the view', () => {
-  // The single most load-bearing assertion in this file. ADR §7.3: a ranked
-  // list of people across an ecosistema's corpus is the re-identification
-  // surface the whole design exists to avoid. Every entry point into the view
-  // is checked, because a name excluded from one and shown in another is
-  // excluded from neither.
-  it('drops a persona at parseGraphEntity', () => {
-    expect(parseGraphEntity(PERSONA_ROW)).toBeNull();
+/**
+ * 🔴 THESE ASSERTIONS WERE THE EXACT OPPOSITE UNTIL 2026-08-29, AND WHY THE
+ * NEW ANSWER IS SAFE IS THE POINT OF EVERY NAME BELOW.
+ *
+ * The owner decided a `persona` is shown like any other type. That is safe
+ * because of WHERE the person rule lives, not because of what this view chose
+ * to hide: a person node cannot be PRODUCED from a testimonio. The backend's
+ * `personaAllowed(contentKind)` is `contentKind === 'documento'` and so fails
+ * closed on null; the extraction schema for gated content omits `persona` from
+ * its `tipo` enum entirely; and a post-filter drops any that appear anyway.
+ * `apps/backend/src/lib/graph/schedule.test.ts` is where that is asserted, and
+ * it is the test that must never be weakened.
+ *
+ * So a name here is a cited author or a named official in a public report --
+ * and it still has to clear `GRAPH_MIN_SUPPORT` like everything else, so a
+ * person named in one or two published documents does not appear at all.
+ */
+describe('🔴 persona is shown like any other type — and why that is safe', () => {
+  it('parses a persona instead of dropping it', () => {
+    expect(parseGraphEntity(PERSONA_ROW)).toEqual({
+      id: 'p1',
+      type: 'persona',
+      label: 'Ana Ruiz Mendoza',
+      support: 12,
+    });
   });
 
-  it('drops a persona out of a view list', () => {
+  it('keeps a persona in a view list, ranked by support like the rest', () => {
     const view = parseGraphView({
       entities: [PERSONA_ROW, { id: 't1', type: 'tema', label: 'Agua', support: 3 }],
     });
-    expect(view.entities.map((e) => e.id)).toEqual(['t1']);
+    // Support 12 beats support 3; the person is not pinned or demoted.
+    expect(view.entities.map((e) => e.id)).toEqual(['p1', 't1']);
   });
 
-  it('drops a persona neighbour, wrapped or flat', () => {
+  it('keeps a persona neighbour, wrapped or flat', () => {
     expect(
       parseGraphNeighbour({ entity: PERSONA_ROW, relationType: 'participa_en', support: 5 }),
-    ).toBeNull();
-    expect(parseGraphNeighbour(PERSONA_ROW)).toBeNull();
+    ).not.toBeNull();
+    expect(parseGraphNeighbour(PERSONA_ROW)).not.toBeNull();
   });
 
-  it('refuses a persona as the subject of a detail', () => {
-    expect(
-      parseGraphEntityDetail({ entity: PERSONA_ROW, neighbours: [], documents: [] }),
-    ).toBeNull();
+  it('accepts a persona as the subject of a detail, so the page can open one', () => {
+    const detail = parseGraphEntityDetail({
+      entity: PERSONA_ROW,
+      neighbours: [],
+      documents: [],
+    });
+    expect(detail?.entity.type).toBe('persona');
   });
 
-  // The ego network is the other half of the same rule: the picture must not
-  // draw a name the list refuses to print.
-  it('drops a persona from a detail’s neighbours', () => {
+  // The picture and the list must show the same set of types. A name printed
+  // in one and missing from the other reads as a bug in whichever you saw first.
+  it('keeps a persona among a detail’s neighbours', () => {
     const detail = parseGraphEntityDetail({
       entity: { id: 'e1', type: 'evento', label: 'Asamblea', support: 4 },
       neighbours: [
@@ -140,30 +179,42 @@ describe('🔴 the person rule — persona never reaches the view', () => {
       documents: [],
     });
     expect(detail).not.toBeNull();
-    expect(detail!.neighbours.map((n) => n.entity.id)).toEqual(['l1']);
+    expect(detail!.neighbours.map((n) => n.entity.id)).toEqual(['p1', 'l1']);
   });
 
-  it('drops a persona from the GraphRAG retrieval', () => {
+  it('keeps a persona in the GraphRAG retrieval, so the chat sees what the page sees', () => {
     const retrieval = parseGraphRetrieval({
       entities: [PERSONA_ROW, { id: 't1', type: 'tema', label: 'Agua', support: 3 }],
       edges: [{ from: 't1', to: 'p1', relationType: 'participa_en', support: 2 }],
       documents: [],
       terms: [],
     });
-    expect(retrieval.entities.map((e) => e.id)).toEqual(['t1']);
-    // ⚠ The edge survives — it is only a pair of ids — but the paragraph
-    // resolves endpoints against `entities`, so the name never surfaces.
-    expect(graphContextParagraph(retrieval)).not.toContain('Ana Ruiz');
+    expect(retrieval.entities.map((e) => e.id)).toEqual(['p1', 't1']);
+    // 🔴 The screen and the chat must not disagree about the graph. Hiding a
+    // node from one surface and not the other was the failure mode the old
+    // "excluded from neither" comment warned about, in the other direction.
+    expect(graphContextParagraph(retrieval)).toContain('Ana Ruiz');
   });
 
-  it('repeats the filter inside egoNeighbours, so the picture is safe on its own', () => {
+  it('draws a persona in the ego network too, so picture and list agree', () => {
     const persona = {
       entity: { id: 'p1', type: 'persona', label: 'Ana Ruiz Mendoza', support: 30 },
       relationType: 'participa_en',
       support: 30,
     } as unknown as GraphNeighbour;
     const drawn = egoNeighbours([persona, neighbour(entity('t1', 'tema', 'Agua', 2))]);
-    expect(drawn.map((n) => n.entity.id)).toEqual(['t1']);
+    expect(drawn.map((n) => n.entity.id)).toEqual(['p1', 't1']);
+  });
+
+  // ⚠ THE PROTECTION THAT DID NOT MOVE. Support is still the gate, and it is
+  // the measure ADR §7.3.3 calls load-bearing — the one that answers "the
+  // testimony that mentions both X and Y". A person is subject to it exactly
+  // like a tema: the backend withholds sub-threshold rows and reports them in
+  // `hidden`, and the page says so out loud rather than swallowing the number.
+  it('says out loud that sub-threshold entities are withheld', () => {
+    const view = parseGraphView({ entities: [PERSONA_ROW], hidden: 4, minSupport: 3 });
+    expect(view.hidden).toBe(4);
+    expect(hiddenCopy(view.hidden, view.minSupport)).toContain('menos de 3 documentos');
   });
 });
 
@@ -172,21 +223,26 @@ describe('isViewableEntityType', () => {
     expect(isViewableEntityType(type)).toBe(true);
   });
 
-  // 🔴 Fails CLOSED. A category the backend adds tomorrow does not appear in
-  // this product until somebody decides it should — least of all `persona`.
-  it.each(['persona', 'Tema', 'concepto', '', null, undefined, 42, {}])(
-    'refuses %p',
-    (raw) => {
-      expect(isViewableEntityType(raw)).toBe(false);
-    },
-  );
+  // 🔴 STILL FAILS CLOSED, which is why the predicate was kept rather than
+  // replaced by `isGraphEntityType`. A category the backend adds tomorrow does
+  // not appear in this product until somebody decides it should.
+  it.each(['Tema', 'concepto', 'ley', '', null, undefined, 42, {}])('refuses %p', (raw) => {
+    expect(isViewableEntityType(raw)).toBe(false);
+  });
 
-  // The backend's vocabulary is wider than the view's, on purpose. Conflating
-  // the two predicates is exactly how `persona` would come back.
-  it('is strictly narrower than the backend vocabulary', () => {
+  // ⚠ The two predicates now agree, and that is a DECISION, not an accident --
+  // the seam is kept so they may diverge again. This asserts the current
+  // decision explicitly so reversing it is a visible test change.
+  it('now admits every type the backend can send, persona included', () => {
     expect(isGraphEntityType('persona')).toBe(true);
-    expect(isViewableEntityType('persona')).toBe(false);
-    expect(GRAPH_ENTITY_TYPES.length).toBe(GRAPH_VIEW_TYPES.length + 1);
+    expect(isViewableEntityType('persona')).toBe(true);
+    expect([...GRAPH_VIEW_TYPES].sort()).toEqual([...GRAPH_ENTITY_TYPES].sort());
+  });
+
+  // ⚠ ORDER IS A VIEW DECISION and is asserted separately from membership: the
+  // lists the ADR built the view around must not shuffle when a type is added.
+  it('keeps the ADR §7.2 lists first, with persona appended', () => {
+    expect(GRAPH_VIEW_TYPES).toEqual(['tema', 'lugar', 'evento', 'organizacion', 'persona']);
   });
 });
 
@@ -516,26 +572,37 @@ describe('filterEntities', () => {
 });
 
 describe('groupByType', () => {
-  // ⚠ ALL FOUR, ALWAYS, IN ADR ORDER. An empty list is information — "your
-  // ecosistema has no organizaciones yet" — and a group that disappears makes
+  // ⚠ ALL OF THEM, ALWAYS, IN VIEW ORDER. An empty list is information -- "your
+  // ecosistema has no organizaciones yet" -- and a group that disappears makes
   // the page's shape change between ecosistemas for no stated reason.
-  it('returns the four ADR lists in order, empty ones included', () => {
+  it('returns every list in order, empty ones included', () => {
     expect(groupByType([]).map((g) => g.type)).toEqual([
       'tema',
       'lugar',
       'evento',
       'organizacion',
+      'persona',
     ]);
     expect(groupByType([]).every((g) => g.entities.length === 0)).toBe(true);
   });
 
-  it('files each entity under its own type', () => {
+  // 🔴 The list exists even when it is empty, so an ecosistema built only
+  // from testimonios shows "Personas" with nothing under it rather than
+  // silently omitting the heading. Same reasoning as every other empty group.
+  it('files each entity under its own type, persona included', () => {
     const grouped = groupByType([
       entity('t', 'tema', 'Agua', 1),
       entity('o', 'organizacion', 'Colectivo Sur', 1),
       entity('t2', 'tema', 'Bosque', 1),
+      entity('p', 'persona', 'Ana Ruiz Mendoza', 1),
     ]);
-    expect(grouped.map((g) => g.entities.map((e) => e.id))).toEqual([['t', 't2'], [], [], ['o']]);
+    expect(grouped.map((g) => g.entities.map((e) => e.id))).toEqual([
+      ['t', 't2'],
+      [],
+      [],
+      ['o'],
+      ['p'],
+    ]);
   });
 });
 
@@ -550,12 +617,14 @@ describe('the Spanish vocabulary', () => {
     lugar: 'Lugares',
     evento: 'Eventos',
     organizacion: 'Organizaciones',
+    persona: 'Personas',
   };
   const CHIP_LABELS: Record<GraphViewType, string> = {
     tema: 'tema',
     lugar: 'lugar',
     evento: 'evento',
     organizacion: 'organización',
+    persona: 'persona',
   };
   const RELATION_LABELS: Record<GraphRelationType, string> = {
     ocurre_en: 'ocurre en',
@@ -581,6 +650,148 @@ describe('the Spanish vocabulary', () => {
   it.each(GRAPH_RELATION_TYPES)('reads %s as a Spanish phrase', (relation) => {
     expect(relationLabel(relation)).toBe(RELATION_LABELS[relation]);
     expect(relationLabel(relation)).not.toContain('_');
+  });
+
+  // ⚠ Every list gets a sentence saying what it is. A bare heading leaves a
+  // first-time reader guessing, which is the thing this product cannot afford.
+  it.each(GRAPH_VIEW_TYPES)('explains the %s list in one sentence', (type) => {
+    expect(typeListHint(type).length).toBeGreaterThan(0);
+    expect(typeListHint(type)).toMatch(/\.$/);
+  });
+
+  // 🔴 THE ONE HINT THAT IS ALSO A PROMISE. A list of names in a corpus
+  // built partly from testimonies invites exactly one worry, and the page
+  // answers it where the reader meets it rather than in a tooltip or an ADR.
+  // The claim is true because the extraction gate keys on `contentKind` and
+  // fails closed -- see `apps/backend/src/lib/graph/types.ts`.
+  it('tells the reader on the page that a name cannot come from a testimonio', () => {
+    expect(typeListHint('persona')).toContain('Nunca salen de un testimonio');
+  });
+
+  // ⚠ The enumerations must not drift out of step with `GRAPH_VIEW_TYPES`.
+  // Both of these name the lists in prose, and prose is where a new type gets
+  // silently forgotten.
+  it('names every list in the subtitle and in the empty-state hint', () => {
+    const subtitle = graphSubtitle('Ecosistema Norte');
+    for (const type of GRAPH_VIEW_TYPES) {
+      const plural = typeListLabel(type).toLowerCase();
+      expect(subtitle.toLowerCase()).toContain(plural);
+      expect(GRAPH_EMPTY_NOTHING_PUBLISHED_HINT.toLowerCase()).toContain(plural);
+    }
+    expect(subtitle).toContain('Ecosistema Norte');
+  });
+
+  it('invites the reader to pick any of the types, persona included', () => {
+    expect(GRAPH_PICK_ENTITY).toContain('persona');
+    for (const type of GRAPH_VIEW_TYPES) {
+      expect(GRAPH_PICK_ENTITY.toLowerCase()).toContain(typeChipLabel(type));
+    }
+  });
+});
+
+// ── The scope picker (ADR §7.1) ─────────────────────────────────────
+
+/**
+ * 🔴 SCOPE SELECTION, NEVER CONTENT. A platform admin picks WHICH
+ * ecosistema `/grafo` describes; they get the same rows under the same
+ * threshold a member of it would get. These assertions cover the two URL rules
+ * that make that work, and they are deliberate opposites of each other.
+ */
+describe('the ecosistema scope, and what each direction of the URL keeps', () => {
+  it('switches ecosistema and keeps the directory search', () => {
+    expect(graphEcosystemHref('42')).toBe('/grafo?eco=42');
+    expect(graphEcosystemHref('42', 'norte')).toBe('/grafo?eco=42&q=norte');
+    expect(graphEcosystemHref('42', '   ')).toBe('/grafo?eco=42');
+  });
+
+  // 🔴 THE RE-IDENTIFICATION-ADJACENT ONE IS NOT THIS, BUT THE CONFUSING ONE
+  // IS. An entity id belongs to exactly ONE ecosistema, so carrying it across a
+  // switch asks the backend for a stranger's id -- which answers not-found, and
+  // opens the new ecosistema's graph on "eso ya no aparece en el grafo": a
+  // scary sentence about a corpus that is perfectly fine.
+  it('drops the entity selection when the ecosistema changes', () => {
+    const href = graphEcosystemHref('42', 'norte');
+    expect(href).not.toContain('entidad');
+    expect(href).not.toContain('conexion');
+  });
+
+  // 🔴 THE MIRROR, AND THE BUG IT PREVENTS. Rebuild the URL from the entity
+  // alone and `?eco=` is dropped -- so an admin's first click silently
+  // re-scopes the page to their own default ecosistema and shows a different
+  // graph than the one they clicked in. Nothing errors; the page is just about
+  // something else.
+  it('keeps the ecosistema scope when the entity changes', () => {
+    expect(graphEntityHref('t1', null, { eco: '42', q: 'norte' })).toBe(
+      '/grafo?entidad=t1&eco=42&q=norte',
+    );
+    expect(graphEntityHref('t1', 'l9', { eco: '42' })).toBe('/grafo?entidad=t1&conexion=l9&eco=42');
+  });
+
+  it('is a bare /grafo when there is nothing to say', () => {
+    expect(graphEntityHref(null, null)).toBe('/grafo');
+    // A member has no scope params at all, so their URLs are unchanged.
+    expect(graphEntityHref('t1', null)).toBe('/grafo?entidad=t1');
+  });
+
+  // A connection is a connection BETWEEN two things; without the first there is
+  // nothing for it to hang off, so it is dropped rather than half-rendered.
+  it('drops a conexion that has no entidad', () => {
+    expect(graphEntityHref(null, 'l9', { eco: '42' })).toBe('/grafo?eco=42');
+  });
+
+  // 🔴 Clearing the selection must NOT clear the ecosistema. Otherwise
+  // "quitar la selección" doubles as "go back to my own ecosistema".
+  it('keeps the ecosistema when the selection is cleared', () => {
+    expect(graphEntityHref(null, null, { eco: '42' })).toBe('/grafo?eco=42');
+  });
+});
+
+describe('the two “no ecosistema” sentences', () => {
+  // 🔴 An admin with no membership used to be told to go ask for access --
+  // from themselves, on a page whose backend already accepts any organization
+  // id from them. The sentence depends on whether they have a picker.
+  it('tells a member to ask for access, and never tells an admin that', () => {
+    expect(noEcosystemCopy(false)).toBe(GRAPH_NO_ECOSYSTEM);
+    expect(noEcosystemCopy(false)).toContain('Pídele acceso');
+    expect(noEcosystemCopy(true)).toBe(GRAPH_NO_ECOSYSTEM_ADMIN);
+    expect(noEcosystemCopy(true)).not.toContain('Pídele acceso');
+    expect(noEcosystemCopy(true)).not.toContain('no perteneces');
+  });
+
+  // ⚠ ADR §7.1, said on the page. A picker listing every tenant reads as "I am
+  // seeing more now"; it is not, and the note is what stops that misreading.
+  it('says switching changes scope, not permissions', () => {
+    expect(GRAPH_SWITCHER_SCOPE_NOTE).toContain('no de permisos');
+    expect(GRAPH_SWITCHER_SCOPE_NOTE).toContain('mismo mínimo de documentos');
+  });
+});
+
+describe('switcherCountCopy', () => {
+  // ⚠ THE TRUNCATED CASE IS THE ONE THE BROWSER CANNOT ANSWER. Saying "12 de 90
+  // coinciden" would be a claim about 90 rows we never received.
+  it('does not claim to have counted rows it never received', () => {
+    const copy = switcherCountCopy({
+      total: 90, rows: 40, matches: 12, truncated: true, filtered: true,
+    });
+    expect(copy).toContain('Mostramos 40 de 90');
+    expect(copy).toContain('Buscar');
+    expect(copy).not.toContain('12 de 40');
+  });
+
+  it('counts matches in the browser when the whole list arrived', () => {
+    expect(
+      switcherCountCopy({ total: 8, rows: 8, matches: 3, truncated: false, filtered: true }),
+    ).toBe('3 de 8 ecosistemas coinciden.');
+  });
+
+  // "1 ecosistemas" is the kind of thing that reads fine until the day it does not.
+  it('agrees in number when nothing is filtered', () => {
+    expect(
+      switcherCountCopy({ total: 1, rows: 1, matches: 1, truncated: false, filtered: false }),
+    ).toBe('1 ecosistema en la plataforma.');
+    expect(
+      switcherCountCopy({ total: 8, rows: 8, matches: 8, truncated: false, filtered: false }),
+    ).toBe('8 ecosistemas en la plataforma.');
   });
 });
 
@@ -730,19 +941,27 @@ describe('egoLayout', () => {
     expect(egoLayout(centre, shuffled)).toEqual(egoLayout(centre, rows));
   });
 
-  // 🔴 The type filter is repeated inside the layout on purpose: the picture
-  // cannot draw a person even if a future response shape slips one past the
-  // parser. See the person-rule block above.
-  it('never draws more than the cap, and never draws a persona', () => {
+  // ⚠ The type filter is repeated inside the layout on purpose, and it is the
+  // SET of drawable types it enforces -- not a ban on one of them. A persona
+  // now draws like any other neighbour; an unknown type still does not.
+  it('draws a persona like any other neighbour, and still refuses an unknown type', () => {
     const persona = {
       entity: { id: 'p1', type: 'persona', label: 'Ana Ruiz Mendoza', support: 999 },
       relationType: 'participa_en',
       support: 999,
     } as unknown as GraphNeighbour;
-    const layout = egoLayout(centre, [persona, ...manyNeighbours(40)]);
+    const alien = {
+      entity: { id: 'x1', type: 'concepto', label: 'Categoría futura', support: 998 },
+      relationType: 'relacionado_con',
+      support: 998,
+    } as unknown as GraphNeighbour;
+    const layout = egoLayout(centre, [persona, alien, ...manyNeighbours(40)]);
     expect(layout.nodes).toHaveLength(EGO_MAX_NEIGHBOURS);
-    expect(layout.nodes.map((n) => n.id)).not.toContain('p1');
-    expect(layout.nodes.map((n) => n.label)).not.toContain('Ana Ruiz Mendoza');
+    // Highest support of all, so it leads the ranking rather than merely appearing.
+    expect(layout.nodes[0]!.id).toBe('p1');
+    expect(layout.nodes.map((n) => n.label)).toContain('Ana Ruiz Mendoza');
+    // 🔴 Still fails closed on a type nobody has decided to show.
+    expect(layout.nodes.map((n) => n.id)).not.toContain('x1');
   });
 
   // "Radial" is the claim the picture makes: straight spokes of equal length
@@ -1115,8 +1334,8 @@ describe('graphContextParagraph', () => {
     );
   });
 
-  // An endpoint we cannot resolve is an endpoint we must not name — this is
-  // also the last line of defence for a `persona` id riding in on an edge.
+  // An endpoint we cannot resolve is an endpoint we must not name: the block
+  // would otherwise assert a connection to a node it knows nothing about.
   it('ignores an edge whose other endpoint is not among the entities', () => {
     const out = graphContextParagraph({
       ...empty,
@@ -1269,12 +1488,19 @@ describe('regressions', () => {
           relationType: 'ocurre_en',
           support: 4,
         },
-        // ⚠ A persona endpoint is dropped like any other: the person rule holds
-        // in the prompt block too, not just on screen.
+        // ⚠ A persona endpoint is indexed like any other, so the chat block
+        // and the screen describe the SAME graph. An endpoint of an unknown
+        // type is still dropped -- the seam fails closed, it is not open.
         {
           from: { id: '1', type: 'tema', label: 'Escasez de agua', support: 9 },
           to: { id: '3', type: 'persona', label: 'Ana Ruiz Mendoza', support: 8 },
           relationType: 'participa_en',
+          support: 7,
+        },
+        {
+          from: { id: '1', type: 'tema', label: 'Escasez de agua', support: 9 },
+          to: { id: '4', type: 'concepto', label: 'Categoría futura', support: 8 },
+          relationType: 'relacionado_con',
           support: 7,
         },
       ],
@@ -1282,11 +1508,12 @@ describe('regressions', () => {
       terms: [],
     };
     const retrieval = parseGraphRetrieval(raw);
-    expect(retrieval.nodes?.map((n) => n.id)).toEqual(['1', '2']);
+    expect(retrieval.nodes?.map((n) => n.id)).toEqual(['1', '2', '3']);
 
     const out = graphContextParagraph(retrieval);
     expect(out).toContain('Ejido Norte (lugar, 4 documentos)');
-    expect(out).not.toContain('Ana Ruiz Mendoza');
+    expect(out).toContain('Ana Ruiz Mendoza');
+    expect(out).not.toContain('Categoría futura');
   });
 
   // 🔴 "Nobody has published anything" and "everything is below the threshold"

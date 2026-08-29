@@ -73,12 +73,12 @@ export interface NavCapabilities {
 /**
  * Every real destination in the app, in the order they are shown.
  *
- * ⚠ ONLY PAGES THAT EXIST. `/`, `/biblioteca`, `/revision` and `/admin` are the
- * whole set of signed-in destinations under `src/routes` — `/sign-in` and `/sign-up` are the
- * way in, not sections, and `/biblioteca/[id]` is a detail view inside
- * Biblioteca rather than a section of its own. A menu entry for a page that
- * does not exist is worse than a missing menu: it teaches people the app is
- * broken.
+ * ⚠ ONLY PAGES THAT EXIST. `/`, `/biblioteca`, `/grafo`, `/revision` and
+ * `/admin` are the whole set of signed-in destinations under `src/routes` —
+ * `/sign-in` and `/sign-up` are the way in, not sections, and
+ * `/biblioteca/[id]` is a detail view inside Biblioteca rather than a section of
+ * its own. A menu entry for a page that does not exist is worse than a missing
+ * menu: it teaches people the app is broken.
  */
 export const NAV_ITEMS: readonly NavItem[] = [
   {
@@ -90,6 +90,24 @@ export const NAV_ITEMS: readonly NavItem[] = [
     href: '/biblioteca',
     label: 'Biblioteca',
     hint: 'Lo que tu ecosistema ha publicado.',
+  },
+  {
+    href: '/grafo',
+    /**
+     * ⚠ "Conexiones", NOT "Grafo".
+     *
+     * `/grafo` is the route and the ADR's word for the feature. It is not this
+     * menu's word for it: a *grafo* is a maths term, and this file's own rule
+     * is plain Spanish nouns for readers who do not have that vocabulary. The
+     * page's kicker says "Conexiones" too (`GRAPH_KICKER`), so clicking the
+     * menu lands on a page that calls itself the same thing.
+     *
+     * It sits next to Biblioteca because it is the same material seen a
+     * different way: both are about what the ecosistema has PUBLISHED, and
+     * neither shows a draft.
+     */
+    label: 'Conexiones',
+    hint: 'Cómo se relaciona lo que se ha publicado.',
   },
   {
     href: '/revision',

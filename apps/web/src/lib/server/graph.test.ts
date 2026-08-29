@@ -128,16 +128,33 @@ describe('fetchGraphView', () => {
     expect(view.minSupport).toBe(3);
   });
 
-  // 🔴 THE PERSON RULE, AT THE BOUNDARY. A ranked list of people across an
-  // ecosistema's corpus is the re-identification surface ADR §7.3 spends its
-  // whole argument on not building. If the backend ever sends one, it stops
-  // here — before serialisation, so there is nothing for a careless `{#if}` to
-  // leak later.
-  it('drops persona entities before they reach the browser', async () => {
+  // 🔴 PERSONA REACHES THE BROWSER, AND THAT IS SAFE BECAUSE OF WHERE THE
+  // PERSON RULE LIVES. It is an EXTRACTION rule, not a serialisation one: the
+  // backend cannot produce a person node from a testimonio at all
+  // (`personaAllowed(contentKind)`, which fails closed on null). So a name that
+  // arrives here came from a `documento` -- a cited author, a named official --
+  // and it still had to clear `GRAPH_MIN_SUPPORT` to be sent at all.
+  it('passes persona entities through like any other type', async () => {
     backendFetch.mockResolvedValue(
       reply({
         entities: [
           { id: 'p', type: 'persona', label: 'Juana Pérez', support: 40 },
+          { id: 'a', type: 'tema', label: 'Agua', support: 3 },
+        ],
+        hidden: 0,
+      }),
+    );
+    const { view } = await fetchGraphView('tok', { organizationId: '7' });
+    expect(view.entities.map((e) => e.id)).toEqual(['p', 'a']);
+  });
+
+  // ⚠ The seam still fails closed. A category the backend adds tomorrow does
+  // not appear in this product until somebody decides it should.
+  it('still drops a type nobody has decided to show', async () => {
+    backendFetch.mockResolvedValue(
+      reply({
+        entities: [
+          { id: 'x', type: 'concepto', label: 'Categoría futura', support: 40 },
           { id: 'a', type: 'tema', label: 'Agua', support: 3 },
         ],
         hidden: 0,
@@ -203,16 +220,19 @@ describe('fetchGraphEntity', () => {
     expect((await fetchGraphEntity('tok', '7', 'e1')).state).toBe('unavailable');
   });
 
-  // 🔴 Same person rule as the list. An entity the view may not show is absent,
-  // not rendered with its neighbours.
-  it('treats a persona entity as absent', async () => {
+  // 🔴 A persona opens like any other entity. Safe for the same reason as
+  // the list above: the person rule is enforced at EXTRACTION, so this name
+  // came from a `documento` and cleared the minimum-support threshold.
+  it('opens a persona entity like any other', async () => {
     backendFetch.mockResolvedValue(
       reply({ ...detail, entity: { id: 'p', type: 'persona', label: 'Juana Pérez', support: 9 } }),
     );
-    expect((await fetchGraphEntity('tok', '7', 'p')).state).toBe('not-found');
+    const res = await fetchGraphEntity('tok', '7', 'p');
+    expect(res.state).toBe('ok');
+    if (res.state === 'ok') expect(res.detail.entity.type).toBe('persona');
   });
 
-  it('drops a persona from the neighbours of a viewable entity', async () => {
+  it('keeps a persona among the neighbours of another entity', async () => {
     backendFetch.mockResolvedValue(
       reply({
         ...detail,
@@ -224,7 +244,16 @@ describe('fetchGraphEntity', () => {
     );
     const res = await fetchGraphEntity('tok', '7', 'e1');
     expect(res.state).toBe('ok');
-    if (res.state === 'ok') expect(res.detail.neighbours.map((n) => n.entity.id)).toEqual(['e2']);
+    // Ranked by edge support, so the person leads -- not pinned, not demoted.
+    if (res.state === 'ok') expect(res.detail.neighbours.map((n) => n.entity.id)).toEqual(['p', 'e2']);
+  });
+
+  // ⚠ The seam still fails closed at this boundary too.
+  it('still treats an entity of an undecided type as absent', async () => {
+    backendFetch.mockResolvedValue(
+      reply({ ...detail, entity: { id: 'x', type: 'concepto', label: 'Categoría futura', support: 9 } }),
+    );
+    expect((await fetchGraphEntity('tok', '7', 'x')).state).toBe('not-found');
   });
 });
 
