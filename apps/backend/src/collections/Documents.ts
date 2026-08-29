@@ -383,12 +383,115 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
     next.organization = original.organization
   }
 
+  // Needs neither the ecosistema nor the contentKind — only the STORED
+  // publication status — so it runs before the two that do.
+  enforceDraftOnlyTextEdits({ next, original, operation, req })
+
   // ⚠ LAST, because it needs the ecosistema this hook just derived. A permission
   // is held IN an organization, so the check is meaningless before we know which
   // one the row belongs to.
   await enforceVocesUploadRights({ next, original, operation, req })
 
   return next
+}
+
+/**
+ * 🔴 ONLY A DRAFT'S TEXT MAY BE REWRITTEN. The authoritative copy of that rule.
+ *
+ * A reviewer may correct a machine transcript — audio comes back from Whisper
+ * with names and numbers mangled — but only while the document is still a
+ * draft, i.e. still private to its uploader. The moment it is published, its
+ * text also exists as EMBEDDED CHUNKS in the ecosistema's shared corpus, and
+ * `extractedText` is no longer the only copy. Rewriting the column then does
+ * not correct anything: it desyncs the row from the chunks that retrieval
+ * actually reads, so the assistant keeps quoting the old text while the
+ * document page shows the new one, and the citation looks like a fabrication.
+ *
+ * ⚠ WHERE THIS RULE ALSO LIVES, AND WHICH ONE IS AUTHORITATIVE. The SvelteKit
+ * BFF checks the same thing in
+ * `apps/web/src/routes/api/documents/[id]/transcript/+server.ts` and returns a
+ * 409 `already_published`, which is a far better error than a validation
+ * failure. That check STAYS — defence in depth, and it is the one users see.
+ * THIS ONE IS AUTHORITATIVE: the BFF is one caller of the REST API, not a wall
+ * around it, and nothing stopped a direct `PATCH /api/documents/:id` before.
+ *
+ * ⚠ THE STORED STATUS, NEVER THE INCOMING ONE. Payload merges the request body
+ * over the stored row BEFORE `beforeValidate` runs, so `next.publicationStatus`
+ * can be whatever the caller typed. Reading it would make the gate
+ * self-defeating: one PATCH carrying `{ publicationStatus: 'draft',
+ * extractedText: '…' }` would walk straight through. (The caller's value is
+ * pinned back to the stored one earlier in this hook — but that happens for
+ * `publicationStatus` specifically, and depending on the order of two edits in
+ * one file is not a guarantee. `original` is.)
+ *
+ * ⚠ NOT `'extractedText' in next` EITHER, for the same merge reason: the key is
+ * present on EVERY authenticated PATCH, including a plain rename, carrying the
+ * row's own text. Only a CHANGE of value counts as an edit.
+ *
+ * ⚠ EVERY SERVER-SIDE WRITER IS UNAFFECTED, because they all reach Payload with
+ * `overrideAccess: true` and no user, and the enclosing hook returns early on
+ * `!req.user`. Checked one by one: `runExtractAndIngest` (this file, the PDF /
+ * DOCX extraction write), the `transcribe.completed` callback
+ * (`app/api/ai-service/callback/route.ts`, which writes the transcript on rows
+ * in any state), `lib/holdReview.ts` (which settles a held row and never writes
+ * this column at all), `lib/anonymiseDocument.ts` and `lib/publishDocument.ts`
+ * (both write `redactedText` / status, never `extractedText`) and
+ * `lib/transcriptionJanitor.ts` (documented as never touching it). A rule that
+ * stops the ingest pipeline would be worse than the gap it closes.
+ *
+ * ⚠ PLATFORM ADMINS ARE NOT EXEMPT, deliberately. The invariant is about the
+ * row and its chunks agreeing, not about authority — an admin editing a
+ * published document's text desyncs the corpus exactly as much as anyone else
+ * would. Unpublish, edit, publish again is the supported route, and it re-embeds.
+ */
+function enforceDraftOnlyTextEdits(args: {
+  next: Record<string, unknown>
+  original: Record<string, unknown>
+  operation: string
+  req: Parameters<CollectionBeforeValidateHook>[0]['req']
+}): void {
+  const { next, original, operation, req } = args
+  // A new row is created as `draft` unconditionally (see the branch above), so
+  // there is no published text to protect yet.
+  if (operation === 'create') return
+
+  // A partial write that never names the column is not a text edit. ⚠ This is
+  // NOT the check that decides anything on the REST path — Payload's merge puts
+  // the key on every body — it is only so a hand-built `payload.update` that
+  // omits the field is not read as clearing it.
+  if (!('extractedText' in next)) return
+
+  // ⚠ Compared as TEXT, and non-strings never compare equal to the stored
+  // value. An HTTP caller can put a number, an array or an object in this field;
+  // treating "unreadable" as "unchanged" would be the fail-open reading.
+  const asText = (v: unknown): string | null =>
+    typeof v === 'string' ? v : v === null || v === undefined ? '' : null
+  const incoming = asText(next.extractedText)
+  const stored = asText(original.extractedText)
+  if (incoming !== null && incoming === stored) return
+
+  const storedStatus = original.publicationStatus
+  if (storedStatus === 'draft') return
+
+  /**
+   * 🔴 FAILS CLOSED WHEN THE STORED STATUS IS UNREADABLE. Reaching here with no
+   * `originalDoc` means we cannot tell whether this document is shared, and
+   * "we do not know" resolves to "no" for a WRITE gate — the opposite direction
+   * from the badge in `apps/web/src/lib/publication.ts`, which fails toward the
+   * private-looking READ. Refusing costs the uploader one retry; allowing costs
+   * a shared corpus that disagrees with its own rows.
+   */
+  throw new ValidationError({
+    collection: 'documents',
+    errors: [
+      {
+        path: 'extractedText',
+        message:
+          'Solo puede corregirse el texto de un documento en borrador. Este ya no lo es: quítalo del corpus compartido de tu ecosistema, corrígelo y vuelve a publicarlo.',
+      },
+    ],
+    req,
+  })
 }
 
 /**
