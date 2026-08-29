@@ -76,7 +76,7 @@ const neighbour = (
   e: GraphEntity,
   support: number = e.support,
   relationType: GraphRelationType = 'relacionado_con',
-): GraphNeighbour => ({ entity: e, relationType, support });
+): GraphNeighbour => ({ entity: e, relationType, support, documents: null });
 
 const doc = (id: string, title = `Documento ${id}`): GraphDocument => ({
   id,
@@ -428,11 +428,66 @@ describe('parseGraphNeighbour', () => {
       entity: entity('t1', 'tema', 'Agua', 4),
       relationType: 'ocurre_en',
       support: 6,
+      // Absent, not empty — this payload carries no per-edge evidence.
+      documents: null,
     });
     expect(parseGraphNeighbour({ id: 't1', type: 'tema', label: 'Agua', support: 4 })).toEqual({
       entity: entity('t1', 'tema', 'Agua', 4),
       relationType: 'relacionado_con',
       support: 4,
+      documents: null,
+    });
+  });
+
+  describe('per-edge evidence', () => {
+    // 🔴 `null` and `[]` mean different things and the caller branches on it:
+    // absent falls back to the old intersection and to the weaker wording;
+    // empty is taken as the backend's real answer.
+    it('distinguishes an ABSENT documents field from an EMPTY one', () => {
+      const absent = parseGraphNeighbour({
+        entity: { id: 't1', type: 'tema', label: 'Agua', support: 4 },
+        relationType: 'ocurre_en',
+        support: 3,
+      });
+      expect(absent?.documents).toBeNull();
+
+      const empty = parseGraphNeighbour({
+        entity: { id: 't1', type: 'tema', label: 'Agua', support: 4 },
+        relationType: 'ocurre_en',
+        support: 3,
+        documents: [],
+      });
+      expect(empty?.documents).toEqual([]);
+    });
+
+    it('parses the edge’s own documents, dropping unreadable rows', () => {
+      const n = parseGraphNeighbour({
+        entity: { id: 't1', type: 'tema', label: 'Agua', support: 4 },
+        relationType: 'ocurre_en',
+        support: 3,
+        documents: [
+          { id: '9', title: 'Acta de asamblea', contentKind: 'documento' },
+          { id: '10', title: 'Testimonio', contentKind: 'testimonio' },
+          null,
+          { nonsense: true },
+        ],
+      });
+      expect(n?.documents).toEqual([
+        { id: '9', title: 'Acta de asamblea', contentKind: 'documento' },
+        { id: '10', title: 'Testimonio', contentKind: 'testimonio' },
+      ]);
+    });
+
+    it('⚠ takes a testimonio title as given, never re-resolving it', () => {
+      // The backend already neutralised it. "Testimonio" IS the title here, and
+      // reaching for the real file name is the leak this whole module refuses.
+      const n = parseGraphNeighbour({
+        entity: { id: 't1', type: 'tema', label: 'Agua', support: 4 },
+        relationType: 'ocurre_en',
+        support: 3,
+        documents: [{ id: '10', title: 'Testimonio', contentKind: 'testimonio' }],
+      });
+      expect(n?.documents?.[0]?.title).toBe('Testimonio');
     });
   });
 

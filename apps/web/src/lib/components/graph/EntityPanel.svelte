@@ -37,19 +37,14 @@
     supportCopy,
     supportShort,
     typeChipLabel,
-    type GraphDocument,
     type GraphEntityDetail,
-    type GraphRelationType,
-    type GraphEntity,
+    // ⚠ IMPORTED, NOT RE-DECLARED. This file used to keep its own copy of the
+    // `SelectedEdge` shape. The copy went stale the first time the real one
+    // grew a field (`exact`), and svelte-check caught it only because the
+    // component happened to read that field — a duplicate type that nothing
+    // reads yet fails silently.
+    type SelectedEdge,
   } from '$lib/graph';
-
-  type SelectedEdge = {
-    entity: GraphEntity;
-    relationType: GraphRelationType;
-    documents: GraphDocument[];
-    /** `false` ⇒ we could not read the neighbour's documents, not "there are none". */
-    ok: boolean;
-  };
 
   type Props = {
     detail: GraphEntityDetail;
