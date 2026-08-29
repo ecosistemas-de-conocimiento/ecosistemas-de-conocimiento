@@ -193,7 +193,18 @@ pnpm --filter @edc/web build       # adapter-node → ./build
 ```
 
 Vitest runs `src/**/*.test.ts` under the **node** environment: BFF route
-handlers and pure helpers, no component rendering. There is no e2e suite.
+handlers and pure helpers, no component rendering.
+
+⚠ Because there is no DOM here, a component's behaviour cannot be unit-tested.
+The convention is to lift every rule and every load-bearing string into a plain
+`$lib/` module that vitest CAN assert — see `$lib/nav.ts`, `$lib/publication.ts`,
+`$lib/holds.ts`, `$lib/layout.ts`, `$lib/design/contrast.ts` — and to check
+layout by screenshot. A claim about how something looks belongs to a screenshot,
+never to this suite.
+
+There **is** an e2e suite, in `e2e/` (Playwright, against a live stack). It is
+separate from the command above; see `TESTING.md` at the repo root for how to
+build its fixtures and run it.
 
 ## Docker
 
