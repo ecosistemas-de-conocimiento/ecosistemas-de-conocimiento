@@ -184,8 +184,17 @@
     border: 1px solid var(--edc-color-line);
     border-radius: var(--edc-radius-2);
   }
+  /* ⚠ `--edc-focus-ring` is a COLOUR, not an `outline` shorthand. Writing
+     `outline: var(--edc-focus-ring)` parses, but the shorthand resets
+     `outline-style` to its initial `none` — so it painted nothing AND
+     suppressed the browser's own focus ring, leaving keyboard focus on this
+     search box invisible. The token is designed for `box-shadow`, which is how
+     every other call site uses it (`Composer`, `DocsPanel`, `EcosystemPicker`,
+     `primitives/Input`, `primitives/StarRating`). `outline: none` stays so the
+     UA ring is replaced rather than doubled. */
   .search input:focus-visible {
-    outline: var(--edc-focus-ring);
+    outline: none;
+    box-shadow: 0 0 0 3px var(--edc-focus-ring);
   }
   .sr-only {
     position: absolute;
