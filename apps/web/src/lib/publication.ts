@@ -7,10 +7,11 @@
  * only ever sees content from their own ecosistema. Within it, a document has
  * a publication state:
  *
- *   draft      → visible ONLY to the person who uploaded it.
- *   publishing → being re-indexed into the shared corpus. Slow. Can fail.
- *   published  → part of the ecosistema's shared corpus; everyone in it sees it.
- *   failed     → publishing did not complete. Retryable.
+ *   draft        → visible ONLY to the person who uploaded it.
+ *   publishing   → being re-indexed into the shared corpus. Slow. Can fail.
+ *   published    → part of the ecosistema's shared corpus; everyone in it sees it.
+ *   unpublishing → being taken back out of the shared corpus. Slow. Can fail.
+ *   failed       → publishing did not complete. Retryable.
  *
  * A user CAN chat against their own drafts (upload → try it → publish), so an
  * answer may cite a document nobody else can open. `draftDocumentIds` +
@@ -19,8 +20,22 @@
  * ## Backend contract — ASSUMPTIONS, flagged
  *
  * Settled with the backend agent:
- *   - `documents.publicationStatus` is one of the four strings above.
+ *   - `documents.publicationStatus` is one of the strings above.
  *   - there is an endpoint to publish one document.
+ *
+ * ⚠ HOW THIS UNION LINES UP WITH THE BACKEND'S. The backend's authoritative
+ * list is `PUBLICATION_STATES` in `apps/backend/src/lib/publishDocument.ts`:
+ * `draft`, `publishing`, `published`, `unpublishing`. Every one of those is
+ * here, in that order.
+ *
+ * `failed` is the one member the backend column cannot currently hold, and it
+ * is kept ON PURPOSE. The backend records a failed publish as
+ * `publicationStatus: 'publishing'` PLUS a populated `publicationError`
+ * (`failPublish`), so nothing writes the literal string today — but this app
+ * models a failed publish as its own state in `types.ts`, the docs panel and
+ * the publish poller, and dropping it would delete a real UI state to match a
+ * storage detail that is expected to change. An extra member costs a badge
+ * string; a missing one costs a wrong write gate, which is Gap 1 itself.
  *
  * NOT settled when this was written; each is isolated to one line so a
  * correction is cheap:
@@ -36,9 +51,12 @@
  */
 
 export const PUBLICATION_STATUSES = [
+  // The backend's four, in the backend's order…
   'draft',
   'publishing',
   'published',
+  'unpublishing',
+  // …then the one this app models and the backend column does not yet hold.
   'failed',
 ] as const;
 
@@ -64,9 +82,16 @@ export function parsePublicationStatus(raw: unknown): PublicationStatus {
   return isPublicationStatus(raw) ? raw : 'draft';
 }
 
-/** `publishing` is the only non-terminal state — it is what we poll on. */
+/**
+ * The two in-flight states are the ones we poll on.
+ *
+ * ⚠ `unpublishing` IS NON-TERMINAL TOO, and forgetting it is not cosmetic: the
+ * poller in `$lib/stores/app.svelte.ts` stops at the first terminal read, so
+ * calling `unpublishing` terminal would freeze the row on "dejando de
+ * compartir…" and never repaint it when the backend settles it to `draft`.
+ */
 export function isTerminalPublication(status: PublicationStatus): boolean {
-  return status !== 'publishing';
+  return status !== 'publishing' && status !== 'unpublishing';
 }
 
 /**
@@ -76,6 +101,18 @@ export function isTerminalPublication(status: PublicationStatus): boolean {
  * where it was — private. Saying otherwise would be the dangerous direction.
  * `publishing` also counts, because until the backend says `published` we do
  * not know that anyone else can see it yet.
+ *
+ * `unpublishing` counts as private, and this matches the backend exactly:
+ * `isSharedWithEcosystem` in `lib/publishDocument.ts` is `state === 'published'`
+ * and nothing else. The backend also retires the shared copy FIRST when
+ * unpublishing, so the row stops being shared before it stops saying
+ * `unpublishing` — the reading here is the conservative one either way.
+ *
+ * 🔴 THIS IS NOT THE PREDICATE FOR A WRITE GATE. "Nobody else can see it" is a
+ * much wider set than "still editable": a `publishing`, `unpublishing` or
+ * `failed` document is private but has a copy in flight, so overwriting its
+ * text would desync the embedded copy from the row. A gate wants
+ * `=== 'draft'`. See the transcript route.
  */
 export function isPrivateToUploader(status: PublicationStatus): boolean {
   return status !== 'published';
@@ -110,7 +147,10 @@ export function publishGate(input: PublishGateInput): {
   if (input.publicationStatus === 'published') {
     return { canPublish: false, reason: 'already-published' };
   }
-  if (input.publicationStatus === 'publishing') {
+  // ⚠ BOTH in-flight states block, not just `publishing`. Publishing a document
+  // that is halfway out of the shared corpus queues two opposite re-embeds
+  // against the same row, and whichever callback lands last decides the state.
+  if (input.publicationStatus === 'publishing' || input.publicationStatus === 'unpublishing') {
     return { canPublish: false, reason: 'in-progress' };
   }
   if (input.ingestStatus === 'failed') {
@@ -164,6 +204,18 @@ export function publicationBadge(status: PublicationStatus): PublicationBadge {
         description: 'Visible para todas las personas de tu ecosistema.',
         tone: 'shared',
       };
+    case 'unpublishing':
+      return {
+        // ⚠ THE COPY DOES NOT PROMISE PRIVACY YET, and that is the careful
+        // direction HERE. For every other state the risk is claiming something
+        // is shared when it is not; on this one it is the reverse — telling
+        // someone their document is already private while a copy may still be
+        // answering questions in the ecosistema is the harmful reading.
+        label: 'Dejando de compartir…',
+        description:
+          'Se está quitando del corpus compartido de tu ecosistema y volviendo a tus borradores. Tarda varios minutos; hasta que termine, puede seguir apareciendo en algunas respuestas.',
+        tone: 'progress',
+      };
     case 'failed':
       return {
         label: 'No se pudo publicar',
@@ -180,7 +232,9 @@ export function publishBlockedCopy(reason: PublishBlockedReason): string {
     case 'already-published':
       return 'Ya está publicado en tu ecosistema.';
     case 'in-progress':
-      return 'Ya se está publicando.';
+      // Covers `publishing` AND `unpublishing`, so it names neither direction:
+      // "ya se está publicando" would be a lie on a document being unpublished.
+      return 'Hay un cambio de publicación en curso. Espera a que termine.';
     case 'not-ingested':
       return 'Espera a que termine de procesarse el documento para publicarlo.';
     case 'ingest-failed':

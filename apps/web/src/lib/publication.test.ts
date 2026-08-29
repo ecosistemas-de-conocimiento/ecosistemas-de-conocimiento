@@ -19,8 +19,25 @@ import {
 } from './publication';
 
 describe('the publication states', () => {
-  it('are exactly the four the backend models', () => {
-    expect(PUBLICATION_STATUSES).toEqual(['draft', 'publishing', 'published', 'failed']);
+  // ⚠ THIS USED TO ASSERT "exactly the four the backend models" AND WAS FALSE.
+  // The backend's `PUBLICATION_STATES` ends in `unpublishing`; this list ended
+  // in `failed`. A union that omits a state the backend really stores makes
+  // every `isPublicationStatus` read of that state fail, and `unpublishing` is
+  // precisely the state where being wrong is expensive.
+  it('contains every state the backend can store, plus the one this app models', () => {
+    expect(PUBLICATION_STATUSES).toEqual([
+      'draft',
+      'publishing',
+      'published',
+      'unpublishing',
+      'failed',
+    ]);
+  });
+
+  // The half of the alignment that a future edit could silently undo.
+  it('recognises `unpublishing` — a value the backend really writes', () => {
+    expect(isPublicationStatus('unpublishing')).toBe(true);
+    expect(parsePublicationStatus('unpublishing')).toBe('unpublishing');
   });
 
   it('recognises its own members and nothing else', () => {
@@ -47,8 +64,11 @@ describe('parsePublicationStatus', () => {
 });
 
 describe('state predicates', () => {
-  it('treats only `publishing` as non-terminal', () => {
+  it('treats both in-flight states as non-terminal', () => {
     expect(isTerminalPublication('publishing')).toBe(false);
+    // The poller stops at the first terminal read. Calling this one terminal
+    // freezes the row on "dejando de compartir…" forever.
+    expect(isTerminalPublication('unpublishing')).toBe(false);
     expect(isTerminalPublication('draft')).toBe(true);
     expect(isTerminalPublication('published')).toBe(true);
     expect(isTerminalPublication('failed')).toBe(true);
@@ -61,6 +81,12 @@ describe('state predicates', () => {
     expect(isPrivateToUploader('publishing')).toBe(true);
     expect(isPrivateToUploader('draft')).toBe(true);
     expect(isPrivateToUploader('published')).toBe(false);
+  });
+
+  // Matches the backend's own `isSharedWithEcosystem`, which is
+  // `state === 'published'` and nothing else.
+  it('counts a document on its way out of the shared corpus as private', () => {
+    expect(isPrivateToUploader('unpublishing')).toBe(true);
   });
 });
 
@@ -91,6 +117,17 @@ describe('publishGate', () => {
       reason: 'already-published',
     });
     expect(publishGate({ publicationStatus: 'publishing', ingestStatus: 'ready' })).toEqual({
+      canPublish: false,
+      reason: 'in-progress',
+    });
+  });
+
+  // 🔴 The one the missing union member was hiding. Before `unpublishing`
+  // existed here, this input fell through to the ingest checks and came back
+  // `canPublish: true` — offering "publicar" on a document mid-retirement, which
+  // queues two opposite re-embeds against one row.
+  it('blocks a publish while the document is being unpublished', () => {
+    expect(publishGate({ publicationStatus: 'unpublishing', ingestStatus: 'ready' })).toEqual({
       canPublish: false,
       reason: 'in-progress',
     });
@@ -143,6 +180,15 @@ describe('publicationBadge', () => {
     expect(publicationBadge('failed').description).toContain('solo tú');
   });
 
+  // ⚠ The opposite direction from every other state. While a document is being
+  // withdrawn, claiming it is already private is the harmful over-claim: a copy
+  // may still be answering questions in the ecosistema.
+  it('does not claim an unpublishing document is already private', () => {
+    const b = publicationBadge('unpublishing');
+    expect(b.description).not.toContain('solo tú');
+    expect(b.description).toMatch(/hasta que termine/i);
+  });
+
   it('does not promise speed for a slow operation', () => {
     expect(publicationBadge('publishing').description).toContain('minutos');
   });
@@ -162,8 +208,9 @@ describe('draftDocumentIds', () => {
       { id: '2', publicationStatus: 'published' },
       { id: '3', publicationStatus: 'publishing' },
       { id: '4', publicationStatus: 'failed' },
+      { id: '5', publicationStatus: 'unpublishing' },
     ]);
-    expect([...ids].sort()).toEqual(['1', '3', '4']);
+    expect([...ids].sort()).toEqual(['1', '3', '4', '5']);
   });
 
   it('is empty for an empty list', () => {
