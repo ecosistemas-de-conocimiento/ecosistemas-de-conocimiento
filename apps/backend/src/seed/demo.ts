@@ -28,16 +28,37 @@
  *
  * Idempotent by slug: re-running updates the existing rows in place. Safe to
  * run on every boot.
+ *
+ * ── WHAT IS IN IT NOW ────────────────────────────────────────────────────────
+ *
+ * The structure above was, for a long time, ALL of it: an ecosistema with an
+ * empty library, an empty graph and a retrieval feature with nothing to
+ * retrieve. Three more pieces now come with it, each in its own file:
+ *
+ *   `./corpus.ts`  250 documents read IN PLACE out of `../corpus-generativo`
+ *                  (never vendored; `CORPUS_DIR` overrides). 🔴 Rows only —
+ *                  nothing is embedded unless `SEED_CORPUS_INGEST=1`. Read that
+ *                  file's header for the cost argument and for what a demo
+ *                  without embeddings can and cannot show.
+ *   `./review.ts`  an Investigador account and two held documents, so
+ *                  `/revision` has something in it.
+ *
+ * ⚠ ALL OF IT DEGRADES. No corpus next door ⇒ the ecosistema is created and the
+ * library is empty, with one log line saying why. No platform admin ⇒ no
+ * documents at all, because every row needs an `uploadedBy`. Neither case
+ * fails the boot, and neither half-seeds.
  */
 
 import type { Payload } from 'payload'
 
+import { corpusIngestRequested, ingestSeededDocuments, seedCorpusDocuments } from './corpus'
 import type { SeedTier } from './env-gate'
 import {
   manualIgnoredOverrideWarning,
   resolveBootSeedDecision,
   resolveManualSeedDecision,
 } from './env-gate'
+import { seedHeldDocuments, seedInvestigador } from './review'
 
 interface SeedTeam {
   slug: string
@@ -138,7 +159,7 @@ async function upsertBySlug(
  * that is a legitimate state. So: if there is a platform admin, give them the
  * membership; if not, say so and carry on.
  */
-async function linkAdminAsOwner(payload: Payload, organizationId: number): Promise<void> {
+async function linkAdminAsOwner(payload: Payload, organizationId: number): Promise<number | null> {
   const admins = await payload.find({
     collection: 'users',
     where: { isPlatformAdmin: { equals: true } },
@@ -152,7 +173,7 @@ async function linkAdminAsOwner(payload: Payload, organizationId: number): Promi
       '[seed-demo] no platform admin exists yet, so the demo organization has no members. ' +
         'Set SEED_ADMIN_PASSWORD and restart, or add a membership by hand in /admin.',
     )
-    return
+    return null
   }
 
   const existing = await payload.find({
@@ -162,7 +183,7 @@ async function linkAdminAsOwner(payload: Payload, organizationId: number): Promi
     depth: 0,
     overrideAccess: true,
   })
-  if (existing.docs.length > 0) return
+  if (existing.docs.length > 0) return Number(admin.id)
 
   await payload.create({
     collection: 'memberships',
@@ -179,6 +200,7 @@ async function linkAdminAsOwner(payload: Payload, organizationId: number): Promi
     { email: admin.email },
     '[seed-demo] linked the platform admin as owner of the demo organization',
   )
+  return Number(admin.id)
 }
 
 export interface SeedDemoOptions {
@@ -267,7 +289,41 @@ export async function seedDemo(
     }
   }
 
-  await linkAdminAsOwner(payload, orgId)
+  const adminId = await linkAdminAsOwner(payload, orgId)
+
+  /**
+   * 🔴 THE LIBRARY, AND THE REVIEW QUEUE. Everything below needs a real user to
+   * hang `uploadedBy` off, so it is skipped — not failed — when the admin
+   * bootstrap did not run. `seed/admin.ts` legitimately skips when
+   * `SEED_ADMIN_PASSWORD` is unset, and an ecosistema with structure and no
+   * documents is the state this seed produced for its whole life before now.
+   */
+  if (adminId != null) {
+    // The Investigador first: a Voz is filed by whoever holds `voces:upload`,
+    // and the corpus seed wants that id for its `testimonio` rows.
+    const investigadorId = await seedInvestigador(payload, orgId)
+
+    await seedCorpusDocuments(payload, {
+      organizationId: orgId,
+      uploaderId: adminId,
+      investigadorId: investigadorId ?? undefined,
+    })
+
+    // ⚠ AFTER the corpus, and deliberately independent of it. These two rows
+    // are what makes `/revision` demonstrable, and they must exist on a
+    // checkout with no corpus next door.
+    await seedHeldDocuments(payload, {
+      organizationId: orgId,
+      uploadedById: investigadorId ?? adminId,
+    })
+
+    // 🔴 THE EXPENSIVE HALF, AND ONLY IF ASKED. See `seed/corpus.ts`: 250
+    // documents means 250 ai-service jobs plus two model calls per Voz, and
+    // nobody's first `docker compose up` should block on that.
+    if (corpusIngestRequested()) {
+      await ingestSeededDocuments(payload, orgId)
+    }
+  }
 
   return { orgId, teamIds, projectIds }
 }
