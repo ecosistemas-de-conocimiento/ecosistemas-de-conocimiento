@@ -288,14 +288,30 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
     const many = (await chooser.count()) > 0;
 
     if (!many) {
-      // 🔴 ONE membership ⇒ NO chooser. `EcosystemPicker.svelte` renders a
-      // plain <p title={name}> in that branch. Assert the ABSENCE, because "a
-      // dropdown with one option" is exactly what that component refuses to be.
+      // 🔴 ONE membership ⇒ A FIELD, NEVER A CHOOSER. Assert the ABSENCE of the
+      // listbox, because "a dropdown with one option" is exactly what
+      // `EcosystemPicker.svelte` refuses to be.
+      //
+      // ⚠ The value is read off the field's `title`, NOT its text. Both
+      // branches of the component render the same bordered field, and the
+      // single-membership one puts an `aria-hidden` initials badge inside it —
+      // so `textContent` would be "OD" + "Organización Demo", and asserting on
+      // that would be asserting on the badge. `title` is the name alone, and in
+      // this branch it is `name` (the non-`single` modes put the hint there,
+      // and all three of those — Cargando…/No disponible/Ninguno — were ruled
+      // out above).
       await expect(picker.locator('[role="listbox"]')).toHaveCount(0);
-      const name = picker.locator('p[title]');
-      await expect(name).toHaveCount(1);
-      const ecosystemName = ((await name.textContent()) ?? '').trim();
+      const field = picker.locator('div[aria-labelledby="eco-picker-label"]');
+      await expect(field).toHaveCount(1);
+      const ecosystemName = ((await field.getAttribute('title')) ?? '').trim();
       expect(ecosystemName.length).toBeGreaterThan(0);
+
+      // The line that says WHY there is nothing to press. Its absence is what
+      // made the field read as a broken chooser, so it is part of the contract.
+      await expect(
+        picker.getByText('Es el único ecosistema al que perteneces.'),
+      ).toBeVisible();
+
       note('ecosistema', `single membership, no chooser: "${ecosystemName}"`);
       return;
     }
