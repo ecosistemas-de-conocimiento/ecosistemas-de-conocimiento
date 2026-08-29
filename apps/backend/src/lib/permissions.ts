@@ -148,6 +148,45 @@ export const PERMISSIONS = {
    * those are what an admin needs and they name nobody.
    */
   ratingsReadComments: 'ratings:read-comments',
+  /**
+   * 🔴 REVIEW A DOCUMENT THE ANONYMISATION GATE REFUSED, and release it or
+   * reject it.
+   *
+   * ── WHY THIS IS A REAL PRIVILEGE AND NOT A CHORE ────────────────────────────
+   *
+   * A hold means the gate is not sure the text is safe. Reviewing one therefore
+   * means reading material that HAS NOT PASSED ANONYMISATION — the gate's
+   * best-effort output with, quite possibly, somebody's name still in it. And an
+   * approval writes that text into a shared corpus that has no per-document
+   * delete, so it is irreversible in practice.
+   *
+   * ── WHY INVESTIGADOR AND NOT ADMIN ──────────────────────────────────────────
+   *
+   * 🔴 The bar had to land somewhere between "the uploader" and "whoever runs
+   * the installation", and the argument that decided it is CONTEXT:
+   *
+   *   · The person who can tell "the gate over-redacted this into nonsense" from
+   *     "a neighbour's name is still in paragraph four" is the person who
+   *     collected the material. That is the Investigador — the same role that
+   *     holds `voces:upload`, which is what put the Voz here in the first place.
+   *   · Gating it at `admin` would hand the judgement to the person with the
+   *     LEAST context, and the predictable outcome is holds sitting unreviewed
+   *     until somebody clicks approve without reading. An unread approval is
+   *     worse than no review, because it launders the decision.
+   *   · Admin and owner hold it too, because `ADMIN_PERMISSIONS` builds on
+   *     `INVESTIGADOR_PERMISSIONS` — a rank that does not come with the lower
+   *     role's grants is a lie.
+   *
+   * ⚠ IT IS A SEPARATE PERMISSION, NOT A FREE CONSEQUENCE OF `voces:upload`, for
+   * exactly the reason `voces:upload` is separate from `documents:write`:
+   * overriding a fail-closed safety gate is a different act from filing
+   * material, and the day the two need to be held by different people, the
+   * split already exists.
+   *
+   * ⚠ AND IT IS SCOPED, like every permission here. Holding it grants review of
+   * holds in the ecosistemas you are an active member of, and nowhere else.
+   */
+  holdsReview: 'holds:review',
 } as const
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]
@@ -171,6 +210,7 @@ const INVESTIGADOR_PERMISSIONS: readonly Permission[] = [
   ...MEMBER_PERMISSIONS,
   PERMISSIONS.vocesUpload,
   PERMISSIONS.ratingsReadComments,
+  PERMISSIONS.holdsReview,
 ]
 
 const ADMIN_PERMISSIONS: readonly Permission[] = [

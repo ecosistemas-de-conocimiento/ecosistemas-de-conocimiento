@@ -1,8 +1,8 @@
 /**
  * The I/O half of the admin "Contribuciones" view.
  *
- * Reads one ecosistema's documents, people, ratings and usage out of Payload
- * and hands them to the pure aggregation in
+ * Reads one ecosistema's documents, people and ratings out of Payload and hands
+ * them to the pure aggregation in
  * `$lib/components/admin/summary.ts`. Nothing here formats anything; nothing
  * there fetches anything.
  *
@@ -23,10 +23,10 @@
  * (`resolveEcosystem`). Two independent things then have to fail before a
  * cross-tenant read happens, and one of them is visible in a URL.
  *
- * ⚠ `messages` has no `organization` column — it is scoped only through its
- * session. It is therefore counted by session id, from the session list this
- * file already scoped, and never by a direct unfiltered read. See
- * `countMessages`.
+ * ⚠ CONVERSATION AND MESSAGE COUNTS ARE NOT READ HERE AT ALL. The ordinary list
+ * read returns the CALLING ADMIN'S OWN chats rather than the ecosistema's, so
+ * they come from the backend's aggregate endpoint instead. See
+ * `fetchEcosystemMetrics` for the whole story.
  *
  * ── Reading cheaply ────────────────────────────────────────────────────────
  *
@@ -40,6 +40,11 @@
 
 import { normalizeEcosystems, type Ecosystem } from '$lib/ecosystems';
 import { backendFetch } from '$lib/server/auth';
+import {
+  METRICS_UNAVAILABLE,
+  parseEcosystemMetrics,
+  type EcosystemMetricsResult,
+} from '$lib/components/admin/metrics';
 import {
   aggregateContributors,
   parseDocRow,
@@ -326,57 +331,67 @@ async function withTranscriptSizes(
   }
 }
 
-// ── Usage ──────────────────────────────────────────────────────────────────
-
-export interface UsageCounts {
-  sessions: number;
-  /** Null when we could not count them, or when the session list was capped. */
-  messages: number | null;
-  ok: boolean;
-}
+// ── The ecosistema's own numbers ───────────────────────────────────────────
 
 /**
- * Conversations and messages in this ecosistema.
+ * `GET /api/metrics/ecosystem?organization=<id>` — the conversation, document
+ * and rating counts, computed by the backend with an elevated read.
  *
- * ⚠ `messages` rows carry no `organization`; they are scoped only by their
- * session. So they are counted with `where[session][in]=<the session ids we
- * already scoped>`. If the session list hit the page cap, the message count
- * would be a count over a prefix — which is not a smaller number, it is a
- * WRONG number presented as a total. In that case it is reported as `null` and
- * the tile is hidden.
+ * ── 🔴 WHY THIS IS NOT COUNTED HERE ANY MORE ───────────────────────────────
+ *
+ * The previous version of this function listed `sessions`, collected their ids
+ * and then counted `messages` filtered by that list. It reported the WRONG
+ * NUMBER, and reported it confidently.
+ *
+ * `Sessions.read` is `ownOnly` and `Messages.read` is `ownViaSession`
+ * (`apps/backend/src/collections/`), with NO platform-admin bypass — a
+ * conversation belongs to the person who had it, and that is a product promise
+ * rather than an oversight. Payload does not refuse an admin's list request; it
+ * ANDs that rule into the query. So "how many conversations does this
+ * ecosistema have?" came back as "how many conversations does the signed-in
+ * admin have in it" — on a real deployment a small, plausible, completely
+ * wrong number.
+ *
+ * Worse, it was wrong in a direction nobody would question: lower than the
+ * truth, never zero, and growing over time like a real metric.
+ *
+ * ⚠ THE FIX IS NOT A LOOSER ACCESS RULE. See the backend's
+ * `lib/ecosystemMetrics.ts` header. The counting happens there, elevated, and
+ * what crosses the wire is a struct of INTEGERS — no session, no message, no
+ * id list. Nothing on this page can leak a conversation because there is no
+ * conversation in the response to leak.
+ *
+ * ⚠ DO NOT ADD A ROW-RETURNING COMPANION CALL to make a tile richer ("las
+ * conversaciones recientes"). The elevation on the other side is only safe for
+ * as long as the output stays countable.
+ *
+ * ⚠ 404 IS A REFUSAL, NOT AN EMPTY ECOSISTEMA. The endpoint answers 404 for
+ * "no such ecosistema" AND for "not yours", deliberately indistinguishable. So
+ * every non-200 becomes `ok: false` and the tiles show `—`; rendering it as
+ * zero would tell an owner nobody uses their ecosistema.
  */
-async function countUsage(
+export async function fetchEcosystemMetrics(
   token: string | undefined,
   organizationId: string,
-): Promise<UsageCounts> {
-  const sessions = await readPages<string>(
-    token,
-    'sessions',
-    (page) => scopedQuery(organizationId, { limit: PAGE_SIZE, page, ...selectParams(['id']) }),
-    (raw) => relationId((raw as { id?: unknown })?.id) || null,
-  );
-  if (!sessions.ok) return { sessions: sessions.totalDocs, messages: null, ok: false };
-  if (sessions.truncated || sessions.rows.length === 0) {
-    return { sessions: sessions.totalDocs, messages: null, ok: true };
-  }
+): Promise<EcosystemMetricsResult> {
   try {
-    const qs = new URLSearchParams({
-      'where[session][in]': sessions.rows.join(','),
-      limit: '1',
-      depth: '0',
-      ...selectParams(['id']),
+    const qs = new URLSearchParams({ organization: organizationId });
+    const res = await backendFetch(token, `/api/metrics/ecosystem?${qs.toString()}`, {
+      method: 'GET',
     });
-    const res = await backendFetch(token, `/api/messages?${qs.toString()}`, { method: 'GET' });
-    if (!res.ok) return { sessions: sessions.totalDocs, messages: null, ok: true };
-    const body = (await res.json().catch(() => ({}))) as { totalDocs?: unknown };
-    return {
-      sessions: sessions.totalDocs,
-      messages: typeof body.totalDocs === 'number' ? body.totalDocs : null,
-      ok: true,
-    };
+    if (!res.ok) {
+      console.warn(`[admin] backend answered ${res.status} computing ecosystem metrics`);
+      return METRICS_UNAVAILABLE;
+    }
+    const metrics = parseEcosystemMetrics(await res.json().catch(() => null));
+    if (!metrics) {
+      console.warn('[admin] ecosystem metrics came back in an unexpected shape');
+      return METRICS_UNAVAILABLE;
+    }
+    return { metrics, ok: true };
   } catch (err) {
-    console.warn('[admin] message count failed', err);
-    return { sessions: sessions.totalDocs, messages: null, ok: true };
+    console.warn('[admin] ecosystem metrics read failed', err);
+    return METRICS_UNAVAILABLE;
   }
 }
 
@@ -403,7 +418,12 @@ export interface AdminOverview {
   };
   audio: AudioSummary;
   ratings: { summary: RatingsSummary; totalDocs: number; truncated: boolean; ok: boolean };
-  usage: UsageCounts;
+  /**
+   * 🔴 The ecosistema-wide counts, from the backend's aggregate endpoint — the
+   * ONLY correct source for conversations and messages. See
+   * `fetchEcosystemMetrics`.
+   */
+  metrics: EcosystemMetricsResult;
 }
 
 /**
@@ -424,7 +444,7 @@ export async function loadAdminOverview(
 ): Promise<AdminOverview> {
   const orgId = ecosystem.id;
 
-  const [docsResult, membersResult, ratingsResult, usage] = await Promise.all([
+  const [docsResult, membersResult, ratingsResult, metrics] = await Promise.all([
     readPages<AdminDocRow>(
       token,
       'documents',
@@ -450,7 +470,7 @@ export async function loadAdminOverview(
         }),
       parseRatingRow,
     ),
-    countUsage(token, orgId),
+    fetchEcosystemMetrics(token, orgId),
   ]);
 
   const docs = await withTranscriptSizes(token, orgId, docsResult.rows);
@@ -479,7 +499,7 @@ export async function loadAdminOverview(
       truncated: ratingsResult.truncated,
       ok: ratingsResult.ok,
     },
-    usage,
+    metrics,
   };
 }
 

@@ -28,7 +28,19 @@ import { confirmPublish, unpublish, type CorpusMover } from './publishDocument'
 
 const ORG = 7
 const USER = 42
-const DOC = { id: 99, name: 'Acta', kind: 'markdown', extractedText: 'texto', organization: ORG, uploadedBy: USER }
+// ⚠ `contentKind: 'documento'` is load-bearing, not decoration. `corpusTextFor`
+// reads the RAW value and fails CLOSED, so a fixture without one is treated as
+// gated material with no `redactedText` and refuses to publish. See
+// `mustPassAnonymisationGate` in `lib/anonymiseDocument.ts`.
+const DOC = {
+  id: 99,
+  name: 'Acta',
+  kind: 'markdown',
+  contentKind: 'documento',
+  extractedText: 'texto',
+  organization: ORG,
+  uploadedBy: USER,
+}
 
 const DRAFT_CORPUS = `eco-${ORG}-draft-${USER}`
 const PUBLISHED_CORPUS = `eco-${ORG}`

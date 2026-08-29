@@ -61,6 +61,7 @@ describe('🔴 the graph is built from the text the CORPUS got, never the origin
       contentKind: 'testimonio',
       extractedText: RAW,
       redactedText: GATED,
+      anonymisationStatus: 'ready',
     })
 
     await scheduleGraphExtractionForDoc({
@@ -101,6 +102,54 @@ describe('🔴 the graph is built from the text the CORPUS got, never the origin
     expect(String(updates.at(-1)?.graphError)).toMatch(/not_graphable/)
   })
 
+  it('🔴 SKIPS a testimonio whose gate verdict is not `ready` or `approved`', async () => {
+    // Tightened when the human-review screen landed on main: a row that cleared
+    // the gate ONCE and was later held or rejected still carries a stale
+    // `redactedText`. Asking only "is it non-empty?" would graph text a human
+    // has since refused. The graph reads what the corpus reads, so it inherits
+    // the condition rather than re-deriving it.
+    for (const status of ['held', 'rejected', 'pending', undefined]) {
+      const { payload, updates } = fakePayload({
+        contentKind: 'testimonio',
+        extractedText: RAW,
+        redactedText: GATED,
+        anonymisationStatus: status,
+      })
+
+      await scheduleGraphExtractionForDoc({
+        payload,
+        docId: 7,
+        organizationId: 1,
+        fresh: { name: 'Voz', contentKind: 'testimonio' },
+      })
+
+      expect(scheduleGraphExtraction).not.toHaveBeenCalled()
+      expect(updates.at(-1)).toMatchObject({ graphStatus: 'skipped' })
+    }
+  })
+
+  it('graphs an APPROVED testimonio from the text the human cleared', async () => {
+    // `approved` is a human's verdict recorded in `anonymisation-reviews`, and
+    // the text may be one they corrected by hand. It is as publishable as
+    // `ready`, so it is as graphable.
+    const { payload } = fakePayload({
+      contentKind: 'testimonio',
+      extractedText: RAW,
+      redactedText: GATED,
+      anonymisationStatus: 'approved',
+    })
+
+    await scheduleGraphExtractionForDoc({
+      payload,
+      docId: 7,
+      organizationId: 1,
+      fresh: { name: 'Voz', contentKind: 'testimonio' },
+    })
+
+    const call = scheduleGraphExtraction.mock.calls[0]![0] as { text: string }
+    expect(call.text).toBe(GATED)
+  })
+
   it('extracts an ordinary documento from extractedText, which is what it should be', async () => {
     // The gate does not run for a `documento`, so `extractedText` IS the corpus
     // text. Nothing is lost by routing it through the same helper.
@@ -133,6 +182,7 @@ describe('🔴 the title the graph carries is neutral for gated content', () => 
       contentKind: 'testimonio',
       extractedText: RAW,
       redactedText: GATED,
+      anonymisationStatus: 'ready',
     })
 
     await scheduleGraphExtractionForDoc({

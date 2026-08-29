@@ -64,9 +64,27 @@ export const DETECT_SYSTEM_PROMPT = [
   'Debes incluir:',
   '- Nombres de personas, apellidos, apodos y diminutivos.',
   '- Referencias de parentesco que nombran a alguien: en "mi hermana Lucía" el hallazgo es "Lucía".',
-  '- Domicilios y direcciones, incluso parciales.',
   '- Centros de trabajo, escuelas o cargos tan precisos que identifican a una persona.',
   '- Teléfonos, correos, cuentas, identificadores oficiales y números de expediente.',
+  '',
+  // 🔴 ADDRESSES GET THEIR OWN SECTION BECAUSE ONE LINE WAS NOT ENOUGH. Measured:
+  // on a live test testimony a street address went past this prompt, and the
+  // verify stage held the document. The shaped forms (`C.P. 06700`,
+  // `Calle X No. 45`) are now removed deterministically before the model ever
+  // sees them — see `deterministic.ts`. What is left for the model is the
+  // free-form half, which is the half regexes cannot reach, so it is spelled out
+  // with examples rather than named in passing.
+  'Domicilios (marca "lugar"). Incluye TODOS estos casos, completos o parciales:',
+  '- Calles, avenidas, andadores, cerradas, privadas y sus números.',
+  '- Colonias, barrios, fraccionamientos, unidades habitacionales, manzana y lote.',
+  '- Códigos postales, alcaldías, delegaciones y municipios cuando ubican un domicilio.',
+  '- Referencias sin formato que permiten llegar a una casa: "enfrente de la tienda',
+  '  de doña Mari", "subiendo por donde está el tanque", "la casa de la reja verde".',
+  '- Un domicilio partido en varias frases cuenta como varios hallazgos, uno por trozo.',
+  '',
+  '⚠ No marques como "lugar" un municipio, estado o pueblo mencionado solo como',
+  'origen o como tema ("el problema del agua en Cuernavaca"). Márcalo cuando ubique',
+  'dónde vive, trabaja o estudia alguien.',
   '',
   'Tipos: "persona" para nombres de personas; "lugar" para domicilios y lugares identificables;',
   '"contacto" para teléfonos, correos y redes; "identificador" para folios, CURP, RFC y números',

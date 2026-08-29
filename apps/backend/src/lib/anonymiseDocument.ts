@@ -29,27 +29,73 @@
  * this and said no; retrying the identical text will say no again.
  */
 
-import { contentKindOf, type ContentKind } from './contentKind'
+import type { ContentKind } from './contentKind'
 import type { GateReport, PersonDetector } from './anonymise/types'
 
 /**
- * Which content kinds go through the gate.
+ * 🔴 THE ONE CONTENT KIND THAT IS NEVER GATED.
  *
- * ⚠ TESTIMONIES AND CONVERSATIONS RUN UNDER THE SAME RULES — the owner's
- * decision, on the grounds that a testimony is expected to be anonymous anyway.
- * There is no per-kind leniency knob here on purpose: one rule means there is no
- * default for a bulk upload to get wrong.
+ * The owner's decision, verbatim: *"docs uploaded should be kept in their
+ * original form."* An uploaded `documento` is somebody's own material, filed
+ * deliberately under their own name and expected back out of the corpus the way
+ * it went in. Scrubbing it would both corrupt the source and cost two model
+ * calls per PDF for nothing.
  *
- * A `documento` is somebody's own material, filed deliberately under their own
- * name. It is not scrubbed, and pretending otherwise would make every uploaded
- * PDF cost two model calls for nothing.
+ * ⚠ THE OTHER TWO RUN UNDER IDENTICAL RULES — also the owner's decision, on the
+ * grounds that a testimony is expected to be anonymous anyway. There is no
+ * per-kind leniency knob, because one rule means there is no default for a bulk
+ * upload to get wrong.
  */
-export function needsAnonymisation(contentKind: ContentKind): boolean {
-  return contentKind === 'testimonio' || contentKind === 'conversacion'
+export const UNGATED_CONTENT_KIND: ContentKind = 'documento'
+
+/**
+ * 🔴 THE ANONYMISATION POLICY. One function, one name, one place to read it.
+ *
+ * ── WHY IT TAKES `unknown` AND NOT A `ContentKind` ──────────────────────────
+ *
+ * Because the coercion is the bug. {@link contentKindOf} answers "what should we
+ * LABEL this row?" and defaults an unreadable value to `documento`, which is the
+ * right answer for a citation card. Feeding that answer to this decision turns
+ * it into "anything we cannot read is an ungated document" — fail-OPEN at the
+ * single point in the design where an ungated pass is close to irreversible
+ * (ai-service has no per-document delete).
+ *
+ * A previous review already caught exactly that fallback once, in the
+ * `contentKind` beforeValidate hook in `collections/Documents.ts`. This function
+ * exists so the same mistake cannot be made a second time by reaching for the
+ * convenient helper: it is phrased as an ALLOW-LIST OF ONE over the RAW value.
+ * `undefined`, `null`, `'documentos'`, `'Documento'` and any future kind nobody
+ * has taught this function about are all gated.
+ *
+ * ⚠ THAT MEANS ADDING A CONTENT KIND MAKES IT GATED BY DEFAULT, and un-gating it
+ * is a deliberate edit here with a reason attached. That direction is the whole
+ * point: a missing decision costs a hold a human can clear, never an ingest
+ * nobody can undo.
+ */
+export function mustPassAnonymisationGate(rawContentKind: unknown): boolean {
+  return rawContentKind !== UNGATED_CONTENT_KIND
 }
 
-/** The statuses the gate can leave on a row. */
-export const ANONYMISATION_STATES = ['n/a', 'pending', 'held', 'ready'] as const
+/**
+ * The statuses the gate — or a human reviewing its refusal — can leave on a row.
+ *
+ *   n/a       not gated: an ordinary `documento`
+ *   pending   the gate is running
+ *   held      🔴 the gate refused. Not ingested. A human must look.
+ *   approved  🔴 a human released a hold. AUDITED, and the only way past one.
+ *   rejected  🔴 a human refused it. Terminal — never ingested, never re-gated.
+ *   ready     cleared the gate on its own; `redactedText` is populated
+ *
+ * ⚠ `failed` is still deliberately absent. See `collections/Documents.ts`.
+ */
+export const ANONYMISATION_STATES = [
+  'n/a',
+  'pending',
+  'held',
+  'approved',
+  'rejected',
+  'ready',
+] as const
 
 export type AnonymisationState = (typeof ANONYMISATION_STATES)[number]
 
@@ -83,10 +129,33 @@ interface Updater {
 export async function anonymiseDocumentText(args: {
   payload: Updater
   docId: string | number
-  contentKind: ContentKind
+  /**
+   * 🔴 THE RAW `documents.contentKind`, NOT `contentKindOf(row)`.
+   *
+   * Typed `unknown` on purpose so a caller cannot quietly hand over a coerced
+   * value: {@link mustPassAnonymisationGate} is the only thing allowed to read
+   * it, and it fails CLOSED on anything it does not recognise. See that
+   * function.
+   */
+  contentKind: unknown
   /** The unredacted text. Never leaves this process except through `detector`. */
   text: string
   detector?: PersonDetector
+  /**
+   * 🔴 TEXT A HUMAN REVIEWER APPROVED. When present, THE GATE DOES NOT RUN.
+   *
+   * The row is already `approved` and its `redactedText` is what a reviewer
+   * cleared — possibly text they corrected by hand. Re-running the gate here
+   * would discard their decision, spend two model calls to do it, and could
+   * answer `ready` on the raw original, ingesting something nobody approved.
+   *
+   * ⚠ THE CALLER MUST TAKE THIS FROM THE STORED ROW, never from a request body.
+   * `documents.anonymisationStatus` and `documents.redactedText` are locked
+   * against API writes (`gateWritesOnly` in `collections/Documents.ts`), which
+   * is what makes reading them here safe. Passing caller-supplied text into this
+   * parameter would be an "ingest anyway" flag with a friendlier name.
+   */
+  approvedText?: string
   /**
    * Known member names/emails. Meaningful for a `conversacion`; deliberately
    * empty for a `testimonio`, whose people are not users of this system at all.
@@ -108,12 +177,20 @@ export async function anonymiseDocumentText(args: {
       context: { __skipDocsExtract: true },
     })
 
-  if (!needsAnonymisation(contentKind)) {
+  if (!mustPassAnonymisationGate(contentKind)) {
     // Recorded explicitly rather than left null. "This was never gated" and
     // "the gate has not run yet" are different facts, and an operator reading
     // the row should not have to infer which one they are looking at.
     await write({ anonymisationStatus: 'n/a', anonymisationError: null })
     return { ok: true, text, report: null }
+  }
+
+  if (typeof args.approvedText === 'string') {
+    // 🔴 THE HUMAN OVERRIDE. Nothing is re-computed and nothing is re-written:
+    // `lib/holdReview.ts` already stored the text, flipped the status and wrote
+    // the audit row, in that order and in one place. This branch exists so the
+    // ingest path can carry that decision without a second opinion about it.
+    return { ok: true, text: args.approvedText, report: null }
   }
 
   await write({ anonymisationStatus: 'pending', anonymisationError: null })
@@ -125,7 +202,13 @@ export async function anonymiseDocumentText(args: {
   try {
     result = await runAnonymisationGate(
       {
-        contentKind: contentKind === 'testimonio' ? 'testimonio' : 'conversacion',
+        // ⚠ `testimonio` IS THE DEFAULT ARM, and the direction matters. This only
+        // picks which sentence describes the material to the model; the rules
+        // are identical. But the `conversacion` prompt tells the model it is
+        // reading members of a community talking to each other, and an
+        // unrecognised kind is not evidence of that. `testimonio` is the arm
+        // that assumes nothing and holds no roster.
+        contentKind: contentKind === 'conversacion' ? 'conversacion' : 'testimonio',
         text,
         roster: args.roster ?? [],
       },
@@ -139,6 +222,15 @@ export async function anonymiseDocumentText(args: {
     await write({
       anonymisationStatus: 'held',
       anonymisationError: `gate_crashed: ${reason}`.slice(0, 500),
+      // 🔴 CLEARED. See the hold branch below — a `redactedText` left over from
+      // an earlier successful run is publishable, and nothing on the publish
+      // path re-reads the status.
+      redactedText: null,
+      // A crash produced no reviewable output. Cleared rather than left stale:
+      // showing a reviewer the text from a PREVIOUS run of a different code path
+      // is worse than showing them nothing.
+      heldText: null,
+      anonymisationSurvivors: null,
     })
     return { ok: false, stage: 'content', reason, report: null }
   }
@@ -151,6 +243,28 @@ export async function anonymiseDocumentText(args: {
       // would be a re-identification map with a different name on the door.
       anonymisationError: `${result.stage}: ${result.reason}`.slice(0, 500),
       anonymisationReport: result.report,
+      /**
+       * 🔴 CLEARED, AND THIS IS A REAL REACHABLE BUG, NOT TIDINESS.
+       *
+       * A row can already carry a `redactedText` from an EARLIER run that
+       * cleared the gate: run one is `ready`, the ai-service ingest then fails,
+       * the uploader retries, and the re-run — the detector is a model — holds
+       * this time. Without this line the row is `held` while still holding run
+       * one's redaction, and `corpusTextFor` asks only "is `redactedText`
+       * non-empty?". The next publish would push it into the shared, undeletable
+       * corpus, and the gate is not re-run on that path to catch it.
+       */
+      redactedText: null,
+      /**
+       * 🔴 THE GATE'S REFUSED OUTPUT GOES IN `heldText`, NOT `redactedText`.
+       *
+       * `corpusTextFor` reads `redactedText`. Writing the held text there would
+       * make the very next publish push the text the gate just refused into the
+       * ecosistema's shared corpus — and the gate is not re-run on that path, so
+       * nothing would catch it. The separate column is the whole defence.
+       */
+      heldText: result.redactedText ?? null,
+      anonymisationSurvivors: result.survivors ?? null,
     })
     return { ok: false, stage: result.stage, reason: result.reason, report: result.report }
   }
@@ -164,6 +278,10 @@ export async function anonymiseDocumentText(args: {
     anonymisationStatus: 'ready',
     anonymisationError: null,
     anonymisationReport: result.report,
+    // A clean run has nothing held. Clearing keeps a stale review from an
+    // earlier attempt off a row that has since passed.
+    heldText: null,
+    anonymisationSurvivors: null,
   })
 
   return { ok: true, text: result.redactedText, report: result.report }
@@ -184,16 +302,35 @@ export function corpusTextFor(doc: {
   contentKind?: unknown
   extractedText?: unknown
   redactedText?: unknown
+  /** 🔴 Consulted for gated content — see below. */
+  anonymisationStatus?: unknown
 }): { ok: true; text: string } | { ok: false; reason: string } {
-  const kind = contentKindOf(doc as { contentKind?: unknown })
-
-  if (!needsAnonymisation(kind)) {
+  // 🔴 THE RAW VALUE, for the reason spelled out on `mustPassAnonymisationGate`.
+  // This function is the LAST thing standing between a publish and the shared
+  // corpus, and it is routinely handed objects assembled in code rather than
+  // rows straight out of Postgres — which is precisely where a `contentKind`
+  // goes missing without the database's NOT NULL enum noticing.
+  if (!mustPassAnonymisationGate(doc.contentKind)) {
     const raw = typeof doc.extractedText === 'string' ? doc.extractedText.trim() : ''
     return raw ? { ok: true, text: raw } : { ok: false, reason: 'no extracted text' }
   }
 
+  /**
+   * 🔴 THE STATUS, NOT JUST THE COLUMN. BELT AND BRACES, DELIBERATELY.
+   *
+   * This used to ask only "is `redactedText` non-empty?", which is true of a row
+   * that cleared the gate ONCE and has since been held or rejected. The hold
+   * branch above now clears the column, so the two checks agree — and they are
+   * both here on purpose, because this function is the last thing standing
+   * between a publish and a corpus with no per-document delete, and one of the
+   * two being forgotten in a future edit is exactly how this bug arrived.
+   *
+   * `ready` is the gate's own verdict; `approved` is a human's, recorded in
+   * `anonymisation-reviews`. Nothing else may be published.
+   */
+  const status = typeof doc.anonymisationStatus === 'string' ? doc.anonymisationStatus : ''
   const redacted = typeof doc.redactedText === 'string' ? doc.redactedText.trim() : ''
-  if (!redacted) {
+  if (!redacted || (status !== 'ready' && status !== 'approved')) {
     return {
       ok: false,
       reason:

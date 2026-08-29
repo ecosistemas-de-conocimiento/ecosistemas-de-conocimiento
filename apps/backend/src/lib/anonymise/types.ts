@@ -86,17 +86,70 @@ export interface GateReport {
   stages: GateStageReport[]
   /** How many distinct people got a `[Persona X]` label in THIS document. */
   pseudonyms: number
+  /**
+   * How many distinct addresses got a `[Domicilio X]` label in THIS document.
+   *
+   * ⚠ A COUNT, like everything else here. Never the addresses. Optional so a
+   * report stored before addresses were handled still parses.
+   */
+  addresses?: number
   /** Which model did the content scrub, for provenance. Null when stubbed. */
   model?: string | null
 }
 
-export type GateResult =
-  | { status: 'ready'; redactedText: string; report: GateReport }
+/**
+ * WHERE THE VERIFY STAGE FOUND SOMETHING STILL STANDING — as OFFSETS into
+ * {@link GateHold.redactedText}, never as the text itself.
+ *
+ * 🔴 WHY OFFSETS ARE NOT A HOLE IN THE "COUNTS ONLY" RULE. That rule exists
+ * because a report that quoted what was REMOVED would rebuild the
+ * re-identification map the gate just destroyed. A survivor is the opposite
+ * case: it was NOT removed, so it is still sitting in `redactedText`, which is
+ * stored anyway because a reviewer has to read it. Pointing at a substring of a
+ * string we already hold adds no information — it only saves the reviewer from
+ * re-reading forty minutes of transcript hunting for the thing the model saw.
+ *
+ * ⚠ SO THE PAIRING IS LOAD-BEARING: these offsets are meaningful ONLY against
+ * the exact `redactedText` they came with. Never store them next to a different
+ * version of the text, and never put them in {@link GateReport}, which IS
+ * counts-only and is shown in places the text is not.
+ */
+export interface SurvivorSpan {
+  /** Index of the first character, into `redactedText`. */
+  start: number
+  /** Index one past the last character. */
+  end: number
+  /** The detector's category. A label, never the matched string. */
+  type: DetectorFinding['type']
+}
+
+/**
+ * 🔴 NOT AN ERROR — A REFUSAL TO INGEST. The caller must leave the content out
+ * of every corpus and record the reason. There is no "ingest anyway" and no
+ * `force` flag; the only way past a hold is a human review, which is audited.
+ */
+export interface GateHold {
+  status: 'hold'
+  stage: GateStage
+  reason: string
+  report: GateReport
   /**
-   * 🔴 NOT AN ERROR — A REFUSAL TO INGEST. The caller must leave the content
-   * out of every corpus and record the reason. There is no "ingest anyway".
+   * The best-effort redacted text AT THE POINT OF REFUSAL, when there is one.
+   *
+   * 🔴 THIS IS NOT SAFE TO INGEST AND MUST NEVER BE STORED IN `redactedText` ON
+   * A ROW. `corpusTextFor` reads that column and would publish this straight
+   * into the shared corpus — which is precisely what the hold refused. It exists
+   * for ONE purpose: giving a human reviewer something to read and correct. The
+   * `documents` row keeps it in its own column (`heldText`) for that reason.
+   *
+   * Absent for a `structural` hold, which produced no output at all.
    */
-  | { status: 'hold'; stage: GateStage; reason: string; report: GateReport }
+  redactedText?: string
+  /** Where verify found something still standing. Only ever set on a verify hold. */
+  survivors?: SurvivorSpan[]
+}
+
+export type GateResult = { status: 'ready'; redactedText: string; report: GateReport } | GateHold
 
 /**
  * What the gate is being asked to anonymise.
@@ -122,7 +175,15 @@ export interface GateInput {
 export interface DetectorFinding {
   /** The exact substring as it appears in the text. */
   text: string
-  /** `persona` becomes `[Persona X]`; everything else becomes `[Dato omitido]`. */
+  /**
+   * `persona` becomes `[Persona X]`, `lugar` becomes `[Domicilio X]`, and
+   * everything else becomes `[Dato omitido]`.
+   *
+   * ⚠ `lugar` SHARES THE ADDRESS ALLOCATOR WITH STAGE 2 on purpose — same
+   * argument as people: an address the regexes caught in one paragraph and the
+   * model caught in another has to come out as the SAME label, or the redaction
+   * invents two houses where the testimony described one.
+   */
   type: 'persona' | 'lugar' | 'contacto' | 'identificador' | 'otro'
 }
 
@@ -158,6 +219,23 @@ export interface PersonDetector {
 
 /** What a person's name is replaced by. Index 0 → `[Persona A]`. */
 export const PERSON_PLACEHOLDER_PREFIX = '[Persona '
+
+/**
+ * What an ADDRESS is replaced by. Index 0 → `[Domicilio A]`.
+ *
+ * 🔴 A LABEL, NOT A REDACTION BAR, for the same reason people get one. The
+ * owner's decision was *"addressess should be anonimized"*, and the cheap way to
+ * obey it is a blanket `[Dato omitido]`. That destroys the testimony: a Voz that
+ * says "me mudé de [Dato omitido] a [Dato omitido] y luego volví a
+ * [Dato omitido]" no longer records whether the person came back to the SAME
+ * place. Labels keep the structure of what was said while removing the address
+ * itself — exactly the trade `pseudonyms.ts` makes for names.
+ *
+ * ⚠ SAME LIFETIME RULE AS `[Persona X]`: stable within one document, deliberately
+ * meaningless between documents. A `[Domicilio A]` that meant the same house
+ * across the corpus would let a reader collect every testimony from one street.
+ */
+export const ADDRESS_PLACEHOLDER_PREFIX = '[Domicilio '
 
 /** What a non-person identifier is replaced by. Deliberately not enumerated. */
 export const OMITTED_PLACEHOLDER = '[Dato omitido]'

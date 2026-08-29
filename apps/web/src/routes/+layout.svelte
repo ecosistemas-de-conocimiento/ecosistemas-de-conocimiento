@@ -4,8 +4,27 @@
   import { app } from '$lib/stores/app.svelte';
   import { hydrationAction } from '$lib/hydration';
   import Toasts from '$lib/components/Toasts.svelte';
+  import PrimaryNav from '$lib/components/PrimaryNav.svelte';
+  import { MAIN_CONTENT_ID, shouldShowNav } from '$lib/nav';
 
   let { children } = $props();
+
+  /**
+   * 🔴 THE MENU LIVES HERE, NOT IN EACH PAGE.
+   *
+   * Every section used to carry its own way out — a "Volver al chat" link on
+   * `/admin`, a line in the document panel's footer pointing at `/biblioteca`,
+   * an `/admin` row at the bottom of the conversation list. Three different
+   * surfaces, each visible from one place, and no way at all to reach the
+   * library from the library. Hoisting it to the root layout is what makes it
+   * ONE menu, in the same spot, on every page — which is the only version of a
+   * menu people can learn.
+   *
+   * ⚠ Read off `$page.data.user` — the root layout's server load, which gets it
+   * from the verified session — and never off the chat's app store, which is
+   * about conversations and knows nothing about roles.
+   */
+  const showNav = $derived(shouldShowNav($page.url.pathname, $page.data.user));
 
   /**
    * 🔴 NOT `onMount`, AND NOT `$state`. Both matter — see `$lib/hydration.ts`
@@ -36,5 +55,37 @@
   });
 </script>
 
-{@render children?.()}
+{#if showNav}
+  <!-- ⚠ `height: 100dvh` on the shell, `min-height: 0` on the content: the chat
+       is a fixed-height, three-column pane that scrolls internally, so the
+       remaining space after the bar has to be a real number for it. `dvh`
+       rather than `vh` because mobile browsers' address bar makes `vh` taller
+       than the visible window, which hides the composer under it. -->
+  <div class="app-shell">
+    <PrimaryNav />
+    <main id={MAIN_CONTENT_ID} class="app-main">
+      {@render children?.()}
+    </main>
+  </div>
+{:else}
+  {@render children?.()}
+{/if}
 <Toasts />
+
+<style>
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+  }
+  .app-main {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    /* A column, so a full-height page (the chat) can claim what is left with
+       `flex-1` while an ordinary document page (Biblioteca, Administración)
+       just grows and scrolls. */
+    display: flex;
+    flex-direction: column;
+  }
+</style>

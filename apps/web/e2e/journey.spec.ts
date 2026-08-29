@@ -415,7 +415,14 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
 
     // Re-select OUR session by its auto-title: hydration activates whichever
     // session the backend lists first, which need not be this one.
-    await page.locator('nav').getByText(RUN_ID).first().click();
+    // ⚠ Scoped to the conversation list. The app has a second navigation
+    // landmark now — the primary section menu — and a bare `locator('nav')`
+    // would reach into both.
+    await page
+      .getByRole('navigation', { name: 'Conversaciones' })
+      .getByText(RUN_ID)
+      .first()
+      .click();
 
     await expect(ratingGroups(page)).toHaveCount(1, { timeout: 60_000 });
     const group = ratingGroups(page).last();

@@ -511,6 +511,12 @@ interface DocumentSnapshot {
   name?: unknown
   extractedText?: unknown
   redactedText?: unknown
+  /**
+   * 🔴 Read so the ingest can honour a `held` / `rejected` / `approved` row —
+   * see `enqueueIngestForDoc`. Without it a replayed callback re-gated a
+   * rejected testimony.
+   */
+  anonymisationStatus?: unknown
   ingestId?: unknown
   transcribeId?: unknown
 }
@@ -711,6 +717,19 @@ async function dispatchTranscribeCompleted(
        * PDF path stayed correct and nothing looked wrong.
        */
       contentKind: typeof doc.contentKind === 'string' ? doc.contentKind : null,
+      /**
+       * 🔴 CARRIED FOR THE SAME REASON AS `contentKind`, AND IT USED TO BE
+       * MISSING.
+       *
+       * `enqueueIngestForDoc` refuses a `held` or `rejected` row and honours an
+       * `approved` one. Omitting these two fields made every one of those
+       * decisions invisible on the audio path — so a replayed
+       * `transcribe.completed` re-gated a rejected testimony and threw away an
+       * approved reviewer's text. The keys are required by the type now, so this
+       * cannot silently regress again.
+       */
+      anonymisationStatus: typeof doc.anonymisationStatus === 'string' ? doc.anonymisationStatus : null,
+      redactedText: typeof doc.redactedText === 'string' ? doc.redactedText : null,
     },
     extractedText: text,
   })

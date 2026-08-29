@@ -65,6 +65,7 @@ import type {
   GateStageReport,
   PersonDetector,
   RedactionCount,
+  SurvivorSpan,
 } from './types'
 import { OMITTED_PLACEHOLDER } from './types'
 
@@ -80,7 +81,7 @@ export interface GateDeps {
  * would HOLD on every document it successfully redacted — the safest possible
  * failure, and a completely useless product.
  */
-const PLACEHOLDER = /\[Dato omitido\]|\[Persona [A-Z]+\]/g
+const PLACEHOLDER = /\[Dato omitido\]|\[Persona [A-Z]+\]|\[Domicilio [A-Z]+\]/g
 
 function countsByLabel(entries: Iterable<string>): RedactionCount[] {
   const tally = new Map<string, number>()
@@ -136,14 +137,31 @@ function applyFindings(
   text: string,
   findings: readonly DetectorFinding[],
   allocate: (name: string) => string,
+  allocateAddress: (address: string) => string,
 ): { text: string; labels: string[] } {
   const ordered = [...findings].sort((a, b) => b.text.length - a.text.length)
   const labels: string[] = []
   let out = text
 
   for (const finding of ordered) {
+    /**
+     * 🔴 `lugar` GETS A LABEL, NOT A BAR, and it comes from the SAME allocator
+     * stage 2 used. A testimony that says the family moved out of one place and
+     * back into it is telling you something; `[Dato omitido]` twice erases
+     * whether it was the same place, and a second allocator would restart at `A`
+     * and claim it was not. Same argument as people, one namespace down.
+     *
+     * ⚠ The model's `lugar` covers "domicilios y lugares identificables", so a
+     * school can land under `[Domicilio X]`. That reads slightly wrong and is
+     * accepted: both are places whose identity we are removing, and splitting
+     * them would need the model to make a distinction its prompt never asked for.
+     */
     const replacement =
-      finding.type === 'persona' ? allocate(finding.text) : OMITTED_PLACEHOLDER
+      finding.type === 'persona'
+        ? allocate(finding.text)
+        : finding.type === 'lugar'
+          ? allocateAddress(finding.text)
+          : OMITTED_PLACEHOLDER
     // Split/join rather than a built RegExp: the finding is arbitrary user text
     // and `new RegExp(finding.text)` would either throw on a stray `(` or, worse,
     // silently match something else entirely.
@@ -154,6 +172,28 @@ function applyFindings(
   }
 
   return { text: out, labels }
+}
+
+/**
+ * Every place a survivor occurs in the output, as offsets.
+ *
+ * ⚠ EVERY occurrence, not the first. A name the model missed usually appears
+ * more than once, and a reviewer who fixes only the highlighted one and approves
+ * would release the others.
+ */
+function survivorSpans(text: string, survivors: readonly DetectorFinding[]): SurvivorSpan[] {
+  const spans: SurvivorSpan[] = []
+  for (const finding of survivors) {
+    if (finding.text.length === 0) continue
+    let from = 0
+    for (;;) {
+      const at = text.indexOf(finding.text, from)
+      if (at === -1) break
+      spans.push({ start: at, end: at + finding.text.length, type: finding.type })
+      from = at + 1
+    }
+  }
+  return spans.sort((a, b) => a.start - b.start)
 }
 
 /** Failure CLASS of a thrown detector error. ⚠ Never the message, never the text. */
@@ -176,14 +216,25 @@ export async function runAnonymisationGate(
   const report = (): GateReport => ({
     stages,
     pseudonyms: allocator.count,
+    addresses: allocator.addressCount,
     model: deps.detector.name,
   })
 
-  const hold = (stage: GateStage, reason: string): GateResult => ({
+  /**
+   * ⚠ `redactedText` ON A HOLD IS FOR A HUMAN TO READ, NOT FOR A CORPUS. See
+   * `GateHold` — storing it in a row's `redactedText` column would hand the
+   * publish path exactly the text this refusal was about.
+   */
+  const hold = (
+    stage: GateStage,
+    reason: string,
+    extra?: { redactedText?: string; survivors?: SurvivorSpan[] },
+  ): GateResult => ({
     status: 'hold',
     stage,
     reason,
     report: report(),
+    ...(extra ?? {}),
   })
 
   // ── 1. STRUCTURAL ─────────────────────────────────────────────────────────
@@ -206,6 +257,9 @@ export async function runAnonymisationGate(
     text: structural.text,
     roster: input.roster,
     allocate: (name) => allocator.labelFor(name),
+    // 🔴 THE SAME ALLOCATOR STAGE 3 WILL USE. See the header — one allocator per
+    // document is the invariant, and addresses obey it exactly like people do.
+    allocateAddress: (address) => allocator.addressLabelFor(address),
   })
   stages.push({ stage: 'deterministic', removed: deterministic.removed })
 
@@ -220,13 +274,21 @@ export async function runAnonymisationGate(
     // 🔴 A detector that could not run is NOT "nothing to redact". See
     // `detector.ts`: the whole reason it throws instead of returning `[]` is to
     // land here.
+    // The deterministic output is real work already done and a reviewer can act
+    // on it, so it travels with the refusal even though the model never ran.
     return hold(
       'content',
       `No se pudo revisar el contenido con el modelo (${failureClassOf(err)}), así que no se ingirió nada.`,
+      { redactedText: deterministic.text },
     )
   }
 
-  const applied = applyFindings(deterministic.text, found, (name) => allocator.labelFor(name))
+  const applied = applyFindings(
+    deterministic.text,
+    found,
+    (name) => allocator.labelFor(name),
+    (address) => allocator.addressLabelFor(address),
+  )
   stages.push({ stage: 'content', removed: countsByLabel(applied.labels) })
 
   // ── 4. VERIFY ─────────────────────────────────────────────────────────────
@@ -245,6 +307,7 @@ export async function runAnonymisationGate(
     return hold(
       'verify',
       `No se pudo verificar el texto ya censurado (${failureClassOf(err)}), así que no se ingirió nada.`,
+      { redactedText: applied.text },
     )
   }
 
@@ -264,10 +327,18 @@ export async function runAnonymisationGate(
     // ⚠ THE COUNT, NEVER THE STRINGS. This reason is stored on the row and shown
     // in the admin panel; quoting the surviving names would put them straight
     // back into the database the gate just kept them out of. Whoever reviews the
-    // hold has access to the ORIGINAL text, which is where they should read it.
+    // hold reads `redactedText` below, with `survivors` marking where the model
+    // saw something — ⚠ NOT the original, which `lib/holdReview.ts` deliberately
+    // never returns.
     return hold(
       'verify',
       `La verificación encontró ${real.length} dato(s) personal(es) que siguen en el texto, así que no se ingirió nada. Revisa el documento original.`,
+      {
+        redactedText: applied.text,
+        // 🔴 OFFSETS, NEVER THE STRINGS — and they only mean anything against the
+        // `redactedText` on this same object. See `SurvivorSpan`.
+        survivors: survivorSpans(applied.text, real),
+      },
     )
   }
 
