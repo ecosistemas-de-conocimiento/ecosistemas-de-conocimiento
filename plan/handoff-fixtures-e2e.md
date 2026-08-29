@@ -102,10 +102,11 @@ audio-service.
 
 ## Abierto
 
-1. **El seed de demo, `apps/backend/src/seed/demo.ts`, sigue creando un ecosistema
-   vacío.** Los 250 documentos del corpus y `MANIFEST.csv` no se usan como datos de
-   TEXTO para seed ni para pruebas — que era la mitad más grande del pedido
-   original.
+1. ✅ **CERRADO (2026-08-29).** El seed ya carga los 250 documentos del corpus:
+   `apps/backend/src/seed/{corpusSource,corpus,review}.ts`. Medido: 250 documentos
+   en 4.29 s, segunda corrida en 76 ms sin duplicar.
+   ⚠ La **ingesta viene apagada** (`SEED_CORPUS_INGEST=1` para prenderla): la
+   biblioteca se ve llena y el asistente no recupera nada hasta que la prendes.
 2. **La voz de Piper suena robótica.** Aceptada por ahora. Una grabación real sigue
    siendo el fixture que falta, y `TESTING.md` lo dice.
 
