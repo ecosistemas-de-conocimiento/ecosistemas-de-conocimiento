@@ -63,6 +63,21 @@
  * belt-and-braces over a table that should already be empty there. Both are
  * asserted in `queries.test.ts`, because "should already be" is how the next
  * writer path leaks.
+ *
+ * ⚠ {@link entityDocumentsQuery} IS THE ONLY STATEMENT HERE THAT SELECTS THE
+ * COLUMN, and `queries.test.ts` asserts that of every other one by name. The
+ * per-edge evidence list is deliberately outside it — a snippet belongs to a
+ * `(document, entity)` pair, not to an edge, so an edge has two candidates and
+ * neither is evidence of the edge itself.
+ *
+ * ── EDGES HAVE THEIR OWN EVIDENCE, AND IT IS NOT AN INTERSECTION ───────────
+ *
+ * {@link entityEdgeDocumentsQuery} answers *"which published documents evidence
+ * THIS connection"* directly out of `graph_relations`, which holds one row per
+ * `(document, from, to, type)`. The surface it replaces intersected the two
+ * entities' document lists, which is a SUPERSET — a document naming both
+ * endpoints without the extraction ever drawing an edge between them was
+ * presented as support for a connection nothing had asserted.
  */
 
 import { sql } from '@payloadcms/db-postgres'
@@ -101,6 +116,19 @@ export function graphMinSupport(): number {
 export const MAX_VIEW_ENTITIES = 200
 export const MAX_NEIGHBOURS = 20 // ADR §7.2: the ego-network is ≤ 20 neighbours.
 export const MAX_ENTITY_DOCUMENTS = 50
+/**
+ * How many supporting documents ONE EDGE carries in the entity answer.
+ *
+ * ⚠ IT MULTIPLIES. The detail response holds up to {@link MAX_NEIGHBOURS}
+ * edges, so this cap is paid twenty times over in a single body. Ten is chosen
+ * so the worst case is 200 document refs (~16 KB), which is a panel, not a
+ * download.
+ *
+ * ⚠ Truncating the LIST does not truncate the TRUTH: `GraphNeighbour.support`
+ * is the real `COUNT(DISTINCT document_id)` for the edge and is unaffected, so
+ * the UI can say "14 documentos" above a list of ten.
+ */
+export const MAX_EDGE_DOCUMENTS = 10
 export const MAX_RETRIEVE_SEEDS = 8
 export const MAX_RETRIEVE_EDGES = 60
 export const MAX_RETRIEVE_DOCUMENTS = 20
@@ -151,6 +179,21 @@ export interface GraphNeighbour {
   relationType: GraphRelationType
   /** DISTINCT published documents that evidence THIS EDGE. */
   support: number
+  /**
+   * 🔴 THE PUBLISHED DOCUMENTS THAT ACTUALLY EVIDENCE THIS EDGE — not the ones
+   * where both endpoints happen to appear.
+   *
+   * `graph_relations` holds one row per `(document, from, to, type)`, so this is
+   * a direct answer rather than an approximation. The surface it replaces
+   * intersected the two entities' document lists client-side, which is a
+   * SUPERSET: a document naming both "consulta previa" and "Oaxaca" without the
+   * extraction ever drawing an edge between them was counted as support for a
+   * connection it never made.
+   *
+   * ⚠ Capped at {@link MAX_EDGE_DOCUMENTS}; `support` carries the true total.
+   * ⚠ NEVER CARRIES A SNIPPET, for any content kind — see the file header.
+   */
+  documents: GraphDocumentRef[]
 }
 
 export interface GraphDocumentRef {
@@ -417,6 +460,8 @@ export interface EntityDetailArgs {
   entityId: number
   neighbourLimit?: number
   documentLimit?: number
+  /** Supporting documents per EDGE. Capped at {@link MAX_EDGE_DOCUMENTS}. */
+  edgeDocumentLimit?: number
   minSupport?: number
 }
 
@@ -489,6 +534,135 @@ export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
     WHERE e.id <> ${entityId}
     ORDER BY edges.support DESC, s.support DESC, e.label ASC
     LIMIT ${limit}`
+}
+
+/**
+ * 🔴 THE PUBLISHED DOCUMENTS THAT EVIDENCE EACH EDGE OF THE EGO-NETWORK.
+ *
+ * ── WHY THIS QUERY EXISTS AT ALL ───────────────────────────────────────────
+ *
+ * ADR §7.2 asks for *"the supporting documents for any edge"*. Until this
+ * statement there was no per-edge query, so the surface APPROXIMATED it by
+ * INTERSECTING the two entities' document lists — and the UI had to say so, in
+ * Spanish, because the intersection is a SUPERSET of the truth: a document that
+ * names both endpoints without the extraction ever drawing an edge between them
+ * landed in the list as evidence for a connection it never made.
+ *
+ * `graph_relations` already holds one row per `(document, from, to, type)`
+ * (ADR §4.1), so the honest answer was always one join away. This is it.
+ *
+ * ── ONE STATEMENT FOR THE WHOLE EGO-NETWORK, NOT ONE PER EDGE ──────────────
+ *
+ * ⚠ The panel shows ONE edge at a time, but fetching one edge at a time would
+ * be up to {@link MAX_NEIGHBOURS} round-trips through authorisation and two rate
+ * limiters to fill a panel the caller already paid one request for. `edges` and
+ * {@link entityNeighboursQuery}'s CTE of the same name are the SAME aggregation
+ * over the same rows, so the two answers cannot disagree about which edges exist
+ * — which is the property that would break first if this were a separate route
+ * with its own copy of the thresholds.
+ *
+ * ⚠ `ROW_NUMBER() … PARTITION BY` IS THE PER-EDGE CAP, IN SQL. A plain `LIMIT`
+ * would spend the whole budget on the first edge and return nothing for the
+ * rest. The `ORDER BY … document_id DESC` inside the partition matches
+ * {@link entityDocumentsQuery}'s tiebreak, so "the ten shown" means the same
+ * thing on both lists.
+ *
+ * ⚠ `evidence` GROUPS BY `(neighbour, type, document)` RATHER THAN SELECTING
+ * DISTINCT BY ACCIDENT. An asymmetric relation type can legitimately hold both
+ * A→B and B→A for the SAME document; from this entity's point of view those are
+ * one edge, and the `edges` CTE already counts them as one because its tally is
+ * over distinct `document_id`. Without the grouping the list would show that
+ * document twice while `support` said one — the list and its own count
+ * disagreeing, which is the bug a reader has no way to diagnose.
+ *
+ * ⚠ NO SQL COMMENT SURVIVES IN THIS STATEMENT, deliberately. `queries.test.ts`
+ * greps the rendered text for the gates, so a comment mentioning a gate clause
+ * would let a statement PASS the audit on prose alone. Explanations live here.
+ *
+ * ── THE THREE GATES, AND A FOURTH THING WORTH SAYING ───────────────────────
+ *
+ * Gates 1 and 2 ride on {@link joinPublishedDocuments}. Gate 3 is applied
+ * TWICE, exactly as in {@link entityNeighboursQuery}: the EDGE needs `>= min`
+ * distinct published documents evidencing it (the `HAVING`), and the NEIGHBOUR
+ * needs `>= min` distinct published documents mentioning it (`ent_support`).
+ *
+ * 🔴 That first threshold is also what makes this list safe to be PRECISE about.
+ * A per-edge list is narrower than the intersection it replaces, and narrower
+ * means more identifying — but an edge below `GRAPH_MIN_SUPPORT` does not exist
+ * as far as this file is concerned, so the shortest list this can ever return is
+ * `GRAPH_MIN_SUPPORT` documents long. It can never point at one testimony, which
+ * is the scenario ADR §7.3 is written against.
+ *
+ * ⚠ NO SNIPPET, DELIBERATELY, AND NOT ONLY BECAUSE THE TEST FORBIDS IT.
+ * `graph_mentions.snippet` is per `(document, entity)`, so an EDGE has two
+ * candidate quotations and neither of them is evidence OF THE EDGE — it is
+ * evidence of one endpoint. Returning one would put a verbatim quotation on a
+ * surface whose own semantics do not justify it. `entityDocumentsQuery` remains
+ * the only statement in this file that selects the column.
+ */
+export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
+  const { organizationId, entityId } = args
+  const minSupport = args.minSupport ?? graphMinSupport()
+  const neighbourLimit = clampLimit(args.neighbourLimit, MAX_NEIGHBOURS, MAX_NEIGHBOURS)
+  const perEdge = clampLimit(args.edgeDocumentLimit, MAX_EDGE_DOCUMENTS, MAX_EDGE_DOCUMENTS)
+
+  // ⚠ The overall ceiling is derived, not guessed: no more rows than the answer
+  // can hold, whatever the two caps are set to.
+  const total = neighbourLimit * perEdge
+
+  return sql`
+    WITH ent_support AS (${entitySupportCte(organizationId, minSupport)}),
+    edges AS (
+      SELECT CASE WHEN r.from_entity_id = ${entityId} THEN r.to_entity_id
+                  ELSE r.from_entity_id END AS neighbour_id,
+             r.type AS relation_type,
+             COUNT(DISTINCT r.document_id)::int AS support
+      FROM graph_relations r
+      ${joinPublishedDocuments('r', organizationId)}
+      WHERE r.organization_id = ${organizationId}
+        AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
+      GROUP BY 1, 2
+      HAVING COUNT(DISTINCT r.document_id) >= ${minSupport}
+    ),
+    evidence AS (
+      SELECT CASE WHEN r.from_entity_id = ${entityId} THEN r.to_entity_id
+                  ELSE r.from_entity_id END AS neighbour_id,
+             r.type AS relation_type,
+             d.id AS document_id,
+             d.name AS name,
+             d.content_kind AS content_kind
+      FROM graph_relations r
+      ${joinPublishedDocuments('r', organizationId)}
+      WHERE r.organization_id = ${organizationId}
+        AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
+      GROUP BY 1, 2, d.id, d.name, d.content_kind
+    ),
+    ranked AS (
+      SELECT ev.neighbour_id AS neighbour_id,
+             ev.relation_type AS relation_type,
+             ev.document_id AS document_id,
+             ev.name AS name,
+             ev.content_kind AS content_kind,
+             ROW_NUMBER() OVER (
+               PARTITION BY ev.neighbour_id, ev.relation_type
+               ORDER BY ev.document_id DESC
+             ) AS rn
+      FROM evidence ev
+      JOIN edges
+        ON edges.neighbour_id = ev.neighbour_id
+       AND edges.relation_type = ev.relation_type
+      JOIN ent_support s ON s.entity_id = ev.neighbour_id
+      WHERE ev.neighbour_id <> ${entityId}
+    )
+    SELECT ranked.neighbour_id AS neighbour_id,
+           ranked.relation_type AS relation_type,
+           ranked.document_id AS id,
+           ranked.name AS name,
+           ranked.content_kind AS content_kind
+    FROM ranked
+    WHERE ranked.rn <= ${perEdge}
+    ORDER BY ranked.neighbour_id ASC, ranked.relation_type ASC, ranked.document_id DESC
+    LIMIT ${total}`
 }
 
 /**
@@ -574,21 +748,43 @@ export async function readEntityDetail(
     support: toCount(entityRow.support),
   }
 
-  const [neighbourResult, documentResult] = await Promise.all([
+  const [neighbourResult, documentResult, edgeDocumentResult] = await Promise.all([
     payload.db.drizzle.execute(entityNeighboursQuery(scoped)),
     payload.db.drizzle.execute(entityDocumentsQuery(scoped)),
+    payload.db.drizzle.execute(entityEdgeDocumentsQuery(scoped)),
   ])
 
-  const neighbours: GraphNeighbour[] = rowsOf(neighbourResult).map((row) => ({
-    entity: {
-      id: toId(row.id),
-      type: toText(row.type) as GraphEntityType,
-      label: toText(row.label),
-      support: toCount(row.support),
-    },
-    relationType: toText(row.relation_type) as GraphRelationType,
-    support: toCount(row.edge_support),
-  }))
+  // ⚠ KEYED ON `(neighbour, relationType)`, NOT ON THE NEIGHBOUR ALONE. Two
+  // entities can be joined by more than one predicate — "sequía de 2023"
+  // `ocurre_en` AND `afecta_a` "Juxtlahuaca" is an ordinary pair — and those are
+  // two rows in `neighbours`, each with its own support. Keying on the
+  // neighbour would give both edges the union of their evidence and overstate
+  // the weaker one.
+  const edgeDocuments = new Map<string, GraphDocumentRef[]>()
+  for (const row of rowsOf(edgeDocumentResult)) {
+    const key = `${toId(row.neighbour_id)}|${toText(row.relation_type)}`
+    const list = edgeDocuments.get(key)
+    // 🔴 `withSnippet: false`. These rows carry no quotation; see the query.
+    const ref = mapDocumentRow(row, false)
+    if (list) list.push(ref)
+    else edgeDocuments.set(key, [ref])
+  }
+
+  const neighbours: GraphNeighbour[] = rowsOf(neighbourResult).map((row) => {
+    const id = toId(row.id)
+    const relationType = toText(row.relation_type) as GraphRelationType
+    return {
+      entity: {
+        id,
+        type: toText(row.type) as GraphEntityType,
+        label: toText(row.label),
+        support: toCount(row.support),
+      },
+      relationType,
+      support: toCount(row.edge_support),
+      documents: edgeDocuments.get(`${id}|${relationType}`) ?? [],
+    }
+  })
 
   const documents = rowsOf(documentResult).map((row) => mapDocumentRow(row, true))
 

@@ -55,8 +55,16 @@ import {
  * ⚠ Re-running the whole corpus costs real money and changes what the graph
  * view shows (ADR §10). Bumping this is a deliberate operation, not a
  * deploy-time one.
+ *
+ * ── WHY IT IS `v2` ─────────────────────────────────────────────────────────
+ *
+ * `v1` did not ask for `fragmento`, so every `v1` row has a NULL
+ * `graph_mentions.snippet` even for a `documento` that would be allowed one.
+ * Those rows are not wrong, they are INCOMPLETE — and the only thing that can
+ * find them is this stamp. A `v1` document is exactly what
+ * `lib/graph/backfill.ts` selects on (`graphPromptVersion != GRAPH_PROMPT_VERSION`).
  */
-export const GRAPH_PROMPT_VERSION = 'v1'
+export const GRAPH_PROMPT_VERSION = 'v2'
 
 /**
  * The registry unit-type. A project takes ownership of extraction by
@@ -80,6 +88,31 @@ export function graphUnitKey(docId: string | number, windowIndex: number): strin
 // The response schema
 // ---------------------------------------------------------------------------
 
+/**
+ * 🔴 THE LENGTH CAP ON `fragmento`, IN CHARACTERS, AND IT IS DELIBERATELY TIGHT.
+ *
+ * ⚠ 120, NOT THE 300 THE ORIGINAL SCHEMA ASKED FOR. Two independent reasons,
+ * and both are load-bearing:
+ *
+ *   1. OUTPUT TOKENS ARE THE BINDING COST. ADR §13 measured this deployment at
+ *      roughly 8 tokens/second, and `fragmento` is the single biggest output
+ *      cost in the response — it is why the array caps came down to 15/20 in
+ *      the first place. A quotation is charged per window, per entity, so 300
+ *      characters × 15 entities is most of a window's answer spent on prose the
+ *      graph does not traverse. `LLM_REQUEST_TIMEOUT_MS` is now 600 s
+ *      (ADR §14), so there is room — but room is not a reason to spend it.
+ *   2. A SHORTER QUOTATION IS A SMALLER RE-IDENTIFICATION SURFACE. This is
+ *      stored only for a `documento` (ADR §7.3.4, and `snippetAllowed` enforces
+ *      it in three places), so the privacy argument is already answered — but a
+ *      sentence identifies less than a paragraph, and the affordance this
+ *      exists for ("why is this entity here") needs a phrase, not an excerpt.
+ *
+ * ⚠ `extract.ts` TRUNCATES TO THE SAME NUMBER and imports it from here. The
+ * schema's `maxLength` is a request the model can miss; the slice is what
+ * actually holds.
+ */
+export const GRAPH_FRAGMENT_MAX_CHARS = 120
+
 /** The JSON Schema handed to ai-service as `responseSchema`. ADR §5.4. */
 export function graphResponseSchema(allowPersona: boolean): Record<string, unknown> {
   const entityTypes = allowPersona
@@ -102,6 +135,23 @@ export function graphResponseSchema(allowPersona: boolean): Record<string, unkno
             tipo: { enum: entityTypes },
             etiqueta: { type: 'string', minLength: 2, maxLength: 120 },
             menciones: { type: 'integer', minimum: 1 },
+            /**
+             * 🔴 A LITERAL QUOTATION, ASKED FOR IN EVERY VARIANT, STORED IN ONE.
+             *
+             * It answers "why is this entity here" — the affordance ADR §13.1
+             * removed and the owner asked back. It is requested even for a
+             * testimonio, and it is the WRITER that refuses to store it there
+             * (`snippetAllowed`, enforced again in `mergeWindows` and a third
+             * time in `queries.ts`'s `CASE`).
+             *
+             * ⚠ ADR §13.1 argued the opposite — that not ASKING is the same rule
+             * without a conditional a later change could get backwards. That
+             * reasoning is answered by there being THREE conditionals, in three
+             * files, each with a test, rather than one; and by the cost §13.1
+             * itself called real: without this, the graph cannot say why any
+             * entity is there, for an ordinary document either.
+             */
+            fragmento: { type: 'string', maxLength: GRAPH_FRAGMENT_MAX_CHARS },
           },
         },
       },
@@ -154,6 +204,20 @@ const PERSONA_RULE_FORBIDDEN = [
  *
  * Inputs: `titulo`, `texto`, `ventana`, `ventanas`. Every one is interpolated
  * with a TRIPLE stache — see the file header.
+ *
+ * ⚠ THE RULES ARE NUMBERED 1–9 AND THE NUMBERING WAS BROKEN. Before `fragmento`
+ * came back there was no rule 7 at all: the list ran 1–6, then BOTH the person
+ * rule and the "few good entities" rule called themselves 8. The model was
+ * being handed a list that contradicted itself about its own length. Rule 7 is
+ * now `fragmento`, the person rule keeps 8 (its two variants hard-code the
+ * number, so they stay in step), and the caps rule is 9.
+ *
+ * ⚠ Rule 9 says "20 relaciones", matching `maxItems` in
+ * {@link graphResponseSchema}. It said 60 — the number from before ADR §13.1
+ * lowered the caps — so the prose and the schema disagreed by a factor of three
+ * on the one instruction the schema cannot enforce by itself (the measurement in
+ * {@link graphEffortLevel}: this model generates until it is cut off rather than
+ * honouring `maxItems`, which makes the WORDS the effective cap).
  */
 export function graphPromptTemplate(allowPersona: boolean): string {
   const entityLines = [
@@ -198,9 +262,13 @@ export function graphPromptTemplate(allowPersona: boolean): string {
     '5. `menciones` es cuántas veces aparece la entidad EN ESTE FRAGMENTO.',
     '6. `desde` y `hacia` deben coincidir EXACTAMENTE con una `etiqueta` de tu',
     '   propia lista `entidades`. No relaciones nada que no hayas extraído.',
+    `7. \`fragmento\` es una cita LITERAL y BREVE del texto (máximo ${GRAPH_FRAGMENT_MAX_CHARS} caracteres)`,
+    '   que muestra por qué extrajiste esa entidad. Copia las palabras tal como',
+    '   aparecen; no las resumas, no las parafrasees, no las expliques. Si',
+    '   ninguna frase corta lo justifica, omite el campo.',
     allowPersona ? PERSONA_RULE_ALLOWED : PERSONA_RULE_FORBIDDEN,
-    '8. Prefiere pocas entidades buenas a muchas genéricas. Máximo 15 entidades',
-    '   y 60 relaciones.',
+    '9. Prefiere pocas entidades buenas a muchas genéricas. Máximo 15 entidades',
+    '   y 20 relaciones.',
     '',
     'TÍTULO DEL DOCUMENTO: {{{titulo}}}',
     'FRAGMENTO {{{ventana}}} DE {{{ventanas}}}.',

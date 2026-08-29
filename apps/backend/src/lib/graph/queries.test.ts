@@ -23,10 +23,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   GRAPH_MIN_SUPPORT_DEFAULT,
+  MAX_EDGE_DOCUMENTS,
   MAX_MATCHABLE_ENTITIES,
   MAX_NEIGHBOURS,
   entityDetailQuery,
   entityDocumentsQuery,
+  entityEdgeDocumentsQuery,
   entityNeighboursQuery,
   entityViewQuery,
   expansionTerms,
@@ -95,6 +97,7 @@ const graphStatements: Record<string, GraphSql> = {
   'entity detail': entityDetailQuery({ organizationId: ORG, entityId: ENTITY }),
   'entity neighbours': entityNeighboursQuery({ organizationId: ORG, entityId: ENTITY }),
   'entity documents': entityDocumentsQuery({ organizationId: ORG, entityId: ENTITY }),
+  'entity edge documents': entityEdgeDocumentsQuery({ organizationId: ORG, entityId: ENTITY }),
   'retrieve candidates': matchableEntitiesQuery(ORG, GRAPH_MIN_SUPPORT_DEFAULT),
   'retrieve edges': retrieveEdgesQuery(ORG, [ENTITY], GRAPH_MIN_SUPPORT_DEFAULT),
   'retrieve documents': retrieveDocumentsQuery(ORG, [ENTITY], GRAPH_MIN_SUPPORT_DEFAULT),
@@ -476,6 +479,7 @@ describe('the entity detail', () => {
         },
       ],
       [],
+      [],
     ])
     const detail = await readEntityDetail(payload, { organizationId: ORG, entityId: ENTITY })
     expect(detail?.entity.support).toBe(7)
@@ -483,7 +487,166 @@ describe('the entity detail', () => {
       entity: { id: 5, type: 'lugar', label: 'Oaxaca', support: 9 },
       relationType: 'ocurre_en',
       support: 4,
+      // No evidence row came back for this edge, so the list is empty rather
+      // than absent — see the note on the empty-list case below.
+      documents: [],
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Per-edge supporting documents
+// ---------------------------------------------------------------------------
+
+/**
+ * These were the missing half of ADR §7.2. The surface used to APPROXIMATE an
+ * edge's evidence by intersecting the two entities' document lists — a superset,
+ * which the UI had to admit to in Spanish. `graph_relations` holds one row per
+ * `(document, from, to, type)`, so the real answer is a direct query.
+ *
+ * ⚠ The SQL below was run against a real Postgres (the scratch database
+ * `edc_lane1`) on a fixture built to exercise each branch: an edge with three
+ * published documents, the same PAIR under a second predicate, an edge with only
+ * two, an edge whose NEIGHBOUR is below the mention threshold, a draft, and
+ * another ecosistema's document. Every assertion here mirrors a row that query
+ * did or did not return.
+ */
+describe("🔴 an edge's supporting documents are the ones that EVIDENCE it", () => {
+  it('reads them out of graph_relations, not out of a mention intersection', () => {
+    const { text } = renderSql(entityEdgeDocumentsQuery({ organizationId: ORG, entityId: ENTITY }))
+    // The evidence comes from the relation rows themselves…
+    expect(text).toContain('FROM graph_relations r')
+    // …and every document it names is joined off THAT row's `document_id`.
+    expect(text).toContain('ON d.id = r.document_id')
+    // Never from `graph_mentions`, which is what an intersection would use: the
+    // only mention table in the statement is the `ent_support` threshold CTE.
+    expect(text.match(/FROM graph_mentions m/g)).toHaveLength(1)
+  })
+
+  it('⚠ requires BOTH thresholds — the edge and the neighbour', () => {
+    // Same pair of checks as `entityNeighboursQuery`, so the two statements
+    // cannot come to disagree about which edges exist. Verified against real
+    // rows: an edge with three published documents was still withheld because
+    // its far endpoint was mentioned by only one.
+    const { text } = renderSql(entityEdgeDocumentsQuery({ organizationId: ORG, entityId: ENTITY }))
+    expect(text).toContain('HAVING COUNT(DISTINCT r.document_id) >= $')
+    expect(text).toContain('JOIN ent_support s ON s.entity_id = ev.neighbour_id')
+  })
+
+  it('🔴 caps per EDGE, not per response — a window function, not a LIMIT', () => {
+    // A plain `LIMIT` spends the whole budget on the first edge and returns
+    // nothing for the rest. Verified with the cap set to 2: every partition
+    // returned two rows, not the first partition two and the others none.
+    const { text, params } = renderSql(
+      entityEdgeDocumentsQuery({ organizationId: ORG, entityId: ENTITY }),
+    )
+    expect(text).toContain('ROW_NUMBER() OVER (')
+    expect(text).toContain('PARTITION BY ev.neighbour_id, ev.relation_type')
+    expect(text).toContain('WHERE ranked.rn <= $')
+    expect(params).toContain(MAX_EDGE_DOCUMENTS)
+    // …and an overall ceiling derived from the two caps, not guessed.
+    expect(params).toContain(MAX_NEIGHBOURS * MAX_EDGE_DOCUMENTS)
+  })
+
+  it('clamps a caller asking for more evidence than the cap allows', () => {
+    const { params } = renderSql(
+      entityEdgeDocumentsQuery({ organizationId: ORG, entityId: ENTITY, edgeDocumentLimit: 9999 }),
+    )
+    expect(params).toContain(MAX_EDGE_DOCUMENTS)
+    expect(params).not.toContain(9999)
+  })
+
+  it('⚠ carries NO snippet — a quotation belongs to an entity, not to an edge', () => {
+    // `graph_mentions.snippet` is per `(document, entity)`, so an edge has two
+    // candidates and neither is evidence OF THE EDGE. `entityDocumentsQuery`
+    // stays the only statement in the file that selects the column, which the
+    // gate suite above asserts of every other one by name.
+    expect(
+      renderSql(entityEdgeDocumentsQuery({ organizationId: ORG, entityId: ENTITY })).text,
+    ).not.toContain('snippet')
+  })
+
+  it('excludes the focal entity, so a self-loop cannot become its own neighbour', () => {
+    expect(
+      renderSql(entityEdgeDocumentsQuery({ organizationId: ORG, entityId: ENTITY })).text,
+    ).toContain('WHERE ev.neighbour_id <> $')
+  })
+
+  it('attaches evidence to the right edge, keyed on the PREDICATE as well', async () => {
+    // Two entities can be joined by more than one predicate, and those are two
+    // rows in `neighbours` with their own support each. Keying the attachment on
+    // the neighbour alone would give both edges the union of their evidence.
+    const payload = fakePayload([
+      [{ id: ENTITY, type: 'evento', label: 'Sequía de 2023', support: '4' }],
+      [
+        { id: 5, type: 'lugar', label: 'Juxtlahuaca', support: '4', relation_type: 'ocurre_en', edge_support: '3' },
+        { id: 5, type: 'lugar', label: 'Juxtlahuaca', support: '4', relation_type: 'afecta_a', edge_support: '4' },
+      ],
+      [],
+      [
+        { neighbour_id: 5, relation_type: 'ocurre_en', id: 1, name: 'acta.pdf', content_kind: 'documento' },
+        { neighbour_id: 5, relation_type: 'afecta_a', id: 2, name: 'boletin.pdf', content_kind: 'documento' },
+        { neighbour_id: 5, relation_type: 'afecta_a', id: 3, name: 'informe.pdf', content_kind: 'documento' },
+      ],
+    ])
+
+    const detail = await readEntityDetail(payload, { organizationId: ORG, entityId: ENTITY })
+    expect(detail?.neighbours[0]?.documents.map((d) => d.id)).toEqual([1])
+    expect(detail?.neighbours[1]?.documents.map((d) => d.id)).toEqual([2, 3])
+  })
+
+  it('🔴 masks a testimonio title on the edge list too — the same rule, a new surface', async () => {
+    const payload = fakePayload([
+      [{ id: ENTITY, type: 'tema', label: 'Desplazamiento', support: '3' }],
+      [{ id: 5, type: 'lugar', label: 'Oaxaca', support: '3', relation_type: 'ocurre_en', edge_support: '3' }],
+      [],
+      [
+        {
+          neighbour_id: 5,
+          relation_type: 'ocurre_en',
+          id: 90,
+          name: 'Testimonio de María López.mp3',
+          content_kind: 'testimonio',
+          // Even if a row somehow carried one, `mapDocumentRow(row, false)`
+          // never reads the column for this list.
+          snippet: 'me llamo María y vivo en …',
+        },
+      ],
+    ])
+
+    const detail = await readEntityDetail(payload, { organizationId: ORG, entityId: ENTITY })
+    expect(detail?.neighbours[0]?.documents).toEqual([
+      { id: 90, title: 'Testimonio', contentKind: 'testimonio' },
+    ])
+    expect(JSON.stringify(detail)).not.toContain('María')
+  })
+
+  it('gives an edge with no evidence row an EMPTY list, never `undefined`', async () => {
+    // The two statements run concurrently over the same rows, so a neighbour
+    // without evidence should be impossible. "Should be impossible" is not a
+    // shape guarantee, and a consumer iterating `documents` must not have to
+    // guard for the field's absence.
+    const payload = fakePayload([
+      [{ id: ENTITY, type: 'tema', label: 'Consulta previa', support: '3' }],
+      [{ id: 5, type: 'lugar', label: 'Oaxaca', support: '3', relation_type: 'ocurre_en', edge_support: '3' }],
+      [],
+      [],
+    ])
+    const detail = await readEntityDetail(payload, { organizationId: ORG, entityId: ENTITY })
+    expect(detail?.neighbours[0]?.documents).toEqual([])
+  })
+
+  it('costs exactly one extra statement, run alongside the other two', async () => {
+    const payload = fakePayload([
+      [{ id: ENTITY, type: 'tema', label: 'X', support: '3' }],
+      [],
+      [],
+      [],
+    ])
+    await readEntityDetail(payload, { organizationId: ORG, entityId: ENTITY })
+    // 1 detail + 3 concurrent. Not one round-trip per edge, which is what a
+    // dedicated `/edge` route would have cost this panel.
+    expect(payload.executed).toHaveLength(4)
   })
 })
 

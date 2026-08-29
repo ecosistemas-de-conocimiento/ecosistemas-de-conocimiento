@@ -330,6 +330,15 @@ describe('GET /api/graph/entity/:id', () => {
           },
         ],
         [{ id: 88, name: 'informe.pdf', content_kind: 'documento', snippet: 'la consulta' }],
+        [
+          {
+            neighbour_id: 6,
+            relation_type: 'ocurre_en',
+            id: 88,
+            name: 'informe.pdf',
+            content_kind: 'documento',
+          },
+        ],
       ],
     })
     const res = await graphEntityEndpoint.handler(req)
@@ -341,12 +350,71 @@ describe('GET /api/graph/entity/:id', () => {
           entity: { id: 6, type: 'lugar', label: 'Oaxaca', support: 3 },
           relationType: 'ocurre_en',
           support: 3,
+          // 🔴 The documents that EVIDENCE this edge, straight out of
+          // `graph_relations` — not the intersection of two entity lists the
+          // surface used to approximate it with.
+          documents: [{ id: 88, title: 'informe.pdf', contentKind: 'documento' }],
         },
       ],
       documents: [
         { id: 88, title: 'informe.pdf', contentKind: 'documento', snippet: 'la consulta' },
       ],
     })
+  })
+
+  it('🔴 sends the per-edge evidence query down with all three gates', async () => {
+    const { req, sql } = fakeRequest('/?organization=7', {
+      memberOf: [7],
+      routeParams: { id: '5' },
+      rows: [[{ id: 5, type: 'tema', label: 'X', support: 3 }], [], [], []],
+    })
+    await graphEntityEndpoint.handler(req)
+    // One detail statement, then three run concurrently. A dedicated
+    // `/api/graph/edge/…` route would instead have cost one request per edge.
+    expect(sql).toHaveLength(4)
+    const edges = sql.find((s) => s.includes('ROW_NUMBER() OVER ('))
+    expect(edges).toBeDefined()
+    expect(edges).toContain('r.organization_id = $')
+    expect(edges).toContain('d.organization_id = $')
+    expect(edges).toContain("d.publication_status = 'published'")
+    expect(edges).toContain('HAVING COUNT(DISTINCT r.document_id) >= $')
+    // The evidence list is not a place for a verbatim quotation.
+    expect(edges).not.toContain('snippet')
+  })
+
+  it('🔴 masks a testimonio title on the EDGE list too, on the wire', async () => {
+    const { req } = fakeRequest('/?organization=7', {
+      memberOf: [7],
+      routeParams: { id: '5' },
+      rows: [
+        [{ id: 5, type: 'tema', label: 'Desplazamiento', support: 3 }],
+        [
+          {
+            id: 6,
+            type: 'lugar',
+            label: 'Oaxaca',
+            support: 3,
+            relation_type: 'ocurre_en',
+            edge_support: 3,
+          },
+        ],
+        [],
+        [
+          {
+            neighbour_id: 6,
+            relation_type: 'ocurre_en',
+            id: 90,
+            name: 'Testimonio de María López.mp3',
+            content_kind: 'testimonio',
+          },
+        ],
+      ],
+    })
+    const raw = await (await graphEntityEndpoint.handler(req)).text()
+    expect(raw).not.toContain('María')
+    expect(JSON.parse(raw).neighbours[0].documents).toEqual([
+      { id: 90, title: 'Testimonio', contentKind: 'testimonio' },
+    ])
   })
 
   it('🔴 masks a testimonio title and drops its snippet, on the wire', async () => {
@@ -400,7 +468,11 @@ describe('GET /api/graph/entity/:id', () => {
       rows: [[{ id: 5, type: 'tema', label: 'X', support: 3 }], [], []],
     })
     await graphEntityEndpoint.handler(req)
-    expect(sql).toHaveLength(3)
+    // ⚠ FOUR, not three: the per-edge evidence statement joined the route. This
+    // loop is the reason the count is asserted at all — every statement the
+    // route runs has to carry the tenant, so a new one must show up here rather
+    // than be added quietly.
+    expect(sql).toHaveLength(4)
     for (const statement of sql) {
       // Whichever graph table the statement reads names the tenant itself…
       expect(statement).toMatch(/[emr]\.organization_id = \$/)

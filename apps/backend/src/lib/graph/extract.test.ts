@@ -17,6 +17,7 @@ import {
   type GraphGenerateClient,
   type ParsedWindow,
 } from './extract'
+import { GRAPH_FRAGMENT_MAX_CHARS, graphResponseSchema } from './prompt'
 
 // ---------------------------------------------------------------------------
 // Fake client
@@ -112,7 +113,20 @@ describe('parseWindowResponse', () => {
       okResponse([{ tipo: 'tema', etiqueta: 'Agua', fragmento: 'x'.repeat(500) }]),
     )
     expect(parsed?.entities[0].menciones).toBe(1)
-    expect(parsed?.entities[0].fragmento).toHaveLength(300)
+    expect(parsed?.entities[0].fragmento).toHaveLength(GRAPH_FRAGMENT_MAX_CHARS)
+  })
+
+  it('🔴 truncates to the SAME number the schema asks for, and it is 120', () => {
+    // The schema's `maxLength` is a request the model can miss; this slice is
+    // what actually holds. Repeating the number in two files is how they drift,
+    // so `extract.ts` imports it — this asserts the value has not quietly gone
+    // back to the original 300, which is the output-token cost ADR §13 measured.
+    expect(GRAPH_FRAGMENT_MAX_CHARS).toBe(120)
+    const item = (
+      (graphResponseSchema(true).properties as Record<string, Record<string, unknown>>).entidades
+        .items as Record<string, Record<string, Record<string, unknown>>>
+    ).properties
+    expect(item.fragmento.maxLength).toBe(GRAPH_FRAGMENT_MAX_CHARS)
   })
 
   it('drops entities with an unknown type or an unusable label', () => {
