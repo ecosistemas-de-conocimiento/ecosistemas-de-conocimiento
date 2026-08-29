@@ -33,6 +33,17 @@
     uploadInFlightCopy,
   } from '$lib/ingest';
 
+  /**
+   * ⚠ NARROW-SCREEN CASE, not a preference. Inside a drawer
+   * (`ChatWorkspace.svelte`, below 64rem) the collapsed vertical-text rail is
+   * meaningless — the drawer is either open or gone — so the rail and the
+   * collapse button are both skipped. The drawer's own "Cerrar" is the way out.
+   *
+   * It does NOT write `app.docsPanelOpen`: that value is persisted per
+   * conversation and belongs to the desktop layout.
+   */
+  let { forceExpanded = false }: { forceExpanded?: boolean } = $props();
+
   let expandedId = $state<string | null>(null);
   const previewIds = new SvelteSet<string>();
   let fileInput = $state<HTMLInputElement | null>(null);
@@ -270,7 +281,7 @@
   }
 </script>
 
-{#if !app.docsPanelOpen}
+{#if !app.docsPanelOpen && !forceExpanded}
   <button
     class="w-8 shrink-0 border-l border-elevated bg-surface hover:bg-surface-soft text-ink-soft flex items-center justify-center transition-colors"
     onclick={() => app.toggleDocsPanel()}
@@ -341,25 +352,27 @@
             <path d="M12 5v14M5 12h14" />
           </svg>
         </button>
-        <button
-          class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft"
-          onclick={() => app.toggleDocsPanel()}
-          title="Contraer"
-          aria-label="Contraer panel"
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
+        {#if !forceExpanded}
+          <button
+            class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft"
+            onclick={() => app.toggleDocsPanel()}
+            title="Contraer"
+            aria-label="Contraer panel"
           >
-            <path d="M9 18l6-6-6-6" />
-          </svg>
-        </button>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M9 18l6-6-6-6" />
+            </svg>
+          </button>
+        {/if}
       </div>
     </header>
 

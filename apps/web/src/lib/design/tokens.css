@@ -47,16 +47,36 @@
   --edc-ramp-neutral-950: #14171b;
   --edc-ramp-neutral-1000: #0d1014;
 
-  /* Acento único: azul institucional apagado. Tono oscuro para modo claro,
-     tono luminoso para modo oscuro, tono medio para rellenos sólidos. */
-  --edc-ramp-accent-700: #1b476f;
-  --edc-ramp-accent-600: #245a8d;
-  --edc-ramp-accent-500: #35709f;
-  --edc-ramp-accent-400: #3a7aab;
-  --edc-ramp-accent-300: #6f9fd4;
-  --edc-ramp-accent-200: #8fb5e0;
-  --edc-ramp-accent-tint-light: #eaeff5;
-  --edc-ramp-accent-tint-dark: #1d2733;
+  /* Acento único: CIRUELA APAGADA (`#6d28d9`), elegida por la organización.
+     Tono oscuro para modo claro, tono luminoso para modo oscuro, tono medio
+     para rellenos sólidos.
+
+     🔴 POR QUÉ CIRUELA Y NO OTRA COSA. No colisiona con ningún color de estado
+     —rojo de error, verde de éxito, ámbar de aviso— así que un botón primario
+     nunca se lee como una alerta. Y a 7.10:1 sobre blanco sirve a la vez como
+     texto sobre superficie y como relleno con texto blanco (el ratio es
+     simétrico).
+
+     ⚠ `#6d28d9` NO puede usarse en modo oscuro: sobre `surface` da 2.33:1.
+     Es aritmética, no gusto — ver README §4 "El compromiso central del tema
+     oscuro". Por eso los pasos 300/200 son variantes claras del mismo hue.
+
+     Los contrastes de cada paso están MEDIDOS y se verifican en
+     `contrast.test.ts`, que lee este archivo. Cambiar un hex de aquí sin
+     recalcular rompe la prueba. */
+  --edc-ramp-accent-700: #5b21b6; /* brand-strong claro · 8.98:1 sobre blanco */
+  --edc-ramp-accent-600: #6d28d9; /* brand claro       · 7.10:1 sobre blanco */
+  /* ⚠ Los pasos 500/400 viven en una ventana estrecha y NO se eligen por
+     gusto: el blanco encima debe llegar a 4.5:1 (texto) y el relleno debe
+     separarse 3:1 de la superficie oscura (WCAG 1.4.11, la silueta del botón).
+     `#7c3aed`, el violeta "natural" del siguiente paso, cumple lo primero
+     (5.70) pero se queda en 2.90 contra `surface` — invisible como forma. */
+  --edc-ramp-accent-500: #8347ee; /* relleno oscuro · blanco 5.12 · forma 3.23 */
+  --edc-ramp-accent-400: #8b54f0; /* hover oscuro   · blanco 4.54 · forma 3.64 */
+  --edc-ramp-accent-300: #a78bfa; /* brand oscuro      · 5.10:1 sobre #272d35 */
+  --edc-ramp-accent-200: #c4b5fd; /* brand-strong oscuro · 7.52:1 sobre #272d35 */
+  --edc-ramp-accent-tint-light: #ede9fe; /* accent-soft de la identidad */
+  --edc-ramp-accent-tint-dark: #241b33;
 
   /* Grafito: segundo tono del sistema. NO es un segundo color de marca; es el
      neutro con énfasis, para que `tone-accent` lea como jerarquía y no como

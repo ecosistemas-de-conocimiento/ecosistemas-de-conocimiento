@@ -5,6 +5,16 @@
   import { app } from '$lib/stores/app.svelte';
   import { generateSync, generateStream, userFacingError, type SyncGenerateResult } from '$lib/api';
   import type { ContextRef, ContextScope } from '$lib/types';
+  import { emptyChatHint } from '$lib/layout';
+
+  /**
+   * ⚠ NARROW-SCREEN CASE. Below 64rem the two supporting panes are drawers
+   * opened from the labelled bar in `ChatWorkspace.svelte`. These two in-header
+   * buttons open the same things, so on a phone they are a second, differently
+   * worded way to do what the bar already does — and one of them ("Docs ›") is
+   * an abbreviation. One control per job.
+   */
+  let { hidePanelButtons = false }: { hidePanelButtons?: boolean } = $props();
 
   let scrollRef: HTMLDivElement | undefined = $state();
   let busy = $state(false);
@@ -118,7 +128,7 @@
 
 <section class="flex-1 min-w-0 flex flex-col">
   <header class="border-b border-line px-4 py-2 flex items-center gap-2 bg-surface backdrop-blur">
-    {#if app.sidebarCollapsed}
+    {#if app.sidebarCollapsed && !hidePanelButtons}
       <button
         class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft"
         onclick={() => app.toggleSidebar()}
@@ -142,12 +152,12 @@
     <h2 class="text-sm font-semibold text-ink truncate flex-1 font-display">
       {app.active?.title ?? 'Sin chat seleccionado'}
     </h2>
-    {#if !app.docsPanelOpen}
+    {#if !app.docsPanelOpen && !hidePanelButtons}
       <button
-        class="text-xs text-ink-soft hover:text-brand px-2 py-1 rounded-lg border border-line hover:border-brand transition-colors"
+        class="text-xs text-ink-soft hover:text-brand px-2 py-1 rounded-lg border border-line hover:border-brand transition-colors whitespace-nowrap"
         onclick={() => app.toggleDocsPanel()}
       >
-        Docs ›
+        Documentos ›
       </button>
     {/if}
   </header>
@@ -161,9 +171,9 @@
       {:else}
         <div class="text-center text-ink-soft text-sm pt-16">
           <p>Inicia una conversación.</p>
-          <p class="text-xs mt-1">
-            Sube documentos en el panel de la derecha y usa @ para mencionarlos.
-          </p>
+          <!-- ⚠ Narrow-aware: on a phone there is no panel on the right.
+               See `emptyChatHint` in $lib/layout.ts. -->
+          <p class="text-xs mt-1">{emptyChatHint(hidePanelButtons)}</p>
         </div>
       {/if}
     </div>
@@ -171,6 +181,7 @@
 
   <Composer
     {busy}
+    narrow={hidePanelButtons}
     sessionId={app.active?.id ?? ''}
     onsend={handleSend}
     oncancel={handleCancel}

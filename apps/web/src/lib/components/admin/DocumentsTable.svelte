@@ -200,7 +200,9 @@
     gap: 0.25rem;
   }
   .chip {
-    padding: 0.3rem 0.6rem;
+    /* ⚠ Measured at 29px tall on a 380px screen — under the 32px touch bar. */
+    min-height: 2rem;
+    padding: 0.35rem 0.6rem;
     font-size: 0.74rem;
     font-weight: 700;
     color: var(--edc-color-ink-soft);

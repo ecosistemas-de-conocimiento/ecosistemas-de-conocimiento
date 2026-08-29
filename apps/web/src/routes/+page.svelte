@@ -1,7 +1,5 @@
 <script lang="ts">
-  import Sidebar from '$lib/components/Sidebar.svelte';
-  import Chat from '$lib/components/Chat.svelte';
-  import DocsPanel from '$lib/components/DocsPanel.svelte';
+  import ChatWorkspace from '$lib/components/ChatWorkspace.svelte';
   import DegradedBanner from '$lib/components/DegradedBanner.svelte';
   import NoEcosystem from '$lib/components/NoEcosystem.svelte';
   import { app } from '$lib/stores/app.svelte';
@@ -38,10 +36,8 @@
     <!-- Nothing below this point makes sense without a tenant to scope it. -->
     <NoEcosystem />
   {:else}
-    <div class="flex flex-1 min-h-0">
-      <Sidebar />
-      <Chat />
-      <DocsPanel />
-    </div>
+    <!-- ⚠ The three panes and how they collapse on a narrow screen live in
+         ChatWorkspace — see $lib/layout.ts for the decision and why. -->
+    <ChatWorkspace />
   {/if}
 </div>

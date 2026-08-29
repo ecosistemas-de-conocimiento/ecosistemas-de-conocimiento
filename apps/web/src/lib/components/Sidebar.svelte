@@ -14,13 +14,28 @@
    * link is a courtesy, `routes/admin/+page.server.ts` is the control.
    */
 
+  /**
+   * ⚠ `forceExpanded` is the NARROW-SCREEN case, not a preference.
+   *
+   * Inside a drawer (`ChatWorkspace.svelte`, below 64rem) the 40px collapsed
+   * rail is meaningless: the drawer is already either open or gone. So the rail
+   * is skipped and the collapse button with it — the drawer's own "Cerrar"
+   * button is the way out, and two controls that both mean "make this go away"
+   * is one more decision than the screen needs.
+   *
+   * It deliberately does NOT write `app.sidebarCollapsed`. That value is
+   * persisted per conversation and belongs to the desktop layout; a phone
+   * visit must not silently re-arrange the desk someone left set up.
+   */
+  let { forceExpanded = false }: { forceExpanded?: boolean } = $props();
+
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
     window.location.href = '/sign-in';
   }
 </script>
 
-{#if app.sidebarCollapsed}
+{#if app.sidebarCollapsed && !forceExpanded}
   <aside
     class="w-10 shrink-0 border-r border-line bg-surface flex flex-col items-center py-3 gap-2 backdrop-blur"
   >
@@ -90,25 +105,27 @@
             <path d="M12 5v14M5 12h14" />
           </svg>
         </button>
-        <button
-          class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft"
-          onclick={() => app.toggleSidebar()}
-          title="Contraer"
-          aria-label="Contraer barra lateral"
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
+        {#if !forceExpanded}
+          <button
+            class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft"
+            onclick={() => app.toggleSidebar()}
+            title="Contraer"
+            aria-label="Contraer barra lateral"
           >
-            <path d="M15 18l-6-6 6-6" />
-          </svg>
-        </button>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+          </button>
+        {/if}
       </div>
     </div>
 
@@ -119,13 +136,20 @@
     <nav class="flex-1 overflow-y-auto p-2 space-y-0.5" aria-label="Conversaciones">
       {#each app.sessions as s (s.id)}
         {@const isActive = s.id === app.activeSessionId}
+        <!-- 🔴 THE OPEN CONVERSATION IS MARKED THREE WAYS, NOT ONE. The tint
+             alone was the whole signal, and a tint is exactly what a
+             colour-blind reader and a washed-out cheap screen both lose. Now
+             there is also a bar down the left edge (a SHAPE) and bold weight,
+             plus `aria-current` so a screen reader is told outright rather
+             than being expected to see it. -->
         <div
-          class="group flex items-center justify-between rounded-lg px-2 py-1.5 cursor-pointer transition-colors {isActive
-            ? 'bg-surface-accent text-ink'
-            : 'text-ink-soft hover:bg-surface-soft hover:text-ink'}"
+          class="group flex items-center justify-between rounded-lg border-l-2 pl-1.5 pr-2 py-1.5 cursor-pointer transition-colors {isActive
+            ? 'bg-surface-accent text-ink border-brand font-semibold'
+            : 'text-ink-soft border-transparent hover:bg-surface-soft hover:text-ink'}"
           onclick={() => app.selectSession(s.id)}
           onkeydown={(e) => e.key === 'Enter' && app.selectSession(s.id)}
           role="button"
+          aria-current={isActive ? 'true' : undefined}
           tabindex="0"
         >
           <span class="truncate text-sm">{s.title}</span>
