@@ -12,10 +12,11 @@ const admin = { id: '1', isPlatformAdmin: true };
 const member = { id: '2', isPlatformAdmin: false };
 
 describe('the menu only offers pages that exist', () => {
-  it('covers the chat, the library and the admin view, and nothing else', () => {
+  it('covers the chat, the library, the graph and the admin view, and nothing else', () => {
     expect(NAV_ITEMS.map((i) => i.href)).toEqual([
       '/',
       '/biblioteca',
+      '/grafo',
       '/revision',
       '/admin',
     ]);
@@ -25,9 +26,30 @@ describe('the menu only offers pages that exist', () => {
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
       'Conversaciones',
       'Biblioteca',
+      'Conexiones',
       'Revisión',
       'Administración',
     ]);
+  });
+
+  // ⚠ "Conexiones", not "Grafo". `/grafo` is the route and the ADR's word for
+  // the feature; a *grafo* is a maths term, and this menu's rule is plain
+  // Spanish nouns for readers who do not have that vocabulary. The page's own
+  // kicker (`GRAPH_KICKER`) says the same word, so the click and the landing
+  // agree.
+  it('does not put the word “grafo” in front of a reader', () => {
+    for (const item of NAV_ITEMS) {
+      expect(item.label.toLowerCase()).not.toContain('grafo');
+      expect(item.hint.toLowerCase()).not.toContain('grafo');
+    }
+  });
+
+  // The graph is the library's material seen another way -- both are about what
+  // the ecosistema has PUBLISHED, and neither shows a draft. Next to each other
+  // is where a reader will look for it.
+  it('puts the graph next to the library', () => {
+    const hrefs = NAV_ITEMS.map((i) => i.href);
+    expect(hrefs.indexOf('/grafo')).toBe(hrefs.indexOf('/biblioteca') + 1);
   });
 
   it('gives every item a plain-language hint, so no entry is a bare noun', () => {
@@ -45,7 +67,17 @@ describe('who sees the admin entry', () => {
   // ⚠ Presentation only — `routes/admin/+page.server.ts` is the control. This
   // asserts the menu stays honest, not that the page is protected.
   it('hides it from an ordinary member', () => {
-    expect(visibleNavItems(member).map((i) => i.href)).toEqual(['/', '/biblioteca']);
+    expect(visibleNavItems(member).map((i) => i.href)).toEqual(['/', '/biblioteca', '/grafo']);
+  });
+
+  // 🔴 THE GRAPH IS FOR EVERYONE, and this is the assertion that says so.
+  // ADR §7.1: one view, every role, same content. What a platform admin gets
+  // extra is an ecosistema PICKER (`routes/grafo/+page.server.ts`), never a
+  // different graph -- so the menu entry carries no role flag at all.
+  it('offers the graph to a member and an admin alike', () => {
+    for (const user of [member, admin]) {
+      expect(visibleNavItems(user).map((i) => i.href)).toContain('/grafo');
+    }
   });
 
   it('hides it when the flag is missing, garbled or merely truthy', () => {

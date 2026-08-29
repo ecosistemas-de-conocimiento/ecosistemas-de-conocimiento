@@ -17,20 +17,35 @@
  * a member. What differs by role is WHICH ecosistema you can look at, never
  * what the graph shows about it.
  *
- * ## 🔴 THE FOUR LISTS, AND WHY `persona` IS NOT ONE OF THEM
+ * ## 🔴 THE FIVE LISTS — `persona` IS ONE OF THEM, AND WHY THAT IS SAFE
  *
- * ADR §7.2 enumerates the view as temas · lugares · eventos · organizaciones.
- * `persona` exists in the backend's vocabulary — a `documento` may legitimately
- * produce person nodes — but a RANKED LIST OF PEOPLE across an ecosistema's
- * corpus is the single most re-identification-adjacent surface the design could
- * offer, and §7.3 spends its whole argument on not building that. So the view
- * drops the type entirely: not from the lists only, but from the ego-network
- * neighbours too, because a name excluded from one and shown in the other is
- * excluded from neither.
+ * The owner decided (2026-08-29) that a `persona` is shown like any other type.
+ * This module header used to argue the opposite, so the reasoning that makes
+ * the new answer safe is recorded here rather than left to be re-derived.
  *
- * ⚠ It is ONE predicate (`isViewableEntityType`), applied where the response is
- * parsed, so the day someone decides differently it is a one-line change with a
- * test that fails loudly — not an audit of every component.
+ * A person node CANNOT come from a testimonio. Not "is filtered out of" — it
+ * cannot be produced. `apps/backend/src/lib/graph/types.ts` gates it on
+ * `personaAllowed(contentKind)`, which is `contentKind === 'documento'` and
+ * therefore fails CLOSED on a null or unknown value; the extraction schema for
+ * gated content omits `persona` from its `tipo` enum entirely
+ * (`lib/graph/prompt.ts`), so the model has no way to express one; and
+ * `lib/graph/extract.ts` drops any that appear anyway. Three layers, keyed on a
+ * COLUMN rather than on a model's judgement.
+ *
+ * So a person in this view is a cited author or a named official in a public
+ * report. Never a participant in a testimony, and never someone whose name a
+ * testimony happened to mention.
+ *
+ * ⚠ AND THEY ARE STILL SUBJECT TO EVERYTHING ELSE. `GRAPH_MIN_SUPPORT` applies
+ * unchanged, so a person named in one or two published documents does not
+ * appear at all; the published-only scope applies; and no snippet is ever
+ * stored for a testimonio. The re-identification argument in ADR §7.3 rests on
+ * minimum support, which is untouched — §7.3.1 was the *extraction* rule, and
+ * that is exactly where it still lives.
+ *
+ * ⚠ `isViewableEntityType` is KEPT as the one seam, now admitting all five
+ * types. It still fails closed on a type the backend adds tomorrow, and it is
+ * still the single place to change if this decision is ever revisited.
  *
  * ## 🔴 A TESTIMONIO'S TITLE IS TAKEN, NEVER IMPROVED
  *
@@ -41,6 +56,7 @@
  */
 
 import { foldText } from '$lib/components/admin/summary';
+import type { Ecosystem } from '$lib/ecosystems';
 
 /** Re-exported so graph code has one import surface for the accent fold. */
 export { foldText };
@@ -57,8 +73,26 @@ export { foldText };
 export const GRAPH_ENTITY_TYPES = ['tema', 'lugar', 'evento', 'organizacion', 'persona'] as const;
 export type GraphEntityType = (typeof GRAPH_ENTITY_TYPES)[number];
 
-/** The four lists the view shows, in the order it shows them (ADR §7.2). */
-export const GRAPH_VIEW_TYPES = ['tema', 'lugar', 'evento', 'organizacion'] as const;
+/**
+ * The lists the view shows, in the order it shows them.
+ *
+ * ⚠ SEPARATE FROM `GRAPH_ENTITY_TYPES` ON PURPOSE, even though the two now hold
+ * the same five values. That one is the BACKEND'S CONTRACT — what a response
+ * may contain. This one is a VIEW decision — what is drawn, and in what order.
+ * Collapsing them into one constant would make the next person's change to the
+ * running order look like a change to the wire format.
+ *
+ * `persona` is last because it is the newest list and the least populated: the
+ * types the ADR built the view around (§7.2) stay where a returning reader
+ * expects to find them.
+ */
+export const GRAPH_VIEW_TYPES = [
+  'tema',
+  'lugar',
+  'evento',
+  'organizacion',
+  'persona',
+] as const;
 export type GraphViewType = (typeof GRAPH_VIEW_TYPES)[number];
 
 export function isGraphEntityType(value: unknown): value is GraphEntityType {
@@ -66,10 +100,14 @@ export function isGraphEntityType(value: unknown): value is GraphEntityType {
 }
 
 /**
- * 🔴 THE ONE PREDICATE THE VIEW'S PERSON RULE HANGS OFF. See the module header.
+ * 🔴 THE ONE SEAM DECIDING WHAT THE VIEW DRAWS. See the module header.
  *
  * Fails CLOSED: an unknown type is not viewable. A category the backend adds
- * tomorrow does not appear in this product until someone decides it should.
+ * tomorrow does not appear in this product until someone decides it should —
+ * which is the property that survived the owner admitting `persona`, and the
+ * reason this predicate was not simply deleted in favour of
+ * `isGraphEntityType`. The two answer different questions and are allowed to
+ * diverge again.
  */
 export function isViewableEntityType(value: unknown): value is GraphViewType {
   return typeof value === 'string' && (GRAPH_VIEW_TYPES as readonly string[]).includes(value);
@@ -213,6 +251,14 @@ export interface GrafoPageData {
   entity: GraphEntityDetail | null;
   entityState: 'none' | 'ok' | 'not-found' | 'unavailable';
   edge: SelectedEdge | null;
+  /**
+   * The platform admin's ecosistema picker, or `null` for everybody else.
+   *
+   * ⚠ `null` means "no picker", never "an empty picker" — the page branches on
+   * it for the `no-ecosystem` sentence too, because an admin who belongs to
+   * nothing must not be told to go ask for access. See `noEcosystemCopy`.
+   */
+  scope: GraphScopePicker | null;
 }
 
 // ── Tolerant parsing ───────────────────────────────────────────────────────
@@ -362,8 +408,9 @@ export function parseGraphRetrieval(raw: unknown): GraphRetrieval {
   // The full node index — seeds plus both endpoints of every edge. See
   // `GraphRetrieval.nodes` for why building it from `entities` alone silently
   // empties the context block's "se conecta con" clause.
-  // 🔴 Endpoints go through `parseGraphEntity` like everything else, so a
-  // `persona` endpoint is dropped here too and can never reach the prompt.
+  // ⚠ Endpoints go through `parseGraphEntity` like everything else, so an
+  // endpoint of a type this view does not draw never reaches the prompt either.
+  // The graph block and the screen therefore describe the same graph.
   const nodes = new Map<string, GraphEntity>();
   for (const e of entities) nodes.set(e.id, e);
   for (const raw of Array.isArray(body.edges) ? body.edges : []) {
@@ -438,6 +485,8 @@ export function typeListLabel(type: GraphViewType): string {
       return 'Eventos';
     case 'organizacion':
       return 'Organizaciones';
+    case 'persona':
+      return 'Personas';
   }
 }
 
@@ -452,6 +501,8 @@ export function typeChipLabel(type: GraphViewType): string {
       return 'evento';
     case 'organizacion':
       return 'organización';
+    case 'persona':
+      return 'persona';
   }
 }
 
@@ -466,6 +517,14 @@ export function typeListHint(type: GraphViewType): string {
       return 'Hechos y procesos con un momento propio.';
     case 'organizacion':
       return 'Instituciones, colectivos y dependencias.';
+    case 'persona':
+      // 🔴 THE ONE HINT THAT IS ALSO A PROMISE. A list of names in a corpus
+      // built partly from testimonies invites exactly one worry, and the
+      // honest answer is short: these names cannot come from a testimonio —
+      // the extraction gate keys on `contentKind` and fails closed (see the
+      // module header). Saying so here, on the page, is cheaper than a reader
+      // guessing wrong and trusting the graph less than it deserves.
+      return 'Personas nombradas en documentos públicos. Nunca salen de un testimonio.';
   }
 }
 
@@ -527,7 +586,27 @@ export function contentKindLabel(
   }
 }
 
-export const GRAPH_KICKER = 'Grafo';
+export const GRAPH_KICKER = 'Conexiones';
+
+/**
+ * The line under the title, up to the ecosistema's name.
+ *
+ * ⚠ Lives here rather than inline in the `.svelte`, for the reason the module
+ * header gives: it enumerates the lists, and an enumeration that drifts out of
+ * step with `GRAPH_VIEW_TYPES` is exactly the silent kind of wrong. The test
+ * asserts every list is named.
+ *
+ * ⚠ Exported as a LEAD, not as the whole sentence, so the template can bold the
+ * ecosistema's name without markup living in a copy string. `graphSubtitle`
+ * composes the same words for anything that needs one plain string; both read
+ * from this constant, so there is still one source of truth.
+ */
+export const GRAPH_SUBTITLE_LEAD = 'Temas, lugares, eventos, organizaciones y personas de';
+
+/** The whole sentence, for a plain-text reading of the same line. */
+export function graphSubtitle(ecosystemName: string): string {
+  return `${GRAPH_SUBTITLE_LEAD} ${ecosystemName}.`;
+}
 export const GRAPH_TITLE = 'Cómo se conecta lo que publica tu ecosistema';
 
 /**
@@ -558,7 +637,7 @@ export const GRAPH_EMPTY_NOTHING_PUBLISHED = 'Tu ecosistema todavía no ha publi
 
 export const GRAPH_EMPTY_NOTHING_PUBLISHED_HINT =
   'Cuando alguien publique un documento o una voz, aquí empezarán a aparecer los temas, ' +
-  'lugares, eventos y organizaciones que se repiten entre ellos.';
+  'lugares, eventos, organizaciones y personas que se repiten entre ellos.';
 
 /**
  * 🔴 TWO EMPTY GRAPHS, TWO DIFFERENT SENTENCES.
@@ -588,11 +667,28 @@ export const GRAPH_NO_ECOSYSTEM =
   'Todavía no perteneces a ningún ecosistema, así que no hay un grafo que mostrar. ' +
   'Pídele acceso a quien administra tu ecosistema.';
 
+/**
+ * ⚠ THE SAME EMPTY SCREEN, A COMPLETELY DIFFERENT SENTENCE.
+ *
+ * A platform admin who belongs to nothing used to be told *"no perteneces a
+ * ningún ecosistema… pídele acceso a quien administra"* — advice to go ask
+ * themselves for a permission they already have, on a page they can already
+ * see every tenant from. They reach this only when the installation genuinely
+ * has no ecosistema to look at, and that is what it now says.
+ */
+export const GRAPH_NO_ECOSYSTEM_ADMIN =
+  'Todavía no hay ningún ecosistema en la plataforma, así que no hay un grafo que mostrar.';
+
+/** Which of the two "no ecosistema" sentences this caller should read. */
+export function noEcosystemCopy(canSwitch: boolean): string {
+  return canSwitch ? GRAPH_NO_ECOSYSTEM_ADMIN : GRAPH_NO_ECOSYSTEM;
+}
+
 export const GRAPH_SEARCH_HINT =
   'La búsqueda es por nombre. No importan los acentos ni las mayúsculas.';
 
 export const GRAPH_PICK_ENTITY =
-  'Elige un tema, lugar, evento u organización para ver con qué se conecta.';
+  'Elige un tema, lugar, evento, organización o persona para ver con qué se conecta.';
 
 export const GRAPH_NO_NEIGHBOURS =
   'Todavía no hay conexiones que mostrar para esto. Aparecerán cuando varios ' +
@@ -690,6 +786,153 @@ export function resultsSummary(input: {
   return `${input.shown.toLocaleString('es-MX')} de ${input.total.toLocaleString('es-MX')} ${noun}`;
 }
 
+// ── The scope picker (platform admins only) ────────────────────────────────
+//
+// 🔴 SCOPE SELECTION, NEVER CONTENT (ADR §7.1). What follows lets a platform
+// admin choose WHICH ecosistema `/grafo` is describing. It changes nothing
+// about what is shown of it: same minimum-support threshold, same
+// published-only scope, same rows a member of that ecosistema would see. There
+// is deliberately no unprotected view, and this is not one.
+//
+// ⚠ WHY IT EXISTS AT ALL. `resolveEcosystem` answers "which ecosistemas am I a
+// MEMBER of", and oversight is not membership (`/admin`'s header spells this
+// out, and `refuseSelfAssignment` in the backend stops an admin joining one to
+// work around it). Without a picker, an admin who belongs to nothing was shown
+// "no perteneces a ningún ecosistema" on a page they are entitled to read for
+// every tenant on the installation.
+
+/**
+ * Everything the picker needs. `null` on `GrafoPageData` ⇒ this caller is not a
+ * platform admin and there is no picker — not "the picker is empty".
+ */
+export interface GraphScopePicker {
+  /** Every ecosistema on the installation, or the current page of them. */
+  rows: Ecosystem[];
+  /** The backend's own total for the current filter. Survives the page cap. */
+  total: number;
+  /** `true` ⇒ `rows` is a prefix, so the search box has to reach the server. */
+  truncated: boolean;
+  /** `false` ⇒ the read failed. NOT "there are no ecosistemas". */
+  ok: boolean;
+  /** The search that produced `rows`, echoed back so the input can show it. */
+  search: string;
+  /**
+   * Ids the caller is a MEMBER of.
+   *
+   * 🔴 A LABEL, NEVER A FILTER — the same rule `/admin`'s switcher states. You
+   * may look at all of them; you belong to some of them. Showing which is what
+   * keeps "reviewing a tenant" and "working in a tenant" from blurring together
+   * in the reader's head.
+   */
+  mine: string[];
+  /** `true` ⇒ `?eco=` named an ecosistema that does not exist. Say so. */
+  notFound: boolean;
+}
+
+/**
+ * 🔴 WHERE "CAMBIAR DE ECOSISTEMA" GOES — AND WHAT IT DELIBERATELY DROPS.
+ *
+ * `?entidad=` and `?conexion=` are graph entity ids, and an entity id belongs to
+ * exactly ONE ecosistema. Carrying them across a switch would ask the backend
+ * for a stranger's id, which answers `not-found`, so the new ecosistema's graph
+ * would open on *"eso ya no aparece en el grafo"* — a scary sentence about a
+ * corpus that is perfectly fine. So the selection is dropped and the picker
+ * lands on the ranked lists.
+ *
+ * `?q=` IS kept: it is the ecosistema search term, and losing it would close the
+ * list someone is halfway through reading.
+ */
+export function graphEcosystemHref(id: string, search = ''): string {
+  const qs = new URLSearchParams({ eco: id });
+  const term = search.trim();
+  if (term) qs.set('q', term);
+  return `/grafo?${qs.toString()}`;
+}
+
+/**
+ * 🔴 THE MIRROR OF `graphEcosystemHref`, AND THE BUG IT EXISTS TO PREVENT.
+ *
+ * Selecting an entity rebuilds the URL from scratch. Build it from `entidad`
+ * and `conexion` alone and `?eco=` is DROPPED — so a platform admin viewing a
+ * tenant they are not a member of would, on their first click, silently fall
+ * back to their own default ecosistema and be shown a different graph than the
+ * one they just clicked in. Nothing would error; the page would simply be about
+ * something else.
+ *
+ * So the two directions have one rule each, and they are opposites on purpose:
+ *  · switching ecosistema DROPS the entity selection (ids are per-ecosistema),
+ *  · selecting an entity KEEPS the ecosistema scope.
+ *
+ * `conexion` is only meaningful with an `entidad`, and is dropped without one.
+ */
+export function graphEntityHref(
+  entidad: string | null,
+  conexion: string | null,
+  scope: { eco?: string | null; q?: string | null } = {},
+): string {
+  const qs = new URLSearchParams();
+  if (entidad) qs.set('entidad', entidad);
+  if (entidad && conexion) qs.set('conexion', conexion);
+  if (scope.eco) qs.set('eco', scope.eco);
+  if (scope.q) qs.set('q', scope.q);
+  const query = qs.toString();
+  return query ? `/grafo?${query}` : '/grafo';
+}
+
+export const GRAPH_SWITCHER_LABEL = 'Estás viendo';
+export const GRAPH_SWITCHER_NONE = 'Ninguno';
+export const GRAPH_SWITCHER_OPEN = 'Cambiar de ecosistema';
+export const GRAPH_SWITCHER_CLOSE = 'Cerrar';
+export const GRAPH_SWITCHER_SEARCH_LABEL = 'Buscar ecosistema';
+export const GRAPH_SWITCHER_SEARCH_PLACEHOLDER = 'Buscar por nombre o clave…';
+export const GRAPH_SWITCHER_SEARCH_GO = 'Buscar';
+export const GRAPH_SWITCHER_MEMBER_TAG = 'Eres miembro';
+
+/**
+ * ⚠ Said on the page. An admin switching ecosistema is entitled to wonder
+ * whether they are now seeing "more" — they are not, and the graph would be
+ * easy to misread as an oversight tool if nobody said so.
+ */
+export const GRAPH_SWITCHER_SCOPE_NOTE =
+  'Cambias de ecosistema, no de permisos: ves exactamente lo mismo que vería quien ' +
+  'pertenece a él, con el mismo mínimo de documentos.';
+
+export const GRAPH_SWITCHER_NOT_FOUND =
+  'El ecosistema que pediste no existe. Estás viendo otro; elígelo de la lista.';
+
+export const GRAPH_SWITCHER_PARTIAL =
+  'No pudimos leer la lista completa de ecosistemas. Puede faltar alguno.';
+
+/** `Ningún ecosistema coincide con "…"`, or null when nothing was typed. */
+export function switcherNoMatches(term: string): string {
+  return `Ningún ecosistema coincide con “${term.trim()}”.`;
+}
+
+/**
+ * The line under the search box.
+ *
+ * ⚠ THREE DIFFERENT SENTENCES, and the first is the only one the browser cannot
+ * answer on its own: when the list is truncated, "12 de 90 coinciden" would be a
+ * claim about 90 rows we never received. Same split `/admin`'s switcher makes.
+ */
+export function switcherCountCopy(input: {
+  total: number;
+  rows: number;
+  matches: number;
+  truncated: boolean;
+  filtered: boolean;
+}): string {
+  const n = (v: number) => v.toLocaleString('es-MX');
+  if (input.truncated) {
+    return `Mostramos ${n(input.rows)} de ${n(input.total)} ecosistemas. Escribe y presiona Buscar para consultar el resto.`;
+  }
+  if (input.filtered) {
+    return `${n(input.matches)} de ${n(input.rows)} ecosistemas coinciden.`;
+  }
+  const noun = input.rows === 1 ? 'ecosistema' : 'ecosistemas';
+  return `${n(input.rows)} ${noun} en la plataforma.`;
+}
+
 // ── The ego network: deterministic radial geometry ──────────────────────────
 //
 // 🔴 NO PHYSICS, NO LAYOUT JITTER, NO CHARTING DEPENDENCY (ADR §7.2). The
@@ -759,9 +1002,10 @@ export function truncateLabel(label: string, max: number): string {
  * The neighbours the picture is allowed to draw: viewable types only, ranked,
  * capped at `EGO_MAX_NEIGHBOURS`.
  *
- * 🔴 The type filter is repeated here on purpose even though parsing already
- * applied it. It is one line, and it means the picture cannot draw a person
- * node even if a future response shape slips one past the parser.
+ * ⚠ The type filter is repeated here on purpose even though parsing already
+ * applied it. It is one line, and it keeps the picture and the lists showing
+ * the same set of types — a type drawn in one and missing from the other is the
+ * bug this belt-and-braces exists to prevent, whichever way the set changes.
  */
 export function egoNeighbours(neighbours: readonly GraphNeighbour[]): GraphNeighbour[] {
   return rankNeighbours(neighbours.filter((n) => isViewableEntityType(n.entity.type))).slice(

@@ -5,16 +5,44 @@
  *
  * There is deliberately NO unprotected internal view. The minimum-support
  * threshold, the published-only scope and the person rule apply to a platform
- * admin exactly as they apply to a member. What differs by role is WHICH
- * ecosistema you may look at — and even that is not decided here: it comes from
- * `resolveEcosystem`, which re-validates the selection cookie against the
- * caller's real memberships on every request.
+ * admin exactly as they apply to a member. What differs by role is SCOPE
+ * SELECTION — which ecosistema you may look at — and never content.
  *
- * ⚠ THE BROWSER NAMES NO ECOSISTEMA. Same rule as `/api/biblioteca`: a client
- * that can name an organization can read one it does not belong to. The only
- * things this route reads out of the URL are two entity ids, and both are
- * passed to an org-scoped backend endpoint that will simply not find them if
- * they belong somewhere else.
+ * ── 🔴 HOW THE SCOPE IS DECIDED, AND THE ONE PLACE IT BRANCHES ──────────────
+ *
+ * For an ordinary member: `resolveEcosystem`, which re-validates the selection
+ * cookie against the caller's real memberships on every request. Unchanged.
+ *
+ * For a PLATFORM ADMIN: `?eco=<id>`, validated by a direct read against the
+ * organizations that actually exist. This is `/admin`'s pattern
+ * (`routes/admin/+page.server.ts`) and it is here for the same reason: oversight
+ * is not membership. Before it, an admin with no membership was told *"no
+ * perteneces a ningún ecosistema… pídele acceso a quien administra"* — on a page
+ * whose backend (`endpoints/graph.ts`, `authoriseOrganization`) already accepts
+ * any organization id from them.
+ *
+ * ⚠ IT SELECTS SCOPE, IT DOES NOT RELAX ANYTHING. The admin's request goes to
+ * the same three org-scoped endpoints, which apply the same threshold and the
+ * same published-only rule. There is no admin branch below this point.
+ *
+ * ⚠ AND IT NEVER WRITES THE `eco_selected` COOKIE. That cookie decides where
+ * this person's OWN uploads and conversations land, and `Sessions.beforeValidate`
+ * still refuses an ecosistema they are not a member of. Looking at a tenant must
+ * not quietly re-point the tenant you WORK in. Hence a URL parameter: visible,
+ * shareable, and gone when you leave. Same rule `/admin` states.
+ *
+ * ⚠ ONE DELIBERATE DIFFERENCE FROM `/admin`. An admin's DEFAULT here is their
+ * own resolved membership (the cookie the sidebar picker sets), not
+ * `mine.list[0]`. `/grafo` has a member reading of itself and `/admin` does
+ * not: an admin who belongs to an ecosistema should see the same one here that
+ * the rest of the app is showing them, or the menu and the page disagree.
+ *
+ * ⚠ FOR EVERYONE ELSE THE BROWSER STILL NAMES NO ECOSISTEMA. Same rule as
+ * `/api/biblioteca`: a client that can name an organization can read one it does
+ * not belong to. `?eco=` is read ONLY after `isPlatformAdmin` passes; for a
+ * member the parameter does not exist. The other two things read out of the URL
+ * are entity ids, and both go to an org-scoped endpoint that will simply not
+ * find them if they belong somewhere else.
  *
  * ── WHY A `+page.server.ts` AND NOT A BFF ROUTE ─────────────────────────────
  *
@@ -31,11 +59,14 @@
  */
 
 import type { PageServerLoad } from './$types';
+import { isPlatformAdmin } from '$lib/components/admin/summary';
+import { listAllEcosystems, readEcosystem } from '$lib/server/admin';
 import { resolveEcosystem } from '$lib/server/ecosystem';
 import { fetchGraphEntity, fetchGraphView } from '$lib/server/graph';
 import {
   sharedDocuments,
   type GrafoPageData,
+  type GraphScopePicker,
   type GraphView,
   type SelectedEdge,
 } from '$lib/graph';
@@ -50,6 +81,9 @@ import {
 
 /** Ids are opaque strings from our own backend; cap them so the URL cannot grow one. */
 const MAX_ID_LENGTH = 120;
+
+/** Same cap `/admin` puts on its ecosistema search box. */
+const MAX_SEARCH_LENGTH = 120;
 
 function readId(raw: string | null): string {
   return (raw ?? '').trim().slice(0, MAX_ID_LENGTH);
@@ -66,20 +100,56 @@ export const load: PageServerLoad = async ({ locals, cookies, url }): Promise<Gr
     entity: null,
     entityState: 'none',
     edge: null,
+    scope: null,
   };
 
   // `hooks.server.ts` already bounces anonymous callers to /sign-in; this is
   // the belt to that braces, and it keeps the check readable here.
   if (!locals.user) return { ...base, state: 'unavailable' };
 
-  const eco = await resolveEcosystem(cookies, locals.token);
+  // 🔴 The ONE role check on this route, and the only thing it unlocks is which
+  // ecosistema may be named. See the header.
+  const admin = isPlatformAdmin(locals.user);
+  const requestedEcoId = admin ? readId(url.searchParams.get('eco')) : '';
+  const ecoSearch = admin ? (url.searchParams.get('q') ?? '').slice(0, MAX_SEARCH_LENGTH) : '';
+
+  // One round trip's latency for all three: the caller's memberships (which is
+  // also the admin's default), the installation's directory, and the ecosistema
+  // `?eco=` named — resolved by a DIRECT read so a term in the search box
+  // cannot make the ecosistema being viewed disappear.
+  const [eco, directory, requestedEco] = await Promise.all([
+    resolveEcosystem(cookies, locals.token),
+    admin ? listAllEcosystems(locals.token, ecoSearch) : null,
+    admin && requestedEcoId ? readEcosystem(locals.token, requestedEcoId) : null,
+  ]);
+
+  const scope: GraphScopePicker | null =
+    admin && directory
+      ? {
+          rows: directory.rows,
+          total: directory.totalDocs,
+          truncated: directory.truncated,
+          ok: directory.ok,
+          search: directory.search,
+          // ⚠ Membership LABELS the rows; it restricts nothing. See the type.
+          mine: eco.list.map((e) => e.id),
+          notFound: Boolean(requestedEcoId) && requestedEco === null,
+        }
+      : null;
+
+  const selected = requestedEco ?? eco.selected ?? directory?.rows[0] ?? null;
+
   // ⚠ Three different "nothing to show" cases, and they must not read the same.
   // `ok: false` means we could not tell — saying "no perteneces a ningún
   // ecosistema" there sends someone to ask for access they already have.
-  if (!eco.ok) return { ...base, state: 'unavailable' };
-  if (!eco.selected) return { ...base, state: 'no-ecosystem' };
+  if (!selected) {
+    // For an admin, "we could not tell" needs BOTH reads to have failed: an
+    // unreadable membership list is irrelevant when the directory came back.
+    const couldNotTell = admin ? !eco.ok && !directory?.ok : !eco.ok;
+    return { ...base, scope, state: couldNotTell ? 'unavailable' : 'no-ecosystem' };
+  }
 
-  const organizationId = eco.selected.id;
+  const organizationId = selected.id;
   const entityId = readId(url.searchParams.get('entidad'));
   const edgeId = readId(url.searchParams.get('conexion'));
 
@@ -113,11 +183,12 @@ export const load: PageServerLoad = async ({ locals, cookies, url }): Promise<Gr
 
   return {
     state: 'ready',
-    ecosystem: { id: eco.selected.id, name: eco.selected.name },
+    ecosystem: { id: selected.id, name: selected.name },
     view: viewResult.view,
     viewOk: viewResult.ok,
     entity: detail,
     entityState: entityResult ? entityResult.state : 'none',
     edge,
+    scope,
   };
 };
