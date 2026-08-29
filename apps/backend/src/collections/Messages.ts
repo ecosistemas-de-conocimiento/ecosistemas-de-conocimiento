@@ -89,20 +89,49 @@ export const protectMessageCorpusState: CollectionBeforeValidateHook = async ({
    * anonymisation gate outright; a client that can set `corpusStatus` decides
    * what gets embedded and what gets re-embedded.
    */
-  const SERVER_OWNED = [
-    'redactedText',
-    'corpusStatus',
-    'corpusIngestId',
-    'corpusError',
-    'anonymisationReport',
-  ] as const
+  /**
+   * What each of these is worth at CREATE time, server-side.
+   *
+   * 🔴 `corpusStatus` is SET, not deleted, and that distinction broke every
+   * message write in the product.
+   *
+   * The comment that used to sit here said deleting the key "lets Payload apply
+   * the default". It does not: Payload resolves field defaults BEFORE the
+   * collection `beforeValidate` hook runs, so by the time we get here the
+   * default is already on `data` — and deleting it hands validation a
+   * `required` field with nothing in it. `POST /api/messages` answered
+   * `400 "Corpus Status is required"` for EVERY caller, which is the route the
+   * web BFF writes every chat turn through. Measured against the running
+   * backend, not inferred.
+   *
+   * ⚠ The lesson worth keeping: a comment that names its assumption is only
+   * half the work. This one named it and was still wrong for months of hook
+   * ordering. Anything relying on when a framework runs its own machinery needs
+   * a test that would fail if the order changed — see the create tests below.
+   *
+   * `null` here means "clear it"; a string means "force it to this".
+   */
+  const SERVER_OWNED_ON_CREATE = {
+    redactedText: null,
+    // The only correct starting point: this turn has not been offered to the
+    // corpus yet. `skipped` would silently exclude it forever.
+    corpusStatus: 'pending',
+    corpusIngestId: null,
+    corpusError: null,
+    anonymisationReport: null,
+  } as const
+
+  const SERVER_OWNED = Object.keys(SERVER_OWNED_ON_CREATE) as Array<
+    keyof typeof SERVER_OWNED_ON_CREATE
+  >
 
   for (const key of SERVER_OWNED) {
     if (operation === 'create') {
-      // ⚠ Deleted, not pinned. `corpusStatus` is `required` with a
-      // `defaultValue`, so removing the key lets Payload apply the default —
-      // which is `pending`, the only correct starting point.
-      delete next[key]
+      const initial = SERVER_OWNED_ON_CREATE[key]
+      // Assigning `null` rather than deleting is deliberate for the optional
+      // ones too: it overwrites whatever a client sent instead of trusting that
+      // an absent key and a null are handled the same way downstream.
+      next[key] = initial
     } else if (key in original) {
       // ⚠ Pinned to the stored value rather than deleted: `corpusStatus` is
       // `required`, and deleting it on an update fails validation on every

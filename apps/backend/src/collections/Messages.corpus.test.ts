@@ -133,16 +133,51 @@ describe('🔴 the corpus cursor and the gate’s verdict are server-owned', () 
     anonymisationReport: { stages: [], pseudonyms: 0 },
   }
 
-  it('strips every one of them on create', async () => {
+  it('overwrites every one of them on create', async () => {
     // 🔴 A client-supplied `redactedText` is the gate bypass: conversation
     // ingest treats a stored redaction as "already cleared" and enqueues it.
     const next = await create(
       { session: ANA_SESSION, role: 'assistant', content: 'hola', ...SMUGGLED },
       ANA,
     )
-    for (const key of Object.keys(SMUGGLED)) {
-      expect(next).not.toHaveProperty(key)
-    }
+    expect(next.redactedText).toBeNull()
+    expect(next.corpusIngestId).toBeNull()
+    expect(next.corpusError).toBeNull()
+    expect(next.anonymisationReport).toBeNull()
+  })
+
+  /**
+   * 🔴 THIS TEST EXISTS BECAUSE ITS PREDECESSOR ASSERTED THE BUG.
+   *
+   * The old version asserted `not.toHaveProperty('corpusStatus')` on create,
+   * matching a hook that DELETED the key on the belief that Payload would then
+   * apply the field's `defaultValue`. Payload applies defaults BEFORE this
+   * hook, so deleting the key left a `required` field empty and
+   * `POST /api/messages` answered 400 for every caller in the product — the
+   * route the web BFF writes every chat turn through.
+   *
+   * A green suite is not evidence when the assertion is a transcript of the
+   * implementation. This one asserts the VALUE the row must start life with,
+   * which is a claim about the product and survives a rewrite of the hook.
+   */
+  it('starts a new turn at `pending`, never absent — an empty required field 400s', async () => {
+    const next = await create(
+      { session: ANA_SESSION, role: 'assistant', content: 'hola', ...SMUGGLED },
+      ANA,
+    )
+    expect(next.corpusStatus).toBe('pending')
+  })
+
+  it('forces `pending` even when the client asks for `skipped`', async () => {
+    // `skipped` means "this turn will never be offered to the corpus". Letting a
+    // client choose it at creation is a quiet, permanent opt-out of the whole
+    // conversation-ingest path — invisible afterwards, because a skipped row
+    // looks exactly like one the server decided to skip.
+    const next = await create(
+      { session: ANA_SESSION, role: 'user', content: 'hola', corpusStatus: 'skipped' },
+      ANA,
+    )
+    expect(next.corpusStatus).toBe('pending')
   })
 
   it('pins them to the stored values on update', async () => {
