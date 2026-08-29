@@ -110,3 +110,30 @@ export function adminCredentials(): AdminCredentials {
 
 /** Directory holding the upload fixtures (`e2e/fixtures`). */
 export const fixturesDir = resolve(here, 'fixtures');
+
+let stackVars: Map<string, string> | null = null;
+
+/**
+ * Any other value out of `infra/.env` — the stack's own environment, read the
+ * way Compose read it.
+ *
+ * ⚠ Used for the database credentials in `e2e/db.ts` and NOTHING ELSE. Every
+ * other value this suite needs is either a URL it can be pointed at or one of
+ * the two seeded credentials above. A process env var of the same name wins, so
+ * CI can inject without a file on disk.
+ *
+ * 🔴 Returns the value, never logs it. Same rule as `adminCredentials()`.
+ */
+export function stackVar(name: string): string | null {
+  if (process.env[name]) return process.env[name] as string;
+  if (!stackVars) {
+    const found = envFileCandidates().find((p) => existsSync(p));
+    stackVars = found ? parseDotenv(readFileSync(found, 'utf8')) : new Map();
+  }
+  return stackVars.get(name) ?? null;
+}
+
+/** The backend's REST base URL, for the bits of provisioning the UI cannot do. */
+export const backendUrl = (
+  process.env.EDC_BACKEND_URL ?? 'http://localhost:45402'
+).replace(/\/+$/, '');
