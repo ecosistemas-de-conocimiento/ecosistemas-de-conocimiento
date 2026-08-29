@@ -15,7 +15,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { runGraphExtraction, type GraphSchedulerPayload } from './schedule'
 import type { GraphGenerateClient } from './extract'
-import { GRAPH_PROMPT_VERSION } from './prompt'
+import { GRAPH_FRAGMENT_MAX_CHARS, GRAPH_PROMPT_VERSION } from './prompt'
 
 const LONG_TEXT = `Primer párrafo del acta. ${'x'.repeat(300)}`
 
@@ -224,6 +224,46 @@ describe('runGraphExtraction', () => {
       const mention = created.find((c) => c.collection === 'graphMentions')
       expect(mention?.data.snippet).toBeNull()
       expect(JSON.stringify(created)).not.toContain('nos cortaron el agua')
+    })
+
+    it("stores the model's `fragmento` as the snippet for a `documento`", async () => {
+      // ⚠ THE POSITIVE HALF, and it did not exist before. Every other test here
+      // proves the quotation does NOT arrive somewhere. Without one that proves
+      // it DOES, the whole feature could be silently dead — the schema could
+      // stop asking, the model could stop answering, `parseWindowResponse` could
+      // drop the field — and the suite would stay green, because "no snippet"
+      // is what almost every other case asserts.
+      const { payload, client, created } = harness(
+        response([{ tipo: 'tema', etiqueta: 'Acceso al agua', fragmento: 'nos cortaron el agua' }]),
+      )
+      await runGraphExtraction({
+        payload,
+        docId: 14,
+        organizationId: 5,
+        contentKind: 'documento',
+        text: LONG_TEXT,
+        client,
+      })
+      const mention = created.find((c) => c.collection === 'graphMentions')
+      expect(mention?.data.snippet).toBe('nos cortaron el agua')
+    })
+
+    it('⚠ truncates an over-long quotation before it reaches the table', async () => {
+      // The schema asks for 120 characters; a model that ignores `maxLength`
+      // must not be able to widen the stored re-identification surface.
+      const { payload, client, created } = harness(
+        response([{ tipo: 'tema', etiqueta: 'Acceso al agua', fragmento: 'á'.repeat(400) }]),
+      )
+      await runGraphExtraction({
+        payload,
+        docId: 15,
+        organizationId: 5,
+        contentKind: 'documento',
+        text: LONG_TEXT,
+        client,
+      })
+      const mention = created.find((c) => c.collection === 'graphMentions')
+      expect(mention?.data.snippet).toHaveLength(GRAPH_FRAGMENT_MAX_CHARS)
     })
   })
 })

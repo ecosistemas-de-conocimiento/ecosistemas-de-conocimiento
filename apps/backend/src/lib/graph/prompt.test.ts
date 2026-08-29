@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   GRAPH_EXTRACT_UNIT_TYPE,
+  GRAPH_FRAGMENT_MAX_CHARS,
   GRAPH_PROMPT_VERSION,
   graphBuiltInSpec,
   graphPromptTemplate,
@@ -16,12 +17,18 @@ import {
 } from './prompt'
 import { GRAPH_RELATION_TYPES } from './types'
 
-const tipoEnum = (schema: Record<string, unknown>): string[] => {
-  const entidades = (schema.properties as Record<string, Record<string, Record<string, unknown>>>)
-    .entidades
-  const items = entidades.items as Record<string, Record<string, Record<string, unknown>>>
-  return items.properties.tipo.enum as unknown as string[]
+interface EntityItem {
+  required: string[]
+  properties: Record<string, Record<string, unknown>>
 }
+
+const entityItem = (schema: Record<string, unknown>): EntityItem => {
+  const entidades = (schema.properties as Record<string, Record<string, unknown>>).entidades
+  return entidades.items as unknown as EntityItem
+}
+
+const tipoEnum = (schema: Record<string, unknown>): string[] =>
+  entityItem(schema).properties.tipo.enum as unknown as string[]
 
 describe('graphResponseSchema', () => {
   it('offers every entity type when personas are allowed', () => {
@@ -78,20 +85,40 @@ describe('graphResponseSchema', () => {
     expect(props.relaciones.maxItems).toBe(20)
   })
 
-  it('🔴 asks for NO verbatim quotation — nothing to leak, by construction', () => {
-    // `fragmento` used to carry a literal quote justifying each entity. It is
-    // gone from every schema variant. ADR §7.3.4 already refused to STORE one
-    // for a testimonio on the grounds that a verbatim quotation is the most
-    // direct re-identification surface in the design; not asking for one at all
-    // is the stronger version of the same rule, and it removes the conditional
-    // that someone could later get backwards.
+  it('asks each entity for a `fragmento` — the "why is this here" affordance', () => {
+    // ADR §13.1 removed it; the owner asked for it back. It is requested in
+    // BOTH variants, including for a testimonio, because the rule that protects
+    // a testimonio is a STORAGE rule, not a request rule — see the next test.
     for (const allowPersona of [true, false]) {
-      const schema = graphResponseSchema(allowPersona)
-      const props = schema.properties as Record<string, Record<string, unknown>>
-      const item = props.entidades.items as Record<string, Record<string, unknown>>
-      expect(Object.keys(item.properties)).not.toContain('fragmento')
+      const item = entityItem(graphResponseSchema(allowPersona))
+      expect(Object.keys(item.properties)).toContain('fragmento')
+      expect(item.properties.fragmento).toEqual({ type: 'string', maxLength: 120 })
     }
-    expect(JSON.stringify(graphResponseSchema(true))).not.toContain('fragmento')
+  })
+
+  it('⚠ keeps `fragmento` OPTIONAL, so a window with nothing to quote still parses', () => {
+    // `required` is `['tipo','etiqueta']`. A model that cannot find a short
+    // literal justification must be able to omit the field rather than invent
+    // one — rule 7 says exactly that in words, and this is the schema agreeing.
+    for (const allowPersona of [true, false]) {
+      expect(entityItem(graphResponseSchema(allowPersona)).required).toEqual([
+        'tipo',
+        'etiqueta',
+      ])
+    }
+  })
+
+  it('🔴 caps the quotation at 120 characters, not the original 300', () => {
+    // Two reasons, both real: `fragmento` is the single biggest OUTPUT cost in
+    // the response and this deployment runs at ~8 tok/s (ADR §13); and a
+    // shorter quotation is a smaller re-identification surface even where it is
+    // allowed to be stored. `extract.ts` slices to the SAME number — asserted
+    // in `extract.test.ts`, because the schema's cap is a request and the slice
+    // is what holds.
+    expect(GRAPH_FRAGMENT_MAX_CHARS).toBe(120)
+    expect(entityItem(graphResponseSchema(true)).properties.fragmento).toMatchObject({
+      maxLength: GRAPH_FRAGMENT_MAX_CHARS,
+    })
   })
 })
 
@@ -115,6 +142,42 @@ describe('graphPromptTemplate', () => {
     for (const type of ['tema', 'lugar', 'evento', 'organizacion', 'persona']) {
       expect(template).toContain(type)
     }
+  })
+
+  it('asks for `fragmento` in words, and says how long it may be', () => {
+    // The schema's `maxLength` is not what the model reads first. Rule 7 is.
+    for (const allowPersona of [true, false]) {
+      const template = graphPromptTemplate(allowPersona)
+      expect(template).toContain('7. `fragmento` es una cita LITERAL y BREVE')
+      expect(template).toContain(`máximo ${GRAPH_FRAGMENT_MAX_CHARS} caracteres`)
+      // ⚠ "Omit it" has to be an option in words too, or the model invents one
+      // for every entity — and an invented quotation is worse than none.
+      expect(template).toContain('omite el campo')
+    }
+  })
+
+  it('🔴 numbers the rules 1-9 exactly once each', () => {
+    // The list used to run 1-6 and then have TWO rule 8s and no rule 7 — a list
+    // that contradicted itself about its own length, handed to a model whose
+    // job is to follow it. Restoring `fragmento` is what made the gap visible.
+    for (const allowPersona of [true, false]) {
+      const rules = graphPromptTemplate(allowPersona)
+        .split('\n')
+        .map((line) => /^(\d)\. /.exec(line)?.[1])
+        .filter((n): n is string => n != null)
+      expect(rules).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9'])
+    }
+  })
+
+  it('⚠ states the SAME array caps the schema enforces', () => {
+    // The prose said 60 relations while `maxItems` said 20. On this deployment
+    // the model generates until it is cut off rather than honouring `maxItems`
+    // (see `graphEffortLevel`), so the WORDS are the effective cap and the two
+    // disagreeing by a factor of three was the schema losing.
+    const template = graphPromptTemplate(true)
+    const props = graphResponseSchema(true).properties as Record<string, Record<string, unknown>>
+    expect(template).toContain(`Máximo ${props.entidades.maxItems} entidades`)
+    expect(template).toContain(`y ${props.relaciones.maxItems} relaciones`)
   })
 
   it('🔴 tells the model not to extract people when personas are forbidden', () => {
@@ -146,5 +209,15 @@ describe('GRAPH_PROMPT_VERSION', () => {
   it('is a non-empty string, because it is stamped on every row it produces', () => {
     expect(typeof GRAPH_PROMPT_VERSION).toBe('string')
     expect(GRAPH_PROMPT_VERSION.length).toBeGreaterThan(0)
+  })
+
+  it('🔴 moved off `v1`, because `v1` asked for no `fragmento`', () => {
+    // Every `v1` row has a NULL snippet even for a `documento` that is allowed
+    // one. Those rows are incomplete, not wrong, and this stamp is the ONLY
+    // thing that can find them: `backfill.ts` selects on
+    // `graphPromptVersion != GRAPH_PROMPT_VERSION`. Leaving it at `v1` would
+    // leave the corpus half-extracted under two contracts with nothing able to
+    // tell the halves apart.
+    expect(GRAPH_PROMPT_VERSION).not.toBe('v1')
   })
 })

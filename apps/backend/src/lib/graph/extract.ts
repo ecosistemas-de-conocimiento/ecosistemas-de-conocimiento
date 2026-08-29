@@ -32,6 +32,7 @@
 import { canonicalKey, displayLabel } from './normalise'
 import {
   GRAPH_EXTRACT_UNIT_TYPE,
+  GRAPH_FRAGMENT_MAX_CHARS,
   GRAPH_PROMPT_VERSION,
   graphBuiltInSpec,
   graphUnitKey,
@@ -187,9 +188,14 @@ export function parseWindowResponse(parsed: unknown): ParsedWindow | null {
     // An entity with no usable label has no identity, so it is not an entity.
     if (!etiqueta || !canonicalKey(etiqueta)) continue
     const menciones = Number(row.menciones)
+    // 🔴 THE SLICE IS THE CAP THAT ACTUALLY HOLDS. `maxLength` in the JSON
+    // Schema is a request; ai-service withholds `parsed` when a response misses
+    // the schema, but nothing here may depend on a length rule having been
+    // honoured before the bytes are stored. Same number as the schema, imported
+    // rather than repeated — see `GRAPH_FRAGMENT_MAX_CHARS`.
     const fragmento =
       typeof row.fragmento === 'string' && row.fragmento.trim()
-        ? row.fragmento.trim().slice(0, 300)
+        ? row.fragmento.trim().slice(0, GRAPH_FRAGMENT_MAX_CHARS)
         : null
     entities.push({
       tipo: row.tipo,

@@ -3,6 +3,9 @@
  *
  *   GET  /api/graph/view?organization=<id>&type=<t>&q=<text>
  *   GET  /api/graph/entity/:id?organization=<id>
+ *        → { entity, neighbours: [{ entity, relationType, support, documents }],
+ *            documents }   — `neighbours[].documents` is the evidence for THAT
+ *                            EDGE, not the intersection of two entity lists.
  *   POST /api/graph/retrieve      { organization, query, limit? }
  *
  * ⚠ THESE THREE ROUTES ARE THE ONLY WAY TO READ THE GRAPH. The collections
@@ -264,6 +267,28 @@ export const graphViewEndpoint: Endpoint = {
  * 🔴 Separating them would let a caller walk the id space and learn exactly what
  * the threshold is suppressing — which is the thing the threshold exists to
  * prevent (ADR §7.3.3).
+ *
+ * ── EACH NEIGHBOUR CARRIES ITS OWN EVIDENCE, AND THERE IS NO `/edge` ROUTE ──
+ *
+ * `neighbours[].documents` is the published documents that EVIDENCE THAT EDGE,
+ * straight out of `graph_relations` (ADR §7.2). It is folded into this answer
+ * rather than given a route of its own, and the reason is the shape of the
+ * caller: the panel behind this data draws an ego-network of up to twenty edges
+ * and lets a person click between them. A `GET /api/graph/edge/:from/:to/:type`
+ * would turn one click into a round-trip, and filling the panel into twenty of
+ * them — each re-running authorisation, both rate-limit buckets and the same
+ * `ent_support` CTE.
+ *
+ * 🔴 It would also be a FOURTH place ADR §6's three gates are written. They are
+ * written once, in `lib/graph/queries.ts`, and the per-edge statement reuses the
+ * very fragments the neighbour statement uses, so the two cannot come to
+ * disagree about which edges exist. A separate route with its own copy of the
+ * thresholds is precisely the drift `queries.test.ts` exists to catch — and the
+ * thing it could not catch is two correct queries that disagree.
+ *
+ * ⚠ The response grows: worst case twenty edges × ten documents. That is the
+ * trade, it is bounded in SQL by `MAX_EDGE_DOCUMENTS`, and it is one body
+ * instead of twenty.
  */
 export const graphEntityEndpoint: Endpoint = {
   path: '/graph/entity/:id',
