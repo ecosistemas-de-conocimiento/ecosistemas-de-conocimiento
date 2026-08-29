@@ -940,3 +940,73 @@ authorisation is not counted — tested.
 ⚠ Inherited from `lib/rateLimit.ts` and unchanged here: the counters are **in-process**, so N replicas
 allow N× every limit above. That module's header explains the seam for a shared store. This app runs
 one replica.
+
+---
+
+## 16. § 13.1 REVERSED — `fragmento` is back, and § 7.2's edge documents are real
+
+Two owner decisions of 2026-08-29, and the defects each one turned up.
+
+### 16.1 `fragmento` returns, documento-only
+
+§ 13.1 removed the per-entity quotation. The owner has asked for it back, and § 13.1 is **superseded**:
+the schema asks for `fragmento` again, capped at **120 characters** rather than the original 300.
+
+✅ **No migration.** `graph_mentions.snippet` was deliberately kept when the field was removed, exactly
+so this reversal would be a schema change and not a redesign. That decision paid.
+
+The privacy rule is unchanged and still enforced in three places — `mergeWindows`, the writer, and a
+SQL `CASE` in `queries.ts`: **a snippet is stored only for a `documento`**, never for a `testimonio` or
+a `conversacion`. What § 13.1 got wrong was not the rule but the conclusion; refusing to *ask* for a
+quotation was a stronger version of the rule than the product needed, and it cost the analysis view
+its "why is this entity here" affordance for ordinary documents too.
+
+⚠ `GRAPH_PROMPT_VERSION` is now **`v2`**. Every `v1` row has a NULL snippet even where one is allowed,
+and the stamp is the only thing that can find them for re-extraction.
+
+### 16.2 🔴 Three defects the reversal exposed, all mine, all in the § 13.1 removal pass
+
+Recorded because two of them were live for a day and neither was visible from any test:
+
+1. **The prompt's rules were numbered 1–6, then two rule 8s and no rule 7.** Removing `fragmento`
+   deleted rule 6 and renumbered by hand, badly. The model was handed a numbered list that
+   contradicted itself about its own length. Now 1–9, contiguous, with a test.
+2. **Rule 9 said "60 relaciones" while `maxItems` said 20** — the pre-§ 13.1 number, left behind.
+   🔴 This one was worse than cosmetic. § 13's measurement showed this model **generates until it is
+   cut off rather than honouring `maxItems`**, so the *words* are the effective cap and the wrong
+   number was the one actually in charge.
+3. **No test ever asserted a snippet ARRIVES.** Every existing snippet test asserted one does *not*
+   reach somewhere it should not. So the whole feature could have gone silently dead — schema stops
+   asking, model stops answering, parser drops the field — with the suite still green. There is now a
+   positive test.
+
+⚠ The general lesson, worth more than the three bugs: **a suite made entirely of negative assertions
+cannot tell "correctly suppressed" from "never produced".** Every privacy rule in this design is a
+negative assertion. Each one needs a positive counterpart proving the thing it suppresses exists in
+the first place.
+
+### 16.3 § 7.2's supporting documents are now real, not an intersection
+
+The graph view showed an edge's supporting documents by **intersecting the two entities' document
+lists**, and the UI said so honestly — *"documentos en los que aparecen los dos"*, not *"los que
+sustentan esta conexión"*. `graph_relations` has always held one row per `(document, from, to, type)`,
+so the true answer was one query away.
+
+`entityEdgeDocumentsQuery` returns it for the whole ego-network in a single statement: an `edges` CTE
+reusing the same aggregation `entityNeighboursQuery` does (so the two cannot disagree about which
+edges exist), an `evidence` CTE over the real relation rows, and a
+`ROW_NUMBER() OVER (PARTITION BY neighbour, type)` per-edge cap — a plain `LIMIT` would have spent the
+whole budget on the first edge.
+
+**It extends `GET /api/graph/entity/:id` rather than adding a `/graph/edge/…` route**, for a reason
+worth keeping: a fourth route would be a fourth place § 6's three gates are written, and the audit
+loop catches a *missing* clause but cannot catch two correct queries drifting apart. It is also 20
+round-trips saved on a panel that draws ≤20 edges.
+
+🟡 **The precise list is narrower than the intersection it replaces, and therefore more identifying in
+principle.** It is safe for one reason and it is worth naming: minimum support means the shortest list
+this can ever return is `GRAPH_MIN_SUPPORT` documents. It cannot point at one testimony.
+
+⚠ No snippet on the edge list, and not merely because a test forbids it: `graph_mentions.snippet` is
+keyed on `(document, entity)`, so an edge has two candidate quotations and neither is evidence *of the
+edge*.
