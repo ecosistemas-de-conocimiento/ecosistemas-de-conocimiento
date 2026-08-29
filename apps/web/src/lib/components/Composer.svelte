@@ -5,15 +5,22 @@
   import { CHAT_KIND_REGISTRY } from '$lib/engine/registry';
   import { searchContext } from '$lib/engine/client';
   import type { ContextRef } from '$lib/types';
+  import { composerPlaceholder } from '$lib/layout';
 
   let {
     busy = false,
     sessionId,
+    narrow = false,
     onsend,
     oncancel,
   }: {
     busy?: boolean;
     sessionId: string;
+    /**
+     * ⚠ Narrow screen. Only the placeholder depends on it — the full hint is
+     * clipped mid-word at 380px. See `composerPlaceholder` for why.
+     */
+    narrow?: boolean;
     /** Send the message text + the `@`-mention refs attached to it. */
     onsend: (text: string, refs: ContextRef[]) => void;
     oncancel?: () => void;
@@ -165,9 +172,7 @@
       oninput={onInput}
       onkeyup={onInput}
       onclick={onInput}
-      placeholder={busy
-        ? 'Generando…  (Esc o Detener para cancelar)'
-        : 'Escribe un mensaje…  (@ para mencionar · Enter envía, Shift+Enter salto de línea)'}
+      placeholder={composerPlaceholder(busy, narrow)}
       class="composer-input"
       data-testid="composer-input"
       disabled={busy}
@@ -217,7 +222,12 @@
   .composer-input {
     flex: 1;
     resize: none;
-    min-height: 40px;
+    /* ⚠ TWO ROWS, NOT ONE. The placeholder wraps at every width the app is
+       used at — to two lines at 1280px and to two at 380px — and a 40px box
+       clipped the second one mid-word. The empty state of the app's most
+       important control read as broken. A typed message still grows the box up
+       to `max-height` exactly as before. */
+    min-height: 3.6rem;
     max-height: 10rem;
     padding: 0.5rem 0.75rem;
     border-radius: var(--edc-radius-2);
@@ -242,4 +252,6 @@
     opacity: 0.7;
     cursor: not-allowed;
   }
+
+
 </style>

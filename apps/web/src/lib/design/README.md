@@ -13,9 +13,24 @@ desde `apps/web/src/app.css`, y lo consumen tres lugares:
 
 ## 1. La identidad, en una línea
 
-**Gris frío como base + un solo acento azul institucional.** Sin degradados
-decorativos, sin tipografía de marca, sin hue fuerte. Es una herramienta de
-lectura y consulta documental, no una app de consumo.
+**Gris frío como base + un solo acento: CIRUELA APAGADA `#6d28d9`.** Sin
+degradados decorativos, sin tipografía de marca. Es una herramienta de lectura y
+consulta documental, no una app de consumo.
+
+> **El acento dejó de ser un marcador de posición.** Hasta ahora era un azul
+> institucional elegido sólo para no comprometer a nadie. La organización eligió
+> la ciruela; el azul ya no está en el archivo.
+>
+> Se cambió **una sola cosa**: el bloque 1 (`--edc-ramp-accent-*`). Ningún
+> componente tenía un hex escrito a mano, así que no hubo nada más que tocar.
+> Los derivados (`-soft`, `-outline`, anillo de foco, tinte de selección) son
+> `color-mix` y se recalcularon solos.
+
+**Por qué ciruela y no otra cosa:** no colisiona con ningún color de estado
+(rojo de error, verde de éxito, ámbar de aviso), así que una acción primaria
+nunca se lee como una alerta. Y a **7.10:1 sobre blanco** —medido, §4— sirve
+simultáneamente como texto sobre superficie y como relleno con texto blanco,
+porque el ratio de contraste es simétrico.
 
 ### Por qué
 
@@ -29,7 +44,8 @@ Decisiones que se derivan de eso:
 
 | Decisión | Razón |
 | --- | --- |
-| Un solo acento (azul `#245a8d`) | "Neutral" = no comprometer a la organización con una paleta que aún no elige. Un acento basta para foco, enlaces y acción primaria. |
+| Un solo acento (ciruela `#6d28d9`) | Un acento basta para foco, enlaces, acción primaria y sección actual. Antes era un azul de relleno (`#245a8d`) precisamente porque la organización aún no había elegido; ya eligió. |
+| El acento oscuro NO se usa en modo oscuro | `#6d28d9` sobre `surface` da **2.33:1**. Ningún color cumple 4.5:1 contra blanco y contra casi-negro a la vez (§4). En oscuro el rol lo juegan `#a78bfa` (texto) y `#8347ee` (relleno). |
 | `--edc-color-accent` es **grafito**, no un segundo color | El sistema hereda dos tonos, `brand` y `accent`. Se resolvió haciendo `accent` un neutro con énfasis, para que `tone-accent` lea como jerarquía y no como otra identidad. |
 | Degradados retirados | Eran decorativos y de la marca anterior. Los tokens `--edc-gradient-*` se conservan (los consume `Button.svelte`) pero ahora son colores planos. |
 | Pila de fuentes del sistema | No hay pipeline de assets ni red en tiempo de build. El `@import` a Google Fonts se eliminó: en un build sin red bloquea el render. |
@@ -103,56 +119,104 @@ interruptor, sólo hace falta poner `data-theme="dark"|"light"` en `<html>`.
 ## 4. Accesibilidad — contrastes medidos
 
 Todos los valores de abajo están **calculados**, no estimados: fórmula de
-luminancia relativa de WCAG 2.1, sobre los hex reales del archivo. El script
-está en el scratchpad de la sesión (`verify.mjs` + `contrast.mjs`) y es
-reproducible en cualquier calculadora de contraste.
+luminancia relativa de WCAG 2.1, sobre los hex reales de `tokens.css`.
 
-Umbrales: **4.5:1** texto normal · **3:1** texto grande y bordes de controles.
+🔴 **Ya no hay que confiar en esta tabla.** Antes el script vivía en el
+scratchpad de una sesión, así que los números eran ciertos el día que se
+escribieron y no comprobables después. Ahora la comprobación es
+[`contrast.test.ts`](./contrast.test.ts): **lee este mismo `tokens.css`**, parsea
+las rampas y afirma cada par. Bajar un valor por debajo de AA rompe
+`pnpm --filter @edc/web test`, no la conciencia de quien revise.
 
-### Tema claro
+Umbrales: **4.5:1** texto normal · **3:1** texto grande, bordes de controles y
+anillos de foco (WCAG 1.4.11).
+
+### Tema claro — el acento
+
+| Par | Ratio | |
+| --- | ---: | --- |
+| `brand` `#6d28d9` como texto / superficie `#ffffff` | **7.10** | ✅ AAA |
+| `brand` / fondo de página `#f5f6f8` | **6.57** | ✅ |
+| `brand-strong` `#5b21b6` / superficie | **8.98** | ✅ AAA |
+| blanco / relleno `brand` `#6d28d9` (botón primario) | **7.10** | ✅ AAA |
+| blanco / relleno hover `brand-strong` `#5b21b6` | **8.98** | ✅ AAA |
+| `brand` sobre `brand-soft` (badge suave) | **5.83** | ✅ |
+| `brand-strong` sobre `brand-soft` (sección actual del menú) | **7.37** | ✅ AAA |
+| `brand` sobre `surface-accent` `#ede9fe` | **5.98** | ✅ |
+| `ink` sobre `surface-accent` (conversación abierta) | **15.14** | ✅ |
+| `ink-soft` sobre `surface-accent` | **5.69** | ✅ |
+| anillo de foco (85% brand) / superficie (≥3) | **5.30** | ✅ |
+| anillo de foco / fondo de página (≥3) | **4.99** | ✅ |
+| `brand-outline` (45% brand + `line`) / superficie (≥3) | **5.25** | ✅ |
+| `brand-outline` / fondo de página (≥3) | **4.86** | ✅ |
+
+### Tema claro — el resto (sin cambios; el re-marcado no tocó los neutros)
 
 | Par | Ratio | |
 | --- | ---: | --- |
 | `ink` `#14171b` / superficie `#ffffff` | **17.98** | ✅ |
 | `ink` / fondo de página `#f5f6f8` | **16.63** | ✅ |
 | `ink-body` `#2c3138` / superficie | **13.10** | ✅ |
-| `ink-body` / fondo de página | **12.11** | ✅ |
 | `ink-soft` `#545c68` / superficie | **6.76** | ✅ |
-| `ink-soft` / fondo de página | **6.25** | ✅ |
-| `brand` `#245a8d` como texto / superficie | **7.19** | ✅ |
-| blanco / relleno `brand` | **7.19** | ✅ |
-| `accent` `#44505f` como texto / superficie | **8.21** | ✅ |
+| `accent` (grafito) `#44505f` / superficie | **8.21** | ✅ |
 | `success` `#176c44` / superficie (y blanco encima) | **6.43** | ✅ |
 | `warning` `#8a5a00` / superficie (y blanco encima) | **5.93** | ✅ |
 | `danger` `#a3282c` / superficie (y blanco encima) | **7.25** | ✅ |
 | `line` `#818892` / superficie (borde de control, ≥3) | **3.58** | ✅ |
-| `line` / fondo de página (≥3) | **3.31** | ✅ |
 | `line-strong` `#6b7280` / superficie (≥3) | **4.83** | ✅ |
-| anillo de foco (85% brand) / superficie (≥3) | **5.00** | ✅ |
-| `brand` sobre `brand-soft` (badge suave) | **5.98** | ✅ |
-| `warning` sobre `warning-soft` (el más ajustado) | **4.57** | ✅ |
+| `warning` sobre `warning-soft` (el más ajustado del sistema) | **4.57** | ✅ |
 
-### Tema oscuro
+### Tema oscuro — el acento
+
+⚠ **`#6d28d9` no aparece aquí**, y no puede: sobre `surface` `#1b1f25` da
+**2.33:1**. En oscuro el acento es una ciruela clara del mismo hue.
+
+| Par | Ratio | |
+| --- | ---: | --- |
+| `brand` `#a78bfa` como texto / `surface` `#1b1f25` | **6.08** | ✅ |
+| `brand` / `surface-strong` `#272d35` | **5.10** | ✅ |
+| `brand` / fondo `#14171b` | **6.61** | ✅ |
+| `brand-strong` `#c4b5fd` / `surface-strong` | **7.52** | ✅ AAA |
+| blanco / `gradient-brand` `#8347ee` (botón sólido) | **5.12** | ✅ |
+| blanco / `gradient-brand-hover` `#8b54f0` | **4.54** | ✅ |
+| relleno `#8347ee` / `surface` (silueta del botón, ≥3) | **3.23** | ✅ |
+| relleno `#8347ee` / fondo `#14171b` (≥3) | **3.51** | ✅ |
+| relleno `#8347ee` / `surface-strong` (≥3) | **2.71** | ⚠ ver nota |
+| `brand` sobre `brand-soft` (badge suave) | **5.02** | ✅ |
+| anillo de foco (85% brand) / `surface` (≥3) | **4.77** | ✅ |
+| anillo de foco / `surface-strong` (≥3) | **4.11** | ✅ |
+| `brand-outline` (45% brand + `line`) / `surface` (≥3) | **4.72** | ✅ |
+| `ink` `#f3f5f7` sobre `surface-accent` `#241b33` | **15.02** | ✅ |
+| `ink-body` `#dde2e8` sobre `surface-accent` | **12.60** | ✅ |
+| `ink-soft` `#a6aeb9` sobre `surface-accent` | **7.33** | ✅ |
+| `brand` `#a78bfa` sobre `surface-accent` | **6.03** | ✅ |
+
+⚠ **La nota del 2.71.** Un botón sólido de acento sobre `surface-strong` —el
+fondo oscuro MÁS CLARO del sistema, el de una tarjeta elevada— se separa 2.71:1
+de él, por debajo del 3:1 que pide WCAG 1.4.11 para la silueta de un control.
+No hay salida aritmética: la misma ventana que mantiene el blanco a 4.5:1 encima
+del relleno no deja margen para separarlo más de un fondo tan claro. Lo que
+identifica ese botón en una tarjeta es su etiqueta blanca, que cumple en todos
+lados. **El acento azul anterior tenía el mismo hueco** (`#35709f` medía 2.63:1
+ahí), así que no es una regresión del re-marcado. `contrast.test.ts` afirma el
+par contra `surface` y contra `bg`, y documenta esta excepción en el propio test.
+
+### Tema oscuro — el resto (sin cambios)
 
 | Par | Ratio | |
 | --- | ---: | --- |
 | `ink` `#f3f5f7` / fondo `#14171b` | **16.45** | ✅ |
 | `ink` / `surface-strong` `#272d35` | **12.70** | ✅ |
 | `ink-body` `#dde2e8` / `surface` `#1b1f25` | **12.70** | ✅ |
-| `ink-body` / `surface-strong` | **10.65** | ✅ |
 | `ink-soft` `#a6aeb9` / `surface-strong` | **6.20** | ✅ |
-| `brand` `#6f9fd4` como texto / `surface-strong` | **5.01** | ✅ |
-| `accent` `#a8b3c2` / `surface-strong` | **6.54** | ✅ |
+| `accent` (grafito) `#a8b3c2` / `surface-strong` | **6.54** | ✅ |
 | `success` `#4fae7c` / `surface-strong` | **5.07** | ✅ |
 | `warning` `#cf9a2f` / `surface-strong` | **5.50** | ✅ |
 | `danger` `#ef7c74` / `surface-strong` | **5.16** | ✅ |
-| blanco / `gradient-brand` `#35709f` (botón sólido) | **5.29** | ✅ |
-| blanco / `gradient-brand-hover` `#3a7aab` | **4.61** | ✅ |
 | blanco / `gradient-accent` `#5c6a7d` | **5.51** | ✅ |
 | blanco / `gradient-warning` `#966300` | **5.15** | ✅ |
 | blanco / `gradient-danger` `#bd3e3c` | **5.36** | ✅ |
 | `line` `#717b89` / `surface-strong` (≥3) | **3.24** | ✅ |
-| anillo de foco / `surface` (≥3) | **4.71** | ✅ |
 | `success` sobre `success-soft` (el más ajustado) | **4.66** | ✅ |
 
 ### El compromiso central del tema oscuro
@@ -186,20 +250,44 @@ Si un componente usa `line` para una división decorativa, debería cambiar a
 
 ## 6. Pendientes en componentes (fuera de este directorio)
 
-Estos son los puntos donde el sistema no puede cumplir AA solo, porque el
-componente escribe el color a mano. Cada uno es un cambio de una línea.
+✅ **Los cinco pendientes que listaba esta sección ya están arreglados** —
+`Badge.svelte` y `Button.svelte` usan `--edc-color-on-*` en lugar de `#ffffff`
+escrito a mano, `tone-success` usa el token de color, `tokens.css` cubre los dos
+nombres del atributo interactivo, y `app.html` dice `lang="es"`. Se comprobó
+leyendo los archivos, no de memoria.
 
-| Archivo | Qué pasa | Arreglo |
+Queda un punto abierto, y es de tipografía, no de color:
+
+| Dónde | Qué pasa | Tamaño |
 | --- | --- | --- |
-| `primitives/Badge.svelte` — `.tone-*.emphasis-solid` | `background: var(--edc-color-brand)` + `color: #ffffff`. En oscuro el tono es claro → blanco sobre claro (2.77:1). | `color: var(--edc-color-on-brand)` (y `-on-success`, `-on-warning`, `-on-danger`, `-on-accent`, `-on-neutral`). Los tokens ya existen y en claro valen `#ffffff`, así que no hay regresión. |
-| `primitives/Button.svelte` — `.tone-neutral.variant-solid` | `background: var(--edc-color-ink-body)` + `color: #ffffff`. En oscuro `ink-body` es casi blanco → **1.30:1**. | `color: var(--edc-color-on-neutral)`. |
-| `primitives/Button.svelte` — `.tone-success.variant-solid` | El degradado está escrito a mano (`linear-gradient(135deg, var(--edc-color-success), #44c98e)`) y no hay token `--edc-gradient-success`. | Sustituir por `background: var(--edc-color-success)` en claro; si se quiere token propio, añadir `--edc-gradient-success` siguiendo el patrón de los otros. |
-| `primitives/Button.svelte`, `IconButton.svelte` | Emiten `data-interactive`, pero `tokens.css` apuntaba a `[data-edc-interactive]`. El bloque nunca hacía match: **el anillo de foco del sistema no se aplicaba**. | Ya mitigado en `tokens.css` (ahora cubre ambos nombres). Lo limpio sería unificar el atributo. |
-| `apps/web/src/app.html` | `<html lang="en">` con interfaz en español. | `lang="es"`. Afecta a lectores de pantalla y a la separación silábica. |
+| `components/Sidebar.svelte` (pie), `EcosystemPicker.svelte`, `DocsPanel.svelte` (aviso de borrador), `routes/sign-up` (pista de contraseña), `routes/biblioteca` y `routes/admin` (`.kicker`, `.hint`, chips) | Texto de 9–11px. **Medido en el navegador a 380px**, no estimado. | < 12px |
+
+⚠ Es un problema real para el público de este producto, no una nota de estilo:
+9px en una pantalla barata a plena luz no se lee. No se corrigió aquí porque
+subir la escala tipográfica toca decenas de sitios y hay que volver a mirar cada
+uno; es un cambio propio, con sus propias capturas.
 
 Además: `--button-hover-color` se lee en `Button.svelte` con fallback
 (`var(--button-hover-color, currentColor)`) y no lo define nadie. Es una vía de
 escape intencional, no una rotura.
+
+---
+
+## 6 bis. Nunca señalar sólo con color
+
+🔴 **Regla del sistema, no del componente.** Un lector daltónico y una pantalla
+lavada por el sol pierden exactamente lo mismo: el matiz. Todo estado que
+signifique algo lleva **una segunda señal** — una palabra, una forma o un peso.
+
+Cómo está hoy, comprobado leyendo los componentes:
+
+| Señal | Segunda señal | |
+| --- | --- | --- |
+| Sección actual del menú (`PrimaryNav`) | Barra inferior de 3px + `aria-current="page"` | ✅ ya estaba |
+| Estado de publicación (borrador / publicando / publicado / fallido) | **Texto**: cada estado tiene su palabra en `$lib/publication.ts`; la insignia nunca es sólo un punto de color | ✅ ya estaba |
+| Estado de ingesta (`DocsPanel`) | **Texto** en el chip | ✅ ya estaba |
+| Conversación abierta (`Sidebar`) | Antes: SÓLO el tinte de fondo. Ahora: barra de acento en el borde izquierdo + negrita + `aria-current` | 🔴 arreglado aquí |
+| Panel abierto en pantalla estrecha (`ChatWorkspace`) | Cursor `▾` que gira + borde de acento, además del relleno; y `aria-expanded` | ✅ nuevo, así desde el principio |
 
 ---
 
@@ -213,17 +301,27 @@ escape intencional, no una rotura.
    - `--edc-ramp-graphite-*` — el neutro con énfasis.
 2. Los derivados (`-soft`, `-outline`, anillo de foco) se recalculan solos:
    son `color-mix` sobre la semántica.
-3. **Revalida los contrastes.** Cambiar el acento cambia su luminancia y
-   rompe las tablas de §4. Pares mínimos a recalcular:
-   - acento como texto sobre `surface` y sobre `bg`, en ambos temas
-   - blanco sobre cada `--edc-gradient-*` en ambos temas
-   - `line` sobre `surface` y sobre `bg`, en ambos temas (≥3)
-   - anillo de foco sobre `surface` (≥3)
+3. **Corre `pnpm --filter @edc/web test`.** `contrast.test.ts` lee `tokens.css`
+   y vuelve a medir cada par: acento como texto sobre `surface` y `bg` en ambos
+   temas, blanco sobre cada relleno sólido, la silueta del relleno contra el
+   fondo, `line`, el anillo de foco y los rellenos suaves compuestos. Si algo
+   baja de AA, la prueba falla y dice qué par y con qué número.
+   Después actualiza las tablas de §4 con los valores nuevos.
 4. Si el acento nuevo es claro en modo claro, hay que bajar `--edc-color-on-*`
    a un tono oscuro también en `:root`, no sólo en el bloque oscuro.
 
 Atajo útil para elegir: un color con **≥4.5:1 contra blanco** funciona a la vez
 como texto sobre blanco y como fondo con texto blanco. El ratio es simétrico.
+
+⚠ **El paso más difícil es el 500 (relleno sólido en oscuro).** Vive en una
+ventana estrecha: el blanco encima necesita 4.5:1 (⇒ luminancia ≤ ~0.184) y la
+silueta del botón necesita 3:1 contra `surface` (⇒ luminancia ≥ ~0.141). El
+violeta "natural" del siguiente paso de la rampa, `#7c3aed`, cumple lo primero
+y falla lo segundo. Empieza por ahí y el resto sale solo.
+
+⚠ **Cambiar sólo el acento no basta si el acento nuevo es CLARO en modo claro.**
+En ese caso `--edc-color-on-*` tiene que bajar a un tono oscuro también en
+`:root`, no sólo en el bloque oscuro. Con la ciruela no hizo falta: es oscura.
 
 ---
 

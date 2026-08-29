@@ -278,6 +278,14 @@
 <style>
   .page {
     min-height: 100%;
+    /* 🔴 MEASURED: 459px wide inside a 380px viewport before this line.
+       `.page` is a FLEX ITEM of the root layout's `.app-main` column, and a
+       flex item's default `min-width: auto` refuses to shrink below its
+       min-content — which here is the longest unbreakable document title
+       (`New_musical_interfaces_and_new_music_ma…`). The overflow did not show
+       up as a page scrollbar because `.app-main` scrolls, so it silently
+       pushed the search box and half the filters off the right edge. */
+    min-width: 0;
     max-width: 60rem;
     margin: 0 auto;
     padding: var(--edc-space-6) var(--edc-space-5) var(--edc-space-8);
@@ -358,7 +366,11 @@
     gap: 0.4rem;
   }
   .filter {
-    padding: 0.3rem 0.7rem;
+    /* ⚠ Measured at 30px tall on a 380px screen. A filter is a thing people
+       poke repeatedly with a thumb; `min-height` gets it to the 32px bar
+       without changing how it looks on a desktop. */
+    min-height: 2rem;
+    padding: 0.35rem 0.7rem;
     border-radius: var(--edc-radius-pill);
     border: 1px solid var(--edc-color-neutral-outline);
     background: var(--edc-color-surface);
@@ -425,6 +437,9 @@
     font-size: 1rem;
     font-weight: 700;
     color: var(--edc-color-ink);
+    /* ⚠ Uploaded filenames have no spaces in them. Without this a single long
+       one sets the min-content width of the whole page. */
+    overflow-wrap: anywhere;
   }
   .date {
     font-size: 0.72rem;

@@ -255,6 +255,8 @@
   }
   .toggle {
     flex: none;
+    /* ⚠ Measured at 31px tall on a 380px screen — one pixel under the bar. */
+    min-height: 2rem;
     padding: 0.35rem 0.75rem;
     border-radius: var(--edc-radius-2);
     border: 1px solid var(--edc-color-neutral-outline);
