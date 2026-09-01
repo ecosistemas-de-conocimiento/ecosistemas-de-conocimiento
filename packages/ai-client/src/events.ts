@@ -11,7 +11,7 @@
 // our own tiny emitter; no DOM EventTarget needed.
 
 import type { HttpClient } from './http.js';
-import { AIServiceError } from './errors.js';
+import { errorFromResponse } from './errors.js';
 import type { AppEvent, AppEventType, EventFor } from './types.js';
 
 type AnyHandler = (event: AppEvent) => void;
@@ -111,10 +111,16 @@ export function openEvents(opts: OpenEventsOptions): EventStream {
         signal: ctrl.signal,
       });
       if (!res.ok) {
-        throw new AIServiceError(
-          `failed to open SSE stream (status ${res.status})`,
+        // Routed through the dispatcher WITH headers so a 429 on stream-open
+        // arrives as a `RateLimitedError` carrying its wait, like every other
+        // route. `/v1/events` sits under the same per-key limiter as the rest
+        // of `/v1`, so this is reachable — and an untyped error here is a
+        // consumer that reconnects immediately into the same refusal.
+        // Message and status are unchanged for every other code.
+        throw errorFromResponse(
           res.status,
           { message: `failed to open SSE stream (status ${res.status})` },
+          res.headers,
         );
       }
       const body = res.body;

@@ -54,6 +54,7 @@
 
 import type { Payload } from 'payload'
 
+import { isRateLimited, withRateLimitRetry, type RetryOptions } from './aiRetry'
 import { corpusTextFor } from './anonymiseDocument'
 import { chunkMetadata, contentKindOf, titleFor } from './contentKind'
 import { draftCorpus, publishedCorpus } from './corpus'
@@ -269,6 +270,121 @@ export interface TransitionDeps extends RowDeps {
   /** Absolute callback URL, or undefined when callbacks are not configured. */
   callbackUrl?: string
   now?: () => Date
+  /**
+   * Overrides for the rate-limit backoff around the enqueue. Production leaves
+   * this unset and takes the env-configured defaults; tests inject `sleep` and
+   * `random` so the suite does not actually wait two minutes. See `aiRetry.ts`.
+   */
+  retry?: RetryOptions
+}
+
+// ---------------------------------------------------------------------------
+// 🔴 THE ENQUEUE IS RATE-LIMITED, AND A REFUSAL MUST NOT BE INVISIBLE
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 The message a user sees when ai-service refused because we were going too
+ * fast. Spanish, because it lands in `publicationError` and the UI renders it
+ * verbatim.
+ *
+ * ⚠ IT SAYS "NOTHING WAS SENT", and that is a factual claim we can make only
+ * because a 429 is refused BEFORE the handler runs. It matters: the user's next
+ * question is "did half of it go through?", and for this one failure the answer
+ * is a clean no. Retrying is safe.
+ */
+export function rateLimitedError(action: 'publish' | 'unpublish'): string {
+  const what =
+    action === 'publish'
+      ? 'publicar este documento'
+      : 'quitar este documento de la biblioteca compartida'
+  return (
+    'El servicio de IA está saturado y rechazó la solicitud (límite de peticiones por minuto). ' +
+    `No se envió nada, así que puedes volver a intentar ${what} en unos minutos.`
+  )
+}
+
+/**
+ * Anything else the move threw. Spanish frame, original detail kept for support.
+ *
+ * ⚠ Deliberately vague about WHICH call failed ("devolvió un error", not
+ * "rechazó el envío"): both the ingest and the retire land here, and naming the
+ * wrong one in a message a user reads back to support is worse than naming
+ * neither. The detail in parentheses is the real diagnosis.
+ */
+export function transitionFailedError(action: 'publish' | 'unpublish', detail: string): string {
+  const what =
+    action === 'publish'
+      ? 'publicar este documento'
+      : 'quitar este documento de la biblioteca compartida'
+  return `No se pudo ${what}: el servicio de IA devolvió un error (${detail}).`
+}
+
+/**
+ * 🔴 THE FIX FOR THE 99 INVISIBLE ROWS.
+ *
+ * `beginPublish` sets `publicationStatus: 'publishing'` and THEN enqueues. When
+ * the enqueue threw, the row was already in the in-flight state and nobody wrote
+ * anything down: 99 documents sat at `publishing` with no `publicationError` and
+ * no `publishIngestId`, which reads to a user as "still working" forever and
+ * gives an operator nothing to act on.
+ *
+ * ⚠ CALL THIS FROM EVERY STEP THAT RUNS AFTER THE STATUS WRITE. The rule this
+ * enforces is "once the row says in-flight, no path out of this function may be
+ * silent" — which covers the ingest in both directions AND the retire in
+ * `unpublish`, not just the one call the incident happened to expose.
+ *
+ * ⚠ EVERY failure is stamped, not just the rate limit. A 500, a DNS failure or
+ * a dropped socket produce the exact same invisible row, and "the state says
+ * what happened" is not a property that should hold for one error class only.
+ *
+ * ⚠ THE STATUS IS LEFT ALONE. `publishing` + a populated `publicationError` is
+ * this file's existing vocabulary for "this tried and did not make it" (see
+ * {@link failPublish}). Rolling back to `draft` would claim the document was
+ * never touched.
+ *
+ * ⚠ NEVER MASKS THE ORIGINAL ERROR. If the row write itself fails there is
+ * nothing useful left to do, and replacing the real cause with a Payload write
+ * error would lose the only diagnosis anyone has.
+ */
+async function recordTransitionFailure(
+  doc: PublishableDocument,
+  deps: TransitionDeps,
+  err: unknown,
+  action: 'publish' | 'unpublish',
+): Promise<void> {
+  const reason = isRateLimited(err)
+    ? rateLimitedError(action)
+    : transitionFailedError(action, err instanceof Error ? err.message : String(err))
+  try {
+    await failPublish(doc, deps, reason)
+  } catch (writeErr) {
+    loggerOf(deps)?.warn(
+      { documentId: String(doc.id), action, err: String(writeErr) },
+      '[publish] could not record the enqueue failure on the row — it stays in an in-flight ' +
+        'state with no visible error. The publish janitor is the remaining safety net.',
+    )
+  }
+}
+
+/**
+ * The enqueue, with the server's own backoff applied.
+ *
+ * ⚠ RETRY IS SAFE HERE FOR ONE SPECIFIC REASON: a 429 is refused by the rate
+ * limiter before ai-service's handler runs, so no ingest was created and a
+ * re-send cannot duplicate one. `isRateLimited` is deliberately narrow for
+ * exactly that reason — see `aiRetry.ts`.
+ */
+async function enqueueWithBackoff(
+  deps: TransitionDeps,
+  doc: PublishableDocument,
+  action: 'publish' | 'unpublish',
+  req: Parameters<CorpusMover['ingest']['enqueue']>[0],
+): Promise<{ ingestId: string }> {
+  return withRateLimitRetry(() => deps.client.ingest.enqueue(req), {
+    label: `${action} document ${doc.id}`,
+    ...(loggerOf(deps) ? { log: loggerOf(deps)! } : {}),
+    ...(deps.retry ?? {}),
+  })
 }
 
 /**
@@ -325,37 +441,46 @@ export async function beginPublish(
     context: { __skipDocsExtract: true },
   })
 
-  const result = await deps.client.ingest.enqueue({
-    corpus,
-    documents: [
-      {
-        id: String(doc.id),
-        text,
-        // ⚠ Neutral for gated content — see `titleFor`. A testimony's filename
-        // is free text and never went through the gate.
-        title: titleFor(contentKindOf(doc), doc.name),
-        /**
-         * 🔴 THE SAME BUILDER THE DRAFT INGEST USES, AND THAT IS THE WHOLE
-         * POINT. Publishing RE-EMBEDS the document into a different corpus, so
-         * it rebuilds the chunk metadata from scratch. Assembled inline, this
-         * object silently loses `contentKind` at exactly the moment the material
-         * becomes visible to the entire ecosistema — and then a citation can no
-         * longer say "this is a testimony" or "this came from a previous
-         * answer". See `lib/contentKind.ts`.
-         */
-        metadata: chunkMetadata({
-          docId: String(doc.id),
-          organizationId,
-          contentKind: contentKindOf(doc),
-          format: doc.kind,
-          publication: 'published',
-          title: doc.name,
-        }),
-      },
-    ],
-    language: CORPUS_LANGUAGE,
-    ...(deps.callbackUrl ? { callbackUrl: deps.callbackUrl } : {}),
-  })
+  // 🔴 Backed off and, on final give-up, WRITTEN DOWN. Before this, a refused
+  // enqueue threw straight past every caller and left the row at `publishing`
+  // with nothing on it. See `recordTransitionFailure`.
+  let result: { ingestId: string }
+  try {
+    result = await enqueueWithBackoff(deps, doc, 'publish', {
+      corpus,
+      documents: [
+        {
+          id: String(doc.id),
+          text,
+          // ⚠ Neutral for gated content — see `titleFor`. A testimony's filename
+          // is free text and never went through the gate.
+          title: titleFor(contentKindOf(doc), doc.name),
+          /**
+           * 🔴 THE SAME BUILDER THE DRAFT INGEST USES, AND THAT IS THE WHOLE
+           * POINT. Publishing RE-EMBEDS the document into a different corpus, so
+           * it rebuilds the chunk metadata from scratch. Assembled inline, this
+           * object silently loses `contentKind` at exactly the moment the material
+           * becomes visible to the entire ecosistema — and then a citation can no
+           * longer say "this is a testimony" or "this came from a previous
+           * answer". See `lib/contentKind.ts`.
+           */
+          metadata: chunkMetadata({
+            docId: String(doc.id),
+            organizationId,
+            contentKind: contentKindOf(doc),
+            format: doc.kind,
+            publication: 'published',
+            title: doc.name,
+          }),
+        },
+      ],
+      language: CORPUS_LANGUAGE,
+      ...(deps.callbackUrl ? { callbackUrl: deps.callbackUrl } : {}),
+    })
+  } catch (err) {
+    await recordTransitionFailure(doc, deps, err, 'publish')
+    throw err
+  }
 
   await deps.payload.update({
     collection: 'documents',
@@ -465,32 +590,56 @@ export async function unpublish(
   // direction too: "the shared corpus does not hold this document" is exactly
   // the guarantee unpublishing has to make. Failing instead would strand a
   // document the user has already asked to stop sharing.
-  await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
+  //
+  // ⚠ THE RETIRE IS RECORDED TOO, and it is the SECOND invisible-row hole in
+  // this file. The row is already at `unpublishing` by the time we get here, so
+  // a throw from this call left exactly the shape the publish path was fixed
+  // for: an in-flight status, no error, nothing to retry from — and in this
+  // direction it also means the document is still SHARED while the row claims
+  // it is being withdrawn. `setDocumentValidity` is an admin route, so a
+  // mis-scoped key makes this a 403 on every attempt, not a rare accident.
+  try {
+    await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
+  } catch (err) {
+    await recordTransitionFailure(doc, deps, err, 'unpublish')
+    throw err
+  }
 
   const corpus = draftCorpus(organizationId, userId)
-  const result = await deps.client.ingest.enqueue({
-    corpus,
-    documents: [
-      {
-        id: String(doc.id),
-        text,
-        // ⚠ Neutral for gated content — see `titleFor`. A testimony's filename
-        // is free text and never went through the gate.
-        title: titleFor(contentKindOf(doc), doc.name),
-        // Same shared builder as every other ingest — see `beginPublish`.
-        metadata: chunkMetadata({
-          docId: String(doc.id),
-          organizationId,
-          contentKind: contentKindOf(doc),
-          format: doc.kind,
-          publication: 'draft',
-          title: doc.name,
-        }),
-      },
-    ],
-    language: CORPUS_LANGUAGE,
-    ...(deps.callbackUrl ? { callbackUrl: deps.callbackUrl } : {}),
-  })
+  // ⚠ SAME BACKOFF, AND IT MATTERS MORE IN THIS DIRECTION. By the time we get
+  // here the shared copy is ALREADY retired, so a refused enqueue leaves a
+  // document that is no longer shared and not yet back in drafts. Silently, that
+  // is a document its own uploader can no longer find. The stamped error is what
+  // makes it a state someone can retry out of.
+  let result: { ingestId: string }
+  try {
+    result = await enqueueWithBackoff(deps, doc, 'unpublish', {
+      corpus,
+      documents: [
+        {
+          id: String(doc.id),
+          text,
+          // ⚠ Neutral for gated content — see `titleFor`. A testimony's filename
+          // is free text and never went through the gate.
+          title: titleFor(contentKindOf(doc), doc.name),
+          // Same shared builder as every other ingest — see `beginPublish`.
+          metadata: chunkMetadata({
+            docId: String(doc.id),
+            organizationId,
+            contentKind: contentKindOf(doc),
+            format: doc.kind,
+            publication: 'draft',
+            title: doc.name,
+          }),
+        },
+      ],
+      language: CORPUS_LANGUAGE,
+      ...(deps.callbackUrl ? { callbackUrl: deps.callbackUrl } : {}),
+    })
+  } catch (err) {
+    await recordTransitionFailure(doc, deps, err, 'unpublish')
+    throw err
+  }
 
   await deps.payload.update({
     collection: 'documents',

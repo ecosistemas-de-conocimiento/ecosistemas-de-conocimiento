@@ -41,7 +41,11 @@ export class HttpClient {
     const text = await res.text();
     const parsed = text.length > 0 ? safeJsonParse(text) : undefined;
     if (!res.ok) {
-      throw errorFromResponse(res.status, parsed);
+      // ⚠ `res.headers` IS PART OF THE ERROR, not decoration. A 429's wait can
+      // arrive ONLY in `Retry-After` — that is the whole contract when the
+      // throttle sits in a proxy rather than in ai-service. This used to pass
+      // the body alone, so no consumer could ever back off by the right amount.
+      throw errorFromResponse(res.status, parsed, res.headers);
     }
     return parsed as T;
   }

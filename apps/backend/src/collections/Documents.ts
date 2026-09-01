@@ -1455,61 +1455,89 @@ export async function enqueueIngestForDoc(args: {
     )
   }
 
+  /**
+   * 🔴 THE SAME RATE-LIMITED BUCKET AS THE PUBLISH MOVE, so the same backoff.
+   *
+   * ai-service caps `/v1` at 100 requests per minute per API key. A bulk upload
+   * or a corpus seed pushes many documents through here at once and the refusals
+   * land as `ingest_enqueue_failed: Rate limit exceeded` in the catch below —
+   * visible, but requiring a human to press retry on every one of them.
+   *
+   * ⚠ WAITING IS ALMOST FREE HERE, unlike in `beginPublish`. This runs inside a
+   * `setImmediate` after the request has already returned, so nobody is holding
+   * a connection open while we sleep. The default budget still applies; raise
+   * `AI_RETRY_TOTAL_WAIT_MS` for a bulk seed.
+   *
+   * ⚠ ONLY a 429 is retried — see `lib/aiRetry.ts`. A 500 might mean the ingest
+   * was half-created, and re-sending would embed the document twice.
+   */
+  const { withRateLimitRetry } = await import('@/lib/aiRetry')
+
   try {
-    const result = await client.ingest.enqueue({
-      corpus,
-      documents: [
-        {
-          id: String(docId),
-          // 🔴 THE GATE'S OUTPUT, NEVER `extractedText`. For a `documento` they
-          // are the same string; for a `testimonio` they are not, and sending
-          // the wrong one embeds the unredacted original into a corpus that has
-          // no per-document delete.
-          text: corpusText,
-          // ⚠ `titleFor`, not `fresh.name`. The top-level title is not echoed
-          // back on retrieve, but it IS stored at ai-service — and for a
-          // testimony the uploader's filename is exactly the identifier the
-          // gate just spent two model calls removing from the body.
-          title: titleFor(contentKind, fresh.name),
+    const result = await withRateLimitRetry(
+      () =>
+        client.ingest.enqueue({
+          corpus,
+          documents: [
+            {
+              id: String(docId),
+              // 🔴 THE GATE'S OUTPUT, NEVER `extractedText`. For a `documento` they
+              // are the same string; for a `testimonio` they are not, and sending
+              // the wrong one embeds the unredacted original into a corpus that has
+              // no per-document delete.
+              text: corpusText,
+              // ⚠ `titleFor`, not `fresh.name`. The top-level title is not echoed
+              // back on retrieve, but it IS stored at ai-service — and for a
+              // testimony the uploader's filename is exactly the identifier the
+              // gate just spent two model calls removing from the body.
+              title: titleFor(contentKind, fresh.name),
+              /**
+               * ⚠ BUILT BY `chunkMetadata`, NOT INLINE. It is the same builder the
+               * publish move uses, which is what stops `kind` from being silently
+               * dropped when a document is re-embedded into the shared corpus. See
+               * `lib/contentKind.ts`.
+               */
+              metadata: chunkMetadata({
+                docId: String(docId),
+                organizationId,
+                contentKind,
+                format: fresh.kind,
+                publication: 'draft',
+                title: fresh.name,
+              }),
+            },
+          ],
           /**
-           * ⚠ BUILT BY `chunkMetadata`, NOT INLINE. It is the same builder the
-           * publish move uses, which is what stops `kind` from being silently
-           * dropped when a document is re-embedded into the shared corpus. See
-           * `lib/contentKind.ts`.
+           * 🔴 THE LEXICAL LEG'S STEMMING, and it is only honoured when the corpus
+           * is FIRST created.
+           *
+           * This is a Postgres text-search config name (`regconfig`), not an ISO
+           * locale: `'spanish'`, not `'es'`. Without it the corpus is created as
+           * `'simple'`, which does no stemming at all — so `acuerdo` does not match
+           * `acuerdos`, and `firmamos` does not match `firmar`.
+           *
+           * ⚠ It costs more here than it would in an English product. This is a
+           * Spanish-language repository, Spanish is heavily inflected, and half the
+           * corpus is TRANSCRIBED SPEECH — where people conjugate freely and rarely
+           * repeat a term in the exact form someone later searches for. Dense
+           * retrieval papers over some of it; the hybrid mode's lexical half simply
+           * misses.
+           *
+           * ⚠ APPLIED AT CREATION ONLY. A corpus that already exists keeps whatever
+           * it was made with — setting this does not retro-fix one. Existing
+           * corpora need `client.corpora.update`, or to be rebuilt.
            */
-          metadata: chunkMetadata({
-            docId: String(docId),
-            organizationId,
-            contentKind,
-            format: fresh.kind,
-            publication: 'draft',
-            title: fresh.name,
-          }),
-        },
-      ],
-      /**
-       * 🔴 THE LEXICAL LEG'S STEMMING, and it is only honoured when the corpus
-       * is FIRST created.
-       *
-       * This is a Postgres text-search config name (`regconfig`), not an ISO
-       * locale: `'spanish'`, not `'es'`. Without it the corpus is created as
-       * `'simple'`, which does no stemming at all — so `acuerdo` does not match
-       * `acuerdos`, and `firmamos` does not match `firmar`.
-       *
-       * ⚠ It costs more here than it would in an English product. This is a
-       * Spanish-language repository, Spanish is heavily inflected, and half the
-       * corpus is TRANSCRIBED SPEECH — where people conjugate freely and rarely
-       * repeat a term in the exact form someone later searches for. Dense
-       * retrieval papers over some of it; the hybrid mode's lexical half simply
-       * misses.
-       *
-       * ⚠ APPLIED AT CREATION ONLY. A corpus that already exists keeps whatever
-       * it was made with — setting this does not retro-fix one. Existing
-       * corpora need `client.corpora.update`, or to be rebuilt.
-       */
-      language: CORPUS_LANGUAGE,
-      ...(callbackUrl ? { callbackUrl } : {}),
-    })
+          language: CORPUS_LANGUAGE,
+          ...(callbackUrl ? { callbackUrl } : {}),
+        }),
+      {
+        label: `ingest document ${docId}`,
+        // `console`, like every other log line in this function: the `payload`
+        // handle here is the narrow no-transaction `Pick<BasePayload,'update'>`
+        // and carries no logger.
+        log: { warn: (obj, msg) => console.warn(msg, obj) },
+      },
+    )
     // Don't overwrite ingestStatus here — we already set 'embedding' above,
     // and the ai-service callback will flip it to 'ready' / 'failed'.
     await payload.update({

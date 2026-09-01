@@ -265,3 +265,81 @@ describe('🔴 enqueueIngestForDoc refuses a settled row', () => {
     expect(wire).not.toContain('María López')
   })
 })
+
+// ---------------------------------------------------------------------------
+// 🔴 The rate limit — the same 100/min bucket the publish move hits
+// ---------------------------------------------------------------------------
+
+/**
+ * ai-service caps `/v1` at 100 requests per minute per API key. A bulk upload or
+ * a corpus seed walks straight into that, and before the fix EVERY refusal was a
+ * terminal `ingest_enqueue_failed` a human had to retry by hand, one row at a
+ * time.
+ *
+ * ⚠ Waiting is nearly free on THIS path, unlike `beginPublish`: this function
+ * runs inside a `setImmediate` after the HTTP response has already gone out, so
+ * nothing is holding a connection open while it sleeps.
+ */
+describe('enqueue when ai-service is rate-limiting', () => {
+  const rateLimited = (retryAfterSeconds: number) =>
+    Object.assign(new Error('Rate limit exceeded. Retry after ~1s.'), {
+      status: 429,
+      name: 'RateLimitedError',
+      retryAfterSeconds,
+    })
+
+  /** Put the shared mock back the way `beforeEach` cannot — `mockClear` keeps implementations. */
+  const restoreEnqueue = () => {
+    enqueue.mockReset()
+    enqueue.mockImplementation(async () => ({ ingestId: 'ing_test_1' }))
+  }
+
+  it('🔴 waits and retries a 429 instead of failing the document', async () => {
+    // `retryAfterSeconds: 1` so the suite pays about a second, not a minute. The
+    // wait is the SERVER'S number, not a guess — see `lib/aiRetry.ts`.
+    enqueue.mockImplementationOnce(async () => {
+      throw rateLimited(1)
+    })
+
+    await run()
+
+    expect(enqueue).toHaveBeenCalledTimes(2)
+    // The document lands normally: no `failed`, no error text on the row.
+    expect(updates[indexOfUpdate('ingestId')]).toMatchObject({ data: { ingestId: 'ing_test_1' } })
+    expect(JSON.stringify(updates)).not.toContain('ingest_enqueue_failed')
+  })
+
+  it('🔴 still records a VISIBLE failure when the backoff budget runs out', async () => {
+    // A bounded wait is only safe because giving up is legible. A zero budget is
+    // the degenerate case: try once, never sleep, write down what happened.
+    vi.stubEnv('AI_RETRY_TOTAL_WAIT_MS', '0')
+    enqueue.mockImplementation(async () => {
+      throw rateLimited(30)
+    })
+
+    await run()
+
+    expect(enqueue).toHaveBeenCalledTimes(1)
+    // ⚠ The LAST write, not the first. `ingestError: null` is also written on the
+    // way in (alongside `ingestStatus: 'embedding'`) to clear a previous
+    // attempt's reason, so `indexOfUpdate` finds that one.
+    const failed = updates.at(-1)!.data as Record<string, unknown>
+    expect(failed.ingestStatus).toBe('failed')
+    expect(String(failed.ingestError)).toContain('Rate limit exceeded')
+    restoreEnqueue()
+  })
+
+  it('does NOT retry an error that will not fix itself', async () => {
+    // A 500 might mean the ingest was half-created; re-sending would embed the
+    // document twice into the same corpus.
+    enqueue.mockImplementation(async () => {
+      throw Object.assign(new Error('upstream exploded'), { status: 500 })
+    })
+
+    await run()
+
+    expect(enqueue).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(updates)).toContain('ingest_enqueue_failed')
+    restoreEnqueue()
+  })
+})

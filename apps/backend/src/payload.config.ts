@@ -29,6 +29,7 @@ import { tokenEndpoint } from './endpoints/token'
 import { checkAIServiceCapabilities } from './lib/capabilityCheck'
 import { checkCallbackConfig } from './lib/callbackConfig'
 import { checkAudioServiceConfig } from './lib/audioClient'
+import { startPublishJanitor } from './lib/publishJanitor'
 import { startSessionJanitor } from './lib/sessionJanitorScheduler'
 import { startTranscriptionJanitor } from './lib/transcriptionJanitor'
 import { describeStorageMode, resolveStorageMode } from './lib/storage/client'
@@ -250,6 +251,22 @@ export default buildConfig({
     //    document waits in `transcribing` forever and looks exactly like one
     //    that is still working. See lib/transcriptionJanitor.ts.
     startTranscriptionJanitor(payload)
+
+    // 7. Stalled-PUBLISH sweep. Same shape and same philosophy as (6): ON by
+    //    default, writes one text field, never deletes and never re-drives.
+    //
+    //    🔴 It covers the second non-terminal state this backend has, and the
+    //    one nothing was watching. A 250-document seed left 145 rows in
+    //    `publicationStatus: 'publishing'` — 99 of them with no error and no
+    //    ingest id at all, frozen for 25+ minutes because the ai-service rate
+    //    limiter refused the enqueue after the row had already been flipped to
+    //    the in-flight state.
+    //
+    //    ⚠ It does NOT re-publish anything. The outcome of an accepted ingest
+    //    is unknowable from here, and a sweep that re-enqueued 145 documents on
+    //    a timer would recreate the very rate-limit burst it is cleaning up
+    //    after. See lib/publishJanitor.ts.
+    startPublishJanitor(payload)
   },
   secret: process.env.PAYLOAD_SECRET || '',
   typescript: {
