@@ -68,7 +68,7 @@
  * `transcriptionJanitor.ts`.
  */
 
-import type { Payload } from 'payload'
+import type { Payload, Where } from 'payload'
 
 /** Env var names, so log lines and tests never hand-type a string that can drift. */
 export const PUBLISH_JANITOR_ENABLED_VAR = 'PUBLISH_JANITOR_ENABLED'
@@ -226,13 +226,33 @@ export async function sweepStalledPublishes(
   const deadlineMs = opts.deadlineMs ?? stuckAfterMs()
   const limit = opts.limit ?? 500
 
+  /**
+   * 🔴 EVERY CONDITION IS IN THE QUERY, NOT JUST IN THE LOOP — and the middle
+   * one is a starvation fix, not an optimisation.
+   *
+   * An earlier version filtered on status alone and relied on `sort: 'updatedAt'`
+   * to keep already-errored rows out of the way. That reasoning was wrong. Rows
+   * carrying a `publicationError` never leave `publishing` — only a user retry
+   * clears one — and the ones stamped by `failPublish` (from the enqueue path
+   * and from the ai-service callback) keep their OLD `updatedAt` forever. So
+   * they sort FIRST, not last. Once more than `limit` of them exist — and one
+   * seed produced 145 in a single run — they would permanently fill the page
+   * and a genuinely new invisible stall would never be examined at all.
+   */
+  const cutoff = new Date(now.getTime() - deadlineMs).toISOString()
+  const stalledWhere: Where[] = [
+    { publicationStatus: { in: [...IN_FLIGHT_PUBLICATION_STATES] } },
+    // Already visible, already retryable — and overwriting ai-service's specific
+    // diagnosis with this file's generic one would be a downgrade.
+    { publicationError: { exists: false } },
+    { updatedAt: { less_than: cutoff } },
+  ]
+
   const page = (await payload.find({
     collection: 'documents',
-    where: { publicationStatus: { in: [...IN_FLIGHT_PUBLICATION_STATES] } },
-    // ⚠ OLDEST FIRST. Rows this sweep has already stamped have a fresh
-    // `updatedAt` (its own write bumped them) and sort last, so a long backlog
-    // of already-visible failures can never starve the page and hide a
-    // genuinely new stall behind them.
+    where: { and: stalledWhere },
+    // Oldest first: if the page is full, the rows most certainly stuck are the
+    // ones that get looked at.
     sort: 'updatedAt',
     limit,
     depth: 0,
@@ -246,16 +266,42 @@ export async function sweepStalledPublishes(
 
   for (const doc of docs) {
     if (doc?.id == null) continue
+    // Belt and braces. The query above already excluded everything this rejects;
+    // keeping the predicate here is what makes the rule unit-testable and what
+    // catches a future edit that loosens the `where`.
     if (!isStalledPublish(doc, now, deadlineMs)) continue
 
     try {
-      await payload.update({
+      /**
+       * 🔴 CONDITIONAL ON THE ROW STILL BEING STUCK. Updating by `id` alone
+       * raced the very callback this sweep is waiting for.
+       *
+       * The gap between the `find` and this write is real — up to `limit`
+       * sequential updates — and the 30-minute deadline is sized for "the
+       * ai-service queue is badly backed up", which is precisely when a
+       * callback lands around the deadline. Lose that race and `confirmPublish`
+       * has already set `published` + `publicationError: null`, and we would
+       * stamp `publish_stalled` onto a document that published perfectly.
+       * Nothing ever clears `publicationError` on a `published` row, so that
+       * false alarm would be permanent.
+       *
+       * With the guard the late-callback case is simply a no-op, which is the
+       * honest outcome: the row is fine and there was nothing to report.
+       * Same `where` shape as `holdReview.ts`'s settle.
+       */
+      const res = (await payload.update({
         collection: 'documents',
-        id: doc.id as never,
+        where: { and: [{ id: { equals: doc.id } }, ...stalledWhere] },
         data: { publicationError: stalledPublishReason(doc, waitedMinutes).slice(0, 500) },
         overrideAccess: true,
         context: { __skipDocsExtract: true },
-      })
+      })) as unknown as { docs?: unknown[] }
+
+      // ⚠ COUNT WHAT THE DATABASE ACTUALLY CHANGED. A guarded update that
+      // matched nothing means the row recovered on its own between the read and
+      // the write, and reporting it as "stalled" would put a phantom in the
+      // ERROR log that operators are meant to act on.
+      if ((res?.docs?.length ?? 0) === 0) continue
     } catch (err) {
       opts.log?.warn(
         { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
@@ -265,6 +311,16 @@ export async function sweepStalledPublishes(
     }
     stalled += 1
     if (!doc.publishIngestId) neverEnqueued += 1
+  }
+
+  // ⚠ A FULL PAGE IS ITSELF A SIGNAL. `examined === limit` means there may be
+  // more stalled rows than this sweep could see, and the next one will pick them
+  // up — but an operator staring at a count should know it was truncated.
+  if (docs.length >= limit) {
+    opts.log?.warn(
+      { examined: docs.length, limit },
+      '[publish-janitor] the sweep page was full — more documents may be stuck than this run examined',
+    )
   }
 
   return { examined: docs.length, stalled, neverEnqueued }

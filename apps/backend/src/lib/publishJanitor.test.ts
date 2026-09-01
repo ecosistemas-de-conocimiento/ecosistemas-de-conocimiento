@@ -42,13 +42,28 @@ const DEADLINE_MS = 30 * 60_000
 /** Minutes before NOW, as the ISO string Payload stores. */
 const minutesAgo = (n: number) => new Date(NOW.getTime() - n * 60_000).toISOString()
 
+/**
+ * ⚠ `update` ANSWERS LIKE PAYLOAD'S BULK UPDATE — `{ docs: [...] }` — because
+ * the sweep now writes through a guarded `where` and counts what the database
+ * says it actually changed. A fake that returned `{}` would make every write
+ * look like a no-op.
+ */
 function fakePayload(docs: Array<Record<string, unknown>>) {
-  const update = vi.fn(async (_args: { id: unknown; data: Record<string, unknown> }) => ({}))
+  const update = vi.fn(
+    async (_args: { where?: Record<string, unknown>; data: Record<string, unknown> }) => ({
+      docs: [{ id: 1 }],
+    }),
+  )
   const find = vi.fn(async (_args: Record<string, unknown>) => ({ docs }))
   return {
     payload: { find, update } as unknown as Pick<Payload, 'find' | 'update'>,
     find,
     update,
+    /** The flattened list of `where` clauses on the nth update call. */
+    whereOf(n: number): Array<Record<string, unknown>> {
+      const w = update.mock.calls[n]![0].where as { and?: Array<Record<string, unknown>> }
+      return w?.and ?? []
+    },
   }
 }
 
@@ -181,7 +196,7 @@ describe('sweepStalledPublishes', () => {
   })
 
   it('leaves fresh and already-visible rows untouched', async () => {
-    const { payload, update } = fakePayload([
+    const { payload, update, whereOf } = fakePayload([
       { id: 1, publicationStatus: 'publishing', updatedAt: minutesAgo(5) },
       {
         id: 2,
@@ -197,7 +212,9 @@ describe('sweepStalledPublishes', () => {
     expect(result.examined).toBe(3)
     expect(result.stalled).toBe(1)
     expect(update).toHaveBeenCalledTimes(1)
-    expect(update.mock.calls[0]![0].id).toBe(3)
+    // ⚠ The fake `find` ignores the `where`, so this proves the in-loop
+    // predicate is still a real second gate and not dead weight behind the SQL.
+    expect(whereOf(0)).toContainEqual({ id: { equals: 3 } })
   })
 
   it('counts the invisible ones separately — they are the ones that alarmed us', async () => {
@@ -209,12 +226,79 @@ describe('sweepStalledPublishes', () => {
     expect(result).toEqual({ examined: 2, stalled: 2, neverEnqueued: 1 })
   })
 
-  it('🔴 asks for the OLDEST rows first, so a backlog cannot starve the sweep', async () => {
+  it('🔴 EXCLUDES already-errored rows IN THE QUERY — the starvation fix', async () => {
+    // Rows carrying a publicationError never leave `publishing` (only a user
+    // retry clears one) and keep their OLD updatedAt, so oldest-first sorting
+    // puts them FIRST, not last. Filtering them only in JS meant that once more
+    // than `limit` of them existed they permanently filled the page and a new
+    // invisible stall was never examined. One seed produced 145 of them.
     const { payload, find } = fakePayload([])
-    await sweepStalledPublishes(payload, { now: NOW })
+    await sweepStalledPublishes(payload, { now: NOW, deadlineMs: DEADLINE_MS })
+
     const args = find.mock.calls[0]![0]
     expect(args.sort).toBe('updatedAt')
-    expect(args.where).toEqual({ publicationStatus: { in: ['publishing', 'unpublishing'] } })
+    const clauses = (args.where as { and: Array<Record<string, unknown>> }).and
+    expect(clauses).toContainEqual({ publicationError: { exists: false } })
+    expect(clauses).toContainEqual({
+      publicationStatus: { in: ['publishing', 'unpublishing'] },
+    })
+    // The deadline is in SQL too, so the page holds only genuinely stalled rows.
+    expect(clauses).toContainEqual({
+      updatedAt: { less_than: new Date(NOW.getTime() - DEADLINE_MS).toISOString() },
+    })
+  })
+
+  it('🔴 the WRITE is guarded, so a late callback cannot get a false error', async () => {
+    // The gap between find and update is up to `limit` sequential writes, and
+    // the 30-minute deadline is sized for exactly the backed-up-queue case where
+    // a callback lands around it. Lose that race with an unguarded update and a
+    // successfully published document keeps a permanent `publish_stalled` error
+    // that nothing ever clears.
+    const { payload, whereOf } = fakePayload([
+      { id: 7, publicationStatus: 'publishing', updatedAt: minutesAgo(60) },
+    ])
+    await sweepStalledPublishes(payload, { now: NOW, deadlineMs: DEADLINE_MS })
+
+    const clauses = whereOf(0)
+    expect(clauses).toContainEqual({ id: { equals: 7 } })
+    // Same three conditions as the read — so a row that recovered in between
+    // simply matches nothing.
+    expect(clauses).toContainEqual({ publicationError: { exists: false } })
+    expect(clauses).toContainEqual({
+      publicationStatus: { in: ['publishing', 'unpublishing'] },
+    })
+  })
+
+  it('🔴 a guarded update that matched NOTHING is not counted as stalled', async () => {
+    // The row recovered between the read and the write. Reporting it would put a
+    // phantom in the ERROR log operators are meant to act on.
+    const { payload, update } = fakePayload([
+      { id: 7, publicationStatus: 'publishing', updatedAt: minutesAgo(60) },
+    ])
+    ;(update as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => ({ docs: [] }))
+
+    const result = await sweepStalledPublishes(payload, { now: NOW, deadlineMs: DEADLINE_MS })
+
+    expect(result.examined).toBe(1)
+    expect(result.stalled).toBe(0)
+    expect(result.neverEnqueued).toBe(0)
+  })
+
+  it('warns when the page was full, so a truncated count is not read as the total', async () => {
+    const warn = vi.fn()
+    const rows = Array.from({ length: 3 }, (_, i) => ({
+      id: i + 1,
+      publicationStatus: 'publishing',
+      updatedAt: minutesAgo(60),
+    }))
+    const { payload } = fakePayload(rows)
+    await sweepStalledPublishes(payload, {
+      now: NOW,
+      deadlineMs: DEADLINE_MS,
+      limit: 3,
+      log: { warn },
+    })
+    expect(warn.mock.calls.some((c) => String(c[1]).includes('page was full'))).toBe(true)
   })
 
   it('one bad row does not abandon the rest', async () => {

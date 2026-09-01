@@ -118,8 +118,10 @@ describe('the wait comes from the server', () => {
 describe('withRateLimitRetry — the loop', () => {
   it('does not retry a call that succeeds', async () => {
     const fn = vi.fn(async () => 'ok')
-    const { slept } = fakeSleep()
-    await expect(withRateLimitRetry(fn)).resolves.toBe('ok')
+    // ⚠ `sleep` MUST be passed in. Without it this asserted an array the code
+    // could never touch, and passed whatever the loop did.
+    const { slept, sleep } = fakeSleep()
+    await expect(withRateLimitRetry(fn, { sleep })).resolves.toBe('ok')
     expect(fn).toHaveBeenCalledTimes(1)
     expect(slept).toEqual([])
   })

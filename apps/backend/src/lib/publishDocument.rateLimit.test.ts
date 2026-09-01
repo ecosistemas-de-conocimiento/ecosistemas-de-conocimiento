@@ -166,6 +166,38 @@ describe('beginPublish — 🔴 a rate-limited enqueue is retried, then written 
     ).rejects.toMatchObject({ status: 429 })
   })
 
+  it('🔴 THE THIRD HOLE: a lost ingest id does NOT claim "nothing was sent"', async () => {
+    // The `publishIngestId` write happens AFTER a successful enqueue. If it
+    // throws, the ingest IS running but the callback can never match the row
+    // (it keys on publishIngestId), so the row is stuck permanently — and the
+    // janitor, which splits its message on that same field, would tell the user
+    // "no llegó a enviarse … No se envió nada", inviting a duplicate publish.
+    const update = vi.fn(async (args: { data: Record<string, unknown> }) => {
+      if ('publishIngestId' in args.data && args.data.publishIngestId) {
+        throw new Error('db write lost')
+      }
+      return {}
+    })
+    const payload = {
+      update,
+      logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() },
+    } as unknown as Payload
+    const enqueue = vi.fn(async () => ({ ingestId: 'ing-77' }))
+
+    // ⚠ Still RESOLVES. The publish genuinely started; a hard failure would be
+    // as wrong as saying nothing.
+    await expect(beginPublish(DOC, { payload, client: mover(enqueue) })).resolves.toMatchObject({
+      ingestId: 'ing-77',
+    })
+
+    const written = update.mock.calls.map((c) => String(c[0].data.publicationError ?? ''))
+    const message = written.find((m) => m !== '' && m !== 'null')!
+    expect(message).toContain('ing-77')
+    expect(message).toContain('Se envió')
+    // 🔴 The exact phrase that would be a lie here.
+    expect(message).not.toContain('No se envió nada')
+  })
+
   it('a successful first attempt does not sleep at all', async () => {
     const { payload } = fakePayload()
     const enqueue = vi.fn(async () => ({ ingestId: 'ing-0' }))

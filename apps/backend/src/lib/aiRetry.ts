@@ -57,9 +57,16 @@ export const AI_RETRY_TOTAL_WAIT_MS_VAR = 'AI_RETRY_TOTAL_WAIT_MS'
 /**
  * Total tries, including the first. 4 = one attempt plus three retries.
  *
- * The rate-limit window is one minute, so three retries spread across a
- * ~2-minute budget straddle at least two windows — enough for a burst that
- * overshot the cap by a little, not enough to sit through a sustained overload.
+ * ⚠ THE BUDGET, NOT THIS NUMBER, IS USUALLY WHAT STOPS THE LOOP — so 4 is a
+ * ceiling and not a promise. Whether all four are used depends entirely on how
+ * long the server asks for:
+ *
+ *   · ai-service's own 429 carries the remaining window, typically a few
+ *     seconds under a short burst. Four attempts easily fit in the budget.
+ *   · a 429 with NO timing at all falls back to {@link MAX_SINGLE_WAIT_MS}
+ *     (61s), and two of those overrun the 120s budget — so that case stops at
+ *     two attempts. That is the intended trade: when the server will not say
+ *     how long, minutes of blind waiting are worth less than a visible failure.
  */
 export const DEFAULT_MAX_ATTEMPTS = 4
 

@@ -288,11 +288,16 @@ describe('enqueue when ai-service is rate-limiting', () => {
       retryAfterSeconds,
     })
 
-  /** Put the shared mock back the way `beforeEach` cannot — `mockClear` keeps implementations. */
-  const restoreEnqueue = () => {
+  /**
+   * ⚠ IN `afterEach`, NOT AT THE END OF EACH TEST BODY. `beforeEach` only calls
+   * `mockClear`, which keeps implementations — so a test that sets a throwing
+   * implementation and then FAILS an assertion would leave `enqueue` throwing
+   * for every later test in this file, turning one red test into a cascade.
+   */
+  afterEach(() => {
     enqueue.mockReset()
     enqueue.mockImplementation(async () => ({ ingestId: 'ing_test_1' }))
-  }
+  })
 
   it('🔴 waits and retries a 429 instead of failing the document', async () => {
     // `retryAfterSeconds: 1` so the suite pays about a second, not a minute. The
@@ -326,7 +331,6 @@ describe('enqueue when ai-service is rate-limiting', () => {
     const failed = updates.at(-1)!.data as Record<string, unknown>
     expect(failed.ingestStatus).toBe('failed')
     expect(String(failed.ingestError)).toContain('Rate limit exceeded')
-    restoreEnqueue()
   })
 
   it('does NOT retry an error that will not fix itself', async () => {
@@ -340,6 +344,5 @@ describe('enqueue when ai-service is rate-limiting', () => {
 
     expect(enqueue).toHaveBeenCalledTimes(1)
     expect(JSON.stringify(updates)).toContain('ingest_enqueue_failed')
-    restoreEnqueue()
   })
 })

@@ -352,18 +352,76 @@ async function recordTransitionFailure(
   err: unknown,
   action: 'publish' | 'unpublish',
 ): Promise<void> {
-  const reason = isRateLimited(err)
-    ? rateLimitedError(action)
-    : transitionFailedError(action, err instanceof Error ? err.message : String(err))
+  // ⚠ Building the message is INSIDE the try. It is cheap but not free of
+  // failure modes — `isRateLimited` does an `instanceof` against a class from
+  // another package — and this function's whole job is to be the path that does
+  // not itself throw.
   try {
+    const reason = isRateLimited(err)
+      ? rateLimitedError(action)
+      : transitionFailedError(action, err instanceof Error ? err.message : String(err))
     await failPublish(doc, deps, reason)
   } catch (writeErr) {
     loggerOf(deps)?.warn(
       { documentId: String(doc.id), action, err: String(writeErr) },
-      '[publish] could not record the enqueue failure on the row — it stays in an in-flight ' +
+      '[publish] could not record the transition failure on the row — it stays in an in-flight ' +
         'state with no visible error. The publish janitor is the remaining safety net.',
     )
   }
+}
+
+/**
+ * 🔴 THE INGEST WAS ACCEPTED AND WE COULD NOT WRITE DOWN ITS ID.
+ *
+ * The narrowest hole of the three, and the one with the most misleading failure
+ * mode if it is left alone. `beginPublish`/`unpublish` store `publishIngestId`
+ * in a SEPARATE write after the enqueue returns. If that write throws:
+ *
+ *   · the ingest IS running at ai-service, and
+ *   · `app/api/ai-service/callback/route.ts` matches the completion on
+ *     `doc.publishIngestId === envelope.ingestId`, so the callback can never
+ *     match this row. It is stuck permanently, not merely until the callback.
+ *
+ * ⚠ AND THE JANITOR WOULD LIE ABOUT IT. `publishJanitor.stalledPublishReason`
+ * splits on whether `publishIngestId` is set, so an empty one reads as "never
+ * reached ai-service, nothing was sent, retry freely" — which is exactly
+ * backwards here, and invites the duplicate publish the janitor exists to
+ * prevent. So this stamps the TRUE story itself, before the janitor can guess
+ * the wrong one.
+ *
+ * ⚠ IT DOES NOT RETHROW. The publish genuinely started; reporting a hard
+ * failure to the caller would be as wrong as saying nothing. The row now
+ * carries the ingest id in its message, which is what support needs to
+ * reconcile it by hand.
+ */
+async function recordLostIngestId(
+  doc: PublishableDocument,
+  deps: TransitionDeps,
+  ingestId: string,
+  action: 'publish' | 'unpublish',
+  cause: unknown,
+): Promise<void> {
+  loggerOf(deps)?.warn(
+    { documentId: String(doc.id), action, ingestId, err: String(cause) },
+    '[publish] the ingest was accepted but its id could not be stored — the completion ' +
+      'callback will not match this row and it must be reconciled by hand.',
+  )
+  try {
+    await failPublish(doc, deps, lostIngestIdError(action, ingestId))
+  } catch {
+    // Nothing left to try. The janitor will at least make the row visible, even
+    // if its guess about what happened is the pessimistic one.
+  }
+}
+
+/** ⚠ Must NOT say "nothing was sent" — something was. See {@link recordLostIngestId}. */
+export function lostIngestIdError(action: 'publish' | 'unpublish', ingestId: string): string {
+  const what = action === 'publish' ? 'publicar' : 'quitar de la biblioteca compartida'
+  return (
+    `Se envió la solicitud de ${what} al servicio de IA (referencia ${ingestId}), pero no se ` +
+    'pudo guardar esa referencia, así que no podremos confirmar automáticamente cuándo termine. ' +
+    'Pide ayuda al equipo en lugar de volver a intentarlo, para no duplicar el envío.'
+  )
 }
 
 /**
@@ -482,17 +540,22 @@ export async function beginPublish(
     throw err
   }
 
-  await deps.payload.update({
-    collection: 'documents',
-    id: doc.id as never,
-    // ⚠ Stored on its OWN field, not on `ingestId`. `ingestId` belongs to the
-    // original draft ingest, and overwriting it would make the two callbacks
-    // indistinguishable — the draft's late `ingest.completed` would be read as
-    // "publish confirmed" and retire the draft copy early.
-    data: { publishIngestId: result.ingestId },
-    overrideAccess: true,
-    context: { __skipDocsExtract: true },
-  })
+  try {
+    await deps.payload.update({
+      collection: 'documents',
+      id: doc.id as never,
+      // ⚠ Stored on its OWN field, not on `ingestId`. `ingestId` belongs to the
+      // original draft ingest, and overwriting it would make the two callbacks
+      // indistinguishable — the draft's late `ingest.completed` would be read as
+      // "publish confirmed" and retire the draft copy early.
+      data: { publishIngestId: result.ingestId },
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+  } catch (err) {
+    // ⚠ Does not rethrow — the publish really did start. See the helper.
+    await recordLostIngestId(doc, deps, result.ingestId, 'publish', err)
+  }
 
   return { ingestId: result.ingestId, corpus }
 }
@@ -641,13 +704,18 @@ export async function unpublish(
     throw err
   }
 
-  await deps.payload.update({
-    collection: 'documents',
-    id: doc.id as never,
-    data: { publishIngestId: result.ingestId },
-    overrideAccess: true,
-    context: { __skipDocsExtract: true },
-  })
+  try {
+    await deps.payload.update({
+      collection: 'documents',
+      id: doc.id as never,
+      data: { publishIngestId: result.ingestId },
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+  } catch (err) {
+    // ⚠ Same hole, same handling. See `recordLostIngestId`.
+    await recordLostIngestId(doc, deps, result.ingestId, 'unpublish', err)
+  }
 
   return { ingestId: result.ingestId, corpus }
 }

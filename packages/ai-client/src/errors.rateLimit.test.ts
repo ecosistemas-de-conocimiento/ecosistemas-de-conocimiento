@@ -70,7 +70,11 @@ describe('errorFromResponse — 🔴 a 429 is now a typed, retryable error', () 
 });
 
 describe('retryAfterFrom — where the wait comes from, in order', () => {
-  const headers = (v: string | null) => ({ get: () => v });
+  // ⚠ CHECKS THE NAME. A fake that answers every `get()` with the same value
+  // would pass even if the code read some other header entirely.
+  const headers = (v: string | null) => ({
+    get: (name: string) => (name.toLowerCase() === 'retry-after' ? v : null),
+  });
 
   it('🔴 the Retry-After header WINS over the body', () => {
     // An intermediary sets the header and knows nothing about our body shape.
