@@ -16,7 +16,7 @@ real time to discover.
 | # | File | Blocked on | Parallel-safe | Cost |
 | --- | --- | --- | --- | --- |
 | 01 | `01-quality-test.md` | ✅ approved — **run it** | yes | ~40 LLM calls, ~30 min |
-| 02 | `02-ai-connections.md` | ✅ decided — **read, do not build** | — | none |
+| 02 | `02-ai-connections.md` | ✅ decided — **spec for later, not this sprint** | — | none |
 | 03 | `03-rate-limiter-hook.md` | nothing — ⚠ low priority for EDC | yes | ~3 lines + tests |
 | 04 | `04-junk-hub-nodes.md` | nothing to start; 05 to finish | yes | prompt + full re-extract (~3h) |
 | 05 | `05-failed-extractions.md` | nothing | yes | 11 LLM calls |
