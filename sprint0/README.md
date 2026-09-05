@@ -16,8 +16,8 @@ real time to discover.
 | # | File | Blocked on | Parallel-safe | Cost |
 | --- | --- | --- | --- | --- |
 | 01 | `01-quality-test.md` | ✅ approved — **run it** | yes | ~40 LLM calls, ~30 min |
-| 02 | `02-tenant-api-keys.md` | ✅ decided — **read, do not build** | — | none |
-| 03 | `03-rate-limiter-hook.md` | nothing | yes | ~3 lines + tests |
+| 02 | `02-ai-connections.md` | ✅ decided — **read, do not build** | — | none |
+| 03 | `03-rate-limiter-hook.md` | nothing — ⚠ low priority for EDC | yes | ~3 lines + tests |
 | 04 | `04-junk-hub-nodes.md` | nothing to start; 05 to finish | yes | prompt + full re-extract (~3h) |
 | 05 | `05-failed-extractions.md` | nothing | yes | 11 LLM calls |
 | 06 | `06-held-testimonios.md` | 🟡 **owner/researcher: human review** | n/a | human time |
@@ -32,10 +32,12 @@ the owner any more**, except the human review in task 06.
 
 - **01 — approved.** Run the quality test. It is the first evidence for whether
   GraphRAG earns its per-turn cost.
-- **02 — decided.** One master key for now; a tenant-key handoff system gets
-  built later, by us, not via ai-service's env map. Task 02 is now a briefing
-  document for whoever builds it, not a task. 🔴 It records one thing that system
-  must solve: ai-service has to learn every key it will ever be shown.
+- **02 — decided, and the question was wrong.** EDC has ONE operator and one AI
+  key. Ecosistemas scope content; they are not customers with separate bills.
+  There is no per-tenant key work. What is coming instead is connections to
+  SEVERAL AI SERVERS, each with its own URL and credential, administered from the
+  Payload admin UI. 🔴 Settle where those keys live before writing the schema —
+  a key in a Payload collection is readable by anything that can read it.
 - **09 — closed.** "Conexiones" stays. No code change.
 
 ## Ordering that matters
@@ -44,8 +46,11 @@ the owner any more**, except the human review in task 06.
   corpus-wide re-run and do not pay for the 11 twice.
 - **01 should run before 04.** The quality test measures the graph as it stands;
   re-extracting first destroys the baseline it would be compared against.
-- **03 is independent of 02.** 03 is a correctness fix worth doing regardless of
-  how 02 is decided. Do not wait for 02.
+- **03 is independent of 02, and lower priority than it first looked.** With one
+  operator and one key, per-IP and per-key resolve to the same single bucket for
+  EDC. It is still a real defect and still worth fixing — it matters the moment
+  ai-service serves anything besides EDC, or EDC talks to more than one server —
+  but it does not block anything here.
 - Everything else is independent.
 
 ## File ownership, to keep agents off each other
