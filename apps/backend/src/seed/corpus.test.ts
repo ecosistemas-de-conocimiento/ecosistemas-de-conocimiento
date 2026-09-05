@@ -14,7 +14,7 @@ import path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { corpusIngestRequested, seedCorpusDocuments } from './corpus'
+import { corpusIngestRequested, resolveSkipThreshold, seedCorpusDocuments } from './corpus'
 import { readCorpusManifest, resolveCorpusDir } from './corpusSource'
 
 const HEADER =
@@ -283,7 +283,7 @@ describe('seeding the corpus as documents', () => {
     expect(logs.join('\n')).toContain('no corpus')
   })
 
-  it('does not create a second copy when the ecosistema already has documents', async () => {
+  it('does not create a second copy when the ecosistema already holds the corpus', async () => {
     // Re-seeding would mean DELETING rows first, and deleting a document
     // retires its chunks at ai-service. Refusing is the safer failure.
     const { payload, created } = fakePayload(250)
@@ -293,6 +293,60 @@ describe('seeding the corpus as documents', () => {
     })
     expect(result).toBeNull()
     expect(created).toHaveLength(0)
+  })
+
+  it('🔴 still seeds when the ecosistema holds unrelated residue', async () => {
+    // THE CASE THE OLD ZERO-DOCUMENT GATE GOT WRONG. A developer's ecosistema
+    // collects rows the corpus never wrote — e2e runs leave them by the dozen,
+    // and so does any manual upload. Under the old test, thirty-odd of those
+    // made the demo library permanently un-seedable, and both remedies were
+    // destructive. `ROWS.length` here is 3, so 2 existing documents is residue
+    // sitting below the line, not a corpus already in place.
+    const { payload, created } = fakePayload(ROWS.length - 1)
+    const result = await seedCorpusDocuments(payload as never, {
+      organizationId: 7,
+      uploaderId: 1,
+    })
+    expect(result).not.toBeNull()
+    expect(created).toHaveLength(ROWS.length)
+  })
+
+  it('says what it is adding and to what, when it seeds alongside residue', async () => {
+    // A library that ends up holding more rows than the corpus has is explained
+    // by this line. Without it the extra rows are a puzzle at exactly the moment
+    // somebody is counting documents against MANIFEST.csv.
+    const { payload, logs } = fakePayload(ROWS.length - 1)
+    await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
+    expect(logs.join('\n')).toContain('below the')
+  })
+})
+
+describe('the skip threshold', () => {
+  const MANIFEST_SIZE = 250
+
+  it('defaults to the manifest size — "it already has at least what I would add"', () => {
+    expect(resolveSkipThreshold(MANIFEST_SIZE, undefined)).toBe(MANIFEST_SIZE)
+    expect(resolveSkipThreshold(MANIFEST_SIZE, '   ')).toBe(MANIFEST_SIZE)
+  })
+
+  it('honours an explicit override', () => {
+    // For what the default cannot know about: several corpora in one
+    // ecosistema, or a deliberate top-up.
+    expect(resolveSkipThreshold(MANIFEST_SIZE, '900')).toBe(900)
+  })
+
+  it('🔴 IGNORES a malformed override instead of obeying it', () => {
+    // Obeying `NaN` or `0` would silently disable the guard that stops a double
+    // seed — and a double seed is the destructive outcome the whole gate exists
+    // to prevent. A typo must not be able to do that.
+    const warnings: string[] = []
+    const warn = (m: string): void => void warnings.push(m)
+    for (const bad of ['0', '-5', 'many', '2.5', '']) {
+      expect(resolveSkipThreshold(MANIFEST_SIZE, bad, warn)).toBe(MANIFEST_SIZE)
+    }
+    // The empty string is not a typo, it is "unset" — so it warns for the four
+    // that are, and stays quiet for that one.
+    expect(warnings).toHaveLength(4)
   })
 })
 

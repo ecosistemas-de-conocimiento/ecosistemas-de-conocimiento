@@ -508,6 +508,19 @@ services:
       # /v1/capabilities THROWS at boot. Fine on a laptop where versions can
       # drift; the fleet should run `strict` so a version skew is loud.
       AI_CAPABILITY_MODE: ${AI_CAPABILITY_MODE:-warn}
+      # ── Seed corpus ──
+      # Where the read-only mount below lands. Set EXPLICITLY rather than left to
+      # `resolveCorpusDir()`'s ancestor walk: that walk starts at
+      # `/repo/apps/backend` and there is no `corpus-generativo` above it inside
+      # this container, so the fallback would find nothing however the mount is
+      # arranged. `apps/backend/src/seed/corpusSource.ts` honours this first.
+      CORPUS_DIR: /corpus
+      # 🔴 EMBEDDING THE CORPUS IS OPT-IN, AND IT STAYS OFF HERE. Set to 1 and a
+      #    `docker compose up` hands 250 documents to ai-service before the demo
+      #    is usable. Rows-only means the library is full and the ASSISTANT
+      #    RETRIEVES NOTHING — read the header of `apps/backend/src/seed/corpus.ts`
+      #    before flipping it, it makes the trade explicit.
+      SEED_CORPUS_INGEST: ${SEED_CORPUS_INGEST:-0}
       # ── CORS ──
       # The browser talks to web on :3000 and to backend on :3002 directly, so
       # backend must accept the web origin.
@@ -555,6 +568,26 @@ services:
       #      costs nothing and it is the difference between a bad S3 day being
       #      "revert one env var" and "revert one env var and restore a volume".
       - backend_media:/repo/apps/backend/media
+      # 🔴 THE CORPUS, READ-ONLY, AND WITHOUT IT THE DEMO COMES UP EMPTY.
+      #    `apps/backend/src/seed/corpus.ts` fills the demo library with the 250
+      #    documents in `../corpus-generativo`. That repo is deliberately NOT
+      #    vendored into this one (it is regenerated on its own schedule), and
+      #    this image is BUILT rather than bind-mounted from the checkout — so
+      #    without this line the corpus is simply not on the container's
+      #    filesystem, `resolveCorpusDir()` walks to `/` and finds nothing, and
+      #    the seed degrades to an ecosistema with an empty library. That is a
+      #    working gate doing the right thing with the wrong input, which is the
+      #    hardest kind of empty screen to diagnose.
+      #    ⚠ `:ro` ON PURPOSE, and the owner confirmed the reasoning: the corpus
+      #      is READ for seeding and for nothing else. Once seeded, every one of
+      #      those 250 documents is read from inside this system, out of
+      #      `documents`. Nothing here has any business writing back into another
+      #      repo's checkout, so the mount says so.
+      #    ⚠ If the corpus is not cloned next door, Docker creates an EMPTY
+      #      directory at the source rather than failing. The seed then reports
+      #      "no MANIFEST.csv" and carries on — the degradation is intended, but
+      #      it means an unexplained empty library is worth checking here first.
+      - ../../corpus-generativo:/corpus:ro
     ports:
       - "${BACKEND_HOST_PORT:-45402}:3002"
     depends_on:

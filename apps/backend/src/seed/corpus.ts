@@ -179,6 +179,34 @@ function fileKindFor(entry: CorpusEntry): 'pdf' | 'docx' {
  * Deterministic in the manifest's order, so two runs against the same corpus
  * produce the same demo.
  */
+/**
+ * How many documents an ecosistema must already hold before the corpus seed
+ * treats it as already-seeded and refuses.
+ *
+ * Defaults to the manifest size — "it already has at least what I would add".
+ * `SEED_CORPUS_SKIP_ABOVE` overrides it for the cases the default cannot know
+ * about: several corpora in one ecosistema, or a deliberate top-up. A value that
+ * is not a positive integer is IGNORED rather than obeyed, with a warning, so a
+ * typo cannot silently disable the guard that stops a double seed.
+ */
+export function resolveSkipThreshold(
+  manifestSize: number,
+  raw: string | undefined = process.env.SEED_CORPUS_SKIP_ABOVE,
+  warn: (message: string) => void = () => {},
+): number {
+  const trimmed = raw?.trim()
+  if (!trimmed) return manifestSize
+  const parsed = Number(trimmed)
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    warn(
+      `[seed-corpus] SEED_CORPUS_SKIP_ABOVE=${trimmed} is not a positive integer — ` +
+        `ignoring it and using the manifest size (${manifestSize}).`,
+    )
+    return manifestSize
+  }
+  return parsed
+}
+
 function publicationFor(contentKind: 'documento' | 'testimonio', index: number): 'draft' | 'published' {
   if (contentKind === 'testimonio') return 'draft'
   return index % 8 === 5 ? 'draft' : 'published'
@@ -214,14 +242,31 @@ export interface SeedCorpusOptions {
  *
  * ── IDEMPOTENCE ──────────────────────────────────────────────────────────────
  *
- * 🔴 Gated on the ecosistema having ZERO documents, and `force` does NOT widen
- * it. Same shape as the outer seed's "empty `organizations` table" gate, and
- * for a stronger reason: re-seeding would mean DELETING 250 rows first, and
- * `collections/Documents.ts` retires a deleted document's chunks from ai-service
- * on the way out. A seed that quietly destroys corpus content on a second run
- * is a worse failure than a seed that refuses to run twice.
+ * 🔴 The seed refuses to run when the ecosistema ALREADY HOLDS THE CORPUS, and
+ * `force` does not widen that. Re-seeding would mean DELETING 250 rows first,
+ * and `collections/Documents.ts` retires a deleted document's chunks from
+ * ai-service on the way out. A seed that quietly destroys corpus content on a
+ * second run is a worse failure than a seed that refuses to run twice.
  *
- * To re-seed: drop the documents yourself, or reset the database.
+ * ⚠ "ALREADY HOLDS THE CORPUS" USED TO MEAN "HAS ANY DOCUMENT AT ALL", AND THAT
+ * WAS TOO TIGHT. A developer's ecosistema accumulates rows that have nothing to
+ * do with the corpus — e2e runs leave them behind by the dozen, and so does any
+ * manual upload. Under the old test, thirty-odd such rows made the demo library
+ * permanently un-seedable, and the only remedies on offer were destructive:
+ * delete real uploads, or reset the database. The seed was refusing in order to
+ * protect content it had not written.
+ *
+ * So the test is now a THRESHOLD, not a presence check: skip once the ecosistema
+ * holds at least as many documents as the manifest would add. That number is the
+ * honest signal for "the corpus is already in here", it leaves ordinary residue
+ * well below the line, and it still refuses the second run the old gate existed
+ * to refuse. `SEED_CORPUS_SKIP_ABOVE` overrides it.
+ *
+ * ⚠ WHAT THIS TRADES AWAY, stated rather than discovered: delete a large chunk
+ * of a seeded corpus and the count drops back under the line, so the next seed
+ * tops it up and you get duplicates of everything still present. That is the
+ * price of not requiring an empty ecosistema. To re-seed cleanly: drop the
+ * corpus rows yourself, or reset the database.
  */
 export async function seedCorpusDocuments(
   payload: Payload,
@@ -239,21 +284,38 @@ export async function seedCorpusDocuments(
     return null
   }
 
-  const existing = await payload.count({
-    collection: 'documents',
-    where: { organization: { equals: opts.organizationId } },
-  })
-  if (existing.totalDocs > 0) {
-    payload.logger.info(
-      `[seed-corpus] ecosistema ${opts.organizationId} already has ${existing.totalDocs} documents — skipping.`,
-    )
-    return null
-  }
-
+  // 🔴 READ THE MANIFEST FIRST. The skip threshold below is derived from how many
+  // documents this seed would ADD, so the manifest has to be in hand before the
+  // count can be judged. Reading it is a few hundred stat-free CSV lines; the
+  // ordering costs nothing and makes the threshold self-describing.
   const entries = readCorpusManifest(located.dir)
   if (entries.length === 0) {
     payload.logger.warn(`[seed-corpus] ${located.dir} has a manifest but no readable files.`)
     return null
+  }
+
+  const existing = await payload.count({
+    collection: 'documents',
+    where: { organization: { equals: opts.organizationId } },
+  })
+  const skipAbove = resolveSkipThreshold(entries.length)
+  if (existing.totalDocs >= skipAbove) {
+    payload.logger.info(
+      `[seed-corpus] ecosistema ${opts.organizationId} already holds ${existing.totalDocs} ` +
+        `documents, at or above the ${skipAbove} this seed would add — skipping. ` +
+        'Set SEED_CORPUS_SKIP_ABOVE to change the line, or drop the corpus rows to re-seed.',
+    )
+    return null
+  }
+  if (existing.totalDocs > 0) {
+    // Not a warning: this is the ordinary case on a developer box, and it is the
+    // case the old zero-document gate got wrong. Say what is being added and to
+    // what, so a library that ends up with more rows than the corpus has is
+    // explained here rather than puzzled over later.
+    payload.logger.info(
+      `[seed-corpus] ecosistema ${opts.organizationId} already holds ${existing.totalDocs} ` +
+        `documents (below the ${skipAbove} skip line) — seeding ${entries.length} alongside them.`,
+    )
   }
 
   const startedAt = Date.now()
