@@ -6,7 +6,7 @@ accumulated learning of the session that built this, and each item in it cost
 real time to discover.
 
 **Repo:** `~/chamba/cide/ecosistemas-de-conocimiento`
-**Branch:** `main` at `12ab845`
+**Branch:** `main` at `7961d9d`
 **Baselines:** backend 1250 tests · web 1213 · chat-engine 48 · ai-client 68. All green, typecheck clean.
 
 ---
@@ -21,7 +21,7 @@ real time to discover.
 | 04 | `04-junk-hub-nodes.md` | nothing to start; 05 to finish | yes | prompt + full re-extract (~3h) |
 | 05 | `05-failed-extractions.md` | nothing | yes | 11 LLM calls |
 | 06 | `06-held-testimonios.md` | 🟡 **owner/researcher: human review** | n/a | human time |
-| 07 | `07-orphaned-edits.md` | nothing | yes | triage only |
+| 07 | `07-orphaned-edits.md` | ✅ closed — landed as `7961d9d` | — | none |
 | 08 | `08-embedding-janitor.md` | nothing | yes | small |
 | 09 | `09-nav-label.md` | ✅ closed — **no change** | — | none |
 

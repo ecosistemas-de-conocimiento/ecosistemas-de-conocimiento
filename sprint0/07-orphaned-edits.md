@@ -1,7 +1,7 @@
 # 07 — Uncommitted work from a session that died
 
-**Blocked on:** nothing. Triage first, then decide.
-**Owns:** `apps/backend/src/seed/**`, `infra/docker-compose.yml`.
+**Status:** ✅ **CLOSED 2026-09-04.** Recovered and committed.
+Kept for the lesson, not the task.
 
 ## State
 
@@ -42,3 +42,35 @@ leave it.
 - ⚠ `infra/.env` is gitignored but has been edited this session —
   `LLM_REQUEST_TIMEOUT_MS=600000` and `GRAPH_MIN_SUPPORT=3`, both with their
   reasoning written inline. Do not revert those while cleaning up.
+
+
+---
+
+## ✅ Outcome
+
+Triaged and landed. It was **not** half-finished scratch work — it was a complete,
+documented, tested feature that its author never got to commit:
+
+- `CORPUS_DIR` set explicitly in compose, because `resolveCorpusDir()`'s ancestor
+  walk starts at `/repo/apps/backend` and can never find the corpus inside the
+  container however the mount is arranged
+- a read-only corpus mount, without which the demo comes up empty
+- `SEED_CORPUS_INGEST` defaulting to 0 — embedding 250 documents on a
+  `docker compose up` is opt-in
+- `resolveSkipThreshold`, refusing to seed an ecosistema that already holds the
+  corpus, and ignoring a malformed override rather than obeying it
+
+Verified before landing: backend 1250 tests green, typecheck clean, 55 seed tests
+across 3 files. The diff was committed unmodified, with authorship noted in the
+message.
+
+## ⚠ The lesson worth keeping
+
+This was 166 lines of finished work sitting one `git checkout` away from being
+destroyed, and nothing about the repository said so. It survived only because
+somebody happened to run `git status` and ask about three unexplained modified
+files.
+
+A session that dies mid-task leaves no marker. If parallel sessions are a normal
+way of working here, "check for uncommitted work belonging to nobody" belongs in
+a routine, not in luck.
