@@ -65,9 +65,44 @@ access stops the API handing the key out; it does not stop anyone with database
 access reading it. Whether that matters depends on who can reach Postgres in
 production — worth answering before launch, not before the schema.
 
-⚠ Second thing, smaller: `getAppAIClient()` is memoised per process. A registry
-that can change at runtime means cache invalidation when an admin edits a
-connection. Easy, but it is the kind of thing that gets found in production.
+### 🔴 Cache invalidation — a requirement, not a footnote
+
+Today the connection is an env var, so "it never changes" is a safe assumption
+and the code makes it in **four** places. An admin UI breaks that assumption
+everywhere at once.
+
+| Where | What is held |
+| --- | --- |
+| `lib/aiClient.ts:39-40` | `appClient`, `adminClient` — module-level, built once |
+| `lib/graph/client.ts:79` | `cached` — the extraction client, its own 660s timeout |
+| `lib/capabilityCheck.ts:44` | `alreadyChecked` — the boot negotiation, runs once per process |
+
+An admin edits a connection and every one of these keeps serving the old URL and
+the old key until the process restarts. The failure is silent: requests keep
+succeeding against the previous server, so the symptom is "my change did nothing"
+rather than an error.
+
+**What the design must include:**
+
+1. **One invalidation seam, not four.** A single `resetAIClients()` the connection
+   collection's `afterChange` hook calls. `graph/client.ts` already exports
+   `__resetGraphClientForTests()` and `capabilityCheck.ts` exports
+   `_resetCapabilityCheckForTests()` — the mechanism exists, it is just named as
+   test-only and wired to nothing.
+2. **Re-run the capability check** after a connection changes. A new server may
+   not publish the capabilities this backend requires, and `alreadyChecked`
+   means it is currently asked exactly once, at boot, against the old server.
+3. 🔴 **Decide what happens across replicas.** Module-level state is per process.
+   With one container an in-process reset is correct and complete. With two, an
+   admin's edit reaches one of them and the other keeps using the old key until
+   it restarts — and nothing surfaces the disagreement. `lib/rateLimit.ts` already
+   carries this exact warning for its counters ("N replicas allow N× every
+   limit"); the same constraint applies here and it is worth answering in the
+   same breath rather than discovering twice.
+
+⚠ Do not solve 3 by removing the memoisation. The clients are cached because
+constructing one negotiates capabilities; rebuilding per request would put a
+network round trip in front of every call.
 
 ## Not needed
 
