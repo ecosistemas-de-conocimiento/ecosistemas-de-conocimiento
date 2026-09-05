@@ -36,8 +36,9 @@ the owner any more**, except the human review in task 06.
   key. Ecosistemas scope content; they are not customers with separate bills.
   There is no per-tenant key work. What is coming instead is connections to
   SEVERAL AI SERVERS, each with its own URL and credential, administered from the
-  Payload admin UI. 🔴 Settle where those keys live before writing the schema —
-  a key in a Payload collection is readable by anything that can read it.
+  Payload admin UI. ✅ **Field-level access control on the key field is approved**
+  — build it into the first migration, not after. 🟡 Encryption at rest is still
+  open and depends on who can reach Postgres in production.
 - **09 — closed.** "Conexiones" stays. No code change.
 
 ## Ordering that matters
