@@ -1,7 +1,7 @@
 # 02 — Per-ecosistema API keys, before prod
 
-**Blocked on:** 🟡 owner. This is a design decision, not a task.
-**Independent of task 03** — do not let this block that fix.
+**Status:** ✅ **DECIDED 2026-09-04.** No longer open. Kept for the reasoning.
+**Independent of task 03** — that fix is still worth doing; see the bottom.
 
 ## The problem
 
@@ -52,3 +52,38 @@ condition that revokes it.
 - Is spend billed per ecosistema, or pooled? If billed per tenant, A is close to
   forced — you cannot bill what you cannot attribute.
 - Does ai-service serve other products in the same deployment?
+
+
+---
+
+## ✅ The decision (owner, 2026-09-04)
+
+> *"We have a single master API key for now, and we create our own system for
+> handing off keys to tenants."*
+
+So: **option A, built by us, later.** Not option C — the shared key is explicitly
+an interim state, not an accepted permanent risk. And not ai-service's `API_KEYS`
+env map as the provisioning mechanism, which was the part of option A that did
+not scale.
+
+### What this means for whoever builds that system
+
+- 🔴 **ai-service must still learn about every key.** Its `API_KEYS` map is the
+  authority for `(org, project, role)` — a key it has never heard of is a 401.
+  A tenant-key system therefore needs a provisioning path into ai-service, not
+  just a way to hand keys to customers. That is the hard part, and it is worth
+  designing before the first tenant rather than after.
+- ⚠ **The interim risk is live until then.** One ecosistema bulk-uploading can
+  exhaust the rate limit and the budget for all of them, with no signal that
+  distinguishes it from an outage. The corpus seed did exactly this. Acceptable
+  with few trusted tenants; write down which condition ends it.
+- ⚠ **Budget attribution follows keys.** ai-service meters spend per `org` from
+  the key. Until keys are per-tenant, per-tenant billing is not derivable from
+  anything ai-service records.
+
+### Task 03 is unaffected and still worth doing
+
+It stops being about tenant fairness and becomes two other things: it isolates
+this product from other products on the same ai-service, and it is the
+foundation the tenant-key system needs — a per-key limiter that does not work is
+a per-key limiter that will not work for tenant keys either.

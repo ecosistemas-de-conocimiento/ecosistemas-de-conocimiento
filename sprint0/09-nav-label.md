@@ -1,7 +1,7 @@
 # 09 — "Conexiones" or "Grafo" in the nav
 
-**Blocked on:** 🟡 owner's word preference. Two constants either way.
-**Owns:** `apps/web/src/lib/nav.ts`, `apps/web/src/lib/graph.ts`.
+**Status:** ✅ **CLOSED 2026-09-04 — "Conexiones" stays.** No code change.
+Kept only for the precedent it sets.
 
 ## State
 
@@ -32,3 +32,14 @@ Tests assert the copy; update them in the same change.
 wins here, the rule in `nav.ts` is weaker than it reads, and the next person
 choosing a label has no guidance. Either outcome is fine; the rule and the labels
 should agree afterwards.
+
+
+---
+
+## ✅ The decision (owner, 2026-09-04)
+
+**"Conexiones".** No change to make.
+
+The rule in `nav.ts` — plain Spanish nouns, no jargon — now has a precedent
+behind it rather than only an assertion. The next person choosing a label can
+follow it and cite this.

@@ -15,15 +15,28 @@ real time to discover.
 
 | # | File | Blocked on | Parallel-safe | Cost |
 | --- | --- | --- | --- | --- |
-| 01 | `01-quality-test.md` | 🟡 **owner: approve spend** | yes | ~40 LLM calls, ~30 min |
-| 02 | `02-tenant-api-keys.md` | 🟡 **owner: design decision** | — | decision only |
+| 01 | `01-quality-test.md` | ✅ approved — **run it** | yes | ~40 LLM calls, ~30 min |
+| 02 | `02-tenant-api-keys.md` | ✅ decided — **read, do not build** | — | none |
 | 03 | `03-rate-limiter-hook.md` | nothing | yes | ~3 lines + tests |
 | 04 | `04-junk-hub-nodes.md` | nothing to start; 05 to finish | yes | prompt + full re-extract (~3h) |
 | 05 | `05-failed-extractions.md` | nothing | yes | 11 LLM calls |
 | 06 | `06-held-testimonios.md` | 🟡 **owner/researcher: human review** | n/a | human time |
 | 07 | `07-orphaned-edits.md` | nothing | yes | triage only |
 | 08 | `08-embedding-janitor.md` | nothing | yes | small |
-| 09 | `09-nav-label.md` | 🟡 owner: one-word preference | yes | 2 constants |
+| 09 | `09-nav-label.md` | ✅ closed — **no change** | — | none |
+
+## Owner decisions, 2026-09-04
+
+All three open questions are answered. **Nothing in this directory is waiting on
+the owner any more**, except the human review in task 06.
+
+- **01 — approved.** Run the quality test. It is the first evidence for whether
+  GraphRAG earns its per-turn cost.
+- **02 — decided.** One master key for now; a tenant-key handoff system gets
+  built later, by us, not via ai-service's env map. Task 02 is now a briefing
+  document for whoever builds it, not a task. 🔴 It records one thing that system
+  must solve: ai-service has to learn every key it will ever be shown.
+- **09 — closed.** "Conexiones" stays. No code change.
 
 ## Ordering that matters
 

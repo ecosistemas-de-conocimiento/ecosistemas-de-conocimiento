@@ -1,6 +1,7 @@
 # 01 — Does GraphRAG actually improve answers?
 
-**Blocked on:** 🟡 owner approving ~40 real LLM calls (~30 min, under $1).
+**Blocked on:** nothing. ✅ **Approved by the owner 2026-09-04** — ~40 real LLM
+calls, ~30 min, under $1. Run it.
 **Owns:** `apps/backend/src/eval/**` (new). Touches no product code.
 **Run before task 04** — 04 re-extracts and destroys the baseline this measures.
 
