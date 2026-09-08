@@ -52,6 +52,27 @@ const MANIFEST_RELATIVE = path.join('resultados', 'MANIFEST.csv')
  * document is about, and the one thing this seed must never do is put a
  * speaker's name on a row. Widening this interface is how that rule gets broken
  * by accident — the columns are unreachable from here on purpose.
+ *
+ * 🔴 `lengua` IS THE ONE EXCEPTION, AND IT IS ADMITTED UNDER A CONDITION.
+ *
+ * It belongs to the same person-describing block as the six above — same row,
+ * same subject — so admitting it here is exactly the widening that warning
+ * exists to prevent, and it needs its own argument rather than silence:
+ *
+ *   · It reaches `documents.lengua`, which `collections/Documents.ts` refuses to
+ *     store on anything that is not a `documento` (`enforceLenguaDocumentoOnly`,
+ *     and a `read` gate on the field saying the same thing). On a `documento`
+ *     the person filed the material under their own name and the text says
+ *     which language they speak; the column restates it. On a `testimonio` it
+ *     is a re-identification key — 18 of the 34 `(tema, lengua)` cells the 59
+ *     seeded testimonios fall into hold exactly ONE of them.
+ *   · The other six have no such conditional reading. There is no content kind
+ *     for which storing a speaker's `nombre` is fine, which is why they stay
+ *     unreachable and this one does not.
+ *
+ * ⚠ SO THE RULE FOR ANYONE EDITING THIS TYPE IS UNCHANGED IN SPIRIT: a column
+ * that describes the PERSON gets on here only if there is a written rule saying
+ * where it may and may not land. `lengua` has one. Nothing else does.
  */
 export interface CorpusEntry {
   /**
@@ -65,8 +86,22 @@ export interface CorpusEntry {
   id: string
   /** Filename inside `resultados/txt` or `resultados/docx`. */
   archivo: string
-  /** `traduccion | dengue | escuela | discapacidad` — the corpus's own theme. */
+  /**
+   * `traduccion | dengue | escuela | discapacidad` — the corpus's own theme.
+   *
+   * ⚠ It lands on `documents.tema`, NOT on a column called `ecosistema`. In this
+   * product an ecosistema is an `organizations` row; all 250 of these are in one.
+   * See the field's header in `collections/Documents.ts`.
+   */
   ecosistema: string
+  /**
+   * The indigenous language of the person the row describes — NOT the language
+   * the document is written in, which is Spanish for every one of them.
+   *
+   * 🔴 ONLY EVER WRITTEN ONTO A `documento`. Read the conditional in this file's
+   * header before using it for anything else.
+   */
+  lengua: string
   /** `testimonio | biografia_oral | carta_presentacion | diario_personal | ficha_participante` */
   formato: string
   /** `corta | media | larga` */
@@ -197,6 +232,7 @@ export function readCorpusManifest(corpusDir: string): CorpusEntry[] {
   const iId = col('id')
   const iArchivo = col('archivo')
   const iEco = col('ecosistema')
+  const iLengua = col('lengua')
   const iFormato = col('formato')
   const iLongitud = col('longitud')
   const iPalabras = col('palabras')
@@ -217,6 +253,10 @@ export function readCorpusManifest(corpusDir: string): CorpusEntry[] {
       id: /^(SIM_\d+)/.exec(archivo)?.[1] || (row[iId] ?? '').trim() || archivo,
       archivo,
       ecosistema: (row[iEco] ?? '').trim(),
+      // ⚠ Absent column ⇒ empty string, never a crash. `iLengua` is -1 for a
+      // manifest that predates the column, and `row[-1]` is `undefined`. A
+      // corpus without it seeds without it; nothing here is required.
+      lengua: (row[iLengua] ?? '').trim(),
       formato: (row[iFormato] ?? '').trim(),
       longitud: (row[iLongitud] ?? '').trim(),
       palabras: Number.parseInt(row[iPalabras] ?? '', 10) || 0,

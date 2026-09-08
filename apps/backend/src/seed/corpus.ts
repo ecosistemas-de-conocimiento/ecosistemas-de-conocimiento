@@ -108,6 +108,33 @@ function themeLabel(ecosistema: string): string {
 }
 
 /**
+ * 🔴 THE ONLY WAY BACK TO A SEEDED TESTIMONIO'S THEME, AND IT EXISTS BECAUSE OF
+ * A DELIBERATE OMISSION ELSEWHERE IN THIS FILE.
+ *
+ * A seeded `documento` carries its `SIM_xxxx` id in `name`, so the backfill can
+ * join it straight to `MANIFEST.csv`. A seeded `testimonio` deliberately does
+ * NOT — see {@link titleFor}: that id is a key into a table with a `nombre`
+ * column, and putting it on an anonymous row would rebuild the link the whole
+ * anonymisation design refuses to keep.
+ *
+ * So the 59 seeded Voces are unjoinable to the manifest, on purpose, and the
+ * only ground truth still legible on the row is the theme this function wrote
+ * into the title in plain Spanish. Reading it back is not a loophole in that
+ * rule: the theme is four values over 250 documents, it is already displayed to
+ * every reader of the library, and it points at nobody. `lengua` is NOT
+ * recoverable this way and must not be — that is the half the rule protects.
+ *
+ * ⚠ Lives beside `THEME_LABELS` so the two cannot drift. Change one, change the
+ * other, or the backfill silently stops matching.
+ */
+export function themeFromSeededTitle(name: string): string | null {
+  for (const [ecosistema, label] of Object.entries(THEME_LABELS)) {
+    if (name.includes(` — ${label} (`)) return ecosistema
+  }
+  return null
+}
+
+/**
  * 🔴 THE TITLE OF A SEEDED `testimonio` NAMES NOBODY, AND CARRIES NO HANDLE
  * BACK TO ANYBODY.
  *
@@ -363,6 +390,32 @@ export async function seedCorpusDocuments(
         name: titleFor(entry, contentKind, ordinal),
         kind: fileKindFor(entry),
         contentKind,
+        /**
+         * The corpus's ground truth, which the product had nowhere to put until
+         * `documents.tema` / `documents.lengua` existed. Until then the only
+         * place a theme or a language surfaced was as an accidentally-extracted
+         * graph node, which a graph cleanup nearly deleted.
+         *
+         * ⚠ `tema`, not `ecosistema`. The manifest's column is called
+         * `ecosistema`; in this product that word means an `organizations` row,
+         * and all 250 of these live in ONE. See the field in
+         * `collections/Documents.ts`.
+         */
+        tema: entry.ecosistema || null,
+        /**
+         * 🔴 NEVER ON A TESTIMONIO. `lengua` is the language of the person the
+         * document is about — the manifest keeps it in the same row as `nombre`
+         * — and on an anonymous Voz it is a re-identification key: 18 of the 34
+         * `(tema, lengua)` cells the 59 seeded testimonios fall into hold
+         * exactly one of them.
+         *
+         * ⚠ THIS LINE IS THE BELT, NOT THE BRACES. `enforceLenguaDocumentoOnly`
+         * in `collections/Documents.ts` nulls the column for any non-`documento`
+         * write, including this one, and a `read` gate on the field says the
+         * same thing again. The check is repeated here so the seed READS as
+         * obeying the rule rather than relying on a hook two files away.
+         */
+        lengua: contentKind === 'documento' ? entry.lengua || null : null,
         publicationStatus,
         /**
          * ⚠ THE TEXT THE PIPELINE WOULD HAVE PRODUCED, cached on the row. It is

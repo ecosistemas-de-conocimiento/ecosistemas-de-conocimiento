@@ -186,6 +186,80 @@ const PUBLICATION_LABELS: Record<PublicationState, string> = {
  */
 const gateWritesOnly: FieldAccess = () => false
 
+/**
+ * 🔴 THE CORPUS GROUND-TRUTH LABELS ARE NOT WRITABLE THROUGH THE API EITHER.
+ *
+ * `lengua` and `tema` (see the fields) are copied from a corpus manifest by the
+ * seed and by `scripts/backfill-corpus-labels.ts`. They are not opinions
+ * somebody types.
+ *
+ * ── WHY A LOCK RATHER THAN JUST `admin.readOnly` ─────────────────────────────
+ *
+ * `apps/web/src/routes/api/documents/[id]/+server.ts` PATCHes straight through
+ * to Payload with the request body UNMODIFIED, and `documents.update` is
+ * `uploaderOnly`. So "editable" here would mean: any signed-in person can put
+ * arbitrary free text on their own row, in a field with no form, no vocabulary
+ * and no validation, that a facet will later group documents by. For `lengua`
+ * it would mean a free-text column on a document collection whose entire
+ * privacy design is about not storing attributes of the people in it — the
+ * obvious thing to type there is a name.
+ *
+ * ⚠ Server-side writes use `overrideAccess: true` and are unaffected: the seed
+ * (`seed/corpus.ts`) and the backfill script. That is the one path.
+ *
+ * ⚠ THIS IS THE CHEAP HALF OF THE DECISION AND IT IS EASY TO REVERSE. When an
+ * upload form collects a theme, open `tema` by giving it a real vocabulary and
+ * dropping this line. `lengua` should stay shut for the reason above.
+ */
+const corpusLabelWritesOnly: FieldAccess = () => false
+
+/**
+ * 🔴 `lengua` IS READABLE ONLY ON A `documento`. The read-side half of the same
+ * rule the write hook enforces — see `enforceLenguaDocumentoOnly`.
+ *
+ * ⚠ NOTE THE EXACT COMPARISON, AND THAT IT FAILS CLOSED. `=== 'documento'`, not
+ * `!== 'testimonio'`, exactly as `personaAllowed` and `snippetAllowed` in
+ * `lib/graph/types.ts` are written. An unknown, null or missing `contentKind`
+ * therefore hides the field. The cost of being wrong that way is a blank in the
+ * UI; the other way is a re-identification key.
+ *
+ * ── WHY THE FIELD NEEDS TWO MECHANISMS AND NOT ONE ──────────────────────────
+ *
+ * The hook already guarantees the column is NULL for anything that is not a
+ * `documento`, so this check is redundant TODAY. It is here for the same reason
+ * ADR §5.3 enforces the person rule twice: the hook is the efficient mechanism,
+ * this is the one that still holds if the hook is edited wrongly, if a row is
+ * written by a path that bypasses hooks (raw SQL, a future `db.execute`), or if
+ * a document is reclassified after the fact.
+ *
+ * ⚠ COSTS NO QUERY. It reads a column already on the row being returned, unlike
+ * `canReadRatingComment` in `collections/Ratings.ts`, which has to resolve a
+ * permission and therefore memoizes on `req`. Nothing to memoize here.
+ *
+ * 🔴 A QUERY THAT SELECTS `lengua` MUST ALSO SELECT `contentKind`. Measured on
+ * `payload@3.88.0`: the projection is applied BEFORE field access runs, so a
+ * `select` that omits `contentKind` hands this function a row with no kind on
+ * it, it fails closed, and `lengua` disappears from EVERY row — including the
+ * `documento` rows that are allowed to have it.
+ *
+ *     select: { name: true, tema: true, lengua: true }                  → always hidden
+ *     select: { name: true, tema: true, lengua: true, contentKind: true } → correct
+ *
+ * That is the safe direction to be wrong in, and it is still a trap: the symptom
+ * is a blank column with no error anywhere. `/biblioteca` and `/admin` both
+ * enumerate their fields (`LIBRARY_LIST_FIELDS`, `DOC_FIELDS` in `apps/web`), so
+ * whoever adds `lengua` to either list has to add `contentKind` beside it.
+ *
+ * ⚠ `read` IS NOT GATED ON `tema`, deliberately. Four values, ~60 documents
+ * each, no personal content — and for every seeded row the theme is already
+ * spelled out in Spanish in `documents.name`. Gating it would hide a label from
+ * the people the library exists for and protect nothing.
+ */
+export const lenguaReadable: FieldAccess = ({ doc, data, siblingData }) => {
+  const row = (doc ?? data ?? siblingData ?? {}) as { contentKind?: unknown }
+  return row.contentKind === 'documento'
+}
+
 const uploaderOnly: Access = ({ req: { user } }) => {
   if (!user) return false
   if (isPlatformAdminUser(user)) return true
@@ -492,6 +566,86 @@ function enforceDraftOnlyTextEdits(args: {
     ],
     req,
   })
+}
+
+/**
+ * 🔴 `lengua` IS NULL ON ANYTHING THAT IS NOT A `documento`. NO EXCEPTIONS,
+ * INCLUDING FOR SERVER-SIDE WRITERS.
+ *
+ * ── WHY THIS IS A PRIVACY RULE AND NOT A DATA-QUALITY ONE ────────────────────
+ *
+ * In the corpus this field exists to record, `lengua` is an attribute of the
+ * PERSON a document is about — it sits in `MANIFEST.csv` in the same row as
+ * `nombre`, `edad`, `rol`, `origen` and `residencia`, and `seed/corpusSource.ts`
+ * refuses to even read those five. It is not the language the document is
+ * written in; every document in that corpus is in Spanish.
+ *
+ * For a `documento` that costs nothing: the material is filed by its own author
+ * under their own name, and the text says which language they speak. Recording
+ * it in a column adds no fact the document does not already state openly.
+ *
+ * 🔴 FOR A `testimonio` IT IS A RE-IDENTIFICATION KEY, and a strong one. Counted
+ * over the seeded corpus: of the 34 `(tema, lengua)` cells the 59 testimonios
+ * fall into, **18 contain exactly one testimonio**. So a filter on two labels
+ * would point at ONE anonymous voice more often than not. That is precisely the
+ * scenario `plan/adr-corpus-graph.md` §7.3 answers for the graph with
+ * `GRAPH_MIN_SUPPORT` — and a plain column on `documents` has no such threshold,
+ * because a `where` clause is not a support count.
+ *
+ * The design already refuses every other handle back to that person: there is no
+ * `subject` column (`contentKind`'s own header), the citation title is replaced
+ * (`titleFor`), no snippet is stored (`snippetAllowed`), no person node is
+ * extracted (`personaAllowed`), and `seed/corpus.ts` deliberately keeps the
+ * corpus's `SIM_xxxx` id OFF a testimonio's title because that id is a join key
+ * into the manifest's `nombre` column. `lengua` would be the first attribute of
+ * the speaker ever stored on the row, and the most identifying available.
+ *
+ * ── WHY IT IS ITS OWN HOOK ───────────────────────────────────────────────────
+ *
+ * 🔴 IT IS NOT FOLDED INTO `bindDocumentToEcosystem`, WHICH RETURNS EARLY ON
+ * `!req.user`. Every server-side write — the seed, the backfill, the callbacks,
+ * the janitors — reaches Payload with `overrideAccess: true` and no user, so a
+ * rule living in that hook would be skipped by exactly the writers that populate
+ * this column. Same reasoning, and the same wording, as
+ * `invalidateGraphOnContentKindChange` in the `afterChange` list: a privacy rule
+ * must not be skippable by an internal write path.
+ *
+ * ⚠ IT READS THE RAW COLUMN, NOT `contentKindOf()`. `contentKindOf` defaults an
+ * unreadable value to `documento`, which is the right default for the ingest
+ * path and the WRONG one here — it would open the field on a row whose kind we
+ * cannot read. `=== 'documento'` fails closed, matching `personaAllowed`.
+ *
+ * ⚠ ON UPDATE, THE STORED KIND WINS. Payload merges the request body over the
+ * stored row before `beforeValidate`, so `data.contentKind` can be whatever a
+ * caller typed. `contentKind` is immutable anyway (`enforceVocesUploadRights`),
+ * but depending on the order of two hooks in one file is not a guarantee —
+ * `originalDoc` is.
+ *
+ * ⚠ ONE CONSEQUENCE OF FAILING CLOSED, STATED SO IT IS NOT DEBUGGED TWICE. A
+ * server-side CREATE that sets `lengua` but omits `contentKind` — relying on the
+ * field's `defaultValue: 'documento'`, which Payload applies AFTER this hook —
+ * loses the language. The row is a `documento` and could have kept it. That is
+ * the correct direction (a missing label costs a blank; the other direction
+ * stores a re-identification key on a row whose kind we could not read), and no
+ * caller hits it today: `seed/corpus.ts` names the kind on every create, and the
+ * backfill only ever updates. Name `contentKind` explicitly and it works.
+ */
+export const enforceLenguaDocumentoOnly: CollectionBeforeValidateHook = ({
+  data,
+  operation,
+  originalDoc,
+}) => {
+  const next = { ...(data ?? {}) } as Record<string, unknown>
+  // A partial write that never names the column cannot set it, and blanking it
+  // here would clear a correctly-stored value on every unrelated PATCH.
+  if (!('lengua' in next)) return next
+
+  const original = (originalDoc ?? {}) as Record<string, unknown>
+  const kind = operation === 'create' ? next.contentKind : (original.contentKind ?? next.contentKind)
+  if (kind === 'documento') return next
+
+  next.lengua = null
+  return next
 }
 
 /**
@@ -2019,6 +2173,94 @@ export const Documents: CollectionConfig = {
     },
     {
       /**
+       * The programme this document belongs to — `traduccion`, `dengue`,
+       * `escuela`, `discapacidad` in the seeded corpus. The corpus's own
+       * ground truth, which the product had nowhere to put until now.
+       *
+       * 🔴 THE MANIFEST CALLS THIS COLUMN `ecosistema` AND THIS FIELD DOES NOT,
+       * DELIBERATELY. In this product an "ecosistema" IS an `organizations` row
+       * (`lib/corpus.ts`), and tenant scoping is the single most load-bearing
+       * rule in the codebase — `plan/adr-corpus-graph.md` §6 gate 1 is "name the
+       * organization explicitly, always". A `documents.ecosistema` column
+       * sitting next to `documents.organization` invites exactly one mistake:
+       * `where: { ecosistema: … }` written by somebody who believes they have
+       * just scoped a tenant, and who has not. `sprint0/00-context.md` already
+       * carries the warning in prose — *"the corpus's four `ecosistema` values
+       * are a column on the row, not separate tenants"* — which is evidence the
+       * confusion has happened at least once. `tema` is the corpus's own word
+       * for the same axis (`seed/corpus.ts` calls the map `THEME_LABELS`) and it
+       * matches the graph's `tema` entity type, which means the same thing.
+       *
+       * ── WHY `text` AND NOT `select` ─────────────────────────────────────────
+       *
+       * It is a closed set of four TODAY, and a `select` would be the obvious
+       * fit if these were product vocabulary. They are not — they are DATA, from
+       * `corpus-generativo`, which is a separate repo regenerated by a script.
+       * A `select` compiles to a Postgres enum, so a regenerated corpus with a
+       * fifth programme fails the seed on row 1 with `invalid input value for
+       * enum`, and adding the value means an `ALTER TYPE` migration. Nothing in
+       * the product branches on the value either: unlike `contentKind`, `kind`
+       * or `anonymisationStatus`, this is a label to group and filter by, not a
+       * state anything switches on. `text` costs a typo-catching dropdown that
+       * nobody can reach anyway, because the field is not writable over the API.
+       *
+       * ⚠ NOT INDEXED, on purpose. Four distinct values over a few hundred rows
+       * is a selectivity no planner will use a btree for. If a library facet ever
+       * needs one, the right index is the composite `(organization_id, tema)` —
+       * the same shape as `documents_organization_publication_status_idx` — and
+       * that is a measured change, not a default.
+       */
+      name: 'tema',
+      type: 'text',
+      access: { create: corpusLabelWritesOnly, update: corpusLabelWritesOnly },
+      admin: {
+        readOnly: true,
+        description:
+          'El programa del que forma parte este documento (traducción, dengue, escuela, discapacidad). Lo escribe el seed o el backfill desde el manifiesto del corpus; no se edita aquí.',
+      },
+    },
+    {
+      /**
+       * 🔴 THE LANGUAGE OF THE PEOPLE THIS DOCUMENT IS ABOUT — NOT THE LANGUAGE
+       * IT IS WRITTEN IN. Every document in the seeded corpus is in Spanish.
+       *
+       * 11 values there (`mixteco`, `náhuatl`, `mazateco`, `tlapaneco (me'phaa)`,
+       * `totonaco`, `zapoteco`, `amuzgo`, `mixe`, `hñähñu (otomí)`, `tlahuica`,
+       * `tsotsil`), and open in principle — Mexico recognises 68 indigenous
+       * languages before variants, so this is `text` for a stronger reason than
+       * `tema` is: the set is not closed even in this corpus's own future.
+       *
+       * 🔴 IT IS NULL FOR ANYTHING THAT IS NOT A `documento`, AND THAT RULE IS
+       * ENFORCED TWICE. Read `enforceLenguaDocumentoOnly` for why it is a
+       * re-identification key on a `testimonio` and merely a restatement of the
+       * document's own text on a `documento`. The write hook nulls it; the
+       * `read` access below hides it. Two mechanisms for one rule, both column
+       * lookups, both failing closed — ADR §5.3's pattern.
+       *
+       * ⚠ THE CONSEQUENCE, STATED RATHER THAN DISCOVERED: 59 of the 250 seeded
+       * documents are testimonios and will never carry a `lengua`. "Which
+       * languages appear in this ecosistema" is therefore answered from the 191
+       * `documento` rows only. That is the correct answer, not a gap to close
+       * later — and it happens to be unclosable by accident anyway, because
+       * `seed/corpus.ts` keeps the manifest join key off a testimonio's title.
+       *
+       * ⚠ NOT INDEXED — see `tema`.
+       */
+      name: 'lengua',
+      type: 'text',
+      access: {
+        create: corpusLabelWritesOnly,
+        update: corpusLabelWritesOnly,
+        read: lenguaReadable,
+      },
+      admin: {
+        readOnly: true,
+        description:
+          '⚠ La lengua de las personas de las que habla el documento, no el idioma en que está escrito. Sólo se guarda en un `documento`; en un testimonio es una llave de reidentificación y queda vacía.',
+      },
+    },
+    {
+      /**
        * The gate's output, and the ONLY text a `testimonio` is ever embedded
        * from.
        *
@@ -2359,7 +2601,14 @@ export const Documents: CollectionConfig = {
     },
   ],
   hooks: {
-    beforeValidate: [bindDocumentToEcosystem],
+    /**
+     * ⚠ `enforceLenguaDocumentoOnly` is SEPARATE from `bindDocumentToEcosystem`
+     * and must stay that way. That hook returns early on `!req.user`, which is
+     * every server-side write — including the two writers that populate
+     * `lengua` at all. Same reasoning as `invalidateGraphOnContentKindChange`
+     * below: a privacy rule must not be skippable by an internal write path.
+     */
+    beforeValidate: [bindDocumentToEcosystem, enforceLenguaDocumentoOnly],
     /**
      * ⚠ `invalidateGraphOnContentKindChange` runs on EVERY update, and it is
      * cheap: it returns immediately unless `contentKind` actually changed. It is

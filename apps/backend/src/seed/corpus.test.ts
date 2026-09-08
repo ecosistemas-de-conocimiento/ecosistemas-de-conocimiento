@@ -25,6 +25,12 @@ interface FakeRow {
   archivo: string
   ecosistema: string
   formato: string
+  /**
+   * The manifest's `lengua` column — the language of the PERSON the row is
+   * about, not the language the document is written in. Varied across the fake
+   * rows so a test can tell which row a stored value came from.
+   */
+  lengua: string
   /** The manifest's own `nombre` column — a name the seed must never surface. */
   nombre: string
   text: string
@@ -36,6 +42,7 @@ const ROWS: FakeRow[] = [
     archivo: 'SIM_0001_traduccion_carta_presentacion_larga.txt',
     ecosistema: 'traduccion',
     formato: 'carta_presentacion',
+    lengua: 'mazateco',
     nombre: 'Camilo Bautista Flores',
     text: 'A quien corresponda: me dirijo a usted para compartir mi trayectoria.',
   },
@@ -44,6 +51,7 @@ const ROWS: FakeRow[] = [
     archivo: 'SIM_0015_traduccion_testimonio_media.txt',
     ecosistema: 'traduccion',
     formato: 'testimonio',
+    lengua: 'mixteco',
     nombre: 'Herminio Valdés Colín',
     text: 'Nací hace 76 años y traduzco en los servicios de salud desde entonces.',
   },
@@ -52,6 +60,7 @@ const ROWS: FakeRow[] = [
     archivo: 'SIM_0002_dengue_biografia_oral_larga.txt',
     ecosistema: 'dengue',
     formato: 'biografia_oral',
+    lengua: 'náhuatl',
     nombre: 'Efrén Peralta Guzmán',
     text: 'E: Gracias por recibirnos. P: Mi pueblo queda en la sierra.',
   },
@@ -70,7 +79,7 @@ function writeCorpus(rows: FakeRow[]): string {
     // manifest quotes `"Huautla de Jiménez, Oaxaca"`, and a naive split(',')
     // would shift every column after it.
     lines.push(
-      `${row.id},${row.archivo},${row.ecosistema},${row.formato},larga,358,${row.nombre},27,intérprete,mazateco,"Huautla de Jiménez, Oaxaca","Jiutepec, Morelos",el Centro de Salud,no,,SÍ`,
+      `${row.id},${row.archivo},${row.ecosistema},${row.formato},larga,358,${row.nombre},27,intérprete,${row.lengua},"Huautla de Jiménez, Oaxaca","Jiutepec, Morelos",el Centro de Salud,no,,SÍ`,
     )
     fs.writeFileSync(path.join(dir, 'resultados', 'txt', row.archivo), row.text, 'utf8')
   }
@@ -202,6 +211,46 @@ describe('seeding the corpus as documents', () => {
     expect(title).toMatch(/^Testimonio — /)
   })
 
+  it('✅ puts the corpus theme on every row, whatever the content kind', async () => {
+    // Four values over 250 documents, already printed in Spanish in a seeded
+    // Voz's own title. It groups the library and identifies nobody.
+    const { payload, created } = fakePayload()
+    await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
+    expect(created.map((d) => d.data.tema)).toEqual(['traduccion', 'traduccion', 'dengue'])
+  })
+
+  it('✅ puts the language on a documento — the positive half of the rule', async () => {
+    // Without this assertion every "not on a testimonio" test below would still
+    // pass if the field stopped being written at all (ADR §16.2).
+    const { payload, created } = fakePayload()
+    await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
+    const documentos = created.filter((d) => d.data.contentKind === 'documento')
+    expect(documentos.map((d) => d.data.lengua)).toEqual(['mazateco', 'náhuatl'])
+  })
+
+  it('🔴 NEVER puts the language on a testimonio', async () => {
+    // `lengua` is an attribute of the person the document is about — the
+    // manifest keeps it in the same row as `nombre`. On an anonymous Voz it is
+    // a re-identification key: across the real corpus, 18 of the 34
+    // `(tema, lengua)` cells the 59 testimonios fall into hold exactly one.
+    const { payload, created } = fakePayload()
+    await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
+    const voz = created.find((d) => d.data.contentKind === 'testimonio')
+    expect(voz?.data.lengua).toBeNull()
+    // …and the manifest really did carry one for that row, so this is a
+    // suppression and not an absence.
+    expect(ROWS.find((r) => r.formato === 'testimonio')?.lengua).toBe('mixteco')
+  })
+
+  it('never writes a manifest column that names a person, on any row', async () => {
+    const { payload, created } = fakePayload()
+    await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
+    const serialised = JSON.stringify(created.map((d) => d.data))
+    for (const row of ROWS) {
+      expect(serialised).not.toContain(row.nombre)
+    }
+  })
+
   it('files a testimonio under the Investigador, not the uploader of ordinary documents', async () => {
     // `uploadedBy` records WHO PERFORMED THE UPLOAD. Filing somebody else's
     // words is `voces:upload`, which is the Investigador's.
@@ -242,6 +291,7 @@ describe('seeding the corpus as documents', () => {
       archivo: `SIM_${String(i).padStart(4, '0')}_escuela_diario_personal_corta.txt`,
       ecosistema: 'escuela',
       formato: 'diario_personal',
+      lengua: 'totonaco',
       nombre: 'Persona Sintética',
       text: `Nota ${i}.`,
     }))

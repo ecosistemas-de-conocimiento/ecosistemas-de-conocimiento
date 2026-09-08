@@ -5,6 +5,7 @@ import * as migration_20260828_080049_documents_session_hasmany from './20260828
 import * as migration_20260828_081504_voces_and_anonymisation from './20260828_081504_voces_and_anonymisation';
 import * as migration_20260828_191401_anonymisation_review from './20260828_191401_anonymisation_review';
 import * as migration_20260829_203018_corpus_graph from './20260829_203018_corpus_graph';
+import * as migration_20260905_060357_document_corpus_labels from './20260905_060357_document_corpus_labels';
 
 export const migrations = [
   {
@@ -40,6 +41,11 @@ export const migrations = [
   {
     up: migration_20260829_203018_corpus_graph.up,
     down: migration_20260829_203018_corpus_graph.down,
-    name: '20260829_203018_corpus_graph'
+    name: '20260829_203018_corpus_graph',
+  },
+  {
+    up: migration_20260905_060357_document_corpus_labels.up,
+    down: migration_20260905_060357_document_corpus_labels.down,
+    name: '20260905_060357_document_corpus_labels'
   },
 ];
