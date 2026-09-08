@@ -1,6 +1,6 @@
 import rateLimitPlugin from '@fastify/rate-limit';
 import sensible from '@fastify/sensible';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 
 import { env } from './config/env.js';
 import { authPlugin } from './plugins/auth.js';
@@ -65,20 +65,42 @@ export async function buildServer(): Promise<FastifyInstance> {
     async (v1) => {
       v1.addHook('preHandler', app.requireAuth);
 
-      // Rate-limit the entire /v1 surface per API key (falls back to IP for
-      // unauthenticated pre-handler failures). Routes that need a tighter cap
-      // (e.g. POST /v1/generate{,/sync}) override via `config.rateLimit`.
-      await v1.register(rateLimitPlugin, {
+      // Rate limiting for the whole /v1 surface. TWO registrations, because
+      // there are two different jobs here and one hook cannot do both.
+      //
+      // 🔴 The bug this shape exists to prevent. There used to be ONE
+      // registration, with `keyGenerator: (req) => req.auth?.apiKeyId ?? req.ip`
+      // and a comment claiming it limited "per API key". It never did.
+      // `@fastify/rate-limit` installs its hook at `onRequest` unless told
+      // otherwise; `requireAuth` (added above) is a `preHandler`, which runs
+      // strictly later. So `req.auth` was always undefined and the key was
+      // always `req.ip` — the "fallback" was the only path that ever ran.
+      // Every consumer behind one egress address shared one bucket; in docker
+      // compose that is an entire backend container, and one batch job could
+      // refuse every other caller it shipped alongside.
+      //
+      // ⚠ This is about WHICH BUCKET, not how big. Both registrations use the
+      // same numbers the single one used, and route-level `config.rateLimit`
+      // overrides (POST /v1/generate{,/sync}, /v1/route, /v1/retrieve/multi)
+      // are picked up by BOTH — the plugin reads them from the route's own
+      // config, so the tighter generate cap still applies to each bucket.
+      //
+      // ⚠ This does NOT give per-tenant fairness. Consumers authenticate with
+      // one API key each, and the ecosistemas backend uses a single
+      // `AI_SERVICE_API_KEY` for every ecosistema it serves — so all of them
+      // still land in one key bucket. Splitting a key per tenant is separate
+      // work; do not read this as tenant isolation.
+      const rateLimitNumbers = {
         max: V1_DEFAULT_RATE_LIMIT_MAX,
         timeWindow: V1_RATE_LIMIT_WINDOW,
-        keyGenerator: (req) => req.auth?.apiKeyId ?? req.ip,
         // The plugin `throw`s whatever this returns; Fastify reads
         // `statusCode` off the thrown value to pick the response code.
         // Returning a plain object would land as a 500 (no statusCode);
         // returning an Error with `statusCode` set gives us the 429 the
         // contract documents, with our custom body shape preserved by
-        // `setErrorHandler` below.
-        errorResponseBuilder: (_req, ctx) => {
+        // `setErrorHandler` below. Shared by both registrations so a 429 looks
+        // identical to a consumer whichever bucket refused it.
+        errorResponseBuilder: (_req: FastifyRequest, ctx: { ttl: number; statusCode: number }) => {
           const err = new Error(
             `Rate limit exceeded. Retry after ${Math.ceil(ctx.ttl / 1000)}s.`,
           ) as Error & {
@@ -91,6 +113,49 @@ export async function buildServer(): Promise<FastifyInstance> {
           err.retryAfterMs = ctx.ttl;
           return err;
         },
+      };
+
+      // 1. PRE-AUTH, per source address, at `onRequest`. Runs before any token
+      //    is parsed, which is the point: it is the ceiling on anonymous
+      //    floods and on credential guessing, both of which are refused by
+      //    `requireAuth` yet still consume this bucket.
+      //
+      //    ⚠ `req.ip` honours `x-forwarded-for` because the Fastify instance
+      //    above is built with `trustProxy: true`, which trusts EVERY hop. A
+      //    caller reaching ai-service directly can therefore pick its own
+      //    bucket by sending that header. Narrowing `trustProxy` to the known
+      //    ingress is a separate change with its own blast radius.
+      await v1.register(rateLimitPlugin, {
+        ...rateLimitNumbers,
+        hook: 'onRequest',
+        keyGenerator: (req) => req.ip,
+      });
+
+      // 2. POST-AUTH, per API key, at `preHandler`. Fastify runs
+      //    instance-level `preHandler` hooks (that is `requireAuth`, added at
+      //    the top of this scope) before the route-level ones the plugin
+      //    installs, so `req.auth` is populated by the time this key generator
+      //    runs. That ordering is the entire fix — verified behaviourally in
+      //    `src/routes/limits.test.ts`, not by reading this config.
+      //
+      //    What it buys: a key's allowance is now the key's, wherever the
+      //    requests come from. One key spread over N addresses used to get N
+      //    times the quota; it now gets one.
+      //
+      //    ⚠ What it does NOT buy: relief from a noisy neighbour on the SAME
+      //    address. Both buckets carry the same numbers, and the per-IP bucket
+      //    counts a superset of the traffic, so it is the one that bites first
+      //    whenever two keys share an egress IP. Making per-key fairness bite
+      //    there means loosening the per-IP ceiling — a deliberate numbers
+      //    decision nobody has taken.
+      await v1.register(rateLimitPlugin, {
+        ...rateLimitNumbers,
+        hook: 'preHandler',
+        // `requireAuth` has already replied 401 for anything that fails to
+        // authenticate, so this hook only ever sees a resolved `req.auth`. The
+        // `??` is a crash guard, not a code path — unlike the version this
+        // replaced, where it was the only path.
+        keyGenerator: (req) => req.auth?.apiKeyId ?? req.ip,
       });
 
       // Surface the typed fields above (`error`, `retryAfterMs`) on the JSON
