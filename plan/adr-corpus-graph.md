@@ -1063,3 +1063,174 @@ selection; selecting an entity keeps the ecosistema.
 organisation in the list, deliberately diverging from `/admin`: `/grafo` has a member reading of
 itself and `/admin` does not, so the menu and the page would otherwise disagree about which
 ecosistema you are in.
+
+## 18. The corpus has two axes the product does not store
+
+Found 2026-09-04, while reviewing a graph cleanup that would have deleted them. Recorded because the
+finding is not visible from the code — it only appears when the seed's ground truth is read next to
+the live graph.
+
+### 18.1 What the manifest knows
+
+`~/chamba/cide/corpus-generativo/resultados/MANIFEST.csv` carries two per-document
+columns, both populated on all 250 rows:
+
+| Column | Values | Distribution |
+| --- | --- | --- |
+| `ecosistema` | 4, closed | `traduccion` 70 · `dengue` 60 · `escuela` 60 · `discapacidad` 60 |
+| `lengua` | 11, open in principle | `mixteco` 43 · `náhuatl` 43 · `mazateco` 27 · `tlapaneco (me'phaa)` 23 · `totonaco` 22 · `zapoteco` 19 · `amuzgo` 16 · `mixe` 16 · `hñähñu (otomí)` 15 · `tlahuica` 13 · `tsotsil` 13 |
+
+🔴 **`documents` has a column for neither.** Checked against `information_schema.columns`: no
+`lengua`, no `idioma`, no `ecosistema`, no `tema`. Note that `ecosistema` here is a *subject* — it is
+not the tenancy `ecosistema`, which is an organisation. All 250 documents live in organisation 1.
+The same word means two different things and this is the first place they collide.
+
+### 18.2 Why that gap was invisible
+
+The graph extracts these words from the prose anyway, so the surface *looks* complete. Counted in
+the live graph for organisation 1:
+
+`discapacidad` 27 documents · `escuela` 26 · `náhuatl` 25 · `mixteco` 18 · `mazateco` 11 ·
+`zapoteco` 9 · `totonaco` 7 · `tlahuica` 5 · `tlapaneco` 5 · `amuzgo` 4 · `dengue` 4 · `hñähñu` 3 ·
+`tsotsil` 3 · `mixe` 2
+
+So the only place a reader can currently see which language a testimony is in, or which of the four
+subjects it belongs to, is **as a side effect of entity extraction**. Nothing declares that. Nothing
+guarantees it. A model that phrased the same fact differently would drop the axis silently.
+
+### 18.3 The near-miss
+
+Task 04 in `sprint0/` proposed rejecting single lowercase common nouns, because generic words were
+becoming the graph's largest hubs — `barranca` in 49 documents, `escuela` typed as an
+`organizacion` in 22. The rule is sound for that failure. But it is orthographic, and Spanish does
+not capitalise language names or abstract nouns, so the same rule deletes all 14 labels above.
+
+⚠ **Three of the four subjects the corpus was built around, and its entire language axis, were on
+the drop list of a cleanup aimed at junk.** The task file itself names `escuela` and `discapacidad`
+as junk hub nodes. Against the manifest they are two of the four things the corpus is *about*.
+
+Both readings are defensible, which is the point worth recording: a `tema` node reading
+`discapacidad` is low-information *if* you already know the document's subject from a column, and
+irreplaceable if you do not. The graph was carrying a load that belonged to the schema.
+
+### 18.4 Decision, 2026-09-04
+
+✅ **Do not drop the names, and add the missing columns.** Both halves, in that order — the filter is
+rescoped so the language and subject labels survive, and `lengua` and `ecosistema` become real fields
+on `documents` populated from the manifest.
+
+Once the columns exist the graph no longer has to carry this axis by accident, and the filter
+question stops being risky: deleting a generic `tema` node costs nothing when the subject is a field.
+
+🟡 Open, and deliberately not settled here:
+
+1. Whether `lengua` is safe to expose on the public view. §7's re-identification argument turns on
+   combinations — a language plus a place plus a role narrows a person further than any one of them.
+   These 250 documents are synthetic, so nothing is at risk today; the field shape is what a real
+   corpus would inherit, and that is the thing to get right now rather than later.
+2. Whether the generic-noun rule should be scoped by entity type. `escuela` as an `organizacion` is a
+   category error in any corpus. `discapacidad` as a `tema` is not. Those may deserve different rules.
+
+### 18.5 RESOLVED — the columns exist, and §18.4's first open question is answered
+
+Landed 2026-09-05, same session.
+
+**The field is `tema`, not `ecosistema`.** §18.1 above warned that the word means two different things
+in this codebase; naming the column `ecosistema` beside `organization` would invite a
+`where: { ecosistema }` that reads like a tenancy scope and enforces nothing. `tema` and `lengua` are
+both plain nullable `text` — not a Postgres enum, because the four themes are *data* from a
+regenerable sibling repo and a fifth theme should not fail the seed. Nothing branches on either
+value, so neither earns the `contentKind` treatment in §3.
+
+#### 🔴 `lengua` is gated to `documento`. This answers §18.4's question 1.
+
+It is **null on anything that is not a `documento`**, enforced twice. The count is the argument: the
+59 testimonios fall into 34 distinct `(tema, lengua)` cells, and **18 of those cells hold exactly
+one document**. So filtering on two labels points at a single anonymous voice more often than not —
+§7.3's scenario exactly, except that a column has no `GRAPH_MIN_SUPPORT` to hide behind. The graph
+threshold does not apply to a field, which is why the field needs its own answer.
+
+`tema` is ungated: four values, ~60 documents each, and a seeded Voz already prints its theme in its
+own title.
+
+⚠ **A projection trap worth knowing.** A Payload `select` that lists `lengua` must also list
+`contentKind` — the projection runs *before* field access, so omitting it hides `lengua` on every
+row with no error. Fail-closed, but silent, and it looks like missing data rather than a gate.
+
+#### What actually got populated
+
+⚠ **191 of 250 rows join to the manifest, not all 250.** `documents.name` carries the `SIM_xxxx` id
+for a `documento` and **not** for a testimonio — `seed/corpus.ts` withholds it deliberately, because
+that id is a key into the manifest's `nombre` column. Testimonios therefore take `tema` from the
+theme in their title and never receive a `lengua`. Two independent reasons converge on the same
+outcome, which is the reassuring case.
+
+#### 🟡 The remaining open question is narrower than §18.4's
+
+`escuela` is now a `tema` **column value on ~60 documents**, so losing the graph's mistyped
+`organizacion|escuela` node costs nothing. That was §18.4's real worry and the column retires it.
+What is left is the general one: whether the graph should keep emitting `tema` nodes that duplicate a
+column, or whether the column makes that class of node redundant. Not urgent, and cheaper to answer
+once there is a second corpus.
+
+## 19. 🔴 GraphRAG measured — no gain, and the reason is the seeder
+
+Run `20260905060010`, 2026-09-05. **120 real generations** (20 questions × 2 arms × 3 reps),
+$0.14. Full report and method: `apps/backend/src/eval/RESULTS.md`. Scoring is mechanical
+string-matching against `MANIFEST.csv`-derived ground truth — deliberately not an LLM judge.
+
+**The graph changed the answer on 2 of 20 questions**: better on one local, worse on one global.
+
+| class | arm | mean recall | citation precision | latency | cost |
+| --- | --- | --- | --- | --- | --- |
+| local | plain | 0.967 | 0.380 | 8.5 s | $0.0325 |
+| local | graph | 0.978 | 0.380 | 7.4 s | $0.0355 |
+| global | plain | **0.430** | **0.680** | 14.0 s | $0.0329 |
+| global | graph | 0.414 | 0.649 | 15.4 s | $0.0371 |
+
+Graph costs **+11% per call** and scored slightly *worse* on the class it exists for. Neither
+delta exceeds noise at n=10 per class.
+
+### The diagnosis is worth more than the null result
+
+Fusion did not underperform — **it almost never ran**.
+
+- **6 of 10 global questions matched ZERO seed entities.** 0 of 10 local questions did.
+- `MAX_RETRIEVE_SEEDS` is **8**. The matcher never reached **2**, on any question.
+- Only **2 of 20** questions contributed any graph chunks to the prompt.
+
+🔴 `matchEntitiesToQuery` (`lib/graph/queries.ts:876`) is pure literal token containment — the
+entity's canonical key must appear inside the user's question. That purity is §8.1's deliberate
+choice and it has an unmeasured consequence: a **local** question names its subject literally
+("¿qué lengua habla Efrén Peralta Guzmán…") and always seeds; a **global** question names a
+*category* ("¿qué centros de salud aparecen en varios documentos?") and seeds nothing. The four
+global questions that did seed only did so by accident of phrasing — they contained the literal
+strings `PILARES`, `dengue` or `escuela`.
+
+**The graph is asked to find what recurs across documents, by a matcher that requires the asker
+to already name the thing that recurs.**
+
+⚠ **So this experiment measured the seeder, not the fusion.** It rules out the optimistic case
+and licenses no conclusion about a graph fused from a better seed set — an embedding lookup over
+entity labels, or a type filter, would be a different system.
+
+⚠ Two further findings independent of the graph: **citation precision on local questions is 0.38
+in both arms**, and **global recall tops out at 0.43 in both arms**. That ceiling, not the graph
+delta, is the larger problem for whoever plans the next build.
+
+### 19.1 The sharpest case, and why §18.5 was the right call
+
+**G05 — "¿Qué lenguas indígenas hablan las personas que aparecen en los documentos?"** Eleven
+expected answers. **Zero seeds.** Recall 0.36 in both arms. The graph holds all eleven languages
+as `tema` entities and cannot retrieve them, because *"lenguas indígenas"* is not one of their
+labels. The `lengua` column added in §18.5 answers this question directly and the graph cannot.
+
+### 19.2 🟡 OPEN — the decision this was built to inform
+
+Whether always-on fusion keeps running on every turn at +11%. The evidence says it buys nothing
+measurable *today*; it does not say fusion is worthless, because the seeder starved it. Three
+honest options: turn fusion off pending a better seeder; keep it and fix the seeder first; or
+keep it as-is and accept the cost as insurance. **Not decided.**
+
+⚠ This result does **not** bear on task 04's junk-hub cleanup. That improves the `/grafo`
+browsing view, which this evaluation never measured.
