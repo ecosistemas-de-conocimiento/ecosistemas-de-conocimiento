@@ -24,6 +24,26 @@
  * `persona` (a registry row outranks the `specDefault` floor), if a future model
  * ignores the enum, or if ai-service's strict `parsed` gate is ever relaxed.
  *
+ * ── 🔴 THE GENERIC-LABEL RULE (prompt `v3`) ────────────────────────────────
+ *
+ * {@link dropGenericEntities} runs on every parsed window, right after the
+ * person rule, and drops a `lugar`, `organizacion` or `persona` whose label is
+ * a bare common noun — `barranca`, `escuela`, `clínica`, `mercado`. Prompt
+ * rule 3 has forbidden exactly this since `v1`; the model did not obey. So the
+ * rule now lives in code, and the prompt is the cheap second layer. Same
+ * division of labour as the person rule, for the same reason: what the code
+ * checks is worth more than what the model is asked.
+ *
+ * 🔴 IT DOES NOT TOUCH `tema`. A one-word `tema` is the corpus's SUBJECT —
+ * `náhuatl`, `discapacidad`, `dengue` — and `documents` has no other column
+ * carrying any of it. {@link GENERIC_RULE_TYPES} holds the full reasoning and
+ * the measurement; read it before widening the rule.
+ *
+ * ⚠ IT RUNS AT EXTRACTION TIME, NEVER AT READ TIME. A filter in `queries.ts`
+ * would change what the view shows the moment the code landed — unversioned,
+ * unstamped and invisible to anyone measuring the graph. This one is stamped
+ * `GRAPH_PROMPT_VERSION` and takes effect only when a document is re-extracted.
+ *
  * ⚠ INFERENCE COSTS MONEY. Nothing in this module retries a window, and nothing
  * loops over generation. One call per window, capped at
  * `GRAPH_EXTRACT_MAX_WINDOWS`. A failed window is counted and skipped.
@@ -222,6 +242,36 @@ export function parseWindowResponse(parsed: unknown): ParsedWindow | null {
 }
 
 /**
+ * Drop the entities a predicate rejects, AND every relation that touched one.
+ *
+ * ⚠ THE EDGES ARE NOT OPTIONAL. `mergeWindows` would drop a dangling edge
+ * anyway — but only if nothing else in the document happens to share the
+ * dropped label. If something does, the edge silently re-attaches to the wrong
+ * node, which is worse than losing it. Removing the edges here, by canonical
+ * key, is what makes that impossible.
+ *
+ * Private on purpose: the two callers below are the two rules, and each states
+ * its own reason. This function is only the mechanics they share.
+ */
+function dropEntitiesWhere(
+  window: ParsedWindow,
+  reject: (entity: RawEntity) => boolean,
+): ParsedWindow {
+  const removed = new Set<string>()
+  const entities = window.entities.filter((e) => {
+    if (!reject(e)) return true
+    removed.add(canonicalKey(e.etiqueta))
+    return false
+  })
+  if (removed.size === 0) return { entities, relations: window.relations }
+
+  const relations = window.relations.filter(
+    (r) => !removed.has(canonicalKey(r.desde)) && !removed.has(canonicalKey(r.hacia)),
+  )
+  return { entities, relations }
+}
+
+/**
  * 🔴 THE PERSON RULE'S SECOND ENFORCEMENT POINT. ADR §5.3, mechanism 2.
  *
  * Unconditional: it runs on every window of every document, whatever schema was
@@ -238,19 +288,189 @@ export function dropForbiddenPersonas(
   contentKind: string | null | undefined,
 ): ParsedWindow {
   if (personaAllowed(contentKind)) return window
+  return dropEntitiesWhere(window, (e) => e.tipo === 'persona')
+}
 
-  const removed = new Set<string>()
-  const entities = window.entities.filter((e) => {
-    if (e.tipo !== 'persona') return true
-    removed.add(canonicalKey(e.etiqueta))
-    return false
-  })
-  if (removed.size === 0) return { entities, relations: window.relations }
+// ---------------------------------------------------------------------------
+// 🔴 THE GENERIC-LABEL RULE — rule 3 of the prompt, made checkable
+// ---------------------------------------------------------------------------
 
-  const relations = window.relations.filter(
-    (r) => !removed.has(canonicalKey(r.desde)) && !removed.has(canonicalKey(r.hacia)),
+/**
+ * Spanish CLOSED-CLASS function words: articles, prepositions, contractions and
+ * the coordinating conjunctions.
+ *
+ * 🔴 THIS IS GRAMMAR, NOT A STOP-LIST, and the difference is the whole design.
+ * A stop-list of NOUNS ("barranca", "escuela", "español") is what this rule
+ * deliberately is not: it would be unbounded, hand-maintained, fitted to one
+ * corpus, and useless the day a second ecosistema arrives with a different
+ * vocabulary. This list is finite, closed (Spanish has not gained a preposition
+ * in centuries) and carries no opinion about any subject matter. It exists only
+ * so that "la barranca" cannot evade the rule by wearing an article — prompt
+ * rule 2 forbids the article, and this is what happens when rule 2 is ignored
+ * too.
+ */
+const SPANISH_FUNCTION_WORDS = new Set([
+  // articles
+  'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'lo',
+  // contractions
+  'al', 'del',
+  // prepositions
+  'a', 'ante', 'bajo', 'con', 'contra', 'de', 'desde', 'en', 'entre', 'hacia',
+  'hasta', 'para', 'por', 'según', 'sin', 'sobre', 'tras',
+  // conjunctions
+  'y', 'e', 'o', 'u', 'ni', 'que',
+])
+
+/** Any uppercase letter, ANYWHERE in the token — `Ó`, `Ñ` and `CIDE` included. */
+const HAS_UPPERCASE = /\p{Lu}/u
+
+/** Leading and trailing punctuation, so `"Carlos` compares as `Carlos`. */
+const EDGE_PUNCTUATION = /^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu
+
+/**
+ * The words in a label that carry meaning — everything that is not grammar.
+ *
+ * Exported for the tests, which assert the tokenisation directly rather than
+ * only through {@link isGenericLabel}: a silent tokenisation bug would make the
+ * whole rule pass everything, and a suite of rejection assertions cannot see
+ * that (00-context.md's warning about negative-only suites).
+ */
+export function significantTokens(label: string): string[] {
+  return (label ?? '')
+    .split(/\s+/)
+    .map((token) => token.replace(EDGE_PUNCTUATION, ''))
+    .filter((token) => token.length > 0 && !SPANISH_FUNCTION_WORDS.has(token.toLowerCase()))
+}
+
+/**
+ * 🔴 IS THIS LABEL A BARE COMMON NOUN, WITH NO NAME IN IT?
+ *
+ * A PURE, TYPE-BLIND PREDICATE. Whether a bare common noun is a defect depends
+ * entirely on the type it was given, and that judgement lives one level up in
+ * {@link GENERIC_RULE_TYPES}. Do not add a type check here.
+ *
+ * ── THE MEASUREMENT THIS EXISTS FOR ────────────────────────────────────────
+ *
+ * On the `v2` corpus the highest-degree nodes included `barranca` (lugar, 49
+ * documents) and `escuela` typed as an `organizacion` (22). Neither is a place
+ * or an institution — they name a CLASS of thing. A hub node that means nothing
+ * joins documents that have nothing to do with each other, in a view whose
+ * entire purpose is finding real patterns across testimonies — and it inflates
+ * the support counts `GRAPH_MIN_SUPPORT` gates on (ADR §7.3), so a generic
+ * label clears the privacy threshold that a specific one may not.
+ *
+ * ⚠ `español` (46) and `discapacidad` (27) were on that same list and are NOT
+ * defects: they are `tema`, and a `tema` is allowed to be one word. That is the
+ * whole reason this predicate is not applied to every type.
+ *
+ * ── THE RULE, AND WHY IT IS ORTHOGRAPHIC ───────────────────────────────────
+ *
+ * A label is generic when it has FEWER THAN TWO significant words and its one
+ * word carries no uppercase letter.
+ *
+ *   · TWO OR MORE significant words ⇒ kept, always. The qualifier is the thing
+ *     that makes a common noun into an entity, and it is exactly what prompt
+ *     rule 3 asks for: "acceso al agua potable" over "agua". Measured against
+ *     the 524 multi-word entities in the corpus, this needs no further test —
+ *     that half of the data was already good.
+ *   · ONE significant word ⇒ kept only if it looks like a PROPER NOUN.
+ *
+ * 🔴 Distinguishing `Morelos` from `barranca` needs either a Spanish lexicon or
+ * orthography, and orthography is what exists in code. Spanish capitalises
+ * proper nouns and does not capitalise common nouns, so the capital IS the
+ * signal — and it is a rule of the language, not a fact about this corpus,
+ * which is what makes it generalise to the next ecosistema. Measured on the
+ * 176 one-word entities in the corpus it separates them cleanly: all 55
+ * capitalised ones are real (Morelos, Cuernavaca, Oaxaca, Chenalhó, Óscar,
+ * CIDE, PILARES, LSM…), and not one is a common noun.
+ *
+ * ⚠ WHAT THIS RULE IS NOT ALLOWED TO TOUCH — see {@link GENERIC_RULE_TYPES}.
+ * Applied to every type, this predicate eats the corpus's own subject
+ * vocabulary: `náhuatl`, `mixteco`, `discapacidad`, `dengue`. So it is applied
+ * ONLY to the types that name a particular. The predicate itself stays pure and
+ * type-blind; the scoping lives in {@link dropGenericEntities}.
+ */
+export function isGenericLabel(label: string): boolean {
+  const tokens = significantTokens(label)
+  // Nothing but grammar, or nothing at all. Not an entity either way.
+  if (tokens.length === 0) return true
+  if (tokens.length >= 2) return false
+  return !HAS_UPPERCASE.test(tokens[0])
+}
+
+/**
+ * 🔴 THE TYPES THE GENERIC-NOUN RULE APPLIES TO, AND WHY IT IS ONLY THESE.
+ *
+ * `lugar`, `organizacion` and `persona` name a PARTICULAR — one specific place,
+ * one specific institution, one specific individual. A bare common noun typed
+ * as one of these is a CATEGORY ERROR, and it is wrong whatever the corpus is
+ * about: `escuela` is not a named organisation in any corpus, `barranca` is not
+ * a place, `tallerista` is not a person. That is exactly the complaint the task
+ * was opened for — `escuela` typed as an `organizacion`, 22 documents.
+ *
+ * 🔴 `tema` IS EXEMPT, AND THIS IS THE LOAD-BEARING EXCLUSION. A `tema` names a
+ * CONCEPT, and a concept is very often exactly one common noun. Measured
+ * against this corpus, a type-blind rule would have deleted:
+ *
+ *   · THE ENTIRE LANGUAGE AXIS. All 250 documents carry a `lengua`, 11 distinct
+ *     ones, and EVERY one of them lands on `tema`: `náhuatl` (25 documents),
+ *     `mixteco` (18), `mazateco` (11), `zapoteco` (9), `totonaco` (7),
+ *     `tlahuica` (5), `tlapaneco` (5), `amuzgo` (4), `hñähñu` (3), `tsotsil`
+ *     (3), `mixe` (2), plus `español` (45).
+ *   · THREE OF THE FOUR SUBJECTS THE CORPUS IS ORGANISED BY: `discapacidad`
+ *     (27), `dengue` (4), `traducción` (1).
+ *
+ * ⚠ AND THERE IS NOWHERE ELSE TO GET THEM. `documents` has no language, theme
+ * or ecosistema column — checked in `information_schema`. The graph is the only
+ * place this vocabulary surfaces in the product, so dropping it is not a
+ * quality trade, it is deleting the corpus's ground truth.
+ *
+ * ⚠ `evento` IS ALSO EXEMPT, less certainly. The prompt defines it as "un hecho
+ * o un proceso", and a PROCESS is a concept — so a bare noun there is not the
+ * unambiguous category error it is for the three types above. The cost is
+ * named: `conversatorio` (27 documents) survives as a generic hub, as do
+ * `pandemia` (16) and `huracán` (10), which may or may not be real referents.
+ * Adding `'evento'` to this set is the one-line change if that trade flips.
+ */
+const GENERIC_RULE_TYPES: ReadonlySet<GraphEntityType> = new Set<GraphEntityType>([
+  'lugar',
+  'organizacion',
+  'persona',
+])
+
+/**
+ * Drop the entities whose label is a bare common noun where a NAME was
+ * required, and the edges that touched one.
+ *
+ * 🔴 THE PRIMARY DEFENCE, and it runs at EXTRACTION time, never at read time.
+ * Prompt rule 3 has forbidden this since `v1` and the model does not obey it; a
+ * rule the code checks is worth more than a rule the model is asked to follow,
+ * which is the same conclusion the person rule reached (ADR §5.3) for the same
+ * reason. The prompt is still sharpened alongside it — as the cheap layer that
+ * tries to make the drop unnecessary, not as the guarantee.
+ *
+ * ⚠ Filtering here rather than in `queries.ts` is deliberate. A read-time
+ * filter would change what the view shows the moment the code lands, with no
+ * re-extraction and no version stamp — a silent, unversioned change to a
+ * surface someone may be measuring. `GRAPH_PROMPT_VERSION` is what makes this
+ * one findable and reversible; a read-time filter would have no stamp at all.
+ *
+ * ⚠ IT LOGS WHAT IT DROPS, unconditionally. If a future model lowercases every
+ * label, this rejects every one-word place, organisation and person in the
+ * corpus at once, and during a multi-hour backfill the log is the only place
+ * that is visible before the money is spent.
+ */
+export function dropGenericEntities(window: ParsedWindow): ParsedWindow {
+  const reject = (e: RawEntity): boolean =>
+    GENERIC_RULE_TYPES.has(e.tipo) && isGenericLabel(e.etiqueta)
+
+  const dropped = window.entities.filter(reject)
+  if (dropped.length === 0) return window
+  console.log(
+    '[graph] etiquetas genéricas descartadas:',
+    dropped.map((e) => `${e.tipo}/${e.etiqueta}`).join(', '),
   )
-  return { entities, relations }
+  return dropEntitiesWhere(window, reject)
 }
 
 // ---------------------------------------------------------------------------
@@ -422,6 +642,20 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
 
   const parsedWindows: ParsedWindow[] = []
   let windowsFailed = 0
+  /**
+   * 🔴 WHY THE REASONS ARE COLLECTED AND NOT ONLY LOGGED.
+   *
+   * The 11 documents that failed the first corpus run all carry the same
+   * `graphError`: `graph_extract_failed: every extraction window failed
+   * (1 of 1)`. The per-window message BELOW already carries the raw response
+   * text — but it only ever reached `onWindowError`, which defaults to
+   * `console.warn`, so the evidence died with the process and the row said
+   * nothing. `schedule.ts`'s `recordFailure` persists THIS throw, so carrying
+   * the first reason into it is what actually makes a repeat run diagnose
+   * itself. `generate.sync` writes no `generation_jobs` row, so there is no
+   * other way to see the response without paying for the call again.
+   */
+  const failureReasons: string[] = []
 
   for (let i = 0; i < windows.length; i++) {
     const input = {
@@ -436,6 +670,7 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
       result = await callWindow({ client, docId, windowIndex: i, input, spec })
     } catch (err) {
       windowsFailed++
+      failureReasons.push(err instanceof Error ? err.message : String(err))
       ;(args.onWindowError ?? defaultWindowError)(i, err)
       continue
     }
@@ -450,23 +685,27 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
       // `generation_jobs` row, so `GET /v1/generate/units/:key/latest` cannot
       // replay it either: if this message does not carry the evidence, the only
       // way to see it is to pay for the call again.
-      const preview =
-        typeof result.text === 'string' && result.text.trim()
-          ? ` — response text was: ${result.text.trim().slice(0, 400)}`
-          : ' — the response carried no text either'
-      ;(args.onWindowError ?? defaultWindowError)(
-        i,
-        new Error(`no usable \`parsed\` payload (schema miss or empty completion)${preview}`),
-      )
+      const reason = `no usable \`parsed\` payload (schema miss or empty completion)${responsePreview(result.text)}`
+      failureReasons.push(reason)
+      ;(args.onWindowError ?? defaultWindowError)(i, new Error(reason))
       continue
     }
 
-    // 🔴 UNCONDITIONAL, and before the merge. See the file header.
-    parsedWindows.push(dropForbiddenPersonas(shaped, contentKind))
+    // 🔴 UNCONDITIONAL, and before the merge. Privacy first: the person rule
+    // runs whatever the model returned, and only then does the quality rule.
+    // Neither depends on the other's output, so the order is a statement of
+    // which one may never be skipped rather than a data dependency.
+    parsedWindows.push(dropGenericEntities(dropForbiddenPersonas(shaped, contentKind)))
   }
 
   if (parsedWindows.length === 0) {
-    throw new Error(`every extraction window failed (${windows.length} of ${windows.length})`)
+    // ⚠ `recordFailure` slices `graphError` to 500 characters and prefixes
+    // ~25 of its own. The reason is capped so the tail of the evidence is not
+    // the part that gets cut.
+    const why = failureReasons[0] ? ` — ${failureReasons[0].slice(0, 400)}` : ''
+    throw new Error(
+      `every extraction window failed (${windows.length} of ${windows.length})${why}`,
+    )
   }
 
   const { entities, relations } = mergeWindows(parsedWindows, contentKind)
@@ -479,6 +718,23 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
     truncated,
     promptVersion: GRAPH_PROMPT_VERSION,
   }
+}
+
+/**
+ * The raw response, as evidence, HEAD AND TAIL.
+ *
+ * 🔴 THE TAIL IS THE DIAGNOSIS. The failure this exists for is a completion cut
+ * off mid-array — the model runs out of output budget rather than closing the
+ * JSON — and the only thing that tells a cut-off array apart from a malformed
+ * one is what the LAST characters look like. A head-only preview, which is what
+ * this was, shows a perfectly well-formed opening every time and says nothing.
+ */
+function responsePreview(text: string | undefined): string {
+  const body = typeof text === 'string' ? text.trim() : ''
+  if (!body) return ' — the response carried no text either'
+  if (body.length <= 300) return ` — response text was: ${body}`
+  const omitted = body.length - 300
+  return ` — response text was: ${body.slice(0, 150)} […${omitted} chars…] ${body.slice(-150)}`
 }
 
 function defaultWindowError(windowIndex: number, err: unknown): void {

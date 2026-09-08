@@ -56,15 +56,41 @@ import {
  * view shows (ADR §10). Bumping this is a deliberate operation, not a
  * deploy-time one.
  *
- * ── WHY IT IS `v2` ─────────────────────────────────────────────────────────
+ * ── WHY IT IS `v3` ─────────────────────────────────────────────────────────
  *
  * `v1` did not ask for `fragmento`, so every `v1` row has a NULL
  * `graph_mentions.snippet` even for a `documento` that would be allowed one.
- * Those rows are not wrong, they are INCOMPLETE — and the only thing that can
- * find them is this stamp. A `v1` document is exactly what
- * `lib/graph/backfill.ts` selects on (`graphPromptVersion != GRAPH_PROMPT_VERSION`).
+ * Those rows are not wrong, they are INCOMPLETE.
+ *
+ * `v2` produced GENERIC HUB NODES. Measured on the 261-document corpus: the
+ * highest-degree nodes included `barranca` (lugar, 49 documents), `español`
+ * (tema, 46), `discapacidad` (tema, 27) and `escuela` typed as an
+ * `organizacion` (22). Those are common nouns, not entities — a hub that means
+ * nothing joins documents that have nothing to do with each other, and it
+ * inflates the support counts `GRAPH_MIN_SUPPORT` gates on (ADR §7.3).
+ *
+ * `v3` answers that in two places, and only one of them is a request:
+ *   1. Rule 3 below now carries the observed failures as explicit
+ *      counter-examples, the entity-type examples no longer demonstrate the
+ *      very mistake rule 3 forbids, and `organizacion` says CON NOMBRE PROPIO.
+ *   2. 🔴 `extract.ts`'s `dropGenericEntities` REJECTS a bare common noun after
+ *      the fact. Rule 3 already said this in `v2` and the model did not obey —
+ *      so, exactly like the person rule, the load-bearing mechanism is the one
+ *      in code, and the prompt is the cheap second layer.
+ *
+ * 🔴 SCOPED TO `lugar`, `organizacion` AND `persona`, AND THAT IS THE WHOLE
+ * DESIGN. `español` and `discapacidad` were on the junk list too and are NOT
+ * junk: they are `tema`, and a one-word `tema` is the corpus's own subject.
+ * All 11 of this corpus's indigenous languages land on `tema`, and `documents`
+ * has no language or theme column, so the graph is the only place they exist.
+ * Rule 3 therefore asks for a NAME only where a name is what the type means,
+ * and says out loud that a one-word `tema` is wanted. `extract.ts`'s
+ * `GENERIC_RULE_TYPES` carries the measurement.
+ *
+ * Only this stamp can find the rows any of that leaves stale.
+ * `lib/graph/backfill.ts` selects on `graphPromptVersion != GRAPH_PROMPT_VERSION`.
  */
-export const GRAPH_PROMPT_VERSION = 'v2'
+export const GRAPH_PROMPT_VERSION = 'v3'
 
 /**
  * The registry unit-type. A project takes ownership of extraction by
@@ -212,6 +238,15 @@ const PERSONA_RULE_FORBIDDEN = [
  * now `fragmento`, the person rule keeps 8 (its two variants hard-code the
  * number, so they stay in step), and the caps rule is 9.
  *
+ * 🔴 RULE 3 IS THE ONE THE MODEL DOES NOT OBEY, and `v3` is the second attempt
+ * at it. `v2` already said "agua es demasiado vago" and the corpus still came
+ * back with `barranca`, `español`, `discapacidad` and `escuela` as its biggest
+ * nodes. What changed in `v3` is that rule 3 is now BACKED BY CODE:
+ * `extract.ts`'s `dropGenericEntities` drops a one-word label that is not a
+ * proper noun, whatever the model returns. The words below are the cheap layer
+ * that tries to make the drop unnecessary — they are not the guarantee. Same
+ * division of labour as the person rule, and for the same measured reason.
+ *
  * ⚠ Rule 9 says "20 relaciones", matching `maxItems` in
  * {@link graphResponseSchema}. It said 60 — the number from before ADR §13.1
  * lowered the caps — so the prose and the schema disagreed by a factor of three
@@ -220,15 +255,25 @@ const PERSONA_RULE_FORBIDDEN = [
  * honouring `maxItems`, which makes the WORDS the effective cap).
  */
 export function graphPromptTemplate(allowPersona: boolean): string {
+  // ⚠ EVERY EXAMPLE HERE IS ALSO A DEMONSTRATION OF RULE 3, and in `v2` three
+  // of them demonstrated the opposite: "el desalojo" is a bare common noun with
+  // an article in front of it — the exact shape rule 3 forbids and the exact
+  // shape the corpus came back full of. An example outranks a rule; the model
+  // reads the list of types before it reads the list of rules. All four lines
+  // now show a QUALIFIED label with no leading article.
   const entityLines = [
     '- `tema`: un asunto, problema, derecho o concepto que el texto trata',
-    '  ("acceso al agua", "desplazamiento forzado", "consulta previa").',
+    '  ("acceso al agua potable", "desplazamiento forzado", "consulta previa").',
     '- `lugar`: un lugar geográfico o un espacio concreto',
-    '  ("Chiapas", "el ejido San Isidro", "la clínica comunitaria").',
+    '  ("Chiapas", "ejido San Isidro", "clínica comunitaria de Xoxocotla").',
     '- `evento`: un hecho o un proceso con desarrollo en el tiempo',
-    '  ("la asamblea de 2019", "el desalojo", "la negociación del convenio").',
-    '- `organizacion`: una institución, dependencia, empresa o colectivo',
-    '  ("CIDE", "la asamblea ejidal", "la Secretaría de Salud").',
+    '  ("asamblea ejidal de 2019", "desalojo de Potoichán",',
+    '  "negociación del convenio").',
+    '- `organizacion`: una institución, dependencia, empresa o colectivo CON',
+    '  NOMBRE PROPIO ("CIDE", "Secretaría de Salud",',
+    '  "Escuela Primaria Miguel Hidalgo"). Un sustantivo genérico como escuela,',
+    '  clínica, universidad o comité nombra una CLASE de cosa, no una',
+    '  organización: usa el nombre completo o no la extraigas.',
   ]
   if (allowPersona) {
     entityLines.push('- `persona`: una persona nombrada en el texto.')
@@ -255,9 +300,24 @@ export function graphPromptTemplate(allowPersona: boolean): string {
     '   sin markdown, sin texto antes ni después.',
     '2. Las `etiqueta` van en ESPAÑOL. Usa la forma que aparece en el texto,',
     '   sin artículos iniciales ("asamblea ejidal", no "la asamblea ejidal").',
-    '3. Usa la forma más CORTA que siga siendo específica. "agua" es demasiado',
-    '   vago; "acceso al agua potable" es útil; una frase entera no es una',
-    '   etiqueta.',
+    '3. Usa la forma más CORTA que siga siendo específica. Una frase entera no',
+    '   es una etiqueta.',
+    '   Un `lugar`, una `organizacion` y una `persona` deben NOMBRAR a UNO en',
+    '   concreto, no a una clase de cosa. Si el texto no da el nombre, no',
+    '   extraigas la entidad.',
+    '   MAL: "escuela", "clínica", "barranca", "mercado", "colonia",',
+    '   "hospital", "universidad", "abogados", "tallerista".',
+    '   BIEN: "Escuela Primaria Miguel Hidalgo", "Centro de Salud de',
+    '   Tlayacapan", "barranca de Amanalco", "mercado de Villa de Ayala",',
+    '   "Morelos", "CIDE".',
+    '   ⚠ Un `lugar`, una `organizacion` o una `persona` de UNA SOLA palabra',
+    '   que no sea nombre propio se DESCARTA automáticamente.',
+    '   Un `tema`, en cambio, SÍ puede ser una sola palabra cuando esa palabra',
+    '   es el asunto mismo: "náhuatl", "mixteco", "discapacidad", "dengue",',
+    '   "braille" son temas válidos y ÚTILES. No los conviertas en frases.',
+    '   ⚠ Si el texto trata SOBRE la escuela, la clínica o el mercado como',
+    '   asunto, eso es un `tema` ("escuela", "salud comunitaria"), no un',
+    '   `lugar` ni una `organizacion`.',
     '4. No inventes nada. Toda entidad debe estar sustentada en este fragmento.',
     '5. `menciones` es cuántas veces aparece la entidad EN ESTE FRAGMENTO.',
     '6. `desde` y `hacia` deben coincidir EXACTAMENTE con una `etiqueta` de tu',

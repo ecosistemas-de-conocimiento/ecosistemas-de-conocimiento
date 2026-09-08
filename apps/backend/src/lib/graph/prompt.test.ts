@@ -15,6 +15,7 @@ import {
   graphResponseSchema,
   graphUnitKey,
 } from './prompt'
+import { isGenericLabel } from './extract'
 import { GRAPH_RELATION_TYPES } from './types'
 
 interface EntityItem {
@@ -180,6 +181,95 @@ describe('graphPromptTemplate', () => {
     expect(template).toContain(`y ${props.relaciones.maxItems} relaciones`)
   })
 
+  it('🔴 names the measured category errors as counter-examples in rule 3', () => {
+    // `v2`'s rule 3 said only "agua es demasiado vago", and the corpus came
+    // back with `barranca` as a lugar (49 documents) and `escuela` as an
+    // `organizacion` (22) among its biggest nodes. The failures the model
+    // actually produced are now in the prompt by name — an abstract rule it
+    // ignored, made concrete. The GUARANTEE is still `dropGenericEntities` in
+    // `extract.ts`; this is the cheap second layer.
+    for (const allowPersona of [true, false]) {
+      const template = graphPromptTemplate(allowPersona)
+      for (const observed of ['barranca', 'escuela', 'clínica', 'mercado']) {
+        expect(template).toContain(`"${observed}"`)
+      }
+      // …paired with the qualified form of the same noun, so the rule reads as
+      // "give me the name", not as "never mention these words".
+      expect(template).toContain('"Escuela Primaria Miguel Hidalgo"')
+      expect(template).toContain('"barranca de Amanalco"')
+      expect(template).toContain('"mercado de Villa de Ayala"')
+    }
+  })
+
+  it('⚠ tells the model that a bare one-word NAME-type label is DISCARDED', () => {
+    // The strongest lever a prompt has is the consequence of disobeying, and
+    // this one is true: `extract.ts` drops it. It is also scoped exactly as the
+    // code is — the threat must not extend to `tema`, or the model stops
+    // producing the corpus's subjects.
+    const template = graphPromptTemplate(true)
+    expect(template).toContain('DESCARTA automáticamente')
+    expect(template).toContain('Un `lugar`, una `organizacion` o una `persona` de UNA SOLA palabra')
+  })
+
+  it('🔴 tells the model a one-word `tema` is WANTED — the corpus vocabulary', () => {
+    // 🔴 THE OWNER'S CORRECTION, IN THE PROMPT. Every one of the 250 corpus
+    // documents carries a `lengua`, all 11 of them land on `tema`, and
+    // `documents` has no language or theme column — the graph is the only place
+    // they exist. An earlier draft of rule 3 told the model to write "lengua
+    // náhuatl" instead of "náhuatl", which would have suppressed exactly the
+    // vocabulary the corpus is organised by.
+    for (const allowPersona of [true, false]) {
+      const template = graphPromptTemplate(allowPersona)
+      expect(template).toContain('Un `tema`, en cambio, SÍ puede ser una sola palabra')
+      for (const subject of ['náhuatl', 'mixteco', 'discapacidad', 'dengue', 'braille']) {
+        expect(template).toContain(`"${subject}"`)
+      }
+      // ⚠ And the routing rule that recovers the fourth theme: `escuela` is a
+      // subject, so it belongs on `tema`, not on `organizacion`.
+      expect(template).toContain('eso es un `tema`')
+    }
+  })
+
+  it('⚠ never asks the model to turn a subject into a phrase', () => {
+    // The suppressing instruction from the withdrawn draft, asserted absent.
+    const template = graphPromptTemplate(true)
+    expect(template).not.toContain('"lengua náhuatl"')
+    expect(template).not.toContain('no "náhuatl"')
+    expect(template).toContain('No los conviertas en frases')
+  })
+
+  it('🔴 no entity-type example demonstrates the mistake rule 3 forbids', () => {
+    // `v2` listed "el desalojo" as an `evento` and "la asamblea ejidal" as an
+    // `organizacion` — a bare common noun with an article in front of it, which
+    // is exactly the shape rule 3 forbids and exactly what the corpus filled up
+    // with. An example outranks a rule: the model reads the type list first.
+    // ⚠ SCOPED TO THE TYPE BLOCK, deliberately. Rule 2 still quotes
+    // "la asamblea ejidal" — as its own MAL example, which is the right place
+    // for a bad form. What must not happen is a bad form appearing where the
+    // model reads it as a MODEL to copy.
+    const template = graphPromptTemplate(true)
+    const typeBlock = template.slice(0, template.indexOf('TIPOS DE RELACIÓN'))
+    for (const wasAnExample of ['"el desalojo"', '"la asamblea ejidal"', '"la clínica comunitaria"'])
+      expect(typeBlock).not.toContain(wasAnExample)
+
+    // 🔴 AND THE GENERAL FORM, checked against the rule itself rather than
+    // against a list of strings: every label quoted in the TIPOS DE ENTIDAD
+    // block must survive `extract.ts`'s filter. An example the code would throw
+    // away is the prompt teaching the failure while forbidding it in words.
+    const examples = [...typeBlock.matchAll(/"([^"]+)"/g)].map((m) => m[1])
+    expect(examples.length).toBeGreaterThan(8)
+    expect(examples.filter((label) => isGenericLabel(label))).toEqual([])
+  })
+
+  it('🔴 says an `organizacion` needs a proper name — `escuela` was typed as one', () => {
+    for (const allowPersona of [true, false]) {
+      const template = graphPromptTemplate(allowPersona)
+      expect(template).toContain('colectivo CON')
+      expect(template).toContain('NOMBRE PROPIO ("CIDE"')
+      expect(template).toContain('Un sustantivo genérico como escuela')
+    }
+  })
+
   it('🔴 tells the model not to extract people when personas are forbidden', () => {
     const forbidden = graphPromptTemplate(false)
     expect(forbidden).toContain('PROHIBIDO EXTRAER PERSONAS')
@@ -219,5 +309,15 @@ describe('GRAPH_PROMPT_VERSION', () => {
     // leave the corpus half-extracted under two contracts with nothing able to
     // tell the halves apart.
     expect(GRAPH_PROMPT_VERSION).not.toBe('v1')
+  })
+
+  it('🔴 is `v3`, the stamp the generic-label re-extraction is findable by', () => {
+    // `v2` rows were extracted under a contract that let `barranca`, `español`,
+    // `escuela` and `discapacidad` become the corpus's biggest nodes. The ONLY
+    // thing that can find them afterwards is this string: `backfill.ts` selects
+    // on `graphPromptVersion != GRAPH_PROMPT_VERSION`. Leaving it at `v2` would
+    // leave the corpus half-extracted under two contracts with nothing able to
+    // tell the halves apart — which is exactly what happened at `v1`.
+    expect(GRAPH_PROMPT_VERSION).toBe('v3')
   })
 })
