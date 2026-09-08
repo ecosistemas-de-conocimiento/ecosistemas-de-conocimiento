@@ -1,0 +1,194 @@
+{
+  "runId": "20260905055821",
+  "fake": true,
+  "asOf": "2026-09-05T05:58:21.203Z",
+  "organization": {
+    "id": 1,
+    "name": "Organización Demo"
+  },
+  "corpusDocuments": 191,
+  "graphMinSupport": 3,
+  "droppedGlobalFacts": [],
+  "results": [
+    {
+      "id": "G02",
+      "klass": "global",
+      "text": "¿Qué sedes de PILARES se repiten en los documentos sobre vida con discapacidad? Nómbralas.",
+      "expected": [
+        "PILARES \"Carlos Monsiváis\"",
+        "PILARES \"Gabriel Vargas\""
+      ],
+      "support": {
+        "PILARES \"Carlos Monsiváis\"": 39,
+        "PILARES \"Gabriel Vargas\"": 17
+      },
+      "targetDocumentId": null,
+      "arms": [
+        {
+          "arm": "plain",
+          "rep": 1,
+          "answer": "[FAKE]\n[CONTEXTO disponible para responder — es tu FUENTE PRINCIPAL y está AQUÍ MISMO; NO digas que no tienes información ni pidas datos que ya aparecen abajo]\n\nContexto del proyecto/organización:\nEcosistema: Organización Demo. Organización de demostración para el repositorio de conocimiento: sube documentos, haz preguntas sobre ellos y califica las respuestas del asistente.\n\n---\n\nContexto recuperado de la base de conocimiento:\n[1] TRANSCRIPCIÓN DE ENTREVISTA — BIOGRAFÍA DE VIDA\nProyecto IH-2025-I-445 · Ecosistema: discapacidad\nPersona entrevistada: Gabriela Noriega Palma (49 años, funcionaria de área de diversidad funcional)\nFecha: 12 de enero de 2026 · Duración aproximada: 30 min\nNota: transcripción de audio; se conservan muletillas y marcas de oralidad.\n------------------------------------------------------------\n\nE: Gracias por recibirnos. ¿Podría contarnos su historia, desde donde usted quiera empezar?\n\nP: Soy de Xoxocotla, Morelos, ¿no? Crecí hablando náhuatl; el español lo fui aprendiendo después, en la escuela y en los mandados, ¿no?\n\nP: Salí de mi pueblo a los 17 años. La verdad, en Ciudad de México aprendí que hay puertas que se abren con el español y puertas que solo se abren con la confianza.\n\nE: ¿Y la gente cómo respondía?\n\nP: En el Día Nacional de la Lengua de Señas Mexicana participé en el conversatorio del PILARES \"Carlos Monsiváis\" de la colonia Portales. No se hablaba 'sobre' las personas sordas: eran las personas sordas quienes tomaban la palabra pública, señando. Este..., los oyentes, por una vez, eran quienes necesitaban intérprete. [risas]\n\nP: Participo desde hace 18 años en actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Pues, llegué buscando un taller y encontré una comunidad.\n\nP: Una tallerista dijo algo que me quedó grabado: 'no queremos ser incluidos en su mundo; queremos que el mundo se rehaga con nosotros adentro desde el principio'. Ahí está toda la discusión, me parece.\n\nE: ¿Y cómo fue eso para usted?\n\nP: Doy seguimiento a las actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Digamos, al principio la institución quería llamar a todo 'inclusión'. Fíjese que, varios propusimos otras palabras, porque la inclusión siempre supone que hay un adentro que nos hace el favor de recibirnos.\n\nP: Cuando cerramos la sesión, una compañera dijo que esto se trata de abrir el corazón, poco a poco. Suena sencillo, pero nombra algo que ningún reglamento nombra, ¿no?\n\nP: Sigo participando porque el PILARES \"Gabriel Vargas\" de Iztapalapa es de los pocos lugares donde mi palabra —hablada, señada o escrita— llega entera, ¿no?\n\nE: Muchas gracias. ¿Algo más que quiera que quede grabado?\n\nP: Que le pongan mi nombre como es, y que la historia regrese a la comunidad. Eso sería todo.\n\n[2] TRANSCRIPCIÓN DE ENTREVISTA — BIOGRAFÍA DE VIDA\nProyecto IH-2025-I-445 · Ecosistema: discapacidad\nPersona entrevistada: Enedina Meza Cárdenas (52 años, funcionaria de área de diversidad funcional)\nFecha: 21 de abril de 2026 · Duración aproximada: 78 min\nNota: transcripción de audio; se conservan muletillas y marcas de oralidad.\n------------------------------------------------------------\n\nE: Gracias por recibirnos. ¿Podría contarnos su historia, desde donde usted quiera empezar?\n\nP: Nací hace 52 años en Malinaltepec, Guerrero. Mi madre me enseñó el tlapaneco (me'phaa) y también me enseñó que la palabra se cuida como se cuida la milpa.\n\nP: Salí de mi pueblo a los 14 años. Digamos, en Ciudad de México aprendí que hay puertas que se abren con el español y puertas que solo se abren con la confianza.\n\nE: ¿Y cómo fue eso para usted?\n\nP: En el Día Nacional de la Lengua de Señas Mexicana participé en el conversatorio del PILARES \"Carlos Monsiváis\" de la colonia Portales. No se hablaba 'sobre' las personas sordas: eran las personas sordas quienes tomaban la palabra pública, señando. Los oyentes, por una vez, eran quienes necesitaban intérprete.\n\nP: Participo desde hace 13 años en actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Llegué buscando un taller y encontré una comunidad.\n\nP: Trabajo del lado institucional, y lo digo sin orgullo automático: he visto cómo un formato mal diseñado puede deshacer en cinco minutos lo que un taller construyó en meses. [se escucha ruido de calle] Mi labor cotidiana es pelear esos formatos por dentro.\n\nP: Me pidieron dar una plática 'motivacional'. Contesté que mi vida no es material de inspiración para terceros, pero que con gusto hablaba de rampas, presupuestos e intérpretes. No me volvieron a llamar. [inaudible] Lo cuento sin amargura: también así se dibuja el mapa.\n\nP: Una tallerista dijo algo que me quedó grabado: 'no queremos ser incluidos en su mundo; queremos que el mundo se rehaga con nosotros adentro desde el principio'. Ahí está toda la discusión, me parece.\n\nP: Doy seguimiento a las actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Al principio la institución quería llamar a todo 'inclusión'. Varios propusimos otras palabras, porque la inclusión siempre supone que hay un adentro que nos hace el favor de recibirnos.\n\nP: Lo que sabemos las personas con discapacidad sobre esta ciudad no está en ningún diagnóstico oficial. Pues, está en nuestros cuerpos y en nuestros trayectos, ¿no? Este..., ojalá este archivo sepa escucharlo, ¿no?\n\nE: Muchas gracias. ¿Algo más que quiera que quede grabado?\n\nP: Pues nomás eso: que se use bien lo que aquí dije. [risas] Que no se quede guardado.\n\n[3] NOTAS PERSONALES DE CAMPO — Delfina Nava Rendón (mediadora educativa de PILARES)\n\n2 de enero de 2026.\nSoy de Papantla, Veracruz. Crecí hablando totonaco; el español lo fui aprendiendo después, en la escuela y en los mandados.\n\n17 de febrero de 2026.\nMi historia con la discapacidad no empezó conmigo: empezó con las escaleras, con las ventanillas, con los formatos que no contemplan mi existencia. Yo estaba bien; el entorno era el problema.\n\n24 de febrero de 2026.\nUna tallerista dijo algo que me quedó grabado: 'no queremos ser incluidos en su mundo; queremos que el mundo se re",
+          "promptChars": 11667,
+          "cached": false,
+          "prepareMs": 321,
+          "generateMs": 0,
+          "totalMs": 321,
+          "retrieveCalls": 1,
+          "retrieveMs": 320,
+          "graphMs": 0,
+          "graphSeeds": [],
+          "graphBlockChars": 0,
+          "graphChunks": 0,
+          "fusedChunks": 5,
+          "fusedFromGraph": 0,
+          "costUsd": 0,
+          "traceId": "fake",
+          "inputTokens": null,
+          "outputTokens": null,
+          "serverMs": null,
+          "score": {
+            "found": [
+              "PILARES \"Carlos Monsiváis\"",
+              "PILARES \"Gabriel Vargas\""
+            ],
+            "missing": [],
+            "recall": 1,
+            "citationPrecision": 1,
+            "citedDocumentIds": [
+              319,
+              340,
+              352,
+              359,
+              364
+            ],
+            "targetCited": null
+          }
+        },
+        {
+          "arm": "graph",
+          "rep": 1,
+          "answer": "[FAKE]\n[CONTEXTO disponible para responder — es tu FUENTE PRINCIPAL y está AQUÍ MISMO; NO digas que no tienes información ni pidas datos que ya aparecen abajo]\n\nContexto del proyecto/organización:\nEcosistema: Organización Demo. Organización de demostración para el repositorio de conocimiento: sube documentos, haz preguntas sobre ellos y califica las respuestas del asistente.\n\n---\n\nContexto del grafo de conocimiento:\nResumen del grafo de conocimiento del ecosistema, calculado sobre TODO el material publicado (no sobre los fragmentos de abajo). Las cifras cuentan documentos publicados distintos, no menciones. Solo aparecen entidades y conexiones que varios documentos respaldan.\n\n- discapacidad (tema): aparece en 17 documentos.\n\nUsa este resumen para responder preguntas generales sobre qué se repite en el corpus o qué aparece junto a qué. Para afirmaciones puntuales, apóyate en los fragmentos recuperados.\n\n---\n\nContexto recuperado de la base de conocimiento:\n[1] TRANSCRIPCIÓN DE ENTREVISTA — BIOGRAFÍA DE VIDA\nProyecto IH-2025-I-445 · Ecosistema: discapacidad\nPersona entrevistada: Gabriela Noriega Palma (49 años, funcionaria de área de diversidad funcional)\nFecha: 12 de enero de 2026 · Duración aproximada: 30 min\nNota: transcripción de audio; se conservan muletillas y marcas de oralidad.\n------------------------------------------------------------\n\nE: Gracias por recibirnos. ¿Podría contarnos su historia, desde donde usted quiera empezar?\n\nP: Soy de Xoxocotla, Morelos, ¿no? Crecí hablando náhuatl; el español lo fui aprendiendo después, en la escuela y en los mandados, ¿no?\n\nP: Salí de mi pueblo a los 17 años. La verdad, en Ciudad de México aprendí que hay puertas que se abren con el español y puertas que solo se abren con la confianza.\n\nE: ¿Y la gente cómo respondía?\n\nP: En el Día Nacional de la Lengua de Señas Mexicana participé en el conversatorio del PILARES \"Carlos Monsiváis\" de la colonia Portales. No se hablaba 'sobre' las personas sordas: eran las personas sordas quienes tomaban la palabra pública, señando. Este..., los oyentes, por una vez, eran quienes necesitaban intérprete. [risas]\n\nP: Participo desde hace 18 años en actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Pues, llegué buscando un taller y encontré una comunidad.\n\nP: Una tallerista dijo algo que me quedó grabado: 'no queremos ser incluidos en su mundo; queremos que el mundo se rehaga con nosotros adentro desde el principio'. Ahí está toda la discusión, me parece.\n\nE: ¿Y cómo fue eso para usted?\n\nP: Doy seguimiento a las actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Digamos, al principio la institución quería llamar a todo 'inclusión'. Fíjese que, varios propusimos otras palabras, porque la inclusión siempre supone que hay un adentro que nos hace el favor de recibirnos.\n\nP: Cuando cerramos la sesión, una compañera dijo que esto se trata de abrir el corazón, poco a poco. Suena sencillo, pero nombra algo que ningún reglamento nombra, ¿no?\n\nP: Sigo participando porque el PILARES \"Gabriel Vargas\" de Iztapalapa es de los pocos lugares donde mi palabra —hablada, señada o escrita— llega entera, ¿no?\n\nE: Muchas gracias. ¿Algo más que quiera que quede grabado?\n\nP: Que le pongan mi nombre como es, y que la historia regrese a la comunidad. Eso sería todo.\n\n[2] TRANSCRIPCIÓN DE ENTREVISTA — BIOGRAFÍA DE VIDA\nProyecto IH-2025-I-445 · Ecosistema: discapacidad\nPersona entrevistada: Enedina Meza Cárdenas (52 años, funcionaria de área de diversidad funcional)\nFecha: 21 de abril de 2026 · Duración aproximada: 78 min\nNota: transcripción de audio; se conservan muletillas y marcas de oralidad.\n------------------------------------------------------------\n\nE: Gracias por recibirnos. ¿Podría contarnos su historia, desde donde usted quiera empezar?\n\nP: Nací hace 52 años en Malinaltepec, Guerrero. Mi madre me enseñó el tlapaneco (me'phaa) y también me enseñó que la palabra se cuida como se cuida la milpa.\n\nP: Salí de mi pueblo a los 14 años. Digamos, en Ciudad de México aprendí que hay puertas que se abren con el español y puertas que solo se abren con la confianza.\n\nE: ¿Y cómo fue eso para usted?\n\nP: En el Día Nacional de la Lengua de Señas Mexicana participé en el conversatorio del PILARES \"Carlos Monsiváis\" de la colonia Portales. No se hablaba 'sobre' las personas sordas: eran las personas sordas quienes tomaban la palabra pública, señando. Los oyentes, por una vez, eran quienes necesitaban intérprete.\n\nP: Participo desde hace 13 años en actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Llegué buscando un taller y encontré una comunidad.\n\nP: Trabajo del lado institucional, y lo digo sin orgullo automático: he visto cómo un formato mal diseñado puede deshacer en cinco minutos lo que un taller construyó en meses. [se escucha ruido de calle] Mi labor cotidiana es pelear esos formatos por dentro.\n\nP: Me pidieron dar una plática 'motivacional'. Contesté que mi vida no es material de inspiración para terceros, pero que con gusto hablaba de rampas, presupuestos e intérpretes. No me volvieron a llamar. [inaudible] Lo cuento sin amargura: también así se dibuja el mapa.\n\nP: Una tallerista dijo algo que me quedó grabado: 'no queremos ser incluidos en su mundo; queremos que el mundo se rehaga con nosotros adentro desde el principio'. Ahí está toda la discusión, me parece.\n\nP: Doy seguimiento a las actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Al principio la institución quería llamar a todo 'inclusión'. Varios propusimos otras palabras, porque la inclusión siempre supone que hay un adentro que nos hace el favor de recibirnos.\n\nP: Lo que sabemos las personas con discapacidad sobre esta ciudad no está en ningún diagnóstico oficial. Pues, está en nuestros cuerpos y en nuestros trayectos, ¿no? Este..., ojalá este archivo sepa escucharlo, ¿no?\n\nE: Muchas gracias. ¿Algo más que quiera que quede grabado?\n\nP: Pues nomás eso: que se use bien lo que aquí dije. [risas] Que no se quede guardado.\n\n[3] NOTAS PERSONALES DE CAMPO — Delfina Nava R",
+          "promptChars": 12205,
+          "cached": false,
+          "prepareMs": 351,
+          "generateMs": 0,
+          "totalMs": 351,
+          "retrieveCalls": 1,
+          "retrieveMs": 350,
+          "graphMs": 118,
+          "graphSeeds": [
+            "discapacidad (tema, 17)"
+          ],
+          "graphBlockChars": 495,
+          "graphChunks": 0,
+          "fusedChunks": 5,
+          "fusedFromGraph": 0,
+          "costUsd": 0,
+          "traceId": "fake",
+          "inputTokens": null,
+          "outputTokens": null,
+          "serverMs": null,
+          "score": {
+            "found": [
+              "PILARES \"Carlos Monsiváis\"",
+              "PILARES \"Gabriel Vargas\""
+            ],
+            "missing": [],
+            "recall": 1,
+            "citationPrecision": 1,
+            "citedDocumentIds": [
+              319,
+              340,
+              352,
+              359,
+              364
+            ],
+            "targetCited": null
+          }
+        },
+        {
+          "arm": "plain",
+          "rep": 2,
+          "answer": "[FAKE]\n[CONTEXTO disponible para responder — es tu FUENTE PRINCIPAL y está AQUÍ MISMO; NO digas que no tienes información ni pidas datos que ya aparecen abajo]\n\nContexto del proyecto/organización:\nEcosistema: Organización Demo. Organización de demostración para el repositorio de conocimiento: sube documentos, haz preguntas sobre ellos y califica las respuestas del asistente.\n\n---\n\nContexto recuperado de la base de conocimiento:\n[1] TRANSCRIPCIÓN DE ENTREVISTA — BIOGRAFÍA DE VIDA\nProyecto IH-2025-I-445 · Ecosistema: discapacidad\nPersona entrevistada: Gabriela Noriega Palma (49 años, funcionaria de área de diversidad funcional)\nFecha: 12 de enero de 2026 · Duración aproximada: 30 min\nNota: transcripción de audio; se conservan muletillas y marcas de oralidad.\n------------------------------------------------------------\n\nE: Gracias por recibirnos. ¿Podría contarnos su historia, desde donde usted quiera empezar?\n\nP: Soy de Xoxocotla, Morelos, ¿no? Crecí hablando náhuatl; el español lo fui aprendiendo después, en la escuela y en los mandados, ¿no?\n\nP: Salí de mi pueblo a los 17 años. La verdad, en Ciudad de México aprendí que hay puertas que se abren con el español y puertas que solo se abren con la confianza.\n\nE: ¿Y la gente cómo respondía?\n\nP: En el Día Nacional de la Lengua de Señas Mexicana participé en el conversatorio del PILARES \"Carlos Monsiváis\" de la colonia Portales. No se hablaba 'sobre' las personas sordas: eran las personas sordas quienes tomaban la palabra pública, señando. Este..., los oyentes, por una vez, eran quienes necesitaban intérprete. [risas]\n\nP: Participo desde hace 18 años en actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Pues, llegué buscando un taller y encontré una comunidad.\n\nP: Una tallerista dijo algo que me quedó grabado: 'no queremos ser incluidos en su mundo; queremos que el mundo se rehaga con nosotros adentro desde el principio'. Ahí está toda la discusión, me parece.\n\nE: ¿Y cómo fue eso para usted?\n\nP: Doy seguimiento a las actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Digamos, al principio la institución quería llamar a todo 'inclusión'. Fíjese que, varios propusimos otras palabras, porque la inclusión siempre supone que hay un adentro que nos hace el favor de recibirnos.\n\nP: Cuando cerramos la sesión, una compañera dijo que esto se trata de abrir el corazón, poco a poco. Suena sencillo, pero nombra algo que ningún reglamento nombra, ¿no?\n\nP: Sigo participando porque el PILARES \"Gabriel Vargas\" de Iztapalapa es de los pocos lugares donde mi palabra —hablada, señada o escrita— llega entera, ¿no?\n\nE: Muchas gracias. ¿Algo más que quiera que quede grabado?\n\nP: Que le pongan mi nombre como es, y que la historia regrese a la comunidad. Eso sería todo.\n\n[2] TRANSCRIPCIÓN DE ENTREVISTA — BIOGRAFÍA DE VIDA\nProyecto IH-2025-I-445 · Ecosistema: discapacidad\nPersona entrevistada: Enedina Meza Cárdenas (52 años, funcionaria de área de diversidad funcional)\nFecha: 21 de abril de 2026 · Duración aproximada: 78 min\nNota: transcripción de audio; se conservan muletillas y marcas de oralidad.\n------------------------------------------------------------\n\nE: Gracias por recibirnos. ¿Podría contarnos su historia, desde donde usted quiera empezar?\n\nP: Nací hace 52 años en Malinaltepec, Guerrero. Mi madre me enseñó el tlapaneco (me'phaa) y también me enseñó que la palabra se cuida como se cuida la milpa.\n\nP: Salí de mi pueblo a los 14 años. Digamos, en Ciudad de México aprendí que hay puertas que se abren con el español y puertas que solo se abren con la confianza.\n\nE: ¿Y cómo fue eso para usted?\n\nP: En el Día Nacional de la Lengua de Señas Mexicana participé en el conversatorio del PILARES \"Carlos Monsiváis\" de la colonia Portales. No se hablaba 'sobre' las personas sordas: eran las personas sordas quienes tomaban la palabra pública, señando. Los oyentes, por una vez, eran quienes necesitaban intérprete.\n\nP: Participo desde hace 13 años en actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Llegué buscando un taller y encontré una comunidad.\n\nP: Trabajo del lado institucional, y lo digo sin orgullo automático: he visto cómo un formato mal diseñado puede deshacer en cinco minutos lo que un taller construyó en meses. [se escucha ruido de calle] Mi labor cotidiana es pelear esos formatos por dentro.\n\nP: Me pidieron dar una plática 'motivacional'. Contesté que mi vida no es material de inspiración para terceros, pero que con gusto hablaba de rampas, presupuestos e intérpretes. No me volvieron a llamar. [inaudible] Lo cuento sin amargura: también así se dibuja el mapa.\n\nP: Una tallerista dijo algo que me quedó grabado: 'no queremos ser incluidos en su mundo; queremos que el mundo se rehaga con nosotros adentro desde el principio'. Ahí está toda la discusión, me parece.\n\nP: Doy seguimiento a las actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Al principio la institución quería llamar a todo 'inclusión'. Varios propusimos otras palabras, porque la inclusión siempre supone que hay un adentro que nos hace el favor de recibirnos.\n\nP: Lo que sabemos las personas con discapacidad sobre esta ciudad no está en ningún diagnóstico oficial. Pues, está en nuestros cuerpos y en nuestros trayectos, ¿no? Este..., ojalá este archivo sepa escucharlo, ¿no?\n\nE: Muchas gracias. ¿Algo más que quiera que quede grabado?\n\nP: Pues nomás eso: que se use bien lo que aquí dije. [risas] Que no se quede guardado.\n\n[3] NOTAS PERSONALES DE CAMPO — Delfina Nava Rendón (mediadora educativa de PILARES)\n\n2 de enero de 2026.\nSoy de Papantla, Veracruz. Crecí hablando totonaco; el español lo fui aprendiendo después, en la escuela y en los mandados.\n\n17 de febrero de 2026.\nMi historia con la discapacidad no empezó conmigo: empezó con las escaleras, con las ventanillas, con los formatos que no contemplan mi existencia. Yo estaba bien; el entorno era el problema.\n\n24 de febrero de 2026.\nUna tallerista dijo algo que me quedó grabado: 'no queremos ser incluidos en su mundo; queremos que el mundo se re",
+          "promptChars": 11667,
+          "cached": false,
+          "prepareMs": 697,
+          "generateMs": 0,
+          "totalMs": 697,
+          "retrieveCalls": 1,
+          "retrieveMs": 696,
+          "graphMs": 0,
+          "graphSeeds": [],
+          "graphBlockChars": 0,
+          "graphChunks": 0,
+          "fusedChunks": 5,
+          "fusedFromGraph": 0,
+          "costUsd": 0,
+          "traceId": "fake",
+          "inputTokens": null,
+          "outputTokens": null,
+          "serverMs": null,
+          "score": {
+            "found": [
+              "PILARES \"Carlos Monsiváis\"",
+              "PILARES \"Gabriel Vargas\""
+            ],
+            "missing": [],
+            "recall": 1,
+            "citationPrecision": 1,
+            "citedDocumentIds": [
+              319,
+              340,
+              352,
+              359,
+              364
+            ],
+            "targetCited": null
+          }
+        },
+        {
+          "arm": "graph",
+          "rep": 2,
+          "answer": "[FAKE]\n[CONTEXTO disponible para responder — es tu FUENTE PRINCIPAL y está AQUÍ MISMO; NO digas que no tienes información ni pidas datos que ya aparecen abajo]\n\nContexto del proyecto/organización:\nEcosistema: Organización Demo. Organización de demostración para el repositorio de conocimiento: sube documentos, haz preguntas sobre ellos y califica las respuestas del asistente.\n\n---\n\nContexto del grafo de conocimiento:\nResumen del grafo de conocimiento del ecosistema, calculado sobre TODO el material publicado (no sobre los fragmentos de abajo). Las cifras cuentan documentos publicados distintos, no menciones. Solo aparecen entidades y conexiones que varios documentos respaldan.\n\n- discapacidad (tema): aparece en 17 documentos.\n\nUsa este resumen para responder preguntas generales sobre qué se repite en el corpus o qué aparece junto a qué. Para afirmaciones puntuales, apóyate en los fragmentos recuperados.\n\n---\n\nContexto recuperado de la base de conocimiento:\n[1] TRANSCRIPCIÓN DE ENTREVISTA — BIOGRAFÍA DE VIDA\nProyecto IH-2025-I-445 · Ecosistema: discapacidad\nPersona entrevistada: Gabriela Noriega Palma (49 años, funcionaria de área de diversidad funcional)\nFecha: 12 de enero de 2026 · Duración aproximada: 30 min\nNota: transcripción de audio; se conservan muletillas y marcas de oralidad.\n------------------------------------------------------------\n\nE: Gracias por recibirnos. ¿Podría contarnos su historia, desde donde usted quiera empezar?\n\nP: Soy de Xoxocotla, Morelos, ¿no? Crecí hablando náhuatl; el español lo fui aprendiendo después, en la escuela y en los mandados, ¿no?\n\nP: Salí de mi pueblo a los 17 años. La verdad, en Ciudad de México aprendí que hay puertas que se abren con el español y puertas que solo se abren con la confianza.\n\nE: ¿Y la gente cómo respondía?\n\nP: En el Día Nacional de la Lengua de Señas Mexicana participé en el conversatorio del PILARES \"Carlos Monsiváis\" de la colonia Portales. No se hablaba 'sobre' las personas sordas: eran las personas sordas quienes tomaban la palabra pública, señando. Este..., los oyentes, por una vez, eran quienes necesitaban intérprete. [risas]\n\nP: Participo desde hace 18 años en actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Pues, llegué buscando un taller y encontré una comunidad.\n\nP: Una tallerista dijo algo que me quedó grabado: 'no queremos ser incluidos en su mundo; queremos que el mundo se rehaga con nosotros adentro desde el principio'. Ahí está toda la discusión, me parece.\n\nE: ¿Y cómo fue eso para usted?\n\nP: Doy seguimiento a las actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Digamos, al principio la institución quería llamar a todo 'inclusión'. Fíjese que, varios propusimos otras palabras, porque la inclusión siempre supone que hay un adentro que nos hace el favor de recibirnos.\n\nP: Cuando cerramos la sesión, una compañera dijo que esto se trata de abrir el corazón, poco a poco. Suena sencillo, pero nombra algo que ningún reglamento nombra, ¿no?\n\nP: Sigo participando porque el PILARES \"Gabriel Vargas\" de Iztapalapa es de los pocos lugares donde mi palabra —hablada, señada o escrita— llega entera, ¿no?\n\nE: Muchas gracias. ¿Algo más que quiera que quede grabado?\n\nP: Que le pongan mi nombre como es, y que la historia regrese a la comunidad. Eso sería todo.\n\n[2] TRANSCRIPCIÓN DE ENTREVISTA — BIOGRAFÍA DE VIDA\nProyecto IH-2025-I-445 · Ecosistema: discapacidad\nPersona entrevistada: Enedina Meza Cárdenas (52 años, funcionaria de área de diversidad funcional)\nFecha: 21 de abril de 2026 · Duración aproximada: 78 min\nNota: transcripción de audio; se conservan muletillas y marcas de oralidad.\n------------------------------------------------------------\n\nE: Gracias por recibirnos. ¿Podría contarnos su historia, desde donde usted quiera empezar?\n\nP: Nací hace 52 años en Malinaltepec, Guerrero. Mi madre me enseñó el tlapaneco (me'phaa) y también me enseñó que la palabra se cuida como se cuida la milpa.\n\nP: Salí de mi pueblo a los 14 años. Digamos, en Ciudad de México aprendí que hay puertas que se abren con el español y puertas que solo se abren con la confianza.\n\nE: ¿Y cómo fue eso para usted?\n\nP: En el Día Nacional de la Lengua de Señas Mexicana participé en el conversatorio del PILARES \"Carlos Monsiváis\" de la colonia Portales. No se hablaba 'sobre' las personas sordas: eran las personas sordas quienes tomaban la palabra pública, señando. Los oyentes, por una vez, eran quienes necesitaban intérprete.\n\nP: Participo desde hace 13 años en actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Llegué buscando un taller y encontré una comunidad.\n\nP: Trabajo del lado institucional, y lo digo sin orgullo automático: he visto cómo un formato mal diseñado puede deshacer en cinco minutos lo que un taller construyó en meses. [se escucha ruido de calle] Mi labor cotidiana es pelear esos formatos por dentro.\n\nP: Me pidieron dar una plática 'motivacional'. Contesté que mi vida no es material de inspiración para terceros, pero que con gusto hablaba de rampas, presupuestos e intérpretes. No me volvieron a llamar. [inaudible] Lo cuento sin amargura: también así se dibuja el mapa.\n\nP: Una tallerista dijo algo que me quedó grabado: 'no queremos ser incluidos en su mundo; queremos que el mundo se rehaga con nosotros adentro desde el principio'. Ahí está toda la discusión, me parece.\n\nP: Doy seguimiento a las actividades del PILARES \"Gabriel Vargas\" de Iztapalapa. Al principio la institución quería llamar a todo 'inclusión'. Varios propusimos otras palabras, porque la inclusión siempre supone que hay un adentro que nos hace el favor de recibirnos.\n\nP: Lo que sabemos las personas con discapacidad sobre esta ciudad no está en ningún diagnóstico oficial. Pues, está en nuestros cuerpos y en nuestros trayectos, ¿no? Este..., ojalá este archivo sepa escucharlo, ¿no?\n\nE: Muchas gracias. ¿Algo más que quiera que quede grabado?\n\nP: Pues nomás eso: que se use bien lo que aquí dije. [risas] Que no se quede guardado.\n\n[3] NOTAS PERSONALES DE CAMPO — Delfina Nava R",
+          "promptChars": 12205,
+          "cached": false,
+          "prepareMs": 366,
+          "generateMs": 0,
+          "totalMs": 366,
+          "retrieveCalls": 1,
+          "retrieveMs": 365,
+          "graphMs": 82,
+          "graphSeeds": [
+            "discapacidad (tema, 17)"
+          ],
+          "graphBlockChars": 495,
+          "graphChunks": 0,
+          "fusedChunks": 5,
+          "fusedFromGraph": 0,
+          "costUsd": 0,
+          "traceId": "fake",
+          "inputTokens": null,
+          "outputTokens": null,
+          "serverMs": null,
+          "score": {
+            "found": [
+              "PILARES \"Carlos Monsiváis\"",
+              "PILARES \"Gabriel Vargas\""
+            ],
+            "missing": [],
+            "recall": 1,
+            "citationPrecision": 1,
+            "citedDocumentIds": [
+              319,
+              340,
+              352,
+              359,
+              364
+            ],
+            "targetCited": null
+          }
+        }
+      ]
+    }
+  ]
+}
