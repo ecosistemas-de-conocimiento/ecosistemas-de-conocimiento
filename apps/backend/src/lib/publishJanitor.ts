@@ -70,6 +70,13 @@
 
 import type { Payload, Where } from 'payload'
 
+import {
+  janitorEnabledFromEnv,
+  janitorIntervalMsFromEnv,
+  startJanitor,
+  stopJanitor,
+} from './janitorScheduler'
+
 /** Env var names, so log lines and tests never hand-type a string that can drift. */
 export const PUBLISH_JANITOR_ENABLED_VAR = 'PUBLISH_JANITOR_ENABLED'
 export const PUBLISH_JANITOR_INTERVAL_MIN_VAR = 'PUBLISH_JANITOR_INTERVAL_MIN'
@@ -244,6 +251,15 @@ export async function sweepStalledPublishes(
     { publicationStatus: { in: [...IN_FLIGHT_PUBLICATION_STATES] } },
     // Already visible, already retryable — and overwriting ai-service's specific
     // diagnosis with this file's generic one would be a downgrade.
+    //
+    // ⚠ PAYLOAD COMPILES `exists: false` TO `IS NULL` ALONE, so a row holding an
+    // EMPTY STRING is not a candidate here and this sweep can never rescue it —
+    // while the UI, which shows the error only when populated, does not show it
+    // either. That row would be stuck at `publishing` forever with nobody able
+    // to tell. The empty string is therefore forbidden at the only place that
+    // writes the field (`failPublish` in `publishDocument.ts` substitutes
+    // `UNEXPLAINED_PUBLISH_FAILURE`), rather than papered over with an `or` here
+    // that would leave the bad value in the database.
     { publicationError: { exists: false } },
     { updatedAt: { less_than: cutoff } },
   ]
@@ -330,6 +346,9 @@ export async function sweepStalledPublishes(
 // Scheduling
 // ---------------------------------------------------------------------------
 
+/** Log tag, and the key the shared scheduler holds this janitor's timer under. */
+const JANITOR_PREFIX = 'publish-janitor'
+
 /**
  * ON BY DEFAULT, for the same reason the transcription janitor is.
  *
@@ -339,78 +358,48 @@ export async function sweepStalledPublishes(
  * it is measured at 99 documents. Set the var to `0` / `false` to disable.
  */
 export function publishJanitorEnabled(): boolean {
-  const raw = (process.env[PUBLISH_JANITOR_ENABLED_VAR] ?? '').trim().toLowerCase()
-  if (!raw) return true
-  return raw !== '0' && raw !== 'false' && raw !== 'off' && raw !== 'no'
+  return janitorEnabledFromEnv(PUBLISH_JANITOR_ENABLED_VAR)
 }
 
 export function publishJanitorIntervalMs(): number {
-  const raw = Number(process.env[PUBLISH_JANITOR_INTERVAL_MIN_VAR])
-  const minutes = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_INTERVAL_MIN
-  // Floor of one minute: a sub-minute sweep is a query loop, not a janitor.
-  return Math.max(1, minutes) * 60_000
+  return janitorIntervalMsFromEnv(PUBLISH_JANITOR_INTERVAL_MIN_VAR, DEFAULT_INTERVAL_MIN)
 }
 
-let timer: ReturnType<typeof setInterval> | null = null
-
 /**
- * Arm the sweep. Idempotent. Mirrors `transcriptionJanitor.ts` exactly — same
- * reasoning about `setInterval` over the Payload Jobs Queue applies, and
- * `sweepStalledPublishes` is exported so a cron can drive it instead.
- *
- * The first sweep waits one interval, so a deploy never stamps anything the
- * instant it comes up. The timer is unref'd so it cannot hold the process open.
+ * Arm the sweep. Idempotent. The timer, the one-interval delay before the first
+ * pass and the catch around a throwing sweep all live in `janitorScheduler.ts`,
+ * shared with the transcription and embedding sweeps. `sweepStalledPublishes`
+ * is exported so a cron can drive it instead.
  */
 export function startPublishJanitor(payload: Payload): boolean {
-  if (!publishJanitorEnabled()) {
-    payload.logger.info(
-      `[publish-janitor] disabled by ${PUBLISH_JANITOR_ENABLED_VAR}. ` +
-        'A document whose publish never reached ai-service, or whose callback is never ' +
-        'delivered, will stay in publicationStatus="publishing" indefinitely with no error ' +
-        'recorded and nothing to move it.',
-    )
-    return false
-  }
-  if (timer) return true
-
-  const intervalMs = publishJanitorIntervalMs()
-  payload.logger.info(
-    { intervalMinutes: intervalMs / 60_000, stuckAfterMinutes: stuckAfterMs() / 60_000 },
-    '[publish-janitor] armed',
-  )
-
-  timer = setInterval(() => {
-    void (async () => {
-      try {
-        const result = await sweepStalledPublishes(payload, { log: payload.logger })
-        if (result.stalled > 0) {
-          // ERROR, not warn. Reaching here means publishes are being accepted
-          // and then going nowhere — an operational fault (a rate limit being
-          // hit hard, or callbacks not being delivered), not a user's file.
-          payload.logger.error(
-            result,
-            '[publish-janitor] documents were stuck mid-publish and have been marked with a ' +
-              'visible error — check ai-service rate limits and that ingest callbacks are ' +
-              'reaching this backend',
-          )
-        }
-      } catch (err) {
-        payload.logger.error(
-          { err: err instanceof Error ? err.message : String(err) },
-          '[publish-janitor] sweep threw (will retry next interval)',
+  return startJanitor(payload, {
+    prefix: JANITOR_PREFIX,
+    enabledVar: PUBLISH_JANITOR_ENABLED_VAR,
+    enabled: publishJanitorEnabled,
+    intervalMs: publishJanitorIntervalMs,
+    disabledDetail:
+      'A document whose publish never reached ai-service, or whose callback is never ' +
+      'delivered, will stay in publicationStatus="publishing" indefinitely with no error ' +
+      'recorded and nothing to move it.',
+    armedContext: () => ({ stuckAfterMinutes: stuckAfterMs() / 60_000 }),
+    sweep: async (p) => {
+      const result = await sweepStalledPublishes(p, { log: p.logger })
+      if (result.stalled > 0) {
+        // ERROR, not warn. Reaching here means publishes are being accepted
+        // and then going nowhere — an operational fault (a rate limit being
+        // hit hard, or callbacks not being delivered), not a user's file.
+        p.logger.error(
+          result,
+          '[publish-janitor] documents were stuck mid-publish and have been marked with a ' +
+            'visible error — check ai-service rate limits and that ingest callbacks are ' +
+            'reaching this backend',
         )
       }
-    })()
-  }, intervalMs)
-  if (typeof timer.unref === 'function') timer.unref()
-
-  return true
+    },
+  })
 }
 
 /** Stop the interval (used by tests / graceful shutdown). */
 export function stopPublishJanitor(): void {
-  if (timer) {
-    clearInterval(timer)
-    timer = null
-  }
+  stopJanitor(JANITOR_PREFIX)
 }

@@ -43,6 +43,13 @@
 
 import type { Payload } from 'payload'
 
+import {
+  janitorEnabledFromEnv,
+  janitorIntervalMsFromEnv,
+  startJanitor,
+  stopJanitor,
+} from './janitorScheduler'
+
 /** Env var names, so log lines and tests never hand-type a string that can drift. */
 export const TRANSCRIPTION_JANITOR_ENABLED_VAR = 'TRANSCRIPTION_JANITOR_ENABLED'
 export const TRANSCRIPTION_JANITOR_INTERVAL_MIN_VAR = 'TRANSCRIPTION_JANITOR_INTERVAL_MIN'
@@ -183,6 +190,9 @@ export async function sweepStalledTranscriptions(
 // Scheduling
 // ---------------------------------------------------------------------------
 
+/** Log tag, and the key the shared scheduler holds this janitor's timer under. */
+const JANITOR_PREFIX = 'transcription-janitor'
+
 /**
  * ON BY DEFAULT, unlike the session janitor.
  *
@@ -192,75 +202,44 @@ export async function sweepStalledTranscriptions(
  * forever with nobody able to tell. Set the var to `0` / `false` to disable.
  */
 export function transcriptionJanitorEnabled(): boolean {
-  const raw = (process.env[TRANSCRIPTION_JANITOR_ENABLED_VAR] ?? '').trim().toLowerCase()
-  if (!raw) return true
-  return raw !== '0' && raw !== 'false' && raw !== 'off' && raw !== 'no'
+  return janitorEnabledFromEnv(TRANSCRIPTION_JANITOR_ENABLED_VAR)
 }
 
 export function transcriptionJanitorIntervalMs(): number {
-  const raw = Number(process.env[TRANSCRIPTION_JANITOR_INTERVAL_MIN_VAR])
-  const minutes = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_INTERVAL_MIN
-  // Floor of one minute: a sub-minute sweep is a query loop, not a janitor.
-  return Math.max(1, minutes) * 60_000
+  return janitorIntervalMsFromEnv(TRANSCRIPTION_JANITOR_INTERVAL_MIN_VAR, DEFAULT_INTERVAL_MIN)
 }
 
-let timer: ReturnType<typeof setInterval> | null = null
-
 /**
- * Arm the sweep. Idempotent. Mirrors `sessionJanitorScheduler.ts` — same
- * reasoning about `setInterval` over the Payload Jobs Queue applies, and the
- * core function above is exported so a cron can drive it instead.
- *
- * The first sweep waits one interval, so a deploy never fails anything the
- * instant it comes up. The timer is unref'd so it cannot hold the process open.
+ * Arm the sweep. Idempotent. The timer, the one-interval delay before the first
+ * pass and the catch around a throwing sweep all live in `janitorScheduler.ts`,
+ * shared with the publish and embedding sweeps. `sweepStalledTranscriptions` is
+ * exported so a cron can drive it instead.
  */
 export function startTranscriptionJanitor(payload: Payload): boolean {
-  if (!transcriptionJanitorEnabled()) {
-    payload.logger.info(
-      `[transcription-janitor] disabled by ${TRANSCRIPTION_JANITOR_ENABLED_VAR}. ` +
-        'A transcription whose completion callback is never delivered will stay in ' +
-        'ingestStatus="transcribing" indefinitely with nothing to move it.',
-    )
-    return false
-  }
-  if (timer) return true
-
-  const intervalMs = transcriptionJanitorIntervalMs()
-  payload.logger.info(
-    { intervalMinutes: intervalMs / 60_000 },
-    '[transcription-janitor] armed',
-  )
-
-  timer = setInterval(() => {
-    void (async () => {
-      try {
-        const result = await sweepStalledTranscriptions(payload)
-        if (result.failed > 0) {
-          // ERROR, not warn: reaching here means completion callbacks are not
-          // being delivered, which is an operational fault, not a user's file.
-          payload.logger.error(
-            result,
-            '[transcription-janitor] failed out transcriptions that never got a callback — ' +
-              'check that the audio-service callback worker container is running',
-          )
-        }
-      } catch (err) {
-        payload.logger.error(
-          { err: err instanceof Error ? err.message : String(err) },
-          '[transcription-janitor] sweep threw (will retry next interval)',
+  return startJanitor(payload, {
+    prefix: JANITOR_PREFIX,
+    enabledVar: TRANSCRIPTION_JANITOR_ENABLED_VAR,
+    enabled: transcriptionJanitorEnabled,
+    intervalMs: transcriptionJanitorIntervalMs,
+    disabledDetail:
+      'A transcription whose completion callback is never delivered will stay in ' +
+      'ingestStatus="transcribing" indefinitely with nothing to move it.',
+    sweep: async (p) => {
+      const result = await sweepStalledTranscriptions(p)
+      if (result.failed > 0) {
+        // ERROR, not warn: reaching here means completion callbacks are not
+        // being delivered, which is an operational fault, not a user's file.
+        p.logger.error(
+          result,
+          '[transcription-janitor] failed out transcriptions that never got a callback — ' +
+            'check that the audio-service callback worker container is running',
         )
       }
-    })()
-  }, intervalMs)
-  if (typeof timer.unref === 'function') timer.unref()
-
-  return true
+    },
+  })
 }
 
 /** Stop the interval (used by tests / graceful shutdown). */
 export function stopTranscriptionJanitor(): void {
-  if (timer) {
-    clearInterval(timer)
-    timer = null
-  }
+  stopJanitor(JANITOR_PREFIX)
 }

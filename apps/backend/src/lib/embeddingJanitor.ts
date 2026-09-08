@@ -84,6 +84,12 @@
 import type { Payload, Where } from 'payload'
 
 import { missingCallbackConfig } from './callbackConfig'
+import {
+  janitorEnabledFromEnv,
+  janitorIntervalMsFromEnv,
+  startJanitor,
+  stopJanitor,
+} from './janitorScheduler'
 
 /** Env var names, so log lines and tests never hand-type a string that can drift. */
 export const EMBEDDING_JANITOR_ENABLED_VAR = 'EMBEDDING_JANITOR_ENABLED'
@@ -149,27 +155,6 @@ export function embeddingStuckAfterMs(): number {
   const raw = Number(process.env[EMBEDDING_JANITOR_STUCK_MIN_VAR])
   const minutes = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_STUCK_MIN
   return minutes * 60_000
-}
-
-/**
- * Is this row stuck mid-embed?
- *
- * Two conditions, and both are also in the SQL — see {@link sweepStalledEmbeddings}.
- *
- * ⚠ AN UNREADABLE OR MISSING `updatedAt` READS AS NOT STUCK. Same asymmetry as
- * the other two sweeps: failing a document because we could not parse its
- * timestamp is acting on a data-shape bug, not on a real stall.
- */
-export function isStalledEmbedding(
-  candidate: StalledEmbeddingCandidate,
-  now: Date,
-  deadlineMs: number = embeddingStuckAfterMs(),
-): boolean {
-  if (String(candidate.ingestStatus ?? '') !== STALLED_INGEST_STATE) return false
-  const updated =
-    candidate.updatedAt == null ? NaN : new Date(candidate.updatedAt as string).getTime()
-  if (!Number.isFinite(updated)) return false
-  return now.getTime() - updated > deadlineMs
 }
 
 /**
@@ -263,6 +248,15 @@ export async function sweepStalledEmbeddings(
    * in SQL, not in the loop, and this sweep's own output (`ingestStatus:
    * 'failed'`) drops the row out of the first clause for good.
    *
+   * ⚠ THESE TWO CLAUSES ARE THE WHOLE DEFINITION OF "STRANDED". There is no
+   * second predicate in the loop below, and a sweep modelled on this one should
+   * not grow one: the guarded update re-asserts this same array, so a row the
+   * database returned has already passed every test there is, and a JS re-check
+   * could only ever agree with it. An unreadable or missing `updatedAt` reads as
+   * NOT stranded for free — `updated_at < cutoff` is NULL, not true, for a NULL
+   * row — which is the right asymmetry: failing a document because we could not
+   * parse its timestamp would be acting on a data-shape bug, not on a stall.
+   *
    * ⚠ NO `ingestError: { exists: false }` CLAUSE HERE, unlike the publish sweep,
    * and that is deliberate rather than forgotten:
    *
@@ -301,10 +295,6 @@ export async function sweepStalledEmbeddings(
 
   for (const doc of docs) {
     if (doc?.id == null) continue
-    // Belt and braces. The query already excluded everything this rejects;
-    // keeping the predicate here is what makes the rule unit-testable and what
-    // catches a future edit that loosens the `where`.
-    if (!isStalledEmbedding(doc, now, deadlineMs)) continue
 
     try {
       /**
@@ -377,6 +367,9 @@ export async function sweepStalledEmbeddings(
 // Scheduling
 // ---------------------------------------------------------------------------
 
+/** Log tag, and the key the shared scheduler holds this janitor's timer under. */
+const JANITOR_PREFIX = 'embedding-janitor'
+
 /**
  * ON BY DEFAULT, for the same reason the other two sweeps are.
  *
@@ -386,88 +379,58 @@ export async function sweepStalledEmbeddings(
  * disable.
  */
 export function embeddingJanitorEnabled(): boolean {
-  const raw = (process.env[EMBEDDING_JANITOR_ENABLED_VAR] ?? '').trim().toLowerCase()
-  if (!raw) return true
-  return raw !== '0' && raw !== 'false' && raw !== 'off' && raw !== 'no'
+  return janitorEnabledFromEnv(EMBEDDING_JANITOR_ENABLED_VAR)
 }
 
 export function embeddingJanitorIntervalMs(): number {
-  const raw = Number(process.env[EMBEDDING_JANITOR_INTERVAL_MIN_VAR])
-  const minutes = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_INTERVAL_MIN
-  // Floor of one minute: a sub-minute sweep is a query loop, not a janitor.
-  return Math.max(1, minutes) * 60_000
+  return janitorIntervalMsFromEnv(EMBEDDING_JANITOR_INTERVAL_MIN_VAR, DEFAULT_INTERVAL_MIN)
 }
 
-let timer: ReturnType<typeof setInterval> | null = null
-
 /**
- * Arm the sweep. Idempotent. Mirrors `publishJanitor.ts` exactly — same
- * reasoning about `setInterval` over the Payload Jobs Queue applies, and
- * `sweepStalledEmbeddings` is exported so a cron can drive it instead.
- *
- * The first sweep waits one interval, so a deploy never fails anything the
- * instant it comes up. The timer is unref'd so it cannot hold the process open.
+ * Arm the sweep. Idempotent. The timer, the one-interval delay before the first
+ * pass and the catch around a throwing sweep all live in `janitorScheduler.ts`,
+ * shared with the transcription and publish sweeps. `sweepStalledEmbeddings` is
+ * exported so a cron can drive it instead.
  */
 export function startEmbeddingJanitor(payload: Payload): boolean {
-  if (!embeddingJanitorEnabled()) {
-    payload.logger.info(
-      `[embedding-janitor] disabled by ${EMBEDDING_JANITOR_ENABLED_VAR}. ` +
-        'A document whose ingest never reached ai-service, or whose completion callback is ' +
-        'never delivered, will stay in ingestStatus="embedding" indefinitely with no error ' +
-        'recorded, nothing to move it, and no retry available.',
-    )
-    return false
-  }
-  if (timer) return true
-
-  const intervalMs = embeddingJanitorIntervalMs()
-  payload.logger.info(
-    { intervalMinutes: intervalMs / 60_000, stuckAfterMinutes: embeddingStuckAfterMs() / 60_000 },
-    '[embedding-janitor] armed',
-  )
-
-  timer = setInterval(() => {
-    void (async () => {
-      try {
-        const result = await sweepStalledEmbeddings(payload, { log: payload.logger })
-        if (result.stalled > 0) {
-          /**
-           * ERROR, not warn: reaching here means ingests are being accepted and
-           * then going nowhere, which is an operational fault rather than a
-           * user's file.
-           *
-           * ⚠ THE CONFIG READ IS THE POINT OF THIS LOG LINE. Three of the five
-           * ways a row strands are a half-configured callback round-trip, and
-           * that is invisible from the row itself — the user-facing message
-           * cannot say it, because config today says nothing about config when
-           * the row got stuck. An operator reading THIS line is looking at both
-           * halves at once. Empty means the round-trip is configured and the
-           * fault is somewhere else.
-           */
-          payload.logger.error(
-            { ...result, missingCallbackConfig: missingCallbackConfig() },
-            '[embedding-janitor] documents were stranded mid-embed and have been failed out with ' +
-              'a visible, retryable reason — check the ai-service callback config and that ' +
-              'ingest callbacks are reaching this backend',
-          )
-        }
-      } catch (err) {
-        payload.logger.error(
-          { err: err instanceof Error ? err.message : String(err) },
-          '[embedding-janitor] sweep threw (will retry next interval)',
+  return startJanitor(payload, {
+    prefix: JANITOR_PREFIX,
+    enabledVar: EMBEDDING_JANITOR_ENABLED_VAR,
+    enabled: embeddingJanitorEnabled,
+    intervalMs: embeddingJanitorIntervalMs,
+    disabledDetail:
+      'A document whose ingest never reached ai-service, or whose completion callback is ' +
+      'never delivered, will stay in ingestStatus="embedding" indefinitely with no error ' +
+      'recorded, nothing to move it, and no retry available.',
+    armedContext: () => ({ stuckAfterMinutes: embeddingStuckAfterMs() / 60_000 }),
+    sweep: async (p) => {
+      const result = await sweepStalledEmbeddings(p, { log: p.logger })
+      if (result.stalled > 0) {
+        /**
+         * ERROR, not warn: reaching here means ingests are being accepted and
+         * then going nowhere, which is an operational fault rather than a
+         * user's file.
+         *
+         * ⚠ THE CONFIG READ IS THE POINT OF THIS LOG LINE. Three of the five
+         * ways a row strands are a half-configured callback round-trip, and
+         * that is invisible from the row itself — the user-facing message
+         * cannot say it, because config today says nothing about config when
+         * the row got stuck. An operator reading THIS line is looking at both
+         * halves at once. Empty means the round-trip is configured and the
+         * fault is somewhere else.
+         */
+        p.logger.error(
+          { ...result, missingCallbackConfig: missingCallbackConfig() },
+          '[embedding-janitor] documents were stranded mid-embed and have been failed out with ' +
+            'a visible, retryable reason — check the ai-service callback config and that ' +
+            'ingest callbacks are reaching this backend',
         )
       }
-    })()
-  }, intervalMs)
-  if (typeof timer.unref === 'function') timer.unref()
-
-  return true
+    },
+  })
 }
 
 /** Stop the interval (used by tests / graceful shutdown). */
 export function stopEmbeddingJanitor(): void {
-  if (timer) {
-    clearInterval(timer)
-    timer = null
-  }
+  stopJanitor(JANITOR_PREFIX)
 }

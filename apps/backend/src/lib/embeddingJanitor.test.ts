@@ -46,7 +46,6 @@ import {
   embeddingJanitorEnabled,
   embeddingJanitorIntervalMs,
   embeddingStuckAfterMs,
-  isStalledEmbedding,
   stalledEmbeddingReason,
   startEmbeddingJanitor,
   stopEmbeddingJanitor,
@@ -126,57 +125,11 @@ function fakeDb(rows: Row[], opts: { beforeUpdate?: (rows: Row[]) => void } = {}
   }
 }
 
-/** A `find` that IGNORES the where — proves the in-loop predicate is a real gate. */
-function blindPayload(docs: Row[]) {
-  const update = vi.fn(
-    async (_args: { where?: { and?: Array<Record<string, unknown>> }; data: Row }) => ({
-      docs: [{ id: 1 }],
-    }),
-  )
-  const find = vi.fn(async () => ({ docs }))
-  return { payload: { find, update } as unknown as Pick<Payload, 'find' | 'update'>, update }
-}
-
 afterEach(() => {
   delete process.env[EMBEDDING_JANITOR_ENABLED_VAR]
   delete process.env[EMBEDDING_JANITOR_INTERVAL_MIN_VAR]
   delete process.env[EMBEDDING_JANITOR_STUCK_MIN_VAR]
   stopEmbeddingJanitor()
-})
-
-describe('isStalledEmbedding — what counts as stranded', () => {
-  it('🔴 an old `embedding` row is stranded — nothing is coming to move it', () => {
-    expect(
-      isStalledEmbedding({ ingestStatus: 'embedding', updatedAt: minutesAgo(31) }, NOW, DEADLINE_MS),
-    ).toBe(true)
-  })
-
-  it('leaves a row inside its deadline alone', () => {
-    expect(
-      isStalledEmbedding({ ingestStatus: 'embedding', updatedAt: minutesAgo(10) }, NOW, DEADLINE_MS),
-    ).toBe(false)
-  })
-
-  it('🔴 ignores every other ingest state, including the other non-terminal ones', () => {
-    // `pending` and `transcribed` can strand a row too, but each needs its own
-    // message and its own deadline. Growing this sweep into them by accident is
-    // how a janitor starts writing errors onto rows that are fine.
-    for (const status of ['pending', 'extracting', 'transcribing', 'transcribed', 'ready', 'failed', 'n/a', undefined, null]) {
-      expect(
-        isStalledEmbedding({ ingestStatus: status, updatedAt: minutesAgo(999) }, NOW, DEADLINE_MS),
-      ).toBe(false)
-    }
-  })
-
-  it('an unreadable `updatedAt` reads as NOT stranded', () => {
-    // Failing a document because we could not parse a timestamp is acting on a
-    // data-shape bug, not on a real stall.
-    for (const updatedAt of [null, undefined, 'not a date', '']) {
-      expect(isStalledEmbedding({ ingestStatus: 'embedding', updatedAt }, NOW, DEADLINE_MS)).toBe(
-        false,
-      )
-    }
-  })
 })
 
 describe('stalledEmbeddingReason — the two stalls are not the same story', () => {
@@ -186,6 +139,11 @@ describe('stalledEmbeddingReason — the two stalls are not the same story', () 
     expect(reason).toContain('No se envió nada')
     expect(reason).toContain('volver a intentarlo')
     expect(reason).toContain('30')
+    // Shown verbatim under "Detalle", so: Spanish, and inside the field.
+    expect(reason).toMatch(/servicio de IA/)
+    expect(reason.length).toBeLessThanOrEqual(500)
+    // An empty id is "never sent", not an id.
+    expect(stalledEmbeddingReason({ ingestId: '' }, 30)).toContain('No se envió nada')
   })
 
   it('🔴 does NOT claim nothing happened when ai-service accepted the ingest', () => {
@@ -195,18 +153,8 @@ describe('stalledEmbeddingReason — the two stalls are not the same story', () 
     expect(reason).not.toContain('No se envió nada')
     expect(reason).toContain('Puede haber terminado sin avisar')
     expect(reason).toContain('antes de repetir el envío')
-  })
-
-  it('an empty ingestId is treated as "never sent", not as an id', () => {
-    expect(stalledEmbeddingReason({ ingestId: '' }, 30)).toContain('No se envió nada')
-  })
-
-  it('is in Spanish and fits the field, because it is shown verbatim', () => {
-    for (const candidate of [{}, { ingestId: 'ing-1' }]) {
-      const reason = stalledEmbeddingReason(candidate, 30)
-      expect(reason).toMatch(/servicio de IA/)
-      expect(reason.length).toBeLessThanOrEqual(500)
-    }
+    expect(reason).toMatch(/servicio de IA/)
+    expect(reason.length).toBeLessThanOrEqual(500)
   })
 })
 
@@ -261,34 +209,37 @@ describe('sweepStalledEmbeddings', () => {
   })
 
   it('🔴 a row that is NOT stranded is left completely alone', async () => {
-    // Paired with the first test on purpose: one row too fresh, one already
-    // ready, one genuinely stuck. Only the stuck one may be written.
+    // Paired with the first test on purpose. Everything here is old enough to
+    // be swept and is spared for some OTHER reason, so only the genuinely stuck
+    // row may be written.
+    //
+    // ⚠ THE OTHER NON-TERMINAL STATES ARE IN THIS LIST DELIBERATELY. `pending`
+    // and `transcribed` strand a row the same way, but each needs its own
+    // message and its own deadline. A sweep that quietly grew to cover them is
+    // how a janitor starts writing errors onto rows that are fine.
     const db = fakeDb([
-      { id: 1, ingestStatus: 'embedding', updatedAt: minutesAgo(5) },
+      { id: 1, ingestStatus: 'embedding', updatedAt: minutesAgo(5) }, // inside the deadline
       { id: 2, ingestStatus: 'ready', updatedAt: minutesAgo(999) },
-      { id: 3, ingestStatus: 'embedding', updatedAt: minutesAgo(99) },
+      { id: 3, ingestStatus: 'embedding', updatedAt: minutesAgo(99) }, // the only stranded one
+      { id: 4, ingestStatus: 'pending', updatedAt: minutesAgo(999) },
+      { id: 5, ingestStatus: 'transcribed', updatedAt: minutesAgo(999) },
+      { id: 6, ingestStatus: 'transcribing', updatedAt: minutesAgo(999) },
+      { id: 7, ingestStatus: 'failed', updatedAt: minutesAgo(999) },
+      // ⚠ An unreadable timestamp reads as NOT stranded. Failing a document
+      // because we could not parse its clock is acting on a data-shape bug.
+      { id: 8, ingestStatus: 'embedding', updatedAt: 'not a date' },
+      { id: 9, ingestStatus: 'embedding', updatedAt: null },
     ])
 
     const result = await sweepStalledEmbeddings(db.payload, { now: NOW, deadlineMs: DEADLINE_MS })
 
     expect(result).toEqual({ examined: 1, stalled: 1, neverSent: 1 })
-    expect(db.row(1)!.ingestStatus).toBe('embedding')
-    expect(db.row(1)!.ingestError).toBeUndefined()
-    expect(db.row(2)!.ingestStatus).toBe('ready')
     expect(db.row(3)!.ingestStatus).toBe('failed')
-  })
-
-  it('the in-loop predicate is a real second gate, not dead weight behind the SQL', async () => {
-    // A `find` that ignores the where — a loosened query, or a future edit.
-    const { payload, update } = blindPayload([
-      { id: 1, ingestStatus: 'embedding', updatedAt: minutesAgo(5) },
-      { id: 2, ingestStatus: 'ready', updatedAt: minutesAgo(999) },
-      { id: 3, ingestStatus: 'embedding', updatedAt: minutesAgo(99) },
-    ])
-    const result = await sweepStalledEmbeddings(payload, { now: NOW, deadlineMs: DEADLINE_MS })
-    expect(result.stalled).toBe(1)
-    expect(update).toHaveBeenCalledTimes(1)
-    expect(update.mock.calls[0]![0].where?.and).toContainEqual({ id: { equals: 3 } })
+    for (const id of [1, 2, 4, 5, 6, 7, 8, 9]) {
+      expect(db.row(id)!.ingestError).toBeUndefined()
+    }
+    expect(db.row(1)!.ingestStatus).toBe('embedding')
+    expect(db.row(2)!.ingestStatus).toBe('ready')
   })
 
   it('counts the never-sent ones separately — they are the safely retryable ones', async () => {
@@ -376,19 +327,6 @@ describe('sweepStalledEmbeddings', () => {
     expect(second.stalled).toBe(1)
     expect(db.row(3)!.ingestStatus).toBe('failed')
     expect(String(db.row(3)!.ingestError)).toContain(STALLED_EMBED_CODE)
-  })
-
-  it('puts BOTH conditions in the query, not just in the loop', async () => {
-    const db = fakeDb([])
-    await sweepStalledEmbeddings(db.payload, { now: NOW, deadlineMs: DEADLINE_MS })
-
-    const args = db.find.mock.calls[0]![0] as Record<string, unknown>
-    expect(args.sort).toBe('updatedAt')
-    const clauses = (args.where as { and: Array<Record<string, unknown>> }).and
-    expect(clauses).toContainEqual({ ingestStatus: { equals: 'embedding' } })
-    expect(clauses).toContainEqual({
-      updatedAt: { less_than: new Date(NOW.getTime() - DEADLINE_MS).toISOString() },
-    })
   })
 
   it('warns when the page was full, so a truncated count is not read as the total', async () => {
