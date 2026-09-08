@@ -29,6 +29,7 @@ import { tokenEndpoint } from './endpoints/token'
 import { checkAIServiceCapabilities } from './lib/capabilityCheck'
 import { checkCallbackConfig } from './lib/callbackConfig'
 import { checkAudioServiceConfig } from './lib/audioClient'
+import { startEmbeddingJanitor } from './lib/embeddingJanitor'
 import { startPublishJanitor } from './lib/publishJanitor'
 import { startSessionJanitor } from './lib/sessionJanitorScheduler'
 import { startTranscriptionJanitor } from './lib/transcriptionJanitor'
@@ -267,6 +268,24 @@ export default buildConfig({
     //    a timer would recreate the very rate-limit burst it is cleaning up
     //    after. See lib/publishJanitor.ts.
     startPublishJanitor(payload)
+
+    // 8. Stalled-EMBEDDING sweep. Same shape and philosophy again: ON by
+    //    default, never re-drives, never deletes.
+    //
+    //    🔴 It closes the LAST of the three states nothing was watching, and
+    //    the one this file's own boot check (1) already warns about: when the
+    //    callback round-trip is half-configured, ai-service embeds the document
+    //    and has nowhere to report it, so the row sits in
+    //    `ingestStatus: 'embedding'` with no error and looks, to the uploader,
+    //    exactly like an upload still in progress.
+    //
+    //    ⚠ Unlike the publish sweep, this one DOES change the status — to
+    //    `failed`. That is not a stronger claim about the document, it is the
+    //    gate `planIngestRetry` checks: a row left at `embedding` with a message
+    //    on it would tell the user to retry next to a button the API 409s. A
+    //    late callback still writes `ready` and clears the message, so a false
+    //    positive heals itself. See lib/embeddingJanitor.ts.
+    startEmbeddingJanitor(payload)
   },
   secret: process.env.PAYLOAD_SECRET || '',
   typescript: {
