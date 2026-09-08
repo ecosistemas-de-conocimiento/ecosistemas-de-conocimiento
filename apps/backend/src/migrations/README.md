@@ -1,12 +1,15 @@
 # Migrations — the baseline exists
 
-`20260814_205354_baseline.ts` is the first and, so far, only migration. It was
-cut on 2026-08-14, when every database in every environment was still empty —
-the only moment a baseline can be cut cleanly rather than reconciled.
+`20260908_092211_baseline.ts` is the first and, so far, only migration. It
+replaced an eight-migration chain on 2026-09-08. Nothing had ever been deployed
+— no CI, no deploy script, and `edc_backend` on `localhost:45432` was the only
+chain-aware database in existence — so the chain described a history no database
+would ever replay.
 
-This file used to say "there is no baseline yet" and describe how to make one.
-That history is preserved below under "How this got here", because the reasoning
-still matters the next time someone is tempted to regenerate it.
+This file used to say "there is no baseline yet" and describe how to make one,
+and then said the same thing about `20260814_205354_baseline.ts`. Both are
+preserved below under "How this got here", because the reasoning still matters
+the next time someone is tempted to regenerate it.
 
 ## The rules now
 
@@ -41,14 +44,18 @@ than leaving a database in that state.
 
 Payload's field config has no compound index, so these were appended to a
 generated `up()` by hand, in a clearly-marked block at the bottom of the file.
-Four are in the baseline; three arrived with the corpus graph.
+Four arrived with the first baseline; three with the corpus graph.
 
-| index | table | columns | migration |
+All seven now live in `20260908_092211_baseline.ts`; the "arrived in" column
+records which of the collapsed migrations first carried them, because that is
+where the reasoning was written.
+
+| index | table | columns | arrived in |
 |---|---|---|---|
-| `ratings_message_user_unq` | `ratings` | `message_id, user_id` | baseline |
-| `memberships_user_organization_unq` | `memberships` | `user_id, organization_id` | baseline |
-| `ai_service_callbacks_natural_key_unq` | `ai_service_callbacks` | `correlation_key, event_key, event` | baseline |
-| `documents_organization_publication_status_idx` | `documents` | `organization_id, publication_status` | baseline |
+| `ratings_message_user_unq` | `ratings` | `message_id, user_id` | 2026-08-14 baseline |
+| `memberships_user_organization_unq` | `memberships` | `user_id, organization_id` | 2026-08-14 baseline |
+| `ai_service_callbacks_natural_key_unq` | `ai_service_callbacks` | `correlation_key, event_key, event` | 2026-08-14 baseline |
+| `documents_organization_publication_status_idx` | `documents` | `organization_id, publication_status` | 2026-08-14 baseline |
 | `graph_entities_org_type_key_unq` | `graph_entities` | `organization_id, type, canonical_key` | `20260829_203018_corpus_graph` |
 | `graph_mentions_document_entity_unq` | `graph_mentions` | `document_id, entity_id` | `20260829_203018_corpus_graph` |
 | `graph_relations_document_edge_unq` | `graph_relations` | `document_id, from_entity_id, to_entity_id, type` | `20260829_203018_corpus_graph` |
@@ -117,7 +124,11 @@ database, then deliberately conflicting `INSERT`s through `psql` to confirm each
 one rejects the second write (and that a different `type` with the same
 `canonical_key` is still allowed).
 
-## 🔴 The corpus-graph migration also REWRITES eight foreign keys by hand
+## 🔴 The baseline also REWRITES eleven foreign keys by hand
+
+Eight of them arrived with `20260829_203018_corpus_graph` and were carried
+forward verbatim. **Three are new on 2026-09-08** and are the subject of the
+next section — read that one too.
 
 `migrate:create` emitted every graph foreign key as `ON DELETE set null`,
 against columns it declared `NOT NULL` in the same statement. Postgres applies
@@ -129,7 +140,7 @@ touched** — and because the delete never completes, `retireDeletedDocumentHook
 never runs either, so the document's chunks stay retrievable in ai-service while
 the user believes it is gone.
 
-A second `db.execute` block in `20260829_203018_corpus_graph.ts` drops and
+A second `db.execute` block in `20260908_092211_baseline.ts` drops and
 recreates all eight with `ON DELETE cascade`, which is both correct here (a
 mention is a statement *about* a document and is meaningless without it) and the
 existing house pattern — every pre-existing FK pointing at `documents` in the
@@ -162,14 +173,62 @@ genuinely missing, and that is the fourth hand-written index above. It serves
 the `AND(publication_status = 'published', organization IN …)` branch of the
 document visibility constraint in one scan.
 
-## ✅ `20260905_060357_document_corpus_labels` has NO hand-written part
+## 🔴 `anonymisation_reviews` had the same defect for eleven days
+
+Found on 2026-09-08 while cutting this baseline, by checking `pg_constraint` on
+the live `edc_backend` rather than by reading the migration. All three foreign
+keys on `anonymisation_reviews` were `confdeltype = 'n'` (SET NULL) against
+columns that are all `NOT NULL`:
+
+- `anonymisation_reviews_document_id_documents_id_fk`
+- `anonymisation_reviews_organization_id_organizations_id_fk`
+- `anonymisation_reviews_reviewer_id_users_id_fk`
+
+Identical mechanism, identical blast radius: deleting a document that has a
+review row raises `23502`, `DELETE /api/documents/:id` 500s,
+`retireDeletedDocumentHook` never runs, and the document's chunks stay
+retrievable in ai-service while the user believes it is gone. The table already
+held 6 rows when this was found. **`20260828_191401_anonymisation_review.ts`
+shipped the bug and nobody caught it**, because that migration was reviewed as
+generated output rather than checked against `pg_constraint`.
+
+⚠ **This one is a FIX, not a copy-forward.** It is applied for the first time in
+`20260908_092211_baseline.ts`, and it was applied to the live `edc_backend` by
+hand as well — that database was STAMPED with the baseline, not migrated by it,
+and a stamp applies no DDL.
+
+⚠ **Check `pg_constraint`, not the generated SQL, whenever a migration adds a
+required relationship.** The generator's default is wrong for every one of them.
+
+```sql
+-- Every FK that would 23502 on a parent delete.
+SELECT c.conrelid::regclass AS tbl, c.conname, a.attname
+FROM pg_constraint c
+JOIN unnest(c.conkey) WITH ORDINALITY k(attnum, ord) ON true
+JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+WHERE c.contype = 'f' AND c.confdeltype = 'n' AND a.attnotnull;
+```
+
+🟡 **That query still returns rows, and they were left alone deliberately.**
+`documents`, `media`, `sessions`, `ratings`, `memberships` and `teams` all point
+at `organizations` (and several at `users`) with SET NULL against NOT NULL
+columns, inherited from the 2026-08-14 baseline. The consequence is narrower:
+**deleting an organization or a user is broken**, and neither is a product
+operation today — there is no route for either. Fixing them means choosing
+between CASCADE (deleting an ecosistema deletes its corpus) and RESTRICT (a
+readable refusal), and that is a product decision, not a migration cleanup.
+Verified on the scratch database: `DELETE FROM organizations` fails on
+`memberships.organization_id` before it reaches anything else.
+
+## ✅ The corpus-label columns have NO hand-written part
 
 `documents.tema` and `documents.lengua` — the corpus's own theme and language
-ground truth, which the product had nowhere to store until now. Two nullable
-`varchar` columns, no enum, no index, no constraint. **Fully generated, so a
-regeneration has nothing to copy forward and `PAYLOAD_ALLOW_PUSH=1` has nothing
-to drop.** Recorded here because the two lists above are where someone checks,
-and "this one is safe" is worth being able to read.
+ground truth, which the product had nowhere to store until now. They arrived in
+`20260905_060357_document_corpus_labels` and are now part of the baseline. Two
+nullable `varchar` columns, no enum, no index, no constraint. **Fully generated,
+so a regeneration has nothing to copy forward and `PAYLOAD_ALLOW_PUSH=1` has
+nothing to drop.** Recorded here because the lists above are where someone
+checks, and "this one is safe" is worth being able to read.
 
 ⚠ **Neither column is an enum, and that is deliberate.** `tema` is a closed set
 of four *today* (`traduccion|dengue|escuela|discapacidad`), which makes a Payload
@@ -185,10 +244,12 @@ cannot skip, and field `read` access. A migration that ever makes it `NOT NULL`,
 or a push that drops the collection's hooks, breaks a privacy rule rather than a
 default. The reasoning is on the field.
 
-🔴 **The 250 seeded rows are NOT backfilled by this migration**, on purpose: the
+🔴 **The seeded rows are NOT backfilled by any migration**, on purpose: the
 values come from a manifest in another checkout, not from anything Postgres can
 compute. `src/seed/backfillCorpusLabels.cli.ts` is a separate, dry-run-by-default
-pass the owner runs by hand.
+pass the owner runs by hand. It was run against `edc_backend` on 2026-09-08:
+285 scanned, 250 updated (191 joined on a SIM id, 59 on their seeded title), 35
+rows not seeded by the corpus left untouched.
 
 ## ⚠ New columns on `media`, and what they mean for existing rows
 
@@ -219,6 +280,82 @@ by hand or deleted.
 
 ## How this got here
 
+The chain has been collapsed twice. Both times for the same reason — no
+database anywhere would ever replay it — and both times the hand-written SQL
+was the entire risk of the operation.
+
+### 2026-09-08 — the second collapse, eight migrations into one
+
+The chain ran `20260814_205354_baseline` → `20260905_060357_document_corpus_labels`.
+It was collapsed because **nothing had ever been deployed**: no CI, no deploy
+script, `infra/fleet/topology.md`, `runbook.md`, `env-manifests.md` and
+`plan/deploy-and-local-demo.md` all say so, local `main` was 76 commits ahead of
+an unpushed `origin/main`, and `edc_backend` on `localhost:45432` was the only
+chain-aware database in existence.
+
+Order matters and this is the order it was done in:
+
+1. **`20260905_060357_document_corpus_labels` was applied first.** It was
+   committed but never run — `documents.tema` and `documents.lengua` did not
+   exist. The database has to match HEAD's config *before* the stamp in step 6,
+   or the stamp records something untrue.
+2. **`src/seed/backfillCorpusLabels.cli.ts --organization=1 --apply`**, so
+   `tema` and `lengua` actually hold values. 250 rows updated.
+3. **`rm src/migrations/*.ts src/migrations/*.json`, then
+   `payload migrate:create baseline`.** With no `.json` snapshot on disk,
+   `migrate:create` diffs against an empty schema and emits a full CREATE. It
+   **never connects to a database** (`disableDBConnect`) — verified by running
+   it with `DATABASE_URI` pointing at a database that does not exist, which
+   succeeded.
+4. **The hand-written SQL was restored from `git show HEAD:…`, not retyped.**
+   15 statements: 4 indexes from the 2026-08-14 baseline, 3 indexes and 8
+   rewritten foreign keys from `20260829_203018_corpus_graph`.
+5. **Three `anonymisation_reviews` foreign keys were fixed** — see that section
+   above. New work, not a copy-forward.
+6. **Verified on a throwaway database**, the way the 2026-08-14 baseline was:
+   `payload migrate` into a fresh `edc_scratch_baseline`, then deliberately
+   conflicting `INSERT`s for all seven unique indexes (each rejected the second
+   write; a matching `canonical_key` under a different `type`, and a matching
+   edge under a different relation `type`, were both still allowed), then a
+   `DELETE` of a document carrying a mention, two relations and a review row —
+   all four cascaded away, the shared `graph_entities` rows survived, and
+   deleting the reviewer cascaded the review too. `migrate:down` then `migrate`
+   round-tripped cleanly. A `pg_dump --schema-only` diff against the live
+   `edc_backend` came back identical apart from column ORDER and the three
+   foreign keys step 5 fixes. The scratch database was dropped.
+7. **`edc_backend` was STAMPED, not migrated** — it already had the schema, and
+   re-running the baseline against it would have dropped a graph worth ~6.6 h
+   and ~$0.81 of LLM extraction (788 entities, 3065 mentions, 2502 relations,
+   all confirmed untouched afterwards):
+   ```sql
+   DELETE FROM payload_migrations;
+   INSERT INTO payload_migrations (name, batch, created_at, updated_at)
+   VALUES ('20260908_092211_baseline', 1, now(), now());
+   ```
+   ⚠ **A stamp applies no DDL.** Step 5's three `ALTER TABLE`s were run against
+   `edc_backend` by hand in the same transaction, and confirmed with
+   `pg_constraint`.
+
+**Two things were deliberately NOT carried forward.** Both are *data*
+migrations over rows a fresh schema does not have:
+
+- `20260828_080049`'s `documents_rels` backfill. It `SELECT`s from
+  `documents.session_id`, a column the baseline never creates.
+- `20260828_081504`'s `UPDATE messages SET corpus_status = 'skipped'`. It
+  existed to classify messages that predated the column; the column's `DEFAULT
+  'pending'` is correct for every row created from here on.
+
+⚠ **One drift was found and left alone.** `edc_backend` still carries
+`documents.session_id` (32 non-NULL values), its index and its foreign key,
+even though `20260828_080049` dropped that column and ran successfully. Nothing
+in HEAD's config knows the column, it is nullable, and its FK is SET NULL
+against a nullable column, so it is inert. It is recorded here rather than
+dropped, because dropping it destroys 32 values nobody has explained yet —
+`documents_rels` holds 34 session links, so it is probably a subset, but
+"probably" is not a reason to delete data on a shared database.
+
+### 2026-08-14 — the first collapse, and why `index.ts` was empty before it
+
 This repo was assembled from two Payload apps, each of which arrived with its
 own baseline migration describing its own schema. Those two baselines could not
 be sequenced together — they create overlapping tables (`users`, `projects`)
@@ -226,8 +363,9 @@ with different shapes, and the second would fail against the first. **Both were
 deleted**, because the alternative is a migration history that describes a
 database nobody will ever have.
 
-`index.ts` then exported an empty array on purpose until 2026-08-14, when the
-baseline was generated from an empty `edc_backend` that a push-enabled boot had
-just built from the config. It was verified by dropping and recreating that
-database, running `payload migrate`, and inserting deliberately conflicting rows
-through `psql` to confirm each unique index actually rejects the second write.
+`index.ts` then exported an empty array on purpose until 2026-08-14, when
+`20260814_205354_baseline` was generated from an empty `edc_backend` that a
+push-enabled boot had just built from the config. It was verified by dropping
+and recreating that database, running `payload migrate`, and inserting
+deliberately conflicting rows through `psql` to confirm each unique index
+actually rejects the second write.

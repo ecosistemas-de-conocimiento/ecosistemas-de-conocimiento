@@ -1,51 +1,9 @@
-import * as migration_20260814_205354_baseline from './20260814_205354_baseline';
-import * as migration_20260814_231500_media_prefix from './20260814_231500_media_prefix';
-import * as migration_20260822_071001_rating_reason from './20260822_071001_rating_reason';
-import * as migration_20260828_080049_documents_session_hasmany from './20260828_080049_documents_session_hasmany';
-import * as migration_20260828_081504_voces_and_anonymisation from './20260828_081504_voces_and_anonymisation';
-import * as migration_20260828_191401_anonymisation_review from './20260828_191401_anonymisation_review';
-import * as migration_20260829_203018_corpus_graph from './20260829_203018_corpus_graph';
-import * as migration_20260905_060357_document_corpus_labels from './20260905_060357_document_corpus_labels';
+import * as migration_20260908_092211_baseline from './20260908_092211_baseline';
 
 export const migrations = [
   {
-    up: migration_20260814_205354_baseline.up,
-    down: migration_20260814_205354_baseline.down,
-    name: '20260814_205354_baseline',
-  },
-  {
-    up: migration_20260814_231500_media_prefix.up,
-    down: migration_20260814_231500_media_prefix.down,
-    name: '20260814_231500_media_prefix',
-  },
-  {
-    up: migration_20260822_071001_rating_reason.up,
-    down: migration_20260822_071001_rating_reason.down,
-    name: '20260822_071001_rating_reason',
-  },
-  {
-    up: migration_20260828_080049_documents_session_hasmany.up,
-    down: migration_20260828_080049_documents_session_hasmany.down,
-    name: '20260828_080049_documents_session_hasmany',
-  },
-  {
-    up: migration_20260828_081504_voces_and_anonymisation.up,
-    down: migration_20260828_081504_voces_and_anonymisation.down,
-    name: '20260828_081504_voces_and_anonymisation',
-  },
-  {
-    up: migration_20260828_191401_anonymisation_review.up,
-    down: migration_20260828_191401_anonymisation_review.down,
-    name: '20260828_191401_anonymisation_review',
-  },
-  {
-    up: migration_20260829_203018_corpus_graph.up,
-    down: migration_20260829_203018_corpus_graph.down,
-    name: '20260829_203018_corpus_graph',
-  },
-  {
-    up: migration_20260905_060357_document_corpus_labels.up,
-    down: migration_20260905_060357_document_corpus_labels.down,
-    name: '20260905_060357_document_corpus_labels'
+    up: migration_20260908_092211_baseline.up,
+    down: migration_20260908_092211_baseline.down,
+    name: '20260908_092211_baseline'
   },
 ];

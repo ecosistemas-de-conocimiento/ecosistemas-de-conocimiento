@@ -1,4 +1,6 @@
 {
+  "id": "412c9f02-1680-49f8-9c95-8c8c26be58fe",
+  "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -941,6 +943,64 @@
           "notNull": true,
           "default": "'markdown'"
         },
+        "content_kind": {
+          "name": "content_kind",
+          "type": "enum_documents_content_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'documento'"
+        },
+        "tema": {
+          "name": "tema",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lengua": {
+          "name": "lengua",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "redacted_text": {
+          "name": "redacted_text",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "held_text": {
+          "name": "held_text",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "anonymisation_survivors": {
+          "name": "anonymisation_survivors",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "anonymisation_status": {
+          "name": "anonymisation_status",
+          "type": "enum_documents_anonymisation_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'n/a'"
+        },
+        "anonymisation_error": {
+          "name": "anonymisation_error",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "anonymisation_report": {
+          "name": "anonymisation_report",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "mode": {
           "name": "mode",
           "type": "enum_documents_mode",
@@ -992,6 +1052,32 @@
         "ingest_id": {
           "name": "ingest_id",
           "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "graph_status": {
+          "name": "graph_status",
+          "type": "enum_documents_graph_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'n/a'"
+        },
+        "graph_error": {
+          "name": "graph_error",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "graph_prompt_version": {
+          "name": "graph_prompt_version",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "graph_extracted_at": {
+          "name": "graph_extracted_at",
+          "type": "timestamp(3) with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -1096,11 +1182,71 @@
           "method": "btree",
           "with": {}
         },
+        "documents_content_kind_idx": {
+          "name": "documents_content_kind_idx",
+          "columns": [
+            {
+              "expression": "content_kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "documents_anonymisation_status_idx": {
+          "name": "documents_anonymisation_status_idx",
+          "columns": [
+            {
+              "expression": "anonymisation_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "documents_media_file_idx": {
           "name": "documents_media_file_idx",
           "columns": [
             {
               "expression": "media_file_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "documents_graph_status_idx": {
+          "name": "documents_graph_status_idx",
+          "columns": [
+            {
+              "expression": "graph_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "documents_graph_prompt_version_idx": {
+          "name": "documents_graph_prompt_version_idx",
+          "columns": [
+            {
+              "expression": "graph_prompt_version",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2024,6 +2170,38 @@
           "primaryKey": false,
           "notNull": false
         },
+        "corpus_status": {
+          "name": "corpus_status",
+          "type": "enum_messages_corpus_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "corpus_ingest_id": {
+          "name": "corpus_ingest_id",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "corpus_error": {
+          "name": "corpus_error",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "redacted_text": {
+          "name": "redacted_text",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "anonymisation_report": {
+          "name": "anonymisation_report",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "updated_at": {
           "name": "updated_at",
           "type": "timestamp(3) with time zone",
@@ -2045,6 +2223,36 @@
           "columns": [
             {
               "expression": "session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "messages_corpus_status_idx": {
+          "name": "messages_corpus_status_idx",
+          "columns": [
+            {
+              "expression": "corpus_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "messages_corpus_ingest_id_idx": {
+          "name": "messages_corpus_ingest_id_idx",
+          "columns": [
+            {
+              "expression": "corpus_ingest_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2609,6 +2817,783 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.anonymisation_reviews": {
+      "name": "anonymisation_reviews",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "document_id": {
+          "name": "document_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reviewer_id": {
+          "name": "reviewer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "decision": {
+          "name": "decision",
+          "type": "enum_anonymisation_reviews_decision",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "gate_stage": {
+          "name": "gate_stage",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "gate_reason": {
+          "name": "gate_reason",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "gate_report": {
+          "name": "gate_report",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "text_edited": {
+          "name": "text_edited",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "note": {
+          "name": "note",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "anonymisation_reviews_document_idx": {
+          "name": "anonymisation_reviews_document_idx",
+          "columns": [
+            {
+              "expression": "document_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "anonymisation_reviews_organization_idx": {
+          "name": "anonymisation_reviews_organization_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "anonymisation_reviews_reviewer_idx": {
+          "name": "anonymisation_reviews_reviewer_idx",
+          "columns": [
+            {
+              "expression": "reviewer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "anonymisation_reviews_decision_idx": {
+          "name": "anonymisation_reviews_decision_idx",
+          "columns": [
+            {
+              "expression": "decision",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "anonymisation_reviews_updated_at_idx": {
+          "name": "anonymisation_reviews_updated_at_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "anonymisation_reviews_created_at_idx": {
+          "name": "anonymisation_reviews_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "anonymisation_reviews_document_id_documents_id_fk": {
+          "name": "anonymisation_reviews_document_id_documents_id_fk",
+          "tableFrom": "anonymisation_reviews",
+          "tableTo": "documents",
+          "columnsFrom": [
+            "document_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "anonymisation_reviews_organization_id_organizations_id_fk": {
+          "name": "anonymisation_reviews_organization_id_organizations_id_fk",
+          "tableFrom": "anonymisation_reviews",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "anonymisation_reviews_reviewer_id_users_id_fk": {
+          "name": "anonymisation_reviews_reviewer_id_users_id_fk",
+          "tableFrom": "anonymisation_reviews",
+          "tableTo": "users",
+          "columnsFrom": [
+            "reviewer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.graph_entities": {
+      "name": "graph_entities",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "enum_graph_entities_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "canonical_key": {
+          "name": "canonical_key",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "aliases": {
+          "name": "aliases",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "graph_entities_organization_idx": {
+          "name": "graph_entities_organization_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_entities_type_idx": {
+          "name": "graph_entities_type_idx",
+          "columns": [
+            {
+              "expression": "type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_entities_canonical_key_idx": {
+          "name": "graph_entities_canonical_key_idx",
+          "columns": [
+            {
+              "expression": "canonical_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_entities_updated_at_idx": {
+          "name": "graph_entities_updated_at_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_entities_created_at_idx": {
+          "name": "graph_entities_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "graph_entities_organization_id_organizations_id_fk": {
+          "name": "graph_entities_organization_id_organizations_id_fk",
+          "tableFrom": "graph_entities",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.graph_mentions": {
+      "name": "graph_mentions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "document_id": {
+          "name": "document_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurrences": {
+          "name": "occurrences",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "snippet": {
+          "name": "snippet",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "graph_mentions_organization_idx": {
+          "name": "graph_mentions_organization_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_mentions_document_idx": {
+          "name": "graph_mentions_document_idx",
+          "columns": [
+            {
+              "expression": "document_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_mentions_entity_idx": {
+          "name": "graph_mentions_entity_idx",
+          "columns": [
+            {
+              "expression": "entity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_mentions_updated_at_idx": {
+          "name": "graph_mentions_updated_at_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_mentions_created_at_idx": {
+          "name": "graph_mentions_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "graph_mentions_organization_id_organizations_id_fk": {
+          "name": "graph_mentions_organization_id_organizations_id_fk",
+          "tableFrom": "graph_mentions",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "graph_mentions_document_id_documents_id_fk": {
+          "name": "graph_mentions_document_id_documents_id_fk",
+          "tableFrom": "graph_mentions",
+          "tableTo": "documents",
+          "columnsFrom": [
+            "document_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "graph_mentions_entity_id_graph_entities_id_fk": {
+          "name": "graph_mentions_entity_id_graph_entities_id_fk",
+          "tableFrom": "graph_mentions",
+          "tableTo": "graph_entities",
+          "columnsFrom": [
+            "entity_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.graph_relations": {
+      "name": "graph_relations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "document_id": {
+          "name": "document_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_entity_id": {
+          "name": "from_entity_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_entity_id": {
+          "name": "to_entity_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "enum_graph_relations_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "graph_relations_organization_idx": {
+          "name": "graph_relations_organization_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_relations_document_idx": {
+          "name": "graph_relations_document_idx",
+          "columns": [
+            {
+              "expression": "document_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_relations_from_entity_idx": {
+          "name": "graph_relations_from_entity_idx",
+          "columns": [
+            {
+              "expression": "from_entity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_relations_to_entity_idx": {
+          "name": "graph_relations_to_entity_idx",
+          "columns": [
+            {
+              "expression": "to_entity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_relations_type_idx": {
+          "name": "graph_relations_type_idx",
+          "columns": [
+            {
+              "expression": "type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_relations_updated_at_idx": {
+          "name": "graph_relations_updated_at_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graph_relations_created_at_idx": {
+          "name": "graph_relations_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "graph_relations_organization_id_organizations_id_fk": {
+          "name": "graph_relations_organization_id_organizations_id_fk",
+          "tableFrom": "graph_relations",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "graph_relations_document_id_documents_id_fk": {
+          "name": "graph_relations_document_id_documents_id_fk",
+          "tableFrom": "graph_relations",
+          "tableTo": "documents",
+          "columnsFrom": [
+            "document_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "graph_relations_from_entity_id_graph_entities_id_fk": {
+          "name": "graph_relations_from_entity_id_graph_entities_id_fk",
+          "tableFrom": "graph_relations",
+          "tableTo": "graph_entities",
+          "columnsFrom": [
+            "from_entity_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "graph_relations_to_entity_id_graph_entities_id_fk": {
+          "name": "graph_relations_to_entity_id_graph_entities_id_fk",
+          "tableFrom": "graph_relations",
+          "tableTo": "graph_entities",
+          "columnsFrom": [
+            "to_entity_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.ai_service_callbacks": {
       "name": "ai_service_callbacks",
       "schema": "",
@@ -2969,6 +3954,30 @@
           "primaryKey": false,
           "notNull": false
         },
+        "anonymisation_reviews_id": {
+          "name": "anonymisation_reviews_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "graph_entities_id": {
+          "name": "graph_entities_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "graph_mentions_id": {
+          "name": "graph_mentions_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "graph_relations_id": {
+          "name": "graph_relations_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "ai_service_callbacks_id": {
           "name": "ai_service_callbacks_id",
           "type": "integer",
@@ -3172,6 +4181,66 @@
           "method": "btree",
           "with": {}
         },
+        "payload_locked_documents_rels_anonymisation_reviews_id_idx": {
+          "name": "payload_locked_documents_rels_anonymisation_reviews_id_idx",
+          "columns": [
+            {
+              "expression": "anonymisation_reviews_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payload_locked_documents_rels_graph_entities_id_idx": {
+          "name": "payload_locked_documents_rels_graph_entities_id_idx",
+          "columns": [
+            {
+              "expression": "graph_entities_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payload_locked_documents_rels_graph_mentions_id_idx": {
+          "name": "payload_locked_documents_rels_graph_mentions_id_idx",
+          "columns": [
+            {
+              "expression": "graph_mentions_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payload_locked_documents_rels_graph_relations_id_idx": {
+          "name": "payload_locked_documents_rels_graph_relations_id_idx",
+          "columns": [
+            {
+              "expression": "graph_relations_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "payload_locked_documents_rels_ai_service_callbacks_id_idx": {
           "name": "payload_locked_documents_rels_ai_service_callbacks_id_idx",
           "columns": [
@@ -3325,6 +4394,58 @@
           "tableTo": "ratings",
           "columnsFrom": [
             "ratings_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "payload_locked_documents_rels_anonymisation_reviews_fk": {
+          "name": "payload_locked_documents_rels_anonymisation_reviews_fk",
+          "tableFrom": "payload_locked_documents_rels",
+          "tableTo": "anonymisation_reviews",
+          "columnsFrom": [
+            "anonymisation_reviews_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "payload_locked_documents_rels_graph_entities_fk": {
+          "name": "payload_locked_documents_rels_graph_entities_fk",
+          "tableFrom": "payload_locked_documents_rels",
+          "tableTo": "graph_entities",
+          "columnsFrom": [
+            "graph_entities_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "payload_locked_documents_rels_graph_mentions_fk": {
+          "name": "payload_locked_documents_rels_graph_mentions_fk",
+          "tableFrom": "payload_locked_documents_rels",
+          "tableTo": "graph_mentions",
+          "columnsFrom": [
+            "graph_mentions_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "payload_locked_documents_rels_graph_relations_fk": {
+          "name": "payload_locked_documents_rels_graph_relations_fk",
+          "tableFrom": "payload_locked_documents_rels",
+          "tableTo": "graph_relations",
+          "columnsFrom": [
+            "graph_relations_id"
           ],
           "columnsTo": [
             "id"
@@ -3665,6 +4786,7 @@
       "schema": "public",
       "values": [
         "member",
+        "investigador",
         "admin",
         "owner"
       ]
@@ -3699,6 +4821,27 @@
         "audio"
       ]
     },
+    "public.enum_documents_content_kind": {
+      "name": "enum_documents_content_kind",
+      "schema": "public",
+      "values": [
+        "documento",
+        "testimonio",
+        "conversacion"
+      ]
+    },
+    "public.enum_documents_anonymisation_status": {
+      "name": "enum_documents_anonymisation_status",
+      "schema": "public",
+      "values": [
+        "n/a",
+        "pending",
+        "held",
+        "approved",
+        "rejected",
+        "ready"
+      ]
+    },
     "public.enum_documents_mode": {
       "name": "enum_documents_mode",
       "schema": "public",
@@ -3721,6 +4864,18 @@
         "failed"
       ]
     },
+    "public.enum_documents_graph_status": {
+      "name": "enum_documents_graph_status",
+      "schema": "public",
+      "values": [
+        "n/a",
+        "pending",
+        "extracting",
+        "ready",
+        "failed",
+        "skipped"
+      ]
+    },
     "public.enum_messages_role": {
       "name": "enum_messages_role",
       "schema": "public",
@@ -3728,6 +4883,19 @@
         "user",
         "assistant",
         "system"
+      ]
+    },
+    "public.enum_messages_corpus_status": {
+      "name": "enum_messages_corpus_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "held-drafts",
+        "held-gate",
+        "embedding",
+        "ingested",
+        "failed",
+        "skipped"
       ]
     },
     "public.enum_ratings_reason": {
@@ -3745,6 +4913,37 @@
         "complete",
         "other"
       ]
+    },
+    "public.enum_anonymisation_reviews_decision": {
+      "name": "enum_anonymisation_reviews_decision",
+      "schema": "public",
+      "values": [
+        "approved",
+        "rejected"
+      ]
+    },
+    "public.enum_graph_entities_type": {
+      "name": "enum_graph_entities_type",
+      "schema": "public",
+      "values": [
+        "tema",
+        "lugar",
+        "evento",
+        "organizacion",
+        "persona"
+      ]
+    },
+    "public.enum_graph_relations_type": {
+      "name": "enum_graph_relations_type",
+      "schema": "public",
+      "values": [
+        "ocurre_en",
+        "participa_en",
+        "ubicado_en",
+        "parte_de",
+        "afecta_a",
+        "relacionado_con"
+      ]
     }
   },
   "schemas": {},
@@ -3756,7 +4955,5 @@
     "schemas": {},
     "tables": {},
     "columns": {}
-  },
-  "id": "d008d2de-f6cb-4c79-839a-c0ebc801d2df",
-  "prevId": "00000000-0000-0000-0000-000000000000"
+  }
 }

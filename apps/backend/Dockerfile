@@ -77,7 +77,7 @@ EXPOSE ${PORT}
 # the binaries directly sidesteps the whole thing and removes a package manager
 # from the runtime image, which is where it least belongs.
 # ✅ `start` is `payload migrate && next start`. The baseline migration exists
-# (src/migrations/20260814_205354_baseline.ts), so the schema is created and
+# (src/migrations/20260908_092211_baseline.ts), so the schema is created and
 # advanced by migrations, NOT by Payload's schema push. No environment variable
 # is needed to get that: the push gate is opt-IN (PAYLOAD_ALLOW_PUSH=1), so push
 # is off unless someone deliberately turns it on. Do not turn it on here — push

@@ -142,3 +142,29 @@ it died on the session rate limit and is the one review still owed.
   design. 🔴 Do not batch-approve.
 - **Janitor scheduling is now copied three times** (`transcription`, `publish`, `embedding`) —
   ~150 lines removable behind a shared `startJanitor(prefix, sweep)`.
+
+## UPDATE 2026-09-08 — the migration chain was collapsed
+
+Open decisions 4 and 5 above are **resolved**. The chain of 8 migrations is gone, replaced by
+`20260908_092211_baseline`. `edc_backend` was **stamped**, not rebuilt — the graph survives at
+788 entities / 3065 mentions / 2502 relations, verified after the fact.
+
+`documents.tema` and `documents.lengua` are applied and populated: escuela 60, dengue 60,
+discapacidad 60, traduccion 70, and 191 rows carrying a `lengua`. The task 04 decision to drop
+the mistyped `organizacion|escuela` node now rests on a column that actually exists.
+
+Three things the operation surfaced, none of them caused by it:
+
+- 🔴 **Organization and user deletion are broken repo-wide.** `documents`, `media`, `sessions`,
+  `ratings`, `memberships` and `teams` all point at `organizations`/`users` with `SET NULL`
+  against `NOT NULL` columns, so `DELETE FROM organizations` fails on `memberships`. Identical in
+  the old chain. Left alone deliberately: CASCADE versus RESTRICT is a product decision, not a
+  migration one. `anonymisation_reviews` had the same bug and *was* fixed, because deleting a
+  document also skipped the `afterDelete` retirement hook and left its chunks searchable.
+- ⚠ **`documents.session_id` still exists on `edc_backend`** with 32 non-NULL values, though
+  `20260828_080049` dropped it and reported success. Nothing in the config knows the column and
+  it is inert. The data was left alone; `documents_rels` holds 34 session links, probably a
+  superset, and "probably" is not enough to delete on a shared database.
+- ⚠ **The `edc-backend-1` container runs a stale baked image** from 2026-09-02 — `/repo` is not a
+  bind mount, so `payload migrate` inside it reports "Done" without applying anything. Everything
+  was run from the host instead. Worth knowing before trusting any in-container migration.
