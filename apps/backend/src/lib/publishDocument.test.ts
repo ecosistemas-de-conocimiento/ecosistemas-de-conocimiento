@@ -24,7 +24,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Payload } from 'payload'
 
-import { confirmPublish, unpublish, type CorpusMover } from './publishDocument'
+import {
+  UNEXPLAINED_PUBLISH_FAILURE,
+  confirmPublish,
+  failPublish,
+  unpublish,
+  type CorpusMover,
+} from './publishDocument'
 
 const ORG = 7
 const USER = 42
@@ -189,4 +195,39 @@ describe('unpublish — retiring the shared copy', () => {
     await expect(unpublish(DOC, { payload, client })).rejects.toThrow()
     expect(client.ingest.enqueue).not.toHaveBeenCalled()
   })
+})
+
+// ---------------------------------------------------------------------------
+// failPublish
+// ---------------------------------------------------------------------------
+
+describe('failPublish — a failure with no words in it is still a failure', () => {
+  it('writes the reason it was given, trimmed to the field', async () => {
+    const { payload, dataOf } = fakePayload()
+    await failPublish(DOC, { payload }, 'Rate limit exceeded')
+    expect(dataOf(0).publicationError).toBe('Rate limit exceeded')
+  })
+
+  it.each(['', '   ', '\n'])(
+    '🔴 substitutes a real message for a blank reason (%j), which would be invisible',
+    async (blank) => {
+      // Two independent ways a blank reason reaches here: `envelope.error` off
+      // the wire on an `ingest.failed`, and `new Error().message`.
+      //
+      // ⚠ AN EMPTY STRING IS UNRECOVERABLE, not merely ugly. The UI shows the
+      // error only when populated, so the user sees nothing — and
+      // `publishJanitor.ts` cannot rescue the row either, because its `where`
+      // uses `publicationError: { exists: false }`, which Payload compiles to
+      // `IS NULL` alone. A row holding `''` is never returned by the sweep
+      // whose whole job is to make this state visible.
+      const { payload, dataOf } = fakePayload()
+      await failPublish(DOC, { payload }, blank)
+
+      const written = String(dataOf(0).publicationError)
+      expect(written).toBe(UNEXPLAINED_PUBLISH_FAILURE)
+      expect(written.trim()).not.toBe('')
+      expect(written).toMatch(/servicio de IA/)
+      expect(written.length).toBeLessThanOrEqual(500)
+    },
+  )
 })

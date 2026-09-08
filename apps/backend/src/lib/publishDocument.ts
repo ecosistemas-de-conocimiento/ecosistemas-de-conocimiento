@@ -589,6 +589,35 @@ export async function confirmPublish(
 }
 
 /**
+ * 🔴 THE MESSAGE FOR A FAILURE THAT ARRIVED WITH NO WORDS IN IT, and it exists
+ * to close a hole rather than to be read often.
+ *
+ * `failPublish` is called with whatever the caller had: at
+ * `app/api/ai-service/callback/route.ts` that is `envelope.error` straight off
+ * the wire on an `ingest.failed`, and elsewhere an `err.message`. Both can be
+ * the empty string — a `new Error()` has one, and nothing validates that
+ * ai-service put words in its error field.
+ *
+ * ⚠ AN EMPTY STRING HERE IS THE WORST OF BOTH WORLDS, which is not obvious. The
+ * UI shows the error only when it is populated, so `''` is invisible to the
+ * user. And `publishJanitor.ts` cannot rescue the row either: its `where`
+ * carries `publicationError: { exists: false }`, which Payload compiles to
+ * `IS NULL` alone, so a row holding `''` is never even returned by the sweep
+ * that exists to make exactly this state visible. The row keeps
+ * `publicationStatus: 'publishing'` forever with nobody able to tell.
+ *
+ * ⚠ THE GUARD BELONGS HERE, NOT IN THE SWEEP'S `where`. This is the only place
+ * that writes the field, so one clause here fixes every caller; widening the
+ * janitor's query to `or: [exists: false, equals: '']` would fix the symptom in
+ * one of the two places it shows and leave the bad value in the database.
+ *
+ * Spanish, because it lands in `publicationError` and the UI renders it verbatim.
+ */
+export const UNEXPLAINED_PUBLISH_FAILURE =
+  'El servicio de IA reportó un error sin detalle. Vuelve a intentarlo; si vuelve a pasar, ' +
+  'avisa a quien administra la instalación.'
+
+/**
  * The publish failed at ai-service. Record it on the row so it is VISIBLE and
  * retryable rather than silently stuck.
  *
@@ -606,7 +635,7 @@ export async function failPublish(
   await deps.payload.update({
     collection: 'documents',
     id: doc.id as never,
-    data: { publicationError: reason.slice(0, 500) },
+    data: { publicationError: (reason.trim() || UNEXPLAINED_PUBLISH_FAILURE).slice(0, 500) },
     overrideAccess: true,
     context: { __skipDocsExtract: true },
   })
