@@ -183,35 +183,18 @@ const PUBLICATION_LABELS: Record<PublicationState, string> = {
  * ⚠ `read` IS DELIBERATELY LEFT ALONE. These fields are how the uploader sees
  * why their upload is stuck, and `visibleToCaller` already decides who sees the
  * row at all.
+ *
+ * ⚠ ALSO LOCKS `tema` AND `lengua`, for a different reason. Those are ground
+ * truth copied from the corpus manifest by `seed/corpus.ts` and
+ * `seed/backfillCorpusLabels.cli.ts` (both `overrideAccess: true`), not opinions
+ * somebody types — and `apps/web/src/routes/api/documents/[id]/+server.ts`
+ * PATCHes the request body through UNMODIFIED, so "editable" would mean free
+ * text on a column a facet groups by. On `lengua`, in a collection whose privacy
+ * design is about not storing attributes of the people in it, the obvious thing
+ * to type there is a name. Reversible for `tema` the day an upload form collects
+ * a theme; `lengua` stays shut.
  */
 const gateWritesOnly: FieldAccess = () => false
-
-/**
- * 🔴 THE CORPUS GROUND-TRUTH LABELS ARE NOT WRITABLE THROUGH THE API EITHER.
- *
- * `lengua` and `tema` (see the fields) are copied from a corpus manifest by the
- * seed and by `scripts/backfill-corpus-labels.ts`. They are not opinions
- * somebody types.
- *
- * ── WHY A LOCK RATHER THAN JUST `admin.readOnly` ─────────────────────────────
- *
- * `apps/web/src/routes/api/documents/[id]/+server.ts` PATCHes straight through
- * to Payload with the request body UNMODIFIED, and `documents.update` is
- * `uploaderOnly`. So "editable" here would mean: any signed-in person can put
- * arbitrary free text on their own row, in a field with no form, no vocabulary
- * and no validation, that a facet will later group documents by. For `lengua`
- * it would mean a free-text column on a document collection whose entire
- * privacy design is about not storing attributes of the people in it — the
- * obvious thing to type there is a name.
- *
- * ⚠ Server-side writes use `overrideAccess: true` and are unaffected: the seed
- * (`seed/corpus.ts`) and the backfill script. That is the one path.
- *
- * ⚠ THIS IS THE CHEAP HALF OF THE DECISION AND IT IS EASY TO REVERSE. When an
- * upload form collects a theme, open `tema` by giving it a real vocabulary and
- * dropping this line. `lengua` should stay shut for the reason above.
- */
-const corpusLabelWritesOnly: FieldAccess = () => false
 
 /**
  * 🔴 `lengua` IS READABLE ONLY ON A `documento`. The read-side half of the same
@@ -250,15 +233,19 @@ const corpusLabelWritesOnly: FieldAccess = () => false
  * enumerate their fields (`LIBRARY_LIST_FIELDS`, `DOC_FIELDS` in `apps/web`), so
  * whoever adds `lengua` to either list has to add `contentKind` beside it.
  *
+ * ⚠ `doc` ONLY, WITH NO FALLBACK TO `data` / `siblingData`. Measured on
+ * `payload@3.88.0`: `fields/hooks/afterRead/promise.js` calls field `read`
+ * access with `doc` (and `data` set to the same object) on every read, so there
+ * is nothing to fall back TO. If `doc` is ever absent this fails closed, which
+ * is the direction above.
+ *
  * ⚠ `read` IS NOT GATED ON `tema`, deliberately. Four values, ~60 documents
  * each, no personal content — and for every seeded row the theme is already
  * spelled out in Spanish in `documents.name`. Gating it would hide a label from
  * the people the library exists for and protect nothing.
  */
-export const lenguaReadable: FieldAccess = ({ doc, data, siblingData }) => {
-  const row = (doc ?? data ?? siblingData ?? {}) as { contentKind?: unknown }
-  return row.contentKind === 'documento'
-}
+export const lenguaReadable: FieldAccess = ({ doc }) =>
+  (doc as { contentKind?: unknown } | undefined)?.contentKind === 'documento'
 
 const uploaderOnly: Access = ({ req: { user } }) => {
   if (!user) return false
@@ -2212,7 +2199,7 @@ export const Documents: CollectionConfig = {
        */
       name: 'tema',
       type: 'text',
-      access: { create: corpusLabelWritesOnly, update: corpusLabelWritesOnly },
+      access: { create: gateWritesOnly, update: gateWritesOnly },
       admin: {
         readOnly: true,
         description:
@@ -2249,8 +2236,8 @@ export const Documents: CollectionConfig = {
       name: 'lengua',
       type: 'text',
       access: {
-        create: corpusLabelWritesOnly,
-        update: corpusLabelWritesOnly,
+        create: gateWritesOnly,
+        update: gateWritesOnly,
         read: lenguaReadable,
       },
       admin: {
@@ -2601,13 +2588,8 @@ export const Documents: CollectionConfig = {
     },
   ],
   hooks: {
-    /**
-     * ⚠ `enforceLenguaDocumentoOnly` is SEPARATE from `bindDocumentToEcosystem`
-     * and must stay that way. That hook returns early on `!req.user`, which is
-     * every server-side write — including the two writers that populate
-     * `lengua` at all. Same reasoning as `invalidateGraphOnContentKindChange`
-     * below: a privacy rule must not be skippable by an internal write path.
-     */
+    // ⚠ DO NOT FOLD `enforceLenguaDocumentoOnly` INTO `bindDocumentToEcosystem`.
+    // Its own doc block says why; the short version is `!req.user`.
     beforeValidate: [bindDocumentToEcosystem, enforceLenguaDocumentoOnly],
     /**
      * ⚠ `invalidateGraphOnContentKindChange` runs on EVERY update, and it is

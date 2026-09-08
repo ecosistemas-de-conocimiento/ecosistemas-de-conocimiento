@@ -67,7 +67,7 @@ const SIM_ID = /(SIM_\d+)/
 export interface BackfillPlanRow {
   id: number | string
   contentKind: string
-  /** How the row was matched: the manifest join, or the title's theme label. */
+  /** Reported, never branched on: the dry run's join-health number. */
   via: 'manifest' | 'title'
   tema: string | null
   lengua: string | null
@@ -93,11 +93,6 @@ interface DocRow {
   lengua?: unknown
 }
 
-interface ManifestLabels {
-  tema: string
-  lengua: string
-}
-
 /**
  * What the backfill WOULD write, computed with no side effects.
  *
@@ -106,7 +101,7 @@ interface ManifestLabels {
  */
 export function planCorpusLabelBackfill(
   rows: readonly DocRow[],
-  manifest: ReadonlyMap<string, ManifestLabels>,
+  manifest: ReadonlyMap<string, { tema: string; lengua: string }>,
 ): BackfillPlan {
   const plan: BackfillPlan = {
     changes: [],
@@ -193,7 +188,7 @@ export async function backfillCorpusLabels(
   }
 
   const entries = readCorpusManifest(located.dir)
-  const manifest = new Map<string, ManifestLabels>(
+  const manifest = new Map<string, { tema: string; lengua: string }>(
     entries.map((e) => [e.id, { tema: e.ecosistema, lengua: e.lengua }]),
   )
   if (manifest.size === 0) {
@@ -204,22 +199,16 @@ export async function backfillCorpusLabels(
   const found = await payload.find({
     collection: 'documents',
     where: { organization: { equals: opts.organizationId } },
-    // ⚠ Higher than the 250 the corpus adds, because the ecosistema also holds
-    // e2e residue and hand-uploads. If this ever caps out, page it — a silently
-    // truncated backfill looks like a partially-labelled corpus.
-    limit: 5000,
+    // ⚠ EVERY ROW, not a page. A silently truncated backfill looks exactly like
+    // a partially-labelled corpus, and the ecosistema holds e2e residue and
+    // hand-uploads on top of the corpus's 250.
+    pagination: false,
     depth: 0,
     overrideAccess: true,
     select: { name: true, contentKind: true, tema: true, lengua: true },
   })
 
   const rows = found.docs as unknown as DocRow[]
-  if (found.totalDocs > rows.length) {
-    payload.logger.warn(
-      `[backfill-labels] ecosistema ${opts.organizationId} holds ${found.totalDocs} documents ` +
-        `but only ${rows.length} were read — raise the limit and re-run.`,
-    )
-  }
 
   const plan = planCorpusLabelBackfill(rows, manifest)
   const result: BackfillResult = { ...plan, applied: 0, failed: 0, corpusDir: located.dir }
@@ -230,15 +219,15 @@ export async function backfillCorpusLabels(
     `does not have`
 
   if (!opts.apply) {
-    const byVia = plan.changes.reduce<Record<string, number>>((acc, c) => {
-      acc[c.via] = (acc[c.via] ?? 0) + 1
-      return acc
-    }, {})
+    // ⚠ THE SPLIT IS THE NUMBER TO READ. ~191 by SIM id and ~59 by title is a
+    // working join; the same total arriving entirely by title means the manifest
+    // join broke and every row is about to be labelled from a string match.
+    const viaManifest = plan.changes.filter((c) => c.via === 'manifest').length
     const withLengua = plan.changes.filter((c) => c.lengua !== null).length
     payload.logger.info(
       `[backfill-labels] DRY RUN over ecosistema ${opts.organizationId} from ${located.dir}: ` +
-        `${summary}. Of the updates: ${byVia.manifest ?? 0} joined on a SIM id, ` +
-        `${byVia.title ?? 0} matched only their seeded title (theme only), ` +
+        `${summary}. Of the updates: ${viaManifest} joined on a SIM id, ` +
+        `${plan.changes.length - viaManifest} matched only their seeded title (theme only), ` +
         `${withLengua} will carry a \`lengua\`. NOTHING WAS WRITTEN — re-run with --apply.`,
     )
     return result
@@ -281,6 +270,14 @@ export async function backfillCorpusLabels(
  *
  * ⚠ Returns the error rather than throwing, so the CLI can print it and exit 1
  * without a stack trace over a typo.
+ *
+ * ⚠ NOT `node:util`'s `parseArgs`, and that was measured, not assumed: swapping
+ * it in grew this function from 18 lines to 32, because the error message stays
+ * either way and `parseArgs` throws on a typo'd flag, so it needs a try/catch to
+ * keep the no-stack-trace promise above. One required string and one boolean do
+ * not earn that. What it would buy — `--organization 1` with a space, and a loud
+ * rejection of an unknown flag — both already fail safe here: the first hits the
+ * refusal below, and a misspelt `--apply` yields a dry run.
  */
 export function parseBackfillArgs(argv: readonly string[]): BackfillOptions | { error: string } {
   const raw = argv.find((a) => a.startsWith('--organization='))?.slice('--organization='.length)

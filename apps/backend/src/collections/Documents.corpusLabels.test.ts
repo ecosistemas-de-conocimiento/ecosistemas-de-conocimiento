@@ -56,14 +56,11 @@ describe('enforceLenguaDocumentoOnly — the write half', () => {
     expect(next.lengua).toBe('mixteco')
   })
 
-  it('nulls it on a testimonio', () => {
-    const next = write({ data: { contentKind: 'testimonio', lengua: 'mixteco' } })
-    expect(next.lengua).toBeNull()
-  })
-
-  it('nulls it on a conversacion', () => {
-    const next = write({ data: { contentKind: 'conversacion', lengua: 'náhuatl' } })
-    expect(next.lengua).toBeNull()
+  it('nulls it on every kind that is not a documento', () => {
+    for (const contentKind of ['testimonio', 'conversacion']) {
+      const next = write({ data: { contentKind, lengua: 'mixteco' } })
+      expect(next.lengua, contentKind).toBeNull()
+    }
   })
 
   it('🔴 fails CLOSED on an unreadable content kind — not open', () => {
@@ -121,7 +118,10 @@ describe('lenguaReadable — the read half', () => {
   })
 
   it('hides it on a testimonio and a conversacion', () => {
-    expect(canRead({ contentKind: 'testimonio' })).toBe(false)
+    // This gate is the only thing standing between the column and every
+    // signed-in member's devtools: `apps/web/src/routes/api/documents/[id]`
+    // relays the whole Payload row to the browser with no field selection.
+    expect(canRead({ contentKind: 'testimonio', lengua: 'mixteco' })).toBe(false)
     expect(canRead({ contentKind: 'conversacion' })).toBe(false)
   })
 
@@ -130,26 +130,5 @@ describe('lenguaReadable — the read half', () => {
       expect(canRead({ contentKind }), `contentKind=${JSON.stringify(contentKind)}`).toBe(false)
     }
     expect(canRead({})).toBe(false)
-  })
-
-  it('reads `data` or `siblingData` when no `doc` is supplied', () => {
-    const access = lenguaReadable as FieldAccess
-    expect(
-      access({ data: { contentKind: 'documento' }, req: {} } as unknown as Parameters<FieldAccess>[0]),
-    ).toBe(true)
-    expect(
-      access({
-        siblingData: { contentKind: 'testimonio' },
-        req: {},
-      } as unknown as Parameters<FieldAccess>[0]),
-    ).toBe(false)
-  })
-
-  it('🔴 covers the BFF pass-through, which is why this gate exists at all', () => {
-    // `apps/web/src/routes/api/documents/[id]/+server.ts` relays the whole
-    // Payload row to the browser with no field selection, and the SPA polls it.
-    // So the field's own `read` access is the only thing standing between a new
-    // column and every signed-in member's devtools.
-    expect(canRead({ contentKind: 'testimonio', lengua: 'mixteco' })).toBe(false)
   })
 })

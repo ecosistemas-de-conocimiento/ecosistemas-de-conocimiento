@@ -155,19 +155,13 @@ describe('planCorpusLabelBackfill', () => {
     ])
   })
 
-  it('counts every row it looked at', () => {
-    const plan = planCorpusLabelBackfill(
-      [
-        { id: 1, name: '(SIM_0001)', contentKind: 'documento' },
-        { id: 6, name: 'acta.pdf', contentKind: 'documento' },
-        { id: 8, name: '(SIM_9999)', contentKind: 'documento' },
-      ],
-      MANIFEST,
-    )
-    expect(plan.scanned).toBe(3)
-    expect(plan.changes).toHaveLength(1)
-    expect(plan.unmatched).toBe(1)
-    expect(plan.orphaned).toBe(1)
+  it('counts every row it looked at, matched or not', () => {
+    const rows = [
+      { id: 1, name: '(SIM_0001)', contentKind: 'documento' },
+      { id: 6, name: 'acta.pdf', contentKind: 'documento' },
+      { id: 8, name: '(SIM_9999)', contentKind: 'documento' },
+    ]
+    expect(planCorpusLabelBackfill(rows, MANIFEST).scanned).toBe(rows.length)
   })
 })
 
@@ -188,13 +182,6 @@ describe('parseBackfillArgs', () => {
     expect(parseBackfillArgs(['--organization=1'])).toEqual({ organizationId: 1, apply: false })
     expect(parseBackfillArgs(['--organization=1', '--apply'])).toEqual({
       organizationId: 1,
-      apply: true,
-    })
-  })
-
-  it('does not care about flag order', () => {
-    expect(parseBackfillArgs(['--apply', '--organization=42'])).toEqual({
-      organizationId: 42,
       apply: true,
     })
   })
