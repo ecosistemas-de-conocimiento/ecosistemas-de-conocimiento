@@ -120,3 +120,83 @@ payload run src/eval/diagnose.ts   # seed-matching diagnostic
 
 `results.fake.json` is the fake-client dry run used to prove the harness before spending
 real money. `results.json` carries `fake: false`.
+
+---
+
+# Second measurement, 2026-09-08 — the seeder fix works
+
+Run `20260908091626`. Same harness, same 20 questions, same 3 repetitions, 120 real
+generations. The only change is `seedEntitiesForQuery` in `lib/graph/queries.ts`.
+
+⚠ **Compare within a run, not across runs.** The plain arm scored 0.430 global in the first
+run and 0.461 here on identical questions — that gap is model sampling, not a change. Only
+the plain-versus-graph contrast inside one run is evidence.
+
+## The numbers
+
+| class | arm | mean recall | citation precision | latency | cost |
+| --- | --- | --- | --- | --- | --- |
+| local | plain | 0.978 | 0.380 | 8.5 s | $0.0324 |
+| local | graph | 0.989 | 0.364 | 11.4 s | $0.0339 |
+| global | plain | 0.461 | 0.680 | 12.6 s | $0.0332 |
+| global | **graph** | **0.733** | **0.691** | 17.2 s | $0.0488 |
+
+**Global recall rose from 0.461 to 0.733** — a 59% relative improvement, against a first
+measurement where the graph was slightly *worse* on this class.
+
+Paired per question: **graph better on 5, worse on 2, identical on 13.** The first
+measurement was better on 1, worse on 1, identical on 18.
+
+| question | plain | graph | seeds |
+| --- | --- | --- | --- |
+| G04 — people named in several documents | 0.00 | **1.00** | 8 |
+| G03 — events in more than one document | 0.22 | **1.00** | 8 |
+| G01 — health centres and hospitals | 0.44 | **1.00** | 8 |
+| G10 — dengue ∩ escuela crossover | 0.17 | **0.67** | 6 |
+| G09 — recurring underlying concerns | 0.22 | 0.11 | 1 |
+| L04 — one person's language and origin | 1.00 | 0.89 | 3 |
+
+The four large gains are exactly the questions that previously seeded **zero** entities and
+now seed the full eight. The mechanism did what it was built to do.
+
+## Citation precision held
+
+This was the predicted cost and it did not appear. Global citation precision went **0.680 →
+0.691** — flat, marginally up. More seeds put more material in the prompt without the model
+citing more loosely. Local precision fell slightly, 0.380 → 0.364, on a number that is poor in
+both arms and is not a graph problem.
+
+## What it now costs
+
+🔴 **The price went up with the benefit.**
+
+- **+26% per call**, against +11% in the first measurement.
+- **Global latency 12.6 s → 17.2 s**, roughly +37%.
+- 🔴 **The graph leg itself got 5x slower: `graphMs` median 78 ms → 388 ms, max 4.0 s.** The
+  pure matching function is still microseconds (124 µs → 257 µs benchmarked over the real 221
+  candidates) and adds no new SQL statement, but the tiers now return up to 8 seeds instead of
+  1, so the two expansion queries that follow do far more work. Most of the added latency is
+  there and in the larger prompt, not in the matcher.
+
+So the honest trade is no longer "11% for nothing". It is **26% and four seconds for a 59%
+relative gain on the question class the graph exists for**, and no measurable harm elsewhere.
+
+## What is still not fixed
+
+**G05 and G07 seed exactly one entity and did not move.** "¿Qué lenguas indígenas hablan las
+personas…" and "¿De qué comunidades o pueblos de origen vienen…" — no entity label contains
+*lengua* or *comunidad de origen*, no relation types them, and their support sits mid-
+distribution. There is a test asserting this so nobody reads the new tiers as a fix for it.
+
+Those two are answered by `documents.lengua`, added 2026-09-05 (ADR §18.5), which is the right
+place for an axis the corpus declares rather than one the graph must infer.
+
+**G09 lost 0.11** — the one real regression, on the vaguest question in the set ("preocupaciones
+o temas de fondo"). One seed, 15 graph chunks, and the extra material appears to have crowded
+out vector chunks that were carrying the answer. n=1; worth watching, not worth acting on.
+
+## Limitations, unchanged
+
+Twenty questions, ten per class, three repetitions. Mechanical string scoring, no LLM judge.
+A 0.27 recall difference at this sample size is large enough to believe; the 0.011 citation
+precision difference is not.

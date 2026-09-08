@@ -33,7 +33,7 @@
  * Production, imported and unmodified:
  *   · `matchableEntitiesQuery`, `retrieveEdgesQuery`, `retrieveDocumentsQuery`
  *     — the SQL itself, including all three gates (org, published, min support)
- *   · `matchEntitiesToQuery`  — the whole seed-matching algorithm
+ *   · `seedEntitiesForQuery`  — the whole seed-matching algorithm (all three tiers)
  *   · `expansionTerms`        — the neighbour labels used to widen the query
  *   · `graphMinSupport`, `toCount`, `contentKindOf`, `titleFor`
  *
@@ -51,7 +51,7 @@ import {
   MAX_RETRIEVE_SEEDS,
   expansionTerms,
   graphMinSupport,
-  matchEntitiesToQuery,
+  seedEntitiesForQuery,
   matchableEntitiesQuery,
   retrieveDocumentsQuery,
   retrieveEdgesQuery,
@@ -122,7 +122,7 @@ export async function readGraphRetrieval(
     canonicalKey: String(row.canonical_key ?? ''),
   }))
 
-  const seeds = matchEntitiesToQuery(candidates, query, seedLimit)
+  const seeds = seedEntitiesForQuery(candidates, query, seedLimit)
   if (seeds.length === 0) return empty
 
   const seedIds = seeds.map((entity) => entity.id)

@@ -1234,3 +1234,65 @@ keep it as-is and accept the cost as insurance. **Not decided.**
 
 ⚠ This result does **not** bear on task 04's junk-hub cleanup. That improves the `/grafo`
 browsing view, which this evaluation never measured.
+
+### 19.3 RESOLVED — the seeder was fixed, and §19's null result reversed
+
+Owner decision 2026-09-08: **GraphRAG stays ON and the seeder gets fixed.** Done. Re-measured
+on the same harness, run `20260908091626`, 120 real generations.
+
+| class | arm | mean recall | citation precision | latency | cost |
+| --- | --- | --- | --- | --- | --- |
+| global | plain | 0.461 | 0.680 | 12.6 s | $0.0332 |
+| global | **graph** | **0.733** | **0.691** | 17.2 s | $0.0488 |
+| local | plain | 0.978 | 0.380 | 8.5 s | $0.0324 |
+| local | graph | 0.989 | 0.364 | 11.4 s | $0.0339 |
+
+**Global recall 0.461 → 0.733**, a 59% relative gain, where §19 measured the graph as slightly
+*worse* on this class. Paired: better on 5 questions, worse on 2, identical on 13 — against 1 /
+1 / 18 before. The four large gains (G01, G03, G04, G10) are precisely the questions that
+previously seeded **zero** entities and now seed the full eight.
+
+⚠ **Compare within a run, never across runs.** The plain arm scored 0.430 in §19 and 0.461 here
+on identical questions; that gap is model sampling.
+
+#### What the fix is
+
+`seedEntitiesForQuery` keeps `matchEntitiesToQuery` untouched as tier 1 and fills the remaining
+seed slots with two more tiers: **category containment** (a singularised n-gram of the question's
+content words appearing *inside* an entity label — the same literal test run the other way, which
+turns "centros de salud" into the three hospital entities) and a **plural type anchor** (when the
+question is headed by a plural type noun, fill from that type's highest-support entities).
+
+§8.1's purity survives: no new SQL statement, nothing new to register in `graphStatements`, no
+model call, no round trip added to the matcher.
+
+🔴 **Three designs were rejected on measurement, not opinion.** An embedding lookup over entity
+labels was built against `/v1/embed` (`bge-m3`) and scored **5 of 55** expected facts — worse than
+either tier kept, and it never surfaced a single language. Seeding from the retrieved chunks'
+entities scored 9 and 11 of 55 and serialises the graph leg behind the vector retrieve, which is
+what §8.1's concurrency exists to avoid. Falling back only when tier 1 returns empty would have
+left four global questions unfixed, because tier 1 returned exactly one useless seed on each.
+
+#### 🔴 The cost rose with the benefit
+
+- **+26% per call**, against +11% in §19.
+- Global latency **12.6 s → 17.2 s**.
+- The graph leg is **5x slower: `graphMs` median 78 ms → 388 ms, max 4.0 s.** Not the matcher —
+  that is still microseconds. Up to 8 seeds instead of 1 means the two expansion queries after it
+  do far more work.
+
+The trade is no longer "11% for nothing". It is **26% and four seconds for a 59% relative gain on
+the class the graph exists for**, with citation precision holding (0.680 → 0.691) and no
+measurable harm to local questions.
+
+#### What is still not fixed
+
+**G05 and G07 did not move** — the indigenous-language and community-of-origin questions. No entity
+label contains *lengua* or *comunidad*, no relation types them, and their support sits mid-
+distribution. A test asserts this so nobody reads the new tiers as a fix for it. Both are answered
+by `documents.lengua` and `documents.tema` (§18.5) — the right place for an axis the corpus
+declares rather than one the graph must infer.
+
+**G09 lost 0.11**, the one regression, on the vaguest question in the set. One seed, 15 graph
+chunks, and the extra material appears to have crowded out vector chunks carrying the answer.
+n=1 — worth watching, not worth acting on.

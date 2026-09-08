@@ -21,6 +21,8 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { GraphEntityType } from './types'
+
 import {
   GRAPH_MIN_SUPPORT_DEFAULT,
   MAX_EDGE_DOCUMENTS,
@@ -33,7 +35,10 @@ import {
   entityViewQuery,
   expansionTerms,
   graphMinSupport,
+  categoryMatchEntities,
   matchEntitiesToQuery,
+  queryEntityTypes,
+  seedEntitiesForQuery,
   matchableEntitiesQuery,
   publishedDocumentCountQuery,
   readEntityDetail,
@@ -732,6 +737,169 @@ describe('matchEntitiesToQuery — deterministic, no model call', () => {
   it('honours the seed limit', () => {
     expect(matchEntitiesToQuery(entities, 'consulta previa en México')).toHaveLength(2)
     expect(matchEntitiesToQuery(entities, 'consulta previa en México', 1)).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Seeding a CATEGORY question — ADR §19
+// ---------------------------------------------------------------------------
+
+/**
+ * The measured defect these tests pin.
+ *
+ * The 2026-09-05 evaluation found that 0 of 55 expected global facts were ever
+ * reached as a seed, because `matchEntitiesToQuery` requires the asker to name
+ * the answer. `seedEntitiesForQuery` adds two tiers on top of it, and the cases
+ * below are the ones taken from that run's own questions — not invented shapes.
+ *
+ * ⚠ Every assertion here is on a PURE function. If one of these ever needs a
+ * mock payload or a fetch stub, ADR §8.1's "no I/O, no model call" has been
+ * broken and that is the thing to look at first.
+ */
+describe('seedEntitiesForQuery — a question that names a category, not an entity', () => {
+  const typed = (
+    id: number,
+    label: string,
+    key: string,
+    type: GraphEntityType,
+    support: number,
+  ): MatchableEntity => ({ id, type, label, canonicalKey: key, support })
+
+  // A miniature of organization 1's graph: the shapes that actually appeared.
+  const corpus: MatchableEntity[] = [
+    typed(1, 'Centro de Salud de Tlayacapan', 'centro de salud de tlayacapan', 'organizacion', 24),
+    typed(2, 'Centro de Salud de Villa de Ayala', 'centro de salud de villa de ayala', 'organizacion', 11),
+    typed(3, 'Hospital General de Cuernavaca José G. Parres', 'hospital general de cuernavaca jose g. parres', 'organizacion', 8),
+    typed(4, 'Escuela Primaria Miguel Hidalgo', 'escuela primaria miguel hidalgo', 'organizacion', 25),
+    typed(5, 'doña Eulalia', 'doña eulalia', 'persona', 10),
+    typed(6, 'Reynaldo Ocampo', 'reynaldo ocampo', 'persona', 10),
+    typed(7, 'Chabela', 'chabela', 'persona', 8),
+    typed(8, 'personas sordas', 'personas sordas', 'tema', 15),
+    typed(9, 'feria escolar de prevención del dengue', 'feria escolar de prevencion del dengue', 'evento', 20),
+    typed(10, 'jornada de descacharrización', 'jornada de descacharrizacion', 'evento', 7),
+    typed(11, 'Morelos', 'morelos', 'lugar', 81),
+    typed(12, 'Cuernavaca', 'cuernavaca', 'lugar', 56),
+    typed(13, 'náhuatl', 'nahuatl', 'tema', 18),
+    typed(14, 'español', 'español', 'tema', 38),
+  ]
+
+  it('🔴 seeds the hospitals from "centros de salud", which the literal matcher cannot', () => {
+    // The exact G01 wording. `Centro de Salud de Tlayacapan` is nowhere inside
+    // it, so the shipped matcher returned nothing and the graph leg produced no
+    // block at all.
+    const question =
+      '¿Qué centros de salud y hospitales aparecen mencionados en varios documentos distintos? Enuméralos.'
+    expect(matchEntitiesToQuery(corpus, question)).toEqual([])
+
+    const seeds = seedEntitiesForQuery(corpus, question).map((e) => e.id)
+    expect(seeds).toContain(1)
+    expect(seeds).toContain(2)
+    expect(seeds).toContain(3)
+  })
+
+  it('singularises both sides, so "centros" reaches "Centro de Salud"', () => {
+    // The whole tier turns on this. Without it the plural in the question and
+    // the singular in the label never meet.
+    expect(categoryMatchEntities(corpus, 'los centros de salud').map((e) => e.id)).toEqual([1, 2])
+  })
+
+  it('keeps the literal tier first, and it alone when the question names its subject', () => {
+    // A local question — the shape that already worked. It must not change.
+    const seeds = seedEntitiesForQuery(corpus, '¿qué dice el documento sobre Chabela?')
+    expect(seeds[0].id).toBe(7)
+  })
+
+  it('fills the remaining budget by type when a PLURAL noun heads the question', () => {
+    // G04. No person is named, so tiers 1 and 2 have nothing; the type anchor
+    // is the only thing that can reach `doña Eulalia`.
+    const seeds = seedEntitiesForQuery(
+      corpus,
+      '¿Qué personas concretas se mencionan por su nombre en varios documentos distintos?',
+    ).map((e) => e.id)
+    expect(seeds).toEqual(expect.arrayContaining([5, 6, 7]))
+    // …and ranked by support, because an entity the corpus leans on is the
+    // better seed.
+    expect(seeds.indexOf(5)).toBeLessThan(seeds.indexOf(7))
+  })
+
+  it('🔴 does not fire the type anchor on a noun that is merely the sentence subject', () => {
+    // G05: "¿Qué **lenguas** indígenas hablan las **personas**…". `personas` is
+    // the subject, not the thing asked for. Filling eight slots with people
+    // here is the exact "fires more often but retrieves noise" failure, and it
+    // is why the type noun must HEAD the interrogative phrase.
+    expect(
+      queryEntityTypes('¿Qué lenguas indígenas hablan las personas que aparecen?', true),
+    ).toEqual([])
+  })
+
+  it('🔴 does not fire the type anchor on a SINGULAR noun — a local question asks for one thing', () => {
+    // The ten local questions all read "¿qué lengua habla X, de qué comunidad
+    // viene y en qué lugar colabora?". Three type nouns, all singular. If the
+    // plural rule were dropped, every local turn would be seeded with the
+    // corpus's biggest places and the local arm would regress.
+    const local =
+      '¿qué lengua habla Efrén Peralta Guzmán, de qué comunidad viene y en qué lugar colabora?'
+    expect(queryEntityTypes(local, true)).toEqual([])
+    expect(seedEntitiesForQuery(corpus, local).map((e) => e.id)).not.toContain(11)
+  })
+
+  it('🔴 never anchors on `tema` or `lugar` — their top of the distribution is hubs, not answers', () => {
+    // Measured: allowing these two bought one extra fact across ten global
+    // questions and spent twenty-two seed slots on `Morelos`, `Cuernavaca` and
+    // `español`. See the block comment on TYPE_ANCHORABLE.
+    expect(queryEntityTypes('¿De qué comunidades o pueblos vienen?', true)).toEqual([])
+    expect(queryEntityTypes('¿Qué temas o asuntos se repiten?', true)).toEqual([])
+    // The same nouns still narrow tier 2's pool, which is the non-strict form.
+    expect(queryEntityTypes('¿De qué comunidades o pueblos vienen?', false)).toContain('lugar')
+  })
+
+  it('narrows tier 2 by the type the question names, so "personas" does not seed a tema', () => {
+    // `personas sordas` is a `tema`. Without the narrowing it outranks every
+    // real person, because it has more support than any of them.
+    expect(categoryMatchEntities(corpus, 'las personas', ['persona'])).toEqual([])
+    expect(categoryMatchEntities(corpus, 'las personas').map((e) => e.id)).toEqual([8])
+  })
+
+  it('prefers the entity that absorbed more of the question', () => {
+    // A three-token hit is a far better seed than a one-token one: `feria
+    // escolar de prevención del dengue` over anything that merely says `feria`.
+    const seeds = categoryMatchEntities(corpus, 'la feria escolar de prevención del dengue')
+    expect(seeds[0].id).toBe(9)
+  })
+
+  it('honours the seed budget and never returns a duplicate', () => {
+    const seeds = seedEntitiesForQuery(
+      corpus,
+      '¿Qué personas y qué centros de salud aparecen en los documentos?',
+      4,
+    )
+    expect(seeds).toHaveLength(4)
+    expect(new Set(seeds.map((e) => e.id)).size).toBe(4)
+  })
+
+  it('returns nothing for an empty or punctuation-only query', () => {
+    for (const q of ['', '   ', '¿¿??', '...']) expect(seedEntitiesForQuery(corpus, q)).toEqual([])
+  })
+
+  it('⚠ still cannot reach a category with no lexical bridge — stated, not hidden', () => {
+    // G05. The eleven languages are `tema` nodes whose labels contain no word
+    // the question uses, no relation types them as languages, and their support
+    // sits mid-distribution. This is answered by the `lengua` column (ADR
+    // §18.5). The test exists so nobody reads the tiers above as a fix for it.
+    const seeds = seedEntitiesForQuery(
+      corpus,
+      '¿Qué lenguas indígenas hablan las personas que aparecen en los documentos?',
+    )
+    expect(seeds.map((e) => e.id)).not.toContain(13)
+  })
+
+  it('stays pure and synchronous — ADR §8.1', () => {
+    // Not a ceremony: the tiers were chosen over an embedding lookup and over
+    // seeding from retrieved chunks precisely because both would have made this
+    // return a promise and put a round trip on every turn.
+    const result = seedEntitiesForQuery(corpus, '¿Qué centros de salud hay?')
+    expect(Array.isArray(result)).toBe(true)
+    expect(result).not.toBeInstanceOf(Promise)
   })
 })
 

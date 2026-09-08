@@ -9,10 +9,16 @@
  *   A. **The graph does not hold the fact.** Extraction missed it. The fix is
  *      re-extraction — sprint0 task 04.
  *   B. **The graph holds the fact, and the matcher never reaches it.** The fix
- *      is in `matchEntitiesToQuery`: seeds come from whole-token containment of
- *      an entity LABEL in the question, so a question that names the ANSWER's
- *      category rather than the answer itself seeds nothing, or seeds a generic
- *      entity that happens to appear in the question's own wording.
+ *      is in the seeder. This is what the 2026-09-05 run found: 52 of 55
+ *      expected global facts were in the graph and NONE was reached as a seed,
+ *      because `matchEntitiesToQuery` requires whole-token containment of an
+ *      entity LABEL in the question, and a global question names the ANSWER's
+ *      category rather than the answer.
+ *
+ *      ⚠ This script now calls `seedEntitiesForQuery`, the three-tier seeder
+ *      that replaced it at the call site (`readGraphRetrieval`). Re-running it
+ *      is the direct before/after measure of any change to that seeder — no
+ *      inference, no money.
  *
  * Telling them apart costs no inference and no money: it is a join between the
  * expected facts and `graph_entities` at or above the support threshold.
@@ -23,7 +29,7 @@
  * `CONTEXT_MAX_NEIGHBOURS` = 3 neighbours per seed.
  */
 
-import { matchEntitiesToQuery, matchableEntitiesQuery, toCount } from '../lib/graph/queries'
+import { matchableEntitiesQuery, seedEntitiesForQuery, toCount } from '../lib/graph/queries'
 import type { MatchableEntity } from '../lib/graph/queries'
 import type { GraphEntityType } from '../lib/graph/types'
 import { loadCorpus } from './corpus'
@@ -68,7 +74,7 @@ interface Line {
 const lines: Line[] = []
 for (const question of questions) {
   if (question.klass !== 'global') continue
-  const seeds = matchEntitiesToQuery(entities, question.text, 8)
+  const seeds = seedEntitiesForQuery(entities, question.text, 8)
   const seedIds = new Set(seeds.map((s) => s.id))
   for (const fact of question.expected) {
     // The best graph entity for this fact: the one with the highest support

@@ -910,6 +910,311 @@ export function matchEntitiesToQuery(
   return kept.slice(0, Math.max(0, limit)).map((candidate) => candidate.entity)
 }
 
+// ---------------------------------------------------------------------------
+// Seeding a CATEGORY question (ADR §19 — the measured defect)
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 WHY THIS EXISTS, AND WHAT WAS MEASURED BEFORE IT DID.
+ *
+ * `matchEntitiesToQuery` above tests ONE direction of containment: the entity's
+ * key must appear inside the question. That is exactly right for a **local**
+ * question, which names its subject — *"¿qué lengua habla Efrén Peralta
+ * Guzmán…"*. It cannot fire on a **global** question, which names a CATEGORY —
+ * *"¿qué centros de salud aparecen en varios documentos?"* — because
+ * `Centro de Salud de Tlayacapan` is not a substring of that sentence.
+ *
+ * The evaluation of 2026-09-05 (ADR §19, `src/eval/RESULTS.md`) measured the
+ * cost of that: 6 of 10 global questions matched zero entities, the matcher
+ * never reached 2 seeds out of a budget of {@link MAX_RETRIEVE_SEEDS} = 8, and
+ * **0 of the 55 expected global facts were ever reached as a seed** — while 52
+ * of those 55 sat in the graph above the support threshold. The graph was being
+ * asked what recurs across documents by a matcher that required the asker to
+ * already name the thing that recurs.
+ *
+ * ── THREE TIERS, ALL PURE ──────────────────────────────────────────────────
+ *
+ * ⚠ ADR §8.1 chose a pure, synchronous matcher — no I/O, no model call — so the
+ * graph leg can run concurrently with the vector retrieve. **That property is
+ * kept.** Everything below is string work over the candidate rows
+ * {@link matchableEntitiesQuery} already returned. No new statement, no new
+ * round trip, and therefore nothing new to register in the gate test.
+ *
+ *  1. **Literal.** {@link matchEntitiesToQuery}, unchanged and still first.
+ *  2. **Category containment.** The same literal test run the OTHER way: a
+ *     contiguous n-gram of the question's content words, singularised, appearing
+ *     inside an entity's key. This is what turns *"centros de salud"* into the
+ *     three hospital entities.
+ *  3. **Type anchor.** When the question's interrogative phrase is HEADED by a
+ *     plural noun naming an entity type — *"¿Qué **personas** concretas…"* — the
+ *     remaining seed slots are filled with that type's highest-support entities.
+ *
+ * ── WHAT WAS REJECTED, WITH THE MEASUREMENT THAT REJECTED IT ───────────────
+ *
+ * · **An embedding lookup over entity labels** (`/v1/embed`, `bge-m3`). Built
+ *   and measured on the same 10 global questions: it reached **5 of 55** facts,
+ *   worse than either tier here, and it never surfaced a single one of the
+ *   eleven languages for *"lenguas indígenas"*. Bare entity labels are one to
+ *   four words with no context; cosine over them is close to noise (every score
+ *   in 0.40–0.57). It would also have cost a round trip per turn and a stored
+ *   vector per entity. Not worth it, and that is a measurement, not a guess.
+ * · **Seeding from the entities of the documents plain retrieval returned.**
+ *   Measured at topK 5 and 12: **9 and 11 of 55**. It also serialises the graph
+ *   leg behind the vector retrieve, which is the one thing §8.1's concurrency
+ *   was for. Rejected on both counts.
+ *
+ * ⚠ **WHAT THIS STILL CANNOT DO, STATED PLAINLY.** A category with no lexical
+ * bridge to its members stays unreachable. *"¿Qué lenguas indígenas hablan…"*
+ * still seeds none of `náhuatl`, `mixteco`, `mazateco`: no label contains
+ * "lengua", no relation types them as languages, and their support puts them in
+ * the middle of the `tema` distribution. That question is answered by the
+ * `lengua` column (ADR §18.5), not by the graph, and no seeding rule changes it.
+ */
+
+/** How many tokens a query n-gram may span. Beyond four it matches nothing. */
+const MAX_QUERY_GRAM_TOKENS = 4
+
+/** Shortest query n-gram worth matching, in characters. Same reason as {@link MIN_MATCH_CHARS}. */
+const MIN_GRAM_CHARS = 4
+
+/**
+ * Spanish function words plus the boilerplate of an instruction.
+ *
+ * ⚠ This is a STOP LIST, not a stemmer. Its only job is to stop tier 2 from
+ * building n-grams out of "que", "en", "los" — grams that would match half the
+ * corpus. A word wrongly present here costs one missed n-gram; a word wrongly
+ * absent costs a noisy seed. Both are recoverable, which is why a crude list is
+ * the right size of tool.
+ */
+const QUERY_STOPWORDS: ReadonlySet<string> = new Set(
+  (
+    'a al ante aparece aparecen aqui asi aun aunque cada como con contra cual cuales ' +
+    'cuando cuanta cuantas cuanto cuantos de del desde donde dos e el ella ellas ello ' +
+    'ellos en entre era eran es esa esas ese eso esos esta estan estas este esto estos ' +
+    'fue fueron ha hace hacen hacia han hasta hay la las le les lo los mas me mi ' +
+    'mientras mucho muchos muy nada ni no nos o os otra otras otro otros para pero poco ' +
+    'por porque que quien quienes se segun ser si sin sobre solo son su sus tambien tan ' +
+    'tanto te tiene tienen toda todas todo todos tras un una unas uno unos varias varios ' +
+    'y ya documento documentos publicado publicados enumera enumeralos enumeralas nombra ' +
+    'nombralos nombralas menciona mencionan mencionado mencionados mencionada mencionadas ' +
+    'distinto distintos distinta distintas concreto concreta concretos concretas repite ' +
+    'repiten repitan comparten cuentan vienen viene hablan habla dice dicen'
+  ).split(' '),
+)
+
+/**
+ * The nouns a person uses to name an entity TYPE rather than an entity.
+ *
+ * ⚠ Deliberately a closed list per type, not a rule. The five types are a closed
+ * set (`GraphEntityType`), and a rule that guessed hypernyms would eventually
+ * decide "centro" means `lugar` and seed every place name in the corpus.
+ */
+const TYPE_NOUNS: ReadonlyArray<readonly [GraphEntityType, readonly string[]]> = [
+  ['persona', ['persona', 'gente', 'vecino', 'habitante', 'nombre']],
+  [
+    'lugar',
+    ['lugar', 'comunidad', 'pueblo', 'municipio', 'localidad', 'colonia', 'barrio', 'region', 'sitio', 'zona'],
+  ],
+  ['evento', ['evento', 'jornada', 'actividad', 'feria', 'taller', 'suceso', 'encuentro']],
+  [
+    'organizacion',
+    ['organizacion', 'institucion', 'centro', 'hospital', 'escuela', 'clinica', 'sede', 'dependencia', 'programa', 'colectivo', 'asociacion'],
+  ],
+  ['tema', ['tema', 'preocupacion', 'asunto', 'problema', 'practica', 'herramienta', 'concepto', 'idea']],
+]
+
+/**
+ * The types tier 3 may fill seed slots with.
+ *
+ * 🔴 `tema` AND `lugar` ARE DELIBERATELY ABSENT, and this was measured, not
+ * assumed. Tier 3 ranks by support, and for these two types the highest-support
+ * members are the corpus's ambient hubs — `Morelos` (81 documents), `Cuernavaca`
+ * (56), `español` (38) — not answers. On the 10 global questions, allowing them
+ * bought **one** extra fact and spent **22** seed slots on hubs. For `persona`,
+ * `organizacion` and `evento` the top of the distribution IS the set of
+ * recurring named things a global question asks for: it bought **7** facts.
+ */
+const TYPE_ANCHORABLE: ReadonlyArray<GraphEntityType> = ['persona', 'organizacion', 'evento']
+
+/** Question words after which the head noun says what kind of thing is wanted. */
+const INTERROGATIVES: ReadonlySet<string> = new Set(['que', 'cual', 'cuales', 'quien', 'quienes'])
+
+/** How far past the question word to look for that head noun. */
+const TYPE_HEAD_WINDOW = 3
+
+/** Canonicalise, then split on anything that is not a letter or digit. */
+function queryTokens(text: string): string[] {
+  return canonicalKey(text)
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token !== '')
+}
+
+/**
+ * A crude Spanish singulariser: `centros` → `centro`, `hospitales` → `hospital`.
+ *
+ * ⚠ Applied to BOTH sides, so it never has to be right in an absolute sense —
+ * only consistent. `lunes` → `lun` on both sides still compares equal. What it
+ * must not do is collapse a short word, hence the length guards.
+ */
+function singularise(token: string): string {
+  if (token.length > 4 && token.endsWith('es')) return token.slice(0, -2)
+  if (token.length > 3 && token.endsWith('s')) return token.slice(0, -1)
+  return token
+}
+
+/** Is this token a plural? The signal that the asker wants a SET, not one thing. */
+function isPlural(token: string): boolean {
+  return singularise(token) !== token
+}
+
+/**
+ * Every contiguous n-gram of the query's content words, singularised, longest
+ * first. `¿Qué centros de salud…` yields `centro de salud`, `centro de`,
+ * `de salud`, `centro`, `salud`.
+ */
+function queryGrams(query: string): string[] {
+  const tokens = queryTokens(query)
+    .filter((token) => token.length >= MIN_MATCH_CHARS && !QUERY_STOPWORDS.has(token))
+    .map(singularise)
+  const grams: string[] = []
+  for (let n = Math.min(MAX_QUERY_GRAM_TOKENS, tokens.length); n >= 1; n -= 1) {
+    for (let i = 0; i + n <= tokens.length; i += 1) {
+      const gram = tokens.slice(i, i + n).join(' ')
+      if (gram.length >= MIN_GRAM_CHARS) grams.push(gram)
+    }
+  }
+  return grams
+}
+
+/** An entity key as singularised, space-delimited tokens, padded for boundary tests. */
+function singularisedKey(entity: MatchableEntity): string {
+  const spaced = tokenSpaced(entity.canonicalKey || canonicalKey(entity.label))
+  if (spaced === '') return ''
+  return ` ${spaced.trim().split(' ').map(singularise).join(' ')} `
+}
+
+/**
+ * TIER 2 — the entities whose LABEL contains a phrase from the question.
+ *
+ * The mirror image of {@link matchEntitiesToQuery}. Ranked by how many tokens
+ * of the question the label absorbed (a three-token hit is a far better seed
+ * than a one-token one), then by support.
+ *
+ * When the question also names a type, the pool is narrowed to it — otherwise
+ * *"¿qué personas…"* seeds the `tema` node `personas sordas` instead of a person.
+ */
+export function categoryMatchEntities(
+  entities: readonly MatchableEntity[],
+  query: string,
+  types: readonly GraphEntityType[] = [],
+): MatchableEntity[] {
+  const grams = queryGrams(query)
+  if (grams.length === 0) return []
+  const pool = types.length > 0 ? entities.filter((e) => types.includes(e.type)) : entities
+
+  const hits: { entity: MatchableEntity; tokens: number }[] = []
+  for (const entity of pool) {
+    const key = singularisedKey(entity)
+    if (key === '') continue
+    let widest = 0
+    for (const gram of grams) {
+      if (key.includes(` ${gram} `)) widest = Math.max(widest, gram.split(' ').length)
+    }
+    if (widest > 0) hits.push({ entity, tokens: widest })
+  }
+
+  hits.sort(
+    (a, b) =>
+      b.tokens - a.tokens ||
+      b.entity.support - a.entity.support ||
+      a.entity.label.localeCompare(b.entity.label, 'es'),
+  )
+  return hits.map((hit) => hit.entity)
+}
+
+/**
+ * The entity types this question asks for, if any.
+ *
+ * `strict` demands the type noun be PLURAL and HEAD an interrogative phrase —
+ * *"¿Qué **personas** concretas…"*. That is the shape of a question asking for a
+ * set, and it is what separates a global question from a local one: *"¿qué
+ * lengua habla X, de qué comunidad viene y en qué lugar colabora?"* names three
+ * type nouns and every one of them is singular, so nothing fires.
+ *
+ * ⚠ Without `strict` the noun may sit anywhere, which is right for narrowing
+ * tier 2's pool and WRONG for tier 3 — in *"¿Qué lenguas indígenas hablan las
+ * personas…"* the word `personas` is the subject of the sentence, not the thing
+ * being asked for, and filling eight slots with people is the noise this rule
+ * exists to prevent.
+ */
+export function queryEntityTypes(query: string, strict: boolean): GraphEntityType[] {
+  const tokens = queryTokens(query)
+  const wanted = new Set<string>()
+
+  if (strict) {
+    tokens.forEach((token, index) => {
+      if (!INTERROGATIVES.has(token)) return
+      for (const head of tokens.slice(index + 1, index + 1 + TYPE_HEAD_WINDOW)) {
+        if (QUERY_STOPWORDS.has(head) || !isPlural(head)) continue
+        wanted.add(singularise(head))
+      }
+    })
+  } else {
+    for (const token of tokens) wanted.add(singularise(token))
+  }
+  if (wanted.size === 0) return []
+
+  return TYPE_NOUNS.filter(
+    ([type, nouns]) =>
+      (!strict || TYPE_ANCHORABLE.includes(type)) && nouns.some((noun) => wanted.has(noun)),
+  ).map(([type]) => type)
+}
+
+/**
+ * The seed set for one turn: literal first, then category, then type anchor.
+ *
+ * This is what {@link readGraphRetrieval} calls. {@link matchEntitiesToQuery}
+ * stays exactly as it was and stays the first tier — a question that names its
+ * subject still seeds from that subject, and the later tiers only ever fill
+ * slots the literal tier left empty.
+ *
+ * Pure and synchronous, like the tier it wraps. Measured at ~0.65 ms per call
+ * over 221 candidates against ~0.17 ms for the literal tier alone — half a
+ * millisecond on a graph leg whose median is 78 ms.
+ */
+export function seedEntitiesForQuery(
+  entities: readonly MatchableEntity[],
+  query: string,
+  limit = MAX_RETRIEVE_SEEDS,
+): MatchableEntity[] {
+  const cap = Math.max(0, limit)
+  const seeds = matchEntitiesToQuery(entities, query, cap)
+  if (seeds.length >= cap) return seeds
+
+  const chosen = new Set(seeds.map((entity) => entity.id))
+  const add = (entity: MatchableEntity): void => {
+    if (seeds.length >= cap || chosen.has(entity.id)) return
+    chosen.add(entity.id)
+    seeds.push(entity)
+  }
+
+  for (const entity of categoryMatchEntities(entities, query, queryEntityTypes(query, false))) {
+    add(entity)
+  }
+
+  const anchored = queryEntityTypes(query, true)
+  if (anchored.length > 0) {
+    const ranked = entities
+      .filter((entity) => anchored.includes(entity.type))
+      .sort((a, b) => b.support - a.support || a.label.localeCompare(b.label, 'es'))
+    for (const entity of ranked) add(entity)
+  }
+
+  return seeds
+}
+
 /**
  * One hop out of a set of seed entities, both endpoints above threshold.
  *
@@ -1027,7 +1332,7 @@ export async function readGraphRetrieval(
     canonicalKey: toText(row.canonical_key),
   }))
 
-  const seeds = matchEntitiesToQuery(candidates, args.query, seedLimit)
+  const seeds = seedEntitiesForQuery(candidates, args.query, seedLimit)
   if (seeds.length === 0) return empty
 
   const seedIds = seeds.map((entity) => entity.id)
