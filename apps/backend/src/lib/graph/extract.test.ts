@@ -12,6 +12,7 @@ import {
   dropForbiddenPersonas,
   dropGenericEntities,
   extractGraph,
+  GRAPH_SHAPE_POLICY,
   isGenericLabel,
   mergeWindows,
   parseWindowResponse,
@@ -21,6 +22,7 @@ import {
   type ParsedWindow,
 } from './extract'
 import { GRAPH_FRAGMENT_MAX_CHARS, graphResponseSchema } from './prompt'
+import { GRAPH_ENTITY_TYPES } from './types'
 
 // ---------------------------------------------------------------------------
 // Fake client
@@ -318,6 +320,49 @@ describe('🔴 isGenericLabel — a PURE, type-blind label predicate', () => {
   })
 })
 
+describe('🔴 GRAPH_SHAPE_POLICY — the graph-shape decision, as data', () => {
+  it('covers EVERY entity type, so a new type forces a decision', () => {
+    // `satisfies Record<GraphEntityType, GraphShapeRule>` already makes this a
+    // COMPILE error — verified by deleting a type and watching tsc fail. This
+    // asserts it again at runtime because the policy is meant to be edited by
+    // someone who may not run the typechecker before asking what it does.
+    expect(Object.keys(GRAPH_SHAPE_POLICY).sort()).toEqual([...GRAPH_ENTITY_TYPES].sort())
+  })
+
+  it('🔴 carries the REASONING with every rule, not just the verdict', () => {
+    // The point of the policy object: a specialist changing it must see the
+    // argument and the measured cost at the point of change, not in a report
+    // they were never sent. An empty rationale is a rule nobody can revisit.
+    for (const type of GRAPH_ENTITY_TYPES) {
+      const rule = GRAPH_SHAPE_POLICY[type]
+      expect(rule.rule.length, `${type}.rule`).toBeGreaterThan(20)
+      expect(rule.rationale.length, `${type}.rationale`).toBeGreaterThan(40)
+      expect(rule.cost.length, `${type}.cost`).toBeGreaterThan(20)
+    }
+  })
+
+  it('records the decision as it stands: only lugar, organizacion and persona', () => {
+    // ⚠ THIS TEST IS THE DECISION RECORD, and it is MEANT to fail when the
+    // policy changes. Failing here is the prompt to update the rationale, the
+    // cost figures and `plan/adr-corpus-graph.md` — not to edit this list back.
+    // Re-measure first: GRAPH_POLICY_ORG=1 payload run src/lib/graph/policy.cli.ts
+    const requiring = GRAPH_ENTITY_TYPES.filter(
+      (t) => GRAPH_SHAPE_POLICY[t].requiresProperName,
+    )
+    expect([...requiring].sort()).toEqual(['lugar', 'organizacion', 'persona'])
+  })
+
+  it('🔴 names the language axis in the `tema` rationale — the thing it protects', () => {
+    // The exemption that saves the corpus's own vocabulary. If someone flips
+    // `tema` to `true`, this rationale is what they read first.
+    expect(GRAPH_SHAPE_POLICY.tema.requiresProperName).toBe(false)
+    for (const language of ['náhuatl', 'mixteco', 'zapoteco']) {
+      expect(GRAPH_SHAPE_POLICY.tema.rationale).toContain(language)
+    }
+    expect(GRAPH_SHAPE_POLICY.evento.cost).toContain('conversatorio')
+  })
+})
+
 describe('🔴 dropGenericEntities — scoped to the types that name a particular', () => {
   const entity = (tipo: string, etiqueta: string) =>
     ({ tipo, etiqueta, menciones: 1, fragmento: null }) as ParsedWindow['entities'][number]
@@ -395,6 +440,19 @@ describe('🔴 dropGenericEntities — scoped to the types that name a particula
     // `traduccion` 70 documents, `dengue` 60, `escuela` 60, `discapacidad` 60.
     const subjects = ['traducción', 'dengue', 'escuela', 'discapacidad']
     expect(labelsOf(windowOf(...subjects.map((s) => entity('tema', s))))).toEqual(subjects)
+  })
+
+  it('🔴 follows GRAPH_SHAPE_POLICY rather than a list of its own', () => {
+    // Ties behaviour to the table so the two cannot drift: editing the policy
+    // changes what is dropped, with no second place to remember to update.
+    for (const type of GRAPH_ENTITY_TYPES) {
+      const survives = labelsOf(windowOf(entity(type, 'cosa'))).length === 1
+      expect(survives, `bare common noun typed as ${type}`).toBe(
+        !GRAPH_SHAPE_POLICY[type].requiresProperName,
+      )
+      // The positive counterpart, per type: a NAMED label survives everywhere.
+      expect(labelsOf(windowOf(entity(type, 'Tlayacapan')))).toEqual(['Tlayacapan'])
+    }
   })
 
   it('⚠ leaves `evento` alone too — and this is the known cost', () => {

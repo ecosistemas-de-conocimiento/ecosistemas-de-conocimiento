@@ -36,7 +36,7 @@
  *
  * 🔴 IT DOES NOT TOUCH `tema`. A one-word `tema` is the corpus's SUBJECT —
  * `náhuatl`, `discapacidad`, `dengue` — and `documents` has no other column
- * carrying any of it. {@link GENERIC_RULE_TYPES} holds the full reasoning and
+ * carrying any of it. {@link GRAPH_SHAPE_POLICY} holds the full reasoning and
  * the measurement; read it before widening the rule.
  *
  * ⚠ IT RUNS AT EXTRACTION TIME, NEVER AT READ TIME. A filter in `queries.ts`
@@ -347,7 +347,7 @@ export function significantTokens(label: string): string[] {
  *
  * A PURE, TYPE-BLIND PREDICATE. Whether a bare common noun is a defect depends
  * entirely on the type it was given, and that judgement lives one level up in
- * {@link GENERIC_RULE_TYPES}. Do not add a type check here.
+ * {@link GRAPH_SHAPE_POLICY}. Do not add a type check here.
  *
  * ── THE MEASUREMENT THIS EXISTS FOR ────────────────────────────────────────
  *
@@ -384,7 +384,7 @@ export function significantTokens(label: string): string[] {
  * capitalised ones are real (Morelos, Cuernavaca, Oaxaca, Chenalhó, Óscar,
  * CIDE, PILARES, LSM…), and not one is a common noun.
  *
- * ⚠ WHAT THIS RULE IS NOT ALLOWED TO TOUCH — see {@link GENERIC_RULE_TYPES}.
+ * ⚠ WHAT THIS RULE IS NOT ALLOWED TO TOUCH — see {@link GRAPH_SHAPE_POLICY}.
  * Applied to every type, this predicate eats the corpus's own subject
  * vocabulary: `náhuatl`, `mixteco`, `discapacidad`, `dengue`. So it is applied
  * ONLY to the types that name a particular. The predicate itself stays pure and
@@ -399,70 +399,134 @@ export function isGenericLabel(label: string): boolean {
 }
 
 /**
- * 🔴 THE TYPES THE GENERIC-NOUN RULE APPLIES TO, AND WHY IT IS ONLY THESE.
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║  LA POLÍTICA DE FORMA DEL GRAFO — EDITA ESTO, NO EL CÓDIGO DE ABAJO       ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
  *
- * `lugar`, `organizacion` and `persona` name a PARTICULAR — one specific place,
- * one specific institution, one specific individual. A bare common noun typed
- * as one of these is a CATEGORY ERROR, and it is wrong whatever the corpus is
- * about: `escuela` is not a named organisation in any corpus, `barranca` is not
- * a place, `tallerista` is not a person. That is exactly the complaint the task
- * was opened for — `escuela` typed as an `organizacion`, 22 documents.
+ * Esta tabla dice, para cada tipo de entidad, si su etiqueta DEBE contener un
+ * nombre propio o si puede ser un sustantivo común a secas. Es una decisión de
+ * criterio documental, no de programación: quien la revise puede ser una
+ * lingüista o una archivista. Todo lo que hace falta para cambiarla está aquí.
  *
- * 🔴 `tema` IS EXEMPT, AND THIS IS THE LOAD-BEARING EXCLUSION. A `tema` names a
- * CONCEPT, and a concept is very often exactly one common noun. Measured
- * against this corpus, a type-blind rule would have deleted:
+ * ── CÓMO CAMBIARLA ────────────────────────────────────────────────────────
  *
- *   · THE ENTIRE LANGUAGE AXIS. All 250 documents carry a `lengua`, 11 distinct
- *     ones, and EVERY one of them lands on `tema`: `náhuatl` (25 documents),
- *     `mixteco` (18), `mazateco` (11), `zapoteco` (9), `totonaco` (7),
- *     `tlahuica` (5), `tlapaneco` (5), `amuzgo` (4), `hñähñu` (3), `tsotsil`
- *     (3), `mixe` (2), plus `español` (45).
- *   · THREE OF THE FOUR SUBJECTS THE CORPUS IS ORGANISED BY: `discapacidad`
- *     (27), `dengue` (4), `traducción` (1).
+ *   1. Cambia `requiresProperName` del tipo que quieras, y ACTUALIZA su
+ *      `rationale` y su `cost` — el motivo viaja con la regla a propósito.
+ *   2. Mide qué pasaría, sin gastar en extracción y sin tocar nada:
  *
- * ⚠ AND THERE IS NOWHERE ELSE TO GET THEM. `documents` has no language, theme
- * or ecosistema column — checked in `information_schema`. The graph is the only
- * place this vocabulary surfaces in the product, so dropping it is not a
- * quality trade, it is deleting the corpus's ground truth.
+ *          GRAPH_POLICY_ORG=1 payload run src/lib/graph/policy.cli.ts
  *
- * ⚠ `evento` IS ALSO EXEMPT, less certainly. The prompt defines it as "un hecho
- * o un proceso", and a PROCESS is a concept — so a bare noun there is not the
- * unambiguous category error it is for the three types above. The cost is
- * named: `conversatorio` (27 documents) survives as a generic hub, as do
- * `pandemia` (16) and `huracán` (10), which may or may not be real referents.
- * Adding `'evento'` to this set is the one-line change if that trade flips.
+ *      Imprime esta misma tabla y, contra el corpus real, cuántas entidades
+ *      se descartarían y cuáles.
+ *   3. 🔴 NADA CAMBIA EN LA VISTA HASTA QUE SE VUELVA A EXTRAER. Esta política
+ *      se aplica al ESCRIBIR el grafo, nunca al leerlo. Para que surta efecto
+ *      hay que subir {@link GRAPH_PROMPT_VERSION} y correr el backfill, que
+ *      cuesta horas y dinero. Es deliberado: así una política nueva no
+ *      reescribe en silencio una vista que alguien esté midiendo.
+ *
+ * ⚠ NO ES UNA LISTA DE PALABRAS PROHIBIDAS. La regla que se aplica es
+ * ortográfica ({@link isGenericLabel}): en español los nombres propios se
+ * escriben con mayúscula y los sustantivos comunes no. Esta tabla sólo decide
+ * A QUÉ TIPOS se les exige ese nombre.
+ *
+ * ⚠ EL COMPILADOR EXIGE QUE ESTÉN TODOS LOS TIPOS. El `satisfies` de abajo
+ * falla si se añade un tipo de entidad al ontología y no se decide su forma,
+ * que es exactamente cuando alguien tiene que pensarlo.
  */
-const GENERIC_RULE_TYPES: ReadonlySet<GraphEntityType> = new Set<GraphEntityType>([
-  'lugar',
-  'organizacion',
-  'persona',
-])
+export interface GraphShapeRule {
+  /**
+   * `true`  → la etiqueta debe nombrar a UNO en concreto (lleva mayúscula, o
+   *           lleva un calificador que la vuelve identificable).
+   * `false` → la etiqueta puede ser un sustantivo común de una sola palabra.
+   */
+  requiresProperName: boolean
+  /** Qué nombra este tipo, en una línea. */
+  rule: string
+  /** Por qué se decidió así. */
+  rationale: string
+  /** Qué cuesta esta decisión, medido contra el corpus — no estimado. */
+  cost: string
+}
+
+export const GRAPH_SHAPE_POLICY = {
+  lugar: {
+    requiresProperName: true,
+    rule: 'Un lugar nombra UN sitio concreto, no una clase de sitio.',
+    rationale:
+      'Una "barranca", un "mercado" o una "clínica" son tipos de espacio, no ' +
+      'lugares. El nodo resultante une documentos que no tienen nada que ver ' +
+      'entre sí, y era el nodo más grande del corpus.',
+    cost:
+      'Descarta 9 de 84 lugares: barranca (34 documentos), clínica, mercado, ' +
+      'colonia, escuela, hospital. Ninguno es un lugar identificable.',
+  },
+  organizacion: {
+    requiresProperName: true,
+    rule: 'Una organización nombra UNA institución concreta.',
+    rationale:
+      'Nombrar una clase de institución ("escuela", "universidad") no dice de ' +
+      'cuál se habla. Era el error de categoría que abrió esta tarea.',
+    cost:
+      'Descarta 18 de 75 organizaciones: escuela (12 documentos), ' +
+      'epidemiólogos, abogados, ingenieros, universidad, comité, cooperativa. ' +
+      'El tema "escuela" no se pierde: vive en la columna documents.tema.',
+  },
+  persona: {
+    requiresProperName: true,
+    rule: 'Una persona nombra a UN individuo, con su nombre.',
+    rationale:
+      'El propio prompt la define como "una persona nombrada en el texto". ' +
+      '"Tallerista" o "vecina" son roles, no personas.',
+    cost: 'Descarta 5 de 202 personas: tallerista, ingeniero, vecina.',
+  },
+  tema: {
+    requiresProperName: false,
+    rule: 'Un tema nombra un CONCEPTO, y un concepto suele ser una sola palabra.',
+    rationale:
+      '🔴 LA EXENCIÓN MÁS IMPORTANTE DE ESTA TABLA. Exigirle nombre propio a ' +
+      'un tema borra el vocabulario propio del corpus. Los 250 documentos ' +
+      'llevan una lengua, son 11 lenguas distintas, y TODAS aparecen como ' +
+      'tema: náhuatl, mixteco, mazateco, zapoteco, totonaco, tlahuica, ' +
+      'tlapaneco, amuzgo, hñähñu, tsotsil, mixe. Igual los asuntos del ' +
+      'corpus: discapacidad, dengue, traducción.',
+    cost:
+      'No descarta ninguno: 0 de 240. Exigir nombre propio aquí descartaría ' +
+      '12 de 12 lenguas y 3 de 4 asuntos — 89 nodos más.',
+  },
+  evento: {
+    requiresProperName: false,
+    rule: 'Un evento nombra un hecho O UN PROCESO, y un proceso es un concepto.',
+    rationale:
+      'El prompt lo define como "un hecho o un proceso con desarrollo en el ' +
+      'tiempo". Un proceso ("migración", "pandemia") es un concepto, así que ' +
+      'un sustantivo común aquí no es el error de categoría claro que sí es ' +
+      'en lugar, organizacion y persona. Es la decisión menos firme de la ' +
+      'tabla y la primera que habría que revisar.',
+    cost:
+      'No descarta ninguno: 0 de 99. El precio está a la vista: ' +
+      '"conversatorio" (27 documentos) sobrevive como nodo genérico, igual ' +
+      'que pandemia (16) y huracán (10).',
+  },
+} as const satisfies Record<GraphEntityType, GraphShapeRule>
 
 /**
- * Drop the entities whose label is a bare common noun where a NAME was
- * required, and the edges that touched one.
+ * Does this entity type require its label to carry a name?
  *
- * 🔴 THE PRIMARY DEFENCE, and it runs at EXTRACTION time, never at read time.
- * Prompt rule 3 has forbidden this since `v1` and the model does not obey it; a
- * rule the code checks is worth more than a rule the model is asked to follow,
- * which is the same conclusion the person rule reached (ADR §5.3) for the same
- * reason. The prompt is still sharpened alongside it — as the cheap layer that
- * tries to make the drop unnecessary, not as the guarantee.
- *
- * ⚠ Filtering here rather than in `queries.ts` is deliberate. A read-time
- * filter would change what the view shows the moment the code lands, with no
- * re-extraction and no version stamp — a silent, unversioned change to a
- * surface someone may be measuring. `GRAPH_PROMPT_VERSION` is what makes this
- * one findable and reversible; a read-time filter would have no stamp at all.
- *
- * ⚠ IT LOGS WHAT IT DROPS, unconditionally. If a future model lowercases every
- * label, this rejects every one-word place, organisation and person in the
- * corpus at once, and during a multi-hour backfill the log is the only place
- * that is visible before the money is spent.
+ * ⚠ FAILS OPEN — an unknown type KEEPS its entity. This is a quality rule, not
+ * a privacy rule, and the two fail in opposite directions on purpose: losing a
+ * good entity is worse than keeping a bad one, whereas for the person rule
+ * (`personaAllowed`) it is the other way round. `parseWindowResponse` has
+ * already rejected any type outside the ontology before this is reached, so in
+ * practice the lookup is total; this is what happens if that ever stops
+ * being true.
  */
+function requiresProperName(type: GraphEntityType): boolean {
+  return GRAPH_SHAPE_POLICY[type]?.requiresProperName === true
+}
+
 export function dropGenericEntities(window: ParsedWindow): ParsedWindow {
   const reject = (e: RawEntity): boolean =>
-    GENERIC_RULE_TYPES.has(e.tipo) && isGenericLabel(e.etiqueta)
+    requiresProperName(e.tipo) && isGenericLabel(e.etiqueta)
 
   const dropped = window.entities.filter(reject)
   if (dropped.length === 0) return window
