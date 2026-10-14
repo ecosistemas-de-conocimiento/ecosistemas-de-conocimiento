@@ -70,6 +70,12 @@ function effortLevel(effort: string | undefined): string | undefined {
   return undefined;
 }
 
+/** The BACKEND's id for a chunk's document, or '' when the chunk carries none. */
+function backendDocId(chunk: RawRetrieveChunk): string {
+  const id = chunk.metadata?.docId;
+  return typeof id === 'string' || typeof id === 'number' ? String(id) : '';
+}
+
 interface RawRetrieveChunk {
   chunkId: string;
   documentId: string;
@@ -258,9 +264,14 @@ export function makeEngineAIClient(
       // (`apps/backend/src/collections/Documents.ts`, the ingest call: docId,
       // organizationId, kind, publication, title). So post-filtering is the
       // only thing that works on data already in the corpus.
+      //
+      // 🔴 Match on `metadata.docId`, never on `documentId`. `documentId` is
+      // ai-service's own UUID for its copy; the backend id the session list
+      // holds is `metadata.docId`. Matching on the UUID dropped every draft
+      // chunk, so attached documents were never cited (measured 2026-10-14).
       const kept =
         isDraftLeg && sessionDocumentIds
-          ? chunks.filter((c) => sessionDocumentIds.has(String(c.documentId))).slice(0, topK)
+          ? chunks.filter((c) => sessionDocumentIds.has(backendDocId(c))).slice(0, topK)
           : chunks;
 
       return {

@@ -43,7 +43,10 @@ async function main(): Promise<void> {
   process.stdout.write(`${lines.join('\n')}\n`)
 }
 
-main().catch((err: unknown) => {
+// 🔴 Top-level `await`, not a bare `main().catch(...)`: `payload run` calls
+// `process.exit(0)` as soon as this module's import resolves, which killed the
+// un-awaited `main()` before it printed anything. See `keygen.test.ts`.
+await main().catch((err: unknown) => {
   console.error('[keygen] failed to generate an Ed25519 keypair:', err)
-  process.exitCode = 1
+  process.exit(1)
 })

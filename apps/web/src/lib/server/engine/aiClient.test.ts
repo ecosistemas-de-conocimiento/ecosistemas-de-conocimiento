@@ -36,10 +36,33 @@ interface Chunk {
   documentId: string;
   text: string;
   score: number;
+  metadata?: Record<string, unknown>;
 }
 
-function chunk(documentId: string, n = 1): Chunk {
-  return { chunkId: `${documentId}#${n}`, documentId, text: `t-${documentId}-${n}`, score: 1 / n };
+/**
+ * A chunk in the shape ai-service REALLY returns. `documentId` is ai-service's
+ * own UUID for its copy of the document; the BACKEND's id — the one the
+ * session's document list holds — travels in `metadata.docId`, set by the
+ * backend's ingest call. ✅ measured 2026-10-14 against a fresh stack:
+ * `{"documentId":"5190327d-…","metadata":{"docId":"3",…}}`.
+ *
+ * 🔴 These fixtures used to put the backend id in `documentId`, which made the
+ * draft-leg filter look correct while it dropped every real chunk — the same
+ * wrong shape `fdb5bd5` fixed in the backend's conversation ingest.
+ */
+function chunk(backendDocId: string, n = 1): Chunk {
+  return {
+    chunkId: `${backendDocId}#${n}`,
+    documentId: `00000000-0000-4000-8000-${backendDocId.padStart(12, '0')}`,
+    text: `t-${backendDocId}-${n}`,
+    score: 1 / n,
+    metadata: { docId: backendDocId },
+  };
+}
+
+/** The backend document ids of the kept matches. */
+function backendIds(matches: { metadata?: Record<string, unknown> }[]): unknown[] {
+  return matches.map((m) => m.metadata?.docId);
 }
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -154,15 +177,29 @@ describe('the draft leg', () => {
 
     const res = await withDocs(new Set(['10', '11'])).retrieve(request(DRAFT));
 
-    expect(res.matches.map((m) => m.documentId)).toEqual(['10', '11']);
+    expect(backendIds(res.matches)).toEqual(['10', '11']);
   });
 
-  it('coerces a numeric documentId against the string id set', async () => {
-    respondWith([{ ...chunk('10'), documentId: 10 as unknown as string }]);
+  it('coerces a numeric metadata.docId against the string id set', async () => {
+    respondWith([{ ...chunk('10'), metadata: { docId: 10 } }]);
 
     const res = await withDocs(new Set(['10'])).retrieve(request(DRAFT));
 
     expect(res.matches).toHaveLength(1);
+  });
+
+  // 🔴 ai-service's own UUID is never a backend id. Matching on it dropped every
+  // draft chunk on a real stack, so attached documents were never cited.
+  it('matches on metadata.docId, never on ai-service’s documentId', async () => {
+    respondWith([
+      { chunkId: 'a', documentId: '10', text: 'uuid collides', score: 1, metadata: { docId: '999' } },
+      { chunkId: 'b', documentId: 'f00d-uuid', text: 'kept', score: 0.5, metadata: { docId: '10' } },
+      { chunkId: 'c', documentId: '10', text: 'no metadata', score: 0.4 },
+    ]);
+
+    const res = await withDocs(new Set(['10'])).retrieve(request(DRAFT));
+
+    expect(res.matches.map((m) => m.chunkId)).toEqual(['b']);
   });
 
   // ⚠ Without the over-fetch the leg starves: ai-service ranks across the
@@ -182,7 +219,7 @@ describe('the draft leg', () => {
 
     expect(sentBodies()[0]!.topK).toBe(12); // 3 × 4
     expect(res.matches).toHaveLength(3); // truncated back to topK
-    expect(res.matches.every((m) => m.documentId === '10')).toBe(true);
+    expect(backendIds(res.matches).every((id) => id === '10')).toBe(true);
   });
 
   it('caps the over-fetch so a large topK cannot ask for the world', async () => {
@@ -212,7 +249,7 @@ describe('the published corpus', () => {
     });
     const res = await ai.retrieve(request(ECO));
 
-    expect(res.matches.map((m) => m.documentId)).toEqual(['999', '998']);
+    expect(backendIds(res.matches)).toEqual(['999', '998']);
   });
 
   it('asks upstream for exactly the topK it was given', async () => {
@@ -262,7 +299,7 @@ describe('an unidentifiable shared corpus fails CLOSED', () => {
     });
 
     // Even the ecosistema's own corpus is filtered down to this conversation.
-    expect((await ai.retrieve(request(ECO))).matches.map((m) => m.documentId)).toEqual(['10']);
+    expect(backendIds((await ai.retrieve(request(ECO))).matches)).toEqual(['10']);
   });
 
   it('refuses every corpus when the document list is ALSO unknown', async () => {
