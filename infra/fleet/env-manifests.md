@@ -1,187 +1,176 @@
 # Per-environment variable manifests
 
-**Status:** proposal · 🔴 **Not applied to any platform. Not verified against a running app.**
+**Status:** proposal · 🔴 **Not applied to any platform yet.** The compose file it describes passes
+`docker compose config` and runs the local stack healthy (2026-10-14); no Coolify deploy has run.
 
-These are written as **per-app tables** rather than `.env` files on purpose: Coolify stores
-environment variables per application, and you paste them app by app. A dotenv file would imply a
-sharing model that does not exist here — and *should* not, see §0.
+**Shape (decided 2026-10-14):** ONE Hetzner box running Coolify, hosting TWO environments of the
+core stack. Each environment is ONE Coolify resource of type **Docker Compose** built from this repo.
 
-Companion to `topology.md` and `runbook.md`. The local demo's variables are in `infra/.env.example`
-and are a **different, deliberately laxer** set.
+| environment | `EDC_ENV` | web URL | backend URL (admin + identity) |
+|---|---|---|---|
+| dev | `dev` | `https://dev.ecosistemasdeconocimiento.com` | `https://api.dev.ecosistemasdeconocimiento.com` ⚠ proposed |
+| staging | `stage` | `https://montaje.ecosistemasdeconocimiento.com` | `https://api.montaje.ecosistemasdeconocimiento.com` ⚠ proposed |
+
+⚠ The domain is not bought yet. Nothing in the repo hard-codes it: every URL below is a Coolify
+variable, so a different domain is a variable change, not a code change.
+⚠ `EDC_ENV` for staging is `stage`, not `montaje`. `apps/backend/src/seed/env-gate.ts` matches exact
+names; an unknown name fails closed (no seed), which is safe but silent.
+
+Core services only: `postgres`, `redis`, `rustfs`, `ai-service`, `backend`, `web`. Audio is **not
+deployed** (§4). There is no prod environment in this shape.
+
+Companion: `runbook.md`. The local demo's variables are in `infra/.env.example`.
 
 ---
 
-## 0. Rules
+## 0. How the compose file splits local from Coolify
 
-1. 🔴 **Every value below is a PLACEHOLDER.** No real credential from any organization appears in
-   this repository. Anything shaped like a secret is `CHANGE_ME_…` or a described generator command.
-2. 🔴 **Each app gets only its own variables.** The local demo hands one `.env` to every container
-   because every value in it is fake. That is not acceptable here: `web` must never hold
-   `PAYLOAD_SECRET`, and only `backend` and `ai-service` hold `CALLBACK_SECRET`.
-3. 🔴 **Generate secrets per environment, never once per fleet.** The prototypes' low-entropy dev
-   secret propagated to **at least five places** across compose files and docs. `openssl rand -hex 32`
-   for each, each time.
-4. **Secrets live in the deploy platform, not in git and not in a file next to the code.** ⚠ Their
-   only secrets mirror was single-copy on one laptop. Whatever you choose, it needs a second copy —
-   and the Coolify `APP_KEY` needs one too (`backups.md` §2).
-5. ⚠ **`EDC_ENV` is the environment NAME; `NODE_ENV` is a build mode.** Deployed dev, stage and prod
-   ALL run `NODE_ENV=production`. Confusing them is how demo data reaches production, because
-   `apps/backend/src/seed/env-gate.ts` gates on `EDC_ENV` alone.
+| file | who loads it | carries |
+|---|---|---|
+| `infra/docker-compose.yml` | Coolify **and** local | every service; no host ports, no fixed network or project name, no path outside the repo; public URLs from variables |
+| `infra/docker-compose.override.yml` | local only (auto-loaded by `docker compose` with no `-f`) | `name: edc`, 454xx host ports, `edc` network name, corpus bind mount |
+| `infra/docker-compose.audio.yml` | opt-in | the three audio containers + the backend's audio wiring |
+
+Check what Coolify will see before pushing: `cd infra && docker compose -f docker-compose.yml config`.
+
+### Coolify resource settings (per environment) — ⚠ inferred from Coolify's compose build pack, not yet exercised on this box
+
+| setting | value | why |
+|---|---|---|
+| Build pack | Docker Compose | one resource per environment |
+| Base directory | `/infra` | 🔴 relative paths (`context: ..`, `env_file: .env`, `./postgres`) resolve against it. With `/` they would point outside the repo |
+| Compose file | `/docker-compose.yml` | the override and audio files must NOT be listed |
+| Domain for `web` | `https://<web host>:3000` | the `:3000` names the container port; Traefik serves 443 |
+| Domain for `backend` | `https://<backend host>:3002` | Payload admin at `/admin` and the identity provider |
+| Domains for the rest | none | `postgres`, `redis`, `rustfs`, `ai-service` stay on the private compose network |
+| Connect to predefined network | **off** | 🔴 with it on, both environments share one network and the names `backend`, `postgres`, `rustfs` could resolve to the OTHER environment's containers |
+| Branch | dev → `main`, auto-deploy · staging → manual (or a release branch) | staging is the frozen copy |
+
+Why no host ports and no fixed names: two copies of the same compose file run on one box. A published
+port, a fixed `container_name` or a fixed network name would make the second deploy collide with the
+first. Coolify names the project after the resource, so volumes are per environment too.
+
+---
+
+## 1. Rules
+
+1. 🔴 **Every value below is a PLACEHOLDER.** No real credential appears in this repository.
+   Anything shaped like a secret is `CHANGE_ME` or a described generator command.
+2. 🔴 **Generate secrets per environment.** dev and staging never share a value. `openssl rand -hex 32`.
+3. **Secrets live in Coolify**, not in git. Back up Coolify's `APP_KEY` (`backups.md` §2).
+4. ⚠ **`EDC_ENV` is the environment NAME; `NODE_ENV` is a build mode.** Both environments run
+   `NODE_ENV=production` (set by the compose file).
+5. ⚠ **Every Coolify variable reaches `backend`, `web` and `ai-service`.** The compose file hands the
+   resource's `.env` to those three with `env_file`. Coolify variables are per *resource*, not per
+   container, so the old rule "web never holds `PAYLOAD_SECRET`" no longer holds by construction.
+   🔧 Accepted for dev/staging. Revisit before any prod: the fix is explicit `environment:` lists.
 
 **Legend:** 🔑 secret · ⚙ config · 💤 optional · ⚠ differs by environment
 
 ---
 
-## 1. `backend` — Next.js + Payload CMS (domain data **and** identity provider)
+## 2. Variables to set in Coolify, per environment
 
-| var | dev | stage | prod | notes |
-|---|---|---|---|---|
-| `NODE_ENV` | `production` | `production` | `production` | ⚙ 🔴 yes, `production` in all three |
-| `EDC_ENV` | `dev` | `stage` | `prod` | ⚙ 🔴 the seed gate reads this |
-| `PORT` | `3002` | `3002` | `3002` | ⚙ must match Coolify's `ports_exposes` |
-| `DATABASE_URI` | `postgres://…@<data>:5432/edc_backend_dev` | `…/edc_backend_stage` | `…/edc_backend_prod` | 🔑 ⚠ **`URI`, not `URL`** |
-| `PAYLOAD_SECRET` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 `openssl rand -hex 32`, **distinct per env** |
-| `PAYLOAD_ALLOW_PUSH` | *unset* | *unset* | *unset* | ⚙ ✅ **Set nothing — the default is already correct.** The gate is opt-IN, so unset means migrations only. 🔴 Setting it to `1` in a deployed environment drops the hand-written unique indexes silently. See §6 |
-| `AUTH_PRIVATE_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 🔴 PKCS#8 PEM, `\n`-escaped. **Distinct per env** — a shared key means a dev token is valid in prod |
-| `AUTH_PUBLIC_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | ⚙ SPKI PEM, served at `/.well-known/jwks.json` |
-| `AUTH_KEY_ID` | e.g. `edc-dev-1` | `edc-stage-1` | `edc-prod-1` | ⚙ the `kid`. Version it — key rotation depends on it |
-| `AUTH_ISSUER` | `https://api-dev.<domain>` | `https://api-stage.<domain>` | `https://api.<domain>` | ⚙ 🔴 the `iss` claim. **Required to issue at all** |
-| `PUBLIC_BACKEND_URL` | `https://api-dev.<domain>` | `https://api-stage.<domain>` | `https://api.<domain>` | ⚙ 🔴 the origin ai-service calls BACK on. Absolute `http(s)://`. Paired with `CALLBACK_SECRET` — see below |
-| `AI_CAPABILITY_MODE` | `strict` | `strict` | `strict` | ⚙ a version skew should be loud, not silent |
-| `SESSION_JANITOR_ENABLED` | `1` | `1` | `1` | 💤 🔧 run once with `SESSION_JANITOR_DRY_RUN=1` first |
-| `SEED_ADMIN_EMAIL` | your address | your address | your address | ⚙ |
-| `SEED_ADMIN_PASSWORD` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 no default exists by design |
-| `SEED_DOMAIN` | `1` | *unset* | *unset* | ⚙ 🔴 demo content never reaches stage/prod |
-| `ALLOWED_ORIGINS` | `https://dev.<domain>` | `https://stage.<domain>` | `https://<domain>` | ⚙ CORS |
-| `IDENTITY_TRUSTED_PROXY_HOPS` | `1` | `1` | `1` | ⚙ 🔴 see §5 |
-| `IDENTITY_ALLOWED_EMAIL_DOMAIN` | *unset* | *unset* | ⚠ **decide** | ⚙ blank = anyone may register |
-| `AUTH_TOKEN_TTL` | `900` | `900` | `900` | 💤 seconds |
-| `IDENTITY_RATELIMIT_TOKEN_USER_MAX` | default | default | default | 💤 |
-| `SERVICE_TOKENS` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 JSON `{"<consumer>":"<secret>"}`, header `x-service-token`. ⚠ malformed JSON rejects **every** S2S call |
-| `CALLBACK_SECRET` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 🔴 must equal the `callbackSecret` in ai-service's `API_KEYS` **for the same env** |
-| `AI_SERVICE_URL` | `http://ai-service-dev:3000` | `…-stage:3000` | `…-prod:3000` | ⚙ internal, not public |
-| `AI_SERVICE_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 must be a key in ai-service `API_KEYS` |
-| `AI_SERVICE_ADMIN_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 role `admin`; needed for corpus delete |
-| `AUDIO_SERVICE_URL` | `http://audio-service-dev:8080` | `…-stage:8080` | `…-prod:8080` | ⚙ internal, not public. ⚠ the API container, **not** a worker |
-| `AUDIO_SERVICE_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 the `role: app` key from audio-service's `API_KEYS` (§4). 🔧 a **different** key from `AI_SERVICE_API_KEY` |
-| `S3_ENDPOINT` | `http://rustfs:9000` | 🔴 *unset* | 🔴 *unset* | ⚙ ⚠ **dev only.** Private-network address of the store on `data`. §4b |
-| `S3_REGION` | `us-east-1` | 🔴 *unset* | 🔴 *unset* | ⚙ RustFS ignores it; the AWS SDK **requires** one to sign at all |
-| `S3_BUCKET` | `edc-dev` | 🔴 *unset* | 🔴 *unset* | ⚙ 🔴 not created by any env var — provisioning creates it. §4b |
-| `S3_ACCESS_KEY_ID` | `CHANGE_ME` | 🔴 *unset* | 🔴 *unset* | 🔑 ⚠ **a SCOPED user on dev, not root** — unlike the local demo. §4b |
-| `S3_SECRET_ACCESS_KEY` | `CHANGE_ME` | 🔴 *unset* | 🔴 *unset* | 🔑 `openssl rand -hex 32` |
+### 2a. Required — the compose file refuses to render without them
 
-🔴 **The five `S3_*` rows are ALL-OR-NOTHING, and "unset" on stage and prod is the configuration,
-not an unfinished row.** The backend falls back to local disk when **all five are absent**. A partial
-set is the worst outcome: an app that half-believes in a store. ⚠ **Set nothing at all** on stage and
-prod rather than setting them to empty strings — "absent" and "empty" are not the same thing to every
-possible implementation of that check, and there is no reason to find out which one we have.
+| var | dev | staging | notes |
+|---|---|---|---|
+| `EDC_ENV` | `dev` | `stage` | ⚙ ⚠ gates seeding (`env-gate.ts`): dev boot-seeds demo content, stage never does |
+| `WEB_ORIGIN` | `https://dev.<domain>` | `https://montaje.<domain>` | ⚙ ⚠ becomes web's `ORIGIN`. 🔴 wrong value ⇒ every file upload answers 403 |
+| `AUTH_ISSUER` | `https://api.dev.<domain>` | `https://api.montaje.<domain>` | ⚙ ⚠ the `iss` claim — the backend's public URL |
+| `ALLOWED_ORIGINS` | `https://dev.<domain>,https://api.dev.<domain>` | `https://montaje.<domain>,https://api.montaje.<domain>` | ⚙ ⚠ backend CORS: web + backend public origins |
+| `POSTGRES_PASSWORD` | `CHANGE_ME` | `CHANGE_ME` | 🔑 |
+| `AI_SERVICE_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | 🔑 the `app` key; compose builds ai-service's `API_KEYS` from it |
+| `CALLBACK_SECRET` | `CHANGE_ME` | `CHANGE_ME` | 🔑 ≥ 32 chars. Compose interpolates it into `API_KEYS` too, so the pair cannot drift |
 
-⚠ **Why stage and prod are blank:** RustFS is approved for `local` and `dev` only (`topology.md` §3).
-Their engine is **open decision #9**. Until it is closed, stage and prod write uploads to the
-`backend` persistent volume, exactly as before.
+### 2b. Required by the apps — read through `env_file`
 
-⚠ **Those two are FORWARD-LOOKING as of 2026-08-14.** `apps/backend/src` reads neither yet — grep
-for "AUDIO" returns nothing — and its callback route does not branch on `transcribe.*`; such an
-event is logged as unknown and 200'd. The names come from `plan/audio-ingest-integration.md` §3.5,
-and `infra/docker-compose.yml` already sets both. 🔴 **If the agent landing that work chooses
-different names, this row and two lines in the compose file change together.** Setting an unread
-variable costs nothing; the alternative is a fleet that silently does not ingest audio.
+| var | dev | staging | notes |
+|---|---|---|---|
+| `PAYLOAD_SECRET` | `CHANGE_ME` | `CHANGE_ME` | 🔑 |
+| `AUTH_PRIVATE_KEY` | `CHANGE_ME` | `CHANGE_ME` | 🔑 PKCS#8 PEM, `\n`-escaped. `pnpm --filter @edc/backend keygen`. Distinct per env |
+| `AUTH_PUBLIC_KEY` | `CHANGE_ME` | `CHANGE_ME` | ⚙ SPKI PEM, served at `/.well-known/jwks.json` |
+| `AUTH_KEY_ID` | `edc-dev-1` | `edc-stage-1` | ⚙ the `kid`. Version it |
+| `SEED_ADMIN_EMAIL` | your address | your address | ⚙ |
+| `SEED_ADMIN_PASSWORD` | `CHANGE_ME` | `CHANGE_ME` | 🔑 no default by design |
+| `SERVICE_TOKENS` | `CHANGE_ME` | `CHANGE_ME` | 🔑 JSON `{"web":"<secret>"}`. Malformed JSON rejects every service call |
+| `ORG_KEY` | `demo` | ⚠ decide | ⚙ the code default `edc` disagrees with the seed's `demo`; always set it |
+| `OPENROUTER_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | 🔑 🔴 ai-service aborts boot without it under `NODE_ENV=production` |
+| `S3_ENDPOINT` | `http://rustfs:9000` | `http://rustfs:9000` | ⚙ the compose-network name. 🔴 never a public URL |
+| `S3_REGION` | `us-east-1` | `us-east-1` | ⚙ RustFS ignores it; the AWS SDK needs one to sign |
+| `S3_BUCKET` | `edc` | `edc` | ⚙ separate stores per env, so the same name is fine |
+| `S3_ACCESS_KEY_ID` | `CHANGE_ME` | `CHANGE_ME` | 🔑 ⚠ also the RustFS **root** key (§3) |
+| `S3_SECRET_ACCESS_KEY` | `CHANGE_ME` | `CHANGE_ME` | 🔑 `openssl rand -hex 32` |
+| `IDENTITY_TRUSTED_PROXY_HOPS` | `1` | `1` | ⚙ 🔴 exactly one proxy (Traefik). Higher = silent bypass of per-IP rate limits; compose default `0` makes every request share Traefik's bucket |
+| `AI_CAPABILITY_MODE` | `strict` | `strict` | ⚙ a version skew between backend and ai-service should be loud |
 
-✅ **`CALLBACK_SECRET` and `PUBLIC_BACKEND_URL` are reused unchanged for audio.** No new variable.
-One verifier (`src/lib/hmac.ts`), one secret, one callback path, two emitters — see §4.
+### 2c. Must stay UNSET on both
 
-🔴 **The callback pair is the failure everyone hits once.** `PUBLIC_BACKEND_URL` **and**
-`CALLBACK_SECRET` must **both** be set, or ingest callbacks are silently OFF and **every upload sits
-in `embedding` forever**. There is no error. Setting `PUBLIC_BACKEND_URL` also makes
-`ingestChunkCallback` a *required* ai-service capability — so under `AI_CAPABILITY_MODE=strict` an
-older ai-service will now refuse to boot the backend. That is the correct, loud behaviour, but know
-it before you see it.
+| var | why |
+|---|---|
+| `MOCK_LLM`, `MOCK_EMBEDDINGS`, `MOCK_LLM_STREAM` | local-demo path only |
+| `PAYLOAD_ALLOW_PUSH` | 🔴 `1` silently drops the baseline's hand-written unique indexes (§6) |
+| `AUDIO_SERVICE_URL`, `AUDIO_SERVICE_API_KEY`, `COMPOSE_PROFILES`, `PUBLIC_AUDIO_UPLOAD_ENABLED` | **staging only** — audio is off there. Dev on edc-1 sets them (`edc-1.md` §4y). Empty URL/key ⇒ the backend logs `[audio-service] NOT CONFIGURED` at boot and fails audio uploads visibly |
+| `CORPUS_DIR` | the corpus is a sibling repo, absent from the checkout. Without it the seed logs why and degrades to an empty library |
+| host-port variables (`*_HOST_PORT`) | read only by the local override |
 
-⚠ **Rate limiting is IN-PROCESS**, not Redis-backed (`apps/backend/src/lib/rateLimit.ts` — the
-Redis-backed version was deliberately dropped during the merge). One container: fine. 🔴 Two
-replicas: each gets its own budget, so the effective limit silently doubles. Note this against
-`topology.md`'s growth path step 4.
+### 2d. Optional
 
-**Persistent storage (Coolify → Storages):** 🔴 mount a volume at the Payload media path
-(`/repo/apps/backend/media` in the image built per `infra/docker-compose.yml`). **Without this, every
-redeploy destroys every uploaded document.** `topology.md` §3.
+| var | default | notes |
+|---|---|---|
+| `SEED_DOMAIN` | unset | 💤 dev may set `1`; stage is refused by the gate anyway |
+| `SEED_CORPUS_INGEST` | `0` | 💤 needs the corpus, which Coolify does not have |
+| `POSTGRES_USER`, `BACKEND_DB_NAME`, `AI_DB_NAME` | `edc`, `edc_backend`, `edc_ai` | 💤 per-env stores, so the defaults are fine |
+| `AI_SERVICE_ADMIN_API_KEY` | `dev-key-admin` | 🔑 🔴 **set it** — the compose default is a public string |
+| `RUSTFS_MEMORY` | `1g` | 💤 |
+| `RERANK_ENABLED`, `SPARSE_ENABLED` | `false` | 💤 the `heavy` sidecars are not deployed |
+| `IDENTITY_ALLOWED_EMAIL_DOMAIN`, `AUTH_TOKEN_TTL`, `SESSION_JANITOR_*`, `LLM_*_TIMEOUT_MS` | code defaults | 💤 see `infra/.env.example` |
 
-⚠ **Still required on `dev`, even though `dev` writes to RustFS.** Two reasons, both real: it is the
-fallback target if the `S3_*` variables are ever removed, and any code path still doing
-`fs.readFile(path.resolve(process.cwd(), 'media', …))` reads from it. The prototypes shipped **two
-such paths** after enabling S3 — one returned 502, the other **silently dropped images from
-exports**. 🔧 Grep `apps/backend` for `fs.readFile` and `process.cwd(), 'media'` before believing the
-switch is complete. 🔴 On stage and prod this volume is not a fallback at all; it is the only storage
-there is.
+Fixed inside the compose file, so **not** set in Coolify: `NODE_ENV`, `PORT`, `HOST`, `DATABASE_URI`
+(backend), `DATABASE_URL` + `REDIS_URL` + `API_KEYS` (ai-service), `AI_SERVICE_URL`, `BACKEND_URL`,
+`PUBLIC_BACKEND_URL` (`http://backend:3002` — the callback origin ai-service reaches over the private
+network, not the public one).
+
+### Why some apps' notes from the old per-app manifest still apply
+
+- 🔴 **The callback pair** — `PUBLIC_BACKEND_URL` **and** `CALLBACK_SECRET` must both be set, or ingest
+  callbacks are silently off and every upload sits in `embedding` forever. The compose file sets the
+  first and requires the second.
+- ⚠ **Rate limiting is in-process.** One backend container per env: fine.
+- 🔴 **Never rename a web variable to `PUBLIC_*`.** SvelteKit inlines those into the browser bundle.
 
 ---
 
-## 2. `web` — SvelteKit (adapter-node)
+## 3. ☁ `rustfs` — the file store in every environment
 
-| var | dev | stage | prod | notes |
-|---|---|---|---|---|
-| `NODE_ENV` | `production` | `production` | `production` | ⚙ |
-| `PORT` / `HOST` | `3000` / `0.0.0.0` | same | same | ⚙ |
-| `AI_SERVICE_URL` | `http://ai-service-dev:3000` | `…-stage:3000` | `…-prod:3000` | ⚙ |
-| `AI_SERVICE_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 ⚠ may differ from backend's — issue a separate key per consumer so one can be revoked alone |
-| `BACKEND_URL` | `http://backend-dev:3002` | `…-stage:3002` | `…-prod:3002` | ⚙ 🔴 **set it explicitly.** Its code default is `http://localhost:3002`, which inside a container means *this* container — a forgotten value fails confusingly, not obviously |
-| `ORIGIN` | `https://dev.<domain>` | `https://stage.<domain>` | `https://<domain>` | ⚙ 🔴 **currently set nowhere.** adapter-node rejects cross-site form POSTs without it, and this app uses form actions + cookies. Alternative: `PROTOCOL_HEADER=x-forwarded-proto` + `HOST_HEADER=x-forwarded-host` |
-| `ORG_KEY` | `demo` | ⚠ decide | ⚠ decide | ⚙ tenant slug. ⚠ the code default is `edc` but the seed creates `demo` — they disagree, so always set it |
-| `PROMPT_SOURCE` | *unset* | *unset* | *unset* | 💤 `registry` pulls prompts from ai-service |
+✅ **Owner decision 2026-10-14: RustFS is the store in local, dev and staging.** It supersedes the
+"dev only" call in `topology.md` §3. The risks behind that call still stand — frequent CVEs, every
+release flagged `prerelease`, open single-drive data-loss issues — so the volume needs backups.
 
-🔴 **All of these are RUNTIME env** (`$env/dynamic/private`), so **one image serves every
-environment** and promotion is a re-tag, not a rebuild. Two things must stay true for that:
-
-- ⚠ **Never rename any of them to `PUBLIC_*`.** SvelteKit inlines `$env/static/public` at build time
-  and ships it to the browser. `AI_SERVICE_API_KEY` under a `PUBLIC_` name is a published API key.
-- ⚠ This is the trap the prototypes hit from the other side: their Vite SPAs used
-  `import.meta.env.VITE_*`, which is build-time-inlined, so **the API URL had to be a Docker
-  `--build-arg` and each environment needed its own image.** Our stack avoids that. Do not
-  "optimise" it back.
+- **Internal only.** No host port, no Coolify domain. The backend serves every file; no browser
+  reaches the store.
+- **Root key = app key.** The compose file feeds `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` to RustFS as
+  its root identity and to the backend as its credential. Same as local. ⚠ A scoped user with a
+  bucket-only policy is the stronger setup; it needs provisioning code in `apps/backend`.
+- 🔴 **The bucket is not created by any env var** (RustFS has no default-bucket variable, ✅ measured
+  2026-08-14). Provisioning is the backend's.
+- 🔴 **The volume holds the bucket data AND the IAM store**, including `users.json` with secret keys in
+  cleartext. Treat a copy of it as a credential store. A restore brings back keys as of snapshot time
+  (`backups.md` §2).
+- 🔴 **`/health` is liveness only and lies about storage.** Watch the backend's readiness route.
+  `runbook.md` §8.
+- ⚠ The compose file defaults the root key to a public placeholder when `S3_*` is unset. Always set
+  both on Coolify (§2b).
 
 ---
 
-## 3. `ai-service` — Fastify + Drizzle + BullMQ + pgvector
+## 4. `audio-service` — NOT deployed yet
 
-| var | dev | stage | prod | notes |
-|---|---|---|---|---|
-| `NODE_ENV` | `production` | `production` | `production` | ⚙ |
-| `PORT` / `HOST` | `3000` / `0.0.0.0` | same | same | ⚙ |
-| `DATABASE_URL` | `postgres://…@<data>:5432/edc_ai_dev` | `…/edc_ai_stage` | `…/edc_ai_prod` | 🔑 ⚠ **`URL`, not `URI`** |
-| `REDIS_URL` | `redis://<data>:6379/0` | `…/1` | `…/2` | ⚙ 🔴 separate instance or DB per env — colliding BullMQ queue names across envs is undebuggable |
-| `API_KEYS` | `CHANGE_ME` (JSON) | `CHANGE_ME` | `CHANGE_ME` | 🔑 🔴 see below |
-| `OPENROUTER_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | `CHANGE_ME` | 🔑 🔴 **boot ABORTS without it when `NODE_ENV=production`** — i.e. in all three |
-| `OPENROUTER_APP_URL` | `https://dev.<domain>` | … | `https://<domain>` | 💤 attribution header |
-| `LOG_LEVEL` | `debug` | `info` | `info` | 💤 |
-| `EMBEDDING_MODEL` | `baai/bge-m3` | same | same | ⚙ 🔴 must be identical across envs — different weights means every corpus must be re-embedded to promote |
-| `EMBEDDING_DIM` | `1024` | `1024` | `1024` | ⚙ 🔴 must match the `chunks.embedding` column; changing it is a **migration** |
-| `RERANK_ENABLED` | `false` | `false` | `false` | ⚙ deferred, see `topology.md` §1 |
-| `SPARSE_ENABLED` | `false` | `false` | `false` | ⚙ deferred |
-| `MOCK_LLM` / `MOCK_EMBEDDINGS` | *unset* | *unset* | *unset* | 🔴 **never set in a deployed env** — they are the local-demo path only |
-| `LLM_REQUEST_TIMEOUT_MS` | `120000` | same | same | 💤 |
-| `LLM_STREAM_STALL_TIMEOUT_MS` | `45000` | same | same | 💤 ⚠ must be **below** the LB/proxy idle timeout |
-
-**`API_KEYS` shape** — JSON, parsed **once at boot**, so adding a consumer needs a restart:
-
-```json
-{
-  "CHANGE_ME_web_key":     {"org":"<org>","project":"edc","role":"app",  "callbackSecret":"CHANGE_ME_matches_backend"},
-  "CHANGE_ME_backend_key": {"org":"<org>","project":"edc","role":"app",  "callbackSecret":"CHANGE_ME_matches_backend"},
-  "CHANGE_ME_admin_key":   {"org":"<org>","project":"edc","role":"admin","callbackSecret":"CHANGE_ME_matches_backend"}
-}
-```
-
-🔴 **`callbackSecret` must be ≥32 chars and must equal the backend's `CALLBACK_SECRET` for the same
-environment.** Get this wrong and the symptom is not an error — it is uploads sitting in `embedding`
-**forever**, because the ingest-complete callback is signed with one secret and rejected by the
-other. Check this pairing first whenever ingest appears to hang.
-
-🔧 **Issue one key per consumer** (`web`, `backend`, admin/ops) rather than sharing one. It costs
-nothing and it means a leak is revocable without an outage.
-
----
-
-## 4. `audio-service` — 🔴 THREE deployables, not one
+Lives in `infra/docker-compose.audio.yml`. Coolify does not load it. When audio is turned on, that
+file sets `AUDIO_SERVICE_URL` and **requires** `AUDIO_SERVICE_API_KEY` — rendering fails without it,
+so audio cannot be half-on. ⚠ Coolify reads ONE compose file, so turning audio on there means
+merging that file into the deployed one. Remove its host `ports:` entry first: two environments on one box would
+collide. The notes below describe the service itself and still apply.
 
 ✅ **Rewritten 2026-08-14 against the real service.** The previous version of this section was
 written before `services/audio-service/` existed and was wrong in every way that matters. Named
@@ -310,91 +299,6 @@ does **not** need to be in `backups.md`'s scope — unlike the Payload media vol
 
 ---
 
-## 4b. ☁ `rustfs` — object storage, 🔴 **`dev` ONLY**
-
-**One container, on the `data` box, serving the `dev` environment.** ✅ Everything in this section was
-measured against `rustfs/rustfs:1.0.0-rc.1` on 2026-08-14 — image pulled, stood up, probed with
-SigV4, torn down. Operational detail in `runbook.md` §8; the engine argument in `topology.md` §3.
-
-🔴 **There is no stage row and no prod row, and that is the decision.** RustFS ships 25 CVEs in 8
-months (7 at CVSS ≥ 9.0), flags every release `prerelease`, and has open issues for silent data loss
-on single-drive — our exact topology. `dev` holds nothing that cannot be recreated; a prod bucket
-holds a customer's only copy of their audio. **Open decision #9.**
-
-| var | dev | stage | prod | notes |
-|---|---|---|---|---|
-| `RUSTFS_ACCESS_KEY` | `CHANGE_ME` | — | — | 🔑 🔴 the **root** identity. Not the app's key — see below |
-| `RUSTFS_SECRET_KEY` | `CHANGE_ME` | — | — | 🔑 `openssl rand -hex 32` |
-| `RUSTFS_VOLUMES` | `/data` | — | — | ⚙ must match the persistent-storage mount |
-| `RUSTFS_ADDRESS` | `:9000` | — | — | ⚙ S3 API port. Console is on 9001 |
-
-⚠ **That is the complete list of variables this image reads.** ✅ Verified against the running
-container. In particular there is **no `RUSTFS_DEFAULT_BUCKET`** — 🔴 **do not carry that assumption
-across from Garage**, which does have `GARAGE_DEFAULT_BUCKET` and is the engine `topology.md` §3
-names for a self-hosted stage/prod.
-
-### 🔴 Root is NOT the app's credential on `dev` — this differs from the local demo on purpose
-
-`infra/.env.example` gives the local demo the **root** key as `S3_ACCESS_KEY_ID`, because every
-credential in that file is fake and the store binds to localhost. **On `dev` that trade stops paying.**
-
-- **Root stays with the operator.** The backend gets a **scoped user with an explicit policy**,
-  created by provisioning.
-- ⚠ **The built-in `readwrite` policy is NOT scoped** — it is `s3:*` on `arn:aws:s3:::*`. Its
-  apparent scoping came only from one-bucket-per-instance. Write a custom policy and include **both**
-  ARNs: `arn:aws:s3:::<bucket>` for bucket actions **and** `arn:aws:s3:::<bucket>/*` for object
-  actions. Omit either and you silently lose half the surface.
-- ✅ **Root rotation is an env change plus a restart.** Measured: restarting with a changed
-  `RUSTFS_ACCESS_KEY`/`_SECRET_KEY` on an **existing** volume makes the new key work and the old key
-  return `InvalidAccessKeyId`. No volume surgery.
-
-### 🔴 The IAM store is volume-resident, so provisioning is a boot-time job, not a setup step
-
-Nothing seeds a user or a policy from the environment. The scoped user and the bucket exist **only**
-after something creates them through the admin API against a running server, and then they live on
-the volume and nowhere else.
-
-- 🔴 **Provisioning must be idempotent and re-runnable on every boot.** ✅ This is cheap: measured,
-  `CreateBucket` on an existing bucket returns **200**, not 409.
-- 🔴 **A one-shot init container that exits is the recorded failure mode.** It runs once against an
-  empty volume and is absent on the day the store comes back wrong. Provisioning belongs in the
-  backend's startup path (`apps/backend/**`), which runs on every deploy.
-
-### Persistent storage and the backup gap
-
-| app | mount | contents |
-|---|---|---|
-| `rustfs` | `/data` | 🔴 **bucket data AND the IAM store**, including `users.json` |
-
-🔴 **`users.json` holds secret keys in CLEARTEXT.** A copy of this volume — a backup, a snapshot, a
-`docker cp` — is a copy of every key it ever issued. Encrypt and access-control it as a **credential
-store**, not as a pile of documents.
-
-🔴 **A volume restore recreates the buckets. It does NOT recreate a usable IAM store.** You get the
-keys as of snapshot time; anything issued or rotated since comes back dead, and the app then
-authenticates against a credential store that has silently moved backwards. ✅ **The mitigation is
-the idempotent provisioning above, not a better backup.** `backups.md` §2.
-
-⚠ **`dev` bucket data is deliberately out of backup scope** — it is reproducible test content.
-
-### Networking
-
-🔴 **Private network only. No Traefik route, no public hostname, no certificate.** The backend proxies
-every byte; nothing in a browser reaches the store. In Coolify, **null the auto-assigned `*.sslip.io`
-fqdn** (`runbook.md` §7) — an object store that quietly acquires a working public hostname is not
-broken, which is exactly why nobody notices.
-
-### Health checking
-
-🔴 **`health_check_enabled: false`, or point it at nothing that matters.** `/health` and
-`/health/ready` on RustFS are **liveness only and they lie about storage** — ✅ measured returning
-`{"status":"ok","ready":true,…}` on an empty store, and measured by the prototypes returning 200
-with `"ready":true` while **every** S3 call 503'd. 🔴 **The uptime monitor watches the BACKEND's
-readiness route**, whose `checks.storage` leg is a `HeadBucket` against the real bucket.
-`runbook.md` §8.
-
----
-
 ## 5. Applies to every app
 
 | var | value | why |
@@ -484,12 +388,8 @@ state. 🔴 Never in a deployed environment.
 
 ## 7. Where these values come from — honesty note
 
-⚠ **The five `S3_*` names are the ONE exception to the sentence below.** They were **not** read out of
-this repository — `apps/backend` has no S3 adapter yet. They are an **agreed contract** between this
-file and the agent landing that adapter: `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`,
-`S3_SECRET_ACCESS_KEY`, with "all five absent ⇒ local disk". 🔴 If the code lands with different
-names, §1's rows, §4b and `infra/.env.example` §7 change together. ✅ The `RUSTFS_*` names in §4b are
-**not** in that category — they were verified against the running image.
+✅ The five `S3_*` names now match the code: `apps/backend/src/lib/storage/client.ts` reads exactly
+`S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` (read 2026-10-14).
 
 Every other variable NAME above was read out of this repository's source
 (`grep -rhoE "process\.env\.[A-Z0-9_]+"` across `apps/backend/src`, plus `apps/web/src` and

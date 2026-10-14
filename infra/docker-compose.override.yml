@@ -1,0 +1,79 @@
+# Ecosistemas de Conocimiento — LOCAL-ONLY additions
+# =============================================================================
+#
+# `docker compose` (no `-f`) loads docker-compose.yml + THIS FILE automatically.
+# Coolify reads docker-compose.yml alone, so nothing here reaches a deployment.
+#
+# What lives here, and why none of it may go in the base file:
+#   · `name: edc` — keeps the existing `edc_*` volumes. On Coolify the project
+#     name comes from the resource, so two environments never share volumes.
+#   · Host ports — Coolify routes through its proxy; published ports would
+#     collide between dev and staging on the same box.
+#   · The fixed `edc` network name — same collision on a shared box.
+#   · The corpus bind mount — it points outside the repo.
+#
+# ⚠ Passing any `-f` turns auto-loading OFF. Then name this file explicitly:
+#     docker compose -f docker-compose.yml -f docker-compose.override.yml \
+#                    -f docker-compose.audio.yml up -d --wait
+#
+# ─── Host ports: one 454xx block, on purpose ────────────────────────────────
+# 🔴 45432, and the 454xx BLOCK GENERALLY, is a safety boundary — not just a
+#    way to avoid a Postgres already on the host. This demo used to publish
+#    Postgres on 55432, a port another local project's tooling has dialed as
+#    part of a destructive test setup. Keep every host port in this block.
+#    Container-side ports never collide; only the LEFT side matters.
+
+name: edc
+
+services:
+  postgres:
+    ports:
+      - "${POSTGRES_HOST_PORT:-45432}:5432"
+
+  redis:
+    ports:
+      - "${REDIS_HOST_PORT:-45479}:6379"
+
+  rustfs:
+    ports:
+      # 45410 → S3 API (the backend reaches it as http://rustfs:9000).
+      # 45411 → web console. ✅ MEASURED: the console is served at
+      #   http://localhost:45411/rustfs/console/ — the trailing path is
+      #   required. `/` answers with an S3 AccessDenied XML document.
+      #   The admin API is on the S3 port under /rustfs/admin/v3/…, SigV4-signed.
+      - "${RUSTFS_S3_HOST_PORT:-45410}:9000"
+      - "${RUSTFS_CONSOLE_HOST_PORT:-45411}:9001"
+
+  backend:
+    environment:
+      # Set EXPLICITLY rather than left to `resolveCorpusDir()`'s ancestor walk:
+      # inside the image there is no `corpus-generativo` above /repo/apps/backend.
+      CORPUS_DIR: /corpus
+    volumes:
+      # The demo library's 250 documents. A sibling repo, deliberately not
+      # vendored. `:ro` — the corpus is read for seeding and nothing else.
+      # ⚠ If it is not cloned next door, Docker creates an EMPTY directory and
+      #   the seed logs "no MANIFEST.csv" and carries on with an empty library.
+      - ${CORPUS_HOST_DIR:-../../corpus-generativo}:/corpus:ro
+    ports:
+      - "${BACKEND_HOST_PORT:-45402}:3002"
+
+  web:
+    ports:
+      - "${WEB_HOST_PORT:-45400}:3000"
+
+  ai-service:
+    ports:
+      - "${AI_SERVICE_HOST_PORT:-45401}:3000"
+
+  bge-m3-service:
+    ports:
+      - "${BGE_HOST_PORT:-45420}:8000"
+
+  rerank-service:
+    ports:
+      - "${RERANK_HOST_PORT:-45421}:8000"
+
+networks:
+  default:
+    name: edc

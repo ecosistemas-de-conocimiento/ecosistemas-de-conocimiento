@@ -6,6 +6,14 @@ operational experience on this stack, plus the Dockerfiles in this repo.
 
 Companions: `topology.md` (what runs where) · `env-manifests.md` (variables) · `backups.md` (RPO/RTO).
 
+> ⚠ **SUPERSEDED SHAPE (2026-10-14).** This runbook describes a multi-box fleet (dev/stage/prod,
+> datastores on a `data` box, one Coolify app per service). The current plan is **one Coolify box,
+> two environments (dev + staging), each one Docker Compose resource** built from
+> `infra/docker-compose.yml`, with Postgres, Redis and RustFS inside each environment. RustFS is the
+> store in every environment. Setup and variables: `env-manifests.md` §0–§2. Sections below that
+> still apply as-is: §3 migrations, §4 rollback, §5 build gotchas, §6 health contract, §8 RustFS
+> operations (ignore its "dev only" scope).
+
 ---
 
 ## 0. The deploy model

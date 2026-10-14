@@ -2,10 +2,14 @@
 # =============================================================================
 #
 #   cd infra
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --wait
+#   docker compose -f docker-compose.yml -f docker-compose.override.yml \
+#                  -f docker-compose.dev.yml up -d --wait
 #
-# Or, once, so you can stop typing both files:
-#   export COMPOSE_FILE=docker-compose.yml:docker-compose.dev.yml
+# Or, once, so you can stop typing the files:
+#   export COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:docker-compose.dev.yml
+#
+# ⚠ docker-compose.override.yml carries the host ports and the `edc` network.
+#   Any `-f` turns its auto-loading off, so it must be named explicitly.
 #
 # ─── When to use which ──────────────────────────────────────────────────────
 # `docker-compose.yml` alone      → THE DEMO. Production images, self-contained,
@@ -81,7 +85,9 @@ services:
       # across a bind mount.
       CHOKIDAR_USEPOLLING: "true"
       PORT: "5173"
-    ports:
+    # `!override` REPLACES the override file's `45400:3000` instead of adding
+    # to it — two mappings on one host port would fail to bind.
+    ports: !override
       # Vite dev binds 5173, not 3000. Published on the same host port so the
       # URL you demo does not change between modes.
       - "${WEB_HOST_PORT:-45400}:5173"
