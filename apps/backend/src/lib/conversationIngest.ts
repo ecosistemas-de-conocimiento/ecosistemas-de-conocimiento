@@ -185,8 +185,14 @@ export function citedDocumentIds(messages: readonly MessageRow[]): Array<number 
     }
 
     // `provenance` is the persisted citation payload: an array of retrieved
-    // chunks, each carrying the `documentId` its corpus knows it by — which is
-    // the `documents` row id, because that is what we send as the ingest id.
+    // chunks.
+    //
+    // 🔴 READ `metadata.docId`, NOT `documentId`. `documentId` is ai-service's
+    // OWN uuid for its copy of the document; the `documents` row id survives
+    // the round trip only in `metadata.docId` (see `chunkMetadata` in
+    // ./contentKind). Reading `documentId` sent a uuid into an integer-column
+    // query and Postgres threw after every chat answer (22P02, measured in
+    // local backend logs 2026-10-14).
     const provenance = message.provenance
     const chunks = Array.isArray(provenance)
       ? provenance
@@ -196,7 +202,11 @@ export function citedDocumentIds(messages: readonly MessageRow[]): Array<number 
     if (!Array.isArray(chunks)) continue
     for (const chunk of chunks) {
       if (!chunk || typeof chunk !== 'object') continue
-      const raw = (chunk as { documentId?: unknown }).documentId
+      const metadata = (chunk as { metadata?: unknown }).metadata
+      const raw =
+        metadata && typeof metadata === 'object'
+          ? (metadata as { docId?: unknown }).docId
+          : undefined
       if (typeof raw !== 'string' && typeof raw !== 'number') continue
       const text = String(raw)
       // ⚠ Skip our own conversation chunks. A turn grounded in a PREVIOUS TURN
@@ -226,16 +236,17 @@ export async function citedUnpublishedDocumentIds(
   if (cited.length === 0) return []
 
   /**
-   * ⚠ ONLY WELL-FORMED IDS REACH THE QUERY. `provenance` is a JSON blob written
-   * by the chat engine, so a malformed `documentId` is possible — and a
-   * non-numeric string handed to `where: { id: { in: … } }` against an integer
-   * column makes Postgres THROW, which would turn a bad citation into a crashed
-   * ingest run rather than a hold.
+   * ⚠ ONLY INTEGER IDS REACH THE QUERY. `documents.id` is an integer column,
+   * and `provenance` is a JSON blob written by the chat engine, so a malformed
+   * `docId` is possible — any non-numeric string handed to
+   * `where: { id: { in: … } }` makes Postgres THROW, which would turn a bad
+   * citation into a crashed ingest run rather than a hold. A uuid passes a
+   * `[A-Za-z0-9_-]+` check, so the guard is digits-only.
    *
    * ⚠ A rejected id is still counted as unpublished below, so junk HOLDS the
    * conversation rather than releasing it. Fail-closed, as everywhere here.
    */
-  const queryable = cited.filter((id) => typeof id === 'number' || /^[A-Za-z0-9_-]+$/.test(id))
+  const queryable = cited.filter((id) => typeof id === 'number' || /^\d+$/.test(id))
   if (queryable.length === 0) return cited
 
   const rows = await payload.find({

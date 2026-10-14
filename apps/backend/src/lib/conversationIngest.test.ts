@@ -36,6 +36,7 @@ import { staticDetector } from './anonymise'
 import type { DetectorFinding, PersonDetector } from './anonymise/types'
 import {
   citedDocumentIds,
+  citedUnpublishedDocumentIds,
   ingestConversationTurns,
   messageIdFromExternalId,
   releaseConversationsWaitingOn,
@@ -191,6 +192,26 @@ describe('the external id that joins a corpus chunk back to a turn', () => {
 // What a conversation cites
 // ---------------------------------------------------------------------------
 
+/**
+ * A provenance chunk in the shape chat-engine persists it (measured on a local
+ * `messages.provenance` row, 2026-10-14).
+ *
+ * 🔴 `documentId` is ai-service's OWN uuid for its copy of the document; the
+ * `documents` row id lives in `metadata.docId`. Fixtures that put the row id in
+ * `documentId` hid a bug where a uuid reached an integer-column query.
+ */
+let uuidSeq = 0
+function cite(docId: string | number) {
+  uuidSeq += 1
+  return {
+    chunkId: `chunk-${uuidSeq}`,
+    documentId: `0f6cbe38-184a-41c2-bde4-${String(uuidSeq).padStart(12, '0')}`,
+    corpus: 'eco-1',
+    score: 0.5,
+    metadata: { docId: String(docId), kind: 'documento' },
+  }
+}
+
 describe('🔴 which documents a conversation cites', () => {
   it('reads explicit @-mentions from contextRefs', () => {
     const ids = citedDocumentIds([
@@ -205,19 +226,19 @@ describe('🔴 which documents a conversation cites', () => {
     // only `contextRefs` would let a whole thread grounded in someone's private
     // draft sail through the hold — precisely what the hold exists for.
     const ids = citedDocumentIds([
-      { id: 2, provenance: { chunks: [{ documentId: '22' }] } },
+      { id: 2, provenance: { chunks: [cite('22')] } },
     ])
     expect(ids).toEqual([22])
   })
 
   it('reads a bare provenance array as well as a { chunks } envelope', () => {
-    expect(citedDocumentIds([{ id: 3, provenance: [{ documentId: 33 }] }])).toEqual([33])
+    expect(citedDocumentIds([{ id: 3, provenance: [cite(33)] }])).toEqual([33])
   })
 
   it('merges both sources and de-duplicates across turns', () => {
     const ids = citedDocumentIds([
       { id: 1, contextRefs: [{ relationTo: 'documents', value: 11 }] },
-      { id: 2, provenance: { chunks: [{ documentId: '11' }, { documentId: '12' }] } },
+      { id: 2, provenance: { chunks: [cite('11'), cite('12')] } },
     ])
     expect(ids.map(String).sort()).toEqual(['11', '12'])
   })
@@ -226,15 +247,65 @@ describe('🔴 which documents a conversation cites', () => {
     expect(citedDocumentIds([{ id: 1, contextRefs: [{ relationTo: 'sessions', value: 9 }] }])).toEqual([])
   })
 
+  it('🔴 reads metadata.docId, NEVER the chunk\'s ai-service uuid `documentId`', () => {
+    // Regression: the uuid in `documentId` reached `where: { id: { in } }` on
+    // the integer `documents.id` and Postgres threw 22P02 after every answer.
+    const ids = citedDocumentIds([
+      {
+        id: 9,
+        provenance: {
+          chunks: [
+            {
+              chunkId: 'c1',
+              documentId: '0f6cbe38-184a-41c2-bde4-83b254919882',
+              metadata: { docId: '119', kind: 'documento' },
+            },
+          ],
+        },
+      },
+    ])
+    expect(ids).toEqual([119])
+  })
+
+  it('ignores a chunk with no metadata.docId', () => {
+    const ids = citedDocumentIds([
+      { id: 9, provenance: { chunks: [{ documentId: '0f6cbe38-184a-41c2-bde4-83b254919882' }] } },
+    ])
+    expect(ids).toEqual([])
+  })
+
   it('IGNORES `msg-…` provenance ids — a turn grounded in a previous turn', () => {
     // 🔴 A conversation chunk is not a document. Treating `msg-7` as a
     // `documents` id would make `citedUnpublishedDocumentIds` find no row for
     // it, decide "we do not know ⇒ not yet", and hold the conversation FOREVER
     // on a row that can never be published.
     const ids = citedDocumentIds([
-      { id: 8, provenance: { chunks: [{ documentId: 'msg-7' }, { documentId: '12' }] } },
+      { id: 8, provenance: { chunks: [cite('msg-7'), cite('12')] } },
     ])
     expect(ids.map(String)).toEqual(['12'])
+  })
+})
+
+describe('🔴 only integer ids reach the documents query', () => {
+  it('never hands a non-numeric id to `where: { id: { in } }`, and still HOLDS on it', async () => {
+    // `documents.id` is an integer column: any non-numeric string there makes
+    // Postgres throw 22P02. A uuid passes a `[A-Za-z0-9_-]+` check, so the
+    // guard must be digits-only.
+    const db = seed([], { documents: [{ id: 5, publicationStatus: 'published' }] })
+    const payload = fakePayloadFor(db)
+    const uuid = '0f6cbe38-184a-41c2-bde4-83b254919882'
+
+    const waiting = await citedUnpublishedDocumentIds(payload, [
+      { id: 1, contextRefs: [{ relationTo: 'documents', value: uuid }] },
+      { id: 2, provenance: { chunks: [cite('5')] } },
+    ])
+
+    const find = payload.find as unknown as ReturnType<typeof vi.fn>
+    const sent = find.mock.calls.flatMap(
+      ([arg]) => ((arg as { where: { id: { in: unknown[] } } }).where.id.in),
+    )
+    expect(sent.map(String)).toEqual(['5'])
+    expect(waiting).toEqual([uuid])
   })
 })
 
@@ -314,7 +385,7 @@ describe('🔴 the hold — a conversation citing an unpublished draft', () => {
           id: 2,
           role: 'assistant',
           content: 'El borrador propone tres etapas',
-          provenance: { chunks: [{ documentId: '900' }] },
+          provenance: { chunks: [cite('900')] },
         },
       ],
       { documents: [{ id: 900, publicationStatus: 'draft' }] },
@@ -363,7 +434,7 @@ describe('🔴 the hold — a conversation citing an unpublished draft', () => {
           id: 1,
           role: 'user',
           content: 'Compara los dos borradores',
-          provenance: { chunks: [{ documentId: '910' }, { documentId: '911' }] },
+          provenance: { chunks: [cite('910'), cite('911')] },
         },
       ],
       {
@@ -390,7 +461,7 @@ describe('🔴 the release — the whole backlog goes out in ONE run', () => {
           id: 2,
           role: 'assistant',
           content: 'El borrador propone tres etapas',
-          provenance: { chunks: [{ documentId: '920' }] },
+          provenance: { chunks: [cite('920')] },
         },
         { id: 3, role: 'user', content: 'Gracias, lo reviso' },
       ],
