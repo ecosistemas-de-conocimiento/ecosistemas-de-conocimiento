@@ -10,12 +10,17 @@ node_modules
 **/node_modules
 .pnpm-store
 
-dist
-build
-.next
-.svelte-kit
-.turbo
-*.tsbuildinfo
+# ⚠ `**/` is required. A bare `dist` matches only the ROOT-level dir in Docker,
+#   so host-built packages/*/dist leaked into every image. Local builds then
+#   passed on stale output, and a clean checkout (Coolify) has no dist at all:
+#   ERR_MODULE_NOT_FOUND. The Dockerfiles build the workspace packages instead.
+**/dist
+**/build
+**/.next
+**/.svelte-kit
+**/.turbo
+**/*.tsbuildinfo
+.cache
 
 .git
 .github

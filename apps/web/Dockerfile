@@ -22,7 +22,9 @@ COPY . .
 # ⚠ `--frozen-lockfile` needs `pnpm-lock.yaml` to exist: run a root
 # `pnpm install` once before the first image build.
 RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @edc/web build
+# `...` = web AND its workspace deps, in order: packages publish from dist/,
+# which is never in the build context.
+RUN pnpm --filter "@edc/web..." build
 
 FROM node:22-alpine AS run
 WORKDIR /repo/apps/web

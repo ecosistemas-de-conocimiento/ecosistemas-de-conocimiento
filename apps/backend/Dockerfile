@@ -33,7 +33,13 @@ RUN corepack enable
 ENV NODE_ENV=production
 COPY --from=deps /repo/node_modules ./node_modules
 COPY --from=deps /repo/apps/backend/node_modules ./apps/backend/node_modules
+COPY --from=deps /repo/packages/ai-client/node_modules ./packages/ai-client/node_modules
+COPY --from=deps /repo/packages/chat-engine/node_modules ./packages/chat-engine/node_modules
+COPY --from=deps /repo/packages/identity-client/node_modules ./packages/identity-client/node_modules
 COPY . .
+# The workspace packages publish from dist/, which is gitignored and
+# dockerignored — build them here, or a clean checkout dies ERR_MODULE_NOT_FOUND.
+RUN pnpm --filter "@edc/backend^..." build
 # src/payload-types.ts is gitignored; routes that import it need it present at
 # build time. `generate:types` reads the config only — no database, no onInit.
 WORKDIR /repo/apps/backend
