@@ -61,3 +61,45 @@ describe('scopeHierarchy — the lengua line of the deterministic summary', () =
     expect(summaryText).not.toContain('Lenguas');
   });
 });
+
+// 🔴 Audit 2026-10-17: an @-mentioned testimonio was inlined into the prompt as
+// its unredacted original, under the uploader's filename.
+describe('resolveEntity — a mentioned document', () => {
+  const adapterFor = (row: Record<string, unknown>) => {
+    mockedBackendFetch.mockResolvedValue(new Response(JSON.stringify(row), { status: 200 }));
+    return makeChatDomainAdapter({ token: 't', sessionId: '1', organizationId: 7, documents: [] });
+  };
+
+  it('🔴 inlines a testimonio as its redactedText under a neutral title', async () => {
+    const adapter = adapterFor({
+      id: 5,
+      name: 'Testimonio de María López.m4a',
+      kind: 'audio',
+      contentKind: 'testimonio',
+      extractedText: 'Me llamo María López',
+      redactedText: 'Me llamo [Persona A]',
+    });
+    const block = await adapter.resolveEntity({ kind: 'document', id: 5 } as never);
+    expect(block).toContain('Me llamo [Persona A]');
+    expect(block).toContain('Testimonio');
+    expect(block).not.toContain('María');
+  });
+
+  it('never falls back to the original when there is no redaction', async () => {
+    const adapter = adapterFor({
+      id: 5,
+      contentKind: 'testimonio',
+      extractedText: 'Me llamo María López',
+      redactedText: null,
+    });
+    const block = await adapter.resolveEntity({ kind: 'document', id: 5 } as never);
+    expect(block).not.toContain('María');
+  });
+
+  it('inlines a documento as before', async () => {
+    const adapter = adapterFor({ id: 6, name: 'Acta', contentKind: 'documento', extractedText: 'texto' });
+    const block = await adapter.resolveEntity({ kind: 'document', id: 6 } as never);
+    expect(block).toContain('Documento adjunto: Acta');
+    expect(block).toContain('texto');
+  });
+});

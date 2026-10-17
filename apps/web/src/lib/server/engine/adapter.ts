@@ -43,6 +43,7 @@ import type {
 import { clamp } from '@edc/chat-engine/core';
 import { backendFetch } from '$lib/server/auth';
 import { lenguaSummaryLine, type LenguaFacet } from '$lib/lengua';
+import { isGatedContent, libraryTitleFor } from '$lib/biblioteca';
 
 const REF_BLOCK_MAX = 3500;
 const SUMMARY_MAX = 4000;
@@ -50,8 +51,11 @@ const SUMMARY_MAX = 4000;
 interface OrgRow { id: number; name: string; slug: string; description?: string | null }
 interface DocRow {
   id: number | string;
-  name: string;
+  /** ⚠ Absent for a colleague's gated row — the backend hides it. */
+  name?: string | null;
   kind?: string | null;
+  /** What the material IS. Decides the label and which text column is used. */
+  contentKind?: string | null;
   ingestStatus?: string | null;
 }
 
@@ -202,7 +206,12 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
         tasks.push(
           (async () => {
             for (const r of await sessionDocuments(q, 8)) {
-              out.push({ kind: 'document', id: r.id, label: r.name, sublabel: 'Documento adjunto' });
+              out.push({
+                kind: 'document',
+                id: r.id,
+                label: libraryTitleFor(r.contentKind, r.name),
+                sublabel: 'Documento adjunto',
+              });
             }
           })(),
         );
@@ -222,17 +231,33 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
         }
         if (ref.kind === 'document') {
           const r = await findById<
-            DocRow & { bodyMarkdown?: string | null; extractedText?: string | null }
+            DocRow & {
+              bodyMarkdown?: string | null;
+              extractedText?: string | null;
+              redactedText?: string | null;
+            }
           >('documents', ref.id);
           if (!r) return '';
-          const text = (r.bodyMarkdown ?? r.extractedText ?? '').trim();
+          /**
+           * 🔴 GATED CONTENT GOES INTO THE PROMPT AS `redactedText`, NEVER THE
+           * ORIGINAL — not even for the uploader, who is the one caller the
+           * backend still hands the original to. Audit 2026-10-17. The prompt
+           * leaves for a hosted model, and an anonymous testimony is anonymous
+           * there too. Same rule, same titles as `/biblioteca`.
+           */
+          const title = libraryTitleFor(r.contentKind, r.name);
+          const text = (
+            isGatedContent(r.contentKind)
+              ? (r.redactedText ?? '')
+              : (r.bodyMarkdown ?? r.extractedText ?? '')
+          ).trim();
           if (!text) {
             return clamp(
-              `Documento adjunto: ${r.name} (sin texto extraído todavía).`,
+              `Documento adjunto: ${title} (sin texto extraído todavía).`,
               REF_BLOCK_MAX,
             );
           }
-          return clamp(`Documento adjunto: ${r.name}\n${text}`, REF_BLOCK_MAX);
+          return clamp(`Documento adjunto: ${title}\n${text}`, REF_BLOCK_MAX);
         }
       } catch {
         /* best-effort per ref */

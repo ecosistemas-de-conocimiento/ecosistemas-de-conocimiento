@@ -115,27 +115,34 @@ export function mayReviewAnywhere(cap: ReviewCapability): boolean {
 }
 
 /**
- * Read the caller's own permissions.
+ * Read the caller's own identity payload, or null when the read failed.
  *
  * ⚠ Forwards the user's JWT, like every other call in this app. The endpoint
  * answers about whoever the token names — there is no id parameter to get wrong
  * and no way to ask about somebody else.
  */
-export async function readReviewCapability(
-  token: string | undefined,
-): Promise<ReviewCapability> {
-  if (!token) return NONE;
+export async function readIdentity(token: string | undefined): Promise<unknown | null> {
+  if (!token) return null;
   try {
     const res = await backendFetch(token, '/api/v1/identity/me', { method: 'GET' });
     if (!res.ok) {
       console.warn(`[holds] identity answered ${res.status} reading the caller's permissions`);
-      return NONE;
+      return null;
     }
-    return reviewCapabilityFrom(await res.json().catch(() => null));
+    return await res.json().catch(() => null);
   } catch (err) {
     console.warn('[holds] could not read the caller permissions', err);
-    return NONE;
+    return null;
   }
+}
+
+/** Read the caller's own permissions, for one permission string. */
+export async function readReviewCapability(
+  token: string | undefined,
+  permission = HOLDS_REVIEW,
+): Promise<ReviewCapability> {
+  const body = await readIdentity(token);
+  return body === null ? NONE : reviewCapabilityFrom(body, permission);
 }
 
 // ---------------------------------------------------------------------------

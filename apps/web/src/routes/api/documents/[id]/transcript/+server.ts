@@ -50,6 +50,12 @@ import { isIngestStatus } from '$lib/ingest';
  * sitting beside it — which is the whole point. Verified by reading
  * `services/ai-service/src/workers/ingest.worker.ts`.
  *
+ * 🔴 ON A TESTIMONIO THE GATE RE-RUNS. The backend's `gateResetForTextEdit`
+ * (collections/Documents.ts) clears `anonymisationStatus` and `redactedText`
+ * when this write changes the text, so the next ingest anonymises the
+ * CORRECTED text instead of re-using an approval given to the old one. This
+ * route cannot do it itself: those columns are locked against API writes.
+ *
  * ⚠ AN EMPTY TRANSCRIPT IS REFUSED. Saving one would embed an empty document:
  * retrieval would find nothing, the row would still say `listo`, and the
  * recording would vanish from every answer with nothing looking broken.

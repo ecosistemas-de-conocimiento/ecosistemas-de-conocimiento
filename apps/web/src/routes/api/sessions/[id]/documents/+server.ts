@@ -4,6 +4,8 @@ import { backendFetch, backendUrl } from '$lib/server/auth';
 import { mapUpstreamMediaError } from '$lib/server/documents';
 import { degradeListResponse } from '$lib/server/degrade';
 import { isAudioUpload, maxUploadBytesFor } from '$lib/config';
+import { readReviewCapability } from '$lib/server/holds';
+import { mayUploadVocesAnywhere, parseUploadContentKind, VOCES_UPLOAD } from '$lib/uploadKind';
 
 // GET /api/sessions/[id]/documents → all docs attached to this session.
 //
@@ -65,6 +67,24 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     const kindRaw = form.get('kind');
     const name = (form.get('name') as string | null) ?? file.name;
     const isPinned = form.get('isPinned') !== 'false';
+
+    // 🔴 WHAT THE MATERIAL IS — `documento` or a Voz. Without this field the
+    // anonymisation gate never ran on an upload from the UI (audit 2026-10-17).
+    // Validated here; the backend's `enforceVocesUploadRights` is the control.
+    const contentKind = parseUploadContentKind(form.get('contentKind'));
+    if (!contentKind) {
+      return json({ error: 'invalid_content_kind' }, { status: 400 });
+    }
+    // ⚠ Refused BEFORE the file goes up. The backend would refuse the row too,
+    // but only after the bytes had landed in media storage with no document
+    // pointing at them. Cheap check on "anywhere"; the backend checks THIS
+    // ecosistema.
+    if (contentKind === 'testimonio') {
+      const grant = await readReviewCapability(locals.token, VOCES_UPLOAD);
+      if (!mayUploadVocesAnywhere(grant)) {
+        return json({ error: 'voces_upload_forbidden' }, { status: 403 });
+      }
+    }
 
     // Infer kind from MIME if not provided.
     //
@@ -160,6 +180,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
         // `documents/[docId]` route for how the list grows and shrinks.
         session: [sessionId],
         kind,
+        contentKind,
         mode: 'rag-retrieve',
         name,
         mediaFile: mediaId,

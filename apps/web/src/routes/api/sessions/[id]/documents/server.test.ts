@@ -459,3 +459,73 @@ describe('POST /api/sessions/[id]/documents — session is an array', () => {
     expect(body.session).toEqual(['abc-123']);
   });
 });
+
+// ── Content kind — documento or Voz ───────────────────────────────────────
+//
+// 🔴 Audit 2026-10-17: this route never sent `contentKind`, so every upload from
+// the UI landed as a `documento` and the anonymisation gate never ran on one.
+
+describe('POST /api/sessions/[id]/documents — contentKind', () => {
+  const mediaOk = () =>
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ doc: { id: 777 } }), { status: 200 }),
+    );
+  const created = () => new Response(JSON.stringify({ doc: { id: 12 } }), { status: 201 });
+  const identity = (permissions: string[]) =>
+    new Response(
+      JSON.stringify({ principal: { isPlatformAdmin: false, projects: { eco: { permissions } } } }),
+      { status: 200 },
+    );
+  const audio = () => new File(['x'], 'voz.m4a', { type: 'audio/mp4' });
+  const createBody = () => {
+    const call = mockedBackendFetch.mock.calls.find((c) => c[1] === '/api/documents')!;
+    return JSON.parse((call[2] as RequestInit).body as string);
+  };
+
+  it('sends documento when the form names none', async () => {
+    mediaOk();
+    mockedBackendFetch.mockResolvedValueOnce(created());
+    const res = await POST(makeEvent({ request: multipartRequest(audio()) }));
+    expect(res.status).toBe(201);
+    expect(createBody().contentKind).toBe('documento');
+  });
+
+  it('🔴 passes a testimonio through for someone holding voces:upload', async () => {
+    mediaOk();
+    mockedBackendFetch
+      .mockResolvedValueOnce(identity(['voces:upload']))
+      .mockResolvedValueOnce(created());
+    const res = await POST(
+      makeEvent({ request: multipartRequest(audio(), { contentKind: 'testimonio' }) }),
+    );
+    expect(res.status).toBe(201);
+    expect(createBody()).toMatchObject({ kind: 'audio', contentKind: 'testimonio' });
+  });
+
+  it('🔴 refuses a testimonio from someone without voces:upload, before the file goes up', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    mockedBackendFetch.mockResolvedValueOnce(identity(['documents:write']));
+    const res = await POST(
+      makeEvent({ request: multipartRequest(audio(), { contentKind: 'testimonio' }) }),
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: 'voces_upload_forbidden' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the identity read fails', async () => {
+    mockedBackendFetch.mockResolvedValueOnce(new Response('{}', { status: 500 }));
+    const res = await POST(
+      makeEvent({ request: multipartRequest(audio(), { contentKind: 'testimonio' }) }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it.each(['conversacion', 'TESTIMONIO', 'otro'])('refuses contentKind=%s with 400', async (kind) => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const res = await POST(makeEvent({ request: multipartRequest(audio(), { contentKind: kind }) }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_content_kind' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});

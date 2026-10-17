@@ -11,6 +11,14 @@
     detachHintCopy,
   } from '$lib/documents';
   import { isAudioUpload, UPLOAD_ACCEPT } from '$lib/config';
+  import { page } from '$app/stores';
+  import {
+    mayUploadVoces,
+    UPLOAD_CONTENT_KINDS,
+    UPLOAD_KIND_HINT,
+    UPLOAD_KIND_LABELS,
+    type UploadContentKind,
+  } from '$lib/uploadKind';
   import {
     audioMetaChips,
     canRetryIngest,
@@ -61,6 +69,15 @@
    * `uploadInFlightCopy`; this is the state it reads.
    */
   let uploadingFile = $state<{ name: string; isAudio: boolean } | null>(null);
+
+  /**
+   * 🔴 DOCUMENTO OR VOZ. Shown only to someone holding `voces:upload` in the
+   * current ecosistema (`+layout.server.ts` → `vocesUpload`). Presentation: the
+   * backend refuses a testimonio from anyone else. Without this choice the
+   * anonymisation gate never ran on a UI upload (audit 2026-10-17).
+   */
+  const canUploadVoces = $derived(mayUploadVoces($page.data?.vocesUpload, app.ecosystem?.slug));
+  let uploadContentKind = $state<UploadContentKind>('documento');
 
   // ── Traer un documento de otra conversación ─────────────────────────────
   //
@@ -211,7 +228,11 @@
     try {
       // uploadDoc handles all error UX via toasts (size cap, server errors,
       // network failure). We just react to the success/failure result here.
-      const doc = await app.uploadDoc(s.id, file);
+      const doc = await app.uploadDoc(
+        s.id,
+        file,
+        canUploadVoces ? uploadContentKind : 'documento',
+      );
       if (doc) expandedId = doc.id;
     } finally {
       uploading = false;
@@ -384,6 +405,26 @@
       Todo lo que subas entra como <strong class="text-ink">borrador</strong>: solo tú lo ves.
       Puedes usarlo en el chat y publicarlo cuando esté listo.
     </p>
+
+    {#if canUploadVoces}
+      <div class="px-3 py-1.5 border-b border-elevated flex flex-col gap-1">
+        <label class="text-[11px] text-ink-soft flex items-center gap-2">
+          <span>Lo que vas a subir es:</span>
+          <select
+            class="text-[11px] bg-surface border border-elevated rounded px-1 py-0.5 text-ink"
+            bind:value={uploadContentKind}
+            disabled={uploading}
+          >
+            {#each UPLOAD_CONTENT_KINDS as k (k)}
+              <option value={k}>{UPLOAD_KIND_LABELS[k]}</option>
+            {/each}
+          </select>
+        </label>
+        {#if uploadContentKind === 'testimonio'}
+          <p class="text-[10px] text-ink-soft">{UPLOAD_KIND_HINT}</p>
+        {/if}
+      </div>
+    {/if}
 
     <!-- Traer un documento que ya existe. Deliberately small and folded away:
          the everyday path is uploading a file here. This is for the person who

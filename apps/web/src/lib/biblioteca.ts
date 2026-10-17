@@ -75,6 +75,46 @@ export function isTestimony(kind: LibraryKind): boolean {
 }
 
 /**
+ * 🔴 IS THIS ROW GATED CONTENT? Read off `contentKind`, NEVER off `kind`.
+ *
+ * Two different "kind"s live on a `documents` row (backend
+ * `lib/contentKind.ts`): `kind` is the FILE FORMAT (`pdf | docx | audio |
+ * markdown`) and `contentKind` is what the material IS (`documento |
+ * testimonio | conversacion`). A Voz is usually `kind: 'audio'`,
+ * `contentKind: 'testimonio'`. This page used to test `kind === 'testimonio'`,
+ * which no row ever matches — so every testimony was shown with its uploader
+ * and its filename. Found by the 2026-10-17 audit.
+ *
+ * ⚠ `!== 'documento'`, so it FAILS CLOSED: an unknown or missing
+ * `contentKind` is treated as gated. The cost of that mistake is a neutral
+ * title; the other mistake is a name on an anonymous testimony.
+ */
+export function isGatedContent(contentKind: unknown): boolean {
+  return contentKind !== 'documento';
+}
+
+/**
+ * The library kind of a row: `testimonio` from `contentKind`, else the format.
+ */
+export function libraryKindOf(row: { kind?: unknown; contentKind?: unknown }): LibraryKind {
+  if (row.contentKind === 'testimonio') return 'testimonio';
+  return parseLibraryKind(row.kind);
+}
+
+/**
+ * The title a reader sees. Mirrors `titleFor` in the backend's
+ * `lib/contentKind.ts`: gated content gets a NEUTRAL title, because `name` is
+ * free text the uploader typed (usually the filename) and never went through
+ * the anonymisation gate.
+ */
+export function libraryTitleFor(contentKind: unknown, name: unknown): string {
+  if (contentKind === 'testimonio') return 'Testimonio';
+  if (contentKind === 'conversacion') return 'Conversación';
+  if (isGatedContent(contentKind)) return 'Documento sin título';
+  return typeof name === 'string' && name.trim() ? name.trim() : 'Documento sin título';
+}
+
+/**
  * 🔴 WHETHER A CONTRIBUTOR NAME MAY EXIST FOR THIS ROW AT ALL.
  *
  * Not "should the UI hide it" — whether the field is allowed to be populated.
@@ -219,6 +259,22 @@ export function kindFilterLabel(filter: KindFilter): string {
  */
 export function kindFilterValues(filter: KindFilter): string[] | null {
   return filter === 'todos' ? null : [filter];
+}
+
+/**
+ * The backend `where` pairs a filter adds, or none for `todos`.
+ *
+ * ⚠ `Voces` filters on `contentKind`, every other filter on the format AND on
+ * `contentKind = documento`. A Voz is `kind: 'audio'`; without the second
+ * clause the "Audios" filter would list testimonies too.
+ */
+export function kindFilterWhere(filter: KindFilter): Array<[string, string]> {
+  if (filter === 'todos') return [];
+  if (filter === 'testimonio') return [['where[contentKind][equals]', 'testimonio']];
+  return [
+    ['where[kind][in]', filter],
+    ['where[contentKind][equals]', 'documento'],
+  ];
 }
 
 /**

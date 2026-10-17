@@ -2,6 +2,7 @@ import type {
   Access,
   CollectionAfterChangeHook,
   CollectionAfterDeleteHook,
+  CollectionBeforeOperationHook,
   CollectionBeforeValidateHook,
   CollectionConfig,
   Endpoint,
@@ -180,9 +181,11 @@ const PUBLICATION_LABELS: Record<PublicationState, string> = {
  * is narrower and is the one that matters: no route reaches these columns
  * WITHOUT an audit row.
  *
- * ⚠ `read` IS DELIBERATELY LEFT ALONE. These fields are how the uploader sees
- * why their upload is stuck, and `visibleToCaller` already decides who sees the
- * row at all.
+ * ⚠ `read` IS LEFT ALONE ON MOST OF THEM. These fields are how the uploader
+ * sees why their upload is stuck, and `visibleToCaller` already decides who
+ * sees the row at all. The exceptions are `heldText` and
+ * `anonymisationSurvivors`, which carry what still identified someone — see
+ * `mayReadGatedOriginal`.
  *
  * ⚠ ALSO LOCKS `tema` AND `lengua`, for a different reason. Those are ground
  * truth copied from the corpus manifest by `seed/corpus.ts` and
@@ -246,6 +249,112 @@ const gateWritesOnly: FieldAccess = () => false
  */
 export const lenguaReadable: FieldAccess = ({ doc }) =>
   (doc as { contentKind?: unknown } | undefined)?.contentKind === 'documento'
+
+/**
+ * 🔴 A PUBLISHED TESTIMONY'S ORIGINAL IS THE UPLOADER'S, NOT THE ECOSISTEMA'S.
+ *
+ * `visibleToCaller` shares a PUBLISHED row with every member — correct for the
+ * row, wrong for three of its columns when the row is gated content:
+ *
+ *   · `extractedText` / `bodyMarkdown` — the UNREDACTED original. For a
+ *     `testimonio` that is the very text the gate exists to keep out of shared
+ *     view; what members get is `redactedText`.
+ *   · `name` — free text the uploader typed, usually the filename. `titleFor`
+ *     already keeps it out of the corpus for the same reason
+ *     ("Testimonio de María López.mp3").
+ *   · `heldText` / `anonymisationSurvivors` — the gate's refused output and the
+ *     offsets of what still identified someone in it.
+ *   · `audioMeta` — its detected `language` (see `enforceLenguaDocumentoOnly`).
+ *
+ * The recording itself is closed in `collections/Media.ts` by the same rule.
+ *
+ * Found by the 2026-10-17 audit: before this, any member of the ecosistema could
+ * `GET /api/documents/:id` on a published testimonio and read the raw original.
+ *
+ * Readable by: a platform admin, the uploader, or anyone when the row is a
+ * `documento`.
+ *
+ * ⚠ `=== 'documento'`, FAILING CLOSED, as `lenguaReadable` is written. An
+ * unknown or missing `contentKind` hides the field from everyone but the
+ * uploader and a platform admin.
+ *
+ * 🔴 A QUERY THAT SELECTS THESE MUST ALSO SELECT `contentKind` AND
+ * `uploadedBy`. Same trap as `lenguaReadable`: the projection runs before field
+ * access, so a `select` that omits them hides the field on every row.
+ *
+ * ⚠ NO ROW ⇒ REFUSED. Payload checks a `where` / `sort` path with no row (see
+ * `endpoints/lenguas.ts`), so `where[extractedText]` is refused for every
+ * non-override caller. Nothing in the product queries these columns that way;
+ * the graph backfill uses `overrideAccess`. `name` is the exception — see
+ * {@link gatedNameReadable}.
+ */
+export function mayReadGatedOriginal(
+  user: unknown,
+  doc: { contentKind?: unknown; uploadedBy?: unknown } | undefined,
+): boolean {
+  if (!user) return false
+  if (isPlatformAdminUser(user)) return true
+  if (!doc) return false
+  if (doc.contentKind === 'documento') return true
+  const callerId = (user as { id?: unknown }).id
+  const uploader = relationId(doc.uploadedBy)
+  return uploader !== null && callerId != null && String(uploader) === String(callerId)
+}
+
+export const gatedOriginalReadable: FieldAccess = ({ req, doc }) =>
+  mayReadGatedOriginal(req.user, doc as Parameters<typeof mayReadGatedOriginal>[1])
+
+/**
+ * `name` follows {@link mayReadGatedOriginal} on every ROW, but lets a `where`
+ * or `sort` on it through, because the product searches by title
+ * (`/biblioteca`, the `@`-mention picker).
+ *
+ * ⚠ LETTING THE QUERY THROUGH WOULD BE AN ORACLE ON ITS OWN: search
+ * `where[name][like]=María` and see whether a testimonio row comes back, with
+ * its title hidden. {@link constrainGatedNameQueries} closes that by narrowing
+ * any query that names `name` to rows whose `name` the caller may read.
+ */
+export const gatedNameReadable: FieldAccess = ({ req, doc }) =>
+  doc === undefined
+    ? Boolean(req.user)
+    : mayReadGatedOriginal(req.user, doc as Parameters<typeof mayReadGatedOriginal>[1])
+
+/** Does a Payload `where` mention this field anywhere, at any depth? */
+export function whereMentions(where: unknown, field: string): boolean {
+  if (!where || typeof where !== 'object') return false
+  if (Array.isArray(where)) return where.some((w) => whereMentions(w, field))
+  for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
+    if (key === field || key.startsWith(`${field}.`)) return true
+    if ((key === 'and' || key === 'or') && whereMentions(value, field)) return true
+  }
+  return false
+}
+
+/**
+ * 🔴 A QUERY ON `name` ONLY MATCHES ROWS WHOSE `name` THE CALLER MAY READ.
+ * The other half of {@link gatedNameReadable}.
+ *
+ * ⚠ `sort=name` is not narrowed. The order of hidden titles inside a page
+ * leaks far less than a match, and narrowing a sort would drop rows from the
+ * list.
+ */
+export const constrainGatedNameQueries: CollectionBeforeOperationHook = ({
+  args,
+  operation,
+  req,
+}) => {
+  if (operation !== 'read' && operation !== 'count') return args
+  const a = args as { overrideAccess?: boolean; where?: Where }
+  // REST leaves it undefined (= access applies); the local API defaults it to true.
+  if (a.overrideAccess === true) return args
+  const user = req.user
+  if (!user || isPlatformAdminUser(user)) return args
+  if (!whereMentions(a.where, 'name')) return args
+  const readable: Where = {
+    or: [{ contentKind: { equals: 'documento' } }, { uploadedBy: { equals: user.id } }],
+  }
+  return { ...args, where: { and: [a.where as Where, readable] } } as typeof args
+}
 
 const uploaderOnly: Access = ({ req: { user } }) => {
   if (!user) return false
@@ -447,6 +556,7 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
   // Needs neither the ecosistema nor the contentKind — only the STORED
   // publication status — so it runs before the two that do.
   enforceDraftOnlyTextEdits({ next, original, operation, req })
+  if (operation !== 'create') Object.assign(next, gateResetForTextEdit(next, original) ?? {})
 
   // ⚠ LAST, because it needs the ecosistema this hook just derived. A permission
   // is held IN an organization, so the check is meaningless before we know which
@@ -454,6 +564,52 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
   await enforceVocesUploadRights({ next, original, operation, req })
 
   return next
+}
+
+/**
+ * 🔴 NEW TEXT ON A GATED ROW RE-RUNS THE GATE. Audit 2026-10-17.
+ *
+ * The transcript editor (`apps/web/.../documents/[id]/transcript`) writes a
+ * corrected `extractedText` and re-queues the ingest. On an APPROVED testimonio
+ * `enqueueIngestForDoc` then passes the stored `redactedText` as `approvedText`
+ * — the text a reviewer cleared for the OLD transcript — and ingests that, so
+ * the correction never reached the corpus. Worse, the approval stood for words
+ * nobody reviewed. On a `ready` row a gate run that then HOLDS would leave last
+ * time's `redactedText` behind for `corpusTextFor`, the bug `planIngestRetry`
+ * documents.
+ *
+ * So a changed text clears the gate state exactly the way `planIngestRetry`
+ * does, and the next ingest gates the new text from scratch.
+ *
+ * ⚠ `rejected` IS LEFT ALONE. A reviewer's "no" is terminal; editing the text
+ * is not a way round it (`enqueueIngestForDoc` refuses a rejected row).
+ *
+ * ⚠ USER WRITES ONLY. It runs inside `bindDocumentToEcosystem`, which returns
+ * early for server-side writes — the extractor and the transcription callback
+ * write `extractedText` themselves and must not reset the gate they feed.
+ *
+ * Returns the fields to merge into `next`, or null when nothing changes.
+ */
+export function gateResetForTextEdit(
+  next: Record<string, unknown>,
+  original: Record<string, unknown>,
+): Record<string, unknown> | null {
+  // `contentKind` is immutable after create; the stored value is the truth.
+  const kind = original.contentKind ?? next.contentKind
+  if (kind === 'documento') return null
+  if (!('extractedText' in next)) return null
+  const asText = (v: unknown): string => (typeof v === 'string' ? v : '')
+  if (asText(next.extractedText) === asText(original.extractedText)) return null
+  const status = original.anonymisationStatus
+  if (status !== 'approved' && status !== 'ready' && status !== 'held') return null
+  return {
+    anonymisationStatus: 'n/a',
+    anonymisationError: null,
+    anonymisationReport: null,
+    redactedText: null,
+    heldText: null,
+    anonymisationSurvivors: null,
+  }
 }
 
 /**
@@ -2301,7 +2457,9 @@ export const Documents: CollectionConfig = {
        */
       name: 'heldText',
       type: 'textarea',
-      access: { create: gateWritesOnly, update: gateWritesOnly },
+      // 🔴 Read: uploader / platform admin only on gated content. Reviewers read
+      // it through `lib/holdReview.ts` (overrideAccess). See `mayReadGatedOriginal`.
+      access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
       admin: {
         readOnly: true,
         description:
@@ -2323,7 +2481,7 @@ export const Documents: CollectionConfig = {
        */
       name: 'anonymisationSurvivors',
       type: 'json',
-      access: { create: gateWritesOnly, update: gateWritesOnly },
+      access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
       admin: {
         readOnly: true,
         description: 'Posiciones (no texto) de lo que la verificación encontró todavía presente.',
@@ -2391,10 +2549,20 @@ export const Documents: CollectionConfig = {
         { label: 'RAG retrieve', value: 'rag-retrieve' },
       ],
     },
-    { name: 'name', type: 'text', required: true, defaultValue: 'Untitled document' },
+    {
+      name: 'name',
+      type: 'text',
+      required: true,
+      defaultValue: 'Untitled document',
+      // 🔴 The uploader's filename. Hidden from colleagues on gated content —
+      // see `gatedNameReadable` and `constrainGatedNameQueries`.
+      access: { read: gatedNameReadable },
+    },
     {
       name: 'bodyMarkdown',
       type: 'textarea',
+      // 🔴 Raw original text. See `mayReadGatedOriginal`.
+      access: { read: gatedOriginalReadable },
       admin: {
         description: 'Markdown source. Used for kind=markdown.',
       },
@@ -2589,6 +2757,9 @@ export const Documents: CollectionConfig = {
        */
       name: 'audioMeta',
       type: 'json',
+      // ⚠ Its detected `language` is the same re-identification key `lengua` is
+      // on a testimonio. Uploader / platform admin only on gated content.
+      access: { read: gatedOriginalReadable },
       admin: {
         readOnly: true,
         description: 'Recording metadata: duration, language, confidence, model, chunk count.',
@@ -2597,6 +2768,9 @@ export const Documents: CollectionConfig = {
     {
       name: 'extractedText',
       type: 'textarea',
+      // 🔴 THE UNREDACTED ORIGINAL. On a published testimonio, colleagues read
+      // `redactedText`; this stays with the uploader. See `mayReadGatedOriginal`.
+      access: { read: gatedOriginalReadable },
       admin: {
         description:
           'The document text: extracted for pdf/docx, TRANSCRIBED for audio. Cached so retries do not redo the work — which for audio is CPU-hours, not milliseconds.',
@@ -2604,6 +2778,7 @@ export const Documents: CollectionConfig = {
     },
   ],
   hooks: {
+    beforeOperation: [constrainGatedNameQueries],
     // ⚠ DO NOT FOLD `enforceLenguaDocumentoOnly` INTO `bindDocumentToEcosystem`.
     // Its own doc block says why; the short version is `!req.user`.
     beforeValidate: [bindDocumentToEcosystem, enforceLenguaDocumentoOnly],
@@ -2621,11 +2796,10 @@ export const Documents: CollectionConfig = {
      * ecosistema's assistant kept quoting it, citing something nobody could
      * open.
      *
-     * ⚠ `@edc/ai-client` still has no per-document DELETE — only
-     * `deleteCorpus(name)`, which would take the whole ecosistema's shared
-     * corpus with it. So this RETIRES instead: it closes the chunk's validity
-     * window, which removes it from every retrieve that passes `asOf`. See
-     * `retireDeletedDocument` for why that distinction matters.
+     * ✅ A REAL DELETE NOW: `admin.deleteDocument` removes the document and its
+     * chunks from both the draft and the shared corpus, under the ecosistema's
+     * ai-service org. Retiring (closing the validity window) is only the
+     * fallback when that call fails. See `retireDeletedDocument`.
      *
      * ⚠ `afterDelete`, not `beforeDelete`, on purpose: a document that could
      * not be retired should still be deletable. The user asked for it gone, and
