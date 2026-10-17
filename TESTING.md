@@ -147,15 +147,49 @@ main checkout), where they are marked measured.
 | `apps/backend/e2e/audio.e2e.ts` | ⚠ failing — cause not yet investigated |
 | `apps/backend/e2e/identity.e2e.ts` | ⚠ failing — cause not yet investigated |
 | `apps/backend/e2e/ratings.e2e.ts` | ⚠ failing — cause not yet investigated |
-| `apps/web/e2e/retrieval.spec.ts` | not run — needs a real-model stack |
-| `apps/web/e2e/journey.spec.ts`, cite step | not run — needs a real-model stack |
+| `apps/web/e2e/retrieval.spec.ts` | 2/2 passing (re-run 2026-10-17, bag-of-words fake embeddings) |
+| `apps/web/e2e/journey.spec.ts` | ⚠ failing at the rating step, before the cite step (see below) |
+| `apps/web/e2e/journey.spec.ts`, cite step | ⚠ failing on the fake stack: dense retrieval does not rank the uploaded PDF |
 
-🔴 **`retrieval.spec.ts` and the journey's cite step cannot pass on the fake stack.** The
-fake provider returns random embeddings, so retrieval ranks chunks at random and no
-citation is predictable. Run them against a stack with a real model key (a paid call).
+**The fake provider's embeddings are a hashed bag of words now, not random.** Texts that
+share words land close (`services/ai-service/test-support/fake-provider/README.md`), so a
+retrieval e2e on the fake stack means something. Measured 2026-10-17 on an isolated
+fake-provider stack (project `edc-e2e-hyb`, backend and web built from this tree, the
+ai-service image of the local demo, 163 published seeded documents):
 
-Not in the table: `publish.e2e.ts`, `storage.e2e.ts`, `revision.spec.ts` and the rest of
-`journey.spec.ts` have no recorded result on this date.
+- `retrieval.spec.ts`: 2/2. It needed one test fix: the draft upload now sends an `Origin`
+  header. SvelteKit answers 403 "Cross-site POST form submissions are forbidden" to a
+  multipart POST without one, and Playwright's API request context sends none.
+- The journey stops at "rate the answer 4 stars, then re-rate it to 2": the row reads
+  `Tu valoración ★★☆☆☆ Quitar` and never `Valoración guardada: 2 de 5.` Not investigated
+  here (ratings belong to another lane). A throwaway copy with every assertion made
+  soft got through to the cite step. There, the audio upload failed (no audio-service in
+  that stack, expected) and the cite step failed.
+- 🔴 **The cite step fails on the fake stack for a ranking reason, not a product bug
+  (inferred).** The fake embedder has no stop-word removal. The journey's long question
+  shares mostly filler words (`qué`, `su`, `de`) with short corpus documents, and the
+  uploaded PDF is one long chunk. Ranks of the uploaded PDF in the published corpus,
+  top 50, measured against that stack's `/v1/retrieve`:
+
+  | question | dense | hybrid |
+  | --- | --- | --- |
+  | the journey's question | not in top 50 | 28 |
+  | `¿qué cuenta <name> sobre su trabajo?` | 44 | 8 |
+  | the name alone | 4 | 1 |
+
+  The document is retrievable; the question is the wrong shape for a bag-of-words
+  embedder. On real embeddings the step is meaningful. Do not shorten the question to
+  make the fake stack pass: that would stop testing a natural question on a real stack.
+
+Not in the table: `publish.e2e.ts`, `storage.e2e.ts` and `revision.spec.ts` have no
+recorded result on this date.
+
+⚠ **Running from a worktree: the fixtures, the web origin and a trailing newline.**
+`apps/web/e2e/fixtures/` is gitignored; copy it from the main checkout or rebuild it.
+Set `WEB_ORIGIN` in the isolated stack's `.env` to the web host port you chose, or every
+form POST answers 403. If you build that `.env` by appending lines to a copy of the main
+one, check the copy ended with a newline: the 2026-10-17 run glued `COMPOSE_PROFILES=fake`
+onto `PUBLIC_BACKEND_URL`, and every ingest answered 400 `Invalid URL`.
 
 ### Running them against an isolated fake-provider stack
 

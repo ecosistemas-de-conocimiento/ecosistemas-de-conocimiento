@@ -730,12 +730,15 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
     // published. The title on a source card is the upload name
     // (`chunkMetadata.title` = `documents.name`).
     //
-    // ⚠ Under the fake provider (`COMPOSE_PROFILES=fake`) embeddings are hash
-    // vectors with no meaning (`test-support/fake-provider/server.mjs`,
-    // `fakeEmbedOne`), so dense retrieval over the published corpus is close
-    // to random and this step can fail there for that reason alone. Read a
-    // failure on the fake stack with that in mind; it is meaningful on real
-    // embeddings.
+    // ⚠ Under the fake provider (`COMPOSE_PROFILES=fake`) embeddings are a
+    // hashed bag of words (`test-support/fake-provider/server.mjs`,
+    // `fakeEmbedOne`), with no stop-word removal. This long question shares
+    // mostly filler words (`qué`, `su`, `de`) with short corpus documents, and
+    // the uploaded PDF is one long chunk, so DENSE retrieval ranks it below
+    // the cap. Measured 2026-10-17 on an isolated fake stack: dense placed it
+    // outside the top 50 for this question, hybrid at 28; the person's name
+    // alone ranks it 4 (dense) and 1 (hybrid). So this step FAILS on the fake
+    // stack for that reason. It is meaningful on real embeddings.
     const sourcesBlock = page.getByTestId('citation-sources').last();
     await expect(sourcesBlock, 'the answer rendered with NO citation block').toBeVisible({
       timeout: 60_000,

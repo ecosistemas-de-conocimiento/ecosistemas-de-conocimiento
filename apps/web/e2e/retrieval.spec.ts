@@ -11,12 +11,13 @@ import { fixtureBytes, fixtures } from './fixtures';
  * 🔴 RUN ONLY AGAINST THE FAKE PROVIDER (`COMPOSE_PROFILES=fake`). Each turn
  * here is a real `/api/generate` call; against a paid model it spends money.
  *
- * ⚠ Under the fake provider embeddings are hash vectors with no meaning
- * (`fakeEmbedOne` in `services/ai-service/test-support/fake-provider`), so
- * WHICH chunks come back is close to random. The isolation and filter
- * assertions do not depend on that: "never" and "only" hold for any ranking.
- * The positive controls (the draft IS cited in its own conversation; the
- * filter returns SOMETHING) do depend on it, and say so when they fail.
+ * ⚠ Under the fake provider embeddings are a hashed bag of words
+ * (`fakeEmbedOne` in `services/ai-service/test-support/fake-provider`): texts
+ * that share words land close, so a question naming the draft's person finds
+ * it. The isolation and filter assertions do not depend on ranking: "never"
+ * and "only" hold for any ranking. The positive controls (the draft IS cited
+ * in its own conversation; the filter returns SOMETHING) do. Measured
+ * 2026-10-17 on an isolated fake stack: both tests pass.
  *
  * Everything created is namespaced `e2e-ret-<timestamp>`, like the journey.
  */
@@ -71,6 +72,7 @@ test.describe('retrieval — API level', () => {
 
   test('🔴 a draft uploaded into conversation A never appears in B\'s provenance', async ({
     request,
+    baseURL,
   }) => {
     const fx = fixtures();
     const a = await newSession(request, `${RUN_ID} A`);
@@ -78,6 +80,10 @@ test.describe('retrieval — API level', () => {
 
     // Upload the PDF fixture into A only. It stays a DRAFT.
     const up = await request.post(`/api/sessions/${a}/documents`, {
+      // 🔴 SvelteKit refuses a multipart POST whose `Origin` is not the app's
+      // own (`Cross-site POST form submissions are forbidden`, 403). A browser
+      // sends it; Playwright's API request context does not.
+      headers: { origin: new URL(baseURL!).origin },
       multipart: {
         file: { name: `${RUN_ID}-borrador.pdf`, mimeType: fx.pdf.mimeType, buffer: fixtureBytes(fx.pdf) },
         name: `${RUN_ID}-borrador.pdf`,
