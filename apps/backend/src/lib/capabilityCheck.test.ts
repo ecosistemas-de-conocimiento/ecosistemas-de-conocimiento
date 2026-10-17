@@ -51,39 +51,39 @@ afterEach(() => {
 describe('requiredAICapabilities', () => {
   it('requires the ingest callback when chat advertises a callback URL', async () => {
     const { requiredAICapabilities } = await load()
-    expect(requiredAICapabilities()).toEqual(['ingestChunkCallback'])
+    expect(requiredAICapabilities()).toEqual(['orgDelegation', 'ingestChunkCallback'])
   })
 
-  it('requires nothing when there is no public URL to be called back on', async () => {
+  it('always requires org delegation — an older ai-service ignores X-AI-Org', async () => {
     vi.stubEnv('PUBLIC_BACKEND_URL', '')
     const { requiredAICapabilities } = await load()
-    expect(requiredAICapabilities()).toEqual([])
+    expect(requiredAICapabilities()).toEqual(['orgDelegation'])
   })
 })
 
 describe('checkAIServiceCapabilities', () => {
   it('passes when ai-service delivers ingest callbacks', async () => {
-    fetchImpl = vi.fn(capabilityDoc({ ingestChunkCallback: true })) as unknown as typeof fetch
+    fetchImpl = vi.fn(
+      capabilityDoc({ ingestChunkCallback: true, orgDelegation: true }),
+    ) as unknown as typeof fetch
 
     const { checkAIServiceCapabilities } = await load()
     await expect(checkAIServiceCapabilities(logger)).resolves.toBeUndefined()
   })
 
+  it('refuses to boot when ai-service would ignore X-AI-Org — every ecosistema would share one org', async () => {
+    vi.stubEnv('PUBLIC_BACKEND_URL', '')
+    fetchImpl = vi.fn(capabilityDoc({ ingestChunkCallback: true })) as unknown as typeof fetch
+
+    const { checkAIServiceCapabilities } = await load()
+    await expect(checkAIServiceCapabilities(logger)).rejects.toThrow(/orgDelegation/)
+  })
+
   it('refuses to boot when ai-service will not call back — documents would hang in `embedding`', async () => {
-    fetchImpl = vi.fn(capabilityDoc({ systemPrompt: true })) as unknown as typeof fetch
+    fetchImpl = vi.fn(capabilityDoc({ orgDelegation: true })) as unknown as typeof fetch
 
     const { checkAIServiceCapabilities } = await load()
     await expect(checkAIServiceCapabilities(logger)).rejects.toThrow(/ingestChunkCallback/)
-  })
-
-  it('makes no request at all when nothing is required', async () => {
-    vi.stubEnv('PUBLIC_BACKEND_URL', '')
-    const spy = vi.fn(capabilityDoc({}))
-    fetchImpl = spy as unknown as typeof fetch
-
-    const { checkAIServiceCapabilities } = await load()
-    await checkAIServiceCapabilities(logger)
-    expect(spy).not.toHaveBeenCalled()
   })
 
   it('skips when ai-service is not configured — AI is optional', async () => {

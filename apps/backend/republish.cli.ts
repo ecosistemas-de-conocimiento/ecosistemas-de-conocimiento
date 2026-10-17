@@ -59,7 +59,7 @@ const { docs } = await payload.find({
 
 console.log(`[republish] ${docs.length} documento(s) por re-publicar (org ${ORG}, ${DELAY_MS}ms entre cada uno)`)
 
-const client = getAdminAIClient()
+const client = getAdminAIClient(ORG)
 const callbackUrl = ingestCallbackUrl() ?? undefined
 let ok = 0
 let failed = 0

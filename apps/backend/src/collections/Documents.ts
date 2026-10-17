@@ -1008,8 +1008,12 @@ const retireDeletedDocumentHook: CollectionAfterDeleteHook = async ({ doc, req }
   try {
     const { getAdminAIClient } = await import('@/lib/aiClient')
     const { retireDeletedDocument } = await import('@/lib/publishDocument')
+    // The document's corpora live in its ecosistema's ai-service org. No
+    // ecosistema on the row means it never reached a corpus we could name.
+    const organizationId = relationId(row.organization)
+    if (organizationId == null) return doc
     await retireDeletedDocument(
-      { payload: req.payload, client: getAdminAIClient() as never },
+      { payload: req.payload, client: getAdminAIClient(organizationId) as never },
       row as never,
     )
   } catch (err) {
@@ -1473,6 +1477,7 @@ export async function enqueueIngestForDoc(args: {
   const gated = await anonymiseDocumentText({
     payload,
     docId,
+    organizationId,
     /**
      * 🔴 THE RAW COLUMN, NOT `contentKind` ABOVE.
      *
@@ -1574,7 +1579,7 @@ export async function enqueueIngestForDoc(args: {
 
   let client
   try {
-    client = getAppAIClient()
+    client = getAppAIClient(organizationId)
   } catch (err) {
     console.error('[documents] ai-client unavailable; ingest skipped for doc', docId, err)
     return
@@ -2678,11 +2683,17 @@ function documentActionEndpoint(
         id: number | string
         publicationStatus?: unknown
         uploadedBy?: unknown
+        organization?: unknown
       } | null
 
       if (!doc) return fail(404, 'No such document.')
       if (String(relationId(doc.uploadedBy) ?? '') !== String(user.id)) {
         return fail(403, 'Only the person who uploaded a document can publish it.')
+      }
+      const organizationId = relationId(doc.organization)
+      if (organizationId == null) {
+        // No ecosistema = no shared corpus and no ai-service org to publish into.
+        return fail(409, 'This document has no ecosistema, so it cannot be published.')
       }
 
       const state = doc.publicationStatus
@@ -2703,7 +2714,7 @@ function documentActionEndpoint(
 
       let client
       try {
-        client = getAdminAIClient()
+        client = getAdminAIClient(organizationId)
       } catch {
         // ⚠ Refuse rather than flip the column. Marking a document published
         // when the re-embed could not even be attempted is exactly the lie this

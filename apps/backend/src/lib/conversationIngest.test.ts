@@ -491,6 +491,38 @@ describe('🔴 the release — the whole backlog goes out in ONE run', () => {
     expect(db.messages.every((m) => m.corpusStatus === 'embedding')).toBe(true)
   })
 
+  it('🔴 books each released conversation to ITS OWN ecosistema client', async () => {
+    // Held conversations span every ecosistema. One fixed client would book
+    // all of them to a single ai-service org.
+    const db = seed(
+      [{ id: 1, role: 'assistant', content: 'Segun el borrador', provenance: { chunks: [cite('920')] } }],
+      { documents: [{ id: 920, publicationStatus: 'draft' }] },
+    )
+    db.sessions.push({ id: 501, user: ANA, organization: OTHER_ECO, title: 'Otro' })
+    db.messages.push({
+      id: 2,
+      session: 501,
+      role: 'assistant',
+      content: 'Tambien el borrador',
+      provenance: { chunks: [cite('920')] },
+    })
+    const perOrg = new Map<string, ReturnType<typeof fakeClient>>()
+    const resolver = (org: number | string) => {
+      const key = String(org)
+      if (!perOrg.has(key)) perOrg.set(key, fakeClient())
+      return perOrg.get(key)!.client
+    }
+    const detector = countingDetector()
+    await run(db, fakeClient().client, detector)
+    await ingestConversationTurns({ payload: fakePayloadFor(db), sessionId: 501, client: resolver, detector })
+    db.documents[0]!.publicationStatus = 'published'
+
+    await releaseConversationsWaitingOn({ payload: fakePayloadFor(db), documentId: 920, client: resolver, detector })
+
+    expect(perOrg.get(String(ECO))!.calls.map((c) => c.corpus)).toEqual([`eco-${ECO}`])
+    expect(perOrg.get(String(OTHER_ECO))!.calls.map((c) => c.corpus)).toEqual([`eco-${OTHER_ECO}`])
+  })
+
   it('releases via a plain re-run too — held-drafts is a RUNNABLE state', async () => {
     // ⚠ This is the difference between `held-drafts` and `held-gate`: the first
     // resolves by itself the moment the draft is published, so a re-run is

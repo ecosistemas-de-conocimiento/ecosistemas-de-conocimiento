@@ -241,9 +241,10 @@ const ingestConversationHook: CollectionAfterChangeHook = ({ doc, req, operation
       const { ingestConversationTurns } = await import('@/lib/conversationIngest')
       const { ingestCallbackUrl } = await import('@/lib/callbackConfig')
 
-      let client
+      // Probe once so a bare local run (no ai-service) returns quietly; the
+      // ingest itself resolves the session's own ecosistema client.
       try {
-        client = getAppAIClient()
+        getAppAIClient()
       } catch {
         // No ai-service configured — a normal state for a bare local run. The
         // turns stay `pending` and the next run picks them up.
@@ -253,7 +254,7 @@ const ingestConversationHook: CollectionAfterChangeHook = ({ doc, req, operation
       await ingestConversationTurns({
         payload,
         sessionId: id,
-        client: client as never,
+        client: ((organizationId: number | string) => getAppAIClient(organizationId)) as never,
         ...(ingestCallbackUrl() ? { callbackUrl: ingestCallbackUrl() as string } : {}),
       })
     })().catch((err) => {

@@ -201,8 +201,13 @@ export interface SyncGenerator {
 }
 
 export interface AIServiceDetectorOptions {
-  /** Override the client. Default: `getAppAIClient()`, imported lazily. */
+  /** Override the client. Default: `getAppAIClient(organizationId)`, imported lazily. */
   client?: SyncGenerator
+  /**
+   * The ecosistema the text belongs to. The model call is booked to its
+   * ai-service org (budget and usage). Omitted = the base org.
+   */
+  organizationId?: number | string
   /** Unique-per-call key generator. Default: a random uuid. */
   unitKey?: () => string
   /** Reported as the detector's name. */
@@ -228,7 +233,7 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
       let client = opts.client
       if (!client) {
         const { getAppAIClient } = await import('@/lib/aiClient')
-        client = getAppAIClient() as unknown as SyncGenerator
+        client = getAppAIClient(opts.organizationId) as unknown as SyncGenerator
       }
 
       const material =

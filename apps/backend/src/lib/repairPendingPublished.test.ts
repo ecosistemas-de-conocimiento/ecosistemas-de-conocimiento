@@ -111,6 +111,16 @@ describe('repairPendingPublished', () => {
 })
 
 describe('liveCheckViaRetrieve', () => {
+  it('asks the retriever of the document\'s own ecosistema', async () => {
+    const orgs: Array<number | string> = []
+    const check = liveCheckViaRetrieve((org) => {
+      orgs.push(org)
+      return { retrieve: async () => ({ chunks: [{ metadata: { docId: '5' } }] }) } as never
+    })
+    await expect(check({ id: 5, organization: 7 } as never)).resolves.toBe('live')
+    expect(orgs).toEqual([7])
+  })
+
   it('asks the SHARED corpus for this doc id, current as of now', async () => {
     const retrieve = vi.fn(async () => ({ chunks: [{ chunkId: 'c1', metadata: { docId: '5' } }] }))
     const check = liveCheckViaRetrieve({ retrieve } as never, () => new Date('2026-10-16T00:00:00Z'))

@@ -364,3 +364,20 @@ describe('the lengua filter on the wire', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('the ecosistema org', () => {
+  const headersOf = (i: number) =>
+    (fetchMock.mock.calls[i]![1] as RequestInit).headers as Record<string, string>;
+  const opts = { sessionId: '1', asOf: ASOF, allowedCorpora: [ECO], publishedCorpus: ECO };
+
+  it('retrieves under the chat client’s org (X-AI-Org), where the corpus lives', async () => {
+    const orgClient = { org: 'eco-7' } as unknown as AIServiceClient;
+    await makeEngineAIClient(orgClient, opts).retrieve(request(ECO));
+    expect(headersOf(0)['X-AI-Org']).toBe('eco-7');
+  });
+
+  it('sends no X-AI-Org for the base client', async () => {
+    await makeEngineAIClient(noClient, opts).retrieve(request(ECO));
+    expect(headersOf(0)['X-AI-Org']).toBeUndefined();
+  });
+});

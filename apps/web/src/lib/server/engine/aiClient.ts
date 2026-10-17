@@ -56,7 +56,7 @@ import type {
   IngestRequest as EngineIngestRequest,
   IngestResult as EngineIngestResult,
 } from '@edc/chat-engine/core';
-import type { AIServiceClient } from '$lib/server/aiService';
+import { aiOrgHeader, type AIServiceClient } from '$lib/server/aiService';
 import { buildChatUnitRequest } from './wire';
 import { useRegistryPrompt } from './promptSource';
 import { buildRetrieveBody } from '$lib/server/retrieval';
@@ -256,7 +256,7 @@ export function makeEngineAIClient(
       // `.strict()` and would reject the extra field — and a retrieve without
       // `asOf` still returns the chunks of UNPUBLISHED documents, because
       // unpublishing only end-dates them. See `$lib/server/retrieval`.
-      const chunks = await retrieveScoped(upstreamReq, opts.asOf);
+      const chunks = await retrieveScoped(upstreamReq, opts.asOf, chatClient.org);
 
       // ⚠ Post-filter, not an ai-service `filter`. ai-service's `filter` is
       // metadata EQUALITY only — it cannot express "documentId IN (…)" — and
@@ -310,6 +310,8 @@ export function makeEngineAIClient(
 async function retrieveScoped(
   req: EngineRetrieveRequest,
   asOf: string | null | undefined,
+  /** The ecosistema's ai-service org suffix (`X-AI-Org`); its corpora live there. */
+  org: string | undefined,
 ): Promise<RawRetrieveChunk[]> {
   const baseUrl = env.AI_SERVICE_URL?.replace(/\/+$/, '');
   const apiKey = env.AI_SERVICE_API_KEY;
@@ -335,6 +337,7 @@ async function retrieveScoped(
       method: 'POST',
       headers: {
         authorization: `Bearer ${apiKey}`,
+        ...aiOrgHeader(org),
         accept: 'application/json',
         'content-type': 'application/json',
       },

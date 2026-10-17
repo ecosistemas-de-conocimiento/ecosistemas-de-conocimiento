@@ -64,14 +64,19 @@ interface Retriever {
 
 /** The `/v1/retrieve` probe. 404 (corpus missing) is `absent`; anything else rethrows. */
 export function liveCheckViaRetrieve(
-  client: Retriever,
+  /**
+   * One retriever, or a resolver per ecosistema. Production passes the
+   * resolver: each document's shared corpus lives in its own ai-service org.
+   */
+  client: Retriever | ((organizationId: number | string) => Retriever),
   now: () => Date = () => new Date(),
 ): LiveCheck {
   return async (doc) => {
     const org = relationId(doc.organization)
     if (org == null) throw new Error(`document ${doc.id} has no organization`)
+    const retriever = typeof client === 'function' ? client(org) : client
     try {
-      const res = await client.retrieve({
+      const res = await retriever.retrieve({
         corpus: publishedCorpus(org),
         // Fixed query: the filename of a testimonio was never anonymised.
         query: 'documento',

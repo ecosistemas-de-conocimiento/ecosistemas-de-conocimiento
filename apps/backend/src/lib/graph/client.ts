@@ -76,26 +76,30 @@ export const graphRequestTimeoutMs = (): number => {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 660_000
 }
 
-let cached: GraphGenerateClient | null = null
+/** One client per ecosistema org, like `lib/aiClient.ts`. */
+const cached = new Map<string, GraphGenerateClient>()
 
 /** Test seam — drops the memoised client so an env change takes effect. */
 export function __resetGraphClientForTests(): void {
-  cached = null
+  cached.clear()
 }
 
 /**
- * The client extraction calls, memoised per process like the shared ones.
+ * The client extraction calls for one ecosistema, memoised per org like the
+ * shared ones. It sends `X-AI-Org: eco-<organizationId>`, so the extraction's
+ * spend is booked to that ecosistema's ai-service org.
  *
  * Throws the same errors `getAppAIClient()` throws when ai-service is not
  * configured; callers record that on `graphStatus` rather than crashing.
  */
-export async function getGraphAIClient(): Promise<GraphGenerateClient> {
-  if (cached) return cached
-
+export async function getGraphAIClient(organizationId: number | string): Promise<GraphGenerateClient> {
   // ⚠ FIRST, so configuration errors come from the module that owns them and
   // an operator gets one message, not two spellings of the same one.
-  const { getAppAIClient } = await import('@/lib/aiClient')
-  getAppAIClient()
+  const { aiOrgSuffix, getAppAIClient } = await import('@/lib/aiClient')
+  const org = aiOrgSuffix(organizationId)
+  const hit = cached.get(org)
+  if (hit) return hit
+  getAppAIClient(organizationId)
 
   // `AIClient` keeps its `HttpClient` deps private, so the timeout cannot be
   // changed on an existing instance. Same two variables `lib/aiClient.ts`
@@ -104,10 +108,12 @@ export async function getGraphAIClient(): Promise<GraphGenerateClient> {
   const apiKey = process.env.AI_SERVICE_API_KEY ?? ''
 
   const { AIClient } = await import('@edc/ai-client')
-  cached = new AIClient({
+  const client = new AIClient({
     baseUrl,
     apiKey,
+    org,
     timeoutMs: graphRequestTimeoutMs(),
   }) as unknown as GraphGenerateClient
-  return cached
+  cached.set(org, client)
+  return client
 }

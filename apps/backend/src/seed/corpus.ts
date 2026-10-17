@@ -524,7 +524,7 @@ export async function ingestSeededDocuments(
 
   let client: unknown
   try {
-    client = getAdminAIClient()
+    client = getAdminAIClient(organizationId)
   } catch (err) {
     // ⚠ Refuse the whole opt-in rather than half of it. Without an admin key
     // the publish path cannot retire the draft copy, and a partially-published

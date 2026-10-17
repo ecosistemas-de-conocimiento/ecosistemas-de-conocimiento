@@ -46,6 +46,20 @@ export const Organizations: CollectionConfig = {
         return next
       },
     ],
+    afterChange: [
+      // Each ecosistema is its own ai-service org; give it a budget on create
+      // (`lib/provisionEcosystem.ts`). Not awaited: the create already
+      // succeeded, and a slow ai-service must not hold the admin request.
+      ({ doc, operation, req }) => {
+        if (operation !== 'create') return doc
+        const id = (doc as { id?: number | string }).id
+        if (id == null) return doc
+        void import('@/lib/provisionEcosystem').then(({ provisionEcosystemOrg }) =>
+          provisionEcosystemOrg(id, { logger: req.payload.logger }),
+        )
+        return doc
+      },
+    ],
   },
   fields: [
     { name: 'name', type: 'text', required: true },

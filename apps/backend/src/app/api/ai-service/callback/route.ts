@@ -813,7 +813,14 @@ async function dispatchPublishMove(
       // in BOTH corpora, which is duplicated content rather than lost content,
       // and is retryable.
       const { getAdminAIClient } = await import('@/lib/aiClient')
-      await confirmPublish(doc as never, { payload, client: getAdminAIClient() as never })
+      // The draft copy lives in the document's ecosistema org. A row with no
+      // ecosistema throws here and stays `publishing` — retryable, never lost.
+      const organizationId = relationId(doc.organization)
+      if (organizationId == null) throw new Error('document has no ecosistema')
+      await confirmPublish(doc as never, {
+        payload,
+        client: getAdminAIClient(organizationId) as never,
+      })
 
       /**
        * 🔴 THE RELEASE, AND THIS IS THE ONLY PLACE IT CAN CORRECTLY HAPPEN.
@@ -839,7 +846,9 @@ async function dispatchPublishMove(
         await releaseConversationsWaitingOn({
           payload,
           documentId: doc.id,
-          client: getAppAIClient() as never,
+          // 🔴 A resolver, not one client: the held conversations this walks
+          // belong to every ecosistema, each to its own ai-service org.
+          client: ((organizationId: number | string) => getAppAIClient(organizationId)) as never,
           ...(ingestCallbackUrl() ? { callbackUrl: ingestCallbackUrl() as string } : {}),
         })
       } catch (err) {

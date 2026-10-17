@@ -200,13 +200,14 @@ export interface ConversationCascadeDeps {
    * with no `AI_SERVICE_ADMIN_API_KEY` throws on construction, and a
    * conversation that never reached the corpus must still be deletable there.
    */
-  corpusClient?: () => Promise<CorpusMover>
+  corpusClient?: (organizationId: number | string) => Promise<CorpusMover>
   now?: Date
 }
 
-async function adminCorpusClient(): Promise<CorpusMover> {
+/** The admin client of the conversation's ecosistema: its corpus lives in that org. */
+async function adminCorpusClient(organizationId: number | string): Promise<CorpusMover> {
   const { getAdminAIClient } = await import('@/lib/aiClient')
-  return getAdminAIClient() as unknown as CorpusMover
+  return getAdminAIClient(organizationId) as unknown as CorpusMover
 }
 
 /**
@@ -314,7 +315,7 @@ async function retireIngestedTurns(
   const { retireFrom } = await import('@/lib/publishDocument')
 
   const corpus = publishedCorpus(organizationId)
-  const client = await (deps.corpusClient ?? adminCorpusClient)()
+  const client = await (deps.corpusClient ?? adminCorpusClient)(organizationId)
 
   for (const turn of turns.docs) {
     // ⚠ Throws on anything but a 404. A 404 means "ai-service has no such

@@ -32,9 +32,13 @@
  * ── 🔴 COST, NOT TOKENS ──────────────────────────────────────────────────────
  *
  * `generationMeta` carries `{ costUsd, traceId, provider, modelUsed }` — no
- * tokens. Tokens live in ai-service's `usage_logs`, stamped with one
- * deployment-wide `{org, project}`, so they cannot be split per ecosistema.
- * Cost IS attributed per message here, so cost is what is reported.
+ * tokens. Tokens live in ai-service's `usage_logs`. Since each ecosistema is
+ * its own ai-service org (`edc-eco-<id>`, see `aiClient.ts`), new rows there
+ * ARE split per ecosistema — but ai-service has no endpoint that returns
+ * tokens: `GET /v1/budget/:org` answers dollars only (limit, remaining,
+ * spent). Rows written before the move stay under the old shared org. Cost
+ * IS attributed per message here, so cost is what is reported until
+ * ai-service exposes a per-org token read.
  *
  * ── WHO MAY ASK ──────────────────────────────────────────────────────────────
  *

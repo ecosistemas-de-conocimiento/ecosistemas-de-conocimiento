@@ -13,20 +13,25 @@
  * corpus delete is recoverable (the janitor sweeps); failing the user-visible
  * flow is not.
  *
- * ⚠ THE API KEY CARRIES THE TENANT, AND IT IS FIXED AT BOOT.
+ * ONE ai-service ORG PER ECOSISTEMA.
  *
- * ai-service reads `{org, project}` from its own `API_KEYS` environment map,
- * keyed by the bearer token — never from the request. So every organization in
- * this product arrives at ai-service under ONE key and looks like ONE org to
- * it. Two consequences, both real:
+ * ai-service reads `{org, project}` from its `API_KEYS` map, keyed by the
+ * bearer token. Our keys carry `delegateOrgPrefix: "edc-"`, so a request that
+ * sends `X-AI-Org: eco-<organizationId>` acts as org `edc-eco-<organizationId>`:
+ * that ecosistema's own budget, usage rows and corpora. Pass the organization
+ * id to `getAppAIClient(id)` / `getAdminAIClient(id)` and you get a client that
+ * always sends it; one client is cached per org.
  *
- *   · ai-service CANNOT enforce per-organization isolation for us. The only
- *     thing separating tenants there is the corpus name, and choosing that name
- *     safely is THIS backend's job — see `lib/corpus.ts`.
- *   · ⚠ Budget is keyed on `org` alone, so all tenants share one spend cap and
- *     one of them can exhaust it for everyone. Accepted for now; it is the
- *     reason to watch `logAIBudgetFailure` output rather than assume a budget
- *     error names the tenant that caused it.
+ *   · Called with NO argument you get the BASE client: no header, the key's
+ *     own org. Only for calls with no ecosistema in hand (boot capability
+ *     check, platform-wide admin scripts).
+ *   · Passing `null` THROWS. A row whose organization failed to load must not
+ *     quietly land in the shared org.
+ *   · 🔴 An ai-service older than org delegation IGNORES the header and puts
+ *     every ecosistema back in one org. `capabilityCheck.ts` requires
+ *     `orgDelegation` at boot for exactly that reason.
+ *   · Corpus names still carry the organization (`lib/corpus.ts`). They stay
+ *     the line between a person's drafts and the shared corpus inside one org.
  *
  * ⚠ `threadCorpus` IS NOT RE-EXPORTED FROM HERE ANY MORE. It used to be, which
  * made this module look like the corpus authority while the actual rule — "the
@@ -36,8 +41,12 @@
 
 import { AIClient } from '@edc/ai-client'
 
-let appClient: AIClient | null = null
-let adminClient: AIClient | null = null
+/** Every org suffix must match this — ai-service and ai-client both check it. */
+const ORG_SUFFIX = /^[a-z0-9-]{1,48}$/
+
+const BASE = '' // cache key of the client that sends no X-AI-Org
+const appClients = new Map<string, AIClient>()
+const adminClients = new Map<string, AIClient>()
 
 function baseUrl(): string {
   const url = process.env.AI_SERVICE_URL
@@ -47,24 +56,71 @@ function baseUrl(): string {
   return url.replace(/\/+$/, '')
 }
 
-export function getAppAIClient(): AIClient {
-  if (appClient) return appClient
-  const apiKey = process.env.AI_SERVICE_API_KEY
-  if (!apiKey) {
-    throw new Error('AI_SERVICE_API_KEY is not set.')
-  }
-  appClient = new AIClient({ baseUrl: baseUrl(), apiKey })
-  return appClient
-}
-
-export function getAdminAIClient(): AIClient {
-  if (adminClient) return adminClient
-  const apiKey = process.env.AI_SERVICE_ADMIN_API_KEY
-  if (!apiKey) {
+/**
+ * The `X-AI-Org` suffix for an ecosistema: `eco-<organizationId>`. With the
+ * key's `delegateOrgPrefix: "edc-"` the effective org is `edc-eco-<id>` —
+ * pass THAT full string to `budget.get()`.
+ */
+export function aiOrgSuffix(organizationId: number | string): string {
+  const suffix = `eco-${String(organizationId)}`
+  if (String(organizationId) === '' || !ORG_SUFFIX.test(suffix)) {
     throw new Error(
-      'AI_SERVICE_ADMIN_API_KEY is not set. Required for corpus delete.',
+      `[aiClient] organization id ${JSON.stringify(organizationId)} cannot be an ai-service org ` +
+        '(lowercase letters, digits and "-" only).',
     )
   }
-  adminClient = new AIClient({ baseUrl: baseUrl(), apiKey })
-  return adminClient
+  return suffix
+}
+
+type OrgArg = number | string | undefined
+
+function cacheKey(organizationId: OrgArg): string {
+  if (organizationId === undefined) return BASE
+  if (organizationId === null) {
+    throw new Error(
+      '[aiClient] organization is null. Pass an id, or call with no argument for the base client.',
+    )
+  }
+  return aiOrgSuffix(organizationId)
+}
+
+function clientFor(
+  cache: Map<string, AIClient>,
+  organizationId: OrgArg,
+  keyVar: 'AI_SERVICE_API_KEY' | 'AI_SERVICE_ADMIN_API_KEY',
+  missing: string,
+): AIClient {
+  const key = cacheKey(organizationId)
+  const hit = cache.get(key)
+  if (hit) return hit
+  const apiKey = process.env[keyVar]
+  if (!apiKey) throw new Error(missing)
+  const client = new AIClient({
+    baseUrl: baseUrl(),
+    apiKey,
+    ...(key === BASE ? {} : { org: key }),
+  })
+  cache.set(key, client)
+  return client
+}
+
+/** The app-role client for one ecosistema; no argument = the base client. */
+export function getAppAIClient(organizationId?: number | string): AIClient {
+  return clientFor(appClients, organizationId, 'AI_SERVICE_API_KEY', 'AI_SERVICE_API_KEY is not set.')
+}
+
+/** The admin-role client for one ecosistema; no argument = the base client. */
+export function getAdminAIClient(organizationId?: number | string): AIClient {
+  return clientFor(
+    adminClients,
+    organizationId,
+    'AI_SERVICE_ADMIN_API_KEY',
+    'AI_SERVICE_ADMIN_API_KEY is not set. Required for corpus delete.',
+  )
+}
+
+/** Test-only: drop every cached client so an env change takes effect. */
+export function _resetAIClientsForTests(): void {
+  appClients.clear()
+  adminClients.clear()
 }

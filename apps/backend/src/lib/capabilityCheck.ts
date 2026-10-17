@@ -16,7 +16,7 @@
  * The negotiation itself lives in `@edc/ai-client`.
  */
 
-import { capabilityModeFromEnv } from '@edc/ai-client'
+import { ORG_DELEGATION_CAPABILITY, capabilityModeFromEnv } from '@edc/ai-client'
 
 import { getAppAIClient } from './aiClient'
 
@@ -25,11 +25,15 @@ import { getAppAIClient } from './aiClient'
  * would block boots for capabilities the product survives without, and a check
  * that blocks for nothing is a check people switch off.
  *
- * The one real coupling is the ingest callback, and only when there is a public
- * URL to be called back on — see below.
+ * Two real couplings: org delegation, always, and the ingest callback when
+ * there is a public URL to be called back on — see below.
  */
 export function requiredAICapabilities(): string[] {
-  const required: string[] = []
+  // 🔴 Every ecosistema is its own ai-service org via `X-AI-Org` (see
+  // `aiClient.ts`). An ai-service without the feature IGNORES the header and
+  // books every ecosistema's budget, usage and corpora under one org — no
+  // error, just tenants mixed together. Required unconditionally.
+  const required: string[] = [ORG_DELEGATION_CAPABILITY]
   // Documents are marked `embedding` and left there: the ai-service callback is
   // what flips them to `ready`/`failed`, and NOTHING POLLS. So against a service
   // that ignores `callbackUrl`, nothing errors and every uploaded document hangs
@@ -51,8 +55,6 @@ type CapabilityLogger = { warn: (message: string) => void; info?: (message: stri
  *   - ai-service not configured → skipped. AI is optional: a deployment
  *     without ai-service must keep starting and working (login, the admin
  *     panel and markdown documents do not need it).
- *   - nothing required → skipped, no request. Don't spend a round-trip
- *     confirming an empty list.
  *   - reachable, missing → THROWS in `strict` (production), warns in `warn`.
  *   - unreachable → warns and continues, always. A restarting ai-service is not
  *     evidence a capability is gone; bricking a deploy over it would be worse
@@ -63,7 +65,6 @@ export async function checkAIServiceCapabilities(logger: CapabilityLogger): Prom
   alreadyChecked = true
 
   const required = requiredAICapabilities()
-  if (required.length === 0) return
 
   if (!process.env.AI_SERVICE_URL || !process.env.AI_SERVICE_API_KEY) {
     logger.info?.(

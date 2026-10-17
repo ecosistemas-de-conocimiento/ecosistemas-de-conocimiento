@@ -49,7 +49,7 @@ async function main(): Promise<void> {
 
   console.log(`[repair-pending-published] mode=${apply ? 'APPLY' : 'dry-run'} delayMs=${delayMs}`)
 
-  const report = await repairPendingPublished(payload, liveCheckViaRetrieve(getAppAIClient().retrieve), {
+  const report = await repairPendingPublished(payload, liveCheckViaRetrieve((org) => getAppAIClient(org).retrieve), {
     apply,
     delayMs,
     limit,

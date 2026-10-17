@@ -2,7 +2,13 @@
 // any client-reachable SvelteKit module is a build error — the `$lib/server/*`
 // path is server-only by SvelteKit convention.
 
-export { AIServiceClient, assertSystemPromptApplied, getAIClient } from './client';
+export {
+  AIServiceClient,
+  aiOrgFor,
+  aiOrgHeader,
+  assertSystemPromptApplied,
+  getAIClient,
+} from './client';
 export type { AIServiceClientOptions } from './client';
 
 export {

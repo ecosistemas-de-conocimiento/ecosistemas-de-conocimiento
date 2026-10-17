@@ -272,6 +272,8 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     throw error(400, 'Invalid JSON body.');
   }
 
+  // Fail fast on a misconfigured server, before any backend round trip. The
+  // client actually used is the ecosistema's, picked once its id is known.
   let chatClient;
   try {
     chatClient = getAIClient();
@@ -324,6 +326,19 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // `null` when the list could not be read — NOT an empty set. The draft leg
   // then retrieves nothing at all rather than guessing. See `$lib/server/sessionDocs`.
   const sessionDocumentIds = sessionDocumentIdSet(sessionDocs);
+
+  // Each ecosistema is its own ai-service org (`X-AI-Org: eco-<id>`): its own
+  // budget, usage and corpora. ⚠ Without an ecosistema id the turn falls back
+  // to the key's own org — its corpora live under the ecosistema's org, so
+  // retrieval comes back empty and the spend lands on the shared org. Loud.
+  if (organizationId != null && organizationId !== '') {
+    chatClient = getAIClient(organizationId);
+  } else {
+    console.warn(
+      `[generate] no ecosistema for session ${body.sessionId}; using the base ai-service org ` +
+        '(no X-AI-Org). Retrieval will find nothing and spend is not attributed to an ecosistema.',
+    );
+  }
 
   // The lengua filter, and the ecosistema's languages for the summary line.
   // The read starts now and overlaps with the engine's condense call; the

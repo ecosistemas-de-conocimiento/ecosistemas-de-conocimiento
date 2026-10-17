@@ -141,6 +141,8 @@ export async function anonymiseDocumentText(args: {
   /** The unredacted text. Never leaves this process except through `detector`. */
   text: string
   detector?: PersonDetector
+  /** The document's ecosistema: the detector's model call is booked to its org. */
+  organizationId?: number | string
   /**
    * 🔴 TEXT A HUMAN REVIEWER APPROVED. When present, THE GATE DOES NOT RUN.
    *
@@ -196,7 +198,9 @@ export async function anonymiseDocumentText(args: {
   await write({ anonymisationStatus: 'pending', anonymisationError: null })
 
   const { runAnonymisationGate, aiServiceDetector } = await import('./anonymise')
-  const detector = args.detector ?? aiServiceDetector()
+  const detector =
+    args.detector ??
+    aiServiceDetector(args.organizationId !== undefined ? { organizationId: args.organizationId } : {})
 
   let result: Awaited<ReturnType<typeof runAnonymisationGate>>
   try {

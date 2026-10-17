@@ -134,6 +134,23 @@ interface SessionRow {
   title?: unknown
 }
 
+/**
+ * The client for one ecosistema. Production passes `getAppAIClient`, so each
+ * conversation's ingest is booked to its own ai-service org.
+ */
+export type ConversationIngesterFor = (organizationId: number | string) => ConversationIngester
+
+/**
+ * A fixed client, or a resolver per ecosistema. 🔴 Pass the resolver whenever
+ * one call can reach SEVERAL ecosistemas (`releaseConversationsWaitingOn`
+ * walks every held conversation): a fixed client would book them all to one org.
+ */
+export type ConversationClient = ConversationIngester | ConversationIngesterFor
+
+function clientForOrg(client: ConversationClient, organizationId: number | string): ConversationIngester {
+  return typeof client === 'function' ? client(organizationId) : client
+}
+
 /** Minimal slice of `@edc/ai-client` this file uses. Keeps it testable. */
 export interface ConversationIngester {
   ingest: {
@@ -340,12 +357,12 @@ export interface ConversationIngestResult {
 export async function ingestConversationTurns(args: {
   payload: Payload
   sessionId: number | string
-  client: ConversationIngester
+  client: ConversationClient
   callbackUrl?: string
   /** Test seam for the gate's model call. */
   detector?: PersonDetector
 }): Promise<ConversationIngestResult> {
-  const { payload, sessionId, client } = args
+  const { payload, sessionId } = args
   const empty: ConversationIngestResult = { ingested: 0, waitingOn: [], heldByGate: 0 }
 
   const session = (await payload
@@ -479,6 +496,7 @@ export async function ingestConversationTurns(args: {
         messageId: message.id,
         text: original,
         roster,
+        organizationId,
         ...(args.detector ? { detector: args.detector } : {}),
       })
       if (!gated.ok) {
@@ -540,6 +558,7 @@ export async function ingestConversationTurns(args: {
 
   let ingestId: string
   try {
+    const client = clientForOrg(args.client, organizationId)
     // ⚠ ONE CALL FOR EVERYTHING OUTSTANDING. In the steady state that is a
     // single turn; on release it is the whole backlog, which is what "the whole
     // conversation ingests in one run" means. Either way each turn is its own
@@ -595,7 +614,8 @@ export async function ingestConversationTurns(args: {
 export async function releaseConversationsWaitingOn(args: {
   payload: Payload
   documentId: number | string
-  client: ConversationIngester
+  /** 🔴 Pass a per-org resolver: held conversations span every ecosistema. */
+  client: ConversationClient
   callbackUrl?: string
   detector?: PersonDetector
 }): Promise<void> {
@@ -686,12 +706,13 @@ async function anonymiseDocumentTextForMessage(args: {
   messageId: number | string
   text: string
   roster: readonly string[]
+  organizationId: number | string
   detector?: PersonDetector
 }): Promise<{ ok: true; text: string } | { ok: false }> {
   const { payload, messageId, text, roster } = args
 
   const { runAnonymisationGate, aiServiceDetector } = await import('./anonymise')
-  const detector = args.detector ?? aiServiceDetector()
+  const detector = args.detector ?? aiServiceDetector({ organizationId: args.organizationId })
 
   let result: Awaited<ReturnType<typeof runAnonymisationGate>>
   try {

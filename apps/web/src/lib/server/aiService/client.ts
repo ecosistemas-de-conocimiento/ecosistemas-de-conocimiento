@@ -50,19 +50,34 @@ import type { ZodSchema } from 'zod';
 export interface AIServiceClientOptions {
   baseUrl: string;
   apiKey: string;
+  /**
+   * Org delegation suffix, sent as `X-AI-Org` on every request. The key must be
+   * configured in ai-service with `delegateOrgPrefix`; the server then acts as
+   * org `<prefix><org>` (budget, usage, corpora). Omit for the key's own org.
+   */
+  org?: string;
   fetch?: typeof fetch;
 }
+
+/** ai-service's rule for the `X-AI-Org` suffix; it answers 400 otherwise. */
+const ORG_SUFFIX = /^[a-z0-9-]{1,48}$/;
 
 export class AIServiceClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
+  /** The delegated org suffix this client sends, or undefined for the key's own org. */
+  readonly org: string | undefined;
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: AIServiceClientOptions) {
     if (!opts.baseUrl) throw new Error('AIServiceClient: baseUrl is required');
     if (!opts.apiKey) throw new Error('AIServiceClient: apiKey is required');
     this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
+    if (opts.org !== undefined && !ORG_SUFFIX.test(opts.org)) {
+      throw new Error(`AIServiceClient: org must match ${ORG_SUFFIX}`);
+    }
     this.apiKey = opts.apiKey;
+    this.org = opts.org;
     this.fetchImpl = opts.fetch ?? fetch;
   }
 
@@ -229,7 +244,7 @@ export class AIServiceClient {
   }
 
   private authHeaders(): Record<string, string> {
-    return { authorization: `Bearer ${this.apiKey}` };
+    return { authorization: `Bearer ${this.apiKey}`, ...aiOrgHeader(this.org) };
   }
 
   private async requestJson<T>(
@@ -449,21 +464,44 @@ function mapErrorResponse(status: number, body: unknown, path: string): AIServic
 
 // ── factory ────────────────────────────────────────────────────────────────
 
-let cached: AIServiceClient | null = null;
+/** `X-AI-Org` for a delegated org, nothing for the key's own org. */
+export function aiOrgHeader(org: string | undefined): Record<string, string> {
+  return org !== undefined ? { 'X-AI-Org': org } : {};
+}
 
 /**
- * Lazily construct the singleton client from `$env/dynamic/private`. Throws a
- * clear error if either var is unset — the BFF surfaces that as a 500 with a
- * "Server misconfigured" message. There is no fallback URL on purpose: chat
- * itself listens on :3000, so silently falling back to `http://localhost:3000`
- * would loop the chat server back to itself.
+ * The ai-service org suffix for one ecosistema. Each ecosistema is its own
+ * ai-service org (`<prefix>eco-<id>`), matching the backend's corpus names
+ * `eco-<id>` and `eco-<id>-draft-<user>`.
  */
-export function getAIClient(): AIServiceClient {
-  if (cached) return cached;
+export function aiOrgFor(organizationId: number | string): string {
+  return `eco-${organizationId}`;
+}
+
+/** Key '' = the base client (no `X-AI-Org`); otherwise the org suffix. */
+const cached = new Map<string, AIServiceClient>();
+
+/**
+ * Lazily construct the client for one ecosistema from `$env/dynamic/private`,
+ * cached per org. No `organizationId` (or null/'') = the base client, which
+ * acts as the key's own org — only for calls with no ecosistema in hand.
+ *
+ * Throws a clear error if either var is unset — the BFF surfaces that as a 500
+ * with a "Server misconfigured" message. There is no fallback URL on purpose:
+ * chat itself listens on :3000, so silently falling back to
+ * `http://localhost:3000` would loop the chat server back to itself.
+ */
+export function getAIClient(organizationId?: number | string | null): AIServiceClient {
+  const org =
+    organizationId != null && organizationId !== '' ? aiOrgFor(organizationId) : undefined;
+  const key = org ?? '';
+  const hit = cached.get(key);
+  if (hit) return hit;
   const baseUrl = env.AI_SERVICE_URL;
   const apiKey = env.AI_SERVICE_API_KEY;
   if (!baseUrl) throw new Error('AI_SERVICE_URL is not set on the server.');
   if (!apiKey) throw new Error('AI_SERVICE_API_KEY is not set on the server.');
-  cached = new AIServiceClient({ baseUrl, apiKey });
-  return cached;
+  const client = new AIServiceClient({ baseUrl, apiKey, ...(org !== undefined ? { org } : {}) });
+  cached.set(key, client);
+  return client;
 }

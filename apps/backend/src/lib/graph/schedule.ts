@@ -38,7 +38,7 @@ export interface RunGraphExtractionArgs {
   contentKind: string | null | undefined
   text: string
   title?: string | null
-  /** Test seam. Production resolves `getAppAIClient()`. */
+  /** Test seam. Production resolves `getGraphAIClient(organizationId)`. */
   client?: GraphGenerateClient
 }
 
@@ -123,7 +123,7 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
       // shared client's timeout is 30 s. It wraps the same factory, so a
       // misconfigured deployment still fails with the same message.
       const { getGraphAIClient } = await import('./client')
-      client = await getGraphAIClient()
+      client = await getGraphAIClient(organizationId)
     } catch (err) {
       // A deployment with no `AI_SERVICE_API_KEY` is a normal state for a local
       // run. `failed` rather than `skipped` on purpose: an operator can fix it
