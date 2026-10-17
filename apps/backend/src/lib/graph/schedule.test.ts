@@ -267,3 +267,60 @@ describe('runGraphExtraction', () => {
     })
   })
 })
+
+describe('runGraphExtraction — a failure on gated content', () => {
+  /**
+   * 🔴 A failed re-extraction must not leave a gated document's previous rows
+   * in place: they may have been built from the raw transcript by a run before
+   * the backfill read `corpusTextFor`, and they would go live when the
+   * testimonio is published.
+   */
+  function withDeletes(parsed: unknown | Error) {
+    const h = harness(parsed)
+    const deletes: { collection: string; where: unknown }[] = []
+    h.payload.delete = async (args) => {
+      deletes.push({ collection: String(args.collection), where: args.where })
+      return {}
+    }
+    return { ...h, deletes }
+  }
+  const where = { and: [{ organization: { equals: 5 } }, { document: { equals: 9 } }] }
+
+  it.each(['testimonio', 'conversacion', null])(
+    '🔴 clears the rows of a %s whose extraction failed',
+    async (contentKind) => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const { payload, client, deletes } = withDeletes(new Error('boom'))
+      const status = await runGraphExtraction({
+        payload, docId: 9, organizationId: 5, contentKind, text: LONG_TEXT, client,
+      })
+      expect(status).toBe('failed')
+      expect(deletes).toContainEqual({ collection: 'graphMentions', where })
+      expect(deletes).toContainEqual({ collection: 'graphRelations', where })
+      vi.restoreAllMocks()
+    },
+  )
+
+  it('🔴 clears them too when the AI client cannot even be resolved', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { payload, deletes } = withDeletes(new Error('unused'))
+    // No `client` and no AI_SERVICE_API_KEY: fails at client resolution.
+    const status = await runGraphExtraction({
+      payload, docId: 9, organizationId: 5, contentKind: 'testimonio', text: LONG_TEXT,
+    })
+    expect(status).toBe('failed')
+    expect(deletes).toContainEqual({ collection: 'graphMentions', where })
+    vi.restoreAllMocks()
+  })
+
+  it('keeps a documento’s previous rows — its raw text IS its corpus text', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { payload, client, deletes } = withDeletes(new Error('boom'))
+    const status = await runGraphExtraction({
+      payload, docId: 9, organizationId: 5, contentKind: 'documento', text: LONG_TEXT, client,
+    })
+    expect(status).toBe('failed')
+    expect(deletes).toHaveLength(0)
+    vi.restoreAllMocks()
+  })
+})

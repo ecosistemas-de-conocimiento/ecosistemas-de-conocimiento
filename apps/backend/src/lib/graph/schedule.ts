@@ -20,6 +20,8 @@
  * is a missing feature; an upload that fails because of it is a broken product.
  */
 
+import { mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
+
 import { extractGraph, type GraphGenerateClient } from './extract'
 import { GRAPH_PROMPT_VERSION } from './prompt'
 import type { GraphStatus } from './types'
@@ -55,8 +57,10 @@ const MIN_TEXT_CHARS = 200
  * Drop everything this document contributed to the graph.
  *
  * 🔴 Tenancy named explicitly, as in every other graph query.
+ *
+ * Exported for the backfill, which clears a gated document it refuses to graph.
  */
-async function clearGraphRows(
+export async function clearGraphRows(
   payload: GraphSchedulerPayload,
   docId: string | number,
   organizationId: string | number,
@@ -128,7 +132,7 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
       // A deployment with no `AI_SERVICE_API_KEY` is a normal state for a local
       // run. `failed` rather than `skipped` on purpose: an operator can fix it
       // and the backfill will then pick the row up.
-      await recordFailure(payload, docId, 'ai_client_unavailable', err)
+      await recordFailure(args, 'ai_client_unavailable', err)
       return 'failed'
     }
   }
@@ -179,17 +183,41 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     )
     return 'ready'
   } catch (err) {
-    await recordFailure(payload, docId, 'graph_extract_failed', err)
+    await recordFailure(args, 'graph_extract_failed', err)
     return 'failed'
   }
 }
 
+/**
+ * Mark a run `failed`.
+ *
+ * 🔴 A GATED DOCUMENT LOSES ITS PREVIOUS ROWS ON FAILURE. A `documento` keeps
+ * them. Why the asymmetry:
+ *
+ * Nothing on a mention row says which text it came from. Before the backfill
+ * read `corpusTextFor`, it extracted testimonios from the RAW transcript, so a
+ * gated document's old rows may hold the names and places the gate removes.
+ * Keeping them after a failed re-extraction would let them go live the moment
+ * the testimonio is published. Deleting is the only rule that is safe without
+ * knowing the rows' history; the cost is a testimonio with an empty graph until
+ * the next successful run, which the backfill retries anyway (`failed`).
+ *
+ * A `documento`'s raw text IS its corpus text, so its old rows are merely stale,
+ * not leaked; keeping them is the better answer there.
+ *
+ * ⚠ `mustPassAnonymisationGate` reads the RAW kind, so an unknown kind is gated.
+ */
 async function recordFailure(
-  payload: GraphSchedulerPayload,
-  docId: string | number,
+  args: Pick<RunGraphExtractionArgs, 'payload' | 'docId' | 'organizationId' | 'contentKind'>,
   code: string,
   err: unknown,
 ): Promise<void> {
+  const { payload, docId, organizationId, contentKind } = args
+  if (mustPassAnonymisationGate(contentKind)) {
+    await clearGraphRows(payload, docId, organizationId).catch((clearErr) => {
+      console.error('[graph] could not clear rows for failed gated doc', docId, clearErr)
+    })
+  }
   const message = err instanceof Error ? err.message : String(err)
   console.error('[graph] extraction failed for doc', docId, code, message)
   await setGraphStatus(payload, docId, {
