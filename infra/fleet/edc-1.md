@@ -1,8 +1,10 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Both environments deployed from `main` @ `f89047e` and verified
-end to end (login, upload, real chat answer citing the upload, conversation delete) — measured
-2026-10-17 by the provisioning agent. Companion docs: `env-manifests.md` (what each variable means),
+**Status:** live since 2026-10-17. Both environments run `main` @ `fcd1325` (the ai-service sync,
+migrations 0002–0004), deployed 2026-10-17 ~04:22–04:50 UTC and verified end to end: login, PDF
+upload → `ready` via the public https callback, real OpenRouter chat answer whose
+`provenance.chunks[]` cites the upload, conversation delete, admin usage panel, lengua filter pages
+— measured by the deploy agent. First deploy was `f89047e`. Companion docs: `env-manifests.md` (what each variable means),
 `runbook.md`, `backups.md`.
 
 🔴 **No secret value appears in this file.** Secrets are named; their values live in the two places
@@ -40,12 +42,15 @@ Proxy must stay OFF: Traefik on the box obtains Let's Encrypt certificates over 
 ## 2. Coolify
 
 - Version 4.4.6, installed with the official script (`curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash`).
-- Dashboard: `https://coolify.ecosistemasdeconocimiento.com`. Without that record, open an SSH
+- Dashboard: `https://coolify.ecosistemasdeconocimiento.com` — ⚠ that name did NOT resolve on
+  2026-10-17 (measured, `dig` empty; no `coolify` record in practice). Open an SSH
   tunnel: `ssh -L 8000:localhost:8000 root@<edc-1-ip>` and browse `http://localhost:8000`.
 - Root admin: email in `EDC_COOLIFY_ROOT_EMAIL`, password in `EDC_COOLIFY_ROOT_PASSWORD`.
   Public registration is disabled.
 - API: enabled. Token in `EDC_COOLIFY_API_TOKEN` (root ability). Call it as
-  `Authorization: Bearer <token>` against `https://coolify.ecosistemasdeconocimiento.com/api/v1`.
+  `Authorization: Bearer <token>` against `https://coolify.ecosistemasdeconocimiento.com/api/v1`,
+  or, while that name does not resolve, through the tunnel:
+  `ssh -fN -L 18000:localhost:8000 root@<edc-1-ip>` → `http://localhost:18000/api/v1`.
 - ⚠ Back up Coolify's own `APP_KEY` (in `/data/coolify/source/.env` on the box) somewhere off the
   box. Without it, a restored Coolify database cannot decrypt the stored variables. `backups.md` §2.
 
@@ -125,9 +130,23 @@ Footguns met on this box:
 4. Deploy the two environments **one after the other**, never at the same time, while fix 3 is not
    on `main`.
 
-### 4a. 🔴 Pending: edits for the ai-service sync — apply BEFORE deploying a `main` that carries it
+### 4a. ✅ Done 2026-10-17: edits for the ai-service update
 
-The compose file now requires `PUBLIC_BACKEND_URL` (rendering fails without it), and the synced
+Applied on both apps before their `fcd1325` deploy (measured). What differed from the plan:
+
+- `RERANK_ENABLED` already existed on both apps (value `false`, auto-created from the OLD compose
+  default). It reaches ai-service through `env_file`, so it would have silently killed rerank once
+  a key is added. Deleted on both.
+- Every variable also has a **preview** copy (`is_preview: true`). The `MOCK_*` and
+  `RERANK_ENABLED` preview copies were deleted too; `PUBLIC_BACKEND_URL` got a preview copy
+  automatically.
+- On compose reload Coolify auto-created `RERANK_PROVIDER=deepinfra`, `RERANK_URL`,
+  `RERANK_MODEL`, `RERANK_TIMEOUT_MS=8000` from the compose defaults. Harmless; rerank stays off
+  (ai-service logs "rung is currently dark"). No stored value held `:?` error text after reload
+  (measured, both apps).
+- `GET /api/v1/deploy?uuid=…` now answers "This endpoint has changed to a POST request" — use POST.
+
+The original plan, kept for reference — the compose file now requires `PUBLIC_BACKEND_URL` (rendering fails without it), and the synced
 ai-service refuses the old internal callback origin. Per application:
 
 | change | dev (`edc-dev`) | staging (`edc-staging`) |
@@ -150,7 +169,15 @@ ai-service refuses the old internal callback origin. Per application:
 - ai-service's `trustProxy` is hard-coded to **1** hop (Traefik). Nothing to set; do not add a
   second proxy in front without changing code.
 
-### 4b. 🔴 Migrations 0002–0004 run on that deploy — back up `edc_ai` first
+### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
+
+Backups taken before the deploy (both DBs, both envs, each checked with `pg_restore -l`, sha256
+matched): on the box in `/root/backups/20261017T0421Z/` (both envs) and
+`/root/backups/20261017T0438Z/` (staging, re-taken just before its deploy); off-box copies in the
+owner's `cide/backups/edc-1/<same stamp>/`. Sizes were small, not ≈ 9 MB: `edc_ai` 72 KB dev /
+57 KB staging, `edc_backend` ≈ 140 KB each (measured). After deploy, ai-service logged the schema
+gate ADOPTING `edc_ai` and stamping it at 5 migrations (0000–0004); the budget row survived
+(`limitUsd: 5`, both envs).
 
 ai-service migrates on every container start. Both environments' `edc_ai` sit at 2 applied
 migrations (0000, 0001) — measured 2026-10-17, `select count(*) from public.__drizzle_migrations`.
@@ -228,11 +255,20 @@ organization slug. Done for dev and staging on 2026-10-17 (`limitUsd: 5`). Read 
    `POST /api/v1/deploy?uuid=<app uuid>` with the bearer token.
 3. Watch it: `GET /api/v1/deployments/<deployment uuid>` until `status` is `finished`.
    A cold build of the whole stack took about 5 minutes (measured 2026-10-17, dev, idle box).
+   The `fcd1325` deploys took ≈ 11 minutes each (measured 2026-10-17, from deploy queue to
+   containers up).
 4. Check: `https://<web host>/api/health` and `https://<backend host>/api/health` answer 200.
 5. Check the variables (§4 footgun 1) whenever the compose file changed.
 6. A deploy that adds ai-service migrations: back up `edc_ai` first (§4b).
 
 ### Smoke check (what was verified on 2026-10-17)
+
+⚠ Uploads accept only PDF, DOCX or audio (`unsupported_kind` for `.txt`) — use a small PDF.
+⚠ `/admin` is client-rendered; check the usage panel through `/admin/__data.json`
+(`overview.usage.ok`). It counts live conversations only, so it reads 0 after the smoke deletes
+its session. Staging: run the chat with the smoke user (`Montaje` owner), the admin page with the
+platform admin. Ingest callback proof: `ingest_requests.callback_url` is the public https URL and
+the backend document turns `ready` ≈ 0.1 s after the ai-service job finishes.
 
 Per environment, through the web origin with an `Origin` header (SvelteKit refuses cross-site
 multipart posts without one): `POST /api/auth/login` → `POST /api/sessions` → multipart upload to
@@ -250,5 +286,9 @@ with the file name → `DELETE /api/sessions/<id>`.
 | Biggest containers | backend ≈ 200 MB each, ai-service 70–120 MB each, Coolify ≈ 140 MB |
 | Disk | 30 GB of 75 GB used; images 11 GB, Docker build cache 17.5 GB (16 GB reclaimable) |
 
-⚠ The build cache grows with every deploy. Coolify's scheduled Docker cleanup prunes it; if disk
+2026-10-17 `fcd1325` deploys (measured, `df -h /`): 42 GB free before, 15 GB free after both
+deploys (build cache 22 GB), 33 GB free after `docker builder prune -f`. Old images (≈ 8 GB
+reclaimable) were kept for rollback.
+
+⚠ The build cache grows with every deploy — about 7 GB per environment deploy here. Coolify's scheduled Docker cleanup prunes it; if disk
 climbs, run `docker builder prune -f` on the box.
