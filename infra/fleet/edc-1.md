@@ -1,8 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Both environments run `main` @ `e3eb1f3` (migration
-`0005_pg_trgm`, session-delete owner guard), deployed 2026-10-17 22:01 UTC (dev) and 22:14 UTC
-(staging) — see §4h. Before that, `643ff4e` on both (12:28 / 12:36 UTC, §4e), and `fcd5247` on
+**Status:** live since 2026-10-17. Dev runs `main` @ `5c157bb` (a conversation delete also
+deletes its own uploads), deployed 2026-10-17 22:31 UTC — see §4i. Staging runs `e3eb1f3`
+(migration `0005_pg_trgm`, session-delete owner guard), deployed 22:14 UTC — see §4h; dev ran it
+from 22:01 UTC. Before that, `643ff4e` on both (12:28 / 12:36 UTC, §4e), and `fcd5247` on
 dev only (§4g). Before that, `7dbe85c` (05:07 / 05:49 UTC) with the org move of §4c. Verified end to end on both (measured by the deploy agent): login, PDF
 upload → `ready` via the public https callback, real OpenRouter chat answer whose
 `provenance.chunks[]` cites the upload, conversation delete, admin usage panel, lengua filter pages
@@ -343,6 +344,47 @@ dev 257 backend documents (248 `ready`), 253 ai-service; staging 4 / 4 / 6.
 `docker builder prune -af` (12.96 GB) and removing dev's `fcd5247` images; 48 GB after staging's
 build; 61 GB after the same cleanup and removing staging's `643ff4e` images. Images 7.0 GB, build
 cache 0. Only `e3eb1f3` images remain, so a rollback means rebuilding an older commit.
+
+### 4i. ✅ Done 2026-10-17 22:31–22:40 UTC: `5c157bb`, dev only
+
+All measured by the deploy agent. Staging was not touched; it stays on `e3eb1f3`. Dev was resolved
+by its domain through the API. `5c157bb` makes a conversation delete also delete the uploads that
+belong only to it (`31cd595`, `fb08716`; the rule is in `apps/backend/src/lib/conversationUploads.ts`).
+
+- Backup (`pg_restore -l` ok, sha256 matched off-box): `/root/backups/20261017T2231Z/`, `edc_ai`
+  2.3 MB, `edc_backend` 314 KB. Pre-check by hash as in §4h: admin key, `RERANK_API_KEY`
+  `4dbc5b378dde`, timeout 600000.
+- Deploy: 22:31:52 → 22:37:15 UTC, ≈ 5.4 min (API poll every 20 s). Schema gate: `edc_ai` current
+  at 6 migrations; none ran. 6 containers `healthy`; health 200 on `dev.` and `api.dev.`; every
+  container carries `RERANK_API_KEY` `4dbc5b378dde`; no non-preview variable holds `:?` text.
+
+**Upload cascade test** (as admin, one script, 22:38 UTC). Conversation A (18) got upload X
+(`cascade-x.pdf`, doc 263). Conversation B (19), created after, got upload Y (`cascade-y.pdf`,
+doc 264), and X was attached to B too. One chat in B answered from Y in 8.9 s, citing
+`cascade-y.pdf` with `rerankScore` 0.99994. Checked per document: the backend `documents` row,
+its `media` row, the ai-service document (`external_id` = backend id), the RustFS object on disk,
+and its presence in "Mis documentos" (`GET /api/documentos`).
+
+| step | Y (only in B) | X (from A, also attached to B) |
+|---|---|---|
+| before deleting B | all 5 present | all 5 present |
+| `DELETE /api/sessions/19` → 200 | **all 5 gone** within 5 s | all 5 present; still listed in A |
+| `DELETE /api/sessions/18` → 200 | — | **all 5 gone** within 5 s |
+
+The backend logged `scheduled post-commit upload cleanup` then `… finished` for each delete. No
+orphan chunks in ai-service afterwards (SQL). Counts after: 257 backend documents (248 `ready`),
+253 ai-service — the same as before the test. Rerank since the deploy: 2 `rerank ok`, 0
+`rerank degraded` (ai-service log).
+
+Found along the way:
+
+- ⚠ **A plain document delete leaves its file behind.** The 5 `zarzamora.pdf` documents deleted
+  through `DELETE /api/documents/<id>` in §4g–§4h left 5 `media` rows (no document points at them)
+  and 5 RustFS objects under `edc/eco_1/u_1/` (measured before this deploy, SQL and `find`).
+  Only the conversation cascade deletes the `media` row and the object. Not cleaned here.
+
+**Disk**, `df -h /` free: 61 GB before; 48 GB after the build; 61 GB after `docker builder prune
+-af` (12.96 GB) and removing dev's `e3eb1f3` images. Images 7.0 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
