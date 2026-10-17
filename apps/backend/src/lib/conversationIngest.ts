@@ -27,8 +27,9 @@
  * user to do bookkeeping for the corpus's benefit. Instead:
  *
  *   · A conversation citing NO unpublished drafts is ingested AS IT GOES.
- *   · A conversation citing unpublished drafts is HELD. When the LAST of those
- *     drafts is published, the whole conversation goes in one run.
+ *   · A conversation citing unpublished drafts, or with one ATTACHED (C-15), is
+ *     HELD. When the LAST of those drafts is published, the whole conversation
+ *     goes in one run.
  *
  * ⚠ The reason for the hold is not privacy, it is coherence: a chat turn that
  * quotes a document only its author can see would be retrievable by the whole
@@ -287,6 +288,36 @@ export async function citedUnpublishedDocumentIds(
   return cited.filter((id) => !published.has(String(id)))
 }
 
+/**
+ * 🔴 C-15: the unpublished documents ATTACHED to this conversation, cited or not.
+ *
+ * Citation is not the only way a turn depends on a draft. An answer can
+ * paraphrase an attached draft without a chunk of it in `provenance`, and a
+ * question can name its title. Either turn, in the shared corpus, leaks a
+ * private document's existence or content. So any unpublished attachment holds
+ * the conversation, and its publish releases it (`releaseConversationsWaitingOn`
+ * re-runs every `held-drafts` session).
+ *
+ * ⚠ The cost: a draft that is attached and never published holds the whole
+ * conversation for good. Detaching it releases the conversation on its next turn.
+ */
+export async function attachedUnpublishedDocumentIds(
+  payload: Payload,
+  sessionId: number | string,
+): Promise<Array<number | string>> {
+  const rows = await payload.find({
+    collection: 'documents',
+    // `documents.session` is hasMany: `equals` matches any attached session.
+    where: { session: { equals: sessionId } },
+    depth: 0,
+    pagination: false,
+    overrideAccess: true,
+  })
+  return (rows.docs as unknown as Array<{ id: number | string; publicationStatus?: unknown }>)
+    .filter((row) => row.publicationStatus !== 'published')
+    .map((row) => row.id)
+}
+
 // ---------------------------------------------------------------------------
 // The roster — the half of the gate that only works for conversations
 // ---------------------------------------------------------------------------
@@ -419,7 +450,14 @@ export async function ingestConversationTurns(args: {
   // TURNS. A draft cited on turn 3 keeps turn 41 out too: releasing the tail of
   // a conversation whose head quotes a private document would put half an
   // exchange in the corpus, citing something nobody else can open.
-  const waitingOn = await citedUnpublishedDocumentIds(payload, all)
+  // C-15: plus every unpublished draft ATTACHED here, cited or not.
+  const [cited, attached] = await Promise.all([
+    citedUnpublishedDocumentIds(payload, all),
+    attachedUnpublishedDocumentIds(payload, sessionId),
+  ])
+  const waitingOn = [
+    ...new Map([...cited, ...attached].map((id) => [String(id), id] as const)).values(),
+  ]
   if (waitingOn.length > 0) {
     await Promise.all(
       outstanding.map((message) =>

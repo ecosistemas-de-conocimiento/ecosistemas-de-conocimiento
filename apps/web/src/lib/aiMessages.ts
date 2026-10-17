@@ -26,3 +26,22 @@ export const AI_UNAVAILABLE_MESSAGE =
  * clear time, so inviting an automatic retry would be a lie).
  */
 export const AI_UNAVAILABLE_CODE = 'ai_unavailable';
+
+/**
+ * Warning code on a turn whose answer was generated but NOT saved (audit C-14).
+ * The BFF sends it in `warnings` with `messageId: null`; `Chat.svelte` shows
+ * `ANSWER_NOT_SAVED_MESSAGE` under the answer. Without it the failure was
+ * silent: the answer vanished on reload, could not be rated, and was never
+ * ingested.
+ */
+export const ANSWER_NOT_SAVED_CODE = 'ANSWER_NOT_SAVED';
+
+export const ANSWER_NOT_SAVED_MESSAGE =
+  'No pudimos guardar esta respuesta. No podrás calificarla y no aparecerá si recargas la página.';
+
+/** The notice to show under an answer, from the turn's warnings; `undefined` when none applies. */
+export function answerNotice(
+  warnings: readonly { code: string }[] | null | undefined,
+): string | undefined {
+  return warnings?.some((w) => w.code === ANSWER_NOT_SAVED_CODE) ? ANSWER_NOT_SAVED_MESSAGE : undefined;
+}

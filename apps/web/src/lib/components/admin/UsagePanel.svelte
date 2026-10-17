@@ -26,11 +26,13 @@
    * reaches it; this file lays it out.
    */
   import {
+    budgetLine,
     formatCostUsd,
     formatDay,
     formatSpan,
     plural,
     shortModelName,
+    type BudgetView,
     type UsageSummary,
   } from './summary';
 
@@ -38,9 +40,15 @@
     summary: UsageSummary;
     /** `false` ⇒ a read failed. Different from "nothing happened". */
     ok: boolean;
+    /**
+     * ai-service's budget for this ecosistema (C-6). `null` = not asked;
+     * `{ok:false}` = the read failed, and the panel says so.
+     */
+    budget?: BudgetView | null;
   };
 
-  let { summary, ok }: Props = $props();
+  let { summary, ok, budget = null }: Props = $props();
+  const budgetText = $derived(budgetLine(budget));
 
   const numbers = new Intl.NumberFormat('es-MX');
 
@@ -59,6 +67,17 @@
     return from === to ? from : `${from} – ${to}`;
   });
 </script>
+
+{#if budget}
+  <p class="caveat" data-testid="budget">
+    {#if budgetText}
+      <strong>Presupuesto de IA:</strong> {budgetText} gastado. Es todo lo que el servicio de IA
+      cobró a este ecosistema: respuestas, preparación de búsquedas e indexación de documentos.
+    {:else}
+      No pudimos leer el presupuesto de IA de este ecosistema.
+    {/if}
+  </p>
+{/if}
 
 {#if !ok}
   <p class="notice">
@@ -91,11 +110,11 @@
       </p>
     </div>
     <div>
-      <dt>Costo</dt>
+      <dt>Costo (solo respuestas)</dt>
       <dd class="cost">{formatCostUsd(summary.costUsd)}</dd>
       <p class="foot">
         {#if summary.costPerTurn != null}
-          {formatCostUsd(summary.costPerTurn)} por respuesta
+          {formatCostUsd(summary.costPerTurn)} por respuesta · no incluye reformular la pregunta
         {:else}
           Ninguna respuesta trae su costo.
         {/if}

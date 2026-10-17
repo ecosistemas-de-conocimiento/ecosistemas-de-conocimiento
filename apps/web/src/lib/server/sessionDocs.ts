@@ -25,12 +25,29 @@
  */
 
 import { backendFetch } from '$lib/server/auth';
+import { libraryTitleFor } from '$lib/biblioteca';
 
+/**
+ * 🔴 A GATED ROW'S `name` NEVER LEAVES THIS READ.
+ *
+ * A testimonio's or conversación's `name` is free text the uploader typed and
+ * it never went through the anonymisation gate. The backend still returns it
+ * to the uploader and to a platform admin, so reading with the user's own
+ * access is NOT enough: this list goes into the prompt (the summary line that
+ * names the attached documents, and the `@`-mention labels), and the prompt
+ * leaves for a hosted model. So the name is replaced HERE with
+ * `libraryTitleFor` — the one helper `/biblioteca` and the `@`-mention
+ * resolver use — before any consumer sees it. A missing `contentKind` is
+ * gated: fail closed.
+ */
 /** The document fields this app reads off a session's document list. */
 export interface SessionDocRow {
   id: number | string;
+  /** Already NEUTRAL for gated content — see `libraryTitleFor` above. */
   name: string;
   kind?: string | null;
+  /** What the material IS (`documento`, `testimonio`, `conversacion`). */
+  contentKind?: string | null;
   ingestStatus?: string | null;
   publicationStatus?: string | null;
 }
@@ -101,8 +118,9 @@ export async function fetchSessionDocs(
       if (r.id == null) continue;
       docs.push({
         id: r.id as number | string,
-        name: typeof r.name === 'string' ? r.name : '',
+        name: libraryTitleFor(r.contentKind, r.name),
         kind: (r.kind as string | null | undefined) ?? null,
+        contentKind: typeof r.contentKind === 'string' ? r.contentKind : null,
         ingestStatus: (r.ingestStatus as string | null | undefined) ?? null,
         publicationStatus: (r.publicationStatus as string | null | undefined) ?? null,
       });

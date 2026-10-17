@@ -1,0 +1,108 @@
+import { describe, expect, it, vi } from 'vitest'
+
+import { BACKFILL_WHERE, backfillLengua, type BackfillCandidate, type LenguaIngester } from './backfillLengua'
+
+function fakePayload(docs: BackfillCandidate[]) {
+  return { find: vi.fn(async (_args: unknown) => ({ docs })) }
+}
+
+function fakeClients() {
+  const calls: Array<{ org: string; req: Parameters<LenguaIngester['ingest']['enqueue']>[0] }> = []
+  const clientFor = (org: number | string): LenguaIngester => ({
+    ingest: {
+      enqueue: async (req) => {
+        calls.push({ org: String(org), req })
+        return { ingestId: `ing-${calls.length}` }
+      },
+    },
+  })
+  return { calls, clientFor }
+}
+
+const DOC: BackfillCandidate = {
+  id: 11,
+  name: 'Informe de partería',
+  kind: 'pdf',
+  contentKind: 'documento',
+  extractedText: 'Las parteras acompañan los nacimientos.',
+  lengua: ' mixe ',
+  organization: 1,
+}
+
+describe('backfillLengua (C-3)', () => {
+  it('🔴 DRY RUN BY DEFAULT: enqueues nothing, reports the plan and its size', async () => {
+    const { calls, clientFor } = fakeClients()
+    const report = await backfillLengua(fakePayload([DOC]) as never, clientFor)
+    expect(calls).toHaveLength(0)
+    expect(report).toMatchObject({ apply: false, candidates: 1, planned: 1, enqueued: 0, lastId: '11' })
+    expect(report.chars).toBe(DOC.extractedText!.length)
+  })
+
+  it('asks only for published documentos with a lengua, by id, for one ecosistema when given', async () => {
+    const payload = fakePayload([])
+    await backfillLengua(payload as never, fakeClients().clientFor, { organizationId: 3, afterId: 40 })
+    const args = payload.find.mock.calls[0]![0] as unknown as { where: { and: unknown[] }; sort: string }
+    expect(args.where.and).toEqual([
+      ...BACKFILL_WHERE,
+      { organization: { equals: 3 } },
+      { id: { greater_than: 40 } },
+    ])
+    expect(args.sort).toBe('id')
+  })
+
+  it('with apply: re-ingests into the PUBLISHED corpus under the same id, lengua in metadata', async () => {
+    const { calls, clientFor } = fakeClients()
+    const sleep = vi.fn(async () => {})
+    const report = await backfillLengua(fakePayload([DOC, { ...DOC, id: 12 }]) as never, clientFor, {
+      apply: true,
+      delayMs: 500,
+      sleep,
+    })
+    expect(report.enqueued).toBe(2)
+    expect(calls[0]!.org).toBe('1')
+    expect(calls[0]!.req.corpus).toBe('eco-1')
+    expect(calls[0]!.req.documents[0]).toMatchObject({
+      id: '11',
+      title: 'Informe de partería',
+      metadata: expect.objectContaining({ docId: '11', lengua: 'mixe', publication: 'published' }),
+    })
+    // No callback: the row is already published and ready.
+    expect(calls[0]!.req).not.toHaveProperty('callbackUrl')
+    // Paced: one pause between two enqueues.
+    expect(sleep).toHaveBeenCalledTimes(1)
+    expect(sleep).toHaveBeenCalledWith(500)
+  })
+
+  it('skips a gated or text-less row instead of publishing the original', async () => {
+    const { calls, clientFor } = fakeClients()
+    const report = await backfillLengua(
+      fakePayload([
+        { ...DOC, id: 20, contentKind: 'testimonio', redactedText: null, anonymisationStatus: 'held' },
+        { ...DOC, id: 21, extractedText: '' },
+        { ...DOC, id: 22, lengua: '' },
+      ]) as never,
+      clientFor,
+      { apply: true, delayMs: 0 },
+    )
+    expect(calls).toHaveLength(0)
+    expect(report.skippedIds).toEqual(['20', '21', '22'])
+  })
+
+  it('an enqueue error is counted and the run goes on', async () => {
+    let n = 0
+    const clientFor = (): LenguaIngester => ({
+      ingest: {
+        enqueue: async () => {
+          n += 1
+          if (n === 1) throw Object.assign(new Error('rate'), { status: 429 })
+          return { ingestId: 'ok' }
+        },
+      },
+    })
+    const report = await backfillLengua(fakePayload([DOC, { ...DOC, id: 12 }]) as never, clientFor, {
+      apply: true,
+      delayMs: 0,
+    })
+    expect(report).toMatchObject({ errors: 1, enqueued: 1, errorIds: ['11'] })
+  })
+})

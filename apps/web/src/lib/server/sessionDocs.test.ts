@@ -122,3 +122,4 @@ describe('sessionDocumentIdSet', () => {
     expect(sessionDocumentIdSet({ ok: false, docs: [] })).toBeNull();
   });
 });
+

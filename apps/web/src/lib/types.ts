@@ -31,6 +31,11 @@ export interface Message {
   /** UI-only state — never sent to the server. */
   pending?: boolean;
   error?: string;
+  /**
+   * UI-only: a non-fatal notice under an answer that DID arrive — today only
+   * "the answer was not saved" (`ANSWER_NOT_SAVED`, `$lib/aiMessages`).
+   */
+  notice?: string;
   /** ai-service telemetry round-tripped by the backend for assistant turns. */
   generationMeta?: unknown;
   /** `@`-mention refs attached to a user turn (for inline-pill rendering). */

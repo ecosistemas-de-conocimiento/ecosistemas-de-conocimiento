@@ -4,6 +4,7 @@
   import Composer from './Composer.svelte';
   import { app } from '$lib/stores/app.svelte';
   import { generateSync, generateStream, userFacingError, type SyncGenerateResult } from '$lib/api';
+  import { answerNotice } from '$lib/aiMessages';
   import type { ContextRef, ContextScope } from '$lib/types';
   import { emptyChatHint } from '$lib/layout';
   import {
@@ -105,6 +106,7 @@
           id: result.messageId ?? placeholder.id,
           content: result.text,
           pending: false,
+          notice: answerNotice(result.warnings),
           provenance: result.provenance ?? null,
           generationMeta: {
             traceId: result.traceId,

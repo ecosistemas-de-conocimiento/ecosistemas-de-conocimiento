@@ -132,7 +132,7 @@
            ecosistema. Cost IS per message in our own rows. Ecosistema-wide,
            from the backend's `/api/metrics/usage`. -->
       <StatTile
-        label="Costo del chat"
+        label="Costo del chat (solo respuestas)"
         value={overview.usage.ok ? formatCostUsd(overview.usage.summary.costUsd) : '—'}
         hint={overview.usage.ok && !overview.usage.summary.costIsComplete
           ? 'Mínimo: faltan respuestas sin dato de costo.'
@@ -203,7 +203,11 @@
       title="Uso del chat"
       subtitle="Cuánto se conversa, cuánto cuesta y con qué modelos. Nunca lo que se dijo."
     >
-      <UsagePanel summary={overview.usage.summary} ok={overview.usage.ok} />
+      <UsagePanel
+        summary={overview.usage.summary}
+        ok={overview.usage.ok}
+        budget={data.state === 'ready' ? data.budget : null}
+      />
     </PanelCard>
 
     <PanelCard

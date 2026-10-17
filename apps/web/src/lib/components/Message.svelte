@@ -94,6 +94,11 @@
     {#if msg.error}
       <div class="mt-1 text-xs">⚠ {msg.error}</div>
     {/if}
+    {#if msg.notice && !msg.error}
+      <div class="mt-1 text-xs text-ink-soft" role="status" data-testid="answer-notice">
+        ⚠ {msg.notice}
+      </div>
+    {/if}
 
     {#if hasCitations}
       <div class="mt-2 pt-2 border-t border-elevated">

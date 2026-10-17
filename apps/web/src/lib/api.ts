@@ -28,14 +28,17 @@ export interface SyncGenerateResult {
   provider?: string;
   costUsd?: number;
   traceId?: string;
-  /** the backend message id for the persisted assistant turn (when available). */
-  messageId?: string;
+  /**
+   * The backend message id for the persisted assistant turn. `null` when the
+   * save failed — `warnings` then carries `ANSWER_NOT_SAVED`.
+   */
+  messageId?: string | null;
   /** Citation provenance for the assistant turn (drives the citation card). */
   provenance?: Provenance | null;
   /**
-   * Non-fatal advisories from ai-service (today only `BUDGET_SOFT_CAP`). Not
-   * rendered — the server already logged them; carried so a future surface can
-   * use them without another plumbing pass.
+   * Non-fatal advisories: ai-service's (`BUDGET_SOFT_CAP`, not rendered — the
+   * server already logged it) and the BFF's `ANSWER_NOT_SAVED`, which
+   * `Chat.svelte` shows under the answer (`answerNotice`).
    */
   warnings?: { code: string; message: string }[];
 }
@@ -157,7 +160,7 @@ export async function generateStream(
           provider: evt.provider as string | undefined,
           costUsd: evt.costUsd as number | undefined,
           traceId: evt.traceId as string | undefined,
-          messageId: evt.messageId as string | undefined,
+          messageId: evt.messageId as string | null | undefined,
           provenance: (evt.provenance as Provenance | null | undefined) ?? null,
           warnings: evt.warnings as SyncGenerateResult['warnings'],
         };

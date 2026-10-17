@@ -67,9 +67,13 @@ function matches(row: Row, where: unknown): boolean {
   return Object.entries(clause).every(([field, condition]) => {
     const cond = condition as { equals?: unknown; in?: unknown[] }
     const actual = row[field]
-    const actualKey = actual && typeof actual === 'object' ? (actual as Row).id : actual
-    if ('equals' in cond) return String(actualKey) === String(cond.equals)
-    if ('in' in cond) return (cond.in ?? []).some((v) => String(v) === String(actualKey))
+    // A `hasMany` relationship (documents.session) matches when ANY of its
+    // values does — Payload's semantics for `equals` / `in` on an array field.
+    const keys = (Array.isArray(actual) ? actual : [actual]).map((v) =>
+      v && typeof v === 'object' ? (v as Row).id : v,
+    )
+    if ('equals' in cond) return keys.some((k) => String(k) === String(cond.equals))
+    if ('in' in cond) return (cond.in ?? []).some((v) => keys.some((k) => String(v) === String(k)))
     return true
   })
 }
@@ -449,6 +453,56 @@ describe('🔴 the hold — a conversation citing an unpublished draft', () => {
     const result = await run(db, client, countingDetector())
     expect(calls).toHaveLength(0)
     expect(result.waitingOn.map(String)).toEqual(['911'])
+  })
+})
+
+describe('🔴 C-15: the hold — a session with an ATTACHED unpublished draft', () => {
+  // A turn need not cite a draft to depend on it: an answer can paraphrase an
+  // attached draft, or a question can name its title, with no chunk of it in
+  // provenance. While the conversation has any unpublished draft attached, it
+  // stays out of the shared corpus.
+  it('holds an uncited turn while a draft attached to this conversation is unpublished', async () => {
+    const db = seed([{ id: 1, role: 'user', content: 'Que opinas del plan de Ana para el ejido' }], {
+      documents: [{ id: 930, publicationStatus: 'draft', session: [SESSION] }],
+    })
+    const { client, calls } = fakeClient()
+    const result = await run(db, client, countingDetector())
+    expect(calls).toHaveLength(0)
+    expect(result.waitingOn.map(String)).toEqual(['930'])
+    expect(db.messages[0]!.corpusStatus).toBe('held-drafts')
+  })
+
+  it('does not hold on a draft attached to ANOTHER conversation', async () => {
+    const db = seed([{ id: 1, role: 'user', content: 'Una pregunta general' }], {
+      documents: [{ id: 931, publicationStatus: 'draft', session: [SESSION + 1] }],
+    })
+    const { client, calls } = fakeClient()
+    const result = await run(db, client, countingDetector())
+    expect(result.waitingOn).toEqual([])
+    expect(calls).toHaveLength(1)
+  })
+
+  it('does not hold on an attached document that is already published', async () => {
+    const db = seed([{ id: 1, role: 'user', content: 'Una pregunta general' }], {
+      documents: [{ id: 932, publicationStatus: 'published', session: [SESSION] }],
+    })
+    const { client, calls } = fakeClient()
+    await run(db, client, countingDetector())
+    expect(calls).toHaveLength(1)
+  })
+
+  it('is released when the attached draft is published', async () => {
+    const db = seed([{ id: 1, role: 'user', content: 'Que opinas del plan de Ana' }], {
+      documents: [{ id: 933, publicationStatus: 'draft', session: [SESSION] }],
+    })
+    const { client, calls } = fakeClient()
+    const detector = countingDetector()
+    await run(db, client, detector)
+    expect(calls).toHaveLength(0)
+    db.documents[0]!.publicationStatus = 'published'
+    await releaseConversationsWaitingOn({ payload: fakePayloadFor(db), documentId: 933, client, detector })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-1'])
   })
 })
 

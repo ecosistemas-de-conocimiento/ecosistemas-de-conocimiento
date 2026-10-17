@@ -33,11 +33,21 @@
  * `topK`, so the engine's cross-corpus merge sees exactly as many chunks as
  * before.
  *
- * ⚠ `score` is never overwritten. A chunk the original query also found keeps
- * the ORIGINAL query's cosine (`fuseMatches` keeps the first leg's record on a
- * tie), so relevance gates read the same scale they read without expansion. The
- * engine then re-sorts all corpora by that score: RRF decides WHICH chunks of a
- * corpus survive, the score decides their final order.
+ * ⚠ `score` is RE-ASSIGNED BY RANK after fusion (audit C-5). Fused position
+ * `i` takes the `i`-th highest score of the ORIGINAL query's list; positions
+ * past its end take its lowest score. So within a corpus `score` follows the
+ * RRF order, and across corpora it stays on the scale the original search
+ * produced (cosine without rerank, cross-encoder with it). Before, a chunk only
+ * a variant found kept its cosine while the original's carried the
+ * cross-encoder value, and the engine's cross-corpus sort compared the two.
+ * When the original found nothing in this corpus there is no scale to borrow:
+ * under rerank those chunks get 0 (they sort after every reranked hit);
+ * without rerank they keep their cosine, which is the same scale anyway.
+ *
+ * Relevance gates are unaffected: they read `denseScore`. A chunk whose
+ * `score` WAS its cosine (no `denseScore`, `rerankScore` or `lexicalScore`)
+ * gets that cosine copied to `denseScore` before `score` is replaced, so
+ * `thresholdScore` reads the same number it read before.
  *
  * ── RERANK (`./rerank`, CHAT_RERANK) ─────────────────────────────────────────
  *
@@ -45,15 +55,8 @@
  * out without it. ai-service has no stand-alone rerank endpoint, so the fused
  * list cannot be reranked once as a whole, and reranking every variant would
  * be four cross-encoder calls per corpus instead of one — against a
- * hypothetical-answer "query" the cross-encoder was not built to score.
- *
- * ⚠ The cost of that choice: a chunk ONLY a variant found keeps its cosine as
- * `score`, while the original's chunks carry the cross-encoder value. Within a
- * corpus that does not matter (RRF orders by rank, not score). The engine's
- * cross-corpus sort then compares the two scales (inferred, not measured: a
- * cross-encoder scores clear hits near 1 and misses near 0, so a variant-only
- * chunk with a typical cosine lands between them). Relevance gates are not
- * affected: they read `denseScore`, which every chunk carries.
+ * hypothetical-answer "query" the cross-encoder was not built to score. The
+ * rank-derived `score` above is what keeps that choice from mixing scales.
  *
  * Best-effort like every engine context step: a failing, slow or junk
  * expansion degrades to the plain retrieve and logs one `[expand]` line.
@@ -70,8 +73,6 @@ import { fuseMatches } from '@edc/chat-engine/core';
 
 /** At most this many variants are searched besides the original. */
 export const MAX_EXPANSIONS = 3;
-/** Output budget for the expansion call: three short lines. */
-export const EXPANSION_MAX_TOKENS = 220;
 /**
  * Give up on the expansion after this long and search the original only.
  * Inferred, not measured: a `quick` call usually returns in 1–2 s.
@@ -190,7 +191,6 @@ export function withQueryExpansion<T extends AIClient>(client: T, opts: QueryExp
         ...(opts.scopeId ? { scopeId: opts.scopeId } : {}),
         userId: opts.userId,
         effort: 'quick',
-        maxTokens: EXPANSION_MAX_TOKENS,
         messages: [
           { role: 'system', content: EXPANSION_SYSTEM_PROMPT },
           { role: 'user', content: `Pregunta: ${query}` },
@@ -240,7 +240,29 @@ export function withQueryExpansion<T extends AIClient>(client: T, opts: QueryExp
         mergedCap: req.topK && req.topK > 0 ? req.topK : DEFAULT_TOPK,
       });
       // Every record came in as a `RetrieveMatch`, so `metadata` is never null.
-      return { matches: fused.map(({ corpus: _corpus, ...rest }) => rest as RetrieveMatch) };
+      const matches = fused.map(({ corpus: _corpus, ...rest }) => rest as RetrieveMatch);
+      return { matches: scoreByRank(matches, original.matches ?? [], req.rerank === true) };
     },
   };
+}
+
+/**
+ * Re-score a fused list by RANK on the original list's scale. See "`score` is
+ * RE-ASSIGNED BY RANK" in the module header. Pure; inputs are not mutated.
+ */
+export function scoreByRank(
+  fused: readonly RetrieveMatch[],
+  original: readonly RetrieveMatch[],
+  reranked: boolean,
+): RetrieveMatch[] {
+  const scale = original.map((x) => x.score).sort((a, b) => b - a);
+  const floor = scale.length > 0 ? scale[scale.length - 1]! : null;
+  return fused.map((c, i) => {
+    const wasCosine =
+      typeof c.denseScore !== 'number' &&
+      typeof c.rerankScore !== 'number' &&
+      typeof c.lexicalScore !== 'number';
+    const score = scale[i] ?? floor ?? (reranked ? 0 : c.score);
+    return { ...c, ...(wasCosine ? { denseScore: c.score } : {}), score };
+  });
 }

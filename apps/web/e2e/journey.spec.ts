@@ -721,28 +721,46 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
 
     // The engine's CitationCard. `citation-sources` is the "Fuentes
     // consultadas" block it renders whenever the turn's provenance carried a
-    // chunk. Soft, because "no citation" here is a downstream symptom of an
-    // ingest that never produced any chunks to cite — reported, not fatal.
-    const sourcesBlock = page.getByTestId('citation-sources').first();
-    await expect
-      .soft(sourcesBlock, 'the answer rendered with NO citation block')
-      .toBeVisible({ timeout: 60_000 });
-    if (await sourcesBlock.isVisible().catch(() => false)) {
-      // 🔴 THE LIST STARTS COLLAPSED, AND THAT IS THE APP'S CHOICE, NOT A BUG.
-      // `components/Message.svelte` passes `collapsibleSources` to the engine's
-      // `CitationCard` and does NOT pass `sourcesOpenByDefault`, so what renders
-      // first is a toggle reading "Fuentes consultadas (N)" — the count is
-      // visible, the passages are one click away, and the chat stays readable.
-      // A test that asserts the `<li>`s without pressing that button is
-      // asserting a different product. Press it, the way a reader does.
-      const toggle = sourcesBlock.getByTestId('citation-sources-toggle');
-      if ((await toggle.count()) && (await toggle.getAttribute('aria-expanded')) !== 'true') {
-        await toggle.click();
-      }
-      await expect(page.getByTestId('citation-source').first()).toBeVisible();
-      const sources = await page.getByTestId('citation-source').allTextContents();
-      note('citations', sources.map((s) => s.replace(/\s+/g, ' ').trim()).join(' | '));
+    // chunk.
+    //
+    // 🔴 HARD, AND IT MUST NAME THE PDF THIS RUN UPLOADED (audit C-1). This step
+    // used to be `expect.soft` inside `if (isVisible)`, so a turn with no
+    // citation, or one citing any other document, passed. Now it fails unless
+    // the source list names `pdfName` — the file this run uploaded and
+    // published. The title on a source card is the upload name
+    // (`chunkMetadata.title` = `documents.name`).
+    //
+    // ⚠ Under the fake provider (`COMPOSE_PROFILES=fake`) embeddings are hash
+    // vectors with no meaning (`test-support/fake-provider/server.mjs`,
+    // `fakeEmbedOne`), so dense retrieval over the published corpus is close
+    // to random and this step can fail there for that reason alone. Read a
+    // failure on the fake stack with that in mind; it is meaningful on real
+    // embeddings.
+    const sourcesBlock = page.getByTestId('citation-sources').last();
+    await expect(sourcesBlock, 'the answer rendered with NO citation block').toBeVisible({
+      timeout: 60_000,
+    });
+    // 🔴 THE LIST STARTS COLLAPSED, AND THAT IS THE APP'S CHOICE, NOT A BUG.
+    // `components/Message.svelte` passes `collapsibleSources` to the engine's
+    // `CitationCard` and does NOT pass `sourcesOpenByDefault`, so what renders
+    // first is a toggle reading "Fuentes consultadas (N)" — the count is
+    // visible, the passages are one click away, and the chat stays readable.
+    // A test that asserts the `<li>`s without pressing that button is
+    // asserting a different product. Press it, the way a reader does.
+    const toggle = sourcesBlock.getByTestId('citation-sources-toggle');
+    if ((await toggle.count()) && (await toggle.getAttribute('aria-expanded')) !== 'true') {
+      await toggle.click();
     }
+    const sourceItems = sourcesBlock.getByTestId('citation-source');
+    await expect(sourceItems.first()).toBeVisible();
+    const sources = (await sourceItems.allTextContents()).map((s) => s.replace(/\s+/g, ' ').trim());
+    note('citations', sources.join(' | '));
+    // The run-scoped stem, not the full name: a card may drop the extension.
+    const pdfStem = pdfName.replace(/\.[^.]+$/, '');
+    expect(
+      sources.some((s) => s.includes(pdfStem)),
+      `the citation list does not name the uploaded PDF "${pdfName}". It lists: ${sources.join(' | ')}`,
+    ).toBe(true);
   });
 
   // ── 10. Sign out ─────────────────────────────────────────────────────────

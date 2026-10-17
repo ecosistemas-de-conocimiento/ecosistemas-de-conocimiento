@@ -20,6 +20,7 @@ import {
   summarizeDocuments,
   summarizeRatings,
   formatCostUsd,
+  budgetLine,
   formatSpan,
   parseUsageSummary,
   shortModelName,
@@ -590,5 +591,22 @@ describe('shortModelName', () => {
   it('leaves a bare name, and a trailing slash, alone', () => {
     expect(shortModelName('gpt-4o-mini')).toBe('gpt-4o-mini');
     expect(shortModelName('vendor/')).toBe('vendor/');
+  });
+});
+
+describe('budgetLine (C-6)', () => {
+  it('shows spent of limit, with the share', () => {
+    expect(
+      budgetLine({ ok: true, limitUsd: 10, spentUsd: 1.5, remainingUsd: 8.5, currency: 'USD' }),
+    ).toBe('$1.50 USD de $10.00 USD (15 %)');
+  });
+  it('shows nothing for a failed or missing read', () => {
+    expect(budgetLine({ ok: false })).toBeNull();
+    expect(budgetLine(null)).toBeNull();
+  });
+  it('omits the share when the limit is zero', () => {
+    expect(budgetLine({ ok: true, limitUsd: 0, spentUsd: 0, remainingUsd: 0, currency: 'USD' })).toBe(
+      '$0.00 USD de $0.00 USD',
+    );
   });
 });

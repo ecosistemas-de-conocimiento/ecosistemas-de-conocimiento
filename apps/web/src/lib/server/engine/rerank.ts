@@ -17,10 +17,15 @@
  *
  * chat-engine 0.6 can rerank ONCE after cross-corpus fusion only through a
  * `hybrid` policy plus `AIClient.retrieveMulti` (`/v1/retrieve/multi`). EDC
- * cannot use that path: the draft leg is post-filtered to this conversation's
- * documents and every retrieve must carry `asOf`, and neither fits one multi
- * call (see `aiClient.ts`). ai-service has no stand-alone rerank endpoint
- * either. So the rerank runs server-side ONCE PER CORPUS per turn:
+ * does not use that path. `asOf` is NOT the reason: the multi request takes
+ * `asOf` and `filter` like `/v1/retrieve` does
+ * (`services/ai-service/src/contract/rag.ts`, `retrieveMultiRequestSchema`).
+ * The reason is the draft leg: it is over-fetched and then post-filtered to
+ * this conversation's documents by `metadata.docId` (see `aiClient.ts`), and a
+ * metadata `filter` cannot say "docId IN (…)". One multi call would rank and
+ * cap the drafts of every conversation together before that filter could run.
+ * ai-service has no stand-alone rerank endpoint either. So the rerank runs
+ * server-side ONCE PER CORPUS per turn:
  *
  *   · the published corpus  — pool 20 (topK 5 × 4)
  *   · the draft corpus      — pool 50 (the draft over-fetch of 20, × 4, capped)
