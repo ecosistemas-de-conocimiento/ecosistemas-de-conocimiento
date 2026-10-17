@@ -208,3 +208,65 @@ out vector chunks that were carrying the answer. n=1; worth watching, not worth 
 Twenty questions, ten per class, three repetitions. Mechanical string scoring, no LLM judge.
 A 0.27 recall difference at this sample size is large enough to believe; the 0.011 citation
 precision difference is not.
+
+---
+
+# Third measurement, 2026-10-17: dense or hybrid retrieval in chat? (audit C-4)
+
+Retrieval only: no answer was generated, nothing was paid for but query embeddings.
+`src/eval/retrieval.ts` sends the requests chat sends for the published corpus:
+`dense` is `/v1/retrieve` (`CHAT_RETRIEVAL_MODE=dense`, today's default), `hybrid` is one
+`/v1/retrieve/multi` call with `mode: 'hybrid'` (`CHAT_RETRIEVAL_MODE=hybrid`: cosine plus
+the corpus's Spanish keyword search, fused by RRF). topK 5, what chat sends per corpus.
+
+**Provenance (measured).** 2026-10-17, 19:34 to 20:15 UTC, on the dev workstation, against
+the local `edc` stack's ai-service at `localhost:45401`, read-only. That image was built
+2026-10-16 22:27 CST and predates `metadataFilterIn` and `orgDelegation`, so its corpora
+sit in the key's own org (`demo`) and the `X-AI-Org` header is ignored. Corpus `eco-1`,
+191 published documents. Load average 3.8 at start, 1.2 at end; other sessions were using
+the box. Raw rows: `retrieval-results.topk5.json`. Rerun:
+`EVAL_REPO_ROOT=<checkout with infra/.env> npx payload run src/eval/retrieval.ts`.
+
+**Labels.** `harness` is the 20 questions of `questions.ts`, the labels `run.ts` scores.
+Local (one target document): MRR = 1 / rank of the first chunk from the target, recall@k =
+the target is in the top k. Global: recall@k = share of the expected facts named in the
+top-k chunks' text; MRR = 1 / rank of the first chunk naming one. `local-all` applies the
+local question template to every published document whose manifest name is unique and
+appears in its own text: 189 single-document questions.
+
+| labels | n | arm | MRR@5 | recall@1 | recall@3 | recall@5 | median request ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| harness local | 10 | dense | **0.950** | 0.900 | 1.000 | **1.000** | 4780 |
+| harness local | 10 | hybrid | 0.475 | 0.400 | 0.500 | 0.600 | 464 |
+| harness global | 10 | dense | 0.720 | 0.350 | 0.414 | 0.505 | 832 |
+| harness global | 10 | hybrid | 0.733 | 0.308 | 0.515 | **0.623** | 595 |
+| local-all | 189 | dense | **0.936** | 0.894 | 0.979 | **0.989** | 750 |
+| local-all | 189 | hybrid | 0.503 | 0.386 | 0.598 | 0.698 | 645 |
+
+- 🔴 **Hybrid halves single-document MRR, 0.94 → 0.50, on 189 questions.** Paired per
+  question: hybrid better on 4, worse on 110, equal on 75. It reproduces the 2026-10-16
+  baseline quoted in the audit (0.95 → 0.50 on 39 queries, another session) on a set
+  five times larger. Likely cause (inferred, as that baseline said): the questions are
+  long, the Spanish keyword leg matches their common words across many documents, and
+  RRF gives that leg the same vote as the cosine leg.
+- **Global questions gain a little: recall@5 0.505 → 0.623, n = 10.** Better on G01, G03,
+  G05, G10; worse on G09; equal on 5. Ten questions cannot separate that from noise.
+- **Latency: no decision-relevant difference.** The 4780 ms dense median on the 10 harness
+  locals comes from the first requests of the run (inferred: a cold start), not a dense
+  cost; on 189 questions dense is 750 ms and hybrid 645 ms.
+- ⚠ **The two rerank arms did not run.** The local stack has `RERANK_ENABLED=false` and no
+  `RERANK_API_KEY`; the probe's `legs` was `["dense"]`, so `rerank: true` would have been a
+  silent no-op scored as "rerank". The script refuses those arms. Measuring them needs a
+  stack with the reranker on (a throwaway ai-service on a copy of `edc_ai`, plus a
+  DeepInfra key). Note how hybrid+rerank would differ: chat's multi call reranks once,
+  over the fused list only, so with topK 5 it can only reorder the hybrid top 5. It
+  cannot bring back a target hybrid ranked 6th or lower.
+- ⚠ Not measured: topK 10, and dense with query expansion (chat's real dense path; the
+  hybrid path skips expansion).
+
+## Recommendation: keep `CHAT_RETRIEVAL_MODE=dense`
+
+Hybrid loses about half the single-document MRR and 29 points of recall@5 on the
+question chat gets most. Its global gain is small and rests on 10 questions. The default
+stays `dense`; nothing here was flipped. Re-measure before flipping, with the rerank arms,
+on a stack where rerank runs.
