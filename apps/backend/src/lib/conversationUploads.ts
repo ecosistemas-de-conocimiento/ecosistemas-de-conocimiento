@@ -254,7 +254,7 @@ async function mayDeleteMedia(
  * `transactions/beginTransaction.js`), the only handle on that connection.
  * Null when there is no transaction or the handle is not there.
  */
-async function currentTxid(req: PayloadRequest | undefined): Promise<string | null> {
+export async function currentTxid(req: PayloadRequest | undefined): Promise<string | null> {
   const raw = req?.transactionID
   const id = raw instanceof Promise ? await raw : raw
   if (!id) return null
@@ -262,7 +262,17 @@ async function currentTxid(req: PayloadRequest | undefined): Promise<string | nu
     sessions?: Record<string, { db?: { execute(q: unknown): Promise<unknown> } }>
   })?.sessions
   const tx = sessions?.[String(id)]?.db
-  if (!tx?.execute) return null
+  if (!tx?.execute) {
+    // ⚠ LOUD, because the failure is otherwise silent: there IS a transaction,
+    // but the adapter's registry no longer looks like 3.88.0's. Every cleanup
+    // would then be skipped (orphans, nothing wrongly deleted). Guarded by
+    // `conversationUploads.adapterShape.test.ts` and the real-Postgres suite.
+    req?.payload?.logger?.error(
+      { transactionID: String(id) },
+      '[sessions] cannot read txid_current(): payload.db.sessions[transactionID].db is missing — has @payloadcms/drizzle changed? Upload files will NOT be cleaned up.',
+    )
+    return null
+  }
   const res = (await tx.execute(sql`SELECT txid_current()::text AS xid`)) as {
     rows?: Array<{ xid?: string }>
   }
@@ -393,7 +403,7 @@ async function waitForOutcome(xid: string, deps: AfterCommitDeps): Promise<TxOut
   return 'gave-up'
 }
 
-async function rowExists(payload: Payload, collection: 'documents', id: Id): Promise<boolean> {
+async function rowExists(payload: Payload, collection: 'documents' | 'sessions', id: Id): Promise<boolean> {
   const row = await payload.findByID({ collection, id, depth: 0, overrideAccess: true, disableErrors: true })
   return row != null
 }
@@ -405,7 +415,7 @@ async function rowExists(payload: Payload, collection: 'documents', id: Id): Pro
 export async function finishUploadCleanupAfterCommit(
   plan: UploadCleanupPlan,
   deps: AfterCommitDeps,
-): Promise<TxOutcome | 'no-transaction'> {
+): Promise<TxOutcome | 'no-transaction' | 'session-survived'> {
   const { payload } = deps
   const log = payload.logger
   const allIds = {
@@ -430,10 +440,26 @@ export async function finishUploadCleanupAfterCommit(
     }
   }
 
+  // 🔴 The SESSION must be gone too. A bulk delete commits the rest when one
+  // row's own delete throws (Payload 3.88, measured in the round-3 audit): that
+  // conversation survives, but its upload rows were already deleted in the
+  // shared transaction. Its files and ai-service documents stay, so the
+  // surviving conversation's uploads can still be restored by hand.
+  if (await rowExists(payload, 'sessions', plan.sessionId)) {
+    log.warn(
+      allIds,
+      '[sessions] the conversation survived its delete; its uploads were NOT cleaned up (rows may be gone, files and ai-service documents kept)',
+    )
+    return 'session-survived'
+  }
+
   const { retireDeletedDocument } = await import('./publishDocument')
   const clientFor =
     deps.corpusClient ??
     (async (organizationId: Id) => (await import('./aiClient')).getAdminAIClient(organizationId))
+
+  const cleanedDocumentIds: string[] = []
+  const deletedMediaIds: string[] = []
 
   for (const doc of plan.documents) {
     try {
@@ -443,6 +469,7 @@ export async function finishUploadCleanupAfterCommit(
       if (organizationId == null) continue
       const client = await clientFor(organizationId)
       await retireDeletedDocument({ payload, client: client as never }, doc as never)
+      cleanedDocumentIds.push(String(doc.id))
     } catch (err) {
       log.warn(
         { sessionId: allIds.sessionId, documentId: String(doc.id), err: String(err) },
@@ -460,6 +487,7 @@ export async function finishUploadCleanupAfterCommit(
       })
       if (totalDocs > 0) continue
       await payload.delete({ collection: 'media', id: mediaId, depth: 0, overrideAccess: true })
+      deletedMediaIds.push(String(mediaId))
     } catch (err) {
       log.warn(
         // The error NAME only: a storage error message can carry the object
@@ -470,6 +498,11 @@ export async function finishUploadCleanupAfterCommit(
     }
   }
 
-  log.info(allIds, '[sessions] cleaned up the uploads that belonged only to this conversation')
+  // Says what was DONE, not what was planned: a skipped row or a failed call
+  // shows up as a planned id missing from these lists.
+  log.info(
+    { ...allIds, cleanedDocumentIds, deletedMediaIds },
+    '[sessions] post-commit upload cleanup finished',
+  )
   return outcome
 }

@@ -420,6 +420,18 @@ function assertNoBulkErrors(
  * the bulk transaction still commits what it did delete.
  */
 export function scheduleUploadCleanup(payload: Payload, plan: UploadCleanupPlan): void {
+  // Logged BEFORE the wait: a restart while it polls loses the closure, and
+  // this line is then the only trace of which files and ai-service documents
+  // became orphans.
+  payload.logger.info(
+    {
+      sessionId: String(plan.sessionId),
+      xid: plan.xid,
+      documentIds: plan.documents.map((d) => String(d.id)),
+      mediaIds: plan.mediaIds.map(String),
+    },
+    '[sessions] scheduled post-commit upload cleanup',
+  )
   void finishUploadCleanupAfterCommit(plan, { payload }).catch((err) => {
     payload.logger.warn(
       {

@@ -64,7 +64,12 @@ import {
   SKIP_DOCUMENT_CORPUS_CLEANUP,
   type UploadCleanupPlan,
 } from '../lib/conversationUploads'
-import { deleteConversationChildren, RETIRABLE_TURN_STATES, Sessions } from './Sessions'
+import {
+  deleteConversationChildren,
+  RETIRABLE_TURN_STATES,
+  scheduleUploadCleanup,
+  Sessions,
+} from './Sessions'
 
 const SESSION = 7
 const ECO = 42
@@ -726,15 +731,19 @@ describe('after commit: the irreversible half', () => {
   })
 
   /** `present` = document id → media id, for documents that still exist after commit. */
-  function afterCommitPayload(opts: { present?: Record<number, number>; failMedia?: number } = {}) {
+  function afterCommitPayload(
+    opts: { present?: Record<number, number>; failMedia?: number; sessionSurvives?: boolean } = {},
+  ) {
     const warn = vi.fn()
     const info = vi.fn()
     const present = opts.present ?? {}
     const mediaDeletes: Array<Record<string, unknown>> = []
     const payload = {
       logger: { info, warn, error: warn, debug: () => {} },
-      findByID: async (args: { collection: string; id: number }) =>
-        args.collection === 'documents' && args.id in present ? { id: args.id } : null,
+      findByID: async (args: { collection: string; id: number }) => {
+        if (args.collection === 'sessions') return opts.sessionSurvives ? { id: args.id } : null
+        return args.collection === 'documents' && args.id in present ? { id: args.id } : null
+      },
       count: async (args: { where: { mediaFile: { equals: number } } }) => ({
         totalDocs: Object.values(present).filter((m) => m === args.where.mediaFile.equals).length,
       }),
@@ -813,6 +822,56 @@ describe('after commit: the irreversible half', () => {
     expect(t.warn).toHaveBeenCalledWith(
       { sessionId: String(SESSION), documentIds: ['50'], mediaIds: ['70', '71'] },
       expect.stringContaining('NOT cleaned up'),
+    )
+  })
+
+  it('🔴 committed but the SESSION survived (its own row delete failed in a bulk): nothing is cleaned', async () => {
+    // Payload 3.88 bulk delete commits the other rows when one row's delete
+    // throws; that conversation's upload rows are gone, but it still exists.
+    const t = afterCommitPayload({ sessionSurvives: true })
+
+    const outcome = await finishUploadCleanupAfterCommit(plan(), {
+      payload: t.payload,
+      corpusClient: () => t.client as never,
+      txStatus: status('committed'),
+      intervalMs: 1,
+    })
+
+    expect(outcome).toBe('session-survived')
+    expect(t.deleteDocument).not.toHaveBeenCalled()
+    expect(t.mediaDeletes).toEqual([])
+    expect(t.warn).toHaveBeenCalledWith(
+      { sessionId: String(SESSION), documentIds: ['50'], mediaIds: ['70', '71'] },
+      expect.stringContaining('survived'),
+    )
+  })
+
+  it('the closing log says what was DONE, not what was planned', async () => {
+    // Document 50 survived; media 70 is still in use; only 71 goes.
+    const t = afterCommitPayload({ present: { 50: 70 } })
+
+    await finishUploadCleanupAfterCommit(plan(), {
+      payload: t.payload,
+      corpusClient: () => t.client as never,
+      txStatus: status('committed'),
+      intervalMs: 1,
+    })
+
+    expect(t.info).toHaveBeenCalledWith(
+      expect.objectContaining({ cleanedDocumentIds: [], deletedMediaIds: ['71'] }),
+      expect.stringContaining('finished'),
+    )
+  })
+
+  it('logs every planned id at SCHEDULE time, before the wait', async () => {
+    const t = afterCommitPayload()
+
+    scheduleUploadCleanup(t.payload, plan())
+
+    // Synchronous: a restart during the wait must still leave this trace.
+    expect(t.info).toHaveBeenCalledWith(
+      { sessionId: String(SESSION), xid: '777', documentIds: ['50'], mediaIds: ['70', '71'] },
+      expect.stringContaining('scheduled'),
     )
   })
 

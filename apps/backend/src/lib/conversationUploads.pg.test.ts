@@ -223,6 +223,58 @@ describe.skipIf(!dockerOk)('deleting a conversation on a real Postgres', () => {
     expect(deleteDocument.mock.calls.map((c) => c[1]).sort()).toEqual(['50', '50', '53', '53', '54', '54'])
   }, 30_000)
 
+  it('🔴 a half-failed bulk delete: the conversation that survived keeps its file and ai-service doc', async () => {
+    // Session 13's own row delete throws after its beforeDelete ran; Payload
+    // 3.88 bulk delete collects the error and commits the rest. Session 13's
+    // upload ROW (54) went in the shared transaction, but its file and
+    // ai-service document must stay.
+    //
+    // ⚠ The throw is in JS (the adapter's `deleteOne`), not a database trigger.
+    // A trigger error aborts the whole Postgres transaction, so all three
+    // conversations survive (measured on this suite 2026-10-17). A JS-level
+    // failure leaves the transaction usable, which is the case that commits.
+    const realDeleteOne = payload.db.deleteOne.bind(payload.db)
+    const spy = vi.spyOn(payload.db, 'deleteOne').mockImplementation(async (args) => {
+      const where = JSON.stringify(args.where)
+      if (args.collection === 'sessions' && where.includes('13')) throw new Error('forced failure for 13')
+      return realDeleteOne(args)
+    })
+
+    let result: Awaited<ReturnType<typeof payload.delete>>
+    try {
+      result = await payload.delete({
+        collection: 'sessions',
+        where: { id: { in: [10, 12, 13] } },
+        overrideAccess: true,
+      })
+    } finally {
+      spy.mockRestore()
+    }
+    await delay(OUTLAST_CLEANUP_MS)
+
+    expect(result.errors.map((e) => Number(e.id))).toEqual([13])
+    expect(await ids('sessions')).toEqual([11, 13])
+    // The others were cleaned…
+    expect([fileA, fileC].map(existsSync)).toEqual([false, false])
+    // …13's file and ai-service document were not.
+    expect(existsSync(fileD)).toBe(true)
+    expect(await ids('media')).toContain(73)
+    expect(deleteDocument.mock.calls.map((c) => c[1])).not.toContain('54')
+  }, 30_000)
+
+  it('🔴 upgrade tripwire: a real delete’s plan carries a non-null txid', async () => {
+    // If `payload.db.sessions` changes shape, `currentTxid` returns null and
+    // every cleanup is silently skipped. The schedule-time log carries the xid.
+    const info = vi.spyOn(payload.logger, 'info')
+    try {
+      await payload.delete({ collection: 'sessions', id: 10, overrideAccess: true })
+      const scheduled = info.mock.calls.find((c) => String(c[1]).includes('scheduled post-commit'))
+      expect(scheduled?.[0]).toMatchObject({ sessionId: '10', xid: expect.stringMatching(/^\d+$/) })
+    } finally {
+      info.mockRestore()
+    }
+  }, 30_000)
+
   it('🔴 a rolled-back attempt never runs its plan, even after a retry removes the row', async () => {
     // Attempt 1 fails at commit; its plan names document 50 and file A.
     await db.execute(sql.raw(`
