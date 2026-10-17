@@ -26,9 +26,12 @@
 
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { anonymous, apiGet, apiJson, type Caller } from './support/api'
+import { anonymous, apiGet, apiJson, pollUntil, type Caller } from './support/api'
+import { draftCorpusName, onFakeProvider, retrieveAs } from './support/ai'
 import { dbAccess, exec, sql } from './support/db'
+import { fixtures } from './support/fixtures'
 import { stackDown } from './support/stack'
+import { docRow, uploadPdfDocument } from './support/upload'
 import { createTextDocument, provisionWorld, type World } from './support/world'
 
 /**
@@ -79,6 +82,13 @@ describe.skipIf(stackDown)('holds — the anonymisation review queue', () => {
   let world: World
   /** Our own held document. Every destructive assertion aims at this and only this. */
   let heldId: number | null = null
+  /**
+   * 🔴 A REAL hold: a `testimonio` PDF the gate refused on its own, because the
+   * fake provider cannot answer the detector in JSON. No column of it is seeded.
+   * The approval tests decide on THIS, so "approved → ingested" is proven on an
+   * ingestable kind, all the way into ai-service.
+   */
+  let pdfHeldId: number | null = null
   /** Someone with `holds:review` in orgA. `owner` inherits it; `member` does not. */
   let reviewer: Caller
   /** A colleague in the SAME ecosistema who may NOT review. */
@@ -119,7 +129,19 @@ describe.skipIf(stackDown)('holds — the anonymisation review queue', () => {
         survivors: JSON.stringify(survivorSpans()),
       },
     )
-  }, 180_000)
+
+    if (onFakeProvider) {
+      pdfHeldId = await uploadPdfDocument(reviewer, `${world.ns} held pdf`, {
+        contentKind: 'testimonio',
+      })
+      await pollUntil(
+        'the testimonio PDF to be held by the gate',
+        () => docRow(reviewer, pdfHeldId!),
+        (r) => r.anonymisationStatus === 'held' || r.ingestStatus === 'ready',
+        { timeoutMs: 120_000, intervalMs: 1500 },
+      )
+    }
+  }, 300_000)
 
   // ── the queue ──────────────────────────────────────────────────────────────
 
@@ -292,23 +314,39 @@ describe.skipIf(stackDown)('holds — the anonymisation review queue', () => {
 
   // ── the decision ───────────────────────────────────────────────────────────
 
-  describe.skipIf(noSeed)('approving a hold', () => {
+  /**
+   * ⚠ Needs SQL (the audit-row reads) AND the fake provider: the gate must
+   * refuse a REAL upload, and must not bill a real model doing it.
+   */
+  describe.skipIf(noSeed || !onFakeProvider)('approving a hold', () => {
+    /** What the reviewer released, built from the gate's REAL held text. */
+    let corrected = ''
+    /** The upload's marker: the subject's name, unique across the corpus. */
+    let marker = ''
+    const REVIEWER_LABEL = '[Persona revisada]'
+
     /**
      * 🔴 THE TEST THE WHOLE FILE EXISTS FOR, and it is destructive — which is
-     * why it runs against the row this suite seeded and nothing else.
+     * why it runs against a row this suite created and nothing else.
      */
     it('records the audit row, releases the corrected text, and flips the document', async () => {
-      // The reviewer corrects what the gate missed. This — not the gate's own
-      // output — is what must end up embedded.
-      const corrected = HELD_TEXT.replace('Lupita', '[Persona B]').replace(
-        '55 4821 9930',
-        '[Teléfono omitido]',
-      )
+      marker = fixtures().pdf.marker
 
-      const res = await apiJson(reviewer, 'POST', `/api/holds/${heldId}`, {
+      const held = await apiGet(reviewer, `/api/holds/${pdfHeldId}`)
+      expect(held.status, 'the gate did not hold the testimonio PDF').toBe(200)
+      const heldText = String(held.body.heldText ?? '')
+      // The detector never ran, so no stage could have taken the NAME out: the
+      // gate's held output still carries it. That is what the reviewer is for.
+      expect(heldText, 'the held text lost the subject name before review').toContain(marker)
+
+      // The reviewer removes what the gate could not. This — not the gate's
+      // output, and not the raw upload — is what must end up embedded.
+      corrected = heldText.split(marker).join(REVIEWER_LABEL)
+
+      const res = await apiJson(reviewer, 'POST', `/api/holds/${pdfHeldId}`, {
         decision: 'approve',
         text: corrected,
-        note: 'e2e: quité el nombre y el teléfono que quedaron.',
+        note: 'e2e: quité el nombre que quedó.',
       })
 
       expect(res.status).toBe(200)
@@ -322,12 +360,10 @@ describe.skipIf(stackDown)('holds — the anonymisation review queue', () => {
         redacted_text: string | null
         held_text: string | null
         anonymisation_survivors: unknown
-        ingest_status: string
       }>(
-        `select anonymisation_status, redacted_text, held_text,
-                anonymisation_survivors, ingest_status
+        `select anonymisation_status, redacted_text, held_text, anonymisation_survivors
            from documents where id = :'id'`,
-        { id: heldId! },
+        { id: pdfHeldId! },
       )
 
       expect(row.anonymisation_status).toBe('approved')
@@ -336,8 +372,6 @@ describe.skipIf(stackDown)('holds — the anonymisation review queue', () => {
       // 🔴 The refused text is gone. It existed only for the review.
       expect(row.held_text).toBeNull()
       expect(row.anonymisation_survivors).toBeNull()
-      // Approval re-enters the ordinary ingest path rather than side-stepping it.
-      expect(row.ingest_status).toBe('pending')
 
       // ── the audit row ───────────────────────────────────────────────────
       const [audit] = sql<{
@@ -352,23 +386,54 @@ describe.skipIf(stackDown)('holds — the anonymisation review queue', () => {
         `select decision, reviewer_id, document_id, organization_id,
                 text_edited, note, gate_stage
            from anonymisation_reviews where document_id = :'id'`,
-        { id: heldId! },
+        { id: pdfHeldId! },
       )
 
       expect(audit, 'no audit row was written').toBeTruthy()
       expect(audit.decision).toBe('approved')
       expect(audit.reviewer_id).toBe(world.alice.id)
       expect(audit.organization_id).toBe(world.orgA.id)
-      expect(audit.gate_stage).toBe('verify')
+      // The stage the REAL gate stopped at, carried from the row into the audit.
+      expect(audit.gate_stage).toBe('content')
       // The reviewer changed the text, and the record says so.
       expect(audit.text_edited).toBe(true)
       expect(audit.note).toContain('e2e:')
     })
 
+    /**
+     * 🔴 APPROVAL RE-ENTERS THE ORDINARY INGEST PATH, AND WHAT IT INGESTS IS THE
+     * APPROVED TEXT. Checked in ai-service's own store, not on the backend row:
+     * the row can only say what the backend meant to send.
+     */
+    it('reaches `ready`, and ai-service holds the approved text, not the raw upload', async () => {
+      const row = await pollUntil(
+        'the approved PDF to be ingested',
+        () => docRow(reviewer, pdfHeldId!),
+        (r) => r.ingestStatus === 'ready' || r.ingestStatus === 'failed',
+        { timeoutMs: 120_000, intervalMs: 2000 },
+      )
+      expect(row.ingestStatus, `ingestError: ${row.ingestError}`).toBe('ready')
+      expect(row.anonymisationStatus).toBe('approved')
+
+      const probe = await retrieveAs(
+        world.orgA.id,
+        draftCorpusName(world.orgA.id, world.alice.id),
+        REVIEWER_LABEL,
+      )
+      expect(probe.status, probe.text.slice(0, 300)).toBe(200)
+      expect(probe.chunks.length).toBeGreaterThan(0)
+
+      const embedded = probe.chunks.map((c) => c.text).join('\n')
+      // 🔴 The raw upload's subject name is nowhere in the corpus…
+      expect(embedded).not.toContain(marker)
+      // …and the reviewer's own edit is.
+      expect(embedded).toContain(REVIEWER_LABEL)
+    })
+
     it('is gone from the queue once it is decided', async () => {
       const res = await apiGet(reviewer, `/api/holds?organization=${world.orgA.id}`)
       const ids = res.body.holds.map((h: { id: string }) => String(h.id))
-      expect(ids).not.toContain(String(heldId))
+      expect(ids).not.toContain(String(pdfHeldId))
     })
 
     /**
@@ -378,18 +443,18 @@ describe.skipIf(stackDown)('holds — the anonymisation review queue', () => {
      * `held`, so it is not loadable at all: the same 404 as everything else.
      */
     it('cannot be decided a second time, and writes no second audit row', async () => {
-      const again = await apiJson(reviewer, 'POST', `/api/holds/${heldId}`, { decision: 'reject' })
+      const again = await apiJson(reviewer, 'POST', `/api/holds/${pdfHeldId}`, { decision: 'reject' })
       expect(again.status).toBe(404)
 
       const [{ n }] = sql<{ n: number }>(
         `select count(*)::int as n from anonymisation_reviews where document_id = :'id'`,
-        { id: heldId! },
+        { id: pdfHeldId! },
       )
       expect(n).toBe(1)
 
       const [row] = sql<{ anonymisation_status: string }>(
         `select anonymisation_status from documents where id = :'id'`,
-        { id: heldId! },
+        { id: pdfHeldId! },
       )
       expect(row.anonymisation_status).toBe('approved')
     })
