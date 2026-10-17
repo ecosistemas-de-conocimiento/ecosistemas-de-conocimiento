@@ -51,7 +51,8 @@ async function startPostgres(): Promise<string> {
   const run = spawnSync(
     'docker',
     [
-      'run', '-d', '--rm', '--name', CONTAINER, '-p', '0:5432',
+      // `--tmpfs` for the data dir: no anonymous volume is left behind.
+      'run', '-d', '--rm', '--tmpfs', '/var/lib/postgresql/data', '--name', CONTAINER, '-p', '0:5432',
       '-e', 'POSTGRES_USER=postgres', '-e', 'POSTGRES_PASSWORD=postgres',
       '-e', 'POSTGRES_DB=doc_columns_test', IMAGE,
     ],
