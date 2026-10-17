@@ -393,3 +393,40 @@ describe('unpublish — 🔴 obeys the same kind and text rules', () => {
     expect(fake.metadata().publication).toBe('draft')
   })
 })
+
+// ---------------------------------------------------------------------------
+// lengua — the retrieval filter's key, and a re-identification key on a Voz
+// ---------------------------------------------------------------------------
+
+describe('beginPublish / unpublish — `lengua` reaches the chunk on a documento only', () => {
+  // Without it on the chunk, ai-service's `filter: { lengua }` matches nothing:
+  // the filter is jsonb containment over chunk metadata, and the re-embed builds
+  // that metadata from the row. Same failure shape as `kind` above.
+  it('🔴 carries a documento’s lengua into the SHARED corpus', async () => {
+    const { payload } = fakePayload()
+    const fake = fakeClient()
+
+    await beginPublish({ ...PLAIN_DOC, lengua: 'mixteco' }, { payload, client: fake.client })
+
+    expect(fake.metadata().lengua).toBe('mixteco')
+  })
+
+  it('carries it back into the drafts on unpublish too', async () => {
+    const { payload } = fakePayload()
+    const fake = fakeClient()
+
+    await unpublish({ ...PLAIN_DOC, lengua: 'tsotsil' }, { payload, client: fake.client })
+
+    expect(fake.metadata().lengua).toBe('tsotsil')
+  })
+
+  it('🔴 never puts one on a testimony, even if the row somehow holds it', async () => {
+    const { payload } = fakePayload()
+    const fake = fakeClient()
+
+    await beginPublish({ ...TESTIMONY, lengua: 'mixe' }, { payload, client: fake.client })
+
+    expect(fake.metadata()).not.toHaveProperty('lengua')
+    expect(JSON.stringify(fake.calls[0])).not.toContain('mixe')
+  })
+})

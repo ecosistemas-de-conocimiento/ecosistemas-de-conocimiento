@@ -45,16 +45,29 @@
     // reads yet fails silently.
     type SelectedEdge,
   } from '$lib/graph';
+  import { filterByLengua } from '$lib/lengua';
 
   type Props = {
     detail: GraphEntityDetail;
     edge: SelectedEdge | null;
     onSelectEdge: (id: string | null) => void;
     onRecentre: (id: string) => void;
+    /** `?lengua=`; `''` ⇒ no filter. Narrows the document list only. */
+    lengua?: string;
+    /** Documento id → lengua, from `/api/lenguas`. A testimonio is never in it. */
+    lenguaByDocument?: Record<string, string>;
   };
-  let { detail, edge, onSelectEdge, onRecentre }: Props = $props();
+  let {
+    detail,
+    edge,
+    onSelectEdge,
+    onRecentre,
+    lengua = '',
+    lenguaByDocument = {},
+  }: Props = $props();
 
-  const documents = $derived(edge ? edge.documents : detail.documents);
+  const allDocuments = $derived(edge ? edge.documents : detail.documents);
+  const documents = $derived(filterByLengua(allDocuments, lenguaByDocument, lengua));
   // 🔴 THE WORDING FOLLOWS `edge.exact`. With per-edge evidence from
   // `graph_relations` we may say these documents SUSTAIN the connection; with
   // only the intersection of two entity lists we may say the two entities
@@ -78,7 +91,9 @@
   // Saying the first when the second is true tells someone their ecosistema has
   // less in it than it does.
   const docsEmpty = $derived(
-    edge
+    lengua && allDocuments.length > 0
+      ? `Ninguno de estos documentos habla de personas que hablan ${lengua}.`
+      : edge
       ? edge.ok
         ? GRAPH_EDGE_DOCS_EMPTY
         : GRAPH_EDGE_DOCS_UNAVAILABLE
@@ -157,6 +172,9 @@
               <span class="doc-kind" class:voice={kind.tone === 'voice'}>{kind.label}</span>
               <!-- 🔴 Verbatim. See the module header. -->
               <span class="doc-title">{doc.title}</span>
+              {#if lenguaByDocument[doc.id]}
+                <span class="doc-lengua">{lenguaByDocument[doc.id]}</span>
+              {/if}
             </a>
             {#if doc.contentKind === 'testimonio'}
               <p class="doc-anon">{GRAPH_TESTIMONY_NOTE}</p>
@@ -349,6 +367,12 @@
   }
   .doc-link:hover {
     border-color: var(--edc-color-line-strong);
+  }
+  .doc-lengua {
+    flex: none;
+    margin-left: auto;
+    font-size: 0.68rem;
+    color: var(--edc-color-ink-soft);
   }
   .doc-kind {
     flex: none;

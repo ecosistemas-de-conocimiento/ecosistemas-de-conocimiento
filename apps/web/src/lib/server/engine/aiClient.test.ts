@@ -337,3 +337,30 @@ describe('the asOf guarantee (must not regress)', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe('the lengua filter on the wire', () => {
+  const opts = {
+    sessionId: '1',
+    asOf: ASOF,
+    allowedCorpora: [ECO],
+    publishedCorpus: ECO,
+    sessionDocumentIds: new Set<string>(),
+  };
+
+  it('forwards `filter: { lengua }` to ai-service', async () => {
+    const ai = makeEngineAIClient(noClient, opts);
+    await ai.retrieve({ ...request(ECO), filter: { lengua: 'mixe' } });
+    expect(sentBodies()[0]!.filter).toEqual({ lengua: 'mixe' });
+  });
+
+  // 🔴 The 400 fallback drops `filter` and retries. For a lengua filter that
+  // answers with every language under a "solo mixe" summary line — wrong, and
+  // silently. Empty is the honest degradation.
+  it('does NOT retry unfiltered when ai-service rejects a lengua filter', async () => {
+    fetchMock.mockResolvedValue(new Response('{}', { status: 400 }));
+    const ai = makeEngineAIClient(noClient, opts);
+    const res = await ai.retrieve({ ...request(ECO), filter: { lengua: 'mixe' } });
+    expect(res.matches).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

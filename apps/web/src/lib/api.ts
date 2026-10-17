@@ -18,6 +18,8 @@ export interface SyncGenerateInput {
   contextRefs?: ContextRef[];
   /** Per-thread context scope (organization-wide). */
   scope?: ContextScope;
+  /** Retrieve only documentos about speakers of this language. See `$lib/lengua.ts`. */
+  lengua?: string;
 }
 
 export interface SyncGenerateResult {

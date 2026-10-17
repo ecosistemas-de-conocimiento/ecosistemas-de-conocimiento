@@ -63,6 +63,8 @@ import { isPlatformAdmin } from '$lib/components/admin/summary';
 import { listAllEcosystems, readEcosystem } from '$lib/server/admin';
 import { resolveEcosystem } from '$lib/server/ecosystem';
 import { fetchGraphEntity, fetchGraphView } from '$lib/server/graph';
+import { fetchLenguaIndex } from '$lib/server/lenguas';
+import { parseLengua, type GrafoLenguaData } from '$lib/lengua';
 import {
   sharedDocuments,
   type GrafoPageData,
@@ -91,8 +93,20 @@ function readId(raw: string | null): string {
 
 const EMPTY_VIEW: GraphView = { entities: [], hidden: 0, minSupport: null, publishedDocuments: null };
 
-export const load: PageServerLoad = async ({ locals, cookies, url }): Promise<GrafoPageData> => {
-  const base: GrafoPageData = {
+export const load: PageServerLoad = async ({
+  locals,
+  cookies,
+  url,
+}): Promise<GrafoPageData & GrafoLenguaData> => {
+  // `?lengua=` narrows the DOCUMENT lists in the panel, never the graph itself:
+  // entity and edge supports are counted by the backend over every published
+  // document, and recounting them over a subset is the graph lane's call (and
+  // its minimum-support threshold's). See `$lib/lengua.ts`.
+  const lengua = parseLengua(url.searchParams.get('lengua'));
+  const base: GrafoPageData & GrafoLenguaData = {
+    lengua,
+    lenguas: [],
+    lenguaByDocument: {},
     state: 'ready',
     ecosystem: null,
     view: EMPTY_VIEW,
@@ -155,12 +169,14 @@ export const load: PageServerLoad = async ({ locals, cookies, url }): Promise<Gr
 
   // One round trip's latency, not three: the view, the focused entity and the
   // neighbour whose shared documents we intersect all go out together.
-  const [viewResult, entityResult, edgeResult] = await Promise.all([
+  const [viewResult, entityResult, edgeResult, lenguaResult] = await Promise.all([
     fetchGraphView(locals.token, { organizationId }),
     entityId ? fetchGraphEntity(locals.token, organizationId, entityId) : null,
     entityId && edgeId && edgeId !== entityId
       ? fetchGraphEntity(locals.token, organizationId, edgeId)
       : null,
+    // Best-effort: a failed read just leaves the lengua panel and chips out.
+    fetchLenguaIndex(locals.token, organizationId),
   ]);
 
   const detail = entityResult?.state === 'ok' ? entityResult.detail : null;
@@ -192,6 +208,9 @@ export const load: PageServerLoad = async ({ locals, cookies, url }): Promise<Gr
       : null;
 
   return {
+    lengua,
+    lenguas: lenguaResult.index.lenguas,
+    lenguaByDocument: lenguaResult.index.byDocument,
     state: 'ready',
     ecosystem: { id: selected.id, name: selected.name },
     view: viewResult.view,

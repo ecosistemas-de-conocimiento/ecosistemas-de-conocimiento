@@ -27,6 +27,8 @@
   import EcosystemScope from '$lib/components/graph/EcosystemScope.svelte';
   import EntityLists from '$lib/components/graph/EntityLists.svelte';
   import EntityPanel from '$lib/components/graph/EntityPanel.svelte';
+  import LenguaPanel from '$lib/components/graph/LenguaPanel.svelte';
+  import { withLengua, type GrafoLenguaData } from '$lib/lengua';
   import {
     emptyGraphCopy,
     filterEntities,
@@ -46,7 +48,7 @@
     type GrafoPageData,
   } from '$lib/graph';
 
-  type Props = { data: GrafoPageData };
+  type Props = { data: GrafoPageData & GrafoLenguaData };
   let { data }: Props = $props();
 
   /** Same cap the backend search takes; keeps a pasted essay out of the filter. */
@@ -69,7 +71,8 @@
     // 🔴 The scope params ride along. Rebuilding the URL without them drops a
     // platform admin's `?eco=` on their first click and quietly re-scopes the
     // page to a different ecosistema. See `graphEntityHref`.
-    void goto(graphEntityHref(entidad, conexion, scopeParams), {
+    // `?lengua=` rides along too, so picking an entity keeps the filter.
+    void goto(withLengua(graphEntityHref(entidad, conexion, scopeParams), data.lengua), {
       keepFocus: true,
       noScroll: true,
     });
@@ -182,6 +185,12 @@
           {selectedId}
           onSelect={(id) => navigate(id, null)}
         />
+
+        <LenguaPanel
+          lenguas={data.lenguas}
+          selected={data.lengua}
+          hrefFor={(l) => withLengua($page.url.pathname + $page.url.search, l)}
+        />
       </section>
 
       <section class="col-panel" aria-label="Conexiones" aria-busy={busy}>
@@ -193,6 +202,8 @@
           <EntityPanel
             detail={data.entity}
             edge={data.edge}
+            lengua={data.lengua}
+            lenguaByDocument={data.lenguaByDocument}
             onSelectEdge={(id) => navigate(data.entity!.entity.id, id)}
             onRecentre={(id) => navigate(id, null)}
           />

@@ -196,6 +196,26 @@ describe('🔴 the corpus an upload lands in', () => {
       publication: 'draft',
     })
   })
+
+  it('carries a documento’s lengua so a chat filter on it can match the draft', async () => {
+    // `run()` pins its fixture; this is the same call with a language on it.
+    await enqueueIngestForDoc({
+      payload: fakePayload as unknown as Parameters<typeof enqueueIngestForDoc>[0]['payload'],
+      docId: 42,
+      organizationId: 10,
+      uploadedById: 3,
+      fresh: {
+        name: 'Acta.pdf',
+        kind: 'pdf',
+        contentKind: 'documento',
+        anonymisationStatus: null,
+        lengua: 'zapoteco',
+      },
+      extractedText: 'contenido extraído',
+    })
+    const documents = wireArgs().documents as Array<{ metadata: Record<string, unknown> }>
+    expect(documents[0]!.metadata.lengua).toBe('zapoteco')
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -347,7 +347,12 @@ async function retrieveScoped(
     // scoped retrieval degrades to unfiltered rather than empty.
     // ⚠ `asOf` is NOT dropped on the retry — that would reintroduce the leak.
     // If the 400 was caused by `asOf` itself, we take the empty result.
-    if (res.status === 400 && body.filter !== undefined) {
+    // 🔴 NOT for a `lengua` filter. That one is the USER's restriction, and the
+    // summary tells the model the context is limited to it; unfiltered chunks
+    // under that sentence would be every language passed off as one. Empty.
+    const isUserRestriction =
+      typeof body.filter === 'object' && body.filter !== null && 'lengua' in body.filter;
+    if (res.status === 400 && body.filter !== undefined && !isUserRestriction) {
       const { filter: _dropped, ...withoutFilter } = body;
       res = await post(withoutFilter);
     }

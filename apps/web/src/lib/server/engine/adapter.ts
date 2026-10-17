@@ -42,6 +42,7 @@ import type {
 } from '@edc/chat-engine/core';
 import { clamp } from '@edc/chat-engine/core';
 import { backendFetch } from '$lib/server/auth';
+import { lenguaSummaryLine, type LenguaFacet } from '$lib/lengua';
 
 const REF_BLOCK_MAX = 3500;
 const SUMMARY_MAX = 4000;
@@ -87,6 +88,15 @@ export interface ChatAdapterCtx {
    * the fetch below stays as the fallback.
    */
   documents?: readonly DocRow[];
+  /**
+   * The ecosistema's languages (`GET /api/lenguas`), for one summary line that
+   * answers "¿qué lenguas aparecen?" from the column rather than from whatever
+   * chunks retrieval returned. A thunk so the caller can start the read early
+   * and overlap it with the condense call. Best-effort: a throw drops the line.
+   */
+  lenguaFacets?: () => Promise<readonly LenguaFacet[]>;
+  /** The turn's lengua filter, when one is set. Said in the summary. */
+  lenguaFilter?: string;
 }
 
 export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
@@ -276,7 +286,11 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
    * retrieval contradicts.
    */
   async function buildSummary(_scope: ContextScope): Promise<string> {
-    const [org, docs] = await Promise.all([findOrg(), sessionDocuments('', 50)]);
+    const [org, docs, lenguas] = await Promise.all([
+      findOrg(),
+      sessionDocuments('', 50),
+      ctx.lenguaFacets ? ctx.lenguaFacets().catch(() => []) : Promise.resolve([]),
+    ]);
 
     const lines: string[] = [];
 
@@ -296,6 +310,17 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
         )
         .join(', ');
       lines.push(`\nDocumentos adjuntos a esta conversación: ${docNames}.`);
+    }
+
+    const lenguaLine = lenguaSummaryLine(lenguas);
+    if (lenguaLine) lines.push(`\n${lenguaLine}`);
+    if (ctx.lenguaFilter) {
+      // ⚠ Told, so the model does not present a filtered context as the whole
+      // ecosistema ("no hay testimonios sobre esto").
+      lines.push(
+        `\nEsta consulta se limita a documentos sobre personas que hablan ${ctx.lenguaFilter}; ` +
+          'los testimonios no registran lengua y quedan fuera.',
+      );
     }
 
     return clamp(lines.join('\n'), SUMMARY_MAX);

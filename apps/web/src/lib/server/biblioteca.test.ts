@@ -101,6 +101,32 @@ describe('libraryListQuery — the two constraints', () => {
   });
 });
 
+describe('libraryListQuery — the lengua filter', () => {
+  const base = { organizationId: '7', kind: 'todos' as const, search: '', page: 1 };
+
+  // `where[lengua]` is refused by the backend for non-override callers (field
+  // read access needs the row), so the filter arrives as the documento ids
+  // `/api/lenguas` named for that language.
+  it('constrains to the given document ids, keeping both constraints', () => {
+    const qs = new URLSearchParams(libraryListQuery({ ...base, documentIds: ['3', '9'] }));
+    expect(qs.get('where[id][in]')).toBe('3,9');
+    expect(qs.get('where[organization][equals]')).toBe('7');
+    expect(qs.get('where[publicationStatus][equals]')).toBe('published');
+    expect(qs.get('where[lengua][equals]')).toBeNull();
+  });
+
+  it('does not constrain ids without a lengua filter', () => {
+    expect(new URLSearchParams(libraryListQuery(base)).get('where[id][in]')).toBeNull();
+  });
+
+  // 🔴 Documents.ts `lenguaReadable`: a projection without `contentKind`
+  // hides `lengua` on every row, silently.
+  it('selects contentKind beside lengua', () => {
+    expect(LIBRARY_LIST_FIELDS).toContain('lengua');
+    expect(LIBRARY_LIST_FIELDS).toContain('contentKind');
+  });
+});
+
 describe('isLibraryVisible — the re-check a read-by-id needs', () => {
   const row = { publicationStatus: 'published', organization: '7' };
 
@@ -148,6 +174,20 @@ describe('toLibraryItem', () => {
     const item = toLibraryItem({ id: 4, name: 'Voz', kind: 'testimonio' }, 'Ana');
     expect(item.contributor).toBeNull();
     expect(JSON.stringify(item)).not.toContain('Ana');
+  });
+
+  it('carries the lengua of a documento', () => {
+    expect(toLibraryItem({ id: 1, contentKind: 'documento', lengua: 'mixe' }, null).lengua).toBe('mixe');
+    expect(toLibraryItem({ id: 1, contentKind: 'documento' }, null).lengua).toBeNull();
+  });
+
+  // 🔴 The backend already hides it; the mapper does not rely on that.
+  it('never carries a lengua on anything but a documento', () => {
+    for (const contentKind of ['testimonio', 'conversacion', undefined, null]) {
+      const item = toLibraryItem({ id: 1, kind: 'audio', contentKind, lengua: 'tsotsil' }, null);
+      expect(item.lengua).toBeNull();
+      expect(JSON.stringify(item)).not.toContain('tsotsil');
+    }
   });
 
   it('falls back to a title rather than showing an empty one', () => {

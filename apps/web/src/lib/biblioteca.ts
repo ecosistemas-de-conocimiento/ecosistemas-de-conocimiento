@@ -252,6 +252,11 @@ export interface LibraryItem {
    * `mayShowContributor`.
    */
   contributor: string | null;
+  /**
+   * The language of the people this documento is about (`$lib/lengua.ts`).
+   * 🔴 ALWAYS `null` on anything but a documento — set server-side, not hidden.
+   */
+  lengua: string | null;
   /** Duration / language chips, for `audio`. Absent otherwise. */
   audioMeta?: Record<string, unknown> | null;
 }

@@ -187,6 +187,7 @@ describe('chunkMetadata — 🔴 nothing that identifies a person', () => {
     'title',
     'authoredBy',
     'sessionId',
+    'lengua',
   ]
 
   it('🔴 emits ONLY the allow-listed keys, for every kind and both publications', () => {
@@ -325,5 +326,35 @@ describe('chunkMetadata — `authoredBy` and `sessionId` are opt-in, not default
         sessionId: 0,
       }).sessionId,
     ).toBe('0')
+  })
+})
+
+describe('chunkMetadata — 🔴 `lengua` rides on a documento and on nothing else', () => {
+  // Why it is on the chunk at all: ai-service's retrieve `filter` is jsonb
+  // containment over chunk metadata, so a "solo documentos en mixteco" chat
+  // filter can only exist if the chunk says so. Why ONLY on a documento: on a
+  // testimonio `lengua` is a re-identification key (`enforceLenguaDocumentoOnly`
+  // in `collections/Documents.ts`), and the shared corpus has no per-document
+  // delete — a key embedded there is embedded for good.
+  const base = { docId: 'doc-1', organizationId: 7, publication: 'published' as const }
+
+  it('carries the language of a documento, trimmed', () => {
+    expect(chunkMetadata({ ...base, contentKind: 'documento', lengua: ' mixteco ' }).lengua).toBe(
+      'mixteco',
+    )
+  })
+
+  it('🔴 drops it on a testimonio and a conversacion even when a caller passes one', () => {
+    for (const contentKind of ['testimonio', 'conversacion'] as const) {
+      expect(chunkMetadata({ ...base, contentKind, lengua: 'tsotsil' })).not.toHaveProperty('lengua')
+    }
+  })
+
+  it('omits the key entirely when there is no language, so a filter cannot match ""', () => {
+    for (const lengua of [undefined, null, '', '   ']) {
+      expect(chunkMetadata({ ...base, contentKind: 'documento', lengua })).not.toHaveProperty(
+        'lengua',
+      )
+    }
   })
 })

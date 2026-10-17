@@ -22,6 +22,8 @@ import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
 import { makeGraphProvider } from '$lib/server/graph';
+import { fetchLenguaIndex } from '$lib/server/lenguas';
+import { lenguaTurn } from '$lib/lengua';
 import { stampDraftProvenance } from '$lib/publication';
 import { prepareTurn, respond, type ContextRef, type ContextScope } from '@edc/chat-engine/core';
 
@@ -75,6 +77,12 @@ interface IncomingBody {
   scope?: ContextScope;
   /** Deprecated: docs are resolved server-side now. Ignored. */
   docs?: unknown;
+  /**
+   * Restrict retrieval to documentos about speakers of this language — an
+   * ai-service metadata `filter: { lengua }`. A string, normalised by
+   * `lenguaTurn`; it names a value, never a tenant or a corpus.
+   */
+  lengua?: unknown;
 }
 
 async function persistAssistantMessage(
@@ -317,6 +325,15 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // then retrieves nothing at all rather than guessing. See `$lib/server/sessionDocs`.
   const sessionDocumentIds = sessionDocumentIdSet(sessionDocs);
 
+  // The lengua filter, and the ecosistema's languages for the summary line.
+  // The read starts now and overlaps with the engine's condense call; the
+  // adapter awaits it only when it builds the summary. Best-effort.
+  const lengua = lenguaTurn(body.lengua);
+  const lenguaFacets =
+    organizationId != null && organizationId !== ''
+      ? fetchLenguaIndex(locals.token, organizationId).then((r) => r.index.lenguas)
+      : null;
+
   // Build the Domain Adapter + the engine's AIClient over this app's BFF client.
   const adapter = makeChatDomainAdapter({
     token: locals.token,
@@ -325,6 +342,8 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     organizationId,
     // Hand over the list we just read so the adapter does not fetch it again.
     ...(sessionDocs.ok ? { documents: sessionDocs.docs } : {}),
+    ...(lenguaFacets ? { lenguaFacets: () => lenguaFacets } : {}),
+    ...(lengua.lengua ? { lenguaFilter: lengua.lengua } : {}),
   });
   const engineAI = makeEngineAIClient(chatClient, {
     sessionId: body.sessionId,
@@ -358,7 +377,8 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // Everything else about it is best-effort: the engine wraps the call in
   // `.catch(() => null)`, so an unreachable or slow graph produces a normal
   // answer with no message to the user (ADR §8.2).
-  const graphProvider = makeGraphProvider({
+  // ⚠ Skipped under a lengua filter — see `LenguaTurn.graph`.
+  const graphProvider = !lengua.graph ? null : makeGraphProvider({
     token: locals.token,
     organizationId,
     aiClient: engineAI,
@@ -389,6 +409,10 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     // Omitted entirely when there is no ecosistema to scope a graph read to,
     // so the engine takes exactly the code path it took before GraphRAG.
     ...(graphProvider ? { graphProvider } : {}),
+    // ai-service metadata filter, forwarded by the engine to every corpus leg.
+    // Chunks embedded before `lengua` reached chunk metadata do not carry it
+    // and are excluded until republished.
+    ...(lengua.retrievalFilter ? { retrievalFilter: lengua.retrievalFilter } : {}),
     // Persist each chunk's grounding passage so the canonical CitationCard can
     // quote it. Cap the stored text to keep the provenance JSON column lean.
     includePassageText: 1200,

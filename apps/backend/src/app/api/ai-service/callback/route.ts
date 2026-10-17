@@ -508,6 +508,8 @@ interface DocumentSnapshot {
    * ⚠ Also the corpus graph's person rule keys off it — see `lib/graph/`.
    */
   contentKind?: unknown
+  /** `documents.lengua`, for the retrieval filter. Null on anything but a documento. */
+  lengua?: unknown
   name?: unknown
   extractedText?: unknown
   redactedText?: unknown
@@ -717,6 +719,8 @@ async function dispatchTranscribeCompleted(
        * PDF path stayed correct and nothing looked wrong.
        */
       contentKind: typeof doc.contentKind === 'string' ? doc.contentKind : null,
+      // For the retrieval filter; `chunkMetadata` drops it unless this is a documento.
+      lengua: typeof doc.lengua === 'string' ? doc.lengua : null,
       /**
        * 🔴 CARRIED FOR THE SAME REASON AS `contentKind`, AND IT USED TO BE
        * MISSING.

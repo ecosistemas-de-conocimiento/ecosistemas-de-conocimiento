@@ -1418,6 +1418,8 @@ export async function enqueueIngestForDoc(args: {
   fresh: Pick<DocumentRow, 'name' | 'kind' | 'contentKind'> & {
     anonymisationStatus: string | null | undefined
     redactedText?: string | null
+    /** For the retrieval filter. `chunkMetadata` keeps it on a documento only. */
+    lengua?: string | null
   }
   extractedText: string
   /** Test seam for the anonymisation gate's model call. */
@@ -1645,6 +1647,8 @@ export async function enqueueIngestForDoc(args: {
                 format: fresh.kind,
                 publication: 'draft',
                 title: fresh.name,
+                // `chunkMetadata` drops it on anything but a documento.
+                lengua: fresh.lengua,
               }),
             },
           ],

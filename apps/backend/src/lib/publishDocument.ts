@@ -123,6 +123,8 @@ export interface PublishableDocument {
    * the row cleared the gate — it can be left over from an earlier run that did.
    */
   anonymisationStatus?: string | null
+  /** Rides into chunk metadata for the retrieval filter; `chunkMetadata` keeps it on a documento only. */
+  lengua?: string | null
   organization?: unknown
   uploadedBy?: unknown
   publicationStatus?: unknown
@@ -536,6 +538,7 @@ export async function beginPublish(
             format: doc.kind,
             publication: 'published',
             title: doc.name,
+            lengua: doc.lengua,
           }),
         },
       ],
@@ -743,6 +746,7 @@ export async function unpublish(
             format: doc.kind,
             publication: 'draft',
             title: doc.name,
+            lengua: doc.lengua,
           }),
         },
       ],

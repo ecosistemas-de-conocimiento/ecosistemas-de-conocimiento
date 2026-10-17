@@ -134,7 +134,20 @@ export function chunkMetadata(args: {
   authoredBy?: 'user' | 'assistant'
   /** Only set for `conversacion`: which thread the turn came from. */
   sessionId?: string | number
+  /**
+   * `documents.lengua` — the language of the PEOPLE a document is about. Lets
+   * retrieval take ai-service's metadata `filter: { lengua }`.
+   *
+   * 🔴 KEPT ON A `documento` ONLY, whatever the caller passes. On a testimonio
+   * it is a re-identification key (`enforceLenguaDocumentoOnly` in
+   * `collections/Documents.ts`), and the corpus has no per-document delete.
+   * This is the third enforcement of that rule, and the one that guards the
+   * corpus rather than the row.
+   */
+  lengua?: string | null
 }): Record<string, unknown> {
+  const lengua =
+    args.contentKind === 'documento' && typeof args.lengua === 'string' ? args.lengua.trim() : ''
   return {
     docId: args.docId,
     organizationId: String(args.organizationId),
@@ -144,5 +157,6 @@ export function chunkMetadata(args: {
     title: titleFor(args.contentKind, args.title),
     ...(args.authoredBy ? { authoredBy: args.authoredBy } : {}),
     ...(args.sessionId === undefined ? {} : { sessionId: String(args.sessionId) }),
+    ...(lengua ? { lengua } : {}),
   }
 }

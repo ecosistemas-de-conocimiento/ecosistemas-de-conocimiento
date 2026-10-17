@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$lib/server/ecosystem', () => ({ resolveEcosystem: vi.fn() }));
+vi.mock('$lib/server/lenguas', () => ({ fetchLenguaIndex: vi.fn() }));
 vi.mock('$lib/server/biblioteca', async () => {
   const actual = await vi.importActual<typeof import('$lib/server/biblioteca')>(
     '$lib/server/biblioteca',
@@ -11,9 +12,11 @@ vi.mock('$lib/server/biblioteca', async () => {
 import { GET } from './+server';
 import { resolveEcosystem } from '$lib/server/ecosystem';
 import { listPublished } from '$lib/server/biblioteca';
+import { fetchLenguaIndex } from '$lib/server/lenguas';
 
 const mockedResolve = resolveEcosystem as unknown as ReturnType<typeof vi.fn>;
 const mockedList = listPublished as unknown as ReturnType<typeof vi.fn>;
+const mockedLenguas = fetchLenguaIndex as unknown as ReturnType<typeof vi.fn>;
 
 type Locals = { user: { id: number } | null; token: string | undefined };
 
@@ -40,6 +43,14 @@ beforeEach(() => {
     source: 'cookie',
   });
   mockedList.mockResolvedValue({ items: [], total: 0, page: 1, hasNextPage: false, ok: true });
+  mockedLenguas.mockReset();
+  mockedLenguas.mockResolvedValue({
+    ok: true,
+    index: {
+      lenguas: [{ lengua: 'mixe', documentos: 2 }],
+      byDocument: { '3': 'mixe', '9': 'mixe', '4': 'amuzgo' },
+    },
+  });
 });
 
 describe('GET /api/biblioteca', () => {
@@ -99,5 +110,33 @@ describe('GET /api/biblioteca', () => {
     const body = await (await GET(makeEvent())).json();
     expect(body.state).toBe('ready');
     expect(body.ecosystem).toEqual({ id: '7', name: 'Ecosistema de prueba' });
+  });
+
+  it('offers the ecosistema\'s languages as facets', async () => {
+    const body = await (await GET(makeEvent())).json();
+    expect(mockedLenguas).toHaveBeenCalledWith('tok', '7');
+    expect(body.lenguas).toEqual([{ lengua: 'mixe', documentos: 2 }]);
+    expect(body.lengua).toBe('');
+    expect(mockedList.mock.calls[0]![1].documentIds).toBeUndefined();
+  });
+
+  it('turns ?lengua= into the documento ids for that language', async () => {
+    const body = await (await GET(makeEvent({ url: 'http://web.test/api/biblioteca?lengua=mixe' }))).json();
+    expect(mockedList.mock.calls[0]![1]).toMatchObject({ documentIds: ['3', '9'] });
+    expect(body.lengua).toBe('mixe');
+  });
+
+  it('answers an empty page without a list read when no documento has that language', async () => {
+    const body = await (await GET(makeEvent({ url: 'http://web.test/api/biblioteca?lengua=otomi' }))).json();
+    expect(mockedList).not.toHaveBeenCalled();
+    expect(body).toMatchObject({ state: 'ready', items: [], total: 0 });
+  });
+
+  // ⚠ Unfiltered results under a filter label would be the wrong answer.
+  it('reports unavailable when a lengua is asked for and the index could not be read', async () => {
+    mockedLenguas.mockResolvedValue({ ok: false, index: { lenguas: [], byDocument: {} } });
+    const body = await (await GET(makeEvent({ url: 'http://web.test/api/biblioteca?lengua=mixe' }))).json();
+    expect(body.state).toBe('unavailable');
+    expect(mockedList).not.toHaveBeenCalled();
   });
 });

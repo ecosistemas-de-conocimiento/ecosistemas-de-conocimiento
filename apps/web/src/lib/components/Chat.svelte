@@ -6,6 +6,13 @@
   import { generateSync, generateStream, userFacingError, type SyncGenerateResult } from '$lib/api';
   import type { ContextRef, ContextScope } from '$lib/types';
   import { emptyChatHint } from '$lib/layout';
+  import {
+    LENGUA_ALL,
+    LENGUA_CHAT_HINT,
+    LENGUA_LABEL,
+    lenguaFacetCopy,
+    type LenguaFacet,
+  } from '$lib/lengua';
 
   /**
    * ⚠ NARROW-SCREEN CASE. Below 64rem the two supporting panes are drawers
@@ -26,6 +33,32 @@
   const scope = $derived<ContextScope>(
     app.active?.contextScope ?? { refs: [{ kind: 'org', id: 'org', label: 'Ecosistema' }] },
   );
+
+  /**
+   * The lengua filter for this conversation's next turns. `''` ⇒ none.
+   *
+   * ⚠ Reset when the conversation changes: a filter carried silently into
+   * another conversation would answer there from a fraction of the corpus.
+   */
+  let lengua = $state('');
+  let lenguas = $state<LenguaFacet[]>([]);
+  $effect(() => {
+    void app.active?.id;
+    lengua = '';
+  });
+  // The ecosistema's languages, once. A failed read leaves the control hidden.
+  $effect(() => {
+    let cancelled = false;
+    fetch('/api/lenguas', { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { lenguas?: LenguaFacet[] } | null) => {
+        if (!cancelled && Array.isArray(body?.lenguas)) lenguas = body.lenguas;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  });
 
   // Auto-scroll on message count changes.
   $effect(() => {
@@ -64,6 +97,7 @@
           .map((m) => ({ role: m.role, content: m.content })),
         contextRefs: refs,
         scope: fresh.contextScope ?? scope,
+        ...(lengua ? { lengua } : {}),
       };
 
       const finalize = (result: SyncGenerateResult) => {
@@ -152,6 +186,23 @@
     <h2 class="text-sm font-semibold text-ink truncate flex-1 font-display">
       {app.active?.title ?? 'Sin chat seleccionado'}
     </h2>
+    {#if lenguas.length > 0}
+      <label class="flex items-center gap-1 text-xs text-ink-soft" title={LENGUA_CHAT_HINT}>
+        <span class="sr-only sm:not-sr-only">{LENGUA_LABEL}</span>
+        <select
+          class="text-xs rounded-lg border border-line bg-surface px-1.5 py-1 max-w-[11rem]"
+          class:border-brand={lengua !== ''}
+          bind:value={lengua}
+          aria-label={`${LENGUA_LABEL}: ${LENGUA_CHAT_HINT}`}
+          data-testid="chat-lengua"
+        >
+          <option value="">{LENGUA_ALL}</option>
+          {#each lenguas as f (f.lengua)}
+            <option value={f.lengua}>{lenguaFacetCopy(f)}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
     {#if !app.docsPanelOpen && !hidePanelButtons}
       <button
         class="text-xs text-ink-soft hover:text-brand px-2 py-1 rounded-lg border border-line hover:border-brand transition-colors whitespace-nowrap"

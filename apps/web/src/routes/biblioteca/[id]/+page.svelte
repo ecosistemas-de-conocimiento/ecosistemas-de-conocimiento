@@ -27,6 +27,7 @@
     type LibraryDocument,
   } from '$lib/biblioteca';
   import { audioMetaChips } from '$lib/ingest';
+  import { LENGUA_LABEL, LENGUA_NOTE } from '$lib/lengua';
   import type { AudioMeta } from '$lib/types';
 
   let doc = $state<LibraryDocument | null>(null);
@@ -115,6 +116,18 @@
         {/if}
         {#if textStatsCopy(doc.text)}
           <span>{textStatsCopy(doc.text)}</span>
+        {/if}
+        <!-- Set server-side on a documento only (`toLibraryItem`). Links to the
+             biblioteca filtered by it. -->
+        {#if doc.lengua}
+          <a
+            class="chip"
+            href={`/biblioteca?lengua=${encodeURIComponent(doc.lengua)}`}
+            title={LENGUA_NOTE}
+            data-testid="library-document-lengua"
+          >
+            {LENGUA_LABEL}: {doc.lengua}
+          </a>
         {/if}
       </div>
 

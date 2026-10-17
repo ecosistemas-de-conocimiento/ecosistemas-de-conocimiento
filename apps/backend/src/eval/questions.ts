@@ -120,6 +120,24 @@ const GLOBAL_SPECS: GlobalSpec[] = [
     ],
   },
   {
+    /**
+     * ⚠ THE PRODUCT NOW ANSWERS THIS DETERMINISTICALLY; THIS EVAL DOES NOT YET.
+     *
+     * `apps/web` puts one line in the chat's Tier-1 summary naming every
+     * language with its documento count (`lenguaSummaryLine` in
+     * `apps/web/src/lib/lengua.ts`, fed by `GET /api/lenguas`, which reads
+     * `documents.lengua` over published documentos only). Retrieval alone
+     * cannot answer an aggregate question — 11 languages over 191 documentos do
+     * not fit in a top-k — which is the 0.36 recall here.
+     *
+     * The harness builds its own summary (`engine.ts`, `adapter.scopeHierarchy`
+     * names the ecosistema only), so its "plain" arm still measures retrieval
+     * alone. To measure the deterministic path, `engine.ts` needs the same line,
+     * from the same rows (published `contentKind = 'documento'`, `lengua` not
+     * null). That file belongs to the eval lane; the question and its expected
+     * set do not change: testimonios carry no `lengua`, and the expected facts
+     * are already filtered by support over published documents.
+     */
     id: 'G05',
     text: '¿Qué lenguas indígenas hablan las personas que aparecen en los documentos?',
     candidates: [

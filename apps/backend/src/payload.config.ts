@@ -21,6 +21,7 @@ import { Projects } from './collections/Projects'
 import { Memberships } from './collections/Memberships'
 
 import { graphEndpoints } from './endpoints/graph'
+import { lenguasEndpoint } from './endpoints/lenguas'
 import { jwksEndpoint } from './endpoints/jwks'
 import { meEndpoint } from './endpoints/me'
 import { resolveEndpoint } from './endpoints/resolve'
@@ -135,7 +136,15 @@ export default buildConfig({
    * `read` on a graph collection would restore the side door those routes exist
    * to close.
    */
-  endpoints: [jwksEndpoint, meEndpoint, resolveEndpoint, tokenEndpoint, ...graphEndpoints],
+  endpoints: [
+    jwksEndpoint,
+    meEndpoint,
+    resolveEndpoint,
+    tokenEndpoint,
+    ...graphEndpoints,
+    // `/api/lenguas` — read its header for why `lengua` needs its own route.
+    lenguasEndpoint,
+  ],
   editor: lexicalEditor(),
   /**
    * ⚠ THIS HOOK IS THE BOOT TIER. Everything here fires AUTOMATICALLY on every

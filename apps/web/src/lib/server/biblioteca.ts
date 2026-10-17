@@ -60,6 +60,11 @@ export const LIBRARY_LIST_FIELDS = [
   'audioMeta',
   'createdAt',
   'updatedAt',
+  // 🔴 A PAIR. `lenguaReadable` (backend Documents.ts) reads `contentKind` off
+  // the projected row; select `lengua` without it and the field vanishes from
+  // every row, with no error.
+  'lengua',
+  'contentKind',
 ] as const;
 
 /** The reader adds the text itself. */
@@ -75,6 +80,15 @@ export interface LibraryQueryInput {
   search: string;
   /** 1-based, as Payload counts. */
   page: number;
+  /**
+   * The lengua filter, as the documento ids `GET /api/lenguas` named for it.
+   *
+   * ⚠ Ids, not `where[lengua][equals]`: the backend refuses a `where` on that
+   * field for any non-override caller (see `apps/backend/src/endpoints/lenguas.ts`).
+   * Absent ⇒ no lengua filter. An EMPTY list is the caller's to short-circuit;
+   * it is never sent as an empty `in`.
+   */
+  documentIds?: readonly string[];
 }
 
 /**
@@ -101,6 +115,10 @@ export function libraryListQuery(input: LibraryQueryInput): string {
 
   const search = normalizeSearch(input.search);
   if (search) qs.set('where[name][like]', search);
+
+  if (input.documentIds && input.documentIds.length > 0) {
+    qs.set('where[id][in]', input.documentIds.join(','));
+  }
 
   qs.set('depth', '0');
   qs.set('limit', String(LIBRARY_PAGE_SIZE));
@@ -180,6 +198,11 @@ export function toLibraryItem(
     createdAt: epoch(row.createdAt),
     updatedAt: epoch(row.updatedAt ?? row.createdAt),
     contributor: mayShowContributor(kind) ? (contributorName ?? null) : null,
+    // 🔴 Documento only, whatever the row says. See `$lib/lengua.ts`.
+    lengua:
+      row.contentKind === 'documento' && typeof row.lengua === 'string' && row.lengua.trim()
+        ? row.lengua.trim()
+        : null,
     audioMeta:
       kind === 'audio' && row.audioMeta && typeof row.audioMeta === 'object' && !Array.isArray(row.audioMeta)
         ? (row.audioMeta as Record<string, unknown>)

@@ -38,6 +38,14 @@
     type LibraryItem,
   } from '$lib/biblioteca';
   import { audioMetaChips } from '$lib/ingest';
+  import {
+    LENGUA_ALL,
+    LENGUA_LABEL,
+    LENGUA_NOTE,
+    lenguaFacetCopy,
+    parseLengua,
+    type LenguaFacet,
+  } from '$lib/lengua';
   import type { AudioMeta } from '$lib/types';
 
   interface LibraryResponse {
@@ -47,6 +55,8 @@
     total: number;
     page: number;
     hasNextPage: boolean;
+    /** The ecosistema's languages, for the filter. Empty ⇒ no control. */
+    lenguas?: LenguaFacet[];
   }
 
   /**
@@ -60,6 +70,7 @@
   const query = $derived({
     q: ($page.url.searchParams.get('q') ?? '').slice(0, MAX_SEARCH_LENGTH),
     kind: parseKindFilter($page.url.searchParams.get('kind')),
+    lengua: parseLengua($page.url.searchParams.get('lengua')),
     page: Math.max(1, Math.floor(Number($page.url.searchParams.get('page')) || 1)),
   });
 
@@ -71,16 +82,20 @@
 
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function pushQuery(next: { q?: string; kind?: KindFilter; page?: number }) {
+  function pushQuery(next: { q?: string; kind?: KindFilter; lengua?: string; page?: number }) {
     const params = new URLSearchParams();
     const q = next.q ?? query.q;
     const kind = next.kind ?? query.kind;
+    const lengua = next.lengua ?? query.lengua;
     // ⚠ Changing the term or the kind resets to page 1. Staying on page 4 of a
     // result set that now has one page shows an empty screen that looks like
     // "nothing matched" and is not.
-    const pageNo = next.page ?? (next.q !== undefined || next.kind !== undefined ? 1 : query.page);
+    const pageNo =
+      next.page ??
+      (next.q !== undefined || next.kind !== undefined || next.lengua !== undefined ? 1 : query.page);
     if (q) params.set('q', q);
     if (kind !== 'todos') params.set('kind', kind);
+    if (lengua) params.set('lengua', lengua);
     if (pageNo > 1) params.set('page', String(pageNo));
     const qs = params.toString();
     void goto(qs ? `/biblioteca?${qs}` : '/biblioteca', {
@@ -103,13 +118,14 @@
    * so a re-render for any other reason does not re-fetch.
    */
   $effect(() => {
-    const key = `${query.q}|${query.kind}|${query.page}`;
+    const key = `${query.q}|${query.kind}|${query.lengua}|${query.page}`;
     void key;
     let cancelled = false;
     loading = true;
     const params = new URLSearchParams();
     if (query.q) params.set('q', query.q);
     if (query.kind !== 'todos') params.set('kind', query.kind);
+    if (query.lengua) params.set('lengua', query.lengua);
     params.set('page', String(query.page));
     fetch(`/api/biblioteca?${params.toString()}`, { credentials: 'same-origin' })
       .then(async (res) => {
@@ -140,7 +156,8 @@
   });
 
   const items = $derived(data?.items ?? []);
-  const filtered = $derived(query.q !== '' || query.kind !== 'todos');
+  const filtered = $derived(query.q !== '' || query.kind !== 'todos' || query.lengua !== '');
+  const lenguas = $derived(data?.lenguas ?? []);
 </script>
 
 <svelte:head><title>Biblioteca · Ecosistemas de Conocimiento</title></svelte:head>
@@ -202,6 +219,31 @@
           </button>
         {/each}
       </div>
+      <!-- Shown only when some published documento records a language. A
+           filter kept in the URL but no longer offered still shows, so it can
+           be cleared. -->
+      {#if lenguas.length > 0 || query.lengua}
+        <label class="lengua">
+          <span class="lengua-label">{LENGUA_LABEL}</span>
+          <select
+            class="lengua-select"
+            value={query.lengua}
+            onchange={(e) => pushQuery({ lengua: e.currentTarget.value })}
+            data-testid="library-lengua"
+          >
+            <option value="">{LENGUA_ALL}</option>
+            {#each lenguas as f (f.lengua)}
+              <option value={f.lengua}>{lenguaFacetCopy(f)}</option>
+            {/each}
+            {#if query.lengua && !lenguas.some((f) => f.lengua === query.lengua)}
+              <option value={query.lengua}>{query.lengua}</option>
+            {/if}
+          </select>
+        </label>
+        <!-- ⚠ Said, because the filter hides every Voz and that must not read
+             as "no hay testimonios". -->
+        <p class="hint">{LENGUA_NOTE}</p>
+      {/if}
     </section>
 
     <p class="count" data-testid="library-count">
@@ -224,6 +266,9 @@
                      different kinds of source, and a reader weighing a passage
                      should not have to work out which one they are holding. -->
                 <span class="kind kind-{label.tone}" title={label.description}>{label.label}</span>
+                {#if item.lengua}
+                  <span class="chip" title={LENGUA_NOTE}>{item.lengua}</span>
+                {/if}
                 <span class="date">{formatLibraryDate(item.createdAt)}</span>
               </div>
               <h2 class="title">{item.title}</h2>
@@ -385,6 +430,32 @@
     border-color: var(--edc-color-brand-outline);
     background: var(--edc-color-brand-soft);
     color: var(--edc-color-brand-strong);
+  }
+
+  .lengua {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .lengua-label {
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: var(--edc-color-ink-soft);
+  }
+  .lengua-select {
+    min-height: 2rem;
+    max-width: 100%;
+    padding: 0.3rem 0.6rem;
+    border-radius: var(--edc-radius-2);
+    border: 1px solid var(--edc-color-line);
+    background: var(--edc-color-surface);
+    color: var(--edc-color-ink);
+    font-size: 0.82rem;
+  }
+  .lengua-select:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--edc-focus-ring);
   }
 
   .count {
