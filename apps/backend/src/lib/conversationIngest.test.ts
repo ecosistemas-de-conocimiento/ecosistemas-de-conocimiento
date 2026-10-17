@@ -29,7 +29,7 @@
  * a test nobody runs.
  */
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Payload } from 'payload'
 
 import { staticDetector } from './anonymise'
@@ -769,6 +769,14 @@ describe('turns that are never ingested', () => {
 // ---------------------------------------------------------------------------
 
 describe('🔴 the anonymisation gate, per turn', () => {
+  // One verify round: verify only judges, so a leftover it finds is a hold.
+  // The redacting rounds are tested in `lib/anonymise/gate.rounds.test.ts`.
+  beforeEach(() => {
+    vi.stubEnv('ANONYMISE_VERIFY_ROUNDS', '1')
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
   it('HOLDS a turn whose detector could not run, and does not enqueue it', async () => {
     // 🔴 A detector that threw is NOT "nothing to redact". People wrote these
     // messages believing they were private, ingestion is silent and automatic,

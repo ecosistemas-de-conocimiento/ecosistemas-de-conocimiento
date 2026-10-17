@@ -80,6 +80,12 @@ export interface GateStageReport {
   removed: RedactionCount[]
   /** Human-readable note for the admin panel. Must contain no removed text. */
   note?: string
+  /**
+   * Verify only: which round this entry records, from 1. Its `removed` counts
+   * what that round redacted, so a reviewer sees what each round caught.
+   * ⚠ Absent on reports stored before verify had rounds.
+   */
+  round?: number
 }
 
 export interface GateReport {
@@ -185,6 +191,14 @@ export interface DetectorFinding {
    * invents two houses where the testimony described one.
    */
   type: 'persona' | 'lugar' | 'contacto' | 'identificador' | 'otro'
+  /**
+   * `false` when the model itself judged the string identifies nobody: a bare
+   * title such as "el doctor" in "el doctor dijo". The gate neither redacts nor
+   * holds on it.
+   *
+   * 🔴 FAIL-CLOSED: anything other than an explicit `false` is identifying.
+   */
+  identifying?: boolean
 }
 
 /**

@@ -137,9 +137,10 @@ describe('runAnonymisationGate — 🔴 every uncertain outcome is a hold', () =
     expect(result.stage).toBe('verify')
   })
 
-  it('holds at `verify` when a name survives the scrub', async () => {
+  it('holds at `verify` when a name survives the LAST verify round', async () => {
     // A detector that misses Ricardo on the first pass and catches him on the
-    // second — the exact case stage 4 exists for.
+    // second — the exact case stage 4 exists for. With one round, verify only
+    // judges; see `gate.rounds.test.ts` for the redacting rounds.
     let calls = 0
     const lateWaker: PersonDetector = {
       name: 'late-waker',
@@ -150,7 +151,7 @@ describe('runAnonymisationGate — 🔴 every uncertain outcome is a hold', () =
       },
     }
 
-    const result = await runAnonymisationGate(input(), { detector: lateWaker })
+    const result = await runAnonymisationGate(input(), { detector: lateWaker, verifyRounds: 1 })
     expect(result.status).toBe('hold')
     if (result.status !== 'hold') return
     expect(result.stage).toBe('verify')
@@ -289,6 +290,7 @@ describe('runAnonymisationGate — 🔴 the report is not a re-identification ma
             }
           })(),
         },
+        verifyRounds: 1,
       },
     )
 
@@ -429,7 +431,7 @@ describe('runAnonymisationGate — domicilios', () => {
 
     const result = await runAnonymisationGate(
       { contentKind: 'testimonio', text },
-      { detector: missesThenFinds },
+      { detector: missesThenFinds, verifyRounds: 1 },
     )
 
     expect(result.status).toBe('hold')
@@ -437,6 +439,16 @@ describe('runAnonymisationGate — domicilios', () => {
     expect(result.stage).toBe('verify')
     // ⚠ Counts only. The reason is stored on the row and shown to a reviewer.
     expect(result.reason).not.toContain('Mari')
+
+    // With rounds, the round that caught it redacts it and the next one verifies.
+    calls = 0
+    const rounds = await runAnonymisationGate(
+      { contentKind: 'testimonio', text },
+      { detector: missesThenFinds },
+    )
+    expect(rounds.status).toBe('ready')
+    if (rounds.status !== 'ready') return
+    expect(rounds.redactedText).toBe('Vivo [Domicilio A].')
   })
 })
 
@@ -518,7 +530,7 @@ describe('runAnonymisationGate — 🔴 a title before a name is part of the nam
     expect(result.redactedText).toBe('Le pregunté a [Persona A].')
   })
 
-  it('🔴 "[Persona A] López" still HOLDS: a surname after the placeholder is a leak', async () => {
+  it('🔴 "[Persona A] López" HOLDS on the last round: a surname after the placeholder is a leak', async () => {
     let calls = 0
     const result = await runAnonymisationGate(input({ text: 'Don Fernando López nos ayudó.' }), {
       detector: {
@@ -531,6 +543,7 @@ describe('runAnonymisationGate — 🔴 a title before a name is part of the nam
             : []
         },
       },
+      verifyRounds: 1,
     })
     expect(result.status).toBe('hold')
     if (result.status !== 'hold') return
@@ -538,7 +551,7 @@ describe('runAnonymisationGate — 🔴 a title before a name is part of the nam
     expect(result.redactedText).toBe('[Persona A] López nos ayudó.')
   })
 
-  it('🔴 a bare surname still HOLDS', async () => {
+  it('🔴 a bare surname HOLDS on the last round', async () => {
     let calls = 0
     const result = await runAnonymisationGate(
       input({ text: 'La maestra Imelda llegó. Ya conocíamos a Ortiz.' }),
@@ -551,6 +564,7 @@ describe('runAnonymisationGate — 🔴 a title before a name is part of the nam
             return text.includes('Ortiz') ? [{ text: 'Ortiz', type: 'persona' }] : []
           },
         },
+        verifyRounds: 1,
       },
     )
     expect(result.status).toBe('hold')
@@ -580,7 +594,7 @@ describe('runAnonymisationGate — 🔴 a title before a name is part of the nam
     expect(result.status).toBe('ready')
   })
 
-  it('🔴 a title-only finding with no placeholder still HOLDS', async () => {
+  it('🔴 a title-only finding with no placeholder HOLDS on the last round', async () => {
     let calls = 0
     const result = await runAnonymisationGate(input({ text: 'Llegó Don y se sentó.' }), {
       detector: {
@@ -590,6 +604,7 @@ describe('runAnonymisationGate — 🔴 a title before a name is part of the nam
           return calls === 1 ? [] : [{ text: 'Don', type: 'persona' }]
         },
       },
+      verifyRounds: 1,
     })
     expect(result.status).toBe('hold')
   })

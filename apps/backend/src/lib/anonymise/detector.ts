@@ -62,7 +62,7 @@ export const DEFAULT_CONCURRENCY = 3
  */
 export const DEFAULT_TIMEOUT_MS = 90_000
 
-function positiveIntFromEnv(name: string, fallback: number): number {
+export function positiveIntFromEnv(name: string, fallback: number): number {
   // ⚠ Blank is "unset", not 0 — same rule as `aiRetry.ts`.
   const text = (process.env[name] ?? '').trim()
   if (text === '') return fallback
@@ -93,7 +93,7 @@ export const DETECT_SYSTEM_PROMPT = [
   'Eres un detector de datos personales en textos en español de México.',
   '',
   'Tu única tarea es LOCALIZAR, no reescribir. Devuelves exclusivamente JSON válido con esta forma:',
-  '{"hallazgos":[{"texto":"...","tipo":"persona|lugar|contacto|identificador|otro"}]}',
+  '{"hallazgos":[{"texto":"...","tipo":"persona|lugar|contacto|identificador|otro","identifica":true}]}',
   '',
   'Reglas obligatorias:',
   '- Copia en "texto" la cadena EXACTAMENTE como aparece en la entrada, con sus mismas',
@@ -113,6 +113,16 @@ export const DETECT_SYSTEM_PROMPT = [
   '  es "Don Fernando Vázquez"; en "la maestra Imelda" es "la maestra Imelda".',
   '- Centros de trabajo, escuelas o cargos tan precisos que identifican a una persona.',
   '- Teléfonos, correos, cuentas, identificadores oficiales y números de expediente.',
+  '',
+  // ⚠ Owner's rule, 2026-10-17: a bare title is not identifying and must not
+  // hold a document. The gate drops a finding marked "identifica": false.
+  'No es un hallazgo:',
+  '- Un tratamiento o cargo SOLO, sin nombre ni apodo junto a él: "el doctor dijo",',
+  '  "la maestra llegó", "don dijo que sí". No identifica a nadie. No lo reportes; si lo',
+  '  reportas, pon "identifica": false. Pon "identifica": true en todo lo demás.',
+  '- Los marcadores entre corchetes como [Persona A], [Domicilio B] o [Dato omitido]: ya',
+  '  están censurados. Sí reporta lo que esté pegado a ellos y aún identifique, como un',
+  '  apellido en "[Persona A] López".',
   '',
   // 🔴 ADDRESSES GET THEIR OWN SECTION BECAUSE ONE LINE WAS NOT ENOUGH. Measured:
   // on a live test testimony a street address went past this prompt, and the
@@ -236,6 +246,8 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
       type: (FINDING_TYPES as readonly unknown[]).includes(tipo)
         ? (tipo as DetectorFinding['type'])
         : 'otro',
+      // 🔴 Only a literal `false` counts; a missing or odd value is identifying.
+      ...((item as { identifica?: unknown }).identifica === false ? { identifying: false } : {}),
     })
   }
   return out
@@ -421,15 +433,14 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
       })
 
       // A name repeated across chunks is one finding.
-      const seen = new Set<string>()
-      const out: DetectorFinding[] = []
+      // 🔴 If any chunk judged it identifying, it is identifying: fail-closed.
+      const byKey = new Map<string, DetectorFinding>()
       for (const f of perChunk.flat()) {
         const key = `${f.type}\u0000${f.text}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        out.push(f)
+        const prior = byKey.get(key)
+        if (prior === undefined || prior.identifying === false) byKey.set(key, f)
       }
-      return out
+      return [...byKey.values()]
     },
   }
 }

@@ -181,6 +181,7 @@ fall back to the default.
 | `ANONYMISE_CHUNK_WORDS` | backend | `250` | 💤 words per detector call. Whole paragraphs are packed up to it; a longer paragraph splits at sentences. Raising it brings back the cut-off replies |
 | `ANONYMISE_DETECT_CONCURRENCY` | backend | `3` | 💤 chunk calls in flight per stage. ai-service allows 30 generations/min per key; a 429 waits what ai-service asked (`AI_RETRY_*`, `lib/aiRetry.ts`) |
 | `ANONYMISE_DETECT_TIMEOUT_MS` | backend | `90000` | 💤 per-call deadline. Without it the client's 30 s default applied, and one measured call aborted there. Keep below ai-service's `LLM_REQUEST_TIMEOUT_MS` |
+| `ANONYMISE_VERIFY_ROUNDS` | backend | `3` | 💤 verify passes per document (`lib/anonymise/gate.ts`). A pass that finds leftovers redacts them and the next pass checks again; leftovers on the last pass hold the document. Each extra pass costs about one stage-3 pass (inferred: same chunks). `1` restores the old judge-only verify |
 
 🔴 Any failed chunk holds the whole document. There is no partial `ready`.
 

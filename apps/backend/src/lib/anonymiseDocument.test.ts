@@ -43,7 +43,7 @@
  * every test here passes one.
  */
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
@@ -289,6 +289,14 @@ describe('anonymiseDocumentText — a testimonio that clears the gate', () => {
 // ---------------------------------------------------------------------------
 
 describe('🔴 anonymiseDocumentText — a hold means nothing was ingested', () => {
+  // One verify round: verify only judges, so a leftover it finds is a hold.
+  // The redacting rounds are tested in `lib/anonymise/gate.rounds.test.ts`.
+  beforeEach(() => {
+    vi.stubEnv('ANONYMISE_VERIFY_ROUNDS', '1')
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
   /**
    * A detector that misses a surname on the first pass and finds it on the
    * verification pass — the realistic shape of a stage-4 hold. The first call
@@ -447,6 +455,11 @@ describe('🔴 nothing written to the row carries the person’s name', () => {
   })
 
   it('🔴 keeps the name out of the error string and the report on the HELD path', async () => {
+    // One verify round, so verify's finding holds instead of being redacted.
+    vi.stubEnv('ANONYMISE_VERIFY_ROUNDS', '1')
+    onTestFinished(() => {
+      vi.unstubAllEnvs()
+    })
     // The reason is written by the gate and carries COUNTS ONLY. An error column
     // that quoted the name it found would put the name straight back into the
     // database the gate had just kept out of it — a re-identification map with a
