@@ -994,17 +994,26 @@ describe('readGraphRetrieval', () => {
     expect(renderSql(matchableEntitiesQuery(ORG, 3)).params).toContain(MAX_MATCHABLE_ENTITIES)
   })
 
-  it('passes seed ids as a typed array parameter, not an interpolated IN list', () => {
-    const { text, params } = renderSql(retrieveEdgesQuery(ORG, [4, 9], 3))
-    expect(text).toContain('= ANY($')
-    expect(text).toContain('::int[]')
-    expect(params).toContainEqual([4, 9])
+  // 🔴 Never a raw JS array inside the `sql` tag: drizzle expands it into
+  // `($6, $7)` and Postgres rejects the cast. This renderer would bind it as one
+  // value and hide that, so it asserts the SHAPE here; `queries.pg.test.ts`
+  // proves the statements run through the real driver.
+  it('passes seed ids as an ARRAY[] of scalar parameters, not an interpolated IN list', () => {
+    const { text, params } = renderSql(retrieveDocumentsQuery(ORG, [4, 9], 3))
+    expect(text).toMatch(/= ANY\(ARRAY\[\$\d+, \$\d+\]::int\[\]\)/)
+    expect(params.some(Array.isArray)).toBe(false)
+    expect(params).toEqual(expect.arrayContaining([4, 9]))
+  })
+
+  it('renders an empty seed list as an empty typed array', () => {
+    expect(renderSql(retrieveEdgesQuery(ORG, [], 3)).text).toContain('ANY(ARRAY[]::int[])')
   })
 
   it('drops junk out of the seed id list rather than letting it reach SQL', () => {
     const ids = [1, Number.NaN, 3] as number[]
-    const { params } = renderSql(retrieveEdgesQuery(ORG, ids, 3))
-    expect(params).toContainEqual([1, 3])
+    const { text, params } = renderSql(retrieveDocumentsQuery(ORG, ids, 3))
+    expect(text).toMatch(/= ANY\(ARRAY\[\$\d+, \$\d+\]::int\[\]\)/)
+    expect(params.some((p) => typeof p === 'number' && Number.isNaN(p))).toBe(false)
   })
 })
 

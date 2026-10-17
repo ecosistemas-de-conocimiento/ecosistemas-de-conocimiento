@@ -685,7 +685,12 @@ services:
       #    ⚠ This `environment:` value deliberately OVERRIDES anything named
       #      `API_KEYS` in `.env` — Compose gives `environment:` precedence over
       #      `env_file:`. That is why `.env.example` no longer defines it.
-      API_KEYS: '{"${AI_SERVICE_API_KEY:?AI_SERVICE_API_KEY is required}":{"org":"edc","project":"demo","role":"app","delegateOrgPrefix":"edc-","callbackSecret":"${CALLBACK_SECRET:?CALLBACK_SECRET is required}"},"${AI_SERVICE_ADMIN_API_KEY:-dev-key-admin}":{"org":"edc","project":"demo","role":"admin","delegateOrgPrefix":"edc-","callbackSecret":"${CALLBACK_SECRET}"}}'
+      # 🔴 The ADMIN key has NO default. It used to fall back to the string
+      #    `dev-key-admin`, which is public (it ships in `.env.example`), so a
+      #    new environment that forgot the variable accepted a known admin key.
+      #    Now Compose refuses to render without it. Local dev gets its value
+      #    from `infra/.env` (copied from `.env.example`).
+      API_KEYS: '{"${AI_SERVICE_API_KEY:?AI_SERVICE_API_KEY is required}":{"org":"edc","project":"demo","role":"app","delegateOrgPrefix":"edc-","callbackSecret":"${CALLBACK_SECRET:?CALLBACK_SECRET is required}"},"${AI_SERVICE_ADMIN_API_KEY:?AI_SERVICE_ADMIN_API_KEY is required (admin bearer for ai-service; local value in infra/.env.example, a fresh secret per deployed env)}":{"org":"edc","project":"demo","role":"admin","delegateOrgPrefix":"edc-","callbackSecret":"${CALLBACK_SECRET}"}}'
       # ⚠ NODE_ENV=production here means CALLBACK_ALLOW_PRIVATE is FORBIDDEN
       #   (boot refuses it) and callbacks must be https. The local override
       #   flips this service to development; never set either on Coolify.
@@ -885,14 +890,13 @@ volumes:
 #  ✅ `services/audio-service/` NOW EXISTS and this file has been reconciled
 #     against it. The three-container shape, the `audio_work` volume, the baked
 #     weights and the `API_KEYS` shape are READ FROM ITS SOURCE, not assumed.
-#  🔴 `apps/backend` DOES NOT YET CONSUME `AUDIO_SERVICE_URL` /
-#     `AUDIO_SERVICE_API_KEY`, and its callback route does not branch on
-#     `transcribe.*` — it logs an unknown event and returns 200. So today the
-#     audio containers come up, accept an upload via curl, transcribe it and
-#     deliver a signed callback that the backend accepts and ignores. The
-#     end-to-end product path lands with `plan/audio-ingest-integration.md`.
-#     ⚠ This is the assumption in this file most likely to break: if that agent
-#       chooses different variable names, change the two lines on `backend`.
+#  ✅ `apps/backend` NOW CONSUMES `AUDIO_SERVICE_URL` / `AUDIO_SERVICE_API_KEY`
+#     (`apps/backend/src/lib/audioClient.ts`), and its callback route handles
+#     `transcribe.completed` / `.failed` / `.progress`
+#     (`apps/backend/src/app/api/ai-service/callback/route.ts`). Read in code
+#     2026-10-17; the full audio path is not exercised by this file, because
+#     the core stack forces both variables empty (see `backend` above) and
+#     `docker-compose.audio.yml` is what sets them.
 #  🔴 The identity provider needs a signing keypair (`AUTH_PRIVATE_KEY` /
 #     `AUTH_PUBLIC_KEY` / `AUTH_KEY_ID` / `AUTH_ISSUER`). There is no default
 #     and none is generated automatically. Generate once with

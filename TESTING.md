@@ -26,7 +26,7 @@ and they were never really a skip: the suite published its throwaway Postgres on
 demo**, so `docker run` failed with "port is already allocated" whenever the demo was
 up. Those containers now bind an ephemeral host port (`-p 0:5432`) and read the
 assignment back from `docker port`, so the suite runs alongside a live local stack.
-See `services/ai-service/src/test/pg-container.ts`.
+See `services/ai-service/src/test/docker-pg.ts`.
 
 They still skip where Docker itself is absent — that is a real environment problem, and
 the only one left that this harness treats as one.

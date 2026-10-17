@@ -1,6 +1,6 @@
 {
   "name": "@edc/chat-engine",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Domain-agnostic chat/RAG engine core + SvelteKit component library. One package, two build outputs: backend-agnostic TS (`./core`) and SvelteKit components (`./svelte`).",
   "type": "module",
   "license": "UNLICENSED",
