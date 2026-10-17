@@ -141,6 +141,8 @@ describe('withQueryExpansion', () => {
     // One cheap, Spanish-prompted call.
     expect(generates).toHaveLength(1);
     expect(generates[0]!.effort).toBe('quick');
+    // C-11: no `maxTokens` — `makeEngineAIClient.generateSync` never forwards it.
+    expect(generates[0]!.maxTokens).toBeUndefined();
     expect(generates[0]!.messages[0]).toEqual({ role: 'system', content: EXPANSION_SYSTEM_PROMPT });
     expect(generates[0]!.messages[1]!.content).toContain(Q);
   });
@@ -167,7 +169,66 @@ describe('withQueryExpansion', () => {
       byQuery: { [Q]: [m('b', 0.5)], 'intérpretes en salud': [m('b', 0.95)] },
     });
     const { matches } = await withQueryExpansion(client, OPTS).retrieve(REQ);
-    expect(matches).toEqual([m('b', 0.5)]);
+    // The cosine is copied to `denseScore` before `score` is re-assigned.
+    expect(matches).toEqual([m('b', 0.5, { denseScore: 0.5 })]);
+  });
+
+  it('🔴 C-5: every fused chunk is scored on the ORIGINAL list\'s scale, by rank', async () => {
+    // Under rerank the original's `score` is the cross-encoder value; a
+    // variant-only chunk arrives with its cosine. After fusion no chunk may
+    // carry a cosine as `score`, or the engine's cross-corpus sort compares
+    // the two scales.
+    const { client } = fakeClient({
+      generateText: 'intérpretes en salud',
+      byQuery: {
+        [Q]: [
+          m('a', 0.95, { denseScore: 0.7, rerankScore: 0.95 }),
+          m('b', 0.1, { denseScore: 0.65, rerankScore: 0.1 }),
+        ],
+        'intérpretes en salud': [m('x', 0.6, { denseScore: 0.6 })],
+      },
+    });
+    const { matches } = await withQueryExpansion(client, OPTS).retrieve({ ...REQ, rerank: true });
+    expect(matches.map((x) => x.chunkId)).toEqual(['a', 'x', 'b']);
+    // Rank 1 and 2 take the original's two scores; rank 3 takes its floor.
+    expect(matches.map((x) => x.score)).toEqual([0.95, 0.1, 0.1]);
+    // The cosine every gate reads is untouched.
+    expect(matches.map((x) => x.denseScore)).toEqual([0.7, 0.6, 0.65]);
+  });
+
+  it('🔴 C-5: the engine\'s cross-corpus merge no longer ranks a variant cosine above a rerank hit', async () => {
+    // pub:1 — the original found `a` (rerank 0.9); a variant found `x` (cosine 0.85).
+    // draft:7 — the original found `d` (rerank 0.5).
+    // Before the fix the merged order was a, x(0.85 cosine), d. `x` is now on
+    // pub:1's rerank scale at rank 2 (its floor, 0.9) — still above d, but
+    // because of its RANK in pub:1, not its cosine.
+    const byCorpus: Record<string, Record<string, RetrieveMatch[]>> = {
+      'pub:1': {
+        [Q]: [m('a', 0.9, { denseScore: 0.7, rerankScore: 0.9 })],
+        'intérpretes en salud': [m('x', 0.85, { denseScore: 0.85 })],
+      },
+      'draft:7': { [Q]: [m('d', 0.5, { denseScore: 0.6, rerankScore: 0.5 })] },
+    };
+    const client: AIClient = {
+      async generateSync() {
+        return { text: 'intérpretes en salud', modelUsed: 'm', provider: 'p', costUsd: 0, traceId: 't' };
+      },
+      async retrieve(req) {
+        return { matches: byCorpus[req.corpus]?.[req.query] ?? [] };
+      },
+      async ingest() {
+        return { ingested: 0, documentIds: [] };
+      },
+    };
+    const wrapped = withQueryExpansion(client, OPTS);
+    const [pub, draft] = await Promise.all([
+      wrapped.retrieve({ ...REQ, corpus: 'pub:1', rerank: true }),
+      wrapped.retrieve({ ...REQ, corpus: 'draft:7', rerank: true }),
+    ]);
+    const x = pub.matches.find((c) => c.chunkId === 'x')!;
+    expect(x.score).toBe(0.9);
+    expect(x.denseScore).toBe(0.85);
+    expect(draft.matches[0]!.score).toBe(0.5);
   });
 
   it('🔴 ONE expansion call per turn, however many corpora are retrieved', async () => {

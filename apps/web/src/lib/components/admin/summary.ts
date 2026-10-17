@@ -737,6 +737,22 @@ export function parseUsageSummary(raw: unknown): UsageSummary | null {
  * this deployment every real total is sub-cent, and a dashboard that reports
  * zero when the answer is "not zero, just small" teaches people to ignore it.
  */
+/**
+ * One ecosistema's ai-service budget as the admin panel shows it (audit C-6).
+ * Built by `$lib/server/budget`; defined here so the component can type it
+ * without importing server code.
+ */
+export type BudgetView =
+  | { ok: true; limitUsd: number; spentUsd: number; remainingUsd: number; currency: string }
+  | { ok: false };
+
+/** `$1.50 USD de $10.00 USD (15 %)` — spent of limit. `null` when there is nothing to show. */
+export function budgetLine(b: BudgetView | null | undefined): string | null {
+  if (!b || !b.ok) return null;
+  const pct = b.limitUsd > 0 ? Math.round((b.spentUsd / b.limitUsd) * 100) : null;
+  return `${formatCostUsd(b.spentUsd)} de ${formatCostUsd(b.limitUsd)}${pct != null ? ` (${pct} %)` : ''}`;
+}
+
 export function formatCostUsd(usd: number): string {
   if (!Number.isFinite(usd) || usd <= 0) return '$0.00 USD';
   return `$${usd.toFixed(usd < 0.01 ? 4 : 2)} USD`;

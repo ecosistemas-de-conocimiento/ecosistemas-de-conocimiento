@@ -333,6 +333,20 @@ describe('parseMessageRow', () => {
     })
   })
 
+  it('C-6: adds the query-expansion call\'s cost to the answer\'s', () => {
+    const row = parseMessageRow({
+      session: 5,
+      role: 'assistant',
+      generationMeta: { costUsd: 0.003, expansionCostUsd: 0.0002 },
+    })!
+    expect(row.costUsd).toBeCloseTo(0.0032, 10)
+  })
+
+  it('C-6: an expansion cost alone does not price an answer that has no cost', () => {
+    const row = parseMessageRow({ session: 5, role: 'assistant', generationMeta: { expansionCostUsd: 0.0002 } })!
+    expect(row.costUsd).toBeNull()
+  })
+
   it('tolerates a turn with no telemetry at all — user turns have none', () => {
     expect(parseMessageRow({ session: 5, role: 'user', createdAt: 'x' })).toMatchObject({
       costUsd: null,

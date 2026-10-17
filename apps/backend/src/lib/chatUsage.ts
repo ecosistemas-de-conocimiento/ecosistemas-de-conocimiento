@@ -31,7 +31,7 @@
  *
  * ── 🔴 COST, NOT TOKENS ──────────────────────────────────────────────────────
  *
- * `generationMeta` carries `{ costUsd, traceId, provider, modelUsed }` — no
+ * `generationMeta` carries `{ costUsd, expansionCostUsd?, traceId, provider, modelUsed }` — no
  * tokens. Tokens live in ai-service's `usage_logs`. Since each ecosistema is
  * its own ai-service org (`edc-eco-<id>`, see `aiClient.ts`), new rows there
  * ARE split per ecosistema — but ai-service has no endpoint that returns
@@ -159,6 +159,10 @@ const name = (value: unknown): string | null =>
  * a turn that cannot be attributed to a conversation cannot be attributed to
  * an ecosistema either.
  */
+function usd(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null
+}
+
 export function parseMessageRow(raw: unknown): UsageMessageRow | null {
   if (!raw || typeof raw !== 'object') return null
   const row = raw as Record<string, unknown>
@@ -170,12 +174,17 @@ export function parseMessageRow(raw: unknown): UsageMessageRow | null {
     row.generationMeta && typeof row.generationMeta === 'object'
       ? (row.generationMeta as Record<string, unknown>)
       : null
-  const cost = meta?.costUsd
+  const cost = usd(meta?.costUsd)
+  // C-6: the web BFF saves the query-expansion call's cost next to the
+  // answer's (`apps/web/src/routes/api/generate/+server.ts`). It is added only
+  // to a priced answer: alone it would make an unpriced turn look priced.
+  // Condense is still not recorded anywhere, so the total stays a floor.
+  const expansion = usd(meta?.expansionCostUsd) ?? 0
   return {
     sessionId: String(session),
     role,
     createdAt: typeof row.createdAt === 'string' ? row.createdAt : null,
-    costUsd: typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? cost : null,
+    costUsd: cost === null ? null : cost + expansion,
     provider: name(meta?.provider),
     model: name(meta?.modelUsed),
   }

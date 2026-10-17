@@ -28,6 +28,7 @@ import { makeGraphProvider } from '$lib/server/graph';
 import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { lenguaTurn } from '$lib/lengua';
 import { stampDraftProvenance } from '$lib/publication';
+import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
 import { prepareTurn, respond, type ContextRef, type ContextScope } from '@edc/chat-engine/core';
 
 /**
@@ -108,12 +109,39 @@ async function persistAssistantMessage(
         ...(provenance ? { provenance } : {}),
       }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.error(
+        `[generate] could not save the answer for session ${sessionId} (backend ${res.status}); ` +
+          'the turn returns messageId: null and the ANSWER_NOT_SAVED warning.',
+      );
+      return null;
+    }
     const body = (await res.json()) as { doc?: { id?: number | string } };
-    return body.doc?.id != null ? String(body.doc.id) : null;
-  } catch {
+    if (body.doc?.id == null) {
+      console.error(`[generate] the backend saved the answer for session ${sessionId} but returned no id.`);
+      return null;
+    }
+    return String(body.doc.id);
+  } catch (err) {
+    // Name only: the message can carry backend detail.
+    console.error(
+      `[generate] could not save the answer for session ${sessionId} ` +
+        `(${(err as Error)?.name ?? 'Error'}); the turn returns messageId: null.`,
+    );
     return null;
   }
+}
+
+/**
+ * The turn's warnings plus `ANSWER_NOT_SAVED` when the save failed (audit
+ * C-14). The UI shows it under the answer — see `$lib/aiMessages`.
+ */
+function withSaveWarning(
+  warnings: AIWarning[] | undefined,
+  messageId: string | null,
+): AIWarning[] | undefined {
+  if (messageId !== null) return warnings;
+  return [...(warnings ?? []), { code: ANSWER_NOT_SAVED_CODE, message: ANSWER_NOT_SAVED_MESSAGE }];
 }
 
 async function bumpLastUsedAt(token: string | undefined, sessionId: string): Promise<void> {
@@ -164,6 +192,8 @@ function streamGenerate(
   sessionId: string,
   provenance: unknown,
   sentSystemPrompt: string | undefined,
+  /** Extra `generationMeta` fields for this turn (C-6: `expansionCostUsd`). */
+  extraMeta: Record<string, unknown> = {},
 ): Response {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
@@ -224,6 +254,7 @@ function streamGenerate(
                   modelUsed: evt.modelUsed,
                   provider: evt.provider,
                   costUsd: evt.costUsd,
+                  ...extraMeta,
                 },
                 provenance,
               );
@@ -232,7 +263,13 @@ function streamGenerate(
               // Log it once here, then let it through to the browser via the
               // spread below — the client keeps it on the result.
               logAIWarnings(evt.warnings, 'generate:stream');
-              emit({ ...evt, messageId, provenance: provenance ?? null });
+              const warnings = withSaveWarning(evt.warnings as AIWarning[] | undefined, messageId);
+              emit({
+                ...evt,
+                messageId,
+                provenance: provenance ?? null,
+                ...(warnings ? { warnings } : {}),
+              });
             } else if (evt.type === 'error') {
               // Budget failures arrive HERE on the streaming transport, not as
               // an HTTP status — see `sanitizeStreamErrorFrame`.
@@ -413,15 +450,25 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // provider above keeps the plain `engineAI`, so its widened retrieve does not
   // pay for a second expansion. `QUERY_EXPANSION=off` turns it off. See
   // `$lib/server/engine/expand`.
+  // C-6: the expansion call's cost is summed here and saved next to the
+  // answer's as `generationMeta.expansionCostUsd`, so the admin cost counts it.
+  // ⚠ An expansion that outlives its 5 s deadline reports after the turn's
+  // metadata was built, and is missed. Condense is not counted at all.
   const userId = String(locals.user.id ?? locals.user.email ?? 'user');
+  let expansionCostUsd = 0;
   const turnAI = queryExpansionEnabled()
     ? withQueryExpansion(engineAI, {
         surface: CHAT_ENGINE_CONFIG.surface,
         orgId: engineOrgId(),
         scopeId: body.sessionId,
         userId,
+        onExpansion: (trace) => {
+          if (Number.isFinite(trace.costUsd) && trace.costUsd > 0) expansionCostUsd += trace.costUsd;
+        },
       })
     : engineAI;
+  const turnMeta = (): Record<string, unknown> =>
+    expansionCostUsd > 0 ? { expansionCostUsd } : {};
 
   // The full engine turn spec (condense → summary → scoped retrieve → @-refs →
   // user-turn injection). Identical shape for both transports: the streaming
@@ -500,6 +547,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
         // corpus name is the exact signal, and it is only knowable here.
         stampDraftProvenance(prepared.provenance, draftCorpus),
         upstream.unit.systemPrompt,
+        turnMeta(),
       );
     } catch (err) {
       if ((err as Error)?.name === 'AbortError' || request.signal.aborted) {
@@ -538,15 +586,22 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
         modelUsed: generation.modelUsed,
         provider: generation.provider,
         costUsd: generation.costUsd,
+        ...turnMeta(),
       },
       provenance,
     );
     void bumpLastUsedAt(locals.token, body.sessionId);
     // `warnings` survives chat's zod schema and the engine adapter now; log it
     // once here and pass it to the browser on the result.
-    const warnings = (generation as { warnings?: AIWarning[] }).warnings;
-    logAIWarnings(warnings, 'generate:sync');
-    return json({ ...generation, messageId, provenance: provenance ?? null });
+    const upstreamWarnings = (generation as { warnings?: AIWarning[] }).warnings;
+    logAIWarnings(upstreamWarnings, 'generate:sync');
+    const warnings = withSaveWarning(upstreamWarnings, messageId);
+    return json({
+      ...generation,
+      messageId,
+      provenance: provenance ?? null,
+      ...(warnings ? { warnings } : {}),
+    });
   } catch (err) {
     if ((err as Error)?.name === 'AbortError' || request.signal.aborted) {
       return new Response(null, { status: 499 });

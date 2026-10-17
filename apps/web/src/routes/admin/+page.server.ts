@@ -59,6 +59,7 @@ import { denyAccess } from '$lib/server/deny';
 import { isPlatformAdmin } from '$lib/components/admin/summary';
 import { listAllEcosystems, loadAdminOverview, readEcosystem } from '$lib/server/admin';
 import { listEcosystems } from '$lib/server/ecosystem';
+import { fetchEcosystemBudget } from '$lib/server/budget';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -117,14 +118,16 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     return { state: 'no-ecosystem' as const, overview: null, directory, selected: null, mine: [], notFound: false };
   }
 
-  const overview = await loadAdminOverview(locals.token, {
-    id: selected.id,
-    name: selected.name,
-  });
+  // The ai-service budget runs alongside; it never fails the page (C-6).
+  const [overview, budget] = await Promise.all([
+    loadAdminOverview(locals.token, { id: selected.id, name: selected.name }),
+    fetchEcosystemBudget(selected.id),
+  ]);
 
   return {
     state: 'ready' as const,
     overview,
+    budget,
     directory,
     selected,
     /** Ids the caller is a member of. Labels rows; grants nothing. */
