@@ -1098,9 +1098,10 @@ function resolveIdList(raw: unknown): (string | number)[] {
 }
 
 /**
- * afterChange hook — runs after the row is committed. We re-fetch in
- * `extractAndIngest` to dodge any partial-doc snapshots Payload might pass
- * on `update` operations.
+ * afterChange hook — runs BEFORE the save commits (Payload 3.88 has no
+ * after-commit hook). `extractAndIngest` re-fetches and retries until the read
+ * is at least as new as this save's `updatedAt`, so it never acts on the
+ * pre-save row.
  */
 const extractAndIngestHook: CollectionAfterChangeHook = async ({
   doc,

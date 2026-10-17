@@ -248,7 +248,8 @@ describe('sweepStalledExtracting', () => {
       documents: [
         extracting({ id: 1, updatedAt: minutesAgo(10) }),
         extracting({ id: 2, publicationStatus: 'published' }),
-        // `planIngestRetry` refuses `approved`; `failed` would be a dead end.
+        // Not this sweep's: `planIngestRetry` accepts only approved rows that
+        // have redactedText, and the stale-pending sweep owns those.
         extracting({ id: 3, anonymisationStatus: 'approved' }),
       ],
     })

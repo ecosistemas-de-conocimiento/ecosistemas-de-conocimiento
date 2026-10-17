@@ -587,7 +587,8 @@ describe('sweepStalledPending — the lost background extract', () => {
       // The gate is running (or died running) — the gate owns this row.
       strandedPending({ id: 6, contentKind: 'testimonio', anonymisationStatus: 'pending' }),
       // A reviewer released it (`holdReview.ts` re-enters at `pending`).
-      // `planIngestRetry` refuses `approved`, so `failed` would be a dead end.
+      // This rule only takes `documento`; released holds (approved + redactedText)
+      // have their own sweep below, where `planIngestRetry` accepts them.
       strandedPending({ id: 7, contentKind: 'testimonio', anonymisationStatus: 'approved' }),
       strandedPending({ id: 8, contentKind: 'testimonio', anonymisationStatus: 'rejected' }),
       strandedPending({ id: 9, contentKind: 'conversacion' }),
