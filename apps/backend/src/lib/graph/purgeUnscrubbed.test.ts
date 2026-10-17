@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+import { NO_DRIZZLE } from '@/lib/documentColumns.testFake'
+vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
 import { purgeUnscrubbedGraphRows, type PurgePayload } from './purgeUnscrubbed'
 
@@ -30,7 +33,7 @@ function fakePayload(documents: Record<string, unknown>[], rowsPerDoc: Record<st
       deletes.push({ collection: String(args.collection), where: args.where, id: args.id })
       return {}
     },
-    db: {},
+    db: { drizzle: NO_DRIZZLE },
   }
   return { payload, deletes, updates }
 }

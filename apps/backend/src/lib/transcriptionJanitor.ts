@@ -43,6 +43,8 @@
 
 import type { Payload } from 'payload'
 
+import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
+
 import {
   janitorEnabledFromEnv,
   janitorIntervalMsFromEnv,
@@ -167,9 +169,12 @@ export async function sweepStalledTranscriptions(
     if (!isTranscriptionStalled(doc, now)) continue
 
     const waitedMinutes = Math.round(transcriptionDeadlineMs(doc) / 60_000)
-    await payload.update({
-      collection: 'documents',
-      id: doc.id as never,
+    // 🔴 Only the ingest columns, and only while the row is STILL
+    // `transcribing`: a late `transcribe.completed` between the `find` and
+    // this write wins instead of being overwritten. `lib/documentColumns.ts`.
+    const changed = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
+      id: doc.id,
+      where: [{ ingestStatus: { equals: 'transcribing' } }],
       data: {
         ingestStatus: 'failed',
         ingestError:
@@ -177,10 +182,8 @@ export async function sweepStalledTranscriptions(
           'The transcription service may have finished without being able to deliver the result — ' +
           'check that the audio-service callback worker is running.',
       },
-      overrideAccess: true,
-      context: { __skipDocsExtract: true },
     })
-    failed += 1
+    if (changed > 0) failed += 1
   }
 
   return { examined: docs.length, failed }

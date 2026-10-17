@@ -12,6 +12,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { NO_DRIZZLE } from '@/lib/documentColumns.testFake'
+vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
+
 const runGraphExtraction = vi.fn(async (_args: Record<string, unknown>) => 'ready' as const)
 
 vi.mock('./schedule', async (importOriginal) => ({
@@ -46,7 +49,7 @@ function fakePayload(documents: Record<string, unknown>[]) {
       deletes.push({ collection: String(args.collection), where: args.where })
       return {}
     },
-    db: {},
+    db: { drizzle: NO_DRIZZLE },
   }
   return { payload, deletes, documentUpdates }
 }

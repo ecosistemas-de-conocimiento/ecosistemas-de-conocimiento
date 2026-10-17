@@ -21,6 +21,7 @@
  */
 
 import { mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
+import { updateDocumentColumns, type DocumentColumnsPayload } from '@/lib/documentColumns'
 
 import { extractGraph, type GraphGenerateClient } from './extract'
 import { GRAPH_PROMPT_VERSION } from './prompt'
@@ -28,9 +29,7 @@ import type { GraphStatus } from './types'
 import { writeGraphForDocument, type GraphWriterPayload } from './writer'
 
 /** The Payload surface a run needs. Structural, so tests need no real instance. */
-export type GraphSchedulerPayload = GraphWriterPayload & {
-  update(args: Record<string, unknown>): Promise<unknown>
-}
+export type GraphSchedulerPayload = GraphWriterPayload & DocumentColumnsPayload
 
 export interface RunGraphExtractionArgs {
   payload: GraphSchedulerPayload
@@ -77,15 +76,11 @@ async function setGraphStatus(
   docId: string | number,
   data: Record<string, unknown>,
 ): Promise<void> {
-  await payload.update({
-    collection: 'documents',
-    id: docId,
-    data,
-    overrideAccess: true,
-    // The ingest hook must not re-fire on a graph status write. Same guard the
-    // ingest pipeline uses for its own status updates.
-    context: { __skipDocsExtract: true },
-  })
+  // 🔴 ONLY THE GRAPH COLUMNS. A `payload.update` here rewrote the whole row
+  // with the `ingestStatus` it had just read, and the ingest callback's `ready`
+  // landing in between was erased — the upload stuck at `embedding` forever.
+  // `lib/documentColumns.ts` has the measurement.
+  await updateDocumentColumns(payload, { id: docId, data })
 }
 
 /**
@@ -299,8 +294,8 @@ export function graphQueueDepth(): { running: number; queued: number } {
  *
  * Called at the same two points `enqueueIngestForDoc` is:
  *   · `collections/Documents.ts` — the pdf/docx path, after the ingest enqueue.
- *   · `app/api/ai-service/callback/route.ts` — the audio path, after the
- *     transcript has become `extractedText`.
+ *   · `lib/ingestRecovery.ts:driveTranscribedDocuments` — the audio path, after
+ *     the sweep has run the gate and the enqueue on a `transcribed` row.
  *
  * ⚠ `setImmediate`, NOT a bare promise, for the same reason the ingest hook uses
  * one: the create transaction has not committed when an `afterChange` hook runs,

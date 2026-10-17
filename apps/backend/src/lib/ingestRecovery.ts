@@ -57,6 +57,7 @@ import {
   startJanitor,
   stopJanitor,
 } from './janitorScheduler'
+import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import { relationId } from './permissions'
 
 export const INGEST_RECOVERY_ENABLED_VAR = 'INGEST_RECOVERY_JANITOR_ENABLED'
@@ -241,14 +242,12 @@ async function failOutDocuments(
   for (const doc of docs) {
     if (doc?.id == null) continue
     try {
-      const res = await payload.update({
-        collection: 'documents',
-        where: { and: [{ id: { equals: doc.id } }, ...where] },
+      const res = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
+        id: doc.id,
+        where,
         data: { ingestStatus: 'failed', ingestError: reason.slice(0, 500) },
-        overrideAccess: true,
-        context: { __skipDocsExtract: true },
       })
-      if (changed(res)) stalled += 1
+      if (res > 0) stalled += 1
     } catch (err) {
       opts.log?.warn(
         { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
@@ -357,14 +356,12 @@ export async function driveTranscribedDocuments(
           : null
     if (refusal) {
       try {
-        const res = await payload.update({
-          collection: 'documents',
-          where: { and: [{ id: { equals: docId } }, ...where] },
+        const res = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
+          id: docId,
+          where,
           data: { ingestStatus: 'failed', ingestError: refusal },
-          overrideAccess: true,
-          context: { __skipDocsExtract: true },
         })
-        if (changed(res)) failed += 1
+        if (res > 0) failed += 1
       } catch (err) {
         opts.log?.warn(
           { documentId: String(docId), err: err instanceof Error ? err.message : String(err) },

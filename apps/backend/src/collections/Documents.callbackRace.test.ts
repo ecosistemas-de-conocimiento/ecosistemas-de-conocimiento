@@ -23,6 +23,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
+
 import { signCallback } from '@/lib/hmac'
 
 const SECRET = 'c'.repeat(64)

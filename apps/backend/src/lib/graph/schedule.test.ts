@@ -13,6 +13,9 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 
+import { NO_DRIZZLE } from '@/lib/documentColumns.testFake'
+vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
+
 import { runGraphExtraction, type GraphSchedulerPayload } from './schedule'
 import type { GraphGenerateClient } from './extract'
 import { GRAPH_FRAGMENT_MAX_CHARS, GRAPH_PROMPT_VERSION } from './prompt'
@@ -45,6 +48,7 @@ function harness(parsed: unknown | Error) {
       return {}
     },
     db: {
+      drizzle: NO_DRIZZLE,
       beginTransaction: async () => 'tx',
       commitTransaction: async () => undefined,
       rollbackTransaction: async () => undefined,

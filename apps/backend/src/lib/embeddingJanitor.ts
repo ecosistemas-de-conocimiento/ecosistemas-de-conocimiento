@@ -84,6 +84,7 @@
 import type { Payload, Where } from 'payload'
 
 import { UNGATED_CONTENT_KIND } from './anonymiseDocument'
+import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import { missingCallbackConfig } from './callbackConfig'
 import {
   janitorEnabledFromEnv,
@@ -348,17 +349,15 @@ export async function sweepStalledEmbeddings(
       if (job && job !== 'processing') {
         try {
           // Same guard as the stall stamp below: a late callback wins.
-          const res = (await payload.update({
-            collection: 'documents',
-            where: { and: [{ id: { equals: doc.id } }, ...stalledWhere] },
+          const res = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
+            id: doc.id,
+            where: stalledWhere,
             data:
               job === 'completed'
                 ? { ingestStatus: 'ready', ingestError: null }
                 : { ingestStatus: 'failed', ingestError: JOB_FAILED_REASON },
-            overrideAccess: true,
-            context: { __skipDocsExtract: true },
-          })) as unknown as { docs?: unknown[] }
-          if ((res?.docs?.length ?? 0) > 0) recovered += 1
+          })
+          if (res > 0) recovered += 1
         } catch (err) {
           opts.log?.warn(
             { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
@@ -387,30 +386,28 @@ export async function sweepStalledEmbeddings(
        * the DATABASE checks. That catches the late callback, a concurrent user
        * retry, and an admin edit with one clause.
        *
-       * ⚠ IT IS A GUARD, NOT A LOCK. Payload's bulk update re-runs the query
-       * inside its transaction and updates the matches; under READ COMMITTED a
-       * callback can still interleave in the sliver between. It closes the
-       * 30-minute window down to milliseconds, which is the difference between a
-       * routine occurrence and a rounding error. Same shape as `holdReview.ts`'s
-       * settle and the publish sweep's.
+       * ⚠ ONE STATEMENT, SO NO SLIVER. The guard is the `WHERE` of the very
+       * `UPDATE` that writes (`lib/documentColumns.ts`). Postgres re-checks it
+       * on the locked row, so a callback that commits first makes this match
+       * nothing. It also writes ONLY the ingest columns: a whole-row
+       * `payload.update` here would have put back whatever graph or gate state
+       * it had read.
        */
-      const res = (await payload.update({
-        collection: 'documents',
-        where: { and: [{ id: { equals: doc.id } }, ...stalledWhere] },
+      const res = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
+        id: doc.id,
+        where: stalledWhere,
         data: {
           // Terminal, so `planIngestRetry` accepts the row — see the header.
           ingestStatus: 'failed',
           ingestError: stalledEmbeddingReason(doc, waitedMinutes).slice(0, 500),
         },
-        overrideAccess: true,
-        context: { __skipDocsExtract: true },
-      })) as unknown as { docs?: unknown[] }
+      })
 
       // ⚠ COUNT WHAT THE DATABASE ACTUALLY CHANGED. A guarded update that
       // matched nothing means the row recovered on its own between the read and
       // the write, and reporting it as "stalled" would put a phantom in the
       // ERROR log that operators are meant to act on.
-      if ((res?.docs?.length ?? 0) === 0) continue
+      if (res === 0) continue
     } catch (err) {
       opts.log?.warn(
         { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
@@ -569,14 +566,12 @@ export async function sweepStalledPending(
     try {
       // 🔴 Guarded on the whole predicate: a retry, a late hook run or a
       // reviewer action between the read and this write makes it match nothing.
-      const res = (await payload.update({
-        collection: 'documents',
-        where: { and: [{ id: { equals: doc.id } }, ...strandedWhere] },
+      const res = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
+        id: doc.id,
+        where: strandedWhere,
         data: { ingestStatus: 'failed', ingestError: reason },
-        overrideAccess: true,
-        context: { __skipDocsExtract: true },
-      })) as unknown as { docs?: unknown[] }
-      if ((res?.docs?.length ?? 0) === 0) continue
+      })
+      if (res === 0) continue
     } catch (err) {
       opts.log?.warn(
         { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },

@@ -30,6 +30,7 @@
  */
 
 import type { ContentKind } from './contentKind'
+import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import type { GateReport, PersonDetector } from './anonymise/types'
 
 /**
@@ -106,16 +107,8 @@ export type AnonymiseOutcome =
    */
   | { ok: false; stage: string; reason: string; report: GateReport | null }
 
-/** Just the write method this module needs, so tests need no Payload. */
-interface Updater {
-  update(args: {
-    collection: 'documents'
-    id: never
-    data: Record<string, unknown>
-    overrideAccess: boolean
-    context?: Record<string, unknown>
-  }): Promise<unknown>
-}
+/** Just the database handle this module writes through, so tests need no Payload. */
+type Updater = DocumentColumnsPayload
 
 /**
  * Run the gate for one document and persist the outcome on its row.
@@ -166,18 +159,15 @@ export async function anonymiseDocumentText(args: {
 }): Promise<AnonymiseOutcome> {
   const { payload, docId, contentKind, text } = args
 
+  /**
+   * 🔴 THE GATE'S OWN COLUMNS ONLY, never a whole-row `payload.update`. That
+   * reads the row and writes every column back, so a corpus-graph status write
+   * or an ingest callback landing in between was silently undone.
+   * `lib/documentColumns.ts`. It also skips the afterChange hook, which the old
+   * write had to switch off with `__skipDocsExtract` anyway.
+   */
   const write = (data: Record<string, unknown>): Promise<unknown> =>
-    payload.update({
-      collection: 'documents',
-      id: docId as never,
-      data,
-      overrideAccess: true,
-      // Re-entrancy guard, same as every other server-side write to this
-      // collection: without it the afterChange hook re-fires and re-runs the
-      // whole extract+ingest pass, which for a testimony means paying for the
-      // gate's model calls again on every status write.
-      context: { __skipDocsExtract: true },
-    })
+    updateDocumentColumns(payload, { id: docId, data })
 
   if (!mustPassAnonymisationGate(contentKind)) {
     // Recorded explicitly rather than left null. "This was never gated" and

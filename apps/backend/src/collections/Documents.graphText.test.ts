@@ -24,7 +24,9 @@
  * what a document says, and a gated document that has not cleared the gate has
  * no text to give.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
 import { scheduleGraphExtractionForDoc } from './Documents'
 
@@ -213,5 +215,32 @@ describe('🔴 the title the graph carries is neutral for gated content', () => 
 
     const call = scheduleGraphExtraction.mock.calls[0]![0] as { title: string }
     expect(call.title).toBe('Informe de agua.pdf')
+  })
+})
+
+describe('GRAPH_EXTRACT=off — an install that does not want the graph', () => {
+  const row = { contentKind: 'documento', extractedText: 'texto', redactedText: null }
+  const fresh = { name: 'Informe.pdf', contentKind: 'documento' as const }
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it.each(['off', 'OFF', ' false ', '0', 'no'])(
+    'schedules nothing and writes nothing when set to %j',
+    async (value) => {
+      vi.stubEnv('GRAPH_EXTRACT', value)
+      const { payload, updates } = fakePayload(row)
+      await scheduleGraphExtractionForDoc({ payload, docId: 9, organizationId: 1, fresh })
+      expect(scheduleGraphExtraction).not.toHaveBeenCalled()
+      expect(updates).toEqual([])
+    },
+  )
+
+  it.each([undefined, '', 'on', 'true', 'junk'])('stays ON by default (%j)', async (value) => {
+    if (value !== undefined) vi.stubEnv('GRAPH_EXTRACT', value)
+    const { payload } = fakePayload(row)
+    await scheduleGraphExtractionForDoc({ payload, docId: 9, organizationId: 1, fresh })
+    expect(scheduleGraphExtraction).toHaveBeenCalledTimes(1)
   })
 })

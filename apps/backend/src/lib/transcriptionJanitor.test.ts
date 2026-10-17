@@ -17,6 +17,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
+
 import {
   STALLED_ERROR_CODE,
   TRANSCRIPTION_JANITOR_ENABLED_VAR,
@@ -119,9 +121,14 @@ describe('sweepStalledTranscriptions', () => {
       expect(args.where).toEqual({ ingestStatus: { equals: 'transcribing' } })
       return { docs: rows }
     },
+    // Honours the guard the way the database does: a row still `transcribing`
+    // (rows here default to it) matches; one that moved on does not.
     update: async (args: Record<string, unknown>) => {
       updated.push(args)
-      return {}
+      const and = ((args.where as { and?: Array<Record<string, { equals?: unknown }>> })?.and ?? [])
+      const id = and.find((c) => 'id' in c)?.id?.equals
+      const row = rows.find((r) => r.id === id)
+      return { docs: row && (row.ingestStatus ?? 'transcribing') === 'transcribing' ? [row] : [] }
     },
   }
 
@@ -138,7 +145,18 @@ describe('sweepStalledTranscriptions', () => {
     const result = await sweepStalledTranscriptions(payload as never, { now: NOW })
     expect(result).toEqual({ examined: 2, failed: 1 })
     expect(updated).toHaveLength(1)
-    expect(updated[0]).toMatchObject({ id: 1, data: { ingestStatus: 'failed' } })
+    expect(updated[0]).toMatchObject({
+      where: { and: [{ id: { equals: 1 } }, { ingestStatus: { equals: 'transcribing' } }] },
+      data: { ingestStatus: 'failed' },
+    })
+  })
+
+  it('🔴 leaves a row alone when its transcript landed between the read and the write', async () => {
+    // The `find` saw `transcribing`; the callback then moved the row on. The
+    // guarded write matches nothing, and the row is not counted as failed.
+    rows = [{ id: 1, updatedAt: minutesAgo(400), ingestStatus: 'transcribed' }]
+    const result = await sweepStalledTranscriptions(payload as never, { now: NOW })
+    expect(result).toEqual({ examined: 1, failed: 0 })
   })
 
   it('stamps a stable code the UI can translate, and names the likely cause', async () => {

@@ -55,6 +55,7 @@
 
 import { corpusTextFor, mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
 import { contentKindOf, titleFor } from '@/lib/contentKind'
+import { updateDocumentColumns } from '@/lib/documentColumns'
 
 import { clearGraphRows, runGraphExtraction, type GraphSchedulerPayload } from './schedule'
 import { GRAPH_PROMPT_VERSION } from './prompt'
@@ -203,15 +204,13 @@ export async function runGraphBackfill(
       // Rows from a pre-fix run may hold the raw transcript's names and places.
       // Not a `.catch`: if this delete fails the run must say so loudly.
       await clearGraphRows(payload, doc.id, organizationId)
-      await payload.update({
-        collection: 'documents',
+      // Graph columns only — see `lib/documentColumns.ts`.
+      await updateDocumentColumns(payload, {
         id: doc.id,
         data: {
           graphStatus: 'skipped',
           graphError: `not_graphable: ${corpusText.reason}`.slice(0, 500),
         },
-        overrideAccess: true,
-        context: { __skipDocsExtract: true },
       })
       continue
     }

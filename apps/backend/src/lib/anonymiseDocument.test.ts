@@ -43,7 +43,9 @@
  * every test here passes one.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
 import { staticDetector } from './anonymise'
 import type { PersonDetector } from './anonymise/types'

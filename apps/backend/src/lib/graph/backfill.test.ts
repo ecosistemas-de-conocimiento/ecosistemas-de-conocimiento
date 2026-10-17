@@ -6,6 +6,9 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 
+import { NO_DRIZZLE } from '@/lib/documentColumns.testFake'
+vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
+
 import { deleteOrphanEntities, runGraphBackfill, staleDocumentsWhere, type GraphBackfillPayload } from './backfill'
 import { GRAPH_PROMPT_VERSION } from './prompt'
 
@@ -44,7 +47,7 @@ function fakePayload(rows: {
       deletes.push({ collection: String(args.collection), id: args.id })
       return {}
     },
-    db: {},
+    db: { drizzle: NO_DRIZZLE },
   }
 
   return { payload, finds, deletes, updates }

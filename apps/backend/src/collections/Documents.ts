@@ -60,12 +60,14 @@ import {
  *
  * 🔴 AUDIO IS NOT A SECOND PIPELINE. It is a slower way of producing
  * `extractedText` on the SAME row. Step 1 above is replaced by a round-trip to
- * `services/audio-service`; steps 2 and 3 are the identical code, called
- * unchanged from the `transcribe.completed` handler in the callback route:
+ * `services/audio-service`; steps 2 and 3 are the identical code. The
+ * `transcribe.completed` callback only persists the transcript and marks the
+ * row `transcribed`; the `ingestRecovery` sweep then runs the gate and the
+ * enqueue (`lib/ingestRecovery.ts:driveTranscribedDocuments`):
  *
  *   afterChange → startTranscription → audio-service → transcribe.completed
- *                                                    → extractedText
- *                                                    → enqueueIngestForDoc  ← same fn
+ *                                                    → extractedText, `transcribed`
+ *   ingestRecovery sweep → driveTranscribedDocuments → enqueueIngestForDoc  ← same fn
  *
  * Everything the ecosistema model already does to a document — draft privacy,
  * publish (which re-embeds into the shared corpus), unpublish, retrieval
@@ -1325,9 +1327,10 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
     // 🔴 THE AUDIO FORK, AND THE `return` IS THE POINT OF IT.
     //
     // There is no text yet and there will not be for minutes-to-hours, so
-    // control must NOT reach `enqueueIngestForDoc` on this pass. It gets there
-    // from the `transcribe.completed` callback, which calls the very same
-    // function with the very same arguments. Falling through here would enqueue
+    // control must NOT reach `enqueueIngestForDoc` on this pass. The
+    // `transcribe.completed` callback persists the transcript and marks the row
+    // `transcribed`; the `ingestRecovery` sweep (`driveTranscribedDocuments`)
+    // then calls this very function. Falling through here would enqueue
     // an empty document: ai-service would happily embed nothing, the row would
     // go `ready`, and search would silently never find the recording.
     if (fresh.kind === 'audio') {
@@ -1419,13 +1422,23 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
   })
 
   // 3. The corpus graph, for the pdf/docx path. The audio path reaches the same
-  //    function from `app/api/ai-service/callback/route.ts`, after the
-  //    transcript has become `extractedText` — there is no text to extract from
+  //    function from the `ingestRecovery` sweep (`driveTranscribedDocuments`),
+  //    after its enqueue of a `transcribed` row — there is no text to extract from
   //    on this pass for audio, which is why the fork above `return`s.
   //
   //    🔴 FIRE-AND-FORGET, AND IT NEVER AFFECTS THIS FUNCTION'S OUTCOME. See
   //    `lib/graph/schedule.ts`: it arms a `setImmediate` and returns.
   await scheduleGraphExtractionForDoc({ payload, docId, organizationId, fresh })
+}
+
+/**
+ * `GRAPH_EXTRACT` — ON unless set to `off`, `false`, `0` or `no` (any case).
+ * Anything else, junk included, keeps the default: the graph is a feature an
+ * install opts out of, not one a typo should switch off.
+ */
+export function graphExtractDisabled(): boolean {
+  const raw = (process.env.GRAPH_EXTRACT ?? '').trim().toLowerCase()
+  return raw === 'off' || raw === 'false' || raw === '0' || raw === 'no'
 }
 
 /**
@@ -1438,8 +1451,8 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
  * an error the user cannot act on would be strictly worse than a document with
  * no graph.
  *
- * Exported so the audio callback path can call exactly this, rather than
- * reimplementing the guard.
+ * Exported so the audio path (`lib/ingestRecovery.ts:driveTranscribedDocuments`)
+ * can call exactly this, rather than reimplementing the guard.
  */
 export async function scheduleGraphExtractionForDoc(args: {
   payload: Awaited<ReturnType<typeof import('payload').getPayload>>
@@ -1448,9 +1461,14 @@ export async function scheduleGraphExtractionForDoc(args: {
   fresh: Pick<DocumentRow, 'name' | 'contentKind'>
 }): Promise<void> {
   const { payload, docId, organizationId, fresh } = args
+  // `GRAPH_EXTRACT=off` (also `false`/`0`/`no`): this install does not build
+  // the corpus graph on upload. Nothing is written, so the row keeps whatever
+  // `graphStatus` it had; `lib/graph/backfill.cli.ts` can still build it later.
+  if (graphExtractDisabled()) return
   try {
     const { corpusTextFor } = await import('@/lib/anonymiseDocument')
     const { scheduleGraphExtraction } = await import('@/lib/graph/schedule')
+    const { updateDocumentColumns } = await import('@/lib/documentColumns')
 
     /**
      * 🔴 THE GRAPH READS THE SAME TEXT THE CORPUS GOT. NOT `extractedText`.
@@ -1499,25 +1517,23 @@ export async function scheduleGraphExtractionForDoc(args: {
     if (!corpusText.ok) {
       // Not a failure — a document we deliberately do not graph. `skipped` is
       // terminal and truthful; `failed` would invite a retry that cannot help.
-      await payload.update({
-        collection: 'documents',
-        id: docId as never,
+      await updateDocumentColumns(payload as never, {
+        id: docId,
         data: {
           graphStatus: 'skipped',
           graphError: `not_graphable: ${corpusText.reason}`.slice(0, 500),
         },
-        overrideAccess: true,
-        context: { __skipDocsExtract: true },
       })
       return
     }
 
-    await payload.update({
-      collection: 'documents',
-      id: docId as never,
+    // 🔴 GRAPH COLUMNS ONLY. This runs right after the ingest enqueue, which is
+    // exactly when the ai-service callback lands; a whole-row `payload.update`
+    // here wrote the stale `embedding` back over the callback's `ready`.
+    // `lib/documentColumns.ts`.
+    await updateDocumentColumns(payload as never, {
+      id: docId,
       data: { graphStatus: 'pending', graphError: null },
-      overrideAccess: true,
-      context: { __skipDocsExtract: true },
     })
     scheduleGraphExtraction({
       payload: payload as never,
@@ -1565,9 +1581,10 @@ export async function enqueueIngestForDoc(args: {
    * A BUG FIX.
    *
    * The terminal-state guards used to live in `runExtractAndIngest`, one level
-   * ABOVE this function — but `dispatchTranscribeCompleted` (the audio callback)
-   * calls THIS function directly and builds its `fresh` slice by hand. With the
-   * key optional, it simply omitted the field, and a replayed
+   * ABOVE this function — but the audio path calls THIS function directly and
+   * builds its `fresh` slice by hand (then the `transcribe.completed` callback,
+   * now `lib/ingestRecovery.ts:driveTranscribedDocuments`). With the key
+   * optional, it simply omitted the field, and a replayed
    * `transcribe.completed` re-ran the gate on a REJECTED document and discarded
    * the text of an APPROVED one. That is precisely the failure
    * `lib/anonymiseDocument.ts` warns about: "the one that got forgotten would be
@@ -1603,11 +1620,12 @@ export async function enqueueIngestForDoc(args: {
    *   rejected  a human looked and said no
    *
    * `runExtractAndIngest` refuses these too, but it is only ONE of the callers.
-   * The audio callback reaches this function directly, and a replayed
-   * `transcribe.completed` (its idempotency guard needs an `ingestId`, which a
-   * held row never got) would otherwise re-run a PROBABILISTIC gate on a
-   * rejected document — and a `ready` verdict would ingest it. Rename it, replay
-   * it, retry it: same accidental "ingest anyway" button, three different doors.
+   * The audio path reaches this function directly from the `ingestRecovery`
+   * sweep (`driveTranscribedDocuments`), which picks up any `transcribed` row
+   * with no `ingestId` — a held row never got one — and would otherwise re-run
+   * a PROBABILISTIC gate on a rejected document, where a `ready` verdict would
+   * ingest it. Rename it, re-drive it, retry it: same accidental "ingest
+   * anyway" button, three different doors.
    *
    * ⚠ The way out of a hold is `POST /api/holds/:id` (audited) or, for a fixed
    * source, `POST /api/documents/:id/retry`. There is no way out of `rejected`
@@ -1638,7 +1656,8 @@ export async function enqueueIngestForDoc(args: {
    */
   const { anonymiseDocumentText } = await import('@/lib/anonymiseDocument')
   const gated = await anonymiseDocumentText({
-    payload,
+    // The live handle carries `db.drizzle`; the narrow type above does not say so.
+    payload: payload as never,
     docId,
     organizationId,
     /**
@@ -1851,15 +1870,12 @@ export async function enqueueIngestForDoc(args: {
         log: { warn: (obj, msg) => console.warn(msg, obj) },
       },
     )
-    // Don't overwrite ingestStatus here — we already set 'embedding' above,
-    // and the ai-service callback will flip it to 'ready' / 'failed'.
-    await payload.update({
-      collection: 'documents',
-      id: docId as never,
-      data: { ingestId: result.ingestId },
-      overrideAccess: true,
-      context: { __skipDocsExtract: true },
-    })
+    // 🔴 `ingestId` ONLY, as one narrow `UPDATE`. The ai-service callback can
+    // land BEFORE this line (measured ~1 ms early on the fake provider), and a
+    // whole-row `payload.update` would write back the `embedding` it had read,
+    // erasing the callback's `ready`. `lib/documentColumns.ts`.
+    const { updateDocumentColumns } = await import('@/lib/documentColumns')
+    await updateDocumentColumns(payload as never, { id: docId, data: { ingestId: result.ingestId } })
     console.log(
       `[documents] enqueued ingest for doc ${docId} → ingestId=${result.ingestId} corpus=${corpus}`,
     )

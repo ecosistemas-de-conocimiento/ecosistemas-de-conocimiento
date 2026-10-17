@@ -24,6 +24,8 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 import type { Payload } from 'payload'
 
 // Documents.ts is imported for `planIngestRetry` alone — the rule that decides

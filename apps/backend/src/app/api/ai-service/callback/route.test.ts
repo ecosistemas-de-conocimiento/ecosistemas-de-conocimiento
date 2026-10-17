@@ -9,6 +9,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
+
 import { signCallback } from '@/lib/hmac'
 
 const SECRET = 'd'.repeat(64)
@@ -132,15 +134,19 @@ describe('POST /api/ai-service/callback — correct signature', () => {
     expect(updated[0]).toMatchObject({ data: { ingestStatus: 'failed' } })
   })
 
-  it('🔴 writes with `__skipDocsExtract`, so the save cannot re-run the ingest pipeline', async () => {
-    // Without it, `afterChange` re-enters `runExtractAndIngest` and a callback
-    // that beat the `ingestId` write re-enqueues and reverts to `embedding`.
+  it('🔴 writes ONLY the ingest columns, through the narrow write', async () => {
+    // A whole-row write would put back whatever graph status it read, and would
+    // re-fire `afterChange`. The narrow write (`lib/documentColumns.ts`, mocked
+    // here by its test fake) touches these two columns and runs no hook.
     for (const event of ['ingest.completed', 'ingest.failed']) {
       updated.length = 0
       findByIDImpl = async () => ({ id: 42, ingestId: `ing_${event}`, publicationStatus: 'draft' })
       const body = envelope({ event, ingestId: `ing_${event}` })
       await post(body, headersFor(body))
-      expect(updated[0]).toMatchObject({ context: { __skipDocsExtract: true } })
+      expect(Object.keys(updated[0]!.data as Record<string, unknown>).sort()).toEqual([
+        'ingestError',
+        'ingestStatus',
+      ])
     }
   })
 

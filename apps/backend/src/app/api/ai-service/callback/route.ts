@@ -372,9 +372,24 @@ async function dispatchCallback(
         return
       }
 
-      await payload.update({
-        collection: 'documents',
-        id: docId as never,
+      /**
+       * 🔴 THE INGEST COLUMNS ONLY, as one narrow `UPDATE`. A whole-row
+       * `payload.update` writes every other column back as it read them, so a
+       * corpus-graph status write in the same milliseconds was erased — and the
+       * mirror-image race is what stranded uploads at `embedding`.
+       * `lib/documentColumns.ts`.
+       *
+       * It also never fires `afterChange`. The whole-row write needed
+       * `__skipDocsExtract` for that: without it the save re-ran
+       * `runExtractAndIngest`, whose only "already enqueued" guard is
+       * `ingestId`. ai-service can call back BEFORE the enqueue's own response
+       * lands (measured: ~1 ms early, 3 of 4 uploads on the fake provider), so
+       * the pipeline re-ran, wrote `embedding` over this `ready` and enqueued
+       * the document a second time. `Documents.callbackRace.test.ts`.
+       */
+      const { updateDocumentColumns } = await import('@/lib/documentColumns')
+      await updateDocumentColumns(payload as never, {
+        id: docId,
         data:
           envelope.event === 'ingest.completed'
             ? // Clear the reason a PREVIOUS attempt failed: a retry that
@@ -386,17 +401,6 @@ async function dispatchCallback(
                   envelope.error?.message ?? 'ai-service reported a failure'
                 }`.slice(0, 500),
               },
-        overrideAccess: true,
-        /**
-         * 🔴 `__skipDocsExtract`, OR THIS WRITE UNDOES ITSELF. Without it the
-         * save re-fires `afterChange` → `runExtractAndIngest`, whose only
-         * "already enqueued" guard is `ingestId`. ai-service can call back
-         * BEFORE the enqueue's own response lands (measured: ~1 ms early, 3
-         * of 4 uploads on the fake provider), so `ingestId` is still empty:
-         * the pipeline re-ran, wrote `embedding` over this `ready` and
-         * enqueued the document a second time. `Documents.callbackRace.test.ts`.
-         */
-        context: { __skipDocsExtract: true },
       })
       if (envelope.event === 'ingest.failed') {
         console.warn(

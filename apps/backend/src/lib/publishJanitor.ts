@@ -70,6 +70,8 @@
 
 import type { Payload, Where } from 'payload'
 
+import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
+
 import {
   janitorEnabledFromEnv,
   janitorIntervalMsFromEnv,
@@ -305,19 +307,19 @@ export async function sweepStalledPublishes(
        * honest outcome: the row is fine and there was nothing to report.
        * Same `where` shape as `holdReview.ts`'s settle.
        */
-      const res = (await payload.update({
-        collection: 'documents',
-        where: { and: [{ id: { equals: doc.id } }, ...stalledWhere] },
+      // One narrow `UPDATE`: the guard and the write are the same statement,
+      // and only `publicationError` is written. `lib/documentColumns.ts`.
+      const res = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
+        id: doc.id,
+        where: stalledWhere,
         data: { publicationError: stalledPublishReason(doc, waitedMinutes).slice(0, 500) },
-        overrideAccess: true,
-        context: { __skipDocsExtract: true },
-      })) as unknown as { docs?: unknown[] }
+      })
 
       // ⚠ COUNT WHAT THE DATABASE ACTUALLY CHANGED. A guarded update that
       // matched nothing means the row recovered on its own between the read and
       // the write, and reporting it as "stalled" would put a phantom in the
       // ERROR log that operators are meant to act on.
-      if ((res?.docs?.length ?? 0) === 0) continue
+      if (res === 0) continue
     } catch (err) {
       opts.log?.warn(
         { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },

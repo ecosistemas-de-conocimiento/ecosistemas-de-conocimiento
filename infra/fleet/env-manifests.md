@@ -145,6 +145,7 @@ values fall back to the default unless noted.
 
 | var | app | default | notes |
 |---|---|---|---|
+| `GRAPH_EXTRACT` | backend | on | 💤 `off` (also `false`/`0`/`no`, any case) skips scheduling graph extraction on upload and on the audio drive: no `deep`-tier model calls, `graphStatus` left as it was. Any other value keeps it on. `lib/graph/backfill.cli.ts` still builds the graph on demand (`collections/Documents.ts:graphExtractDisabled`) |
 | `GRAPH_EXTRACT_TIMEOUT_MS` | backend | `660000` | ⚙ 🔴 client timeout for ONE extraction window. **Ordering rule: must stay above ai-service's `LLM_REQUEST_TIMEOUT_MS`** (`lib/graph/client.ts`, ADR §14). If the client aborts first, ai-service's answer and its failure reason are never seen, and every failure looks like a network fault. 660000 = 600000 + 60 s for queueing and the response trip. An env left at the 120000 server default should lower this to match |
 | `GRAPH_EXTRACT_EFFORT` | backend | `deep` | 💤 `quick`/`standard`/`deep`/`maximum`. Keep `deep`: ADR §13 measured `standard` cut off by its output-token cap at 82–96 s (quoted) |
 | `GRAPH_EXTRACT_WINDOW_CHARS` | backend | `12000` | 💤 characters per extraction call (ADR §5.2) |
