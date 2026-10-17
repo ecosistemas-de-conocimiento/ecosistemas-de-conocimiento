@@ -46,6 +46,7 @@ import { deleteConversationChildren, RETIRABLE_TURN_STATES, Sessions } from './S
 
 const SESSION = 7
 const ECO = 42
+const OWNER = 5
 
 interface MessageRow {
   id: number
@@ -80,6 +81,7 @@ function fakePayload(
       return {
         id: args.id,
         organization: opts.organization === undefined ? ECO : opts.organization,
+        user: OWNER,
       }
     },
 
@@ -132,6 +134,41 @@ function notFound(): Error & { status: number } {
 
 const deleteOps = (calls: Call[]) =>
   calls.filter((c) => c.op === 'delete').map((c) => c.collection)
+
+describe('🔴 only the owner’s delete runs the cascade', () => {
+  // Payload 3.88 `deleteByID` runs `beforeDelete` BEFORE it checks the row
+  // against `ownOnly`. Without this guard, user A deleting user B's session id
+  // retired B's turns from the shared corpus, then got a 403.
+  it('refuses a signed-in caller who does not own the conversation, before touching anything', async () => {
+    const messages: MessageRow[] = [{ id: 1, session: SESSION, corpusStatus: 'ingested' }]
+    const { payload, calls } = fakePayload(messages, [{ id: 9, session: SESSION }])
+    const corpus = fakeCorpus()
+    const req = { user: { id: OWNER + 1 } } as never
+
+    await expect(
+      deleteConversationChildren(SESSION, { payload, req, corpusClient: async () => corpus.client }),
+    ).rejects.toMatchObject({ status: 403 })
+
+    expect(calls.map((c) => `${c.op}:${c.collection}`)).toEqual(['findByID:sessions'])
+    expect(corpus.setDocumentValidity).not.toHaveBeenCalled()
+  })
+
+  it('lets the owner through', async () => {
+    const { payload, calls } = fakePayload([], [])
+
+    await deleteConversationChildren(SESSION, { payload, req: { user: { id: OWNER } } as never })
+
+    expect(deleteOps(calls)).toEqual(['ratings', 'messages'])
+  })
+
+  it('lets a system caller with no user through — the janitor', async () => {
+    const { payload, calls } = fakePayload([], [])
+
+    await deleteConversationChildren(SESSION, { payload, req: {} as never })
+
+    expect(deleteOps(calls)).toEqual(['ratings', 'messages'])
+  })
+})
 
 describe('deleting a conversation deletes its children', () => {
   it('deletes the ratings and the messages', async () => {

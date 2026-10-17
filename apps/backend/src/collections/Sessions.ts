@@ -8,7 +8,7 @@ import type {
   PayloadRequest,
   Where,
 } from 'payload'
-import { ValidationError } from 'payload'
+import { Forbidden, ValidationError } from 'payload'
 
 import { CONTEXT_REF_RELATION_TO } from '../lib/contextRefs'
 import { organizationIdsForUser, relationId } from '../lib/permissions'
@@ -204,6 +204,43 @@ export interface ConversationCascadeDeps {
   now?: Date
 }
 
+/**
+ * 🔴 THE OWNERSHIP CHECK `beforeDelete` DOES NOT GET FROM PAYLOAD.
+ *
+ * Payload 3.88.0 `collections/operations/deleteByID.js` runs `beforeDelete`
+ * (lines 44-52) BEFORE it matches the row against the `ownOnly` where-filter
+ * (lines 56-72). Without this check, user A sending `DELETE /api/sessions/<B's
+ * id>` — ids are sequential — ran B's whole cascade first (retiring B's turns
+ * from the shared corpus, which no rollback undoes) and got a 403 only
+ * afterwards. Reproduced on a real Postgres: `Sessions.ownerGuard.pg.test.ts`.
+ *
+ * A signed-in caller must own the conversation. There is no admin exception
+ * because `ownOnly` has none either: Payload would refuse a platform admin's
+ * delete of someone else's session anyway, so letting the cascade run for one
+ * would only reproduce the same hole. A caller with NO user is server code
+ * (the janitor), which already chose `overrideAccess`.
+ */
+async function assertMayDeleteConversation(
+  sessionId: number | string,
+  { payload, req }: ConversationCascadeDeps,
+): Promise<void> {
+  const user = req?.user
+  if (!user) return
+  const session = await payload.findByID({
+    collection: 'sessions',
+    id: sessionId,
+    depth: 0,
+    overrideAccess: true,
+    disableErrors: true,
+    req,
+  })
+  // Missing: nothing to cascade, and Payload answers 404 itself.
+  if (!session) return
+  if (String(relationId((session as { user?: unknown }).user)) !== String(user.id)) {
+    throw new Forbidden(req?.t)
+  }
+}
+
 /** The admin client of the conversation's ecosistema: its corpus lives in that org. */
 async function adminCorpusClient(organizationId: number | string): Promise<CorpusMover> {
   const { getAdminAIClient } = await import('@/lib/aiClient')
@@ -220,6 +257,9 @@ export async function deleteConversationChildren(
 ): Promise<void> {
   const { payload, req } = deps
   const now = deps.now ?? new Date()
+
+  // 🔴 FIRST, before anything that reaches ai-service or deletes a row.
+  await assertMayDeleteConversation(sessionId, deps)
 
   await retireIngestedTurns(sessionId, deps, now)
 
