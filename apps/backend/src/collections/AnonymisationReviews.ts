@@ -59,12 +59,14 @@ export const AnonymisationReviews: CollectionConfig = {
     /**
      * 🔴 `where[document.name]` / `sort=document.name` reach the gated
      * `documents.name` through the relationship, and the narrowing on
-     * `documents` never sees them. Same rule, applied at this path.
+     * `documents` never sees them. Same for `document.uploadedBy` and
+     * `document.session` (who recorded a testimonio). Same rule, applied at
+     * this path.
      * Imported lazily: `Documents.ts` is a large module graph.
      */
     beforeOperation: [
       (async (hookArgs: Parameters<CollectionBeforeOperationHook>[0]) =>
-        (await import('./Documents')).constrainGatedNameQueriesAt('document.')(
+        (await import('./Documents')).constrainGatedQueriesAt('document.')(
           hookArgs,
         )) as CollectionBeforeOperationHook,
     ],

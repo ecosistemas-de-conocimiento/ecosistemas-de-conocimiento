@@ -39,18 +39,25 @@ if (!stackDown && !db.ok) {
 describe.skipIf(noSeed)('🔴 a published testimonio, read by a colleague', () => {
   let world: World
   let docId: number
+  let aliceSessionId: number
   /** Appears ONLY in the raw text and the raw filename. Never in the redaction. */
   const marker = `Zelmira${randomBytes(4).toString('hex')}`
   const REDACTED = 'Me llamo [Persona A] y vivo en [Domicilio A].'
 
   beforeAll(async () => {
     world = await provisionWorld()
+    // The conversation Alice recorded it in — what `session` links.
+    const session = await apiJson(world.alice.caller, 'POST', '/api/sessions', {
+      title: `${world.ns} grabación`,
+    })
+    expect(session.status).toBe(201)
+    aliceSessionId = Number(session.body.doc.id)
     // Alice is `owner` in orgA, which carries `voces:upload`.
     const doc = await createTextDocument(
       world.alice.caller,
       `Testimonio de ${marker}.m4a`,
       `Me llamo ${marker} y vivo en la calle Morelos 12.`,
-      { contentKind: 'testimonio' },
+      { contentKind: 'testimonio', session: [aliceSessionId] },
     )
     docId = Number(doc.id)
     exec(
@@ -106,6 +113,53 @@ describe.skipIf(noSeed)('🔴 a published testimonio, read by a colleague', () =
     expect(res.body.extractedText).toContain(marker)
     expect(res.body.name).toContain(marker)
     expect(res.body.graphError).toContain(marker)
+  })
+
+  it('🔴 who recorded it: no uploadedBy and no session for a colleague, by id or list', async () => {
+    const byId = await apiGet(world.bob.caller, `/api/documents/${docId}?depth=0`)
+    expect(byId.status).toBe(200)
+    expect(byId.body.uploadedBy).toBeUndefined()
+    expect(byId.body.session).toBeUndefined()
+    const list = await apiGet(
+      world.bob.caller,
+      `/api/documents?where[id][equals]=${docId}&depth=1`,
+    )
+    expect(list.status).toBe(200)
+    expect(list.body.docs).toHaveLength(1)
+    expect(list.body.docs[0].uploadedBy).toBeUndefined()
+    expect(list.body.docs[0].session).toBeUndefined()
+  })
+
+  it.each([
+    ['uploadedBy', () => `where[uploadedBy][equals]=${world.alice.id}`],
+    ['OR uploadedBy', () => `where[OR][0][uploadedBy][equals]=${world.alice.id}`],
+    ['session', () => `where[session][equals]=${aliceSessionId}`],
+  ])('🔴 a filter on %s is not an oracle on who recorded it', async (_label, query) => {
+    const list = await apiGet(world.bob.caller, `/api/documents?${query()}&depth=0`)
+    expect(list.status).toBe(200)
+    expect(list.body.docs.some((d: { id: number }) => Number(d.id) === docId)).toBe(false)
+    const count = await apiGet(world.bob.caller, `/api/documents/count?${query()}`)
+    expect(count.status).toBe(200)
+    expect(count.body.totalDocs).toBe(0)
+  })
+
+  it('the uploader still sees both, and "Mis documentos" (uploadedBy = me) still lists it', async () => {
+    const byId = await apiGet(world.alice.caller, `/api/documents/${docId}?depth=0`)
+    expect(byId.status).toBe(200)
+    expect(Number(byId.body.uploadedBy)).toBe(Number(world.alice.id))
+    expect((byId.body.session as unknown[]).map(Number)).toEqual([aliceSessionId])
+    const mine = await apiGet(
+      world.alice.caller,
+      `/api/documents?where[uploadedBy][equals]=${world.alice.id}&depth=0&limit=100`,
+    )
+    expect(mine.status).toBe(200)
+    expect(mine.body.docs.some((d: { id: number }) => Number(d.id) === docId)).toBe(true)
+    const inSession = await apiGet(
+      world.alice.caller,
+      `/api/documents?where[session][equals]=${aliceSessionId}&depth=0`,
+    )
+    expect(inSession.status).toBe(200)
+    expect(inSession.body.docs.map((d: { id: number }) => Number(d.id))).toEqual([docId])
   })
 
   it('🔴 L5: graphError (the model’s raw reply) is hidden from a colleague', async () => {

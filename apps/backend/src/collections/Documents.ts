@@ -268,6 +268,8 @@ export const lenguaReadable: FieldAccess = ({ doc }) =>
  *   · `heldText` / `anonymisationSurvivors` — the gate's refused output and the
  *     offsets of what still identified someone in it.
  *   · `audioMeta` — its detected `language` (see `enforceLenguaDocumentoOnly`).
+ *   · `uploadedBy` / `session` — who recorded it and in which conversation
+ *     (see {@link gatedQueryableReadable}).
  *
  * The recording itself is closed in `collections/Media.ts` by the same rule.
  *
@@ -289,7 +291,7 @@ export const lenguaReadable: FieldAccess = ({ doc }) =>
  * `endpoints/lenguas.ts`), so `where[extractedText]` is refused for every
  * non-override caller. Nothing in the product queries these columns that way;
  * the graph backfill uses `overrideAccess`. `name` is the exception — see
- * {@link gatedNameReadable}.
+ * {@link gatedQueryableReadable}.
  */
 export function mayReadGatedOriginal(
   user: unknown,
@@ -308,16 +310,29 @@ export const gatedOriginalReadable: FieldAccess = ({ req, doc }) =>
   mayReadGatedOriginal(req.user, doc as Parameters<typeof mayReadGatedOriginal>[1])
 
 /**
- * `name` follows {@link mayReadGatedOriginal} on every ROW, but lets a `where`
- * or `sort` on it through, because the product searches by title
- * (`/biblioteca`, the `@`-mention picker).
+ * The fields in {@link GATED_QUERYABLE_FIELDS} follow {@link mayReadGatedOriginal}
+ * on every ROW, but let a `where` or `sort` on them through, because the
+ * product queries them:
+ *
+ *   · `name` — `/biblioteca` and the `@`-mention picker search by title;
+ *   · `uploadedBy` — "Mis documentos" and the session picker filter on
+ *     `uploadedBy = me`, and `visibleToCaller` itself is that clause;
+ *   · `session` — every conversation lists its documents by `session`.
+ *
+ * 🔴 `uploadedBy` AND `session` ARE WHO RECORDED A TESTIMONIO. The first names
+ * the investigador, the second links their conversation. A colleague who reads
+ * either on a published testimonio learns who was in the room, which is what
+ * the biblioteca hides on purpose (`contributorIdsToResolve` in the web app).
  *
  * ⚠ LETTING THE QUERY THROUGH WOULD BE AN ORACLE ON ITS OWN: search
- * `where[name][like]=María` and see whether a testimonio row comes back, with
- * its title hidden. {@link constrainGatedNameQueries} closes that by narrowing
- * any query that names `name` to rows whose `name` the caller may read.
+ * `where[name][like]=María` — or `where[uploadedBy][equals]=<colleague>` — and
+ * see whether a testimonio row comes back. {@link constrainGatedQueries} closes
+ * that by narrowing any query that names one of these fields to rows on which
+ * the caller may read it.
  */
-export const gatedNameReadable: FieldAccess = ({ req, doc }) =>
+export const GATED_QUERYABLE_FIELDS = ['name', 'uploadedBy', 'session'] as const
+
+export const gatedQueryableReadable: FieldAccess = ({ req, doc }) =>
   doc === undefined
     ? Boolean(req.user)
     : mayReadGatedOriginal(req.user, doc as Parameters<typeof mayReadGatedOriginal>[1])
@@ -361,7 +376,7 @@ function stripSort(sort: unknown, field: string): unknown {
 }
 
 /**
- * Is `where` already limited to rows whose name the caller may read? True when
+ * Is `where` already limited to rows whose gated fields the caller may read? True when
  * a top-level clause (through any `and`) pins the uploader to the caller or the
  * kind to `documento`.
  */
@@ -382,21 +397,28 @@ function narrowedToReadable(where: unknown, prefix: string, userId: unknown): bo
 }
 
 /**
- * 🔴 A QUERY ON `name` ONLY MATCHES ROWS WHOSE `name` THE CALLER MAY READ.
- * The other half of {@link gatedNameReadable}.
+ * 🔴 A QUERY ON A GATED FIELD ONLY MATCHES ROWS ON WHICH THE CALLER MAY READ
+ * IT. The other half of {@link gatedQueryableReadable}; the fields are
+ * {@link GATED_QUERYABLE_FIELDS}.
  *
- *   · a `where` naming it is narrowed to readable rows;
- *   · a `sort` on it is STRIPPED unless the query is already narrowed. Sorting
+ *   · a `where` naming one is narrowed to readable rows;
+ *   · a `sort` on one is STRIPPED unless the query is already narrowed. Sorting
  *     is a full oracle, not a small leak: a colleague who controls a few probe
  *     rows named "M", "Ma", "Mb"… reads where the hidden title falls between
- *     them and binary-searches it out letter by letter. Nothing in the product
- *     sorts documents by name.
+ *     them and binary-searches it out letter by letter. The same works on
+ *     `uploadedBy` with probe rows of known uploaders. Nothing in the product
+ *     sorts documents by any of these.
+ *
+ * ⚠ `where[uploadedBy][equals]=<me>` IS ALREADY NARROWED, so "Mis documentos"
+ * passes through untouched. A `session` filter on the caller's own
+ * conversation is narrowed but loses nothing: only the uploader can attach a
+ * document to a session (`uploaderOnly`, `bindDocumentToEcosystem`).
  *
  * `prefix` is the relationship path from another collection (`'document.'` on
  * `anonymisation-reviews`), whose where/sort reach the same column.
  */
-export function constrainGatedNameQueriesAt(prefix: string): CollectionBeforeOperationHook {
-  const field = `${prefix}name`
+export function constrainGatedQueriesAt(prefix: string): CollectionBeforeOperationHook {
+  const fields = GATED_QUERYABLE_FIELDS.map((f) => `${prefix}${f}`)
   return ({ args, operation, req }) => {
     if (operation !== 'read' && operation !== 'count' && operation !== 'readDistinct') return args
     const a = args as { overrideAccess?: boolean; where?: Where; sort?: unknown }
@@ -407,7 +429,7 @@ export function constrainGatedNameQueriesAt(prefix: string): CollectionBeforeOpe
 
     let next = args as typeof args & { where?: Where; sort?: unknown }
     let narrowed = narrowedToReadable(a.where, prefix, user.id)
-    if (!narrowed && whereMentions(a.where, field)) {
+    if (!narrowed && fields.some((field) => whereMentions(a.where, field))) {
       const readable: Where = {
         or: [
           { [`${prefix}contentKind`]: { equals: 'documento' } },
@@ -417,15 +439,19 @@ export function constrainGatedNameQueriesAt(prefix: string): CollectionBeforeOpe
       next = { ...next, where: { and: [a.where as Where, readable] } }
       narrowed = true
     }
-    if (!narrowed && sortParts(a.sort).some((p) => sortsOn(p, field))) {
-      next = { ...next, sort: stripSort(a.sort, field) }
+    if (!narrowed) {
+      let sort = a.sort
+      for (const field of fields) {
+        if (sortParts(sort).some((p) => sortsOn(p, field))) sort = stripSort(sort, field)
+      }
+      if (sort !== a.sort) next = { ...next, sort }
     }
     return next as typeof args
   }
 }
 
-export const constrainGatedNameQueries: CollectionBeforeOperationHook =
-  constrainGatedNameQueriesAt('')
+export const constrainGatedQueries: CollectionBeforeOperationHook =
+  constrainGatedQueriesAt('')
 
 const uploaderOnly: Access = ({ req: { user } }) => {
   if (!user) return false
@@ -2222,7 +2248,7 @@ async function loadMediaBytes(
  * 🔴 `ENOENT: …, open '/app/media/Testimonio de María López.pdf'` and
  * `object <bucket>/<key> returned no body` both quote the uploader's filename,
  * and `ingestError` is shown to every member of the ecosistema on a published
- * row — the same filename `gatedNameReadable` hides. The filename, the key
+ * row — the same filename `gatedQueryableReadable` hides. The filename, the key
  * and any absolute path are cut out; the error code and the media id stay, so
  * an operator still knows what failed and where to look.
  */
@@ -2340,6 +2366,9 @@ export const Documents: CollectionConfig = {
       relationTo: 'users',
       required: true,
       index: true,
+      // 🔴 Who recorded it. Hidden from colleagues on gated content, by row and
+      // by query — see `gatedQueryableReadable` and `constrainGatedQueries`.
+      access: { read: gatedQueryableReadable },
       admin: { readOnly: true, description: 'Taken from the session. Immutable.' },
     },
     {
@@ -2419,6 +2448,8 @@ export const Documents: CollectionConfig = {
       relationTo: 'sessions',
       hasMany: true,
       index: true,
+      // 🔴 The uploader's conversation. Same rule as `uploadedBy`.
+      access: { read: gatedQueryableReadable },
       admin: {
         description:
           'The conversations this document is attached to, if any. Attaching shares it with another conversation; it never moves it out of the ones it is already in.',
@@ -2706,8 +2737,8 @@ export const Documents: CollectionConfig = {
       required: true,
       defaultValue: 'Untitled document',
       // 🔴 The uploader's filename. Hidden from colleagues on gated content —
-      // see `gatedNameReadable` and `constrainGatedNameQueries`.
-      access: { read: gatedNameReadable },
+      // see `gatedQueryableReadable` and `constrainGatedQueries`.
+      access: { read: gatedQueryableReadable },
     },
     {
       name: 'bodyMarkdown',
@@ -2936,7 +2967,7 @@ export const Documents: CollectionConfig = {
     },
   ],
   hooks: {
-    beforeOperation: [constrainGatedNameQueries],
+    beforeOperation: [constrainGatedQueries],
     // ⚠ DO NOT FOLD `enforceLenguaDocumentoOnly` INTO `bindDocumentToEcosystem`.
     // Its own doc block says why; the short version is `!req.user`.
     beforeValidate: [bindDocumentToEcosystem, enforceLenguaDocumentoOnly],

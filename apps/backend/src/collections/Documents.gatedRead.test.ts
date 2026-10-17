@@ -14,11 +14,11 @@ import type { PayloadRequest } from 'payload'
 import { AnonymisationReviews } from './AnonymisationReviews'
 import {
   bindDocumentToEcosystem,
-  constrainGatedNameQueries,
-  constrainGatedNameQueriesAt,
+  constrainGatedQueries,
+  constrainGatedQueriesAt,
   Documents,
   storageErrorReason,
-  gatedNameReadable,
+  gatedQueryableReadable,
   gatedOriginalReadable,
   gateResetForTextEdit,
   mayReadGatedOriginal,
@@ -78,22 +78,22 @@ describe('field access', () => {
   it('name: the no-row path check passes for a signed-in caller — the HOOK does the work', () => {
     // `/biblioteca` and the @-mention picker search by title, so the path check
     // cannot refuse. It also cannot tell a `where` from a `sort`. Both are made
-    // safe by `constrainGatedNameQueries`: a where is narrowed, and a sort is
+    // safe by `constrainGatedQueries`: a where is narrowed, and a sort is
     // stripped unless the query is narrowed (see the sort cases below).
-    expect(fieldAccess(gatedNameReadable, ben, undefined)).toBe(true)
-    expect(fieldAccess(gatedNameReadable, null, undefined)).toBe(false)
+    expect(fieldAccess(gatedQueryableReadable, ben, undefined)).toBe(true)
+    expect(fieldAccess(gatedQueryableReadable, null, undefined)).toBe(false)
   })
 
   it('🔴 name: hidden on a colleague\'s testimonio row', () => {
-    expect(fieldAccess(gatedNameReadable, ben, testimonio)).toBe(false)
-    expect(fieldAccess(gatedNameReadable, ana, testimonio)).toBe(true)
-    expect(fieldAccess(gatedNameReadable, ben, documento)).toBe(true)
+    expect(fieldAccess(gatedQueryableReadable, ben, testimonio)).toBe(false)
+    expect(fieldAccess(gatedQueryableReadable, ana, testimonio)).toBe(true)
+    expect(fieldAccess(gatedQueryableReadable, ben, documento)).toBe(true)
   })
 })
 
-describe('🔴 constrainGatedNameQueries — no title oracle', () => {
+describe('🔴 constrainGatedQueries — no title oracle', () => {
   const run = (user: unknown, where: unknown, extra: Record<string, unknown> = {}) =>
-    constrainGatedNameQueries({
+    constrainGatedQueries({
       args: { where, ...extra },
       operation: 'read',
       req: { user } as unknown as PayloadRequest,
@@ -144,7 +144,7 @@ describe('🔴 constrainGatedNameQueries — no title oracle', () => {
 
   it('🔴 narrows a COUNT too — `/api/documents/count` is the cheapest oracle', () => {
     const where = { OR: [{ name: { like: 'Mar' } }] }
-    const out = constrainGatedNameQueries({
+    const out = constrainGatedQueries({
       args: { where },
       operation: 'count',
       req: { user: ben } as unknown as PayloadRequest,
@@ -153,9 +153,9 @@ describe('🔴 constrainGatedNameQueries — no title oracle', () => {
   })
 })
 
-describe('🔴 constrainGatedNameQueries — no sort oracle (L2)', () => {
+describe('🔴 constrainGatedQueries — no sort oracle (L2)', () => {
   const run = (user: unknown, args: Record<string, unknown>) =>
-    constrainGatedNameQueries({
+    constrainGatedQueries({
       args,
       operation: 'read',
       req: { user } as unknown as PayloadRequest,
@@ -187,7 +187,7 @@ describe('🔴 constrainGatedNameQueries — no sort oracle (L2)', () => {
 
 describe('🔴 the same rule on a relationship path from another collection (L3)', () => {
   const run = (where: unknown, sort?: unknown) =>
-    constrainGatedNameQueriesAt('document.')({
+    constrainGatedQueriesAt('document.')({
       args: { where, sort },
       operation: 'read',
       req: { user: ben } as unknown as PayloadRequest,
@@ -223,6 +223,77 @@ describe('🔴 the same rule on a relationship path from another collection (L3)
   })
 })
 
+describe('🔴 who recorded a testimonio stays with the uploader', () => {
+  // `uploadedBy` names the investigador who recorded it and `session` links
+  // their conversation. The biblioteca hides the contributor on gated rows; the
+  // raw API has to as well, by row AND by query.
+  const run = (user: unknown, args: Record<string, unknown>, operation = 'read') =>
+    constrainGatedQueries({
+      args,
+      operation,
+      req: { user } as unknown as PayloadRequest,
+    } as never) as { where?: unknown; sort?: unknown }
+  const readableToBen = {
+    or: [{ contentKind: { equals: 'documento' } }, { uploadedBy: { equals: BEN } }],
+  }
+
+  it('uploadedBy / session: hidden on a colleague\'s testimonio row, shown on a documento', () => {
+    expect(fieldAccess(gatedQueryableReadable, ben, testimonio)).toBe(false)
+    expect(fieldAccess(gatedQueryableReadable, ana, testimonio)).toBe(true)
+    expect(fieldAccess(gatedQueryableReadable, admin, testimonio)).toBe(true)
+    expect(fieldAccess(gatedQueryableReadable, ben, documento)).toBe(true)
+  })
+
+  it.each([
+    ['uploadedBy equals', { uploadedBy: { equals: ANA } }],
+    ['uploadedBy in', { uploadedBy: { in: [ANA] } }],
+    ['uploadedBy.email', { 'uploadedBy.email': { like: 'ana@' } }],
+    ['session equals', { session: { equals: 7 } }],
+    ['session.user', { 'session.user': { equals: ANA } }],
+    ['OR', { OR: [{ uploadedBy: { equals: ANA } }] }],
+    ['nested And', { and: [{ organization: { equals: 3 } }, { And: [{ session: { exists: true } }] }] }],
+  ])('🔴 narrows a where on %s to rows the caller may read', (_label, where) => {
+    expect(run(ben, { where }).where).toEqual({ and: [where, readableToBen] })
+    expect(run(ben, { where }, 'count').where).toEqual({ and: [where, readableToBen] })
+  })
+
+  it('leaves "Mis documentos" (uploadedBy = me) and a platform admin alone', () => {
+    const mine = { uploadedBy: { equals: BEN } }
+    expect(run(ben, { where: mine }).where).toBe(mine)
+    const theirs = { uploadedBy: { equals: ANA } }
+    expect(run(admin, { where: theirs }).where).toBe(theirs)
+    expect(run(ben, { where: theirs, overrideAccess: true }).where).toBe(theirs)
+  })
+
+  it.each([
+    ['uploadedBy', undefined],
+    ['-session', undefined],
+    ['-createdAt,uploadedBy.email', '-createdAt'],
+  ])('🔴 strips a sort on %j for a colleague', (sort, expected) => {
+    expect(run(ben, { sort, where: { organization: { equals: 3 } } }).sort).toEqual(expected)
+  })
+
+  it('on anonymisation-reviews, `document.uploadedBy` is narrowed too', async () => {
+    const where = { 'document.uploadedBy': { equals: ANA } }
+    const out = (await AnonymisationReviews.hooks!.beforeOperation![0]!({
+      args: { where },
+      operation: 'read',
+      req: { user: ben } as unknown as PayloadRequest,
+    } as never)) as { where?: unknown }
+    expect(out.where).toEqual({
+      and: [
+        where,
+        {
+          or: [
+            { 'document.contentKind': { equals: 'documento' } },
+            { 'document.uploadedBy': { equals: BEN } },
+          ],
+        },
+      ],
+    })
+  })
+})
+
 describe('🔴 the collection config actually wires the gate', () => {
   // Measured: deleting every `access.read: gated*` line and the hook
   // registration used to keep this file green. These fail if that happens.
@@ -243,12 +314,12 @@ describe('🔴 the collection config actually wires the gate', () => {
     expect(field(name)?.access?.read).toBe(gatedOriginalReadable)
   })
 
-  it('name reads through gatedNameReadable', () => {
-    expect(field('name')?.access?.read).toBe(gatedNameReadable)
+  it.each(['name', 'uploadedBy', 'session'])('%s reads through gatedQueryableReadable', (name) => {
+    expect(field(name)?.access?.read).toBe(gatedQueryableReadable)
   })
 
-  it('constrainGatedNameQueries runs before every operation', () => {
-    expect(Documents.hooks?.beforeOperation).toContain(constrainGatedNameQueries)
+  it('constrainGatedQueries runs before every operation', () => {
+    expect(Documents.hooks?.beforeOperation).toContain(constrainGatedQueries)
   })
 })
 
