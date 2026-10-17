@@ -28,10 +28,14 @@ function syncOk(text: string): Response {
  */
 function scripted(script: Array<Hallazgo[] | ((text: string) => Hallazgo[]) | 'error'>) {
   const prompts: string[] = []
+  const systems: string[] = []
   const fetchImpl = (async (_url: string, init: RequestInit) => {
-    const body = JSON.parse(String(init.body)) as { unit: { input: { userPrompt: string } } }
+    const body = JSON.parse(String(init.body)) as {
+      unit: { input: { userPrompt: string }; systemPrompt?: string }
+    }
     const prompt = body.unit.input.userPrompt
     prompts.push(prompt)
+    systems.push(body.unit.systemPrompt ?? '')
     const step = script[prompts.length - 1] ?? []
     if (step === 'error') {
       return new Response(JSON.stringify({ error: 'boom' }), {
@@ -46,6 +50,7 @@ function scripted(script: Array<Hallazgo[] | ((text: string) => Hallazgo[]) | 'e
   return {
     detector: aiServiceDetector({ client: client as unknown as SyncGenerator, sleep: async () => {} }),
     prompts,
+    systems,
   }
 }
 
@@ -164,8 +169,19 @@ describe('runAnonymisationGate — 🔴 placeholders stay consistent across roun
     const result = await gate(text, detector)
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return
-    expect(result.redactedText).toBe('[Persona A] nos ayudó. [Persona A] volvió.')
+    // "Don" stays: a generic word beside a placeholder is the model's call.
+    expect(result.redactedText).toBe('Don [Persona A] nos ayudó. [Persona A] volvió.')
     expect(result.report.pseudonyms).toBe(1)
+  })
+
+  it('🔴 "[Persona A] López" on the LAST round holds', async () => {
+    vi.stubEnv(ANONYMISE_VERIFY_ROUNDS_VAR, '1')
+    const { detector } = scripted([[persona('Fernando')], [persona('[Persona A] López')]])
+    const result = await gate('Fernando López nos ayudó.', detector)
+    expect(result.status).toBe('hold')
+    if (result.status !== 'hold') return
+    expect(result.stage).toBe('verify')
+    expect(result.redactedText).toBe('[Persona A] López nos ayudó.')
   })
 
   it('a place glued to a place placeholder joins it', async () => {
@@ -227,5 +243,81 @@ describe('runAnonymisationGate — 🔴 a bare title identifies nobody', () => {
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return
     expect(result.redactedText).not.toMatch(/\bDon\b/)
+  })
+})
+
+describe('runAnonymisationGate — 🔴 the model owns span boundaries (no word lists)', () => {
+  it('a titled span and the bare name get ONE label, and the title goes with it', async () => {
+    const text = 'Don Fernando Vázquez nos prestaba su camioneta. Después Fernando Vázquez se fue.'
+    const { detector } = scripted([[persona('Don Fernando Vázquez'), persona('Fernando Vázquez')], []])
+    const result = await gate(text, detector)
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe('[Persona A] nos prestaba su camioneta. Después [Persona A] se fue.')
+    expect(result.report.pseudonyms).toBe(1)
+  })
+
+  it('⚠ two people who share only a first name are NOT merged', async () => {
+    const { detector } = scripted([[persona('Ana López'), persona('Ana')], []])
+    const result = await gate('Ana López habló. Luego Ana se fue.', detector)
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.report.pseudonyms).toBe(2)
+  })
+
+  it('🔴 a span in the wrong case or without accents still redacts the text’s own spelling', async () => {
+    // Measured 2026-10-17: "la maestra Nicasia Olvera" for "La maestra Nicasia Olvera".
+    const text = 'La maestra Nicasia Olvera llegó. Luego habló Teódulo Ruíz.'
+    const { detector } = scripted([
+      [persona('la maestra Nicasia Olvera'), persona('teodulo ruiz')],
+      [],
+    ])
+    const result = await gate(text, detector)
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe('[Persona A] llegó. Luego habló [Persona B].')
+  })
+
+  it('a place span with its generic head noun leaves no "colonia [Domicilio A]"', async () => {
+    const text = 'Vivíamos en la colonia Las Flores, junto a la tortillería de Doña Lupe.'
+    const { detector } = scripted([
+      [lugar('colonia Las Flores'), lugar('tortillería de Doña Lupe')],
+      [],
+    ])
+    const result = await gate(text, detector)
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    // Labels follow replacement order, longest span first.
+    expect(result.redactedText).toBe('Vivíamos en la [Domicilio B], junto a la [Domicilio A].')
+  })
+
+  it('a generic word beside a placeholder passes when verify does not report it', async () => {
+    const { detector } = scripted([[persona('Fernando')], []])
+    const result = await gate('Don Fernando llegó.', detector)
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe('Don [Persona A] llegó.')
+  })
+
+  it('…and is absorbed into the placeholder when verify reports it anyway', async () => {
+    const { detector } = scripted([
+      [persona('Fernando'), lugar('Las Flores')],
+      [persona('Don [Persona A]'), lugar('colonia [Domicilio A]')],
+      [],
+    ])
+    const result = await gate('Don Fernando vive en la colonia Las Flores.', detector)
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe('[Persona A] vive en la [Domicilio A].')
+  })
+
+  it('the verify pass, and only it, tells the model what is not a leftover', async () => {
+    const { VERIFY_SYSTEM_ADDENDUM } = await import('./detector')
+    const { detector, systems } = scripted([[persona('Ana')], []])
+    await gate('Ana llegó.', detector)
+    expect(systems[0]).not.toContain(VERIFY_SYSTEM_ADDENDUM)
+    expect(systems[1]).toContain(VERIFY_SYSTEM_ADDENDUM)
+    expect(VERIFY_SYSTEM_ADDENDUM).toContain('[Persona A] López')
+    expect(VERIFY_SYSTEM_ADDENDUM).toContain('el doctor dijo')
   })
 })

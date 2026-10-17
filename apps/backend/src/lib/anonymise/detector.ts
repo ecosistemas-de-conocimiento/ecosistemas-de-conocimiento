@@ -30,7 +30,6 @@
 import { withRateLimitRetry } from '@/lib/aiRetry'
 
 import { chunkText } from './chunk'
-import { stripLeadingTitles } from './titles'
 import type { DetectorFinding, PersonDetector } from './types'
 
 /** Env var names, so docs and tests never hand-type a string that can drift. */
@@ -105,12 +104,11 @@ export const DETECT_SYSTEM_PROMPT = [
   'Debes incluir:',
   '- Nombres de personas, apellidos, apodos y diminutivos.',
   '- Referencias de parentesco que nombran a alguien: en "mi hermana Lucía" el hallazgo es "Lucía".',
-  // ⚠ Titles are part of the name (owner's rule, 2026-10-17); `titles.ts` also
-  // absorbs them in code, so a model that ignores this line is still covered.
-  '- Un tratamiento o cargo que antecede al nombre es parte del nombre: incluye "don", "doña",',
-  '  "señor", "señora", "la maestra", "el maestro", "el profe", "el doctor", "la doctora",',
-  '  "licenciado", "ingeniero", "el padre" y similares. En "Don Fernando Vázquez" el hallazgo',
-  '  es "Don Fernando Vázquez"; en "la maestra Imelda" es "la maestra Imelda".',
+  // 🔴 THE MODEL OWNS SPAN BOUNDARIES (owner's rule, 2026-10-17: no word lists
+  // in code). A span cut short leaves "Don [Persona F]" or "colonia [Domicilio L]".
+  '- Devuelve el tramo COMPLETO que identifica. Un tratamiento o cargo que antecede al',
+  '  nombre es parte del nombre: en "Don Fernando Vázquez" el hallazgo es',
+  '  "Don Fernando Vázquez"; en "la maestra Nicasia Olvera" es "la maestra Nicasia Olvera".',
   '- Centros de trabajo, escuelas o cargos tan precisos que identifican a una persona.',
   '- Teléfonos, correos, cuentas, identificadores oficiales y números de expediente.',
   '',
@@ -118,11 +116,8 @@ export const DETECT_SYSTEM_PROMPT = [
   // hold a document. The gate drops a finding marked "identifica": false.
   'No es un hallazgo:',
   '- Un tratamiento o cargo SOLO, sin nombre ni apodo junto a él: "el doctor dijo",',
-  '  "la maestra llegó", "don dijo que sí". No identifica a nadie. No lo reportes; si lo',
-  '  reportas, pon "identifica": false. Pon "identifica": true en todo lo demás.',
-  '- Los marcadores entre corchetes como [Persona A], [Domicilio B] o [Dato omitido]: ya',
-  '  están censurados. Sí reporta lo que esté pegado a ellos y aún identifique, como un',
-  '  apellido en "[Persona A] López".',
+  '  "la maestra llegó". No identifica a nadie. No lo reportes; si lo reportas, pon',
+  '  "identifica": false. Pon "identifica": true en todo lo demás.',
   '',
   // 🔴 ADDRESSES GET THEIR OWN SECTION BECAUSE ONE LINE WAS NOT ENOUGH. Measured:
   // on a live test testimony a street address went past this prompt, and the
@@ -138,6 +133,8 @@ export const DETECT_SYSTEM_PROMPT = [
   '- Referencias sin formato que permiten llegar a una casa: "enfrente de la tienda',
   '  de doña Mari", "subiendo por donde está el tanque", "la casa de la reja verde".',
   '- Un domicilio partido en varias frases cuenta como varios hallazgos, uno por trozo.',
+  '- Incluye en el tramo la palabra genérica que encabeza el lugar: "colonia Las Flores",',
+  '  "tortillería de Doña Lupe", no solo "Las Flores" ni "Doña Lupe".',
   '',
   '⚠ No marques como "lugar" un municipio, estado o pueblo mencionado solo como',
   'origen o como tema ("el problema del agua en Cuernavaca"). Márcalo cuando ubique',
@@ -146,6 +143,26 @@ export const DETECT_SYSTEM_PROMPT = [
   'Tipos: "persona" para nombres de personas; "lugar" para domicilios y lugares identificables;',
   '"contacto" para teléfonos, correos y redes; "identificador" para folios, CURP, RFC y números',
   'de cuenta; "otro" para cualquier otro dato que permita identificar a alguien.',
+].join('\n')
+
+/**
+ * Appended to {@link DETECT_SYSTEM_PROMPT} for a VERIFY pass, whose input is
+ * already redacted.
+ *
+ * ⚠ The owner's rule, 2026-10-17: a generic word beside a placeholder, or a bare
+ * title, is not a leftover. A surname beside one IS: "[Persona A] López" must
+ * still be reported.
+ */
+export const VERIFY_SYSTEM_ADDENDUM = [
+  '',
+  'Este texto YA fue censurado. Busca solo lo que todavía identifique a alguien.',
+  '- Los marcadores entre corchetes como [Persona A], [Domicilio B] o [Dato omitido] ya',
+  '  están censurados: no los reportes.',
+  '- Una palabra genérica junto a un marcador ("Don [Persona F]", "la maestra [Persona B]",',
+  '  "colonia [Domicilio L]") no identifica a nadie: no la reportes.',
+  '- Un tratamiento o cargo sin nombre ("el doctor dijo") tampoco: no lo reportes.',
+  '- SÍ reporta un nombre, apellido o lugar que siga junto a un marcador: en',
+  '  "[Persona A] López" el hallazgo es "[Persona A] López".',
 ].join('\n')
 
 /**
@@ -169,6 +186,41 @@ export class DetectorFailure extends Error {
     super(message)
     this.name = 'DetectorFailure'
   }
+}
+
+/** Fold one character for matching: lower case, accents dropped. */
+function foldChar(ch: string): string {
+  return ch.normalize('NFD').replace(/[\u0300-\u036f]/gu, '').toLowerCase()
+}
+
+/**
+ * `needle` as the text spells it: exactly, else case- and accent-blind, giving
+ * back the substring of `source` it matched. Null when it is not there at all.
+ *
+ * ⚠ Folding is per character with an offset map, so a character that folds to
+ * two (or none) never shifts the slice that is returned.
+ */
+export function locateSpan(source: string, needle: string): string | null {
+  if (source.includes(needle)) return needle
+  let folded = ''
+  const startOf: number[] = []
+  for (let i = 0; i < source.length; ) {
+    const cp = source.codePointAt(i) as number
+    const ch = String.fromCodePoint(cp)
+    for (const f of foldChar(ch)) {
+      folded += f
+      startOf.push(i)
+    }
+    i += ch.length
+  }
+  const want = [...needle].map(foldChar).join('')
+  if (want.length === 0) return null
+  const at = folded.indexOf(want)
+  if (at === -1) return null
+  const begin = startOf[at] as number
+  const lastStart = startOf[at + want.length - 1] as number
+  const end = lastStart + String.fromCodePoint(source.codePointAt(lastStart) as number).length
+  return source.slice(begin, end)
 }
 
 /**
@@ -230,16 +282,13 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
     // permissive: the text it claims to describe is still in the document and
     // stage 4 still runs over the result.
     //
-    // ⚠ ONE RESCUE: a titled span whose TITLE is in the wrong case. Measured
-    // 2026-10-17, 9,454 words: asked to include titles, the model returned
-    // "la maestra Nicasia Olvera" for "La maestra Nicasia Olvera"; dropping it
-    // lost the name. The bare name is a literal substring, so it is kept, and
-    // `titles.ts` absorbs the title once the name is a placeholder.
-    let located = trimmed
-    if (!sourceText.includes(located)) {
-      located = stripLeadingTitles(trimmed).trim()
-      if (located === trimmed || located.length < 2 || !sourceText.includes(located)) continue
-    }
+    // ⚠ ONE RESCUE: a span in the wrong case or without its accents. Measured
+    // 2026-10-17, 9,454 words: the model returned "la maestra Nicasia Olvera"
+    // for "La maestra Nicasia Olvera"; dropping it lost the name. The span is
+    // matched case- and accent-blind and replaced by the text's OWN spelling,
+    // so the replacement still finds it.
+    const located = locateSpan(sourceText, trimmed)
+    if (located === null) continue
 
     out.push({
       text: located,
@@ -336,7 +385,7 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
 
   return {
     name: opts.name ?? 'ai-service:anonymise-detect',
-    async detect({ text, contentKind }) {
+    async detect({ text, contentKind, pass }) {
       let client = opts.client
       if (!client) {
         const { getAppAIClient } = await import('@/lib/aiClient')
@@ -403,7 +452,10 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
                     unitKey: nextKey(),
                     unitType: 'anonymise-detect',
                     input: { userPrompt: `${material}\n\n${chunk.text}` },
-                    systemPrompt: DETECT_SYSTEM_PROMPT,
+                    systemPrompt:
+                      pass === 'verify'
+                        ? `${DETECT_SYSTEM_PROMPT}\n${VERIFY_SYSTEM_ADDENDUM}`
+                        : DETECT_SYSTEM_PROMPT,
                     specOverride: { promptTemplate: PROMPT_TEMPLATE_USER_PROMPT },
                   },
                   effortLevel: 'quick',

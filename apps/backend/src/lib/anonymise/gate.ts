@@ -58,7 +58,6 @@ import { positiveIntFromEnv } from './detector'
 import { deterministicPass } from './deterministic'
 import { createPseudonymAllocator } from './pseudonyms'
 import { structuralPass } from './structural'
-import { absorbTitles, onlyPlaceholders } from './titles'
 import type {
   DetectorFinding,
   GateInput,
@@ -232,10 +231,25 @@ function applyFindings(
     out = next
   }
 
-  // 🔴 A title before a name is part of the name: "Don [Persona F]" becomes
-  // "[Persona F]". Without this, verify reads the title as a leftover and holds
-  // a document whose names are all gone. See `titles.ts`.
-  return { text: absorbTitles(out), labels }
+  // ⚠ No title clean-up here: the model owns span boundaries and includes a
+  // leading title in the name (detector prompt). If it does not, verify sees
+  // "Don [Persona F]"; its prompt says that is not a leftover, and a round that
+  // reports it anyway absorbs it into `[Persona F]` (see `resolveLeftover`).
+  return { text: out, labels }
+}
+
+/**
+ * True when `finding` holds at least one of our placeholders and nothing else
+ * but punctuation and spaces: "[Domicilio AP], [Domicilio AQ]".
+ *
+ * 🔴 ANY LETTER OR DIGIT OUTSIDE A PLACEHOLDER MAKES IT A LEFTOVER, so
+ * "[Persona A] López" is never dismissed here. Whether a word beside a
+ * placeholder is generic ("Don [Persona F]") is the model's judgement, made in
+ * the verify prompt, not a word list's.
+ */
+function onlyPlaceholders(finding: string): boolean {
+  if (!finding.match(PLACEHOLDER)) return false
+  return !/[\p{L}\p{N}]/u.test(finding.replace(PLACEHOLDER, ''))
 }
 
 /**
@@ -461,7 +475,11 @@ export async function runAnonymisationGate(
   for (let round = 1; ; round++) {
     let survivors: DetectorFinding[]
     try {
-      survivors = await deps.detector.detect({ text: current, contentKind: input.contentKind })
+      survivors = await deps.detector.detect({
+        text: current,
+        contentKind: input.contentKind,
+        pass: 'verify',
+      })
     } catch (err) {
       return hold(
         'verify',
@@ -471,8 +489,8 @@ export async function runAnonymisationGate(
     }
 
     const spans = placeholderSpans(current)
-    // ⚠ `onlyPlaceholders`: a finding made of our placeholders, punctuation and
-    // titles before a person ("[Domicilio AP], [Domicilio AQ]") names nobody.
+    // ⚠ `onlyPlaceholders`: a finding made of our placeholders and punctuation
+    // ("[Domicilio AP], [Domicilio AQ]") names nobody.
     // ⚠ `identifies`: the model judged a bare title ("el doctor") names nobody.
     const real = survivors.filter(
       (f) =>
