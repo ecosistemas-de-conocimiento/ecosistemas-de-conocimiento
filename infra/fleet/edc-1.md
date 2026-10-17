@@ -1,10 +1,11 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Both environments run `main` @ `fcd1325` (the ai-service sync,
-migrations 0002–0004), deployed 2026-10-17 ~04:22–04:50 UTC and verified end to end: login, PDF
+**Status:** live since 2026-10-17. Both environments run `main` @ `7dbe85c` (one ai-service org per
+ecosistema, query expansion), deployed 2026-10-17 05:07 UTC (dev) and 05:49 UTC (staging), with
+the org move of §4c applied. Verified end to end on both (measured by the deploy agent): login, PDF
 upload → `ready` via the public https callback, real OpenRouter chat answer whose
 `provenance.chunks[]` cites the upload, conversation delete, admin usage panel, lengua filter pages
-— measured by the deploy agent. First deploy was `f89047e`. Companion docs: `env-manifests.md` (what each variable means),
+, usage logs booked to `edc-eco-1`. Before that: `fcd1325`, then `f89047e` (first deploy). Companion docs: `env-manifests.md` (what each variable means),
 `runbook.md`, `backups.md`.
 
 🔴 **No secret value appears in this file.** Secrets are named; their values live in the two places
@@ -199,26 +200,42 @@ Restore, if a migration goes wrong: stop that env's ai-service, then
 the previous commit. ⚠ Copy the dumps off the box if you keep them; Hetzner's daily image also
 holds the disk, but restoring it rolls back both environments at once.
 
-### 4c. ⏸️ Pending: one ai-service org per ecosistema (`f0d5075`)
+### 4c. ✅ Done 2026-10-17: one ai-service org per ecosistema (`7dbe85c`)
 
-Not applied on either environment yet. The `3099526` deploy of dev failed at build on 2026-10-17
-(measured, deployment `nsq84vck1szpd4xrnpm4wn04`), so dev and staging still run `fcd1325` with
-every corpus in org `demo`. 🔴 Build blocker: `apps/backend/src/eval/run.ts` imports
-`apps/web/src/lib/server/engine/expand.ts`, which imports `@edc/chat-engine/core`. The backend
-image has no `apps/web/node_modules`, and the Next build type-checks every `**/*.ts`, so it fails
-with "Cannot find module '@edc/chat-engine/core'". Fix that on `main` first.
+Applied on dev (05:16 UTC) and staging (05:50 UTC), measured:
 
-Pre-deploy dumps of dev (`edc_ai`, `edc_backend`): `/root/backups/20261017T0452Z/` and the
-owner's `cide/backups/edc-1/20261017T0452Z/`.
+| | dev | staging |
+|---|---|---|
+| corpora moved `demo` → `edc-eco-1` | `eco-1`, `eco-1-draft-1` | `eco-1-draft-2` |
+| rows moved (chunks / documents / ingest_requests / ingest_jobs) | 7 / 7 / 7 / 3 | 2 / 2 / 2 / 1 |
+| `budget_state` | `demo` kept; `edc-eco-1` created at $5 | same |
+| dump right before the move | `/root/backups/20261017T0516Z/` | `/root/backups/20261017T0550Z/` |
 
-State before the move (measured 2026-10-17): dev has `eco-1` and `eco-1-draft-1` in `demo`;
-staging has `eco-1-draft-2` in `demo`. One `budget_state` row each, org `demo`.
+Every dump was checked with `pg_restore -l` and copied to the owner's `cide/backups/edc-1/<same
+stamp>/` (sha256 matched). Also kept: pre-deploy dumps of both databases, dev in `20261017T0452Z`,
+staging in `20261017T0545Z`. After the move, the smoke chat wrote three `usage_logs` rows on each
+environment, all under `edc-eco-1`: one embedding and two chat calls. The second chat call is
+query expansion (inferred from the count). Both ai-services report `orgDelegation: true`.
 
-The order, per environment, once the build passes:
+What differed from the plan:
+
+- 🔴 **The disk filled during the staging build** (05:24 UTC). Dev's build cache was not pruned
+  between the two deploys. `coolify-db` hit "No space left on device", restarted 8 times, then
+  recovered on its own, and the staging deployment hung for 15 min in "exporting to image".
+  Dev's redis also failed AOF writes for that minute, and recovered (`aof_last_write_status:ok`).
+  Fix used: `docker builder prune -f`, remove the `f89047e` images, cancel the hung deploy
+  (`POST /api/v1/deployments/<uuid>/cancel`), deploy again. **Prune the build cache between
+  the two environments**, not only at the end.
+- The first try at `3099526` failed at build (`@edc/chat-engine/core` not found from
+  `apps/backend/src/eval`); `7dbe85c` took the eval out of the backend build.
+- In both answers, chat cited the PDF by file name in prose; no inline `[n]` markers appeared.
+
+The order, per environment (the one used above):
 
 1. Deploy the whole app. Coolify cannot deploy one service. The compose default
    `AI_CAPABILITY_MODE=warn` lets backend boot even before ai-service reports `orgDelegation`.
-2. Stop the new `backend-<uuid>` and `web-<uuid>` containers, so nothing writes to `edc_ai`.
+2. Stop the new `backend-<uuid>` and `web-<uuid>` containers, so nothing writes to `edc_ai`
+   (`docker stop`; they stayed stopped for about one minute here).
 3. Dump `edc_ai` (§4b), check it with `pg_restore -l`, copy it off the box.
 4. Pipe the script into the postgres container. Dry run first, then apply:
    ```sh
@@ -228,7 +245,7 @@ The order, per environment, once the build passes:
      < scripts/ai-org-per-ecosystem.sql
    ```
    It moves `eco-<id>*` corpora to org `edc-eco-<id>` and creates a $5 budget row per new org.
-5. Start backend and web. Check: `corpora.org` reads `edc-eco-*`, one `budget_state` row per
+5. `docker start` backend and web. Check: `corpora.org` reads `edc-eco-*`, one `budget_state` row per
    ecosistema org, and a new chat's `usage_logs` row carries `edc-eco-<id>`.
 
 After the move, §6's budget command targets `edc-eco-<id>`, not `demo`. New ecosistemas get
@@ -265,6 +282,9 @@ read one key at a time (`grep -m1 '^KEY=' file | cut -d= -f2-`).
 
 ## 6. 🔴 The budget step — every fresh ai-service
 
+⚠ Since §4c, chat spends from org `edc-eco-<organization id>`, not `demo`. Replace `demo` with
+that org in the commands below. A new ecosistema gets its row from the backend at creation.
+
 A new ai-service database has no budget row, so every chat answers **402**. After the first deploy
 of an environment, or after its `edc_ai` database is recreated, run inside that environment's
 ai-service container (it is not exposed publicly):
@@ -279,7 +299,8 @@ docker exec "$C" curl -s -X PUT \
 
 The org is `demo` in both environments: it is the `org` inside `API_KEYS`, not the Payload
 organization slug. Done for dev and staging on 2026-10-17 (`limitUsd: 5`). Read the remainder with
-`GET /v1/budget/demo`.
+`GET /v1/budget/demo`. Since §4c the `API_KEYS` org is `edc`, and chat reaches `edc-eco-<id>`
+through the `X-AI-Org` header.
 
 ---
 
@@ -325,5 +346,10 @@ with the file name → `DELETE /api/sessions/<id>`.
 deploys (build cache 22 GB), 33 GB free after `docker builder prune -f`. Old images (≈ 8 GB
 reclaimable) were kept for rollback.
 
-⚠ The build cache grows with every deploy — about 7 GB per environment deploy here. Coolify's scheduled Docker cleanup prunes it; if disk
+2026-10-17 `7dbe85c` deploys (measured, `df -h /`): 33 GB free before; dev's deploy took
+16 GB of build cache. Staging's build then filled the disk (§4c). After cleanup: 17 GB free.
+The images are large — web ≈ 6.1 GB, ai-service ≈ 5.0 GB, backend ≈ 2.5 GB per tag — and the
+`fcd1325` images (≈ 13.5 GB per environment) are still kept for rollback.
+
+⚠ The build cache grows with every deploy — 7–16 GB per environment deploy here. Coolify's scheduled Docker cleanup prunes it; if disk
 climbs, run `docker builder prune -f` on the box.
