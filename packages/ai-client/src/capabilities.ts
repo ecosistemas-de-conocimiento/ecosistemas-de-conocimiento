@@ -65,6 +65,14 @@ export const STRICT_STRUCTURED_OUTPUT_CAPABILITY = 'strictStructuredOutput';
 export const ORG_DELEGATION_CAPABILITY = 'orgDelegation';
 
 /**
+ * Capability name for the `$in` operator in a retrieve `filter`
+ * (`{ docId: { $in: ['12', '34'] } }`) and for `RetrieveMultiRequest.corpusFilters`.
+ * Require it before sending either: an older server reads `$in` as plain jsonb
+ * containment and answers 200 with ZERO chunks.
+ */
+export const METADATA_FILTER_IN_CAPABILITY = 'metadataFilterIn';
+
+/**
  * The capability names to `require` before sending `responseSchemaStrict: true`
  * to `model`: the feature name, plus the per-model name when a model is given.
  *

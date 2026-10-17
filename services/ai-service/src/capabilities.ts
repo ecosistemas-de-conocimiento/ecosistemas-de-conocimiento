@@ -253,6 +253,21 @@ export const SERVICE_CAPABILITIES = Object.freeze({
    * schema is strict). See `src/services/ai/router/strict-schema.ts`.
    */
   strictStructuredOutput: true,
+
+  /**
+   * The retrieve metadata `filter` accepts `{ key: { "$in": [v1, …] } }`
+   * (1–500 strings or numbers; matches when `metadata.key` equals one), on
+   * `/v1/retrieve` and `/v1/retrieve/multi`, in dense and hybrid mode, applied
+   * in SQL on every leg before ranking. `/v1/retrieve/multi` also accepts
+   * `corpusFilters: { <corpus>: <filter> }`, which replaces `filter` for that
+   * corpus only. See `src/services/rag/metadata-filter.ts`.
+   *
+   * A consumer that sends `$in` REQUIRES this, and the failure it prevents is
+   * silent: an older server reads `{ "$in": [...] }` as plain jsonb containment
+   * and returns ZERO chunks with a 200. (`corpusFilters` alone would 400 on an
+   * older server, because the multi schema is strict.)
+   */
+  metadataFilterIn: true,
 });
 
 /**

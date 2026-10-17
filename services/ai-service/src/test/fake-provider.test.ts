@@ -253,3 +253,42 @@ describe('fake provider — embeddings', () => {
     expect(Math.sqrt(v.reduce((s, n) => s + n * n, 0))).toBeCloseTo(1, 6);
   });
 });
+
+// The fake's vectors are a hashed bag of words, so a consumer e2e can assert
+// that a query retrieves the document it is about. These pin that behaviour.
+describe('fake provider — embeddings are a hashed bag of words', () => {
+  const cosine = (a: number[], b: number[]) => a.reduce((s, x, i) => s + x * b[i]!, 0);
+  const norm = (v: number[]) => Math.sqrt(v.reduce((s, n) => s + n * n, 0));
+
+  const DOC_A = 'El presupuesto participativo de la alcaldía financia huertos urbanos en el barrio norte.';
+  const DOC_B = 'Quarterly revenue figures for the southern logistics warehouse rose sharply.';
+  const QUERY = '¿Qué huertos urbanos financia el presupuesto participativo?';
+
+  it('gives an identical vector for the same text', () => {
+    expect(fakeEmbedOne(DOC_A)).toEqual(fakeEmbedOne(DOC_A));
+    expect(fakeEmbedOne(DOC_A, 64)).toEqual(fakeEmbedOne(DOC_A, 64));
+  });
+
+  it('scores a query higher against the doc it shares words with', () => {
+    const q = fakeEmbedOne(QUERY);
+    const a = cosine(q, fakeEmbedOne(DOC_A));
+    const b = cosine(q, fakeEmbedOne(DOC_B));
+    expect(a).toBeGreaterThan(b);
+    expect(a).toBeGreaterThan(0.4);
+    expect(Math.abs(b)).toBeLessThan(0.2);
+  });
+
+  it('ignores case, accents and punctuation', () => {
+    expect(fakeEmbedOne('Alcaldía, PRESUPUESTO!')).toEqual(fakeEmbedOne('alcaldia presupuesto'));
+  });
+
+  it('returns unit-length vectors of the requested dimension, even for empty text', () => {
+    for (const text of [DOC_A, DOC_B, QUERY, '', '?!', 'x']) {
+      for (const dim of [1024, 1536, 16]) {
+        const v = fakeEmbedOne(text, dim);
+        expect(v).toHaveLength(dim);
+        expect(norm(v)).toBeCloseTo(1, 6);
+      }
+    }
+  });
+});

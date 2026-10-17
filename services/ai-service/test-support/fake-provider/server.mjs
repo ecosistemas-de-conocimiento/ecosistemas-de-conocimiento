@@ -111,34 +111,53 @@ function promptTokensOf(messages) {
   return Math.max(1, Math.ceil(chars / CHARS_PER_TOKEN));
 }
 
-/**
- * Deterministic, unit-length vector for one input: FNV-1a hash seeds a
- * mulberry32 PRNG. Same text in, byte-identical vector out, so a test can seed
- * a chunk with `fakeEmbedOne(text)` and a query for `text` scores 1.0.
- */
-export function fakeEmbedOne(text, dim = DEFAULTS.embeddingDim) {
+/** FNV-1a, 32-bit. */
+function fnv1a(s) {
   let h = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
     h = Math.imul(h, 0x01000193);
   }
-  let a = h >>> 0;
-  const rand = () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  const vec = new Array(dim);
-  let sumSq = 0;
-  for (let i = 0; i < dim; i++) {
-    const v = rand() * 2 - 1;
-    vec[i] = v;
-    sumSq += v * v;
+  return h >>> 0;
+}
+
+/** Lowercased, accent-free words: `¿Alcaldía, OK?` → `['alcaldia', 'ok']`. */
+export function fakeTokens(text) {
+  return (
+    String(text)
+      .normalize('NFD')
+      .replace(/\p{M}/gu, '')
+      .toLowerCase()
+      .match(/[\p{L}\p{N}]+/gu) ?? []
+  );
+}
+
+/**
+ * Deterministic, unit-length, hashed bag-of-words vector for one input.
+ *
+ * Each word adds 1, and each adjacent word pair adds 0.5, to the slot its
+ * FNV-1a hash picks; a second hash bit picks the sign, so collisions cancel out
+ * on average instead of piling up. The sum is then L2-normalised. Texts that
+ * share words therefore land close in cosine space, and a query retrieves the
+ * document it is about. Same text in, byte-identical vector out, so a test can
+ * seed a chunk with `fakeEmbedOne(text)` and a query for `text` scores 1.0.
+ * Text with no words (empty, punctuation only) hashes as one raw feature, so
+ * it still gets a unit vector.
+ */
+export function fakeEmbedOne(text, dim = DEFAULTS.embeddingDim) {
+  const words = fakeTokens(text);
+  const features = words.length === 0 ? [[`raw:${text}`, 1]] : words.map((w) => [w, 1]);
+  for (let i = 1; i < words.length; i++) features.push([`${words[i - 1]} ${words[i]}`, 0.5]);
+  const vec = new Array(dim).fill(0);
+  for (const [feature, weight] of features) {
+    const h = fnv1a(feature);
+    vec[h % dim] += h & 0x80000000 ? -weight : weight;
   }
-  const norm = Math.sqrt(sumSq) || 1;
-  for (let i = 0; i < dim; i++) vec[i] = vec[i] / norm;
+  const norm = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));
+  // A whole-text cancellation (two features, same slot, opposite signs) is
+  // the one way to reach zero; fall back to a fixed unit axis.
+  if (norm === 0) vec[fnv1a(String(text)) % dim] = 1;
+  else for (let i = 0; i < dim; i++) vec[i] /= norm;
   return vec;
 }
 

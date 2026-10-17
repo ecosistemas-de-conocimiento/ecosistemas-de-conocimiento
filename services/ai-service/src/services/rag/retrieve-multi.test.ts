@@ -200,6 +200,38 @@ describe('RetrieveMultiService.retrieveMulti', () => {
     }
   });
 
+  it('a corpusFilters entry REPLACES filter for that corpus only', async () => {
+    const { service, retrieve } = stubRetrieveService({ shared: [], drafts: [], other: [] });
+    const svc = new RetrieveMultiService({ db: {} as never, retrieveService: service, router: noRewriteRouter });
+    const draftFilter = { docId: { $in: ['12', '34'] } };
+    await svc.retrieveMulti(
+      {
+        corpora: ['shared', 'drafts', 'other'],
+        query: 'q',
+        mode: 'hybrid',
+        filter: { k: 'v' },
+        corpusFilters: { drafts: draftFilter },
+      },
+      CTX,
+    );
+    const reqFor = (corpus: string) =>
+      retrieve.mock.calls.map((c) => c[0]).find((r: { corpus: string }) => r.corpus === corpus);
+    expect(reqFor('drafts').filter).toEqual(draftFilter);
+    expect(reqFor('shared').filter).toEqual({ k: 'v' });
+    expect(reqFor('other').filter).toEqual({ k: 'v' });
+  });
+
+  it('with corpusFilters and no shared filter, unlisted corpora get NO filter key', async () => {
+    const { service, retrieve } = stubRetrieveService({ shared: [], drafts: [] });
+    const svc = new RetrieveMultiService({ db: {} as never, retrieveService: service, router: noRewriteRouter });
+    await svc.retrieveMulti(
+      { corpora: ['shared', 'drafts'], query: 'q', corpusFilters: { drafts: { docId: { $in: [1] } } } },
+      CTX,
+    );
+    const shared = retrieve.mock.calls.map((c) => c[0]).find((r: { corpus: string }) => r.corpus === 'shared');
+    expect('filter' in shared).toBe(false);
+  });
+
   it('reranks the FUSED pool after fusion, surfacing rerankScore and re-ordering', async () => {
     // Fused order by score: a1(0.9), b1(0.7), a2(0.4), b2(0.2). The reranker
     // (over that pool, indices 0..3) promotes b2 then b1 then a1.

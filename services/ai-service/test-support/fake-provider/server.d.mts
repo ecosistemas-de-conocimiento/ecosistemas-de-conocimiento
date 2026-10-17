@@ -57,5 +57,11 @@ export interface FakeProvider {
 }
 
 export declare function startFakeProvider(options?: FakeProviderOptions): Promise<FakeProvider>;
+/**
+ * Hashed bag-of-words vector, unit length: texts that share words score close
+ * in cosine space; the same text gives a byte-identical vector. See README.md.
+ */
 export declare function fakeEmbedOne(text: string, dim?: number): number[];
+/** The words `fakeEmbedOne` hashes: lowercased, accents stripped, punctuation dropped. */
+export declare function fakeTokens(text: string): string[];
 export declare function fakeBodyText(tokens: number): string;

@@ -1257,7 +1257,8 @@
           },
           "filter": {
             "type": "object",
-            "additionalProperties": {}
+            "additionalProperties": {},
+            "description": "Metadata constraint applied before ranking. Per key: a value (jsonb containment) or { \"$in\": [...] } (1-500 strings or numbers; matches when metadata[key] equals one of them). Keys combine with AND."
           },
           "asOf": {
             "type": "string",
@@ -1324,7 +1325,16 @@
           },
           "filter": {
             "type": "object",
-            "additionalProperties": {}
+            "additionalProperties": {},
+            "description": "Metadata constraint applied before ranking. Per key: a value (jsonb containment) or { \"$in\": [...] } (1-500 strings or numbers; matches when metadata[key] equals one of them). Keys combine with AND."
+          },
+          "corpusFilters": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {},
+              "description": "Metadata constraint applied before ranking. Per key: a value (jsonb containment) or { \"$in\": [...] } (1-500 strings or numbers; matches when metadata[key] equals one of them). Keys combine with AND."
+            }
           },
           "asOf": {
             "type": "string",
