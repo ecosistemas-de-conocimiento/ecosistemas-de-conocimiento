@@ -26,11 +26,36 @@
 
 import { backendFetch } from '$lib/server/auth';
 
+/**
+ * 🔴 THE TITLE A GATED ROW CARRIES ONTO THE TURN — never its `name`.
+ *
+ * A testimonio's or conversación's `name` is free text the uploader typed and
+ * it never went through the anonymisation gate. The backend still returns it
+ * to the uploader and to a platform admin, so reading with the user's own
+ * access is NOT enough: this list goes into the prompt (the summary line that
+ * names the attached documents, and the `@`-mention labels), and the prompt
+ * leaves for a hosted model. So the name is replaced HERE, at the one read the
+ * generate route makes, before any consumer sees it.
+ *
+ * Mirrors `titleFor` in the backend's `lib/contentKind.ts` (and the web's
+ * `libraryTitleFor` in `$lib/biblioteca`). Anything that is not a `documento`
+ * — a missing `contentKind` included — is gated: fail closed.
+ */
+export function attachmentTitleFor(contentKind: unknown, name: unknown): string {
+  if (contentKind === 'testimonio') return 'Testimonio';
+  if (contentKind === 'conversacion') return 'Conversación';
+  if (contentKind !== 'documento') return 'Documento sin título';
+  return typeof name === 'string' && name.trim() ? name.trim() : 'Documento sin título';
+}
+
 /** The document fields this app reads off a session's document list. */
 export interface SessionDocRow {
   id: number | string;
+  /** Already NEUTRAL for gated content — see `attachmentTitleFor`. */
   name: string;
   kind?: string | null;
+  /** What the material IS (`documento`, `testimonio`, `conversacion`). */
+  contentKind?: string | null;
   ingestStatus?: string | null;
   publicationStatus?: string | null;
 }
@@ -101,8 +126,9 @@ export async function fetchSessionDocs(
       if (r.id == null) continue;
       docs.push({
         id: r.id as number | string,
-        name: typeof r.name === 'string' ? r.name : '',
+        name: attachmentTitleFor(r.contentKind, r.name),
         kind: (r.kind as string | null | undefined) ?? null,
+        contentKind: typeof r.contentKind === 'string' ? r.contentKind : null,
         ingestStatus: (r.ingestStatus as string | null | undefined) ?? null,
         publicationStatus: (r.publicationStatus as string | null | undefined) ?? null,
       });

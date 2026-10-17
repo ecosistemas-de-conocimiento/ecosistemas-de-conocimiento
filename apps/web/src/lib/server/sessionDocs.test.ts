@@ -13,7 +13,12 @@ vi.mock('$lib/server/auth', () => ({
 }));
 
 import { backendFetch } from '$lib/server/auth';
-import { fetchSessionDocs, sessionDocumentIdSet, sessionDocumentsQuery } from './sessionDocs';
+import {
+  attachmentTitleFor,
+  fetchSessionDocs,
+  sessionDocumentIdSet,
+  sessionDocumentsQuery,
+} from './sessionDocs';
 
 const mockedBackendFetch = backendFetch as unknown as ReturnType<typeof vi.fn>;
 
@@ -120,5 +125,16 @@ describe('sessionDocumentIdSet', () => {
   // 🔴 The distinction the draft leg fails closed on.
   it('is NULL when the list could not be read', () => {
     expect(sessionDocumentIdSet({ ok: false, docs: [] })).toBeNull();
+  });
+});
+
+describe('attachmentTitleFor (privacy)', () => {
+  it('keeps a documento\'s name', () => {
+    expect(attachmentTitleFor('documento', ' informe.pdf ')).toBe('informe.pdf');
+  });
+  it('🔴 never passes a gated row\'s name through', () => {
+    expect(attachmentTitleFor('testimonio', 'Juana Pérez.m4a')).toBe('Testimonio');
+    expect(attachmentTitleFor('conversacion', 'Sobre Juana')).toBe('Conversación');
+    expect(attachmentTitleFor(undefined, 'Juana Pérez.m4a')).toBe('Documento sin título');
   });
 });

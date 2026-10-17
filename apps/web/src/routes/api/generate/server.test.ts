@@ -41,6 +41,7 @@ interface World {
   organization: string | null;
   saveStatus: number;
   graphCalls: number;
+  sessionDocs: Array<Record<string, unknown>>;
 }
 
 let calls: Call[];
@@ -77,7 +78,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     }
     if (p === `/api/sessions/${SESSION}` && method === 'PATCH') return json({});
     if (p === '/api/documents') {
-      return json({ docs: [{ id: 11, name: 'informe.pdf', kind: 'pdf', publicationStatus: 'draft' }] });
+      return json({ docs: world.sessionDocs });
     }
     if (p === '/api/lenguas') return json({ lenguas: [{ lengua: 'mixe', documentos: 1 }] });
     if (p.startsWith('/api/organizations')) {
@@ -197,7 +198,14 @@ async function readSse(res: Response): Promise<Record<string, unknown>[]> {
 
 beforeEach(() => {
   calls = [];
-  world = { organization: ECO, saveStatus: 201, graphCalls: 0 };
+  world = {
+    organization: ECO,
+    saveStatus: 201,
+    graphCalls: 0,
+    sessionDocs: [
+      { id: 11, name: 'informe.pdf', kind: 'pdf', contentKind: 'documento', publicationStatus: 'draft' },
+    ],
+  };
   ENV.QUERY_EXPANSION = undefined;
   ENV.CHAT_RERANK = undefined;
   vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -287,6 +295,37 @@ describe('POST /api/generate — sync', () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('could not save the answer for session 5 (backend 500)'),
     );
+  });
+});
+
+describe('POST /api/generate — gated attachments (privacy)', () => {
+  // A testimony's `name` is free text the uploader typed and it never went
+  // through the anonymisation gate. The backend still returns it to the
+  // UPLOADER (and a platform admin), so a read with the user's own access is
+  // not enough: the prompt leaves for a hosted model, and the summary line
+  // naming the attached documents must use the neutral title.
+  const RAW_NAME = 'Entrevista con Juana Pérez de San Mateo.m4a';
+  const promptOf = () =>
+    JSON.stringify(
+      generates().find((c) => !JSON.stringify(c.body).includes('Escribe exactamente tres'))!.body,
+    );
+
+  it('🔴 names an attached testimonio "Testimonio" in the prompt, never its filename', async () => {
+    world.sessionDocs = [
+      { id: 21, name: RAW_NAME, kind: 'audio', contentKind: 'testimonio', publicationStatus: 'draft' },
+      { id: 11, name: 'informe.pdf', kind: 'pdf', contentKind: 'documento', publicationStatus: 'draft' },
+    ];
+    await POST(event(turn()));
+    const prompt = promptOf();
+    expect(prompt).not.toContain('Juana');
+    expect(prompt).toContain('Testimonio');
+    expect(prompt).toContain('informe.pdf');
+  });
+
+  it('🔴 a row whose contentKind is missing is treated as gated (fail closed)', async () => {
+    world.sessionDocs = [{ id: 22, name: RAW_NAME, kind: 'audio', publicationStatus: 'draft' }];
+    await POST(event(turn()));
+    expect(promptOf()).not.toContain('Juana');
   });
 });
 
