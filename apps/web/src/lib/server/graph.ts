@@ -248,12 +248,17 @@ export async function fetchGraphRetrieval(
         limit: input.limit ?? GRAPH_RETRIEVE_LIMIT,
       }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // Still fail-open, but LOUD. A silent `return null` here hid an HTTP 500
+      // on every graph-matching turn (fixed 2026-10-17, backend
+      // `lib/graph/queries.ts:intArray`): the chat worked, the graph never did.
+      console.warn(`[grafo] backend answered ${res.status} to /api/graph/retrieve`);
+      return null;
+    }
     return parseGraphRetrieval(await res.json());
   } catch {
-    // Best-effort by design. Not even a warn: this runs on every chat turn, and
-    // a backend without the graph endpoints yet would fill the log with noise
-    // while the product works perfectly.
+    // Best-effort by design. A network failure or unreadable body is not
+    // logged: this runs on every chat turn and the turn works without it.
     return null;
   }
 }

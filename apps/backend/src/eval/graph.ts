@@ -1,179 +1,84 @@
 /**
- * The GraphRAG leg, as the ADR designs it — reproduced so it can be measured.
+ * The GraphRAG leg, measured through the PRODUCTION read path.
  *
- * ══════════════════════════════════════════════════════════════════════════
- * 🔴 THE SHIPPED PATH DOES NOT WORK, AND THAT IS WHY THIS FILE EXISTS
- * ══════════════════════════════════════════════════════════════════════════
+ * `readGraphRetrieval` below is `lib/graph/queries.ts:readGraphRetrieval`
+ * itself — same statements, same seed matching, same row mapping. Only the
+ * transport differs: the harness cannot open a `pg` pool (see `db.ts`), so the
+ * `payload.db.drizzle.execute` it hands in renders each drizzle statement with
+ * `toExecutableSql` and runs it through `psql`.
  *
- * `POST /api/graph/retrieve` returns **HTTP 500 for every query that matches at
- * least one entity**. Measured against the running `edc-backend-1` on
- * 2026-09-04; see `RESULTS.md` §1 for the two Postgres errors and the reproduction.
+ * ── HISTORY ─────────────────────────────────────────────────────────────────
  *
- * The cause is in `retrieveEdgesQuery` / `retrieveDocumentsQuery`
- * (`lib/graph/queries.ts`): they bind a JS array into `= ANY(${ids}::int[])`,
- * and drizzle's `sql` tag does not bind an array as ONE array parameter — it
- * expands it into a parenthesised list of scalar placeholders. One seed renders
- * `ANY(($6)::int[])` with `$6 = 160` → `malformed array literal: "160"`; two or
- * more render `ANY(($6, $7)::int[])` → `cannot cast type record to integer[]`.
- * The SQL TEXT is correct; only the parameter binding is wrong.
+ * Until 2026-10-17 this file carried its OWN copy of `readGraphRetrieval`, and
+ * inlined the seed-id array as `ARRAY[…]`, because the shipped statements bound
+ * a JS array into `= ANY(${ids}::int[])`. Drizzle expands that into `($6, $7)`,
+ * so `POST /api/graph/retrieve` answered HTTP 500 for every query that matched
+ * an entity (`RESULTS.md` §1). The statements now build `ARRAY[$6, $7]::int[]`
+ * from scalar parameters (`queries.ts:intArray`, pinned by
+ * `queries.pg.test.ts`), so the copy is gone and the "with graph" arm measures
+ * what ships.
  *
- * The web provider treats a non-2xx as "the graph had nothing", deliberately
- * without even a log line (`apps/web/src/lib/server/graph.ts:fetchGraphRetrieval`),
- * and `prepareTurn` wraps the provider in `.catch(() => null)`. So today the
- * graph contributes exactly nothing, silently, on every turn.
+ * ── WHAT IS STILL A COPY ────────────────────────────────────────────────────
  *
- * ⚠ CONSEQUENCE FOR THE MEASUREMENT, STATED ONCE AND REPEATED IN THE REPORT:
- * the "with graph" arm here measures **GraphRAG as designed**, not GraphRAG as
- * currently shipped. As shipped, the two arms are byte-identical by
- * construction — no chunks, no block, `fuseMatches(vector, [])` is the plain
- * score sort, and `buildChatTurn` is called without `graphContext`.
- *
- * ── WHAT IS PRODUCTION CODE HERE AND WHAT IS A COPY ─────────────────────────
- *
- * Production, imported and unmodified:
- *   · `matchableEntitiesQuery`, `retrieveEdgesQuery`, `retrieveDocumentsQuery`
- *     — the SQL itself, including all three gates (org, published, min support)
- *   · `seedEntitiesForQuery`  — the whole seed-matching algorithm (all three tiers)
- *   · `expansionTerms`        — the neighbour labels used to widen the query
- *   · `graphMinSupport`, `toCount`, `contentKindOf`, `titleFor`
- *
- * Copied, because `apps/backend` cannot import `apps/web`'s `$lib`:
- *   · `foldText`, `expandGraphQuery`, `graphContextParagraph` and the three
- *     copy helpers it uses. `graph.copy.test.ts` pins them against the cases
- *     `apps/web/src/lib/graph.test.ts` asserts.
- *
- * Changed, and ONLY this:
- *   · the array parameter is inlined as `ARRAY[…]` (`db.ts:inlineParams`)
- *     instead of being bound. That is the defect above, routed around.
+ * `apps/backend` cannot import `apps/web`'s `$lib`, so `foldText`,
+ * `expandGraphQuery`, `graphContextParagraph` and the three copy helpers it
+ * uses are reproduced below. `harness.test.ts` pins them against the cases
+ * `apps/web/src/lib/graph.test.ts` asserts.
  */
 
 import {
-  MAX_RETRIEVE_SEEDS,
-  expansionTerms,
-  graphMinSupport,
-  seedEntitiesForQuery,
-  matchableEntitiesQuery,
-  retrieveDocumentsQuery,
-  retrieveEdgesQuery,
-  toCount,
-  type MatchableEntity,
+  readGraphRetrieval as readGraphRetrievalProduction,
+  type GraphQueryPayload,
+  type GraphRetrieval,
+  type GraphSql,
+  type GraphViewEntity,
 } from '../lib/graph/queries'
-import { contentKindOf, titleFor, type ContentKind } from '../lib/contentKind'
-import type { GraphEntityType, GraphRelationType } from '../lib/graph/types'
+import type { GraphEntityType } from '../lib/graph/types'
 import { selectJson, toExecutableSql } from './db'
 import type { EvalEnv } from './env'
 
-// ── The shapes `POST /api/graph/retrieve` answers with ─────────────────────
-
-export interface GraphViewEntity {
-  id: number
-  type: GraphEntityType
-  label: string
-  support: number
-}
-export interface GraphEdge {
-  from: GraphViewEntity
-  to: GraphViewEntity
-  relationType: GraphRelationType
-  support: number
-}
-export interface GraphDocumentRef {
-  id: number
-  title: string
-  contentKind: ContentKind
-}
-export interface GraphRetrieval {
-  entities: GraphViewEntity[]
-  edges: GraphEdge[]
-  documents: GraphDocumentRef[]
-  terms: string[]
-}
+export type {
+  GraphDocumentRef,
+  GraphEdge,
+  GraphRetrieval,
+  GraphViewEntity,
+} from '../lib/graph/queries'
 
 /** `MAX_QUERY_CHARS` in `apps/backend/src/endpoints/graph.ts`. Semantic, so reproduced. */
 const MAX_QUERY_CHARS = 2000
 
+/** `payload.db.drizzle`, as far as the graph read path needs it, over `psql`. */
+function psqlPayload(env: EvalEnv): GraphQueryPayload {
+  return {
+    db: {
+      drizzle: {
+        execute: async (query: GraphSql) => ({
+          rows: await selectJson<Record<string, unknown>>(
+            env,
+            env.backendDb,
+            toExecutableSql(query),
+          ),
+        }),
+      },
+    },
+  }
+}
+
 /**
- * `readGraphRetrieval`, executed correctly.
- *
- * Same three statements, same order, same short-circuit on zero seeds. The only
- * difference from `lib/graph/queries.ts:readGraphRetrieval` is the transport.
+ * `POST /api/graph/retrieve`, minus HTTP: the endpoint's query trim, then the
+ * production `readGraphRetrieval`.
  */
 export async function readGraphRetrieval(
   env: EvalEnv,
   args: { organizationId: number; query: string; limit?: number },
 ): Promise<GraphRetrieval> {
-  const minSupport = graphMinSupport()
-  const seedLimit = Math.min(args.limit ?? MAX_RETRIEVE_SEEDS, MAX_RETRIEVE_SEEDS)
-  const empty: GraphRetrieval = { entities: [], edges: [], documents: [], terms: [] }
-
   const query = args.query.trim().slice(0, MAX_QUERY_CHARS)
-  if (query === '') return empty
-
-  const candidateRows = await selectJson<Record<string, unknown>>(
-    env,
-    env.backendDb,
-    toExecutableSql(matchableEntitiesQuery(args.organizationId, minSupport)),
-  )
-  const candidates: MatchableEntity[] = candidateRows.map((row) => ({
-    id: Number(row.id),
-    type: String(row.type) as GraphEntityType,
-    label: String(row.label ?? ''),
-    support: toCount(row.support),
-    canonicalKey: String(row.canonical_key ?? ''),
-  }))
-
-  const seeds = seedEntitiesForQuery(candidates, query, seedLimit)
-  if (seeds.length === 0) return empty
-
-  const seedIds = seeds.map((entity) => entity.id)
-  const [edgeRows, documentRows] = await Promise.all([
-    selectJson<Record<string, unknown>>(
-      env,
-      env.backendDb,
-      toExecutableSql(retrieveEdgesQuery(args.organizationId, seedIds, minSupport)),
-    ),
-    selectJson<Record<string, unknown>>(
-      env,
-      env.backendDb,
-      toExecutableSql(retrieveDocumentsQuery(args.organizationId, seedIds, minSupport)),
-    ),
-  ])
-
-  const edges: GraphEdge[] = edgeRows.map((row) => ({
-    from: {
-      id: Number(row.from_id),
-      type: String(row.from_type) as GraphEntityType,
-      label: String(row.from_label ?? ''),
-      support: toCount(row.from_support),
-    },
-    to: {
-      id: Number(row.to_id),
-      type: String(row.to_type) as GraphEntityType,
-      label: String(row.to_label ?? ''),
-      support: toCount(row.to_support),
-    },
-    relationType: String(row.relation_type) as GraphRelationType,
-    support: toCount(row.support),
-  }))
-
-  // `mapDocumentRow(row, false)` — the privacy gate on titles. A testimonio is
-  // "Testimonio", never the free text an uploader typed. Not reachable in this
-  // corpus (no published testimonio carries content), but it is the rule.
-  const documents: GraphDocumentRef[] = documentRows.map((row) => {
-    const contentKind = contentKindOf({ contentKind: row.content_kind })
-    return {
-      id: Number(row.id),
-      title: titleFor(contentKind, typeof row.name === 'string' ? row.name : null),
-      contentKind,
-    }
+  if (query === '') return { entities: [], edges: [], documents: [], terms: [] }
+  return readGraphRetrievalProduction(psqlPayload(env), {
+    organizationId: args.organizationId,
+    query,
+    limit: args.limit,
   })
-
-  return {
-    entities: seeds.map(({ id, type, label, support }) => ({ id, type, label, support })),
-    edges,
-    documents,
-    terms: expansionTerms(seeds, edges),
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

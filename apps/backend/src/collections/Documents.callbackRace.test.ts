@@ -93,7 +93,15 @@ vi.mock('@/lib/aiClient', () => ({
   getAppAIClient: () => ({ ingest: { enqueue } }),
 }))
 
-const settle = () => new Promise((r) => setTimeout(r, 150))
+/**
+ * The hook defers `runExtractAndIngest` with `setImmediate` and never awaits
+ * it, so there is no promise to hold. Poll instead of sleeping: a fixed 150 ms
+ * wait failed 1 of 3 full-suite runs under load (measured, audit 2026-10-17).
+ * `ingestId` is the first run's LAST write, so its arrival marks the pipeline
+ * as done; a racing second run would have bumped `enqueue` past one call.
+ */
+const settle = () =>
+  vi.waitFor(() => expect(row.ingestId).toBe('ing_1'), { timeout: 5000, interval: 10 })
 
 beforeEach(() => {
   calls = 0

@@ -1216,11 +1216,32 @@ export function seedEntitiesForQuery(
 }
 
 /**
+ * A list of integer ids as a Postgres `int[]` expression: `ARRAY[$6, $7]::int[]`.
+ *
+ * 🔴 WHY NOT `${ids}::int[]`. Drizzle's `sql` tag does not bind a JS array as
+ * ONE parameter — it expands it into `($6, $7, …)`. One id then fails with
+ * `malformed array literal`, two or more with `cannot cast type record to
+ * integer[]`. That shipped, and `POST /api/graph/retrieve` answered HTTP 500 for
+ * every query that matched an entity (measured 2026-10-17). `queries.pg.test.ts`
+ * runs these statements through the real driver to keep it fixed.
+ *
+ * Each id is its own scalar parameter, so nothing is inlined. An empty list
+ * renders `ARRAY[]::int[]`, which Postgres accepts and `ANY` treats as no match.
+ */
+function intArray(ids: readonly number[]): GraphSql {
+  return sql`ARRAY[${sql.join(
+    ids.map((id) => sql`${id}`),
+    sql`, `,
+  )}]::int[]`
+}
+
+/**
  * One hop out of a set of seed entities, both endpoints above threshold.
  *
- * ⚠ `= ANY(${ids}::int[])` rather than a built-up `IN (…)` list. The ids come
- * from our own previous query, so either would be safe — but a hand-built `IN`
- * list is the shape somebody later copies for a value that did NOT come from us.
+ * ⚠ `= ANY(${intArray(ids)})` rather than a built-up `IN (…)` list. The ids
+ * come from our own previous query, so either would be safe — but a hand-built
+ * `IN` list is the shape somebody later copies for a value that did NOT come
+ * from us. 🔴 Never interpolate the JS array itself: see {@link intArray}.
  */
 export function retrieveEdgesQuery(
   organizationId: number,
@@ -1239,7 +1260,7 @@ export function retrieveEdgesQuery(
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
       WHERE r.organization_id = ${organizationId}
-        AND (r.from_entity_id = ANY(${ids}::int[]) OR r.to_entity_id = ANY(${ids}::int[]))
+        AND (r.from_entity_id = ANY(${intArray(ids)}) OR r.to_entity_id = ANY(${intArray(ids)}))
       GROUP BY 1, 2, 3
       HAVING COUNT(DISTINCT r.document_id) >= ${minSupport}
     )
@@ -1289,7 +1310,7 @@ export function retrieveDocumentsQuery(
     ${joinPublishedDocuments('m', organizationId)}
     JOIN ent_support s ON s.entity_id = m.entity_id
     WHERE m.organization_id = ${organizationId}
-      AND m.entity_id = ANY(${ids}::int[])
+      AND m.entity_id = ANY(${intArray(ids)})
     GROUP BY d.id, d.name, d.content_kind
     ORDER BY matched_entities DESC, occurrences DESC, d.id DESC
     LIMIT ${clampLimit(limit, MAX_RETRIEVE_DOCUMENTS, MAX_RETRIEVE_DOCUMENTS)}`
