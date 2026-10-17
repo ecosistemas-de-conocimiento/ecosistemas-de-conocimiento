@@ -1017,6 +1017,16 @@ interface DocumentRow {
   transcribeId?: string | null
   transcribeAttempt?: number | null
   audioMeta?: AudioMeta | null
+  /** Stamped by Payload on every write. `runExtractAndIngest` reads it to spot a stale read. */
+  updatedAt?: string | Date | null
+}
+
+/** A Payload timestamp as epoch ms, or null when absent or unparseable. */
+function timestampMs(value: unknown): number | null {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.getTime() : null
+  if (typeof value !== 'string' || !value) return null
+  const t = Date.parse(value)
+  return Number.isFinite(t) ? t : null
 }
 
 /**
@@ -1291,34 +1301,55 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
   // Payload has no after-commit hook, so a bounded retry is the honest fix.
   // ~2.5s total is far longer than a commit needs and still fails loudly if the
   // row genuinely does not exist.
+  //
+  // 🔴 ON AN UPDATE THE READ DOES NOT THROW — IT RETURNS THE OLD ROW. A create's
+  // uncommitted row is invisible, so `findByID` throws and the loop retries. An
+  // update's uncommitted row is not invisible: the PREVIOUS version is, and the
+  // read succeeds with it. That is how approving a hold sometimes never ingested
+  // (measured by `e2e/holds.e2e.ts`, 1 of 3 runs at load 8): the read returned
+  // the pre-approval row, still `held`, and the held guard below returned.
+  // So a row older than the write that fired this hook counts as "not visible
+  // yet", exactly like a throw. `updatedAt` is the clock: Payload stamps it on
+  // every write, and the hook's `doc` carries the stamp of THIS write.
+  // `Documents.approvalRace.test.ts`.
   const RETRY_DELAYS_MS = [25, 50, 100, 250, 500, 750, 800]
+  const writtenAt = timestampMs(row.updatedAt)
   let fresh: DocumentRowWithMedia | null = null
+  let lastError: unknown = null
 
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
-      fresh = (await payload.findByID({
+      const read = (await payload.findByID({
         collection: 'documents',
         id: docId as never,
         depth: 1,
         overrideAccess: true,
       })) as DocumentRowWithMedia
-      if (fresh) break
-    } catch (err) {
-      const last = attempt === RETRY_DELAYS_MS.length
-      if (last) {
-        console.error(
-          '[documents] doc',
-          docId,
-          `still not readable after ${RETRY_DELAYS_MS.reduce((a, b) => a + b, 0)}ms —`,
-          'giving up on extract+ingest',
-          err,
-        )
-        return
+      const readAt = timestampMs(read?.updatedAt)
+      if (read && (writtenAt === null || (readAt !== null && readAt >= writtenAt))) {
+        fresh = read
+        break
       }
+      lastError = 'the row read back is older than the write that fired this hook'
+    } catch (err) {
+      lastError = err
+    }
+    if (attempt < RETRY_DELAYS_MS.length) {
       await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]))
     }
   }
-  if (!fresh) return
+  if (!fresh) {
+    // ⚠ Left `pending`. `sweepStalledPending` in `lib/embeddingJanitor.ts` is
+    // the backstop for a row this loop gives up on.
+    console.error(
+      '[documents] doc',
+      docId,
+      `still not readable after ${RETRY_DELAYS_MS.reduce((a, b) => a + b, 0)}ms —`,
+      'giving up on extract+ingest',
+      lastError,
+    )
+    return
+  }
   if (!INGESTABLE_KINDS.has(String(fresh.kind))) return
 
   /**
@@ -3079,6 +3110,7 @@ export interface RetryableDocument {
   extractedText?: string | null
   transcribeAttempt?: number | null
   anonymisationStatus?: string | null
+  redactedText?: string | null
 }
 
 /**
@@ -3118,7 +3150,26 @@ export function planIngestRetry(doc: RetryableDocument): Record<string, unknown>
    * ⚠ THIS IS THE SAME BUG CLASS AS THE RENAME LOOP, one state along. Retry is
    * for "I fixed the source"; a reviewed document has no source problem.
    */
-  if (doc.anonymisationStatus === 'rejected' || doc.anonymisationStatus === 'approved') return null
+  if (doc.anonymisationStatus === 'rejected') return null
+
+  /**
+   * 🔴 AN APPROVED ROW RE-SENDS ITS APPROVED TEXT, AND KEEPS THE APPROVAL.
+   *
+   * A failure after a release is a TECHNICAL failure (a lost hook run, an
+   * ai-service error), and refusing it left the document with no way out at
+   * all: `sweepStalledPending` could not stamp it, the uploader could not retry
+   * it. So the retry writes exactly what `holdReview.ts` writes on approval, the
+   * gate fields untouched: the hook sees `approved` again and ingests
+   * `redactedText` without re-running the gate.
+   *
+   * ⚠ No `redactedText`, no retry. The approval path never ingests
+   * `extractedText`, so an approved row without its approved text has nothing
+   * it may send.
+   */
+  if (doc.anonymisationStatus === 'approved') {
+    const approved = typeof doc.redactedText === 'string' && doc.redactedText.trim().length > 0
+    return approved ? { ingestStatus: 'pending', ingestError: null, ingestId: null } : null
+  }
 
   /**
    * ⚠ CLEARS THE ANONYMISATION HOLD, and this is the ONLY place that does.

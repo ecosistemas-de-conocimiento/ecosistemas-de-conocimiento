@@ -619,6 +619,27 @@ describe('sweepStalledPending — the lost background extract', () => {
     }
   })
 
+  it('🔴 sweeps a reviewer’s release whose ingest was lost, and leaves it retryable', async () => {
+    // `holdReview.ts` re-enters an approved hold at `pending`. A lost hook run
+    // (a restart, or a read that never saw the approval commit) stranded it there.
+    const released = strandedPending({
+      id: 21,
+      contentKind: 'testimonio',
+      anonymisationStatus: 'approved',
+      redactedText: 'Mi nombre es [Persona A].',
+    })
+    const db = fakeDb([released])
+
+    const result = await sweepStalledPending(db.payload, { now: NOW, deadlineMs: PENDING_DEADLINE_MS })
+
+    expect(result).toEqual({ examined: 1, stalled: 1 })
+    expect(db.row(21)!.ingestStatus).toBe('failed')
+    // The decision survives the sweep.
+    expect(db.row(21)!.anonymisationStatus).toBe('approved')
+    const plan = planIngestRetry(db.row(21) as Record<string, string>)
+    expect(plan).toEqual({ ingestStatus: 'pending', ingestError: null, ingestId: null })
+  })
+
   it('🔴 THE RACE: a row that moves between the read and the write is left alone', async () => {
     // A user pressing retry, or a late hook run, moves the row to `extracting`.
     const db = fakeDb([strandedPending({ id: 7 })], {

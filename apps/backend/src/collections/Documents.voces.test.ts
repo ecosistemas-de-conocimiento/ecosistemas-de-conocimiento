@@ -429,7 +429,7 @@ describe('🔴 a reviewer’s decision is the only override, and retry cannot un
     ).toBeNull()
   })
 
-  it('🔴 retry REFUSES an approved document — re-gating would replace what a human cleared', () => {
+  it('🔴 retry REFUSES an approved document with no approved text — re-gating would replace what a human cleared', () => {
     // Worse than losing the decision: the fresh gate run reads `extractedText`,
     // the raw original, and a probabilistic detector can answer `ready` on it.
     expect(
@@ -440,6 +440,21 @@ describe('🔴 a reviewer’s decision is the only override, and retry cannot un
         anonymisationStatus: 'approved',
       }),
     ).toBeNull()
+  })
+
+  it('🔴 retry RE-SENDS an approved document’s approved text and keeps the decision', () => {
+    // The ingest after a release failed for a technical reason. Without this the
+    // row had no way out at all. Only ingest fields move: the gate fields, the
+    // approved `redactedText` among them, are left exactly as the reviewer set them.
+    expect(
+      planIngestRetry({
+        kind: 'pdf',
+        ingestStatus: 'failed',
+        extractedText: 'el testimonio completo',
+        anonymisationStatus: 'approved',
+        redactedText: 'el testimonio [Persona A]',
+      }),
+    ).toEqual({ ingestStatus: 'pending', ingestError: null, ingestId: null })
   })
 
   it('a still-HELD document stays retryable — "I fixed the source" is a real case', () => {

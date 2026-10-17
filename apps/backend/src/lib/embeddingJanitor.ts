@@ -461,9 +461,10 @@ export async function sweepStalledEmbeddings(
  *     is outside the anonymisation gate entirely. 🔴 This is what keeps the
  *     sweep off a HOLD (`held`, waiting for a reviewer — `seed/review.ts`
  *     writes exactly `pending` + `held`), off a gate run (`pending`), off a
- *     reviewer's release (`approved` re-enters at `pending`, and
- *     `planIngestRetry` refuses `approved`, so `failed` would be a dead end),
- *     off a rejection, and off a seeded Voz that has never been gated at all.
+ *     rejection, and off a seeded Voz that has never been gated at all.
+ *   · …OR `anonymisationStatus` is `approved` with a `redactedText` — a
+ *     reviewer's release whose ingest run was lost. See
+ *     {@link PENDING_SWEEP_GATE_SHAPES}.
  *     Unknown or missing `contentKind` is excluded by the same `equals`, which
  *     fails closed like `mustPassAnonymisationGate`.
  *   · `publicationStatus` is `draft` — a retry re-runs the DRAFT ingest, so on
@@ -500,6 +501,23 @@ export const NEVER_STARTED_CODE = 'ingest_never_started'
  * drift apart silently.
  */
 export const PENDING_SWEEP_KINDS = ['pdf', 'docx', 'audio'] as const
+
+/**
+ * The gate states a stale `pending` row may be in and still be swept. See the
+ * section header for why every other gate state is excluded.
+ *
+ *   · ungated: a `documento` that never entered the gate.
+ *   · 🔴 released: a reviewer APPROVED a hold. `holdReview.ts` re-enters it at
+ *     `pending`, and the hook can lose that run like any other (a restart, or a
+ *     read that never saw the approval commit). `planIngestRetry` re-sends the
+ *     approved `redactedText` and keeps the decision, so `failed` is retryable.
+ *     `redactedText` must exist: without it the retry would have nothing
+ *     approved to send, and `planIngestRetry` refuses it.
+ */
+export const PENDING_SWEEP_GATE_SHAPES: readonly (readonly Where[])[] = [
+  [{ contentKind: { equals: UNGATED_CONTENT_KIND } }, { anonymisationStatus: { equals: 'n/a' } }],
+  [{ anonymisationStatus: { equals: 'approved' } }, { redactedText: { exists: true } }],
+]
 
 export function pendingStuckAfterMs(): number {
   const raw = Number(process.env[PENDING_JANITOR_STUCK_MIN_VAR])
@@ -538,58 +556,64 @@ export async function sweepStalledPending(
   const limit = opts.limit ?? 500
 
   const cutoff = new Date(now.getTime() - deadlineMs).toISOString()
-  const strandedWhere: Where[] = [
-    { ingestStatus: { equals: 'pending' } },
-    { ingestId: { exists: false } },
-    { contentKind: { equals: UNGATED_CONTENT_KIND } },
-    { anonymisationStatus: { equals: 'n/a' } },
-    { publicationStatus: { equals: 'draft' } },
-    { kind: { in: [...PENDING_SWEEP_KINDS] } },
-    { updatedAt: { less_than: cutoff } },
-  ]
-
-  const page = (await payload.find({
-    collection: 'documents',
-    where: { and: strandedWhere },
-    sort: 'updatedAt',
-    limit,
-    depth: 0,
-    overrideAccess: true,
-  })) as unknown as { docs?: Array<{ id?: number | string }> }
-
-  const docs = page?.docs ?? []
   const reason = neverStartedReason(Math.round(deadlineMs / 60_000)).slice(0, 500)
+  let examined = 0
   let stalled = 0
 
-  for (const doc of docs) {
-    if (doc?.id == null) continue
-    try {
-      // 🔴 Guarded on the whole predicate: a retry, a late hook run or a
-      // reviewer action between the read and this write makes it match nothing.
-      const res = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
-        id: doc.id,
-        where: strandedWhere,
-        data: { ingestStatus: 'failed', ingestError: reason },
-      })
-      if (res === 0) continue
-    } catch (err) {
-      opts.log?.warn(
-        { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
-        '[embedding-janitor] could not fail out a stale pending row — it stays invisible',
-      )
-      continue
+  // One pass per gate shape. `updateDocumentColumns` has no `or`, and two
+  // narrow predicates are easier to audit than one compound one.
+  for (const gate of PENDING_SWEEP_GATE_SHAPES) {
+    const strandedWhere: Where[] = [
+      { ingestStatus: { equals: 'pending' } },
+      { ingestId: { exists: false } },
+      ...gate,
+      { publicationStatus: { equals: 'draft' } },
+      { kind: { in: [...PENDING_SWEEP_KINDS] } },
+      { updatedAt: { less_than: cutoff } },
+    ]
+
+    const page = (await payload.find({
+      collection: 'documents',
+      where: { and: strandedWhere },
+      sort: 'updatedAt',
+      limit,
+      depth: 0,
+      overrideAccess: true,
+    })) as unknown as { docs?: Array<{ id?: number | string }> }
+
+    const docs = page?.docs ?? []
+    examined += docs.length
+
+    for (const doc of docs) {
+      if (doc?.id == null) continue
+      try {
+        // 🔴 Guarded on the whole predicate: a retry, a late hook run or a
+        // reviewer action between the read and this write makes it match nothing.
+        const res = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
+          id: doc.id,
+          where: strandedWhere,
+          data: { ingestStatus: 'failed', ingestError: reason },
+        })
+        if (res === 0) continue
+      } catch (err) {
+        opts.log?.warn(
+          { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+          '[embedding-janitor] could not fail out a stale pending row — it stays invisible',
+        )
+        continue
+      }
+      stalled += 1
     }
-    stalled += 1
+
+    if (docs.length >= limit) {
+      opts.log?.warn(
+        { examined: docs.length, limit },
+        '[embedding-janitor] the pending sweep page was full — more documents may be stuck than this run examined',
+      )
+    }
   }
 
-  if (docs.length >= limit) {
-    opts.log?.warn(
-      { examined: docs.length, limit },
-      '[embedding-janitor] the pending sweep page was full — more documents may be stuck than this run examined',
-    )
-  }
-
-  return { examined: docs.length, stalled }
+  return { examined, stalled }
 }
 
 // ---------------------------------------------------------------------------
