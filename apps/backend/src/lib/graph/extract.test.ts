@@ -959,6 +959,40 @@ describe('extractGraph', () => {
     expect(message.length).toBeLessThan(500)
   })
 
+  it('🔴 a failing extraction on a testimonio never logs or throws the reply content', async () => {
+    const secret = 'Juana Pérez Hernández'
+    const body = `{"entidades":[{"tipo":"persona","etiqueta":"${secret}","fragm`
+    const client: GraphGenerateClient = {
+      generate: {
+        async sync() {
+          return { parsed: undefined, text: body }
+        },
+      },
+    }
+    const spies = (['log', 'warn', 'error', 'info', 'debug'] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(() => undefined),
+    )
+    let message = ''
+    try {
+      for (const contentKind of ['testimonio', 'conversacion', 'unknown-kind']) {
+        await extractGraph({ docId: 31, contentKind, text, client, windowChars: 5000 }).catch(
+          (err: Error) => {
+            message += err.message
+          },
+        )
+      }
+      const logged = spies.flatMap((s) => s.mock.calls).map((c) => c.map(String).join(' ')).join('\n')
+      expect(logged).toContain('extraction window')
+      expect(logged).not.toContain('Juana')
+      expect(logged).not.toContain('entidades')
+      expect(message).not.toContain('Juana')
+      expect(message).toContain(`response length ${body.length}`)
+      expect(message).toMatch(/position \d+/)
+    } finally {
+      spies.forEach((s) => s.mockRestore())
+    }
+  })
+
   it('returns an empty extraction for empty text without calling the model', async () => {
     const { client, calls } = fakeClient([])
     const result = await extractGraph({ docId: 8, contentKind: 'documento', text: '  ', client })
