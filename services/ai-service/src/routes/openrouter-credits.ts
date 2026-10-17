@@ -3,7 +3,7 @@
 //
 // Why this lives in ai-service (not the consumer):
 //   - The OPENROUTER_API_KEY is platform infra, owned by ai-service. Letting
-//     consumers (a prototype admin pages, …) hit OpenRouter directly forces every
+//     consumers hit OpenRouter directly forces every
 //     consumer to hold the key, which violates the "one process holds the
 //     LLM provider credentials" invariant that the OpenRouter HTTP adapter
 //     comment (`adapters/openrouter.ts`) codifies.

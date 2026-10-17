@@ -12,9 +12,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { fetchContext } from './fetch.js';
-import { CorpusNotFoundError } from '../rag/retrieve.js';
+import { CorpusNotFoundError, type RetrieveService } from '../rag/retrieve.js';
 
-function makeRetrieveService(impl: ReturnType<typeof vi.fn>) {
+// ⚠ Typed as the real method, not `ReturnType<typeof vi.fn>`. Under vitest 5 a
+// bare `vi.fn` is `Mock<Procedure | Constructable>`, which no longer satisfies
+// `Pick<RetrieveService, 'retrieve'>` — 5 x TS2322. Naming the actual signature
+// is both the fix and the stronger check: a mock with the wrong shape now fails
+// at compile time instead of being accepted as any callable.
+function makeRetrieveService(impl: RetrieveService['retrieve']) {
   return { retrieve: impl };
 }
 

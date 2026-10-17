@@ -6,10 +6,39 @@
 // The point of asserting on emitted SQL is backward compatibility: a consumer
 // pinned to the current contract must produce byte-identical queries, and the
 // only way to know that is to look.
+//
+// 🔴 THE SAME REASONING NOW APPLIES TO THE CORPUS LOOKUP.
+// Both legs of a hybrid retrieve are keyed by `corpus_id`, and that id comes
+// from ONE `lookupCorpus` read carrying `and(eq(corpora.org, ctx.org),
+// eq(corpora.project, ctx.project), eq(corpora.name, name))`. That predicate is
+// the only thing standing between two tenants' corpora — and this file used to
+// stub it away with `where: () => ({ limit: … })`, a function taking NO
+// parameter. Every case below therefore agreed with any WHERE clause at all,
+// INCLUDING NONE: delete the two tenant terms and both legs happily fan out
+// over another org's chunks while the file stays green.
+//
+// `where()` now TAKES its predicate and records it (`from()` takes the table so
+// the record is labelled), so a dropped `eq(...)` shows up as a missing column
+// or a missing bound param.
+//
+// 🔴 AND THE MUTATION THAT DELETES THE `.where()` CALL, NOT ITS TERMS.
+// Recording a predicate only sees a `where()` that RAN. Deleting the call left
+// no record — and this stub disguised it further: `limit` lived only inside the
+// `where()` result, so `selectCorpusColumns().limit(1)` threw
+// `TypeError: this.selectCorpusColumns(...).limit is not a function`. Every
+// case went red about the STUB's shape, naming no tenant leak. The `from()`
+// result now carries its own guarded `limit`/`then` (see
+// `WhereRecorder.guard`), so an unfiltered corpus lookup is recorded as
+// `<NO PREDICATE>` and the scope assertions reject it by name.
+//
+// ⚠ A mock cannot PROVE isolation — it shows which predicate was BUILT, never
+// that Postgres honoured it. The real proof is
+// `src/routes/tenant-isolation.integration.test.ts`, against a live database.
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RetrieveService, type Embedder } from './retrieve.js';
+import { WhereRecorder } from '../../test/where-recorder.js';
 
 const ORG = 'org-1';
 const PROJECT = 'proj-1';
@@ -61,13 +90,50 @@ function flattenSql(node: unknown, out: { text: string[]; params: unknown[] }): 
   out.params.push(node);
 }
 
+/**
+ * One recorder for the whole file, cleared in `beforeEach` so a test only ever
+ * sees the predicates its OWN `retrieve()` call built.
+ */
+const wheres = new WhereRecorder();
+beforeEach(() => {
+  wheres.reset();
+});
+
+/** The table a drizzle `from(...)` was handed, under the name drizzle uses. */
+function tableName(table: unknown): string {
+  const name = (table as Record<symbol, unknown> | null)?.[Symbol.for('drizzle:Name')];
+  return typeof name === 'string' ? name : 'unknown';
+}
+
 /** Stub db: fixed corpus row, scripted `execute` results, recorded SQL. */
 function makeDb(results: Array<Record<string, unknown>[]>) {
   const calls: Recorded[] = [];
   let i = 0;
   const db = {
     select: () => ({
-      from: () => ({ where: () => ({ limit: () => Promise.resolve([SEED_CORPUS]) }) }),
+      // 🔴 `from` TAKES the table and `where` TAKES the predicate — the two
+      // parameters this stub used to throw away. Without them the corpus
+      // lookup is invisible to every assertion in the file.
+      from: (table: unknown) => {
+        // ONE guard per `from()` — per chain instance — so `settle()` can tell
+        // "this chain was filtered" from "this chain never was".
+        const guard = wheres.guard(tableName(table));
+        const rows = () => Promise.resolve(guard.settle([SEED_CORPUS]));
+        return {
+          where: (predicate: unknown) => {
+            guard.where(predicate);
+            return { limit: () => Promise.resolve(guard.settle([SEED_CORPUS])) };
+          },
+          // 🔴 The UNFILTERED terminals. `limit` is where the real mutation
+          // lands (`selectCorpusColumns().limit(1)` once `.where()` is gone);
+          // `then` covers an awaited chain that calls neither. Without these
+          // two the deleted call is a TypeError about the stub, not a recorded
+          // whole-table read.
+          limit: rows,
+          then: (resolve: (v: unknown[]) => void, reject?: (e: unknown) => void) =>
+            rows().then(resolve, reject),
+        };
+      },
     }),
     execute: vi.fn(async (q: unknown) => {
       const acc = { text: [] as string[], params: [] as unknown[] };
@@ -158,6 +224,14 @@ describe('RetrieveService — dense mode is unchanged', () => {
     // `ranks` is hybrid-only telemetry and must not appear.
     expect(out.chunks[0]!.ranks).toBeUndefined();
     expect(out.chunks[0]!.lexicalScore).toBeUndefined();
+    // 🔴 Those chunks came out of a corpus resolved under the CALLER's tenancy,
+    // not merely under its name. The old parameterless `where()` was blind to
+    // this and would have accepted a bare `eq(corpora.name, …)`.
+    //
+    // EVERY read, not "at least one": this file reaches `corpora` exactly once
+    // per retrieve and that read must be scoped, so the weaker form would only
+    // let a second, unscoped lookup in unnoticed.
+    wheres.expectEveryQueryScopedTo('corpora', { org: ORG, project: PROJECT });
   });
 
   it('does not touch the lexical index at all', async () => {
@@ -267,5 +341,79 @@ describe('RetrieveService — hybrid fusion', () => {
     const svc = new RetrieveService({ db, embedder });
     const out = await svc.retrieve({ corpus: 'docs', query: 'q', mode: 'hybrid', topK: 2 }, ctx);
     expect(out.chunks.map((c) => c.chunkId)).toEqual(['a', 'b']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 Tenant scope of the corpus lookup
+// ---------------------------------------------------------------------------
+//
+// Hybrid retrieve fans out into TWO `execute` legs, both filtered only by
+// `"corpus_id" = $1`. Neither leg carries an org or a project — they do not
+// need to, PROVIDED the corpus id they share was resolved under the caller's
+// tenancy. That makes `lookupCorpus` the whole tenant boundary for this file:
+// one dropped `eq(...)` there and both legs read another tenant's chunks.
+//
+// This file never reaches the alias branch of `lookupCorpus` — the stub answers
+// the direct by-name read with a row every time, so the `corpus_aliases` lookup
+// and its target re-check are unreachable here. They are covered in
+// `retrieve.test.ts`, which can drive the miss path.
+// ---------------------------------------------------------------------------
+
+describe('RetrieveService — tenant scope of the corpus lookup', () => {
+  it('🔴 the corpus lookup is scoped to (org, project) — not merely to the name', async () => {
+    const { db } = makeDb([[row('a')]]);
+    const svc = new RetrieveService({ db, embedder });
+    await svc.retrieve({ corpus: 'docs', query: 'q' }, ctx);
+
+    const lookups = wheres.for('corpora');
+    expect(lookups).toHaveLength(1);
+    const lookup = lookups[0]!;
+    // Column by column, so a dropped term names itself rather than showing up
+    // as one opaque "the SQL changed".
+    expect(lookup.sql).toContain('"corpora"."org" =');
+    expect(lookup.sql).toContain('"corpora"."project" =');
+    expect(lookup.sql).toContain('"corpora"."name" =');
+    // Bound to the CALLER's scope, in that order — a predicate naming the right
+    // columns but binding a constant would pass the checks above.
+    expect(lookup.params).toEqual([ORG, PROJECT, 'docs']);
+    // Catches the other mutation — the `.where()` call DELETED rather than
+    // emptied. It reaches the recorder only because the stub's terminals settle
+    // through `WhereRecorder.guard`.
+    wheres.expectEveryQueryScopedTo('corpora', { org: ORG, project: PROJECT });
+    wheres.expectNoUnfilteredQuery();
+  });
+
+  it('🔴 hybrid resolves the corpus ONCE, under tenancy — and BOTH legs re-fence', async () => {
+    // ⚠ THIS CASE INVERTED, deliberately. It used to assert
+    // `expect(c.sql).not.toContain('"org"')` — a tripwire whose comment said a
+    // future edit adding an org filter should go red so someone re-read the
+    // reasoning before deciding which guard was the real one. That happened:
+    // the isolation review ruled that the corpus lookup alone is INHERITED
+    // isolation, holding only because every caller passes `corpusRow.id` from
+    // `lookupCorpus`. One future caller passing a raw id loses it silently.
+    //
+    // So both guards are now real, and both are asserted here. The lookup is
+    // still the primary boundary — that is what the `corpora` assertions
+    // below pin — and the chunk-layer predicate is defence in depth behind it.
+    const { db, calls } = makeDb([[row('a')], [row('b')]]);
+    const svc = new RetrieveService({ db, embedder });
+    await svc.retrieve({ corpus: 'docs', query: 'q', mode: 'hybrid' }, ctx);
+
+    // Two legs ran…
+    expect(calls).toHaveLength(2);
+    // …and BOTH carry the corpus id AND the tenant scope, bound to the caller.
+    for (const c of calls) {
+      expect(c.sql).toContain('"corpus_id" = ');
+      expect(c.sql).toContain('"org" =');
+      expect(c.sql).toContain('"project" =');
+      expect(c.params).toContain(ORG);
+      expect(c.params).toContain(PROJECT);
+    }
+    // …and the tenant-scoped lookup still happens exactly ONCE. A second,
+    // unscoped corpus read added for the lexical leg would fail here.
+    expect(wheres.for('corpora')).toHaveLength(1);
+    wheres.expectEveryQueryScopedTo('corpora', { org: ORG, project: PROJECT });
+    wheres.expectNoUnfilteredQuery();
   });
 });

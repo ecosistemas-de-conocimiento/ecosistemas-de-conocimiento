@@ -21,9 +21,8 @@ import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { usageLogs } from '../db/schema/index.js';
 import { callOpenRouterEmbedding } from '../services/ai/embeddings/openrouter.js';
-import { embedRequestSchema } from '../schemas/rag.js';
+import { embedRequestSchema } from '../contract/rag.js';
 import { BudgetEnforcer } from '../services/budget/enforcer.js';
-import { BudgetExceeded, BudgetNotConfigured } from '../services/budget/errors.js';
 import { priceForEmbedding } from '../services/ai/router/task-profiles.js';
 
 const DEFAULT_EMBEDDING_MODEL = env.EMBEDDING_MODEL;
@@ -57,34 +56,22 @@ const embedRoutes: FastifyPluginAsync = async (app) => {
     //    top-level `warnings: [{ code: 'BUDGET_SOFT_CAP', ... }]` on the
     //    response. See `plan/budget-reset-followup.md`.
     const budget = new BudgetEnforcer(db);
-    let reserveResult: Awaited<ReturnType<typeof budget.reserve>>;
-    try {
-      reserveResult = await budget.reserve({
-        org: req.auth.org,
-        amountUsd: estimatedCost,
-      });
-    } catch (err) {
-      if (err instanceof BudgetNotConfigured) {
-        reply.code(402);
-        return {
-          error: 'BudgetNotConfigured',
-          org: err.org,
-          message: err.message,
-        };
-      }
-      if (err instanceof BudgetExceeded) {
-        reply.code(402);
-        return {
-          error: 'BudgetExceeded',
-          org: err.org,
-          requested: err.requested,
-          remaining: err.remaining,
-          shortfallUsd: err.shortfallUsd,
-          message: err.message,
-        };
-      }
-      throw err;
-    }
+    // A budget refusal is not caught here: the class declares `status = 402`
+    // and its own body, and the /v1 error handler sends it.
+    //
+    // `BudgetNotConfigured` and `BudgetExceeded` are byte-for-byte what this
+    // route used to build by hand in a two-arm `instanceof` catch.
+    //
+    // ⚠ DECLARED WIRE CHANGE — `BudgetMisconfigured` on this route only.
+    // That third class was NOT in the old catch, so `reserve()` raising it
+    // answered a Fastify generic 500. It now answers 402 with the same typed
+    // body `/v1/generate` has always sent for it. This is the intended fix (a
+    // config fault is a caller-actionable 402, not a server error) and it is
+    // pinned in `src/errors/wire-golden.test.ts` → "changed vs main".
+    const reserveResult = await budget.reserve({
+      org: req.auth.org,
+      amountUsd: estimatedCost,
+    });
 
     // 3. Call the embedder. On any failure, refund the full reserve and rethrow.
     let result: Awaited<ReturnType<typeof callOpenRouterEmbedding>>;

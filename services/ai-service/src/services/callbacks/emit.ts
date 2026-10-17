@@ -11,7 +11,9 @@
 //   3. Persists a `callback_deliveries` row in `pending` status.
 //   4. Fire-and-forget: kicks off the first POST asynchronously.
 //   5. On 5xx / network: schedules retries per the contract backoff schedule
-//      (t+0, +5s, +30s, +2m, +10m, then dead-letter).
+//      (t+0, +5s, +30s, +2m, +10m, +30m, +2h, then dead-letter).
+//   6. Every terminal transition goes through `reportDeliveryTransition`:
+//      one counter increment, plus an ERROR line for the dead-letter set.
 //
 // Critical correctness note (from the contract doc):
 //   - Sign the EXACT bytes we send. We capture `body = JSON.stringify(...)`
@@ -22,7 +24,7 @@
 // Re-signing per attempt:
 //   The signature covers `${unixSeconds}.${body}`, and receivers enforce the
 //   contract's ±300s replay window against that timestamp. The retry schedule
-//   below spans ~12m35s from enqueue to the final attempt, so a signature
+//   below spans ~2h43m from enqueue to the final attempt, so a signature
 //   minted once at enqueue is GUARANTEED to be stale (and 401'd as a replay)
 //   by attempts 4 and 5 — precisely the attempts that only exist because the
 //   earlier ones failed. `attemptDelivery` therefore re-derives the secret and
@@ -42,7 +44,24 @@ import { eq, sql } from 'drizzle-orm';
 import { db as defaultDb, type Db } from '../../db/client.js';
 import { callbackDeliveries, ingestRequests } from '../../db/schema/index.js';
 import { env } from '../../config/env.js';
+import { CodedEnvelopeError } from '../../errors/base.js';
+import { rootLogger, type ComponentLogger } from '../../logger.js';
+import {
+  DLQ_STATUSES,
+  recordCallbackTransition,
+  type CallbackDeliveryStatus,
+} from '../../metrics/callbacks.js';
 import { deriveApiKeyId } from '../../plugins/auth.js';
+import { assertSafeCallbackUrl } from './url-guard.js';
+
+/** A Db handle or an open transaction on it — the outbox insert takes either. */
+export type DbOrTx = Db | Parameters<Parameters<Db['transaction']>[0]>[0];
+
+/**
+ * Default logger for this module. `component` makes delivery lines filterable
+ * in Coolify; a caller-injected logger (tests) wins.
+ */
+const emitLog: ComponentLogger = rootLogger.child({ component: 'callback-emit' });
 
 // ---------------------------------------------------------------------------
 // Event envelope types — mirror the contract doc §"Event shapes".
@@ -93,15 +112,28 @@ export interface EnqueueDeps {
   fetcher?: typeof fetch;
   /** Test seam: deterministic clock. */
   clock?: () => Date;
+  /** Defaults to the module's `rootLogger` child. Never optional to USE. */
+  logger?: ComponentLogger;
 }
 
-/** Retry schedule from the contract doc §"Transport" (in milliseconds). */
+/**
+ * Retry schedule from the contract doc §"Transport" (in milliseconds).
+ *
+ * Seven attempts, ~2h42m35s from the first to the last (sum of the delays,
+ * inferred by arithmetic). The +30m and +2h tail is plan decision D2=B
+ * (PLAN-live-ingest §5): the old five-attempt window of 12m35s was
+ * shorter than an ordinary consumer deploy or outage, so a receiver that was
+ * down for a quarter hour lost every callback for good. Receivers' 120 s claim
+ * lease is unaffected — each attempt is still one POST.
+ */
 export const RETRY_SCHEDULE_MS = [
   0, // attempt 1 — fire immediately
   5_000, // attempt 2 — +5s
   30_000, // attempt 3 — +30s
   120_000, // attempt 4 — +2m
   600_000, // attempt 5 — +10m
+  1_800_000, // attempt 6 — +30m
+  7_200_000, // attempt 7 — +2h
 ];
 
 export const MAX_ATTEMPTS = RETRY_SCHEDULE_MS.length;
@@ -217,53 +249,119 @@ export function signEnvelope(
 // ---------------------------------------------------------------------------
 
 /**
- * Persist a `callback_deliveries` row and kick off the first delivery
- * attempt. Fire-and-forget — the returned promise resolves once the row is
- * inserted; the actual POST happens asynchronously.
+ * 400 at REQUEST time: the caller sent a `callbackUrl` but its API key has no
+ * `callbackSecret`, so every callback would be recorded `auth_failed` and the
+ * consumer would never hear back (plan finding A2, decision D4=A).
+ *
+ * Before this, the request was accepted with 202, the boot check only warned,
+ * and the loss was visible only in `callback_deliveries`. Refusing up front is
+ * the one place the caller is still listening.
+ */
+export class CallbackSecretMissingError extends CodedEnvelopeError {
+  readonly code = 'ERR_CALLBACK_SECRET_MISSING';
+  readonly status = 400;
+  override name = 'CallbackSecretMissingError';
+  constructor() {
+    super(
+      'callbackUrl was sent, but this API key has no callbackSecret configured in ai-service, ' +
+        'so callbacks could not be signed. Configure a 32+-char callbackSecret for the key, ' +
+        'or omit callbackUrl and poll GET /v1/ingest/:ingestId.',
+    );
+  }
+}
+
+/**
+ * Throw `CallbackSecretMissingError` unless `apiKeyId` resolves to a key with
+ * a `callbackSecret`. Call it before persisting any request that carries a
+ * `callbackUrl`.
+ */
+export function assertCallbackSecretFor(apiKeyId: string | null | undefined): void {
+  if (!apiKeyId || !resolveCallbackSecret(apiKeyId)) {
+    throw new CallbackSecretMissingError();
+  }
+}
+
+/** The columns a transition report needs; a subset of the delivery row. */
+interface TransitionSubject {
+  id: string;
+  org: string;
+  project: string | null;
+  source: string;
+  sourceId: string;
+  itemKey: string | null;
+  event: string;
+}
+
+/**
+ * Count a delivery row entering a terminal status, and log an ERROR when that
+ * status is one of the dead-letter set (`dead_letter`, `failed`,
+ * `auth_failed`): the consumer was NOT told about this event.
+ *
+ * Every terminal write in this module and in the sweeper goes through here, so
+ * the metric and the log cannot drift from the rows (plan §2.3).
+ */
+export function reportDeliveryTransition(
+  log: ComponentLogger,
+  row: TransitionSubject,
+  status: CallbackDeliveryStatus,
+  info: { attempt: number; responseStatus?: number | null; lastError?: string | null },
+): void {
+  recordCallbackTransition(status, row.event, row.project);
+  if (!DLQ_STATUSES.includes(status)) return;
+  log.error(
+    {
+      deliveryId: row.id,
+      org: row.org,
+      project: row.project,
+      source: row.source,
+      sourceId: row.sourceId,
+      itemKey: row.itemKey,
+      event: row.event,
+      attempt: info.attempt,
+      responseStatus: info.responseStatus ?? null,
+      lastError: info.lastError ?? null,
+      status,
+    },
+    `callback delivery ${status}: consumer was NOT notified (replay via POST /v1/admin/callbacks/:id/replay)`,
+  );
+}
+
+export interface InsertedDelivery {
+  deliveryId: string;
+  status: 'pending' | 'auth_failed';
+}
+
+/**
+ * Persist a `callback_deliveries` row WITHOUT sending anything.
+ *
+ * This is the transactional-outbox half of `enqueueCallback`: pass the open
+ * transaction that writes the event's source rows (the ingest worker passes
+ * the document transaction), so the delivery row exists if and only if the
+ * document does. Then call `kickDelivery` for each returned `pending` id AFTER
+ * the transaction commits. A crash between commit and kick leaves a `pending`
+ * row with `next_attempt_at = now`, which the sweeper recovers.
+ *
+ * Throws when the insert fails — the caller's transaction must roll back
+ * (plan finding A7: the old fire-and-forget insert lost the row with only a
+ * `console.warn`).
  *
  * On signing failure (no secret found), the row is still inserted in
- * `auth_failed` status so the operator has an audit trail.
+ * `auth_failed` status so the operator has an audit trail; the caller reports
+ * that transition after commit via the returned status.
  */
-export async function enqueueCallback(
+export async function insertCallbackDelivery(
   envelope: BaseEnvelope,
   opts: EnqueueOptions,
-  deps: EnqueueDeps = {},
-): Promise<{ deliveryId: string; status: 'pending' | 'auth_failed' }> {
-  const db = deps.db ?? defaultDb;
-  const fetcher = deps.fetcher ?? fetch;
+  deps: { db: DbOrTx; clock?: () => Date },
+): Promise<InsertedDelivery> {
+  const db = deps.db;
   const clock = deps.clock ?? (() => new Date());
 
-  // Resolve secret first — if missing, record `auth_failed` and bail.
-  if (!opts.apiKeyId) {
-    // No apiKeyId captured at enqueue (e.g. legacy row pre-migration). Record
-    // a permanent `auth_failed` row so the operator can replay manually after
-    // setting up the consumer's secret + apiKeyId.
-    const row = await db
-      .insert(callbackDeliveries)
-      .values({
-        org: opts.org,
-        project: opts.project ?? null,
-        source: opts.source,
-        sourceId: opts.sourceId,
-        itemKey: opts.itemKey ?? null,
-        event: envelope.event,
-        url: opts.url,
-        apiKeyId: null,
-        body: JSON.stringify(envelope),
-        signedAtUnix: Math.floor(clock().getTime() / 1000),
-        signature: '',
-        status: 'auth_failed',
-        attempt: 0,
-        nextAttemptAt: null,
-        lastError: 'no apiKeyId captured at enqueue time',
-        updatedAt: clock(),
-      })
-      .returning({ id: callbackDeliveries.id });
-    return { deliveryId: row[0]!.id, status: 'auth_failed' };
-  }
-
-  const secret = resolveCallbackSecret(opts.apiKeyId);
+  const secret = opts.apiKeyId ? resolveCallbackSecret(opts.apiKeyId) : null;
   if (!secret) {
+    // No apiKeyId captured at enqueue (legacy row), or the key has no secret.
+    // Request-time validation (`assertCallbackSecretFor`) makes this rare;
+    // a key rotated out between request and completion still lands here.
     const row = await db
       .insert(callbackDeliveries)
       .values({
@@ -281,7 +379,9 @@ export async function enqueueCallback(
         status: 'auth_failed',
         attempt: 0,
         nextAttemptAt: null,
-        lastError: 'no callbackSecret configured for this apiKeyId',
+        lastError: opts.apiKeyId
+          ? 'no callbackSecret configured for this apiKeyId'
+          : 'no apiKeyId captured at enqueue time',
         updatedAt: clock(),
       })
       .returning({ id: callbackDeliveries.id });
@@ -311,21 +411,81 @@ export async function enqueueCallback(
     })
     .returning({ id: callbackDeliveries.id });
 
-  const deliveryId = row[0]!.id;
+  return { deliveryId: row[0]!.id, status: 'pending' };
+}
 
-  // Kick off the first attempt asynchronously. We never `await` the POST in
-  // the caller path — the terminal transition must not block on a slow
-  // receiver. The scheduler keeps the retry loop alive in the background.
+/**
+ * Post-commit half of the outbox: report an `auth_failed` insert, or start the
+ * first attempt of a `pending` one. Never throws and never awaits the POST —
+ * a terminal transition must not block on a slow receiver.
+ */
+export function kickDelivery(
+  inserted: InsertedDelivery,
+  envelope: BaseEnvelope,
+  opts: EnqueueOptions,
+  deps: EnqueueDeps = {},
+): void {
+  const log = deps.logger ?? emitLog;
+  if (inserted.status === 'auth_failed') {
+    reportDeliveryTransition(
+      log,
+      {
+        id: inserted.deliveryId,
+        org: opts.org,
+        project: opts.project ?? null,
+        source: opts.source,
+        sourceId: opts.sourceId,
+        itemKey: opts.itemKey ?? null,
+        event: envelope.event,
+      },
+      'auth_failed',
+      {
+        attempt: 0,
+        lastError: opts.apiKeyId
+          ? 'no callbackSecret configured for this apiKeyId'
+          : 'no apiKeyId captured at enqueue time',
+      },
+    );
+    return;
+  }
+  const db = deps.db ?? defaultDb;
+  const fetcher = deps.fetcher ?? fetch;
+  const clock = deps.clock ?? (() => new Date());
+  const deliveryId = inserted.deliveryId;
   setImmediate(() => {
-    void attemptDelivery(deliveryId, { db, fetcher, clock }).catch((err) => {
-      // Best-effort log; the row's `last_error` already captures the message.
-      console.warn(
-        `callback emit: deliveryId=${deliveryId} initial attempt scheduling failed: ${err instanceof Error ? err.message : String(err)}`,
+    void attemptDelivery(deliveryId, { db, fetcher, clock, logger: log }).catch((err) => {
+      // The row stays `pending` with `next_attempt_at` in the past, so the
+      // sweeper re-claims it after its grace period. ERROR, not warn: this is
+      // a delivery that did not happen when it should have.
+      log.error(
+        { deliveryId, err: err instanceof Error ? err.message : String(err) },
+        'callback emit: initial attempt threw; the sweeper will retry it',
       );
     });
   });
+}
 
-  return { deliveryId, status: 'pending' };
+/**
+ * Persist a `callback_deliveries` row and kick off the first delivery
+ * attempt. The returned promise resolves once the row is inserted; the POST
+ * happens asynchronously. Rejects when the insert fails — callers must not
+ * swallow that (see `insertCallbackDelivery`).
+ *
+ * Callers that write the event's source rows in a transaction should use
+ * `insertCallbackDelivery` inside it plus `kickDelivery` after commit instead.
+ */
+export async function enqueueCallback(
+  envelope: BaseEnvelope,
+  opts: EnqueueOptions,
+  deps: EnqueueDeps = {},
+): Promise<InsertedDelivery> {
+  const db = deps.db ?? defaultDb;
+  const inserted = await insertCallbackDelivery(envelope, opts, {
+    db,
+    ...(deps.clock ? { clock: deps.clock } : {}),
+  });
+  kickDelivery(inserted, envelope, opts, { ...deps, db });
+  return inserted;
 }
 
 // ---------------------------------------------------------------------------
@@ -353,11 +513,13 @@ export async function attemptDelivery(
   deps: Required<Pick<EnqueueDeps, 'fetcher' | 'clock'>> & {
     db?: Db;
     preserveSignature?: boolean;
+    logger?: ComponentLogger;
   },
 ): Promise<void> {
   const db = deps.db ?? defaultDb;
   const fetcher = deps.fetcher;
   const clock = deps.clock;
+  const log = deps.logger ?? emitLog;
 
   // Load current row state. Another worker may have advanced it; treat the
   // row's `attempt` as the canonical source.
@@ -368,7 +530,7 @@ export async function attemptDelivery(
     .limit(1);
   const row = rows[0];
   if (!row) {
-    console.warn(`callback emit: deliveryId=${deliveryId} missing; aborted`);
+    log.warn({ deliveryId }, 'callback emit: delivery row missing; attempt aborted');
     return;
   }
   if (
@@ -404,17 +566,19 @@ export async function attemptDelivery(
       // restore the secret and re-fire via
       // `POST /v1/admin/callbacks/:id/replay`, which re-signs.
       const failedAt = clock();
+      const lastError = row.apiKeyId
+        ? `no callbackSecret configured for apiKeyId ${row.apiKeyId} at attempt time (rotated out?)`
+        : 'no apiKeyId on delivery row; cannot re-sign this attempt';
       await db
         .update(callbackDeliveries)
         .set({
           status: 'auth_failed',
           nextAttemptAt: null,
-          lastError: row.apiKeyId
-            ? `no callbackSecret configured for apiKeyId ${row.apiKeyId} at attempt time (rotated out?)`
-            : 'no apiKeyId on delivery row; cannot re-sign this attempt',
+          lastError,
           updatedAt: failedAt,
         })
         .where(eq(callbackDeliveries.id, deliveryId));
+      reportDeliveryTransition(log, row, 'auth_failed', { attempt: row.attempt, lastError });
       return;
     }
     const signed = signBody(row.body, secret, clock());
@@ -423,11 +587,39 @@ export async function attemptDelivery(
     resigned = true;
   }
 
+  // SSRF guard (audit finding [HIGH] SSRF): re-validate the target URL
+  // immediately before EVERY attempt — this also covers URLs sourced from
+  // `project_configs.callback_url` and catches DNS rebinding between enqueue
+  // and delivery. A blocked URL is a permanent failure, not a retry.
+  try {
+    await assertSafeCallbackUrl(row.url);
+  } catch {
+    const blockedAt = clock();
+    await db
+      .update(callbackDeliveries)
+      .set({
+        status: 'failed',
+        nextAttemptAt: null,
+        lastError: 'callback url blocked (ssrf guard)',
+        updatedAt: blockedAt,
+      })
+      .where(eq(callbackDeliveries.id, deliveryId));
+    reportDeliveryTransition(log, row, 'failed', {
+      attempt: row.attempt,
+      lastError: 'callback url blocked (ssrf guard)',
+    });
+    return;
+  }
+
   let response: Response | null = null;
   let networkError: Error | null = null;
   try {
     response = await fetcher(row.url, {
       method: 'POST',
+      // Never follow redirects: a public 200-range host 302ing to an internal
+      // address would bypass the pre-fetch SSRF guard above. A redirect
+      // response surfaces as a fetch error -> normal retry/dead-letter path.
+      redirect: 'error',
       headers: {
         'Content-Type': 'application/json',
         // Force a fresh TCP connection per delivery. undici's default
@@ -513,13 +705,26 @@ export async function attemptDelivery(
     })
     .where(eq(callbackDeliveries.id, deliveryId));
 
+  if (nextStatus !== 'pending') {
+    reportDeliveryTransition(log, row, nextStatus, {
+      attempt: nextAttempt,
+      responseStatus,
+      lastError,
+    });
+  }
+
   // Schedule the next attempt if applicable.
   if (nextStatus === 'pending' && nextAttemptAt) {
     const delayMs = Math.max(0, nextAttemptAt.getTime() - now.getTime());
     setTimeout(() => {
       void attemptDelivery(deliveryId, deps).catch((err) => {
-        console.warn(
-          `callback emit: deliveryId=${deliveryId} attempt ${nextAttempt + 1} scheduling failed: ${err instanceof Error ? err.message : String(err)}`,
+        log.error(
+          {
+            deliveryId,
+            attempt: nextAttempt + 1,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          'callback emit: scheduled attempt threw; the sweeper will retry it',
         );
       });
     }, delayMs).unref?.();
@@ -618,7 +823,7 @@ export async function replayDelivery(
  * without re-implementing the SQL.
  */
 export async function maybeMarkProgress(
-  db: Db,
+  db: DbOrTx,
   ingestRequestId: string,
   totalDocs: number,
   completedDocs: number,

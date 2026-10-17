@@ -1,6 +1,5 @@
 // Multi-corpus retrieval MACHINERY — parallel fan-out + score fusion, with an
-// optional cheap query-rewrite step in front. Project-agnostic (ADR-0001):
-// extracted from a prototype's `services/chat/respond.ts#retrieveContext` so every
+// optional cheap query-rewrite step in front. Project-agnostic (ADR-0001), so every
 // product gets "search across everything relevant in one call".
 //
 // Composition, not duplication: this service REUSES `RetrieveService` per
@@ -9,15 +8,20 @@
 
 import { env } from '../../config/env.js';
 import type { Db } from '../../db/client.js';
-import { callRerank, type Reranker } from '../ai/rerank/rerank-client.js';
+import { callRerank, type Reranker, type RerankResult } from '../ai/rerank/rerank-client.js';
 import type { LLMRouter } from '../ai/router/types.js';
 import { createOpenRouter } from '../ai/router/openrouter.js';
 import { condenseQuery } from './condense.js';
+import { fuseAcrossCorpora } from './fuse-across-corpora.js';
 import {
   CorpusNotFoundError,
+  RERANK_OK_MESSAGE,
   RetrieveService,
+  SILENT_LEG_MESSAGE,
+  rerankOkLine,
   type RetrieveContext,
   type RetrieveLogger,
+  type SilentLegWarning,
 } from './retrieve.js';
 import type {
   CorpusDiagnostics,
@@ -27,6 +31,64 @@ import type {
 } from './types.js';
 
 const DEFAULT_TOP_K = 10;
+
+/**
+ * RRF damping constant for the CROSS-CORPUS rung. Must track
+ * `DEFAULT_RRF_K` in `retrieve.ts` (60, Cormack et al. 2009) and is overridden
+ * by `req.rrfK` exactly as the per-corpus rung is, so an eval sweep moves both
+ * together. Duplicated rather than imported only because `retrieve.ts` keeps it
+ * private; the value is asserted equal in the tests.
+ */
+const DEFAULT_RRF_K = 60;
+
+/**
+ * Logged when a corpus matched chunks and then won NO slot in the fused result.
+ * This is the exact fingerprint of the cross-corpus fusion defect
+ * (`matched: 8, contributed: 0`) and of any future variant of it: the corpus was
+ * indexed, was queried, DID match — and nothing it found reached the caller.
+ * It can be legitimate (a genuinely weaker corpus under a tight `limit`), so it
+ * is a warn and not an error. It exists so that outcome is never again silent.
+ */
+export const CORPUS_SHUTOUT_MESSAGE =
+  'corpus matched but contributed no chunks to the fused result';
+
+/**
+ * Logged when a hybrid candidate reaches cross-corpus fusion carrying neither
+ * `denseScore` nor `lexicalScore`. It cannot be placed on either global leg, so
+ * it scores 0 and sinks to the tail rather than being dropped. Should be
+ * unreachable — it means an upstream leg stopped surfacing its per-leg score.
+ */
+export const UNSCORED_CANDIDATE_MESSAGE =
+  'hybrid candidates reached cross-corpus fusion with no per-leg score';
+
+// ── Silent-leg warn gating for the fan-out ──────────────────────────────────
+//
+// `RetrieveService.retrieve` raises one signal per retrieval leg it ASKED for
+// that came back with zero rows. On single `/v1/retrieve` it logs that itself,
+// and that is the whole point: the caller asked one corpus a question and a leg
+// went silent.
+//
+// On `/v1/retrieve/multi` a corpus that matches nothing is ROUTINE and is
+// ALREADY reported — as a `{ corpus, matched: 0 }` row in `corpora`. Fanning
+// out over five corpora where three legitimately match nothing would otherwise
+// emit three of those warns per request (six in hybrid mode, two legs each),
+// and a warning that fires on ordinary traffic is a warning nobody reads.
+//
+// So the fan-out supplies `ctx.onSilentLeg` per corpus — which makes `retrieve`
+// hand the warning over instead of logging it — BUFFERS what it gets, and
+// decides once that corpus's promise settles:
+//   • the corpus returned chunks  → LOG them. A corpus that matched but had a
+//     silent leg (a dead sparse leg behind a working dense one) is exactly the
+//     anomaly this lane exists to expose, and nothing else reports it.
+//   • the corpus returned nothing → drop them. `matched: 0` already said it.
+//   • the leg threw               → LOG them. An errored leg is not routine,
+//     and whatever it said on the way down is part of that story.
+//
+// Only the silent-leg signal is routed this way, because only it travels
+// through `onSilentLeg`. Everything else a leg logs — the sparse-leg degrade
+// warn, the passage-bound clamp warn, the single-corpus rerank fail-safe warn —
+// goes straight to `opts.logger`, which is handed to the composed
+// `RetrieveService` unwrapped. There is nothing in between to swallow them.
 
 /**
  * Rerank pool depth for the multi-corpus path — the cross-encoder re-scores this
@@ -68,7 +130,19 @@ export class RetrieveMultiService {
   private readonly logger: RetrieveLogger | undefined;
 
   constructor(opts: RetrieveMultiServiceOptions) {
-    this.retrieveService = opts.retrieveService ?? new RetrieveService({ db: opts.db });
+    // Forward the logger into the composed per-corpus service UNWRAPPED. Without
+    // it the outbound passage-bound clamp would truncate SILENTLY on
+    // `/v1/retrieve/multi` — the warn that makes an over-bound stored chunk
+    // visible is emitted inside `RetrieveService.retrieve`, so a service built
+    // without a logger swallows it. Nothing is interposed here: the one signal
+    // this route judges differently is diverted at its source, per call, by
+    // `ctx.onSilentLeg` in `retrieveMulti` below.
+    this.retrieveService =
+      opts.retrieveService ??
+      new RetrieveService({
+        db: opts.db,
+        ...(opts.logger ? { logger: opts.logger } : {}),
+      });
     this.router = opts.router ?? createOpenRouter();
     this.reranker = opts.reranker ?? callRerank;
     this.rerankInjected = opts.reranker !== undefined;
@@ -130,35 +204,102 @@ export class RetrieveMultiService {
     // ── 2. Fan out in parallel. Each leg is independent and fail-safe: a
     //    missing/erroring corpus contributes zero chunks and is recorded in
     //    diagnostics rather than failing the whole request.
+    //    Each leg also gets its OWN `ctx` carrying its OWN silent-leg buffer,
+    //    so the per-leg "returned zero rows" signal can be judged against what
+    //    that leg actually contributed — see the notes at the top of this file.
+    //    Per-call by construction: two concurrent fan-outs over the same corpus
+    //    hold different buffers and cannot settle each other's warnings.
     const diagnostics: CorpusDiagnostics[] = [];
     const legs = await Promise.all(
       corpora.map(async (corpus): Promise<MultiRetrievedChunk[]> => {
+        const silentLegs: SilentLegWarning[] = [];
+        // Overriding any `onSilentLeg` on the incoming `ctx` is deliberate: on
+        // this route the fan-out owns the verdict, and a caller cannot opt out
+        // of being told `matched: 0` instead.
+        const legCtx: RetrieveContext = {
+          ...ctx,
+          onSilentLeg: (w) => silentLegs.push(w),
+        };
+        // The ONE condition under which a buffered silent-leg warning is
+        // dropped: this corpus contributed nothing AND said so in `corpora`.
+        // Starts false so every other exit — chunks returned, corpus missing,
+        // leg threw, an exception nobody anticipated — logs what it buffered.
+        let alreadyReported = false;
         try {
-          const r = await this.retrieveService.retrieve({ corpus, ...shared }, ctx);
+          const r = await this.retrieveService.retrieve({ corpus, ...shared }, legCtx);
           diagnostics.push({ corpus, matched: r.chunks.length });
+          alreadyReported = r.chunks.length === 0;
           return r.chunks.map((c) => ({ ...c, corpus }));
         } catch (err) {
+          // An errored leg is NOT the routine zero-match case: `matched: 0`
+          // here carries an `error`, and whatever the legs reported on the way
+          // down is part of that story. Left to be logged.
           diagnostics.push({
             corpus,
             matched: 0,
             error: err instanceof CorpusNotFoundError ? 'not_found' : 'failed',
           });
           return [];
+        } finally {
+          // A corpus that matched but had a silent leg (a dead sparse leg
+          // behind a working dense one) is the anomaly this lane exists to
+          // expose, and NOTHING else reports it — so it must be heard. Logged
+          // under the SAME message `RetrieveService` would have used, imported
+          // from it, so one grep still finds every silent leg on every route.
+          if (!alreadyReported) {
+            for (const w of silentLegs) this.logger?.warn(w, SILENT_LEG_MESSAGE);
+          }
         }
       }),
     );
 
-    // ── 3. Fuse: highest score first, dedupe by chunk (an alias + its target
-    //    can both be queried). Score is comparable across corpora that share an
-    //    embedding model and mode — the prototype invariant. The FULLY deduped list
-    //    (`fused`) is the candidate pool; the final cap happens in step 4.
-    const ordered = legs.flat().sort((a, b) => b.score - a.score);
-    const seen = new Set<string>();
-    const fused: MultiRetrievedChunk[] = [];
-    for (const c of ordered) {
-      if (seen.has(c.chunkId)) continue;
-      seen.add(c.chunkId);
-      fused.push(c);
+    // ── 3. Fuse across corpora, dedupe by chunk (an alias + its target can
+    //    both be queried). The FULLY deduped list (`fused`) is the candidate
+    //    pool; the final cap happens in step 4.
+    //
+    //    TWO paths, and which one runs is reported back as `fusion`:
+    //
+    //    • `cross-corpus-rrf` — hybrid mode over MORE THAN ONE corpus. Here
+    //      each leg's `score` is a per-corpus RRF value built from ranks inside
+    //      that corpus's own pool, and those are NOT comparable across corpora:
+    //      the deeper pool is systematically penalised, to the point where a
+    //      180-chunk corpus with better matches lost every slot to a 10-chunk
+    //      one (MEASURED). `fuseAcrossCorpora`
+    //      rebuilds the ranks over one global pool per leg and re-runs RRF —
+    //      see that module's header for the reasoning and the two rejected
+    //      alternatives.
+    //
+    //    • `score` — the original stable sort on the raw `score`. This is what
+    //      runs for a SINGLE corpus (nothing to normalise across; within one
+    //      corpus the RRF scores already share a pool and are comparable) and
+    //      for `dense` mode (`score` IS the cosine similarity against the same
+    //      query vector, which is already cross-corpus comparable). Both are
+    //      byte-identical to the pre-fix behaviour, ties and all — including
+    //      the stable-sort order, which is why the single-corpus path is a
+    //      strict no-op rather than merely an equivalent one.
+    const useCrossCorpus = req.mode === 'hybrid' && corpora.length > 1;
+    const fusion: 'score' | 'cross-corpus-rrf' = useCrossCorpus
+      ? 'cross-corpus-rrf'
+      : 'score';
+    let fused: MultiRetrievedChunk[];
+    if (useCrossCorpus) {
+      const result = fuseAcrossCorpora(legs.flat(), req.rrfK ?? DEFAULT_RRF_K);
+      fused = result.chunks;
+      if (result.unscored > 0) {
+        this.logger?.warn(
+          { unscored: result.unscored, corpora, org: ctx.org, project: ctx.project },
+          UNSCORED_CANDIDATE_MESSAGE,
+        );
+      }
+    } else {
+      const ordered = legs.flat().sort((a, b) => b.score - a.score);
+      const seen = new Set<string>();
+      fused = [];
+      for (const c of ordered) {
+        if (seen.has(c.chunkId)) continue;
+        seen.add(c.chunkId);
+        fused.push(c);
+      }
     }
 
     // ── 4. Optional cross-encoder rerank of the fused candidates, then cap.
@@ -176,12 +317,23 @@ export class RetrieveMultiService {
     if (wantRerank) {
       const poolDepth = Math.min(limit * RERANK_POOL_MULTIPLIER, RERANK_POOL_CAP);
       const pool = fused.slice(0, poolDepth);
-      chunks = await this.applyRerank(
-        pool,
-        fused,
-        query,
-        req.rerankModel ?? env.RERANK_MODEL,
-        limit,
+      const model = req.rerankModel ?? env.RERANK_MODEL;
+      chunks = await this.applyRerank(pool, fused, query, model, limit, (scored, egress) =>
+        this.logger?.info?.(
+          rerankOkLine(
+            {
+              corpus: corpora,
+              org: ctx.org,
+              project: ctx.project,
+              model,
+              poolSize: pool.length,
+              scored,
+              topK: limit,
+            },
+            egress,
+          ),
+          RERANK_OK_MESSAGE,
+        ),
       );
     } else {
       chunks = fused.slice(0, limit);
@@ -192,7 +344,35 @@ export class RetrieveMultiService {
     const order = new Map(corpora.map((c, i) => [c, i]));
     diagnostics.sort((a, b) => (order.get(a.corpus) ?? 0) - (order.get(b.corpus) ?? 0));
 
-    return { query, rewritten, chunks, corpora: diagnostics };
+    // ── 5. Make fusion legible. `matched` has always said what each corpus
+    //    FOUND; nothing said what each corpus KEPT. That gap is what let a
+    //    corpus be indexed, queried, matched — and then silently shut out of
+    //    every slot. `contributed` closes it, and a corpus that matched and
+    //    contributed nothing is also WARNED, because "it succeeded and did
+    //    nothing and nothing said so" is the failure mode this route keeps
+    //    producing. Both are additive: existing consumers read `matched` as
+    //    before.
+    const kept = new Map<string, number>();
+    for (const c of chunks) kept.set(c.corpus, (kept.get(c.corpus) ?? 0) + 1);
+    for (const d of diagnostics) {
+      d.contributed = kept.get(d.corpus) ?? 0;
+      if (d.matched > 0 && d.contributed === 0) {
+        this.logger?.warn(
+          {
+            corpus: d.corpus,
+            matched: d.matched,
+            corpora,
+            fusion,
+            limit,
+            org: ctx.org,
+            project: ctx.project,
+          },
+          CORPUS_SHUTOUT_MESSAGE,
+        );
+      }
+    }
+
+    return { query, rewritten, chunks, corpora: diagnostics, fusion };
   }
 
   /**
@@ -228,6 +408,7 @@ export class RetrieveMultiService {
     query: string,
     model: string,
     limit: number,
+    onOk: (scored: number, egress: RerankResult['egress']) => void,
   ): Promise<MultiRetrievedChunk[]> {
     if (pool.length === 0) return fused.slice(0, limit);
 
@@ -238,7 +419,7 @@ export class RetrieveMultiService {
 
     try {
       const documents = pool.map((c) => c.text);
-      const { results } = await this.reranker({
+      const { results, egress } = await this.reranker({
         model,
         query,
         documents,
@@ -261,6 +442,7 @@ export class RetrieveMultiService {
         selected.push({ ...cand, rerankScore: r.relevanceScore, score: r.relevanceScore });
         if (selected.length >= limit) break;
       }
+      const scored = selected.length;
 
       // Backfill from the FULL fused order (not the capped pool) if the reranker
       // yielded fewer than `limit` usable candidates — never return fewer chunks
@@ -278,6 +460,14 @@ export class RetrieveMultiService {
         }
       }
 
+      // Isolated: the rerank already SUCCEEDED here. Inside the bare `try`, a
+      // throwing logger would fall into the fail-safe `catch` below, discard
+      // this result and report a reranker failure that never happened.
+      try {
+        onOk(scored, egress);
+      } catch {
+        // A broken log sink must not change what the caller receives.
+      }
       return selected;
     } catch (err) {
       this.logger?.warn(

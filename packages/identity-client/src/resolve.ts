@@ -13,6 +13,7 @@
 // token instead: it is already signed, already scoped, and costs no round-trip.
 
 import type { ProjectGrant, ResolvedPrincipal } from './types.js';
+import { grantOf, isPlatformAdminFlag, normalizeGrant } from './permissions.js';
 import {
   requireServiceConfig,
   serviceError,
@@ -35,6 +36,12 @@ export type ResolveOptions = ServiceCallOptions;
  * than 404. Ordinary users get their permissions already flattened (roles +
  * `extraPermissions`, unioned). If you need the admin flag itself, call
  * {@link resolvePrincipal}.
+ *
+ * ⚠ THE GRANT IS READ FOR `projectSlug` AND FOR NOTHING ELSE. If the answer
+ * carries no entry for the slug you asked about, you get the EMPTY grant. There
+ * is no "well, take the first project then" fallback: that used to exist here
+ * and it handed back some OTHER project's roles and permissions, which is a
+ * cross-project privilege leak, not a convenience.
  */
 export async function resolveGrant(
   email: string,
@@ -43,12 +50,10 @@ export async function resolveGrant(
 ): Promise<ProjectGrant | null> {
   const principal = await resolvePrincipal(email, projectSlug, options);
   if (!principal) return null;
-  // The response is narrowed to one project, so the single entry IS the answer
-  // even if the server echoed the slug with different casing.
-  return (
-    principal.projects[projectSlug] ??
-    Object.values(principal.projects)[0] ?? { roles: [], permissions: [] }
-  );
+  // `grantOf` is the single normaliser: absent slug → empty grant, and a
+  // malformed `roles`/`permissions` (a bare string, say) collapses to `[]`
+  // rather than reaching `String.prototype.includes` and matching a substring.
+  return grantOf(principal, projectSlug);
 }
 
 /**
@@ -93,6 +98,11 @@ export async function resolvePrincipal(
  * uses that shape and the resolve body is the part of the contract still
  * settling; a client that hard-fails on the other shape would turn a
  * server-side wording change into a platform-wide outage.
+ *
+ * ⚠ EVERY GRANT LEAVING HERE IS NORMALISED. This is a server-supplied body, so
+ * its shape is whatever the IdP sent, not what `ResolvedPrincipal` declares.
+ * Both branches run their grants through `normalizeGrant`, so a consumer that
+ * reads `principal.projects[slug].permissions` directly gets a real array.
  */
 function normalize(body: unknown, email: string, projectSlug: string): ResolvedPrincipal | null {
   if (!body || typeof body !== 'object') return null;
@@ -101,21 +111,24 @@ function normalize(body: unknown, email: string, projectSlug: string): ResolvedP
   const base = {
     email: typeof raw.email === 'string' ? raw.email.toLowerCase() : email,
     name: typeof raw.name === 'string' ? raw.name : null,
-    isPlatformAdmin: raw.isPlatformAdmin === true,
+    isPlatformAdmin: isPlatformAdminFlag(raw.isPlatformAdmin),
   };
 
   if (Array.isArray(raw.permissions) || Array.isArray(raw.roles)) {
-    const grant: ProjectGrant = {
-      roles: Array.isArray(raw.roles) ? (raw.roles as string[]) : [],
-      permissions: Array.isArray(raw.permissions) ? (raw.permissions as string[]) : [],
-    };
-    // Trust the server's echoed `project` over our request parameter.
-    const slug = typeof raw.project === 'string' && raw.project ? raw.project : projectSlug;
-    return { ...base, projects: { [slug]: grant } };
+    // The flat body IS the answer to the slug we asked about, so it is keyed by
+    // the REQUESTED slug — not by the server's echo. Keying it by the echo made
+    // a casing difference produce a map the caller could not look itself up in,
+    // which is what the removed `Object.values(...)[0]` fallback was papering
+    // over. `project` is still echoed back on the response for observability.
+    return { ...base, projects: { [projectSlug]: normalizeGrant(raw) } };
   }
 
   if (raw.projects && typeof raw.projects === 'object') {
-    return { ...base, projects: raw.projects as Record<string, ProjectGrant> };
+    const projects: Record<string, ProjectGrant> = {};
+    for (const [slug, grant] of Object.entries(raw.projects as Record<string, unknown>)) {
+      projects[slug] = normalizeGrant(grant);
+    }
+    return { ...base, projects };
   }
 
   return null;

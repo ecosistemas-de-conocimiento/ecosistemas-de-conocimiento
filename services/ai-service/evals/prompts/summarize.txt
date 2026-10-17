@@ -1,0 +1,5 @@
+Summarize the passage below in exactly two sentences. Plain language, no preamble,
+no bullet points, no headings. Answer with the summary only.
+
+Passage:
+{{ passage }}

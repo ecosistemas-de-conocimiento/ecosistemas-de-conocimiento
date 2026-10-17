@@ -11,16 +11,19 @@ import { CapabilitiesAPI } from './capabilities.js';
 import { CorporaAPI } from './corpora.js';
 import { EmbedAPI } from './embed.js';
 import { GenerateAPI } from './generate.js';
-import { HttpClient } from './http.js';
+import { HttpClient, type RetryPolicy } from './http.js';
 import { IngestAPI } from './ingest.js';
+import {
+  configureIngestGate,
+  ingestGateScopeFor,
+  type IngestGateConfig,
+} from './ingest-gate.js';
 import { RegistryAPI } from './registry.js';
 import { RetrieveAPI } from './retrieve.js';
 import { RouteAPI } from './route.js';
 import { TenantAPI } from './tenant.js';
 import { TextToSqlAPI } from './text-to-sql.js';
 import { openEvents, type EventStream } from './events.js';
-
-const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface AIClientOptions {
   /** Base URL of the ai-service deployment (no trailing slash needed). */
@@ -29,8 +32,48 @@ export interface AIClientOptions {
   apiKey: string;
   /** Injectable fetch (tests / polyfills). Defaults to the platform `fetch`. */
   fetch?: typeof fetch;
-  /** Hard request timeout in ms. Defaults to 30 seconds. */
+  /**
+   * Hard request timeout in ms, PER ATTEMPT. Defaults to 30 seconds. A call
+   * can override it (`http.json({ timeoutMs })`, `generate.sync(req, { timeoutMs })`).
+   *
+   * An explicit value is never shortened by the retry budget
+   * (`retry.maxElapsedMs`): every attempt gets all of it, and the budget only
+   * decides whether another attempt starts. So a retried GET can take up to
+   * about `retry.maxElapsedMs + timeoutMs`; bound the whole thing with
+   * `signal` (e.g. `AbortSignal.timeout(ms)`) when you need a hard ceiling.
+   * Left unset, the 30 s default IS cut to the budget remaining, so the call
+   * takes at most `retry.maxElapsedMs` (30 s) in total. `Infinity` disables
+   * the deadline.
+   */
   timeoutMs?: number;
+  /**
+   * Retry policy for transient failures of IDEMPOTENT requests
+   * (see {@link RetryPolicy}). Defaults to {@link DEFAULT_RETRY_POLICY}:
+   * 3 attempts, 250 ms base, equal jitter, `Retry-After` honoured.
+   * `{ attempts: 1 }` disables retry for this client.
+   */
+  retry?: Partial<RetryPolicy>;
+  /**
+   * Budget for the process-wide ingest gate that admits every
+   * `POST /v1/ingest` this package sends. Partial — anything omitted keeps
+   * `DEFAULT_INGEST_GATE_CONFIG`, whose numbers are sized against ai-service's
+   * real 100/min-per-key limit. See `./ingest-gate.ts`.
+   *
+   * Applied to this client's gate SCOPE, so it is safe to set from one place at
+   * startup. `configureIngestGate` does the same thing without a client, and is
+   * the better hook when the config lives in an app's boot module.
+   */
+  ingestGate?: Partial<IngestGateConfig>;
+  /**
+   * Which process-wide gate this client's ingests share.
+   *
+   * Defaults to a non-reversible id derived from `(baseUrl, apiKey)`, because
+   * ai-service's limiter is keyed on the API key: two clients holding different
+   * keys have two independent server-side buckets, and one shared gate would
+   * halve each one's throughput and let a 429 on one key park the other. Set it
+   * explicitly only to force two clients to share a gate, or to split one.
+   */
+  ingestGateScope?: string;
 }
 
 export class AIClient {
@@ -70,11 +113,16 @@ export class AIClient {
       baseUrl: opts.baseUrl,
       apiKey: opts.apiKey,
       fetchImpl,
-      timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      // Passed through only when SET: an explicit value is never clamped by the
+      // retry budget, the default is (see `RetryPolicy.maxElapsedMs`).
+      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts.retry ? { retry: opts.retry } : {}),
     });
     this.registry = new RegistryAPI(this.http);
     this.generate = new GenerateAPI(this.http);
-    this.ingest = new IngestAPI(this.http);
+    const gateScope = opts.ingestGateScope ?? ingestGateScopeFor(opts.baseUrl, opts.apiKey);
+    if (opts.ingestGate) configureIngestGate(opts.ingestGate, gateScope);
+    this.ingest = new IngestAPI(this.http, gateScope);
     this.corpora = new CorporaAPI(this.http);
     this.retrieve = new RetrieveAPI(this.http);
     this.embed = new EmbedAPI(this.http);
@@ -136,6 +184,8 @@ export {
   CapabilitiesAPI,
   CapabilityNegotiationError,
   capabilityModeFromEnv,
+  STRICT_STRUCTURED_OUTPUT_CAPABILITY,
+  strictStructuredOutputCapabilities,
   type CapabilityDocument,
   type CapabilityLogger,
   type CapabilityMode,
@@ -143,11 +193,132 @@ export {
   type NegotiationResult,
   type NegotiationStatus,
 } from './capabilities.js';
+// The boot-time capability check WRAPPER around `capabilities.negotiate` —
+// the once-per-process latch, the "AI is optional" skip, the empty-list
+// short-circuit and the test reset seam that all four consumers hand-rolled.
+export {
+  createCapabilityCheck,
+  type CapabilityCheck,
+  type CapabilityCheckLogger,
+  type CapabilityCheckOptions,
+  type CapabilityNegotiator,
+} from './capability-check.js';
+// Budget-failure classification (402). Classify → decide disclosure → log.
+// No user-facing copy and no framework: the Spanish sentence stays in the
+// product, the classification and the disclosure rule live here.
+export {
+  classifyBudgetFailure,
+  budgetFailureFromWire,
+  budgetFailureFromFrame,
+  budgetFailureLogFields,
+  isRequesterBudgetOwner,
+  mayDiscloseBudgetAmounts,
+  BUDGET_FAILURE_LOG_MESSAGE,
+  BUDGET_NOT_CONFIGURED_WIRE,
+  BUDGET_EXCEEDED_WIRE,
+  BUDGET_MISCONFIGURED_WIRE,
+  type BudgetFailure,
+  type BudgetFailureKind,
+} from './budget-failure.js';
+// Response guards every consumer hand-rolled: fail loud when the system prompt
+// was not applied, and log the advisory `warnings[]` (budget soft cap) once.
+export {
+  assertSystemPromptApplied,
+  SystemPromptNotAppliedError,
+  SYSTEM_PROMPT_NOT_APPLIED_LOG_MESSAGE,
+  type AssertSystemPromptAppliedArgs,
+  type SystemPromptGuardLogger,
+} from './system-prompt.js';
+export {
+  logResponseWarnings,
+  RESPONSE_WARNING_LOG_MESSAGE,
+  type ResponseWarningLogger,
+} from './response-warnings.js';
+// The passage-length contract in characters, per corpus `chunkSize`.
+export { maxChunkChars, DEFAULT_CHUNK_SIZE, CHARS_PER_TOKEN } from './chunk-bound.js';
 export { EmbedAPI } from './embed.js';
-export { GenerateAPI } from './generate.js';
-export { IngestAPI } from './ingest.js';
+export { GenerateAPI, type GenerateSyncOptions } from './generate.js';
+export {
+  GENERATE_STREAM_CONFORMANCE_CASES,
+  type GenerateStreamConformanceCase,
+} from './stream-conformance.js';
+export {
+  openGenerateStream,
+  openRawGenerateStream,
+  type GenerateStream,
+  type GenerateStreamOptions,
+} from './stream.js';
+export {
+  IngestAPI,
+  type IngestCallOptions,
+  type EnqueueAllOptions,
+} from './ingest.js';
+// Process-wide, 429-aware ingest gate. Every `client.ingest.enqueue*` call goes
+// through it automatically — these exports are for CONFIGURING it (once, at
+// startup) and for catching its typed failures. See `./ingest-gate.ts`.
+export {
+  IngestGate,
+  IngestRateLimitExhaustedError,
+  IngestBatchTooLargeError,
+  configureIngestGate,
+  getIngestGate,
+  ingestGateScopeFor,
+  chunkDocuments,
+  rateLimitRetryAfterMs,
+  MAX_DOCS_PER_INGEST_REQUEST,
+  DEFAULT_INGEST_GATE_CONFIG,
+  DEFAULT_INGEST_GATE_SCOPE,
+  DEFAULT_INGEST_BUSY_MESSAGE,
+  _resetIngestGatesForTests,
+  _setIngestGateForTests,
+  type IngestGateConfig,
+  type IngestGateEvent,
+  type IngestLane,
+  type IngestCallMeta,
+  type IngestResultLike,
+} from './ingest-gate.js';
+// Opt-in coalescing batcher for BULK ingests (debounce + batch, last write wins
+// per document id). Safe only once your callback join keys on `docId` — see
+// `./ingest-batcher.ts`.
+export {
+  IngestBatcher,
+  IngestBatcherFullError,
+  type IngestBatcherOptions,
+  type IngestBatchFailure,
+  type IngestBatchRequest,
+} from './ingest-batcher.js';
+// Transient-failure retry for IDEMPOTENT requests. `DEFAULT_RETRY_POLICY` is
+// the shipped policy; `AIClientOptions.retry` overrides it per client and
+// `JsonRequestOptions.retry` per call.
+export { DEFAULT_RETRY_POLICY, DEFAULT_TIMEOUT_MS, type RetryPolicy } from './http.js';
 export { RegistryAPI } from './registry.js';
-export { RetrieveAPI } from './retrieve.js';
+export { RetrieveAPI, type RetrieveCallOptions } from './retrieve.js';
+// Retrieval outcome rule (audit P2): a typed 404 or a 200 with no
+// chunks is `empty`; every other failure throws `RetrievalUnavailableError`.
+// Plus the `grounding` provenance helper, the fleet's Spanish sentences, and
+// conformance cases a consumer runs against its own wrapper.
+export {
+  RetrievalUnavailableError,
+  toRetrievalOutcomeError,
+  groundingOf,
+  GROUNDING_FIELD,
+  RETRIEVAL_EMPTY_MESSAGE,
+  RETRIEVAL_UNAVAILABLE_MESSAGE,
+  AI_UNAVAILABLE_MESSAGE,
+  type EmptyRetrievalReason,
+  type Grounding,
+  type RetrievalOutcome,
+  type RetrievalUnavailableInit,
+  type RetrievalUnavailableKind,
+} from './retrieval-outcome.js';
+export {
+  RETRIEVAL_CONFORMANCE_CASES,
+  RETRIEVAL_CONFORMANCE_TIMEOUT_MS,
+  retrievalConformanceFetch,
+  checkRetrievalConformance,
+  type RetrievalConformanceCase,
+  type RetrievalConformanceResponse,
+} from './retrieval-conformance.js';
 export { RouteAPI } from './route.js';
 export {
   TenantAPI,
@@ -155,8 +326,6 @@ export {
   type ReadinessCheckId,
   type ReadinessReport,
   type SetBudgetResult,
-  type ProvisionUnitType,
-  type ProvisionTenantRequest,
   type ProvisionItemResult,
   type ProvisionTenantResult,
 } from './tenant.js';

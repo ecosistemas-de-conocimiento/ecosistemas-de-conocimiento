@@ -5,6 +5,8 @@
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
+import { WhereRecorder } from '../test/where-recorder.js';
+
 // ---------------------------------------------------------------------------
 // Module mocks — must be declared BEFORE the dynamic `buildServer` import so
 // Vitest hoists them ahead of any transitive resolution.
@@ -16,10 +18,41 @@ const resolveSpecMock = vi.fn();
 const createOpenRouterMock = vi.fn();
 const fetchContextMock = vi.fn();
 
+// ⚠ `snapshotWhere` and `RecordedWhere` used to be defined here. They now come
+// from `src/test/where-recorder.ts`: eighteen further test files carried the
+// same parameterless-`where()` defect, and fixing each with its own private
+// copy is how three subtly different `<NO PREDICATE>` conventions get born.
+// The shared helper has its own mutation tests in
+// `src/test/where-recorder.test.ts`, so the tripwire itself is proven to fail.
+
 // Stable single-row store the GET / cancel handlers read from. Tests mutate it.
+//
+// 🔴 `wheres` EXISTS BECAUSE A STUB THAT DISCARDS ITS FILTER PROVES NOTHING.
+// The chain below used to declare `where: () => chain` — no parameter — so the
+// tenant predicate the route builds was thrown away and this file agreed with
+// any WHERE clause at all, including none. It is now recorded and asserted on.
+// (The full-strength proof, against a real Postgres with real foreign rows,
+// lives in `src/routes/tenant-isolation.integration.test.ts`.)
+//
+// 🔴 AND `wheres` IS A `WhereRecorder`, NOT A BARE ARRAY, FOR ONE REASON:
+// `guard()`. Recording the argument catches the mutation that EMPTIES a
+// `.where()`; it is blind to the one that DELETES it. That was not theoretical
+// here. `GET /v1/generate/:requestId` ends with
+//
+//     const jobRows = await db.select().from(generationJobs)
+//                       .where(eq(generationJobs.generationRequestId, row.id));
+//
+// and the chain below is thenable, so deleting that `.where(...)` left
+// `await …from(generationJobs)` resolving the full `jobRows` array — a
+// cross-tenant read of every job in the table — with this file GREEN at 24/24
+// (measured). Nothing reached `record()`, because `record()` only runs from
+// inside `where`. A guard built per `from()` and settled on every terminal
+// puts that chain in `calls` as `<NO PREDICATE>`, which is what the
+// `expectNoUnfilteredQuery()` assertions below now catch.
 const dbState = {
   requestRows: [] as Record<string, unknown>[],
   jobRows: [] as Record<string, unknown>[],
+  wheres: new WhereRecorder(),
 };
 
 vi.mock('../services/generation/orchestrator.js', async () => {
@@ -63,16 +96,32 @@ vi.mock('../db/client.js', () => {
   const select = () => ({
     from(table: unknown) {
       let rows: unknown[] = [];
+      let tableName = 'unknown';
       if ((table as { _name?: unknown })?._name === 'generation_requests' || table === GR_TABLE) {
         rows = dbState.requestRows;
+        tableName = 'generation_requests';
       } else if ((table as { _name?: unknown })?._name === 'generation_jobs' || table === GJ_TABLE) {
         rows = dbState.jobRows;
+        tableName = 'generation_jobs';
       }
+      // ONE guard per chain instance — per `from()`. Anything else and two
+      // queries in the same handler share a `filtered` flag, so the first
+      // one's predicate would excuse the second one's absence.
+      const guard = dbState.wheres.guard(tableName);
       const chain: Record<string, unknown> = {
-        where: () => chain,
+        // 🔴 TAKES its argument — see the `wheres` comment above.
+        where: (predicate: unknown) => {
+          guard.where(predicate);
+          return chain;
+        },
+        // NOT a terminal: `.orderBy()` hands the builder back, so settling here
+        // would record a chain that has not run yet.
         orderBy: () => chain,
-        limit: () => Promise.resolve(rows),
-        then: (resolve: (v: unknown[]) => void) => resolve(rows),
+        // EVERY terminal settles through the guard. `then` is the load-bearing
+        // one: `await db.select().from(t)` with the `.where()` deleted lands
+        // here and nowhere else.
+        limit: () => guard.settle(Promise.resolve(rows)),
+        then: (resolve: (v: unknown[]) => void) => resolve(guard.settle(rows)),
       };
       // `select(...).from(t).where(...)` returns a thenable for non-limit usage.
       return chain;
@@ -119,6 +168,7 @@ beforeEach(() => {
   fetchContextMock.mockResolvedValue({});
   dbState.requestRows = [];
   dbState.jobRows = [];
+  dbState.wheres.reset();
 });
 
 afterEach(() => {
@@ -161,6 +211,12 @@ describe('POST /v1/generate', () => {
     const [, ctx] = enqueueGenerationMock.mock.calls[0]!;
     expect((ctx as { org: string; project: string }).org).toBe(ORG);
     expect((ctx as { org: string; project: string }).project).toBe(PROJECT);
+    // …and a logger in deps. The orchestrator forwards it to `fetchContext`,
+    // which hands it to the RetrieveService that clamps over-bound stored
+    // chunks — without it the async generate path clamps silently.
+    const [, , deps] = enqueueGenerationMock.mock.calls[0]!;
+    expect((deps as { logger?: { warn: unknown } }).logger).toBeDefined();
+    expect(typeof (deps as { logger: { warn: unknown } }).logger.warn).toBe('function');
     await app.close();
   });
 
@@ -292,6 +348,31 @@ describe('GET /v1/generate/:requestId', () => {
     expect(body.units).toHaveLength(1);
     expect(body.units[0].unitKey).toBe('u1');
     expect(body.units[0].output).toEqual({ text: 'hello' });
+
+    // 🔴 THE ASSERTION THAT CATCHES A DELETED `.where()` RATHER THAN AN
+    // EMPTIED ONE — and the only test in this file that reaches the handler's
+    // SECOND query, because the scoping tests below all 404 before it.
+    //
+    // This handler runs two queries: the request lookup (id + org + project,
+    // asserted column-by-column further down) and then a jobs lookup scoped to
+    // the PARENT request id. The second is deliberately NOT tenant-scoped —
+    // `row.id` was itself fetched under the tenant predicate, so re-filtering
+    // on (org, project) would be redundant. That is why `expectScopedTo` is
+    // the wrong tool for it. What it must never be is UNFILTERED: delete
+    // `.where(eq(generationJobs.generationRequestId, row.id))` and the reply
+    // carries every tenant's jobs. Measured before the guard was wired: that
+    // deletion left this file GREEN at 24/24.
+    dbState.wheres.expectNoUnfilteredQuery();
+    // Both queries reached the stub, in order. A count, so a chain that
+    // silently stopped running could not satisfy the line above vacuously.
+    expect(dbState.wheres.calls.map((c) => c.table)).toEqual([
+      'generation_requests',
+      'generation_jobs',
+    ]);
+    // The jobs lookup is the one whose scope is the parent row, not the tenant.
+    expect(dbState.wheres.for('generation_jobs')[0]!.sql).toContain(
+      '"generation_jobs"."generation_request_id" =',
+    );
     await app.close();
   });
 
@@ -307,12 +388,18 @@ describe('GET /v1/generate/:requestId', () => {
     await app.close();
   });
 
-  it('404 when the request belongs to a different tenant (no existence leak)', async () => {
+  it('404 — not 403 — when the lookup returns nothing, so the status code alone leaks no existence', async () => {
     const app = await makeApp();
-    // The select chain filters by org+project; rows from a different tenant
-    // simply don't get returned by the WHERE clause (mocked to ignore the
-    // predicate, but since dbState.requestRows is empty for THIS scope it's
-    // identical behaviour from the route's perspective).
+    // ⚠ THIS IS NOT A TENANT-ISOLATION TEST, and it used to claim to be one.
+    // The db here is a stub whose `where()` ignores the predicate, so emptying
+    // `requestRows` proves only what the ROUTE does with an empty result set:
+    // it answers 404 rather than 403, which is the no-existence-leak half of
+    // the contract. Whether a foreign tenant's row is actually excluded is a
+    // property of the WHERE clause, and a mock cannot demonstrate it.
+    //
+    // 🔴 The real proof runs against a real Postgres, with a REAL foreign
+    // request id, in `src/routes/tenant-isolation.integration.test.ts`
+    // ("cross-ORG: GET /v1/generate/:requestId with a REAL foreign id is 404").
     dbState.requestRows = [];
     const res = await app.inject({
       method: 'GET',
@@ -320,6 +407,66 @@ describe('GET /v1/generate/:requestId', () => {
       headers: { authorization: `Bearer ${APP_TOKEN}` },
     });
     expect(res.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it('🔴 scopes the request lookup by id AND org AND project — a dropped tenant filter fails here', async () => {
+    // The stub now RECORDS the predicate it is handed (see `dbState.wheres`),
+    // so this asserts on the SQL the route actually built rather than on a
+    // row array the test itself emptied. Column by column, so dropping any one
+    // of the three is its own distinct failure.
+    const app = await makeApp();
+    dbState.requestRows = [];
+    await app.inject({
+      method: 'GET',
+      url: '/v1/generate/req-42',
+      headers: { authorization: `Bearer ${APP_TOKEN}` },
+    });
+
+    // Reported BEFORE the column checks: with the guard wired, a deleted
+    // `.where()` arrives here as `<NO PREDICATE>`, and this says so by name
+    // instead of failing on a `toContain` that just prints a missing substring.
+    dbState.wheres.expectNoUnfilteredQuery();
+    const lookup = dbState.wheres.for('generation_requests')[0];
+    expect(lookup).toBeDefined();
+    expect(lookup!.sql).toContain('"generation_requests"."id" =');
+    expect(lookup!.sql).toContain('"generation_requests"."org" =');
+    expect(lookup!.sql).toContain('"generation_requests"."project" =');
+    // Bound to the CALLER's scope — a predicate naming the right columns but
+    // binding the wrong values would pass the checks above.
+    expect(lookup!.params).toEqual(['req-42', ORG, PROJECT]);
+    await app.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /v1/generate/units/:unitKey/latest
+// ---------------------------------------------------------------------------
+
+describe('GET /v1/generate/units/:unitKey/latest', () => {
+  it('🔴 scopes the job lookup by org AND project AND unitKey — a dropped tenant filter fails here', async () => {
+    // A shared `unitKey` across tenants is the dangerous shape here: the route
+    // orders by `createdAt desc` and takes ONE row, so without the tenant
+    // predicate the caller receives whichever tenant wrote most recently. The
+    // real-database version of this case is in
+    // `src/routes/tenant-isolation.integration.test.ts`.
+    const app = await makeApp();
+    dbState.jobRows = [];
+    await app.inject({
+      method: 'GET',
+      url: '/v1/generate/units/u-shared/latest',
+      headers: { authorization: `Bearer ${APP_TOKEN}` },
+    });
+
+    // As above: names a deleted `.where()` as `<NO PREDICATE>` rather than
+    // leaving it to a substring check.
+    dbState.wheres.expectNoUnfilteredQuery();
+    const lookup = dbState.wheres.for('generation_jobs')[0];
+    expect(lookup).toBeDefined();
+    expect(lookup!.sql).toContain('"generation_jobs"."org" =');
+    expect(lookup!.sql).toContain('"generation_jobs"."project" =');
+    expect(lookup!.sql).toContain('"generation_jobs"."unit_key" =');
+    expect(lookup!.params).toEqual([ORG, PROJECT, 'u-shared']);
     await app.close();
   });
 });
@@ -345,6 +492,11 @@ describe('POST /v1/generate/:requestId/cancel', () => {
     expect(cancelGenerationMock).toHaveBeenCalledWith(
       'req-1',
       expect.objectContaining({ org: ORG, project: PROJECT }),
+      // Third argument added by phase 2: the route now passes the generation
+      // queue explicitly (`app.runtime.queues.generation`) instead of letting
+      // `cancelGeneration` reach for a module-scope singleton. The first two
+      // arguments — the assertion this case exists for — are unchanged.
+      expect.objectContaining({ queue: expect.anything() }),
     );
     await app.close();
   });

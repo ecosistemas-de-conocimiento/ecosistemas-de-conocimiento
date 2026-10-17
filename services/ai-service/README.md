@@ -44,7 +44,7 @@ cross-scope reads return 404, not 403 ("it doesn't exist in your scope").
 
 ## Stack
 
-TypeScript · Node 22 · [Fastify](https://fastify.dev) ·
+TypeScript · Node 26 (pinned by `.nvmrc`) · [Fastify](https://fastify.dev) ·
 Postgres + [`pgvector`](https://github.com/pgvector/pgvector) via
 [Drizzle](https://orm.drizzle.team) · Redis + [BullMQ](https://bullmq.io) ·
 Zod for config and payload validation. Two optional Python CPU sidecars
@@ -113,9 +113,24 @@ Other useful scripts (all via `pnpm --filter @edc/ai-service <script>`):
 Postgres must have the `vector` extension available — migration `0000` runs
 `CREATE EXTENSION vector`. The `pgvector/pgvector:pg16` image ships it.
 
-**No database?** Set `MOCK_LLM=1` to swap both the router and the embedder for
-deterministic stubs. The unit suite runs entirely without Postgres, Redis or a
-network.
+**There is no mock mode.** `MOCK_LLM`, `MOCK_EMBEDDINGS` and `MOCK_LLM_STREAM`
+were removed, and setting any of them refuses boot. For local demos and e2e,
+run the TEST-ONLY fake provider and point the service at it:
+
+```bash
+FAKE_PROVIDER_PORT=4010 node test-support/fake-provider/server.mjs &
+export CHAT_COMPLETIONS_URL=http://127.0.0.1:4010/api/v1/chat/completions
+export EMBEDDINGS_URL=http://127.0.0.1:4010/api/v1/embeddings
+export OPENROUTER_API_KEY=fake-provider-test-key
+```
+
+Every answer then starts with `[FAKE-PROVIDER TEST DATA]`. The unit suite runs
+without Postgres, Redis or a network.
+
+**Boot schema gate.** The container runs `scripts/schema-gate.mjs precheck`
+before migrating and `stamp` after: it refuses to boot when an already-applied
+migration's bytes changed. Appended migrations are allowed. Back up the
+database before deploying a release that adds migrations.
 
 ## Three things a new tenant needs
 

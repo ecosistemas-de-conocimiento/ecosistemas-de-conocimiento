@@ -6,7 +6,7 @@
 
 /** What one user is allowed to do inside ONE project. */
 export interface ProjectGrant {
-  /** Role slugs held in this project, e.g. `['facilitador']`. */
+  /** Role slugs held in this project, e.g. `['facilitator']`. */
   roles: string[];
   /**
    * Effective permission slugs in this project — the union of every role's

@@ -2,8 +2,7 @@
 //
 // Rewrites an anaphoric follow-up ("and what about those?") into a standalone
 // search query using the conversation history + the cheapest LLM tier, so the
-// retriever embeds the real intent instead of a dangling pronoun. Extracted
-// from a prototype's `services/chat/condense.ts` so every product gets it.
+// retriever embeds the real intent instead of a dangling pronoun.
 //
 // CONTENT-AGNOSTIC SPLIT: this file ships ZERO natural-language wording. The
 // consumer passes the entire rewrite instruction (its locale, its phrasing) as

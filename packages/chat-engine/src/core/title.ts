@@ -7,6 +7,7 @@
  */
 
 import type { AIClient } from './types.js';
+import { warnEngine } from './warn.js';
 
 /** The default/placeholder titles we're willing to overwrite. */
 export function isPlaceholderTitle(
@@ -73,7 +74,8 @@ export async function generateThreadTitle(
       .replace(/\s+/g, ' ');
     if (looksLikeTitle(cleaned)) return cleaned;
     return deriveTitleFromText(args.userText);
-  } catch {
+  } catch (err) {
+    warnEngine('title.failed', err);
     return deriveTitleFromText(args.userText);
   }
 }

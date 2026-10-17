@@ -1,0 +1,85 @@
+# Zero-cost cases for the FAKE run (`scripts/eval-generation.sh fake`).
+#
+# Same five prompts and the same five task profiles as `generation.yaml`, but
+# pointed at an ai-service whose CHAT_COMPLETIONS_URL is the TEST-ONLY fake
+# provider (test-support/fake-provider/). The real router runs; the fake
+# provider returns a marked body, so NO tokens are bought — not by the target,
+# and not by a judge: there is no `llm-rubric` anywhere in this file, on purpose.
+#
+# What it proves: the harness itself works end to end — auth header, request
+# body, `specDefault` spec resolution, Handlebars render, response transform,
+# assertion wiring. It proves NOTHING about generation quality; only the paid
+# run does that.
+#
+# The body's contract lives in `fakeBodyText`
+# (test-support/fake-provider/server.mjs): it always STARTS with the literal
+# `[FAKE-PROVIDER TEST DATA]`.
+
+- description: 'fake wire: summarize-prose / standard effort'
+  vars: &summarize
+    unitKey: eval-summarize-1
+    promptFile: summarize.txt
+    unitType: eval.summarize
+    effortLevel: standard
+    model: openai/gpt-4o-mini
+    passage: The town library moved its opening hours.
+  assert: &wire
+    - type: is-json
+      value:
+        type: object
+        required: [text, modelUsed, provider, costUsd, traceId, systemPromptApplied]
+        properties:
+          text: { type: string }
+          modelUsed: { type: string }
+          provider: { type: string }
+          costUsd: { type: number }
+          traceId: { type: string }
+          systemPromptApplied: { type: boolean }
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        if (!r.text.startsWith('[FAKE-PROVIDER TEST DATA]')) {
+          throw new Error('not the fake-provider body — is the target pointed at test-support/fake-provider?');
+        }
+        if (r.costUsd !== 0) throw new Error('a fake-provider call must cost 0, got ' + r.costUsd);
+        return true;
+
+- description: 'fake wire: classify-label / quick effort'
+  vars:
+    <<: *summarize
+    unitKey: eval-classify-1
+    promptFile: classify.txt
+    unitType: eval.classify
+    effortLevel: quick
+    message: The parcel still has not arrived.
+  assert: *wire
+
+- description: 'fake wire: extract-json / quick effort'
+  vars:
+    <<: *summarize
+    unitKey: eval-extract-1
+    promptFile: extract-json.txt
+    unitType: eval.extract
+    effortLevel: quick
+    note: Marta will collect twelve chairs in Lisbon on Wednesday.
+  assert: *wire
+
+- description: 'fake wire: action-items-json / standard effort'
+  vars:
+    <<: *summarize
+    unitKey: eval-action-items-1
+    promptFile: action-items.txt
+    unitType: eval.action_items
+    effortLevel: standard
+    note: Ana will book the room. Bruno will send the table.
+  assert: *wire
+
+- description: 'fake wire: plain-language-rewrite / deep effort'
+  vars:
+    <<: *summarize
+    unitKey: eval-plain-1
+    promptFile: plain-language.txt
+    unitType: eval.plain_language
+    effortLevel: deep
+    sentence: Applicants must submit the requisite documentation.
+  assert: *wire

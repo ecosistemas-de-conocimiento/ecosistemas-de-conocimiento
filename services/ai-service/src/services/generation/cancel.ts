@@ -21,35 +21,62 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { db as defaultDb, type Db } from '../../db/client.js';
 import { generationJobs, generationRequests, projectConfigs } from '../../db/schema/index.js';
 import {
-  getGenerationQueue,
   type GenerationQueueLike,
 } from '../../queue/queues.js';
 import { enqueueCallback } from '../callbacks/emit.js';
 import { getEventBus, type EventBus } from '../events/bus.js';
-import { getCancelBus, type CancelBus } from './cancel-bus.js';
+import type { CancelBus } from './cancel-bus.js';
+import { BudgetEnforcer } from '../budget/enforcer.js';
+import {
+  CANCELLED_LOST_ERROR,
+  WORKER_LOST_CODE,
+  lostWindowMs,
+} from '../jobs/lost.js';
+import {
+  heldOrEstimatedReserveUsd,
+  settleLostGenerationJob,
+} from '../../workers/generation.worker.js';
 
 export interface CancelResult {
   cancelled: boolean;
   removedJobs: number;
   alreadyCancelled?: boolean;
+  /**
+   * Jobs that were sitting at `running` past the lock window — their worker
+   * died — and that this cancel settled. ADDITIVE: a sibling count, never
+   * folded into `removedJobs`, which has always meant "removed from the BullMQ
+   * queue" and is 0 for these (there is nothing left in the queue to remove).
+   * Omitted when zero, so a consumer that has never heard of the field sees a
+   * byte-identical response for every request that has no lost job.
+   */
+  lostJobs?: number;
 }
 
 export interface CancelDeps {
   db?: Db;
-  queue?: GenerationQueueLike;
+  /** The generation queue. Required — no module-scope singleton to fall back on. */
+  queue: GenerationQueueLike;
   bus?: EventBus;
   cancelBus?: CancelBus;
+  budget?: BudgetEnforcer;
+  /** Lost-worker window override. Test seam only; see `lostWindowMs()`. */
+  lostWindowMs?: number;
 }
 
 export async function cancelGeneration(
   requestId: string,
   ctx: { org: string; project: string },
-  deps: CancelDeps = {},
+  deps: CancelDeps,
 ): Promise<CancelResult> {
   const db = deps.db ?? defaultDb;
-  const queue = deps.queue ?? getGenerationQueue();
+  const queue = deps.queue;
   const bus = deps.bus ?? getEventBus();
-  const cancelBus = deps.cancelBus ?? getCancelBus();
+  // Optional, and absent means "do not publish". That is EXACTLY what the old
+  // `?? getCancelBus()` did for a caller that passed none: the fallback bus was
+  // never `start()`ed, so `RedisCancelBus.publish()` returned early on its null
+  // `pub` client. Production always passes `app.runtime.cancelBus`.
+  const cancelBus = deps.cancelBus;
+  const budget = deps.budget ?? new BudgetEnforcer(db);
 
   // 1. Cross-tenant guard + existence probe in one query.
   const rows = await db
@@ -117,6 +144,45 @@ export async function cancelGeneration(
       );
   });
 
+  // 5b. Jobs left at 'running' by a DEAD worker. `/cancel` used to leave these
+  // untouched forever: the transaction above only moves rows in 'queued', and
+  // the comment said the worker transitions a running job when it re-reads the
+  // parent — which is true of a LIVE worker and false of one that is gone. The
+  // result was `{cancelled:true, removedJobs:0}` with the row still 'running',
+  // and the router's reserve for it still held.
+  //
+  // A job running INSIDE the window is still handled the old way: the
+  // cancel-bus publish at step 7 aborts its in-flight LLM call and the worker
+  // settles its own row. Only rows past the window — where there is no worker
+  // left to do that — are settled here.
+  const windowMs = deps.lostWindowMs ?? lostWindowMs();
+  let lostJobs = 0;
+  for (const j of jobRows) {
+    if (j.status !== 'running') continue;
+    const settled = await settleLostGenerationJob(db, j.id, {
+      windowMs,
+      status: 'cancelled',
+      error: CANCELLED_LOST_ERROR,
+      code: WORKER_LOST_CODE,
+    });
+    if (!settled) continue;
+    lostJobs += 1;
+    // Same leak, same fix as the reaper: the reserve was taken and will never
+    // be trued up. Guarded by the rowcount above, so a second cancel refunds
+    // nothing.
+    const refundUsd = await heldOrEstimatedReserveUsd(budget, j.id, settled);
+    if (refundUsd > 0) {
+      // `jobId` closes the ledger rows too — otherwise the reaper's next sweep
+      // still sees a live hold for a job `/cancel` already settled.
+      await budget.refund({ org: ctx.org, amountUsd: refundUsd, jobId: j.id }).catch((err: unknown) => {
+        console.warn(
+          `cancel: refunding the lost reserve for job ${j.id} failed: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
+  }
+
   // 6. Emit after writes commit.
   bus.emit({
     type: 'generation.request.cancelled',
@@ -179,9 +245,9 @@ export async function cancelGeneration(
   // 7. Best-effort pub/sub hint so worker pods can abort their in-flight LLM
   // call. The DB write at step 5 is the authoritative cancel; this just
   // shaves the latency from "until the LLM call finishes" to "tens of ms".
-  await cancelBus.publish(row.id);
+  await cancelBus?.publish(row.id);
 
-  return { cancelled: true, removedJobs };
+  return { cancelled: true, removedJobs, ...(lostJobs > 0 ? { lostJobs } : {}) };
 }
 
 async function resolveProjectCallbackUrl(

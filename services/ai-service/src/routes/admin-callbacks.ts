@@ -31,6 +31,17 @@ const adminCallbacksRoutes: FastifyPluginAsync = async (app) => {
     Body: { resign?: boolean } | undefined;
   }>('/:deliveryId/replay', async (req, reply) => {
     const body = req.body ?? {};
+    // Tenant isolation (audit finding [HIGH] IDOR): admin is a PER-TENANT
+    // role — a delivery belonging to another org must be indistinguishable
+    // from a missing one, and must not be re-fireable across tenants.
+    const owned = await db
+      .select({ org: callbackDeliveries.org })
+      .from(callbackDeliveries)
+      .where(eq(callbackDeliveries.id, req.params.deliveryId))
+      .limit(1);
+    if (!owned[0] || owned[0].org !== req.auth.org) {
+      return reply.notFound(`delivery ${req.params.deliveryId} not found`);
+    }
     const result = await replayDelivery(req.params.deliveryId, {
       resign: body.resign ?? true,
     });
@@ -56,7 +67,12 @@ const adminCallbacksRoutes: FastifyPluginAsync = async (app) => {
     };
   }>('/', async (req) => {
     const q = req.query;
-    const conditions = [] as ReturnType<typeof eq>[];
+    // Tenant isolation (audit finding [HIGH] IDOR): ALWAYS scope the listing
+    // to the caller's org — delivery rows carry other tenants' callback
+    // envelopes (generated output), endpoints, and response excerpts.
+    const conditions = [eq(callbackDeliveries.org, req.auth.org)] as ReturnType<
+      typeof eq
+    >[];
     if (q.status) {
       conditions.push(
         eq(

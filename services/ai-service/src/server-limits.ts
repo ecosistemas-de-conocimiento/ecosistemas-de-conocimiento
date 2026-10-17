@@ -18,16 +18,9 @@ export const DEFAULT_BODY_LIMIT_BYTES = 1_048_576;
 // still bounding worker memory.
 export const INGEST_BODY_LIMIT_BYTES = 10_485_760;
 
-// Generation rate-limit. 30/min: average LLM call is 2–10s wall clock and
-// ~$0.001–$0.01; 30/min keeps a single caller from burning a budget in a
-// burst. Other /v1 routes inherit the 100/min default.
-//
-// ⚠ Every cap below is enforced TWICE. `server.ts` registers
-// `@fastify/rate-limit` twice over /v1: once keyed by source IP at
-// `onRequest`, once keyed by API key at `preHandler`. A route-level
-// `config.rateLimit` override is read by both registrations, so 30 here means
-// 30/min per IP AND 30/min per key — not 60. Raising either number is a
-// deliberate decision; the batch job that gets refused is the thing to fix.
+// Generation rate-limit per (org, project) API key. 30/min: average LLM call
+// is 2–10s wall clock and ~$0.001–$0.01; 30/min keeps a single key from
+// burning a budget in a burst. Other /v1 routes inherit the 100/min default.
 export const GENERATE_RATE_LIMIT_MAX = 30;
 export const V1_DEFAULT_RATE_LIMIT_MAX = 100;
 export const V1_RATE_LIMIT_WINDOW = '1 minute';

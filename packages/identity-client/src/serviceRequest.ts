@@ -1,24 +1,39 @@
-// Shared plumbing for the SERVICE-TO-SERVICE calls (`/v1/identity/resolve`,
-// `/v1/identity/export`).
+// Shared HTTP plumbing for every call this package makes to the IdP.
 //
-// One file, so both calls send the same header, honour the same timeout, and
-// classify errors the same way. The two endpoints authenticate identically on
-// the server (`src/endpoints/serviceAuth.ts`); the client mirrors that.
+// Two lanes share it, and they authenticate DIFFERENTLY:
 //
-//   ⚠ SERVER-SIDE ONLY. `serviceToken` is a bearer credential for the whole
-//     IdP service surface. Shipping it to a browser hands every visitor the
-//     ability to read the whole grant map.
+//   · the SERVICE lane (`resolve.ts`, `export.ts`) sends `X-Service-Token` and
+//     is machine-to-machine. Both endpoints authenticate identically on the
+//     server (`src/endpoints/serviceAuth.ts`); the client mirrors that.
+//   · the SESSION lane (`session.ts` — login / refresh / revoke) sends NO
+//     credential of its own. The password or the refresh ticket travels in the
+//     JSON body, on behalf of a browser user.
+//
+// Only the TRANSPORT is shared: one timeout, one abort composition, one JSON
+// parse. It is extracted rather than copied because a second copy of the abort
+// composition is a listener leak that gets fixed in one place and not the other.
+// Authentication is deliberately NOT shared — `sendRequest` attaches no header
+// of its own, which is what lets the session lane reuse it with no way to
+// accidentally pick up a service token.
+//
+//   ⚠ THE `service*` HELPERS BELOW ARE SERVER-SIDE ONLY. `serviceToken` is a
+//     bearer credential for the whole IdP service surface. Shipping it to a
+//     browser hands every visitor the ability to read the whole grant map.
 
 import { IdentityConfigError, IdentityRequestError, type IdentityErrorBody } from './errors.js';
 import { SERVICE_TOKEN_HEADER } from './types.js';
 
-const DEFAULT_TIMEOUT_MS = 10_000;
+/** Every IdP call in this package uses this unless the caller overrides it. */
+export const DEFAULT_TIMEOUT_MS = 10_000;
 
-export interface ServiceCallOptions {
-  /** IdP base URL, e.g. `https://backend.example.org/api`. Trailing slash optional. */
-  baseUrl: string;
-  /** This service's entry in the IdP's `SERVICE_TOKENS` map. Never expose to a client. */
-  serviceToken: string;
+/**
+ * The injectable parts of any IdP call — the half that is about HOW to reach
+ * the server rather than WHO is calling.
+ *
+ * {@link ServiceCallOptions} and `SessionOptions` both build on this, so the
+ * two lanes cannot drift on timeout or abort semantics.
+ */
+export interface HttpCallOptions {
   /** Injectable fetch (tests / polyfills). Defaults to the platform `fetch`. */
   fetch?: typeof fetch;
   /** Hard request timeout in ms. Default 10 000. */
@@ -27,10 +42,19 @@ export interface ServiceCallOptions {
   signal?: AbortSignal;
 }
 
+export interface ServiceCallOptions extends HttpCallOptions {
+  /** IdP base URL, e.g. `https://backend.example.org/api`. Trailing slash optional. */
+  baseUrl: string;
+  /** This service's entry in the IdP's `SERVICE_TOKENS` map. Never expose to a client. */
+  serviceToken: string;
+}
+
 export interface ServiceResponse {
   status: number;
   /** Parsed JSON, or `undefined` for an empty body. */
   body: unknown;
+  /** Response headers — `Retry-After` on a 429 is the one that matters. */
+  headers: Headers;
 }
 
 /** Throws {@link IdentityConfigError} before any network call. */
@@ -55,18 +79,29 @@ export function requireServiceConfig(
 }
 
 /**
- * GET a service-to-service endpoint.
+ * One HTTP round trip, carrying the timeout and abort composition every IdP
+ * call shares.
  *
  * Returns the status and parsed body for ANY HTTP response, including 4xx and
- * 5xx — the caller decides what a given status means, because it differs:
- * `/resolve` treats 404 as a normal "no access" answer, `/export` treats it as
- * a hard error. Only transport failures (network, timeout, abort) throw here.
+ * 5xx — the caller decides what a given status means, because it genuinely
+ * differs: `/resolve` treats 404 as a normal "no access" answer, `/export`
+ * treats it as a broken configuration, and `/refresh` treats it as "that
+ * project does not exist" while the user's session stays perfectly alive. Only
+ * transport failures (network, timeout, abort) leave through `transportError`.
+ *
+ * ⚠ `transportError` is a parameter, not a hard-coded class, because the two
+ * lanes throw DIFFERENT error families for the same network failure. Collapsing
+ * them would force a session consumer to catch `IdentityRequestError` to learn
+ * that its refresh timed out — and lose the one fact it has to act on, which is
+ * whether its refresh ticket survived.
  */
-export async function serviceGet(
+export async function sendRequest(
   label: string,
   fetchImpl: typeof fetch,
   url: string,
-  options: ServiceCallOptions,
+  init: { method: 'GET' | 'POST'; headers: Record<string, string>; body?: string },
+  options: HttpCallOptions,
+  transportError: (message: string) => Error,
 ): Promise<ServiceResponse> {
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -77,20 +112,17 @@ export async function serviceGet(
   let res: Response;
   try {
     res = await fetchImpl(url, {
-      method: 'GET',
-      headers: {
-        [SERVICE_TOKEN_HEADER]: options.serviceToken,
-        Accept: 'application/json',
-      },
+      method: init.method,
+      headers: init.headers,
+      ...(init.body === undefined ? {} : { body: init.body }),
       signal: controller.signal,
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    throw new IdentityRequestError(
+    throw transportError(
       controller.signal.aborted
         ? `${label}: request timed out after ${timeoutMs}ms`
         : `${label}: request failed: ${reason}`,
-      0,
     );
   } finally {
     clearTimeout(timer);
@@ -98,15 +130,61 @@ export async function serviceGet(
   }
 
   const text = await res.text();
-  return { status: res.status, body: text.length > 0 ? safeJsonParse(text) : undefined };
+  return {
+    status: res.status,
+    body: text.length > 0 ? safeJsonParse(text) : undefined,
+    headers: res.headers,
+  };
+}
+
+/**
+ * GET a service-to-service endpoint with `X-Service-Token`.
+ *
+ * A thin wrapper over {@link sendRequest} that adds the one thing this lane
+ * owns: the credential. Transport failures throw {@link IdentityRequestError}
+ * with `status: 0`.
+ */
+export async function serviceGet(
+  label: string,
+  fetchImpl: typeof fetch,
+  url: string,
+  options: ServiceCallOptions,
+): Promise<ServiceResponse> {
+  return sendRequest(
+    label,
+    fetchImpl,
+    url,
+    {
+      method: 'GET',
+      headers: {
+        [SERVICE_TOKEN_HEADER]: options.serviceToken,
+        Accept: 'application/json',
+      },
+    },
+    options,
+    (message) => new IdentityRequestError(message, 0),
+  );
+}
+
+/**
+ * The human-readable half of an IdP error body, if there is one.
+ *
+ * The IdP answers `{ errors: [{ message }] }` on every custom endpoint (it is
+ * Payload's own REST convention, kept so consumers need ONE error parser), but
+ * a reverse proxy in front of it may answer `{ message }` or `{ error }` or
+ * plain text. All four shapes land here rather than in two lanes' worth of
+ * near-identical guessing.
+ */
+export function responseMessage(body: unknown): string | undefined {
+  const raw = body as { message?: unknown; error?: unknown } | undefined;
+  if (typeof raw?.message === 'string' && raw.message.length > 0) return raw.message;
+  if (typeof raw?.error === 'string' && raw.error.length > 0) return raw.error;
+  return firstPayloadError(body);
 }
 
 /** Turn a non-2xx response into a typed error with a readable message. */
 export function serviceError(label: string, status: number, body: unknown): IdentityRequestError {
-  const detail =
-    (body as { message?: string; error?: string } | undefined)?.message ??
-    (body as { message?: string; error?: string } | undefined)?.error ??
-    firstPayloadError(body);
+  const detail = responseMessage(body);
 
   if (status === 401 || status === 403) {
     return new IdentityRequestError(

@@ -43,6 +43,14 @@ const internalRoutes: FastifyPluginAsync = async (app) => {
       .where(
         and(
           eq(traces.org, req.auth.org),
+          // Project, not just org. `traces` carries both via `scopingColumns()`
+          // (`src/db/schema/index.ts`), but this route filtered on org alone —
+          // so a key scoped to project A could read project B's trace row from
+          // the same org. Dev-only and it returns no prompt or chunk text, so
+          // it was never a live leak; it was a one-line predicate missing from
+          // a scope that has two halves, and every OTHER surface enforces both.
+          // An absent rule is the widest rule.
+          eq(traces.project, req.auth.project),
           // metadata->>'unitKey' = $unitKey — Postgres JSONB text accessor.
           sql`${traces.metadata}->>'unitKey' = ${unitKey}`,
         ),

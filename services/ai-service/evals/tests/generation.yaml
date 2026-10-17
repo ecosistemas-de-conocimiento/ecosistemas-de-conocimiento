@@ -1,0 +1,132 @@
+# Generation-quality cases for the PAID run (`scripts/eval-generation.sh real`).
+#
+# Every case is deliberately DOMAIN-FREE. ai-service is project-agnostic
+# (ADR-0001), so nothing here may carry a consumer product's vocabulary — the
+# cases exercise the SHAPES the service ships (prose, classification, JSON
+# extraction, plain-language rewriting), never any product's subject matter.
+#
+# `vars` drive two layers:
+#   - promptfoo renders the prompt file with them (nunjucks);
+#   - the rendered text is sent as `unit.specDefault.promptTemplate`, the
+#     registry's zero-config FLOOR (src/contract/generate.ts), so no registry
+#     row is needed and a project could still take ownership by registering
+#     the unitType.
+# `unitType` / `effortLevel` / `model` pick the task profile per case.
+
+- description: summarize-prose / standard effort
+  vars:
+    unitKey: eval-summarize-1
+    promptFile: summarize.txt
+    unitType: eval.summarize
+    effortLevel: standard
+    model: openai/gpt-4o-mini
+    passage: >-
+      The town library moved its opening hours. From next month it opens at
+      nine in the morning on weekdays and stays open until eight in the
+      evening on Thursdays. It closes on Sundays, as before. The change was
+      made after a survey of readers, most of whom said the old midday
+      closing was inconvenient.
+  assert:
+    - type: llm-rubric
+      value: >-
+        The response is exactly two sentences of plain prose. It states the new
+        weekday opening time and the late Thursday closing time. It does not
+        invent any fact absent from the passage, and it contains no bullet
+        points, headings or preamble.
+    - type: not-contains
+      value: '- '
+    - type: javascript
+      value: output.trim().length > 0 && output.trim().length < 600
+
+- description: classify-label / quick effort
+  vars:
+    unitKey: eval-classify-1
+    promptFile: classify.txt
+    unitType: eval.classify
+    effortLevel: quick
+    model: openai/gpt-4o-mini
+    message: >-
+      The parcel I ordered three weeks ago still has not arrived and nobody
+      answers the phone number on your website. This is the third time it
+      happens.
+  assert:
+    - type: regex
+      value: '^\s*complaint\s*$'
+
+- description: extract-json / structured, quick effort
+  vars:
+    unitKey: eval-extract-1
+    promptFile: extract-json.txt
+    unitType: eval.extract
+    effortLevel: quick
+    model: openai/gpt-4o-mini
+    note: >-
+      Marta will collect twelve chairs in Lisbon on Wednesday.
+  assert:
+    - type: is-json
+      value:
+        type: object
+        required: [name, city, day, count]
+        additionalProperties: false
+        properties:
+          name: { type: string }
+          city: { type: string }
+          day: { type: string }
+          count: { type: number }
+    - type: javascript
+      value: |
+        const o = JSON.parse(output);
+        return o.count === 12 && o.day.toLowerCase() === 'wednesday';
+
+- description: action-items-json / structured array, standard effort
+  vars:
+    unitKey: eval-action-items-1
+    promptFile: action-items.txt
+    unitType: eval.action_items
+    effortLevel: standard
+    model: openai/gpt-4o-mini
+    note: >-
+      We agreed that Ana will book the meeting room before Friday, and that
+      Bruno will send the updated cost table to the group. Nothing else was
+      decided.
+  assert:
+    - type: is-json
+      value:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items:
+          type: object
+          required: [owner, task]
+          additionalProperties: false
+          properties:
+            owner: { type: string }
+            task: { type: string }
+    - type: llm-rubric
+      value: >-
+        The array holds exactly two items. One names Ana and her task is
+        booking the meeting room. The other names Bruno and his task is
+        sending the updated cost table. No third item is invented.
+
+- description: plain-language-rewrite / deep effort
+  vars:
+    unitKey: eval-plain-1
+    promptFile: plain-language.txt
+    unitType: eval.plain_language
+    effortLevel: deep
+    model: openai/gpt-4o-mini
+    sentence: >-
+      Applicants must submit the requisite documentation prior to the
+      expiration of the stipulated period, failing which the application shall
+      be deemed withdrawn.
+  assert:
+    - type: llm-rubric
+      value: >-
+        The rewrite keeps both facts: that the papers must be sent before the
+        deadline, and that missing the deadline means the application is
+        dropped. It uses everyday words a child could read, adds no new
+        information, and does not simply repeat the original wording.
+    - type: not-contains
+      value: requisite
+    - type: not-contains
+      value: stipulated

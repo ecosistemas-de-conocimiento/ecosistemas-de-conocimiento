@@ -263,9 +263,24 @@ describe('PATCH /v1/corpora/:name', () => {
     await app.close();
   });
 
+  it('maps CHUNK_SIZE_LOCKED to 409', async () => {
+    const { ChunkSizeShrinkNotAllowedError } = await import('../services/rag/corpus-crud.js');
+    updateMock.mockRejectedValueOnce(new ChunkSizeShrinkNotAllowedError('policies', 800, 200));
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/v1/corpora/policies',
+      headers: { authorization: 'Bearer app-key' },
+      payload: { chunkSize: 200 },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('CHUNK_SIZE_LOCKED');
+    await app.close();
+  });
+
   it('maps CORPUS_NOT_FOUND to 404', async () => {
     const { CorpusNotFoundError } = await import('../services/rag/corpus-crud.js');
-    updateMock.mockRejectedValueOnce(new CorpusNotFoundError('missing'));
+    updateMock.mockRejectedValueOnce(new CorpusNotFoundError({ corpus: 'missing' }));
     const app = await makeApp();
     const res = await app.inject({
       method: 'PATCH',

@@ -6,7 +6,11 @@
 // `readiness()` reports all three at once, in plain words.
 
 import type { HttpClient } from './http.js';
-import type { Validator } from './types.js';
+// The provision REQUEST body is generated from `src/contract/tenant.ts` — it is
+// NOT re-declared here. A hand-written copy sat in this file and, because an
+// explicit named export beats a star export, it silently WON over the generated
+// one in `index.ts`, leaving the only request body the drift gate could not see.
+import type { ProvisionTenantRequest } from './types.js';
 
 export type ReadinessCheckId = 'api-key' | 'budget' | 'registry';
 
@@ -34,28 +38,6 @@ export interface SetBudgetResult {
   currency: string;
   /** True when this call created the budget row (the fail-closed gate lifted). */
   created: boolean;
-}
-
-export interface ProvisionUnitType {
-  unitType: string;
-  version: string;
-  promptTemplate: string;
-  metaPromptTemplate?: string | null;
-  model?: string | null;
-  defaultEffort?: 'quick' | 'standard' | 'deep' | 'maximum' | null;
-  effortProfiles?: Record<string, unknown> | null;
-  responseSchema?: Record<string, unknown> | null;
-  validators?: Validator[];
-  renderer?: string | null;
-  contentKind?: string | null;
-  metadata?: Record<string, unknown> | null;
-  /** Defaults to true — an inactive entry provisions nothing. */
-  activate?: boolean;
-}
-
-export interface ProvisionTenantRequest {
-  budget?: { limitUsd: number; refill?: boolean };
-  unitTypes?: ProvisionUnitType[];
 }
 
 export interface ProvisionItemResult {

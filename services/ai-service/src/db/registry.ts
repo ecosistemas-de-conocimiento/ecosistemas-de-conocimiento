@@ -9,6 +9,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 
 import type { Db } from './client.js';
+import { CodedEnvelopeError } from '../errors/base.js';
 import { projectConfigs, registryAudit, registryEntries } from './schema/index.js';
 
 export type ProjectConfigRow = typeof projectConfigs.$inferSelect;
@@ -235,14 +236,24 @@ export async function getVersion(
  * Distinguishes the two failure modes a caller cares about so the route layer
  * can map them to 400 vs. 500 without parsing error messages.
  */
-export class RegistryConflictError extends Error {
+export class RegistryConflictError extends CodedEnvelopeError {
+  readonly code = 'ERR_REGISTRY_CONFLICT';
+  /**
+   * 400, not 409. The route answered `reply.badRequest` from M3 until the
+   * flattening was removed, so 400 is the status consumers have always seen —
+   * the class adopts it rather than changing the status AND the body in one
+   * step. Revisit as a separate, versioned change if 409 is wanted.
+   */
+  readonly status = 400;
   constructor(message: string) {
     super(message);
     this.name = 'RegistryConflictError';
   }
 }
 
-export class RegistryNotFoundError extends Error {
+export class RegistryNotFoundError extends CodedEnvelopeError {
+  readonly code = 'ERR_REGISTRY_NOT_FOUND';
+  readonly status = 404;
   constructor(message: string) {
     super(message);
     this.name = 'RegistryNotFoundError';

@@ -1,8 +1,7 @@
 // Pure cost estimation for a resolved batch.
 //
 // Each `ResolvedUnit` already carries its own `EffortProfile` (the registry
-// resolver attaches it during `resolveSpec`). Compared to a prototype, we drop the
-// per-story / per-dimension math: every unit costs exactly one rollup of
+// resolver attaches it during `resolveSpec`): every unit costs exactly one rollup of
 // `perCall × validationPasses × multiSample`, summed across the batch.
 //
 // Side-effect free — no DB, no queue. Called from:
@@ -69,7 +68,7 @@ export function estimateBatch(
   };
 }
 
-/** Round to 6 decimals — tracks a prototype and matches USD micro-cent precision. */
+/** Round to 6 decimals — matches USD micro-cent precision. */
 function round6(n: number): number {
   return Math.round(n * 1e6) / 1e6;
 }

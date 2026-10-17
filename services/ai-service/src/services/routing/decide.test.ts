@@ -10,7 +10,7 @@ import {
   renderCandidates,
 } from './decide.js';
 import { renderPrompt } from '../render/handlebars.js';
-import type { RouteCandidateInput } from '../../schemas/route.js';
+import type { RouteCandidateInput } from '../../contract/route.js';
 
 const CANDIDATES: RouteCandidateInput[] = [
   { id: 'search', description: 'semantic text search (default)' },
@@ -21,7 +21,7 @@ const CANDIDATES: RouteCandidateInput[] = [
 describe('decideRoute — happy path', () => {
   it('picks the candidate the model returned (from parsed)', () => {
     const d = decideRoute({ parsed: { routeId: 'sql', reason: 'count question' } }, CANDIDATES);
-    expect(d).toEqual({ routeId: 'sql', reason: 'count question' });
+    expect(d).toEqual({ routeId: 'sql', reason: 'count question', fallback: false });
   });
 
   it('parses JSON from text when parsed is absent', () => {
@@ -164,8 +164,8 @@ describe('DEFAULT_ROUTER_PROMPT — is Spanish', () => {
 });
 
 describe('decideRoute — reason strings stay English (API response values)', () => {
-  // `src/routes/route.ts` matches `decision.reason.startsWith('fallback:')`, and
-  // consumers may match these too. They are wire values, NOT prompts.
+  // Consumers on older servers match `reason.startsWith('fallback:')` (newer ones
+  // can read `fallback`). They are wire values, NOT prompts.
   it('prefixes every fail-safe reason with the English `fallback:`', () => {
     expect(decideRoute({ text: 'garbage' }, CANDIDATES).reason).toBe(
       'fallback: router produced unparseable output',

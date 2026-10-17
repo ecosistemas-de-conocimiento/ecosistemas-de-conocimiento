@@ -1,7 +1,6 @@
 // Atomic budget reserve / refund / adjust against `budget_state`.
 //
-// Ported from a prototype's `services/ai/router/budget-enforcer.ts`. A prototype reserved
-// against `organizations.budget_remaining_usd`; ai-service has no
+// ai-service has no
 // `organizations` table — its mutable counter lives on `budget_state` keyed by
 // the opaque `org` text. See `plan/m3-m4-decisions.md` §2.
 //
@@ -23,8 +22,21 @@
 // ── Budget reset (0007_budget_reset) ──────────────────────────────────────
 // Lazy reset semantics from `plan/budget-reset-followup.md`:
 //   - On every `reserve()`, read the row's `reset_*` fields.
-//   - If `now() >= next_reset_at`, run the reset UPDATE BEFORE the reserve,
-//     wrapped in the same `db.transaction` so the pair is atomic.
+//   - If `now() >= next_reset_at`, run the reset UPDATE BEFORE the reserve.
+//     ⚠ There is NO `db.transaction` here — reset and reserve are two separate
+//     statements, and an earlier version of this comment claimed otherwise.
+//     Each is atomic ON ITS OWN and that is sufficient:
+//       · the reset UPDATE carries `AND next_reset_at = <the value we read>`,
+//         so of N concurrent callers that all see the boundary as passed,
+//         exactly one matches a row and flips it; the losers match zero rows
+//         and simply proceed (`maybeReset` returns false).
+//       · the reserve UPDATE carries `AND remaining_usd >= amount`, so it
+//         re-reads and re-checks the balance under Postgres' own row lock,
+//         whatever the reset did in between.
+//     The only thing the missing transaction costs is ordering across the two:
+//     a caller can reserve against the PRE-reset balance and get a
+//     `BudgetExceeded` a few milliseconds before the reset that would have
+//     covered it. No money is ever created or lost by that interleaving.
 //   - Append a `usage_logs` row with `endpoint = 'budget-reset'` for the
 //     audit trail. Audit-only — doesn't move money.
 //   - After the reserve, evaluate soft-cap: if remaining is below the
@@ -42,12 +54,36 @@ const SOFT_CAP_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
 interface ReserveInput {
   org: string;
   amountUsd: number;
-  /** Soft link only; logged via the trace writer, not consulted here. */
+  /**
+   * The router's per-call trace id.
+   *
+   * ⚠ This used to be documented as "soft link only; logged via the trace
+   * writer, not consulted here" — and it genuinely was IGNORED. It is now the
+   * key the `budget_reservations` ledger row is written under, which is what
+   * lets a hold be found and settled later.
+   */
   traceId?: string;
+  /** Opaque scoping tag, copied onto the ledger row for per-project audit. */
+  project?: string | undefined;
+  /**
+   * `generation_jobs.id`, when this reserve belongs to a queued job. THE
+   * REAPER'S ONLY HANDLE: a worker that dies leaves nothing but the job row,
+   * so a hold with no `job_id` cannot be recovered by amount and falls back to
+   * the old `metadata.reservePerCallUsd` guess.
+   */
+  jobId?: string | undefined;
 }
 
 export interface ReserveResult {
   remainingUsd: number;
+  /**
+   * The `budget_reservations` row this hold wrote, when one was written.
+   *
+   * Absent for a $0 reserve (nothing is held) and when the ledger INSERT
+   * failed — see the ledger's "audit, not authority" note in
+   * `src/db/schema/index.ts`.
+   */
+  reservationId?: string;
   /** True when this reserve crossed (or stayed below) the soft-cap threshold
    *  AND the throttle window has elapsed. Audit-only; the reserve still
    *  succeeded. */
@@ -65,7 +101,18 @@ interface AdjustInput {
 interface RefundInput {
   org: string;
   amountUsd: number;
+  /** Close out this call's live holds as `refunded`. */
+  traceId?: string | undefined;
+  /** Close out this job's live holds as `refunded`. */
+  jobId?: string | undefined;
 }
+
+interface AdjustInputWithLedger extends AdjustInput {
+  traceId?: string | undefined;
+}
+
+/** Ledger row lifecycle. See `budgetReservations` in `src/db/schema/index.ts`. */
+export type ReservationState = 'reserved' | 'settled' | 'refunded';
 
 type AnyDb = Db | Parameters<Parameters<Db['transaction']>[0]>[0];
 
@@ -141,10 +188,16 @@ export class BudgetEnforcer {
     // Step 2: attempt the atomic reserve.
     const attempt = await this.tryReserve(input.org, input.amountUsd);
     if (attempt !== null) {
+      // Ledger row AFTER the atomic UPDATE won, never before: a row written
+      // ahead of the decrement would record a hold that a concurrent caller's
+      // `remaining_usd >= amount` predicate then refused, and the reaper would
+      // refund money that was never taken.
+      const reservationId = await this.writeReservation(input);
       const softCap = await this.evaluateSoftCap(input.org, attempt);
       return {
         remainingUsd: attempt,
         softCap,
+        ...(reservationId ? { reservationId } : {}),
         ...(resetOutcome ? { resetOccurred: true } : {}),
       };
     }
@@ -158,15 +211,125 @@ export class BudgetEnforcer {
     throw new BudgetExceeded(input.org, input.amountUsd, remaining);
   }
 
-  /** Refund a previously reserved amount. Never throws; missing rows no-op. */
+  /**
+   * Refund a previously reserved amount. Never throws; missing rows no-op.
+   *
+   * When a `traceId` / `jobId` is given, the matching LIVE ledger rows are
+   * closed out as `refunded` — otherwise the reaper would find them still
+   * `reserved` on its next sweep and refund the same money again.
+   *
+   * 🔴 CLAMPED AT `limit_usd`. A refund credits money that was supposedly
+   * reserved, but nothing here proves it was: a double refund, or a refund of
+   * a hold whose reserve was already released, would otherwise MINT budget —
+   * measured, a $10.00 cap ended at $10.00574. `LEAST(...)` caps the credit at
+   * the org's own limit. It stays ONE statement: a read-then-write would
+   * reintroduce the race the atomic UPDATE exists to avoid.
+   */
   async refund(input: RefundInput): Promise<void> {
     if (!(input.amountUsd > 0)) return;
     await this.db.execute(sql`
       UPDATE "budget_state"
-         SET "remaining_usd" = "remaining_usd" + ${input.amountUsd}::numeric,
+         SET "remaining_usd" = LEAST(
+               "remaining_usd" + ${input.amountUsd}::numeric,
+               "limit_usd"
+             ),
              "updated_at" = now()
        WHERE "org" = ${input.org}
     `);
+    await this.closeReservations(input, 'refunded');
+  }
+
+  /**
+   * Close out every LIVE hold for a call/job, without moving money.
+   *
+   * The router's true-up (`adjust`) already reconciles the org counter in one
+   * statement; this is the ledger's half of the same event. Idempotent by the
+   * `state = 'reserved'` predicate: a second call matches nothing.
+   */
+  async settleReservations(key: { traceId?: string | undefined; jobId?: string | undefined }): Promise<void> {
+    await this.closeReservations(key, 'settled');
+  }
+
+  /**
+   * The exact amount still HELD for a job — the number a lost-worker refund
+   * must return, and the reason this table exists.
+   *
+   * `null` (not 0) when the job has no ledger rows at all, so the caller can
+   * tell "nothing held" apart from "this job predates the ledger" and fall
+   * back to the old `metadata.reservePerCallUsd` estimate for the latter.
+   */
+  async heldReserveUsd(jobId: string): Promise<number | null> {
+    const out = await this.db.execute(sql`
+      SELECT
+        COALESCE(SUM("amount_usd") FILTER (WHERE "state" = 'reserved'), 0) AS held,
+        COUNT(*) AS total
+      FROM "budget_reservations"
+      WHERE "job_id" = ${jobId}
+    `);
+    const rows = rowsFromExecute(out);
+    const row = rows[0];
+    if (!row) return null;
+    if (asNumber(row['total']) === 0) return null;
+    return asNumber(row['held']);
+  }
+
+  /** Insert one ledger row. Best-effort — see the schema's audit-not-authority note. */
+  private async writeReservation(input: ReserveInput): Promise<string | undefined> {
+    try {
+      const out = await this.db.execute(sql`
+        INSERT INTO "budget_reservations"
+          ("org", "project", "trace_id", "job_id", "amount_usd", "state")
+        VALUES (
+          ${input.org},
+          ${input.project ?? null},
+          ${input.traceId ?? null},
+          ${input.jobId ?? null},
+          ${input.amountUsd}::numeric,
+          'reserved'
+        )
+        RETURNING "id"
+      `);
+      const id = rowsFromExecute(out)[0]?.['id'];
+      return typeof id === 'string' ? id : undefined;
+    } catch (err) {
+      // The MONEY already moved and the call is valid. Losing the audit row
+      // costs precision in a later lost-worker refund, not correctness now.
+      console.warn(
+        `[budget] budget_reservations insert failed for org=${input.org} ` +
+          `traceId=${input.traceId ?? '-'} jobId=${input.jobId ?? '-'}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      return undefined;
+    }
+  }
+
+  /** Flip live holds to a terminal state. No key ⇒ no-op (never a mass update). */
+  private async closeReservations(
+    key: { traceId?: string | undefined; jobId?: string | undefined },
+    state: 'settled' | 'refunded',
+  ): Promise<void> {
+    // 🔴 A missing key must NOT widen to "every reserved row". Callers that
+    // have neither id (an ad-hoc refund, `/v1/embed`) simply leave the ledger
+    // alone — a stale `reserved` row is a reporting artefact; a mass close-out
+    // would erase every other tenant's live holds.
+    if (!key.traceId && !key.jobId) return;
+    try {
+      await this.db.execute(sql`
+        UPDATE "budget_reservations"
+           SET "state" = ${state}, "settled_at" = now()
+         WHERE "state" = 'reserved'
+           AND (
+             (${key.traceId ?? null}::text IS NOT NULL AND "trace_id" = ${key.traceId ?? null})
+             OR (${key.jobId ?? null}::text IS NOT NULL AND "job_id" = ${key.jobId ?? null})
+           )
+      `);
+    } catch (err) {
+      console.warn(
+        `[budget] budget_reservations close-out (${state}) failed for ` +
+          `traceId=${key.traceId ?? '-'} jobId=${key.jobId ?? '-'}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /**
@@ -174,14 +337,20 @@ export class BudgetEnforcer {
    * No floor enforcement — actuals can briefly push the row below zero; the
    * reconciliation job (future) is responsible for catching sustained drift.
    */
-  async adjust(input: AdjustInput): Promise<void> {
-    if (Math.abs(input.deltaUsd) < 1e-9) return;
-    await this.db.execute(sql`
-      UPDATE "budget_state"
-         SET "remaining_usd" = "remaining_usd" + ${input.deltaUsd}::numeric,
-             "updated_at" = now()
-       WHERE "org" = ${input.org}
-    `);
+  async adjust(input: AdjustInputWithLedger): Promise<void> {
+    // ⚠ The ledger close-out runs even for a zero delta. A true-up whose
+    // actual cost landed exactly on the reserve moves no money but the holds
+    // are just as finished, and leaving them `reserved` would let the reaper
+    // refund a completed call.
+    if (Math.abs(input.deltaUsd) >= 1e-9) {
+      await this.db.execute(sql`
+        UPDATE "budget_state"
+           SET "remaining_usd" = "remaining_usd" + ${input.deltaUsd}::numeric,
+               "updated_at" = now()
+         WHERE "org" = ${input.org}
+      `);
+    }
+    await this.closeReservations({ traceId: input.traceId }, 'settled');
   }
 
   /** Read-only view of the current `remaining_usd` for an org. 0 if no row. */
@@ -206,6 +375,39 @@ export class BudgetEnforcer {
     if (!(await this.rowExists(org))) {
       throw new BudgetNotConfigured(org);
     }
+  }
+
+  /**
+   * Soft-cap probe for a batch that is ABOUT to run.
+   *
+   * Exists because the async `/v1/generate` path no longer reserves the batch
+   * estimate (see the header of `services/generation/orchestrator.ts`), and the
+   * `BUDGET_SOFT_CAP` warning in the launch response used to be a side effect
+   * of that reserve. Dropping the reserve without this would have silently
+   * removed a consumer-visible warning — a client-facing regression.
+   *
+   * 🔴 `projectedSpendUsd` IS NOT OPTIONAL IN SPIRIT. The old reserve evaluated
+   * the soft cap on the POST-reserve remaining, so the batch that CROSSES the
+   * threshold is the one that warns. A probe on the PRE-spend remaining warns
+   * one batch too late — the crossing batch says nothing, and a consumer can treat this
+   * as "the one advance notice".
+   *
+   * MEASURED on real Postgres (limit 100, soft_cap_pct 90 ⇒ threshold 10,
+   * remaining 10.5, batch estimate 1.0): the post-reserve evaluation fires
+   * (9.5 < 10); a pre-spend evaluation does not (10.5 >= 10). Callers therefore
+   * pass the batch estimate so the projected remaining is what gets judged.
+   *
+   * ⚠ NOT strictly read-only: it moves no MONEY (`remaining_usd` is untouched),
+   * but a firing warning stamps `soft_cap_warned_at` via `evaluateSoftCap` —
+   * that is the 5-minute throttle's bookkeeping, and it is why two probes in a
+   * row do not both warn.
+   */
+  async checkSoftCap(org: string, projectedSpendUsd = 0): Promise<boolean> {
+    const remaining = await this.getRemaining(org);
+    // Clamp: a negative "projected spend" must never inflate the remaining and
+    // suppress a warning that is genuinely due.
+    const projected = remaining - Math.max(0, projectedSpendUsd);
+    return this.evaluateSoftCap(org, projected);
   }
 
   /** Internal: one atomic reserve attempt. Returns the new remaining, or null
@@ -337,15 +539,22 @@ export class BudgetEnforcer {
     return flipped;
   }
 
-  /** After a successful reserve, decide whether the soft-cap threshold is
-   *  breached and (subject to a 5-min throttle) emit `softCap: true`. */
-  private async evaluateSoftCap(org: string, newRemaining: number): Promise<boolean> {
+  /** Decide whether the soft-cap threshold is breached at `projectedRemaining`
+   *  and (subject to a 5-min throttle) emit `softCap: true`. Two callers pass
+   *  two different numbers for the SAME semantics — "what remains once this
+   *  spend lands": `reserve()` passes the post-UPDATE remaining, `checkSoftCap`
+   *  passes remaining minus the batch estimate it was handed. Stamps
+   *  `soft_cap_warned_at` when it returns true; moves no money. */
+  private async evaluateSoftCap(
+    org: string,
+    projectedRemaining: number,
+  ): Promise<boolean> {
     const snap = await this.readBudgetRow(org);
     if (!snap) return false;
     if (snap.limitUsd <= 0) return false;
     if (snap.softCapPct >= 100) return false; // disabled
     const threshold = snap.limitUsd * (1 - snap.softCapPct / 100);
-    if (newRemaining >= threshold) return false;
+    if (projectedRemaining >= threshold) return false;
 
     // Throttle: only emit if the last warning was > 5 min ago (or never).
     const now = new Date();

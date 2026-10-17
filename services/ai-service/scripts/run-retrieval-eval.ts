@@ -21,6 +21,9 @@
 
 import type { ConfigReport } from '../src/eval/types.js';
 
+// Fallback matches `docker-compose.yml` (POSTGRES_DB=ai_service_test). The
+// `_test` suffix is enforced by `assertTestDatabase` inside the harness
+// (`src/eval/harness.ts:131`, on `resetEvalCorpus()`), not by this file.
 process.env.DATABASE_URL ??=
   process.env.TEST_DATABASE_URL ?? 'postgres://ai_service:ai_service@localhost:45432/ai_service';
 process.env.REDIS_URL ??= process.env.TEST_REDIS_URL ?? 'redis://localhost:56379';

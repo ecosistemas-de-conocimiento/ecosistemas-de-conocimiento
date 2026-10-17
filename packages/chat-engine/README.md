@@ -19,9 +19,9 @@ One package, **two build outputs**:
   props/config; no component reaches into a store, a route, or an i18n bundle.
 
   `CitationCard` is the canonical citation surface: clickable `[N]` markers →
-  inline cards with the quoted passage (`<blockquote>`), source title, an
-  injected link to the original asset, and a relevance %, plus a "Fuentes
-  consultadas" list. Feed it `CitationLike[]` — use the core
+  inline cards with the quoted passage (`<blockquote>`), source title, and an
+  injected link to the original asset, plus a "Fuentes consultadas" list. It
+  shows no relevance number (≥0.6.0). Feed it `CitationLike[]` — use the core
   `provenanceToCitations(provenance)` helper to map engine `Provenance`.
 
 ## Workspace package — not published
@@ -85,6 +85,65 @@ supplies a thin adapter that maps `scopeId → projectId` (and forwards the
 optional `/v1/retrieve` `filter` field). The engine has no notion of "project"
 on purpose — see `apps/web/src/lib/server/engine/aiClient.ts`.
 
+## 0.4.3 — `prepublishOnly` stopped calling a script this repo deleted
+
+No code moved; the diff against 0.4.2 is one line of `scripts.prepublishOnly` plus the CI
+workflow and this note. The hook used to shell out to `scripts/ci/suite-census.mjs` twice
+(`--suite unit`, then `--verify-all --workflow ci`). That script is deleted on this branch, so
+the old hook would have died on `MODULE_NOT_FOUND` and made every hand-typed `npm publish`
+from this repo fail. It is now `npm run typecheck && npm run build && npm test` — the same
+three gates `verify.yml` runs, invoked directly. ⚠ This supersedes the census description in
+the 0.4.1 note below.
+
+⚠ **Committed, not published.** The version exists because `guard-version-bump` reads any
+non-`version` edit to `package.json` as shipped source moving — the same reason 0.4.1 exists.
+Publishing here is `workflow_dispatch` only (see `DISTRIBUTION.md`), so a number in this file
+says a tree was committed, never that a tarball was served. Check `dist-tags.latest` on GitHub
+Packages before assuming a consumer has it.
+
+## 0.4.1 — a publish typed by hand now runs the gate
+
+No code moved. `prepublishOnly` runs the same list `verify.yml` runs, in the same order —
+typecheck → the unit suite under `suite-census` → `--verify-all` → build — so `npm publish`
+or `pnpm publish` from a laptop cannot skip the checks a merge cannot skip. That path
+reaches no workflow file, and under the fleet's no-pinning rule every consumer resolves
+`latest`: a publish from a red tree lands on all of them at their next install without
+anyone choosing to take it.
+
+🔴 **Watched refuse, then watched pass**. With one assertion in
+`src/core/citation.test.ts` flipped to a wrong expectation, `npm publish --dry-run` stopped
+at census C1 — exit 1, no tarball, `prepack` never reached. Restored, it packs 0.4.1.
+MEASURED on npm 11.19.0 and pnpm 9.15.9: both run the hook FIRST, before `prepack`.
+⚠ `npm pack` does NOT run it — pack is gated by `prepack`, a separate script.
+
+⚠ **0.4.1 is not published.** The version exists because `guard-version-bump` correctly
+reads any non-`version` edit to `package.json` as shipped source moving. Until someone runs
+the publish workflow, a consumer still installs 0.4.0.
+
+## 0.4.0 — behaviour change in the default prompt
+
+`DEFAULT_ENGINE_CONFIG.userContextPreamble` changed, so **every consumer that spreads
+`DEFAULT_ENGINE_CONFIG` gets different model behaviour on upgrade** even though no API
+changed. Two things moved:
+
+1. **It can now admit a fact is missing.** The old default banned saying "I have no
+   information" without qualifying it to the context that is present, so a model asked for
+   a number absent from the context would count what it could see and answer confidently.
+   The instruction is now scoped: use what is below, and say plainly when something is not
+   below. Numbers are gated on being written or derivable, never on being countable.
+2. **The directive is English; the block headers stay Spanish.** The preamble is machinery
+   (the engine instructing the model). `blockHeaders` and `teamInstructionsHeader` are
+   content — labels on product prose the model can echo — so they follow the product's
+   locale. The preamble now states the reply language explicitly so an English directive
+   cannot pull answers into English.
+
+`systemPrompt` also stopped hard-coding `Responde en español`; it now says "same language
+as the user", matching `condenseSystemPrompt` and `titlePrompt`.
+
+⚠ Prompt behaviour is **not** verified by the unit suite — those tests only pin strings.
+See [`harness/README.md`](./harness/README.md) for the old-vs-new experiment against a real
+model, what it costs, and what is still unmeasured.
+
 ## The one seam: `DomainAdapter`
 
 The consumer implements this against its own data layer; the engine stays
@@ -110,7 +169,8 @@ The engine owns the ingest MECHANISM; the product owns the CONTENT. Supply an
 returning `CorpusBatch[]` / `ContextRef[]` — and drive it with:
 
 - `syncEntity(aiClient, source, ref)` — one entity, on the write path.
-  Fire-and-forget: a slow or down ai-service is swallowed and never propagates.
+  Every batch is attempted, but since 0.5.0 a failure REJECTS with a
+  `CorpusSyncError` — a fire-and-forget caller must attach its own `.catch`.
 - `backfillScope(aiClient, source, scopeId)` — every entity in a scope,
   sequentially. For an offline/boot job, **not** the write path.
 

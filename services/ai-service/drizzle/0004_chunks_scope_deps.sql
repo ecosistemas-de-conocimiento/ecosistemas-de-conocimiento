@@ -1,0 +1,44 @@
+-- Extended statistics teaching the planner that `corpus_id` already implies its
+-- tenant. Additive, planner-metadata only: no table, no column, no index.
+--
+-- WHY. `retrieve.ts` fences all four chunk candidate queries with
+-- `AND org = $org AND project = $project` (defence in depth: isolation was
+-- INHERITED from the scoped corpus lookup rather than enforced where the rows
+-- are read). Postgres assumes columns are independent, so it multiplies those
+-- two selectivities on top of `corpus_id` and badly under-estimates the row
+-- count -- 2,271 against a true 20,000 on the reproduction below. At that
+-- estimate an ordered ANN scan stops looking worthwhile and the planner takes a
+-- sequential scan instead.
+--
+-- MEASURED on a throwaway PG 16.14 / pgvector 0.8.2, stock planner defaults,
+-- 60k chunks over 3 (org, project) pairs with realistic 800-char chunk text:
+--
+--   deep pool (MMR, LIMIT 60), corpus_id only  Index Scan hnsw    2.24 ms
+--   deep pool, + org + project                 SEQ SCAN 60k     661.19 ms
+--   deep pool, fenced, after this migration    Index Scan hnsw    1.91 ms
+--
+-- 295x, fully recovered. Dense top-K (LIMIT 10) never collapsed and is not the
+-- reason this exists; the tsvector leg is unaffected. Reproducing it needs a
+-- realistic HEAP -- `embedding` is TOASTed out of line, so with short filler
+-- text there is no plan flip at any row count worth testing.
+--
+-- INERT ON ARRIVAL, deliberately. Stage and prod hold zero chunks and dev holds
+-- ~615, so this changes no plan today; it only pays near ~20k chunks in one
+-- tenant. `ANALYZE` on an empty table is a no-op and autoanalyze populates the
+-- dependency degrees once content lands. It ships early because the alternative
+-- is discovering the need during an incident.
+--
+-- 🔴 `IF NOT EXISTS` IS LOAD-BEARING. The migrator takes NO advisory lock and
+-- runs every pending migration in ONE transaction, and prod and prod-p2 share a
+-- single DATABASE_URL. Two concurrent boots would both apply this; without
+-- `IF NOT EXISTS` the loser dies on "statistics object already exists", rolls
+-- back the whole transaction, and the container exits 1 -- while /health stays
+-- green on the old container. Promote those two sequentially regardless.
+--
+-- NOT SEEN BY THE SCHEMA GATE. `scripts/schema-gate.mjs` fingerprints
+-- `pg_attribute` for `relkind IN ('r','p')` only, so a `pg_statistic_ext` row
+-- adds no columns and is invisible to it -- the gate will not refuse this, and
+-- will never notice if it is later dropped. Same blind spot covers indexes,
+-- constraints, views, triggers and extensions.
+CREATE STATISTICS IF NOT EXISTS "chunks_scope_deps" (dependencies) ON "corpus_id", "org", "project" FROM "chunks";--> statement-breakpoint
+ANALYZE "chunks";

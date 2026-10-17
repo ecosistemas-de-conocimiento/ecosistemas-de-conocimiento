@@ -10,6 +10,7 @@ import {
   AIClient,
   AIServiceError,
   BudgetExceededError,
+  BudgetMisconfiguredError,
   BudgetNotConfiguredError,
   IdempotencyConflictError,
   SpecResolutionError,
@@ -115,6 +116,68 @@ describe('AIClient — typed error mapping', () => {
     }
   });
 
+  it('maps 402 BudgetMisconfigured to BudgetMisconfiguredError, distinct from the sibling 402s', async () => {
+    // ai-service refuses a call whose resolved effort profile carries a zero /
+    // non-finite `estimatedCostUsdPerCall` (security audit, C4 step
+    // 3, strict). The org HAS a budget, so collapsing this
+    // into `BudgetNotConfiguredError` would tell a consumer to ask for a budget
+    // that already exists.
+    const body = {
+      error: 'BudgetMisconfigured',
+      org: 'org-zero-estimate',
+      estimatedCostUsdPerCall: 0,
+      message:
+        'Budget metering misconfigured for org=org-zero-estimate: the resolved effort ' +
+        'profile has estimatedCostUsdPerCall=0',
+    };
+    const fetchImpl = vi.fn().mockImplementation(async () => jsonResponse(402, body));
+    const client = new AIClient({
+      baseUrl: 'http://x',
+      apiKey: 't',
+      fetch: fetchImpl as unknown as typeof fetch,
+    });
+    try {
+      await client.generate.enqueue({ units: [{ unitKey: 'u1' }] });
+      expect.unreachable('should throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(BudgetMisconfiguredError);
+      expect(e).not.toBeInstanceOf(BudgetNotConfiguredError);
+      expect(e).not.toBeInstanceOf(BudgetExceededError);
+      const err = e as BudgetMisconfiguredError;
+      expect(err.org).toBe('org-zero-estimate');
+      expect(err.estimatedCostUsdPerCall).toBe(0);
+      expect(err.status).toBe(402);
+      expect(err.message).toContain('estimatedCostUsdPerCall=0');
+    }
+  });
+
+  it('BudgetMisconfigured with a non-finite estimate arrives as null, message keeps the value', async () => {
+    // `JSON.stringify(NaN)` is `null`, so ai-service normalises the field and
+    // leaves the real value in `message`. A consumer must not read the `null`
+    // as "no value supplied".
+    const body = {
+      error: 'BudgetMisconfigured',
+      org: 'org-nan',
+      estimatedCostUsdPerCall: null,
+      message: 'the resolved effort profile has estimatedCostUsdPerCall=NaN',
+    };
+    const fetchImpl = vi.fn().mockImplementation(async () => jsonResponse(402, body));
+    const client = new AIClient({
+      baseUrl: 'http://x',
+      apiKey: 't',
+      fetch: fetchImpl as unknown as typeof fetch,
+    });
+    try {
+      await client.generate.enqueue({ units: [{ unitKey: 'u1' }] });
+      expect.unreachable('should throw');
+    } catch (e) {
+      const err = e as BudgetMisconfiguredError;
+      expect(err).toBeInstanceOf(BudgetMisconfiguredError);
+      expect(err.estimatedCostUsdPerCall).toBeNull();
+      expect(err.message).toContain('estimatedCostUsdPerCall=NaN');
+    }
+  });
+
   it('maps 409 IdempotencyConflict to IdempotencyConflictError', async () => {
     const body = {
       error: 'IdempotencyConflict',
@@ -177,7 +240,10 @@ describe('AIClient — typed error mapping', () => {
   });
 
   it('falls back to AIServiceError for unknown error bodies', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(500, { message: 'boom' }));
+    // `mockImplementation`, not `mockResolvedValue`: a 500 is retried, and a
+    // real `fetch` returns a FRESH Response per call. Handing back one shared
+    // object makes the second attempt read an already-consumed body.
+    const fetchImpl = vi.fn().mockImplementation(async () => jsonResponse(500, { message: 'boom' }));
     const client = new AIClient({
       baseUrl: 'http://x',
       apiKey: 't',
@@ -249,5 +315,61 @@ describe('AIClient — timeout', () => {
     });
     await expect(client.budget.get('o')).rejects.toBeInstanceOf(AIServiceError);
     expect(receivedSignal?.aborted).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `/v1/generate/sync` has returned `usage` + `finishReason` since the shared
+// wire projection landed (`services/generation/wire-projection.ts`), but
+// `SyncResult` did not declare them, so a consumer metering credits could not
+// read the authoritative token count without an `as any`. Additive: both are
+// optional, so nothing that compiled before stops compiling.
+// ---------------------------------------------------------------------------
+describe('generate.sync — usage / finishReason', () => {
+  const BODY = {
+    text: 'hello',
+    modelUsed: 'm',
+    provider: 'openrouter',
+    costUsd: 0.01,
+    traceId: 't-1',
+  };
+
+  it('surfaces usage and finishReason when the server sends them', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        ...BODY,
+        usage: { outputTokens: 42, inputTokens: 17, totalTokens: 59 },
+        finishReason: 'stop',
+      }),
+    );
+    const client = new AIClient({
+      baseUrl: 'http://service.local',
+      apiKey: 'k',
+      fetch: fetchImpl as unknown as typeof fetch,
+    });
+    const res = await client.generate.sync({ unit: { unitKey: 'answer', input: {} } });
+
+    // Typed, not `any` — this line is the point of the test.
+    expect(res.usage?.outputTokens).toBe(42);
+    expect(res.usage?.inputTokens).toBe(17);
+    expect(res.usage?.totalTokens).toBe(59);
+    expect(res.finishReason).toBe('stop');
+  });
+
+  it('leaves both undefined when the provider reported no counts', async () => {
+    // ai-service OMITS `usage` entirely rather than sending zeros, so a credits
+    // meter falls back to its own estimate instead of billing an
+    // authoritative-looking zero. The client must not invent a default.
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200, BODY));
+    const client = new AIClient({
+      baseUrl: 'http://service.local',
+      apiKey: 'k',
+      fetch: fetchImpl as unknown as typeof fetch,
+    });
+    const res = await client.generate.sync({ unit: { unitKey: 'answer', input: {} } });
+
+    expect(res.usage).toBeUndefined();
+    expect(res.finishReason).toBeUndefined();
+    expect(res.text).toBe('hello');
   });
 });

@@ -5,13 +5,21 @@
  *
  * The optional ai-service metadata `filter` is forwarded to every corpus.
  *
+ * With a `hybrid` `RetrievalPolicy` (0.6.0) and an `AIClient.retrieveMulti`,
+ * the fan-out and fusion happen SERVER-side in one call and the server's
+ * order is kept as-is: per-corpus RRF scores are rank-based, so sorting them
+ * against each other client-side would be wrong.
+ *
  * `fuseMatches()` lives here too: the pure Reciprocal-Rank-Fusion merge used
  * when a SECOND, non-vector ranked list (a graph path) contributes to the same
  * turn. It is exported and called from `prepareTurn`, not from inside
- * `retrieveContext`, so the two retrieval paths can run concurrently.
+ * `retrieveContext`, so the two retrieval paths can run concurrently. When the
+ * first list is a hybrid result it is fused by its server ORDER, never by its
+ * score (`vectorRanked`) — the same reason the hybrid path never re-sorts.
  */
 
-import type { AIClient, ResolvedCorpus, RetrievedChunk } from './types.js';
+import type { AIClient, ResolvedCorpus, RetrievalPolicy, RetrievedChunk } from './types.js';
+import { warnEngine } from './warn.js';
 
 /**
  * Canonical per-thread/session chat-docs corpus name — the ONE shared helper.
@@ -48,10 +56,27 @@ export interface RetrieveContextArgs {
   query: string;
   /** Optional ai-service metadata filter, forwarded to every corpus retrieve. */
   filter?: Record<string, string | number | boolean>;
-  /** Per-corpus topK. Defaults to `DEFAULT_PER_CORPUS_TOPK` (5). */
+  /**
+   * Per-corpus topK on the dense fan-out. Defaults to `DEFAULT_PER_CORPUS_TOPK`
+   * (5). A `RetrievalPolicy.perCorpusTopK` wins over it.
+   */
   perCorpusTopK?: number;
-  /** How many merged chunks survive the cap. Defaults to `DEFAULT_MERGED_CAP` (8). */
+  /**
+   * How many merged chunks survive the dense cap. Defaults to
+   * `DEFAULT_MERGED_CAP` (8). A `RetrievalPolicy.limit` wins over it.
+   */
   mergedCap?: number;
+}
+
+/** `retrieveContext` output when a policy is given. ADDITIVE (0.6.0). */
+export interface RetrieveContextResult {
+  matches: RetrievedChunk[];
+  /**
+   * Corpora that failed (threw, or the multi call reported `error: 'failed'`).
+   * `not_found` is NOT a failure: a corpus with nothing ingested yet is a
+   * normal empty. When the whole multi call throws, every target is listed.
+   */
+  failedCorpora: string[];
 }
 
 /**
@@ -59,18 +84,59 @@ export interface RetrieveContextArgs {
  * chat-docs corpus, each fetched independently; any side may fail/empty without
  * killing the turn. Merged by score, capped.
  */
+export function retrieveContext(args: RetrieveContextArgs): Promise<RetrievedChunk[]>;
+/**
+ * With a policy: returns the matches AND the failed corpora. `dense` runs the
+ * per-corpus fan-out with the policy's `perCorpusTopK`/`limit`; `hybrid` needs
+ * `aiClient.retrieveMulti` (see `AIClient.retrieveMulti`).
+ */
+export function retrieveContext(
+  args: RetrieveContextArgs,
+  policy: RetrievalPolicy,
+): Promise<RetrieveContextResult>;
 export async function retrieveContext(
   args: RetrieveContextArgs,
-): Promise<RetrievedChunk[]> {
+  policy?: RetrievalPolicy,
+): Promise<RetrievedChunk[] | RetrieveContextResult> {
+  const result = await retrieveWithPolicy(args, policy);
+  return policy ? result : result.matches;
+}
+
+/**
+ * Internal (not exported from the package index): `retrieveContext` that
+ * always reports failed corpora. No policy → the pre-0.6.0 wire calls exactly.
+ */
+export async function retrieveWithPolicy(
+  args: RetrieveContextArgs,
+  policy: RetrievalPolicy | undefined,
+): Promise<RetrieveContextResult> {
   const trimmed = args.query.trim();
-  if (!trimmed) return [];
+  if (!trimmed) return { matches: [], failedCorpora: [] };
   const queryText = trimmed.slice(0, 2000);
-  const topK = args.perCorpusTopK ?? DEFAULT_PER_CORPUS_TOPK;
 
   const targets: ResolvedCorpus[] = [
     ...args.corpora,
     { corpus: threadCorpus(args.threadId), scopeId: args.fallbackScopeId },
   ];
+
+  if (policy?.mode === 'hybrid') {
+    // The multi endpoint scopes every corpus under ONE (orgId, scopeId). A
+    // target under another scope would come back `not_found` — an empty that
+    // looks normal — so a mixed-scope set falls back too.
+    const oneScope = targets.every(
+      (t) => !t.scopeId || t.scopeId === args.fallbackScopeId,
+    );
+    if (args.aiClient.retrieveMulti && oneScope) {
+      return retrieveMultiHybrid(args, policy, targets, queryText);
+    }
+    // Never fuse per-corpus RRF scores client-side: they are rank-based and
+    // not comparable across corpora. Dense is the honest fallback.
+    warnEngine('retrieve.multi_unavailable');
+  }
+
+  const topK = policy?.perCorpusTopK ?? args.perCorpusTopK ?? DEFAULT_PER_CORPUS_TOPK;
+  const cap = policy?.limit ?? args.mergedCap ?? DEFAULT_MERGED_CAP;
+  const failedCorpora: string[] = [];
 
   const fetchOne = ({ corpus, scopeId }: ResolvedCorpus) =>
     args.aiClient
@@ -81,19 +147,63 @@ export async function retrieveContext(
         query: queryText,
         topK,
         ...(args.filter ? { filter: args.filter } : {}),
+        // Only a policy adds wire fields: no policy → today's request, byte for byte.
+        ...(policy ? { mode: 'dense' as const } : {}),
+        ...(policy?.rerank !== undefined ? { rerank: policy.rerank } : {}),
       })
       .then((r) =>
         (r.matches ?? []).map((m) => ({ ...m, corpus }) as RetrievedChunk),
       )
-      .catch(() => [] as RetrievedChunk[]);
+      .catch((err: unknown) => {
+        warnEngine('retrieve.failed', err); // this corpus drops out, visibly
+        failedCorpora.push(corpus);
+        return [] as RetrievedChunk[];
+      });
 
   const results = await Promise.all(targets.map(fetchOne));
   const tagged: RetrievedChunk[] = results.flat();
   // ONE merge code path: `fuseMatches` with an empty second leg IS the plain
   // descending-score sort + cap this function has always done (see its header).
-  return fuseMatches(tagged, [], {
-    ...(args.mergedCap !== undefined ? { mergedCap: args.mergedCap } : {}),
-  });
+  return { matches: fuseMatches(tagged, [], { mergedCap: cap }), failedCorpora };
+}
+
+/**
+ * ONE `retrieveMulti` call over every target, all under the fallback scope
+ * (the caller checked that every target lives there).
+ */
+async function retrieveMultiHybrid(
+  args: RetrieveContextArgs,
+  policy: RetrievalPolicy,
+  targets: ResolvedCorpus[],
+  queryText: string,
+): Promise<RetrieveContextResult> {
+  const corpora = [...new Set(targets.map((t) => t.corpus))];
+  try {
+    const res = await args.aiClient.retrieveMulti!({
+      orgId: args.orgId,
+      scopeId: args.fallbackScopeId,
+      corpora,
+      query: queryText,
+      topK: policy.perCorpusTopK,
+      limit: policy.limit,
+      mode: 'hybrid',
+      ...(args.filter ? { filter: args.filter } : {}),
+      ...(policy.rerank !== undefined ? { rerank: policy.rerank } : {}),
+    });
+    const failedCorpora = (res.corpora ?? [])
+      .filter((d) => d.error === 'failed')
+      .map((d) => d.corpus);
+    if (failedCorpora.length > 0) warnEngine('retrieve.failed');
+    // Server order, untouched — no re-sort (see module header). The slice only
+    // guards a server that ignored `limit`.
+    const matches = (res.matches ?? [])
+      .slice(0, policy.limit)
+      .map((m) => ({ ...m }) as RetrievedChunk);
+    return { matches, failedCorpora };
+  } catch (err) {
+    warnEngine('retrieve.failed', err); // the whole fan-out dropped, visibly
+    return { matches: [], failedCorpora: corpora };
+  }
 }
 
 export interface FuseMatchesOptions {
@@ -101,6 +211,15 @@ export interface FuseMatchesOptions {
   k?: number;
   /** How many fused chunks survive the cap. Defaults to `DEFAULT_MERGED_CAP` (8). */
   mergedCap?: number;
+  /**
+   * The first list is ALREADY in rank order and its scores must not be used to
+   * re-rank it — set this for a `hybrid` retrieve, whose scores are server-side
+   * per-corpus RRF values that are not comparable across corpora. The list is
+   * then ranked by position (1, 2, 3 …), and with an empty graph list it is
+   * returned in the order given, only capped. Defaults to `false` (rank by
+   * descending score, the dense behaviour).
+   */
+  vectorRanked?: boolean;
 }
 
 /**
@@ -135,10 +254,16 @@ export interface FuseMatchesOptions {
  *
  * Chunks are deduped by `chunkId`, keeping the richer record.
  *
- * NOTE the RRF score orders the result but never overwrites
- * `RetrievedChunk.score`: that field is persisted into provenance and rendered
- * to the user as a relevance percentage by `provenanceToCitations`, so it has
- * to stay on the scale the retriever produced it on.
+ * ── When the first list is a HYBRID result (`vectorRanked`) ──────────────────
+ * Its `score`s are server-side per-corpus RRF values, not comparable across
+ * corpora, so the leg is ranked by the server's ORDER (rank = position) and
+ * never re-sorted. With an empty graph list it comes back in that order,
+ * capped — exactly what the hybrid path returns without a graph.
+ *
+ * NOTE the client-side RRF score orders the result but never overwrites
+ * `RetrievedChunk.score`: that field is persisted into provenance and read by
+ * `relevanceScore` / the relevance gates, so it has to stay on the scale the
+ * retriever produced it on.
  *
  * Pure — no I/O, and neither input array is mutated.
  */
@@ -150,14 +275,22 @@ export function fuseMatches(
   const cap = opts.mergedCap ?? DEFAULT_MERGED_CAP;
   const k = opts.k ?? DEFAULT_RRF_K;
 
+  const ranked = opts.vectorRanked === true;
+
   // The no-graph path: today's behaviour, exactly. See the header.
   if (graphMatches.length === 0) {
-    return [...vectorMatches].sort((a, b) => b.score - a.score).slice(0, cap);
+    return ranked
+      ? vectorMatches.slice(0, cap)
+      : [...vectorMatches].sort((a, b) => b.score - a.score).slice(0, cap);
   }
 
-  const legs: Array<{ name: 'vector' | 'graph'; rows: RetrievedChunk[] }> = [
-    { name: 'vector', rows: byDescendingScore(vectorMatches) },
-    { name: 'graph', rows: byDescendingScore(graphMatches) },
+  const legs: Array<{ name: 'vector' | 'graph'; rows: RetrievedChunk[]; byPosition: boolean }> = [
+    {
+      name: 'vector',
+      rows: ranked ? [...vectorMatches] : byDescendingScore(vectorMatches),
+      byPosition: ranked,
+    },
+    { name: 'graph', rows: byDescendingScore(graphMatches), byPosition: false },
   ];
 
   interface FusedEntry {
@@ -173,7 +306,10 @@ export function fuseMatches(
   const byId = new Map<string, FusedEntry>();
 
   for (const leg of legs) {
-    const ranks = competitionRanks(leg.rows);
+    // A pre-ranked leg has no ties to resolve: its rank IS its position.
+    const ranks = leg.byPosition
+      ? leg.rows.map((_, i) => i + 1)
+      : competitionRanks(leg.rows);
     const seenInLeg = new Set<string>();
     leg.rows.forEach((row, i) => {
       const rank = ranks[i]!;
@@ -196,8 +332,11 @@ export function fuseMatches(
       if (seenInLeg.has(row.chunkId)) return;
       seenInLeg.add(row.chunkId);
       entry.legsFound += 1;
-      if (leg.name === 'vector') entry.vectorScore = row.score;
-      else entry.graphScore = row.score;
+      // A pre-ranked leg's score is not comparable across its own rows, so its
+      // tie-break key is the (negated) position instead.
+      const key = leg.byPosition ? -i : row.score;
+      if (leg.name === 'vector') entry.vectorScore = key;
+      else entry.graphScore = key;
       entry.rrf += 1 / (k + rank);
     });
   }

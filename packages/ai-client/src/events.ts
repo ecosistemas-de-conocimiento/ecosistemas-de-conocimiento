@@ -11,7 +11,7 @@
 // our own tiny emitter; no DOM EventTarget needed.
 
 import type { HttpClient } from './http.js';
-import { errorFromResponse } from './errors.js';
+import { AIServiceError } from './errors.js';
 import type { AppEvent, AppEventType, EventFor } from './types.js';
 
 type AnyHandler = (event: AppEvent) => void;
@@ -111,21 +111,10 @@ export function openEvents(opts: OpenEventsOptions): EventStream {
         signal: ctrl.signal,
       });
       if (!res.ok) {
-        // Routed through the dispatcher WITH headers, so a 429 on stream-open is
-        // a `RateLimitedError` carrying its wait like every other route.
-        // `/v1/events` sits under the same per-key limiter as the rest of `/v1`.
-        //
-        // ⚠ NO CONSUMER CAN OBSERVE THIS YET. It is thrown inside the
-        // fire-and-forget IIFE and swallowed by the bare `catch` below, which
-        // just closes the stream — as it did with the untyped error this
-        // replaces. So this is not a fix on its own; it is the typed error being
-        // ready for the day that `catch` learns to surface a retryable failure
-        // instead of a silent close. Message and status are unchanged for every
-        // other status code.
-        throw errorFromResponse(
+        throw new AIServiceError(
+          `failed to open SSE stream (status ${res.status})`,
           res.status,
           { message: `failed to open SSE stream (status ${res.status})` },
-          res.headers,
         );
       }
       const body = res.body;
@@ -136,7 +125,7 @@ export function openEvents(opts: OpenEventsOptions): EventStream {
       const reader = body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
-      // eslint-disable-next-line no-constant-condition
+       
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;

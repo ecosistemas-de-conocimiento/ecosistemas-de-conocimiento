@@ -17,8 +17,6 @@
 
 import { Redis } from 'ioredis';
 
-import { env } from '../../config/env.js';
-
 export const CANCEL_CHANNEL = 'gen:cancel';
 
 export type CancelHandler = (requestId: string) => void;
@@ -45,8 +43,10 @@ export interface CancelBus {
  *
  * Exported so the integration test suite can construct two bus instances
  * pointing at the same Redis (simulating two worker pods) and assert
- * cross-instance message delivery. Production code should still go through
- * `getCancelBus()` for the singleton.
+ * cross-instance message delivery. Production goes through `Runtime.cancelBus`
+ * (`src/runtime.ts`) — ONE bus per process, shared by the HTTP cancel route and
+ * the in-process generation worker, which is what makes the fast path work at
+ * all: the route publishes on the same object the worker subscribed with.
  */
 export class RedisCancelBus implements CancelBus {
   private pub: Redis | null = null;
@@ -133,22 +133,13 @@ export class RedisCancelBus implements CancelBus {
   }
 }
 
-// ── singleton ───────────────────────────────────────────────────────────────
+// ── construction ────────────────────────────────────────────────────────────
+//
+// 🔴 WAS A SINGLETON (`getCancelBus()` + `resetCancelBusForTests()`). The
+// module-scope cache meant "which bus does this cancel publish on?" was decided
+// by import order, and a test could only swap it by resetting global state.
+// `createCancelBus(config)` returns a value; `createRuntime()` calls it once.
 
-let cached: CancelBus | null = null;
-
-/**
- * Lazily construct the singleton bus. The DI-friendly path (tests) passes a
- * custom CancelBus into cancelGeneration / startGenerationWorker; production
- * code falls back to this default.
- */
-export function getCancelBus(): CancelBus {
-  if (cached) return cached;
-  cached = new RedisCancelBus(env.REDIS_URL);
-  return cached;
-}
-
-/** Reset the cached singleton — only used by tests. */
-export function resetCancelBusForTests(): void {
-  cached = null;
+export function createCancelBus(config: { REDIS_URL: string }): CancelBus {
+  return new RedisCancelBus(config.REDIS_URL);
 }

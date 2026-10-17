@@ -1,6 +1,6 @@
 // Cost-rollup integration test (real Postgres) — ADR-0003 Track 1 / S2.
 //
-// Locks the invariant the prototype credit debit (Track 2) trues-up from:
+// Locks the invariant a consumer's credit debit trues-up from:
 //
 //   generation_requests.actual_cost_usd == Σ(traces.actual_cost_usd)
 //

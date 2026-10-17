@@ -1,124 +1,125 @@
 // Public type surface for the @edc/ai-client package.
 //
-// Hand-written to mirror the wire shapes documented in the ai-service
-// OpenAPI spec (`/v1/openapi.json`). The types deliberately re-declare what
-// ai-service's internal types look like — importing across the workspace
-// boundary would create a circular dep (ai-service ships the spec; the
-// client consumes the spec; the client must not depend on ai-service's TS).
+// TWO HALVES, and the difference matters when you edit this file.
 //
-// Keep these aligned with `src/schemas/*` and `src/types/generation.ts` in
-// ai-service whenever the wire contract evolves.
+// 1. REQUEST bodies are GENERATED. They are re-exported below from
+//    `./generated/wire.js`, which `npm run contract:types` derives from the
+//    Zod schemas in ai-service's `src/contract/` — the same objects that gate
+//    the requests at runtime and that build `/v1/openapi.json`. Do not add or
+//    edit a request type here: change the schema, regenerate, and
+//    `npm run contract:check` will confirm the two agree.
+//    The generated file is plain structural TypeScript with no zod import, so
+//    this package keeps its zero-dependency contract.
+//
+//    The header this replaced said "keep these aligned ... whenever the wire
+//    contract evolves". They had not stayed aligned:
+//    `RetrieveMultiRequest` was missing `rerank` and `rerankModel`, both of
+//    which `/v1/retrieve/multi` has accepted since the reranker landed, so a
+//    typed consumer could not reach the feature at all. That is the failure
+//    mode the generator exists to make impossible.
+//
+// 2. RESPONSE bodies stay HAND-WRITTEN, below the re-exports. ai-service does
+//    not validate its own responses with Zod, so there is no schema to derive
+//    them from; writing one purely to generate types would create the second
+//    source of truth this change removes. They are still pinned by
+//    `src/errors/wire-golden.test.ts` and the openapi golden on the server.
+//
+// ── The one deliberate narrowing ──────────────────────────────────────────
+// `chunkConfig` is `z.record(z.string(), z.unknown())` on the wire ON PURPOSE
+// (see `chunkConfigSchema` in `src/contract/rag.ts`: the real validation lives
+// in `parseStructuralConfig`, so a stricter edge schema would make every new
+// chunking option a breaking change). The client narrows it to `ChunkConfig`
+// for editor help. That narrowing is applied with `Omit<...>` on top of the
+// generated type, so every OTHER field still comes from the contract and
+// drift in any of them is still caught.
+
+import type * as Wire from './generated/wire.js';
+
+// ---------------------------------------------------------------------------
+// Generated request types — see `src/contract/wire-manifest.ts` for the list.
+// ---------------------------------------------------------------------------
+
+export type {
+  EffortLevel,
+  Validator,
+  InlineSpecOverride,
+  IncludeContextItem,
+  Unit,
+  GenerateRequest,
+  GenerateSyncRequest,
+  ProjectConfigPatch,
+  RegistryEntryCreate,
+  SetBudgetRequest,
+  ProvisionUnitType,
+  ProvisionTenantRequest,
+  CorpusAliasRequest,
+  DocumentValidityRequest,
+  ChatTurn,
+  RetrieveRewrite,
+  RetrieveRequest,
+  RetrieveMultiRequest,
+  EmbedRequest,
+  RouteChatMessage,
+  RouteCandidate,
+  RouteRequest,
+} from './generated/wire.js';
+
+/**
+ * Per-unit spec FLOOR. Same shape as `specOverride`, opposite precedence: an
+ * active registry entry for the unit-type BEATS it. Kept as a named alias
+ * because the contract declares `inlineSpecDefaultSchema` as literally
+ * `inlineSpecOverrideSchema`, so generating it would emit a duplicate.
+ */
+export type InlineSpecDefault = Wire.InlineSpecOverride;
+
+// ---------------------------------------------------------------------------
+// The `chunkConfig` narrowing (see the header). Everything except that one
+// field is inherited from the generated contract type.
+// ---------------------------------------------------------------------------
+
+/** One structural boundary pattern. `pattern` is JS regex SOURCE; group 1 is the identifier. */
+export interface ChunkSectionPattern {
+  key: string;
+  pattern: string;
+  flags?: string;
+}
+
+/**
+ * Structural chunking configuration. The wire accepts any object here; this
+ * is the shape ai-service's `parseStructuralConfig` actually understands, so
+ * it is what you want in an editor. Anything it does not understand degrades
+ * to the corpus's configured strategy with a warning rather than failing.
+ */
+export interface ChunkConfig {
+  sections: ChunkSectionPattern[];
+  subSections?: ChunkSectionPattern[];
+  maxChars?: number;
+  minChars?: number;
+}
+
+export type IngestDocument = Omit<Wire.IngestDocument, 'chunkConfig'> & {
+  chunkConfig?: ChunkConfig;
+};
+
+export type IngestRequest = Omit<Wire.IngestRequest, 'chunkConfig' | 'documents'> & {
+  documents: IngestDocument[];
+  chunkConfig?: ChunkConfig;
+};
+
+/** The mutable settings on a corpus — the body of `PATCH /v1/corpora/:name`. */
+export type CorpusConfig = Omit<Wire.CorpusUpdateRequest, 'chunkConfig'> & {
+  chunkConfig?: ChunkConfig;
+};
+
+export type CorpusCreateRequest = Omit<Wire.CorpusCreateRequest, 'chunkConfig'> & {
+  chunkConfig?: ChunkConfig;
+};
+
+export type CorpusUpdateRequest = CorpusConfig;
 
 // ---------------------------------------------------------------------------
 // Generation surface
 // ---------------------------------------------------------------------------
-
-export type EffortLevel = 'quick' | 'standard' | 'deep' | 'maximum';
-
-/** A validator entry is either a builtin name (string) or an inline rule. */
-export type Validator = string | { type: string; [k: string]: unknown };
-
-export interface InlineSpecOverride {
-  promptTemplate?: string;
-  metaPromptTemplate?: string | null;
-  model?: string | null;
-  effortLevel?: EffortLevel;
-  effortProfile?: Record<string, unknown>;
-  responseSchema?: unknown;
-  validators?: Validator[];
-  renderer?: string | null;
-  contentKind?: string | null;
-}
-
-/**
- * Same shape as {@link InlineSpecOverride}, opposite precedence. Aliased rather
- * than duplicated so the two slots can never drift apart.
- */
-export type InlineSpecDefault = InlineSpecOverride;
-
-export interface Unit {
-  unitKey: string;
-  unitType?: string;
-  input?: Record<string, unknown>;
-  dependsOn?: Record<string, string>;
-  /**
-   * Per-unit spec **CEILING** — nothing can reconfigure what it sets, not even
-   * a registered `registry_entries` row for the unit-type.
-   *
-   * ⚠ This is the WRONG slot for a default you ship. A built-in prompt sent
-   * here makes the project's registered row resolve and then be discarded, with
-   * no error anywhere. Use {@link Unit.specDefault} for built-ins.
-   */
-  specOverride?: InlineSpecOverride;
-  /**
-   * Per-unit spec **FLOOR** — consulted only after the active
-   * `registry_entries` row, so registering the unit-type WINS over it.
-   *
-   * This is where a built-in belongs: a default prompt / effort tier /
-   * response schema that must work with zero registry config while leaving a
-   * project free to take ownership. Fields left unset fall through the rest of
-   * the precedence chain exactly as if the floor were absent, and unlike
-   * `specOverride` it does not suppress registry provenance on the trace.
-   *
-   * ⚠ Requires an ai-service that publishes the `specDefaultSlot` capability.
-   * The unit schema is strict, so an older deployment answers `400` on the
-   * unknown key. Assert it at boot with
-   * `client.capabilities.negotiate({ require: ['specDefaultSlot'], ... })`.
-   */
-  specDefault?: InlineSpecDefault;
-  /**
-   * Per-unit **system prompt**. Reaches the model as a real
-   * `{ role: 'system' }` message ahead of the rendered user prompt — this is
-   * the supported replacement for hand-folding standing instructions into
-   * `input.userPrompt`.
-   *
-   * Literal text: it is NOT rendered as a Handlebars template, so an embedded
-   * JSON schema or brace-heavy output contract survives byte-for-byte.
-   *
-   * Precedence (highest first): `unit.systemPrompt` →
-   * `unit.specOverride.metaPromptTemplate` → request `systemPromptOverride` →
-   * the registry entry's `metaPromptTemplate`. Supply none and no `system`
-   * message is sent at all.
-   *
-   * Requires an ai-service deployment carrying system-prompt support. Verify
-   * with `SyncResult.systemPromptApplied` before trusting it in production.
-   */
-  systemPrompt?: string;
-}
-
-export type IncludeContextItem =
-  | {
-      corpus: string;
-      query: string;
-      topK?: number;
-      mmr?: number;
-    }
-  | { name: string };
-
-export interface GenerateRequest {
-  units: Unit[];
-  effortLevel?: EffortLevel;
-  promptOverride?: string;
-  modelOverride?: string;
-  /** Batch-wide system prompt; a unit's own `systemPrompt` wins over it. */
-  systemPromptOverride?: string;
-  effortOverrides?: Record<string, Record<string, unknown>>;
-  includeContext?: IncludeContextItem[];
-  clientRequestId?: string;
-  callbackUrl?: string;
-  requestedBy?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface GenerateSyncRequest {
-  unit: Unit;
-  effortLevel?: EffortLevel;
-  modelOverride?: string;
-  /** Same semantics as on `GenerateRequest`; loses to `unit.systemPrompt`. */
-  systemPromptOverride?: string;
-  includeContext?: IncludeContextItem[];
-  requestedBy?: string;
-}
 
 /** Top-level advisory flag returned alongside any budget-reserving response.
  *  Today only emits `BUDGET_SOFT_CAP`; treat unknown codes as informational. */
@@ -153,8 +154,84 @@ export interface SyncResult {
    * instructions and returning junk that still parses.
    */
   systemPromptApplied?: boolean;
+  /**
+   * Token counts for this call. See {@link GenerationUsage}.
+   *
+   * ABSENT when the provider reported no counts — deliberately, so a credits
+   * meter falls back to its own estimate rather than billing an
+   * authoritative-looking zero. Also absent from an ai-service deployment that
+   * predates the shared wire projection.
+   *
+   * Same field, same omission rules, as the stream's `done` frame
+   * ({@link GenerateStreamDone}): both routes are built from one projection
+   * server-side, which is what makes "same payload as /sync" true.
+   */
+  usage?: GenerationUsage;
+  /**
+   * Why the provider stopped (`stop`, `length`, …), forwarded verbatim and
+   * only when the provider supplied one. Not an enum on purpose: the value is
+   * provider vocabulary and normalising it here would invent a contract
+   * ai-service does not enforce.
+   */
+  finishReason?: string;
   warnings?: ResponseWarning[];
 }
+
+/**
+ * Token counts as ai-service puts them on the wire (`projectWireUsage` in
+ * `services/generation/wire-projection.ts`).
+ *
+ * The whole object is ABSENT when the provider reported no counts at all —
+ * deliberately, so a consumer metering credits falls back to its own estimate
+ * instead of billing an authoritative-looking zero. `outputTokens` is the only
+ * member that is always present when the object is; the others appear only
+ * when positive.
+ */
+export interface GenerationUsage {
+  outputTokens: number;
+  inputTokens?: number;
+  totalTokens?: number;
+}
+
+/** One token chunk from `POST /v1/generate/stream`. */
+export interface GenerateStreamDelta {
+  type: 'delta';
+  text: string;
+}
+
+/**
+ * Terminal frame of `POST /v1/generate/stream`.
+ *
+ * Contractually the SAME payload as `/v1/generate/sync` — both are built from
+ * one shared projection server-side — plus the `type` discriminator.
+ *
+ * ⚠ `text` is AUTHORITATIVE. It is not always the concatenation of the deltas:
+ * a cache hit emits no deltas at all and delivers the whole answer here.
+ */
+export interface GenerateStreamDone {
+  type: 'done';
+  text: string;
+  parsed?: unknown;
+  modelUsed: string;
+  provider: string;
+  costUsd: number;
+  /** Absent when the provider reported no token counts. See {@link GenerationUsage}. */
+  usage?: GenerationUsage;
+  finishReason?: string;
+  traceId: string;
+  /** See {@link SyncResult.systemPromptApplied} — same migration safety net. */
+  systemPromptApplied?: boolean;
+  warnings?: ResponseWarning[];
+}
+
+/**
+ * A frame yielded by `client.generate.stream(...)`.
+ *
+ * Terminal `error` frames are NOT in this union: they are thrown as the typed
+ * error classes instead, so a stream failure is caught the same way a `/sync`
+ * failure is.
+ */
+export type GenerateStreamFrame = GenerateStreamDelta | GenerateStreamDone;
 
 export type GenerationRequestStatus =
   | 'queued'
@@ -203,27 +280,26 @@ export interface CancelResult {
   cancelled: boolean;
   removedJobs: number;
   alreadyCancelled?: boolean;
+  /**
+   * Jobs that were still `running` because their WORKER DIED, and that this
+   * cancel settled. A sibling count, never folded into `removedJobs` — that
+   * field has always meant "removed from the queue", and there is nothing left
+   * in the queue to remove for these. Absent when there were none, so a client
+   * built before this field sees exactly the response it has always seen.
+   */
+  lostJobs?: number;
 }
 
 // ---------------------------------------------------------------------------
 // Registry surface
 // ---------------------------------------------------------------------------
 
-export interface ProjectConfigPatch {
-  defaultModel?: string | null;
-  defaultEffort?: EffortLevel | null;
-  effortProfiles?: Record<string, unknown> | null;
-  contextRules?: Record<string, unknown> | null;
-  callbackUrl?: string | null;
-  metadata?: Record<string, unknown> | null;
-}
-
 export interface ProjectConfigResponse {
   id: string;
   org: string;
   project: string;
   defaultModel: string | null;
-  defaultEffort: EffortLevel | null;
+  defaultEffort: Wire.EffortLevel | null;
   effortProfiles: unknown;
   contextRules: unknown;
   callbackUrl: string | null;
@@ -231,21 +307,6 @@ export interface ProjectConfigResponse {
   createdAt: string;
   updatedAt: string | null;
   updatedBy: string | null;
-}
-
-export interface RegistryEntryCreate {
-  version: string;
-  promptTemplate: string;
-  metaPromptTemplate?: string | null;
-  model?: string | null;
-  defaultEffort?: EffortLevel | null;
-  effortProfiles?: Record<string, unknown> | null;
-  responseSchema?: Record<string, unknown> | null;
-  validators?: Validator[];
-  renderer?: string | null;
-  contentKind?: string | null;
-  metadata?: Record<string, unknown> | null;
-  activate?: boolean;
 }
 
 export interface RegistryEntry {
@@ -258,7 +319,7 @@ export interface RegistryEntry {
   promptTemplate: string;
   metaPromptTemplate: string | null;
   model: string | null;
-  defaultEffort: EffortLevel | null;
+  defaultEffort: Wire.EffortLevel | null;
   effortProfiles: unknown;
   responseSchema: unknown;
   validators: unknown;
@@ -278,78 +339,6 @@ export interface UnitTypeSummary {
 // ---------------------------------------------------------------------------
 // RAG surface
 // ---------------------------------------------------------------------------
-
-export interface IngestDocument {
-  id?: string;
-  text: string;
-  title?: string;
-  sourceUrl?: string;
-  metadata?: Record<string, unknown>;
-  /**
-   * Chunking configuration for THIS document, overriding the batch-level one.
-   * This is the granularity that usually matters: one corpus routinely mixes
-   * documents with a numbered structure and documents that are ordinary prose.
-   * See `ChunkConfig`.
-   */
-  chunkConfig?: ChunkConfig;
-  /**
-   * Temporal validity of this document as a half-open interval
-   * `[validFrom, validTo)`, ISO-8601. Omit a side for "unbounded"; omit both
-   * for "always valid" (the default, and the behaviour before these fields
-   * existed).
-   *
-   * Set these when the corpus contains content that can be superseded — a
-   * statute replaced by a later edition, a policy version, a price list — and
-   * pass `asOf` on retrieve. Chunks outside the interval are then dropped from
-   * the candidate set BEFORE ranking, so a superseded passage cannot reach the
-   * generator at all.
-   *
-   * To retire an ALREADY-INGESTED document, use
-   * `client.admin.setDocumentValidity(...)` — it writes the same bounds
-   * without re-embedding anything.
-   */
-  validFrom?: string;
-  validTo?: string;
-  /**
-   * Per-document Postgres text-search config name (`'spanish'`, `'english'`,
-   * `'simple'`, …). Stored on the document for a future per-chunk stemming path;
-   * it does NOT change lexical stemming today — that is set per-CORPUS via
-   * `IngestRequest.language` (which IS live). An unknown name is rejected at
-   * ingest. Optional and additive — omit it and nothing changes.
-   */
-  language?: string;
-}
-
-export interface IngestRequest {
-  corpus: string;
-  documents: IngestDocument[];
-  /**
-   * Embedding model applied only when the corpus is FIRST created; ignored for
-   * an existing corpus. Omit to use the service default (an open multilingual
-   * 1024-dim model).
-   */
-  embeddingModel?: string;
-  /**
-   * Corpus-level default language — a Postgres text-search config (`regconfig`)
-   * name DIRECTLY: `'spanish'`, `'english'`, `'simple'`, … (not an ISO locale
-   * code). DRIVES the lexical leg's stemming. Applied only when the corpus is
-   * FIRST created (use `client.corpora.create`/`update` for explicit control);
-   * an unknown name is rejected at ingest. Optional and additive.
-   */
-  language?: string;
-  /**
-   * Optional consumer-side webhook URL. Required if the consumer wants
-   * `ingest.completed` / `ingest.failed` / `ingest.progress` events for
-   * this batch — without it the consumer must poll `client.ingest.status()`.
-   * See `plan/tecnología/ai-infra/callback-contract.md`.
-   */
-  callbackUrl?: string;
-  /**
-   * Chunking configuration for every document in this batch that does not
-   * carry its own. See `ChunkConfig`.
-   */
-  chunkConfig?: ChunkConfig;
-}
 
 /** One level of document structure to split on. `pattern` is JS regex source. */
 export interface ChunkSectionPattern {
@@ -412,51 +401,32 @@ export interface IngestResult {
   totalDocs: number;
 }
 
+/** One indexed document in a terminal `IngestStatus`. New in 0.24.0. */
+export interface IngestStatusDocument {
+  /** Your document id when you sent one, else ai-service's — the same `docId` callbacks carry. */
+  docId: string;
+  /** Chunks indexed for this document; 0 means nothing is retrievable. */
+  chunkCount: number;
+}
+
 export interface IngestStatus {
   ingestId: string;
   totalDocs: number;
   completedDocs: number;
   failedDocs: number;
   status: 'processing' | 'completed' | 'partial' | 'failed';
+  /**
+   * Total chunks indexed by this batch. Present once `status` is terminal, on
+   * servers that ship it (absent on older ones — treat absent as unknown, not 0).
+   */
+  chunkCount?: number;
+  /** Per-document chunk counts; same presence rule as `chunkCount`. */
+  documents?: IngestStatusDocument[];
 }
 
 // ---------------------------------------------------------------------------
 // Corpus control plane (client.corpora)
 // ---------------------------------------------------------------------------
-
-/** Corpus config knobs shared by create + update (all optional on both). */
-export interface CorpusConfig {
-  /**
-   * Embedding model to stamp on the corpus. Validated against its known vector
-   * dimension server-side. Omit ⇒ the service default. Changing it after data
-   * has landed is refused (would invalidate the stored vectors).
-   */
-  embeddingModel?: string;
-  /**
-   * Lexical text-search config — a Postgres `regconfig` name directly
-   * (`'spanish'`, `'english'`, `'simple'`, …). Drives stemming on the hybrid
-   * retrieve leg. Omit on create ⇒ `'simple'`.
-   */
-  language?: string;
-  /** Chunking strategy id. Omit on create ⇒ `'recursive-char'`. */
-  chunkStrategy?: string;
-  /** Target chunk size. Omit on create ⇒ 800. */
-  chunkSize?: number;
-  /** Chunk overlap. Omit on create ⇒ 100. */
-  chunkOverlap?: number;
-  /** Strategy-specific options — see `ChunkConfig`. */
-  chunkConfig?: ChunkConfig;
-  /** Opaque consumer metadata stored on the corpus row. */
-  metadata?: Record<string, unknown>;
-}
-
-export interface CorpusCreateRequest extends CorpusConfig {
-  /** Corpus name, unique within your `(org, project)`. */
-  name: string;
-}
-
-/** Update is `CorpusConfig` (every field optional); the route rejects an empty body. */
-export type CorpusUpdateRequest = CorpusConfig;
 
 /** Introspection view of a corpus — returned by create/get/update and, in an array, by list. */
 export interface Corpus {
@@ -491,61 +461,16 @@ export interface DeleteCorpusResult {
   };
 }
 
-export interface RetrieveRequest {
-  corpus: string;
-  query: string;
-  topK?: number;
-  mmr?: number;
-  /**
-   * Opaque metadata constraint applied BEFORE ranking: a chunk matches when
-   * its stored `metadata` contains every key/value pair given here (jsonb
-   * containment). The service never interprets the keys.
-   *
-   * jsonb is type-sensitive — `{ k: 5 }` will not match a stored `"5"`.
-   */
-  filter?: Record<string, unknown>;
-  /**
-   * Point-in-time constraint, ISO-8601. Only chunks whose
-   * `[validFrom, validTo)` interval contains this instant are eligible.
-   * Chunks with no validity bounds are always eligible, so adding `asOf` to a
-   * corpus that never sets validity changes nothing.
-   *
-   * Applied as a SQL predicate on the candidate set alongside `filter`, so a
-   * superseded chunk cannot displace a current one or appear in the result.
-   */
-  asOf?: string;
-  /**
-   * Ranking mode. `dense` (the default) is cosine top-K over the embedding
-   * index — unchanged from before this field existed. `hybrid` also runs a
-   * lexical full-text leg and fuses the two with Reciprocal Rank Fusion.
-   *
-   * Use `hybrid` when queries contain exact identifiers — article numbers,
-   * norm codes, indicator ids, SKUs — which dense embeddings systematically
-   * miss. ⚠ In `hybrid` mode `score` is an RRF score (typically 0.01–0.05),
-   * NOT a cosine similarity: if you threshold on `score`, read `denseScore`
-   * instead.
-   */
-  mode?: 'dense' | 'hybrid';
-  /** RRF damping constant, default 60. Hybrid only; for eval sweeps. */
-  rrfK?: number;
-  /**
-   * Opt into cross-encoder reranking: after retrieval (dense or hybrid+RRF), a
-   * capped top-N pool is re-scored by a cross-encoder and re-ordered before the
-   * final top-K, surfacing `rerankScore` on each chunk.
-   *
-   * A NO-OP unless the SERVER has rerank wired (`RERANK_ENABLED` + `RERANK_URL`)
-   * — so on an environment where rerank isn't configured, `rerank: true`
-   * degrades silently to the un-reranked order. It also fails safe to that
-   * order on any rerank error/timeout. Mutually exclusive with `mmr` (rerank
-   * wins if both are set).
-   *
-   * ⚠ When rerank is on, `score` is the cross-encoder score (typically a 0–1
-   * sigmoid), a different scale again from RRF and cosine — threshold on
-   * `rerankScore` (equal to `score` here), not `denseScore`.
-   */
-  rerank?: boolean;
-  /** Override the rerank model for this request (A/B). Absent ⇒ the server's `RERANK_MODEL`. Ignored unless `rerank`. */
-  rerankModel?: string;
+/**
+ * `DELETE /v1/corpus/:name/documents/:externalId` response. TWO counters, not
+ * the three on {@link DeleteCorpusResult}: removing a document never removes
+ * its corpus.
+ */
+export interface DeleteDocumentResult {
+  deleted: {
+    chunks: number;
+    documents: number;
+  };
 }
 
 export interface RetrievedChunk {
@@ -586,63 +511,69 @@ export interface SetDocumentValidityResult {
   validTo: string | null;
 }
 
+/**
+ * A retrieval leg — one independent source of candidate rows.
+ *
+ * `lexical` (Postgres full-text search) and `sparse` (learned-sparse bge-m3)
+ * are two DIFFERENT legs whose scores both arrive in `lexicalScore`. That
+ * shared slot is why this type exists.
+ */
+export type RetrievalLeg = 'dense' | 'lexical' | 'sparse' | 'rerank';
+
 export interface RetrieveResult {
   chunks: RetrievedChunk[];
-}
-
-/** A conversation turn passed to the multi-retrieve rewrite step (oldest → newest). */
-export interface ChatTurn {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-}
-
-/**
- * Rewrite (query-condensation) directive for `retrieveMulti`. The service
- * supplies the MECHANISM (cheap LLM call + sanitize + fail-safe); YOU supply
- * all natural language. `instruction` is passed to the model verbatim as the
- * rewrite's system message, so its locale and wording stay in your product.
- */
-export interface RetrieveRewrite {
-  /** System instruction for the rewrite, in your own locale/phrasing. */
-  instruction: string;
   /**
-   * Conversation turns EXCLUDING the current question, oldest → newest. Only
-   * the last few non-system turns are used. Empty/absent ⇒ the query is used
-   * unchanged (there is nothing anaphoric to resolve on the first turn).
+   * The legs that returned CANDIDATE rows — not the legs you asked for, and
+   * not the legs whose rows survived into `chunks`.
+   *
+   * ⚠ The unit differs by leg. `dense`, `lexical` and `sparse` count rows the
+   * leg returned into the server's fusion POOL, before RRF and before the
+   * final top-K slice. `rerank` counts rows in the RESPONSE — the returned
+   * chunks carrying a `rerankScore`. So `topK: 1` against a hybrid retrieve
+   * whose lexical leg returned 50 rows that all lost the fusion gives you one
+   * dense chunk and `legs === ['dense','lexical']`. Do not read a leg name as
+   * "this leg is represented in `chunks`"; read it as "this leg is alive".
+   * Whether a leg's candidates win slots is ranking, not health.
+   *
+   * `rerank` is here only when the cross-encoder really scored rows. The
+   * rerank rung is fail-safe: a timeout or a down reranker silently returns
+   * the fused order, which is byte-identical to a `rerank: false` response
+   * minus `rerankScore`. If you need to know rerank ran, this is how.
+   *
+   * ⚠ OPTIONAL for two independent reasons, so a present-check is not a
+   * version check. An older deployment omits it, AND `retrieve.multi` never
+   * returns it — `RetrieveMultiResult` has no `legs` field and gaining one is
+   * a separate, deferred lane. Everything here is about the single-corpus
+   * `client.retrieve.retrieve()` path; `client.retrieve.retrieveMulti()` gives
+   * you no degradation signal today, its own rerank rung included.
+   *
+   * ⚠ `undefined` means the SERVICE is older than this field, never that no
+   * legs ran. Gate on the `retrievalLegs` capability, not on the field. At
+   * boot, with the rest of what your build requires:
+   *
+   * ```ts
+   * await client.capabilities.negotiate({
+   *   consumer: 'my-app',
+   *   require: ['retrievalLegs'],
+   * });
+   * ```
+   *
+   * which throws `CapabilityNegotiationError` in `strict` mode when the
+   * service is reachable and positively lacks it, and logs loudly instead in
+   * `warn` mode or when the service cannot be reached at all. Prefer
+   * `createCapabilityCheck` (`./capability-check.js`) if you want the
+   * once-per-process wrapper the fleet's consumers share. For a plain boolean
+   * at some other moment, read the document:
+   * `(await client.capabilities.get()).capabilities.retrievalLegs === true`.
+   *
+   * ⚠ Read it as a SET. Today a hybrid retrieve runs dense plus exactly one
+   * lexical leg, so `['dense','lexical']` and `['dense','sparse']` are the
+   * common shapes — plus `rerank` when the cross-encoder scored rows, and
+   * minus any leg that returned zero rows, which is the case you are watching
+   * for. The declared next change fuses all three. Never key on `legs.length`
+   * or `legs[1]`.
    */
-  history?: ChatTurn[];
-  /** Rewrite output token cap. Default 80 — a rewritten query is short. */
-  maxTokens?: number;
-}
-
-/**
- * `retrieveMulti` request — fan out across corpora + fuse, with an optional
- * cheap query-rewrite step in front. All corpora are resolved under the
- * bearer token's own `(org, project)`.
- */
-export interface RetrieveMultiRequest {
-  /** Corpus names to search in parallel. */
-  corpora: string[];
-  query: string;
-  /** Per-corpus fetch depth. Default 10 (same as single `retrieve`). */
-  topK?: number;
-  /** Final cap on the fused, deduped result. Absent ⇒ `topK`. */
-  limit?: number;
-  /** MMR lambda — forwarded to every per-corpus retrieve. */
-  mmr?: number;
-  /** jsonb-containment metadata constraint — forwarded to every corpus. */
-  filter?: Record<string, unknown>;
-  /** Point-in-time validity constraint (ISO-8601) — forwarded to every corpus. */
-  asOf?: string;
-  /**
-   * `dense` (default) or `hybrid`. ⚠ In `hybrid` mode fused `score` values are
-   * RRF scores, not cosine — threshold on `denseScore` instead.
-   */
-  mode?: 'dense' | 'hybrid';
-  /** RRF damping constant, default 60. Hybrid only. */
-  rrfK?: number;
-  /** Optional query-condensation directive. Omit for no rewrite. */
-  rewrite?: RetrieveRewrite;
+  legs?: RetrievalLeg[];
 }
 
 /** A fused chunk, tagged with the corpus it came from (for citations/provenance). */
@@ -657,6 +588,18 @@ export interface CorpusDiagnostics {
   matched: number;
   /** `not_found` (no such corpus in your scope) or `failed` (retrieve threw). */
   error?: 'not_found' | 'failed';
+  /**
+   * Chunks this corpus won a slot for in the FINAL `chunks` array, after
+   * fusion, the optional rerank and the `limit` cap.
+   *
+   * ⚠ `matched` says what the corpus FOUND; `contributed` says what survived.
+   * `matched: 8, contributed: 0` means the corpus was queried and DID match and
+   * then reached you with nothing — worth surfacing rather than assuming an
+   * attachment simply had no relevant text.
+   *
+   * Optional: absent when talking to an ai-service older than this release.
+   */
+  contributed?: number;
 }
 
 export interface RetrieveMultiResult {
@@ -666,11 +609,19 @@ export interface RetrieveMultiResult {
   rewritten: boolean;
   chunks: MultiRetrievedChunk[];
   corpora: CorpusDiagnostics[];
-}
-
-export interface EmbedRequest {
-  model?: string;
-  input: string | string[];
+  /**
+   * Which cross-corpus ordering rule produced `chunks`.
+   *
+   *  • `cross-corpus-rrf` — `mode: 'hybrid'` over MORE THAN ONE corpus. The
+   *    per-corpus RRF scores are rank-based and not comparable across corpora,
+   *    so the service rebuilds ranks over one global pool per leg and re-runs
+   *    RRF. `score` is that global RRF value, on the same scale as before.
+   *  • `score` — a single corpus, or `mode: 'dense'`, where `score` is already
+   *    comparable. Unchanged from previous releases.
+   *
+   * Optional: absent when talking to an ai-service older than this release.
+   */
+  fusion?: 'score' | 'cross-corpus-rrf';
 }
 
 export interface EmbedResponse {
@@ -687,37 +638,15 @@ export interface EmbedResponse {
 // Route (capability router) surface
 // ---------------------------------------------------------------------------
 
-/** One conversational turn supplied as routing context. */
-export interface RouteChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
-/** One routable surface the caller offers to the router. */
-export interface RouteCandidate {
-  /** Stable id returned verbatim when this surface is chosen. */
-  id: string;
-  /** Natural-language description the classifier reasons over. */
-  description: string;
-  /** Optional structural hint (e.g. a table's columns); rendered, not validated. */
-  schema?: Record<string, unknown>;
-}
-
-export interface RouteRequest {
-  question: string;
-  candidates: RouteCandidate[];
-  history?: RouteChatMessage[];
-  /** Fail-safe target id (must be one of the candidate ids). Defaults to candidates[0].id. */
-  defaultRouteId?: string;
-  effortLevel?: EffortLevel;
-  modelOverride?: string;
-}
-
 export interface RouteResult {
   /** Always one of the supplied candidate ids. */
   routeId: string;
   /** Justification, or a `fallback: ...` explanation when the router degraded. */
   reason: string;
+  /** True ⇒ the default route was used, not a model choice. Absent from older servers. */
+  fallback?: boolean;
+  /** Why the router degraded; only with `fallback: true`. */
+  fallbackCause?: 'router_call_failed' | 'router_unparseable' | 'router_invalid_route';
 }
 
 // ---------------------------------------------------------------------------
@@ -738,7 +667,7 @@ export interface TextToSqlRequest {
   dialect?: string;
   /** LIMIT appended client-side when the generated SELECT omits one (default 100). */
   rowLimit?: number;
-  effortLevel?: EffortLevel;
+  effortLevel?: Wire.EffortLevel;
   modelOverride?: string;
 }
 

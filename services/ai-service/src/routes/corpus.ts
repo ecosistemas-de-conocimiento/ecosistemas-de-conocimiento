@@ -31,20 +31,11 @@
 import type { FastifyPluginAsync } from 'fastify';
 
 import { db } from '../db/client.js';
-import { corpusAliasRequestSchema, documentValiditySchema } from '../schemas/rag.js';
-import {
-  AliasNameConflictError,
-  CorpusAliasService,
-  TargetCorpusNotFoundError,
-} from '../services/rag/corpus-alias.js';
+import { corpusAliasRequestSchema, documentValiditySchema } from '../contract/rag.js';
+import { CorpusAliasService } from '../services/rag/corpus-alias.js';
 import { CorpusDeleteService } from '../services/rag/corpus-delete.js';
 import { DocumentDeleteService } from '../services/rag/document-delete.js';
-import {
-  CorpusNotFoundError as ValidityCorpusNotFoundError,
-  DocumentNotFoundError,
-  DocumentValidityService,
-  InvalidValidityIntervalError,
-} from '../services/rag/document-validity.js';
+import { DocumentValidityService } from '../services/rag/document-validity.js';
 
 const corpusRoutes: FastifyPluginAsync = async (app) => {
   // No plugin-wide admin gate: the DELETE routes below are app-role, scoped to
@@ -79,45 +70,33 @@ const corpusRoutes: FastifyPluginAsync = async (app) => {
       if (parsed.data.validFrom === undefined && parsed.data.validTo === undefined) {
         return reply.badRequest('at least one of validFrom / validTo must be provided');
       }
-      try {
-        const result = await validityService.setValidity(
-          {
-            corpus: name,
-            externalId,
-            ...(parsed.data.validFrom !== undefined ? { validFrom: parsed.data.validFrom } : {}),
-            ...(parsed.data.validTo !== undefined ? { validTo: parsed.data.validTo } : {}),
-          },
-          { org: req.auth.org, project: req.auth.project },
-        );
-        req.log.info(
-          {
-            org: req.auth.org,
-            project: req.auth.project,
-            corpus: name,
-            externalId,
-            chunksUpdated: result.chunksUpdated,
-            validFrom: result.validFrom,
-            validTo: result.validTo,
-          },
-          'document validity updated',
-        );
-        return reply.send(result);
-      } catch (err) {
-        if (err instanceof ValidityCorpusNotFoundError) {
-          return reply
-            .code(404)
-            .send({ error: { code: 'CORPUS_NOT_FOUND', message: err.message } });
-        }
-        if (err instanceof DocumentNotFoundError) {
-          return reply
-            .code(404)
-            .send({ error: { code: 'DOCUMENT_NOT_FOUND', message: err.message } });
-        }
-        if (err instanceof InvalidValidityIntervalError) {
-          return reply.badRequest(err.message);
-        }
-        throw err;
-      }
+      // No `try`/`catch`: `InvalidValidityIntervalError` used to be caught here
+      // and re-sent via `reply.badRequest`, i.e. fastify-sensible's
+      // `{statusCode, error: 'Bad Request', message}`. It declares the same 400
+      // and now sends its own body. The two 404s were already answered by the
+      // /v1 error handler and are unchanged.
+      const result = await validityService.setValidity(
+        {
+          corpus: name,
+          externalId,
+          ...(parsed.data.validFrom !== undefined ? { validFrom: parsed.data.validFrom } : {}),
+          ...(parsed.data.validTo !== undefined ? { validTo: parsed.data.validTo } : {}),
+        },
+        { org: req.auth.org, project: req.auth.project },
+      );
+      req.log.info(
+        {
+          org: req.auth.org,
+          project: req.auth.project,
+          corpus: name,
+          externalId,
+          chunksUpdated: result.chunksUpdated,
+          validFrom: result.validFrom,
+          validTo: result.validTo,
+        },
+        'document validity updated',
+      );
+      return reply.send(result);
     },
   );
 
@@ -225,46 +204,31 @@ const corpusRoutes: FastifyPluginAsync = async (app) => {
     if (parsed.data.target === name) {
       return reply.badRequest('alias target must differ from the alias name');
     }
-    try {
-      const result = await aliasService.setAlias(name, parsed.data.target, {
+    // No `try`/`catch`. `TargetCorpusNotFoundError` and `AliasNameConflictError`
+    // were hand-answered here with the SAME status and the SAME nested body,
+    // differing only in a SHORTER message that omitted `(org=…, project=…)`.
+    // The shortening moved into the two CLASSES (`services/rag/corpus-alias.ts`),
+    // so the wire is byte-identical and the route stops re-deciding.
+    const result = await aliasService.setAlias(name, parsed.data.target, {
+      org: req.auth.org,
+      project: req.auth.project,
+    });
+    req.log.info(
+      {
         org: req.auth.org,
         project: req.auth.project,
-      });
-      req.log.info(
-        {
-          org: req.auth.org,
-          project: req.auth.project,
-          alias: result.alias,
-          target: result.target,
-          created: result.created,
-        },
-        'corpus alias set',
-      );
-      return reply.code(result.created ? 201 : 200).send({
         alias: result.alias,
         target: result.target,
-        targetCorpusId: result.targetCorpusId,
         created: result.created,
-      });
-    } catch (err) {
-      if (err instanceof TargetCorpusNotFoundError) {
-        return reply.code(404).send({
-          error: {
-            code: 'TARGET_CORPUS_NOT_FOUND',
-            message: `target corpus '${parsed.data.target}' not found`,
-          },
-        });
-      }
-      if (err instanceof AliasNameConflictError) {
-        return reply.code(409).send({
-          error: {
-            code: 'ALIAS_NAME_CONFLICT',
-            message: `'${name}' already names a corpus; alias names cannot collide with corpora`,
-          },
-        });
-      }
-      throw err;
-    }
+      },
+      'corpus alias set',
+    );
+    return reply.code(result.created ? 201 : 200).send({
+      alias: result.alias,
+      target: result.target,
+      targetCorpusId: result.targetCorpusId,
+      created: result.created,
+    });
   });
 };
 

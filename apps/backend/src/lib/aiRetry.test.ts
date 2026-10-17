@@ -36,12 +36,12 @@ import {
   withRateLimitRetry,
 } from './aiRetry'
 
-/** Shaped like `@edc/ai-client`'s `RateLimitedError` without importing the class. */
+/** Shaped like `@edc/ai-client`'s `RateLimitError` without importing the class. */
 function rateLimited(retryAfterSeconds = 5) {
   return Object.assign(new Error(`Rate limit exceeded. Retry after ~${retryAfterSeconds}s`), {
     status: 429,
-    name: 'RateLimitedError',
-    retryAfterSeconds,
+    name: 'RateLimitError',
+    retryAfterMs: retryAfterSeconds * 1000,
   })
 }
 
@@ -88,7 +88,7 @@ describe('isRateLimited — 🔴 the ONE error worth waiting on', () => {
 })
 
 describe('the wait comes from the server', () => {
-  it('uses `retryAfterSeconds` in ms', () => {
+  it('uses `retryAfterMs`', () => {
     expect(requestedWaitMs(rateLimited(7))).toBe(7_000)
   })
 

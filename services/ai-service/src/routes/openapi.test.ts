@@ -46,7 +46,17 @@ describe('GET /v1/openapi.json', () => {
   //   /v1/capabilities — ADR-0004. Consumers negotiate at boot, before any
   //     tenant context exists, and must be able to tell "missing capability"
   //     apart from "bad API key".
-  const UNAUTHENTICATED_V1_PATHS = new Set(['/v1/capabilities']);
+  //   /v1/openapi.json, /v1/docs — the documentation surfaces themselves,
+  //     mounted outside the `requireAuth` block in `server.ts`. They describe
+  //     the authenticated surface and carry no tenant data. They appear here
+  //     only because the document now declares EVERY route the server serves
+  //     (`src/openapi/routes-vs-document.test.ts`); before that they were
+  //     absent from `paths` and this list did not need them.
+  const UNAUTHENTICATED_V1_PATHS = new Set([
+    '/v1/capabilities',
+    '/v1/openapi.json',
+    '/v1/docs',
+  ]);
 
   it('declares every documented /v1/* path with Bearer security', async () => {
     const app = await makeApp();
@@ -96,8 +106,9 @@ describe('GET /v1/docs', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toMatch(/application\/javascript/);
-    // Sanity: the body looks like the real swagger-ui bundle.
-    expect(res.body.length).toBeGreaterThan(1000);
+    // Shape, not size: the shell in `openapi.ts` calls `SwaggerUIBundle(...)`,
+    // so the served bundle must define it. Names what is wrong when it breaks.
+    expect(res.body).toContain('SwaggerUIBundle');
     await app.close();
   });
 

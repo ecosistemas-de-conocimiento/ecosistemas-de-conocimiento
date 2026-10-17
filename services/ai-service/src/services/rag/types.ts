@@ -10,72 +10,30 @@
 // optional MMR).
 
 import type { corpora } from '../../db/schema/index.js';
+// 🔴 These six shapes are NOT restated here any more. They are the wire
+// contract, and the wire contract has exactly one home: `src/contract/`.
+//
+// `z.input`, NOT `z.infer`. The output view would mark every defaulted field
+// (`topK`, `mode`, `rrfK` …) as REQUIRED, which is true of what arrives from a
+// route — and false of every other caller. `fetchContext` and the retrieval
+// tests call these services directly with `{ corpus, query }` and rely on the
+// service applying its own fallback. `z.input` is exactly the shape these
+// interfaces were hand-written as, so this substitution changes no types.
+import type { z } from '../../contract/zod.js';
+import type {
+  chatTurnSchema,
+  ingestDocumentSchema,
+  ingestRequestSchema,
+  retrieveMultiRequestSchema,
+  retrieveRequestSchema,
+  retrieveRewriteSchema,
+} from '../../contract/rag.js';
 
-/**
- * A single document the consumer wants ingested. `id` (decision §15) is the
- * dedupe key inside the parent corpus when present; absent ⇒ always new.
- */
-export interface IngestDocument {
-  /** Consumer-supplied stable id. `(corpus, id)` collision ⇒ replace doc. */
-  id?: string;
-  /** Raw extracted text. Service does not parse PDFs/HTML (decision §13). */
-  text: string;
-  title?: string;
-  sourceUrl?: string;
-  /** Opaque consumer payload — service stores, never interprets. */
-  metadata?: Record<string, unknown>;
-  /**
-   * Temporal validity, ISO-8601, half-open `[validFrom, validTo)`. Stamped
-   * onto every chunk so `/v1/retrieve` can filter by `asOf` pre-ranking.
-   * Both omitted ⇒ always valid (existing behaviour).
-   */
-  validFrom?: string;
-  validTo?: string;
-  /**
-   * Per-document ISO-style language code (`'es'`, `'es-MX'`, `'en'`). Stored on
-   * the document row for a future per-chunk stemming path. Does NOT drive the
-   * lexical regconfig today — that is the PER-CORPUS `language` (see
-   * `IngestRequest.language`), which IS live.
-   */
-  language?: string;
-  /**
-   * Per-document chunking configuration; overrides the batch-level one. See
-   * `chunkConfigSchema` in `src/schemas/rag.ts` for the shape and
-   * `parseStructuralConfig` for the validation.
-   */
-  chunkConfig?: Record<string, unknown>;
-}
+/** `ingestDocumentSchema` in `src/contract/rag.ts` — the request shape as sent. */
+export type IngestDocument = z.input<typeof ingestDocumentSchema>;
 
-/** A `POST /v1/ingest` body. */
-export interface IngestRequest {
-  /** Corpus name (resolved to `corpora.id` server-side). */
-  corpus: string;
-  documents: IngestDocument[];
-  /**
-   * Override the embedding model when the corpus is FIRST created (rare).
-   * Ignored for an already-existing corpus (its stored model is authoritative —
-   * changing it would invalidate its vectors). Absent ⇒ `env.EMBEDDING_MODEL`.
-   */
-  embeddingModel?: string;
-  /**
-   * Corpus-level default language — an ISO-style code (`'es'`, `'es-MX'`,
-   * `'en'`), mapped internally to a Postgres regconfig that DRIVES the lexical
-   * leg's stemming. Applied only when the corpus is FIRST created. Absent ⇒
-   * `'simple'`. See the schema doc in `src/schemas/rag.ts`.
-   */
-  language?: string;
-  /**
-   * Optional consumer webhook URL — see `plan/m3-webhook-signing-followup.md`.
-   * Fires `ingest.completed` / `ingest.failed` per doc, plus `ingest.progress`
-   * on batches >5 docs.
-   */
-  callbackUrl?: string;
-  /**
-   * Batch-level chunking configuration, applied to every document in the
-   * request that does not carry its own. Absent ⇒ the corpus's strategy.
-   */
-  chunkConfig?: Record<string, unknown>;
-}
+/** `ingestRequestSchema` in `src/contract/rag.ts` — the request shape as sent. */
+export type IngestRequest = z.input<typeof ingestRequestSchema>;
 
 /** What `/v1/ingest` returns immediately (work runs async — decision §14). */
 export interface IngestResult {
@@ -86,44 +44,8 @@ export interface IngestResult {
   totalDocs: number;
 }
 
-/** A `POST /v1/retrieve` body. */
-export interface RetrieveRequest {
-  corpus: string;
-  query: string;
-  /** Top-K cosine matches. Defaults applied server-side. */
-  topK?: number;
-  /** Optional MMR lambda (0.5–0.7 typical) — decision §12. */
-  mmr?: number;
-  /**
-   * Optional opaque jsonb-containment constraint on chunk `metadata`, applied
-   * pre-ranking (plan/open-retrieve-metadata-filter.md). Absent/empty ⇒ no
-   * filter (identical to today's corpus-only query). Service never interprets
-   * the keys (ADR-0001).
-   */
-  filter?: Record<string, unknown>;
-  /**
-   * Point-in-time validity constraint (ISO-8601). Chunks whose
-   * `[valid_from, valid_to)` interval excludes this instant are removed from
-   * the candidate set BEFORE ranking. Unbounded chunks always qualify.
-   */
-  asOf?: string;
-  /** `dense` (default, unchanged behaviour) or `hybrid` (dense + lexical, RRF-fused). */
-  mode?: 'dense' | 'hybrid';
-  /** RRF damping constant; default 60. Hybrid only. */
-  rrfK?: number;
-  /**
-   * Opt into cross-encoder reranking: after retrieval (dense or hybrid+RRF), a
-   * capped top-N pool is re-scored by a cross-encoder and re-ordered before the
-   * final `slice(topK)`. Default off. A NO-OP unless the service has
-   * `RERANK_ENABLED=true` and a configured `RERANK_URL` — so it degrades
-   * silently to the un-reranked order on any environment where rerank isn't
-   * wired, and it FAILS SAFE to the fused order on any rerank error/timeout.
-   * Mutually exclusive with `mmr` (rerank wins if both are set).
-   */
-  rerank?: boolean;
-  /** Override the rerank model for this request (A/B). Absent ⇒ `env.RERANK_MODEL`. Ignored unless `rerank`. */
-  rerankModel?: string;
-}
+/** `retrieveRequestSchema` in `src/contract/rag.ts` — the request shape as sent. */
+export type RetrieveRequest = z.input<typeof retrieveRequestSchema>;
 
 /** A single retrieved chunk row. */
 export interface RetrievedChunk {
@@ -160,60 +82,77 @@ export interface RetrievedChunk {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * A retrieval leg — one independent source of candidate rows.
+ *
+ * `lexical` and `sparse` are BOTH lexical legs and they are different legs.
+ * `lexical` is Postgres full-text search over `chunks.text_search`; `sparse` is
+ * the learned-sparse (bge-m3) inner product over `chunks.sparse_embedding`.
+ * They used to share the name `lexical` all the way to the wire, which is the
+ * reason this type exists: their scores both land in `lexicalScore`, so a
+ * response could not say which of the two produced it — or whether it produced
+ * anything at all.
+ */
+export type RetrievalLeg = 'dense' | 'lexical' | 'sparse' | 'rerank';
+
 /** What `/v1/retrieve` returns. */
 export interface RetrieveResult {
   chunks: RetrievedChunk[];
+  /**
+   * The legs that returned CANDIDATE rows — not the legs that were requested,
+   * and not the legs whose rows survived into `chunks`.
+   *
+   * ⚠ The unit differs by leg, deliberately. `dense`, `lexical` and `sparse`
+   * are recorded from how many rows the leg returned into the fusion POOL,
+   * before RRF and before the final top-K slice. `rerank` is recorded from the
+   * RESPONSE instead — how many returned chunks carry a `rerankScore` — because
+   * the rerank rung has no pool of its own and reading the rows is the only
+   * source that cannot drift from what the caller got. So `topK: 1` on a hybrid
+   * retrieve whose lexical leg returned 50 rows that all lost the fusion still
+   * reports `['dense','lexical']`, with a single dense chunk in `chunks`.
+   *
+   * Pool contribution is the signal worth having: a leg is ALIVE when it
+   * produces candidates. Whether those candidates win slots is ranking, not
+   * health, and a healthy leg losing every slot on one query is ordinary.
+   *
+   * ⚠ `/v1/retrieve` ONLY. `RetrieveMultiResult` below carries no `legs`, and
+   * adding one is a separate, deferred lane — so a cross-corpus retrieve still
+   * has no degradation signal at all, including for the rerank rung that runs
+   * only there (once, after cross-corpus fusion).
+   *
+   * On this route, it is the field that makes retrieval degradation visible. A dead
+   * reranker, an empty sparse column, a tsvector leg that was never
+   * backfilled: each of those used to produce a perfectly ordinary-looking
+   * 200 that was byte-identical to a response where the leg had simply not
+   * been asked for. `legs` is the difference. `rerank` appears here only when
+   * the cross-encoder really scored rows; if it timed out or the service was
+   * down, the fail-safe returns the fused order and `rerank` is absent.
+   *
+   * ⚠ Read it as a SET, never by length or position. Today a hybrid retrieve
+   * runs dense plus exactly ONE lexical leg — `SPARSE_ENABLED` chooses which —
+   * so you will see `['dense','lexical']` or `['dense','sparse']` and never
+   * both — plus `rerank` when the cross-encoder really scored rows, and MINUS
+   * any leg that came back with zero rows, which is precisely the case this
+   * field exists to expose. That is what runs today, not a promise: the declared next change
+   * fuses dense + tsvector + sparse together, at which point three leg names
+   * is a normal response. A client that hardcodes a length of 2, or reads
+   * `legs[1]`, breaks on that release.
+   */
+  legs: RetrievalLeg[];
 }
 
 // ---------------------------------------------------------------------------
 // Multi-corpus retrieval (`POST /v1/retrieve/multi`).
 // ---------------------------------------------------------------------------
 
-/** A conversation turn used by the rewrite step (oldest → newest). */
-export interface ChatTurn {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-}
+/** `chatTurnSchema` in `src/contract/rag.ts` — the request shape as sent. */
+export type ChatTurn = z.input<typeof chatTurnSchema>;
 
-/**
- * Consumer-owned rewrite directive. The service supplies the MECHANISM (cheap
- * LLM call + sanitize + fail-safe); the consumer supplies ALL natural language.
- */
-export interface RetrieveRewrite {
-  /** System instruction for the rewrite. All locale/wording lives here. */
-  instruction: string;
-  /** Turns excluding the current question. Empty/absent ⇒ no rewrite. */
-  history?: ChatTurn[];
-  /** Rewrite output token cap. Default 80. */
-  maxTokens?: number;
-}
+/** `retrieveRewriteSchema` in `src/contract/rag.ts` — the request shape as sent. */
+export type RetrieveRewrite = z.input<typeof retrieveRewriteSchema>;
 
-/** A `POST /v1/retrieve/multi` body. */
-export interface RetrieveMultiRequest {
-  /** Corpus names, all under the caller's `(org, project)`. */
-  corpora: string[];
-  query: string;
-  /** Per-corpus fetch depth (default 10). */
-  topK?: number;
-  /** Final cap on the fused result (default `topK`). */
-  limit?: number;
-  mmr?: number;
-  filter?: Record<string, unknown>;
-  asOf?: string;
-  mode?: 'dense' | 'hybrid';
-  rrfK?: number;
-  /**
-   * Opt into cross-encoder reranking, applied AFTER cross-corpus fusion over a
-   * capped top-N pool of the fused candidates (not per corpus). No-op unless
-   * the server has rerank wired; fails safe to the fused order. Mutually
-   * exclusive with `mmr` (rerank wins — `mmr` is not forwarded to the legs).
-   */
-  rerank?: boolean;
-  /** Override the rerank model for this request (A/B). Absent ⇒ `env.RERANK_MODEL`. Ignored unless `rerank`. */
-  rerankModel?: string;
-  /** Optional query-condensation directive. */
-  rewrite?: RetrieveRewrite;
-}
+/** `retrieveMultiRequestSchema` in `src/contract/rag.ts` — the request shape as sent. */
+export type RetrieveMultiRequest = z.input<typeof retrieveMultiRequestSchema>;
 
 /** A fused chunk, carrying the corpus it was retrieved from (for citations). */
 export interface MultiRetrievedChunk extends RetrievedChunk {
@@ -227,6 +166,22 @@ export interface CorpusDiagnostics {
   matched: number;
   /** `not_found` (no such corpus in scope) or `failed` (retrieve threw). */
   error?: 'not_found' | 'failed';
+  /**
+   * Chunks this corpus won a slot for in the FINAL `chunks` array, after
+   * fusion, the optional rerank and the `limit` cap.
+   *
+   * ⚠ `matched` says what the corpus FOUND; `contributed` says what survived.
+   * `matched: 8, contributed: 0` is a corpus that was indexed, queried and
+   * matched and then reached the caller with nothing — the fingerprint of the
+   * cross-corpus fusion defect measured. It can also be
+   * ordinary (a weaker corpus under a tight `limit`), which is why it is
+   * reported rather than raised; it is also WARNED server-side under
+   * `CORPUS_SHUTOUT_MESSAGE`.
+   *
+   * Additive and always present from this release on. Optional in the type so
+   * an older ai-client compiled against the previous shape still type-checks.
+   */
+  contributed?: number;
 }
 
 /** What `/v1/retrieve/multi` returns. */
@@ -237,6 +192,22 @@ export interface RetrieveMultiResult {
   rewritten: boolean;
   chunks: MultiRetrievedChunk[];
   corpora: CorpusDiagnostics[];
+  /**
+   * Which cross-corpus ordering rule produced `chunks`.
+   *
+   *  • `cross-corpus-rrf` — `mode: 'hybrid'` over MORE THAN ONE corpus. The
+   *    per-corpus RRF scores are rank-based and not comparable across corpora,
+   *    so ranks are rebuilt over one global pool per leg and RRF is re-run.
+   *    `score` on each chunk is that global RRF value (same scale as before:
+   *    `Σ 1/(k + rank)` over at most two legs, same `k`).
+   *  • `score` — a single corpus, or `mode: 'dense'` (where `score` is cosine
+   *    against the same query vector and already comparable). Identical to the
+   *    earlier behaviour.
+   *
+   * Additive; present from this release on. Optional in the type so an older
+   * ai-client compiled against the previous shape still type-checks.
+   */
+  fusion?: 'score' | 'cross-corpus-rrf';
 }
 
 /**

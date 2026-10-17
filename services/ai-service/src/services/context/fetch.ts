@@ -4,7 +4,7 @@
 // strings under a per-item key. The orchestrator merges this map into
 // `input.__context` so prompt templates can reference `{{__context.<key>}}`.
 //
-// Each `includeContext` entry is one of two shapes (`src/services/context/types.ts`):
+// Each `includeContext` entry is one of two shapes (`src/contract/context.ts`):
 //   - Inline: `{ corpus, query, topK?, mmr? }` — call retrieve directly.
 //   - Named:  `{ name }` — look up `project_configs.contextRules[name]` (a
 //     JSON blob shaped like the inline recipe), then call retrieve.
@@ -20,10 +20,11 @@ import {
   CorpusNotFoundError,
   RetrieveService,
   type Embedder,
+  type RetrieveLogger,
 } from '../rag/retrieve.js';
-import type { IncludeContextItem } from './types.js';
+import type { IncludeContextItem } from '../../contract/context.js';
 import type { RetrieveRequest } from '../rag/types.js';
-export type { IncludeContextItem } from './types.js';
+export type { IncludeContextItem } from '../../contract/context.js';
 
 export interface FetchContextArgs {
   org: string;
@@ -35,6 +36,14 @@ export interface FetchContextArgs {
    * mmr? }` so named-recipe items can be resolved.
    */
   projectContextRules?: unknown;
+  /**
+   * Logger handed to the `RetrieveService` this function builds. Without it the
+   * generate-with-RAG path clamps over-bound stored chunks SILENTLY: the warn
+   * that makes such a row visible is emitted inside `RetrieveService.retrieve`,
+   * so a service constructed without a logger swallows it. Optional because the
+   * non-HTTP call sites (eval, tests) legitimately have none.
+   */
+  logger?: RetrieveLogger;
   /** Injection points for tests. The defaults route through the real RAG stack. */
   retrieveService?: Pick<RetrieveService, 'retrieve'>;
   db?: Db;
@@ -83,6 +92,7 @@ export async function fetchContext(
     new RetrieveService({
       db: args.db ?? defaultDb,
       ...(args.embedder ? { embedder: args.embedder } : {}),
+      ...(args.logger ? { logger: args.logger } : {}),
     });
 
   for (let i = 0; i < items.length; i++) {

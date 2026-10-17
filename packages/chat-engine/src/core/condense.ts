@@ -4,13 +4,21 @@
  * the real intent, not a dangling pronoun. Uses the cheapest tier.
  *
  * Fail-safe: on the first turn (no history) or any error, returns the original
- * question unchanged — condensation never breaks a turn. A rewrite shorter than
+ * question unchanged — condensation never breaks a turn. An error is LOGGED
+ * (name + status) on the way down, never swallowed. A rewrite shorter than
  * 3 chars is rejected (model returned junk) → original.
+ *
+ * ⚠ Fail-safe is NOT silent. Both fallbacks after a call (a throw, a junk
+ * rewrite) warn via `warnEngine` (`condense.failed` / `condense.unusable`): retrieval then
+ * embeds the raw follow-up, answers get worse, and without the log nobody can
+ * tell that apart from a thin corpus. The first-turn shortcut logs nothing —
+ * it is the normal path, not a failure.
  *
  * The prompt is injected via `EngineConfig.condenseSystemPrompt`.
  */
 
 import type { AIClient, ChatHistoryRow } from './types.js';
+import { warnEngine } from './warn.js';
 
 export async function condenseQuery(
   aiClient: AIClient,
@@ -51,8 +59,14 @@ export async function condenseQuery(
       .replace(/^["'«»“”]+|["'«»“”]+$/g, '')
       .replace(/\s+/g, ' ')
       .slice(0, 500);
-    return out.length >= 3 ? out : args.question;
-  } catch {
+    if (out.length >= 3) return out;
+    warnEngine('condense.unusable');
+    return args.question;
+  } catch (err) {
+    // Fail-safe kept, silence removed: an outage here (auth, budget, provider)
+    // must not look like a condense that chose to keep the question. Name and
+    // status only — see warn.ts.
+    warnEngine('condense.failed', err);
     return args.question;
   }
 }

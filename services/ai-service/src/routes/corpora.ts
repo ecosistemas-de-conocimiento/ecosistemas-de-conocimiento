@@ -27,16 +27,9 @@ import type { FastifyPluginAsync } from 'fastify';
 
 import { env } from '../config/env.js';
 import { db } from '../db/client.js';
-import { corpusCreateSchema, corpusUpdateSchema } from '../schemas/rag.js';
-import {
-  CorpusAlreadyExistsError,
-  CorpusNameIsAliasError,
-  CorpusNotFoundError,
-  CorpusService,
-  EmbeddingModelChangeNotAllowedError,
-} from '../services/rag/corpus-crud.js';
+import { corpusCreateSchema, corpusUpdateSchema } from '../contract/rag.js';
+import { CorpusService } from '../services/rag/corpus-crud.js';
 import { CorpusDeleteService } from '../services/rag/corpus-delete.js';
-import { EmbeddingDimensionMismatchError } from '../services/rag/embedding-models.js';
 
 const corporaRoutes: FastifyPluginAsync = async (app) => {
   const service = new CorpusService({ db });
@@ -48,33 +41,23 @@ const corporaRoutes: FastifyPluginAsync = async (app) => {
     if (!parsed.success) {
       return reply.badRequest(parsed.error.issues.map((i) => i.message).join('; '));
     }
-    try {
-      const corpus = await service.createCorpus(
-        parsed.data,
-        { org: req.auth.org, project: req.auth.project },
-        { embeddingModel: env.EMBEDDING_MODEL, embeddingDim: env.EMBEDDING_DIM },
-      );
-      req.log.info(
-        { org: req.auth.org, project: req.auth.project, corpus: corpus.name },
-        'corpus created',
-      );
-      return reply.code(201).send(corpus);
-    } catch (err) {
-      if (err instanceof EmbeddingDimensionMismatchError) {
-        return reply.badRequest(err.message);
-      }
-      if (err instanceof CorpusAlreadyExistsError) {
-        return reply
-          .code(409)
-          .send({ error: { code: 'CORPUS_ALREADY_EXISTS', message: err.message } });
-      }
-      if (err instanceof CorpusNameIsAliasError) {
-        return reply
-          .code(409)
-          .send({ error: { code: 'CORPUS_NAME_IS_ALIAS', message: err.message } });
-      }
-      throw err;
-    }
+    // No `catch`. Every error `createCorpus` raises is a taxonomy class that
+    // declares its own status and body, and the ONE /v1 error handler sends
+    // it. `EmbeddingDimensionMismatchError` used to be caught here and
+    // re-sent via `reply.badRequest`, which replaced the discriminator with
+    // fastify-sensible's generic `error: 'Bad Request'` — same 400, but no
+    // `error`/`code` for a consumer to branch on. See the `changed vs 970baae`
+    // block in `src/errors/wire-golden.test.ts`.
+    const corpus = await service.createCorpus(
+      parsed.data,
+      { org: req.auth.org, project: req.auth.project },
+      { embeddingModel: env.EMBEDDING_MODEL, embeddingDim: env.EMBEDDING_DIM },
+    );
+    req.log.info(
+      { org: req.auth.org, project: req.auth.project, corpus: corpus.name },
+      'corpus created',
+    );
+    return reply.code(201).send(corpus);
   });
 
   // GET /v1/corpora — list.
@@ -113,34 +96,22 @@ const corporaRoutes: FastifyPluginAsync = async (app) => {
     if (Object.keys(parsed.data).length === 0) {
       return reply.badRequest('patch body must contain at least one field to change');
     }
-    try {
-      const corpus = await service.updateCorpus(
-        name,
-        parsed.data,
-        { org: req.auth.org, project: req.auth.project },
-        { embeddingDim: env.EMBEDDING_DIM },
-      );
-      req.log.info(
-        { org: req.auth.org, project: req.auth.project, corpus: name },
-        'corpus reconfigured',
-      );
-      return corpus;
-    } catch (err) {
-      if (err instanceof CorpusNotFoundError) {
-        return reply
-          .code(404)
-          .send({ error: { code: 'CORPUS_NOT_FOUND', message: err.message } });
-      }
-      if (err instanceof EmbeddingModelChangeNotAllowedError) {
-        return reply
-          .code(409)
-          .send({ error: { code: 'EMBEDDING_MODEL_LOCKED', message: err.message } });
-      }
-      if (err instanceof EmbeddingDimensionMismatchError) {
-        return reply.badRequest(err.message);
-      }
-      throw err;
-    }
+    // No `catch` — see POST above. `InvalidTextSearchConfigError` and
+    // `EmbeddingDimensionMismatchError` used to be flattened here;
+    // `CorpusNotFoundError`, `EmbeddingModelChangeNotAllowedError` and
+    // `ChunkSizeShrinkNotAllowedError` were already answered by the /v1
+    // handler and are unchanged.
+    const corpus = await service.updateCorpus(
+      name,
+      parsed.data,
+      { org: req.auth.org, project: req.auth.project },
+      { embeddingDim: env.EMBEDDING_DIM },
+    );
+    req.log.info(
+      { org: req.auth.org, project: req.auth.project, corpus: name },
+      'corpus reconfigured',
+    );
+    return corpus;
   });
 
   // DELETE /v1/corpora/:name — delete (shares CorpusDeleteService with the

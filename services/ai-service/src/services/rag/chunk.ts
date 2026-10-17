@@ -1,9 +1,9 @@
 // Recursive-character chunker. plan/m3-m4-decisions.md §11.
 //
 // Algorithm: paragraph (`\n\n`) → sentence (`. ` / `? ` / `! `) → hard char
-// split. Token estimation uses `chars/4` (the prototype convention; rough but
+// split. Token estimation uses `chars/4` (rough but
 // deterministic). Overlap is the last `overlap*4` chars of chunk N carried as
-// a prefix of chunk N+1 — same convention a prototype uses, keeps merges idempotent.
+// a prefix of chunk N+1, which keeps merges idempotent.
 //
 // Returns ordinal-stamped chunks; the worker pairs them with their embeddings
 // before insert.
@@ -29,9 +29,29 @@ export interface ChunkOptions {
   chunkOverlap?: number;
 }
 
-const DEFAULT_CHUNK_SIZE = 800;
-const DEFAULT_CHUNK_OVERLAP = 100;
-const CHARS_PER_TOKEN = 4;
+/** Target chunk size in tokens when a corpus does not configure one. */
+export const DEFAULT_CHUNK_SIZE = 800;
+export const DEFAULT_CHUNK_OVERLAP = 100;
+/** Token-estimation convention: `chars / 4`. */
+export const CHARS_PER_TOKEN = 4;
+
+/**
+ * The chunk-size contract, in CHARACTERS, for a corpus configured with
+ * `chunkSize` tokens. THE single definition of the bound.
+ *
+ * Ingestion enforces it on the way IN (every splitter reaches this number
+ * through `chunkForCorpus`); `/v1/retrieve` clamps stored passage text to it on
+ * the way OUT. Both sides call THIS function, so the two can never drift — that
+ * is the whole point of it existing rather than a second literal `3200` living
+ * next to the retrieve serializer.
+ *
+ * A stored chunk longer than this is an ANOMALY, not a configuration: rows
+ * ingested before the limits existed, hand-inserted rows, or an ingester bug.
+ * See `clampPassageText` in `passage-bound.ts` for what retrieval does about it.
+ */
+export function maxChunkChars(chunkSize: number = DEFAULT_CHUNK_SIZE): number {
+  return chunkSize * CHARS_PER_TOKEN;
+}
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN);
@@ -122,7 +142,7 @@ export function chunkRecursive(text: string, opts: ChunkOptions = {}): Chunk[] {
   const trimmed = text;
   if (trimmed.length === 0) return [];
 
-  const maxChars = chunkSize * CHARS_PER_TOKEN;
+  const maxChars = maxChunkChars(chunkSize);
   const overlapChars = chunkOverlap * CHARS_PER_TOKEN;
 
   const segments = recursiveSplit(trimmed, maxChars);

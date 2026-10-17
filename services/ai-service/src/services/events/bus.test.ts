@@ -1,8 +1,7 @@
 /**
  * M3 Step 5 — bus tests.
  *
- * Adapted from a prototype's bus.test.ts. Fixtures use ai-service event shapes
- * (`org` / `project?`) — NOT a prototype's `orgId` / `userId`.
+ * Fixtures use ai-service event shapes (`org` / `project?`).
  *
  * Covers:
  *  - typed emit + receive
@@ -260,7 +259,7 @@ describe('EventBus', () => {
     // @ts-expect-error 'totally.fake.event' is not in AppEvent union
     bus.emit({ type: 'totally.fake.event' });
 
-    // Prototype-shaped event (orgId/userId) is gone → must not compile.
+    // An event shaped orgId/userId must not compile.
     // @ts-expect-error ai-service uses `org`, not `orgId` + `userId`
     bus.emit({ type: 'trace.started', traceId: 't', orgId: 'o', userId: 'u' });
   });

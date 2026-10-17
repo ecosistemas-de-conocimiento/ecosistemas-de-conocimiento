@@ -1,10 +1,9 @@
 // Persist trace + usage rows for each router call.
 //
-// Ported from a prototype's `services/ai/router/trace-writer.ts`. Writes go directly
-// through Drizzle into the ai-service's own `traces` / `usage_logs` tables
-// (a prototype wrote through Payload's Local API). Three changes from a prototype:
-//   1. `surfaceToTraceType` is gone — `traces.label` is an opaque free-form
-//      tag; the consumer's taxonomy lives there.
+// Writes go directly through Drizzle into the ai-service's own `traces` /
+// `usage_logs` tables.
+//   1. `traces.label` is an opaque free-form tag; the consumer's taxonomy lives
+//      there.
 //   2. Cross-org check on `parentTraceId` is comparison on the opaque `org`
 //      text (no numeric Payload id), throwing a plain Error so route handlers
 //      can map it to 403 if needed.
@@ -15,6 +14,7 @@ import { eq, sql } from 'drizzle-orm';
 
 import type { Db } from '../../../db/client.js';
 import { traces, usageLogs } from '../../../db/schema/index.js';
+import { minimiseTracePayload } from '../pii-egress.js';
 
 type AnyDb = Db | Parameters<Parameters<Db['transaction']>[0]>[0];
 
@@ -23,8 +23,7 @@ export type TraceStatusIn = 'started' | 'completed' | 'failed' | 'aborted';
 type PersistedTraceStatus = 'queued' | 'running' | 'completed' | 'failed' | 'aborted';
 
 function mapStatus(s: TraceStatusIn): PersistedTraceStatus {
-  // A prototype had `'completed' → 'ready'` etc. against an older trace enum; the
-  // ai-service `trace_status` enum already matches the router vocabulary —
+  // The ai-service `trace_status` enum already matches the router vocabulary —
   // `'started'` is the only outlier (router-internal, not in the enum).
   return s === 'started' ? 'running' : s;
 }
@@ -32,7 +31,7 @@ function mapStatus(s: TraceStatusIn): PersistedTraceStatus {
 export interface WriteTraceInput {
   org: string;
   project?: string | null;
-  /** Free-form grouping tag — what a prototype spread across `surface`/`traceType`. */
+  /** Free-form grouping tag. */
   label?: string;
   status: TraceStatusIn;
   model?: string;
@@ -128,8 +127,20 @@ export class TraceWriter {
       parentTraceId: input.parentTraceId,
       promptVersion: input.promptVersion,
       actorUserId: input.actorUserId,
-      inputPayload: input.inputPayload as object | undefined,
-      outputPayload: input.outputPayload as object | undefined,
+      // 🔴 §9.4 OPTION A. `inputPayload` / `outputPayload` are the two `jsonb`
+      // columns that hold free prose, so they are scrubbed before the insert and
+      // stored SCRUBBED ONLY — placeholder tokens, no reversible map. Option B
+      // (a per-org reversible map) was rejected: it makes `traces` a PII store
+      // with a key, in a fleet whose DB roles are already Postgres superusers.
+      //
+      // ⚠ NOT SCRUBBED, and deliberately so: `metadata`, `label`,
+      // `tokenUsage`, `costBreakdown`, `effortProfileUsed`. §9.4 names these two
+      // columns; the others carry ids, counts and enum-ish tags, not user prose.
+      // If a caller ever starts putting prose in `metadata`, that is the moment
+      // to widen this — not before, because scrubbing an id-shaped field would
+      // corrupt it (a phone-shaped id becomes `[TELEFONO]`).
+      inputPayload: (await minimiseTracePayload(input.inputPayload)) as object | undefined,
+      outputPayload: (await minimiseTracePayload(input.outputPayload)) as object | undefined,
       tokenUsage: input.tokenUsage as object | undefined,
       durationMs: input.durationMs,
       effort: input.effort,

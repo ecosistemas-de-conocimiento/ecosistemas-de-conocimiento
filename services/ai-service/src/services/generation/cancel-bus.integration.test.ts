@@ -3,9 +3,9 @@
 // Why integration and not unit: the bus IS a thin wrapper over ioredis. A
 // unit test that mocks ioredis would only assert "we called the methods we
 // said we would" — useless if ioredis itself is misconfigured or our two-
-// connection pattern is wrong. Hitting a real Redis (docker-compose port
-// 56379, per `vitest.integration.config.ts` + `integration-setup.ts`)
-// catches:
+// connection pattern is wrong. Hitting a real Redis — a throwaway container
+// started by `integration-setup.ts` on a Docker-allocated port, or whatever
+// `TEST_REDIS_URL` names — catches:
 //   - publish + subscribe protocol wiring (channel name match, message
 //     delivered as a string, not bytes)
 //   - cross-instance delivery (simulating two pods: one publishes, another's

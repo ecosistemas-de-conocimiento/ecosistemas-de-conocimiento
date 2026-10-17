@@ -13,7 +13,9 @@
 // vector, but ONLY when served through FlagEmbedding with `return_sparse=True`.
 // So sparse vectors require a SIBLING self-hosted bge-m3 service (see
 // `bge-m3-service/`), whose URL is config-driven exactly like `EMBEDDINGS_URL`
-// and `RERANK_URL`: managed vs self-hosted is a pure env flip, no code change.
+// and `RERANK_URL`: managed vs self-hosted is an env flip with no code change.
+// It is NOT a privacy-neutral flip: a managed host is a perimeter crossing, so
+// `callSparseEmbed` scrubs its input first (egress seam 5, `../pii-egress.ts`).
 // This is CPU-scale work, not GPU (semantic/lexical embedding is CPU).
 //
 // WIRE SHAPE (bge-m3-service `POST /embed`):
@@ -27,6 +29,9 @@
 // (see `toSparsevecLiteral`).
 
 import { env } from '../../../config/env.js';
+import { AiServiceError } from '../../../errors/base.js';
+import { recordEgressScrub } from '../../../metrics/pii.js';
+import { minimiseEgressReport } from '../pii-egress.js';
 
 /**
  * A single learned-sparse vector: parallel `indices` / `values` arrays. The
@@ -81,7 +86,11 @@ export class SparseEmbedHttpError extends Error {
 }
 
 /** Thrown when a sparse embed is requested but no `SPARSE_EMBED_URL` is configured. */
-export class SparseEmbedNotConfiguredError extends Error {
+export class SparseEmbedNotConfiguredError extends AiServiceError {
+  readonly code = 'ERR_SPARSE_EMBED_NOT_CONFIGURED';
+  readonly status = 503;
+  /** A deployment fault; the caller gets a generic 500, pino gets the detail. */
+  override readonly expose = false;
   constructor() {
     super('Sparse embed requested but SPARSE_EMBED_URL is not configured.');
     this.name = 'SparseEmbedNotConfiguredError';
@@ -152,10 +161,31 @@ export async function callSparseEmbed(args: SparseEmbedArgs): Promise<SparseEmbe
     return { model: args.model, dense: [], sparse: [] };
   }
 
+  // 🔴 EGRESS SEAM 5 (SECURITY_OPEN §15). `SPARSE_EMBED_URL` is config-driven,
+  // so this POST crosses the perimeter whenever it points at a managed host; it
+  // carries chunk text on ingest and query text on retrieve. Same rule as the
+  // dense seam (`./openrouter.ts`): scrub here, in the one transport, so every
+  // caller is covered. ONLY `input` is scrubbed — `model` is a configured id,
+  // never user text.
+  //
+  // SAME SHAPE: `minimiseEgressReport` keeps array length and order, so the
+  // dense/sparse vectors still map back to the caller's inputs by position.
+  // Query and chunk text are scrubbed by the same deterministic rules, so they
+  // stay consistent with each other (the dense seam's re-ingest caveat applies).
+  //
+  // FAILS CLOSED: a `PiiMinimisationFailedError` propagates and aborts the call.
+  // Do not catch it and send the raw `inputs`.
+  const report = await minimiseEgressReport({ input: inputs }, args.signal);
+  const safeInputs = report.payload.input;
+
+  // Counted after the scrub, immediately before the wire: "a scrubbed payload
+  // was sent", not "a scrub was attempted".
+  recordEgressScrub('sparse_embed', report.counts);
+
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: args.model, input: inputs }),
+    body: JSON.stringify({ model: args.model, input: safeInputs }),
     signal: args.signal,
   });
 

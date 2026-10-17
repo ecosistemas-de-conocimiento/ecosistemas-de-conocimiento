@@ -1,0 +1,68 @@
+/* ai-service holding page stylesheet. EDC-owned; not synced. */
+
+:root {
+  --bg: #ffffff;
+  --text: #111111;
+  --glow-a: rgba(60, 110, 160, 0.12);  /* soft blue */
+  --glow-b: rgba(34, 31, 32, 0.06);   /* ink */
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  overflow: hidden;
+}
+
+/* Two soft blurred shapes drifting slowly behind the logo. */
+.holding-bg { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+.holding-bg::before,
+.holding-bg::after {
+  content: "";
+  position: absolute;
+  width: 60vmax;
+  height: 60vmax;
+  border-radius: 50%;
+}
+.holding-bg::before {
+  background: radial-gradient(circle, var(--glow-a), transparent 70%);
+  top: -20vmax; left: -15vmax;
+  animation: holding-drift-a 38s ease-in-out infinite alternate;
+}
+.holding-bg::after {
+  background: radial-gradient(circle, var(--glow-b), transparent 70%);
+  bottom: -25vmax; right: -20vmax;
+  animation: holding-drift-b 46s ease-in-out infinite alternate;
+}
+@keyframes holding-drift-a { to { transform: translate(18vmax, 12vmax) scale(1.1); } }
+@keyframes holding-drift-b { to { transform: translate(-16vmax, -10vmax) scale(0.95); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .holding-bg::before, .holding-bg::after { animation: none; }
+}
+
+.holding {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 48px;
+  padding: 24px;
+  text-align: center;
+}
+
+/* Fixed box so a product logo of any aspect ratio keeps the layout still. */
+.holding-product-logo { width: 160px; height: 160px; object-fit: contain; }
+
+.holding-name { font-size: 32px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+
+.holding-logo { width: min(280px, 70vw); height: auto; }

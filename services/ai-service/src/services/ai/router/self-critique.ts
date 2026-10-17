@@ -1,7 +1,5 @@
-// Self-critique loop for `deep` and `maximum` effort. Ported 1:1 from a prototype
-// `services/ai/router/self-critique.ts` with the `SystemFlag.kind` →
-// `Flag.severity` rename and the `'tip'` branch dropped (ai-service `Flag`
-// union is `'blocker' | 'warning'` only).
+// Self-critique loop for `deep` and `maximum` effort. The ai-service `Flag`
+// union is `'blocker' | 'warning'` only.
 //
 // Two passes per call:
 //   1. generate — produce the initial draft.

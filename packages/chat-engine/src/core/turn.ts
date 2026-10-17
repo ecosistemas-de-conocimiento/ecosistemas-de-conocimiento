@@ -3,10 +3,20 @@
  *
  * The system message is BEHAVIORAL ONLY. ALL factual context (Tier-1 summary,
  * retrieved chunks, @-cited entities) goes in the USER turn, under the labelled
- * "[CONTEXTO … es tu FUENTE PRINCIPAL …]" preamble. This is because the dev
- * chat model under-weights/ignores factual content placed in the system
- * message. The wording is load-bearing and proven — do not paraphrase it; all
- * of the strings come from `EngineConfig` so a consumer can override them.
+ * "[CONTEXT for your reply …]" preamble. This is because the dev chat model
+ * under-weights/ignores factual content placed in the system message. All of
+ * the strings come from `EngineConfig` so a consumer can override them.
+ *
+ * Note the deliberate language split visible in the assembled turn: the
+ * preamble is ENGLISH (machinery — the engine instructing the model) while
+ * `blockHeaders` stay LOCALIZED (content — labels on product prose the model
+ * can echo). See the `config.ts` docs before "unifying" them.
+ *
+ * The preamble carries the anti-fabrication contract — see the
+ * `userContextPreamble` doc in `config.ts`. It must (a) stop the model denying
+ * context that is present, (b) stop it inventing facts that are absent, and
+ * (c) keep the reply in the user's language. A product that overrides the
+ * string inherits all three obligations.
  */
 
 import { DEFAULT_ENGINE_CONFIG, type EngineConfig } from './config.js';
@@ -72,9 +82,24 @@ export interface BuiltTurn {
   provenance: Provenance | null;
 }
 
-/** Fill the `{context}` / `{message}` slots of the preamble. */
+/**
+ * Fill the `{context}` / `{message}` slots of the preamble.
+ *
+ * ONE pass with a replacer function, deliberately. The obvious
+ * `.replace('{context}', context).replace('{message}', message)` has two real
+ * bugs, both of which silently corrupt what the model reads:
+ *   1. a STRING replacement still interprets `$&`, `` $` ``, `$'`, `$$` and
+ *      `$1` in the replacement, so a user message or retrieved chunk holding
+ *      `$&` (shell, regex, a code paste) comes out mangled;
+ *   2. substituting `{context}` first means a retrieved chunk containing the
+ *      literal text `{message}` swallows the user's actual question.
+ * A replacer function is exempt from `$`-expansion and each slot is visited
+ * exactly once, so neither can happen.
+ */
 function applyPreamble(template: string, context: string, message: string): string {
-  return template.replace('{context}', context).replace('{message}', message);
+  return template.replace(/\{(context|message)\}/g, (_m, slot: string) =>
+    slot === 'context' ? context : message,
+  );
 }
 
 /**
@@ -152,6 +177,11 @@ export function buildChatTurn(args: BuildTurnArgs): BuiltTurn {
               score: m.score,
               corpus: m.corpus,
               metadata: m.metadata ?? null,
+              // Optional per-leg scores (0.6.0): copied only when present, so a
+              // dense turn's provenance keeps its pre-0.6.0 shape.
+              ...(typeof m.denseScore === 'number' ? { denseScore: m.denseScore } : {}),
+              ...(typeof m.lexicalScore === 'number' ? { lexicalScore: m.lexicalScore } : {}),
+              ...(typeof m.rerankScore === 'number' ? { rerankScore: m.rerankScore } : {}),
               ...(passage !== undefined ? { text: passage } : {}),
             };
           }),

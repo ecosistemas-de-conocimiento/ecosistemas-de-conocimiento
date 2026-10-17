@@ -25,4 +25,4 @@ export interface ValidatorContext {
   responseSchema?: unknown;
 }
 
-export type { Validator } from '../../../schemas/registry.js';
+export type { Validator } from '../../../contract/registry.js';

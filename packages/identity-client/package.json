@@ -1,7 +1,7 @@
 {
   "name": "@edc/identity-client",
-  "version": "0.1.0",
-  "description": "Consumer-side identity client: EdDSA token verification, permission helpers, service-to-service grant resolution.",
+  "version": "0.3.3",
+  "description": "Consumer-side identity client: browser-user sessions (login, rotating refresh tickets, revoke), EdDSA token verification, permission helpers, service-to-service grant resolution.",
   "type": "module",
   "license": "UNLICENSED",
   "private": true,
@@ -22,7 +22,9 @@
     "jwt",
     "eddsa",
     "jwks",
-    "rbac"
+    "rbac",
+    "session",
+    "refresh-token"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -35,9 +37,10 @@
   "devDependencies": {
     "@types/node": "^22.10.5",
     "typescript": "^5.7.3",
-    "vitest": "^2.1.8"
+    "vite": "^8.2.2",
+    "vitest": "^5.0.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12.0"
   }
 }

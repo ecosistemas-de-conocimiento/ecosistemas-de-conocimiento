@@ -12,9 +12,9 @@
 //   1. CORRECTNESS FLOOR PRESERVED — rerank never introduces a superseded
 //      citation. A re-ordering rung must not resurrect forbidden content.
 //   2. rerankScore is surfaced and drives the order.
-//   3. NON-REGRESSION — rerank does not drop overall pass rate below hybrid,
-//      and does not regress the exact-identifier slice (where a term-overlap
-//      reranker should help or hold).
+//   3. IMPROVEMENT — rerank strictly beats the same run with the rung disabled
+//      (hybrid) on pass rate, MRR and the exact-identifier slice. A tie is what
+//      a dead reranker produces, so a tie fails.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -89,17 +89,26 @@ describe(`rerank eval — ${GOLDEN_SET_VERSION}`, () => {
     expect(reports['hybrid+rerank']!.totalForbiddenHits).toBe(0);
   });
 
-  it('rerank does not regress overall pass rate below hybrid', () => {
-    expect(reports['hybrid+rerank']!.passRate).toBeGreaterThanOrEqual(
-      reports['hybrid']!.passRate,
-    );
+  // 🔴 STRICT `>`, NOT `>=`. The rerank rung swallows every reranker failure and
+  // returns the fused order, and a reranker that scores everything equal leaves
+  // the fused order in place too. Either way the reranked run TIES hybrid, so
+  // `>=` passed with the reranker doing nothing. MEASURED:
+  // `fixtureRerankScore` forced to `return 0` was green under `>=`. The
+  // baseline is the same run with the rung disabled, measured here, never a
+  // stored number.
+  it('rerank beats hybrid on overall pass rate and MRR', () => {
+    const hybrid = reports['hybrid']!;
+    const reranked = reports['hybrid+rerank']!;
+    expect(reranked.passRate, 'passRate vs hybrid').toBeGreaterThan(hybrid.passRate);
+    expect(reranked.mrr, 'MRR vs hybrid').toBeGreaterThan(hybrid.mrr);
   });
 
-  it('rerank does not regress the exact-identifier slice', () => {
+  it('rerank beats hybrid on the exact-identifier slice', () => {
     const hybrid = reports['hybrid']!.byTag['exact-identifier'];
     const reranked = reports['hybrid+rerank']!.byTag['exact-identifier'];
-    expect(reranked, 'no exact-identifier slice').toBeDefined();
-    expect(reranked!.passRate).toBeGreaterThanOrEqual(hybrid!.passRate);
+    expect(hybrid, 'no exact-identifier slice (hybrid)').toBeDefined();
+    expect(reranked, 'no exact-identifier slice (reranked)').toBeDefined();
+    expect(reranked!.passRate).toBeGreaterThan(hybrid!.passRate);
   });
 
   it('surfaces rerankScore on reranked results', async () => {

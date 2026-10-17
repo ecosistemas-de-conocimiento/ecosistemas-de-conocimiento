@@ -284,8 +284,8 @@ describe('enqueue when ai-service is rate-limiting', () => {
   const rateLimited = (retryAfterSeconds: number) =>
     Object.assign(new Error('Rate limit exceeded. Retry after ~1s.'), {
       status: 429,
-      name: 'RateLimitedError',
-      retryAfterSeconds,
+      name: 'RateLimitError',
+      retryAfterMs: retryAfterSeconds * 1000,
     })
 
   /**
@@ -300,7 +300,7 @@ describe('enqueue when ai-service is rate-limiting', () => {
   })
 
   it('🔴 waits and retries a 429 instead of failing the document', async () => {
-    // `retryAfterSeconds: 1` so the suite pays about a second, not a minute. The
+    // A 1 s `retryAfterMs` so the suite pays about a second, not a minute. The
     // wait is the SERVER'S number, not a guess — see `lib/aiRetry.ts`.
     enqueue.mockImplementationOnce(async () => {
       throw rateLimited(1)

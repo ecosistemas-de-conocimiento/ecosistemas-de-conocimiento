@@ -51,7 +51,7 @@ describe('migration ledger location', () => {
   it('every runtime `migrate()` call passes the shared config', () => {
     // A new migrate() call site that forgets this would write to the `drizzle`
     // schema and silently re-run the baseline. Cheap to check, expensive to miss.
-    for (const rel of ['src/db/migrate.ts', 'src/test/integration-setup.ts']) {
+    for (const rel of ['src/db/migrate.ts', 'src/test/integration-database.ts']) {
       const source = read(rel);
       expect(source, `${rel} calls migrate()`).toMatch(/migrate\(/);
       expect(source, `${rel} must spread MIGRATIONS_CONFIG`).toMatch(

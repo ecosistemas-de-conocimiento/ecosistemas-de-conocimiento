@@ -86,6 +86,96 @@ describe('hashKey', () => {
     expect(typeof hashKey(k)).toBe('string');
     expect(hashKey(k)).toHaveLength(64);
   });
+
+  it('produces a different hash for a different org', () => {
+    // The cache is process-shared, so the tenant is part of the entry's
+    // identity. Without this, one organisation serves another's completion.
+    const a: CacheKeyInput = { model: 'm', messages: baseMessages, org: 'acme', project: 'p' };
+    const b: CacheKeyInput = { ...a, org: 'globex' };
+    expect(hashKey(a)).not.toBe(hashKey(b));
+  });
+
+  it('🔴 produces a different hash for a different project in the SAME org', () => {
+    // FG-18. `router.ts` used to pass the org as `namespace` and carry no
+    // project at all, so these two collided and shared an answer for the
+    // 5-minute TTL. Same org is not the same caller.
+    const a: CacheKeyInput = { model: 'm', messages: baseMessages, org: 'acme', project: 'proj-a' };
+    const b: CacheKeyInput = { ...a, project: 'proj-b' };
+    expect(hashKey(a)).not.toBe(hashKey(b));
+  });
+
+  it('treats a missing project and a null project as the same tenant', () => {
+    // Both mean "no project". They must not split the cache in two, or a caller
+    // that omits the field never hits an entry written by one that passed null.
+    const a: CacheKeyInput = { model: 'm', messages: baseMessages, org: 'acme' };
+    const b: CacheKeyInput = { ...a, project: null };
+    expect(hashKey(a)).toBe(hashKey(b));
+  });
+
+  it('keeps org and project distinguishable when one value contains the other', () => {
+    // The fields are joined before hashing, so a separator that a value could
+    // contain would let these two produce one digest. They must not.
+    const a: CacheKeyInput = { model: 'm', messages: baseMessages, org: 'a', project: 'b|c' };
+    const b: CacheKeyInput = { model: 'm', messages: baseMessages, org: 'a|b', project: 'c' };
+    expect(hashKey(a)).not.toBe(hashKey(b));
+  });
+
+  it('🔴 keeps org and project distinct when a value contains the SEPARATOR', () => {
+    // FG-18 follow-up. The fields used to be joined by a lone `\u0000` and the
+    // comment claimed that byte "CANNOT occur in any field". It can: `org` and
+    // `project` are read from the `API_KEYS` JSON env, and a JS string holds any
+    // code unit. These two are the shortest proof — with a lone separator they
+    // both hash the byte sequence `a NUL b NUL c`.
+    const a: CacheKeyInput = { model: 'm', messages: baseMessages, org: 'a\u0000b', project: 'c' };
+    const b: CacheKeyInput = { model: 'm', messages: baseMessages, org: 'a', project: 'b\u0000c' };
+    expect(hashKey(a)).not.toBe(hashKey(b));
+  });
+
+  it('🔴 message boundaries cannot be forged from message CONTENT', () => {
+    // The same defect one field over, and this one needs no operator at all:
+    // message content is whatever the end user typed. The messages used to be
+    // joined by the literals `::` and `||`, so a single message containing
+    // `x||user::y` reproduced the byte sequence of TWO messages `x` and `y`.
+    const a: CacheKeyInput = {
+      model: 'm',
+      messages: [
+        { role: 'user', content: 'x' },
+        { role: 'user', content: 'y' },
+      ],
+      org: 'acme',
+      project: 'proj-a',
+    };
+    const b: CacheKeyInput = {
+      ...a,
+      messages: [{ role: 'user', content: 'x||user::y' }],
+    };
+    expect(hashKey(a)).not.toBe(hashKey(b));
+  });
+
+  it('frames fields even when a value BEGINS with digits', () => {
+    // A regression guard, not a report of a live defect: it passes on the old
+    // separator scheme too. It exists so nobody "simplifies" `writeField` down
+    // to a bare `update(String(v.length)); update(v)` — these two collide under
+    // exactly that, because the length digits then run into a value that starts
+    // with digits. The `FIELD_SEP` terminator is what stops it.
+    const a: CacheKeyInput = { model: 'm', messages: baseMessages, org: '0', project: 'abcdefgh6ijklmn' };
+    const b: CacheKeyInput = { model: 'm', messages: baseMessages, org: '15abcdefgh', project: 'ijklmn' };
+    expect(hashKey(a)).not.toBe(hashKey(b));
+  });
+
+  it('still separates namespaces within one project', () => {
+    // `namespace` keeps critique/refine entries apart and is now only that —
+    // it no longer doubles as the tenant.
+    const a: CacheKeyInput = {
+      model: 'm',
+      messages: baseMessages,
+      org: 'acme',
+      project: 'proj-a',
+      namespace: 'generate',
+    };
+    const b: CacheKeyInput = { ...a, namespace: 'critique' };
+    expect(hashKey(a)).not.toBe(hashKey(b));
+  });
 });
 
 describe('RouterCache', () => {

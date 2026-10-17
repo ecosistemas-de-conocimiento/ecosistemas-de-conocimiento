@@ -5,8 +5,10 @@
 // before this module: if OpenRouter held the socket open without honouring TCP
 // close, or stalled mid-stream, nothing capped it. `withRequestTimeout` adds an
 // independent wall-clock backstop that COMBINES with the disconnect signal —
-// whichever fires first aborts the upstream fetch through the exact same
-// `OpenRouterAbortError` partial-billing/refund path in `router.ts`.
+// whichever fires first aborts the upstream fetch. What happens next depends
+// on `cause()`: a disconnect takes the `OpenRouterAbortError` partial-billing
+// path in `router.ts`; a TIMEOUT ends the call as an unbilled
+// `ProviderTimeout` (504) — decision, see `provider-timeout.ts`.
 //
 // Node target is >=22 (engines) and we run on Node 24; both `AbortSignal.any`
 // (Node 20.3+) and `AbortSignal.timeout` are available, so no setTimeout

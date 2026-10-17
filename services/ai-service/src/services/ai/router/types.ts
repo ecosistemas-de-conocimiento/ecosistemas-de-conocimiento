@@ -2,15 +2,16 @@
 // the actual LLM HTTP adapter — it owns budget reservation, cache, validator
 // dispatch, and the self-critique pipeline.
 //
-// Adapted from a prototype's `services/ai/router/types.ts`. The prototype-specific
-// `surface: LLMSurface` / `dimension: DimensionType` / `storyId` fields are
-// dropped — `label` is a free-form opaque string the consumer or orchestrator
+// `label` is a free-form opaque string the consumer or orchestrator
 // stamps onto `traces.label`. `effortProfile` is **passed in pre-resolved** by
 // the orchestrator (`services/registry/resolve.ts`); the router does not
 // re-resolve.
 
 import type { Flag } from '../validators/types.js';
 import type { EffortLevel, EffortProfile, Validator } from '../../../types/generation.js';
+import type { FinishReason } from './finish-reason.js';
+
+export type { FinishReason };
 
 export type ProviderKey = 'openrouter' | 'openai' | 'anthropic' | 'local';
 
@@ -47,6 +48,15 @@ export interface RouteRequest {
   temperature?: number;
 
   responseSchema?: unknown;
+  /**
+   * `true` ⇒ ask the provider for STRICT schema-constrained output
+   * (`response_format: { type: 'json_schema', json_schema: { name, schema,
+   * strict: true } }`) instead of JSON mode. Needs `responseSchema`, a model in
+   * `STRICT_SCHEMA_MODELS`, and a schema inside the strict subset; otherwise the
+   * router throws `SpecResolutionError` (400) before reserving budget. See
+   * `strict-schema.ts`.
+   */
+  responseSchemaStrict?: boolean;
   validators?: Validator[];
 
   signal?: AbortSignal;
@@ -72,6 +82,19 @@ export interface RouteRequest {
   registryEntryId?: string;
   /** Stamped onto `traces.prompt_version` (from `ResolvedSpec.registryEntryVersion`). */
   promptVersion?: string;
+
+  /**
+   * Fastify's per-HTTP-request id, recorded on `traces.metadata.httpRequestId`.
+   *
+   * 🔴 NOT `requestId`. In this codebase that name means
+   * `generation_requests.id` — see `generationRequestId` above, the wire's
+   * `LaunchGenerationResult.requestId`, and the `request:<uuid>:generations`
+   * event channel. This one identifies ONE HTTP call: the synchronous routes
+   * make exactly one router call per call, while a retry or a status poll is a
+   * further HTTP request against the same generation request. Two ids, two
+   * lifetimes, two names.
+   */
+  httpRequestId?: string;
 }
 
 export interface RouteResult {
@@ -82,6 +105,18 @@ export interface RouteResult {
   /** Validator output — `severity: 'blocker'` ⇒ retry-eligible. */
   flags: Flag[];
   usage: TokenUsage;
+  /**
+   * Why the model stopped, normalized off the provider's raw `finish_reason`
+   * (see `finish-reason.ts`). **Optional and honestly absent**: omitted when
+   * the provider reported nothing, and on cache hits — the cache entry does
+   * not store it, and re-serving a cached body says nothing about how the
+   * original call ended.
+   *
+   * `'length'` is the load-bearing value: it means the output was truncated at
+   * `effortProfile.maxOutputTokens`, which consumers metering credits by
+   * output tokens must settle differently from a clean `'stop'`.
+   */
+  finishReason?: FinishReason;
   model: string;
   provider: ProviderKey;
   /** Trace row id written by the router. */
