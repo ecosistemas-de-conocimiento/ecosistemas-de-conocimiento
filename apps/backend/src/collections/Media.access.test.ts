@@ -55,6 +55,7 @@ type DocRow = {
   uploadedBy: number
   mediaFile: number | null
   publicationStatus: string
+  contentKind?: string
 }
 
 const DEFAULT_DOCS: DocRow[] = [
@@ -128,13 +129,15 @@ function reqAs(
             | number[]
             | undefined
           const wantsFile = clauses.find((c) => c.mediaFile)?.mediaFile?.exists === true
+          const kind = clauses.find((c) => c.contentKind)?.contentKind?.equals
 
           return {
             docs: docs.filter(
               (d) =>
                 (status === undefined || d.publicationStatus === status) &&
                 (orgIn === undefined || orgIn.includes(d.organization)) &&
-                (!wantsFile || d.mediaFile !== null),
+                (!wantsFile || d.mediaFile !== null) &&
+                (kind === undefined || (d.contentKind ?? 'documento') === kind),
             ),
           }
         }
@@ -199,8 +202,28 @@ describe('🔴 a member of another ecosistema', () => {
         { publicationStatus: { equals: 'published' } },
         { organization: { in: [ECO_B] } },
         { mediaFile: { exists: true } },
+        { contentKind: { equals: 'documento' } },
       ],
     })
+  })
+
+  it('🔴 never shares the recording behind a published testimonio', async () => {
+    // Audit 2026-10-17: the file of a Voz is the speaker's own voice. Colleagues
+    // get the redacted text, never the source.
+    const VOZ_MEDIA = 5009
+    const docs: DocRow[] = [
+      ...DEFAULT_DOCS,
+      {
+        id: 509,
+        organization: ECO_A,
+        uploadedBy: ANA,
+        mediaFile: VOZ_MEDIA,
+        publicationStatus: 'published',
+        contentKind: 'testimonio',
+      },
+    ]
+    expect(reachableIds(await constraintFor(BEN, { docs }))).not.toContain(VOZ_MEDIA)
+    expect(reachableIds(await constraintFor(BEN, { docs }))).toContain(ANA_PUBLISHED_MEDIA)
   })
 })
 

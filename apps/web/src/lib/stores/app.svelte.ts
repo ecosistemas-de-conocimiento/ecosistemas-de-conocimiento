@@ -1,3 +1,4 @@
+import type { UploadContentKind } from '$lib/uploadKind';
 import type {
   DocKind,
   IngestStatus,
@@ -78,6 +79,13 @@ function uploadErrorToast(
         title: 'Sin permiso',
         message: 'No puedes subir documentos a esta conversación.',
       };
+    case 'voces_upload_forbidden':
+      return {
+        title: 'Sin permiso para subir voces',
+        message: 'Subir testimonios requiere el rol de investigador en este ecosistema.',
+      };
+    case 'invalid_content_kind':
+      return { title: 'Tipo de material no válido', message: 'Elige Documento o Voz / testimonio.' };
     case 'media_upload_rejected':
       return {
         title: 'El servidor rechazó el archivo',
@@ -1065,7 +1073,12 @@ class AppStore {
    * ingest enqueue; the actual `ready` flip arrives via the M5 webhook
    * (server-side; we poll here to surface it in the UI).
    */
-  async uploadDoc(sessionId: string, file: File): Promise<WorkingDoc | null> {
+  async uploadDoc(
+    sessionId: string,
+    file: File,
+    /** `testimonio` routes it through the anonymisation gate. See `$lib/uploadKind.ts`. */
+    contentKind: UploadContentKind = 'documento',
+  ): Promise<WorkingDoc | null> {
     // Client-side gate. Server enforces it too; this saves a round-trip and
     // gives the user a specific reason without a server 413.
     //
@@ -1088,6 +1101,7 @@ class AppStore {
       form.append('file', file, file.name);
       form.append('name', file.name);
       form.append('isPinned', 'true');
+      form.append('contentKind', contentKind);
       const res = await fetch(`/api/sessions/${sessionId}/documents`, {
         method: 'POST',
         body: form,

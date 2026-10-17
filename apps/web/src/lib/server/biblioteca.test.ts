@@ -65,9 +65,17 @@ describe('libraryListQuery — the two constraints', () => {
     expect(qs.get('where[kind][in]')).toBeNull();
   });
 
-  it('constrains kind when one is chosen', () => {
+  // 🔴 A Voz is `kind: 'audio'`; the filter is on `contentKind`.
+  it('filters Voces on contentKind, never on the file format', () => {
     const qs = new URLSearchParams(libraryListQuery({ ...base, kind: 'testimonio' }));
-    expect(qs.get('where[kind][in]')).toBe('testimonio');
+    expect(qs.get('where[contentKind][equals]')).toBe('testimonio');
+    expect(qs.get('where[kind][in]')).toBeNull();
+  });
+
+  it('filters a format to documentos only, so Audios never lists a Voz', () => {
+    const qs = new URLSearchParams(libraryListQuery({ ...base, kind: 'audio' }));
+    expect(qs.get('where[kind][in]')).toBe('audio');
+    expect(qs.get('where[contentKind][equals]')).toBe('documento');
   });
 
   it('searches on the title only, trimmed', () => {
@@ -161,7 +169,7 @@ describe('isLibraryVisible — the re-check a read-by-id needs', () => {
 describe('toLibraryItem', () => {
   it('maps a document and keeps its contributor', () => {
     const item = toLibraryItem(
-      { id: 3, name: 'Acta', kind: 'pdf', createdAt: '2026-08-01T00:00:00.000Z' },
+      { id: 3, name: 'Acta', kind: 'pdf', contentKind: 'documento', createdAt: '2026-08-01T00:00:00.000Z' },
       'Ana',
     );
     expect(item).toMatchObject({ id: '3', title: 'Acta', kind: 'pdf', contributor: 'Ana' });
@@ -174,6 +182,35 @@ describe('toLibraryItem', () => {
     const item = toLibraryItem({ id: 4, name: 'Voz', kind: 'testimonio' }, 'Ana');
     expect(item.contributor).toBeNull();
     expect(JSON.stringify(item)).not.toContain('Ana');
+  });
+
+  // 🔴 THE REAL SHAPE OF A VOZ: the format is `audio`, the content kind is
+  // `testimonio`. Audit 2026-10-17: keyed on `kind`, this row read as an
+  // ordinary audio and carried its uploader and its filename.
+  it('🔴 treats {kind:audio, contentKind:testimonio} as a testimonio', () => {
+    const item = toLibraryItem(
+      {
+        id: 4,
+        name: 'Testimonio de María López.m4a',
+        kind: 'audio',
+        contentKind: 'testimonio',
+        audioMeta: { durationSeconds: 60, language: 'tsotsil' },
+      },
+      'Ana',
+    );
+    expect(item.kind).toBe('testimonio');
+    expect(item.title).toBe('Testimonio');
+    expect(item.contributor).toBeNull();
+    expect(item.audioMeta).toBeNull();
+    const out = JSON.stringify(item);
+    for (const leak of ['María', 'López', 'Ana', 'tsotsil']) expect(out).not.toContain(leak);
+  });
+
+  it('never shows the typed name on gated content, whatever the kind', () => {
+    for (const contentKind of ['testimonio', 'conversacion', 'nope', undefined]) {
+      const item = toLibraryItem({ id: 1, name: 'Juana Pérez', kind: 'pdf', contentKind }, null);
+      expect(item.title).not.toContain('Juana');
+    }
   });
 
   it('carries the lengua of a documento', () => {
@@ -195,8 +232,12 @@ describe('toLibraryItem', () => {
   });
 
   it('keeps audioMeta only for audio, and only when it is an object', () => {
-    expect(toLibraryItem({ id: 1, kind: 'audio', audioMeta: { durationSeconds: 60 } }, null).audioMeta)
-      .toEqual({ durationSeconds: 60 });
+    expect(
+      toLibraryItem(
+        { id: 1, kind: 'audio', contentKind: 'documento', audioMeta: { durationSeconds: 60 } },
+        null,
+      ).audioMeta,
+    ).toEqual({ durationSeconds: 60 });
     expect(toLibraryItem({ id: 1, kind: 'audio', audioMeta: 'x' }, null).audioMeta).toBeNull();
     expect(toLibraryItem({ id: 1, kind: 'pdf', audioMeta: { a: 1 } }, null).audioMeta).toBeNull();
   });
@@ -211,25 +252,57 @@ describe('contributorIdsToResolve', () => {
   // filed it is not the person whose voice it is.
   it('never includes a testimonio uploader', () => {
     const ids = contributorIdsToResolve([
-      { kind: 'pdf', uploadedBy: '1' },
+      { kind: 'pdf', contentKind: 'documento', uploadedBy: '1' },
       { kind: 'testimonio', uploadedBy: '2' },
-      { kind: 'audio', uploadedBy: 3 },
+      { kind: 'audio', contentKind: 'documento', uploadedBy: 3 },
     ]);
     expect(ids).toEqual(['1', '3']);
   });
 
+  // 🔴 The real shape of a Voz. Keyed on `kind`, this uploader was resolved.
+  it('🔴 never includes the uploader of {kind:audio, contentKind:testimonio}', () => {
+    const ids = contributorIdsToResolve([
+      { kind: 'audio', contentKind: 'testimonio', uploadedBy: '2' },
+      { kind: 'audio', contentKind: 'documento', uploadedBy: '3' },
+    ]);
+    expect(ids).toEqual(['3']);
+  });
+
+  it('fails closed on a row with no contentKind', () => {
+    expect(contributorIdsToResolve([{ kind: 'pdf', uploadedBy: '1' }])).toEqual([]);
+  });
+
   it('de-duplicates and tolerates a missing uploader', () => {
-    expect(contributorIdsToResolve([{ kind: 'pdf', uploadedBy: '1' }, { kind: 'pdf', uploadedBy: '1' }, { kind: 'pdf' }])).toEqual(['1']);
+    const doc = { kind: 'pdf', contentKind: 'documento' };
+    expect(
+      contributorIdsToResolve([{ ...doc, uploadedBy: '1' }, { ...doc, uploadedBy: '1' }, doc]),
+    ).toEqual(['1']);
   });
 });
 
 describe('documentText', () => {
   it('prefers the extraction / transcript', () => {
-    expect(documentText({ extractedText: 'transcrito', bodyMarkdown: '# nota' })).toBe('transcrito');
+    expect(
+      documentText({ contentKind: 'documento', extractedText: 'transcrito', bodyMarkdown: '# nota' }),
+    ).toBe('transcrito');
   });
 
   it('falls back to the markdown body for a note', () => {
-    expect(documentText({ extractedText: '   ', bodyMarkdown: '# nota' })).toBe('# nota');
+    expect(
+      documentText({ contentKind: 'documento', extractedText: '   ', bodyMarkdown: '# nota' }),
+    ).toBe('# nota');
+  });
+
+  // 🔴 Audit 2026-10-17: the reader showed a testimonio's unredacted original.
+  it('🔴 reads ONLY redactedText on a testimonio, even when the original is present', () => {
+    const row = {
+      contentKind: 'testimonio',
+      extractedText: 'Me llamo María López',
+      bodyMarkdown: 'María López',
+      redactedText: 'Me llamo [Persona A]',
+    };
+    expect(documentText(row)).toBe('Me llamo [Persona A]');
+    expect(documentText({ ...row, redactedText: null })).toBe('');
   });
 
   it('is empty when there is nothing', () => {
@@ -257,8 +330,8 @@ describe('listPublished', () => {
           totalDocs: 2,
           hasNextPage: false,
           docs: [
-            { id: 1, name: 'Acta', kind: 'pdf', uploadedBy: '10' },
-            { id: 2, name: 'Voz', kind: 'testimonio', uploadedBy: '11' },
+            { id: 1, name: 'Acta', kind: 'pdf', contentKind: 'documento', uploadedBy: '10' },
+            { id: 2, name: 'Voz', kind: 'audio', contentKind: 'testimonio', uploadedBy: '11' },
           ],
         });
       }
@@ -304,6 +377,7 @@ describe('readPublished', () => {
             id: 5,
             name: 'Acta',
             kind: 'pdf',
+            contentKind: 'documento',
             organization: '7',
             publicationStatus: 'published',
             extractedText: 'contenido',
@@ -350,11 +424,13 @@ describe('readPublished', () => {
       path.startsWith('/api/documents')
         ? jsonResponse({
             id: 5,
-            name: 'Voz',
-            kind: 'testimonio',
+            name: 'Testimonio de María López.m4a',
+            kind: 'audio',
+            contentKind: 'testimonio',
             organization: '7',
             publicationStatus: 'published',
-            extractedText: 'lo que dijo',
+            extractedText: 'lo que dijo María López',
+            redactedText: 'lo que dijo [Persona A]',
             uploadedBy: '10',
           })
         : jsonResponse({ docs: [{ id: 10, displayName: 'Ana' }] }),
@@ -363,8 +439,17 @@ describe('readPublished', () => {
     expect(out.state).toBe('ok');
     if (out.state === 'ok') {
       expect(out.doc.contributor).toBeNull();
-      expect(JSON.stringify(out.doc)).not.toContain('Ana');
+      expect(out.doc.title).toBe('Testimonio');
+      expect(out.doc.text).toBe('lo que dijo [Persona A]');
+      const json = JSON.stringify(out.doc);
+      for (const leak of ['Ana', 'María', 'López']) expect(json).not.toContain(leak);
     }
+  });
+
+  it('asks the backend for redactedText', async () => {
+    mockedBackendFetch.mockResolvedValue(jsonResponse({}, 404));
+    await readPublished('tok', '7', '5');
+    expect(String(mockedBackendFetch.mock.calls[0]![1])).toContain('select%5BredactedText%5D=true');
   });
 
   it('URL-encodes the id into the upstream path', async () => {

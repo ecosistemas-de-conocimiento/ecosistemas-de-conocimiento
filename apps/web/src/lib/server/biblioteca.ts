@@ -26,16 +26,17 @@
  *
  * A testimonio's contributor is dropped BEFORE the row leaves this module. Not
  * hidden in the template — dropped. The name never reaches the browser, so
- * there is nothing for a careless `{#if}` to leak later. See `mayShowContributor`.
+ * there is nothing for a careless `{#if}` to leak later. See `isGatedContent`
+ * (keyed on `contentKind`, never on the file-format `kind`).
  */
 
 import { backendFetch } from '$lib/server/auth';
 import {
-  isTestimony,
-  kindFilterValues,
-  mayShowContributor,
+  isGatedContent,
+  kindFilterWhere,
+  libraryKindOf,
+  libraryTitleFor,
   normalizeSearch,
-  parseLibraryKind,
   type KindFilter,
   type LibraryDocument,
   type LibraryItem,
@@ -67,8 +68,20 @@ export const LIBRARY_LIST_FIELDS = [
   'contentKind',
 ] as const;
 
-/** The reader adds the text itself. */
-export const LIBRARY_DOC_FIELDS = [...LIBRARY_LIST_FIELDS, 'extractedText', 'bodyMarkdown'] as const;
+/**
+ * The reader adds the text itself.
+ *
+ * 🔴 `redactedText` IS THE TEXT OF A TESTIMONIO. `extractedText` and
+ * `bodyMarkdown` are the unredacted original; the backend hides them from
+ * everyone but the uploader on gated rows (`mayReadGatedOriginal`), and
+ * {@link documentText} never reads them for one either.
+ */
+export const LIBRARY_DOC_FIELDS = [
+  ...LIBRARY_LIST_FIELDS,
+  'extractedText',
+  'bodyMarkdown',
+  'redactedText',
+] as const;
 
 function selectParams(fields: readonly string[]): Array<[string, string]> {
   return fields.map((f) => [`select[${f}]`, 'true']);
@@ -110,8 +123,7 @@ export function libraryListQuery(input: LibraryQueryInput): string {
   qs.set('where[organization][equals]', input.organizationId);
   qs.set('where[publicationStatus][equals]', 'published');
 
-  const kinds = kindFilterValues(input.kind);
-  if (kinds) qs.set('where[kind][in]', kinds.join(','));
+  for (const [k, v] of kindFilterWhere(input.kind)) qs.set(k, v);
 
   const search = normalizeSearch(input.search);
   if (search) qs.set('where[name][like]', search);
@@ -190,28 +202,43 @@ export function toLibraryItem(
   row: Record<string, unknown>,
   contributorName: string | null,
 ): LibraryItem {
-  const kind = parseLibraryKind(row.kind);
+  const kind = libraryKindOf(row);
+  // 🔴 `contentKind`, not `kind`. See `isGatedContent`.
+  const gated = isGatedContent(row.contentKind);
   return {
     id: String(row.id ?? ''),
-    title: typeof row.name === 'string' && row.name ? row.name : 'Documento sin título',
+    // 🔴 Never the uploader's filename on gated content, even when the backend
+    // hands it over (it does, to the uploader and to a platform admin).
+    title: libraryTitleFor(row.contentKind, row.name),
     kind,
     createdAt: epoch(row.createdAt),
     updatedAt: epoch(row.updatedAt ?? row.createdAt),
-    contributor: mayShowContributor(kind) ? (contributorName ?? null) : null,
+    contributor: gated ? null : (contributorName ?? null),
     // 🔴 Documento only, whatever the row says. See `$lib/lengua.ts`.
     lengua:
       row.contentKind === 'documento' && typeof row.lengua === 'string' && row.lengua.trim()
         ? row.lengua.trim()
         : null,
+    // ⚠ Not on gated content: `audioMeta.language` is the same
+    // re-identification key `lengua` is (backend `enforceLenguaDocumentoOnly`).
     audioMeta:
-      kind === 'audio' && row.audioMeta && typeof row.audioMeta === 'object' && !Array.isArray(row.audioMeta)
+      !gated && kind === 'audio' && row.audioMeta && typeof row.audioMeta === 'object' && !Array.isArray(row.audioMeta)
         ? (row.audioMeta as Record<string, unknown>)
         : null,
   };
 }
 
-/** The document's text, from whichever column this kind stores it in. */
+/**
+ * The document's text, from whichever column this kind stores it in.
+ *
+ * 🔴 GATED CONTENT READS `redactedText` AND NOTHING ELSE. The original is the
+ * uploader's; the library shows what the anonymisation gate released. No
+ * redaction ⇒ no text, never a fallback to the original.
+ */
 export function documentText(row: Record<string, unknown>): string {
+  if (isGatedContent(row.contentKind)) {
+    return typeof row.redactedText === 'string' ? row.redactedText : '';
+  }
   const extracted = typeof row.extractedText === 'string' ? row.extractedText : '';
   if (extracted.trim()) return extracted;
   const body = typeof row.bodyMarkdown === 'string' ? row.bodyMarkdown : '';
@@ -230,7 +257,7 @@ export function documentText(row: Record<string, unknown>): string {
 export function contributorIdsToResolve(rows: readonly Record<string, unknown>[]): string[] {
   const ids = new Set<string>();
   for (const row of rows) {
-    if (isTestimony(parseLibraryKind(row.kind))) continue;
+    if (isGatedContent(row.contentKind)) continue;
     const id = relationId(row.uploadedBy);
     if (id) ids.add(id);
   }

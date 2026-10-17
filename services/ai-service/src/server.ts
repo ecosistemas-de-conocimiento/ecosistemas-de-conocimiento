@@ -52,10 +52,10 @@ import {
  * limiter.
  *
  *   `k:<apiKeyId>`      a request presenting a CONFIGURED key. Bucketed by the
- *                       key and never by an address: `trustProxy: true` makes
- *                       `req.ip` the leftmost `X-Forwarded-For` entry, so an
- *                       IP bucket is one header away from being a fresh bucket
- *                       per request. Pinned by `routes/rate-limit-key.test.ts`.
+ *                       key and never by an address: `req.ip` comes from
+ *                       `X-Forwarded-For`, and a miscounted `TRUSTED_PROXY_HOPS`
+ *                       makes it caller-chosen, so an IP bucket is one header
+ *                       away from being a fresh bucket per request. Pinned by `routes/rate-limit-key.test.ts`.
  *
  *   `ip:<socket peer>`  everything else — missing, malformed, unknown or
  *                       expired credentials. These are the requests that end
@@ -214,9 +214,6 @@ const metricsPlugin = ((metricsPluginModule as { default?: unknown }).default ??
  * the `env` singleton is deliberately not imported here, so a caller that
  * hands in a runtime gets a server built entirely from THAT value.
  */
-/** Proxy hops between the internet and this service (one ingress). */
-export const TRUSTED_PROXY_HOPS = 1;
-
 export async function buildServer(injectedRuntime?: Runtime): Promise<FastifyInstance> {
   // 🔴 WHO CLOSES THE RUNTIME. A `Runtime` owns a Redis client, BullMQ queues
   // and a FlowProducer; `runtime.close()` is what releases them. Before this
@@ -242,12 +239,11 @@ export async function buildServer(injectedRuntime?: Runtime): Promise<FastifyIns
       // Coolify captures stdout; keep it JSON in prod, pretty is opt-in via tooling.
       redact: ['req.headers.authorization'],
     },
-    // Trust exactly ONE proxy hop: the single ingress (Traefik) in front of
-    // this container. `true` trusted every hop, so `req.ip` was the LEFTMOST
-    // `X-Forwarded-For` entry — whatever the caller wrote. With `1`, `req.ip`
-    // is the address the ingress itself appended. Pinned by
-    // `routes/trust-proxy.test.ts`.
-    trustProxy: TRUSTED_PROXY_HOPS,
+    // Trust exactly `TRUSTED_PROXY_HOPS` hops (default 1: the Traefik ingress).
+    // `true` trusted every hop, so `req.ip` was the LEFTMOST `X-Forwarded-For`
+    // entry — whatever the caller wrote. With a count, `req.ip` is the address
+    // the outermost trusted proxy appended. Pinned by `routes/trust-proxy.test.ts`.
+    trustProxy: config.TRUSTED_PROXY_HOPS,
     disableRequestLogging: false,
     // Global request-body cap (see `server-limits.ts`). Per-route overrides
     // land on the route options below; this is the floor for anything that
@@ -438,7 +434,7 @@ export async function buildServer(injectedRuntime?: Runtime): Promise<FastifyIns
       //
       // The other half of the contract is `v1RateLimitKey`: an authenticated
       // request must bucket by API KEY, never by `req.ip`, which
-      // `trustProxy: true` makes attacker-controlled per request
+      // a miscounted `TRUSTED_PROXY_HOPS` makes attacker-controlled per request
       // (`routes/rate-limit-key.test.ts` pins that). The old keyGenerator read
       // `req.auth`, which is what made auth-before-limiter look mandatory;
       // deriving the bucket from the Authorization header instead removes the

@@ -8,11 +8,9 @@
  *      identical HMAC scheme on purpose, so these events go through the existing
  *      verification code untouched. The first describe block proves that — if it
  *      ever fails, someone added a second verifier and the two will drift.
- *   2. **The join is into the EXISTING pipeline.** `transcribe.completed` ends
- *      by calling `enqueueIngestForDoc`, which resolves the corpus itself from
- *      the row. The transcript therefore lands in the uploader's PRIVATE draft
- *      corpus, exactly like an uploaded PDF, and is shared only if the document
- *      is deliberately published. A test here asserts the corpus name.
+ *   2. **The callback only persists.** `transcribe.completed` writes the text
+ *      and `transcribed`, and stops. `lib/ingestRecovery.ts` runs the gate and
+ *      `enqueueIngestForDoc`; its tests assert the PRIVATE draft corpus name.
  *   3. **A stale job cannot clobber a live one.** A retry mints a new
  *      transcribeId while the old job may still be alive; both callbacks carry
  *      the same externalId. The `transcribeId` guard is the whole defence.
@@ -257,44 +255,35 @@ describe('transcribe.completed — the join into the EXISTING ingest path', () =
     })
   })
 
-  it('passes through `transcribed` before `embedding`', async () => {
-    // A real, observable state: if the process dies between persisting the text
-    // and enqueuing the ingest, the row stops somewhere that is TRUE, and the
-    // retry picks it up without re-transcribing.
+  it('🔴 stops at `transcribed`: the gate and the enqueue are left to the recovery sweep', async () => {
+    // audio-service gives up on a callback after 20 s, and the gate is two model
+    // calls. `lib/ingestRecovery.ts` drives the row from here; its tests cover
+    // the corpus name and the tenant-from-the-row rule that used to live here.
     const body = completed()
-    await post(body, headersFor(body))
+    const res = await post(body, headersFor(body))
+    expect(res.status).toBe(200)
     const statuses = updated
       .map((u) => (u.data as Record<string, unknown>).ingestStatus)
       .filter(Boolean)
-    expect(statuses).toEqual(['transcribed', 'embedding'])
+    expect(statuses).toEqual(['transcribed'])
+    expect(ingestEnqueue).not.toHaveBeenCalled()
+    expect(written().ingestId).toBeUndefined()
   })
 
-  it('🔴 lands in the UPLOADER’S PRIVATE DRAFT corpus, never the shared one', async () => {
-    const body = completed()
-    await post(body, headersFor(body))
-    expect(ingestEnqueue).toHaveBeenCalledOnce()
-    const args = ingestEnqueue.mock.calls[0]![0]
-    expect(args.corpus).toBe('eco-10-draft-3')
-    // The ecosistema's shared corpus. Landing here would share a recording of a
-    // meeting with everyone the instant it finished transcribing.
-    expect(args.corpus).not.toBe('eco-10')
-  })
-
-  it('derives the tenant from the ROW, not from the envelope', async () => {
-    // ⚠ `metadata` is echoed back by audio-service — data we sent, round-tripped
-    // through another service. Letting it choose a corpus would let a
-    // compromised or buggy audio-service write into any ecosistema.
-    findByIDImpl = async () => transcribingRow({ organization: 77, uploadedBy: 9 })
-    const body = completed({ metadata: { organizationId: '10', uploadedById: '3' } })
-    await post(body, headersFor(body))
-    const args = ingestEnqueue.mock.calls[0]![0]
-    expect(args.corpus).toBe('eco-77-draft-9')
-  })
-
-  it('records the ingestId so the ordinary ingest.completed leg can finish it', async () => {
-    const body = completed()
-    await post(body, headersFor(body))
-    expect(written().ingestId).toBe('ing_from_transcript')
+  it('answers 500 when the transcript cannot be written, so audio-service retries', async () => {
+    fakePayload.update = async () => {
+      throw new Error('db down')
+    }
+    try {
+      const body = completed()
+      const res = await post(body, headersFor(body))
+      expect(res.status).toBe(500)
+    } finally {
+      fakePayload.update = async (args: Record<string, unknown>) => {
+        updated.push(args)
+        return {}
+      }
+    }
   })
 })
 
@@ -364,6 +353,14 @@ describe('a superseded job cannot clobber a live one', () => {
 
   it('ignores a row that never started a job', async () => {
     findByIDImpl = async () => transcribingRow({ transcribeId: null })
+    const body = completed()
+    await post(body, headersFor(body))
+    expect(updated).toHaveLength(0)
+  })
+
+  it('ignores a repeat once the transcript is persisted and the row left `transcribing`', async () => {
+    findByIDImpl = async () =>
+      transcribingRow({ extractedText: 'ya estaba', ingestStatus: 'transcribed' })
     const body = completed()
     await post(body, headersFor(body))
     expect(updated).toHaveLength(0)

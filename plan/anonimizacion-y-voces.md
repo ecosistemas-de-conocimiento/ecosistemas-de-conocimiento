@@ -23,6 +23,7 @@ The second changes the first. A chat should be stripped of who said it. A testim
 - Ingestion is automatic and silent. There is no human in the loop to catch a bad redaction.
 - Isolation is by corpus name (`eco-{orgId}`, `eco-{orgId}-draft-{userId}`); ai-service cannot tell our tenants apart.
 - 🔴 **ai-service has no per-document delete.** Retirement closes a validity window; the chunk and its vector remain. So *ingesting something you should not have is close to irreversible.* This single fact should drive the design.
+  ✅ **UPDATED 2026-10-17:** ai-service now has `DELETE /v1/corpus/:name/documents/:externalId` (`admin.deleteDocument` in `@edc/ai-client`). Deleting a `documents` row now deletes it, chunks and text, from both the draft and the shared corpus, under the ecosistema's ai-service org (`retireDeletedDocument` in `apps/backend/src/lib/publishDocument.ts`). Retiring is only the fallback when that call fails. The gate's "hold, don't ingest" rule stays: a delete removes the copy, not what the hosted model or a reader already saw. The publish / unpublish moves still retire rather than delete.
 - We hold the **membership roster** for each ecosistema.
   ⚠ **CORRECTED by the owner:** the roster is NOT the main lever. It helps for *conversations*,
   where the speakers are members. It is close to useless for *testimonies*, where the people named
@@ -191,6 +192,13 @@ In `apps/backend`, as domain logic. `ai-service` is deliberately content-agnosti
 **Decided differently from the proposal**
 
 - §3.4 — no `subject`, no `onBehalf`, no consent level. A testimony is anonymous, always. The rationale in `Documents.ts`: a stored subject is a re-identification map; one rule leaves no default for a bulk upload to get wrong. `uploadedBy` keeps meaning "who performed the upload".
+
+**Fixed after the 2026-10-17 audit**
+
+- 🔴 A published testimonio leaked its original to every member: `extractedText`, `bodyMarkdown`, `name`, `heldText`, `anonymisationSurvivors` and `audioMeta` now have field read access limited to the uploader and platform admins on any non-`documento` row (`mayReadGatedOriginal` in `collections/Documents.ts`); a `where` on `name` is narrowed so it is not an oracle; the recording behind a published testimonio is no longer shared (`collections/Media.ts`). `/biblioteca` and the `@`-mention picker read `redactedText` and a neutral title.
+- `/biblioteca` keyed testimony on `kind` (the file format); it now reads `contentKind`.
+- The web upload route never sent `contentKind`, so the gate never ran from the UI. `DocsPanel` now offers "Voz / testimonio" to holders of `voces:upload`.
+- Editing the transcript of an approved testimonio re-used the old approval. A text edit on a gated row now clears the gate state (`gateResetForTextEdit`).
 
 **Still open**
 
