@@ -31,10 +31,11 @@
  * the old "documents always survive" behaviour a bug on 2026-10-17: the smoke
  * PDF stayed in "Mis documentos". Everything else survives: a document attached
  * to another conversation, published, uploaded before the conversation
- * existed, uploaded by someone else, cited by another conversation, or with an
- * anonymisation-review record — and, pending Rodrigo, anything that is not a
- * `documento` (testimonios of any status stay). The "uploads" block pins each
- * case.
+ * existed or in another conversation (`uploadedInSession`), uploaded by
+ * someone else, cited by another conversation, with an anonymisation-review
+ * record (unless it is HELD: then the review rows go too), or a conversación.
+ * Testimonio drafts go since Rodrigo's 2026-10-17 ruling. The "uploads" block
+ * pins each case.
  *
  * 🔴 ONLY THE OWNER'S DELETE RUNS ANY OF IT. Payload runs `beforeDelete` before
  * it applies `ownOnly`, so the hook checks ownership itself.
@@ -94,6 +95,8 @@ interface Call {
 interface DocRow {
   id: number
   session: number[]
+  uploadedInSession?: number | null
+  anonymisationStatus?: string
   contentKind?: string
   uploadedBy?: number
   publicationStatus?: string
@@ -114,6 +117,8 @@ interface FakeOpts {
   reviewed?: number[]
   /** media id → uploader, when it is not OWNER. */
   mediaUploader?: Record<number, number>
+  /** `payload_migrations.created_at` of the `uploadedInSession` migration; absent = no row. */
+  originRecordedSince?: string
 }
 
 const OWNER = 5
@@ -185,6 +190,10 @@ function fakePayload(
 
     find: async (args: { collection: string; where?: unknown }) => {
       calls.push({ op: 'find', collection: args.collection, args })
+      if (args.collection === 'payload-migrations') {
+        const docs = opts.originRecordedSince ? [{ createdAt: opts.originRecordedSince }] : []
+        return { docs, totalDocs: docs.length, totalPages: 1, page: 1 }
+      }
       if (args.collection === 'documents') {
         const id = (args.where as { session?: { equals?: number } })?.session?.equals
         const docs = documents.filter((d) => id !== undefined && d.session.includes(id))
@@ -209,6 +218,11 @@ function fakePayload(
         return { docs: [], errors: [{ id: 1, isPublic: false, message: 'row is locked' }] }
       }
       if (args.collection === 'ratings') return { docs: ratings, errors: [] }
+      if (args.collection === 'anonymisation-reviews') {
+        const doc = (args.where as { document?: { equals?: number } })?.document?.equals
+        const docs = (opts.reviewed ?? []).filter((d) => d === doc).map((d) => ({ id: d + 1000 }))
+        return { docs, errors: [] }
+      }
       if (args.collection === 'messages') return { docs: messages, errors: [] }
       if (args.collection === 'documents' || args.collection === 'media') {
         // By-id deletes: Payload throws on failure rather than collecting errors.
@@ -592,8 +606,10 @@ describe('uploads that belong ONLY to this conversation go with it', () => {
     ['uploaded before this conversation existed', { createdAt: EARLIER }],
     ['undated', { createdAt: undefined }],
     ['uploaded by someone else', { uploadedBy: OWNER + 1 }],
-    ['that is a testimonio, even a draft', { contentKind: 'testimonio' }],
+    ['that is a published testimonio', { contentKind: 'testimonio', publicationStatus: 'published' }],
+    ['that is a testimonio mid-publish', { contentKind: 'testimonio', publicationStatus: 'publishing' }],
     ['that is a conversación', { contentKind: 'conversacion' }],
+    ['that is a conversación draft held for review', { contentKind: 'conversacion', anonymisationStatus: 'held' }],
     ['with no contentKind', { contentKind: undefined }],
   ] as Array<[string, Partial<DocRow>]>)('keeps a document %s', async (_label, over) => {
     const { payload, calls } = fakePayload([], [], { documents: [ownUpload(over)] })
@@ -616,6 +632,125 @@ describe('uploads that belong ONLY to this conversation go with it', () => {
     await deleteConversationChildren(SESSION, { payload })
 
     expect(byIdDeletes(calls)).toEqual([])
+  })
+
+  it('🔴 deletes a testimonio draft, as Rodrigo ruled on 2026-10-17', async () => {
+    const { payload, calls } = fakePayload([], [], {
+      documents: [ownUpload({ contentKind: 'testimonio', anonymisationStatus: 'ready' })],
+    })
+
+    const plan = await deleteConversationChildren(SESSION, { payload })
+
+    expect(byIdDeletes(calls)).toEqual(['documents:50'])
+    expect(plan?.mediaIds).toEqual([70])
+  })
+
+  it('🔴 deletes a HELD testimonio draft AND its review rows, before the document row', async () => {
+    const { payload, calls } = fakePayload([], [], {
+      documents: [ownUpload({ contentKind: 'testimonio', anonymisationStatus: 'held' })],
+      // An earlier decision, before it was held again.
+      reviewed: [50],
+    })
+
+    const plan = await deleteConversationChildren(SESSION, { payload })
+
+    const deletes = calls.filter((c) => c.op === 'delete').map((c) => c.collection)
+    expect(deletes).toEqual(['ratings', 'messages', 'anonymisation-reviews', 'documents'])
+    const reviewDelete = calls.find((c) => c.op === 'delete' && c.collection === 'anonymisation-reviews')!
+    expect(reviewDelete.args).toMatchObject({ where: { document: { equals: 50 } }, overrideAccess: true })
+    // A held row's review record does not keep it.
+    expect(calls.some((c) => c.op === 'count' && c.collection === 'anonymisation-reviews')).toBe(false)
+    expect(plan?.reviewIds).toEqual([1050])
+  })
+
+  it('keeps a REJECTED testimonio draft with a review row: an audit of somebody else’s decision', async () => {
+    const { payload, calls } = fakePayload([], [], {
+      documents: [ownUpload({ contentKind: 'testimonio', anonymisationStatus: 'rejected' })],
+      reviewed: [50],
+    })
+
+    await deleteConversationChildren(SESSION, { payload })
+
+    expect(byIdDeletes(calls)).toEqual([])
+    expect(calls.some((c) => c.op === 'delete' && c.collection === 'anonymisation-reviews')).toBe(false)
+  })
+
+  it('aborts when a held document’s review rows cannot be deleted', async () => {
+    const { payload } = fakePayload([], [], {
+      documents: [ownUpload({ contentKind: 'testimonio', anonymisationStatus: 'held' })],
+      failDelete: 'anonymisation-reviews',
+    })
+    const onPlan = vi.fn()
+
+    await expect(deleteConversationChildren(SESSION, { payload, onUploadPlan: onPlan })).rejects.toThrow(
+      /anonymisation-review/,
+    )
+    expect(onPlan).toHaveBeenCalledTimes(1)
+  })
+
+  describe('uploadedInSession: where the document was uploaded', () => {
+    it('deletes a document uploaded in THIS conversation, without reading the migration row', async () => {
+      const { payload, calls } = fakePayload([], [], {
+        documents: [ownUpload({ uploadedInSession: SESSION })],
+      })
+
+      await deleteConversationChildren(SESSION, { payload })
+
+      expect(byIdDeletes(calls)).toEqual(['documents:50'])
+      expect(calls.some((c) => c.collection === 'payload-migrations')).toBe(false)
+    })
+
+    it('🔴 keeps a document uploaded in another conversation, even when everything else fits', async () => {
+      const { payload, calls } = fakePayload([], [], {
+        documents: [ownUpload({ uploadedInSession: 8 })],
+      })
+
+      expect(await deleteConversationChildren(SESSION, { payload })).toBeNull()
+      expect(byIdDeletes(calls)).toEqual([])
+    })
+
+    it('NULL on a legacy row (born before the column existed) falls back to the old guess', async () => {
+      // Recording began after this row was born: the row is legacy.
+      const { payload, calls } = fakePayload([], [], {
+        documents: [ownUpload({ uploadedInSession: null })],
+        originRecordedSince: '2026-10-18T00:00:00.000Z',
+      })
+
+      await deleteConversationChildren(SESSION, { payload })
+
+      expect(byIdDeletes(calls)).toEqual(['documents:50'])
+    })
+
+    it('NULL with no migration row (push, a hand-built test database) falls back to the old guess', async () => {
+      const { payload, calls } = fakePayload([], [], {
+        documents: [ownUpload({ uploadedInSession: null })],
+      })
+
+      await deleteConversationChildren(SESSION, { payload })
+
+      expect(byIdDeletes(calls)).toEqual(['documents:50'])
+    })
+
+    it('🔴 NULL on a row born AFTER recording began is kept: its origin conversation is gone, or it was no chat upload', async () => {
+      const { payload, calls } = fakePayload([], [], {
+        documents: [ownUpload({ uploadedInSession: null })],
+        originRecordedSince: SESSION_CREATED,
+      })
+
+      expect(await deleteConversationChildren(SESSION, { payload })).toBeNull()
+      expect(byIdDeletes(calls)).toEqual([])
+    })
+
+    it('NULL on a legacy row still needs the old guess: older than the conversation → kept', async () => {
+      const { payload, calls } = fakePayload([], [], {
+        documents: [ownUpload({ uploadedInSession: null, createdAt: EARLIER })],
+        originRecordedSince: '2026-10-18T00:00:00.000Z',
+      })
+
+      await deleteConversationChildren(SESSION, { payload })
+
+      expect(byIdDeletes(calls)).toEqual([])
+    })
   })
 
   it('keeps a stored file another surviving document also points at', async () => {
@@ -738,10 +873,13 @@ describe('after commit: the irreversible half', () => {
     const info = vi.fn()
     const present = opts.present ?? {}
     const mediaDeletes: Array<Record<string, unknown>> = []
+    const goneMedia = new Set<number>()
     const payload = {
       logger: { info, warn, error: warn, debug: () => {} },
       findByID: async (args: { collection: string; id: number }) => {
         if (args.collection === 'sessions') return opts.sessionSurvives ? { id: args.id } : null
+        // A media row exists until a delete of it succeeds.
+        if (args.collection === 'media') return goneMedia.has(args.id) ? null : { id: args.id }
         return args.collection === 'documents' && args.id in present ? { id: args.id } : null
       },
       count: async (args: { where: { mediaFile: { equals: number } } }) => ({
@@ -750,6 +888,7 @@ describe('after commit: the irreversible half', () => {
       delete: async (args: Record<string, unknown>) => {
         mediaDeletes.push(args)
         if (args.id === opts.failMedia) throw new Error('bucket unreachable')
+        goneMedia.add(args.id as number)
         return { id: args.id }
       },
     } as unknown as Payload
@@ -904,6 +1043,60 @@ describe('after commit: the irreversible half', () => {
 
     expect(t.mediaDeletes.map((a) => a.id)).toEqual([70, 71])
     expect(JSON.stringify(t.warn.mock.calls)).toContain('"mediaId":"70"')
+  })
+
+  it('a document deleted on its own (no session): deletes its file, with no session check', async () => {
+    const t = afterCommitPayload({ sessionSurvives: true })
+
+    const outcome = await finishUploadCleanupAfterCommit(
+      { sessionId: null, documentId: 50, xid: '777', documents: [], mediaIds: [70] },
+      { payload: t.payload, txStatus: status('committed'), intervalMs: 1 },
+    )
+
+    expect(outcome).toBe('committed')
+    expect(t.mediaDeletes.map((a) => a.id)).toEqual([70])
+    expect(t.info).toHaveBeenCalledWith(
+      { documentId: '50', documentIds: [], mediaIds: ['70'], cleanedDocumentIds: [], deletedMediaIds: ['70'] },
+      expect.stringContaining('[documents]'),
+    )
+  })
+
+  it('a file another plan already deleted (404) is not reported as an orphan', async () => {
+    const t = afterCommitPayload()
+    const gone = t.payload as unknown as { delete: (a: Record<string, unknown>) => Promise<unknown> }
+    gone.delete = async () => {
+      throw Object.assign(new Error('Not Found'), { status: 404 })
+    }
+
+    await finishUploadCleanupAfterCommit(plan({ mediaIds: [70] }), {
+      payload: t.payload,
+      corpusClient: () => t.client as never,
+      txStatus: status('committed'),
+      intervalMs: 1,
+    })
+
+    expect(t.warn).not.toHaveBeenCalled()
+  })
+
+  it('🔴 an object the storage plugin failed to delete is logged with ids', async () => {
+    // `@payloadcms/plugin-cloud-storage` 3.88.0 catches the S3 error, so the
+    // media delete "succeeds" and the object stays.
+    const t = afterCommitPayload()
+    const objectStillStored = vi.fn(async () => true)
+
+    await finishUploadCleanupAfterCommit(plan({ mediaIds: [70] }), {
+      payload: t.payload,
+      corpusClient: () => t.client as never,
+      txStatus: status('committed'),
+      objectStillStored,
+      intervalMs: 1,
+    })
+
+    expect(objectStillStored).toHaveBeenCalledTimes(1)
+    expect(t.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: String(SESSION), mediaId: '70', documentIds: ['50'] }),
+      expect.stringContaining('still in the bucket'),
+    )
   })
 
   it('with no transaction (autocommit), runs at once on the rows that are gone', async () => {

@@ -14,8 +14,8 @@ import { CONTEXT_REF_RELATION_TO } from '../lib/contextRefs'
 import {
   corpusCleanupSkipList,
   deleteConversationUploadRows,
-  finishUploadCleanupAfterCommit,
   KEEP_CONVERSATION_UPLOADS,
+  scheduleUploadCleanup,
   type UploadCleanupPlan,
 } from '../lib/conversationUploads'
 import { organizationIdsForUser, relationId } from '../lib/permissions'
@@ -179,10 +179,11 @@ const stampOwnerAndEcosystem: CollectionBeforeValidateHook = async ({
  *
  * ⚠ ONLY THE UPLOADS THAT BELONG TO THIS CONVERSATION ALONE ARE DELETED —
  * document row in the transaction; stored file and ai-service chunks only
- * once `txid_status` says this transaction committed (`scheduleUploadCleanup`). The rule (attached nowhere
- * else, a `documento` draft, the owner's, born after the conversation,
- * referenced by nothing else) lives in `lib/conversationUploads.ts`. Testimonios
- * are never cascade-deleted, pending Rodrigo. Every other document
+ * once `txid_status` says this transaction committed (`scheduleUploadCleanup`).
+ * The rule (attached nowhere else, a `documento` or `testimonio` draft —
+ * held ones included —, the owner's, uploaded in this conversation,
+ * referenced by nothing else) lives in `lib/conversationUploads.ts`.
+ * Conversaciones are never cascade-deleted. Every other document
  * keeps standing: `documents.session` is `hasMany`, the attachment lives in the
  * `documents_rels` join table, and `documents_rels_sessions_fk` is
  * `ON DELETE CASCADE` (re-verified against the live schema on 2026-08-28), so
@@ -409,41 +410,9 @@ function assertNoBulkErrors(
   )
 }
 
-/**
- * Start the irreversible half — stored files, ai-service documents — in the
- * background. It waits for THIS transaction's outcome (`txid_status`) before
- * doing anything; see `lib/conversationUploads.ts`.
- *
- * ⚠ Scheduled from here, in a closure, and NOT handed to an `afterDelete`
- * through `req.context`: a bulk delete runs these hooks concurrently on one
- * `req`, and a row whose hook throws never reaches `afterDelete` even though
- * the bulk transaction still commits what it did delete.
- */
-export function scheduleUploadCleanup(payload: Payload, plan: UploadCleanupPlan): void {
-  // Logged BEFORE the wait: a restart while it polls loses the closure, and
-  // this line is then the only trace of which files and ai-service documents
-  // became orphans.
-  payload.logger.info(
-    {
-      sessionId: String(plan.sessionId),
-      xid: plan.xid,
-      documentIds: plan.documents.map((d) => String(d.id)),
-      mediaIds: plan.mediaIds.map(String),
-    },
-    '[sessions] scheduled post-commit upload cleanup',
-  )
-  void finishUploadCleanupAfterCommit(plan, { payload }).catch((err) => {
-    payload.logger.warn(
-      {
-        sessionId: String(plan.sessionId),
-        documentIds: plan.documents.map((d) => String(d.id)),
-        mediaIds: plan.mediaIds.map(String),
-        err: String(err),
-      },
-      '[sessions] post-commit upload cleanup failed; these uploads may be orphans',
-    )
-  })
-}
+// Lives with the rest of the machinery; `Documents.beforeDelete` schedules
+// through it too. Re-exported for `Sessions.cascade.test.ts`.
+export { scheduleUploadCleanup }
 
 const cascadeConversationDelete: CollectionBeforeDeleteHook = async ({ context, id, req }) => {
   // ⚠ Synchronously, before any `await`: concurrent bulk-delete hooks must
@@ -577,7 +546,7 @@ export const Sessions: CollectionConfig = {
      *   4. Deletes the `documents` rows of the uploads that belong to this
      *      conversation ALONE. Their files and ai-service documents go after
      *      commit, scheduled from this hook. See `lib/conversationUploads.ts`
-     *      for the rule and its one blind spot.
+     *      for the rule and its one blind spot (legacy rows only).
      *
      * ⚠ Steps 2 and 3 are in that order because `ratings.message_id` is NOT
      * NULL with an `ON DELETE SET NULL` foreign key. Reversing them breaks the
@@ -593,8 +562,10 @@ export const Sessions: CollectionConfig = {
      * has already failed on the foreign key, so an `afterDelete` cascade can
      * never run at all.
      *
-     * ⚠ Any OTHER document survives: attached elsewhere, published, older than
-     * the conversation, someone else's, or referenced elsewhere. For those,
+     * ⚠ Any OTHER document survives: attached elsewhere, published, a
+     * conversación, uploaded in another conversation (or, on rows older than
+     * `uploadedInSession`, older than this one), someone else's, or referenced
+     * elsewhere. A held testimonio's review rows go with it. For those,
      * `documents_rels_sessions_fk` is `ON DELETE CASCADE` (re-verified against
      * the live schema, 2026-08-28), so deleting a conversation removes only the
      * JOIN ROW — the attachment, not the document.

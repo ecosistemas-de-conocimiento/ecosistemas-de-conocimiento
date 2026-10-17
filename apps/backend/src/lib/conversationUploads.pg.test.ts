@@ -11,6 +11,9 @@
  *     `beforeDelete` before it applies `ownOnly`;
  *   · 🔴 files and ai-service documents go only AFTER commit: a delete that
  *     fails, or whose commit fails, leaves the rows AND the file.
+ *   · the 2026-10-17 rulings: a held testimonio draft goes with its review
+ *     rows, `uploadedInSession` decides where a document came from, and a
+ *     document deleted ON ITS OWN takes its file with it, after commit.
  *
  * Same harness as `documentColumns.pg.test.ts`: a throwaway
  * `postgres:16-alpine` on a kernel-assigned port with `--tmpfs` (no volume is
@@ -38,7 +41,9 @@ vi.mock('@/lib/aiClient', () => ({
   getAdminAIClient: () => ({ admin: { deleteDocument, setDocumentValidity } }),
 }))
 
-import { up as baselineUp } from '../migrations/20260908_092211_baseline'
+// Every migration, not the baseline alone: the booted config expects the
+// columns later ones add (`documents.uploaded_in_session_id`).
+import { migrations } from '../migrations'
 
 const CONTAINER = `edc-backend-conv-uploads-pg-${process.pid}`
 const IMAGE = 'postgres:16-alpine'
@@ -96,7 +101,9 @@ async function waitForQueries(candidate: Db): Promise<void> {
 const rows = async (query: ReturnType<typeof sql>): Promise<Record<string, unknown>[]> =>
   ((await db.execute(query)) as unknown as { rows: Record<string, unknown>[] }).rows
 
-const ids = async (table: 'documents' | 'media' | 'sessions' | 'messages'): Promise<number[]> =>
+const ids = async (
+  table: 'documents' | 'media' | 'sessions' | 'messages' | 'anonymisation_reviews',
+): Promise<number[]> =>
   (await rows(sql.raw(`SELECT id FROM ${table} ORDER BY id`))).map((r) => Number(r.id))
 
 /** Poll until `check` holds; the file/ai-service half runs after commit, asynchronously. */
@@ -127,18 +134,20 @@ const FILE_A = fileName('a')
 const FILE_B = fileName('b')
 const FILE_C = fileName('c')
 const FILE_D = fileName('d')
+const FILE_E = fileName('e')
 const fileA = path.join(MEDIA_DIR, FILE_A)
 const fileB = path.join(MEDIA_DIR, FILE_B)
 const fileC = path.join(MEDIA_DIR, FILE_C)
 const fileD = path.join(MEDIA_DIR, FILE_D)
-const ALL_FILES = [fileA, fileB, fileC, fileD]
+const fileE = path.join(MEDIA_DIR, FILE_E)
+const ALL_FILES = [fileA, fileB, fileC, fileD, fileE]
 
 describe.skipIf(!dockerOk)('deleting a conversation on a real Postgres', () => {
   beforeAll(async () => {
     const url = await startPostgres()
     db = drizzle(url)
     await waitForQueries(db)
-    await baselineUp({ db, payload: {}, req: {} } as unknown as MigrateUpArgs)
+    for (const m of migrations) await m.up({ db, payload: {}, req: {} } as unknown as MigrateUpArgs)
 
     process.env.DATABASE_URI = url
     process.env.PAYLOAD_SECRET = 'conv-uploads-test-secret'
@@ -166,8 +175,10 @@ describe.skipIf(!dockerOk)('deleting a conversation on a real Postgres', () => {
     await db.execute(sql.raw(`
       DROP TRIGGER IF EXISTS fail_session_delete ON sessions;
       DROP TRIGGER IF EXISTS fail_session_commit ON sessions;
+      DROP TRIGGER IF EXISTS fail_document_commit ON documents;
       TRUNCATE documents, documents_rels, media, sessions, sessions_rels, messages, messages_rels,
-               ratings, anonymisation_reviews, memberships, organizations, users RESTART IDENTITY CASCADE;
+               ratings, anonymisation_reviews, memberships, organizations, users, payload_migrations
+               RESTART IDENTITY CASCADE;
       INSERT INTO users (id, email) VALUES (1, 'uploads-owner@example.invalid'), (2, 'uploads-other@example.invalid');
       INSERT INTO organizations (id, name, slug) VALUES (1, 'Org uno', 'uno');
       INSERT INTO sessions (id, user_id, organization_id, created_at) VALUES
@@ -409,5 +420,179 @@ describe.skipIf(!dockerOk)('deleting a conversation on a real Postgres', () => {
     expect(await ids('media')).toEqual([70, 71, 72, 73])
     expect(existsSync(fileA)).toBe(true)
     expect(deleteDocument).not.toHaveBeenCalled()
+  }, 30_000)
+  // ── 2026-10-17: testimonio drafts, uploadedInSession, standalone deletes ──
+
+  /**
+   * Conversation 14 holds one row per new rule:
+   *   55 held testimonio draft, uploaded here, file E, a review row (95) left
+   *      by an earlier decision → goes, with the review row and the file;
+   *   56 published testimonio → kept;
+   *   57 documento draft uploaded in conversation 11 (`uploadedInSession`)
+   *      and shared here → kept;
+   *   58 documento draft with no recorded origin, born after 14 → the old
+   *      guess, unless the migration row says recording had begun.
+   */
+  async function seedConversation14(): Promise<void> {
+    await db.execute(sql.raw(`
+      INSERT INTO sessions (id, user_id, organization_id, created_at) VALUES (14, 1, 1, '${OPENED}');
+      INSERT INTO media (id, uploaded_by_id, filename) VALUES (74, 1, '${FILE_E}');
+      INSERT INTO documents (id, organization_id, uploaded_by_id, name, kind, content_kind,
+                             anonymisation_status, publication_status, media_file_id,
+                             uploaded_in_session_id, created_at) VALUES
+        (55, 1, 1, 't-held', 'audio', 'testimonio', 'held', 'draft', 74, 14, '${LATER}'),
+        (56, 1, 1, 't-pub', 'markdown', 'testimonio', 'ready', 'published', NULL, 14, '${LATER}'),
+        (57, 1, 1, 'from-11', 'markdown', 'documento', 'n/a', 'draft', NULL, 11, '${LATER}'),
+        (58, 1, 1, 'legacy', 'markdown', 'documento', 'n/a', 'draft', NULL, NULL, '${LATER}');
+      INSERT INTO documents_rels (parent_id, path, sessions_id, "order") VALUES
+        (55, 'session', 14, 1), (56, 'session', 14, 1), (57, 'session', 14, 1), (58, 'session', 14, 1);
+      INSERT INTO anonymisation_reviews (id, document_id, organization_id, reviewer_id, decision)
+        VALUES (95, 55, 1, 2, 'approved');
+    `))
+  }
+
+  it('🔴 a held testimonio draft goes with its review row and its file; published and foreign-origin rows stay', async () => {
+    await seedConversation14()
+
+    await payload.delete({ collection: 'sessions', id: 14, overrideAccess: true })
+
+    // 55 (held, here) and 58 (no origin, legacy guess) go; 56 published and
+    // 57 uploaded in conversation 11 stay.
+    expect((await ids('documents')).filter((id) => id >= 55)).toEqual([56, 57])
+    expect(await ids('anonymisation_reviews')).toEqual([])
+    expect(await eventually(async () => !(await ids('media')).includes(74))).toBe(true)
+    expect(existsSync(fileE)).toBe(false)
+    expect(deleteDocument.mock.calls.map((c) => c[1]).sort()).toEqual(['55', '55', '58', '58'])
+  }, 30_000)
+
+  it('🔴 no recorded origin on a row born AFTER the column’s migration ran → kept', async () => {
+    await seedConversation14()
+    // Recording began when conversation 14 was opened; 58 was born after.
+    await db.execute(sql.raw(`
+      INSERT INTO payload_migrations (name, batch, created_at, updated_at)
+        VALUES ('20261017_231817_documents_uploaded_in_session', 2, '${OPENED}', '${OPENED}');
+    `))
+
+    await payload.delete({ collection: 'sessions', id: 14, overrideAccess: true })
+
+    expect((await ids('documents')).filter((id) => id >= 55)).toEqual([56, 57, 58])
+  }, 30_000)
+
+  it('a chat upload records its conversation, and an update cannot re-point it', async () => {
+    const owner = await payload.findByID({ collection: 'users', id: 1, overrideAccess: true })
+    const created = await payload.create({
+      collection: 'documents',
+      data: { name: 'chat upload', kind: 'markdown', session: [12], uploadedInSession: 13 } as never,
+      overrideAccess: false,
+      user: owner,
+    })
+    const row = async () =>
+      (await rows(sql`SELECT uploaded_in_session_id AS s FROM documents WHERE id = ${created.id}`))[0]?.s
+    // The body's 13 is ignored: the origin is the one conversation named.
+    expect(await row()).toBe(12)
+
+    await payload.update({
+      collection: 'documents',
+      id: created.id,
+      data: { name: 'renamed', uploadedInSession: 13 } as never,
+      overrideAccess: false,
+      user: owner,
+    })
+    expect(await row()).toBe(12)
+  }, 30_000)
+
+  it('🔴 a document deleted on its own takes its media row and file with it, after commit', async () => {
+    const owner = await payload.findByID({ collection: 'users', id: 1, overrideAccess: true })
+
+    await payload.delete({ collection: 'documents', id: 53, overrideAccess: false, user: owner })
+
+    expect(await ids('documents')).toEqual([50, 51, 52, 54])
+    expect(await eventually(async () => (await ids('media')).join() === '70,71,73')).toBe(true)
+    expect(existsSync(fileC)).toBe(false)
+    expect([fileA, fileB, fileD].map(existsSync)).toEqual([true, true, true])
+  }, 30_000)
+
+  it('keeps a file another surviving document still points at', async () => {
+    await db.execute(sql.raw(`
+      INSERT INTO documents (id, organization_id, uploaded_by_id, name, kind, media_file_id, created_at)
+        VALUES (59, 1, 1, 'same file', 'pdf', 70, '${LATER}');
+    `))
+
+    await payload.delete({ collection: 'documents', id: 50, overrideAccess: true })
+    await delay(OUTLAST_CLEANUP_MS)
+
+    expect(await ids('documents')).not.toContain(50)
+    expect(await ids('media')).toContain(70)
+    expect(existsSync(fileA)).toBe(true)
+  }, 30_000)
+
+  it('🔴 never deletes someone else’s file a document points at', async () => {
+    await db.execute(sql.raw(`UPDATE media SET uploaded_by_id = 2 WHERE id = 72;`))
+
+    await payload.delete({ collection: 'documents', id: 53, overrideAccess: true })
+    await delay(OUTLAST_CLEANUP_MS)
+
+    expect(await ids('media')).toContain(72)
+    expect(existsSync(fileC)).toBe(true)
+  }, 30_000)
+
+  it('🔴 a document delete whose COMMIT fails keeps the row AND the file', async () => {
+    await db.execute(sql.raw(`
+      CREATE OR REPLACE FUNCTION refuse_document_delete() RETURNS trigger AS $$
+        BEGIN RAISE EXCEPTION 'forced commit failure'; END $$ LANGUAGE plpgsql;
+      CREATE CONSTRAINT TRIGGER fail_document_commit AFTER DELETE ON documents
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION refuse_document_delete();
+    `))
+
+    await payload.delete({ collection: 'documents', id: 53, overrideAccess: true }).catch(() => {})
+    await delay(OUTLAST_CLEANUP_MS)
+
+    expect(await ids('documents')).toContain(53)
+    expect(await ids('media')).toContain(72)
+    expect(existsSync(fileC)).toBe(true)
+  }, 30_000)
+
+  it('🔴 a bulk delete of 3 documents cleans up all 3 files', async () => {
+    // Payload runs the row hooks concurrently on ONE req; each plans its own.
+    const result = await payload.delete({
+      collection: 'documents',
+      where: { id: { in: [50, 53, 54] } },
+      overrideAccess: true,
+    })
+    expect(result.errors).toEqual([])
+
+    expect(await ids('documents')).toEqual([51, 52])
+    expect(await eventually(async () => (await ids('media')).join() === '71')).toBe(true)
+    expect([fileA, fileC, fileD].map(existsSync)).toEqual([false, false, false])
+    expect(existsSync(fileB)).toBe(true)
+  }, 30_000)
+
+  it('a bulk delete of 2 documents sharing one file deletes it once, with no orphan warning', async () => {
+    await db.execute(sql.raw(`
+      INSERT INTO documents (id, organization_id, uploaded_by_id, name, kind, media_file_id, created_at)
+        VALUES (59, 1, 1, 'same file', 'pdf', 70, '${LATER}');
+    `))
+    const warn = vi.spyOn(payload.logger, 'warn')
+    try {
+      await payload.delete({ collection: 'documents', where: { id: { in: [50, 59] } }, overrideAccess: true })
+      expect(await eventually(async () => !(await ids('media')).includes(70))).toBe(true)
+      await delay(1_000)
+      expect(existsSync(fileA)).toBe(false)
+      expect(warn.mock.calls.filter((c) => String(c[1]).includes('orphan'))).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
+  }, 30_000)
+
+  it('🔴 a conversation delete plans each file ONCE: its documents plan none of their own', async () => {
+    const info = vi.spyOn(payload.logger, 'info')
+    try {
+      await payload.delete({ collection: 'sessions', id: 10, overrideAccess: true })
+      const scheduled = info.mock.calls.filter((c) => String(c[1]).includes('scheduled post-commit'))
+      expect(scheduled.map((c) => String(c[1]))).toEqual(['[sessions] scheduled post-commit upload cleanup'])
+      expect(await eventually(async () => !(await ids('media')).includes(70))).toBe(true)
+    } finally {
+      info.mockRestore()
+    }
   }, 30_000)
 })

@@ -2,6 +2,7 @@ import type {
   Access,
   CollectionAfterChangeHook,
   CollectionAfterDeleteHook,
+  CollectionBeforeDeleteHook,
   CollectionBeforeOperationHook,
   CollectionBeforeValidateHook,
   CollectionConfig,
@@ -30,7 +31,11 @@ import {
   PERMISSIONS,
   relationId,
 } from '../lib/permissions'
-import { consumeCorpusCleanupSkip } from '../lib/conversationUploads'
+import {
+  consumeCorpusCleanupSkip,
+  planDocumentMediaCleanup,
+  scheduleUploadCleanup,
+} from '../lib/conversationUploads'
 import {
   beginPublish,
   NotPublishableError,
@@ -318,7 +323,10 @@ export const gatedOriginalReadable: FieldAccess = ({ req, doc }) =>
  *   · `name` — `/biblioteca` and the `@`-mention picker search by title;
  *   · `uploadedBy` — "Mis documentos" and the session picker filter on
  *     `uploadedBy = me`, and `visibleToCaller` itself is that clause;
- *   · `session` — every conversation lists its documents by `session`.
+ *   · `session` — every conversation lists its documents by `session`;
+ *   · `uploadedInSession` — the conversation cascade reads it (with
+ *     `overrideAccess`). Nothing in the product queries it through the API,
+ *     but it names the same conversation `session` does.
  *
  * 🔴 `uploadedBy` AND `session` ARE WHO RECORDED A TESTIMONIO. The first names
  * the investigador, the second links their conversation. A colleague who reads
@@ -331,7 +339,7 @@ export const gatedOriginalReadable: FieldAccess = ({ req, doc }) =>
  * that by narrowing any query that names one of these fields to rows on which
  * the caller may read it.
  */
-export const GATED_QUERYABLE_FIELDS = ['name', 'uploadedBy', 'session'] as const
+export const GATED_QUERYABLE_FIELDS = ['name', 'uploadedBy', 'session', 'uploadedInSession'] as const
 
 export const gatedQueryableReadable: FieldAccess = ({ req, doc }) =>
   doc === undefined
@@ -504,11 +512,15 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
     next.uploadedBy = user.id
     // Everything starts private. Sharing is a deliberate, separate act.
     next.publicationStatus = 'draft'
+    // Never the body's. Set below from the one conversation the upload names.
+    next.uploadedInSession = null
   } else {
     // ⚠ Immutable after creation. Both are corpus-name inputs: letting either
     // change would leave the embedded copy in one corpus while the row claims
     // another, and the mismatch is invisible until search stops working.
     next.uploadedBy = original.uploadedBy
+    // Where it was uploaded is a fact of its creation, never re-pointed.
+    next.uploadedInSession = original.uploadedInSession ?? null
     // `publicationStatus` moves ONLY through `lib/publishDocument.ts`, which
     // writes with `overrideAccess: true` and therefore never reaches this
     // branch. A client PATCHing it directly would mark a document shared
@@ -588,6 +600,10 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
     next.session = sessionIds
 
     if (operation === 'create') {
+      // ⚠ The ORIGIN, derived like `uploadedBy`: the one conversation the
+      // upload names, already checked as the caller's above. A create naming
+      // several has no single origin and records none.
+      next.uploadedInSession = sessionIds.length === 1 ? sessionIds[0] : null
       // ⚠ The ecosistema is DERIVED, never accepted from the body. A
       // client-supplied `organization` would let a document be filed under a
       // tenant it does not belong to — and then published into that tenant's
@@ -1295,6 +1311,31 @@ const retireDeletedDocumentHook: CollectionAfterDeleteHook = async ({ context, d
     )
   }
   return doc
+}
+
+/**
+ * 🔴 A DELETED DOCUMENT TAKES ITS STORED FILE WITH IT — AFTER COMMIT.
+ *
+ * Until 2026-10-17 deleting a document on its own (Mis documentos, the admin
+ * panel) left its `media` row and its object in the bucket, owned by nobody's
+ * document. Rodrigo ruled that a bug.
+ *
+ * The object delete cannot be rolled back, so this hook only PLANS it, in the
+ * transaction: it reads the document's file, checks it is the uploader's, and
+ * captures the transaction id. The delete runs once `txid_status` says the
+ * transaction committed, and only when no surviving document points at the
+ * file. Same machinery as a conversation delete, in
+ * `lib/conversationUploads.ts` (`planDocumentMediaCleanup`).
+ *
+ * ⚠ A document that a conversation delete is removing is skipped there: that
+ * plan already covers its file.
+ *
+ * ⚠ `beforeDelete`, not `afterDelete`: a bulk delete runs the row hooks
+ * concurrently, and each row schedules its own plan in its own closure.
+ */
+const scheduleMediaCleanupHook: CollectionBeforeDeleteHook = async ({ id, req }) => {
+  const plan = await planDocumentMediaCleanup(id, { payload: req.payload, req })
+  if (plan) scheduleUploadCleanup(req.payload, plan)
 }
 
 async function runExtractAndIngest(row: DocumentRow): Promise<void> {
@@ -2503,8 +2544,9 @@ export const Documents: CollectionConfig = {
        *
        * ⚠ Still OPTIONAL. Deleting a session leaves the row standing with one
        * fewer attachment, UNLESS the document belongs to that conversation
-       * alone (a `documento` draft attached nowhere else and referenced by
-       * nothing else) — then it goes too. The rule is `lib/conversationUploads.ts`.
+       * alone (a `documento` or `testimonio` draft uploaded there, attached
+       * nowhere else and referenced by nothing else) — then it goes too. The
+       * rule is `lib/conversationUploads.ts`.
        *
        * ⚠ EVERY attached conversation must belong to the caller AND to the SAME
        * ecosistema as the document. Both are enforced in
@@ -2521,6 +2563,43 @@ export const Documents: CollectionConfig = {
       admin: {
         description:
           'The conversations this document is attached to, if any. Attaching shares it with another conversation; it never moves it out of the ones it is already in.',
+      },
+    },
+    {
+      /**
+       * 🔴 THE CONVERSATION THIS DOCUMENT WAS UPLOADED IN. Singular, and only
+       * ever set by the server.
+       *
+       * `session` above says where a document is attached NOW; attaching is
+       * sharing, so it cannot say where the document came from. This field
+       * does. A conversation delete takes a document with it only when this
+       * names THAT conversation (`lib/conversationUploads.ts`), so a document
+       * uploaded in conversation B and shared into A is never deleted with A.
+       *
+       * ⚠ Stamped in `bindDocumentToEcosystem` on a signed-in create that
+       * names exactly one conversation (the chat upload,
+       * `POST /api/sessions/:id/documents`), and IMMUTABLE afterwards, like
+       * `uploadedBy`. A client-supplied value is overwritten on create and
+       * pinned on update.
+       *
+       * ⚠ NULL means "not recorded": every row created before the column
+       * existed, a server-side create, a create naming several conversations,
+       * and every row whose origin conversation was deleted (the foreign key
+       * is `ON DELETE SET NULL`). How the cascade reads a NULL is in
+       * `lib/conversationUploads.ts`.
+       */
+      name: 'uploadedInSession',
+      type: 'relationship',
+      relationTo: 'sessions',
+      // The `ON DELETE SET NULL` of every conversation delete looks rows up by
+      // this column.
+      index: true,
+      // 🔴 Who recorded a testimonio, and in which conversation. Same rule as
+      // `session`, and listed in GATED_QUERYABLE_FIELDS for the same reason.
+      access: { read: gatedQueryableReadable },
+      admin: {
+        readOnly: true,
+        description: 'The conversation this document was uploaded in. Set by the server. Immutable.',
       },
     },
     {
@@ -3063,6 +3142,7 @@ export const Documents: CollectionConfig = {
      * refusing because a downstream service is unreachable would leave them
      * stuck with a row they cannot remove. The failure is logged instead.
      */
+    beforeDelete: [scheduleMediaCleanupHook],
     afterDelete: [retireDeletedDocumentHook],
   },
   endpoints: [

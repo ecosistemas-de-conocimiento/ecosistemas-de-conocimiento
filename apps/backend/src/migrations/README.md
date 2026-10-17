@@ -1,7 +1,15 @@
 # Migrations — the baseline exists
 
-`20260908_092211_baseline.ts` is the first and, so far, only migration. It
-replaced an eight-migration chain on 2026-09-08. Nothing had ever been deployed
+`20260908_092211_baseline.ts` is the first migration. It replaced an
+eight-migration chain on 2026-09-08.
+
+The chain since then:
+
+| migration | what | hand-written part |
+|---|---|---|
+| `20261017_231817_documents_uploaded_in_session` | `documents.uploaded_in_session_id`, FK to `sessions` `ON DELETE set null` (the column is nullable, so that is correct here), and its index | none; no backfill, on purpose (the file header says why) |
+
+⚠ A migration file is frozen once committed, comments included. Nothing had ever been deployed
 — no CI, no deploy script, and `edc_backend` on `localhost:45432` was the only
 chain-aware database in existence — so the chain described a history no database
 would ever replay.
