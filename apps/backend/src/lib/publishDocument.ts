@@ -32,15 +32,16 @@
  * lives in Postgres, so any re-ingest is replayable from local data. What is at
  * stake is which corpus can find it, and for how long.
  *
- * ── 🔴 THE PRIMITIVE WE DO NOT HAVE ──────────────────────────────────────────
+ * ── 🔴 RETIRE, NOT DELETE, FOR THE PUBLISH MOVES ─────────────────────────────
  *
- * `@edc/ai-client` has NO per-document corpus delete. It offers
- * `admin.deleteCorpus(name)` — the whole corpus, far too blunt — and
+ * The publish and unpublish moves take a copy OUT of one corpus with
  * `admin.setDocumentValidity(corpus, externalId, { validTo })`, which retires a
- * document by closing its validity window.
+ * document by closing its validity window. (`admin.deleteDocument` now exists
+ * and the DELETED-document path uses it — see `retireDeletedDocument`. The
+ * moves were not switched in the same change.)
  *
- * So "delete it from the draft corpus" is implemented as "stamp `validTo` =
- * now". That is the intended primitive, and it has a CONSUMER-SIDE CONDITION:
+ * So "take it out of the draft corpus" is "stamp `validTo` = now", and that has
+ * a CONSUMER-SIDE CONDITION:
  *
  *   ⚠ RETRIEVAL MUST PASS `asOf`. A retrieve that omits it may not apply the
  *   validity window at all, and a retired document would keep coming back.
@@ -48,8 +49,7 @@
  *   that calls `retrieveMulti` must spread it.
  *
  * This is the weakest link in the design and it is worth knowing about rather
- * than discovering. If ai-service ever grows a real per-document delete, this
- * file is the only place that changes.
+ * than discovering.
  */
 
 import type { Payload } from 'payload'
@@ -788,9 +788,31 @@ export async function confirmUnpublish(
   })
 }
 
+/** What the delete path needs on top of {@link CorpusMover}: the real delete. */
+export interface CorpusDeleter extends CorpusMover {
+  admin: CorpusMover['admin'] & {
+    deleteDocument(corpus: string, externalId: string): Promise<unknown>
+  }
+}
+
 /**
- * Retire a document from BOTH of its possible corpora, because it is being
- * deleted.
+ * ai-service's OWN "no such corpus / no such document" — and nothing else.
+ *
+ * ⚠ A BARE 404 IS NOT ENOUGH HERE, unlike {@link isAlreadyAbsent}. An
+ * ai-service that predates `DELETE /v1/corpus/:name/documents/:id` answers the
+ * unknown ROUTE with a 404 too, and reading that as "already gone" would skip
+ * the fallback and leave the chunks retrievable. So the body's code decides.
+ */
+function isDocumentAbsent(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { status?: unknown; code?: unknown; body?: { error?: { code?: unknown } } }
+  if (e.status !== 404) return false
+  const code = String(e.code ?? e.body?.error?.code ?? '')
+  return /(^|_)(CORPUS|DOCUMENT)_NOT_FOUND$/.test(code)
+}
+
+/**
+ * Remove a deleted document from BOTH of its possible corpora.
  *
  * 🔴 THIS CLOSES A REAL LEAK. Deleting a `documents` row used to remove it from
  * the UI and leave its chunks embedded and retrievable. For a PUBLISHED
@@ -798,31 +820,35 @@ export async function confirmUnpublish(
  * gone, and the ecosistema's assistant keeps quoting it — with a citation that
  * now points at nothing.
  *
- * ⚠ RETIRES FROM BOTH, deliberately, and does not consult
- * `publicationStatus`. A row can be deleted mid-transition (`publishing` /
- * `unpublishing`), when copies legitimately exist in both places at once, and a
- * crash between the two publish steps can leave one behind in either. Guessing
- * from the stored state is exactly how you leave the copy that mattered. A
- * corpus that has no such document answers 404 and `retireFrom` already treats
- * that as "already not retrievable there" — so retiring twice is cheap and
- * always safe, while retiring once is a bet.
+ * ── DELETE FIRST, RETIRE ONLY AS THE FALLBACK ───────────────────────────────
  *
- * ⚠ RETIREMENT IS NOT DELETION. ai-service has no per-document delete; this
- * closes the chunk's validity window (`validTo: now`), which removes it from
- * results ONLY for retrieves that pass `asOf`. Every caller in this repo does —
- * `retrievalOptionsFor()` is the single place that says so and
- * `GET /api/sessions/:id/corpora` hands it to the client rather than
- * documenting it — but a future caller that forgets would see deleted documents
- * come back. That is the weakest link in this design and it is worth knowing.
+ * `@edc/ai-client` now has `admin.deleteDocument(corpus, externalId)`, which
+ * removes the document AND its chunks — text and vectors gone, storage
+ * reclaimed. That is what a deletion should mean, and for a testimony it is the
+ * difference between "not shown" and "not kept". So each corpus gets a real
+ * delete. Only if that call FAILS (ai-service down, an older ai-service without
+ * the route) does it fall back to `retireFrom` — closing the validity window —
+ * so the document at least stops being retrieved.
+ *
+ * ⚠ BOTH CORPORA, deliberately, and does not consult `publicationStatus`. A
+ * row can be deleted mid-transition (`publishing` / `unpublishing`), when copies
+ * legitimately exist in both places at once, and a crash between the two
+ * publish steps can leave one behind in either. A corpus that has no such
+ * document answers `404 CORPUS_NOT_FOUND` / `DOCUMENT_NOT_FOUND`, which is
+ * success here — so deleting twice is cheap and always safe, while deleting
+ * once is a bet.
+ *
+ * ⚠ THE CLIENT MUST BE THE ECOSISTEMA'S. Corpora live in the ecosistema's own
+ * ai-service org (`getAdminAIClient(organizationId)` sends `X-AI-Org`); a client
+ * for the wrong org reads every document as missing, and that 404 is success.
  *
  * Never throws. The row is already gone by the time this runs, so there is
  * nothing to roll back and failing loudly would only turn a successful delete
- * into an error the user cannot act on. It logs instead, and the document stays
- * retrievable until someone retries — which is why the log line names the
- * corpus and the id.
+ * into an error the user cannot act on. It logs instead, naming the corpus and
+ * the id.
  */
 export async function retireDeletedDocument(
-  deps: TransitionDeps,
+  deps: Omit<TransitionDeps, 'client'> & { client: CorpusDeleter },
   doc: PublishableDocument,
   now: Date = new Date(),
 ): Promise<void> {
@@ -843,6 +869,16 @@ export async function retireDeletedDocument(
 
   for (const corpus of corpora) {
     try {
+      await deps.client.admin.deleteDocument(corpus, String(doc.id))
+      continue
+    } catch (err) {
+      if (isDocumentAbsent(err)) continue
+      log?.warn(
+        { corpus, documentId: String(doc.id), err: String(err) },
+        '[delete] per-document delete failed — falling back to retiring it (chunks stay stored).',
+      )
+    }
+    try {
       await retireFrom(deps.client, corpus, doc.id, now, log)
     } catch (err) {
       // Keep going: the OTHER corpus is the one that might still be serving
@@ -850,7 +886,7 @@ export async function retireDeletedDocument(
       // us reaching it.
       log?.warn(
         { corpus, documentId: String(doc.id), err: String(err) },
-        '[delete] could not retire a deleted document — its chunks remain retrievable in this corpus.',
+        '[delete] could not delete or retire a deleted document — its chunks remain retrievable in this corpus.',
       )
     }
   }

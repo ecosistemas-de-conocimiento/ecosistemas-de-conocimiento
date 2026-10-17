@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   formatLibraryDate,
+  isGatedContent,
   isTestimony,
+  kindFilterWhere,
+  libraryKindOf,
+  libraryTitleFor,
   kindFilterLabel,
   kindFilterValues,
   kindLabel,
@@ -183,5 +187,37 @@ describe('formatLibraryDate', () => {
 
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])('says nothing for %p', (raw) => {
     expect(formatLibraryDate(raw)).toBe('');
+  });
+});
+
+// 🔴 Audit 2026-10-17: the library keyed testimony on `kind` (the FILE FORMAT),
+// which a Voz never carries. These pin the `contentKind` reading.
+describe('contentKind, not kind', () => {
+  it('a Voz is {kind: audio, contentKind: testimonio}', () => {
+    expect(libraryKindOf({ kind: 'audio', contentKind: 'testimonio' })).toBe('testimonio');
+    expect(libraryKindOf({ kind: 'audio', contentKind: 'documento' })).toBe('audio');
+  });
+
+  it('isGatedContent fails closed', () => {
+    expect(isGatedContent('documento')).toBe(false);
+    for (const k of ['testimonio', 'conversacion', 'x', undefined, null]) {
+      expect(isGatedContent(k)).toBe(true);
+    }
+  });
+
+  it('libraryTitleFor never shows a typed name on gated content', () => {
+    expect(libraryTitleFor('testimonio', 'María.m4a')).toBe('Testimonio');
+    expect(libraryTitleFor('conversacion', 'María')).toBe('Conversación');
+    expect(libraryTitleFor(undefined, 'María')).toBe('Documento sin título');
+    expect(libraryTitleFor('documento', '  Acta  ')).toBe('Acta');
+  });
+
+  it('kindFilterWhere puts Voces on contentKind and formats on documentos', () => {
+    expect(kindFilterWhere('todos')).toEqual([]);
+    expect(kindFilterWhere('testimonio')).toEqual([['where[contentKind][equals]', 'testimonio']]);
+    expect(kindFilterWhere('pdf')).toEqual([
+      ['where[kind][in]', 'pdf'],
+      ['where[contentKind][equals]', 'documento'],
+    ]);
   });
 });

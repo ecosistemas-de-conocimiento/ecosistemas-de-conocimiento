@@ -1,4 +1,10 @@
-import { readReviewCapability, mayReviewAnywhere } from '$lib/server/holds';
+import {
+  HOLDS_REVIEW,
+  mayReviewAnywhere,
+  readIdentity,
+  reviewCapabilityFrom,
+} from '$lib/server/holds';
+import { VOCES_UPLOAD } from '$lib/uploadKind';
 import type { LayoutServerLoad } from './$types';
 
 // Expose the authenticated user (or null) to all pages. Auth pages read it to
@@ -22,10 +28,21 @@ import type { LayoutServerLoad } from './$types';
 // ⚠ Costs one backend call per full page load, not per client-side navigation:
 // this load reads only `locals`, which SvelteKit does not track as a
 // dependency, so it does not re-run when the URL changes.
+//
+// ⚠ AND `vocesUpload` — where this person may file a Voz (`voces:upload`, per
+// ecosistema). Same presentation-only status: `DocsPanel` shows the
+// "Voz / testimonio" choice from it, and the backend's
+// `enforceVocesUploadRights` is the control. One identity read serves both.
 export const load: LayoutServerLoad = async ({ locals }) => {
-  const capability = locals.user ? await readReviewCapability(locals.token) : null;
+  const identity = locals.user ? await readIdentity(locals.token) : null;
+  const ok = identity !== null;
+  const holds = ok ? reviewCapabilityFrom(identity, HOLDS_REVIEW) : null;
+  const vocesUpload = ok
+    ? reviewCapabilityFrom(identity, VOCES_UPLOAD)
+    : { isPlatformAdmin: false, slugs: [], ok: false };
   return {
     user: locals.user,
-    canReviewHolds: capability ? mayReviewAnywhere(capability) : false,
+    canReviewHolds: holds ? mayReviewAnywhere(holds) : false,
+    vocesUpload,
   };
 };

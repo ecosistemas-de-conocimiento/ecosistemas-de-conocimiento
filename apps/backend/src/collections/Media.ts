@@ -102,6 +102,12 @@ export const mediaVisibleToCaller: Access = async ({ req }) => {
         { publicationStatus: { equals: 'published' } },
         { organization: { in: organizationIds } },
         { mediaFile: { exists: true } },
+        // 🔴 A `documento` only. The file behind a published testimonio is the
+        // RECORDING — the speaker's own voice and every unredacted word. What
+        // the ecosistema shares is the gate's `redactedText`, never the source.
+        // Same rule as `mayReadGatedOriginal` in `Documents.ts`; the uploader
+        // still reaches it through `mine` above.
+        { contentKind: { equals: 'documento' } },
       ],
     },
     depth: 0,
