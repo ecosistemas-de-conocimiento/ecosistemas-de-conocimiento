@@ -30,6 +30,7 @@
 import { withRateLimitRetry } from '@/lib/aiRetry'
 
 import { chunkText } from './chunk'
+import { stripLeadingTitles } from './titles'
 import type { DetectorFinding, PersonDetector } from './types'
 
 /** Env var names, so docs and tests never hand-type a string that can drift. */
@@ -104,6 +105,12 @@ export const DETECT_SYSTEM_PROMPT = [
   'Debes incluir:',
   '- Nombres de personas, apellidos, apodos y diminutivos.',
   '- Referencias de parentesco que nombran a alguien: en "mi hermana Lucía" el hallazgo es "Lucía".',
+  // ⚠ Titles are part of the name (owner's rule, 2026-10-17); `titles.ts` also
+  // absorbs them in code, so a model that ignores this line is still covered.
+  '- Un tratamiento o cargo que antecede al nombre es parte del nombre: incluye "don", "doña",',
+  '  "señor", "señora", "la maestra", "el maestro", "el profe", "el doctor", "la doctora",',
+  '  "licenciado", "ingeniero", "el padre" y similares. En "Don Fernando Vázquez" el hallazgo',
+  '  es "Don Fernando Vázquez"; en "la maestra Imelda" es "la maestra Imelda".',
   '- Centros de trabajo, escuelas o cargos tan precisos que identifican a una persona.',
   '- Teléfonos, correos, cuentas, identificadores oficiales y números de expediente.',
   '',
@@ -212,10 +219,20 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
     // stage 4 look like it verified something it did not. Dropping it is not
     // permissive: the text it claims to describe is still in the document and
     // stage 4 still runs over the result.
-    if (!sourceText.includes(trimmed)) continue
+    //
+    // ⚠ ONE RESCUE: a titled span whose TITLE is in the wrong case. Measured
+    // 2026-10-17, 9,454 words: asked to include titles, the model returned
+    // "la maestra Nicasia Olvera" for "La maestra Nicasia Olvera"; dropping it
+    // lost the name. The bare name is a literal substring, so it is kept, and
+    // `titles.ts` absorbs the title once the name is a placeholder.
+    let located = trimmed
+    if (!sourceText.includes(located)) {
+      located = stripLeadingTitles(trimmed).trim()
+      if (located === trimmed || located.length < 2 || !sourceText.includes(located)) continue
+    }
 
     out.push({
-      text: trimmed,
+      text: located,
       type: (FINDING_TYPES as readonly unknown[]).includes(tipo)
         ? (tipo as DetectorFinding['type'])
         : 'otro',
@@ -343,9 +360,18 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
       const perChunk = await mapBounded(chunks, concurrency, async (chunk) => {
         let result: { text: string }
         try {
-          // ⚠ ONLY a 429 is retried, waiting what ai-service asked (`aiRetry.ts`).
-          // A refused request never ran, so resending it is free; anything else
-          // throws straight through to a HOLD.
+          // ⚠ A 429, a 503, a broken connection and our own timeout are retried
+          // (`aiRetry.ts`, `retryTransient`): at most 3 retries, Retry-After when
+          // the server sends one, else 1 s, 2 s, 4 s, all under one total sleep
+          // ceiling. Anything else, and the last failure, throws through to a
+          // HOLD — never to "nothing to redact".
+          //
+          // ⚠ `/v1/generate/sync` does not dedupe, so a retry after a lost answer
+          // is a second generation and a second budget debit. Accepted here: the
+          // call is read-only, and one chunk costs well under a cent.
+          //
+          // ⚠ The ceiling counts SLEEP, not attempts in flight: a chunk that
+          // times out every time takes up to 4 × `timeoutMs` plus ~7 s.
           result = await withRateLimitRetry(
             () =>
               gen.generate.sync(
@@ -372,7 +398,11 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
                 },
                 { timeoutMs },
               ),
-            { label: 'anonymise-detect', ...(opts.sleep ? { sleep: opts.sleep } : {}) },
+            {
+              label: 'anonymise-detect',
+              retryTransient: true,
+              ...(opts.sleep ? { sleep: opts.sleep } : {}),
+            },
           )
         } catch (err) {
           // ⚠ The message names the FAILURE, never the document. A transport error

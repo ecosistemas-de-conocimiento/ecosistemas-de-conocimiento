@@ -56,6 +56,7 @@
 import { deterministicPass } from './deterministic'
 import { createPseudonymAllocator } from './pseudonyms'
 import { structuralPass } from './structural'
+import { absorbTitles, onlyPlaceholders } from './titles'
 import type {
   DetectorFinding,
   GateInput,
@@ -124,6 +125,49 @@ function coveredByPlaceholder(
 }
 
 /**
+ * Replace every occurrence of `needle` that does not cut into a placeholder.
+ * Returns null when nothing was replaced.
+ *
+ * 🔴 MEASURED 2026-10-17, 9,454 words: stage 2 had written `[Domicilio E]`, the
+ * model then returned part of it as a finding, and a plain split/join turned
+ * every such placeholder into `[[Domicilio AH]E]`. Verify held on 13 of them.
+ * An occurrence that lies inside a placeholder, or straddles its edge, is
+ * skipped; one that wholly CONTAINS a placeholder is replaced (that only
+ * removes more text).
+ *
+ * Literal `indexOf` rather than a built RegExp: the finding is arbitrary user
+ * text and `new RegExp(finding.text)` would either throw on a stray `(` or,
+ * worse, silently match something else entirely.
+ */
+function replaceOutsidePlaceholders(
+  text: string,
+  needle: string,
+  replacement: () => string,
+): string | null {
+  const spans = placeholderSpans(text)
+  let label: string | undefined
+  let result = ''
+  let copied = 0
+  let search = 0
+  for (;;) {
+    const at = text.indexOf(needle, search)
+    if (at === -1) break
+    const end = at + needle.length
+    const cuts = spans.some(([s, e]) => at < e && end > s && !(at <= s && end >= e))
+    if (cuts) {
+      search = at + 1
+      continue
+    }
+    label ??= replacement()
+    result += text.slice(copied, at) + label
+    copied = end
+    search = end
+  }
+  // `copied` only moves on a replacement, and a needle is never empty.
+  return copied === 0 ? null : result + text.slice(copied)
+}
+
+/**
  * Replace findings, LONGEST FIRST.
  *
  * 🔴 THE ORDER IS A REAL BUG FIX, NOT TIDINESS. Models routinely return both
@@ -156,22 +200,24 @@ function applyFindings(
      * accepted: both are places whose identity we are removing, and splitting
      * them would need the model to make a distinction its prompt never asked for.
      */
-    const replacement =
+    // ⚠ LAZY: a finding that replaces nothing must not use up a label, or the
+    // report counts a person who is not in the text and the letters skip.
+    const replacement = () =>
       finding.type === 'persona'
         ? allocate(finding.text)
         : finding.type === 'lugar'
           ? allocateAddress(finding.text)
           : OMITTED_PLACEHOLDER
-    // Split/join rather than a built RegExp: the finding is arbitrary user text
-    // and `new RegExp(finding.text)` would either throw on a stray `(` or, worse,
-    // silently match something else entirely.
-    const parts = out.split(finding.text)
-    if (parts.length === 1) continue
+    const next = replaceOutsidePlaceholders(out, finding.text, replacement)
+    if (next === null) continue
     labels.push(finding.type)
-    out = parts.join(replacement)
+    out = next
   }
 
-  return { text: out, labels }
+  // 🔴 A title before a name is part of the name: "Don [Persona F]" becomes
+  // "[Persona F]". Without this, verify reads the title as a leftover and holds
+  // a document whose names are all gone. See `titles.ts`.
+  return { text: absorbTitles(out), labels }
 }
 
 /**
@@ -312,7 +358,12 @@ export async function runAnonymisationGate(
   }
 
   const spans = placeholderSpans(applied.text)
-  const real = survivors.filter((f) => !coveredByPlaceholder(applied.text, spans, f.text))
+  // ⚠ `onlyPlaceholders`: a finding made of our placeholders, punctuation and
+  // titles before a person ("[Domicilio AP], [Domicilio AQ]") names nobody.
+  // It needs at least one placeholder, so a bare "Don" still holds.
+  const real = survivors.filter(
+    (f) => !coveredByPlaceholder(applied.text, spans, f.text) && !onlyPlaceholders(f.text),
+  )
 
   stages.push({
     stage: 'verify',
