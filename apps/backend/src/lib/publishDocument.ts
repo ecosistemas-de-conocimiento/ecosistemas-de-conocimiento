@@ -589,7 +589,21 @@ export async function confirmPublish(
   await deps.payload.update({
     collection: 'documents',
     id: doc.id as never,
-    data: { publicationStatus: 'published', publicationError: null, publishIngestId: null },
+    data: {
+      publicationStatus: 'published',
+      publicationError: null,
+      publishIngestId: null,
+      /**
+       * 🔴 THE PUBLISH MOVE IS AN INGEST, SO IT ENDS ONE. The shared-corpus copy
+       * was just embedded and confirmed, so the document is retrievable and
+       * citable — the definition of `ready`. The callback route returns early on
+       * a publish move, BEFORE its ordinary `ready` write, so nothing else sets
+       * this: without it a row that was never draft-ingested (seeded, or a
+       * markdown note) reads `published` + `pending` ("en cola") forever.
+       */
+      ingestStatus: 'ready',
+      ingestError: null,
+    },
     overrideAccess: true,
     context: { __skipDocsExtract: true },
   })

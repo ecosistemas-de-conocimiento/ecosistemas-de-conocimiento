@@ -42,7 +42,14 @@ import {
   EMBEDDING_JANITOR_ENABLED_VAR,
   EMBEDDING_JANITOR_INTERVAL_MIN_VAR,
   EMBEDDING_JANITOR_STUCK_MIN_VAR,
+  DEFAULT_PENDING_STUCK_MIN,
+  NEVER_STARTED_CODE,
+  PENDING_SWEEP_KINDS,
+  PENDING_JANITOR_STUCK_MIN_VAR,
   STALLED_EMBED_CODE,
+  neverStartedReason,
+  pendingStuckAfterMs,
+  sweepStalledPending,
   embeddingJanitorEnabled,
   embeddingJanitorIntervalMs,
   embeddingStuckAfterMs,
@@ -71,6 +78,9 @@ function matchesClause(row: Row, clause: Clause): boolean {
   return Object.entries(clause).every(([field, op]) => {
     const value = row[field]
     if ('equals' in op) return String(value ?? '') === String(op.equals)
+    if ('in' in op) return (op.in as unknown[]).map(String).includes(String(value ?? ''))
+    // Payload compiles `exists: false` to `IS NULL`: an absent key or a null.
+    if ('exists' in op) return (value != null) === Boolean(op.exists)
     if ('less_than' in op) {
       const t = new Date(String(value)).getTime()
       return Number.isFinite(t) && t < new Date(String(op.less_than)).getTime()
@@ -129,6 +139,7 @@ afterEach(() => {
   delete process.env[EMBEDDING_JANITOR_ENABLED_VAR]
   delete process.env[EMBEDDING_JANITOR_INTERVAL_MIN_VAR]
   delete process.env[EMBEDDING_JANITOR_STUCK_MIN_VAR]
+  delete process.env[PENDING_JANITOR_STUCK_MIN_VAR]
   stopEmbeddingJanitor()
 })
 
@@ -410,5 +421,181 @@ describe('scheduling', () => {
     // The first sweep is one interval away, so a deploy never fails anything
     // the instant it boots.
     expect(find).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The stale-`pending` sweep
+// ---------------------------------------------------------------------------
+
+/**
+ * A row this sweep exists for: an ordinary upload whose background extract was
+ * lost (a `setImmediate` with no durable queue dies with the process), so the
+ * row never left `pending` and never got an ingest id.
+ */
+const strandedPending = (over: Row = {}): Row => ({
+  id: 1,
+  kind: 'pdf',
+  contentKind: 'documento',
+  anonymisationStatus: 'n/a',
+  publicationStatus: 'draft',
+  ingestStatus: 'pending',
+  extractedText: 'texto',
+  updatedAt: minutesAgo(999),
+  ...over,
+})
+
+describe('sweepStalledPending — the lost background extract', () => {
+  const PENDING_DEADLINE_MS = 60 * 60_000
+
+  it('🔴 fails the row out with a Spanish reason, writes nothing else, and leaves it retryable', async () => {
+    const db = fakeDb([strandedPending()])
+
+    const result = await sweepStalledPending(db.payload, {
+      now: NOW,
+      deadlineMs: PENDING_DEADLINE_MS,
+    })
+
+    expect(result).toEqual({ examined: 1, stalled: 1 })
+    const call = db.update.mock.calls[0]![0]
+    const data = call.data as Record<string, unknown>
+    expect(Object.keys(data).sort()).toEqual(['ingestError', 'ingestStatus'])
+    expect(data.ingestStatus).toBe('failed')
+    expect(String(data.ingestError)).toContain(NEVER_STARTED_CODE)
+    // Same reason as the embed sweep: the status write must not re-fire the
+    // hook, or the sweep that never re-drives would re-drive on every pass.
+    expect(call.context).toEqual({ __skipDocsExtract: true })
+
+    // 🔴 The whole point of `failed`: the existing retry path now accepts it.
+    const plan = planIngestRetry(db.row(1) as Record<string, string>)
+    expect(plan).not.toBeNull()
+    expect(plan!.ingestStatus).toBe('pending')
+    expect(plan!.ingestError).toBeNull()
+  })
+
+  it('🔴 never touches a hold, a gated row, or a row whose retry would misfire', async () => {
+    // Every row here is old enough and `pending` with no ingest id. Each one is
+    // spared for a reason that is NOT "it might still be running".
+    const spared: Row[] = [
+      // Inside the deadline.
+      strandedPending({ id: 2, updatedAt: minutesAgo(5) }),
+      // ai-service accepted something — the embed sweep's territory, not this.
+      strandedPending({ id: 3, ingestId: 'ing-3' }),
+      // 🔴 A HOLD waiting for a reviewer. `seed/review.ts` writes exactly this
+      // shape, and `failed` would put a retry button on a human decision.
+      strandedPending({ id: 4, contentKind: 'testimonio', anonymisationStatus: 'held' }),
+      // 🔴 A seeded Voz that has never been through the gate.
+      strandedPending({ id: 5, contentKind: 'testimonio', anonymisationStatus: 'n/a' }),
+      // The gate is running (or died running) — the gate owns this row.
+      strandedPending({ id: 6, contentKind: 'testimonio', anonymisationStatus: 'pending' }),
+      // A reviewer released it (`holdReview.ts` re-enters at `pending`).
+      // `planIngestRetry` refuses `approved`, so `failed` would be a dead end.
+      strandedPending({ id: 7, contentKind: 'testimonio', anonymisationStatus: 'approved' }),
+      strandedPending({ id: 8, contentKind: 'testimonio', anonymisationStatus: 'rejected' }),
+      strandedPending({ id: 9, contentKind: 'conversacion' }),
+      // Fails closed on an unknown content kind, like `mustPassAnonymisationGate`.
+      strandedPending({ id: 10, contentKind: null }),
+      // Published rows belong to the publish path and the repair script: a
+      // retry would re-ingest into the uploader's DRAFT corpus.
+      strandedPending({ id: 11, publicationStatus: 'published' }),
+      strandedPending({ id: 12, publicationStatus: 'publishing' }),
+      // `planIngestRetry` refuses a kind with no pipeline.
+      strandedPending({ id: 13, kind: 'markdown' }),
+      // Not `pending` at all.
+      strandedPending({ id: 14, ingestStatus: 'embedding', updatedAt: minutesAgo(10) }),
+      strandedPending({ id: 15, ingestStatus: 'ready' }),
+    ]
+    const db = fakeDb([strandedPending({ id: 1 }), ...spared])
+
+    const result = await sweepStalledPending(db.payload, {
+      now: NOW,
+      deadlineMs: PENDING_DEADLINE_MS,
+    })
+
+    expect(result).toEqual({ examined: 1, stalled: 1 })
+    expect(db.row(1)!.ingestStatus).toBe('failed')
+    for (const row of spared) {
+      const after = db.row(row.id as number)!
+      expect(after.ingestStatus, `row ${row.id}`).toBe(row.ingestStatus)
+      expect(after.ingestError, `row ${row.id}`).toBeUndefined()
+    }
+  })
+
+  it('🔴 THE RACE: a row that moves between the read and the write is left alone', async () => {
+    // A user pressing retry, or a late hook run, moves the row to `extracting`.
+    const db = fakeDb([strandedPending({ id: 7 })], {
+      beforeUpdate: (store) => {
+        Object.assign(store[0]!, { ingestStatus: 'extracting', updatedAt: NOW.toISOString() })
+      },
+    })
+
+    const result = await sweepStalledPending(db.payload, {
+      now: NOW,
+      deadlineMs: PENDING_DEADLINE_MS,
+    })
+
+    expect(result).toEqual({ examined: 1, stalled: 0 })
+    expect(db.row(7)!.ingestStatus).toBe('extracting')
+    expect(db.row(7)!.ingestError).toBeUndefined()
+  })
+
+  it('the guarded write re-asserts every condition, the gate ones included', async () => {
+    const db = fakeDb([strandedPending({ id: 7 })])
+    await sweepStalledPending(db.payload, { now: NOW, deadlineMs: PENDING_DEADLINE_MS })
+
+    const clauses = db.whereOf(0)
+    expect(clauses).toContainEqual({ id: { equals: 7 } })
+    expect(clauses).toContainEqual({ ingestStatus: { equals: 'pending' } })
+    expect(clauses).toContainEqual({ ingestId: { exists: false } })
+    expect(clauses).toContainEqual({ anonymisationStatus: { equals: 'n/a' } })
+    expect(clauses).toContainEqual({ contentKind: { equals: 'documento' } })
+    expect(clauses).toContainEqual({
+      updatedAt: { less_than: new Date(NOW.getTime() - PENDING_DEADLINE_MS).toISOString() },
+    })
+  })
+
+  it('sweeps exactly the kinds `planIngestRetry` will retry — the two lists cannot drift', () => {
+    for (const kind of ['pdf', 'docx', 'audio', 'markdown', 'chat', 'unknown']) {
+      const retryable =
+        planIngestRetry({ kind, ingestStatus: 'failed', extractedText: 't', anonymisationStatus: 'n/a' }) !== null
+      expect((PENDING_SWEEP_KINDS as readonly string[]).includes(kind), kind).toBe(retryable)
+    }
+  })
+
+  it('the reason says nothing was sent and that retrying is safe', () => {
+    const reason = neverStartedReason(60)
+    expect(reason).toContain(NEVER_STARTED_CODE)
+    expect(reason).toContain('60')
+    expect(reason).toContain('volver a intentarlo')
+    expect(reason.length).toBeLessThanOrEqual(500)
+  })
+
+  it('has its own deadline, longer than the embed one, and it is configurable', () => {
+    expect(pendingStuckAfterMs()).toBe(DEFAULT_PENDING_STUCK_MIN * 60_000)
+    expect(DEFAULT_PENDING_STUCK_MIN).toBeGreaterThanOrEqual(DEFAULT_STUCK_MIN)
+    process.env[PENDING_JANITOR_STUCK_MIN_VAR] = '120'
+    expect(pendingStuckAfterMs()).toBe(120 * 60_000)
+    process.env[PENDING_JANITOR_STUCK_MIN_VAR] = 'nope'
+    expect(pendingStuckAfterMs()).toBe(DEFAULT_PENDING_STUCK_MIN * 60_000)
+  })
+
+  it('🔴 the scheduled janitor runs this sweep too — not just the embed one', async () => {
+    vi.useFakeTimers()
+    try {
+      const find = vi.fn(async () => ({ docs: [] }))
+      const payload = { logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() }, find, update: vi.fn() }
+      startEmbeddingJanitor(payload as unknown as Payload)
+      await vi.advanceTimersByTimeAsync(embeddingJanitorIntervalMs() + 1)
+
+      const states = find.mock.calls.map((c) => {
+        const and = ((c as unknown[])[0] as { where: { and: Clause[] } }).where.and
+        return and.find((cl) => 'ingestStatus' in cl)!.ingestStatus!.equals
+      })
+      expect(states).toContain('embedding')
+      expect(states).toContain('pending')
+    } finally {
+      stopEmbeddingJanitor()
+      vi.useRealTimers()
+    }
   })
 })

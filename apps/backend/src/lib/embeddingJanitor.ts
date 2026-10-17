@@ -83,6 +83,7 @@
 
 import type { Payload, Where } from 'payload'
 
+import { UNGATED_CONTENT_KIND } from './anonymiseDocument'
 import { missingCallbackConfig } from './callbackConfig'
 import {
   janitorEnabledFromEnv,
@@ -117,6 +118,10 @@ const DEFAULT_INTERVAL_MIN = 15
 
 /**
  * The one non-terminal ingest state this sweep owns.
+ *
+ * ⚠ `pending` NOW HAS ITS OWN SWEEP — {@link sweepStalledPending}, with its own
+ * message, deadline and a much narrower predicate. That is the decision this
+ * comment asked for, not this list growing.
  *
  * ⚠ `pending` AND `transcribed` ARE ALSO NON-TERMINAL AND ARE DELIBERATELY NOT
  * HERE. Both can strand a row the same way — `transcribed` is where a row stops
@@ -364,6 +369,167 @@ export async function sweepStalledEmbeddings(
 }
 
 // ---------------------------------------------------------------------------
+// The stale-`pending` sweep
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 THE SECOND STATE THIS FILE OWNS, ADDED AS A DECISION, NOT AN EDIT TO A LIST.
+ *
+ * `STALLED_INGEST_STATE`'s comment says adding `pending` "is a decision". This
+ * is it, with its own message, its own deadline and its own predicate.
+ *
+ * ── How a row strands at `pending` ───────────────────────────────────────────
+ *
+ * Extraction runs in a `setImmediate` from `afterChange`; there is no durable
+ * queue in `apps/backend`. A backend restart between the row's create (or a
+ * retry's `pending` write) and the `extracting` write LOSES THE JOB, and nothing
+ * else ever moves the row. `planIngestRetry` refuses anything but `failed`, so
+ * the uploader sees "en cola" forever with no button that works.
+ *
+ * ── 🔴 THE PREDICATE IS NARROW ON PURPOSE ───────────────────────────────────
+ *
+ * A row is swept only if EVERY one of these holds. Each excluded shape is
+ * excluded for a reason that is not "it might still be running":
+ *
+ *   · `ingestId` is NULL — ai-service never accepted anything for it.
+ *   · `contentKind` is `documento` and `anonymisationStatus` is `n/a` — the row
+ *     is outside the anonymisation gate entirely. 🔴 This is what keeps the
+ *     sweep off a HOLD (`held`, waiting for a reviewer — `seed/review.ts`
+ *     writes exactly `pending` + `held`), off a gate run (`pending`), off a
+ *     reviewer's release (`approved` re-enters at `pending`, and
+ *     `planIngestRetry` refuses `approved`, so `failed` would be a dead end),
+ *     off a rejection, and off a seeded Voz that has never been gated at all.
+ *     Unknown or missing `contentKind` is excluded by the same `equals`, which
+ *     fails closed like `mustPassAnonymisationGate`.
+ *   · `publicationStatus` is `draft` — a retry re-runs the DRAFT ingest, so on
+ *     a published row it would put a second copy in the uploader's private
+ *     corpus. Published + pending rows belong to `scripts/repair-pending-published.ts`.
+ *   · `kind` has a pipeline — `planIngestRetry` refuses anything else, and a
+ *     `failed` with no working retry is the bug this exists to remove.
+ *   · `updatedAt` is older than the deadline.
+ *
+ * Same shape as the embed sweep below it: every condition in SQL (starvation
+ * rule), the guarded write re-asserts all of them (race rule), two fields
+ * written, no ai-service client reachable from the signature.
+ */
+
+/** Env var for the `pending` deadline, in minutes. */
+export const PENDING_JANITOR_STUCK_MIN_VAR = 'EMBEDDING_JANITOR_PENDING_STUCK_MIN'
+
+/**
+ * 60 minutes. On the happy path `pending` lasts seconds — the hook's
+ * post-commit read retries for ~2.5s, then writes `extracting` or
+ * `transcribing`. Longer than the embed deadline because a false positive here
+ * costs the user a retry, and there is no backed-up queue to wait for: a row
+ * still `pending` after an hour was lost, not slow. (inferred from the hook's
+ * code path in `collections/Documents.ts`, not measured on a live host.)
+ */
+export const DEFAULT_PENDING_STUCK_MIN = 60
+
+/** The reason code stamped on a row this sweep gives up on. Stable; used by tests and support. */
+export const NEVER_STARTED_CODE = 'ingest_never_started'
+
+/**
+ * The kinds `planIngestRetry` will retry. Kept here rather than imported from
+ * the collection; a test pins it to `planIngestRetry`'s answer so they cannot
+ * drift apart silently.
+ */
+export const PENDING_SWEEP_KINDS = ['pdf', 'docx', 'audio'] as const
+
+export function pendingStuckAfterMs(): number {
+  const raw = Number(process.env[PENDING_JANITOR_STUCK_MIN_VAR])
+  const minutes = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_PENDING_STUCK_MIN
+  return minutes * 60_000
+}
+
+/** The Spanish message written into `ingestError`, shown verbatim under "Detalle". */
+export function neverStartedReason(waitedMinutes: number): string {
+  return (
+    `${NEVER_STARTED_CODE}: el procesamiento del documento no llegó a empezar y lleva más de ` +
+    `${waitedMinutes} minutos en cola. No se envió nada al servicio de IA, así que puedes ` +
+    'volver a intentarlo. Si vuelve a pasar, avisa a quien administra la instalación.'
+  )
+}
+
+export interface PendingSweepResult {
+  /** Rows matching the full predicate that were examined. */
+  examined: number
+  /** Rows failed out with a visible, retryable reason. */
+  stalled: number
+}
+
+/** One sweep over stale `pending` rows. See the section header for the predicate. */
+export async function sweepStalledPending(
+  payload: Pick<Payload, 'find' | 'update'>,
+  opts: {
+    now?: Date
+    limit?: number
+    deadlineMs?: number
+    log?: { warn(o: Record<string, unknown>, m: string): void }
+  } = {},
+): Promise<PendingSweepResult> {
+  const now = opts.now ?? new Date()
+  const deadlineMs = opts.deadlineMs ?? pendingStuckAfterMs()
+  const limit = opts.limit ?? 500
+
+  const cutoff = new Date(now.getTime() - deadlineMs).toISOString()
+  const strandedWhere: Where[] = [
+    { ingestStatus: { equals: 'pending' } },
+    { ingestId: { exists: false } },
+    { contentKind: { equals: UNGATED_CONTENT_KIND } },
+    { anonymisationStatus: { equals: 'n/a' } },
+    { publicationStatus: { equals: 'draft' } },
+    { kind: { in: [...PENDING_SWEEP_KINDS] } },
+    { updatedAt: { less_than: cutoff } },
+  ]
+
+  const page = (await payload.find({
+    collection: 'documents',
+    where: { and: strandedWhere },
+    sort: 'updatedAt',
+    limit,
+    depth: 0,
+    overrideAccess: true,
+  })) as unknown as { docs?: Array<{ id?: number | string }> }
+
+  const docs = page?.docs ?? []
+  const reason = neverStartedReason(Math.round(deadlineMs / 60_000)).slice(0, 500)
+  let stalled = 0
+
+  for (const doc of docs) {
+    if (doc?.id == null) continue
+    try {
+      // 🔴 Guarded on the whole predicate: a retry, a late hook run or a
+      // reviewer action between the read and this write makes it match nothing.
+      const res = (await payload.update({
+        collection: 'documents',
+        where: { and: [{ id: { equals: doc.id } }, ...strandedWhere] },
+        data: { ingestStatus: 'failed', ingestError: reason },
+        overrideAccess: true,
+        context: { __skipDocsExtract: true },
+      })) as unknown as { docs?: unknown[] }
+      if ((res?.docs?.length ?? 0) === 0) continue
+    } catch (err) {
+      opts.log?.warn(
+        { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+        '[embedding-janitor] could not fail out a stale pending row — it stays invisible',
+      )
+      continue
+    }
+    stalled += 1
+  }
+
+  if (docs.length >= limit) {
+    opts.log?.warn(
+      { examined: docs.length, limit },
+      '[embedding-janitor] the pending sweep page was full — more documents may be stuck than this run examined',
+    )
+  }
+
+  return { examined: docs.length, stalled }
+}
+
+// ---------------------------------------------------------------------------
 // Scheduling
 // ---------------------------------------------------------------------------
 
@@ -401,9 +567,31 @@ export function startEmbeddingJanitor(payload: Payload): boolean {
     disabledDetail:
       'A document whose ingest never reached ai-service, or whose completion callback is ' +
       'never delivered, will stay in ingestStatus="embedding" indefinitely with no error ' +
-      'recorded, nothing to move it, and no retry available.',
-    armedContext: () => ({ stuckAfterMinutes: embeddingStuckAfterMs() / 60_000 }),
+      'recorded, nothing to move it, and no retry available. An upload whose background ' +
+      'extract was lost to a restart stays "pending" the same way.',
+    armedContext: () => ({
+      stuckAfterMinutes: embeddingStuckAfterMs() / 60_000,
+      pendingStuckAfterMinutes: pendingStuckAfterMs() / 60_000,
+    }),
     sweep: async (p) => {
+      // ⚠ Pending first, and caught on its own: a throw here must not skip the
+      // embed sweep, which predates it.
+      try {
+        const pending = await sweepStalledPending(p, { log: p.logger })
+        if (pending.stalled > 0) {
+          p.logger.error(
+            pending,
+            '[embedding-janitor] documents sat in ingestStatus="pending" with no ingest id past ' +
+              'the deadline — their background extract was lost (likely a restart) and they ' +
+              'have been failed out with a visible, retryable reason',
+          )
+        }
+      } catch (err) {
+        p.logger.error(
+          { err: err instanceof Error ? err.message : String(err) },
+          '[embedding-janitor] the pending sweep threw',
+        )
+      }
       const result = await sweepStalledEmbeddings(p, { log: p.logger })
       if (result.stalled > 0) {
         /**

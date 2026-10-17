@@ -99,6 +99,19 @@ describe('confirmPublish — retiring the draft copy', () => {
     expect(dataOf(0).publicationStatus).toBe('published')
   })
 
+  it('🔴 marks the ingest ready too — a published document is retrievable by definition', async () => {
+    // The publish move IS an ingest: the shared-corpus copy was just embedded
+    // and confirmed by `ingest.completed`. The callback route returns early on a
+    // publish move, before the ordinary `ready` write, so without this the row
+    // reads `published` + `ingestStatus: 'pending'` forever — "en cola" on a
+    // document the whole ecosistema can already cite.
+    const { payload, dataOf } = fakePayload()
+    await confirmPublish(DOC, { payload, client: mover(vi.fn(async () => ({}))) })
+
+    expect(dataOf(0).ingestStatus).toBe('ready')
+    expect(dataOf(0).ingestError).toBeNull()
+  })
+
   it('🔴 completes when the draft corpus does not exist at all', async () => {
     // The markdown case: nothing was ever ingested, so there is no corpus. The
     // publish must still finish — the shared-corpus ingest already succeeded.
