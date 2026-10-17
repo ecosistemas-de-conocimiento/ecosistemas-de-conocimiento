@@ -243,7 +243,7 @@ services:
     # would arrive empty and only the `postgres` database would exist.
     build:
       context: ./postgres
-    image: edc-postgres:pg16
+    image: edc-postgres:pg16-${EDC_ENV:-local}
     <<: [*restart, *logging]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-edc}
