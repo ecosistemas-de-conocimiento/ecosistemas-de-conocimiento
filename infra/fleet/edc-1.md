@@ -1,9 +1,9 @@
 # edc-1 — the dev + staging box
 
 **Status:** live since 2026-10-17. Dev runs `main` @ `5c157bb` (a conversation delete also
-deletes its own uploads), deployed 2026-10-17 22:31 UTC — see §4i. Staging runs `e3eb1f3`
-(migration `0005_pg_trgm`, session-delete owner guard), deployed 22:14 UTC — see §4h; dev ran it
-from 22:01 UTC. Before that, `643ff4e` on both (12:28 / 12:36 UTC, §4e), and `fcd5247` on
+deletes its own uploads), deployed 2026-10-17 22:31 UTC — see §4i. Staging runs `97d5316` (same
+code as dev's `5c157bb`), deployed 23:03 UTC — see §4j. Before that, `e3eb1f3` on both
+(migration `0005_pg_trgm`, session-delete owner guard; 22:01 / 22:14 UTC, §4h). Before that, `643ff4e` on both (12:28 / 12:36 UTC, §4e), and `fcd5247` on
 dev only (§4g). Before that, `7dbe85c` (05:07 / 05:49 UTC) with the org move of §4c. Verified end to end on both (measured by the deploy agent): login, PDF
 upload → `ready` via the public https callback, real OpenRouter chat answer whose
 `provenance.chunks[]` cites the upload, conversation delete, admin usage panel, lengua filter pages
@@ -197,6 +197,11 @@ ai-service refuses the old internal callback origin. Per application:
   `rerank: true` on each corpus retrieve, behind `CHAT_RERANK` (default on; `off` disables it,
   `apps/web/src/lib/server/engine/rerank.ts`). ⚠ Not yet measured on edc-1: the smoke chats above
   ran before `7e137e2` and returned `rerankScore: null`. Re-check after the next deploy.
+- A `/v1/retrieve` without `mode: 'hybrid'` runs only the dense leg (plus rerank), so chat's
+  default path logs `legs: ["dense","rerank"]` by design. The lexical leg runs only with
+  `mode: 'hybrid'`, and drops out of `legs` when no stem matches (read in code 2026-10-17:
+  `services/ai-service/src/services/rag/retrieve.ts`, `req.mode === 'hybrid'`; chat sends
+  `hybrid` only when `CHAT_RETRIEVAL_MODE` asks for it, `apps/web/src/lib/server/engine/config.ts`).
 
 ### 4e. ✅ Done 2026-10-17 12:28–12:43 UTC: `643ff4e`, both envs
 
@@ -382,9 +387,44 @@ Found along the way:
   through `DELETE /api/documents/<id>` in §4g–§4h left 5 `media` rows (no document points at them)
   and 5 RustFS objects under `edc/eco_1/u_1/` (measured before this deploy, SQL and `find`).
   Only the conversation cascade deletes the `media` row and the object. Not cleaned here.
+  ✅ Cleaned on dev at 22:56 UTC (§4j).
 
 **Disk**, `df -h /` free: 61 GB before; 48 GB after the build; 61 GB after `docker builder prune
 -af` (12.96 GB) and removing dev's `e3eb1f3` images. Images 7.0 GB, build cache 0.
+
+### 4j. ✅ Done 2026-10-17 22:56–23:05 UTC: `97d5316` on staging; dev leftovers removed
+
+All measured by the deploy agent. Dev was not redeployed; it stays on `5c157bb`. From `5c157bb` to
+`97d5316` only a doc and an e2e test changed (`git diff --name-only`), so dev runs the same code.
+
+**Dev leftover files.** The 5 orphan `media` rows of §4i (ids 6–10, `zarzamora*.pdf`, uploader
+user 1) were deleted as admin through the backend (`DELETE /api/media/<id>`, 200 each). Their
+documents and ai-service documents were already gone (§4g–§4h). After, by SQL and `find`: 0
+`zarzamora*` media rows, 0 `zarzamora*` RustFS objects, 0 `media` rows without a document.
+Document counts unchanged: 257 backend (248 `ready`), 253 ai-service.
+
+**Staging** (`dwmvhro1iewb7uvpzg9qbspe`, resolved by its domain through the API):
+
+- Backup (`pg_restore -l` ok, sha256 matched off-box): `/root/backups/20261017T2257Z/`, `edc_ai`
+  100 KB, `edc_backend` 141 KB. Pre-check by hash as in §4h.
+- Deploy: 22:57:50 → 23:03:14 UTC, ≈ 5.4 min (API poll every 20 s). Schema gate: `edc_ai` current
+  at 6 migrations; none ran; `pg_trgm` 1.6 present. 6 containers `healthy`; health 200 on
+  `montaje.` and `api.montaje.`; every container carries `RERANK_API_KEY` `4dbc5b378dde`; no
+  non-preview variable holds `:?` text.
+- Upload cascade test, as the smoke user, the same script as §4i. Conversation A (9) got X
+  (doc 7). Conversation B (10) got Y (doc 8), and X was attached to B too. One chat in B: 8.7 s,
+  answer from Y, citing `cascade-y.pdf` with `rerankScore` 0.99994. Deleting B (200) removed Y from
+  all 5 places (backend row, `media` row, ai-service document, RustFS object, "Mis documentos")
+  within 5 s, and left X in all 5. Deleting A (200) then removed X from all 5. The backend logged
+  `post-commit upload cleanup finished` for both. No orphan chunks (SQL). Rerank since the deploy:
+  2 `rerank ok`, 0 `rerank degraded` (ai-service log).
+- Counts after: 4 backend documents (4 `ready`), 6 ai-service — the same as before the test.
+- ⚠ Staging still holds 2 orphan `media` rows from §4h's document deletes (ids 5 and 6,
+  `zarzamora.pdf` / `zarzamora-1.pdf`) and their 2 RustFS objects. Not cleaned: only the dev
+  cleanup was approved.
+
+**Disk**, `df -h /` free: 61 GB before; 48 GB after staging's build; 61 GB after `docker builder
+prune -af` (12.96 GB) and removing staging's `e3eb1f3` images. Images 7.0 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
