@@ -31,6 +31,7 @@
     LOOSE_DOC_OPTIONS,
   } from '$lib/documents';
   import { ingestBadge } from '$lib/ingest';
+  import { canRetryGraph, GRAPH_RETRY_LABEL, graphBadge } from '$lib/graphStatus';
   import { publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
   import type { WorkingDoc } from '$lib/types';
 
@@ -193,6 +194,7 @@
         {@const gate = gateOf(d)}
         {@const ing = ingestBadge(d.ingestStatus, d.kind, d.audioMeta)}
         {@const loose = isLoose(d)}
+        {@const graph = graphBadge(d.graphStatus, d.graphError)}
         <li class="row" class:loose data-testid={`owned-doc-${d.id}`}>
           <div class="row-head">
             <span class="name">{d.title}</span>
@@ -203,6 +205,13 @@
               <span class="chip" title={ing.title}>{ing.label}</span>
             {/if}
             <span class="pub-badge pub-{pub.tone}" title={pub.description}>{pub.label}</span>
+            {#if graph}
+              <span
+                class="chip graph-{graph.tone}"
+                title={graph.title}
+                data-testid={`graph-status-${d.id}`}>{graph.label}</span
+              >
+            {/if}
           </div>
 
           {#if loose}
@@ -251,6 +260,18 @@
               />
             {:else if gate.reason}
               <span class="blocked">{publishBlockedCopy(gate.reason)}</span>
+            {/if}
+            {#if canRetryGraph(d)}
+              <Button
+                tone="warning"
+                variant="outline"
+                size="sm"
+                label={GRAPH_RETRY_LABEL}
+                loading={d.graphRetryPending === true}
+                disabled={busyId === d.id || d.graphRetryPending === true}
+                dataTestId={`graph-retry-${d.id}`}
+                onClick={() => app.retryGraph(d.id)}
+              />
             {/if}
             <!-- 🔴 The destructive verb, and the only one on this screen that
                  destroys anything. Toned as danger and worded as "Eliminar",
@@ -458,6 +479,10 @@
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--edc-color-ink-soft);
+  }
+  .chip.graph-failed {
+    border-color: var(--edc-color-danger);
+    color: var(--edc-color-danger);
   }
   .loose-note {
     margin: 0;

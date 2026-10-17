@@ -5,20 +5,33 @@ pnpm test          # every workspace, in parallel
 pnpm typecheck
 ```
 
-Current state, measured 2026-08-29: **2,593 passing, 0 skipped, 0 failing.**
+Current unit counts, **measured 2026-10-17** with `vitest run` in each workspace, on
+Rodrigo's 16-core dev box at load average ~17 (other agents running), from a worktree
+at `main` plus the graph-status badge change. All passing, 0 skipped, 0 failing.
 
-| Workspace | Tests |
-| --- | ---: |
-| `apps/web` | 888 |
-| `apps/backend` | 884 |
-| `services/ai-service` | 688 |
-| `packages/ai-client` | 55 |
-| `packages/identity-client` | 50 |
-| `packages/chat-engine` | 28 |
+| Workspace | Tests | Provenance |
+| --- | ---: | --- |
+| `apps/backend` | 1,655 | measured 2026-10-17 |
+| `apps/web` | 1,442 | measured 2026-10-17 |
+| `packages/chat-engine` | 211 | measured 2026-10-17 |
+| `services/ai-service` | 688 | quoted from this file, 2026-08-29; not re-measured |
+| `packages/ai-client` | 55 | quoted from this file, 2026-08-29; not re-measured |
+| `packages/identity-client` | 50 | quoted from this file, 2026-08-29; not re-measured |
+
+⚠ **A fresh worktree fails 27 backend test files and 4 web test files before you build the
+packages.** `@edc/ai-client`, `@edc/identity-client` and `@edc/chat-engine` export from
+`dist/`, which is gitignored. The error is `Failed to resolve entry for package` or
+`Cannot find package '@edc/chat-engine/core'`. Build them once (measured 2026-10-17):
+
+```bash
+pnpm --filter @edc/ai-client build
+pnpm --filter @edc/identity-client build
+pnpm --filter @edc/chat-engine build
+```
 
 ⚠ **`pnpm test` is the UNIT suite only.** It does not touch a running stack. The
 end-to-end suites are separate, need the containers up, and are described under
-"The e2e suites" below — including the one application bug they currently catch.
+"The e2e suites" below.
 
 The 13 that used to show as skipped were `services/ai-service/src/routes/registry.test.ts`,
 and they were never really a skip: the suite published its throwaway Postgres on a
@@ -118,24 +131,79 @@ missing fixture.
   asserts content-word recall against deliberately robotic speech, which is the *harder*
   case. Making it prettier would weaken the test.
 
-## The e2e suites — they now actually run
+## The e2e suites
 
-Measured 2026-08-29, against the live `infra/` stack. Until this date **neither suite
-had ever executed**: both were written against a stack that was not up, so every
-assertion in them was an unverified claim. They are no longer.
+Last recorded run: **2026-10-17, on an isolated fake-provider stack** (method below).
+Results quoted from `plan/auditoria-ia-2026-10-17.md` (an untracked findings doc in the
+main checkout), where they are marked measured.
 
-| Suite | Command | Result |
-| --- | --- | ---: |
-| `apps/backend/e2e` (API-level, vitest) | `pnpm --filter @edc/backend test:e2e` | **96 passing, 1 failing, 12 skipped** |
-| `apps/web/e2e/revision.spec.ts` (Playwright) | `pnpm --filter @edc/web test:e2e revision` | **8 passing** |
-| `apps/web/e2e/journey.spec.ts` (Playwright) | `pnpm --filter @edc/web test:e2e journey` | **blocked — see below** |
+| Suite | Result on the fake stack |
+| --- | --- |
+| `apps/backend/e2e/anonymisation.e2e.ts` | 3/3 passing |
+| `apps/backend/e2e/holds.e2e.ts` | 20/20 passing |
+| `apps/backend/e2e/tenancy.e2e.ts` | 22/22 passing |
+| `apps/backend/e2e/documents.e2e.ts` + `testimonyRead.e2e.ts` | 22/22 passing |
+| `apps/web/e2e/grafo.spec.ts` | 3/3 passing |
+| `apps/backend/e2e/audio.e2e.ts` | ⚠ failing — cause not yet investigated |
+| `apps/backend/e2e/identity.e2e.ts` | ⚠ failing — cause not yet investigated |
+| `apps/backend/e2e/ratings.e2e.ts` | ⚠ failing — cause not yet investigated |
+| `apps/web/e2e/retrieval.spec.ts` | not run — needs a real-model stack |
+| `apps/web/e2e/journey.spec.ts`, cite step | not run — needs a real-model stack |
 
-The one failure and the twelve skips are **all the same application bug**, not test
-problems. `POST /api/messages` answers `400 The following field is invalid: Corpus
-Status` for every authenticated caller, so no chat turn can be written at all. See
-"Known failures" below. Nothing was weakened to hide it.
+🔴 **`retrieval.spec.ts` and the journey's cite step cannot pass on the fake stack.** The
+fake provider returns random embeddings, so retrieval ranks chunks at random and no
+citation is predictable. Run them against a stack with a real model key (a paid call).
 
-### Running them yourself
+Not in the table: `publish.e2e.ts`, `storage.e2e.ts`, `revision.spec.ts` and the rest of
+`journey.spec.ts` have no recorded result on this date.
+
+### Running them against an isolated fake-provider stack
+
+This keeps the e2e run off the shared `edc` demo stack and its volumes, and costs no
+model calls. The method below is quoted from the 2026-10-17 run; it is not re-run here.
+
+1. Copy `infra/docker-compose.override.yml` to a scratch file and delete two things from
+   the copy: the top-level `name: edc`, and the `networks: default: name: edc` block. Both
+   pin the project to the shared demo; without them `-p` picks the names.
+2. Change the host ports in the copy (the `*_HOST_PORT` env vars work) so they do not
+   collide with a running demo. Keep them in the 454xx block.
+3. Turn on the fake provider in `infra/.env`: uncomment the four-line fake-provider
+   block from `.env.example` (`COMPOSE_PROFILES=fake` plus the chat, embeddings and key
+   lines). ⚠ The three URL/key lines reach ai-service through `env_file: .env`
+   (`infra/docker-compose.yml`), so exporting them in your shell does nothing; only
+   `COMPOSE_PROFILES` works from the shell (inferred from reading the compose file).
+   Then bring it up:
+
+```bash
+cd infra
+docker compose -p edc-e2e-<x> -f docker-compose.yml -f /path/to/override-copy.yml \
+  up -d --build --wait
+```
+
+4. Point the suites at it:
+
+```bash
+export E2E_BACKEND_URL=http://localhost:<backend-port>
+export E2E_AI_SERVICE_URL=http://localhost:<ai-service-port>
+export EDC_E2E_COMPOSE_PROJECT=edc-e2e-<x>   # the suites' direct-SQL seeding uses it
+export EDC_WEB_URL=http://localhost:<web-port>
+pnpm --filter @edc/backend test:e2e
+pnpm --filter @edc/web     test:e2e
+```
+
+5. 🔴 Tear it down with its volumes and its locally built images. The disk on the dev
+   box sat at 95% on 2026-10-17 (measured, `df -h /`):
+
+```bash
+docker compose -p edc-e2e-<x> -f docker-compose.yml -f /path/to/override-copy.yml \
+  down -v --rmi local
+```
+
+⚠ **A throwaway Postgres for a one-off check:** `docker run --rm --tmpfs /var/lib/postgresql/data …`.
+`--rm` deletes the container on exit and `--tmpfs` keeps its data in memory, so nothing
+lands on the disk.
+
+### Running them against the local demo stack
 
 ```bash
 cd infra && docker compose up -d --wait     # 1. the stack must be up
@@ -147,7 +215,11 @@ pnpm --filter @edc/web     test:e2e         # 3b. browser
 Both suites read `infra/.env` at runtime for `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`
 and the Postgres credentials. Neither has a secret in it, and neither ever prints one.
 
-⚠ **From a `git worktree`, two things need pointing.**
+⚠ **The demo stack's images may predate your checkout.** After rebuilding past the
+per-ecosistema org change, run `scripts/ai-org-per-ecosystem.sql` or retrieval comes
+back empty. See "Stack local" in `plan/deploy-and-local-demo.md`.
+
+⚠ **From a `git worktree`, three things need pointing.**
 
 - `infra/.env` is gitignored and exists only in the MAIN checkout. Both suites already
   walk back to it through `.git`; `EDC_E2E_ENV_FILE` (backend) or `EDC_ENV_FILE` (web)
@@ -197,24 +269,13 @@ assert by **slicing the text back out** — never by trusting the arithmetic. Ge
 this wrong highlights the wrong characters and tells a reviewer that a harmless word is
 the thing still identifying someone.
 
-### Known failures — application bugs, not test bugs
-
-- 🔴 **`POST /api/messages` → 400 for every authenticated caller.**
-  `apps/backend/src/collections/Messages.ts:105`. The `protectMessageCorpusState`
-  `beforeValidate` hook `delete`s `corpusStatus` on create, on the stated assumption
-  that "removing the key lets Payload apply the default". Payload resolves field
-  defaults *before* the collection hook, so the field arrives `required` and empty.
-  Measured directly against the running backend, and against the seeded admin.
-  It breaks **chat in the live app**, not only the suites: the web BFF creates turns
-  through this same route (`apps/web/src/routes/api/generate/+server.ts:88` and
-  `apps/web/src/routes/api/sessions/[id]/messages/+server.ts:51`).
-  Blocks: `ratings.e2e.ts` (12), `tenancy.e2e.ts` "messages are private via their
-  session" (1), and `journey.spec.ts` from the chat step onwards.
-
 ## Not covered by any of this
 
-- **No `docker build` has ever run.** Every Dockerfile is unverified.
-- ~~**The audio path has never run end to end.**~~ ✅ It has, 2026-08-29:
+- ~~**No `docker build` has ever run.**~~ The images build: the local demo stack runs
+  built images, and the 2026-10-17 isolated e2e run built its own (quoted from the
+  findings doc above).
+- ~~**The audio path has never run end to end.**~~ ✅ It has, 2026-08-29 (on 2026-10-17
+  `audio.e2e.ts` fails on the fake stack, cause not yet investigated):
   `audio.e2e.ts` uploaded the Piper `.m4a`, audio-service transcribed it, and the
   transcript reached `ready` through the same ingest path a PDF uses — **75.5 s** for
   the 55.2 s clip, measured. The old "~9 s for 45 s" figure was against the retired

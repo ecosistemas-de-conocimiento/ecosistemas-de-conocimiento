@@ -37,6 +37,7 @@ import {
   publishGate,
 } from '../publication';
 import { relationIds, relationSessions } from '../documents';
+import { graphRetryErrorCopy, parseGraphStatus } from '../graphStatus';
 import {
   belongsTo,
   clearEcosystemScopedState,
@@ -228,7 +229,13 @@ function docFromBackend(row: Record<string, unknown>): WorkingDoc {
  * conversation and has nothing to name.
  */
 function ownedDocFromBackend(row: Record<string, unknown>): WorkingDoc {
-  return { ...docFromBackend(row), attachedSessions: relationSessions(row.session) };
+  return {
+    ...docFromBackend(row),
+    attachedSessions: relationSessions(row.session),
+    graphStatus: parseGraphStatus(row.graphStatus),
+    graphError: typeof row.graphError === 'string' ? row.graphError : null,
+    uploadedByCaller: row.uploadedByCaller === true,
+  };
 }
 
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
@@ -1701,6 +1708,45 @@ class AppStore {
       this.ownedDocsDegraded = { reason: 'unavailable' };
     } finally {
       this.ownedDocsLoading = false;
+    }
+  }
+
+  /**
+   * Rebuild one owned document's graph ("Reconstruir grafo" in Mis documentos).
+   *
+   * Optimistic only about the request: on 202 the row shows `pending`, which is
+   * what the backend said. No poll — the badge refreshes on the next list read.
+   */
+  async retryGraph(docId: string): Promise<boolean> {
+    const d = this.ownedDocs.find((x) => x.id === docId);
+    if (!d || d.graphRetryPending) return false;
+    d.graphRetryPending = true;
+    try {
+      const res = await fetch(`/api/documents/${encodeURIComponent(docId)}/graph-retry`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (!res.ok) {
+        toasts.push({
+          kind: 'error',
+          title: 'No se pudo reconstruir el grafo',
+          message: graphRetryErrorCopy(res.status),
+        });
+        return false;
+      }
+      d.graphStatus = 'pending';
+      d.graphError = null;
+      return true;
+    } catch (err) {
+      console.error('retryGraph failed', err);
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo conectar',
+        message: 'Revisa tu conexión e inténtalo de nuevo.',
+      });
+      return false;
+    } finally {
+      d.graphRetryPending = false;
     }
   }
 

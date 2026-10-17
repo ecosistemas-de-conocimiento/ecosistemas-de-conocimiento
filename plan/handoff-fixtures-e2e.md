@@ -86,8 +86,10 @@ audio-service.
 
 ## ⚠ No verificado
 
-- **Las suites e2e mismas.** Necesitan un stack docker vivo, así que ninguna de las
-  aserciones nuevas se ha ejecutado.
+- ~~**Las suites e2e mismas.**~~ Ya corrieron: 2026-08-29 contra el stack local, y
+  2026-10-17 contra un stack aislado con el proveedor falso (anonymisation, holds,
+  tenancy, documents, testimonyRead y grafo pasan; audio, identity y ratings fallan,
+  causa sin investigar). Cifras citadas de `TESTING.md`, que dice cómo se midieron.
 - El tiempo de transcripción del clip nuevo de 55.2s. La cifra vieja de "~9s para
   45s" se midió contra el clip retirado, y cada comentario lo dice.
 
