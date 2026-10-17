@@ -191,10 +191,11 @@ ai-service refuses the old internal callback origin. Per application:
   container answers `legs: ["dense","lexical","rerank"]` with `rerankScore` on chunks, and logs
   `rerank ok` with `provider: deepinfra`. Dev, 3 paired calls on `eco-1`: 0.42–0.63 s without
   rerank, 1.32–3.18 s with it (pool 20; dev was mid-ingest). The log line carries no duration.
-- ⚠ **The EDC chat does not ask for rerank.** ai-service reranks only when a request sends
-  `rerank: true`; `apps/web` passes no `retrievalPolicy` to `@edc/chat-engine`, so chat turns
-  still return `rerankScore: null` (measured: one chat per env, both answered with a citation).
-  Turning it on for chat is a code change.
+- ✅ **Chat now asks for rerank** (code since `7e137e2`, read 2026-10-17). ai-service reranks
+  only when a request sends `rerank: true`. `apps/web` now passes a `retrievalPolicy` with
+  `rerank: true` on each corpus retrieve, behind `CHAT_RERANK` (default on; `off` disables it,
+  `apps/web/src/lib/server/engine/rerank.ts`). ⚠ Not yet measured on edc-1: the smoke chats above
+  ran before `7e137e2` and returned `rerankScore: null`. Re-check after the next deploy.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
@@ -310,25 +311,29 @@ read one key at a time (`grep -m1 '^KEY=' file | cut -d= -f2-`).
 
 ## 6. 🔴 The budget step — every fresh ai-service
 
-⚠ Since §4c, chat spends from org `edc-eco-<organization id>`, not `demo`. Replace `demo` with
-that org in the commands below. A new ecosistema gets its row from the backend at creation.
+**Which org.** Chat spends from one ai-service org per ecosistema: `edc-eco-<organization id>`
+(read in code: `aiOrgSuffix` in `apps/backend/src/lib/aiClient.ts` and `aiOrgFor` in
+`apps/web/src/lib/server/aiService/client.ts` send `X-AI-Org: eco-<id>`; the key's
+`delegateOrgPrefix: "edc-"` makes it `edc-eco-<id>`). The key's own org inside `API_KEYS` is `edc`;
+only calls with no ecosistema in hand use it. The org is never the Payload organization slug.
 
-A new ai-service database has no budget row, so every chat answers **402**. After the first deploy
-of an environment, or after its `edc_ai` database is recreated, run inside that environment's
-ai-service container (it is not exposed publicly):
+A new ecosistema gets its budget row from the backend at creation (`provisionEcosystem.ts`,
+`AI_ECOSYSTEM_BUDGET_USD`, default $5). A new ai-service **database** has no rows at all, so every
+chat answers **402** until each existing ecosistema's org has one. After the first deploy of an
+environment, or after its `edc_ai` database is recreated, run inside that environment's ai-service
+container (it is not exposed publicly), once per ecosistema:
 
 ```sh
 C=$(docker ps --format '{{.Names}}' | grep '^ai-service-<app uuid>')
 docker exec "$C" curl -s -X PUT \
   -H "Authorization: Bearer <AI_SERVICE_ADMIN_API_KEY of that env>" \
   -H 'Content-Type: application/json' \
-  http://127.0.0.1:3000/v1/budget/demo -d '{"limitUsd":5}'
+  http://127.0.0.1:3000/v1/budget/edc-eco-<organization id> -d '{"limitUsd":5}'
 ```
 
-The org is `demo` in both environments: it is the `org` inside `API_KEYS`, not the Payload
-organization slug. Done for dev and staging on 2026-10-17 (`limitUsd: 5`). Read the remainder with
-`GET /v1/budget/demo`. Since §4c the `API_KEYS` org is `edc`, and chat reaches `edc-eco-<id>`
-through the `X-AI-Org` header.
+Read the remainder with `GET /v1/budget/edc-eco-<organization id>`. State on 2026-10-17
+(measured, §4c): `edc-eco-1` has a $5 row on dev and staging. The older `demo` row is kept on both
+only because pre-§4c spend is booked to it; nothing spends from `demo` any more.
 
 ---
 
