@@ -22,6 +22,19 @@ describe.skipIf(stackDown)('identity', () => {
   let world: World
 
   beforeAll(async () => {
+    // 🔴 A STACK WITHOUT A SIGNING KEYPAIR FAILS HERE, BY NAME. Nothing generates
+    // AUTH_PRIVATE_KEY / AUTH_PUBLIC_KEY; a fresh `infra/.env` copied from
+    // `.env.example` has neither. The backend then boots, serves an EMPTY JWK Set
+    // and answers every mint with 503 — correct behaviour, but the tests below
+    // would report it as a dozen unrelated status mismatches.
+    const jwks = await apiGet(anonymous, '/.well-known/jwks.json')
+    if (!Array.isArray(jwks.body?.keys) || jwks.body.keys.length === 0) {
+      throw new Error(
+        `[e2e] ${BACKEND_URL} serves an empty JWK Set: the stack has no identity signing ` +
+          'keypair. Run `pnpm --filter @edc/backend keygen`, paste AUTH_PRIVATE_KEY and ' +
+          'AUTH_PUBLIC_KEY into infra/.env, and recreate the backend container.',
+      )
+    }
     admin = await loginAdmin()
     world = await provisionWorld()
   }, 120_000)

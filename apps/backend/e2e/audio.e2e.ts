@@ -33,7 +33,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { apiGet, apiJson, pollUntil, uploadFixture, type Caller } from './support/api'
 import { AUDIO_SERVICE_URL } from './support/env'
 import { fixtures, type FixtureEntry } from './support/fixtures'
-import { stackDown } from './support/stack'
+import { audioDown } from './support/stack'
 import { provisionWorld, type World } from './support/world'
 
 /**
@@ -72,7 +72,7 @@ async function audioState(caller: Caller, id: number): Promise<AudioState> {
   }
 }
 
-describe.skipIf(stackDown)('audio transcription', () => {
+describe.skipIf(audioDown)('audio transcription', () => {
   let world: World
   let clip: FixtureEntry
   let docId: number
@@ -83,7 +83,7 @@ describe.skipIf(stackDown)('audio transcription', () => {
   beforeAll(async () => {
     world = await provisionWorld()
     // 🔴 INSIDE the hook, never at module scope. `fixtures()` throws when the
-    // fixtures have not been built, and this suite is `skipIf(stackDown)` — a
+    // fixtures have not been built, and this suite is `skipIf(audioDown)` — a
     // top-level call would turn a legitimate "I have no stack running" skip into
     // a collection error before the skip is ever consulted.
     clip = fixtures().audio

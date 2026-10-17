@@ -63,11 +63,18 @@ describe.skipIf(stackDown)('ratings', () => {
     const res = await apiJson(world.alice.caller, 'POST', '/api/ratings/upsert', {
       message: assistantMessageId,
       stars: 4,
+      // ⚠ Free text is kept ONLY with `reason: 'other'` (`normalizeFeedback`
+      // in collections/Ratings.ts). A comment with no reason, or with a preset,
+      // is a 400 — so the reason is sent here, not left off.
+      reason: 'other',
       comment: 'Útil',
     })
     expect(res.status).toBe(201)
     expect(res.body.created).toBe(true)
     expect(res.body.doc.stars).toBe(4)
+    expect(res.body.doc.reason).toBe('other')
+    // The author always reads back their own note (`canReadRatingComment`).
+    expect(res.body.doc.comment).toBe('Útil')
     // Derived, never declared: both come from the session the message hangs off.
     expect(idOf(res.body.doc.session)).toBe(sessionId)
     expect(idOf(res.body.doc.organization)).toBe(world.orgA.id)
@@ -77,12 +84,16 @@ describe.skipIf(stackDown)('ratings', () => {
   it('re-rating UPDATES rather than appending', async () => {
     const res = await apiJson(world.alice.caller, 'POST', '/api/ratings/upsert', {
       message: assistantMessageId,
+      // A preset from the 1-3 list, and no text: a preset never carries one.
       stars: 2,
-      comment: 'Pensándolo mejor, no tanto',
+      reason: 'incomplete',
     })
     expect(res.status).toBe(200)
     expect(res.body.created).toBe(false)
     expect(res.body.doc.stars).toBe(2)
+    expect(res.body.doc.reason).toBe('incomplete')
+    // Re-rating writes reason AND comment unconditionally, so the old note goes.
+    expect(res.body.doc.comment ?? null).toBeNull()
   })
 
   it('🔴 exactly ONE row exists for (message, user) after rating and re-rating', async () => {
@@ -150,6 +161,19 @@ describe.skipIf(stackDown)('ratings', () => {
     expect(res.status).toBe(403)
     expect(res.text).toMatch(/only assistant answers/i)
     expect((await ratingsFor(userMessageId)).body.totalDocs).toBe(0)
+  })
+
+  it('refuses free text without the `other` reason', async () => {
+    for (const reason of [undefined, 'incomplete']) {
+      const res = await apiJson(world.alice.caller, 'POST', '/api/ratings/upsert', {
+        message: assistantMessageId,
+        stars: 2,
+        reason,
+        comment: 'Texto suelto',
+      })
+      expect(res.status).toBe(400)
+      expect(res.text).toMatch(/free text is only stored with/i)
+    }
   })
 
   it('refuses fractional and out-of-range stars', async () => {
