@@ -323,10 +323,12 @@ export const retrievedChunkSchema = z.object({
  * (learned-sparse bge-m3 inner product over `chunks.sparse_embedding`) are two
  * DIFFERENT legs whose scores both land in `RetrievedChunk.lexicalScore`. That
  * shared slot is why this enum exists: without it a response cannot say which
- * of the two filled it, or whether it was filled at all.
+ * of the two filled it, or whether it was filled at all. `trigram` (pg_trgm
+ * word similarity over `chunks.text`, opt-in via `HYBRID_LEXICAL_LEG`) is a
+ * third lexical leg sharing that slot; it appears only where enabled.
  */
 export const retrievalLegSchema = z
-  .enum(['dense', 'lexical', 'sparse', 'rerank'])
+  .enum(['dense', 'lexical', 'sparse', 'trigram', 'rerank'])
   .openapi('RetrievalLeg');
 
 /** `POST /v1/retrieve`. */

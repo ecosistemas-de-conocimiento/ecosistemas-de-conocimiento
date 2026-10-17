@@ -439,3 +439,236 @@ describe('runAnonymisationGate — domicilios', () => {
     expect(result.reason).not.toContain('Mari')
   })
 })
+
+describe('runAnonymisationGate — 🔴 a title before a name is part of the name', () => {
+  // Measured 2026-10-17 on the local stack: the content stage redacted the name
+  // and left the title, and verify held on "Don [Persona F]" and
+  // "La maestra [Persona J]". Rodrigo's rule: the title goes with the name.
+  const TITLED = [
+    'Don Fernando Vázquez nos prestaba su camioneta.',
+    'La maestra Imelda nos daba clases los sábados.',
+    'Después Fernando Vázquez se fue al norte.',
+  ].join('\n')
+
+  /** Stage 3 finds the bare names; stage 4 reports any title still glued to a placeholder. */
+  function titleBlindDetector(): PersonDetector {
+    let calls = 0
+    return {
+      name: 'title-blind',
+      async detect({ text }) {
+        calls += 1
+        if (calls === 1) {
+          return [
+            { text: 'Fernando Vázquez', type: 'persona' },
+            { text: 'Imelda', type: 'persona' },
+          ]
+        }
+        return [...text.matchAll(/(?:Don|La maestra) \[Persona [A-Z]+\]/g)].map((m) => ({
+          text: m[0],
+          type: 'persona' as const,
+        }))
+      },
+    }
+  }
+
+  it('verify can no longer see "Don [Persona F]": redaction absorbed the title', async () => {
+    const result = await runAnonymisationGate(input({ text: TITLED }), {
+      detector: titleBlindDetector(),
+    })
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe(
+      [
+        '[Persona A] nos prestaba su camioneta.',
+        '[Persona B] nos daba clases los sábados.',
+        'Después [Persona A] se fue al norte.',
+      ].join('\n'),
+    )
+  })
+
+  it('a titled span from the model gets the SAME label as the bare name', async () => {
+    const result = await runAnonymisationGate(input({ text: TITLED }), {
+      detector: staticDetector([
+        { text: 'Don Fernando Vázquez', type: 'persona' },
+        { text: 'Fernando Vázquez', type: 'persona' },
+        { text: 'La maestra Imelda', type: 'persona' },
+      ]),
+    })
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.report.pseudonyms).toBe(2)
+    expect(result.redactedText).not.toMatch(/Don|maestra/)
+  })
+
+  it('a roster name keeps its title out too', async () => {
+    const result = await runAnonymisationGate(
+      input({
+        contentKind: 'conversacion',
+        text: 'Le pregunté a doña Ana López.',
+        roster: ['Ana López'],
+      }),
+      {
+        detector: staticDetector((text) =>
+          /doña \[/i.test(text) ? [{ text: 'doña', type: 'persona' }] : [],
+        ),
+      },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe('Le pregunté a [Persona A].')
+  })
+
+  it('🔴 "[Persona A] López" still HOLDS: a surname after the placeholder is a leak', async () => {
+    let calls = 0
+    const result = await runAnonymisationGate(input({ text: 'Don Fernando López nos ayudó.' }), {
+      detector: {
+        name: 'half',
+        async detect({ text }) {
+          calls += 1
+          if (calls === 1) return [{ text: 'Fernando', type: 'persona' }]
+          return text.includes('[Persona A] López')
+            ? [{ text: '[Persona A] López', type: 'persona' }]
+            : []
+        },
+      },
+    })
+    expect(result.status).toBe('hold')
+    if (result.status !== 'hold') return
+    expect(result.stage).toBe('verify')
+    expect(result.redactedText).toBe('[Persona A] López nos ayudó.')
+  })
+
+  it('🔴 a bare surname still HOLDS', async () => {
+    let calls = 0
+    const result = await runAnonymisationGate(
+      input({ text: 'La maestra Imelda llegó. Ya conocíamos a Ortiz.' }),
+      {
+        detector: {
+          name: 'half',
+          async detect({ text }) {
+            calls += 1
+            if (calls === 1) return [{ text: 'Imelda', type: 'persona' }]
+            return text.includes('Ortiz') ? [{ text: 'Ortiz', type: 'persona' }] : []
+          },
+        },
+      },
+    )
+    expect(result.status).toBe('hold')
+    if (result.status !== 'hold') return
+    expect(result.stage).toBe('verify')
+  })
+
+  it('a finding that is only placeholders and punctuation is not a leftover', async () => {
+    // Measured 2026-10-17: verify reported "[Domicilio AP], [Domicilio AQ]".
+    let calls = 0
+    const result = await runAnonymisationGate(input({ text: 'Nací en Tlapa, Guerrero.' }), {
+      detector: {
+        name: 'pairs',
+        async detect({ text }) {
+          calls += 1
+          if (calls === 1) {
+            return [
+              { text: 'Tlapa', type: 'lugar' },
+              { text: 'Guerrero', type: 'lugar' },
+            ]
+          }
+          const m = text.match(/\[Domicilio [A-Z]+\], \[Domicilio [A-Z]+\]/)
+          return m ? [{ text: m[0], type: 'lugar' }] : []
+        },
+      },
+    })
+    expect(result.status).toBe('ready')
+  })
+
+  it('🔴 a title-only finding with no placeholder still HOLDS', async () => {
+    let calls = 0
+    const result = await runAnonymisationGate(input({ text: 'Llegó Don y se sentó.' }), {
+      detector: {
+        name: 'title-only',
+        async detect() {
+          calls += 1
+          return calls === 1 ? [] : [{ text: 'Don', type: 'persona' }]
+        },
+      },
+    })
+    expect(result.status).toBe('hold')
+  })
+})
+
+describe('runAnonymisationGate — 🔴 a finding never rewrites inside a placeholder', () => {
+  // Measured 2026-10-17, 9,454 words: stage 2 had written "[Domicilio E]", the
+  // model then returned part of that placeholder as a finding, and split/join
+  // turned every one into "[[Domicilio AH]E]", which verify held on 13 times.
+  it('leaves earlier placeholders intact when the model echoes part of one', async () => {
+    let calls = 0
+    const result = await runAnonymisationGate(
+      input({ text: 'Vivo en Tlapa y trabajo con Ana. Tlapa es bonito.' }),
+      {
+        detector: {
+          name: 'echo',
+          async detect({ text }) {
+            calls += 1
+            if (calls === 1) {
+              return [
+                { text: 'Tlapa', type: 'lugar' },
+                { text: 'Ana', type: 'persona' },
+              ]
+            }
+            return []
+          },
+        },
+      },
+    )
+    expect(result.status).toBe('ready')
+
+    // Now the echo itself: a second content finding that sits inside "[Domicilio A]".
+    let n = 0
+    const echoed = await runAnonymisationGate(
+      input({ text: 'Vivo en Tlapa y trabajo con Ana.' }),
+      {
+        detector: {
+          name: 'echo2',
+          async detect() {
+            n += 1
+            if (n === 1) {
+              return [
+                { text: 'Tlapa', type: 'lugar' },
+                { text: 'Ana', type: 'persona' },
+                { text: 'Domicilio', type: 'lugar' },
+                { text: 'Persona', type: 'persona' },
+              ]
+            }
+            return []
+          },
+        },
+      },
+    )
+    expect(echoed.status).toBe('ready')
+    if (echoed.status !== 'ready') return
+    expect(echoed.redactedText).toBe('Vivo en [Domicilio A] y trabajo con [Persona A].')
+  })
+
+  it('still replaces a finding that occurs both inside and outside a placeholder', async () => {
+    let n = 0
+    const result = await runAnonymisationGate(
+      input({ text: 'Vivo en Tlapa. Mi perro se llama Domicilio.' }),
+      {
+        detector: {
+          name: 'both',
+          async detect() {
+            n += 1
+            return n === 1
+              ? [
+                  { text: 'Tlapa', type: 'lugar' },
+                  { text: 'Domicilio', type: 'persona' },
+                ]
+              : []
+          },
+        },
+      },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe('Vivo en [Domicilio A]. Mi perro se llama [Persona A].')
+  })
+})

@@ -42,6 +42,7 @@
  * backwards.
  */
 
+import { stripLeadingTitles } from './titles'
 import { ADDRESS_PLACEHOLDER_PREFIX, PERSON_PLACEHOLDER_PREFIX } from './types'
 
 /** Alphabet for the label suffix. After `Z` it rolls over to `AA`, `AB`, … */
@@ -74,7 +75,9 @@ function labelSuffix(index: number): string {
  * person in exactly the documents that matter most.
  */
 export function normaliseName(name: string): string {
-  return name
+  // ⚠ "Don Fernando Vázquez" and "Fernando Vázquez" are one person. The title
+  // is redacted WITH the name (see `titles.ts`), so it must not split the bucket.
+  return stripLeadingTitles(name)
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/gu, '')
     .toLowerCase()

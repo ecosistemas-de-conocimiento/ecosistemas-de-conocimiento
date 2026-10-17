@@ -242,3 +242,130 @@ describe('the ceilings are configurable, and have sane defaults', () => {
     expect(totalWaitBudgetMs()).toBe(0)
   })
 })
+
+describe('withRateLimitRetry — retryTransient (fake timers, the real sleep)', () => {
+  /** Shaped like `@edc/ai-client`'s errors without importing the classes. */
+  const unavailable = (retryAfterMs?: number) =>
+    Object.assign(new Error('Service Unavailable'), { status: 503, retryAfterMs })
+  const fetchFailed = (code = 'ECONNRESET') =>
+    Object.assign(new TypeError('fetch failed'), {
+      cause: Object.assign(new Error(code), { code }),
+    })
+  const ourTimeout = () =>
+    Object.assign(new Error('timed out'), {
+      name: 'RequestAbortedError',
+      status: 0,
+      reason: 'timeout',
+    })
+  const cancelled = () =>
+    Object.assign(new Error('cancelled'), {
+      name: 'RequestAbortedError',
+      status: 0,
+      reason: 'cancel',
+    })
+
+  /** Run `withRateLimitRetry` to completion under fake timers; returns the waits taken. */
+  async function drive<T>(
+    fn: () => Promise<T>,
+    opts: Parameters<typeof withRateLimitRetry>[1] = {},
+  ) {
+    vi.useFakeTimers()
+    try {
+      const waits: number[] = []
+      const p = withRateLimitRetry(fn, { random: NO_JITTER, retryTransient: true, ...opts })
+      const settled = p.then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      )
+      for (let i = 0; i < 20; i += 1) {
+        const before = Date.now()
+        await vi.advanceTimersToNextTimerAsync()
+        if (Date.now() > before) waits.push(Date.now() - before)
+      }
+      return { ...(await settled), waits }
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+
+  it('429 → success', async () => {
+    const fn = vi.fn().mockRejectedValueOnce(rateLimited(2)).mockResolvedValueOnce('ok')
+    const r = await drive(fn)
+    expect(r.ok && r.value).toBe('ok')
+    expect(r.waits).toEqual([2_000])
+  })
+
+  it('429 on every attempt → gives up after 1 + 3 retries and re-throws', async () => {
+    const err = rateLimited(1)
+    const fn = vi.fn().mockRejectedValue(err)
+    const r = await drive(fn)
+    expect(r.ok).toBe(false)
+    expect(!r.ok && r.error).toBe(err)
+    expect(fn).toHaveBeenCalledTimes(DEFAULT_MAX_ATTEMPTS)
+  })
+
+  it('honours Retry-After on a 503 too', async () => {
+    const fn = vi.fn().mockRejectedValueOnce(unavailable(7_000)).mockResolvedValueOnce('ok')
+    const r = await drive(fn)
+    expect(r.ok && r.value).toBe('ok')
+    expect(r.waits).toEqual([7_000])
+  })
+
+  it('503 with no hint → exponential backoff: 1 s, 2 s, 4 s', async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(unavailable())
+      .mockRejectedValueOnce(unavailable())
+      .mockRejectedValueOnce(unavailable())
+      .mockResolvedValueOnce('ok')
+    const r = await drive(fn)
+    expect(r.ok && r.value).toBe('ok')
+    expect(r.waits).toEqual([1_000, 2_000, 4_000])
+  })
+
+  it.each([
+    ['ECONNRESET', fetchFailed('ECONNRESET')],
+    ['ETIMEDOUT', fetchFailed('ETIMEDOUT')],
+    ['a bare fetch failure', new TypeError('fetch failed')],
+    ['an abort from our own timeout', ourTimeout()],
+  ])('network error (%s) → retry', async (_label, err) => {
+    const fn = vi.fn().mockRejectedValueOnce(err).mockResolvedValueOnce('ok')
+    const r = await drive(fn)
+    expect(r.ok && r.value).toBe('ok')
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([400, 401, 422, 402, 500])('a %i is not retried', async (status) => {
+    const err = Object.assign(new Error(`status ${status}`), { status })
+    const fn = vi.fn().mockRejectedValue(err)
+    const r = await drive(fn)
+    expect(!r.ok && r.error).toBe(err)
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+
+  it('a caller cancel is not retried', async () => {
+    const fn = vi.fn().mockRejectedValue(cancelled())
+    const r = await drive(fn)
+    expect(r.ok).toBe(false)
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+
+  it('🔴 the total ceiling stops further retries', async () => {
+    const err = unavailable()
+    const fn = vi.fn().mockRejectedValue(err)
+    // 1 s + 2 s fit in 3.5 s; the next 4 s wait would not.
+    const r = await drive(fn, { budgetMs: 3_500, attempts: 10 })
+    expect(!r.ok && r.error).toBe(err)
+    expect(r.waits).toEqual([1_000, 2_000])
+    expect(fn).toHaveBeenCalledTimes(3)
+  })
+
+  it('🔴 WITHOUT the option, 503 and network errors still throw at once', async () => {
+    for (const err of [unavailable(), fetchFailed(), ourTimeout()]) {
+      const fn = vi.fn().mockRejectedValue(err)
+      const r = await drive(fn, { retryTransient: false })
+      expect(!r.ok && r.error).toBe(err)
+      expect(fn).toHaveBeenCalledTimes(1)
+    }
+  })
+})

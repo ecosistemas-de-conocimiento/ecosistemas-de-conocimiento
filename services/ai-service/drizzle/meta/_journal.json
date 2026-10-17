@@ -36,6 +36,13 @@
       "when": 1789039403525,
       "tag": "0004_chunks_scope_deps",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792211496449,
+      "tag": "0005_pg_trgm",
+      "breakpoints": true
     }
   ]
 }

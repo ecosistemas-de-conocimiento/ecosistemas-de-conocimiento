@@ -516,9 +516,11 @@ export interface SetDocumentValidityResult {
  *
  * `lexical` (Postgres full-text search) and `sparse` (learned-sparse bge-m3)
  * are two DIFFERENT legs whose scores both arrive in `lexicalScore`. That
- * shared slot is why this type exists.
+ * shared slot is why this type exists. `trigram` (pg_trgm word similarity) is
+ * a third lexical leg in that slot, seen only on a service started with
+ * `HYBRID_LEXICAL_LEG=trigram`.
  */
-export type RetrievalLeg = 'dense' | 'lexical' | 'sparse' | 'rerank';
+export type RetrievalLeg = 'dense' | 'lexical' | 'sparse' | 'trigram' | 'rerank';
 
 export interface RetrieveResult {
   chunks: RetrievedChunk[];
@@ -526,7 +528,7 @@ export interface RetrieveResult {
    * The legs that returned CANDIDATE rows — not the legs you asked for, and
    * not the legs whose rows survived into `chunks`.
    *
-   * ⚠ The unit differs by leg. `dense`, `lexical` and `sparse` count rows the
+   * ⚠ The unit differs by leg. `dense`, `lexical`, `sparse` and `trigram` count rows the
    * leg returned into the server's fusion POOL, before RRF and before the
    * final top-K slice. `rerank` counts rows in the RESPONSE — the returned
    * chunks carrying a `rerankScore`. So `topK: 1` against a hybrid retrieve

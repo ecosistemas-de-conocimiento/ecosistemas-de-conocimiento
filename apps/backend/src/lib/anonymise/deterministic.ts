@@ -48,6 +48,7 @@
  */
 
 import { createPseudonymAllocator } from './pseudonyms'
+import { absorbTitles } from './titles'
 import type { RedactionCount } from './types'
 import { OMITTED_PLACEHOLDER } from './types'
 
@@ -571,7 +572,8 @@ export function deterministicPass(args: DeterministicArgs): {
         return label
       })
     }
-    out = out.normalize('NFC')
+    // A roster member's title goes with their name: "doña [Persona A]" → "[Persona A]".
+    out = absorbTitles(out.normalize('NFC'))
   }
   pushCount(removed, DETERMINISTIC_LABELS.rosterPerson, rosterHits)
 
