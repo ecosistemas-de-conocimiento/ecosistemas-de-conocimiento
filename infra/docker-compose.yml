@@ -627,10 +627,8 @@ services:
       #    Coolify, the published host port locally. Never the container's
       #    internal 3000. Mismatching them is the same 403.
       #
-      #    The prototypes hit this exact wall on a prototype's FE: all three
-      #    environments carried a stale prod ORIGIN and every POST 403'd until
-      #    it was set per environment. Same failure, written up in their
-      #    `ai-infra/coolify-operational.md`.
+      #    A stale ORIGIN copied across environments causes the same 403 on
+      #    every POST, so set it per environment.
       ORIGIN: ${WEB_ORIGIN:?WEB_ORIGIN is required (the URL the browser uses for web)}
       # ⚠ These are read via `$env/dynamic/private` — RUNTIME env, not build
       #   args, so one image serves every environment. Do NOT "optimise" them
@@ -687,7 +685,7 @@ services:
       #    ⚠ This `environment:` value deliberately OVERRIDES anything named
       #      `API_KEYS` in `.env` — Compose gives `environment:` precedence over
       #      `env_file:`. That is why `.env.example` no longer defines it.
-      API_KEYS: '{"${AI_SERVICE_API_KEY:?AI_SERVICE_API_KEY is required}":{"org":"demo","project":"demo","role":"app","callbackSecret":"${CALLBACK_SECRET:?CALLBACK_SECRET is required}"},"${AI_SERVICE_ADMIN_API_KEY:-dev-key-admin}":{"org":"demo","project":"demo","role":"admin","callbackSecret":"${CALLBACK_SECRET}"}}'
+      API_KEYS: '{"${AI_SERVICE_API_KEY:?AI_SERVICE_API_KEY is required}":{"org":"edc","project":"demo","role":"app","delegateOrgPrefix":"edc-","callbackSecret":"${CALLBACK_SECRET:?CALLBACK_SECRET is required}"},"${AI_SERVICE_ADMIN_API_KEY:-dev-key-admin}":{"org":"edc","project":"demo","role":"admin","delegateOrgPrefix":"edc-","callbackSecret":"${CALLBACK_SECRET}"}}'
       # ⚠ NODE_ENV=production here means CALLBACK_ALLOW_PRIVATE is FORBIDDEN
       #   (boot refuses it) and callbacks must be https. The local override
       #   flips this service to development; never set either on Coolify.
