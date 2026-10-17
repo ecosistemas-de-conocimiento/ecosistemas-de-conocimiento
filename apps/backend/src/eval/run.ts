@@ -86,7 +86,7 @@ import path from 'node:path'
 
 import { prepareTurn, type GraphProvider, type RetrievedChunk } from '@edc/chat-engine/core'
 
-import { loadCorpus, type CorpusDoc } from './corpus'
+import { loadCorpus, loadUnpublishedSims, type CorpusDoc } from './corpus'
 import { selectJson } from './db'
 import { CHAT_ENGINE_CONFIG, makeEvalAIClient, makeEvalAdapter, type EvalAIClient } from './engine'
 import { EVAL_ORGANIZATION_ID, EVAL_PUBLISHED_CORPUS, loadEvalEnv, type EvalEnv } from './env'
@@ -315,6 +315,7 @@ async function runArm(args: {
   }
   const real = makeEvalAIClient({
     env,
+    organizationId: EVAL_ORGANIZATION_ID,
     asOf: args.asOf,
     allowedCorpora: [EVAL_PUBLISHED_CORPUS],
     unitKeyFor: () => unitKey,
@@ -493,7 +494,10 @@ const [org] = await selectJson<{ name: string; description: string | null }>(
 if (!org) throw new Error(`[eval] organization ${EVAL_ORGANIZATION_ID} not found`)
 
 const docs = await loadCorpus(env)
-const { questions, droppedGlobalFacts } = buildQuestions(docs)
+const { questions, droppedGlobalFacts, skippedLocal } = buildQuestions(docs, {
+  unpublishedSims: await loadUnpublishedSims(env),
+  warn: (m) => console.error(m),
+})
 const selected = only ? questions.filter((q) => only.split(',').includes(q.id)) : questions
 
 console.error(
@@ -510,6 +514,7 @@ for (const d of droppedGlobalFacts) {
 {
   const probe = makeEvalAIClient({
     env,
+    organizationId: EVAL_ORGANIZATION_ID,
     asOf,
     allowedCorpora: [EVAL_PUBLISHED_CORPUS],
     unitKeyFor: () => 'eval:probe',
@@ -587,6 +592,8 @@ const out = {
   corpusDocuments: docs.length,
   graphMinSupport: env.graphMinSupport,
   droppedGlobalFacts,
+  /** Local questions whose target is a draft on this stack — not scored. */
+  skippedLocal,
   results,
 }
 const target = path.join(import.meta.dirname, fake ? 'results.fake.json' : 'results.json')

@@ -28,6 +28,7 @@ import type { EvalEnv } from './env'
 import { chatRetrievalPolicy } from '../../../web/src/lib/server/engine/rerank'
 import { expandGraphQuery, graphContextParagraph, type GraphRetrieval } from './graph'
 import { buildQuestions } from './questions'
+import { aiOrgSuffix } from '../lib/aiClient'
 import {
   meanOf,
   orderedSources,
@@ -237,8 +238,25 @@ describe('buildQuestions', () => {
     expect(droppedGlobalFacts.some((d) => d.label.includes('Parres'))).toBe(true)
   })
 
-  it('🔴 refuses to build a local question whose document is not published', () => {
+  it('🔴 refuses to build a local question whose document is not in the database at all', () => {
     expect(() => buildQuestions(supported)).toThrow(/no PUBLISHED document/)
+  })
+
+  it('skips, with a warning, a local question whose document is a seeded draft', () => {
+    // The seed keeps every 8th documento a draft (SIM_0134 on the dev stack).
+    const warnings: string[] = []
+    const withoutDraft = all.filter((d) => d.sim !== 'SIM_0134')
+    const { questions, skippedLocal } = buildQuestions(withoutDraft, {
+      unpublishedSims: new Set(['SIM_0134']),
+      warn: (m) => warnings.push(m),
+    })
+    const locals = questions.filter((q) => q.klass === 'local')
+    expect(locals).toHaveLength(9)
+    expect(skippedLocal).toEqual(['SIM_0134'])
+    expect(warnings.join('\n')).toMatch(/SIM_0134.*not published/)
+    // The ids stay pinned to the SIM, so results stay comparable across stacks.
+    expect(locals.map((q) => q.id)).not.toContain('L06')
+    expect(locals.map((q) => q.id)).toContain('L07')
   })
 
   it('produces 10 local and 10 global questions', () => {
@@ -491,7 +509,13 @@ describe('parseCitationMarkers', () => {
 describe('rerank in the eval client (same policy as production)', () => {
   const env = { aiServiceUrl: 'http://ai.test', aiServiceApiKey: 'k' } as EvalEnv
   const client = () =>
-    makeEvalAIClient({ env, asOf: '2026-10-17T00:00:00Z', allowedCorpora: ['eco-1'], unitKeyFor: () => 'u' })
+    makeEvalAIClient({
+      env,
+      organizationId: 1,
+      asOf: '2026-10-17T00:00:00Z',
+      allowedCorpora: ['eco-1'],
+      unitKeyFor: () => 'u',
+    })
   const req = { orgId: 'edc', scopeId: 'e', corpus: 'eco-1', query: 'q', topK: 5 }
   const ok = (body: unknown) =>
     new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
@@ -518,6 +542,30 @@ describe('rerank in the eval client (same policy as production)', () => {
     expect(bodies(f)[0]).toMatchObject({ rerank: true })
     expect(res.matches[0]).toMatchObject({ denseScore: 0.5, rerankScore: 0.9 })
     expect(ai.calls[0]?.legs).toEqual(['dense', 'rerank'])
+  })
+
+  it("🔴 acts as the ecosistema's own ai-service org: X-AI-Org eco-1, as getAppAIClient(1)", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(ok({ chunks: [] }))
+      .mockResolvedValueOnce(ok({ text: 'r', systemPromptApplied: true }))
+    vi.stubGlobal('fetch', f)
+    const ai = client()
+    await ai.retrieve(req)
+    await ai.generateSync({
+      surface: 'chat',
+      orgId: 'edc',
+      scopeId: 'e',
+      userId: 'u',
+      messages: [
+        { role: 'system', content: 's' },
+        { role: 'user', content: 'q' },
+      ],
+    })
+    const headers = f.mock.calls.map((c) => (c[1] as RequestInit).headers as Record<string, string>)
+    expect(headers).toHaveLength(2)
+    for (const h of headers) expect(h['x-ai-org']).toBe(aiOrgSuffix(1))
+    expect(aiOrgSuffix(1)).toBe('eco-1')
   })
 
   it('a failing rerank request is retried once without rerank', async () => {

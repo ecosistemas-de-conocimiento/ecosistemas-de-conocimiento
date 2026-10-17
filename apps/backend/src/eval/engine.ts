@@ -17,6 +17,13 @@
  *   · `AIClient`      — `retrieve` and `generateSync` over HTTP, reproducing
  *                       `makeEngineAIClient`'s gates.
  *
+ * 🔴 ONE ai-service ORG PER ECOSISTEMA. Every call carries
+ * `X-AI-Org: eco-<organizationId>`, built by the backend's own `aiOrgSuffix` —
+ * the header `getAppAIClient(organizationId)` sends and apps/web's
+ * `retrieveScoped` sends. Without it the delegating key acts as its base org,
+ * which holds none of the ecosistema's corpora since the org-per-ecosistema
+ * move, and every retrieve comes back empty.
+ *
  * 🔴 THE THREE RETRIEVAL INVARIANTS, KEPT THE SAME WAY apps/web KEEPS THEM
  *
  *  1. `asOf` on every retrieve. One value per run, set once, asserted non-empty
@@ -38,6 +45,7 @@
 import { DEFAULT_ENGINE_CONFIG, type EngineConfig } from '@edc/chat-engine/core'
 import type { AIClient, DomainAdapter } from '@edc/chat-engine/core'
 
+import { aiOrgSuffix } from '../lib/aiClient'
 import type { EvalEnv } from './env'
 
 /** `apps/web/src/lib/server/engine/config.ts:CHAT_ENGINE_CONFIG`, copied. */
@@ -118,6 +126,8 @@ export interface EvalAIClient extends AIClient {
 
 export interface EvalAIClientOptions {
   env: EvalEnv
+  /** The ecosistema. Sent as `X-AI-Org: eco-<id>`, as `getAppAIClient(id)` does. */
+  organizationId: number | string
   /** ISO instant every retrieve is scoped to. 🔴 Without it, zero chunks. */
   asOf: string
   /** The closed set of corpus names this client may touch. */
@@ -139,6 +149,8 @@ export function makeEvalAIClient(opts: EvalAIClientOptions): EvalAIClient {
 
   const headers = {
     authorization: `Bearer ${opts.env.aiServiceApiKey}`,
+    // The ecosistema's own org — see the module header. Throws on a bad id.
+    'x-ai-org': aiOrgSuffix(opts.organizationId),
     accept: 'application/json',
     'content-type': 'application/json',
   }

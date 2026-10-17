@@ -265,9 +265,26 @@ export interface QuestionSet {
   questions: EvalQuestion[]
   /** Global facts dropped for lack of support, with the count that dropped them. */
   droppedGlobalFacts: Array<{ question: string; label: string; support: number }>
+  /** Local questions skipped because their target is a draft on this stack. */
+  skippedLocal: string[]
 }
 
-export function buildQuestions(docs: readonly CorpusDoc[]): QuestionSet {
+export interface BuildQuestionsOptions {
+  /**
+   * SIM ids that exist in the ecosistema but are NOT published
+   * (`loadUnpublishedSims`). The seed keeps every 8th `documento` a draft, so
+   * on a seeded stack a local target such as SIM_0134 can be one.
+   */
+  unpublishedSims?: ReadonlySet<string>
+  warn?: (message: string) => void
+}
+
+export function buildQuestions(
+  docs: readonly CorpusDoc[],
+  opts: BuildQuestionsOptions = {},
+): QuestionSet {
+  const warn = opts.warn ?? ((m: string) => console.error(m))
+  const skippedLocal: string[] = []
   const questions: EvalQuestion[] = []
   const droppedGlobalFacts: QuestionSet['droppedGlobalFacts'] = []
 
@@ -293,7 +310,17 @@ export function buildQuestions(docs: readonly CorpusDoc[]): QuestionSet {
   const bySim = new Map(docs.map((d) => [d.sim, d]))
   LOCAL_SIMS.forEach((sim, index) => {
     const doc = bySim.get(sim)
+    if (!doc && opts.unpublishedSims?.has(sim)) {
+      // ⚠ SKIPPED, NOT SCORED. Retrieval only sees published rows, so scoring a
+      // draft target would charge both arms for a document neither may find.
+      // The id stays pinned to the SIM (L06 is always SIM_0134), so a skipped
+      // question leaves a gap rather than renumbering the rest.
+      warn(`[eval] ⚠ skipping local question ${sim}: its document is not published on this stack`)
+      skippedLocal.push(sim)
+      return
+    }
     if (!doc) {
+      // Not even a draft: the database holds a different corpus.
       throw new Error(
         `[eval] local question ${sim} has no PUBLISHED document. The corpus in the ` +
           'database is not the one this question set was built against; re-pick.',
@@ -325,7 +352,7 @@ export function buildQuestions(docs: readonly CorpusDoc[]): QuestionSet {
     })
   })
 
-  return { questions, droppedGlobalFacts }
+  return { questions, droppedGlobalFacts, skippedLocal }
 }
 
 /**

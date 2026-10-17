@@ -168,6 +168,29 @@ export async function loadCorpus(env: EvalEnv): Promise<CorpusDoc[]> {
   return out
 }
 
+/**
+ * The `SIM_xxxx` ids that exist in the eval ecosistema but are NOT published —
+ * the seed's drafts. `buildQuestions` skips a local question whose target is
+ * one of these, and still refuses one whose target is missing altogether.
+ */
+export async function loadUnpublishedSims(env: EvalEnv): Promise<Set<string>> {
+  const rows = await selectJson<{ name: string }>(
+    env,
+    env.backendDb,
+    `SELECT name
+       FROM documents
+      WHERE organization_id = ${EVAL_ORGANIZATION_ID}
+        AND publication_status <> 'published'
+        AND name ~ 'SIM_[0-9]{4}'`,
+  )
+  const out = new Set<string>()
+  for (const row of rows) {
+    const m = /SIM_\d{4}/.exec(row.name)
+    if (m) out.add(m[0])
+  }
+  return out
+}
+
 // ── Facts ──────────────────────────────────────────────────────────────────
 
 /**
