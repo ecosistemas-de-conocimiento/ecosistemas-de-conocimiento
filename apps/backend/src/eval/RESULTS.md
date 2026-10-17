@@ -1,8 +1,17 @@
 # Does GraphRAG improve answers? — measured, 2026-09-05
 
+> 🔴 **Correction, 2026-10-16: every "citation precision" below is RETRIEVAL precision.**
+> The scorer read chat-engine's `provenance`, which holds every retrieved chunk (topK 5),
+> not the ones the answer cites with `[n]`. So local 0.38 / 0.364 means "of the ~5 documents
+> put in the prompt, about 2 contain a fact" — its floor is 1/5 = 0.20. It says nothing
+> about what the model cited. `score.ts` now reports both: `retrievalPrecision` (the old
+> number, renamed) and true `citationPrecision` / `citationRecall` from the answer's `[n]`
+> markers, and `results.json` now stores each arm's sources in prompt order. True citation
+> numbers are **pending a re-run**; these two runs cannot be re-scored because they stored
+> document ids sorted, not in prompt order.
+
 Run `20260905060010`. **120 real generations** (20 questions × 2 arms × 3 repetitions)
 against the live corpus, `asOf` 2026-09-05, `GRAPH_MIN_SUPPORT` 3, 191 corpus documents.
-Total spend **$0.14**.
 
 > ⚠ Scoring is **mechanical** — expected labels are string-matched in the answer text, and
 > the expected sets are computed from `corpus-generativo`'s `MANIFEST.csv`, not judged.
@@ -17,14 +26,14 @@ Total spend **$0.14**.
 **The graph changed the answer on 2 of 20 questions.** It was better on one local question
 and worse on one global question. On the other 18 the two arms scored identically.
 
-| class | arm | mean recall | citation precision | mean latency | cost |
-| --- | --- | --- | --- | --- | --- |
-| local | plain | 0.967 | 0.380 | 8.5 s | $0.0325 |
-| local | **graph** | **0.978** | 0.380 | 7.4 s | $0.0355 |
-| global | plain | **0.430** | **0.680** | 14.0 s | $0.0329 |
-| global | **graph** | 0.414 | 0.649 | 15.4 s | $0.0371 |
+| class | arm | mean recall | citation precision | mean latency |
+| --- | --- | --- | --- | --- |
+| local | plain | 0.967 | 0.380 | 8.5 s |
+| local | **graph** | **0.978** | 0.380 | 7.4 s |
+| global | plain | **0.430** | **0.680** | 14.0 s |
+| global | **graph** | 0.414 | 0.649 | 15.4 s |
 
-Graph costs **+11% per call**. On global questions — the class it exists for — it scored
+On global questions — the class it exists for — it scored
 **slightly worse on both recall and citation precision**. Neither difference is larger than
 the noise at this sample size.
 
@@ -87,7 +96,7 @@ harmful once. n=2; this is a hint, not a finding.
 ## What this does and does not license
 
 **Does:** it rules out the optimistic case. Whatever GraphRAG is worth here, it is not
-currently delivering a measurable improvement, and it is charging 11% per turn for that.
+currently delivering a measurable improvement.
 
 **Does not:** it does not show that graph fusion is worthless. It shows that *this seeding
 strategy* starves it. A matcher that could turn "centros de salud" into the three hospital
@@ -134,12 +143,12 @@ the plain-versus-graph contrast inside one run is evidence.
 
 ## The numbers
 
-| class | arm | mean recall | citation precision | latency | cost |
-| --- | --- | --- | --- | --- | --- |
-| local | plain | 0.978 | 0.380 | 8.5 s | $0.0324 |
-| local | graph | 0.989 | 0.364 | 11.4 s | $0.0339 |
-| global | plain | 0.461 | 0.680 | 12.6 s | $0.0332 |
-| global | **graph** | **0.733** | **0.691** | 17.2 s | $0.0488 |
+| class | arm | mean recall | citation precision | latency |
+| --- | --- | --- | --- | --- |
+| local | plain | 0.978 | 0.380 | 8.5 s |
+| local | graph | 0.989 | 0.364 | 11.4 s |
+| global | plain | 0.461 | 0.680 | 12.6 s |
+| global | **graph** | **0.733** | **0.691** | 17.2 s |
 
 **Global recall rose from 0.461 to 0.733** — a 59% relative improvement, against a first
 measurement where the graph was slightly *worse* on this class.
@@ -166,11 +175,10 @@ This was the predicted cost and it did not appear. Global citation precision wen
 citing more loosely. Local precision fell slightly, 0.380 → 0.364, on a number that is poor in
 both arms and is not a graph problem.
 
-## What it now costs
+## What it now costs in latency
 
-🔴 **The price went up with the benefit.**
+🔴 **Latency went up with the benefit.**
 
-- **+26% per call**, against +11% in the first measurement.
 - **Global latency 12.6 s → 17.2 s**, roughly +37%.
 - 🔴 **The graph leg itself got 5x slower: `graphMs` median 78 ms → 388 ms, max 4.0 s.** The
   pure matching function is still microseconds (124 µs → 257 µs benchmarked over the real 221
@@ -178,8 +186,8 @@ both arms and is not a graph problem.
   1, so the two expansion queries that follow do far more work. Most of the added latency is
   there and in the larger prompt, not in the matcher.
 
-So the honest trade is no longer "11% for nothing". It is **26% and four seconds for a 59%
-relative gain on the question class the graph exists for**, and no measurable harm elsewhere.
+So the trade is **about four seconds for a 59% relative gain on the question class the graph
+exists for**, and no measurable harm elsewhere.
 
 ## What is still not fixed
 

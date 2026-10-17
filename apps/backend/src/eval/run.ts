@@ -61,7 +61,14 @@ import { CHAT_ENGINE_CONFIG, makeEvalAIClient, makeEvalAdapter, type EvalAIClien
 import { EVAL_ORGANIZATION_ID, EVAL_PUBLISHED_CORPUS, loadEvalEnv, type EvalEnv } from './env'
 import { expandGraphQuery, graphContextParagraph, readGraphRetrieval } from './graph'
 import { buildQuestions, type EvalQuestion } from './questions'
-import { citedDocumentIds, scoreAnswer, type Provenance, type QuestionScore } from './score'
+import {
+  orderedSources,
+  retrievedDocumentIds,
+  scoreWithSources,
+  type Provenance,
+  type QuestionScore,
+  type Source,
+} from './score'
 
 export type Arm = 'novector' | 'plain' | 'graph'
 
@@ -91,6 +98,12 @@ export interface ArmResult {
   outputTokens: number | null
   /** Server-side generation time from ai-service's own `traces` row. */
   serverMs: number | null
+  /**
+   * The prompt's sources IN PROMPT ORDER — `sources[i].n` is the `[n]` the
+   * model saw. Stored so a run can be re-scored (`scoreWithSources`) without
+   * paying for it again. Runs before 2026-10-16 lack it.
+   */
+  sources?: Source[]
   score: QuestionScore
 }
 
@@ -309,7 +322,7 @@ async function runArm(args: {
   const generateMs = Date.now() - t1
 
   const retrieves = aiClient.calls.filter((c) => c.kind === 'retrieve')
-  const provenance = prepared.provenance as Provenance | null
+  const sources = orderedSources(prepared.provenance as Provenance | null)
   const fusedFromGraph = prepared.matches.filter(
     (m) => (m.metadata as Record<string, unknown> | null | undefined)?.path === GRAPH_PATH_TAG,
   ).length
@@ -336,7 +349,8 @@ async function runArm(args: {
     inputTokens: null,
     outputTokens: null,
     serverMs: null,
-    score: scoreAnswer(question, generation.text, provenance, args.docs),
+    sources,
+    score: scoreWithSources(question, generation.text, sources, args.docs),
   }
 }
 
@@ -480,6 +494,7 @@ for (const question of selected) {
         `[eval] ${question.id} r${rep} ${arm.padEnd(5)} ` +
           `${String(Date.now() - started).padStart(6)}ms ` +
           `recall=${result.score.found.length}/${question.expected.length} ` +
+          `retrieved=${result.score.retrievedDocumentIds.length} ` +
           `cited=${result.score.citedDocumentIds.length} ` +
           `graphBlock=${result.graphBlockChars} graphChunks=${result.graphChunks}`,
       )
@@ -524,4 +539,4 @@ if (cachedCalls > 0) {
   )
 }
 
-export { citedDocumentIds }
+export { retrievedDocumentIds }

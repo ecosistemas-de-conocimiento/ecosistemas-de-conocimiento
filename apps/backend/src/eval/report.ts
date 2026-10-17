@@ -27,6 +27,26 @@ interface Results {
 const file = path.join(import.meta.dirname, 'results.json')
 const data = JSON.parse(readFileSync(file, 'utf8')) as Results
 
+/**
+ * Runs before 2026-10-16 stored RETRIEVAL precision under the name
+ * `citationPrecision` (and `citedDocumentIds` / `targetCited` likewise meant
+ * "retrieved"). Move them to their true names, and mark true citation scores
+ * unknown — those runs did not store the prompt order needed to compute them.
+ */
+for (const arm of data.results.flatMap((r) => r.arms)) {
+  const s = arm.score as Partial<ArmResult['score']> & ArmResult['score']
+  if (s.retrievalPrecision !== undefined) continue
+  s.retrievalPrecision = s.citationPrecision
+  s.retrievedDocumentIds = s.citedDocumentIds
+  s.targetRetrieved = s.targetCited
+  s.citationPrecision = null
+  s.citationRecall = null
+  s.citedDocumentIds = []
+  s.citedOrdinals = []
+  s.strayOrdinals = []
+  s.targetCited = null
+}
+
 const mean = (xs: readonly number[]): number =>
   xs.length === 0 ? Number.NaN : xs.reduce((a, b) => a + b, 0) / xs.length
 const sd = (xs: readonly number[]): number => {
@@ -65,27 +85,30 @@ const graphContributed = (q: QuestionResult): boolean =>
 
 function summary(qs: readonly QuestionResult[], arm: 'plain' | 'graph') {
   const recall = defined(perQuestion(qs, arm, (a) => a.score.recall))
+  const retrievalPrecision = defined(perQuestion(qs, arm, (a) => a.score.retrievalPrecision))
   const precision = defined(perQuestion(qs, arm, (a) => a.score.citationPrecision))
-  const target = defined(
-    perQuestion(qs, arm, (a) => (a.score.targetCited === null ? null : a.score.targetCited ? 1 : 0)),
-  )
+  const citationRecall = defined(perQuestion(qs, arm, (a) => a.score.citationRecall))
+  const asRate = (b: boolean | null): number | null => (b === null ? null : b ? 1 : 0)
+  const targetRetrieved = defined(perQuestion(qs, arm, (a) => asRate(a.score.targetRetrieved)))
+  const target = defined(perQuestion(qs, arm, (a) => asRate(a.score.targetCited)))
   const total = defined(perQuestion(qs, arm, (a) => a.totalMs))
   const prepare = defined(perQuestion(qs, arm, (a) => a.prepareMs))
   const generate = defined(perQuestion(qs, arm, (a) => a.generateMs))
   const inTok = defined(perQuestion(qs, arm, (a) => a.inputTokens))
   const outTok = defined(perQuestion(qs, arm, (a) => a.outputTokens))
-  const cost = qs.flatMap((q) => armsOf(q, arm)).reduce((a, x) => a + x.costUsd, 0)
   const calls = qs.flatMap((q) => armsOf(q, arm)).length
   return {
     recall: mean(recall),
+    retrievalPrecision: mean(retrievalPrecision),
     precision: mean(precision),
+    citationRecall: mean(citationRecall),
+    targetRetrieved: mean(targetRetrieved),
     targetCited: mean(target),
     totalMs: mean(total),
     prepareMs: mean(prepare),
     generateMs: mean(generate),
     inTok: mean(inTok),
     outTok: mean(outTok),
-    costPerCall: cost / calls,
     calls,
   }
 }
@@ -127,8 +150,10 @@ const lGraph = summary(local, 'graph')
 
 const gRecallDiff = paired(global, (a) => a.score.recall)
 const lRecallDiff = paired(local, (a) => a.score.recall)
-const gPrecDiff = paired(global, (a) => a.score.citationPrecision)
-const lPrecDiff = paired(local, (a) => a.score.citationPrecision)
+const gPrecDiff = paired(global, (a) => a.score.retrievalPrecision)
+const lPrecDiff = paired(local, (a) => a.score.retrievalPrecision)
+const gCitePrecDiff = paired(global, (a) => a.score.citationPrecision)
+const lCitePrecDiff = paired(local, (a) => a.score.citationPrecision)
 
 const gNoise = noiseFloor(global)
 const lNoise = noiseFloor(local)
@@ -137,7 +162,6 @@ const contributed = data.results.filter(graphContributed)
 const contributedGlobal = global.filter(graphContributed)
 const cached = data.results.flatMap((r) => r.arms).filter((a) => a.cached).length
 const allArms = data.results.flatMap((r) => r.arms)
-const totalCost = allArms.reduce((a, x) => a + x.costUsd, 0)
 const reps = Math.max(...data.results.map((r) => armsOf(r, 'plain').length))
 
 const promptDelta = mean(
@@ -160,20 +184,24 @@ const tokenDelta = mean(
 function armTable(label: string, plain: ReturnType<typeof summary>, graph: ReturnType<typeof summary>): string {
   const rows: Array<[string, string, string]> = [
     ['Recall of expected facts', pct1(plain.recall), pct1(graph.recall)],
-    ['Citation precision', pct1(plain.precision), pct1(graph.precision)],
+    ['Retrieval precision (every retrieved doc)', pct1(plain.retrievalPrecision), pct1(graph.retrievalPrecision)],
+    ['Citation precision ([n]-cited docs)', pct1(plain.precision), pct1(graph.precision)],
+    ['Citation recall (facts backed by a cited doc)', pct1(plain.citationRecall), pct1(graph.citationRecall)],
     ['Turn latency (context + generation)', ms(plain.totalMs), ms(graph.totalMs)],
     ['  · context assembly', ms(plain.prepareMs), ms(graph.prepareMs)],
     ['  · generation', ms(plain.generateMs), ms(graph.generateMs)],
     ['Prompt tokens', plain.inTok.toFixed(0), graph.inTok.toFixed(0)],
     ['Completion tokens', plain.outTok.toFixed(0), graph.outTok.toFixed(0)],
-    ['Cost per turn (USD)', `$${plain.costPerCall.toFixed(5)}`, `$${graph.costPerCall.toFixed(5)}`],
   ]
-  if (Number.isFinite(plain.targetCited)) {
-    rows.splice(2, 0, [
-      'Target document cited',
-      pct(plain.targetCited),
-      pct(graph.targetCited),
+  if (Number.isFinite(plain.targetRetrieved)) {
+    rows.splice(4, 0, [
+      'Target document retrieved',
+      pct(plain.targetRetrieved),
+      pct(graph.targetRetrieved),
     ])
+  }
+  if (Number.isFinite(plain.targetCited)) {
+    rows.splice(5, 0, ['Target document cited', pct(plain.targetCited), pct(graph.targetCited)])
   }
   return [
     `| ${label} | no graph | with graph |`,
@@ -216,8 +244,8 @@ const md = `# Does GraphRAG actually improve answers?
 \`asOf\` ${data.asOf} · ${data.corpusDocuments} published seeded documents joined to
 \`MANIFEST.csv\` · \`GRAPH_MIN_SUPPORT=${data.graphMinSupport}\`.
 
-20 questions × 2 arms × ${reps} repetitions = **${allArms.length} real generations**, total cost
-**$${totalCost.toFixed(4)}**. Mechanical scoring only — no LLM judge (see §7).
+20 questions × 2 arms × ${reps} repetitions = **${allArms.length} real generations**.
+Mechanical scoring only — no LLM judge (see §7).
 
 ---
 
@@ -295,7 +323,7 @@ Two deviations from production, both deliberate and both stated:
    (question, arm, repetition). ai-service caches a \`standard\`-tier generation on
    \`hash(model, messages, maxTokens, temperature, org)\` for five minutes. Without the
    marker, whenever the graph contributed nothing the second arm was served the first
-   one's answer at 6 ms and $0 — measured, not assumed. The marker is drawn the same way
+   one's answer at 6 ms — measured, not assumed. The marker is drawn the same way
    for both arms, so it adds no systematic difference; it only stops the cache collapsing
    two samples into one. ${cached === 0 ? `**${cached} of ${allArms.length} calls were cache hits.**` : `⚠ **${cached} of ${allArms.length} calls were still served from cache.**`}
 2. The graph read runs in-process instead of over the 500ing HTTP endpoint (§1).
@@ -309,7 +337,8 @@ ${armTable('global (' + global.length + ' questions)', gPlain, gGraph)}
 Paired difference (graph − no-graph), per question, on the mean of ${reps} repetitions:
 
 * recall **${(gRecallDiff.mean * 100).toFixed(1)} points** (sd ${(gRecallDiff.sd * 100).toFixed(1)})
-* citation precision **${(gPrecDiff.mean * 100).toFixed(1)} points** (sd ${(gPrecDiff.sd * 100).toFixed(1)})
+* retrieval precision **${(gPrecDiff.mean * 100).toFixed(1)} points** (sd ${(gPrecDiff.sd * 100).toFixed(1)})
+* citation precision ${gCitePrecDiff.diffs.length === 0 ? '— (not stored in this run)' : `**${(gCitePrecDiff.mean * 100).toFixed(1)} points** (sd ${(gCitePrecDiff.sd * 100).toFixed(1)})`}
 * noise floor, same arm repeated: sd **±${(gNoise.withinSd * 100).toFixed(1)} points**,
   worst single-question spread **${(gNoise.maxSpread * 100).toFixed(0)} points**
 
@@ -330,7 +359,8 @@ ${armTable('local (' + local.length + ' questions)', lPlain, lGraph)}
 Paired difference (graph − no-graph):
 
 * recall **${(lRecallDiff.mean * 100).toFixed(1)} points** (sd ${(lRecallDiff.sd * 100).toFixed(1)})
-* citation precision **${(lPrecDiff.mean * 100).toFixed(1)} points** (sd ${(lPrecDiff.sd * 100).toFixed(1)})
+* retrieval precision **${(lPrecDiff.mean * 100).toFixed(1)} points** (sd ${(lPrecDiff.sd * 100).toFixed(1)})
+* citation precision ${lCitePrecDiff.diffs.length === 0 ? '— (not stored in this run)' : `**${(lCitePrecDiff.mean * 100).toFixed(1)} points** (sd ${(lCitePrecDiff.sd * 100).toFixed(1)})`}
 * noise floor: sd **±${(lNoise.withinSd * 100).toFixed(1)} points**
 
 ${questionTable(local)}
@@ -372,14 +402,11 @@ touch it.
 
 ---
 
-## 6. The bill
+## 6. What the graph adds to each turn
 
 | | value |
 |---|---|
 | generations | ${allArms.length} |
-| total cost | $${totalCost.toFixed(4)} |
-| cost per turn, no graph | $${((gPlain.costPerCall + lPlain.costPerCall) / 2).toFixed(5)} |
-| cost per turn, with graph | $${((gGraph.costPerCall + lGraph.costPerCall) / 2).toFixed(5)} |
 | extra prompt characters from the graph block | ${Math.round(promptDelta)} |
 | extra prompt tokens | ${Number.isFinite(tokenDelta) ? Math.round(tokenDelta) : '—'} |
 | extra context-assembly latency | ${ms(((gGraph.prepareMs - gPlain.prepareMs) + (lGraph.prepareMs - lPlain.prepareMs)) / 2)} |

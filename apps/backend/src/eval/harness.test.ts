@@ -14,14 +14,26 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { prepareTurn, type AIClient, type DomainAdapter } from '@edc/chat-engine/core'
+import {
+  prepareTurn,
+  splitContentByCitations,
+  type AIClient,
+  type DomainAdapter,
+} from '@edc/chat-engine/core'
 
 import { parseCsv, type CorpusDoc, type ManifestRow } from './corpus'
 import { inlineParams } from './db'
 import { CHAT_ENGINE_CONFIG } from './engine'
 import { expandGraphQuery, graphContextParagraph, type GraphRetrieval } from './graph'
 import { buildQuestions } from './questions'
-import { citedDocumentIds, meanOf, scoreAnswer } from './score'
+import {
+  meanOf,
+  orderedSources,
+  parseCitationMarkers,
+  retrievedDocumentIds,
+  scoreAnswer,
+  scoreWithSources,
+} from './score'
 import { contains, containsAny, fold } from './text'
 
 // ── Normalisation ──────────────────────────────────────────────────────────
@@ -266,21 +278,69 @@ describe('scoreAnswer', () => {
     expect(s.recall).toBe(0.5)
   })
 
-  it('citation precision counts documents that really contain a fact', () => {
+  it('retrieval precision counts every RETRIEVED document, cited or not', () => {
     const s = scoreAnswer(question, 'Habla mazateco.', provenance, docs)
-    expect(s.citedDocumentIds).toEqual([118, 999])
-    expect(s.citationPrecision).toBe(0.5)
-    expect(s.targetCited).toBe(true)
+    expect(s.retrievedDocumentIds).toEqual([118, 999])
+    expect(s.retrievalPrecision).toBe(0.5)
+    expect(s.targetRetrieved).toBe(true)
   })
 
-  it('🔴 citation precision is null, not 0, when nothing was cited', () => {
+  it('🔴 an answer with no [n] marker has null citation precision, 0 citation recall', () => {
     // "cited badly" and "cited nothing" are different failures.
-    expect(scoreAnswer(question, 'x', null, docs).citationPrecision).toBeNull()
+    const s = scoreAnswer(question, 'Habla mazateco.', provenance, docs)
+    expect(s.citedDocumentIds).toEqual([])
+    expect(s.citationPrecision).toBeNull()
+    expect(s.citationRecall).toBe(0)
+    expect(s.targetCited).toBe(false)
+    expect(scoreAnswer(question, 'x', null, docs).retrievalPrecision).toBeNull()
+  })
+
+  it('[n] maps to provenance.chunks[n - 1] — prompt order, not doc-id order', () => {
+    // Source [1] is doc 999 (no fact); [2] is doc 118 (the target).
+    const reversed = { chunks: [provenance.chunks[1], provenance.chunks[0]] }
+    const s = scoreAnswer(question, 'Habla mazateco [2].', reversed, docs)
+    expect(s.citedDocumentIds).toEqual([118])
+    expect(s.citationPrecision).toBe(1)
+    expect(s.citationRecall).toBe(1)
+    expect(s.targetCited).toBe(true)
+    const wrong = scoreAnswer(question, 'Habla mazateco [1].', reversed, docs)
+    expect(wrong.citedDocumentIds).toEqual([999])
+    expect(wrong.citationPrecision).toBe(0)
+    expect(wrong.targetCited).toBe(false)
+  })
+
+  it('[1][2] cites both; out-of-range markers are stray and never scored', () => {
+    const s = scoreAnswer(question, 'Mazateco [1][2], y además [7].', provenance, docs)
+    expect(s.citedOrdinals).toEqual([1, 2])
+    expect(s.strayOrdinals).toEqual([7])
+    expect(s.citationPrecision).toBe(0.5)
+    const onlyStray = scoreAnswer(question, 'Mazateco [3].', provenance, docs)
+    expect(onlyStray.citationPrecision).toBeNull()
+    expect(onlyStray.strayOrdinals).toEqual([3])
+  })
+
+  it('a document cited through two chunks counts once', () => {
+    const twoChunks = {
+      chunks: [provenance.chunks[0], { ...provenance.chunks[0], chunkId: 'a2' }],
+    }
+    const s = scoreAnswer(question, 'Mazateco [1] y [2].', twoChunks, docs)
+    expect(s.citedDocumentIds).toEqual([118])
+    expect(s.citationPrecision).toBe(1)
+  })
+
+  it('stored sources re-score to the same result as the provenance', () => {
+    const answer = 'Mazateco [2], Tlayacapan [1].'
+    const sources = orderedSources(provenance)
+    expect(sources.map((x) => [x.n, x.docId])).toEqual([[1, 118], [2, 999]])
+    const fromJson = JSON.parse(JSON.stringify(sources))
+    expect(scoreWithSources(question, answer, fromJson, docs)).toEqual(
+      scoreAnswer(question, answer, provenance, docs),
+    )
   })
 
   it('reads the PAYLOAD id from metadata.docId, never ai-service\'s documentId', () => {
-    expect(citedDocumentIds(provenance)).toEqual([118, 999])
-    expect(citedDocumentIds({ chunks: [{ ...provenance.chunks[0], metadata: null }] })).toEqual([])
+    expect(retrievedDocumentIds(provenance)).toEqual([118, 999])
+    expect(retrievedDocumentIds({ chunks: [{ ...provenance.chunks[0], metadata: null }] })).toEqual([])
   })
 
   it('meanOf ignores nulls and reports null for an empty set', () => {
@@ -394,5 +454,34 @@ describe('the two arms', () => {
     )
     expect(prepared.graphContext).toBe('')
     expect(prepared.matches).toHaveLength(1)
+  })
+})
+
+describe('parseCitationMarkers', () => {
+  it('no markers → nothing', () => {
+    expect(parseCitationMarkers('Sin citas. [a] [] (1)', 5)).toEqual({ ordinals: [], stray: [] })
+  })
+
+  it('adjacent, grouped and spaced markers', () => {
+    expect(parseCitationMarkers('x [1][2] y [ 3 , 4 ]', 5).ordinals).toEqual([1, 2, 3, 4])
+  })
+
+  it('repeats count once, in first-use order', () => {
+    expect(parseCitationMarkers('[3] a [1] b [3] c [1, 3]', 5)).toEqual({ ordinals: [3, 1], stray: [] })
+  })
+
+  it('out of range — 0, past the last source, or no sources at all — is stray', () => {
+    expect(parseCitationMarkers('[0] [2] [6] [6]', 5)).toEqual({ ordinals: [2], stray: [0, 6] })
+    expect(parseCitationMarkers('[1]', 0)).toEqual({ ordinals: [], stray: [1] })
+  })
+
+  it("🔴 agrees with chat-engine's splitContentByCitations, which the UI renders", () => {
+    const valid = [1, 2, 3, 4, 5]
+    for (const text of ['a [1][2] b', 'x [1, 3] y [9] z [2]', 'none', '[5] and [5]', '[ 2 ,4 ]']) {
+      const engine = splitContentByCitations(text, valid).flatMap((seg) =>
+        seg.type === 'cite' ? [seg.ordinal] : [],
+      )
+      expect(parseCitationMarkers(text, valid.length).ordinals).toEqual([...new Set(engine)])
+    }
   })
 })
