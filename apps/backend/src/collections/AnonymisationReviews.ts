@@ -36,7 +36,7 @@
  * collection with different access rules is a second thing to get wrong.
  */
 
-import type { CollectionConfig } from 'payload'
+import type { CollectionBeforeOperationHook, CollectionConfig } from 'payload'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
 import { organizationIdsForUserWithPermission, PERMISSIONS } from '../lib/permissions'
@@ -54,6 +54,20 @@ export const AnonymisationReviews: CollectionConfig = {
     group: 'Feedback',
     description:
       'Every human decision on a document the anonymisation gate held. Append-only.',
+  },
+  hooks: {
+    /**
+     * 🔴 `where[document.name]` / `sort=document.name` reach the gated
+     * `documents.name` through the relationship, and the narrowing on
+     * `documents` never sees them. Same rule, applied at this path.
+     * Imported lazily: `Documents.ts` is a large module graph.
+     */
+    beforeOperation: [
+      (async (hookArgs: Parameters<CollectionBeforeOperationHook>[0]) =>
+        (await import('./Documents')).constrainGatedNameQueriesAt('document.')(
+          hookArgs,
+        )) as CollectionBeforeOperationHook,
+    ],
   },
   access: {
     /**

@@ -17,6 +17,7 @@ import {
   CONTENT_KINDS,
   chunkMetadata,
   contentKindOf,
+  knownContentKind,
   titleFor,
   DEFAULT_CONTENT_KIND,
   isContentKind,
@@ -321,13 +322,61 @@ export const gatedNameReadable: FieldAccess = ({ req, doc }) =>
     ? Boolean(req.user)
     : mayReadGatedOriginal(req.user, doc as Parameters<typeof mayReadGatedOriginal>[1])
 
-/** Does a Payload `where` mention this field anywhere, at any depth? */
+/**
+ * Does a Payload `where` mention this field anywhere, at any depth?
+ *
+ * 🔴 IT WALKS EVERY NESTED OBJECT, NOT ONLY `and` / `or`. Payload matches the
+ * combinators case-insensitively (`OR`, `And` work), so a check that looked for
+ * the lowercase keys alone let `where[OR][0][name][like]=Mar` straight past the
+ * narrowing — and `/api/documents/count` then leaked a hidden filename prefix by
+ * prefix. Over-matching only narrows a query; under-matching leaks.
+ */
 export function whereMentions(where: unknown, field: string): boolean {
   if (!where || typeof where !== 'object') return false
   if (Array.isArray(where)) return where.some((w) => whereMentions(w, field))
   for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
     if (key === field || key.startsWith(`${field}.`)) return true
-    if ((key === 'and' || key === 'or') && whereMentions(value, field)) return true
+    if (whereMentions(value, field)) return true
+  }
+  return false
+}
+
+/** The parts of a Payload `sort` (`'a,-b'` or `['a', '-b']`). */
+function sortParts(sort: unknown): string[] {
+  if (typeof sort === 'string') return sort.split(',').map((s) => s.trim()).filter(Boolean)
+  if (Array.isArray(sort)) return sort.filter((s): s is string => typeof s === 'string')
+  return []
+}
+
+const sortsOn = (part: string, field: string): boolean => {
+  const path = part.replace(/^[-+]/, '')
+  return path === field || path.startsWith(`${field}.`)
+}
+
+/** The same sort with every part on `field` removed; `undefined` when nothing is left. */
+function stripSort(sort: unknown, field: string): unknown {
+  const kept = sortParts(sort).filter((p) => !sortsOn(p, field))
+  if (kept.length === 0) return undefined
+  return Array.isArray(sort) ? kept : kept.join(',')
+}
+
+/**
+ * Is `where` already limited to rows whose name the caller may read? True when
+ * a top-level clause (through any `and`) pins the uploader to the caller or the
+ * kind to `documento`.
+ */
+function narrowedToReadable(where: unknown, prefix: string, userId: unknown): boolean {
+  if (!where || typeof where !== 'object' || Array.isArray(where)) return false
+  for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
+    if (key.toLowerCase() === 'and' && Array.isArray(value)) {
+      if (value.some((w) => narrowedToReadable(w, prefix, userId))) return true
+      continue
+    }
+    const equals = (value as { equals?: unknown } | null)?.equals
+    if (key === `${prefix}contentKind` && equals === 'documento') return true
+    if (key === `${prefix}uploadedBy` && equals != null && String(equals) === String(userId)) {
+      return true
+    }
   }
   return false
 }
@@ -336,27 +385,47 @@ export function whereMentions(where: unknown, field: string): boolean {
  * 🔴 A QUERY ON `name` ONLY MATCHES ROWS WHOSE `name` THE CALLER MAY READ.
  * The other half of {@link gatedNameReadable}.
  *
- * ⚠ `sort=name` is not narrowed. The order of hidden titles inside a page
- * leaks far less than a match, and narrowing a sort would drop rows from the
- * list.
+ *   · a `where` naming it is narrowed to readable rows;
+ *   · a `sort` on it is STRIPPED unless the query is already narrowed. Sorting
+ *     is a full oracle, not a small leak: a colleague who controls a few probe
+ *     rows named "M", "Ma", "Mb"… reads where the hidden title falls between
+ *     them and binary-searches it out letter by letter. Nothing in the product
+ *     sorts documents by name.
+ *
+ * `prefix` is the relationship path from another collection (`'document.'` on
+ * `anonymisation-reviews`), whose where/sort reach the same column.
  */
-export const constrainGatedNameQueries: CollectionBeforeOperationHook = ({
-  args,
-  operation,
-  req,
-}) => {
-  if (operation !== 'read' && operation !== 'count') return args
-  const a = args as { overrideAccess?: boolean; where?: Where }
-  // REST leaves it undefined (= access applies); the local API defaults it to true.
-  if (a.overrideAccess === true) return args
-  const user = req.user
-  if (!user || isPlatformAdminUser(user)) return args
-  if (!whereMentions(a.where, 'name')) return args
-  const readable: Where = {
-    or: [{ contentKind: { equals: 'documento' } }, { uploadedBy: { equals: user.id } }],
+export function constrainGatedNameQueriesAt(prefix: string): CollectionBeforeOperationHook {
+  const field = `${prefix}name`
+  return ({ args, operation, req }) => {
+    if (operation !== 'read' && operation !== 'count' && operation !== 'readDistinct') return args
+    const a = args as { overrideAccess?: boolean; where?: Where; sort?: unknown }
+    // REST leaves it undefined (= access applies); the local API defaults it to true.
+    if (a.overrideAccess === true) return args
+    const user = req.user
+    if (!user || isPlatformAdminUser(user)) return args
+
+    let next = args as typeof args & { where?: Where; sort?: unknown }
+    let narrowed = narrowedToReadable(a.where, prefix, user.id)
+    if (!narrowed && whereMentions(a.where, field)) {
+      const readable: Where = {
+        or: [
+          { [`${prefix}contentKind`]: { equals: 'documento' } },
+          { [`${prefix}uploadedBy`]: { equals: user.id } },
+        ],
+      }
+      next = { ...next, where: { and: [a.where as Where, readable] } }
+      narrowed = true
+    }
+    if (!narrowed && sortParts(a.sort).some((p) => sortsOn(p, field))) {
+      next = { ...next, sort: stripSort(a.sort, field) }
+    }
+    return next as typeof args
   }
-  return { ...args, where: { and: [a.where as Where, readable] } } as typeof args
 }
+
+export const constrainGatedNameQueries: CollectionBeforeOperationHook =
+  constrainGatedNameQueriesAt('')
 
 const uploaderOnly: Access = ({ req: { user } }) => {
   if (!user) return false
@@ -1552,7 +1621,7 @@ export async function scheduleGraphExtractionForDoc(args: {
        * nearly reached the shared corpus. `titleFor` gives gated material a
        * neutral title; the graph surfaces titles, so it needs the same rule.
        */
-      title: titleFor(contentKindOf(fresh), fresh.name),
+      title: titleFor(knownContentKind(fresh), fresh.name),
     })
   } catch (err) {
     console.error('[graph] could not schedule extraction for doc', docId, err)
@@ -1820,7 +1889,7 @@ export async function enqueueIngestForDoc(args: {
               // back on retrieve, but it IS stored at ai-service — and for a
               // testimony the uploader's filename is exactly the identifier the
               // gate just spent two model calls removing from the body.
-              title: titleFor(contentKind, fresh.name),
+              title: titleFor(knownContentKind(fresh), fresh.name),
               /**
                * ⚠ BUILT BY `chunkMetadata`, NOT INLINE. It is the same builder the
                * publish move uses, which is what stops `kind` from being silently
@@ -2094,19 +2163,53 @@ async function loadMediaBytes(
   const contentType = media?.mimeType ?? null
 
   const { isStorageConfigured } = await import('@/lib/storage/client')
-  if (isStorageConfigured()) {
-    const { getObjectBytes } = await import('@/lib/storage/client')
-    const prefix = (media?.prefix ?? '').replace(/^\/+|\/+$/g, '')
-    const key = prefix ? `${prefix}/${filename}` : filename
-    const { bytes } = await getObjectBytes(key)
-    return { bytes, filename, contentType }
-  }
+  const prefix = (media?.prefix ?? '').replace(/^\/+|\/+$/g, '')
+  const key = prefix ? `${prefix}/${filename}` : filename
+  try {
+    if (isStorageConfigured()) {
+      const { getObjectBytes } = await import('@/lib/storage/client')
+      const { bytes } = await getObjectBytes(key)
+      return { bytes, filename, contentType }
+    }
 
-  const path = await import('node:path')
-  const fs = await import('node:fs/promises')
-  const filePath = path.resolve(process.cwd(), 'media', filename)
-  const bytes = await fs.readFile(filePath)
-  return { bytes, filename, contentType }
+    const path = await import('node:path')
+    const fs = await import('node:fs/promises')
+    const filePath = path.resolve(process.cwd(), 'media', filename)
+    const bytes = await fs.readFile(filePath)
+    return { bytes, filename, contentType }
+  } catch (err) {
+    // 🔴 The callers write this message into `ingestError`, which every member
+    // reads on a published row. See `storageErrorReason`.
+    throw new Error(storageErrorReason(err, mediaId, filename, key))
+  }
+}
+
+/**
+ * A storage read failure as a message SAFE TO STORE ON THE ROW.
+ *
+ * 🔴 `ENOENT: …, open '/app/media/Testimonio de María López.pdf'` and
+ * `object <bucket>/<key> returned no body` both quote the uploader's filename,
+ * and `ingestError` is shown to every member of the ecosistema on a published
+ * row — the same filename `gatedNameReadable` hides. The filename, the key
+ * and any absolute path are cut out; the error code and the media id stay, so
+ * an operator still knows what failed and where to look.
+ */
+export function storageErrorReason(
+  err: unknown,
+  mediaId: string | number,
+  filename: string,
+  key: string,
+): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  const code = (err as { code?: unknown; name?: unknown } | null)?.code ?? (err as Error)?.name
+  let scrubbed = raw
+  for (const secret of [key, filename].filter(Boolean)) scrubbed = scrubbed.split(secret).join('<archivo>')
+  scrubbed = scrubbed
+    // Absolute paths and bucket/key paths, quoted or bare.
+    .replace(/'[^']*<archivo>[^']*'|"[^"]*<archivo>[^"]*"|\S*<archivo>\S*/g, '<archivo>')
+    .replace(/(?:\/[\w.-]+)+/g, '<ruta>')
+  const prefix = typeof code === 'string' && code && !scrubbed.includes(code) ? `${code}: ` : ''
+  return `could not read the stored file for media ${mediaId}: ${prefix}${scrubbed}`.slice(0, 400)
 }
 
 async function openMediaBlob(
@@ -2704,6 +2807,13 @@ export const Documents: CollectionConfig = {
        */
       name: 'graphError',
       type: 'textarea',
+      /**
+       * 🔴 GATED LIKE THE ORIGINAL. On a schema miss it carries up to 400
+       * characters of the model's raw reply (`lib/graph/extract.ts`), which
+       * quotes the text it was given. The uploader and a platform admin can
+       * read it; a colleague on a published testimonio cannot.
+       */
+      access: { read: gatedOriginalReadable },
       admin: {
         readOnly: true,
         description: 'Por qué falló la última extracción del grafo. `code: message`.',

@@ -56,7 +56,7 @@ import type { Payload } from 'payload'
 
 import { isRateLimited, withRateLimitRetry, type RetryOptions } from './aiRetry'
 import { corpusTextFor } from './anonymiseDocument'
-import { chunkMetadata, contentKindOf, titleFor } from './contentKind'
+import { chunkMetadata, contentKindOf, knownContentKind, titleFor } from './contentKind'
 import { draftCorpus, publishedCorpus } from './corpus'
 
 /**
@@ -521,7 +521,7 @@ export async function beginPublish(
           text,
           // ⚠ Neutral for gated content — see `titleFor`. A testimony's filename
           // is free text and never went through the gate.
-          title: titleFor(contentKindOf(doc), doc.name),
+          title: titleFor(knownContentKind(doc), doc.name),
           /**
            * 🔴 THE SAME BUILDER THE DRAFT INGEST USES, AND THAT IS THE WHOLE
            * POINT. Publishing RE-EMBEDS the document into a different corpus, so
@@ -737,7 +737,7 @@ export async function unpublish(
           text,
           // ⚠ Neutral for gated content — see `titleFor`. A testimony's filename
           // is free text and never went through the gate.
-          title: titleFor(contentKindOf(doc), doc.name),
+          title: titleFor(knownContentKind(doc), doc.name),
           // Same shared builder as every other ingest — see `beginPublish`.
           metadata: chunkMetadata({
             docId: String(doc.id),

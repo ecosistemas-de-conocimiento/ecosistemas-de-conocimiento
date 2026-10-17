@@ -56,6 +56,15 @@ export function contentKindOf(row: { contentKind?: unknown } | null | undefined)
 }
 
 /**
+ * The row's kind when it is a known one, else `null` — NO default. For
+ * {@link titleFor}: `contentKindOf` maps an unknown kind to `documento`, whose
+ * title is the free-text filename, which is the fail-open direction.
+ */
+export function knownContentKind(row: { contentKind?: unknown } | null | undefined): ContentKind | null {
+  return isContentKind(row?.contentKind) ? row.contentKind : null
+}
+
+/**
  * 🔴 EVERY CHUNK THAT ENTERS ANY CORPUS GETS ITS METADATA FROM HERE.
  *
  * Three callers: the draft ingest (`collections/Documents.ts`), the publish and
@@ -100,9 +109,13 @@ export function contentKindOf(row: { contentKind?: unknown } | null | undefined)
  * definition, a handle on which person it came from. `metadata.docId` still
  * identifies the row for anyone with access to it.
  */
-export function titleFor(contentKind: ContentKind, name?: string | null): string {
+export function titleFor(contentKind: ContentKind | null | undefined, name?: string | null): string {
   if (contentKind === 'testimonio') return 'Testimonio'
   if (contentKind === 'conversacion') return 'Conversación'
+  // 🔴 FAILS CLOSED. Only a `documento` carries its own name. A kind this code
+  // does not know yet — a new one added to `CONTENT_KINDS`, or a raw column
+  // value nobody validated — gets a neutral title, not the filename.
+  if (contentKind !== 'documento') return 'Documento'
   const trimmed = typeof name === 'string' ? name.trim() : ''
   return trimmed === '' ? 'Documento sin título' : trimmed
 }

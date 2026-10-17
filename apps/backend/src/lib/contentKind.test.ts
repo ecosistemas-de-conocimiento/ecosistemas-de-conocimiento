@@ -49,7 +49,30 @@ import {
   chunkMetadata,
   contentKindOf,
   isContentKind,
+  titleFor,
 } from './contentKind'
+
+describe('🔴 titleFor fails CLOSED — only a documento carries its own name', () => {
+  it('a documento keeps its name, trimmed, with a fallback when empty', () => {
+    expect(titleFor('documento', '  Informe de agua.pdf ')).toBe('Informe de agua.pdf')
+    expect(titleFor('documento', '   ')).toBe('Documento sin título')
+    expect(titleFor('documento', null)).toBe('Documento sin título')
+  })
+
+  it('a testimonio and a conversacion get their neutral titles', () => {
+    expect(titleFor('testimonio', 'Testimonio de María López.mp3')).toBe('Testimonio')
+    expect(titleFor('conversacion', '¿Qué dijo Juan Pérez?')).toBe('Conversación')
+  })
+
+  it.each([['entrevista'], [''], [null], [undefined], [42]])(
+    '🔴 an unknown or missing kind (%j) never returns the raw name',
+    (kind) => {
+      const title = titleFor(kind as never, 'Testimonio de María López.mp3')
+      expect(title).not.toContain('María')
+      expect(title).toBe('Documento')
+    },
+  )
+})
 
 // ---------------------------------------------------------------------------
 // contentKindOf
