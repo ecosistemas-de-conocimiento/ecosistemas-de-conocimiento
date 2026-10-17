@@ -1,8 +1,9 @@
 # Plan — anonymisation before corpus, and the Investigador / Voces role
 
-**Status:** Proposed. Nothing implemented.
+**Status:** Implemented in large part — merged on 2026-08-28. See §7 for what landed and what is still open. Sections 1–6 are the original proposal, kept as the record of the reasoning.
 **Decided so far (owner):** conversations are ingested into the corpus; questions AND assistant answers; a conversation that cited unpublished drafts enters when those drafts are published; ingestion is automatic and silent.
-**Open:** what "anonymised" means in practice, and whether testimonies are anonymised at all.
+**Decided later, in code (`c0fea63`):** testimonies are **always anonymous** — no `subject` field, no consent level (see `apps/backend/src/collections/Documents.ts`, the comment on `contentKind`). This settles §3.4 in a different direction from the three-level proposal.
+**Open:** the legal / ethical frame for testimonies, retention, and moving stage 4 off the hosted model (§7).
 
 ---
 
@@ -173,3 +174,28 @@ In `apps/backend`, as domain logic. `ai-service` is deliberately content-agnosti
 4. Add the `subject` / `onBehalf` / consent fields and the Investigador role, with access scoped to one ecosistema.
 5. Mark assistant turns in chunk metadata (independent of everything above, and worth doing now).
 6. Revisit stage 4 once there is a GPU to run it on.
+
+## 7. Implementation status (reviewed 2026-10-16 against the git history)
+
+**Implemented** — merged in `c0fea63`; main work in `fd52489`, review fixes in `cae927f`, `fcb3b65`.
+
+- ✅ **The gate with a hold state** (§3.1) — `apps/backend/src/lib/anonymise/`. `gate.ts` returns `ready | hold` only; a detector failure, an empty result or a verify disagreement ends in `hold`. Stages: `structural.ts` (drop ids, coarsen dates), `deterministic.ts` (regexes + roster), `detector.ts` (open scrub, LLM), then verify by re-running the detector over the redacted text.
+- ✅ **Per-document pseudonyms** (§3.2) — `lib/anonymise/pseudonyms.ts`: `[Persona A]`, `[Domicilio A]`, `[Dato omitido]`. No re-identification map is stored.
+- ✅ **Stage 4 against the hosted model, behind an interface** (§3.3) — `aiServiceDetector` in `detector.ts` calls ai-service `/v1/generate/sync`; `staticDetector` exists for tests. The caller chooses the detector explicitly (`lib/anonymise/index.ts`).
+- ✅ **`kind` on every chunk** (§3.1b) — `lib/contentKind.ts`: `documento | testimonio | conversacion`; stored as the immutable `contentKind` column on `Documents.ts`, passed through `lib/publishDocument.ts`.
+- ✅ **Conversation ingestion, incremental, with assistant turns marked** (§3.0, §4, step 5) — `lib/conversationIngest.ts` appends turns (never re-ingests the thread) and sets `authoredBy: 'assistant' | 'user'`; hooks in `collections/Messages.ts`; ai-service callback at `app/api/ai-service/callback/route.ts`.
+- ✅ **Investigador role, scoped to one ecosistema** (§3.4, step 4) — `lib/permissions.ts` (`ORG_ROLES`, rank between `member` and `admin`, `voces:upload`), `collections/Memberships.ts`; migration `migrations/20260828_081504_voces_and_anonymisation.ts`.
+- ✅ **Document anonymisation for Voces** — `lib/anonymiseDocument.ts`, wired into `collections/Documents.ts`.
+- ✅ **Follow-ups after the merge:** review screen for held documents (`7204d17`); anonymisation policy in one place plus street-address redaction (`f9f1cd9`, `1dd93ee`); six findings from the adversarial review of the gate (`161ede9`); the corpus graph reads the anonymised text and makes no person nodes from a `testimonio` (`eed2c59`, `2f6d191`).
+
+**Decided differently from the proposal**
+
+- §3.4 — no `subject`, no `onBehalf`, no consent level. A testimony is anonymous, always. The rationale in `Documents.ts`: a stored subject is a re-identification map; one rule leaves no default for a bulk upload to get wrong. `uploadedBy` keeps meaning "who performed the upload".
+
+**Still open**
+
+1. 🔴 **Move stage 4 to a self-hosted model** before the first real Voz (§3.3). Today the unredacted text still goes to the hosted model via ai-service.
+2. ❔ **Legal / ethical frame for testimonies** — consent artefact, and whether it must be recorded outside the system (§2).
+3. ❔ **Retention** — does an anonymised conversation ever expire (§2).
+4. ⚠ **Re-identification by context** has no technical fix (§5); ingestion stays inside the ecosistema that produced it.
+5. 📝 **Tell users plainly that conversations feed the corpus** (§5) — not verified in the UI during this review.
