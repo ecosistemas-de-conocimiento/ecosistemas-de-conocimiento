@@ -423,3 +423,173 @@ function respondWithOnce(chunks: Chunk[]): void {
     }),
   );
 }
+
+// ── The hybrid path (`opts.hybrid`, CHAT_RETRIEVAL_MODE=hybrid) ───────────────
+//
+// 🔴 The same draft-isolation property as the dense leg above, on the one
+// `/v1/retrieve/multi` call: drafts are limited server-side by
+// `corpusFilters` + `docId $in`, AND checked again on the way back, so a
+// server that ignored the filter still cannot leak another conversation's
+// draft into this one.
+describe('retrieveMulti (hybrid)', () => {
+  type MultiChunk = Chunk & { corpus: string };
+  const multiChunk = (corpus: string, backendDocId: string, n = 1): MultiChunk => ({
+    ...chunk(backendDocId, n),
+    chunkId: `${corpus}/${backendDocId}#${n}`,
+    corpus,
+  });
+
+  function respondMulti(chunks: MultiChunk[], corpora = [ECO, DRAFT]): void {
+    fetchMock.mockImplementation(async () =>
+      new Response(
+        JSON.stringify({ chunks, corpora: corpora.map((c) => ({ corpus: c, matched: 1 })) }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+  }
+
+  const hybridClient = (over: Partial<Parameters<typeof makeEngineAIClient>[1]> = {}) =>
+    makeEngineAIClient(noClient, {
+      sessionId: '1',
+      asOf: ASOF,
+      allowedCorpora: [ECO, DRAFT],
+      publishedCorpus: ECO,
+      sessionDocumentIds: new Set(['10', '11']),
+      hybrid: true,
+      ...over,
+    });
+
+  // What the engine sends: every target, including its `chat:thread` leg.
+  const multiReq = (extra: Record<string, unknown> = {}) => ({
+    orgId: 'org',
+    scopeId: 's1',
+    corpora: [ECO, DRAFT, 'chat:thread:1'],
+    query: '¿qué dice el informe?',
+    topK: 5,
+    limit: 8,
+    mode: 'hybrid' as const,
+    ...extra,
+  });
+
+  it('is offered only when hybrid is on', () => {
+    expect(makeEngineAIClient(noClient, { sessionId: '1' }).retrieveMulti).toBeUndefined();
+    expect(hybridClient().retrieveMulti).toBeTypeOf('function');
+  });
+
+  it('sends ONE hybrid multi call, drafts limited to this conversation by `$in`', async () => {
+    respondMulti([]);
+    await hybridClient().retrieveMulti!(multiReq());
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]![0])).toBe('http://ai.test/v1/retrieve/multi');
+    const [body] = sentBodies();
+    expect(body).toMatchObject({
+      corpora: [ECO, DRAFT], // the engine's chat:thread leg is dropped
+      mode: 'hybrid',
+      topK: 5,
+      limit: 8,
+      asOf: ASOF,
+      corpusFilters: { [DRAFT]: { docId: { $in: ['10', '11'] } } },
+    });
+    // The shared corpus is never narrowed.
+    expect(body).not.toHaveProperty('filter');
+    expect(body!.corpusFilters).not.toHaveProperty(ECO);
+  });
+
+  // `docId` is stored as a string; `$in` compares by type.
+  it('sends the ids as strings', async () => {
+    respondMulti([]);
+    await hybridClient().retrieveMulti!(multiReq());
+    const filters = sentBodies()[0]!.corpusFilters as Record<string, { docId: { $in: unknown[] } }>;
+    expect(filters[DRAFT]!.docId.$in.every((v) => typeof v === 'string')).toBe(true);
+  });
+
+  it('🔴 drops a draft chunk of another conversation even if the server ignored the filter', async () => {
+    respondMulti([
+      multiChunk(DRAFT, '999'),
+      multiChunk(ECO, '500'),
+      multiChunk(DRAFT, '10'),
+      multiChunk('eco-99', '10'), // a corpus we never sent
+    ]);
+    const res = await hybridClient().retrieveMulti!(multiReq());
+    expect(res.matches.map((m) => [m.corpus, m.metadata?.docId])).toEqual([
+      [ECO, '500'],
+      [DRAFT, '10'],
+    ]);
+  });
+
+  it('🔴 refuses the draft corpus when the document list is unknown (fail closed)', async () => {
+    respondMulti([multiChunk(DRAFT, '10'), multiChunk(ECO, '500')]);
+    const res = await hybridClient({ sessionDocumentIds: null }).retrieveMulti!(multiReq());
+    expect(sentBodies()[0]!.corpora).toEqual([ECO]);
+    expect(sentBodies()[0]).not.toHaveProperty('corpusFilters');
+    expect(res.matches.map((m) => m.corpus)).toEqual([ECO]);
+    expect(console.error).toHaveBeenCalled();
+  });
+
+  it('skips the draft corpus when no document is attached here', async () => {
+    respondMulti([]);
+    await hybridClient({ sessionDocumentIds: new Set() }).retrieveMulti!(multiReq());
+    expect(sentBodies()[0]!.corpora).toEqual([ECO]);
+  });
+
+  it('narrows EVERY corpus when publishedCorpus is null', async () => {
+    respondMulti([multiChunk(ECO, '500'), multiChunk(ECO, '10')]);
+    const res = await hybridClient({ publishedCorpus: null }).retrieveMulti!(multiReq());
+    expect(Object.keys(sentBodies()[0]!.corpusFilters as object).sort()).toEqual([DRAFT, ECO].sort());
+    expect(res.matches.map((m) => m.metadata?.docId)).toEqual(['10']);
+  });
+
+  it('makes no call without asOf', async () => {
+    const res = await hybridClient({ asOf: null }).retrieveMulti!(multiReq());
+    expect(res.matches).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('makes no call when no requested corpus is authorised', async () => {
+    const res = await hybridClient().retrieveMulti!(multiReq({ corpora: ['eco-99', 'chat:thread:1'] }));
+    expect(res.matches).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // The lengua filter keeps today's meaning on BOTH corpora. A `corpusFilters`
+  // entry REPLACES `filter`, so lengua must be repeated inside it.
+  it('keeps the lengua filter on the shared corpus AND inside the draft filter', async () => {
+    respondMulti([]);
+    await hybridClient().retrieveMulti!(multiReq({ filter: { lengua: 'mixe' } }));
+    expect(sentBodies()[0]).toMatchObject({
+      filter: { lengua: 'mixe' },
+      corpusFilters: { [DRAFT]: { lengua: 'mixe', docId: { $in: ['10', '11'] } } },
+    });
+  });
+
+  it('forwards rerank, and retries once without it on an HTTP error', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    respondMulti([multiChunk(ECO, '500')]);
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 503 }));
+    const res = await hybridClient().retrieveMulti!(multiReq({ rerank: true }));
+    const [first, retry] = sentBodies();
+    expect(first).toMatchObject({ rerank: true });
+    expect(retry).not.toHaveProperty('rerank');
+    expect(retry).toMatchObject({
+      asOf: ASOF,
+      corpusFilters: { [DRAFT]: { docId: { $in: ['10', '11'] } } },
+    });
+    expect(res.matches).toHaveLength(1);
+  });
+
+  it('throws on an HTTP error, so the engine reports the corpora as failed', async () => {
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 400 }));
+    await expect(hybridClient().retrieveMulti!(multiReq())).rejects.toThrow(/400/);
+  });
+
+  it('forwards the leg scores and keeps the server order', async () => {
+    respondMulti([
+      { ...multiChunk(ECO, '500'), score: 0.03, denseScore: 0.6, lexicalScore: 0.2 } as MultiChunk,
+      { ...multiChunk(DRAFT, '10'), score: 0.02 } as MultiChunk,
+    ]);
+    const res = await hybridClient().retrieveMulti!(multiReq());
+    expect(res.matches[0]).toMatchObject({ corpus: ECO, score: 0.03, denseScore: 0.6, lexicalScore: 0.2 });
+    expect(res.matches[1]).toMatchObject({ corpus: DRAFT, score: 0.02 });
+  });
+});

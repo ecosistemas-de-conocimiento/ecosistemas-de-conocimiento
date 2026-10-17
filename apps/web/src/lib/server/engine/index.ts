@@ -8,11 +8,13 @@
 export {
   CHAT_ENGINE_CONFIG,
   CHAT_KIND_REGISTRY,
+  chatTurnHybrid,
   chatTurnRetrievalPolicy,
   engineOrgId,
   queryExpansionEnabled,
 } from './config';
 export { chatRetrievalPolicy, parseRerankFlag } from './rerank';
+export { parseRetrievalMode, type ChatRetrievalMode } from './hybrid';
 export { withQueryExpansion, type ExpansionTrace, type QueryExpansionOptions } from './expand';
 export { makeEngineAIClient, type EngineAIClientOptions } from './aiClient';
 export {

@@ -15,22 +15,18 @@
  *
  * ── WHERE THE RERANK HAPPENS, AND HOW MANY TIMES ─────────────────────────────
  *
- * chat-engine 0.6 can rerank ONCE after cross-corpus fusion only through a
- * `hybrid` policy plus `AIClient.retrieveMulti` (`/v1/retrieve/multi`). EDC
- * does not use that path. `asOf` is NOT the reason: the multi request takes
- * `asOf` and `filter` like `/v1/retrieve` does
- * (`services/ai-service/src/contract/rag.ts`, `retrieveMultiRequestSchema`).
- * The reason is the draft leg: it is over-fetched and then post-filtered to
- * this conversation's documents by `metadata.docId` (see `aiClient.ts`), and a
- * metadata `filter` cannot say "docId IN (…)". One multi call would rank and
- * cap the drafts of every conversation together before that filter could run.
- * ai-service has no stand-alone rerank endpoint either. So the rerank runs
- * server-side ONCE PER CORPUS per turn:
+ * On the default dense path (`CHAT_RETRIEVAL_MODE=dense`) the rerank runs
+ * server-side ONCE PER CORPUS per turn. The draft leg is over-fetched and then
+ * post-filtered to this conversation's documents by `metadata.docId` (see
+ * `aiClient.ts`), so one multi call there would rank and cap every
+ * conversation's drafts together before that filter could run:
  *
  *   · the published corpus  — pool 20 (topK 5 × 4)
  *   · the draft corpus      — pool 50 (the draft over-fetch of 20, × 4, capped)
  *
- * The two calls run in parallel. Query expansion (`./expand`) reranks only the
+ * The two calls run in parallel. On the hybrid path (`./hybrid`) the drafts
+ * are filtered server-side (`corpusFilters` + `$in`), so ONE multi call
+ * reranks once, after cross-corpus fusion. Query expansion (`./expand`) reranks only the
  * ORIGINAL query's search; its three variant searches go out without `rerank`,
  * so expansion does not multiply the rerank calls by four. The GraphRAG
  * widened retrieve (`$lib/server/graph`) builds its own request and is never
@@ -63,13 +59,28 @@ export function parseRerankFlag(raw: string | undefined): boolean {
 }
 
 /**
- * The policy for a chat turn. `undefined` when rerank is off: the engine then
- * takes its pre-0.6.0 path, byte for byte — no policy fields on the wire.
+ * The policy for a chat turn.
  *
- * `dense` with the engine's own defaults (topK 5 per corpus, cap 8), so the
- * only thing the policy changes is `rerank: true` on each corpus retrieve.
+ *   · dense, rerank off → `undefined`: the engine takes its pre-0.6.0 path,
+ *     byte for byte — no policy fields on the wire.
+ *   · dense, rerank on → `dense` with the engine's own defaults (topK 5 per
+ *     corpus, cap 8); the only change is `rerank: true` on each retrieve.
+ *   · hybrid → `hybrid` with the same depth and cap. The engine then calls
+ *     `AIClient.retrieveMulti` once; give it a client built with `hybrid: true`
+ *     (`makeEngineAIClient`), or it warns and falls back to dense.
  */
-export function chatRetrievalPolicy(rerank: boolean): RetrievalPolicy | undefined {
+export function chatRetrievalPolicy(
+  rerank: boolean,
+  mode: 'dense' | 'hybrid' = 'dense',
+): RetrievalPolicy | undefined {
+  if (mode === 'hybrid') {
+    return {
+      mode: 'hybrid',
+      perCorpusTopK: DEFAULT_PER_CORPUS_TOPK,
+      limit: DEFAULT_MERGED_CAP,
+      rerank,
+    };
+  }
   if (!rerank) return undefined;
   return {
     mode: 'dense',

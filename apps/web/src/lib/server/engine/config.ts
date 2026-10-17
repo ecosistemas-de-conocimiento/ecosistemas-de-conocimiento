@@ -14,6 +14,7 @@ import { env } from '$env/dynamic/private';
 import { CHAT_KIND_REGISTRY } from '$lib/engine/registry';
 import { parseExpansionFlag } from './expand';
 import { chatRetrievalPolicy, parseRerankFlag } from './rerank';
+import { hybridRetrievalForTurn } from './hybrid';
 import type { RetrievalPolicy } from '@edc/chat-engine/core';
 
 /** Re-export the client-safe registry so server code has one import surface. */
@@ -63,8 +64,25 @@ export function queryExpansionEnabled(): boolean {
 /**
  * Cross-encoder rerank on chat turns (`./rerank`): `CHAT_RERANK=off` turns it
  * off. Default ON. Read per call, so an operator can flip it without a rebuild.
- * `undefined` (off) is the engine's pre-policy retrieval, byte for byte.
+ * `undefined` (dense, rerank off) is the engine's pre-policy retrieval, byte
+ * for byte.
+ *
+ * `hybrid` is the answer of `chatTurnHybrid()`: the `CHAT_RETRIEVAL_MODE`
+ * switch AND the ai-service capability. Pass the same value to
+ * `makeEngineAIClient({ hybrid })`.
  */
-export function chatTurnRetrievalPolicy(): RetrievalPolicy | undefined {
-  return chatRetrievalPolicy(parseRerankFlag(env.CHAT_RERANK));
+export function chatTurnRetrievalPolicy(hybrid = false): RetrievalPolicy | undefined {
+  return chatRetrievalPolicy(parseRerankFlag(env.CHAT_RERANK), hybrid ? 'hybrid' : 'dense');
+}
+
+/**
+ * Whether this turn retrieves in hybrid mode (`./hybrid`). Default dense.
+ * Read per call. Never throws; any doubt answers `false`.
+ */
+export function chatTurnHybrid(): Promise<boolean> {
+  return hybridRetrievalForTurn({
+    CHAT_RETRIEVAL_MODE: env.CHAT_RETRIEVAL_MODE,
+    AI_SERVICE_URL: env.AI_SERVICE_URL,
+    AI_SERVICE_API_KEY: env.AI_SERVICE_API_KEY,
+  });
 }

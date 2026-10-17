@@ -24,6 +24,7 @@ const ENV: Record<string, string | undefined> = vi.hoisted(() => ({
 vi.mock('$env/dynamic/private', () => ({ env: ENV }));
 
 import { POST } from './+server';
+import { resetHybridCapabilityCache } from '$lib/server/engine/hybrid';
 import { ANSWER_NOT_SAVED_CODE } from '$lib/aiMessages';
 
 const SESSION = '5';
@@ -42,6 +43,10 @@ interface World {
   saveStatus: number;
   graphCalls: number;
   sessionDocs: Array<Record<string, unknown>>;
+  /** What `GET /v1/capabilities` answers. */
+  capabilities: Record<string, boolean>;
+  /** What `/v1/retrieve/multi` answers, whatever it was asked. */
+  multiChunks: Array<Record<string, unknown>>;
 }
 
 let calls: Call[];
@@ -104,6 +109,14 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   }
 
   if (url.host === 'ai.test') {
+    if (url.pathname === '/v1/capabilities') return json({ capabilities: world.capabilities });
+    if (url.pathname === '/v1/retrieve/multi') {
+      const corpora = (body as { corpora: string[] }).corpora;
+      return json({
+        chunks: world.multiChunks,
+        corpora: corpora.map((corpus) => ({ corpus, matched: 1 })),
+      });
+    }
     if (url.pathname === '/v1/retrieve') {
       return json({
         chunks: [
@@ -205,9 +218,13 @@ beforeEach(() => {
     sessionDocs: [
       { id: 11, name: 'informe.pdf', kind: 'pdf', contentKind: 'documento', publicationStatus: 'draft' },
     ],
+    capabilities: { orgDelegation: true, metadataFilterIn: true },
+    multiChunks: [],
   };
   ENV.QUERY_EXPANSION = undefined;
   ENV.CHAT_RERANK = undefined;
+  ENV.CHAT_RETRIEVAL_MODE = undefined;
+  resetHybridCapabilityCache();
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -357,5 +374,90 @@ describe('POST /api/generate — stream', () => {
     for (const c of retrieves()) {
       expect((c.body as { filter?: unknown }).filter).toEqual({ lengua: 'mixe' });
     }
+  });
+});
+
+// ── CHAT_RETRIEVAL_MODE=hybrid (audit C-4) ────────────────────────────────────
+describe('POST /api/generate — hybrid retrieval', () => {
+  const DRAFT = `eco-${ECO}-draft-1`;
+  const multis = () =>
+    calls.filter((c) => c.url.host === 'ai.test' && c.url.pathname === '/v1/retrieve/multi');
+  const capabilityProbes = () =>
+    calls.filter((c) => c.url.host === 'ai.test' && c.url.pathname === '/v1/capabilities');
+  const multiChunk = (corpus: string, docId: string, text: string) => ({
+    corpus,
+    documentId: `uuid-${docId}`,
+    chunkId: `${corpus}/${docId}`,
+    score: 0.03,
+    denseScore: 0.6,
+    text,
+    metadata: { docId, title: `doc-${docId}` },
+  });
+
+  it('is off by default: no capability probe, no multi call', async () => {
+    await POST(event(turn()));
+    expect(capabilityProbes()).toHaveLength(0);
+    expect(multis()).toHaveLength(0);
+    expect(retrieves().length).toBeGreaterThan(0);
+  });
+
+  it('🔴 sends ONE hybrid multi call with the drafts limited to this conversation', async () => {
+    ENV.CHAT_RETRIEVAL_MODE = 'hybrid';
+    world.multiChunks = [multiChunk(`eco-${ECO}`, '500', 'Las parteras acompañan los partos.')];
+    const res = await POST(event(turn()));
+    expect(res.status).toBe(200);
+    expect(multis()).toHaveLength(1);
+    const multi = multis()[0]!;
+    expect(multi.body).toMatchObject({
+      corpora: [`eco-${ECO}`, DRAFT],
+      mode: 'hybrid',
+      rerank: true,
+      asOf: '2026-10-17T00:00:00.000Z',
+      corpusFilters: { [DRAFT]: { docId: { $in: ['11'] } } },
+    });
+    expect(multi.headers['x-ai-org']).toBe(`eco-${ECO}`);
+    // The engine's per-corpus retrieves are gone; only the graph's widened
+    // retrieve, on the published corpus, still uses /v1/retrieve.
+    for (const c of retrieves()) expect(c.body).toMatchObject({ corpus: `eco-${ECO}` });
+    const saved = saves()[0]!.body as { provenance: { chunks: unknown[] } };
+    expect(saved.provenance.chunks.length).toBeGreaterThan(0);
+  });
+
+  it('🔴 a draft of another conversation never reaches the prompt or the provenance', async () => {
+    ENV.CHAT_RETRIEVAL_MODE = 'hybrid';
+    world.multiChunks = [
+      multiChunk(DRAFT, '999', 'SECRETO DE OTRA CONVERSACION'),
+      multiChunk(DRAFT, '11', 'Las parteras acompañan los partos.'),
+    ];
+    await POST(event(turn()));
+    const answerCall = generates().find((c) => !JSON.stringify(c.body).includes('Escribe exactamente tres'));
+    expect(JSON.stringify(answerCall!.body)).not.toContain('SECRETO DE OTRA CONVERSACION');
+    expect(JSON.stringify(answerCall!.body)).toContain('Las parteras acompañan los partos.');
+    expect(JSON.stringify(saves()[0]!.body)).not.toContain('SECRETO DE OTRA CONVERSACION');
+  });
+
+  it('🔴 keeps `lengua` on the shared corpus AND on the draft filter', async () => {
+    ENV.CHAT_RETRIEVAL_MODE = 'hybrid';
+    await POST(event(turn({ lengua: 'mixe' })));
+    expect(multis()[0]!.body).toMatchObject({
+      filter: { lengua: 'mixe' },
+      corpusFilters: { [DRAFT]: { lengua: 'mixe', docId: { $in: ['11'] } } },
+    });
+  });
+
+  it('🔴 without `metadataFilterIn` it falls back to the dense path, drafts post-filtered', async () => {
+    ENV.CHAT_RETRIEVAL_MODE = 'hybrid';
+    world.capabilities = { orgDelegation: true };
+    await POST(event(turn()));
+    expect(multis()).toHaveLength(0);
+    expect(retrieves().some((c) => (c.body as { corpus: string }).corpus === DRAFT)).toBe(true);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('metadataFilterIn'));
+  });
+
+  it('works on the streaming path too', async () => {
+    ENV.CHAT_RETRIEVAL_MODE = 'hybrid';
+    const res = await POST(event(turn(), true));
+    await readSse(res);
+    expect(multis()).toHaveLength(1);
   });
 });
