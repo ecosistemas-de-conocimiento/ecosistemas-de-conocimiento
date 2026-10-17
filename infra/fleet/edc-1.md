@@ -1,8 +1,8 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Both environments run `main` @ `7dbe85c` (one ai-service org per
-ecosistema, query expansion), deployed 2026-10-17 05:07 UTC (dev) and 05:49 UTC (staging), with
-the org move of §4c applied. Verified end to end on both (measured by the deploy agent): login, PDF
+**Status:** live since 2026-10-17. Both environments run `main` @ `643ff4e` (slim images, chat
+rerank on by default, admin key required by compose), deployed 2026-10-17 12:28 UTC (dev) and
+12:36 UTC (staging) — see §4e. Before that, `7dbe85c` (05:07 / 05:49 UTC) with the org move of §4c. Verified end to end on both (measured by the deploy agent): login, PDF
 upload → `ready` via the public https callback, real OpenRouter chat answer whose
 `provenance.chunks[]` cites the upload, conversation delete, admin usage panel, lengua filter pages
 , usage logs booked to `edc-eco-1`. Before that: `fcd1325`, then `f89047e` (first deploy). Companion docs: `env-manifests.md` (what each variable means),
@@ -197,6 +197,49 @@ ai-service refuses the old internal callback origin. Per application:
   `apps/web/src/lib/server/engine/rerank.ts`). ⚠ Not yet measured on edc-1: the smoke chats above
   ran before `7e137e2` and returned `rerankScore: null`. Re-check after the next deploy.
 
+### 4e. ✅ Done 2026-10-17 12:28–12:43 UTC: `643ff4e`, both envs
+
+All measured by the deploy agent. Before each deploy, through the API:
+
+- `AI_SERVICE_ADMIN_API_KEY` holds a real 64-char secret on both apps; its sha256 matches the local
+  `EDC_{DEV,STAGE}_AI_SERVICE_ADMIN_API_KEY`. `RERANK_API_KEY` is stored in Coolify on both (not only
+  in the generated `.env`), so the regenerated `.env` kept it. `RERANK_ENABLED` and `CHAT_RERANK`
+  exist nowhere.
+- `LLM_REQUEST_TIMEOUT_MS=600000` added to both apps (literal). ai-service reads it through
+  `env_file`; `printenv` in both new ai-service containers shows `600000`. The backend's
+  `GRAPH_EXTRACT_TIMEOUT_MS` stays at its 660000 code default (not set), above it as required.
+- After the compose reload, no non-preview variable holds `:?` error text (both apps).
+  ⚠ The **preview** copies of `ALLOWED_ORIGINS`, `AUTH_ISSUER`, `EDC_ENV`, `POSTGRES_PASSWORD` and
+  `WEB_ORIGIN` do hold the error text, on both apps. Preview deployments are not used, so this is
+  harmless today; fix them before ever turning previews on.
+
+Backups (both DBs, `pg_restore -l` ok, sha256 matched off-box): dev `/root/backups/20261017T1228Z/`
+(`edc_ai` 2.0 MB, `edc_backend` 258 KB), staging `/root/backups/20261017T1236Z/` (87 KB / 138 KB);
+off-box copies in the owner's `cide/backups/edc-1/<same stamp>/`.
+
+Deploys: ≈ 6 min each from queue to finished. No build failure on the first slim build. The schema
+gate found `edc_ai` current (5 migrations); no new migration. Image sizes (`docker images`):
+web 348 MB (was 6.07 GB), ai-service 545 MB (was 5.01 GB), backend 1.5 GB (was 2.49 GB).
+
+Smoke, per env (dev as admin, staging as the smoke user): health 200 on web and backend hosts,
+login 200, PDF upload → `ready` in ≈ 5 s, chat answer in 10–11 s citing `zarzamora.pdf` in
+`provenance.chunks[].metadata.title` with `rerankScore` set (0.99995 on the cited chunk), ai-service
+logged `rerank ok` twice per chat (once per corpus), conversation delete 200. This closes the
+"not yet measured" item of §4d. Doc counts unchanged by the deploy (dev: 257 backend documents,
+248 `ready`, 252 ai-service documents; staging: 4 / 4 / 5).
+
+Found along the way:
+
+- ⚠ The smoke's uploaded PDF **outlives the conversation delete**: each run leaves one draft
+  document `zarzamora.pdf` (dev doc 258, in `eco-1-draft-1`; staging in `eco-1-draft-2`). Counts
+  after the smoke are one higher. Delete them by hand if the corpus must stay clean.
+- Dev carried 2 documents at `ingest_status=pending` and 2 at `graph_status=extracting` before
+  the deploy, plus 48 `graph failed` (the 120 s timeout this deploy raises). Not touched here.
+- Disk, `df -h /` free: 40 GB before; 27 GB after dev's build; 51 GB after `docker builder prune
+  -af` and removing dev's `7dbe85c` images; 38 GB after staging's build; 61 GB after the same
+  cleanup on staging. Build cache per slim build ≈ 13 GB. The `7dbe85c` images are gone, so
+  rollback means rebuilding an older commit.
+
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
 Backups taken before the deploy (both DBs, both envs, each checked with `pg_restore -l`, sha256
@@ -383,6 +426,9 @@ reclaimable) were kept for rollback.
 16 GB of build cache. Staging's build then filled the disk (§4c). After cleanup: 17 GB free.
 The images are large — web ≈ 6.1 GB, ai-service ≈ 5.0 GB, backend ≈ 2.5 GB per tag — and the
 `fcd1325` images (≈ 13.5 GB per environment) are still kept for rollback.
+
+2026-10-17 `643ff4e` deploys (measured, `df -h /`): see §4e. With slim images and both caches
+pruned, 12 GB used, 61 GB free; images 7.0 GB in all, build cache 0.
 
 ⚠ The build cache grows with every deploy — 7–16 GB per environment deploy here. Coolify's scheduled Docker cleanup prunes it; if disk
 climbs, run `docker builder prune -f` on the box.
