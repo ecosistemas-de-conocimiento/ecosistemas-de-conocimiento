@@ -13,11 +13,14 @@ import {
   dropGenericEntities,
   extractGraph,
   GRAPH_SHAPE_POLICY,
+  GRAPH_WORD_CLASSES,
   isGenericLabel,
+  policyRejects,
   mergeWindows,
   parseWindowResponse,
   significantTokens,
   splitIntoWindows,
+  wordClassOf,
   type GraphGenerateClient,
   type ParsedWindow,
 } from './extract'
@@ -352,14 +355,103 @@ describe('🔴 GRAPH_SHAPE_POLICY — the graph-shape decision, as data', () => 
     expect([...requiring].sort()).toEqual(['lugar', 'organizacion', 'persona'])
   })
 
-  it('🔴 names the language axis in the `tema` rationale — the thing it protects', () => {
+  it('🔴 names the language axis and the subjects in the `tema` rationale', () => {
     // The exemption that saves the corpus's own vocabulary. If someone flips
     // `tema` to `true`, this rationale is what they read first.
     expect(GRAPH_SHAPE_POLICY.tema.requiresProperName).toBe(false)
-    for (const language of ['náhuatl', 'mixteco', 'zapoteco']) {
-      expect(GRAPH_SHAPE_POLICY.tema.rationale).toContain(language)
+    for (const word of ['náhuatl', 'mixteco', 'zapoteco', 'discapacidad', 'dengue']) {
+      expect(GRAPH_SHAPE_POLICY.tema.rationale).toContain(word)
     }
     expect(GRAPH_SHAPE_POLICY.evento.cost).toContain('conversatorio')
+  })
+
+  it('records the v4 decision: only `tema` excludes word classes, and which', () => {
+    // ⚠ DECISION RECORD, like the test above: meant to fail when the policy
+    // changes. `lugar` etc. need no exclusion — the orthographic rule already
+    // drops a bare `barranca` there.
+    expect(GRAPH_SHAPE_POLICY.tema.excludes).toEqual(['lengua', 'lugarSinNombre'])
+    for (const type of GRAPH_ENTITY_TYPES.filter((t) => t !== 'tema')) {
+      expect(GRAPH_SHAPE_POLICY[type].excludes, type).toEqual([])
+    }
+  })
+
+  it('🔴 every excluded word class carries its reasoning and a measured cost', () => {
+    for (const [name, cls] of Object.entries(GRAPH_WORD_CLASSES)) {
+      expect(cls.rule.length, `${name}.rule`).toBeGreaterThan(20)
+      expect(cls.rationale.length, `${name}.rationale`).toBeGreaterThan(40)
+      expect(cls.cost.length, `${name}.cost`).toBeGreaterThan(20)
+      expect(cls.words.length, `${name}.words`).toBeGreaterThan(0)
+    }
+    // 🔴 The owner's decision (2026-10-16): `español` ONLY. The 2026-09-04
+    // correction that keeps the indigenous languages is cited where it holds.
+    expect(GRAPH_WORD_CLASSES.lengua.words).toEqual(['español', 'castellano'])
+    expect(GRAPH_WORD_CLASSES.lengua.rationale).toContain('2026-09-04')
+  })
+})
+
+describe('🔴 wordClassOf — a PURE, type-blind word-class lookup', () => {
+  it('finds `español` in any case, or with an article or a head', () => {
+    // ⚠ `canonicalKey` keeps the ñ, so `espanol` is a different key, as everywhere.
+    for (const label of ['español', 'Español', 'ESPAÑOL', 'castellano', 'idioma español',
+      'el español']) {
+      expect(wordClassOf(label), label).toBe('lengua')
+    }
+  })
+
+  it('🔴 does NOT class the indigenous languages — they stay `tema`', () => {
+    for (const label of ['náhuatl', 'nahuatl', 'mixteco', 'mazateco', 'zapoteco',
+      'totonaco', 'tlahuica', 'tlapaneco', 'amuzgo', 'hñähñu', 'tsotsil', 'mixe',
+      'lengua náhuatl']) {
+      expect(wordClassOf(label), label).toBeNull()
+    }
+  })
+
+  it('finds an unnamed geographic noun, singular or plural', () => {
+    for (const label of ['barranca', 'barrancas', 'la barranca', 'colonia', 'río',
+      'ríos', 'ciudades', 'cerro']) {
+      expect(wordClassOf(label), label).toBe('lugarSinNombre')
+    }
+  })
+
+  it('🔴 returns null once a QUALIFIER is present — that is a tema, not a word', () => {
+    // The positive half: a qualified label is exactly what rule 3 asks for.
+    for (const label of ['contaminación de barrancas', 'barranca de Amanalco',
+      'lengua de señas mexicana', 'revitalización del náhuatl', 'enseñanza del español',
+      'lenguas indígenas', 'pueblos indígenas']) {
+      expect(wordClassOf(label), label).toBeNull()
+    }
+  })
+
+  it('returns null for the corpus subjects and the deliberately excluded words', () => {
+    // `escuela`, `mercado`, `clínica` are built spaces or subjects, not
+    // geography; `ejido`/`comunidad` are subjects here; `mayo` is the month;
+    // `lsm` and `braille` are the disability subject's vocabulary.
+    for (const label of ['discapacidad', 'dengue', 'traducción', 'escuela', 'mercado',
+      'clínica', 'ejido', 'comunidad', 'bosque', 'mayo', 'manzana', 'lsm', 'braille',
+      'lengua', 'Morelos']) {
+      expect(wordClassOf(label), label).toBeNull()
+    }
+  })
+})
+
+describe('policyRejects — the predicate the CLI measures', () => {
+  it('rejects a bare noun where a name is required, and a word class where excluded', () => {
+    expect(policyRejects('lugar', 'barranca')).toBe(true)
+    expect(policyRejects('tema', 'barranca')).toBe(true)
+    expect(policyRejects('tema', 'español')).toBe(true)
+    expect(policyRejects('tema', 'discapacidad')).toBe(false)
+    expect(policyRejects('lugar', 'barranca de Amanalco')).toBe(false)
+  })
+
+  it('⚠ leaves `evento` alone for word classes too — that decision is not taken here', () => {
+    expect(policyRejects('evento', 'conversatorio')).toBe(false)
+    expect(policyRejects('evento', 'barranca')).toBe(false)
+  })
+
+  it('takes a simulated `requiresProperName` without touching the word classes', () => {
+    const all = () => true
+    expect(policyRejects('tema', 'discapacidad', all)).toBe(true)
+    expect(policyRejects('tema', 'español', () => false)).toBe(true)
   })
 })
 
@@ -420,20 +512,37 @@ describe('🔴 dropGenericEntities — scoped to the types that name a particula
   })
 
   /**
-   * 🔴 THE CORPUS'S LANGUAGE AXIS SURVIVES, ALL OF IT.
-   *
-   * Every one of the 250 corpus documents carries a `lengua`; there are 11
-   * distinct ones and EVERY one lands on `tema` in the live graph. `documents`
-   * has no language column — checked in `information_schema` — so the graph is
-   * the only place this vocabulary exists in the product. An earlier draft of
-   * this rule deleted all of it.
+   * 🔴 THE CORPUS'S INDIGENOUS LANGUAGE AXIS SURVIVES, ALL OF IT — and
+   * `español` does not. Owner decision 2026-10-16, upholding 2026-09-04. For
+   * a testimonio `documents.lengua` is NULL on purpose (ADR §18.5), so the
+   * graph is where its language shows. `español` (93 documents in the v3
+   * graph) is the language almost the whole corpus is written in: it links
+   * everything and distinguishes nothing.
    */
-  it('🔴 keeps all 11 corpus languages, which are `tema` and one word each', () => {
+  it('🔴 keeps all 11 corpus languages as `tema`, and drops only `español`', () => {
     const languages = [
       'náhuatl', 'mixteco', 'mazateco', 'zapoteco', 'totonaco', 'tlahuica',
-      'tlapaneco', 'amuzgo', 'hñähñu', 'tsotsil', 'mixe', 'español',
+      'tlapaneco', 'amuzgo', 'hñähñu', 'tsotsil', 'mixe',
     ]
-    expect(labelsOf(windowOf(...languages.map((l) => entity('tema', l))))).toEqual(languages)
+    expect(
+      labelsOf(windowOf(...[...languages, 'español'].map((l) => entity('tema', l)))),
+    ).toEqual(languages)
+  })
+
+  it('🔴 drops `barranca` re-typed as a `tema` — the hole v3 left', () => {
+    // v3 dropped `lugar|barranca`; the model answered with `tema|barranca`
+    // (24 documents). Both doors are now shut, and the named and the
+    // qualified forms still pass.
+    expect(labelsOf(windowOf(entity('tema', 'barranca'), entity('tema', 'colonia')))).toEqual([])
+    expect(
+      labelsOf(
+        windowOf(
+          entity('lugar', 'barranca de Amanalco'),
+          entity('tema', 'contaminación de barrancas'),
+          entity('tema', 'enseñanza del español'),
+        ),
+      ),
+    ).toEqual(['barranca de Amanalco', 'contaminación de barrancas', 'enseñanza del español'])
   })
 
   it('🔴 keeps the four subjects the corpus is organised by', () => {
@@ -459,8 +568,8 @@ describe('🔴 dropGenericEntities — scoped to the types that name a particula
     // The prompt defines `evento` as "un hecho o un proceso", and a process is
     // a concept, so a bare noun there is not the unambiguous category error it
     // is for lugar/organizacion/persona. The price is named rather than hidden:
-    // `conversatorio` (27 documents) stays a generic hub. Adding 'evento' to
-    // `GENERIC_RULE_TYPES` is the one-line change if that trade flips.
+    // `conversatorio` stays a generic hub. Flipping `evento.requiresProperName`
+    // in `GRAPH_SHAPE_POLICY` is the one-line change if that trade flips.
     expect(labelsOf(windowOf(entity('evento', 'conversatorio')))).toEqual(['conversatorio'])
     expect(labelsOf(windowOf(entity('evento', 'pandemia')))).toEqual(['pandemia'])
   })
@@ -725,14 +834,18 @@ describe('extractGraph', () => {
           { tipo: 'lugar', etiqueta: 'barranca', menciones: 9 },
           { tipo: 'organizacion', etiqueta: 'escuela', menciones: 5 },
           { tipo: 'lugar', etiqueta: 'clínica', menciones: 3 },
-          { tipo: 'tema', etiqueta: 'náhuatl', menciones: 7 },
+          { tipo: 'tema', etiqueta: 'dengue', menciones: 7 },
           { tipo: 'tema', etiqueta: 'discapacidad', menciones: 4 },
+          // v4: a language and a re-typed place noun, both refused as `tema`.
+          { tipo: 'tema', etiqueta: 'español', menciones: 6 },
+          { tipo: 'tema', etiqueta: 'barranca', menciones: 5 },
           { tipo: 'lugar', etiqueta: 'Morelos', menciones: 3 },
           { tipo: 'organizacion', etiqueta: 'Escuela Primaria Miguel Hidalgo', menciones: 2 },
         ],
         [
           { desde: 'barranca', hacia: 'Morelos', tipo: 'ubicado_en' },
-          { desde: 'náhuatl', hacia: 'Morelos', tipo: 'relacionado_con' },
+          { desde: 'dengue', hacia: 'Morelos', tipo: 'relacionado_con' },
+          { desde: 'español', hacia: 'dengue', tipo: 'relacionado_con' },
         ],
       ),
     ])
@@ -750,12 +863,13 @@ describe('extractGraph', () => {
     expect(labels).not.toContain('barranca')
     expect(labels).not.toContain('escuela')
     expect(labels).not.toContain('clínica')
+    expect(labels).not.toContain('español')
     // 🔴 …and the positive counterpart, twice over: the corpus's own subject
     // vocabulary survives, and so do the properly named entities. Without this
     // the suite could not tell a working filter from an extraction that
     // produced nothing at all.
     expect(labels).toEqual([
-      'náhuatl',
+      'dengue',
       'discapacidad',
       'Morelos',
       'Escuela Primaria Miguel Hidalgo',
@@ -769,14 +883,14 @@ describe('extractGraph', () => {
     // Both post-filters run on the same window. A testimonio loses its persona
     // to the privacy rule; a class-of-thing typed as a place goes to the
     // quality rule; a named organisation survives both, because ADR §5.3 says
-    // organisations always do; and the one-word `tema` survives because the
-    // quality rule never looks at a `tema`.
+    // organisations always do; and the one-word subject `tema` survives
+    // because the orthographic rule never looks at a `tema`.
     vi.spyOn(console, 'log').mockImplementation(() => undefined)
     const { client } = fakeClient([
       okResponse([
         { tipo: 'persona', etiqueta: 'Ernesto Ramírez', menciones: 4 },
         { tipo: 'lugar', etiqueta: 'barranca', menciones: 3 },
-        { tipo: 'tema', etiqueta: 'mixteco', menciones: 2 },
+        { tipo: 'tema', etiqueta: 'dengue', menciones: 2 },
         { tipo: 'organizacion', etiqueta: 'Centro de Salud de Tlayacapan', menciones: 2 },
       ]),
     ])
@@ -788,7 +902,7 @@ describe('extractGraph', () => {
       windowChars: 5000,
     })
     expect(result.entities.map((e) => e.label)).toEqual([
-      'mixteco',
+      'dengue',
       'Centro de Salud de Tlayacapan',
     ])
   })

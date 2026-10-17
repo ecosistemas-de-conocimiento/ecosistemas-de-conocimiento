@@ -212,12 +212,12 @@ describe('graphPromptTemplate', () => {
   })
 
   it('🔴 tells the model a one-word `tema` is WANTED — the corpus vocabulary', () => {
-    // 🔴 THE OWNER'S CORRECTION, IN THE PROMPT. Every one of the 250 corpus
-    // documents carries a `lengua`, all 11 of them land on `tema`, and
-    // `documents` has no language or theme column — the graph is the only place
-    // they exist. An earlier draft of rule 3 told the model to write "lengua
-    // náhuatl" instead of "náhuatl", which would have suppressed exactly the
-    // vocabulary the corpus is organised by.
+    // 🔴 THE OWNER'S CORRECTION, IN THE PROMPT (2026-09-04, upheld 2026-10-16).
+    // All 11 of the corpus's indigenous languages land on `tema`, and for a
+    // testimonio `documents.lengua` is NULL on purpose (ADR §18.5), so the graph
+    // is where their language shows. An earlier draft told the model to write
+    // "lengua náhuatl" instead of "náhuatl", which would have suppressed exactly
+    // the vocabulary the corpus is organised by.
     for (const allowPersona of [true, false]) {
       const template = graphPromptTemplate(allowPersona)
       expect(template).toContain('Un `tema`, en cambio, SÍ puede ser una sola palabra')
@@ -227,6 +227,25 @@ describe('graphPromptTemplate', () => {
       // ⚠ And the routing rule that recovers the fourth theme: `escuela` is a
       // subject, so it belongs on `tema`, not on `organizacion`.
       expect(template).toContain('eso es un `tema`')
+    }
+  })
+
+  it('🔴 v4: tells the model `español` and an unnamed place are NEVER a `tema`', () => {
+    // Measured on the v3 graph: `tema|español` 93 documents, `tema|barranca` 24
+    // after v3 refused it as a `lugar`. `extract.ts` drops both whatever the
+    // model returns; these words are the cheap layer.
+    for (const allowPersona of [true, false]) {
+      const template = graphPromptTemplate(allowPersona)
+      expect(template).toContain('NUNCA son `tema`')
+      expect(template).toContain('- "español": casi todos los textos están en español')
+      // ⚠ Scoped to Spanish ONLY: the indigenous languages are said to stay.
+      expect(template).toContain('Las lenguas indígenas SÍ son temas.')
+      expect(template).toContain('SIN NOMBRE ("barranca"')
+      // The qualified form stays wanted, so this cannot read as "never mention".
+      expect(template).toContain('"contaminación de barrancas"')
+      // 🔴 The v3 escape route is gone: rule 3 no longer routes the mercado or
+      // the clínica into `tema` "como asunto".
+      expect(template).not.toContain('la clínica o el mercado como')
     }
   })
 
@@ -311,13 +330,15 @@ describe('GRAPH_PROMPT_VERSION', () => {
     expect(GRAPH_PROMPT_VERSION).not.toBe('v1')
   })
 
-  it('🔴 is `v3`, the stamp the generic-label re-extraction is findable by', () => {
+  it('🔴 is `v4`, the stamp the language/place re-extraction is findable by', () => {
     // `v2` rows were extracted under a contract that let `barranca`, `español`,
     // `escuela` and `discapacidad` become the corpus's biggest nodes. The ONLY
     // thing that can find them afterwards is this string: `backfill.ts` selects
     // on `graphPromptVersion != GRAPH_PROMPT_VERSION`. Leaving it at `v2` would
     // leave the corpus half-extracted under two contracts with nothing able to
     // tell the halves apart — which is exactly what happened at `v1`.
-    expect(GRAPH_PROMPT_VERSION).toBe('v3')
+    // `v3` rows carry `tema|español` (93 documents) and `tema|barranca` (24);
+    // `v4` refuses both, and only this stamp finds the rows still carrying them.
+    expect(GRAPH_PROMPT_VERSION).toBe('v4')
   })
 })

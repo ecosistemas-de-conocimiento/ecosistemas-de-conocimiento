@@ -47,7 +47,7 @@
 import { getPayload } from 'payload'
 import config from '@payload-config'
 
-import { GRAPH_SHAPE_POLICY, isGenericLabel } from './extract'
+import { GRAPH_SHAPE_POLICY, GRAPH_WORD_CLASSES, policyRejects } from './extract'
 import { GRAPH_ENTITY_TYPES, type GraphEntityType } from './types'
 import { GRAPH_MIN_SUPPORT_DEFAULT } from './queries'
 
@@ -170,7 +170,9 @@ const rows: Row[] = entities.docs.map((raw) => {
     type: e.type,
     label: e.label,
     support: supportByEntity.get(id)?.size ?? 0,
-    dropped: requiresName(e.type) && isGenericLabel(e.label),
+    // La misma función que aplica la extracción: la simulación no puede
+    // divergir de la regla.
+    dropped: policyRejects(e.type, e.label, requiresName),
   }
 })
 
@@ -203,6 +205,9 @@ for (const type of GRAPH_ENTITY_TYPES) {
       : ''
   }`)
   line(`   regla      ${rule.rule}`)
+  if (rule.excludes.length > 0) {
+    line(`   excluye    ${rule.excludes.join(', ')} (ver GRAPH_WORD_CLASSES)`)
+  }
   line(`   por qué    ${wrap(rule.rationale, 'por qué    '.length)}`)
   line(`   costo      ${wrap(rule.cost, 'costo      '.length)}`)
   line(
@@ -212,6 +217,13 @@ for (const type of GRAPH_ENTITY_TYPES) {
 }
 
 const dropped = rows.filter((r) => r.dropped)
+
+line()
+line('── CLASES DE PALABRA CON OTRO SITIO ' + '─'.repeat(42))
+for (const [name, cls] of Object.entries(GRAPH_WORD_CLASSES)) {
+  line(`   ${name}: ${cls.rule}`)
+  line(`     ${wrap(cls.cost, 5)}`)
+}
 const visible = rows.filter((r) => r.support >= minSupport)
 const visibleDropped = visible.filter((r) => r.dropped)
 

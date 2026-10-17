@@ -56,7 +56,7 @@ import {
  * view shows (ADR §10). Bumping this is a deliberate operation, not a
  * deploy-time one.
  *
- * ── WHY IT IS `v3` ─────────────────────────────────────────────────────────
+ * ── WHY IT IS `v4` ─────────────────────────────────────────────────────────
  *
  * `v1` did not ask for `fragmento`, so every `v1` row has a NULL
  * `graph_mentions.snippet` even for a `documento` that would be allowed one.
@@ -85,12 +85,25 @@ import {
  * has no language or theme column, so the graph is the only place they exist.
  * Rule 3 therefore asks for a NAME only where a name is what the type means,
  * and says out loud that a one-word `tema` is wanted. `extract.ts`'s
- * `GENERIC_RULE_TYPES` carries the measurement.
+ * `GRAPH_SHAPE_POLICY` carries the measurement.
+ *
+ * `v4` closes the hole `v3` left. Measured on the `v3` graph (local
+ * `edc_backend`, organization 1, 2026-10-16, read-only): with `barranca`
+ * refused as a `lugar`, the model RE-TYPED it as a `tema` (24 documents;
+ * `colonia` 10), and `español` grew to the graph's largest node as a `tema`
+ * (93 documents) — it links almost the whole corpus, which is in Spanish.
+ * 🔴 The 11 indigenous languages STAY `tema`: owner decision 2026-10-16,
+ * upholding the 2026-09-04 correction. `v4` therefore:
+ *   1. 🔴 refuses a `tema` that is `español` or an unnamed geographic
+ *      noun — `extract.ts`'s `GRAPH_WORD_CLASSES`, wired through the `excludes`
+ *      field of `GRAPH_SHAPE_POLICY`. Same layer as the `v3` rule.
+ *   2. tells the model so in rule 3, and stops offering "el mercado como
+ *      asunto" as the way to route a place noun into `tema`.
  *
  * Only this stamp can find the rows any of that leaves stale.
  * `lib/graph/backfill.ts` selects on `graphPromptVersion != GRAPH_PROMPT_VERSION`.
  */
-export const GRAPH_PROMPT_VERSION = 'v3'
+export const GRAPH_PROMPT_VERSION = 'v4'
 
 /**
  * The registry unit-type. A project takes ownership of extraction by
@@ -238,7 +251,7 @@ const PERSONA_RULE_FORBIDDEN = [
  * now `fragmento`, the person rule keeps 8 (its two variants hard-code the
  * number, so they stay in step), and the caps rule is 9.
  *
- * 🔴 RULE 3 IS THE ONE THE MODEL DOES NOT OBEY, and `v3` is the second attempt
+ * 🔴 RULE 3 IS THE ONE THE MODEL DOES NOT OBEY, and `v3` was the second attempt
  * at it. `v2` already said "agua es demasiado vago" and the corpus still came
  * back with `barranca`, `español`, `discapacidad` and `escuela` as its biggest
  * nodes. What changed in `v3` is that rule 3 is now BACKED BY CODE:
@@ -315,9 +328,14 @@ export function graphPromptTemplate(allowPersona: boolean): string {
     '   Un `tema`, en cambio, SÍ puede ser una sola palabra cuando esa palabra',
     '   es el asunto mismo: "náhuatl", "mixteco", "discapacidad", "dengue",',
     '   "braille" son temas válidos y ÚTILES. No los conviertas en frases.',
-    '   ⚠ Si el texto trata SOBRE la escuela, la clínica o el mercado como',
-    '   asunto, eso es un `tema` ("escuela", "salud comunitaria"), no un',
-    '   `lugar` ni una `organizacion`.',
+    '   ⚠ Si el texto trata SOBRE la escuela como asunto, eso es un `tema`',
+    '   ("escuela", "salud comunitaria"), no una `organizacion`.',
+    '   ⚠ NUNCA son `tema`, y se DESCARTAN automáticamente:',
+    '   - "español": casi todos los textos están en español, así que no',
+    '     distingue nada. Las lenguas indígenas SÍ son temas.',
+    '   - un accidente geográfico o asentamiento SIN NOMBRE ("barranca",',
+    '     "colonia", "cerro", "río"): es un `lugar` sin nombre. Usa el nombre',
+    '     ("barranca de Amanalco") o el asunto ("contaminación de barrancas").',
     '4. No inventes nada. Toda entidad debe estar sustentada en este fragmento.',
     '5. `menciones` es cuántas veces aparece la entidad EN ESTE FRAGMENTO.',
     '6. `desde` y `hacia` deben coincidir EXACTAMENTE con una `etiqueta` de tu',

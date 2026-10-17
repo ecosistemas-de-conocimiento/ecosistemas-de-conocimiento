@@ -34,10 +34,14 @@
  * division of labour as the person rule, for the same reason: what the code
  * checks is worth more than what the model is asked.
  *
- * 🔴 IT DOES NOT TOUCH `tema`. A one-word `tema` is the corpus's SUBJECT —
- * `náhuatl`, `discapacidad`, `dengue` — and `documents` has no other column
- * carrying any of it. {@link GRAPH_SHAPE_POLICY} holds the full reasoning and
- * the measurement; read it before widening the rule.
+ * 🔴 THE ORTHOGRAPHIC RULE DOES NOT TOUCH `tema`. A one-word `tema` is the
+ * corpus's SUBJECT — `discapacidad`, `dengue`, `escuela`, and its 11
+ * indigenous languages, `náhuatl`, `mixteco`. Since `v4` a `tema` is refused
+ * only for two closed word classes: `español`, the language almost the whole
+ * corpus is written in, and an unnamed geographic noun (a `lugar` with no
+ * name). {@link GRAPH_SHAPE_POLICY} and
+ * {@link GRAPH_WORD_CLASSES} hold the reasoning and the measurement; read them
+ * before widening the rule.
  *
  * ⚠ IT RUNS AT EXTRACTION TIME, NEVER AT READ TIME. A filter in `queries.ts`
  * would change what the view shows the moment the code landed — unversioned,
@@ -359,9 +363,10 @@ export function significantTokens(label: string): string[] {
  * the support counts `GRAPH_MIN_SUPPORT` gates on (ADR §7.3), so a generic
  * label clears the privacy threshold that a specific one may not.
  *
- * ⚠ `español` (46) and `discapacidad` (27) were on that same list and are NOT
- * defects: they are `tema`, and a `tema` is allowed to be one word. That is the
- * whole reason this predicate is not applied to every type.
+ * ⚠ `discapacidad` (27) was on that same list and is NOT a defect: it is a
+ * `tema`, and a `tema` is allowed to be one word. That is the whole reason
+ * this predicate is not applied to every type. (`español` was on it too; since
+ * `v4` it is refused as a language by {@link wordClassOf}, not by this.)
  *
  * ── THE RULE, AND WHY IT IS ORTHOGRAPHIC ───────────────────────────────────
  *
@@ -427,7 +432,9 @@ export function isGenericLabel(label: string): boolean {
  * ⚠ NO ES UNA LISTA DE PALABRAS PROHIBIDAS. La regla que se aplica es
  * ortográfica ({@link isGenericLabel}): en español los nombres propios se
  * escriben con mayúscula y los sustantivos comunes no. Esta tabla sólo decide
- * A QUÉ TIPOS se les exige ese nombre.
+ * A QUÉ TIPOS se les exige ese nombre. La única lista de palabras es
+ * {@link GRAPH_WORD_CLASSES} (v4), y `excludes` decide a qué tipo no le toca
+ * cada clase: son palabras con otro sitio, no palabras malas.
  *
  * ⚠ EL COMPILADOR EXIGE QUE ESTÉN TODOS LOS TIPOS. El `satisfies` de abajo
  * falla si se añade un tipo de entidad al ontología y no se decide su forma,
@@ -440,6 +447,13 @@ export interface GraphShapeRule {
    * `false` → la etiqueta puede ser un sustantivo común de una sola palabra.
    */
   requiresProperName: boolean
+  /**
+   * Clases de palabra ({@link GRAPH_WORD_CLASSES}) que este tipo NO admite
+   * como etiqueta de una sola palabra, aunque `requiresProperName` sea `false`.
+   * Vacío → ninguna. Es para las palabras que SÍ tienen un sitio, sólo que no
+   * es este tipo.
+   */
+  excludes: readonly GraphWordClass[]
   /** Qué nombra este tipo, en una línea. */
   rule: string
   /** Por qué se decidió así. */
@@ -448,9 +462,116 @@ export interface GraphShapeRule {
   cost: string
 }
 
+/**
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║  CLASES DE PALABRA QUE TIENEN OTRO SITIO — v4                             ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
+ *
+ * La regla ortográfica no distingue `español` de `discapacidad`: en español
+ * ni las lenguas ni los conceptos llevan mayúscula. Hace falta saber QUÉ
+ * palabra es, y para eso sólo hay una lista.
+ *
+ * ⚠ NO ES UNA LISTA DE PALABRAS BASURA, y la diferencia importa. Cada clase
+ * es CERRADA y corta, y cada una tiene un motivo que no es opinión sobre el
+ * asunto del corpus:
+ *
+ *   · `lengua` → sólo `español`: no distingue nada, porque casi todo el
+ *     corpus está en español. Las lenguas indígenas NO están aquí.
+ *   · `lugarSinNombre` → el tipo `lugar`, donde la regla ortográfica ya la
+ *     descarta por no tener nombre.
+ *
+ * ── LO QUE SE MIDIÓ — `edc_backend` local, ecosistema 1, 2026-10-16 ─────────
+ *
+ * Grafo `v3`, sólo lectura. `v3` descartó `barranca` como `lugar` (quedan 4
+ * documentos) y el modelo la RE-TIPÓ como `tema` (24 documentos): la regla de
+ * `v3` tenía una salida, y la propia regla 3 del prompt se la señalaba ("si el
+ * texto trata SOBRE el mercado como asunto, eso es un tema"). Igual `colonia`
+ * (10). Y `español` creció a 93 documentos como `tema`: el nodo más grande del
+ * grafo, y no dice nada, porque casi todo el corpus está en español.
+ *
+ * Una palabra entra aquí comparada por `canonicalKey` (sin acentos, en
+ * minúsculas), así que `náhuatl` y `nahuatl` son la misma. También se
+ * reconoce el plural (`barrancas`) y la forma con núcleo (`idioma español`). Una etiqueta con CALIFICADOR no se toca:
+ * `contaminación de barrancas` y `lengua de señas mexicana` son temas.
+ */
+export const GRAPH_WORD_CLASSES = {
+  lengua: {
+    rule: 'La lengua en que está escrito casi todo el corpus: el español.',
+    rationale:
+      'Casi todo el corpus está en español, así que como nodo "español" une ' +
+      'casi todos los documentos y no distingue ninguno. 🔴 SÓLO el español. ' +
+      'Las 11 lenguas indígenas SIGUEN siendo tema, por decisión del dueño ' +
+      '(corrección del 2026-09-04, confirmada el 2026-10-16): distinguen ' +
+      'documentos, y para los testimonios la columna documents.lengua es NULL ' +
+      'a propósito (ADR §18.5), así que el grafo es donde su lengua se ve.',
+    cost:
+      'Medido en el grafo v3 el 2026-10-16: descarta un solo nodo, español ' +
+      '(93 documentos), el más grande del grafo.',
+    words: ['español', 'castellano'],
+  },
+  lugarSinNombre: {
+    rule: 'Una clase de accidente geográfico o de asentamiento, sin nombre.',
+    rationale:
+      'Una "barranca" o una "colonia" sin nombre es un LUGAR que no dice cuál. ' +
+      'Como lugar ya se descarta; tipada como tema sobrevivía, y v3 lo hizo ' +
+      'así. Se quedan fuera a propósito ejido, comunidad, bosque y selva, que ' +
+      'en este corpus también son asuntos.',
+    cost:
+      'Medido en el grafo v3: descarta barranca (24 documentos) y colonia (10). ' +
+      'NO toca mercado (10), clínica (6) ni hospital (3): son espacios ' +
+      'construidos, no geografía, y quedan como decisión abierta.',
+    words: [
+      'barranca', 'cañada', 'arroyo', 'río', 'cerro', 'monte', 'montaña', 'sierra',
+      'valle', 'laguna', 'lago', 'manantial', 'presa', 'playa', 'costa',
+      'colonia', 'barrio', 'pueblo', 'municipio', 'localidad', 'ranchería',
+      'ciudad', 'calle', 'avenida',
+      // ⚠ Fuera a propósito: `manzana` y `cuadra` (fruta, establo), y en la
+      // lista de lenguas `mayo` (el mes) y `mexicano` (el gentilicio).
+    ],
+  },
+} as const satisfies Record<
+  string,
+  { rule: string; rationale: string; cost: string; words: readonly string[] }
+>
+
+export type GraphWordClass = keyof typeof GRAPH_WORD_CLASSES
+
+/** Núcleos que se quitan antes de comparar: `idioma español` → `español`. */
+const WORD_CLASS_HEADS = new Set(['lengua', 'lenguas', 'idioma', 'idiomas'])
+
+const WORD_CLASS_KEYS: ReadonlyMap<GraphWordClass, ReadonlySet<string>> = new Map(
+  (Object.keys(GRAPH_WORD_CLASSES) as GraphWordClass[]).map((cls) => [
+    cls,
+    new Set(GRAPH_WORD_CLASSES[cls].words.map((w) => canonicalKey(w))),
+  ]),
+)
+
+/**
+ * ¿A qué clase de {@link GRAPH_WORD_CLASSES} pertenece esta etiqueta, si a
+ * alguna? Pura y ciega al tipo, igual que {@link isGenericLabel}: qué tipo
+ * rechaza qué clase lo dice {@link GRAPH_SHAPE_POLICY}.
+ *
+ * Sólo una etiqueta de UNA palabra significativa (tras quitar artículos,
+ * preposiciones y un núcleo `lengua`/`idioma`) puede pertenecer a una clase.
+ * Con calificador ya es otra cosa: `contaminación de barrancas`.
+ */
+export function wordClassOf(label: string): GraphWordClass | null {
+  const tokens = significantTokens(label).map((t) => canonicalKey(t))
+  const core = tokens.length === 2 && WORD_CLASS_HEADS.has(tokens[0]) ? tokens.slice(1) : tokens
+  if (core.length !== 1) return null
+  const key = core[0]
+  // Singular, o plural regular: `barrancas`, `ciudades`, `ríos`.
+  const forms = [key, key.replace(/s$/, ''), key.replace(/es$/, '')]
+  for (const [cls, keys] of WORD_CLASS_KEYS) {
+    if (forms.some((f) => keys.has(f))) return cls
+  }
+  return null
+}
+
 export const GRAPH_SHAPE_POLICY = {
   lugar: {
     requiresProperName: true,
+    excludes: [],
     rule: 'Un lugar nombra UN sitio concreto, no una clase de sitio.',
     rationale:
       'Una "barranca", un "mercado" o una "clínica" son tipos de espacio, no ' +
@@ -462,6 +583,7 @@ export const GRAPH_SHAPE_POLICY = {
   },
   organizacion: {
     requiresProperName: true,
+    excludes: [],
     rule: 'Una organización nombra UNA institución concreta.',
     rationale:
       'Nombrar una clase de institución ("escuela", "universidad") no dice de ' +
@@ -473,6 +595,7 @@ export const GRAPH_SHAPE_POLICY = {
   },
   persona: {
     requiresProperName: true,
+    excludes: [],
     rule: 'Una persona nombra a UN individuo, con su nombre.',
     rationale:
       'El propio prompt la define como "una persona nombrada en el texto". ' +
@@ -481,20 +604,26 @@ export const GRAPH_SHAPE_POLICY = {
   },
   tema: {
     requiresProperName: false,
+    excludes: ['lengua', 'lugarSinNombre'],
     rule: 'Un tema nombra un CONCEPTO, y un concepto suele ser una sola palabra.',
     rationale:
       '🔴 LA EXENCIÓN MÁS IMPORTANTE DE ESTA TABLA. Exigirle nombre propio a ' +
-      'un tema borra el vocabulario propio del corpus. Los 250 documentos ' +
-      'llevan una lengua, son 11 lenguas distintas, y TODAS aparecen como ' +
-      'tema: náhuatl, mixteco, mazateco, zapoteco, totonaco, tlahuica, ' +
-      'tlapaneco, amuzgo, hñähñu, tsotsil, mixe. Igual los asuntos del ' +
-      'corpus: discapacidad, dengue, traducción.',
+      'un tema borra el vocabulario propio del corpus: discapacidad, dengue, ' +
+      'traducción, escuela — los cuatro asuntos del corpus, todos de una ' +
+      'palabra — y sus 11 lenguas: náhuatl, mixteco, mazateco, zapoteco, ' +
+      'totonaco, tlahuica, tlapaneco, amuzgo, hñähñu, tsotsil, mixe. Desde v4 ' +
+      'hay dos excepciones: "español", que une casi todo el corpus, y una ' +
+      'barranca o una colonia sin nombre, que es un lugar. Ver ' +
+      'GRAPH_WORD_CLASSES.',
     cost:
-      'No descarta ninguno: 0 de 240. Exigir nombre propio aquí descartaría ' +
-      '12 de 12 lenguas y 3 de 4 asuntos — 89 nodos más.',
+      'Exigir nombre propio aquí descartaría 3 de 4 asuntos del corpus. Las ' +
+      'dos excepciones de v4, medidas en el grafo v3 el 2026-10-16: 3 nodos, ' +
+      'español (93 documentos, el más grande del grafo), barranca (24) y ' +
+      'colonia (10).',
   },
   evento: {
     requiresProperName: false,
+    excludes: [],
     rule: 'Un evento nombra un hecho O UN PROCESO, y un proceso es un concepto.',
     rationale:
       'El prompt lo define como "un hecho o un proceso con desarrollo en el ' +
@@ -524,9 +653,31 @@ function requiresProperName(type: GraphEntityType): boolean {
   return GRAPH_SHAPE_POLICY[type]?.requiresProperName === true
 }
 
+/**
+ * Is this word class one the type refuses? Fails open like
+ * {@link requiresProperName}: an unknown type excludes nothing.
+ */
+function excludesClass(type: GraphEntityType, cls: GraphWordClass | null): boolean {
+  if (!cls) return false
+  const excluded: readonly GraphWordClass[] = GRAPH_SHAPE_POLICY[type]?.excludes ?? []
+  return excluded.includes(cls)
+}
+
+/**
+ * 🔴 THE ONE PREDICATE THE POLICY COMPILES TO. `dropGenericEntities` applies it
+ * and `policy.cli.ts` measures it, so the simulation cannot drift from the
+ * rule. `requiresName` lets the CLI simulate another `requiresProperName`.
+ */
+export function policyRejects(
+  type: GraphEntityType,
+  label: string,
+  requiresName: (type: GraphEntityType) => boolean = requiresProperName,
+): boolean {
+  return (requiresName(type) && isGenericLabel(label)) || excludesClass(type, wordClassOf(label))
+}
+
 export function dropGenericEntities(window: ParsedWindow): ParsedWindow {
-  const reject = (e: RawEntity): boolean =>
-    requiresProperName(e.tipo) && isGenericLabel(e.etiqueta)
+  const reject = (e: RawEntity): boolean => policyRejects(e.tipo, e.etiqueta)
 
   const dropped = window.entities.filter(reject)
   if (dropped.length === 0) return window
