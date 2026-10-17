@@ -31,6 +31,8 @@ import { checkAIServiceCapabilities } from './lib/capabilityCheck'
 import { checkCallbackConfig } from './lib/callbackConfig'
 import { checkAudioServiceConfig } from './lib/audioClient'
 import { startEmbeddingJanitor } from './lib/embeddingJanitor'
+import { startIngestRecoveryJanitor } from './lib/ingestRecovery'
+import { ensureEcosystemBudgets } from './lib/provisionEcosystem'
 import { startPublishJanitor } from './lib/publishJanitor'
 import { startSessionJanitor } from './lib/sessionJanitorScheduler'
 import { startTranscriptionJanitor } from './lib/transcriptionJanitor'
@@ -295,6 +297,21 @@ export default buildConfig({
     //    late callback still writes `ready` and clears the message, so a false
     //    positive heals itself. See lib/embeddingJanitor.ts.
     startEmbeddingJanitor(payload)
+
+    // 9. Recovery sweep (lib/ingestRecovery.ts). Every minute. 🔴 It is now
+    //    what moves a finished transcript (`transcribed`) through the
+    //    anonymisation gate and into the ingest — the callback only persists
+    //    the text. It also fails out stuck `extracting` rows, lost gate runs
+    //    and chat turns stuck at `embedding`, with a retryable reason.
+    startIngestRecoveryJanitor(payload)
+
+    // 10. Every ecosistema has an ai-service budget row. The create hook in
+    //     collections/Organizations.ts provisions once, fire-and-forget; a
+    //     failure there left the ecosistema answering 402 forever. Reads
+    //     readiness first and provisions only a MISSING budget, so an
+    //     operator-raised cap is never reset. Not awaited: boot must not wait
+    //     on ai-service. Never throws.
+    void ensureEcosystemBudgets(payload, { logger: payload.logger })
   },
   secret: process.env.PAYLOAD_SECRET || '',
   typescript: {

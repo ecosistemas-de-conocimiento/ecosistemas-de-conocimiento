@@ -119,6 +119,12 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
+  // Proxy hops between the internet and this service. Fastify reads `req.ip`
+  // that many entries from the RIGHT of `X-Forwarded-For`. Default 1: the one
+  // Traefik ingress Coolify puts in front of the container. Raise it only when
+  // another proxy (e.g. a CDN) sits in front of the ingress. Never `true`: that
+  // trusts every hop, so `req.ip` becomes the caller-written leftmost entry.
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().nonnegative().default(1),
 
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
