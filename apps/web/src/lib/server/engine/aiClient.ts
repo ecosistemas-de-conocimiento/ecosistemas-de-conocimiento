@@ -82,6 +82,11 @@ interface RawRetrieveChunk {
   ordinal?: number;
   text: string;
   score: number;
+  /** Cosine, when the dense leg found the chunk. Present on rerank responses. */
+  denseScore?: number;
+  lexicalScore?: number;
+  /** Cross-encoder score; present only when ai-service's rerank ran. */
+  rerankScore?: number;
   metadata?: Record<string, unknown>;
 }
 
@@ -279,6 +284,13 @@ export function makeEngineAIClient(
           documentId: c.documentId,
           chunkId: c.chunkId,
           score: c.score,
+          // 🔴 Forwarded so the engine's relevance helpers (`relevanceScore`,
+          // `maxDenseScore`) read the COSINE. Under rerank `score` is the
+          // cross-encoder value, on another scale; with `denseScore` dropped
+          // it would be persisted and shown as if it were a similarity.
+          ...(typeof c.denseScore === 'number' ? { denseScore: c.denseScore } : {}),
+          ...(typeof c.lexicalScore === 'number' ? { lexicalScore: c.lexicalScore } : {}),
+          ...(typeof c.rerankScore === 'number' ? { rerankScore: c.rerankScore } : {}),
           text: c.text,
           ...(c.metadata ? { metadata: c.metadata } : {}),
         })),
@@ -317,14 +329,14 @@ async function retrieveScoped(
   const apiKey = env.AI_SERVICE_API_KEY;
   if (!baseUrl || !apiKey) return [];
 
-  const body = buildRetrieveBody({
+  const scoped = buildRetrieveBody({
     corpus: req.corpus,
     query: req.query,
     topK: req.topK,
     filter: req.filter,
     asOf,
   });
-  if (!body) {
+  if (!scoped) {
     console.error(
       `[retrieve] refusing to retrieve corpus "${req.corpus}" without an asOf ` +
         '— unpublished documents would be included. Check GET /api/sessions/:id/corpora.',
@@ -344,7 +356,21 @@ async function retrieveScoped(
       body: JSON.stringify(payload),
     });
 
+  // `rerank` only when the turn's policy asked for it (`./rerank`, CHAT_RERANK).
+  let body: Record<string, unknown> = req.rerank === true ? { ...scoped, rerank: true } : scoped;
+
   let res = await post(body);
+  if (!res.ok && body.rerank === true) {
+    // A rerank fault ai-service refuses with an HTTP error (a misconfigured
+    // reranker, or a build that rejects the field): retry ONCE without it, so
+    // the corpus degrades to its plain ranking instead of dropping out of the
+    // turn. ai-service already falls back to the fused order on a reranker
+    // timeout or error, so this only covers what reaches us as a non-2xx.
+    console.warn(`[retrieve] rerank request failed (${res.status}); retrying without rerank`);
+    const { rerank: _dropped, ...withoutRerank } = body;
+    body = withoutRerank;
+    res = await post(body);
+  }
   if (!res.ok) {
     // An ai-service that rejects the extra `filter` field: retry without it so
     // scoped retrieval degrades to unfiltered rather than empty.

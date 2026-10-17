@@ -39,6 +39,22 @@
  * engine then re-sorts all corpora by that score: RRF decides WHICH chunks of a
  * corpus survive, the score decides their final order.
  *
+ * ── RERANK (`./rerank`, CHAT_RERANK) ─────────────────────────────────────────
+ *
+ * Only the ORIGINAL query's search carries `rerank`; the variant searches go
+ * out without it. ai-service has no stand-alone rerank endpoint, so the fused
+ * list cannot be reranked once as a whole, and reranking every variant would
+ * be four cross-encoder calls per corpus instead of one — against a
+ * hypothetical-answer "query" the cross-encoder was not built to score.
+ *
+ * ⚠ The cost of that choice: a chunk ONLY a variant found keeps its cosine as
+ * `score`, while the original's chunks carry the cross-encoder value. Within a
+ * corpus that does not matter (RRF orders by rank, not score). The engine's
+ * cross-corpus sort then compares the two scales (inferred, not measured: a
+ * cross-encoder scores clear hits near 1 and misses near 0, so a variant-only
+ * chunk with a typical cosine lands between them). Relevance gates are not
+ * affected: they read `denseScore`, which every chunk carries.
+ *
  * Best-effort like every engine context step: a failing, slow or junk
  * expansion degrades to the plain retrieve and logs one `[expand]` line.
  */
@@ -208,11 +224,13 @@ export function withQueryExpansion<T extends AIClient>(client: T, opts: QueryExp
       const originalP = client.retrieve(req);
       const variants = await variantsFor(req.query);
       if (variants.length === 0) return originalP;
+      // Variants are never reranked — see "RERANK" in the module header.
+      const { rerank: _rerank, ...variantReq } = req;
 
       const [original, ...rewritten] = await Promise.all([
         originalP,
         ...variants.map((query) =>
-          client.retrieve({ ...req, query }).catch(() => ({ matches: [] }) as RetrieveResult),
+          client.retrieve({ ...variantReq, query }).catch(() => ({ matches: [] }) as RetrieveResult),
         ),
       ]);
       // `fuseMatches` wants `RetrievedChunk`; the engine tags `corpus` after us.

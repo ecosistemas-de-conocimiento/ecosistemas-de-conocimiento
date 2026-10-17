@@ -13,7 +13,7 @@
  * user turn, not merely to be absent when there is no provider.
  */
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   prepareTurn,
   splitContentByCitations,
@@ -23,7 +23,9 @@ import {
 
 import { parseCsv, type CorpusDoc, type ManifestRow } from './corpus'
 import { inlineParams } from './db'
-import { CHAT_ENGINE_CONFIG } from './engine'
+import { CHAT_ENGINE_CONFIG, makeEvalAIClient } from './engine'
+import type { EvalEnv } from './env'
+import { chatRetrievalPolicy } from '../../../web/src/lib/server/engine/rerank'
 import { expandGraphQuery, graphContextParagraph, type GraphRetrieval } from './graph'
 import { buildQuestions } from './questions'
 import {
@@ -483,5 +485,51 @@ describe('parseCitationMarkers', () => {
       )
       expect(parseCitationMarkers(text, valid.length).ordinals).toEqual([...new Set(engine)])
     }
+  })
+})
+
+describe('rerank in the eval client (same policy as production)', () => {
+  const env = { aiServiceUrl: 'http://ai.test', aiServiceApiKey: 'k' } as EvalEnv
+  const client = () =>
+    makeEvalAIClient({ env, asOf: '2026-10-17T00:00:00Z', allowedCorpora: ['eco-1'], unitKeyFor: () => 'u' })
+  const req = { orgId: 'edc', scopeId: 'e', corpus: 'eco-1', query: 'q', topK: 5 }
+  const ok = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
+  const bodies = (f: ReturnType<typeof vi.fn>) =>
+    f.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string) as Record<string, unknown>)
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('the production policy is rerank on; --no-rerank is no policy', () => {
+    expect(chatRetrievalPolicy(true)?.rerank).toBe(true)
+    expect(chatRetrievalPolicy(false)).toBeUndefined()
+  })
+
+  it('forwards rerank, records legs, and keeps the cosine', async () => {
+    const f = vi.fn().mockResolvedValue(
+      ok({
+        legs: ['dense', 'rerank'],
+        chunks: [{ chunkId: 'c', documentId: 'd', score: 0.9, denseScore: 0.5, rerankScore: 0.9, text: 't' }],
+      }),
+    )
+    vi.stubGlobal('fetch', f)
+    const ai = client()
+    const res = await ai.retrieve({ ...req, rerank: true })
+    expect(bodies(f)[0]).toMatchObject({ rerank: true })
+    expect(res.matches[0]).toMatchObject({ denseScore: 0.5, rerankScore: 0.9 })
+    expect(ai.calls[0]?.legs).toEqual(['dense', 'rerank'])
+  })
+
+  it('a failing rerank request is retried once without rerank', async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+      .mockResolvedValueOnce(ok({ chunks: [{ chunkId: 'c', documentId: 'd', score: 0.5, text: 't' }] }))
+    vi.stubGlobal('fetch', f)
+    const ai = client()
+    const res = await ai.retrieve({ ...req, rerank: true })
+    expect(res.matches).toHaveLength(1)
+    expect(bodies(f)[1]).not.toHaveProperty('rerank')
+    expect(ai.calls[0]?.rerankFallback).toBe(true)
   })
 })

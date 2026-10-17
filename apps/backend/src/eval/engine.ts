@@ -104,6 +104,10 @@ export interface CallRecord {
   chunks?: number
   traceId?: string
   costUsd?: number
+  /** ai-service's `legs` for a retrieve — `rerank` there means it really ran. */
+  legs?: string[]
+  /** The rerank request failed and was retried without it. */
+  rerankFallback?: boolean
 }
 
 export interface EvalAIClient extends AIClient {
@@ -151,39 +155,68 @@ export function makeEvalAIClient(opts: EvalAIClientOptions): EvalAIClient {
       if (!allowed.has(req.corpus)) return { matches: [] }
       const topK = req.topK && req.topK > 0 ? req.topK : DEFAULT_TOPK
       const started = Date.now()
-      const res = await fetch(`${opts.env.aiServiceUrl}/v1/retrieve`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          corpus: req.corpus,
-          query: req.query,
-          topK,
-          asOf, // Gate 1.
-          ...(req.filter ? { filter: req.filter } : {}),
-        }),
-      })
+      const payload: Record<string, unknown> = {
+        corpus: req.corpus,
+        query: req.query,
+        topK,
+        asOf, // Gate 1.
+        ...(req.filter ? { filter: req.filter } : {}),
+        // Only when the turn's policy asked (`rerank.ts`, `--no-rerank` here).
+        ...(req.rerank === true ? { rerank: true } : {}),
+      }
+      const post = (p: Record<string, unknown>) =>
+        fetch(`${opts.env.aiServiceUrl}/v1/retrieve`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(p),
+        })
+      let res = await post(payload)
+      // The same fallback as `retrieveScoped` in apps/web: a failing rerank
+      // request is retried once without it, never dropped.
+      let rerankFallback = false
+      if (!res.ok && payload.rerank === true) {
+        const { rerank: _dropped, ...plain } = payload
+        rerankFallback = true
+        res = await post(plain)
+      }
       const ms = Date.now() - started
       if (!res.ok) {
-        calls.push({ kind: 'retrieve', ms, corpus: req.corpus, chunks: 0 })
+        calls.push({ kind: 'retrieve', ms, corpus: req.corpus, chunks: 0, rerankFallback })
         return { matches: [] }
       }
       const body = (await res.json()) as {
+        legs?: string[]
         chunks?: Array<{
           chunkId: string
           documentId: string
           score: number
+          denseScore?: number
+          lexicalScore?: number
+          rerankScore?: number
           text: string
           metadata?: Record<string, unknown>
         }>
       }
+      // Leg scores forwarded exactly as `makeEngineAIClient` does: under rerank
+      // `score` is the cross-encoder value, and the cosine is `denseScore`.
       const matches = (body.chunks ?? []).map((c) => ({
         documentId: c.documentId,
         chunkId: c.chunkId,
         score: c.score,
+        ...(typeof c.denseScore === 'number' ? { denseScore: c.denseScore } : {}),
+        ...(typeof c.lexicalScore === 'number' ? { lexicalScore: c.lexicalScore } : {}),
+        ...(typeof c.rerankScore === 'number' ? { rerankScore: c.rerankScore } : {}),
         text: c.text,
         ...(c.metadata ? { metadata: c.metadata } : {}),
       }))
-      calls.push({ kind: 'retrieve', ms, corpus: req.corpus, chunks: matches.length })
+      calls.push({
+        kind: 'retrieve',
+        ms,
+        corpus: req.corpus,
+        chunks: matches.length,
+        ...(body.legs ? { legs: body.legs } : {}),
+        ...(rerankFallback ? { rerankFallback } : {}),
+      })
       return { matches }
     },
 

@@ -4,6 +4,7 @@
  *   node ../web/node_modules/.bin/tsx src/eval/run.ts --fake     # no inference
  *   node ../web/node_modules/.bin/tsx src/eval/run.ts            # ~40 real calls
  *   node ../web/node_modules/.bin/tsx src/eval/run.ts --expand   # + query expansion
+ *   node ../web/node_modules/.bin/tsx src/eval/run.ts --no-rerank  # rerank off
  *
  * Run from `apps/backend`. Writes `src/eval/results.json`; `report.ts` turns
  * that into `RESULTS.md`.
@@ -27,6 +28,17 @@
  * It is the PRODUCTION module, imported from `apps/web`, not a copy: it reads
  * no `$env`. As in production, only the engine's retrieve is wrapped — the
  * graph provider and the answer's generate use the plain client.
+ *
+ * ── RERANK: ON BY DEFAULT, AS IN PRODUCTION; `--no-rerank` TO COMPARE ───────
+ *
+ * Both arms get the PRODUCTION retrieval policy, `chatRetrievalPolicy` from
+ * `apps/web/src/lib/server/engine/rerank.ts` (imported, not copied): a
+ * cross-encoder rerank on each corpus retrieve, which production turns on with
+ * `CHAT_RERANK` (default on). `--no-rerank` passes no policy, which is the
+ * engine's pre-policy retrieval and what every run before 2026-10-17 measured.
+ * `results.json` records which (`rerank`) and each arm's `rerankedRetrieves`
+ * — how many retrieves came back with `rerank` in ai-service's `legs`, so a
+ * reranker that silently fell back is visible.
  *
  * ⚠ The expansion call carries NO run marker. Within five minutes both arms and
  * every repetition of a question get the router-cached rewordings — the same
@@ -80,6 +92,7 @@ import { CHAT_ENGINE_CONFIG, makeEvalAIClient, makeEvalAdapter, type EvalAIClien
 import { EVAL_ORGANIZATION_ID, EVAL_PUBLISHED_CORPUS, loadEvalEnv, type EvalEnv } from './env'
 import { expandGraphQuery, graphContextParagraph, readGraphRetrieval } from './graph'
 import { withQueryExpansion, type ExpansionTrace } from '../../../web/src/lib/server/engine/expand'
+import { chatRetrievalPolicy } from '../../../web/src/lib/server/engine/rerank'
 import { buildQuestions, type EvalQuestion } from './questions'
 import {
   orderedSources,
@@ -106,6 +119,8 @@ export interface ArmResult {
   totalMs: number
   retrieveCalls: number
   retrieveMs: number
+  /** Retrieves whose `legs` included `rerank` — the cross-encoder really ran. */
+  rerankedRetrieves?: number
   graphMs: number
   graphSeeds: string[]
   graphBlockChars: number
@@ -286,6 +301,7 @@ async function runArm(args: {
   organizationDescription: string | null
   fake: boolean
   expand: boolean
+  rerank: boolean
   runId: string
   docs: readonly CorpusDoc[]
 }): Promise<ArmResult> {
@@ -330,6 +346,7 @@ async function runArm(args: {
       })
     : aiClient
 
+  const policy = chatRetrievalPolicy(args.rerank)
   const t0 = Date.now()
   const prepared = await prepareTurn({
     config,
@@ -345,6 +362,8 @@ async function runArm(args: {
     inlineRefs: [],
     includePassageText: 1200,
     ...(graphProvider ? { graphProvider } : {}),
+    // The production policy; `--no-rerank` → none (see the module header).
+    ...(policy ? { retrievalPolicy: policy } : {}),
   })
   const prepareMs = Date.now() - t0
 
@@ -377,6 +396,7 @@ async function runArm(args: {
     totalMs: prepareMs + generateMs,
     retrieveCalls: retrieves.length,
     retrieveMs: retrieves.reduce((a, c) => a + c.ms, 0),
+    rerankedRetrieves: retrieves.filter((c) => c.legs?.includes('rerank')).length,
     graphMs: trace.ms,
     graphSeeds: trace.seeds,
     graphBlockChars: prepared.graphContext.length,
@@ -443,6 +463,7 @@ async function backfillTokens(env: EvalEnv, results: QuestionResult[]): Promise<
 
 const fake = process.argv.includes('--fake')
 const expand = process.argv.includes('--expand')
+const rerank = !process.argv.includes('--no-rerank')
 const only = process.argv.find((a) => a.startsWith('--only='))?.slice('--only='.length)
 /**
  * Samples per arm per question.
@@ -477,7 +498,7 @@ const selected = only ? questions.filter((q) => only.split(',').includes(q.id)) 
 
 console.error(
   `[eval] ${docs.length} published corpus documents joined; ` +
-    `${selected.length} questions; fake=${fake}; expand=${expand}; asOf=${asOf}`,
+    `${selected.length} questions; fake=${fake}; expand=${expand}; rerank=${rerank}; asOf=${asOf}`,
 )
 for (const d of droppedGlobalFacts) {
   console.error(`[eval] dropped ${d.question} "${d.label}" — support ${d.support} < 3`)
@@ -528,6 +549,7 @@ for (const question of selected) {
         organizationDescription: org.description,
         fake,
         expand,
+        rerank,
         runId,
         docs,
       })
@@ -559,6 +581,7 @@ const out = {
   runId,
   fake,
   queryExpansion: expand,
+  rerank,
   asOf,
   organization: { id: EVAL_ORGANIZATION_ID, name: org.name },
   corpusDocuments: docs.length,

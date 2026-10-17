@@ -7,6 +7,7 @@ import type {
   RetrieveRequest,
   SyncGenerationRequest,
 } from '@edc/chat-engine/core';
+import { chatRetrievalPolicy } from './rerank';
 import {
   EXPANSION_SYSTEM_PROMPT,
   parseExpansionFlag,
@@ -277,5 +278,31 @@ describe('through the real engine (`prepareTurn`)', () => {
     // 3 corpora (pub, draft, the engine's thread leg) × 2 queries.
     expect(retrieves).toHaveLength(6);
     expect(retrieves.every((r) => r.filter?.lengua === 'zapoteco')).toBe(true);
+  });
+
+  it('🔴 with the rerank policy, ONLY the original query is reranked — once per corpus', async () => {
+    const { client, retrieves } = fakeClient({
+      generateText: 'intérpretes en salud\ntraducción en clínicas',
+      byQuery: { [Q]: [m('a', 0.9, { denseScore: 0.6, rerankScore: 0.9 })] },
+    });
+    const prepared = await prepareTurn({
+      config: { ...DEFAULT_ENGINE_CONFIG, surface: 'chat' },
+      aiClient: withQueryExpansion(client, OPTS),
+      adapter,
+      orgId: 'edc',
+      userId: 'u1',
+      threadId: 't1',
+      scope: { refs: [{ kind: 'org' }] },
+      history: [],
+      userMessage: Q,
+      retrievalPolicy: chatRetrievalPolicy(true)!,
+    });
+    const reranked = retrieves.filter((r) => r.rerank === true);
+    // 3 corpora × 1 original query; the 2 rewordings per corpus go out plain.
+    expect(reranked).toHaveLength(3);
+    expect(reranked.every((r) => r.query === Q)).toBe(true);
+    expect(retrieves.filter((r) => r.query !== Q).every((r) => r.rerank === undefined)).toBe(true);
+    // The cosine rides through, so the engine's gate reads it, not the rerank score.
+    expect(prepared.maxDenseScore).toBe(0.6);
   });
 });

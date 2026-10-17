@@ -13,6 +13,7 @@ import { backendFetch } from '$lib/server/auth';
 import {
   buildChatUnitRequest,
   CHAT_ENGINE_CONFIG,
+  chatTurnRetrievalPolicy,
   engineOrgId,
   makeChatDomainAdapter,
   makeEngineAIClient,
@@ -428,6 +429,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // the sync branch hands the SAME args to `respond()`, which prepares AND
   // generates. Best-effort throughout — a failing context step degrades to
   // empty inside the engine and never breaks the turn.
+  const retrievalPolicy = chatTurnRetrievalPolicy();
   const engineTurnArgs = {
     config: CHAT_ENGINE_CONFIG,
     aiClient: turnAI,
@@ -447,6 +449,10 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     // Chunks embedded before `lengua` reached chunk metadata do not carry it
     // and are excluded until republished.
     ...(lengua.retrievalFilter ? { retrievalFilter: lengua.retrievalFilter } : {}),
+    // Cross-encoder rerank on each corpus retrieve, `CHAT_RERANK` (default ON).
+    // Off → no policy, the engine's pre-policy retrieval exactly. A failing
+    // rerank falls back to the plain retrieve. See `$lib/server/engine/rerank`.
+    ...(retrievalPolicy ? { retrievalPolicy } : {}),
     // Persist each chunk's grounding passage so the canonical CitationCard can
     // quote it. Cap the stored text to keep the provenance JSON column lean.
     includePassageText: 1200,

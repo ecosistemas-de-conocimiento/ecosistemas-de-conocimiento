@@ -381,3 +381,45 @@ describe('the ecosistema org', () => {
     expect(headersOf(0)['X-AI-Org']).toBeUndefined();
   });
 });
+
+describe('rerank (CHAT_RERANK policy)', () => {
+  const opts = { sessionId: '1', asOf: ASOF, allowedCorpora: [ECO], publishedCorpus: ECO };
+
+  it('sends `rerank: true` only when the engine asked for it', async () => {
+    const ai = makeEngineAIClient(noClient, opts);
+    await ai.retrieve(request(ECO));
+    await ai.retrieve({ ...request(ECO), rerank: true });
+    const [plain, reranked] = sentBodies();
+    expect(plain).not.toHaveProperty('rerank');
+    expect(reranked).toMatchObject({ rerank: true, asOf: ASOF });
+  });
+
+  it('🔴 a failing rerank request is retried once without rerank, keeping asOf', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 503 }));
+    respondWithOnce([chunk('7')]);
+    const ai = makeEngineAIClient(noClient, opts);
+    const res = await ai.retrieve({ ...request(ECO), rerank: true });
+    expect(res.matches).toHaveLength(1);
+    const [first, retry] = sentBodies();
+    expect(first).toMatchObject({ rerank: true });
+    expect(retry).not.toHaveProperty('rerank');
+    expect(retry).toMatchObject({ asOf: ASOF });
+  });
+
+  it('🔴 forwards denseScore and rerankScore, so the cosine is never lost', async () => {
+    respondWith([{ ...chunk('7'), score: 0.97, denseScore: 0.58, rerankScore: 0.97 } as Chunk]);
+    const ai = makeEngineAIClient(noClient, opts);
+    const [match] = (await ai.retrieve({ ...request(ECO), rerank: true })).matches;
+    expect(match).toMatchObject({ score: 0.97, denseScore: 0.58, rerankScore: 0.97 });
+  });
+});
+
+function respondWithOnce(chunks: Chunk[]): void {
+  fetchMock.mockResolvedValueOnce(
+    new Response(JSON.stringify({ chunks }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  );
+}

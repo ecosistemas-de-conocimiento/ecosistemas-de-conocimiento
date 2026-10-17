@@ -364,6 +364,9 @@ export function makeGraphProvider(opts: GraphProviderOptions): GraphProvider | n
             corpus,
             query: expanded,
             topK: GRAPH_EXPANSION_TOPK,
+            // No `rerank`, even when the turn's policy has it on: the query is
+            // the question plus graph terms, and the engine fuses this list
+            // by RANK (RRF), so a cross-encoder pass would buy nothing here.
           })
           .catch(() => null),
         remaining,

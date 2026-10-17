@@ -13,6 +13,8 @@ import { DEFAULT_ENGINE_CONFIG } from '@edc/chat-engine/core';
 import { env } from '$env/dynamic/private';
 import { CHAT_KIND_REGISTRY } from '$lib/engine/registry';
 import { parseExpansionFlag } from './expand';
+import { chatRetrievalPolicy, parseRerankFlag } from './rerank';
+import type { RetrievalPolicy } from '@edc/chat-engine/core';
 
 /** Re-export the client-safe registry so server code has one import surface. */
 export { CHAT_KIND_REGISTRY };
@@ -56,4 +58,13 @@ export const CHAT_ENGINE_CONFIG: EngineConfig = {
  */
 export function queryExpansionEnabled(): boolean {
   return parseExpansionFlag(env.QUERY_EXPANSION);
+}
+
+/**
+ * Cross-encoder rerank on chat turns (`./rerank`): `CHAT_RERANK=off` turns it
+ * off. Default ON. Read per call, so an operator can flip it without a rebuild.
+ * `undefined` (off) is the engine's pre-policy retrieval, byte for byte.
+ */
+export function chatTurnRetrievalPolicy(): RetrievalPolicy | undefined {
+  return chatRetrievalPolicy(parseRerankFlag(env.CHAT_RERANK));
 }

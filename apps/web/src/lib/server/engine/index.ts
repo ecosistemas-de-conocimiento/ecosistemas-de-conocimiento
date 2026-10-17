@@ -5,7 +5,14 @@
  * client-safe.
  */
 
-export { CHAT_ENGINE_CONFIG, CHAT_KIND_REGISTRY, engineOrgId, queryExpansionEnabled } from './config';
+export {
+  CHAT_ENGINE_CONFIG,
+  CHAT_KIND_REGISTRY,
+  chatTurnRetrievalPolicy,
+  engineOrgId,
+  queryExpansionEnabled,
+} from './config';
+export { chatRetrievalPolicy, parseRerankFlag } from './rerank';
 export { withQueryExpansion, type ExpansionTrace, type QueryExpansionOptions } from './expand';
 export { makeEngineAIClient, type EngineAIClientOptions } from './aiClient';
 export {
