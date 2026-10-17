@@ -1,5 +1,6 @@
 import type { Provenance } from '@edc/chat-engine/core';
 import type { PublicationStatus } from './publication';
+import type { GraphStatus } from './graphStatus';
 
 export type { PublicationStatus };
 
@@ -179,6 +180,17 @@ export interface WorkingDoc {
   retryPending?: boolean;
   /** UI-only state — a transcript correction is on the wire. Never sent. */
   transcriptSavePending?: boolean;
+  /** Backend `documents.graphStatus`; see `$lib/graphStatus`. Separate from ingest. */
+  graphStatus?: GraphStatus;
+  /** Why the graph extraction failed, when the backend says. */
+  graphError?: string | null;
+  /**
+   * Did the caller upload this row? Only "Mis documentos" sends it. Gates the
+   * "Reconstruir grafo" button, because the backend lets only the uploader in.
+   */
+  uploadedByCaller?: boolean;
+  /** UI-only state — a graph rebuild request is on the wire. Never sent. */
+  graphRetryPending?: boolean;
 }
 
 export interface Session {

@@ -187,7 +187,7 @@ el día anterior, no durante el demo.**
 
 ### 🔴 Hoy el demo todavía no corre
 
-Dos de las cuatro cosas que faltaban ya se resolvieron. Quedan tres pendientes. Ninguna es mía, todas
+Tres de las cinco cosas que faltaban ya se resolvieron. Quedan dos pendientes. Ninguna es mía, todas
 son cortas.
 
 1. ✅ **`pnpm-lock.yaml` ya existe en la raíz.** Era el bloqueo número uno; todas las imágenes usan
@@ -201,14 +201,48 @@ son cortas.
 4. ⚠ **Los paquetes de `packages/` publican desde `dist/`, y ningún Dockerfile corre `pnpm -r build`.**
    Puede que funcione por accidente o puede fallar con `ERR_MODULE_NOT_FOUND`. **No lo pude verificar.**
    Es lo primero que revisaría en la primera construcción.
-5. 🔴 **`apps/backend` todavía no usa `AUDIO_SERVICE_URL` ni `AUDIO_SERVICE_API_KEY`**, y su ruta de
-   callback no distingue los eventos `transcribe.*`: los registra como evento desconocido y responde 200.
-   O sea: hoy los contenedores de audio levantan y funcionan de punta a punta con `curl`, pero el camino
-   del producto (subir en la interfaz → documento listo) llega junto con
-   `plan/audio-ingest-integration.md`. El compose ya deja puestas las dos variables, así que cuando eso
-   aterrice no hay que editarlo otra vez.
+5. ✅ **`apps/backend` ya usa `AUDIO_SERVICE_URL` y `AUDIO_SERVICE_API_KEY`**
+   (`apps/backend/src/lib/audioClient.ts:45-68`) y su ruta de callback maneja los eventos
+   `transcribe.*` (`apps/backend/src/app/api/ai-service/callback/route.ts`). Leído en el código el
+   2026-10-17. El camino del producto (subir en la interfaz → documento listo) existe.
 
 ✅ `apps/backend/Dockerfile` ya se arregló mientras yo escribía esto. Ya no es la imagen vieja.
+
+### 🔴 Stack local: después de reconstruir, mueve los datos de IA a una org por ecosistema
+
+Desde el cambio a una org de ai-service por ecosistema, el backend manda `X-AI-Org: eco-<id>` y
+ai-service lo trata como la org `edc-eco-<id>` (`apps/backend/src/lib/aiClient.ts:20,60-61`, leído en
+el código). Los corpus que ya tenías siguen en la org vieja, `demo`. **Si reconstruyes las imágenes y
+no mueves los datos, la búsqueda regresa vacía:** el chat contesta sin citas y nada falla en voz alta.
+
+⚠ Al revés también engaña. Con imágenes viejas, `X-AI-Org: eco-2` regresó los corpus de eco-1, y los 16
+corpus estaban en la org `demo` (medido en la auditoría IA del 2026-10-17). Si ves eso, tus imágenes son
+anteriores al cambio.
+
+Pasos, con el stack local arriba (contenedor `edc-postgres-1`, usuario `edc`, base `edc_ai`):
+
+1. Reconstruye: `cd infra && docker compose up -d --build --wait`.
+2. Para las subidas y la ingesta mientras corre el script.
+3. **Prueba en seco.** Hace todo dentro de una transacción, imprime los conteos y hace rollback:
+
+   ```bash
+   docker exec -i edc-postgres-1 psql -U edc -d edc_ai -v ON_ERROR_STOP=1 \
+     < scripts/ai-org-per-ecosystem.sql
+   ```
+
+4. Revisa los conteos. El script se niega si una org destino ya tiene un corpus con el mismo nombre;
+   eso se resuelve a mano.
+5. **Aplica**, con `-v apply=1`:
+
+   ```bash
+   docker exec -i edc-postgres-1 psql -U edc -d edc_ai -v ON_ERROR_STOP=1 -v apply=1 \
+     < scripts/ai-org-per-ecosystem.sql
+   ```
+
+6. Comprueba: una pregunta en el chat de cada ecosistema debe traer citas de ese ecosistema y de
+   ningún otro.
+
+El encabezado de `scripts/ai-org-per-ecosystem.sql` explica qué mueve, qué no mueve y por qué.
 
 ---
 

@@ -222,6 +222,35 @@ describe('GET /api/documentos — the list', () => {
     expect(body.docs[0]!.audioMeta).toEqual({ durationSeconds: 90 });
     expect(body.docs[0]!.name).toBe('Doc 10');
   });
+
+  // Drives the graph badge and the "Reconstruir grafo" button. The backend's
+  // graph-retry lets only the uploader in, so the row says whether that is us
+  // — as a boolean, without sending the uploader object itself.
+  it('sends graphStatus, graphError and uploadedByCaller, not the uploader', async () => {
+    mockedBackendFetch.mockResolvedValueOnce(
+      listResponse([
+        doc(11, {
+          graphStatus: 'failed',
+          graphError: 'timeout',
+          uploadedBy: { id: 5, email: 'u@test' },
+        }),
+        doc(12, { graphStatus: 'ready', uploadedBy: 99 }),
+      ]),
+    );
+
+    const res = await GET(makeEvent({}));
+    const text = await res.text();
+    const body = JSON.parse(text) as { docs: Record<string, unknown>[] };
+
+    expect(body.docs[0]).toMatchObject({
+      graphStatus: 'failed',
+      graphError: 'timeout',
+      uploadedByCaller: true,
+    });
+    expect(body.docs[1]).toMatchObject({ graphStatus: 'ready', uploadedByCaller: false });
+    expect(body.docs[0]!.uploadedBy).toBeUndefined();
+    expect(text).not.toContain('u@test');
+  });
 });
 
 describe('GET /api/documentos — degradation', () => {

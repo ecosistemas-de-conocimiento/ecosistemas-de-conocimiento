@@ -36,7 +36,7 @@ Activar reranker DeepInfra
 Reescritura de preguntas antes de buscar
 Org por ecosistema en ai-service (en curso), resuelve el tope de gasto compartido
 Desplegar dev y staging en la caja de EDC; compose listo, deploy sin confirmar
-Re-extraer el grafo con modelo real; en local está en modo mock
+Grafo local: no es mock, 672 entidades reales (medido en la auditoría IA, 2026-10-17); ¿falta re-extraer?
 Re-correr el eval de GraphRAG con la métrica de citas nueva
 Decidir qué hacer con `evento` en el grafo
 Correr el script de reparación de documentos `pending`

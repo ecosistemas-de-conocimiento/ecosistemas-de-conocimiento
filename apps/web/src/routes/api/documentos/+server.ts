@@ -69,7 +69,7 @@ function parseFilter(raw: string | null): DocFilter {
  * already reads ids out of that shape, and the view needs the titles to say
  * WHICH conversations a document is being used in.
  */
-function slimDoc(row: Record<string, unknown>): Record<string, unknown> {
+function slimDoc(row: Record<string, unknown>, callerId: string): Record<string, unknown> {
   return {
     id: row.id,
     name: row.name,
@@ -79,6 +79,11 @@ function slimDoc(row: Record<string, unknown>): Record<string, unknown> {
     audioMeta: row.audioMeta,
     publicationStatus: row.publicationStatus,
     publicationError: row.publicationError,
+    graphStatus: row.graphStatus,
+    graphError: row.graphError,
+    // ⚠ A boolean, not the uploader's id: the view only needs to know whether
+    // the backend's graph-retry rule ("only the uploader") lets this caller in.
+    uploadedByCaller: relationIds(row.uploadedBy)[0] === callerId,
     isPinned: row.isPinned,
     bodyMarkdown: row.bodyMarkdown,
     session: relationSessions(row.session),
@@ -135,7 +140,7 @@ export const GET: RequestHandler = async ({ locals, cookies, url }) => {
   const docs = rows
     .filter((row) => row && row.id != null)
     .filter((row) => (filter === 'sueltos' ? relationIds(row.session).length === 0 : true))
-    .map(slimDoc);
+    .map((row) => slimDoc(row, String(locals.user!.id)));
 
   return json({ docs, totalDocs: docs.length, filter }, { status: 200 });
 };

@@ -1,7 +1,9 @@
 # Audio ingest — backend + frontend integration spec
 
-**Status:** ready to implement. `services/audio-service` exists and is complete;
-nothing in `apps/` or `packages/` has been touched by this work.
+**Status:** implemented. The backend reads `AUDIO_SERVICE_URL` and
+`AUDIO_SERVICE_API_KEY` (`apps/backend/src/lib/audioClient.ts:45-68`) and handles the
+`transcribe.*` callbacks (`apps/backend/src/app/api/ai-service/callback/route.ts`);
+read in code 2026-10-17. The spec below is kept as the design record.
 **Audience:** the agent wiring audio into `apps/backend` and `apps/web`.
 **Prerequisite reading:** `services/audio-service/README.md` (surface, callback
 contract, env vars), then `apps/backend/src/collections/Documents.ts` and
