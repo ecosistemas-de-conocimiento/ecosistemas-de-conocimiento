@@ -383,7 +383,12 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
     await expect(star(group, 4)).toHaveAttribute('aria-checked', 'false');
     await expect(group).not.toHaveAttribute('aria-busy', 'true');
     // The polite live region reports the NEW value.
-    await expect(row).toContainText('Valoración guardada: 2 de 5.');
+    // ⚠ The live region is NOT inside `row`. `MessageRating.svelte` wraps the
+    // star row in an outer column (stars row, reason chips, "Otro" box, status
+    // span), so the status span is a sibling of `row`, one level up. Asserting
+    // it on `row` waits forever even though the rating saved.
+    const feedback = row.locator('..');
+    await expect(feedback).toContainText('Valoración guardada: 2 de 5.');
   });
 
   // ── 9. Keyboard accessibility on the star rating ─────────────────────────
