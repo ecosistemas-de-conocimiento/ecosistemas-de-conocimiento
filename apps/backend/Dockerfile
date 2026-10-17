@@ -44,6 +44,27 @@ RUN pnpm --filter "@edc/backend^..." build
 # build time. `generate:types` reads the config only — no database, no onInit.
 WORKDIR /repo/apps/backend
 RUN pnpm payload generate:types && pnpm build
+# `pnpm deploy --prod` writes a self-contained copy of the backend's PRODUCTION
+# dependencies to /out (its own `.pnpm` store, the `@edc/*` packages copied in
+# from their dist/). The runtime stage takes that instead of the workspace's
+# full `node_modules`, which carries every dev dep (typescript, eslint, vitest,
+# drizzle-kit, playwright, …). The deps stage's store is not here, so this
+# re-fetches from the registry — prod deps only.
+WORKDIR /repo
+RUN pnpm --filter @edc/backend deploy --prod /out \
+# pnpm installs the native optional deps for BOTH libcs here (measured: next's
+# swc, sharp's libvips, lightningcss, @napi-rs/canvas — ~220 MB of musl
+# binaries). This image is Debian (glibc); the musl builds can never load.
+  && find /out/node_modules/.pnpm -maxdepth 1 -name '*musl*' -exec rm -rf {} +
+# `.next/cache` is next build's incremental cache — ~450 MB measured in the
+# previous image, and `next start` never reads it. The dev-deps symlink farm in
+# `apps/backend/node_modules` is replaced by /out's below.
+#
+# 🔴 `typescript` is a devDependency, but `next start` NEEDS it: Next loads
+# `next.config.ts` through it, and without it tries `yarn add typescript` at
+# boot and dies (measured). It has no dependencies, so a plain copy suffices.
+RUN cp -rL apps/backend/node_modules/typescript /out/node_modules/typescript \
+  && rm -rf apps/backend/.next/cache apps/backend/node_modules
 
 # ── runtime: ship .next plus the source the path aliases need ───────────────
 FROM node:${NODE_VERSION}-slim AS runtime
@@ -59,15 +80,18 @@ ENV PORT=3002
 RUN apt-get update \
   && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
-COPY --from=build /repo/node_modules /repo/node_modules
-COPY --from=build /repo/packages /repo/packages
+# Source stays (payload.config.ts, src/migrations, tsconfig paths): `payload
+# migrate` and the `payload run` ops scripts load TypeScript through tsx at
+# runtime. node_modules is /out's production-only, self-contained tree, so
+# /repo/node_modules and /repo/packages are no longer needed.
 COPY --from=build /repo/apps/backend ./
+COPY --from=build /out/node_modules ./node_modules
 EXPOSE ${PORT}
 # 🔴 NO pnpm AT RUNTIME. DO NOT "simplify" the CMD below back to `pnpm start`.
 #
 # pnpm 11 runs a dependency-status check before any script, and that check
-# re-reads the WORKSPACE. This runtime stage deliberately carries only
-# `node_modules`, `packages/` and the backend itself — there is no root
+# re-reads the WORKSPACE. This runtime stage deliberately carries only the
+# backend and its deployed `node_modules` — there is no root
 # `package.json` or `pnpm-workspace.yaml` — so the check sees a workspace of
 # exactly one package and dies with:
 #   "@edc/ai-client@workspace:*" is in the dependencies but no package named

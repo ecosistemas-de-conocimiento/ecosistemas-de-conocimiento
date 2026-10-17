@@ -21,26 +21,34 @@ RUN corepack enable
 COPY . .
 # ⚠ `--frozen-lockfile` needs `pnpm-lock.yaml` to exist: run a root
 # `pnpm install` once before the first image build.
-RUN pnpm install --frozen-lockfile
+# `--filter @edc/web...` installs web and its workspace deps only — not
+# ai-service's or backend's trees, which this image never runs.
+RUN pnpm install --frozen-lockfile --filter "@edc/web..."
 # `...` = web AND its workspace deps, in order: packages publish from dist/,
 # which is never in the build context.
 RUN pnpm --filter "@edc/web..." build
+# `pnpm deploy --prod` writes a self-contained copy of web's PRODUCTION
+# dependencies to /out: real directories, no symlinks into the root store, and
+# the `@edc/*` workspace packages copied in from their `files` (dist/). That
+# is what lets the run stage drop the workspace, the dev deps and the store.
+RUN pnpm --filter @edc/web deploy --prod /out
 
 FROM node:22-alpine AS run
 WORKDIR /repo/apps/web
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0
-# The whole installed workspace comes across, on purpose. `build/` is NOT
-# standalone: Vite's SSR build EXTERNALISES every package listed in
+# `build/` is NOT standalone: Vite's SSR build EXTERNALISES every package in
 # `dependencies` instead of inlining it, so the emitted server chunks still
 # contain bare `import '@edc/chat-engine/core'` / `'markdown-it'` /
-# `'dompurify'` and need a real `node_modules` at runtime. In a pnpm workspace
-# those are symlinks into the root store and into `packages/`, so the root and
-# app trees must be copied together or the links dangle. (devDependencies — zod, @sveltejs/kit, …
-# — ARE inlined, which is why a broken copy boots fine and only the routes
-# touching an externalised package fail, with `ERR_MODULE_NOT_FOUND`.)
-COPY --from=build /repo /repo
+# `'dompurify'` and need a real `node_modules` at runtime. devDependencies —
+# zod, @sveltejs/kit, … — ARE inlined. So the run stage needs exactly:
+# `build/`, plus the production `node_modules` that `pnpm deploy` produced.
+# A missing entry boots fine and only the routes touching an externalised
+# package fail, with `ERR_MODULE_NOT_FOUND` — check a chat route after changes.
+COPY --from=build /out/package.json ./package.json
+COPY --from=build /out/node_modules ./node_modules
+COPY --from=build /repo/apps/web/build ./build
 EXPOSE ${PORT}
 # Liveness hits the unauthenticated health route, which by contract checks
 # nothing downstream — a backend blip must not restart this container.

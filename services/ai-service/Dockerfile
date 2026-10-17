@@ -51,9 +51,14 @@ RUN pnpm install --filter @edc/ai-service... --frozen-lockfile
 COPY services/ai-service ./services/ai-service
 RUN pnpm --filter @edc/ai-service build
 
-# Prune dev dependencies in place. Keeps the pnpm symlink layout intact, which
-# the runtime stage copies verbatim (see below).
-RUN pnpm install --filter @edc/ai-service... --frozen-lockfile --prod
+# `pnpm deploy --prod` writes a self-contained copy of the PRODUCTION deps to
+# /out (its own `.pnpm` store, no links into /repo). It replaced an in-place
+# `pnpm install --prod`, which unlinked the dev deps but left them in the root
+# `.pnpm` store: measured 3.22 GB copied into the old image — promptfoo's
+# onnxruntime, codex and claude-agent-sdk binaries, typescript, vite.
+# The musl builds of native optional deps can never load on this glibc image.
+RUN pnpm --filter @edc/ai-service deploy --prod /out \
+  && find /out/node_modules/.pnpm -maxdepth 1 -name '*musl*' -exec rm -rf {} +
 
 # --- runtime ---
 FROM node:26-bookworm-slim AS runtime
@@ -62,13 +67,11 @@ ENV NODE_ENV=production
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# A pnpm install is a symlink farm: `services/ai-service/node_modules/<dep>` is
-# a RELATIVE link into `/repo/node_modules/.pnpm/...`. Both trees must therefore
-# land at their ORIGINAL absolute paths or every import breaks — hence the
-# `/repo/...` targets and the `/repo/services/ai-service` workdir.
+# /out/node_modules is self-contained (its symlinks point inside itself), so
+# only that one tree comes across. The `/repo/services/ai-service` workdir is
+# kept so paths in logs and ops docs stay the same.
 WORKDIR /repo/services/ai-service
-COPY --from=build /repo/node_modules /repo/node_modules
-COPY --from=build /repo/services/ai-service/node_modules /repo/services/ai-service/node_modules
+COPY --from=build /out/node_modules ./node_modules
 COPY --from=build /repo/services/ai-service/dist ./dist
 COPY --from=build /repo/services/ai-service/drizzle ./drizzle
 COPY --from=build /repo/services/ai-service/package.json ./
