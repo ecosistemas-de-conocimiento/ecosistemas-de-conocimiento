@@ -1,8 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Both environments run `main` @ `643ff4e` (slim images, chat
-rerank on by default, admin key required by compose), deployed 2026-10-17 12:28 UTC (dev) and
-12:36 UTC (staging) — see §4e. Before that, `7dbe85c` (05:07 / 05:49 UTC) with the org move of §4c. Verified end to end on both (measured by the deploy agent): login, PDF
+**Status:** live since 2026-10-17. Both environments run `main` @ `e3eb1f3` (migration
+`0005_pg_trgm`, session-delete owner guard), deployed 2026-10-17 22:01 UTC (dev) and 22:14 UTC
+(staging) — see §4h. Before that, `643ff4e` on both (12:28 / 12:36 UTC, §4e), and `fcd5247` on
+dev only (§4g). Before that, `7dbe85c` (05:07 / 05:49 UTC) with the org move of §4c. Verified end to end on both (measured by the deploy agent): login, PDF
 upload → `ready` via the public https callback, real OpenRouter chat answer whose
 `provenance.chunks[]` cites the upload, conversation delete, admin usage panel, lengua filter pages
 , usage logs booked to `edc-eco-1`. Before that: `fcd1325`, then `f89047e` (first deploy). Companion docs: `env-manifests.md` (what each variable means),
@@ -254,6 +255,94 @@ Found along the way:
 - ⚠ The other containers of each env (web, backend, redis, postgres, rustfs) were not recreated
   and still carry the shared key in their environment from the 12:28/12:37 deploys. They do not
   use it. The next Coolify deploy of each env replaces them.
+
+### 4g. ✅ Done 2026-10-17 21:05–21:11 UTC: `fcd5247`, dev only
+
+All measured by the deploy agent. Staging (`edc-staging`) was not touched; it stays on `643ff4e`.
+The dev app was resolved by its domain through the API (`edc-dev` = `pehgnxpqvnonhihabzvnwnil`).
+
+- Before the deploy, through the API: `AI_SERVICE_ADMIN_API_KEY` is 64 chars and its sha256 matches
+  the local `EDC_DEV_AI_SERVICE_ADMIN_API_KEY`. `RERANK_API_KEY` is stored in Coolify (main and
+  preview copies) with sha256 prefix `4dbc5b378dde`, the same as the local file.
+  `LLM_REQUEST_TIMEOUT_MS=600000`. None of the new optional variables (`CHAT_RETRIEVAL_MODE`,
+  `GRAPH_EXTRACT`, `ANONYMISE_*`, `TRUSTED_PROXY_HOPS`) was set; they run on code defaults.
+- No compose or migration file changed between `643ff4e` and `fcd5247` (read: `git diff --name-only`).
+  After the reload, no non-preview variable holds `:?` error text. The same 5 preview copies as in
+  §4e still do.
+- Backup (`pg_restore -l` ok, sha256 matched off-box): `/root/backups/20261017T2105Z/`, `edc_ai`
+  2.3 MB, `edc_backend` 313 KB (`ls -l`). Off-box copy in the owner's `cide/backups/edc-1/20261017T2105Z/`.
+- Deploy: queued 21:05:49, `finished` at 21:11:16 UTC, ≈ 5.5 min (API poll every 20 s). Schema gate:
+  `edc_ai` current at 5 migrations (0000–0004); no new migration ran (ai-service log and
+  `__drizzle_migrations` count).
+- After: all 6 dev containers `healthy` (`docker ps`). Health 200 on `dev.` and `api.dev.` (curl).
+  Every dev container's environment carries `RERANK_API_KEY` with sha256 prefix `4dbc5b378dde`
+  (`docker inspect`), so the shared key that §4f left in web, backend, redis, postgres and rustfs
+  is gone on dev. `printenv` in ai-service: `LLM_REQUEST_TIMEOUT_MS=600000`.
+- Smoke, as admin (curl-equivalent script, 2 runs at 21:14:58 and 21:15:33 UTC): login 200, PDF upload
+  → `ready` in 3.1 s, chat answer in 12.4 s and 18.0 s naming the fact only the PDF holds, citing
+  `zarzamora.pdf` in `provenance.chunks[].metadata.title`, conversation delete 200.
+  ⚠ The cited chunk had `rerankScore: null` in both runs (it was 0.99995 in §4e). ai-service logged
+  `rerank degraded … reason: timeout` (8 s limit). Run 1: the draft corpus `eco-1-draft-1` timed
+  out (pool 36, topK 20), while `eco-1` reranked (`rerank ok`, pool 20, topK 5). Run 2: both corpora
+  timed out. Direct calls from the dev ai-service container to DeepInfra answered 200 in 2.1–4.0 s
+  (4 calls, 3 and 37 short synthetic documents). Cause not confirmed. Inferred: provider latency
+  spikes plus real-size chunks push some calls past 8 s. Open item; not a deploy failure.
+- The smoke's own draft documents (dev docs 259, 260, 261, all `zarzamora.pdf`) were deleted through
+  the backend (`DELETE /api/documents/<id>`). The `afterDelete` hook removed them from ai-service too.
+  Counts after, by SQL: 258 backend documents (249 `ready`), 253 ai-service documents. Dev doc 258
+  (a leftover from §4e) is still there.
+- Disk, `df -h /` free: 61 GB before; 48 GB after the build (build cache 12.96 GB); 61 GB after
+  `docker builder prune -af` and removing dev's three `643ff4e` images. Images 7.0 GB, build cache 0.
+  The postgres image is now tagged per environment (`edc-postgres:pg16-dev` / `pg16-stage`).
+
+### 4h. ✅ Done 2026-10-17 22:01–22:20 UTC: `e3eb1f3`, both envs
+
+All measured by the deploy agent. `e3eb1f3` adds ai-service migration `0005_pg_trgm`
+(`CREATE EXTENSION IF NOT EXISTS pg_trgm`) and the session-delete owner guard (`7c2f1a5`). No
+compose file changed. Each app was resolved by its domain through the API before deploying.
+`HYBRID_LEXICAL_LEG` and `TRIGRAM_THRESHOLD` stay unset on both (API list, and unset inside
+ai-service). Dev first; staging only after dev's cleanup showed 61 GB free.
+
+| | dev (`pehgnxpqvnonhihabzvnwnil`) | staging (`dwmvhro1iewb7uvpzg9qbspe`) |
+|---|---|---|
+| Backup (`pg_restore -l` ok, sha256 matched off-box) | `/root/backups/20261017T2201Z/`, `edc_ai` 2.3 MB, `edc_backend` 314 KB | `/root/backups/20261017T2214Z/`, 96 KB / 141 KB |
+| Pre-check (API, by hash) | admin key matches `EDC_DEV_…`; `RERANK_API_KEY` `4dbc5b378dde`; timeout 600000 | admin key matches `EDC_STAGE_…`; same rerank key and timeout |
+| Deploy (API poll every 20 s) | 22:01:51 → 22:07:14, ≈ 5.4 min | 22:14:47 → 22:20:10, ≈ 5.4 min |
+| `edc_ai` migrations after (`__drizzle_migrations`) | 6; schema gate log: `0005_pg_trgm` appended and applied | 6, same log |
+| `pg_trgm` (`pg_extension`) | 1.6 installed | 1.6 installed |
+| Containers / health | 6 `healthy`; 200 on `dev.` and `api.dev.` | 6 `healthy`; 200 on `montaje.` and `api.montaje.` |
+| `RERANK_API_KEY` in every container (`docker inspect`) | `4dbc5b378dde` | `4dbc5b378dde` |
+
+After the reload, no non-preview variable holds `:?` error text on either app. The 5 preview copies
+from §4e still do.
+
+**Owner guard (the security fix), per env.** The owner made two sessions: one with an uploaded PDF
+(its turn stays `held-drafts`, never ingested) and one chat-only (its turn reached `ingested` in
+2–10 s). A signed-in non-owner then sent `DELETE /api/sessions/<id>` for both, through the web route
+and straight to the backend. Dev's non-owner was a throwaway user registered for the test (users 3
+and 4, both deleted afterwards). Staging's was the platform admin; the guard makes no admin exception.
+
+- Every non-owner delete answered **403** (4 calls per env).
+- Afterwards both sessions still existed, with the same messages. The ingested turn's ai-service
+  document stayed live (`msg-16` dev, `msg-8` staging: 1 row, `valid_to` null).
+- The owner then deleted both sessions: **200**. The ingested turn was retired (1 row,
+  `valid_to` set). Retiring keeps the row, so ai-service's document count goes up by one per
+  ingested turn.
+
+**Smoke, per env** (dev as admin, staging as the smoke user): PDF upload → `ready` in 2.2 s, chat
+answer in 8.7 s (dev) and 8.4 s (staging) naming the fact only the PDF holds, citing `zarzamora.pdf`
+with `rerankScore` 0.99997 on both. Rerank since each deploy (ai-service log): 4 `rerank ok`, 0
+`rerank degraded`, per env (2 chats × 2 corpora). The §4g timeouts did not recur in these runs.
+
+**Cleanup.** Every `zarzamora.pdf` was deleted through the backend (`DELETE /api/documents/<id>`),
+including the §4e leftovers (dev 258, staging 5). The `afterDelete` hook removed them from
+ai-service too. By SQL, no `zarzamora.pdf` remains in either store on either env. Counts after:
+dev 257 backend documents (248 `ready`), 253 ai-service; staging 4 / 4 / 6.
+
+**Disk**, `df -h /` free: 61 GB before dev; 48 GB after dev's build; 61 GB after
+`docker builder prune -af` (12.96 GB) and removing dev's `fcd5247` images; 48 GB after staging's
+build; 61 GB after the same cleanup and removing staging's `643ff4e` images. Images 7.0 GB, build
+cache 0. Only `e3eb1f3` images remain, so a rollback means rebuilding an older commit.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 

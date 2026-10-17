@@ -35,6 +35,7 @@ vi.mock('@edc/ai-client', () => ({
 }))
 
 import type { Payload } from 'payload'
+import { KEEP_CONVERSATION_UPLOADS } from './conversationUploads'
 import {
   __resetJanitorLock,
   DEFAULTS,
@@ -180,6 +181,24 @@ describe('runSessionJanitor — selection', () => {
     expect(res.deleted).toBe(2)
     expect(res.failed).toBe(0)
     expect(table.map((r) => r.id).sort()).toEqual([3, 4])
+  })
+
+  it('asks the cascade to KEEP uploads — an idle sweep never deletes a person’s files', async () => {
+    const rows: Row[] = [
+      { id: 1, lastUsedAt: daysAgo(120), updatedAt: daysAgo(120), createdAt: daysAgo(200) },
+    ]
+    const { payload } = fakePayload(rows)
+    const seen: unknown[] = []
+    const realDelete = payload.delete.bind(payload)
+    ;(payload as unknown as { delete: unknown }).delete = async (args: never) => {
+      seen.push(args)
+      return realDelete(args)
+    }
+
+    await runSessionJanitor(payload, cfg({ ttlDays: 90 }), NOW)
+
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ context: { [KEEP_CONVERSATION_UPLOADS]: true } })
   })
 
   it('falls back to updatedAt when lastUsedAt is null', async () => {

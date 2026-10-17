@@ -41,7 +41,9 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
   return json(out, { status: res.status });
 };
 
-// DELETE /api/sessions/[id] → cascade-delete (messages + docs via afterDelete hook).
+// DELETE /api/sessions/[id] → the backend's `Sessions.beforeDelete` cascade:
+// ratings, messages, and the uploads that belong to this conversation alone
+// (`apps/backend/src/lib/conversationUploads.ts`).
 export const DELETE: RequestHandler = async ({ locals, params }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
   const res = await backendFetch(locals.token, `/api/sessions/${params.id}`, {

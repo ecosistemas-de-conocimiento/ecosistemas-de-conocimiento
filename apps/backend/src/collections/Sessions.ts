@@ -8,9 +8,16 @@ import type {
   PayloadRequest,
   Where,
 } from 'payload'
-import { ValidationError } from 'payload'
+import { Forbidden, ValidationError } from 'payload'
 
 import { CONTEXT_REF_RELATION_TO } from '../lib/contextRefs'
+import {
+  corpusCleanupSkipList,
+  deleteConversationUploadRows,
+  finishUploadCleanupAfterCommit,
+  KEEP_CONVERSATION_UPLOADS,
+  type UploadCleanupPlan,
+} from '../lib/conversationUploads'
 import { organizationIdsForUser, relationId } from '../lib/permissions'
 import type { CorpusMover } from '../lib/publishDocument'
 
@@ -112,8 +119,8 @@ const stampOwnerAndEcosystem: CollectionBeforeValidateHook = async ({
 
 /**
  * 🔴 DELETING A CONVERSATION DELETES ITS RATINGS AND ITS MESSAGES, and retires
- * the turns that already reached the ecosistema's corpus. It deletes NOTHING
- * else — no documents, and never a corpus.
+ * the turns that already reached the ecosistema's corpus, and deletes the
+ * uploads that belong to this conversation alone. It never deletes a corpus.
  *
  * ── WHY THIS IS APPLICATION CODE AND NOT A MIGRATION ─────────────────────────
  *
@@ -170,13 +177,20 @@ const stampOwnerAndEcosystem: CollectionBeforeValidateHook = async ({
  * knowledgebase. `Sessions.cascade.test.ts` and `lib/sessionJanitor.test.ts`
  * both guard it.
  *
- * ⚠ DOCUMENTS ARE NOT DELETED. `documents.session` is `hasMany`, so the
- * attachment lives in the `documents_rels` join table and
- * `documents_rels_sessions_fk` is `ON DELETE CASCADE` — re-verified against the
- * live schema on 2026-08-28. Deleting a conversation therefore removes the
- * ATTACHMENT ROW and leaves the document standing, which is the whole point of
- * making the field `hasMany`. A document belongs to the ecosistema and to its
- * uploader and outlives every conversation it was attached to.
+ * ⚠ ONLY THE UPLOADS THAT BELONG TO THIS CONVERSATION ALONE ARE DELETED —
+ * document row in the transaction; stored file and ai-service chunks only
+ * once `txid_status` says this transaction committed (`scheduleUploadCleanup`). The rule (attached nowhere
+ * else, a `documento` draft, the owner's, born after the conversation,
+ * referenced by nothing else) lives in `lib/conversationUploads.ts`. Testimonios
+ * are never cascade-deleted, pending Rodrigo. Every other document
+ * keeps standing: `documents.session` is `hasMany`, the attachment lives in the
+ * `documents_rels` join table, and `documents_rels_sessions_fk` is
+ * `ON DELETE CASCADE` (re-verified against the live schema on 2026-08-28), so
+ * only the ATTACHMENT ROW goes.
+ *
+ * Until 2026-10-17 no document was ever deleted here, and every file uploaded
+ * in a chat outlived the chat in "Mis documentos". Rodrigo ruled that a bug.
+ * The session janitor still keeps uploads (`KEEP_CONVERSATION_UPLOADS`).
  */
 
 /**
@@ -202,6 +216,47 @@ export interface ConversationCascadeDeps {
    */
   corpusClient?: (organizationId: number | string) => Promise<CorpusMover>
   now?: Date
+  /** Skip the uploads step. The janitor sets it, via `KEEP_CONVERSATION_UPLOADS`. */
+  keepUploads?: boolean
+  /** Receives the post-commit plan for the uploads; the hook schedules it. */
+  onUploadPlan?: (plan: UploadCleanupPlan) => void
+}
+
+/**
+ * 🔴 THE OWNERSHIP CHECK `beforeDelete` DOES NOT GET FROM PAYLOAD.
+ *
+ * Payload 3.88.0 `collections/operations/deleteByID.js` runs `beforeDelete`
+ * (lines 44-52) BEFORE it matches the row against the `ownOnly` where-filter
+ * (lines 56-72). Without this check, user A sending `DELETE /api/sessions/<B's
+ * id>` — ids are sequential — ran the whole cascade on B's conversation first
+ * and got a 403 only afterwards. Reproduced on a real Postgres:
+ * `Sessions.ownerGuard.pg.test.ts`.
+ *
+ * A signed-in caller must own the conversation. There is no admin exception
+ * because `ownOnly` has none either: Payload would refuse a platform admin's
+ * delete of someone else's session anyway, so letting the cascade run for one
+ * would only reproduce the same hole. A caller with NO user is server code
+ * (the janitor), which already chose `overrideAccess`.
+ */
+async function assertMayDeleteConversation(
+  sessionId: number | string,
+  { payload, req }: ConversationCascadeDeps,
+): Promise<void> {
+  const user = req?.user
+  if (!user) return
+  const session = await payload.findByID({
+    collection: 'sessions',
+    id: sessionId,
+    depth: 0,
+    overrideAccess: true,
+    disableErrors: true,
+    req,
+  })
+  // Missing: nothing to cascade, and Payload answers 404 itself.
+  if (!session) return
+  if (String(relationId((session as { user?: unknown }).user)) !== String(user.id)) {
+    throw new Forbidden(req?.t)
+  }
 }
 
 /** The admin client of the conversation's ecosistema: its corpus lives in that org. */
@@ -217,9 +272,12 @@ async function adminCorpusClient(organizationId: number | string): Promise<Corpu
 export async function deleteConversationChildren(
   sessionId: number | string,
   deps: ConversationCascadeDeps,
-): Promise<void> {
+): Promise<UploadCleanupPlan | null> {
   const { payload, req } = deps
   const now = deps.now ?? new Date()
+
+  // 🔴 FIRST, before anything that reaches ai-service or deletes a row.
+  await assertMayDeleteConversation(sessionId, deps)
 
   await retireIngestedTurns(sessionId, deps, now)
 
@@ -252,6 +310,14 @@ export async function deleteConversationChildren(
       req,
     }),
   )
+
+  // ⚠ AFTER the messages: a message still citing an upload must be one from
+  // another conversation. BEFORE the session row: the `documents_rels` rows
+  // that say which uploads are this conversation's cascade away with it.
+  // Rows only: files and ai-service documents go after commit (see
+  // `lib/conversationUploads.ts`), from the plan this returns.
+  if (deps.keepUploads) return null
+  return deleteConversationUploadRows(sessionId, { payload, req, onPlan: deps.onUploadPlan })
 }
 
 /**
@@ -343,8 +409,52 @@ function assertNoBulkErrors(
   )
 }
 
-const cascadeConversationDelete: CollectionBeforeDeleteHook = async ({ id, req }) => {
-  await deleteConversationChildren(id, { payload: req.payload, req })
+/**
+ * Start the irreversible half — stored files, ai-service documents — in the
+ * background. It waits for THIS transaction's outcome (`txid_status`) before
+ * doing anything; see `lib/conversationUploads.ts`.
+ *
+ * ⚠ Scheduled from here, in a closure, and NOT handed to an `afterDelete`
+ * through `req.context`: a bulk delete runs these hooks concurrently on one
+ * `req`, and a row whose hook throws never reaches `afterDelete` even though
+ * the bulk transaction still commits what it did delete.
+ */
+export function scheduleUploadCleanup(payload: Payload, plan: UploadCleanupPlan): void {
+  // Logged BEFORE the wait: a restart while it polls loses the closure, and
+  // this line is then the only trace of which files and ai-service documents
+  // became orphans.
+  payload.logger.info(
+    {
+      sessionId: String(plan.sessionId),
+      xid: plan.xid,
+      documentIds: plan.documents.map((d) => String(d.id)),
+      mediaIds: plan.mediaIds.map(String),
+    },
+    '[sessions] scheduled post-commit upload cleanup',
+  )
+  void finishUploadCleanupAfterCommit(plan, { payload }).catch((err) => {
+    payload.logger.warn(
+      {
+        sessionId: String(plan.sessionId),
+        documentIds: plan.documents.map((d) => String(d.id)),
+        mediaIds: plan.mediaIds.map(String),
+        err: String(err),
+      },
+      '[sessions] post-commit upload cleanup failed; these uploads may be orphans',
+    )
+  })
+}
+
+const cascadeConversationDelete: CollectionBeforeDeleteHook = async ({ context, id, req }) => {
+  // ⚠ Synchronously, before any `await`: concurrent bulk-delete hooks must
+  // share ONE skip-list object (see `corpusCleanupSkipList`).
+  corpusCleanupSkipList(req)
+  await deleteConversationChildren(id, {
+    payload: req.payload,
+    req,
+    keepUploads: context?.[KEEP_CONVERSATION_UPLOADS] === true,
+    onUploadPlan: (plan) => scheduleUploadCleanup(req.payload, plan),
+  })
 }
 
 export const Sessions: CollectionConfig = {
@@ -461,6 +571,13 @@ export const Sessions: CollectionConfig = {
      *      being returned only because every retrieve carries `asOf`.
      *   2. Deletes the session's `ratings`.
      *   3. Deletes the session's `messages`.
+     *   0. FIRST refuses a signed-in caller who does not own the conversation
+     *      (`assertMayDeleteConversation` — Payload checks `ownOnly` only
+     *      after this hook has run).
+     *   4. Deletes the `documents` rows of the uploads that belong to this
+     *      conversation ALONE. Their files and ai-service documents go after
+     *      commit, scheduled from this hook. See `lib/conversationUploads.ts`
+     *      for the rule and its one blind spot.
      *
      * ⚠ Steps 2 and 3 are in that order because `ratings.message_id` is NOT
      * NULL with an `ON DELETE SET NULL` foreign key. Reversing them breaks the
@@ -476,19 +593,14 @@ export const Sessions: CollectionConfig = {
      * has already failed on the foreign key, so an `afterDelete` cascade can
      * never run at all.
      *
-     * ⚠ `documents` do NOT go with the session, and the hook deliberately does
-     * not touch them: a document belongs to the ecosistema and to its uploader,
-     * and it outlives every conversation it was attached to.
+     * ⚠ Any OTHER document survives: attached elsewhere, published, older than
+     * the conversation, someone else's, or referenced elsewhere. For those,
+     * `documents_rels_sessions_fk` is `ON DELETE CASCADE` (re-verified against
+     * the live schema, 2026-08-28), so deleting a conversation removes only the
+     * JOIN ROW — the attachment, not the document.
      *
-     * `documents.session` is `hasMany`, so the attachment lives in the
-     * `documents_rels` join table and `documents_rels_sessions_fk` is
-     * `ON DELETE CASCADE` (re-verified against the live schema, 2026-08-28).
-     * Deleting a conversation cascades that JOIN ROW away — the attachment, not
-     * the document. Same guarantee as before, now expressed on the table that
-     * holds the fact.
-     *
-     * 📝 Per-document corpus cleanup on document delete is a separate, still
-     * unbuilt problem — see the note on `Documents.hooks`.
+     * The session janitor passes `context[KEEP_CONVERSATION_UPLOADS]` and so
+     * keeps every upload, as before.
      */
     beforeDelete: [cascadeConversationDelete],
   },

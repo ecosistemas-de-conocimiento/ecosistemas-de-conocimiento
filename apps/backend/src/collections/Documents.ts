@@ -30,6 +30,7 @@ import {
   PERMISSIONS,
   relationId,
 } from '../lib/permissions'
+import { consumeCorpusCleanupSkip } from '../lib/conversationUploads'
 import {
   beginPublish,
   NotPublishableError,
@@ -1265,9 +1266,14 @@ type DocumentRowWithMedia = DocumentRow & {
  * trying to close, and the leak is already logged with the corpus and id so it
  * can be retried by hand.
  */
-const retireDeletedDocumentHook: CollectionAfterDeleteHook = async ({ doc, req }) => {
+const retireDeletedDocumentHook: CollectionAfterDeleteHook = async ({ context, doc, req }) => {
   const row = doc as { id?: unknown; organization?: unknown; uploadedBy?: unknown }
   if (row?.id == null) return doc
+  // A conversation delete removes this row inside ITS transaction and does the
+  // ai-service half itself, after commit (`lib/conversationUploads.ts`).
+  // One-shot, by id: the entry is consumed here, so it cannot reach any other
+  // delete in the same request.
+  if (consumeCorpusCleanupSkip(context, row.id)) return doc
 
   try {
     const { getAdminAIClient } = await import('@/lib/aiClient')
@@ -2495,11 +2501,10 @@ export const Documents: CollectionConfig = {
        * expressible without ever hiding a document from a conversation that was
        * already using it.
        *
-       * ⚠ Still OPTIONAL, and the document still OUTLIVES every conversation it
-       * is attached to. A document belongs to the ecosistema and to its
-       * uploader; a conversation is only where it happened to be used. Deleting
-       * a session leaves the row standing with one fewer attachment — see the
-       * hooks note on `collections/Sessions.ts`.
+       * ⚠ Still OPTIONAL. Deleting a session leaves the row standing with one
+       * fewer attachment, UNLESS the document belongs to that conversation
+       * alone (a `documento` draft attached nowhere else and referenced by
+       * nothing else) — then it goes too. The rule is `lib/conversationUploads.ts`.
        *
        * ⚠ EVERY attached conversation must belong to the caller AND to the SAME
        * ecosistema as the document. Both are enforced in
