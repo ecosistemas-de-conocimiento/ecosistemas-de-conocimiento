@@ -199,6 +199,41 @@ Restore, if a migration goes wrong: stop that env's ai-service, then
 the previous commit. ⚠ Copy the dumps off the box if you keep them; Hetzner's daily image also
 holds the disk, but restoring it rolls back both environments at once.
 
+### 4c. ⏸️ Pending: one ai-service org per ecosistema (`f0d5075`)
+
+Not applied on either environment yet. The `3099526` deploy of dev failed at build on 2026-10-17
+(measured, deployment `nsq84vck1szpd4xrnpm4wn04`), so dev and staging still run `fcd1325` with
+every corpus in org `demo`. 🔴 Build blocker: `apps/backend/src/eval/run.ts` imports
+`apps/web/src/lib/server/engine/expand.ts`, which imports `@edc/chat-engine/core`. The backend
+image has no `apps/web/node_modules`, and the Next build type-checks every `**/*.ts`, so it fails
+with "Cannot find module '@edc/chat-engine/core'". Fix that on `main` first.
+
+Pre-deploy dumps of dev (`edc_ai`, `edc_backend`): `/root/backups/20261017T0452Z/` and the
+owner's `cide/backups/edc-1/20261017T0452Z/`.
+
+State before the move (measured 2026-10-17): dev has `eco-1` and `eco-1-draft-1` in `demo`;
+staging has `eco-1-draft-2` in `demo`. One `budget_state` row each, org `demo`.
+
+The order, per environment, once the build passes:
+
+1. Deploy the whole app. Coolify cannot deploy one service. The compose default
+   `AI_CAPABILITY_MODE=warn` lets backend boot even before ai-service reports `orgDelegation`.
+2. Stop the new `backend-<uuid>` and `web-<uuid>` containers, so nothing writes to `edc_ai`.
+3. Dump `edc_ai` (§4b), check it with `pg_restore -l`, copy it off the box.
+4. Pipe the script into the postgres container. Dry run first, then apply:
+   ```sh
+   docker exec -i "$C" psql -U edc -d edc_ai -v ON_ERROR_STOP=1 -v from_org=demo \
+     < scripts/ai-org-per-ecosystem.sql            # dry run, rolls back
+   docker exec -i "$C" psql -U edc -d edc_ai -v ON_ERROR_STOP=1 -v from_org=demo -v apply=1 \
+     < scripts/ai-org-per-ecosystem.sql
+   ```
+   It moves `eco-<id>*` corpora to org `edc-eco-<id>` and creates a $5 budget row per new org.
+5. Start backend and web. Check: `corpora.org` reads `edc-eco-*`, one `budget_state` row per
+   ecosistema org, and a new chat's `usage_logs` row carries `edc-eco-<id>`.
+
+After the move, §6's budget command targets `edc-eco-<id>`, not `demo`. New ecosistemas get
+their row from the backend (`provisionEcosystem.ts`). Old spend stays booked to `demo`.
+
 ---
 
 ## 5. Where secrets live (names only)
