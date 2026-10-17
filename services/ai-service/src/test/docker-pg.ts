@@ -86,9 +86,13 @@ export function dockerAvailable(): boolean {
   return info.status === 0;
 }
 
-/** Force-remove a container, ignoring "no such container". */
+/**
+ * Force-remove a container, ignoring "no such container". `-v` also removes
+ * its anonymous volumes: the postgres and redis images both declare a
+ * `VOLUME`, and without `-v` each run orphans one on the host disk.
+ */
 export function removeContainer(name: string): void {
-  spawnSync('docker', ['rm', '-f', name], { stdio: 'ignore' });
+  spawnSync('docker', ['rm', '-fv', name], { stdio: 'ignore' });
 }
 
 /**
@@ -197,6 +201,11 @@ export async function startThrowawayPg(opts: ThrowawayPgOptions): Promise<Throwa
       'run',
       '-d',
       '--rm',
+      // Data on tmpfs: the image declares `VOLUME /var/lib/postgresql/data`,
+      // so without this every run leaves an anonymous volume behind. RAM is
+      // also faster than disk for a throwaway database.
+      '--tmpfs',
+      '/var/lib/postgresql/data',
       '--name',
       containerName,
       '-p',

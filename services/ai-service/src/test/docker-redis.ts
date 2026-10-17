@@ -64,7 +64,9 @@ export async function startThrowawayRedis(
 
   execFileSync(
     'docker',
-    ['run', '-d', '--rm', '--name', containerName, '-p', publish, image],
+    // `--tmpfs /data`: the image declares `VOLUME /data`; tmpfs keeps each
+    // run from leaving an anonymous volume behind.
+    ['run', '-d', '--rm', '--tmpfs', '/data', '--name', containerName, '-p', publish, image],
     { stdio: 'ignore' },
   );
 
