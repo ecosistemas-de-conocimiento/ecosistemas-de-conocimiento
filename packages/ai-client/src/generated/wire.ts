@@ -324,16 +324,12 @@ export type RetrieveRequest = {
   topK?: number;
   mmr?: number;
   /**
-   * Optional opaque metadata constraint applied **before** vector ranking
-   * (plan/open-retrieve-metadata-filter.md §3/§4). Matched against each
-   * chunk's stored `metadata` via jsonb containment (`@>`): a chunk matches
-   * when its metadata contains all the key/value pairs in `filter`. The
-   * service never interprets the keys (ADR-0001 project-agnostic).
-   *
-   * Backward compatible: absent or `{}` ⇒ byte-for-byte today's behavior
-   * (corpus-only predicate, no containment clause emitted). Chunks whose
-   * `metadata IS NULL` are excluded by any non-empty filter. jsonb is
-   * type-sensitive — `{ "k": 5 }` (number) will not match a stored `"5"`.
+   * Optional metadata constraint applied **before** ranking, on every leg.
+   * Per key: a value ⇒ jsonb containment (`@>`); `{ "$in": [v1, …] }` ⇒
+   * `metadata[key]` equals one of 1–500 strings/numbers. Keys AND together.
+   * Absent or `{}` ⇒ no clause. NULL metadata never matches a non-empty
+   * filter; jsonb is type-sensitive (`5` ≠ `"5"`). `$in` needs the
+   * `metadataFilterIn` capability. See `metadataFilterSchema`.
    */
   filter?: Record<string, unknown>;
   /**
@@ -419,6 +415,22 @@ export type RetrieveMultiRequest = {
   /** Forwarded to every per-corpus retrieve — see `retrieveRequestSchema`. */
   mmr?: number;
   filter?: Record<string, unknown>;
+  /**
+   * Per-corpus metadata filter, keyed by a name in `corpora`. For a corpus
+   * listed here, its entry REPLACES `filter` for that corpus only (no
+   * merging — repeat any shared keys you still want). Corpora not listed
+   * use `filter` as before. Same shape and validation as `filter`.
+   *
+   * Use case: a shared corpus searched unfiltered plus a per-user corpus
+   * restricted to an allowed set, in ONE fused hybrid call:
+   * `{ corpora: ['shared', 'drafts'],
+   * corpusFilters: { drafts: { docId: { $in: ['12', '34'] } } } }`.
+   *
+   * A key that is not in `corpora` is a 400: a typo would otherwise retrieve
+   * that corpus UNFILTERED. Older servers reject this field (the schema is
+   * strict) — require the `metadataFilterIn` capability before sending it.
+   */
+  corpusFilters?: Record<string, Record<string, unknown>>;
   asOf?: string;
   mode?: "dense" | "hybrid";
   rrfK?: number;

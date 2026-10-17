@@ -7,7 +7,12 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { AIClient, CapabilityNegotiationError, capabilityModeFromEnv } from './index.js';
+import {
+  AIClient,
+  CapabilityNegotiationError,
+  METADATA_FILTER_IN_CAPABILITY,
+  capabilityModeFromEnv,
+} from './index.js';
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -239,5 +244,11 @@ describe('strictStructuredOutputCapabilities', () => {
       'strictStructuredOutput',
       'strictStructuredOutput:openai/gpt-4o-mini',
     ]);
+  });
+});
+
+describe('METADATA_FILTER_IN_CAPABILITY', () => {
+  it('names the server capability for `$in` filters and `corpusFilters`', () => {
+    expect(METADATA_FILTER_IN_CAPABILITY).toBe('metadataFilterIn');
   });
 });

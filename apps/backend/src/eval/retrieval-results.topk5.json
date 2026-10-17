@@ -1,0 +1,8460 @@
+{
+  "measuredAt": "2026-10-17T20:15:07.882Z",
+  "aiServiceUrl": "http://localhost:45401",
+  "corpus": "eco-1",
+  "asOf": "2026-10-17T19:34:37.678Z",
+  "topK": 5,
+  "limit": 8,
+  "rerankRuns": false,
+  "skippedArms": [
+    "dense+rerank",
+    "hybrid+rerank"
+  ],
+  "probeLegs": [
+    "dense"
+  ],
+  "expansionCostUsd": 0,
+  "wallMs": 2428922,
+  "summary": [
+    {
+      "set": "harness",
+      "klass": "local",
+      "arm": "dense",
+      "n": 10,
+      "mrr": 0.95,
+      "recall": {
+        "1": 0.9,
+        "3": 1,
+        "5": 1
+      },
+      "medianMs": 4780
+    },
+    {
+      "set": "harness",
+      "klass": "local",
+      "arm": "hybrid",
+      "n": 10,
+      "mrr": 0.475,
+      "recall": {
+        "1": 0.4,
+        "3": 0.5,
+        "5": 0.6
+      },
+      "medianMs": 464
+    },
+    {
+      "set": "harness",
+      "klass": "global",
+      "arm": "dense",
+      "n": 10,
+      "mrr": 0.72,
+      "recall": {
+        "1": 0.3495670995670995,
+        "3": 0.4141774891774892,
+        "5": 0.5054112554112554
+      },
+      "medianMs": 832
+    },
+    {
+      "set": "harness",
+      "klass": "global",
+      "arm": "hybrid",
+      "n": 10,
+      "mrr": 0.7333333333333333,
+      "recall": {
+        "1": 0.3079004329004329,
+        "3": 0.5153679653679654,
+        "5": 0.6228354978354977
+      },
+      "medianMs": 595
+    },
+    {
+      "set": "local-all",
+      "klass": "local",
+      "arm": "dense",
+      "n": 189,
+      "mrr": 0.935626102292769,
+      "recall": {
+        "1": 0.8941798941798942,
+        "3": 0.9788359788359788,
+        "5": 0.9894179894179894
+      },
+      "medianMs": 750
+    },
+    {
+      "set": "local-all",
+      "klass": "local",
+      "arm": "hybrid",
+      "n": 189,
+      "mrr": 0.502557319223986,
+      "recall": {
+        "1": 0.3862433862433862,
+        "3": 0.5978835978835979,
+        "5": 0.6984126984126984
+      },
+      "medianMs": 645
+    }
+  ],
+  "rows": [
+    {
+      "set": "harness",
+      "id": "G01",
+      "klass": "global",
+      "arm": "dense",
+      "ms": 685,
+      "rr": 1,
+      "recall": {
+        "1": 0.3333333333333333,
+        "3": 0.3333333333333333,
+        "5": 0.6666666666666666
+      },
+      "docIds": [
+        169,
+        129,
+        156,
+        183,
+        182
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G01",
+      "klass": "global",
+      "arm": "hybrid",
+      "ms": 459,
+      "rr": 1,
+      "recall": {
+        "1": 0.3333333333333333,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        169,
+        183,
+        174,
+        166,
+        173
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G02",
+      "klass": "global",
+      "arm": "dense",
+      "ms": 28435,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        359,
+        364,
+        319,
+        340,
+        352
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G02",
+      "klass": "global",
+      "arm": "hybrid",
+      "ms": 512,
+      "rr": 1,
+      "recall": {
+        "1": 0.5,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        352,
+        364,
+        324,
+        359,
+        319
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G03",
+      "klass": "global",
+      "arm": "dense",
+      "ms": 779,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        233,
+        263,
+        44,
+        56,
+        64
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G03",
+      "klass": "global",
+      "arm": "hybrid",
+      "ms": 567,
+      "rr": 1,
+      "recall": {
+        "1": 0.3333333333333333,
+        "3": 0.6666666666666666,
+        "5": 0.6666666666666666
+      },
+      "docIds": [
+        212,
+        231,
+        146,
+        233,
+        263
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G04",
+      "klass": "global",
+      "arm": "dense",
+      "ms": 1379,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        129,
+        102,
+        104,
+        103,
+        84
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G04",
+      "klass": "global",
+      "arm": "hybrid",
+      "ms": 681,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        364,
+        129,
+        315,
+        104,
+        102
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G05",
+      "klass": "global",
+      "arm": "dense",
+      "ms": 740,
+      "rr": 1,
+      "recall": {
+        "1": 0.09090909090909091,
+        "3": 0.2727272727272727,
+        "5": 0.36363636363636365
+      },
+      "docIds": [
+        147,
+        159,
+        174,
+        119,
+        125
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G05",
+      "klass": "global",
+      "arm": "hybrid",
+      "ms": 699,
+      "rr": 1,
+      "recall": {
+        "1": 0.09090909090909091,
+        "3": 0.2727272727272727,
+        "5": 0.45454545454545453
+      },
+      "docIds": [
+        159,
+        336,
+        149,
+        163,
+        119
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G06",
+      "klass": "global",
+      "arm": "dense",
+      "ms": 832,
+      "rr": 1,
+      "recall": {
+        "1": 0.75,
+        "3": 0.75,
+        "5": 1
+      },
+      "docIds": [
+        198,
+        243,
+        187,
+        199,
+        196
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G06",
+      "klass": "global",
+      "arm": "hybrid",
+      "ms": 521,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 0.25,
+        "5": 1
+      },
+      "docIds": [
+        243,
+        187,
+        199,
+        198,
+        225
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G07",
+      "klass": "global",
+      "arm": "dense",
+      "ms": 854,
+      "rr": 1,
+      "recall": {
+        "1": 0.07142857142857142,
+        "3": 0.2857142857142857,
+        "5": 0.35714285714285715
+      },
+      "docIds": [
+        142,
+        122,
+        127,
+        232,
+        303
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G07",
+      "klass": "global",
+      "arm": "hybrid",
+      "ms": 624,
+      "rr": 1,
+      "recall": {
+        "1": 0.07142857142857142,
+        "3": 0.21428571428571427,
+        "5": 0.35714285714285715
+      },
+      "docIds": [
+        314,
+        364,
+        359,
+        142,
+        312
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G08",
+      "klass": "global",
+      "arm": "dense",
+      "ms": 855,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        265,
+        288,
+        296,
+        258,
+        299
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G08",
+      "klass": "global",
+      "arm": "hybrid",
+      "ms": 595,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        299,
+        288,
+        258,
+        270,
+        304
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G09",
+      "klass": "global",
+      "arm": "dense",
+      "ms": 819,
+      "rr": 0.2,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0.16666666666666666
+      },
+      "docIds": [
+        79,
+        69,
+        72,
+        78,
+        304
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G09",
+      "klass": "global",
+      "arm": "hybrid",
+      "ms": 520,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        79,
+        69,
+        72,
+        78,
+        198
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G10",
+      "klass": "global",
+      "arm": "dense",
+      "ms": 808,
+      "rr": 1,
+      "recall": {
+        "1": 0.25,
+        "3": 0.5,
+        "5": 0.5
+      },
+      "docIds": [
+        198,
+        243,
+        206,
+        210,
+        207
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "G10",
+      "klass": "global",
+      "arm": "hybrid",
+      "ms": 644,
+      "rr": 1,
+      "recall": {
+        "1": 0.75,
+        "3": 0.75,
+        "5": 0.75
+      },
+      "docIds": [
+        278,
+        261,
+        198,
+        258,
+        243
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L01",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 795,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        118,
+        271,
+        125,
+        154,
+        124
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L01",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 418,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        124,
+        118,
+        125,
+        173,
+        154
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L02",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 724,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        140,
+        164,
+        259,
+        338,
+        298
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L02",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 464,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        124,
+        311,
+        336,
+        125,
+        118
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L03",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 7359,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        173,
+        234,
+        239,
+        319,
+        220
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L03",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 311,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        173,
+        319,
+        163,
+        325,
+        234
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L04",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 7450,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        193,
+        137,
+        250,
+        141,
+        166
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L04",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 569,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        141,
+        159,
+        163,
+        125,
+        362
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L05",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 776,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        186,
+        206,
+        231,
+        172,
+        318
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L05",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 609,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        160,
+        186,
+        172,
+        173,
+        139
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L06",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 820,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        250,
+        137,
+        141,
+        182,
+        124
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L06",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 316,
+      "rr": 0.25,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        159,
+        141,
+        124,
+        250,
+        336
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L07",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 4780,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        299,
+        167,
+        183,
+        174,
+        181
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L07",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 471,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        183,
+        173,
+        167,
+        336,
+        174
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L08",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 6998,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        311,
+        195,
+        164,
+        140,
+        336
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L08",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 300,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        311,
+        336,
+        125,
+        124,
+        139
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L09",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 7588,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        324,
+        139,
+        215,
+        223,
+        301
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L09",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 515,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        324,
+        139,
+        336,
+        124,
+        295
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L10",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 776,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        365,
+        281,
+        290,
+        128,
+        331
+      ]
+    },
+    {
+      "set": "harness",
+      "id": "L10",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 453,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        365,
+        359,
+        290,
+        331,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0001",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 5859,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        117,
+        130,
+        316,
+        178,
+        226
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0001",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 477,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        178,
+        117,
+        316,
+        336,
+        134
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0002",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 7355,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        118,
+        271,
+        125,
+        154,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0002",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 673,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        124,
+        118,
+        125,
+        173,
+        154
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0003",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 802,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        119,
+        146,
+        134,
+        187,
+        149
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0003",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 576,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        119,
+        159,
+        134,
+        149,
+        173
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0004",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 763,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        120,
+        247,
+        238,
+        362,
+        142
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0004",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 509,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        120,
+        173,
+        362,
+        159,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0005",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 815,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        121,
+        186,
+        125,
+        154,
+        263
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0005",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 424,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        121,
+        159,
+        125,
+        310,
+        132
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0006",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 3820,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        122,
+        225,
+        145,
+        309,
+        126
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0006",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 566,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        149,
+        122,
+        163,
+        145,
+        159
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0007",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 802,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        139,
+        123,
+        127,
+        326,
+        221
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0007",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 426,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        139,
+        123,
+        336,
+        159,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0008",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 5618,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        124,
+        232,
+        271,
+        185,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0008",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 691,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        124,
+        336,
+        356,
+        159,
+        118
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0009",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 681,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        125,
+        154,
+        118,
+        138,
+        166
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0009",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 989,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        125,
+        118,
+        166,
+        154,
+        348
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0010",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 525,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        126,
+        225,
+        145,
+        122,
+        268
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0010",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 327,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        163,
+        126,
+        336,
+        145,
+        149
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0011",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 598,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        127,
+        139,
+        141,
+        123,
+        161
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0011",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 778,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        139,
+        141,
+        159,
+        149,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0012",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 353,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        128,
+        281,
+        365,
+        347,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0012",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 2108,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        128,
+        347,
+        139,
+        149,
+        365
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0013",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 464,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        129,
+        196,
+        157,
+        219,
+        186
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0013",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 7409,
+      "rr": 0.2,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        124,
+        336,
+        157,
+        139,
+        129
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0014",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 345,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        130,
+        313,
+        134,
+        334,
+        180
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0014",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 8176,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        130,
+        334,
+        336,
+        134,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0016",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 497,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        132,
+        156,
+        289,
+        314,
+        262
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0016",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 604,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        156,
+        132,
+        314,
+        163,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0018",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 1333,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        134,
+        146,
+        119,
+        130,
+        180
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0018",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 447,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        134,
+        159,
+        119,
+        336,
+        149
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0021",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 3952,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        137,
+        154,
+        141,
+        312,
+        213
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0021",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 612,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        159,
+        141,
+        124,
+        336,
+        149
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0022",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 723,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        138,
+        154,
+        125,
+        118,
+        348
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0022",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 427,
+      "rr": 0.2,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        125,
+        118,
+        159,
+        336,
+        138
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0023",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 6121,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        139,
+        127,
+        301,
+        223,
+        123
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0023",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 484,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        139,
+        149,
+        123,
+        336,
+        324
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0024",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 7335,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        140,
+        164,
+        259,
+        338,
+        298
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0024",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 373,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        124,
+        311,
+        336,
+        125,
+        118
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0025",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 7355,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        141,
+        137,
+        250,
+        139,
+        159
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0025",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 401,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        141,
+        159,
+        124,
+        149,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0026",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 7413,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        142,
+        278,
+        120,
+        150,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0026",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 498,
+      "rr": 0.2,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        124,
+        125,
+        119,
+        147,
+        142
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0027",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 670,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        143,
+        269,
+        265,
+        355,
+        210
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0027",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 799,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        143,
+        336,
+        163,
+        310,
+        119
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0028",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 450,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        144,
+        157,
+        267,
+        180,
+        271
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0028",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 5306,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        157,
+        124,
+        163,
+        139,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0029",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 1541,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        145,
+        225,
+        122,
+        331,
+        268
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0029",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 502,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        145,
+        163,
+        149,
+        159,
+        309
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0030",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 989,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        146,
+        119,
+        134,
+        159,
+        257
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0030",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 416,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        159,
+        119,
+        149,
+        134,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0031",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 1937,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        147,
+        326,
+        259,
+        279,
+        334
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0031",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 473,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        359,
+        147,
+        343,
+        326,
+        259
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0033",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 438,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        149,
+        146,
+        159,
+        221,
+        230
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0033",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 736,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        149,
+        159,
+        336,
+        139,
+        119
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0034",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 460,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        150,
+        235,
+        301,
+        350,
+        156
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0034",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 7366,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        124,
+        350,
+        159,
+        163,
+        156
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0035",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 511,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        151,
+        229,
+        311,
+        290,
+        140
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0035",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 673,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        336,
+        124,
+        151,
+        311,
+        163
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0038",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 558,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        154,
+        137,
+        125,
+        138,
+        118
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0038",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 715,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        125,
+        154,
+        118,
+        124,
+        166
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0039",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 493,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        186,
+        125,
+        155,
+        162,
+        199
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0039",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 54849,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        178,
+        125,
+        163,
+        162,
+        316
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0040",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 571,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        156,
+        314,
+        262,
+        289,
+        132
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0040",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 902,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        156,
+        314,
+        163,
+        336,
+        132
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0041",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 521,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        157,
+        267,
+        144,
+        186,
+        180
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0041",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 773,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        157,
+        124,
+        267,
+        139,
+        119
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0044",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 607,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        160,
+        254,
+        128,
+        127,
+        293
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0044",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 744,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        160,
+        315,
+        141,
+        293,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0045",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 787,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        161,
+        180,
+        263,
+        350,
+        127
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0045",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 440,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        161,
+        180,
+        350,
+        141,
+        263
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0046",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 9389,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        162,
+        237,
+        362,
+        186,
+        222
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0046",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 453,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        162,
+        178,
+        125,
+        316,
+        261
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0047",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 687,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        163,
+        310,
+        352,
+        223,
+        340
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0047",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 1471,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        163,
+        310,
+        340,
+        336,
+        159
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0048",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 421,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        164,
+        140,
+        279,
+        229,
+        328
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0048",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 57096,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        336,
+        164,
+        311,
+        163,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0049",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 728,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        165,
+        212,
+        257,
+        310,
+        293
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0049",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 484,
+      "rr": 0.25,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        310,
+        159,
+        124,
+        165,
+        149
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0050",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 11687,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        166,
+        154,
+        125,
+        138,
+        118
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0050",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 483,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        125,
+        166,
+        118,
+        163,
+        154
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0051",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 57429,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        167,
+        277,
+        176,
+        254,
+        299
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0051",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 392,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        167,
+        343,
+        169,
+        347,
+        314
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0053",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 12150,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        169,
+        167,
+        182,
+        176,
+        177
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0053",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 347,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        169,
+        167,
+        343,
+        336,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0054",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 57475,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        170,
+        175,
+        150,
+        301,
+        278
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0054",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 751,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        170,
+        149,
+        124,
+        139,
+        119
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0056",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 480,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        186,
+        172,
+        231,
+        139,
+        318
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0056",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 11240,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        172,
+        160,
+        186,
+        139,
+        173
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0057",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 470,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        173,
+        234,
+        239,
+        319,
+        220
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0057",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 58316,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        173,
+        319,
+        163,
+        325,
+        234
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0058",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 949,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        174,
+        313,
+        218,
+        183,
+        299
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0058",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 632,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        174,
+        183,
+        163,
+        336,
+        173
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0059",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 474,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        175,
+        181,
+        170,
+        239,
+        145
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0059",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 645,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        175,
+        149,
+        336,
+        181,
+        156
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0060",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 588,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        176,
+        182,
+        167,
+        336,
+        290
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0060",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 847,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        336,
+        167,
+        169,
+        343,
+        149
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0061",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 1211,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        177,
+        169,
+        167,
+        283,
+        185
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0061",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 442,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        169,
+        177,
+        163,
+        183,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0062",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 5579,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        178,
+        273,
+        316,
+        117,
+        186
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0062",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 454,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        178,
+        316,
+        163,
+        336,
+        117
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0064",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 63773,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        180,
+        161,
+        263,
+        350,
+        130
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0064",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 302,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        180,
+        350,
+        161,
+        263,
+        163
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0065",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 5922,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        181,
+        175,
+        295,
+        255,
+        254
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0065",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 792,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        181,
+        175,
+        343,
+        125,
+        334
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0066",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 727,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        182,
+        167,
+        176,
+        169,
+        343
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0066",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 699,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        336,
+        169,
+        167,
+        343,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0067",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 732,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        183,
+        174,
+        299,
+        167,
+        177
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0067",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 569,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        183,
+        174,
+        163,
+        169,
+        343
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0068",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 887,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        184,
+        130,
+        313,
+        186,
+        154
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0068",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 462,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        334,
+        184,
+        130,
+        313,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0069",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 59276,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        185,
+        281,
+        124,
+        336,
+        356
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0069",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 541,
+      "rr": 0.2,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        124,
+        336,
+        356,
+        139,
+        185
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0070",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 589,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        186,
+        172,
+        231,
+        318,
+        154
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0070",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 1041,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        186,
+        160,
+        172,
+        139,
+        143
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0071",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 352,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        146,
+        187,
+        119,
+        134,
+        186
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0071",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 7806,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        159,
+        119,
+        134,
+        149,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0074",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 317,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        190,
+        302,
+        143,
+        215,
+        210
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0074",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 61800,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        159,
+        149,
+        190,
+        336,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0075",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 694,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        191,
+        159,
+        230,
+        360,
+        322
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0075",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 685,
+      "rr": 0.25,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        159,
+        360,
+        119,
+        191,
+        163
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0077",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 767,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        193,
+        137,
+        250,
+        141,
+        166
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0077",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 364,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        141,
+        159,
+        163,
+        125,
+        362
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0078",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 5694,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        137,
+        154,
+        194,
+        312,
+        293
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0078",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 714,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        315,
+        160,
+        159,
+        124,
+        293
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0079",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 564,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        195,
+        156,
+        338,
+        275,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0079",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 997,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        156,
+        336,
+        314,
+        132,
+        163
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0080",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 586,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        196,
+        219,
+        129,
+        163,
+        122
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0080",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 990,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        163,
+        196,
+        159,
+        310,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0082",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 599,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        198,
+        224,
+        207,
+        218,
+        174
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0082",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 754,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        336,
+        149,
+        139,
+        125,
+        343
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0083",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 510,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        199,
+        186,
+        173,
+        162,
+        222
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0083",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 732,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        173,
+        178,
+        162,
+        316,
+        325
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0085",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 581,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        201,
+        314,
+        137,
+        336,
+        202
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0085",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 725,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        314,
+        202,
+        336,
+        159,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0086",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 521,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        201,
+        202,
+        258,
+        265,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0086",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 828,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        202,
+        336,
+        258,
+        124,
+        163
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0087",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 587,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        203,
+        124,
+        185,
+        336,
+        259
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0087",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 797,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        124,
+        336,
+        356,
+        159,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0089",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 422,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        205,
+        271,
+        307,
+        355,
+        325
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0089",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 52577,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        205,
+        325,
+        355,
+        124,
+        321
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0090",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 557,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        186,
+        206,
+        231,
+        172,
+        318
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0090",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 777,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        160,
+        186,
+        172,
+        173,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0091",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 460,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        207,
+        224,
+        198,
+        182,
+        250
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0091",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 15528,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        336,
+        149,
+        139,
+        124,
+        119
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0092",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 508,
+      "rr": 0.25,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        154,
+        150,
+        125,
+        208,
+        138
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0092",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 931,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        125,
+        118,
+        159,
+        154,
+        348
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0093",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 585,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        209,
+        164,
+        229,
+        266,
+        140
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0093",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 732,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        173,
+        209,
+        336,
+        124,
+        311
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0094",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 558,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        143,
+        210,
+        269,
+        265,
+        302
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0094",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 673,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        163,
+        143,
+        159,
+        336,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0095",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 654,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        147,
+        302,
+        122,
+        178,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0095",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 877,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        359,
+        343,
+        147,
+        125,
+        334
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0096",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 345,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        212,
+        165,
+        257,
+        310,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0096",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 48218,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        159,
+        310,
+        124,
+        173,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0097",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 824,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        213,
+        137,
+        154,
+        312,
+        273
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0097",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 638,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        213,
+        124,
+        159,
+        336,
+        149
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0099",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 754,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        215,
+        139,
+        190,
+        223,
+        301
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0099",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 553,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        139,
+        215,
+        324,
+        149,
+        310
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0100",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 749,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        122,
+        216,
+        145,
+        225,
+        126
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0100",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 1652,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        336,
+        145,
+        309,
+        163,
+        122
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0101",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 537,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        217,
+        311,
+        140,
+        164,
+        151
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0101",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 794,
+      "rr": 0.2,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        336,
+        311,
+        163,
+        290,
+        217
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0102",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 506,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        218,
+        313,
+        174,
+        180,
+        186
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0102",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 896,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        125,
+        336,
+        139,
+        163,
+        147
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0103",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 445,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        219,
+        196,
+        232,
+        129,
+        271
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0103",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 12712,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        124,
+        219,
+        173,
+        343,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0104",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 1570,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        220,
+        173,
+        239,
+        234,
+        319
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0104",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 469,
+      "rr": 0.2,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        173,
+        319,
+        139,
+        290,
+        220
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0105",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 55353,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        221,
+        149,
+        123,
+        326,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0105",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 453,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        149,
+        336,
+        125,
+        159,
+        123
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0106",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 13684,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        222,
+        178,
+        231,
+        186,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0106",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 543,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        178,
+        124,
+        222,
+        163,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0107",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 654,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        223,
+        139,
+        163,
+        301,
+        215
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0107",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 525,
+      "rr": 0.25,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        163,
+        139,
+        340,
+        223,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0108",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 626,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        224,
+        207,
+        198,
+        356,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0108",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 309,
+      "rr": 0.25,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        336,
+        149,
+        159,
+        224,
+        356
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0109",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 53163,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        225,
+        145,
+        122,
+        126,
+        268
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0109",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 453,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        149,
+        145,
+        163,
+        309,
+        359
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0110",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 14189,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        226,
+        178,
+        336,
+        290,
+        316
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0110",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 541,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        178,
+        336,
+        226,
+        316,
+        290
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0113",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 748,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        229,
+        140,
+        164,
+        336,
+        266
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0113",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 505,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        336,
+        124,
+        172,
+        163,
+        311
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0115",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 1047,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        231,
+        186,
+        222,
+        172,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0115",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 498,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        160,
+        186,
+        172,
+        139,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0116",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 52253,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        232,
+        124,
+        271,
+        118,
+        293
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0116",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 466,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        124,
+        118,
+        149,
+        139,
+        173
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0117",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 17225,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        233,
+        273,
+        120,
+        213,
+        186
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0117",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 805,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        159,
+        125,
+        273,
+        315,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0118",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 508,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        234,
+        173,
+        319,
+        239,
+        186
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0118",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 649,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        173,
+        319,
+        125,
+        163,
+        343
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0119",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 393,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        235,
+        150,
+        312,
+        350,
+        137
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0119",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 50424,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        312,
+        235,
+        350,
+        163,
+        364
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0121",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 581,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        237,
+        163,
+        362,
+        162,
+        340
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0121",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 951,
+      "rr": 0.25,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        163,
+        340,
+        336,
+        237,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0122",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 789,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        238,
+        120,
+        247,
+        336,
+        176
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0122",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 565,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        336,
+        238,
+        120,
+        173,
+        159
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0123",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 927,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        239,
+        173,
+        175,
+        170,
+        319
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0123",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 591,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        173,
+        319,
+        139,
+        163,
+        156
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0124",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 755,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        240,
+        120,
+        142,
+        303,
+        247
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0124",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 441,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        149,
+        159,
+        139,
+        119,
+        147
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0125",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 448,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        241,
+        125,
+        186,
+        255,
+        128
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0125",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 726,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        124,
+        159,
+        125,
+        163,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0126",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 772,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        293,
+        302,
+        160,
+        254,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0126",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 523,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        160,
+        124,
+        159,
+        315,
+        293
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0127",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 1156,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        243,
+        137,
+        141,
+        258,
+        250
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0127",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 573,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        141,
+        159,
+        124,
+        163,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0130",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 739,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        246,
+        233,
+        159,
+        230,
+        186
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0130",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 434,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        159,
+        360,
+        125,
+        124,
+        315
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0131",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 6113,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        247,
+        120,
+        238,
+        362,
+        303
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0131",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 566,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        159,
+        120,
+        238,
+        173,
+        362
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0134",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 409,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        250,
+        137,
+        141,
+        182,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0134",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 616,
+      "rr": 0.25,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        159,
+        141,
+        124,
+        250,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0136",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 441,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        149,
+        143,
+        252,
+        355,
+        221
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0136",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 736,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        149,
+        336,
+        252,
+        143,
+        159
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0138",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 449,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        254,
+        167,
+        293,
+        347,
+        181
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0138",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 60060,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        347,
+        315,
+        160,
+        167,
+        293
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0139",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 423,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        255,
+        181,
+        295,
+        241,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0139",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 9974,
+      "rr": 0.2,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        125,
+        124,
+        163,
+        343,
+        255
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0140",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 419,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        256,
+        186,
+        332,
+        154,
+        121
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0140",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 59789,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        124,
+        121,
+        159,
+        119,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0141",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 680,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        257,
+        165,
+        310,
+        146,
+        212
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0141",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 930,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        159,
+        149,
+        310,
+        119,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0142",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 478,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        258,
+        243,
+        201,
+        154,
+        202
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0142",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 8169,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        258,
+        202,
+        336,
+        159,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0143",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 1132,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        259,
+        147,
+        140,
+        338,
+        326
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0143",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 793,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        259,
+        147,
+        326,
+        336,
+        163
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0145",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 442,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        150,
+        261,
+        235,
+        222,
+        186
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0145",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 59562,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        261,
+        178,
+        163,
+        350,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0146",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 314,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        262,
+        156,
+        314,
+        132,
+        289
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0146",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 9894,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        156,
+        262,
+        314,
+        163,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0147",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 498,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        263,
+        180,
+        161,
+        350,
+        174
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0147",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 59750,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        263,
+        180,
+        350,
+        161,
+        163
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0149",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 429,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        265,
+        143,
+        269,
+        210,
+        186
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0149",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 10002,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        336,
+        143,
+        163,
+        125,
+        310
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0150",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 597,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        266,
+        164,
+        343,
+        282,
+        309
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0150",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 732,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        343,
+        149,
+        336,
+        309,
+        164
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0151",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 913,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        267,
+        157,
+        269,
+        144,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0151",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 2495,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        157,
+        124,
+        267,
+        139,
+        156
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0152",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 561,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        225,
+        268,
+        145,
+        122,
+        126
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0152",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 814,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        336,
+        149,
+        268,
+        145,
+        163
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0153",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 1549,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        269,
+        143,
+        267,
+        265,
+        186
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0153",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 615,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        143,
+        336,
+        124,
+        163,
+        310
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0154",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 1149,
+      "rr": 0.25,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        154,
+        125,
+        138,
+        270,
+        118
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0154",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 467,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        125,
+        270,
+        118,
+        348,
+        154
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0155",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 50000,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        271,
+        124,
+        232,
+        325,
+        118
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0155",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 507,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        124,
+        325,
+        271,
+        118,
+        355
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0157",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 866,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        273,
+        233,
+        178,
+        330,
+        213
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0157",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 683,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        273,
+        178,
+        336,
+        139,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0159",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 1014,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        275,
+        224,
+        195,
+        207,
+        311
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0159",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 548,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        336,
+        149,
+        139,
+        125,
+        311
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0161",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 1082,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        277,
+        167,
+        254,
+        181,
+        185
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0161",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 522,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        163,
+        277,
+        347,
+        167,
+        323
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0162",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 712,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        278,
+        247,
+        150,
+        142,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0162",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 658,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        278,
+        159,
+        125,
+        149,
+        156
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0163",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 773,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        279,
+        164,
+        147,
+        259,
+        326
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0163",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 605,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        279,
+        147,
+        336,
+        259,
+        326
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0165",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 811,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        281,
+        128,
+        356,
+        185,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0165",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 496,
+      "rr": 0.25,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        124,
+        336,
+        356,
+        281,
+        159
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0166",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 10200,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        282,
+        343,
+        266,
+        298,
+        137
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0166",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 650,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        343,
+        159,
+        282,
+        309,
+        163
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0167",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 766,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        283,
+        177,
+        167,
+        186,
+        222
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0167",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 440,
+      "rr": 0.2,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        149,
+        139,
+        336,
+        125,
+        283
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0172",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 58415,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        288,
+        149,
+        241,
+        147,
+        122
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0172",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 575,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        149,
+        159,
+        336,
+        124,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0173",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 995,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        289,
+        314,
+        156,
+        254,
+        338
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0173",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 590,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        156,
+        314,
+        163,
+        336,
+        132
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0174",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 949,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        290,
+        336,
+        331,
+        359,
+        365
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0174",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 614,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        336,
+        290,
+        359,
+        331,
+        149
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0175",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 765,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        291,
+        323,
+        302,
+        277,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0175",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 428,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        124,
+        159,
+        163,
+        336,
+        323
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0176",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 6702,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        292,
+        125,
+        234,
+        186,
+        313
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0176",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 608,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        125,
+        163,
+        343,
+        124,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0177",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 798,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        293,
+        271,
+        232,
+        254,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0177",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 490,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        293,
+        124,
+        315,
+        160,
+        173
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0179",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 61686,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        295,
+        181,
+        255,
+        324,
+        237
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0179",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 697,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        295,
+        324,
+        125,
+        343,
+        334
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0180",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 742,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        296,
+        354,
+        124,
+        336,
+        174
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0180",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 505,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        296,
+        124,
+        336,
+        163,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0181",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 763,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        297,
+        316,
+        117,
+        178,
+        226
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0181",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 533,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        178,
+        316,
+        117,
+        163,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0182",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 867,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        298,
+        140,
+        259,
+        271,
+        282
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0182",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 654,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        298,
+        159,
+        124,
+        125,
+        282
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0183",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 845,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        299,
+        167,
+        183,
+        174,
+        181
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0183",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 531,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        183,
+        173,
+        167,
+        336,
+        174
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0185",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 779,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        301,
+        139,
+        215,
+        223,
+        150
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0185",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 409,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        139,
+        124,
+        301,
+        149,
+        324
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0186",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 69882,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        302,
+        178,
+        271,
+        122,
+        150
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0186",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 407,
+      "rr": 0.2,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        124,
+        149,
+        163,
+        336,
+        302
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0187",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 70095,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        303,
+        247,
+        240,
+        142,
+        149
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0187",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 533,
+      "rr": 0.2,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        159,
+        149,
+        139,
+        147,
+        303
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0188",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 889,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        304,
+        237,
+        362,
+        254,
+        162
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0188",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 719,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        304,
+        160,
+        315,
+        293,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0189",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 620,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        237,
+        362,
+        305,
+        139,
+        162
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0189",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 915,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        149,
+        139,
+        336,
+        304,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0191",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 764,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        307,
+        271,
+        355,
+        325,
+        166
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0191",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 599,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        325,
+        307,
+        355,
+        125,
+        163
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0192",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 456,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        308,
+        186,
+        218,
+        163,
+        130
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0192",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 687,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        163,
+        124,
+        308,
+        125,
+        156
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0193",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 705,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        309,
+        122,
+        343,
+        225,
+        145
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0193",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 464,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        309,
+        149,
+        343,
+        145,
+        122
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0194",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 62302,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        310,
+        257,
+        212,
+        165,
+        163
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0194",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 362,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        310,
+        159,
+        163,
+        139,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0195",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 7233,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        311,
+        195,
+        164,
+        140,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0195",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 446,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        311,
+        336,
+        125,
+        124,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0196",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 62448,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        312,
+        137,
+        154,
+        235,
+        213
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0196",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 330,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        312,
+        364,
+        137,
+        159,
+        154
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0197",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 7723,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        313,
+        174,
+        130,
+        334,
+        218
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0197",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 450,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        334,
+        313,
+        130,
+        125,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0198",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 62024,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        314,
+        156,
+        262,
+        201,
+        289
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0198",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 613,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        314,
+        156,
+        163,
+        336,
+        132
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0199",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 784,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        315,
+        233,
+        254,
+        186,
+        293
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0199",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 614,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        315,
+        160,
+        159,
+        293,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0200",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 939,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        316,
+        178,
+        226,
+        117,
+        186
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0200",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 706,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        178,
+        316,
+        159,
+        117,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0202",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 435,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        186,
+        318,
+        231,
+        172,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0202",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 3640,
+      "rr": 0.2,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        186,
+        160,
+        172,
+        139,
+        318
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0203",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 512,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        319,
+        173,
+        234,
+        239,
+        181
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0203",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 724,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        173,
+        319,
+        163,
+        139,
+        159
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0205",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 482,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        321,
+        271,
+        325,
+        355,
+        307
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0205",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 64358,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        321,
+        325,
+        355,
+        307,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0206",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 606,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        322,
+        159,
+        230,
+        360,
+        191
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0206",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 790,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        159,
+        360,
+        322,
+        163,
+        310
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0207",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 442,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        323,
+        291,
+        277,
+        297,
+        137
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0207",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 3951,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        323,
+        163,
+        124,
+        159,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0208",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 569,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        324,
+        139,
+        215,
+        223,
+        301
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0208",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 821,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        324,
+        139,
+        336,
+        124,
+        295
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0209",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 430,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        325,
+        271,
+        321,
+        307,
+        355
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0209",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 64348,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        325,
+        173,
+        321,
+        355,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0210",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 514,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        326,
+        147,
+        259,
+        123,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0210",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 918,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        326,
+        147,
+        336,
+        163,
+        149
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0212",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 770,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        328,
+        156,
+        164,
+        338,
+        132
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0212",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 607,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        156,
+        314,
+        163,
+        336,
+        132
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0214",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 753,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        330,
+        233,
+        273,
+        169,
+        213
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0214",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 472,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        330,
+        169,
+        125,
+        336,
+        183
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0215",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 1436,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        331,
+        145,
+        290,
+        359,
+        365
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0215",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 583,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        331,
+        359,
+        290,
+        124,
+        159
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0216",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 805,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        332,
+        163,
+        340,
+        223,
+        237
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0216",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 559,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        163,
+        340,
+        336,
+        124,
+        314
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0218",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 729,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        334,
+        313,
+        130,
+        147,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0218",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 620,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        334,
+        359,
+        130,
+        313,
+        147
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0220",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 716,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        336,
+        356,
+        124,
+        185,
+        290
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0220",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 509,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        336,
+        124,
+        356,
+        159,
+        149
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0222",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 763,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        338,
+        259,
+        140,
+        156,
+        328
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0222",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 593,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        156,
+        314,
+        163,
+        132,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0223",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 750,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        125,
+        339,
+        302,
+        122,
+        178
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0223",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 508,
+      "rr": 0.3333333333333333,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        125,
+        336,
+        339,
+        163,
+        124
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0224",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 799,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        340,
+        163,
+        225,
+        332,
+        360
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0224",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 790,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        340,
+        163,
+        360,
+        159,
+        336
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0227",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 460,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        343,
+        167,
+        169,
+        182,
+        309
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0227",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 58688,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        343,
+        169,
+        167,
+        309,
+        149
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0231",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 665,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        347,
+        167,
+        128,
+        254,
+        299
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0231",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 447,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        347,
+        167,
+        149,
+        128,
+        139
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0232",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 9877,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        154,
+        348,
+        138,
+        125,
+        118
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0232",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 401,
+      "rr": 0.5,
+      "recall": {
+        "1": 0,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        125,
+        348,
+        118,
+        156,
+        159
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0234",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 59451,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        350,
+        161,
+        150,
+        180,
+        263
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0234",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 481,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        350,
+        180,
+        163,
+        161,
+        263
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0236",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 566,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        352,
+        163,
+        310,
+        143,
+        295
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0236",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 1266,
+      "rr": 0.2,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 1
+      },
+      "docIds": [
+        163,
+        310,
+        324,
+        336,
+        352
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0238",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 670,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        354,
+        296,
+        185,
+        178,
+        196
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0238",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 844,
+      "rr": 0,
+      "recall": {
+        "1": 0,
+        "3": 0,
+        "5": 0
+      },
+      "docIds": [
+        124,
+        336,
+        173,
+        296,
+        163
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0239",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 422,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        355,
+        271,
+        325,
+        307,
+        143
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0239",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 5829,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        355,
+        325,
+        321,
+        307,
+        143
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0240",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 679,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        356,
+        336,
+        124,
+        185,
+        281
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0240",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 782,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        356,
+        124,
+        336,
+        159,
+        163
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0241",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 618,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        357,
+        141,
+        127,
+        355,
+        161
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0241",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 817,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        357,
+        141,
+        336,
+        149,
+        159
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0243",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 722,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        359,
+        290,
+        331,
+        365,
+        147
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0243",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 599,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        359,
+        331,
+        290,
+        124,
+        365
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0244",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 911,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        360,
+        159,
+        230,
+        322,
+        225
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0244",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 577,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        360,
+        159,
+        163,
+        124,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0246",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 5305,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        362,
+        247,
+        120,
+        238,
+        237
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0246",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 1533,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        362,
+        120,
+        173,
+        124,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0248",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 4943,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        364,
+        235,
+        312,
+        137,
+        186
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0248",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 539,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        364,
+        312,
+        124,
+        163,
+        125
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0249",
+      "klass": "local",
+      "arm": "dense",
+      "ms": 892,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        365,
+        281,
+        290,
+        128,
+        331
+      ]
+    },
+    {
+      "set": "local-all",
+      "id": "SIM_0249",
+      "klass": "local",
+      "arm": "hybrid",
+      "ms": 904,
+      "rr": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1
+      },
+      "docIds": [
+        365,
+        359,
+        290,
+        331,
+        124
+      ]
+    }
+  ]
+}

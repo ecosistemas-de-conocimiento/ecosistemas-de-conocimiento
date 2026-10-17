@@ -172,6 +172,31 @@ const PROBES: Record<keyof typeof SERVICE_CAPABILITIES, Probe> = {
     expect(parsed.success).toBe(true);
   },
 
+  // Contract half only: the SQL half (every leg, every mode, real Postgres) is
+  // `services/rag/retrieve-filter-in.integration.test.ts`. Here: `$in` is
+  // accepted, the builder turns it into set membership rather than containment
+  // (an older build's containment is the silent failure), and multi accepts
+  // `corpusFilters`.
+  metadataFilterIn: async () => {
+    const { retrieveRequestSchema, retrieveMultiRequestSchema } = await import('../contract/rag.js');
+    const filter = { docId: { $in: ['12', '34'] } };
+    expect(retrieveRequestSchema.safeParse({ corpus: 'c', query: 'q', filter }).success).toBe(true);
+    expect(
+      retrieveMultiRequestSchema.safeParse({
+        corpora: ['a', 'b'],
+        query: 'q',
+        mode: 'hybrid',
+        corpusFilters: { b: filter },
+      }).success,
+    ).toBe(true);
+    const { sql } = await import('drizzle-orm');
+    const { PgDialect } = await import('drizzle-orm/pg-core');
+    const { metadataFilterClause } = await import('../services/rag/metadata-filter.js');
+    const q = new PgDialect().sqlToQuery(sql`${metadataFilterClause(filter)}`);
+    expect(q.sql).toContain('jsonb_array_elements');
+    expect(q.sql).not.toContain('@>');
+  },
+
   capabilityRouter: async () => {
     await expectRouteExists('POST', '/v1/route');
   },

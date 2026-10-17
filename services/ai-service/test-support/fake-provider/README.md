@@ -108,6 +108,34 @@ Behaviour that matches a real provider:
   for `text`. A test can seed a chunk with it, and a query for the same text
   then scores 1.0.
 
+### Embeddings are a hashed bag of words
+
+The vectors carry crude meaning, so a consumer e2e can assert that a query
+retrieves the document it is about. They are NOT random.
+
+1. Split the text into words: lowercase, strip accents, drop punctuation
+   (`fakeTokens(text)` shows the result). `¿Alcaldía, OK?` → `alcaldia ok`.
+2. Hash each word (weight 1) and each adjacent word pair (weight 0.5) with
+   FNV-1a into one of `embeddingDim` slots. A second hash bit picks the sign, so
+   collisions cancel out on average.
+3. Sum, then L2-normalise to unit length.
+
+What a test can rely on:
+
+- The same text gives a byte-identical vector, in-process and over HTTP.
+- Texts that share words score higher than texts that do not. Two texts with no
+  word in common score about 0 (exactly 0 unless their words collide in a slot).
+  Measured 2026-10-17 at dim 1024: a Spanish question sharing 5 words with a
+  13-word document scored 0.649 against it and -0.024 against an unrelated
+  English one. See the bag-of-words tests in `src/test/fake-provider.test.ts`.
+- Case, accents and punctuation do not matter: `Alcaldía, PRESUPUESTO!` and
+  `alcaldia presupuesto` give the same vector.
+- Text with no words (empty, punctuation only) still gets a unit vector.
+
+What it does not do: synonyms, stemming, stop-word removal or word order beyond
+adjacent pairs. `huerto` and `huertos` are unrelated, and shared filler words
+(`the`, `de`) add similarity. Write test fixtures whose distinctive words overlap.
+
 Migrating from the old knobs:
 
 | Old ai-service variable | Fake provider |

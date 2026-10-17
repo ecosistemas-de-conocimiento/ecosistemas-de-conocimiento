@@ -27,6 +27,69 @@ export const textSearchConfigSchema = z
   });
 
 // ---------------------------------------------------------------------------
+// Retrieve metadata `filter` — shared by /v1/retrieve and /v1/retrieve/multi.
+// ---------------------------------------------------------------------------
+
+/** The only operator the filter recognises. */
+export const IN_OPERATOR = '$in';
+
+/** Upper bound on the number of values in one `$in` set. */
+export const MAX_IN_VALUES = 500;
+
+/** True when `v` is an `{ "$in": ... }` operand rather than a containment value. */
+export function isInOperand(v: unknown): v is { $in: unknown } {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) && IN_OPERATOR in v;
+}
+
+/** The operand of `{ key: { "$in": [...] } }`. */
+const inOperandSchema = z
+  .object({
+    [IN_OPERATOR]: z
+      .array(z.union([z.string().max(1000), z.number()]))
+      .min(1)
+      .max(MAX_IN_VALUES),
+  })
+  .strict();
+
+/**
+ * Optional opaque metadata constraint applied **before** ranking, on every
+ * retrieval leg (plan/open-retrieve-metadata-filter.md §3/§4). The service
+ * never interprets the keys (ADR-0001 project-agnostic). Per key, either:
+ *
+ *   - `"key": value` — jsonb containment (`@>`): the chunk's metadata must
+ *     contain this key/value. The original behaviour.
+ *   - `"key": { "$in": [v1, v2, …] }` — the chunk's `metadata.key` must equal
+ *     one of the values. 1–500 values, each a string or a number.
+ *
+ * Keys combine with AND. Backward compatible: absent or `{}` ⇒ no clause.
+ * Chunks whose `metadata IS NULL` are excluded by any non-empty filter. jsonb
+ * is type-sensitive — `5` (number) does not match a stored `"5"`, in either
+ * form. Any other object value (no `$in` key) is plain containment, exactly as
+ * before; `$in` is the only operator.
+ */
+export const metadataFilterSchema = z
+  .record(z.string(), z.unknown())
+  .superRefine((filter, ctx) => {
+    // Re-issue nested failures with the key in the message: the route joins
+    // `issue.message`s only, so a bare message would not say WHICH key failed.
+    for (const [key, value] of Object.entries(filter)) {
+      if (isInOperand(value) && !inOperandSchema.safeParse(value).success) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [key],
+          message: `filter.${key}.$in: must be the operand's only key and hold a non-empty array of at most ${MAX_IN_VALUES} strings or numbers`,
+        });
+      }
+    }
+  })
+  .openapi({
+    description:
+      'Metadata constraint applied before ranking. Per key: a value (jsonb containment) ' +
+      `or { "$in": [...] } (1-${MAX_IN_VALUES} strings or numbers; matches when metadata[key] ` +
+      'equals one of them). Keys combine with AND.',
+  });
+
+// ---------------------------------------------------------------------------
 // POST /v1/retrieve — body.
 // ---------------------------------------------------------------------------
 // Matches `IncludeContextItem` minus the `name` recipe variant: retrieve only
@@ -39,18 +102,14 @@ export const retrieveRequestSchema = z
     topK: z.number().int().min(1).max(50).default(10),
     mmr: z.number().min(0).max(1).optional(),
     /**
-     * Optional opaque metadata constraint applied **before** vector ranking
-     * (plan/open-retrieve-metadata-filter.md §3/§4). Matched against each
-     * chunk's stored `metadata` via jsonb containment (`@>`): a chunk matches
-     * when its metadata contains all the key/value pairs in `filter`. The
-     * service never interprets the keys (ADR-0001 project-agnostic).
-     *
-     * Backward compatible: absent or `{}` ⇒ byte-for-byte today's behavior
-     * (corpus-only predicate, no containment clause emitted). Chunks whose
-     * `metadata IS NULL` are excluded by any non-empty filter. jsonb is
-     * type-sensitive — `{ "k": 5 }` (number) will not match a stored `"5"`.
+     * Optional metadata constraint applied **before** ranking, on every leg.
+     * Per key: a value ⇒ jsonb containment (`@>`); `{ "$in": [v1, …] }` ⇒
+     * `metadata[key]` equals one of 1–500 strings/numbers. Keys AND together.
+     * Absent or `{}` ⇒ no clause. NULL metadata never matches a non-empty
+     * filter; jsonb is type-sensitive (`5` ≠ `"5"`). `$in` needs the
+     * `metadataFilterIn` capability. See `metadataFilterSchema`.
      */
-    filter: z.record(z.string(), z.unknown()).optional(),
+    filter: metadataFilterSchema.optional(),
     /**
      * Point-in-time constraint, ISO-8601. When present, only chunks whose
      * validity interval contains `asOf` are eligible — applied as a SQL
@@ -193,7 +252,23 @@ export const retrieveMultiRequestSchema = z
     limit: z.number().int().min(1).max(100).optional(),
     /** Forwarded to every per-corpus retrieve — see `retrieveRequestSchema`. */
     mmr: z.number().min(0).max(1).optional(),
-    filter: z.record(z.string(), z.unknown()).optional(),
+    filter: metadataFilterSchema.optional(),
+    /**
+     * Per-corpus metadata filter, keyed by a name in `corpora`. For a corpus
+     * listed here, its entry REPLACES `filter` for that corpus only (no
+     * merging — repeat any shared keys you still want). Corpora not listed
+     * use `filter` as before. Same shape and validation as `filter`.
+     *
+     * Use case: a shared corpus searched unfiltered plus a per-user corpus
+     * restricted to an allowed set, in ONE fused hybrid call:
+     * `{ corpora: ['shared', 'drafts'],
+     *    corpusFilters: { drafts: { docId: { $in: ['12', '34'] } } } }`.
+     *
+     * A key that is not in `corpora` is a 400: a typo would otherwise retrieve
+     * that corpus UNFILTERED. Older servers reject this field (the schema is
+     * strict) — require the `metadataFilterIn` capability before sending it.
+     */
+    corpusFilters: z.record(z.string().min(1), metadataFilterSchema).optional(),
     asOf: z.string().datetime({ offset: true }).optional(),
     mode: z.enum(['dense', 'hybrid']).optional(),
     rrfK: z.number().int().min(1).max(1000).optional(),
@@ -236,7 +311,20 @@ export const retrieveMultiRequestSchema = z
     /** Optional query-rewrite directive — see `retrieveRewriteSchema`. */
     rewrite: retrieveRewriteSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((req, ctx) => {
+    if (req.corpusFilters === undefined) return;
+    const requested = new Set(req.corpora);
+    for (const name of Object.keys(req.corpusFilters)) {
+      if (!requested.has(name)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['corpusFilters', name],
+          message: `corpusFilters.${name}: not one of the requested corpora`,
+        });
+      }
+    }
+  });
 export type RetrieveMultiRequestInput = z.infer<typeof retrieveMultiRequestSchema>;
 
 // ---------------------------------------------------------------------------

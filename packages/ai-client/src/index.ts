@@ -207,6 +207,7 @@ export {
   STRICT_STRUCTURED_OUTPUT_CAPABILITY,
   strictStructuredOutputCapabilities,
   ORG_DELEGATION_CAPABILITY,
+  METADATA_FILTER_IN_CAPABILITY,
   type CapabilityDocument,
   type CapabilityLogger,
   type CapabilityMode,

@@ -192,8 +192,14 @@ export class RetrieveMultiService {
       ...(req.mmr !== undefined && !wantRerank ? { mmr: req.mmr } : {}),
       ...(req.mode !== undefined ? { mode: req.mode } : {}),
       ...(req.rrfK !== undefined ? { rrfK: req.rrfK } : {}),
-      ...(req.filter !== undefined ? { filter: req.filter } : {}),
       ...(req.asOf !== undefined ? { asOf: req.asOf } : {}),
+    };
+    // A `corpusFilters` entry REPLACES the shared `filter` for that corpus
+    // only; every other corpus keeps `filter`. The contract already refused a
+    // key outside `corpora`, so a typo cannot silently drop a filter.
+    const filterFor = (corpus: string) => {
+      const f = req.corpusFilters?.[corpus] ?? req.filter;
+      return f !== undefined ? { filter: f } : {};
     };
 
     // De-duplicate corpora, preserving first-seen order (Set iteration order).
@@ -226,7 +232,10 @@ export class RetrieveMultiService {
         // leg threw, an exception nobody anticipated — logs what it buffered.
         let alreadyReported = false;
         try {
-          const r = await this.retrieveService.retrieve({ corpus, ...shared }, legCtx);
+          const r = await this.retrieveService.retrieve(
+            { corpus, ...shared, ...filterFor(corpus) },
+            legCtx,
+          );
           diagnostics.push({ corpus, matched: r.chunks.length });
           alreadyReported = r.chunks.length === 0;
           return r.chunks.map((c) => ({ ...c, corpus }));

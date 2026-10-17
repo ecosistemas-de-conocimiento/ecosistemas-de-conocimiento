@@ -22,6 +22,11 @@
  *     `.strict()`, so we bypass it for the filtered path (raw fetch) and fall
  *     back to the typed client when no filter is present.
  *
+ *  3. **hybrid (`opts.hybrid`, `CHAT_RETRIEVAL_MODE=hybrid`).** The client
+ *     also offers `retrieveMulti`: one `/v1/retrieve/multi` call, the draft
+ *     corpus limited server-side by `corpusFilters` + `docId $in`. Every gate
+ *     below holds on that path too. See `./hybrid`.
+ *
  * ── WHAT RETRIEVAL IS SCOPED TO ──────────────────────────────────────────────
  *
  * Two different scopes, and conflating them was a real defect:
@@ -51,6 +56,8 @@ import type {
   AIClient as EngineAIClient,
   RetrieveRequest as EngineRetrieveRequest,
   RetrieveResult as EngineRetrieveResult,
+  RetrieveMultiRequest as EngineRetrieveMultiRequest,
+  RetrieveMultiResult as EngineRetrieveMultiResult,
   SyncGenerationRequest as EngineSyncGenerationRequest,
   SyncGenerationResult as EngineSyncGenerationResult,
   IngestRequest as EngineIngestRequest,
@@ -149,7 +156,18 @@ export interface EngineAIClientOptions {
    * none". The draft leg refuses to retrieve at all in that case.
    */
   sessionDocumentIds?: ReadonlySet<string> | null;
+  /**
+   * Offer the engine `retrieveMulti`, the `CHAT_RETRIEVAL_MODE=hybrid` path:
+   * ONE `/v1/retrieve/multi` call with the draft corpus limited server-side by
+   * `corpusFilters` + `$in` on `docId`. Set it ONLY when ai-service has the
+   * `metadataFilterIn` capability (`./hybrid`). Without it the engine has no
+   * `retrieveMulti` and takes the dense per-corpus path.
+   */
+  hybrid?: boolean;
 }
+
+/** ai-service's cap on the values in one `$in` (`metadata-filter.ts`). */
+const MAX_IN_VALUES = 500;
 
 /**
  * Build an engine `AIClient` over chat's BFF client + a session-scope tag.
@@ -263,12 +281,12 @@ export function makeEngineAIClient(
       // unpublishing only end-dates them. See `$lib/server/retrieval`.
       const chunks = await retrieveScoped(upstreamReq, opts.asOf, chatClient.org);
 
-      // ⚠ Post-filter, not an ai-service `filter`. ai-service's `filter` is
-      // metadata EQUALITY only — it cannot express "documentId IN (…)" — and
-      // the draft chunks carry no `sessionId` in their metadata anyway
-      // (`apps/backend/src/collections/Documents.ts`, the ingest call: docId,
-      // organizationId, kind, publication, title). So post-filtering is the
-      // only thing that works on data already in the corpus.
+      // ⚠ Post-filter, not an ai-service `filter`, on THIS (dense) path. The
+      // draft chunks carry no `sessionId` in their metadata (`chunkMetadata`
+      // in `apps/backend/src/lib/contentKind.ts`), only `docId`. ai-service
+      // can now say "docId IN (…)" (`$in`, capability `metadataFilterIn`);
+      // the hybrid path (`retrieveMulti` below) sends it. This path keeps the
+      // post-filter because it must work against an ai-service without it.
       //
       // 🔴 Match on `metadata.docId`, never on `documentId`. `documentId` is
       // ai-service's own UUID for its copy; the backend id the session list
@@ -296,6 +314,19 @@ export function makeEngineAIClient(
         })),
       };
     },
+
+    ...(opts.hybrid === true
+      ? {
+          retrieveMulti: (req: EngineRetrieveMultiRequest) =>
+            retrieveMultiScoped(req, {
+              allowedCorpora,
+              publishedCorpus,
+              sessionDocumentIds,
+              asOf: opts.asOf,
+              org: chatClient.org,
+            }),
+        }
+      : {}),
 
     // apps/web does not ingest from the BFF (the backend's Documents hook owns
     // ingest). The engine's corpus-sync path is unused on this surface; provide
@@ -389,4 +420,146 @@ async function retrieveScoped(
   }
   const parsed = (await res.json().catch(() => ({}))) as { chunks?: RawRetrieveChunk[] };
   return parsed.chunks ?? [];
+}
+
+interface MultiScope {
+  allowedCorpora: ReadonlySet<string>;
+  publishedCorpus: string | null;
+  sessionDocumentIds: ReadonlySet<string> | null;
+  asOf: string | null | undefined;
+  org: string | undefined;
+}
+
+/**
+ * The hybrid path: ONE `/v1/retrieve/multi` call, every gate of `retrieve()`
+ * kept. See `./hybrid` for when it runs.
+ *
+ *   · Only authorised corpora are sent (the engine's `chat:thread:{id}` leg is
+ *     dropped, as in `retrieve()`).
+ *   · 🔴 Every corpus except the shared one gets its own `corpusFilters` entry,
+ *     `docId $in` THIS conversation's documents, so ai-service filters drafts
+ *     in SQL before ranking. The entry REPLACES the shared `filter` for that
+ *     corpus, so the lengua filter is merged into it (see `./hybrid`).
+ *   · A draft corpus is dropped from the call when the document list is
+ *     unknown (fail closed, as in `retrieve()`), when it is empty (nothing to
+ *     find), or when it is longer than one `$in` can carry.
+ *   · No `asOf` → no call at all.
+ *   · 🔴 The result is checked again here: a draft chunk whose `docId` is not
+ *     attached to this conversation, or a chunk from a corpus we did not send,
+ *     is dropped. A server that ignored `corpusFilters` cannot leak a draft.
+ *
+ * Errors throw: the engine catches them, warns `retrieve.failed`, and answers
+ * the turn without retrieved context.
+ */
+async function retrieveMultiScoped(
+  req: EngineRetrieveMultiRequest,
+  scope: MultiScope,
+): Promise<EngineRetrieveMultiResult> {
+  const empty: EngineRetrieveMultiResult = { matches: [], corpora: [] };
+  const baseUrl = env.AI_SERVICE_URL?.replace(/\/+$/, '');
+  const apiKey = env.AI_SERVICE_API_KEY;
+  if (!baseUrl || !apiKey) return empty;
+
+  const asOf = typeof scope.asOf === 'string' && scope.asOf.trim() !== '' ? scope.asOf : null;
+  if (!asOf) {
+    console.error(
+      '[retrieve] refusing a multi-corpus retrieve without an asOf — unpublished ' +
+        'documents would be included. Check GET /api/sessions/:id/corpora.',
+    );
+    return empty;
+  }
+
+  const isDraft = (corpus: string) =>
+    scope.publishedCorpus === null || corpus !== scope.publishedCorpus;
+  const ids = scope.sessionDocumentIds ? [...scope.sessionDocumentIds].map(String) : null;
+
+  const corpora: string[] = [];
+  const corpusFilters: Record<string, Record<string, unknown>> = {};
+  for (const corpus of new Set(req.corpora)) {
+    if (!scope.allowedCorpora.has(corpus)) continue;
+    if (!isDraft(corpus)) {
+      corpora.push(corpus);
+      continue;
+    }
+    if (ids === null) {
+      // 🔴 FAIL CLOSED — see the same branch in `retrieve()`.
+      console.error(
+        `[retrieve] refusing the draft corpus "${corpus}" — this conversation's ` +
+          'document list could not be read, so we cannot tell which drafts belong here.',
+      );
+      continue;
+    }
+    if (ids.length === 0) continue;
+    if (ids.length > MAX_IN_VALUES) {
+      console.error(
+        `[retrieve] refusing the draft corpus "${corpus}" — ${ids.length} attached ` +
+          `documents exceed the ${MAX_IN_VALUES} values one $in filter can carry.`,
+      );
+      continue;
+    }
+    corpora.push(corpus);
+    // `docId` is stored as a STRING (`chunkMetadata`), and `$in` compares by
+    // type: "12" matches, 12 does not. `ids` are strings.
+    corpusFilters[corpus] = { ...(req.filter ?? {}), docId: { $in: ids } };
+  }
+  if (corpora.length === 0) return empty;
+
+  const body: Record<string, unknown> = {
+    corpora,
+    query: req.query,
+    ...(req.topK ? { topK: req.topK } : {}),
+    ...(req.limit ? { limit: req.limit } : {}),
+    mode: 'hybrid',
+    ...(req.filter ? { filter: req.filter } : {}),
+    ...(Object.keys(corpusFilters).length > 0 ? { corpusFilters } : {}),
+    asOf,
+    ...(req.rerank === true ? { rerank: true } : {}),
+  };
+
+  const post = (payload: Record<string, unknown>) =>
+    fetch(`${baseUrl}/v1/retrieve/multi`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        ...aiOrgHeader(scope.org),
+        accept: 'application/json',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+  let res = await post(body);
+  if (!res.ok && body.rerank === true) {
+    // Same retry as `retrieveScoped`: a rerank fault costs one round trip.
+    console.warn(`[retrieve] multi rerank request failed (${res.status}); retrying without rerank`);
+    const { rerank: _dropped, ...withoutRerank } = body;
+    res = await post(withoutRerank);
+  }
+  if (!res.ok) throw new Error(`retrieve/multi answered ${res.status}`);
+
+  const parsed = (await res.json().catch(() => ({}))) as {
+    chunks?: Array<RawRetrieveChunk & { corpus?: string }>;
+    corpora?: EngineRetrieveMultiResult['corpora'];
+  };
+  const sent = new Set(corpora);
+  const attached = new Set(ids ?? []);
+  const kept = (parsed.chunks ?? []).filter((c) => {
+    if (typeof c.corpus !== 'string' || !sent.has(c.corpus)) return false;
+    return !isDraft(c.corpus) || attached.has(backendDocId(c));
+  });
+
+  return {
+    matches: kept.map((c) => ({
+      corpus: c.corpus as string,
+      documentId: c.documentId,
+      chunkId: c.chunkId,
+      score: c.score,
+      ...(typeof c.denseScore === 'number' ? { denseScore: c.denseScore } : {}),
+      ...(typeof c.lexicalScore === 'number' ? { lexicalScore: c.lexicalScore } : {}),
+      ...(typeof c.rerankScore === 'number' ? { rerankScore: c.rerankScore } : {}),
+      text: c.text,
+      ...(c.metadata ? { metadata: c.metadata } : {}),
+    })),
+    corpora: (parsed.corpora ?? []).filter((d) => sent.has(d.corpus)),
+  };
 }

@@ -158,6 +158,7 @@ values fall back to the default unless noted.
 | `GRAPH_BACKFILL_LIMIT`, `_ORG`, `_DRY_RUN`, `_NO_SWEEP`; `GRAPH_POLICY_ORG`, `GRAPH_POLICY_REQUIRE_NAME` | backend CLI | — | 🔴 never set in Coolify. One-shot CLI arguments for `lib/graph/backfill.cli.ts` and `policy.cli.ts`; see their headers |
 | `CHAT_RERANK` | web | on | 💤 cross-encoder rerank on each corpus retrieve. `off`/`0`/`false`/`no` turns it off. Only takes effect where ai-service has rerank on (`RERANK_API_KEY`, §2d); a failing rerank falls back to the plain retrieve |
 | `QUERY_EXPANSION` | web | on | 💤 rewords the question before searching: one extra `quick` model call per turn. `off`/`0`/`false`/`no` turns it off |
+| `CHAT_RETRIEVAL_MODE` | web | dense | 💤 `dense` or `hybrid`. `hybrid` makes ONE `/v1/retrieve/multi` call in hybrid mode (cosine + Spanish keyword search), drafts limited server-side by `corpusFilters` + `docId $in`. Needs ai-service's `metadataFilterIn` capability; without it chat stays dense and web logs it once. Query expansion does not apply on the hybrid path. Flip only after `apps/backend/src/eval/RESULTS.md` shows a win (audit C-4) |
 | `PROMPT_SOURCE` | web | unset (inline prompt) | 💤 🔴 `registry` pulls the chat prompt from ai-service's registry. Set it only after each ecosistema org has its `chat` registry row, or every turn answers 400 |
 
 Fixed inside the compose file, so **not** set in Coolify: `NODE_ENV` (`production`), `PORT`, `HOST`,

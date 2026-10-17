@@ -28,6 +28,7 @@ import {
 } from '../ai/embeddings/sparse-embed.js';
 import { callRerank, type Reranker, type RerankResult } from '../ai/rerank/rerank-client.js';
 import { clampPassageText, corpusPassageBound } from './passage-bound.js';
+import { metadataFilterClause } from './metadata-filter.js';
 import type {
   CorpusRow,
   RetrievalLeg,
@@ -1409,18 +1410,6 @@ export class RetrieveService {
  */
 function chunkScopeClause(org: string, project: string) {
   return sql` AND "org" = ${org} AND "project" = ${project}`;
-}
-
-/**
- * Optional pre-ranking metadata containment predicate
- * (plan/open-retrieve-metadata-filter.md §4/§5). Emitted ONLY when a non-empty
- * `filter` is present — an absent or `{}` filter produces the identical SQL we
- * ran before this feature (byte-for-byte backward compat). Bound as a single
- * `::jsonb` param; never interpolated into SQL text.
- */
-function metadataFilterClause(filter?: Record<string, unknown>) {
-  const hasFilter = filter !== undefined && Object.keys(filter).length > 0;
-  return hasFilter ? sql` AND "metadata" @> ${JSON.stringify(filter)}::jsonb` : sql``;
 }
 
 /**

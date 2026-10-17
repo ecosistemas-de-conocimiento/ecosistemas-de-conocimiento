@@ -13,6 +13,7 @@ import { backendFetch } from '$lib/server/auth';
 import {
   buildChatUnitRequest,
   CHAT_ENGINE_CONFIG,
+  chatTurnHybrid,
   chatTurnRetrievalPolicy,
   engineOrgId,
   makeChatDomainAdapter,
@@ -401,6 +402,10 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     ...(lenguaFacets ? { lenguaFacets: () => lenguaFacets } : {}),
     ...(lengua.lengua ? { lenguaFilter: lengua.lengua } : {}),
   });
+  // CHAT_RETRIEVAL_MODE=hybrid AND ai-service has `metadataFilterIn` → one
+  // hybrid `/v1/retrieve/multi` call, drafts filtered server-side. Otherwise
+  // the dense per-corpus path. Default dense. See `$lib/server/engine/hybrid`.
+  const hybrid = await chatTurnHybrid();
   const engineAI = makeEngineAIClient(chatClient, {
     sessionId: body.sessionId,
     signal: request.signal,
@@ -412,6 +417,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     allowedCorpora: corpora,
     publishedCorpus,
     sessionDocumentIds,
+    hybrid,
   });
 
   // 🔴 THE SECOND RETRIEVAL PATH — GraphRAG (ADR §8).
@@ -476,7 +482,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // the sync branch hands the SAME args to `respond()`, which prepares AND
   // generates. Best-effort throughout — a failing context step degrades to
   // empty inside the engine and never breaks the turn.
-  const retrievalPolicy = chatTurnRetrievalPolicy();
+  const retrievalPolicy = chatTurnRetrievalPolicy(hybrid);
   const engineTurnArgs = {
     config: CHAT_ENGINE_CONFIG,
     aiClient: turnAI,
@@ -499,6 +505,8 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     // Cross-encoder rerank on each corpus retrieve, `CHAT_RERANK` (default ON).
     // Off → no policy, the engine's pre-policy retrieval exactly. A failing
     // rerank falls back to the plain retrieve. See `$lib/server/engine/rerank`.
+    // Under `hybrid` the policy is `mode: 'hybrid'` and rerank runs once,
+    // after fusion.
     ...(retrievalPolicy ? { retrievalPolicy } : {}),
     // Persist each chunk's grounding passage so the canonical CitationCard can
     // quote it. Cap the stored text to keep the provenance JSON column lean.
