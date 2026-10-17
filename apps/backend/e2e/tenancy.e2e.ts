@@ -19,8 +19,11 @@
 
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { anonymous, apiGet, apiJson } from './support/api'
+import { anonymous, apiGet, apiJson, pollUntil } from './support/api'
+import { onFakeProvider, retrieveAs } from './support/ai'
+import { fixtures } from './support/fixtures'
 import { stackDown } from './support/stack'
+import { docRow, uploadPdfDocument } from './support/upload'
 import { createTextDocument, provisionWorld, type World } from './support/world'
 
 describe.skipIf(stackDown)('tenancy and isolation', () => {
@@ -260,6 +263,60 @@ describe.skipIf(stackDown)('tenancy and isolation', () => {
     expect(res.body.published).toBe(`eco-${world.orgB.id}`)
     expect(res.body.published).not.toBe(`eco-${world.orgA.id}`)
   })
+
+  // -------------------------------------------------------------------------
+  // 🔴 Isolation INSIDE ai-service, not just in the corpus names (finding T-3)
+  // -------------------------------------------------------------------------
+
+  /**
+   * The tests above prove the backend derives different corpus NAMES per
+   * ecosistema. That alone isolates nothing: anyone who learns `eco-<A>-…` could
+   * ask ai-service for it. What isolates is the ai-service ORG each ecosistema
+   * reads as (`X-AI-Org: eco-<id>` → org `edc-eco-<id>`). So this ingests a real
+   * PDF for alice through the pipeline, then asks ai-service for alice's corpus
+   * BY NAME — once as orgA (control: the chunks are there) and once as orgB.
+   */
+  it.skipIf(!onFakeProvider)(
+    '🔴 a retrieve sent as ecosistema B returns none of ecosistema A\'s chunks',
+    async () => {
+      const docId = await uploadPdfDocument(world.alice.caller, `${world.ns} tenancy pdf`)
+
+      // The corpus name the backend itself hands alice, not one rebuilt here.
+      const corpora = await apiGet(world.alice.caller, `/api/sessions/${aliceSessionId}/corpora`)
+      const corpus = String(corpora.body.draft)
+      const query = fixtures().pdf.marker
+
+      // Control: as orgA the chunks arrive. Without this, "0 chunks" below could
+      // just mean the ingest never landed.
+      //
+      // ⚠ Polled on ai-service, NOT on the backend's `ingestStatus: 'ready'`.
+      // The claim here is about ai-service's store. The backend status has its
+      // own race (a background graph-status write can revert `ready` to
+      // `embedding`, measured 2026-10-17 on the fake provider), and that is
+      // `documents.e2e.ts`'s assertion to make, not this one's.
+      const asA = await pollUntil(
+        'alice\'s PDF chunks to reach ai-service',
+        async () => {
+          const probe = await retrieveAs(world.orgA.id, corpus, query)
+          const row = await docRow(world.alice.caller, docId)
+          return { ...probe, row }
+        },
+        (p) => p.chunks.length > 0 || p.row.ingestStatus === 'failed',
+        { timeoutMs: 120_000, intervalMs: 2000 },
+      )
+      expect(asA.row.ingestStatus, `ingestError: ${asA.row.ingestError}`).not.toBe('failed')
+      expect(asA.status, asA.text.slice(0, 300)).toBe(200)
+      expect(asA.chunks.length).toBeGreaterThan(0)
+      // Every chunk is the document we just uploaded, so the control is ours.
+      expect(new Set(asA.chunks.map((c) => c.documentId)).size).toBe(1)
+
+      const asB = await retrieveAs(world.orgB.id, corpus, query)
+      // 404 (no such corpus in orgB) or an empty 200 — either way not one chunk.
+      expect([200, 404], asB.text.slice(0, 300)).toContain(asB.status)
+      expect(asB.chunks).toHaveLength(0)
+    },
+    240_000,
+  )
 
   // -------------------------------------------------------------------------
   // Messages ride the session's privacy
