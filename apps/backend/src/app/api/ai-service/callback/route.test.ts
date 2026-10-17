@@ -15,8 +15,11 @@ const SECRET = 'd'.repeat(64)
 
 const created: Array<Record<string, unknown>> = []
 const updated: Array<Record<string, unknown>> = []
+/** The `aiServiceCallbacks` table: what `create` inserted and `delete` has not removed. */
+let dedupeRows: Array<{ id: number }> = []
 
 let createImpl: (args: Record<string, unknown>) => Promise<unknown>
+let updateImpl: (args: Record<string, unknown>) => Promise<unknown>
 
 /**
  * The row the receiver reads before dispatching.
@@ -34,8 +37,11 @@ let findByIDImpl: (args: Record<string, unknown>) => Promise<unknown>
 const fakePayload = {
   create: (args: Record<string, unknown>) => createImpl(args),
   findByID: (args: Record<string, unknown>) => findByIDImpl(args),
-  update: async (args: Record<string, unknown>) => {
-    updated.push(args)
+  update: (args: Record<string, unknown>) => updateImpl(args),
+  delete: async (args: { collection: string; id: number }) => {
+    if (args.collection === 'aiServiceCallbacks') {
+      dedupeRows = dedupeRows.filter((r) => r.id !== args.id)
+    }
     return {}
   },
 }
@@ -79,8 +85,15 @@ const headersFor = (body: string, opts: { secret?: string; skewSeconds?: number 
 beforeEach(() => {
   created.length = 0
   updated.length = 0
+  dedupeRows = []
   createImpl = async (args) => {
     created.push(args)
+    const row = { id: 900 + created.length }
+    dedupeRows.push(row)
+    return row
+  }
+  updateImpl = async (args) => {
+    updated.push(args)
     return {}
   }
   // A plain draft: no `publishIngestId`, so the receiver takes the ordinary
@@ -124,6 +137,7 @@ describe('POST /api/ai-service/callback — correct signature', () => {
     // that beat the `ingestId` write re-enqueues and reverts to `embedding`.
     for (const event of ['ingest.completed', 'ingest.failed']) {
       updated.length = 0
+      findByIDImpl = async () => ({ id: 42, ingestId: `ing_${event}`, publicationStatus: 'draft' })
       const body = envelope({ event, ingestId: `ing_${event}` })
       await post(body, headersFor(body))
       expect(updated[0]).toMatchObject({ context: { __skipDocsExtract: true } })
@@ -131,7 +145,13 @@ describe('POST /api/ai-service/callback — correct signature', () => {
   })
 
   it('finds the row by docId, so a callback that beats the ingestId write still lands', async () => {
-    findByIDImpl = async () => ({ id: 42, ingestId: null, publicationStatus: 'draft' })
+    // The race from commit 7bf0622: the row is `embedding` and has no id yet.
+    findByIDImpl = async () => ({
+      id: 42,
+      ingestId: null,
+      ingestStatus: 'embedding',
+      publicationStatus: 'draft',
+    })
     const body = envelope()
     await post(body, headersFor(body))
     expect(updated[0]).toMatchObject({ id: 42, data: { ingestStatus: 'ready' } })
@@ -147,6 +167,76 @@ describe('POST /api/ai-service/callback — correct signature', () => {
     expect(res.status).toBe(200)
     await expect(res.json()).resolves.toMatchObject({ deduped: true, dispatched: false })
     expect(updated).toHaveLength(0)
+  })
+})
+
+describe('🔴 a late callback from a superseded ingest', () => {
+  it('is ignored when the row carries a different ingestId', async () => {
+    // A retry cleared the id and enqueued again; the OLD run's `failed` lands.
+    findByIDImpl = async () => ({ id: 42, ingestId: 'ing_new', ingestStatus: 'embedding', publicationStatus: 'draft' })
+    const body = envelope({ event: 'ingest.failed', ingestId: 'ing_old', error: { message: 'old' } })
+    const res = await post(body, headersFor(body))
+    expect(res.status).toBe(200)
+    expect(updated).toHaveLength(0)
+  })
+
+  it('is ignored when the row has no ingestId and is not embedding', async () => {
+    // `pending` after a retry, before the new enqueue: no run can be reporting.
+    for (const ingestStatus of ['pending', 'failed', 'ready']) {
+      findByIDImpl = async () => ({ id: 42, ingestId: null, ingestStatus, publicationStatus: 'draft' })
+      const body = envelope({ ingestId: `ing_${ingestStatus}` })
+      await post(body, headersFor(body))
+    }
+    expect(updated).toHaveLength(0)
+  })
+
+  it('still heals a row the janitor stamped failed, when the ids match', async () => {
+    findByIDImpl = async () => ({ id: 42, ingestId: 'ing_abc', ingestStatus: 'failed', publicationStatus: 'draft' })
+    const body = envelope()
+    await post(body, headersFor(body))
+    expect(updated[0]).toMatchObject({ data: { ingestStatus: 'ready', ingestError: null } })
+  })
+})
+
+describe('🔴 a handler that throws', () => {
+  it('answers 500 and leaves no dedupe row, so the sender’s retry is processed', async () => {
+    updateImpl = async () => {
+      throw new Error('connection terminated unexpectedly')
+    }
+    const body = envelope()
+    const res = await post(body, headersFor(body))
+    expect(res.status).toBe(500)
+    expect(created).toHaveLength(1)
+    expect(dedupeRows).toEqual([])
+
+    // The retry: the database is back, and the event is NOT deduped away.
+    updateImpl = async (args) => {
+      updated.push(args)
+      return {}
+    }
+    const retry = await post(body, headersFor(body))
+    expect(retry.status).toBe(200)
+    await expect(retry.json()).resolves.toMatchObject({ deduped: false, dispatched: true })
+    expect(updated[0]).toMatchObject({ data: { ingestStatus: 'ready' } })
+  })
+
+  it('answers 500 when the row cannot be READ for a reason other than "not found"', async () => {
+    findByIDImpl = async () => {
+      throw new Error('connection refused')
+    }
+    const body = envelope()
+    const res = await post(body, headersFor(body))
+    expect(res.status).toBe(500)
+    expect(dedupeRows).toEqual([])
+  })
+
+  it('answers 200 for a row that does not exist — a retry cannot fix that', async () => {
+    findByIDImpl = async () => {
+      throw Object.assign(new Error('Not Found'), { status: 404 })
+    }
+    const body = envelope()
+    const res = await post(body, headersFor(body))
+    expect(res.status).toBe(200)
   })
 })
 

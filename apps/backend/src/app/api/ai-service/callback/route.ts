@@ -29,8 +29,18 @@
  *   - 401 — HMAC mismatch / stale timestamp / no secret configured.
  *           ai-service stops retrying THIS callback (auth misconfig);
  *           operator alert + manual rotation + replay.
- *   - 500 — only on truly internal failures (dedupe insert blows up).
- *           Triggers ai-service's exponential-backoff retry schedule.
+ *   - 500 — internal failures: the dedupe insert blows up, OR the handler
+ *           throws. Triggers the sender's retry schedule.
+ *
+ * 🔴 A HANDLER THAT THROWS DELETES ITS DEDUPE ROW AND ANSWERS 500. It used to
+ * log and answer 200 with the dedupe row in place, so the sender stopped
+ * retrying and any retry would have been deduped away: the event was lost.
+ *
+ * ⚠ THE HANDLERS ARE SHORT ON PURPOSE. audio-service gives up on a callback
+ * after 20 s (`services/audio-service/app/config.py`). `transcribe.completed`
+ * used to run the anonymisation gate (two model calls) and the ingest enqueue
+ * inside this request; now it only persists the transcript and writes
+ * `transcribed`, and `lib/ingestRecovery.ts` runs the gate and the enqueue.
  *
  * Dispatch model: we run the Documents update INLINE before responding.
  * A <200ms turnaround via `queueMicrotask` was tried and abandoned: on
@@ -226,8 +236,9 @@ export async function POST(req: Request): Promise<NextResponse> {
   //    we've already processed it.
   const payload = await getPayload({ config: configPromise })
   let alreadyProcessed = false
+  let dedupeRowId: number | string | null = null
   try {
-    await payload.create({
+    const dedupeRow = await payload.create({
       collection: 'aiServiceCallbacks',
       data: {
         correlationKey: key.correlationKey,
@@ -238,6 +249,7 @@ export async function POST(req: Request): Promise<NextResponse> {
       },
       overrideAccess: true,
     })
+    dedupeRowId = (dedupeRow as { id?: number | string } | null)?.id ?? null
   } catch (err) {
     // Distinguish "already-processed" (unique violation) from a real DB
     // error. Payload wraps PG's `23505` in a 400 ValidationError; the raw
@@ -272,7 +284,28 @@ export async function POST(req: Request): Promise<NextResponse> {
   try {
     await dispatchCallback(payload, envelope)
   } catch (err) {
-    console.error('[callback] dispatch failed (no consumer-side retry):', envelope.event, err)
+    console.error('[callback] dispatch failed; asking the sender to retry:', envelope.event, err)
+    // 🔴 Forget the event, or the retry this 500 asks for is deduped away.
+    if (dedupeRowId != null) {
+      try {
+        await payload.delete({
+          collection: 'aiServiceCallbacks',
+          id: dedupeRowId as never,
+          overrideAccess: true,
+        })
+      } catch (delErr) {
+        console.error(
+          '[callback] could not delete the dedupe row after a failed dispatch — a retry of',
+          envelope.event,
+          'will be deduped and LOST',
+          delErr,
+        )
+      }
+    }
+    return NextResponse.json(
+      { error: 'internal_error', message: 'dispatch_failed' },
+      { status: 500 },
+    )
   }
 
   return NextResponse.json({ ok: true, deduped: false, dispatched: true })
@@ -310,18 +343,8 @@ async function dispatchCallback(
       // Read the row FIRST: whether this callback is the original draft ingest
       // or the second half of a publish depends on which ingestId it carries,
       // and those two mean completely different things.
-      let doc: DocumentSnapshot | null = null
-      try {
-        doc = (await payload.findByID({
-          collection: 'documents',
-          id: docId as never,
-          depth: 0,
-          overrideAccess: true,
-        })) as unknown as DocumentSnapshot
-      } catch (err) {
-        console.error('[callback] no documents row for', docIdRaw, err)
-        return
-      }
+      const doc = await readDocument(payload, docId)
+      if (!doc) return
 
       // 🔴 IS THIS THE PUBLISH MOVE COMPLETING? `publishIngestId` is a separate
       // column from `ingestId` precisely so these cannot be confused. If they
@@ -338,49 +361,51 @@ async function dispatchCallback(
         return
       }
 
-      try {
-        await payload.update({
-          collection: 'documents',
-          id: docId as never,
-          data:
-            envelope.event === 'ingest.completed'
-              ? // Clear the reason a PREVIOUS attempt failed: a retry that
-                // succeeded must not keep showing the old error next to "Listo".
-                { ingestStatus: 'ready', ingestError: null }
-              : {
-                  ingestStatus: 'failed',
-                  ingestError: `${envelope.error?.code ?? 'ingest_failed'}: ${
-                    envelope.error?.message ?? 'ai-service reported a failure'
-                  }`.slice(0, 500),
-                },
-          overrideAccess: true,
-          /**
-           * 🔴 `__skipDocsExtract`, OR THIS WRITE UNDOES ITSELF. Without it the
-           * save re-fires `afterChange` → `runExtractAndIngest`, whose only
-           * "already enqueued" guard is `ingestId`. ai-service can call back
-           * BEFORE the enqueue's own response lands (measured: ~1 ms early, 3
-           * of 4 uploads on the fake provider), so `ingestId` is still empty:
-           * the pipeline re-ran, wrote `embedding` over this `ready` and
-           * enqueued the document a second time. `Documents.callbackRace.test.ts`.
-           */
-          context: { __skipDocsExtract: true },
-        })
-        if (envelope.event === 'ingest.failed') {
-          console.warn(
-            '[callback] ingest.failed for doc',
-            docIdRaw,
-            envelope.error ?? '<no error payload>',
-          )
-        }
-      } catch (err) {
-        console.error(
-          '[callback] failed to update documents row',
-          docIdRaw,
-          'for',
+      if (!ingestCallbackMatches(doc, envelope.ingestId)) {
+        console.warn(
+          '[callback] ignoring',
           envelope.event,
-          err,
+          'from a superseded ingest for doc',
+          docIdRaw,
+          envelope.ingestId,
+        )
+        return
+      }
+
+      await payload.update({
+        collection: 'documents',
+        id: docId as never,
+        data:
+          envelope.event === 'ingest.completed'
+            ? // Clear the reason a PREVIOUS attempt failed: a retry that
+              // succeeded must not keep showing the old error next to "Listo".
+              { ingestStatus: 'ready', ingestError: null }
+            : {
+                ingestStatus: 'failed',
+                ingestError: `${envelope.error?.code ?? 'ingest_failed'}: ${
+                  envelope.error?.message ?? 'ai-service reported a failure'
+                }`.slice(0, 500),
+              },
+        overrideAccess: true,
+        /**
+         * 🔴 `__skipDocsExtract`, OR THIS WRITE UNDOES ITSELF. Without it the
+         * save re-fires `afterChange` → `runExtractAndIngest`, whose only
+         * "already enqueued" guard is `ingestId`. ai-service can call back
+         * BEFORE the enqueue's own response lands (measured: ~1 ms early, 3
+         * of 4 uploads on the fake provider), so `ingestId` is still empty:
+         * the pipeline re-ran, wrote `embedding` over this `ready` and
+         * enqueued the document a second time. `Documents.callbackRace.test.ts`.
+         */
+        context: { __skipDocsExtract: true },
+      })
+      if (envelope.event === 'ingest.failed') {
+        console.warn(
+          '[callback] ingest.failed for doc',
+          docIdRaw,
+          envelope.error ?? '<no error payload>',
         )
       }
+      // A failed write throws to `POST`, which answers 500 so the sender retries.
       return
     }
     case 'ingest.progress':
@@ -470,7 +495,7 @@ async function dispatchConversationTurn(
    */
   const row = (await payload
     .findByID({ collection: 'messages', id: messageId as never, depth: 0, overrideAccess: true })
-    .catch(() => null)) as { corpusIngestId?: unknown } | null
+    .catch(rethrowUnlessNotFound)) as { corpusIngestId?: unknown } | null
 
   if (!row || typeof row.corpusIngestId !== 'string' || row.corpusIngestId !== envelope.ingestId) {
     console.warn(
@@ -492,17 +517,14 @@ async function dispatchConversationTurn(
             envelope.error?.message ?? 'ai-service reported a failure'
           }`.slice(0, 500),
         } as const)
-  try {
-    await payload.update({
-      collection: 'messages',
-      id: messageId as never,
-      data,
-      overrideAccess: true,
-      context: { __skipConversationIngest: true },
-    })
-  } catch (err) {
-    console.error('[callback] could not update messages row', messageId, err)
-  }
+  // A failed write throws to `POST`, which answers 500 so the sender retries.
+  await payload.update({
+    collection: 'messages',
+    id: messageId as never,
+    data,
+    overrideAccess: true,
+    context: { __skipConversationIngest: true },
+  })
 }
 
 /** The slice of a documents row the callback dispatcher reasons about. */
@@ -529,8 +551,42 @@ interface DocumentSnapshot {
    * rejected testimony.
    */
   anonymisationStatus?: unknown
+  ingestStatus?: unknown
   ingestId?: unknown
   transcribeId?: unknown
+}
+
+/**
+ * 🔴 IS THIS `ingest.completed` / `ingest.failed` ABOUT THE INGEST THE ROW IS
+ * WAITING FOR? The document twin of `transcribeIdMatches`.
+ *
+ * A retry clears `ingestId` and enqueues again; the old run's callback carries
+ * the same `docId`. Without this check a late `failed` from the superseded run
+ * fails a row whose retry is succeeding, and a late `completed` marks `ready` a
+ * row whose current ingest has not landed.
+ *
+ * Accepted when the ids match, OR when the row has no `ingestId` yet and is
+ * `embedding`. The second case is the callback-before-ingestId race (commit
+ * 7bf0622, `Documents.callbackRace.test.ts`): ai-service can call back before
+ * the enqueue's response lets us store the id.
+ *
+ * ⚠ The second case cannot tell the current run from a superseded one inside
+ * that window. It is milliseconds wide, and closing it needs an id minted
+ * before the enqueue, which ai-service does not take.
+ */
+function ingestCallbackMatches(doc: DocumentSnapshot, ingestId: string): boolean {
+  if (typeof doc.ingestId === 'string' && doc.ingestId.length > 0) return doc.ingestId === ingestId
+  return doc.ingestStatus === 'embedding'
+}
+
+/**
+ * A "no such row" is permanent: answer 200 and drop the event. Anything else
+ * (the database is down) is transient and must reach `POST` as a 500.
+ */
+function rethrowUnlessNotFound(err: unknown): null {
+  const status = (err as { status?: number })?.status
+  if (status === 404 || (err as { name?: string })?.name === 'NotFound') return null
+  throw err
 }
 
 // ---------------------------------------------------------------------------
@@ -565,6 +621,7 @@ async function readDocument(
       overrideAccess: true,
     })) as unknown as DocumentSnapshot
   } catch (err) {
+    rethrowUnlessNotFound(err)
     console.error('[callback] no documents row for', docId, err)
     return null
   }
@@ -587,14 +644,14 @@ function transcribeIdMatches(doc: DocumentSnapshot, transcribeId: string): boole
 }
 
 /**
- * 🔴 THE JOIN BACK INTO THE EXISTING PIPELINE. This is the whole point of the
- * audio work: the transcript becomes `extractedText`, and then the SAME
- * `enqueueIngestForDoc` that an uploaded PDF goes through is called, unchanged.
+ * 🔴 PERSIST THE TRANSCRIPT, WRITE `transcribed`, AND STOP.
  *
- * It resolves `draftCorpus(organizationId, uploadedById)` itself from the row —
- * so the transcript lands in the uploader's PRIVATE draft corpus and becomes
- * shared only if the document is deliberately published. We pass no corpus name
- * of our own; `lib/corpus.ts` is the only place one is derived, and it says so.
+ * The transcript becomes `extractedText`. The anonymisation gate (two model
+ * calls) and the ingest enqueue used to run here, inside a webhook request
+ * audio-service abandons after 20 s. They now run in
+ * `lib/ingestRecovery.ts:driveTranscribedDocuments`, which calls the SAME
+ * `enqueueIngestForDoc` an uploaded PDF goes through — so the transcript still
+ * lands in the uploader's PRIVATE draft corpus, resolved from the row.
  */
 async function dispatchTranscribeCompleted(
   payload: Awaited<ReturnType<typeof getPayload>>,
@@ -621,11 +678,15 @@ async function dispatchTranscribeCompleted(
   // DOES NOT EXIST yet (no migration baseline), so the dedupe insert upstream is
   // currently inert. Text on the row plus an ingestId means this already ran;
   // running it again would enqueue a second ingest for the same document.
+  //
+  // ⚠ And a row that has left `transcribing` with its text on it: the
+  // transcript is already persisted, and `transcribed` is now a resting state
+  // the sweep picks up, so an ingestId alone no longer marks "done".
+  const hasText = typeof doc.extractedText === 'string' && doc.extractedText.trim().length > 0
   const alreadyDone =
-    typeof doc.extractedText === 'string' &&
-    doc.extractedText.trim().length > 0 &&
-    typeof doc.ingestId === 'string' &&
-    doc.ingestId.length > 0
+    hasText &&
+    ((typeof doc.ingestId === 'string' && doc.ingestId.length > 0) ||
+      (typeof doc.ingestStatus === 'string' && doc.ingestStatus !== 'transcribing'))
   if (alreadyDone) {
     console.warn('[callback] transcribe.completed already applied to doc', docId, '— ignoring')
     return
@@ -670,10 +731,8 @@ async function dispatchTranscribeCompleted(
     return
   }
 
-  // `transcribed` before `embedding`: if the process dies between these two
-  // writes the row stops in a state that is TRUE — the text exists, nothing has
-  // been embedded — and `POST /api/documents/:id/retry` picks it up from there
-  // without re-transcribing.
+  // The resting state `lib/ingestRecovery.ts` drives from: the text exists and
+  // nothing has been embedded. A write that throws reaches `POST` as a 500.
   await payload.update({
     collection: 'documents',
     id: docId as never,
@@ -685,94 +744,6 @@ async function dispatchTranscribeCompleted(
     },
     overrideAccess: true,
     context: { __skipDocsExtract: true },
-  })
-
-  const organizationId = relationId(doc.organization)
-  const uploadedById = relationId(doc.uploadedBy)
-  if (organizationId == null || uploadedById == null) {
-    // No ecosistema or no uploader means no corpus name can be derived. Refuse
-    // rather than guess: a guessed corpus is a cross-tenant write.
-    console.error(
-      '[callback] doc',
-      docId,
-      'has no organization/uploadedBy — cannot derive a corpus for the transcript',
-    )
-    await payload.update({
-      collection: 'documents',
-      id: docId as never,
-      data: {
-        ingestStatus: 'failed',
-        ingestError: 'no_tenant: the document has no ecosistema or uploader, so it has no corpus',
-      },
-      overrideAccess: true,
-      context: { __skipDocsExtract: true },
-    })
-    return
-  }
-
-  const { enqueueIngestForDoc, scheduleGraphExtractionForDoc } = await import(
-    '@/collections/Documents'
-  )
-  await enqueueIngestForDoc({
-    payload,
-    docId,
-    organizationId,
-    uploadedById,
-    fresh: {
-      name: typeof doc.name === 'string' ? doc.name : null,
-      kind: typeof doc.kind === 'string' ? doc.kind : 'audio',
-      /**
-       * 🔴 CARRIED, NOT DEFAULTED. A Voz is normally a recording, so the audio
-       * path is the one a `testimonio` actually takes. Dropping `contentKind`
-       * here would let every testimony skip the anonymisation gate — the gate
-       * runs inside `enqueueIngestForDoc` and decides on this field — while the
-       * PDF path stayed correct and nothing looked wrong.
-       */
-      contentKind: typeof doc.contentKind === 'string' ? doc.contentKind : null,
-      // For the retrieval filter; `chunkMetadata` drops it unless this is a documento.
-      lengua: typeof doc.lengua === 'string' ? doc.lengua : null,
-      /**
-       * 🔴 CARRIED FOR THE SAME REASON AS `contentKind`, AND IT USED TO BE
-       * MISSING.
-       *
-       * `enqueueIngestForDoc` refuses a `held` or `rejected` row and honours an
-       * `approved` one. Omitting these two fields made every one of those
-       * decisions invisible on the audio path — so a replayed
-       * `transcribe.completed` re-gated a rejected testimony and threw away an
-       * approved reviewer's text. The keys are required by the type now, so this
-       * cannot silently regress again.
-       */
-      anonymisationStatus: typeof doc.anonymisationStatus === 'string' ? doc.anonymisationStatus : null,
-      redactedText: typeof doc.redactedText === 'string' ? doc.redactedText : null,
-    },
-    extractedText: text,
-  })
-
-  // 🔴 THE AUDIO PATH'S CORPUS-GRAPH TRIGGER, and this is the only place it can
-  // go. `runExtractAndIngest` returns before its own trigger for `kind: 'audio'`
-  // — there is no text yet on that pass and there will not be for minutes to
-  // hours. The transcript exists HERE, so extraction is armed HERE, from the
-  // same function the pdf/docx path uses (ADR §5.1).
-  //
-  // ⚠ Fire-and-forget, and it cannot fail this handler:
-  // `scheduleGraphExtractionForDoc` catches everything. A transcript that landed
-  // must not be reported as a failed callback because the graph could not be
-  // built from it.
-  //
-  // ⚠ NO TEXT IS PASSED. The graph pipeline re-reads the row and takes the SAME
-  // text the corpus got — `redactedText` for gated content, never the raw
-  // transcript. Handing it `text` here is exactly how the graph would come to
-  // hold what the anonymisation gate removed. See `lib/graph/extract.ts`.
-  await scheduleGraphExtractionForDoc({
-    payload,
-    docId,
-    organizationId,
-    fresh: {
-      name: typeof doc.name === 'string' ? doc.name : null,
-      // 🔴 The column verbatim. A transcript is very often a `testimonio`, which
-      // is exactly the case where the person rule and the snippet rule bite.
-      contentKind: typeof doc.contentKind === 'string' ? doc.contentKind : null,
-    },
   })
 }
 
