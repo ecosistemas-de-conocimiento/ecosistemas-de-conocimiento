@@ -92,8 +92,11 @@ export interface RetrievedChunk {
  * reason this type exists: their scores both land in `lexicalScore`, so a
  * response could not say which of the two produced it — or whether it produced
  * anything at all.
+ *
+ * `trigram` is a third lexical leg (pg_trgm word similarity over `chunks.text`),
+ * opt-in via `HYBRID_LEXICAL_LEG=trigram`; its score also lands in `lexicalScore`.
  */
-export type RetrievalLeg = 'dense' | 'lexical' | 'sparse' | 'rerank';
+export type RetrievalLeg = 'dense' | 'lexical' | 'sparse' | 'trigram' | 'rerank';
 
 /** What `/v1/retrieve` returns. */
 export interface RetrieveResult {

@@ -24,6 +24,9 @@ Object.assign(process.env, fake.env);
 process.env.API_KEYS = JSON.stringify({
   'deleg-admin': { org: 'acme', project: 'chat', role: 'admin', delegateOrgPrefix: 'acme-' },
   'deleg-app': { org: 'acme', project: 'chat', role: 'app', delegateOrgPrefix: 'acme-' },
+  // A dedicated key whose own org sits INSIDE the delegation prefix. Boot used
+  // to refuse this; owner decision 2026-10-16 allows it.
+  'sub-a': { org: 'acme-a', project: 'chat', role: 'app' },
 });
 
 import type { FastifyInstance } from 'fastify';
@@ -169,6 +172,30 @@ describe('org delegation against a real Postgres', () => {
     `);
     // Only acme-a has a row; the parent org `acme` was never touched.
     expect([...rows]).toEqual([{ org: 'acme-a', limit_usd: '7.000000000' }]);
+  });
+
+  it('a dedicated key inside the prefix shares only its own org: acme-b stays fenced', async () => {
+    for (const suffix of ['a', 'b']) {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/v1/corpora',
+        headers: as('deleg-app', suffix),
+        payload: { name: `ledger-${suffix}` },
+      });
+      expect(created.statusCode).toBe(201);
+    }
+
+    // The dedicated key IS org acme-a, so it sees acme-a's corpus (by design)…
+    const list = await app.inject({ method: 'GET', url: '/v1/corpora', headers: as('sub-a') });
+    expect(list.statusCode).toBe(200);
+    expect(list.body).toContain('ledger-a');
+    // …and nothing of the sibling acme-b, nor of the parent org.
+    expect(list.body).not.toContain('ledger-b');
+
+    // It cannot delegate: X-AI-Org on a key without a prefix is still 403.
+    const hop = await app.inject({ method: 'GET', url: '/v1/corpora', headers: as('sub-a', 'b') });
+    expect(hop.statusCode).toBe(403);
+    expect(hop.body).not.toContain('ledger-b');
   });
 
   it('POST /v1/tenant/provision provisions the DELEGATED org, not the key org', async () => {

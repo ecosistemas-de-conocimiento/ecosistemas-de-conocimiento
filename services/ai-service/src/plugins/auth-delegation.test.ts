@@ -182,16 +182,16 @@ describe('API_KEYS schema — delegateOrgPrefix', () => {
   });
 });
 
-describe('normaliseApiKeys — delegation namespace overlap', () => {
-  it('refuses a key whose own org sits inside ANOTHER key\'s delegation namespace', async () => {
+describe('normaliseApiKeys — prefix overlap is allowed', () => {
+  // Owner decision 2026-10-16: a dedicated key per sub-org may own an org
+  // inside a delegating key's prefix. Boot used to refuse this.
+  it('boots a key whose own org sits inside ANOTHER key\'s delegation prefix', async () => {
     const { normaliseApiKeys } = await import('../config/env.js');
     const { problems } = normaliseApiKeys({
       deleg: { org: 'acme', project: 'p', role: 'app', delegateOrgPrefix: 'acme-' },
       other: { org: 'acme-tenant-7', project: 'p', role: 'app' },
     });
-    expect(problems).toHaveLength(1);
-    expect(problems[0]).toMatch(/acme-tenant-7/);
-    expect(problems[0]).toMatch(/acme-/);
+    expect(problems).toEqual([]);
   });
 
   it('allows two keys sharing one prefix (rotation) and a delegator whose own org is outside it', async () => {
@@ -202,5 +202,37 @@ describe('normaliseApiKeys — delegation namespace overlap', () => {
       unrelated: { org: 'acmex', project: 'p', role: 'app' },
     });
     expect(problems).toEqual([]);
+  });
+});
+
+describe('requireAuth — dedicated sub-org key alongside a delegating key', () => {
+  const OVERLAP = {
+    'deleg-key': { org: 'acme', project: 'p1', delegateOrgPrefix: 'acme-' },
+    'sub-key': { org: 'acme-tenant-7', project: 'p1' },
+  };
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv('LOG_LEVEL', 'silent');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('boots; the dedicated key acts as its own org and the delegator reaches the same org', async () => {
+    const app = await makeApp(OVERLAP);
+    const sub = await echo(app, 'sub-key');
+    expect(sub.statusCode).toBe(200);
+    expect(sub.json()).toMatchObject({ org: 'acme-tenant-7' });
+    const viaDeleg = await echo(app, 'deleg-key', 'tenant-7');
+    expect(viaDeleg.json()).toMatchObject({ org: 'acme-tenant-7' });
+    await app.close();
+  });
+
+  it('the dedicated key cannot reach a sibling: X-AI-Org on it is still 403', async () => {
+    const app = await makeApp(OVERLAP);
+    const res = await echo(app, 'sub-key', 'tenant-8');
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: 'org_delegation_forbidden' });
+    await app.close();
   });
 });

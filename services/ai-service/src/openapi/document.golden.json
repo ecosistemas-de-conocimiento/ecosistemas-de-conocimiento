@@ -2791,6 +2791,7 @@
           "dense",
           "lexical",
           "sparse",
+          "trigram",
           "rerank"
         ]
       },

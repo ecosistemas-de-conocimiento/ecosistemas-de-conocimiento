@@ -1,0 +1,31 @@
+-- pg_trgm, for the OPT-IN trigram lexical leg of a hybrid retrieve
+-- (`HYBRID_LEXICAL_LEG=trigram`, see `src/config/env.ts` and `trigramSearch`
+-- in `src/services/rag/retrieve.ts`). The leg filters with `query <% text`
+-- (pg_trgm word similarity >= `pg_trgm.word_similarity_threshold`).
+--
+-- WHY THE EXTENSION LIVES HERE AND NOT AT THE LEG'S FIRST USE: `CREATE
+-- EXTENSION` needs a privileged role, and the migrator already runs as one;
+-- the request path should not. It costs nothing when the leg is off: it only
+-- registers functions and operators, and touches no table.
+--
+-- NO TRIGRAM INDEX, on purpose. A GIN `gin_trgm_ops` index over
+-- `chunks.text` was tried and dropped.
+-- MEASURED 2026-10-16 (local throwaway pgvector:pg16 container, dev laptop
+-- under load from other sessions; 10 Spanish questions, median of 7 runs;
+-- EDC's 324 real chunks, ~1.7 KB each, copied from its local edc_ai DB):
+--   trigram leg, index present   ~123 ms median (planner chose a SEQ SCAN)
+--   trigram leg, index dropped   ~145 ms median
+--   tsvector `simple` leg          ~6 ms median
+-- At 3,240 chunks (the same texts x10, near-duplicates) both trigram variants
+-- took ~1,025 ms: cost is linear in total chunk text, ~0.3 ms per chunk,
+-- because a whole question shares common trigrams with most chunks and the
+-- `word_similarity` recheck dominates. The planner did not use the index, and
+-- it would slow every chunk insert on every deployment and lock `chunks`
+-- while it builds (not CONCURRENTLY: that cannot run inside the migrator's
+-- transaction). Bench script was not committed (scratch).
+--
+-- pg_trgm ships in Postgres contrib, which the pgvector image includes.
+-- 🔴 `IF NOT EXISTS` IS LOAD-BEARING: the migrator takes no advisory lock and
+-- runs every pending migration in ONE transaction, and two boots sharing one
+-- DATABASE_URL may both apply this (see 0004's header).
+CREATE EXTENSION IF NOT EXISTS pg_trgm;

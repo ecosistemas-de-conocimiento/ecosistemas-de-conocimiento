@@ -101,6 +101,14 @@ export interface RetrieveServiceOptions {
    * sparse leg REPLACES the `tsvector` lexical leg in the RRF fusion.
    */
   sparseEmbedder?: SparseEmbedder;
+  /**
+   * Which non-sparse lexical leg a hybrid retrieve fuses. Defaults to
+   * `env.HYBRID_LEXICAL_LEG` (`tsvector`). An active sparse leg still wins.
+   * Injectable so tests and eval compare legs inside one process.
+   */
+  lexicalLeg?: LexicalLegChoice;
+  /** `pg_trgm.word_similarity_threshold` for the trigram leg. Defaults to `env.TRIGRAM_THRESHOLD`. */
+  trigramThreshold?: number;
   /** Optional logger for the rerank fail-safe path; absent ⇒ warnings are swallowed. */
   logger?: RetrieveLogger;
 }
@@ -329,7 +337,7 @@ interface FusedCandidate extends CandidateRow {
  * and keeps only the ordering, which is the part that transfers.
  */
 function rrfFuse(
-  legs: Array<{ name: 'dense' | 'lexical' | 'sparse'; rows: CandidateRow[] }>,
+  legs: Array<{ name: 'dense' | 'lexical' | 'sparse' | 'trigram'; rows: CandidateRow[] }>,
   k: number,
   limit: number,
 ): FusedCandidate[] {
@@ -564,6 +572,9 @@ function mmrRerank(
   return picked;
 }
 
+/** The non-sparse lexical legs `HYBRID_LEXICAL_LEG` selects between. */
+export type LexicalLegChoice = 'tsvector' | 'trigram' | 'none';
+
 export class RetrieveService {
   private readonly db: Db;
   private readonly embedder: Embedder;
@@ -573,6 +584,8 @@ export class RetrieveService {
   private readonly sparseEmbedder: SparseEmbedder;
   /** True when a sparse embedder was injected — forces sparse availability (see options). */
   private readonly sparseInjected: boolean;
+  private readonly lexicalLeg: LexicalLegChoice;
+  private readonly trigramThreshold: number;
   private readonly logger: RetrieveLogger | undefined;
 
   constructor(opts: RetrieveServiceOptions) {
@@ -582,6 +595,8 @@ export class RetrieveService {
     this.rerankInjected = opts.reranker !== undefined;
     this.sparseEmbedder = opts.sparseEmbedder ?? callSparseEmbed;
     this.sparseInjected = opts.sparseEmbedder !== undefined;
+    this.lexicalLeg = opts.lexicalLeg ?? env.HYBRID_LEXICAL_LEG;
+    this.trigramThreshold = opts.trigramThreshold ?? env.TRIGRAM_THRESHOLD;
     this.logger = opts.logger;
   }
 
@@ -659,7 +674,25 @@ export class RetrieveService {
       // tsvector one. `lexicalScore` and `ranks.lexical` keep their names — they
       // are the "second leg" score slot and renaming them would break every
       // consumer for no gain; `legs` is what says which leg filled them.
-      const secondLeg: RetrievalLeg = useSparse ? 'sparse' : 'lexical';
+      //
+      // Without sparse, `HYBRID_LEXICAL_LEG` picks the second leg: `tsvector`
+      // (default, named `lexical` on the wire for compatibility), `trigram`
+      // (pg_trgm word similarity), or `none` (dense alone, still RRF-scored).
+      const secondLeg: RetrievalLeg | null = useSparse
+        ? 'sparse'
+        : this.lexicalLeg === 'trigram'
+          ? 'trigram'
+          : this.lexicalLeg === 'none'
+            ? null
+            : 'lexical';
+      const secondLegArgs = {
+        corpusId: corpusRow.id,
+        org: ctx.org,
+        project: ctx.project,
+        query: req.query,
+        limit: poolSize,
+        ...predicates,
+      };
       // Both legs in parallel — they are independent reads against the same
       // snapshot-consistent connection pool.
       const [dense, lexical] = await Promise.all([
@@ -672,33 +705,23 @@ export class RetrieveService {
           includeEmbedding: useMmr,
           ...predicates,
         }),
-        useSparse
-          ? this.sparseSearch({
-              corpusId: corpusRow.id,
-              org: ctx.org,
-              project: ctx.project,
-              query: req.query,
-              limit: poolSize,
-              ...predicates,
-            })
-          : this.lexicalSearch({
-              corpusId: corpusRow.id,
-              org: ctx.org,
-              project: ctx.project,
-              query: req.query,
-              textSearchConfig: corpusRow.textSearchConfig,
-              limit: poolSize,
-              ...predicates,
-            }),
+        secondLeg === 'sparse'
+          ? this.sparseSearch(secondLegArgs)
+          : secondLeg === 'trigram'
+            ? this.trigramSearch(secondLegArgs)
+            : secondLeg === 'lexical'
+              ? this.lexicalSearch({
+                  ...secondLegArgs,
+                  textSearchConfig: corpusRow.textSearchConfig,
+                })
+              : Promise.resolve([] as CandidateRow[]),
       ]);
-      attempted.push(
-        { name: 'dense', rows: dense.length },
-        { name: secondLeg, rows: lexical.length },
-      );
+      attempted.push({ name: 'dense', rows: dense.length });
+      if (secondLeg !== null) attempted.push({ name: secondLeg, rows: lexical.length });
       pool = rrfFuse(
         [
           { name: 'dense', rows: dense },
-          { name: secondLeg, rows: lexical },
+          ...(secondLeg !== null ? [{ name: secondLeg, rows: lexical }] : []),
         ],
         req.rrfK ?? DEFAULT_RRF_K,
         Math.min(poolSize, poolDepth),
@@ -1225,6 +1248,67 @@ export class RetrieveService {
     `);
 
     return rowsFromExecute(result).map((r) => ({
+      id: String(r['id']),
+      document_id: String(r['document_id']),
+      ordinal: Number(r['ordinal']),
+      text: String(r['text']),
+      metadata: r['metadata'] ?? undefined,
+      score: Number(r['score']),
+    }));
+  }
+
+  /**
+   * Trigram leg of a hybrid retrieve (`HYBRID_LEXICAL_LEG=trigram`). Scores each
+   * chunk with pg_trgm `word_similarity(query, text)`: the best trigram overlap
+   * between the WHOLE query and any run of words in the chunk. Near-spellings
+   * and inflections ("contratación" / "contratos") share trigrams, so this
+   * needs no language stemmer — the reason it exists (see `HYBRID_LEXICAL_LEG`
+   * in `src/config/env.ts` for EDC's quoted eval).
+   *
+   * `query <% text` is `word_similarity >= threshold`. There is NO trigram
+   * index: measured, the planner seq-scanned even with one (numbers and setup
+   * in `drizzle/0005_pg_trgm.sql`). ⚠ Measured cost is linear in corpus text,
+   * ~0.3 ms per 1.7 KB chunk: fine near 300 chunks, about 1 s near 3,000.
+   * The threshold is a GUC, so it is set with `set_config(..., is_local => true)` inside a transaction and
+   * never leaks to the pooled connection. Whole-query only: EDC measured
+   * per-word trigram at 0.87 MRR but 370 ms+, so it is not offered.
+   *
+   * pg_trgm lower-cases but does NOT strip accents: "publico" and "público"
+   * differ by the trigrams around the accented letter.
+   */
+  private async trigramSearch(opts: {
+    corpusId: string;
+    org: string;
+    project: string;
+    query: string;
+    limit: number;
+    filter?: Record<string, unknown>;
+    asOf?: string;
+  }): Promise<CandidateRow[]> {
+    const scopeClause = chunkScopeClause(opts.org, opts.project);
+    const filterClause = metadataFilterClause(opts.filter);
+    const validityClause = validityFilterClause(opts.asOf);
+    const rows = await this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT set_config('pg_trgm.word_similarity_threshold', ${String(this.trigramThreshold)}, true)`,
+      );
+      return tx.execute(sql`
+        SELECT
+          "id"::text AS id,
+          "document_id"::text AS document_id,
+          "ordinal" AS ordinal,
+          "text" AS text,
+          "metadata" AS metadata,
+          word_similarity(${opts.query}, "text") AS score
+        FROM "chunks"
+        WHERE "corpus_id" = ${opts.corpusId}::uuid${scopeClause}
+          AND ${opts.query} <% "text"${filterClause}${validityClause}
+        ORDER BY score DESC, "id"
+        LIMIT ${opts.limit}
+      `);
+    });
+
+    return rowsFromExecute(rows).map((r) => ({
       id: String(r['id']),
       document_id: String(r['document_id']),
       ordinal: Number(r['ordinal']),

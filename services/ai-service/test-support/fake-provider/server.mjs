@@ -23,6 +23,7 @@
 // `node` from an ai-service checkout. Typings: `server.d.mts`.
 
 import http from 'node:http';
+import { Buffer } from 'node:buffer';
 import { pathToFileURL } from 'node:url';
 
 export const FAKE_PROVIDER_MARKER = '[FAKE-PROVIDER TEST DATA]';

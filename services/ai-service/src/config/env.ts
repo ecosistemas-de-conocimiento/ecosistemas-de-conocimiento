@@ -86,9 +86,10 @@ export const apiKeyEntry = z.object({
    * `req.auth`. Enforced in `src/plugins/auth.ts`.
    *
    * Must end in `-`, at most 32 chars, so a prefix cannot run into an
-   * unrelated org name (`acme` would also cover `acmecorp`). Boot refuses a
-   * key whose own `org` falls inside another key's prefix: that org would be
-   * reachable by the delegating key. ADDITIVE: absent on every existing entry.
+   * unrelated org name (`acme` would also cover `acmecorp`). Another key's own
+   * `org` MAY start with this prefix (owner decision 2026-10-16): a dedicated
+   * key per sub-org shares that org with the delegating key, which can already
+   * act as it by design. ADDITIVE: absent on every existing entry.
    */
   delegateOrgPrefix: z
     .string()
@@ -326,6 +327,31 @@ const envSchema = z.object({
   SPARSE_EMBED_MODEL: z.string().default('baai/bge-m3'),
   SPARSE_DIM: z.coerce.number().int().positive().default(SPARSE_VOCAB_DIM),
   SPARSE_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(10_000),
+
+  /**
+   * Which lexical leg a `mode: 'hybrid'` retrieve fuses with the dense leg,
+   * when the sparse leg above is NOT active (an active sparse leg still
+   * replaces whatever this selects).
+   *
+   * `tsvector` (DEFAULT, unchanged behaviour) — Postgres full-text search over
+   * `chunks.text_search` with the corpus's `language` config.
+   * `trigram` — pg_trgm `word_similarity(query, chunks.text)` via the `<%`
+   * operator (extension from `drizzle/0005_pg_trgm.sql`; no trigram index).
+   * Matches near-spellings and inflections without a language stemmer.
+   * `none` — no lexical leg: hybrid is RRF over the dense leg alone.
+   *
+   * WHY `trigram` exists — quoted from EDC's 2026-10-16 eval (39 queries,
+   * 253 chunks, no trigram index; optimistic): dense + tsvector `spanish`
+   * dropped single-doc MRR from 0.95 to 0.50; dense + whole-query trigram kept
+   * 0.95 and lifted overall MRR to 0.81 against 0.79 for dense-only.
+   *
+   * `TRIGRAM_THRESHOLD` — `pg_trgm.word_similarity_threshold` for the `<%`
+   * filter, set per query with `SET LOCAL`. Lower = more candidates and a
+   * slower scan. The 0.3 default is NOT tuned against any eval (pg_trgm's own
+   * default, 0.6, is tuned for short strings, not whole questions).
+   */
+  HYBRID_LEXICAL_LEG: z.enum(['tsvector', 'trigram', 'none']).default('tsvector'),
+  TRIGRAM_THRESHOLD: z.coerce.number().gt(0).max(1).default(0.3),
 
   /**
    * PII NER model server (§9.4 / §9.1's third adapter) — the OPTIONAL `person`
@@ -1125,24 +1151,6 @@ export function normaliseApiKeys(entries: Record<string, ApiKeyEntry>): {
     }
     claimed.set(trimmed, label);
     keys[trimmed] = entry;
-  }
-
-  // Delegation namespace overlap: a key whose own org starts with ANOTHER
-  // key's `delegateOrgPrefix` is an org the delegating key can also reach via
-  // `X-AI-Org`. Keys that delegate with the same prefix (rotation) are fine.
-  for (const [rawKey, entry] of Object.entries(keys)) {
-    for (const [otherKey, other] of Object.entries(keys)) {
-      const prefix = other.delegateOrgPrefix;
-      if (otherKey === rawKey || !prefix) continue;
-      if (entry.delegateOrgPrefix === prefix) continue;
-      if (entry.org.startsWith(prefix)) {
-        problems.push(
-          `key ${apiKeyLabel(rawKey, entry)} has org=${entry.org}, inside the delegation ` +
-            `prefix "${prefix}" of key ${apiKeyLabel(otherKey, other)}, so that key could act ` +
-            'as this org via X-AI-Org. Rename the org or change the prefix.',
-        );
-      }
-    }
   }
 
   return { keys, problems };
