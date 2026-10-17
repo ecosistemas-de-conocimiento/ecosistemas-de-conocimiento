@@ -46,6 +46,10 @@
  * itself, a 400 will not fix itself, and a 500 might mean the work half
  * happened. Retrying any of those wastes the caller's time at best and
  * duplicates work at worst. See {@link isRateLimited}.
+ *
+ * ⚠ ONE OPT-IN EXCEPTION: `retryTransient` adds 503s, broken connections and
+ * our own timeouts, for callers whose repeat is harmless (the anonymisation
+ * detector). Off by default; the publish paths leave it off.
  */
 
 import { RateLimitError } from '@edc/ai-client'
@@ -143,6 +147,58 @@ export function waitWithJitter(err: unknown, random: () => number = Math.random)
   return Math.round(base + jitter)
 }
 
+/** First exponential step for a transient failure with no server hint: 1 s, 2 s, 4 s, … */
+export const TRANSIENT_BASE_WAIT_MS = 1_000
+
+/** Socket-level codes that mean "the connection broke", not "the server said no". */
+const TRANSIENT_NETWORK_CODES = new Set([
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'ECONNREFUSED',
+  'EPIPE',
+  'EAI_AGAIN',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+])
+
+/**
+ * A 503, a broken connection, or OUR OWN per-call timeout — the failures
+ * {@link RetryOptions.retryTransient} opts into.
+ *
+ * ⚠ A caller CANCEL (`RequestAbortedError` with `reason: 'cancel'`) is not
+ * transient: something on our side asked to stop. Neither is a 500, which can
+ * mean the work half-happened.
+ */
+export function isTransient(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { status?: unknown; name?: unknown; reason?: unknown; code?: unknown; cause?: unknown; message?: unknown }
+  if (e.status === 503) return true
+  if (e.name === 'RequestAbortedError') return e.reason === 'timeout'
+  const code = e.code ?? (e.cause as { code?: unknown } | null | undefined)?.code
+  if (typeof code === 'string' && TRANSIENT_NETWORK_CODES.has(code)) return true
+  // undici's `fetch` rejects every network fault as `TypeError: fetch failed`.
+  return err instanceof TypeError && e.message === 'fetch failed'
+}
+
+/**
+ * Wait before retry number `attempt` of a TRANSIENT failure: the server's own
+ * `retryAfterMs` when it sent one, else exponential from
+ * {@link TRANSIENT_BASE_WAIT_MS}. Same jitter rule as a 429.
+ */
+export function transientWaitMs(
+  err: unknown,
+  attempt: number,
+  random: () => number = Math.random,
+): number {
+  const hint = (err as { retryAfterMs?: unknown } | null)?.retryAfterMs
+  const base =
+    typeof hint === 'number' && Number.isFinite(hint) && hint > 0
+      ? Math.min(MAX_SINGLE_WAIT_MS, hint)
+      : Math.min(MAX_SINGLE_WAIT_MS, TRANSIENT_BASE_WAIT_MS * 2 ** (attempt - 1))
+  return Math.round(base + Math.min(MAX_JITTER_MS, base * JITTER_FRACTION) * random())
+}
+
 export function maxAttempts(): number {
   const raw = Number(process.env[AI_RETRY_MAX_ATTEMPTS_VAR])
   // Floor of 1: "no retries" is a legitimate setting, "no attempts" is not.
@@ -181,6 +237,19 @@ export interface RetryOptions {
   random?: () => number
   attempts?: number
   budgetMs?: number
+  /**
+   * Also retry a 503, a broken connection and our own timeout
+   * ({@link isTransient}), with exponential backoff when the server gives no
+   * hint. Same attempt cap, same total ceiling. Default false.
+   *
+   * 🔴 OPT-IN, BECAUSE IT IS ONLY HONEST FOR WORK WHOSE REPEAT IS HARMLESS. A
+   * broken connection or a timeout can mean the server DID the work and the
+   * answer got lost. For `ingest.enqueue` a resend embeds a document twice, so
+   * the publish paths do not pass this. For the anonymisation detector a
+   * resend is a second read-only generation: it costs a second budget debit
+   * and nothing else.
+   */
+  retryTransient?: boolean
 }
 
 /**
@@ -213,17 +282,21 @@ export async function withRateLimitRetry<T>(
     try {
       return await fn()
     } catch (err) {
-      if (!isRateLimited(err)) throw err
+      const limited = isRateLimited(err)
+      if (!limited && !(opts.retryTransient && isTransient(err))) throw err
       if (attempt >= attempts) {
         opts.log?.warn(
           { label, attempt, attempts, sleptMs: slept },
-          `[ai-retry] ${label} is still rate-limited after ${attempt} attempts — giving up. ` +
+          `[ai-retry] ${label} is still ${limited ? 'rate-limited' : 'failing'} after ${attempt} attempts — giving up. ` +
             'The caller must record this failure somewhere a human can see it.',
         )
         throw err
       }
 
-      const wait = waitWithJitter(err, random)
+      // ⚠ A 429 keeps its own rule (the server's wait, else one full window):
+      // retrying a rate limit after 1 s only spends an attempt on a bucket the
+      // server just said is full.
+      const wait = limited ? waitWithJitter(err, random) : transientWaitMs(err, attempt, random)
       if (slept + wait > budgetMs) {
         // ⚠ Stop BEFORE the sleep, not after. Sleeping past the budget and then
         // discovering it would hold the request open for the very duration the
@@ -238,7 +311,7 @@ export async function withRateLimitRetry<T>(
 
       opts.log?.warn(
         { label, attempt, attempts, waitMs: wait },
-        `[ai-retry] ${label} was rate-limited by ai-service; waiting ${Math.round(wait / 1000)}s before retry.`,
+        `[ai-retry] ${label} ${limited ? 'was rate-limited by ai-service' : 'hit a transient failure'}; waiting ${Math.round(wait / 1000)}s before retry.`,
       )
       await sleep(wait)
       slept += wait

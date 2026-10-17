@@ -360,9 +360,18 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
       const perChunk = await mapBounded(chunks, concurrency, async (chunk) => {
         let result: { text: string }
         try {
-          // ⚠ ONLY a 429 is retried, waiting what ai-service asked (`aiRetry.ts`).
-          // A refused request never ran, so resending it is free; anything else
-          // throws straight through to a HOLD.
+          // ⚠ A 429, a 503, a broken connection and our own timeout are retried
+          // (`aiRetry.ts`, `retryTransient`): at most 3 retries, Retry-After when
+          // the server sends one, else 1 s, 2 s, 4 s, all under one total sleep
+          // ceiling. Anything else, and the last failure, throws through to a
+          // HOLD — never to "nothing to redact".
+          //
+          // ⚠ `/v1/generate/sync` does not dedupe, so a retry after a lost answer
+          // is a second generation and a second budget debit. Accepted here: the
+          // call is read-only, and one chunk costs well under a cent.
+          //
+          // ⚠ The ceiling counts SLEEP, not attempts in flight: a chunk that
+          // times out every time takes up to 4 × `timeoutMs` plus ~7 s.
           result = await withRateLimitRetry(
             () =>
               gen.generate.sync(
@@ -389,7 +398,11 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
                 },
                 { timeoutMs },
               ),
-            { label: 'anonymise-detect', ...(opts.sleep ? { sleep: opts.sleep } : {}) },
+            {
+              label: 'anonymise-detect',
+              retryTransient: true,
+              ...(opts.sleep ? { sleep: opts.sleep } : {}),
+            },
           )
         } catch (err) {
           // ⚠ The message names the FAILURE, never the document. A transport error

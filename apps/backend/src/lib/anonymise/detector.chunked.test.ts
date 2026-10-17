@@ -214,15 +214,99 @@ describe('aiServiceDetector — chunked', () => {
       () => new Promise<Response>(() => {}),
     )
     const t0 = Date.now()
+    const sleeps: number[] = []
     const result = await runAnonymisationGate(
       { contentKind: 'testimonio', text: 'Me acompañó Teodulfo a la clínica.' },
-      { detector: aiServiceDetector({ client }) },
+      {
+        detector: aiServiceDetector({
+          client,
+          sleep: async (ms) => {
+            sleeps.push(ms)
+          },
+        }),
+      },
     )
     expect(Date.now() - t0).toBeLessThan(5_000)
     expect(calls[0]?.signal).toBe(true)
+    // Our own timeout is transient: 1 + 3 retries, then the hold.
+    expect(calls).toHaveLength(4)
+    expect(sleeps).toHaveLength(3)
     expect(result.status).toBe('hold')
     if (result.status !== 'hold') return
     expect(result.reason).toContain('tiempo-agotado')
+  })
+
+  describe('🔴 transient failures: retried, and still fail-closed', () => {
+    const TEXT = 'Me acompañó Teodulfo a la clínica.'
+    const status = (code: number, headers: Record<string, string> = {}) =>
+      new Response(JSON.stringify({ error: 'x', message: 'x' }), {
+        status: code,
+        headers: { 'Content-Type': 'application/json', ...headers },
+      })
+
+    async function gate(answer: Answer) {
+      const sleeps: number[] = []
+      const { client, calls } = fakeClient(answer)
+      const result = await runAnonymisationGate(
+        { contentKind: 'testimonio', text: TEXT },
+        {
+          detector: aiServiceDetector({
+            client,
+            sleep: async (ms) => {
+              sleeps.push(ms)
+            },
+          }),
+        },
+      )
+      return { result, calls, sleeps }
+    }
+
+    it('a 503 is retried, then the gate is ready', async () => {
+      const { result, calls, sleeps } = await gate((p, n) => (n === 1 ? status(503) : honest(p, n)))
+      expect(result.status).toBe('ready')
+      expect(sleeps).toHaveLength(1)
+      // stage 3: 503 + retry; stage 4: one call
+      expect(calls).toHaveLength(3)
+    })
+
+    it('a network error is retried, then the gate is ready', async () => {
+      const { result, sleeps } = await gate((p, n) => {
+        if (n === 1) {
+          throw Object.assign(new TypeError('fetch failed'), {
+            cause: Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }),
+          })
+        }
+        return honest(p, n)
+      })
+      expect(result.status).toBe('ready')
+      expect(sleeps).toHaveLength(1)
+    })
+
+    it('a 429 on every attempt ends in a HOLD after 1 + 3 retries', async () => {
+      const { result, calls } = await gate(() =>
+        new Response(JSON.stringify({ error: 'RateLimitExceeded', retryAfterMs: 1 }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      expect(result.status).toBe('hold')
+      if (result.status !== 'hold') return
+      expect(result.stage).toBe('content')
+      expect(calls).toHaveLength(4)
+    })
+
+    it('the verify stage retries too', async () => {
+      const { result, calls } = await gate((p, n) => (n === 2 ? status(503) : honest(p, n)))
+      expect(result.status).toBe('ready')
+      expect(calls).toHaveLength(3)
+    })
+
+    it.each([400, 401, 422])('a %i is not retried and holds', async (code) => {
+      const { result, calls, sleeps } = await gate(() => status(code))
+      expect(result.status).toBe('hold')
+      expect(calls).toHaveLength(1)
+      expect(sleeps).toHaveLength(0)
+    })
   })
 
   it('reads chunk size and concurrency from the environment', async () => {
