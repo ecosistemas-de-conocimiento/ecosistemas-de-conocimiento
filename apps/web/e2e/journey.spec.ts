@@ -13,8 +13,10 @@ import { fixtureBytes, fixtures, type FixtureEntry } from './fixtures';
  * ## Rules this file follows
  *
  * 1. **Nothing is mocked.** Every assertion is about what the running stack
- *    actually painted. `MOCK_LLM=1` makes the ANSWER TEXT a deterministic stub,
- *    so nothing here asserts on wording — only that an answer arrives, renders,
+ *    actually painted. The ANSWER TEXT is either a real model reply or the stub
+ *    from ai-service's test-only fake provider (`test-support/fake-provider/`;
+ *    the old `MOCK_LLM` switch was removed and now refuses boot), so
+ *    nothing here asserts on wording — only that an answer arrives, renders,
  *    and can be rated and cited.
  * 2. **Everything created is namespaced** `e2e-fe-<timestamp>`. A backend E2E
  *    suite hits the same database concurrently. Nothing is ever deleted.
@@ -355,8 +357,8 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
     // An answer has ARRIVED and SETTLED when the rating control appears:
     // `Message.svelte` renders it only for an assistant turn that is not
     // pending, not errored, and carries a server-issued id. That is a far
-    // stronger signal than any text assertion — and `MOCK_LLM=1` makes the
-    // text a stub, so its wording is deliberately never asserted.
+    // stronger signal than any text assertion — and the text may be a real
+    // model reply or the fake provider's stub, so its wording is never asserted.
     await expect(ratingGroups(page)).toHaveCount(1, { timeout: 120_000 });
 
     // The session auto-titles from the first message, so it is namespaced too.
