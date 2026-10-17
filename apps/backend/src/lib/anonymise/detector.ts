@@ -27,7 +27,47 @@
  * is the honest answer to "we do not know".
  */
 
+import { withRateLimitRetry } from '@/lib/aiRetry'
+
+import { chunkText } from './chunk'
 import type { DetectorFinding, PersonDetector } from './types'
+
+/** Env var names, so docs and tests never hand-type a string that can drift. */
+export const ANONYMISE_CHUNK_WORDS_VAR = 'ANONYMISE_CHUNK_WORDS'
+export const ANONYMISE_DETECT_CONCURRENCY_VAR = 'ANONYMISE_DETECT_CONCURRENCY'
+export const ANONYMISE_DETECT_TIMEOUT_MS_VAR = 'ANONYMISE_DETECT_TIMEOUT_MS'
+
+/**
+ * Words per detector call. See `chunk.ts` for the measurement: the reply cap
+ * limits how many FINDINGS fit, and 250 words of dense testimony stays under it
+ * (inferred from the measured 218-word text: 11 findings, at most 290 of 400
+ * output tokens).
+ */
+export const DEFAULT_CHUNK_WORDS = 250
+
+/**
+ * Chunk calls in flight at once, per stage.
+ *
+ * ⚠ ai-service caps generation at 30 requests/min per API key (quoted:
+ * `services/ai-service/src/server-limits.ts`, `GENERATE_RATE_LIMIT_MAX`). A
+ * 10k-word text is ~40 chunks per stage, so it WILL meet that limit; 3 keeps
+ * the burst small, and each chunk waits out a 429 through `withRateLimitRetry`.
+ */
+export const DEFAULT_CONCURRENCY = 3
+
+/**
+ * Per-call deadline. Without one, `@edc/ai-client`'s 30 s default applies, and
+ * one measured call (4,862-word text, 2026-10-17) was aborted at exactly that.
+ */
+export const DEFAULT_TIMEOUT_MS = 90_000
+
+function positiveIntFromEnv(name: string, fallback: number): number {
+  // ⚠ Blank is "unset", not 0 — same rule as `aiRetry.ts`.
+  const text = (process.env[name] ?? '').trim()
+  if (text === '') return fallback
+  const n = Number(text)
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback
+}
 
 /** Finding types the prompt is allowed to return. Anything else is dropped. */
 const FINDING_TYPES: readonly DetectorFinding['type'][] = [
@@ -196,7 +236,7 @@ export interface SyncGenerator {
         specOverride?: { promptTemplate: string }
       }
       effortLevel?: string
-    }): Promise<{ text: string; modelUsed?: string }>
+    }, opts?: { timeoutMs?: number }): Promise<{ text: string; modelUsed?: string }>
   }
 }
 
@@ -213,6 +253,44 @@ export interface AIServiceDetectorOptions {
   /** Reported as the detector's name. */
   name?: string
   effortLevel?: string
+  /** Words per chunk. Default: `ANONYMISE_CHUNK_WORDS`, else {@link DEFAULT_CHUNK_WORDS}. */
+  chunkWords?: number
+  /** Chunks in flight. Default: `ANONYMISE_DETECT_CONCURRENCY`, else {@link DEFAULT_CONCURRENCY}. */
+  concurrency?: number
+  /** Per-call deadline. Default: `ANONYMISE_DETECT_TIMEOUT_MS`, else {@link DEFAULT_TIMEOUT_MS}. */
+  timeoutMs?: number
+  /** Injected in tests so a 429 retry does not really sleep. */
+  sleep?: (ms: number) => Promise<void>
+}
+
+/**
+ * Run `work` over `items` with at most `limit` in flight, results in input order.
+ *
+ * 🔴 FIRST FAILURE WINS AND NOTHING NEW STARTS. The caller turns any throw into
+ * a HOLD, so further chunks would be paid for and thrown away. Calls already in
+ * flight finish on their own; their results are ignored.
+ */
+async function mapBounded<T, R>(
+  items: readonly T[],
+  limit: number,
+  work: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  let failed = false
+  const worker = async () => {
+    while (!failed && next < items.length) {
+      const i = next++
+      try {
+        results[i] = await work(items[i] as T)
+      } catch (err) {
+        failed = true
+        throw err
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
 }
 
 /**
@@ -241,35 +319,87 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
           ? 'Es el testimonio de una persona, transcrito.'
           : 'Es una conversación entre integrantes de una comunidad.'
 
-      let result: { text: string }
-      try {
-        result = await client.generate.sync({
-          unit: {
-            // 🔴 UNIQUE PER CALL. ai-service keys a unit's latest generation by
-            // `unitKey`; reusing one across documents would let a cached or
-            // concurrent result from ANOTHER document answer this one — findings
-            // for the wrong text, which reads as "nothing to redact here".
-            unitKey: nextKey(),
-            unitType: 'anonymise-detect',
-            input: { userPrompt: `${material}\n\n${text}` },
-            systemPrompt: DETECT_SYSTEM_PROMPT,
-            specOverride: { promptTemplate: PROMPT_TEMPLATE_USER_PROMPT },
-          },
-          effortLevel: 'quick',
-        })
-      } catch (err) {
-        // ⚠ The message names the FAILURE, never the document. A transport error
-        // string can carry a request body in some clients, and this reason ends
-        // up on a row an admin reads.
-        throw new DetectorFailure(
-          'transporte',
-          `The anonymisation detector could not reach ai-service: ${
-            err instanceof Error ? err.name : 'unknown error'
-          }`,
-        )
-      }
+      const chunkWords =
+        opts.chunkWords ?? positiveIntFromEnv(ANONYMISE_CHUNK_WORDS_VAR, DEFAULT_CHUNK_WORDS)
+      const concurrency =
+        opts.concurrency ??
+        positiveIntFromEnv(ANONYMISE_DETECT_CONCURRENCY_VAR, DEFAULT_CONCURRENCY)
+      const timeoutMs =
+        opts.timeoutMs ?? positiveIntFromEnv(ANONYMISE_DETECT_TIMEOUT_MS_VAR, DEFAULT_TIMEOUT_MS)
+      const gen = client
 
-      return parseFindings(result.text ?? '', text)
+      // 🔴 ONE CALL PER CHUNK, NOT PER DOCUMENT. The whole document in one call
+      // overflowed the reply cap on every multi-paragraph testimony — see
+      // `chunk.ts`. This covers stage 3 AND stage 4, since both call `detect`.
+      //
+      // ⚠ OFFSETS NEED NO REMAPPING, BY CONSTRUCTION. A finding is a literal
+      // string, `parseFindings` checks it against its OWN chunk, and the chunks
+      // partition `text` exactly, so every kept finding occurs in `text`. The
+      // gate replaces and locates findings over the FULL text, so every
+      // occurrence in every chunk is replaced, and survivor offsets are
+      // full-text offsets.
+      const chunks = chunkText(text, chunkWords).filter((c) => /\S/.test(c.text))
+
+      const perChunk = await mapBounded(chunks, concurrency, async (chunk) => {
+        let result: { text: string }
+        try {
+          // ⚠ ONLY a 429 is retried, waiting what ai-service asked (`aiRetry.ts`).
+          // A refused request never ran, so resending it is free; anything else
+          // throws straight through to a HOLD.
+          result = await withRateLimitRetry(
+            () =>
+              gen.generate.sync(
+                {
+                  unit: {
+                    // 🔴 UNIQUE PER CALL. ai-service keys a unit's latest generation
+                    // by `unitKey`; reusing one across documents would let a cached
+                    // or concurrent result from ANOTHER document answer this one —
+                    // findings for the wrong text, which reads as "nothing to redact".
+                    //
+                    // ⚠ ai-service ALSO caches identical PROMPTS for ~5 minutes,
+                    // whatever the unitKey (observed while measuring, 2026-10-17).
+                    // Chunking makes identical prompts likelier: the same boilerplate
+                    // paragraph in two documents is the same chunk. That is correct —
+                    // the same text has the same findings — but a re-run inside the
+                    // window is a cached answer, not a fresh opinion from the model.
+                    unitKey: nextKey(),
+                    unitType: 'anonymise-detect',
+                    input: { userPrompt: `${material}\n\n${chunk.text}` },
+                    systemPrompt: DETECT_SYSTEM_PROMPT,
+                    specOverride: { promptTemplate: PROMPT_TEMPLATE_USER_PROMPT },
+                  },
+                  effortLevel: 'quick',
+                },
+                { timeoutMs },
+              ),
+            { label: 'anonymise-detect', ...(opts.sleep ? { sleep: opts.sleep } : {}) },
+          )
+        } catch (err) {
+          // ⚠ The message names the FAILURE, never the document. A transport error
+          // string can carry a request body in some clients, and this reason ends
+          // up on a row an admin reads.
+          const name = err instanceof Error ? err.name : 'unknown error'
+          const timedOut = (err as { reason?: unknown } | null)?.reason === 'timeout'
+          throw new DetectorFailure(
+            timedOut ? 'tiempo-agotado' : 'transporte',
+            timedOut
+              ? `The anonymisation detector timed out after ${timeoutMs} ms.`
+              : `The anonymisation detector could not reach ai-service: ${name}`,
+          )
+        }
+        return parseFindings(result.text ?? '', chunk.text)
+      })
+
+      // A name repeated across chunks is one finding.
+      const seen = new Set<string>()
+      const out: DetectorFinding[] = []
+      for (const f of perChunk.flat()) {
+        const key = `${f.type}\u0000${f.text}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        out.push(f)
+      }
+      return out
     },
   }
 }
