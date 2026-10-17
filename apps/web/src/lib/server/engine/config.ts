@@ -12,6 +12,7 @@ import type { EngineConfig } from '@edc/chat-engine/core';
 import { DEFAULT_ENGINE_CONFIG } from '@edc/chat-engine/core';
 import { env } from '$env/dynamic/private';
 import { CHAT_KIND_REGISTRY } from '$lib/engine/registry';
+import { parseExpansionFlag } from './expand';
 
 /** Re-export the client-safe registry so server code has one import surface. */
 export { CHAT_KIND_REGISTRY };
@@ -48,3 +49,11 @@ export const CHAT_ENGINE_CONFIG: EngineConfig = {
     'Responde en español, de forma clara y concisa. Usa Markdown (encabezados, ' +
     'listas, código) cuando ayude a la lectura.',
 };
+
+/**
+ * Query expansion on chat turns (`./expand`): `QUERY_EXPANSION=off` turns it
+ * off. Default ON. Read per call, so an operator can flip it without a rebuild.
+ */
+export function queryExpansionEnabled(): boolean {
+  return parseExpansionFlag(env.QUERY_EXPANSION);
+}

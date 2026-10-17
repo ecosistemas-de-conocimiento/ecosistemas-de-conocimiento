@@ -16,7 +16,9 @@ import {
   engineOrgId,
   makeChatDomainAdapter,
   makeEngineAIClient,
+  queryExpansionEnabled,
   useRegistryPrompt,
+  withQueryExpansion,
 } from '$lib/server/engine';
 import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
@@ -44,8 +46,9 @@ import { prepareTurn, respond, type ContextRef, type ContextScope } from '@edc/c
  *      when, which ecosistema, and which documents are attached to this
  *      conversation. One `Promise.all`, shared by everything below.
  *   2. Build the Domain Adapter (ecosistema + this conversation's documents).
- *   3. `prepareTurn()` — condense → deterministic summary → scoped retrieve →
- *      resolve `@`-refs → assemble the user turn.
+ *   3. `prepareTurn()` — condense → deterministic summary → scoped retrieve
+ *      (each search also run on the question's rewordings, unless
+ *      `QUERY_EXPANSION=off`) → resolve `@`-refs → assemble the user turn.
  *   4. Generate: sync (`respond`-style) or stream (drive the existing SSE proxy
  *      with the engine-assembled messages).
  *   5. Persist the assistant turn (+ provenance) and round-trip the message id.
@@ -388,6 +391,22 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     publishedCorpus,
   });
 
+  // QUERY EXPANSION — the engine's retrieve also searches 2 rewordings and one
+  // hypothetical answer of the condensed question, fused by RRF. One extra
+  // `quick` model call per turn. Only the ENGINE's client is wrapped: the graph
+  // provider above keeps the plain `engineAI`, so its widened retrieve does not
+  // pay for a second expansion. `QUERY_EXPANSION=off` turns it off. See
+  // `$lib/server/engine/expand`.
+  const userId = String(locals.user.id ?? locals.user.email ?? 'user');
+  const turnAI = queryExpansionEnabled()
+    ? withQueryExpansion(engineAI, {
+        surface: CHAT_ENGINE_CONFIG.surface,
+        orgId: engineOrgId(),
+        scopeId: body.sessionId,
+        userId,
+      })
+    : engineAI;
+
   // The full engine turn spec (condense → summary → scoped retrieve → @-refs →
   // user-turn injection). Identical shape for both transports: the streaming
   // branch runs `prepareTurn` (context only) and drives the SSE proxy itself;
@@ -396,10 +415,10 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // empty inside the engine and never breaks the turn.
   const engineTurnArgs = {
     config: CHAT_ENGINE_CONFIG,
-    aiClient: engineAI,
+    aiClient: turnAI,
     adapter,
     orgId: engineOrgId(),
-    userId: String(locals.user.id ?? locals.user.email ?? 'user'),
+    userId,
     scopeId: body.sessionId,
     threadId: body.sessionId,
     scope,

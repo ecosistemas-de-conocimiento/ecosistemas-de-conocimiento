@@ -3,6 +3,7 @@
  *
  *   node ../web/node_modules/.bin/tsx src/eval/run.ts --fake     # no inference
  *   node ../web/node_modules/.bin/tsx src/eval/run.ts            # ~40 real calls
+ *   node ../web/node_modules/.bin/tsx src/eval/run.ts --expand   # + query expansion
  *
  * Run from `apps/backend`. Writes `src/eval/results.json`; `report.ts` turns
  * that into `RESULTS.md`.
@@ -14,6 +15,24 @@
  * short-circuits without an LLM call and BOTH arms hand the graph and the
  * vector leg the identical query. The ONLY difference is whether
  * `prepareTurn` is given a `graphProvider`.
+ *
+ * ── `--expand`: QUERY EXPANSION ON BOTH ARMS ───────────────────────────────
+ *
+ * Production wraps the engine's client in `withQueryExpansion` (default ON,
+ * `QUERY_EXPANSION`). This harness leaves it OFF unless `--expand` is passed,
+ * so runs stay comparable with the baselines recorded before it existed. To
+ * measure its effect, run once without and once with the flag; `results.json`
+ * records which (`queryExpansion`) and each arm's `expansion` trace.
+ *
+ * It is the PRODUCTION module, imported from `apps/web`, not a copy: it reads
+ * no `$env`. As in production, only the engine's retrieve is wrapped — the
+ * graph provider and the answer's generate use the plain client.
+ *
+ * ⚠ The expansion call carries NO run marker. Within five minutes both arms and
+ * every repetition of a question get the router-cached rewordings — the same
+ * variants on both arms, so the graph comparison stays clean — and every arm
+ * after the first reports that call at ~0 ms and $0. Read the expansion's cost
+ * off the first repetition's `plain` arm.
  *
  * ⚠ ARM ORDER IS INTERLEAVED PER QUESTION (no-graph then graph, immediately)
  * rather than all of one arm then all of the other. The model is nondeterministic
@@ -60,6 +79,7 @@ import { selectJson } from './db'
 import { CHAT_ENGINE_CONFIG, makeEvalAIClient, makeEvalAdapter, type EvalAIClient } from './engine'
 import { EVAL_ORGANIZATION_ID, EVAL_PUBLISHED_CORPUS, loadEvalEnv, type EvalEnv } from './env'
 import { expandGraphQuery, graphContextParagraph, readGraphRetrieval } from './graph'
+import { withQueryExpansion, type ExpansionTrace } from '../../../web/src/lib/server/engine/expand'
 import { buildQuestions, type EvalQuestion } from './questions'
 import {
   orderedSources,
@@ -104,6 +124,8 @@ export interface ArmResult {
    * paying for it again. Runs before 2026-10-16 lack it.
    */
   sources?: Source[]
+  /** The query expansion this arm ran (`--expand` only). */
+  expansion?: Omit<ExpansionTrace, 'query'>
   score: QuestionScore
 }
 
@@ -263,6 +285,7 @@ async function runArm(args: {
   organizationName: string
   organizationDescription: string | null
   fake: boolean
+  expand: boolean
   runId: string
   docs: readonly CorpusDoc[]
 }): Promise<ArmResult> {
@@ -291,10 +314,26 @@ async function runArm(args: {
   const trace: GraphTrace = { ms: 0, seeds: [], blockChars: 0, chunks: 0 }
   const graphProvider = arm === 'graph' ? makeEvalGraphProvider(env, aiClient, trace) : undefined
 
+  // `--expand`: the engine's retrieve searches the rewordings too. The graph
+  // provider above and the generate below keep the plain client, as in
+  // `apps/web/src/routes/api/generate/+server.ts`.
+  let expansion: ArmResult['expansion']
+  const turnClient = args.expand
+    ? withQueryExpansion(aiClient, {
+        surface: config.surface,
+        orgId: env.orgKey,
+        scopeId: `eval-${question.id}`,
+        userId: 'eval',
+        onExpansion: ({ variants, ms, costUsd }) => {
+          expansion = { variants, ms, costUsd }
+        },
+      })
+    : aiClient
+
   const t0 = Date.now()
   const prepared = await prepareTurn({
     config,
-    aiClient,
+    aiClient: turnClient,
     adapter,
     orgId: env.orgKey,
     userId: 'eval',
@@ -350,6 +389,7 @@ async function runArm(args: {
     outputTokens: null,
     serverMs: null,
     sources,
+    ...(expansion ? { expansion } : {}),
     score: scoreWithSources(question, generation.text, sources, args.docs),
   }
 }
@@ -402,6 +442,7 @@ async function backfillTokens(env: EvalEnv, results: QuestionResult[]): Promise<
 // ── Main ───────────────────────────────────────────────────────────────────
 
 const fake = process.argv.includes('--fake')
+const expand = process.argv.includes('--expand')
 const only = process.argv.find((a) => a.startsWith('--only='))?.slice('--only='.length)
 /**
  * Samples per arm per question.
@@ -436,7 +477,7 @@ const selected = only ? questions.filter((q) => only.split(',').includes(q.id)) 
 
 console.error(
   `[eval] ${docs.length} published corpus documents joined; ` +
-    `${selected.length} questions; fake=${fake}; asOf=${asOf}`,
+    `${selected.length} questions; fake=${fake}; expand=${expand}; asOf=${asOf}`,
 )
 for (const d of droppedGlobalFacts) {
   console.error(`[eval] dropped ${d.question} "${d.label}" — support ${d.support} < 3`)
@@ -486,6 +527,7 @@ for (const question of selected) {
         organizationName: org.name,
         organizationDescription: org.description,
         fake,
+        expand,
         runId,
         docs,
       })
@@ -516,6 +558,7 @@ if (!fake) await backfillTokens(env, results)
 const out = {
   runId,
   fake,
+  queryExpansion: expand,
   asOf,
   organization: { id: EVAL_ORGANIZATION_ID, name: org.name },
   corpusDocuments: docs.length,
@@ -529,9 +572,13 @@ console.error(`[eval] wrote ${target}`)
 
 // Keep the runner honest about what it actually spent.
 const spend = results.flatMap((r) => r.arms).reduce((a, x) => a + x.costUsd, 0)
+const expansionSpend = results
+  .flatMap((r) => r.arms)
+  .reduce((a, x) => a + (x.expansion?.costUsd ?? 0), 0)
 const calls = results.flatMap((r) => r.arms).length
 const cachedCalls = results.flatMap((r) => r.arms).filter((a) => a.cached).length
 console.error(`[eval] total generation cost: $${spend.toFixed(4)} over ${calls} calls`)
+if (expand) console.error(`[eval] query expansion cost: $${expansionSpend.toFixed(4)}`)
 if (cachedCalls > 0) {
   console.error(
     `[eval] 🔴 ${cachedCalls} of ${calls} calls were served from ai-service's router ` +
