@@ -22,13 +22,13 @@ jobs:
         env:
           POSTGRES_USER: ai_service
           POSTGRES_PASSWORD: ai_service
-          POSTGRES_DB: ai_service
+          POSTGRES_DB: ai_service_test
         ports:
           - 5432:5432
         # Health-check the container so subsequent steps don't race the
         # postgres boot. `pg_isready` is bundled in the pgvector image.
         options: >-
-          --health-cmd "pg_isready -U ai_service -d ai_service"
+          --health-cmd "pg_isready -U ai_service -d ai_service_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -47,7 +47,7 @@ jobs:
       # `src/test/integration-setup.ts` reads these and rebinds
       # DATABASE_URL / REDIS_URL onto process.env before importing any module
       # that touches `config/env.ts`.
-      TEST_DATABASE_URL: postgres://ai_service:ai_service@localhost:5432/ai_service
+      TEST_DATABASE_URL: postgres://ai_service:ai_service@localhost:5432/ai_service_test
       TEST_REDIS_URL: redis://localhost:6379
 
     steps:
@@ -55,7 +55,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile --filter @edc/ai-service...
       - name: Run migrations

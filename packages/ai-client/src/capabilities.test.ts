@@ -229,3 +229,15 @@ describe('capabilityModeFromEnv', () => {
     );
   });
 });
+
+describe('strictStructuredOutputCapabilities', () => {
+  it('names the feature, and the per-model name in the server format', async () => {
+    const { strictStructuredOutputCapabilities } = await import('./index.js');
+    expect(strictStructuredOutputCapabilities()).toEqual(['strictStructuredOutput']);
+    // Same literal as `src/routes/capabilities.test.ts` on the server side.
+    expect(strictStructuredOutputCapabilities('openai/gpt-4o-mini')).toEqual([
+      'strictStructuredOutput',
+      'strictStructuredOutput:openai/gpt-4o-mini',
+    ]);
+  });
+});

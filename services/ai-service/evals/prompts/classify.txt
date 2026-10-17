@@ -1,0 +1,10 @@
+Classify the message below into exactly one of these labels:
+
+  question   - the writer is asking for information
+  complaint  - the writer is reporting a problem or expressing dissatisfaction
+  request    - the writer is asking for an action to be taken
+
+Answer with the single lowercase label and nothing else.
+
+Message:
+{{ message }}

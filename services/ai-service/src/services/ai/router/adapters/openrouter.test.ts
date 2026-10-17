@@ -16,11 +16,15 @@ vi.mock('../task-profiles.js', () => ({
 vi.mock('../../../../config/env.js', () => ({
   // Stall backstop off by default so the existing streaming tests are
   // unaffected; the stall-specific test overrides it on the mocked env object.
-  env: { OPENROUTER_API_KEY: 'env-fallback-key', LLM_STREAM_STALL_TIMEOUT_MS: 0 },
+  env: {
+    OPENROUTER_API_KEY: 'env-fallback-key',
+    LLM_STREAM_STALL_TIMEOUT_MS: 0,
+    CHAT_COMPLETIONS_URL: 'https://openrouter.ai/api/v1/chat/completions',
+  },
 }));
 
 // Import after mocks are set so the adapter binds to them.
-const { callOpenRouter, OpenRouterHttpError, streamingCallOpenRouter } = await import('./openrouter.js');
+const { callOpenRouter, OpenRouterAbortError, OpenRouterHttpError, streamingCallOpenRouter } = await import('./openrouter.js');
 
 function makeResponse(opts: { ok: boolean; status: number; body: unknown }): Response {
   const text = typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body);
@@ -492,6 +496,58 @@ describe('streamingCallOpenRouter onDelta', () => {
     }
   });
 
+  it('a stall rejected with the REAL fetch reason (TimeoutError) still carries the partial', async () => {
+    // Real undici rejects `reader.read()` with `signal.reason` — the stall
+    // controller's `TimeoutError` DOMException — not with an `AbortError`.
+    // The sibling test above mocks an `AbortError`, which hid that a real
+    // stall left the adapter as a bare TimeoutError: no partial, a 500 upstream.
+    const { env } = (await import('../../../../config/env.js')) as unknown as {
+      env: { LLM_STREAM_STALL_TIMEOUT_MS?: number };
+    };
+    const prev = env.LLM_STREAM_STALL_TIMEOUT_MS;
+    env.LLM_STREAM_STALL_TIMEOUT_MS = 25;
+    try {
+      fetchMock.mockImplementationOnce((_url: string, init: { signal: AbortSignal }) => {
+        const encoder = new TextEncoder();
+        let emitted = false;
+        const body = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (!emitted) {
+              emitted = true;
+              controller.enqueue(
+                encoder.encode('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'),
+              );
+              return;
+            }
+            return new Promise<void>((_resolve, reject) => {
+              const onAbort = (): void => {
+                controller.error(init.signal.reason);
+                reject(init.signal.reason as Error);
+              };
+              if (init.signal.aborted) onAbort();
+              else init.signal.addEventListener('abort', onAbort, { once: true });
+            });
+          },
+        });
+        return Promise.resolve({ ok: true, status: 200, body } as unknown as Response);
+      });
+
+      const err = await streamingCallOpenRouter({
+        model: 'm',
+        messages: baseMessages,
+        maxTokens: 10,
+        temperature: 0,
+        apiKey: 'k',
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(OpenRouterAbortError);
+      expect((err as InstanceType<typeof OpenRouterAbortError>).partial.contentText).toBe('hi');
+      expect(((err as { cause?: Error }).cause as Error)?.name).toBe('TimeoutError');
+    } finally {
+      env.LLM_STREAM_STALL_TIMEOUT_MS = prev;
+    }
+  });
+
   it('omitting onDelta still returns the full completion (no-op callback)', async () => {
     fetchMock.mockResolvedValueOnce(
       makeStreamResponse([
@@ -509,5 +565,258 @@ describe('streamingCallOpenRouter onDelta', () => {
     });
 
     expect(completion.contentText).toBe('hi');
+  });
+});
+
+// OpenRouter's generation id (`gen-…`) — the body's top-level `id`, on every
+// stream chunk. The router stores it on the trace (`metadata.providerGenerationId`)
+// so a charge can be reconciled against OpenRouter's own record of the call.
+describe('streamingCallOpenRouter — provider generation id', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    priceForUsageMock.mockReset();
+    priceForUsageMock.mockReturnValue(0.001);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns the stream chunk id as rawId', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeStreamResponse([
+        'data: {"id":"gen-abc","model":"m","choices":[{"delta":{"content":"hi"}}]}\n\n',
+        'data: {"id":"gen-abc","choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    );
+    const completion = await streamingCallOpenRouter({
+      model: 'm', messages: baseMessages, maxTokens: 10, temperature: 0, apiKey: 'k',
+    });
+    expect(completion.rawId).toBe('gen-abc');
+  });
+
+  it('omits rawId when no chunk carries an id', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeStreamResponse([
+        'data: {"model":"m","choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    );
+    const completion = await streamingCallOpenRouter({
+      model: 'm', messages: baseMessages, maxTokens: 10, temperature: 0, apiKey: 'k',
+    });
+    expect('rawId' in completion).toBe(false);
+  });
+
+  it('carries the id on an aborted call\'s partial', async () => {
+    const ctrl = new AbortController();
+    const encoder = new TextEncoder();
+    fetchMock.mockImplementationOnce(async (_url: unknown, init: { signal?: AbortSignal }) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode('data: {"id":"gen-cut","model":"m","choices":[{"delta":{"content":"par"}}]}\n\n'),
+          );
+          init.signal?.addEventListener('abort', () => controller.error(init.signal?.reason));
+        },
+      });
+      return { ok: true, status: 200, body } as unknown as Response;
+    });
+    const p = streamingCallOpenRouter({
+      model: 'm', messages: baseMessages, maxTokens: 10, temperature: 0, apiKey: 'k',
+      signal: ctrl.signal,
+      onDelta: () => ctrl.abort(),
+    });
+    const err = await p.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OpenRouterAbortError);
+    expect((err as InstanceType<typeof OpenRouterAbortError>).partial.rawId).toBe('gen-cut');
+  });
+});
+
+// OpenAI's json_object mode answers HTTP 400 ("'messages' must contain the word
+// 'json' in some form") when no message says "json". Measured:
+// /v1/route with modelOverride openai/gpt-4o-mini → 14/14 OpenRouterHttpError 400,
+// each silently degraded to the fallback route .
+// Neither the built-in
+// router prompt nor a consumer-registered one has to say "json", so the adapter does.
+describe('JSON mode always names JSON in the messages', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const okBody = {
+    model: 'm',
+    choices: [{ message: { content: '{}' }, finish_reason: 'stop' }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0.001 },
+  };
+  const okStream = [
+    'data: {"model":"m","choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"cost":0.001}}\n\n',
+    'data: [DONE]\n\n',
+  ];
+  const sentMessages = (): ChatMessage[] =>
+    JSON.parse(fetchMock.mock.calls[0]![1].body as string).messages as ChatMessage[];
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    priceForUsageMock.mockReset();
+    priceForUsageMock.mockReturnValue(0.001);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('adds a leading system line naming JSON when no message mentions it', async () => {
+    fetchMock.mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
+    await callOpenRouter({
+      model: 'openai/gpt-4o-mini',
+      messages: baseMessages,
+      maxTokens: 10,
+      temperature: 0,
+      apiKey: 'k',
+      responseFormat: { type: 'json_object' },
+    });
+    const sent = sentMessages();
+    expect(sent).toHaveLength(baseMessages.length + 1);
+    expect(sent[0]!.role).toBe('system');
+    expect(sent[0]!.content).toMatch(/json/i);
+    expect(sent.slice(1)).toEqual(baseMessages);
+  });
+
+  it('does the same on the streaming path', async () => {
+    fetchMock.mockResolvedValueOnce(makeStreamResponse(okStream));
+    await streamingCallOpenRouter({
+      model: 'openai/gpt-4o-mini',
+      messages: baseMessages,
+      maxTokens: 10,
+      temperature: 0,
+      apiKey: 'k',
+      responseFormat: { type: 'json_object' },
+    });
+    const sent = sentMessages();
+    expect(sent[0]!.role).toBe('system');
+    expect(sent[0]!.content).toMatch(/json/i);
+    expect(sent.slice(1)).toEqual(baseMessages);
+  });
+
+  it('leaves the messages untouched when one already says JSON (any case)', async () => {
+    fetchMock.mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
+    const said: ChatMessage[] = [
+      { role: 'system', content: 'Devuelve SOLO el objeto Json.' },
+      { role: 'user', content: 'hola' },
+    ];
+    await callOpenRouter({
+      model: 'm',
+      messages: said,
+      maxTokens: 10,
+      temperature: 0,
+      apiKey: 'k',
+      responseFormat: { type: 'json_object' },
+    });
+    expect(sentMessages()).toEqual(said);
+  });
+
+  it('leaves the messages untouched without JSON mode', async () => {
+    fetchMock.mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
+    await callOpenRouter({ model: 'm', messages: baseMessages, maxTokens: 10, temperature: 0, apiKey: 'k' });
+    expect(sentMessages()).toEqual(baseMessages);
+  });
+});
+
+// Strict schema-constrained output. OpenRouter IGNORES a parameter the routed
+// endpoint does not support unless `provider.require_parameters` is true, which
+// would silently turn strict mode back into free text. So strict mode always
+// sends it, and OpenRouter errors instead of degrading.
+describe('strict json_schema mode', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const schema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['a'],
+    properties: { a: { type: 'string' } },
+  };
+  const strictFormat = {
+    type: 'json_schema' as const,
+    json_schema: { name: 'response', schema, strict: true as const },
+  };
+  const okBody = {
+    model: 'm',
+    choices: [{ message: { content: '{"a":"x"}' }, finish_reason: 'stop' }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0.001 },
+  };
+  const okStream = [
+    'data: {"model":"m","choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"cost":0.001}}\n\n',
+    'data: [DONE]\n\n',
+  ];
+  const sentBody = (): Record<string, unknown> =>
+    JSON.parse(fetchMock.mock.calls[0]![1].body as string) as Record<string, unknown>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    priceForUsageMock.mockReset();
+    priceForUsageMock.mockReturnValue(0.001);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sends response_format json_schema + provider.require_parameters (non-streaming)', async () => {
+    fetchMock.mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
+    await callOpenRouter({
+      model: 'openai/gpt-4o-mini',
+      messages: baseMessages,
+      maxTokens: 10,
+      temperature: 0,
+      apiKey: 'k',
+      responseFormat: strictFormat,
+    });
+    const body = sentBody();
+    expect(body.response_format).toEqual(strictFormat);
+    expect(body.provider).toEqual({ require_parameters: true });
+  });
+
+  it('does the same on the streaming path', async () => {
+    fetchMock.mockResolvedValueOnce(makeStreamResponse(okStream));
+    await streamingCallOpenRouter({
+      model: 'openai/gpt-4o-mini',
+      messages: baseMessages,
+      maxTokens: 10,
+      temperature: 0,
+      apiKey: 'k',
+      responseFormat: strictFormat,
+    });
+    const body = sentBody();
+    expect(body.response_format).toEqual(strictFormat);
+    expect(body.provider).toEqual({ require_parameters: true });
+  });
+
+  it('adds no JSON hint line: the schema constrains decoding, and the word rule is json_object-only', async () => {
+    fetchMock.mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
+    await callOpenRouter({
+      model: 'openai/gpt-4o-mini',
+      messages: baseMessages,
+      maxTokens: 10,
+      temperature: 0,
+      apiKey: 'k',
+      responseFormat: strictFormat,
+    });
+    expect(sentBody().messages).toEqual(baseMessages);
+  });
+
+  it('JSON mode sends no provider block (unchanged wire)', async () => {
+    fetchMock.mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
+    await callOpenRouter({
+      model: 'm',
+      messages: baseMessages,
+      maxTokens: 10,
+      temperature: 0,
+      apiKey: 'k',
+      responseFormat: { type: 'json_object' },
+    });
+    expect(sentBody().provider).toBeUndefined();
   });
 });

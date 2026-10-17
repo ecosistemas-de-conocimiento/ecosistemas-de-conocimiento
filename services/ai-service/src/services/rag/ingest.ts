@@ -15,7 +15,8 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { env } from '../../config/env.js';
 import type { Db } from '../../db/client.js';
-import { corpora, documents, ingestRequests } from '../../db/schema/index.js';
+import { chunks, corpora, documents, ingestJobs, ingestRequests } from '../../db/schema/index.js';
+import { CodedEnvelopeError } from '../../errors/base.js';
 import type {
   GenerationQueueLike,
 } from '../../queue/queues.js';
@@ -24,6 +25,8 @@ import {
   type IngestJobData,
   type IngestQueueLike,
 } from '../../queue/queues.js';
+import { assertCallbackSecretFor } from '../callbacks/emit.js';
+import { assertSafeCallbackUrl } from '../callbacks/url-guard.js';
 import { resolveCorpusEmbeddingDim } from './embedding-models.js';
 import { resolveTextSearchConfig } from './language.js';
 import type { IngestRequest, IngestResult } from './types.js';
@@ -44,13 +47,48 @@ export interface IngestCtx {
   apiKeyId?: string;
 }
 
+export interface IngestStatusDocument {
+  /** The consumer's document id when it sent one, else ai-service's — the same `docId` the callbacks carry. */
+  docId: string;
+  /** Chunks indexed for this document. 0 means nothing is retrievable. */
+  chunkCount: number;
+}
+
 export interface IngestStatus {
   ingestId: string;
   totalDocs: number;
   completedDocs: number;
   failedDocs: number;
   status: 'processing' | 'completed' | 'partial' | 'failed';
+  /** Sum of `documents[].chunkCount`. Present once the batch is terminal. */
+  chunkCount?: number;
+  /** One entry per indexed document of this batch. Present once the batch is terminal. */
+  documents?: IngestStatusDocument[];
 }
+
+/**
+ * 404 for `GET /v1/ingest/:ingestId` when no ingest with that id exists in the
+ * caller's (org, project) — including ids that are not UUIDs at all.
+ *
+ * Plan finding A11: this used to answer 200 `status: 'processing'` with zero
+ * counts, so a consumer polling an id it had lost (or a typo) waited forever.
+ * Reconcilers poll this route, so "never existed" must be distinguishable
+ * from "still running".
+ */
+export class IngestNotFoundError extends CodedEnvelopeError {
+  readonly code = 'ERR_INGEST_NOT_FOUND';
+  readonly status = 404;
+  override name = 'IngestNotFoundError';
+  constructor(readonly ingestId: string) {
+    super(`ingest '${ingestId}' not found in this org/project`);
+  }
+  protected override bodyFields(): Record<string, unknown> {
+    return { ingestId: this.ingestId };
+  }
+}
+
+/** `ingest_requests.id` is a uuid column; anything else can never match. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Suppress an unused-export lint when the route layer only imports this name. */
 export type { GenerationQueueLike };
@@ -66,6 +104,18 @@ export class IngestService {
    * against).
    */
   async ingestBatch(req: IngestRequest, ctx: IngestCtx): Promise<IngestResult> {
+    // SSRF guard (audit finding [HIGH] SSRF): refuse loopback/private/
+    // link-local/metadata targets BEFORE persisting the request row, so a
+    // hostile callbackUrl never enters the delivery pipeline. The route maps
+    // `CallbackUrlBlockedError` to a 400.
+    if (req.callbackUrl) {
+      // D4=A (PLAN-live-ingest): a callbackUrl from a key that
+      // cannot sign is refused with 400 `CallbackSecretMissingError` instead of
+      // a 202 whose every callback is recorded `auth_failed`.
+      assertCallbackSecretFor(ctx.apiKeyId);
+      await assertSafeCallbackUrl(req.callbackUrl);
+    }
+
     const corpus = await this.resolveOrCreateCorpus(req.corpus, ctx, {
       ...(req.embeddingModel !== undefined ? { embeddingModel: req.embeddingModel } : {}),
       ...(req.language !== undefined ? { language: req.language } : {}),
@@ -90,9 +140,36 @@ export class IngestService {
       .returning({ id: ingestRequests.id });
     const ingestId = inserted[0]!.id;
 
-    for (const doc of req.documents) {
+    // One `ingest_jobs` row per document, INSERTED BEFORE THE JOB IS QUEUED.
+    // That ordering is the whole mechanism: the worker claims this row with a
+    // conditional UPDATE (`WHERE status = 'queued'`) before it chunks or
+    // embeds anything, so a stalled re-delivery of the same BullMQ job finds
+    // nothing to claim and returns without a second embedding charge. A row
+    // written after the add would leave a window where the worker is already
+    // running with nothing to claim.
+    //
+    // One INSERT for the whole batch (≤100 docs, capped by the request schema).
+    // `RETURNING` on a multi-row INSERT comes back in VALUES order, which is
+    // what pairs each id with its document below.
+    // (`documents` is `.min(1)` at the route; the guard is for direct callers —
+    // drizzle throws on an empty VALUES list.)
+    const jobRows = req.documents.length === 0 ? [] : await this.deps.db
+      .insert(ingestJobs)
+      .values(
+        req.documents.map((doc) => ({
+          org: ctx.org,
+          project: ctx.project,
+          ingestId,
+          externalId: doc.id ?? null,
+          status: 'queued' as const,
+        })),
+      )
+      .returning({ id: ingestJobs.id });
+
+    for (const [i, doc] of req.documents.entries()) {
       const data: IngestJobData = {
         ingestId,
+        jobId: jobRows[i]!.id,
         corpusId: corpus.id,
         org: ctx.org,
         project: ctx.project,
@@ -122,13 +199,20 @@ export class IngestService {
   }
 
   /**
-   * Compute status. With the `ingest_requests` row landed (callback contract
-   * pass), we now report totals + failed counts directly from that row
-   * instead of approximating from `documents`. Falls back to the old
-   * `documents`-count approximation if the request row is missing (pre-
-   * migration data).
+   * Compute status from the `ingest_requests` row. Falls back to counting
+   * `documents` rows for pre-migration ingests that have no request row.
+   *
+   * Throws `IngestNotFoundError` (404) when neither exists in the caller's
+   * (org, project), or when `ingestId` is not a UUID.
+   *
+   * Once the batch is terminal the snapshot also carries per-document
+   * `chunkCount`s: a consumer reconciling a lost callback needs the same
+   * "how much got indexed" fact the `ingest.completed` envelope carries.
+   * Computed only for terminal batches, so a poll loop on a running batch
+   * stays one indexed lookup.
    */
   async getIngestStatus(ingestId: string, ctx: IngestCtx): Promise<IngestStatus> {
+    if (!UUID_RE.test(ingestId)) throw new IngestNotFoundError(ingestId);
     const reqRows = await this.deps.db
       .select()
       .from(ingestRequests)
@@ -142,36 +226,67 @@ export class IngestService {
       .limit(1);
     if (reqRows[0]) {
       const r = reqRows[0];
-      const status: IngestStatus['status'] =
-        r.status === 'queued' || r.status === 'running'
-          ? 'processing'
-          : r.status;
+      if (r.status === 'queued' || r.status === 'running') {
+        return {
+          ingestId,
+          totalDocs: r.totalDocs,
+          completedDocs: r.completedDocs,
+          failedDocs: r.failedDocs,
+          status: 'processing',
+        };
+      }
+      const docs = await this.documentChunkCounts(ingestId, ctx);
       return {
         ingestId,
         totalDocs: r.totalDocs,
         completedDocs: r.completedDocs,
         failedDocs: r.failedDocs,
-        status,
+        status: r.status,
+        chunkCount: docs.reduce((n, d) => n + d.chunkCount, 0),
+        documents: docs,
       };
     }
     // Legacy fallback — pre-migration ingests don't have an `ingest_requests`
-    // row. Count `documents` rows by ingest_id (worker's old behaviour).
+    // row. Their `documents` rows are the only evidence they existed.
+    const docs = await this.documentChunkCounts(ingestId, ctx);
+    if (docs.length === 0) throw new IngestNotFoundError(ingestId);
+    return {
+      ingestId,
+      totalDocs: docs.length,
+      completedDocs: docs.length,
+      failedDocs: 0,
+      status: 'completed',
+      chunkCount: docs.reduce((n, d) => n + d.chunkCount, 0),
+      documents: docs,
+    };
+  }
+
+  /**
+   * Per-document chunk counts for the documents whose latest ingest is
+   * `ingestId`. A document re-ingested by a LATER batch moves to that batch
+   * (the worker re-stamps `documents.ingest_id`), so it is reported there.
+   */
+  private async documentChunkCounts(
+    ingestId: string,
+    ctx: IngestCtx,
+  ): Promise<IngestStatusDocument[]> {
     const rows = await this.deps.db
-      .select({ count: sql<number>`count(*)::int` })
+      .select({
+        id: documents.id,
+        externalId: documents.externalId,
+        chunkCount: sql<number>`count(${chunks.id})::int`,
+      })
       .from(documents)
+      .leftJoin(chunks, eq(chunks.documentId, documents.id))
       .where(
         and(
           eq(documents.ingestId, ingestId),
           eq(documents.org, ctx.org),
           eq(documents.project, ctx.project),
         ),
-      );
-    const completed = rows[0]?.count ?? 0;
-    const totalDocs = completed;
-    const failedDocs = 0;
-    const status: IngestStatus['status'] =
-      completed === 0 ? 'processing' : 'completed';
-    return { ingestId, totalDocs, completedDocs: completed, failedDocs, status };
+      )
+      .groupBy(documents.id, documents.externalId);
+    return rows.map((r) => ({ docId: r.externalId ?? r.id, chunkCount: Number(r.chunkCount) }));
   }
 
   // -------------------------------------------------------------------------

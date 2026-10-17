@@ -2,8 +2,15 @@
 //
 // `RetrieveService.retrieve` is mocked at the class level so the route layer
 // is exercised in isolation: Zod validation, error-class → 404 mapping, and
-// the auth-context plumbing (cross-tenant access yields a 404 because the
-// service's lookup filters by `{org, project}`).
+// that the caller's `{org, project}` (never the body) is what reaches the
+// service.
+//
+// ⚠ SCOPE LIMIT, stated because this file previously overclaimed. With the
+// service mocked, NOTHING here executes the tenant-scoping WHERE clause. These
+// cases prove the route hands the auth context down and maps the resulting
+// error to 404-not-403; they cannot prove another tenant's rows are
+// unreachable. That is asserted against a real Postgres in
+// `src/routes/tenant-isolation.integration.test.ts`.
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
@@ -30,6 +37,7 @@ vi.mock('../services/rag/retrieve-multi.js', () => ({
 
 vi.mock('../db/client.js', () => ({ db: {} }));
 
+import { env } from '../config/env.js';
 import { CorpusNotFoundError } from '../services/rag/retrieve.js';
 
 import { useBuildServer } from '../test/server-harness.js';
@@ -99,9 +107,19 @@ describe('POST /v1/retrieve', () => {
     await app.close();
   });
 
-  it('returns 404 for cross-tenant corpus access (different org owns the name)', async () => {
-    // The service-level lookup is `{org, project, name}` — a foreign-owned
-    // corpus is indistinguishable from a missing one, by design (no info leak).
+  it('a CorpusNotFoundError raised for a foreign-owned name is answered 404, not 403', async () => {
+    // ⚠ THIS IS NOT A TENANT-ISOLATION TEST, and it used to claim to be one.
+    // `RetrieveService` is mocked here, so the only thing under test is the
+    // route's error mapping: told to reject, it must answer 404 and not 403, so
+    // a foreign corpus is indistinguishable from a missing one at the wire.
+    // Nothing here executes the `{org, project, name}` WHERE clause that
+    // actually makes the row unreachable — a mock told to throw would agree
+    // with a service that had no predicate at all.
+    //
+    // 🔴 The real proof runs against a real Postgres, with a positive control
+    // showing the owner still retrieves the same chunk, in
+    // `src/routes/tenant-isolation.integration.test.ts` ("POST /v1/retrieve →
+    // cross-ORG / cross-PROJECT").
     retrieveMock.mockRejectedValueOnce(
       new CorpusNotFoundError({ corpus: 'foreign', org: ORG, project: PROJECT }),
     );
@@ -172,4 +190,69 @@ describe('POST /v1/retrieve/multi', () => {
     expect(res.statusCode).toBe(400);
     await app.close();
   });
+});
+
+// Item 10.3 — the rerank model allowlist (`DEEPINFRA_RERANK_MODELS`). A refused
+// per-request `rerankModel` is the route's existing flat 400, before the service
+// runs; the service mocks above prove it never reached retrieval.
+describe('rerankModel allowlist (RERANK_PROVIDER=deepinfra)', () => {
+  const previous = env.RERANK_PROVIDER;
+  beforeEach(() => {
+    env.RERANK_PROVIDER = 'deepinfra';
+  });
+  afterEach(() => {
+    env.RERANK_PROVIDER = previous;
+  });
+
+  const cases = [
+    { url: '/v1/retrieve', payload: { corpus: 'docs', query: 'q', rerank: true }, mock: retrieveMock },
+    { url: '/v1/retrieve/multi', payload: { corpora: ['a'], query: 'q', rerank: true }, mock: retrieveMultiMock },
+  ] as const;
+
+  for (const c of cases) {
+    it(`🔴 ${c.url}: a Google model is a 400 and never reaches the service`, async () => {
+      const app = await makeApp();
+      const res = await app.inject({
+        method: 'POST',
+        url: c.url,
+        headers: { authorization: `Bearer ${APP_TOKEN}` },
+        payload: { ...c.payload, rerankModel: 'google/gemini-2.5-flash' },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toMatch(/allowlist/);
+      expect(c.mock).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it(`${c.url}: a refused model is a 400 even with \`rerank\` absent (checked, not ignored)`, async () => {
+      // Documented in the contract and the OpenAPI description: `rerankModel`
+      // is only USED under `rerank`, but always CHECKED. Fail-closed on purpose.
+      const { rerank: _dropped, ...withoutRerank } = c.payload;
+      const app = await makeApp();
+      const res = await app.inject({
+        method: 'POST',
+        url: c.url,
+        headers: { authorization: `Bearer ${APP_TOKEN}` },
+        payload: { ...withoutRerank, rerankModel: 'google/gemini-2.5-flash' },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toMatch(/allowlist/);
+      expect(c.mock).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it(`${c.url}: the allowlisted Qwen model passes through`, async () => {
+      c.mock.mockResolvedValueOnce({ chunks: [], query: 'q', rewritten: false, corpora: [] });
+      const app = await makeApp();
+      const res = await app.inject({
+        method: 'POST',
+        url: c.url,
+        headers: { authorization: `Bearer ${APP_TOKEN}` },
+        payload: { ...c.payload, rerankModel: 'Qwen/Qwen3-Reranker-0.6B' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(c.mock).toHaveBeenCalledTimes(1);
+      await app.close();
+    });
+  }
 });

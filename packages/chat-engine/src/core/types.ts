@@ -62,11 +62,28 @@ export interface ResolvedCorpus {
 // Citation / provenance — what a turn cited, recorded on the assistant turn.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One retrieved chunk, tagged with the corpus it came from. */
+/**
+ * One retrieved chunk, tagged with the corpus it came from.
+ *
+ * ⚠ `score` is the server's RANKING score and its scale depends on the mode:
+ * cosine in `dense` mode, Reciprocal Rank Fusion (~0.01–0.05) in `hybrid`
+ * mode, the cross-encoder score when rerank ran. Never threshold or display
+ * it; read `relevanceScore` / `maxDenseScore` (relevance.ts).
+ */
 export interface RetrievedChunk {
   documentId: string;
   chunkId: string;
   score: number;
+  /**
+   * Cosine similarity. ADDITIVE (0.6.0). ai-service sets it on every dense-mode
+   * chunk (equal to `score`) and, in hybrid mode, only on chunks the dense leg
+   * found. The stable similarity to threshold on in both modes.
+   */
+  denseScore?: number;
+  /** Lexical (`ts_rank_cd`/sparse) score. ADDITIVE (0.6.0); hybrid lexical-leg hits only. */
+  lexicalScore?: number;
+  /** Cross-encoder score. ADDITIVE (0.6.0); present only when rerank ran. */
+  rerankScore?: number;
   text: string;
   corpus: string;
   metadata?: Record<string, unknown> | null;
@@ -77,9 +94,16 @@ export interface Provenance {
   chunks: Array<{
     chunkId: string;
     documentId: string;
+    /** Ranking score — scale depends on the retrieve mode. See `RetrievedChunk`. */
     score: number;
     corpus: string;
     metadata: Record<string, unknown> | null;
+    /** Copied from `RetrievedChunk` when present. ADDITIVE (0.6.0). */
+    denseScore?: number;
+    /** Copied from `RetrievedChunk` when present. ADDITIVE (0.6.0). */
+    lexicalScore?: number;
+    /** Copied from `RetrievedChunk` when present. ADDITIVE (0.6.0). */
+    rerankScore?: number;
     /**
      * The retrieved chunk's grounding passage. ADDITIVE (engine ≥0.3.0):
      * older provenance blocks omit it. Persisting it lets the canonical
@@ -106,7 +130,8 @@ export interface Provenance {
  *   - `title`         source document title (`metadata.title`, or the corpus
  *                     name as a fallback).
  *   - `passageText`   the quoted grounding passage (`Provenance.chunks[].text`).
- *   - `score`         relevance 0..1 (rendered as a %). Null/undefined hides it.
+ *   - `score`         data only, never rendered; its scale depends on the
+ *                     retrieve mode (cosine, RRF or rerank). See `relevanceScore`.
  *   - `href`          a ready-made link to open the source asset. PREFER the
  *                     injected `linkResolver` on the card; `href` is the escape
  *                     hatch when the consumer already has the URL.
@@ -159,6 +184,12 @@ export interface SyncGenerationResult {
   provider: string;
   costUsd: number;
   traceId: string;
+  /**
+   * Why the model stopped (`stop`, `length`, …), as ai-service reports it.
+   * ADDITIVE (0.6.0); absent on a cache hit or an older server. Read it with
+   * `shouldRetryEmpty`.
+   */
+  finishReason?: string;
 }
 
 export interface IngestRequest {
@@ -196,16 +227,81 @@ export interface RetrieveRequest {
    * the engine swallows a rejecting build's failure (→ `matches: []`).
    */
   filter?: Record<string, string | number | boolean>;
+  /**
+   * Ranking mode, forwarded to ai-service. ADDITIVE (0.6.0). Absent = the
+   * server default, `dense`. In `hybrid` mode `score` is an RRF value, NOT a
+   * cosine — read `denseScore` for a similarity.
+   */
+  mode?: RetrieveMode;
+  /** Opt into cross-encoder reranking (server no-op when not wired). ADDITIVE (0.6.0). */
+  rerank?: boolean;
+}
+
+/** ai-service ranking mode (ai-client 0.25.0 `RetrieveRequest.mode`). */
+export type RetrieveMode = 'dense' | 'hybrid';
+
+/** One match as ai-service returns it, before the engine tags its corpus. */
+export interface RetrieveMatch {
+  documentId: string;
+  chunkId: string;
+  score: number;
+  text: string;
+  metadata?: Record<string, unknown>;
+  /** See `RetrievedChunk.denseScore`. ADDITIVE (0.6.0). */
+  denseScore?: number;
+  /** See `RetrievedChunk.lexicalScore`. ADDITIVE (0.6.0). */
+  lexicalScore?: number;
+  /** See `RetrievedChunk.rerankScore`. ADDITIVE (0.6.0). */
+  rerankScore?: number;
 }
 
 export interface RetrieveResult {
-  matches: Array<{
-    documentId: string;
-    chunkId: string;
-    score: number;
-    text: string;
-    metadata?: Record<string, unknown>;
-  }>;
+  matches: RetrieveMatch[];
+}
+
+/**
+ * One fan-out over several corpora, fused SERVER-side. ADDITIVE (0.6.0).
+ * Mirrors ai-client 0.25.0 `RetrieveMultiRequest` with the engine's
+ * scope-neutral naming (`scopeId`, not `projectId`); the consumer's shim maps
+ * it, as it does for `retrieve`.
+ */
+export interface RetrieveMultiRequest {
+  orgId: string;
+  scopeId: string;
+  /** Corpus names, all under the caller's `(orgId, scopeId)`. */
+  corpora: string[];
+  query: string;
+  /** Per-corpus fetch depth. */
+  topK?: number;
+  /** Final cap on the fused, deduped result. */
+  limit?: number;
+  mode?: RetrieveMode;
+  /** Applied to EVERY corpus — a key only one corpus carries empties the rest. */
+  filter?: Record<string, string | number | boolean>;
+  /** Cross-encoder rerank, applied once AFTER cross-corpus fusion. */
+  rerank?: boolean;
+}
+
+/** Per-corpus outcome (ai-client 0.25.0 `CorpusDiagnostics`). */
+export interface RetrieveMultiCorpusDiagnostics {
+  corpus: string;
+  /** Chunks this corpus contributed before fusion/cap. */
+  matched: number;
+  /** `not_found` (no such corpus in scope) or `failed` (its retrieve threw). */
+  error?: 'not_found' | 'failed';
+  /** Chunks that survived into the final `matches`. Absent on older servers. */
+  contributed?: number;
+}
+
+/**
+ * Result of `AIClient.retrieveMulti`. ADDITIVE (0.6.0). `matches` mirrors
+ * ai-client's `chunks`, each tagged with its corpus, IN SERVER ORDER: in
+ * hybrid mode over several corpora the server re-ranks one global pool
+ * (`cross-corpus-rrf`), so its order is the only comparable one.
+ */
+export interface RetrieveMultiResult {
+  matches: Array<RetrieveMatch & { corpus: string }>;
+  corpora: RetrieveMultiCorpusDiagnostics[];
 }
 
 /**
@@ -219,4 +315,28 @@ export interface AIClient {
   generateSync(req: SyncGenerationRequest): Promise<SyncGenerationResult>;
   retrieve(req: RetrieveRequest): Promise<RetrieveResult>;
   ingest(req: IngestRequest): Promise<IngestResult>;
+  /**
+   * OPTIONAL (0.6.0). Server-side multi-corpus fan-out + fusion. Required for
+   * a `hybrid` `RetrievalPolicy`: without it — or when the resolved corpora
+   * span more than one `scopeId`, which one multi call cannot cover — the
+   * engine warns `retrieve.multi_unavailable` and runs dense per corpus,
+   * because per-corpus RRF scores are rank-based and cannot be merged
+   * client-side.
+   */
+  retrieveMulti?(req: RetrieveMultiRequest): Promise<RetrieveMultiResult>;
+}
+
+/**
+ * How `retrieveContext` retrieves. ADDITIVE (0.6.0). Absent = the pre-0.6.0
+ * behaviour exactly: one dense `retrieve` per corpus (topK 5), merged by
+ * score, capped at 8.
+ */
+export interface RetrievalPolicy {
+  mode: RetrieveMode;
+  /** Per-corpus fetch depth (`topK`). */
+  perCorpusTopK: number;
+  /** Final cap on the merged/fused result. */
+  limit: number;
+  /** Cross-encoder rerank (forwarded; the server no-ops when it is not wired). */
+  rerank?: boolean;
 }

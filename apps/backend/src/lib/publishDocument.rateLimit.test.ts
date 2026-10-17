@@ -38,12 +38,12 @@ const DOC = {
   uploadedBy: USER,
 }
 
-/** Shaped like `@edc/ai-client`'s `RateLimitedError`. */
+/** Shaped like `@edc/ai-client`'s `RateLimitError`. */
 function rateLimited(retryAfterSeconds = 5) {
   return Object.assign(new Error(`Rate limit exceeded. Retry after ~${retryAfterSeconds}s.`), {
     status: 429,
-    name: 'RateLimitedError',
-    retryAfterSeconds,
+    name: 'RateLimitError',
+    retryAfterMs: retryAfterSeconds * 1000,
   })
 }
 

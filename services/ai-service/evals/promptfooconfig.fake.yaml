@@ -1,0 +1,37 @@
+# promptfoo — FAKE-PROVIDER CONFIG. Costs nothing. Exercises the harness, not the model.
+#
+# Target: an ai-service whose CHAT_COMPLETIONS_URL points at the TEST-ONLY fake
+# provider (test-support/fake-provider/), which answers with a body marked
+# `[FAKE-PROVIDER TEST DATA]`. No tokens are bought, and there is no LLM judge
+# in this config at all — every assertion is deterministic.
+#
+# Use it to prove the plumbing before spending anything on the paid config:
+#   scripts/eval-generation.sh fake
+
+description: ai-service generation harness — fake-provider smoke (zero cost)
+
+prompts:
+  - file://prompts/render.js
+
+providers:
+  - id: 'https://ai-service-fake-provider/v1/generate/sync'
+    label: ai-service /v1/generate/sync (fake provider)
+    config:
+      url: '{{ env.AI_SERVICE_URL }}/v1/generate/sync'
+      method: POST
+      headers:
+        Authorization: 'Bearer {{ env.AI_SERVICE_KEY }}'
+        Content-Type: application/json
+      body:
+        unit:
+          unitKey: '{{ unitKey }}'
+          unitType: '{{ unitType }}'
+          specDefault:
+            promptTemplate: '{{ prompt }}'
+            model: '{{ model }}'
+            effortLevel: '{{ effortLevel }}'
+      # The WHOLE response object, so the wire shape itself is what gets
+      # asserted — not just the text.
+      transformResponse: JSON.stringify(json)
+
+tests: file://tests/wire-shape.yaml

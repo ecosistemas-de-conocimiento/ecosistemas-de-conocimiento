@@ -29,8 +29,11 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import type { Db } from '../../db/client.js';
+import { CodedEnvelopeError, NestedEnvelopeError } from '../../errors/base.js';
+import { CorpusNotFoundError } from './errors.js';
 import { chunks, corpora, corpusAliases, documents } from '../../db/schema/index.js';
 import { resolveCorpusEmbeddingDim } from './embedding-models.js';
+import { isValidTextSearchConfig } from './language.js';
 
 export interface CorpusServiceDeps {
   db: Db;
@@ -92,7 +95,9 @@ export interface CorpusIntrospection {
 }
 
 /** Thrown by `createCorpus` when the name already names a corpus in scope. Route → 409. */
-export class CorpusAlreadyExistsError extends Error {
+export class CorpusAlreadyExistsError extends NestedEnvelopeError {
+  readonly code = 'ERR_CORPUS_ALREADY_EXISTS';
+  readonly status = 409;
   readonly corpusName: string;
   constructor(name: string) {
     super(`corpus '${name}' already exists`);
@@ -102,7 +107,9 @@ export class CorpusAlreadyExistsError extends Error {
 }
 
 /** Thrown by `createCorpus` when the name already names an alias in scope. Route → 409. */
-export class CorpusNameIsAliasError extends Error {
+export class CorpusNameIsAliasError extends NestedEnvelopeError {
+  readonly code = 'ERR_CORPUS_NAME_IS_ALIAS';
+  readonly status = 409;
   readonly corpusName: string;
   constructor(name: string) {
     super(`'${name}' already names an alias; corpus names share the alias namespace`);
@@ -112,14 +119,7 @@ export class CorpusNameIsAliasError extends Error {
 }
 
 /** Thrown by `updateCorpus` when no corpus matches in scope. Route → 404. */
-export class CorpusNotFoundError extends Error {
-  readonly corpusName: string;
-  constructor(name: string) {
-    super(`corpus '${name}' not found`);
-    this.name = 'CorpusNotFoundError';
-    this.corpusName = name;
-  }
-}
+export { CorpusNotFoundError };
 
 /**
  * Thrown when a PATCH tries to change `embeddingModel` on a corpus that already
@@ -127,7 +127,9 @@ export class CorpusNotFoundError extends Error {
  * changing the model would leave the corpus's vectors embedded with the OLD
  * model, so retrieval quality would degrade with no error. Route → 409.
  */
-export class EmbeddingModelChangeNotAllowedError extends Error {
+export class EmbeddingModelChangeNotAllowedError extends NestedEnvelopeError {
+  readonly code = 'ERR_EMBEDDING_MODEL_LOCKED';
+  readonly status = 409;
   readonly corpusName: string;
   constructor(name: string) {
     super(
@@ -137,6 +139,65 @@ export class EmbeddingModelChangeNotAllowedError extends Error {
     );
     this.name = 'EmbeddingModelChangeNotAllowedError';
     this.corpusName = name;
+  }
+}
+
+/**
+ * Thrown when a PATCH tries to LOWER `chunkSize` on a corpus that already has
+ * chunks. Route → 409, same status and shape as the embeddingModel guard.
+ *
+ * Why lowering is refused: `chunk_size` is not just an ingestion setting, it is
+ * the corpus's advertised output contract. `/v1/retrieve` clamps stored passage
+ * text to `maxChunkChars(chunk_size)`. Shrinking it under existing rows would
+ * retroactively put legitimately-ingested chunks over the new bound, so
+ * retrieval would start truncating real content and emit a per-row "this is an
+ * anomaly, investigate it" warning for every one of them — a false alarm at
+ * corpus scale, and silent data loss from the consumer's point of view.
+ *
+ * RAISING it stays allowed: existing rows simply remain comfortably under the
+ * new bound, nothing is truncated and nothing warns. Only new ingests get the
+ * larger chunks, which is exactly what the caller asked for.
+ */
+export class ChunkSizeShrinkNotAllowedError extends NestedEnvelopeError {
+  readonly code = 'ERR_CHUNK_SIZE_LOCKED';
+  readonly status = 409;
+  readonly corpusName: string;
+  readonly current: number;
+  readonly requested: number;
+  constructor(name: string, current: number, requested: number) {
+    super(
+      `cannot lower chunkSize on corpus '${name}' from ${current} to ${requested}: ` +
+        `it already has chunks. Existing chunks were split at the larger size, so retrieval ` +
+        `would truncate them to the new bound and flag each one as an anomaly. ` +
+        `Raising chunkSize is allowed; to lower it, delete + re-ingest the corpus.`,
+    );
+    this.name = 'ChunkSizeShrinkNotAllowedError';
+    this.corpusName = name;
+    this.current = current;
+    this.requested = requested;
+  }
+}
+
+/**
+ * Thrown by `updateCorpus` when `language` is not an installed Postgres
+ * text-search config name. Defense-in-depth: the wire schema
+ * (`textSearchConfigSchema`) already rejects an unknown name with a 400, so
+ * this fires only for a non-wire caller. It matters because the value reaches a
+ * `::regconfig` cast — `'es'::regconfig` THROWS, and here it would throw
+ * mid-transaction while re-indexing a whole corpus. Route → 400, the same
+ * status the schema gives, so no new wire error code.
+ */
+export class InvalidTextSearchConfigError extends CodedEnvelopeError {
+  readonly code = 'ERR_INVALID_TEXT_SEARCH_CONFIG';
+  readonly status = 400;
+  readonly language: string;
+  constructor(language: string) {
+    super(
+      `'${language}' is not an installed Postgres text-search config name ` +
+        `(expected e.g. 'simple', 'spanish', 'english' — not an ISO locale code like 'es')`,
+    );
+    this.name = 'InvalidTextSearchConfigError';
+    this.language = language;
   }
 }
 
@@ -285,10 +346,32 @@ export class CorpusService {
    * Reconfigure a corpus. Only the fields present in `patch` change; the rest
    * are left as stored. `embeddingModel` may change ONLY while the corpus is
    * still empty (no chunks) — otherwise `EmbeddingModelChangeNotAllowedError`,
-   * because re-embedding existing vectors is out of scope. Changing `language`
-   * affects how NEW chunks are lexically indexed; already-ingested chunks keep
-   * their existing tsvector until re-ingested (dense retrieval is unaffected).
-   * Throws `CorpusNotFoundError` when no corpus matches (route → 404).
+   * because re-embedding existing vectors is out of scope.
+   *
+   * CHANGING `language` RE-INDEXES THE CORPUS, in this same transaction.
+   *
+   * That is not an optimisation, it is the correctness requirement.
+   * `chunks.text_search` is NOT a generated column — the ingest worker fills it
+   * once with `to_tsvector(<corpus config>::regconfig, text)`. Writing the
+   * corpus row alone moves the QUERY side of the lexical leg and leaves the
+   * INDEX side where it was, so a `simple → spanish` PATCH leaves the index
+   * holding the raw surface form `'documentos'` while the query now asks for
+   * the stem `'document'`. Nothing throws; the leg just stops matching, the
+   * dense leg silently carries the request alone, and retrieval gets WORSE
+   * than before the PATCH (measured: the exact surface form matched before and
+   * stops matching after — an inflected language is where this bites). So the
+   * `UPDATE … SET text_search = to_tsvector(<new config>, text)` runs inside
+   * the same transaction as the config write — either both move or neither
+   * does. Vectors are untouched: this is a lexical re-index, not a re-embed,
+   * so it costs no tokens.
+   *
+   * A no-op (`language` absent, or equal to the stored value) does NOT rewrite
+   * chunks — the rewrite is gated on the value actually changing, so PATCHing
+   * unrelated fields on a large corpus stays cheap.
+   *
+   * Throws `CorpusNotFoundError` when no corpus matches (route → 404), and
+   * `InvalidTextSearchConfigError` for a `language` outside the installed
+   * whitelist (route → 400) BEFORE anything is written.
    */
   async updateCorpus(
     name: string,
@@ -296,6 +379,12 @@ export class CorpusService {
     ctx: CorpusServiceContext,
     defaults: { embeddingDim: number },
   ): Promise<CorpusIntrospection> {
+    // Whitelist gate BEFORE the transaction opens: the value is about to be
+    // cast `::regconfig` over every chunk in the corpus, and an unknown name
+    // throws there instead of here.
+    if (patch.language !== undefined && !isValidTextSearchConfig(patch.language)) {
+      throw new InvalidTextSearchConfigError(patch.language);
+    }
     return this.deps.db.transaction(async (tx) => {
       const rows = await tx
         .select()
@@ -305,25 +394,49 @@ export class CorpusService {
         )
         .limit(1);
       const row = rows[0];
-      if (!row) throw new CorpusNotFoundError(name);
+      if (!row) throw new CorpusNotFoundError({ corpus: name });
 
       const set: Partial<CorpusRow> = { updatedAt: new Date() };
 
+      // Both "is this corpus already populated?" guards below need the same
+      // count, and a PATCH may carry both fields. Memoised so a large corpus is
+      // counted at most once per request.
+      let cachedChunkCount: number | undefined;
+      const populated = async (): Promise<boolean> => {
+        if (cachedChunkCount === undefined) {
+          const chunkCount = await tx
+            .select({ n: sql<number>`count(*)::int` })
+            .from(chunks)
+            .where(eq(chunks.corpusId, row.id));
+          cachedChunkCount = chunkCount[0]?.n ?? 0;
+        }
+        return cachedChunkCount > 0;
+      };
+
       if (patch.embeddingModel !== undefined && patch.embeddingModel !== row.embeddingModel) {
         // Guard: refuse a model change once the corpus holds embedded chunks.
-        const chunkCount = await tx
-          .select({ n: sql<number>`count(*)::int` })
-          .from(chunks)
-          .where(eq(chunks.corpusId, row.id));
-        if ((chunkCount[0]?.n ?? 0) > 0) {
+        if (await populated()) {
           throw new EmbeddingModelChangeNotAllowedError(name);
         }
         // Empty corpus — safe to re-stamp model + revalidate dimension.
         set.embeddingModel = patch.embeddingModel;
         set.embeddingDim = resolveCorpusEmbeddingDim(patch.embeddingModel, defaults.embeddingDim);
       }
+      // Gated on the value actually CHANGING, not merely being present: a
+      // re-send of the same language must not rewrite the whole corpus.
+      const languageChanged =
+        patch.language !== undefined && patch.language !== row.textSearchConfig;
       if (patch.language !== undefined) set.textSearchConfig = patch.language;
       if (patch.chunkStrategy !== undefined) set.chunkStrategy = patch.chunkStrategy;
+      // Guard: refuse to SHRINK chunk_size once the corpus holds chunks. It is
+      // the corpus's advertised retrieve bound, not just an ingestion knob —
+      // lowering it under existing rows makes `/v1/retrieve` truncate real
+      // content and warn about every row. Raising it is safe and stays allowed.
+      if (patch.chunkSize !== undefined && patch.chunkSize < row.chunkSize) {
+        if (await populated()) {
+          throw new ChunkSizeShrinkNotAllowedError(name, row.chunkSize, patch.chunkSize);
+        }
+      }
       if (patch.chunkSize !== undefined) set.chunkSize = patch.chunkSize;
       if (patch.chunkOverlap !== undefined) set.chunkOverlap = patch.chunkOverlap;
       if (patch.chunkConfig !== undefined) set.chunkConfig = patch.chunkConfig;
@@ -335,6 +448,21 @@ export class CorpusService {
         .where(eq(corpora.id, row.id))
         .returning();
       const newRow = updated[0]!;
+
+      // Re-index the lexical column with the NEW config, same transaction as
+      // the config write above. Mirrors the ingest worker's tsvector build
+      // (src/workers/ingest.worker.ts) — same expression, scoped to this
+      // corpus instead of one document. `::regconfig` on a BOUND param, never
+      // interpolated; the name was whitelist-checked before the transaction
+      // opened. `embedding` / `sparse_embedding` are deliberately untouched.
+      if (languageChanged) {
+        await tx.execute(sql`
+          UPDATE "chunks"
+             SET "text_search" = to_tsvector(${newRow.textSearchConfig}::regconfig, "text")
+           WHERE "corpus_id" = ${row.id}::uuid
+        `);
+      }
+
       const counts = await this.countsForCorpora([newRow.id], tx);
       return introspectionFromRow(
         newRow,

@@ -1,11 +1,4 @@
-// Router pipeline tests. Ported from a prototype `services/ai/router/router.test.ts`
-// with fixture changes:
-//   - `surface: 'story-enrichment-ixd'` → `label: 'unit:ixd'`
-//   - `storyId: 1`                       → `unitKey: 'unit-1'`
-//   - `orgId: 'acme'`                    → `org: 'acme'`
-//   - `effort: 'standard'`               → `effortLevel: 'standard'` + explicit
-//                                          `effortProfile` via `getTaskProfile`
-//   - dropped: `surface → trace_type` / `dimensionFromSurface` tests
+// Router pipeline tests.
 //
 // Adapter is mocked via `vi.mock('./adapters/openrouter.js')`. BudgetEnforcer
 // and TraceWriter are injected via `RouterOptions` so we don't touch real DB
@@ -58,7 +51,12 @@ vi.mock('../../../config/env.js', () => ({
 }));
 
 // Import after mocks are registered so the SUT binds to them.
-const { Router } = await import('./router.js');
+const { Router, MAX_MULTI_SAMPLE, MAX_OUTPUT_TOKENS } = await import('./router.js');
+
+/** The `max_tokens` the adapter was handed on call `n` (0-based). */
+function adapterMaxTokens(n = 0): number {
+  return (adapterMock.mock.calls[n]![0] as { maxTokens: number }).maxTokens;
+}
 
 // --- Test helpers -------------------------------------------------------- //
 
@@ -250,6 +248,64 @@ describe('Router — cache hit', () => {
     expect(adapterMock).toHaveBeenCalledTimes(1);
     // Budget.reserve only ran for the first call.
     expect(budget.reserve).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 does NOT serve one project the answer cached for another in the same org', async () => {
+    // FG-18. The key carried the org (as `namespace`) but never the project, so
+    // an identical prompt from proj-b returned proj-a's completion for the
+    // 5-minute TTL. Same organisation, different caller, different context.
+    const traceWriter = makeTraceWriter();
+    const budget = makeBudget();
+    const cache = new RouterCache({ max: 10 });
+    adapterMock
+      .mockResolvedValueOnce(
+        makeCompletion({ contentText: 'for proj-a', promptTokens: 10, completionTokens: 20 }),
+      )
+      .mockResolvedValueOnce(
+        makeCompletion({ contentText: 'for proj-b', promptTokens: 10, completionTokens: 20 }),
+      );
+
+    const router = new Router({
+      cache,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      budget: budget as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      traceWriter: traceWriter as any,
+    });
+
+    const a = await router.route(makeReq({ org: 'acme', project: 'proj-a' }));
+    expect(a.cached).toBe(false);
+    expect(a.content).toBe('for proj-a');
+
+    // Identical in every way except the project.
+    const b = await router.route(makeReq({ org: 'acme', project: 'proj-b' }));
+    expect(b.cached).toBe(false);
+    expect(b.content).toBe('for proj-b');
+    expect(adapterMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('still caches within one project, so the fix did not disable the cache', async () => {
+    // The obvious way to "pass" the test above is to stop caching. This is the
+    // other half: a repeat from the SAME project must still hit.
+    const traceWriter = makeTraceWriter();
+    const budget = makeBudget();
+    const cache = new RouterCache({ max: 10 });
+    adapterMock.mockResolvedValueOnce(
+      makeCompletion({ contentText: 'once', promptTokens: 10, completionTokens: 20 }),
+    );
+
+    const router = new Router({
+      cache,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      budget: budget as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      traceWriter: traceWriter as any,
+    });
+    const req = makeReq({ org: 'acme', project: 'proj-a' });
+
+    expect((await router.route(req)).cached).toBe(false);
+    expect((await router.route(req)).cached).toBe(true);
+    expect(adapterMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -466,6 +522,88 @@ describe('Router — cancelled with partial usage', () => {
   });
 });
 
+describe('Router — provider generation id on the trace', () => {
+  const mk = (traceWriter: ReturnType<typeof makeTraceWriter>) =>
+    new Router({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      budget: makeBudget() as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      traceWriter: traceWriter as any,
+      cache: new RouterCache({ max: 10 }),
+    });
+
+  it('stores the winning completion\'s rawId as metadata.providerGenerationId', async () => {
+    const traceWriter = makeTraceWriter();
+    adapterMock.mockResolvedValueOnce(makeCompletion());
+    await mk(traceWriter).route(makeReq());
+    expect(traceWriter.writeTrace.mock.calls[0]?.[0].metadata.providerGenerationId).toBe('gen-x');
+  });
+
+  it('omits the key when the provider sent no id', async () => {
+    const traceWriter = makeTraceWriter();
+    const { rawId: _drop, ...noId } = makeCompletion();
+    adapterMock.mockResolvedValueOnce(noId);
+    await mk(traceWriter).route(makeReq());
+    expect(traceWriter.writeTrace.mock.calls[0]![0].metadata).not.toHaveProperty('providerGenerationId');
+  });
+
+  it('stores the partial\'s id on an aborted (client-disconnect) trace', async () => {
+    const { OpenRouterAbortError } = await import('./adapters/openrouter.js');
+    const traceWriter = makeTraceWriter();
+    adapterMock.mockRejectedValueOnce(
+      new OpenRouterAbortError({
+        contentText: 'par',
+        finishReason: 'aborted',
+        model: 'mock/model',
+        rawId: 'gen-cut',
+        usage: { promptTokens: 5, completionTokens: 1, costUsd: 0.0001, costSource: 'pricing-table' },
+      }),
+    );
+    await expect(mk(traceWriter).route(makeReq())).rejects.toBeInstanceOf(OpenRouterAbortError);
+    const trace = traceWriter.writeTrace.mock.calls[0]?.[0];
+    expect(trace.status).toBe('aborted');
+    expect(trace.metadata.providerGenerationId).toBe('gen-cut');
+  });
+
+  it('stores the partial\'s id on a provider-timeout trace', async () => {
+    // The timeout trace is written by its own code path (the unbilled 504
+    // `ProviderTimeout`), separate from the disconnect one above, so it needs
+    // its own pin: OpenRouter still bills that partial to US, and its id is
+    // what reconciles it against the provider invoice.
+    const { OpenRouterAbortError } = await import('./adapters/openrouter.js');
+    const traceWriter = makeTraceWriter();
+    adapterMock.mockImplementationOnce(
+      (opts: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          const onAbort = (): void =>
+            reject(
+              new OpenRouterAbortError({
+                contentText: 'par',
+                finishReason: 'aborted',
+                model: 'mock/model',
+                rawId: 'gen-timeout',
+                usage: { promptTokens: 5, completionTokens: 1, costUsd: 0.0001, costSource: 'pricing-table' },
+              }),
+            );
+          if (opts.signal?.aborted) onAbort();
+          else opts.signal?.addEventListener('abort', onAbort, { once: true });
+        }),
+    );
+    const router = new Router({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      budget: makeBudget() as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      traceWriter: traceWriter as any,
+      cache: new RouterCache({ max: 10 }),
+      requestTimeoutMs: 20,
+    });
+    await expect(router.route(makeReq())).rejects.toMatchObject({ name: 'ProviderTimeout' });
+    const trace = traceWriter.writeTrace.mock.calls[0]?.[0];
+    expect(trace.metadata.reason).toBe('provider_timeout');
+    expect(trace.metadata.providerGenerationId).toBe('gen-timeout');
+  });
+});
+
 describe('Router — wall-clock timeout backstop', () => {
   it('aborts the adapter when requestTimeoutMs elapses and records abortCause=timeout', async () => {
     const { OpenRouterAbortError } = await import('./adapters/openrouter.js');
@@ -508,17 +646,23 @@ describe('Router — wall-clock timeout backstop', () => {
       requestTimeoutMs: 20, // tiny wall-clock cap drives the abort
     });
 
-    await expect(router.route(makeReq())).rejects.toBeInstanceOf(OpenRouterAbortError);
+    // Decision (audit §3 item 5, option A): OUR timeout is a 504
+    // `ProviderTimeout`, UNBILLED — no longer the partial-billing abort path.
+    // Full contract in `router-provider-timeout.test.ts`.
+    await expect(router.route(makeReq())).rejects.toMatchObject({
+      name: 'ProviderTimeout',
+      code: 'ERR_PROVIDER_TIMEOUT',
+    });
 
     // The adapter received a *combined* signal (not undefined) that fired.
     expect(sawSignal).toBeDefined();
     expect(sawSignal?.aborted).toBe(true);
 
-    // Partial-billing path reused unchanged: status aborted, partial recorded.
     const traceArg = traceWriter.writeTrace.mock.calls[0]?.[0];
     expect(traceArg.status).toBe('aborted');
-    expect(traceArg.actualCostUsd).toBeCloseTo(partial.usage.costUsd, 6);
-    // The new bit: the cause is distinguished as a timeout, not a disconnect.
+    expect(traceArg.actualCostUsd).toBe(0);
+    expect(traceArg.metadata.providerCostUsd).toBeCloseTo(partial.usage.costUsd, 6);
+    // The cause is distinguished as a timeout, not a disconnect.
     expect(traceArg.metadata.abortCause).toBe('timeout');
   });
 
@@ -783,5 +927,195 @@ describe('Router — structured-output self-heal on quick effort', () => {
     expect(adapterMock).toHaveBeenCalledTimes(2);
     expect(out.parsed).toBeUndefined();
     expect(out.flags.some((f) => f.code === 'json-parse-error')).toBe(true);
+  });
+});
+
+// -------------------------------------------------------------------------- //
+// Security clamp at the PROVIDER boundary — audit finding C4.
+//
+// `resolveSpec` already bounds these (see `registry/caller-limits.test.ts`),
+// but the router is reachable with a hand-built profile that never went
+// through the resolver — `/v1/route`, RAG condense, any direct `Router` user.
+// These tests pin the second line of defence: whatever the profile says, the
+// adapter never sees an out-of-bounds `max_tokens`, and never more billed
+// passes than `MAX_MULTI_SAMPLE`.
+// -------------------------------------------------------------------------- //
+
+describe('Router — C4 cost clamps at the adapter boundary', () => {
+  function makeRouter() {
+    const traceWriter = makeTraceWriter();
+    const budget = makeBudget();
+    return new Router({
+      cache: new RouterCache({ max: 10 }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      budget: budget as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      traceWriter: traceWriter as any,
+    });
+  }
+
+  it('caps max_tokens at MAX_OUTPUT_TOKENS however large the profile asks', async () => {
+    adapterMock.mockResolvedValue(makeCompletion());
+    const profile = { ...getTaskProfile('standard'), maxOutputTokens: 200_000 };
+    await makeRouter().route(makeReq({ effortProfile: profile }));
+
+    expect(adapterMaxTokens()).toBe(MAX_OUTPUT_TOKENS);
+  });
+
+  it('🔴 passes a BELOW-ceiling max_tokens through untouched', async () => {
+    // The chat product's per-user credit cap rides on this exact behaviour.
+    // A clamp that also lowered legitimate caps, or dropped them, would break
+    // metering silently — see `plan/open-maxoutputtokens-clamp-not-delete.md`.
+    adapterMock.mockResolvedValue(makeCompletion());
+    const profile = { ...getTaskProfile('standard'), maxOutputTokens: 120 };
+    await makeRouter().route(makeReq({ effortProfile: profile }));
+
+    expect(adapterMaxTokens()).toBe(120);
+  });
+
+  it('caps the multiSample fan-out at MAX_MULTI_SAMPLE billed passes', async () => {
+    adapterMock.mockResolvedValue(makeCompletion());
+    const profile = { ...getTaskProfile('standard'), multiSample: 50 };
+    await makeRouter().route(makeReq({ effortProfile: profile }));
+
+    // One pass per sample, and `standard` triggers no self-critique refine.
+    expect(adapterMock).toHaveBeenCalledTimes(MAX_MULTI_SAMPLE);
+  });
+
+  it('falls back to the default cap rather than sending NaN when the profile is junk', async () => {
+    adapterMock.mockResolvedValue(makeCompletion());
+    // `effortProfile` crosses the wire as `z.record(z.string(), z.unknown())`, so a
+    // non-numeric value can reach a hand-built profile. `Math.min(NaN, ceiling)`
+    // is NaN, which is a worse failure than the one being fixed.
+    const profile = { ...getTaskProfile('standard'), maxOutputTokens: NaN };
+    await makeRouter().route(makeReq({ effortProfile: profile }));
+
+    expect(adapterMaxTokens()).toBe(800);
+  });
+});
+
+// ------------------------------------------------------------------------ //
+// Strict schema-constrained output (`responseSchemaStrict`).
+
+describe('Router — strict schema-constrained output', () => {
+  const schema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['answer'],
+    properties: { answer: { type: 'string' } },
+  };
+
+  function makeRouter(cache = new RouterCache({ max: 10 })) {
+    const budget = makeBudget();
+    const router = new Router({
+      cache,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      budget: budget as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      traceWriter: makeTraceWriter() as any,
+    });
+    return { router, budget };
+  }
+
+  function sentFormat(n = 0): unknown {
+    return (adapterMock.mock.calls[n]![0] as { responseFormat?: unknown }).responseFormat;
+  }
+
+  it('asks the adapter for json_schema with strict: true and the caller schema', async () => {
+    adapterMock.mockResolvedValueOnce(makeCompletion({ contentText: '{"answer":"x"}' }));
+    const { router } = makeRouter();
+    const out = await router.route(
+      makeReq({ model: 'openai/gpt-4o-mini', responseSchema: schema, responseSchemaStrict: true }),
+    );
+    expect(sentFormat()).toEqual({
+      type: 'json_schema',
+      json_schema: { name: 'response', schema, strict: true },
+    });
+    expect(out.parsed).toEqual({ answer: 'x' });
+  });
+
+  it('keeps JSON mode when the flag is absent', async () => {
+    adapterMock.mockResolvedValueOnce(makeCompletion({ contentText: '{"answer":"x"}' }));
+    const { router } = makeRouter();
+    await router.route(makeReq({ model: 'openai/gpt-4o-mini', responseSchema: schema }));
+    expect(sentFormat()).toEqual({ type: 'json_object' });
+  });
+
+  it('still holds the output to the full schema (the strictParsed gate stays on)', async () => {
+    adapterMock.mockResolvedValueOnce(makeCompletion({ contentText: '{"other":1}' }));
+    const { router } = makeRouter();
+    const out = await router.route(
+      makeReq({ model: 'openai/gpt-4o-mini', responseSchema: schema, responseSchemaStrict: true }),
+    );
+    expect(out.parsed).toBeUndefined();
+    expect(out.flags.some((f) => f.code === 'json-schema-mismatch')).toBe(true);
+  });
+
+  it('🔴 refuses an unsupported model BEFORE reserving budget or dialling the provider', async () => {
+    const { router, budget } = makeRouter();
+    await expect(
+      router.route(
+        makeReq({ model: 'deepseek/deepseek-r1', responseSchema: schema, responseSchemaStrict: true }),
+      ),
+    ).rejects.toMatchObject({ name: 'SpecResolutionError', cause: 'strict schema unsupported model' });
+    expect(budget.reserve).not.toHaveBeenCalled();
+    expect(adapterMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a schema outside the strict subset before reserving budget', async () => {
+    const { router, budget } = makeRouter();
+    await expect(
+      router.route(
+        makeReq({
+          model: 'openai/gpt-4o-mini',
+          responseSchema: { type: 'object' },
+          responseSchemaStrict: true,
+        }),
+      ),
+    ).rejects.toMatchObject({ name: 'SpecResolutionError', cause: 'strict schema invalid' });
+    expect(budget.reserve).not.toHaveBeenCalled();
+  });
+
+  it('cache: strict, JSON-mode and plain calls with the same messages never share an entry', async () => {
+    const cache = new RouterCache({ max: 10 });
+    const { router } = makeRouter(cache);
+    adapterMock
+      .mockResolvedValueOnce(makeCompletion({ contentText: 'plain text' }))
+      .mockResolvedValueOnce(makeCompletion({ contentText: '{"answer":"json"}' }))
+      .mockResolvedValueOnce(makeCompletion({ contentText: '{"answer":"strict"}' }));
+    const base = { model: 'openai/gpt-4o-mini' };
+
+    const plain = await router.route(makeReq(base));
+    const json = await router.route(makeReq({ ...base, responseSchema: schema }));
+    const strict = await router.route(
+      makeReq({ ...base, responseSchema: schema, responseSchemaStrict: true }),
+    );
+    expect([plain.cached, json.cached, strict.cached]).toEqual([false, false, false]);
+    expect(adapterMock).toHaveBeenCalledTimes(3);
+
+    // …and a repeat of the strict call IS a hit, re-gated against the schema.
+    const again = await router.route(
+      makeReq({ ...base, responseSchema: schema, responseSchemaStrict: true }),
+    );
+    expect(again.cached).toBe(true);
+    expect(again.parsed).toEqual({ answer: 'strict' });
+  });
+
+  it('cache: two strict calls with different schemas do not share an entry', async () => {
+    const { router } = makeRouter();
+    adapterMock
+      .mockResolvedValueOnce(makeCompletion({ contentText: '{"answer":"a"}' }))
+      .mockResolvedValueOnce(makeCompletion({ contentText: '{"answer":"b","n":1}' }));
+    const other = {
+      ...schema,
+      required: ['answer', 'n'],
+      properties: { ...schema.properties, n: { type: 'integer' } },
+    };
+    await router.route(makeReq({ model: 'openai/gpt-4o-mini', responseSchema: schema, responseSchemaStrict: true }));
+    const second = await router.route(
+      makeReq({ model: 'openai/gpt-4o-mini', responseSchema: other, responseSchemaStrict: true }),
+    );
+    expect(second.cached).toBe(false);
+    expect(adapterMock).toHaveBeenCalledTimes(2);
   });
 });

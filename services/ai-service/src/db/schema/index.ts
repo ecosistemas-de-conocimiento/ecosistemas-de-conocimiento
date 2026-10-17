@@ -14,15 +14,8 @@
 // keys or `jsonb` blobs (`input`, `output`, `metadata`, …) that the service
 // stores, ferries and aggregates by, but does not look inside.
 //
-// Provenance: derived from a prototype's Payload AI collections — `AiCompanionTraces`,
-// `AiUsageLogs`, `LlmConfigs`, `GenerationRequests` — `GenerationJob` (a
-// transient BullMQ payload in a prototype), and `DimensionSpec` / `TASK_PROFILES`
-// (pulled forward from M3's "registry" into `registry_entries` +
-// `project_configs`). The
-// Prototype-specific pieces (story / dimension / scopeType / surface / tone /
-// traceType / the dimensions list / includeContext shapes) are gone from the
-// column set; they ride along inside `unit_key` / `unit_type` / `metadata` /
-// `input` / `spec_override` instead.
+// Product-specific pieces ride along inside `unit_key` / `unit_type` / `metadata` /
+// `input` / `spec_override` rather than in the column set.
 //
 // Spec-delivery model = **C, registry with inline fallback** (see the consumer
 // contract doc): a consumer may register per-`unitType` `registry_entries`
@@ -191,7 +184,7 @@ export const generationJobStatus = pgEnum('generation_job_status', [
 // ---------------------------------------------------------------------------
 // llm_configs — BYOK provider credentials + per-org limits/budgets
 // ---------------------------------------------------------------------------
-// From a prototype's `llmConfigs`. Org-scoped, so `project` is intentionally absent.
+// Org-scoped, so `project` is intentionally absent.
 // The API key arrives and leaves the service encrypted (AES-256-GCM in the app
 // layer); the DB only ever holds ciphertext — hence `apiKeyEncrypted`.
 // Resolution/redaction is the router's job, not the schema's.
@@ -265,8 +258,7 @@ export const projectConfigs = pgTable(
 // ---------------------------------------------------------------------------
 // What a consumer registers so its `/v1/generate` units can be thin
 // (`unitType` + `input` vars) instead of carrying the whole prompt + schema
-// inline on every call. Pulled forward from M3's registry (a prototype's
-// `DimensionSpec` / `TASK_PROFILES`). The *shape* is project-agnostic; the
+// inline on every call. The *shape* is project-agnostic; the
 // *contents* are the consuming project's. Unset fields fall back to
 // `project_configs`.
 //
@@ -331,7 +323,7 @@ export const registryEntries = pgTable(
 // ---------------------------------------------------------------------------
 // generation_requests — one row per batch submitted to /v1/generate
 // ---------------------------------------------------------------------------
-// From a prototype's `generationRequests`. The consumer has already expanded any
+// The consumer has already expanded any
 // project-wide scope into a flat batch of opaque units before calling, so there
 // is no `scope`/`story`/`dimensions` here — only what the orchestrator needs:
 // the effort knobs and overrides, the rollup counters, the cost totals.
@@ -390,9 +382,9 @@ export const generationRequests = pgTable(
 // ---------------------------------------------------------------------------
 // generation_jobs — one row per generation unit in a batch
 // ---------------------------------------------------------------------------
-// Persisted form of a prototype's transient `GenerationJob`. A "unit" is opaque: the
+// A "unit" is opaque: the
 // consumer gives it a `unitKey` (its own id for the thing being generated) and
-// an optional `unitType` (a grouping tag — what a prototype called a dimension — used
+// an optional `unitType` (a grouping tag used
 // only for per-type cost rollup). `input`/`output` are the request/result
 // blobs the service ferries to/from the model. `queueJobId` links to BullMQ;
 // `traceId` is a soft link to the LLM call.
@@ -448,11 +440,10 @@ export const generationJobs = pgTable(
 // ---------------------------------------------------------------------------
 // traces — one row per LLM call
 // ---------------------------------------------------------------------------
-// From a prototype's `aiCompanionTraces`, stripped to what the service owns: status,
+// What the service owns: status,
 // model/provider, token+cost+duration accounting, effort + the resolved effort
 // profile, the prompt-registry version, and soft links to the request/job/
-// parent trace. `label` is a single opaque grouping tag (what a prototype spread over
-// `surface`/`traceType`). Append-only in spirit — the links are plain uuids,
+// parent trace. `label` is a single opaque grouping tag. Append-only in spirit — the links are plain uuids,
 // not FKs, so a trace can be flushed before (or without) its parents existing.
 
 export const traces = pgTable(
@@ -502,7 +493,7 @@ export const traces = pgTable(
 // ---------------------------------------------------------------------------
 // usage_logs — append-only billing/usage ledger
 // ---------------------------------------------------------------------------
-// From a prototype's `aiUsageLogs` (create-only). One row per provider call charged.
+// Create-only. One row per provider call charged.
 // Soft links to the trace / request / job it belongs to. Nothing updates or
 // deletes these — aggregate over them for `GET /v1/budget/:org`.
 
@@ -641,6 +632,75 @@ export const budgetState = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// budget_reservations — the per-hold ledger behind `budget_state`
+// ---------------------------------------------------------------------------
+//
+// `budget_state.remaining_usd` is a COUNTER. It says how much is left; it
+// cannot say WHAT is currently held, or by whom. That gap is what this table
+// closes, and it is not academic:
+//
+//   · A worker that dies mid-run leaves a reserve held forever. The recovery
+//     path (`lostReserveUsd` in `workers/generation.worker.ts`) had to GUESS
+//     the amount from `generation_jobs.metadata.reservePerCallUsd`, falling
+//     back to `estimated_cost_usd`. That fallback is `perCall ×
+//     validationPasses × multiSample`, so for `deep` / `maximum` it
+//     OVER-refunds — the org is credited money it never had held.
+//   · The router reserves once per PASS. A `maximum`-effort unit takes several
+//     holds under ONE job, and no single stored number describes their sum.
+//   · Nothing could answer "who is holding this org's missing $4?" during an
+//     incident.
+//
+// One row per hold. `state` is the whole lifecycle:
+//   · `reserved` — the hold is live. THIS is the row `lostReserveUsd` sums.
+//   · `settled`  — the call finished and the true-up (`adjust`) reconciled it.
+//   · `refunded` — the hold was returned unspent (adapter threw, extra pass
+//                  skipped, worker declared lost, request cancelled).
+//
+// ⚠ THE LEDGER IS AUDIT, NOT AUTHORITY. `budget_state.remaining_usd` remains
+// the number the atomic reserve reads and writes; a ledger row is written
+// AFTER that UPDATE has already succeeded. Reversing that — deciding
+// admission from a SUM over this table — would trade one atomic statement for
+// a read-modify-write across N rows, which is exactly the race the counter
+// exists to avoid. A ledger write that fails therefore does NOT fail the call;
+// it degrades `lostReserveUsd` to the old fallback, which is what it does for
+// pre-migration rows anyway.
+//
+// `trace_id` / `job_id` are NULLABLE and are plain text, NOT foreign keys:
+// `/v1/generate/sync` and `/v1/embed` reserve with no job row at all, and the
+// router's `traceId` is minted before any `traces` row exists.
+export const budgetReservations = pgTable(
+  'budget_reservations',
+  {
+    id: idColumn(),
+    org: text('org').notNull(),
+    project: text('project'),
+    /** The router's per-call trace id. Groups the holds of one `route()`. */
+    traceId: text('trace_id'),
+    /** `generation_jobs.id`, when the reserve was taken for a queued job. */
+    jobId: text('job_id'),
+    /**
+     * Scale 9, matching `budget_state.remaining_usd` — NOT the 6dp `usd()`
+     * helper. A hold rounded to 6dp cannot sum back to a counter kept at 9dp,
+     * and sub-cent LLM calls live in those last three digits (see the 0008
+     * note on `budget_state`).
+     */
+    amountUsd: numeric('amount_usd', { precision: 20, scale: 9 }).notNull(),
+    /** 'reserved' | 'settled' | 'refunded'. Text, not an enum: the states are
+     *  ours alone and a new one must not be a migration. */
+    state: text('state').notNull().default('reserved'),
+    createdAt: createdAtColumn(),
+    settledAt: timestamp('settled_at', { withTimezone: true }),
+  },
+  (t) => ({
+    orgIdx: index('budget_reservations_org_idx').on(t.org),
+    // The reaper's hot path: "what is still held for this job?".
+    jobStateIdx: index('budget_reservations_job_state_idx').on(t.jobId, t.state),
+    // The router's settle path: "close out this call's holds".
+    traceIdx: index('budget_reservations_trace_idx').on(t.traceId),
+  }),
+);
+
+// ---------------------------------------------------------------------------
 // corpora — RAG: a named, project-scoped collection of documents+chunks
 // ---------------------------------------------------------------------------
 // One row per `(org, project, name)` triple. Each corpus declares the
@@ -686,11 +746,20 @@ export const corpora = pgTable(
      * can never reach `::regconfig`. Stored verbatim; the default is `'simple'`.
      *
      * This IS live and per-corpus: a corpus stored as `'spanish'` builds AND
-     * queries its lexical leg with Spanish stemming (index and query read the
-     * SAME corpus row, so they always align — the cross-language zero-rows
-     * footgun cannot recur). The dense multilingual model carries the rest of
-     * the semantic/cross-language matching. `'simple'` is the neutral,
-     * no-stemming default for content-agnostic corpora.
+     * queries its lexical leg with Spanish stemming. The dense multilingual
+     * model carries the rest of the semantic/cross-language matching.
+     * `'simple'` is the neutral, no-stemming default for content-agnostic
+     * corpora.
+     *
+     * ⚠ INDEX/QUERY ALIGNMENT IS NOT AUTOMATIC. Both sides do read this one
+     * row, but they read it at DIFFERENT TIMES: the index is built once at
+     * ingest and stored in `chunks.text_search` (not a generated column), the
+     * query parses this value on every retrieve. So anything that moves this
+     * value AFTER data has landed must move the stored tsvectors with it, or
+     * the two silently stop agreeing and the lexical leg matches nothing.
+     * `CorpusService.updateCorpus` is the only such path and it does exactly
+     * that — re-running `to_tsvector(<new config>, text)` over the corpus in
+     * the same transaction. A NEW writer of this column must do the same.
      */
     textSearchConfig: text('text_search_config').notNull().default('simple'),
 
@@ -850,6 +919,13 @@ export const chunks = pgTable(
      * would have to hard-code one. NULL on any chunk ingested before migration
      * 0012 — a NULL tsvector matches no tsquery, so hybrid retrieval over an
      * un-backfilled corpus degrades to dense-only instead of going wrong.
+     *
+     * ⚠ Because it is written once and not generated, this column is a COPY of
+     * a decision (`corpora.text_search_config`) that can change later. Every
+     * writer of that config owns re-running `to_tsvector` here — see
+     * `CorpusService.updateCorpus`, which does it in the same transaction as
+     * the config write. Skipping it does not error; it just kills the lexical
+     * leg.
      */
     textSearch: tsvectorColumn('text_search'),
 
@@ -957,6 +1033,67 @@ export const ingestRequests = pgTable(
     orgIdx: index('ingest_requests_org_idx').on(t.org),
     projectIdx: index('ingest_requests_project_idx').on(t.project),
     statusIdx: index('ingest_requests_status_idx').on(t.status),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// ingest_jobs — one row per QUEUED INGEST JOB (i.e. per document)
+// ---------------------------------------------------------------------------
+// 🔴 THIS TABLE EXISTS FOR EXACTLY ONE REASON: an ingest job had no durable
+// per-job row, so there was nothing to claim. `ingest_requests` is the BATCH
+// (one row per POST /v1/ingest, N documents), and the `documents` row does not
+// exist until AFTER the embedding call has been paid for. A stalled or
+// redelivered ingest job therefore re-chunked, re-EMBEDDED (a second charge on
+// the org) and, on the `externalId === null` path where there is no dedupe key,
+// inserted a SECOND documents row with a second full set of chunks.
+//
+// The generation side already solved this shape (`generation_jobs` +
+// `claimJob` / `writeTerminalStatus` in src/workers/generation.worker.ts); the
+// ingest side simply had no row to hang the same conditional UPDATE on. This
+// is that row, and nothing more — status, attempts, and the timestamps needed
+// to SEE a stuck job. Everything else about the job stays in the BullMQ
+// payload, which is where it already was.
+//
+// Lifecycle: 'queued' (inserted by IngestService.ingestBatch, before the BullMQ
+// add) → 'running' (claimed by exactly one worker) → 'completed' / 'failed'.
+// A worker that catches an error RELEASES the row back to 'queued' so BullMQ's
+// own retry (attempts: 3) still works; a worker that DIES leaves the row at
+// 'running' forever. That asymmetry is the decision: a stuck job is visible and
+// free, a silent second embedding charge is neither. There is no automatic
+// takeover.
+
+export const ingestJobStatus = pgEnum('ingest_job_status', [
+  'queued',
+  'running',
+  'completed',
+  'failed',
+]);
+
+export const ingestJobs = pgTable(
+  'ingest_jobs',
+  {
+    id: idColumn(),
+    ...scopingColumns(),
+
+    /** The `ingest_requests` batch this document belongs to. */
+    ingestId: uuid('ingest_id').notNull(),
+
+    /** Consumer dedupe key for this document, if any — for operator triage. */
+    externalId: text('external_id'),
+
+    status: ingestJobStatus('status').notNull().default('queued'),
+    /** Incremented in SQL by the claim, never from a value read into JS. */
+    attempts: integer('attempts').notNull().default(0),
+
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    error: text('error'),
+
+    createdAt: createdAtColumn(),
+  },
+  (t) => ({
+    ingestIdx: index('ingest_jobs_ingest_id_idx').on(t.ingestId),
+    statusIdx: index('ingest_jobs_status_idx').on(t.status),
   }),
 );
 

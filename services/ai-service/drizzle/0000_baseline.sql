@@ -1,6 +1,6 @@
 -- pgvector lives outside Drizzle's introspection; enable it before any table
 -- declares a `vector(N)` column (chunks.embedding). Idempotent so it is safe on
--- a managed Postgres image that already ships the extension.
+-- a Coolify-managed Postgres that already ships the extension.
 CREATE EXTENSION IF NOT EXISTS vector;--> statement-breakpoint
 CREATE TYPE "public"."budget_enforcement" AS ENUM('soft', 'hard');--> statement-breakpoint
 CREATE TYPE "public"."callback_delivery_source" AS ENUM('generate', 'ingest');--> statement-breakpoint

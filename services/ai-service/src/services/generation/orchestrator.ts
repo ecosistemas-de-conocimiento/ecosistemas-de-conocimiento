@@ -3,22 +3,79 @@
 // Walks the 13-step pipeline laid out in plan/m3-step5-detailed-plan.md §B:
 // resolve deps → idempotency probe → per-unit spec resolution → DAG validation
 // → context fetch → two-phase prompt render → estimate → transactional inserts
-// + atomic budget reserve → FlowProducer enqueue (DAG-aware) → emit start
-// event → return handle.
+// → transactional inserts (NO budget movement — see below) → FlowProducer
+// enqueue (DAG-aware) → emit start event → return handle.
 //
 // Two-phase rendering (§B step 6 + plan/m3-m4-decisions.md §16 amendment):
 // leaf units render now; dependent units defer to the worker because their
 // predecessor outputs literally don't exist yet.
 //
-// The budget reserve happens LAST inside the transaction so a row-insert
-// failure cannot leave budget over-decremented (the in-tx UPDATE rolls back
-// alongside the inserts). The step-8 advisory check (`estimateBatch` against
-// `budget.getRemaining`) is best-effort to short-circuit obvious overspends;
-// the atomic reserve is the source of truth.
+// ── 🔴 WHY THERE IS NO BATCH RESERVE HERE ─────────────────────────────────
+// This function used to reserve the WHOLE-request estimate inside the insert
+// transaction. Nothing ever released it. The only refund/adjust callers in the
+// service are the router (its own PER-CALL reserve/true-up) and
+// `routes/embed.ts`, so the batch estimate stayed subtracted from
+// `budget_state.remaining_usd` forever.
+//
+// MEASURED before the fix: remaining 10 → 9.999263 on `POST /v1/generate`,
+// still 9.999263 after the job completed with actual cost 0; on a 2-trace run
+// remaining ended at 10 − 0.000737 − 0.000106 — the stranded estimate sitting
+// on top of the real cost. Every batch leaked its estimate, so a busy org
+// drifted to a false $0 and started 402-ing on money it had never spent.
+//
+// THREE FIXES WERE ON THE TABLE — release per job as the router's per-call
+// reserve takes over; release the whole batch when the request goes terminal;
+// or drop the batch reserve. We dropped it, because the other two add release
+// paths that must fire on EVERY terminal route (completed, failed, cancelled,
+// orphaned row, worker killed mid-job) and any one of them missing recreates
+// exactly this leak — while double-holding the money in the meantime, since
+// the router reserves per call anyway.
+//
+// WHAT STILL ENFORCES THE CAP (ADR-0003 D5 fail-closed is UNCHANGED):
+//   1. `budget.assertConfigured(org)` below — an org with no `budget_state`
+//      row gets a 402 `BudgetNotConfigured` UP FRONT, before any work.
+//   2. The advisory `estimateBatch` gate below — a batch whose estimate
+//      exceeds `remaining_usd` is rejected with 402 `BudgetExceeded` up front.
+//   3. `BudgetEnforcer.reserve()` inside the router, per LLM call, which is
+//      the ATOMIC boundary that actually moves money and refuses when the row
+//      cannot cover the call. It is already the sole enforcement on
+//      `/v1/generate/sync` and `/v1/generate/stream`; the async path now
+//      matches it instead of holding a second, never-released claim.
+//
+// Net invariant, asserted in `orchestrator-budget.integration.test.ts`:
+// after a batch settles, `remaining_usd == initial − Σ(actual cost)`.
+//
+// ── RESIDUAL EXPOSURE, STATED HONESTLY ────────────────────────────────────
+// The advisory gate above is not a lock: any number of batches can pass it
+// concurrently. What actually bounds spend is the router's per-call atomic
+// reserve — but `BudgetEnforcer.adjust()` (the true-up after a call) has NO
+// FLOOR, so an actual cost above its reserve pushes `remaining_usd` down past
+// where the reserve alone would have stopped.
+//
+// The bound is therefore NOT "one call's estimate". It is:
+//
+//   overshoot ≤ Σ over all CONCURRENTLY IN-FLIGHT calls of
+//               max(0, actual_cost − reserved_estimate)
+//
+// and "concurrently in-flight" spans the whole deployment: `concurrency: 5`
+// per generation-worker replica, plus every in-flight `/v1/generate/sync` and
+// `/v1/generate/stream` call, which reserve on the same row. With N workers
+// that is 5N + (open sync/stream calls) simultaneous true-ups.
+//
+// We still prefer this to the old code, and the reason is the SHAPE of the
+// error, not its size: this gap is bounded by in-flight concurrency and
+// SELF-CORRECTING (each true-up settles to the real cost, and the next
+// reserve sees the true remaining), whereas the batch reserve leaked a
+// PERMANENT, UNBOUNDED amount — every batch ever enqueued stayed subtracted
+// forever, drifting a busy org to a false $0. A transient overshoot that
+// heals is strictly better than a monotonic leak that does not.
+//
+// Same bound the sync path has always carried; making it explicit here so a
+// future reader does not mistake the per-call reserve for a hard cap.
 
 import { randomUUID } from 'node:crypto';
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { FlowJob } from 'bullmq';
 
 import { db as defaultDb, type Db } from '../../db/client.js';
@@ -27,6 +84,7 @@ import { BudgetEnforcer } from '../budget/enforcer.js';
 import { BudgetExceeded } from '../budget/errors.js';
 import { getEventBus, type EventBus } from '../events/bus.js';
 import { fetchContext } from '../context/fetch.js';
+import type { RetrieveLogger } from '../rag/retrieve.js';
 import {
   checkIdempotency,
   hashPayload,
@@ -35,17 +93,15 @@ import {
 import {
   GENERATION_QUEUE_NAME,
   generationJobName,
-  getGenerationFlowProducer,
-  getGenerationQueue,
   orgPriorityBucket,
   type GenerationQueueLike,
   type MockFlowProducer,
   type MockJobNode,
+  type Queues,
 } from '../../queue/queues.js';
 import { renderPrompt } from '../render/handlebars.js';
 import {
   resolveSpec,
-  SpecResolutionError,
   type ResolvedSpec,
 } from '../registry/resolve.js';
 import type {
@@ -58,6 +114,7 @@ import type {
 import { estimateBatch } from './estimate.js';
 import {
   BudgetExceededError,
+  BudgetMisconfigured,
   BudgetNotConfigured,
   CrossBatchDependencyError,
   DependencyCycleError,
@@ -66,6 +123,7 @@ import {
 // Re-exports for the route layer's error mapping (one import surface).
 export {
   BudgetExceededError,
+  BudgetMisconfigured,
   BudgetNotConfigured,
   CrossBatchDependencyError,
   DependencyCycleError,
@@ -79,16 +137,24 @@ export { SpecResolutionError } from '../registry/resolve.js';
 
 export interface OrchestratorDeps {
   db?: Db;
-  queue?: GenerationQueueLike;
-  flow?: ReturnType<typeof getGenerationFlowProducer>;
+  /** The generation queue. Required — see the resolution block in `enqueueGeneration`. */
+  queue: GenerationQueueLike;
+  /** The generation flow producer (parent/child `dependsOn` fan-out). Required. */
+  flow: Queues['flow'];
   resolver?: typeof resolveSpec;
   bus?: EventBus;
   budget?: BudgetEnforcer;
   rng?: () => string;
   clock?: () => Date;
+  /**
+   * Logger forwarded to the context fetch, so the RAG retrieve it performs can
+   * warn when it clamps an over-bound stored chunk. Without it that warn is
+   * swallowed on the async generate path.
+   */
+  logger?: RetrieveLogger;
 }
 
-interface OrchestratorCtx {
+export interface OrchestratorCtx {
   org: string;
   project: string;
   requestedBy?: string;
@@ -98,6 +164,18 @@ interface OrchestratorCtx {
    * later from `env.API_KEYS`.
    */
   apiKeyId?: string;
+  /**
+   * Per-HTTP-request correlation id, minted at the edge and carried into the
+   * BullMQ payload so a worker log line can be tied back to the inbound call
+   * that enqueued it.
+   *
+   * ⚠ NOT `requestId`. In this service `requestId` already means
+   * `generation_requests.id` — the DB row for a batch, which outlives the HTTP
+   * call and is shared by every unit in it. `httpRequestId` is the transport
+   * id and is deliberately named so the two can never be confused at a call
+   * site. Not persisted: it rides the job payload only.
+   */
+  httpRequestId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,20 +185,19 @@ interface OrchestratorCtx {
 export async function enqueueGeneration(
   req: GenerateRequest,
   ctx: OrchestratorCtx,
-  deps: OrchestratorDeps = {},
+  deps: OrchestratorDeps,
 ): Promise<LaunchGenerationResult> {
   // ── Step 1. Resolve deps with defaults. ─────────────────────────────────
   const db = deps.db ?? defaultDb;
-  const queue = deps.queue ?? getGenerationQueue();
-  const flow = deps.flow ?? getGenerationFlowProducer();
+  // 🔴 REQUIRED, NOT DEFAULTED. These used to fall back to
+  // `getGenerationQueue()` / `getGenerationFlowProducer()` — module-scope
+  // singletons, so the queue a caller actually enqueued to was invisible at the
+  // call site. The HTTP layer passes `app.runtime.queues.*`; tests pass their
+  // own runtime's.
+  const flow = deps.flow;
   const resolver = deps.resolver ?? resolveSpec;
   const bus = deps.bus ?? getEventBus();
   const budget = deps.budget ?? new BudgetEnforcer(db);
-  // `budgetInjected` is true when the caller passed their own enforcer (tests).
-  // In production we build a fresh enforcer bound to the in-tx handle so the
-  // reserve participates in the same transaction as the row inserts; in tests
-  // we use the injected stub directly so spies + canned returns still work.
-  const budgetInjected = deps.budget !== undefined;
   const clock = deps.clock ?? (() => new Date());
   const rng = deps.rng ?? (() => randomUUID());
 
@@ -157,10 +234,33 @@ export async function enqueueGeneration(
     // `new` ⇒ either no prior row, or the prior row is stale. The
     // idempotency helper doesn't expose the stale id, so probe once more
     // for a same-key row and capture its id for DELETE-in-tx (step 9).
+    //
+    // 🔴 `eq(generationRequests.org, ctx.org)` IS LOAD-BEARING AND WAS MISSING.
+    // Without it this probe matched ANY org's row for the key, and its result
+    // goes straight to `tx.delete(generationRequests).where(eq(id, staleId))`
+    // in step 9 — with `generation_jobs` cascading. `clientRequestId` is
+    // caller-supplied (`z.string().min(1).max(200)`) and never namespaced, and
+    // the unique index is `("org","client_request_id")`, so the same key
+    // legitimately exists in two orgs. `checkIdempotency` above IS org-scoped,
+    // which is exactly what made the hole reachable: it returns `new` for the
+    // caller's org precisely when the only row holding the key belongs to
+    // SOMEONE ELSE, and this probe then resolved to that someone else's row and
+    // deleted it. Any authenticated app key could destroy another tenant's
+    // finished generation batch by guessing a correlation id.
+    //
+    // Proven by `src/routes/tenant-isolation.integration.test.ts` →
+    // "cross-ORG: A enqueueing with B's clientRequestId does NOT delete B's
+    // request or its jobs", which read the victim's rows back and found
+    // `{ requests: 0, jobs: 0 }` before this line existed.
     const priorRows = await db
       .select({ id: generationRequests.id })
       .from(generationRequests)
-      .where(eq(generationRequests.clientRequestId, req.clientRequestId))
+      .where(
+        and(
+          eq(generationRequests.org, ctx.org),
+          eq(generationRequests.clientRequestId, req.clientRequestId),
+        ),
+      )
       .limit(1);
     if (priorRows[0]) staleId = priorRows[0].id;
   }
@@ -196,6 +296,7 @@ export async function enqueueGeneration(
     org: ctx.org,
     project: ctx.project,
     includeContext: req.includeContext,
+    ...(deps.logger ? { logger: deps.logger } : {}),
   });
 
   // ── Step 6. Two-phase prompt rendering. ─────────────────────────────────
@@ -247,13 +348,27 @@ export async function enqueueGeneration(
       estimate.budgetRemainingUsd ?? 0,
     );
   }
+  // Soft-cap warning for the launch response. It used to fall out of the batch
+  // reserve's `ReserveResult`; with the reserve gone it is probed directly so
+  // the `BUDGET_SOFT_CAP` warning consumers already parse keeps arriving
+  // unchanged.
+  //
+  // 🔴 THE ESTIMATE IS PASSED ON PURPOSE. The old reserve judged the soft cap
+  // on the POST-reserve remaining, so the batch that CROSSES the threshold is
+  // the batch that warns. Probing the PRE-spend remaining warns one batch late
+  // — measured on real Postgres (limit 100, soft_cap_pct 90 ⇒ threshold 10,
+  // remaining 10.5, estimate 1.0): post-spend 9.5 fires, pre-spend 10.5 does
+  // not. A consumer can treat this as its one advance notice, so losing the crossing
+  // batch's warning is a consumer-visible regression.
+  const reserveSoftCap = await budget.checkSoftCap(
+    ctx.org,
+    estimate.estimatedCostUsd,
+  );
 
   // ── Step 9. Transaction: stale-row delete (if any) + request row insert
-  //    + per-unit job rows + atomic budget reserve (LAST so a row failure
-  //    rolls the spend back). ───────────────────────────────────────────
+  //    + per-unit job rows. No budget movement — see the header. ─────────
   const insertedJobIds: string[] = [];
   let requestId = '';
-  let reserveSoftCap = false;
   await db.transaction(async (tx) => {
     if (staleId) {
       await tx
@@ -336,26 +451,19 @@ export async function enqueueGeneration(
           effort: spec.effortLevel,
           priority: orgPriorityBucket(ctx.org),
           estimatedCostUsd: ru.estimatedCostUsd.toFixed(6),
+          // The EXACT amount `RouterImpl.budgetReserve` will hold per provider
+          // call for this unit. `estimated_cost_usd` above is this number
+          // multiplied by `validationPasses × multiSample`, which is the right
+          // number to quote a consumer and the WRONG number to refund when a
+          // worker dies with one reserve outstanding. Recorded here so the
+          // lost-worker reaper refunds exactly what was taken — see
+          // `lostReserveUsd` in src/workers/generation.worker.ts.
+          metadata: { reservePerCallUsd: spec.effortProfile.estimatedCostUsdPerCall },
           traceId: rng(),
         })
         .returning({ id: generationJobs.id });
       insertedJobIds.push(inserted[0]!.id);
     }
-
-    // Reserve LAST so an insert exception rolls back the decrement. In
-    // production, build a fresh enforcer bound to `tx` so the UPDATE
-    // participates in the same transaction as the row inserts. In tests,
-    // use the injected enforcer directly so its spies + canned returns
-    // remain observable.
-    const txBudget = budgetInjected ? budget : new BudgetEnforcer(tx);
-    const reserveResult = await txBudget.reserve({
-      org: ctx.org,
-      amountUsd: estimate.estimatedCostUsd,
-    });
-    // Capture the soft-cap flag for the route layer to surface as a warning.
-    // `resetOccurred` is intentionally not propagated up here — the audit row
-    // in `usage_logs` is the contract; the API response stays terse.
-    if (reserveResult.softCap) reserveSoftCap = true;
   });
 
   // ── Step 10. Enqueue via FlowProducer — DAG-aware. ──────────────────────
@@ -387,6 +495,11 @@ export async function enqueueGeneration(
         org: ctx.org,
         project: ctx.project,
         unitKey,
+        // Transport correlation id, forwarded verbatim so worker logs can be
+        // joined to the inbound HTTP call. Omitted (not `undefined`) when the
+        // caller supplied none, so the payload stays byte-identical for
+        // consumers that don't send one.
+        ...(ctx.httpRequestId ? { httpRequestId: ctx.httpRequestId } : {}),
       },
       opts: { priority: orgPriorityBucket(ctx.org) },
       ...(children.length > 0 ? { children } : {}),

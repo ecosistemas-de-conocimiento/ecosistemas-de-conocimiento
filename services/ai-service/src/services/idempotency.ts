@@ -23,6 +23,7 @@ import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import safeStringify from 'safe-stable-stringify';
 
+import { AiServiceError } from '../errors/base.js';
 import type { Db } from '../db/client.js';
 import { generationRequests } from '../db/schema/index.js';
 
@@ -50,13 +51,21 @@ export type IdempotencyDecision =
   | { kind: 'conflict'; existingRequestId: string };
 
 /** Thrown by the orchestrator when `checkIdempotency` returns `conflict`. */
-export class IdempotencyConflictError extends Error {
+export class IdempotencyConflictError extends AiServiceError {
   readonly code = 'ERR_IDEMPOTENCY_CONFLICT' as const;
+  readonly status = 409;
   readonly existingRequestId: string;
+  /** The discriminator predates the class name; consumers switch on it. */
+  override get wireError() {
+    return 'IdempotencyConflict';
+  }
   constructor(existingRequestId: string, message?: string) {
     super(message ?? `clientRequestId already used with a different payload (request ${existingRequestId})`);
     this.name = 'IdempotencyConflictError';
     this.existingRequestId = existingRequestId;
+  }
+  protected override bodyFields() {
+    return { existingRequestId: this.existingRequestId };
   }
 }
 

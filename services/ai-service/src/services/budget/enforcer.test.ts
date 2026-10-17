@@ -8,8 +8,8 @@
 //
 // The deterministic in-memory `stubDb` simulates the atomic-reserve invariant
 // (UPDATE only succeeds if remaining >= amount; both reads and writes serialise
-// through a single in-memory map) so we can keep the prototype concurrency test
-// shape ported: two reserves in Promise.all — exactly one wins. TODO: M3.7
+// through a single in-memory map) so we can keep the concurrency test
+// shape: two reserves in Promise.all — exactly one wins. TODO: M3.7
 // adds a real-DB integration test using docker-compose's pgvector image.
 
 import { sql, type SQL } from 'drizzle-orm';
@@ -141,7 +141,19 @@ function makeStubDb(opts: { llmConfigs?: LlmConfigSeed[]; seedBudgets?: BudgetRo
       row.remaining_usd -= amount;
       return { rows: [{ remaining_usd: row.remaining_usd }] };
     }
-    // Increment (refund or adjust): ... SET remaining_usd = remaining_usd + ? WHERE org = ?
+    // Clamped increment (refund):
+    //   SET remaining_usd = LEAST(remaining_usd + ?, limit_usd) WHERE org = ?
+    // Mirrors Postgres' LEAST so an over-refund cannot mint budget in the stub
+    // either — without this branch the generic `+` branch below would swallow
+    // the refund SQL and the clamp would be untested.
+    if (qstr.includes('LEAST(') && qstr.includes('"remaining_usd" + ')) {
+      const [amount, org] = params as [number, string];
+      const row = budgetRows.get(org);
+      if (!row) return { rows: [] };
+      row.remaining_usd = Math.min(row.remaining_usd + amount, row.limit_usd);
+      return { rows: [{ remaining_usd: row.remaining_usd }] };
+    }
+    // Increment (adjust true-up): ... SET remaining_usd = remaining_usd + ? WHERE org = ?
     if (qstr.includes('"remaining_usd" + ')) {
       const [delta, org] = params as [number, string];
       const row = budgetRows.get(org);
@@ -385,6 +397,51 @@ describe('BudgetEnforcer.refund', () => {
     const enforcer = new BudgetEnforcer(db);
     await expect(enforcer.refund({ org: 'no-such-org', amountUsd: 10 })).resolves.toBeUndefined();
   });
+
+  // F11 — an unclamped refund MINTS budget. A refund credits money that was
+  // supposedly held, but nothing proves it was: refund twice, or refund a hold
+  // whose reserve was already released, and `remaining` climbs past the cap.
+  it('clamps at limit_usd: an over-refund lands exactly on the cap, never above', async () => {
+    const { db, budgetRows } = makeStubDb({
+      seedBudgets: [{ org: 'org', limit_usd: 10, remaining_usd: 9.9 }],
+    });
+    const enforcer = new BudgetEnforcer(db);
+    // Refund far more than was ever reserved.
+    await enforcer.refund({ org: 'org', amountUsd: 5 });
+    expect(budgetRows.get('org')?.remaining_usd).toBe(10);
+    expect(budgetRows.get('org')?.remaining_usd).toBeLessThanOrEqual(10);
+  });
+
+  it('clamps at limit_usd: a double refund cannot exceed the cap', async () => {
+    const { db, budgetRows } = makeStubDb({
+      seedBudgets: [{ org: 'org', limit_usd: 10, remaining_usd: 9 }],
+    });
+    const enforcer = new BudgetEnforcer(db);
+    await enforcer.refund({ org: 'org', amountUsd: 1 });
+    expect(budgetRows.get('org')?.remaining_usd).toBe(10);
+    // Second (spurious) refund of the same hold — the money is already back.
+    await enforcer.refund({ org: 'org', amountUsd: 1 });
+    expect(budgetRows.get('org')?.remaining_usd).toBe(10);
+  });
+
+  it('a refund that stays inside the cap still credits the FULL amount', async () => {
+    const { db, budgetRows } = makeStubDb({
+      seedBudgets: [{ org: 'org', limit_usd: 100, remaining_usd: 40 }],
+    });
+    const enforcer = new BudgetEnforcer(db);
+    await enforcer.refund({ org: 'org', amountUsd: 12.5 });
+    expect(budgetRows.get('org')?.remaining_usd).toBe(52.5);
+  });
+
+  it('emits the clamp in the SQL, as ONE statement (no read-then-write)', async () => {
+    const { db, calls } = makeStubDb({
+      seedBudgets: [{ org: 'org', limit_usd: 10, remaining_usd: 5 }],
+    });
+    const enforcer = new BudgetEnforcer(db);
+    await enforcer.refund({ org: 'org', amountUsd: 1 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatch(/LEAST\(\s*"remaining_usd" \+ .*"limit_usd"\s*\)/);
+  });
 });
 
 describe('BudgetEnforcer.adjust', () => {
@@ -622,6 +679,99 @@ describe('BudgetEnforcer — soft cap (0007_budget_reset)', () => {
     // After: 85, threshold is 10; 85 >= 10 → no softCap.
     expect(result.remainingUsd).toBe(85);
     expect(result.softCap).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkSoftCap — the PROJECTED remaining, not the current one
+//
+// 🔴 THE REGRESSION THIS PINS. The async `/v1/generate` path used to reserve
+// the whole batch estimate, and the soft-cap warning fell out of that reserve —
+// i.e. it was evaluated on the POST-spend remaining, so the batch that CROSSES
+// the threshold is the batch that warns. When the leaking batch reserve was
+// removed, `checkSoftCap` replaced it but judged the PRE-spend remaining, which
+// warns one batch too late: the crossing batch says nothing.
+//
+// MEASURED on real Postgres — limit 100, soft_cap_pct 90 (⇒ threshold 10),
+// remaining 10.5, batch estimate 1.0: the old post-reserve evaluation fires
+// (9.5 < 10); the pre-spend evaluation does not (10.5 >= 10). a consumer can treat this
+// warning as "the one advance notice", so the miss is consumer-visible.
+//
+// These cases run the REAL enforcer against the stub db. A `vi.fn()` returning
+// `softCap: true` would have passed throughout the regression.
+// ---------------------------------------------------------------------------
+
+describe('BudgetEnforcer.checkSoftCap — evaluated on remaining MINUS the estimate', () => {
+  const FUTURE = () => new Date(Date.now() + 24 * 3600 * 1000);
+  /** limit 100 @ soft_cap_pct 90 ⇒ warn threshold = 100 × (1 − 0.9) = 10. */
+  function seedCrossingRow() {
+    return makeStubDb({
+      seedBudgets: [
+        {
+          org: 'org',
+          limit_usd: 100,
+          remaining_usd: 10.5,
+          soft_cap_pct: 90,
+          next_reset_at: FUTURE(),
+        },
+      ],
+    });
+  }
+
+  it('🔴 warns on the batch that CROSSES the threshold (10.5 − 1.0 = 9.5 < 10)', async () => {
+    const { db } = seedCrossingRow();
+    const enforcer = new BudgetEnforcer(db);
+    expect(await enforcer.checkSoftCap('org', 1.0)).toBe(true);
+  });
+
+  it('without the estimate the SAME row does not warn — the pre-spend bug, pinned', async () => {
+    const { db } = seedCrossingRow();
+    const enforcer = new BudgetEnforcer(db);
+    // 10.5 >= 10. This is exactly what the crossing batch used to report, and
+    // is why the estimate has to be passed in.
+    expect(await enforcer.checkSoftCap('org')).toBe(false);
+  });
+
+  it('a batch too small to cross the threshold still does not warn', async () => {
+    const { db } = seedCrossingRow();
+    const enforcer = new BudgetEnforcer(db);
+    // 10.5 − 0.2 = 10.3 >= 10.
+    expect(await enforcer.checkSoftCap('org', 0.2)).toBe(false);
+  });
+
+  it('moves no money, but stamps the throttle so the next probe stays quiet', async () => {
+    const { db, budgetRows } = seedCrossingRow();
+    const enforcer = new BudgetEnforcer(db);
+    expect(await enforcer.checkSoftCap('org', 1.0)).toBe(true);
+    // `remaining_usd` untouched — the probe is not a reserve.
+    expect(budgetRows.get('org')?.remaining_usd).toBe(10.5);
+    // …but `soft_cap_warned_at` IS written: that is the 5-minute throttle, and
+    // it is why the doc comment no longer claims "read-only".
+    expect(budgetRows.get('org')?.soft_cap_warned_at).toBeInstanceOf(Date);
+    expect(await enforcer.checkSoftCap('org', 1.0)).toBe(false);
+  });
+
+  it('a negative estimate cannot inflate remaining and suppress a due warning', async () => {
+    const { db } = makeStubDb({
+      seedBudgets: [
+        {
+          org: 'org',
+          limit_usd: 100,
+          remaining_usd: 5,
+          soft_cap_pct: 90,
+          next_reset_at: FUTURE(),
+        },
+      ],
+    });
+    const enforcer = new BudgetEnforcer(db);
+    // 5 is already below the threshold of 10; −100 must be clamped to 0.
+    expect(await enforcer.checkSoftCap('org', -100)).toBe(true);
+  });
+
+  it('an org with no budget_state row never warns', async () => {
+    const { db } = makeStubDb({});
+    const enforcer = new BudgetEnforcer(db);
+    expect(await enforcer.checkSoftCap('missing-org', 1.0)).toBe(false);
   });
 });
 

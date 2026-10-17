@@ -51,6 +51,30 @@ export interface CapabilityDocument {
 }
 
 /**
+ * Strict schema-constrained output (`responseSchemaStrict: true` on a unit's
+ * `specOverride` / `specDefault`). A deployment that has it also publishes one
+ * name per model it will run strictly: `strictStructuredOutput:<model id>`.
+ */
+export const STRICT_STRUCTURED_OUTPUT_CAPABILITY = 'strictStructuredOutput';
+
+/**
+ * The capability names to `require` before sending `responseSchemaStrict: true`
+ * to `model`: the feature name, plus the per-model name when a model is given.
+ *
+ * ```ts
+ * await client.capabilities.negotiate({
+ *   consumer: 'my-app',
+ *   require: [...strictStructuredOutputCapabilities('openai/gpt-4o-mini')],
+ * })
+ * ```
+ */
+export function strictStructuredOutputCapabilities(model?: string): string[] {
+  return model
+    ? [STRICT_STRUCTURED_OUTPUT_CAPABILITY, `${STRICT_STRUCTURED_OUTPUT_CAPABILITY}:${model}`]
+    : [STRICT_STRUCTURED_OUTPUT_CAPABILITY];
+}
+
+/**
  * `strict` — refuse to start when a required capability is positively absent.
  *   The default for stage/prod.
  * `warn` — log loudly and continue. For dev/local.
@@ -217,6 +241,12 @@ export class CapabilitiesAPI {
         res = await this.http.raw({
           method: 'GET',
           path: '/v1/capabilities',
+          // 🔴 ONE ladder, not two. This loop already retries with backoff AND
+          // classifies each outcome (404 = positive absence, 5xx = unclear),
+          // which the transport cannot do. Leaving the transport's own retry
+          // on multiplied the ladders: `attempts` here x `attempts` there = 9
+          // requests for a default 3, and every wait compounded the same way.
+          retry: { attempts: 1 },
           ...(args.signal ? { signal: args.signal } : {}),
         });
       } catch (err) {

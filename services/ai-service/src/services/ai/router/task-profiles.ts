@@ -1,7 +1,6 @@
 // Router-internal pricing fallback. The effort-profile defaults live in
 // `src/services/registry/resolve.ts` as `EFFORT_PROFILES` (single source of
-// truth in ai-service); `TASK_PROFILES` is re-exported as an alias for back-
-// compat with prototype-shaped imports. This file owns only the per-model price
+// truth in ai-service); `TASK_PROFILES` is re-exported as an alias. This file owns only the per-model price
 // table used when OpenRouter doesn't return a `cost` field on usage.
 
 import type { EffortLevel, EffortProfile } from '../../../types/generation.js';
@@ -29,8 +28,12 @@ export const MODEL_PRICING: Record<
   'deepseek/deepseek-chat-v3.1': { inputPerMillion: 0.21, outputPerMillion: 0.79 },
   'moonshotai/kimi-k2-0905': { inputPerMillion: 0.6, outputPerMillion: 2.5 },
   'deepseek/deepseek-r1': { inputPerMillion: 0.7, outputPerMillion: 2.5 },
-  // Legacy entries (kept for old trace cost-fallback):
+  // OpenAI/Anthropic entries. Several are ACTIVE, including gpt-4o-mini (router
+  // default). Others stay for old trace cost-fallback.
   'openai/gpt-4o-mini': { inputPerMillion: 0.15, outputPerMillion: 0.6 },
+  // OpenRouter list price read from GET https://openrouter.ai/api/v1/models
+  // ($0.40 / $1.60 per 1M).
+  'openai/gpt-4.1-mini': { inputPerMillion: 0.4, outputPerMillion: 1.6 },
   'openai/gpt-4o': { inputPerMillion: 2.5, outputPerMillion: 10 },
   'anthropic/claude-3.5-sonnet': { inputPerMillion: 3, outputPerMillion: 15 },
   'anthropic/claude-3.5-haiku': { inputPerMillion: 0.8, outputPerMillion: 4 },

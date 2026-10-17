@@ -1,6 +1,6 @@
 {
   "name": "@edc/chat-engine",
-  "version": "0.3.1",
+  "version": "0.6.0",
   "description": "Domain-agnostic chat/RAG engine core + SvelteKit component library. One package, two build outputs: backend-agnostic TS (`./core`) and SvelteKit components (`./svelte`).",
   "type": "module",
   "license": "UNLICENSED",
@@ -32,17 +32,18 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.core.json && svelte-package -i src/svelte -o dist/svelte",
+    "build": "tsc -p tsconfig.core.json && pnpm run build:svelte",
     "build:core": "tsc -p tsconfig.core.json",
-    "build:svelte": "svelte-package -i src/svelte -o dist/svelte",
+    "build:svelte": "svelte-package -i src/svelte -o dist/svelte && find dist/svelte -name '*.test.*' -delete",
     "typecheck": "tsc -p tsconfig.core.json --noEmit",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
   "peerDependencies": {
-    "svelte": "^5.0.0",
-    "@sveltejs/kit": "^2.0.0"
+    "@sveltejs/kit": "^2.0.0",
+    "svelte": "^5.0.0"
   },
   "peerDependenciesMeta": {
     "svelte": {
@@ -52,13 +53,16 @@
       "optional": true
     }
   },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "devDependencies": {
     "@sveltejs/package": "^2.5.8",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "svelte": "^5.16.0",
     "svelte-check": "^4.1.1",
     "typescript": "^5.7.3",
-    "vite": "^6.0.7",
-    "vitest": "^3.0.5"
+    "vite": "^6.4.0",
+    "vitest": "^5.0.0"
   }
 }

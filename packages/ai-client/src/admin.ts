@@ -2,11 +2,19 @@
 //
 // Wraps the admin-gated endpoints under `/v1/*` that platform operators (not
 // regular org/project users) consume. Today: `getOpenRouterCredits()` for the
-// operator dashboard, `deleteCorpus()` for the rollout-plan §Sa corpus
-// lifecycle.
+// operator dashboard, `deleteCorpus()` / `deleteDocument()` for the
+// rollout-plan §Sa corpus lifecycle.
+//
+// ⚠ Despite the sub-API's name, several methods here take the ordinary
+// APP-ROLE key: `deleteCorpus`, `deleteDocument` and `setDocumentValidity`
+// are scoped by `(org, project)`, not by role. Each method's doc says which.
 
 import type { HttpClient } from './http.js';
-import type { DeleteCorpusResult, SetDocumentValidityResult } from './types.js';
+import type {
+  DeleteCorpusResult,
+  DeleteDocumentResult,
+  SetDocumentValidityResult,
+} from './types.js';
 
 // `DeleteCorpusResult` is defined canonically in `./types.js` (it is also the
 // return type of `client.corpora.delete`); re-exported here for the historical
@@ -64,6 +72,33 @@ export class AdminAPI {
     return this.http.json<DeleteCorpusResult>({
       method: 'DELETE',
       path: `/v1/corpus/${encodeURIComponent(name)}`,
+    });
+  }
+
+  /**
+   * Delete ONE document (by the consumer's external id) and its chunks,
+   * leaving the corpus and sibling documents intact — the doc-removed-entirely
+   * case that re-ingest cannot express.
+   *
+   * App-role token (an admin key also works), scoped to the key's
+   * `(org, project)`; a document in another tenant reads as missing.
+   *
+   * Errors:
+   *   - 404 (`CORPUS_NOT_FOUND` / `DOCUMENT_NOT_FOUND`) — never ingested, or
+   *     already deleted. Treat as a no-op for at-most-once cleanup.
+   *   - 400 when `corpus` or `externalId` is empty.
+   *
+   * See the route handler at `src/routes/corpus.ts` in the ai-service repo.
+   *
+   * @param corpus corpus name
+   * @param externalId the consumer-supplied document id used at ingest
+   */
+  async deleteDocument(corpus: string, externalId: string): Promise<DeleteDocumentResult> {
+    return this.http.json<DeleteDocumentResult>({
+      method: 'DELETE',
+      path: `/v1/corpus/${encodeURIComponent(corpus)}/documents/${encodeURIComponent(
+        externalId,
+      )}`,
     });
   }
 

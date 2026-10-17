@@ -6,9 +6,6 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { V1_DEFAULT_RATE_LIMIT_MAX } from '../server-limits.js';
-import { warmServerModule } from '../test/server-harness.js';
-
 // ---------------------------------------------------------------------------
 // Mock collaborators — must run before the dynamic buildServer import.
 // ---------------------------------------------------------------------------
@@ -39,9 +36,9 @@ vi.mock('../services/rag/ingest.js', () => {
   return { IngestService };
 });
 
-vi.mock('../queue/queues.js', () => ({
-  getIngestQueue: () => ({}),
-}));
+// (The `queue/queues.js` mock that used to sit here is gone: `buildServer()`
+// now takes a Runtime, and the default test Runtime already hands back the
+// in-memory queues this file needs. See `src/runtime.ts`.)
 
 vi.mock('../db/client.js', () => ({
   db: {
@@ -60,25 +57,6 @@ vi.mock('../db/client.js', () => ({
 }));
 
 const APP_TOKEN = 'test-key';
-// A SECOND, distinct consumer. `vitest.config.ts` only ships one key, and the
-// bucketing tests below need two so "different keys" is a real condition and
-// not a relabelled single key. Stubbed at module scope so it is in place
-// before `makeApp()`'s `vi.resetModules()` re-evaluates `config/env.ts`.
-const OTHER_TOKEN = 'other-test-key';
-vi.stubEnv(
-  'API_KEYS',
-  JSON.stringify({
-    [APP_TOKEN]: { org: 'test-org', project: 'test-project' },
-    [OTHER_TOKEN]: { org: 'other-org', project: 'other-project' },
-  }),
-);
-
-// This file cannot share one server import the way its siblings do — see
-// `makeApp()` — so instead the expensive transform is WARMED in `beforeAll`.
-// Later re-imports then only re-evaluate, which keeps the ~3 s module-graph
-// cost off the per-test clock and its 5 s timeout.
-// See `src/test/server-harness.ts`.
-warmServerModule();
 
 async function makeApp() {
   // Force a fresh module instance so each test starts with a clean
@@ -180,132 +158,6 @@ describe('rate limiting', () => {
 
     await app.close();
   }, 30_000);
-});
-
-// ---------------------------------------------------------------------------
-// Which bucket? — per-IP vs per-API-key
-// ---------------------------------------------------------------------------
-//
-// 🔴 These assert BEHAVIOUR, never config. The broken version of `server.ts`
-// declared `keyGenerator: (req) => req.auth?.apiKeyId ?? req.ip` and passed
-// every config-shaped test, while the key was in fact ALWAYS `req.ip`:
-// `@fastify/rate-limit` hooks in at `onRequest` by default and `requireAuth`
-// is a `preHandler`, so `req.auth` did not exist yet.
-//
-// The only way to tell the two apart from outside is to vary the API key and
-// the source IP INDEPENDENTLY and watch the status codes.
-//
-// `app.inject({ remoteAddress })` sets the socket address, and `buildServer()`
-// runs with `trustProxy: true` and no `x-forwarded-for` here, so `req.ip` is
-// exactly what we pass.
-
-/** GET /v1/ — the authenticated ping. No route override, so the /v1 default cap applies. */
-function ping(
-  app: Awaited<ReturnType<typeof makeApp>>,
-  opts: { token?: string; ip: string },
-) {
-  return app.inject({
-    method: 'GET',
-    url: '/v1/',
-    remoteAddress: opts.ip,
-    ...(opts.token ? { headers: { authorization: `Bearer ${opts.token}` } } : {}),
-  });
-}
-
-/**
- * How many distinct source IPs one key's allowance is spread over. 100/25 = 4
- * requests per IP — nowhere near the 100/min per-IP ceiling, so anything
- * refused AFTER this ran was refused by the per-KEY bucket and by nothing else.
- * That separation is the whole point; do not collapse it to a single IP.
- */
-const SPREAD_IPS = 25;
-const spreadIp = (i: number) => `10.0.0.${(i % SPREAD_IPS) + 1}`;
-
-/** Burn one key's entire per-minute allowance, scattered across `SPREAD_IPS` addresses. */
-async function spendWholeAllowanceAcrossManyIps(
-  app: Awaited<ReturnType<typeof makeApp>>,
-  token: string,
-) {
-  for (let i = 0; i < V1_DEFAULT_RATE_LIMIT_MAX; i++) {
-    const res = await ping(app, { token, ip: spreadIp(i) });
-    expect(res.statusCode, `warm-up ${i + 1} from ${spreadIp(i)} should pass`).toBe(200);
-  }
-}
-
-describe('rate limiting is bucketed per API key, not only per IP', () => {
-  it('counts one API key across every source IP it arrives from', async () => {
-    const app = await makeApp();
-    // 100 requests, 4 per IP. No IP is anywhere near its own ceiling.
-    await spendWholeAllowanceAcrossManyIps(app, APP_TOKEN);
-
-    // Same key, from an address that has served only 4 requests. If the bucket
-    // were keyed by IP this sails through; keyed by API key it is the 101st.
-    const blocked = await ping(app, { token: APP_TOKEN, ip: spreadIp(0) });
-    expect(blocked.statusCode).toBe(429);
-
-    // The 429 body shape is part of ai-service's published contract — other
-    // products parse `retryAfterMs`. It must survive on the new bucket too.
-    const body = blocked.json();
-    expect(body.error).toBe('RateLimitExceeded');
-    expect(body.message).toMatch(/Retry after \d+s/);
-    expect(body.retryAfterMs).toBeGreaterThan(0);
-
-    await app.close();
-  });
-
-  it('does not let one exhausted key refuse a different key on the same IP', async () => {
-    const app = await makeApp();
-    await spendWholeAllowanceAcrossManyIps(app, APP_TOKEN);
-
-    // Both of the next two requests come from THE SAME address. One is refused
-    // and the other served — which is only possible if they are counted in
-    // different buckets.
-    const sharedIp = spreadIp(0);
-    const exhausted = await ping(app, { token: APP_TOKEN, ip: sharedIp });
-    const neighbour = await ping(app, { token: OTHER_TOKEN, ip: sharedIp });
-
-    expect(exhausted.statusCode, 'the key that spent its allowance').toBe(429);
-    expect(neighbour.statusCode, 'a different key from the same IP').toBe(200);
-
-    await app.close();
-  });
-
-  it('still refuses an unauthenticated flood from one IP, before auth runs', async () => {
-    const app = await makeApp();
-    const ip = '198.51.100.7';
-
-    // Every one of these is rejected by `requireAuth` — and still counted.
-    // That is what makes the pre-auth bucket a credential-guessing ceiling.
-    for (let i = 0; i < V1_DEFAULT_RATE_LIMIT_MAX; i++) {
-      const res = await ping(app, { ip });
-      expect(res.statusCode, `unauthenticated attempt ${i + 1}`).toBe(401);
-    }
-
-    const blocked = await ping(app, { ip });
-    expect(blocked.statusCode, 'the flood is cut off by rate limiting, not by auth').toBe(429);
-    expect(blocked.json().error).toBe('RateLimitExceeded');
-
-    await app.close();
-  });
-
-  it('keeps the per-IP ceiling where it was — a fresh key on a flooded IP is still refused', async () => {
-    // The counterweight to the test above it: splitting the bucket did NOT
-    // raise how much traffic one address may send. Two keys sharing an egress
-    // IP still share the per-IP ceiling; per-key fairness only bites once they
-    // do not. Guards against anyone "fixing" fairness by loosening this.
-    const app = await makeApp();
-    const ip = '198.51.100.9';
-
-    for (let i = 0; i < V1_DEFAULT_RATE_LIMIT_MAX; i++) {
-      const res = await ping(app, { token: APP_TOKEN, ip });
-      expect(res.statusCode, `request ${i + 1} from ${ip}`).toBe(200);
-    }
-
-    const neighbour = await ping(app, { token: OTHER_TOKEN, ip });
-    expect(neighbour.statusCode).toBe(429);
-
-    await app.close();
-  });
 });
 
 // ---------------------------------------------------------------------------

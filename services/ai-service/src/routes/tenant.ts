@@ -16,7 +16,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 
 import { db } from '../db/client.js';
-import { provisionTenantRequestSchema } from '../schemas/tenant.js';
+import { provisionTenantRequestSchema } from '../contract/tenant.js';
 import {
   getTenantReadiness,
   provisionTenant,

@@ -1,0 +1,11 @@
+Read the note below and return a single JSON object with exactly these keys:
+
+  "name"    string  - the person named in the note
+  "city"    string  - the city named in the note
+  "day"     string  - the weekday named in the note, lowercase English
+  "count"   number  - the quantity named in the note
+
+Return raw JSON only. No markdown fence, no commentary, no extra keys.
+
+Note:
+{{ note }}

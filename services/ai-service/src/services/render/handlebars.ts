@@ -1,6 +1,12 @@
 import Handlebars from 'handlebars';
 
-export class RenderError extends Error {
+import { AiServiceError } from '../../errors/base.js';
+
+export class RenderError extends AiServiceError {
+  readonly code = 'ERR_RENDER';
+  readonly status = 400;
+  /** Rendering happens before the SSE hijack; kept legible if it ever moves. */
+  override readonly midStream = true;
   override readonly name = 'RenderError';
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);

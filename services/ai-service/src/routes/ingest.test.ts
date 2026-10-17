@@ -23,15 +23,9 @@ vi.mock('../db/client.js', () => ({
   db: {},
 }));
 
-vi.mock('../queue/queues.js', async () => {
-  const actual = await vi.importActual<typeof import('../queue/queues.js')>(
-    '../queue/queues.js',
-  );
-  return {
-    ...actual,
-    getIngestQueue: () => ({ add: vi.fn(), addBulk: vi.fn() }),
-  };
-});
+// (The `queue/queues.js` mock that used to sit here is gone: `buildServer()`
+// now takes a Runtime, and the default test Runtime already hands back the
+// in-memory ingest queue this file needs. See `src/runtime.ts`.)
 
 const APP_TOKEN = 'test-key';
 const ORG = 'test-org';

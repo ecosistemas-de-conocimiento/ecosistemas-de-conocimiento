@@ -23,8 +23,8 @@
 // Falls back to `priceForEmbedding()` for any other model in the price table.
 
 import { env } from '../../../config/env.js';
+import { minimiseEgress } from '../pii-egress.js';
 import { priceForEmbedding } from '../router/task-profiles.js';
-import { isMockEmbeddingsEnabled, mockEmbedOne } from './mock-embed.js';
 
 // The embeddings endpoint is config-driven (`env.EMBEDDINGS_URL`) so the model
 // can be served by a managed provider in dev and a self-hosted box in prod with
@@ -101,19 +101,20 @@ function appHeaders(apiKey: string): Record<string, string> {
  * or error envelopes.
  */
 export async function callOpenRouterEmbedding(opts: EmbedOptions): Promise<EmbedResult> {
-  // Offline mock seam — gated by the same `MOCK_LLM=1` switch that swaps the
-  // chat-completion adapter (or the dedicated `MOCK_EMBEDDINGS=1` override).
-  // Short-circuits BEFORE the API-key check and the `fetch` below so RAG
-  // ingest/query work with zero network and zero spend, even with no key set.
-  // The real path is untouched when the flag is off.
-  if (isMockEmbeddingsEnabled()) {
-    return mockEmbedding(opts);
-  }
-
   const apiKey = resolveApiKey(opts);
   const body = {
     model: opts.model,
-    input: opts.input,
+    // 🔴 EGRESS SEAM 3 of 5 (§9.4; see `../pii-egress.ts`). This is the "ingest embeddings" site: ingest
+    // (`src/workers/ingest.worker.ts`), `/v1/embed` and retrieve all embed
+    // through this one function, so scrubbing here covers all three and makes a
+    // future caller opt in by default.
+    //
+    // ⚠ CONSEQUENCE, stated so nobody discovers it as a retrieval bug: a chunk
+    // whose text carries a CURP is embedded as `[CURP]`, and a query carrying
+    // the same CURP is embedded as `[CURP]` too — the two stay consistent, but a
+    // corpus ingested BEFORE this change was embedded from the raw text. Mixing
+    // them degrades recall on such chunks; re-ingest is the fix.
+    input: await minimiseEgress(opts.input, opts.signal),
     // Force float arrays. Some OpenRouter-routed hosts (and the open models we
     // now use, e.g. bge-m3) can return base64-packed floats otherwise, which
     // this adapter deliberately rejects rather than decodes (see below).
@@ -182,28 +183,6 @@ export async function callOpenRouterEmbedding(opts: EmbedOptions): Promise<Embed
     embeddings,
     model,
     usage: { inputTokens, estimatedCostUsd },
-  };
-}
-
-/**
- * Offline mock embedding path. Returns one deterministic, unit-normalized
- * 1024-dim vector per input (seeded from a hash of the text, so cosine top-K
- * is stable across runs). Does NO network I/O.
- *
- * The `usage` object matches the real path's shape so the budget ledger and
- * usage-readers (e.g. `src/workers/ingest.worker.ts`, which reads
- * `usage.inputTokens` + `usage.estimatedCostUsd`) keep working. `inputTokens`
- * is the same chars/4 estimate the real path falls back to; `estimatedCostUsd`
- * is 0 — mock embeddings are free.
- */
-function mockEmbedding(opts: EmbedOptions): EmbedResult {
-  const inputs = Array.isArray(opts.input) ? opts.input : [opts.input];
-  const embeddings = inputs.map((text) => mockEmbedOne(text));
-  const inputTokens = resolveInputTokens(undefined, opts.input);
-  return {
-    embeddings,
-    model: opts.model,
-    usage: { inputTokens, estimatedCostUsd: 0 },
   };
 }
 

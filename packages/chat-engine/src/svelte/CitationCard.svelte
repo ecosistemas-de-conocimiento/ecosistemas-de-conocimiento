@@ -6,7 +6,10 @@
    *   - clickable `[N]` markers (rendered from `content` as CLEAN TEXT — no
    *     `{@html}`) that reveal …
    *   - an inline card per citation with the QUOTED passage (`<blockquote>`),
-   *     the source title, a link to open the original asset, and a relevance %,
+   *     the source title and a link to open the original asset. It shows NO
+   *     relevance number (0.6.0): `CitationLike.score` is data only, and its
+   *     scale depends on the retrieve mode (cosine vs RRF vs rerank). A
+   *     hybrid hit the model rightly cited rendered as "4%" (decision D1).
    *   - plus a "Fuentes consultadas" list that toggles each card open/closed.
    *
    * EVERYTHING product-specific is injected:
@@ -28,14 +31,19 @@
    */
   import type { CitationLike, CitationSegment } from "@edc/chat-engine/core";
   import { splitContentByCitations } from "@edc/chat-engine/core";
+  import { safeHref } from "./safeHref.js";
 
   interface CitationLabels {
     /** Heading above the source list. e.g. "Fuentes consultadas". */
     sourcesTitle: string;
     /** Text/aria for the "open the original asset" link. e.g. "Abrir documento". */
     openSource: string;
-    /** Prefix before the relevance %. e.g. "Relevancia". */
-    relevance: string;
+    /**
+     * @deprecated Since 0.6.0 the card renders no relevance number, so this
+     * label is ignored. Kept optional so existing consumers still typecheck;
+     * it will be removed in the next breaking release.
+     */
+    relevance?: string;
     /** Fallback when a citation has no title. e.g. "Fuente sin título". */
     untitledSource: string;
     /** aria-label for a `[N]` marker button (ordinal appended). e.g. "Ver fuente". */
@@ -62,6 +70,11 @@
     onopensource?: (citation: CitationLike, href: string) => void;
     /** Stable id seed for ARIA + card anchors (unique per message). Default auto. */
     idSeed?: string | number;
+    /**
+     * Ordinals whose cards start expanded. ADDITIVE (0.6.0), default none.
+     * Read once at mount, like `sourcesOpenByDefault`; thereafter user-toggled.
+     */
+    initiallyExpanded?: number[];
   }
 
   const {
@@ -73,6 +86,7 @@
     sourcesOpenByDefault = false,
     onopensource,
     idSeed,
+    initiallyExpanded,
   }: Props = $props();
 
   // Stable-enough seed for element ids when the consumer doesn't pass one.
@@ -86,7 +100,8 @@
   );
 
   // Which citation cards are expanded (by ordinal).
-  let expanded = $state<Set<number>>(new Set());
+  // svelte-ignore state_referenced_locally
+  let expanded = $state<Set<number>>(new Set(initiallyExpanded ?? []));
   // Source list open/closed (only relevant when collapsible). Seeded once from
   // the prop's initial value; thereafter user-toggled.
   // svelte-ignore state_referenced_locally
@@ -129,7 +144,8 @@
 
   function hrefFor(c: CitationLike): string | null {
     const resolved = linkResolver ? linkResolver(c) : null;
-    return resolved ?? c.href ?? null;
+    const href = resolved ?? c.href ?? null;
+    return safeHref(href); // the one shared guard — see safeHref.ts
   }
 
   function onSourceLinkClick(e: MouseEvent, c: CitationLike, href: string): void {
@@ -150,10 +166,6 @@
 
   function titleOf(c: CitationLike): string {
     return (c.title && c.title.trim()) || labels.untitledSource;
-  }
-
-  function pct(score: number | null | undefined): number | null {
-    return typeof score === "number" ? Math.round(score * 100) : null;
   }
 
   const hasCitations = $derived(citations.length > 0);
@@ -194,11 +206,6 @@
           {#if c.passageText && c.passageText.trim()}
             <blockquote class="citation-card-passage">{c.passageText}</blockquote>
           {/if}
-          {#if pct(c.score) != null}
-            <span class="citation-card-score"
-              >{labels.relevance}: {pct(c.score)}%</span
-            >
-          {/if}
         </div>
       {/if}
     {/each}
@@ -234,9 +241,6 @@
             >
               <span class="citation-source-ord">[{c.ordinal}]</span>
               <span class="citation-source-title">{titleOf(c)}</span>
-              {#if pct(c.score) != null}
-                <span class="citation-source-score">{pct(c.score)}%</span>
-              {/if}
             </button>
             {#if href}
               <a
@@ -334,12 +338,6 @@
     font-style: italic;
     white-space: pre-wrap;
   }
-  .citation-card-score {
-    display: block;
-    margin-top: 0.35rem;
-    font-size: 0.72rem;
-    color: var(--edc-color-ink-soft);
-  }
 
   .citation-sources {
     margin-top: 0.65rem;
@@ -406,10 +404,5 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .citation-source-score {
-    flex: 0 0 auto;
-    color: var(--edc-color-ink-soft);
-    font-size: 0.74rem;
   }
 </style>

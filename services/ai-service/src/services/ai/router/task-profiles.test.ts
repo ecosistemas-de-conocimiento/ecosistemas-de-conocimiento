@@ -28,6 +28,14 @@ describe('priceForUsage', () => {
     expect(priceForUsage(model, inputTokens, outputTokens)).toBeCloseTo(expected, 12);
   });
 
+  // Without a row, a call whose OpenRouter usage carries no cost is ledgered at $0. The
+  // expected value is a MEASURED call (4348 in / 496 out → $0.0025328,
+  // OpenRouter-reported cost), so the row must reproduce OpenRouter's price.
+  it('prices openai/gpt-4.1-mini at OpenRouter rates', () => {
+    expect(MODEL_PRICING['openai/gpt-4.1-mini']).toEqual({ inputPerMillion: 0.4, outputPerMillion: 1.6 });
+    expect(priceForUsage('openai/gpt-4.1-mini', 4348, 496)).toBeCloseTo(0.0025328, 10);
+  });
+
   it('returns 0 for an unknown model', () => {
     expect(priceForUsage('does/not-exist', 1_000_000, 1_000_000)).toBe(0);
   });

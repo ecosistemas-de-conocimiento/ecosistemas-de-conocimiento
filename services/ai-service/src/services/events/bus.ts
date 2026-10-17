@@ -1,7 +1,7 @@
 /**
  * M3 Step 5 — in-process typed event bus.
  *
- * Ported from a prototype `events/bus.ts`. Backed by `mitt` for the wildcard channel
+ * Backed by `mitt` for the wildcard channel
  * plus per-type subscriptions. Preserves discriminated-union narrowing on
  * `AppEvent` so subscribers get the correctly-narrowed variant for the type
  * they listened for.

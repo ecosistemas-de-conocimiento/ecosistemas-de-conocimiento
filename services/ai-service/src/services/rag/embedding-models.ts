@@ -19,6 +19,8 @@
 // This map is exported so the corpus-CRUD session (a separate route surface)
 // can reuse the same validation rather than re-deriving it.
 
+import { CodedEnvelopeError } from '../../errors/base.js';
+
 /**
  * Known open + hosted embedding models → the vector dimension they emit.
  * Keep additive; an unknown model is not an error here (see
@@ -43,10 +45,12 @@ export function knownEmbeddingDim(model: string): number | undefined {
 
 /**
  * Thrown when a corpus is asked to use an embedding model whose known
- * dimension cannot fit the live `chunks.embedding` column. Caught at the
- * ingest route and surfaced as a 400 (consumer error) rather than a 500.
+ * dimension cannot fit the live `chunks.embedding` column. A 400 (consumer
+ * error) rather than a 500 — declared by the class, not re-decided per route.
  */
-export class EmbeddingDimensionMismatchError extends Error {
+export class EmbeddingDimensionMismatchError extends CodedEnvelopeError {
+  readonly code = 'ERR_EMBEDDING_DIMENSION_MISMATCH';
+  readonly status = 400;
   readonly model: string;
   readonly modelDim: number;
   readonly columnDim: number;

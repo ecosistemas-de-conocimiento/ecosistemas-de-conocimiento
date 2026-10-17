@@ -6,8 +6,7 @@
 //     leaving the `corpora` row and sibling documents intact.
 //   - Consumers that re-version a source document get free chunk replacement
 //     via the ingest worker's externalId dedupe; this endpoint covers the
-//     OTHER lifecycle event — a document being *removed* entirely (a prototype
-//     document-delete flow) — which re-ingest can never express.
+//     OTHER lifecycle event — a document being *removed* entirely — which re-ingest can never express.
 //
 // Behaviour:
 //   - Resolve `(org, project, name)` to a `corpora` row (same scoped lookup

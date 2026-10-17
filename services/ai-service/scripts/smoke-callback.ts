@@ -7,8 +7,8 @@
 //   2. Boots the real ai-service (`buildServer()` + `startWorkers()`) in the
 //      same process so the ingest worker runs the actual emit code path.
 //   3. POSTs a small `/v1/ingest` batch with `callbackUrl` set to the echo
-//      receiver. The MOCK_LLM stub fakes embeddings deterministically — no
-//      OpenRouter spend.
+//      receiver. Embeddings come from the TEST-ONLY fake provider
+//      (`test-support/fake-provider/`), started in-process — no OpenRouter spend.
 //   4. Waits up to 30s for the echo receiver to capture N callbacks (N =
 //      docs.length, one `ingest.completed` per doc).
 //   5. For every captured callback, re-derives the HMAC over `${timestamp}.${rawBody}`
@@ -38,16 +38,28 @@ import { createHmac, randomBytes } from 'node:crypto';
 
 import Fastify, { type FastifyInstance } from 'fastify';
 
+import { startFakeProvider } from '../test-support/fake-provider/server.mjs';
+
 // ---------------------------------------------------------------------------
 // Env rebind — MUST happen before any ai-service module loads `config/env.ts`.
 // ---------------------------------------------------------------------------
 
+// Fallback matches `docker-compose.yml` (POSTGRES_DB=ai_service_test) — a
+// zero-config run targets the throwaway database, never whatever else happens
+// to be listening on 55432. This script runs drizzle migrations, so pointing it
+// at a live database by accident is not harmless.
 process.env.DATABASE_URL ??=
   'postgres://ai_service:ai_service@localhost:45432/ai_service';
 process.env.REDIS_URL ??= 'redis://localhost:56379';
 process.env.NODE_ENV = 'development';
+// The echo receiver listens on 127.0.0.1, which the callback SSRF guard blocks
+// unless private targets are allowed. Local-only, exactly as `.env.docker`.
+process.env.CALLBACK_ALLOW_PRIVATE ??= '1';
 process.env.LOG_LEVEL ??= 'warn';
-process.env.MOCK_LLM = '1';
+// The TEST-ONLY fake provider serves the embeddings; its env points the real
+// adapters at it and supplies a placeholder key.
+const fakeProvider = await startFakeProvider();
+Object.assign(process.env, fakeProvider.env);
 
 // A fresh, in-memory API key for this smoke. The 64-hex-char secret matches
 // the contract recommendation.
@@ -163,12 +175,16 @@ function verifySignature(
 // `callOpenRouterEmbedding` signature shape so the worker accepts it.
 // ---------------------------------------------------------------------------
 
-function makeMockEmbedder() {
+function makeMockEmbedder(dim: number) {
   return async ({ model, input }: { model: string; input: string | string[] }) => {
     const items = Array.isArray(input) ? input : [input];
-    // 1536-dim 0-filled vectors. The ingest worker writes these into chunks
-    // and the embedding column type is `vector(1536)`.
-    const embeddings = items.map(() => new Array(1536).fill(0));
+    // `dim`-wide vectors: the corpus dimension follows `env.EMBEDDING_DIM`
+    // (1024 today), and the worker refuses any other width before inserting.
+    const embeddings = items.map(() => {
+      const v = new Array(dim).fill(0);
+      v[0] = 1;
+      return v;
+    });
     return {
       embeddings,
       model,
@@ -210,7 +226,13 @@ async function main(): Promise<void> {
   const app = await buildServer();
   await app.ready();
   const aiServiceAddress = await app.listen({ port: 0, host: '127.0.0.1' });
-  const workers = await startWorkers({ embedder: makeMockEmbedder() as never });
+  // `startWorkers(runtime, deps)`: the server's own Runtime carries the Redis
+  // connection the ingest queue lives on. The bare `startWorkers({embedder})`
+  // form predates the Runtime refactor and failed at boot.
+  const { env } = await import('../src/config/env.js');
+  const workers = await startWorkers(app.runtime, {
+    embedder: makeMockEmbedder(env.EMBEDDING_DIM) as never,
+  });
 
   const DOCS = [
     { id: 'smoke-doc-1', text: 'alpha smoke document for callback' },
@@ -287,9 +309,11 @@ async function main(): Promise<void> {
     await workers.stop().catch(() => undefined);
     await app.close().catch(() => undefined);
     await echo.stop().catch(() => undefined);
+    await fakeProvider.close().catch(() => undefined);
+    // `app.close()` above also closes the Runtime (and its Redis) that
+    // `buildServer()` created for itself.
     const { closeDb } = await import('../src/db/client.js');
-    const { closeRedis } = await import('../src/queue/connection.js');
-    await Promise.allSettled([closeDb(), closeRedis()]);
+    await Promise.allSettled([closeDb()]);
   }
 
   if (failures.length > 0) {

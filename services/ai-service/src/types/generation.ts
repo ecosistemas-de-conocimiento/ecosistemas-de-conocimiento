@@ -1,8 +1,6 @@
 // Public/internal generation types.
 //
-// Pulled forward from a prototype's `types/generation.ts` but stripped of domain
-// vocabulary (no `dimension`, no `scope`, no `surface`, no `storyId`). What
-// remains is the contract-level shape consumers POST and the in-memory carrier
+// Stripped of domain vocabulary. What remains is the contract-level shape consumers POST and the in-memory carrier
 // the orchestrator passes around.
 //
 // Single sources of truth re-exported here so route handlers and tests can
@@ -10,8 +8,8 @@
 // without reaching across module boundaries:
 //   - `EffortProfile`, `ResolvedSpec`, `InlineSpecOverride`, `SpecDefault`
 //     live on `src/services/registry/resolve.ts`.
-//   - `IncludeContextItem` lives on `src/services/context/types.ts`.
-//   - `EffortLevel`, `Validator` live on `src/schemas/registry.ts`.
+//   - `IncludeContextItem` lives on `src/contract/context.ts`.
+//   - `EffortLevel`, `Validator` live on `src/contract/registry.ts`.
 
 import type { generationJobStatus, generationRequestStatus } from '../db/schema/index.js';
 import type {
@@ -21,8 +19,14 @@ import type {
   ResolvedSpec,
   SpecDefault,
 } from '../services/registry/resolve.js';
-import type { IncludeContextItem } from '../services/context/types.js';
-import type { EffortLevel, Validator } from '../schemas/registry.js';
+import type { EffortLevel, Validator } from '../contract/registry.js';
+// 🔴 `Unit` and `GenerateRequest` are DERIVED from the wire contract below,
+// not restated. They keep exactly two narrowings — `specOverride`/`specDefault`
+// (to the richer resolver types) and `effortOverrides` (to `Partial<EffortProfile>`)
+// — applied with `Omit<…> & { … }` so every OTHER field still comes from
+// `src/contract/generate.ts` and cannot drift from what the route validates.
+import type { generateRequestSchema, unitSchema } from '../contract/generate.js';
+import type { z } from '../contract/zod.js';
 
 export type {
   EffortLevel,
@@ -33,7 +37,7 @@ export type {
   SpecDefault,
   Validator,
 };
-export type { IncludeContextItem } from '../services/context/types.js';
+export type { IncludeContextItem } from '../contract/context.js';
 
 export type GenerationRequestStatus = (typeof generationRequestStatus.enumValues)[number];
 export type GenerationJobStatus = (typeof generationJobStatus.enumValues)[number];
@@ -51,11 +55,8 @@ export type GenerationJobStatus = (typeof generationJobStatus.enumValues)[number
  * by these references and the worker merges predecessor `output`s under the
  * declared slot names before rendering.
  */
-export interface Unit {
-  unitKey: string;
-  unitType?: string;
-  input?: Record<string, unknown>;
-  dependsOn?: Record<string, string>;
+export type Unit = Omit<z.input<typeof unitSchema>, 'specOverride' | 'specDefault'> & {
+  /** Per-unit spec CEILING. See `InlineSpecOverride` in `src/services/registry/resolve.ts`. */
   specOverride?: InlineSpecOverride;
   /**
    * Per-unit spec FLOOR — beaten by an active `registry_entries` row. Where a
@@ -64,29 +65,17 @@ export interface Unit {
    * `SpecDefault` in `src/services/registry/resolve.ts`.
    */
   specDefault?: SpecDefault;
-  /**
-   * Per-unit system prompt, delivered as a real `{ role: 'system' }` message.
-   * Literal text — never Handlebars-rendered. Highest-precedence level; see
-   * `src/services/generation/system-prompt.ts`.
-   */
-  systemPrompt?: string;
-}
+};
 
-/** Body of `POST /v1/generate` after Zod validation. */
-export interface GenerateRequest {
+/** Body of `POST /v1/generate`, with the two internally-narrowed fields. */
+export type GenerateRequest = Omit<
+  z.input<typeof generateRequestSchema>,
+  'units' | 'effortOverrides'
+> & {
   units: Unit[];
-  effortLevel?: EffortLevel;
-  promptOverride?: string;
-  modelOverride?: string;
-  /** Batch-wide system prompt; loses to a unit's own `systemPrompt`. */
-  systemPromptOverride?: string;
+  /** Narrower than the wire's `Record<string, Record<string, unknown>>`. */
   effortOverrides?: Record<string, Partial<EffortProfile>>;
-  includeContext?: IncludeContextItem[];
-  clientRequestId?: string;
-  callbackUrl?: string;
-  requestedBy?: string;
-  metadata?: Record<string, unknown>;
-}
+};
 
 /** Orchestrator-local carrier — unit + its resolved spec + per-unit estimate. */
 export interface ResolvedUnit {
@@ -128,4 +117,14 @@ export interface GenerationJobData {
   org: string;
   project: string;
   unitKey: string;
+  /**
+   * Correlation id of the HTTP request that enqueued this job. Optional — old
+   * jobs already in Redis when this shipped carry none, so every reader must
+   * tolerate its absence.
+   *
+   * ⚠ NOT `requestId`: that name is already taken by
+   * `generation_requests.id` (`generationRequestId` here). This is the
+   * transport id from the edge.
+   */
+  httpRequestId?: string;
 }

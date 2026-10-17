@@ -124,9 +124,14 @@ describe('signEnvelope', () => {
 });
 
 describe('retry schedule', () => {
-  it('has 5 attempts at t+0/+5s/+30s/+2m/+10m', () => {
-    expect(MAX_ATTEMPTS).toBe(5);
-    expect(RETRY_SCHEDULE_MS).toEqual([0, 5_000, 30_000, 120_000, 600_000]);
+  // D2=B (PLAN-live-ingest): +30m and +2h extend the window from
+  // 12m35s to ~2h43m so a consumer deploy or short outage does not
+  // dead-letter every callback sent during it.
+  it('has 7 attempts at t+0/+5s/+30s/+2m/+10m/+30m/+2h', () => {
+    expect(MAX_ATTEMPTS).toBe(7);
+    expect(RETRY_SCHEDULE_MS).toEqual([
+      0, 5_000, 30_000, 120_000, 600_000, 1_800_000, 7_200_000,
+    ]);
   });
 });
 
@@ -156,7 +161,11 @@ function makeRow(over: Partial<FakeRow> = {}): FakeRow {
     id: 'd-1',
     status: 'pending',
     attempt: 0,
-    url: 'http://localhost:1',
+    // A public TEST-NET-3 (RFC 5737) IP literal: passes the SSRF url-guard
+    // (which blocks loopback/private/link-local hosts and would mark a
+    // `localhost` row 'failed' before the fetcher ever ran) without any DNS
+    // lookup — the fetcher is mocked, so nothing actually connects.
+    url: 'http://203.0.113.7:1',
     apiKeyId: TEST_API_KEY_ID,
     signedAtUnix: 1_700_000_000,
     signature: 'deadbeef',
@@ -271,7 +280,8 @@ describe('attemptDelivery', () => {
 // Per-attempt re-signing (fix)
 //
 // The bug: the timestamp + signature were minted ONCE at enqueue and replayed
-// on every retry. The retry schedule spans 0 + 5s + 30s + 2m + 10m = 12m35s,
+// on every retry. The retry schedule then spanned 0 + 5s + 30s + 2m + 10m = 12m35s
+// (now ~2h43m with the +30m/+2h tail),
 // so attempts 4 and 5 arrived with a timestamp far outside the contract's
 // ±300s replay window — a conforming receiver 401s them, and ai-service maps
 // 401 to a permanent `auth_failed`. The payload was lost precisely in the case
@@ -366,15 +376,16 @@ describe('signBody', () => {
 describe('attemptDelivery — per-attempt re-signing', () => {
   const START = new Date('2026-07-27T00:00:00.000Z');
   const BODY = '{"event":"unit.completed","emittedAt":"2026-07-27T00:00:00Z","requestId":"req-1"}';
-  /** 0 + 5s + 30s + 2m + 10m — the wall-clock offset of each attempt. */
-  const ATTEMPT_OFFSETS_MS = [0, 5_000, 35_000, 155_000, 755_000];
+  /** 0 + 5s + 30s + 2m + 10m + 30m + 2h — the wall-clock offset of each attempt. */
+  const ATTEMPT_OFFSETS_MS = [0, 5_000, 35_000, 155_000, 755_000, 2_555_000, 9_755_000];
+  const FINAL_OFFSET_MS = ATTEMPT_OFFSETS_MS.at(-1)!;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(START);
   });
 
-  it('every one of the 5 attempts carries a fresh, valid signature', async () => {
+  it('every one of the MAX_ATTEMPTS attempts carries a fresh, valid signature', async () => {
     const row = makeRow({
       body: BODY,
       // Stamped at enqueue, as the emitter does.
@@ -577,6 +588,135 @@ describe('attemptDelivery — per-attempt re-signing', () => {
     expect(updates.at(-1)?.status).toBe('delivered');
     expect(updates.at(-1)?.signature).toBe(calls[0]!.signature);
   });
+
+  // -------------------------------------------------------------------------
+  // A/B at the +10m slot — the load-bearing proof.
+  //
+  // Both arms run the SAME production `attemptDelivery` through the SAME real
+  // retry loop out to the final `+10m` attempt. The only difference is which
+  // stamping policy is in force:
+  //
+  //   A — `preserveSignature: true` reproduces the old emitter
+  //       exactly: mint once at enqueue, replay that (timestamp, signature)
+  //       pair on every attempt. `deps` propagates down the retry chain, so
+  //       all 5 attempts carry the enqueue-time stamp.
+  //   B — the default path: re-stamp and re-sign per attempt.
+  //
+  // A strict 300s receiver then judges the FINAL attempt of each arm. This is
+  // the assertion that must fail if anyone re-hoists stamping back to enqueue.
+  // -------------------------------------------------------------------------
+  it('at the final (+2h) attempt a strict 300s receiver REJECTS enqueue-time stamping and ACCEPTS per-attempt stamping', async () => {
+    // ---- Arm A: pre-fix behaviour, driven end-to-end ----------------------
+    const enqueueStamp = signBody(BODY, SECRET_V1, START);
+    const rowA = makeRow({
+      body: BODY,
+      signedAtUnix: enqueueStamp.signedAtUnix,
+      signature: enqueueStamp.signature,
+    });
+    const { db: dbA } = makeStubDb(rowA);
+    const callsA: CapturedCall[] = [];
+    const fetcherA = capturingFetcher(callsA, () => new Response('boom', { status: 503 }));
+
+    await attemptDelivery('d-1', {
+      db: dbA,
+      fetcher: fetcherA,
+      clock: () => new Date(),
+      preserveSignature: true,
+    });
+    await runFullRetrySchedule();
+
+    expect(callsA).toHaveLength(MAX_ATTEMPTS);
+    const finalA = callsA.at(-1)!;
+    // The final attempt really is the contract's +2h slot (9755s after enqueue:
+    // 0 + 5s + 30s + 2m + 10m + 30m + 2h of cumulative backoff).
+    expect(finalA.atMs - START.getTime()).toBe(FINAL_OFFSET_MS);
+    expect(finalA.atMs - START.getTime()).toBeGreaterThan(RECEIVER_SKEW_WINDOW_S * 1000);
+    // It carries the ENQUEUE timestamp, 9755s stale by the time it is sent.
+    expect(finalA.ts).toBe(Math.floor(START.getTime() / 1000));
+    // 🔴 A strict 300s receiver rejects it. This is the fleet-wide bug.
+    expect(receiverAccepts(finalA, SECRET_V1, finalA.atMs)).toBe(false);
+    // ...and it is the WINDOW that rejects it, not a bad signature: the same
+    // request sails through a window wider than the schedule. Consumers once
+    // widened to 900s for this; the emitter fix makes any widening unnecessary.
+    expect(receiverAccepts(finalA, SECRET_V1, finalA.atMs, 10_000)).toBe(true);
+
+    // ---- Arm B: current behaviour, same schedule, same receiver -----------
+    vi.setSystemTime(START);
+    const rowB = makeRow({
+      body: BODY,
+      signedAtUnix: enqueueStamp.signedAtUnix,
+      signature: enqueueStamp.signature,
+    });
+    const { db: dbB } = makeStubDb(rowB);
+    const callsB: CapturedCall[] = [];
+    const fetcherB = capturingFetcher(callsB, () => new Response('boom', { status: 503 }));
+
+    await attemptDelivery('d-1', { db: dbB, fetcher: fetcherB, clock: () => new Date() });
+    await runFullRetrySchedule();
+
+    expect(callsB).toHaveLength(MAX_ATTEMPTS);
+    const finalB = callsB.at(-1)!;
+    // Same wall-clock slot as arm A — nothing about the schedule changed.
+    expect(finalB.atMs - START.getTime()).toBe(FINAL_OFFSET_MS);
+    // ✅ Fresh stamp, so the strict 300s receiver accepts it. Skew is ~0s.
+    expect(finalB.ts).toBe(Math.floor(finalB.atMs / 1000));
+    expect(receiverAccepts(finalB, SECRET_V1, finalB.atMs)).toBe(true);
+
+    // The wire bytes are identical between the two arms — only the two
+    // signature headers differ. No consumer-visible shape change.
+    expect(finalB.body).toBe(finalA.body);
+    expect(finalB.event).toBe(finalA.event);
+  });
+
+  // -------------------------------------------------------------------------
+  // Duplicate detection must survive re-stamping.
+  //
+  // The contract (`callback-contract.md` §Idempotency) tells receivers to
+  // dedupe on the envelope's NATURAL KEY — `(requestId, unitKey, event)` on the
+  // generate path, `(ingestId, docId, event)` on ingest — and explicitly NOT on
+  // the timestamp or the signature. Those keys live inside the body, and the
+  // body is re-sent verbatim, so re-stamping cannot disturb them.
+  //
+  // This test pins that invariant: a receiver keying on the natural key still
+  // collapses all 5 attempts of one event into a single logical delivery.
+  // -------------------------------------------------------------------------
+  it('the dedupe natural key is byte-stable across all attempts, so retries stay recognisable as duplicates', async () => {
+    const identityBody = JSON.stringify({
+      event: 'unit.completed',
+      emittedAt: '2026-07-27T00:00:00.000Z',
+      requestId: 'req-42',
+      clientRequestId: 'client-7',
+      unitKey: 'unit-a',
+    });
+    const row = makeRow({ body: identityBody, event: 'unit.completed' });
+    const { db } = makeStubDb(row);
+    const calls: CapturedCall[] = [];
+    const fetcher = capturingFetcher(calls, () => new Response('boom', { status: 503 }));
+
+    await attemptDelivery('d-1', { db, fetcher, clock: () => new Date() });
+    await runFullRetrySchedule();
+
+    expect(calls).toHaveLength(MAX_ATTEMPTS);
+
+    // What a conforming receiver keys on, recomputed per attempt from the wire.
+    const naturalKeys = calls.map((c) => {
+      const env_ = JSON.parse(c.body) as {
+        event: string;
+        requestId: string;
+        unitKey: string;
+        emittedAt: string;
+      };
+      return `${env_.requestId}|${env_.unitKey}|${env_.event}|${env_.emittedAt}`;
+    });
+    // All 5 attempts collapse to ONE dedupe key => "same event, retried".
+    expect(new Set(naturalKeys).size).toBe(1);
+    expect(naturalKeys[0]).toBe('req-42|unit-a|unit.completed|2026-07-27T00:00:00.000Z');
+
+    // The signature and timestamp are the ONLY things that vary — which is
+    // exactly why the contract forbids deduping on them.
+    expect(new Set(calls.map((c) => c.ts)).size).toBe(MAX_ATTEMPTS);
+    expect(new Set(calls.map((c) => c.signature)).size).toBe(MAX_ATTEMPTS);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -668,5 +808,209 @@ describe('maybeMarkProgress — Date-bind regression', () => {
     const fired = await maybeMarkProgress(db, INGEST_ID, 5, 5, new Date());
     expect(fired).toBe(false);
     expect(calls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dead-letter visibility (PLAN-live-ingest §2.3 / §3.2)
+//
+// A delivery that ends `dead_letter`, `failed` or `auth_failed` is a callback
+// the consumer never got. Before this, nothing logged it and nothing counted
+// it; the only trace was the row. Each test drives the REAL attempt loop and
+// asserts the ERROR line on an injected logger plus the transition counter.
+// ---------------------------------------------------------------------------
+
+describe('dead-letter visibility', () => {
+  function spyLogger() {
+    const lines: Array<{ level: string; obj: Record<string, unknown>; msg?: string }> = [];
+    const at = (level: string) => (obj: object, msg?: string) => {
+      lines.push({ level, obj: obj as Record<string, unknown>, ...(msg !== undefined ? { msg } : {}) });
+    };
+    return { lines, logger: { info: at('info'), warn: at('warn'), error: at('error') } };
+  }
+
+  async function counterValue(status: string, event: string, project: string): Promise<number> {
+    const { callbackTransitionsTotal } = await import('../../metrics/callbacks.js');
+    const m = await callbackTransitionsTotal.get();
+    return (
+      m.values.find(
+        (v) =>
+          (v.labels as Record<string, unknown>).status === status && (v.labels as Record<string, unknown>).event === event && (v.labels as Record<string, unknown>).project === project,
+      )?.value ?? 0
+    );
+  }
+
+  const SCOPE = {
+    org: 'dlq-org',
+    project: 'dlq-project',
+    source: 'ingest',
+    sourceId: 'ing-dlq',
+    itemKey: 'doc-dlq',
+    event: 'ingest.completed',
+  };
+
+  it('receiver 500 on every attempt → dead_letter, one ERROR line, counter +1', async () => {
+    vi.useFakeTimers();
+    const row = makeRow(SCOPE as Partial<FakeRow>);
+    const { db, updates } = makeStubDb(row);
+    const { lines, logger } = spyLogger();
+    const before = await counterValue('dead_letter', 'ingest.completed', 'dlq-project');
+    const fetcher = vi.fn(async () => new Response('down', { status: 500 }));
+
+    await attemptDelivery('d-1', {
+      db,
+      fetcher: fetcher as unknown as typeof fetch,
+      clock: () => new Date(),
+      logger,
+    });
+    await runFullRetrySchedule();
+
+    expect(fetcher).toHaveBeenCalledTimes(MAX_ATTEMPTS);
+    expect(updates.at(-1)?.status).toBe('dead_letter');
+    const errors = lines.filter((l) => l.level === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.obj).toMatchObject({
+      deliveryId: 'd-1',
+      org: 'dlq-org',
+      project: 'dlq-project',
+      source: 'ingest',
+      sourceId: 'ing-dlq',
+      itemKey: 'doc-dlq',
+      event: 'ingest.completed',
+      attempt: MAX_ATTEMPTS,
+      responseStatus: 500,
+      status: 'dead_letter',
+    });
+    expect(await counterValue('dead_letter', 'ingest.completed', 'dlq-project')).toBe(before + 1);
+  });
+
+  it.each([
+    [401, 'auth_failed'],
+    [404, 'failed'],
+  ] as const)('receiver %i → %s, ERROR line, counter +1', async (code, status) => {
+    const row = makeRow(SCOPE as Partial<FakeRow>);
+    const { db } = makeStubDb(row);
+    const { lines, logger } = spyLogger();
+    const before = await counterValue(status, 'ingest.completed', 'dlq-project');
+    const fetcher = vi.fn(async () => new Response('x', { status: code }));
+    await attemptDelivery('d-1', {
+      db,
+      fetcher: fetcher as unknown as typeof fetch,
+      clock: () => new Date(),
+      logger,
+    });
+    const errors = lines.filter((l) => l.level === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.obj).toMatchObject({ status, responseStatus: code, deliveryId: 'd-1' });
+    expect(await counterValue(status, 'ingest.completed', 'dlq-project')).toBe(before + 1);
+  });
+
+  it('2xx → delivered is counted but logs NO error', async () => {
+    const row = makeRow(SCOPE as Partial<FakeRow>);
+    const { db } = makeStubDb(row);
+    const { lines, logger } = spyLogger();
+    const before = await counterValue('delivered', 'ingest.completed', 'dlq-project');
+    await attemptDelivery('d-1', {
+      db,
+      fetcher: (async () => new Response('ok', { status: 200 })) as unknown as typeof fetch,
+      clock: () => new Date(),
+      logger,
+    });
+    expect(lines.filter((l) => l.level === 'error')).toHaveLength(0);
+    expect(await counterValue('delivered', 'ingest.completed', 'dlq-project')).toBe(before + 1);
+  });
+
+  it('a 5xx that will be retried is NOT a terminal transition: no ERROR, no count', async () => {
+    const row = makeRow(SCOPE as Partial<FakeRow>);
+    const { db } = makeStubDb(row);
+    const { lines, logger } = spyLogger();
+    await attemptDelivery('d-1', {
+      db,
+      fetcher: (async () => new Response('x', { status: 503 })) as unknown as typeof fetch,
+      clock: () => new Date(),
+      logger,
+    });
+    expect(row.status).toBe('pending');
+    expect(lines.filter((l) => l.level === 'error')).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Outbox insert — never swallowed (finding A7) — and the D4 request gate
+// ---------------------------------------------------------------------------
+
+describe('insertCallbackDelivery', () => {
+  const OPTS = {
+    url: 'http://203.0.113.7:1',
+    apiKeyId: TEST_API_KEY_ID,
+    source: 'ingest' as const,
+    sourceId: 'ing-1',
+    itemKey: 'doc-1',
+    org: 'test-org',
+    project: 'test-project',
+  };
+  const ENVELOPE = { event: 'ingest.completed' as const, emittedAt: 'x' };
+
+  it('REJECTS when the row insert fails — the caller must see it', async () => {
+    const { insertCallbackDelivery } = await import('./emit.js');
+    const db = {
+      insert: () => ({
+        values: () => ({
+          returning: () => Promise.reject(new Error('insert exploded')),
+        }),
+      }),
+    } as unknown as Db;
+    await expect(insertCallbackDelivery(ENVELOPE, OPTS, { db })).rejects.toThrow('insert exploded');
+  });
+
+  it('writes a signed pending row and sends nothing by itself', async () => {
+    const { insertCallbackDelivery } = await import('./emit.js');
+    const inserted: Array<Record<string, unknown>> = [];
+    const db = {
+      insert: () => ({
+        values: (v: Record<string, unknown>) => {
+          inserted.push(v);
+          return { returning: async () => [{ id: 'new-1' }] };
+        },
+      }),
+    } as unknown as Db;
+    const fetcher = vi.fn();
+    const out = await insertCallbackDelivery(ENVELOPE, OPTS, { db });
+    expect(out).toEqual({ deliveryId: 'new-1', status: 'pending' });
+    expect(inserted[0]).toMatchObject({ status: 'pending', event: 'ingest.completed', itemKey: 'doc-1' });
+    expect(inserted[0]!.signature).not.toBe('');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe('assertCallbackSecretFor (D4 = request-time 400)', () => {
+  it('passes for a key with a callbackSecret', async () => {
+    const { assertCallbackSecretFor } = await import('./emit.js');
+    expect(() => assertCallbackSecretFor(TEST_API_KEY_ID)).not.toThrow();
+  });
+
+  it.each([
+    ['a key with no callbackSecret', (): string | undefined => {
+      installCallbackSecret(undefined);
+      return TEST_API_KEY_ID;
+    }],
+    ['an unknown apiKeyId', (): string | undefined => 'not-a-known-key-id'],
+    ['no apiKeyId at all', (): string | undefined => undefined],
+  ] as const)('throws CallbackSecretMissingError (400) for %s', async (_label, setup) => {
+    const { assertCallbackSecretFor, CallbackSecretMissingError } = await import('./emit.js');
+    const id = setup();
+    let caught: unknown;
+    try {
+      assertCallbackSecretFor(id);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(CallbackSecretMissingError);
+    const err = caught as InstanceType<typeof CallbackSecretMissingError>;
+    expect(err.status).toBe(400);
+    expect(err.toBody()).toMatchObject({
+      error: 'CallbackSecretMissingError',
+      code: 'ERR_CALLBACK_SECRET_MISSING',
+    });
   });
 });

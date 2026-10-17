@@ -191,6 +191,66 @@ describe('/v1/corpora control plane (integration)', () => {
     expect(locked.json().error.code).toBe('EMBEDDING_MODEL_LOCKED');
   });
 
+  it('refuses to SHRINK chunkSize on a non-empty corpus, but allows raising it', async () => {
+    // `chunk_size` is the corpus's advertised retrieve bound, not just an
+    // ingestion knob: `/v1/retrieve` clamps stored passage text to
+    // `chunk_size * 4` chars. Lowering it under existing rows would make
+    // retrieval truncate legitimately-ingested content and flag every row as an
+    // anomaly. Raising it is harmless — old rows stay under the new bound.
+    const { db } = await import('../db/client.js');
+    const { chunks, corpora, documents } = await import('../db/schema/index.js');
+    const ins = await db
+      .insert(corpora)
+      .values({ org: 'acme', project: 'chat', name: 'shrink', chunkSize: 800 })
+      .returning({ id: corpora.id });
+    const corpusId = ins[0]!.id;
+
+    const patch = async (payload: Record<string, unknown>) =>
+      app.inject({ method: 'PATCH', url: '/v1/corpora/shrink', headers: auth, payload });
+
+    // EMPTY corpus: shrinking is fine, there is nothing to invalidate.
+    const whileEmpty = await patch({ chunkSize: 400 });
+    expect(whileEmpty.statusCode).toBe(200);
+    expect(whileEmpty.json().chunkSize).toBe(400);
+
+    // Populate it.
+    const doc = await db
+      .insert(documents)
+      .values({ corpusId, org: 'acme', project: 'chat', text: 'body' })
+      .returning({ id: documents.id });
+    const ones = new Array(1024).fill(0);
+    ones[0] = 1;
+    await db.insert(chunks).values({
+      documentId: doc[0]!.id,
+      corpusId,
+      org: 'acme',
+      project: 'chat',
+      ordinal: 0,
+      text: 'c0',
+      embedding: ones,
+    });
+
+    // NON-EMPTY: shrinking is refused with a 409.
+    const shrink = await patch({ chunkSize: 200 });
+    expect(shrink.statusCode).toBe(409);
+    expect(shrink.json().error.code).toBe('CHUNK_SIZE_LOCKED');
+    expect(shrink.json().error.message).toContain('cannot lower chunkSize');
+
+    // …and nothing was written — the guard runs before the update.
+    const after = await app.inject({ method: 'GET', url: '/v1/corpora/shrink', headers: auth });
+    expect(after.json().chunkSize).toBe(400);
+
+    // NON-EMPTY: RAISING is still allowed.
+    const raise = await patch({ chunkSize: 1600 });
+    expect(raise.statusCode).toBe(200);
+    expect(raise.json().chunkSize).toBe(1600);
+
+    // NON-EMPTY: re-sending the SAME value is not a shrink, so it passes.
+    const same = await patch({ chunkSize: 1600 });
+    expect(same.statusCode).toBe(200);
+    expect(same.json().chunkSize).toBe(1600);
+  });
+
   it('deletes a corpus (cascade) and 404s on re-issue', async () => {
     await app.inject({
       method: 'POST',

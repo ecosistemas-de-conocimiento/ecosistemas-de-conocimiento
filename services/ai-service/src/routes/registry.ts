@@ -12,15 +12,13 @@ import {
   getVersion,
   listUnitTypes,
   listVersions,
-  RegistryConflictError,
-  RegistryNotFoundError,
   upsertProjectConfig,
 } from '../db/registry.js';
 import { db } from '../db/client.js';
 import {
   projectConfigPatchSchema,
   registryEntryCreateSchema,
-} from '../schemas/registry.js';
+} from '../contract/registry.js';
 
 const registryRoutes: FastifyPluginAsync = async (app) => {
   // GET /v1/registry/config — both roles can read.
@@ -95,24 +93,21 @@ const registryRoutes: FastifyPluginAsync = async (app) => {
         return reply.badRequest(parsed.error.issues.map((i) => i.message).join('; '));
       }
       const { activate, ...payload } = parsed.data;
-      try {
-        const entry = await createVersion(
-          db,
-          req.auth.org,
-          req.auth.project,
-          req.params.unitType,
-          payload,
-          req.auth.apiKeyId,
-          { activate },
-        );
-        reply.code(201);
-        return { entry };
-      } catch (err) {
-        if (err instanceof RegistryConflictError) {
-          return reply.badRequest(err.message);
-        }
-        throw err;
-      }
+      // No `catch`: `RegistryConflictError` declares the same 400 this route
+      // used to re-decide with `reply.badRequest`, and the /v1 error handler
+      // now sends the class's own `{error:'RegistryConflictError', code,
+      // message}` instead of fastify-sensible's generic `error: 'Bad Request'`.
+      const entry = await createVersion(
+        db,
+        req.auth.org,
+        req.auth.project,
+        req.params.unitType,
+        payload,
+        req.auth.apiKeyId,
+        { activate },
+      );
+      reply.code(201);
+      return { entry };
     },
   );
 
@@ -120,23 +115,18 @@ const registryRoutes: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { unitType: string; version: string } }>(
     '/unit-types/:unitType/versions/:version/activate',
     { preHandler: app.requireAdmin },
-    async (req, reply) => {
-      try {
-        const entry = await activateVersion(
-          db,
-          req.auth.org,
-          req.auth.project,
-          req.params.unitType,
-          req.params.version,
-          req.auth.apiKeyId,
-        );
-        return { entry };
-      } catch (err) {
-        if (err instanceof RegistryNotFoundError) {
-          return reply.notFound(err.message);
-        }
-        throw err;
-      }
+    async (req) => {
+      // No `catch`: `RegistryNotFoundError` declares the same 404 this route
+      // used to re-decide with `reply.notFound`. See the sibling POST above.
+      const entry = await activateVersion(
+        db,
+        req.auth.org,
+        req.auth.project,
+        req.params.unitType,
+        req.params.version,
+        req.auth.apiKeyId,
+      );
+      return { entry };
     },
   );
 };

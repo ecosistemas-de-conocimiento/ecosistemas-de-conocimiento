@@ -1,5 +1,13 @@
-# rerank-service dependencies. Kept byte-identical to bge-m3-service so the two
-# CPU siblings stay in lockstep (same FlagEmbedding / torch / transformers set).
+# Model-server dependencies, shared verbatim by rerank-service and bge-m3-service.
+# The two CPU siblings stay in lockstep on one FlagEmbedding / torch / transformers set.
+#
+# 🔴 THESE TWO FILES MUST BE BYTE-IDENTICAL, INCLUDING THIS COMMENT, AND THAT IS WHY
+# IT NAMES NEITHER SERVICE. Both Dockerfiles are instruction-identical, so Docker
+# reuses the ~1.61 GB pip layer across both images — but only while the COPY'd
+# requirements.txt hashes the same. Earlier each file's first line named
+# its OWN service while claiming byte-identity, which was the only difference between
+# them, and it split the layer: `docker system df -v` showed just 134.4 MB shared and
+# the deps layer stored TWICE. A single word of drift here costs 1.61 GB per host.
 #
 # torch is installed FIRST from the CPU wheel index in the Dockerfile (so no CUDA
 # is ever resolved); it is also listed here so the version is pinned in one place.

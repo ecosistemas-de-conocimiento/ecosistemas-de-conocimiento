@@ -11,7 +11,7 @@
 // that corpus into a poison-pill BullMQ retry loop. Degrading to the historical
 // default is the behaviour that loses the least.
 
-import { chunkRecursive, type Chunk } from './chunk.js';
+import { chunkRecursive, maxChunkChars, type Chunk } from './chunk.js';
 import {
   chunkStructural,
   hasSectionMetadata,
@@ -51,12 +51,31 @@ export function chunkForCorpus(
         );
         return recursive(text, settings);
       }
+      const ceiling = maxChunkChars(settings.chunkSize);
+      // A caller-supplied `chunk_config.maxChars` may only ever LOWER the
+      // corpus's ceiling, never raise it.
+      //
+      // This used to be `{ maxChars: chunkSize * 4, ...opts }` — with `opts`
+      // spread last, a `chunk_config.maxChars` of any size WON, and the corpus
+      // emitted chunks longer than the `chunk_size` it advertises. That is the
+      // one way the current ingester could produce an over-bound row, and
+      // `/v1/retrieve` now clamps to that same ceiling — so leaving the hole
+      // open would mean truncating legitimately-ingested text at retrieval.
+      // Closing it here keeps `chunk_size` a real ceiling for EVERY strategy,
+      // which is what makes the outbound clamp sound.
+      const requested = opts.maxChars;
+      if (requested !== undefined && requested > ceiling) {
+        onWarn(
+          `chunkForCorpus: chunk_config.maxChars (${requested}) exceeds the corpus ceiling ` +
+            `(chunk_size ${settings.chunkSize} → ${ceiling} chars); clamping to ${ceiling}`,
+        );
+      }
       try {
         const out = chunkStructural(text, {
-          // Give the structural splitter a ceiling derived from the corpus's
-          // own token budget, so `chunk_size` still means something.
-          maxChars: settings.chunkSize * 4,
           ...opts,
+          // Last word, deliberately: the corpus's own token budget is the
+          // ceiling, so `chunk_size` still means something.
+          maxChars: Math.min(requested ?? ceiling, ceiling),
         });
         // A structural split that matched NO section boundary has not chunked
         // the document — it has hard-split unstructured prose at arbitrary

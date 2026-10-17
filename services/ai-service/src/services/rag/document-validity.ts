@@ -21,6 +21,8 @@
 import { and, eq, sql } from 'drizzle-orm';
 
 import type { Db } from '../../db/client.js';
+import { CodedEnvelopeError, NestedEnvelopeError } from '../../errors/base.js';
+import { CorpusNotFoundError } from './errors.js';
 import { corpora, corpusAliases, documents } from '../../db/schema/index.js';
 
 export interface DocumentValidityServiceOptions {
@@ -51,21 +53,20 @@ export interface SetValidityResult {
   validTo: string | null;
 }
 
-export class DocumentNotFoundError extends Error {
+export class DocumentNotFoundError extends NestedEnvelopeError {
+  readonly code = 'ERR_DOCUMENT_NOT_FOUND';
+  readonly status = 404;
   constructor(opts: { corpus: string; externalId: string }) {
     super(`document '${opts.externalId}' not found in corpus '${opts.corpus}'`);
     this.name = 'DocumentNotFoundError';
   }
 }
 
-export class CorpusNotFoundError extends Error {
-  constructor(opts: { corpus: string }) {
-    super(`corpus '${opts.corpus}' not found`);
-    this.name = 'CorpusNotFoundError';
-  }
-}
+export { CorpusNotFoundError };
 
-export class InvalidValidityIntervalError extends Error {
+export class InvalidValidityIntervalError extends CodedEnvelopeError {
+  readonly code = 'ERR_INVALID_VALIDITY_INTERVAL';
+  readonly status = 400;
   constructor(message: string) {
     super(message);
     this.name = 'InvalidValidityIntervalError';

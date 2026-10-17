@@ -1,16 +1,13 @@
 /**
  * M3 Step 5 — ai-service narrowed event union.
  *
- * Adapted from a prototype `types/events.ts`. Dropped all `brainstorm.*`, `story.*`,
- * `*.dimensions.updated`, `orgBudget.*`, and `trace.progress` events that
- * carried prototype-specific dimension/cluster semantics. What remains is the
- * narrow set the generation orchestrator + trace writer need to fan out over
+ * The narrow set the generation orchestrator + trace writer need to fan out over
  * SSE in ai-service.
  *
  * Conventions:
- * - `org` (not a prototype's `orgId`) — matches ai-service's auth/context naming.
+ * - `org` — matches ai-service's auth/context naming.
  * - `project?` (optional) — generation requests are not always project-scoped.
- * - `flags: Flag[]` (validator flags) replaces a prototype's `SystemFlag`.
+ * - `flags: Flag[]` (validator flags).
  */
 
 import type { Flag } from '../ai/validators/types.js';

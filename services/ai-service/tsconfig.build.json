@@ -6,5 +6,16 @@
     "outDir": "dist"
   },
   "include": ["src/**/*"],
-  "exclude": ["src/**/*.test.ts", "src/**/__tests__/**"]
+  // Test-only code stays out of dist. `src/eval/**`, `src/telemetry/fixtures/**`
+  // and `src/workers/__fixtures__/**` are imported only by tests and
+  // `scripts/` (checked 2026-10-02 with `git grep`). The fake model provider
+  // lives outside `src/` (`test-support/`), so it is never in dist either.
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/__tests__/**",
+    "src/testing/**",
+    "src/eval/**",
+    "src/telemetry/fixtures/**",
+    "src/workers/__fixtures__/**"
+  ]
 }

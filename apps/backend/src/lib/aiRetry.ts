@@ -48,7 +48,7 @@
  * duplicates work at worst. See {@link isRateLimited}.
  */
 
-import { RateLimitedError } from '@edc/ai-client'
+import { RateLimitError } from '@edc/ai-client'
 
 /** Env var names, so log lines and tests never hand-type a string that can drift. */
 export const AI_RETRY_MAX_ATTEMPTS_VAR = 'AI_RETRY_MAX_ATTEMPTS'
@@ -113,8 +113,8 @@ export const MAX_JITTER_MS = 5_000
  * ⚠ DUCK-TYPED ON TOP OF THE `instanceof`, on purpose, and both branches are
  * load-bearing:
  *
- *   · `instanceof RateLimitedError` is the real path and carries the server's
- *     own `retryAfterSeconds`.
+ *   · `instanceof RateLimitError` is the real path and carries the server's
+ *     own `retryAfterMs` (0 when the server gave no hint).
  *   · The structural check keeps this usable from `publishDocument.ts`, which
  *     deliberately depends on a hand-written `CorpusMover` interface rather than
  *     the concrete `AIClient` so its transitions stay testable with plain fake
@@ -123,15 +123,15 @@ export const MAX_JITTER_MS = 5_000
  *     in a pnpm workspace, and one that would silently disable every retry.
  */
 export function isRateLimited(err: unknown): boolean {
-  if (err instanceof RateLimitedError) return true
+  if (err instanceof RateLimitError) return true
   return Boolean(err) && typeof err === 'object' && (err as { status?: unknown }).status === 429
 }
 
 /** The server's requested wait in ms, or the default when it did not say. */
 export function requestedWaitMs(err: unknown): number {
-  const seconds = (err as { retryAfterSeconds?: unknown } | null)?.retryAfterSeconds
-  if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0) {
-    return Math.min(MAX_SINGLE_WAIT_MS, seconds * 1000)
+  const ms = (err as { retryAfterMs?: unknown } | null)?.retryAfterMs
+  if (typeof ms === 'number' && Number.isFinite(ms) && ms > 0) {
+    return Math.min(MAX_SINGLE_WAIT_MS, ms)
   }
   return MAX_SINGLE_WAIT_MS
 }

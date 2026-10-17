@@ -1,0 +1,60 @@
+# promptfoo — generation-quality harness for ai-service.  PAID CONFIG.
+#
+# 🔴 Running this spends real OpenRouter money, twice over: once on the target
+#    model that answers each case, and once on the LLM judge that grades it.
+#    It is CLI-only, MANUAL, and needs Rodrigo's explicit OK per run. It is
+#    wired into NO CI job and into NO `npm test`. See evals/README.md.
+#
+# For the free path use `promptfooconfig.fake.yaml` (scripts/eval-generation.sh
+# fake), which talks to an ai-service pointed at the TEST-ONLY fake provider
+# (test-support/fake-provider/) and costs nothing.
+#
+# Complement, not a replacement: the retrieval gate stays `src/eval/` +
+# `npm run eval:retrieval` (offline, free, runs on every change). See
+# plan/tecnología/ai-infra/reranker-and-eval-plan.md §2.6 — the third-party
+# frameworks were rejected as the retrieval gate; promptfoo is kept only for
+# the generation side, which `src/eval/` does not measure.
+
+description: ai-service generation quality over POST /v1/generate/sync
+
+prompts:
+  - file://prompts/render.js
+
+providers:
+  # The service's OWN HTTP surface — this is a black-box eval of ai-service,
+  # not of a model. Everything the service does (spec resolution, effort
+  # profile, system-prompt ladder, render) is inside the thing under test.
+  - id: 'https://ai-service/v1/generate/sync'
+    label: ai-service /v1/generate/sync
+    config:
+      url: '{{ env.AI_SERVICE_URL }}/v1/generate/sync'
+      method: POST
+      headers:
+        Authorization: 'Bearer {{ env.AI_SERVICE_KEY }}'
+        Content-Type: application/json
+      body:
+        unit:
+          unitKey: '{{ unitKey }}'
+          unitType: '{{ unitType }}'
+          # The registry FLOOR (src/contract/generate.ts `specDefault`): the case
+          # works with zero registry config, and a project that registers this
+          # unitType still WINS over it. Putting the prompt in `specOverride`
+          # instead would make a registry row resolve and then be discarded.
+          specDefault:
+            promptTemplate: '{{ prompt }}'
+            model: '{{ model }}'
+            effortLevel: '{{ effortLevel }}'
+      # The graded output is the generated text. `parsed` is deliberately not
+      # used: the JSON contract is stated in the prompt and checked by the
+      # `is-json` assertions, so a schema failure shows up as a case failure
+      # rather than as a 4xx from the service.
+      transformResponse: json.text
+
+defaultTest:
+  options:
+    # The judge routes through OpenRouter on OPENROUTER_API_KEY — never a
+    # vendor SDK default. promptfoo's built-in grader would otherwise reach for
+    # OpenAI directly and bill an account this service does not use.
+    provider: 'openrouter:{{ env.AI_EVAL_JUDGE_MODEL }}'
+
+tests: file://tests/generation.yaml

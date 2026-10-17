@@ -5,37 +5,53 @@
   "description": "Domain-agnostic AI + RAG service (ingest, embed, retrieve, generate) consumed over HTTP.",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": "^26"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/index.js",
+    "start": "node --import ./dist/telemetry/preload.js dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint . && node scripts/check-domain-vocabulary.mjs",
     "check:domain": "node scripts/check-domain-vocabulary.mjs",
+    "check:error-parity": "pnpm --filter @edc/ai-client run check:error-parity",
+    "check": "pnpm run lint && pnpm run check:error-parity && pnpm run contract:check",
+    "contract:types": "tsx scripts/generate-wire-types.ts",
+    "contract:check": "tsx scripts/generate-wire-types.ts --check",
     "test": "node scripts/check-domain-vocabulary.mjs && vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/db/migrate.ts",
-    "db:migrate:prod": "node dist/db/migrate.js",
+    "db:gate": "node scripts/schema-gate.mjs",
+    "db:migrate": "node scripts/schema-gate.mjs precheck && tsx src/db/migrate.ts && node scripts/schema-gate.mjs stamp",
+    "db:migrate:prod": "node scripts/schema-gate.mjs precheck && node dist/db/migrate.js && node scripts/schema-gate.mjs stamp",
     "refresh-pricing": "tsx scripts/refresh-model-pricing.ts",
     "set-budget": "tsx scripts/set-budget.ts",
     "smoke": "vitest run --config vitest.smoke.config.ts",
-    "eval:retrieval": "tsx scripts/run-retrieval-eval.ts"
+    "eval:retrieval": "tsx scripts/run-retrieval-eval.ts",
+    "eval:generation": "bash scripts/eval-generation.sh"
   },
   "dependencies": {
-    "@asteasolutions/zod-to-openapi": "^7.3.4",
+    "@asteasolutions/zod-to-openapi": "^9.1.0",
+    "@fastify/otel": "^0.21.0",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/sensible": "^6.0.2",
     "@fastify/static": "^9.1.3",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.222.0",
+    "@opentelemetry/instrumentation": "^0.222.0",
+    "@opentelemetry/instrumentation-ioredis": "^0.70.0",
+    "@opentelemetry/instrumentation-pino": "^0.68.0",
+    "@opentelemetry/sdk-node": "^0.222.0",
+    "@prometheus-io/client": "^0.16.1",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "bullmq": "^5.34.0",
+    "cockatiel": "^4.0.0",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.38.3",
     "fastify": "^5.2.0",
+    "fastify-metrics": "^14.1.0",
     "fastify-plugin": "^5.0.1",
     "handlebars": "^4.7.9",
     "ioredis": "^5.4.2",
@@ -46,7 +62,7 @@
     "postgres": "^3.4.5",
     "safe-stable-stringify": "^2.5.0",
     "swagger-ui-dist": "^5.32.6",
-    "zod": "^3.24.1"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@edc/ai-client": "workspace:*",
@@ -54,9 +70,11 @@
     "@types/node": "^22.10.5",
     "drizzle-kit": "^0.30.1",
     "eslint": "^9.17.0",
+    "promptfoo": "^0.122.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.19.1",
-    "vitest": "^2.1.8"
+    "vite": "^8.2.2",
+    "vitest": "^5.0.0"
   }
 }

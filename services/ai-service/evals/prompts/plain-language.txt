@@ -1,0 +1,6 @@
+Rewrite the sentence below so that a reader with a primary-school education can
+understand it. Keep every fact. Use short sentences and everyday words. Do not add
+information that is not there. Answer with the rewritten text only.
+
+Sentence:
+{{ sentence }}

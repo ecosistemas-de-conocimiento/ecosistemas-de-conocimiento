@@ -4,11 +4,25 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 
+import { env, rerankModelRefusal } from '../config/env.js';
 import { db } from '../db/client.js';
 import { GENERATE_RATE_LIMIT_MAX, V1_RATE_LIMIT_WINDOW } from '../server-limits.js';
-import { retrieveMultiRequestSchema, retrieveRequestSchema } from '../schemas/rag.js';
-import { CorpusNotFoundError, RetrieveService } from '../services/rag/retrieve.js';
+import { retrieveMultiRequestSchema, retrieveRequestSchema } from '../contract/rag.js';
+import { RetrieveService } from '../services/rag/retrieve.js';
 import { RetrieveMultiService } from '../services/rag/retrieve-multi.js';
+
+/**
+ * A per-request `rerankModel` outside the rerank allowlist (`DEEPINFRA_RERANK_MODELS`
+ * in `config/env.ts`) is a 400, not a silent fallback: the rung fails safe, so
+ * letting it through would degrade quietly — or, for a model DeepInfra proxies to
+ * Google/Anthropic, send the pool under terms that void no-training/no-sharing.
+ * `callRerank` repeats the check before any network call; this one makes the
+ * refusal visible to the caller.
+ */
+function refusedRerankModel(model: string | undefined): string | undefined {
+  if (model === undefined) return undefined;
+  return rerankModelRefusal(env.RERANK_PROVIDER, model);
+}
 
 const retrieveRoutes: FastifyPluginAsync = async (app) => {
   const service = new RetrieveService({ db, logger: app.log });
@@ -19,21 +33,22 @@ const retrieveRoutes: FastifyPluginAsync = async (app) => {
     if (!parsed.success) {
       return reply.badRequest(parsed.error.issues.map((i) => i.message).join('; '));
     }
-    try {
-      const result = await service.retrieve(parsed.data, {
-        org: req.auth.org,
-        project: req.auth.project,
-      });
-      return result;
-    } catch (err) {
-      if (err instanceof CorpusNotFoundError) {
-        // Cross-tenant access (corpus belongs to another org/project) lands
-        // here too — the lookup filters by `{org, project, name}`, so a
-        // missing row is indistinguishable from a foreign row by design.
-        return reply.notFound(err.message);
-      }
-      throw err;
-    }
+    const modelRefusal = refusedRerankModel(parsed.data.rerankModel);
+    if (modelRefusal) return reply.badRequest(modelRefusal);
+    // No `catch`. This route used to answer `CorpusNotFoundError` with
+    // `reply.notFound(err.message)`, i.e. fastify-sensible's flat
+    // `{statusCode, error: 'Not Found', message}` — while `/v1/corpora` and
+    // `/v1/corpus` answered the SAME class with its own nested
+    // `{error:{code:'CORPUS_NOT_FOUND', message}}`. One class, two envelopes.
+    // The class wins: same 404, same message, one shape everywhere.
+    //
+    // Cross-tenant access (a corpus owned by another org/project) still lands
+    // on this class — the lookup filters by `{org, project, name}`, so a
+    // missing row is indistinguishable from a foreign row by design.
+    return service.retrieve(parsed.data, {
+      org: req.auth.org,
+      project: req.auth.project,
+    });
   });
 
   // POST /v1/retrieve/multi — fan out across N corpora + fuse, with an optional
@@ -53,6 +68,8 @@ const retrieveRoutes: FastifyPluginAsync = async (app) => {
       if (!parsed.success) {
         return reply.badRequest(parsed.error.issues.map((i) => i.message).join('; '));
       }
+      const modelRefusal = refusedRerankModel(parsed.data.rerankModel);
+      if (modelRefusal) return reply.badRequest(modelRefusal);
       return multiService.retrieveMulti(parsed.data, {
         org: req.auth.org,
         project: req.auth.project,

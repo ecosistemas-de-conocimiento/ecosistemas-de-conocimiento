@@ -42,16 +42,10 @@ describe('callOpenRouterEmbedding', () => {
     vi.stubGlobal('fetch', fetchMock);
     priceForEmbeddingMock.mockReset();
     priceForEmbeddingMock.mockReturnValue(0.00002);
-    // Ensure the offline mock seam is OFF for the real-path tests; a leaked
-    // MOCK_LLM/MOCK_EMBEDDINGS from another suite would silently bypass fetch.
-    delete process.env['MOCK_LLM'];
-    delete process.env['MOCK_EMBEDDINGS'];
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
-    delete process.env['MOCK_LLM'];
-    delete process.env['MOCK_EMBEDDINGS'];
   });
 
   it('sends correctly-shaped request body and headers for a single string input', async () => {
@@ -287,100 +281,5 @@ describe('callOpenRouterEmbedding', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  describe('MOCK_LLM / MOCK_EMBEDDINGS offline seam', () => {
-    afterEach(() => {
-      delete process.env['MOCK_LLM'];
-      delete process.env['MOCK_EMBEDDINGS'];
-    });
-
-    it('MOCK_LLM=1 returns correct-dimension vectors with NO network call and NO api key', async () => {
-      process.env['MOCK_LLM'] = '1';
-
-      // Note: no apiKey passed and the mocked env has none either — the mock
-      // path must short-circuit before the key check.
-      const result = await callOpenRouterEmbedding({
-        model: 'openai/text-embedding-3-small',
-        input: 'hello world',
-      });
-
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(result.embeddings).toHaveLength(1);
-      expect(result.embeddings[0]).toHaveLength(1024);
-      // Every component is a finite number.
-      expect(result.embeddings[0]!.every((n) => Number.isFinite(n))).toBe(true);
-      // Echoes the requested model and reports a present usage object.
-      expect(result.model).toBe('openai/text-embedding-3-small');
-      expect(result.usage.estimatedCostUsd).toBe(0);
-      // chars/4 estimate of "hello world" (11 chars) → ceil(11/4) = 3.
-      expect(result.usage.inputTokens).toBe(3);
-    });
-
-    it('MOCK_EMBEDDINGS=1 alone also enables the offline seam', async () => {
-      process.env['MOCK_EMBEDDINGS'] = '1';
-
-      const result = await callOpenRouterEmbedding({
-        model: 'openai/text-embedding-3-small',
-        input: 'offline',
-      });
-
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(result.embeddings[0]).toHaveLength(1024);
-    });
-
-    it('is deterministic: same input → byte-identical vector', async () => {
-      process.env['MOCK_LLM'] = '1';
-
-      const a = await callOpenRouterEmbedding({
-        model: 'openai/text-embedding-3-small',
-        input: 'reproducible text',
-      });
-      const b = await callOpenRouterEmbedding({
-        model: 'openai/text-embedding-3-small',
-        input: 'reproducible text',
-      });
-
-      expect(a.embeddings[0]).toEqual(b.embeddings[0]);
-    });
-
-    it('different inputs → different vectors', async () => {
-      process.env['MOCK_LLM'] = '1';
-
-      const a = await callOpenRouterEmbedding({
-        model: 'm',
-        input: 'alpha',
-      });
-      const b = await callOpenRouterEmbedding({
-        model: 'm',
-        input: 'beta',
-      });
-
-      expect(a.embeddings[0]).not.toEqual(b.embeddings[0]);
-    });
-
-    it('returns one vector per input for an array, in order', async () => {
-      process.env['MOCK_LLM'] = '1';
-
-      const result = await callOpenRouterEmbedding({
-        model: 'm',
-        input: ['one', 'two', 'three'],
-      });
-
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(result.embeddings).toHaveLength(3);
-      expect(result.embeddings.every((v) => v.length === 1024)).toBe(true);
-      // Order-stable: the vector for index 0 equals a standalone embed of 'one'.
-      const standalone = await callOpenRouterEmbedding({ model: 'm', input: 'one' });
-      expect(result.embeddings[0]).toEqual(standalone.embeddings[0]);
-    });
-
-    it('produces unit-normalized vectors (magnitude ~= 1)', async () => {
-      process.env['MOCK_LLM'] = '1';
-
-      const result = await callOpenRouterEmbedding({ model: 'm', input: 'norm check' });
-      const mag = Math.sqrt(result.embeddings[0]!.reduce((s, n) => s + n * n, 0));
-      expect(mag).toBeCloseTo(1, 6);
-    });
   });
 });

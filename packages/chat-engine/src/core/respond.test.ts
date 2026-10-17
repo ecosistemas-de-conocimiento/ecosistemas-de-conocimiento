@@ -3,7 +3,8 @@ import { respond, prepareTurn } from './respond.js';
 import { buildChatTurn } from './turn.js';
 import { condenseQuery } from './condense.js';
 import { retrieveContext } from './retrieve.js';
-import { syncEntity, backfillScope } from './corpus-sync.js';
+import { syncEntity, backfillScope, CorpusSyncError } from './corpus-sync.js';
+import { generateThreadTitle } from './title.js';
 import { DEFAULT_ENGINE_CONFIG } from './config.js';
 import type {
   AIClient,
@@ -15,6 +16,48 @@ import type {
 import type { DomainAdapter, ResolvedScope } from './adapter.js';
 
 // ── fakes ────────────────────────────────────────────────────────────────────
+
+/**
+ * `util.inspect` renders a value the way `console.warn` / `console.error` do in
+ * Node (Error message, stack, `[cause]`), which `JSON.stringify` does not.
+ * ⚠ Loaded through a non-literal specifier ON PURPOSE: this package has no
+ * `@types/node`, and `svelte-check` (which reads every `src/**\/*.ts`) fails
+ * on a static `import 'node:util'`. Adding the types would change the
+ * lockfile for one test helper.
+ */
+const NODE_UTIL = 'node:util';
+const { inspect } = (await import(/* @vite-ignore */ NODE_UTIL)) as {
+  inspect: (value: unknown, options?: { depth?: number; showHidden?: boolean }) => string;
+};
+
+/**
+ * Capture console.warn and read back the STRUCTURED payload (the 2nd arg) —
+ * tests assert the stable `event` code, never the human-readable line.
+ *
+ * `events()` also pins the CALL SHAPE: exactly (line: string, payload: plain
+ * object). A third argument — e.g. the raw error — fails here, not silently.
+ *
+ * `raw()` renders every argument the way a console would (`util.inspect`,
+ * deep, hidden props), for "never logs X" checks. ⚠ NOT `JSON.stringify`: it
+ * turns an `Error` into `{}`, so a leaked error object read as clean.
+ */
+function captureWarnings() {
+  const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  return {
+    events: () =>
+      spy.mock.calls.map((c) => {
+        expect(c).toHaveLength(2);
+        expect(typeof c[0]).toBe('string');
+        expect(Object.getPrototypeOf(c[1])).toBe(Object.prototype);
+        return c[1];
+      }),
+    raw: () =>
+      spy.mock.calls
+        .map((c) => c.map((a) => inspect(a, { depth: 10, showHidden: true })).join(' '))
+        .join('\n'),
+    restore: () => spy.mockRestore(),
+  };
+}
 
 function fakeAIClient(overrides: Partial<AIClient> = {}): AIClient {
   return {
@@ -99,7 +142,15 @@ describe('buildChatTurn — user-turn injection invariant', () => {
     });
     expect(messages.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
     expect(messages[3]!.content).toMatchInlineSnapshot(`
-      "[CONTEXTO disponible para responder — es tu FUENTE PRINCIPAL y está AQUÍ MISMO; NO digas que no tienes información ni pidas datos que ya aparecen abajo]
+      "[CONTEXT for your reply — it is RIGHT BELOW and it is your primary source.
+
+      Rules:
+      1. What is below, you have. Never say you lack information that appears below, and never ask the user for something that already appears below.
+      2. What is NOT below, you do not have. Say so plainly and name the missing detail. Never invent, assume, estimate or extrapolate it, and do not dress a guess as "about", "around" or "at least" — numbers and counts above all.
+      3. Give a number only if that number is written below, or you can derive it by arithmetic over numbers that are written below. Otherwise rule 2 applies — including when you could work it out by counting a list.
+      4. A list below may be partial. If you report how many items it shows, say plainly that it is the number listed here, not the total.
+      5. Saying that a detail is not here is a correct and complete answer. A plausible number is not.
+      6. Write your reply in the same language as the user message.]
 
       Contexto del proyecto/organización:
       RESUMEN
@@ -116,7 +167,7 @@ describe('buildChatTurn — user-turn injection invariant', () => {
 
       ========
 
-      Mensaje del usuario:
+      User message (reply in this same language):
       PREGUNTA"
     `);
     // ≥0.3.0: the grounding passage is persisted by default so the citation
@@ -172,6 +223,149 @@ describe('buildChatTurn — user-turn injection invariant', () => {
   });
 });
 
+// ── the preamble's two obligations ───────────────────────────────────────────
+//
+// Product rule: the system must never invent a number. It either has the real
+// value or it says it does not have it. The preamble is where that is enforced,
+// so these guard BOTH halves — an edit that drops either one must go red.
+//
+// ⚠ These are STRING pins. They prove the instruction is present; they do NOT
+// prove a model obeys it. Live behaviour is measured by `harness/` (see its
+// README), never by this file.
+
+describe('userContextPreamble — honest-context contract', () => {
+  const preamble = DEFAULT_ENGINE_CONFIG.userContextPreamble;
+
+  it('keeps each slot EXACTLY once, and keeps the rules above the context', () => {
+    // `applyPreamble` visits each slot once. A duplicated `{context}` would
+    // ship a literal `{context}` to the model; a rule block moved below the
+    // context would lose its priming position. Both must fail loudly.
+    expect(preamble.match(/\{context\}/g)).toHaveLength(1);
+    expect(preamble.match(/\{message\}/g)).toHaveLength(1);
+    expect(preamble).toContain('========');
+    expect(preamble.indexOf('Rules:')).toBeLessThan(preamble.indexOf('{context}'));
+    expect(preamble.indexOf('{context}')).toBeLessThan(preamble.indexOf('========'));
+    expect(preamble.indexOf('========')).toBeLessThan(preamble.indexOf('{message}'));
+  });
+
+  it('(a) forbids denying context that IS present — and stays SCOPED', () => {
+    // The original failure: the assistant said "no tengo acceso a tu proyecto"
+    // while the project sat directly below.
+    expect(preamble).toMatch(/What is below, you have/i);
+    // ⚠ The scoping is the whole fix. An unscoped "never say you have no
+    // information" is the 0.3.1 defect verbatim: it reads as a blanket ban on
+    // admitting ignorance, which is what made the model invent counts. If this
+    // assertion is ever loosened, re-read the config.ts doc first.
+    expect(preamble).toMatch(/Never say you lack information that appears below/i);
+    expect(preamble).not.toMatch(/Never say you have no information[,.]/i);
+  });
+
+  it('(b) requires naming an ABSENT fact instead of inventing or hedging one', () => {
+    expect(preamble).toMatch(/Never invent, assume, estimate or extrapolate/i);
+    expect(preamble).toMatch(/name the missing detail/i);
+    // Hedging is fabrication with a softener on it.
+    expect(preamble).toMatch(/"about", "around" or "at least"/i);
+  });
+
+  it('(b) gates numbers on being written or derivable — not on being countable', () => {
+    // The concrete defect: the summary lists names but no total, so a model
+    // told never to admit ignorance counts the visible names and answers with
+    // confidence. The gate is mechanical on purpose — "is this number written
+    // below?" is checkable, "am I counting to produce a total?" is a judgement
+    // call the model can talk itself past.
+    expect(preamble).toMatch(/Give a number only if that number is written below/i);
+    expect(preamble).toMatch(/counting a list/i);
+    // …but legitimate arithmetic over STATED numbers must stay allowed, or the
+    // assistant stonewalls on sums it can actually justify.
+    expect(preamble).toMatch(/derive it by arithmetic over numbers that are written below/i);
+  });
+
+  it('(b) defines the right answer for a partial list, rather than banning it', () => {
+    // Reporting "3 are listed here, which may not be the total" is honest and
+    // useful. Only a BARE count presented as the total is the defect.
+    expect(preamble).toMatch(/A list below may be partial/i);
+    expect(preamble).toMatch(/the number listed here, not the total/i);
+  });
+
+  it('grants explicit permission to say a detail is missing', () => {
+    // Load-bearing counterweight to (a): without it, (a) reads as an absolute
+    // ban on admitting ignorance about anything.
+    expect(preamble).toMatch(/is a correct and complete answer/i);
+  });
+
+  it('(c) states the reply language TWICE, including next to the message', () => {
+    // The directive is English MACHINERY. Without an explicit rule the model
+    // can answer a Spanish user in English — a worse regression than the bug
+    // being fixed. The rule in the header sits ~1k tokens from the generation
+    // point, so it is repeated on the label immediately before `{message}`,
+    // where it actually carries weight.
+    expect(preamble).toMatch(/same language as the user message/i);
+    expect(preamble).toMatch(/User message \(reply in this same language\):/);
+    const tail = preamble.slice(preamble.indexOf('========'));
+    expect(tail).toMatch(/reply in this same language/i);
+  });
+
+  it('is English machinery, while the block headers stay localized content', () => {
+    // The split is deliberate and must not be "unified" by a later tidy-up:
+    //   preamble     = the engine instructing the model   → MACHINERY, English
+    //   blockHeaders = labels on product prose the model  → CONTENT, localized
+    //                  can echo into its own reply
+    // Asserted by leading Spanish word rather than by deep-equality, so a
+    // legitimate rewording passes but an accidental translation fails.
+    expect(preamble).not.toMatch(/[áéíóúñ¿¡]/i);
+    expect(DEFAULT_ENGINE_CONFIG.blockHeaders.summary).toMatch(/^Contexto/);
+    expect(DEFAULT_ENGINE_CONFIG.blockHeaders.retrieved).toMatch(/^Contexto/);
+    expect(DEFAULT_ENGINE_CONFIG.blockHeaders.inlineRefs).toMatch(/^Entidades/);
+    expect(DEFAULT_ENGINE_CONFIG.teamInstructionsHeader).toMatch(/^Instrucciones/);
+  });
+});
+
+describe('systemPrompt — the other half of the anti-fabrication pressure', () => {
+  const sp = DEFAULT_ENGINE_CONFIG.systemPrompt;
+
+  it('keeps its own do-not-invent and admit-the-gap clauses', () => {
+    // These predate the preamble fix and carry half the pressure in the
+    // assembled turn. Nothing guarded them, so they could be deleted silently.
+    expect(sp).toMatch(/no inventes detalles/i);
+    expect(sp).toMatch(/Si el contexto no alcanza para responder algo, dilo/i);
+  });
+
+  it('does not pin an output language, so it cannot fight the preamble', () => {
+    // It used to say "Responde en español" while the preamble says "reply in
+    // the user's language" — a direct conflict for any non-Spanish user, in a
+    // package whose own doc claims language neutrality. `condenseSystemPrompt`
+    // and `titlePrompt` were already language-adaptive; this now matches.
+    expect(sp).toMatch(/mismo idioma que el usuario/i);
+    expect(sp).not.toMatch(/Responde en español/i);
+  });
+});
+
+describe('applyPreamble — slot substitution is not string-replace', () => {
+  it('does not interpret `$&` and friends in user text', () => {
+    const { messages } = buildChatTurn({
+      config: DEFAULT_ENGINE_CONFIG,
+      history: [],
+      summaryText: 'S',
+      retrievedMatches: [],
+      userMessage: 'grep -o "$&" y $` y $\' y $$1',
+    });
+    expect(messages.at(-1)!.content).toContain('grep -o "$&" y $` y $\' y $$1');
+  });
+
+  it('a chunk containing the literal {message} cannot swallow the question', () => {
+    const { messages } = buildChatTurn({
+      config: DEFAULT_ENGINE_CONFIG,
+      history: [],
+      summaryText: 'plantilla con {message} dentro',
+      retrievedMatches: [],
+      userMessage: 'LA PREGUNTA REAL',
+    });
+    const content = messages.at(-1)!.content;
+    expect(content).toContain('LA PREGUNTA REAL');
+    expect(content).toContain('plantilla con {message} dentro');
+  });
+});
+
 // ── condense fail-safe ────────────────────────────────────────────────────────
 
 describe('condenseQuery — fail-safe', () => {
@@ -207,14 +401,76 @@ describe('condenseQuery — fail-safe', () => {
     expect(out).toBe('riesgos de los proyectos de Plataforma');
   });
 
-  it('falls back to the original question when generate throws', async () => {
-    const ai = fakeAIClient({ generateSync: async () => { throw new Error('boom'); } });
-    const out = await condenseQuery(ai, {
-      condenseSystemPrompt: 'x', surface: 'chat', orgId: 'o', userId: 'u',
-      history: [{ role: 'user', content: 'algo' }],
-      question: 'pregunta original',
-    });
-    expect(out).toBe('pregunta original');
+  /**
+   * 🔴 The fail-safe stays; the SILENCE goes. A bare `catch {}` made a
+   * condense outage (auth, budget, provider down) indistinguishable from a
+   * condense that chose to keep the question — and retrieval then quietly ran
+   * on the raw, anaphoric question.
+   * Asserted on the structured `event` field, never on the log's prose.
+   */
+  it('falls back AND warns condense.failed with error name + status, never the message', async () => {
+    const warnings = captureWarnings();
+    try {
+      class UpstreamError extends Error {
+        status = 402;
+        constructor() { super('Bearer sk-secret over budget'); this.name = 'UpstreamError'; }
+      }
+      const ai = fakeAIClient({ generateSync: async () => { throw new UpstreamError(); } });
+      const out = await condenseQuery(ai, {
+        condenseSystemPrompt: 'x', surface: 'chat', orgId: 'o', userId: 'u',
+        history: [{ role: 'user', content: 'algo' }],
+        question: 'pregunta original',
+      });
+      expect(out).toBe('pregunta original'); // the turn still runs…
+      expect(warnings.events()).toEqual([ // …and the failure is visible
+        { event: 'condense.failed', errorName: 'UpstreamError', status: 402 },
+      ]);
+      expect(warnings.raw()).not.toContain('sk-secret');
+      expect(warnings.raw()).not.toContain('pregunta original');
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('warns condense.unusable when the rewrite is junk (under 3 chars)', async () => {
+    const warnings = captureWarnings();
+    try {
+      const ai = fakeAIClient({
+        generateSync: async () => ({
+          text: '"x"', modelUsed: 'm', provider: 'p', costUsd: 0, traceId: 't',
+        }),
+      });
+      const out = await condenseQuery(ai, {
+        condenseSystemPrompt: 'x', surface: 'chat', orgId: 'o', userId: 'u',
+        history: [{ role: 'user', content: 'algo' }],
+        question: 'pregunta original',
+      });
+      expect(out).toBe('pregunta original');
+      expect(warnings.events()).toEqual([{ event: 'condense.unusable' }]);
+      expect(warnings.raw()).not.toContain('pregunta original');
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('warns nothing on a successful rewrite (positive control for the two above)', async () => {
+    const warnings = captureWarnings();
+    try {
+      const ai = fakeAIClient({
+        generateSync: async () => ({
+          text: 'riesgos de Plataforma', modelUsed: 'm', provider: 'p', costUsd: 0, traceId: 't',
+        }),
+      });
+      const out = await condenseQuery(ai, {
+        condenseSystemPrompt: 'x', surface: 'chat', orgId: 'o', userId: 'u',
+        history: [{ role: 'user', content: 'algo' }],
+        question: 'pregunta original',
+      });
+      expect(out).toBe('riesgos de Plataforma');
+      expect(warnings.events()).toEqual([]);
+    } finally {
+      warnings.restore();
+    }
   });
 });
 
@@ -259,18 +515,24 @@ describe('retrieveContext — scoped retrieve via filter', () => {
     expect(out[0]!.corpus).toBe('kb-1');
   });
 
-  it('swallows a per-corpus failure (best-effort)', async () => {
+  it('drops a failing corpus (best-effort) and warns retrieve.failed', async () => {
+    const warnings = captureWarnings();
     const ai = fakeAIClient({
       retrieve: async (req) => {
         if (req.corpus === 'kb-1') throw new Error('down');
         return { matches: [{ documentId: 'd', chunkId: 'ok', score: 0.5, text: 'b' }] };
       },
     });
-    const out = await retrieveContext({
-      aiClient: ai, orgId: 'o', fallbackScopeId: 'chat',
-      corpora: [{ corpus: 'kb-1' }], threadId: 1, query: 'q',
-    });
-    expect(out.map((m) => m.chunkId)).toEqual(['ok']);
+    try {
+      const out = await retrieveContext({
+        aiClient: ai, orgId: 'o', fallbackScopeId: 'chat',
+        corpora: [{ corpus: 'kb-1' }], threadId: 1, query: 'q',
+      });
+      expect(out.map((m) => m.chunkId)).toEqual(['ok']);
+      expect(warnings.events()).toEqual([{ event: 'retrieve.failed', errorName: 'Error' }]);
+    } finally {
+      warnings.restore();
+    }
   });
 });
 
@@ -329,12 +591,17 @@ describe('respond() orchestrator', () => {
   });
 
   it('best-effort: a throwing scopeHierarchy does NOT break the turn', async () => {
-    const adapter = fakeAdapter({
-      scopeHierarchy: async () => { throw new Error('db down'); },
-    });
-    const res = await respond({ ...baseArgs(), adapter });
-    expect(res.generation.text).toBe('respuesta del asistente');
-    expect(res.summaryText).toBe('');
+    const warnings = captureWarnings();
+    try {
+      const adapter = fakeAdapter({
+        scopeHierarchy: async () => { throw new Error('db down'); },
+      });
+      const res = await respond({ ...baseArgs(), adapter });
+      expect(res.generation.text).toBe('respuesta del asistente');
+      expect(res.summaryText).toBe('');
+    } finally {
+      warnings.restore();
+    }
   });
 
   it('prepareTurn alone does not call generate (router seam)', async () => {
@@ -343,6 +610,162 @@ describe('respond() orchestrator', () => {
     // condense is skipped (no history) so generate is never called.
     expect(ai.generateSync).not.toHaveBeenCalled();
     expect(prepared.messages.at(-1)!.role).toBe('user');
+  });
+});
+
+// ── survived failures are VISIBLE (warn.ts), and never leak text ─────────────
+//
+// Each spot keeps its fallback (the turn still runs) and emits exactly one
+// structured warning. Asserted on the `event` code, never on log wording.
+// The secret rides the error MESSAGE: it must never reach the log.
+
+class UpstreamError extends Error {
+  status = 503;
+  constructor() { super('Bearer sk-secret upstream body'); this.name = 'UpstreamError'; }
+}
+
+describe('respond() — survived failures warn', () => {
+  it('a throwing scopeHierarchy warns scope.failed', async () => {
+    const warnings = captureWarnings();
+    try {
+      const adapter = fakeAdapter({ scopeHierarchy: async () => { throw new UpstreamError(); } });
+      const res = await respond({ ...baseArgs(), adapter });
+      expect(res.summaryText).toBe('');
+      expect(warnings.events()).toEqual([
+        { event: 'scope.failed', errorName: 'UpstreamError', status: 503 },
+      ]);
+      expect(warnings.raw()).not.toContain('sk-secret');
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('a throwing resolveEntity warns ref.failed once per failed ref; the others still resolve', async () => {
+    const warnings = captureWarnings();
+    try {
+      const adapter = fakeAdapter({
+        resolveEntity: async (ref) => {
+          if (ref.id === 1) throw new UpstreamError();
+          return 'Proyecto dos: texto resuelto';
+        },
+      });
+      const prepared = await prepareTurn({
+        ...baseArgs(),
+        adapter,
+        inlineRefs: [{ kind: 'project', id: 1 }, { kind: 'project', id: 2 }],
+      });
+      expect(prepared.messages.at(-1)!.content).toContain('Proyecto dos: texto resuelto');
+      expect(warnings.events()).toEqual([
+        { event: 'ref.failed', errorName: 'UpstreamError', status: 503 },
+      ]);
+      expect(warnings.raw()).not.toContain('sk-secret');
+      expect(warnings.raw()).not.toContain('texto resuelto');
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('a throwing retrieve warns retrieve.failed per failed corpus and never logs the query', async () => {
+    const warnings = captureWarnings();
+    try {
+      const ai = fakeAIClient({
+        retrieve: async (req) => {
+          if (req.corpus === 'kb-down') throw new UpstreamError();
+          return { matches: [{ documentId: 'd', chunkId: 'ok', score: 0.5, text: 'pasaje' }] };
+        },
+      });
+      const out = await retrieveContext({
+        aiClient: ai, orgId: 'o', fallbackScopeId: 's', threadId: 1,
+        corpora: [{ corpus: 'kb-down', scopeId: 's' }],
+        query: 'consulta privada del usuario',
+      });
+      expect(out.map((m) => m.chunkId)).toEqual(['ok']); // the healthy corpus still answers
+      expect(warnings.events()).toEqual([
+        { event: 'retrieve.failed', errorName: 'UpstreamError', status: 503 },
+      ]);
+      expect(warnings.raw()).not.toContain('consulta privada');
+      expect(warnings.raw()).not.toContain('sk-secret');
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('a throwing title generate warns title.failed and falls back to a derived title', async () => {
+    const warnings = captureWarnings();
+    try {
+      const ai = fakeAIClient({ generateSync: async () => { throw new UpstreamError(); } });
+      const title = await generateThreadTitle(ai, {
+        titlePrompt: 'x', surface: 'chat', orgId: 'o', userId: 'u',
+        userText: 'presupuesto participativo de la colonia centro',
+        assistantText: 'respuesta',
+      });
+      // Six words or fewer: the derived title is the whole message, unchanged.
+      expect(title).toBe('presupuesto participativo de la colonia centro');
+      expect(warnings.events()).toEqual([
+        { event: 'title.failed', errorName: 'UpstreamError', status: 503 },
+      ]);
+      expect(warnings.raw()).not.toContain('presupuesto');
+      expect(warnings.raw()).not.toContain('sk-secret');
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it.each([
+    ['text in the name', 'Bearer sk-secret leaked'],
+    ['punctuation', 'Error: sk-secret'],
+    ['over 64 chars', 'A'.repeat(65)],
+    ['empty', ''],
+  ])('replaces an unsafe Error.name (%s) instead of logging it', async (_label, badName) => {
+    const warnings = captureWarnings();
+    try {
+      const err = new Error('boom');
+      err.name = badName;
+      const adapter = fakeAdapter({ scopeHierarchy: async () => { throw err; } });
+      await respond({ ...baseArgs(), adapter });
+      expect(warnings.events()).toEqual([{ event: 'scope.failed', errorName: 'UnsafeErrorName' }]);
+      expect(warnings.raw()).not.toContain('sk-secret');
+      if (badName) expect(warnings.raw()).not.toContain(badName);
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('keeps a safe Error.name of 64 chars (positive control for the filter)', async () => {
+    const warnings = captureWarnings();
+    try {
+      const err = new Error('boom');
+      err.name = `Upstream_${'A'.repeat(55)}`;
+      const adapter = fakeAdapter({ scopeHierarchy: async () => { throw err; } });
+      await respond({ ...baseArgs(), adapter });
+      expect(warnings.events()).toEqual([{ event: 'scope.failed', errorName: err.name }]);
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('a clean turn with refs, corpora and history warns nothing (positive control)', async () => {
+    const warnings = captureWarnings();
+    try {
+      const adapter = fakeAdapter({
+        scopeHierarchy: async () => ({ summaryText: 'S', corpora: [{ corpus: 'kb', scopeId: 's' }] }),
+        resolveEntity: async () => 'ref text',
+      });
+      const ai = fakeAIClient({
+        generateSync: async () => ({ text: 'consulta condensada', modelUsed: 'm', provider: 'p', costUsd: 0, traceId: 't' }),
+      });
+      await respond({
+        ...baseArgs(), adapter, aiClient: ai,
+        history: [{ role: 'user', content: 'hola' }],
+        inlineRefs: [{ kind: 'project', id: 1 }],
+      });
+      await generateThreadTitle(ai, {
+        titlePrompt: 'x', surface: 'chat', orgId: 'o', userId: 'u', userText: 'hola', assistantText: 'hola',
+      });
+      expect(warnings.events()).toEqual([]);
+    } finally {
+      warnings.restore();
+    }
   });
 });
 
@@ -384,16 +807,131 @@ describe('corpus-sync', () => {
     expect(r.docs).toBe(3);
   });
 
-  it('syncEntity swallows an ingest failure (never breaks the write path)', async () => {
-    const ai = fakeAIClient({ ingest: async () => { throw new Error('ingest down'); } });
-    const source = {
-      docsForEntity: async () => [
-        { orgId: 'o', scopeId: 's', corpus: 'c', documents: [{ id: 'x', title: 't', text: 'x', metadata: {} }] },
-      ],
-      entitiesInScope: async () => [],
-    };
-    const r = await syncEntity(ai, source, { kind: 'team', id: 1 });
-    expect(r.synced).toBe(0);
+  // 🔴 Sync REJECTS on failure (0.5.0, backlog 275). Before, every error was
+  // caught inside, so a consumer's `.catch` could never fire and a dead ingest
+  // path looked identical to "nothing to sync". The write path stays safe only
+  // if the CALLER chooses fire-and-forget with its own `.catch`.
+  const batch = (corpus: string, id: string) => ({
+    orgId: 'o', scopeId: 's', corpus,
+    documents: [{ id, title: 't', text: 'contenido privado', metadata: {} }],
+  });
+
+  it('syncEntity rejects when ingest fails, after attempting every batch', async () => {
+    const warnings = captureWarnings();
+    try {
+      const attempted: string[] = [];
+      const ai = fakeAIClient({
+        ingest: async (req) => {
+          attempted.push(req.corpus);
+          if (req.corpus === 'down') throw new UpstreamError();
+          return { ingested: req.documents.length, documentIds: [] };
+        },
+      });
+      const source = {
+        docsForEntity: async () => [batch('down', 'a'), batch('up', 'b')],
+        entitiesInScope: async () => [],
+      };
+      const err = await syncEntity(ai, source, { kind: 'team', id: 1 }).then(
+        () => { throw new Error('expected syncEntity to reject'); },
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(CorpusSyncError);
+      expect(err).toMatchObject({
+        synced: 1, // the healthy batch still went in
+        failures: [{ event: 'sync.ingest.failed', errorName: 'UpstreamError', status: 503 }],
+      });
+      // cause is SANITIZED: name + status, never the upstream error object.
+      expect((err as Error).cause).toEqual({
+        event: 'sync.ingest.failed', errorName: 'UpstreamError', status: 503,
+      });
+      // What `console.error(err)` would print in a consumer:
+      expect(inspect(err, { depth: 10, showHidden: true })).not.toContain('sk-secret');
+      expect(attempted).toEqual(['down', 'up']);
+      expect(String((err as Error).message)).not.toContain('sk-secret');
+      expect(warnings.events()).toEqual([
+        { event: 'sync.ingest.failed', errorName: 'UpstreamError', status: 503 },
+      ]);
+      expect(warnings.raw()).not.toContain('contenido privado');
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('syncEntity rejects when the entity source fails', async () => {
+    const warnings = captureWarnings();
+    try {
+      const source = {
+        docsForEntity: async () => { throw new UpstreamError(); },
+        entitiesInScope: async () => [],
+      };
+      await expect(syncEntity(fakeAIClient(), source, { kind: 'team', id: 1 })).rejects.toMatchObject({
+        name: 'CorpusSyncError',
+        synced: 0,
+        failures: [{ event: 'sync.docs.failed', errorName: 'UpstreamError', status: 503 }],
+      });
+      expect(warnings.events()).toEqual([
+        { event: 'sync.docs.failed', errorName: 'UpstreamError', status: 503 },
+      ]);
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('backfillScope rejects when entitiesInScope fails', async () => {
+    const warnings = captureWarnings();
+    try {
+      const source = {
+        docsForEntity: async () => [],
+        entitiesInScope: async () => { throw new UpstreamError(); },
+      };
+      await expect(backfillScope(fakeAIClient(), source, 's')).rejects.toMatchObject({
+        name: 'CorpusSyncError',
+        failures: [{ event: 'backfill.entities.failed', errorName: 'UpstreamError', status: 503 }],
+      });
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('backfillScope keeps going past a failing entity, then rejects with the totals', async () => {
+    const warnings = captureWarnings();
+    try {
+      const ingested: string[] = [];
+      const ai = fakeAIClient({
+        ingest: async (req) => {
+          if (req.documents[0]!.id === 't:2') throw new UpstreamError();
+          ingested.push(req.documents[0]!.id!);
+          return { ingested: 1, documentIds: [] };
+        },
+      });
+      const source = {
+        docsForEntity: async (ref: { id?: string | number }) => [batch('c', `t:${ref.id}`)],
+        entitiesInScope: async () => [1, 2, 3].map((id) => ({ kind: 'team' as const, id })),
+      };
+      await expect(backfillScope(ai, source, 's')).rejects.toMatchObject({
+        name: 'CorpusSyncError',
+        synced: 2,
+        failures: [{ event: 'sync.ingest.failed', errorName: 'UpstreamError', status: 503 }],
+      });
+      expect(ingested).toEqual(['t:1', 't:3']);
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('a clean sync and backfill resolve and warn nothing (positive control)', async () => {
+    const warnings = captureWarnings();
+    try {
+      const source = {
+        docsForEntity: async (ref: { id?: string | number }) => [batch('c', `t:${ref.id}`)],
+        entitiesInScope: async () => [{ kind: 'team' as const, id: 1 }],
+      };
+      await expect(syncEntity(fakeAIClient(), source, { kind: 'team', id: 1 })).resolves.toEqual({ synced: 1 });
+      await expect(backfillScope(fakeAIClient(), source, 's')).resolves.toEqual({ entities: 1, docs: 1 });
+      expect(warnings.events()).toEqual([]);
+    } finally {
+      warnings.restore();
+    }
   });
 });
 
@@ -498,6 +1036,78 @@ describe('fuseMatches — RRF when the graph leg has entries', () => {
   it('works with an empty vector leg (graph-only turn)', () => {
     const fused = fuseMatches([], [chunk('g2', 0.4), chunk('g1', 0.8)]);
     expect(fused.map((m) => m.chunkId)).toEqual(['g1', 'g2']);
+  });
+});
+
+describe('fuseMatches — vectorRanked (a hybrid list keeps its server order)', () => {
+  // Hybrid scores are per-corpus RRF values: 'b' scores higher than 'a' but
+  // the server ranked 'a' first. Re-sorting by score would invert that.
+  const hybrid = [chunk('a', 0.016), chunk('b', 0.033), chunk('c', 0.01)];
+
+  it('with an empty graph list, returns the given order, only capped', () => {
+    expect(fuseMatches(hybrid, [], { vectorRanked: true }).map((m) => m.chunkId))
+      .toEqual(['a', 'b', 'c']);
+    expect(fuseMatches(hybrid, [], { vectorRanked: true, mergedCap: 2 }).length).toBe(2);
+  });
+
+  it('with graph entries, ranks the vector leg by position, not score', () => {
+    const fused = fuseMatches(hybrid, [chunk('g', 0.9)], { vectorRanked: true });
+    // 'a' (position 1) and 'g' (graph rank 1) tie on RRF; the vector leg wins
+    // the tie-break. 'b' stays ahead of 'c' by position.
+    expect(fused.map((m) => m.chunkId)).toEqual(['a', 'g', 'b', 'c']);
+  });
+});
+
+describe('prepareTurn — graphProvider on a hybrid policy', () => {
+  const policy = { mode: 'hybrid' as const, perCorpusTopK: 5, limit: 12 };
+  const serverOrder = [
+    { documentId: 'd1', chunkId: 'h1', score: 0.016, text: 'H1', corpus: 'kb', denseScore: 0.4 },
+    { documentId: 'd2', chunkId: 'h2', score: 0.033, text: 'H2', corpus: 'kb', denseScore: 0.7 },
+  ];
+  const ai = () =>
+    fakeAIClient({
+      retrieveMulti: async () => ({ matches: serverOrder, corpora: [] }),
+    });
+
+  it('without graph chunks, keeps the server order untouched', async () => {
+    const prepared = await prepareTurn({
+      ...baseArgs(),
+      aiClient: ai(),
+      retrievalPolicy: policy,
+      graphProvider: async () => ({ context: 'BLOQUE' }),
+    });
+    expect(prepared.matches.map((m) => m.chunkId)).toEqual(['h1', 'h2']);
+    expect(prepared.graphContext).toBe('BLOQUE');
+  });
+
+  it('fuses graph chunks by server order and keeps maxDenseScore on the retrieved leg', async () => {
+    const prepared = await prepareTurn({
+      ...baseArgs(),
+      aiClient: ai(),
+      retrievalPolicy: policy,
+      graphProvider: async () => ({
+        chunks: [{ documentId: 'd9', chunkId: 'g1', score: 0.99, text: 'G', corpus: 'kb' }],
+      }),
+    });
+    expect(prepared.matches.map((m) => m.chunkId)).toEqual(['h1', 'g1', 'h2']);
+    // The graph chunk's bare 0.99 must not be read as a cosine.
+    expect(prepared.maxDenseScore).toBe(0.7);
+  });
+
+  it('a rejecting provider warns graph.failed and degrades to the plain turn', async () => {
+    const warnings = captureWarnings();
+    try {
+      const prepared = await prepareTurn({
+        ...baseArgs(),
+        aiClient: ai(),
+        retrievalPolicy: policy,
+        graphProvider: async () => { throw new Error('graph down'); },
+      });
+      expect(prepared.matches.map((m) => m.chunkId)).toEqual(['h1', 'h2']);
+      expect(warnings.events()).toEqual([{ event: 'graph.failed', errorName: 'Error' }]);
+    } finally {
+      warnings.restore();
+    }
   });
 });
 

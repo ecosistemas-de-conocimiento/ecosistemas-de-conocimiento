@@ -1,0 +1,137 @@
+{
+  "retrieve/missing-required-keys": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Invalid input: expected string, received undefined; Invalid input: expected string, received undefined"
+    }
+  },
+  "retrieve/wrong-scalar-type": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Invalid input: expected number, received string"
+    }
+  },
+  "retrieve/number-out-of-range": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Too small: expected number to be >=1; Too big: expected number to be <=1"
+    }
+  },
+  "retrieve/unrecognized-key-under-strict": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Unrecognized key: \"nope\""
+    }
+  },
+  "generate/empty-body": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Invalid input: expected array, received undefined"
+    }
+  },
+  "generate/empty-array-and-bad-url": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Too small: expected array to have >=1 items; Invalid URL"
+    }
+  },
+  "generate/nested-path-and-min-string": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Too small: expected string to have >=1 characters; Invalid input: expected string, received number"
+    }
+  },
+  "generate-sync/missing-nested-object": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Invalid input: expected object, received undefined"
+    }
+  },
+  "generate-sync/bad-enum": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Invalid option: expected one of \"quick\"|\"standard\"|\"deep\"|\"maximum\""
+    }
+  },
+  "generate-stream/empty-body": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Invalid input: expected object, received undefined"
+    }
+  },
+  "route/refine-message": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "defaultRouteId must match one of the candidate ids"
+    }
+  },
+  "route/union-and-array-min": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Too small: expected string to have >=1 characters; Too small: expected array to have >=1 items"
+    }
+  },
+  "embed/wrong-container-type": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Invalid input; Unrecognized key: \"texts\""
+    }
+  },
+  "corpora/create-missing-name": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Invalid input: expected string, received undefined; Invalid input: expected number, received string"
+    }
+  },
+  "ingest/missing-documents": {
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "statusCode": 400,
+      "error": "Bad Request",
+      "message": "Invalid input: expected array, received undefined"
+    }
+  }
+}

@@ -22,6 +22,12 @@ export type {
   IngestResult,
   RetrieveRequest,
   RetrieveResult,
+  RetrieveMode,
+  RetrieveMatch,
+  RetrieveMultiRequest,
+  RetrieveMultiResult,
+  RetrieveMultiCorpusDiagnostics,
+  RetrievalPolicy,
   AIClient,
 } from './types.js';
 
@@ -61,7 +67,11 @@ export {
 } from './title.js';
 
 // Retrieve orchestration + the pure two-list fusion (RRF)
-export type { RetrieveContextArgs, FuseMatchesOptions } from './retrieve.js';
+export type {
+  RetrieveContextArgs,
+  RetrieveContextResult,
+  FuseMatchesOptions,
+} from './retrieve.js';
 export {
   retrieveContext,
   threadCorpus,
@@ -70,6 +80,19 @@ export {
   DEFAULT_PER_CORPUS_TOPK,
   DEFAULT_RRF_K,
 } from './retrieve.js';
+
+// Relevance across retrieve modes (cosine vs RRF vs rerank) + cited-only provenance
+export type { ScoredChunk, CitedChunk } from './relevance.js';
+export {
+  thresholdScore,
+  maxDenseScore,
+  relevanceScore,
+  parseCitedOrdinals,
+  citedProvenance,
+} from './relevance.js';
+
+// Empty-generation predicates (a 200 with no visible text)
+export { isEmptyGeneration, shouldRetryEmpty } from './generation.js';
 
 // Turn assembly (the load-bearing invariant)
 export type { BuildTurnArgs, BuiltTurn } from './turn.js';
@@ -87,4 +110,7 @@ export { respond, prepareTurn } from './respond.js';
 
 // Generic corpus-sync scaffolding (the advanced-RAG ingest seam)
 export type { CorpusDoc, CorpusBatch, EntitySource } from './corpus-sync.js';
-export { syncEntity, backfillScope } from './corpus-sync.js';
+export { syncEntity, backfillScope, CorpusSyncError } from './corpus-sync.js';
+
+// Survived-failure warnings: the structured payload every console.warn carries
+export type { EngineWarning, EngineWarningEvent } from './warn.js';

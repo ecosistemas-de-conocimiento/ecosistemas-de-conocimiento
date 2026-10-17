@@ -129,6 +129,19 @@ export interface ItemResult {
   /** Results that violated `mustNotContain` — the stale-citation counter. */
   forbiddenHits: number;
   retrievedDocs: string[];
+  /**
+   * `chunks.id` of every result, in RANKED ORDER.
+   *
+   * `retrievedDocs` cannot stand in for this: it is de-duplicated to the
+   * document level, so two runs that return the same documents in the same
+   * document order but rank the CHUNKS differently look identical. Ranking is
+   * the whole output of a fusion change, so an eval comparing two retrieval
+   * parameterisations needs the ranked chunk list itself — otherwise a
+   * parameter that is silently dropped somewhere between the config and
+   * `rrfFuse` produces two indistinguishable reports and the sweep quietly
+   * measures the same configuration twice.
+   */
+  retrievedChunkIds: string[];
 }
 
 /** Aggregate over a whole golden set under one config. */

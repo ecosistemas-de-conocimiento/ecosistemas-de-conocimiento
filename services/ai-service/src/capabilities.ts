@@ -40,6 +40,8 @@
 //      it was written. Retiring a behaviour means flipping the value to `false`
 //      (and keeping the key), never deleting the key.
 
+import { STRICT_SCHEMA_MODELS } from './services/ai/router/strict-schema.js';
+
 /**
  * The capabilities this build ships. Keys are the stable public names
  * consumers declare; values are `true` when the behaviour is wired.
@@ -125,7 +127,131 @@ export const SERVICE_CAPABILITIES = Object.freeze({
    * part of onboarding, want to know this is on.
    */
   budgetFailClosed: true,
+
+  /**
+   * `POST /v1/retrieve` reports `legs` — the retrieval legs that actually
+   * CONTRIBUTED rows to the response — and names the two lexical legs apart
+   * (`lexical` = Postgres full-text, `sparse` = learned-sparse bge-m3) instead
+   * of labelling both `lexical`.
+   *
+   * This is the capability that makes retrieval degradation checkable, and the
+   * reason it needs a capability rather than a feature-detect is that its
+   * absence is INDISTINGUISHABLE from its failure case. The rerank rung is
+   * fail-safe: a dead reranker returns the fused order, so the response is
+   * byte-identical to `rerank: false` minus `rerankScore`. A consumer probing
+   * "is `legs` there?" against an older deployment reads `undefined` and cannot
+   * tell "this service does not report legs" from "no leg ran". Requiring the
+   * capability makes the older service refuse to boot instead of answering
+   * plausibly and wrongly.
+   *
+   * A consumer that asserts on `legs` — a canary asserting `rerank` really ran,
+   * an eval comparing leg coverage — REQUIRES this. See
+   * `src/services/rag/retrieve.ts` (stage 2.5) and `retrieveResponseSchema` in
+   * `src/contract/responses.ts`.
+   */
+  retrievalLegs: true,
+
+  /**
+   * Outbound payloads are PII-MINIMISED at the egress seams before they leave
+   * the perimeter: both OpenRouter chat paths (sync and streaming), the
+   * embeddings adapter (so ingest, `/v1/embed` and retrieve alike), the RERANK
+   * client (the whole candidate pool, `min(topK * 4, 50)` passages), the SPARSE-EMBED client (`callSparseEmbed`, chunk and query
+   * text sent to `SPARSE_EMBED_URL`; SECURITY_OPEN §15, added on
+   * `fix/pii-sparse-embed-scrub`), and the two free-prose `traces` columns (`input_payload` /
+   * `output_payload`, stored SCRUBBED ONLY with no reversible map). CURP, RFC,
+   * email, MX phone numbers and MX addresses are replaced by placeholder tokens
+   * (`[CURP]`, `[RFC]`, `[EMAIL]`, `[TELEFONO]`, `[DIRECCION]`).
+   *
+   * 🔴 THIS FILE DESCRIBES THE CODE, NOT ANY RUNNING SERVICE, and for the rerank
+   * seam those differ RIGHT NOW. A deployment serves whatever image it was built
+   * from, so a service running a build older than `ee844cd` answers
+   * `piiMinimisation: true` from code where the rerank pool is UNSCRUBBED.
+   * MEASURED: `ai.dev.example.org/v1/capabilities` returned `true`
+   * while dev ran an image that predated the rerank seam; stage and prod were
+   * further behind. That is a dated snapshot, not current state: which commit
+   * each environment runs now is a deploy fact (assumed per handoff, not
+   * measured here — dev exposes no commit; `/health` returns only
+   * `{status, service}`, measured). Check the deploy record.
+   * ⇒ Do NOT date this seam's protection from a commit or a merge. Protection
+   * begins when an environment is DEPLOYED with the code, and this file cannot
+   * know which environment is reading it.
+   *
+   * ⚠ This is the honesty contract at the top of this file failing in the
+   * OPPOSITE direction from the one it was written for. It exists to stop a
+   * capability reading `true` while the wiring is inert. Here the SOURCE is more
+   * protective than the running service — and the wire, being
+   * `Record<string, boolean>`, cannot tell the two apart either way.
+   *
+   * ⚠ THIS LIST WAS WRONG BEFORE THE RERANK SEAM LANDED, and the correction is
+   * recorded rather than silently applied because a consumer may have read the
+   * earlier version. The rerank leg sent its pool UNSCRUBBED from the
+   * DeepInfra cutover until the wiring landed. Before the cutover the
+   * rung was dead, so nothing crossed the perimeter there and the omission was
+   * harmless; between those two dates it was not.
+   *
+   * 🔴 AND THE INFERENCE THIS NEW SEAM INVITES, WHICH IS WRONG: "the rerank pool
+   * is scrubbed" does NOT mean "personal records are safe to rerank on a third
+   * party". The scrub removes the five PATTERNS below and nothing else. A corpus
+   * of council minutes or citizen correspondence is mostly NAMES, and names are
+   * exactly what survives — see the ceiling immediately below. Scrubbing the
+   * pool changed what a reranker receives; it did not change what may be sent.
+   *
+   * ⚠ THE CEILING, and a consumer MUST NOT read past it: this is PRESENCE, not
+   * STRENGTH. What it promises is that the minimiser RUNS at the seam and that a
+   * synthetic CURP does not survive it. It promises NOTHING about recall on real
+   * Spanish text, and in particular the rules layer has NO `person` detector — a
+   * name written in running Spanish is not a pattern, so names still reach the
+   * provider. Quote no eval number against this capability; no real Spanish
+   * golden set exists. A consumer with a legal obligation about names needs the
+   * NER detector installed, which is a separate, unmade decision.
+   *
+   * It fails CLOSED, which is the second half of what the name is worth: if the
+   * minimiser cannot finish, the provider call is REFUSED rather than made with
+   * the raw payload. A consumer that sees a 503 `ERR_PII_MINIMISATION_FAILED` is
+   * seeing this working, not this broken.
+   *
+   * Two consumers need to know: one that must state where personal data goes,
+   * and one whose prompts contain identifiers and would otherwise be surprised
+   * to read `[CURP]` back in a model's answer. See
+   * `src/services/ai/pii-egress.ts` and `src/services/ai/pii/`.
+   *
+   * 🔴 NONE OF THIS CEILING CROSSES THE WIRE. `CapabilityDocument` is
+   * `Record<string, boolean>` (see below), so a consumer receives `true` and
+   * cannot learn which seams are covered, that names are not detected, or that
+   * the list above was once incomplete. Everything qualifying this capability is
+   * SOURCE-ONLY. A consumer with a legal obligation must read this comment or
+   * ask; it cannot discover any of it from `GET /v1/capabilities`.
+   */
+  piiMinimisation: true,
+
+  /**
+   * `responseSchemaStrict: true` (in `unit.specOverride` / `unit.specDefault`)
+   * is honoured: the provider is asked for STRICT schema-constrained output
+   * (`response_format: json_schema`, `strict: true`, plus OpenRouter's
+   * `provider.require_parameters` so an endpoint cannot drop it), instead of
+   * JSON mode. An unsupported model or a schema outside the strict subset is a
+   * `400 SpecResolutionError` — never a silent fall back to JSON mode.
+   *
+   * WHICH MODELS: the document also carries one key per supported model,
+   * `strictStructuredOutput:<model id>` (see `strictModelCapabilityName` and
+   * `getCapabilityDocument`). A consumer that pins a model REQUIRES both names,
+   * e.g. `['strictStructuredOutput', 'strictStructuredOutput:openai/gpt-4o-mini']`,
+   * so a deployment that cannot run that model strictly refuses at boot rather
+   * than 400ing mid-request. Older ai-service builds lack both, and an older
+   * build would otherwise reject the unknown spec key with a 400 (the unit
+   * schema is strict). See `src/services/ai/router/strict-schema.ts`.
+   */
+  strictStructuredOutput: true,
 });
+
+/**
+ * The per-model capability name for strict structured output. One per entry in
+ * `STRICT_SCHEMA_MODELS`. Same honesty rule as every other name: a model that
+ * loses support flips to `false`, its key is never deleted.
+ */
+export function strictModelCapabilityName(model: string): string {
+  return `strictStructuredOutput:${model}`;
+}
 
 /** A published capability name. */
 export type CapabilityName = keyof typeof SERVICE_CAPABILITIES;
@@ -138,5 +264,8 @@ export interface CapabilityDocument {
 
 /** The document served by `GET /v1/capabilities`. */
 export function getCapabilityDocument(): CapabilityDocument {
-  return { capabilities: { ...SERVICE_CAPABILITIES } };
+  const strictModels = Object.fromEntries(
+    STRICT_SCHEMA_MODELS.map((m) => [strictModelCapabilityName(m), true] as const),
+  );
+  return { capabilities: { ...SERVICE_CAPABILITIES, ...strictModels } };
 }

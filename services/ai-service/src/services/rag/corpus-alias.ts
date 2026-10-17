@@ -29,6 +29,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 
 import type { Db } from '../../db/client.js';
+import { NestedEnvelopeError } from '../../errors/base.js';
 import { corpora, corpusAliases } from '../../db/schema/index.js';
 
 export interface CorpusAliasServiceDeps {
@@ -51,28 +52,47 @@ export interface CorpusAliasResult {
   created: boolean;
 }
 
-/** Thrown when the `target` corpus does not exist in the caller's scope. Route → 404. */
-export class TargetCorpusNotFoundError extends Error {
+/**
+ * Thrown when the `target` corpus does not exist in the caller's scope. 404.
+ *
+ * ⚠ The MESSAGE is the wire message. `POST /v1/corpus/:name/alias` used to
+ * catch this class and hand-build a SHORTER body, because `message` also named
+ * `(org=…, project=…)` and the route did not want the caller's scope echoed
+ * into a 404. The route no longer re-decides anything, so the shortening moved
+ * HERE: the message is scope-free by construction and the scope survives as
+ * fields for the log line. Byte-identical on the wire to what the route sent.
+ */
+export class TargetCorpusNotFoundError extends NestedEnvelopeError {
+  readonly code = 'ERR_TARGET_CORPUS_NOT_FOUND';
+  readonly status = 404;
   public readonly target: string;
+  public readonly org: string;
+  public readonly project: string;
   constructor(opts: { target: string; org: string; project: string }) {
-    super(
-      `target corpus '${opts.target}' not found in (org=${opts.org}, project=${opts.project})`,
-    );
+    super(`target corpus '${opts.target}' not found`);
     this.name = 'TargetCorpusNotFoundError';
     this.target = opts.target;
+    this.org = opts.org;
+    this.project = opts.project;
   }
 }
 
-/** Thrown when the alias name already names a real corpus in the same scope. Route → 409. */
-export class AliasNameConflictError extends Error {
+/**
+ * Thrown when the alias name already names a real corpus in the same scope. 409.
+ * Same scope-free-message rule as `TargetCorpusNotFoundError` above.
+ */
+export class AliasNameConflictError extends NestedEnvelopeError {
+  readonly code = 'ERR_ALIAS_NAME_CONFLICT';
+  readonly status = 409;
   public readonly aliasName: string;
+  public readonly org: string;
+  public readonly project: string;
   constructor(opts: { name: string; org: string; project: string }) {
-    super(
-      `'${opts.name}' already names a corpus in (org=${opts.org}, project=${opts.project}); ` +
-        `alias names share the corpus namespace and cannot collide`,
-    );
+    super(`'${opts.name}' already names a corpus; alias names cannot collide with corpora`);
     this.name = 'AliasNameConflictError';
     this.aliasName = opts.name;
+    this.org = opts.org;
+    this.project = opts.project;
   }
 }
 

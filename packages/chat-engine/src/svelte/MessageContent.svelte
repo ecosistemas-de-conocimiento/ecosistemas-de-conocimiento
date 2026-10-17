@@ -13,6 +13,7 @@
     kindEmoji as resolveKindEmoji,
     kindLabel as resolveKindLabel,
   } from "@edc/chat-engine/core";
+  import { safeHref } from "./safeHref.js";
 
   interface Props {
     content: string;
@@ -31,7 +32,8 @@
   const segments = $derived(splitContentByRefs(content, refs));
 
   function hrefFor(ref: MentionRefLike): string | null {
-    return hrefForRef ? hrefForRef(ref) : null;
+    const href = hrefForRef ? hrefForRef(ref) : null;
+    return safeHref(href); // the one shared guard — see safeHref.ts
   }
 
   function onPillClick(e: MouseEvent, ref: MentionRefLike, href: string): void {

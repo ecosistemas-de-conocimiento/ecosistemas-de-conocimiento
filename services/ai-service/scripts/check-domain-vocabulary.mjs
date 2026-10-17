@@ -120,15 +120,6 @@ const DENY = [
  *   for one product's subject matter. They are forbidden EVERYWHERE, including
  *   comments, because a comment naming them is how the next person justifies
  *   the code that follows.
- *
- *   A PROTOTYPE NAME in a comment is not coupling; it is provenance.
- *   "Ported from a prototype", "what a prototype called a dimension", "generalised from
- *   A prototype's classifier" — every one of those records where a piece of
- *   machinery came from or what was deliberately dropped, and this service is
- *   a port, so that history explains a lot of otherwise-odd shapes. Deleting
- *   them would lose real reasoning and change nothing about what the code
- *   does. The source name is NOT in this exemption: it carries
- *   no design reasoning, so it must be gone from the tree entirely.
  */
 const ALLOWLIST = [
   {

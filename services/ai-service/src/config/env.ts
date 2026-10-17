@@ -1,4 +1,25 @@
+// ⚠ ON THIS FLEET, `dev` ALSO RUNS `NODE_ENV=production`.
+//
+// Measured read-only via the Coolify API: all five deployed ai-service apps —
+// dev, stage and prod alike — boot with `NODE_ENV=production`, and none of them
+// currently sets any of `PRODUCTION_FORBIDDEN_FLAGS`, so today nothing breaks.
+//
+// The consequence to know before you debug on a deployed box: setting
+// `CALLBACK_ALLOW_PRIVATE` on the DEV deployment hard-fails boot, exactly as it
+// would on prod. That is BY DESIGN — the guard keys off `NODE_ENV`, not off the
+// environment's name, so it cannot be fooled by a box that calls itself dev.
+//
+// The old in-service mock switches (`MOCK_LLM`, `MOCK_EMBEDDINGS`,
+// `MOCK_LLM_STREAM`) were REMOVED, not gated: the shipped service
+// can no longer produce fake model output at all. Setting one now refuses boot
+// in EVERY environment (`REMOVED_MOCK_FLAGS`), because a consumer still setting
+// it expects zero-cost fake output and would otherwise get real, billed calls.
+// Tests point the service at `test-support/fake-provider/` instead.
+
+import { createHash } from 'node:crypto';
+
 import { config as loadDotenv } from 'dotenv';
+import { pino } from 'pino';
 import { z } from 'zod';
 
 loadDotenv();
@@ -13,7 +34,7 @@ const apiKeyEntry = z.object({
   role: z.enum(['app', 'admin']).default('app'),
   /**
    * Per-consumer HMAC secret used to sign async callbacks (see
-   * `plan/m3-webhook-signing-followup.md`). When absent, ai-service
+   * `plan/tecnología/ai-infra/callback-contract.md`). When absent, ai-service
    * still records terminal callbacks in `callback_deliveries` but cannot sign
    * them — see `src/services/callbacks/emit.ts` for the actual behaviour.
    *
@@ -29,6 +50,30 @@ const apiKeyEntry = z.object({
    * window and validated for shape only here.
    */
   previousCallbackSecrets: z.array(z.string().min(32)).optional(),
+  /**
+   * Optional expiry, ISO-8601 with an explicit offset or `Z`
+   * (`2026-12-31T00:00:00Z`). ADDITIVE: entries without it never expire, which
+   * is every entry that exists today — do not make this required.
+   *
+   * Enforced at auth time in `src/plugins/auth.ts`: a request bearing an
+   * expired key gets `401 { error: 'api_key_expired' }`, a code distinct from
+   * the generic `unauthorized` so a consumer can tell "rotate me" apart from
+   * "wrong token". Also surfaced at boot by `warnOnExpiringApiKeys`.
+   */
+  expiresAt: z.string().datetime({ offset: true }).optional(),
+  /**
+   * Optional short human label for the key ("app-prod-2026q3"). Purely for
+   * operators: it rides on `req.auth.kid` and appears in boot/expiry warnings
+   * so a log line can name a key without printing the token.
+   *
+   * NOT written to `registry_audit.actor_key_id`. That column is documented
+   * (schema comment + `src/plugins/auth.ts`) as the SHA-256-derived
+   * `apiKeyId`, and existing rows carry that derivation; writing a free-text
+   * label into the same column would change its meaning for every reader and
+   * for `registry_entries.updated_by`, which is a migration, not a
+   * pass-through. Logs only.
+   */
+  kid: z.string().min(1).max(64).optional(),
 });
 
 export type ApiKeyEntry = z.infer<typeof apiKeyEntry>;
@@ -58,12 +103,17 @@ const envSchema = z.object({
   REDIS_URL: z.string().url(),
 
   // JSON map of apiKey -> { org, project, role? }
+  //
+  // Tokens are normalised (trimmed) here and a boot that would have needed the
+  // normalisation is REFUSED — see `normaliseApiKeys` for why a silently fixed
+  // key is the same footgun one step later.
   API_KEYS: z
     .string()
     .default('{}')
     .transform((raw, ctx) => {
+      let entries: Record<string, ApiKeyEntry>;
       try {
-        return z.record(apiKeyEntry).parse(JSON.parse(raw));
+        entries = z.record(z.string(), apiKeyEntry).parse(JSON.parse(raw));
       } catch {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -71,6 +121,18 @@ const envSchema = z.object({
         });
         return z.NEVER;
       }
+      const { keys, problems } = normaliseApiKeys(entries);
+      if (problems.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'API_KEYS holds token(s) that no request could ever match. ' +
+            'Refusing to start; fix the env var and redeploy. ' +
+            problems.join(' | '),
+        });
+        return z.NEVER;
+      }
+      return keys;
     }),
 
   OPENROUTER_API_KEY: z.string().optional(),
@@ -99,6 +161,13 @@ const envSchema = z.object({
    * free dial.
    */
   EMBEDDINGS_URL: z.string().url().default('https://openrouter.ai/api/v1/embeddings'),
+  /**
+   * The OpenAI-compatible `/chat/completions` endpoint both chat paths (plain
+   * and streaming) call. Defaults to OpenRouter. The companion of
+   * `EMBEDDINGS_URL`; tests and consumer e2e point both at the TEST-ONLY fake
+   * provider (`test-support/fake-provider/`), never shipped in the image.
+   */
+  CHAT_COMPLETIONS_URL: z.string().url().default('https://openrouter.ai/api/v1/chat/completions'),
   EMBEDDING_MODEL: z.string().default('baai/bge-m3'),
   EMBEDDING_DIM: z.coerce.number().int().positive().default(1024),
 
@@ -108,18 +177,29 @@ const envSchema = z.object({
    * OFF by default, exactly like the embeddings seam, so retrieval behaviour is
    * byte-identical until a consumer opts in (per-request `rerank: true`).
    *
-   * Design + rationale: `plan/retrieval-upgrade-decisions.md`.
+   * Design + rationale: `plan/tecnología/ai-infra/reranker-and-eval-plan.md`.
    *
    * `RERANK_ENABLED` — master switch. When false (default), the service NEVER
    * calls the reranker even if a request sets `rerank: true` — the request field
    * degrades to a no-op. This is the deploy-safety gate: ai-service can ship the
    * seam dark, then flip it on per environment once `RERANK_URL` has a home.
    *
-   * `RERANK_URL` — the Cohere-style `POST /rerank` endpoint of the SIBLING
-   * self-hosted reranker service (see `rerank-service/`). NOT OpenRouter: the
-   * chosen model `baai/bge-reranker-v2-m3` is not served there. Prod self-host =
-   * repoint this at the self-hosted box, no code change. Absent ⇒ rerank stays a
+   * `RERANK_URL` — the rerank endpoint. Passed to `fetch` VERBATIM, so the
+   * endpoint segment is required. Points either at the SIBLING self-hosted
+   * service (see `rerank-service/`) or at a hosted rerank API; managed vs
+   * self-hosted is an env flip, not a code change. Absent ⇒ rerank stays a
    * no-op even if `RERANK_ENABLED=true` (nothing to call).
+   *   ⚠ CORRECTION: an older comment here said flatly "NOT
+   *   OpenRouter". OpenRouter DOES have a rerank API, `/api/v1/rerank` (QUOTED
+   *   from the ZDR research, not verified by this lane), and it speaks the
+   *   Cohere shape — so it is a `RERANK_PROVIDER=rerank-api` URL needing no
+   *   adapter. What is true is only that the DEFAULT MODEL is not served
+   *   there. That is a model question, not an API one.
+   *   ⚠ UNDER `RERANK_PROVIDER=deepinfra` THIS IS THE API BASE, not a full
+   *   endpoint (`https://api.deepinfra.com`). That provider carries the model
+   *   as a path segment, and the adapter appends it from `RERANK_MODEL` so the
+   *   model knob keeps working. A full `/v1/inference/...` URL is REFUSED at
+   *   boot rather than silently 404ing every call.
    *
    * `RERANK_MODEL` — default rerank model id, overridable per-request via
    * `rerankModel`. `baai/bge-reranker-v2-m3`: open (Apache-2.0), multilingual,
@@ -129,12 +209,47 @@ const envSchema = z.object({
    * timeout (or ANY rerank error) the service FALLS BACK to the fused order and
    * never fails the query — reranking is a relevance-polish rung, not a
    * correctness gate. Default 5s.
+   *
+   * `RERANK_PROVIDER` — which WIRE SHAPE `RERANK_URL` speaks. `RERANK_URL` on
+   * its own only says WHERE to POST; it does not say what body the other end
+   * parses, and hosted rerankers do not agree on one:
+   *   - `rerank-api` (default) — `POST {model, query, documents, top_n?}` ⇒
+   *     `{results: [{index, relevance_score}]}`. Cohere `/v2/rerank`, Jina
+   *     `/v1/rerank`, Voyage and our own sibling `rerank-service/` all speak it.
+   *     The value names that shared REQUEST FORMAT, not a vendor.
+   *     `cohere` is the legacy spelling of the same value (ruling:
+   *     it read as "Cohere the vendor"). It stays accepted so deployed envs
+   *     keep booting, and is normalised to `rerank-api` at parse time — no
+   *     code past this schema ever sees `cohere`.
+   *   - `deepinfra` — `POST {queries, documents}` ⇒ `{scores: number[]}`,
+   *     positional, no `index`, no `top_n`, model in the URL path.
+   * Adding a provider is a new adapter in `rerank-client.ts`, never a branch in
+   * the transport. See that file for the full contract.
+   *
+   * `RERANK_API_KEY` — bearer credential for `RERANK_URL`. Sent as
+   * `Authorization: Bearer <key>` on every rerank call when set, and OMITTED
+   * when unset, because the self-hosted sibling needs no credential and a
+   * `Bearer undefined` header would be worse than none.
+   *
+   * 🔴 WHY THIS IS NOT OPTIONAL FOR A HOSTED PROVIDER: the rerank rung FAILS
+   * SAFE. A 401 is swallowed into the fused order, and the response is then
+   * byte-identical to `rerank: false` minus `rerankScore` — an unauthenticated
+   * reranker is INVISIBLE in the output. So a provider whose adapter declares
+   * `requiresApiKey` REFUSES to boot without this key (all environments, not
+   * just production) rather than shipping a deployment that silently never
+   * reranks. `rerank-api` does not declare it: that value covers the self-hosted
+   * sibling, where no credential is the normal case.
    */
   RERANK_ENABLED: z
     .enum(['true', 'false', '0', '1'])
     .default('false')
     .transform((v) => v === 'true' || v === '1'),
   RERANK_URL: z.string().url().optional(),
+  RERANK_PROVIDER: z
+    .enum(['rerank-api', 'cohere', 'deepinfra'])
+    .default('rerank-api')
+    .transform((v) => (v === 'cohere' ? 'rerank-api' : v)),
+  RERANK_API_KEY: z.string().optional(),
   RERANK_MODEL: z.string().default('baai/bge-reranker-v2-m3'),
   RERANK_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(5_000),
 
@@ -160,7 +275,10 @@ const envSchema = z.object({
    *
    * `SPARSE_EMBED_URL` — the `POST /embed` endpoint of the SIBLING bge-m3
    * service. Absent ⇒ sparse stays off even if `SPARSE_ENABLED=true` (nothing to
-   * call). Managed/self-hosted is a pure env flip, like `EMBEDDINGS_URL`.
+   * call). Managed/self-hosted is an env flip, like `EMBEDDINGS_URL`. The
+   * text sent here is PII-SCRUBBED first (egress seam 5 in
+   * `src/services/ai/pii-egress.ts`), so a managed URL receives placeholders,
+   * not raw CURP/RFC/email/phone/address.
    *
    * `SPARSE_EMBED_MODEL` — sparse model id the sibling serves. `baai/bge-m3`
    * produces dense + sparse from one forward pass; kept separate from a corpus's
@@ -181,6 +299,54 @@ const envSchema = z.object({
   SPARSE_EMBED_MODEL: z.string().default('baai/bge-m3'),
   SPARSE_DIM: z.coerce.number().int().positive().default(SPARSE_VOCAB_DIM),
   SPARSE_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(10_000),
+
+  /**
+   * PII NER model server (§9.4 / §9.1's third adapter) — the OPTIONAL `person`
+   * detector behind the PII minimiser.
+   *
+   * WHAT IS ALREADY ON WITHOUT ANY OF THESE: the five OFFLINE RULE detectors
+   * (CURP, RFC, email, phone, MX addresses) run at every egress seam
+   * unconditionally — see `src/services/ai/pii-egress.ts`. These five vars add
+   * the one thing rules cannot do: a person's NAME in running Spanish is not a
+   * pattern, so it takes a sequence model.
+   *
+   * 🔴 THESE ARE INERT TODAY, on purpose. Nothing installs `nerDetector` into
+   * the egress policy yet, because §5 open item 7 leaves the MODEL UNCHOSEN
+   * (size, language coverage and licence all open). They are declared here
+   * anyway — and this is the whole reason this block exists — because
+   * `ner-client.ts` used to read them through bare `process.env`, which put them
+   * outside this schema, outside `.env.example`, and made a TYPO in any of them
+   * SILENT. An undeclared var cannot be misspelled loudly.
+   *
+   * 🔴 PII IS THE ONE CAPABILITY THAT FAILS CLOSED (§9.1's table): rerank
+   * degrades to the fused order, sparse falls back to the tsvector leg, and a
+   * failed PII detector REFUSES THE CALL. So a deployment that installs the NER
+   * detector with `PII_NER_URL` unset does not quietly ship every name to the
+   * provider — every request 503s until it is fixed.
+   *
+   * `PII_NER_URL` — `POST /ner` of the sibling `pii-service/`. Passed to `fetch`
+   * VERBATIM, so the endpoint segment is required, exactly like `RERANK_URL`.
+   * Absent ⇒ the adapter is NOT CONFIGURED and refuses when called.
+   *
+   * `PII_NER_MODEL` — model id. 🔴 NO DEFAULT, deliberately: §5 open item 7 is
+   * open, and baking a guess here would put an unmade decision into the image.
+   *
+   * `PII_NER_BATCH_LIMIT` — inputs per request. The caller splits above it.
+   *
+   * `PII_NER_TIMEOUT_MS` — per-request wall clock. ⚠ NEVER write a literal 0: it
+   * passes `.nonnegative()` and installs NO abort timer, so a hung model server
+   * hangs the caller — the same §10-item-8 footgun `RERANK_TIMEOUT_MS` carries.
+   * Blank is safe; the empty-string rule below restores the default and warns.
+   *
+   * `PII_NER_MIN_SCORE` — drop entities scoring below this. ⚠ A LOWER number is
+   * the SAFER one here, the opposite of a relevance threshold: a missed name
+   * leaks PII, while a false positive only costs prose quality.
+   */
+  PII_NER_URL: z.string().url().optional(),
+  PII_NER_MODEL: z.string().optional(),
+  PII_NER_BATCH_LIMIT: z.coerce.number().int().positive().default(16),
+  PII_NER_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(5_000),
+  PII_NER_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.5),
 
   /**
    * Per-call wall-clock cap on the OPTIONAL query-condensation (rewrite) step
@@ -208,6 +374,41 @@ const envSchema = z.object({
   LLM_REQUEST_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(120_000),
 
   /**
+   * The same wall-clock backstop, for the ASYNC generation worker only
+   * (`src/workers/generation.worker.ts`). An async unit has no HTTP client
+   * waiting on it, so a `deep` unit may legitimately need longer than a sync
+   * call. Unset ⇒ inherits `LLM_REQUEST_TIMEOUT_MS` (resolved in the `env` IIFE
+   * below), so nothing changes by default. An explicit value must be a
+   * positive integer — there is no "0 disables" here.
+   *
+   * The worker lock window (`workerRuntimeOptions`, src/queue/queues.ts) is
+   * derived from the LONGER of the two deadlines, so raising this one also
+   * raises the lock and a long unit cannot outlive it.
+   */
+  LLM_ASYNC_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+
+  /**
+   * ── WORKER LOCK WINDOW (own region — keep edits here, not folded into the
+   *    timeout block above; another lane is editing this file this cycle) ──
+   *
+   * BullMQ holds a per-job lock and renews it on a timer. When the renewal
+   * misses (a blocked event loop, a paused container), the stalled checker
+   * hands the SAME job to a second worker. `lockDuration` is the tolerance for
+   * that miss, NOT a deadline: a job that runs longer is fine as long as its
+   * process keeps renewing.
+   *
+   * Leave this UNSET and `workerRuntimeOptions()` (src/queue/queues.ts) derives
+   * the window as `max(2 x max(LLM_REQUEST_TIMEOUT_MS,
+   * LLM_ASYNC_REQUEST_TIMEOUT_MS), 60000)` — two full LLM
+   * timeouts covers the worst in-band case (initial call plus one validator
+   * retry). Set it only when a deployment's real job duration is not a function
+   * of the LLM timeout (an ingest-heavy pod embedding very large documents is
+   * the case we expect); it then overrides the derivation outright, floor
+   * included.
+   */
+  WORKER_LOCK_DURATION_MS: z.coerce.number().int().positive().optional(),
+
+  /**
    * Inactivity/stall backstop on a streaming provider call: if no delta (or any
    * SSE frame) arrives for this many ms, abort the stream. A stalled stream is
    * the more realistic hang than a slow-but-progressing one, so this default
@@ -215,12 +416,205 @@ const envSchema = z.object({
    * streaming adapter's read loop. Set to 0 to disable.
    */
   LLM_STREAM_STALL_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(45_000),
+
+  /**
+   * Callback SSRF guard — local/docker-network escape hatch. OFF by default.
+   *
+   * ai-service POSTs signed callbacks to a consumer-supplied `callbackUrl`
+   * (`POST /v1/generate`, `POST /v1/ingest`) or to `project_configs.callback_url`.
+   * `assertSafeCallbackUrl` (services/callbacks/url-guard.ts) refuses any target
+   * that resolves into loopback / RFC1918 / link-local / IPv6-ULA space, so a
+   * tenant key cannot turn the service into an SSRF pivot inside the fleet
+   * network.
+   *
+   * That default is correct everywhere the service is DEPLOYED, and wrong on a
+   * developer's machine: the local compose stack addresses every consumer by
+   * SERVICE NAME on a bridge network, so every callback target resolves to
+   * 172.16/12 (or 10/8) and the whole async surface becomes undeliverable.
+   * Setting this to `1`/`true` re-allows exactly those local ranges —
+   * loopback, RFC1918 and IPv6 ULA, plus their IPv4-mapped forms.
+   *
+   * What it does NOT relax, at any value:
+   *   - link-local `169.254.0.0/16` (the cloud metadata endpoint lives there)
+   *     and IPv6 `fe80::/10`;
+   *   - `0.0.0.0/8` and the IPv6 unspecified address;
+   *   - the scheme allowlist (https everywhere; http only outside production).
+   * No container is ever reachable at those, so relaxing them would buy a
+   * developer nothing and hand an attacker the instance-credentials endpoint.
+   *
+   * 🔴 Set it ONLY in local compose config (`.env.docker`). Leave it unset in
+   * dev/stage/prod — a deployed consumer's callback target is a public
+   * hostname. Boot logs a warning whenever it is on (see `warnIfCallbackGuardRelaxed`).
+   */
+  CALLBACK_ALLOW_PRIVATE: z
+    .enum(['true', 'false', '0', '1'])
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
+
+  /**
+   * How long a SIGTERM'd process lets its in-flight jobs finish before it
+   * aborts them.
+   *
+   * On the signal the workers stop taking new jobs immediately. Whatever is
+   * already running gets this window to complete on its own. Past it, each
+   * survivor is aborted through the same AbortController the `/cancel` fast
+   * path uses, so it ends as a NAMED terminal job (`shutdown`, distinct from
+   * the reaper's `worker_lost`) with its partial cost billed, its parent rolled
+   * up and its callback fired — rather than being killed mid-flight and left at
+   * `running` for the reaper to find minutes later.
+   *
+   * 🔴 THE PLATFORM'S STOP GRACE MUST EXCEED THIS. Docker (and Coolify on top
+   * of it) waits 10 SECONDS after SIGTERM and then SIGKILLs — shorter than this
+   * default, and a SIGKILL is precisely the ungraceful death this window
+   * exists to avoid. An image cannot raise its own stop timeout; it is set by
+   * whoever runs the container (`docker run --stop-timeout`,
+   * `stop_grace_period` in compose, the platform's setting). Either raise it
+   * there to comfortably more than this value, or lower this value to fit.
+   * See the `STOPSIGNAL` block in the Dockerfile.
+   *
+   * CAPPED AT 5 MINUTES so that note stays enforceable. The cap is not a
+   * property of the shutdown code — it is the largest window we are willing to
+   * ask any platform to wait, and nothing above it can be honoured: Docker's
+   * own default stop timeout is 10s, compose's `stop_grace_period` is 10s
+   * (see docker-compose.yml), and Coolify inherits Docker's. A value the
+   * platform will not wait for is not a longer grace, it is a SIGKILL at the
+   * platform's number with this file claiming otherwise. Zod refuses it at
+   * boot, where the operator is still looking, instead of letting the next
+   * redeploy discover it as a truncated shutdown.
+   */
+  SHUTDOWN_GRACE_MS: z.coerce.number().int().positive().max(300_000).default(30_000),
 });
 
-export type Env = z.infer<typeof envSchema>;
+/** The parsed schema, with `LLM_ASYNC_REQUEST_TIMEOUT_MS`'s inherited default resolved. */
+export type Env = Omit<z.infer<typeof envSchema>, 'LLM_ASYNC_REQUEST_TIMEOUT_MS'> & {
+  LLM_ASYNC_REQUEST_TIMEOUT_MS: number;
+};
+
+// ── EMPTY STRING IS NOT A VALUE ─────────────────────────────────────────────
+//
+// A deploy platform hands a variable that was cleared in the UI to the process
+// as `""`, not as "absent". Zod sees a present value and parses it, so `""`
+// takes two different wrong turns depending on the var:
+//
+//   · a numeric knob with `z.coerce` — `Number('') === 0`. Every
+//     `.nonnegative()` timeout in this file therefore ACCEPTS an empty string
+//     and silently becomes 0. `RERANK_TIMEOUT_MS=` is not "use the 5s default",
+//     it is "time out immediately, forever", and nothing logs.
+//     (`.positive()` knobs like `PORT` fail the parse instead, which at least
+//     exits — but exits with `Invalid input` and no clue that the var was blank.)
+//
+//   · a REQUIRED var — `DATABASE_URL=` fails the url check and exits 1, but
+//     the message is a generic `Invalid url` inside a `fieldErrors` dump. The
+//     one fact an operator needs — "you set it to nothing" — is not in it.
+//
+// The rule this layer imposes, and its two halves:
+//   1. numeric/boolean var that ACCEPTS being unset ⇒ `""` means unset. The
+//      schema default applies and ONE warning names the var, so the fallback
+//      is visible in the boot log rather than inferred later from behaviour.
+//   2. required var (no default, not optional) ⇒ `""` REFUSES the boot, naming
+//      the var, through the same fatal path as any other invalid config.
+//
+// 🔴 STRING vars are DELIBERATELY UNTOUCHED. `EMBEDDING_MODEL=` and
+// `OPENROUTER_API_KEY=` keep parsing to `''` exactly as they do today —
+// `validateProductionReadiness` already reads the empty key as missing, and
+// widening this layer to strings would change what several call sites see.
+// This is a fix for the silent-coercion class only. Do not generalise it
+// without re-reading every `env.<STRING_VAR>` read site.
+
+/**
+ * Does this field accept being absent — i.e. does it carry a `.default()` or a
+ * `.optional()`?
+ *
+ * Probed rather than declared. A hand-maintained list of "vars with defaults"
+ * is a second copy of the schema and rots the first time a default is added;
+ * asking the field itself cannot drift.
+ */
+function acceptsUnset(field: z.ZodType): boolean {
+  return field.safeParse(undefined).success;
+}
+
+/**
+ * Is this field a NUMERIC or BOOLEAN knob (as opposed to a string/enum/url)?
+ *
+ * Probed by parsing `'1'` and looking at the OUTPUT type: the coercing numeric
+ * fields yield `1`, the `z.enum(['true','false','0','1']).transform(...)` flags
+ * yield `true`, and every string, url, enum and the `API_KEYS` JSON transform
+ * either yields a string or rejects. That keeps the classification tied to what
+ * the field actually does with a value instead of to how it was spelled.
+ */
+function isScalarKnob(field: z.ZodType): boolean {
+  const probe = field.safeParse('1');
+  return probe.success && (typeof probe.data === 'number' || typeof probe.data === 'boolean');
+}
+
+/** The two classes, computed once from the schema at module load. */
+const ENV_FIELDS = envSchema.shape as Record<string, z.ZodType>;
+const EMPTY_MEANS_UNSET: readonly string[] = Object.keys(ENV_FIELDS).filter(
+  (k) => acceptsUnset(ENV_FIELDS[k]!) && isScalarKnob(ENV_FIELDS[k]!),
+);
+const REQUIRED_VARS: readonly string[] = Object.keys(ENV_FIELDS).filter(
+  (k) => !acceptsUnset(ENV_FIELDS[k]!),
+);
+
+export interface EnvPreprocessResult {
+  /** The source, with empty scalar knobs deleted so their default applies. */
+  values: Record<string, unknown>;
+  /** One line per numeric/boolean var that was blank and fell back. */
+  warnings: string[];
+  /** One line per REQUIRED var that was blank. Non-empty ⇒ refuse the boot. */
+  fatals: string[];
+}
+
+/**
+ * Apply the empty-string rule to a raw environment.
+ *
+ * Pure and exported so the two classes can be tested without booting a process
+ * or stubbing `process.exit`. `env` below is the only production caller.
+ */
+export function preprocessEnv(
+  source: Record<string, string | undefined>,
+): EnvPreprocessResult {
+  const values: Record<string, unknown> = { ...source };
+  const warnings: string[] = [];
+  const fatals: string[] = [];
+
+  for (const name of REQUIRED_VARS) {
+    if (source[name] === '') {
+      fatals.push(
+        `${name} is set but EMPTY. It is required and has no default — an empty ` +
+          `string is not a value. Set it in the deploy environment, or unset it ` +
+          `entirely if you expected a fallback (there is none).`,
+      );
+    }
+  }
+
+  for (const name of EMPTY_MEANS_UNSET) {
+    if (source[name] !== '') continue;
+    delete values[name];
+    warnings.push(
+      `${name} is set but EMPTY; reading it as UNSET and using the built-in ` +
+        `default. An empty numeric var would otherwise coerce to 0.`,
+    );
+  }
+
+  return { values, warnings, fatals };
+}
 
 export const env: Env = (() => {
-  const parsed = envSchema.safeParse(process.env);
+  // 🔴 BEFORE `safeParse`, on purpose. The required-var check has to run while
+  // the ORIGINAL string is still visible: once Zod has turned `DATABASE_URL=''`
+  // into an `Invalid url` issue, "it was blank" is no longer recoverable from
+  // the error, and that is the whole message an operator needs.
+  const { values, warnings, fatals } = preprocessEnv(process.env);
+  if (fatals.length > 0) {
+    console.error(
+      'FATAL: environment variable(s) set to an empty string:\n  ' + fatals.join('\n  '),
+    );
+    process.exit(1);
+  }
+  for (const w of warnings) console.warn(w);
+
+  const parsed = envSchema.safeParse(values);
   if (!parsed.success) {
     console.error('Invalid environment configuration:', parsed.error.flatten().fieldErrors);
     process.exit(1);
@@ -242,11 +636,177 @@ export const env: Env = (() => {
     );
     process.exit(1);
   }
-  return parsed.data;
+  return {
+    ...parsed.data,
+    LLM_ASYNC_REQUEST_TIMEOUT_MS:
+      parsed.data.LLM_ASYNC_REQUEST_TIMEOUT_MS ?? parsed.data.LLM_REQUEST_TIMEOUT_MS,
+  };
 })();
 
 export const isProd = env.NODE_ENV === 'production';
 export const isTest = env.NODE_ENV === 'test';
+
+/**
+ * The PARSED `RERANK_PROVIDER` values, as a type — after the `cohere` alias is
+ * normalised away, so it is `'rerank-api' | 'deepinfra'`. Anything keyed on it
+ * (the adapter table, test fixture tables) needs one entry per wire, not one
+ * per spelling.
+ */
+export type RerankProviderName = typeof env.RERANK_PROVIDER;
+
+/**
+ * Rerank providers that are HOSTED, and therefore cannot work without a
+ * credential.
+ *
+ * Lives here rather than beside the wire adapters in `rerank-client.ts` for one
+ * structural reason: `rerank-client.ts` imports THIS module, so the dependency
+ * only runs one way. Putting the policy there and reading it here would make
+ * the config module import the whole rerank stack to answer a boot question.
+ *
+ * `rerank-api` is absent deliberately — that value also covers the unauthenticated
+ * self-hosted sibling `rerank-service/`, which is the common case locally, and
+ * demanding a fake credential for it would be worse than the 401 a
+ * misconfigured hosted Cohere/Jina deployment gets.
+ */
+const RERANK_PROVIDERS_REQUIRING_API_KEY: ReadonlySet<string> = new Set<RerankProviderName>([
+  'deepinfra',
+]);
+
+/** Whether `provider` refuses to work without `RERANK_API_KEY`. */
+export function rerankProviderRequiresApiKey(provider: RerankProviderName): boolean {
+  return RERANK_PROVIDERS_REQUIRING_API_KEY.has(provider);
+}
+
+/**
+ * The rerank models this service may send traffic to under `deepinfra`. A CODE
+ * constant, not env, on purpose (ruling R3/R9): dev and demo-1 share
+ * one env, so an env allowlist is one edit away from being whatever the last
+ * person typed. Fail-closed — a model not listed here is refused at boot (when
+ * the rung is live), per request (400), and in `callRerank` before any network.
+ *
+ * CRITERION TO ADD A MODEL: its DeepInfra model page carries the "Zero
+ * retention" badge, AND a live call to it returned 200. Google and Anthropic
+ * models VOID DeepInfra's no-training and no-sharing terms ("except when using
+ * Google or Anthropic models" — quoted from DeepInfra's data-privacy docs,
+ * see the aiinfra rerank-pii-egress handoff §10.3), so they never
+ * qualify, badge or not.
+ */
+export const DEEPINFRA_RERANK_MODELS: ReadonlySet<string> = new Set(['Qwen/Qwen3-Reranker-0.6B']);
+
+/**
+ * Why `model` may not be used as a rerank model on `provider`, or `undefined`
+ * when it may. The allowlist covers ONLY `deepinfra`. `rerank-api` is the
+ * Cohere-style wire, not a place: it serves the self-hosted sibling
+ * `rerank-service/` (nothing leaves the perimeter) AND any hosted Cohere, Jina
+ * or Voyage endpoint a `RERANK_URL` points at (see `rerankApiAdapter` in
+ * `rerank-client.ts`). A hosted `rerank-api` URL therefore sends the pool to a
+ * third party with NO model check here — a known gap, tracked in the vault at
+ * plan/tecnología/prompts/open/HANDOFF-aiinfra-backlog-run.md
+ * (not in this repo).
+ */
+export function rerankModelRefusal(provider: RerankProviderName, model: string): string | undefined {
+  if (provider !== 'deepinfra') return undefined;
+  if (DEEPINFRA_RERANK_MODELS.has(model)) return undefined;
+  return (
+    `rerank model "${model}" is not in the DeepInfra allowlist ` +
+    `(${[...DEEPINFRA_RERANK_MODELS].join(', ')}).`
+  );
+}
+
+/**
+ * Boot probe for the rerank ENDPOINT — that `RERANK_URL` and `RERANK_MODEL`
+ * together can actually address a model on the configured provider.
+ *
+ * Separate from the credential probe because these are different deployment
+ * mistakes with different fixes, and the fail-safe hides both identically. Two
+ * cases, both MEASURED against the live DeepInfra API:
+ *
+ *   - `RERANK_URL` given as a full `/v1/inference/...` URL under `deepinfra`.
+ *     The adapter appends the model to the base, so a full URL yields
+ *     `.../v1/inference/X/v1/inference/Y` and 404s every call.
+ *   - `RERANK_MODEL` not in `DEEPINFRA_RERANK_MODELS` under `deepinfra`. This
+ *     used to match only this repo's self-hosted default
+ *     `baai/bge-reranker-v2-m3`, which DeepInfra does NOT host (both spellings
+ *     return 404 `{"detail":{"error":"Model is not available"}}`, while
+ *     `Qwen/Qwen3-Reranker-0.6B` returns 200). The allowlist subsumes that case
+ *     and also refuses a model that WOULD answer but voids the data terms.
+ *
+ * Fatal only when the rung is LIVE, matching `validateRerankCredential`.
+ */
+export function validateRerankEndpoint(): void {
+  if (env.RERANK_PROVIDER !== 'deepinfra') return;
+
+  const live = env.RERANK_ENABLED && Boolean(env.RERANK_URL);
+  const problems: string[] = [];
+
+  if (env.RERANK_URL && /\/v1\/inference\//.test(env.RERANK_URL)) {
+    problems.push(
+      'RERANK_URL must be the DeepInfra API BASE (e.g. https://api.deepinfra.com) — ' +
+        'the model path is appended from RERANK_MODEL. A full inference URL 404s every call.',
+    );
+  }
+  const modelRefusal = rerankModelRefusal(env.RERANK_PROVIDER, env.RERANK_MODEL);
+  if (modelRefusal) {
+    problems.push(
+      `RERANK_MODEL: ${modelRefusal} A model outside it either 404s (DeepInfra does not host ` +
+        'it) or voids the no-training/no-sharing terms. Add a model in code, not env.',
+    );
+  }
+  if (problems.length === 0) return;
+
+  const detail = problems.join(' ');
+  if (live) {
+    console.error(
+      `FATAL: rerank endpoint is unusable. ${detail} Refusing to start — the rung fails safe, so a ` +
+        'broken endpoint would silently return the un-reranked order.',
+    );
+    process.exit(1);
+  }
+  console.warn(
+    `${detail} The rung is currently dark, so this is not fatal yet — it becomes a boot failure ` +
+      'the moment rerank is switched on.',
+  );
+}
+
+/**
+ * Boot probe for the rerank credential.
+ *
+ * 🔴 WHY THIS IS FATAL RATHER THAN A WARN, AND FATAL IN EVERY ENVIRONMENT:
+ * the rerank rung FAILS SAFE. An unauthenticated hosted reranker 401s, the 401
+ * is swallowed into the fused order, and the resulting response is
+ * byte-identical to `rerank: false` minus `rerankScore`. There is no output a
+ * consumer could read to notice. So the deployment that would silently never
+ * rerank must not be allowed to start — and since `dev` is where that
+ * configuration gets written and copied to stage, warning there and exiting
+ * only in production would let the broken shape through the one environment
+ * that could have caught it.
+ *
+ * SCOPE: fatal ONLY when the rung is actually live (`RERANK_ENABLED` and a
+ * `RERANK_URL`). A dark seam with a half-written provider config is a
+ * half-finished deploy, not a lie about retrieval quality, so that warns.
+ */
+export function validateRerankCredential(): void {
+  const provider = env.RERANK_PROVIDER;
+  if (!rerankProviderRequiresApiKey(provider)) return;
+  if (env.RERANK_API_KEY?.trim()) return;
+
+  const live = env.RERANK_ENABLED && Boolean(env.RERANK_URL);
+  const detail =
+    `RERANK_PROVIDER=${provider} requires a credential and RERANK_API_KEY is missing or empty. ` +
+    'A hosted reranker without one 401s on every call, and the rerank rung fails safe, ' +
+    'so retrieval would silently return the un-reranked order forever.';
+
+  if (live) {
+    console.error(
+      `FATAL: ${detail} Refusing to start — set RERANK_API_KEY, or set RERANK_PROVIDER to one that needs no key.`,
+    );
+    process.exit(1);
+  }
+  console.warn(
+    `${detail} The rung is currently dark (RERANK_ENABLED/RERANK_URL), so this is not fatal yet — ` +
+      'it becomes a boot failure the moment rerank is switched on.',
+  );
+}
 
 /**
  * Startup probe for production-only required configuration.
@@ -267,35 +827,15 @@ export const isTest = env.NODE_ENV === 'test';
  * binds on a broken prod config.
  */
 export function validateProductionReadiness(): void {
-  const key = env.OPENROUTER_API_KEY?.trim() ?? '';
+  // 🔴 FIRST, above every early return below. The OPENROUTER_API_KEY branch
+  // RETURNS on a missing key (legitimate in dev/test), so anything sequenced
+  // after it is skipped in exactly the environments that run without one — a
+  // gate that silently does not fire is worse than no gate.
+  refuseRemovedMockFlags();
+  validateRerankCredential();
+  validateRerankEndpoint();
 
-  /**
-   * ⚠ `MOCK_LLM=1` means no OpenRouter request is ever made — it is this
-   * project's single local-mock switch and it gates both the chat-completion
-   * adapter and embeddings. A key is therefore not merely optional under it,
-   * it is unused.
-   *
-   * This exemption exists because the local demo runs the PRODUCTION image
-   * (`NODE_ENV=production`) with the mocks on, which is the whole point: the
-   * stack must boot and be clickable with ZERO API keys. Without this branch
-   * the guard below fired first and the documented zero-key path could not
-   * start — the demo promised something the code refused to do.
-   *
-   * The guard still protects a real deployment, because a real deployment does
-   * not set `MOCK_LLM`. Turning the mocks on in production is itself the
-   * misconfiguration then, so say so loudly rather than silently.
-   */
-  const mocked = (process.env.MOCK_LLM ?? '').trim() === '1';
-  if (mocked) {
-    if (env.NODE_ENV === 'production') {
-      console.warn(
-        'MOCK_LLM=1 with NODE_ENV=production: no OpenRouter calls will be made and ' +
-          'every generated answer is a deterministic stub. This is correct for the ' +
-          'local demo image and WRONG for a real deployment — unset MOCK_LLM there.',
-      );
-    }
-    return;
-  }
+  const key = env.OPENROUTER_API_KEY?.trim() ?? '';
 
   if (!key) {
     if (env.NODE_ENV === 'production') {
@@ -318,15 +858,131 @@ export function validateProductionReadiness(): void {
         'This may be intentional (e.g. a fake key for local testing) but live OpenRouter calls will fail.',
     );
   }
+
+  validateProductionSafetyFlags();
+}
+
+/**
+ * Names of the environment switches that are development affordances only, and
+ * that must never be present in a production deploy.
+ *
+ * Each entry pairs the variable with what it disarms, so the fatal message can
+ * say why the boot was refused rather than only which name was found.
+ */
+const PRODUCTION_FORBIDDEN_FLAGS: ReadonlyArray<{ name: string; effect: string }> = [
+  {
+    name: 'CALLBACK_ALLOW_PRIVATE',
+    effect:
+      'disables the callback SSRF guard, letting any tenant key aim a signed callback ' +
+      'at loopback/private/ULA addresses on the internal network',
+  },
+];
+
+/**
+ * Is this raw `process.env` value an "on" setting?
+ *
+ * Deliberately wider than the readers themselves. `CALLBACK_ALLOW_PRIVATE`
+ * accepts `true|false|0|1` through the Zod schema, and a removed mock flag has
+ * no reader left at all. Neither has any legitimate production use, so the
+ * mere PRESENCE of a non-off value is the defect we refuse to boot on — that
+ * also keeps the guard correct if a read site ever widens what it accepts.
+ */
+function isFlagOn(raw: string | undefined): boolean {
+  if (raw === undefined) return false;
+  const v = raw.trim().toLowerCase();
+  if (v === '') return false;
+  // `n` is spelled out here alongside `no` because a bare `N` is a common way
+  // to write "off" and would otherwise read as ON. Its counterpart `y` needs no
+  // entry: anything not in this list is already ON, which is the safe default.
+  return v !== '0' && v !== 'false' && v !== 'off' && v !== 'no' && v !== 'n';
+}
+
+/**
+ * The in-service mock switches removed. They no longer do
+ * anything, so a deploy or CI job still setting one is misconfigured in a
+ * dangerous direction: it expects free fake output and would get real, billed
+ * provider calls. Refused in EVERY environment, not only production.
+ */
+export const REMOVED_MOCK_FLAGS: readonly string[] = ['MOCK_LLM', 'MOCK_EMBEDDINGS', 'MOCK_LLM_STREAM'];
+
+/**
+ * Startup probe: refuse to boot while a removed mock switch is still set.
+ * Runs in every environment. Tests and consumer e2e use the TEST-ONLY fake
+ * provider instead (`test-support/fake-provider/README.md`).
+ */
+export function refuseRemovedMockFlags(): void {
+  const offenders = REMOVED_MOCK_FLAGS.filter((name) => isFlagOn(process.env[name]));
+  if (offenders.length === 0) return;
+  console.error(
+    `FATAL: ${offenders.join(', ')} ${offenders.length === 1 ? 'was' : 'were'} removed on 2026-10-02 ` +
+      'and no longer fake anything — with it set, model calls would be REAL and billed. ' +
+      'Unset it. For tests, run the fake provider (test-support/fake-provider/ in the ' +
+      'ai-service repo) and point CHAT_COMPLETIONS_URL and EMBEDDINGS_URL at it.',
+  );
+  process.exit(1);
+}
+
+/**
+ * Startup probe: refuse to boot a production process that carries a
+ * development-only safety switch.
+ *
+ * ⚠ This reads `process.env` DIRECTLY rather than the parsed `env` object,
+ * so a new flag only has to be added to `PRODUCTION_FORBIDDEN_FLAGS`, not to
+ * the schema.
+ *
+ * Behaviour:
+ *   - production + any flag on -> fatal error naming every offending variable,
+ *     `process.exit(1)`.
+ *   - dev/test    + any flag on -> silent here; `warnIfCallbackGuardRelaxed`
+ *     still warns for the SSRF switch.
+ */
+export function validateProductionSafetyFlags(): void {
+  if (env.NODE_ENV !== 'production') return;
+
+  const offenders = PRODUCTION_FORBIDDEN_FLAGS.filter((f) => isFlagOn(process.env[f.name]));
+  if (offenders.length === 0) return;
+
+  console.error(
+    'FATAL: development-only environment flags are set in production. ' +
+      'Refusing to start — unset them in the deploy environment and retry. ' +
+      `Offending: ${offenders.map((f) => `${f.name} (${f.effect})`).join('; ')}`,
+  );
+  process.exit(1);
+}
+
+/**
+ * Startup probe: shout when the callback SSRF guard has been relaxed.
+ *
+ * `CALLBACK_ALLOW_PRIVATE=1` is a local-development affordance (see the field
+ * doc above). If it ever appears in a deployed environment, any tenant key can
+ * aim a signed callback at a sibling service on the internal network, so the
+ * fact has to be visible in the boot log rather than only in a Coolify env
+ * panel. We warn instead of refusing to boot: the switch is legitimate in the
+ * local stack, which runs the same image.
+ *
+ * In production this warning is unreachable: `validateProductionSafetyFlags`
+ * (called from `validateProductionReadiness`, which `src/index.ts` runs first)
+ * has already exited 1 on the same variable.
+ */
+export function warnIfCallbackGuardRelaxed(): void {
+  if (!env.CALLBACK_ALLOW_PRIVATE) return;
+  console.warn(
+    'CALLBACK_ALLOW_PRIVATE is ON: callback URLs resolving to loopback/private/ULA ' +
+      'addresses are ALLOWED. This is intended for the local docker stack only — ' +
+      'unset it in every deployed environment. Link-local/metadata targets stay blocked.',
+  );
 }
 
 /**
  * Startup probe: log a warning for any `role: 'app'` API key entry that lacks
- * a `callbackSecret`. Per the callback contract, an app-role key consuming the
- * async endpoints (`/v1/generate`, `/v1/ingest`) cannot receive signed
- * callbacks without this secret — emission is recorded but unsigned, and the
- * receiver will reject. We log instead of crashing so existing deployments
- * (and tests) continue to boot.
+ * a `callbackSecret`. Such a key cannot receive signed callbacks.
+ *
+ * This stays a WARN, not a boot failure (decision D4=A in
+ * PLAN-live-ingest): several app keys never send `callbackUrl` and
+ * need no secret. The enforcement is at request time instead —
+ * `POST /v1/ingest` with a `callbackUrl` from such a key answers 400
+ * `CallbackSecretMissingError` (`assertCallbackSecretFor` in
+ * `services/callbacks/emit.ts`).
  */
 export function validateCallbackSecrets(): void {
   const missing: string[] = [];
@@ -345,4 +1001,160 @@ export function validateCallbackSecrets(): void {
         `Affected: ${missing.join(', ')}`,
     );
   }
+}
+
+/**
+ * Operator-facing label for an API key. `kid` when the entry carries one, else
+ * the same SHA-256-derived id that `src/plugins/auth.ts` puts on
+ * `req.auth.apiKeyId` and into `registry_audit.actor_key_id`.
+ *
+ * The derivation is duplicated here rather than imported from
+ * `plugins/auth.ts` on purpose: that module imports THIS one, and closing the
+ * cycle for a one-line hash is not worth it. Keep the two in sync — both are
+ * SHA-256(key) hex, first 16 chars.
+ *
+ * NEVER returns the raw token.
+ */
+export function apiKeyLabel(rawKey: string, entry: ApiKeyEntry): string {
+  return entry.kid ?? createHash('sha256').update(rawKey).digest('hex').slice(0, 16);
+}
+
+/**
+ * Trims every configured API-key token, and REFUSES the boot when the trim
+ * would have changed anything.
+ *
+ * The asymmetry this closes: `src/plugins/auth.ts` trims the PRESENTED bearer
+ * token (`extractBearer`) and then matches it against these configured keys.
+ * The configured side was never normalised, so an entry carrying a stray
+ * leading or trailing space could not be matched by ANY request. The operator
+ * saw a plain `401 unauthorized` — which reads as "the consumer has the wrong
+ * credential" — when the real defect was a malformed env var. Cheap to
+ * introduce (a copy-paste out of a secrets panel, a trailing newline in a CI
+ * variable) and expensive to diagnose, because every observable signal points
+ * at the consumer.
+ *
+ * Why refuse rather than accept the trimmed key silently: the deployed env var
+ * would still hold a token that nobody can copy out correctly, so the next
+ * operator to read it re-creates the mismatch somewhere the trim does not
+ * reach (a consumer's own config, a runbook, a rotation). A silently "fixed"
+ * key is the same footgun one step later. Refusing forces the fix at the
+ * source, and the refusal is fatal in EVERY environment — a token that cannot
+ * match is a defect in dev exactly as much as in prod, and boot is the only
+ * moment an operator is looking.
+ *
+ * Two distinct problems, reported separately because the fixes differ:
+ *   - PADDED    — a token that does not equal its own trim. Fix: strip the
+ *     whitespace (or the empty string, which no bearer header can present).
+ *   - COLLIDING — two entries that are different strings but trim to the SAME
+ *     token, so one would silently shadow the other's org/project scope. A
+ *     request would authenticate into a tenant the operator did not intend.
+ *     Unreachable while PADDED stays fatal (a collision needs at least one
+ *     padded key), but checked and messaged on its own so the guard survives
+ *     the padded refusal ever being softened to a warning.
+ *
+ * Messages name the entry's `kid` or its derived 16-hex id via
+ * {@link apiKeyLabel}, NEVER the token — a boot log is not a secret store, and
+ * a malformed key is still a live credential somewhere.
+ *
+ * Returns the normalised map so that trimming, not merely the check, is the
+ * real data path: if the refusal is ever relaxed, the keys `requireAuth`
+ * matches against are already the trimmed ones.
+ */
+export function normaliseApiKeys(entries: Record<string, ApiKeyEntry>): {
+  keys: Record<string, ApiKeyEntry>;
+  problems: string[];
+} {
+  const problems: string[] = [];
+  const keys: Record<string, ApiKeyEntry> = {};
+  /** trimmed token -> label of the first entry that claimed it. */
+  const claimed = new Map<string, string>();
+
+  for (const [rawKey, entry] of Object.entries(entries)) {
+    const label = apiKeyLabel(rawKey, entry);
+    const trimmed = rawKey.trim();
+
+    if (trimmed !== rawKey) {
+      problems.push(
+        `key ${label} (org=${entry.org}, project=${entry.project}) has leading/trailing ` +
+          'whitespace in its token; the presented bearer token is trimmed, so no request ' +
+          'could ever match this entry. Strip the whitespace in API_KEYS.',
+      );
+    }
+    if (trimmed.length === 0) {
+      problems.push(
+        `key ${label} (org=${entry.org}, project=${entry.project}) is empty once trimmed; ` +
+          'a bearer header cannot present an empty token. Remove the entry.',
+      );
+      continue;
+    }
+
+    const owner = claimed.get(trimmed);
+    if (owner !== undefined) {
+      problems.push(
+        `keys ${owner} and ${label} are the same token once trimmed, so one silently ` +
+          "shadows the other's org/project scope. Remove one of them.",
+      );
+      continue;
+    }
+    claimed.set(trimmed, label);
+    keys[trimmed] = entry;
+  }
+
+  return { keys, problems };
+}
+
+/**
+ * Has this entry's optional `expiresAt` passed?
+ *
+ * Entries without `expiresAt` never expire — that is every entry configured
+ * before this field existed, so the answer for them must stay `false`.
+ * An unparseable date is treated as NOT expired: the Zod schema already
+ * rejects malformed values at boot, so reaching here with one means the object
+ * bypassed validation, and failing open on a shape error is the same posture
+ * the rest of `requireAuth` takes (the scope check below it is the real gate).
+ */
+export function isApiKeyExpired(entry: ApiKeyEntry, now: Date = new Date()): boolean {
+  if (!entry.expiresAt) return false;
+  const expiry = Date.parse(entry.expiresAt);
+  if (Number.isNaN(expiry)) return false;
+  return expiry <= now.getTime();
+}
+
+/** How far ahead an expiry is called out at boot. */
+export const API_KEY_EXPIRY_WARN_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Startup probe: one pino `warn` per API key that has already expired or that
+ * expires within {@link API_KEY_EXPIRY_WARN_WINDOW_MS}.
+ *
+ * Warn, never crash — an expired key must not take the whole service down for
+ * every other tenant; it is rejected per-request in `requireAuth` instead.
+ * Lines name `kid`/`apiKeyId` and the org/project scope, never the token.
+ */
+export function warnOnExpiringApiKeys(now: Date = new Date(), log = bootLogger()): void {
+  for (const [rawKey, entry] of Object.entries(env.API_KEYS)) {
+    if (!entry.expiresAt) continue;
+    const expiry = Date.parse(entry.expiresAt);
+    if (Number.isNaN(expiry)) continue;
+    const msLeft = expiry - now.getTime();
+    if (msLeft > API_KEY_EXPIRY_WARN_WINDOW_MS) continue;
+    const keyId = apiKeyLabel(rawKey, entry);
+    log.warn(
+      {
+        keyId,
+        org: entry.org,
+        project: entry.project,
+        expiresAt: entry.expiresAt,
+        expired: msLeft <= 0,
+      },
+      msLeft <= 0
+        ? `API_KEYS: key ${keyId} EXPIRED at ${entry.expiresAt} — requests bearing it are rejected with 401 api_key_expired. Rotate or remove the entry.`
+        : `API_KEYS: key ${keyId} expires at ${entry.expiresAt} (within 7 days). Add the replacement entry now; see .env.example for the rotation recipe.`,
+    );
+  }
+}
+
+/** Lazily-built boot logger, so importing this module starts no transport. */
+function bootLogger() {
+  return pino({ name: 'boot', level: env.LOG_LEVEL });
 }

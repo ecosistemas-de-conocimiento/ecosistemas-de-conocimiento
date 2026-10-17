@@ -1,7 +1,9 @@
 // ai-service's own retrieval golden set — `gs-ai-2026-07`.
 //
-// 43 items over the synthetic corpus in `structured-corpus.ts`. This is the
-// regression gate for THIS repo's retrieval machinery, and nothing more.
+// Items over the synthetic corpus in `structured-corpus.ts`. This is the
+// regression gate for THIS repo's retrieval machinery, and nothing more. The
+// count is deliberately not written down here: it is a curation decision, and a
+// number in prose only rots.
 //
 // IT ENCODES NO PRODUCT'S DOMAIN, deliberately (ADR-0001). Every query, every
 // document and every identifier below is invented, and the subject matter is

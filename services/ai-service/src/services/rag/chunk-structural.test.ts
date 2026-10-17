@@ -11,6 +11,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { maxChunkChars } from './chunk.js';
 import { chunkForCorpus, parseStructuralConfig } from './chunk-strategy.js';
 import { chunkStructural } from './chunk-structural.js';
 
@@ -168,6 +169,83 @@ describe('chunkForCorpus — strategy resolution', () => {
     );
     expect(out.length).toBeGreaterThan(1);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('matched no section boundaries'));
+  });
+});
+
+describe('chunkForCorpus — chunk_size is a REAL ceiling for every strategy', () => {
+  // Why this matters beyond ingestion: `/v1/retrieve` now clamps stored passage
+  // text to `maxChunkChars(corpus.chunk_size)`. If a caller's `chunk_config`
+  // could raise the ingestion ceiling above that number, retrieval would
+  // truncate legitimately-ingested text and warn about a non-anomaly. So the
+  // override may LOWER the ceiling, never raise it.
+  const bigSection = (n: number) =>
+    `Section ${n}. ` + `Filler prose for this section. `.repeat(60);
+  const DOC_BIG = [1, 2, 3].map(bigSection).join('\n\n');
+
+  it('clamps a chunk_config.maxChars that exceeds the corpus ceiling', () => {
+    const warn = vi.fn();
+    const chunkSize = 40; // 40 tokens => 160 chars
+    const out = chunkForCorpus(
+      DOC_BIG,
+      {
+        chunkSize,
+        chunkOverlap: 4,
+        chunkStrategy: 'structural',
+        chunkConfig: { ...SECTIONS, maxChars: 100_000 },
+      },
+      warn,
+    );
+    const ceiling = maxChunkChars(chunkSize);
+    expect(ceiling).toBe(160);
+    for (const c of out) {
+      expect(c.text.length).toBeLessThanOrEqual(ceiling);
+    }
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('exceeds the corpus ceiling'),
+    );
+  });
+
+  it('honours a chunk_config.maxChars that LOWERS the ceiling, without warning', () => {
+    const warn = vi.fn();
+    const out = chunkForCorpus(
+      DOC_BIG,
+      {
+        chunkSize: 800, // ceiling 3200
+        chunkOverlap: 100,
+        chunkStrategy: 'structural',
+        chunkConfig: { ...SECTIONS, maxChars: 120 },
+      },
+      warn,
+    );
+    for (const c of out) {
+      expect(c.text.length).toBeLessThanOrEqual(120);
+    }
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('exceeds the corpus ceiling'),
+    );
+  });
+
+  it('with no maxChars override the ceiling is the corpus chunk_size', () => {
+    const out = chunkForCorpus(DOC_BIG, {
+      chunkSize: 50,
+      chunkOverlap: 5,
+      chunkStrategy: 'structural',
+      chunkConfig: SECTIONS,
+    });
+    for (const c of out) {
+      expect(c.text.length).toBeLessThanOrEqual(maxChunkChars(50));
+    }
+  });
+
+  it('the recursive strategy respects the same ceiling', () => {
+    const out = chunkForCorpus(DOC_BIG, {
+      chunkSize: 60,
+      chunkOverlap: 6,
+      chunkStrategy: 'recursive-char',
+    });
+    for (const c of out) {
+      expect(c.text.length).toBeLessThanOrEqual(maxChunkChars(60));
+    }
   });
 });
 

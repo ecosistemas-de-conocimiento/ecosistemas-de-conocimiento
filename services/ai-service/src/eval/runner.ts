@@ -190,6 +190,7 @@ export function evaluateItem(
     ndcgAtK: round4(ndcg(novelFlags, totalRelevant)),
     forbiddenHits,
     retrievedDocs: [...new Set(chunks.map((c) => resolveDocId(c.documentId) ?? c.documentId))],
+    retrievedChunkIds: chunks.map((c) => c.chunkId),
   };
 }
 

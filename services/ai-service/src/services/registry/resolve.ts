@@ -26,8 +26,15 @@
 import { and, eq, sql } from 'drizzle-orm';
 
 import type { Db } from '../../db/client.js';
+import { AiServiceError } from '../../errors/base.js';
 import { projectConfigs, registryEntries } from '../../db/schema/index.js';
-import type { EffortLevel, Validator } from '../../schemas/registry.js';
+import type { EffortLevel, Validator } from '../../contract/registry.js';
+import { clampCallerLimits } from './caller-limits.js';
+import {
+  STRICT_SCHEMA_MODELS,
+  strictSchemaProblems,
+  supportsStrictSchema,
+} from '../ai/router/strict-schema.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -68,6 +75,13 @@ export interface ResolvedSpec {
   effortLevel: EffortLevel;
   effortProfile: EffortProfile;
   responseSchema?: unknown;
+  /**
+   * `true` ⇒ the provider is asked for STRICT schema-constrained output
+   * (`response_format: json_schema`, `strict: true`) instead of JSON mode.
+   * Only ever `true` or absent: resolution has already checked the model and
+   * the schema, see `checkStrictSchema`.
+   */
+  responseSchemaStrict?: true;
   validators: Validator[];
   renderer?: string;
   contentKind?: string;
@@ -151,14 +165,25 @@ export const EFFORT_PROFILES: Record<EffortLevel, EffortProfile> = {
 export type SpecResolutionCause =
   | 'no spec for unitType'
   | 'no defaults'
-  | 'no model';
+  | 'no model'
+  /** `responseSchemaStrict` on a model not in `STRICT_SCHEMA_MODELS`. */
+  | 'strict schema unsupported model'
+  /** `responseSchemaStrict` with no schema, or one outside the strict subset. */
+  | 'strict schema invalid';
 
-export class SpecResolutionError extends Error {
+export class SpecResolutionError extends AiServiceError {
+  readonly code = 'ERR_SPEC_RESOLUTION';
+  readonly status = 400;
+  /** Resolution happens before the SSE hijack; kept legible if it ever moves. */
+  override readonly midStream = true;
   override readonly name = 'SpecResolutionError';
   override readonly cause: SpecResolutionCause;
   constructor(args: { cause: SpecResolutionCause; message?: string }) {
     super(args.message ?? args.cause);
     this.cause = args.cause;
+  }
+  protected override bodyFields() {
+    return { cause: this.cause };
   }
 }
 
@@ -177,6 +202,8 @@ export interface InlineSpecOverride {
   effortLevel?: EffortLevel;
   effortProfile?: Partial<EffortProfile>;
   responseSchema?: unknown;
+  /** Strict schema-constrained output. See `ResolvedSpec.responseSchemaStrict`. */
+  responseSchemaStrict?: boolean;
   validators?: Validator[];
   renderer?: string | null;
   contentKind?: string | null;
@@ -222,8 +249,9 @@ export interface ResolveSpecArgs {
   specDefault?: SpecDefault;
   requestOverrides?: RequestOverrides;
   /**
-   * Caller-supplied fallback for the built-in `EFFORT_PROFILES`. Mostly useful
-   * for tests; production wiring leaves this undefined.
+   * Caller-supplied fallback for the built-in `EFFORT_PROFILES` — the bottom
+   * of the precedence chain. `/v1/route` uses it for the router's `quick`
+   * model (see `ROUTER_DEFAULT_MODEL`); other wiring leaves it undefined.
    */
   defaultEffortProfiles?: Partial<Record<EffortLevel, Partial<EffortProfile>>>;
 }
@@ -388,13 +416,28 @@ export async function resolveSpec(db: Db, args: ResolveSpecArgs): Promise<Resolv
       : undefined;
   const fromInline = specOverride?.effortProfile;
 
-  const effortProfile = mergeProfile(
-    base,
-    fromProject,
-    fromDefault,
-    fromRegistry,
-    fromRequest,
-    fromInline,
+  // The admin-controlled layers ONLY: built-in defaults, `project_configs`,
+  // and the active `registry_entries` row. `fromDefault` (`unit.specDefault`),
+  // `fromRequest` (`requestOverrides.effortOverrides`) and `fromInline`
+  // (`unit.specOverride`) all arrive over the wire, so they are excluded.
+  // This is the floor `clampCallerLimits` holds `estimatedCostUsdPerCall` to,
+  // and the fallback when a caller sends a non-numeric value.
+  const adminBaseline = mergeProfile(base, fromProject, fromRegistry);
+
+  // Security clamp — audit finding C4 (budget/cost caps bypassable
+  // via a caller-supplied `effortProfile`). Applied AFTER the merge, so it
+  // binds no matter which layer supplied the value, and so a caller keeps any
+  // value that is already within the server's bounds.
+  //
+  // ⚠ CLAMP, NEVER DELETE. The audit's step 4 proposed dropping these fields
+  // from the caller overlays; for `maxOutputTokens` that would silently break
+  // the chat product's per-user credit cap. See
+  // `plan/open-maxoutputtokens-clamp-not-delete.md` and the regression test
+  // "a caller-supplied maxOutputTokens BELOW the ceiling survives untouched"
+  // in `resolve.test.ts`, which exists to fail if anyone reverts to deletion.
+  const effortProfile = clampCallerLimits(
+    mergeProfile(base, fromProject, fromDefault, fromRegistry, fromRequest, fromInline),
+    adminBaseline,
   );
 
   // 7. Resolve model.
@@ -446,6 +489,14 @@ export async function resolveSpec(db: Db, args: ResolveSpecArgs): Promise<Resolv
     specOverride?.responseSchema !== undefined
       ? specOverride.responseSchema
       : (registryRow?.responseSchema ?? specDefault?.responseSchema ?? undefined);
+  // Strict mode: inline beats the floor. There is no registry column for it —
+  // a caller turns it on per call, and it applies to whichever layer supplied
+  // the schema (including a registered row's).
+  const responseSchemaStrict =
+    specOverride?.responseSchemaStrict ?? specDefault?.responseSchemaStrict ?? false;
+  if (responseSchemaStrict) {
+    checkStrictSchema(model, responseSchema ?? undefined);
+  }
   const renderer =
     specOverride?.renderer ?? registryRow?.renderer ?? specDefault?.renderer ?? undefined;
   const contentKind =
@@ -464,6 +515,7 @@ export async function resolveSpec(db: Db, args: ResolveSpecArgs): Promise<Resolv
   }
   if (responseSchema !== undefined && responseSchema !== null)
     out.responseSchema = responseSchema;
+  if (responseSchemaStrict) out.responseSchemaStrict = true;
   if (renderer) out.renderer = renderer;
   if (contentKind) out.contentKind = contentKind;
   // Provenance. Deliberately NOT gated on `specDefault`: a floor loses to the
@@ -475,4 +527,44 @@ export async function resolveSpec(db: Db, args: ResolveSpecArgs): Promise<Resolv
     out.registryEntryVersion = registryRow.version;
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Strict schema-constrained output — the pre-flight check
+// ---------------------------------------------------------------------------
+
+/**
+ * Throw `SpecResolutionError` (400) unless `model` can run strict mode and
+ * `schema` is inside the strict subset. Never downgrades to JSON mode.
+ *
+ * Called by `resolveSpec` (so `/v1/generate` refuses at submit time, not in the
+ * worker) AND by the router (the seam every provider call crosses), both
+ * before any budget is reserved.
+ */
+export function checkStrictSchema(model: string, schema: unknown): void {
+  if (!supportsStrictSchema(model)) {
+    throw new SpecResolutionError({
+      cause: 'strict schema unsupported model',
+      message:
+        `responseSchemaStrict: model '${model}' does not support strict schema-constrained ` +
+        `output. Supported: ${STRICT_SCHEMA_MODELS.join(', ')} (also listed by ` +
+        'GET /v1/capabilities as `strictStructuredOutputModels`). Pick one of those, or drop ' +
+        'responseSchemaStrict to use JSON mode.',
+    });
+  }
+  if (schema === undefined || schema === null) {
+    throw new SpecResolutionError({
+      cause: 'strict schema invalid',
+      message: 'responseSchemaStrict: no responseSchema resolved for this unit, so there is nothing to enforce',
+    });
+  }
+  const problems = strictSchemaProblems(schema);
+  if (problems.length > 0) {
+    throw new SpecResolutionError({
+      cause: 'strict schema invalid',
+      message:
+        'responseSchemaStrict: the responseSchema is outside the strict subset; ai-service ' +
+        `rejects it rather than rewrite it. ${problems.join('; ')}`,
+    });
+  }
 }

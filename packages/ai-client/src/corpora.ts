@@ -60,8 +60,15 @@ export class CorporaAPI {
   /**
    * Reconfigure a corpus. Only the fields you send change. `embeddingModel` can
    * change ONLY while the corpus is still empty (409 `EMBEDDING_MODEL_LOCKED`
-   * otherwise). Changing `language` affects how NEW chunks are lexically
-   * indexed; existing chunks keep their tsvector until re-ingested.
+   * otherwise).
+   *
+   * Changing `language` RE-INDEXES the corpus — the stored lexical tsvectors
+   * are rebuilt with the new text-search config in the same transaction as the
+   * config write, so you do NOT have to re-ingest to make a language change
+   * take effect. Nothing is re-embedded, so it costs no tokens and dense
+   * retrieval is unaffected. Sending the language the corpus already has is a
+   * no-op. `language` is a Postgres regconfig name (`'spanish'`/`'english'`/
+   * `'simple'`/…), not an ISO locale code — `'es'` is rejected with a 400.
    *
    * Errors: 400 (validation / empty patch / model↔dim), 404 (`CORPUS_NOT_FOUND`),
    * 409 (`EMBEDDING_MODEL_LOCKED`).

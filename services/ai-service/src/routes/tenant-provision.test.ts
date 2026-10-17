@@ -9,9 +9,14 @@
 // wiring (see `tenant.test.ts` / `budget.test.ts`) but would happily accept a
 // malformed SQL expression that only explodes in production.
 //
-// Same harness + skip semantics as `registry.test.ts`: throwaway
-// `pgvector/pgvector:pg16` container from `src/test/pg-container.ts`, on a
-// kernel-assigned host port, skipped entirely when docker is absent.
+// Same harness + gate semantics as `registry.test.ts`: a real Postgres from
+// $AI_SVC_TEST_PG_URL (the CI service container) or, failing that, a throwaway
+// `pgvector/pgvector:pg16` container this file starts itself.
+//
+// 🔴 A MISSING PREREQUISITE IS A SKIP LOCALLY AND A HARD FAILURE IN CI. Gating
+// on `!dockerAvailable()` alone meant these 6 tests reported ZERO on a runner
+// with no daemon — leaving the budget upsert's `LEAST(remaining, cap)` clamp
+// unexecuted while the job stayed green. See `src/test/docker-gate.ts`.
 
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
@@ -19,48 +24,75 @@ import type { FastifyInstance } from 'fastify';
 import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { hasDocker, startPostgres, stopContainer, type PgContainer } from '../test/pg-container.js';
+import { externalTestClusterUrl, skipWithoutTestPostgres } from '../test/docker-gate.js';
+import type { TestPostgres } from '../test/docker-pg.js';
+import { createDatabaseOnCluster, startThrowawayPg } from '../test/docker-pg.js';
 
-// Distinct from registry.test.ts's container — vitest runs test FILES in
-// parallel, so a shared container name would have them fighting each other.
-// The host PORT no longer needs coordinating: both are ephemeral.
+// Distinct container name from registry.test.ts — vitest runs test FILES in
+// parallel, so a shared name would collide. The host port is allocated by
+// Docker (see `src/test/docker-pg.ts`), so two containers can never contend
+// for the same number.
 const CONTAINER_NAME = 'ai-svc-tenant-test';
+// ⚠ Distinct from registry.test.ts's for the same reason the container name is:
+// the two files run in PARALLEL workers and must not share a database.
+//
+// 🔴 AND IT MUST DIFFER PER PROCESS TOO, for the reason spelled out beside the
+// same constant in `registry.test.ts`: `createDatabaseOnCluster` opens with
+// `DROP DATABASE ... WITH (FORCE)` and `stop()` drops again in `afterAll`, so
+// two RUNS sharing one $AI_SVC_TEST_PG_URL delete each other's database
+// mid-test. Measured; this file has the identical shape.
+//
+// ⚠ THE PID GOES BEFORE `_test`, NOT AFTER. `THROWAWAY_DATABASE_NAME` is
+// /^ai_service(?:_[a-z0-9_]+)?_test$/, so a trailing `_<pid>` fails the
+// allowlist and `createDatabaseOnCluster` refuses to run at all.
+const DATABASE_NAME = `ai_service_tenant_provision_${process.pid}_test`;
+
+// 🔴 Module scope on purpose — see the same constant in `registry.test.ts`.
+const SKIP_SUITE = skipWithoutTestPostgres('tenant provisioning (integration)');
 
 const APP_TOKEN = 'tenant-test-app';
 const ADMIN_TOKEN = 'tenant-test-admin';
 const ORG = 'tenant-test-org';
 const PROJECT = 'tenant-test-project';
 
-const DOCKER_AVAILABLE = hasDocker();
-
-describe.skipIf(!DOCKER_AVAILABLE)('tenant provisioning (integration)', () => {
+// Skipped ONLY on a developer machine with neither $AI_SVC_TEST_PG_URL nor a
+// Docker daemon. In CI the same condition THROWS at module scope, so the file
+// fails to collect and the run exits non-zero instead of reporting nothing.
+// skip-reason: needs a real Postgres (CI service container or Docker); in CI a missing one FAILS, it never skips
+describe.skipIf(SKIP_SUITE)('tenant provisioning (integration)', () => {
   let app: FastifyInstance;
   let queryClient: ReturnType<typeof postgres>;
-  let container: PgContainer;
+  let pg: TestPostgres | undefined;
 
   beforeAll(async () => {
-    container = await startPostgres(CONTAINER_NAME);
+    const cluster = externalTestClusterUrl();
+    pg = cluster
+      ? await createDatabaseOnCluster(cluster, DATABASE_NAME)
+      : await startThrowawayPg({
+          containerName: CONTAINER_NAME,
+          portEnvVar: 'AI_SVC_TEST_TENANT_PG_PORT',
+        });
 
-    process.env.DATABASE_URL = container.url;
+    process.env.DATABASE_URL = pg.url;
     process.env.API_KEYS = JSON.stringify({
       [APP_TOKEN]: { org: ORG, project: PROJECT, role: 'app' },
       [ADMIN_TOKEN]: { org: ORG, project: PROJECT, role: 'admin' },
     });
 
-    const migrateClient = postgres(container.url, { max: 1 });
+    const migrateClient = postgres(pg.url, { max: 1 });
     await migrate(drizzle(migrateClient), { migrationsFolder: './drizzle' });
     await migrateClient.end();
 
     const { buildServer } = await import('../server.js');
     app = await buildServer();
-    queryClient = postgres(container.url, { max: 2 });
-  }, 120_000);
+    queryClient = postgres(pg.url, { max: 2 });
+  }, 60_000);
 
   afterAll(async () => {
     await app?.close();
     await queryClient?.end({ timeout: 5 });
-    stopContainer(CONTAINER_NAME);
-  }, 30_000);
+    await pg?.stop();
+  });
 
   beforeEach(async () => {
     await queryClient`DELETE FROM budget_state`;

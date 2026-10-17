@@ -1,0 +1,10 @@
+Read the meeting note below and return a JSON array of the action items it contains.
+Each element is an object with exactly two keys:
+
+  "owner"  string - who is responsible
+  "task"   string - what they must do, one short phrase
+
+Return raw JSON only. No markdown fence, no commentary.
+
+Meeting note:
+{{ note }}

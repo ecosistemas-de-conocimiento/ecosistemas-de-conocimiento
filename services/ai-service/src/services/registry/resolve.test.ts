@@ -3,11 +3,49 @@
 // queries — keyed by which table the chain's `.from(...)` was called against.
 // This keeps the tests free of Postgres while still exercising the resolver's
 // full precedence pipeline.
+//
+// 🔴 WHY THE STUB'S `where()` TAKES ITS ARGUMENT NOW.
+// It used to read `where: () => chain` — a function with NO parameter. The
+// `(org, project)` predicate `resolveSpec` builds was therefore DISCARDED at
+// the door, so every case below agreed with any WHERE clause at all,
+// INCLUDING NONE. Delete `eq(registryEntries.org, org)` from `resolve.ts` and
+// this file stayed green while one tenant resolved another tenant's registered
+// prompt. That prompt is what decides what the model is told and what shape it
+// must answer in, so a leak there hands a consumer's product logic to whoever
+// asked for the same unitType.
+//
+// Every `where()` now records its predicate through `WhereRecorder`, which
+// serialises it with drizzle's OWN dialect — the same code path that talks to
+// Postgres — and keeps the bound parameters. The dedicated cases at the bottom
+// then assert the tenant COLUMNS and the tenant VALUES are really in there.
+//
+// 🔴 …AND WHY BOTH TERMINALS NOW SETTLE THROUGH `WhereRecorder.guard()`.
+// Taking the argument catches the mutation that EMPTIES the predicate. It is
+// blind to the one that DELETES the `.where()` call outright, because this
+// stub's `where` returns the chain itself — strip the call and
+// `.from(registryEntries).limit(1)` is still a legal chain that still resolves
+// to the canned row. Measured on this file at HEAD, with the whole
+// `.where(and(eq(org), eq(project), eq(unitType), isActive))` deleted from
+// `resolve.ts`: 23 of 27 cases stayed GREEN over what is a whole-table read of
+// every tenant's registered prompts, and the 4 reds blamed the wrong thing —
+// "no where() was recorded for 'registry_entries' at all — the stub was never
+// reached". The stub was reached on every call; the PREDICATE was gone.
+//
+// `guard.settle()` on `limit` and on `then` records a never-filtered chain as
+// `<NO PREDICATE>`, which puts the deleted call into the same list as the
+// emptied one and makes `expectNoUnfilteredQuery()` below a real gate instead
+// of a statement about predicates the stub happened to see.
+//
+// ⚠ This is the cheap complement, not the proof. A mock can only show which
+// predicate was BUILT, never that Postgres honoured it. The full-strength
+// proof — seed a row owned by tenant B, act as A, read B's rows back — lives
+// in `src/routes/tenant-isolation.integration.test.ts`.
 
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { Db } from '../../db/client.js';
 import { projectConfigs, registryEntries } from '../../db/schema/index.js';
+import { WhereRecorder } from '../../test/where-recorder.js';
 
 import {
   EFFORT_PROFILES,
@@ -32,17 +70,54 @@ interface StubRows {
  * call resolves to the canned row(s) for that table. Only the surface the
  * resolver actually uses is implemented.
  */
+/**
+ * Every predicate every stubbed query built, in call order.
+ *
+ * Module-level rather than per-`makeDb` because several cases construct more
+ * than one db; `beforeEach` clears it so a case only ever sees its own queries.
+ */
+const wheres = new WhereRecorder();
+
 function makeDb(rows: StubRows): Db {
   // Each `select()` starts a fresh builder so successive resolveSpec calls in
   // the same test don't share state.
   const build = (table: unknown) => {
     let row: unknown = undefined;
-    if (table === registryEntries) row = rows.registry;
-    if (table === projectConfigs) row = rows.project;
+    // Name the table as Postgres knows it, so a failure message reads like the
+    // schema instead of like a JS object identity.
+    let name = 'unknown';
+    if (table === registryEntries) {
+      row = rows.registry;
+      name = 'registry_entries';
+    }
+    if (table === projectConfigs) {
+      row = rows.project;
+      name = 'project_configs';
+    }
     const result: unknown[] = row ? [row] : [];
-    const chain = {
-      where: () => chain,
-      limit: () => Promise.resolve(result),
+    // ONE guard per chain instance — per `from()`, i.e. per query. `resolveSpec`
+    // issues two (registry_entries, project_configs) and each gets its own, so
+    // "was this chain ever filtered?" is answered per query rather than per
+    // resolve.
+    const guard = wheres.guard(name);
+    const chain: {
+      where: (predicate: unknown) => typeof chain;
+      limit: (n?: number) => Promise<unknown[]>;
+      then: (resolve: (v: unknown[]) => void) => void;
+    } = {
+      // 🔴 TAKES its argument. A parameterless `where()` here is precisely what
+      // let a dropped tenant filter pass green — see the header.
+      where: (predicate: unknown) => {
+        guard.where(predicate);
+        return chain;
+      },
+      // 🔴 …and both terminals SETTLE through the guard — see the header.
+      // `limit` is the terminal `resolveSpec` uses; `then` covers the chain
+      // being awaited directly, which is what a `.limit(1)` deletion produces.
+      limit: async () => guard.settle(result),
+      then: (resolve) => {
+        Promise.resolve(guard.settle(result)).then(resolve);
+      },
     };
     return chain;
   };
@@ -105,6 +180,10 @@ function makeProjectRow(over: Record<string, unknown> = {}) {
 // Tests
 // ---------------------------------------------------------------------------
 
+beforeEach(() => {
+  wheres.reset();
+});
+
 describe('resolveSpec', () => {
   it('returns the active registry row when nothing overrides it', async () => {
     const db = makeDb({ registry: makeRegistryRow(), project: makeProjectRow() });
@@ -121,6 +200,15 @@ describe('resolveSpec', () => {
     // because neither project nor registry supplied an override.
     expect(spec.effortProfile.maxOutputTokens).toBe(EFFORT_PROFILES.standard.maxOutputTokens);
     expect(spec.effortProfile.model).toBe('registered/model');
+    // The same call had to build a tenant-scoped predicate to reach that row at
+    // all. Pinned here as well as in the dedicated cases below, so the file's
+    // happiest path cannot drift away from the scope it depends on.
+    // EVERY query on each table, not merely one: `resolveSpec` reads each table
+    // exactly once and neither read is ever legitimately unscoped, so a second
+    // tenant-blind read appearing alongside a good one is a defect — and that
+    // is the case `expectScopedTo` passes.
+    wheres.expectEveryQueryScopedTo('registry_entries', { org: ORG, project: PROJECT });
+    wheres.expectEveryQueryScopedTo('project_configs', { org: ORG, project: PROJECT });
   });
 
   it('inline specOverride beats the registered row', async () => {
@@ -495,5 +583,207 @@ describe('resolveSpec — specDefault (floor)', () => {
       validators: [],
     });
     expect(spec.metaPromptSource).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tenant scope — the predicate, not the row
+// ---------------------------------------------------------------------------
+//
+// Every case above asserts on the ROW the stub handed back, and the stub picks
+// that row by table identity alone. That says nothing whatsoever about the
+// WHERE clause — and the WHERE clause is the only thing standing between two
+// consumers' registered prompts. These cases read the predicate itself.
+
+describe('resolveSpec — tenant scope of the queries it issues', () => {
+  it('🔴 scopes the registry lookup to (org, project) AND unitType — not to unitType alone', async () => {
+    await resolveSpec(makeDb({ registry: makeRegistryRow() }), {
+      org: ORG,
+      project: PROJECT,
+      unitType: 'thing',
+    });
+
+    const lookups = wheres.for('registry_entries');
+    expect(lookups).toHaveLength(1);
+    const lookup = lookups[0]!;
+    // Column by column, so dropping any ONE of the three is its own named
+    // failure rather than one opaque "the SQL changed".
+    expect(lookup.sql).toContain('"registry_entries"."org" =');
+    expect(lookup.sql).toContain('"registry_entries"."project" =');
+    expect(lookup.sql).toContain('"registry_entries"."unit_type" =');
+    // …and the values bound are the CALLER's scope, in that order. A predicate
+    // that named the right columns but bound a constant, or compared `org`
+    // against another column, would sail past the check above.
+    expect(lookup.params).toEqual([ORG, PROJECT, 'thing']);
+  });
+
+  it('🔴 scopes the project_configs lookup to (org, project) — it has no other filter at all', async () => {
+    // `project_configs` is read on EVERY resolve, with or without a unitType,
+    // and (org, project) is its whole predicate. There is no id or name to fall
+    // back on here: lose either term and the query returns some other tenant's
+    // default model and callback URL.
+    await resolveSpec(makeDb({ project: makeProjectRow() }), {
+      org: ORG,
+      project: PROJECT,
+      specDefault: { promptTemplate: 'built-in' },
+    });
+
+    const lookups = wheres.for('project_configs');
+    expect(lookups).toHaveLength(1);
+    const lookup = lookups[0]!;
+    expect(lookup.sql).toContain('"project_configs"."org" =');
+    expect(lookup.sql).toContain('"project_configs"."project" =');
+    expect(lookup.params).toEqual([ORG, PROJECT]);
+  });
+
+  it('🔴 binds the CALLER scope, never the scope of the row that comes back', async () => {
+    // The stub returns a row stamped ORG/PROJECT no matter who asks — exactly
+    // the shape of a cross-tenant read. If `resolveSpec` ever sourced its
+    // filter from the row (or from a cached spec) instead of its arguments,
+    // this is the only case in the file that would notice.
+    await resolveSpec(makeDb({ registry: makeRegistryRow(), project: makeProjectRow() }), {
+      org: 'other-org',
+      project: 'other-project',
+      unitType: 'thing',
+    });
+
+    wheres.expectEveryQueryScopedTo('registry_entries', {
+      org: 'other-org',
+      project: 'other-project',
+    });
+    wheres.expectEveryQueryScopedTo('project_configs', {
+      org: 'other-org',
+      project: 'other-project',
+    });
+  });
+
+  it('🔴 issues no unfiltered query, including on the throw-nothing-resolvable path', async () => {
+    // Both reads happen BEFORE the precondition throws, so the error path is a
+    // real query path and gets the same guarantee. `and()` with every `eq(...)`
+    // stripped out collapses to `undefined`, which the recorder stores as the
+    // `<NO PREDICATE>` marker — a full-table read, caught here by name.
+    await expect(
+      resolveSpec(makeDb({}), { org: ORG, project: PROJECT, unitType: 'unknown' }),
+    ).rejects.toBeInstanceOf(SpecResolutionError);
+
+    expect(wheres.calls.map((c) => c.table)).toEqual(['registry_entries', 'project_configs']);
+    // A real gate now, not a restatement of the line above: both chains settle
+    // through `guard`, so a DELETED `.where()` arrives here as `<NO PREDICATE>`
+    // — present in the list, and rejected by name — rather than leaving the
+    // list short and being reported as "the stub was never reached".
+    wheres.expectNoUnfilteredQuery();
+  });
+});
+
+describe('resolveSpec — responseSchemaStrict (strict schema-constrained output)', () => {
+  const strictSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['answer'],
+    properties: { answer: { type: 'string' } },
+  };
+
+  async function resolveWith(
+    spec: { specOverride?: InlineSpecOverride; specDefault?: InlineSpecOverride },
+    registry?: unknown,
+  ) {
+    return resolveSpec(makeDb({ project: makeProjectRow(), ...(registry ? { registry } : {}) }), {
+      org: ORG,
+      project: PROJECT,
+      unitType: 'thing',
+      ...spec,
+    });
+  }
+
+  async function causeOf(p: Promise<unknown>): Promise<{ cause: string; message: string }> {
+    try {
+      await p;
+    } catch (err) {
+      expect(err).toBeInstanceOf(SpecResolutionError);
+      const e = err as SpecResolutionError;
+      return { cause: e.cause, message: e.message };
+    }
+    throw new Error('expected resolveSpec to throw');
+  }
+
+  it('absent ⇒ the spec carries no strict flag (JSON mode, unchanged)', async () => {
+    const spec = await resolveWith({
+      specOverride: { promptTemplate: 'p', model: 'openai/gpt-4o-mini', responseSchema: strictSchema },
+    });
+    expect(spec.responseSchemaStrict).toBeUndefined();
+  });
+
+  it('specOverride sets it on a supported model and a strict-ready schema', async () => {
+    const spec = await resolveWith({
+      specOverride: {
+        promptTemplate: 'p',
+        model: 'openai/gpt-4o-mini',
+        responseSchema: strictSchema,
+        responseSchemaStrict: true,
+      },
+    });
+    expect(spec.responseSchemaStrict).toBe(true);
+    expect(spec.responseSchema).toEqual(strictSchema);
+  });
+
+  it('specDefault (floor) can set it too, and specOverride: false beats it', async () => {
+    const floor = { promptTemplate: 'p', model: 'openai/gpt-4o-mini', responseSchema: strictSchema, responseSchemaStrict: true };
+    expect((await resolveWith({ specDefault: floor })).responseSchemaStrict).toBe(true);
+    expect(
+      (await resolveWith({ specDefault: floor, specOverride: { responseSchemaStrict: false } }))
+        .responseSchemaStrict,
+    ).toBeUndefined();
+  });
+
+  it('applies strict mode to a registry-supplied responseSchema', async () => {
+    const spec = await resolveWith(
+      { specDefault: { responseSchemaStrict: true } },
+      makeRegistryRow({ model: 'openai/gpt-4o', responseSchema: strictSchema }),
+    );
+    expect(spec.responseSchemaStrict).toBe(true);
+    expect(spec.model).toBe('openai/gpt-4o');
+  });
+
+  it('🔴 refuses an unsupported model with a 400 — never downgrades to JSON mode', async () => {
+    const { cause, message } = await causeOf(
+      resolveWith({
+        specOverride: {
+          promptTemplate: 'p',
+          model: 'deepseek/deepseek-r1',
+          responseSchema: strictSchema,
+          responseSchemaStrict: true,
+        },
+      }),
+    );
+    expect(cause).toBe('strict schema unsupported model');
+    expect(message).toContain("'deepseek/deepseek-r1'");
+    expect(message).toContain('GET /v1/capabilities');
+    expect(new SpecResolutionError({ cause: 'strict schema unsupported model' }).status).toBe(400);
+  });
+
+  it('refuses strict mode with no responseSchema to enforce', async () => {
+    const { cause } = await causeOf(
+      resolveWith({
+        specOverride: { promptTemplate: 'p', model: 'openai/gpt-4o-mini', responseSchemaStrict: true },
+      }),
+    );
+    expect(cause).toBe('strict schema invalid');
+  });
+
+  it('refuses a schema outside the strict subset, listing every offending path', async () => {
+    const { cause, message } = await causeOf(
+      resolveWith({
+        specOverride: {
+          promptTemplate: 'p',
+          model: 'openai/gpt-4o-mini',
+          responseSchema: { type: 'object', properties: { a: { type: 'string', minLength: 1 } } },
+          responseSchemaStrict: true,
+        },
+      }),
+    );
+    expect(cause).toBe('strict schema invalid');
+    expect(message).toContain('#: an object needs `additionalProperties: false`');
+    expect(message).toContain('missing "a"');
+    expect(message).toContain('#/properties/a: keyword `minLength` is not supported');
   });
 });

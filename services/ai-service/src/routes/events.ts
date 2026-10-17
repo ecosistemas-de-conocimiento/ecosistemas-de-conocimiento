@@ -7,7 +7,7 @@
 // connection and forwards bus events whose `requestId` matches.
 //
 // A 15s `: ping\n\n` heartbeat keeps the socket alive through idle reverse
-// proxies. Cleanup on `req.raw.on('close')` clears the interval, unsubscribes
+// proxies. Cleanup on `reply.raw.on('close')` clears the interval, unsubscribes
 // from the bus, and ends the underlying socket.
 
 import type { FastifyPluginAsync } from 'fastify';
@@ -47,6 +47,12 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
     }
 
     // SSE headers, then take over the underlying socket.
+    // 🔴 `x-request-id` GOES ON `reply.raw`. The `onRequest` hook in
+    // `server.ts` sets it through `reply.header(...)`, which only reaches the
+    // wire via Fastify's serializer — and `reply.hijack()` below skips that, so
+    // this route answered with no correlation id at all. A long-lived SSE
+    // stream is precisely where a consumer needs one.
+    reply.raw.setHeader('x-request-id', req.id);
     reply.raw.setHeader('Content-Type', 'text/event-stream');
     reply.raw.setHeader('Cache-Control', 'no-cache');
     reply.raw.setHeader('Connection', 'keep-alive');
@@ -81,7 +87,7 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
       }
     }, 15_000);
     // Don't hold the event loop open just for a long-lived SSE socket; the
-    // request itself anchors lifetime via `req.raw.on('close')`.
+    // connection itself anchors lifetime via `reply.raw.on('close')`.
     heartbeat.unref?.();
 
     const cleanup = (): void => {
@@ -96,7 +102,14 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
       }
     };
 
-    req.raw.on('close', cleanup);
+    // Lifetime hangs off the CONNECTION (`reply.raw`), not the request stream.
+    // `req.raw`'s `'close'` reports the request BODY being consumed; for this
+    // body-less GET it happens to coincide with the hang-up, but the same
+    // listener on POST /v1/route fired mid-call and turned every call into a
+    // 499 (ai-reality-audit). One rule for every route: see
+    // generate.ts. The `req.raw` `'error'` (ECONNRESET on a reset socket) stays
+    // as a second trigger; `cleanup` is idempotent.
+    reply.raw.on('close', cleanup);
     req.raw.on('error', cleanup);
   });
 };

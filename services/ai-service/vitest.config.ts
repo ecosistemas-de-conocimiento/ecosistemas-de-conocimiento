@@ -3,6 +3,24 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
+    // 🔴 Do NOT add `isolate: false`, however loudly vitest's footer advertises
+    // it as the faster option. This suite's per-file isolation is not a
+    // preference, it is the ONLY thing keeping process-wide state from leaking
+    // between files. The concrete one: `getSharedProviderResilience()`
+    // (`src/services/ai/router/resilience.ts`) memoises a SINGLE circuit
+    // breaker in a module-scope `let`, deliberately — a per-call breaker counts
+    // to five alone and never opens. `pool: 'forks'` + `isolate: true`
+    // (vitest's defaults, relied on here) give each file a fresh module
+    // registry and therefore a fresh breaker. Turn isolation off and one file's
+    // provoked provider failures carry into the next file's first request, as
+    // an OPEN breaker and a `provider_unavailable` that has nothing to do with
+    // the test that reports it. `createTestRuntime()` calls
+    // `resetSharedProviderResilience()` for the same reason WITHIN a file.
+    // The same warning is on `vitest.integration.config.ts`.
+    isolate: true,
+    // vitest's default, written down so nobody flips it: a run that finds no
+    // test file must exit non-zero. CI's exit-code gate depends on it.
+    passWithNoTests: false,
     // Service sources only. The typed client (`@edc/ai-client`) used to be
     // nested under this package and was included here; it now lives at the
     // repo-root `packages/ai-client` and owns its own vitest run.

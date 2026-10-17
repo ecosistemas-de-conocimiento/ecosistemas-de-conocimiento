@@ -1,7 +1,8 @@
 // Real OpenRouter HTTP adapter — non-streaming + streaming.
 //
-// INVARIANT: this is the ONLY file in the tree that calls
-// `fetch('https://openrouter.ai/...')`. Anything that needs an LLM call must
+// INVARIANT: this is the ONLY file in the tree that calls the chat-completions
+// endpoint (`env.CHAT_COMPLETIONS_URL`, OpenRouter by default; tests point it
+// at `test-support/fake-provider/`). Anything that needs an LLM call must
 // route through here so the trace writer, budget enforcer, and cache layers
 // stay in front of the network seam.
 //
@@ -10,12 +11,9 @@
 //     `usage.include = true` is sent on the request body.
 //   - When `usage.cost` is missing (streaming, certain models), we fall back
 //     to the per-1K pricing table in `../task-profiles.ts`.
-//
-// Ported 1:1 from a prototype `services/ai/router/adapters/openrouter-adapter.ts`
-// with path-only edits (relative imports + `.js` extensions, env via the
-// validated config).
 
 import { env } from '../../../../config/env.js';
+import { minimiseEgress } from '../../pii-egress.js';
 import type { ChatMessage } from '../types.js';
 import { priceForUsage } from '../task-profiles.js';
 
@@ -25,9 +23,10 @@ import { priceForUsage } from '../task-profiles.js';
  * the total wall-clock cap is too coarse to catch quickly. We arm a per-read
  * timer; if no frame arrives within `LLM_STREAM_STALL_TIMEOUT_MS`, we abort an
  * internal controller chained (via `AbortSignal.any`) onto the caller's signal,
- * which unblocks `reader.read()` with an AbortError. The router then bills the
- * partial like any other abort. The `TimeoutError` DOMException name lets the
- * upstream cause-detection still classify it as a timeout (not a disconnect).
+ * which unblocks `reader.read()`. `streamingCallOpenRouter` wraps it in
+ * `OpenRouterAbortError` with the `TimeoutError` DOMException as `cause`, and
+ * the router ends the call as an UNBILLED `ProviderTimeout` (504) — a stall is
+ * our timeout, not a disconnect (decision, see provider-timeout.ts).
  *
  * Read at call time (not module load) so tests can vary it per case and so a
  * config reload would take effect without a restart.
@@ -36,7 +35,9 @@ function stallTimeoutMs(): number {
   return env.LLM_STREAM_STALL_TIMEOUT_MS;
 }
 
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+// Config-driven like `EMBEDDINGS_URL`. Read once at module load from the
+// validated env; defaults to OpenRouter.
+const OPENROUTER_URL = env.CHAT_COMPLETIONS_URL;
 
 export interface OpenRouterCallOptions {
   model: string;
@@ -50,8 +51,11 @@ export interface OpenRouterCallOptions {
   models?: string[];
   /** Set to false to suppress `usage.include`; default is true. */
   includeUsage?: boolean;
-  /** Optional response_format for JSON mode. */
-  responseFormat?: { type: 'json_object' };
+  /**
+   * Optional `response_format`: JSON mode (`json_object`) or strict
+   * schema-constrained output (`json_schema` with `strict: true`).
+   */
+  responseFormat?: OpenRouterResponseFormat;
   /**
    * Optional per-token callback. Fired by `streamingCallOpenRouter` for each
    * `delta` chunk as it arrives, so a streaming HTTP route can forward tokens
@@ -59,6 +63,37 @@ export interface OpenRouterCallOptions {
    * overhead and identical behaviour to before.
    */
   onDelta?: (text: string) => void;
+}
+
+/**
+ * The `response_format` values ai-service sends. `json_schema` is always
+ * `strict: true`: ai-service has no non-strict schema mode.
+ */
+export type OpenRouterResponseFormat =
+  | { type: 'json_object' }
+  | {
+      type: 'json_schema';
+      json_schema: { name: string; schema: unknown; strict: true };
+    };
+
+/**
+ * Set `response_format` (and, for strict mode, the routing guard) on a body.
+ *
+ * 🔴 `provider.require_parameters: true` IS LOAD-BEARING FOR STRICT MODE.
+ * OpenRouter decides structured-output support per ENDPOINT (upstream host),
+ * and by default it routes to an endpoint that does not support a parameter
+ * and DROPS the parameter — strict mode would silently become free text. With
+ * the flag, OpenRouter routes only to endpoints that honour `response_format`,
+ * and errors when there are none. (OpenRouter docs, Structured Outputs.)
+ * JSON mode keeps its old wire: no `provider` block.
+ */
+function applyResponseFormat(
+  body: Record<string, unknown>,
+  responseFormat: OpenRouterResponseFormat | undefined,
+): void {
+  if (!responseFormat) return;
+  body.response_format = responseFormat;
+  if (responseFormat.type === 'json_schema') body.provider = { require_parameters: true };
 }
 
 export interface OpenRouterCompletion {
@@ -72,6 +107,12 @@ export interface OpenRouterCompletion {
     /** Whether the cost came from OpenRouter's `usage.cost` field. */
     costSource: 'openrouter' | 'pricing-table';
   };
+  /**
+   * OpenRouter's generation id (`gen-…`): the body's top-level `id`, the key
+   * for `GET /api/v1/generation?id=` (OpenRouter's own record of the call,
+   * cost included). Absent when the provider sent none. Set on BOTH adapters,
+   * and on an aborted call's partial when any chunk arrived before the abort.
+   */
   rawId?: string;
 }
 
@@ -127,13 +168,48 @@ export class OpenRouterHttpError extends Error {
   public readonly status: number;
   public readonly code: string | number | undefined;
   public readonly bodySnippet: string;
-  constructor(opts: { status: number; code?: string | number; message: string; bodySnippet?: string }) {
+  /**
+   * `Retry-After`, in ms, when the provider sent one. Read here at the only
+   * layer that still HAS the response headers — the router's retry ladder
+   * (`router/resilience.ts`) needs it and gets an error object, not a
+   * `Response`.
+   *
+   * Absent, zero, or in the past all collapse to `undefined`: a
+   * `Retry-After: 0` is a proxy placeholder, and honouring it literally means
+   * hammering a server that just said no with no backoff at all. Same rule as
+   * `packages/ai-client/src/http.ts`.
+   */
+  public readonly retryAfterMs: number | undefined;
+  constructor(opts: {
+    status: number;
+    code?: string | number;
+    message: string;
+    bodySnippet?: string;
+    retryAfterMs?: number | undefined;
+  }) {
     super(opts.message);
     this.name = 'OpenRouterHttpError';
     this.status = opts.status;
     this.code = opts.code;
     this.bodySnippet = opts.bodySnippet ?? '';
+    this.retryAfterMs = opts.retryAfterMs;
   }
+}
+
+/**
+ * `Retry-After` off a `Response`, in ms. HTTP allows delta-seconds OR an
+ * HTTP-date and both are seen behind proxies, so both are read. A date in the
+ * past yields `undefined`, never a negative wait.
+ */
+export function retryAfterMsFromResponse(res: { headers?: { get?(name: string): string | null } }): number | undefined {
+  const raw = res.headers?.get?.('retry-after')?.trim();
+  if (!raw) return undefined;
+  const asMs = (ms: number): number | undefined => (ms > 0 ? ms : undefined);
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds)) return asMs(seconds * 1000);
+  const at = Date.parse(raw);
+  if (Number.isNaN(at)) return undefined;
+  return asMs(at - Date.now());
 }
 
 function resolveApiKey(opts: OpenRouterCallOptions): string {
@@ -144,6 +220,36 @@ function resolveApiKey(opts: OpenRouterCallOptions): string {
     );
   }
   return key;
+}
+
+/**
+ * OpenAI's `json_object` mode refuses a request (HTTP 400: "'messages' must
+ * contain the word 'json' in some form") when no message says "json". The
+ * caller's prompt does not have to — the built-in router prompt and the
+ * consumer-registered ones say "objeto estructurado" — so in JSON mode the
+ * adapter adds one leading system line when the word is missing.
+ *
+ * ⚠ It is an INSTRUCTION, and every model reads it, not only OpenAI's. It fires
+ * on EVERY OpenRouter call that sets `responseSchema` and whose messages lack
+ * the word: /v1/generate/sync and /stream, the async workers, and the
+ * refine/sample passes, as well as /v1/route. A prompt that already says
+ * "json" (most structured prompts do) is sent unchanged. Measured: /v1/route with
+ * openai/gpt-4o-mini (deployed code, no hint) failed 14/14 with this 400. The
+ * "14/14 correct with the hint" figure came from a REPLAY of the same rendered
+ * prompt plus this line through /v1/generate/sync (script router-replay.mts),
+ * not from this adapter on /v1/route; that check runs after deploy.
+ */
+export const JSON_MODE_HINT = 'Respond with a single valid JSON object.';
+
+export function withJsonModeHint(
+  messages: ChatMessage[],
+  responseFormat: OpenRouterCallOptions['responseFormat'],
+): ChatMessage[] {
+  // JSON mode only: strict `json_schema` mode has no "say json" rule, and the
+  // schema already constrains decoding, so no extra instruction is added.
+  if (responseFormat?.type !== 'json_object') return messages;
+  if (messages.some((m) => /json/i.test(m.content))) return messages;
+  return [{ role: 'system', content: JSON_MODE_HINT }, ...messages];
 }
 
 function appHeaders(apiKey: string): Record<string, string> {
@@ -164,12 +270,15 @@ export async function callOpenRouter(
   const apiKey = resolveApiKey(opts);
   const body: Record<string, unknown> = {
     model: opts.model,
-    messages: opts.messages,
+    // 🔴 EGRESS SEAM 1 of 3 (§9.4). `opts.messages` NEVER reaches `fetch`
+    // directly; a refusal here aborts the call rather than shipping raw PII.
+    // See `src/services/ai/pii-egress.ts`.
+    messages: await minimiseEgress(withJsonModeHint(opts.messages, opts.responseFormat), opts.signal),
     max_tokens: opts.maxTokens,
     temperature: opts.temperature,
   };
   if (opts.models && opts.models.length > 0) body.models = opts.models;
-  if (opts.responseFormat) body.response_format = opts.responseFormat;
+  applyResponseFormat(body, opts.responseFormat);
   if (opts.includeUsage !== false) {
     // OpenRouter spec: include cost when caller asks. Default-on for traces.
     body.usage = { include: true };
@@ -191,6 +300,7 @@ export async function callOpenRouter(
       status: res.status,
       message: `OpenRouter returned non-JSON (status=${res.status}): ${text.slice(0, 200)}`,
       bodySnippet: text.slice(0, 200),
+      retryAfterMs: retryAfterMsFromResponse(res),
     });
   }
 
@@ -202,6 +312,7 @@ export async function callOpenRouter(
       code,
       message: `OpenRouter error (${code ?? res.status}): ${msg}`,
       bodySnippet: text.slice(0, 200),
+      retryAfterMs: retryAfterMsFromResponse(res),
     });
   }
 
@@ -245,8 +356,19 @@ export async function callOpenRouter(
  */
 export type OpenRouterStreamEvent =
   | { type: 'delta'; text: string }
+  /** Once, on the first chunk carrying a top-level `id`. See `rawId`. */
+  | { type: 'meta'; generationId: string }
   | { type: 'done'; usage: OpenRouterCompletion['usage']; finishReason: string | null; model: string }
-  | { type: 'error'; message: string };
+  /**
+   * ⚠ `status` / `retryAfterMs` are OPTIONAL because this event is also
+   * emitted for stream-body faults that have no HTTP status of their own. When
+   * they ARE present the fault was a non-OK response, and
+   * `streamingCallOpenRouter` upgrades it into a typed `OpenRouterHttpError`
+   * so the router's retry ladder can see a 429/5xx for what it is. Before
+   * this, a 502 on the STREAMING path (the default adapter!) surfaced as a
+   * bare `Error` and was therefore never retryable.
+   */
+  | { type: 'error'; message: string; status?: number; retryAfterMs?: number | undefined };
 
 export async function* callOpenRouterStream(
   opts: OpenRouterCallOptions,
@@ -254,14 +376,16 @@ export async function* callOpenRouterStream(
   const apiKey = resolveApiKey(opts);
   const body: Record<string, unknown> = {
     model: opts.model,
-    messages: opts.messages,
+    // 🔴 EGRESS SEAM 2 of 3 (§9.4). The streaming path is the DEFAULT adapter,
+    // so an unminimised body here would be the common case, not the edge one.
+    messages: await minimiseEgress(withJsonModeHint(opts.messages, opts.responseFormat), opts.signal),
     max_tokens: opts.maxTokens,
     temperature: opts.temperature,
     stream: true,
     usage: { include: true },
   };
   if (opts.models && opts.models.length > 0) body.models = opts.models;
-  if (opts.responseFormat) body.response_format = opts.responseFormat;
+  applyResponseFormat(body, opts.responseFormat);
 
   // Inactivity backstop: chain an internal controller onto the caller's signal
   // so a per-read stall timer can abort the fetch independently of (and on top
@@ -302,7 +426,12 @@ export async function* callOpenRouterStream(
 
   if (!res.ok || !res.body) {
     const text = res.body ? await res.text() : '';
-    yield { type: 'error', message: `OpenRouter stream error HTTP ${res.status}: ${text.slice(0, 200)}` };
+    yield {
+      type: 'error',
+      message: `OpenRouter stream error HTTP ${res.status}: ${text.slice(0, 200)}`,
+      status: res.status,
+      retryAfterMs: retryAfterMsFromResponse(res),
+    };
     return;
   }
 
@@ -314,6 +443,7 @@ export async function* callOpenRouterStream(
   let reportedCost: number | undefined;
   let model = opts.model;
   let finishReason: string | null = null;
+  let generationId: string | undefined;
 
   try {
   armStallTimer();
@@ -334,6 +464,10 @@ export async function* callOpenRouterStream(
         if (!payload || payload === '[DONE]') continue;
         try {
           const evt = JSON.parse(payload) as OpenRouterApiResponse;
+          if (generationId === undefined && typeof evt.id === 'string' && evt.id.length > 0) {
+            generationId = evt.id;
+            yield { type: 'meta', generationId };
+          }
           if (evt.usage) {
             promptTokens = evt.usage.prompt_tokens ?? promptTokens;
             completionTokens = evt.usage.completion_tokens ?? completionTokens;
@@ -401,6 +535,7 @@ export async function streamingCallOpenRouter(
   const reportedPromptTokens = 0;
   const reportedCompletionTokens = 0;
   let reportedCost: number | undefined;
+  let generationId: string | undefined;
 
   const buildPartial = (): OpenRouterCompletion => {
     const completionTokens = reportedCompletionTokens > 0 ? reportedCompletionTokens : deltaCount;
@@ -417,6 +552,7 @@ export async function streamingCallOpenRouter(
       finishReason: 'aborted',
       model,
       usage: { promptTokens, completionTokens, costUsd, costSource },
+      ...(generationId !== undefined ? { rawId: generationId } : {}),
     };
   };
 
@@ -426,21 +562,48 @@ export async function streamingCallOpenRouter(
         contentText += evt.text;
         deltaCount++;
         opts.onDelta?.(evt.text);
+      } else if (evt.type === 'meta') {
+        generationId = evt.generationId;
       } else if (evt.type === 'done') {
         return {
           contentText,
           finishReason: evt.finishReason,
           model: evt.model,
           usage: evt.usage,
+          ...(generationId !== undefined ? { rawId: generationId } : {}),
         };
       } else if (evt.type === 'error') {
-        throw new Error(evt.message);
+        // Same MESSAGE as before — only the class is upgraded, so anything
+        // asserting on the text keeps matching. A stream fault with no status
+        // (malformed frame, truncated body) stays a plain `Error`.
+        throw evt.status === undefined
+          ? new Error(evt.message)
+          : new OpenRouterHttpError({
+              status: evt.status,
+              message: evt.message,
+              retryAfterMs: evt.retryAfterMs,
+            });
       }
     }
     // Stream ended without a `done` event — treat as malformed response.
     throw new Error('OpenRouter stream ended without a done event');
   } catch (err) {
-    if ((err as Error)?.name === 'AbortError') {
+    // 🔴 `opts.signal?.aborted` IS LOAD-BEARING, not belt-and-braces. A caller
+    // that aborts WITH A REASON — the cooperative shutdown passes the string
+    // `SHUTDOWN_ABORT_REASON`, the wall-clock deadline a `TimeoutError` — makes
+    // `fetch` and `reader.read()` reject with THAT reason, whose `name` is not
+    // `'AbortError'`. Checking the name alone turned every such abort into a
+    // plain failure: trace `failed`, partial spend unbilled. The removed
+    // in-service stream mock always threw a named `AbortError`, which hid this
+    // until the shutdown tests ran against a real HTTP provider.
+    //
+    // `TimeoutError` is the STALL backstop above: it aborts an INTERNAL
+    // controller, so `opts.signal` never fires and real `fetch` rejects with
+    // the DOMException reason, not an `AbortError`. Without this arm a stall
+    // surfaced as a bare `TimeoutError` → 500, with no partial for the trace.
+    // The router recognises the `cause` and ends the call as `ProviderTimeout`.
+    const name = (err as Error)?.name;
+    if (name === 'AbortError' || name === 'TimeoutError' || opts.signal?.aborted) {
       throw new OpenRouterAbortError(buildPartial(), err);
     }
     throw err;

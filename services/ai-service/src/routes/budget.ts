@@ -17,7 +17,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 
 import { db } from '../db/client.js';
 import { budgetState, llmConfigs, usageLogs } from '../db/schema/index.js';
-import { setBudgetRequestSchema } from '../schemas/tenant.js';
+import { setBudgetRequestSchema } from '../contract/tenant.js';
 import { setOrgBudget } from '../services/budget/provision.js';
 
 const budgetRoutes: FastifyPluginAsync = async (app) => {

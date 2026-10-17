@@ -12,6 +12,8 @@ import {
   chunks as chunksTable,
   corpora as corporaTable,
   documents as documentsTable,
+  ingestJobs as ingestJobsTable,
+  callbackDeliveries as callbackDeliveriesTable,
   ingestRequests as ingestRequestsTable,
   usageLogs as usageLogsTable,
 } from '../db/schema/index.js';
@@ -21,7 +23,11 @@ import type {
   SparseVector,
 } from '../services/ai/embeddings/sparse-embed.js';
 
+import { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
+
 import { processIngestJob } from './ingest.worker.js';
+import { WhereRecorder } from '../test/where-recorder.js';
 
 // ---------------------------------------------------------------------------
 // Stub DB
@@ -101,6 +107,15 @@ interface StubState {
    * the whole document transaction rolls back (no half-index).
    */
   failExecuteMatching?: string;
+  /**
+   * The `ingest_requests` snapshot the counter bump returns. `undefined` → the
+   * default no-callback row; `null` → the row is missing (finding A6).
+   */
+  requestRow?: Record<string, unknown> | null;
+  /** `callback_deliveries` rows inserted (rolled back with the transaction). */
+  deliveries: Array<Record<string, unknown>>;
+  /** When true, the `callback_deliveries` insert rejects (finding A7). */
+  failDeliveryInsert?: boolean;
 }
 
 function makeState(): StubState {
@@ -113,6 +128,7 @@ function makeState(): StubState {
     deletes: [],
     executes: [],
     docIdSeq: 0,
+    deliveries: [],
   };
 }
 
@@ -201,6 +217,26 @@ function makeDb(state: StubState): Db {
             };
             return out;
           }
+          if (table === callbackDeliveriesTable) {
+            if (state.failDeliveryInsert) {
+              return {
+                returning() {
+                  return Promise.reject(new Error('simulated callback_deliveries insert failure'));
+                },
+              };
+            }
+            const ids: Array<{ id: string }> = [];
+            for (const v of list) {
+              const id = `delivery-${state.deliveries.length + 1}`;
+              state.deliveries.push({ id, ...v });
+              ids.push({ id });
+            }
+            return {
+              returning() {
+                return Promise.resolve(ids);
+              },
+            };
+          }
           if (table === usageLogsTable) {
             for (const v of list) {
               state.usageLogs.push({
@@ -272,6 +308,8 @@ function makeDb(state: StubState): Db {
                   // — return a snapshot suitable for the callback contract bookkeeping.
                   // No callbackUrl on the stub ⇒ enqueueCallback is skipped.
                   if (which === 'ingest_requests') {
+                    if (state.requestRow === null) return Promise.resolve([]);
+                    if (state.requestRow) return Promise.resolve([{ ...state.requestRow }]);
                     return Promise.resolve([
                       {
                         callbackUrl: null,
@@ -335,6 +373,7 @@ function makeDb(state: StubState): Db {
         deletes: [...state.deletes],
         executes: [...state.executes],
         docIdSeq: state.docIdSeq,
+        deliveries: [...state.deliveries],
       };
       return Promise.resolve()
         .then(() => fn(stub))
@@ -346,6 +385,7 @@ function makeDb(state: StubState): Db {
           state.deletes = snap.deletes;
           state.executes = snap.executes;
           state.docIdSeq = snap.docIdSeq;
+          state.deliveries = snap.deliveries;
           throw err;
         });
     },
@@ -834,5 +874,332 @@ describe('processIngestJob', () => {
     expect(state.chunks.length).toBeGreaterThan(0);
     const sqls = state.executes.map(executeSqlText);
     expect(sqls.some((s) => s.includes('sparse_embedding'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Claim lifecycle: claim → release-on-error → guarded terminal write
+//
+// 🔴 THE DEFECT THESE LOCK. A stalled BullMQ job is re-delivered to a second
+// worker, which used to re-run the whole body: the document chunked twice,
+// EMBEDDED twice (a second charge), and — with `externalId: null`, which has no
+// dedupe key — inserted twice. That the WRITES are refused by Postgres is
+// proven in `ingest.worker.stalled.integration.test.ts`; these cases prove the
+// worker BRANCHES on the row count, and that the three predicates are actually
+// sent.
+//
+// The RELEASE has no integration counterpart and this is its only cover: get it
+// wrong and BullMQ's `attempts: 3` retries all bounce off a row stuck at
+// 'running', silently turning every transient ingest error into a lost
+// document.
+// ---------------------------------------------------------------------------
+
+describe('processIngestJob — claim lifecycle', () => {
+  const JOB_ROW = 'job-row-1';
+
+  interface ClaimStub {
+    db: Db;
+    row: { status: string; attempts: number };
+    wheres: WhereRecorder;
+    sets: Array<Record<string, unknown>>;
+  }
+
+  /**
+   * A stub narrow enough to see only the `ingest_jobs` writes. Every OTHER
+   * table read throws — deliberately: the body is not under test here, and a
+   * throw from the corpus load is exactly the "the run failed" case the release
+   * path exists for.
+   */
+  /**
+   * `lost` models the `started_at < now() - window` half of the lost-worker
+   * predicate, which this stub cannot express in SQL. False (the default) is a
+   * row whose owner may still be alive: the reap's UPDATE matches no row, so
+   * a re-delivery writes NOTHING at all.
+   */
+  function makeClaimStub(initialStatus: string, lost = false): ClaimStub {
+    const row = { status: initialStatus, attempts: 0 };
+    const wheres = new WhereRecorder();
+    const sets: Array<Record<string, unknown>> = [];
+    const db = {
+      select() {
+        return {
+          from() {
+            return {
+              where() {
+                return {
+                  limit() {
+                    throw new Error('body ran');
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+      update(table: unknown) {
+        if (table !== ingestJobsTable) throw new Error('unexpected table');
+        return {
+          set(values: Record<string, unknown>) {
+            const guard = wheres.guard('ingest_jobs');
+            return {
+              where(predicate: unknown) {
+                const { params } = guard.where(predicate);
+                const statuses = params
+                  .map((pp) => String(pp))
+                  .filter((pp) =>
+                    ['queued', 'running', 'completed', 'failed'].includes(pp),
+                  );
+                // Model the SQL predicate: one status ⇒ equality, more ⇒ NOT IN.
+                const matched =
+                  statuses.length > 1
+                    ? !statuses.includes(row.status)
+                    : statuses.length === 1
+                      ? statuses[0] === row.status
+                      : true;
+                const applyWrite = () => {
+                  if (!matched) return [];
+                  // The lost-worker transition also requires an old
+                  // `started_at`; the stub carries that as `lost`.
+                  if (values.error === 'worker_lost' && !lost) return [];
+                  sets.push({ ...values });
+                  if (typeof values.status === 'string') row.status = values.status;
+                  if (values.attempts !== undefined) row.attempts += 1;
+                  return [{ id: JOB_ROW }];
+                };
+                const result = {
+                  returning: async () => applyWrite(),
+                  then(resolve: (v: unknown) => void, reject?: (e: unknown) => void) {
+                    return Promise.resolve(applyWrite()).then(resolve, reject);
+                  },
+                };
+                return result;
+              },
+            };
+          },
+        };
+      },
+    } as unknown as Db;
+    return { db, row, wheres, sets };
+  }
+
+  const data = (): IngestJobData => ({
+    ingestId: 'ing-1',
+    jobId: JOB_ROW,
+    corpusId: 'corpus-1',
+    org: 'o',
+    project: 'p',
+    externalId: null,
+    text: 'some text',
+  });
+
+  it('a row already `running` is NOT re-claimed: the body never runs', async () => {
+    // Exactly the state a stalled re-delivery finds. The stub's body throws, so
+    // a return here IS the proof the body was never entered.
+    const stub = makeClaimStub('running');
+    await expect(
+      processIngestJob({ id: 'b-1', data: data() }, { db: stub.db }),
+    ).resolves.toBeUndefined();
+    expect(stub.row.attempts).toBe(0);
+    expect(stub.sets).toHaveLength(0);
+  });
+
+  // ── Lost worker ────────────────────────────────────────────────────────
+  //
+  // Same re-delivery, but the row has been 'running' for longer than the lock
+  // window, so its owner is presumed dead. The body still must not run — the
+  // whole point is that a lost job is never re-embedded — but the row must
+  // stop being 'running' forever.
+
+  it("a 'running' row PAST the window is failed as 'worker_lost', body still never runs", async () => {
+    const stub = makeClaimStub('running', true);
+    await expect(
+      processIngestJob({ id: 'b-1', data: data() }, { db: stub.db }),
+    ).resolves.toBeUndefined();
+    // Still never claimed: no re-run, no second embed.
+    expect(stub.row.attempts).toBe(0);
+    expect(stub.row.status).toBe('failed');
+    expect(stub.sets).toHaveLength(1);
+    expect(stub.sets[0]).toMatchObject({ status: 'failed', error: 'worker_lost' });
+    expect(stub.sets[0]!['finishedAt']).toBeInstanceOf(Date);
+  });
+
+  it("the lost transition is guarded on status = 'running', not on NOT IN (terminal)", async () => {
+    // A `queued` row must never be swept up by the reaper: it has no worker at
+    // all, it is waiting for one. Only a CLAIMED row can be lost.
+    const stub = makeClaimStub('running', true);
+    await processIngestJob({ id: 'b-1', data: data() }, { db: stub.db });
+    const lostWrite = stub.wheres.calls.find(
+      (c) => c.table === 'ingest_jobs' && c.params.includes('running'),
+    );
+    expect(lostWrite).toBeDefined();
+    expect(lostWrite!.params).not.toContain('queued');
+    // And it names `started_at` — without the age half of the predicate a
+    // healthy in-flight job would be killed the moment BullMQ re-delivers it.
+    expect(lostWrite!.sql).toContain('started_at');
+  });
+
+  it("a 'running' row past the window is not reaped TWICE", async () => {
+    const stub = makeClaimStub('running', true);
+    await processIngestJob({ id: 'b-1', data: data() }, { db: stub.db });
+    await processIngestJob({ id: 'b-2', data: data() }, { db: stub.db });
+    // The second delivery finds the row already 'failed', so the guarded
+    // UPDATE matches nothing and no second bookkeeping run happens.
+    expect(stub.sets).toHaveLength(1);
+  });
+
+  it('a row already `completed` is NOT re-claimed either', async () => {
+    const stub = makeClaimStub('completed');
+    await expect(
+      processIngestJob({ id: 'b-1', data: data() }, { db: stub.db }),
+    ).resolves.toBeUndefined();
+    expect(stub.row.status).toBe('completed');
+    expect(stub.sets).toHaveLength(0);
+  });
+
+  it('the claim UPDATE is conditional on `status = queued` and bumps attempts', async () => {
+    const stub = makeClaimStub('queued');
+    // The body throws (stub), so the run fails after the claim.
+    await expect(
+      processIngestJob({ id: 'b-1', data: data() }, { db: stub.db }),
+    ).rejects.toThrow('body ran');
+    const claim = stub.wheres.calls.find((c) => c.params.includes('queued'));
+    expect(claim, 'the claim ran without a status predicate').toBeDefined();
+    expect(claim!.sql).toContain('status');
+    expect(stub.row.attempts).toBe(1);
+  });
+
+  it("the claim stamps `started_at` from POSTGRES' clock, not the worker's", async () => {
+    // 🔴 ONE CLOCK. `reapLostIngestJob` asks Postgres
+    // `started_at < now() - make_interval(...)`. If the claim stamps
+    // `started_at` from a `new Date()` built in the worker, the two ends of
+    // that comparison come from two machines: a worker whose clock runs ahead
+    // makes a live job look older than the lock window and it is reaped as
+    // `worker_lost` mid-embed, and one running behind hides a genuinely lost
+    // row for the size of the skew. `generation.worker.ts`'s `claimJob` has
+    // always used `now()`; this is the ingest half.
+    //
+    // Sabotage: `startedAt: new Date()` → the SQL assertions below go RED.
+    const stub = makeClaimStub('queued');
+    await expect(
+      processIngestJob({ id: 'b-1', data: data() }, { db: stub.db }),
+    ).rejects.toThrow('body ran');
+
+    const claim = stub.sets.find((values) => values['status'] === 'running');
+    expect(claim, 'the claim never wrote a `running` row').toBeDefined();
+    const startedAt = claim!['startedAt'];
+    // A `Date` here is the defect itself — node's clock, serialised as a bound
+    // parameter — so name that case rather than only asserting the good one.
+    expect(startedAt).not.toBeInstanceOf(Date);
+    expect(startedAt).toBeInstanceOf(SQL);
+    // Serialised through drizzle's own dialect, the same path the recorder
+    // uses for predicates: what Postgres would actually receive.
+    expect(new PgDialect().sqlToQuery(startedAt as SQL).sql).toBe('now()');
+  });
+
+  it('a failed run RELEASES the row back to `queued` so BullMQ can retry it', async () => {
+    const stub = makeClaimStub('queued');
+    await expect(
+      processIngestJob({ id: 'b-1', data: data() }, { db: stub.db }),
+    ).rejects.toThrow('body ran');
+    // Left at 'running' instead, all three BullMQ attempts would bounce off the
+    // claim and the document would be lost silently.
+    expect(stub.row.status).toBe('queued');
+    const release = stub.wheres.calls.find((c) => c.params.includes('running'));
+    expect(release, 'the release ran without a status predicate').toBeDefined();
+  });
+
+  it('a job with NO jobId runs unclaimed — the pre-migration payload still works', async () => {
+    // Jobs enqueued by an older build sit in Redis across a deploy. They must
+    // run (old behaviour), not be dropped.
+    const stub = makeClaimStub('queued');
+    const { jobId: _drop, ...legacy } = data();
+    await expect(
+      processIngestJob({ id: 'b-1', data: legacy as IngestJobData }, { db: stub.db }),
+    ).rejects.toThrow('body ran');
+    expect(stub.sets).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Callback delivery durability (PLAN-live-ingest findings A3/A6/A7)
+// ---------------------------------------------------------------------------
+
+describe('processIngestJob — callback outbox', () => {
+  const CALLBACK_ROW = {
+    callbackUrl: 'http://203.0.113.7:1/cb',
+    apiKeyId: 'key-id-without-a-configured-secret',
+    corpus: 'test-corpus',
+    totalDocs: 1,
+    completedDocs: 1,
+    failedDocs: 0,
+    status: 'running',
+  };
+
+  it('A7: the ingest.completed delivery row is written in the SAME transaction as the document', async () => {
+    state.corpora.push(makeCorpus());
+    state.requestRow = { ...CALLBACK_ROW };
+    await processIngestJob({ id: 'q-1', data: jobData({ externalId: 'ext-1' }) }, { db, embedder: makeEmbedder() });
+
+    expect(state.documents).toHaveLength(1);
+    expect(state.deliveries).toHaveLength(1);
+    expect(state.deliveries[0]).toMatchObject({
+      event: 'ingest.completed',
+      source: 'ingest',
+      sourceId: INGEST_ID,
+      itemKey: 'ext-1',
+      url: CALLBACK_ROW.callbackUrl,
+    });
+  });
+
+  it('A7: a failed delivery insert rolls the document back and FAILS the job (BullMQ retries)', async () => {
+    state.corpora.push(makeCorpus());
+    state.requestRow = { ...CALLBACK_ROW };
+    state.failDeliveryInsert = true;
+
+    await expect(
+      processIngestJob({ id: 'q-1', data: jobData() }, { db, embedder: makeEmbedder() }),
+    ).rejects.toThrow('simulated callback_deliveries insert failure');
+
+    // Nothing survived: a retry starts from zero and cannot duplicate the doc.
+    expect(state.documents).toHaveLength(0);
+    expect(state.chunks).toHaveLength(0);
+    expect(state.usageLogs).toHaveLength(0);
+    expect(state.deliveries).toHaveLength(0);
+  });
+
+  it('A3: a missing corpus emits ingest.failed and moves the failed counter', async () => {
+    // No corpora in state.
+    state.requestRow = { ...CALLBACK_ROW, completedDocs: 0, failedDocs: 1 };
+    const embedder = makeEmbedder();
+    await processIngestJob({ id: 'q-1', data: jobData({ externalId: 'ext-gone' }) }, { db, embedder });
+
+    expect(embedder).not.toHaveBeenCalled();
+    expect(state.deliveries).toHaveLength(1);
+    expect(state.deliveries[0]).toMatchObject({ event: 'ingest.failed', itemKey: 'ext-gone' });
+    expect(JSON.parse(String(state.deliveries[0]!.body))).toMatchObject({
+      event: 'ingest.failed',
+      error: { code: 'corpus-missing' },
+    });
+    // The failed-docs counter was bumped and the batch went terminal.
+    const reqUpdates = state.updates.filter((u) => u.table === 'ingest_requests');
+    expect(reqUpdates.some((u) => 'failedDocs' in u.set)).toBe(true);
+    expect(reqUpdates.some((u) => u.set.status === 'failed')).toBe(true);
+  });
+
+  it('A6: a missing ingest_requests row is counted, not silently skipped', async () => {
+    const { callbackEmitSkippedTotal } = await import('../metrics/callbacks.js');
+    const value = async () =>
+      (await callbackEmitSkippedTotal.get()).values.find(
+        (v) => (v.labels as Record<string, unknown>).reason === 'ingest_request_missing',
+      )?.value ?? 0;
+    const before = await value();
+    state.corpora.push(makeCorpus());
+    state.requestRow = null;
+
+    await processIngestJob({ id: 'q-1', data: jobData() }, { db, embedder: makeEmbedder() });
+
+    expect(state.documents).toHaveLength(1); // the document itself is fine
+    expect(state.deliveries).toHaveLength(0);
+    expect(await value()).toBe(before + 1);
   });
 });

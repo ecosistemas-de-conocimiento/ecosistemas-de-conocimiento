@@ -8,6 +8,20 @@ dist/
 .env
 .env.local
 .env.*.local
+# Local docker-stack env, read by the local-ecosystem master compose via an
+# absolute `env_file:` path. It was tracked; it is an env file, so it is not,
+# any more — the next person to paste a real provider key into it must not be
+# able to commit it by accident.
+#
+# ⚠ UNTRACKING DOES NOT DELETE YOUR COPY, and it does not scrub git history:
+# every version ever committed is still reachable. If a checkout does remove
+# the file (git deletes an UNMODIFIED file when moving to a commit that no
+# longer tracks it), restore the last committed version with:
+#     git show 186d52b:.env.docker > .env.docker
+# and check `local-ecosystem/CONTRACT.md` for the values it expects.
+.env.docker
 coverage/
 .DS_Store
 .worktrees/
+.vitest-*.json
+worktrees/
