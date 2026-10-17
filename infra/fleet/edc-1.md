@@ -43,9 +43,13 @@ Proxy must stay OFF: Traefik on the box obtains Let's Encrypt certificates over 
 ## 2. Coolify
 
 - Version 4.4.6, installed with the official script (`curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash`).
-- Dashboard: `https://coolify.ecosistemasdeconocimiento.com` — ⚠ that name did NOT resolve on
-  2026-10-17 (measured, `dig` empty; no `coolify` record in practice). Open an SSH
-  tunnel: `ssh -L 8000:localhost:8000 root@<edc-1-ip>` and browse `http://localhost:8000`.
+- Dashboard: `https://coolify.ecosistemasdeconocimiento.com` — ✅ serves over HTTPS with a Let's
+  Encrypt certificate since 2026-10-17 07:52 UTC (measured: issuer `YR2`, expires 2027-01-15; `/`
+  → 302 `/login`; API answers 200). Coolify's instance FQDN was already set to that URL. The first
+  ACME tries ran before DNS existed and hit Let's Encrypt's limit of 5 failed authorizations per
+  hour (`coolify-proxy` log, 05:50 UTC). Rewriting `/data/coolify/proxy/dynamic/coolify.yaml`
+  unchanged made Traefik retry, and it succeeded. Fallback: SSH tunnel
+  `ssh -L 8000:localhost:8000 root@<edc-1-ip>`, browse `http://localhost:8000`.
 - Root admin: email in `EDC_COOLIFY_ROOT_EMAIL`, password in `EDC_COOLIFY_ROOT_PASSWORD`.
   Public registration is disabled.
 - API: enabled. Token in `EDC_COOLIFY_API_TOKEN` (root ability). Call it as
@@ -165,10 +169,32 @@ ai-service refuses the old internal callback origin. Per application:
   answered 200 via `<edc-1-ip>`.
 - `MOCK_*=0` would still boot (only "on" values are refused), but they are dead; delete them.
 - Rerank (DeepInfra, `Qwen/Qwen3-Reranker-0.6B`, 8 s timeout — compose defaults) turns on by adding
-  ONE variable, `RERANK_API_KEY`, once EDC has its own DeepInfra key; then redeploy. Do not create
-  `RERANK_ENABLED`: a value of `false` there overrides the key (it is the kill switch).
+  ONE variable, `RERANK_API_KEY`. Do not create `RERANK_ENABLED`: a value of `false` there
+  overrides the key (it is the kill switch). ✅ Done 2026-10-17 on both apps — see §4d.
 - ai-service's `trustProxy` is hard-coded to **1** hop (Traefik). Nothing to set; do not add a
   second proxy in front without changing code.
+
+### 4d. ✅ Done 2026-10-17 ~07:40 UTC: rerank on, both envs
+
+- `RERANK_API_KEY` added to `edc-dev` and `edc-staging` through the API (`is_literal`; Coolify
+  made the preview copies itself). ⚠ It is a **temporarily shared** DeepInfra key, approved by the
+  owner on 2026-10-17. Replace it with an EDC-owned key: change the variable on both apps and in
+  the local secrets file. `RERANK_ENABLED` exists nowhere (checked: both apps' variables and both
+  generated `.env` files). The other `RERANK_*` stay at the compose defaults.
+- Applied without a rebuild: the key line was appended to
+  `/data/coolify/applications/<app uuid>/.env` (the file Coolify generates at deploy; backups in
+  `/root/edc-{dev,staging}.env.bak-rerank`), then
+  `docker compose -p <app uuid> -f docker-compose.yaml up -d --no-deps --no-build ai-service`.
+  Only ai-service was recreated; backend, web and databases kept running. The next Coolify
+  deploy regenerates that `.env` with the key from its database.
+- Verified (measured): direct `POST /v1/retrieve` with `rerank: true` inside each ai-service
+  container answers `legs: ["dense","lexical","rerank"]` with `rerankScore` on chunks, and logs
+  `rerank ok` with `provider: deepinfra`. Dev, 3 paired calls on `eco-1`: 0.42–0.63 s without
+  rerank, 1.32–3.18 s with it (pool 20; dev was mid-ingest). The log line carries no duration.
+- ⚠ **The EDC chat does not ask for rerank.** ai-service reranks only when a request sends
+  `rerank: true`; `apps/web` passes no `retrievalPolicy` to `@edc/chat-engine`, so chat turns
+  still return `rerankScore: null` (measured: one chat per env, both answered with a citation).
+  Turning it on for chat is a code change.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
@@ -264,6 +290,8 @@ Names in the local secrets file:
 
 - Hetzner and model provider: `HCLOUD_TOKEN`, `OPENROUTER_KEY` (copied into both apps as `OPENROUTER_API_KEY`).
 - Coolify: `EDC_COOLIFY_ROOT_EMAIL`, `EDC_COOLIFY_ROOT_PASSWORD`, `EDC_COOLIFY_API_TOKEN`.
+- Reranker: `RERANK_API_KEY` (DeepInfra; copied into both apps under the same name). ⚠ Temporarily
+  shared with another project, owner-approved 2026-10-17; replace with an EDC-owned key (§4d).
 - GitHub: `EDC_GITHUB_DEPLOY_KEY_B64`.
 - Per environment, prefix `EDC_DEV_` or `EDC_STAGE_`: `POSTGRES_PASSWORD`, `AI_SERVICE_API_KEY`,
   `AI_SERVICE_ADMIN_API_KEY`, `CALLBACK_SECRET`, `PAYLOAD_SECRET`, `SERVICE_TOKEN_WEB` (the value
