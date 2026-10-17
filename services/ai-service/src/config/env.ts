@@ -24,7 +24,7 @@ import { z } from 'zod';
 
 loadDotenv();
 
-const apiKeyEntry = z.object({
+export const apiKeyEntry = z.object({
   org: z.string().min(1),
   project: z.string().min(1),
   /**
@@ -74,6 +74,27 @@ const apiKeyEntry = z.object({
    * pass-through. Logs only.
    */
   kid: z.string().min(1).max(64).optional(),
+  /**
+   * Optional org delegation. When set, a request bearing this key may send
+   * `X-AI-Org: <suffix>` (suffix `^[a-z0-9-]{1,48}$`) and then acts as org
+   * `delegateOrgPrefix + suffix` instead of `org`. `project`, `role` and the
+   * key id still come from this entry. Without the header the key acts as
+   * its own `org`. A key without this field that sends the header gets 403.
+   *
+   * Lets one consumer key serve many sub-tenants, each with its own budget,
+   * usage rows and corpora, because every downstream path reads the org from
+   * `req.auth`. Enforced in `src/plugins/auth.ts`.
+   *
+   * Must end in `-`, at most 32 chars, so a prefix cannot run into an
+   * unrelated org name (`acme` would also cover `acmecorp`). Boot refuses a
+   * key whose own `org` falls inside another key's prefix: that org would be
+   * reachable by the delegating key. ADDITIVE: absent on every existing entry.
+   */
+  delegateOrgPrefix: z
+    .string()
+    .max(32)
+    .regex(/^[a-z0-9][a-z0-9-]*-$/, 'delegateOrgPrefix must match ^[a-z0-9][a-z0-9-]*-$')
+    .optional(),
 });
 
 export type ApiKeyEntry = z.infer<typeof apiKeyEntry>;
@@ -1098,6 +1119,24 @@ export function normaliseApiKeys(entries: Record<string, ApiKeyEntry>): {
     }
     claimed.set(trimmed, label);
     keys[trimmed] = entry;
+  }
+
+  // Delegation namespace overlap: a key whose own org starts with ANOTHER
+  // key's `delegateOrgPrefix` is an org the delegating key can also reach via
+  // `X-AI-Org`. Keys that delegate with the same prefix (rotation) are fine.
+  for (const [rawKey, entry] of Object.entries(keys)) {
+    for (const [otherKey, other] of Object.entries(keys)) {
+      const prefix = other.delegateOrgPrefix;
+      if (otherKey === rawKey || !prefix) continue;
+      if (entry.delegateOrgPrefix === prefix) continue;
+      if (entry.org.startsWith(prefix)) {
+        problems.push(
+          `key ${apiKeyLabel(rawKey, entry)} has org=${entry.org}, inside the delegation ` +
+            `prefix "${prefix}" of key ${apiKeyLabel(otherKey, other)}, so that key could act ` +
+            'as this org via X-AI-Org. Rename the org or change the prefix.',
+        );
+      }
+    }
   }
 
   return { keys, problems };

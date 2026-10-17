@@ -59,7 +59,12 @@ registry.registerComponent('securitySchemes', 'Bearer', {
   scheme: 'bearer',
   description:
     'Per-project bearer token. Resolves the caller to a {org, project} ' +
-    'scope; every row is stamped with both.',
+    'scope; every row is stamped with both. A key configured with a ' +
+    'delegation prefix may also send `X-AI-Org: <suffix>` (suffix ' +
+    '^[a-z0-9-]{1,48}$) to act as org `<prefix><suffix>`: budget, usage and ' +
+    'corpora then belong to that org. The header on a key without a prefix ' +
+    'is 403 org_delegation_forbidden; an invalid suffix is 400 invalid_org. ' +
+    'Capability: orgDelegation.',
 });
 
 const BEARER = [{ Bearer: [] }];

@@ -93,6 +93,17 @@ export const SERVICE_CAPABILITIES = Object.freeze({
   tenantReadiness: true,
 
   /**
+   * Org delegation: an `API_KEYS` entry with `delegateOrgPrefix` may send
+   * `X-AI-Org: <suffix>` and act as org `prefix + suffix`, with its own
+   * budget, usage and corpora. A key without the prefix gets 403 for the
+   * header. See `src/plugins/auth.ts`.
+   *
+   * A consumer that sends the header REQUIRES this. An older server ignores
+   * the unknown header, so every sub-tenant would land in the key's own org.
+   */
+  orgDelegation: true,
+
+  /**
    * Async ingest accepts a `callbackUrl` and delivers HMAC-signed completion
    * callbacks. Consumers that wait on a callback instead of polling REQUIRE
    * this, or they wait forever.

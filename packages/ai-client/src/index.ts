@@ -30,6 +30,22 @@ export interface AIClientOptions {
   baseUrl: string;
   /** Per-project bearer token. */
   apiKey: string;
+  /**
+   * Org delegation: act on behalf of a sub-tenant. Sent as `X-AI-Org` on
+   * every request of this client. Only for a key configured server-side with
+   * `delegateOrgPrefix`; the server then acts as org `<prefix><org>`, so
+   * budget, usage and corpora belong to that org. Use one client per org.
+   *
+   * Must match `^[a-z0-9-]{1,48}$` (checked here, and again by the server).
+   * A key without a prefix gets 403 `org_delegation_forbidden`.
+   *
+   * 🔴 Require {@link ORG_DELEGATION_CAPABILITY} in `capabilities.negotiate`
+   * first: an ai-service older than the feature IGNORES the header, so every
+   * sub-tenant would silently share the key's own org.
+   *
+   * `budget.get(org)` takes the FULL effective org (`<prefix><org>`).
+   */
+  org?: string;
   /** Injectable fetch (tests / polyfills). Defaults to the platform `fetch`. */
   fetch?: typeof fetch;
   /**
@@ -103,6 +119,9 @@ export class AIClient {
   constructor(opts: AIClientOptions) {
     if (!opts.baseUrl) throw new TypeError('AIClient: baseUrl is required');
     if (!opts.apiKey) throw new TypeError('AIClient: apiKey is required');
+    if (opts.org !== undefined && !/^[a-z0-9-]{1,48}$/.test(opts.org)) {
+      throw new TypeError('AIClient: org must match ^[a-z0-9-]{1,48}$');
+    }
     const fetchImpl = opts.fetch ?? globalThis.fetch;
     if (typeof fetchImpl !== 'function') {
       throw new TypeError(
@@ -112,6 +131,7 @@ export class AIClient {
     this.http = new HttpClient({
       baseUrl: opts.baseUrl,
       apiKey: opts.apiKey,
+      ...(opts.org !== undefined ? { org: opts.org } : {}),
       fetchImpl,
       // Passed through only when SET: an explicit value is never clamped by the
       // retry budget, the default is (see `RetryPolicy.maxElapsedMs`).
@@ -186,6 +206,7 @@ export {
   capabilityModeFromEnv,
   STRICT_STRUCTURED_OUTPUT_CAPABILITY,
   strictStructuredOutputCapabilities,
+  ORG_DELEGATION_CAPABILITY,
   type CapabilityDocument,
   type CapabilityLogger,
   type CapabilityMode,

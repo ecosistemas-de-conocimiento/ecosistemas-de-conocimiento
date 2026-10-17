@@ -139,6 +139,26 @@ const PROBES: Record<keyof typeof SERVICE_CAPABILITIES, Probe> = {
     await expectRouteExists('GET', '/v1/tenant/readiness');
   },
 
+  // Both halves: the key schema accepts the prefix, and the server ACTS on the
+  // header (a non-delegating key is refused instead of the header ignored).
+  // The full path is in `plugins/auth-delegation.test.ts` and
+  // `routes/delegated-org.integration.test.ts`.
+  orgDelegation: async () => {
+    const { apiKeyEntry } = await import('../config/env.js');
+    expect(
+      apiKeyEntry.safeParse({ org: 'o', project: 'p', delegateOrgPrefix: 'o-' }).success,
+    ).toBe(true);
+    const { buildServer } = await import('../server.js');
+    const app = await buildServer();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/',
+      headers: { authorization: 'Bearer test-key', 'x-ai-org': 'x' },
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  },
+
   // Both halves: the route exists, and the request body actually accepts the
   // `callbackUrl` a consumer would wait on.
   ingestChunkCallback: async () => {

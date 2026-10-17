@@ -16,6 +16,8 @@ import { AIServiceError, RequestAbortedError, errorFromResponse } from './errors
 export interface HttpDeps {
   baseUrl: string;
   apiKey: string;
+  /** Delegated org suffix, sent as `X-AI-Org` on every call. See `AIClientOptions.org`. */
+  org?: string;
   fetchImpl: typeof fetch;
   /**
    * Per-attempt deadline in ms. Omit for {@link DEFAULT_TIMEOUT_MS}, which —
@@ -313,6 +315,7 @@ export class HttpClient {
     const url = `${stripTrailingSlash(this.deps.baseUrl)}${opts.path}`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.deps.apiKey}`,
+      ...(this.deps.org !== undefined ? { 'X-AI-Org': this.deps.org } : {}),
       Accept: 'application/json',
       ...(opts.headers ?? {}),
     };

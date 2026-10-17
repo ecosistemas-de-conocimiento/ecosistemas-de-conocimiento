@@ -3,10 +3,14 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 
-import { env, isApiKeyExpired } from '../config/env.js';
+import { env, isApiKeyExpired, type ApiKeyEntry } from '../config/env.js';
 
 export interface AuthContext {
-  /** Opaque scoping tag — cost/budget attribution, observability, RAG isolation. Never interpreted. */
+  /**
+   * Opaque scoping tag — cost/budget attribution, observability, RAG isolation. Never interpreted.
+   * The EFFECTIVE org: the key's `org`, or `delegateOrgPrefix + X-AI-Org` for a delegating key.
+   * Every downstream path must read the org from here, never from the key config.
+   */
   org: string;
   /** Opaque scoping tag. Every stored row is stamped with {org, project}. */
   project: string;
@@ -118,6 +122,49 @@ function matchConfiguredKey(token: string): string | null {
   return matched;
 }
 
+/** Header a delegating key uses to pick the org it acts as. */
+export const ORG_HEADER = 'x-ai-org';
+
+/** Allowed shape of the `X-AI-Org` value (the suffix after the key's prefix). */
+const ORG_SUFFIX_RE = /^[a-z0-9-]{1,48}$/;
+
+/**
+ * The org a request acts as. No header: the key's own `org`. With the header:
+ * `delegateOrgPrefix + suffix`, only for a key that declares a prefix. A key
+ * without one gets 403 rather than the header being ignored: ignoring it would
+ * silently put every sub-tenant of a consumer into one org.
+ */
+function resolveEffectiveOrg(
+  req: FastifyRequest,
+  entry: ApiKeyEntry,
+): { org: string } | { reject: { status: 400 | 403; body: Record<string, string> } } {
+  const raw = req.headers[ORG_HEADER];
+  if (raw === undefined) return { org: entry.org };
+  if (!entry.delegateOrgPrefix) {
+    return {
+      reject: {
+        status: 403,
+        body: {
+          error: 'org_delegation_forbidden',
+          message: 'This API key cannot act on behalf of another org (X-AI-Org not allowed)',
+        },
+      },
+    };
+  }
+  if (typeof raw !== 'string' || !ORG_SUFFIX_RE.test(raw)) {
+    return {
+      reject: {
+        status: 400,
+        body: {
+          error: 'invalid_org',
+          message: 'X-AI-Org must be one value matching ^[a-z0-9-]{1,48}$',
+        },
+      },
+    };
+  }
+  return { org: entry.delegateOrgPrefix + raw };
+}
+
 /**
  * Decorates every request with `req.auth`. Use `app.requireAuth` as a preHandler
  * on protected routes (everything under /v1). Maps a per-consuming-project bearer
@@ -170,8 +217,14 @@ export const authPlugin: FastifyPluginAsync = fp(async (app) => {
         .code(401)
         .send({ error: 'api_key_expired', message: 'API key expired' });
     }
+    // Org delegation (see `delegateOrgPrefix` in `src/config/env.ts`). Runs
+    // AFTER the key is authenticated, so an unknown key + header stays a 401.
+    const org = resolveEffectiveOrg(req, entry);
+    if ('reject' in org) {
+      return reply.code(org.reject.status).send(org.reject.body);
+    }
     req.auth = {
-      org: entry.org,
+      org: org.org,
       project: entry.project,
       role: entry.role,
       apiKeyId: deriveApiKeyId(token),

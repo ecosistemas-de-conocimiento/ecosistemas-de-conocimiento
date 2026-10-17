@@ -58,6 +58,13 @@ export interface CapabilityDocument {
 export const STRICT_STRUCTURED_OUTPUT_CAPABILITY = 'strictStructuredOutput';
 
 /**
+ * Capability name for org delegation (`AIClientOptions.org` / `X-AI-Org`).
+ * Require it before sending the header: an older server ignores the header
+ * and puts every sub-tenant in the key's own org.
+ */
+export const ORG_DELEGATION_CAPABILITY = 'orgDelegation';
+
+/**
  * The capability names to `require` before sending `responseSchemaStrict: true`
  * to `model`: the feature name, plus the per-model name when a model is given.
  *
