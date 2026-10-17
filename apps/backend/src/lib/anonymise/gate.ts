@@ -233,7 +233,7 @@ function applyFindings(
 
   // ⚠ No title clean-up here: the model owns span boundaries and includes a
   // leading title in the name (detector prompt). If it does not, verify sees
-  // "Don [Persona F]"; its prompt says that is not a leftover, and a round that
+  // "Don [Persona F]"; the prompt says that is not a leftover, and a round that
   // reports it anyway absorbs it into `[Persona F]` (see `resolveLeftover`).
   return { text: out, labels }
 }
@@ -475,11 +475,7 @@ export async function runAnonymisationGate(
   for (let round = 1; ; round++) {
     let survivors: DetectorFinding[]
     try {
-      survivors = await deps.detector.detect({
-        text: current,
-        contentKind: input.contentKind,
-        pass: 'verify',
-      })
+      survivors = await deps.detector.detect({ text: current, contentKind: input.contentKind })
     } catch (err) {
       return hold(
         'verify',

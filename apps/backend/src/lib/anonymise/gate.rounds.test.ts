@@ -311,13 +311,13 @@ describe('runAnonymisationGate — 🔴 the model owns span boundaries (no word 
     expect(result.redactedText).toBe('[Persona A] vive en la [Domicilio A].')
   })
 
-  it('the verify pass, and only it, tells the model what is not a leftover', async () => {
-    const { VERIFY_SYSTEM_ADDENDUM } = await import('./detector')
+  it('detect and verify send the SAME prompt, which says what is not a leftover', async () => {
+    // Measured 2026-10-17: a verify-only addendum made the model miss a full name.
+    const { DETECT_SYSTEM_PROMPT } = await import('./detector')
     const { detector, systems } = scripted([[persona('Ana')], []])
     await gate('Ana llegó.', detector)
-    expect(systems[0]).not.toContain(VERIFY_SYSTEM_ADDENDUM)
-    expect(systems[1]).toContain(VERIFY_SYSTEM_ADDENDUM)
-    expect(VERIFY_SYSTEM_ADDENDUM).toContain('[Persona A] López')
-    expect(VERIFY_SYSTEM_ADDENDUM).toContain('el doctor dijo')
+    expect(systems).toEqual([DETECT_SYSTEM_PROMPT, DETECT_SYSTEM_PROMPT])
+    expect(DETECT_SYSTEM_PROMPT).toContain('"[Persona A] López"')
+    expect(DETECT_SYSTEM_PROMPT).toContain('"colonia [Domicilio L]"')
   })
 })

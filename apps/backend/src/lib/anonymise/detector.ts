@@ -118,6 +118,13 @@ export const DETECT_SYSTEM_PROMPT = [
   '- Un tratamiento o cargo SOLO, sin nombre ni apodo junto a él: "el doctor dijo",',
   '  "la maestra llegó". No identifica a nadie. No lo reportes; si lo reportas, pon',
   '  "identifica": false. Pon "identifica": true en todo lo demás.',
+  // ⚠ ONE PROMPT FOR DETECT AND VERIFY, measured 2026-10-17 on the chunk holding
+  // "el Chacho Melgarejo": a separate verify addendum ("this text is already
+  // redacted…") caught it 0/6 and 3/6; the shared prompt 10/12.
+  '- Los marcadores entre corchetes ([Persona A], [Domicilio B], [Dato omitido]): ya están',
+  '  censurados. Tampoco una palabra genérica pegada a uno, sin nombre propio: "Don',
+  '  [Persona F]", "colonia [Domicilio L]". Pero un nombre o apellido pegado a un marcador',
+  '  SÍ es hallazgo: en "[Persona A] López" el hallazgo es "[Persona A] López".',
   '',
   // 🔴 ADDRESSES GET THEIR OWN SECTION BECAUSE ONE LINE WAS NOT ENOUGH. Measured:
   // on a live test testimony a street address went past this prompt, and the
@@ -143,26 +150,6 @@ export const DETECT_SYSTEM_PROMPT = [
   'Tipos: "persona" para nombres de personas; "lugar" para domicilios y lugares identificables;',
   '"contacto" para teléfonos, correos y redes; "identificador" para folios, CURP, RFC y números',
   'de cuenta; "otro" para cualquier otro dato que permita identificar a alguien.',
-].join('\n')
-
-/**
- * Appended to {@link DETECT_SYSTEM_PROMPT} for a VERIFY pass, whose input is
- * already redacted.
- *
- * ⚠ The owner's rule, 2026-10-17: a generic word beside a placeholder, or a bare
- * title, is not a leftover. A surname beside one IS: "[Persona A] López" must
- * still be reported.
- */
-export const VERIFY_SYSTEM_ADDENDUM = [
-  '',
-  'Este texto YA fue censurado. Busca solo lo que todavía identifique a alguien.',
-  '- Los marcadores entre corchetes como [Persona A], [Domicilio B] o [Dato omitido] ya',
-  '  están censurados: no los reportes.',
-  '- Una palabra genérica junto a un marcador ("Don [Persona F]", "la maestra [Persona B]",',
-  '  "colonia [Domicilio L]") no identifica a nadie: no la reportes.',
-  '- Un tratamiento o cargo sin nombre ("el doctor dijo") tampoco: no lo reportes.',
-  '- SÍ reporta un nombre, apellido o lugar que siga junto a un marcador: en',
-  '  "[Persona A] López" el hallazgo es "[Persona A] López".',
 ].join('\n')
 
 /**
@@ -385,7 +372,7 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
 
   return {
     name: opts.name ?? 'ai-service:anonymise-detect',
-    async detect({ text, contentKind, pass }) {
+    async detect({ text, contentKind }) {
       let client = opts.client
       if (!client) {
         const { getAppAIClient } = await import('@/lib/aiClient')
@@ -452,10 +439,7 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
                     unitKey: nextKey(),
                     unitType: 'anonymise-detect',
                     input: { userPrompt: `${material}\n\n${chunk.text}` },
-                    systemPrompt:
-                      pass === 'verify'
-                        ? `${DETECT_SYSTEM_PROMPT}\n${VERIFY_SYSTEM_ADDENDUM}`
-                        : DETECT_SYSTEM_PROMPT,
+                    systemPrompt: DETECT_SYSTEM_PROMPT,
                     specOverride: { promptTemplate: PROMPT_TEMPLATE_USER_PROMPT },
                   },
                   effortLevel: 'quick',

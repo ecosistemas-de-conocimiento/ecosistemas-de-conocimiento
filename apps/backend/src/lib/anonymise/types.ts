@@ -226,15 +226,9 @@ export interface PersonDetector {
    * means "nothing to redact" and would let unscrubbed text through the gate;
    * a throw becomes a HOLD, which is the safe answer to "we do not know".
    */
-  detect(args: {
-    text: string
-    contentKind: 'testimonio' | 'conversacion'
-    /**
-     * `verify` when the text is already redacted, so the prompt can say what a
-     * placeholder is and what is NOT a leftover beside one. Omitted = `detect`.
-     */
-    pass?: 'detect' | 'verify'
-  }): Promise<DetectorFinding[]>
+  detect(args: { text: string; contentKind: 'testimonio' | 'conversacion' }): Promise<
+    DetectorFinding[]
+  >
 }
 
 /** What a person's name is replaced by. Index 0 → `[Persona A]`. */
