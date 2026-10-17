@@ -13,7 +13,8 @@ environment, so a forgotten flag fails loudly instead of making real, billed cal
 
 ## Everything it returns is marked as test data
 
-- Every completion body starts with `[FAKE-PROVIDER TEST DATA]`.
+- Every completion body starts with `[FAKE-PROVIDER TEST DATA]`, unless the
+  request scripted the reply with `[[FAKE_REPLY:…]]` (see below).
 - Every response carries the header `x-fake-provider: test-data`.
 - Every JSON body carries `provider: "fake-provider"` and an `id` starting `fake-provider-`.
 - `usage.cost` is `0` unless you set another value.
@@ -78,6 +79,26 @@ await fake.close();
 
 Per request, a prompt containing `[[FAKE_OUTPUT_TOKENS:<n>]]` sets that answer's
 length (1 to 20000). Two tests in one run can then ask for different lengths.
+
+Per request, a prompt containing `[[FAKE_REPLY:<base64>]]` makes the answer
+**exactly** the decoded text, with no marker. Use it to test a path that parses
+model JSON, for example a PII detector that must answer `{"spans":[]}`:
+
+```js
+const reply = Buffer.from('{"spans":[]}', 'utf8').toString('base64'); // eyJzcGFucyI6W119
+const prompt = `${realPrompt}\n[[FAKE_REPLY:${reply}]]`;
+```
+
+- The payload is base64 of UTF-8 text, standard or URL-safe alphabet. Base64
+  keeps `]]` in the reply from ending the directive, and keeps ai-service's PII
+  egress scrub from rewriting the reply on its way to the fake.
+- Put it in any message, system or user. The last `FAKE_REPLY` wins, and it
+  overrides `FAKE_OUTPUT_TOKENS`.
+- `max_tokens` still cuts it (chars/4), and streaming sends it in 4-char frames.
+- The `x-fake-provider` header and the `fake-provider-` id still mark the response.
+
+Only this test-only server reads the directive. A real provider sees it as plain
+prompt text, so nothing about it exists in the shipped service.
 
 Behaviour that matches a real provider:
 

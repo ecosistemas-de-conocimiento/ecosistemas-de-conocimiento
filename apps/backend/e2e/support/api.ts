@@ -87,9 +87,18 @@ export async function uploadFixture(
   contentType: string,
   filename = fixture,
 ): Promise<ApiResult> {
-  const bytes = fs.readFileSync(path.join(FIXTURES_DIR, fixture))
+  return uploadBytes(caller, fs.readFileSync(path.join(FIXTURES_DIR, fixture)), contentType, filename)
+}
+
+/** `POST /api/media` with bytes built in the test rather than read from `e2e/fixtures`. */
+export async function uploadBytes(
+  caller: Caller,
+  bytes: Uint8Array,
+  contentType: string,
+  filename: string,
+): Promise<ApiResult> {
   const form = new FormData()
-  form.append('file', new Blob([bytes], { type: contentType }), filename)
+  form.append('file', new Blob([new Uint8Array(bytes)], { type: contentType }), filename)
   const res = await fetch(`${BACKEND_URL}/api/media`, {
     method: 'POST',
     headers: authHeaders(caller),
