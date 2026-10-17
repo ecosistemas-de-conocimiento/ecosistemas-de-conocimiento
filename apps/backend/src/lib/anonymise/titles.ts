@@ -103,8 +103,16 @@ const NOT_IN_WORD = '(?<![\\p{L}\\p{N}\\p{M}])'
 
 const ONE_TITLE = `(?:${TITLES.map(tolerant).join('|')}|(?<!${NOT_IN_WORD}${POSSESSIVE}\\s+)padre)`
 
-/** `el`/`la` + one or more titles, each followed by whitespace. */
-const TITLE_RUN = `${NOT_IN_WORD}(?:(?:el|la)\\s+)?(?:${ONE_TITLE}\\s+)+`
+/**
+ * `el`/`la` and any titles after it, or one or more titles; each followed by
+ * whitespace.
+ *
+ * ⚠ A BARE ARTICLE COUNTS. Measured 2026-10-17: the model returned "delegado
+ * Abundio Cázares" out of "El delegado Abundio Cázares", and "Chacho Melgarejo"
+ * out of the nickname "el Chacho Melgarejo"; verify then held on
+ * "El [Persona E]" and "el [Persona L]". Dropping an article loses no name.
+ */
+const TITLE_RUN = `${NOT_IN_WORD}(?:(?:el|la)\\s+(?:${ONE_TITLE}\\s+)*|(?:${ONE_TITLE}\\s+)+)`
 
 const BEFORE_PERSON = new RegExp(`${TITLE_RUN}(?=\\[Persona [A-Z]+\\])`, 'giu')
 
@@ -129,4 +137,20 @@ export function absorbTitles(text: string): string {
 export function stripLeadingTitles(name: string): string {
   const stripped = name.replace(LEADING, '')
   return stripped.trim().length > 0 ? stripped : name
+}
+
+const ANY_PLACEHOLDER = /\[Dato omitido\]|\[Persona [A-Z]+\]|\[Domicilio [A-Z]+\]/g
+
+/**
+ * True when `finding` holds at least one of our placeholders and, once those
+ * and any title before a person placeholder are gone, no letter or digit is
+ * left: "[Domicilio AP], [Domicilio AQ]", "Don [Persona F]".
+ *
+ * 🔴 AT LEAST ONE PLACEHOLDER IS REQUIRED. A bare "Don" with nothing after it
+ * still counts as a leftover, so a model that flags only the title of a name
+ * it missed still holds the document.
+ */
+export function onlyPlaceholders(finding: string): boolean {
+  if (!finding.match(ANY_PLACEHOLDER)) return false
+  return !/[\p{L}\p{N}]/u.test(absorbTitles(finding).replace(ANY_PLACEHOLDER, ''))
 }

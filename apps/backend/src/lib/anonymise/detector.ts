@@ -30,6 +30,7 @@
 import { withRateLimitRetry } from '@/lib/aiRetry'
 
 import { chunkText } from './chunk'
+import { stripLeadingTitles } from './titles'
 import type { DetectorFinding, PersonDetector } from './types'
 
 /** Env var names, so docs and tests never hand-type a string that can drift. */
@@ -218,10 +219,20 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
     // stage 4 look like it verified something it did not. Dropping it is not
     // permissive: the text it claims to describe is still in the document and
     // stage 4 still runs over the result.
-    if (!sourceText.includes(trimmed)) continue
+    //
+    // ⚠ ONE RESCUE: a titled span whose TITLE is in the wrong case. Measured
+    // 2026-10-17, 9,454 words: asked to include titles, the model returned
+    // "la maestra Nicasia Olvera" for "La maestra Nicasia Olvera"; dropping it
+    // lost the name. The bare name is a literal substring, so it is kept, and
+    // `titles.ts` absorbs the title once the name is a placeholder.
+    let located = trimmed
+    if (!sourceText.includes(located)) {
+      located = stripLeadingTitles(trimmed).trim()
+      if (located === trimmed || located.length < 2 || !sourceText.includes(located)) continue
+    }
 
     out.push({
-      text: trimmed,
+      text: located,
       type: (FINDING_TYPES as readonly unknown[]).includes(tipo)
         ? (tipo as DetectorFinding['type'])
         : 'otro',

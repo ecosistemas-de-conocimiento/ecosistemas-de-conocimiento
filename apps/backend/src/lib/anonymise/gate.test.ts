@@ -557,4 +557,118 @@ describe('runAnonymisationGate — 🔴 a title before a name is part of the nam
     if (result.status !== 'hold') return
     expect(result.stage).toBe('verify')
   })
+
+  it('a finding that is only placeholders and punctuation is not a leftover', async () => {
+    // Measured 2026-10-17: verify reported "[Domicilio AP], [Domicilio AQ]".
+    let calls = 0
+    const result = await runAnonymisationGate(input({ text: 'Nací en Tlapa, Guerrero.' }), {
+      detector: {
+        name: 'pairs',
+        async detect({ text }) {
+          calls += 1
+          if (calls === 1) {
+            return [
+              { text: 'Tlapa', type: 'lugar' },
+              { text: 'Guerrero', type: 'lugar' },
+            ]
+          }
+          const m = text.match(/\[Domicilio [A-Z]+\], \[Domicilio [A-Z]+\]/)
+          return m ? [{ text: m[0], type: 'lugar' }] : []
+        },
+      },
+    })
+    expect(result.status).toBe('ready')
+  })
+
+  it('🔴 a title-only finding with no placeholder still HOLDS', async () => {
+    let calls = 0
+    const result = await runAnonymisationGate(input({ text: 'Llegó Don y se sentó.' }), {
+      detector: {
+        name: 'title-only',
+        async detect() {
+          calls += 1
+          return calls === 1 ? [] : [{ text: 'Don', type: 'persona' }]
+        },
+      },
+    })
+    expect(result.status).toBe('hold')
+  })
+})
+
+describe('runAnonymisationGate — 🔴 a finding never rewrites inside a placeholder', () => {
+  // Measured 2026-10-17, 9,454 words: stage 2 had written "[Domicilio E]", the
+  // model then returned part of that placeholder as a finding, and split/join
+  // turned every one into "[[Domicilio AH]E]", which verify held on 13 times.
+  it('leaves earlier placeholders intact when the model echoes part of one', async () => {
+    let calls = 0
+    const result = await runAnonymisationGate(
+      input({ text: 'Vivo en Tlapa y trabajo con Ana. Tlapa es bonito.' }),
+      {
+        detector: {
+          name: 'echo',
+          async detect({ text }) {
+            calls += 1
+            if (calls === 1) {
+              return [
+                { text: 'Tlapa', type: 'lugar' },
+                { text: 'Ana', type: 'persona' },
+              ]
+            }
+            return []
+          },
+        },
+      },
+    )
+    expect(result.status).toBe('ready')
+
+    // Now the echo itself: a second content finding that sits inside "[Domicilio A]".
+    let n = 0
+    const echoed = await runAnonymisationGate(
+      input({ text: 'Vivo en Tlapa y trabajo con Ana.' }),
+      {
+        detector: {
+          name: 'echo2',
+          async detect() {
+            n += 1
+            if (n === 1) {
+              return [
+                { text: 'Tlapa', type: 'lugar' },
+                { text: 'Ana', type: 'persona' },
+                { text: 'Domicilio', type: 'lugar' },
+                { text: 'Persona', type: 'persona' },
+              ]
+            }
+            return []
+          },
+        },
+      },
+    )
+    expect(echoed.status).toBe('ready')
+    if (echoed.status !== 'ready') return
+    expect(echoed.redactedText).toBe('Vivo en [Domicilio A] y trabajo con [Persona A].')
+  })
+
+  it('still replaces a finding that occurs both inside and outside a placeholder', async () => {
+    let n = 0
+    const result = await runAnonymisationGate(
+      input({ text: 'Vivo en Tlapa. Mi perro se llama Domicilio.' }),
+      {
+        detector: {
+          name: 'both',
+          async detect() {
+            n += 1
+            return n === 1
+              ? [
+                  { text: 'Tlapa', type: 'lugar' },
+                  { text: 'Domicilio', type: 'persona' },
+                ]
+              : []
+          },
+        },
+      },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe('Vivo en [Domicilio A]. Mi perro se llama [Persona A].')
+  })
 })

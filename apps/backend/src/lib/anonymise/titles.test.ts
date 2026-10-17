@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { DETECT_SYSTEM_PROMPT } from './detector'
+import { DETECT_SYSTEM_PROMPT, parseFindings } from './detector'
 import { absorbTitles, stripLeadingTitles } from './titles'
 
 describe('absorbTitles — a title directly before a person placeholder joins it', () => {
@@ -32,6 +32,10 @@ describe('absorbTitles — a title directly before a person placeholder joins it
     ['el ingeniero [Persona A]', '[Persona A]'],
     ['el señor licenciado [Persona A]', '[Persona A]'],
     ['el padre [Persona A] dio la misa', '[Persona A] dio la misa'],
+    // a bare article left by a model span that took the title but not "El"
+    // (measured 2026-10-17: "El [Persona E]" and "el [Persona L]" held verify)
+    ['El [Persona E] nunca firmó', '[Persona E] nunca firmó'],
+    ['Le decíamos el [Persona L] porque', 'Le decíamos [Persona L] porque'],
     // decomposed accents (NFD) as the roster pass leaves them
     ['Doña [Persona A]'.normalize('NFD'), '[Persona A]'],
   ])('%s', (input, expected) => {
@@ -79,5 +83,21 @@ describe('the detector prompt', () => {
   it('asks for the title inside the person span', () => {
     expect(DETECT_SYSTEM_PROMPT).toContain('el hallazgo\n  es "Don Fernando Vázquez"')
     expect(DETECT_SYSTEM_PROMPT).toContain('"la maestra Imelda"')
+  })
+})
+
+describe('parseFindings — a titled span in the wrong case', () => {
+  // Measured 2026-10-17, 9,454 words: the model returned "la maestra Nicasia
+  // Olvera" for "La maestra Nicasia Olvera". The exact-substring filter dropped
+  // it and the name went through to verify. The bare name IS in the text.
+  it("keeps the name when only the title's case differs", () => {
+    const source = 'ENTREVISTADA: La maestra Nicasia Olvera nos daba clases.'
+    const raw = '{"hallazgos":[{"texto":"la maestra Nicasia Olvera","tipo":"persona"}]}'
+    expect(parseFindings(raw, source)).toEqual([{ text: 'Nicasia Olvera', type: 'persona' }])
+  })
+
+  it('still drops a finding whose name is not in the text', () => {
+    const raw = '{"hallazgos":[{"texto":"la maestra Rosa","tipo":"persona"}]}'
+    expect(parseFindings(raw, 'La maestra Nicasia llegó.')).toEqual([])
   })
 })
