@@ -255,6 +255,45 @@ Found along the way:
   and still carry the shared key in their environment from the 12:28/12:37 deploys. They do not
   use it. The next Coolify deploy of each env replaces them.
 
+### 4g. ✅ Done 2026-10-17 21:05–21:11 UTC: `fcd5247`, dev only
+
+All measured by the deploy agent. Staging (`edc-staging`) was not touched; it stays on `643ff4e`.
+The dev app was resolved by its domain through the API (`edc-dev` = `pehgnxpqvnonhihabzvnwnil`).
+
+- Before the deploy, through the API: `AI_SERVICE_ADMIN_API_KEY` is 64 chars and its sha256 matches
+  the local `EDC_DEV_AI_SERVICE_ADMIN_API_KEY`. `RERANK_API_KEY` is stored in Coolify (main and
+  preview copies) with sha256 prefix `4dbc5b378dde`, the same as the local file.
+  `LLM_REQUEST_TIMEOUT_MS=600000`. None of the new optional variables (`CHAT_RETRIEVAL_MODE`,
+  `GRAPH_EXTRACT`, `ANONYMISE_*`, `TRUSTED_PROXY_HOPS`) was set; they run on code defaults.
+- No compose or migration file changed between `643ff4e` and `fcd5247` (read: `git diff --name-only`).
+  After the reload, no non-preview variable holds `:?` error text. The same 5 preview copies as in
+  §4e still do.
+- Backup (`pg_restore -l` ok, sha256 matched off-box): `/root/backups/20261017T2105Z/`, `edc_ai`
+  2.3 MB, `edc_backend` 313 KB (`ls -l`). Off-box copy in the owner's `cide/backups/edc-1/20261017T2105Z/`.
+- Deploy: queued 21:05:49, `finished` at 21:11:16 UTC, ≈ 5.5 min (API poll every 20 s). Schema gate:
+  `edc_ai` current at 5 migrations (0000–0004); no new migration ran (ai-service log and
+  `__drizzle_migrations` count).
+- After: all 6 dev containers `healthy` (`docker ps`). Health 200 on `dev.` and `api.dev.` (curl).
+  Every dev container's environment carries `RERANK_API_KEY` with sha256 prefix `4dbc5b378dde`
+  (`docker inspect`), so the shared key that §4f left in web, backend, redis, postgres and rustfs
+  is gone on dev. `printenv` in ai-service: `LLM_REQUEST_TIMEOUT_MS=600000`.
+- Smoke, as admin (curl-equivalent script, 2 runs at 21:14:58 and 21:15:33 UTC): login 200, PDF upload
+  → `ready` in 3.1 s, chat answer in 12.4 s and 18.0 s naming the fact only the PDF holds, citing
+  `zarzamora.pdf` in `provenance.chunks[].metadata.title`, conversation delete 200.
+  ⚠ The cited chunk had `rerankScore: null` in both runs (it was 0.99995 in §4e). ai-service logged
+  `rerank degraded … reason: timeout` (8 s limit). Run 1: the draft corpus `eco-1-draft-1` timed
+  out (pool 36, topK 20), while `eco-1` reranked (`rerank ok`, pool 20, topK 5). Run 2: both corpora
+  timed out. Direct calls from the dev ai-service container to DeepInfra answered 200 in 2.1–4.0 s
+  (4 calls, 3 and 37 short synthetic documents). Cause not confirmed. Inferred: provider latency
+  spikes plus real-size chunks push some calls past 8 s. Open item; not a deploy failure.
+- The smoke's own draft documents (dev docs 259, 260, 261, all `zarzamora.pdf`) were deleted through
+  the backend (`DELETE /api/documents/<id>`). The `afterDelete` hook removed them from ai-service too.
+  Counts after, by SQL: 258 backend documents (249 `ready`), 253 ai-service documents. Dev doc 258
+  (a leftover from §4e) is still there.
+- Disk, `df -h /` free: 61 GB before; 48 GB after the build (build cache 12.96 GB); 61 GB after
+  `docker builder prune -af` and removing dev's three `643ff4e` images. Images 7.0 GB, build cache 0.
+  The postgres image is now tagged per environment (`edc-postgres:pg16-dev` / `pg16-stage`).
+
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
 Backups taken before the deploy (both DBs, both envs, each checked with `pg_restore -l`, sha256
