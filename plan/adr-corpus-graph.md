@@ -1173,6 +1173,9 @@ What is left is the general one: whether the graph should keep emitting `tema` n
 column, or whether the column makes that class of node redundant. Not urgent, and cheaper to answer
 once there is a second corpus.
 
+**Decided 2026-10-17 (Rodrigo): keep extracting `tema` nodes**, even where they duplicate the
+`documents.tema` column. Same day: **keep `evento` nodes** in the graph. Both questions are closed.
+
 ## 19. 🔴 GraphRAG measured — no gain, and the reason is the seeder
 
 Run `20260905060010`, 2026-09-05. **120 real generations** (20 questions × 2 arms × 3 reps),
