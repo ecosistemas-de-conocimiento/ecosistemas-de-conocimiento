@@ -148,8 +148,8 @@ main checkout), where they are marked measured.
 | `apps/backend/e2e/identity.e2e.ts` | 15/15 passing — needs a signing keypair (see step 3) |
 | `apps/backend/e2e/ratings.e2e.ts` | 13/13 passing |
 | `apps/web/e2e/retrieval.spec.ts` | 2/2 passing (re-run 2026-10-17, bag-of-words fake embeddings) |
-| `apps/web/e2e/journey.spec.ts` | ⚠ failing at the rating step, before the cite step (see below) |
-| `apps/web/e2e/journey.spec.ts`, cite step | ⚠ failing on the fake stack: dense retrieval does not rank the uploaded PDF |
+| `apps/web/e2e/journey.spec.ts`, every step but the cite step | passing (re-run 2026-10-17 at `aaec3f4`, with audio; see below) |
+| `apps/web/e2e/journey.spec.ts`, cite step | ⚠ failing on the fake stack: dense retrieval does not rank the uploaded PDF (measured, see below) |
 
 **The fake provider's embeddings are a hashed bag of words now, not random.** Texts that
 share words land close (`services/ai-service/test-support/fake-provider/README.md`), so a
@@ -160,7 +160,20 @@ ai-service image of the local demo, 163 published seeded documents):
 - `retrieval.spec.ts`: 2/2. It needed one test fix: the draft upload now sends an `Origin`
   header. SvelteKit answers 403 "Cross-site POST form submissions are forbidden" to a
   multipart POST without one, and Playwright's API request context sends none.
-- The journey stops at "rate the answer 4 stars, then re-rate it to 2": the row reads
+- **Re-run, 2026-10-17 21:40 UTC (measured).** Isolated project `edc-e2e-jrn`, backend,
+  web and ai-service built from `aaec3f4`, `docker-compose.audio.yml` on,
+  `SEED_CORPUS_INGEST=1` (250 seeded, 163 published; 191 ingests completed on the fake
+  provider). ⚠ Without that flag the seed embeds nothing, and the cite step would pass
+  against an empty corpus: it would test nothing. Every step
+  passed up to the cite step: sign in, ecosistema picker, chat, rate 4 then 2, keyboard
+  rating, rating survives a reload, PDF upload and ingest (2 s), audio upload and
+  transcription (55.2 s clip, `listo` in 127 s), publish (3 s, POST 202). The cite step
+  failed on ranking. A scratch copy with only the cite assertion made soft also passed
+  sign out, with no console errors. Ranks of the uploaded PDF on that stack, top 50:
+  the journey's question: dense not in top 50, hybrid 26; `¿qué cuenta <name> sobre su
+  trabajo?`: dense 44, hybrid 8; the name alone: dense 4, hybrid 1. The recording is not
+  in either top 50 for the journey's question. Same picture as the earlier run below.
+- Earlier run: the journey stopped at "rate the answer 4 stars, then re-rate it to 2": the row reads
   `Tu valoración ★★☆☆☆ Quitar` and never `Valoración guardada: 2 de 5.` Not investigated
   here (ratings belong to another lane). A throwaway copy with every assertion made
   soft got through to the cite step. There, the audio upload failed (no audio-service in

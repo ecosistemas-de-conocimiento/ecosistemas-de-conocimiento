@@ -270,3 +270,86 @@ Hybrid loses about half the single-document MRR and 29 points of recall@5 on the
 question chat gets most. Its global gain is small and rests on 10 questions. The default
 stays `dense`; nothing here was flipped. Re-measure before flipping, with the rerank arms,
 on a stack where rerank runs.
+
+---
+
+# Fourth measurement, 2026-10-17: the two rerank arms
+
+Same script, same labels, same topK 5 as the third measurement, now on a stack where the
+cross-encoder runs. Paid: the DeepInfra reranker plus query embeddings.
+
+**Provenance (measured).** 2026-10-17, 20:56 to 21:11 UTC (wall 876 s), on the dev
+workstation. ai-service built from this tree's `services/ai-service` at `aaec3f4`, run as
+a throwaway container with `RERANK_ENABLED=true`, `RERANK_PROVIDER=deepinfra`,
+`RERANK_MODEL=Qwen/Qwen3-Reranker-0.6B`, an EDC-owned DeepInfra key, real OpenRouter query
+embeddings. Its database was a `pg_dump` **copy** of the local `edc` stack's `edc_ai`,
+restored into a throwaway Postgres on tmpfs; `scripts/ai-org-per-ecosystem.sql` was
+applied to the copy (this ai-service resolves `X-AI-Org: eco-1` to org `edc-eco-1`). The
+real `edc_ai` was only read by `pg_dump`. Corpus `eco-1`, 191 published documents. The
+probe's `legs` was `["dense","rerank"]`. Load average 2.8 at start, 46 at end: another
+session started a heavy job during the run, so the latency column is noisy and its last
+minutes are inflated. Raw rows: `retrieval-results.topk5.rerank.json`. Rerun: as above,
+plus `EVAL_AI_SERVICE_URL=<rerank-on ai-service>`. The stack was torn down after.
+
+**Rerank calls and cost.** 420 `rerank ok` log lines, zero rerank errors: 209 dense+rerank
+(pool 20 chunks each), 209 hybrid+rerank (pool 5, the fused list), 2 probes. One
+representative pool-20 call, re-sent straight to DeepInfra after the run, cost
+**$0.000123** for 12 307 input tokens (measured, `inference_status.cost`). So the run cost
+about **$0.03** in reranking (inferred: 211 × $0.000123 plus 209 smaller pool-5 calls).
+Query embeddings were not logged by ai-service; not measured, inferred under a cent.
+
+| labels | n | arm | MRR@5 | recall@1 | recall@3 | recall@5 | median ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| harness local | 10 | dense | **0.950** | 0.900 | 1.000 | 1.000 | 574 |
+| harness local | 10 | dense+rerank | 0.875 | 0.800 | 0.900 | 1.000 | 1299 |
+| harness local | 10 | hybrid | 0.475 | 0.400 | 0.500 | 0.600 | 476 |
+| harness local | 10 | hybrid+rerank | 0.600 | 0.600 | 0.600 | 0.600 | 790 |
+| harness global | 10 | dense | 0.720 | 0.350 | 0.414 | 0.505 | 441 |
+| harness global | 10 | dense+rerank | **0.925** | **0.458** | **0.624** | **0.718** | 2136 |
+| harness global | 10 | hybrid | 0.733 | 0.308 | 0.515 | 0.623 | 453 |
+| harness global | 10 | hybrid+rerank | 0.750 | 0.341 | 0.482 | 0.623 | 778 |
+| local-all | 189 | dense | 0.936 | 0.894 | 0.979 | 0.989 | 452 |
+| local-all | 189 | dense+rerank | **0.955** | **0.921** | **0.984** | **1.000** | 1363 |
+| local-all | 189 | hybrid | 0.503 | 0.386 | 0.598 | 0.698 | 455 |
+| local-all | 189 | hybrid+rerank | 0.688 | 0.677 | 0.698 | 0.698 | 797 |
+
+- **The dense and hybrid rows reproduce the third measurement exactly** (every MRR and
+  recall figure equal), on a different ai-service build and a copied database. The new
+  rows are comparable to the old ones.
+- **Dense+rerank is the best arm on 189 single-document questions: MRR 0.936 → 0.955,
+  recall@5 0.989 → 1.000.** Paired: better on 18, worse on 13, equal on 158. Small, and
+  in the right direction.
+- **On the 10 harness globals, rerank lifts dense MRR 0.720 → 0.925 and recall@5 0.505 →
+  0.718.** Ten questions; a hint, not a finding. On the 10 harness locals it costs a
+  little (MRR 0.950 → 0.875: L04 and L05 drop from rank 1–2 to 2–4; recall@5 stays 1.0).
+- **Rerank does not rescue hybrid.** Hybrid+rerank reaches 0.688 single-document MRR, still
+  0.27 below dense. Its recall@5 is capped at hybrid's 0.698, as predicted: with topK 5 the
+  reranker only reorders the fused top 5 and cannot bring back a target ranked 6th.
+- **Latency: rerank adds roughly 0.3–0.9 s per retrieve** (median 452 → 1363 ms on 189
+  questions, dense pool 20). Under the load noted above, so read the size, not the digits.
+
+## Is chat's default still right? Yes: dense, with rerank on
+
+Quoted from the brief for this run: chat's default is `CHAT_RETRIEVAL_MODE=dense` with
+rerank on. That is the best arm measured here on the large set (dense+rerank, MRR 0.955)
+and the best on global recall@5. Hybrid stays worse with or without rerank. Keep both
+defaults. Nothing was flipped.
+
+## Answer-level rerank arms on edc-1 dev (quoted, another session)
+
+A separate session ran the answer-generation harness (`run.ts`, plain and graph arms, 3
+repetitions, 19 questions) on **edc-1 dev**, 163 published documents, with rerank on, with
+query expansion, and with `--no-rerank`. Quoted from
+`/tmp/claude-1000/-home-furenku-chamba-cide-ecosistemas-de-conocimiento/c7f7a5cc-b1df-4fdd-8d33-4cd05b6448cb/scratchpad/eval-dev2/summary.txt`
+(runs `20261017195542`, `20261017203514`; not re-measured here):
+
+| class | arm | rerank on: recall | rerank off: recall |
+| --- | --- | --- | --- |
+| local | plain | 0.951 | 0.963 |
+| global | plain | **0.598** | 0.472 |
+| global | graph | **0.720** | 0.669 |
+
+It measures a different thing (mechanical answer recall, not retrieval rank), on a
+different corpus size and environment, and it covers no hybrid arm, so it does not replace
+the table above. It points the same way: rerank helps global questions and does not
+matter much on local ones.
