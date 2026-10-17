@@ -53,6 +53,7 @@
  * `GRAPH_EXTRACT_MAX_WINDOWS`. A failed window is counted and skipped.
  */
 
+import { mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
 import { canonicalKey, displayLabel } from './normalise'
 import {
   GRAPH_EXTRACT_UNIT_TYPE,
@@ -885,8 +886,12 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
       result = await callWindow({ client, docId, windowIndex: i, input, spec })
     } catch (err) {
       windowsFailed++
-      failureReasons.push(err instanceof Error ? err.message : String(err))
-      ;(args.onWindowError ?? defaultWindowError)(i, err)
+      // 🔴 A thrown client error may echo the response; a gated kind keeps only its class.
+      const safe = mustPassAnonymisationGate(contentKind)
+        ? new Error(`window call failed (${err instanceof Error ? err.name : typeof err})`)
+        : err
+      failureReasons.push(safe instanceof Error ? safe.message.slice(0, 400) : String(safe).slice(0, 400))
+      ;(args.onWindowError ?? defaultWindowError)(i, safe)
       continue
     }
 
@@ -900,7 +905,7 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
       // `generation_jobs` row, so `GET /v1/generate/units/:key/latest` cannot
       // replay it either: if this message does not carry the evidence, the only
       // way to see it is to pay for the call again.
-      const reason = `no usable \`parsed\` payload (schema miss or empty completion)${responsePreview(result.text)}`
+      const reason = `no usable \`parsed\` payload (schema miss or empty completion)${responsePreview(result.text, contentKind)}`
       failureReasons.push(reason)
       ;(args.onWindowError ?? defaultWindowError)(i, new Error(reason))
       continue
@@ -944,16 +949,40 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
  * one is what the LAST characters look like. A head-only preview, which is what
  * this was, shows a perfectly well-formed opening every time and says nothing.
  */
-function responsePreview(text: string | undefined): string {
+function responsePreview(text: string | undefined, contentKind: string | null | undefined): string {
   const body = typeof text === 'string' ? text.trim() : ''
   if (!body) return ' — the response carried no text either'
-  if (body.length <= 300) return ` — response text was: ${body}`
-  const omitted = body.length - 300
-  return ` — response text was: ${body.slice(0, 150)} […${omitted} chars…] ${body.slice(-150)}`
+  // 🔴 PRIVACY. Logs and `graphError` are not a place for corpus text. A gated
+  // kind (testimonio, conversación, unknown) gets metadata only: the length and
+  // where JSON.parse gave up — enough to tell a cut-off array from a malformed one.
+  if (mustPassAnonymisationGate(contentKind)) {
+    return ` — response length ${body.length}, ${parseErrorPosition(body)}`
+  }
+  // A documento: a short, capped head and tail. Still no corpus dump.
+  const keep = 60
+  if (body.length <= keep * 2) return ` — response text was: ${body}`
+  const omitted = body.length - keep * 2
+  return ` — response length ${body.length}, ${parseErrorPosition(body)}; response text was: ${body.slice(0, keep)} […${omitted} chars…] ${body.slice(-keep)}`
+}
+
+/** Where JSON.parse stopped, without echoing the text (V8 messages can quote it). */
+function parseErrorPosition(body: string): string {
+  try {
+    JSON.parse(body)
+    return 'valid JSON (schema miss)'
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : ''
+    const pos = /position (\d+)/.exec(msg)?.[1]
+    if (pos) return `parse error at position ${pos}`
+    if (/end of JSON input|Unterminated/i.test(msg)) return `parse error at end of input (position ${body.length})`
+    return 'parse error (position unknown)'
+  }
 }
 
 function defaultWindowError(windowIndex: number, err: unknown): void {
-  console.warn('[graph] extraction window', windowIndex, 'failed:', err)
+  // Message only, capped: never the raw error object, which may carry a response body.
+  const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+  console.warn('[graph] extraction window', windowIndex, 'failed:', message.slice(0, 400))
 }
 
 /** One `/v1/generate/sync` call, with the built-in spec in the chosen slot. */

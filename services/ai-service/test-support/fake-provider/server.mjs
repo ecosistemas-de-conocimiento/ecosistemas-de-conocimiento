@@ -13,7 +13,8 @@
 // build context. See README.md here.
 //
 // Everything it returns is MARKED as test data:
-//   - every completion body starts with `[FAKE-PROVIDER TEST DATA]`;
+//   - every completion body starts with `[FAKE-PROVIDER TEST DATA]`, except a
+//     reply the request scripted with `[[FAKE_REPLY:<base64>]]`;
 //   - every response carries the header `x-fake-provider: test-data`;
 //   - every JSON body carries `provider: "fake-provider"` and an `id` starting
 //     `fake-provider-`.
@@ -61,6 +62,30 @@ function directiveTokens(messages) {
     for (const match of content.matchAll(DIRECTIVE)) {
       const n = Number(match[1]);
       if (Number.isFinite(n) && n > 0) found = Math.min(20000, Math.floor(n));
+    }
+  }
+  return found;
+}
+
+/**
+ * Per-request scripted reply: `[[FAKE_REPLY:<base64 of UTF-8 text>]]` anywhere
+ * in a message makes the completion body EXACTLY that decoded text, with no
+ * marker, so a consumer e2e can test a path that parses model JSON (for
+ * example a PII detector answering `{"spans":[]}`). Base64, not raw JSON, so
+ * `]]` in the reply cannot end the directive and the service-side PII egress
+ * scrub cannot rewrite it. Standard or URL-safe alphabet. The LAST directive
+ * wins. `max_tokens` still cuts it (chars/4), and the response header and `id`
+ * still mark it as test data. It lives only in this test-only server: the real
+ * provider sees the directive as plain prompt text.
+ */
+const REPLY_DIRECTIVE = /\[\[FAKE_REPLY:([A-Za-z0-9+/_-]*={0,2})\]\]/g;
+
+function directiveReply(messages) {
+  let found;
+  for (const m of Array.isArray(messages) ? messages : []) {
+    const content = typeof m?.content === 'string' ? m.content : '';
+    for (const match of content.matchAll(REPLY_DIRECTIVE)) {
+      found = Buffer.from(match[1], 'base64').toString('utf8');
     }
   }
   return found;
@@ -198,11 +223,16 @@ export async function startFakeProvider(options = {}) {
     const firstDelayMs = pacing.firstDelayMs ?? cfg.streamFirstDelayMs;
     const tokensPerSec = pacing.tokensPerSec ?? cfg.streamTokensPerSec;
     const model = String(body.model ?? 'fake-provider/model');
-    const configured = directiveTokens(body.messages) ?? cfg.bodyTokens;
+    const scripted = directiveReply(body.messages);
+    const configured =
+      scripted !== undefined
+        ? Math.ceil(scripted.length / CHARS_PER_TOKEN)
+        : (directiveTokens(body.messages) ?? cfg.bodyTokens);
     const cap = Number.isFinite(body.max_tokens) && body.max_tokens > 0 ? Math.floor(body.max_tokens) : Infinity;
     const outTokens = Math.min(configured, cap);
     const finishReason = outTokens < configured ? 'length' : 'stop';
-    const content = fakeBodyText(outTokens);
+    const content =
+      scripted !== undefined ? scripted.slice(0, outTokens * CHARS_PER_TOKEN) : fakeBodyText(outTokens);
     const promptTokens = promptTokensOf(body.messages);
     const usage = {
       prompt_tokens: promptTokens,

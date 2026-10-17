@@ -214,7 +214,14 @@ async function recordFailure(
     })
   }
   const message = err instanceof Error ? err.message : String(err)
-  console.error('[graph] extraction failed for doc', docId, code, message)
+  // 🔴 PRIVACY. A gated kind logs safe metadata only: a downstream error (a
+  // Postgres unique violation, a client error) can quote a label or the reply.
+  if (mustPassAnonymisationGate(contentKind)) {
+    console.error('[graph] extraction failed for doc', docId, String(contentKind), code,
+      err instanceof Error ? err.name : typeof err, `message length ${message.length}`)
+  } else {
+    console.error('[graph] extraction failed for doc', docId, code, message.slice(0, 500))
+  }
   await setGraphStatus(payload, docId, {
     graphStatus: 'failed',
     // Same `code: message` shape as `ingestError`, so the frontend maps the

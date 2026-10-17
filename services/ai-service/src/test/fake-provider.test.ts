@@ -83,6 +83,69 @@ describe('fake provider — chat completions', () => {
     expect(out.finishReason).toBe('stop');
   });
 
+  it('a `[[FAKE_REPLY:<base64>]]` directive makes the body exactly that text, unmarked', async () => {
+    const reply = '{"spans":[]}';
+    const b64 = Buffer.from(reply, 'utf8').toString('base64');
+    const out = await chat.callOpenRouter({
+      model: 'x/y',
+      messages: [
+        { role: 'system', content: 'Detect PII. Answer JSON.' },
+        { role: 'user', content: `text to scan [[FAKE_REPLY:${b64}]]` },
+      ],
+      maxTokens: 800,
+      temperature: 0,
+    });
+    expect(out.contentText).toBe(reply);
+    expect(JSON.parse(out.contentText)).toEqual({ spans: [] });
+    expect(out.finishReason).toBe('stop');
+    expect(out.usage.completionTokens).toBe(Math.ceil(reply.length / 4));
+  });
+
+  it('a scripted reply streams back byte-identical, including non-ASCII', async () => {
+    const reply = '{"spans":[{"start":0,"end":5,"label":"NOMBRE","text":"Peña"}]}';
+    const b64 = Buffer.from(reply, 'utf8').toString('base64');
+    const deltas: string[] = [];
+    const out = await chat.streamingCallOpenRouter({
+      model: 'x/y',
+      messages: [{ role: 'user', content: `[[FAKE_REPLY:${b64}]]` }],
+      maxTokens: 800,
+      temperature: 0,
+      onDelta: (t) => deltas.push(t),
+    });
+    expect(deltas.join('')).toBe(reply);
+    expect(out.contentText).toBe(reply);
+    expect(out.finishReason).toBe('stop');
+  });
+
+  it('a scripted reply still honours max_tokens, and the last directive wins', async () => {
+    const first = Buffer.from('ignored').toString('base64');
+    const second = Buffer.from('x'.repeat(100)).toString('base64');
+    const out = await chat.callOpenRouter({
+      model: 'x/y',
+      messages: [{ role: 'user', content: `[[FAKE_REPLY:${first}]] [[FAKE_REPLY:${second}]]` }],
+      maxTokens: 5,
+      temperature: 0,
+    });
+    expect(out.contentText).toBe('x'.repeat(20));
+    expect(out.finishReason).toBe('length');
+    expect(out.usage.completionTokens).toBe(5);
+  });
+
+  it('a scripted reply still carries the test-data header and id', async () => {
+    const res = await fetch(fake.chatCompletionsUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'x/y',
+        messages: [{ role: 'user', content: `[[FAKE_REPLY:${Buffer.from('{}').toString('base64')}]]` }],
+      }),
+    });
+    expect(res.headers.get(FAKE_PROVIDER_HEADER)).toBe('test-data');
+    const body = (await res.json()) as { id: string; provider: string };
+    expect(body.provider).toBe('fake-provider');
+    expect(body.id.startsWith('fake-provider-')).toBe(true);
+  });
+
   it('marks every response with the test-data header', async () => {
     const res = await fetch(fake.chatCompletionsUrl, {
       method: 'POST',
