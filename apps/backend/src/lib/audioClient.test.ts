@@ -30,6 +30,11 @@ import {
 } from './audioClient'
 
 const fetchMock = vi.fn()
+// The upload goes through `postStreaming` (node:http), the transcript read
+// through `fetch`; both land in the same mock, with fetch's (url, init) shape.
+vi.mock('./streamingPost', () => ({
+  postStreaming: (...args: unknown[]) => fetchMock(...args),
+}))
 
 const submit = (over: Partial<Parameters<typeof submitTranscription>[0]> = {}) =>
   submitTranscription({
@@ -44,10 +49,18 @@ const submit = (over: Partial<Parameters<typeof submitTranscription>[0]> = {}) =
     ...over,
   })
 
-/** The multipart body of the one call that was made, as a plain map. */
+/**
+ * The multipart body of the one call that was made, as a plain map.
+ *
+ * Parsed back by undici's own multipart parser, so a malformed hand-built body
+ * fails here rather than at audio-service.
+ */
 const sentForm = async (): Promise<Record<string, string>> => {
   const init = fetchMock.mock.calls[0]![1] as RequestInit
-  const form = init.body as FormData
+  const headers = init.headers as Record<string, string>
+  const form = await new Response(init.body as ReadableStream, {
+    headers: { 'content-type': headers['Content-Type']! },
+  }).formData()
   const out: Record<string, string> = {}
   for (const [k, v] of form.entries()) {
     out[k] = typeof v === 'string' ? v : `<file:${(v as File).name}>`
@@ -202,6 +215,95 @@ describe('submitTranscription — the wire', () => {
   it('returns the transcribeId and the duration known at 202', async () => {
     const result = await submit()
     expect(result).toMatchObject({ ok: true, transcribeId: 'tr_1', durationSeconds: 1834.2 })
+  })
+})
+
+/** An audio body of `size` bytes, produced on demand. Counts what was pulled. */
+function lazyAudio(size: number, chunk = 1 << 20) {
+  const state = { pulled: 0 }
+  const body = {
+    size,
+    stream: () =>
+      new ReadableStream<Uint8Array>({
+        pull(c) {
+          const n = Math.min(chunk, size - state.pulled)
+          if (n <= 0) return c.close()
+          state.pulled += n
+          c.enqueue(new Uint8Array(n).fill(0x61))
+        },
+      }),
+  }
+  return { body, state }
+}
+
+describe('🔴 submitTranscription — the audio is streamed, never buffered', () => {
+  beforeEach(() => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ transcribeId: 'tr_1' }), { status: 202 }),
+    )
+  })
+
+  it('sends a ReadableStream (not a FormData) with an exact Content-Length', async () => {
+    await submit()
+    const init = fetchMock.mock.calls[0]![1] as RequestInit
+    expect(init.body).toBeInstanceOf(ReadableStream)
+    const declared = Number((init.headers as Record<string, string>)['Content-Length'])
+    const bytes = new Uint8Array(await new Response(init.body as ReadableStream).arrayBuffer())
+    expect(declared).toBe(bytes.byteLength)
+  })
+
+  it('round-trips the file bytes and every field through a real multipart parser', async () => {
+    await submit({ filename: 'Junta de la señora.m4a' })
+    const init = fetchMock.mock.calls[0]![1] as RequestInit
+    const form = await new Response(init.body as ReadableStream, {
+      headers: { 'content-type': (init.headers as Record<string, string>)['Content-Type']! },
+    }).formData()
+    const file = form.get('file') as File
+    expect(file.name).toBe('Junta de la señora.m4a')
+    expect(file.type).toBe('audio/x-m4a')
+    expect(await file.text()).toBe('fake audio bytes')
+    expect(form.get('idempotencyKey')).toBe('doc-42-a0')
+    expect(form.get('title')).toBe('Junta de agosto')
+  })
+
+  it('🔴 reads none of a 300 MB recording until fetch pulls it', async () => {
+    const { body, state } = lazyAudio(300 * 1024 * 1024)
+    await submit({ body })
+    // The mocked fetch never reads the body: nothing may have been read for it.
+    expect(state.pulled).toBe(0)
+    const init = fetchMock.mock.calls[0]![1] as RequestInit
+    const declared = Number((init.headers as Record<string, string>)['Content-Length'])
+    expect(declared).toBeGreaterThan(300 * 1024 * 1024)
+    expect(declared).toBeLessThan(300 * 1024 * 1024 + 4096)
+  })
+
+  it('🔴 hands chunks through one at a time — the body is never concatenated', async () => {
+    const { body, state } = lazyAudio(32 * 1024 * 1024)
+    const concat = vi.spyOn(Buffer, 'concat')
+    const sizes: number[] = []
+    fetchMock.mockImplementationOnce(async (_url: string, init: RequestInit) => {
+      const reader = (init.body as ReadableStream<Uint8Array>).getReader()
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        sizes.push(value.byteLength)
+      }
+      return new Response(JSON.stringify({ transcribeId: 'tr_1' }), { status: 202 })
+    })
+    await submit({ body })
+    expect(state.pulled).toBe(32 * 1024 * 1024)
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(1 << 20)
+    // Nothing anywhere joined audio chunks into a bigger buffer.
+    const joined = concat.mock.calls.map(([list]) => list.reduce((n, b) => n + b.length, 0))
+    expect(joined.filter((n) => n > 1 << 20)).toEqual([])
+  })
+
+  it('a quote or a newline in the filename cannot break the part header', async () => {
+    await submit({ filename: 'a"b\r\nX-Evil: 1.m4a' })
+    const init = fetchMock.mock.calls[0]![1] as RequestInit
+    const raw = await new Response(init.body as ReadableStream).text()
+    expect(raw).toContain('filename="a%22b%0D%0AX-Evil: 1.m4a"\r\n')
+    expect(raw).not.toMatch(/^X-Evil/m)
   })
 })
 

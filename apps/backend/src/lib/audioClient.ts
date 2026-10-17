@@ -41,6 +41,8 @@
  * `CALLBACK_SECRET`.
  */
 
+import { postStreaming } from './streamingPost'
+
 /** Env var names, so log lines and tests never hand-type a string that can drift. */
 export const AUDIO_SERVICE_URL_VAR = 'AUDIO_SERVICE_URL'
 export const AUDIO_SERVICE_API_KEY_VAR = 'AUDIO_SERVICE_API_KEY'
@@ -83,13 +85,24 @@ export function audioServiceConfigured(): boolean {
 // POST /v1/transcribe
 // ---------------------------------------------------------------------------
 
+/**
+ * The audio bytes, as something that can be READ ONCE AS A STREAM and knows its
+ * length up front.
+ *
+ * A `Blob` fits (`fs.openAsBlob(path)` is a file-backed one), and so does an S3
+ * response stream with its `ContentLength` (`openObjectStream`). ⚠ Never a
+ * Buffer: a recording can be as large as the 200 MB upload cap, and every copy
+ * of it in the backend's heap is that size again. See `openMediaStream`.
+ *
+ * `stream()` may only be called once — an S3 body cannot be rewound.
+ */
+export interface AudioBody {
+  readonly size: number
+  stream(): ReadableStream<Uint8Array>
+}
+
 export interface TranscribeRequest {
-  /**
-   * The audio bytes. A `Blob` rather than a `Buffer` so the caller can hand us
-   * `fs.openAsBlob(path)` — a lazily-read, file-backed blob. ⚠ A 300 MB
-   * `readFile` would OOM the Next process; see `startTranscription`.
-   */
-  body: Blob
+  body: AudioBody
   filename: string
   contentType?: string | null
   /** The `documents` row id. Echoed on every callback; the join key back. */
@@ -133,6 +146,81 @@ export interface TranscribeRejected {
 
 export type TranscribeResult = TranscribeAccepted | TranscribeRejected
 
+/** RFC 7578 escaping for a quoted header parameter, the same as undici's `FormData`. */
+const quoted = (value: string): string =>
+  value.replace(/\r/g, '%0D').replace(/\n/g, '%0A').replace(/"/g, '%22')
+
+/**
+ * A `multipart/form-data` body that STREAMS its one file part.
+ *
+ * 🔴 WHY NOT `FormData`: undici's `FormData` only takes a real `Blob`, and a
+ * Blob cannot be built from a stream without reading it whole. That forced the
+ * S3 path to buffer every recording (audit I-10). This writes the same wire
+ * format by hand: the file part first, as `FormData` did, then the text fields,
+ * with the file's chunks passed through one at a time as `fetch` pulls them.
+ *
+ * The length is exact (part headers + `file.size` + trailer), so the request
+ * carries a `Content-Length` rather than going chunked.
+ */
+export function streamingMultipart(
+  file: { body: AudioBody; filename: string; contentType?: string | null },
+  fields: ReadonlyArray<readonly [string, string]>,
+): { body: ReadableStream<Uint8Array>; contentType: string; contentLength: number } {
+  const enc = new TextEncoder()
+  const boundary = `----edc-audio-${crypto.randomUUID()}`
+  const head = enc.encode(
+    `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="file"; filename="${quoted(file.filename)}"\r\n` +
+      `Content-Type: ${file.contentType || 'application/octet-stream'}\r\n\r\n`,
+  )
+  const tail = enc.encode(
+    '\r\n' +
+      fields
+        .map(
+          ([name, value]) =>
+            `--${boundary}\r\nContent-Disposition: form-data; name="${quoted(name)}"\r\n\r\n${value}\r\n`,
+        )
+        .join('') +
+      `--${boundary}--\r\n`,
+  )
+
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+  let done = false
+  const body = new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        if (done) return
+        if (!reader) {
+          // Opened on the first pull, so nothing is read before fetch wants it.
+          reader = file.body.stream().getReader()
+          controller.enqueue(head)
+          return
+        }
+        const chunk = await reader.read()
+        if (!chunk.done) {
+          controller.enqueue(chunk.value)
+          return
+        }
+        done = true
+        controller.enqueue(tail)
+        controller.close()
+      },
+      async cancel(reason) {
+        await reader?.cancel(reason)
+      },
+    },
+    // ⚠ 0, not the default 1: with 1 the stream pulls once at construction and
+    // opens the file before `fetch` has even connected.
+    { highWaterMark: 0 },
+  )
+
+  return {
+    body,
+    contentType: `multipart/form-data; boundary=${boundary}`,
+    contentLength: head.byteLength + file.body.size + tail.byteLength,
+  }
+}
+
 /**
  * Submit one file for transcription. Never throws — every failure comes back as
  * a `TranscribeRejected` so the caller can record it on the row.
@@ -151,23 +239,35 @@ export async function submitTranscription(
     }
   }
 
-  const form = new FormData()
-  // The third argument is the filename audio-service sees. It uses the
-  // extension as a cheap pre-filter before ffprobe, so it must survive.
-  form.append('file', req.body, req.filename)
-  form.append('language', req.language ?? TRANSCRIBE_LANGUAGE)
-  form.append('externalId', req.externalId)
-  form.append('idempotencyKey', req.idempotencyKey)
-  if (req.title) form.append('title', req.title)
-  if (req.callbackUrl) form.append('callbackUrl', req.callbackUrl)
-  if (req.metadata) form.append('metadata', JSON.stringify(req.metadata))
+  const fields: Array<[string, string]> = [
+    ['language', req.language ?? TRANSCRIBE_LANGUAGE],
+    ['externalId', req.externalId],
+    ['idempotencyKey', req.idempotencyKey],
+  ]
+  if (req.title) fields.push(['title', req.title])
+  if (req.callbackUrl) fields.push(['callbackUrl', req.callbackUrl])
+  if (req.metadata) fields.push(['metadata', JSON.stringify(req.metadata)])
+  // The filename is what audio-service sees. It uses the extension as a cheap
+  // pre-filter before ffprobe, so it must survive.
+  const multipart = streamingMultipart(
+    { body: req.body, filename: req.filename, contentType: req.contentType },
+    fields,
+  )
 
   let res: Response
   try {
-    res = await fetch(`${base}/v1/transcribe`, {
+    // ⚠ `postStreaming`, not `fetch`: Node 22's `fetch` held a streamed body
+    // in memory. See `lib/streamingPost.ts`.
+    res = await postStreaming(`${base}/v1/transcribe`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${key}` },
-      body: form,
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': multipart.contentType,
+        // ⚠ Declared, not chunked: audio-service's size guard answers a clean
+        // 413 off this header before it reads a byte (`app/limits.py`).
+        'Content-Length': String(multipart.contentLength),
+      },
+      body: multipart.body,
     })
   } catch (err) {
     return {
