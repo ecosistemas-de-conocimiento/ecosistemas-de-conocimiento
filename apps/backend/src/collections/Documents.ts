@@ -3382,6 +3382,13 @@ export function planGraphRetry(doc: GraphRetryableDocument): { reason: string } 
  *
  * Returns 202 as soon as the run is armed. Poll `graphStatus`.
  */
+/** A URL id as a positive safe integer: digits only, else null (the route 400s). */
+function digitsId(raw: string | undefined): number | null {
+  if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return null
+  const n = Number(raw)
+  return Number.isSafeInteger(n) && n > 0 ? n : null
+}
+
 function retryGraphEndpoint(): Endpoint {
   return {
     path: '/:id/graph-retry',
@@ -3401,8 +3408,11 @@ function retryGraphEndpoint(): Endpoint {
       const user = req.user
       if (!user) return fail(401, 'Authentication required.')
 
-      const id = (req.routeParams as { id?: string } | undefined)?.id
-      if (!id) return fail(400, 'Missing document id.')
+      // 🔴 A NUMBER, NOT THE ROUTE-PARAM STRING. `id` flows on into the
+      // `graph_*` rows' `document` relationship, and Payload rejects a string
+      // there ("The following field is invalid: Document"). Coerce once, here.
+      const id = digitsId((req.routeParams as { id?: string } | undefined)?.id)
+      if (id == null) return fail(400, 'Missing or invalid document id.')
 
       // ⚠ Read UNDER ACCESS CONTROL, exactly like publish and retry.
       // `visibleToCaller` 404s a document the caller may not see, so this
