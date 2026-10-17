@@ -248,10 +248,6 @@ function responseFormatFor(req: RouteRequest): OpenRouterResponseFormat | undefi
  * (`metadata->>'httpRequestId'`). Omitted entirely when absent, so the async
  * worker path — which has no HTTP request of its own — writes exactly the rows
  * it wrote before.
- *
- * Exported because the MOCK_LLM router in `openrouter.ts` writes its own trace
- * row on a path that never reaches this class, and consumers run their e2e
- * suites against exactly that router — correlation has to work there too.
  */
 export function httpRequestIdMeta(req: RouteRequest): { httpRequestId?: string } {
   return req.httpRequestId ? { httpRequestId: req.httpRequestId } : {};

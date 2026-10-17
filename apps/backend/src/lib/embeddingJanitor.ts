@@ -123,13 +123,11 @@ const DEFAULT_INTERVAL_MIN = 15
  * message, deadline and a much narrower predicate. That is the decision this
  * comment asked for, not this list growing.
  *
- * ⚠ `pending` AND `transcribed` ARE ALSO NON-TERMINAL AND ARE DELIBERATELY NOT
- * HERE. Both can strand a row the same way — `transcribed` is where a row stops
- * if the process dies between persisting the transcript and enqueuing the
- * ingest — but each needs a different message and a different deadline, and a
- * sweep that quietly grew to cover states nobody argued about is how a janitor
- * starts writing errors onto rows that are fine. Adding one is a decision, not
- * an edit to a list.
+ * ⚠ `transcribed`, `extracting`, a lost gate run (`anonymisationStatus:
+ * 'pending'`) and chat turns at `embedding` are owned by `ingestRecovery.ts`,
+ * each with its own predicate, message and deadline. `transcribed` is DRIVEN
+ * there, not stamped: the callback now stops at it on purpose. Adding a state
+ * is a decision, not an edit to a list.
  */
 export const STALLED_INGEST_STATE = 'embedding'
 

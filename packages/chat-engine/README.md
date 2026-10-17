@@ -183,3 +183,27 @@ the product's hook — what `respond()`'s callers reach for. The free
 `syncEntity(aiClient, source, ref)` above is the mechanism. The usual wiring is
 to implement the adapter method by calling the free function with your
 `EntitySource`. Same for `DomainAdapter.backfill` and `backfillScope`.
+
+## Optional extension point: `graphProvider` (≥0.7.0)
+
+A consumer with a second, non-vector retrieval path (a knowledge graph, say)
+can pass `RespondArgs.graphProvider`. Omit it and nothing changes.
+
+```ts
+type GraphProvider = (condensedQuery: string) =>
+  Promise<{ chunks?: RetrievedChunk[]; context?: string } | null>;
+```
+
+- It runs concurrently with the vector/hybrid retrieve, on the condensed query.
+- Its `chunks` are fused with the retrieved matches by `fuseMatches`
+  (Reciprocal Rank Fusion, k=60). A hybrid result is fused by its server order,
+  never re-sorted by score.
+- Its `context` string is injected verbatim into the user turn, under
+  `EngineConfig.blockHeaders.graph`, after the summary and before the
+  retrieved block. It carries no `[N]` markers, so citation numbers do not move.
+- `PreparedTurn.maxDenseScore` ignores graph chunks: their `score` is on the
+  provider's own scale, not a cosine.
+- A provider that throws or rejects warns `graph.failed` and the turn proceeds
+  without it. Timeouts are the provider's job.
+
+What the graph holds, and how it is queried, stays in the consumer.

@@ -82,6 +82,7 @@ first. Coolify names the project after the resource, so volumes are per environm
 | `ALLOWED_ORIGINS` | `https://dev.<domain>,https://api.dev.<domain>` | `https://montaje.<domain>,https://api.montaje.<domain>` | ⚙ ⚠ backend CORS: web + backend public origins |
 | `POSTGRES_PASSWORD` | `CHANGE_ME` | `CHANGE_ME` | 🔑 |
 | `AI_SERVICE_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | 🔑 the `app` key; compose builds ai-service's `API_KEYS` from it |
+| `AI_SERVICE_ADMIN_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | 🔑 the `admin` key, also built into `API_KEYS`. No default since 2026-10-17: the old fallback `dev-key-admin` is public (`.env.example`), so a forgotten value gave a known admin key. Never reuse the local value |
 | `CALLBACK_SECRET` | `CHANGE_ME` | `CHANGE_ME` | 🔑 ≥ 32 chars. Compose interpolates it into `API_KEYS` too, so the pair cannot drift |
 | `PUBLIC_BACKEND_URL` | `https://api.dev.<domain>` | `https://api.montaje.<domain>` | ⚙ ⚠ the origin ai-service calls back to. 🔴 Must be the backend's PUBLIC **https** origin: ai-service refuses private addresses and, under `NODE_ENV=production`, plain http. It reaches the public host through Traefik on the same box (✅ hairpin measured 2026-10-17: `curl` from both ai-service containers on edc-1 to both `api.*` hosts → 200). Locally `http://backend:3002` |
 
@@ -105,6 +106,7 @@ first. Coolify names the project after the resource, so volumes are per environm
 | `S3_SECRET_ACCESS_KEY` | `CHANGE_ME` | `CHANGE_ME` | 🔑 `openssl rand -hex 32` |
 | `IDENTITY_TRUSTED_PROXY_HOPS` | `1` | `1` | ⚙ 🔴 exactly one proxy (Traefik). Higher = silent bypass of per-IP rate limits; compose default `0` makes every request share Traefik's bucket |
 | `AI_CAPABILITY_MODE` | `strict` | `strict` | ⚙ a version skew between backend and ai-service should be loud |
+| `LLM_REQUEST_TIMEOUT_MS` | `600000` | `600000` | ⚙ ai-service, whole generation. 🔴 Code default `120000` is too short: a `deep`-tier graph extraction window failed at 120,008 ms and passed in 72–96 s after the raise to 600000 (quoted, `plan/adr-corpus-graph.md` §13–§14, local stack 2026-08-28). Must stay **below** the backend's `GRAPH_EXTRACT_TIMEOUT_MS` (§2f) |
 
 ### 2c. Must stay UNSET on both
 
@@ -125,14 +127,37 @@ first. Coolify names the project after the resource, so volumes are per environm
 | `SEED_DOMAIN` | unset | 💤 dev may set `1`; stage is refused by the gate anyway |
 | `SEED_CORPUS_INGEST` | `0` | 💤 needs the corpus, which Coolify does not have |
 | `POSTGRES_USER`, `BACKEND_DB_NAME`, `AI_DB_NAME` | `edc`, `edc_backend`, `edc_ai` | 💤 per-env stores, so the defaults are fine |
-| `AI_SERVICE_ADMIN_API_KEY` | `dev-key-admin` | 🔑 🔴 **set it** — the compose default is a public string |
 | `RUSTFS_MEMORY` | `1g` | 💤 |
 | `RERANK_API_KEY` | unset | 🔑 **the switch.** Hosted DeepInfra rerank, owner-approved. Setting it turns rerank on (guard in ai-service's `command:` exports `RERANK_ENABLED=true` when the key is non-empty and `RERANK_ENABLED` is unset). Unset ⇒ off, plus one boot warning about the missing key — expected. Not required |
 | `RERANK_ENABLED` | **leave unset** | 💤 🔴 a Coolify value of `false` overrides the key: set it only as a kill switch. `true` without a key refuses boot |
 | `RERANK_PROVIDER`, `RERANK_URL`, `RERANK_MODEL`, `RERANK_TIMEOUT_MS` | `deepinfra`, `https://api.deepinfra.com`, `Qwen/Qwen3-Reranker-0.6B`, `8000` | 💤 compose defaults; do not set. Under `deepinfra` the URL is the API base (a `/v1/inference/…` URL refuses boot) and the model must be on ai-service's code allowlist |
 | `SPARSE_ENABLED` | `false` | 💤 the `heavy` sidecar is not deployed. Keep off |
 | `SHUTDOWN_GRACE_MS` | `30000` | 💤 🔴 must stay below ai-service's `stop_grace_period` (45s in the compose file) |
-| `IDENTITY_ALLOWED_EMAIL_DOMAIN`, `AUTH_TOKEN_TTL`, `SESSION_JANITOR_*`, `LLM_*_TIMEOUT_MS` | code defaults | 💤 see `infra/.env.example` |
+| `SEED_CORPUS_SKIP_ABOVE` | the manifest size | 💤 backend corpus seed's double-seed guard: refuses an ecosistema already holding this many docs. Not a positive integer ⇒ ignored with a warning (`seed/corpus.ts`) |
+| `AI_ECOSYSTEM_BUDGET_USD` | `5` | 💤 backend: starting monthly ai-service cap for each **new** ecosistema (`lib/provisionEcosystem.ts`). `5` is an owner decision quoted from `edc-1.md` §6, not a measured need. Junk or negative ⇒ `5`. Existing orgs: ai-service `set-budget` |
+| `IDENTITY_ALLOWED_EMAIL_DOMAIN`, `AUTH_TOKEN_TTL`, `SESSION_JANITOR_*`, `CONDENSE_TIMEOUT_MS`, `LLM_STREAM_STALL_TIMEOUT_MS` | code defaults | 💤 see `infra/.env.example` |
+
+### 2f. Corpus graph and chat retrieval — optional
+
+Read from code 2026-10-17. Backend values are in `apps/backend/src/lib/graph/*` and
+`lib/rateLimit.ts`; web values in `apps/web/src/lib/server/engine/*`. Junk or non-positive
+values fall back to the default unless noted.
+
+| var | app | default | notes |
+|---|---|---|---|
+| `GRAPH_EXTRACT_TIMEOUT_MS` | backend | `660000` | ⚙ 🔴 client timeout for ONE extraction window. **Ordering rule: must stay above ai-service's `LLM_REQUEST_TIMEOUT_MS`** (`lib/graph/client.ts`, ADR §14). If the client aborts first, ai-service's answer and its failure reason are never seen, and every failure looks like a network fault. 660000 = 600000 + 60 s for queueing and the response trip. An env left at the 120000 server default should lower this to match |
+| `GRAPH_EXTRACT_EFFORT` | backend | `deep` | 💤 `quick`/`standard`/`deep`/`maximum`. Keep `deep`: ADR §13 measured `standard` cut off by its output-token cap at 82–96 s (quoted) |
+| `GRAPH_EXTRACT_WINDOW_CHARS` | backend | `12000` | 💤 characters per extraction call (ADR §5.2) |
+| `GRAPH_EXTRACT_MAX_WINDOWS` | backend | `8` | 💤 runaway brake; a longer doc is extracted from its start only, and still shows `ready` |
+| `GRAPH_EXTRACT_MAX_CONCURRENCY` | backend | `2` | 💤 extractions at once per backend process; in-memory queue |
+| `GRAPH_MIN_SUPPORT` | backend | `3` | 💤 🔴 published docs that must mention an entity before it shows. A privacy control (ADR §7.3.3): values below 1 fall back to `3`, never to `0`. `1` is accepted |
+| `GRAPH_RATELIMIT_VIEW_USER_MAX` | backend | `120` | 💤 graph browsing, per user per minute |
+| `GRAPH_RATELIMIT_RETRIEVE_USER_MAX` | backend | `60` | 💤 the GraphRAG leg, per user per minute. Runs on every chat turn; hitting it silently drops graph context |
+| `GRAPH_RATELIMIT_ORG_MAX` | backend | `600` | 💤 one ecosistema, all members, per minute |
+| `GRAPH_BACKFILL_LIMIT`, `_ORG`, `_DRY_RUN`, `_NO_SWEEP`; `GRAPH_POLICY_ORG`, `GRAPH_POLICY_REQUIRE_NAME` | backend CLI | — | 🔴 never set in Coolify. One-shot CLI arguments for `lib/graph/backfill.cli.ts` and `policy.cli.ts`; see their headers |
+| `CHAT_RERANK` | web | on | 💤 cross-encoder rerank on each corpus retrieve. `off`/`0`/`false`/`no` turns it off. Only takes effect where ai-service has rerank on (`RERANK_API_KEY`, §2d); a failing rerank falls back to the plain retrieve |
+| `QUERY_EXPANSION` | web | on | 💤 rewords the question before searching: one extra `quick` model call per turn. `off`/`0`/`false`/`no` turns it off |
+| `PROMPT_SOURCE` | web | unset (inline prompt) | 💤 🔴 `registry` pulls the chat prompt from ai-service's registry. Set it only after each ecosistema org has its `chat` registry row, or every turn answers 400 |
 
 Fixed inside the compose file, so **not** set in Coolify: `NODE_ENV` (`production`), `PORT`, `HOST`,
 `DATABASE_URI` (backend), `DATABASE_URL` + `REDIS_URL` + `API_KEYS` (ai-service), `AI_SERVICE_URL`,
@@ -150,7 +175,7 @@ Read from `services/ai-service/src` (2026-10-17). 🔧 Set only what you change.
 | `METRICS_TOKEN` | unset | 🔑 unset ⇒ `GET /metrics` answers loopback peers only, 403 otherwise. Set it only when a scraper runs |
 | `RATE_LIMIT_REDIS` | on (outside tests) | 💤 `/v1` rate-limit store shared in Redis. `0` = in-process, for debugging one box |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` | unset, `ai-service` | 💤 unset endpoint ⇒ OpenTelemetry does not start. No collector on edc-1 |
-| `LLM_ASYNC_REQUEST_TIMEOUT_MS` | inherits `LLM_REQUEST_TIMEOUT_MS` (120000) | 💤 async generation worker only |
+| `LLM_ASYNC_REQUEST_TIMEOUT_MS` | inherits `LLM_REQUEST_TIMEOUT_MS` (600000 here, §2b) | 💤 async generation worker only |
 | `WORKER_LOCK_DURATION_MS` | `max(2 × LLM timeout, 60000)` | 💤 BullMQ lock tolerance. Set only for very long ingests |
 | `WORKER_LOST_WINDOW_MS` | 2 × lock duration | 💤 when a `running` job is presumed lost |
 | `WORKER_REAP_ENABLED` | on | 💤 `false` is an incident escape hatch only |
