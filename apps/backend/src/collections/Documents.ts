@@ -1236,7 +1236,14 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
   }
 
   // 2. Enqueue ingest — skip if already enqueued (idempotent re-saves).
-  if (fresh.ingestId) return
+  //
+  // ⚠ `ingestStatus` TOO, not only `ingestId`. `ingestId` is written AFTER the
+  // enqueue returns, so for that window a row that is already `embedding` (or
+  // already `ready`, when the callback beat the response) carries no id. Any
+  // save in that window would otherwise enqueue the document twice and move a
+  // `ready` row back to `embedding`. A retry resets the row to `pending`, so
+  // this never blocks a deliberate re-run. `Documents.callbackRace.test.ts`.
+  if (fresh.ingestId || fresh.ingestStatus === 'embedding' || fresh.ingestStatus === 'ready') return
 
   await enqueueIngestForDoc({
     payload,

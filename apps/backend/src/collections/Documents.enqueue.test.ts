@@ -115,6 +115,9 @@ describe('enqueue with callbacks configured', () => {
     expect(updates[embeddingAt]).toMatchObject({ data: { ingestStatus: 'embedding' } })
     expect(updates[ingestIdAt]).toMatchObject({ data: { ingestId: 'ing_test_1' } })
     expect(embeddingAt).toBeLessThan(ingestIdAt)
+    // 🔴 The post-enqueue write carries ONLY the id. The callback may already
+    // have written `ready`; a status here would move the row backwards.
+    expect(Object.keys(updates[ingestIdAt]!.data as object)).toEqual(['ingestId'])
     // Never flipped to a done state on the 202 — only the callback may do that.
     expect(JSON.stringify(updates)).not.toContain('ready')
   })

@@ -119,6 +119,24 @@ describe('POST /api/ai-service/callback — correct signature', () => {
     expect(updated[0]).toMatchObject({ data: { ingestStatus: 'failed' } })
   })
 
+  it('🔴 writes with `__skipDocsExtract`, so the save cannot re-run the ingest pipeline', async () => {
+    // Without it, `afterChange` re-enters `runExtractAndIngest` and a callback
+    // that beat the `ingestId` write re-enqueues and reverts to `embedding`.
+    for (const event of ['ingest.completed', 'ingest.failed']) {
+      updated.length = 0
+      const body = envelope({ event, ingestId: `ing_${event}` })
+      await post(body, headersFor(body))
+      expect(updated[0]).toMatchObject({ context: { __skipDocsExtract: true } })
+    }
+  })
+
+  it('finds the row by docId, so a callback that beats the ingestId write still lands', async () => {
+    findByIDImpl = async () => ({ id: 42, ingestId: null, publicationStatus: 'draft' })
+    const body = envelope()
+    await post(body, headersFor(body))
+    expect(updated[0]).toMatchObject({ id: 42, data: { ingestStatus: 'ready' } })
+  })
+
   it('dedupes a retried event: 200, no second document write', async () => {
     createImpl = async () => {
       throw Object.assign(new Error('duplicate key value'), { code: '23505' })

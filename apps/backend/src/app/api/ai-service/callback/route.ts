@@ -354,6 +354,16 @@ async function dispatchCallback(
                   }`.slice(0, 500),
                 },
           overrideAccess: true,
+          /**
+           * 🔴 `__skipDocsExtract`, OR THIS WRITE UNDOES ITSELF. Without it the
+           * save re-fires `afterChange` → `runExtractAndIngest`, whose only
+           * "already enqueued" guard is `ingestId`. ai-service can call back
+           * BEFORE the enqueue's own response lands (measured: ~1 ms early, 3
+           * of 4 uploads on the fake provider), so `ingestId` is still empty:
+           * the pipeline re-ran, wrote `embedding` over this `ready` and
+           * enqueued the document a second time. `Documents.callbackRace.test.ts`.
+           */
+          context: { __skipDocsExtract: true },
         })
         if (envelope.event === 'ingest.failed') {
           console.warn(

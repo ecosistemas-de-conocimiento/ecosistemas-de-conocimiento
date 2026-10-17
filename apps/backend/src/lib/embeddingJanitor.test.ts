@@ -175,7 +175,7 @@ describe('sweepStalledEmbeddings', () => {
 
     const result = await sweepStalledEmbeddings(db.payload, { now: NOW, deadlineMs: DEADLINE_MS })
 
-    expect(result).toEqual({ examined: 1, stalled: 1, neverSent: 1 })
+    expect(result).toEqual({ examined: 1, stalled: 1, neverSent: 1, recovered: 0 })
     const data = db.update.mock.calls[0]![0].data as Record<string, unknown>
     // The restraint asserted: two fields, and neither of them touches the corpus
     // join-back key or any text on the row.
@@ -244,7 +244,7 @@ describe('sweepStalledEmbeddings', () => {
 
     const result = await sweepStalledEmbeddings(db.payload, { now: NOW, deadlineMs: DEADLINE_MS })
 
-    expect(result).toEqual({ examined: 1, stalled: 1, neverSent: 1 })
+    expect(result).toEqual({ examined: 1, stalled: 1, neverSent: 1, recovered: 0 })
     expect(db.row(3)!.ingestStatus).toBe('failed')
     for (const id of [1, 2, 4, 5, 6, 7, 8, 9]) {
       expect(db.row(id)!.ingestError).toBeUndefined()
@@ -259,7 +259,7 @@ describe('sweepStalledEmbeddings', () => {
       { id: 2, ingestStatus: 'embedding', ingestId: 'ing-2', updatedAt: minutesAgo(60) },
     ])
     const result = await sweepStalledEmbeddings(db.payload, { now: NOW, deadlineMs: DEADLINE_MS })
-    expect(result).toEqual({ examined: 2, stalled: 2, neverSent: 1 })
+    expect(result).toEqual({ examined: 2, stalled: 2, neverSent: 1, recovered: 0 })
     expect(String(db.row(1)!.ingestError)).toContain('No se envió nada')
     expect(String(db.row(2)!.ingestError)).toContain('Puede haber terminado sin avisar')
   })
@@ -284,7 +284,7 @@ describe('sweepStalledEmbeddings', () => {
 
     // The guarded update matched nothing, so nothing was written AND nothing is
     // reported — a phantom in the ERROR log is a call-out operators would act on.
-    expect(result).toEqual({ examined: 1, stalled: 0, neverSent: 0 })
+    expect(result).toEqual({ examined: 1, stalled: 0, neverSent: 0, recovered: 0 })
     expect(db.row(7)!.ingestStatus).toBe('ready')
     expect(db.row(7)!.ingestError).toBeNull()
   })
@@ -385,8 +385,104 @@ describe('sweepStalledEmbeddings', () => {
       examined: 0,
       stalled: 0,
       neverSent: 0,
+      recovered: 0,
     })
     expect(db.update).not.toHaveBeenCalled()
+  })
+})
+
+describe('sweepStalledEmbeddings — rescue from the ai-service job status', () => {
+  /**
+   * 🔴 WHY: the callback-before-ingestId race left rows at `embedding` whose
+   * ai-service job had in fact COMPLETED. Stamping those `failed` tells the
+   * user to retry, and a retry embeds the document a second time into a corpus
+   * with no per-document delete. The job status is the truth; read it first.
+   */
+  const stuck = (over: Row = {}) => ({
+    id: 1,
+    organization: 10,
+    ingestStatus: 'embedding',
+    ingestId: 'ing-1',
+    updatedAt: minutesAgo(60),
+    ...over,
+  })
+
+  it('🔴 a completed job is marked `ready`, with no error', async () => {
+    const db = fakeDb([stuck({ ingestError: null })])
+    const readIngestStatus = vi.fn(async () => 'completed' as const)
+
+    const result = await sweepStalledEmbeddings(db.payload, {
+      now: NOW,
+      deadlineMs: DEADLINE_MS,
+      readIngestStatus,
+    })
+
+    expect(readIngestStatus).toHaveBeenCalledWith(expect.objectContaining({ id: 1, ingestId: 'ing-1' }))
+    expect(db.row(1)).toMatchObject({ ingestStatus: 'ready', ingestError: null })
+    expect(result).toMatchObject({ recovered: 1, stalled: 0 })
+    expect(db.update.mock.calls[0]![0].context).toEqual({ __skipDocsExtract: true })
+  })
+
+  it('🔴 a failed job is marked `failed` with the job status as the reason', async () => {
+    const db = fakeDb([stuck()])
+    await sweepStalledEmbeddings(db.payload, {
+      now: NOW,
+      deadlineMs: DEADLINE_MS,
+      readIngestStatus: async () => 'failed',
+    })
+    expect(db.row(1)!.ingestStatus).toBe('failed')
+    expect(String(db.row(1)!.ingestError)).toContain('ingest_failed')
+    // Still retryable through the one explicit path.
+    expect(planIngestRetry({ ...(db.row(1) as Record<string, string>), kind: 'pdf', extractedText: 'x' })).not.toBeNull()
+  })
+
+  it('a job still processing, or an unreadable status, falls back to the stall stamp', async () => {
+    const db = fakeDb([stuck({ id: 1 }), stuck({ id: 2, ingestId: 'ing-2' })])
+    await sweepStalledEmbeddings(db.payload, {
+      now: NOW,
+      deadlineMs: DEADLINE_MS,
+      readIngestStatus: async (doc) => {
+        if (doc.id === 1) return 'processing'
+        throw new Error('404')
+      },
+    })
+    expect(String(db.row(1)!.ingestError)).toContain(STALLED_EMBED_CODE)
+    expect(String(db.row(2)!.ingestError)).toContain(STALLED_EMBED_CODE)
+  })
+
+  it('never asks about a row with no ingest id — nothing was sent', async () => {
+    const db = fakeDb([stuck({ ingestId: null })])
+    const readIngestStatus = vi.fn(async () => 'completed' as const)
+    await sweepStalledEmbeddings(db.payload, { now: NOW, deadlineMs: DEADLINE_MS, readIngestStatus })
+    expect(readIngestStatus).not.toHaveBeenCalled()
+    expect(db.row(1)!.ingestStatus).toBe('failed')
+  })
+
+  it('🔴 the rescue write is guarded too: a callback that lands first wins', async () => {
+    const db = fakeDb([stuck()], {
+      beforeUpdate: (rows) => Object.assign(rows[0]!, { ingestStatus: 'failed', ingestError: 'real' }),
+    })
+    await sweepStalledEmbeddings(db.payload, {
+      now: NOW,
+      deadlineMs: DEADLINE_MS,
+      readIngestStatus: async () => 'completed',
+    })
+    expect(db.row(1)).toMatchObject({ ingestStatus: 'failed', ingestError: 'real' })
+  })
+
+  it('caps status reads per sweep and leaves the rest for the next pass, unstamped', async () => {
+    // ai-service's /v1 cap is per IP and shared by every consumer.
+    const db = fakeDb([stuck({ id: 1 }), stuck({ id: 2, updatedAt: minutesAgo(50) })])
+    const readIngestStatus = vi.fn(async () => 'completed' as const)
+    await sweepStalledEmbeddings(db.payload, {
+      now: NOW,
+      deadlineMs: DEADLINE_MS,
+      readIngestStatus,
+      maxStatusReads: 1,
+    })
+    expect(readIngestStatus).toHaveBeenCalledTimes(1)
+    expect(db.row(1)!.ingestStatus).toBe('ready')
+    expect(db.row(2)!.ingestStatus).toBe('embedding')
   })
 })
 

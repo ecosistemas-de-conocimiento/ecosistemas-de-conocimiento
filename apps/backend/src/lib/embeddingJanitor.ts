@@ -146,6 +146,8 @@ export interface StalledEmbeddingCandidate {
    * {@link stalledEmbeddingReason} for how far that evidence actually goes.
    */
   ingestId?: string | null
+  /** The ecosistema; picks the ai-service key a job-status read must use. */
+  organization?: unknown
   /**
    * When the row was last written. The embed started at or before this.
    *
@@ -211,14 +213,40 @@ export interface EmbeddingSweepResult {
   stalled: number
   /** Of those, how many never got as far as an ingest id. The "nothing was sent" ones. */
   neverSent: number
+  /** Rows moved to `ready` / `failed` from their ai-service job status instead. */
+  recovered: number
 }
+
+/** ai-service's batch status (`client.ingest.status(id).status`). */
+export type IngestJobStatus = 'processing' | 'completed' | 'partial' | 'failed'
+
+/**
+ * Default cap on job-status reads per sweep. ai-service's `/v1` limit is 100
+ * requests per minute PER IP, shared by every consumer (quoted from the
+ * header above); 50 reads every 15 minutes stays far under it.
+ */
+export const DEFAULT_MAX_STATUS_READS = 50
+
+/** Reason written when ai-service reports the job failed. Same code the callback uses. */
+export const JOB_FAILED_REASON =
+  'ingest_failed: el servicio de IA reportó que el procesamiento falló (estado leído por el janitor).'
 
 /**
  * One sweep: find every document stranded mid-embed and make the stall VISIBLE
  * and RETRYABLE.
  *
- * ⚠ It writes TWO fields and calls nothing. No ai-service client is reachable
- * from this signature — the restraint is structural, not a matter of discipline.
+ * ⚠ It writes TWO fields and NEVER RE-ENQUEUES. The one ai-service call it can
+ * make is a READ, through `readIngestStatus`, and only when the caller passes
+ * one: no enqueue is reachable from this signature.
+ *
+ * 🔴 THE JOB-STATUS RESCUE. When a row carries an `ingestId` and a reader is
+ * passed, the sweep asks ai-service first. `completed` → `ready`; `failed` /
+ * `partial` → `failed` with {@link JOB_FAILED_REASON}. Only `processing` or an
+ * unreadable status falls through to the stall stamp. This is what rescues the
+ * rows the callback-before-ingestId race stranded: their job DID complete, and
+ * stamping them `failed` would invite a retry that embeds them twice.
+ * ⚠ Past `maxStatusReads`, rows with an id are SKIPPED, not stamped: every row
+ * read this pass leaves `embedding`, so the next pass reaches the rest.
  *
  * ⚠ `__skipDocsExtract` is not optional. Without it the status write re-fires
  * the `afterChange` hook, and the sweep that must not re-drive the ingest would
@@ -234,6 +262,9 @@ export async function sweepStalledEmbeddings(
     limit?: number
     deadlineMs?: number
     log?: { warn(o: Record<string, unknown>, m: string): void }
+    /** Read-only ai-service job status for a row with an `ingestId`. */
+    readIngestStatus?: (doc: StalledEmbeddingCandidate) => Promise<IngestJobStatus>
+    maxStatusReads?: number
   } = {},
 ): Promise<EmbeddingSweepResult> {
   const now = opts.now ?? new Date()
@@ -297,9 +328,48 @@ export async function sweepStalledEmbeddings(
   const waitedMinutes = Math.round(deadlineMs / 60_000)
   let stalled = 0
   let neverSent = 0
+  let recovered = 0
+  let statusReads = 0
+  const maxStatusReads = opts.maxStatusReads ?? DEFAULT_MAX_STATUS_READS
 
   for (const doc of docs) {
     if (doc?.id == null) continue
+
+    if (opts.readIngestStatus && doc.ingestId) {
+      if (statusReads >= maxStatusReads) continue
+      statusReads += 1
+      let job: IngestJobStatus | null = null
+      try {
+        job = await opts.readIngestStatus(doc)
+      } catch (err) {
+        opts.log?.warn(
+          { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+          '[embedding-janitor] could not read the ai-service job status — stamping the stall instead',
+        )
+      }
+      if (job && job !== 'processing') {
+        try {
+          // Same guard as the stall stamp below: a late callback wins.
+          const res = (await payload.update({
+            collection: 'documents',
+            where: { and: [{ id: { equals: doc.id } }, ...stalledWhere] },
+            data:
+              job === 'completed'
+                ? { ingestStatus: 'ready', ingestError: null }
+                : { ingestStatus: 'failed', ingestError: JOB_FAILED_REASON },
+            overrideAccess: true,
+            context: { __skipDocsExtract: true },
+          })) as unknown as { docs?: unknown[] }
+          if ((res?.docs?.length ?? 0) > 0) recovered += 1
+        } catch (err) {
+          opts.log?.warn(
+            { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+            '[embedding-janitor] could not apply the ai-service job status',
+          )
+        }
+        continue
+      }
+    }
 
     try {
       /**
@@ -365,7 +435,7 @@ export async function sweepStalledEmbeddings(
     )
   }
 
-  return { examined: docs.length, stalled, neverSent }
+  return { examined: docs.length, stalled, neverSent, recovered }
 }
 
 // ---------------------------------------------------------------------------
@@ -592,7 +662,17 @@ export function startEmbeddingJanitor(payload: Payload): boolean {
           '[embedding-janitor] the pending sweep threw',
         )
       }
-      const result = await sweepStalledEmbeddings(p, { log: p.logger })
+      const result = await sweepStalledEmbeddings(p, {
+        log: p.logger,
+        readIngestStatus: readJobStatus,
+      })
+      if (result.recovered > 0) {
+        p.logger.warn(
+          result,
+          '[embedding-janitor] documents sat in ingestStatus="embedding" although their ' +
+            'ai-service job had finished — moved to ready/failed from the job status',
+        )
+      }
       if (result.stalled > 0) {
         /**
          * ERROR, not warn: reaching here means ingests are being accepted and
@@ -616,6 +696,18 @@ export function startEmbeddingJanitor(payload: Payload): boolean {
       }
     },
   })
+}
+
+/**
+ * The production job-status reader: the row's own ecosistema key, a GET.
+ * Lazy import, like every other ai-client use in this backend.
+ */
+async function readJobStatus(doc: StalledEmbeddingCandidate): Promise<IngestJobStatus> {
+  const { getAppAIClient } = await import('./aiClient')
+  const { relationId } = await import('./permissions')
+  const org = relationId(doc.organization as never)
+  const client = getAppAIClient(org ?? undefined)
+  return (await client.ingest.status(String(doc.ingestId))).status
 }
 
 /** Stop the interval (used by tests / graceful shutdown). */
