@@ -26,6 +26,14 @@
  *     stamp is what makes stale rows FINDABLE after a prompt change. Includes
  *     rows that were never extracted (the column is NULL).
  *   · `graphStatus = 'failed'` — a lost run or a transient ai-service error.
+ *   · `graphStatus = 'extracting'` with `updatedAt` older than a cutoff
+ *     ({@link DEFAULT_STALE_EXTRACTING_MS}, 30 min; `staleExtractingMs` /
+ *     `GRAPH_BACKFILL_STALE_EXTRACTING_MIN`). A crash mid-run leaves the row
+ *     stamped with the CURRENT version and stuck at `extracting`, which no
+ *     other clause matches, so it was never retried. The `extracting` write
+ *     bumps `updated_at` (`lib/documentColumns.ts`), so the age is the age of
+ *     that write. ⚠ The cutoff is what keeps a run that is still going from
+ *     being started twice; keep it well above the longest real extraction.
  *
  * ── What it reads 🔴 ──────────────────────────────────────────────────────
  *
@@ -75,6 +83,11 @@ export interface BackfillOptions {
   dryRun?: boolean
   /** Skip the orphan sweep (useful when running the backfill in slices). */
   skipOrphanSweep?: boolean
+  /**
+   * An `extracting` row older than this is treated as a lost run and retried.
+   * Default {@link DEFAULT_STALE_EXTRACTING_MS}.
+   */
+  staleExtractingMs?: number
   log?: (message: string) => void
 }
 
@@ -107,6 +120,15 @@ const relationId = (raw: unknown): string | number | null => {
   return null
 }
 
+/** How old an `extracting` row must be before the backfill calls it lost: 30 min. */
+export const DEFAULT_STALE_EXTRACTING_MS = 30 * 60 * 1000
+
+export interface StaleWhereOptions {
+  staleExtractingMs?: number
+  /** Injected in tests. */
+  now?: number
+}
+
 /**
  * Documents whose graph is stale or broken.
  *
@@ -114,12 +136,22 @@ const relationId = (raw: unknown): string | number | null => {
  * every other graph query. Access control plays no part: this runs with
  * `overrideAccess: true` and there is no user.
  */
-export function staleDocumentsWhere(organizationId?: string | number): Record<string, unknown> {
+export function staleDocumentsWhere(
+  organizationId?: string | number,
+  opts: StaleWhereOptions = {},
+): Record<string, unknown> {
+  const staleMs =
+    opts.staleExtractingMs != null && opts.staleExtractingMs > 0
+      ? opts.staleExtractingMs
+      : DEFAULT_STALE_EXTRACTING_MS
+  const cutoff = new Date((opts.now ?? Date.now()) - staleMs).toISOString()
   const stale = {
     or: [
       { graphPromptVersion: { not_equals: GRAPH_PROMPT_VERSION } },
       { graphPromptVersion: { exists: false } },
       { graphStatus: { equals: 'failed' } },
+      // A lost run: see the module header.
+      { and: [{ graphStatus: { equals: 'extracting' } }, { updatedAt: { less_than: cutoff } }] },
     ],
   }
   // Nothing to extract from an empty row, and asking the model about one costs
@@ -149,7 +181,9 @@ export async function runGraphBackfill(
 
   const found = await payload.find({
     collection: 'documents',
-    where: staleDocumentsWhere(options.organizationId),
+    where: staleDocumentsWhere(options.organizationId, {
+      staleExtractingMs: options.staleExtractingMs,
+    }),
     limit: limit || 0,
     depth: 0,
     overrideAccess: true,

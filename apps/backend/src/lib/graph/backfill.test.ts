@@ -9,7 +9,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { NO_DRIZZLE } from '@/lib/documentColumns.testFake'
 vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
-import { deleteOrphanEntities, runGraphBackfill, staleDocumentsWhere, type GraphBackfillPayload } from './backfill'
+import {
+  DEFAULT_STALE_EXTRACTING_MS,
+  deleteOrphanEntities,
+  runGraphBackfill,
+  staleDocumentsWhere,
+  type GraphBackfillPayload,
+} from './backfill'
 import { GRAPH_PROMPT_VERSION } from './prompt'
 
 const silent = () => undefined
@@ -62,6 +68,35 @@ describe('staleDocumentsWhere', () => {
     expect(or).toContainEqual({ graphStatus: { equals: 'failed' } })
   })
 
+  it('🔴 also selects a row stuck at `extracting` past the cutoff, whatever its stamp', () => {
+    // A crash mid-run leaves the CURRENT version stamped and the status at
+    // `extracting`: no other clause matches it, so it was never retried.
+    const now = Date.parse('2026-10-17T12:00:00.000Z')
+    const where = staleDocumentsWhere(undefined, { now }) as { and: Record<string, unknown>[] }
+    const or = (where.and[0] as { or: Record<string, unknown>[] }).or
+    expect(DEFAULT_STALE_EXTRACTING_MS).toBe(30 * 60 * 1000)
+    expect(or).toContainEqual({
+      and: [
+        { graphStatus: { equals: 'extracting' } },
+        { updatedAt: { less_than: '2026-10-17T11:30:00.000Z' } },
+      ],
+    })
+  })
+
+  it('the stale-extracting cutoff is configurable', () => {
+    const now = Date.parse('2026-10-17T12:00:00.000Z')
+    const where = staleDocumentsWhere(7, { now, staleExtractingMs: 5 * 60 * 1000 }) as {
+      and: Record<string, unknown>[]
+    }
+    const or = (where.and[1] as { or: Record<string, unknown>[] }).or
+    expect(or).toContainEqual({
+      and: [
+        { graphStatus: { equals: 'extracting' } },
+        { updatedAt: { less_than: '2026-10-17T11:55:00.000Z' } },
+      ],
+    })
+  })
+
   it('requires text — asking the model about an empty row costs the same', () => {
     const where = staleDocumentsWhere() as { and: Record<string, unknown>[] }
     expect(where.and).toContainEqual({ extractedText: { exists: true } })
@@ -85,6 +120,21 @@ describe('runGraphBackfill', () => {
     expect(result).toMatchObject({ candidates: 2, extracted: 0, failed: 0, skipped: 2, dryRun: true })
     // 🔴 A dry run must not delete an entity either.
     expect(deletes).toHaveLength(0)
+  })
+
+  it('queries with the configured stale-extracting cutoff', async () => {
+    const { payload, finds } = fakePayload({ documents: [] })
+    const before = Date.now()
+    await runGraphBackfill(payload, { dryRun: true, log: silent, staleExtractingMs: 60_000 })
+    const where = finds.find((f) => f.collection === 'documents')?.where as {
+      and: { or?: Record<string, unknown>[] }[]
+    }
+    const clause = where.and[0]!.or!.find((c) => 'and' in c) as {
+      and: [unknown, { updatedAt: { less_than: string } }]
+    }
+    const cutoff = Date.parse(clause.and[1].updatedAt.less_than)
+    expect(cutoff).toBeGreaterThanOrEqual(before - 60_000)
+    expect(cutoff).toBeLessThanOrEqual(Date.now() - 60_000)
   })
 
   it('refuses a document with no ecosistema rather than guessing one', async () => {

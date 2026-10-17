@@ -23,6 +23,7 @@ vi.mock('./schedule', async (importOriginal) => ({
 }))
 
 const { runGraphBackfill } = await import('./backfill')
+const { GRAPH_PROMPT_VERSION } = await import('./prompt')
 type Payload = Parameters<typeof runGraphBackfill>[0]
 
 const silent = () => undefined
@@ -97,6 +98,44 @@ describe('runGraphBackfill — privacy', () => {
     expect(deletes).toContainEqual({ collection: 'graphRelations', where })
     expect(documentUpdates.at(-1)?.data).toMatchObject({ graphStatus: 'skipped' })
     expect(String(documentUpdates.at(-1)?.data.graphError)).toMatch(/^not_graphable:/)
+  })
+
+  it('🔴 a stale `extracting` testimonio is retried from its redacted text only', async () => {
+    const { payload } = fakePayload([
+      {
+        id: 8,
+        organization: 5,
+        contentKind: 'testimonio',
+        name: 'Testimonio de María López.mp3',
+        extractedText: RAW,
+        redactedText: REDACTED,
+        anonymisationStatus: 'ready',
+        graphStatus: 'extracting',
+        graphPromptVersion: GRAPH_PROMPT_VERSION,
+      },
+    ])
+    await runGraphBackfill(payload, { log: silent, skipOrphanSweep: true })
+    const args = runGraphExtraction.mock.calls[0]![0]
+    expect(args.text).toBe(REDACTED.trim())
+    expect(args.title).toBe('Testimonio')
+  })
+
+  it('🔴 a stale `extracting` testimonio with no approved redaction is skipped', async () => {
+    const { payload, documentUpdates } = fakePayload([
+      {
+        id: 9,
+        organization: 5,
+        contentKind: 'testimonio',
+        extractedText: RAW,
+        anonymisationStatus: 'held',
+        graphStatus: 'extracting',
+        graphPromptVersion: GRAPH_PROMPT_VERSION,
+      },
+    ])
+    const result = await runGraphBackfill(payload, { log: silent, skipOrphanSweep: true })
+    expect(runGraphExtraction).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ extracted: 0, skipped: 1 })
+    expect(documentUpdates.at(-1)?.data).toMatchObject({ graphStatus: 'skipped' })
   })
 
   it('a dry run reports an unscrubbed testimonio and deletes nothing', async () => {

@@ -8,6 +8,9 @@
  *     GRAPH_BACKFILL_ORG=3        only this ecosistema (default: all)
  *     GRAPH_BACKFILL_DRY_RUN=1    list candidates, extract nothing
  *     GRAPH_BACKFILL_NO_SWEEP=1   skip the orphan-entity sweep
+ *     GRAPH_BACKFILL_STALE_EXTRACTING_MIN=30
+ *                                 retry rows stuck at `extracting` for longer
+ *                                 than this many minutes (default 30)
  *
  * ── 🔴 WHY THIS IS A SEPARATE FILE FROM `backfill.ts` ──────────────────────
  *
@@ -48,6 +51,10 @@ const result = await runGraphBackfill(payload as unknown as GraphBackfillPayload
   organizationId: process.env.GRAPH_BACKFILL_ORG?.trim() || undefined,
   dryRun: process.env.GRAPH_BACKFILL_DRY_RUN === '1',
   skipOrphanSweep: process.env.GRAPH_BACKFILL_NO_SWEEP === '1',
+  staleExtractingMs: (() => {
+    const minutes = intFromEnv('GRAPH_BACKFILL_STALE_EXTRACTING_MIN')
+    return minutes ? minutes * 60 * 1000 : undefined
+  })(),
 })
 
 // A non-zero exit when something failed, so a wrapper script cannot report
