@@ -17,6 +17,10 @@
  * an S3-compatible store is not S3.
  */
 
+import { Readable } from 'node:stream'
+
+import { nodeToWeb } from '../nodeToWeb'
+
 /** Every variable this module reads. Named to match the sibling app it came from, deliberately. */
 export const S3_ENV_VARS = [
   'S3_ENDPOINT',
@@ -250,7 +254,13 @@ export async function openObjectStream(
   return {
     size: res.ContentLength,
     contentType: res.ContentType ?? null,
-    stream: () => body.transformToWebStream() as ReadableStream<Uint8Array>,
+    // ⚠ Not `transformToWebStream()`: that is `Readable.toWeb`, which on
+    // Node 22/24 can throw an uncaught error when the upload is cancelled
+    // mid-body. See `lib/nodeToWeb.ts`.
+    stream: () =>
+      body instanceof Readable
+        ? nodeToWeb(body)
+        : (body.transformToWebStream() as ReadableStream<Uint8Array>),
     close,
   }
 }

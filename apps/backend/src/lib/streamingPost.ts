@@ -18,6 +18,8 @@ import https from 'node:https'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
+import { nodeToWeb } from './nodeToWeb'
+
 export interface StreamingPostInit {
   method?: string
   headers: Record<string, string>
@@ -43,7 +45,8 @@ export function postStreaming(url: string, init: StreamingPostInit): Promise<Res
           const status = res.statusCode ?? 502
           const body = NULL_BODY.has(status)
             ? null
-            : (Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>)
+            : // Not `Readable.toWeb`: cancelling it can crash Node 22/24. See `lib/nodeToWeb.ts`.
+              nodeToWeb(res)
           if (!body) res.resume()
           resolve(new Response(body, { status, headers }))
         } catch (err) {
