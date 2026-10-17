@@ -1,0 +1,17 @@
+// Type coverage for the retrieval eval (src/eval), which tsconfig.json excludes.
+//
+// The eval imports apps/web's PRODUCTION query-expansion module
+// (apps/web/src/lib/server/engine/expand.ts) on purpose, so it measures what
+// ships, not a copy. That file resolves @edc/chat-engine from
+// apps/web/node_modules, which the backend Docker image does not contain, and
+// `next build` type-checks every file tsconfig.json includes. The eval is a
+// dev-only tool run with apps/web's tsx; it is never in the image build graph.
+// `pnpm typecheck` runs this config after the main one.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./tsconfig.eval.tsbuildinfo"
+  },
+  "include": ["next-env.d.ts", "src/eval/**/*.ts"],
+  "exclude": ["node_modules"]
+}

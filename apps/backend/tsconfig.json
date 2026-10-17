@@ -25,5 +25,9 @@
     "next-env.d.ts",
     ".next/types/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  // 🔴 src/eval is excluded so `next build` never type-checks it. The eval
+  // imports apps/web's production expand.ts, which resolves @edc/chat-engine
+  // from apps/web/node_modules — absent from the backend image, so the build
+  // died there. tsconfig.eval.json type-checks it; `pnpm typecheck` runs both.
+  "exclude": ["node_modules", "src/eval/**"]
 }
