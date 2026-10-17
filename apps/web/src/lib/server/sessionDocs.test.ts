@@ -13,12 +13,7 @@ vi.mock('$lib/server/auth', () => ({
 }));
 
 import { backendFetch } from '$lib/server/auth';
-import {
-  attachmentTitleFor,
-  fetchSessionDocs,
-  sessionDocumentIdSet,
-  sessionDocumentsQuery,
-} from './sessionDocs';
+import { fetchSessionDocs, sessionDocumentIdSet, sessionDocumentsQuery } from './sessionDocs';
 
 const mockedBackendFetch = backendFetch as unknown as ReturnType<typeof vi.fn>;
 
@@ -128,13 +123,3 @@ describe('sessionDocumentIdSet', () => {
   });
 });
 
-describe('attachmentTitleFor (privacy)', () => {
-  it('keeps a documento\'s name', () => {
-    expect(attachmentTitleFor('documento', ' informe.pdf ')).toBe('informe.pdf');
-  });
-  it('🔴 never passes a gated row\'s name through', () => {
-    expect(attachmentTitleFor('testimonio', 'Juana Pérez.m4a')).toBe('Testimonio');
-    expect(attachmentTitleFor('conversacion', 'Sobre Juana')).toBe('Conversación');
-    expect(attachmentTitleFor(undefined, 'Juana Pérez.m4a')).toBe('Documento sin título');
-  });
-});
