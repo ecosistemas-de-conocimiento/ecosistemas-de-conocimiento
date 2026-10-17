@@ -17,7 +17,7 @@
  * an S3-compatible store is not S3.
  */
 
-/** Every variable this module reads. Named to match a prototype's, deliberately. */
+/** Every variable this module reads. Named to match the sibling app it came from, deliberately. */
 export const S3_ENV_VARS = [
   'S3_ENDPOINT',
   'S3_ACCESS_KEY_ID',

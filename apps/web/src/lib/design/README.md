@@ -34,7 +34,7 @@ porque el ratio de contraste es simétrico.
 
 ### Por qué
 
-El código venía de otro producto (a prototype) y traía su identidad: rojo `#ff0044`,
+El código venía de otro producto y traía su identidad: rojo `#ff0044`,
 naranja `#ff6b3d`, degradados de marca en botones y radiales de color en el
 fondo de la página, más un `@import` a Google Fonts (Open Sans + IBM Plex Mono).
 Nada de eso pertenece a esta organización, y el brief pedía algo **neutro**:

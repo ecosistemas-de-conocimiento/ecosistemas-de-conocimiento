@@ -1,19 +1,15 @@
-> **Status — 2026-06-09.** Decision + design notes for the shared capability
-> router (`POST /v1/route`) and the shared text-to-SQL helper, promoted from
-> A prototype's bespoke `router.ts` + `tryXlsxSql()` into project-agnostic platform
-> capabilities so chat (PoC tester) and a prototype can consume them too. Plain-
-> language summary first, then the technical detail.
+> **Status.** Decision + design notes for the shared capability
+> router (`POST /v1/route`) and the shared text-to-SQL helper, project-agnostic
+> platform capabilities. Plain-language summary first, then the technical detail.
 
 # Capability router + shared text-to-SQL
 
 ## Summary
 
-A prototype had two useful pieces of machinery baked into its backend: a *capability
-router* (an LLM that maps a user question onto one of a prototype's three data
-surfaces) and a *text-to-SQL* helper (an LLM that writes a read-only `SELECT`
-over an xlsx-backed table, guarded so it can't mutate anything). Both are
-generally useful. This change generalises them into ai-service so any product
-can use them, without ai-service learning any product's domain.
+Two useful pieces of machinery: a *capability router* (an LLM that maps a user
+question onto one of the caller's data surfaces) and a *text-to-SQL* helper (an
+LLM that writes a read-only `SELECT` over a table, guarded so it can't mutate
+anything). They live in ai-service so any product can use them, without ai-service learning any product's domain.
 
 Two deliverables:
 
@@ -32,18 +28,13 @@ Two deliverables:
 
 ## Why it stays project-agnostic (ADR-0001)
 
-A prototype's router hard-coded a 3-value `Capability` enum and a Spanish municipal
-prompt; its SQL helper introspected a prototype's `information_schema` and ran the
-query against a prototype's Payload pool. None of that crosses into ai-service:
-
 - The candidate list is **caller-supplied**, not an enum. ai-service classifies
   onto whatever ids the caller offers and re-validates the chosen id against the
   same list. It never names a product capability.
 - The default router prompt + SQL prompt are **generic English** and live in
   ai-service as the *floor*; a project overrides them by registering the
   `capability-router` / `text-to-sql` unit-type (prompt + model) in the
-  registry. So the prototype Spanish prompt becomes registry data a prototype owns,
-  not ai-service code.
+  registry. So a product's prompt is registry data it owns, not ai-service code.
 - ai-service **does not execute SQL**, does not know table schemas (the caller
   passes `columns`), and does not introspect any database.
 
@@ -82,8 +73,7 @@ have a valid candidate list, we never error out).
   the `text-to-sql` unit-type + a generic default prompt; the result is run
   through the pure guard client-side.
 - `guardReadOnlySelect(sql, rowLimit?)` and `isReadOnlySelect(sql)` are exported
-  pure functions (`packages/ai-client/src/sql-guard.ts`). They mirror a prototype's
-  battle-tested `isReadOnlySelect` exactly — reject DML/DDL keywords, `;`-chains,
+  pure functions (`packages/ai-client/src/sql-guard.ts`). They reject DML/DDL keywords, `;`-chains,
   `--` and `/* */` comments; require a leading `SELECT` — plus auto-append a
   `LIMIT` (default 100) and strip a ```` ```sql ```` fence.
 - Products execute the validated SQL against **their own** Postgres.
@@ -97,22 +87,16 @@ have a valid candidate list, we never error out).
 - **`text-to-sql`** — override the SQL-generation `promptTemplate` / `model`.
   Absent a registered entry, the built-in read-only SQL prompt is used.
 
-A prototype should register a `capability-router` entry carrying its Spanish prompt
-(and a `text-to-sql` entry likewise) when it migrates off its bespoke code.
-
 ## ai-client
 
 `@edc/ai-client` 0.2.0 → 0.3.0. Added `client.route`, `client.textToSql`,
 `RouteAPI`, `TextToSqlAPI`, the pure guard exports, and all types. Existing
 methods unchanged (backward compatible). Zero prod runtime deps preserved.
-Packed `.tgz` rebuilt at `packages/ai-client/edc-ai-client-0.3.0.tgz`
-(the stale 0.2.0 tgz removed). Not re-copied into chat/the prototypes — they pick up
-the new tgz in a later phase.
 
 ## Not done / deferred
 
 - Compound questions (one question needing two surfaces at once) are out of
-  scope — this is a single-label classifier, same as a prototype's. Revisit with a
+  scope — this is a single-label classifier. Revisit with a
   multi-step plan router only if pilot transcripts show the need.
 - The router does not stream; it is a single short structured call.
 - No new DB migration: routing + SQL-gen are registry *data* (unit-types), not

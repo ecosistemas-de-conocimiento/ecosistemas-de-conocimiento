@@ -30,7 +30,6 @@
 - *Soft enforcement only in M3.* Check remaining at the request boundary, no worker-side atomic guard; add the table in a follow-up. Cheapest now; can over-spend under concurrent burst.
 
 **Tradeoffs.**
-- Pro: matches a prototype's invariant and lets us port its atomic-reserve concurrency tests as-is.
 - Pro: single hot row per org, but writes are short and `UPDATE ... RETURNING` doesn't hold a long lock.
 - Con: budget state and historical accounting now live in two places — `budget_state` (live remaining) vs `usage_logs` (audit trail). A reconciliation job will eventually be needed.
 - Con: monthly reset (rolling 30d? calendar month?) isn't specified — currently the budget is set once and decremented forever until someone manually adjusts it. **Tech debt:** no reset policy.
@@ -70,7 +69,6 @@
 - *Per-call override too* — request body can set `validatorRetries` per `/v1/generate` call.
 
 **Tradeoffs.**
-- Pro: matches a prototype; ports cleanly.
 - Pro: simple — one constant in the worker.
 - Con: "noisy" unitTypes (free-form Spanish output, unstructured prose) eat more retries than they're worth; tighter ones get one shot when they could safely have three.
 - Con: when a consumer hits a model that's chronically failing one validator, they can't dial retries up themselves — needs a config change in ai-service.
@@ -329,7 +327,7 @@ These didn't fit a single decision row but came up in the interview:
 - **No CI configuration mentioned anywhere** — README says CI exists ("M1 ✅") but there's no `.github/` or `.gitlab-ci.yml` visible. **Tech debt to verify.**
 - **API_KEYS env map.** Static JSON in env. Fine at small scale; will not scale past dozens of keys or any kind of key rotation. Documented for M5.
 - **`registry_audit` only audits registry writes.** Generation, budget changes, and ingest are not audited. May want a broader audit story.
-- **No rate limiting on the API surface itself** — only on the LLM provider side (a prototype's worker had `limiter: { max: 10, duration: 1000 }`). The HTTP routes don't rate-limit; a consumer could hammer `/v1/generate` and burn budget fast.
+- **No rate limiting on the API surface itself** — only on the LLM provider side. The HTTP routes don't rate-limit; a consumer could hammer `/v1/generate` and burn budget fast.
 - **No request-size limits enforced beyond Fastify defaults** — large `units` arrays could spike memory.
 
 ---

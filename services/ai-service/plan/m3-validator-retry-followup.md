@@ -16,7 +16,6 @@ Flow: call the model; run `runValidators(checks, output, ctx)`; if any flag is `
 
 ## §2. Why hardcoded was chosen
 
-- **Port parity with a prototype.** A prototype's router does a single retry on blocker flags. Matching the behaviour ports the relevant tests verbatim.
 - **One knob is enough until evidence of need.** No consumer is asking for more. Building a config surface with no payoff is debt.
 - **Spend protection.** Every retry doubles spend on that job. A low fixed cap is the easiest budget guard.
 - **Failure visibility stays loud.** Chronic validator failures show up as `failed` rows on dashboards. A retry knob hides them in spend instead.
@@ -90,7 +89,6 @@ Stored on `generation_requests.metadata.validatorRetries` (no new column). Worke
 A reasonable alternative is 0 retries — validators emit blockers, the worker marks `failed`, done. M3 keeps **one** retry because:
 
 - LLM outputs sometimes fail validation on transient format slippage (a missing closing brace, a stray fence). One re-prompt with the error often fixes it cheaply.
-- A prototype's empirical experience is the single retry catches most recoverable failures.
 
 But: if retries went off entirely, what protects spend?
 

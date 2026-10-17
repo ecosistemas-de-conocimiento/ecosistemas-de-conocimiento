@@ -300,7 +300,7 @@ describe('POST /v1/route — registry precedence (real resolveSpec)', () => {
     await app.close();
   });
 
-  it('a registered row with a NULL model keeps the router floor model (a prototype registers prompt-only)', async () => {
+  it('a registered row with a NULL model keeps the router floor model (a consumer app registers prompt-only)', async () => {
     stub.registry = registryRow({ promptTemplate: 'ruta: {{{question}}}', model: null });
     okRoute();
     const app = await makeApp();

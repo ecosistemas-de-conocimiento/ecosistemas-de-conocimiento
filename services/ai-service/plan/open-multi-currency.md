@@ -56,9 +56,7 @@ Four roughly-independent pieces, none of which exist today:
 Three reasons, all of which would have to change for it to become
 urgent:
 
-- **No consumer asks.** A prototype is the only consumer today and it
-  internally bills in USD (or doesn't bill at all — the platform owner
-  absorbs the cost). Nothing in production is misrepresented by USD-only.
+- **No consumer asks.** Nothing in production is misrepresented by USD-only.
 - **It's additive.** Going multi-currency later doesn't break any
   contract — the existing schema columns are already named and typed
   for it. Today's consumer would never notice the change.

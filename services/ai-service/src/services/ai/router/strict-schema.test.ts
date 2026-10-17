@@ -177,7 +177,7 @@ describe('strictSchemaProblems — rejects, never rewrites', () => {
 });
 
 describe('model support table', () => {
-  it('names gpt-4o-mini (the prototype synthesis model) and the built-in effort-tier model', () => {
+  it('names gpt-4o-mini (the consumer app synthesis model) and the built-in effort-tier model', () => {
     expect(supportsStrictSchema('openai/gpt-4o-mini')).toBe(true);
     expect(supportsStrictSchema('deepseek/deepseek-chat-v3.1')).toBe(true);
   });

@@ -270,7 +270,7 @@ export async function probeAiService(baseUrl = process.env.AI_SERVICE_URL): Prom
  * Measured by the user against `rustfs/rustfs:1.0.0-rc.1`: both endpoints
  * answer 200 — `/health/ready` reporting `"storage":{"ready":true}` — WHILE
  * EVERY S3 CALL AGAINST THE SAME PROCESS RETURNS 503. That is Rule 4b's whole
- * point, and the user's own notes call it "a prototype 20-hour outage in a new
+ * point, and the user's own notes call it "the other product's 20-hour outage in a new
  * place, and worse because the endpoint has a reassuring name". So this probe
  * does the thing: one `HeadBucket` on the real bucket with the real app
  * credential. Rule 5 — bounded, cheap (~1ms), no data transferred, no

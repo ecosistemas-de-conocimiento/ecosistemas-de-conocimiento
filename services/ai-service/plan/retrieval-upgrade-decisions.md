@@ -3,8 +3,7 @@
 Migration: `0012`
 
 Implements rungs 0–1 of the retrieval ladder, in ai-service, behind the existing
-`/v1/retrieve` contract. Driven by a prototype's compliance-RAG needs; another prototype
-inherits it. Later rungs (reranker, HyDE, contextual retrieval, agentic loops)
+`/v1/retrieve` contract. Later rungs (reranker, HyDE, contextual retrieval, agentic loops)
 are explicitly NOT started.
 
 ---
@@ -20,17 +19,10 @@ lines of orchestration over a single SQL statement.
 
 **Two recon findings corrected the assumptions the work was planned on:**
 
-1. **Chunking is NOT consumer-side.** A prototype has no chunker at all — repo-wide
-   there is no 512/50 splitter. It POSTs whole documents and ai-service does
-   100% of the chunking. The "a prototype chunks at 512/50 paragraph-aware" note was
-   stale. This settles the structural-chunker seam by itself (§2).
-2. **No temporal metadata reaches ai-service.** A prototype models validity as
-   `document_versions.is_current` (a boolean) plus `version_number` /
-   `fetched_at` / `content_hash`. There is no `valid_at` / `superseded_at`
-   anywhere, and none of those fields are sent on ingest — the metadata literal
-   is `{versionId, orgId, threadId, scope, kind, tier, replaces}`. When
-   `flipSupersede()` flips `is_current=false`, **ai-service is never told**, so
-   superseded chunks stay retrievable forever. There was nothing to filter on;
+1. **Chunking is NOT consumer-side.** A consumer POSTs whole documents and
+   ai-service does 100% of the chunking. This settles the structural-chunker
+   seam by itself (§2).
+2. **No temporal metadata reached ai-service.** There was nothing to filter on;
    the columns had to be created (§1).
 
 ---
@@ -116,13 +108,12 @@ than remembered.
 **Why the chunker is in ai-service at all** (this part is unchanged — it is the
 MACHINERY that belongs here, not the patterns):
 
-1. A prototype has no chunker; ai-service already does all chunking. Moving the
-   splitter consumer-side means building a chunker that does not exist, twice.
+1. ai-service already does all chunking. Moving the splitter consumer-side means
+   building a chunker per consumer.
 2. `/v1/ingest` is document-level. A consumer **structurally cannot** set
    per-chunk metadata — the contract has no place to put it. Section
    identifiers have to be produced where the split happens.
-3. A prototype's compliance grounding needs the same splitter. One implementation,
-   two sets of patterns.
+3. One implementation, many sets of patterns.
 
 **The wire seam.** Recon during
 the preset removal found that `corpora.chunk_config` had **no HTTP surface at
@@ -249,25 +240,18 @@ default — no pinned consumer can be affected without changing its own call.
 (`src/eval/`: interchange format, metrics, runner, offline embedder,
 comparison report). Consumers own the golden **content**.
 
-**Why not put a prototype's golden set here.** A prototype already has `eval-items` /
-`eval-runs` / `eval-results` Payload collections holding a frozen `gs-2026-06`
-set of 177 items, plus a super-admin dashboard rendering it. Those items encode
-A prototype's subject matter. Copying them here would put a product's domain in the
-shared service (ADR-0001) and would immediately drift from the copy the
-dashboard reads. The same rule that deleted the chunking preset (§2) applies to
-fixtures: a fixture is content.
+**Why not put a consumer's golden set here.** Those items encode a product's
+subject matter. Copying them here would put a product's domain in the shared
+service (ADR-0001). The same rule that deleted the chunking preset (§2) applies
+to fixtures: a fixture is content.
 
-**Why not put the runner in a prototype.** A prototype's "runner" is a simulator — grep
-confirms `src/seed/evals/run.ts` makes no ai-service calls, and
-`/api/iso/evals/rerun` documents itself as producing plausible verdicts. A
-retrieval eval has to run *inside* the retriever to A/B ranking configurations
-over one ingest without a network round trip per item.
+**Why the runner lives here.** A retrieval eval has to run *inside* the retriever
+to A/B ranking configurations over one ingest without a network round trip per
+item.
 
-**So:** `GoldenItem` is defined so a prototype's rows map onto it field-for-field
-(`kind` names are deliberately identical for the three retrieval-testable
-kinds). ai-service ships its own small project-agnostic golden set
-(`gs-ai-2026-07`, 43 items) as this repo's regression gate. A prototype feeds its
-items in by exporting to this format.
+**So:** ai-service ships its own small project-agnostic golden set (`gs-ai-2026-07`,
+43 items) as this repo's regression gate. A consumer feeds its items in by
+exporting to this format.
 
 **Why the embedder is offline and deterministic.** An eval that costs money per
 run does not get run, and a regression gate that does not run on every change is
@@ -368,10 +352,9 @@ Neither number was load-bearing for the decision to ship rungs 0–1.
   preserving by default, opt-in cost. The backfill statement is at the bottom
   of the migration, commented out because it rewrites every chunk row.
 - **Client `@edc/ai-client` 0.6.0 → 0.7.0**, additive only. `filter` is
-  now typed (a prototype currently casts around its absence), and `ChunkConfig` /
+  now typed, and `ChunkConfig` /
   `ChunkSectionPattern` are exported for the ingest-side seam (§2).
 
-## 7. Prototype-side changes this enables (NOT made here — describe, don't edit)
 
 1. Send `validFrom` / `validTo` on ingest, from `document_versions`.
 2. Call `admin.setDocumentValidity(corpus, docId, { validTo })` from
@@ -385,6 +368,6 @@ Neither number was load-bearing for the decision to ship rungs 0–1.
    is no preset to name; ai-service ships none (§2). Then re-ingest.
 5. Pass `mode: 'hybrid'` on the retrieve calls.
 6. Seed `document-sources` rows — the auto-fetch infrastructure exists but there
-   are no `diputados.gob.mx` URLs anywhere, so `tenant-a-global` is empty today.
+   are no `diputados.gob.mx` URLs anywhere, so `a consumer app-global` is empty today.
 
 Items 1–2 are the ones that matter: without them `asOf` has nothing to filter.

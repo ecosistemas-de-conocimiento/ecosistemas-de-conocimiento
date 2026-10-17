@@ -114,7 +114,7 @@ afterAll(async () => {
 });
 
 describe.each([
-  ['first ledger shape (state in outcome)', FIRST_LEDGER],
+  ['a consumer app shape (state in outcome)', FIRST_LEDGER],
   ['second-ledger shape (claim_state + outcome enum)', SECOND_LEDGER],
 ])('conformance — %s', (_label, claims) => {
   it.each(CALLBACK_CLAIMS_CONFORMANCE_CASES)('$name', async (c) => {
@@ -147,7 +147,7 @@ describe('conformance — no unique index', () => {
   });
 });
 
-describe('tenant-a extras', () => {
+describe('a consumer app extras', () => {
   const key = { source: 'ingest', sourceId: 'extras-1', itemKey: 'doc-1', event: 'ingest.completed' };
 
   it('writes the audit outcome and version id in the same UPDATE as the state', async () => {

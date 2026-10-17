@@ -239,7 +239,7 @@ describe('cross-corpus score normalization before rank fusion', () => {
   it('leaves a multi-corpus DENSE query on the plain score sort', async () => {
     // In `dense` mode `score` IS cosine against the same query vector, which is
     // already comparable across corpora. Nothing to renormalise, so chat and
-    // frontend code — which does not pass `mode: 'hybrid'` — take the old path exactly.
+    // tenant-d — which do not pass `mode: 'hybrid'` — take the old path exactly.
     const dense = (id: string, score: number): RetrievedChunk => ({
       chunkId: id,
       documentId: `doc-${id}`,

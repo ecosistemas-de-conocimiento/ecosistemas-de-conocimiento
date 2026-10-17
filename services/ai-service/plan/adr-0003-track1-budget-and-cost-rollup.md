@@ -2,7 +2,7 @@
 > Implements S1 (fail-closed per-org budget cap) + S2 (cost-rollup undercount
 > fix). The ADR lives in the strategy vault:
 > `plan/tecnología/ai-infra/adr-0003-consumer-credit-ledger-and-balance-display.md`.
-> Track 2 (a prototype credit ledger) and Track 3 (shared package) are NOT in this
+> Track 2 (a consumer's credit ledger) and Track 3 (shared package) are NOT in this
 > change. Same format as `m5-decisions.md`.
 
 # ADR-0003 Track 1 — fail-closed budget + cost-rollup fix

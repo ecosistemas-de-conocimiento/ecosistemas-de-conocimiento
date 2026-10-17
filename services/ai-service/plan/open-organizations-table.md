@@ -10,7 +10,7 @@ every budget row. There's no separate table that lists what orgs exist,
 who owns them, what their human-readable name is, what billing email to
 send to, or any other org-level metadata. This is intentional minimalism:
 the service treats `{org, project}` as scoping tags and nothing more,
-and that's worked fine because consuming apps (a prototype today) hold the
+and that's worked fine because consuming apps hold the
 real org concept on their side. The follow-up exists for the day when a
 UI on the `ai-service` side itself wants to render an org — say, in an
 admin dashboard listing budgets across all tenants — and discovers there
@@ -111,10 +111,10 @@ tables.
   `organizations.id`. The lazy-create pattern fixes this on write;
   manual backfill is needed for tables that aren't written to
   routinely.
-- **Naming conflict with consumer-side orgs.** A prototype has its own
-  `Organizations` Payload collection. The `ai-service` table is
+- **Naming conflict with consumer-side orgs.** A consumer can have its own
+  `Organizations` collection. The `ai-service` table is
   *not* the same thing — `ai-service.organizations` carries only
-  `{ai-service}-relevant metadata; a prototype's `Organizations` carries
+  `{ai-service}-relevant metadata; a consumer's `Organizations` carries
   product domain. The contract stays opaque-`org`-string; this table
   just makes the service-side metadata explicit. Document.
 - **Multi-tenant UI design.** If a future admin UI lets one operator

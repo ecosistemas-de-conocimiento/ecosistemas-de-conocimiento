@@ -35,7 +35,7 @@ Two new optional request fields:
 - `systemPromptOverride` — batch/request level, on `/v1/generate` and `/sync`.
 
 **Rejected alternative: honouring a `system` entry in the `input.messages`
-array consumers already send.** Several consumers (the prototypes, chat)
+array consumers already send.** Several consumers
 today send `input.messages` *including* a system entry AND fold the same text
 into `userPrompt`, because ai-service ignored the array. Honouring it would have
 made those consumers send their instructions twice, immediately, with no code
@@ -227,10 +227,6 @@ parallel.
 
 - **`@edc/ai-client` bumped 0.5.0 → 0.6.0** (additive). Publishing is a
   separate, gated step.
-- **A prototype's `*_META_PROMPT` blobs** could now move into
-  `registry_entries.meta_prompt_template` instead of being sent per call. That is
-  a prototype decision, separate from removing its fold, and is flagged in the
-  consumer cleanup prompt rather than decided here.
 - **chat's migration is behavioural, not mechanical**: it currently flattens the
   conversation through `specOverride.promptTemplate` with literal `system:` /
   `user:` role markers. Moving to a real system message changes what the model

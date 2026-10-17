@@ -74,9 +74,8 @@ always exactly the last 30 days of spend.
   budget" — relies on the `UPDATE … RETURNING` predicate in `enforcer.ts`.
   A rolling-sum approach would have to wrap reserve + the eventual usage_log
   insert in a serializable transaction, and even then two concurrent bursts
-  read the same SUM before either insert lands. Prototype-style concurrency tests
-  (the ones we ported to `src/services/budget/enforcer.test.ts`) would no
-  longer pass.
+  read the same SUM before either insert lands. The concurrency tests in
+  `src/services/budget/enforcer.test.ts` would no longer pass.
 
 ## Implementation comparison
 
@@ -101,8 +100,7 @@ The reasoning:
 2. **Preserves the atomic-reserve invariant.** The reset is just one more
    atomic SQL statement (`UPDATE budget_state SET remaining_usd = limit_usd,
    last_reset_at = now(), next_reset_at = … WHERE org = $ AND next_reset_at
-   <= now()`), running in the same transaction as the reserve. A prototype's tests
-   still pass.
+   <= now()`), running in the same transaction as the reserve.
 3. **Lazy beats cron.** No "what if the cron didn't run?" question. No hot
    simultaneous reset of every org. The first caller in a new month pays the
    tiny extra UPDATE; everyone after that hits the normal hot path.
