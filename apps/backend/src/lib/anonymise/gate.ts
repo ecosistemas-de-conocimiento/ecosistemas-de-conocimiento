@@ -56,6 +56,7 @@
 import { deterministicPass } from './deterministic'
 import { createPseudonymAllocator } from './pseudonyms'
 import { structuralPass } from './structural'
+import { absorbTitles } from './titles'
 import type {
   DetectorFinding,
   GateInput,
@@ -171,7 +172,10 @@ function applyFindings(
     out = parts.join(replacement)
   }
 
-  return { text: out, labels }
+  // 🔴 A title before a name is part of the name: "Don [Persona F]" becomes
+  // "[Persona F]". Without this, verify reads the title as a leftover and holds
+  // a document whose names are all gone. See `titles.ts`.
+  return { text: absorbTitles(out), labels }
 }
 
 /**

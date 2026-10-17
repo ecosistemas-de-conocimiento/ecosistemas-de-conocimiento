@@ -439,3 +439,122 @@ describe('runAnonymisationGate — domicilios', () => {
     expect(result.reason).not.toContain('Mari')
   })
 })
+
+describe('runAnonymisationGate — 🔴 a title before a name is part of the name', () => {
+  // Measured 2026-10-17 on the local stack: the content stage redacted the name
+  // and left the title, and verify held on "Don [Persona F]" and
+  // "La maestra [Persona J]". Rodrigo's rule: the title goes with the name.
+  const TITLED = [
+    'Don Fernando Vázquez nos prestaba su camioneta.',
+    'La maestra Imelda nos daba clases los sábados.',
+    'Después Fernando Vázquez se fue al norte.',
+  ].join('\n')
+
+  /** Stage 3 finds the bare names; stage 4 reports any title still glued to a placeholder. */
+  function titleBlindDetector(): PersonDetector {
+    let calls = 0
+    return {
+      name: 'title-blind',
+      async detect({ text }) {
+        calls += 1
+        if (calls === 1) {
+          return [
+            { text: 'Fernando Vázquez', type: 'persona' },
+            { text: 'Imelda', type: 'persona' },
+          ]
+        }
+        return [...text.matchAll(/(?:Don|La maestra) \[Persona [A-Z]+\]/g)].map((m) => ({
+          text: m[0],
+          type: 'persona' as const,
+        }))
+      },
+    }
+  }
+
+  it('verify can no longer see "Don [Persona F]": redaction absorbed the title', async () => {
+    const result = await runAnonymisationGate(input({ text: TITLED }), {
+      detector: titleBlindDetector(),
+    })
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe(
+      [
+        '[Persona A] nos prestaba su camioneta.',
+        '[Persona B] nos daba clases los sábados.',
+        'Después [Persona A] se fue al norte.',
+      ].join('\n'),
+    )
+  })
+
+  it('a titled span from the model gets the SAME label as the bare name', async () => {
+    const result = await runAnonymisationGate(input({ text: TITLED }), {
+      detector: staticDetector([
+        { text: 'Don Fernando Vázquez', type: 'persona' },
+        { text: 'Fernando Vázquez', type: 'persona' },
+        { text: 'La maestra Imelda', type: 'persona' },
+      ]),
+    })
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.report.pseudonyms).toBe(2)
+    expect(result.redactedText).not.toMatch(/Don|maestra/)
+  })
+
+  it('a roster name keeps its title out too', async () => {
+    const result = await runAnonymisationGate(
+      input({
+        contentKind: 'conversacion',
+        text: 'Le pregunté a doña Ana López.',
+        roster: ['Ana López'],
+      }),
+      {
+        detector: staticDetector((text) =>
+          /doña \[/i.test(text) ? [{ text: 'doña', type: 'persona' }] : [],
+        ),
+      },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe('Le pregunté a [Persona A].')
+  })
+
+  it('🔴 "[Persona A] López" still HOLDS: a surname after the placeholder is a leak', async () => {
+    let calls = 0
+    const result = await runAnonymisationGate(input({ text: 'Don Fernando López nos ayudó.' }), {
+      detector: {
+        name: 'half',
+        async detect({ text }) {
+          calls += 1
+          if (calls === 1) return [{ text: 'Fernando', type: 'persona' }]
+          return text.includes('[Persona A] López')
+            ? [{ text: '[Persona A] López', type: 'persona' }]
+            : []
+        },
+      },
+    })
+    expect(result.status).toBe('hold')
+    if (result.status !== 'hold') return
+    expect(result.stage).toBe('verify')
+    expect(result.redactedText).toBe('[Persona A] López nos ayudó.')
+  })
+
+  it('🔴 a bare surname still HOLDS', async () => {
+    let calls = 0
+    const result = await runAnonymisationGate(
+      input({ text: 'La maestra Imelda llegó. Ya conocíamos a Ortiz.' }),
+      {
+        detector: {
+          name: 'half',
+          async detect({ text }) {
+            calls += 1
+            if (calls === 1) return [{ text: 'Imelda', type: 'persona' }]
+            return text.includes('Ortiz') ? [{ text: 'Ortiz', type: 'persona' }] : []
+          },
+        },
+      },
+    )
+    expect(result.status).toBe('hold')
+    if (result.status !== 'hold') return
+    expect(result.stage).toBe('verify')
+  })
+})

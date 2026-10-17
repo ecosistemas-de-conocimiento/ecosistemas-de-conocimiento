@@ -104,6 +104,12 @@ export const DETECT_SYSTEM_PROMPT = [
   'Debes incluir:',
   '- Nombres de personas, apellidos, apodos y diminutivos.',
   '- Referencias de parentesco que nombran a alguien: en "mi hermana Lucía" el hallazgo es "Lucía".',
+  // ⚠ Titles are part of the name (owner's rule, 2026-10-17); `titles.ts` also
+  // absorbs them in code, so a model that ignores this line is still covered.
+  '- Un tratamiento o cargo que antecede al nombre es parte del nombre: incluye "don", "doña",',
+  '  "señor", "señora", "la maestra", "el maestro", "el profe", "el doctor", "la doctora",',
+  '  "licenciado", "ingeniero", "el padre" y similares. En "Don Fernando Vázquez" el hallazgo',
+  '  es "Don Fernando Vázquez"; en "la maestra Imelda" es "la maestra Imelda".',
   '- Centros de trabajo, escuelas o cargos tan precisos que identifican a una persona.',
   '- Teléfonos, correos, cuentas, identificadores oficiales y números de expediente.',
   '',
