@@ -36,6 +36,10 @@
  *     `process.exit(0)` — and a refusal's own `process.exit(1)` wins, which is
  *     what makes the "refuses loudly" contract true.
  *
+ * ⚠ With `SEED_CORPUS_INGEST=1` the await covers the in-process work too:
+ * `runDemoSeedCli` holds each draft until its gate has run and then waits for
+ * the graph queue to drain before it exits (`seed/demo.ts`).
+ *
  * Works identically under `tsx src/seed/demo.cli.ts`.
  */
 import { runDemoSeedCli } from './demo'

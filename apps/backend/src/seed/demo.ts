@@ -320,8 +320,21 @@ export async function seedDemo(
     // 🔴 THE EXPENSIVE HALF, AND ONLY IF ASKED. See `seed/corpus.ts`: 250
     // documents means 250 ai-service jobs plus two model calls per Voz, and
     // nobody's first `docker compose up` should block on that.
+    //
+    // ⚠ THROTTLED (`seed/corpus.ts`), so it takes minutes: 250 starts at the
+    // default 2 s spacing is ~8 min (inferred). The manual CLI awaits it, gate
+    // included. Boot does NOT: `onInit` blocking that long would hold the
+    // server off its port. Boot runs it detached; the server process stays up.
     if (corpusIngestRequested()) {
-      await ingestSeededDocuments(payload, orgId)
+      if (opts.tier === 'manual') {
+        await ingestSeededDocuments(payload, orgId, { awaitDrafts: true })
+      } else {
+        void ingestSeededDocuments(payload, orgId).catch((err) => {
+          payload.logger.warn(
+            `[seed-demo] background corpus ingest failed: ${err instanceof Error ? err.message : String(err)}`,
+          )
+        })
+      }
     }
   }
 
@@ -365,5 +378,32 @@ export async function runDemoSeedCli(): Promise<void> {
       ? `[seed:demo] org=${res.orgId} teams=${res.teamIds.join(',')} projects=${res.projectIds.join(',')}`
       : '[seed:demo] no-op (demo already seeded)',
   )
+
+  /**
+   * 🔴 WAIT FOR THIS PROCESS'S OWN WORK BEFORE EXITING. `seedDemo` returns with
+   * every draft past its gate and enqueue (`awaitDrafts`), but each enqueue arms
+   * a graph extraction in THIS process (`lib/graph/schedule.ts`, a
+   * `setImmediate` queue). `process.exit(0)` below, like `payload run`'s own,
+   * would kill it mid-flight — the same top-level-await lesson `demo.cli.ts`
+   * documents. Bounded by `SEED_WAIT_MAX_MS` (default 60 min).
+   */
+  if (res && corpusIngestRequested()) {
+    const { graphQueueDepth } = await import('@/lib/graph/schedule')
+    const { waitUntilIdle } = await import('./throttle')
+    const maxMs = Number(process.env.SEED_WAIT_MAX_MS) > 0 ? Number(process.env.SEED_WAIT_MAX_MS) : 60 * 60_000
+    payload.logger.info('[seed:demo] waiting for in-process graph extraction to finish…')
+    const idle = await waitUntilIdle(
+      async () => {
+        const q = graphQueueDepth()
+        return q.running === 0 && q.queued === 0
+      },
+      { pollMs: 5000, timeoutMs: maxMs, quietPolls: 3 },
+    )
+    payload.logger.info(
+      idle
+        ? '[seed:demo] in-process work done. Rows at `publishing` wait on ai-service callbacks to the running server.'
+        : `[seed:demo] ⚠ gave up waiting after ${maxMs}ms — graph extraction may still have been in flight.`,
+    )
+  }
   process.exit(0)
 }

@@ -480,13 +480,65 @@ export function corpusIngestRequested(): boolean {
 }
 
 /**
- * How many documents to have in flight at once when ingest IS requested.
+ * 🔴 THE SEED IS THROTTLED, BECAUSE ai-service IS. `/v1` allows 100 requests
+ * per minute per API key (`lib/aiRetry.ts` has the incident). A dev run with
+ * ingest on sent the corpus faster than that: publishes were refused and
+ * testimonios were held with `transporte` errors when the gate's model calls
+ * got a 429.
  *
- * ⚠ Bounded, and low. Each one is an HTTP call to ai-service and, for a Voz,
- * two model calls; firing 250 at once is how a local ai-service gets knocked
- * over by its own seed.
+ * Two brakes, both env-overridable:
+ *
+ *   · `SEED_INGEST_CONCURRENCY` (default 2) documents in flight at once.
+ *   · `SEED_INGEST_SPACING_MS` (default 2000) between two starts, across all
+ *     workers — at most 30 starts a minute.
+ *
+ * ⚠ The defaults are INFERRED, not measured: a published `documento` is one
+ * request, a draft `testimonio` is three (two gate calls and an enqueue), so 30
+ * starts a minute stays under 100 even if every one were a testimonio. The
+ * graph extraction that follows each ingest also spends from the same key, and
+ * this brake does not cover it.
  */
-const INGEST_CONCURRENCY = 4
+const DEFAULT_INGEST_CONCURRENCY = 2
+const DEFAULT_INGEST_SPACING_MS = 2000
+
+/**
+ * The publish enqueue's 429 backoff for the seed: `beginPublish` waits the
+ * server's own `retryAfterMs` (`RateLimitError`, via `withRateLimitRetry`).
+ *
+ * ⚠ Far more patient than the default ~2 min. That default exists because a
+ * person is holding an HTTP request open (`lib/aiRetry.ts`); nobody is waiting
+ * on a seed, and giving up only writes a `publicationError` onto a demo row.
+ */
+export const SEED_PUBLISH_RETRY = { attempts: 20, budgetMs: 15 * 60_000 } as const
+
+/** How long one draft may take to clear the gate and enqueue before the seed moves on. */
+const DRAFT_SETTLE_TIMEOUT_MS = 5 * 60_000
+const DRAFT_POLL_MS = 2000
+
+function positiveIntFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim()
+  if (!raw) return fallback
+  const n = Number(raw)
+  return Number.isInteger(n) && n >= 0 ? n : fallback
+}
+
+export interface IngestSeedOptions {
+  /** Default `SEED_INGEST_CONCURRENCY`, else 2. */
+  concurrency?: number
+  /** Default `SEED_INGEST_SPACING_MS`, else 2000. */
+  spacingMs?: number
+  /**
+   * Hold a draft's slot until its in-process work (gate, enqueue) has run. The
+   * CLI sets it: that work runs in a `setImmediate` inside the hook, and without
+   * the wait the throttle would bound only the re-saves, not the model calls —
+   * and the CLI would exit with the gate still running.
+   */
+  awaitDrafts?: boolean
+  /** Injected in tests. */
+  sleep?: (ms: number) => Promise<void>
+  /** Injected in tests: the retry jitter. */
+  random?: () => number
+}
 
 /**
  * 🔴 THE OPT-IN. Hand every seeded row to the PRODUCT'S OWN pipeline — no
@@ -503,12 +555,10 @@ const INGEST_CONCURRENCY = 4
  *     extraction (the text is cached), runs the anonymisation gate for a
  *     `testimonio`, and enqueues into the uploader's draft corpus.
  *
- * ⚠ NEITHER PATH IS AWAITED TO COMPLETION, and it cannot be. `beginPublish`
- * returns when the job is ENQUEUED; the draft path runs in a `setImmediate`
- * inside the hook. What this function bounds is how many are enqueued at once,
- * not how long ai-service takes. Expect the rows to sit in `embedding` /
- * `publishing` for a while after the seed logs "done", and watch
- * `ingestStatus`.
+ * ⚠ NEITHER PATH WAITS FOR ai-service TO FINISH EMBEDDING. `beginPublish`
+ * returns when the job is ENQUEUED. With `awaitDrafts` a draft waits for its
+ * gate and enqueue, not for the embedding. Expect rows to sit in `embedding` /
+ * `publishing` for a while after the seed logs "done", and watch `ingestStatus`.
  *
  * ⚠ ONE FAILURE DOES NOT STOP THE REST. A document that cannot be enqueued is
  * logged and skipped: 249 embedded documents and one loud line is a better
@@ -517,10 +567,12 @@ const INGEST_CONCURRENCY = 4
 export async function ingestSeededDocuments(
   payload: Payload,
   organizationId: number,
+  opts: IngestSeedOptions = {},
 ): Promise<{ enqueued: number; failed: number }> {
   const { getAdminAIClient } = await import('@/lib/aiClient')
   const { ingestCallbackUrl } = await import('@/lib/callbackConfig')
   const { beginPublish } = await import('@/lib/publishDocument')
+  const { throttledEach, waitForDraftSettled } = await import('./throttle')
 
   let client: unknown
   try {
@@ -550,24 +602,41 @@ export async function ingestSeededDocuments(
     anonymisationStatus?: unknown
   }>
 
-  const deps = { payload, client: client as never, callbackUrl: ingestCallbackUrl() ?? undefined }
+  const concurrency =
+    opts.concurrency ?? positiveIntFromEnv('SEED_INGEST_CONCURRENCY', DEFAULT_INGEST_CONCURRENCY)
+  const spacingMs =
+    opts.spacingMs ?? positiveIntFromEnv('SEED_INGEST_SPACING_MS', DEFAULT_INGEST_SPACING_MS)
+  const deps = {
+    payload,
+    client: client as never,
+    callbackUrl: ingestCallbackUrl() ?? undefined,
+    retry: {
+      ...SEED_PUBLISH_RETRY,
+      label: 'seed publish',
+      ...(opts.sleep ? { sleep: opts.sleep } : {}),
+      ...(opts.random ? { random: opts.random } : {}),
+    },
+  }
   const startedAt = Date.now()
   let enqueued = 0
   let failed = 0
-  let cursor = 0
+  let unsettled = 0
 
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      const index = cursor
-      cursor += 1
-      if (index >= rows.length) return
-      const row = rows[index]
+  // ⚠ A HELD ROW IS LEFT ALONE. The gate refused it; re-saving it would do
+  // nothing (the hook skips held rows) and publishing it would be refused by
+  // `corpusTextFor`. Touching it here would only add noise to the log.
+  const todo = rows.filter(
+    (row) => row.anonymisationStatus !== 'held' && row.anonymisationStatus !== 'rejected',
+  )
 
-      // ⚠ A HELD ROW IS LEFT ALONE. The gate refused it; re-saving it would do
-      // nothing (the hook skips held rows) and publishing it would be refused
-      // by `corpusTextFor`. Touching it here would only add noise to the log.
-      if (row.anonymisationStatus === 'held' || row.anonymisationStatus === 'rejected') continue
+  payload.logger.info(
+    `[seed-corpus] ingesting ${todo.length} documents, ${concurrency} at a time, ` +
+      `${spacingMs}ms apart (ai-service allows 100 requests/min per key).`,
+  )
 
+  await throttledEach(
+    todo,
+    async (row) => {
       try {
         if (row.publicationStatus === 'published') {
           await beginPublish(row as never, deps)
@@ -578,6 +647,29 @@ export async function ingestSeededDocuments(
             data: {},
             overrideAccess: true,
           })
+          if (opts.awaitDrafts) {
+            const settled = await waitForDraftSettled(
+              async () =>
+                (await payload.findByID({
+                  collection: 'documents',
+                  id: row.id as never,
+                  depth: 0,
+                  overrideAccess: true,
+                })) as never,
+              {
+                pollMs: DRAFT_POLL_MS,
+                timeoutMs: DRAFT_SETTLE_TIMEOUT_MS,
+                ...(opts.sleep ? { sleep: opts.sleep } : {}),
+              },
+            )
+            if (!settled) {
+              unsettled += 1
+              payload.logger.warn(
+                `[seed-corpus] document ${row.id} had not cleared the gate and enqueue after ` +
+                  `${DRAFT_SETTLE_TIMEOUT_MS / 60_000} min — moving on.`,
+              )
+            }
+          }
         }
         enqueued += 1
       } catch (err) {
@@ -586,10 +678,12 @@ export async function ingestSeededDocuments(
           `[seed-corpus] could not enqueue document ${row.id}: ${err instanceof Error ? err.message : String(err)}`,
         )
       }
-    }
+    },
+    { concurrency, spacingMs },
+  )
+  if (unsettled > 0) {
+    payload.logger.warn(`[seed-corpus] ${unsettled} draft(s) were still in the gate when the seed moved on.`)
   }
-
-  await Promise.all(Array.from({ length: INGEST_CONCURRENCY }, worker))
 
   payload.logger.info(
     `[seed-corpus] ingest requested for ${enqueued} documents (${failed} refused) in ` +
