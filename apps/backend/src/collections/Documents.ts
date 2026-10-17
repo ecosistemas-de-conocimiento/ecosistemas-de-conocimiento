@@ -268,6 +268,8 @@ export const lenguaReadable: FieldAccess = ({ doc }) =>
  *   · `heldText` / `anonymisationSurvivors` — the gate's refused output and the
  *     offsets of what still identified someone in it.
  *   · `audioMeta` — its detected `language` (see `enforceLenguaDocumentoOnly`).
+ *   · `uploadedBy` / `session` — who recorded it and in which conversation
+ *     (see {@link gatedQueryableReadable}).
  *
  * The recording itself is closed in `collections/Media.ts` by the same rule.
  *
@@ -289,7 +291,7 @@ export const lenguaReadable: FieldAccess = ({ doc }) =>
  * `endpoints/lenguas.ts`), so `where[extractedText]` is refused for every
  * non-override caller. Nothing in the product queries these columns that way;
  * the graph backfill uses `overrideAccess`. `name` is the exception — see
- * {@link gatedNameReadable}.
+ * {@link gatedQueryableReadable}.
  */
 export function mayReadGatedOriginal(
   user: unknown,
@@ -308,16 +310,29 @@ export const gatedOriginalReadable: FieldAccess = ({ req, doc }) =>
   mayReadGatedOriginal(req.user, doc as Parameters<typeof mayReadGatedOriginal>[1])
 
 /**
- * `name` follows {@link mayReadGatedOriginal} on every ROW, but lets a `where`
- * or `sort` on it through, because the product searches by title
- * (`/biblioteca`, the `@`-mention picker).
+ * The fields in {@link GATED_QUERYABLE_FIELDS} follow {@link mayReadGatedOriginal}
+ * on every ROW, but let a `where` or `sort` on them through, because the
+ * product queries them:
+ *
+ *   · `name` — `/biblioteca` and the `@`-mention picker search by title;
+ *   · `uploadedBy` — "Mis documentos" and the session picker filter on
+ *     `uploadedBy = me`, and `visibleToCaller` itself is that clause;
+ *   · `session` — every conversation lists its documents by `session`.
+ *
+ * 🔴 `uploadedBy` AND `session` ARE WHO RECORDED A TESTIMONIO. The first names
+ * the investigador, the second links their conversation. A colleague who reads
+ * either on a published testimonio learns who was in the room, which is what
+ * the biblioteca hides on purpose (`contributorIdsToResolve` in the web app).
  *
  * ⚠ LETTING THE QUERY THROUGH WOULD BE AN ORACLE ON ITS OWN: search
- * `where[name][like]=María` and see whether a testimonio row comes back, with
- * its title hidden. {@link constrainGatedNameQueries} closes that by narrowing
- * any query that names `name` to rows whose `name` the caller may read.
+ * `where[name][like]=María` — or `where[uploadedBy][equals]=<colleague>` — and
+ * see whether a testimonio row comes back. {@link constrainGatedQueries} closes
+ * that by narrowing any query that names one of these fields to rows on which
+ * the caller may read it.
  */
-export const gatedNameReadable: FieldAccess = ({ req, doc }) =>
+export const GATED_QUERYABLE_FIELDS = ['name', 'uploadedBy', 'session'] as const
+
+export const gatedQueryableReadable: FieldAccess = ({ req, doc }) =>
   doc === undefined
     ? Boolean(req.user)
     : mayReadGatedOriginal(req.user, doc as Parameters<typeof mayReadGatedOriginal>[1])
@@ -361,7 +376,7 @@ function stripSort(sort: unknown, field: string): unknown {
 }
 
 /**
- * Is `where` already limited to rows whose name the caller may read? True when
+ * Is `where` already limited to rows whose gated fields the caller may read? True when
  * a top-level clause (through any `and`) pins the uploader to the caller or the
  * kind to `documento`.
  */
@@ -382,21 +397,28 @@ function narrowedToReadable(where: unknown, prefix: string, userId: unknown): bo
 }
 
 /**
- * 🔴 A QUERY ON `name` ONLY MATCHES ROWS WHOSE `name` THE CALLER MAY READ.
- * The other half of {@link gatedNameReadable}.
+ * 🔴 A QUERY ON A GATED FIELD ONLY MATCHES ROWS ON WHICH THE CALLER MAY READ
+ * IT. The other half of {@link gatedQueryableReadable}; the fields are
+ * {@link GATED_QUERYABLE_FIELDS}.
  *
- *   · a `where` naming it is narrowed to readable rows;
- *   · a `sort` on it is STRIPPED unless the query is already narrowed. Sorting
+ *   · a `where` naming one is narrowed to readable rows;
+ *   · a `sort` on one is STRIPPED unless the query is already narrowed. Sorting
  *     is a full oracle, not a small leak: a colleague who controls a few probe
  *     rows named "M", "Ma", "Mb"… reads where the hidden title falls between
- *     them and binary-searches it out letter by letter. Nothing in the product
- *     sorts documents by name.
+ *     them and binary-searches it out letter by letter. The same works on
+ *     `uploadedBy` with probe rows of known uploaders. Nothing in the product
+ *     sorts documents by any of these.
+ *
+ * ⚠ `where[uploadedBy][equals]=<me>` IS ALREADY NARROWED, so "Mis documentos"
+ * passes through untouched. A `session` filter on the caller's own
+ * conversation is narrowed but loses nothing: only the uploader can attach a
+ * document to a session (`uploaderOnly`, `bindDocumentToEcosystem`).
  *
  * `prefix` is the relationship path from another collection (`'document.'` on
  * `anonymisation-reviews`), whose where/sort reach the same column.
  */
-export function constrainGatedNameQueriesAt(prefix: string): CollectionBeforeOperationHook {
-  const field = `${prefix}name`
+export function constrainGatedQueriesAt(prefix: string): CollectionBeforeOperationHook {
+  const fields = GATED_QUERYABLE_FIELDS.map((f) => `${prefix}${f}`)
   return ({ args, operation, req }) => {
     if (operation !== 'read' && operation !== 'count' && operation !== 'readDistinct') return args
     const a = args as { overrideAccess?: boolean; where?: Where; sort?: unknown }
@@ -407,7 +429,7 @@ export function constrainGatedNameQueriesAt(prefix: string): CollectionBeforeOpe
 
     let next = args as typeof args & { where?: Where; sort?: unknown }
     let narrowed = narrowedToReadable(a.where, prefix, user.id)
-    if (!narrowed && whereMentions(a.where, field)) {
+    if (!narrowed && fields.some((field) => whereMentions(a.where, field))) {
       const readable: Where = {
         or: [
           { [`${prefix}contentKind`]: { equals: 'documento' } },
@@ -417,15 +439,19 @@ export function constrainGatedNameQueriesAt(prefix: string): CollectionBeforeOpe
       next = { ...next, where: { and: [a.where as Where, readable] } }
       narrowed = true
     }
-    if (!narrowed && sortParts(a.sort).some((p) => sortsOn(p, field))) {
-      next = { ...next, sort: stripSort(a.sort, field) }
+    if (!narrowed) {
+      let sort = a.sort
+      for (const field of fields) {
+        if (sortParts(sort).some((p) => sortsOn(p, field))) sort = stripSort(sort, field)
+      }
+      if (sort !== a.sort) next = { ...next, sort }
     }
     return next as typeof args
   }
 }
 
-export const constrainGatedNameQueries: CollectionBeforeOperationHook =
-  constrainGatedNameQueriesAt('')
+export const constrainGatedQueries: CollectionBeforeOperationHook =
+  constrainGatedQueriesAt('')
 
 const uploaderOnly: Access = ({ req: { user } }) => {
   if (!user) return false
@@ -2034,10 +2060,10 @@ export async function startTranscription(args: {
     'name' | 'kind' | 'mediaFile' | 'transcribeId' | 'transcribeAttempt' | 'organization' | 'uploadedBy'
   >
   /**
-   * Test seam. Production reads Payload's local media directory as a
-   * FILE-BACKED, LAZILY-READ blob — see {@link openMediaBlob}.
+   * Test seam. Production STREAMS the recording from object storage or local
+   * disk, never copying it into memory — see {@link openMediaStream}.
    */
-  openMedia?: typeof openMediaBlob
+  openMedia?: typeof openMediaStream
 }): Promise<void> {
   const { payload, docId, fresh } = args
 
@@ -2076,9 +2102,9 @@ export async function startTranscription(args: {
 
   const { submitTranscription, TRANSCRIBE_LANGUAGE } = await import('@/lib/audioClient')
 
-  let media: Awaited<ReturnType<typeof openMediaBlob>>
+  let media: Awaited<ReturnType<typeof openMediaStream>>
   try {
-    media = await (args.openMedia ?? openMediaBlob)(payload, mediaId)
+    media = await (args.openMedia ?? openMediaStream)(payload, mediaId)
   } catch (err) {
     return void (await fail(
       'media_unreadable',
@@ -2086,40 +2112,46 @@ export async function startTranscription(args: {
     ))
   }
 
-  // Visible BEFORE the network call, so a hanging audio-service still shows the
-  // user something true rather than looking like nothing happened.
-  await payload.update({
-    collection: 'documents',
-    id: docId as never,
-    data: { ingestStatus: 'transcribing', ingestError: null },
-    overrideAccess: true,
-    context: { __skipDocsExtract: true },
-  })
-
   const attempt = Number(fresh.transcribeAttempt ?? 0) || 0
-  const result = await submitTranscription({
-    body: media.body,
-    filename: media.filename,
-    contentType: media.contentType,
-    // The join key back to this row. The callback echoes it as `externalId`.
-    externalId: String(docId),
-    title: fresh.name ?? null,
-    // ⚠ The attempt number is IN the key. audio-service dedupes on it within our
-    // (org, project), which is what makes a double-fire of the hook free — but
-    // it also means a retry reusing the key would silently re-adopt the failed
-    // job instead of transcribing again.
-    idempotencyKey: `doc-${docId}-a${attempt}`,
-    callbackUrl,
-    language: TRANSCRIBE_LANGUAGE,
-    // ⚠ DECORATIVE — log correlation only. audio-service does not and must not
-    // scope anything on these; see the header of `lib/audioClient.ts`.
-    metadata: {
-      docId: String(docId),
-      organizationId: String(resolveId(fresh.organization) ?? ''),
-      uploadedById: String(resolveId(fresh.uploadedBy) ?? ''),
-      kind: 'audio',
-    },
-  })
+  // ⚠ Released whatever happens below: an unread S3 body holds its socket.
+  let result: Awaited<ReturnType<typeof submitTranscription>>
+  try {
+    // Visible BEFORE the network call, so a hanging audio-service still shows the
+    // user something true rather than looking like nothing happened.
+    await payload.update({
+      collection: 'documents',
+      id: docId as never,
+      data: { ingestStatus: 'transcribing', ingestError: null },
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+
+    result = await submitTranscription({
+      body: media.body,
+      filename: media.filename,
+      contentType: media.contentType,
+      // The join key back to this row. The callback echoes it as `externalId`.
+      externalId: String(docId),
+      title: fresh.name ?? null,
+      // ⚠ The attempt number is IN the key. audio-service dedupes on it within our
+      // (org, project), which is what makes a double-fire of the hook free — but
+      // it also means a retry reusing the key would silently re-adopt the failed
+      // job instead of transcribing again.
+      idempotencyKey: `doc-${docId}-a${attempt}`,
+      callbackUrl,
+      language: TRANSCRIBE_LANGUAGE,
+      // ⚠ DECORATIVE — log correlation only. audio-service does not and must not
+      // scope anything on these; see the header of `lib/audioClient.ts`.
+      metadata: {
+        docId: String(docId),
+        organizationId: String(resolveId(fresh.organization) ?? ''),
+        uploadedById: String(resolveId(fresh.uploadedBy) ?? ''),
+        kind: 'audio',
+      },
+    })
+  } finally {
+    media.close()
+  }
 
   if (!result.ok) {
     return void (await fail(result.code, result.message))
@@ -2145,20 +2177,6 @@ export async function startTranscription(args: {
 }
 
 /**
- * Open a media row's bytes as a Blob.
- *
- * ⚠ `fs.openAsBlob` rather than `fs.readFile`: it is FILE-BACKED and read
- * lazily as the request body streams, so a 200 MB recording never lands in the
- * Next process's heap whole. `readFile` on the same file is an OOM waiting for
- * a big enough upload.
- *
- * ⚠ `path.resolve(process.cwd(), 'media', …)` mirrors `extractText` exactly.
- * That hardcoded location is Payload's default `staticDir` and is an EXISTING
- * assumption, not one introduced here. It does mean the backend and
- * audio-service must not be assumed to share a filesystem: we read the bytes and
- * POST them.
- */
-/**
  * Read a media row's bytes, from wherever that row's bytes actually live.
  *
  * 🔴 THE ONE PLACE THAT KNOWS WHERE UPLOADS ARE STORED. Both the text-extract
@@ -2183,20 +2201,8 @@ async function loadMediaBytes(
   payload: Pick<Awaited<ReturnType<typeof import('payload').getPayload>>, 'findByID'>,
   mediaId: string | number,
 ): Promise<{ bytes: Buffer; filename: string; contentType: string | null }> {
-  const media = (await payload.findByID({
-    collection: 'media',
-    id: mediaId as never,
-    depth: 0,
-    overrideAccess: true,
-  })) as { filename?: string | null; mimeType?: string | null; prefix?: string | null } | null
-
-  const filename = media?.filename
-  if (!filename) throw new Error(`media ${mediaId} has no filename`)
-  const contentType = media?.mimeType ?? null
-
+  const { filename, contentType, key } = await locateMedia(payload, mediaId)
   const { isStorageConfigured } = await import('@/lib/storage/client')
-  const prefix = (media?.prefix ?? '').replace(/^\/+|\/+$/g, '')
-  const key = prefix ? `${prefix}/${filename}` : filename
   try {
     if (isStorageConfigured()) {
       const { getObjectBytes } = await import('@/lib/storage/client')
@@ -2204,10 +2210,8 @@ async function loadMediaBytes(
       return { bytes, filename, contentType }
     }
 
-    const path = await import('node:path')
     const fs = await import('node:fs/promises')
-    const filePath = path.resolve(process.cwd(), 'media', filename)
-    const bytes = await fs.readFile(filePath)
+    const bytes = await fs.readFile(await localMediaPath(filename))
     return { bytes, filename, contentType }
   } catch (err) {
     // 🔴 The callers write this message into `ingestError`, which every member
@@ -2217,12 +2221,51 @@ async function loadMediaBytes(
 }
 
 /**
+ * Where a media row's bytes live: its filename, type, and S3 key.
+ *
+ * ⚠ The S3 key is `${prefix}/${filename}`, NOT `filename` — see
+ * {@link loadMediaBytes}.
+ */
+async function locateMedia(
+  payload: Pick<Awaited<ReturnType<typeof import('payload').getPayload>>, 'findByID'>,
+  mediaId: string | number,
+): Promise<{ filename: string; contentType: string | null; key: string }> {
+  const media = (await payload.findByID({
+    collection: 'media',
+    id: mediaId as never,
+    depth: 0,
+    overrideAccess: true,
+  })) as { filename?: string | null; mimeType?: string | null; prefix?: string | null } | null
+
+  const filename = media?.filename
+  if (!filename) throw new Error(`media ${mediaId} has no filename`)
+  const prefix = (media?.prefix ?? '').replace(/^\/+|\/+$/g, '')
+  return {
+    filename,
+    contentType: media?.mimeType ?? null,
+    key: prefix ? `${prefix}/${filename}` : filename,
+  }
+}
+
+/**
+ * The local-disk path of an upload when no object storage is configured.
+ *
+ * ⚠ `./media/` is Payload's default `staticDir` — an existing assumption. It
+ * also means the backend and audio-service must not be assumed to share a
+ * filesystem: we read the bytes and POST them.
+ */
+async function localMediaPath(filename: string): Promise<string> {
+  const path = await import('node:path')
+  return path.resolve(process.cwd(), 'media', filename)
+}
+
+/**
  * A storage read failure as a message SAFE TO STORE ON THE ROW.
  *
  * 🔴 `ENOENT: …, open '/app/media/Testimonio de María López.pdf'` and
  * `object <bucket>/<key> returned no body` both quote the uploader's filename,
  * and `ingestError` is shown to every member of the ecosistema on a published
- * row — the same filename `gatedNameReadable` hides. The filename, the key
+ * row — the same filename `gatedQueryableReadable` hides. The filename, the key
  * and any absolute path are cut out; the error code and the media id stay, so
  * an operator still knows what failed and where to look.
  */
@@ -2244,15 +2287,61 @@ export function storageErrorReason(
   return `could not read the stored file for media ${mediaId}: ${prefix}${scrubbed}`.slice(0, 400)
 }
 
-async function openMediaBlob(
+/**
+ * Open a media row's bytes FOR STREAMING, from wherever they are stored.
+ *
+ * 🔴 NO COPY OF THE RECORDING IS MADE IN MEMORY (audit I-10). The previous
+ * version went through {@link loadMediaBytes} and then copied the Buffer into a
+ * Uint8Array and that into a Blob, then undici's FormData read it again.
+ * Measured 2026-10-17 with `scripts/measure-audio-upload-rss.mjs` on the dev
+ * box, Node 22.23.2, a 200 MB file, a throwaway RustFS on tmpfs, fake
+ * audio-service on localhost: peak RSS 1,213 MB from object storage and
+ * 1,088 MB from local disk. The streaming path: 147 MB and 113 MB, the same
+ * as with a 100 MB file (145 MB / 112 MB). Now:
+ *
+ *   · object storage → the S3 response stream (`openObjectStream`), read only
+ *     as the upload to audio-service pulls it;
+ *   · local disk → `fs.openAsBlob`, a FILE-BACKED blob read lazily as the
+ *     request body streams.
+ *
+ * Either way the object is OPENED here, so a missing file fails before the row
+ * is marked `transcribing` (`media_unreadable`), not halfway through the POST.
+ *
+ * ⚠ `close()` MUST be called once the upload is over, sent or not — an unread
+ * S3 body holds its connection. `startTranscription` does it in a `finally`.
+ */
+export async function openMediaStream(
   payload: Pick<Awaited<ReturnType<typeof import('payload').getPayload>>, 'findByID'>,
   mediaId: string | number,
-): Promise<{ body: Blob; filename: string; contentType: string | null }> {
-  const { bytes, filename, contentType } = await loadMediaBytes(payload, mediaId)
-  const body = new Blob([new Uint8Array(bytes)], {
-    type: contentType ?? 'application/octet-stream',
-  })
-  return { body, filename, contentType }
+): Promise<{
+  body: import('@/lib/audioClient').AudioBody
+  filename: string
+  contentType: string | null
+  close(): void
+}> {
+  const { filename, contentType, key } = await locateMedia(payload, mediaId)
+  const { isStorageConfigured } = await import('@/lib/storage/client')
+  try {
+    if (isStorageConfigured()) {
+      const { openObjectStream } = await import('@/lib/storage/client')
+      const object = await openObjectStream(key)
+      return {
+        body: { size: object.size, stream: object.stream },
+        filename,
+        contentType: contentType ?? object.contentType,
+        close: object.close,
+      }
+    }
+
+    const { openAsBlob } = await import('node:fs')
+    const body = await openAsBlob(await localMediaPath(filename), {
+      type: contentType ?? 'application/octet-stream',
+    })
+    return { body, filename, contentType, close: () => {} }
+  } catch (err) {
+    // 🔴 Written into `ingestError`. See `storageErrorReason`.
+    throw new Error(storageErrorReason(err, mediaId, filename, key))
+  }
 }
 
 async function extractText(
@@ -2340,6 +2429,9 @@ export const Documents: CollectionConfig = {
       relationTo: 'users',
       required: true,
       index: true,
+      // 🔴 Who recorded it. Hidden from colleagues on gated content, by row and
+      // by query — see `gatedQueryableReadable` and `constrainGatedQueries`.
+      access: { read: gatedQueryableReadable },
       admin: { readOnly: true, description: 'Taken from the session. Immutable.' },
     },
     {
@@ -2419,6 +2511,8 @@ export const Documents: CollectionConfig = {
       relationTo: 'sessions',
       hasMany: true,
       index: true,
+      // 🔴 The uploader's conversation. Same rule as `uploadedBy`.
+      access: { read: gatedQueryableReadable },
       admin: {
         description:
           'The conversations this document is attached to, if any. Attaching shares it with another conversation; it never moves it out of the ones it is already in.',
@@ -2706,8 +2800,8 @@ export const Documents: CollectionConfig = {
       required: true,
       defaultValue: 'Untitled document',
       // 🔴 The uploader's filename. Hidden from colleagues on gated content —
-      // see `gatedNameReadable` and `constrainGatedNameQueries`.
-      access: { read: gatedNameReadable },
+      // see `gatedQueryableReadable` and `constrainGatedQueries`.
+      access: { read: gatedQueryableReadable },
     },
     {
       name: 'bodyMarkdown',
@@ -2936,7 +3030,7 @@ export const Documents: CollectionConfig = {
     },
   ],
   hooks: {
-    beforeOperation: [constrainGatedNameQueries],
+    beforeOperation: [constrainGatedQueries],
     // ⚠ DO NOT FOLD `enforceLenguaDocumentoOnly` INTO `bindDocumentToEcosystem`.
     // Its own doc block says why; the short version is `!req.user`.
     beforeValidate: [bindDocumentToEcosystem, enforceLenguaDocumentoOnly],
@@ -3382,6 +3476,13 @@ export function planGraphRetry(doc: GraphRetryableDocument): { reason: string } 
  *
  * Returns 202 as soon as the run is armed. Poll `graphStatus`.
  */
+/** A URL id as a positive safe integer: digits only, else null (the route 400s). */
+function digitsId(raw: string | undefined): number | null {
+  if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return null
+  const n = Number(raw)
+  return Number.isSafeInteger(n) && n > 0 ? n : null
+}
+
 function retryGraphEndpoint(): Endpoint {
   return {
     path: '/:id/graph-retry',
@@ -3401,8 +3502,11 @@ function retryGraphEndpoint(): Endpoint {
       const user = req.user
       if (!user) return fail(401, 'Authentication required.')
 
-      const id = (req.routeParams as { id?: string } | undefined)?.id
-      if (!id) return fail(400, 'Missing document id.')
+      // 🔴 A NUMBER, NOT THE ROUTE-PARAM STRING. `id` flows on into the
+      // `graph_*` rows' `document` relationship, and Payload rejects a string
+      // there ("The following field is invalid: Document"). Coerce once, here.
+      const id = digitsId((req.routeParams as { id?: string } | undefined)?.id)
+      if (id == null) return fail(400, 'Missing or invalid document id.')
 
       // ⚠ Read UNDER ACCESS CONTROL, exactly like publish and retry.
       // `visibleToCaller` 404s a document the caller may not see, so this

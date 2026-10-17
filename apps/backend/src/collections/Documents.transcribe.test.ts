@@ -54,10 +54,12 @@ const fakePayload = {
   findByID: async () => ({ filename: 'junta.m4a', mimeType: 'audio/x-m4a' }),
 }
 
+const closeMedia = vi.fn()
 const openMedia = vi.fn(async () => ({
   body: new Blob(['audio']),
   filename: 'junta.m4a',
   contentType: 'audio/x-m4a',
+  close: closeMedia,
 }))
 
 const run = (fresh: Record<string, unknown> = {}) =>
@@ -86,6 +88,7 @@ beforeEach(() => {
   ingestEnqueue.mockClear()
   submitTranscription.mockClear()
   openMedia.mockClear()
+  closeMedia.mockClear()
   vi.stubEnv(CALLBACK_SECRET_VAR, SECRET)
   vi.stubEnv(CALLBACK_BASE_URL_VAR, 'https://backend.test')
   vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -107,6 +110,21 @@ describe('startTranscription', () => {
     // shows the user nothing at all during the part they are watching.
     await run()
     expect(updates[0]).toMatchObject({ data: { ingestStatus: 'transcribing' } })
+  })
+
+  it('🔴 releases the media stream once the upload is done, accepted or not', async () => {
+    // An S3 response stream that is never read or closed holds its socket open.
+    await run()
+    expect(closeMedia).toHaveBeenCalledOnce()
+    closeMedia.mockClear()
+    submitTranscription.mockResolvedValueOnce({
+      ok: false,
+      permanent: false,
+      code: 'audio_service_unreachable',
+      message: 'ECONNREFUSED',
+    } as never)
+    await run()
+    expect(closeMedia).toHaveBeenCalledOnce()
   })
 
   it('records the transcribeId and the duration known at 202', async () => {

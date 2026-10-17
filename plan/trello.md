@@ -30,6 +30,8 @@ Decidido: RustFS como almacenamiento en todos los entornos
 Decidido: una caja propia de EDC en Hetzner, sólo dev y staging
 Compose único que Coolify puede desplegar
 
+Decidido: el grafo conserva `evento` y los `tema` que duplican la columna (2026-10-17)
+
 # Abierto
 
 Activar reranker DeepInfra
@@ -38,7 +40,6 @@ Org por ecosistema en ai-service (en curso), resuelve el tope de gasto compartid
 Desplegar dev y staging en la caja de EDC; compose listo, deploy sin confirmar
 Grafo local: no es mock, 672 entidades reales (medido en la auditoría IA, 2026-10-17); ¿falta re-extraer?
 Re-correr el eval de GraphRAG con la métrica de citas nueva
-Decidir qué hacer con `evento` en el grafo
 Correr el script de reparación de documentos `pending`
 Decidir dónde corre el scrub en prod; modelo externo aceptado sólo en desarrollo
 Métricas de chat por tokens; hoy sólo costo, ai-service no separa por ecosistema

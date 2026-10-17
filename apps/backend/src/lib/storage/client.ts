@@ -194,14 +194,10 @@ export interface BucketOps {
  * `./media/<filename>`; once uploads moved to S3 that path no longer exists and
  * BOTH pipelines broke with `ENOENT` / "Unable to open file as blob".
  *
- * ⚠ This buffers the whole object in memory, which the disk path deliberately
- * did not (`fs.openAsBlob` is file-backed and streams lazily). That is a real
- * regression in peak memory and it is bounded only by the upload size cap. It
- * is accepted here because the alternative — plumbing a stream all the way into
- * undici's FormData — is a bigger change than the bug warrants, and because
- * every consumer below needs a contiguous buffer anyway. If uploads ever get
- * large enough for this to hurt, stream to a temp file and hand back a
- * file-backed Blob rather than growing the heap.
+ * ⚠ This buffers the whole object in memory. Only text extraction uses it:
+ * `unpdf` and `mammoth` need the whole file as one buffer anyway. Audio does
+ * NOT come through here — a recording can be as large as the upload cap, and
+ * it goes to audio-service as a stream through {@link openObjectStream}.
  */
 export async function getObjectBytes(
   key: string,
@@ -213,6 +209,50 @@ export async function getObjectBytes(
   if (!res.Body) throw new Error(`object ${bucket}/${key} returned no body`)
   const bytes = Buffer.from(await res.Body.transformToByteArray())
   return { bytes, contentType: res.ContentType ?? null }
+}
+
+/**
+ * Open an object for reading AS A STREAM, with its length.
+ *
+ * 🔴 NOTHING IS READ HERE. The S3 response body is handed back as a web
+ * stream, so its bytes flow straight from the store to whoever pulls them —
+ * for audio, the multipart upload to audio-service (`streamingMultipart` in
+ * `lib/audioClient.ts`). Audit I-10: the old path copied a recording into the
+ * heap three times over.
+ *
+ * ⚠ `close()` MUST BE CALLED when the caller is done, read or not. An unread
+ * S3 body holds its HTTP connection open until the socket times out.
+ *
+ * ⚠ The length is `ContentLength`, REQUIRED: the upload declares it so
+ * audio-service can refuse an oversized file before reading it. An object with
+ * no length is refused rather than sent chunked.
+ */
+export async function openObjectStream(
+  key: string,
+  bucket: string = getStorageBucket(),
+): Promise<{
+  size: number
+  contentType: string | null
+  stream(): ReadableStream<Uint8Array>
+  close(): void
+}> {
+  const mod = await import('@aws-sdk/client-s3')
+  const client = new mod.S3Client(s3ClientConfig())
+  const res = await client.send(new mod.GetObjectCommand({ Bucket: bucket, Key: key }))
+  const body = res.Body
+  if (!body) throw new Error(`object ${bucket}/${key} returned no body`)
+  // The Node SDK's body is an `IncomingMessage`; `destroy` frees its socket.
+  const close = () => (body as { destroy?: () => void }).destroy?.()
+  if (typeof res.ContentLength !== 'number') {
+    close()
+    throw new Error(`object ${bucket}/${key} returned no length`)
+  }
+  return {
+    size: res.ContentLength,
+    contentType: res.ContentType ?? null,
+    stream: () => body.transformToWebStream() as ReadableStream<Uint8Array>,
+    close,
+  }
 }
 
 let cachedOps: BucketOps | null = null

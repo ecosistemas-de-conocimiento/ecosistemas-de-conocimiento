@@ -177,9 +177,8 @@ ai-service refuses the old internal callback origin. Per application:
 ### 4d. ✅ Done 2026-10-17 ~07:40 UTC: rerank on, both envs
 
 - `RERANK_API_KEY` added to `edc-dev` and `edc-staging` through the API (`is_literal`; Coolify
-  made the preview copies itself). ⚠ It is a **temporarily shared** DeepInfra key, approved by the
-  owner on 2026-10-17. Replace it with an EDC-owned key: change the variable on both apps and in
-  the local secrets file. `RERANK_ENABLED` exists nowhere (checked: both apps' variables and both
+  made the preview copies itself). The key was at first a temporarily shared DeepInfra key; it is
+  now EDC-owned (§4f). `RERANK_ENABLED` exists nowhere (checked: both apps' variables and both
   generated `.env` files). The other `RERANK_*` stay at the compose defaults.
 - Applied without a rebuild: the key line was appended to
   `/data/coolify/applications/<app uuid>/.env` (the file Coolify generates at deploy; backups in
@@ -239,6 +238,22 @@ Found along the way:
   -af` and removing dev's `7dbe85c` images; 38 GB after staging's build; 61 GB after the same
   cleanup on staging. Build cache per slim build ≈ 13 GB. The `7dbe85c` images are gone, so
   rollback means rebuilding an older commit.
+
+### 4f. ✅ Done 2026-10-17: reranker on an EDC-owned DeepInfra key, both envs
+
+- `RERANK_API_KEY` now holds an EDC-owned DeepInfra key: in the local secrets file, and on
+  `edc-dev` and `edc-staging` in Coolify, main and preview copies (API PATCH, `is_literal`). The
+  shared key is gone from the local file, from Coolify (checked by hash on every variable of both
+  apps) and from every file under `/data/coolify/applications` and `/root` on the box (measured).
+- Applied without a rebuild, as in §4d: the `RERANK_API_KEY` line in each generated
+  `/data/coolify/applications/<app uuid>/.env` was rewritten, then only ai-service was recreated
+  (`up -d --no-deps --no-build ai-service`). Dev first, then staging.
+- Verified (measured): `printenv` in each new ai-service container shows the new key (by hash).
+  A direct `POST /v1/retrieve` with `rerank: true` answered 200 with `rerankScore` on all 5 chunks
+  (dev `eco-1`, staging `eco-1-draft-2`) and logged `rerank ok`, `provider: deepinfra`.
+- ⚠ The other containers of each env (web, backend, redis, postgres, rustfs) were not recreated
+  and still carry the shared key in their environment from the 12:28/12:37 deploys. They do not
+  use it. The next Coolify deploy of each env replaces them.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
@@ -334,8 +349,8 @@ Names in the local secrets file:
 
 - Hetzner and model provider: `HCLOUD_TOKEN`, `OPENROUTER_KEY` (copied into both apps as `OPENROUTER_API_KEY`).
 - Coolify: `EDC_COOLIFY_ROOT_EMAIL`, `EDC_COOLIFY_ROOT_PASSWORD`, `EDC_COOLIFY_API_TOKEN`.
-- Reranker: `RERANK_API_KEY` (DeepInfra; copied into both apps under the same name). ⚠ Temporarily
-  shared with another project, owner-approved 2026-10-17; replace with an EDC-owned key (§4d).
+- Reranker: `RERANK_API_KEY` (DeepInfra; copied into both apps under the same name). EDC-owned
+  since 2026-10-17 (§4f); not shared with any other project.
 - GitHub: `EDC_GITHUB_DEPLOY_KEY_B64`.
 - Per environment, prefix `EDC_DEV_` or `EDC_STAGE_`: `POSTGRES_PASSWORD`, `AI_SERVICE_API_KEY`,
   `AI_SERVICE_ADMIN_API_KEY`, `CALLBACK_SECRET`, `PAYLOAD_SECRET`, `SERVICE_TOKEN_WEB` (the value

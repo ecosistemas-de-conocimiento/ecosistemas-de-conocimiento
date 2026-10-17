@@ -168,6 +168,22 @@ Fixed inside the compose file, so **not** set in Coolify: `NODE_ENV` (`productio
 Not env, so not here: chunk size 800 / overlap 100 and `CORPUS_LANGUAGE=spanish` are set by the
 backend per corpus, not by ai-service variables. Unchanged.
 
+### 2g. Anonymisation gate detector — optional
+
+Read from code 2026-10-17 (`apps/backend/src/lib/anonymise/detector.ts`, `chunk.ts`). The detector
+sends a document to the model in chunks, because ai-service caps a `quick` reply at 400 output
+tokens and a whole multi-paragraph testimony's list of findings did not fit (measured 2026-10-17,
+local stack: every text from 1,191 words up was cut off and held). Blank, junk or values below 1
+fall back to the default.
+
+| var | app | default | notes |
+|---|---|---|---|
+| `ANONYMISE_CHUNK_WORDS` | backend | `250` | 💤 words per detector call. Whole paragraphs are packed up to it; a longer paragraph splits at sentences. Raising it brings back the cut-off replies |
+| `ANONYMISE_DETECT_CONCURRENCY` | backend | `3` | 💤 chunk calls in flight per stage. ai-service allows 30 generations/min per key; a 429 waits what ai-service asked (`AI_RETRY_*`, `lib/aiRetry.ts`) |
+| `ANONYMISE_DETECT_TIMEOUT_MS` | backend | `90000` | 💤 per-call deadline. Without it the client's 30 s default applied, and one measured call aborted there. Keep below ai-service's `LLM_REQUEST_TIMEOUT_MS` |
+
+🔴 Any failed chunk holds the whole document. There is no partial `ready`.
+
 ### 2e. ai-service operational knobs — optional, leave unset
 
 Read from `services/ai-service/src` (2026-10-17). 🔧 Set only what you change.

@@ -144,9 +144,9 @@ main checkout), where they are marked measured.
 | `apps/backend/e2e/tenancy.e2e.ts` | 22/22 passing |
 | `apps/backend/e2e/documents.e2e.ts` + `testimonyRead.e2e.ts` | 22/22 passing |
 | `apps/web/e2e/grafo.spec.ts` | 3/3 passing |
-| `apps/backend/e2e/audio.e2e.ts` | ⚠ failing — cause not yet investigated |
-| `apps/backend/e2e/identity.e2e.ts` | ⚠ failing — cause not yet investigated |
-| `apps/backend/e2e/ratings.e2e.ts` | ⚠ failing — cause not yet investigated |
+| `apps/backend/e2e/audio.e2e.ts` | 9/9 passing — needs `docker-compose.audio.yml` (see step 1) |
+| `apps/backend/e2e/identity.e2e.ts` | 15/15 passing — needs a signing keypair (see step 3) |
+| `apps/backend/e2e/ratings.e2e.ts` | 13/13 passing |
 | `apps/web/e2e/retrieval.spec.ts` | 2/2 passing (re-run 2026-10-17, bag-of-words fake embeddings) |
 | `apps/web/e2e/journey.spec.ts` | ⚠ failing at the rating step, before the cite step (see below) |
 | `apps/web/e2e/journey.spec.ts`, cite step | ⚠ failing on the fake stack: dense retrieval does not rank the uploaded PDF |
@@ -181,15 +181,30 @@ ai-service image of the local demo, 163 published seeded documents):
   embedder. On real embeddings the step is meaningful. Do not shorten the question to
   make the fake stack pass: that would stop testing a natural question on a real stack.
 
-Not in the table: `publish.e2e.ts`, `storage.e2e.ts` and `revision.spec.ts` have no
-recorded result on this date.
-
 ⚠ **Running from a worktree: the fixtures, the web origin and a trailing newline.**
 `apps/web/e2e/fixtures/` is gitignored; copy it from the main checkout or rebuild it.
 Set `WEB_ORIGIN` in the isolated stack's `.env` to the web host port you chose, or every
 form POST answers 403. If you build that `.env` by appending lines to a copy of the main
 one, check the copy ended with a newline: the 2026-10-17 run glued `COMPOSE_PROFILES=fake`
 onto `PUBLIC_BACKEND_URL`, and every ingest answered 400 `Invalid URL`.
+
+The audio, identity and ratings rows are a later run the same day (measured,
+2026-10-17, isolated project on the dev box, CPU transcription with Whisper `small`;
+audio reached `ready` in 79–91 s for the 55.2 s clip). On the earlier run they failed
+for three reasons, none of them a product bug:
+
+- **audio** — the stack had no `docker-compose.audio.yml`, so the backend ran with
+  `AUDIO_SERVICE_URL` empty and logged "transcription is off". The suite now
+  **skips** with a banner when audio-service does not answer, instead of failing.
+- **identity** — the fake `.env` had no `AUTH_PRIVATE_KEY` / `AUTH_PUBLIC_KEY`. The
+  backend served an empty JWK Set and answered every mint with 503. The suite now
+  stops in `beforeAll` with a message naming the keypair.
+- **ratings** — the test sent a `comment` with no `reason`. Free text is kept only
+  with `reason: 'other'` (`normalizeFeedback`, `collections/Ratings.ts`), so the
+  upsert answered 400. The test predated that rule; it now sends `other`.
+
+Not in the table: `publish.e2e.ts`, `storage.e2e.ts` and `revision.spec.ts` have no
+recorded result on this date.
 
 ### Running them against an isolated fake-provider stack
 
@@ -199,6 +214,8 @@ model calls. The method below is quoted from the 2026-10-17 run; it is not re-ru
 1. Copy `infra/docker-compose.override.yml` to a scratch file and delete two things from
    the copy: the top-level `name: edc`, and the `networks: default: name: edc` block. Both
    pin the project to the shared demo; without them `-p` picks the names.
+   For `audio.e2e.ts`, also pass `-f docker-compose.audio.yml` (after the override
+   copy). Without it the audio suite skips. It runs on CPU; no GPU is needed.
 2. Change the host ports in the copy (the `*_HOST_PORT` env vars work) so they do not
    collide with a running demo. Keep them in the 454xx block.
 3. Turn on the fake provider in `infra/.env`: uncomment the four-line fake-provider
@@ -206,7 +223,10 @@ model calls. The method below is quoted from the 2026-10-17 run; it is not re-ru
    lines). ⚠ The three URL/key lines reach ai-service through `env_file: .env`
    (`infra/docker-compose.yml`), so exporting them in your shell does nothing; only
    `COMPOSE_PROFILES` works from the shell (inferred from reading the compose file).
-   Then bring it up:
+   🔴 Also set, in the same `.env`: a signing keypair (`pnpm --filter @edc/backend
+   keygen`, paste both lines), and `AUTH_ISSUER` plus `ALLOWED_ORIGINS` on the
+   **new** backend host port. `identity.e2e.ts` asserts `AUTH_ISSUER` equals
+   `E2E_BACKEND_URL`. Then bring it up:
 
 ```bash
 cd infra
@@ -308,8 +328,8 @@ the thing still identifying someone.
 - ~~**No `docker build` has ever run.**~~ The images build: the local demo stack runs
   built images, and the 2026-10-17 isolated e2e run built its own (quoted from the
   findings doc above).
-- ~~**The audio path has never run end to end.**~~ ✅ It has, 2026-08-29 (on 2026-10-17
-  `audio.e2e.ts` fails on the fake stack, cause not yet investigated):
+- ~~**The audio path has never run end to end.**~~ ✅ It has, 2026-08-29, and again on
+  the isolated fake stack on 2026-10-17 (9/9, measured):
   `audio.e2e.ts` uploaded the Piper `.m4a`, audio-service transcribed it, and the
   transcript reached `ready` through the same ingest path a PDF uses — **75.5 s** for
   the 55.2 s clip, measured. The old "~9 s for 45 s" figure was against the retired
