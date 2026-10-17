@@ -55,7 +55,7 @@ let db: Db
 let payload: GraphQueryPayload
 
 function stopContainer(): void {
-  spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' })
+  spawnSync('docker', ['rm', '-fv', CONTAINER], { stdio: 'ignore' })
 }
 
 async function startPostgres(): Promise<string> {
@@ -63,7 +63,8 @@ async function startPostgres(): Promise<string> {
   const run = spawnSync(
     'docker',
     [
-      'run', '-d', '--rm', '--name', CONTAINER, '-p', '0:5432',
+      // `--tmpfs` for the data dir: no anonymous volume is left behind.
+      'run', '-d', '--rm', '--tmpfs', '/var/lib/postgresql/data', '--name', CONTAINER, '-p', '0:5432',
       '-e', 'POSTGRES_USER=postgres', '-e', 'POSTGRES_PASSWORD=postgres',
       '-e', 'POSTGRES_DB=graph_test', IMAGE,
     ],
