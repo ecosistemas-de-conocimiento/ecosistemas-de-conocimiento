@@ -50,13 +50,17 @@ completo.** La transcripción sí termina bien. No aparece ningún error, en nin
 aviso nunca se entrega, el backend nunca se entera de que el texto existe, y el documento se queda sin
 quedar listo. Para siempre.
 
-### No necesitas credenciales de nube ni GPU
+### No necesitas GPU; necesitas una llave de modelo, o el proveedor falso
 
-- El demo arranca con `MOCK_LLM=1` y `MOCK_EMBEDDINGS=1`. ✅
-- Eso significa: el modelo de lenguaje y los vectores son falsos pero deterministas.
-- **Qué sí ves:** subir documentos, chat con citas, calificar respuestas 1–5, multitenencia.
-- ⚠ **Qué no ves:** calidad real de respuestas. La búsqueda es ruido. No demuestres calidad en este modo.
-- Para respuestas reales: pon `OPENROUTER_API_KEY` en `.env` y cambia los tres `MOCK_*` a 0.
+- 🔴 `MOCK_LLM`, `MOCK_EMBEDDINGS` y `MOCK_LLM_STREAM` ya no existen en ai-service. Si alguno está
+  encendido, ai-service se niega a arrancar. Bórralos de tu `.env`.
+- **Respuestas reales:** pon `OPENROUTER_API_KEY` en `infra/.env`. Es el único camino que cuesta dinero.
+- **Modo falso, gratis:** descomenta el bloque del proveedor falso en `infra/.env`
+  (`COMPOSE_PROFILES=fake` y tres variables; ver `infra/.env.example`). Arranca el servicio
+  `fake-provider`, solo de pruebas, y ai-service corre su código real contra él.
+- **Qué sí ves en modo falso:** subir documentos, chat con citas, calificar respuestas 1–5, multitenencia.
+- ⚠ **Qué no ves:** calidad real de respuestas. Cada respuesta empieza con `[FAKE-PROVIDER TEST DATA]`.
+  No demuestres calidad en este modo.
 
 ### 🔴 Los tres niveles, y qué cuesta de verdad el audio
 

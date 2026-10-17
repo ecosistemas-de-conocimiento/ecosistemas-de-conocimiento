@@ -66,13 +66,17 @@
 #   `context: ..` to `context: .` and every `env_file: .env` to
 #   `env_file: infra/.env`. Nothing else changes.
 #
-# ─── No GPU, no cloud credentials ───────────────────────────────────────────
-# The default profile runs with `MOCK_LLM=1` and `MOCK_EMBEDDINGS=1`, so the
-# stack boots and the UI is clickable with ZERO API keys. Retrieval returns
-# deterministic stub vectors — good enough to demo the shape of the product, not
-# its answer quality. To demo REAL answers, set `OPENROUTER_API_KEY` in `.env`
-# and flip `MOCK_LLM`/`MOCK_EMBEDDINGS` to 0. That is the only paid path.
-#
+# ─── No GPU; one model key, or the fake provider ────────────────────────────
+# ai-service has NO in-service mock any more. `MOCK_LLM`, `MOCK_EMBEDDINGS` and
+# `MOCK_LLM_STREAM` were removed on 2026-10-02, and setting any of
+# them to an "on" value now REFUSES BOOT. Two ways to run locally:
+#   · REAL answers: set `OPENROUTER_API_KEY` in `.env`. The only paid path.
+#   · ZERO-COST fake: uncomment the fake-provider block in `.env`
+#     (`COMPOSE_PROFILES=fake` + three URLs/key). That starts the TEST-ONLY
+#     `fake-provider` service from docker-compose.override.yml and points
+#     ai-service's real code path at it. Every answer starts with
+#     `[FAKE-PROVIDER TEST DATA]`. Local only; Coolify never sees it.
+
 # ─── THREE TIERS — REVISED 2026-08-14 against the real audio-service ────────
 # 🔴 Read this before promising anyone a demo.
 #
@@ -484,7 +488,15 @@ services:
       #      X-AIService-Timestamp / -Signature / -Event, and audio-service signs
       #      with exactly those headers on purpose, so no new backend code is
       #      needed to authenticate it — only a new `event` branch.
-      PUBLIC_BACKEND_URL: http://backend:3002
+      #    🔴 ai-service REFUSES callbacks to private addresses (its SSRF
+      #      guard) and, under NODE_ENV=production, anything but https. So on
+      #      Coolify this is the backend's PUBLIC https origin, e.g.
+      #      https://api.dev.ecosistemasdeconocimiento.com — ai-service reaches
+      #      it through Traefik on the same box (hairpin; ✅ measured 2026-10-17
+      #      from both ai-service containers on edc-1: 200). Locally it is
+      #      `http://backend:3002`, allowed only because docker-compose.override.yml
+      #      runs ai-service with NODE_ENV=development + CALLBACK_ALLOW_PRIVATE=1.
+      PUBLIC_BACKEND_URL: ${PUBLIC_BACKEND_URL:?PUBLIC_BACKEND_URL is required (backend public https origin; local http://backend:3002)}
       # ── audio-service — OFF unless docker-compose.audio.yml is added ──
       # Empty here on purpose. The backend treats an empty URL or key as
       # "audio not configured" and says so: it logs it at boot
@@ -676,19 +688,50 @@ services:
       #      `API_KEYS` in `.env` — Compose gives `environment:` precedence over
       #      `env_file:`. That is why `.env.example` no longer defines it.
       API_KEYS: '{"${AI_SERVICE_API_KEY:?AI_SERVICE_API_KEY is required}":{"org":"demo","project":"demo","role":"app","callbackSecret":"${CALLBACK_SECRET:?CALLBACK_SECRET is required}"},"${AI_SERVICE_ADMIN_API_KEY:-dev-key-admin}":{"org":"demo","project":"demo","role":"admin","callbackSecret":"${CALLBACK_SECRET}"}}'
-      # ── Advanced RAG: the two optional legs (profile `heavy`) ──
-      # Both default OFF, so pointing at a service that is not running is
-      # harmless: rerank degrades to a no-op on the fused order, and sparse
-      # falls back to the Postgres tsvector lexical leg. Flip the ENABLED flags
-      # in `.env` at the same time as you add `--profile heavy`.
-      # 🔴 These URLs are consumed VERBATIM — the `/rerank` and `/embed` paths
-      #    are part of the value, NOT appended by the client. Dropping the path
-      #    yields a 404 that the fallback silently swallows, so the feature
-      #    looks enabled and does nothing. Easy to get wrong; check it first.
-      RERANK_ENABLED: ${RERANK_ENABLED:-false}
-      RERANK_URL: http://rerank-service:8000/rerank
+      # ⚠ NODE_ENV=production here means CALLBACK_ALLOW_PRIVATE is FORBIDDEN
+      #   (boot refuses it) and callbacks must be https. The local override
+      #   flips this service to development; never set either on Coolify.
+      # ── Rerank: hosted DeepInfra (owner-approved). THE KEY IS THE SWITCH ──
+      # Setting `RERANK_API_KEY` (secret, arrives through `env_file`, never
+      # written here) turns rerank ON: the `command:` below exports
+      # RERANK_ENABLED=true when the key is non-empty and RERANK_ENABLED is
+      # unset. No key ⇒ ai-service's default, OFF. `RERANK_ENABLED=false`
+      # set explicitly is the kill switch that keeps a key but stops reranking.
+      # Why a shell guard and not `${RERANK_API_KEY:+true}`: Coolify 4.4.6's
+      # compose parser does not know the `:+` operator and would create a
+      # variable literally named `RERANK_API_KEY:+true` (read from its
+      # bootstrap/helpers/parsers.php on edc-1, 2026-10-17).
+      # 🔴 With rerank on, provider deepinfra and no key, ai-service REFUSES
+      #    BOOT — the guard only turns it on when the key exists.
+      # ⚠ Under deepinfra RERANK_URL is the API BASE; the model path is
+      #   appended. A full `/v1/inference/...` URL is refused at boot.
+      # Self-hosted sidecar instead (profile `heavy`): RERANK_PROVIDER=rerank-api,
+      # RERANK_URL=http://rerank-service:8000/rerank (path included), and
+      # RERANK_ENABLED=true (that sidecar needs no key).
+      RERANK_PROVIDER: ${RERANK_PROVIDER:-deepinfra}
+      RERANK_URL: ${RERANK_URL:-https://api.deepinfra.com}
+      RERANK_MODEL: ${RERANK_MODEL:-Qwen/Qwen3-Reranker-0.6B}
+      RERANK_TIMEOUT_MS: ${RERANK_TIMEOUT_MS:-8000}
+      # ── Sparse leg (profile `heavy`). OFF: falls back to Postgres tsvector.
+      # 🔴 The URL is consumed VERBATIM — `/embed` is part of the value. A
+      #    missing path 404s and the fallback swallows it silently.
       SPARSE_ENABLED: ${SPARSE_ENABLED:-false}
       SPARSE_EMBED_URL: http://bge-m3-service:8000/embed
+    # The image's own CMD (services/ai-service/Dockerfile, last line), preceded
+    # by the rerank key guard described above. 🔴 If the Dockerfile's CMD
+    # changes, change it here too. `$$` keeps the variables for the shell, and
+    # no `${` appears, so neither Compose nor Coolify interpolates them.
+    command:
+      - sh
+      - -c
+      - >-
+        if [ -n "$$RERANK_API_KEY" ] && [ -z "$$RERANK_ENABLED" ]; then export RERANK_ENABLED=true; fi;
+        npm run --silent db:migrate:prod && exec node --import ./dist/telemetry/preload.js dist/index.js
+    # 🔴 Must exceed SHUTDOWN_GRACE_MS (default 30s). On SIGTERM ai-service
+    #    lets in-flight jobs finish for that long, then aborts them as named
+    #    `shutdown` jobs. Docker's default 10s would SIGKILL them mid-flight.
+    #    Raise both together if SHUTDOWN_GRACE_MS ever changes.
+    stop_grace_period: 45s
     depends_on:
       postgres:
         condition: service_healthy

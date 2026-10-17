@@ -1,7 +1,8 @@
 # Per-environment variable manifests
 
-**Status:** proposal · 🔴 **Not applied to any platform yet.** The compose file it describes passes
-`docker compose config` and runs the local stack healthy (2026-10-14); no Coolify deploy has run.
+**Status:** applied on `edc-1` (dev + staging) — see `edc-1.md`. ⚠ The ai-service changes
+(removed `MOCK_*`, `PUBLIC_BACKEND_URL` as a required public https origin, rerank variables) are
+**not yet applied** there; `edc-1.md` §4 lists the exact edits.
 
 **Shape (decided 2026-10-14):** ONE Hetzner box running Coolify, hosting TWO environments of the
 core stack. Each environment is ONE Coolify resource of type **Docker Compose** built from this repo.
@@ -82,6 +83,7 @@ first. Coolify names the project after the resource, so volumes are per environm
 | `POSTGRES_PASSWORD` | `CHANGE_ME` | `CHANGE_ME` | 🔑 |
 | `AI_SERVICE_API_KEY` | `CHANGE_ME` | `CHANGE_ME` | 🔑 the `app` key; compose builds ai-service's `API_KEYS` from it |
 | `CALLBACK_SECRET` | `CHANGE_ME` | `CHANGE_ME` | 🔑 ≥ 32 chars. Compose interpolates it into `API_KEYS` too, so the pair cannot drift |
+| `PUBLIC_BACKEND_URL` | `https://api.dev.<domain>` | `https://api.montaje.<domain>` | ⚙ ⚠ the origin ai-service calls back to. 🔴 Must be the backend's PUBLIC **https** origin: ai-service refuses private addresses and, under `NODE_ENV=production`, plain http. It reaches the public host through Traefik on the same box (✅ hairpin measured 2026-10-17: `curl` from both ai-service containers on edc-1 to both `api.*` hosts → 200). Locally `http://backend:3002` |
 
 ### 2b. Required by the apps — read through `env_file`
 
@@ -108,7 +110,9 @@ first. Coolify names the project after the resource, so volumes are per environm
 
 | var | why |
 |---|---|
-| `MOCK_LLM`, `MOCK_EMBEDDINGS`, `MOCK_LLM_STREAM` | local-demo path only |
+| `MOCK_LLM`, `MOCK_EMBEDDINGS`, `MOCK_LLM_STREAM` | 🔴 **removed** from ai-service (2026-10-02). Any "on" value refuses boot in every environment. **Delete** them; `0` still boots but is dead weight. Local fake mode is the `fake-provider` service (`.env.example`) |
+| `CALLBACK_ALLOW_PRIVATE` | 🔴 forbidden under `NODE_ENV=production` — ai-service refuses to boot. Local override only |
+| `CHAT_COMPLETIONS_URL`, `EMBEDDINGS_URL` | default to OpenRouter. Set only for the local fake provider |
 | `PAYLOAD_ALLOW_PUSH` | 🔴 `1` silently drops the baseline's hand-written unique indexes (§6) |
 | `AUDIO_SERVICE_URL`, `AUDIO_SERVICE_API_KEY`, `COMPOSE_PROFILES`, `PUBLIC_AUDIO_UPLOAD_ENABLED` | **staging only** — audio is off there. Dev on edc-1 sets them (`edc-1.md` §4y). Empty URL/key ⇒ the backend logs `[audio-service] NOT CONFIGURED` at boot and fails audio uploads visibly |
 | `CORPUS_DIR` | the corpus is a sibling repo, absent from the checkout. Without it the seed logs why and degrades to an empty library |
@@ -123,19 +127,46 @@ first. Coolify names the project after the resource, so volumes are per environm
 | `POSTGRES_USER`, `BACKEND_DB_NAME`, `AI_DB_NAME` | `edc`, `edc_backend`, `edc_ai` | 💤 per-env stores, so the defaults are fine |
 | `AI_SERVICE_ADMIN_API_KEY` | `dev-key-admin` | 🔑 🔴 **set it** — the compose default is a public string |
 | `RUSTFS_MEMORY` | `1g` | 💤 |
-| `RERANK_ENABLED`, `SPARSE_ENABLED` | `false` | 💤 the `heavy` sidecars are not deployed |
+| `RERANK_API_KEY` | unset | 🔑 **the switch.** Hosted DeepInfra rerank, owner-approved. Setting it turns rerank on (guard in ai-service's `command:` exports `RERANK_ENABLED=true` when the key is non-empty and `RERANK_ENABLED` is unset). Unset ⇒ off, plus one boot warning about the missing key — expected. Not required |
+| `RERANK_ENABLED` | **leave unset** | 💤 🔴 a Coolify value of `false` overrides the key: set it only as a kill switch. `true` without a key refuses boot |
+| `RERANK_PROVIDER`, `RERANK_URL`, `RERANK_MODEL`, `RERANK_TIMEOUT_MS` | `deepinfra`, `https://api.deepinfra.com`, `Qwen/Qwen3-Reranker-0.6B`, `8000` | 💤 compose defaults; do not set. Under `deepinfra` the URL is the API base (a `/v1/inference/…` URL refuses boot) and the model must be on ai-service's code allowlist |
+| `SPARSE_ENABLED` | `false` | 💤 the `heavy` sidecar is not deployed. Keep off |
+| `SHUTDOWN_GRACE_MS` | `30000` | 💤 🔴 must stay below ai-service's `stop_grace_period` (45s in the compose file) |
 | `IDENTITY_ALLOWED_EMAIL_DOMAIN`, `AUTH_TOKEN_TTL`, `SESSION_JANITOR_*`, `LLM_*_TIMEOUT_MS` | code defaults | 💤 see `infra/.env.example` |
 
-Fixed inside the compose file, so **not** set in Coolify: `NODE_ENV`, `PORT`, `HOST`, `DATABASE_URI`
-(backend), `DATABASE_URL` + `REDIS_URL` + `API_KEYS` (ai-service), `AI_SERVICE_URL`, `BACKEND_URL`,
-`PUBLIC_BACKEND_URL` (`http://backend:3002` — the callback origin ai-service reaches over the private
-network, not the public one).
+Fixed inside the compose file, so **not** set in Coolify: `NODE_ENV` (`production`), `PORT`, `HOST`,
+`DATABASE_URI` (backend), `DATABASE_URL` + `REDIS_URL` + `API_KEYS` (ai-service), `AI_SERVICE_URL`,
+`BACKEND_URL`, and ai-service's `stop_grace_period: 45s`.
+
+Not env, so not here: chunk size 800 / overlap 100 and `CORPUS_LANGUAGE=spanish` are set by the
+backend per corpus, not by ai-service variables. Unchanged.
+
+### 2e. ai-service operational knobs — optional, leave unset
+
+Read from `services/ai-service/src` (2026-10-17). 🔧 Set only what you change.
+
+| var | default | notes |
+|---|---|---|
+| `METRICS_TOKEN` | unset | 🔑 unset ⇒ `GET /metrics` answers loopback peers only, 403 otherwise. Set it only when a scraper runs |
+| `RATE_LIMIT_REDIS` | on (outside tests) | 💤 `/v1` rate-limit store shared in Redis. `0` = in-process, for debugging one box |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` | unset, `ai-service` | 💤 unset endpoint ⇒ OpenTelemetry does not start. No collector on edc-1 |
+| `LLM_ASYNC_REQUEST_TIMEOUT_MS` | inherits `LLM_REQUEST_TIMEOUT_MS` (120000) | 💤 async generation worker only |
+| `WORKER_LOCK_DURATION_MS` | `max(2 × LLM timeout, 60000)` | 💤 BullMQ lock tolerance. Set only for very long ingests |
+| `WORKER_LOST_WINDOW_MS` | 2 × lock duration | 💤 when a `running` job is presumed lost |
+| `WORKER_REAP_ENABLED` | on | 💤 `false` is an incident escape hatch only |
+| `CALLBACK_SWEEP_ENABLED` | on | 💤 re-delivers overdue callbacks. `false` is an incident escape hatch only |
+| `CALLBACK_SWEEP_INTERVAL_MS`, `_GRACE_MS`, `_LEASE_MS`, `_MAX_AGE_MS`, `_BATCH_SIZE`, `_DRY_RUN` | `60000`, `120000`, `120000`, `86400000`, `50`, `false` | 💤 |
+| `PII_NER_URL`, `PII_NER_MODEL` | unset | 💤 unset ⇒ the NER leg of the PII scrub is off; regex scrub still runs |
+| `PII_NER_BATCH_LIMIT`, `_TIMEOUT_MS`, `_MIN_SCORE` | `16`, `5000`, `0.5` | 💤 only with `PII_NER_URL` |
+| `CHILD_MODE`, `CHILD_LOCK_DURATION_MS`, `CHILD_STALLED_INTERVAL_MS` | — | 🔴 test fixtures only. Never set |
+
+⚠ `trustProxy` in ai-service is hard-coded to **1** hop (Traefik). No variable changes it.
 
 ### Why some apps' notes from the old per-app manifest still apply
 
 - 🔴 **The callback pair** — `PUBLIC_BACKEND_URL` **and** `CALLBACK_SECRET` must both be set, or ingest
-  callbacks are silently off and every upload sits in `embedding` forever. The compose file sets the
-  first and requires the second.
+  callbacks are silently off and every upload sits in `embedding` forever. The compose file requires
+  both.
 - ⚠ **Rate limiting is in-process.** One backend container per env: fine.
 - 🔴 **Never rename a web variable to `PUBLIC_*`.** SvelteKit inlines those into the browser bundle.
 

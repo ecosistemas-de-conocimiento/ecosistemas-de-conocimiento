@@ -11,6 +11,9 @@
 #     collide between dev and staging on the same box.
 #   · The fixed `edc` network name — same collision on a shared box.
 #   · The corpus bind mount — it points outside the repo.
+#   · ai-service as NODE_ENV=development + CALLBACK_ALLOW_PRIVATE=1, so it
+#     may call back to `http://backend:3002`. Both are refused on a deploy.
+#   · The TEST-ONLY `fake-provider` service (profile `fake`).
 #
 # ⚠ Passing any `-f` turns auto-loading OFF. Then name this file explicitly:
 #     docker compose -f docker-compose.yml -f docker-compose.override.yml \
@@ -65,6 +68,40 @@ services:
   ai-service:
     ports:
       - "${AI_SERVICE_HOST_PORT:-45401}:3000"
+    environment:
+      # 🔴 LOCAL ONLY. Callbacks go to `http://backend:3002` — a private
+      #    address over plain http. ai-service refuses both unless
+      #    CALLBACK_ALLOW_PRIVATE is on, and refuses to BOOT with that flag
+      #    under NODE_ENV=production. So locally this one service runs as
+      #    development. Deployed envs keep production and an https public
+      #    callback origin (see `PUBLIC_BACKEND_URL` in docker-compose.yml).
+      NODE_ENV: development
+      CALLBACK_ALLOW_PRIVATE: "1"
+      # Rerank stays OFF locally even if a RERANK_API_KEY is in `.env`. To try
+      # it, change this line, not the base file.
+      RERANK_ENABLED: "false"
+
+  # ── TEST-ONLY fake model provider (profile `fake`). Never deployed. ──────
+  # Replaces the removed MOCK_LLM / MOCK_EMBEDDINGS / MOCK_LLM_STREAM switches.
+  # Speaks OpenRouter's chat, streaming chat and embeddings shapes; every
+  # answer starts `[FAKE-PROVIDER TEST DATA]`. Zero dependencies, so plain
+  # `node` runs it straight from source (it is not in any image).
+  # Turn it on with the fake-provider block in `.env` (sets
+  # `COMPOSE_PROFILES=fake` and points ai-service at it):
+  #   CHAT_COMPLETIONS_URL=http://fake-provider:4010/api/v1/chat/completions
+  #   EMBEDDINGS_URL=http://fake-provider:4010/api/v1/embeddings
+  #   OPENROUTER_API_KEY=fake-provider-test-key
+  # Docs: services/ai-service/test-support/fake-provider/README.md.
+  fake-provider:
+    profiles: ["fake"]
+    image: node:22-alpine
+    command: ["node", "/fake/server.mjs"]
+    environment:
+      FAKE_PROVIDER_HOST: 0.0.0.0
+      FAKE_PROVIDER_PORT: "4010"
+    volumes:
+      - ../services/ai-service/test-support/fake-provider:/fake:ro
+    expose: ["4010"]
 
   bge-m3-service:
     ports:

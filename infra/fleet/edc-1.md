@@ -106,9 +106,9 @@ Staging has no seed, so it was set up by hand on 2026-10-17:
 
 ## 4. Variables per environment
 
-Every variable listed in `env-manifests.md` §2a–2b is set on both applications, plus
-`MOCK_LLM=0`, `MOCK_EMBEDDINGS=0`, `MOCK_LLM_STREAM=0`, `TZ=UTC`, `AI_SERVICE_ADMIN_API_KEY`
-(never the compose default). All are set as **literal** (Coolify does not interpolate them).
+Every variable listed in `env-manifests.md` §2a–2b is set on both applications, plus `TZ=UTC` and
+`AI_SERVICE_ADMIN_API_KEY` (never the compose default). All are set as **literal** (Coolify does not
+interpolate them).
 
 Footguns met on this box:
 
@@ -124,6 +124,53 @@ Footguns met on this box:
    tag it per environment in `infra/docker-compose.yml` (`edc-postgres:pg16-${EDC_ENV:-local}`).
 4. Deploy the two environments **one after the other**, never at the same time, while fix 3 is not
    on `main`.
+
+### 4a. 🔴 Pending: edits for the ai-service sync — apply BEFORE deploying a `main` that carries it
+
+The compose file now requires `PUBLIC_BACKEND_URL` (rendering fails without it), and the synced
+ai-service refuses the old internal callback origin. Per application:
+
+| change | dev (`edc-dev`) | staging (`edc-staging`) |
+|---|---|---|
+| **add** `PUBLIC_BACKEND_URL` | `https://api.dev.ecosistemasdeconocimiento.com` | `https://api.montaje.ecosistemasdeconocimiento.com` |
+| **delete** `MOCK_LLM`, `MOCK_EMBEDDINGS`, `MOCK_LLM_STREAM` | yes | yes |
+| leave unset | `CALLBACK_ALLOW_PRIVATE`, `RERANK_ENABLED`, `RERANK_API_KEY`, `NODE_ENV` | same |
+
+- `PUBLIC_BACKEND_URL` must exist **before** Coolify reloads the compose file (§4 footgun 1): create
+  it through the API, then check its value is the URL, not the `:?` error text.
+- Why the public host: ai-service refuses callbacks to private addresses and, under
+  `NODE_ENV=production`, plain http. The old `http://backend:3002` would leave every upload in
+  `embedding`. ai-service reaches the public host through Traefik on this same box — ✅ measured
+  2026-10-17: `curl https://api.{dev,montaje}.…/api/health` from inside both ai-service containers
+  answered 200 via `<edc-1-ip>`.
+- `MOCK_*=0` would still boot (only "on" values are refused), but they are dead; delete them.
+- Rerank (DeepInfra, `Qwen/Qwen3-Reranker-0.6B`, 8 s timeout — compose defaults) turns on by adding
+  ONE variable, `RERANK_API_KEY`, once EDC has its own DeepInfra key; then redeploy. Do not create
+  `RERANK_ENABLED`: a value of `false` there overrides the key (it is the kill switch).
+- ai-service's `trustProxy` is hard-coded to **1** hop (Traefik). Nothing to set; do not add a
+  second proxy in front without changing code.
+
+### 4b. 🔴 Migrations 0002–0004 run on that deploy — back up `edc_ai` first
+
+ai-service migrates on every container start. Both environments' `edc_ai` sit at 2 applied
+migrations (0000, 0001) — measured 2026-10-17, `select count(*) from public.__drizzle_migrations`.
+The update adds `0002_ingest_jobs`, `0003_budget_reservations`, `0004_chunks_scope_deps`. Dump each
+environment right before its deploy (≈ 9 MB for dev today, measured):
+
+```sh
+ssh root@<edc-1-ip>
+mkdir -p /root/backups
+for APP in pehgnxpqvnonhihabzvnwnil dwmvhro1iewb7uvpzg9qbspe; do   # dev, staging
+  C=$(docker ps --format '{{.Names}}' | grep "^postgres-$APP")
+  docker exec "$C" pg_dump -U edc -d edc_ai -Fc > "/root/backups/edc_ai-$APP-$(date -u +%Y%m%dT%H%MZ).dump"
+done
+ls -lh /root/backups
+```
+
+Restore, if a migration goes wrong: stop that env's ai-service, then
+`docker exec -i "$C" pg_restore -U edc -d edc_ai --clean --if-exists < <file>.dump`, and redeploy
+the previous commit. ⚠ Copy the dumps off the box if you keep them; Hetzner's daily image also
+holds the disk, but restoring it rolls back both environments at once.
 
 ---
 
@@ -183,6 +230,7 @@ organization slug. Done for dev and staging on 2026-10-17 (`limitUsd: 5`). Read 
    A cold build of the whole stack took about 5 minutes (measured 2026-10-17, dev, idle box).
 4. Check: `https://<web host>/api/health` and `https://<backend host>/api/health` answer 200.
 5. Check the variables (§4 footgun 1) whenever the compose file changed.
+6. A deploy that adds ai-service migrations: back up `edc_ai` first (§4b).
 
 ### Smoke check (what was verified on 2026-10-17)
 
