@@ -27,6 +27,16 @@
  *     rows that were never extracted (the column is NULL).
  *   · `graphStatus = 'failed'` — a lost run or a transient ai-service error.
  *
+ * ── What it reads 🔴 ──────────────────────────────────────────────────────
+ *
+ * The SAME text and title the live ingest path uses
+ * (`scheduleGraphExtractionForDoc` in `collections/Documents.ts`):
+ * `corpusTextFor` and `titleFor`. Never `extractedText` and `name` directly —
+ * for a `testimonio` those are the raw transcript and the uploader's free-text
+ * file name. A gated document with no approved redaction is not extracted, and
+ * any rows an earlier run left on it are deleted (they may have come from the
+ * raw text).
+ *
  * ⚠ `skipped` rows are NOT re-run when their stamp is current: they were skipped
  * because the document has no usable text, and that does not change by itself.
  *
@@ -43,7 +53,10 @@
  * being deleted and being written back.
  */
 
-import { runGraphExtraction, type GraphSchedulerPayload } from './schedule'
+import { corpusTextFor, mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
+import { contentKindOf, titleFor } from '@/lib/contentKind'
+
+import { clearGraphRows, runGraphExtraction, type GraphSchedulerPayload } from './schedule'
 import { GRAPH_PROMPT_VERSION } from './prompt'
 
 /** The Payload surface the backfill needs, structurally. */
@@ -79,6 +92,8 @@ interface DocRow {
   organization?: unknown
   contentKind?: unknown
   extractedText?: unknown
+  redactedText?: unknown
+  anonymisationStatus?: unknown
   graphStatus?: unknown
   graphPromptVersion?: unknown
 }
@@ -175,6 +190,32 @@ export async function runGraphBackfill(
     touchedOrganizations.add(String(organizationId))
     organizationById.set(String(organizationId), organizationId)
 
+    /**
+     * 🔴 THE CORPUS TEXT, NOT `extractedText`. Same helper, same fail-closed
+     * rule as the live path. Decided before the dry-run branch so a dry run
+     * reports exactly what a real run would refuse.
+     */
+    const corpusText = corpusTextFor(doc)
+    if (!corpusText.ok) {
+      log(`[graph-backfill] doc ${doc.id} sin texto anonimizado aprobado — omitido`)
+      result.skipped++
+      if (dryRun) continue
+      // Rows from a pre-fix run may hold the raw transcript's names and places.
+      // Not a `.catch`: if this delete fails the run must say so loudly.
+      await clearGraphRows(payload, doc.id, organizationId)
+      await payload.update({
+        collection: 'documents',
+        id: doc.id,
+        data: {
+          graphStatus: 'skipped',
+          graphError: `not_graphable: ${corpusText.reason}`.slice(0, 500),
+        },
+        overrideAccess: true,
+        context: { __skipDocsExtract: true },
+      })
+      continue
+    }
+
     if (dryRun) {
       log(
         `[graph-backfill] (simulación) doc ${doc.id} ` +
@@ -191,8 +232,14 @@ export async function runGraphBackfill(
       // 🔴 The column, verbatim. No default is applied here: `personaAllowed`
       // fails closed on an unexpected value, which is the safe direction.
       contentKind: typeof doc.contentKind === 'string' ? doc.contentKind : null,
-      text: typeof doc.extractedText === 'string' ? doc.extractedText : '',
-      title: typeof doc.name === 'string' ? doc.name : null,
+      text: corpusText.text,
+      // 🔴 `titleFor`, as the live path. ⚠ The name is withheld for ANY gated
+      // raw kind: `contentKindOf` maps an unknown kind to `documento`, whose
+      // title is the free-text name — the one value the gate never reads.
+      title: titleFor(
+        contentKindOf(doc),
+        mustPassAnonymisationGate(doc.contentKind) || typeof doc.name !== 'string' ? null : doc.name,
+      ),
     })
 
     if (status === 'ready') result.extracted++
