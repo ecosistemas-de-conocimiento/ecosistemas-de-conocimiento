@@ -1,8 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `5c157bb` (a conversation delete also
-deletes its own uploads), deployed 2026-10-17 22:31 UTC — see §4i. Staging runs `97d5316` (same
-code as dev's `5c157bb`), deployed 23:03 UTC — see §4j. Before that, `e3eb1f3` on both
+**Status:** live since 2026-10-17. Dev runs `main` @ `29f61b3` (backend migration
+`documents.uploaded_in_session_id`, testimonio drafts cascade, files deleted with their document),
+deployed 2026-10-18 00:27 UTC — see §4k. Staging runs `97d5316`, deployed 2026-10-17 23:03 UTC —
+see §4j. Before that, dev ran `5c157bb` (a conversation delete also deletes its own uploads; 22:31 UTC, §4i). Before that, `e3eb1f3` on both
 (migration `0005_pg_trgm`, session-delete owner guard; 22:01 / 22:14 UTC, §4h). Before that, `643ff4e` on both (12:28 / 12:36 UTC, §4e), and `fcd5247` on
 dev only (§4g). Before that, `7dbe85c` (05:07 / 05:49 UTC) with the org move of §4c. Verified end to end on both (measured by the deploy agent): login, PDF
 upload → `ready` via the public https callback, real OpenRouter chat answer whose
@@ -425,6 +426,48 @@ Document counts unchanged: 257 backend (248 `ready`), 253 ai-service.
 
 **Disk**, `df -h /` free: 61 GB before; 48 GB after staging's build; 61 GB after `docker builder
 prune -af` (12.96 GB) and removing staging's `e3eb1f3` images. Images 7.0 GB, build cache 0.
+
+### 4k. ✅ Done 2026-10-18 00:26–00:36 UTC: `29f61b3`, dev only
+
+All measured by the deploy agent. Staging was not touched; it stays on `97d5316`. Dev was resolved
+by its domain through the API. `29f61b3` (`22ed9e0`, `29f61b3`) records each upload's conversation
+in a new column, cascades testimonio drafts with their conversation, and deletes a document's file
+when the document is deleted.
+
+- Backup (`pg_restore -l` ok, sha256 matched off-box): `/root/backups/20261018T0026Z/`, `edc_ai`
+  2.4 MB, `edc_backend` 315 KB. Pre-check by hash as in §4h.
+- Deploy: 00:27:07 → 00:32:30 UTC, ≈ 5.4 min (API poll every 20 s). 6 containers `healthy`;
+  health 200 on `dev.` and `api.dev.`; every container carries `RERANK_API_KEY` `4dbc5b378dde`; no
+  non-preview variable holds `:?` text.
+- **First backend (Payload) migration since the baseline.** The backend log shows
+  `Migrated: 20261017_231817_documents_uploaded_in_session (50ms)` at container start.
+  `payload_migrations` now has 2 rows (baseline batch 1, this one batch 2). `documents` has
+  `uploaded_in_session_id integer`, index `documents_uploaded_in_session_idx`, and FK
+  `documents_uploaded_in_session_id_sessions_id_fk … ON DELETE SET NULL` (`\d documents`).
+  Existing rows stay NULL (no backfill, by design). `edc_ai` still at 6 migrations; none ran.
+
+Smoke, as admin, one script (00:33 UTC). Each document was checked in 5 places: the backend
+`documents` row, its `media` row, the ai-service document, the RustFS object on disk, and
+"Mis documentos" (`GET /api/documentos`).
+
+| test | result |
+|---|---|
+| (a) Standalone document: `POST /api/media` then `POST /api/documents` with no session, straight to the backend (doc 266) | `ready` in 2 s, 0 session links, `uploaded_in_session_id` NULL, present in all 5. `DELETE /api/documents/266` → 200 → **gone from all 5** within 5 s. This closes the §4i "file left behind" item. |
+| (b) Upload origin | chat upload X in conversation 34 → `uploaded_in_session_id` 34; Y in 35 → 35 |
+| (c) Cascade + chat | X also attached to 35. One chat in 35: 9.1 s, answer from Y, citing `cascade-y.pdf` with `rerankScore` 0.99994. Deleting 35 → Y gone from all 5, X kept in all 5. Deleting 34 → X gone from all 5. |
+| (d) Testimonio draft | upload with `contentKind=testimonio` (doc 269) in conversation 36. The anonymisation gate did **not** hold it (`anonymisation_status` `ready`, 0 review rows). Deleting 36 → gone from all 5. So a non-held testimonio draft cascades. The **held** case was not tested: a held draft could not be produced on demand. |
+
+After: no orphan chunks; 0 `media` rows without a document; 5 `media` rows and 5 RustFS objects
+(SQL, `find`). 257 backend documents (248 `ready`), the same as before. Rerank since the deploy:
+2 `rerank ok`, 0 `rerank degraded` (ai-service log).
+
+⚠ ai-service now holds 266 documents, against 253 in §4i. The 13 extra rows are retired
+conversation turns (`msg-*`, `valid_to` set), created 23:23–23:26 UTC on 2026-10-17 by
+conversations 20–33. Those are not from this deploy's runs, and all of them are deleted now.
+Retiring keeps the row (§4h), so this is expected.
+
+**Disk**, `df -h /` free: 61 GB before; 48 GB after the build; 61 GB after `docker builder prune
+-af` (12.96 GB) and removing dev's `5c157bb` images. Images 7.0 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
