@@ -595,4 +595,111 @@ describe.skipIf(!dockerOk)('deleting a conversation on a real Postgres', () => {
       info.mockRestore()
     }
   }, 30_000)
+  // ── The row lock: a publish or an approval racing the cascade ──
+
+  /**
+   * Run `onRead(n)` right after the cascade's n-th read of the conversation's
+   * documents: read 1 is BEFORE the row lock, read 2 is the re-read UNDER it.
+   * `onRead` runs on the test's own connection, outside the delete's
+   * transaction, like a concurrent request would.
+   */
+  async function deleteWithInterleave(sessionId: number, onRead: (n: number) => void | Promise<void>) {
+    const real = payload.find.bind(payload)
+    let n = 0
+    const spy = vi.spyOn(payload, 'find').mockImplementation((async (args: Parameters<Payload['find']>[0]) => {
+      const out = await real(args)
+      const w = JSON.stringify(args.where ?? {})
+      if (args.collection === 'documents' && w.includes('"session"')) await onRead(++n)
+      return out
+    }) as never)
+    try {
+      await payload.delete({ collection: 'sessions', id: sessionId, overrideAccess: true })
+    } finally {
+      spy.mockRestore()
+    }
+    return n
+  }
+
+  it('🔴 a publish that lands after the cascade read its status keeps the document', async () => {
+    await seedConversation14()
+
+    const reads = await deleteWithInterleave(14, async (n) => {
+      if (n === 1) await db.execute(sql`UPDATE documents SET publication_status = 'publishing' WHERE id = 58`)
+    })
+    await delay(OUTLAST_CLEANUP_MS)
+
+    expect(reads).toBe(2)
+    expect(await ids('documents')).toContain(58)
+    expect(deleteDocument.mock.calls.map((c) => c[1])).not.toContain('58')
+  }, 30_000)
+
+  it('🔴 an approval that lands after the cascade read its status keeps the document AND the reviewer’s row', async () => {
+    await seedConversation14()
+
+    await deleteWithInterleave(14, async (n) => {
+      if (n === 1) {
+        await db.execute(sql.raw(`
+          INSERT INTO anonymisation_reviews (id, document_id, organization_id, reviewer_id, decision)
+            VALUES (96, 55, 1, 2, 'approved');
+          UPDATE documents SET anonymisation_status = 'approved' WHERE id = 55;
+        `))
+      }
+    })
+    await delay(OUTLAST_CLEANUP_MS)
+
+    expect(await ids('documents')).toContain(55)
+    expect(await ids('anonymisation_reviews')).toEqual([95, 96])
+    expect(await ids('media')).toContain(74)
+    expect(existsSync(fileE)).toBe(true)
+  }, 30_000)
+
+  it('🔴 a publish that comes after the lock WAITS for the delete, then matches nothing', async () => {
+    await seedConversation14()
+    let publish: Promise<unknown> | undefined
+
+    await deleteWithInterleave(14, (n) => {
+      if (n !== 2) return
+      // Not awaited: it blocks on the row lock until the delete commits.
+      publish = db.execute(sql`UPDATE documents SET publication_status = 'publishing' WHERE id = 58`)
+    })
+    const result = (await publish) as { rowCount?: number }
+
+    // Had it not waited, it would have matched the row, which existed when it
+    // started. Matching nothing means it ran after the delete committed.
+    expect(result.rowCount).toBe(0)
+    expect(await ids('documents')).not.toContain(58)
+  }, 30_000)
+
+  it('🔴 a review row written after the lock waits too, then fails: no review of a deleted document', async () => {
+    await seedConversation14()
+    let review: Promise<unknown> | undefined
+
+    await deleteWithInterleave(14, (n) => {
+      if (n !== 2) return
+      review = db
+        .execute(sql.raw(`INSERT INTO anonymisation_reviews (id, document_id, organization_id, reviewer_id, decision)
+                          VALUES (97, 55, 1, 2, 'approved')`))
+        .then(() => 'inserted', (err: unknown) => `failed: ${String((err as { cause?: { code?: string } })?.cause?.code ?? (err as { code?: string })?.code)}`)
+    })
+
+    // 23503: foreign_key_violation. The document is gone by the time it runs.
+    expect(await review).toBe('failed: 23503')
+    expect(await ids('anonymisation_reviews')).toEqual([])
+    expect(await ids('documents')).not.toContain(55)
+  }, 30_000)
+
+  it('a create with no conversation clears a client-sent uploadedInSession', async () => {
+    await db.execute(sql.raw(`INSERT INTO memberships (user_id, organization_id) VALUES (1, 1);`))
+    const owner = await payload.findByID({ collection: 'users', id: 1, overrideAccess: true })
+
+    const created = await payload.create({
+      collection: 'documents',
+      data: { name: 'loose upload', kind: 'markdown', uploadedInSession: 11 } as never,
+      overrideAccess: false,
+      user: owner,
+    })
+
+    const [row] = await rows(sql`SELECT uploaded_in_session_id AS s FROM documents WHERE id = ${created.id}`)
+    expect(row?.s).toBeNull()
+  }, 30_000)
 })

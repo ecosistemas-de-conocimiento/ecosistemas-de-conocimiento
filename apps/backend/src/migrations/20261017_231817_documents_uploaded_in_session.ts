@@ -6,10 +6,11 @@ import { MigrateUpArgs, MigrateDownArgs, sql } from '@payloadcms/db-postgres'
  * `collections/Documents.ts` (`uploadedInSession`); the rule that reads it is
  * in `lib/conversationUploads.ts`.
  *
- * ✅ FULLY GENERATED. `payload migrate:create`, diffed against the baseline
- * snapshot; the only change in the `.json` is this column, its foreign key and
- * its index. No hand-written part, so a regeneration has nothing to copy
- * forward and `PAYLOAD_ALLOW_PUSH=1` has nothing to drop.
+ * ✅ THE SQL IS FULLY GENERATED; ONLY THIS COMMENT IS HAND-WRITTEN.
+ * `payload migrate:create`, diffed against the baseline snapshot; the only
+ * change in the `.json` is this column, its foreign key and its index. No
+ * hand-written SQL, so a regeneration has nothing to copy forward and
+ * `PAYLOAD_ALLOW_PUSH=1` has nothing to drop.
  *
  * ✅ `ON DELETE set null` IS CORRECT HERE, unlike the generator's other
  * `set null`s in the README: this column is NULLABLE, so deleting a

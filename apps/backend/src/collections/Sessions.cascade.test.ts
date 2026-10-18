@@ -663,17 +663,19 @@ describe('uploads that belong ONLY to this conversation go with it', () => {
     expect(plan?.reviewIds).toEqual([1050])
   })
 
-  it('keeps a REJECTED testimonio draft with a review row: an audit of somebody else’s decision', async () => {
-    const { payload, calls } = fakePayload([], [], {
-      documents: [ownUpload({ contentKind: 'testimonio', anonymisationStatus: 'rejected' })],
-      reviewed: [50],
-    })
+  it.each(['approved', 'rejected'])(
+    '🔴 keeps a %s testimonio draft by its STATUS, even with no review row left',
+    async (anonymisationStatus) => {
+      // No `reviewed`: the status alone must keep it, not the review-row check.
+      const { payload, calls } = fakePayload([], [], {
+        documents: [ownUpload({ contentKind: 'testimonio', anonymisationStatus })],
+      })
 
-    await deleteConversationChildren(SESSION, { payload })
-
-    expect(byIdDeletes(calls)).toEqual([])
-    expect(calls.some((c) => c.op === 'delete' && c.collection === 'anonymisation-reviews')).toBe(false)
-  })
+      expect(await deleteConversationChildren(SESSION, { payload })).toBeNull()
+      expect(byIdDeletes(calls)).toEqual([])
+      expect(calls.some((c) => c.op === 'delete' && c.collection === 'anonymisation-reviews')).toBe(false)
+    },
+  )
 
   it('aborts when a held document’s review rows cannot be deleted', async () => {
     const { payload } = fakePayload([], [], {

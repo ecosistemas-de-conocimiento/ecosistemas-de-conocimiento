@@ -17,7 +17,11 @@
  *
  *   1. It is attached to THIS conversation and no other (`documents.session`).
  *   2. It is still a `draft`. Anything published, or mid-publish, is part of
- *      the ecosistema's shared knowledge, which colleagues read.
+ *      the ecosistema's shared knowledge, which colleagues read. And no
+ *      reviewer has decided on it: `anonymisationStatus` `approved` or
+ *      `rejected` is kept, whatever review rows exist.
+ *      🔴 Decided under a row lock (`lockDocumentRows`): a publish or an
+ *      approval racing the delete either lands first and is seen, or waits.
  *   3. It is a `documento` or a `testimonio`. Rodrigo ruled on 2026-10-17 that
  *      testimonio DRAFTS go too, including ones the anonymisation gate HELD
  *      for review. ⚠ Conversaciones are NEVER cascade-deleted, in any status,
@@ -42,8 +46,8 @@
  *      before it was held again) are deleted with it, so no reviewer item
  *      dangles. The review QUEUE is not a table: it is `documents` filtered on
  *      `anonymisationStatus = 'held'` (`lib/holdReview.ts`), so the row going
- *      is the queue entry going. A `rejected` or `approved` document with a
- *      review row is still kept.
+ *      is the queue entry going. A `rejected` or `approved` document is
+ *      kept by rule 2 already.
  *
  * ⚠ ONE CASE THE MODEL STILL CANNOT TELL APART, and only on rows older than
  * `uploadedInSession`. A document uploaded into a LATER conversation B,
@@ -239,6 +243,9 @@ export interface UploadRow {
 const sameId = (a: unknown, b: unknown): boolean =>
   a != null && b != null && String(a) === String(b)
 
+/** Rule 2b: the anonymisation states a reviewer's decision leaves behind. */
+const REVIEWED_STATES: ReadonlyArray<string> = ['approved', 'rejected']
+
 /** Rule 3. A missing kind is in neither list: fail closed. */
 const CASCADABLE_KINDS: ReadonlyArray<string> = ['documento', 'testimonio']
 
@@ -255,6 +262,9 @@ export function isOwnDraftUpload(
   const attached = Array.isArray(doc.session) ? doc.session.map(relationId) : []
   if (attached.length !== 1 || !sameId(attached[0], session.id)) return false
   if (doc.publicationStatus !== 'draft') return false
+  // A reviewer decided on it: an approved one is on its way to the corpus, a
+  // rejected one is the record of a refusal. Neither is a loose upload.
+  if (REVIEWED_STATES.includes(doc.anonymisationStatus ?? '')) return false
   if (!CASCADABLE_KINDS.includes(doc.contentKind ?? '')) return false
   if (!sameId(relationId(doc.uploadedBy), relationId(session.user))) return false
 
@@ -356,35 +366,83 @@ async function mayDeleteMedia(
   return sharers === 0
 }
 
+type TxHandle = { execute(q: unknown): Promise<unknown> }
+
 /**
- * `txid_current()` on the transaction's OWN connection. Reaches into
- * `@payloadcms/drizzle` 3.88.0's session registry (`payload.db.sessions[id].db`,
+ * The transaction's OWN connection. Reaches into `@payloadcms/drizzle`
+ * 3.88.0's session registry (`payload.db.sessions[id].db`,
  * `transactions/beginTransaction.js`), the only handle on that connection.
  * Null when there is no transaction or the handle is not there.
  */
-export async function currentTxid(req: PayloadRequest | undefined): Promise<string | null> {
+async function transactionHandle(req: PayloadRequest | undefined): Promise<TxHandle | null> {
   const raw = req?.transactionID
   const id = raw instanceof Promise ? await raw : raw
   if (!id) return null
   const sessions = (req?.payload?.db as unknown as {
-    sessions?: Record<string, { db?: { execute(q: unknown): Promise<unknown> } }>
+    sessions?: Record<string, { db?: TxHandle }>
   })?.sessions
   const tx = sessions?.[String(id)]?.db
   if (!tx?.execute) {
     // ⚠ LOUD, because the failure is otherwise silent: there IS a transaction,
     // but the adapter's registry no longer looks like 3.88.0's. Every cleanup
-    // would then be skipped (orphans, nothing wrongly deleted). Guarded by
+    // would then be skipped (orphans, nothing wrongly deleted), and the row
+    // lock below could not be taken. Guarded by
     // `conversationUploads.adapterShape.test.ts` and the real-Postgres suite.
     req?.payload?.logger?.error(
       { transactionID: String(id) },
-      '[uploads] cannot read txid_current(): payload.db.sessions[transactionID].db is missing — has @payloadcms/drizzle changed? Upload files will NOT be cleaned up.',
+      '[uploads] cannot reach the transaction: payload.db.sessions[transactionID].db is missing — has @payloadcms/drizzle changed? Upload files will NOT be cleaned up.',
     )
     return null
   }
+  return tx
+}
+
+/** `txid_current()` on the transaction's own connection; null without one. */
+export async function currentTxid(req: PayloadRequest | undefined): Promise<string | null> {
+  const tx = await transactionHandle(req)
+  if (!tx) return null
   const res = (await tx.execute(sql`SELECT txid_current()::text AS xid`)) as {
     rows?: Array<{ xid?: string }>
   }
   return res.rows?.[0]?.xid ?? null
+}
+
+/**
+ * 🔴 `SELECT … FOR UPDATE` on these `documents` rows, in the delete's own
+ * transaction, IN ID ORDER. Returns the ids it locked (a row deleted
+ * meanwhile is simply absent), or null when there is no transaction to lock in.
+ *
+ * WHY. The cascade decides from a row's status and then deletes it. Without a
+ * lock, a publish (`lib/publishDocument.ts` sets `publishing`) or a reviewer's
+ * approval (`lib/holdReview.ts` inserts a review row, then moves
+ * `anonymisationStatus`) landing between the two was deleted anyway: shown on
+ * a real Postgres by the 2026-10-17 audit. Under the lock:
+ *
+ *   · a write that COMMITTED before the lock is seen, because the rows are
+ *     read again after it (Postgres READ COMMITTED: each statement sees what
+ *     has committed so far);
+ *   · a write that comes AFTER waits for this transaction. Both paths write
+ *     with single statements that block on it: an `UPDATE documents` needs the
+ *     row lock, and an `INSERT INTO anonymisation_reviews` takes `FOR KEY
+ *     SHARE` on the document for its foreign key, which conflicts with
+ *     `FOR UPDATE`. Once this commits the row is gone: the UPDATE matches
+ *     nothing and the INSERT fails its foreign key.
+ *
+ * ⚠ ID ORDER, so two deletes locking overlapping rows cannot deadlock on each
+ * other. Every other writer of `documents` touches one row per statement.
+ */
+async function lockDocumentRows(ids: Id[], req: PayloadRequest | undefined): Promise<Set<string> | null> {
+  const tx = await transactionHandle(req)
+  if (!tx) return null
+  const sorted = [...ids].map(Number).filter(Number.isFinite).sort((a, b) => a - b)
+  if (sorted.length === 0) return new Set()
+  const res = (await tx.execute(
+    sql`SELECT id FROM documents WHERE id IN (${sql.join(
+      sorted.map((id) => sql`${id}`),
+      sql`, `,
+    )}) ORDER BY id FOR UPDATE`,
+  )) as { rows?: Array<{ id: unknown }> }
+  return new Set((res.rows ?? []).map((r) => String(r.id)))
 }
 
 /**
@@ -404,16 +462,29 @@ export async function deleteConversationUploadRows(
   const { payload, req } = deps
   const skip = corpusCleanupSkipList(req)
 
-  const attached = await payload.find({
-    collection: 'documents',
-    // `equals` on a hasMany relationship reads "contains this id".
-    where: { session: { equals: sessionId } },
-    depth: 0,
-    overrideAccess: true,
-    pagination: false,
+  const findAttached = async () =>
+    (
+      await payload.find({
+        collection: 'documents',
+        // `equals` on a hasMany relationship reads "contains this id".
+        where: { session: { equals: sessionId } },
+        depth: 0,
+        overrideAccess: true,
+        pagination: false,
+        req,
+      })
+    ).docs as unknown as UploadRow[]
+  const found = await findAttached()
+  if (found.length === 0) return null
+
+  // 🔴 Lock, then decide from what is read UNDER the lock (`lockDocumentRows`).
+  // A row attached meanwhile is not locked, so it is left out.
+  const locked = await lockDocumentRows(
+    found.map((d) => d.id),
     req,
-  })
-  if (attached.docs.length === 0) return null
+  )
+  const rows = locked === null ? found : (await findAttached()).filter((d) => locked.has(String(d.id)))
+  if (rows.length === 0) return null
 
   const session = (await payload.findByID({
     collection: 'sessions',
@@ -423,7 +494,6 @@ export async function deleteConversationUploadRows(
     req,
   })) as unknown as SessionFacts
 
-  const rows = attached.docs as unknown as UploadRow[]
   // Read only when a row needs it: one query per conversation delete at most.
   const recordedSince =
     deps.originRecordedSince !== undefined

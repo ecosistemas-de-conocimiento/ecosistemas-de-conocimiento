@@ -7,7 +7,7 @@ The chain since then:
 
 | migration | what | hand-written part |
 |---|---|---|
-| `20261017_231817_documents_uploaded_in_session` | `documents.uploaded_in_session_id`, FK to `sessions` `ON DELETE set null` (the column is nullable, so that is correct here), and its index | none; no backfill, on purpose (the file header says why) |
+| `20261017_231817_documents_uploaded_in_session` | `documents.uploaded_in_session_id`, FK to `sessions` `ON DELETE set null` (the column is nullable, so that is correct here), and its index | SQL: none (the header comment is hand-written); no backfill, on purpose (the header says why) |
 
 ⚠ A migration file is frozen once committed, comments included. Nothing had ever been deployed
 — no CI, no deploy script, and `edc_backend` on `localhost:45432` was the only
