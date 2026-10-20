@@ -15,8 +15,10 @@
  *   …chunk text, with every <fuente / </fuente look-alike neutralised…
  *   </fuente>
  *
- * Earlier assistant answers get `tipo="respuesta anterior del asistente, no es
- * fuente primaria"` on the opening tag. The system-prompt rule that gives the
+ * Earlier assistant answers are DROPPED by default (owner ruling 2026-10-20,
+ * `FenceOptions.retrieveAssistantChunks`). When an operator brings them back
+ * they get `tipo="respuesta anterior del asistente, no es fuente primaria"` on
+ * the opening tag. The system-prompt rule that gives the
  * fence its meaning is `CHUNK_DATA_RULE` (`./prompt`).
  *
  * ⚠ The engine copies `RetrievedChunk.text` into the persisted provenance (the
@@ -179,13 +181,40 @@ export function withFencedRefs<A extends DomainAdapter>(adapter: A): A {
 
 export interface FenceOptions {
   /**
-   * 🔴 OPEN DECISION (owner): should earlier assistant answers be retrievable
-   * at all? `true` (default) keeps today's behaviour, labelled. `false` drops
-   * them here, after retrieval, so they cost top-K slots. Every leg passes
-   * through this one line.
+   * Are earlier assistant answers (chunk metadata `authoredBy: 'assistant'`)
+   * retrievable at all? Owner ruling 2026-10-20: NO, so the default is
+   * `false`. Production reads it from `CHAT_RETRIEVE_ASSISTANT_CHUNKS`
+   * (`retrieveAssistantChunks()` in `./config`); `true` brings them back,
+   * labelled. Every leg passes through this one wrapper: the published and
+   * draft legs, hybrid `retrieveMulti`, the graph provider's widened retrieve
+   * and the query-expansion variants.
    */
   retrieveAssistantChunks?: boolean;
 }
+
+/** `CHAT_RETRIEVE_ASSISTANT_CHUNKS` env value → on/off. Default OFF; on on/1/true/yes. */
+export function parseAssistantChunksFlag(raw: string | undefined): boolean {
+  return ['on', '1', 'true', 'yes'].includes((raw ?? '').trim().toLowerCase());
+}
+
+/**
+ * Extra chunks each leg asks for while assistant answers are filtered out.
+ *
+ * The filter runs AFTER retrieval (ai-service's `filter` has no "not equal"),
+ * so a dropped answer would cost its top-K slot. Each leg asks for `topK + 3`
+ * (and `limit + 3` on `retrieveMulti`), drops the answers and trims back.
+ * ⚠ 3 is inferred, not measured: audit 2026-10-17 saw an answer as the top-1
+ * source in 6 of 14 turns, but did not count how many answers a turn held. A
+ * leg that retrieves more than 3 answers still comes up short.
+ *
+ * Rerank cost (inferred from ai-service's pool rule `min(topK × 4, 50)`,
+ * quoted in `./rerank`, not measured): the published leg's pool grows from 20
+ * to 32 candidates per turn; the draft leg stays at the 50 cap; the
+ * graph-widened retrieve and the expansion variants are not reranked.
+ */
+export const ASSISTANT_OVERFETCH = 3;
+/** The engine's per-corpus topK when a request carries none. */
+const DEFAULT_TOPK = 5;
 
 export interface FencedClient<T extends AIClient> {
   client: T;
@@ -194,12 +223,15 @@ export interface FencedClient<T extends AIClient> {
 }
 
 export function withFencedChunks<T extends AIClient>(base: T, opts: FenceOptions = {}): FencedClient<T> {
-  const keepAssistant = opts.retrieveAssistantChunks ?? true;
+  const keepAssistant = opts.retrieveAssistantChunks ?? false;
   const originals = new Map<string, string>();
+  const extra = keepAssistant ? 0 : ASSISTANT_OVERFETCH;
 
-  const fence = <M extends RetrieveMatch>(matches: M[]): M[] =>
+  /** Drop answers, trim the over-fetch back to `cap`, fence what is left. */
+  const fence = <M extends RetrieveMatch>(matches: M[], cap: number | undefined): M[] =>
     matches
       .filter((x) => keepAssistant || !isAssistantAuthored(x.metadata))
+      .slice(0, keepAssistant ? undefined : cap)
       .map((x) => {
         // Strings only: a `text: null` from upstream must not make
         // `restorePassages` throw after the SSE stream has opened.
@@ -212,14 +244,24 @@ export function withFencedChunks<T extends AIClient>(base: T, opts: FenceOptions
     generateSync: base.generateSync.bind(base),
     ingest: base.ingest.bind(base),
     async retrieve(req) {
-      const r = await base.retrieve(req);
-      return { ...r, matches: fence(r.matches) };
+      const topK = req.topK && req.topK > 0 ? req.topK : DEFAULT_TOPK;
+      const r = await base.retrieve(extra ? { ...req, topK: topK + extra } : req);
+      return { ...r, matches: fence(r.matches, topK) };
     },
     ...(base.retrieveMulti
       ? {
           async retrieveMulti(req: Parameters<NonNullable<AIClient['retrieveMulti']>>[0]) {
-            const r = await base.retrieveMulti!(req);
-            return { ...r, matches: fence(r.matches) };
+            const r = await base.retrieveMulti!(
+              extra
+                ? {
+                    ...req,
+                    ...(req.topK ? { topK: req.topK + extra } : {}),
+                    ...(req.limit ? { limit: req.limit + extra } : {}),
+                  }
+                : req,
+            );
+            // No `limit` → nothing to trim back to; the answers are still dropped.
+            return { ...r, matches: fence(r.matches, req.limit) };
           },
         }
       : {}),

@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
 import { degradeListResponse } from '$lib/server/degrade';
 import { refsToRelationships, relationshipsToRefs } from '$lib/server/contextRefs';
+import { toBrowserMessage } from '$lib/server/citationProvenance';
 import type { ContextRef } from '$lib/types';
 
 // GET /api/sessions/[id]/messages → ordered messages for this session.
@@ -24,9 +25,12 @@ export const GET: RequestHandler = async ({ locals, params }) => {
   });
   const body = (await res.json().catch(() => ({}))) as { docs?: Record<string, unknown>[] };
   if (Array.isArray(body.docs)) {
-    for (const doc of body.docs) {
-      doc.contextRefs = relationshipsToRefs(doc.contextRefs);
-    }
+    // 🔴 Persisted provenance may predate the write-side allowlist and still
+    // carry chunk `sessionId` / `authoredBy` (Fable audit #8). Strip here, at
+    // the read boundary — `$lib/server/citationProvenance`.
+    body.docs = body.docs.map((doc) =>
+      toBrowserMessage({ ...doc, contextRefs: relationshipsToRefs(doc.contextRefs) }),
+    );
   }
   const out = degradeListResponse(res, body, 'messages');
   return json(out.body, { status: out.status });
@@ -58,6 +62,11 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       ...(contextRefs.length ? { contextRefs } : {}),
     }),
   });
-  const out = await res.json().catch(() => ({}));
+  const out = (await res.json().catch(() => ({}))) as { doc?: unknown };
+  // This route never sends provenance, but the echoed row is a message: same
+  // allowlist as the GET, so no path returns a raw one.
+  if (out.doc && typeof out.doc === 'object') {
+    out.doc = toBrowserMessage(out.doc as Record<string, unknown>);
+  }
   return json(out, { status: res.status });
 };
