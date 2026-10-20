@@ -19,6 +19,7 @@ import {
   makeChatDomainAdapter,
   makeEngineAIClient,
   queryExpansionEnabled,
+  retrieveAssistantChunks,
   useRegistryPrompt,
   withQueryExpansion,
 } from '$lib/server/engine';
@@ -30,6 +31,7 @@ import { withFencedChunks, withFencedRefs } from '$lib/server/engine/chunkFence'
 import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { lenguaTurn } from '$lib/lengua';
 import { stampDraftProvenance } from '$lib/publication';
+import { toBrowserProvenance } from '$lib/server/citationProvenance';
 import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
 import { prepareTurn, respond, type ContextRef, type ContextScope } from '@edc/chat-engine/core';
 
@@ -432,9 +434,13 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // cheap fold, not a guarantee (see `neutraliseFenceTags`). Earlier assistant
   // answers are labelled. The graph block and the summary are NOT fenced.
   // `restorePassages` puts the original passage text back on the provenance
-  // before it is persisted. The open owner decision (are assistant answers
-  // retrievable at all?) is the `retrieveAssistantChunks` option.
-  const fenced = withFencedChunks(unfencedAI);
+  // before it is persisted.
+  // Earlier assistant answers are dropped from every leg (owner ruling
+  // 2026-10-20), each leg over-fetching so the turn keeps its source count.
+  // `CHAT_RETRIEVE_ASSISTANT_CHUNKS=on` brings them back, labelled.
+  const fenced = withFencedChunks(unfencedAI, {
+    retrieveAssistantChunks: retrieveAssistantChunks(),
+  });
   const engineAI = fenced.client;
 
   // 🔴 THE SECOND RETRIEVAL PATH — GraphRAG (ADR §8).
@@ -570,7 +576,11 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
         // Mark chunks that came from THIS user's draft corpus before the turn
         // is persisted, so the citation stays labelled after a reload — the
         // corpus name is the exact signal, and it is only knowable here.
-        stampDraftProvenance(fenced.restorePassages(prepared.provenance, PASSAGE_TEXT_CAP), draftCorpus),
+        // Then the browser allowlist (Fable audit #8): what is saved is what
+        // every member's browser later reads back.
+        toBrowserProvenance(
+          stampDraftProvenance(fenced.restorePassages(prepared.provenance, PASSAGE_TEXT_CAP), draftCorpus),
+        ),
         upstream.unit.systemPrompt,
         turnMeta(),
       );
@@ -600,10 +610,10 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // `engineAI` closure (captured at construction above).
   try {
     const { generation, provenance: rawProvenance } = await respond(engineTurnArgs);
-    // See the streaming branch: stamp the caller's own drafts before persisting.
-    const provenance = stampDraftProvenance(
-      fenced.restorePassages(rawProvenance, PASSAGE_TEXT_CAP),
-      draftCorpus,
+    // See the streaming branch: stamp the caller's own drafts before
+    // persisting, then the browser allowlist.
+    const provenance = toBrowserProvenance(
+      stampDraftProvenance(fenced.restorePassages(rawProvenance, PASSAGE_TEXT_CAP), draftCorpus),
     );
     const messageId = await persistAssistantMessage(
       locals.token,

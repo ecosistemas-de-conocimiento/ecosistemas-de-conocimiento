@@ -8,7 +8,9 @@ import type {
 } from '@edc/chat-engine/core';
 import {
   ASSISTANT_CHUNK_LABEL,
+  ASSISTANT_OVERFETCH,
   fenceChunkText,
+  parseAssistantChunksFlag,
   neutraliseFenceTags,
   withFencedChunks,
   withFencedRefs,
@@ -188,8 +190,11 @@ describe('withFencedChunks through the real prepareTurn', () => {
     m(UUID_B, 'Antes dije que el faro existe.', { kind: 'conversacion', authoredBy: 'assistant', title: 'Conversación' }),
   ];
 
+  // These cases read how an assistant chunk is FENCED, so they keep it.
+  const keep = { retrieveAssistantChunks: true };
+
   it('every retrieved chunk is delimited, and the injection cannot close its delimiter', async () => {
-    const fenced = withFencedChunks(fakeClient(matches));
+    const fenced = withFencedChunks(fakeClient(matches), keep);
     const { user } = await turnFor(fenced.client);
     expect(openings(user)).toBe(2);
     expect(closings(user)).toBe(2);
@@ -208,7 +213,7 @@ describe('withFencedChunks through the real prepareTurn', () => {
   });
 
   it('citations still map 1:1 by ordinal, with the ORIGINAL passage text restored', async () => {
-    const fenced = withFencedChunks(fakeClient(matches));
+    const fenced = withFencedChunks(fakeClient(matches), keep);
     const { prepared } = await turnFor(fenced.client);
     const provenance = fenced.restorePassages(prepared.provenance, 1200);
     expect(provenance?.chunks.map((c) => c.chunkId)).toEqual([UUID_A, UUID_B]);
@@ -255,12 +260,113 @@ describe('withFencedChunks through the real prepareTurn', () => {
     expect(out.matches.every((x) => x.text.startsWith('<fuente id="'))).toBe(true);
   });
 
-  it('retrieveAssistantChunks: false drops assistant chunks (the open decision, default keeps them)', async () => {
-    const kept = await withFencedChunks(fakeClient(matches)).client.retrieve({ corpus: 'pub:1' } as never);
-    expect(kept.matches).toHaveLength(2);
-    const dropped = await withFencedChunks(fakeClient(matches), { retrieveAssistantChunks: false })
-      .client.retrieve({ corpus: 'pub:1' } as never);
-    expect(dropped.matches.map((x) => x.chunkId)).toEqual([UUID_A]);
+  it('fences the hybrid retrieveMulti leg too (kept assistant chunk included)', async () => {
+    const multi: AIClient = {
+      ...fakeClient(matches),
+      async retrieveMulti(_req: RetrieveMultiRequest) {
+        return { matches: matches.map((x) => ({ ...x, corpus: 'pub:1' })), corpora: [] };
+      },
+    };
+    const out = await withFencedChunks(multi, keep).client.retrieveMulti!({} as RetrieveMultiRequest);
+    expect(out.matches).toHaveLength(2);
+  });
+});
+
+/**
+ * Owner ruling 2026-10-20: earlier assistant answers are NOT retrievable.
+ * Dropped after retrieval, so each leg over-fetches by `ASSISTANT_OVERFETCH`
+ * and trims back, and a turn keeps its full source count.
+ */
+describe('withFencedChunks — assistant answers are filtered out (default)', () => {
+  const asst = (i: number) => m(`a${i}`, `respuesta ${i}`, { kind: 'conversacion', authoredBy: 'assistant' });
+  const doc = (i: number) => m(`d${i}`, `documento ${i}`, { kind: 'documento', title: `Doc ${i}` });
+
+  /** Answers `topK` matches (assistant ones first), and records what it was asked. */
+  function recordingClient(assistantCount: number) {
+    const asked: Array<{ topK?: number; limit?: number }> = [];
+    const answer = (n: number) =>
+      Array.from({ length: n }, (_, i) => (i < assistantCount ? asst(i) : doc(i)));
+    const client: AIClient = {
+      ...fakeClient([]),
+      async retrieve(req) {
+        asked.push({ topK: req.topK });
+        return { matches: answer(req.topK ?? 5) };
+      },
+      async retrieveMulti(req: RetrieveMultiRequest) {
+        asked.push({ topK: req.topK, limit: req.limit });
+        return { matches: answer(req.limit ?? 8).map((x) => ({ ...x, corpus: 'pub:1' })), corpora: [] };
+      },
+    };
+    return { client, asked };
+  }
+
+  it('is the default: no option drops them on retrieve', async () => {
+    const out = await withFencedChunks(fakeClient(matchesWithAssistant())).client.retrieve({ corpus: 'pub:1' } as never);
+    expect(out.matches.map((x) => x.chunkId)).toEqual(['d1']);
+  });
+
+  it('retrieve over-fetches by ASSISTANT_OVERFETCH and keeps the full topK of non-assistant chunks', async () => {
+    const { client, asked } = recordingClient(3);
+    const out = await withFencedChunks(client).client.retrieve({ corpus: 'pub:1', topK: 5 } as never);
+    expect(asked).toEqual([{ topK: 5 + ASSISTANT_OVERFETCH }]);
+    expect(out.matches).toHaveLength(5);
+    expect(out.matches.every((x) => x.chunkId.startsWith('d'))).toBe(true);
+  });
+
+  it('trims back to topK when nothing was filtered', async () => {
+    const { client } = recordingClient(0);
+    const out = await withFencedChunks(client).client.retrieve({ corpus: 'pub:1', topK: 5 } as never);
+    expect(out.matches.map((x) => x.chunkId)).toEqual(['d0', 'd1', 'd2', 'd3', 'd4']);
+  });
+
+  it('a retrieve without topK is treated as the engine default of 5', async () => {
+    const { client, asked } = recordingClient(1);
+    const out = await withFencedChunks(client).client.retrieve({ corpus: 'pub:1' } as never);
+    expect(asked).toEqual([{ topK: 5 + ASSISTANT_OVERFETCH }]);
+    expect(out.matches).toHaveLength(5);
+  });
+
+  it('retrieveMulti over-fetches topK and limit, drops assistant chunks, trims to limit', async () => {
+    const { client, asked } = recordingClient(2);
+    const out = await withFencedChunks(client).client.retrieveMulti!({ topK: 5, limit: 8 } as RetrieveMultiRequest);
+    expect(asked).toEqual([{ topK: 5 + ASSISTANT_OVERFETCH, limit: 8 + ASSISTANT_OVERFETCH }]);
+    expect(out.matches).toHaveLength(8);
+    expect(out.matches.every((x) => x.chunkId.startsWith('d'))).toBe(true);
+  });
+
+  it('retrieveAssistantChunks: true asks for exactly what the engine asked, and keeps them', async () => {
+    const { client, asked } = recordingClient(2);
+    const fenced = withFencedChunks(client, { retrieveAssistantChunks: true });
+    const out = await fenced.client.retrieve({ corpus: 'pub:1', topK: 5 } as never);
+    await fenced.client.retrieveMulti!({ topK: 5, limit: 8 } as RetrieveMultiRequest);
+    expect(asked).toEqual([{ topK: 5 }, { topK: 5, limit: 8 }]);
+    expect(out.matches.filter((x) => x.chunkId.startsWith('a'))).toHaveLength(2);
+  });
+
+  it('reaches the prompt and the provenance through the real prepareTurn', async () => {
+    const fenced = withFencedChunks(fakeClient(matchesWithAssistant()));
+    const { prepared, user } = await turnFor(fenced.client);
+    expect(user).not.toContain('Antes dije');
+    expect(user).not.toContain(ASSISTANT_CHUNK_LABEL);
+    expect(prepared.provenance?.chunks.map((c) => c.chunkId)).toEqual(['d1']);
+  });
+
+  function matchesWithAssistant() {
+    return [
+      m('a1', 'Antes dije que el faro existe.', { kind: 'conversacion', authoredBy: 'assistant' }),
+      m('d1', 'Dato.', { kind: 'documento', title: 'Informe' }),
+    ];
+  }
+});
+
+describe('parseAssistantChunksFlag (CHAT_RETRIEVE_ASSISTANT_CHUNKS)', () => {
+  it('is off unless explicitly turned on', () => {
+    for (const v of [undefined, '', 'off', '0', 'false', 'no', 'nope']) {
+      expect(parseAssistantChunksFlag(v)).toBe(false);
+    }
+    for (const v of ['on', '1', 'true', 'yes', ' ON ', 'True']) {
+      expect(parseAssistantChunksFlag(v)).toBe(true);
+    }
   });
 });
 
@@ -300,14 +406,19 @@ describe('withFencedRefs (@-mentioned documents)', () => {
 });
 
 describe('markAssistantCitations (citation card)', () => {
-  it('suffixes the title of an assistant-authored citation only', () => {
+  it('suffixes the title of a citation the server flagged isAssistantAnswer only', () => {
     const out = markAssistantCitations([
-      { title: 'Conversación', metadata: { authoredBy: 'assistant' } },
+      { title: 'Conversación', metadata: { isAssistantAnswer: true } },
       { title: 'Informe', metadata: { kind: 'documento' } },
-      { title: null, metadata: { authoredBy: 'assistant' } },
+      { title: null, metadata: { isAssistantAnswer: true } },
     ]);
     expect(out[0]!.title).toBe(`Conversación${ASSISTANT_CITATION_SUFFIX}`);
     expect(out[1]!.title).toBe('Informe');
     expect(out[2]!.title).toBe(`Fuente sin título${ASSISTANT_CITATION_SUFFIX}`);
+  });
+
+  it('ignores a raw `authoredBy` — the browser never receives it (Fable audit #8)', () => {
+    const out = markAssistantCitations([{ title: 'X', metadata: { authoredBy: 'assistant' } }]);
+    expect(out[0]!.title).toBe('X');
   });
 });

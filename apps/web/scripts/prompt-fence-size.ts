@@ -106,7 +106,13 @@ async function measure(aiClient: AIClient, a: DomainAdapter, systemPrompt: strin
 
 const encode = loadTokenizer();
 const before = await measure(client, adapter, OLD_SYSTEM, encode);
-const after = await measure(withFencedChunks(client).client, withFencedRefs(adapter), CHAT_SYSTEM_PROMPT, encode);
+// Keep the assistant chunk: this measures the fence, including its labelled tag.
+const after = await measure(
+  withFencedChunks(client, { retrieveAssistantChunks: true }).client,
+  withFencedRefs(adapter),
+  CHAT_SYSTEM_PROMPT,
+  encode,
+);
 const pct = (a: number, b: number) => `${(((a - b) / b) * 100).toFixed(1)}%`;
 console.log(JSON.stringify({ chunkChars, withRef, tokenizer: encode ? 'cl100k_base (proxy)' : 'unavailable', before, after }));
 console.log(

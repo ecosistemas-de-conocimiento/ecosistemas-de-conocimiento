@@ -12,6 +12,7 @@ export {
   chatTurnRetrievalPolicy,
   engineOrgId,
   queryExpansionEnabled,
+  retrieveAssistantChunks,
 } from './config';
 export { chatRetrievalPolicy, parseRerankFlag } from './rerank';
 export { parseRetrievalMode, type ChatRetrievalMode } from './hybrid';

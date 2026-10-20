@@ -8,14 +8,33 @@
  * source in 6 of 14 chat turns, about 10 s after they were written. Unlabelled,
  * an earlier mistake reads as a documented fact.
  *
+ * Owner ruling 2026-10-20: chat retrieval drops them by default
+ * (`CHAT_RETRIEVE_ASSISTANT_CHUNKS`, `$lib/server/engine/chunkFence`). The
+ * label stays for the revert and for turns saved before the ruling.
+ *
  * Client-safe (no `$lib/server` import): the prompt fence
  * (`$lib/server/engine/chunkFence`) and the citation card (`Message.svelte`)
  * share these strings so the model and the reader see the same words.
  */
 
-/** Is this chunk (or citation) one of the assistant's own earlier answers? */
+/**
+ * Is this RAW chunk metadata one of the assistant's own earlier answers?
+ * Server-side in practice: the browser never receives `authoredBy`
+ * (`$lib/server/citationProvenance`).
+ */
 export function isAssistantAuthored(metadata: Record<string, unknown> | null | undefined): boolean {
   return metadata?.authoredBy === 'assistant';
+}
+
+/**
+ * The boolean the server derives from `authoredBy` and puts on browser-bound
+ * citation metadata in place of the raw field (Fable audit #8).
+ */
+export const ASSISTANT_ANSWER_FLAG = 'isAssistantAnswer';
+
+/** Did the server flag this citation as an earlier assistant answer? */
+export function isAssistantAnswerCitation(metadata: Record<string, unknown> | null | undefined): boolean {
+  return metadata?.[ASSISTANT_ANSWER_FLAG] === true;
 }
 
 /** The label, in the prompt fence and on the citation card. Spanish: content the model may echo. */
@@ -30,13 +49,13 @@ interface CitationTitleLike {
 }
 
 /**
- * Suffix the title of each assistant-authored citation. Same mechanism as
- * `markDraftCitations` (`$lib/publication`): `CitationCard` is a shared package
- * component whose only per-source text is `title`.
+ * Suffix the title of each citation the server flagged `isAssistantAnswer`.
+ * Same mechanism as `markDraftCitations` (`$lib/publication`): `CitationCard`
+ * is a shared package component whose only per-source text is `title`.
  */
 export function markAssistantCitations<T extends CitationTitleLike>(citations: readonly T[]): T[] {
   return citations.map((c) =>
-    isAssistantAuthored(c.metadata)
+    isAssistantAnswerCitation(c.metadata)
       ? // `as T`: see the same cast in `markDraftCitations`.
         ({ ...c, title: `${c.title ?? 'Fuente sin título'}${ASSISTANT_CITATION_SUFFIX}` } as T)
       : c,
