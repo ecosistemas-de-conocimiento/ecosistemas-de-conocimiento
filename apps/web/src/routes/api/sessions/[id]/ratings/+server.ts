@@ -124,7 +124,17 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     }),
   });
 
-  const out = await res.json().catch(() => ({}));
+  const out = (await res.json().catch(() => ({}))) as { doc?: unknown };
+  // 🔴 At Payload's default depth the reply POPULATES `doc.message`, raw
+  // provenance included: chunk `sessionId`, `authoredBy` and another
+  // conversation's `msg-…` id (Fable audit #8). Collapse the relations to ids.
+  // The store never reads this body, so nothing is lost.
+  if (out.doc && typeof out.doc === 'object') {
+    const doc = out.doc as Record<string, unknown>;
+    for (const rel of ['message', 'session'] as const) {
+      if (doc[rel] && typeof doc[rel] === 'object') doc[rel] = idOf(doc[rel]);
+    }
+  }
   return json(out, { status: res.status });
 };
 

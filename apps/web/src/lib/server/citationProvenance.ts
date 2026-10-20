@@ -5,8 +5,9 @@
  * turn the backend writes `sessionId` (which thread it came from) and
  * `authoredBy` (`chunkMetadata`, apps/backend/src/lib/contentKind.ts). The
  * engine copies that metadata onto the provenance, and the provenance reaches
- * every member who opens the conversation. So a member could read which other
- * conversation a cited answer came from.
+ * the browser of the conversation's owner (conversations are owner-only). An
+ * answer retrieved from ANOTHER conversation, possibly another member's, then
+ * handed its owner that conversation's id (and its `msg-…` docId).
  *
  * Every server→browser path goes through here:
  *   · `POST /api/generate` — the sync JSON, the stream's `done` frame, and what
@@ -14,6 +15,8 @@
  *   · `GET /api/sessions/[id]/messages` — persisted turns, which may predate
  *     this and still hold the raw fields;
  *   · `POST /api/sessions/[id]/messages` — the created row it echoes back.
+ * `POST /api/sessions/[id]/ratings` drops the populated message from its echo
+ * instead (collapsed to an id), so no provenance rides there at all.
  *
  * Only the fields the citation card reads survive. `authoredBy: 'assistant'`
  * becomes `isAssistantAnswer: true`, derived here, so the card can still say
