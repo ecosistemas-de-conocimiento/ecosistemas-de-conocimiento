@@ -8,6 +8,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   checkTurnCorpus,
   classifyTurnRows,
+  describeError,
+  readOnlyUrl,
   organizationOfTurnCorpus,
   type AiTurnRow,
   type TurnCheckDeps,
@@ -129,5 +131,64 @@ describe('checkTurnCorpus', () => {
 
     expect(t.erase).not.toHaveBeenCalled()
     expect(report.validityMismatches).toBe(1)
+  })
+})
+
+describe('readOnlyUrl', () => {
+  it('adds the read-only option', () => {
+    const url = new URL(readOnlyUrl('postgres://u:p@h:5432/edc_ai'))
+    expect(url.searchParams.get('options')).toBe('-c default_transaction_read_only=on')
+  })
+
+  it('MERGES an existing options param instead of overwriting it', () => {
+    const url = new URL(readOnlyUrl('postgres://u:p@h:5432/edc_ai?options=-c%20search_path%3Dai&sslmode=require'))
+    expect(url.searchParams.get('options')).toBe('-c search_path=ai -c default_transaction_read_only=on')
+    expect(url.searchParams.get('sslmode')).toBe('require')
+  })
+
+  it('🔴 a malformed URL throws an error that does not carry the URL', () => {
+    const secretUrl = 'postgres://edc:s3cr3t-pw@[bad'
+    let caught: unknown
+    try {
+      readOnlyUrl(secretUrl)
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(Error)
+    expect(JSON.stringify(caught, Object.getOwnPropertyNames(caught as object))).not.toContain('s3cr3t-pw')
+  })
+})
+
+describe('describeError', () => {
+  it('🔴 never prints a password: Node’s invalid-URL error carries `input`', () => {
+    const secretUrl = 'postgres://edc:s3cr3t-pw@[bad/edc_ai'
+    let nodeErr: unknown
+    try {
+      new URL(secretUrl)
+    } catch (err) {
+      nodeErr = err
+    }
+    // The leak, as Node ships it.
+    expect((nodeErr as { input?: string }).input).toContain('s3cr3t-pw')
+
+    const line = describeError(nodeErr, [secretUrl])
+    expect(line).not.toContain('s3cr3t-pw')
+    expect(line).toContain('TypeError')
+    expect(line).toContain('ERR_INVALID_URL')
+  })
+
+  it('redacts a URL echoed in a message, known or not', () => {
+    const known = 'postgres://edc:pw-one@db:5432/edc_ai'
+    const err = Object.assign(new Error(`connect failed for ${known} and postgresql://x:pw-two@other/db`), {
+      code: 'ECONNREFUSED',
+    })
+    const line = describeError(err, [known])
+    expect(line).not.toContain('pw-one')
+    expect(line).not.toContain('pw-two')
+    expect(line).toContain('Error ECONNREFUSED')
+  })
+
+  it('handles a non-Error', () => {
+    expect(describeError('boom postgres://a:pw@h/d', [])).not.toContain('pw@')
   })
 })

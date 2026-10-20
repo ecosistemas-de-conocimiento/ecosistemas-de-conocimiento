@@ -37,9 +37,11 @@
  *     `scripts/check-turn-corpus.ts` finds and erases those.
  *
  * ⚠ A TURN STILL `embedding` WHEN THE CONVERSATION GOES can land at
- * ai-service after this ran: the erase reads it as absent, then the ingest
- * creates it, live. The callback ignores it (no `messages` row). The check
- * script finds it as `orphan-live`.
+ * ai-service after this ran: ai-service creates the document row only in its
+ * ingest worker, so the erase reads it as absent, and then the ingest creates
+ * it, live. `eraseLateTurn` below closes that: the ingest callback for a
+ * `msg-<id>` whose `messages` row is gone erases it. Without callbacks
+ * configured, `scripts/check-turn-corpus.ts` finds it as `orphan-live`.
  *
  * 🔴 PRIVACY: logs carry ids only, never turn text.
  */
@@ -47,6 +49,7 @@
 import type { Payload } from 'payload'
 
 import { rowExists, waitForOutcome, type AfterCommitDeps, type TxOutcome } from './conversationUploads'
+import { organizationOfTurnCorpus } from './turnCorpusCheck'
 
 type Id = number | string
 
@@ -166,4 +169,52 @@ export async function eraseTurnsAfterCommit(
   // What was DONE: a planned id missing from both lists was skipped or failed.
   log.info({ ...allIds, erasedTurnIds, absentTurnIds }, '[sessions] post-commit turn erasure finished')
   return outcome
+}
+
+export type LateTurnOutcome = 'erased' | 'absent' | 'skipped'
+
+/**
+ * A turn's ingest callback arrived and its `messages` row is GONE: the
+ * conversation was deleted while the turn was `embedding`, and the document
+ * landed after the post-commit erase looked for it. Erase it now.
+ *
+ * ⚠ SAFE TO ERASE ON "ROW GONE" ALONE, unlike the post-commit half: `messages`
+ * ids come from a serial and are never reused, so no live turn can own
+ * `msg-<id>` once its row is gone.
+ *
+ * ⚠ ONLY FROM A SHARED `eco-<id>` CORPUS, read from the signed envelope's
+ * `corpus`; the client is that ecosistema's (`X-AI-Org`). Anything else is
+ * skipped with a warning: turns never go anywhere else.
+ *
+ * THROWS on a real failure, so the callback answers 500 and ai-service
+ * retries. ai-service's own not-found is success.
+ */
+export async function eraseLateTurn(args: {
+  messageId: Id
+  corpus: string | undefined
+  log: { warn(obj: Record<string, unknown>, msg: string): void; info(obj: Record<string, unknown>, msg: string): void }
+  corpusClient?: (organizationId: Id) => Promise<TurnDeleter> | TurnDeleter
+}): Promise<LateTurnOutcome> {
+  const turnId = `msg-${String(args.messageId)}`
+  const organizationId = args.corpus ? organizationOfTurnCorpus(args.corpus) : null
+  if (organizationId == null) {
+    args.log.warn(
+      { turnId, corpus: args.corpus ?? null },
+      '[callback] a turn landed after its conversation was deleted, outside a shared eco-<id> corpus; NOT erased',
+    )
+    return 'skipped'
+  }
+  const client = await (args.corpusClient ?? defaultClient)(organizationId)
+  const { isDocumentAbsent } = await import('./publishDocument')
+  try {
+    await client.admin.deleteDocument(args.corpus as string, turnId)
+  } catch (err) {
+    if (isDocumentAbsent(err)) return 'absent'
+    throw err
+  }
+  args.log.info(
+    { turnId, corpus: args.corpus },
+    '[callback] erased a turn that landed after its conversation was deleted',
+  )
+  return 'erased'
 }

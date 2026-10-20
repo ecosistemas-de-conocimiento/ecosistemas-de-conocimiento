@@ -16,8 +16,17 @@ import type { Payload } from 'payload'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const calls: string[] = []
+/**
+ * What ai-service holds, as `corpus/externalId`. `deleteDocument` removes a
+ * document and its chunks, or answers ai-service's own 404 when it is absent:
+ * a turn still `embedding` is not in here yet (its worker has not run).
+ */
+const stored = new Set<string>()
 const deleteDocument = vi.fn(async (corpus: string, id: string) => {
   calls.push(`delete ${corpus} ${id}`)
+  if (!stored.delete(`${corpus}/${id}`)) {
+    throw Object.assign(new Error('not found'), { status: 404, code: 'DOCUMENT_NOT_FOUND' })
+  }
   return { deleted: true }
 })
 const setDocumentValidity = vi.fn(async (corpus: string, id: string, _bounds: unknown) => {
@@ -29,6 +38,7 @@ vi.mock('@/lib/aiClient', () => ({
 }))
 
 import { KEEP_CONVERSATION_UPLOADS } from './conversationUploads'
+import { signCallback } from './hmac'
 import {
   bootPayload,
   dockerOk,
@@ -68,6 +78,8 @@ describe.skipIf(!dockerOk)('deleting a conversation erases its turns, on a real 
 
   beforeEach(async () => {
     calls.length = 0
+    stored.clear()
+    for (const id of ['msg-100', 'msg-101', 'msg-110']) stored.add(`eco-3/${id}`)
     deleteDocument.mockClear()
     setDocumentValidity.mockClear()
     // Conversation 10: two turns in the corpus (one still embedding), one that
@@ -168,5 +180,43 @@ describe.skipIf(!dockerOk)('deleting a conversation erases its turns, on a real 
 
     expect(await eventually(async () => deleteDocument.mock.calls.length === 3)).toBe(true)
     expect(erased()).toEqual(['eco-3 msg-100', 'eco-3 msg-101', 'eco-3 msg-110'])
+  }, 30_000)
+
+  it('🔴 RACE: deleted while embedding, the turn lands late, and the callback erases it', async () => {
+    // msg-101 is `embedding`: ai-service has not created its document yet.
+    stored.delete('eco-3/msg-101')
+    const secret = 'e'.repeat(64)
+    process.env.CALLBACK_SECRET = secret
+
+    await payload.delete({ collection: 'sessions', id: 10, overrideAccess: true })
+    // The post-commit erase ran: msg-100 gone, msg-101 not there to erase.
+    expect(await eventually(async () => deleteDocument.mock.calls.length === 2)).toBe(true)
+    expect([...stored]).toEqual(['eco-3/msg-110'])
+
+    // ai-service's worker now lands msg-101, LIVE, and sends its callback.
+    stored.add('eco-3/msg-101')
+    const body = JSON.stringify({
+      event: 'ingest.completed',
+      ingestId: 'ing-late',
+      docId: 'msg-101',
+      corpus: 'eco-3',
+    })
+    const timestamp = Math.floor(Date.now() / 1000)
+    const { POST } = await import('@/app/api/ai-service/callback/route')
+    const res = await POST(
+      new Request('http://backend.test/api/ai-service/callback', {
+        method: 'POST',
+        body,
+        headers: {
+          'content-type': 'application/json',
+          'x-aiservice-timestamp': String(timestamp),
+          'x-aiservice-signature': signCallback({ timestamp, body, secret }),
+        },
+      }),
+    )
+
+    expect(res.status).toBe(200)
+    expect([...stored]).toEqual(['eco-3/msg-110'])
+    expect(await ids('messages')).toEqual([110])
   }, 30_000)
 })

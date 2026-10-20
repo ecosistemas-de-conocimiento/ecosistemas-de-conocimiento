@@ -179,9 +179,37 @@ export async function checkTurnCorpus(deps: TurnCheckDeps & { apply: boolean }):
  * even by mistake. Erasure goes through the ai-service API, never this.
  */
 export function readOnlyUrl(url: string): string {
-  const u = new URL(url)
-  u.searchParams.set('options', '-c default_transaction_read_only=on')
+  let u: URL
+  try {
+    u = new URL(url)
+  } catch {
+    // 🔴 Not the original error: Node's carries the whole URL in `input`,
+    // password included.
+    throw new TypeError('the database URL is not a valid URL (value withheld)')
+  }
+  // MERGED, not overwritten: an existing `options` (search_path, …) stays.
+  const existing = u.searchParams.get('options')?.trim()
+  const readOnly = '-c default_transaction_read_only=on'
+  u.searchParams.set('options', existing ? `${existing} ${readOnly}` : readOnly)
   return u.toString()
+}
+
+const ANY_DB_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"]*@[^\s'"]*/gi
+
+/**
+ * One printable line for an error, with no secret in it: the name, the code,
+ * and the message with every `secrets` value and any `scheme://…@…` URL
+ * replaced. 🔴 Never print the error object itself: Node's invalid-URL error
+ * carries the full URL, password included, in `input`.
+ */
+export function describeError(err: unknown, secrets: Array<string | undefined>): string {
+  const e = err as { name?: unknown; code?: unknown; message?: unknown } | null
+  const name = err instanceof Error ? err.name : typeof e?.name === 'string' ? e.name : 'Error'
+  const code = typeof e?.code === 'string' ? ` ${e.code}` : ''
+  let message = err instanceof Error ? err.message : typeof err === 'string' ? err : 'unknown error'
+  for (const secret of secrets) if (secret) message = message.split(secret).join('[redacted]')
+  message = message.replace(ANY_DB_URL, '[redacted-url]')
+  return `${name}${code}: ${message}`
 }
 
 type Exec = { execute(query: unknown): Promise<unknown> }

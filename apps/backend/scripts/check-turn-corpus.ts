@@ -31,6 +31,7 @@ import { drizzle } from '@payloadcms/db-postgres/drizzle/node-postgres'
 import { getAdminAIClient } from '../src/lib/aiClient'
 import {
   checkTurnCorpus,
+  describeError,
   organizationOfTurnCorpus,
   readOnlyUrl,
   sqlReaders,
@@ -41,11 +42,14 @@ async function main(): Promise<void> {
   const aiUrl = process.env.AI_DATABASE_URL
   if (!aiUrl) throw new Error('AI_DATABASE_URL is not set (the ai-service database, edc_ai).')
 
+  // First, so a malformed URL fails before anything connects.
+  const aiReadOnlyUrl = readOnlyUrl(aiUrl)
+
   const { getPayload } = await import('payload')
   const config = (await import('@payload-config')).default
   const payload = await getPayload({ config })
   const backend = (payload.db as unknown as { drizzle: { execute(q: unknown): Promise<unknown> } }).drizzle
-  const ai = drizzle(readOnlyUrl(aiUrl))
+  const ai = drizzle(aiReadOnlyUrl)
 
   console.log(`[check-turn-corpus] mode=${apply ? 'APPLY' : 'read-only'}`)
   try {
@@ -74,6 +78,11 @@ try {
   await main()
   process.exit(0)
 } catch (err) {
-  console.error('[check-turn-corpus] failed:', err)
+  // 🔴 Never the error object: a malformed AI_DATABASE_URL gives a Node error
+  // whose `input` is the whole URL, password included.
+  console.error(
+    '[check-turn-corpus] failed:',
+    describeError(err, [process.env.AI_DATABASE_URL, process.env.DATABASE_URI]),
+  )
   process.exit(1)
 }

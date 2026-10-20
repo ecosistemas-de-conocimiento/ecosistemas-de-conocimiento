@@ -501,7 +501,27 @@ async function dispatchConversationTurn(
     .findByID({ collection: 'messages', id: messageId as never, depth: 0, overrideAccess: true })
     .catch(rethrowUnlessNotFound)) as { corpusIngestId?: unknown } | null
 
-  if (!row || typeof row.corpusIngestId !== 'string' || row.corpusIngestId !== envelope.ingestId) {
+  /**
+   * 🔴 THE ROW IS GONE: the conversation was deleted while this turn was
+   * `embedding`. ai-service creates the document only in its ingest worker,
+   * so the post-commit erase found nothing, and the turn is now LIVE in the
+   * shared corpus. Erase it here (audit 2026-10-17 §3 item 2). A failure
+   * throws, so this answers 500 and ai-service retries.
+   */
+  if (!row) {
+    const { eraseLateTurn } = await import('@/lib/conversationTurnErasure')
+    await eraseLateTurn({
+      messageId,
+      corpus: envelope.corpus,
+      log: {
+        warn: (obj, msg) => console.warn(msg, obj),
+        info: (obj, msg) => console.info(msg, obj),
+      },
+    })
+    return
+  }
+
+  if (typeof row.corpusIngestId !== 'string' || row.corpusIngestId !== envelope.ingestId) {
     console.warn(
       '[callback] ignoring an ingest callback from a superseded run for message',
       messageId,
