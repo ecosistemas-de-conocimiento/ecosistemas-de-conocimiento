@@ -93,6 +93,7 @@ import { EVAL_ORGANIZATION_ID, EVAL_PUBLISHED_CORPUS, loadEvalEnv, type EvalEnv 
 import { expandGraphQuery, graphContextParagraph, readGraphRetrieval } from './graph'
 import { withQueryExpansion, type ExpansionTrace } from '../../../web/src/lib/server/engine/expand'
 import { chatRetrievalPolicy } from '../../../web/src/lib/server/engine/rerank'
+import { withFencedChunks } from '../../../web/src/lib/server/engine/chunkFence'
 import { buildQuestions, type EvalQuestion } from './questions'
 import {
   orderedSources,
@@ -321,6 +322,9 @@ async function runArm(args: {
     unitKeyFor: () => unitKey,
   })
   const aiClient = args.fake ? makeFakeAIClient(real) : real
+  // The production prompt fence (`apps/web/.../engine/chunkFence.ts`), on every
+  // retrieve leg, as `+server.ts` wires it. Generate keeps the plain client.
+  const fenced = withFencedChunks(aiClient)
 
   const adapter = makeEvalAdapter({
     organizationName: args.organizationName,
@@ -329,14 +333,14 @@ async function runArm(args: {
   })
 
   const trace: GraphTrace = { ms: 0, seeds: [], blockChars: 0, chunks: 0 }
-  const graphProvider = arm === 'graph' ? makeEvalGraphProvider(env, aiClient, trace) : undefined
+  const graphProvider = arm === 'graph' ? makeEvalGraphProvider(env, fenced.client, trace) : undefined
 
   // `--expand`: the engine's retrieve searches the rewordings too. The graph
   // provider above and the generate below keep the plain client, as in
   // `apps/web/src/routes/api/generate/+server.ts`.
   let expansion: ArmResult['expansion']
   const turnClient = args.expand
-    ? withQueryExpansion(aiClient, {
+    ? withQueryExpansion(fenced.client, {
         surface: config.surface,
         orgId: env.orgKey,
         scopeId: `eval-${question.id}`,
@@ -345,7 +349,7 @@ async function runArm(args: {
           expansion = { variants, ms, costUsd }
         },
       })
-    : aiClient
+    : fenced.client
 
   const policy = chatRetrievalPolicy(args.rerank)
   const t0 = Date.now()
@@ -381,7 +385,7 @@ async function runArm(args: {
   const generateMs = Date.now() - t1
 
   const retrieves = aiClient.calls.filter((c) => c.kind === 'retrieve')
-  const sources = orderedSources(prepared.provenance as Provenance | null)
+  const sources = orderedSources(fenced.restorePassages(prepared.provenance, 1200) as Provenance | null)
   const fusedFromGraph = prepared.matches.filter(
     (m) => (m.metadata as Record<string, unknown> | null | undefined)?.path === GRAPH_PATH_TAG,
   ).length

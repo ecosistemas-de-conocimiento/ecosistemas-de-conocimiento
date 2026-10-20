@@ -11,6 +11,7 @@
   import { MessageContent, CitationCard } from '@edc/chat-engine/svelte';
   import { CHAT_KIND_REGISTRY } from '$lib/engine/registry';
   import { CHAT_CITATION_LABELS, chatCitationHref } from '$lib/engine/client';
+  import { markAssistantCitations } from '$lib/assistantChunks';
   import { provenanceToCitations } from '@edc/chat-engine/core';
   import type { CitationLike, MentionRefLike } from '@edc/chat-engine/core';
 
@@ -53,7 +54,9 @@
    * belongs to the conversations it was added to.
    */
   const draftIds = $derived(draftDocumentIds(app.active?.docs ?? []));
-  const marked = $derived(markDraftCitations(rawCitations, draftIds));
+  // An earlier assistant answer retrieved as a source is labelled as such, the
+  // same words the model reads in the prompt fence ($lib/assistantChunks).
+  const marked = $derived(markDraftCitations(markAssistantCitations(rawCitations), draftIds));
   const citations = $derived(marked.citations);
   const hasCitations = $derived(isAssistant && !msg.error && citations.length > 0);
 
