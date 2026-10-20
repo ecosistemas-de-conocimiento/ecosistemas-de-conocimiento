@@ -1,7 +1,8 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `8b6a60b` (prompt-injection fence in the
-chat prompt), deployed 2026-10-20 19:54 UTC — see §4l. Before that, dev ran `29f61b3` (backend migration
+**Status:** live since 2026-10-17. Dev runs `main` @ `39823b3` (conversation delete erases its
+turns from ai-service; ratings FKs cascade), deployed 2026-10-20 20:10 UTC — see §4m. Before that,
+dev ran `8b6a60b` (prompt-injection fence in the chat prompt; 19:54 UTC, §4l). Before that, dev ran `29f61b3` (backend migration
 `documents.uploaded_in_session_id`, testimonio drafts cascade, files deleted with their document),
 deployed 2026-10-18 00:27 UTC — see §4k. Staging runs `97d5316`, deployed 2026-10-17 23:03 UTC —
 see §4j. Before that, dev ran `5c157bb` (a conversation delete also deletes its own uploads; 22:31 UTC, §4i). Before that, `e3eb1f3` on both
@@ -502,6 +503,63 @@ ai-service — all the same as before the deploy (SQL, `find`). Rerank since the
 
 **Disk**, `df -h /` free: 61 GB before; 48 GB after the build; 61 GB after `docker builder prune
 -af` (12.96 GB) and removing dev's `29f61b3` images. Images 7.0 GB, build cache 0.
+
+### 4m. ✅ Done 2026-10-20 20:09–20:20 UTC: `39823b3`, dev only
+
+All measured by the deploy agent. Staging got only a read-only API check; it stays on `97d5316`.
+Dev was resolved by its domain through the API. `39823b3` (`a2950a8`, `0bad4c5`): deleting a
+conversation now **erases** its turns from ai-service after commit (document and chunks), not just
+retires them. Turns that land after their conversation is gone are erased too. The 4 `ratings`
+foreign keys become `ON DELETE CASCADE`. Adds `scripts/check-turn-corpus.ts`.
+
+Pre-check through the API, both apps, non-preview copies (by hash, no value printed):
+
+| | dev | staging |
+|---|---|---|
+| `PAYLOAD_ALLOW_PUSH` | unset | unset |
+| `CALLBACK_SECRET` | 64 chars, sha256 `49480d4006e4`, matches local `EDC_DEV_CALLBACK_SECRET` | 64 chars, `41be8e77bb8a`, matches `EDC_STAGE_CALLBACK_SECRET` |
+| `PUBLIC_BACKEND_URL` | 45 chars, `b3c42123b732`, https, host `api.dev.ecosistemasdeconocimiento.com` | 49 chars, `40c377f282f7`, https, host `api.montaje.ecosistemasdeconocimiento.com` |
+
+None holds `:?` error text. Dev's admin key, `RERANK_API_KEY` and timeout as in §4h.
+
+- Backup (`pg_restore -l` ok, sha256 matched off-box): `/root/backups/20261020T2009Z/`, `edc_ai`
+  2.4 MB, `edc_backend` 316 KB.
+- Deploy: 20:10:15 → 20:15:38 UTC, ≈ 5.4 min (API poll every 20 s). 6 containers `healthy`;
+  health 200 on `dev.` and `api.dev.`; `edc_ai` current at 6 migrations; no non-preview variable
+  holds `:?` text.
+- **Backend migration** `20261020_193707_ratings_fk_cascade`: log `Migrated … (61ms)`;
+  `payload_migrations` row at batch 3. `pg_constraint` on `ratings`: all 4 FKs (`message_id`,
+  `organization_id`, `session_id`, `user_id`) went from `confdeltype` `n` (SET NULL) before the
+  deploy to `c`, `ON DELETE CASCADE`, after.
+
+Smoke, as admin, one script (20:16 UTC):
+
+| test | result |
+|---|---|
+| (a) Turn erasure | Chat-only conversation 39, one turn (answer in 31.2 s). Message 35 reached `ingested`; ai-service held `msg-35` with 1 document row and 1 chunk, live, 14 s after the answer. `DELETE /api/sessions/39` → 200. Within 5 s: **0 document rows, 0 chunks** for `msg-35` in ai-service (erased, not retired). |
+| (b) Rating | 4 stars on message 35 → 201, 1 `ratings` row. The conversation delete above then succeeded (200) and removed session, message and rating rows (0 / 0 / 0). |
+| Normal chat | upload `smoke-m.pdf` → `ready` in 2.2 s; answer in 7.1 s naming the fact, marker `[1]` = first chunk `smoke-m.pdf`, `rerankScore` 0.99995; no `<fuente` in the response. Deleting the conversation removed the upload from all 5 places of §4i, and its turn `msg-36` left 0 rows and 0 chunks in ai-service. |
+
+⚠ The chat-only answer took 31.2 s; the others on this box take 7–12 s. A single sample, not
+investigated.
+
+**Turn corpus check, dry run** (inside the dev backend container, `TURN_CHECK_APPLY` unset and
+removed with `env -u`; `AI_DATABASE_URL` built from the container's `DATABASE_URI`):
+`mode=read-only`, `{"turnDocs":18,"orphanLive":0,"orphanStored":18,"validityMismatches":0,"erased":0,"eraseFailed":0,"skipped":0}`.
+The 18 `orphan-stored` turns, all in corpus `eco-1`, org `edc-eco-1`: `msg-2`, `msg-6`, `msg-8`,
+`msg-11`, `msg-16`, `msg-18` to `msg-29`, `msg-31`. They are every `msg-*` row in ai-service, none
+live: turns retired by conversation deletes before this fix (§4h, §4k). Not erased; that needs
+`TURN_CHECK_APPLY=1` and a decision.
+⚠ `payload run` boots the whole backend in the script's process: the seed checks and the janitors'
+"armed" lines ran too. Read-only applies to the ai-service database only. Nothing changed: counts
+before and after were identical (SQL).
+
+After: no orphan chunks; 257 backend documents (248 `ready`), 266 ai-service; 5 `media` rows and
+5 RustFS objects, 0 `media` rows without a document; 0 `ratings`; 2 users — all the same as before
+the deploy. Rerank since the deploy: 4 `rerank ok`, 0 `rerank degraded` (ai-service log).
+
+**Disk**, `df -h /` free: 61 GB before; 48 GB after the build; 61 GB after `docker builder prune
+-af` (12.96 GB) and removing dev's `8b6a60b` images. Images 7.0 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
