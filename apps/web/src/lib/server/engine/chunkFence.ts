@@ -24,34 +24,126 @@
  * back, so users never see the fence. Call it on every provenance this turn
  * produces, before persisting.
  *
- * Not fenced: the graph block (`graphContext`) — deterministic prose built by
- * `$lib/server/graph` from entity names, not raw chunk text — and the Tier-1
- * summary, which is the product's own text.
+ * `@`-mentioned documents (`resolveEntity`, the engine's inline-refs block)
+ * get the same fence through `withFencedRefs`.
+ *
+ * Not fenced: the graph block (`graphContext`) — prose built by
+ * `$lib/server/graph` from extracted entity names, not raw chunk text — and the
+ * Tier-1 summary (product text plus document titles). Neither is free of
+ * corpus-derived words; both are short and structured.
  *
  * The clean home for this is a per-chunk formatter hook in
  * chat-engine's `buildChatTurn`; until it exists this wrapper is the seam.
  */
 
-import type { AIClient, Provenance, RetrieveMatch } from '@edc/chat-engine/core';
+import type {
+  AIClient,
+  ContextRef,
+  DomainAdapter,
+  Provenance,
+  RetrieveMatch,
+} from '@edc/chat-engine/core';
 // Relative, not `$lib`: the eval harness in apps/backend imports this file.
 import { ASSISTANT_CHUNK_LABEL, isAssistantAuthored } from '../../assistantChunks';
 
 export { ASSISTANT_CHUNK_LABEL };
 
 /**
- * Zero-width characters a forged tag could hide between `<` and `fuente`.
- * Matches `<fuente`, `</fuente`, `< / FUENTE`, `<​/fuente`, and the
- * HTML-escaped `&lt;/fuente`.
+ * Look-alike detection works on a COMPARISON COPY of the text, one entry per
+ * folded character, each mapped back to the span of the original it came from.
+ * Folding, per character:
+ *   · decode entities and escapes: `&#60;` `&#x3c;` `&lt` (with or without `;`,
+ *     any number of `&amp;` layers), `&sol;`, `<`, `\x3c`;
+ *   · drop format characters (Unicode `Cf`: zero-width, LRM/RLM, soft hyphen,
+ *     BOM, tag characters), combining marks (`M`, incl. CGJ) and backslashes;
+ *   · NFKC (fullwidth `＜`, small `﹤`, fullwidth `／`…), a few homoglyphs
+ *     (Cyrillic `е`), then lower case.
+ * A match is replaced in the ORIGINAL text; everything else is byte-identical,
+ * so tone marks in indigenous-language text are never stripped.
+ *
+ * ⚠ Cheap, not complete: a model may still read some spelling this misses
+ * (other homoglyphs, words split by visible characters). The system rule
+ * (`CHUNK_DATA_RULE`) is the second layer.
  */
-const FENCE_LOOKALIKE =
-  /(<|&lt;)([\s​-‍⁠﻿]*\/?[\s​-‍⁠﻿]*fuente)/gi;
+const IGNORABLE = /^[\p{Cf}\p{M}\\]$/u;
+const LT_LIKE = new Set(['<', '‹', '〈', '〈', '⟨']);
+const SLASH_LIKE = new Set(['/', '⁄', '∕', '⧸']);
+const HOMOGLYPHS: Record<string, string> = { 'е': 'e', 'Е': 'e', 'у': 'u' };
+const NUM_ENTITY = /^&(?:amp;)*#(?:x([0-9a-f]{1,6})|(\d{1,7}));?/i;
+const NAMED_ENTITY = /^&(?:amp;)*(lt|sol);?/i;
+const JS_ESCAPE = /^\\(?:u([0-9a-f]{4})|x([0-9a-f]{2}))/i;
+
+function foldChar(ch: string): string {
+  if (IGNORABLE.test(ch)) return '';
+  if (LT_LIKE.has(ch)) return '<';
+  if (SLASH_LIKE.has(ch)) return '/';
+  return [...ch.normalize('NFKC')]
+    .map((c) => (LT_LIKE.has(c) ? '<' : SLASH_LIKE.has(c) ? '/' : (HOMOGLYPHS[c] ?? c)))
+    .join('')
+    .toLowerCase();
+}
+
+function fromCode(hex: string | undefined, dec: string | undefined): string {
+  const cp = hex ? parseInt(hex, 16) : Number(dec);
+  return Number.isInteger(cp) && cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : '';
+}
+
+/** The comparison copy, with each copy char's original span [from, to). */
+function comparisonCopy(text: string): { copy: string; from: number[]; to: number[] } {
+  let copy = '';
+  const from: number[] = [];
+  const to: number[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const rest = text.slice(i, i + 24);
+    let len: number;
+    let decoded: string;
+    let m: RegExpExecArray | null;
+    if ((m = NUM_ENTITY.exec(rest))) {
+      len = m[0].length;
+      decoded = fromCode(m[1], m[2]);
+    } else if ((m = NAMED_ENTITY.exec(rest))) {
+      len = m[0].length;
+      decoded = m[1]!.toLowerCase() === 'lt' ? '<' : '/';
+    } else if ((m = JS_ESCAPE.exec(rest))) {
+      len = m[0].length;
+      decoded = fromCode(m[1] ?? m[2], undefined);
+    } else {
+      decoded = String.fromCodePoint(text.codePointAt(i)!);
+      len = decoded.length;
+    }
+    for (const c of foldChar(decoded)) {
+      copy += c;
+      from.push(i);
+      to.push(i + len);
+    }
+    i += len;
+  }
+  return { copy, from, to };
+}
+
+const TAG_IN_COPY = /<\s*(\/?)\s*fuente/g;
+/** A `[N]` at the start of a line reads like one of the engine's own ordinals. */
+const LINE_ORDINAL = /^([ \t]*)\[\s*(\d{1,4})\s*\]/gm;
 
 /**
- * Break every fence-tag look-alike inside chunk text by swapping its `<` for
- * `‹` (U+2039). The words stay readable; only the tag stops being a tag.
+ * Break every fence-tag look-alike inside chunk text by replacing it with
+ * `‹fuente` / `‹/fuente` (U+2039), and turn a line-leading `[N]` into `(N)`.
+ * The words stay readable; only the tag stops being a tag.
  */
 export function neutraliseFenceTags(text: string): string {
-  return text.replace(FENCE_LOOKALIKE, (_m, _lt: string, rest: string) => `‹${rest}`);
+  const { copy, from, to } = comparisonCopy(text);
+  let out = '';
+  let last = 0;
+  for (const m of copy.matchAll(TAG_IN_COPY)) {
+    const a = from[m.index]!;
+    const b = to[m.index + m[0].length - 1]!;
+    if (a < last) continue;
+    out += text.slice(last, a) + `‹${m[1]}fuente`;
+    last = b;
+  }
+  out += text.slice(last);
+  return out.replace(LINE_ORDINAL, (_m, lead: string, n: string) => `${lead}(${n})`);
 }
 
 /** Ids land inside an attribute: keep them to a safe alphabet. */
@@ -59,10 +151,30 @@ function safeId(id: string): string {
   return String(id).replace(/[^\w.:#-]/g, '_');
 }
 
+/** `<fuente id=…>` + neutralised text + `</fuente>`. */
+function fence(id: string, text: string, tipo = ''): string {
+  return `<fuente id="${safeId(id)}"${tipo}>\n${neutraliseFenceTags(text)}\n</fuente>`;
+}
+
 /** The fenced form of one chunk's text, as the model reads it. */
 export function fenceChunkText(chunk: Pick<RetrieveMatch, 'chunkId' | 'text' | 'metadata'>): string {
   const tipo = isAssistantAuthored(chunk.metadata) ? ` tipo="${ASSISTANT_CHUNK_LABEL}"` : '';
-  return `<fuente id="${safeId(chunk.chunkId)}"${tipo}>\n${neutraliseFenceTags(chunk.text ?? '')}\n</fuente>`;
+  return fence(chunk.chunkId, chunk.text ?? '', tipo);
+}
+
+/**
+ * Fence what `resolveEntity` returns for an `@`-mention (an attached
+ * document's text, up to `REF_BLOCK_MAX`), with the same marker. The id is
+ * `<kind>:<id>`. Empty results stay empty, so the engine still drops them.
+ */
+export function withFencedRefs<A extends DomainAdapter>(adapter: A): A {
+  return {
+    ...adapter,
+    async resolveEntity(ref: ContextRef) {
+      const text = await adapter.resolveEntity(ref);
+      return typeof text === 'string' && text.trim() ? fence(`${ref.kind}:${ref.id}`, text) : text;
+    },
+  };
 }
 
 export interface FenceOptions {
@@ -89,7 +201,9 @@ export function withFencedChunks<T extends AIClient>(base: T, opts: FenceOptions
     matches
       .filter((x) => keepAssistant || !isAssistantAuthored(x.metadata))
       .map((x) => {
-        originals.set(x.chunkId, x.text);
+        // Strings only: a `text: null` from upstream must not make
+        // `restorePassages` throw after the SSE stream has opened.
+        if (typeof x.text === 'string') originals.set(x.chunkId, x.text);
         return { ...x, text: fenceChunkText(x) };
       });
 
@@ -119,7 +233,9 @@ export function withFencedChunks<T extends AIClient>(base: T, opts: FenceOptions
         ...provenance,
         chunks: provenance.chunks.map((c) => {
           const original = originals.get(c.chunkId);
-          return original !== undefined && c.text !== undefined ? { ...c, text: original.slice(0, cap) } : c;
+          return typeof original === 'string' && typeof c.text === 'string'
+            ? { ...c, text: original.slice(0, cap) }
+            : c;
         }),
       };
     },

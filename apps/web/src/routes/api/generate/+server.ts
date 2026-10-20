@@ -26,7 +26,7 @@ import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
 import { makeGraphProvider } from '$lib/server/graph';
-import { withFencedChunks } from '$lib/server/engine/chunkFence';
+import { withFencedChunks, withFencedRefs } from '$lib/server/engine/chunkFence';
 import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { lenguaTurn } from '$lib/lengua';
 import { stampDraftProvenance } from '$lib/publication';
@@ -396,7 +396,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       : null;
 
   // Build the Domain Adapter + the engine's AIClient over this app's BFF client.
-  const adapter = makeChatDomainAdapter({
+  const adapter = withFencedRefs(makeChatDomainAdapter({
     token: locals.token,
     sessionId: body.sessionId,
     corpora,
@@ -405,7 +405,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     ...(sessionDocs.ok ? { documents: sessionDocs.docs } : {}),
     ...(lenguaFacets ? { lenguaFacets: () => lenguaFacets } : {}),
     ...(lengua.lengua ? { lenguaFilter: lengua.lengua } : {}),
-  });
+  }));
   // CHAT_RETRIEVAL_MODE=hybrid AND ai-service has `metadataFilterIn` → one
   // hybrid `/v1/retrieve/multi` call, drafts filtered server-side. Otherwise
   // the dense per-corpus path. Default dense. See `$lib/server/engine/hybrid`.
@@ -423,14 +423,17 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     sessionDocumentIds,
     hybrid,
   });
-  // 🔴 PROMPT-INJECTION FENCE (audit 2026-10-17 §3 item 3). Every leg — the
-  // published and draft legs, hybrid `retrieveMulti`, and the graph provider's
-  // widened retrieve below — goes through this one client, so every chunk
-  // reaches the prompt as `<fuente id=…>…</fuente>` with look-alike tags
-  // neutralised, and earlier assistant answers are labelled. The provenance
-  // gets the original passage text back via `restorePassages` before it is
-  // persisted. The open owner decision (are assistant answers retrievable at
-  // all?) is the `retrieveAssistantChunks` option. See `chunkFence.ts`.
+  // 🔴 PROMPT-INJECTION FENCE (audit 2026-10-17 §3 item 3), a partial
+  // mitigation. Retrieved chunks from every leg that goes through this client
+  // (published and draft legs, hybrid `retrieveMulti`, the graph provider's
+  // widened retrieve) reach the prompt as `<fuente id=…>…</fuente>`; the
+  // adapter above (`withFencedRefs`) fences `@`-mentioned documents the same way. Common tag
+  // look-alikes and line-leading `[N]` inside the text are neutralised — a
+  // cheap fold, not a guarantee (see `neutraliseFenceTags`). Earlier assistant
+  // answers are labelled. The graph block and the summary are NOT fenced.
+  // `restorePassages` puts the original passage text back on the provenance
+  // before it is persisted. The open owner decision (are assistant answers
+  // retrievable at all?) is the `retrieveAssistantChunks` option.
   const fenced = withFencedChunks(unfencedAI);
   const engineAI = fenced.client;
 
