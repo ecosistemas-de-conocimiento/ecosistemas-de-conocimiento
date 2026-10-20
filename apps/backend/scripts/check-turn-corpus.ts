@@ -3,8 +3,14 @@
  * row is gone, and documents whose chunks disagree with them on validity.
  * Logic and rationale: `src/lib/turnCorpusCheck.ts`.
  *
- * 🔴 READ-ONLY BY DEFAULT. The ai-service database is opened with
- * `default_transaction_read_only=on`, and nothing is erased.
+ * 🔴 READ-ONLY BY DEFAULT. BOTH databases (ai-service's and the backend's) are
+ * opened with `default_transaction_read_only=on`, and nothing is erased.
+ *
+ * 🔴 NO PAYLOAD BOOT. The script reads the backend database directly; it never
+ * calls `getPayload`, so no seed, bucket check or janitor runs. `payload run`
+ * is only the launcher: it loads `.env` and the TypeScript loader, then imports
+ * this file. With APPLY, the only other thing used is the ai-service admin
+ * client, for `deleteDocument`.
  *
  *     # report (writes nothing)
  *     AI_DATABASE_URL=postgres://…/edc_ai \
@@ -16,9 +22,9 @@
  *
  * Env:
  *   AI_DATABASE_URL     the ai-service database (`edc_ai`), REQUIRED
- *   TURN_CHECK_APPLY=1  erase `orphan-live` and `orphan-stored` turns
- *   plus the backend's usual DATABASE_URI, and AI_SERVICE_URL +
- *   AI_SERVICE_ADMIN_API_KEY for the erase.
+ *   DATABASE_URI        the backend database (`edc_backend`), REQUIRED
+ *   TURN_CHECK_APPLY=1  erase `orphan-live` and `orphan-stored` turns; needs
+ *                       AI_SERVICE_URL + AI_SERVICE_ADMIN_API_KEY too.
  *
  * ⚠ Env vars, not flags: `payload run` does not reliably forward argv.
  * ⚠ Mismatches are reported only, never repaired.
@@ -33,23 +39,17 @@ import {
   checkTurnCorpus,
   describeError,
   organizationOfTurnCorpus,
-  readOnlyUrl,
   sqlReaders,
+  turnCheckEnv,
 } from '../src/lib/turnCorpusCheck'
 
+type Closable = { $client?: { end(): Promise<void> } }
+
 async function main(): Promise<void> {
-  const apply = process.env.TURN_CHECK_APPLY === '1'
-  const aiUrl = process.env.AI_DATABASE_URL
-  if (!aiUrl) throw new Error('AI_DATABASE_URL is not set (the ai-service database, edc_ai).')
-
-  // First, so a malformed URL fails before anything connects.
-  const aiReadOnlyUrl = readOnlyUrl(aiUrl)
-
-  const { getPayload } = await import('payload')
-  const config = (await import('@payload-config')).default
-  const payload = await getPayload({ config })
-  const backend = (payload.db as unknown as { drizzle: { execute(q: unknown): Promise<unknown> } }).drizzle
-  const ai = drizzle(aiReadOnlyUrl)
+  // First, so a missing or malformed URL fails before anything connects.
+  const { apply, aiUrl, backendUrl } = turnCheckEnv(process.env)
+  const ai = drizzle(aiUrl)
+  const backend = drizzle(backendUrl)
 
   console.log(`[check-turn-corpus] mode=${apply ? 'APPLY' : 'read-only'}`)
   try {
@@ -68,7 +68,7 @@ async function main(): Promise<void> {
       console.log('[check-turn-corpus] read-only — re-run with TURN_CHECK_APPLY=1 to erase the orphans.')
     }
   } finally {
-    await (ai as unknown as { $client?: { end(): Promise<void> } }).$client?.end()
+    for (const db of [ai, backend]) await (db as unknown as Closable).$client?.end()
   }
 }
 

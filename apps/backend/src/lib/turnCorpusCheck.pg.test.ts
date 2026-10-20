@@ -132,6 +132,28 @@ describe.skipIf(!dockerOk)('the turn-corpus check on a real Postgres', () => {
     expect(report).toMatchObject({ erased: 4, skipped: 1 })
   })
 
+  it('🔴 the backend connection the script opens refuses writes too, and still reads', async () => {
+    const backendReadOnly = drizzle(readOnlyUrl(pg.urlFor('turn_check_backend')))
+    try {
+      const report = await checkTurnCorpus({
+        ...sqlReaders(aiReadOnly, backendReadOnly),
+        erase: async () => {},
+        log: () => {},
+        apply: false,
+      })
+      expect(report).toMatchObject({ turnDocs: 6, orphanLive: 4, orphanStored: 1 })
+
+      const code = await backendReadOnly.execute(sql.raw(`DELETE FROM messages`)).then(
+        () => 'ok',
+        (err: unknown) =>
+          String((err as { cause?: { code?: string } })?.cause?.code ?? (err as { code?: string })?.code),
+      )
+      expect(code).toBe('25006') // read_only_sql_transaction
+    } finally {
+      await (backendReadOnly as unknown as { $client?: { end(): Promise<void> } }).$client?.end()
+    }
+  })
+
   it('🔴 the ai-service connection refuses writes', async () => {
     const code = await aiReadOnly.execute(sql.raw(`DELETE FROM chunks`)).then(
       () => 'ok',

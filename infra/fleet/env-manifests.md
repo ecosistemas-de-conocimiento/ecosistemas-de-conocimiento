@@ -126,6 +126,7 @@ first. Coolify names the project after the resource, so volumes are per environm
 |---|---|---|
 | `SEED_DOMAIN` | unset | 💤 dev may set `1`; stage is refused by the gate anyway |
 | `SEED_CORPUS_INGEST` | `0` | 💤 needs the corpus, which Coolify does not have |
+| `INGEST_ASSISTANT_TURNS` | `false` | 💤 🔴 backend. Assistant answers enter the shared corpus only on `true`/`1`/`on`/`yes`; questions always do (`lib/conversationIngest.ts`). Off since 2026-10-20: an audit measured an earlier answer as the top-1 source in 6 of 14 chat turns (quoted, owner's ruling). Off also skips the anonymisation gate for answers. Leave unset |
 | `POSTGRES_USER`, `BACKEND_DB_NAME`, `AI_DB_NAME` | `edc`, `edc_backend`, `edc_ai` | 💤 per-env stores, so the defaults are fine |
 | `RUSTFS_MEMORY` | `1g` | 💤 |
 | `RERANK_API_KEY` | unset | 🔑 **the switch.** Hosted DeepInfra rerank, owner-approved. Setting it turns rerank on (guard in ai-service's `command:` exports `RERANK_ENABLED=true` when the key is non-empty and `RERANK_ENABLED` is unset). Unset ⇒ off, plus one boot warning about the missing key — expected. Not required |

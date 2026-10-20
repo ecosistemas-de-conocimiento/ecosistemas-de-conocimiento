@@ -29,7 +29,8 @@
  *
  * A SCRIPT, NOT A JANITOR: `edc_ai` is a separate database, and a janitor
  * would need its URL inside the backend container. Run it by hand:
- * `scripts/check-turn-corpus.ts`.
+ * `scripts/check-turn-corpus.ts`. It reads both databases over read-only
+ * connections (`turnCheckEnv`) and never boots Payload.
  */
 
 import { sql } from '@payloadcms/db-postgres'
@@ -192,6 +193,26 @@ export function readOnlyUrl(url: string): string {
   const readOnly = '-c default_transaction_read_only=on'
   u.searchParams.set('options', existing ? `${existing} ${readOnly}` : readOnly)
   return u.toString()
+}
+
+/**
+ * What `scripts/check-turn-corpus.ts` connects to: BOTH databases read-only,
+ * straight from the env, with no Payload boot. 🔴 Booting Payload for a check
+ * ran the admin seed, the demo-seed gate, the bucket check and every janitor
+ * (edc-1 runbook §4m); read-only then held for `edc_ai` only.
+ *
+ * Throws naming the missing variable, never a value.
+ */
+export function turnCheckEnv(env: Record<string, string | undefined>): {
+  apply: boolean
+  aiUrl: string
+  backendUrl: string
+} {
+  const ai = env.AI_DATABASE_URL?.trim()
+  if (!ai) throw new Error('AI_DATABASE_URL is not set (the ai-service database, edc_ai).')
+  const backend = env.DATABASE_URI?.trim()
+  if (!backend) throw new Error('DATABASE_URI is not set (the backend database, edc_backend).')
+  return { apply: env.TURN_CHECK_APPLY === '1', aiUrl: readOnlyUrl(ai), backendUrl: readOnlyUrl(backend) }
 }
 
 const ANY_DB_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"]*@[^\s'"]*/gi

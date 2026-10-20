@@ -3,6 +3,8 @@
  * against a real Postgres in `turnCorpusCheck.pg.test.ts`.
  */
 
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -11,6 +13,7 @@ import {
   describeError,
   readOnlyUrl,
   organizationOfTurnCorpus,
+  turnCheckEnv,
   type AiTurnRow,
   type TurnCheckDeps,
 } from './turnCorpusCheck'
@@ -190,5 +193,57 @@ describe('describeError', () => {
 
   it('handles a non-Error', () => {
     expect(describeError('boom postgres://a:pw@h/d', [])).not.toContain('pw@')
+  })
+})
+
+describe('turnCheckEnv — the script reads both databases itself, read-only', () => {
+  const env = {
+    AI_DATABASE_URL: 'postgres://edc:ai-pw@db:5432/edc_ai',
+    DATABASE_URI: 'postgres://edc:be-pw@db:5432/edc_backend',
+  }
+  const readOnly = (url: string) => new URL(url).searchParams.get('options')
+
+  it('🔴 opens BOTH connections read-only, the backend one too', () => {
+    const cfg = turnCheckEnv(env)
+    expect(readOnly(cfg.aiUrl)).toBe('-c default_transaction_read_only=on')
+    expect(readOnly(cfg.backendUrl)).toBe('-c default_transaction_read_only=on')
+    expect(new URL(cfg.backendUrl).pathname).toBe('/edc_backend')
+    expect(cfg.apply).toBe(false)
+  })
+
+  it('applies only on TURN_CHECK_APPLY=1', () => {
+    expect(turnCheckEnv({ ...env, TURN_CHECK_APPLY: '1' }).apply).toBe(true)
+    expect(turnCheckEnv({ ...env, TURN_CHECK_APPLY: 'true' }).apply).toBe(false)
+  })
+
+  it('names a missing variable, never a value', () => {
+    expect(() => turnCheckEnv({ DATABASE_URI: env.DATABASE_URI })).toThrow(/AI_DATABASE_URL/)
+    expect(() => turnCheckEnv({ AI_DATABASE_URL: env.AI_DATABASE_URL })).toThrow(/DATABASE_URI/)
+  })
+
+  it('🔴 a malformed backend URL fails without carrying it', () => {
+    let caught: unknown
+    try {
+      turnCheckEnv({ ...env, DATABASE_URI: 'postgres://edc:s3cr3t-pw@[bad' })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(Error)
+    expect(JSON.stringify(caught, Object.getOwnPropertyNames(caught as object))).not.toContain('s3cr3t-pw')
+  })
+})
+
+describe('🔴 scripts/check-turn-corpus.ts does not boot Payload', () => {
+  // Booting Payload ran the admin seed, the demo-seed gate, the bucket check and
+  // every janitor inside a "read-only" check (edc-1 runbook §4m).
+  const source = readFileSync(new URL('../../scripts/check-turn-corpus.ts', import.meta.url), 'utf8')
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+
+  it('never calls getPayload or loads the Payload config', () => {
+    expect(code).not.toMatch(/getPayload|@payload-config|from 'payload'/)
+  })
+
+  it('reads its connections from turnCheckEnv', () => {
+    expect(code).toMatch(/turnCheckEnv\(process\.env\)/)
   })
 })
