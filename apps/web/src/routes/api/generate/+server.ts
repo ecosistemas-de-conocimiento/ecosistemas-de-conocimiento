@@ -26,11 +26,15 @@ import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
 import { makeGraphProvider } from '$lib/server/graph';
+import { withFencedChunks } from '$lib/server/engine/chunkFence';
 import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { lenguaTurn } from '$lib/lengua';
 import { stampDraftProvenance } from '$lib/publication';
 import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
 import { prepareTurn, respond, type ContextRef, type ContextScope } from '@edc/chat-engine/core';
+
+/** Max characters of each chunk's passage persisted on the provenance. */
+const PASSAGE_TEXT_CAP = 1200;
 
 /**
  * BFF — chat turns now run through `@edc/chat-engine`.
@@ -406,7 +410,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // hybrid `/v1/retrieve/multi` call, drafts filtered server-side. Otherwise
   // the dense per-corpus path. Default dense. See `$lib/server/engine/hybrid`.
   const hybrid = await chatTurnHybrid();
-  const engineAI = makeEngineAIClient(chatClient, {
+  const unfencedAI = makeEngineAIClient(chatClient, {
     sessionId: body.sessionId,
     signal: request.signal,
     asOf,
@@ -419,6 +423,16 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     sessionDocumentIds,
     hybrid,
   });
+  // 🔴 PROMPT-INJECTION FENCE (audit 2026-10-17 §3 item 3). Every leg — the
+  // published and draft legs, hybrid `retrieveMulti`, and the graph provider's
+  // widened retrieve below — goes through this one client, so every chunk
+  // reaches the prompt as `<fuente id=…>…</fuente>` with look-alike tags
+  // neutralised, and earlier assistant answers are labelled. The provenance
+  // gets the original passage text back via `restorePassages` before it is
+  // persisted. The open owner decision (are assistant answers retrievable at
+  // all?) is the `retrieveAssistantChunks` option. See `chunkFence.ts`.
+  const fenced = withFencedChunks(unfencedAI);
+  const engineAI = fenced.client;
 
   // 🔴 THE SECOND RETRIEVAL PATH — GraphRAG (ADR §8).
   //
@@ -510,7 +524,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     ...(retrievalPolicy ? { retrievalPolicy } : {}),
     // Persist each chunk's grounding passage so the canonical CitationCard can
     // quote it. Cap the stored text to keep the provenance JSON column lean.
-    includePassageText: 1200,
+    includePassageText: PASSAGE_TEXT_CAP,
   };
 
   // ── STREAMING ────────────────────────────────────────────────────────────
@@ -553,7 +567,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
         // Mark chunks that came from THIS user's draft corpus before the turn
         // is persisted, so the citation stays labelled after a reload — the
         // corpus name is the exact signal, and it is only knowable here.
-        stampDraftProvenance(prepared.provenance, draftCorpus),
+        stampDraftProvenance(fenced.restorePassages(prepared.provenance, PASSAGE_TEXT_CAP), draftCorpus),
         upstream.unit.systemPrompt,
         turnMeta(),
       );
@@ -584,7 +598,10 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   try {
     const { generation, provenance: rawProvenance } = await respond(engineTurnArgs);
     // See the streaming branch: stamp the caller's own drafts before persisting.
-    const provenance = stampDraftProvenance(rawProvenance, draftCorpus);
+    const provenance = stampDraftProvenance(
+      fenced.restorePassages(rawProvenance, PASSAGE_TEXT_CAP),
+      draftCorpus,
+    );
     const messageId = await persistAssistantMessage(
       locals.token,
       body.sessionId,

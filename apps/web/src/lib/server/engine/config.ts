@@ -15,6 +15,7 @@ import { CHAT_KIND_REGISTRY } from '$lib/engine/registry';
 import { parseExpansionFlag } from './expand';
 import { chatRetrievalPolicy, parseRerankFlag } from './rerank';
 import { hybridRetrievalForTurn } from './hybrid';
+import { CHAT_SYSTEM_PROMPT } from './prompt';
 import type { RetrievalPolicy } from '@edc/chat-engine/core';
 
 /** Re-export the client-safe registry so server code has one import surface. */
@@ -39,18 +40,8 @@ export function engineOrgId(): string {
 export const CHAT_ENGINE_CONFIG: EngineConfig = {
   ...DEFAULT_ENGINE_CONFIG,
   surface: 'chat',
-  systemPrompt:
-    'Eres un asistente que ayuda a una persona a consultar los documentos de su ' +
-    'ecosistema de conocimiento. Tienes acceso a un resumen del contexto (el ' +
-    'ecosistema y los documentos de la conversación) y a fragmentos recuperados ' +
-    'de esos documentos.\n\n' +
-    'Puedes razonar, proponer ideas y aportar conocimiento general. Pero cuando ' +
-    'afirmes hechos sobre el ecosistema o sus documentos, básate en el resumen ' +
-    'y en el contenido recuperado; no inventes detalles. Distingue con claridad ' +
-    'entre lo que consta en el contexto y tus propias sugerencias. Si el contexto ' +
-    'no alcanza para responder algo, dilo explícitamente.\n\n' +
-    'Responde en español, de forma clara y concisa. Usa Markdown (encabezados, ' +
-    'listas, código) cuando ayude a la lectura.',
+  // `./prompt`: pure, so the eval harness imports the same string.
+  systemPrompt: CHAT_SYSTEM_PROMPT,
 };
 
 /**
