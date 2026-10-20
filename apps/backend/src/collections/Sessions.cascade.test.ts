@@ -428,6 +428,63 @@ describe('retiring the turns that reached the shared corpus', () => {
   it('lists exactly the states that reached, or are reaching, the corpus', () => {
     expect([...RETIRABLE_TURN_STATES]).toEqual(['ingested', 'embedding'])
   })
+
+  // Audit 2026-10-17 §3 item 2: retire hides at once, the erase follows after commit.
+  it('🔴 hands an after-commit ERASE plan naming the retired turns, after retiring them', async () => {
+    const messages: MessageRow[] = [
+      { id: 1, session: SESSION, corpusStatus: 'ingested' },
+      { id: 2, session: SESSION, corpusStatus: 'embedding' },
+      { id: 3, session: SESSION, corpusStatus: 'skipped' },
+    ]
+    const { payload } = fakePayload(messages, [])
+    const corpus = fakeCorpus()
+    const onTurnErasurePlan = vi.fn(() => {
+      // Retirement already happened when the plan is handed over.
+      expect(corpus.setDocumentValidity).toHaveBeenCalledTimes(2)
+    })
+
+    await deleteConversationChildren(SESSION, {
+      payload,
+      corpusClient: async () => corpus.client,
+      onTurnErasurePlan,
+    })
+
+    expect(onTurnErasurePlan).toHaveBeenCalledWith({
+      sessionId: SESSION,
+      // No transaction in this fake; a real one carries `txid_current()`.
+      xid: null,
+      organizationId: ECO,
+      corpus: `eco-${ECO}`,
+      messageIds: [1, 2],
+    })
+  })
+
+  it('hands no erase plan when no turn reached the corpus', async () => {
+    const { payload } = fakePayload([{ id: 1, session: SESSION, corpusStatus: 'pending' }], [])
+    const onTurnErasurePlan = vi.fn()
+
+    await deleteConversationChildren(SESSION, { payload, onTurnErasurePlan })
+
+    expect(onTurnErasurePlan).not.toHaveBeenCalled()
+  })
+
+  it('hands no erase plan when the retire fails: the delete aborts', async () => {
+    const { payload } = fakePayload([{ id: 1, session: SESSION, corpusStatus: 'ingested' }], [])
+    const corpus = fakeCorpus(() => {
+      throw Object.assign(new Error('ai-service request failed (status 503)'), { status: 503 })
+    })
+    const onTurnErasurePlan = vi.fn()
+
+    await expect(
+      deleteConversationChildren(SESSION, {
+        payload,
+        corpusClient: async () => corpus.client,
+        onTurnErasurePlan,
+      }),
+    ).rejects.toThrow(/503/)
+
+    expect(onTurnErasurePlan).not.toHaveBeenCalled()
+  })
 })
 
 describe('🔴 deleting a conversation must NOT delete a corpus', () => {

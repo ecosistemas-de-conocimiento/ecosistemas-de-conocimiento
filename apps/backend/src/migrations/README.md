@@ -8,6 +8,7 @@ The chain since then:
 | migration | what | hand-written part |
 |---|---|---|
 | `20261017_231817_documents_uploaded_in_session` | `documents.uploaded_in_session_id`, FK to `sessions` `ON DELETE set null` (the column is nullable, so that is correct here), and its index | SQL: none (the header comment is hand-written); no backfill, on purpose (the header says why) |
+| `20261020_193707_ratings_fk_cascade` | all four `ratings` FKs (`message_id`, `session_id`, `organization_id`, `user_id`) rewritten to `ON DELETE cascade` | 🔴 SQL: ALL of it. `migrate:create` emitted an empty migration; the `.json` still says `set null`. See "The ratings foreign keys" below |
 
 ⚠ A migration file is frozen once committed, comments included. Nothing had ever been deployed
 — no CI, no deploy script, and `edc_backend` on `localhost:45432` was the only
@@ -218,7 +219,8 @@ WHERE c.contype = 'f' AND c.confdeltype = 'n' AND a.attnotnull;
 ```
 
 🟡 **That query still returns rows, and they were left alone deliberately.**
-`documents`, `media`, `sessions`, `ratings`, `memberships` and `teams` all point
+`documents`, `media`, `sessions`, `memberships` and `teams` (and `ratings`
+until `20261020_193707_ratings_fk_cascade`) all point
 at `organizations` (and several at `users`) with SET NULL against NOT NULL
 columns, inherited from the 2026-08-14 baseline. The consequence is narrower:
 **deleting an organization or a user is broken**, and neither is a product
@@ -227,6 +229,28 @@ between CASCADE (deleting an ecosistema deletes its corpus) and RESTRICT (a
 readable refusal), and that is a product decision, not a migration cleanup.
 Verified on the scratch database: `DELETE FROM organizations` fails on
 `memberships.organization_id` before it reaches anything else.
+
+## 🔴 The ratings foreign keys are hand-written too (2026-10-20)
+
+`20261020_193707_ratings_fk_cascade` drops and recreates the four `ratings`
+foreign keys with `ON DELETE cascade`. Before it, a rated message, an
+ecosistema with ratings and a user who ever rated could not be deleted
+(23502; audit 2026-10-17 §3 item 9). A user's ratings are DELETED, not
+anonymised; the migration header says why.
+
+Made the same way as the baseline's FK rewrites, and with the same two
+consequences: a regenerated baseline will not carry it, and a
+`PAYLOAD_ALLOW_PUSH=1` boot can revert it to `set null`. Checked on
+2026-10-20: `migrate:create --skip-empty` wrote nothing before this migration
+(no drift between the config and the latest `.json`), and
+`migrate:create --force-accept-warning` produced a `.json` that differs from
+the previous one in its `id` only. `collections/Ratings.deletePaths.pg.test.ts`
+pins the four `confdeltype = 'c'`, the three deletes, and a `down()`/`up()`
+round trip that reproduces the old 23502.
+
+⚠ **It does not make a user or an ecosistema deletable by itself.** The 23502
+query above still lists `sessions`, `memberships`, `documents`, `media` and
+`teams`. That test pins that too.
 
 ## ✅ The corpus-label columns have NO hand-written part
 

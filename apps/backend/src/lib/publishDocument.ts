@@ -229,7 +229,8 @@ function isAlreadyAbsent(err: unknown): boolean {
  *
  * ⚠ EXPORTED, and not only for documents. `collections/Sessions.ts` retires the
  * chat turns of a deleted conversation with it (external id `msg-<id>`, see
- * `lib/conversationIngest.ts`). It is the ONLY retirement primitive in the
+ * `lib/conversationIngest.ts`), as the immediate hide; the erase follows after
+ * commit (`lib/conversationTurnErasure.ts`). It is the ONLY retirement primitive in the
  * repo, deliberately: the 404 rule above is subtle enough that a second
  * implementation would get it wrong. Note that it THROWS on any non-404 — the
  * never-throws policy belongs to `retireDeletedDocument`, its caller, not here.
@@ -797,13 +798,14 @@ export interface CorpusDeleter extends CorpusMover {
 
 /**
  * ai-service's OWN "no such corpus / no such document" — and nothing else.
+ * Exported for `lib/conversationTurnErasure.ts`.
  *
  * ⚠ A BARE 404 IS NOT ENOUGH HERE, unlike {@link isAlreadyAbsent}. An
  * ai-service that predates `DELETE /v1/corpus/:name/documents/:id` answers the
  * unknown ROUTE with a 404 too, and reading that as "already gone" would skip
  * the fallback and leave the chunks retrievable. So the body's code decides.
  */
-function isDocumentAbsent(err: unknown): boolean {
+export function isDocumentAbsent(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false
   const e = err as { status?: unknown; code?: unknown; body?: { error?: { code?: unknown } } }
   if (e.status !== 404) return false

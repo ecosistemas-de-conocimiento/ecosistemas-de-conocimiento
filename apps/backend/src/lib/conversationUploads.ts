@@ -686,7 +686,14 @@ async function freshTxStatus(payload: Payload, xid: string): Promise<string | nu
   return res.rows?.[0]?.s ?? null
 }
 
-async function waitForOutcome(xid: string, deps: AfterCommitDeps): Promise<TxOutcome> {
+/**
+ * Poll `txid_status(xid)` until the transaction ends or the budget runs out.
+ * Exported for `lib/conversationTurnErasure.ts`, which waits the same way.
+ */
+export async function waitForOutcome(
+  xid: string,
+  deps: Pick<AfterCommitDeps, 'payload' | 'txStatus' | 'attempts' | 'intervalMs'>,
+): Promise<TxOutcome> {
   const status = deps.txStatus ?? ((x: string) => freshTxStatus(deps.payload, x))
   const attempts = deps.attempts ?? 240
   const intervalMs = deps.intervalMs ?? 250
@@ -700,7 +707,12 @@ async function waitForOutcome(xid: string, deps: AfterCommitDeps): Promise<TxOut
   return 'gave-up'
 }
 
-async function rowExists(payload: Payload, collection: 'documents' | 'sessions' | 'media', id: Id): Promise<boolean> {
+/** Is the row still there, on a fresh connection? Exported for the turn erasure. */
+export async function rowExists(
+  payload: Payload,
+  collection: 'documents' | 'sessions' | 'media' | 'messages',
+  id: Id,
+): Promise<boolean> {
   const row = await payload.findByID({ collection, id, depth: 0, overrideAccess: true, disableErrors: true })
   return row != null
 }
