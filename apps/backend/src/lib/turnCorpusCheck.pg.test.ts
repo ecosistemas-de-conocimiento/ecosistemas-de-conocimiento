@@ -104,6 +104,8 @@ describe.skipIf(!dockerOk)('the turn-corpus check on a real Postgres', () => {
       erased: 0,
       eraseFailed: 0,
       skipped: 0,
+      backendMessages: 1,
+      refused: null,
     })
     expect(erase).not.toHaveBeenCalled()
     expect(lines.filter((l) => l.startsWith('orphan-live')).map((l) => l.split('doc=')[1]).sort()).toEqual([

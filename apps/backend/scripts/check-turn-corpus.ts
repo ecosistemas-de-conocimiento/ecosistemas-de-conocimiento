@@ -25,11 +25,19 @@
  *   DATABASE_URI        the backend database (`edc_backend`), REQUIRED
  *   TURN_CHECK_APPLY=1  erase `orphan-live` and `orphan-stored` turns; needs
  *                       AI_SERVICE_URL + AI_SERVICE_ADMIN_API_KEY too.
+ *   TURN_CHECK_MAX_ERASE  cap on turns one APPLY may erase, default 50.
+ *                       More orphans than that ⇒ APPLY erases nothing.
+ *   TURN_CHECK_FORCE=1  APPLY even though the backend has 0 messages.
+ *
+ * 🔴 Nothing proves the two databases are the same environment. With the wrong
+ * DATABASE_URI every turn looks orphaned, so APPLY refuses (exit 1) past the
+ * cap, or when the backend has no messages at all.
  *
  * ⚠ Env vars, not flags: `payload run` does not reliably forward argv.
  * ⚠ Mismatches are reported only, never repaired.
  *
- * Exit 0 = ran (problems are reported, not fatal). Exit 1 = could not run.
+ * Exit 0 = ran (problems are reported, not fatal). Exit 1 = could not run,
+ * APPLY was refused, or any erase failed.
  */
 
 import { drizzle } from '@payloadcms/db-postgres/drizzle/node-postgres'
@@ -38,6 +46,7 @@ import { getAdminAIClient } from '../src/lib/aiClient'
 import {
   checkTurnCorpus,
   describeError,
+  turnCheckExitCode,
   organizationOfTurnCorpus,
   sqlReaders,
   turnCheckEnv,
@@ -45,9 +54,9 @@ import {
 
 type Closable = { $client?: { end(): Promise<void> } }
 
-async function main(): Promise<void> {
+async function main(): Promise<0 | 1> {
   // First, so a missing or malformed URL fails before anything connects.
-  const { apply, aiUrl, backendUrl } = turnCheckEnv(process.env)
+  const { apply, aiUrl, backendUrl, maxErase, force } = turnCheckEnv(process.env)
   const ai = drizzle(aiUrl)
   const backend = drizzle(backendUrl)
 
@@ -62,11 +71,14 @@ async function main(): Promise<void> {
       },
       log: (line) => console.log(`[check-turn-corpus] ${line}`),
       apply,
+      maxErase,
+      force,
     })
     console.log(`[check-turn-corpus] ${JSON.stringify(report)}`)
     if (!apply && report.orphanLive + report.orphanStored > 0) {
       console.log('[check-turn-corpus] read-only — re-run with TURN_CHECK_APPLY=1 to erase the orphans.')
     }
+    return turnCheckExitCode(report)
   } finally {
     for (const db of [ai, backend]) await (db as unknown as Closable).$client?.end()
   }
@@ -75,8 +87,7 @@ async function main(): Promise<void> {
 // `payload run` awaits only the import; top-level await keeps the script alive
 // (same as scripts/repair-pending-published.ts).
 try {
-  await main()
-  process.exit(0)
+  process.exit(await main())
 } catch (err) {
   // 🔴 Never the error object: a malformed AI_DATABASE_URL gives a Node error
   // whose `input` is the whole URL, password included.

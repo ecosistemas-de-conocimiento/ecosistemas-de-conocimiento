@@ -129,6 +129,7 @@ interface MessageRow {
   content?: unknown
   redactedText?: unknown
   corpusStatus?: unknown
+  corpusIngestId?: unknown
   contextRefs?: unknown
   provenance?: unknown
   createdAt?: unknown
@@ -451,15 +452,26 @@ export async function ingestConversationTurns(args: {
    * 🔴 An assistant turn with `INGEST_ASSISTANT_TURNS` off is skipped too, but
    * ONLY from a runnable state. One already `embedding`, `ingested` or
    * `held-gate` keeps its status: it says what is (or is not) in ai-service.
+   *
+   * 🔴 So does a `failed` turn that still carries a `corpusIngestId`. The
+   * janitor gives up on a stalled turn that way (`lib/ingestRecovery.ts`), and
+   * ai-service may have stored it anyway; `skipped` would claim it never got
+   * there, and the id is the only trace that it might have.
    */
   const answerOff = (message: MessageRow) => !withAnswers && message.role === 'assistant'
+  const mayBeStored = (message: MessageRow) =>
+    corpusStateOf(message) === 'failed' &&
+    typeof message.corpusIngestId === 'string' &&
+    message.corpusIngestId.length > 0
   await Promise.all(
     all
       .filter(
         (message) =>
           ((!isIngestableRole(message.role) || !hasText(message.content)) &&
             corpusStateOf(message) !== 'skipped') ||
-          (answerOff(message) && RUNNABLE_STATES.includes(corpusStateOf(message))),
+          (answerOff(message) &&
+            RUNNABLE_STATES.includes(corpusStateOf(message)) &&
+            !mayBeStored(message)),
       )
       .map((message) => writeMessage(payload, message.id, { corpusStatus: 'skipped' })),
   )

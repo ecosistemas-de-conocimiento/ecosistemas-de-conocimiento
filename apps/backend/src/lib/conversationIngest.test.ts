@@ -108,8 +108,12 @@ function fakePayload(db: Db) {
       if (!row) throw new Error('NotFound')
       return row
     }),
+    // COPIES, like a real read: a row the module updates must not change under
+    // a list it already read, or a filter it forgot to apply goes unseen.
     find: vi.fn(async ({ collection, where }: { collection: string; where?: unknown }) => ({
-      docs: table(collection).filter((row) => matches(row, where)),
+      docs: table(collection)
+        .filter((row) => matches(row, where))
+        .map((row) => ({ ...row })),
     })),
     update: vi.fn(async ({ collection, id, data }: { collection: string; id: unknown; data: Record<string, unknown> }) => {
       const row = table(collection).find((r) => String(r.id) === String(id))
@@ -978,6 +982,54 @@ describe('🔴 assistant turns stay out of the corpus by default', () => {
 
     expect(db.messages.map((m) => m.corpusStatus)).toEqual(['ingested', 'embedding', 'held-gate', 'embedding'])
     expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-4'])
+  })
+
+  it('🔴 a `failed` answer becomes `skipped`, and the gate never sees it', async () => {
+    const db = seed([
+      { id: 1, role: 'assistant', content: 'Fallo antes', corpusStatus: 'failed' },
+      { id: 2, role: 'user', content: 'Pregunta' },
+    ])
+    const { client, calls } = fakeClient()
+    const seen: string[] = []
+    const detector: PersonDetector = {
+      name: 'recording',
+      async detect({ text }) {
+        seen.push(text)
+        return []
+      },
+    }
+
+    await run(db, client, detector)
+
+    expect(db.messages[0]!.corpusStatus).toBe('skipped')
+    expect(seen.some((t) => t.includes('Fallo antes'))).toBe(false)
+    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-2'])
+  })
+
+  it('a `held-drafts` answer becomes `skipped`', async () => {
+    const db = seed([{ id: 1, role: 'assistant', content: 'Retenida', corpusStatus: 'held-drafts' }])
+    const { client, calls } = fakeClient()
+
+    await run(db, client, countingDetector())
+
+    expect(db.messages[0]!.corpusStatus).toBe('skipped')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('🔴 a `failed` answer that KEEPS its ingest id stays `failed` — ai-service may hold it', async () => {
+    // The janitor gives up on a stalled turn by marking it `failed` without
+    // clearing `corpusIngestId` (lib/ingestRecovery.ts). ai-service may have
+    // stored it anyway. `skipped` would claim it never reached the corpus.
+    const db = seed([
+      { id: 1, role: 'assistant', content: 'Atascada', corpusStatus: 'failed', corpusIngestId: 'ing-9' },
+    ])
+    const { client, calls } = fakeClient()
+
+    await run(db, client, countingDetector())
+
+    expect(db.messages[0]!.corpusStatus).toBe('failed')
+    expect(db.messages[0]!.corpusIngestId).toBe('ing-9')
+    expect(calls).toHaveLength(0)
   })
 
   it('a conversation released from a draft hold sends its questions, not its answers', async () => {
