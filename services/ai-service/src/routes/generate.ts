@@ -37,7 +37,7 @@ import {
 } from '../services/generation/system-prompt.js';
 import { renderPrompt } from '../services/render/handlebars.js';
 import { createOpenRouter } from '../services/ai/router/openrouter.js';
-import { fetchContext } from '../services/context/fetch.js';
+import { fetchContextWithTrace } from '../services/context/fetch.js';
 import { projectWireUsage } from '../services/generation/wire-projection.js';
 import {
   generateRequestSchema,
@@ -196,7 +196,10 @@ const generateRoutes: FastifyPluginAsync = async (app) => {
       // `{{__context.<key>}}` — same shape the async orchestrator
       // produces (orchestrator.ts step 5). Prior to this, sync silently
       // dropped `includeContext` even though the schema accepted it.
-      const contextMap = await fetchContext({
+      //
+      // A missing corpus (404), an unknown recipe (400) or a budget refusal
+      // (402) throws here and is mapped below — never an ungrounded 200.
+      const { context: contextMap, retrievalTrace } = await fetchContextWithTrace({
         org: req.auth.org,
         project: req.auth.project,
         ...(includeContext ? { includeContext } : {}),
@@ -270,6 +273,7 @@ const generateRoutes: FastifyPluginAsync = async (app) => {
         // silently losing its instructions.
         systemPromptApplied: systemPrompt !== undefined,
         ...(warnings ? { warnings } : {}),
+        ...(retrievalTrace.length > 0 ? { retrievalTrace } : {}),
       };
     } catch (err) {
       // OUR provider timeout (deadline or stall, in ANY pass) is NOT an
@@ -389,6 +393,7 @@ const generateRoutes: FastifyPluginAsync = async (app) => {
     let spec: Awaited<ReturnType<typeof resolveSpec>>;
     let rendered: string;
     let systemPrompt: string | undefined;
+    let retrievalTrace: Awaited<ReturnType<typeof fetchContextWithTrace>>['retrievalTrace'];
     let router: ReturnType<typeof createOpenRouter>;
     try {
       spec = await resolveSpec(db, {
@@ -405,12 +410,14 @@ const generateRoutes: FastifyPluginAsync = async (app) => {
           ...(modelOverride ? { modelOverride } : {}),
         },
       });
-      const contextMap = await fetchContext({
+      const fetched = await fetchContextWithTrace({
         org: req.auth.org,
         project: req.auth.project,
         ...(includeContext ? { includeContext } : {}),
         logger: app.log,
       });
+      const contextMap = fetched.context;
+      retrievalTrace = fetched.retrievalTrace;
       const renderVars = {
         ...(unit.input ?? {}),
         __context: contextMap,
@@ -508,6 +515,7 @@ const generateRoutes: FastifyPluginAsync = async (app) => {
         traceId: result.traceId,
         systemPromptApplied: systemPrompt !== undefined,
         ...(warnings ? { warnings } : {}),
+        ...(retrievalTrace.length > 0 ? { retrievalTrace } : {}),
       });
     } catch (err) {
       const isAbort = (err as Error)?.name === 'AbortError' || abortCtrl.signal.aborted;

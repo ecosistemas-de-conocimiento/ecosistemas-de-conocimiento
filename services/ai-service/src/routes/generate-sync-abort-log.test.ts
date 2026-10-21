@@ -31,7 +31,10 @@ vi.mock('../services/registry/resolve.js', async () => {
 vi.mock('../services/ai/router/openrouter.js', () => ({
   createOpenRouter: () => createOpenRouterMock(),
 }));
-vi.mock('../services/context/fetch.js', () => ({ fetchContext: async () => ({}) }));
+vi.mock('../services/context/fetch.js', () => ({
+  fetchContext: async () => ({}),
+  fetchContextWithTrace: async () => ({ context: {}, retrievalTrace: [] }),
+}));
 vi.mock('../db/client.js', () => ({
   db: {
     select: () => ({

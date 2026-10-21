@@ -251,6 +251,12 @@ describe('cooperative shutdown on SIGTERM — ingest worker (integration)', () =
   it(
     'aborts the in-flight embed past the grace window, settles the ingest job as `shutdown`, and exits 0',
     async () => {
+      // Ingest is charged against the org's cap (AIS-7) and the enforcer is
+      // fail-closed on a missing row.
+      await db.execute(sql`
+        INSERT INTO "budget_state" ("org", "limit_usd", "remaining_usd")
+        VALUES (${ORG}, 1, 1)
+      `);
       child = await bootApp();
 
       // ── Enqueue a real ingest over HTTP ──────────────────────────────────
@@ -392,6 +398,12 @@ describe('cooperative shutdown on SIGTERM — ingest worker (integration)', () =
         .from(documents)
         .where(eq(documents.ingestId, ingestId));
       expect(docRows).toHaveLength(0);
+
+      // ── …and the embed's budget hold went back to the org ─────────────────
+      const budgetRow = rowsOf(
+        await db.execute(sql`SELECT "remaining_usd" FROM "budget_state" WHERE "org" = ${ORG}`),
+      )[0];
+      expect(Number(budgetRow?.['remaining_usd'])).toBeCloseTo(1, 9);
 
       // ── the batch is terminal, so the consumer's poll ends ────────────────
       const batch = (

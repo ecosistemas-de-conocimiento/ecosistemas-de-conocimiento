@@ -13,10 +13,12 @@
  * what it actually protects is this product's single most silent failure: the
  * ingest callback. Removing it would remove the only thing that notices.
  *
- * The negotiation itself lives in `@edc/ai-client`.
+ * The negotiation itself lives in `@edc/ai-client`. Since 0.32.0 the client
+ * throws on every outcome but `ok`; the warn/strict split and the "unreachable
+ * never blocks" rule below are EDC's own, because AI is optional here.
  */
 
-import { ORG_DELEGATION_CAPABILITY, capabilityModeFromEnv } from '@edc/ai-client'
+import { CapabilityNegotiationError, ORG_DELEGATION_CAPABILITY } from '@edc/ai-client'
 
 import { getAppAIClient } from './aiClient'
 
@@ -42,6 +44,21 @@ export function requiredAICapabilities(): string[] {
   // with no public origin there is no callback to miss.
   if (process.env.PUBLIC_BACKEND_URL) required.push('ingestChunkCallback')
   return required
+}
+
+export type CapabilityMode = 'strict' | 'warn'
+
+/**
+ * `strict` throws at boot on a missing capability; `warn` logs and continues.
+ * `AI_CAPABILITY_MODE` wins when it is `strict` or `warn`; otherwise strict on
+ * NODE_ENV=production and warn everywhere else.
+ */
+export function capabilityModeFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): CapabilityMode {
+  const explicit = env['AI_CAPABILITY_MODE']?.trim().toLowerCase()
+  if (explicit === 'strict' || explicit === 'warn') return explicit
+  return (env['NODE_ENV'] ?? '').trim().toLowerCase() === 'production' ? 'strict' : 'warn'
 }
 
 // `onInit` re-runs on every `next dev` hot-reload; one check per process.
@@ -73,12 +90,28 @@ export async function checkAIServiceCapabilities(logger: CapabilityLogger): Prom
     return
   }
 
-  await getAppAIClient().capabilities.negotiate({
-    consumer: 'edc-backend',
-    require: required,
-    mode: capabilityModeFromEnv(),
-    logger,
-  })
+  try {
+    await getAppAIClient().capabilities.negotiate({
+      consumer: 'edc-backend',
+      require: required,
+      // The pre-0.32 window (3 attempts, 400 ms doubling): a short boot delay
+      // when ai-service is down, since unreachable never blocks here anyway.
+      attempts: 3,
+      retryDelayMs: 400,
+      logger,
+    })
+  } catch (err) {
+    if (!(err instanceof CapabilityNegotiationError)) throw err
+    if (err.status === 'unreachable') {
+      logger.warn(`${err.message} Starting anyway — a restarting ai-service is not a missing capability.`)
+      return
+    }
+    if (capabilityModeFromEnv() === 'warn') {
+      logger.warn(`${err.message} Starting anyway (AI_CAPABILITY_MODE=warn).`)
+      return
+    }
+    throw err
+  }
 }
 
 /** Test-only: let the check run again in the same process. */

@@ -283,3 +283,61 @@ describe('callOpenRouterEmbedding', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+// `EMBEDDINGS_API_KEY` lets a non-OpenRouter `EMBEDDINGS_URL` (e.g. a
+// self-hosted llama.cpp bge-m3) get its own token, so the OpenRouter key is
+// never sent to a third-party host. Unset ⇒ behaviour is unchanged.
+describe('callOpenRouterEmbedding — EMBEDDINGS_API_KEY resolution', () => {
+  async function authHeaderWith(
+    envKeys: { EMBEDDINGS_API_KEY?: string; OPENROUTER_API_KEY?: string },
+    apiKey?: string,
+  ): Promise<string> {
+    vi.resetModules();
+    vi.doMock('../router/task-profiles.js', () => ({ priceForEmbedding: () => 0 }));
+    vi.doMock('../../../config/env.js', () => ({
+      env: {
+        OPENAI_API_KEY: undefined,
+        EMBEDDINGS_URL: 'https://embeddings.example.test/v1/embeddings',
+        EMBEDDING_MODEL: 'baai/bge-m3',
+        EMBEDDING_DIM: 1024,
+        ...envKeys,
+      },
+    }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      makeResponse({ ok: true, status: 200, body: { data: [{ index: 0, embedding: [0.1] }] } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const mod = await import('./openrouter.js');
+      await mod.callOpenRouterEmbedding({ model: 'baai/bge-m3', input: 'x', apiKey });
+      const init = fetchMock.mock.calls[0]![1] as RequestInit;
+      return (init.headers as Record<string, string>).Authorization!;
+    } finally {
+      vi.unstubAllGlobals();
+      vi.doUnmock('../router/task-profiles.js');
+      vi.doUnmock('../../../config/env.js');
+    }
+  }
+
+  it('sends EMBEDDINGS_API_KEY instead of OPENROUTER_API_KEY when set', async () => {
+    expect(
+      await authHeaderWith({ EMBEDDINGS_API_KEY: 'embed-key', OPENROUTER_API_KEY: 'or-key' }),
+    ).toBe('Bearer embed-key');
+  });
+
+  it('falls back to OPENROUTER_API_KEY when EMBEDDINGS_API_KEY is unset', async () => {
+    expect(await authHeaderWith({ OPENROUTER_API_KEY: 'or-key' })).toBe('Bearer or-key');
+  });
+
+  it('treats an empty EMBEDDINGS_API_KEY as unset', async () => {
+    expect(
+      await authHeaderWith({ EMBEDDINGS_API_KEY: '', OPENROUTER_API_KEY: 'or-key' }),
+    ).toBe('Bearer or-key');
+  });
+
+  it('an explicit opts.apiKey still wins over EMBEDDINGS_API_KEY', async () => {
+    expect(
+      await authHeaderWith({ EMBEDDINGS_API_KEY: 'embed-key', OPENROUTER_API_KEY: 'or-key' }, 'inline'),
+    ).toBe('Bearer inline');
+  });
+});

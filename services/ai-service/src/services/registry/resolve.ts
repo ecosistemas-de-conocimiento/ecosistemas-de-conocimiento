@@ -169,7 +169,12 @@ export type SpecResolutionCause =
   /** `responseSchemaStrict` on a model not in `STRICT_SCHEMA_MODELS`. */
   | 'strict schema unsupported model'
   /** `responseSchemaStrict` with no schema, or one outside the strict subset. */
-  | 'strict schema invalid';
+  | 'strict schema invalid'
+  /**
+   * An `includeContext` `{ name }` with no usable `project_configs.contextRules`
+   * entry (`services/context/fetch.ts`). Was a silent empty context.
+   */
+  | 'unknown context recipe';
 
 export class SpecResolutionError extends AiServiceError {
   readonly code = 'ERR_SPEC_RESOLUTION';

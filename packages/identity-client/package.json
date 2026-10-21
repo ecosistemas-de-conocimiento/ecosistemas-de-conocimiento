@@ -1,6 +1,6 @@
 {
   "name": "@edc/identity-client",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Consumer-side identity client: browser-user sessions (login, rotating refresh tickets, revoke), EdDSA token verification, permission helpers, service-to-service grant resolution.",
   "type": "module",
   "license": "UNLICENSED",

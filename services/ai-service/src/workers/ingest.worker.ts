@@ -11,6 +11,9 @@
 //   5. INSERT one chunk row per chunk (with ordinal + embedding).
 //   6. Append a `usage_logs` row tagged `/v1/ingest` so spend rolls up cleanly.
 //
+// Budget (audit 2026-10-17, AIS-7): step 3 is bracketed by the same
+// reserve → adjust / refund cycle `/v1/embed` uses. See `chargeIngestEmbed`.
+//
 // `processIngestJob` is exported so unit tests can drive it without Redis. It
 // CLAIMS the job's `ingest_jobs` row before step 1 and settles it after step 7
 // — see the block comment at `claimIngestJob` for why a redelivered job that
@@ -20,6 +23,8 @@
 // already in-band. The ONE exception is a cooperative-shutdown abort, which is
 // not a failed attempt and gets no retry: see `settleShutdownAbortedIngestJob`
 // and `startIngestWorker`'s `stop()`.
+
+import { randomUUID } from 'node:crypto';
 
 import { Worker } from 'bullmq';
 import type { Redis } from 'ioredis';
@@ -49,6 +54,12 @@ import {
   type SparseEmbedder,
 } from '../services/ai/embeddings/sparse-embed.js';
 import { priceForEmbedding } from '../services/ai/router/task-profiles.js';
+import { BudgetEnforcer } from '../services/budget/enforcer.js';
+import {
+  BudgetExceeded,
+  BudgetMisconfigured,
+  BudgetNotConfigured,
+} from '../services/budget/errors.js';
 import {
   insertCallbackDelivery,
   kickDelivery,
@@ -87,6 +98,12 @@ export interface IngestWorkerDeps {
   connection?: Redis;
   embedder?: typeof callOpenRouterEmbedding;
   /**
+   * The budget the dense embed is charged against. Defaults to a
+   * `BudgetEnforcer` on `db`. Injectable so the stub-DB unit suite can observe
+   * the reserve / adjust / refund calls without a real `budget_state` row.
+   */
+  budget?: IngestBudget;
+  /**
    * Injectable learned-sparse (bge-m3) embedder. Defaults to the real
    * `callSparseEmbed` client. Passing a stub FORCES the sparse path on
    * (bypassing the `SPARSE_ENABLED` + `SPARSE_EMBED_URL` gate) so tests can drive
@@ -124,6 +141,9 @@ export interface IngestWorkerDeps {
    */
   shutdownGraceMs?: number;
 }
+
+/** The slice of `BudgetEnforcer` the ingest path uses. */
+export type IngestBudget = Pick<BudgetEnforcer, 'reserve' | 'adjust' | 'refund' | 'heldReserveUsd'>;
 
 /** Structured logger for this worker; `component` makes it filterable. */
 const ingestLog = rootLogger.child({ component: 'ingest-worker' });
@@ -181,8 +201,9 @@ function mergeChunkMetadata(
 // `onIngestDocFailed` bookkeeping as any other failed doc, so the batch
 // counters move, the batch goes terminal and the `ingest.failed` callback
 // fires. Never re-run, always reported — see `src/services/jobs/lost.ts`.
-// (Ingest takes no budget reserve, so there is nothing to refund here; the
-// embedding spend is recorded from actuals in `usage_logs`.)
+// The lost job's live budget hold (taken before its embed, keyed by the
+// `ingest_jobs` row id) is refunded by the reaper from the ledger, exactly as
+// `reapLostGenerationJob` does — see `reapLostIngestJob`.
 
 /** The statuses an `ingest_jobs` row never leaves. */
 export const TERMINAL_INGEST_JOB_STATUSES = ['completed', 'failed'] as const;
@@ -312,6 +333,7 @@ async function runClaimedIngestJob(
     const reaped = await reapLostIngestJob(jobRowId, {
       db,
       ...(deps.lostWindowMs !== undefined ? { windowMs: deps.lostWindowMs } : {}),
+      ...(deps.budget ? { budget: deps.budget } : {}),
     }).catch((err) => {
       ingestLog.warn(
         `ingest worker: reaping job row ${jobRowId} failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -523,12 +545,79 @@ async function runIngestJob(
     return { status: 'failed', error: 'zero-chunks' };
   }
 
-  // ── 3. Embed (batch) ──────────────────────────────────────────────────
-  const embedResult = await embedder({
-    model: corpus.embeddingModel,
-    input: docChunks.map((c) => c.text),
-    ...(signal ? { signal } : {}),
-  });
+  // ── 3. Budget hold + embed (batch) ────────────────────────────────────
+  // Reserve BEFORE the paid call, so an org over its cap spends nothing.
+  // Estimated from the chunker's token counts; the true-up below corrects it.
+  const budget = deps.budget ?? new BudgetEnforcer(db);
+  const estimateUsd = priceForEmbedding(
+    corpus.embeddingModel,
+    docChunks.reduce((n, c) => n + c.tokens, 0),
+  );
+  // One trace per ATTEMPT: a BullMQ retry takes a fresh hold, and the
+  // true-up must settle only its own.
+  const traceId = `ingest:${data.jobId ?? `bull:${bullJob.id}`}:${randomUUID()}`;
+  try {
+    await budget.reserve({
+      org: data.org,
+      amountUsd: estimateUsd,
+      traceId,
+      project: data.project,
+      jobId: data.jobId,
+    });
+  } catch (err) {
+    // Fail the DOCUMENT, not the attempt: a retry seconds later meets the
+    // same cap, so BullMQ's backoff would only delay the `ingest.failed`.
+    if (
+      err instanceof BudgetExceeded ||
+      err instanceof BudgetNotConfigured ||
+      err instanceof BudgetMisconfigured
+    ) {
+      ingestLog.warn(
+        { org: data.org, ingestId: data.ingestId, estimateUsd, code: err.code },
+        'ingest worker: budget refused the embed; failing the document',
+      );
+      await onIngestDocFailed(db, data, { code: err.code, message: err.message });
+      return { status: 'failed', error: err.code };
+    }
+    throw err;
+  }
+
+  let embedResult: Awaited<ReturnType<typeof embedder>>;
+  try {
+    embedResult = await embedder({
+      model: corpus.embeddingModel,
+      input: docChunks.map((c) => c.text),
+      ...(signal ? { signal } : {}),
+    });
+  } catch (err) {
+    // No embedding came back, so nothing is owed: return the whole hold.
+    // Covers a shutdown abort too — that path re-enters via this throw.
+    await budget
+      .refund({ org: data.org, amountUsd: estimateUsd, traceId })
+      .catch((e: unknown) => {
+        ingestLog.error(
+          { org: data.org, ingestId: data.ingestId, traceId, err: e instanceof Error ? e.message : String(e) },
+          'ingest worker: refunding the embed hold failed',
+        );
+      });
+    throw err;
+  }
+  // The provider has charged from here on, whatever happens below (a count or
+  // dimension mismatch, a failed insert): true up to the ACTUAL cost now.
+  const cost =
+    embedResult.usage.estimatedCostUsd > 0
+      ? embedResult.usage.estimatedCostUsd
+      : priceForEmbedding(corpus.embeddingModel, embedResult.usage.inputTokens);
+  // ⚠ Logged, not thrown: throwing would release the job to a BullMQ retry
+  // that embeds — and pays for — the same document again.
+  await budget
+    .adjust({ org: data.org, deltaUsd: estimateUsd - cost, traceId })
+    .catch((e: unknown) => {
+      ingestLog.error(
+        { org: data.org, ingestId: data.ingestId, traceId, estimateUsd, cost, err: e instanceof Error ? e.message : String(e) },
+        'ingest worker: budget true-up failed; the hold stays at the estimate',
+      );
+    });
   if (embedResult.embeddings.length !== docChunks.length) {
     throw new Error(
       `ingest worker: embedding count mismatch (got ${embedResult.embeddings.length}, expected ${docChunks.length})`,
@@ -620,10 +709,6 @@ async function runIngestJob(
   // wrote nothing — so the retry cannot duplicate the document either. The
   // POST itself starts only after commit (`kickOutbox`); a crash in between
   // leaves a `pending` row the sweeper delivers.
-  const cost =
-    embedResult.usage.estimatedCostUsd > 0
-      ? embedResult.usage.estimatedCostUsd
-      : priceForEmbedding(corpus.embeddingModel, embedResult.usage.inputTokens);
   const { outbox } = await db.transaction(async (tx) => {
     // ── 4. Dedupe / upsert the document row ───────────────────────────────
     let docId: string;
@@ -1125,6 +1210,8 @@ export async function settleLostIngestJob(
 export interface IngestReapDeps {
   db?: Db;
   windowMs?: number;
+  /** Defaults to a `BudgetEnforcer` on `db`. */
+  budget?: IngestBudget;
 }
 
 /**
@@ -1142,6 +1229,22 @@ export async function reapLostIngestJob(
   const windowMs = deps.windowMs ?? lostWindowMs();
   const settled = await settleLostIngestJob(db, jobRowId, { windowMs });
   if (!settled) return false;
+
+  // Refund AFTER the guarded transition won, so two sweeps cannot both refund.
+  // The ledger is the source: only a hold still `reserved` (the worker died
+  // between reserve and true-up) is returned, and `jobId` closes it out.
+  const budget = deps.budget ?? new BudgetEnforcer(db);
+  try {
+    const held = await budget.heldReserveUsd(jobRowId);
+    if (held !== null && held > 0) {
+      await budget.refund({ org: settled.org, amountUsd: held, jobId: jobRowId });
+    }
+  } catch (e) {
+    ingestLog.error(
+      { jobRowId, org: settled.org, err: e instanceof Error ? e.message : String(e) },
+      'ingest worker: refunding the lost job\'s budget hold failed',
+    );
+  }
 
   await onIngestDocFailed(
     db,
@@ -1185,7 +1288,15 @@ export async function reapLostIngestJobs(
     .limit(deps.batchSize ?? 100);
   const reaped: string[] = [];
   for (const c of candidates) {
-    if (await reapLostIngestJob(c.id, { db, windowMs })) reaped.push(c.id);
+    if (
+      await reapLostIngestJob(c.id, {
+        db,
+        windowMs,
+        ...(deps.budget ? { budget: deps.budget } : {}),
+      })
+    ) {
+      reaped.push(c.id);
+    }
   }
   return reaped;
 }

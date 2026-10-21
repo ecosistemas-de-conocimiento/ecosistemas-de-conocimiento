@@ -8,6 +8,7 @@ import { env, rerankModelRefusal } from '../config/env.js';
 import { db } from '../db/client.js';
 import { GENERATE_RATE_LIMIT_MAX, V1_RATE_LIMIT_WINDOW } from '../server-limits.js';
 import { retrieveMultiRequestSchema, retrieveRequestSchema } from '../contract/rag.js';
+import { BudgetEnforcer } from '../services/budget/enforcer.js';
 import { RetrieveService } from '../services/rag/retrieve.js';
 import { RetrieveMultiService } from '../services/rag/retrieve-multi.js';
 
@@ -25,8 +26,12 @@ function refusedRerankModel(model: string | undefined): string | undefined {
 }
 
 const retrieveRoutes: FastifyPluginAsync = async (app) => {
-  const service = new RetrieveService({ db, logger: app.log });
-  const multiService = new RetrieveMultiService({ db, logger: app.log });
+  // Both routes meter the query embed and the rerank against the org cap
+  // (AIS-7). A refused reserve throws the budget classes, which the /v1 error
+  // handler answers with the same 402 body `/v1/generate/sync` sends.
+  const budget = new BudgetEnforcer(db);
+  const service = new RetrieveService({ db, logger: app.log, budget });
+  const multiService = new RetrieveMultiService({ db, logger: app.log, budget });
 
   app.post('/', async (req, reply) => {
     const parsed = retrieveRequestSchema.safeParse(req.body);
@@ -54,7 +59,8 @@ const retrieveRoutes: FastifyPluginAsync = async (app) => {
   // POST /v1/retrieve/multi — fan out across N corpora + fuse, with an optional
   // cheap query-rewrite step. A missing/erroring corpus never 404s the whole
   // call (it lands in the response's `corpora` diagnostics), so there is no
-  // CorpusNotFoundError to map here. The tighter generate-tier rate limit
+  // CorpusNotFoundError to map here. A budget refusal DOES fail the whole call
+  // (402): the org cannot pay for any corpus. The tighter generate-tier rate limit
   // applies because the optional rewrite step can invoke the LLM.
   app.post(
     '/multi',
