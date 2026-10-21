@@ -1,8 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `a4643cb` (privacy gate, Voz-only seed, chat
-searches documents only), deployed 2026-10-21 11:52 UTC, on freshly wiped and reseeded databases
-with two ecosistemas — see §4p. Before that, dev ran `2f60202` (UX batches 6–8; 09:17 UTC, §4o).
+**Status:** live since 2026-10-17. Dev runs `main` @ `6d213a9` (held-publish fix, town rule,
+title-only retrieval), deployed 2026-10-21 14:58 UTC, with the 13 held-but-published testimonios
+repaired — see §4q. Before that, `a4643cb` (privacy gate, Voz-only seed, chat searches documents
+only; 11:52 UTC) on freshly wiped and reseeded databases with two ecosistemas — see §4p. Before that, dev ran `2f60202` (UX batches 6–8; 09:17 UTC, §4o).
 Before that, dev ran `d12f0b4` (UX batches 1–5:
 pinned docs, documents page, closed sign-up, whole graph, Revisión wording; 08:51 UTC, §4n). Before that, dev ran `39823b3` (conversation delete erases its
 turns from ai-service; ratings FKs cascade; 2026-10-20 20:10 UTC, §4m). Before that,
@@ -843,6 +844,54 @@ RustFS still holds the files of the wiped rows (no `media` rows point at them). 
 **Disk**, `df -h /` free: 60 GB before; 42 GB before the final prune (two builds); 60 GB after
 `docker builder prune -af` (16.53 GB) and removing dev's `2f60202`, `b2801b4` and `dd4e7cc`
 images. Images 7.5 GB, build cache 0.
+
+### 4q. ✅ Done 2026-10-21 14:57–15:35 UTC: `6d213a9` and the privacy repairs, dev only
+
+All measured by the deploy agent. Staging was not touched. No wipe.
+
+**§4p's graph backfill, final** (ended 14:57 UTC, ≈ 3 h): 148 extracted, 14 failed (schema misses:
+"no usable `parsed` payload"), 38 skipped (held), 13 orphan nodes removed. Graph status then: ready
+200, failed 14, skipped 38. Cost $0.4452 (`usage_logs` 1.2998 − 0.8546).
+
+**Deploy** `6d213a9` (held-publish fix, town rule, title-only retrieval). Backup
+`/root/backups/20261021T1458Z/` (sha256 matched off-box). 14:58:35 → 15:04:14 UTC. 6 containers
+`healthy`, health 200, `edc_ai` 6 migrations, `payload_migrations` 3. `apps/backend/scripts/`
+is in the image (`repair-held-published.ts`, `purge-unscrubbed-graph-rows.ts`,
+`regate-place-holds.ts` present). Nothing was mid-ingest, mid-publish or mid-extract when the
+scripts ran.
+
+The scripts ran from `/repo/apps/backend` in the backend container as
+`env -u SEED_CORPUS_INGEST [X_APPLY=1] node_modules/.bin/payload run scripts/<name>.ts`. Dry run
+first, then apply. Never `pnpm` (§4p).
+
+| script | dry run | apply |
+|---|---|---|
+| `repair-held-published.ts` | examined 170, matched **13**: 246, 238, 227, 223, 222, 208, 191, 188, 163, 134 (eco-3), 41, 29, 28 (eco-1). `inFlight` [], `unreviewable` [], `failed` [] | repaired 13. All now `held` + `draft`; ai-service: their 13 document rows (3 in `eco-1`, 10 in `eco-3`) have **0 live**; validity closed |
+| `purge-unscrubbed-graph-rows.ts` | 39 unscrubbed gated documents, 1 with rows: doc 219 (held), 10 mentions, 6 relations | deleted; doc 219 has 0 mentions |
+| `regate-place-holds.ts` | 39 held examined, 31 place-only. **5** have only town findings under the new rule (223, 217, 66, 46, 41); 26 keep a place that is not a town and stay held | re-gated 5: **3 released** (41 and 223 published; 217 ready, still a draft), **2 held again** by the fresh verify (46, 66). Cost **$0.0109** |
+
+**Verify:**
+
+| check | result |
+|---|---|
+| The 13 out of the search corpus | 0 live ai-service rows. 11 stay held and appear in Revisión: Salud lists 13 holds including 28 and 29, and Educación (`/revision?eco=3`) lists 23 including 134, 163, 188, 191, 208, 222, 227, 238 and 246. 41 and 223 were released by the re-gate and are published again, now with text |
+| Biblioteca has no empty cards | 159 items (Salud 97, Educación 62); every one has non-empty text through `/api/biblioteca/<id>` |
+| Place-only holds released | 3 of the 31 (5 re-gated, 2 held again) |
+| Exact title as admin (doc 71) | the answer describes doc 71 (the title pin reached the model). ⚠ But it carries **no `[n]` and an empty `provenance`**: no source is shown. Not "cites only doc 71"; it cites nothing |
+| Normal chat (dengue) | 200, 12.0 s, grouped markers, 7 sources; ai-service logged only `rerank ok` |
+| No turns in ai-service | 0 `msg-*` |
+| `/grafo` | Salud 83 entidades, Educación 63 (Playwright, no page errors) |
+| Revisión ecosistema | ⚠ Revisión ignores the ecosistema chosen in the switcher; it takes `?eco=<id>` |
+
+**Graph backfill for the released documents** (15:12:47 → 15:32:01): 51 candidates, 15 extracted
+(the 2 released plus 13 earlier failures), 1 failed, 35 skipped (held). 41, 217 and 223 are now
+`ready`. Graph status: ready 215, failed 1, skipped 36. Cost **$0.0508**.
+
+After: 159 published, 57 ready drafts, 36 held; 0 sessions. **Spend tonight**: §4p run 1 $0.4786
+(wiped) + `usage_logs` now $1.3670 = **$1.8456** of the $10 overnight cap.
+
+**Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
+-af` (12.97 GB) and removing dev's `a4643cb` images. Images 7.8 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
