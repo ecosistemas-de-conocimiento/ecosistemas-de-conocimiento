@@ -274,6 +274,12 @@ export function makeEngineAIClient(
         return { matches: [] };
       }
 
+      // Nothing attached here → the post-filter below would drop every chunk,
+      // so skip the round trip. It was also a 404 on most turns: ai-service
+      // creates `eco-<id>-draft-<user>` on the person's first upload, so a
+      // person who never uploaded has no draft corpus at all.
+      if (isDraftLeg && sessionDocumentIds?.size === 0) return { matches: [] };
+
       const topK = req.topK && req.topK > 0 ? req.topK : DEFAULT_TOPK;
       // Over-fetch only on the draft leg — see `DRAFT_OVERFETCH_FACTOR`.
       const upstreamReq: EngineRetrieveRequest = isDraftLeg
@@ -397,6 +403,17 @@ async function retrieveScoped(
   let body: Record<string, unknown> = req.rerank === true ? { ...scoped, rerank: true } : scoped;
 
   let res = await post(body);
+  if (res.status === 404) {
+    // 🔴 NOT a rerank fault, so no rerank retry. On `/v1/retrieve` a 404 is
+    // ai-service's CORPUS_NOT_FOUND: no corpus by this name under this org
+    // (`X-AI-Org`). The retry would 404 too. Nothing to retrieve there.
+    const detail = await res.text().catch(() => '');
+    console.warn(
+      `[retrieve] corpus "${req.corpus}" not found at ai-service (404, org ${org ?? 'base'}): ` +
+        detail.slice(0, 200),
+    );
+    return [];
+  }
   if (!res.ok && body.rerank === true) {
     // A rerank fault ai-service refuses with an HTTP error (a misconfigured
     // reranker, or a build that rejects the field): retry ONCE without it, so
