@@ -1,7 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `8a1df66` (cite-rule fix round 2), deployed
-2026-10-21 16:47 UTC — see §4v; ⚠ Educación answers still hedge. Before that, `5fe43ff` (answer from
+**Status:** live since 2026-10-17. Dev runs `main` @ `08b32da` (graph: no language or placeholder
+nodes, overview hides isolated nodes; noise purged), deployed 2026-10-21 20:07 UTC — see §4w, which
+also lists the dev demo accounts. Before that, `1a148aa` (cite A/B switch) and `8a1df66` (cite-rule fix
+round 2; 16:47 UTC, §4v; ⚠ Educación answers still hedge). Before that, `5fe43ff` (answer from
 partly relevant passages; 16:33 UTC, §4u). Before that, `8b525fa` (tighter cite rule, no sources on a no-answer reply, at most 7 sources;
 16:16 UTC, §4t). Before that, `9285305` (sources fallback, cite rule in the prompt, no draft
 search without attachments; 16:00 UTC, §4s). Before that, `0e92026` (title match always shown as a source, Revisión
@@ -1057,6 +1059,65 @@ Spend: `usage_logs` $1.4358 → $1.4598 (**+$0.0240**, 12 chats). Tonight: $0.47
 **Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
 -af` (12.97 GB) and removing dev's `5fe43ff` images. Images 7.8 GB, build cache 0.
 
+### 4w. ✅ Done 2026-10-21 17:05–20:20 UTC: cite A/B, demo accounts, graph noise purge (`08b32da`), dev only
+
+All measured by the deploy agent. Staging was not touched.
+
+**Cite-rule A/B** (`1a148aa`, 17:02 UTC). `CHAT_CITE_VARIANT` A–D was set only in the generated
+`/data/coolify/applications/<dev>/.env`, then `docker compose … up -d --no-deps --no-build web`.
+`printenv` and the web log line `[prompt] cite variant X` confirmed each run. The variable was
+removed and web re-created at the end. 20 streamed runs (raw table in the deploy agent's
+scratchpad, `cite-ab.md`). No variant met the rule: no dengue run stayed ≤ 20 s except one that
+broke the group limit. On the tie-break, A (the current rule) had the fewest groups, D close.
+Every variant still opens Educación answers with "Los documentos … no contienen testimonios
+específicos…". Spend +$0.0352.
+
+**Demo accounts on dev** (created and changed as the platform admin, through the REST API the
+Payload panel uses; secrets appended to the owner's `cide/.env`, never printed):
+
+| account | user | memberships | how to sign in | sees |
+|---|---|---|---|---|
+| participant | 3, `participante@ecosistemas.test` | `member` in org 1 (Salud) and org 3 (Educación) | `EDC_DEV_PARTICIPANT_EMAIL` / `EDC_DEV_PARTICIPANT_PASSWORD` (random, 32 chars) | Conversaciones, Mis documentos, Biblioteca, Conexiones. `/revision` and `/admin` answer "403 Sin acceso" and are not in the nav. Chat works. |
+| investigador | 2, `investigador@ecosistemas.test` (uploader of the 252 seeded docs) | `investigador` in orgs 1 and 3 | `EDC_DEV_INVESTIGADOR_EMAIL` / `EDC_DEV_INVESTIGADOR_PASSWORD` (random 32, set by admin `PATCH /api/users/2`) | adds Revisión (held list, both ecosistema tabs); Mis documentos lists 132 (Salud) + 120 (Educación). `/admin` → 403. |
+
+The seed (`seed/review.ts`) creates the investigador with `SEED_INVESTIGADOR_PASSWORD` or, if
+unset, a random password printed once to the boot log. It was unset on dev, and that log was lost
+with the container, so the password was reset as above. The lowest role is `member` (`ORG_ROLES`
+in `apps/backend/src/lib/permissions.ts`: member < investigador < admin < owner).
+
+**Graph noise purge, `08b32da`** (languages and placeholders filtered; the overview hides isolated
+nodes). Backup `/root/backups/20261021T2006Z/` (sha256 matched off-box). Deploy 20:07:03 →
+20:12:27 UTC; 6 containers `healthy`, health 200. `scripts/purge-graph-noise.ts`, from
+`/repo/apps/backend` with `env -u SEED_CORPUS_INGEST … node_modules/.bin/payload run`:
+
+| | dry run | `PURGE_NOISE_APPLY=1` |
+|---|---|---|
+| entities (language names such as "totonaco", "mixteco", "zapoteco"; placeholders "Domicilio A", "[Domicilio B]"…) | 60 | 60 deleted |
+| mentions | 360 | 360 deleted |
+| relations | 271 | 271 deleted |
+
+Graph before → after: entities Salud 193 → 163, Educación 174 → 144; mentions 1,958 → 1,598;
+relations 1,032 → 761. ⚠ One placeholder survives inside a longer label: `lugar` "mercado de
+Domicilio C" (org 1, 1 mention). The filter matches whole labels.
+
+Verify as the participant (Playwright, 1366 px, screenshots):
+
+| | Salud | Educación |
+|---|---|---|
+| overview nodes / lines / isolated nodes | 25 / 15 / **0** | 23 / 18 / **0** |
+| language or placeholder labels in the map, or anywhere on the page | none | none |
+| entity count / list blocks | 68 entidades / 10 | 51 / 10 |
+| chat smoke | mosquito question: 8.2 s, 4 groups, 5 sources | discapacidad question: 4.8 s, hedges ("no hablan específicamente…"), 0 sources |
+
+No page errors. The overview is sparse now: mostly pairs and short chains.
+
+Spend: $1.4950 after the A/B → $1.5059 (**+$0.0109**: participant and investigador checks + 2
+chats). Tonight: $0.4786 + $1.5059 = **$1.9845** of the $10 cap.
+
+**Disk**, `df -h /` free: 60 GB before each deploy; 47 GB after each build; 60 GB after
+`docker builder prune -af` (12.97 GB) and removing the previous dev images. Images 7.8 GB, build
+cache 0.
+
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
 Backups taken before the deploy (both DBs, both envs, each checked with `pg_restore -l`, sha256
@@ -1159,6 +1220,8 @@ Names in the local secrets file:
   inside `SERVICE_TOKENS={"web":…}`), `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`,
   `SEED_ADMIN_PASSWORD`, `AUTH_PRIVATE_KEY`, `AUTH_PUBLIC_KEY`.
 - Staging test user: `EDC_STAGE_SMOKE_USER_EMAIL`, `EDC_STAGE_SMOKE_USER_PASSWORD`.
+- Dev demo users (§4w): `EDC_DEV_PARTICIPANT_EMAIL`, `EDC_DEV_PARTICIPANT_PASSWORD` (role
+  `member`); `EDC_DEV_INVESTIGADOR_EMAIL`, `EDC_DEV_INVESTIGADOR_PASSWORD` (role `investigador`).
 
 The admin login on both environments is `admin@ejemplo.invalid` with that environment's
 `SEED_ADMIN_PASSWORD`. Every secret was generated fresh per environment (`openssl rand -hex 32`;
