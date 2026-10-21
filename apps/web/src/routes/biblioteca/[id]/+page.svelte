@@ -28,7 +28,7 @@
     type LibraryDocument,
   } from '$lib/biblioteca';
   import { audioMetaChips } from '$lib/ingest';
-  import { LENGUA_LABEL, LENGUA_NOTE } from '$lib/lengua';
+  import { LENGUA_LABEL } from '$lib/lengua';
   import type { AudioMeta } from '$lib/types';
 
   let doc = $state<LibraryDocument | null>(null);
@@ -89,13 +89,9 @@
          an id exists somewhere the reader cannot go. -->
     <div class="empty">
       <p class="empty-title">No encontramos esta publicación.</p>
-      <p class="notice">
-        Puede que ya no exista, o que no esté publicada en tu ecosistema. Solo aparece aquí
-        lo que alguien compartió con todo el ecosistema.
-      </p>
     </div>
   {:else if viewState === 'unavailable'}
-    <p class="notice">No pudimos abrir esta publicación en este momento. Inténtalo en un rato.</p>
+    <p class="notice">No pudimos abrir esta publicación. Inténtalo más tarde.</p>
   {:else if doc && label}
     <article>
       <div class="card-top">
@@ -103,7 +99,6 @@
         <span class="date">{formatLibraryDate(doc.createdAt)}</span>
       </div>
       <h1>{doc.title}</h1>
-      <p class="sub">{label.description}</p>
 
       <div class="meta">
         {#if voice}
@@ -124,7 +119,6 @@
           <a
             class="chip"
             href={`/biblioteca?lengua=${encodeURIComponent(doc.lengua)}`}
-            title={LENGUA_NOTE}
             data-testid="library-document-lengua"
           >
             {LENGUA_LABEL}: {doc.lengua}
@@ -204,11 +198,6 @@
     font-weight: 800;
     letter-spacing: -0.02em;
     color: var(--edc-color-ink);
-  }
-  .sub {
-    margin: 0;
-    font-size: 0.82rem;
-    color: var(--edc-color-ink-soft);
   }
   .meta {
     margin: 0.6rem 0 0;

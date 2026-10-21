@@ -58,8 +58,7 @@
 
     {#if registrationClosed}
       <p class="text-sm text-ink-soft closed-note" role="status">
-        Ya no se pueden crear cuentas desde esta página. Pide a quien administra la plataforma que
-        te cree una cuenta.
+        Pide tu cuenta a quien administra la plataforma.
       </p>
     {/if}
 
@@ -100,10 +99,6 @@
     <button type="submit" disabled={submitting} class="login-submit">
       {submitting ? 'Entrando…' : 'Entrar'}
     </button>
-
-    <p class="text-xs text-ink-soft pt-2">
-      ¿Todavía no tienes cuenta? Pide a quien administra la plataforma que te cree una cuenta.
-    </p>
   </form>
 </div>
 

@@ -11,8 +11,8 @@
 
   const message = $derived(
     reason === 'forbidden'
-      ? 'No pudimos cargar tus conversaciones anteriores. Puedes seguir trabajando: volverán a aparecer en cuanto se restablezca el acceso.'
-      : 'Estamos teniendo problemas para llegar al servidor, así que puede faltar alguna conversación. Puedes seguir trabajando: se sincroniza en cuanto vuelva la conexión.',
+      ? 'No pudimos cargar tus conversaciones anteriores.'
+      : 'No pudimos llegar al servidor; puede faltar alguna conversación.',
   );
 </script>
 

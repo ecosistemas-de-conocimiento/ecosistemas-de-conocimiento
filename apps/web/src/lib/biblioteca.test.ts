@@ -15,7 +15,6 @@ import {
   LIBRARY_EMPTY,
   LIBRARY_KINDS,
   LIBRARY_NO_RESULTS,
-  LIBRARY_SCOPE_NOTE,
   mayShowContributor,
   MAX_SEARCH_LENGTH,
   normalizeSearch,
@@ -59,9 +58,8 @@ describe('the anonymity rule', () => {
     }
   });
 
-  it('explains the absence instead of leaving a blank', () => {
+  it('marks the absence instead of leaving a blank', () => {
     expect(TESTIMONY_ANONYMITY_NOTE).toMatch(/anónimo/i);
-    expect(TESTIMONY_ANONYMITY_NOTE).toMatch(/no guarda quién/i);
   });
 });
 
@@ -114,15 +112,6 @@ describe('isMachineTranscript (backlog #12)', () => {
   it('does not call a PDF Voz machine-made', () => {
     expect(isMachineTranscript({ kind: 'testimonio', fromAudio: false })).toBe(false);
     expect(isMachineTranscript({ kind: 'pdf', fromAudio: false })).toBe(false);
-  });
-});
-
-describe('the scope note', () => {
-  // 🔴 The commonest misreading of a shared library is "this is everything".
-  it('says out loud that drafts are not here, including the reader’s own', () => {
-    expect(LIBRARY_SCOPE_NOTE).toMatch(/publicado/i);
-    expect(LIBRARY_SCOPE_NOTE).toMatch(/borradores/i);
-    expect(LIBRARY_SCOPE_NOTE).toMatch(/tuyos/i);
   });
 });
 

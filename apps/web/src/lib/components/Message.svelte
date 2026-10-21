@@ -118,7 +118,7 @@
           {waiting === 'writing' ? 'Escribiendo la respuesta…' : 'Buscando en los documentos…'}
         </span>
         {#if slow}
-          <p class="mt-1 text-xs">A veces tarda hasta un minuto. Seguimos trabajando en tu respuesta.</p>
+          <p class="mt-1 text-xs">Puede tardar hasta un minuto.</p>
         {/if}
       </div>
     {/if}

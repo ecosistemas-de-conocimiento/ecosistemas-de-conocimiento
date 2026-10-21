@@ -311,6 +311,15 @@
     cursor: grab;
     user-select: none;
   }
+  /* Phone (UX backlog #24): a shorter map, so the topic lists start on the
+     first screen instead of below it. */
+  @media (max-width: 40rem) {
+    .canvas {
+      aspect-ratio: 10 / 6;
+      min-height: 12rem;
+      max-height: 40vh;
+    }
+  }
   .canvas:active {
     cursor: grabbing;
   }

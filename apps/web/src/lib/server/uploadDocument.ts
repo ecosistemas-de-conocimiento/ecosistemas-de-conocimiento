@@ -1,6 +1,6 @@
 import { backendFetch, backendUrl } from '$lib/server/auth';
 import { mapUpstreamMediaError } from '$lib/server/documents';
-import { isAudioUpload, maxUploadBytesFor } from '$lib/config';
+import { isAudioUpload, MAX_AUDIO_UPLOAD_BYTES, MAX_UPLOAD_BYTES } from '$lib/config';
 import { readReviewCapability } from '$lib/server/holds';
 import {
   AUDIO_UPLOAD_ENABLED,
@@ -68,7 +68,8 @@ export async function uploadDocument(
 
   // The browser checks too, but it is not a security boundary: a body accepted
   // here lands on the backend's disk before anything can refuse it.
-  const cap = maxUploadBytesFor(file);
+  // The SETTLED kind, not the MIME: a PDF sent as `audio/mp4` gets the 20 MB cap.
+  const cap = kind === 'audio' ? MAX_AUDIO_UPLOAD_BYTES : MAX_UPLOAD_BYTES;
   if (file.size > cap) return { status: 413, body: { error: 'file_too_large', limit: cap, kind } };
 
   // Payload's `POST /api/media` wants multipart with a `file` field. No
