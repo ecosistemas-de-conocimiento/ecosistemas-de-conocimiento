@@ -27,22 +27,18 @@
   import EcosystemScope from '$lib/components/graph/EcosystemScope.svelte';
   import EntityLists from '$lib/components/graph/EntityLists.svelte';
   import EntityPanel from '$lib/components/graph/EntityPanel.svelte';
+  import OverviewGraph from '$lib/components/graph/OverviewGraph.svelte';
   import LenguaPanel from '$lib/components/graph/LenguaPanel.svelte';
   import { withLengua, type GrafoLenguaData } from '$lib/lengua';
   import {
     emptyGraphCopy,
     filterEntities,
     graphEntityHref,
-    GRAPH_SUBTITLE_LEAD,
+    GRAPH_SEARCH_ENABLED,
     GRAPH_ENTITY_NOT_FOUND,
     GRAPH_ENTITY_UNAVAILABLE,
     GRAPH_KICKER,
-    GRAPH_PICK_ENTITY,
-    GRAPH_SCOPE_NOTE,
-    GRAPH_SEARCH_HINT,
-    GRAPH_TITLE,
     GRAPH_UNAVAILABLE,
-    hiddenCopy,
     noEcosystemCopy,
     resultsSummary,
     type GrafoPageData,
@@ -58,7 +54,8 @@
 
   const visible = $derived(filterEntities(data.view.entities, search));
   const filtered = $derived(search.trim() !== '');
-  const hidden = $derived(hiddenCopy(data.view.hidden, data.view.minSupport));
+  /** What the search box matches, for dimming the rest of the map. */
+  const matches = $derived(filtered ? new Set(visible.map((e) => e.id)) : null);
   const busy = $derived(Boolean($navigating));
 
   /**
@@ -67,18 +64,30 @@
    * the back button should undo a selection rather than leave the page. Same
    * reasoning as `/biblioteca`'s filters and `/admin`'s `?eco=`.
    */
-  function navigate(entidad: string | null, conexion: string | null) {
+  function navigate(entidad: string | null, conexion: string | null): Promise<void> {
     // 🔴 The scope params ride along. Rebuilding the URL without them drops a
     // platform admin's `?eco=` on their first click and quietly re-scopes the
     // page to a different ecosistema. See `graphEntityHref`.
     // `?lengua=` rides along too, so picking an entity keeps the filter.
-    void goto(withLengua(graphEntityHref(entidad, conexion, scopeParams), data.lengua), {
+    return goto(withLengua(graphEntityHref(entidad, conexion, scopeParams), data.lengua), {
       keepFocus: true,
       noScroll: true,
     });
   }
 
   const selectedId = $derived(data.entity?.entity.id ?? null);
+
+  /**
+   * Phone (UX backlog #24): the lists sit BELOW the map and the panel, so a
+   * tap on a topic changed a panel the reader could not see. Below the
+   * two-column breakpoint, bring the panel into view once it has loaded.
+   */
+  let panelEl = $state<HTMLElement | null>(null);
+  async function selectFromList(id: string) {
+    await navigate(id, null);
+    if (!window.matchMedia('(max-width: 59.99rem)').matches) return;
+    panelEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   /**
    * ⚠ `data.scope` is `null` for everybody who is not a platform admin — "no
@@ -104,20 +113,10 @@
 <svelte:head><title>{GRAPH_KICKER} · Ecosistemas de Conocimiento</title></svelte:head>
 
 <div class="page text-ink">
-  <header class="head">
-    <div>
-      <p class="kicker">{GRAPH_KICKER}</p>
-      <h1>{GRAPH_TITLE}</h1>
-      {#if data.ecosystem}
-        <!-- ⚠ The enumeration comes from `$lib/graph.ts`, not from this
-             template: it lists the entity types, and a list that drifts out of
-             step with `GRAPH_VIEW_TYPES` is the silent kind of wrong. Only the
-             ecosistema's name is composed here, so it can be bolded — it is
-             the one word on this line a reader scans for. -->
-        <p class="sub">{GRAPH_SUBTITLE_LEAD} <strong>{data.ecosystem.name}</strong>.</p>
-      {/if}
-    </div>
-  </header>
+  <!-- ⚠ No title and no subtitle (backlog #27): the nav tab already says
+       "Conexiones" and the page opens on the map. The heading stays, small,
+       so the page still has one for a screen reader. -->
+  <h1 class="kicker">{GRAPH_KICKER}</h1>
 
   <!-- 🔴 SCOPE, NEVER CONTENT (ADR §7.1). Platform admins only, and all it does
        is choose which ecosistema the page is describing. Rendered ABOVE the
@@ -126,11 +125,6 @@
   {#if scope}
     <EcosystemScope {scope} selected={data.ecosystem} />
   {/if}
-
-  <!-- 🔴 Said on the page, not in a tooltip. Two misreadings are common: that
-       the graph covers everything, and that a missing connection means it does
-       not exist. -->
-  <p class="notice">{GRAPH_SCOPE_NOTE}</p>
 
   {#if data.state === 'no-ecosystem'}
     <!-- ⚠ Two different sentences. A member is told to ask for access; an admin
@@ -148,52 +142,22 @@
     {@const empty = emptyGraphCopy(data.view)}
     <div class="empty" data-testid="grafo-vacio">
       <p class="empty-title">{empty.title}</p>
-      <p class="notice">{empty.hint}</p>
-      {#if hidden}<p class="notice">{hidden}</p>{/if}
     </div>
   {:else}
-    {#if hidden}
-      <!-- 🔴 The withheld count, said out loud. A number we hold and do not show
-           is a number that makes a short list look like a bug. -->
-      <p class="notice" data-testid="grafo-ocultas">{hidden}</p>
-    {/if}
+    <!-- The whole graph first (backlog #3), the selected entity's panel
+         beside it. Clicking a point selects exactly as the lists do: through
+         the URL, so the back button undoes it. -->
+    <div class="stage">
+      <OverviewGraph
+        entities={data.view.entities}
+        edges={data.view.edges ?? []}
+        {selectedId}
+        {matches}
+        panelNeighbourIds={data.entity?.neighbours.map((n) => n.entity.id) ?? []}
+        onSelect={(id) => navigate(id === selectedId ? null : id, null)}
+      />
 
-    <div class="board">
-      <section class="col-lists" aria-label="Entidades del grafo">
-        <label class="search">
-          <span class="sr-only">Buscar por nombre</span>
-          <input
-            type="search"
-            class="search-input"
-            placeholder="Buscar por nombre…"
-            maxlength={MAX_SEARCH_LENGTH}
-            bind:value={search}
-            data-testid="grafo-busqueda"
-          />
-        </label>
-        <p class="hint">{GRAPH_SEARCH_HINT}</p>
-        <p class="count" data-testid="grafo-conteo">
-          {resultsSummary({
-            total: data.view.entities.length,
-            shown: visible.length,
-            filtered,
-          })}
-        </p>
-
-        <EntityLists
-          entities={visible}
-          {selectedId}
-          onSelect={(id) => navigate(id, null)}
-        />
-
-        <LenguaPanel
-          lenguas={data.lenguas}
-          selected={data.lengua}
-          hrefFor={(l) => withLengua($page.url.pathname + $page.url.search, l)}
-        />
-      </section>
-
-      <section class="col-panel" aria-label="Conexiones" aria-busy={busy}>
+      <section class="col-panel" aria-label="Conexiones" aria-busy={busy} bind:this={panelEl}>
         {#if data.entityState === 'unavailable'}
           <p class="notice">{GRAPH_ENTITY_UNAVAILABLE}</p>
         {:else if data.entityState === 'not-found'}
@@ -207,10 +171,51 @@
             onSelectEdge={(id) => navigate(data.entity!.entity.id, id)}
             onRecentre={(id) => navigate(id, null)}
           />
-        {:else}
-          <p class="placeholder">{GRAPH_PICK_ENTITY}</p>
         {/if}
+        <!-- No "pick an entity" hint when nothing is selected (owner, 2026-10-21). -->
       </section>
+    </div>
+
+    <!-- No scope note and no withheld-count line (backlog #28, #29). The
+         threshold itself is unchanged; it is applied in the backend's SQL. -->
+
+    <div class="board">
+      <section class="col-lists" aria-label="Entidades del grafo">
+        <!-- Hidden for the demo (backlog #30); see `GRAPH_SEARCH_ENABLED`. -->
+        {#if GRAPH_SEARCH_ENABLED}
+          <label class="search">
+            <span class="sr-only">Buscar por nombre</span>
+            <input
+              type="search"
+              class="search-input"
+              placeholder="Buscar por nombre…"
+              maxlength={MAX_SEARCH_LENGTH}
+              bind:value={search}
+              data-testid="grafo-busqueda"
+            />
+          </label>
+        {/if}
+        <p class="count" data-testid="grafo-conteo">
+          {resultsSummary({
+            total: data.view.entities.length,
+            shown: visible.length,
+            filtered,
+          })}
+        </p>
+
+        <EntityLists
+          entities={visible}
+          {selectedId}
+          onSelect={(id) => void selectFromList(id)}
+        />
+
+      </section>
+
+      <LenguaPanel
+        lenguas={data.lenguas}
+        selected={data.lengua}
+        hrefFor={(l) => withLengua($page.url.pathname + $page.url.search, l)}
+      />
     </div>
   {/if}
 </div>
@@ -218,19 +223,16 @@
 <style>
   .page {
     min-height: 100vh;
-    max-width: 76rem;
+    /* ⚠ The page sits in a flex row: without `width` it shrinks to its
+       content, and the map (which is 100% wide) shrinks with it. */
+    width: 100%;
+    box-sizing: border-box;
+    max-width: 90rem;
     margin: 0 auto;
     padding: var(--edc-space-6) var(--edc-space-5) var(--edc-space-8);
     display: grid;
     gap: var(--edc-space-4);
     align-content: start;
-  }
-  .head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
   }
   .kicker {
     margin: 0;
@@ -239,22 +241,6 @@
     letter-spacing: 0.09em;
     text-transform: uppercase;
     color: var(--edc-color-ink-soft);
-  }
-  h1 {
-    margin: 0.15rem 0 0.2rem;
-    font-family: var(--edc-font-display);
-    font-size: 1.7rem;
-    font-weight: 800;
-    letter-spacing: -0.02em;
-    color: var(--edc-color-ink);
-  }
-  .sub {
-    margin: 0;
-    font-size: 0.86rem;
-    color: var(--edc-color-ink-soft);
-  }
-  .sub strong {
-    color: var(--edc-color-ink);
   }
   .notice {
     margin: 0;
@@ -267,14 +253,23 @@
     color: var(--edc-color-ink-body);
   }
 
+  .stage,
   .board {
     display: grid;
     gap: var(--edc-space-5);
     align-items: start;
   }
   @media (min-width: 60rem) {
+    .stage {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 26rem);
+    }
+    /* The panel scrolls beside the map instead of pushing the page down. */
+    .stage .col-panel {
+      max-height: clamp(24rem, 70vh, 46rem);
+      overflow-y: auto;
+    }
     .board {
-      grid-template-columns: minmax(0, 21rem) minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr) minmax(0, 21rem);
     }
   }
   .col-lists {
@@ -305,25 +300,9 @@
   .search-input:focus {
     box-shadow: 0 0 0 3px var(--edc-focus-ring);
   }
-  .hint {
-    margin: 0;
-    font-size: 0.72rem;
-    color: var(--edc-color-ink-soft);
-  }
   .count {
     margin: 0 0 0.2rem;
     font-size: 0.78rem;
-    color: var(--edc-color-ink-soft);
-  }
-
-  .placeholder {
-    margin: 0;
-    padding: 2.5rem 1rem;
-    text-align: center;
-    border: 1px dashed var(--edc-color-elevated-border);
-    border-radius: var(--edc-radius-3);
-    background: var(--edc-color-surface-soft);
-    font-size: 0.88rem;
     color: var(--edc-color-ink-soft);
   }
 
@@ -340,11 +319,6 @@
     font-weight: 800;
     color: var(--edc-color-ink);
   }
-  .empty .notice {
-    max-width: 40rem;
-    text-align: left;
-  }
-
   .sr-only {
     position: absolute;
     width: 1px;

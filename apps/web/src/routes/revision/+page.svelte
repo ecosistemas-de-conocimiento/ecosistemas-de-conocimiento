@@ -20,17 +20,14 @@
     APPROVED_TOAST,
     formatHoldDate,
     QUEUE_EMPTY,
-    QUEUE_EMPTY_HINT,
-    QUEUE_NO_TEXT_NOTE,
     QUEUE_UNAVAILABLE,
     ECOSYSTEM_NOT_FOUND,
     NO_ECOSYSTEM,
     REJECTED_TOAST,
-    REVIEW_INTRO,
     REVIEW_TITLE,
-    stageLabel,
     survivorCountLabel,
   } from '$lib/holds';
+  import { holdSummary } from './holdSummary';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -56,9 +53,8 @@
     {/if}
   </header>
 
-  <!-- Said on the page, not in a tooltip. Somebody sent here for the first time
-       has no idea why a document would be "retenido". -->
-  <p class="intro">{REVIEW_INTRO}</p>
+  <!-- ⚠ No intro or hint paragraphs (owner, UX backlog #32/#33, 2026-10-21):
+       labels, counts, short empty states and errors only. -->
 
   {#if done === 'approved'}
     <p class="done" role="status" data-testid="hold-done">{APPROVED_TOAST}</p>
@@ -94,11 +90,12 @@
     <p class="notice" data-testid="hold-queue-unavailable">{QUEUE_UNAVAILABLE}</p>
   {:else if data.holds.length === 0}
     <p class="notice" data-testid="hold-queue-empty">{QUEUE_EMPTY}</p>
-    <p class="hint">{QUEUE_EMPTY_HINT}</p>
   {:else}
-    <p class="hint">{QUEUE_NO_TEXT_NOTE}</p>
     <ul class="list" data-testid="hold-queue">
       {#each data.holds as hold (hold.id)}
+        {@const summary = holdSummary(hold)}
+        <!-- ⚠ `summary` is built from the SAME count as the badge, never from
+             the stored reason's own number. See `holdSummary.ts`. -->
         <li class="card">
           <a class="card-link" href={`/revision/${encodeURIComponent(hold.id)}`}>
             <!-- 🔴 The gate's NEUTRAL title, rendered as sent. Nothing here
@@ -111,12 +108,8 @@
               <span class="date">{formatHoldDate(hold.updatedAt)}</span>
             {/if}
           </p>
-          <p class="why">{stageLabel(hold.stage)} lo detuvo.</p>
-          {#if hold.reason}
-            <!-- The gate's own words. ⚠ Counts and rule names only — it never
-                 quotes what it found. -->
-            <p class="reason">{hold.reason}</p>
-          {/if}
+          <p class="why">{summary.why}</p>
+          <p class="reason">{summary.detail}</p>
         </li>
       {/each}
     </ul>
@@ -144,18 +137,11 @@
     line-height: 1.2;
   }
   .sub,
-  .intro,
-  .hint,
   .notice,
   .why,
   .reason {
     margin: 0.6rem 0 0;
   }
-  .intro {
-    max-width: 46rem;
-    line-height: 1.5;
-  }
-  .hint,
   .reason {
     font-size: 0.85rem;
     color: var(--edc-color-ink-soft);

@@ -55,7 +55,8 @@
 import type { Payload } from 'payload'
 
 import { isRateLimited, withRateLimitRetry, type RetryOptions } from './aiRetry'
-import { corpusTextFor } from './anonymiseDocument'
+import { corpusTextFor, mustPassAnonymisationGate } from './anonymiseDocument'
+import { updateDocumentColumns } from './documentColumns'
 import { chunkMetadata, contentKindOf, knownContentKind, titleFor } from './contentKind'
 import { draftCorpus, publishedCorpus } from './corpus'
 
@@ -229,7 +230,8 @@ function isAlreadyAbsent(err: unknown): boolean {
  *
  * ⚠ EXPORTED, and not only for documents. `collections/Sessions.ts` retires the
  * chat turns of a deleted conversation with it (external id `msg-<id>`, see
- * `lib/conversationIngest.ts`). It is the ONLY retirement primitive in the
+ * `lib/conversationIngest.ts`), as the immediate hide; the erase follows after
+ * commit (`lib/conversationTurnErasure.ts`). It is the ONLY retirement primitive in the
  * repo, deliberately: the 404 rule above is subtle enough that a second
  * implementation would get it wrong. Note that it THROWS on any non-404 — the
  * never-throws policy belongs to `retireDeletedDocument`, its caller, not here.
@@ -500,13 +502,39 @@ export async function beginPublish(
 
   const corpus = publishedCorpus(organizationId)
 
-  await deps.payload.update({
-    collection: 'documents',
-    id: doc.id as never,
-    data: { publicationStatus: 'publishing', publicationError: null },
-    overrideAccess: true,
-    context: { __skipDocsExtract: true },
-  })
+  if (mustPassAnonymisationGate(doc.contentKind)) {
+    /**
+     * 🔴 FAIL CLOSED ON THE STORED ROW, NOT ON `doc`. `doc` is whatever the
+     * caller read, possibly minutes ago; the seed handed over a snapshot taken
+     * before a second gate run held the row. So the move to `publishing` is ONE
+     * `UPDATE … WHERE` that re-asserts `corpusTextFor`'s rule against the
+     * database: still `ready`/`approved`, still carrying a redaction. Paired with
+     * the gate's claim (`GATE_CLAIM_GUARD`, which refuses a `publishing` row) the
+     * two cannot interleave: whichever write lands first, the other matches 0.
+     */
+    const moved = await updateDocumentColumns(deps.payload as never, {
+      id: doc.id,
+      data: { publicationStatus: 'publishing', publicationError: null },
+      where: [
+        { anonymisationStatus: { in: ['ready', 'approved'] } },
+        { redactedText: { exists: true } },
+      ],
+    })
+    if (moved === 0) {
+      throw new NotPublishableError(
+        'This document cannot be published: this content has not cleared the anonymisation gate, ' +
+          'so there is no redacted version to share.',
+      )
+    }
+  } else {
+    await deps.payload.update({
+      collection: 'documents',
+      id: doc.id as never,
+      data: { publicationStatus: 'publishing', publicationError: null },
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+  }
 
   // 🔴 Backed off and, on final give-up, WRITTEN DOWN. Before this, a refused
   // enqueue threw straight past every caller and left the row at `publishing`
@@ -570,6 +598,11 @@ export async function beginPublish(
   return { ingestId: result.ingestId, corpus }
 }
 
+/** Spanish, because it lands in `publicationError` and the UI renders it verbatim. */
+export const PUBLISH_WITHDRAWN_NOT_CLEARED =
+  'No se publicó: el texto ya no está aprobado por la revisión de datos personales. ' +
+  'Queda como borrador hasta que se revise.'
+
 /**
  * STEP 2 OF PUBLISHING, driven by the `ingest.completed` callback.
  *
@@ -586,6 +619,29 @@ export async function confirmPublish(
 ): Promise<void> {
   const { organizationId, userId } = idsOf(doc)
   const now = (deps.now ?? (() => new Date()))()
+
+  /**
+   * 🔴 THE LAST CHANCE TO KEEP A HELD ROW OUT OF THE SHARED CORPUS. The callback
+   * route reads the row when `ingest.completed` arrives. If it no longer clears
+   * `corpusTextFor` — a gate run held it after the enqueue, the state the 13 dev
+   * rows were left in on 2026-10-21 — the shared copy that just landed is
+   * retired and the row goes back to a draft. Never flipped to `published`.
+   */
+  if (mustPassAnonymisationGate(doc.contentKind) && !corpusTextFor(doc).ok) {
+    await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
+    await deps.payload.update({
+      collection: 'documents',
+      id: doc.id as never,
+      data: {
+        publicationStatus: 'draft',
+        publicationError: PUBLISH_WITHDRAWN_NOT_CLEARED,
+        publishIngestId: null,
+      },
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+    return
+  }
 
   await retireFrom(deps.client, draftCorpus(organizationId, userId), doc.id, now, loggerOf(deps))
 
@@ -797,13 +853,14 @@ export interface CorpusDeleter extends CorpusMover {
 
 /**
  * ai-service's OWN "no such corpus / no such document" — and nothing else.
+ * Exported for `lib/conversationTurnErasure.ts`.
  *
  * ⚠ A BARE 404 IS NOT ENOUGH HERE, unlike {@link isAlreadyAbsent}. An
  * ai-service that predates `DELETE /v1/corpus/:name/documents/:id` answers the
  * unknown ROUTE with a 404 too, and reading that as "already gone" would skip
  * the fallback and leave the chunks retrievable. So the body's code decides.
  */
-function isDocumentAbsent(err: unknown): boolean {
+export function isDocumentAbsent(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false
   const e = err as { status?: unknown; code?: unknown; body?: { error?: { code?: unknown } } }
   if (e.status !== 404) return false

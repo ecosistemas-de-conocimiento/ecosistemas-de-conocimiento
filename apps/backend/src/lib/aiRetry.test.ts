@@ -335,7 +335,15 @@ describe('withRateLimitRetry — retryTransient (fake timers, the real sleep)', 
     expect(fn).toHaveBeenCalledTimes(2)
   })
 
-  it.each([400, 401, 422, 402, 500])('a %i is not retried', async (status) => {
+  it.each([500, 502, 504])('a %i is retried (opt-in transient)', async (status) => {
+    const err = Object.assign(new Error(`status ${status}`), { status })
+    const fn = vi.fn().mockRejectedValueOnce(err).mockResolvedValueOnce('ok')
+    const r = await drive(fn)
+    expect(r.ok && r.value).toBe('ok')
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([400, 401, 422, 402])('a %i is not retried', async (status) => {
     const err = Object.assign(new Error(`status ${status}`), { status })
     const fn = vi.fn().mockRejectedValue(err)
     const r = await drive(fn)

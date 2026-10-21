@@ -172,6 +172,13 @@ describe('the draft leg', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // A person with no uploads has no draft corpus at ai-service: this was a 404.
+  it('makes NO request when no document is attached to this conversation', async () => {
+    const res = await withDocs(new Set()).retrieve({ ...request(DRAFT), rerank: true });
+    expect(res.matches).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('keeps chunks of documents attached here and drops the rest', async () => {
     respondWith([chunk('10'), chunk('999'), chunk('11'), chunk('998')]);
 
@@ -224,7 +231,12 @@ describe('the draft leg', () => {
 
   it('caps the over-fetch so a large topK cannot ask for the world', async () => {
     await withDocs(new Set(['10'])).retrieve(request(DRAFT, 40));
-    expect(sentBodies()[0]!.topK).toBe(50);
+    expect(sentBodies()[0]!.topK).toBe(20);
+  });
+
+  it('the fence\'s topK 8 (5 + 3) asks the draft leg for 20, not 32', async () => {
+    await withDocs(new Set(['10'])).retrieve(request(DRAFT, 8));
+    expect(sentBodies()[0]!.topK).toBe(20);
   });
 
   it('still sends asOf on the over-fetched call', async () => {
@@ -405,6 +417,21 @@ describe('rerank (CHAT_RERANK policy)', () => {
     expect(first).toMatchObject({ rerank: true });
     expect(retry).not.toHaveProperty('rerank');
     expect(retry).toMatchObject({ asOf: ASOF });
+  });
+
+  // Measured on dev 2026-10-21: "rerank request failed (404); retrying without
+  // rerank". The 404 was CORPUS_NOT_FOUND, and the retry 404'd too.
+  it('a 404 (corpus not found) is NOT retried without rerank', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: 'ERR_CORPUS_NOT_FOUND' } }), { status: 404 }),
+    );
+    const ai = makeEngineAIClient(noClient, opts);
+    const res = await ai.retrieve({ ...request(ECO), rerank: true });
+    expect(res.matches).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('not found');
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain('retrying without rerank');
   });
 
   it('🔴 forwards denseScore and rerankScore, so the cosine is never lost', async () => {

@@ -531,15 +531,6 @@ export const CANCEL_LABEL = 'Cancelar';
 
 export const NOTE_LABEL = 'Nota sobre tu decisión (opcional)';
 
-/**
- * ⚠ THE SAME SENTENCE `MessageRating.svelte` USES, WORD FOR WORD, and shown in
- * the same place — ABOVE the box. A privacy notice under a textarea is read
- * after you have already typed, which is too late to be a choice. Two different
- * phrasings of "this is not private" in one product teaches people that the
- * wording, rather than the fact, is what varies.
- */
-export const NOTE_NOT_PRIVATE = 'Esto no es privado: lo lee quien administra e investiga aquí.';
-
 export const NOTE_PLACEHOLDER = 'Por qué lo apruebas o lo rechazas';
 
 // ── Outcomes ───────────────────────────────────────────────────────────────

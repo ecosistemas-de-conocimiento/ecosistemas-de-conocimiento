@@ -260,7 +260,7 @@ Queda un punto abierto, y es de tipografía, no de color:
 
 | Dónde | Qué pasa | Tamaño |
 | --- | --- | --- |
-| `components/Sidebar.svelte` (pie), `EcosystemPicker.svelte`, `DocsPanel.svelte` (aviso de borrador), `routes/sign-up` (pista de contraseña), `routes/biblioteca` y `routes/admin` (`.kicker`, `.hint`, chips) | Texto de 9–11px. **Medido en el navegador a 380px**, no estimado. | < 12px |
+| `components/Sidebar.svelte` (pie), `EcosystemPicker.svelte`, `DocsPanel.svelte` (aviso de borrador), `routes/biblioteca` y `routes/admin` (`.kicker`, `.hint`, chips) | Texto de 9–11px. **Medido en el navegador a 380px**, no estimado. | < 12px |
 
 ⚠ Es un problema real para el público de este producto, no una nota de estilo:
 9px en una pantalla barata a plena luz no se lee. No se corrigió aquí porque

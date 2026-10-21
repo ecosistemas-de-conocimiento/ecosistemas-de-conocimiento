@@ -108,8 +108,14 @@ interface RawRetrieveChunk {
  * rank 6. So we ask wide, drop what does not belong here, and truncate back.
  */
 const DRAFT_OVERFETCH_FACTOR = 4;
-/** Ceiling on the over-fetch, so a large `topK` cannot ask for the world. */
-const DRAFT_OVERFETCH_MAX = 50;
+/**
+ * Ceiling on the over-fetch: 20, the draft leg's depth before 2026-10-20
+ * (engine topK 5 × 4). The assistant-answer fence (`./chunkFence`) asks every
+ * leg for topK + 3, and × 4 made that 32 here; a 32-deep draft retrieve timed
+ * out once on dev (reported 2026-10-21, not measured here). The fence only
+ * needs topK + 3 kept AFTER the session filter, which 20 still covers.
+ */
+const DRAFT_OVERFETCH_MAX = 20;
 /** `RetrieveRequest.topK` is optional; the engine always sends 5 today. */
 const DEFAULT_TOPK = 5;
 
@@ -268,6 +274,12 @@ export function makeEngineAIClient(
         return { matches: [] };
       }
 
+      // Nothing attached here → the post-filter below would drop every chunk,
+      // so skip the round trip. It was also a 404 on most turns: ai-service
+      // creates `eco-<id>-draft-<user>` on the person's first upload, so a
+      // person who never uploaded has no draft corpus at all.
+      if (isDraftLeg && sessionDocumentIds?.size === 0) return { matches: [] };
+
       const topK = req.topK && req.topK > 0 ? req.topK : DEFAULT_TOPK;
       // Over-fetch only on the draft leg — see `DRAFT_OVERFETCH_FACTOR`.
       const upstreamReq: EngineRetrieveRequest = isDraftLeg
@@ -391,6 +403,17 @@ async function retrieveScoped(
   let body: Record<string, unknown> = req.rerank === true ? { ...scoped, rerank: true } : scoped;
 
   let res = await post(body);
+  if (res.status === 404) {
+    // 🔴 NOT a rerank fault, so no rerank retry. On `/v1/retrieve` a 404 is
+    // ai-service's CORPUS_NOT_FOUND: no corpus by this name under this org
+    // (`X-AI-Org`). The retry would 404 too. Nothing to retrieve there.
+    const detail = await res.text().catch(() => '');
+    console.warn(
+      `[retrieve] corpus "${req.corpus}" not found at ai-service (404, org ${org ?? 'base'}): ` +
+        detail.slice(0, 200),
+    );
+    return [];
+  }
   if (!res.ok && body.rerank === true) {
     // A rerank fault ai-service refuses with an HTTP error (a misconfigured
     // reranker, or a build that rejects the field): retry ONCE without it, so
@@ -497,10 +520,18 @@ async function retrieveMultiScoped(
       );
       continue;
     }
+    // 🔴 A `docId` already on the shared filter (a title match,
+    // `$lib/server/titleMatch`) must not be widened back to every attached
+    // document: keep it only if it is attached here, else skip this corpus.
+    const pinned = req.filter?.docId;
+    if (pinned !== undefined && !ids.includes(String(pinned))) continue;
     corpora.push(corpus);
     // `docId` is stored as a STRING (`chunkMetadata`), and `$in` compares by
     // type: "12" matches, 12 does not. `ids` are strings.
-    corpusFilters[corpus] = { ...(req.filter ?? {}), docId: { $in: ids } };
+    corpusFilters[corpus] = {
+      ...(req.filter ?? {}),
+      docId: { $in: pinned !== undefined ? [String(pinned)] : ids },
+    };
   }
   if (corpora.length === 0) return empty;
 

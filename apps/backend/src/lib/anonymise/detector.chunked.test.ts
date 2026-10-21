@@ -179,11 +179,11 @@ describe('aiServiceDetector — chunked', () => {
     expect(result.reason).toMatch(/respuesta-no-json|json-invalido/)
   })
 
-  it('🔴 fails closed on a 500 from one chunk, and stops launching the rest', async () => {
+  it('🔴 fails closed on a 400 from one chunk, and stops launching the rest', async () => {
     const text = longTestimony()
     const { client, calls } = fakeClient((prompt, n) =>
       n === 1
-        ? new Response(JSON.stringify({ error: 'boom' }), { status: 500 })
+        ? new Response(JSON.stringify({ error: 'boom' }), { status: 400 })
         : honest(prompt, n),
     )
     await expect(
@@ -191,7 +191,7 @@ describe('aiServiceDetector — chunked', () => {
         text,
         contentKind: 'testimonio',
       }),
-    ).rejects.toMatchObject({ failureClass: 'transporte' })
+    ).rejects.toMatchObject({ failureClass: 'transporte', infrastructure: true })
     expect(calls).toHaveLength(1)
   })
 
@@ -316,6 +316,56 @@ describe('aiServiceDetector — chunked', () => {
       if (result.status !== 'hold') return
       expect(result.stage).toBe('content')
       expect(calls).toHaveLength(4)
+      // 🔴 Not a finding: the model never answered, so the hold is retryable.
+      expect(result.retryable).toBe(true)
+    })
+
+    it('🔴 `retry` raises the per-chunk budget (the seed passes its patient one)', async () => {
+      const sleeps: number[] = []
+      const { client, calls } = fakeClient(() =>
+        new Response(JSON.stringify({ error: 'RateLimitExceeded', retryAfterMs: 60_000 }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      const result = await runAnonymisationGate(
+        { contentKind: 'testimonio', text: TEXT },
+        {
+          detector: aiServiceDetector({
+            client,
+            retry: {
+              attempts: 20,
+              budgetMs: 15 * 60_000,
+              random: () => 0,
+              sleep: async (ms) => {
+                sleeps.push(ms)
+              },
+            },
+          }),
+        },
+      )
+      // Default budget: 2 full-window waits overrun 120 s. Seed budget: 14 fit.
+      expect(calls.length).toBeGreaterThan(4)
+      expect(sleeps.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(15 * 60_000)
+      expect(result.status === 'hold' && result.retryable).toBe(true)
+    })
+
+    it.each([500, 502, 504])('a %i is retried, then the gate is ready', async (code) => {
+      const { result, sleeps } = await gate((p, n) => (n === 1 ? status(code) : honest(p, n)))
+      expect(result.status).toBe('ready')
+      expect(sleeps).toHaveLength(1)
+    })
+
+    it('🔴 a 402 budget refusal holds at once, and the hold is retryable', async () => {
+      const { result, calls } = await gate(() => status(402))
+      expect(calls).toHaveLength(1)
+      expect(result.status === 'hold' && result.retryable).toBe(true)
+    })
+
+    it('🔴 unparseable model output is NOT retryable: an ordinary hold', async () => {
+      const { result } = await gate(() => syncOk('no es json'))
+      expect(result.status).toBe('hold')
+      expect(result.status === 'hold' && result.retryable).toBeUndefined()
     })
 
     it('the verify stage retries too', async () => {
@@ -330,6 +380,27 @@ describe('aiServiceDetector — chunked', () => {
       expect(calls).toHaveLength(1)
       expect(sleeps).toHaveLength(0)
     })
+  })
+
+  it('🔴 ANONYMISE_DETECT_MIN_GAP_MS spaces every call start, across concurrent chunks', async () => {
+    vi.stubEnv('ANONYMISE_DETECT_MIN_GAP_MS', '2700')
+    const text = longTestimony()
+    const sleeps: number[] = []
+    const { client, calls } = fakeClient()
+    await aiServiceDetector({
+      client,
+      chunkWords: 60,
+      concurrency: 3,
+      sleep: async (ms) => {
+        sleeps.push(ms)
+      },
+    }).detect({ text, contentKind: 'testimonio' })
+    // The sleep is injected and returns at once, so each start reserves the
+    // next 2.7 s slot: waits grow by ~2.7 s per call.
+    expect(sleeps.length).toBeGreaterThanOrEqual(calls.length - 1)
+    const sorted = [...sleeps].sort((a, b) => a - b)
+    expect(sorted[sorted.length - 1]!).toBeGreaterThan(2_700 * (calls.length - 2))
+    vi.unstubAllEnvs()
   })
 
   it('reads chunk size and concurrency from the environment', async () => {

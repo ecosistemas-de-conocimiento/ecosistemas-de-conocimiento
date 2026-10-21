@@ -61,11 +61,9 @@
           data-interactive
           data-testid={`nav-${item.href === '/' ? 'chat' : item.href.slice(1)}`}
         >
+          <!-- The hint lives only in `title`: no explainer text under each
+               label (UX backlog #33). -->
           <span class="label">{item.label}</span>
-          <!-- The hint is `aria-hidden` because it is already the link's
-               `title`; announcing it twice makes the menu twice as long to
-               listen to. -->
-          <span class="hint" aria-hidden="true">{item.hint}</span>
         </a>
       </li>
     {/each}
@@ -105,13 +103,35 @@
     margin: 0;
     padding: 0 0.5rem;
     list-style: none;
-    /* ⚠ The narrow-screen answer. Three word-labels do not fit on a small
-       phone, so the row scrolls; it never hides behind a menu button. */
+    /* ⚠ The narrow-screen answer. When the labels still do not fit (a phone,
+       a narrow window) the row scrolls; it never hides behind a menu button. */
     overflow-x: auto;
-    scrollbar-width: none;
+    scrollbar-width: thin;
+    /* 🔴 THE SCROLL HINT (UX backlog #13). A clipped "Administración" with no
+       cue looked like the menu simply ended. These four layers draw a soft
+       shadow on whichever edge has more items behind it: the two `local`
+       covers scroll WITH the content and hide the shadow once you reach that
+       end; the two `scroll` shadows stay pinned to the visible edges. Pure
+       CSS, so it is right on the first paint and needs no resize listener. */
+    background:
+      linear-gradient(to right, var(--edc-color-surface) 40%, transparent) left center / 3rem
+        100% no-repeat local,
+      linear-gradient(to left, var(--edc-color-surface) 40%, transparent) right center / 3rem
+        100% no-repeat local,
+      linear-gradient(to right, color-mix(in srgb, var(--edc-color-ink) 22%, transparent), transparent)
+        left center / 1.25rem 100% no-repeat scroll,
+      linear-gradient(to left, color-mix(in srgb, var(--edc-color-ink) 22%, transparent), transparent)
+        right center / 1.25rem 100% no-repeat scroll;
+    background-color: var(--edc-color-surface);
   }
-  .items::-webkit-scrollbar {
-    display: none;
+
+  /* ⚠ SHRINK BEFORE SCROLLING (UX backlog #13). Each item starts at its
+     natural one-line width; when the row is too wide, items give up width and
+     their label stays on one line. An item never shrinks below its label
+     (`min-width: auto` is the label's width, since the label never wraps), so
+     past that point the row scrolls instead. At 1366 px all six items fit. */
+  .items > li {
+    flex: 0 1 auto;
   }
 
   .item {
@@ -122,7 +142,6 @@
     border-bottom: 3px solid transparent;
     color: var(--edc-color-ink-soft);
     text-decoration: none;
-    white-space: nowrap;
   }
   .item:hover {
     color: var(--edc-color-ink);
@@ -146,6 +165,7 @@
 
   .label {
     display: block;
+    white-space: nowrap;
     font-family: var(--edc-font-display);
     font-size: 0.95rem;
     font-weight: 700;
@@ -155,20 +175,10 @@
     color: var(--edc-color-brand-strong);
   }
 
-  .hint {
-    display: block;
-    font-size: 0.7rem;
-    line-height: 1.2;
-    color: var(--edc-color-ink-soft);
-  }
-
-  /* On a phone the hints would push the bar to a third of the screen. The
-     label stays; the explanation lives in the link's `title`. */
+  /* Phone: tighter items so more of the row fits before it scrolls. */
   @media (max-width: 40rem) {
-    .hint {
-      display: none;
-    }
     .item {
+      padding: 0.55rem 0.65rem;
       min-height: 2.6rem;
       display: flex;
       align-items: center;

@@ -501,7 +501,27 @@ async function dispatchConversationTurn(
     .findByID({ collection: 'messages', id: messageId as never, depth: 0, overrideAccess: true })
     .catch(rethrowUnlessNotFound)) as { corpusIngestId?: unknown } | null
 
-  if (!row || typeof row.corpusIngestId !== 'string' || row.corpusIngestId !== envelope.ingestId) {
+  /**
+   * 🔴 THE ROW IS GONE: the conversation was deleted while this turn was
+   * `embedding`. ai-service creates the document only in its ingest worker,
+   * so the post-commit erase found nothing, and the turn is now LIVE in the
+   * shared corpus. Erase it here (audit 2026-10-17 §3 item 2). A failure
+   * throws, so this answers 500 and ai-service retries.
+   */
+  if (!row) {
+    const { eraseLateTurn } = await import('@/lib/conversationTurnErasure')
+    await eraseLateTurn({
+      messageId,
+      corpus: envelope.corpus,
+      log: {
+        warn: (obj, msg) => console.warn(msg, obj),
+        info: (obj, msg) => console.info(msg, obj),
+      },
+    })
+    return
+  }
+
+  if (typeof row.corpusIngestId !== 'string' || row.corpusIngestId !== envelope.ingestId) {
     console.warn(
       '[callback] ignoring an ingest callback from a superseded run for message',
       messageId,
@@ -807,38 +827,8 @@ async function dispatchPublishMove(
         client: getAdminAIClient(organizationId) as never,
       })
 
-      /**
-       * 🔴 THE RELEASE, AND THIS IS THE ONLY PLACE IT CAN CORRECTLY HAPPEN.
-       *
-       * The owner's rule: a conversation citing unpublished drafts is held, and
-       * when the LAST of those drafts is published the whole conversation goes
-       * in one run. "Published" means the shared-corpus copy is CONFIRMED —
-       * which is here, not at the `POST /publish` that merely enqueued it.
-       * Releasing at the endpoint would put chat turns in the ecosistema's
-       * corpus citing a document whose re-embed had not landed and might fail.
-       *
-       * ⚠ AFTER `confirmPublish`, never before: `releaseConversationsWaitingOn`
-       * re-reads `publicationStatus` to decide, and the flip to `published`
-       * happens inside that call.
-       *
-       * Never throws — a conversation that could not be embedded must not turn a
-       * successful publish into an error the user cannot act on.
-       */
-      const { releaseConversationsWaitingOn } = await import('@/lib/conversationIngest')
-      const { getAppAIClient } = await import('@/lib/aiClient')
-      const { ingestCallbackUrl } = await import('@/lib/callbackConfig')
-      try {
-        await releaseConversationsWaitingOn({
-          payload,
-          documentId: doc.id,
-          // 🔴 A resolver, not one client: the held conversations this walks
-          // belong to every ecosistema, each to its own ai-service org.
-          client: ((organizationId: number | string) => getAppAIClient(organizationId)) as never,
-          ...(ingestCallbackUrl() ? { callbackUrl: ingestCallbackUrl() as string } : {}),
-        })
-      } catch (err) {
-        console.warn('[callback] conversation release failed for doc', doc.id, err)
-      }
+      // No conversation release here any more: chat turns never enter the
+      // corpus (owner ruling 2026-10-21, `collections/Messages.ts`).
     } else {
       // Unpublish already retired the shared copy before this re-ingest was
       // enqueued, so there is nothing left to retire — just record the state.

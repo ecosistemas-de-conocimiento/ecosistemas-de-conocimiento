@@ -43,11 +43,11 @@
  * every test here passes one.
  */
 
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
-import { staticDetector } from './anonymise'
+import { aiServiceDetector, staticDetector } from './anonymise'
 import type { PersonDetector } from './anonymise/types'
 import {
   anonymiseDocumentText,
@@ -74,12 +74,15 @@ function fakePayload() {
     payload: {
       update: async (args: {
         collection: 'documents'
-        id: never
+        id?: never
+        /** A guarded write (the gate's claim) names its row in `where`. */
+        where?: { and?: Array<{ id?: { equals?: unknown } }> }
         data: Record<string, unknown>
         overrideAccess: boolean
         context?: Record<string, unknown>
       }) => {
-        updates.push({ collection: args.collection, id: args.id, data: args.data })
+        const id = args.id ?? args.where?.and?.[0]?.id?.equals
+        updates.push({ collection: args.collection, id, data: args.data })
         return {}
       },
     },
@@ -289,14 +292,6 @@ describe('anonymiseDocumentText — a testimonio that clears the gate', () => {
 // ---------------------------------------------------------------------------
 
 describe('🔴 anonymiseDocumentText — a hold means nothing was ingested', () => {
-  // One verify round: verify only judges, so a leftover it finds is a hold.
-  // The redacting rounds are tested in `lib/anonymise/gate.rounds.test.ts`.
-  beforeEach(() => {
-    vi.stubEnv('ANONYMISE_VERIFY_ROUNDS', '1')
-  })
-  afterEach(() => {
-    vi.unstubAllEnvs()
-  })
   /**
    * A detector that misses a surname on the first pass and finds it on the
    * verification pass — the realistic shape of a stage-4 hold. The first call
@@ -384,6 +379,68 @@ describe('🔴 anonymiseDocumentText — a hold means nothing was ingested', () 
 // 🔴 Fail closed
 // ---------------------------------------------------------------------------
 
+describe('🔴 a gate that could not RUN is retryable, never a Revisión hold (2026-10-21)', () => {
+  /** The REAL detector over a client that is rate-limited on every call. */
+  const alwaysRateLimited = () => {
+    let calls = 0
+    const client = {
+      generate: {
+        async sync() {
+          calls += 1
+          throw Object.assign(new Error('rate limited'), { status: 429, retryAfterMs: 60_000 })
+        },
+      },
+    }
+    return {
+      calls: () => calls,
+      detector: aiServiceDetector({ client: client as never, sleep: async () => undefined }),
+    }
+  }
+
+  it('🔴 a 429 that outlasts the retry budget leaves the row at `n/a`, NOT `held`', async () => {
+    const fake = fakePayload()
+    const { detector, calls } = alwaysRateLimited()
+    const result = await run(fake, { contentKind: 'testimonio', detector })
+
+    // Default budget: 120 s; two full-window waits overrun it.
+    expect(calls()).toBe(2)
+    expect(result).toMatchObject({ ok: false, retryable: true, stage: 'content' })
+    expect(fake.last('anonymisationStatus')).toBe('n/a')
+    expect(String(fake.last('anonymisationError'))).toMatch(
+      /^gate_unavailable: content: La revisión automática no pudo terminar \(transporte\)/,
+    )
+    // Still nothing ingestable, and nothing for a reviewer.
+    expect(fake.last('redactedText')).toBeNull()
+    expect(fake.last('heldText')).toBeNull()
+    expect(fake.updates.some((u) => u.data.anonymisationStatus === 'held')).toBe(false)
+  })
+
+  it('🔴 a re-run on the retryable row gates it normally', async () => {
+    const fake = fakePayload()
+    await run(fake, { contentKind: 'testimonio', detector: alwaysRateLimited().detector })
+    const second = await run(fake, { contentKind: 'testimonio', detector: findsTheName() })
+    expect(second.ok).toBe(true)
+    expect(fake.last('anonymisationStatus')).toBe('ready')
+    expect(fake.last('anonymisationError')).toBeNull()
+  })
+
+  it('🔴 a real finding still holds exactly as before', async () => {
+    let n = 0
+    const missesThenFinds: PersonDetector = {
+      name: 'misses-then-finds',
+      async detect() {
+        n += 1
+        return n === 1 ? [] : [{ text: NAME, type: 'persona' }]
+      },
+    }
+    const fake = fakePayload()
+    const result = await run(fake, { contentKind: 'testimonio', detector: missesThenFinds })
+    expect(result).toMatchObject({ ok: false, stage: 'verify' })
+    expect((result as { retryable?: unknown }).retryable).toBeUndefined()
+    expect(fake.last('anonymisationStatus')).toBe('held')
+  })
+})
+
 describe('🔴 anonymiseDocumentText — failure ends in `held`, never in a pass', () => {
   it('🔴 a detector that THROWS holds the document', async () => {
     // The detector throws rather than returning `[]` precisely so it lands here.
@@ -455,11 +512,6 @@ describe('🔴 nothing written to the row carries the person’s name', () => {
   })
 
   it('🔴 keeps the name out of the error string and the report on the HELD path', async () => {
-    // One verify round, so verify's finding holds instead of being redacted.
-    vi.stubEnv('ANONYMISE_VERIFY_ROUNDS', '1')
-    onTestFinished(() => {
-      vi.unstubAllEnvs()
-    })
     // The reason is written by the gate and carries COUNTS ONLY. An error column
     // that quoted the name it found would put the name straight back into the
     // database the gate had just kept out of it — a re-identification map with a

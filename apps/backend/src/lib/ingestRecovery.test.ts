@@ -32,6 +32,7 @@ import {
   sweepLostGateRuns,
   sweepStalledExtracting,
   sweepStalledMessages,
+  sweepUnavailableGateRuns,
 } from './ingestRecovery'
 
 const NOW = new Date('2026-10-17T12:00:00Z')
@@ -44,7 +45,10 @@ function matchesClause(row: Row, clause: Clause): boolean {
   return Object.entries(clause).every(([field, op]) => {
     const value = row[field]
     if ('equals' in op) return String(value ?? '') === String(op.equals)
+    if ('like' in op) return String(value ?? '').toLowerCase().includes(String(op.like).toLowerCase())
     if ('in' in op) return (op.in as unknown[]).map(String).includes(String(value ?? ''))
+    // NULL-safe, like `documentColumns.ts`: an unset column is "not in".
+    if ('not_in' in op) return value == null || !(op.not_in as unknown[]).map(String).includes(String(value))
     if ('exists' in op) return (value != null) === Boolean(op.exists)
     if ('less_than' in op) {
       const t = new Date(String(value)).getTime()
@@ -208,13 +212,21 @@ describe('driveTranscribedDocuments', () => {
 
   it('🔴 runs the anonymisation gate for a testimonio before anything reaches the ingest', async () => {
     // The gate's detector is a model call at ai-service. Answer it with an
-    // error: the gate must HOLD, and nothing may be enqueued.
+    // error: the gate must refuse, and nothing may be enqueued.
     const db = fakeDb({ documents: [transcribedRow({ contentKind: 'testimonio' })] })
     await driveTranscribedDocuments(db.payload, { now: NOW, deadlineMs: 60_000 })
     expect(fetchCalls.some((c) => c.method === 'POST' && c.url.endsWith('/v1/ingest'))).toBe(false)
     const row = db.row('documents', 42)
-    expect(row.anonymisationStatus).toBe('held')
+    // 🔴 The model never answered: retryable, NOT a Revisión hold (2026-10-21).
+    expect(row.anonymisationStatus).toBe('n/a')
     expect(row.ingestStatus).toBe('failed')
+    expect(String(row.ingestError)).toMatch(/^anonymisation_unavailable: /)
+
+    // …and the unavailable-gate sweep picks it up after its cooldown.
+    const later = new Date(NOW.getTime() + 20 * 60_000)
+    const redrive = await sweepUnavailableGateRuns(db.payload, { now: later, deadlineMs: 15 * 60_000 })
+    expect(redrive).toEqual({ examined: 1, redriven: 1 })
+    expect(db.row('documents', 42).ingestStatus).toBe('pending')
   })
 })
 
@@ -297,6 +309,14 @@ describe('sweepLostGateRuns', () => {
     expect(planIngestRetry(row as never)).toMatchObject({ anonymisationStatus: 'n/a', ingestStatus: 'pending' })
   })
 
+  it('🔴 resets the gate state from pending, so a seed re-run can claim the row again', async () => {
+    const db = fakeDb({ documents: [lostGate()] })
+    await sweepLostGateRuns(db.payload, { now: NOW, deadlineMs: 60 * 60_000 })
+    const row = db.row('documents', 1)
+    expect(row.anonymisationStatus).toBe('n/a')
+    expect(String(row.anonymisationError)).toMatch(/^gate_unavailable: /)
+  })
+
   it('leaves held, approved, settled-n/a, young and published rows alone', async () => {
     const db = fakeDb({
       documents: [
@@ -310,6 +330,52 @@ describe('sweepLostGateRuns', () => {
     })
     const result = await sweepLostGateRuns(db.payload, { now: NOW, deadlineMs: 60 * 60_000 })
     expect(result).toEqual({ examined: 0, stalled: 0 })
+  })
+})
+
+// ── 5. A gate that could not RUN (model never answered) ──────────────────────
+
+describe('sweepUnavailableGateRuns — 🔴 re-drives the gate, never touches a content hold', () => {
+  const unavailable = (over: Row = {}): Row => ({
+    id: 1,
+    kind: 'pdf',
+    contentKind: 'testimonio',
+    publicationStatus: 'draft',
+    anonymisationStatus: 'n/a',
+    anonymisationError: 'gate_unavailable: content: La revisión automática no pudo terminar (transporte).',
+    ingestStatus: 'failed',
+    ingestError: 'anonymisation_unavailable: content: La revisión automática no pudo terminar (transporte).',
+    ingestId: null,
+    extractedText: 'texto',
+    updatedAt: minutesAgo(30),
+    ...over,
+  })
+
+  it('🔴 resets the row to `pending` through the HOOK (no __skipDocsExtract), so the gate runs again', async () => {
+    const db = fakeDb({ documents: [unavailable()] })
+    const result = await sweepUnavailableGateRuns(db.payload, { now: NOW, deadlineMs: 15 * 60_000 })
+    expect(result).toEqual({ examined: 1, redriven: 1 })
+    expect(db.row('documents', 1)).toMatchObject({ ingestStatus: 'pending', ingestError: null })
+    const call = db.update.mock.calls[0]![0] as { context?: unknown }
+    expect(call.context).toBeUndefined()
+  })
+
+  it('leaves content holds, other failures, young and published rows alone', async () => {
+    const db = fakeDb({
+      documents: [
+        unavailable({
+          id: 1,
+          anonymisationStatus: 'held',
+          ingestError: 'anonymisation_held: verify: encontró 2 datos',
+        }),
+        unavailable({ id: 2, ingestError: 'extraction_failed: boom' }),
+        unavailable({ id: 3, updatedAt: minutesAgo(5) }),
+        unavailable({ id: 4, publicationStatus: 'published' }),
+        unavailable({ id: 5, anonymisationStatus: 'rejected' }),
+      ],
+    })
+    const result = await sweepUnavailableGateRuns(db.payload, { now: NOW, deadlineMs: 15 * 60_000 })
+    expect(result).toEqual({ examined: 0, redriven: 0 })
   })
 })
 

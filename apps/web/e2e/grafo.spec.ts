@@ -192,7 +192,8 @@ test.describe('grafo — lo que el grafo publicado deja ver', () => {
     await page.goto(`/grafo?eco=${seed.orgId}`);
 
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-    await expect(page.locator('.sub strong')).toHaveText(seed.orgName);
+    // The subtitle naming the ecosistema is gone (backlog #27); the switcher names it.
+    await expect(page.locator('p.name')).toHaveText(seed.orgName);
 
     const agua = page.getByTestId(`grafo-entidad-${seed.agua}`);
     const escuela = page.getByTestId(`grafo-entidad-${seed.escuela}`);
@@ -203,13 +204,10 @@ test.describe('grafo — lo que el grafo publicado deja ver', () => {
     await expect(agua).toContainText('aparece en 5 documentos');
     await expect(escuela).toContainText('aparece en 3 documentos');
 
-    // 🔴 Threshold: 2 published mentions is below 3, so it is held back — and
-    // the page says so instead of dropping it silently.
+    // 🔴 Threshold: 2 published mentions is below 3, so it is held back. The
+    // sentence that used to report it is gone (backlog #29); the gate is not.
     await expect(page.getByTestId(`grafo-entidad-${seed.raro}`)).toHaveCount(0);
     await expect(page.getByText('Lugar raro')).toHaveCount(0);
-    await expect(page.getByTestId('grafo-ocultas')).toContainText(
-      'Hay 1 entidad que no se muestra porque aparece en menos de 3 documentos publicados',
-    );
     await expect(page.getByTestId('grafo-conteo')).toHaveText('2 entidades');
 
     // Lengua facets count published documentos only: not the testimonio, not the draft.
@@ -235,7 +233,8 @@ test.describe('grafo — lo que el grafo publicado deja ver', () => {
     expect(url.searchParams.get('eco')).toBe(String(seed.orgId));
 
     // Still the seeded ecosistema, and the panel describes the clicked entity.
-    await expect(page.locator('.sub strong')).toHaveText(seed.orgName);
+    // The subtitle naming the ecosistema is gone (backlog #27); the switcher names it.
+    await expect(page.locator('p.name')).toHaveText(seed.orgName);
     await expect(page.getByRole('heading', { level: 2, name: 'Agua', exact: true })).toBeVisible();
     await expect(page.getByTestId(`grafo-entidad-${seed.agua}`)).toHaveAttribute(
       'aria-pressed',

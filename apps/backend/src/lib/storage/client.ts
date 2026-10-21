@@ -265,6 +265,31 @@ export async function openObjectStream(
   }
 }
 
+/**
+ * Is there an object at `key`? A HEAD: false on 404, true on 200, and any
+ * other answer throws.
+ *
+ * It exists for one check: `@payloadcms/plugin-cloud-storage` 3.88.0
+ * `hooks/afterDelete.js` CATCHES a failed object delete and only logs it, so
+ * a `media` delete that "succeeded" can leave the object behind. The upload
+ * cleanup (`lib/conversationUploads.ts`) asks this afterwards and logs the ids
+ * of what is left.
+ */
+export async function objectExists(key: string, bucket: string = getStorageBucket()): Promise<boolean> {
+  const mod = await import('@aws-sdk/client-s3')
+  const client = new mod.S3Client(s3ClientConfig())
+  try {
+    await client.send(new mod.HeadObjectCommand({ Bucket: bucket, Key: key }))
+    return true
+  } catch (err) {
+    // A HEAD has no body to parse a code from: read the status (see below).
+    if (httpStatusOf(err) === 404) return false
+    throw err
+  } finally {
+    client.destroy()
+  }
+}
+
 let cachedOps: BucketOps | null = null
 
 /**

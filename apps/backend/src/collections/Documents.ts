@@ -2,6 +2,7 @@ import type {
   Access,
   CollectionAfterChangeHook,
   CollectionAfterDeleteHook,
+  CollectionBeforeDeleteHook,
   CollectionBeforeOperationHook,
   CollectionBeforeValidateHook,
   CollectionConfig,
@@ -12,7 +13,7 @@ import type {
 import { ValidationError } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
-import { ANONYMISATION_STATES } from '../lib/anonymiseDocument'
+import { ANONYMISATION_STATES, GATE_UNAVAILABLE_INGEST_CODE } from '../lib/anonymiseDocument'
 import {
   CONTENT_KINDS,
   chunkMetadata,
@@ -30,6 +31,11 @@ import {
   PERMISSIONS,
   relationId,
 } from '../lib/permissions'
+import {
+  consumeCorpusCleanupSkip,
+  planDocumentMediaCleanup,
+  scheduleUploadCleanup,
+} from '../lib/conversationUploads'
 import {
   beginPublish,
   NotPublishableError,
@@ -317,7 +323,10 @@ export const gatedOriginalReadable: FieldAccess = ({ req, doc }) =>
  *   · `name` — `/biblioteca` and the `@`-mention picker search by title;
  *   · `uploadedBy` — "Mis documentos" and the session picker filter on
  *     `uploadedBy = me`, and `visibleToCaller` itself is that clause;
- *   · `session` — every conversation lists its documents by `session`.
+ *   · `session` — every conversation lists its documents by `session`;
+ *   · `uploadedInSession` — the conversation cascade reads it (with
+ *     `overrideAccess`). Nothing in the product queries it through the API,
+ *     but it names the same conversation `session` does.
  *
  * 🔴 `uploadedBy` AND `session` ARE WHO RECORDED A TESTIMONIO. The first names
  * the investigador, the second links their conversation. A colleague who reads
@@ -330,7 +339,7 @@ export const gatedOriginalReadable: FieldAccess = ({ req, doc }) =>
  * that by narrowing any query that names one of these fields to rows on which
  * the caller may read it.
  */
-export const GATED_QUERYABLE_FIELDS = ['name', 'uploadedBy', 'session'] as const
+export const GATED_QUERYABLE_FIELDS = ['name', 'uploadedBy', 'session', 'uploadedInSession'] as const
 
 export const gatedQueryableReadable: FieldAccess = ({ req, doc }) =>
   doc === undefined
@@ -503,11 +512,15 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
     next.uploadedBy = user.id
     // Everything starts private. Sharing is a deliberate, separate act.
     next.publicationStatus = 'draft'
+    // Never the body's. Set below from the one conversation the upload names.
+    next.uploadedInSession = null
   } else {
     // ⚠ Immutable after creation. Both are corpus-name inputs: letting either
     // change would leave the embedded copy in one corpus while the row claims
     // another, and the mismatch is invisible until search stops working.
     next.uploadedBy = original.uploadedBy
+    // Where it was uploaded is a fact of its creation, never re-pointed.
+    next.uploadedInSession = original.uploadedInSession ?? null
     // `publicationStatus` moves ONLY through `lib/publishDocument.ts`, which
     // writes with `overrideAccess: true` and therefore never reaches this
     // branch. A client PATCHing it directly would mark a document shared
@@ -587,6 +600,10 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
     next.session = sessionIds
 
     if (operation === 'create') {
+      // ⚠ The ORIGIN, derived like `uploadedBy`: the one conversation the
+      // upload names, already checked as the caller's above. A create naming
+      // several has no single origin and records none.
+      next.uploadedInSession = sessionIds.length === 1 ? sessionIds[0] : null
       // ⚠ The ecosistema is DERIVED, never accepted from the body. A
       // client-supplied `organization` would let a document be filed under a
       // tenant it does not belong to — and then published into that tenant's
@@ -1265,9 +1282,14 @@ type DocumentRowWithMedia = DocumentRow & {
  * trying to close, and the leak is already logged with the corpus and id so it
  * can be retried by hand.
  */
-const retireDeletedDocumentHook: CollectionAfterDeleteHook = async ({ doc, req }) => {
+const retireDeletedDocumentHook: CollectionAfterDeleteHook = async ({ context, doc, req }) => {
   const row = doc as { id?: unknown; organization?: unknown; uploadedBy?: unknown }
   if (row?.id == null) return doc
+  // A conversation delete removes this row inside ITS transaction and does the
+  // ai-service half itself, after commit (`lib/conversationUploads.ts`).
+  // One-shot, by id: the entry is consumed here, so it cannot reach any other
+  // delete in the same request.
+  if (consumeCorpusCleanupSkip(context, row.id)) return doc
 
   try {
     const { getAdminAIClient } = await import('@/lib/aiClient')
@@ -1289,6 +1311,31 @@ const retireDeletedDocumentHook: CollectionAfterDeleteHook = async ({ doc, req }
     )
   }
   return doc
+}
+
+/**
+ * 🔴 A DELETED DOCUMENT TAKES ITS STORED FILE WITH IT — AFTER COMMIT.
+ *
+ * Until 2026-10-17 deleting a document on its own (Mis documentos, the admin
+ * panel) left its `media` row and its object in the bucket, owned by nobody's
+ * document. Rodrigo ruled that a bug.
+ *
+ * The object delete cannot be rolled back, so this hook only PLANS it, in the
+ * transaction: it reads the document's file, checks it is the uploader's, and
+ * captures the transaction id. The delete runs once `txid_status` says the
+ * transaction committed, and only when no surviving document points at the
+ * file. Same machinery as a conversation delete, in
+ * `lib/conversationUploads.ts` (`planDocumentMediaCleanup`).
+ *
+ * ⚠ A document that a conversation delete is removing is skipped there: that
+ * plan already covers its file.
+ *
+ * ⚠ `beforeDelete`, not `afterDelete`: a bulk delete runs the row hooks
+ * concurrently, and each row schedules its own plan in its own closure.
+ */
+const scheduleMediaCleanupHook: CollectionBeforeDeleteHook = async ({ id, req }) => {
+  const plan = await planDocumentMediaCleanup(id, { payload: req.payload, req })
+  if (plan) scheduleUploadCleanup(req.payload, plan)
 }
 
 async function runExtractAndIngest(row: DocumentRow): Promise<void> {
@@ -1824,9 +1871,19 @@ export async function enqueueIngestForDoc(args: {
     roster: [],
   })
 
+  if (!gated.ok && gated.busy) {
+    // 🔴 THE GATE DID NOT RUN: another run holds the row, a decision stands, or
+    // the row is shared (`GATE_CLAIM_GUARD`). Nothing was written and nothing is
+    // written here — stamping `failed` would clobber the run that owns it.
+    console.warn(`[documents] doc ${docId}: gate not claimed (${gated.reason}) — leaving the row as it is.`)
+    return
+  }
+
   if (!gated.ok) {
     console.warn(
-      `[documents] doc ${docId} HELD at the ${gated.stage} stage of the anonymisation gate — not ingested.`,
+      gated.retryable
+        ? `[documents] doc ${docId}: the anonymisation gate could not run (${gated.stage}) — not ingested, retryable.`
+        : `[documents] doc ${docId} HELD at the ${gated.stage} stage of the anonymisation gate — not ingested.`,
     )
     /**
      * 🔴 SAY SO ON `ingestStatus` TOO, OR THE USER WATCHES A SPINNER FOREVER.
@@ -1848,7 +1905,9 @@ export async function enqueueIngestForDoc(args: {
       id: docId as never,
       data: {
         ingestStatus: 'failed',
-        ingestError: `anonymisation_held: ${gated.stage}: ${gated.reason}`.slice(0, 500),
+        // ⚠ A gate that could not RUN gets its own code: `ingestRecovery.ts`
+        // re-drives exactly these rows (`sweepUnavailableGateRuns`).
+        ingestError: `${gated.retryable ? GATE_UNAVAILABLE_INGEST_CODE : 'anonymisation_held'}: ${gated.stage}: ${gated.reason}`.slice(0, 500),
       },
       overrideAccess: true,
       context: { __skipDocsExtract: true },
@@ -2495,11 +2554,11 @@ export const Documents: CollectionConfig = {
        * expressible without ever hiding a document from a conversation that was
        * already using it.
        *
-       * ⚠ Still OPTIONAL, and the document still OUTLIVES every conversation it
-       * is attached to. A document belongs to the ecosistema and to its
-       * uploader; a conversation is only where it happened to be used. Deleting
-       * a session leaves the row standing with one fewer attachment — see the
-       * hooks note on `collections/Sessions.ts`.
+       * ⚠ Still OPTIONAL. Deleting a session leaves the row standing with one
+       * fewer attachment, UNLESS the document belongs to that conversation
+       * alone (a `documento` or `testimonio` draft uploaded there, attached
+       * nowhere else and referenced by nothing else) — then it goes too. The
+       * rule is `lib/conversationUploads.ts`.
        *
        * ⚠ EVERY attached conversation must belong to the caller AND to the SAME
        * ecosistema as the document. Both are enforced in
@@ -2516,6 +2575,43 @@ export const Documents: CollectionConfig = {
       admin: {
         description:
           'The conversations this document is attached to, if any. Attaching shares it with another conversation; it never moves it out of the ones it is already in.',
+      },
+    },
+    {
+      /**
+       * 🔴 THE CONVERSATION THIS DOCUMENT WAS UPLOADED IN. Singular, and only
+       * ever set by the server.
+       *
+       * `session` above says where a document is attached NOW; attaching is
+       * sharing, so it cannot say where the document came from. This field
+       * does. A conversation delete takes a document with it only when this
+       * names THAT conversation (`lib/conversationUploads.ts`), so a document
+       * uploaded in conversation B and shared into A is never deleted with A.
+       *
+       * ⚠ Stamped in `bindDocumentToEcosystem` on a signed-in create that
+       * names exactly one conversation (the chat upload,
+       * `POST /api/sessions/:id/documents`), and IMMUTABLE afterwards, like
+       * `uploadedBy`. A client-supplied value is overwritten on create and
+       * pinned on update.
+       *
+       * ⚠ NULL means "not recorded": every row created before the column
+       * existed, a server-side create, a create naming several conversations,
+       * and every row whose origin conversation was deleted (the foreign key
+       * is `ON DELETE SET NULL`). How the cascade reads a NULL is in
+       * `lib/conversationUploads.ts`.
+       */
+      name: 'uploadedInSession',
+      type: 'relationship',
+      relationTo: 'sessions',
+      // The `ON DELETE SET NULL` of every conversation delete looks rows up by
+      // this column.
+      index: true,
+      // 🔴 Who recorded a testimonio, and in which conversation. Same rule as
+      // `session`, and listed in GATED_QUERYABLE_FIELDS for the same reason.
+      access: { read: gatedQueryableReadable },
+      admin: {
+        readOnly: true,
+        description: 'The conversation this document was uploaded in. Set by the server. Immutable.',
       },
     },
     {
@@ -3058,6 +3154,7 @@ export const Documents: CollectionConfig = {
      * refusing because a downstream service is unreachable would leave them
      * stuck with a row they cannot remove. The failure is logged instead.
      */
+    beforeDelete: [scheduleMediaCleanupHook],
     afterDelete: [retireDeletedDocumentHook],
   },
   endpoints: [

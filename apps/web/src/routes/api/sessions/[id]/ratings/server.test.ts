@@ -155,6 +155,42 @@ describe('POST /api/sessions/[id]/ratings', () => {
     expect(calledBody(1)).toEqual({ message: 7, session: 42, stars: 4, reason: null, comment: null });
   });
 
+  // 🔴 Fable audit #8 follow-up: at Payload's default depth the upsert reply
+  // populates `doc.message`, provenance and all, with raw chunk `sessionId`,
+  // `authoredBy` and another conversation's `msg-…` id. The echo collapses
+  // the relations to ids; the store never reads the reply body anyway.
+  it('🔴 the echo carries no populated message or provenance, only ids', async () => {
+    const populated = {
+      id: 7,
+      role: 'assistant',
+      content: 'a',
+      session: { id: 42, title: 't' },
+      provenance: {
+        chunks: [
+          {
+            chunkId: 'c1',
+            documentId: 'u',
+            score: 1,
+            corpus: 'eco-7',
+            metadata: { docId: 'msg-41', authoredBy: 'assistant', sessionId: '77', title: 'Conversación' },
+          },
+        ],
+      },
+    };
+    mockedBackendFetch
+      .mockResolvedValueOnce(jsonResponse({ id: 7, session: 42 }))
+      .mockResolvedValueOnce(
+        jsonResponse({ doc: { id: 5, stars: 4, message: populated, session: { id: 42 } }, message: 'ok' }),
+      );
+
+    const res = await POST(makeEvent({ request: postRequest({ messageId: '7', stars: 4 }) }));
+    const text = await res.text();
+    for (const leaked of ['"authoredBy"', '"sessionId"', 'msg-41', '"provenance"']) {
+      expect(text).not.toContain(leaked);
+    }
+    expect(JSON.parse(text)).toEqual({ doc: { id: 5, stars: 4, message: '7', session: '42' }, message: 'ok' });
+  });
+
   // The backend derives both from the session. A client that can name them can
   // write into another ecosistema.
   it('never sends user or organization', async () => {

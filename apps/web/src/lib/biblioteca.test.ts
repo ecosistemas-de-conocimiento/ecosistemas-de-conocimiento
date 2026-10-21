@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatLibraryDate,
   isGatedContent,
+  isMachineTranscript,
   isTestimony,
   kindFilterWhere,
   libraryKindOf,
@@ -14,7 +15,6 @@ import {
   LIBRARY_EMPTY,
   LIBRARY_KINDS,
   LIBRARY_NO_RESULTS,
-  LIBRARY_SCOPE_NOTE,
   mayShowContributor,
   MAX_SEARCH_LENGTH,
   normalizeSearch,
@@ -58,9 +58,8 @@ describe('the anonymity rule', () => {
     }
   });
 
-  it('explains the absence instead of leaving a blank', () => {
+  it('marks the absence instead of leaving a blank', () => {
     expect(TESTIMONY_ANONYMITY_NOTE).toMatch(/anónimo/i);
-    expect(TESTIMONY_ANONYMITY_NOTE).toMatch(/no guarda quién/i);
   });
 });
 
@@ -94,14 +93,25 @@ describe('kindLabel', () => {
   it('says an audio document was transcribed by machine', () => {
     expect(kindLabel('audio').description).toMatch(/automática|máquina/i);
   });
+
+  // UX demo backlog #12: a PDF Voz was described as recorded "de viva voz".
+  it('describes a Voz by its real source format', () => {
+    expect(kindLabel('testimonio', { fromAudio: true }).description).toMatch(/audio/i);
+    expect(kindLabel('testimonio', { fromAudio: false }).description).toMatch(/por escrito/i);
+    expect(kindLabel('testimonio').description).not.toMatch(/viva voz|audio/i);
+  });
 });
 
-describe('the scope note', () => {
-  // 🔴 The commonest misreading of a shared library is "this is everything".
-  it('says out loud that drafts are not here, including the reader’s own', () => {
-    expect(LIBRARY_SCOPE_NOTE).toMatch(/publicado/i);
-    expect(LIBRARY_SCOPE_NOTE).toMatch(/borradores/i);
-    expect(LIBRARY_SCOPE_NOTE).toMatch(/tuyos/i);
+describe('isMachineTranscript (backlog #12)', () => {
+  it('🔴 warns on an audio Voz and on any audio', () => {
+    expect(isMachineTranscript({ kind: 'testimonio', fromAudio: true })).toBe(true);
+    expect(isMachineTranscript({ kind: 'audio', fromAudio: true })).toBe(true);
+    expect(isMachineTranscript({ kind: 'audio' })).toBe(true);
+  });
+
+  it('does not call a PDF Voz machine-made', () => {
+    expect(isMachineTranscript({ kind: 'testimonio', fromAudio: false })).toBe(false);
+    expect(isMachineTranscript({ kind: 'pdf', fromAudio: false })).toBe(false);
   });
 });
 

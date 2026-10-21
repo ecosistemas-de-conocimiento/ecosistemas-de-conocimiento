@@ -71,7 +71,7 @@ export const DETERMINISTIC_LABELS = {
   domicilio: 'domicilio',
   /** `C.P. 06700` on its own. */
   codigoPostal: 'codigo-postal',
-  /** `Col. Portales`, `Mz. 4 Lt. 12`, `Alcaldía Benito Juárez`. */
+  /** `Col. Portales`, `Fracc. Los Sauces`, `Mz. 4 Lt. 12`. */
   asentamiento: 'asentamiento',
 } as const
 
@@ -367,6 +367,82 @@ const ASENTAMIENTO_ABREV = `(?:${anyCaseAlternation([
   'unidad habitacional',
 ])})`
 
+/** The manzana / lote words. A settlement's name run stops in front of them. */
+const MARCAS_MZ_LT = anyCaseAlternation([
+  'mz',
+  'mz.',
+  'mza',
+  'mza.',
+  'manz',
+  'manz.',
+  'manzana',
+  'lt',
+  'lt.',
+  'lote',
+])
+
+/**
+ * `Mz. 4 Lt. 12`, `manzana 4, lote 12`.
+ *
+ * ⚠ `Mz`/`Mza` REQUIRE a following number, because "las visitas por manzana" is
+ * a real sentence in the corpus and means a city block on a walking route.
+ */
+const MANZANA_LOTE = String.raw`(?:${anyCaseAlternation([
+  'mz',
+  'mz.',
+  'mza',
+  'mza.',
+  'manz',
+  'manz.',
+  'manzana',
+])})\s*\d{1,3}(?:${SEP}(?:${anyCaseAlternation(['lt', 'lt.', 'lote'])})\s*\d{1,3})?`
+
+/**
+ * 🔴 NOT A MANZANA/LOTE WORD. Measured before this existed (audit, 2026-10-21):
+ * `U.H. Vicente Guerrero Mz. 4 Lt. 12` came out as `[Domicilio A]. 4 Lt. 12` —
+ * the capitalised `Mz` passed as one more word of the name, the run stopped at
+ * its full stop, and the block and lot numbers stayed in the text.
+ */
+const NO_MZ_LT = String.raw`(?!(?:${MARCAS_MZ_LT})(?![\p{L}\p{N}]))`
+
+/**
+ * Words that end a lower-case settlement name: the ones that start the next
+ * clause. See {@link NOMBRE_ASENTAMIENTO}.
+ */
+const FIN_DE_NOMBRE = String.raw`(?!(?:${anyCaseAlternation([
+  'y', 'e', 'o', 'u', 'ni', 'que', 'en', 'a', 'al', 'con', 'por', 'para', 'desde',
+  'hasta', 'me', 'se', 'le', 'les', 'nos', 'te', 'mi', 'mis', 'su', 'sus', 'tu',
+  'donde', 'cuando', 'pero', 'porque', 'pues', 'hace', 'ya', 'no', 'es', 'era',
+  'fue', 'son', 'está', 'esta', 'estaba', 'vivo', 'vive', 'vivía', 'vivimos',
+  'ahí', 'allí', 'aquí', 'allá', 'acá', 'entonces', 'luego', 'después', 'despues',
+  'delante', 'detrás', 'detras', 'atrás', 'atras', 'cerca', 'lejos', 'frente',
+  'enfrente', 'junto', 'arriba', 'abajo', 'rumbo', 'sobre', 'entre', 'sin', 'hacia',
+])})(?![\p{L}\p{N}]))`
+
+/**
+ * The NAME after `Col.` / `Fracc.` / `U.H.`, in two shapes.
+ *
+ *   · LOWER CASE from its first word, up to four words, ONLY when a terminator follows — a comma,
+ *     full stop, semicolon, colon, closing bracket, line end, the end of the
+ *     text, or `Mz.`/`Lt.`. Measured before this existed (audit, 2026-10-21):
+ *     `col. santa cruz` came out as `[Domicilio A] cruz`. The terminator is the
+ *     brake: without it a run of loose words walks into the sentence. A word
+ *     that starts a clause (`y`, `que`, `desde`, …) ends the run too.
+ *   · STRICT otherwise: one loose word, then capitalised words only. This is
+ *     the shape `Col. Portales y ahí vivía mi tía Rosa` needs.
+ *
+ * Either shape may carry `Mz. 4 Lt. 12` after it, inside the same label.
+ */
+const NOMBRE_ASENTAMIENTO =
+  String.raw`(?:` +
+  // Lower case: the FIRST word too. A capitalised name ("Col. Portales delante
+  // del pozo") always takes the strict shape below.
+  String.raw`${NO_MZ_LT}\p{Ll}[\p{L}\p{N}'’-]*` +
+  String.raw`(?:\s+${NO_MZ_LT}${FIN_DE_NOMBRE}${PALABRA_LIBRE}){1,3}` +
+  String.raw`(?=[ \t]*(?:[,.;:)\n]|$)|\s+(?:${MARCAS_MZ_LT})(?![\p{L}\p{N}]))` +
+  String.raw`|${NO_MZ_LT}${PALABRA_LIBRE}(?:\s+${NO_MZ_LT}${PALABRA_NOMBRE}){0,4}` +
+  String.raw`)(?:${SEP}${MANZANA_LOTE})?`
+
 /**
  * `, Col. Portales` hanging off a street line.
  *
@@ -387,7 +463,7 @@ const ASENTAMIENTO_ABREV = `(?:${anyCaseAlternation([
  * `[Domicilio A]`, `[Domicilio B]`, … — which defeats the entire reason these
  * are labels and not redaction bars.
  */
-const COLA_ASENTAMIENTO = String.raw`(?:${SEP}${ASENTAMIENTO_ABREV}\s*${PALABRA_LIBRE}(?:\s+${PALABRA_NOMBRE}){0,4})?`
+const COLA_ASENTAMIENTO = String.raw`(?:${SEP}${ASENTAMIENTO_ABREV}\s*${NOMBRE_ASENTAMIENTO})?`
 
 /** `C.P.` / `CP` / `Código Postal`, always followed by exactly five digits. */
 const CP_TOKEN = String.raw`(?:${anyCaseAlternation([
@@ -436,47 +512,21 @@ const DOMICILIO = new RegExp(
 const CODIGO_POSTAL = new RegExp(String.raw`(?<![\p{L}\p{N}])${CP_TOKEN}`, 'gu')
 
 /**
- * A settlement standing alone: `Col. Portales`, `Mz. 4 Lt. 12`,
- * `Alcaldía Benito Juárez`.
+ * A settlement standing alone: `Col. Portales`, `Fracc. Los Sauces`, `Mz. 4 Lt. 12`.
  *
- * ⚠ `Alcaldía` / `Delegación` ARE included spelled out, unlike `colonia`, and the
- * trade is named rather than hidden: "fui a la Alcaldía Benito Juárez a pedir
- * agua" is an institution, not a home, and it will be redacted. That costs a
- * little meaning. It buys the CDMX half of every address, which always carries
- * one — and unlike `colonia`, the corpus measurement found ZERO prose uses of
- * either word to weigh against it.
+ * 🔴 `Alcaldía` / `Delegación` ARE NOT HERE ANY MORE (owner's ruling,
+ * 2026-10-21, backlog #12: town and municipality names are shown). A CDMX
+ * alcaldía is a municipality of hundreds of thousands of people; it locates no
+ * home. The colonia, street and C.P. beside it are still caught.
  *
- * ⚠ `Mz`/`Mza` REQUIRE a following number, because "las visitas por manzana" is
- * a real sentence in that corpus and means a city block on a walking route.
+ * ⚠ `Mz`/`Mza` REQUIRE a following number — see {@link MANZANA_LOTE}.
  */
 const ASENTAMIENTO = new RegExp(
   String.raw`(?<![\p{L}\p{N}])(?:` +
     // The dotted markers are postal notation, so the NAME after one may be
     // lower-cased — see `COLA_ASENTAMIENTO`.
-    String.raw`${ASENTAMIENTO_ABREV}\s*${PALABRA_LIBRE}(?:\s+${PALABRA_NOMBRE}){0,4}` +
-    // ⚠ `Alcaldía` / `Delegación` are ordinary words, so their name run keeps the
-    // STRICT word and must be a proper noun. Loose words behind a spelled-out
-    // keyword is the combination that walks into a sentence.
-    String.raw`|(?:${anyCaseAlternation([
-      'alcaldía',
-      'alcaldia',
-      'delegación',
-      'delegacion',
-      'del.',
-    ])})\s*${PALABRA_NOMBRE}(?:\s+${PALABRA_NOMBRE}){0,4}` +
-    String.raw`|(?:${anyCaseAlternation([
-      'mz',
-      'mz.',
-      'mza',
-      'mza.',
-      'manz',
-      'manz.',
-      'manzana',
-    ])})\s*\d{1,3}(?:${SEP}(?:${anyCaseAlternation([
-      'lt',
-      'lt.',
-      'lote',
-    ])})\s*\d{1,3})?` +
+    String.raw`${ASENTAMIENTO_ABREV}\s*${NOMBRE_ASENTAMIENTO}` +
+    String.raw`|${MANZANA_LOTE}` +
     String.raw`)`,
   'gu',
 )

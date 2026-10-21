@@ -235,6 +235,7 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
               bodyMarkdown?: string | null;
               extractedText?: string | null;
               redactedText?: string | null;
+              anonymisationStatus?: string | null;
             }
           >('documents', ref.id);
           if (!r) return '';
@@ -244,11 +245,16 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
            * backend still hands the original to. Audit 2026-10-17. The prompt
            * leaves for a hosted model, and an anonymous testimony is anonymous
            * there too. Same rule, same titles as `/biblioteca`.
+           *
+           * 🔴 AND ONLY WHEN THE GATE CLEARED IT: `anonymisationStatus` `ready`
+           * or `approved`, the backend's `corpusTextFor` rule. A held or
+           * rejected row is sent with no text, even if a `redactedText` lingers.
            */
           const title = libraryTitleFor(r.contentKind, r.name);
+          const gateCleared = r.anonymisationStatus === 'ready' || r.anonymisationStatus === 'approved';
           const text = (
             isGatedContent(r.contentKind)
-              ? (r.redactedText ?? '')
+              ? (gateCleared ? (r.redactedText ?? '') : '')
               : (r.bodyMarkdown ?? r.extractedText ?? '')
           ).trim();
           if (!text) {

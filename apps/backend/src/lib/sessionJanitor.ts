@@ -32,12 +32,12 @@
  *     stops answering other members' questions. Retirement closes a validity
  *     window; it does not erase the vector. See `collections/Sessions.ts`.
  *
- *     `documents` are the one deliberate exception and are NOT deleted.
- *     `documents.session` is a `hasMany` relationship, so the attachment lives
- *     in the `documents_rels` join table; deleting a conversation deletes the
- *     ATTACHMENT ROW and leaves the document standing. That is the intended
- *     contract — a document belongs to the ecosistema and to its uploader, and
- *     it outlives every conversation it was attached to.
+ *     `documents` are the one deliberate exception and are NOT deleted by a
+ *     sweep. A user's own delete removes the uploads that belong to that
+ *     conversation alone (`lib/conversationUploads.ts`); the sweep opts out
+ *     with `context[KEEP_CONVERSATION_UPLOADS]`, so only the `documents_rels`
+ *     ATTACHMENT ROW goes and the document lands in "Mis documentos". Nobody
+ *     asked an idle-timeout to delete their files.
  *   - 🔴 NO CORPUS IS DELETED. It used to be: back when there was one corpus
  *     per conversation, `Sessions.afterDelete` dropped it. Under the ecosistema
  *     model the corpora are `eco-{orgId}` and `eco-{orgId}-draft-{userId}`,
@@ -67,6 +67,8 @@
  */
 
 import type { Payload, Where } from 'payload'
+
+import { KEEP_CONVERSATION_UPLOADS } from './conversationUploads'
 
 export interface JanitorConfig {
   /** Sessions idle longer than this many days are reaped. */
@@ -265,6 +267,9 @@ export async function runSessionJanitor(
             id,
             depth: 0,
             overrideAccess: true,
+            // An idle sweep must not delete a person's files. They land in
+            // "Mis documentos" as loose documents. See `conversationUploads.ts`.
+            context: { [KEEP_CONVERSATION_UPLOADS]: true },
           })
           result.deleted += 1
           payload.logger.info(

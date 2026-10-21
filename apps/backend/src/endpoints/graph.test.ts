@@ -223,6 +223,7 @@ describe('GET /api/graph/view', () => {
           { id: 6, type: 'lugar', label: 'Oaxaca', support: 3, hidden: 9 },
         ],
         [{ n: 14 }],
+        [{ from_id: 5, to_id: 6, support: 3 }],
       ],
     })
     const res = await graphViewEndpoint.handler(req)
@@ -235,6 +236,8 @@ describe('GET /api/graph/view', () => {
       hidden: 9,
       minSupport: 3,
       publishedDocuments: 14,
+      // The whole-graph edges among the listed entities (backlog #3).
+      edges: [{ from: 5, to: 6, support: 3 }],
     })
   })
 
@@ -250,6 +253,7 @@ describe('GET /api/graph/view', () => {
       hidden: 0,
       minSupport: 3,
       publishedDocuments: 2,
+      edges: [],
     })
 
     // Published, but every entity is below the threshold: the UI says
@@ -263,6 +267,7 @@ describe('GET /api/graph/view', () => {
       hidden: 31,
       minSupport: 3,
       publishedDocuments: 2,
+      edges: [],
     })
   })
 
@@ -350,6 +355,7 @@ describe('GET /api/graph/entity/:id', () => {
           entity: { id: 6, type: 'lugar', label: 'Oaxaca', support: 3 },
           relationType: 'ocurre_en',
           support: 3,
+          direction: 'both',
           // 🔴 The documents that EVIDENCE this edge, straight out of
           // `graph_relations` — not the intersection of two entity lists the
           // surface used to approximate it with.

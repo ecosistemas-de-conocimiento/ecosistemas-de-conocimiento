@@ -10,7 +10,9 @@ import type {
 } from '../types';
 import type { AudioMeta } from '../types';
 import { toasts } from './toasts.svelte';
-import { MAX_UPLOAD_BYTES, formatBytes, isAudioUpload, maxUploadBytesFor } from '../config';
+import { uploadErrorToast } from '../uploadErrors';
+import { autoTitle, cleanTitle } from '../sessionTitle';
+import { formatBytes, isAudioUpload, MAX_AUDIO_UPLOAD_BYTES, MAX_UPLOAD_BYTES } from '../config';
 import {
   isIngestStatus,
   isTerminalIngest,
@@ -46,69 +48,6 @@ import {
   type Ecosystem,
 } from '../ecosystems';
 
-/**
- * Map a BFF upload error code (see /api/sessions/[id]/documents +server.ts)
- * to user-facing toast copy. Unknown codes fall through to a generic message
- * so the UX still says something useful.
- */
-function uploadErrorToast(
-  code: string,
-  status: number,
-  limitBytes: number = MAX_UPLOAD_BYTES,
-): { title: string; message: string } {
-  switch (code) {
-    case 'file_too_large':
-      return {
-        title: 'El archivo es muy grande',
-        // The limit depends on what was being uploaded — audio gets a much
-        // larger one — so quote the cap that actually applied, not a constant.
-        message: `El máximo es ${formatBytes(limitBytes)}. Prueba con un archivo más chico, o con una grabación más corta.`,
-      };
-    case 'unsupported_media_type':
-    case 'unsupported_kind':
-      return {
-        title: 'Tipo de archivo no admitido',
-        message: 'Aceptamos PDF, DOCX y audio en MP3, M4A, WAV, OGG u OPUS.',
-      };
-    case 'unauthorized':
-      return {
-        title: 'Tu sesión expiró',
-        message: 'Vuelve a iniciar sesión para subir documentos.',
-      };
-    case 'forbidden':
-      return {
-        title: 'Sin permiso',
-        message: 'No puedes subir documentos a esta conversación.',
-      };
-    case 'voces_upload_forbidden':
-      return {
-        title: 'Sin permiso para subir voces',
-        message: 'Subir testimonios requiere el rol de investigador en este ecosistema.',
-      };
-    case 'invalid_content_kind':
-      return { title: 'Tipo de material no válido', message: 'Elige Documento o Voz / testimonio.' };
-    case 'media_upload_rejected':
-      return {
-        title: 'El servidor rechazó el archivo',
-        message: 'Prueba con otro documento.',
-      };
-    case 'upstream_unavailable':
-      return {
-        title: 'Algo falló en el servidor',
-        message: 'Inténtalo de nuevo en un momento.',
-      };
-    case 'upstream_unreachable':
-      return {
-        title: 'No se pudo conectar',
-        message: 'Revisa tu conexión e inténtalo de nuevo.',
-      };
-    case 'multipart_missing_file':
-    case 'media_id_missing':
-      return { title: 'No se pudo subir', message: 'Algo salió mal. Inténtalo de nuevo.' };
-    default:
-      return { title: 'No se pudo subir', message: `Error inesperado (HTTP ${status}).` };
-  }
-}
 
 /**
  * Reactive app store using Svelte 5 runes ($state).
@@ -143,6 +82,17 @@ const PUBLISH_REQUEST_TIMEOUT_MS = 20_000;
  * two spellings would silently disable auto-titling.
  */
 const UNTITLED_SESSION = 'Nueva conversación';
+
+/** Attaching a document failed for an ordinary reason. */
+export const ATTACH_FAILED_TOAST = {
+  title: 'No se pudo agregar el documento',
+  message: 'Inténtalo de nuevo.',
+};
+/** Bug #37: the conversation was deleted elsewhere; this tab still listed it. */
+export const ATTACH_GONE_TOAST = {
+  title: 'Esa conversación ya no existe',
+  message: 'Elige otra o crea una nueva.',
+};
 
 function parseDate(raw: unknown): number {
   if (typeof raw === 'number') return raw;
@@ -522,8 +472,8 @@ class AppStore {
         title: 'No se pudo cambiar de ecosistema',
         message:
           code === 'not_a_member'
-            ? 'Ya no perteneces a ese ecosistema. Actualiza la página.'
-            : 'Inténtalo de nuevo en un momento. Sigues en el mismo ecosistema.',
+            ? 'Ya no perteneces a ese ecosistema.'
+            : 'Inténtalo de nuevo en un momento.',
       });
       return false;
     } finally {
@@ -608,10 +558,34 @@ class AppStore {
   }
 
   // ── session ops ────────────────────────────────────────────────────────
-  async newSession(): Promise<string | null> {
+  /**
+   * An existing conversation that is still empty — no title of its own, no
+   * messages, no documents — or `null`. UX backlog #25: pressing "Nueva
+   * conversación" (or starting one from a document) used to stack up empty
+   * "Nueva conversación" rows in the sidebar. We reuse the empty one instead.
+   *
+   * ⚠ Messages and documents load lazily, so the candidate is read first:
+   * "no messages in memory" is not "no messages".
+   */
+  private async findEmptySession(): Promise<Session | null> {
+    const candidate = this.sessions.find((x) => x.title === UNTITLED_SESSION);
+    if (!candidate) return null;
+    if (candidate.messages.length === 0) await this.loadMessages(candidate.id);
+    if (candidate.docs.length === 0) await this.loadDocs(candidate.id);
+    const fresh = this.sessions.find((x) => x.id === candidate.id);
+    if (!fresh || fresh.title !== UNTITLED_SESSION) return null;
+    return fresh.messages.length === 0 && fresh.docs.length === 0 ? fresh : null;
+  }
+
+  async newSession(opts: { reuseEmpty?: boolean } = {}): Promise<string | null> {
     // Nothing to create a conversation IN. The screen already says so; firing
     // the request anyway would just add a toast on top of an explanation.
     if (this.hasNoEcosystem) return null;
+    const empty = opts.reuseEmpty === false ? null : await this.findEmptySession();
+    if (empty) {
+      await this.selectSession(empty.id);
+      return empty.id;
+    }
     try {
       const data = await fetchJson<{ doc: Record<string, unknown> }>('/api/sessions', {
         method: 'POST',
@@ -684,7 +658,11 @@ class AppStore {
     const prev = this.sessions;
     this.sessions = this.sessions.filter((s) => s.id !== id);
     if (this.activeSessionId === id) {
-      this.activeSessionId = this.sessions[0]?.id ?? null;
+      const next = this.sessions[0]?.id ?? null;
+      this.activeSessionId = next;
+      // Messages load lazily: without this the next conversation would show
+      // "Inicia una conversación" over a thread that has messages.
+      if (next) void this.selectSession(next);
     }
     try {
       await fetchJson(`/api/sessions/${id}`, {
@@ -694,13 +672,18 @@ class AppStore {
     } catch (err) {
       console.error('deleteSession failed', err);
       this.sessions = prev;
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo borrar la conversación',
+        message: 'Sigue en tu lista. Inténtalo de nuevo.',
+      });
     }
   }
 
   async renameSession(id: string, title: string): Promise<void> {
     const s = this.sessions.find((x) => x.id === id);
     if (!s) return;
-    const next = title.trim() || s.title;
+    const next = cleanTitle(title) ?? s.title;
     if (next === s.title) return;
     const prev = s.title;
     s.title = next;
@@ -714,7 +697,13 @@ class AppStore {
       });
     } catch (err) {
       console.error('renameSession failed', err);
-      s.title = prev;
+      // Only roll back if nothing renamed it again meanwhile.
+      if (s.title === next) s.title = prev;
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo cambiar el nombre',
+        message: 'Inténtalo de nuevo.',
+      });
     }
   }
 
@@ -785,7 +774,7 @@ class AppStore {
     s.messages.push(message);
     s.updatedAt = message.createdAt;
     if (s.title === UNTITLED_SESSION && message.role === 'user' && message.content.trim()) {
-      const newTitle = message.content.slice(0, 48);
+      const newTitle = autoTitle(message.content);
       s.title = newTitle;
       // Fire-and-forget — no need to block the user.
       void fetchJson(`/api/sessions/${sessionId}`, {
@@ -951,7 +940,7 @@ class AppStore {
       toasts.push({
         kind: 'error',
         title: 'No se guardó el motivo',
-        message: 'Tu valoración sí quedó guardada. Vuelve a intentar el motivo.',
+        message: 'La valoración sí quedó guardada.',
       });
     } finally {
       const current = find();
@@ -1092,14 +1081,19 @@ class AppStore {
     // ⚠ The cap depends on the file: audio gets a much larger one, because 20 MB
     // is roughly twenty minutes of speech and the recordings people want to
     // upload are longer than that.
-    const cap = maxUploadBytesFor(file);
+    //
+    // The SETTLED kind, the way the server settles it (PDF, then DOCX, then
+    // audio): a PDF the browser labels `audio/mp4` still gets the 20 MB cap.
+    const isDocument =
+      /\.(pdf|docx)$/i.test(file.name) ||
+      file.type === 'application/pdf' ||
+      file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    const cap = !isDocument && isAudioUpload(file) ? MAX_AUDIO_UPLOAD_BYTES : MAX_UPLOAD_BYTES;
     if (file.size > cap) {
       toasts.push({
         kind: 'error',
         title: 'El archivo es muy grande',
-        message: isAudioUpload(file)
-          ? `"${file.name}" pesa ${formatBytes(file.size)}. El máximo para audio es ${formatBytes(cap)}. Prueba con una grabación más corta o comprímela.`
-          : `"${file.name}" pesa ${formatBytes(file.size)}. El máximo es ${formatBytes(cap)}.`,
+        message: `El máximo es ${formatBytes(cap)}.`,
       });
       return null;
     }
@@ -1165,12 +1159,13 @@ class AppStore {
    * server-side whether or not this loop is running, so giving up here — or
    * closing the tab — loses nothing. The UI says so; see `$lib/ingest.ts`.
    */
-  private async pollDocStatus(sessionId: string, docId: string): Promise<void> {
+  private async pollDocStatus(_sessionId: string | null, docId: string): Promise<void> {
     if (this.pollingDocs.has(docId)) return;
     this.pollingDocs.add(docId);
-    const kindNow =
-      this.sessions.find((x) => x.id === sessionId)?.docs.find((x) => x.id === docId)?.kind ??
-      'pdf';
+    // ⚠ Every copy of the row is updated, not just the conversation's: "Mis
+    // documentos" holds its own copy, and it used to sit on "Extrayendo…" until
+    // a reload because nothing polled it (seen on dev, 2026-10-21).
+    const kindNow = this.docsWithId(docId)[0]?.kind ?? 'pdf';
     // Backoff: 2s, 5s, then a steady interval. 30s for audio — 10s polling for
     // four hours is ~1400 requests to learn one boolean.
     const schedule = [2000, 5000];
@@ -1193,28 +1188,29 @@ class AppStore {
           const body = (await res.json()) as Record<string, unknown>;
           if (!isIngestStatus(body.ingestStatus)) continue;
           const status = body.ingestStatus;
-          const s = this.sessions.find((x) => x.id === sessionId);
-          const d = s?.docs.find((x) => x.id === docId);
-          // Document (or session) deleted while we waited — stop polling it.
-          if (!d) return;
-          d.ingestStatus = status;
-          // Carry the reason and the recording metadata across too: a `failed`
-          // row without its `ingestError` can only say "algo falló", which is
-          // the message this whole feature exists to avoid.
-          d.ingestError = typeof body.ingestError === 'string' ? body.ingestError : null;
-          if (body.audioMeta && typeof body.audioMeta === 'object' && !Array.isArray(body.audioMeta)) {
-            d.audioMeta = body.audioMeta as AudioMeta;
-          }
-          // 🔴 PICK UP THE TRANSCRIPT AS SOON AS IT EXISTS. It lands on the row
-          // at `transcribed`, one whole step before `ready` — that gap is the
-          // embedding run, and it can be minutes. Waiting for `ready` to fetch
-          // the text would hide a finished transcription from the person who is
-          // sitting there watching for it.
-          //
-          // ⚠ Only ever ASSIGNED when the server sends a string. A poll that
-          // omits the field must not blank a transcript we already have.
-          if (d.kind === 'audio' && typeof body.extractedText === 'string') {
-            d.transcript = body.extractedText;
+          const copies = this.docsWithId(docId);
+          // Document (or every list holding it) gone while we waited — stop.
+          if (copies.length === 0) return;
+          for (const d of copies) {
+            d.ingestStatus = status;
+            // Carry the reason and the recording metadata across too: a `failed`
+            // row without its `ingestError` can only say "algo falló", which is
+            // the message this whole feature exists to avoid.
+            d.ingestError = typeof body.ingestError === 'string' ? body.ingestError : null;
+            if (body.audioMeta && typeof body.audioMeta === 'object' && !Array.isArray(body.audioMeta)) {
+              d.audioMeta = body.audioMeta as AudioMeta;
+            }
+            // 🔴 PICK UP THE TRANSCRIPT AS SOON AS IT EXISTS. It lands on the row
+            // at `transcribed`, one whole step before `ready` — that gap is the
+            // embedding run, and it can be minutes. Waiting for `ready` to fetch
+            // the text would hide a finished transcription from the person who is
+            // sitting there watching for it.
+            //
+            // ⚠ Only ever ASSIGNED when the server sends a string. A poll that
+            // omits the field must not blank a transcript we already have.
+            if (d.kind === 'audio' && typeof body.extractedText === 'string') {
+              d.transcript = body.extractedText;
+            }
           }
           if (isTerminalIngest(status)) return;
         } catch {
@@ -1422,7 +1418,7 @@ class AppStore {
         toasts.push({
           kind: 'warning',
           title: 'La publicación no comenzó',
-          message: 'El servidor respondió pero el documento no cambió de estado. Inténtalo de nuevo.',
+          message: 'Inténtalo de nuevo.',
         });
         return;
       }
@@ -1440,7 +1436,7 @@ class AppStore {
         toasts.push({
           kind: 'warning',
           title: 'La publicación no comenzó',
-          message: 'El servidor respondió pero el documento sigue en borrador. Inténtalo de nuevo.',
+          message: 'Sigue en borrador. Inténtalo de nuevo.',
         });
       }
     } catch (err) {
@@ -1622,22 +1618,56 @@ class AppStore {
    * the row is adopted from a fresh read rather than painted in advance.
    */
   async attachDoc(sessionId: string, docId: string): Promise<boolean> {
-    try {
-      await fetchJson(`/api/sessions/${sessionId}/documents/${docId}`, {
-        method: 'POST',
-        credentials: 'same-origin',
-      });
-    } catch (err) {
-      console.error('attachDoc failed', err);
-      toasts.push({
-        kind: 'error',
-        title: 'No se pudo agregar el documento',
-        message: 'Inténtalo de nuevo. El documento sigue en las conversaciones donde ya estaba.',
-      });
+    const result = await this.postAttach(sessionId, docId, false);
+    if (result === 'gone') {
+      this.forgetSession(sessionId);
+      toasts.push({ kind: 'error', ...ATTACH_GONE_TOAST });
+      return false;
+    }
+    if (result === 'failed') {
+      toasts.push({ kind: 'error', ...ATTACH_FAILED_TOAST });
       return false;
     }
     await this.loadDocs(sessionId);
     return true;
+  }
+
+  /**
+   * The one attach request. `gone` is bug #37: the conversation no longer
+   * exists on the server (deleted in another tab, or by a cleanup) although
+   * this tab still lists it. The route answers `404 session_not_found` for it.
+   *
+   * `pin` also sets the document's `isPinned` in the same write.
+   */
+  private async postAttach(
+    sessionId: string,
+    docId: string,
+    pin: boolean,
+  ): Promise<'ok' | 'gone' | 'failed'> {
+    try {
+      await fetchJson(`/api/sessions/${sessionId}/documents/${docId}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        ...(pin
+          ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: true }) }
+          : {}),
+      });
+      return 'ok';
+    } catch (err) {
+      console.error('attachDoc failed', err);
+      return (err as Error)?.message === 'session_not_found' ? 'gone' : 'failed';
+    }
+  }
+
+  /**
+   * Drop a conversation the server no longer has from this tab. Not a delete:
+   * there is nothing left to delete.
+   */
+  private forgetSession(sessionId: string): void {
+    this.sessions = this.sessions.filter((s) => s.id !== sessionId);
+    if (this.activeSessionId === sessionId) {
+      this.activeSessionId = this.sessions[0]?.id ?? null;
+    }
   }
 
   /**
@@ -1676,6 +1706,46 @@ class AppStore {
     return true;
   }
 
+  /**
+   * "Nueva conversación con este documento" (UX backlog #2): open a fresh
+   * conversation — or the empty one already waiting, see `findEmptySession` —
+   * with this document in it, and make it the active one.
+   *
+   * Returns the conversation id, or `null` when either step failed; both steps
+   * already told the user why. The caller navigates to the chat (`/`).
+   */
+  async startSessionWithDoc(
+    docId: string,
+    /** The filter "Mis documentos" is showing, so its re-read keeps it. */
+    filter: 'all' | 'sueltos' = 'all',
+  ): Promise<string | null> {
+    let sessionId = await this.newSession();
+    if (!sessionId) return null;
+    // Pinned, like an upload into a conversation: the person started this
+    // conversation FOR the document, so it goes with every message.
+    let result = await this.postAttach(sessionId, docId, true);
+    if (result === 'gone') {
+      // 🔴 Bug #37. The reused empty conversation was deleted elsewhere — its
+      // lazy reads answer 200 with empty lists, so `findEmptySession` cannot
+      // tell. Forget it and make a real one.
+      this.forgetSession(sessionId);
+      sessionId = await this.newSession({ reuseEmpty: false });
+      if (!sessionId) return null;
+      result = await this.postAttach(sessionId, docId, true);
+    }
+    if (result !== 'ok') {
+      if (result === 'gone') this.forgetSession(sessionId);
+      toasts.push({ kind: 'error', ...ATTACH_FAILED_TOAST });
+      return null;
+    }
+    await this.loadDocs(sessionId);
+    this.activeSessionId = sessionId;
+    // "Mis documentos" names the conversations a document is in; refresh it
+    // if it has been read, so it does not still say "Sin conversación".
+    if (this.ownedDocsReady) void this.loadOwnedDocs(filter);
+    return sessionId;
+  }
+
   // ── Mis documentos ─────────────────────────────────────────────────────
 
   /**
@@ -1699,6 +1769,10 @@ class AppStore {
         reason?: unknown;
       }>(`/api/documentos${qs}`, { credentials: 'same-origin' });
       this.ownedDocs = (data?.docs ?? []).map(ownedDocFromBackend);
+      // Watch anything still in flight, so its badge moves without a reload.
+      for (const d of this.ownedDocs) {
+        if (!isTerminalIngest(d.ingestStatus)) void this.pollDocStatus(null, d.id);
+      }
       this.ownedDocsDegraded = data?.degraded
         ? { reason: data.reason === 'forbidden' ? 'forbidden' : 'unavailable' }
         : null;
@@ -1712,7 +1786,7 @@ class AppStore {
   }
 
   /**
-   * Rebuild one owned document's graph ("Reconstruir grafo" in Mis documentos).
+   * Rebuild one owned document's graph ("Preparar conexiones otra vez" in Mis documentos).
    *
    * Optimistic only about the request: on 202 the row shows `pending`, which is
    * what the backend said. No poll — the badge refreshes on the next list read.
@@ -1729,7 +1803,8 @@ class AppStore {
       if (!res.ok) {
         toasts.push({
           kind: 'error',
-          title: 'No se pudo reconstruir el grafo',
+          // Plain words, as on the badge (backlog #21).
+          title: 'No se pudieron preparar las conexiones',
           message: graphRetryErrorCopy(res.status),
         });
         return false;
@@ -1766,18 +1841,10 @@ class AppStore {
    * the server's answer, not a guess.
    */
   async attachOwnedDoc(sessionId: string, docId: string, filter: 'all' | 'sueltos' = 'all'): Promise<boolean> {
-    try {
-      await fetchJson(`/api/sessions/${sessionId}/documents/${docId}`, {
-        method: 'POST',
-        credentials: 'same-origin',
-      });
-    } catch (err) {
-      console.error('attachOwnedDoc failed', err);
-      toasts.push({
-        kind: 'error',
-        title: 'No se pudo agregar el documento',
-        message: 'Inténtalo de nuevo. El documento sigue donde estaba.',
-      });
+    const result = await this.postAttach(sessionId, docId, false);
+    if (result !== 'ok') {
+      if (result === 'gone') this.forgetSession(sessionId);
+      toasts.push({ kind: 'error', ...(result === 'gone' ? ATTACH_GONE_TOAST : ATTACH_FAILED_TOAST) });
       return false;
     }
     // The conversation's own panel, if it happens to be loaded, and this list.

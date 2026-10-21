@@ -8,7 +8,8 @@ import { fixtureBytes, fixtures, type FixtureEntry } from './fixtures';
  *
  * Sign in → read the ecosistema → chat → rate the answer (mouse, then
  * keyboard) → upload a PDF → upload a Spanish recording and watch it
- * transcribe → publish → ask a question that cites the material → sign out.
+ * transcribe → publish → in a new conversation, ask a question that cites the
+ * published PDF → sign out.
  *
  * ## Rules this file follows
  *
@@ -280,12 +281,6 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
     await expect(picker.getByText('No disponible')).toHaveCount(0);
     await expect(picker.getByText('Ninguno')).toHaveCount(0);
 
-    // The one sentence that explains what the tenant boundary means. Present
-    // in BOTH shapes — the reason the control exists, said where the choice is.
-    await expect(
-      picker.getByText('Lo que publiques aquí lo ve este ecosistema.'),
-    ).toBeVisible();
-
     const chooser = picker.locator('[aria-haspopup="listbox"]');
     const many = (await chooser.count()) > 0;
 
@@ -308,11 +303,8 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
       const ecosystemName = ((await field.getAttribute('title')) ?? '').trim();
       expect(ecosystemName.length).toBeGreaterThan(0);
 
-      // The line that says WHY there is nothing to press. Its absence is what
-      // made the field read as a broken chooser, so it is part of the contract.
-      await expect(
-        picker.getByText('Es el único ecosistema al que perteneces.'),
-      ).toBeVisible();
+      // No explainer line under the field (UX backlog #33).
+      await expect(picker.getByText('Es el único ecosistema al que perteneces.')).toHaveCount(0);
 
       note('ecosistema', `single membership, no chooser: "${ecosystemName}"`);
       return;
@@ -468,8 +460,8 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
   await test.step('upload a PDF and confirm it reads as a draft', async () => {
     const panel = docsPanel(page);
     await expect(panel).toBeVisible();
-    // The standing explanation at the top of the panel, not only per card.
-    await expect(panel.getByText('Todo lo que subas entra como')).toBeVisible();
+    // No standing explainer at the top of the panel (UX backlog #36).
+    await expect(panel.getByText('Todo lo que subas entra como')).toHaveCount(0);
 
     const [chooser] = await Promise.all([
       page.waitForEvent('filechooser'),
@@ -587,7 +579,8 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
     if (!states.settled) return;
     await expect(card.locator('.chip.ingest-ready')).toHaveText('listo');
     await ensureExpanded(card);
-    await expect(card.getByText('Transcripción lista.')).toBeVisible();
+    // Said twice on an expanded draft (status line and the review link row).
+    await expect(card.getByText('Transcripción lista.').first()).toBeVisible();
   });
 
   // ── 7. Publish, and confirm the UI stops calling it private ──────────────
@@ -696,33 +689,61 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
     await expect(card.getByText(DRAFT_BADGE)).toHaveCount(0);
     await expect(card.getByText('solo tú')).toHaveCount(0);
     await expect(card.locator('[data-testid^="publish-"]')).toHaveCount(0);
-    await expect(card.getByText('Ya está publicado en tu ecosistema.')).toBeVisible();
+    // The badge alone says it; no extra sentence (UX backlog #33).
+    await expect(card.getByText('Ya está publicado en tu ecosistema.')).toHaveCount(0);
   });
 
   // ── 8. Ask a question that cites the uploaded material ───────────────────
   await test.step('ask about the uploaded material and get a citation', async () => {
-    // Names material from BOTH uploads — the document's subject BY NAME, and the
-    // recording — so the question is answerable from whichever of the two
-    // actually made it into a corpus.
+    // 🔴 A NEW CONVERSATION, AND THE QUESTION IS ITS FIRST MESSAGE. Two reasons.
     //
-    // The name is the PDF fixture's `marker`, read from the manifest: it is
-    // unique across the corpus's 250 documents, so an answer grounded in it can
-    // only have been retrieved from the file THIS run uploaded.
+    // 1. It is the claim worth testing. The PDF was published in the step
+    //    above, which retires its draft copy (`confirmPublish`). A draft is
+    //    only ever retrieved in the conversation it was uploaded into, so a
+    //    citation in a DIFFERENT conversation can only have come through the
+    //    ecosistema's published corpus — the shared brain publishing feeds.
+    // 2. A follow-up is not searched with its own words. On any turn with
+    //    history the engine first condenses the question (`condenseQuery`,
+    //    chat-engine), and retrieval embeds the condensed text. Under the fake
+    //    provider that text is the stub `[FAKE-PROVIDER TEST DATA] fake
+    //    provider …`, so a follow-up retrieves the same unrelated documents
+    //    whatever it asks. Measured 2026-10-17 on an isolated fake stack: the
+    //    old follow-up's top three citations were, in order, the three
+    //    documents nearest the stub, and the PDF ranked 119 of 164 for it. A first
+    //    message skips condensing (no history), so its words are what is
+    //    searched, on the fake stack and on a real one alike.
     //
-    // ⚠ THE RECORDING IS NAMED GENERICALLY, AND HAS TO STAY THAT WAY. Its own
-    // marker is a spoken proper noun, and `markerIsAssertable` is false on that
-    // entry precisely because no ASR model spells one reliably. Putting it in
-    // the question would make an ordinary Whisper spelling variant read as a
-    // retrieval failure.
-    const cited =
-      `${RUN_ID} ¿qué cuenta ${fx.pdf.marker} sobre su trabajo y qué dificultades ` +
-      'menciona? ¿y de qué habla la grabación que subí?';
+    // The question carries the PDF fixture's own words, read from the manifest
+    // (never hardcoded — see `./fixtures`): the subject's name (`marker`,
+    // unique across the corpus's 250 documents), its format and its ecosistema.
+    // Under the fake provider embeddings are a hashed bag of words with no
+    // stop-word removal (`test-support/fake-provider/server.mjs`,
+    // `fakeEmbedOne`), so filler words (`de`, `su`, `qué`) pull toward short
+    // documents and the PDF, one long chunk, sinks. Measured 2026-10-17
+    // against that stack's published corpus (164 documents) with a port of
+    // `fakeEmbedOne` checked against the stored vectors (cosine 1.0000), over
+    // 1000 random RUN_IDs: this question puts the PDF 1st in 95% of runs and
+    // in the top 2 in 98%; the old follow-up's wording placed it 70th. The
+    // top 2 matters: query expansion fuses the original search with one
+    // rewording (on the fake stack, the stub again) and keeps 5, so a
+    // document needs about rank 2 of the original search to survive. Expect
+    // a rare fake-stack miss from hash collisions with the RUN_ID's digits.
+    //
+    // ⚠ THE RECORDING IS NOT NAMED. Its marker is a spoken proper noun, and
+    // `markerIsAssertable` is false on that entry precisely because no ASR
+    // model spells one reliably.
+    await page.getByRole('button', { name: 'Nueva conversación' }).first().click();
+    await expect(page.getByRole('heading', { name: 'Nueva conversación' })).toBeVisible();
+    const formato = fx.pdf.formato.replace(/_/g, ' ');
+    const ecosistema = fx.pdf.ecosistema.replace(/_/g, ' ');
+    const cited = `${RUN_ID} ¿Quién es ${fx.pdf.marker}? ${formato}, ${ecosistema}`;
     await page.getByTestId('composer-input').fill(cited);
     await page.getByTestId('composer-send').click();
+    await expect(page.getByText(cited).first()).toBeVisible();
 
-    // Two settled answers now; the second rating control appearing IS this
-    // turn settling.
-    await expect(ratingGroups(page)).toHaveCount(2, { timeout: 180_000 });
+    // One settled answer in this conversation; its rating control appearing
+    // IS this turn settling.
+    await expect(ratingGroups(page)).toHaveCount(1, { timeout: 180_000 });
 
     // The engine's CitationCard. `citation-sources` is the "Fuentes
     // consultadas" block it renders whenever the turn's provenance carried a
@@ -733,17 +754,8 @@ test('journey: sign in → chat → rate → upload → transcribe → publish �
     // citation, or one citing any other document, passed. Now it fails unless
     // the source list names `pdfName` — the file this run uploaded and
     // published. The title on a source card is the upload name
-    // (`chunkMetadata.title` = `documents.name`).
-    //
-    // ⚠ Under the fake provider (`COMPOSE_PROFILES=fake`) embeddings are a
-    // hashed bag of words (`test-support/fake-provider/server.mjs`,
-    // `fakeEmbedOne`), with no stop-word removal. This long question shares
-    // mostly filler words (`qué`, `su`, `de`) with short corpus documents, and
-    // the uploaded PDF is one long chunk, so DENSE retrieval ranks it below
-    // the cap. Measured 2026-10-17 on an isolated fake stack: dense placed it
-    // outside the top 50 for this question, hybrid at 28; the person's name
-    // alone ranks it 4 (dense) and 1 (hybrid). So this step FAILS on the fake
-    // stack for that reason. It is meaningful on real embeddings.
+    // (`chunkMetadata.title` = `documents.name`). Not vacuous: with the PDF
+    // upload skipped, this assertion failed (measured 2026-10-17).
     const sourcesBlock = page.getByTestId('citation-sources').last();
     await expect(sourcesBlock, 'the answer rendered with NO citation block').toBeVisible({
       timeout: 60_000,

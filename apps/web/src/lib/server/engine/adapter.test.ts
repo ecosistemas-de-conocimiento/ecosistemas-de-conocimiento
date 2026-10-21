@@ -78,6 +78,7 @@ describe('resolveEntity — a mentioned document', () => {
       contentKind: 'testimonio',
       extractedText: 'Me llamo María López',
       redactedText: 'Me llamo [Persona A]',
+      anonymisationStatus: 'ready',
     });
     const block = await adapter.resolveEntity({ kind: 'document', id: 5 } as never);
     expect(block).toContain('Me llamo [Persona A]');
@@ -95,6 +96,22 @@ describe('resolveEntity — a mentioned document', () => {
     const block = await adapter.resolveEntity({ kind: 'document', id: 5 } as never);
     expect(block).not.toContain('María');
   });
+
+  it.each(['held', 'pending', 'rejected', 'n/a', undefined])(
+    '🔴 sends no text for a testimonio whose gate status is %s, even with a redactedText',
+    async (status) => {
+      const adapter = adapterFor({
+        id: 5,
+        contentKind: 'testimonio',
+        extractedText: 'Me llamo María López',
+        redactedText: 'Me llamo [Persona A]',
+        ...(status ? { anonymisationStatus: status } : {}),
+      });
+      const block = await adapter.resolveEntity({ kind: 'document', id: 5 } as never);
+      expect(block).not.toContain('María');
+      expect(block).not.toContain('[Persona A]');
+    },
+  );
 
   it('inlines a documento as before', async () => {
     const adapter = adapterFor({ id: 6, name: 'Acta', contentKind: 'documento', extractedText: 'texto' });

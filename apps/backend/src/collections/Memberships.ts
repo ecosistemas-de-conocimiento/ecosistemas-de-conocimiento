@@ -1,8 +1,13 @@
 import type { CollectionBeforeValidateHook, CollectionConfig } from 'payload'
 import { ValidationError } from 'payload'
 
-import { withinMyOrganizations, withinMyOrganizationsWithRole } from '../access'
-import { DEFAULT_ORG_ROLE, ORG_ROLES, type OrgRole } from '../lib/permissions'
+import { isPlatformAdminUser, withinMyOrganizations, withinMyOrganizationsWithRole } from '../access'
+import {
+  DEFAULT_ORG_ROLE,
+  ORG_ROLES,
+  organizationIdsForUserWithMinRole,
+  type OrgRole,
+} from '../lib/permissions'
 
 import { compoundUnique, toRelationId } from './hooks/compoundUnique'
 
@@ -90,6 +95,68 @@ export const refuseSelfAssignment: CollectionBeforeValidateHook = ({
   return data
 }
 
+/**
+ * 🔴 AN ADMIN OF ONE ECOSISTEMA MUST NOT WRITE MEMBERSHIPS INTO ANOTHER.
+ *
+ * `create` access is `withinMyOrganizationsWithRole('admin')`, which returns a
+ * WHERE constraint (`organization in [my admin orgs]`). Payload uses that
+ * constraint to filter reads, updates and deletes of EXISTING rows — but on
+ * `create` there is no existing row, and Payload discards the result
+ * (`payload/dist/collections/operations/create.js`, measured 2026-10-21: the
+ * value of `executeAccess` is ignored). Any truthy answer means "allowed", so an
+ * admin of A could `POST /api/memberships { organization: B }` and put an
+ * accomplice into B with any role.
+ *
+ * Update has the twin hole: `update` access scopes WHICH row may be edited
+ * (one in A), not what it may be edited INTO — patching `organization` to B
+ * moves the row across the boundary.
+ *
+ * So the target organization is checked here, on every write, against the
+ * organizations where the caller holds at least `admin`. Platform admins and
+ * the seed path (no `req.user`) are unaffected — the same carve-outs the access
+ * rule already makes.
+ */
+export const FOREIGN_ORGANIZATION_MESSAGE =
+  'You can only add people to an ecosistema you administer.'
+
+type AdminOrgResolver = (
+  payload: Parameters<typeof organizationIdsForUserWithMinRole>[0],
+  userId: number | string,
+) => Promise<(number | string)[]>
+
+export const makeRefuseForeignOrganization =
+  (
+    adminOrgIds: AdminOrgResolver = (payload, userId) =>
+      organizationIdsForUserWithMinRole(payload, userId, 'admin'),
+  ): CollectionBeforeValidateHook =>
+  async ({ data, operation, originalDoc, req }) => {
+    const caller = req?.user
+    const callerId = (caller as { id?: unknown } | null | undefined)?.id
+    if (callerId === null || callerId === undefined) return data
+    if (isPlatformAdminUser(caller)) return data
+
+    const patch = (data ?? {}) as Record<string, unknown>
+    // On update, only a write that names an organization can move the row; the
+    // access rule already pinned the row itself to one of the caller's orgs.
+    if (operation === 'update' && !('organization' in patch)) return data
+
+    const stored = (originalDoc ?? {}) as Record<string, unknown>
+    const target = toRelationId('organization' in patch ? patch.organization : stored.organization)
+    // A missing organization is the `required` validator's job, not ours.
+    if (target === null) return data
+
+    const allowed = await adminOrgIds(req.payload, callerId as number | string)
+    if (allowed.some((id) => String(id) === String(target))) return data
+
+    throw new ValidationError({
+      collection: 'memberships',
+      errors: [{ path: 'organization', message: FOREIGN_ORGANIZATION_MESSAGE }],
+      req,
+    })
+  }
+
+export const refuseForeignOrganization = makeRefuseForeignOrganization()
+
 /** Admin-panel labels. Exhaustive by type, so adding a role forces a label. */
 const ROLE_LABELS: Record<OrgRole, string> = {
   member: 'Member — read, upload, chat, rate answers',
@@ -155,6 +222,8 @@ export const Memberships: CollectionConfig = {
       // 🔴 First, because a refusal must not depend on whether a twin row
       // happens to exist. See `refuseSelfAssignment` above.
       refuseSelfAssignment,
+      // 🔴 Then the tenant boundary on the TARGET row — see the hook's header.
+      refuseForeignOrganization,
       compoundUnique({
         collection: 'memberships',
         fields: ['user', 'organization'],

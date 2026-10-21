@@ -7,10 +7,10 @@
  */
 
 import { AIClient } from '@edc/ai-client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { aiServiceDetector, type SyncGenerator } from './detector'
-import { ANONYMISE_VERIFY_ROUNDS_VAR, runAnonymisationGate } from './gate'
+import { ANONYMISE_VERIFY_ROUNDS_VAR, DEFAULT_VERIFY_ROUNDS, runAnonymisationGate } from './gate'
 import type { GateReport } from './types'
 
 type Hallazgo = { texto: string; tipo: string; identifica?: boolean }
@@ -63,16 +63,47 @@ const gate = (text: string, detector: ReturnType<typeof scripted>['detector']) =
 const verifyStages = (r: { report: GateReport }) =>
   r.report.stages.filter((s) => s.stage === 'verify')
 
+/**
+ * Every test in this file runs the OPT-IN, `ANONYMISE_VERIFY_ROUNDS=3`, except
+ * the default block, which clears it. Measured 2026-10-18 (local stack, real
+ * model, 4,866 words): 3 rounds let a whole name through in 2 of 12 runs, so 3
+ * is not the default. The round logic must still work for whoever turns it on.
+ */
+beforeEach(() => {
+  vi.stubEnv(ANONYMISE_VERIFY_ROUNDS_VAR, '3')
+})
+
 afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-describe('runAnonymisationGate — verify rounds', () => {
+describe('runAnonymisationGate — 🔴 default is ONE round (fail-closed)', () => {
+  it('the default is 1', () => {
+    expect(DEFAULT_VERIFY_ROUNDS).toBe(1)
+  })
+
+  it('🔴 with no setting, a verify leftover → held, nothing redacted by verify', async () => {
+    vi.stubEnv(ANONYMISE_VERIFY_ROUNDS_VAR, '')
+    const { detector, prompts } = scripted([[persona('Ana')], [persona('Berta')], []])
+    const result = await gate('Ana y Berta.', detector)
+    expect(result.status).toBe('hold')
+    if (result.status !== 'hold') return
+    expect(result.stage).toBe('verify')
+    // Stage 3 plus ONE verify call: no second round is attempted.
+    expect(prompts).toHaveLength(2)
+    expect(result.redactedText).toBe('[Persona A] y Berta.')
+    expect(result.reason).not.toContain('Berta')
+  })
+})
+
+describe('runAnonymisationGate — verify rounds (opt-in: 3)', () => {
+
   it('🔴 round 2 catches a leftover, redacts it, round 3 is clean → ready', async () => {
-    const text = 'Ana vive en Jiutepec. Su vecino es Ricardo Peña.'
+    // ⚠ A rancho, not a town: towns are shown and never count as a leftover.
+    const text = 'Ana vive en el rancho La Joya. Su vecino es Ricardo Peña.'
     const { detector, prompts } = scripted([
       [persona('Ana')],
-      [lugar('Jiutepec')],
+      [lugar('rancho La Joya')],
       [persona('Ricardo Peña')],
       [],
     ])
@@ -80,7 +111,7 @@ describe('runAnonymisationGate — verify rounds', () => {
 
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return
-    expect(result.redactedText).toBe('[Persona A] vive en [Domicilio A]. Su vecino es [Persona B].')
+    expect(result.redactedText).toBe('[Persona A] vive en el [Domicilio A]. Su vecino es [Persona B].')
     expect(prompts).toHaveLength(4)
 
     // 🔴 What each round caught is on the report, as counts only.
@@ -89,7 +120,7 @@ describe('runAnonymisationGate — verify rounds', () => {
     expect(rounds[0]?.removed).toEqual([{ label: 'lugar', count: 1 }])
     expect(rounds[1]?.removed).toEqual([{ label: 'persona', count: 1 }])
     expect(rounds[2]?.removed).toEqual([])
-    expect(JSON.stringify(result.report)).not.toMatch(/Jiutepec|Ricardo|Ana /)
+    expect(JSON.stringify(result.report)).not.toMatch(/Joya|Ricardo|Ana /)
   })
 
   it('stops at the first clean round', async () => {
@@ -116,7 +147,7 @@ describe('runAnonymisationGate — verify rounds', () => {
     if (result.status !== 'hold') return
     expect(result.stage).toBe('verify')
     expect(prompts).toHaveLength(4)
-    expect(result.reason).toContain('3')
+    expect(verifyStages(result).map((r) => r.round)).toEqual([1, 2, 3])
     expect(result.reason).not.toContain('Dora')
     // Survivors point at what the LAST round still saw, in the text it saw.
     const held = result.redactedText ?? ''
@@ -133,7 +164,8 @@ describe('runAnonymisationGate — verify rounds', () => {
   })
 
   it('🔴 a detector error in round 2 → held', async () => {
-    const { detector } = scripted([[persona('Ana')], [persona('Berta')], 'error'])
+    // ⚠ Every retry of round 2 fails too: the detector retries transient errors.
+    const { detector } = scripted([[persona('Ana')], [persona('Berta')], ...Array(8).fill('error')])
     const result = await gate('Ana y Berta.', detector)
     expect(result.status).toBe('hold')
     if (result.status !== 'hold') return

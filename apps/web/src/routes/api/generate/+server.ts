@@ -24,13 +24,20 @@ import {
 } from '$lib/server/engine';
 import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
+import { withPinnedRefs } from './pinned';
+import { fetchPublishedTitles, matchDocumentTitle, titleRetrievalFilter, withTitleRef } from '$lib/server/titleMatch';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
 import { makeGraphProvider } from '$lib/server/graph';
+import { withFencedChunks, withFencedRefs } from '$lib/server/engine/chunkFence';
 import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { lenguaTurn } from '$lib/lengua';
 import { stampDraftProvenance } from '$lib/publication';
+import { citedBrowserProvenance } from '$lib/server/citationProvenance';
 import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
 import { prepareTurn, respond, type ContextRef, type ContextScope } from '@edc/chat-engine/core';
+
+/** Max characters of each chunk's passage persisted on the provenance. */
+const PASSAGE_TEXT_CAP = 1200;
 
 /**
  * BFF — chat turns now run through `@edc/chat-engine`.
@@ -191,7 +198,8 @@ function streamGenerate(
   upstream: Response,
   token: string | undefined,
   sessionId: string,
-  provenance: unknown,
+  /** The browser-safe provenance for the COMPLETE answer (cited sources only). */
+  provenanceFor: (answer: string) => unknown,
   sentSystemPrompt: string | undefined,
   /** Extra `generationMeta` fields for this turn (C-6: `expansionCostUsd`). */
   extraMeta: Record<string, unknown> = {},
@@ -246,6 +254,7 @@ function streamGenerate(
                 });
                 continue;
               }
+              const provenance = provenanceFor(evt.text ?? '');
               const messageId = await persistAssistantMessage(
                 token,
                 sessionId,
@@ -391,8 +400,13 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       ? fetchLenguaIndex(locals.token, organizationId).then((r) => r.index.lenguas)
       : null;
 
+  // The ecosistema's published document titles, for "tell me about <title>"
+  // (UX #35, `$lib/server/titleMatch`). Starts now, awaited when the inline
+  // refs are built. Best-effort: a failed read pins nothing.
+  const publishedTitles = fetchPublishedTitles(locals.token, organizationId);
+
   // Build the Domain Adapter + the engine's AIClient over this app's BFF client.
-  const adapter = makeChatDomainAdapter({
+  const adapter = withFencedRefs(makeChatDomainAdapter({
     token: locals.token,
     sessionId: body.sessionId,
     corpora,
@@ -401,12 +415,12 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     ...(sessionDocs.ok ? { documents: sessionDocs.docs } : {}),
     ...(lenguaFacets ? { lenguaFacets: () => lenguaFacets } : {}),
     ...(lengua.lengua ? { lenguaFilter: lengua.lengua } : {}),
-  });
+  }));
   // CHAT_RETRIEVAL_MODE=hybrid AND ai-service has `metadataFilterIn` → one
   // hybrid `/v1/retrieve/multi` call, drafts filtered server-side. Otherwise
   // the dense per-corpus path. Default dense. See `$lib/server/engine/hybrid`.
   const hybrid = await chatTurnHybrid();
-  const engineAI = makeEngineAIClient(chatClient, {
+  const unfencedAI = makeEngineAIClient(chatClient, {
     sessionId: body.sessionId,
     signal: request.signal,
     asOf,
@@ -419,6 +433,21 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     sessionDocumentIds,
     hybrid,
   });
+  // 🔴 PROMPT-INJECTION FENCE (audit 2026-10-17 §3 item 3), a partial
+  // mitigation. Retrieved chunks from every leg that goes through this client
+  // (published and draft legs, hybrid `retrieveMulti`, the graph provider's
+  // widened retrieve) reach the prompt as `<fuente id=…>…</fuente>`; the
+  // adapter above (`withFencedRefs`) fences `@`-mentioned documents the same way. Common tag
+  // look-alikes and line-leading `[N]` inside the text are neutralised — a
+  // cheap fold, not a guarantee (see `neutraliseFenceTags`). The graph block
+  // and the summary are NOT fenced.
+  // `restorePassages` puts the original passage text back on the provenance
+  // before it is persisted.
+  // 🔴 Conversation turns (questions and answers) are dropped from every leg,
+  // always (owner ruling 2026-10-21: documents only), each leg over-fetching
+  // so the turn keeps its source count. See `$lib/turnChunks`.
+  const fenced = withFencedChunks(unfencedAI);
+  const engineAI = fenced.client;
 
   // 🔴 THE SECOND RETRIEVAL PATH — GraphRAG (ADR §8).
   //
@@ -483,6 +512,11 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // generates. Best-effort throughout — a failing context step degrades to
   // empty inside the engine and never breaks the turn.
   const retrievalPolicy = chatTurnRetrievalPolicy(hybrid);
+  // A message that names exactly one published document pins it for this turn.
+  const titleMatch = matchDocumentTitle(userMessage, await publishedTitles);
+  // …and narrows retrieval to it, so its chunks are the turn's only `[N]`
+  // sources (see `$lib/server/titleMatch`). No match: the lengua filter alone.
+  const retrievalFilter = titleRetrievalFilter(lengua.retrievalFilter, titleMatch);
   const engineTurnArgs = {
     config: CHAT_ENGINE_CONFIG,
     aiClient: turnAI,
@@ -494,14 +528,18 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     scope,
     history,
     userMessage,
-    inlineRefs: body.contextRefs ?? [],
+    // `@`-mentions, then the document the message names by title, then every
+    // document pinned ("fijar") in this conversation. See `./pinned.ts`: the
+    // docs panel promises pinned documents are sent.
+    inlineRefs: withPinnedRefs(withTitleRef(body.contextRefs, titleMatch), sessionDocs),
     // Omitted entirely when there is no ecosistema to scope a graph read to,
     // so the engine takes exactly the code path it took before GraphRAG.
-    ...(graphProvider ? { graphProvider } : {}),
+    // Skipped on a title match: its retrieve and block span the ecosistema.
+    ...(graphProvider && !titleMatch ? { graphProvider } : {}),
     // ai-service metadata filter, forwarded by the engine to every corpus leg.
     // Chunks embedded before `lengua` reached chunk metadata do not carry it
     // and are excluded until republished.
-    ...(lengua.retrievalFilter ? { retrievalFilter: lengua.retrievalFilter } : {}),
+    ...(retrievalFilter ? { retrievalFilter } : {}),
     // Cross-encoder rerank on each corpus retrieve, `CHAT_RERANK` (default ON).
     // Off → no policy, the engine's pre-policy retrieval exactly. A failing
     // rerank falls back to the plain retrieve. See `$lib/server/engine/rerank`.
@@ -510,7 +548,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     ...(retrievalPolicy ? { retrievalPolicy } : {}),
     // Persist each chunk's grounding passage so the canonical CitationCard can
     // quote it. Cap the stored text to keep the provenance JSON column lean.
-    includePassageText: 1200,
+    includePassageText: PASSAGE_TEXT_CAP,
   };
 
   // ── STREAMING ────────────────────────────────────────────────────────────
@@ -553,7 +591,16 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
         // Mark chunks that came from THIS user's draft corpus before the turn
         // is persisted, so the citation stays labelled after a reload — the
         // corpus name is the exact signal, and it is only knowable here.
-        stampDraftProvenance(prepared.provenance, draftCorpus),
+        // Then only the sources the finished answer cites (UX #35), through
+        // the browser allowlist (Fable audit #8): what is saved is what every
+        // member's browser later reads back. A document named by title is
+        // always among them, cited or not (`citedBrowserProvenance`).
+        (answer) =>
+          citedBrowserProvenance(
+            stampDraftProvenance(fenced.restorePassages(prepared.provenance, PASSAGE_TEXT_CAP), draftCorpus),
+            answer,
+            titleMatch,
+          ),
         upstream.unit.systemPrompt,
         turnMeta(),
       );
@@ -583,8 +630,13 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // `engineAI` closure (captured at construction above).
   try {
     const { generation, provenance: rawProvenance } = await respond(engineTurnArgs);
-    // See the streaming branch: stamp the caller's own drafts before persisting.
-    const provenance = stampDraftProvenance(rawProvenance, draftCorpus);
+    // See the streaming branch: stamp the caller's own drafts before
+    // persisting, keep the cited sources only, then the browser allowlist.
+    const provenance = citedBrowserProvenance(
+      stampDraftProvenance(fenced.restorePassages(rawProvenance, PASSAGE_TEXT_CAP), draftCorpus),
+      generation.text,
+      titleMatch,
+    );
     const messageId = await persistAssistantMessage(
       locals.token,
       body.sessionId,

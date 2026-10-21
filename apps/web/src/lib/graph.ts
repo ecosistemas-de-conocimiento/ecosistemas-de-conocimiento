@@ -137,9 +137,21 @@ export interface GraphEntity {
   support: number;
 }
 
+/**
+ * Which way an edge points, seen from the entity in focus. `out` ⇒ focus →
+ * neighbour; `in` ⇒ neighbour → focus; `both` ⇒ either, or a symmetric type.
+ *
+ * ⚠ WITHOUT IT EVERY INCOMING EDGE READ BACKWARDS (backlog #16): Morelos was
+ * listed as "está en Xoxocotla", because the stored row is "Xoxocotla
+ * ubicado_en Morelos" and the panel printed the relation from Morelos' side.
+ */
+export type GraphEdgeDirection = 'out' | 'in' | 'both';
+
 export interface GraphNeighbour {
   entity: GraphEntity;
   relationType: GraphRelationType;
+  /** See {@link GraphEdgeDirection}. An older backend sends none ⇒ `out`. */
+  direction: GraphEdgeDirection;
   support: number;
   /**
    * The published documents that EVIDENCE THIS EDGE — not the ones the two
@@ -191,6 +203,20 @@ export interface GraphView {
    * wording, which is the more common case and the less alarming one.
    */
   publishedDocuments: number | null;
+  /**
+   * The edges among `entities`, for the whole-graph picture (backlog #3).
+   * Undirected; one per pair. Optional so an older backend, or a hand-built
+   * view, still typechecks — absent reads as "no edges".
+   */
+  edges?: GraphViewEdge[];
+}
+
+/** One undirected edge of the whole-graph picture. */
+export interface GraphViewEdge {
+  fromId: string;
+  toId: string;
+  /** Distinct published documents behind the strongest relation of the pair. */
+  support: number;
 }
 
 export interface GraphEntityDetail {
@@ -365,7 +391,36 @@ export function parseGraphView(raw: unknown): GraphView {
     hidden: count(body.hidden),
     minSupport: minSupport > 0 ? minSupport : null,
     publishedDocuments: published,
+    edges: parseViewEdges(body.edges, entities),
   };
+}
+
+/**
+ * The whole-graph edges, kept only when BOTH endpoints are entities this view
+ * lists, and one per unordered pair.
+ *
+ * ⚠ The endpoint check is not paranoia. An edge to a node that is not drawn
+ * would be a line to nowhere, and a duplicate pair would be two keyed rows with
+ * the same key — the exact crash backlog #7 was.
+ */
+function parseViewEdges(raw: unknown, entities: readonly GraphEntity[]): GraphViewEdge[] {
+  if (!Array.isArray(raw)) return [];
+  const known = new Set(entities.map((e) => e.id));
+  const seen = new Set<string>();
+  const out: GraphViewEdge[] = [];
+  for (const item of raw) {
+    const edge = parseGraphEdge(item);
+    if (!edge || !known.has(edge.fromId) || !known.has(edge.toId)) continue;
+    const key = edge.fromId < edge.toId ? `${edge.fromId}|${edge.toId}` : `${edge.toId}|${edge.fromId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ fromId: edge.fromId, toId: edge.toId, support: edge.support });
+  }
+  return out;
+}
+
+function toDirection(v: unknown): GraphEdgeDirection {
+  return v === 'in' || v === 'both' ? v : 'out';
 }
 
 export function parseGraphNeighbour(raw: unknown): GraphNeighbour | null {
@@ -382,6 +437,7 @@ export function parseGraphNeighbour(raw: unknown): GraphNeighbour | null {
   return {
     entity,
     relationType: toRelationType(row.relationType),
+    direction: toDirection(row.direction),
     support: declared ?? entity.support,
     // Absent stays `null`; see the field comment. `Array.isArray` is the whole
     // distinction, so an older backend degrades instead of showing "none".
@@ -399,10 +455,58 @@ export function parseGraphEntityDetail(raw: unknown): GraphEntityDetail | null {
   const neighbours = (Array.isArray(body.neighbours) ? body.neighbours : [])
     .map(parseGraphNeighbour)
     .filter((n): n is GraphNeighbour => n !== null);
-  const documents = (Array.isArray(body.documents) ? body.documents : [])
-    .map(parseGraphDocument)
-    .filter((d): d is GraphDocument => d !== null);
-  return { entity, neighbours: rankNeighbours(neighbours), documents };
+  const documents = uniqueDocuments(
+    (Array.isArray(body.documents) ? body.documents : [])
+      .map(parseGraphDocument)
+      .filter((d): d is GraphDocument => d !== null),
+  );
+  return { entity, neighbours: rankNeighbours(mergeNeighbours(neighbours)), documents };
+}
+
+/** First occurrence wins; order kept. Every list here is rendered keyed by id. */
+export function uniqueDocuments(documents: readonly GraphDocument[]): GraphDocument[] {
+  const seen = new Set<string>();
+  return documents.filter((d) => {
+    if (seen.has(d.id)) return false;
+    seen.add(d.id);
+    return true;
+  });
+}
+
+/**
+ * 🔴 ONE ROW PER NEIGHBOUR — THE FIX FOR BACKLOG #7.
+ *
+ * The backend answers one row per `(neighbour, relationType)`: "traducción en
+ * salud" reaches "consentimiento informado" by `afecta_a` (3 documents) AND by
+ * `relacionado_con` (5) — measured 2026-10-21 on local `edc_backend`, org 1.
+ * The panel keys its rows, the ego network keys its nodes, and `?conexion=`
+ * selects, all by ENTITY id. Two rows with one key made Svelte throw
+ * `each_key_duplicate`, which blanked the whole page on the very first topic.
+ *
+ * So the neighbour is folded here, once, before anything renders: the
+ * strongest relation names the edge (its type, direction and support), and the
+ * evidence is the union of every relation's documents — a document behind
+ * either relation IS behind the connection between these two.
+ *
+ * ⚠ `documents` stays `null` only if NO row sent the field; see
+ * `GraphNeighbour.documents`.
+ */
+export function mergeNeighbours(neighbours: readonly GraphNeighbour[]): GraphNeighbour[] {
+  const byId = new Map<string, GraphNeighbour>();
+  for (const n of neighbours) {
+    const prev = byId.get(n.entity.id);
+    if (!prev) {
+      byId.set(n.entity.id, n.documents ? { ...n, documents: uniqueDocuments(n.documents) } : n);
+      continue;
+    }
+    const strongest = n.support > prev.support ? n : prev;
+    const documents =
+      prev.documents === null && n.documents === null
+        ? null
+        : uniqueDocuments([...(strongest.documents ?? []), ...(prev.documents ?? []), ...(n.documents ?? [])]);
+    byId.set(n.entity.id, { ...strongest, documents });
+  }
+  return [...byId.values()];
 }
 
 export function parseGraphEdge(raw: unknown): GraphEdge | null {
@@ -535,29 +639,35 @@ export function typeChipLabel(type: GraphViewType): string {
   }
 }
 
-/** What each list is, in one sentence. On the page, not in a tooltip. */
-export function typeListHint(type: GraphViewType): string {
-  switch (type) {
-    case 'tema':
-      return 'De qué se habla en el material publicado.';
-    case 'lugar':
-      return 'Lugares que se mencionan.';
-    case 'evento':
-      return 'Hechos y procesos con un momento propio.';
-    case 'organizacion':
-      return 'Instituciones, colectivos y dependencias.';
-    case 'persona':
-      // 🔴 THE ONE HINT THAT IS ALSO A PROMISE. A list of names in a corpus
-      // built partly from testimonies invites exactly one worry, and the
-      // honest answer is short: these names cannot come from a testimonio —
-      // the extraction gate keys on `contentKind` and fails closed (see the
-      // module header). Saying so here, on the page, is cheaper than a reader
-      // guessing wrong and trusting the graph less than it deserves.
-      return 'Personas nombradas en documentos públicos. Nunca salen de un testimonio.';
+/**
+ * How a relation reads FROM THE ENTITY IN FOCUS, as "[focus] <label> [neighbour]".
+ *
+ * ⚠ `in` READS THE OTHER WAY. "Xoxocotla ubicado_en Morelos", seen from
+ * Morelos, is "Morelos incluye Xoxocotla" — not "está en". See
+ * {@link GraphEdgeDirection}. `both` means the rows disagree or the type has no
+ * direction, so it gets the one label that is true either way.
+ */
+export function relationLabel(
+  relation: GraphRelationType,
+  direction: GraphEdgeDirection = 'out',
+): string {
+  if (direction === 'both' && relation !== 'relacionado_con') return 'se relaciona con';
+  if (direction === 'in') {
+    switch (relation) {
+      case 'ocurre_en':
+        return 'es donde ocurre';
+      case 'participa_en':
+        return 'cuenta con';
+      case 'ubicado_en':
+        return 'incluye';
+      case 'parte_de':
+        return 'tiene como parte a';
+      case 'afecta_a':
+        return 'recibe el efecto de';
+      case 'relacionado_con':
+        return 'se relaciona con';
+    }
   }
-}
-
-export function relationLabel(relation: GraphRelationType): string {
   switch (relation) {
     case 'ocurre_en':
       return 'ocurre en';
@@ -617,36 +727,13 @@ export function contentKindLabel(
 
 export const GRAPH_KICKER = 'Conexiones';
 
-/**
- * The line under the title, up to the ecosistema's name.
- *
- * ⚠ Lives here rather than inline in the `.svelte`, for the reason the module
- * header gives: it enumerates the lists, and an enumeration that drifts out of
- * step with `GRAPH_VIEW_TYPES` is exactly the silent kind of wrong. The test
- * asserts every list is named.
- *
- * ⚠ Exported as a LEAD, not as the whole sentence, so the template can bold the
- * ecosistema's name without markup living in a copy string. `graphSubtitle`
- * composes the same words for anything that needs one plain string; both read
- * from this constant, so there is still one source of truth.
- */
-export const GRAPH_SUBTITLE_LEAD = 'Temas, lugares, eventos, organizaciones y personas de';
+// ⚠ NO TITLE AND NO SUBTITLE (backlog #27, owner's call 2026-10-21). The nav
+// tab already says "Conexiones"; the page opens on the graph itself.
 
-/** The whole sentence, for a plain-text reading of the same line. */
-export function graphSubtitle(ecosystemName: string): string {
-  return `${GRAPH_SUBTITLE_LEAD} ${ecosystemName}.`;
-}
-export const GRAPH_TITLE = 'Cómo se conecta lo que publica tu ecosistema';
-
-/**
- * ⚠ Said on the page, not in a tooltip. Two misreadings are common and both are
- * costly: that the graph covers everything (it covers what has been PUBLISHED),
- * and that a missing connection means it does not exist (it may exist and sit
- * below the threshold).
- */
-export const GRAPH_SCOPE_NOTE =
-  'Aquí solo entra lo publicado. Los borradores, incluidos los tuyos, no cuentan. ' +
-  'Y una conexión aparece solo cuando varios documentos distintos la respaldan.';
+// ⚠ NO SCOPE NOTE AND NO "HAY N ENTIDADES QUE NO SE MUESTRAN" LINE (backlog #28,
+// #29, owner's call 2026-10-21). The published-only scope and the 3-document
+// threshold are unchanged — they live in the backend's SQL — only the sentences
+// explaining them are gone from the page. `GraphView.hidden` is still parsed.
 
 /**
  * 🔴 THE EMPTY STATE THE ADR NAMES, WORD FOR WORD (§7.3.3).
@@ -713,11 +800,13 @@ export function noEcosystemCopy(canSwitch: boolean): string {
   return canSwitch ? GRAPH_NO_ECOSYSTEM_ADMIN : GRAPH_NO_ECOSYSTEM;
 }
 
-export const GRAPH_SEARCH_HINT =
-  'La búsqueda es por nombre. No importan los acentos ni las mayúsculas.';
-
-export const GRAPH_PICK_ENTITY =
-  'Elige un tema, lugar, evento, organización o persona para ver con qué se conecta.';
+/**
+ * ⚠ THE /grafo SEARCH BOX IS HIDDEN FOR THE DEMO (backlog #30, owner's call
+ * 2026-10-21). Flip to `true` to bring it back as it was — accent- and
+ * case-insensitive name search over the lists (`filterEntities`). Full-text
+ * search there is backlog #31, after the demo.
+ */
+export const GRAPH_SEARCH_ENABLED = false;
 
 export const GRAPH_NO_NEIGHBOURS =
   'Todavía no hay conexiones que mostrar para esto. Aparecerán cuando varios ' +
@@ -738,24 +827,13 @@ export const GRAPH_ENTITY_NOT_FOUND =
 export const GRAPH_EDGE_DOCS_TITLE = 'Documentos que sustentan esta conexión';
 
 /**
- * ✅ THE CLAIM IS NOW TRUE. This used to say "los documentos en los que aparecen
- * los dos", because the backend exposed documents per ENTITY and the list was an
- * intersection — a superset of what actually evidenced the relation. The backend
- * now answers per EDGE from `graph_relations`, so the stronger sentence is the
- * accurate one.
+ * The wording for the fallback, when only the intersection is computable.
  *
- * ⚠ If `GraphNeighbour.documents` is ever `null` again (an older backend), the
- * caller falls back to the intersection and MUST fall back to the old wording
- * with it. A true sentence over approximate data is the failure this pair of
- * constants exists to prevent.
+ * ⚠ If `GraphNeighbour.documents` is ever `null` (an older backend), the caller
+ * falls back to the intersection and MUST use this title with it. A confident
+ * title over approximate data is the failure this pair exists to prevent.
  */
-export const GRAPH_EDGE_DOCS_HINT =
-  'Documentos publicados que sustentan esta conexión.';
-
-/** The wording for the fallback, when only the intersection is computable. */
 export const GRAPH_EDGE_DOCS_TITLE_APPROX = 'Documentos donde aparecen los dos';
-export const GRAPH_EDGE_DOCS_HINT_APPROX =
-  'Documentos publicados en los que aparecen los dos. De ahí sale la conexión.';
 
 /**
  * ⚠ TWO DIFFERENT SENTENCES, AND THEY MUST NOT BE MERGED. "We found none" is a
@@ -774,9 +852,6 @@ export function entityDocsTitle(label: string): string {
   return `Dónde aparece ${label}`;
 }
 
-export const GRAPH_ENTITY_DOCS_HINT =
-  'Documentos publicados del ecosistema donde se menciona.';
-
 export const GRAPH_ENTITY_DOCS_EMPTY = 'No hay documentos publicados que listar aquí.';
 
 /** Turn a neighbour into the new centre of the picture. */
@@ -784,30 +859,9 @@ export const GRAPH_RECENTRE_LABEL = 'Ver sus conexiones';
 
 export const GRAPH_CLEAR_EDGE_LABEL = 'Quitar la selección';
 
-export const GRAPH_TESTIMONY_NOTE = 'Testimonio anónimo: el sistema no guarda quién lo contó.';
-
-/**
- * How many entities the threshold withheld — said out loud, never swallowed.
- *
- * `null` when nothing was hidden, so the caller renders nothing rather than a
- * reassuring "0 ocultas" line nobody needs.
- */
-export function hiddenCopy(hidden: number, minSupport: number | null): string | null {
-  const n = Math.max(0, Math.floor(hidden));
-  if (n === 0) return null;
-  // ⚠ Subject AND verb agree with the count. "1 entidad … aparecen" is the
-  // exact sort of seam that makes a careful sentence read as machine output.
-  const subject =
-    n === 1
-      ? 'Hay 1 entidad que no se muestra'
-      : `Hay ${n.toLocaleString('es-MX')} entidades que no se muestran`;
-  const verb = n === 1 ? 'aparece' : 'aparecen';
-  const because =
-    minSupport && minSupport > 1
-      ? `porque ${verb} en menos de ${minSupport} documentos publicados`
-      : `porque ${verb} en muy pocos documentos publicados`;
-  return `${subject} ${because}. Es a propósito: protege a quien contó algo una sola vez.`;
-}
+// ⚠ NO EXPLAINER PARAGRAPHS ON /grafo (backlog #33, owner's rule 2026-10-21):
+// the per-list hints, the document-list hints, the testimony note and the map
+// hint are gone. Labels, buttons, short empty states and errors stay.
 
 /** Human count of what a filtered list is currently showing. */
 export function resultsSummary(input: {
@@ -928,15 +982,6 @@ export const GRAPH_SWITCHER_SEARCH_PLACEHOLDER = 'Buscar por nombre o clave…';
 export const GRAPH_SWITCHER_SEARCH_GO = 'Buscar';
 export const GRAPH_SWITCHER_MEMBER_TAG = 'Eres miembro';
 
-/**
- * ⚠ Said on the page. An admin switching ecosistema is entitled to wonder
- * whether they are now seeing "more" — they are not, and the graph would be
- * easy to misread as an oversight tool if nobody said so.
- */
-export const GRAPH_SWITCHER_SCOPE_NOTE =
-  'Cambias de ecosistema, no de permisos: ves exactamente lo mismo que vería quien ' +
-  'pertenece a él, con el mismo mínimo de documentos.';
-
 export const GRAPH_SWITCHER_NOT_FOUND =
   'El ecosistema que pediste no existe. Estás viendo otro; elígelo de la lista.';
 
@@ -1005,6 +1050,7 @@ export interface EgoNode {
   type: GraphViewType;
   support: number;
   relationType: GraphRelationType;
+  direction: GraphEdgeDirection;
   x: number;
   y: number;
   r: number;
@@ -1107,6 +1153,7 @@ export function egoLayout(centre: GraphEntity, neighbours: readonly GraphNeighbo
         type: neighbour.entity.type,
         support: neighbour.support,
         relationType: neighbour.relationType,
+        direction: neighbour.direction,
         x: round(x),
         y: round(y),
         r: round(r),
@@ -1139,6 +1186,256 @@ export function egoDescription(centre: GraphEntity, drawn: number): string {
   const noun = drawn === 1 ? 'conexión' : 'conexiones';
   return `${centre.label}, ${supportCopy(centre.support)}, con ${drawn} ${noun} a un paso.`;
 }
+
+// ── The whole graph: a deterministic force layout (backlog #3) ─────────────
+//
+// The owner decided (2026-10-21) that `/grafo` opens on the WHOLE graph, zoomable,
+// instead of an empty panel. ADR §7.2's objection to physics was two things: a
+// picture that rearranges itself on every render, and a hairball at 400 nodes.
+//
+// 🔴 THE FIRST IS ANSWERED BY DETERMINISM. Start positions come from each
+// entity's RANK (a golden-angle spiral, strongest in the middle), the iteration
+// count is fixed, and there is no randomness anywhere — so the same graph draws
+// the same picture today and tomorrow, which is the property the ADR wanted.
+// `graph.test.ts` asserts identical output across two runs.
+//
+// ⚠ THE SECOND IS A SIZE QUESTION. The demo corpus is 187 entities and 88 edges
+// above threshold (measured 2026-10-21, local `edc_backend`, org 1, threshold 3).
+// The backend caps the view at 200 entities (`MAX_VIEW_ENTITIES`), so the O(n²)
+// repulsion below is at most 200² / 2 × 240 ≈ 4.8M pair visits, once per load.
+//
+// No dependency: Fruchterman–Reingold is forty lines, and d3-force would be a
+// new runtime dependency for one picture.
+
+export const OVERVIEW_WIDTH = 1000;
+export const OVERVIEW_HEIGHT = 700;
+const OVERVIEW_MARGIN = 40;
+const OVERVIEW_ITERATIONS = 240;
+const OVERVIEW_NODE_MIN_R = 4;
+const OVERVIEW_NODE_MAX_R = 16;
+const OVERVIEW_LABEL_MAX = 22;
+/** Labels always drawn, strongest first. The rest appear on zoom, hover or selection. */
+export const OVERVIEW_ALWAYS_LABELLED = 18;
+
+export interface OverviewNode {
+  id: string;
+  label: string;
+  displayLabel: string;
+  type: GraphViewType;
+  support: number;
+  /** 0 = strongest. Decides which labels are drawn before any zoom. */
+  rank: number;
+  x: number;
+  y: number;
+  r: number;
+}
+
+export interface OverviewEdge {
+  /** `fromId|toId`. Unique: `parseGraphView` keeps one edge per pair. */
+  key: string;
+  fromId: string;
+  toId: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  /** 0.6–2.6, by support. Thicker = more documents behind it. */
+  strokeWidth: number;
+}
+
+export interface OverviewLayout {
+  width: number;
+  height: number;
+  nodes: OverviewNode[];
+  edges: OverviewEdge[];
+  /** Node id → ids it is connected to. For highlighting a selection. */
+  adjacency: Map<string, Set<string>>;
+}
+
+/**
+ * The entities the WHOLE-GRAPH OVERVIEW draws: only those with at least one
+ * edge to another listed entity. Owner rule 2026-10-21, chosen (review).
+ *
+ * ⚠ OVERVIEW ONLY. The entity lists and the panel still get every entity, so
+ * an isolated one stays findable. Degree is counted on the edges the backend
+ * returned, which are already past every filter (threshold, languages,
+ * placeholders), so "isolated" means isolated in what the member can see.
+ *
+ * Why so many are isolated: an edge needs ≥ `GRAPH_MIN_SUPPORT` published
+ * documents for the SAME (from, to, relation type), while an entity needs that
+ * many documents mentioning it at all — see `queries.ts` `viewEdgesQuery`.
+ */
+export function connectedEntities(
+  entities: readonly GraphEntity[],
+  edges: readonly GraphViewEdge[],
+): GraphEntity[] {
+  const ids = new Set(entities.map((e) => e.id));
+  const linked = new Set<string>();
+  for (const e of edges) {
+    if (e.fromId === e.toId || !ids.has(e.fromId) || !ids.has(e.toId)) continue;
+    linked.add(e.fromId);
+    linked.add(e.toId);
+  }
+  return entities.filter((e) => linked.has(e.id));
+}
+
+/**
+ * Lay the whole graph out. Pure and deterministic; see the section header.
+ *
+ * Fruchterman–Reingold with a weak pull to the centre, so entities with no
+ * edge settle in a ring around the connected core instead of drifting off the
+ * canvas, then scaled to fit `OVERVIEW_WIDTH × OVERVIEW_HEIGHT`.
+ */
+export function overviewLayout(
+  entities: readonly GraphEntity[],
+  edges: readonly GraphViewEdge[],
+): OverviewLayout {
+  const ranked = rankEntities(entities);
+  const n = ranked.length;
+  const index = new Map(ranked.map((e, i) => [e.id, i]));
+  const links = edges
+    .map((e) => ({ a: index.get(e.fromId), b: index.get(e.toId), edge: e }))
+    .filter(
+      (l): l is { a: number; b: number; edge: GraphViewEdge } =>
+        l.a !== undefined && l.b !== undefined && l.a !== l.b,
+    );
+
+  // Ideal edge length for a unit-area square: Fruchterman–Reingold's `k`.
+  const k = Math.sqrt(1 / Math.max(1, n));
+  const xs = new Float64Array(n);
+  const ys = new Float64Array(n);
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < n; i++) {
+    const radius = 0.5 * Math.sqrt((i + 0.5) / Math.max(1, n));
+    xs[i] = radius * Math.cos(i * golden);
+    ys[i] = radius * Math.sin(i * golden);
+  }
+
+  const dx = new Float64Array(n);
+  const dy = new Float64Array(n);
+  let temperature = 0.1;
+  const cooling = temperature / (OVERVIEW_ITERATIONS + 1);
+  for (let iter = 0; iter < OVERVIEW_ITERATIONS; iter++) {
+    dx.fill(0);
+    dy.fill(0);
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        let ddx = xs[i]! - xs[j]!;
+        let ddy = ys[i]! - ys[j]!;
+        let dist2 = ddx * ddx + ddy * ddy;
+        if (dist2 < 1e-12) {
+          // A deterministic nudge for two nodes on the same spot.
+          ddx = 1e-6 * (i - j);
+          ddy = 1e-6;
+          dist2 = ddx * ddx + ddy * ddy;
+        }
+        const f = (k * k) / dist2;
+        dx[i]! += ddx * f;
+        dy[i]! += ddy * f;
+        dx[j]! -= ddx * f;
+        dy[j]! -= ddy * f;
+      }
+    }
+    for (const { a, b } of links) {
+      const ddx = xs[a]! - xs[b]!;
+      const ddy = ys[a]! - ys[b]!;
+      const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 1e-6;
+      const f = dist / k;
+      dx[a]! -= ddx * f;
+      dy[a]! -= ddy * f;
+      dx[b]! += ddx * f;
+      dy[b]! += ddy * f;
+    }
+    for (let i = 0; i < n; i++) {
+      // Gravity: keeps the unconnected entities in view.
+      dx[i]! -= (xs[i]! * 0.6) / k;
+      dy[i]! -= (ys[i]! * 0.6) / k;
+      const len = Math.sqrt(dx[i]! * dx[i]! + dy[i]! * dy[i]!) || 1;
+      const step = Math.min(len, temperature);
+      xs[i]! += (dx[i]! / len) * step;
+      ys[i]! += (dy[i]! / len) * step;
+    }
+    temperature -= cooling;
+  }
+
+  // Fit to the canvas, keeping the aspect ratio.
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < n; i++) {
+    minX = Math.min(minX, xs[i]!);
+    maxX = Math.max(maxX, xs[i]!);
+    minY = Math.min(minY, ys[i]!);
+    maxY = Math.max(maxY, ys[i]!);
+  }
+  const spanX = maxX - minX || 1;
+  const spanY = maxY - minY || 1;
+  const scale = Math.min(
+    (OVERVIEW_WIDTH - OVERVIEW_MARGIN * 2) / spanX,
+    (OVERVIEW_HEIGHT - OVERVIEW_MARGIN * 2) / spanY,
+  );
+  const offX = (OVERVIEW_WIDTH - spanX * scale) / 2;
+  const offY = (OVERVIEW_HEIGHT - spanY * scale) / 2;
+  const px = (i: number) => round(n === 1 ? OVERVIEW_WIDTH / 2 : offX + (xs[i]! - minX) * scale);
+  const py = (i: number) => round(n === 1 ? OVERVIEW_HEIGHT / 2 : offY + (ys[i]! - minY) * scale);
+
+  const maxSupport = ranked.reduce((m, e) => Math.max(m, e.support), 1);
+  const nodes: OverviewNode[] = ranked.map((e, i) => ({
+    id: e.id,
+    label: e.label,
+    displayLabel: truncateLabel(e.label, OVERVIEW_LABEL_MAX),
+    type: e.type,
+    support: e.support,
+    rank: i,
+    x: px(i),
+    y: py(i),
+    // Area, not radius, tracks support: a node twice as backed looks twice as big.
+    r: round(
+      OVERVIEW_NODE_MIN_R +
+        (OVERVIEW_NODE_MAX_R - OVERVIEW_NODE_MIN_R) * Math.sqrt(e.support / maxSupport),
+    ),
+  }));
+
+  const maxEdge = links.reduce((m, l) => Math.max(m, l.edge.support), 1);
+  const adjacency = new Map<string, Set<string>>();
+  const link = (from: string, to: string) => {
+    const set = adjacency.get(from) ?? new Set<string>();
+    set.add(to);
+    adjacency.set(from, set);
+  };
+  const outEdges: OverviewEdge[] = links.map(({ a, b, edge }) => {
+    link(edge.fromId, edge.toId);
+    link(edge.toId, edge.fromId);
+    return {
+      key: `${edge.fromId}|${edge.toId}`,
+      fromId: edge.fromId,
+      toId: edge.toId,
+      x1: px(a),
+      y1: py(a),
+      x2: px(b),
+      y2: py(b),
+      strokeWidth: round(0.6 + 2 * (edge.support / maxEdge)),
+    };
+  });
+
+  return { width: OVERVIEW_WIDTH, height: OVERVIEW_HEIGHT, nodes, edges: outEdges, adjacency };
+}
+
+/**
+ * Screen-reader label of the whole-graph picture. Short on purpose (owner,
+ * 2026-10-21): the counts and the "same as the list" sentence were dropped.
+ */
+export const OVERVIEW_DESCRIPTION = 'Mapa de conexiones';
+
+/** Plain-Spanish labels for the colour key, one per drawn type. */
+export function overviewLegend(): Array<{ type: GraphViewType; label: string }> {
+  return GRAPH_VIEW_TYPES.map((type) => ({ type, label: typeListLabel(type) }));
+}
+
+export const OVERVIEW_ZOOM_IN = 'Acercar';
+export const OVERVIEW_ZOOM_OUT = 'Alejar';
+export const OVERVIEW_RESET = 'Ver todo';
 
 // ── Supporting documents for an edge ───────────────────────────────────────
 

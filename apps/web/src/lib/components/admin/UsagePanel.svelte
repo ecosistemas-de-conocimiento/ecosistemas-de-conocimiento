@@ -71,8 +71,7 @@
 {#if budget}
   <p class="caveat" data-testid="budget">
     {#if budgetText}
-      <strong>Presupuesto de IA:</strong> {budgetText} gastado. Es todo lo que el servicio de IA
-      cobró a este ecosistema: respuestas, preparación de búsquedas e indexación de documentos.
+      <strong>Presupuesto de IA:</strong> {budgetText} gastado.
     {:else}
       No pudimos leer el presupuesto de IA de este ecosistema.
     {/if}

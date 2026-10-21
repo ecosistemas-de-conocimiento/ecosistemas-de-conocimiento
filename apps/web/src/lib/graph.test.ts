@@ -11,6 +11,7 @@ import {
   egoNeighbours,
   emptyGraphCopy,
   expandGraphQuery,
+  connectedEntities,
   filterEntities,
   GRAPH_EMPTY_NOTHING_PUBLISHED,
   GRAPH_EMPTY_NOTHING_PUBLISHED_HINT,
@@ -19,16 +20,12 @@ import {
   GRAPH_NO_ECOSYSTEM,
   GRAPH_NO_ECOSYSTEM_ADMIN,
   GRAPH_NO_RESULTS,
-  GRAPH_PICK_ENTITY,
   GRAPH_RELATION_TYPES,
-  GRAPH_SWITCHER_SCOPE_NOTE,
   GRAPH_VIEW_TYPES,
   graphContextParagraph,
   graphEcosystemHref,
   graphEntityHref,
-  graphSubtitle,
   groupByType,
-  hiddenCopy,
   isGraphEntityType,
   isViewableEntityType,
   MAX_EXPANSION_CHARS,
@@ -40,6 +37,10 @@ import {
   parseGraphNeighbour,
   parseGraphRetrieval,
   parseGraphView,
+  mergeNeighbours,
+  overviewLayout,
+  OVERVIEW_HEIGHT,
+  OVERVIEW_WIDTH,
   rankEntities,
   rankNeighbours,
   relationLabel,
@@ -51,7 +52,6 @@ import {
   switcherCountCopy,
   truncateLabel,
   typeChipLabel,
-  typeListHint,
   typeListLabel,
   type ContentKind,
   type EgoLayout,
@@ -76,7 +76,7 @@ const neighbour = (
   e: GraphEntity,
   support: number = e.support,
   relationType: GraphRelationType = 'relacionado_con',
-): GraphNeighbour => ({ entity: e, relationType, support, documents: null });
+): GraphNeighbour => ({ entity: e, relationType, direction: 'out', support, documents: null });
 
 const doc = (id: string, title = `Documento ${id}`): GraphDocument => ({
   id,
@@ -211,10 +211,10 @@ describe('🔴 persona is shown like any other type — and why that is safe', (
   // testimony that mentions both X and Y". A person is subject to it exactly
   // like a tema: the backend withholds sub-threshold rows and reports them in
   // `hidden`, and the page says so out loud rather than swallowing the number.
-  it('says out loud that sub-threshold entities are withheld', () => {
+  it('still reads how many sub-threshold entities are withheld', () => {
     const view = parseGraphView({ entities: [PERSONA_ROW], hidden: 4, minSupport: 3 });
     expect(view.hidden).toBe(4);
-    expect(hiddenCopy(view.hidden, view.minSupport)).toContain('menos de 3 documentos');
+    expect(view.minSupport).toBe(3);
   });
 });
 
@@ -261,6 +261,7 @@ describe('parseGraphView', () => {
         // ⚠ `null`, not `0`. "We do not know how much is published" and "nothing
         // is published" are the two states this field exists to separate.
         publishedDocuments: null,
+        edges: [],
       });
     },
   );
@@ -427,6 +428,8 @@ describe('parseGraphNeighbour', () => {
     expect(wrapped).toEqual({
       entity: entity('t1', 'tema', 'Agua', 4),
       relationType: 'ocurre_en',
+      // No `direction` from an older backend reads as the stored direction.
+      direction: 'out',
       support: 6,
       // Absent, not empty — this payload carries no per-edge evidence.
       documents: null,
@@ -434,6 +437,7 @@ describe('parseGraphNeighbour', () => {
     expect(parseGraphNeighbour({ id: 't1', type: 'tema', label: 'Agua', support: 4 })).toEqual({
       entity: entity('t1', 'tema', 'Agua', 4),
       relationType: 'relacionado_con',
+      direction: 'out',
       support: 4,
       documents: null,
     });
@@ -707,39 +711,13 @@ describe('the Spanish vocabulary', () => {
     expect(relationLabel(relation)).not.toContain('_');
   });
 
-  // ⚠ Every list gets a sentence saying what it is. A bare heading leaves a
-  // first-time reader guessing, which is the thing this product cannot afford.
-  it.each(GRAPH_VIEW_TYPES)('explains the %s list in one sentence', (type) => {
-    expect(typeListHint(type).length).toBeGreaterThan(0);
-    expect(typeListHint(type)).toMatch(/\.$/);
-  });
-
-  // 🔴 THE ONE HINT THAT IS ALSO A PROMISE. A list of names in a corpus
-  // built partly from testimonies invites exactly one worry, and the page
-  // answers it where the reader meets it rather than in a tooltip or an ADR.
-  // The claim is true because the extraction gate keys on `contentKind` and
-  // fails closed -- see `apps/backend/src/lib/graph/types.ts`.
-  it('tells the reader on the page that a name cannot come from a testimonio', () => {
-    expect(typeListHint('persona')).toContain('Nunca salen de un testimonio');
-  });
-
   // ⚠ The enumerations must not drift out of step with `GRAPH_VIEW_TYPES`.
   // Both of these name the lists in prose, and prose is where a new type gets
   // silently forgotten.
-  it('names every list in the subtitle and in the empty-state hint', () => {
-    const subtitle = graphSubtitle('Ecosistema Norte');
+  it('names every list in the empty-state hint', () => {
     for (const type of GRAPH_VIEW_TYPES) {
       const plural = typeListLabel(type).toLowerCase();
-      expect(subtitle.toLowerCase()).toContain(plural);
       expect(GRAPH_EMPTY_NOTHING_PUBLISHED_HINT.toLowerCase()).toContain(plural);
-    }
-    expect(subtitle).toContain('Ecosistema Norte');
-  });
-
-  it('invites the reader to pick any of the types, persona included', () => {
-    expect(GRAPH_PICK_ENTITY).toContain('persona');
-    for (const type of GRAPH_VIEW_TYPES) {
-      expect(GRAPH_PICK_ENTITY.toLowerCase()).toContain(typeChipLabel(type));
     }
   });
 });
@@ -811,13 +789,6 @@ describe('the two “no ecosistema” sentences', () => {
     expect(noEcosystemCopy(true)).toBe(GRAPH_NO_ECOSYSTEM_ADMIN);
     expect(noEcosystemCopy(true)).not.toContain('Pídele acceso');
     expect(noEcosystemCopy(true)).not.toContain('no perteneces');
-  });
-
-  // ⚠ ADR §7.1, said on the page. A picker listing every tenant reads as "I am
-  // seeing more now"; it is not, and the note is what stops that misreading.
-  it('says switching changes scope, not permissions', () => {
-    expect(GRAPH_SWITCHER_SCOPE_NOTE).toContain('no de permisos');
-    expect(GRAPH_SWITCHER_SCOPE_NOTE).toContain('mismo mínimo de documentos');
   });
 });
 
@@ -903,41 +874,6 @@ describe('contentKindLabel', () => {
     const out = contentKindLabel(kind as ContentKind);
     expect(out.label.length).toBeGreaterThan(0);
     expect(out.tone).toBe(kind === 'testimonio' ? 'voice' : 'document');
-  });
-});
-
-describe('hiddenCopy', () => {
-  // Nothing hidden means the caller renders nothing — not a reassuring
-  // "0 ocultas" line that only draws attention to a non-event.
-  it.each([0, -1, 0.4])('says nothing for %p', (hidden) => {
-    expect(hiddenCopy(hidden, 3)).toBeNull();
-  });
-
-  // ⚠ A number we hold and do not show is a number that makes an empty screen
-  // look like a bug. The threshold is stated, and so is the reason for it.
-  it('names the threshold when the backend named one', () => {
-    const copy = hiddenCopy(4, 3)!;
-    expect(copy).toContain('4 entidades que no se muestran');
-    expect(copy).toContain('menos de 3 documentos publicados');
-    expect(copy).toMatch(/a propósito/i);
-  });
-
-  // Without a threshold it must not invent one — "menos de 0 documentos" is
-  // both false and unreadable.
-  it.each([null, 1])('says "muy pocos" rather than inventing a number for %p', (minSupport) => {
-    const copy = hiddenCopy(4, minSupport)!;
-    expect(copy).toContain('muy pocos documentos publicados');
-    expect(copy).not.toMatch(/menos de/);
-  });
-
-  it('agrees in number', () => {
-    expect(hiddenCopy(1, null)!).toContain('Hay 1 entidad que no se muestra ');
-    expect(hiddenCopy(2, null)!).toContain('Hay 2 entidades que no se muestran ');
-  });
-
-  // The whole point of the threshold, said in the sentence that reports it.
-  it('says who the threshold protects', () => {
-    expect(hiddenCopy(1, null)!).toMatch(/protege a quien contó algo una sola vez/);
   });
 });
 
@@ -1509,13 +1445,6 @@ describe('regressions', () => {
     expect(resultsSummary({ total: 1, shown: 1, filtered: false })).toBe('1 entidad');
   });
 
-  // ⚠ Same defect, in the sentence that explains the threshold — the one piece
-  // of copy that has to be believed for an empty graph not to read as a bug.
-  it('agrees the verb with the hidden count', () => {
-    expect(hiddenCopy(1, 3)).toContain('Hay 1 entidad que no se muestra porque aparece en');
-    expect(hiddenCopy(4, 3)).toContain('entidades que no se muestran porque aparecen en');
-  });
-
   // ⚠ ABSENT AND ZERO ARE DIFFERENT. A support the backend actually sent is
   // taken as sent; only a missing one falls back to the entity's own count.
   // Redrawing a 0 as the entity's full count puts a fat spoke on a thin edge,
@@ -1587,5 +1516,227 @@ describe('regressions', () => {
     const unknown = parseGraphView({ entities: [], hidden: 0 });
     expect(unknown.publishedDocuments).toBeNull();
     expect(emptyGraphCopy(unknown).title).toBe(GRAPH_EMPTY_THRESHOLD);
+  });
+});
+
+// ── Backlog #7: the first topic crashed the page ──────────────────────────
+
+describe('🔴 one row per neighbour (backlog #7, Svelte each_key_duplicate)', () => {
+  // Measured 2026-10-21 on local `edc_backend`: "traducción en salud" reaches
+  // "consentimiento informado" by `afecta_a` (3 documents) AND
+  // `relacionado_con` (5). The panel and the ego network key by entity id, so
+  // two rows for one neighbour blanked `/grafo?entidad=…`.
+  const raw = {
+    entity: { id: '160', type: 'tema', label: 'traducción en salud', support: 30 },
+    neighbours: [
+      {
+        entity: { id: '161', type: 'tema', label: 'consentimiento informado', support: 12 },
+        relationType: 'afecta_a',
+        support: 3,
+        direction: 'out',
+        documents: [
+          { id: '1', title: 'A' },
+          { id: '2', title: 'B' },
+        ],
+      },
+      {
+        entity: { id: '161', type: 'tema', label: 'consentimiento informado', support: 12 },
+        relationType: 'relacionado_con',
+        support: 5,
+        direction: 'both',
+        documents: [
+          { id: '2', title: 'B' },
+          { id: '3', title: 'C' },
+        ],
+      },
+      {
+        entity: { id: '162', type: 'lugar', label: 'Morelos', support: 9 },
+        relationType: 'ocurre_en',
+        support: 4,
+      },
+    ],
+    documents: [
+      { id: '1', title: 'A' },
+      { id: '1', title: 'A' },
+      { id: '2', title: 'B' },
+    ],
+  };
+
+  it('folds a neighbour reached by two relations into one row', () => {
+    const detail = parseGraphEntityDetail(raw)!;
+    const ids = detail.neighbours.map((n) => n.entity.id);
+    expect(ids).toEqual([...new Set(ids)]);
+    expect(ids).toEqual(['161', '162']);
+  });
+
+  it('names the folded edge by its strongest relation, with the union of the evidence', () => {
+    const folded = parseGraphEntityDetail(raw)!.neighbours[0]!;
+    expect(folded.relationType).toBe('relacionado_con');
+    expect(folded.support).toBe(5);
+    expect(folded.documents!.map((d) => d.id)).toEqual(['2', '3', '1']);
+  });
+
+  it('never hands the page two documents with one id', () => {
+    const detail = parseGraphEntityDetail(raw)!;
+    expect(detail.documents.map((d) => d.id)).toEqual(['1', '2']);
+  });
+
+  it('keeps `documents: null` when no row sent per-edge evidence', () => {
+    const a = neighbour(entity('x', 'tema', 'X', 4), 3, 'afecta_a');
+    const b = neighbour(entity('x', 'tema', 'X', 4), 4, 'ocurre_en');
+    const merged = mergeNeighbours([a, b]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.documents).toBeNull();
+    expect(merged[0]!.relationType).toBe('ocurre_en');
+  });
+});
+
+// ── Backlog #16: incoming edges read backwards ────────────────────────────
+
+describe('relationLabel reads from the entity in focus', () => {
+  it('turns an incoming "está en" into "incluye"', () => {
+    // "Xoxocotla ubicado_en Morelos", seen from Morelos.
+    expect(relationLabel('ubicado_en', 'out')).toBe('está en');
+    expect(relationLabel('ubicado_en', 'in')).toBe('incluye');
+  });
+
+  it('has a plain Spanish label for every relation in both directions', () => {
+    for (const relation of GRAPH_RELATION_TYPES) {
+      for (const direction of ['out', 'in', 'both'] as const) {
+        const label = relationLabel(relation, direction);
+        expect(label).not.toContain('_');
+        expect(label.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('says only what is true either way when the direction is mixed', () => {
+    expect(relationLabel('afecta_a', 'both')).toBe('se relaciona con');
+  });
+
+  it('reads the direction off the wire, and an older backend as the stored direction', () => {
+    const base = {
+      entity: { id: 'a', type: 'lugar', label: 'Xoxocotla', support: 4 },
+      relationType: 'ubicado_en',
+    };
+    expect(parseGraphNeighbour({ ...base, direction: 'in' })!.direction).toBe('in');
+    expect(parseGraphNeighbour({ ...base, direction: 'junk' })!.direction).toBe('out');
+    expect(parseGraphNeighbour(base)!.direction).toBe('out');
+  });
+});
+
+// ── Backlog #3: the whole graph on load ───────────────────────────────────
+
+describe('parseGraphView edges', () => {
+  const entities = [
+    { id: 'a', type: 'tema', label: 'Agua', support: 9 },
+    { id: 'b', type: 'lugar', label: 'Oaxaca', support: 5 },
+  ];
+
+  it('keeps one edge per pair, and only between listed entities', () => {
+    const view = parseGraphView({
+      entities,
+      edges: [
+        { from: 'a', to: 'b', support: 4 },
+        { from: 'b', to: 'a', support: 4 },
+        { from: 'a', to: 'zz', support: 9 },
+        { from: 'a', to: 'a', support: 9 },
+      ],
+    });
+    expect(view.edges).toEqual([{ fromId: 'a', toId: 'b', support: 4 }]);
+  });
+
+  it('reads an older backend with no edges as none', () => {
+    expect(parseGraphView({ entities }).edges).toEqual([]);
+  });
+});
+
+describe('connectedEntities — the overview hides degree-0 nodes (owner, 2026-10-21)', () => {
+  const rows = [
+    entity('a', 'tema', 'Agua', 9),
+    entity('b', 'lugar', 'Oaxaca', 5),
+    entity('c', 'tema', 'Aislado', 7),
+    entity('d', 'evento', 'Solo consigo', 4),
+  ];
+  const edges = [
+    { fromId: 'a', toId: 'b', support: 3 },
+    { fromId: 'd', toId: 'd', support: 3 }, // a self-loop is not a connection
+    { fromId: 'c', toId: 'zz', support: 3 }, // nor is an edge to an unlisted id
+  ];
+
+  it('keeps only entities with an edge to another listed entity, in input order', () => {
+    expect(connectedEntities(rows, edges).map((e) => e.id)).toEqual(['a', 'b']);
+  });
+
+  it('draws nothing when nothing is connected', () => {
+    expect(connectedEntities(rows, [])).toEqual([]);
+  });
+
+  it('🔴 the lists still show every entity, isolated ones included', () => {
+    // The page passes `data.view.entities` through `filterEntities` to the lists
+    // and through `connectedEntities` only inside `OverviewGraph`.
+    expect(filterEntities(rows, '').map((e) => e.id)).toEqual(['a', 'b', 'c', 'd']);
+    expect(rows).toHaveLength(4); // not mutated
+    const drawn = overviewLayout(connectedEntities(rows, edges), edges).nodes.map((n) => n.id);
+    expect(drawn.sort()).toEqual(['a', 'b']);
+  });
+});
+
+describe('overviewLayout', () => {
+  // A corpus-sized fixture: 190 entities, a hub-and-spoke core and loose ends.
+  const many = Array.from({ length: 190 }, (_, i) =>
+    entity(`e${i}`, GRAPH_VIEW_TYPES[i % GRAPH_VIEW_TYPES.length]!, `Entidad ${i}`, 3 + (i % 40)),
+  );
+  const edges = Array.from({ length: 90 }, (_, i) => ({
+    fromId: `e${i % 12}`,
+    toId: `e${12 + i}`,
+    support: 3 + (i % 5),
+  }));
+
+  it('is deterministic: the same graph draws the same picture', () => {
+    expect(overviewLayout(many, edges)).toEqual(overviewLayout(many, edges));
+  });
+
+  it('keeps every node inside the canvas', () => {
+    const layout = overviewLayout(many, edges);
+    for (const node of layout.nodes) {
+      expect(node.x).toBeGreaterThanOrEqual(0);
+      expect(node.x).toBeLessThanOrEqual(OVERVIEW_WIDTH);
+      expect(node.y).toBeGreaterThanOrEqual(0);
+      expect(node.y).toBeLessThanOrEqual(OVERVIEW_HEIGHT);
+      expect(Number.isFinite(node.r)).toBe(true);
+    }
+  });
+
+  it('gives every node and every edge a unique key', () => {
+    const layout = overviewLayout(many, edges);
+    expect(new Set(layout.nodes.map((n) => n.id)).size).toBe(layout.nodes.length);
+    expect(new Set(layout.edges.map((e) => e.key)).size).toBe(layout.edges.length);
+  });
+
+  it('ranks the strongest entity first and draws it biggest', () => {
+    const layout = overviewLayout(many, edges);
+    const biggest = Math.max(...layout.nodes.map((n) => n.r));
+    expect(layout.nodes[0]!.rank).toBe(0);
+    expect(layout.nodes[0]!.r).toBe(biggest);
+  });
+
+  it('knows who is connected to whom, both ways', () => {
+    const layout = overviewLayout(many, edges);
+    expect(layout.adjacency.get('e0')?.has('e12')).toBe(true);
+    expect(layout.adjacency.get('e12')?.has('e0')).toBe(true);
+  });
+
+  it('copes with one entity and with none', () => {
+    expect(overviewLayout([], []).nodes).toEqual([]);
+    const one = overviewLayout([entity('x', 'tema', 'X', 3)], []);
+    expect(one.nodes[0]).toMatchObject({ x: OVERVIEW_WIDTH / 2, y: OVERVIEW_HEIGHT / 2 });
+  });
+
+  it('lays out a corpus-sized graph quickly', () => {
+    const start = performance.now();
+    overviewLayout(many, edges);
+    // Generous ceiling so a slow CI host does not flake.
+    expect(performance.now() - start).toBeLessThan(1500);
   });
 });

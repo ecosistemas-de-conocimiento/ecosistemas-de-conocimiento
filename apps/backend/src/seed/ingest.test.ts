@@ -66,7 +66,7 @@ describe('ingestSeededDocuments — rate limit', () => {
       random: () => 0,
     })
 
-    expect(result).toEqual({ enqueued: 1, failed: 0 })
+    expect(result).toEqual({ enqueued: 1, failed: 0, held: 0 })
     expect(enqueue).toHaveBeenCalledTimes(2)
     expect(slept).toContain(4321)
     expect(updates.at(-1)?.data).toEqual({ publishIngestId: 'ing-1' })
@@ -111,7 +111,7 @@ describe('ingestSeededDocuments — drafts', () => {
 
     expect(updates).toEqual([{ id: 20, data: {} }])
     expect(n).toBe(2)
-    expect(result).toEqual({ enqueued: 1, failed: 0 })
+    expect(result).toEqual({ enqueued: 1, failed: 0, held: 0 })
   })
 
   it('does not poll a draft when not asked to', async () => {

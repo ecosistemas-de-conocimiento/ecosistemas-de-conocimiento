@@ -25,9 +25,15 @@
  * would let raw testimony through the gate labelled `ready`, into a corpus with
  * no per-document delete. So: THROW. `gate.ts` turns a throw into a HOLD, which
  * is the honest answer to "we do not know".
+ *
+ * ⚠ BUT A CALL THAT NEVER GOT AN ANSWER IS NOT A CONTENT FINDING. A 429, a 5xx,
+ * a 402 budget refusal, a broken connection or our own timeout throws a
+ * {@link DetectorFailure} with `infrastructure: true`. It still fails CLOSED —
+ * nothing is ingested — but `anonymiseDocument.ts` records it as RETRYABLE, not
+ * as a Revisión hold a human has to clear. Revisión is for real findings.
  */
 
-import { withRateLimitRetry } from '@/lib/aiRetry'
+import { withRateLimitRetry, type RetryOptions } from '@/lib/aiRetry'
 
 import { chunkText } from './chunk'
 import type { DetectorFinding, PersonDetector } from './types'
@@ -36,6 +42,44 @@ import type { DetectorFinding, PersonDetector } from './types'
 export const ANONYMISE_CHUNK_WORDS_VAR = 'ANONYMISE_CHUNK_WORDS'
 export const ANONYMISE_DETECT_CONCURRENCY_VAR = 'ANONYMISE_DETECT_CONCURRENCY'
 export const ANONYMISE_DETECT_TIMEOUT_MS_VAR = 'ANONYMISE_DETECT_TIMEOUT_MS'
+export const ANONYMISE_DETECT_MIN_GAP_MS_VAR = 'ANONYMISE_DETECT_MIN_GAP_MS'
+
+/**
+ * 🔴 THE ONLY KNOB THAT BOUNDS DETECTOR CALLS PER MINUTE, PROCESS-WIDE.
+ *
+ * `ANONYMISE_DETECT_CONCURRENCY` caps chunks in flight PER `detect()` call — one
+ * stage of one document. Documents gated in parallel multiply it, and a
+ * document's call count is 2 × its chunk count, so no per-document spacing can
+ * promise a calls/min figure. This gap is between the START of any two detector
+ * calls in this process (retries included). 2_700 ms ≈ 22 calls/min, under
+ * ai-service's 30/min generate cap per key. Unset or 0 = off.
+ *
+ * ⚠ Other generate callers on the same key (graph extraction) are not paced by
+ * this.
+ */
+let nextDetectSlotAt = 0
+
+/** Reserve the next start slot synchronously, then wait for it. */
+async function paceDetectCall(sleep: (ms: number) => Promise<void>): Promise<void> {
+  const gap = nonNegativeIntFromEnv(ANONYMISE_DETECT_MIN_GAP_MS_VAR, 0)
+  if (gap <= 0) return
+  const now = Date.now()
+  const slot = Math.max(now, nextDetectSlotAt)
+  nextDetectSlotAt = slot + gap
+  if (slot > now) await sleep(slot - now)
+}
+
+function nonNegativeIntFromEnv(name: string, fallback: number): number {
+  const text = (process.env[name] ?? '').trim()
+  if (text === '') return fallback
+  const n = Number(text)
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback
+}
+
+const realSleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
 
 /**
  * Words per detector call. See `chunk.ts` for the measurement: the reply cap
@@ -136,16 +180,37 @@ export const DETECT_SYSTEM_PROMPT = [
   'Domicilios (marca "lugar"). Incluye TODOS estos casos, completos o parciales:',
   '- Calles, avenidas, andadores, cerradas, privadas y sus números.',
   '- Colonias, barrios, fraccionamientos, unidades habitacionales, manzana y lote.',
-  '- Códigos postales, alcaldías, delegaciones y municipios cuando ubican un domicilio.',
+  '- Ranchos y parajes con nombre: "el rancho Los Pinos", "el paraje Tres Cruces".',
+  '- Códigos postales.',
   '- Referencias sin formato que permiten llegar a una casa: "enfrente de la tienda',
   '  de doña Mari", "subiendo por donde está el tanque", "la casa de la reja verde".',
   '- Un domicilio partido en varias frases cuenta como varios hallazgos, uno por trozo.',
   '- Incluye en el tramo la palabra genérica que encabeza el lugar: "colonia Las Flores",',
   '  "tortillería de Doña Lupe", no solo "Las Flores" ni "Doña Lupe".',
   '',
-  '⚠ No marques como "lugar" un municipio, estado o pueblo mencionado solo como',
-  'origen o como tema ("el problema del agua en Cuernavaca"). Márcalo cuando ubique',
-  'dónde vive, trabaja o estudia alguien.',
+  // 🔴 OWNER'S RULING (2026-10-21, backlog #12): town and municipality names are
+  // SHOWN. They are what a testimony is about, and a town alone points at
+  // thousands of people, not at one home. The line between "shown" and "marked"
+  // is the size of the unit, not how the sentence uses it:
+  //   · shown: estado, municipio, alcaldía, ciudad, pueblo, comunidad, localidad,
+  //     ejido, congregación — WHATEVER ITS SIZE. A small locality is shown too:
+  //     a reader cannot tell a 300-person pueblo from a 3,000-person one, and a
+  //     size cut-off the model cannot check is a rule it applies at random.
+  //   · marked: anything inside a locality — colonia, barrio, fraccionamiento,
+  //     unidad habitacional, rancho, paraje, a street, a house.
+  // ⚠ "Rancho"/"paraje" are marked only when the WORD is said: in rural Mexico a
+  // rancho is often one family's land. A locality whose name merely contains
+  // "Rancho" ("vivo en Rancho Nuevo") is a town and is shown.
+  '⚠ NUNCA marques estados, municipios, alcaldías, ciudades, pueblos, comunidades,',
+  'localidades, ejidos ni congregaciones, aunque sean pequeños y aunque digan dónde',
+  'vive, trabaja o estudia alguien. En "vivo en Xoxocotla, Morelos" no hay hallazgo.',
+  'Marca todo lo de la lista Domicilios aunque esté en una ciudad o pueblo.',
+  '"Rancho Nuevo" como nombre de un pueblo no se marca.',
+  // ⚠ Many Mexican towns carry a person's name (Dolores, Soledad, Guadalupe).
+  // The town rule must not become a reason to leave a person's name in.
+  '⚠ El nombre de una persona SIEMPRE se marca como "persona", aunque también sea el',
+  'nombre de un pueblo: en "mi tía Soledad" el hallazgo es "Soledad"; en "Dolores me',
+  'dijo" el hallazgo es "Dolores".',
   '',
   'Tipos: "persona" para nombres de personas; "lugar" para domicilios y lugares identificables;',
   '"contacto" para teléfonos, correos y redes; "identificador" para folios, CURP, RFC y números',
@@ -169,6 +234,12 @@ export class DetectorFailure extends Error {
     /** A failure CLASS, never the text. `gate.ts` puts this in a user-visible reason. */
     public readonly failureClass: string,
     message: string,
+    /**
+     * 🔴 TRUE WHEN THE MODEL NEVER ANSWERED (429, 5xx, 402, network, timeout).
+     * The gate still refuses to ingest, but the row is left RETRYABLE instead
+     * of held for review. False for anything about the answer itself.
+     */
+    public readonly infrastructure: boolean = false,
   ) {
     super(message)
     this.name = 'DetectorFailure'
@@ -326,6 +397,12 @@ export interface AIServiceDetectorOptions {
   timeoutMs?: number
   /** Injected in tests so a 429 retry does not really sleep. */
   sleep?: (ms: number) => Promise<void>
+  /**
+   * Per-chunk retry budget. Default: `aiRetry.ts`'s 4 tries / 120 s, sized for
+   * an upload a person is waiting on. The bulk seed passes its patient
+   * `SEED_PUBLISH_RETRY` here so two full-window 429s do not end the run.
+   */
+  retry?: Pick<RetryOptions, 'attempts' | 'budgetMs' | 'sleep' | 'random' | 'log'>
 }
 
 /**
@@ -408,8 +485,9 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
       const perChunk = await mapBounded(chunks, concurrency, async (chunk) => {
         let result: { text: string }
         try {
-          // ⚠ A 429, a 503, a broken connection and our own timeout are retried
-          // (`aiRetry.ts`, `retryTransient`): at most 3 retries, Retry-After when
+          // ⚠ A 429, a 500/502/503/504, a broken connection and our own timeout
+          // are retried (`aiRetry.ts`, `retryTransient`): by default 3 retries
+          // (`opts.retry` raises it for the seed), Retry-After when
           // the server sends one, else 1 s, 2 s, 4 s, all under one total sleep
           // ceiling. Anything else, and the last failure, throws through to a
           // HOLD — never to "nothing to redact".
@@ -421,8 +499,9 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
           // ⚠ The ceiling counts SLEEP, not attempts in flight: a chunk that
           // times out every time takes up to 4 × `timeoutMs` plus ~7 s.
           result = await withRateLimitRetry(
-            () =>
-              gen.generate.sync(
+            async () => {
+              await paceDetectCall(opts.sleep ?? opts.retry?.sleep ?? realSleep)
+              return gen.generate.sync(
                 {
                   unit: {
                     // 🔴 UNIQUE PER CALL. ai-service keys a unit's latest generation
@@ -445,8 +524,10 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
                   effortLevel: 'quick',
                 },
                 { timeoutMs },
-              ),
+              )
+            },
             {
+              ...(opts.retry ?? {}),
               label: 'anonymise-detect',
               retryTransient: true,
               ...(opts.sleep ? { sleep: opts.sleep } : {}),
@@ -463,6 +544,9 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
             timedOut
               ? `The anonymisation detector timed out after ${timeoutMs} ms.`
               : `The anonymisation detector could not reach ai-service: ${name}`,
+            // Every throw out of the CALL (as opposed to the parse below) means
+            // the model never answered: rate limit, 5xx, budget, auth, network.
+            true,
           )
         }
         return parseFindings(result.text ?? '', chunk.text)

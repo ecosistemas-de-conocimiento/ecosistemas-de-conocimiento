@@ -7,7 +7,7 @@
  *
  * 🔴 PAID MODEL CALLS unless GATE_DRY=1. Every chunk of every transcript goes to
  * ai-service once for detect and once per verify round (up to
- * `ANONYMISE_VERIFY_ROUNDS`, default 3). Before rounds, measured 2026-10-17 on host `torre`
+ * `ANONYMISE_VERIFY_ROUNDS`, default 1). Before rounds, measured 2026-10-17 on host `torre`
  * (local stack, load average 18-45), summing `costUsd` over the JSONL rows: two
  * batches of 6 runs at 1.2k / 4.9k / 9.5k words (GATE_WORDS=1000,5000,10000
  * GATE_RUNS=2 GATE_VARY=1) cost $0.164 and $0.160, about $0.33 together, so

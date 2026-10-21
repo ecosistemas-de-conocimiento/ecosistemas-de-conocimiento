@@ -329,7 +329,12 @@ export async function seedDemo(
       if (opts.tier === 'manual') {
         await ingestSeededDocuments(payload, orgId, { awaitDrafts: true })
       } else {
-        void ingestSeededDocuments(payload, orgId).catch((err) => {
+        // 🔴 `awaitDrafts` HERE TOO. Without it a draft's slot ends at the
+        // re-save, and its gate (a `setImmediate` in the hook) runs detached —
+        // so `SEED_INGEST_CONCURRENCY` bounded the saves, not the model calls.
+        // The whole call is already detached from boot, so waiting costs the
+        // server nothing.
+        void ingestSeededDocuments(payload, orgId, { awaitDrafts: true }).catch((err) => {
           payload.logger.warn(
             `[seed-demo] background corpus ingest failed: ${err instanceof Error ? err.message : String(err)}`,
           )

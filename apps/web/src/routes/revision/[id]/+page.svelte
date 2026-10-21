@@ -7,7 +7,8 @@
    * ── 🔴 THE FOUR THINGS THIS SCREEN OWES THE PERSON READING IT ─────────────
    *
    *  1. THAT THEY ARE READING THE REDACTED VERSION. They never see the
-   *     original. Without the notice, "edit" reads as "restore the words".
+   *     original. ⚠ The notice paragraph that said so was removed by owner
+   *     ruling (UX backlog #33, 2026-10-21); the placeholders now carry it.
    *  2. WHERE THE GATE FOUND SOMETHING. Highlighted, so nobody hunts through
    *     forty minutes of transcript — and NOT highlighted once they have typed,
    *     because the offsets stop being true the moment the text moves.
@@ -27,27 +28,23 @@
     APPROVE_RECORDED,
     CANCEL_LABEL,
     DETAIL_UNAVAILABLE,
-    EDIT_HINT,
-    EDITING_REDACTED_NOTICE,
     formatHoldDate,
     highlightsAreStale,
     MAX_NOTE_LENGTH,
     NO_SURVIVORS,
     NO_TEXT_NOTICE,
     NOTE_LABEL,
-    NOTE_NOT_PRIVATE,
     NOTE_PLACEHOLDER,
     REJECT_CONFIRM,
     REJECT_CONSEQUENCE,
     REJECT_LABEL,
     segmentHeldText,
-    stageLabel,
     STALE_HIGHLIGHTS_NOTICE,
     survivorBreakdown,
-    SURVIVORS_HINT,
     SURVIVORS_TITLE,
     survivorLabel,
   } from '$lib/holds';
+  import { holdSummary } from '../holdSummary';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -83,6 +80,10 @@
   const stale = $derived(highlightsAreStale(original, text));
   const segments = $derived(original === null ? [] : segmentHeldText(text, hold?.survivors ?? []));
   const breakdown = $derived(survivorBreakdown(hold?.survivors ?? []));
+  /** ⚠ Counted from the same highlights as the chips below, so the numbers agree. */
+  const summary = $derived(
+    hold ? holdSummary({ ...hold, survivorCount: hold.survivors.length }) : null,
+  );
 </script>
 
 <svelte:head><title>Documento retenido · Ecosistemas de Conocimiento</title></svelte:head>
@@ -97,13 +98,13 @@
       <!-- 🔴 The gate's NEUTRAL title, as sent. -->
       <h1 data-testid="hold-title">{hold.title}</h1>
       <p class="sub">
-        {stageLabel(hold.stage)} lo detuvo.
+        {summary?.why}
         {#if formatHoldDate(hold.updatedAt)}
           <span class="date">{formatHoldDate(hold.updatedAt)}</span>
         {/if}
       </p>
-      {#if hold.reason}
-        <p class="reason">{hold.reason}</p>
+      {#if summary}
+        <p class="reason">{summary.detail}</p>
       {/if}
     </header>
 
@@ -118,9 +119,6 @@
             <li class="chip">{row.label} · {row.count}</li>
           {/each}
         </ul>
-        {#if !stale}
-          <p class="hint">{SURVIVORS_HINT}</p>
-        {/if}
       {/if}
     </section>
 
@@ -132,16 +130,15 @@
     {:else}
       <section class="block" aria-labelledby="text-title">
         <h2 id="text-title">El texto retenido</h2>
-        <!-- 🔴 THE SENTENCE THAT MAKES THE EDITOR HONEST. Above the text, not
-             below it: read after you have started editing, it is too late. -->
-        <p class="notice" data-testid="hold-redacted-notice">{EDITING_REDACTED_NOTICE}</p>
+        <!-- ⚠ The "you are reading the redacted version" notice and the edit
+             hint were removed by owner ruling (UX backlog #33, 2026-10-21): no
+             explainer paragraphs. The placeholders in the text show it. -->
 
         {#if stale}
           <p class="warn" data-testid="hold-stale">{STALE_HIGHLIGHTS_NOTICE}</p>
         {/if}
 
         {#if editing}
-          <p class="hint">{EDIT_HINT}</p>
           <label class="sr-only" for="hold-text">Texto tachado del documento</label>
           <textarea
             id="hold-text"
@@ -189,8 +186,6 @@
       {/if}
 
       <div class="note-field">
-        <!-- ⚠ ABOVE the box, word for word the sentence the rating box uses. -->
-        <p class="hint" data-testid="hold-note-notice">{NOTE_NOT_PRIVATE}</p>
         <label for="hold-note">{NOTE_LABEL}</label>
         <textarea
           id="hold-note"

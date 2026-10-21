@@ -31,6 +31,13 @@
  *      stamp `failed`, which puts the turn back in the runnable set so the next
  *      message in the thread retries it.
  *
+ *   5. A gate that could not RUN — the model never answered (429, 5xx, 402,
+ *      timeout), so `enqueueIngestForDoc` wrote `ingestStatus: 'failed'` with
+ *      `anonymisation_unavailable` and left the gate at `n/a`. 🔴 THIS SWEEP
+ *      RE-DRIVES IT after a cooldown, a few rows per pass, through the same
+ *      reset `POST /:id/retry` uses. Nothing was sent to the corpus, so a
+ *      repeat cannot duplicate anything; it costs at most two model calls.
+ *
  * ⚠ 2–4 NEVER RE-DRIVE. Same reasons as `embeddingJanitor.ts`: an outcome we
  * cannot see, and a shared 100 req/min ai-service bucket.
  *
@@ -57,6 +64,7 @@ import {
   startJanitor,
   stopJanitor,
 } from './janitorScheduler'
+import { GATE_UNAVAILABLE_CODE, GATE_UNAVAILABLE_INGEST_CODE } from './anonymiseDocument'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import { relationId } from './permissions'
 
@@ -65,6 +73,17 @@ export const INGEST_RECOVERY_INTERVAL_MIN_VAR = 'INGEST_RECOVERY_JANITOR_INTERVA
 export const TRANSCRIBED_DRIVE_MIN_VAR = 'INGEST_RECOVERY_TRANSCRIBED_MIN'
 export const STAGE_STUCK_MIN_VAR = 'INGEST_RECOVERY_STAGE_STUCK_MIN'
 export const MESSAGE_STUCK_MIN_VAR = 'INGEST_RECOVERY_MESSAGE_STUCK_MIN'
+export const GATE_RETRY_MIN_VAR = 'INGEST_RECOVERY_GATE_RETRY_MIN'
+
+/**
+ * A row whose gate could not run is re-driven once it is this old. inferred:
+ * longer than one ai-service rate-limit window (60 s) many times over, so a
+ * burst has drained; short enough that a demo row recovers within the hour.
+ */
+export const DEFAULT_GATE_RETRY_MIN = 15
+
+/** At most this many unavailable-gate rows are re-driven per pass. */
+export const DEFAULT_GATE_RETRY_LIMIT = 5
 
 /**
  * Every minute (the scheduler's floor). This sweep is now the step that moves
@@ -165,6 +184,21 @@ export function lostGateRunWhere(cutoff: string): Where[] {
   ]
 }
 
+/**
+ * A draft whose gate could not run (see `GATE_UNAVAILABLE_INGEST_CODE`), waiting
+ * for a retry. `n/a` re-asserts that no human decision sits on the row.
+ */
+export function unavailableGateWhere(cutoff: string): Where[] {
+  return [
+    { ingestStatus: { equals: 'failed' } },
+    { ingestError: { like: `${GATE_UNAVAILABLE_INGEST_CODE}:` } },
+    { anonymisationStatus: { equals: 'n/a' } },
+    { ingestId: { exists: false } },
+    { publicationStatus: { equals: 'draft' } },
+    { updatedAt: { less_than: cutoff } },
+  ]
+}
+
 /** A chat turn claimed for ingest and never confirmed. */
 export function stalledMessageWhere(cutoff: string): Where[] {
   return [{ corpusStatus: { equals: 'embedding' } }, { updatedAt: { less_than: cutoff } }]
@@ -227,7 +261,7 @@ async function failOutDocuments(
   payload: Pick<Payload, 'find' | 'update'>,
   where: Where[],
   reason: string,
-  opts: { limit: number; log?: Log; label: string },
+  opts: { limit: number; log?: Log; label: string; extra?: Record<string, unknown> },
 ): Promise<FailOutResult> {
   const page = (await payload.find({
     collection: 'documents',
@@ -245,7 +279,7 @@ async function failOutDocuments(
       const res = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
         id: doc.id,
         where,
-        data: { ingestStatus: 'failed', ingestError: reason.slice(0, 500) },
+        data: { ingestStatus: 'failed', ingestError: reason.slice(0, 500), ...(opts.extra ?? {}) },
       })
       if (res > 0) stalled += 1
     } catch (err) {
@@ -284,8 +318,74 @@ export function sweepLostGateRuns(
     payload,
     lostGateRunWhere(cutoffIso(now, ms)),
     gateStalledReason(Math.round(ms / 60_000)),
-    { limit: opts.limit ?? 500, log: opts.log, label: 'lost gate run' },
+    {
+      limit: opts.limit ?? 500,
+      log: opts.log,
+      label: 'lost gate run',
+      /**
+       * 🔴 THE GATE STATE TOO, not only the ingest. Left at `pending`, the row
+       * was skipped forever: the seed's gate claim refuses `pending`
+       * (`GATE_CLAIM_GUARD`), so a seed re-run never picked it up. `n/a` + the
+       * unavailable code is the retryable "gate not run" state. It also voids
+       * the lost run's token, so if that run is somehow still alive its final
+       * write matches nothing.
+       */
+      extra: {
+        anonymisationStatus: 'n/a',
+        anonymisationError: `${GATE_UNAVAILABLE_CODE}: stalled: the gate run did not finish`,
+      },
+    },
   )
+}
+
+export interface RedriveResult {
+  examined: number
+  /** Reset to `pending`; the `afterChange` hook re-runs the gate. */
+  redriven: number
+}
+
+/**
+ * Re-run the gate for drafts it could not finish (case 5 in the header).
+ *
+ * ⚠ THE SAME RESET AS `POST /:id/retry` (`ingestStatus: 'pending'`, no
+ * `__skipDocsExtract`), so the ordinary hook does the work. A row that fails
+ * again comes back with a fresh `updatedAt` and waits another cooldown.
+ */
+export async function sweepUnavailableGateRuns(
+  payload: Pick<Payload, 'find' | 'update'>,
+  opts: SweepOpts = {},
+): Promise<RedriveResult> {
+  const now = opts.now ?? new Date()
+  const ms = opts.deadlineMs ?? minutesFromEnv(GATE_RETRY_MIN_VAR, DEFAULT_GATE_RETRY_MIN) * 60_000
+  const where = unavailableGateWhere(cutoffIso(now, ms))
+  const page = (await payload.find({
+    collection: 'documents',
+    where: { and: where },
+    sort: 'updatedAt',
+    limit: opts.limit ?? DEFAULT_GATE_RETRY_LIMIT,
+    depth: 0,
+    overrideAccess: true,
+  })) as unknown as { docs?: Array<{ id?: number | string }> }
+  const docs = page?.docs ?? []
+  let redriven = 0
+  for (const doc of docs) {
+    if (doc?.id == null) continue
+    try {
+      const res = await payload.update({
+        collection: 'documents',
+        where: { and: [{ id: { equals: doc.id } }, ...where] },
+        data: { ingestStatus: 'pending', ingestError: null, ingestId: null },
+        overrideAccess: true,
+      })
+      if (changed(res)) redriven += 1
+    } catch (err) {
+      opts.log?.warn(
+        { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+        '[ingest-recovery] could not re-drive a row whose gate could not run',
+      )
+    }
+  }
+  return { examined: docs.length, redriven }
 }
 
 /** The slice of a `transcribed` row the drive reads. */
@@ -576,6 +676,7 @@ export async function runIngestRecoveryPass(
     await step('transcribed', () => driveTranscribedDocuments(payload, { log }))
     await step('extracting', () => sweepStalledExtracting(payload, { log }))
     await step('gate', () => sweepLostGateRuns(payload, { log }))
+    await step('gate-unavailable', () => sweepUnavailableGateRuns(payload, { log }))
     await step('messages', () =>
       sweepStalledMessages(payload, { log, readIngestStatus: messageJobStatusReader(payload) }),
     )

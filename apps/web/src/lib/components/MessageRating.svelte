@@ -142,9 +142,7 @@
         data-testid={`message-rating-other-${msg.id}`}
       ></textarea>
       <!-- Saving on blur, not on every keystroke: one write per thought, and
-           nothing is lost if they click away. Leaving it empty is fine —
-           "ninguno de estos" is itself a real answer. -->
-      <span class="text-ink-soft">Se guarda al salir del recuadro. Puedes dejarlo vacío.</span>
+           nothing is lost if they click away. -->
     </div>
   {/if}
 

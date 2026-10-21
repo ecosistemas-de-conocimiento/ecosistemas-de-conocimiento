@@ -215,6 +215,61 @@ describe('deterministicPass — domicilios', () => {
     }
   })
 
+  it('🔴 shows towns, municipalities, alcaldías and states (owner, 2026-10-21, #12)', () => {
+    // A town points at thousands of people, not at one home. The street, the
+    // colonia and the C.P. beside it are still caught — see the next assertion.
+    for (const line of [
+      'Vivo en Xoxocotla, Morelos.',
+      'Trabajo en el municipio de Puente de Ixtla.',
+      'Vivo en la Alcaldía Iztapalapa, cerca del metro.',
+      'fui a la Alcaldía Benito Juárez y luego de eso me fui',
+      'Estudio en la Delegación Coyoacán.',
+      'Soy de Rancho Nuevo, Chiapas.',
+    ]) {
+      const out = run(line)
+      expect(out.text, line).toBe(line)
+      expect(out.removed, line).toEqual([])
+    }
+    expect(run('Vivo en calle Morelos No. 45, Xoxocotla, Morelos, C.P. 62680.').text).toBe(
+      'Vivo en [Domicilio A], Xoxocotla, Morelos, [Domicilio B].',
+    )
+    expect(run('Vivo en Col. Portales, Alcaldía Benito Juárez.').text).toBe(
+      'Vivo en [Domicilio A], Alcaldía Benito Juárez.',
+    )
+    expect(run('Mi código es C.P. 06700.').text).toBe('Mi código es [Domicilio A].')
+  })
+
+  it('🔴 swallows Mz./Lt. after a named settlement (audit leak, 2026-10-21)', () => {
+    // Was: `[Domicilio A]. 4 Lt. 12` — the block and lot numbers stayed.
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['U.H. Vicente Guerrero Mz. 4 Lt. 12', '[Domicilio A]'],
+      ['Vivo en U.H. Vicente Guerrero Mz. 4 Lt. 12, cerca del metro.', 'Vivo en [Domicilio A], cerca del metro.'],
+      ['Col. Las Palmas, Mz. 7, Lt. 3.', '[Domicilio A].'],
+      ['Cerrada Josefa Ortiz No. 7, U.H. Vicente Guerrero Mz. 4 Lt. 12.', '[Domicilio A].'],
+    ]
+    for (const [input, expected] of cases) {
+      expect(run(input).text, input).toBe(expected)
+    }
+  })
+
+  it('🔴 takes a lower-case colonia name whole (audit leak, 2026-10-21)', () => {
+    // Was: `[Domicilio A] cruz`.
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['col. santa cruz', '[Domicilio A]'],
+      ['Vivo en col. santa cruz, cerca de la iglesia.', 'Vivo en [Domicilio A], cerca de la iglesia.'],
+      ['col. santa maría la ribera.', '[Domicilio A].'],
+      ['calle ermita no. 12, col. santa cruz', '[Domicilio A]'],
+      ['col. santa cruz mz. 4 lt. 12', '[Domicilio A]'],
+      // ⚠ The brake: with no terminator, or at a clause word, it stops.
+      ['col. santa cruz desde hace años', '[Domicilio A] cruz desde hace años'],
+      ['col. portales y despues de eso ya no supe mas', '[Domicilio A] y despues de eso ya no supe mas'],
+      ['col. portales delante del pozo', '[Domicilio A] delante del pozo'],
+    ]
+    for (const [input, expected] of cases) {
+      expect(run(input).text, input).toBe(expected)
+    }
+  })
+
   it('🔴 does NOT match a loose word run with a bare number — the sentence trap', () => {
     // `en la calle hay 20 casas` is ordinary Spanish and is the sentence the
     // two-arm design in `DOMICILIO` exists to refuse. It matched while the
@@ -235,11 +290,11 @@ describe('deterministicPass — domicilios', () => {
     expect(labels(out.removed)).toEqual([DETERMINISTIC_LABELS.codigoPostal])
   })
 
-  it('redacts abbreviated settlements: Col., Fracc., Mz./Lt., Alcaldía', () => {
+  it('redacts abbreviated settlements: Col., Fracc., Mz./Lt.', () => {
     for (const line of [
+      'Col. Portales, por el mercado.',
       'Fracc. Los Sauces, casa 22.',
       'Mz. 4 Lt. 12, por allá.',
-      'Alcaldía Iztapalapa, cerca del metro.',
     ]) {
       const out = run(line)
       expect(out.text, line).toContain('[Domicilio A]')
@@ -309,10 +364,6 @@ describe('deterministicPass — domicilios', () => {
         '[Domicilio A] y ahí vivía mi tía Rosa',
       ],
       ['Col. Portales y despues de eso ya no supe mas', '[Domicilio A] y despues de eso ya no supe mas'],
-      [
-        'fui a la Alcaldía Benito Juárez y luego de eso me fui',
-        'fui a la [Domicilio A] y luego de eso me fui',
-      ],
     ]
     for (const [input, expected] of cases) {
       expect(run(input).text, input).toBe(expected)
@@ -383,6 +434,12 @@ describe('deterministicPass — domicilios', () => {
        */
       'Calle Morelos No. 45' + ' '.repeat(100_000) + 'x',
       'Col. Portales' + '\n'.repeat(64_000) + 'x',
+      // The lower-case settlement name and the Mz./Lt. tail (2026-10-21).
+      'col. ' + 'santa '.repeat(20_000),
+      'col. santa' + ' '.repeat(100_000) + 'cruz maría de la ribera vive',
+      'col. santa cruz' + ' '.repeat(100_000) + 'x',
+      'U.H. Vicente Guerrero Mz.' + ' '.repeat(100_000) + 'x',
+      'Col. Las Palmas, Mz. 7' + ' '.repeat(100_000) + 'Lt',
     ]
     for (const text of cases) {
       const started = performance.now()

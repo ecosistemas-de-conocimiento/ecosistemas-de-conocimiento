@@ -36,8 +36,7 @@ export const AI_UNAVAILABLE_CODE = 'ai_unavailable';
  */
 export const ANSWER_NOT_SAVED_CODE = 'ANSWER_NOT_SAVED';
 
-export const ANSWER_NOT_SAVED_MESSAGE =
-  'No pudimos guardar esta respuesta. No podrás calificarla y no aparecerá si recargas la página.';
+export const ANSWER_NOT_SAVED_MESSAGE = 'No pudimos guardar esta respuesta.';
 
 /** The notice to show under an answer, from the turn's warnings; `undefined` when none applies. */
 export function answerNotice(

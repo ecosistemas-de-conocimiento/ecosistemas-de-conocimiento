@@ -31,7 +31,9 @@ vi.mock('@/lib/aiClient', () => ({
   getAdminAIClient: () => ({ admin: { setDocumentValidity, deleteDocument } }),
 }))
 
-import { up as baselineUp } from '../migrations/20260908_092211_baseline'
+// Every migration, not the baseline alone: the booted config expects the
+// columns later ones add (`documents.uploaded_in_session_id`).
+import { migrations } from '../migrations'
 
 const CONTAINER = `edc-backend-owner-guard-pg-${process.pid}`
 const IMAGE = 'postgres:16-alpine'
@@ -96,7 +98,7 @@ describe.skipIf(!dockerOk)('deleting someone else’s conversation, on a real Po
     const url = await startPostgres()
     db = drizzle(url)
     await waitForQueries(db)
-    await baselineUp({ db, payload: {}, req: {} } as unknown as MigrateUpArgs)
+    for (const m of migrations) await m.up({ db, payload: {}, req: {} } as unknown as MigrateUpArgs)
 
     process.env.DATABASE_URI = url
     process.env.PAYLOAD_SECRET = 'owner-guard-test-secret'

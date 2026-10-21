@@ -47,7 +47,7 @@
  * happened. Retrying any of those wastes the caller's time at best and
  * duplicates work at worst. See {@link isRateLimited}.
  *
- * ⚠ ONE OPT-IN EXCEPTION: `retryTransient` adds 503s, broken connections and
+ * ⚠ ONE OPT-IN EXCEPTION: `retryTransient` adds 500/502/503/504s, broken connections and
  * our own timeouts, for callers whose repeat is harmless (the anonymisation
  * detector). Off by default; the publish paths leave it off.
  */
@@ -150,6 +150,9 @@ export function waitWithJitter(err: unknown, random: () => number = Math.random)
 /** First exponential step for a transient failure with no server hint: 1 s, 2 s, 4 s, … */
 export const TRANSIENT_BASE_WAIT_MS = 1_000
 
+/** Server statuses a harmless repeat may wait out. See {@link isTransient}. */
+const TRANSIENT_STATUSES = new Set([500, 502, 503, 504])
+
 /** Socket-level codes that mean "the connection broke", not "the server said no". */
 const TRANSIENT_NETWORK_CODES = new Set([
   'ECONNRESET',
@@ -163,17 +166,21 @@ const TRANSIENT_NETWORK_CODES = new Set([
 ])
 
 /**
- * A 503, a broken connection, or OUR OWN per-call timeout — the failures
- * {@link RetryOptions.retryTransient} opts into.
+ * A 500/502/503/504, a broken connection, or OUR OWN per-call timeout — the
+ * failures {@link RetryOptions.retryTransient} opts into.
+ *
+ * ⚠ A 500 CAN MEAN THE WORK HALF-HAPPENED. That is exactly why this is opt-in:
+ * only a caller whose repeat is harmless (the read-only anonymisation detector)
+ * passes `retryTransient`. Before 2026-10-21 a 500 from the detector's upstream
+ * model ended as a permanent Revisión hold on the first try.
  *
  * ⚠ A caller CANCEL (`RequestAbortedError` with `reason: 'cancel'`) is not
- * transient: something on our side asked to stop. Neither is a 500, which can
- * mean the work half-happened.
+ * transient: something on our side asked to stop.
  */
 export function isTransient(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false
   const e = err as { status?: unknown; name?: unknown; reason?: unknown; code?: unknown; cause?: unknown; message?: unknown }
-  if (e.status === 503) return true
+  if (typeof e.status === 'number' && TRANSIENT_STATUSES.has(e.status)) return true
   if (e.name === 'RequestAbortedError') return e.reason === 'timeout'
   const code = e.code ?? (e.cause as { code?: unknown } | null | undefined)?.code
   if (typeof code === 'string' && TRANSIENT_NETWORK_CODES.has(code)) return true
@@ -238,7 +245,7 @@ export interface RetryOptions {
   attempts?: number
   budgetMs?: number
   /**
-   * Also retry a 503, a broken connection and our own timeout
+   * Also retry a 500/502/503/504, a broken connection and our own timeout
    * ({@link isTransient}), with exponential backoff when the server gives no
    * hint. Same attempt cap, same total ceiling. Default false.
    *

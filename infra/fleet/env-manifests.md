@@ -126,6 +126,8 @@ first. Coolify names the project after the resource, so volumes are per environm
 |---|---|---|
 | `SEED_DOMAIN` | unset | 💤 dev may set `1`; stage is refused by the gate anyway |
 | `SEED_CORPUS_INGEST` | `0` | 💤 needs the corpus, which Coolify does not have |
+| `INGEST_ASSISTANT_TURNS` | unset | 💤 no effect since 2026-10-21: no chat turn (question or answer) is ingested at all; the callers are removed (`collections/Messages.ts`). Leave unset |
+| `CHAT_RETRIEVE_ASSISTANT_CHUNKS` | unset | 💤 removed 2026-10-21: chat always drops every conversation-turn chunk (over-fetching 3 per leg), so no switch remains (`apps/web/src/lib/turnChunks.ts`). Leave unset |
 | `POSTGRES_USER`, `BACKEND_DB_NAME`, `AI_DB_NAME` | `edc`, `edc_backend`, `edc_ai` | 💤 per-env stores, so the defaults are fine |
 | `RUSTFS_MEMORY` | `1g` | 💤 |
 | `RERANK_API_KEY` | unset | 🔑 **the switch.** Hosted DeepInfra rerank, owner-approved. Setting it turns rerank on (guard in ai-service's `command:` exports `RERANK_ENABLED=true` when the key is non-empty and `RERANK_ENABLED` is unset). Unset ⇒ off, plus one boot warning about the missing key — expected. Not required |
@@ -159,6 +161,7 @@ values fall back to the default unless noted.
 | `CHAT_RERANK` | web | on | 💤 cross-encoder rerank on each corpus retrieve. `off`/`0`/`false`/`no` turns it off. Only takes effect where ai-service has rerank on (`RERANK_API_KEY`, §2d); a failing rerank falls back to the plain retrieve |
 | `QUERY_EXPANSION` | web | on | 💤 rewords the question before searching: one extra `quick` model call per turn. `off`/`0`/`false`/`no` turns it off |
 | `CHAT_RETRIEVAL_MODE` | web | dense | 💤 `dense` or `hybrid`. `hybrid` makes ONE `/v1/retrieve/multi` call in hybrid mode (cosine + Spanish keyword search), drafts limited server-side by `corpusFilters` + `docId $in`. Needs ai-service's `metadataFilterIn` capability; without it chat stays dense and web logs it once. Query expansion does not apply on the hybrid path. Flip only after `apps/backend/src/eval/RESULTS.md` shows a win (audit C-4) |
+| `CHAT_CITE_VARIANT` | web | unset (`A`) | 💤 🔴 **dev only; leave unset in staging and production.** Prompt A/B of the chat cite rule (`CITE_RULE_VARIANTS` in `apps/web/src/lib/server/engine/prompt.ts`): `A` the 8a1df66 rule, `B` cite less and answer more, `C` B's citation limit with no no-answer instruction, `D` B plus a partial-answer example. Unset or unknown is `A`. Read per request (`$env/dynamic/private`), so a change needs a container recreate, not a rebuild; `docker restart` alone does not pick it up (`runbook.md`, "Migrations must live in the container CMD"). Recreate as in `edc-1.md` §4d, with `web` in place of `ai-service`. Each turn logs `[prompt] cite variant X` at debug level. Set it `is_buildtime: false` |
 | `PROMPT_SOURCE` | web | unset (inline prompt) | 💤 🔴 `registry` pulls the chat prompt from ai-service's registry. Set it only after each ecosistema org has its `chat` registry row, or every turn answers 400 |
 
 Fixed inside the compose file, so **not** set in Coolify: `NODE_ENV` (`production`), `PORT`, `HOST`,
@@ -181,7 +184,7 @@ fall back to the default.
 | `ANONYMISE_CHUNK_WORDS` | backend | `250` | 💤 words per detector call. Whole paragraphs are packed up to it; a longer paragraph splits at sentences. Raising it brings back the cut-off replies |
 | `ANONYMISE_DETECT_CONCURRENCY` | backend | `3` | 💤 chunk calls in flight per stage. ai-service allows 30 generations/min per key; a 429 waits what ai-service asked (`AI_RETRY_*`, `lib/aiRetry.ts`) |
 | `ANONYMISE_DETECT_TIMEOUT_MS` | backend | `90000` | 💤 per-call deadline. Without it the client's 30 s default applied, and one measured call aborted there. Keep below ai-service's `LLM_REQUEST_TIMEOUT_MS` |
-| `ANONYMISE_VERIFY_ROUNDS` | backend | `3` | 💤 verify passes per document (`lib/anonymise/gate.ts`). A pass that finds leftovers redacts them and the next pass checks again; leftovers on the last pass hold the document. Each extra pass costs about one stage-3 pass (inferred: same chunks). `1` restores the old judge-only verify |
+| `ANONYMISE_VERIFY_ROUNDS` | backend | `1` | 💤 verify passes per document (`lib/anonymise/gate.ts`). `1`: verify only judges and any leftover holds the document (fail-closed). Higher is an opt-in: a pass that finds leftovers redacts them and the next pass checks again; leftovers on the last pass hold. 🔴 `3` let a whole name reach `ready` in 2 of 12 runs ("el Chacho Melgarejo", "la señora Lucrecia"; measured 2026-10-18, local stack, real model, 4,866-word text). Each extra pass costs about one stage-3 pass (inferred: same chunks) |
 
 🔴 Any failed chunk holds the whole document. There is no partial `ready`.
 

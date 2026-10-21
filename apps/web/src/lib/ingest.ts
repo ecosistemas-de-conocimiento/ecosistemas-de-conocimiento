@@ -25,6 +25,7 @@
  */
 
 import type { AudioMeta, DocKind, IngestStatus } from './types';
+import { AUDIO_UPLOAD_ENABLED } from './uploadKind';
 
 /** Backend values, mirrored. A value we do not know reads as `n/a`. */
 export const INGEST_STATUSES: readonly IngestStatus[] = [
@@ -106,13 +107,6 @@ export function transcriptionEtaCopy(audioMeta: AudioMeta | null | undefined): s
   return 'Transcribiendo el audio. Puede tardar tanto como dura la grabación.';
 }
 
-/**
- * ⚠ NOT OPTIONAL, and not decoration. A user who does not know a wait is
- * measured in hours will assume the upload broke.
- */
-export const TRANSCRIBING_REASSURANCE =
-  'Puedes cerrar esta ventana: el documento se sigue procesando en el servidor y estará listo cuando vuelvas.';
-
 // ── Provenance ─────────────────────────────────────────────────────────────
 
 /**
@@ -185,7 +179,7 @@ export function ingestBadge(
       return {
         label: 'transcribiendo…',
         tone: 'pending',
-        title: `${transcriptionEtaCopy(audioMeta)} ${TRANSCRIBING_REASSURANCE}`,
+        title: transcriptionEtaCopy(audioMeta),
       };
     case 'transcribed':
       return {
@@ -257,7 +251,9 @@ export function ingestFailureCopy(ingestError: string | null | undefined): Inges
     case 'unsupported_media_type':
       return {
         title: 'Formato no admitido',
-        message: 'Aceptamos PDF, DOCX y audio en MP3, M4A, WAV, OGG u OPUS.',
+        message: AUDIO_UPLOAD_ENABLED
+          ? 'Aceptamos PDF, DOCX y audio en MP3, M4A, WAV, OGG u OPUS.'
+          : 'Aceptamos PDF y DOCX.',
         needsDifferentFile: true,
       };
     case 'payload_too_large':
@@ -440,7 +436,6 @@ export function audioMetaChips(audioMeta: AudioMeta | null | undefined): AudioMe
 
 export interface UploadInFlightCopy {
   title: string;
-  message: string;
 }
 
 /**
@@ -452,16 +447,9 @@ export interface UploadInFlightCopy {
  */
 export function uploadInFlightCopy(isAudio: boolean): UploadInFlightCopy {
   if (isAudio) {
-    return {
-      title: 'Subiendo la grabación…',
-      message:
-        'En cuanto termine de subir empieza la transcripción, que tarda más o menos lo que dura la grabación. No hace falta que esperes aquí.',
-    };
+    return { title: 'Subiendo la grabación…' };
   }
-  return {
-    title: 'Subiendo el documento…',
-    message: 'Se procesa en cuanto termine de subir; suele tardar poco.',
-  };
+  return { title: 'Subiendo el documento…' };
 }
 
 // ── Reading the transcript ─────────────────────────────────────────────────
@@ -469,27 +457,8 @@ export function uploadInFlightCopy(isAudio: boolean): UploadInFlightCopy {
 export const TRANSCRIPT_PREVIEW_SHOW = 'Ver transcripción';
 export const TRANSCRIPT_PREVIEW_HIDE = 'Ocultar transcripción';
 
-/**
- * ⚠ THE REASON THE TRANSCRIPT IS READABLE AT ALL. Machine transcription makes
- * mistakes, and this text is about to be quoted as fact to the whole
- * ecosistema. A transcript nobody can inspect is worse than one they can.
- */
-export const TRANSCRIPT_REVIEW_PROMPT =
-  'Léela antes de publicarla: si el audio se escuchaba mal, aquí se nota.';
-
-/**
- * ⚠ "Léela antes de publicarla" is advice, and advice about a step already
- * taken is noise that teaches people to skip the next sentence too. Once the
- * transcript is shared it is dropped; the provenance warning beside it stays,
- * because THAT is still true — a published transcript can still be wrong.
- */
-export function transcriptReviewPrompt(publicationStatus: string): string | null {
-  return publicationStatus === 'draft' ? TRANSCRIPT_REVIEW_PROMPT : null;
-}
-
 /** Nothing to read yet, said without implying the transcript was lost. */
-export const TRANSCRIPT_UNAVAILABLE =
-  'Todavía no tenemos el texto aquí. Aparecerá en cuanto termine de procesarse.';
+export const TRANSCRIPT_UNAVAILABLE = 'Todavía no hay texto.';
 
 /** `'hola que tal'` → `3 palabras`. Null for an empty transcript. */
 export function transcriptStatsCopy(text: string | null | undefined): string | null {
@@ -515,7 +484,7 @@ export function transcriptReadyCallToAction(input: {
   if (!isTranscript(input.kind)) return null;
   if (input.ingestStatus !== 'ready') return null;
   if (input.publicationStatus !== 'draft') return null;
-  return 'La transcripción está lista y por ahora solo tú la ves. Revísala aquí abajo, corrige lo que haga falta y publícala para que aparezca en los documentos de tu ecosistema.';
+  return 'Transcripción lista.';
 }
 
 // ── Correcting the transcript ──────────────────────────────────────────────
@@ -582,44 +551,9 @@ export function transcriptEditGate(input: TranscriptEditGateInput): {
   return { canEdit: true, reason: null };
 }
 
-/** Why the edit is unavailable, in words the user can act on. */
-export function transcriptEditBlockedCopy(reason: TranscriptEditBlockedReason): string {
-  switch (reason) {
-    case 'not-a-transcript':
-      return 'Este documento no es una transcripción.';
-    case 'published':
-      // ⚠ Says WHY, not just "no". "Ya está publicado" alone reads as an
-      // arbitrary rule; the reason is that other people may already cite it.
-      return 'Ya está publicado: otras personas pueden haberlo leído o citado, así que el texto ya no se edita.';
-    case 'in-progress':
-      return 'Espera a que termine de procesarse para corregir el texto.';
-    case 'no-transcript':
-      return 'Todavía no hay texto que corregir.';
-  }
-}
-
-/**
- * ⚠ NOT OPTIONAL, and the reason the whole feature works. People do not proof
- * text they believe a person wrote. Saying out loud that a machine wrote it,
- * right where the cursor goes, is what turns "léela" into "revísala".
- */
-export const TRANSCRIPT_EDIT_INVITATION =
-  'La escribió una máquina y puede tener errores: nombres, lugares o palabras locales. Corrígela aquí antes de publicarla.';
-
 export const TRANSCRIPT_EDIT_START = 'Corregir la transcripción';
 export const TRANSCRIPT_EDIT_SAVE = 'Guardar y volver a indexar';
 export const TRANSCRIPT_EDIT_CANCEL = 'Cancelar';
-
-/**
- * 🔴 SAVING RE-INDEXES, AND THE USER IS TOLD SO BEFORE THEY PRESS IT.
- *
- * A correction that fixed the text on screen but left the chat answering from
- * the old wording would be worse than no editing at all — the person would
- * believe it was fixed and stop checking. Saving therefore re-runs the ingest,
- * which takes a minute or two and is not free, so the button says what it does.
- */
-export const TRANSCRIPT_EDIT_REINDEX_NOTE =
-  'Al guardar, el texto se vuelve a indexar para que el chat responda con la versión corregida. Tarda un par de minutos.';
 
 /** Nothing changed — do not spend an ingest on an identical string. */
 export function transcriptChanged(before: string | null | undefined, after: string): boolean {
@@ -638,5 +572,4 @@ export const TRANSCRIPT_EDIT_EMPTY_ERROR =
 
 /** After a successful save: what happened, and what is still pending. */
 export const TRANSCRIPT_EDIT_SAVED_TITLE = 'Transcripción corregida';
-export const TRANSCRIPT_EDIT_SAVED_MESSAGE =
-  'Guardamos tu versión y la estamos volviendo a indexar. En cuanto diga "listo", el chat responderá con el texto corregido.';
+export const TRANSCRIPT_EDIT_SAVED_MESSAGE = 'Guardada; se está volviendo a indexar.';

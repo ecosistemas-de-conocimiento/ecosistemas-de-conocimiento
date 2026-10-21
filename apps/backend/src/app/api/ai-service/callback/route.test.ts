@@ -11,6 +11,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
+// The ai-service admin client the late-turn erase uses. `clientOrgs` records
+// which ecosistema each client was built for (it sets `X-AI-Org`).
+const deleteDocument = vi.fn(async (_corpus: string, _id: string): Promise<unknown> => ({ deleted: true }))
+const clientOrgs: string[] = []
+vi.mock('@/lib/aiClient', () => ({
+  getAdminAIClient: (org: number | string) => {
+    clientOrgs.push(String(org))
+    return { admin: { deleteDocument } }
+  },
+}))
+
 import { signCallback } from '@/lib/hmac'
 
 const SECRET = 'd'.repeat(64)
@@ -243,6 +254,71 @@ describe('🔴 a handler that throws', () => {
     const body = envelope()
     const res = await post(body, headersFor(body))
     expect(res.status).toBe(200)
+  })
+})
+
+describe('🔴 a turn that lands after its conversation was deleted', () => {
+  // Audit 2026-10-17 §3 item 2: the conversation went while this turn was
+  // `embedding`; ai-service created the document only afterwards, in its
+  // worker, so the post-commit erase found nothing.
+  beforeEach(() => {
+    deleteDocument.mockReset()
+    deleteDocument.mockImplementation(async () => ({ deleted: true }))
+    clientOrgs.length = 0
+    findByIDImpl = async (args) => {
+      if (args.collection === 'messages') throw Object.assign(new Error('Not Found'), { status: 404 })
+      throw new Error(`unexpected findByID ${String(args.collection)}`)
+    }
+  })
+
+  it('🔴 erases msg-<id> from its shared corpus, with that ecosistema’s client', async () => {
+    const body = envelope({ docId: 'msg-77', corpus: 'eco-3' })
+    const res = await post(body, headersFor(body))
+
+    expect(res.status).toBe(200)
+    expect(deleteDocument.mock.calls).toEqual([['eco-3', 'msg-77']])
+    expect(clientOrgs).toEqual(['3'])
+    expect(updated).toHaveLength(0)
+  })
+
+  it('erases on ingest.failed too (a partial landing is still a landing)', async () => {
+    const body = envelope({ event: 'ingest.failed', docId: 'msg-77', corpus: 'eco-3' })
+    await post(body, headersFor(body))
+    expect(deleteDocument.mock.calls).toEqual([['eco-3', 'msg-77']])
+  })
+
+  it('ai-service’s own not-found is success', async () => {
+    deleteDocument.mockImplementation(async () => {
+      throw Object.assign(new Error('nf'), { status: 404, code: 'DOCUMENT_NOT_FOUND' })
+    })
+    const body = envelope({ docId: 'msg-77', corpus: 'eco-3' })
+    expect((await post(body, headersFor(body))).status).toBe(200)
+  })
+
+  it('🔴 a failed erase answers 500 and forgets the event, so ai-service retries', async () => {
+    deleteDocument.mockImplementation(async () => {
+      throw Object.assign(new Error('unavailable'), { status: 503 })
+    })
+    const body = envelope({ docId: 'msg-77', corpus: 'eco-3' })
+    const res = await post(body, headersFor(body))
+    expect(res.status).toBe(500)
+    expect(dedupeRows).toEqual([])
+  })
+
+  it('never erases outside a shared eco-<id> corpus', async () => {
+    for (const corpus of [undefined, 'eco-3-draft-5', 'other']) {
+      const body = envelope({ docId: 'msg-77', ...(corpus ? { corpus } : {}) })
+      expect((await post(body, headersFor(body))).status).toBe(200)
+    }
+    expect(deleteDocument).not.toHaveBeenCalled()
+  })
+
+  it('never erases a turn whose row still exists (a superseded run is only ignored)', async () => {
+    findByIDImpl = async () => ({ id: 77, corpusIngestId: 'ing_new' })
+    const body = envelope({ docId: 'msg-77', corpus: 'eco-3', ingestId: 'ing_old' })
+    expect((await post(body, headersFor(body))).status).toBe(200)
+    expect(deleteDocument).not.toHaveBeenCalled()
+    expect(updated).toHaveLength(0)
   })
 })
 

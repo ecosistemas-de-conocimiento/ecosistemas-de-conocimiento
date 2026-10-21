@@ -15,6 +15,7 @@ import { CHAT_KIND_REGISTRY } from '$lib/engine/registry';
 import { parseExpansionFlag } from './expand';
 import { chatRetrievalPolicy, parseRerankFlag } from './rerank';
 import { hybridRetrievalForTurn } from './hybrid';
+import { chatSystemPrompt, parseCiteVariant, type CiteVariant } from './prompt';
 import type { RetrievalPolicy } from '@edc/chat-engine/core';
 
 /** Re-export the client-safe registry so server code has one import surface. */
@@ -39,19 +40,25 @@ export function engineOrgId(): string {
 export const CHAT_ENGINE_CONFIG: EngineConfig = {
   ...DEFAULT_ENGINE_CONFIG,
   surface: 'chat',
-  systemPrompt:
-    'Eres un asistente que ayuda a una persona a consultar los documentos de su ' +
-    'ecosistema de conocimiento. Tienes acceso a un resumen del contexto (el ' +
-    'ecosistema y los documentos de la conversación) y a fragmentos recuperados ' +
-    'de esos documentos.\n\n' +
-    'Puedes razonar, proponer ideas y aportar conocimiento general. Pero cuando ' +
-    'afirmes hechos sobre el ecosistema o sus documentos, básate en el resumen ' +
-    'y en el contenido recuperado; no inventes detalles. Distingue con claridad ' +
-    'entre lo que consta en el contexto y tus propias sugerencias. Si el contexto ' +
-    'no alcanza para responder algo, dilo explícitamente.\n\n' +
-    'Responde en español, de forma clara y concisa. Usa Markdown (encabezados, ' +
-    'listas, código) cuando ayude a la lectura.',
+  // `./prompt`: pure, so the eval harness imports the same string (variant A).
+  // A getter, so `CHAT_CITE_VARIANT` is read per request: the engine reads
+  // `systemPrompt` once per turn (`buildSystemPrompt` in chat-engine core).
+  get systemPrompt() {
+    return chatSystemPrompt(chatCiteVariant());
+  },
 };
+
+/**
+ * Dev-only prompt A/B: `CHAT_CITE_VARIANT` = `A`|`B`|`C`|`D` picks the cite
+ * rule (`CITE_RULE_VARIANTS` in `./prompt`). Unset or unknown is `A`, the
+ * 8a1df66 prompt. Read per call, so an operator can flip it without a rebuild.
+ * Logs the active variant at debug level, so a measurement can attribute runs.
+ */
+export function chatCiteVariant(): CiteVariant {
+  const variant = parseCiteVariant(env.CHAT_CITE_VARIANT);
+  console.debug(`[prompt] cite variant ${variant}`);
+  return variant;
+}
 
 /**
  * Query expansion on chat turns (`./expand`): `QUERY_EXPANSION=off` turns it

@@ -64,6 +64,18 @@ const ROWS: FakeRow[] = [
     nombre: 'Efrén Peralta Guzmán',
     text: 'E: Gracias por recibirnos. P: Mi pueblo queda en la sierra.',
   },
+  {
+    // ⚠ NOT A CORPUS GENRE. The corpus ships five formatos; this row stands for
+    // one the seed has never heard of. It is still a gated `testimonio` (owner's
+    // ruling: every corpus item is a Voz).
+    id: 'SIM_0003',
+    archivo: 'SIM_0003_escuela_informe_tecnico_corta.txt',
+    ecosistema: 'escuela',
+    formato: 'informe_tecnico',
+    lengua: 'totonaco',
+    nombre: 'Rosa Elena Méndez',
+    text: 'Informe del taller de lectura: asistieron 14 familias.',
+  },
 ]
 
 let corpusDir: string
@@ -150,12 +162,13 @@ describe('reading the corpus in place', () => {
       'carta_presentacion',
       'testimonio',
       'biografia_oral',
+      'informe_tecnico',
     ])
   })
 
   it('drops a manifest row whose file is missing rather than failing the seed', () => {
     fs.rmSync(path.join(corpusDir, 'resultados', 'txt', ROWS[1].archivo))
-    expect(readCorpusManifest(corpusDir).map((e) => e.id)).toEqual(['SIM_0001', 'SIM_0002'])
+    expect(readCorpusManifest(corpusDir).map((e) => e.id)).toEqual(['SIM_0001', 'SIM_0002', 'SIM_0003'])
   })
 })
 
@@ -167,8 +180,8 @@ describe('seeding the corpus as documents', () => {
       uploaderId: 1,
       investigadorId: 2,
     })
-    expect(result?.created).toBe(3)
-    expect(created).toHaveLength(3)
+    expect(result?.created).toBe(4)
+    expect(created).toHaveLength(4)
     expect(created[0].data.extractedText).toBe(ROWS[0].text)
   })
 
@@ -183,15 +196,38 @@ describe('seeding the corpus as documents', () => {
     }
   })
 
-  it('maps only the testimonio genre onto the gated content kind', async () => {
-    // Everything else is somebody's own material, filed under their own name.
-    // See the reasoning on TESTIMONIO_FORMATOS.
+  it('🔴 seeds EVERY row as a testimonio, whatever its formato (owner ruling)', async () => {
+    // In the product every corpus item is a Voz. The genre split is an artefact
+    // of the synthetic corpus, so no formato — not even an unknown one — may
+    // land as an ungated `documento`.
     const { payload, created } = fakePayload()
     await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
-    expect(created.map((d) => d.data.contentKind)).toEqual([
-      'documento',
-      'testimonio',
-      'documento',
+    expect(created).toHaveLength(ROWS.length)
+    expect(created.every((d) => d.data.contentKind === 'testimonio')).toBe(true)
+  })
+
+  it('seeds an unknown formato as a gated testimonio draft, with no corpus id or lengua', async () => {
+    const { payload, created } = fakePayload()
+    await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
+    const informe = created.find((d) => d.data.tema === 'escuela')!
+    expect(informe.data).toMatchObject({
+      contentKind: 'testimonio',
+      // "Testimonio — …", so `publishesAfterGate` leaves it a draft after the gate.
+      name: 'Testimonio — acompañamiento escolar (01)',
+      lengua: null,
+      publicationStatus: 'draft',
+      extractedText: 'Informe del taller de lectura: asistieron 14 familias.',
+    })
+  })
+
+  it('titles a gated carta by genre, theme and number, with no corpus id', async () => {
+    const { payload, created } = fakePayload()
+    await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
+    expect(created.map((d) => d.data.name)).toEqual([
+      'Carta de presentación — traducción en salud (01)',
+      'Testimonio — traducción en salud (01)',
+      'Biografía oral — prevención del dengue (01)',
+      'Testimonio — acompañamiento escolar (01)',
     ])
   })
 
@@ -201,7 +237,7 @@ describe('seeding the corpus as documents', () => {
     // anonymisation design refuses to keep.
     const { payload, created } = fakePayload()
     await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
-    const voz = created.find((d) => d.data.contentKind === 'testimonio')
+    const voz = created.find((d) => String(d.data.name).startsWith('Testimonio'))
     const title = String(voz?.data.name)
     expect(title).not.toContain('SIM_0015')
     for (const row of ROWS) {
@@ -216,16 +252,7 @@ describe('seeding the corpus as documents', () => {
     // Voz's own title. It groups the library and identifies nobody.
     const { payload, created } = fakePayload()
     await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
-    expect(created.map((d) => d.data.tema)).toEqual(['traduccion', 'traduccion', 'dengue'])
-  })
-
-  it('✅ puts the language on a documento — the positive half of the rule', async () => {
-    // Without this assertion every "not on a testimonio" test below would still
-    // pass if the field stopped being written at all (ADR §16.2).
-    const { payload, created } = fakePayload()
-    await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
-    const documentos = created.filter((d) => d.data.contentKind === 'documento')
-    expect(documentos.map((d) => d.data.lengua)).toEqual(['mazateco', 'náhuatl'])
+    expect(created.map((d) => d.data.tema)).toEqual(['traduccion', 'traduccion', 'dengue', 'escuela'])
   })
 
   it('🔴 NEVER puts the language on a testimonio', async () => {
@@ -235,8 +262,7 @@ describe('seeding the corpus as documents', () => {
     // `(tema, lengua)` cells the 59 testimonios fall into hold exactly one.
     const { payload, created } = fakePayload()
     await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
-    const voz = created.find((d) => d.data.contentKind === 'testimonio')
-    expect(voz?.data.lengua).toBeNull()
+    expect(created.map((d) => d.data.lengua)).toEqual([null, null, null, null])
     // …and the manifest really did carry one for that row, so this is a
     // suppression and not an absence.
     expect(ROWS.find((r) => r.formato === 'testimonio')?.lengua).toBe('mixteco')
@@ -251,7 +277,7 @@ describe('seeding the corpus as documents', () => {
     }
   })
 
-  it('files a testimonio under the Investigador, not the uploader of ordinary documents', async () => {
+  it('files every seeded row under the Investigador, not the platform admin', async () => {
     // `uploadedBy` records WHO PERFORMED THE UPLOAD. Filing somebody else's
     // words is `voces:upload`, which is the Investigador's.
     const { payload, created } = fakePayload()
@@ -260,10 +286,7 @@ describe('seeding the corpus as documents', () => {
       uploaderId: 1,
       investigadorId: 2,
     })
-    const voz = created.find((d) => d.data.contentKind === 'testimonio')
-    const doc = created.find((d) => d.data.contentKind === 'documento')
-    expect(voz?.data.uploadedBy).toBe(2)
-    expect(doc?.data.uploadedBy).toBe(1)
+    expect(created.map((d) => d.data.uploadedBy)).toEqual([2, 2, 2, 2])
   })
 
   it('falls back to the ordinary uploader when there is no Investigador', async () => {
@@ -272,40 +295,15 @@ describe('seeding the corpus as documents', () => {
     expect(created.every((d) => d.data.uploadedBy === 1)).toBe(true)
   })
 
-  it('never publishes a testimonio', async () => {
+  it('🔴 never publishes a seeded row: every one is a draft until the gate clears it', async () => {
     // A seeded Voz has never been through the gate, so it has no
     // `redactedText` — and `corpusTextFor` would refuse to publish it. A
     // `published` column there would be a state the product could not produce.
+    // `ingestSeededDocuments` publishes what clears (ingest.gated.test.ts).
     const { payload, created } = fakePayload()
-    await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
-    const voz = created.find((d) => d.data.contentKind === 'testimonio')
-    expect(voz?.data.publicationStatus).toBe('draft')
-  })
-
-  it('publishes documents so the library is not empty, and keeps some as drafts', async () => {
-    // The library screen lists ONLY published rows, so an all-draft seed
-    // reproduces the empty library this seed exists to fix. An all-published
-    // seed cannot show the draft/publish flow.
-    const many: FakeRow[] = Array.from({ length: 24 }, (_, i) => ({
-      id: `SIM_${String(i).padStart(4, '0')}`,
-      archivo: `SIM_${String(i).padStart(4, '0')}_escuela_diario_personal_corta.txt`,
-      ecosistema: 'escuela',
-      formato: 'diario_personal',
-      lengua: 'totonaco',
-      nombre: 'Persona Sintética',
-      text: `Nota ${i}.`,
-    }))
-    fs.rmSync(corpusDir, { recursive: true, force: true })
-    corpusDir = writeCorpus(many)
-    process.env.CORPUS_DIR = corpusDir
-
-    const { payload } = fakePayload()
-    const result = await seedCorpusDocuments(payload as never, {
-      organizationId: 7,
-      uploaderId: 1,
-    })
-    expect(result?.published).toBeGreaterThan(0)
-    expect(result?.drafts).toBeGreaterThan(0)
+    const result = await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
+    expect(result?.created).toBe(ROWS.length)
+    expect(created.every((d) => d.data.publicationStatus === 'draft')).toBe(true)
   })
 
   it('keeps corpus documents out of the prompt: retrieved, never inlined', async () => {

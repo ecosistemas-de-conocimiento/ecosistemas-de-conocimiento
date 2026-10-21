@@ -11,11 +11,14 @@ import {
   __resetSpecSlotForTests,
   dropForbiddenPersonas,
   dropGenericEntities,
+  dropNoiseEntities,
   extractGraph,
   GRAPH_SHAPE_POLICY,
   GRAPH_WORD_CLASSES,
   isGenericLabel,
+  isTransientWindowError,
   policyRejects,
+  splitQualifiedPlaces,
   mergeWindows,
   parseWindowResponse,
   significantTokens,
@@ -382,10 +385,11 @@ describe('🔴 GRAPH_SHAPE_POLICY — the graph-shape decision, as data', () => 
       expect(cls.cost.length, `${name}.cost`).toBeGreaterThan(20)
       expect(cls.words.length, `${name}.words`).toBeGreaterThan(0)
     }
-    // 🔴 The owner's decision (2026-10-16): `español` ONLY. The 2026-09-04
-    // correction that keeps the indigenous languages is cited where it holds.
+    // The word-class layer still names `español` only. Since 2026-10-21 every
+    // language is dropped by the separate noise rule (`noise.ts`), and the
+    // rationale says so.
     expect(GRAPH_WORD_CLASSES.lengua.words).toEqual(['español', 'castellano'])
-    expect(GRAPH_WORD_CLASSES.lengua.rationale).toContain('2026-09-04')
+    expect(GRAPH_WORD_CLASSES.lengua.rationale).toContain('2026-10-21')
   })
 })
 
@@ -519,6 +523,8 @@ describe('🔴 dropGenericEntities — scoped to the types that name a particula
    * graph) is the language almost the whole corpus is written in: it links
    * everything and distinguishes nothing.
    */
+  // ⚠ `dropGenericEntities` ALONE. Since 2026-10-21 `dropNoiseEntities` drops
+  // every language after it — see the `extractGraph` noise test below.
   it('🔴 keeps all 11 corpus languages as `tema`, and drops only `español`', () => {
     const languages = [
       'náhuatl', 'mixteco', 'mazateco', 'zapoteco', 'totonaco', 'tlahuica',
@@ -673,6 +679,76 @@ describe('extractGraph', () => {
   beforeEach(() => {
     __resetSpecSlotForTests()
     vi.restoreAllMocks()
+  })
+
+  it('🔴 drops languages and redaction placeholders, of any type, with their relations', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const { client } = fakeClient([
+      okResponse(
+        [
+          { tipo: 'tema', etiqueta: 'náhuatl' },
+          { tipo: 'tema', etiqueta: 'Amuzgo' },
+          { tipo: 'tema', etiqueta: 'tlapaneco (me’phaa)' },
+          { tipo: 'organizacion', etiqueta: 'Totonaco' },
+          { tipo: 'tema', etiqueta: 'idioma español' },
+          { tipo: 'lugar', etiqueta: '[Domicilio B]' },
+          { tipo: 'lugar', etiqueta: 'Domicilio 1' },
+          { tipo: 'lugar', etiqueta: '[Lugar B]' },
+          { tipo: 'organizacion', etiqueta: '[Dato omitido]' },
+          { tipo: 'evento', etiqueta: 'Persona A' },
+          { tipo: 'tema', etiqueta: 'traducción del zapoteco al español' },
+          { tipo: 'lugar', etiqueta: 'Tlayacapan' },
+          { tipo: 'tema', etiqueta: 'personas sordas' },
+        ],
+        [
+          { desde: 'náhuatl', hacia: 'Tlayacapan', tipo: 'relacionado_con' },
+          { desde: 'traducción del zapoteco al español', hacia: '[Domicilio B]', tipo: 'ubicado_en' },
+          { desde: 'traducción del zapoteco al español', hacia: 'Tlayacapan', tipo: 'ocurre_en' },
+        ],
+      ),
+    ])
+    const out = await extractGraph({
+      docId: 7,
+      contentKind: 'testimonio',
+      text,
+      client,
+      windowChars: 5000,
+      maxWindows: 8,
+    })
+    expect(out.entities.map((e) => e.label).sort()).toEqual(
+      ['Tlayacapan', 'personas sordas', 'traducción del zapoteco al español'].sort(),
+    )
+    expect(out.relations).toEqual([
+      { fromKey: 'traduccion del zapoteco al español', toKey: 'tlayacapan', type: 'ocurre_en' },
+    ])
+  })
+
+  it('🔴 dropNoiseEntities drops a label that CONTAINS a placeholder, whole, with its relations', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const e = (tipo: 'tema' | 'lugar' | 'persona', etiqueta: string) => ({ tipo, etiqueta, menciones: 1, fragmento: null })
+    const out = dropNoiseEntities({
+      entities: [
+        e('lugar', 'mercado de Domicilio C'),
+        e('tema', '[Persona B] y su hija'),
+        e('tema', 'Personas con discapacidad'),
+        e('tema', 'Personal docente'),
+        e('tema', 'visitas a domicilio'),
+        e('lugar', 'Tlayacapan'),
+      ],
+      relations: [
+        { desde: 'mercado de Domicilio C', hacia: 'Tlayacapan', tipo: 'ubicado_en' },
+        { desde: 'visitas a domicilio', hacia: 'Tlayacapan', tipo: 'ocurre_en' },
+      ],
+    } as ParsedWindow)
+    expect(out.entities.map((x) => x.etiqueta)).toEqual([
+      'Personas con discapacidad', 'Personal docente', 'visitas a domicilio', 'Tlayacapan',
+    ])
+    expect(out.relations.map((r) => r.desde)).toEqual(['visitas a domicilio'])
+  })
+
+  it('dropNoiseEntities leaves a clean window untouched', () => {
+    const w = { entities: [{ tipo: 'tema' as const, etiqueta: 'dengue', menciones: 1, fragmento: null }], relations: [] }
+    expect(dropNoiseEntities(w)).toBe(w)
   })
 
   const text = ['P1 ' + 'x'.repeat(200), 'P2 ' + 'y'.repeat(200), 'P3 ' + 'z'.repeat(200)].join(
@@ -998,5 +1074,110 @@ describe('extractGraph', () => {
     const result = await extractGraph({ docId: 8, contentKind: 'documento', text: '  ', client })
     expect(calls).toHaveLength(0)
     expect(result).toMatchObject({ entities: [], relations: [], windows: 0 })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Backlog #16 — duplicate places, and a red badge from one dropped connection
+// ---------------------------------------------------------------------------
+
+describe('splitQualifiedPlaces', () => {
+  const place = (etiqueta: string) => ({
+    tipo: 'lugar' as const,
+    etiqueta,
+    menciones: 2,
+    fragmento: null,
+  })
+
+  it('turns "Cuernavaca, Morelos" into Cuernavaca, Morelos and the edge between them', () => {
+    const out = splitQualifiedPlaces({
+      entities: [
+        place('Cuernavaca, Morelos'),
+        { tipo: 'tema', etiqueta: 'agua', menciones: 1, fragmento: null },
+      ],
+      relations: [{ desde: 'agua', hacia: 'Cuernavaca, Morelos', tipo: 'afecta_a' }],
+    })
+    expect(out.entities.map((e) => `${e.tipo}/${e.etiqueta}`)).toEqual([
+      'lugar/Cuernavaca',
+      'tema/agua',
+      'lugar/Morelos',
+    ])
+    expect(out.relations).toEqual([
+      { desde: 'Cuernavaca', hacia: 'Morelos', tipo: 'ubicado_en' },
+      // The edge that named the qualified label now points at the bare place.
+      { desde: 'agua', hacia: 'Cuernavaca', tipo: 'afecta_a' },
+    ])
+  })
+
+  it('merges with the bare spelling in the same document', () => {
+    const window = splitQualifiedPlaces({
+      entities: [place('Xoxocotla, Morelos'), place('Xoxocotla'), place('Morelos')],
+      relations: [],
+    })
+    const merged = mergeWindows([window], 'documento')
+    expect(merged.entities.map((e) => e.label).sort()).toEqual(['Morelos', 'Xoxocotla'])
+    expect(merged.entities.find((e) => e.label === 'Xoxocotla')?.occurrences).toBe(4)
+    expect(merged.relations).toEqual([
+      { fromKey: 'xoxocotla', toKey: 'morelos', type: 'ubicado_en' },
+    ])
+  })
+
+  it('leaves anything that is not clearly "Place, Container" alone', () => {
+    const untouched: ParsedWindow = {
+      entities: [
+        place('Xoxocotla, Puente de Ixtla, Morelos'),
+        place('Tepoztlán, centro'),
+        { tipo: 'organizacion', etiqueta: 'CIDE, A.C.', menciones: 1, fragmento: null },
+      ],
+      relations: [],
+    }
+    expect(splitQualifiedPlaces(untouched)).toEqual(untouched)
+  })
+})
+
+describe('one retry for a transient window failure', () => {
+  it('classifies network blips and 5xx as transient, and nothing else', () => {
+    expect(isTransientWindowError(new TypeError('fetch failed'))).toBe(true)
+    expect(isTransientWindowError(Object.assign(new Error('x'), { code: 'ECONNRESET' }))).toBe(true)
+    expect(isTransientWindowError(Object.assign(new Error('x'), { status: 503 }))).toBe(true)
+    expect(isTransientWindowError(Object.assign(new Error('x'), { status: 429 }))).toBe(true)
+    expect(isTransientWindowError(Object.assign(new Error('budget'), { status: 402 }))).toBe(false)
+    expect(isTransientWindowError(new Error('timeout'))).toBe(false)
+  })
+
+  it('recovers from one `fetch failed` instead of failing the document', async () => {
+    const { client, calls } = fakeClient([
+      new TypeError('fetch failed'),
+      okResponse([{ tipo: 'tema', etiqueta: 'Agua', menciones: 1 }]),
+    ])
+    const result = await extractGraph({
+      docId: 40,
+      contentKind: 'documento',
+      text: 'x'.repeat(300),
+      client,
+      retryDelayMs: 0,
+      onWindowError: () => undefined,
+    })
+    expect(calls).toHaveLength(2)
+    expect(result.windowsFailed).toBe(0)
+    expect(result.entities.map((e) => e.label)).toEqual(['Agua'])
+  })
+
+  it('still fails after a second transient failure', async () => {
+    const { client, calls } = fakeClient([
+      new TypeError('fetch failed'),
+      new TypeError('fetch failed'),
+    ])
+    await expect(
+      extractGraph({
+        docId: 41,
+        contentKind: 'documento',
+        text: 'x'.repeat(300),
+        client,
+        retryDelayMs: 0,
+        onWindowError: () => undefined,
+      }),
+    ).rejects.toThrow(/every extraction window failed/)
+    expect(calls).toHaveLength(2)
   })
 })

@@ -146,13 +146,17 @@ export interface KindLabel {
  * needs to know which they are looking at without guessing, so the difference
  * is a labelled chip with its own colour, not a subtle icon.
  */
-export function kindLabel(kind: LibraryKind): KindLabel {
+export function kindLabel(kind: LibraryKind, opts: { fromAudio?: boolean } = {}): KindLabel {
   switch (kind) {
     case 'testimonio':
+      // ⚠ A Voz can be a recording OR a PDF/DOCX. Saying "de viva voz" about a
+      // written file was false (UX demo backlog #12). `fromAudio` is the file
+      // format, set server-side in `toLibraryItem`.
       return {
         label: 'Voz',
-        description:
-          'Testimonio recogido de viva voz. Es anónimo: no se guarda quién lo contó.',
+        description: opts.fromAudio
+          ? 'Testimonio grabado en audio. Es anónimo: no se guarda quién lo contó.'
+          : 'Testimonio entregado por escrito. Es anónimo: no se guarda quién lo contó.',
         tone: 'voice',
       };
     case 'audio':
@@ -183,30 +187,26 @@ export function kindLabel(kind: LibraryKind): KindLabel {
  * author on one card and a name on the next assumes the data is incomplete and
  * goes looking. This says the quiet part: nobody knows, on purpose.
  */
-export const TESTIMONY_ANONYMITY_NOTE =
-  'Testimonio anónimo: el sistema no guarda quién lo contó.';
+export const TESTIMONY_ANONYMITY_NOTE = 'Testimonio anónimo';
 
 /** The machine-transcription warning, reused verbatim from `$lib/ingest.ts`. */
-export const LIBRARY_TRANSCRIPT_NOTE =
-  'Este texto se generó automáticamente a partir de un audio y puede contener errores.';
+export const LIBRARY_TRANSCRIPT_NOTE = 'Transcripción automática: puede tener errores.';
 
 /**
- * ⚠ Said on the page, not only in a tooltip. The single most common misreading
- * of a shared library is "this is everything there is". It is not: it is
- * everything that has been PUBLISHED, and the drafts people are still working
- * on are deliberately not here.
+ * 🔴 DOES THIS ROW'S TEXT COME FROM A MACHINE TRANSCRIPTION? Keyed on the FILE
+ * FORMAT, not on "is it a Voz": a testimonio uploaded as a PDF was written by a
+ * person, and labelling it machine-made was false (UX demo backlog #12). An
+ * audio testimonio still gets the warning.
  */
-export const LIBRARY_SCOPE_NOTE =
-  'Aquí solo aparece lo publicado: lo que alguien de tu ecosistema decidió compartir. Los borradores, incluidos los tuyos, no se ven en esta página.';
+export function isMachineTranscript(item: { kind: LibraryKind; fromAudio?: boolean }): boolean {
+  return item.kind === 'audio' || item.fromAudio === true;
+}
 
 export const LIBRARY_EMPTY = 'Todavía no hay nada publicado en tu ecosistema.';
-export const LIBRARY_EMPTY_HINT =
-  'Cuando alguien publique un documento o una voz, aparecerá aquí para todas las personas del ecosistema.';
 
 export const LIBRARY_NO_RESULTS = 'Ningún documento coincide con lo que buscas.';
 
-export const LIBRARY_UNAVAILABLE =
-  'No pudimos leer la biblioteca en este momento. Vuelve a intentarlo en un rato.';
+export const LIBRARY_UNAVAILABLE = 'No pudimos leer la biblioteca. Inténtalo más tarde.';
 
 // ── Filters ────────────────────────────────────────────────────────────────
 
@@ -315,6 +315,11 @@ export interface LibraryItem {
   lengua: string | null;
   /** Duration / language chips, for `audio`. Absent otherwise. */
   audioMeta?: Record<string, unknown> | null;
+  /**
+   * The uploaded FILE was audio. Needed because `kind` says `testimonio` for
+   * every Voz, whatever its format. Drives `isMachineTranscript`.
+   */
+  fromAudio: boolean;
 }
 
 /** A full document, as the reader page gets it. */

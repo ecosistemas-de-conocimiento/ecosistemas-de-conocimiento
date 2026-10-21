@@ -83,6 +83,7 @@
 import { sql } from '@payloadcms/db-postgres'
 
 import { contentKindOf, titleFor, type ContentKind } from '../contentKind'
+import { GRAPH_NOISE_KEY_PATTERN } from './noise'
 import { canonicalKey } from './normalise'
 import { snippetAllowed, type GraphEntityType, type GraphRelationType } from './types'
 
@@ -114,6 +115,12 @@ export function graphMinSupport(): number {
 
 /** Hard ceilings, so no caller can ask for the whole corpus in one page. */
 export const MAX_VIEW_ENTITIES = 200
+/**
+ * Edges in the whole-graph view. ⚠ The demo corpus has 88 (measured
+ * 2026-10-21, local `edc_backend`, org 1, threshold 3); the cap is what keeps a
+ * grown corpus from shipping a hairball nobody can read.
+ */
+export const MAX_VIEW_EDGES = 1000
 export const MAX_NEIGHBOURS = 20 // ADR §7.2: the ego-network is ≤ 20 neighbours.
 export const MAX_ENTITY_DOCUMENTS = 50
 /**
@@ -172,6 +179,12 @@ export interface GraphEntityView {
    * published is below the threshold", and those need different Spanish.
    */
   publishedDocuments: number
+  /**
+   * Every above-threshold edge whose BOTH endpoints are in `entities`. What
+   * lets `/grafo` draw the whole graph on load instead of one ego network.
+   * Capped at {@link MAX_VIEW_EDGES}, strongest first.
+   */
+  edges: GraphViewEdge[]
 }
 
 export interface GraphNeighbour {
@@ -179,6 +192,18 @@ export interface GraphNeighbour {
   relationType: GraphRelationType
   /** DISTINCT published documents that evidence THIS EDGE. */
   support: number
+  /**
+   * 🔴 WHICH WAY THE EDGE POINTS, SEEN FROM THE FOCAL ENTITY.
+   *
+   * `out` ⇒ focal → neighbour ("Xoxocotla ubicado_en Morelos", seen from
+   * Xoxocotla). `in` ⇒ neighbour → focal (the same row, seen from Morelos).
+   * `both` ⇒ rows exist in both directions, or the type is symmetric.
+   *
+   * ⚠ WITHOUT IT THE PANEL READ EVERY INCOMING EDGE BACKWARDS: Morelos was
+   * listed as "está en Xoxocotla" (backlog #16). The stored direction was right;
+   * the `CASE WHEN … THEN to ELSE from` that finds the neighbour dropped it.
+   */
+  direction: GraphEdgeDirection
   /**
    * 🔴 THE PUBLISHED DOCUMENTS THAT ACTUALLY EVIDENCE THIS EDGE — not the ones
    * where both endpoints happen to appear.
@@ -194,6 +219,26 @@ export interface GraphNeighbour {
    * ⚠ NEVER CARRIES A SNIPPET, for any content kind — see the file header.
    */
   documents: GraphDocumentRef[]
+}
+
+export type GraphEdgeDirection = 'out' | 'in' | 'both'
+
+function toDirection(value: unknown): GraphEdgeDirection {
+  return value === 'out' || value === 'in' ? value : 'both'
+}
+
+/**
+ * One edge of the WHOLE-GRAPH view (`/grafo` on load, backlog #3), between two
+ * entities the same answer lists. Undirected and type-free on purpose: the
+ * overview draws "these two are connected"; the panel says how.
+ */
+export interface GraphViewEdge {
+  /** The lower of the two entity ids. */
+  from: number
+  /** The higher of the two entity ids. */
+  to: number
+  /** The strongest single relation type's DISTINCT published documents. */
+  support: number
 }
 
 export interface GraphDocumentRef {
@@ -310,6 +355,22 @@ function joinPublishedDocuments(alias: 'm' | 'r', organizationId: number): Graph
 }
 
 /**
+ * 🔴 GATE 4 — NO LANGUAGE AND NO REDACTION PLACEHOLDER (owner, 2026-10-21).
+ *
+ * `noise.ts` holds the pattern and the reasoning; the extractor already drops
+ * these labels, and THIS hides the rows written before it did. Matched on
+ * `canonical_key` — the writer's own accent/case fold — with the pattern bound
+ * as a parameter, so JavaScript and Postgres run the same regex text.
+ *
+ * Every statement gets it either directly on `graph_entities` or through
+ * {@link entitySupportCte}, which every edge/neighbour/document statement joins.
+ */
+function notNoise(alias: 'e' | 'ne'): GraphSql {
+  const col = alias === 'e' ? sql`e.canonical_key` : sql`ne.canonical_key`
+  return sql` AND NOT (${col} ~ ${GRAPH_NOISE_KEY_PATTERN})`
+}
+
+/**
  * Entity support, gated, as a CTE body.
  *
  * `COUNT(DISTINCT m.document_id)` — DISTINCT DOCUMENTS, never occurrences. ADR
@@ -322,6 +383,9 @@ function entitySupportCte(organizationId: number, minSupport: number): GraphSql 
            COUNT(DISTINCT m.document_id)::int AS support
     FROM graph_mentions m
     ${joinPublishedDocuments('m', organizationId)}
+    JOIN graph_entities ne
+      ON ne.id = m.entity_id
+     AND ne.organization_id = ${organizationId}${notNoise('ne')}
     WHERE m.organization_id = ${organizationId}
     GROUP BY m.entity_id
     HAVING COUNT(DISTINCT m.document_id) >= ${minSupport}`
@@ -384,7 +448,7 @@ export function entityViewQuery(args: EntityViewArgs): GraphSql {
         ON m.entity_id = e.id
        AND m.organization_id = ${organizationId}
       ${joinPublishedDocuments('m', organizationId)}
-      WHERE e.organization_id = ${organizationId}${typeFilter}${searchFilter}
+      WHERE e.organization_id = ${organizationId}${notNoise('e')}${typeFilter}${searchFilter}
       GROUP BY e.id, e.type, e.label
     ),
     visible AS (
@@ -443,12 +507,84 @@ export async function readEntityView(
     })
   }
 
+  // Only when something is visible: an empty view needs no third round trip.
+  const edges: GraphViewEdge[] = []
+  if (entities.length > 0) {
+    const edgeRows = rowsOf(
+      await payload.db.drizzle.execute(
+        viewEdgesQuery(
+          args.organizationId,
+          entities.map((e) => e.id),
+          minSupport,
+        ),
+      ),
+    )
+    for (const row of edgeRows) {
+      const from = toId(row.from_id)
+      const to = toId(row.to_id)
+      if (!from || !to || from === to) continue
+      edges.push({ from, to, support: toCount(row.support) })
+    }
+  }
+
   return {
     entities,
     hidden,
     minSupport,
     publishedDocuments: toCount(rowsOf(countResult)[0]?.n),
+    edges,
   }
+}
+
+/**
+ * 🔴 THE EDGES OF THE WHOLE-GRAPH VIEW, WITH THE SAME THREE GATES.
+ *
+ * ⚠ THE SAME EDGE RULE AS THE EGO NETWORK. An edge is one
+ * `(from, to, type)` with `>= min` distinct published documents — exactly the
+ * `edges` CTE of {@link entityNeighboursQuery} — and only THEN are the types and
+ * both directions folded into one undirected pair. Folding first would let
+ * three thin relation types add up to an edge the panel refuses to show.
+ *
+ * Both endpoints must be in `entityIds` (what the view listed) AND above
+ * threshold on their own (`ent_support`) — the statement is exported, so it
+ * holds the gate itself rather than trusting the id list.
+ */
+export function viewEdgesQuery(
+  organizationId: number,
+  entityIds: readonly number[],
+  minSupport: number,
+  limit = MAX_VIEW_EDGES,
+): GraphSql {
+  const ids = entityIds.map((id) => Math.trunc(Number(id))).filter((id) => Number.isFinite(id))
+  return sql`
+    WITH ent_support AS (${entitySupportCte(organizationId, minSupport)}),
+    edges AS (
+      SELECT r.from_entity_id AS from_id,
+             r.to_entity_id AS to_id,
+             r.type AS relation_type,
+             COUNT(DISTINCT r.document_id)::int AS support
+      FROM graph_relations r
+      ${joinPublishedDocuments('r', organizationId)}
+      WHERE r.organization_id = ${organizationId}
+        AND r.from_entity_id = ANY(${intArray(ids)})
+        AND r.to_entity_id = ANY(${intArray(ids)})
+      GROUP BY 1, 2, 3
+      HAVING COUNT(DISTINCT r.document_id) >= ${minSupport}
+    ),
+    pairs AS (
+      SELECT LEAST(edges.from_id, edges.to_id) AS from_id,
+             GREATEST(edges.from_id, edges.to_id) AS to_id,
+             MAX(edges.support)::int AS support
+      FROM edges
+      WHERE edges.from_id <> edges.to_id
+      GROUP BY 1, 2
+    )
+    SELECT pairs.from_id AS from_id, pairs.to_id AS to_id, pairs.support AS support
+    FROM pairs
+    JOIN ent_support fs ON fs.entity_id = pairs.from_id
+    JOIN ent_support ts ON ts.entity_id = pairs.to_id
+    ORDER BY pairs.support DESC, pairs.from_id ASC, pairs.to_id ASC
+    LIMIT ${clampLimit(limit, MAX_VIEW_EDGES, MAX_VIEW_EDGES)}`
 }
 
 // ---------------------------------------------------------------------------
@@ -485,7 +621,7 @@ export function entityDetailQuery(args: EntityDetailArgs): GraphSql {
       ON m.entity_id = e.id
      AND m.organization_id = ${organizationId}
     ${joinPublishedDocuments('m', organizationId)}
-    WHERE e.organization_id = ${organizationId}
+    WHERE e.organization_id = ${organizationId}${notNoise('e')}
       AND e.id = ${entityId}
     GROUP BY e.id, e.type, e.label
     HAVING COUNT(DISTINCT m.document_id) >= ${minSupport}`
@@ -512,7 +648,10 @@ export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
       SELECT CASE WHEN r.from_entity_id = ${entityId} THEN r.to_entity_id
                   ELSE r.from_entity_id END AS neighbour_id,
              r.type AS relation_type,
-             COUNT(DISTINCT r.document_id)::int AS support
+             COUNT(DISTINCT r.document_id)::int AS support,
+             CASE WHEN BOOL_AND(r.from_entity_id = ${entityId}) THEN 'out'
+                  WHEN BOOL_AND(r.to_entity_id = ${entityId}) THEN 'in'
+                  ELSE 'both' END AS direction
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
       WHERE r.organization_id = ${organizationId}
@@ -525,7 +664,8 @@ export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
            e.label AS label,
            s.support AS support,
            edges.relation_type AS relation_type,
-           edges.support AS edge_support
+           edges.support AS edge_support,
+           edges.direction AS direction
     FROM edges
     JOIN graph_entities e
       ON e.id = edges.neighbour_id
@@ -782,6 +922,7 @@ export async function readEntityDetail(
       },
       relationType,
       support: toCount(row.edge_support),
+      direction: toDirection(row.direction),
       documents: edgeDocuments.get(`${id}|${relationType}`) ?? [],
     }
   })
@@ -818,7 +959,7 @@ export function matchableEntitiesQuery(organizationId: number, minSupport: numbe
       ON m.entity_id = e.id
      AND m.organization_id = ${organizationId}
     ${joinPublishedDocuments('m', organizationId)}
-    WHERE e.organization_id = ${organizationId}
+    WHERE e.organization_id = ${organizationId}${notNoise('e')}
     GROUP BY e.id, e.type, e.label, e.canonical_key
     HAVING COUNT(DISTINCT m.document_id) >= ${minSupport}
     ORDER BY support DESC, e.label ASC

@@ -23,6 +23,13 @@
  * `lib/holdReview.ts`), `update` and `delete` are `false` for everyone including
  * platform admins. An audit log that its own subjects can edit is decoration.
  *
+ * ⚠ ONE SERVER-SIDE EXCEPTION, ruled by Rodrigo on 2026-10-17: when a
+ * conversation delete takes a HELD document with it, that document's rows go
+ * too (`lib/conversationUploads.ts`), so no reviewer item points at nothing.
+ * Rows of a `rejected` or `approved` document keep the document alive instead.
+ * (The `document` foreign key is `ON DELETE cascade` anyway, baseline
+ * migration, so any other document delete takes its rows with it as well.)
+ *
  * ── 🔴 WHAT IS NOT HERE, AND WILL NOT BE ─────────────────────────────────────
  *
  * NOTHING THAT IDENTIFIES THE SPEAKER. No `subject`, no `speaker`, no

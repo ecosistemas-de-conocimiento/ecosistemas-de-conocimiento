@@ -6,9 +6,10 @@
  * What this file supplies is the three seams `apps/web` supplies in production,
  * rebuilt against the same contracts:
  *
- *   · `EngineConfig`  — a copy of `apps/web/src/lib/server/engine/config.ts`
+ *   · `EngineConfig`  — mirrors `apps/web/src/lib/server/engine/config.ts`
  *                       (which imports `$env/dynamic/private` and cannot be
- *                       imported from `apps/backend`). Same system prompt, and
+ *                       imported from `apps/backend`). The system prompt is
+ *                       imported from `apps/web` (`engine/prompt.ts`), and
  *                       everything else inherited from `DEFAULT_ENGINE_CONFIG`.
  *   · `DomainAdapter` — `scopeHierarchy` returns the same deterministic summary
  *                       shape `makeChatDomainAdapter` builds, for a conversation
@@ -47,23 +48,17 @@ import type { AIClient, DomainAdapter } from '@edc/chat-engine/core'
 
 import { aiOrgSuffix } from '../lib/aiClient'
 import type { EvalEnv } from './env'
+import { CHAT_SYSTEM_PROMPT } from '../../../web/src/lib/server/engine/prompt'
 
-/** `apps/web/src/lib/server/engine/config.ts:CHAT_ENGINE_CONFIG`, copied. */
+/**
+ * `apps/web/src/lib/server/engine/config.ts:CHAT_ENGINE_CONFIG`. The system
+ * prompt is IMPORTED from `apps/web` (`engine/prompt.ts` is pure), not copied,
+ * so the harness measures the production rules.
+ */
 export const CHAT_ENGINE_CONFIG: EngineConfig = {
   ...DEFAULT_ENGINE_CONFIG,
   surface: 'chat',
-  systemPrompt:
-    'Eres un asistente que ayuda a una persona a consultar los documentos de su ' +
-    'ecosistema de conocimiento. Tienes acceso a un resumen del contexto (el ' +
-    'ecosistema y los documentos de la conversación) y a fragmentos recuperados ' +
-    'de esos documentos.\n\n' +
-    'Puedes razonar, proponer ideas y aportar conocimiento general. Pero cuando ' +
-    'afirmes hechos sobre el ecosistema o sus documentos, básate en el resumen ' +
-    'y en el contenido recuperado; no inventes detalles. Distingue con claridad ' +
-    'entre lo que consta en el contexto y tus propias sugerencias. Si el contexto ' +
-    'no alcanza para responder algo, dilo explícitamente.\n\n' +
-    'Responde en español, de forma clara y concisa. Usa Markdown (encabezados, ' +
-    'listas, código) cuando ayude a la lectura.',
+  systemPrompt: CHAT_SYSTEM_PROMPT,
 }
 
 /**

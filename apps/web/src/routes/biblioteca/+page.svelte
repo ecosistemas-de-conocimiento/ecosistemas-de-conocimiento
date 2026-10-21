@@ -26,9 +26,7 @@
     kindLabel,
     KIND_FILTERS,
     LIBRARY_EMPTY,
-    LIBRARY_EMPTY_HINT,
     LIBRARY_NO_RESULTS,
-    LIBRARY_SCOPE_NOTE,
     LIBRARY_UNAVAILABLE,
     MAX_SEARCH_LENGTH,
     parseKindFilter,
@@ -41,7 +39,6 @@
   import {
     LENGUA_ALL,
     LENGUA_LABEL,
-    LENGUA_NOTE,
     lenguaFacetCopy,
     parseLengua,
     type LenguaFacet,
@@ -167,25 +164,11 @@
     <div>
       <p class="kicker">Biblioteca</p>
       <h1>Lo que ha publicado tu ecosistema</h1>
-      {#if data?.ecosystem}
-        <p class="sub">
-          Documentos y voces compartidas en <strong>{data.ecosystem.name}</strong>.
-        </p>
-      {/if}
     </div>
   </header>
 
-  <!-- 🔴 SAID ON THE PAGE, NOT IN A TOOLTIP. The commonest misreading of a
-       shared library is "this is everything there is". It is everything that
-       has been PUBLISHED — and someone who found their own draft here would
-       reasonably conclude everyone else can see it too. -->
-  <p class="notice">{LIBRARY_SCOPE_NOTE}</p>
-
   {#if data?.state === 'no-ecosystem'}
-    <p class="notice">
-      Todavía no perteneces a ningún ecosistema, así que no hay una biblioteca que mostrar.
-      Pídele acceso a quien administra tu ecosistema.
-    </p>
+    <p class="notice">Todavía no perteneces a ningún ecosistema.</p>
   {:else if failed}
     <p class="notice">{LIBRARY_UNAVAILABLE}</p>
   {:else}
@@ -202,10 +185,6 @@
           data-testid="library-search"
         />
       </label>
-      <!-- ⚠ Says WHAT is searched. A box that silently searches titles only,
-           while the reader assumes it searches the text, produces "no está" for
-           a document that is right there. -->
-      <p class="hint">La búsqueda es por título.</p>
       <div class="filters" role="group" aria-label="Filtrar por tipo">
         {#each KIND_FILTERS as f (f)}
           <button
@@ -240,9 +219,6 @@
             {/if}
           </select>
         </label>
-        <!-- ⚠ Said, because the filter hides every Voz and that must not read
-             as "no hay testimonios". -->
-        <p class="hint">{LENGUA_NOTE}</p>
       {/if}
     </section>
 
@@ -257,7 +233,7 @@
     {#if items.length > 0}
       <ul class="list">
         {#each items as item (item.id)}
-          {@const label = kindLabel(item.kind)}
+          {@const label = kindLabel(item.kind, { fromAudio: item.fromAudio })}
           {@const voice = isTestimony(item.kind)}
           <li class="card" class:voice>
             <a class="card-link" href={`/biblioteca/${item.id}`} data-testid={`library-item-${item.id}`}>
@@ -265,13 +241,17 @@
                 <!-- 🔴 A VOZ AND A DOCUMENTO MUST NOT LOOK THE SAME. They are
                      different kinds of source, and a reader weighing a passage
                      should not have to work out which one they are holding. -->
-                <span class="kind kind-{label.tone}" title={label.description}>{label.label}</span>
-                {#if item.lengua}
-                  <span class="chip" title={LENGUA_NOTE}>{item.lengua}</span>
-                {/if}
+                <!-- ⚠ The badges sit together on the left. `space-between`
+                     on three children floated the lengua mid-card (backlog #23). -->
+                <span class="badges">
+                  <span class="kind kind-{label.tone}" title={label.description}>{label.label}</span>
+                  {#if item.lengua}
+                    <span class="kind kind-lengua">{item.lengua}</span>
+                  {/if}
+                </span>
                 <span class="date">{formatLibraryDate(item.createdAt)}</span>
               </div>
-              <h2 class="title">{item.title}</h2>
+              <h2 class="title" title={item.title}>{item.title}</h2>
               {#if voice}
                 <!-- 🔴 NO AUTHOR SLOT EXISTS HERE, and this line is why the
                      absence does not read as missing data. The server never
@@ -314,7 +294,6 @@
     {:else if !loading}
       <div class="empty">
         <p class="empty-title">{filtered ? LIBRARY_NO_RESULTS : LIBRARY_EMPTY}</p>
-        {#if !filtered}<p class="notice">{LIBRARY_EMPTY_HINT}</p>{/if}
       </div>
     {/if}
   {/if}
@@ -361,14 +340,6 @@
     letter-spacing: -0.02em;
     color: var(--edc-color-ink);
   }
-  .sub {
-    margin: 0;
-    font-size: 0.86rem;
-    color: var(--edc-color-ink-soft);
-  }
-  .sub strong {
-    color: var(--edc-color-ink);
-  }
   .notice {
     margin: 0;
     padding: 0.7rem 0.85rem;
@@ -399,11 +370,6 @@
   }
   .search-input:focus {
     box-shadow: 0 0 0 3px var(--edc-focus-ring);
-  }
-  .hint {
-    margin: 0;
-    font-size: 0.72rem;
-    color: var(--edc-color-ink-soft);
   }
   .filters {
     display: flex;
@@ -511,6 +477,12 @@
     /* ⚠ Uploaded filenames have no spaces in them. Without this a single long
        one sets the min-content width of the whole page. */
     overflow-wrap: anywhere;
+    /* Two lines, then "…" (UX backlog #24). Full title in the tooltip. */
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
   }
   .date {
     font-size: 0.72rem;
@@ -543,6 +515,18 @@
   .kind-document {
     background: var(--edc-color-surface-soft);
     color: var(--edc-color-ink-soft);
+  }
+  .badges {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  /* Same size as the kind badge; weight dropped so the kind stays the lead. */
+  .kind-lengua {
+    background: var(--edc-color-surface-soft);
+    color: var(--edc-color-ink-soft);
+    font-weight: 600;
   }
   .chip {
     padding: 0.05rem 0.35rem;

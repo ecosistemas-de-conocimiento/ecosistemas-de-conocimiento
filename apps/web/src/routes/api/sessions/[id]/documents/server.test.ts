@@ -5,6 +5,17 @@ vi.mock('$lib/server/auth', () => ({
   backendFetch: vi.fn(),
 }));
 
+// The audio switch ships OFF (backlog #8). The audio tests below describe the
+// route with it ON, so they keep guarding that path for the day it returns;
+// the "switch off" block flips it back and checks the refusal.
+const audioSwitch = vi.hoisted(() => ({ on: true }));
+vi.mock('$lib/uploadKind', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/uploadKind')>()),
+  get AUDIO_UPLOAD_ENABLED() {
+    return audioSwitch.on;
+  },
+}));
+
 import { POST } from './+server';
 import { mapUpstreamMediaError } from '$lib/server/documents';
 import { backendFetch } from '$lib/server/auth';
@@ -58,6 +69,15 @@ function emptyMultipartRequest(): Request {
 
 const mockedBackendFetch = backendFetch as unknown as ReturnType<typeof vi.fn>;
 
+/** First bytes that match the name's kind: the route sniffs them. */
+function bytesFor(name: string): BlobPart {
+  if (/\.pdf$/i.test(name)) return '%PDF-1.7';
+  if (/\.docx$/i.test(name)) return new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]);
+  if (/\.mp3$/i.test(name)) return 'ID3\x04\x00';
+  if (/\.(m4a|mp4|mov)$/i.test(name)) return '\x00\x00\x00\x20ftypM4A ';
+  return 'x';
+}
+
 beforeEach(() => {
   vi.restoreAllMocks();
   mockedBackendFetch.mockReset();
@@ -98,7 +118,7 @@ describe('mapUpstreamMediaError', () => {
 describe('POST /api/sessions/[id]/documents — early rejections', () => {
   it('returns 401 unauthorized when locals.user is null', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const file = new File(['x'], 'a.pdf', { type: 'application/pdf' });
+    const file = new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' });
     const res = await POST(
       makeEvent({ locals: { user: null }, request: multipartRequest(file) }),
     );
@@ -118,7 +138,7 @@ describe('POST /api/sessions/[id]/documents — early rejections', () => {
 
   it('returns 400 unsupported_kind for an unrecognized extension/MIME', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const file = new File(['x'], 'whatever.zip', { type: 'application/zip' });
+    const file = new File([bytesFor('whatever.zip')], 'whatever.zip', { type: 'application/zip' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'unsupported_kind' });
@@ -137,7 +157,7 @@ describe('POST /api/sessions/[id]/documents — upstream media error mapping', (
 
   it('413 → 413 file_too_large', async () => {
     withUpstream(413, 'too big');
-    const file = new File(['x'], 'big.pdf', { type: 'application/pdf' });
+    const file = new File(['%PDF-1.7'], 'big.pdf', { type: 'application/pdf' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
     expect(res.status).toBe(413);
     expect(await res.json()).toMatchObject({ error: 'file_too_large', detail: 'too big' });
@@ -145,7 +165,7 @@ describe('POST /api/sessions/[id]/documents — upstream media error mapping', (
 
   it('415 → 415 unsupported_media_type', async () => {
     withUpstream(415);
-    const file = new File(['x'], 'a.pdf', { type: 'application/pdf' });
+    const file = new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
     expect(res.status).toBe(415);
     expect(await res.json()).toMatchObject({ error: 'unsupported_media_type' });
@@ -153,7 +173,7 @@ describe('POST /api/sessions/[id]/documents — upstream media error mapping', (
 
   it('401 → 401 unauthorized', async () => {
     withUpstream(401);
-    const file = new File(['x'], 'a.pdf', { type: 'application/pdf' });
+    const file = new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
     expect(res.status).toBe(401);
     expect(await res.json()).toMatchObject({ error: 'unauthorized' });
@@ -161,7 +181,7 @@ describe('POST /api/sessions/[id]/documents — upstream media error mapping', (
 
   it('403 → 403 forbidden', async () => {
     withUpstream(403);
-    const file = new File(['x'], 'a.pdf', { type: 'application/pdf' });
+    const file = new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: 'forbidden' });
@@ -169,7 +189,7 @@ describe('POST /api/sessions/[id]/documents — upstream media error mapping', (
 
   it('400 → 400 media_upload_rejected', async () => {
     withUpstream(400);
-    const file = new File(['x'], 'a.pdf', { type: 'application/pdf' });
+    const file = new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'media_upload_rejected' });
@@ -177,7 +197,7 @@ describe('POST /api/sessions/[id]/documents — upstream media error mapping', (
 
   it('500 → 502 upstream_unavailable (with upstreamStatus echoed)', async () => {
     withUpstream(500);
-    const file = new File(['x'], 'a.pdf', { type: 'application/pdf' });
+    const file = new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
     expect(res.status).toBe(502);
     expect(await res.json()).toMatchObject({
@@ -188,7 +208,7 @@ describe('POST /api/sessions/[id]/documents — upstream media error mapping', (
 
   it('network failure → 502 upstream_unreachable', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('ECONNREFUSED'));
-    const file = new File(['x'], 'a.pdf', { type: 'application/pdf' });
+    const file = new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
     expect(res.status).toBe(502);
     expect(await res.json()).toMatchObject({
@@ -204,7 +224,7 @@ describe('POST /api/sessions/[id]/documents — upstream media error mapping', (
         headers: { 'content-type': 'application/json' },
       }),
     );
-    const file = new File(['x'], 'a.pdf', { type: 'application/pdf' });
+    const file = new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: 'media_id_missing' });
@@ -228,7 +248,7 @@ describe('POST /api/sessions/[id]/documents — success', () => {
       }),
     );
 
-    const file = new File(['hello'], 'paper.pdf', { type: 'application/pdf' });
+    const file = new File(['%PDF-1.7 hello'], 'paper.pdf', { type: 'application/pdf' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
 
     expect(res.status).toBe(201);
@@ -306,7 +326,7 @@ describe('POST /api/sessions/[id]/documents — audio', () => {
   // way a user records a junta.
   it('creates an .m4a with an empty MIME type as kind: audio', async () => {
     upstreamAccepts();
-    const file = new File(['x'], 'junta.m4a', { type: '' });
+    const file = new File([bytesFor('junta.m4a')], 'junta.m4a', { type: '' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
 
     expect(res.status).toBe(201);
@@ -319,7 +339,7 @@ describe('POST /api/sessions/[id]/documents — audio', () => {
 
   it('creates an audio/mpeg file as kind: audio', async () => {
     upstreamAccepts();
-    const file = new File(['x'], 'entrevista.mp3', { type: 'audio/mpeg' });
+    const file = new File([bytesFor('entrevista.mp3')], 'entrevista.mp3', { type: 'audio/mpeg' });
     const res = await POST(makeEvent({ request: multipartRequest(file) }));
 
     expect(res.status).toBe(201);
@@ -345,7 +365,7 @@ describe('POST /api/sessions/[id]/documents — audio', () => {
   ) => {
     upstreamAccepts();
     const res = await POST(
-      makeEvent({ request: multipartRequest(new File(['x'], name, { type })) }),
+      makeEvent({ request: multipartRequest(new File([bytesFor(name)], name, { type })) }),
     );
     expect(res.status).toBe(201);
     expect(createdBody()).toMatchObject({ kind });
@@ -356,7 +376,7 @@ describe('POST /api/sessions/[id]/documents — audio', () => {
   // else can refuse it. So the refusal must happen before the upload starts.
   it('rejects an oversize recording with 413 before touching the backend', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const file = new File(['x'], 'maraton.mp3', { type: 'audio/mpeg' });
+    const file = new File([bytesFor('maraton.mp3')], 'maraton.mp3', { type: 'audio/mpeg' });
     const res = await POST(
       makeEvent({ request: sizedMultipartRequest(file, 201 * 1024 * 1024) }),
     );
@@ -371,7 +391,7 @@ describe('POST /api/sessions/[id]/documents — audio', () => {
   // refused, and the same 25 MB as audio is fine — that asymmetry IS the change.
   it('still refuses a 25 MB pdf at the document cap', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const file = new File(['x'], 'escaneo.pdf', { type: 'application/pdf' });
+    const file = new File(['%PDF-1.7'], 'escaneo.pdf', { type: 'application/pdf' });
     const res = await POST(
       makeEvent({ request: sizedMultipartRequest(file, 25 * 1024 * 1024) }),
     );
@@ -383,7 +403,7 @@ describe('POST /api/sessions/[id]/documents — audio', () => {
 
   it('accepts a 25 MB mp3, which the old cap would have refused', async () => {
     upstreamAccepts();
-    const file = new File(['x'], 'junta.mp3', { type: 'audio/mpeg' });
+    const file = new File([bytesFor('junta.mp3')], 'junta.mp3', { type: 'audio/mpeg' });
     const res = await POST(
       makeEvent({ request: sizedMultipartRequest(file, 25 * 1024 * 1024) }),
     );
@@ -398,7 +418,7 @@ describe('POST /api/sessions/[id]/documents — audio', () => {
   // people would least like to misplace.
   it('never names a corpus or an organization in the row it creates', async () => {
     upstreamAccepts();
-    const file = new File(['x'], 'junta.m4a', { type: 'audio/mp4' });
+    const file = new File([bytesFor('junta.m4a')], 'junta.m4a', { type: 'audio/mp4' });
     await POST(makeEvent({ request: multipartRequest(file) }));
 
     const init = mockedBackendFetch.mock.calls[0]![2] as RequestInit;
@@ -416,6 +436,62 @@ describe('POST /api/sessions/[id]/documents — audio', () => {
 // documento de otra conversación" possible without copying or moving the row.
 // Both create paths must send the list shape, not the scalar the field used to
 // be. See `documents/[docId]` for how the list grows and shrinks afterwards.
+
+// 🔴 Backlog #8: with the switch off, the SERVER refuses audio, so a direct
+// POST cannot get a recording past the hidden file picker.
+describe('POST /api/sessions/[id]/documents — audio switch off', () => {
+  beforeEach(() => {
+    audioSwitch.on = false;
+    return () => {
+      audioSwitch.on = true;
+    };
+  });
+
+  it.each([
+    ['junta.m4a', ''],
+    ['entrevista.mp3', 'audio/mpeg'],
+    ['grabacion.mp4', 'video/mp4'],
+  ])('refuses %s (%p) with 400 before the file goes up', async (name, type) => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const res = await POST(
+      makeEvent({ request: multipartRequest(new File([bytesFor(name)], name, { type })) }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'unsupported_kind' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mockedBackendFetch).not.toHaveBeenCalled();
+  });
+
+  it('still accepts a PDF', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ doc: { id: 9 } }), { status: 200 }),
+    );
+    mockedBackendFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ doc: { id: 1 } }), { status: 201 }),
+    );
+    const res = await POST(
+      makeEvent({ request: multipartRequest(new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' })) }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  // Payload validation text is English; the browser only ever gets a code.
+  it('never passes a backend validation message through', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ doc: { id: 9 } }), { status: 200 }),
+    );
+    mockedBackendFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ errors: [{ message: 'That conversation belongs to…' }] }), {
+        status: 400,
+      }),
+    );
+    const res = await POST(
+      makeEvent({ request: multipartRequest(new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' })) }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'document_create_failed' });
+  });
+});
 
 describe('POST /api/sessions/[id]/documents — session is an array', () => {
   it('sends session as a one-element array on the markdown/JSON path', async () => {
@@ -476,7 +552,7 @@ describe('POST /api/sessions/[id]/documents — contentKind', () => {
       JSON.stringify({ principal: { isPlatformAdmin: false, projects: { eco: { permissions } } } }),
       { status: 200 },
     );
-  const audio = () => new File(['x'], 'voz.m4a', { type: 'audio/mp4' });
+  const audio = () => new File([bytesFor('voz.m4a')], 'voz.m4a', { type: 'audio/mp4' });
   const createBody = () => {
     const call = mockedBackendFetch.mock.calls.find((c) => c[1] === '/api/documents')!;
     return JSON.parse((call[2] as RequestInit).body as string);

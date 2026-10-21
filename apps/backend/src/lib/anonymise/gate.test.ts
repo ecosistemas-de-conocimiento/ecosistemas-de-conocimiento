@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { staticDetector } from './detector'
+import { DETECT_SYSTEM_PROMPT, staticDetector } from './detector'
 import { runAnonymisationGate } from './gate'
 import type { DetectorFinding, GateInput, PersonDetector } from './types'
 
@@ -440,11 +440,12 @@ describe('runAnonymisationGate — domicilios', () => {
     // ⚠ Counts only. The reason is stored on the row and shown to a reviewer.
     expect(result.reason).not.toContain('Mari')
 
-    // With rounds, the round that caught it redacts it and the next one verifies.
+    // With the 3-round opt-in, the round that caught it redacts it and the next
+    // one verifies.
     calls = 0
     const rounds = await runAnonymisationGate(
       { contentKind: 'testimonio', text },
-      { detector: missesThenFinds },
+      { detector: missesThenFinds, verifyRounds: 3 },
     )
     expect(rounds.status).toBe('ready')
     if (rounds.status !== 'ready') return
@@ -590,5 +591,237 @@ describe('runAnonymisationGate — 🔴 a finding never rewrites inside a placeh
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return
     expect(result.redactedText).toBe('Vivo en [Domicilio A]. Mi perro se llama [Persona A].')
+  })
+})
+
+describe('runAnonymisationGate — common place nouns do not hold a document', () => {
+  // The opening of the testimony on dev (2026-10-21, `/revision`, screenshot 81),
+  // as it stood after stage 3. Verify flagged "la escuela", "la colonia" and
+  // "la barranca" as `lugar` and held it with 7 highlights.
+  const SEEN = [
+    'Conserje de la escuela, 60 años · Papantla · febrero de 2026',
+    'Llegué a la colonia hace 32 años, la que da a la barranca que corre detrás.',
+    'La escuela fue lo primero que nos organizó como vecinos.',
+  ].join('\n')
+
+  it('is ready when verify flags only common nouns', async () => {
+    let calls = 0
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: SEEN },
+      {
+        detector: {
+          name: 'seen-on-dev',
+          async detect() {
+            calls += 1
+            // Stage 3 marks nothing: Papantla is a town, and towns are shown (#12).
+            return calls === 1
+              ? []
+              : [
+                  { text: 'la escuela', type: 'lugar' },
+                  { text: 'la colonia', type: 'lugar' },
+                  { text: 'La escuela', type: 'lugar' },
+                ]
+          },
+        },
+      },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    // The town and the common nouns stay readable.
+    expect(result.redactedText).toContain('Papantla')
+    expect(result.redactedText).toContain('la colonia')
+  })
+
+  it('does not redact a common noun in stage 3 either', async () => {
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: SEEN },
+      { detector: staticDetector([{ text: 'la escuela', type: 'lugar' }]) },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toContain('Conserje de la escuela')
+  })
+
+  it.each([
+    ['a named colonia', 'Vivo en la colonia Portales desde niña.', 'la colonia Portales'],
+    ['a proper name written like a noun', 'Vivo en La Barranca desde niña.', 'La Barranca'],
+    ['a barrio with a name', 'Vivo en el barrio de San Juan.', 'el barrio de San Juan'],
+    ['a free-form reference', 'Vivo en la casa de la reja verde.', 'la casa de la reja verde'],
+    // ⚠ Off the list since the 2026-10-21 audit: also the name of colonias.
+    ['"la barranca" from the dev screenshot', SEEN, 'la barranca'],
+    ['"la presa"', 'Ahora vivo en la presa con mis hijos.', 'la presa'],
+  ])('🔴 still HOLDS on %s that survives', async (_case, text, finding) => {
+    let calls = 0
+    const missesThenFinds: PersonDetector = {
+      name: 'misses-then-finds',
+      async detect() {
+        calls += 1
+        return calls === 1 ? [] : [{ text: finding, type: 'lugar' }]
+      },
+    }
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text },
+      { detector: missesThenFinds },
+    )
+    expect(result.status).toBe('hold')
+    if (result.status !== 'hold') return
+    expect(result.stage).toBe('verify')
+  })
+
+  it('🔴 still REDACTS a surname spelled like a place noun', async () => {
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Me ayudó la familia de los barrios.' },
+      { detector: staticDetector([{ text: 'los barrios', type: 'persona' }]) },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).not.toContain('barrios')
+  })
+
+  it('🔴 a persona finding spelled like a generic noun still HOLDS in verify', async () => {
+    let calls = 0
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Me ayudó la familia de la escuela.' },
+      {
+        detector: {
+          name: 'late',
+          async detect() {
+            calls += 1
+            return calls === 1 ? [] : [{ text: 'la escuela', type: 'persona' }]
+          },
+        },
+      },
+    )
+    expect(result.status).toBe('hold')
+  })
+
+  it('🔴 still REDACTS a named place in stage 3', async () => {
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Vivo en la colonia Portales desde niña.' },
+      { detector: staticDetector([{ text: 'la colonia Portales', type: 'lugar' }]) },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).not.toContain('Portales')
+  })
+
+  it('🔴 a street address is still gone, even when the model flags only "la calle"', async () => {
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Vivo en calle Morelos No. 45. La calle es tranquila.' },
+      { detector: staticDetector([{ text: 'La calle', type: 'lugar' }]) },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).not.toContain('Morelos')
+    expect(result.redactedText).toContain('La calle es tranquila')
+  })
+})
+
+describe('runAnonymisationGate — 🔴 towns are shown, addresses are not (owner, 2026-10-21, #12)', () => {
+  it('the detector prompt says never to mark a town, municipality, city or state', () => {
+    expect(DETECT_SYSTEM_PROMPT).toContain('NUNCA marques estados, municipios, alcaldías, ciudades, pueblos')
+    expect(DETECT_SYSTEM_PROMPT).toContain('En "vivo en Xoxocotla, Morelos" no hay hallazgo.')
+    // A town rule must not narrow the address list or spare a person's name.
+    expect(DETECT_SYSTEM_PROMPT).toContain('Marca todo lo de la lista Domicilios aunque esté en una ciudad o pueblo.')
+    expect(DETECT_SYSTEM_PROMPT).not.toContain('Marca solo lo que queda dentro')
+    expect(DETECT_SYSTEM_PROMPT).toContain('El nombre de una persona SIEMPRE se marca como "persona"')
+    expect(DETECT_SYSTEM_PROMPT).toContain('en "mi tía Soledad" el hallazgo es "Soledad"')
+    expect(DETECT_SYSTEM_PROMPT).toContain('dijo" el hallazgo es "Dolores".')
+    // The old rule — mark a town when it says where someone lives — is gone.
+    expect(DETECT_SYSTEM_PROMPT).not.toContain('Márcalo cuando ubique')
+    expect(DETECT_SYSTEM_PROMPT).not.toMatch(/municipios cuando ubican un domicilio/)
+  })
+
+  it('the detector prompt still asks for streets, colonias, ranchos, parajes, C.P. and house references', () => {
+    for (const kept of [
+      'Calles, avenidas',
+      'Colonias, barrios, fraccionamientos',
+      'Ranchos y parajes',
+      'Códigos postales',
+      'la casa de la reja verde',
+    ]) {
+      expect(DETECT_SYSTEM_PROMPT, kept).toContain(kept)
+    }
+  })
+
+  it('keeps "vivo en Xoxocotla, Morelos" when the detector follows the prompt', async () => {
+    const text = 'Vivo en Xoxocotla, Morelos, y trabajo en la Alcaldía Iztapalapa.'
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text },
+      { detector: staticDetector([]) },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe(text)
+    expect(result.report.addresses ?? 0).toBe(0)
+  })
+
+  it.each([
+    ['calle Morelos 45', 'Vivo en calle Morelos 45, Xoxocotla, Morelos.', 'calle Morelos 45'],
+    ['colonia Portales', 'Vivo en la colonia Portales, en la Ciudad de México.', 'colonia Portales'],
+    ['the rancho', 'Vivimos en el rancho Los Pinos, en Tlaquiltenango.', 'rancho Los Pinos'],
+  ])('🔴 still redacts %s and keeps the town beside it', async (_case, text, finding) => {
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text },
+      { detector: staticDetector([{ text: finding, type: 'lugar' }]) },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).not.toContain(finding)
+    expect(result.redactedText).toContain('[Domicilio A]')
+    for (const town of ['Xoxocotla', 'Ciudad de México', 'Tlaquiltenango']) {
+      if (text.includes(town)) expect(result.redactedText).toContain(town)
+    }
+  })
+
+  it('🔴 C.P. 06700 is redacted in code, with no help from the model', async () => {
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Vivo en Xoxocotla, Morelos, C.P. 06700.' },
+      { detector: staticDetector([]) },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe('Vivo en Xoxocotla, Morelos, [Domicilio A].')
+  })
+})
+
+describe('runAnonymisationGate — one count on the whole review screen', () => {
+  function lateDetector(name: string): PersonDetector {
+    let calls = 0
+    return {
+      name: 'late',
+      async detect() {
+        calls += 1
+        return calls === 1 ? [] : [{ text: name, type: 'persona' }]
+      },
+    }
+  }
+
+  it('the reason counts every highlighted occurrence, like the badge', async () => {
+    // One name, three times: the badge and the chips show 3 highlights, so the
+    // reason must say 3, not "1 finding". Dev showed 7 next to 4 (2026-10-21).
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Rosa llegó. Rosa habló. Luego Rosa se fue.' },
+      { detector: lateDetector('Rosa') },
+    )
+    expect(result.status).toBe('hold')
+    if (result.status !== 'hold') return
+    expect(result.survivors).toHaveLength(3)
+    expect(result.reason).toBe(
+      'Quedaron 3 datos que podrían identificar a alguien. Todavía no se agregó a la búsqueda.',
+    )
+    expect(result.reason).not.toContain('Rosa')
+    expect(result.reason).not.toMatch(/ingiri|ingerir|\(s\)|\(es\)/)
+  })
+
+  it('says 1 dato in the singular', async () => {
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Habló Rosa.' },
+      { detector: lateDetector('Rosa') },
+    )
+    if (result.status !== 'hold') throw new Error('expected hold')
+    expect(result.reason).toBe(
+      'Quedó 1 dato que podría identificar a alguien. Todavía no se agregó a la búsqueda.',
+    )
   })
 })

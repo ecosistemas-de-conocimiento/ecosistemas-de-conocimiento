@@ -273,6 +273,20 @@ describe.skipIf(!dockerOk)('updateDocumentColumns on a real Postgres', () => {
       ).toBe(0)
     })
 
+    it('🔴 `not_in` is NULL-safe: an unset column is "not in the list"', async () => {
+      const status = String((await row()).anonymisation_status)
+      expect(
+        await updateDocumentColumns(payload, { id: DOC, where: [{ anonymisationStatus: { not_in: [status] } }], data: { graphStatus: 'failed' } }),
+      ).toBe(0)
+      expect(
+        await updateDocumentColumns(payload, { id: DOC, where: [{ anonymisationStatus: { not_in: ['held', 'rejected'].filter((s) => s !== status) } }], data: { graphStatus: 'failed' } }),
+      ).toBe(1)
+      await db.execute(sql`UPDATE documents SET held_text = NULL WHERE id = ${DOC}`)
+      expect(
+        await updateDocumentColumns(payload, { id: DOC, where: [{ heldText: { not_in: ['x'] } }], data: { graphStatus: 'ready' } }),
+      ).toBe(1)
+    })
+
     it('refuses a field outside the allowlist rather than guessing a column', async () => {
       await expect(
         updateDocumentColumns(payload, { id: DOC, data: { extractedText: 'x' } as never }),

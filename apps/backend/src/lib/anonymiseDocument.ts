@@ -27,7 +27,16 @@
  * ⚠ A HELD DOCUMENT IS NOT A FAILED ONE, and the two statuses are separate for
  * that reason. `failed` invites a retry button. `held` means the gate looked at
  * this and said no; retrying the identical text will say no again.
+ *
+ * 🔴 AND A GATE THAT COULD NOT RUN IS NOT A HOLD. A 429, a 5xx, a 402 budget
+ * refusal or a timeout means the model never answered — nobody "said no". Those
+ * leave the row at `n/a` (gate not run yet, the same state `planIngestRetry`
+ * resets to) with a {@link GATE_UNAVAILABLE_CODE} error, so a seed re-run, the
+ * ingest-recovery sweep or a retry runs the gate again. Before 2026-10-21 they
+ * ended as permanent Revisión holds that nothing ever retried.
  */
+
+import { randomUUID } from 'node:crypto'
 
 import type { ContentKind } from './contentKind'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
@@ -48,6 +57,24 @@ import type { GateReport, PersonDetector } from './anonymise/types'
  * upload to get wrong.
  */
 export const UNGATED_CONTENT_KIND: ContentKind = 'documento'
+
+/**
+ * Prefix of `anonymisationError` on a row whose gate could not run (the model
+ * never answered). The row is RETRYABLE, never in Revisión. See the header.
+ */
+export const GATE_UNAVAILABLE_CODE = 'gate_unavailable'
+
+/**
+ * Prefix of `anonymisationError` while a gate run holds the row (`pending`),
+ * followed by that run's token. See the claim in {@link anonymiseDocumentText}.
+ */
+export const GATE_RUNNING_CODE = 'gate_running'
+
+/**
+ * Prefix of `ingestError` the draft path writes for the same case
+ * (`enqueueIngestForDoc`). `ingestRecovery.ts` re-drives rows carrying it.
+ */
+export const GATE_UNAVAILABLE_INGEST_CODE = 'anonymisation_unavailable'
 
 /**
  * 🔴 THE ANONYMISATION POLICY. One function, one name, one place to read it.
@@ -80,7 +107,8 @@ export function mustPassAnonymisationGate(rawContentKind: unknown): boolean {
 /**
  * The statuses the gate — or a human reviewing its refusal — can leave on a row.
  *
- *   n/a       not gated: an ordinary `documento`
+ *   n/a       not gated: an ordinary `documento` — OR a gated kind whose gate
+ *             has not run yet (a retry reset, or {@link GATE_UNAVAILABLE_CODE})
  *   pending   the gate is running
  *   held      🔴 the gate refused. Not ingested. A human must look.
  *   approved  🔴 a human released a hold. AUDITED, and the only way past one.
@@ -105,7 +133,52 @@ export type AnonymiseOutcome =
   /**
    * 🔴 The caller MUST NOT ingest. Not a soft failure, not a retry hint.
    */
-  | { ok: false; stage: string; reason: string; report: GateReport | null }
+  | {
+      ok: false
+      stage: string
+      reason: string
+      report: GateReport | null
+      /**
+       * True when the gate could not RUN (model never answered). The row is
+       * left retryable at `n/a`, not `held`. Still: do not ingest.
+       */
+      retryable?: true
+      /**
+       * 🔴 True when the gate did NOT run because it could not CLAIM the row:
+       * another gate run holds it (`pending`), a decision is already on it, or
+       * the row is not a draft. Nothing was written. Not a hold, not a failure:
+       * the caller leaves the row exactly as it is. See {@link GATE_CLAIM_GUARD}.
+       */
+      busy?: true
+    }
+
+/**
+ * 🔴 THE CLAIM. The gate runs only on a row that matches this, and the match
+ * and the `pending` write are ONE `UPDATE … WHERE`, so two gate runs on the
+ * same row cannot both start — in one process or in two.
+ *
+ * Measured on dev, 2026-10-21 (§4p of the edc-1 runbook): 13 testimonios ended
+ * `held` + `published`. `payload run src/seed/demo.cli.ts` boots Payload, whose
+ * boot seed starts `ingestSeededDocuments` detached; the CLI then runs it AGAIN
+ * in the same process. Both read the 252 rows up front. Run A gated a row
+ * `ready` and published it; run B, holding its stale `n/a` snapshot, gated it
+ * again, the model answered differently, and B wrote `held` over a row already
+ * in the shared corpus — which the hold cannot take back.
+ *
+ *   · not `pending`             another run is on it right now
+ *   · not `held`/`rejected`/`approved`  a verdict or a human decision stands
+ *   · not publishing/published/unpublishing  🔴 a row in (or moving into) the
+ *     SHARED corpus is never re-gated. A different answer there cannot be
+ *     acted on, so the gate would only write a status that lies about what the
+ *     ecosistema can read. Unpublish first.
+ *
+ * ⚠ NULL passes both (`not_in` is NULL-safe in `documentColumns.ts`): a fresh
+ * row has no gate state yet.
+ */
+export const GATE_CLAIM_GUARD = [
+  { anonymisationStatus: { not_in: ['pending', 'held', 'rejected', 'approved'] } },
+  { publicationStatus: { not_in: ['publishing', 'published', 'unpublishing'] } },
+] as const
 
 /** Just the database handle this module writes through, so tests need no Payload. */
 type Updater = DocumentColumnsPayload
@@ -185,7 +258,42 @@ export async function anonymiseDocumentText(args: {
     return { ok: true, text: args.approvedText, report: null }
   }
 
-  await write({ anonymisationStatus: 'pending', anonymisationError: null })
+  // 🔴 CLAIM, OR DO NOTHING. See `GATE_CLAIM_GUARD`.
+  //
+  // ⚠ The claim carries a PER-RUN TOKEN in `anonymisationError` (no new column).
+  // Every final write below is guarded on `pending` + this token, so a run that
+  // outlived `sweepLostGateRuns` (which resets a stale `pending`) and a newer run
+  // that claimed the row since cannot be overwritten by the stale one.
+  const token = `${GATE_RUNNING_CODE}: ${randomUUID()}`
+  const claimed = await updateDocumentColumns(payload, {
+    id: docId,
+    data: { anonymisationStatus: 'pending', anonymisationError: token },
+    where: GATE_CLAIM_GUARD.map((clause) => ({ ...clause })) as never,
+  })
+  if (claimed === 0) {
+    return {
+      ok: false,
+      stage: 'claim',
+      reason: 'the row is already being gated, already decided, or not a draft',
+      report: null,
+      busy: true,
+    }
+  }
+
+  /** The run's final write. False when this run no longer owns the row. */
+  const finish = async (data: Record<string, unknown>): Promise<boolean> =>
+    (await updateDocumentColumns(payload, {
+      id: docId,
+      data,
+      where: [{ anonymisationStatus: { equals: 'pending' } }, { anonymisationError: { equals: token } }],
+    })) > 0
+  const superseded = (): AnonymiseOutcome => ({
+    ok: false,
+    stage: 'claim',
+    reason: 'a newer gate run or a sweep took the row over; this run wrote nothing',
+    report: null,
+    busy: true,
+  })
 
   const { runAnonymisationGate, aiServiceDetector } = await import('./anonymise')
   const detector =
@@ -213,7 +321,7 @@ export async function anonymiseDocumentText(args: {
     // already return `hold`; anything that escapes them is a bug, and a bug in
     // the redactor is the last thing that should be allowed to fail open.
     const reason = err instanceof Error ? err.message : String(err)
-    await write({
+    if (!(await finish({
       anonymisationStatus: 'held',
       anonymisationError: `gate_crashed: ${reason}`.slice(0, 500),
       // 🔴 CLEARED. See the hold branch below — a `redactedText` left over from
@@ -225,12 +333,37 @@ export async function anonymiseDocumentText(args: {
       // is worse than showing them nothing.
       heldText: null,
       anonymisationSurvivors: null,
-    })
+    }))) return superseded()
     return { ok: false, stage: 'content', reason, report: null }
   }
 
+  if (result.status === 'hold' && result.retryable) {
+    /**
+     * 🔴 NOT A HOLD. The model never answered, so there is nothing for a human
+     * to review — only a run to repeat. `n/a` + the error puts the row back in
+     * every retry path (seed re-run, `planIngestRetry`, ingest recovery) and
+     * keeps it out of Revisión. Not ingested: `corpusTextFor` refuses `n/a` on
+     * a gated kind, and the caller sees `ok: false`.
+     */
+    if (!(await finish({
+      anonymisationStatus: 'n/a',
+      anonymisationError: `${GATE_UNAVAILABLE_CODE}: ${result.stage}: ${result.reason}`.slice(0, 500),
+      anonymisationReport: result.report,
+      redactedText: null,
+      heldText: null,
+      anonymisationSurvivors: null,
+    }))) return superseded()
+    return {
+      ok: false,
+      stage: result.stage,
+      reason: result.reason,
+      report: result.report,
+      retryable: true,
+    }
+  }
+
   if (result.status === 'hold') {
-    await write({
+    if (!(await finish({
       anonymisationStatus: 'held',
       // ⚠ The reason is written by the gate and carries COUNTS ONLY, never the
       // text that triggered it. An error column that quoted the name it found
@@ -259,11 +392,11 @@ export async function anonymiseDocumentText(args: {
        */
       heldText: result.redactedText ?? null,
       anonymisationSurvivors: result.survivors ?? null,
-    })
+    }))) return superseded()
     return { ok: false, stage: result.stage, reason: result.reason, report: result.report }
   }
 
-  await write({
+  if (!(await finish({
     // ⚠ Stored BESIDE the original, not over it. `extractedText` is the record
     // of what was actually said and stays access-controlled in Postgres; only
     // `redactedText` is ever embedded. Overwriting the original would destroy
@@ -276,7 +409,7 @@ export async function anonymiseDocumentText(args: {
     // earlier attempt off a row that has since passed.
     heldText: null,
     anonymisationSurvivors: null,
-  })
+  }))) return superseded()
 
   return { ok: true, text: result.redactedText, report: result.report }
 }

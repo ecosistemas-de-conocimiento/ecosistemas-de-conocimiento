@@ -31,6 +31,13 @@ export interface Ecosystem {
 export const UNNAMED_ECOSYSTEM = 'Ecosistema sin nombre';
 
 /**
+ * SvelteKit `depends` key for server loads scoped to the picked ecosistema.
+ * `EcosystemPicker` invalidates it after a switch, so a page whose load reads
+ * the `eco_selected` cookie (which SvelteKit does not track) re-runs.
+ */
+export const ECOSYSTEM_DEPENDENCY = 'app:ecosystem';
+
+/**
  * Map a Payload `/api/organizations` list body into `Ecosystem[]`.
  *
  * Tolerant on purpose — a row missing a name still has to be selectable, or the
@@ -223,29 +230,14 @@ export interface EcosystemPickerView {
   mode: EcosystemPickerMode;
   /** What the field shows as its value. Never empty. */
   value: string;
-  /** One line under the field saying what this state means. */
+  /**
+   * One short line under the field, or `''` for none. Only the states that
+   * are not self-evident from the field get one: "none" and "unavailable"
+   * (UX backlog #33: no explainer lines).
+   */
   hint: string;
   /** Can the field be pressed to open a chooser? Only ever true for `multiple`. */
   interactive: boolean;
-  /**
-   * 🔴 The second true thing, for a platform admin only.
-   *
-   * `hint` describes MEMBERSHIP, and it is what decides where this person's own
-   * uploads and conversations land — `Sessions.beforeValidate` rejects anything
-   * else, admin or not. But for a platform admin "es el único ecosistema al que
-   * perteneces" read as the whole story, and it is not: they review every
-   * ecosistema from /admin without belonging to any of them.
-   *
-   * Two short lines rather than one long one, because the two facts are about
-   * two different powers — participating here, overseeing everywhere — and
-   * fusing them into a sentence is how people come away thinking membership is
-   * what grants the oversight. It is not, and it must not become that: see
-   * `refuseSelfAssignment` in the backend's `Memberships` collection.
-   *
-   * `undefined` for everyone else. Nobody who is not an admin should read a
-   * line about admin powers.
-   */
-  adminNote?: string;
 }
 
 export interface EcosystemPickerInput {
@@ -257,11 +249,6 @@ export interface EcosystemPickerInput {
   current: Ecosystem | null;
   /** How many memberships this user has. */
   count: number;
-  /**
-   * Is the caller a platform admin? Changes only the COPY — never the list,
-   * never the selection. Oversight and participation are separate powers.
-   */
-  platformAdmin?: boolean;
 }
 
 /**
@@ -271,23 +258,15 @@ export interface EcosystemPickerInput {
  * someone they have no ecosistema when we simply could not ask is the one wrong
  * answer here.
  */
-export const ADMIN_OVERSIGHT_NOTE =
-  'Como administrador puedes revisar todos los ecosistemas, aunque no seas miembro.';
-
 export function ecosystemPickerView(input: EcosystemPickerInput): EcosystemPickerView {
-  // ⚠ Only added once we KNOW the membership picture. While loading, or when
-  // the list could not be read, the honest thing to say is "we are still
-  // asking" — a note about reviewing everything would read as an answer.
-  const adminNote = input.platformAdmin ? { adminNote: ADMIN_OVERSIGHT_NOTE } : {};
-
   if (!input.ready) {
-    return { mode: 'loading', value: 'Cargando…', hint: 'Leyendo tus ecosistemas.', interactive: false };
+    return { mode: 'loading', value: 'Cargando…', hint: '', interactive: false };
   }
   if (input.unavailable) {
     return {
       mode: 'unavailable',
       value: 'No disponible',
-      hint: 'No pudimos leer tus ecosistemas ahora mismo. Vuelve a intentarlo en un momento.',
+      hint: 'No pudimos leer tus ecosistemas.',
       interactive: false,
     };
   }
@@ -295,35 +274,22 @@ export function ecosystemPickerView(input: EcosystemPickerInput): EcosystemPicke
     return {
       mode: 'none',
       value: 'Ninguno',
-      // ⚠ For an admin this is no longer a dead end, so it must not read like
-      // one: they belong nowhere and still review everything.
-      hint: input.platformAdmin
-        ? 'No perteneces a ningún ecosistema, así que no puedes subir ni conversar aquí.'
-        : 'Todavía no perteneces a ningún ecosistema.',
+      hint: 'Todavía no perteneces a ningún ecosistema.',
       interactive: false,
-      ...adminNote,
     };
   }
   if (input.count > 1) {
     return {
       mode: 'multiple',
       value: input.current.name,
-      hint: `Perteneces a ${input.count} ecosistemas. Toca para cambiar.`,
+      hint: '',
       interactive: true,
-      ...adminNote,
     };
   }
   return {
     mode: 'single',
     value: input.current.name,
-    // Says out loud why there is nothing to press. Without this line the field
-    // looks like a chooser that is not responding.
-    //
-    // ⚠ For an admin this sentence is TRUE but was reliably misread as "this is
-    // all you can reach". It stays — membership is what decides where uploads
-    // and chats go — and `adminNote` carries the other half.
-    hint: 'Es el único ecosistema al que perteneces.',
+    hint: '',
     interactive: false,
-    ...adminNote,
   };
 }

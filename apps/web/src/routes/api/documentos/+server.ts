@@ -5,6 +5,7 @@ import { backendFetch } from '$lib/server/auth';
 import { degradeListResponse } from '$lib/server/degrade';
 import { relationIds, relationSessions } from '$lib/documents';
 import { resolveEcosystem } from '$lib/server/ecosystem';
+import { uploadLooseDocument } from '$lib/server/uploadDocument';
 
 /**
  * GET /api/documentos — "Mis documentos": everything the caller owns in the
@@ -143,4 +144,30 @@ export const GET: RequestHandler = async ({ locals, cookies, url }) => {
     .map((row) => slimDoc(row, String(locals.user!.id)));
 
   return json({ docs, totalDocs: docs.length, filter }, { status: 200 });
+};
+
+/**
+ * POST /api/documentos — upload a file into the ecosistema with no
+ * conversation ("Subir documento" in Mis documentos, UX demo backlog #15).
+ *
+ * ⚠ ONLY FOR SOMEONE IN EXACTLY ONE ECOSISTEMA. The backend derives the
+ * ecosistema of a conversation-less document from the caller's memberships and
+ * refuses when there are several (`Documents.ts`). Checked here first, so the
+ * file never goes up just to be refused — and so a platform admin looking at a
+ * different ecosistema cannot file a document somewhere they are not looking.
+ */
+export const POST: RequestHandler = async ({ locals, cookies, request }) => {
+  if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
+  if (!(request.headers.get('content-type') ?? '').startsWith('multipart/form-data')) {
+    return json({ error: 'multipart_missing_file' }, { status: 400 });
+  }
+
+  const { selected, list, ok } = await resolveEcosystem(cookies, locals.token);
+  if (!ok) return json({ error: 'upstream_unavailable' }, { status: 503 });
+  if (!selected || list.length !== 1 || list[0]!.id !== selected.id) {
+    return json({ error: 'needs_conversation' }, { status: 409 });
+  }
+
+  const { status, body } = await uploadLooseDocument(locals.token, await request.formData());
+  return json(body, { status });
 };

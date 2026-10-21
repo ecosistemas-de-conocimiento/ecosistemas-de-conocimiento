@@ -7,7 +7,7 @@
  * `onMount()`, gated on "is this an auth route?". That is wrong for one reason
  * that is invisible until you actually sign in through the form:
  *
- *   The root layout is SHARED by `/sign-in`, `/sign-up` and `/`. It mounts
+ *   The root layout is SHARED by `/sign-in` and `/`. It mounts
  *   ONCE — on whichever of them you land on first. Sign in through the form and
  *   that first route is `/sign-in`, where the gate says "don't hydrate". The
  *   `goto('/')` that follows is a CLIENT-SIDE navigation: the layout does not
@@ -36,7 +36,9 @@
  * side), this one decides when to fetch (a UX concern, browser side). Coupling
  * them would mean a change to one silently reaching into the other.
  */
-export const AUTH_ROUTES: readonly string[] = ['/sign-in', '/sign-up'];
+// `/sign-up` is not here: sign-up is closed and that path is now a bare server
+// redirect to `/sign-in` (UX backlog #6) — it never renders the layout.
+export const AUTH_ROUTES: readonly string[] = ['/sign-in'];
 
 /** Is this one of the unauthenticated routes? Trailing slash tolerated. */
 export function isAuthRoute(pathname: string): boolean {
