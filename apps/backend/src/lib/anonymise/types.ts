@@ -259,3 +259,10 @@ export const ADDRESS_PLACEHOLDER_PREFIX = '[Domicilio '
 
 /** What a non-person identifier is replaced by. Deliberately not enumerated. */
 export const OMITTED_PLACEHOLDER = '[Dato omitido]'
+
+/**
+ * Every placeholder this pipeline can emit, as a GLOBAL pattern. Shared by the
+ * gate (what verify may ignore) and the detector (where a model span may not
+ * be located). ⚠ Global: reset `lastIndex` or use `matchAll`/`match`/`replace`.
+ */
+export const PLACEHOLDER_PATTERN = /\[Dato omitido\]|\[Persona [A-Z]+\]|\[Domicilio [A-Z]+\]/g

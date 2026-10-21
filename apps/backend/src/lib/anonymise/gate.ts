@@ -72,7 +72,7 @@ import type {
   RedactionCount,
   SurvivorSpan,
 } from './types'
-import { OMITTED_PLACEHOLDER } from './types'
+import { OMITTED_PLACEHOLDER, PLACEHOLDER_PATTERN } from './types'
 
 export interface GateDeps {
   detector: PersonDetector
@@ -111,7 +111,7 @@ export const DEFAULT_VERIFY_ROUNDS = 1
  * would HOLD on every document it successfully redacted — the safest possible
  * failure, and a completely useless product.
  */
-const PLACEHOLDER = /\[Dato omitido\]|\[Persona [A-Z]+\]|\[Domicilio [A-Z]+\]/g
+const PLACEHOLDER = PLACEHOLDER_PATTERN
 
 /**
  * What every refusal tells the person reading the queue. Plain Spanish, no
@@ -269,8 +269,9 @@ function applyFindings(
 
   // ⚠ No title clean-up here: the model owns span boundaries and includes a
   // leading title in the name (detector prompt). If it does not, verify sees
-  // "Don [Persona F]"; the prompt says that is not a leftover, and a round that
-  // reports it anyway absorbs it into `[Persona F]` (see `resolveLeftover`).
+  // "la maestra [Persona F]", which the prompt asks it to REPORT: at the default
+  // of one round the document holds; an opt-in round absorbs the title into
+  // `[Persona F]` (see `resolveLeftover`).
   return { text: out, labels }
 }
 
@@ -279,9 +280,7 @@ function applyFindings(
  * but punctuation and spaces: "[Domicilio AP], [Domicilio AQ]".
  *
  * 🔴 ANY LETTER OR DIGIT OUTSIDE A PLACEHOLDER MAKES IT A LEFTOVER, so
- * "[Persona A] López" is never dismissed here. Whether a word beside a
- * placeholder is generic ("Don [Persona F]") is the model's judgement, made in
- * the verify prompt, not a word list's.
+ * "[Persona A] López" and "la maestra [Persona A]" are never dismissed here.
  */
 function onlyPlaceholders(finding: string): boolean {
   if (!finding.match(PLACEHOLDER)) return false
@@ -289,12 +288,55 @@ function onlyPlaceholders(finding: string): boolean {
 }
 
 /**
- * 🔴 THE MODEL'S OWN JUDGEMENT THAT A STRING NAMES NOBODY. A bare title, as in
- * "el doctor dijo", comes back with `identifica: false` (see the detector
- * prompt) and is neither redacted nor held on. Anything else is identifying.
+ * True when `at` in `text` begins a sentence: nothing before it but spaces and
+ * opening marks, back to the start or to `.`, `!`, `?`, `…`, `:` or a newline.
  */
-function identifies(f: DetectorFinding): boolean {
-  return f.identifying !== false
+function atSentenceStart(text: string, at: number): boolean {
+  const before = text.slice(0, at)
+  if (/\n[\s¿¡"«“'(—–-]*$/u.test(before)) return true
+  const stripped = before.replace(/[\s¿¡"«“'(—–-]+$/u, '')
+  return stripped === '' || /[.!?…:]$/u.test(stripped)
+}
+
+/**
+ * True when `span` holds a capitalised word anywhere it occurs in `text`,
+ * except as the first word of a sentence ("El doctor dijo").
+ *
+ * ⚠ No occurrence at all counts as a proper noun: we cannot tell, so fail closed.
+ */
+function hasProperNoun(text: string, span: string): boolean {
+  let from = 0
+  let seen = false
+  for (;;) {
+    const at = text.indexOf(span, from)
+    if (at === -1) return !seen
+    seen = true
+    for (const w of span.matchAll(/\p{L}+/gu)) {
+      if (!/^\p{Lu}/u.test(w[0])) continue
+      if (w.index === 0 && atSentenceStart(text, at)) continue
+      return true
+    }
+    from = at + 1
+  }
+}
+
+/**
+ * STAGE 3 ONLY: may this finding be left in the text because the model judged
+ * it names nobody? A bare title ("el doctor dijo") comes back with
+ * `identifica: false` (see the detector prompt) and is not redacted.
+ *
+ * 🔴 THE MODEL'S `false` IS NOT TRUSTED ON ITS OWN. Measured in the 2026-10-21
+ * audit: the model returned "Chacho Melgarejo" with `identifica: false`. So the
+ * judgement is honoured only when the span has no proper noun (no capitalised
+ * word outside a sentence start), no placeholder and no digit; anything else
+ * is redacted anyway. ⚠ VERIFY NEVER CALLS THIS: there, every finding is a
+ * leftover, whatever the model said about it. A bare title verify reports
+ * holds — fail-closed; the prompt asks the model not to report one at all.
+ */
+function mayKeepAsNonIdentifying(f: DetectorFinding, text: string): boolean {
+  if (f.identifying !== false) return false
+  if (/\p{N}/u.test(f.text) || f.text.match(PLACEHOLDER)) return false
+  return !hasProperNoun(text, f.text)
 }
 
 /** The placeholder family a finding type is redacted into, if it has one. */
@@ -307,8 +349,20 @@ const FAMILY: Partial<Record<DetectorFinding['type'], RegExp>> = {
 const EDGE = /^[\s\p{P}]+|[\s\p{P}]+$/gu
 
 /**
+ * A fragment cut out from between placeholders is redacted GLOBALLY, as a
+ * literal string, so it must look like a name: at least 3 characters and a
+ * capital letter. 🔴 Measured in the 2026-10-21 audit: "[Persona A] de
+ * [Persona B]" reduced to "de", and every "de" in the text was replaced.
+ */
+const MIN_FRAGMENT = 3
+function safeFragment(piece: string): boolean {
+  return piece.length >= MIN_FRAGMENT && /\p{Lu}/u.test(piece)
+}
+
+/**
  * Turn one verify leftover into what to redact, without ever writing inside a
- * placeholder.
+ * placeholder. `{ unsafe: true }` means it cannot be redacted safely: the
+ * round HOLDS instead.
  *
  * ⚠ THREE SHAPES:
  *
@@ -325,12 +379,14 @@ const EDGE = /^[\s\p{P}]+|[\s\p{P}]+$/gu
  */
 function resolveLeftover(
   f: DetectorFinding,
-): { absorbInto: string } | { findings: DetectorFinding[] } {
+): { absorbInto: string } | { findings: DetectorFinding[] } | { unsafe: true } {
   const inside = f.text.match(PLACEHOLDER) ?? []
   const only = inside[0]
   if (inside.length === 1 && only !== undefined && FAMILY[f.type]?.test(only)) {
     return { absorbInto: only }
   }
+  // No placeholder, whole or cut: a plain finding, redacted as it is.
+  if (!/[[\]]/.test(f.text)) return { findings: [f] }
   const parts = f.text.split(PLACEHOLDER)
   const pieces = parts
     .map((piece, i) => {
@@ -341,26 +397,31 @@ function resolveLeftover(
       if (i === parts.length - 1) p = p.replace(/\[[^[\]]*$/, '')
       return p.replace(EDGE, '')
     })
-    .filter((p) => p.length >= 2 && /[\p{L}\p{N}]/u.test(p))
+    .filter((p) => /[\p{L}\p{N}]/u.test(p))
+  // 🔴 One weak fragment and the whole leftover holds: redacting the strong
+  // pieces only would report a round as clean that left the weak one in.
+  if (!pieces.every(safeFragment)) return { unsafe: true }
   return { findings: pieces.map((text) => ({ text, type: f.type })) }
 }
 
 /**
  * Redact one round's leftovers with the document's allocator, so a name caught
- * late gets the label it already had. Returns the labels actually applied.
+ * late gets the label it already had. Returns the labels actually applied, or
+ * null when any leftover cannot be redacted safely (the round then holds).
  */
 function redactLeftovers(
   text: string,
   leftovers: readonly DetectorFinding[],
   allocate: (name: string) => string,
   allocateAddress: (address: string) => string,
-): { text: string; labels: string[] } {
+): { text: string; labels: string[] } | null {
   const labels: string[] = []
   const plain: DetectorFinding[] = []
   let out = text
   // Longest first, for the reason on `applyFindings`.
   for (const f of [...leftovers].sort((a, b) => b.text.length - a.text.length)) {
     const resolved = resolveLeftover(f)
+    if ('unsafe' in resolved) return null
     if ('findings' in resolved) {
       plain.push(...resolved.findings)
       continue
@@ -499,7 +560,7 @@ export async function runAnonymisationGate(
 
   const applied = applyFindings(
     deterministic.text,
-    found.filter(identifies),
+    found.filter((f) => !mayKeepAsNonIdentifying(f, deterministic.text)),
     (name) => allocator.labelFor(name),
     (address) => allocator.addressLabelFor(address),
   )
@@ -542,14 +603,15 @@ export async function runAnonymisationGate(
     const spans = placeholderSpans(current)
     // ⚠ `onlyPlaceholders`: a finding made of our placeholders and punctuation
     // ("[Domicilio AP], [Domicilio AQ]") names nobody.
-    // ⚠ `identifies`: the model judged a bare title ("el doctor") names nobody.
+    // 🔴 NO `identifica: false` HERE. A verify finding is a leftover whatever
+    // the model said about it (audit 2026-10-21: "Chacho Melgarejo" came back
+    // marked non-identifying). See `mayKeepAsNonIdentifying`.
     // 🔴 `isTownLevelPlace`: a town, municipality, city or state is SHOWN (owner,
     // 2026-10-21, #12), so it never holds — the prompt says so and the model
     // still marked towns in 31 of 38 dev holds. Colonias, streets, numbers, C.P.,
     // ranchos, parajes and house references still hold. See `townPlaces.ts`.
     const real = survivors.filter(
       (f) =>
-        identifies(f) &&
         !coveredByPlaceholder(current, spans, f.text) &&
         !onlyPlaceholders(f.text) &&
         !isTownLevelPlace(f, current),

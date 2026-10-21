@@ -36,7 +36,7 @@
 import { withRateLimitRetry, type RetryOptions } from '@/lib/aiRetry'
 
 import { chunkText } from './chunk'
-import type { DetectorFinding, PersonDetector } from './types'
+import { PLACEHOLDER_PATTERN, type DetectorFinding, type PersonDetector } from './types'
 
 /** Env var names, so docs and tests never hand-type a string that can drift. */
 export const ANONYMISE_CHUNK_WORDS_VAR = 'ANONYMISE_CHUNK_WORDS'
@@ -165,10 +165,16 @@ export const DETECT_SYSTEM_PROMPT = [
   // ⚠ ONE PROMPT FOR DETECT AND VERIFY, measured 2026-10-17 on the chunk holding
   // "el Chacho Melgarejo": a separate verify addendum ("this text is already
   // redacted…") caught it 0/6 and 3/6; the shared prompt 10/12.
+  // 🔴 A TITLE OR CARGO NEXT TO A PERSON PLACEHOLDER IS A FINDING (audit
+  // 2026-10-21): "la maestra [Persona A]" in a village names one person, which
+  // is what the "cargos tan precisos" line above says. Only a generic PLACE
+  // word next to a place placeholder is exempt.
   '- Los marcadores entre corchetes ([Persona A], [Domicilio B], [Dato omitido]): ya están',
-  '  censurados. Tampoco una palabra genérica pegada a uno, sin nombre propio: "Don',
-  '  [Persona F]", "colonia [Domicilio L]". Pero un nombre o apellido pegado a un marcador',
-  '  SÍ es hallazgo: en "[Persona A] López" el hallazgo es "[Persona A] López".',
+  '  censurados. Tampoco una palabra genérica de lugar pegada a un marcador de lugar:',
+  '  "colonia [Domicilio L]".',
+  '- Pero un nombre, apellido, tratamiento o cargo pegado a un marcador de persona SÍ es',
+  '  hallazgo: en "[Persona A] López" el hallazgo es "[Persona A] López"; en',
+  '  "la maestra [Persona A]" el hallazgo es "la maestra [Persona A]".',
   '',
   // 🔴 ADDRESSES GET THEIR OWN SECTION BECAUSE ONE LINE WAS NOT ENOUGH. Measured:
   // on a live test testimony a street address went past this prompt, and the
@@ -257,9 +263,23 @@ function foldChar(ch: string): string {
  *
  * ⚠ Folding is per character with an offset map, so a character that folds to
  * two (or none) never shifts the slice that is returned.
+ *
+ * 🔴 A MATCH WHOLLY INSIDE ONE OF OUR PLACEHOLDERS IS SKIPPED, exact or folded,
+ * and the search goes on. Audit 2026-10-21: the model reported "Domi" for
+ * "La domi", the first match was inside `[Domicilio A]`, the gate saw it as
+ * covered, and "La domi" stayed in a ready text.
  */
 export function locateSpan(source: string, needle: string): string | null {
-  if (source.includes(needle)) return needle
+  const spans = [...source.matchAll(PLACEHOLDER_PATTERN)].map(
+    (m) => [m.index, m.index + m[0].length] as const,
+  )
+  // Only a match wholly INSIDE a placeholder is skipped. One that straddles an
+  // edge ("Domicilio A], Ana") or contains one ("[Persona A] López") is real
+  // text the gate's `resolveLeftover` knows how to redact.
+  const clear = (at: number, end: number) => !spans.some(([s, e]) => at >= s && end <= e)
+  for (let at = source.indexOf(needle); at !== -1; at = source.indexOf(needle, at + 1)) {
+    if (clear(at, at + needle.length)) return needle
+  }
   let folded = ''
   const startOf: number[] = []
   for (let i = 0; i < source.length; ) {
@@ -273,12 +293,13 @@ export function locateSpan(source: string, needle: string): string | null {
   }
   const want = [...needle].map(foldChar).join('')
   if (want.length === 0) return null
-  const at = folded.indexOf(want)
-  if (at === -1) return null
-  const begin = startOf[at] as number
-  const lastStart = startOf[at + want.length - 1] as number
-  const end = lastStart + String.fromCodePoint(source.codePointAt(lastStart) as number).length
-  return source.slice(begin, end)
+  for (let at = folded.indexOf(want); at !== -1; at = folded.indexOf(want, at + 1)) {
+    const begin = startOf[at] as number
+    const lastStart = startOf[at + want.length - 1] as number
+    const end = lastStart + String.fromCodePoint(source.codePointAt(lastStart) as number).length
+    if (clear(begin, end)) return source.slice(begin, end)
+  }
+  return null
 }
 
 /**

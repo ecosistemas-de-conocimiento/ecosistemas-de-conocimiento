@@ -250,13 +250,13 @@ describe('runAnonymisationGate — 🔴 placeholders stay consistent across roun
 })
 
 describe('runAnonymisationGate — 🔴 a bare title identifies nobody', () => {
-  it('"el doctor dijo" passes when the model marks it as not identifying', async () => {
+  it('"el doctor dijo" passes when stage 3 marks it as not identifying and verify is silent', async () => {
     const text = 'El doctor dijo que la maestra llegó tarde.'
     const notId = (texto: string): Hallazgo => ({ texto, tipo: 'persona', identifica: false })
-    const { detector } = scripted([
-      [notId('El doctor')],
-      [notId('El doctor'), notId('la maestra')],
-    ])
+    // ⚠ Verify never honours `identifica: false` (audit 2026-10-21): a bare
+    // title passes only when verify, as the prompt asks, does not report it.
+    // See gate.audit.test.ts for the verify-reports-it case, which holds.
+    const { detector } = scripted([[notId('El doctor'), notId('la maestra')], []])
     const result = await gate(text, detector)
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return
