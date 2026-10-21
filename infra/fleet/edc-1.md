@@ -1,7 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `39823b3` (conversation delete erases its
-turns from ai-service; ratings FKs cascade), deployed 2026-10-20 20:10 UTC — see §4m. Before that,
+**Status:** live since 2026-10-17. Dev runs `main` @ `d12f0b4` (UX batches 1–5: pinned docs,
+documents page, closed sign-up, whole graph, Revisión wording), deployed 2026-10-21 08:51 UTC — see
+§4n. Before that, dev ran `39823b3` (conversation delete erases its
+turns from ai-service; ratings FKs cascade; 2026-10-20 20:10 UTC, §4m). Before that,
 dev ran `8b6a60b` (prompt-injection fence in the chat prompt; 19:54 UTC, §4l). Before that, dev ran `29f61b3` (backend migration
 `documents.uploaded_in_session_id`, testimonio drafts cascade, files deleted with their document),
 deployed 2026-10-18 00:27 UTC — see §4k. Staging runs `97d5316`, deployed 2026-10-17 23:03 UTC —
@@ -562,6 +564,107 @@ the deploy. Rerank since the deploy: 4 `rerank ok`, 0 `rerank degraded` (ai-serv
 
 **Disk**, `df -h /` free: 61 GB before; 48 GB after the build; 61 GB after `docker builder prune
 -af` (12.96 GB) and removing dev's `8b6a60b` images. Images 7.0 GB, build cache 0.
+
+### 4n. ✅ Done 2026-10-21 08:30–09:12 UTC: `51b3d06`, `941ae13`, then `d12f0b4`, dev only
+
+All measured by the deploy agent. Staging was not touched; it stays on `97d5316`. Dev was resolved
+by its domain through the API before each deploy. Three builds:
+
+| build | contents | deploy (API poll every 20 s) | backup, sha256 matched off-box |
+|---|---|---|---|
+| `51b3d06` | UX batch 1 (pinned docs reach the model, progress text, clickable `[n]`, rename) + backend stops ingesting assistant turns | 08:30:57 → 08:36:42 | `/root/backups/20261021T0830Z/` |
+| `941ae13` | UX batch 2 (Mis documentos upload, download original, audio hidden) | 08:45:27 → 08:50:51 | `20261021T0845Z` |
+| `d12f0b4` | batch 3 `710660f` (closed sign-up, no-ecosystem screen, nav fit), batch 4 `b1a2d47` (graph), batch 5 (Revisión wording) | 08:51:44 → 08:57:07 | `20261021T0851Z` |
+
+`941ae13` was deployed but not smoked: the later batches arrived while it built, so every batch's
+checks ran once on `d12f0b4`. Coolify built `main`'s head at queue time, which was already
+`d12f0b4` (not `b1a2d47` as requested). No migration in any build: `payload_migrations` stays at
+3, `edc_ai` current at 6 (schema gate log). `PROMPT_SOURCE` (and the old `CHAT_PROMPT_SOURCE`) is
+unset on dev and staging, in Coolify and in both running web containers. After each deploy: 6
+containers `healthy`, health 200, `RERANK_API_KEY` `4dbc5b378dde` in every container, no
+non-preview variable holds `:?` text.
+
+**Batch 1 on `51b3d06`** (as admin; streaming `POST /api/generate?stream=1`, time from request):
+
+| question | first token | full answer |
+|---|---|---|
+| fact from the pinned upload | 6.9 s | 8.8 s |
+| second fact from the pinned upload (re-run with a fixed PDF, see below) | 10.7 s | 11.0 s |
+| corpus question, long answer (177 deltas) | 6.4 s | 34.5 s |
+| "resume el documento que acabo de subir", no `@` | 8.7 s / 4.2 s (re-run) | 12.4 s / 9.4 s |
+
+- Pinned docs reach the model: the summary, asked without `@`, named all 4 facts of the upload.
+- ⚠ Test artefact, not a bug: the first PDFs held each text on ONE line wider than the page, and
+  extraction kept only the first ≈ 105 characters (stored `documents.text` length 105–107). The
+  answers were right about what was stored. With wrapped lines (stored 165–202 chars) both
+  checks passed.
+- Progress text, Playwright at 1280 px: "Buscando en los documentos…" then "Escribiendo la
+  respuesta…" both shown. Clicking `[1]` reveals the source card under the answer (screenshot).
+  ⚠ Grouped markers such as `[1, 2, 4]` are NOT turned into buttons; only single `[n]` are.
+- Rename: `PATCH /api/sessions/<id>` `{title}` → 200, title stored and shown in the sidebar.
+- No assistant turn ingested: the 4 assistant messages read `corpus_status = skipped`, and
+  ai-service held 0 `msg-*` documents after the chats.
+- Rerank on `51b3d06`: 15 `rerank ok`, 1 `rerank degraded` (`timeout`, corpus `eco-1-draft-1`,
+  pool 36, **topK 32**, 8000 ms). topK was 20 in §4g; pinned docs seem to widen it (inferred).
+
+**Batch 2 on `d12f0b4`:**
+
+- Mis documentos → "Subir documento" (Playwright, file input): the document reached `ready` in the
+  database, and "Descargar original" downloaded the same bytes (sha256 `7af69e469d3d…` both).
+  ⚠ The page kept showing **EXTRAYENDO…** for 60 s after the row was `ready`; after a reload it
+  shows LISTO. The list does not refresh the status by itself.
+- A non-uploader (the member below) gets 404 on `GET /api/documents/<id>/original`, and the
+  document is not in their Mis documentos.
+- Audio: the file input accepts only PDF and DOCX; the page never mentions audio. A direct `.mp3`
+  POST to `/api/documentos` and to `/api/sessions/<id>/documents` → 400 `unsupported_kind`.
+  ⚠ The same audio bytes named `a.pdf` were accepted as a PDF document (kind follows the file
+  name). It is not treated as audio. That conversation's cascade removed it.
+- "Nueva conversación con este documento" → a new conversation opens with the document in its
+  panel (LISTO). The document is attached unpinned (`fijar` off).
+
+**Batch 3 on `d12f0b4`:**
+
+- `/sign-up` → 303 to `/sign-in?registro=cerrado`, which shows "Ya no se pueden crear cuentas desde
+  esta página…". `POST /api/auth/register` → 403. Anonymous `POST /api/users` on the backend → 403.
+  No user row was created.
+- The product name shows on sign-in: title "Ecosistemas de Conocimiento" (screenshot).
+- A user created by the platform admin (`POST /api/users` as admin, the call the Payload panel
+  makes) with no membership signs in and sees "Todavía no perteneces a ningún ecosistema" with no
+  error wording (screenshot).
+- The admin added a `member` membership in org 1 (`POST /api/memberships` → 201). The member then
+  signed in, created a conversation and got a chat answer (200, 26.7 s, 5 chunks).
+- Top nav at 1366 px: `scrollWidth` = `clientWidth` = 1366, no horizontal scroll (screenshot).
+- The test user and its membership were deleted afterwards.
+
+**Batch 4 on `d12f0b4` (graph):**
+
+- Backfill CLI, dry run (`GRAPH_BACKFILL_DRY_RUN=1 payload run src/lib/graph/backfill.cli.ts`):
+  9 candidates at current prompt `v4`, all 9 skipped "sin texto anonimizado aprobado" (the 9 held
+  testimonios). 0 extracted. The real run was not made: it would extract nothing.
+  ⚠ **No rebuild happened.** The CLI only re-extracts `failed`, stale `extracting` or
+  older-prompt rows. All 246 `ready` documents are already at `v4`. The stored graph still holds
+  4 places twice, from before the "Ciudad, Estado" split: `Cuernavaca, Morelos`, `Juchitán,
+  Oaxaca`, `Papantla, Veracruz` and `Tlahuitoltepec, Oaxaca`, each next to the bare name (SQL).
+  Forcing a rebuild means resetting those rows' graph status; that is a decision. Cost, inferred:
+  ai-service `usage_logs` cannot split graph extraction from chat (no purpose field). All 1,437
+  `router.route` calls since 2026-10-17 cost $2.0174, about $0.0014 each. So ≈ 246 extractions
+  would cost roughly $0.35–1.
+- `/grafo` (Playwright, 1366 px): 124 points on load, matching "124 entidades". Wheel zoom changed
+  the transform from `scale(1)` to `scale(1.82)`, and dragging moved it. No search box. Clicking
+  the first topic ("traducción en salud") opened its panel. No page errors. No near-duplicate
+  labels among the 124 points shown. Some labels overlap on the map (screenshots).
+
+**Batch 5 on `d12f0b4`:** `/revision` lists 9 held testimonios. Each badge count matches its
+sentence ("1 dato señalado" / "quedó 1 dato…", "7 datos" / "quedaron 7 datos…"). Sentences are
+whole, ending "Todavía no se agregó a la búsqueda." No intro paragraph: title, "En Organización
+Demo.", then the list. `scripts/demo-ecosistemas.sh` was not run.
+
+After cleanup (SQL, `find`): 0 sessions; 257 backend documents (248 `ready`), 248 ai-service,
+0 `msg-*`, 249 chunks, 0 orphan chunks; 5 `media` rows and 5 RustFS objects; users 1, 2 and 8. User 8
+("Prueba bug 37", created 09:04 UTC) is not from this run and was left alone.
+
+**Disk**, `df -h /` free: 61 GB before; 47 GB after each build; 60 GB after each `docker builder
+prune -af` (12.96 GB) and removing the previous dev images. Images 7.5 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 

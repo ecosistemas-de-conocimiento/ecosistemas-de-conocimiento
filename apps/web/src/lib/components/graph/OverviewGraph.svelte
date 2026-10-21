@@ -33,6 +33,7 @@
     type GraphEntity,
     type GraphViewEdge,
   } from '$lib/graph';
+  import { labelFontSize, placeLabels } from './overviewLabels';
 
   type Props = {
     entities: GraphEntity[];
@@ -194,12 +195,22 @@
     return false;
   }
 
-  function showLabel(id: string, rank: number): boolean {
-    if (id === selectedId || id === hoverId) return true;
+  function wantsLabel(id: string, rank: number): boolean {
     if (matches) return matches.has(id) && (matches.size <= 30 || k >= LABEL_ALL_K);
     if (selectedId) return neighbourIds?.has(id) ?? false;
     return rank < OVERVIEW_ALWAYS_LABELLED || k >= LABEL_ALL_K;
   }
+
+  // Selected and hovered always show; the rest are skipped where they would
+  // overlap a stronger one (`./overviewLabels`).
+  const labelled = $derived(
+    placeLabels(
+      layout.nodes,
+      k,
+      (n) => wantsLabel(n.id, n.rank),
+      new Set([selectedId, hoverId].filter((id): id is string => id !== null)),
+    ),
+  );
 
   function edgeDim(fromId: string, toId: string): boolean {
     if (selectedId) return fromId !== selectedId && toId !== selectedId;
@@ -250,19 +261,25 @@
             <!-- A generous invisible hit area: a small node is a small target. -->
             <circle class="hit" cx={node.x} cy={node.y} r={Math.max(node.r + 6 / k, 12 / k)} />
             <circle class="dot" cx={node.x} cy={node.y} r={node.r} />
-            {#if showLabel(node.id, node.rank)}
-              <text
-                class="label"
-                x={node.x}
-                y={node.y - node.r - 4 / k}
-                text-anchor="middle"
-                font-size={12 / Math.sqrt(k)}
-              >
-                {node.displayLabel}
-              </text>
-            {/if}
             <title>{`${node.label} — ${typeChipLabel(node.type)} — ${supportShort(node.support)}`}</title>
           </g>
+        {/each}
+
+        <!-- Labels in their own layer, above every dot, so a later dot never hides one. -->
+        {#each layout.nodes as node (node.id)}
+          {#if labelled.has(node.id)}
+            <text
+              class="label"
+              class:dim={isDim(node.id)}
+              class:active={node.id === selectedId}
+              x={node.x}
+              y={node.y - node.r - 4 / k}
+              text-anchor="middle"
+              font-size={labelFontSize(k)}
+            >
+              {node.displayLabel}
+            </text>
+          {/if}
         {/each}
       </g>
     </svg>
@@ -386,8 +403,11 @@
     stroke-linejoin: round;
     pointer-events: none;
   }
-  .node.active .label {
+  .label.active {
     font-weight: 800;
+  }
+  .label.dim {
+    opacity: 0.2;
   }
 
   .controls {

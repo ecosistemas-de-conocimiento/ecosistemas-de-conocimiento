@@ -1,5 +1,5 @@
 /**
- * Turn the `[N]` markers in a rendered answer into buttons that open source N
+ * Turn the `[N]` markers (and grouped `[1, 2, 4]`) in a rendered answer into buttons that open source N
  * (UX backlog #10). Before this, `[3]` was plain text and the reader had to
  * find source 3 in a collapsed list by hand.
  *
@@ -28,8 +28,13 @@ export function linkCitations(html: string, ordinals: Iterable<number>): string 
       return tag;
     }
     if (skipDepth > 0 || !text) return text ?? '';
-    return text.replace(/\[(\d{1,3})\]/g, (whole, d: string) =>
-      known.has(Number(d)) ? citationButton(Number(d)) : whole,
+    // `[3]`, and groups like `[1, 2, 4]` or `[1,2]`: one button per known number.
+    return text.replace(/\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\]/g, (_w, group: string) =>
+      group
+        .split(',')
+        .map((d) => Number(d.trim()))
+        .map((n) => (known.has(n) ? citationButton(n) : `[${n}]`))
+        .join(''),
     );
   });
 }
