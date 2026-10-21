@@ -36,7 +36,7 @@
  * report. Never a participant in a testimony, and never someone whose name a
  * testimony happened to mention.
  *
- * ⚠ AND THEY ARE STILL SUBJECT TO EVERYTHING ELSE. `GRAPH_MIN_SUPPORT` applies
+ * ⚠ AND THEY ARE STILL SUBJECT TO EVERYTHING ELSE. `GRAPH_MIN_ENTITY_DOCS` applies
  * unchanged, so a person named in one or two published documents does not
  * appear at all; the published-only scope applies; and no snippet is ever
  * stored for a testimonio. The re-identification argument in ADR §7.3 rests on
@@ -152,7 +152,18 @@ export interface GraphNeighbour {
   relationType: GraphRelationType;
   /** See {@link GraphEdgeDirection}. An older backend sends none ⇒ `out`. */
   direction: GraphEdgeDirection;
+  /**
+   * Distinct published documents behind THIS CONNECTION. After
+   * {@link mergeNeighbours} that is the PAIR's weight — every relation type —
+   * when the backend sends `pairSupport`, else the strongest type's.
+   */
   support: number;
+  /**
+   * The per-type breakdown of a merged connection, strongest first. Present
+   * only after {@link mergeNeighbours}, and only when there is more than one
+   * type to show.
+   */
+  relations?: Array<{ relationType: GraphRelationType; direction: GraphEdgeDirection; support: number }>;
   /**
    * The published documents that EVIDENCE THIS EDGE — not the ones the two
    * entities happen to share. `graph_relations` holds one row per
@@ -162,10 +173,15 @@ export interface GraphNeighbour {
    * ⚠ `null` MEANS THE BACKEND DID NOT SEND THE FIELD, which is different from
    * an empty list. Absent ⇒ fall back to the old intersection. Empty ⇒ the
    * backend really found none, which should not happen (an edge exists only
-   * when at least `GRAPH_MIN_SUPPORT` documents evidence it) and is shown as
+   * when at least `GRAPH_MIN_EDGE_DOCS` documents evidence it) and is shown as
    * "none" rather than papered over.
    */
   documents: GraphDocument[] | null;
+  /**
+   * The PAIR's weight off the wire: documents behind any relation between the
+   * two. {@link mergeNeighbours} folds it into `support`.
+   */
+  pairSupport?: number;
 }
 
 export interface GraphDocument {
@@ -211,12 +227,32 @@ export interface GraphView {
   edges?: GraphViewEdge[];
 }
 
-/** One undirected edge of the whole-graph picture. */
+/**
+ * What drew an overview edge. `relation` ⇒ the extraction related the pair;
+ * `co-mention` ⇒ it did not, but published documents mention both (UI:
+ * "aparecen juntos").
+ */
+export type GraphViewEdgeKind = 'relation' | 'co-mention';
+
+/**
+ * One undirected edge of the whole-graph picture: ONE PER PAIR, every relation
+ * type and both directions folded in by the backend (owner, 2026-10-21).
+ */
 export interface GraphViewEdge {
   fromId: string;
   toId: string;
-  /** Distinct published documents behind the strongest relation of the pair. */
+  /**
+   * Distinct published documents behind the edge: any relation of the pair for
+   * `relation`, documents mentioning both for `co-mention`.
+   */
   support: number;
+  /** Absent from an older backend ⇒ `relation`. */
+  kind: GraphViewEdgeKind;
+  /** Published documents mentioning both ends. `0` when the backend did not say. */
+  coMentions: number;
+  /** `relation` only: the pair's most common type, and its way from `fromId`. */
+  relationType?: GraphRelationType;
+  direction?: GraphEdgeDirection;
 }
 
 export interface GraphEntityDetail {
@@ -414,7 +450,20 @@ function parseViewEdges(raw: unknown, entities: readonly GraphEntity[]): GraphVi
     const key = edge.fromId < edge.toId ? `${edge.fromId}|${edge.toId}` : `${edge.toId}|${edge.fromId}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ fromId: edge.fromId, toId: edge.toId, support: edge.support });
+    const row = item as Record<string, unknown>;
+    const kind: GraphViewEdgeKind = row.kind === 'co-mention' ? 'co-mention' : 'relation';
+    const parsed: GraphViewEdge = {
+      fromId: edge.fromId,
+      toId: edge.toId,
+      support: edge.support,
+      kind,
+      coMentions: count(row.coMentions),
+    };
+    if (kind === 'relation' && (row.relationType ?? row.type) != null) {
+      parsed.relationType = edge.relationType;
+      parsed.direction = row.direction === 'in' || row.direction === 'both' ? row.direction : 'out';
+    }
+    out.push(parsed);
   }
   return out;
 }
@@ -434,11 +483,14 @@ export function parseGraphNeighbour(raw: unknown): GraphNeighbour | null {
   // count, and the ego network would show a fat spoke for a thin edge.
   const declared =
     row.support === undefined || row.support === null ? null : count(row.support);
+  const pair =
+    row.pairSupport === undefined || row.pairSupport === null ? null : count(row.pairSupport);
   return {
     entity,
     relationType: toRelationType(row.relationType),
     direction: toDirection(row.direction),
     support: declared ?? entity.support,
+    ...(pair !== null ? { pairSupport: pair } : {}),
     // Absent stays `null`; see the field comment. `Array.isArray` is the whole
     // distinction, so an older backend degrades instead of showing "none".
     documents: Array.isArray(row.documents)
@@ -492,21 +544,41 @@ export function uniqueDocuments(documents: readonly GraphDocument[]): GraphDocum
  * `GraphNeighbour.documents`.
  */
 export function mergeNeighbours(neighbours: readonly GraphNeighbour[]): GraphNeighbour[] {
-  const byId = new Map<string, GraphNeighbour>();
+  const groups = new Map<string, GraphNeighbour[]>();
   for (const n of neighbours) {
-    const prev = byId.get(n.entity.id);
-    if (!prev) {
-      byId.set(n.entity.id, n.documents ? { ...n, documents: uniqueDocuments(n.documents) } : n);
-      continue;
-    }
-    const strongest = n.support > prev.support ? n : prev;
-    const documents =
-      prev.documents === null && n.documents === null
-        ? null
-        : uniqueDocuments([...(strongest.documents ?? []), ...(prev.documents ?? []), ...(n.documents ?? [])]);
-    byId.set(n.entity.id, { ...strongest, documents });
+    const list = groups.get(n.entity.id);
+    if (list) list.push(n);
+    else groups.set(n.entity.id, [n]);
   }
-  return [...byId.values()];
+  const out: GraphNeighbour[] = [];
+  for (const rows of groups.values()) {
+    // Strongest type first; a tie goes to the alphabetically first type, the
+    // same order the backend's overview edge uses, so the map and the panel
+    // name a tied pair the same way.
+    const ranked = [...rows].sort(
+      (x, y) => y.support - x.support || x.relationType.localeCompare(y.relationType),
+    );
+    const strongest = ranked[0]!;
+    const documents = rows.every((n) => n.documents === null)
+      ? null
+      : uniqueDocuments(ranked.flatMap((n) => n.documents ?? []));
+    const pair = rows.reduce((m, n) => Math.max(m, n.pairSupport ?? 0), 0);
+    const merged: GraphNeighbour = {
+      ...strongest,
+      support: Math.max(pair, strongest.support),
+      documents,
+    };
+    delete merged.pairSupport;
+    if (ranked.length > 1) {
+      merged.relations = ranked.map((n) => ({
+        relationType: n.relationType,
+        direction: n.direction,
+        support: n.support,
+      }));
+    }
+    out.push(merged);
+  }
+  return out;
 }
 
 export function parseGraphEdge(raw: unknown): GraphEdge | null {
@@ -1187,240 +1259,11 @@ export function egoDescription(centre: GraphEntity, drawn: number): string {
   return `${centre.label}, ${supportCopy(centre.support)}, con ${drawn} ${noun} a un paso.`;
 }
 
-// ── The whole graph: a deterministic force layout (backlog #3) ─────────────
+// ── The whole graph (backlog #3) ───────────────────────────────────────────
 //
-// The owner decided (2026-10-21) that `/grafo` opens on the WHOLE graph, zoomable,
-// instead of an empty panel. ADR §7.2's objection to physics was two things: a
-// picture that rearranges itself on every render, and a hairball at 400 nodes.
-//
-// 🔴 THE FIRST IS ANSWERED BY DETERMINISM. Start positions come from each
-// entity's RANK (a golden-angle spiral, strongest in the middle), the iteration
-// count is fixed, and there is no randomness anywhere — so the same graph draws
-// the same picture today and tomorrow, which is the property the ADR wanted.
-// `graph.test.ts` asserts identical output across two runs.
-//
-// ⚠ THE SECOND IS A SIZE QUESTION. The demo corpus is 187 entities and 88 edges
-// above threshold (measured 2026-10-21, local `edc_backend`, org 1, threshold 3).
-// The backend caps the view at 200 entities (`MAX_VIEW_ENTITIES`), so the O(n²)
-// repulsion below is at most 200² / 2 × 240 ≈ 4.8M pair visits, once per load.
-//
-// No dependency: Fruchterman–Reingold is forty lines, and d3-force would be a
-// new runtime dependency for one picture.
-
-export const OVERVIEW_WIDTH = 1000;
-export const OVERVIEW_HEIGHT = 700;
-const OVERVIEW_MARGIN = 40;
-const OVERVIEW_ITERATIONS = 240;
-const OVERVIEW_NODE_MIN_R = 4;
-const OVERVIEW_NODE_MAX_R = 16;
-const OVERVIEW_LABEL_MAX = 22;
-/** Labels always drawn, strongest first. The rest appear on zoom, hover or selection. */
-export const OVERVIEW_ALWAYS_LABELLED = 18;
-
-export interface OverviewNode {
-  id: string;
-  label: string;
-  displayLabel: string;
-  type: GraphViewType;
-  support: number;
-  /** 0 = strongest. Decides which labels are drawn before any zoom. */
-  rank: number;
-  x: number;
-  y: number;
-  r: number;
-}
-
-export interface OverviewEdge {
-  /** `fromId|toId`. Unique: `parseGraphView` keeps one edge per pair. */
-  key: string;
-  fromId: string;
-  toId: string;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  /** 0.6–2.6, by support. Thicker = more documents behind it. */
-  strokeWidth: number;
-}
-
-export interface OverviewLayout {
-  width: number;
-  height: number;
-  nodes: OverviewNode[];
-  edges: OverviewEdge[];
-  /** Node id → ids it is connected to. For highlighting a selection. */
-  adjacency: Map<string, Set<string>>;
-}
-
-/**
- * The entities the WHOLE-GRAPH OVERVIEW draws: only those with at least one
- * edge to another listed entity. Owner rule 2026-10-21, chosen (review).
- *
- * ⚠ OVERVIEW ONLY. The entity lists and the panel still get every entity, so
- * an isolated one stays findable. Degree is counted on the edges the backend
- * returned, which are already past every filter (threshold, languages,
- * placeholders), so "isolated" means isolated in what the member can see.
- *
- * Why so many are isolated: an edge needs ≥ `GRAPH_MIN_SUPPORT` published
- * documents for the SAME (from, to, relation type), while an entity needs that
- * many documents mentioning it at all — see `queries.ts` `viewEdgesQuery`.
- */
-export function connectedEntities(
-  entities: readonly GraphEntity[],
-  edges: readonly GraphViewEdge[],
-): GraphEntity[] {
-  const ids = new Set(entities.map((e) => e.id));
-  const linked = new Set<string>();
-  for (const e of edges) {
-    if (e.fromId === e.toId || !ids.has(e.fromId) || !ids.has(e.toId)) continue;
-    linked.add(e.fromId);
-    linked.add(e.toId);
-  }
-  return entities.filter((e) => linked.has(e.id));
-}
-
-/**
- * Lay the whole graph out. Pure and deterministic; see the section header.
- *
- * Fruchterman–Reingold with a weak pull to the centre, so entities with no
- * edge settle in a ring around the connected core instead of drifting off the
- * canvas, then scaled to fit `OVERVIEW_WIDTH × OVERVIEW_HEIGHT`.
- */
-export function overviewLayout(
-  entities: readonly GraphEntity[],
-  edges: readonly GraphViewEdge[],
-): OverviewLayout {
-  const ranked = rankEntities(entities);
-  const n = ranked.length;
-  const index = new Map(ranked.map((e, i) => [e.id, i]));
-  const links = edges
-    .map((e) => ({ a: index.get(e.fromId), b: index.get(e.toId), edge: e }))
-    .filter(
-      (l): l is { a: number; b: number; edge: GraphViewEdge } =>
-        l.a !== undefined && l.b !== undefined && l.a !== l.b,
-    );
-
-  // Ideal edge length for a unit-area square: Fruchterman–Reingold's `k`.
-  const k = Math.sqrt(1 / Math.max(1, n));
-  const xs = new Float64Array(n);
-  const ys = new Float64Array(n);
-  const golden = Math.PI * (3 - Math.sqrt(5));
-  for (let i = 0; i < n; i++) {
-    const radius = 0.5 * Math.sqrt((i + 0.5) / Math.max(1, n));
-    xs[i] = radius * Math.cos(i * golden);
-    ys[i] = radius * Math.sin(i * golden);
-  }
-
-  const dx = new Float64Array(n);
-  const dy = new Float64Array(n);
-  let temperature = 0.1;
-  const cooling = temperature / (OVERVIEW_ITERATIONS + 1);
-  for (let iter = 0; iter < OVERVIEW_ITERATIONS; iter++) {
-    dx.fill(0);
-    dy.fill(0);
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        let ddx = xs[i]! - xs[j]!;
-        let ddy = ys[i]! - ys[j]!;
-        let dist2 = ddx * ddx + ddy * ddy;
-        if (dist2 < 1e-12) {
-          // A deterministic nudge for two nodes on the same spot.
-          ddx = 1e-6 * (i - j);
-          ddy = 1e-6;
-          dist2 = ddx * ddx + ddy * ddy;
-        }
-        const f = (k * k) / dist2;
-        dx[i]! += ddx * f;
-        dy[i]! += ddy * f;
-        dx[j]! -= ddx * f;
-        dy[j]! -= ddy * f;
-      }
-    }
-    for (const { a, b } of links) {
-      const ddx = xs[a]! - xs[b]!;
-      const ddy = ys[a]! - ys[b]!;
-      const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 1e-6;
-      const f = dist / k;
-      dx[a]! -= ddx * f;
-      dy[a]! -= ddy * f;
-      dx[b]! += ddx * f;
-      dy[b]! += ddy * f;
-    }
-    for (let i = 0; i < n; i++) {
-      // Gravity: keeps the unconnected entities in view.
-      dx[i]! -= (xs[i]! * 0.6) / k;
-      dy[i]! -= (ys[i]! * 0.6) / k;
-      const len = Math.sqrt(dx[i]! * dx[i]! + dy[i]! * dy[i]!) || 1;
-      const step = Math.min(len, temperature);
-      xs[i]! += (dx[i]! / len) * step;
-      ys[i]! += (dy[i]! / len) * step;
-    }
-    temperature -= cooling;
-  }
-
-  // Fit to the canvas, keeping the aspect ratio.
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (let i = 0; i < n; i++) {
-    minX = Math.min(minX, xs[i]!);
-    maxX = Math.max(maxX, xs[i]!);
-    minY = Math.min(minY, ys[i]!);
-    maxY = Math.max(maxY, ys[i]!);
-  }
-  const spanX = maxX - minX || 1;
-  const spanY = maxY - minY || 1;
-  const scale = Math.min(
-    (OVERVIEW_WIDTH - OVERVIEW_MARGIN * 2) / spanX,
-    (OVERVIEW_HEIGHT - OVERVIEW_MARGIN * 2) / spanY,
-  );
-  const offX = (OVERVIEW_WIDTH - spanX * scale) / 2;
-  const offY = (OVERVIEW_HEIGHT - spanY * scale) / 2;
-  const px = (i: number) => round(n === 1 ? OVERVIEW_WIDTH / 2 : offX + (xs[i]! - minX) * scale);
-  const py = (i: number) => round(n === 1 ? OVERVIEW_HEIGHT / 2 : offY + (ys[i]! - minY) * scale);
-
-  const maxSupport = ranked.reduce((m, e) => Math.max(m, e.support), 1);
-  const nodes: OverviewNode[] = ranked.map((e, i) => ({
-    id: e.id,
-    label: e.label,
-    displayLabel: truncateLabel(e.label, OVERVIEW_LABEL_MAX),
-    type: e.type,
-    support: e.support,
-    rank: i,
-    x: px(i),
-    y: py(i),
-    // Area, not radius, tracks support: a node twice as backed looks twice as big.
-    r: round(
-      OVERVIEW_NODE_MIN_R +
-        (OVERVIEW_NODE_MAX_R - OVERVIEW_NODE_MIN_R) * Math.sqrt(e.support / maxSupport),
-    ),
-  }));
-
-  const maxEdge = links.reduce((m, l) => Math.max(m, l.edge.support), 1);
-  const adjacency = new Map<string, Set<string>>();
-  const link = (from: string, to: string) => {
-    const set = adjacency.get(from) ?? new Set<string>();
-    set.add(to);
-    adjacency.set(from, set);
-  };
-  const outEdges: OverviewEdge[] = links.map(({ a, b, edge }) => {
-    link(edge.fromId, edge.toId);
-    link(edge.toId, edge.fromId);
-    return {
-      key: `${edge.fromId}|${edge.toId}`,
-      fromId: edge.fromId,
-      toId: edge.toId,
-      x1: px(a),
-      y1: py(a),
-      x2: px(b),
-      y2: py(b),
-      strokeWidth: round(0.6 + 2 * (edge.support / maxEdge)),
-    };
-  });
-
-  return { width: OVERVIEW_WIDTH, height: OVERVIEW_HEIGHT, nodes, edges: outEdges, adjacency };
-}
+// Drawn by `force-graph` (2D canvas) and `3d-force-graph` (3D, lazy); the data
+// and rules both share live in `components/graph/mapModel.ts`, which also says
+// how the picture stays the same on every visit. Only the copy lives here.
 
 /**
  * Screen-reader label of the whole-graph picture. Short on purpose (owner,
@@ -1432,6 +1275,9 @@ export const OVERVIEW_DESCRIPTION = 'Mapa de conexiones';
 export function overviewLegend(): Array<{ type: GraphViewType; label: string }> {
   return GRAPH_VIEW_TYPES.map((type) => ({ type, label: typeListLabel(type) }));
 }
+
+/** Legend entry for a co-mention edge. A label, not an explanation (owner). */
+export const OVERVIEW_COMENTION_LEGEND = 'aparecen juntos';
 
 export const OVERVIEW_ZOOM_IN = 'Acercar';
 export const OVERVIEW_ZOOM_OUT = 'Alejar';

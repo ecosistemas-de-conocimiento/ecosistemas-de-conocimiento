@@ -223,7 +223,7 @@ describe('GET /api/graph/view', () => {
           { id: 6, type: 'lugar', label: 'Oaxaca', support: 3, hidden: 9 },
         ],
         [{ n: 14 }],
-        [{ from_id: 5, to_id: 6, support: 3 }],
+        [{ from_id: 5, to_id: 6, kind: 'relation', support: 3, co_mentions: 4, relation_type: 'ocurre_en', direction: 'out' }],
       ],
     })
     const res = await graphViewEndpoint.handler(req)
@@ -234,10 +234,13 @@ describe('GET /api/graph/view', () => {
         { id: 6, type: 'lugar', label: 'Oaxaca', support: 3 },
       ],
       hidden: 9,
-      minSupport: 3,
+      minSupport: 1,
+      minEdgeSupport: 1,
       publishedDocuments: 14,
       // The whole-graph edges among the listed entities (backlog #3).
-      edges: [{ from: 5, to: 6, support: 3 }],
+      edges: [
+        { from: 5, to: 6, kind: 'relation', support: 3, coMentions: 4, relationType: 'ocurre_en', direction: 'out' },
+      ],
     })
   })
 
@@ -251,7 +254,8 @@ describe('GET /api/graph/view', () => {
     expect(await body(await graphViewEndpoint.handler(young.req))).toEqual({
       entities: [],
       hidden: 0,
-      minSupport: 3,
+      minSupport: 1,
+      minEdgeSupport: 1,
       publishedDocuments: 2,
       edges: [],
     })
@@ -265,7 +269,8 @@ describe('GET /api/graph/view', () => {
     expect(await body(await graphViewEndpoint.handler(thresholded.req))).toEqual({
       entities: [],
       hidden: 31,
-      minSupport: 3,
+      minSupport: 1,
+      minEdgeSupport: 1,
       publishedDocuments: 2,
       edges: [],
     })
@@ -355,6 +360,7 @@ describe('GET /api/graph/entity/:id', () => {
           entity: { id: 6, type: 'lugar', label: 'Oaxaca', support: 3 },
           relationType: 'ocurre_en',
           support: 3,
+          pairSupport: 3,
           direction: 'both',
           // 🔴 The documents that EVIDENCE this edge, straight out of
           // `graph_relations` — not the intersection of two entity lists the

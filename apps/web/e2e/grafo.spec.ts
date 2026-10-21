@@ -20,16 +20,16 @@
  * built so that every number on screen is the result of a rule:
  *   · "Agua" has mentions in 4 published documentos, 1 published testimonio and
  *     1 DRAFT. The page must say 5, not 6 — the draft is excluded.
- *   · "Lugar raro" has 2 published mentions plus 1 draft. Counting the draft
- *     would put it at the threshold (3); the page must hide it and say
- *     "Hay 1 entidad que no se muestra".
+ *   · "Lugar raro" has 2 published mentions plus 1 draft. The page must say 2.
+ *   · "Solo borrador" is mentioned by the draft alone, and "Juana" (a persona)
+ *     by the testimonio alone. Neither may show: published-only, and a persona
+ *     only from a documento.
  *   · Lengua facets count documentos only: the testimonio is stamped tsotsil
  *     too, and the facet must still say 2.
  *
- * ⚠ The threshold is the backend default, 3 (`GRAPH_MIN_SUPPORT_DEFAULT`,
- * `apps/backend/src/lib/graph/queries.ts`). A stack that sets
- * `GRAPH_MIN_SUPPORT` to something else fails the hidden-count assertion, and
- * the failure names the number it saw.
+ * ⚠ The threshold is the backend default, 1 (`GRAPH_MIN_ENTITY_DOCS`,
+ * `apps/backend/src/lib/graph/queries.ts`). A stack that sets it higher fails
+ * the entity-count assertion, and the failure names the number it saw.
  *
  * ⚠ Copy is written out, not imported from `$lib/graph.ts` — importing would
  * make the test agree with the app by construction. Same rule as
@@ -71,6 +71,8 @@ interface Seed {
   agua: number;
   escuela: number;
   raro: number;
+  soloBorrador: number;
+  juana: number;
   /** Published documento names, by lengua. */
   tsotsil: string[];
   mixe: string;
@@ -132,6 +134,8 @@ function seedGraph(ns: string, userId: number): Seed {
   const agua = entity('tema', 'Agua', 'agua');
   const escuela = entity('organizacion', 'Escuela comunitaria', 'escuela comunitaria');
   const raro = entity('lugar', 'Lugar raro', 'lugar raro');
+  const soloBorrador = entity('tema', 'Solo borrador', 'solo borrador');
+  const juana = entity('persona', 'Juana', 'juana');
 
   const mention = (documentId: number, entityId: number) =>
     execute(
@@ -142,6 +146,8 @@ function seedGraph(ns: string, userId: number): Seed {
   for (const d of [d1, d2, d3, d4, t1, d5]) mention(d, agua);
   for (const d of [d1, d2, d3]) mention(d, escuela);
   for (const d of [d1, d2, d5]) mention(d, raro);
+  mention(d5, soloBorrador);
+  mention(t1, juana);
 
   for (const d of [d1, d2, d3]) {
     execute(
@@ -157,6 +163,8 @@ function seedGraph(ns: string, userId: number): Seed {
     agua,
     escuela,
     raro,
+    soloBorrador,
+    juana,
     tsotsil: [names.d1, names.d2],
     mixe: names.d3,
     sinLengua: names.d4,
@@ -204,11 +212,14 @@ test.describe('grafo — lo que el grafo publicado deja ver', () => {
     await expect(agua).toContainText('aparece en 5 documentos');
     await expect(escuela).toContainText('aparece en 3 documentos');
 
-    // 🔴 Threshold: 2 published mentions is below 3, so it is held back. The
-    // sentence that used to report it is gone (backlog #29); the gate is not.
-    await expect(page.getByTestId(`grafo-entidad-${seed.raro}`)).toHaveCount(0);
-    await expect(page.getByText('Lugar raro')).toHaveCount(0);
-    await expect(page.getByTestId('grafo-conteo')).toHaveText('2 entidades');
+    // 🔴 Published-only: the draft mention of "Lugar raro" is not counted.
+    await expect(page.getByTestId(`grafo-entidad-${seed.raro}`)).toContainText(
+      'aparece en 2 documentos',
+    );
+    // 🔴 A draft-only entity, and a persona named only by a testimonio, never show.
+    await expect(page.getByTestId(`grafo-entidad-${seed.soloBorrador}`)).toHaveCount(0);
+    await expect(page.getByTestId(`grafo-entidad-${seed.juana}`)).toHaveCount(0);
+    await expect(page.getByTestId('grafo-conteo')).toHaveText('3 entidades');
 
     // Lengua facets count published documentos only: not the testimonio, not the draft.
     const lenguas = page.getByTestId('grafo-lenguas');
@@ -275,6 +286,6 @@ test.describe('grafo — lo que el grafo publicado deja ver', () => {
     await expect(page.locator('a.doc-link', { hasText: 'Testimonio' })).toHaveCount(0);
 
     // The lists are NOT narrowed: lengua filters documents, never the graph.
-    await expect(page.getByTestId('grafo-conteo')).toHaveText('2 entidades');
+    await expect(page.getByTestId('grafo-conteo')).toHaveText('3 entidades');
   });
 });

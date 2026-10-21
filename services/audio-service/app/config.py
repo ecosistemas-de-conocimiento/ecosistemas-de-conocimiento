@@ -18,7 +18,7 @@ import os
 from functools import lru_cache
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -69,7 +69,28 @@ class Settings(BaseSettings):
     # Same shape and same semantics as ai-service's API_KEYS.
     API_KEYS: str = "{}"
 
-    # ── Whisper / CTranslate2 ────────────────────────────────────────────────
+    # ── Whisper backend ──────────────────────────────────────────────────────
+    # "local"  : faster-whisper in THIS process (everything under "Whisper /
+    #            CTranslate2" below applies).
+    # "remote" : POST each chunk to a whisper.cpp `whisper-server` elsewhere
+    #            (the DGX Spark). Queue, chunking, Redis and callbacks stay here;
+    #            only the model call moves. faster-whisper is never imported.
+    WHISPER_BACKEND: Literal["local", "remote"] = "local"
+    # Base URL of whisper-server, e.g. <spark-url>. We POST to
+    # `{WHISPER_REMOTE_URL}/inference` and probe `{WHISPER_REMOTE_URL}/health`.
+    WHISPER_REMOTE_URL: str = ""
+    # Per-chunk read timeout. Generous on purpose: a chunk is up to
+    # CHUNK_MAX_SECONDS (15 min) of audio, and whisper-server holds ONE mutex
+    # around inference, so our request may queue behind another caller's.
+    WHISPER_REMOTE_TIMEOUT_S: float = 1800.0
+    # Sent as `Authorization: Bearer …` when set. whisper-server ignores it
+    # today; it exists for a future auth proxy in front of the Spark.
+    WHISPER_REMOTE_TOKEN: str = ""
+    # Label only — reported in describe()/callbacks. The real model is whatever
+    # whisper-server was started with; we cannot ask it.
+    WHISPER_REMOTE_MODEL: str = "large-v3"
+
+    # ── Whisper / CTranslate2 (WHISPER_BACKEND=local only) ───────────────────
     # Model id or local path. `large-v3-turbo` is the CPU-viable default (see
     # README §"Model choice"). Any faster-whisper shorthand ("small", "medium",
     # "large-v3", "large-v3-turbo") or an explicit HF repo id works.
@@ -224,6 +245,18 @@ class Settings(BaseSettings):
                 + ", ".join(sorted(allowed))
             )
         return v
+
+    @field_validator("WHISPER_REMOTE_URL")
+    @classmethod
+    def _remote_url(cls, v: str) -> str:
+        return v.strip().rstrip("/")
+
+    @model_validator(mode="after")
+    def _remote_needs_url(self) -> "Settings":
+        # Fail at boot, not at the first job's first chunk.
+        if self.WHISPER_BACKEND == "remote" and not self.WHISPER_REMOTE_URL:
+            raise ValueError("WHISPER_BACKEND=remote requires WHISPER_REMOTE_URL")
+        return self
 
     # ── Derived ──────────────────────────────────────────────────────────────
     @property

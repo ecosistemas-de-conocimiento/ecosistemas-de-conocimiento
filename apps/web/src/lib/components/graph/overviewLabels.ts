@@ -1,5 +1,5 @@
 /**
- * Which overview-map labels to draw, so no two overlap (`OverviewGraph.svelte`).
+ * Which overview-map labels to draw, so no two overlap (`graph2d.ts`).
  *
  * Greedy and deterministic: `forced` labels (selected, hovered) go first, then
  * the wanted ones strongest first (`rank` 0 = strongest). A label whose box
@@ -30,8 +30,10 @@ export function placeLabels(
   k: number,
   wanted: (node: LabelNode) => boolean,
   forced: ReadonlySet<string> = new Set(),
+  /** Font size in layout units. Default {@link labelFontSize}. */
+  fontSize?: number,
 ): Set<string> {
-  const fs = labelFontSize(k);
+  const fs = fontSize ?? labelFontSize(k);
   const order = nodes
     .filter((n) => forced.has(n.id) || wanted(n))
     .sort((a, b) => Number(forced.has(b.id)) - Number(forced.has(a.id)) || a.rank - b.rank);

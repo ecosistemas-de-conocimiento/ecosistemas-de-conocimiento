@@ -69,7 +69,13 @@ COPY scripts/ ./scripts/
 #
 # Needs ~2 GB of RAM and network access at build time. Change the model with
 # `--build-arg WHISPER_MODEL=small` (~250 MB) for a leaner demo image.
-RUN python scripts/bake_model.py \
+#
+# `--build-arg WHISPER_BAKE=0` skips the bake — for WHISPER_BACKEND=remote,
+# where the model runs on the Spark and these weights would be dead weight.
+# ⚠ An image built that way CANNOT run WHISPER_BACKEND=local (offline, no weights).
+ARG WHISPER_BAKE=1
+RUN if [ "$WHISPER_BAKE" = "1" ]; then python scripts/bake_model.py; \
+    else echo "[bake] skipped (WHISPER_BAKE=$WHISPER_BAKE)"; fi \
     && chown -R app:app /opt/whisper-cache
 
 # Runtime is provably offline: the weights are present, so never phone home.
