@@ -12,7 +12,7 @@ import {
 } from './uploadKind';
 
 describe('audio upload switch (UX demo backlog #8)', () => {
-  it('🔴 ships OFF until audio-service runs on EDC', () => {
+  it('🔴 is OFF unless PUBLIC_AUDIO_UPLOAD_ENABLED=1', () => {
     expect(AUDIO_UPLOAD_ENABLED).toBe(false);
   });
 

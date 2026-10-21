@@ -1,3 +1,5 @@
+import { env } from '$env/dynamic/public';
+
 /**
  * What an upload IS — a `documento` or a Voz (`testimonio`) — and who may say so.
  *
@@ -72,17 +74,19 @@ export const UPLOAD_KIND_LABELS: Record<UploadContentKind, string> = {
 // ── Audio upload switch ─────────────────────────────────────────────────────
 
 /**
- * 🔴 AUDIO UPLOAD IS OFF until audio-service is deployed on EDC.
+ * 🔴 AUDIO UPLOAD IS OFF unless the environment runs audio-service.
  *
  * Decided 2026-10-21 (UX demo backlog #8): an audio file went up, then failed
  * with "Falta configurar el servicio de audio" and an English env-var detail.
- * Flip this to `true` once transcription runs on the server. It is the ONLY
- * switch: the file picker, the button tooltip and the panel's refusal read it.
+ * So it is ON only where `PUBLIC_AUDIO_UPLOAD_ENABLED=1` is set at runtime —
+ * today dev on edc-1, next to the compose profile `audio`
+ * (infra/fleet/edc-1.md §4x). It is the ONLY switch: the file picker, the
+ * button tooltip, the panel's refusal and the upload route read it.
  *
  * ⚠ Presentation only. The upload route still accepts audio from a direct POST.
  * A Voz (`testimonio`) stays available: it can be a PDF or a DOCX.
  */
-export const AUDIO_UPLOAD_ENABLED = false;
+export const AUDIO_UPLOAD_ENABLED = env.PUBLIC_AUDIO_UPLOAD_ENABLED === '1';
 
 /** True for the parts of an `accept` list that name audio or video. */
 function isAudioAcceptEntry(entry: string, audioExtensions: RegExp): boolean {
