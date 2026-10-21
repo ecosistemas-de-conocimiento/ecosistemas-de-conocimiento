@@ -44,6 +44,33 @@ describe('🔴 isPlaceholderLabel — the gate’s own label set', () => {
     }
   })
 
+  it('🔴 matches a label that CONTAINS an unbracketed placeholder token (dev, 2026-10-21)', () => {
+    for (const label of [
+      'mercado de Domicilio C', 'Mercado de domicilio c', '[Persona B] y su hija', 'Persona B y su hija',
+      'casa de Persona A', 'Domicilio A, Morelos', 'mercado de Domicilio E', 'escuela de Lugar 3',
+      'Persona AB López', 'fuente: Dato omitido', '(Persona A)', 'Persona Á',
+    ]) {
+      expect(isPlaceholderLabel(label), label).toBe(true)
+    }
+  })
+
+  it('🔴 keeps real words that start like a placeholder', () => {
+    for (const label of [
+      'Personas con discapacidad', 'Personal docente', 'Personal de salud', 'visitas a domicilio',
+      'Domicilios', 'domicilios particulares', 'de persona a persona', 'persona y comunidad',
+      'lugar de origen', 'lugar de encuentro', 'en su lugar de trabajo', 'domicilio a domicilio',
+      'datos omitidos', 'impersona a', 'persona sorda', 'lugares sagrados',
+    ]) {
+      expect(isPlaceholderLabel(label), label).toBe(false)
+    }
+  })
+
+  it('whole-label placeholders still match even when the suffix is a short word', () => {
+    for (const label of ['Persona A', 'Domicilio E', 'Lugar O', '[Persona Y]', 'Domicilio A.']) {
+      expect(isPlaceholderLabel(label), label).toBe(true)
+    }
+  })
+
   it('leaves real subjects that only share a word', () => {
     for (const label of [
       'persona sorda', 'personas sordas', 'persona sorda mayor', 'personas mayores',

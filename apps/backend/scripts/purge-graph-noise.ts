@@ -1,6 +1,7 @@
 /**
  * ONE-OFF CLEANUP: delete graph entities that are a LANGUAGE or a redaction
- * PLACEHOLDER, with their mentions and relations.
+ * PLACEHOLDER, or whose label CONTAINS one (`mercado de Domicilio C`), with
+ * their mentions and relations.
  * Logic and rationale: `src/lib/graph/purgeNoise.ts` and `src/lib/graph/noise.ts`.
  *
  * 🔴 DRY RUN BY DEFAULT. It reads and prints counts; it writes nothing.

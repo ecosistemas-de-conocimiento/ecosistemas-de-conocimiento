@@ -723,6 +723,29 @@ describe('extractGraph', () => {
     ])
   })
 
+  it('🔴 dropNoiseEntities drops a label that CONTAINS a placeholder, whole, with its relations', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const e = (tipo: 'tema' | 'lugar' | 'persona', etiqueta: string) => ({ tipo, etiqueta, menciones: 1, fragmento: null })
+    const out = dropNoiseEntities({
+      entities: [
+        e('lugar', 'mercado de Domicilio C'),
+        e('tema', '[Persona B] y su hija'),
+        e('tema', 'Personas con discapacidad'),
+        e('tema', 'Personal docente'),
+        e('tema', 'visitas a domicilio'),
+        e('lugar', 'Tlayacapan'),
+      ],
+      relations: [
+        { desde: 'mercado de Domicilio C', hacia: 'Tlayacapan', tipo: 'ubicado_en' },
+        { desde: 'visitas a domicilio', hacia: 'Tlayacapan', tipo: 'ocurre_en' },
+      ],
+    } as ParsedWindow)
+    expect(out.entities.map((x) => x.etiqueta)).toEqual([
+      'Personas con discapacidad', 'Personal docente', 'visitas a domicilio', 'Tlayacapan',
+    ])
+    expect(out.relations.map((r) => r.desde)).toEqual(['visitas a domicilio'])
+  })
+
   it('dropNoiseEntities leaves a clean window untouched', () => {
     const w = { entities: [{ tipo: 'tema' as const, etiqueta: 'dengue', menciones: 1, fragmento: null }], relations: [] }
     expect(dropNoiseEntities(w)).toBe(w)

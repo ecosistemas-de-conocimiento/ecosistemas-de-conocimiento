@@ -20,8 +20,9 @@
  * CANONICAL KEY (`normalise.ts`: lowercased, accents folded, `ñ` kept), so the
  * fold is the writer's own and case/accent handling cannot drift between the
  * two sides. The pattern uses only constructs whose meaning is identical in a
- * JS `RegExp` and a Postgres ARE (`~`): `^ $ | ? (?:) [] [^] {m,n} \( \) \[ \]`.
- * `noise.test.ts` checks the JS side; `queries.pg.test.ts` the Postgres side.
+ * JS `RegExp` and a Postgres ARE (`~`): `^ $ | ? (?:) (?!) [] [^] {m,n} \( \) \[ \]`.
+ * `noise.test.ts` checks the JS side; `queries.pg.test.ts` runs the same label
+ * list through Postgres and asserts the two verdicts are identical.
  */
 
 import {
@@ -93,16 +94,40 @@ const LABELLED = [
   'lugar',
 ].map(escapeRe).join('|')
 
-const PLACEHOLDER_CORE =
-  `(?:(?:${LABELLED}) (?:[a-z]{1,2}|[0-9]{1,3})|${escapeRe(placeholderWord(OMITTED_PLACEHOLDER))})`
+/** A letter of a canonical key, as a bracket body: the key is lowercased, accents folded, `ñ` kept. */
+const KEY_CHAR = 'a-z0-9ñ'
+
+/** The placeholder's suffix: one or two letters, or up to three digits. */
+const SUFFIX = '(?:[a-z]{1,2}|[0-9]{1,3})'
 
 /**
- * A key that is a placeholder, with or without its brackets (`persona a`,
- * `[persona a]`), or that CONTAINS a bracketed one (`casa de [persona a]`).
- * Unbracketed, only the whole label counts: `persona sorda` is a subject.
+ * Spanish words of one or two letters. `persona a persona`, `lugar de origen`,
+ * `persona y comunidad` have the placeholder SHAPE, so a suffix that is one of
+ * these words only counts when nothing but punctuation or the end follows it
+ * (`[Persona A]`, `mercado de Domicilio E`, `Domicilio A, Morelos`).
+ */
+const SHORT_WORDS = [
+  'a', 'e', 'o', 'u', 'y', 'al', 'da', 'de', 'di', 'eh', 'el', 'en', 'es', 'ex', 'fe',
+  'ha', 'he', 'la', 'le', 'lo', 'me', 'mi', 'ni', 'no', 'os', 'se', 'si', 'su', 'te',
+  'ti', 'tu', 'un', 'va', 've', 'vi', 'ya', 'yo',
+].join('|')
+
+/**
+ * 🔴 A key that CONTAINS a placeholder token, anywhere, bracketed or not:
+ * `persona a`, `[persona a]`, `mercado de domicilio c`, `[persona b] y su hija`,
+ * `dato omitido`. The whole entity is dropped, never stripped down to the rest:
+ * a stripped `mercado de` could merge into a real node (owner review 2026-10-21).
+ *
+ * Whole-word on both sides, with an explicit `[^a-z0-9ñ]` class instead of
+ * `\b` — JavaScript's `\b` and Postgres's `\y` disagree on `ñ`.
+ * The shape is the word, ONE space, and a suffix token, so `personal docente`,
+ * `personas con discapacidad`, `visitas a domicilio`, `domicilio fiscal` and
+ * `lugar de origen` stay. The `(?!…)` lookahead means the same in both engines.
  */
 export const GRAPH_PLACEHOLDER_KEY_PATTERN =
-  `^\\[?${PLACEHOLDER_CORE}\\]?$|\\[${PLACEHOLDER_CORE}\\]`
+  `(?:^|[^${KEY_CHAR}])(?:` +
+  `(?:${LABELLED}) (?:(?!(?:${SHORT_WORDS}) )${SUFFIX}(?:[^${KEY_CHAR}]|$)|${SUFFIX}(?:[^${KEY_CHAR} ]|$))` +
+  `|${escapeRe(placeholderWord(OMITTED_PLACEHOLDER))}(?:[^${KEY_CHAR}]|$))`
 
 // ---------------------------------------------------------------------------
 // The predicate
