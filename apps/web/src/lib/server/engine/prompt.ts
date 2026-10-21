@@ -44,14 +44,28 @@ export const PLAIN_LANGUAGE_RULE =
  *
  * This rule also owns the no-answer instruction: {@link PLAIN_LANGUAGE_RULE}
  * no longer carries it, so the model reads it once.
+ *
+ * 🔴 THE NO-ANSWER REPLY IS FOR "NO PASSAGE ON THE TOPIC" ONLY. Measured on dev
+ * after 8b525fa (runbook §4t): 3 on-topic questions in the Educación
+ * ecosistema (eco-3) all got "Los documentos no hablan de esto." with no
+ * sources, although retrieval returned 8 reranked candidates. 8b525fa read
+ * "if the documents do not answer the question, reply exactly …". Inferred
+ * cause: testimonios answer such a question only in part, and that wording,
+ * with the preamble's "saying a detail is missing is a complete answer",
+ * made a partial answer look like no answer. So a partial answer is asked for
+ * by name, and it opens with what the passages say: `isNoAnswer` in
+ * `$lib/server/citationProvenance` reads only the first sentence.
  */
 export const CITE_RULE =
   'Cita solo los pasajes que apoyan directamente una afirmación: pon su número ' +
   'entre corchetes al final de la frase, así: "El riego empezó en 2020 [2]." ' +
   'Usa como máximo un grupo de números por frase, de uno a tres: [1, 3]. No ' +
-  'cites tus propias ideas ni una frase que diga que falta información. Si los ' +
-  `documentos no responden la pregunta, contesta exactamente "${NO_ANSWER_REPLY}" ` +
-  'y nada más.';
+  'cites tus propias ideas ni una frase que diga que falta información. ' +
+  'Responde con lo que dicen los pasajes que sí tratan el tema, aunque solo ' +
+  'cubran una parte de la pregunta: empieza por lo que dicen y después, si ' +
+  'hace falta, di qué parte no cubren. Contesta exactamente ' +
+  `"${NO_ANSWER_REPLY}" y nada más solo si ningún pasaje trata el tema de la ` +
+  'pregunta.';
 
 export const CHAT_SYSTEM_PROMPT =
   'Eres un asistente que ayuda a una persona a consultar los documentos de su ' +

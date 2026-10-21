@@ -10,8 +10,20 @@ describe('CHAT_SYSTEM_PROMPT', () => {
     expect(CITE_RULE).toMatch(/\[\d+\]/);
   });
 
-  it('🔴 no documents for the question: the exact no-answer reply and nothing else', () => {
-    expect(CITE_RULE).toContain(`contesta exactamente "${NO_ANSWER_REPLY}" y nada más`);
+  it('🔴 no passage on the topic: the exact no-answer reply and nothing else', () => {
+    expect(CITE_RULE).toContain(
+      `Contesta exactamente "${NO_ANSWER_REPLY}" y nada más solo si ningún pasaje trata el tema de la pregunta`,
+    );
+  });
+
+  it('🔴 partly relevant passages get an answer, not the no-answer reply (Educación, 8b525fa)', () => {
+    // 8b525fa's "Si los documentos no responden la pregunta, contesta
+    // exactamente …" refused 3/3 on-topic Educación questions on dev.
+    expect(CITE_RULE).not.toContain('Si los documentos no responden la pregunta');
+    expect(CITE_RULE).toContain('aunque solo cubran una parte de la pregunta');
+    // The partial answer opens with what the passages say, so `isNoAnswer`
+    // (first sentence only) never drops its sources.
+    expect(CITE_RULE).toContain('empieza por lo que dicen');
   });
 
   it('gives the no-answer instruction once: the plain-language rule no longer carries it', () => {
