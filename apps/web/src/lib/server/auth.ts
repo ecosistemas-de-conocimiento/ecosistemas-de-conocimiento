@@ -67,12 +67,6 @@ export type AuthFailure =
   | 'invalid-credentials'
   /** Payload locked the account after too many failed attempts. */
   | 'account-locked'
-  /** Sign-up: that email already has an account. */
-  | 'email-taken'
-  /** Sign-up: the address is not a valid email. */
-  | 'email-invalid'
-  /** Sign-up: `IDENTITY_ALLOWED_EMAIL_DOMAIN` fenced this address out. */
-  | 'email-domain'
   /** The backend never answered — down, restarting, or no network. */
   | 'unreachable'
   /** The backend answered 5xx. */
@@ -81,12 +75,8 @@ export type AuthFailure =
   | 'bad-request'
   /** Email or password left empty. */
   | 'missing-fields'
-  /** Sign-up: password under the 8-character minimum. */
-  | 'password-too-short'
   /** Sign-in failed for a reason we could not classify. */
-  | 'login-failed'
-  /** Sign-up failed for a reason we could not classify. */
-  | 'register-failed';
+  | 'login-failed';
 
 /**
  * The only auth copy the user ever sees. Spanish, `tú`, and every line says
@@ -98,20 +88,13 @@ export const AUTH_ERROR_COPY: Record<AuthFailure, string> = {
     'El correo o la contraseña no coinciden. Revísalos e inténtalo de nuevo.',
   'account-locked':
     'Bloqueamos la cuenta un rato por varios intentos fallidos. Espera unos minutos y vuelve a intentarlo.',
-  'email-taken':
-    'Ya hay una cuenta con ese correo. Inicia sesión con ella o usa otro correo.',
-  'email-invalid': 'Ese correo no se ve bien. Revísalo; se escribe así: nombre@ejemplo.com.',
-  'email-domain':
-    'Ese correo no puede registrarse aquí. Usa el correo de tu institución o pide ayuda a quien administra la instalación.',
   unreachable:
     'No pudimos conectar con el servidor. Revisa tu conexión e inténtalo de nuevo en un momento.',
   server:
     'El servidor tuvo un problema. Inténtalo de nuevo en un momento; si sigue igual, avisa a quien administra la instalación.',
   'bad-request': 'No pudimos leer lo que enviaste. Recarga la página e inténtalo de nuevo.',
   'missing-fields': 'Escribe tu correo y tu contraseña.',
-  'password-too-short': 'La contraseña necesita al menos 8 caracteres. Escribe una más larga.',
   'login-failed': 'No pudimos iniciar tu sesión. Inténtalo de nuevo en un momento.',
-  'register-failed': 'No pudimos crear tu cuenta. Inténtalo de nuevo en un momento.',
 };
 
 /** Spanish copy for a failure code. Never falls through to a raw string. */
@@ -187,45 +170,6 @@ export async function loginWithBackend(
     // A thrown fetch means we never reached the backend at all.
     return { ok: false, failure: 'unreachable', detail: (err as Error).message };
   }
-}
-
-export async function registerWithBackend(
-  email: string,
-  password: string,
-  displayName: string,
-): Promise<LoginResult> {
-  try {
-    const res = await fetch(`${backendUrl()}/api/users`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, displayName }),
-    });
-    const body = (await res.json().catch(() => ({}))) as PayloadErrorBody & {
-      doc?: BackendUser;
-    };
-    if (!res.ok || !body.doc) {
-      const detail = backendMessages(body) || `HTTP ${res.status}`;
-      // The three sign-up refusals a person can actually act on. Payload states
-      // each of them in a field-level message; `Users.beforeValidate` throws
-      // the domain-fence one ("Only @x addresses may sign up.").
-      const failure: AuthFailure =
-        res.status >= 500
-          ? 'server'
-          : /already registered/i.test(detail)
-            ? 'email-taken'
-            : /may sign up/i.test(detail)
-              ? 'email-domain'
-              : /valid email/i.test(detail)
-                ? 'email-invalid'
-                : 'register-failed';
-      return { ok: false, failure, detail };
-    }
-  } catch (err) {
-    return { ok: false, failure: 'unreachable', detail: (err as Error).message };
-  }
-  // Payload's create-user route returns the user but no JWT — follow with login
-  // so the caller gets a session in one round-trip.
-  return loginWithBackend(email, password);
 }
 
 /**

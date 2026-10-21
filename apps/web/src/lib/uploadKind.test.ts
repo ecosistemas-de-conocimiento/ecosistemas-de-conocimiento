@@ -1,6 +1,47 @@
 import { describe, expect, it } from 'vitest';
 
-import { mayUploadVoces, mayUploadVocesAnywhere, parseUploadContentKind } from './uploadKind';
+import { AUDIO_EXTENSIONS, UPLOAD_ACCEPT } from './config';
+import {
+  AUDIO_UPLOAD_ENABLED,
+  looseUploadErrorCopy,
+  mayUploadVoces,
+  mayUploadVocesAnywhere,
+  parseUploadContentKind,
+  uploadAccept,
+  uploadButtonTitle,
+} from './uploadKind';
+
+describe('audio upload switch (UX demo backlog #8)', () => {
+  it('🔴 ships OFF until audio-service runs on EDC', () => {
+    expect(AUDIO_UPLOAD_ENABLED).toBe(false);
+  });
+
+  it('with audio off, the picker offers only PDF and DOCX', () => {
+    expect(uploadAccept(UPLOAD_ACCEPT, AUDIO_EXTENSIONS, false).split(',')).toEqual([
+      'application/pdf',
+      '.pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.docx',
+    ]);
+  });
+
+  it('with audio on, the picker keeps the full list', () => {
+    expect(uploadAccept(UPLOAD_ACCEPT, AUDIO_EXTENSIONS, true)).toBe(UPLOAD_ACCEPT);
+  });
+
+  it('Mis documentos upload errors are Spanish and never echo the code', () => {
+    for (const code of ['needs_conversation', 'unsupported_kind', 'file_too_large', 'boom', null]) {
+      const copy = looseUploadErrorCopy(code, '20.0 MB');
+      expect(`${copy.title} ${copy.message}`).not.toMatch(/_|boom/);
+    }
+    expect(looseUploadErrorCopy('unsupported_kind', '').message).not.toMatch(/audio/i);
+  });
+
+  it('the tooltip names audio only when audio is on', () => {
+    expect(uploadButtonTitle(false)).not.toMatch(/audio|MP3/i);
+    expect(uploadButtonTitle(true)).toMatch(/audio/);
+  });
+});
 
 describe('parseUploadContentKind', () => {
   it('defaults an absent field to documento', () => {

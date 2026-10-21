@@ -15,7 +15,9 @@ import {
   GRAPH_SHAPE_POLICY,
   GRAPH_WORD_CLASSES,
   isGenericLabel,
+  isTransientWindowError,
   policyRejects,
+  splitQualifiedPlaces,
   mergeWindows,
   parseWindowResponse,
   significantTokens,
@@ -998,5 +1000,110 @@ describe('extractGraph', () => {
     const result = await extractGraph({ docId: 8, contentKind: 'documento', text: '  ', client })
     expect(calls).toHaveLength(0)
     expect(result).toMatchObject({ entities: [], relations: [], windows: 0 })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Backlog #16 — duplicate places, and a red badge from one dropped connection
+// ---------------------------------------------------------------------------
+
+describe('splitQualifiedPlaces', () => {
+  const place = (etiqueta: string) => ({
+    tipo: 'lugar' as const,
+    etiqueta,
+    menciones: 2,
+    fragmento: null,
+  })
+
+  it('turns "Cuernavaca, Morelos" into Cuernavaca, Morelos and the edge between them', () => {
+    const out = splitQualifiedPlaces({
+      entities: [
+        place('Cuernavaca, Morelos'),
+        { tipo: 'tema', etiqueta: 'agua', menciones: 1, fragmento: null },
+      ],
+      relations: [{ desde: 'agua', hacia: 'Cuernavaca, Morelos', tipo: 'afecta_a' }],
+    })
+    expect(out.entities.map((e) => `${e.tipo}/${e.etiqueta}`)).toEqual([
+      'lugar/Cuernavaca',
+      'tema/agua',
+      'lugar/Morelos',
+    ])
+    expect(out.relations).toEqual([
+      { desde: 'Cuernavaca', hacia: 'Morelos', tipo: 'ubicado_en' },
+      // The edge that named the qualified label now points at the bare place.
+      { desde: 'agua', hacia: 'Cuernavaca', tipo: 'afecta_a' },
+    ])
+  })
+
+  it('merges with the bare spelling in the same document', () => {
+    const window = splitQualifiedPlaces({
+      entities: [place('Xoxocotla, Morelos'), place('Xoxocotla'), place('Morelos')],
+      relations: [],
+    })
+    const merged = mergeWindows([window], 'documento')
+    expect(merged.entities.map((e) => e.label).sort()).toEqual(['Morelos', 'Xoxocotla'])
+    expect(merged.entities.find((e) => e.label === 'Xoxocotla')?.occurrences).toBe(4)
+    expect(merged.relations).toEqual([
+      { fromKey: 'xoxocotla', toKey: 'morelos', type: 'ubicado_en' },
+    ])
+  })
+
+  it('leaves anything that is not clearly "Place, Container" alone', () => {
+    const untouched: ParsedWindow = {
+      entities: [
+        place('Xoxocotla, Puente de Ixtla, Morelos'),
+        place('Tepoztlán, centro'),
+        { tipo: 'organizacion', etiqueta: 'CIDE, A.C.', menciones: 1, fragmento: null },
+      ],
+      relations: [],
+    }
+    expect(splitQualifiedPlaces(untouched)).toEqual(untouched)
+  })
+})
+
+describe('one retry for a transient window failure', () => {
+  it('classifies network blips and 5xx as transient, and nothing else', () => {
+    expect(isTransientWindowError(new TypeError('fetch failed'))).toBe(true)
+    expect(isTransientWindowError(Object.assign(new Error('x'), { code: 'ECONNRESET' }))).toBe(true)
+    expect(isTransientWindowError(Object.assign(new Error('x'), { status: 503 }))).toBe(true)
+    expect(isTransientWindowError(Object.assign(new Error('x'), { status: 429 }))).toBe(true)
+    expect(isTransientWindowError(Object.assign(new Error('budget'), { status: 402 }))).toBe(false)
+    expect(isTransientWindowError(new Error('timeout'))).toBe(false)
+  })
+
+  it('recovers from one `fetch failed` instead of failing the document', async () => {
+    const { client, calls } = fakeClient([
+      new TypeError('fetch failed'),
+      okResponse([{ tipo: 'tema', etiqueta: 'Agua', menciones: 1 }]),
+    ])
+    const result = await extractGraph({
+      docId: 40,
+      contentKind: 'documento',
+      text: 'x'.repeat(300),
+      client,
+      retryDelayMs: 0,
+      onWindowError: () => undefined,
+    })
+    expect(calls).toHaveLength(2)
+    expect(result.windowsFailed).toBe(0)
+    expect(result.entities.map((e) => e.label)).toEqual(['Agua'])
+  })
+
+  it('still fails after a second transient failure', async () => {
+    const { client, calls } = fakeClient([
+      new TypeError('fetch failed'),
+      new TypeError('fetch failed'),
+    ])
+    await expect(
+      extractGraph({
+        docId: 41,
+        contentKind: 'documento',
+        text: 'x'.repeat(300),
+        client,
+        retryDelayMs: 0,
+        onWindowError: () => undefined,
+      }),
+    ).rejects.toThrow(/every extraction window failed/)
+    expect(calls).toHaveLength(2)
   })
 })

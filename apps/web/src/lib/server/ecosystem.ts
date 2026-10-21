@@ -127,10 +127,21 @@ export async function listEcosystems(token: string | undefined): Promise<Ecosyst
       depth: '1',
     });
     const res = await backendFetch(token, `/api/memberships?${qs.toString()}`, { method: 'GET' });
+    if (res.status === 403) {
+      // 🔴 A 403 HERE MEANS "NO MEMBERSHIPS", NOT AN OUTAGE. The backend's
+      // `memberships.read` is `withinMyOrganizations()`, which returns `false`
+      // (→ 403 on a list) for an identified, non-admin caller who belongs to
+      // no organization — it refuses rather than build an empty `in: []`
+      // constraint. `/api/users/me` already answered above, so the backend is
+      // up and knows who this is. Reading this as a failed read showed a brand
+      // new account "problemas para llegar al servidor" and "No disponible"
+      // instead of the "pide que te agreguen" screen (UX backlog #6).
+      // (A deactivated account lands here too; "ask an administrator" is the
+      // right advice for it as well.)
+      console.warn('[ecosistemas] backend answered 403 listing memberships; treating as none');
+      return { list: [], ok: true };
+    }
     if (!res.ok) {
-      // A 403 here is Payload's "empty tenant" answer in some shapes, so it is
-      // not proof of a real authz problem — but it is also not proof of zero
-      // memberships. Report it as a failed read and let the caller stay quiet.
       console.warn(`[ecosistemas] backend answered ${res.status} listing memberships`);
       return { list: [], ok: false };
     }

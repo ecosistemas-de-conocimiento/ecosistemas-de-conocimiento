@@ -50,6 +50,11 @@ export interface SessionDocRow {
   contentKind?: string | null;
   ingestStatus?: string | null;
   publicationStatus?: string | null;
+  /**
+   * "Fijar" in the docs panel. A missing value reads as pinned, the same
+   * default the store and the upload route use.
+   */
+  isPinned?: boolean;
 }
 
 export interface SessionDocs {
@@ -123,6 +128,7 @@ export async function fetchSessionDocs(
         contentKind: typeof r.contentKind === 'string' ? r.contentKind : null,
         ingestStatus: (r.ingestStatus as string | null | undefined) ?? null,
         publicationStatus: (r.publicationStatus as string | null | undefined) ?? null,
+        isPinned: r.isPinned !== false,
       });
     }
     return { docs, ok: true };

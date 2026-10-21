@@ -34,7 +34,7 @@ apps/web  ──session cookie──▶  THIS APP  ──API key──▶  servi
 
 | Collection | One row is |
 |---|---|
-| `users` | a person. One account, many ecosistemas. Public sign-up. |
+| `users` | a person. One account, many ecosistemas. No public sign-up: a platform admin creates accounts in the Payload admin panel (`/admin` → Users), then adds a membership. |
 | `organizations` | **an ecosistema** — a group of people building one corpus. Its `slug` is the token audience. |
 | `memberships` | a person's role in an ecosistema: `member` / `admin` / `owner`. |
 | `teams`, `projects` | domain structure inside an ecosistema. Mentionable in chat. |

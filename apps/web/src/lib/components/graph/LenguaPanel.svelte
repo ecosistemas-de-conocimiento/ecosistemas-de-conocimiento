@@ -12,7 +12,6 @@
    */
   import {
     LENGUA_ALL,
-    LENGUA_NOTE,
     LENGUA_PANEL_TITLE,
     lenguaFacetCopy,
     type LenguaFacet,
@@ -30,7 +29,6 @@
 {#if lenguas.length > 0 || selected}
   <section class="lenguas" aria-label={LENGUA_PANEL_TITLE} data-testid="grafo-lenguas">
     <h2 class="title">{LENGUA_PANEL_TITLE}</h2>
-    <p class="hint">{LENGUA_NOTE}</p>
     <ul class="rows">
       <li>
         <a class="row" class:active={!selected} href={hrefFor('')} aria-current={!selected ? 'true' : undefined}>
@@ -69,12 +67,6 @@
     font-size: 0.82rem;
     font-weight: 800;
     color: var(--edc-color-ink);
-  }
-  .hint {
-    margin: 0;
-    font-size: 0.72rem;
-    line-height: 1.45;
-    color: var(--edc-color-ink-soft);
   }
   .rows {
     list-style: none;

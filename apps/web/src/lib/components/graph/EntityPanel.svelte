@@ -23,16 +23,12 @@
     entityDocsTitle,
     GRAPH_CLEAR_EDGE_LABEL,
     GRAPH_EDGE_DOCS_EMPTY,
-    GRAPH_EDGE_DOCS_HINT,
-    GRAPH_EDGE_DOCS_HINT_APPROX,
     GRAPH_EDGE_DOCS_TITLE,
     GRAPH_EDGE_DOCS_TITLE_APPROX,
     GRAPH_EDGE_DOCS_UNAVAILABLE,
     GRAPH_ENTITY_DOCS_EMPTY,
-    GRAPH_ENTITY_DOCS_HINT,
     GRAPH_NO_NEIGHBOURS,
     GRAPH_RECENTRE_LABEL,
-    GRAPH_TESTIMONY_NOTE,
     relationLabel,
     supportCopy,
     supportShort,
@@ -80,13 +76,6 @@
         : GRAPH_EDGE_DOCS_TITLE_APPROX
       : entityDocsTitle(detail.entity.label),
   );
-  const docsHint = $derived(
-    edge
-      ? edge.exact
-        ? GRAPH_EDGE_DOCS_HINT
-        : GRAPH_EDGE_DOCS_HINT_APPROX
-      : GRAPH_ENTITY_DOCS_HINT,
-  );
   // ⚠ "We found none" and "we could not read them" are different sentences.
   // Saying the first when the second is true tells someone their ecosistema has
   // less in it than it does.
@@ -131,7 +120,7 @@
               onclick={() => onSelectEdge(edge?.entity.id === n.entity.id ? null : n.entity.id)}
               data-testid={`grafo-vecino-${n.entity.id}`}
             >
-              <span class="rel">{relationLabel(n.relationType)}</span>
+              <span class="rel">{relationLabel(n.relationType, n.direction)}</span>
               <span class="rel-label">{n.entity.label}</span>
               <span class="rel-meta">
                 {typeChipLabel(n.entity.type)} · {supportShort(n.support)}
@@ -160,7 +149,6 @@
         </button>
       {/if}
     </div>
-    <p class="docs-hint">{docsHint}</p>
     {#if documents.length === 0}
       <p class="notice">{docsEmpty}</p>
     {:else}
@@ -176,9 +164,6 @@
                 <span class="doc-lengua">{lenguaByDocument[doc.id]}</span>
               {/if}
             </a>
-            {#if doc.contentKind === 'testimonio'}
-              <p class="doc-anon">{GRAPH_TESTIMONY_NOTE}</p>
-            {/if}
           </li>
         {/each}
       </ul>
@@ -345,11 +330,6 @@
     font-weight: 600;
     cursor: pointer;
   }
-  .docs-hint {
-    margin: 0;
-    font-size: 0.74rem;
-    color: var(--edc-color-ink-soft);
-  }
   .doc {
     display: grid;
     gap: 0.1rem;
@@ -397,11 +377,5 @@
     font-weight: 600;
     color: var(--edc-color-ink);
     line-height: 1.35;
-  }
-  .doc-anon {
-    margin: 0 0 0 0.55rem;
-    font-size: 0.7rem;
-    font-style: italic;
-    color: var(--edc-color-ink-soft);
   }
 </style>

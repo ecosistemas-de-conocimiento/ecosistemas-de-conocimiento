@@ -83,7 +83,7 @@
         >
           {node.displayLabel}
         </text>
-        <title>{`${node.label} — ${relationLabel(node.relationType)} — ${supportShort(node.support)}`}</title>
+        <title>{`${node.label} — ${relationLabel(node.relationType, node.direction)} — ${supportShort(node.support)}`}</title>
       </g>
     {/each}
   </svg>

@@ -49,6 +49,14 @@ describe.skipIf(stackDown)('identity', () => {
     expect(res.body.user.email).toBe(requireEnv('SEED_ADMIN_EMAIL').toLowerCase())
   })
 
+  it('🔴 refuses anonymous sign-up — only a platform admin creates accounts', async () => {
+    const res = await apiJson(anonymous, 'POST', '/api/users', {
+      email: `anon-${Date.now()}@e2e.local`,
+      password: 'E2e-anonymous-signup-1',
+    })
+    expect(res.status).toBe(403)
+  })
+
   it('refuses a wrong password', async () => {
     const res = await apiJson(anonymous, 'POST', '/api/users/login', {
       email: requireEnv('SEED_ADMIN_EMAIL'),

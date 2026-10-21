@@ -66,11 +66,20 @@ export class AIServiceError extends Error {
  * reintroduce the leak.
  */
 export function userFacingError(err: unknown): string {
-  if (err instanceof AIServiceError) {
-    return err.code === AI_UNAVAILABLE_CODE ? AI_UNAVAILABLE_MESSAGE : err.message;
+  if (err instanceof AIServiceError && err.code === AI_UNAVAILABLE_CODE) {
+    return AI_UNAVAILABLE_MESSAGE;
   }
-  return `Error inesperado: ${(err as Error)?.message ?? 'desconocido'}`;
+  // Every other failure text is written for developers ("Network error: …",
+  // "ai-service: …", "HTTP 502"). The people using this are not technical
+  // (UX backlog #26), so they get one plain sentence and the detail goes to
+  // the console.
+  console.warn('[chat] turn failed:', (err as Error)?.message ?? err);
+  return TURN_FAILED_MESSAGE;
 }
+
+/** What a failed chat turn says, whatever went wrong underneath. */
+export const TURN_FAILED_MESSAGE =
+  'No se pudo obtener la respuesta. Revisa tu conexión e inténtalo de nuevo en un momento.';
 
 export interface GenerateOptions {
   signal?: AbortSignal;
@@ -79,6 +88,12 @@ export interface GenerateOptions {
 export interface StreamGenerateOptions extends GenerateOptions {
   /** Fired for each token chunk as it streams in. */
   onDelta?: (text: string) => void;
+  /**
+   * Fired once when the stream opens. The BFF sends its headers only after it
+   * has searched the documents and ai-service has accepted the generation, so
+   * this is the moment "buscando" becomes "escribiendo" (UX backlog #9).
+   */
+  onOpen?: () => void;
 }
 
 /**
@@ -127,6 +142,7 @@ export async function generateStream(
     throw new AIServiceError(detail, code);
   }
 
+  opts.onOpen?.();
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';

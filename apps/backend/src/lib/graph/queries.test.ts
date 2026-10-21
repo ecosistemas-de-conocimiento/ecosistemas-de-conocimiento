@@ -46,6 +46,7 @@ import {
   readGraphRetrieval,
   retrieveDocumentsQuery,
   retrieveEdgesQuery,
+  viewEdgesQuery,
   toCount,
   type GraphSql,
   type GraphQueryPayload,
@@ -106,6 +107,7 @@ const graphStatements: Record<string, GraphSql> = {
   'retrieve candidates': matchableEntitiesQuery(ORG, GRAPH_MIN_SUPPORT_DEFAULT),
   'retrieve edges': retrieveEdgesQuery(ORG, [ENTITY], GRAPH_MIN_SUPPORT_DEFAULT),
   'retrieve documents': retrieveDocumentsQuery(ORG, [ENTITY], GRAPH_MIN_SUPPORT_DEFAULT),
+  'view edges': viewEdgesQuery(ORG, [ENTITY, 43], GRAPH_MIN_SUPPORT_DEFAULT),
 }
 
 describe('🔴 the three gates, on every statement that reads graph rows', () => {
@@ -396,7 +398,7 @@ describe('the view, when the threshold hides everything', () => {
       [{ n: 2 }],
     ])
     const view = await readEntityView(payload, { organizationId: ORG })
-    expect(view).toEqual({ entities: [], hidden: 12, minSupport: 3, publishedDocuments: 2 })
+    expect(view).toEqual({ entities: [], hidden: 12, minSupport: 3, publishedDocuments: 2, edges: [] })
   })
 
   it('reports an ecosistema with nothing published as empty in BOTH senses', async () => {
@@ -406,7 +408,7 @@ describe('the view, when the threshold hides everything', () => {
     // carry both numbers.
     const payload = fakePayload([[], [{ n: 0 }]])
     const view = await readEntityView(payload, { organizationId: ORG })
-    expect(view).toEqual({ entities: [], hidden: 0, minSupport: 3, publishedDocuments: 0 })
+    expect(view).toEqual({ entities: [], hidden: 0, minSupport: 3, publishedDocuments: 0, edges: [] })
   })
 
   it('caps what a caller can ask for', () => {
@@ -492,6 +494,8 @@ describe('the entity detail', () => {
       entity: { id: 5, type: 'lugar', label: 'Oaxaca', support: 9 },
       relationType: 'ocurre_en',
       support: 4,
+      // No `direction` column came back, so the edge reads as undirected.
+      direction: 'both',
       // No evidence row came back for this edge, so the list is empty rather
       // than absent — see the note on the empty-list case below.
       documents: [],
@@ -1048,3 +1052,68 @@ function fakePayload(results: Record<string, unknown>[][]): FakePayload {
     },
   }
 }
+
+// ---------------------------------------------------------------------------
+// The whole-graph view's edges (backlog #3) and edge direction (backlog #16)
+// ---------------------------------------------------------------------------
+
+describe('the whole-graph view edges', () => {
+  it('reads the edges among the listed entities, after the view and the count', async () => {
+    const payload = fakePayload([
+      [
+        { id: 5, type: 'tema', label: 'Agua', support: 9, hidden: 0 },
+        { id: 6, type: 'lugar', label: 'Oaxaca', support: 3, hidden: 0 },
+      ],
+      [{ n: 11 }],
+      [
+        { from_id: '5', to_id: '6', support: '4' },
+        // A self-loop is not an edge anyone can draw.
+        { from_id: '6', to_id: '6', support: '3' },
+      ],
+    ])
+    const view = await readEntityView(payload, { organizationId: ORG })
+    expect(view.edges).toEqual([{ from: 5, to: 6, support: 4 }])
+    // The id list is bound as parameters, never interpolated as text.
+    const edgeSql = payload.executed[2]
+    expect(edgeSql?.params).toEqual(expect.arrayContaining([5, 6]))
+    expect(edgeSql?.text).not.toMatch(/ANY\(ARRAY\[5/)
+  })
+
+  it('makes no third round trip when nothing is visible', async () => {
+    const payload = fakePayload([[{ id: null, hidden: 2 }], [{ n: 1 }]])
+    await readEntityView(payload, { organizationId: ORG })
+    expect(payload.executed).toHaveLength(2)
+  })
+
+  it('applies the edge threshold per relation type BEFORE folding the pair', () => {
+    const { text } = renderSql(viewEdgesQuery(ORG, [1, 2], GRAPH_MIN_SUPPORT_DEFAULT))
+    const having = text.indexOf('HAVING COUNT(DISTINCT r.document_id)')
+    const fold = text.indexOf('LEAST(edges.from_id, edges.to_id)')
+    expect(having).toBeGreaterThan(-1)
+    expect(fold).toBeGreaterThan(having)
+    expect(text).toContain('GROUP BY 1, 2, 3')
+  })
+})
+
+describe('edge direction, seen from the focal entity', () => {
+  it('carries the direction the database reports, and treats anything else as undirected', async () => {
+    const payload = fakePayload([
+      [{ id: ENTITY, type: 'lugar', label: 'Morelos', support: '9' }],
+      [
+        { id: 5, type: 'lugar', label: 'Xoxocotla', support: '4', relation_type: 'ubicado_en', edge_support: '3', direction: 'in' },
+        { id: 6, type: 'tema', label: 'Agua', support: '4', relation_type: 'afecta_a', edge_support: '3', direction: 'out' },
+        { id: 7, type: 'tema', label: 'Salud', support: '4', relation_type: 'relacionado_con', edge_support: '3', direction: 'junk' },
+      ],
+      [],
+      [],
+    ])
+    const detail = await readEntityDetail(payload, { organizationId: ORG, entityId: ENTITY })
+    expect(detail?.neighbours.map((n) => n.direction)).toEqual(['in', 'out', 'both'])
+  })
+
+  it('computes it in the neighbour statement', () => {
+    const { text } = renderSql(entityNeighboursQuery({ organizationId: ORG, entityId: ENTITY }))
+    expect(text).toContain('AS direction')
+    expect(text).toContain('BOOL_AND(r.from_entity_id = $')
+  })
+})

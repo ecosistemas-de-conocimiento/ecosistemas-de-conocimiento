@@ -24,17 +24,26 @@ describe('graphBadge', () => {
   });
 
   it.each([
-    ['pending', 'grafo en cola', 'pending'],
-    ['extracting', 'construyendo grafo…', 'pending'],
-    ['ready', 'grafo listo', 'ready'],
-    ['failed', 'grafo falló', 'failed'],
-    ['skipped', 'sin grafo', 'muted'],
-  ] as const)('labels %s in Spanish', (status, label, tone) => {
+    ['pending', 'Conexiones: en preparación', 'pending'],
+    ['extracting', 'Conexiones: en preparación', 'pending'],
+    ['ready', 'Conexiones: listas', 'ready'],
+    ['failed', 'Conexiones: sin terminar', 'muted'],
+    ['skipped', 'Sin conexiones', 'muted'],
+  ] as const)('labels %s in plain Spanish', (status, label, tone) => {
     expect(graphBadge(status)).toMatchObject({ label, tone });
   });
 
-  it('puts the backend reason in a failed badge tooltip', () => {
-    expect(graphBadge('failed', 'timeout')!.title).toContain('timeout');
+  // UX demo backlog #21: "GRAFO EN COLA" was jargon to a non-technical audience.
+  it.each(['pending', 'extracting', 'ready', 'failed', 'skipped'] as const)(
+    'never says "grafo" on %s',
+    (status) => {
+      const b = graphBadge(status)!;
+      expect(`${b.label} ${b.title}`).not.toMatch(/grafo/i);
+    },
+  );
+
+  it('says a failed run does not break the document for the chat', () => {
+    expect(graphBadge('failed')!.title).toContain('funciona igual en el chat');
   });
 
   it('says skipped is not an error', () => {
@@ -59,14 +68,15 @@ describe('canRetryGraph', () => {
     },
   );
 
-  it('labels the button "Reconstruir grafo"', () => {
-    expect(GRAPH_RETRY_LABEL).toBe('Reconstruir grafo');
+  it('labels the button in plain words', () => {
+    expect(GRAPH_RETRY_LABEL).toBe('Preparar conexiones otra vez');
   });
 });
 
 describe('graphRetryErrorCopy', () => {
   it('names the uploader rule on 403 and the in-flight/no-text rule on 409', () => {
     expect(graphRetryErrorCopy(403)).toContain('Solo quien subió');
+    expect(graphRetryErrorCopy(403)).not.toMatch(/grafo/i);
     expect(graphRetryErrorCopy(409)).toContain('ya está en curso');
     expect(graphRetryErrorCopy(500)).toContain('Inténtalo de nuevo');
   });

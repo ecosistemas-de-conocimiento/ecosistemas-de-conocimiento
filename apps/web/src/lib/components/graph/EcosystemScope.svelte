@@ -51,7 +51,6 @@
     GRAPH_SWITCHER_NOT_FOUND,
     GRAPH_SWITCHER_OPEN,
     GRAPH_SWITCHER_PARTIAL,
-    GRAPH_SWITCHER_SCOPE_NOTE,
     GRAPH_SWITCHER_SEARCH_GO,
     GRAPH_SWITCHER_SEARCH_LABEL,
     GRAPH_SWITCHER_SEARCH_PLACEHOLDER,
@@ -115,9 +114,6 @@
       {open ? GRAPH_SWITCHER_CLOSE : GRAPH_SWITCHER_OPEN}
     </button>
   </div>
-
-  <!-- 🔴 The ADR §7.1 sentence, on the page. Scope, not permissions. -->
-  <p class="note">{GRAPH_SWITCHER_SCOPE_NOTE}</p>
 
   {#if scope.notFound}
     <p class="note warn" role="status">{GRAPH_SWITCHER_NOT_FOUND}</p>
@@ -193,7 +189,7 @@
         </ul>
         {#if matches.length > visible.length}
           <p class="note">
-            Y {matches.length - visible.length} más. Escribe para acotar la lista.
+            Y {matches.length - visible.length} más.
           </p>
         {/if}
       {/if}
