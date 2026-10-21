@@ -33,6 +33,10 @@
  * Anything else is `off` (fail closed) and logged.
  *
  * Best-effort: a failing or slow retrieve yields no block, never a failed turn.
+ *
+ * ⏸ Deferred (audit 2026-10-21): turns that cite a document later unpublished
+ * or deleted are not retired yet; see the TODO in
+ * `apps/backend/src/lib/conversationIngest.ts`.
  */
 
 import type { AIClient, DomainAdapter, RetrieveMatch } from '@edc/chat-engine/core';
@@ -73,9 +77,11 @@ export const ORIENTATION_HEADER = 'Conversaciones anteriores (no son fuentes; no
  * neither open a fence nor read as a citation, whitespace folded, capped.
  */
 export function orientationText(text: string): string {
-  // `[N]` first: `neutraliseFenceTags` turns a line-leading one into `(N)`.
-  return neutraliseFenceTags(text.replace(/\[\s*\d{1,4}(?:\s*[,;-]\s*\d{1,4})*\s*\]/g, ''))
-    .replace(/[<>]/g, ' ')
+  // Brackets go OUTRIGHT, not just `[N]` patterns: a one-pass `[N]` strip
+  // turns "[[1]1]" into "[1]" (audit 2026-10-21). Then no digit run can
+  // read as a citation, nested or not.
+  return neutraliseFenceTags(text.replace(/\[\s*\d{1,4}(?:\s*[,;-]\s*\d{1,4})*\s*\]/g, '').replace(/[[\]]/g, ' '))
+    .replace(/[<>[\]]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, ORIENT_MAX_CHARS_PER_TURN);

@@ -77,6 +77,7 @@ describe('CHAT_CITE_VARIANT — the dev prompt A/B', () => {
   it('the orientation rule names the block, forbids citing it, and uses no banned word', () => {
     expect(ORIENTATION_RULE).toContain('Conversaciones anteriores');
     expect(ORIENTATION_RULE).toContain('nunca lo cites con [N]');
+    expect(ORIENTATION_RULE).toContain('No repitas ni cites lo que preguntaron o dijeron otras personas');
     expect(ORIENTATION_RULE).not.toMatch(/fragmento|contexto|recuperad/i);
   });
 

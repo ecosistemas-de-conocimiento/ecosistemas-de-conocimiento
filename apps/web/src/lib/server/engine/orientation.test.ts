@@ -52,6 +52,13 @@ describe('orientationText / orientationBlock', () => {
     expect(t).toContain('Dice X');
   });
 
+  it('🔴 nested brackets cannot rebuild a citation (audit probe)', () => {
+    const t = orientationText('según el estudio [[1]1] la cifra es 40%');
+    expect(t).not.toMatch(/[[\]]/);
+    expect(t).toContain('la cifra es 40%');
+    expect(orientationBlock(['según el estudio [[1]1] la cifra es 40%'])).not.toMatch(/\[\s*\d/);
+  });
+
   it('labels the block, bullets each turn, caps the whole block', () => {
     const b = orientationBlock(['uno', 'dos', 'x'.repeat(5000)]);
     expect(b.startsWith(ORIENTATION_HEADER)).toBe(true);

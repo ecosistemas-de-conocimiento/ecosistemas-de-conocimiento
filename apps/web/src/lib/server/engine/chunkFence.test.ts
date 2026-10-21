@@ -7,6 +7,7 @@ import type {
   RetrieveMultiRequest,
 } from '@edc/chat-engine/core';
 import {
+  SOURCE_KINDS_FILTER,
   TURN_OVERFETCH,
   fenceChunkText,
   neutraliseFenceTags,
@@ -388,5 +389,38 @@ describe('withFencedRefs (@-mentioned documents)', () => {
 
   it('leaves an empty resolution empty', async () => {
     expect(await withFencedRefs(refAdapter('  ')).resolveEntity({ kind: 'document', id: '1' } as never)).toBe('  ');
+  });
+});
+
+describe('withFencedChunks — kindFilter (metadataFilterIn)', () => {
+  function filterRecorder() {
+    const filters: unknown[] = [];
+    const client: AIClient = {
+      ...fakeClient([]),
+      async retrieve(req) {
+        filters.push(req.filter);
+        return { matches: [m('a', 'turno', { kind: 'conversacion', authoredBy: 'user' }), m('d', 'doc', { kind: 'documento' })] };
+      },
+      async retrieveMulti(req: RetrieveMultiRequest) {
+        filters.push(req.filter);
+        return { matches: [], corpora: [] };
+      },
+    };
+    return { client, filters };
+  }
+
+  it('🔴 on: kind $in is merged into the filter of retrieve and retrieveMulti, keeping the caller’s keys', async () => {
+    const { client, filters } = filterRecorder();
+    const fenced = withFencedChunks(client, { kindFilter: true }).client;
+    await fenced.retrieve({ corpus: 'pub:1', filter: { lengua: 'mixe' } } as never);
+    await fenced.retrieveMulti!({ corpora: ['pub:1'], query: 'q' } as never);
+    expect(filters).toEqual([{ lengua: 'mixe', ...SOURCE_KINDS_FILTER }, { ...SOURCE_KINDS_FILTER }]);
+  });
+
+  it('🔴 off (older ai-service): no $in is sent, and turns are still dropped after the retrieve', async () => {
+    const { client, filters } = filterRecorder();
+    const out = await withFencedChunks(client).client.retrieve({ corpus: 'pub:1' } as never);
+    expect(filters).toEqual([undefined]);
+    expect(out.matches.map((x) => x.chunkId)).toEqual(['d']);
   });
 });

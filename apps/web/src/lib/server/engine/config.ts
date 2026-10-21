@@ -14,7 +14,7 @@ import { env } from '$env/dynamic/private';
 import { CHAT_KIND_REGISTRY } from '$lib/engine/registry';
 import { parseExpansionFlag } from './expand';
 import { chatRetrievalPolicy, parseRerankFlag } from './rerank';
-import { hybridRetrievalForTurn } from './hybrid';
+import { hybridRetrievalForTurn, metadataFilterInAvailable } from './hybrid';
 import { chatSystemPrompt, parseCiteVariant, type CiteVariant } from './prompt';
 import { parseOrientScope, type OrientScope } from './orientation';
 import type { RetrievalPolicy } from '@edc/chat-engine/core';
@@ -102,4 +102,16 @@ export function chatTurnHybrid(): Promise<boolean> {
  */
 export function chatOrientScope(): OrientScope {
   return parseOrientScope(env.CHAT_ORIENT_SCOPE);
+}
+
+/**
+ * Whether the sources legs may send `kind $in [documento, testimonio]`
+ * (`SOURCE_KINDS_FILTER`, `./chunkFence`): ai-service has `metadataFilterIn`.
+ * Asked once per process (cached in `./hybrid`). Never throws; doubt is `false`.
+ */
+export function chatKindFilterAvailable(): Promise<boolean> {
+  const baseUrl = env.AI_SERVICE_URL?.replace(/\/+$/, '');
+  const apiKey = env.AI_SERVICE_API_KEY;
+  if (!baseUrl || !apiKey) return Promise.resolve(false);
+  return metadataFilterInAvailable(baseUrl, apiKey);
 }

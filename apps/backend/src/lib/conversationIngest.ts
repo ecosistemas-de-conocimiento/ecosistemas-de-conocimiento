@@ -12,6 +12,16 @@
  * the gate holds is not embedded and is logged; it does NOT go to Revisión
  * (chosen, review: one hold per chat message would flood the reviewers).
  *
+ * ⏸ TODO (deferred, audit 2026-10-21; not demo-critical): when a document is
+ * UNPUBLISHED or DELETED, the turns whose `provenance` / `contextRefs` cite it
+ * ({@link citedDocumentIds}) stay in the corpus, so another member's
+ * orientation block can still carry what they said about it. Fix: on the
+ * unpublish confirm and the document delete, find those turns (state in
+ * `RETIRABLE_TURN_STATES`, `collections/Sessions.ts`) and retire + erase them
+ * as the conversation delete does (`conversationTurnErasure.ts`). Not done:
+ * that path is transaction-coupled to the session delete and needs its own
+ * after-commit plan, well past a small change.
+ *
  * ── 🔴 THE ONE THING THIS FILE EXISTS TO GET RIGHT ───────────────────────────
  *
  * **Append the new turns. Never re-ingest the thread.**

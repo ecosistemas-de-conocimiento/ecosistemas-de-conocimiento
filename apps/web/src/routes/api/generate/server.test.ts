@@ -29,6 +29,8 @@ import { ANSWER_NOT_SAVED_CODE } from '$lib/aiMessages';
 import { NO_ANSWER_REPLY } from '$lib/server/engine/prompt';
 
 const SESSION = '5';
+/** `SOURCE_KINDS_FILTER` (`chunkFence`): sent on every sources leg when ai-service has `metadataFilterIn`. */
+const KINDS = { kind: { $in: ['documento', 'testimonio'] } };
 const ECO = '7';
 const QUESTION = '¿qué dicen sobre la partería tradicional?';
 
@@ -390,7 +392,7 @@ describe('POST /api/generate — sync', () => {
     await POST(event(turn({ lengua: 'mixe' })));
     expect(retrieves().length).toBeGreaterThan(0);
     for (const c of retrieves()) {
-      expect((c.body as { filter?: unknown }).filter).toEqual({ lengua: 'mixe' });
+      expect((c.body as { filter?: unknown }).filter).toEqual({ lengua: 'mixe', ...KINDS });
     }
     expect(world.graphCalls).toBe(0);
   });
@@ -503,7 +505,7 @@ describe('POST /api/generate — stream', () => {
     await readSse(await POST(event(turn({ lengua: 'mixe' }), true)));
     expect(retrieves().length).toBeGreaterThan(0);
     for (const c of retrieves()) {
-      expect((c.body as { filter?: unknown }).filter).toEqual({ lengua: 'mixe' });
+      expect((c.body as { filter?: unknown }).filter).toEqual({ lengua: 'mixe', ...KINDS });
     }
   });
 });
@@ -525,9 +527,9 @@ describe('POST /api/generate — hybrid retrieval', () => {
     metadata: { docId, title: `doc-${docId}` },
   });
 
-  it('is off by default: no capability probe, no multi call', async () => {
+  it('is off by default: no multi call (one capability probe, for the source-kinds filter)', async () => {
     await POST(event(turn()));
-    expect(capabilityProbes()).toHaveLength(0);
+    expect(capabilityProbes()).toHaveLength(1);
     expect(multis()).toHaveLength(0);
     expect(retrieves().length).toBeGreaterThan(0);
   });
@@ -1031,7 +1033,7 @@ describe('POST /api/generate — a title match retrieves only that document', ()
     const res = await POST(event(ask(NAMED)));
     const body = (await res.json()) as { provenance: unknown };
     expect(retrieves().length).toBeGreaterThan(0);
-    for (const c of retrieves()) expect((c.body as { filter?: unknown }).filter).toEqual({ docId: '31' });
+    for (const c of retrieves()) expect((c.body as { filter?: unknown }).filter).toEqual({ docId: '31', ...KINDS });
     expect(answerPrompt()).toContain('FRAGMENTO DEL DIAGNOSTICO.');
     expect(answerPrompt()).not.toContain('TEXTO DEL OTRO DOCUMENTO.');
     expect(sourceDocIds(body.provenance)).toEqual(['31']);
@@ -1042,7 +1044,7 @@ describe('POST /api/generate — a title match retrieves only that document', ()
   it('🔴 stream: the done frame lists only the named document', async () => {
     const frames = await readSse(await POST(event(ask(NAMED), true)));
     const done = frames.find((f) => f.type === 'done')!;
-    for (const c of retrieves()) expect((c.body as { filter?: unknown }).filter).toEqual({ docId: '31' });
+    for (const c of retrieves()) expect((c.body as { filter?: unknown }).filter).toEqual({ docId: '31', ...KINDS });
     expect(sourceDocIds(done.provenance)).toEqual(['31']);
   });
 
@@ -1054,14 +1056,14 @@ describe('POST /api/generate — a title match retrieves only that document', ()
   it('keeps the lengua filter beside the docId', async () => {
     await POST(event(ask(NAMED, { lengua: 'mixe' })));
     for (const c of retrieves()) {
-      expect((c.body as { filter?: unknown }).filter).toEqual({ lengua: 'mixe', docId: '31' });
+      expect((c.body as { filter?: unknown }).filter).toEqual({ lengua: 'mixe', docId: '31', ...KINDS });
     }
   });
 
-  it('no title match: retrieval is unfiltered and cites what it found, as before', async () => {
+  it('no title match: retrieval carries only the source-kinds filter and cites what it found, as before', async () => {
     const res = await POST(event(ask(QUESTION)));
     const body = (await res.json()) as { provenance: unknown };
-    for (const c of retrieves()) expect((c.body as { filter?: unknown }).filter).toBeUndefined();
+    for (const c of retrieves()) expect((c.body as { filter?: unknown }).filter).toEqual(KINDS);
     expect(world.graphCalls).toBeGreaterThan(0);
     expect(sourceDocIds(body.provenance)).toEqual(['79']);
   });
@@ -1310,5 +1312,35 @@ describe('POST /api/generate — earlier conversations orient, never cite', () =
   it('stream: the block reaches the model too', async () => {
     await readSse(await POST(event(turn(), true)));
     expect(block()).toContain('RESPUESTA ANTERIOR');
+  });
+});
+
+// ── Turns dropped BEFORE ranking (audit 2026-10-21, crowding) ────────────────
+describe('POST /api/generate — sources legs ask ai-service for documents only', () => {
+  it('🔴 with metadataFilterIn: every sources retrieve carries kind $in, the orientation leg does not', async () => {
+    await POST(event(turn()));
+    expect(retrieves().length).toBeGreaterThan(0);
+    for (const c of retrieves()) expect((c.body as { filter?: unknown }).filter).toMatchObject(KINDS);
+    expect((orientRetrieves()[0]!.body as { filter: unknown }).filter).toEqual({ kind: 'conversacion' });
+  });
+
+  it('🔴 hybrid: the multi call carries it, and the draft corpusFilters inherit it', async () => {
+    ENV.CHAT_RETRIEVAL_MODE = 'hybrid';
+    await POST(event(turn()));
+    const multi = calls.find((c) => c.url.pathname === '/v1/retrieve/multi')!;
+    const body = multi.body as { filter?: unknown; corpusFilters?: Record<string, unknown> };
+    expect(body.filter).toMatchObject(KINDS);
+    expect(body.corpusFilters?.[`eco-${ECO}-draft-1`]).toMatchObject({ ...KINDS, docId: { $in: ['11'] } });
+  });
+
+  it('🔴 without metadataFilterIn: no $in is sent, and the post-filter still drops turns', async () => {
+    world.capabilities = { orgDelegation: true, metadataFilterIn: false };
+    world.turnsInRetrieve = true;
+    ENV.CHAT_ORIENT_SCOPE = 'off';
+    await POST(event(turn()));
+    for (const c of retrieves()) expect(JSON.stringify(c.body)).not.toContain('$in');
+    const prompt = JSON.stringify(generates().find((c) => !JSON.stringify(c.body).includes('Escribe exactamente tres'))!.body);
+    expect(prompt).not.toContain('RESPUESTA ANTERIOR');
+    expect(prompt).not.toContain('PREGUNTA ANTERIOR');
   });
 });

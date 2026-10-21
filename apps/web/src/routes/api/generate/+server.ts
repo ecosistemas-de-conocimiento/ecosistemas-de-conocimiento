@@ -13,6 +13,7 @@ import { backendFetch } from '$lib/server/auth';
 import {
   buildChatUnitRequest,
   CHAT_ENGINE_CONFIG,
+  chatKindFilterAvailable,
   chatOrientScope,
   chatTurnHybrid,
   chatTurnRetrievalPolicy,
@@ -448,7 +449,9 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // 🔴 Conversation turns (questions and answers) are dropped from every leg,
   // always (owner ruling 2026-10-21: documents only), each leg over-fetching
   // so the turn keeps its source count. See `$lib/turnChunks`.
-  const fenced = withFencedChunks(unfencedAI);
+  // ai-service with `metadataFilterIn` drops turns BEFORE ranking too
+  // (`SOURCE_KINDS_FILTER`); the fence's post-filter stays either way.
+  const fenced = withFencedChunks(unfencedAI, { kindFilter: await chatKindFilterAvailable() });
   const engineAI = fenced.client;
 
   // 🔴 ORIENTATION, NEVER SOURCES (owner ruling 2026-10-21, #4 choice A).
