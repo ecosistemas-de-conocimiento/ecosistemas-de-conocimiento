@@ -111,23 +111,13 @@ describe('the aria wiring points at something real', () => {
 });
 
 describe('the copy tells the truth about the screen it is on', () => {
-  it('keeps the @-mention hint in both placeholders', () => {
-    // It is the only half of the hint a touch user can act on.
-    expect(composerPlaceholder(false, true)).toContain('@');
-    expect(composerPlaceholder(false, false)).toContain('@');
+  it('says exactly "Escribe un mensaje…" when idle', () => {
+    // Owner, 2026-10-21: no `@` or keyboard hint; it was cut off on a phone.
+    expect(composerPlaceholder(false)).toBe('Escribe un mensaje…');
   });
 
-  it('drops the keyboard-only half on a narrow screen', () => {
-    // ⚠ Not a style preference — the long string wraps to four lines in a
-    // one-row box at 380px and is cut off mid-word.
-    expect(composerPlaceholder(false, false)).toContain('Shift+Enter');
-    expect(composerPlaceholder(false, true)).not.toContain('Shift+Enter');
-    expect(composerPlaceholder(false, true).length).toBeLessThan(45);
-  });
-
-  it('says the same thing while generating, at any width', () => {
-    expect(composerPlaceholder(true, true)).toBe(composerPlaceholder(true, false));
-    expect(composerPlaceholder(true, false)).toContain('Detener');
+  it('says how to cancel while generating', () => {
+    expect(composerPlaceholder(true)).toContain('Detener');
   });
 });
 

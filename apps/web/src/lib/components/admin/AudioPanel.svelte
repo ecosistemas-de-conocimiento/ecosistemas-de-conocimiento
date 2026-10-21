@@ -31,10 +31,7 @@
 </script>
 
 {#if summary.total === 0}
-  <p class="empty">
-    Todavía nadie ha subido audio a este ecosistema. Cuando alguien suba una grabación,
-    se transcribe sola y aparece aquí.
-  </p>
+  <p class="empty">Sin audios todavía.</p>
 {:else}
   <p class="lede">
     {summary.total}

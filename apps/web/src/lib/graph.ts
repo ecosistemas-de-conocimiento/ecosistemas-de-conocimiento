@@ -808,9 +808,6 @@ export function noEcosystemCopy(canSwitch: boolean): string {
  */
 export const GRAPH_SEARCH_ENABLED = false;
 
-export const GRAPH_PICK_ENTITY =
-  'Elige un tema, lugar, evento, organización o persona para ver con qué se conecta.';
-
 export const GRAPH_NO_NEIGHBOURS =
   'Todavía no hay conexiones que mostrar para esto. Aparecerán cuando varios ' +
   'documentos publicados las respalden.';
@@ -1398,12 +1395,11 @@ export function overviewLayout(
   return { width: OVERVIEW_WIDTH, height: OVERVIEW_HEIGHT, nodes, edges: outEdges, adjacency };
 }
 
-/** Screen-reader summary of the whole-graph picture. */
-export function overviewDescription(entities: number, edges: number): string {
-  const what = entities === 1 ? '1 elemento' : `${entities} elementos`;
-  const links = edges === 1 ? '1 conexión' : `${edges} conexiones`;
-  return `Mapa con ${what} y ${links} entre ellos. La lista de abajo tiene la misma información.`;
-}
+/**
+ * Screen-reader label of the whole-graph picture. Short on purpose (owner,
+ * 2026-10-21): the counts and the "same as the list" sentence were dropped.
+ */
+export const OVERVIEW_DESCRIPTION = 'Mapa de conexiones';
 
 /** Plain-Spanish labels for the colour key, one per drawn type. */
 export function overviewLegend(): Array<{ type: GraphViewType; label: string }> {

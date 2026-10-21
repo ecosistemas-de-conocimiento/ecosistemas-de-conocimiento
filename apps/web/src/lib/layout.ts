@@ -135,15 +135,10 @@ export function isPanelOpen(current: MobilePanel, panel: MobilePanel): boolean {
 /**
  * What the message box says when it is empty.
  *
- * ⚠ THE LONG ONE DOES NOT FIT ON A PHONE. At 380px the full hint wraps to four
- * lines inside a one-row box and the last two are cut off mid-word — so the
- * part that survives is the part nobody needed. The short one keeps the `@`
- * hint, which is the only half a phone user can act on; `Shift+Enter` is a
- * physical-keyboard instruction.
+ * ⚠ SHORT ON PURPOSE, AT EVERY WIDTH (owner, 2026-10-21). The old hints about
+ * `@` and `Shift+Enter` wrapped and were cut off mid-word on a phone, and on a
+ * wide screen they were noise.
  */
-export function composerPlaceholder(busy: boolean, narrow: boolean): string {
-  if (busy) return 'Generando…  (Esc o Detener para cancelar)';
-  return narrow
-    ? 'Escribe un mensaje…  (@ para mencionar)'
-    : 'Escribe un mensaje…  (@ para mencionar · Enter envía, Shift+Enter salto de línea)';
+export function composerPlaceholder(busy: boolean): string {
+  return busy ? 'Generando…  (Esc o Detener para cancelar)' : 'Escribe un mensaje…';
 }

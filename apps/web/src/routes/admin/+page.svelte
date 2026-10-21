@@ -67,11 +67,6 @@
     <div>
       <p class="kicker">Administración</p>
       <h1>Contribuciones</h1>
-      {#if overview}
-        <p class="sub">
-          Todo lo que ha reunido <strong>{overview.ecosystem.name}</strong>, y quién lo aportó.
-        </p>
-      {/if}
     </div>
   </header>
 
@@ -154,7 +149,6 @@
           label="No se pudieron procesar"
           value={numbers.format(overview.documents.summary.failed)}
           tone="danger"
-          hint="Quien los subió puede reintentarlos desde su panel."
         />
       {:else if overview.documents.summary.inProgress > 0}
         <StatTile
@@ -176,20 +170,14 @@
       </p>
     {/if}
 
-    <PanelCard
-      title="Quién ha aportado"
-      subtitle="Cada persona del ecosistema y lo que ha subido."
-    >
+    <PanelCard title="Quién ha aportado">
       {#if !overview.contributors.ok}
         <p class="notice small">No pudimos leer la lista de personas del ecosistema.</p>
       {/if}
       <ContributorsTable rows={overview.contributors.rows} />
     </PanelCard>
 
-    <PanelCard
-      title="Audio y transcripciones"
-      subtitle="Las grabaciones se transcriben solas. Aquí se ve si funcionó."
-    >
+    <PanelCard title="Audio y transcripciones">
       <AudioPanel
         summary={overview.audio}
         docs={overview.documents.rows}
@@ -199,10 +187,7 @@
 
     <!-- 🔴 Metadata only, computed by the backend over the WHOLE ecosistema and
          returned with no message text in it. See `apps/backend/src/lib/chatUsage.ts`. -->
-    <PanelCard
-      title="Uso del chat"
-      subtitle="Cuánto se conversa, cuánto cuesta y con qué modelos. Nunca lo que se dijo."
-    >
+    <PanelCard title="Uso del chat">
       <UsagePanel
         summary={overview.usage.summary}
         ok={overview.usage.ok}
@@ -210,10 +195,7 @@
       />
     </PanelCard>
 
-    <PanelCard
-      title="Qué opinan de las respuestas"
-      subtitle="Las estrellas y, sobre todo, los motivos."
-    >
+    <PanelCard title="Qué opinan de las respuestas">
       {#if !overview.ratings.ok}
         <p class="notice small">No pudimos leer todas las calificaciones.</p>
       {:else if overview.ratings.truncated}
@@ -225,10 +207,7 @@
       <RatingsPanel summary={overview.ratings.summary} />
     </PanelCard>
 
-    <PanelCard
-      title="Todos los documentos"
-      subtitle="El corpus completo del ecosistema. Solo el registro: quién lo subió, cuándo y en qué estado — nunca el contenido de un borrador."
-    >
+    <PanelCard title="Todos los documentos">
       {#if !overview.documents.ok}
         <p class="notice small">No pudimos leer todos los documentos. La lista puede estar incompleta.</p>
       {:else if overview.documents.truncated}
@@ -273,14 +252,6 @@
     font-size: 1.7rem;
     font-weight: 800;
     letter-spacing: -0.02em;
-    color: var(--edc-color-ink);
-  }
-  .sub {
-    margin: 0;
-    font-size: 0.86rem;
-    color: var(--edc-color-ink-soft);
-  }
-  .sub strong {
     color: var(--edc-color-ink);
   }
   .tiles {

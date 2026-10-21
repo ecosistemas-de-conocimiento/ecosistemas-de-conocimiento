@@ -18,14 +18,14 @@
    * ⚠ ACCESSIBILITY. Same rule as `EgoNetwork.svelte`: the SVG is `aria-hidden`
    * and the entity LISTS below the picture are the real, keyboard-operable
    * control. The zoom buttons are real buttons. A screen reader gets
-   * `overviewDescription()`.
+   * `OVERVIEW_DESCRIPTION`.
    */
   import {
     OVERVIEW_ALWAYS_LABELLED,
+    OVERVIEW_DESCRIPTION,
     OVERVIEW_RESET,
     OVERVIEW_ZOOM_IN,
     OVERVIEW_ZOOM_OUT,
-    overviewDescription,
     overviewLayout,
     overviewLegend,
     supportShort,
@@ -53,7 +53,6 @@
 
   const layout = $derived(overviewLayout(entities, edges));
   const legend = overviewLegend();
-  const description = $derived(overviewDescription(layout.nodes.length, layout.edges.length));
 
   const MIN_K = 0.6;
   const MAX_K = 8;
@@ -298,7 +297,7 @@
       {/each}
     </ul>
   </div>
-  <figcaption class="sr-only">{description}</figcaption>
+  <figcaption class="sr-only">{OVERVIEW_DESCRIPTION}</figcaption>
 </figure>
 
 <style>

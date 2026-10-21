@@ -26,18 +26,18 @@
  * boots in seconds and a chat that finds nothing, versus a boot that blocks on
  * 250 embeddings. Flip the flag when you want the chat half.
  *
- * ── ⚠ THE ONE THING THE SEED WRITES THAT IT CANNOT YET BACK UP ───────────────
+ * ── ⚠ EVERY SEEDED ROW IS A DRAFT UNTIL THE GATE CLEARS IT ───────────────────
  *
  * The library screen lists ONLY `publicationStatus: 'published'` rows
- * (`apps/web/src/lib/server/biblioteca.ts`). A seed that left everything at
- * `draft` would therefore produce the empty library it was written to fix. So
- * most `documento` rows are seeded `published`.
+ * (`apps/web/src/lib/server/biblioteca.ts`). Every seeded row is a gated
+ * `testimonio` (see {@link seedCorpusDocuments}), and a gated row can be
+ * published only once the gate has cleared it (`corpusTextFor`). So the seed
+ * writes drafts, and with ingest off the library is EMPTY.
  *
- * 🔴 With ingest off, that column is TRUE OF THE ROW AND FALSE OF THE CORPUS:
- * the document is shared with the ecosistema, and there is not a chunk of it
- * anywhere. `SEED_CORPUS_INGEST=1` is what makes it true, and it does so
- * through the product's own `beginPublish` rather than by writing a column.
- * This is stated here, logged at seed time, and is the reason the flag exists.
+ * 🔴 `SEED_CORPUS_INGEST=1` is what fills it: {@link ingestSeededDocuments}
+ * runs the gate on each row and publishes what clears, through the product's
+ * own `beginPublish` rather than by writing a column. This is stated here,
+ * logged at seed time, and is the reason the flag exists.
  *
  * ⚠ EXTENSIONLESS IMPORTS. Reached from `seed/demo.ts`, which
  * `payload.config.ts` imports for `onInit` — see the note in `seed/admin.ts`.
@@ -49,7 +49,14 @@ import type { CorpusEntry } from './corpusSource'
 import { readCorpusManifest, readCorpusText, resolveCorpusDir } from './corpusSource'
 
 /**
- * 🔴 WHICH CORPUS DOCUMENTS BECOME A `testimonio`: ALL FIVE GENRES.
+ * 🔴 WHICH CORPUS DOCUMENTS BECOME A `testimonio`: ALL OF THEM.
+ *
+ * 🔴 OWNER'S RULING (2026-10-21): in the product every corpus item is a Voz.
+ * The genre split (biografía, carta, ficha, diario, …) is an artefact of the
+ * synthetic corpus, not a content kind. So EVERY seeded row — every formato,
+ * the `.docx` files, and a formato this file has never heard of — is seeded
+ * `contentKind: 'testimonio'` and goes through the gate. There is no
+ * `documento` branch left in the seed.
  *
  * `contentKind: 'testimonio'` is not a genre label in this product. It is a
  * SWITCH: it routes the row through the anonymisation gate
@@ -71,25 +78,21 @@ import { readCorpusManifest, readCorpusText, resolveCorpusDir } from './corpusSo
  * missed would serve the raw original to the ecosistema.
  *
  * ⚠ WHAT IT COSTS, STATED: the seeded library has no `documento` left, so no
- * seeded row carries a `lengua` and every card reads "Testimonio". A formato
- * NOT in this set (none today) stays an ordinary, ungated `documento`.
+ * seeded row carries a `lengua` and every card reads "Testimonio".
  *
  * ⚠ A user's own upload is unaffected: it is a `documento` unless the
  * Investigador files it as a Voz. That is the owner's earlier rule ("docs
- * uploaded should be kept in their original form") and #34 does not change it.
+ * uploaded should be kept in their original form") and this ruling does not
+ * change it.
  */
-const GATED_FORMATOS: ReadonlySet<string> = new Set([
-  'testimonio',
-  'biografia_oral',
-  'carta_presentacion',
-  'diario_personal',
-  'ficha_participante',
-])
+const SEEDED_CONTENT_KIND = 'testimonio' as const
 
 /**
  * Genres the seed PUBLISHES once the gate has cleared them, so the library is
- * not empty. A seeded `testimonio` stays a draft, as before: the demo still
- * needs drafts to show the publish flow.
+ * not empty. A seeded `testimonio`-genre row stays a draft, as before: the demo
+ * still needs drafts to show the publish flow. So does a formato not listed
+ * here — its title falls back to "Testimonio — …" — which is the safe direction:
+ * it is still gated, it is just not published by the seed.
  */
 const PUBLISHED_AFTER_GATE_FORMATOS: ReadonlySet<string> = new Set([
   'biografia_oral',
@@ -123,13 +126,14 @@ function themeLabel(ecosistema: string): string {
  * 🔴 THE ONLY WAY BACK TO A SEEDED TESTIMONIO'S THEME, AND IT EXISTS BECAUSE OF
  * A DELIBERATE OMISSION ELSEWHERE IN THIS FILE.
  *
- * A seeded `documento` carries its `SIM_xxxx` id in `name`, so the backfill can
- * join it straight to `MANIFEST.csv`. A seeded `testimonio` deliberately does
+ * A `documento` from an older seed carries its `SIM_xxxx` id in `name`, so the
+ * backfill can join it straight to `MANIFEST.csv`. A seeded `testimonio` — every
+ * seeded row today — deliberately does
  * NOT — see {@link titleFor}: that id is a key into a table with a `nombre`
  * column, and putting it on an anonymous row would rebuild the link the whole
  * anonymisation design refuses to keep.
  *
- * So the 59 seeded Voces are unjoinable to the manifest, on purpose, and the
+ * So the seeded Voces are unjoinable to the manifest, on purpose, and the
  * only ground truth still legible on the row is the theme this function wrote
  * into the title in plain Spanish. Reading it back is not a loophole in that
  * rule: the theme is four values over 250 documents, it is already displayed to
@@ -150,9 +154,9 @@ export function themeFromSeededTitle(name: string): string | null {
  * 🔴 THE TITLE OF A SEEDED `testimonio` NAMES NOBODY, AND CARRIES NO HANDLE
  * BACK TO ANYBODY.
  *
- * `documents.name` is free text and it is what the library shows. For a
- * `documento` the corpus id belongs on it — it is the document's filing
- * reference and makes a seeded row traceable to the file it came from.
+ * `documents.name` is free text and it is what the library shows. Every seeded
+ * row is a testimonio, so none carries its corpus id (older seeds put it on a
+ * `documento`'s title; `publishesAfterGate` still recognises those).
  *
  * ⚠ FOR A TESTIMONIO THE CORPUS ID IS EXACTLY WHAT MUST NOT BE THERE. `SIM_0055`
  * is a key into `MANIFEST.csv`, and that table has a `nombre` column. Putting
@@ -165,15 +169,12 @@ export function themeFromSeededTitle(name: string): string | null {
  * every chunk that reaches a corpus. This is the row-level half of the same
  * rule: the library shows `name`, and the gate never looked at it.)
  */
-function titleFor(entry: CorpusEntry, contentKind: 'documento' | 'testimonio', ordinal: number): string {
-  const theme = themeLabel(entry.ecosistema)
-  if (contentKind === 'testimonio') {
-    // The genre stays on the row for whoever filed it; readers see "Testimonio".
-    const genre = FORMATO_LABELS[entry.formato] ?? 'Testimonio'
-    return `${genre} — ${theme} (${String(ordinal).padStart(2, '0')})`
-  }
-  const genre = FORMATO_LABELS[entry.formato] ?? 'Documento'
-  return `${genre} — ${theme} (${entry.id})`
+function titleFor(entry: CorpusEntry, ordinal: number): string {
+  // The genre stays on the row for whoever filed it; readers see "Testimonio".
+  // ⚠ An unknown formato falls back to "Testimonio", which keeps it out of
+  // `publishesAfterGate`: gated, and left a draft.
+  const genre = FORMATO_LABELS[entry.formato] ?? 'Testimonio'
+  return `${genre} — ${themeLabel(entry.ecosistema)} (${String(ordinal).padStart(2, '0')})`
 }
 
 /**
@@ -231,21 +232,6 @@ function fileKindFor(entry: CorpusEntry): 'pdf' | 'docx' {
 }
 
 /**
- * ⚠ VARIED ON PURPOSE — a demo where everything is `published` cannot show the
- * draft/publish flow at all, and one where everything is a draft has an empty
- * library.
- *
- *   · `documento`  — published, except every 8th, which stays a draft (~12%).
- *   · `testimonio` — ALWAYS a draft. Not a style choice: publishing is what
- *     puts a document in front of the whole ecosistema, and `corpusTextFor`
- *     refuses a gated row that has no `redactedText`. A seeded Voz has never
- *     been through the gate, so `published` would be a state the product's own
- *     publish path would have refused to create.
- *
- * Deterministic in the manifest's order, so two runs against the same corpus
- * produce the same demo.
- */
-/**
  * How many documents an ecosistema must already hold before the corpus seed
  * treats it as already-seeded and refuses.
  *
@@ -273,26 +259,18 @@ export function resolveSkipThreshold(
   return parsed
 }
 
-function publicationFor(contentKind: 'documento' | 'testimonio', index: number): 'draft' | 'published' {
-  if (contentKind === 'testimonio') return 'draft'
-  return index % 8 === 5 ? 'draft' : 'published'
-}
-
 export interface SeedCorpusResult {
+  /** Rows written. Every one is a `testimonio` draft; see {@link SEEDED_CONTENT_KIND}. */
   created: number
-  documentos: number
-  testimonios: number
-  published: number
-  drafts: number
   corpusDir: string
 }
 
 export interface SeedCorpusOptions {
   organizationId: number
-  /** Files the `documento` rows. Normally the platform admin. */
+  /** Files the rows when there is no Investigador. Normally the platform admin. */
   uploaderId: number
   /**
-   * Files the `testimonio` rows.
+   * Files every seeded row (all are `testimonio`).
    *
    * ⚠ A Voz is filed by whoever holds `voces:upload` — the Investigador — and
    * `uploadedBy` records WHO PERFORMED THE UPLOAD, never whose words these are
@@ -387,19 +365,13 @@ export async function seedCorpusDocuments(
   const startedAt = Date.now()
   const result: SeedCorpusResult = {
     created: 0,
-    documentos: 0,
-    testimonios: 0,
-    published: 0,
-    drafts: 0,
     corpusDir: located.dir,
   }
 
   // Per-genre-and-theme counters, so a Voz is numbered without borrowing the corpus id.
   const testimonioOrdinals = new Map<string, number>()
 
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index]
-    const contentKind = GATED_FORMATOS.has(entry.formato) ? 'testimonio' : 'documento'
+  for (const entry of entries) {
 
     let text: string
     try {
@@ -412,26 +384,20 @@ export async function seedCorpusDocuments(
     }
     if (!text) continue
 
-    let ordinal = 0
-    if (contentKind === 'testimonio') {
-      // Per genre AND theme, so "Carta de presentación — traducción en salud"
-      // runs 01, 02, … on its own and no two titles repeat.
-      const key = `${entry.formato}/${entry.ecosistema}`
-      ordinal = (testimonioOrdinals.get(key) ?? 0) + 1
-      testimonioOrdinals.set(key, ordinal)
-    }
-
-    const publicationStatus = publicationFor(contentKind, index)
+    // Per genre AND theme, so "Carta de presentación — traducción en salud"
+    // runs 01, 02, … on its own and no two titles repeat.
+    const key = `${entry.formato}/${entry.ecosistema}`
+    const ordinal = (testimonioOrdinals.get(key) ?? 0) + 1
+    testimonioOrdinals.set(key, ordinal)
 
     await payload.create({
       collection: 'documents',
       data: {
         organization: opts.organizationId,
-        uploadedBy:
-          contentKind === 'testimonio' ? (opts.investigadorId ?? opts.uploaderId) : opts.uploaderId,
-        name: titleFor(entry, contentKind, ordinal),
+        uploadedBy: opts.investigadorId ?? opts.uploaderId,
+        name: titleFor(entry, ordinal),
         kind: fileKindFor(entry),
-        contentKind,
+        contentKind: SEEDED_CONTENT_KIND,
         /**
          * The corpus's ground truth, which the product had nowhere to put until
          * `documents.tema` / `documents.lengua` existed. Until then the only
@@ -457,8 +423,15 @@ export async function seedCorpusDocuments(
          * same thing again. The check is repeated here so the seed READS as
          * obeying the rule rather than relying on a hook two files away.
          */
-        lengua: contentKind === 'documento' ? entry.lengua || null : null,
-        publicationStatus,
+        lengua: null,
+        /**
+         * 🔴 ALWAYS A DRAFT. Publishing puts a document in front of the whole
+         * ecosistema, and `corpusTextFor` refuses a gated row with no
+         * `redactedText`. A seeded Voz has not been through the gate yet, so
+         * `published` would be a state the product's own publish path refuses
+         * to create. `ingestSeededDocuments` publishes what the gate clears.
+         */
+        publicationStatus: 'draft',
         /**
          * ⚠ THE TEXT THE PIPELINE WOULD HAVE PRODUCED, cached on the row. It is
          * also what makes the ingest opt-in cheap: `runExtractAndIngest` skips
@@ -492,18 +465,13 @@ export async function seedCorpusDocuments(
     })
 
     result.created += 1
-    if (contentKind === 'testimonio') result.testimonios += 1
-    else result.documentos += 1
-    if (publicationStatus === 'published') result.published += 1
-    else result.drafts += 1
   }
 
   payload.logger.info(
     `[seed-corpus] ${result.created} documents in ${Date.now() - startedAt}ms from ${located.dir} ` +
-      `(${result.documentos} documento / ${result.testimonios} testimonio, ` +
-      `${result.published} published / ${result.drafts} draft). ` +
-      'NOTHING IS EMBEDDED, and gated rows stay drafts until the gate clears them, ' +
-      'so the library shows only ungated rows. ' +
+      '(all testimonio drafts). ' +
+      'NOTHING IS EMBEDDED, and every row stays a draft until the gate clears it, ' +
+      'so the library is empty. ' +
       'Set SEED_CORPUS_INGEST=1 to run the gate and the real ingest pipeline.',
   )
 
