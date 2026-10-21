@@ -65,8 +65,9 @@ const verifyStages = (r: { report: GateReport }) =>
 
 /**
  * Every test in this file runs the OPT-IN, `ANONYMISE_VERIFY_ROUNDS=3`, except
- * the default block, which clears it. Measured 2026-10-18 (local stack, real
- * model, 4,866 words): 3 rounds let a whole name through in 2 of 12 runs, so 3
+ * the default block, which clears it. Measured 2026-10-17 (local stack, real
+ * model, 4,866 words; rows in scripts/measurements/): 3 rounds let a whole name
+ * through in 2 of 18 runs, so 3
  * is not the default. The round logic must still work for whoever turns it on.
  */
 beforeEach(() => {

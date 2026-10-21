@@ -91,15 +91,19 @@ export const ANONYMISE_VERIFY_ROUNDS_VAR = 'ANONYMISE_VERIFY_ROUNDS'
  * is fail-closed: a human reads every text verify was unsure about.
  *
  * More rounds are an opt-in (`ANONYMISE_VERIFY_ROUNDS=3`), not the default,
- * because they let whole names through. Measured 2026-10-18, local stack, real
- * model, 4,866-word text, 3 rounds: 2 of 12 runs reached `ready` with a whole
- * name still in it ("el Chacho Melgarejo", "la señora Lucrecia"). A later
- * round that finds nothing does not prove an earlier round redacted everything.
+ * because they let whole names through. Measured 2026-10-17 (UTC 22:27-23:08),
+ * host `torre`, local stack, real model, up to 3 rounds, 1,195 / 4,866 / 9,454
+ * words: 2 of 18 runs reached `ready` with a whole name still in it ("el Chacho
+ * Melgarejo", "Lucrecia"), both on the 4,866-word text (2 of 12 in the last two
+ * batches). A later round that finds nothing does not prove an earlier round
+ * redacted everything. Raw rows: `scripts/measurements/anonymise-gate-2026-10-17-
+ * rounds-batch{1,2,3}.jsonl`.
  *
- * Why rounds exist at all — measured 2026-10-17, real model, 1 round: all 20
- * planted names were caught, yet every 1.2k-9.5k-word text was held, because
- * verify found real places the first pass had missed. Each extra round costs
- * about what stage 3 costs (inferred: same chunks, same prompt).
+ * At the default — measured 2026-10-21 (UTC 22:54-23:03), host `torre`, load
+ * average 3-19, same harness and sizes, 2 runs each, GATE_VARY=1: 6 of 6 runs
+ * held at verify, 0 reached `ready`; $0.236 in total. Raw rows:
+ * `scripts/measurements/anonymise-gate-2026-10-21-1round.jsonl`. Each extra
+ * round costs about what stage 3 costs (inferred: same chunks, same prompt).
  */
 export const DEFAULT_VERIFY_ROUNDS = 1
 
