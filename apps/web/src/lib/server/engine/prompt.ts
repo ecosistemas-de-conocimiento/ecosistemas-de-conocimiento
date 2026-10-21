@@ -55,17 +55,29 @@ export const PLAIN_LANGUAGE_RULE =
  * made a partial answer look like no answer. So a partial answer is asked for
  * by name, and it opens with what the passages say: `isNoAnswer` in
  * `$lib/server/citationProvenance` reads only the first sentence.
+ *
+ * Round 2, measured on dev after 5fe43ff (runbook §4u): "¿qué dicen los
+ * testimonios sobre las personas con discapacidad en la escuela?" still got
+ * the no-answer reply over 8 eco-3 discapacidad testimonios (rerank
+ * 0.91–0.98). Those passages are about disability, mostly not about school
+ * (corpus fixture: 22 of 52 discapacidad files use a school word). "Ningún
+ * pasaje trata el tema" let a two-part topic count as untreated; it now reads
+ * "tiene relación", with "the topic but not the place" as the example. And
+ * dengue answers carried 29–33 `[N]` in 10–12 groups again, so the group
+ * limit is stated as a firm rule plus "do not cite every sentence".
  */
 export const CITE_RULE =
   'Cita solo los pasajes que apoyan directamente una afirmación: pon su número ' +
   'entre corchetes al final de la frase, así: "El riego empezó en 2020 [2]." ' +
-  'Usa como máximo un grupo de números por frase, de uno a tres: [1, 3]. No ' +
-  'cites tus propias ideas ni una frase que diga que falta información. ' +
-  'Responde con lo que dicen los pasajes que sí tratan el tema, aunque solo ' +
-  'cubran una parte de la pregunta: empieza por lo que dicen y después, si ' +
-  'hace falta, di qué parte no cubren. Contesta exactamente ' +
-  `"${NO_ANSWER_REPLY}" y nada más solo si ningún pasaje trata el tema de la ` +
-  'pregunta.';
+  'Regla firme: como máximo un grupo de números por frase, con uno a tres ' +
+  'números: [1, 3]. No cites cada frase: en una lista o en un párrafo que ' +
+  'resume varios pasajes, cita una sola vez, al final. No cites tus propias ' +
+  'ideas ni una frase que diga que falta información. ' +
+  'Responde con lo que dicen los pasajes que tienen relación con la pregunta, ' +
+  'aunque solo cubran una parte de ella (por ejemplo, el tema pero no el ' +
+  'lugar): empieza por lo que dicen y después, si hace falta, di qué parte no ' +
+  `cubren. Contesta exactamente "${NO_ANSWER_REPLY}" y nada más solo si ningún ` +
+  'pasaje tiene relación con la pregunta.';
 
 export const CHAT_SYSTEM_PROMPT =
   'Eres un asistente que ayuda a una persona a consultar los documentos de su ' +

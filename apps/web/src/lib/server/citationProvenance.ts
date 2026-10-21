@@ -150,8 +150,16 @@ export function toBrowserProvenance(provenance: unknown): Provenance | null {
  * {@link NO_ANSWER_VARIANTS} ({@link isNoAnswer}, accent- and case-folded)
  * drops its `[N]` sources and gets no fallback. A title-matched document is
  * still added: the person named it, so it stays one click away.
- * Only the FIRST sentence counts: an answer that covers part of the question
- * and later says "los documentos no mencionan X" keeps its sources.
+ * WITH `[N]`, only the FIRST sentence counts: an answer that covers part of
+ * the question and later says "los documentos no mencionan X" keeps its
+ * cited sources.
+ * WITHOUT `[N]`, a refusal cue ANYWHERE ({@link hasRefusalCue}) skips the
+ * fallback. Measured on dev after 5fe43ff: "Los documentos de la Red
+ * Comunitaria de Salud no hablan de la capital …" (no `[N]`) slipped past the
+ * first-sentence net and listed 3 fallback sources; an Educación hedge "… no
+ * contienen testimonios directos de familias" (no `[N]`) did too. The cost:
+ * an uncited partial answer that names one gap shows no sources. An answer
+ * that wants its sources cites them.
  *
  * 🔴 AT MOST {@link MAX_SOURCES} SOURCES. Measured on dev after 9285305: dengue
  * answers cited 29–31 times. Cited sources keep citation order (first `[N]`
@@ -166,11 +174,14 @@ export function citedBrowserProvenance(
   titleMatch: TitledDoc | null = null,
 ): Provenance | null {
   const text = answer ?? '';
-  let cited: Array<Chunk & { ordinal?: number }> = isNoAnswer(text)
-    ? []
-    : parseCitedOrdinals(text).length > 0
-      ? citedProvenance(provenance, text).map(({ relevance: _r, ...c }) => c)
-      : topRetrieved(provenance);
+  let cited: Array<Chunk & { ordinal?: number }> =
+    parseCitedOrdinals(text).length > 0
+      ? isNoAnswer(text)
+        ? []
+        : citedProvenance(provenance, text).map(({ relevance: _r, ...c }) => c)
+      : hasRefusalCue(text)
+        ? []
+        : topRetrieved(provenance);
   cited = cited.slice(0, MAX_SOURCES);
   if (titleMatch && !cited.some((c) => chunkDocId(c) === titleMatch.id)) {
     cited = cited.slice(0, MAX_SOURCES - 1);
@@ -217,6 +228,35 @@ export function isNoAnswer(answer: string): boolean {
   const first = fold((answer ?? '').trim().split(/[.!?\n]/, 1)[0] ?? '');
   const reply = fold(NO_ANSWER_REPLY).replace(/[.!?]+$/, '');
   return first.includes(reply) || NO_ANSWER_VARIANTS.some((v) => first.includes(v));
+}
+
+/**
+ * Short refusal cues, already folded ({@link fold}). Read ANYWHERE in an answer
+ * with no `[N]` ({@link hasRefusalCue}); never on an answer with markers.
+ */
+export const REFUSAL_CUES = [
+  'no hablan',
+  'no mencionan',
+  'no contienen',
+  'no tratan',
+  'no incluyen',
+  'no encontre',
+] as const;
+
+/**
+ * The answer says, anywhere, that the documents lack the answer: the
+ * no-answer reply, one of {@link NO_ANSWER_VARIANTS}, or one of
+ * {@link REFUSAL_CUES}, accent- and case-folded. Only for an answer with no
+ * `[N]` (see {@link citedBrowserProvenance}).
+ */
+export function hasRefusalCue(answer: string): boolean {
+  const all = fold(answer ?? '');
+  const reply = fold(NO_ANSWER_REPLY).replace(/[.!?]+$/, '');
+  return (
+    all.includes(reply) ||
+    NO_ANSWER_VARIANTS.some((v) => all.includes(v)) ||
+    REFUSAL_CUES.some((c) => all.includes(c))
+  );
 }
 
 /** How many retrieved sources an answer with no `[N]` lists. */

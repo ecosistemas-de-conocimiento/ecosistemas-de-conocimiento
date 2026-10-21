@@ -5,14 +5,15 @@ describe('CHAT_SYSTEM_PROMPT', () => {
   it('carries the cite rule: only direct support, one [N] group per sentence', () => {
     expect(CHAT_SYSTEM_PROMPT).toContain(CITE_RULE);
     expect(CITE_RULE).toContain('Cita solo los pasajes que apoyan directamente una afirmación');
-    expect(CITE_RULE).toContain('como máximo un grupo de números por frase, de uno a tres');
+    expect(CITE_RULE).toContain('Regla firme: como máximo un grupo de números por frase, con uno a tres');
+    expect(CITE_RULE).toContain('No cites cada frase');
     expect(CITE_RULE).toContain('ni una frase que diga que falta información');
     expect(CITE_RULE).toMatch(/\[\d+\]/);
   });
 
   it('🔴 no passage on the topic: the exact no-answer reply and nothing else', () => {
     expect(CITE_RULE).toContain(
-      `Contesta exactamente "${NO_ANSWER_REPLY}" y nada más solo si ningún pasaje trata el tema de la pregunta`,
+      `Contesta exactamente "${NO_ANSWER_REPLY}" y nada más solo si ningún pasaje tiene relación con la pregunta`,
     );
   });
 
@@ -20,7 +21,10 @@ describe('CHAT_SYSTEM_PROMPT', () => {
     // 8b525fa's "Si los documentos no responden la pregunta, contesta
     // exactamente …" refused 3/3 on-topic Educación questions on dev.
     expect(CITE_RULE).not.toContain('Si los documentos no responden la pregunta');
-    expect(CITE_RULE).toContain('aunque solo cubran una parte de la pregunta');
+    expect(CITE_RULE).toContain('aunque solo cubran una parte de ella');
+    // Round 2: a two-part topic ("discapacidad en la escuela") still refused.
+    expect(CITE_RULE).toContain('el tema pero no el lugar');
+    expect(CITE_RULE).not.toContain('ningún pasaje trata el tema');
     // The partial answer opens with what the passages say, so `isNoAnswer`
     // (first sentence only) never drops its sources.
     expect(CITE_RULE).toContain('empieza por lo que dicen');

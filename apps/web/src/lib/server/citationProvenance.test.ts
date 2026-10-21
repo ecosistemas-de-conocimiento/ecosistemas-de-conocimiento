@@ -4,6 +4,8 @@ import {
   MAX_SOURCES,
   NO_ANSWER_VARIANTS,
   citedBrowserProvenance,
+  REFUSAL_CUES,
+  hasRefusalCue,
   isNoAnswer,
   toBrowserProvenance,
   toBrowserMessage,
@@ -306,6 +308,46 @@ describe('citedBrowserProvenance — a no-answer reply shows no sources, cited o
     'Encontré información sobre el riego en los documentos [3].',
   ])('a normal sentence that mentions "documentos" is not one: %j', (text) => {
     expect(isNoAnswer(text)).toBe(false);
+  });
+});
+
+describe('citedBrowserProvenance — no [N] and a refusal cue anywhere: no fallback (round 2)', () => {
+  const doc = (i: number) => ({ ...docChunk, chunkId: `d${i}`, metadata: { docId: String(i), title: `Doc ${i}` } });
+  const five = { chunks: [doc(1), doc(2), doc(3), doc(4), doc(5)] };
+
+  it('🔴 a reworded refusal with no [N] lists no fallback sources (dev 5fe43ff, Francia #1)', () => {
+    const answer = 'Los documentos de la Red Comunitaria de Salud no hablan de la capital de Francia.';
+    expect(isNoAnswer(answer)).toBe(false); // the first-sentence net missed it
+    expect(citedBrowserProvenance(five as never, answer)).toBeNull();
+  });
+
+  it('🔴 a hedge with no [N] lists no fallback sources (dev 5fe43ff, Educación Q1 #1)', () => {
+    const answer =
+      'Hay relatos de docentes y conserjes sobre la escuela. Los documentos disponibles no contienen ' +
+      'testimonios directos de familias.';
+    expect(citedBrowserProvenance(five as never, answer)).toBeNull();
+  });
+
+  it.each([...REFUSAL_CUES, 'NO ENCONTRÉ nada', 'Los textos no incluyen eso'])(
+    'the cue %j fires anywhere, accent- and case-folded',
+    (cue) => {
+      expect(hasRefusalCue(`El tema es amplio. Aun así, ${cue}.`)).toBe(true);
+    },
+  );
+
+  it('no cue and no [N]: the top-3 fallback still runs', () => {
+    expect(hasRefusalCue('Las familias cuentan que la maestra llamaba cada semana.')).toBe(false);
+    expect(citedBrowserProvenance(five as never, 'Las familias cuentan que la maestra llamaba.')!.chunks).toHaveLength(3);
+  });
+
+  it('WITH [N]: only the first sentence counts, a later cue keeps the cited sources', () => {
+    const partial = 'Las familias valoran la llamada semanal [2]. Los documentos no mencionan el transporte.';
+    expect(citedBrowserProvenance(five as never, partial)!.chunks.map((c) => c.chunkId)).toEqual(['d2']);
+  });
+
+  it('a title-matched document is still shown under a reworded refusal', () => {
+    const out = citedBrowserProvenance(five as never, 'Los textos no tratan París.', { id: '4', name: 'Doc 4' })!;
+    expect(out.chunks.map((c) => c.chunkId)).toEqual(['d4']);
   });
 });
 
