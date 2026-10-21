@@ -198,26 +198,24 @@ export {
 } from './admin.js';
 export { BudgetAPI } from './budget.js';
 export { CorporaAPI } from './corpora.js';
-// Capability negotiation (ADR-0004). `capabilityModeFromEnv` is the shared rule
-// — strict in production, warn everywhere else, `AI_CAPABILITY_MODE` overrides.
+// Capability negotiation (ADR-0004). Strict in every environment since 0.32.0:
+// every outcome except `ok` throws.
 export {
   CapabilitiesAPI,
   CapabilityNegotiationError,
-  capabilityModeFromEnv,
   STRICT_STRUCTURED_OUTPUT_CAPABILITY,
   strictStructuredOutputCapabilities,
   ORG_DELEGATION_CAPABILITY,
   METADATA_FILTER_IN_CAPABILITY,
   type CapabilityDocument,
   type CapabilityLogger,
-  type CapabilityMode,
   type NegotiateOptions,
   type NegotiationResult,
   type NegotiationStatus,
 } from './capabilities.js';
 // The boot-time capability check WRAPPER around `capabilities.negotiate` —
-// the once-per-process latch, the "AI is optional" skip, the empty-list
-// short-circuit and the test reset seam that all four consumers hand-rolled.
+// the once-per-process latch, the fail-boot-when-unconfigured rule and the test
+// reset seam that all four consumers hand-rolled.
 export {
   createCapabilityCheck,
   type CapabilityCheck,

@@ -1,9 +1,8 @@
 // Capability negotiation (ADR-0004).
 //
-// The behaviour that matters here is the SPLIT: only positive knowledge of
-// absence may block a boot. An unreachable or unintelligible service must let
-// the app start, because blocking on a restarting dependency would be a worse
-// failure than the mis-promotion this check exists to catch.
+// Strict in every environment since 0.32.0: ai-service is a required
+// dependency, so every outcome except `ok` throws. An unreachable service gets
+// a bounded retry window first, then fails the boot.
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -11,7 +10,6 @@ import {
   AIClient,
   CapabilityNegotiationError,
   METADATA_FILTER_IN_CAPABILITY,
-  capabilityModeFromEnv,
 } from './index.js';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -68,7 +66,6 @@ describe('negotiate — reachable and positively lacking (the fatal case)', () =
       .negotiate({
         consumer: 'edc-web',
         require: ['systemPrompt', 'tenantProvision'],
-        mode: 'strict',
         logger: silentLogger,
       })
       .then(
@@ -97,26 +94,22 @@ describe('negotiate — reachable and positively lacking (the fatal case)', () =
       makeClient(fetchImpl).capabilities.negotiate({
         consumer: 'chat',
         require: ['systemPrompt'],
-        mode: 'strict',
         logger: silentLogger,
       }),
     ).rejects.toBeInstanceOf(CapabilityNegotiationError);
   });
 
-  it('warn mode logs loudly and lets the app start', async () => {
+  it("ignores a stale `mode: 'warn'` from an untyped caller — there is no warn mode", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200, DOC));
-    const logger = { warn: vi.fn(), info: vi.fn() };
 
-    const res = await makeClient(fetchImpl).capabilities.negotiate({
-      consumer: 'edc-backend',
-      require: ['tenantProvision'],
-      mode: 'warn',
-      logger,
-    });
-
-    expect(res.status).toBe('missing');
-    expect(logger.warn).toHaveBeenCalledTimes(1);
-    expect(logger.warn.mock.calls[0]![0]).toContain('AI_CAPABILITY_MODE=warn');
+    await expect(
+      makeClient(fetchImpl).capabilities.negotiate({
+        consumer: 'a consumer app',
+        require: ['tenantProvision'],
+        mode: 'warn',
+        logger: silentLogger,
+      } as never),
+    ).rejects.toBeInstanceOf(CapabilityNegotiationError);
   });
 });
 
@@ -128,7 +121,6 @@ describe('negotiate — the service predates the endpoint (404)', () => {
       .capabilities.negotiate({
         consumer: 'edc-web',
         require: ['systemPrompt'],
-        mode: 'strict',
         logger: silentLogger,
       })
       .then(
@@ -144,24 +136,58 @@ describe('negotiate — the service predates the endpoint (404)', () => {
   });
 });
 
-describe('negotiate — unreachable is never fatal', () => {
-  it('retries, then starts anyway even in strict mode', async () => {
+describe('negotiate — unreachable fails the boot after the retry window', () => {
+  it('retries, then throws with the cause and a fix', async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
-    const logger = { warn: vi.fn(), info: vi.fn() };
 
-    const res = await makeClient(fetchImpl).capabilities.negotiate({
-      consumer: 'edc-backend',
-      require: ['systemPrompt'],
-      mode: 'strict',
-      attempts: 3,
-      retryDelayMs: 0,
-      logger,
-    });
+    const err = await makeClient(fetchImpl)
+      .capabilities.negotiate({
+        consumer: 'a consumer app',
+        require: ['systemPrompt'],
+        attempts: 3,
+        retryDelayMs: 0,
+        logger: silentLogger,
+      })
+      .then(
+        () => null,
+        (e: unknown) => e as CapabilityNegotiationError,
+      );
 
-    expect(res.status).toBe('unreachable');
+    expect(err).toBeInstanceOf(CapabilityNegotiationError);
+    expect(err!.status).toBe('unreachable');
+    expect(err!.message).toContain('ECONNREFUSED');
+    expect(err!.message).toContain('AI_SERVICE_URL');
+    expect(err!.message).toContain('Refusing to start');
+    expect(err!.message).not.toMatch(/Starting anyway/);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
-    expect(logger.warn).toHaveBeenCalledTimes(1);
-    expect(logger.warn.mock.calls[0]![0]).toContain('ECONNREFUSED');
+  });
+
+  it('bounds each attempt with attemptTimeoutMs — a hanging service still fails the boot', async () => {
+    // Never settles unless aborted.
+    const fetchImpl = vi.fn(
+      (_url: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    );
+
+    const err = await makeClient(fetchImpl)
+      .capabilities.negotiate({
+        consumer: 'a consumer app',
+        require: ['systemPrompt'],
+        attempts: 2,
+        retryDelayMs: 0,
+        attemptTimeoutMs: 20,
+        logger: silentLogger,
+      })
+      .then(
+        () => null,
+        (e: unknown) => e as CapabilityNegotiationError,
+      );
+
+    expect(err).toBeInstanceOf(CapabilityNegotiationError);
+    expect(err!.status).toBe('unreachable');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it('recovers when a retry succeeds — a restarting service must not block boot', async () => {
@@ -173,7 +199,6 @@ describe('negotiate — unreachable is never fatal', () => {
     const res = await makeClient(fetchImpl).capabilities.negotiate({
       consumer: 'edc-backend',
       require: ['systemPrompt'],
-      mode: 'strict',
       retryDelayMs: 0,
       logger: silentLogger,
     });
@@ -182,56 +207,33 @@ describe('negotiate — unreachable is never fatal', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
-  it('never concludes absence from a 5xx', async () => {
+  it('classifies a 5xx as unreachable, not missing, and throws', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(503, { message: 'unavailable' }));
 
-    const res = await makeClient(fetchImpl).capabilities.negotiate({
-      consumer: 'edc-backend',
-      require: ['systemPrompt'],
-      mode: 'strict',
-      attempts: 2,
-      retryDelayMs: 0,
-      logger: silentLogger,
-    });
-
-    expect(res.status).toBe('unreachable');
+    await expect(
+      makeClient(fetchImpl).capabilities.negotiate({
+        consumer: 'a consumer app',
+        require: ['systemPrompt'],
+        attempts: 2,
+        retryDelayMs: 0,
+        logger: silentLogger,
+      }),
+    ).rejects.toMatchObject({ status: 'unreachable', missing: [] });
   });
 
-  it('never concludes absence from something that is not a capability document', async () => {
+  it('classifies a non-capability document as unreachable and throws', async () => {
     // A proxy, an index page, or a wrong AI_SERVICE_URL answering 200.
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200, { hello: 'world' }));
 
-    const res = await makeClient(fetchImpl).capabilities.negotiate({
-      consumer: 'edc-backend',
-      require: ['systemPrompt'],
-      mode: 'strict',
-      attempts: 2,
-      retryDelayMs: 0,
-      logger: silentLogger,
-    });
-
-    expect(res.status).toBe('unreachable');
-  });
-});
-
-describe('capabilityModeFromEnv', () => {
-  it('is strict in production and warn elsewhere', () => {
-    expect(capabilityModeFromEnv({ NODE_ENV: 'production' })).toBe('strict');
-    expect(capabilityModeFromEnv({ NODE_ENV: 'development' })).toBe('warn');
-    expect(capabilityModeFromEnv({})).toBe('warn');
-  });
-
-  it('honours an explicit AI_CAPABILITY_MODE override in both directions', () => {
-    expect(capabilityModeFromEnv({ NODE_ENV: 'production', AI_CAPABILITY_MODE: 'warn' })).toBe(
-      'warn',
-    );
-    expect(capabilityModeFromEnv({ NODE_ENV: 'development', AI_CAPABILITY_MODE: 'strict' })).toBe(
-      'strict',
-    );
-    // Garbage falls back to the NODE_ENV rule rather than failing boot.
-    expect(capabilityModeFromEnv({ NODE_ENV: 'production', AI_CAPABILITY_MODE: 'maybe' })).toBe(
-      'strict',
-    );
+    await expect(
+      makeClient(fetchImpl).capabilities.negotiate({
+        consumer: 'a consumer app',
+        require: ['systemPrompt'],
+        attempts: 2,
+        retryDelayMs: 0,
+        logger: silentLogger,
+      }),
+    ).rejects.toMatchObject({ status: 'unreachable', missing: [] });
   });
 });
 

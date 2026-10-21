@@ -48,11 +48,11 @@ Verify the bearer token on an inbound request, then gate on a permission.
 ```ts
 import {
   verifyIdentityToken,
-  canInProject,
+  canInAudience,
   IdentityTokenError,
 } from '@edc/identity-client'
 
-const PROJECT = 'edc' // your project slug — this is the token audience
+const AUDIENCE = 'edc' // your audience slug — the token's `aud`
 
 export async function principalFromRequest(req: Request) {
   const bearer = req.headers.get('authorization')?.replace(/^Bearer /i, '')
@@ -61,7 +61,7 @@ export async function principalFromRequest(req: Request) {
   try {
     return await verifyIdentityToken(bearer, {
       issuer: process.env.IDENTITY_ISSUER!,   // the apps/backend origin
-      audience: PROJECT,
+      audience: AUDIENCE,
       // Root path, NOT under /api — see the note below.
       jwksUrl: process.env.IDENTITY_JWKS_URL!,
     })
@@ -79,7 +79,7 @@ export async function principalFromRequest(req: Request) {
 
 // In a route handler:
 const claims = await principalFromRequest(req)
-if (!claims || !canInProject(claims, PROJECT, 'document:edit')) {
+if (!claims || !canInAudience(claims, AUDIENCE, 'document:edit')) {
   return new Response('Forbidden', { status: 403 })
 }
 ```
@@ -382,13 +382,13 @@ It still throws on `malformed_request` (400), `rate_limited` (429) and
 | `revokeSession(baseUrl, { refreshToken }, opts?)` | `POST /v1/identity/revoke`. Resolves for any ticket the IdP accepts the shape of. **Server-side only.** |
 | `verifyIdentityToken(token, opts)` | Verifies signature, `iss`, `aud`, expiry and claim shapes. Returns `IdentityTokenClaims`, throws `IdentityTokenError`. |
 | `can(principal, perm)` | Pure. Token → checks its own audience. Principal → true if held in **any** project, or platform admin. |
-| `canInProject(principal, slug, perm)` | Pure. The check to use in a route handler. |
+| `canInAudience(principal, slug, perm)` | Pure. The check to use in a route handler. `canInProject` is the same function under its older name (0.4.0). |
 | `grantOf(principal, slug)` | Pure. Always returns a `ProjectGrant`, never `undefined`. |
 | `hasRoleInProject` / `projectsOf` / `isPlatformAdmin` / `isTokenClaims` | Pure conveniences. |
 | `resolveGrant(email, slug, opts)` | `GET /v1/identity/resolve`. Returns `ProjectGrant \| null` — `null` means "no access" (the endpoint 404s for both an unknown account and a known account with no grant). **Server-side only.** |
 | `resolvePrincipal(email, slug, opts)` | Same call, returns the full `ResolvedPrincipal` (keeps `isPlatformAdmin`). |
 | `resolveExport(slug, opts)` | `GET /v1/identity/export`. Every active member of one project, for seeding. Returns `ProjectExport`; **throws** `IdentityRequestError` on 404. **Server-side only.** |
-| `createIdentitySession({ baseUrl, project, store, ... })` | The **stateful** layer over the three session calls: rotate → persist → classify `dead`/`survived`/`unavailable`, single-flight per ticket. **Server-side only.** |
+| `createIdentitySession({ baseUrl, audience, store, ... })` | The **stateful** layer over the three session calls: rotate → persist → classify `dead`/`survived`/`unavailable`, single-flight per ticket. **Server-side only.** |
 | `checkCatalogueDrift(expected, { project, ... })` | One `resolveExport` call, diffed against the product's own permission list. See below. |
 | `resetIdentitySessionState()` | Drops every in-flight refresh and spent-ticket memo. Tests only. |
 | `clearJwksCache()` | Drops cached key sets. Tests and rotation drills only. |
@@ -450,7 +450,7 @@ by remembering:
 ```ts
 const session = createIdentitySession({
   baseUrl: process.env.IDENTITY_URL!,   // WITH the /api
-  project: 'chat',                      // the `aud` of every token minted
+  audience: 'chat',                     // the `aud` of every token minted
   store: {
     saveTicket: (t) => cookies.set('chat_idp', t.refreshToken, cookieOptions(t.maxAge)),
     saveToken:  (t) => cookies.set('chat_auth', t.token, cookieOptions(t.maxAge)),
@@ -466,9 +466,14 @@ if (!result.ok && result.kind === 'unavailable') return error(503)
 
 ⚠ **Create one manager per request** — the store is a cookie jar. The
 single-flight and memo state is module-level and shared by every manager built
-against the same `(baseUrl, project)` pair, which is what makes it work. The
-project is part of the key because a memo entry holds an access token scoped to
-one project.
+against the same `(baseUrl, audience)` pair, which is what makes it work. The
+audience is part of the key because a memo entry holds an access token scoped to
+one audience.
+
+⚠ **`project` is the deprecated name of `audience`** (0.4.0). It still works.
+Set both only while switching env vars: equal slugs are accepted, different
+slugs throw `IdentityConfigError` at construction. A blank `audience` counts as
+unset.
 
 ⚠ **`end()` is the interlock, not just a revoke.** It clears the store, then
 purges the memo chain in **both** directions and marks every ticket it reaches
@@ -548,13 +553,13 @@ unseen `kid`, so a key rotation does not need a consumer redeploy.
   `status >= 400`, not `!res.ok`, not `catch (err) { logout() }`.
 - **A refresh ticket is not an access token.** It opens no product. Trade it for
   a project token with `audience`, then verify *that* token downstream.
-- **A token grants only its `aud`.** `canInProject(token, 'other-project', …)`
+- **A token grants only its `aud`.** `canInAudience(token, 'other-project', …)`
   is always `false`, platform admin or not. Mint a second token instead.
 - **Tokens carry no `isPlatformAdmin` flag.** The issuer flattens an admin's
   permissions into `perms` when it mints the token. Only `ResolvedPrincipal`
   carries the flag.
 - **`can()` on a `ResolvedPrincipal` is platform-wide.** It answers "anywhere",
-  which is almost never what a route handler means. Use `canInProject`.
+  which is almost never what a route handler means. Use `canInAudience`.
 - **The service token is not a user credential.** It authenticates *your
   service* to the whole resolve surface. Server-side environments only.
 - **Permissions are already flattened.** Never expand roles yourself — that is

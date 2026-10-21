@@ -128,6 +128,13 @@ const envSchema = z.object({
   TRUSTED_PROXY_HOPS: z.coerce.number().int().nonnegative().default(1),
 
   DATABASE_URL: z.string().url(),
+  // Optional DIRECT (non-pooled) Postgres URL, used ONLY by the migration path
+  // (`createMigrationClient`, `scripts/schema-gate.mjs`, `drizzle.config.ts`).
+  // Same convention as Prisma's `directUrl` and Supabase's direct connection:
+  // when `DATABASE_URL` points at PgBouncer in transaction mode, migrations
+  // want a real session (advisory locks, multi-statement DDL, startup
+  // parameters). Unset ⇒ migrations use `DATABASE_URL`, exactly as before.
+  DATABASE_URL_DIRECT: z.string().url().optional(),
   REDIS_URL: z.string().url(),
 
   // JSON map of apiKey -> { org, project, role? }
@@ -189,6 +196,14 @@ const envSchema = z.object({
    * free dial.
    */
   EMBEDDINGS_URL: z.string().url().default('https://openrouter.ai/api/v1/embeddings'),
+  /**
+   * `EMBEDDINGS_API_KEY` — optional Bearer token for `EMBEDDINGS_URL`. When set
+   * (non-empty), embedding calls send it INSTEAD of `OPENROUTER_API_KEY`, so a
+   * self-hosted or third-party embeddings host never receives the OpenRouter
+   * key. Unset or empty ⇒ unchanged behaviour (`OPENROUTER_API_KEY`, then
+   * `OPENAI_API_KEY`).
+   */
+  EMBEDDINGS_API_KEY: z.string().optional(),
   /**
    * The OpenAI-compatible `/chat/completions` endpoint both chat paths (plain
    * and streaming) call. Defaults to OpenRouter. The companion of

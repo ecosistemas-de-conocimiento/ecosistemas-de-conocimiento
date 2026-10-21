@@ -226,6 +226,13 @@ describe('POST /v1/retrieve reports `legs` ON THE WIRE (capability `retrievalLeg
     await db.execute(
       sql`TRUNCATE TABLE corpus_aliases, chunks, documents, corpora RESTART IDENTITY CASCADE`,
     );
+    // `/v1/retrieve` is metered (AIS-7) and fail-closed: an org with no
+    // `budget_state` row is a 402. The shared truncate wipes it per test.
+    await db.execute(sql`
+      INSERT INTO "budget_state" ("org", "limit_usd", "remaining_usd")
+      VALUES (${TENANT.org}, 100::numeric, 100::numeric)
+      ON CONFLICT ("org") DO UPDATE SET "remaining_usd" = 100::numeric
+    `);
   });
 
   /** One real HTTP round-trip through auth, the route and JSON serialisation. */

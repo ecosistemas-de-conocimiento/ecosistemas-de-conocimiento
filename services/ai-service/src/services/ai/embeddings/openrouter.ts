@@ -36,7 +36,7 @@ export interface EmbedOptions {
   model: string;
   /** A single string or an array of strings. The API returns one vector per input. */
   input: string | string[];
-  /** Falls back to `env.OPENROUTER_API_KEY`, then `env.OPENAI_API_KEY`, when omitted. */
+  /** Falls back to `env.EMBEDDINGS_API_KEY`, then `env.OPENROUTER_API_KEY`, then `env.OPENAI_API_KEY`, when omitted. */
   apiKey?: string;
   signal?: AbortSignal;
 }
@@ -77,10 +77,15 @@ export class OpenRouterEmbeddingHttpError extends Error {
 }
 
 function resolveApiKey(opts: EmbedOptions): string {
-  const key = opts.apiKey ?? env.OPENROUTER_API_KEY ?? env.OPENAI_API_KEY;
+  // `EMBEDDINGS_API_KEY` wins when non-empty, so a non-OpenRouter
+  // `EMBEDDINGS_URL` never receives the OpenRouter key. `||` (not `??`) treats
+  // `EMBEDDINGS_API_KEY=` as unset; when it is unset the chain is exactly the
+  // old `OPENROUTER_API_KEY ?? OPENAI_API_KEY`.
+  const key =
+    opts.apiKey ?? (env.EMBEDDINGS_API_KEY || env.OPENROUTER_API_KEY) ?? env.OPENAI_API_KEY;
   if (!key) {
     throw new Error(
-      'OpenRouter embedding API key missing: pass opts.apiKey or set OPENROUTER_API_KEY (preferred) / OPENAI_API_KEY env var.',
+      'OpenRouter embedding API key missing: pass opts.apiKey or set EMBEDDINGS_API_KEY / OPENROUTER_API_KEY (preferred) / OPENAI_API_KEY env var.',
     );
   }
   return key;

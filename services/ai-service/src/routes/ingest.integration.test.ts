@@ -47,6 +47,13 @@ describe('/v1/ingest — L1 delivery durability (integration)', () => {
     await db.execute(
       sql`TRUNCATE TABLE callback_deliveries, ingest_jobs, ingest_requests, chunks, documents, corpora RESTART IDENTITY CASCADE`,
     );
+    // Ingest is charged against the org's cap; the enforcer is fail-closed on a missing row.
+    // Both orgs the keys above act as.
+    await db.execute(sql`
+      INSERT INTO "budget_state" ("org", "limit_usd", "remaining_usd")
+      VALUES ('acme', 100, 100), ('other', 100, 100)
+      ON CONFLICT ("org") DO UPDATE SET "limit_usd" = 100, "remaining_usd" = 100
+    `);
   });
 
   const auth = (key: string) => ({ authorization: `Bearer ${key}` });

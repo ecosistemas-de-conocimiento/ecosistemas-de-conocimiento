@@ -580,6 +580,8 @@ describe('a worker that dies mid-job (integration)', () => {
   // -------------------------------------------------------------------------
 
   it('ingest: the re-delivery of a SIGKILLed job fails it as worker_lost and settles the batch', async () => {
+    // Ingest is charged against the org's cap (AIS-7); fail-closed on no row.
+    await seedBudget(db, 10);
     const corpusId = (
       await db
         .insert(corpora)

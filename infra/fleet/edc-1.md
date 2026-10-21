@@ -1,8 +1,10 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `08b32da` (graph: no language or placeholder
-nodes, overview hides isolated nodes; noise purged), deployed 2026-10-21 20:07 UTC — see §4w, which
-also lists the dev demo accounts. Before that, `1a148aa` (cite A/B switch) and `8a1df66` (cite-rule fix
+**Status:** live since 2026-10-17. Dev runs `main` @ `ac47612` (audio-service under compose profile
+`audio`), redeployed 2026-10-21 23:18 UTC after a failed deploy — see §4x. Dev now has four ecosistemas
+(ids 1, 3, 6, 7), a 2D/3D graph (`6fb558e`) and turns stored through the gate (`66790b5`). Before that,
+`08b32da` (graph: no language or placeholder nodes; 20:07 UTC) — see §4w, which also lists the dev
+demo accounts. Before that, `1a148aa` (cite A/B switch) and `8a1df66` (cite-rule fix
 round 2; 16:47 UTC, §4v; ⚠ Educación answers still hedge). Before that, `5fe43ff` (answer from
 partly relevant passages; 16:33 UTC, §4u). Before that, `8b525fa` (tighter cite rule, no sources on a no-answer reply, at most 7 sources;
 16:16 UTC, §4t). Before that, `9285305` (sources fallback, cite rule in the prompt, no draft
@@ -1116,6 +1118,86 @@ chats). Tonight: $0.4786 + $1.5059 = **$1.9845** of the $10 cap.
 
 **Disk**, `df -h /` free: 60 GB before each deploy; 47 GB after each build; 60 GB after
 `docker builder prune -af` (12.97 GB) and removing the previous dev images. Images 7.8 GB, build
+cache 0.
+
+### 4x. ⚠ Done 2026-10-21 22:50–23:30 UTC: four ecosistemas, 2D/3D graph (`6fb558e`), stored turns (`66790b5`), dev only — with a self-caused outage
+
+All measured by the deploy agent. Staging was not touched.
+
+**`6fb558e`** (force-graph 2D, lazy 3D, one-doc thresholds read at query time). `GRAPH_MIN_SUPPORT`
+was not set; no new `GRAPH_*` variable added; no variable holds `:?` text. Backup
+`/root/backups/20261021T2253Z/` (sha256 matched off-box). Deploy 22:53:34 → 22:59:19 UTC; 6
+containers `healthy`. No corpus folder in the backend container and `CORPUS_DIR` unset, so a boot
+cannot re-seed (the seed tops up any ecosistema under 250 documents when a corpus is present).
+
+`scripts/demo-ecosistemas-4.sh` (read first; run on the box with `PG_CONTAINER=<pg>`), dry run then
+`--apply`, identical except the new ids (the dry run consumed 4 and 5): 120 documents moved; graph
+171 entities copied, 851 mentions and 426 relations moved, 125 unused removed. ai-service: 111
+documents and 111 chunks moved into 4 corpora, 2 budgets created. Every cross-check 0.
+
+| id | ecosistema | slug | documents (published) | ai-service org / budget |
+|---|---|---|---|---|
+| 1 | Traducción en salud | `demo` | 72 (53) | `edc-eco-1`, $5 |
+| 3 | Acompañamiento escolar | `educacion-comunitaria` | 60 (31) | `edc-eco-3`, $5 |
+| 6 | Prevención del dengue | `prevencion-dengue` (new) | 60 (44) | `edc-eco-6`, $5, PUT → 200 |
+| 7 | Discapacidad | `discapacidad` (new) | 60 (31) | `edc-eco-7`, $5, PUT → 200 |
+
+Members (3 each) were copied into all four. `purge-graph-noise.ts`: 1 entity, 1 mention ("mercado
+de Domicilio C", now caught by `488ee4d`). Graph entities after: 1 → 107, 3 → 74, 6 → 75, 7 → 96.
+
+Verify as the participant (Playwright 1366 px; SwiftShader WebGL; screenshots):
+
+| check | Prevención del dengue | Discapacidad |
+|---|---|---|
+| backend graph view (`GET /api/graph/view`) | 73 nodes; 523 edges = 101 relations + 422 co-mentions; 0 isolated | 84 nodes; 571 = 74 + 497; 0 isolated |
+| 2D canvas | renders; legend shows the dashed "aparecen juntos" line; dashed co-mention edges visible | same |
+| select via the entity list → `?entidad=` | 777 | 843 |
+| Esc / click on empty canvas | both clear the selection | both clear it |
+| same layout on reload | canvas `toDataURL` sha256 identical (`0289eaab2fde` twice) | identical (`4f83abb8fa31`) |
+| 3D toggle | `data-vista=3d`, WebGL canvas 888×622, no fallback line | same; labels in the top layer overlap |
+| chat smoke | 8.7 s, 6 groups, 7 sources | 3.7 s, hedges, 3 sources |
+
+The switcher lists the 4 (Acompañamiento escolar, Discapacidad, Prevención del dengue, Traducción
+en salud). Biblioteca totals match the published counts above. No page errors.
+
+**`66790b5`** (#4 v2: chat turns stored through the anonymisation gate and used only to orient chat,
+never cited). Backup `/root/backups/20261021T2304Z/`. Deploy 23:04:39 → 23:10:03 UTC. Smoke as the
+participant in Prevención del dengue, 3 fresh conversations:
+
+| exchange | time | groups / sources | "Conversación" or `msg-*` sources | turn row → ai-service document | ai-service calls in the exchange |
+|---|---|---|---|---|---|
+| 1st question (dengue in the colonias) | 14.6 s | 7 / 7 | 0 | assistant turn 81: `embedding` (no redaction yet) at +9 s, `ingested` + `redacted_text` at +17 s; `msg-81` appears only then | 2 `/v1/generate/sync`, 1 `/v1/ingest`, 6 `/v1/retrieve` |
+| 2nd, related (brigadas casa por casa) | 15.7 s | 8 / 7 | **0** | turn 82: same order; `msg-82` at +14 s | 2 / 1 / 6 |
+| off-topic (capital de Francia) | 3.9 s | 0 / **0** | 0 | ⚠ `msg-83` was already in ai-service at +6 s while the backend row still read `embedding` with no `redacted_text`; `ingested` at +14 s | 2 / 1 / 5 |
+
+- Detector calls: **2** `/v1/generate/sync` per exchange (the brief expected 4–6). Only the
+  assistant turn becomes a message row.
+- The stored turn text (`msg-81`, `kind conversacion`) has 0 manifest names and 0 `[Persona X]`.
+  ⚠ It still holds **7 `[n]` citation groups**, although `68fd202` says brackets are stripped from
+  turns.
+- Deleting the 3 conversations removed the 3 `msg-*` documents (0 left).
+
+**🔴 Incident, 23:10–23:25 UTC: dev down ≈ 8 minutes, caused by this agent.** While I pruned after
+`66790b5`, a deploy of `ac47612` queued by someone else at 23:06:36 (deployment
+`k3iirrwz0bsperpwxqgg43vz`) was building. My cleanup loop removed every dev image not tagged
+`66790b5`, so it deleted its freshly built `web` and `ai-service` images (`ac47612`) and pruned
+20.47 GB of build cache. At start, Coolify tried to pull those images ("pull access denied for
+pehgnxpqvnonhihabzvnwnil_web…"); the deploy **failed** at 23:17:48, left all containers `Created`,
+and both health URLs answered 503. Volumes were untouched. Fixed by redeploying the same commit
+through the API (23:18:39 → 23:24:59, `finished`). 9 containers up, including the audio services
+`ac47612` turns on; health 200. Data checked: 252 backend documents, 4 organisations, 228 ai-service
+documents (= 66 + 51 + 55 + 56, the split script's corpus totals).
+**Rule from this: before any `docker rmi` or `docker builder prune` on the box, check
+`GET /api/v1/deployments` is empty and no `docker compose … build` runs; remove only images of known
+older commits by name.**
+
+Spend: `usage_logs` $1.5059 → $1.5237 (**+$0.0178**: 6fb558e checks and chats $0.0072, 66790b5 smoke
+$0.0106). Tonight: $0.4786 + $1.5237 = **$2.0023** of the $10 cap.
+
+**Disk**, `df -h /` free: 60 GB before; 47 GB after the `6fb558e` build; 60 GB after its prune
+(13.21 GB); 35 GB with `66790b5` and the concurrent `ac47612` build; 54 GB after the (harmful) prune
+above; 33 GB after the `ac47612` redeploy; 58 GB after `docker builder prune -af` (26.47 GB, no
+deploy running) and removing dev's `66790b5` images. Images 9.4 GB (audio images added), build
 cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs

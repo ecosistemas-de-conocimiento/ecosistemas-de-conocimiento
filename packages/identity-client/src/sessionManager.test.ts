@@ -104,7 +104,7 @@ describe('construction', () => {
   it('rejects a manager with no project — there is no fleet-wide token', () => {
     expect(() =>
       createIdentitySession({ baseUrl: BASE, project: '', store: mapStore().store }),
-    ).toThrow(/`project` is required/);
+    ).toThrow(/`audience` \(or deprecated `project`\) is required/);
   });
 
   it('rejects a store that cannot persist a ticket', () => {

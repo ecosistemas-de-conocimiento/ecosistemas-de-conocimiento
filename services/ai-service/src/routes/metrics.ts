@@ -32,13 +32,15 @@
 // The moment a scraper lives anywhere else — a sidecar, a Prometheus on the
 // docker network, a remote agent — set METRICS_TOKEN. There is no third mode.
 //
-// 🔴 AND WHY `req.socket.remoteAddress`, NOT `req.ip`. The server runs with
-// `trustProxy: true`, which makes `req.ip` the LEFTMOST `X-Forwarded-For`
-// entry — a value the caller writes. `server.ts` already says this out loud
-// about the rate limiter's key. For a rate-limit bucket a spoofed value is a
+// 🔴 AND WHY `req.socket.remoteAddress`, NOT `req.ip`. The server trusts
+// `TRUSTED_PROXY_HOPS` proxy hops (default 1: the Traefik ingress), so `req.ip`
+// is an `X-Forwarded-For` entry: the one the outermost trusted proxy appended.
+// That is only right while the hop count matches the real topology; a
+// miscounted value hands `req.ip` back to the caller (`server.ts` says the same
+// about the rate limiter's key). For a rate-limit bucket a spoofed value is a
 // fairness problem; for an ALLOWLIST it is the whole control: `curl -H
-// 'X-Forwarded-For: 127.0.0.1'` would have walked straight in. The raw socket
-// peer is the only address in the request the caller cannot choose.
+// 'X-Forwarded-For: 127.0.0.1'` must never walk in. The raw socket peer is the
+// only address in the request the caller cannot choose, whatever the config.
 //
 // 🔴 `process.env`, not `env`: `src/config/env.ts` is another lane's file and
 // phase 2 folds this in there alongside the OTel settings — the same note

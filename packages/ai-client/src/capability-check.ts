@@ -4,37 +4,28 @@
  * ── What was actually duplicated ─────────────────────────────────────────────
  * All four consumers already share the NEGOTIATION (`CapabilitiesAPI.negotiate`
  * in `./capabilities.ts`). What each one re-derived by hand is the WRAPPER
- * around it — 81 to 123 lines each, and the same five decisions every time:
+ * around it — the same decisions every time:
  *
  *   1. run once per process, because Payload's `onInit` re-runs on every
  *      `next dev` hot-reload;
- *   2. skip when ai-service is not configured, because AI is optional
- *      fleet-wide (a product without ai-service must still boot);
- *   3. skip without a request when nothing is required — don't spend a
- *      round-trip confirming an empty list;
- *   4. read the mode from the environment (`capabilityModeFromEnv`);
- *   5. expose a reset seam so a test can run the check twice.
+ *   2. fail the boot when ai-service is not configured — it is a REQUIRED
+ *      dependency, and a hard dependency fails boot (0.32.0);
+ *   3. expose a reset seam so a test can run the check twice.
  *
- * The four copies had already drifted on (3): chat returns early on an empty
- * list, a consumer app and a consumer app do not, so a consumer that requires nothing still opens
- * a connection at every boot. Small, but it is the same drift mechanism that
- * produced three different callback verifiers.
+ * ── Strict in every environment (0.32.0) ─────────────────────────────────────
+ * There is no `warn` mode, no skip path and no `AI_CAPABILITY_MODE` override.
+ * `run()` resolves only when ai-service is configured, reachable within the
+ * startup window, and has every required capability. Anything else throws.
+ * An empty `require` list still probes: it proves ai-service is reachable.
  *
  * ── What stays in the product ────────────────────────────────────────────────
- * The required-capability LIST and the skip SENTENCE. Both are genuinely
- * per-product: the list must describe what that codebase actually does (an
- * aspirational entry blocks boots for nothing, a missing one lets the failure
- * through), and the skip message names the product's own supported offline mode
- * — frontend code's fixture path, chat's optional AI, a consumer app's `AI_SERVICE_ENABLED`
- * flag, a consumer app's "ai-service is REQUIRED, this is an ERROR". So they are
- * options, not defaults, and `skipLevel` exists because exactly one consumer
- * (a consumer app) treats an unconfigured ai-service as an error rather than a shrug.
+ * The required-capability LIST. It must describe what that codebase actually
+ * does: an aspirational entry blocks boots for nothing, a missing one lets the
+ * failure through.
  */
 
 import {
-  capabilityModeFromEnv,
   type CapabilityLogger,
-  type CapabilityMode,
   type NegotiationResult,
 } from './capabilities.js';
 
@@ -44,7 +35,6 @@ export interface CapabilityNegotiator {
     negotiate(opts: {
       consumer: string;
       require: readonly string[];
-      mode?: CapabilityMode;
       logger?: CapabilityLogger;
     }): Promise<NegotiationResult>;
   };
@@ -62,22 +52,11 @@ export interface CapabilityCheckOptions {
    */
   require: () => readonly string[];
   /**
-   * The client to negotiate with, or `null`/`undefined` when ai-service is not
-   * configured for this process. Also a function, for the same reason.
+   * The client to negotiate with. Returning `null`/`undefined` (ai-service not
+   * configured for this process) makes `run()` THROW. Also a function, for the
+   * same reason as `require`.
    */
   client: () => CapabilityNegotiator | null | undefined;
-  /** What the log says when there is no client. Name the product's offline mode. */
-  skipMessage: string;
-  /**
-   * Level for `skipMessage`. `info` for a product where AI is optional;
-   * `error` where ai-service is a REQUIRED dependency and its absence is a
-   * misconfiguration someone must fix (a consumer app). Never throws either way —
-   * gating boot on a dependency crash-loops every replica, and readiness
-   * reports it independently. Defaults to `info`.
-   */
-  skipLevel?: 'info' | 'error';
-  /** Override the fleet rule (`strict` in production, `warn` elsewhere). */
-  mode?: () => CapabilityMode;
 }
 
 /** A logger that may also carry `error` — a superset of `CapabilityLogger`. */
@@ -89,13 +68,13 @@ export interface CapabilityCheck {
   /**
    * Run the check. Call from `onInit`.
    *
-   *   - already run to a CONCLUSION in this process → returns immediately, no
-   *     request. A run that threw, or that could not reach ai-service, learned
-   *     nothing and does NOT latch: the next call checks again.
-   *   - nothing required           → returns, no request.
-   *   - no client configured       → logs `skipMessage`, returns.
-   *   - reachable, missing         → THROWS in `strict`, warns in `warn`.
-   *   - unreachable                → warns and continues, ALWAYS.
+   *   - already passed in this process → returns immediately, no request.
+   *   - no client configured           → THROWS.
+   *   - unreachable after the window   → THROWS (`CapabilityNegotiationError`).
+   *   - reachable, missing/unsupported → THROWS (`CapabilityNegotiationError`).
+   *   - reachable, has everything      → resolves, and latches.
+   *
+   * A run that threw does NOT latch: the next call checks again.
    */
   run(logger: CapabilityCheckLogger): Promise<void>;
   /** Test seam: let the check run again in the same process. */
@@ -117,49 +96,22 @@ export function createCapabilityCheck(opts: CapabilityCheckOptions): CapabilityC
     async run(logger: CapabilityCheckLogger): Promise<void> {
       if (alreadyChecked) return;
 
-      const required = [...opts.require()];
-      // Nothing required ⇒ nothing to ask. Don't spend a round-trip proving an
-      // empty list is satisfied. Latched: the answer cannot change mid-process.
-      if (required.length === 0) {
-        alreadyChecked = true;
-        return;
-      }
-
       const client = opts.client();
       if (!client) {
-        alreadyChecked = true;
-        if (opts.skipLevel === 'error' && logger.error) logger.error(opts.skipMessage);
-        else if (opts.skipLevel === 'error') logger.warn(opts.skipMessage);
-        else if (logger.info) logger.info(opts.skipMessage);
-        else logger.warn(opts.skipMessage);
-        return;
+        throw new Error(
+          `${opts.consumer}: ai-service is not configured (no client). ai-service is a ` +
+            `required dependency; set AI_SERVICE_URL and its API key. Refusing to start.`,
+        );
       }
 
-      const result = await client.capabilities.negotiate({
+      // Throws on every outcome except `ok`, so reaching the latch means the
+      // check passed.
+      await client.capabilities.negotiate({
         consumer: opts.consumer,
-        require: required,
-        mode: (opts.mode ?? capabilityModeFromEnv)(),
+        require: [...opts.require()],
         logger,
       });
-
-      // 🔴 LATCHED AFTER THE AWAIT, AND ONLY WHEN WE LEARNED SOMETHING.
-      //
-      // Two ways the old `alreadyChecked = true` before the await was wrong,
-      // and `unreachable` is the one that bites in `warn` mode (dev, local):
-      //
-      //   - `negotiate` THREW (strict, capability positively absent) — the
-      //     latch is simply not reached, so the next boot attempt checks
-      //     again. That is the point of refusing to start.
-      //   - `negotiate` RESOLVED `unreachable` — it logs loudly and continues
-      //     BY DESIGN, because an unreachable service is not evidence a
-      //     capability is gone. But nothing was verified. Latching there
-      //     consumed the one check the process would ever run: every later
-      //     `onInit` (each `next dev` reload, each ai-service restart) short-
-      //     circuited, and the guard read green having answered nothing.
-      //
-      // `missing` / `unsupported` in `warn` mode DO latch: the answer is
-      // known, it was logged, and repeating it every reload is noise.
-      if (result.status !== 'unreachable') alreadyChecked = true;
+      alreadyChecked = true;
     },
 
     reset(): void {

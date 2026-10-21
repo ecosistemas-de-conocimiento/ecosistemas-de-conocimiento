@@ -22,18 +22,16 @@
 // place gets re-implemented and silently regressed per consumer. That is the
 // same lesson the hand-folded system prompt taught, at the same cost.
 //
-// ── Why this is not allowed to brick a deploy ─────────────────────────────
-// A hard boot-time dependency that fails when ai-service is merely slow or
-// briefly restarting would be a WORSE failure than the one we're fixing. So the
-// only fatal outcome is positive knowledge of absence:
+// ── Strict in every environment (0.32.0) ──────────────────────────────────
+// ai-service is a REQUIRED dependency, and a hard dependency fails boot: there
+// is no degraded mode and no per-environment downgrade. Every non-ok outcome
+// throws `CapabilityNegotiationError`:
 //
-//   reachable + says it lacks capability X  → fatal in `strict`
-//   reachable + predates the endpoint (404) → fatal in `strict`
-//   unreachable / timing out / 5xx / unclear → NEVER fatal, logged loudly
-//
-// `warn` mode downgrades even the fatal cases to a loud log — the right default
-// for dev and local, where a stale container is routine and a blocked boot is
-// more annoying than useful.
+//   reachable + says it lacks capability X   → throws (`missing`)
+//   reachable + predates the endpoint (404)  → throws (`unsupported`)
+//   unreachable / timing out / 5xx / unclear → throws (`unreachable`), but only
+//     after a bounded startup retry window, so a briefly restarting ai-service
+//     does not fail the boot. The orchestrator restarts the consumer after that.
 
 import type { HttpClient } from './http.js';
 
@@ -89,13 +87,6 @@ export function strictStructuredOutputCapabilities(model?: string): string[] {
     : [STRICT_STRUCTURED_OUTPUT_CAPABILITY];
 }
 
-/**
- * `strict` — refuse to start when a required capability is positively absent.
- *   The default for stage/prod.
- * `warn` — log loudly and continue. For dev/local.
- */
-export type CapabilityMode = 'strict' | 'warn';
-
 /** Minimal logger shape; any pino/console-like object satisfies it. */
 export interface CapabilityLogger {
   warn(message: string): void;
@@ -110,12 +101,16 @@ export interface NegotiateOptions {
   consumer: string;
   /** Capability names this consumer cannot run without. */
   require: readonly string[];
-  /** Defaults to `strict`. Use `capabilityModeFromEnv()` for the shared rule. */
-  mode?: CapabilityMode;
-  /** Total attempts before concluding "unreachable". Defaults to 3. */
+  /**
+   * Total attempts before concluding "unreachable" and throwing. Defaults to 5.
+   * With the defaults the startup window is at most about 40 s (inferred from
+   * the defaults: 4 backoff waits of 1+2+4+8 s, plus 5 attempts of at most 5 s).
+   */
   attempts?: number;
-  /** Base backoff in ms between attempts (doubles each time). Defaults to 400. */
+  /** Base backoff in ms between attempts (doubles each time). Defaults to 1000. */
   retryDelayMs?: number;
+  /** Deadline for EACH probe attempt, in ms. Defaults to 5000. */
+  attemptTimeoutMs?: number;
   logger?: CapabilityLogger;
   signal?: AbortSignal;
 }
@@ -133,8 +128,9 @@ export interface NegotiationResult {
 }
 
 /**
- * Thrown by `negotiate()` in `strict` mode when a required capability is
- * positively absent. Carries the structured facts so a consumer can log them
+ * Thrown by `negotiate()` on every outcome except `ok`: a required capability
+ * is absent, or ai-service could not be reached within the startup window.
+ * Carries the structured facts so a consumer can log them
  * as fields as well as prose.
  */
 export class CapabilityNegotiationError extends Error {
@@ -161,28 +157,6 @@ export class CapabilityNegotiationError extends Error {
   }
 }
 
-/**
- * The rule in one place: block the boot where a bad promotion is
- * expensive, warn where a stale container is routine.
- *
- * Reads `AI_CAPABILITY_MODE` first so any environment can be overridden without
- * a code change — the escape hatch you want at 2am when the check itself is the
- * thing in the way.
- */
-export function capabilityModeFromEnv(
-  env: Record<string, string | undefined> = typeof process !== 'undefined'
-    ? process.env
-    : {},
-): CapabilityMode {
-  const explicit = env['AI_CAPABILITY_MODE']?.trim().toLowerCase();
-  if (explicit === 'strict' || explicit === 'warn') return explicit;
-
-  // Anything that is not a real deployed environment gets `warn`.
-  const nodeEnv = (env['NODE_ENV'] ?? '').trim().toLowerCase();
-  if (nodeEnv === 'production') return 'strict';
-  return 'warn';
-}
-
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -205,31 +179,24 @@ export class CapabilitiesAPI {
   }
 
   /**
-   * Boot-time check. Returns a classified result; throws
-   * `CapabilityNegotiationError` only in `strict` mode and only when the
-   * service is reachable and positively lacks something required.
+   * Boot-time check. Resolves only with status `ok`; throws
+   * `CapabilityNegotiationError` on every other outcome.
    */
   async negotiate(opts: NegotiateOptions): Promise<NegotiationResult> {
-    const mode = opts.mode ?? 'strict';
-    const attempts = Math.max(1, opts.attempts ?? 3);
-    const baseDelay = Math.max(0, opts.retryDelayMs ?? 400);
+    const attempts = Math.max(1, opts.attempts ?? 5);
+    const baseDelay = Math.max(0, opts.retryDelayMs ?? 1000);
+    const timeoutMs = opts.attemptTimeoutMs ?? 5000;
     const log = opts.logger ?? console;
     const required = [...opts.require];
 
-    const result = await this.probe({ attempts, baseDelay, required, signal: opts.signal });
-    const decorated = this.explain(result, opts.consumer, mode);
+    const result = await this.probe({ attempts, baseDelay, timeoutMs, required, signal: opts.signal });
+    const decorated = this.explain(result, opts.consumer);
 
     if (decorated.status === 'ok') {
       log.info?.(
         `[ai-client] capability check passed for ${opts.consumer}: ` +
           `${required.length} required, ai-service at ${this.baseUrl}.`,
       );
-      return decorated;
-    }
-
-    // Unreachable is never fatal — see the header. Loud, but the app starts.
-    if (decorated.status === 'unreachable' || mode === 'warn') {
-      log.warn(decorated.message);
       return decorated;
     }
 
@@ -245,6 +212,7 @@ export class CapabilitiesAPI {
   private async probe(args: {
     attempts: number;
     baseDelay: number;
+    timeoutMs: number;
     required: string[];
     signal?: AbortSignal | undefined;
   }): Promise<NegotiationResult> {
@@ -262,6 +230,7 @@ export class CapabilitiesAPI {
           // on multiplied the ladders: `attempts` here x `attempts` there = 9
           // requests for a default 3, and every wait compounded the same way.
           retry: { attempts: 1 },
+          timeoutMs: args.timeoutMs,
           ...(args.signal ? { signal: args.signal } : {}),
         });
       } catch (err) {
@@ -324,12 +293,8 @@ export class CapabilitiesAPI {
   private explain(
     result: NegotiationResult,
     consumer: string,
-    mode: CapabilityMode,
   ): NegotiationResult {
-    const suffix =
-      mode === 'warn'
-        ? ' Continuing anyway because AI_CAPABILITY_MODE=warn.'
-        : ' Refusing to start.';
+    const suffix = ' Refusing to start.';
 
     switch (result.status) {
       case 'ok':
@@ -362,10 +327,8 @@ export class CapabilitiesAPI {
           ...result,
           message:
             `${consumer} could not reach ai-service at ${this.baseUrl} to check ` +
-            `capabilities (${result.message}). Starting anyway — an unreachable service is ` +
-            `not evidence that a capability is missing, and blocking boot on a restarting ` +
-            `dependency would be worse than the mistake this check exists to catch. ` +
-            `Required: ${quoteList([...result.missing])}.`,
+            `capabilities (${result.message}). ai-service is a required dependency; check ` +
+            `that it is running and that AI_SERVICE_URL points at it.${suffix}`,
         };
     }
   }

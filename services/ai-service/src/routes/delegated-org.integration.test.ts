@@ -103,6 +103,13 @@ describe('org delegation against a real Postgres', () => {
       embedding: fakeEmbedOne(SECRET),
     });
 
+    // `/v1/retrieve` is metered (AIS-7) and fail-closed, so the owner org
+    // needs a budget row for the positive control.
+    await db.execute(sql`
+      INSERT INTO "budget_state" ("org", "limit_usd", "remaining_usd")
+      VALUES ('acme-a', 100::numeric, 100::numeric)
+    `);
+
     // Positive control: the owner retrieves it.
     const owner = await app.inject({
       method: 'POST',

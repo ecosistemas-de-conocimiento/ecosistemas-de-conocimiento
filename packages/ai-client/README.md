@@ -345,16 +345,14 @@ every environment runs its own ai-service. Declare what you require and check it
 actionable message — instead of degrading silently (service ahead of consumer)
 or throwing mid-user-action (consumer ahead of service).
 
-```ts
-import { AIClient, capabilityModeFromEnv } from '@edc/ai-client'
+ai-service is a required dependency, so the check is strict in every
+environment (since 0.32.0): there is no `warn` mode and no env override.
 
-// Only when AI is enabled — a consumer configured without ai-service must keep
-// starting and working exactly as before.
+```ts
 await client.capabilities.negotiate({
   consumer: 'edc-backend',       // your product's name; only used in messages
   // Add 'specDefaultSlot' if you call client.textToSql().
   require: ['systemPrompt', 'strictParsed'],
-  mode: capabilityModeFromEnv(), // strict in production, warn elsewhere
   logger: payload.logger,
 })
 ```
@@ -363,28 +361,24 @@ Outcomes:
 
 | Situation | `status` | Result |
 |---|---|---|
-| Has everything required | `ok` | continues |
-| Reachable, lacks a required capability | `missing` | **throws** in `strict`, warns in `warn` |
-| Reachable but predates `/v1/capabilities` (404) | `unsupported` | **throws** in `strict`, warns in `warn` |
-| Unreachable / 5xx / unintelligible answer | `unreachable` | **always continues**, logged loudly |
+| Has everything required | `ok` | resolves |
+| Reachable, lacks a required capability | `missing` | **throws** |
+| Reachable but predates `/v1/capabilities` (404) | `unsupported` | **throws**, no retry |
+| Unreachable / 5xx / unintelligible answer | `unreachable` | **throws** after the startup window |
 
-That last row is deliberate: an unreachable service is *not* evidence a
-capability is missing, and blocking boot on a briefly-restarting dependency
-would be a worse failure than the mis-promotion this check exists to catch.
-The negotiation's own probe retries with exponential backoff (3 attempts by
-default, `attempts` / `retryDelayMs` to change it); a 404 is definitive and is
-never retried.
-
-`AI_CAPABILITY_MODE=strict|warn` overrides the mode in any environment.
+The throw is a `CapabilityNegotiationError` carrying `status`, `missing`,
+`consumer` and `baseUrl`. The probe retries with exponential backoff before it
+concludes `unreachable`, so a briefly restarting ai-service does not fail the
+boot: `attempts` (default 5), `retryDelayMs` (default 1000, doubling) and
+`attemptTimeoutMs` (default 5000 per attempt). Worst case is about 40 s
+(inferred from those defaults).
 
 ### The boot check itself — `createCapabilityCheck`
 
 `negotiate()` is the question. `createCapabilityCheck` is the wrapper around it
-that all four consumers had hand-rolled (81–123 lines each), with the same five
-decisions and one already-drifted: run once per process (Payload's `onInit`
-re-fires on every `next dev` reload), skip when ai-service is not configured
-(AI is optional fleet-wide), skip *without a request* when nothing is required,
-read the mode from the environment, and expose a reset seam for tests.
+that all four consumers had hand-rolled: run once per process (Payload's
+`onInit` re-fires on every `next dev` reload), fail the boot when ai-service is
+not configured, and expose a reset seam for tests.
 
 ```ts
 // lib/capabilityCheck.ts
@@ -393,22 +387,19 @@ export const aiCapabilityCheck = createCapabilityCheck({
   // A FUNCTION: the list may depend on env, and a module-scope array is
   // captured at import time, before any test hook can change it.
   require: () => (process.env.MY_APP_BACKEND_URL ? ['ingestChunkCallback'] : []),
-  client: () => getAppAIClient(),          // null ⇒ not configured ⇒ skip
-  skipMessage: '[my-app] ai-service not configured — skipping (AI is optional).',
+  client: () => getAppAIClient(),          // null ⇒ not configured ⇒ throws
 })
 
 // payload.config.ts
 onInit: async (payload) => { await aiCapabilityCheck.run(payload.logger) }
 ```
 
-What stays in the product: the required-capability **list** and the skip
-**sentence**. The list must describe what that codebase actually does — an
-aspirational entry blocks boots for nothing, a missing one lets the failure
-through — and the sentence names the product's own offline mode.
-`skipLevel: 'error'` is there for a consumer whose ai-service is a required
-dependency, where an unconfigured one is a misconfiguration rather than a
-shrug. It still never throws: gating boot on a dependency crash-loops every replica, and
-readiness reports it independently.
+`run()` resolves only when ai-service is configured, reachable and has every
+required capability; only a passing run latches. An empty list still probes,
+which proves ai-service is reachable. What stays in the product is the
+required-capability **list**: it must describe what that codebase actually
+does — an aspirational entry blocks boots for nothing, a missing one lets the
+failure through.
 
 ## Budget failures (HTTP 402)
 

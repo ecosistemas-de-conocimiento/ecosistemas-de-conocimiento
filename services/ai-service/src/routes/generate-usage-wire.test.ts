@@ -34,6 +34,11 @@ vi.mock('../services/ai/router/openrouter.js', () => ({
 
 vi.mock('../services/context/fetch.js', () => ({
   fetchContext: (...a: unknown[]) => fetchContextMock(...a),
+  // The routes call the trace variant; it wraps the same mock.
+  fetchContextWithTrace: async (...a: unknown[]) => ({
+    context: await fetchContextMock(...a),
+    retrievalTrace: [],
+  }),
 }));
 
 vi.mock('../db/client.js', () => ({

@@ -175,6 +175,25 @@ export interface SyncResult {
    */
   finishReason?: string;
   warnings?: ResponseWarning[];
+  /**
+   * What each `includeContext` item retrieved, in request order: chunk ids,
+   * the legs that ran, and any retrieval warnings. Ids only, never chunk text.
+   *
+   * Present only when the request carried `includeContext`. Absent from an
+   * ai-service deployment older than this field.
+   */
+  retrievalTrace?: RetrievalTraceEntry[];
+}
+
+/** One entry of {@link SyncResult.retrievalTrace}: one `includeContext` item. */
+export interface RetrievalTraceEntry {
+  /** The `__context` key the chunks were rendered under. */
+  key: string;
+  corpus: string;
+  /** In rank order; exactly the chunks the prompt got. */
+  chunkIds: string[];
+  legs: RetrievalLeg[];
+  warnings?: RetrievalWarning[];
 }
 
 /**
@@ -222,6 +241,8 @@ export interface GenerateStreamDone {
   /** See {@link SyncResult.systemPromptApplied} — same migration safety net. */
   systemPromptApplied?: boolean;
   warnings?: ResponseWarning[];
+  /** See {@link SyncResult.retrievalTrace}. */
+  retrievalTrace?: RetrievalTraceEntry[];
 }
 
 /**
@@ -522,6 +543,28 @@ export interface SetDocumentValidityResult {
  */
 export type RetrievalLeg = 'dense' | 'lexical' | 'sparse' | 'trigram' | 'rerank';
 
+/**
+ * An advisory flag on a retrieval response: the call SUCCEEDED, but not in the
+ * shape you asked for. Same `{ code, message }` core as {@link ResponseWarning},
+ * so one reader handles both lists. Treat an unknown `code` as informational.
+ *
+ * Codes today:
+ *   - `RERANK_DEGRADED` — `rerank: true` was asked for and the cross-encoder
+ *     did not fully order the result. `reason` is `timeout`, `error`,
+ *     `unavailable` (no reranker on this server) or `backfilled` (it scored
+ *     fewer rows than the result holds). Chunks without a `rerankScore` are in
+ *     fused order.
+ *   - `BUDGET_SOFT_CAP` — the org's remaining budget fell below its soft cap.
+ *
+ * Never carries the query or any chunk text.
+ */
+export interface RetrievalWarning {
+  code: string;
+  message: string;
+  /** Typed as `string`, not a union: the server may add reasons. */
+  reason?: string;
+}
+
 export interface RetrieveResult {
   chunks: RetrievedChunk[];
   /**
@@ -538,16 +581,15 @@ export interface RetrieveResult {
    * Whether a leg's candidates win slots is ranking, not health.
    *
    * `rerank` is here only when the cross-encoder really scored rows. The
-   * rerank rung is fail-safe: a timeout or a down reranker silently returns
-   * the fused order, which is byte-identical to a `rerank: false` response
-   * minus `rerankScore`. If you need to know rerank ran, this is how.
+   * rerank rung is fail-safe: a timeout or a down reranker returns the fused
+   * order, and the response then carries a `RERANK_DEGRADED` entry in
+   * {@link RetrieveResult.warnings} (older services stayed silent). Its absence
+   * from `legs` is the other way to tell rerank did not run.
    *
-   * ⚠ OPTIONAL for two independent reasons, so a present-check is not a
-   * version check. An older deployment omits it, AND `retrieve.multi` never
-   * returns it — `RetrieveMultiResult` has no `legs` field and gaining one is
-   * a separate, deferred lane. Everything here is about the single-corpus
-   * `client.retrieve.retrieve()` path; `client.retrieve.retrieveMulti()` gives
-   * you no degradation signal today, its own rerank rung included.
+   * ⚠ OPTIONAL because an older deployment omits it, so a present-check is
+   * not a version check. `client.retrieve.retrieveMulti()` carries its own
+   * {@link RetrieveMultiResult.legs} from 0.33.0 on, absent on older services.
+   * A degraded rerank is also reported in {@link RetrieveResult.warnings}.
    *
    * ⚠ `undefined` means the SERVICE is older than this field, never that no
    * legs ran. Gate on the `retrievalLegs` capability, not on the field. At
@@ -576,6 +618,11 @@ export interface RetrieveResult {
    * or `legs[1]`.
    */
   legs?: RetrievalLeg[];
+  /**
+   * Present only when something degraded (see {@link RetrievalWarning}).
+   * Absent on success and on deployments older than this field.
+   */
+  warnings?: RetrievalWarning[];
 }
 
 /** A fused chunk, tagged with the corpus it came from (for citations/provenance). */
@@ -624,6 +671,17 @@ export interface RetrieveMultiResult {
    * Optional: absent when talking to an ai-service older than this release.
    */
   fusion?: 'score' | 'cross-corpus-rrf';
+  /**
+   * The legs that returned candidate rows, as a SET: the union of every
+   * per-corpus retrieve's legs, plus `rerank` when the post-fusion
+   * cross-encoder really scored rows. A corpus that errored contributes no
+   * legs. Same units and reading rules as {@link RetrieveResult.legs}.
+   *
+   * Optional: absent when talking to an ai-service older than this release.
+   */
+  legs?: RetrievalLeg[];
+  /** Same as {@link RetrieveResult.warnings}; deduplicated across corpora. */
+  warnings?: RetrievalWarning[];
 }
 
 export interface EmbedResponse {

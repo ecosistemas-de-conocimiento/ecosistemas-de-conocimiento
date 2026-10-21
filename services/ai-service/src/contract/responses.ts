@@ -331,6 +331,28 @@ export const retrievalLegSchema = z
   .enum(['dense', 'lexical', 'sparse', 'trigram', 'rerank'])
   .openapi('RetrievalLeg');
 
+/**
+ * An advisory flag on a retrieval response: the call SUCCEEDED, but not in the
+ * shape the caller asked for. Same `{ code, message }` core as
+ * `ResponseWarning`, so a consumer can handle both lists with one reader;
+ * consumers must treat an unknown `code` as informational.
+ *
+ * Codes today:
+ *   - `RERANK_DEGRADED` — `rerank: true` was asked for and the cross-encoder
+ *     did not fully order the result. `reason` says why: `timeout`, `error`,
+ *     `unavailable` (no reranker configured on this server) or `backfilled`
+ *     (the reranker scored fewer rows than the result holds). The chunks are in
+ *     fused order wherever they carry no `rerankScore`.
+ *   - `BUDGET_SOFT_CAP` — the org's remaining budget fell below its soft cap.
+ *
+ * Never carries the query or any chunk text.
+ */
+export const retrievalWarningSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+  reason: z.string().optional(),
+}).openapi('RetrievalWarning');
+
 /** `POST /v1/retrieve`. */
 export const retrieveResponseSchema = z.object({
   chunks: z.array(retrievedChunkSchema),
@@ -360,8 +382,16 @@ export const retrieveResponseSchema = z.object({
         'entirely; a build that advertises the `retrievalLegs` capability ' +
         'always sends it. Check the capability, not the field, to decide ' +
         'whether absence means "no legs ran" (it never does) or "old service". ' +
-        'Single-corpus only: `POST /v1/retrieve/multi` returns no `legs` at ' +
-        'all, so nothing here describes that route.',
+        '`POST /v1/retrieve/multi` carries its own `legs`: the union over ' +
+        'every corpus queried, plus `rerank` for its post-fusion rung.',
+    ),
+  warnings: z
+    .array(retrievalWarningSchema)
+    .optional()
+    .describe(
+      'Present only when something degraded. `RERANK_DEGRADED` replaces the ' +
+        'old log-only signal for a rerank that timed out, failed, is not ' +
+        'configured, or backfilled. Absent on older deployments.',
     ),
 });
 
@@ -406,6 +436,17 @@ export const retrieveMultiResponseSchema = z.object({
    * Optional in the CONTRACT for the same forward-compatibility reason.
    */
   fusion: z.enum(['score', 'cross-corpus-rrf']).optional(),
+  /**
+   * The legs that returned candidate rows, as a SET: the union of every
+   * per-corpus retrieve's `legs`, plus `rerank` when the post-fusion
+   * cross-encoder really scored rows. Same units and reading rules as
+   * `RetrieveResponse.legs`. A corpus that errored contributes no legs.
+   *
+   * Optional in the CONTRACT so older deployments (which omit it) validate.
+   */
+  legs: z.array(retrievalLegSchema).optional(),
+  /** Same as `RetrieveResponse.warnings`; deduplicated across corpora. */
+  warnings: z.array(retrievalWarningSchema).optional(),
 });
 
 /**
@@ -482,8 +523,10 @@ export const projectConfigResponseBodySchema = z.object({
       contextRules: jsonObject
         .nullable()
         .describe(
-          'OPEN. Keys are caller-invented recipe names; `services/context/fetch.ts` ' +
-            'ignores an entry it cannot read rather than failing.',
+          'OPEN. Keys are caller-invented recipe names, each an inline ' +
+            '`includeContext` item without `name`. An `includeContext: [{ name }]` ' +
+            'with no entry here, or a malformed one, fails the generation with a ' +
+            '400 `SpecResolutionError` (cause `unknown context recipe`).',
         ),
       callbackUrl: z.string().nullable(),
       metadata: jsonObject.nullable().describe('OPEN. Consumer blob — no service code reads it.'),
@@ -765,6 +808,15 @@ export const launchGenerationResponseSchema = z.object({
   warnings: z.array(responseWarningSchema).optional(),
 });
 
+/** What one `includeContext` item retrieved. Ids only — never chunk text. */
+export const retrievalTraceEntrySchema = z.object({
+  key: z.string().describe('The `__context` key the chunks were rendered under.'),
+  corpus: z.string(),
+  chunkIds: z.array(z.string()).describe('In rank order; exactly the chunks the prompt got.'),
+  legs: z.array(retrievalLegSchema),
+  warnings: z.array(retrievalWarningSchema).optional(),
+}).openapi('RetrievalTraceEntry');
+
 /**
  * The body of `POST /v1/generate/sync` — and, field for field, the payload of
  * the terminal `done` frame on `/v1/generate/stream`. One projection, two
@@ -798,6 +850,14 @@ export const syncGenerationResponseSchema = z.object({
     .boolean()
     .describe('Did the request carry a system prompt that this deployment applied as one?'),
   warnings: z.array(responseWarningSchema).optional(),
+  retrievalTrace: z
+    .array(retrievalTraceEntrySchema)
+    .optional()
+    .describe(
+      'One entry per `includeContext` item, in request order: the chunk ids ' +
+        'that grounded the prompt, the legs that ran, and any retrieval ' +
+        'warnings. Present only when the request carried `includeContext`.',
+    ),
 }).openapi('SyncGenerationResult');
 
 /**
