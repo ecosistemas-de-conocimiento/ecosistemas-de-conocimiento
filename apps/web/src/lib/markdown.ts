@@ -1,6 +1,7 @@
 import MarkdownIt from 'markdown-it';
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/core';
+import { linkCitations } from './citationLinks';
 
 import javascript from 'highlight.js/lib/languages/javascript';
 import typescript from 'highlight.js/lib/languages/typescript';
@@ -77,6 +78,8 @@ function ensureHook(): void {
 
 export interface RenderOptions {
   inline?: boolean;
+  /** Source ordinals whose `[N]` markers become buttons. See `./citationLinks`. */
+  citations?: number[];
 }
 
 /**
@@ -87,5 +90,7 @@ export function renderMarkdown(source: string, opts: RenderOptions = {}): string
   if (typeof window === 'undefined') return '';
   ensureHook();
   const raw = opts.inline ? md.renderInline(source ?? '') : md.render(source ?? '');
-  return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+  const clean = DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+  // After sanitising: the buttons are our own fixed markup, not the model's.
+  return opts.citations?.length ? linkCitations(clean, opts.citations) : clean;
 }

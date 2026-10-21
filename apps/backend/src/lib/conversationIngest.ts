@@ -36,16 +36,22 @@
  * ecosistema while the thing it quotes is not. The answer would cite a source
  * nobody else can open.
  *
- * ── BOTH QUESTIONS AND ANSWERS GO IN, AND THAT HAS A COST ────────────────────
+ * ── QUESTIONS GO IN. ANSWERS DO NOT, UNLESS SWITCHED ON ──────────────────────
  *
- * The owner chose to ingest user turns AND assistant turns. The cost is a
- * feedback loop: the assistant retrieves its own prior answers and cites them as
- * sources, so its mistakes become "documented" over time, silently.
+ * 🔴 `INGEST_ASSISTANT_TURNS` IS OFF BY DEFAULT (owner's ruling 2026-10-20).
+ * Ingesting answers is a feedback loop: the assistant retrieves its own prior
+ * answers and cites them as sources, so its mistakes become "documented". An
+ * audit measured it live: an earlier answer was the top-1 source in 6 of 14
+ * chat turns, about 10 s after it was written (quoted from the ruling). With
+ * the switch off an answer is marked `skipped` and never reaches the
+ * anonymisation gate, so it also costs no model calls.
  *
- * ⚠ THE MITIGATION IS `metadata.authoredBy`, and it is not optional. Every
- * assistant turn is marked, so retrieval and citations can say *"this came from
- * a previous answer"* rather than presenting it as a source. That makes the loop
- * visible instead of silent. See `lib/contentKind.ts`.
+ * ⚠ Answers ingested before the ruling stay where they are. Retrieval filters
+ * them out (web); their rows keep the status the erase path relies on.
+ *
+ * ⚠ IF IT IS SWITCHED BACK ON, `metadata.authoredBy` is the mitigation, and it
+ * is not optional. Every assistant turn is marked, so retrieval and citations
+ * can say *"this came from a previous answer"*. See `lib/contentKind.ts`.
  *
  * ── EVERY TURN GOES THROUGH THE ANONYMISATION GATE ───────────────────────────
  *
@@ -123,6 +129,7 @@ interface MessageRow {
   content?: unknown
   redactedText?: unknown
   corpusStatus?: unknown
+  corpusIngestId?: unknown
   contextRefs?: unknown
   provenance?: unknown
   createdAt?: unknown
@@ -170,6 +177,17 @@ export interface ConversationIngester {
 }
 
 const CORPUS_LANGUAGE = process.env.CORPUS_LANGUAGE?.trim() || 'spanish'
+
+/**
+ * 🔴 `INGEST_ASSISTANT_TURNS`: whether assistant answers enter the shared
+ * corpus. OFF unless set to an explicit yes (`true`, `1`, `on`, `yes`), so a
+ * typo keeps the feedback loop closed. Read per run, not at import.
+ */
+export function ingestAssistantTurnsEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return ['true', '1', 'on', 'yes'].includes(env.INGEST_ASSISTANT_TURNS?.trim().toLowerCase() ?? '')
+}
 
 // ---------------------------------------------------------------------------
 // Which drafts is this conversation waiting on?
@@ -392,9 +410,12 @@ export async function ingestConversationTurns(args: {
   callbackUrl?: string
   /** Test seam for the gate's model call. */
   detector?: PersonDetector
+  /** Overrides `INGEST_ASSISTANT_TURNS`. */
+  ingestAssistantTurns?: boolean
 }): Promise<ConversationIngestResult> {
   const { payload, sessionId } = args
   const empty: ConversationIngestResult = { ingested: 0, waitingOn: [], heldByGate: 0 }
+  const withAnswers = args.ingestAssistantTurns ?? ingestAssistantTurnsEnabled()
 
   const session = (await payload
     .findByID({ collection: 'sessions', id: sessionId as never, depth: 0, overrideAccess: true })
@@ -427,13 +448,30 @@ export async function ingestConversationTurns(args: {
    * will never move — indistinguishable from a stuck pipeline. `skipped` is the
    * honest terminal state, and writing it once takes the row out of every future
    * scan.
+   *
+   * 🔴 An assistant turn with `INGEST_ASSISTANT_TURNS` off is skipped too, but
+   * ONLY from a runnable state. One already `embedding`, `ingested` or
+   * `held-gate` keeps its status: it says what is (or is not) in ai-service.
+   *
+   * 🔴 So does a `failed` turn that still carries a `corpusIngestId`. The
+   * janitor gives up on a stalled turn that way (`lib/ingestRecovery.ts`), and
+   * ai-service may have stored it anyway; `skipped` would claim it never got
+   * there, and the id is the only trace that it might have.
    */
+  const answerOff = (message: MessageRow) => !withAnswers && message.role === 'assistant'
+  const mayBeStored = (message: MessageRow) =>
+    corpusStateOf(message) === 'failed' &&
+    typeof message.corpusIngestId === 'string' &&
+    message.corpusIngestId.length > 0
   await Promise.all(
     all
       .filter(
         (message) =>
-          (!isIngestableRole(message.role) || !hasText(message.content)) &&
-          corpusStateOf(message) !== 'skipped',
+          ((!isIngestableRole(message.role) || !hasText(message.content)) &&
+            corpusStateOf(message) !== 'skipped') ||
+          (answerOff(message) &&
+            RUNNABLE_STATES.includes(corpusStateOf(message)) &&
+            !mayBeStored(message)),
       )
       .map((message) => writeMessage(payload, message.id, { corpusStatus: 'skipped' })),
   )
@@ -441,6 +479,7 @@ export async function ingestConversationTurns(args: {
   const outstanding = all.filter(
     (message) =>
       isIngestableRole(message.role) &&
+      !answerOff(message) &&
       hasText(message.content) &&
       RUNNABLE_STATES.includes(corpusStateOf(message)),
   )
@@ -656,6 +695,7 @@ export async function releaseConversationsWaitingOn(args: {
   client: ConversationClient
   callbackUrl?: string
   detector?: PersonDetector
+  ingestAssistantTurns?: boolean
 }): Promise<void> {
   const { payload, documentId } = args
   try {
@@ -680,6 +720,9 @@ export async function releaseConversationsWaitingOn(args: {
         client: args.client,
         ...(args.callbackUrl ? { callbackUrl: args.callbackUrl } : {}),
         ...(args.detector ? { detector: args.detector } : {}),
+        ...(args.ingestAssistantTurns !== undefined
+          ? { ingestAssistantTurns: args.ingestAssistantTurns }
+          : {}),
       })
     }
   } catch (err) {

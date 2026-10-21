@@ -10,9 +10,14 @@
     detachConfirmCopy,
     detachHintCopy,
   } from '$lib/documents';
-  import { isAudioUpload, UPLOAD_ACCEPT } from '$lib/config';
+  import { AUDIO_EXTENSIONS, isAudioUpload, UPLOAD_ACCEPT } from '$lib/config';
+  import { toasts } from '$lib/stores/toasts.svelte';
   import { page } from '$app/stores';
   import {
+    AUDIO_UPLOAD_ENABLED,
+    AUDIO_UPLOAD_OFF_COPY,
+    uploadAccept,
+    uploadButtonTitle,
     mayUploadVoces,
     UPLOAD_CONTENT_KINDS,
     UPLOAD_KIND_HINT,
@@ -223,6 +228,13 @@
       input.value = '';
       return;
     }
+    // 🔴 Audio is switched off (`AUDIO_UPLOAD_ENABLED`). The picker already
+    // hides audio, but "Todos los archivos" in the OS dialog still lets one through.
+    if (!AUDIO_UPLOAD_ENABLED && isAudioUpload(file)) {
+      toasts.push({ kind: 'warning', ...AUDIO_UPLOAD_OFF_COPY });
+      input.value = '';
+      return;
+    }
     uploading = true;
     uploadingFile = { name: file.name, isAudio: isAudioUpload(file) };
     try {
@@ -320,7 +332,7 @@
         <input
           bind:this={fileInput}
           type="file"
-          accept={UPLOAD_ACCEPT}
+          accept={uploadAccept(UPLOAD_ACCEPT, AUDIO_EXTENSIONS)}
           class="hidden"
           onchange={onFileChosen}
         />
@@ -328,8 +340,8 @@
           class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft disabled:opacity-40"
           onclick={() => fileInput?.click()}
           disabled={uploading || !app.active}
-          title="Subir documento o audio — PDF, DOCX, MP3, M4A, WAV, OGG u OPUS. Se guardará como borrador, solo tú lo verás."
-          aria-label="Subir documento o audio"
+          title={uploadButtonTitle()}
+          aria-label={AUDIO_UPLOAD_ENABLED ? 'Subir documento o audio' : 'Subir documento'}
         >
           {#if uploading}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin">
@@ -686,7 +698,11 @@
                   dataTestId={`publish-${d.id}`}
                   onClick={() => publish(sid, d)}
                 />
-              {:else if gate.reason}
+              {:else if gate.reason && gate.reason !== 'ingest-failed'}
+                <!-- ⚠ `ingest-failed` is skipped here: the failure box below
+                     already says what happened and offers "Reintentar" when a
+                     retry can work. Its "Bórralo y súbelo de nuevo" sat right
+                     next to that button and contradicted it (backlog #8). -->
                 <!-- ⚠ `already-published` used to be excluded here, on the
                      reading that the "Publicado" badge already says it. It does
                      not: the badge is one word, and what a user needs to know is
@@ -754,9 +770,11 @@
               <div class="publish-failed">
                 <strong class="text-danger">No se completó la publicación.</strong>
                 El documento sigue siendo privado: solo tú lo ves.
-                {#if d.publicationError}
-                  <span class="block mt-0.5 text-ink-soft break-words">
-                    Detalle: {d.publicationError}
+                <!-- No raw `publicationError`: it is a backend string, often in
+                     English (same rule as the ingest failure, backlog #8). -->
+                {#if gate.canPublish}
+                  <span class="block mt-0.5 text-ink-soft">
+                    Puedes reintentarlo con el botón de arriba.
                   </span>
                 {/if}
               </div>
@@ -958,20 +976,27 @@
                       <div>Indexando el contenido…</div>
                     {:else if d.ingestStatus === 'failed'}
                       {@const failure = ingestFailureCopy(d.ingestError)}
+                      <!-- 🔴 No raw `ingestError` here. It used to render as
+                           "Detalle: audio_service_not_configured: … (missing:
+                           AUDIO_SERVICE_URL …)" — English env-var names in front
+                           of the person uploading (UX demo backlog #8). The
+                           Spanish copy above is all they get; the raw code stays
+                           in the backend's Documents record for whoever debugs. -->
                       <div class="text-danger">{failure.title}. {failure.message}</div>
-                      {#if d.ingestError}
-                        <!-- The raw code + upstream message. Diagnostic, in
-                             English, deliberately below the Spanish
-                             explanation — useful in a bug report, never the
-                             primary thing the user reads. -->
-                        <div class="break-words opacity-70">Detalle: {d.ingestError}</div>
-                      {/if}
                     {:else if d.ingestStatus === 'ready'}
+                      <!-- ⚠ Follows the "fijar" checkbox. Saying "Fíjalo" on a
+                           document that is already pinned read as broken (backlog #21). -->
                       <div>
                         {#if isTranscript(d.kind)}
-                          Transcripción lista. Fíjala para incluirla en el siguiente mensaje.
+                          Transcripción lista.
+                          {d.includeInContext
+                            ? 'Está fijada: va en cada mensaje.'
+                            : 'Fíjala para incluirla en cada mensaje.'}
                         {:else}
-                          Disponible para el chat. Fíjalo para incluirlo en el siguiente mensaje.
+                          Disponible para el chat.
+                          {d.includeInContext
+                            ? 'Está fijado: va en cada mensaje.'
+                            : 'Fíjalo para incluirlo en cada mensaje.'}
                         {/if}
                       </div>
                     {/if}

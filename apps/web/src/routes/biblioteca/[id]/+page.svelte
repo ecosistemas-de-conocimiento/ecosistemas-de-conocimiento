@@ -19,6 +19,7 @@
   import { page } from '$app/stores';
   import {
     formatLibraryDate,
+    isMachineTranscript,
     isTestimony,
     kindLabel,
     LIBRARY_TRANSCRIPT_NOTE,
@@ -67,10 +68,10 @@
     };
   });
 
-  const label = $derived(doc ? kindLabel(doc.kind) : null);
+  const label = $derived(doc ? kindLabel(doc.kind, { fromAudio: doc.fromAudio }) : null);
   const voice = $derived(doc ? isTestimony(doc.kind) : false);
-  /** A transcript is machine-written whether it is a voz or an ordinary audio. */
-  const machineWritten = $derived(doc ? doc.kind === 'audio' || doc.kind === 'testimonio' : false);
+  /** Machine-written only when the FILE was audio — a PDF Voz is not (backlog #12). */
+  const machineWritten = $derived(doc ? isMachineTranscript(doc) : false);
 </script>
 
 <svelte:head><title>{doc?.title ?? 'Biblioteca'} · Ecosistemas de Conocimiento</title></svelte:head>
@@ -190,6 +191,11 @@
     display: flex;
     align-items: center;
     gap: 0.6rem;
+  }
+  /* Was unstyled, so the date rendered larger than the kind badge beside it. */
+  .date {
+    font-size: 0.72rem;
+    color: var(--edc-color-ink-soft);
   }
   h1 {
     margin: 0.4rem 0 0.2rem;

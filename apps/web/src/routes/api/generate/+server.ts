@@ -25,6 +25,7 @@ import {
 } from '$lib/server/engine';
 import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
+import { withPinnedRefs } from './pinned';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
 import { makeGraphProvider } from '$lib/server/graph';
 import { withFencedChunks, withFencedRefs } from '$lib/server/engine/chunkFence';
@@ -517,7 +518,9 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     scope,
     history,
     userMessage,
-    inlineRefs: body.contextRefs ?? [],
+    // `@`-mentions plus every document pinned ("fijar") in this conversation.
+    // See `./pinned.ts`: the docs panel promises pinned documents are sent.
+    inlineRefs: withPinnedRefs(body.contextRefs, sessionDocs),
     // Omitted entirely when there is no ecosistema to scope a graph read to,
     // so the engine takes exactly the code path it took before GraphRAG.
     ...(graphProvider ? { graphProvider } : {}),

@@ -71,3 +71,90 @@ export const UPLOAD_KIND_LABELS: Record<UploadContentKind, string> = {
 
 export const UPLOAD_KIND_HINT =
   'Una voz es el testimonio de otra persona. Siempre es anónima: pasa por la anonimización antes de entrar al corpus, y las demás personas del ecosistema no verán el archivo original ni su nombre.';
+
+// ── Audio upload switch ─────────────────────────────────────────────────────
+
+/**
+ * 🔴 AUDIO UPLOAD IS OFF until audio-service is deployed on EDC.
+ *
+ * Decided 2026-10-21 (UX demo backlog #8): an audio file went up, then failed
+ * with "Falta configurar el servicio de audio" and an English env-var detail.
+ * Flip this to `true` once transcription runs on the server. It is the ONLY
+ * switch: the file picker, the button tooltip and the panel's refusal read it.
+ *
+ * ⚠ Presentation only. The upload route still accepts audio from a direct POST.
+ * A Voz (`testimonio`) stays available: it can be a PDF or a DOCX.
+ */
+export const AUDIO_UPLOAD_ENABLED = false;
+
+/** True for the parts of an `accept` list that name audio or video. */
+function isAudioAcceptEntry(entry: string, audioExtensions: RegExp): boolean {
+  return entry.startsWith('audio/') || entry.startsWith('video/') || audioExtensions.test(entry);
+}
+
+/**
+ * The file picker's `accept` string. With audio off, every audio or video entry
+ * is dropped from `fullAccept`, so the picker only offers PDF and DOCX.
+ */
+export function uploadAccept(
+  fullAccept: string,
+  audioExtensions: RegExp,
+  audioEnabled: boolean = AUDIO_UPLOAD_ENABLED,
+): string {
+  if (audioEnabled) return fullAccept;
+  return fullAccept
+    .split(',')
+    .filter((entry) => !isAudioAcceptEntry(entry.trim(), audioExtensions))
+    .join(',');
+}
+
+/** The upload button's tooltip. */
+export function uploadButtonTitle(audioEnabled: boolean = AUDIO_UPLOAD_ENABLED): string {
+  return audioEnabled
+    ? 'Subir documento o audio — PDF, DOCX, MP3, M4A, WAV, OGG u OPUS. Se guardará como borrador, solo tú lo verás.'
+    : 'Subir documento — PDF o DOCX. Se guardará como borrador, solo tú lo verás.';
+}
+
+/**
+ * Toast copy for a failed upload from Mis documentos (`POST /api/documentos`).
+ * Keyed by the route's error code; anything unknown gets a generic Spanish line,
+ * never the code itself.
+ */
+export function looseUploadErrorCopy(
+  code: string | null | undefined,
+  maxBytesLabel: string,
+): { title: string; message: string } {
+  switch (code) {
+    case 'needs_conversation':
+      return {
+        title: 'Súbelo desde una conversación',
+        message:
+          'Perteneces a varios ecosistemas. Abre una conversación del ecosistema donde va el archivo y súbelo ahí.',
+      };
+    case 'unsupported_kind':
+    case 'unsupported_media_type':
+      return {
+        title: 'Tipo de archivo no admitido',
+        message: AUDIO_UPLOAD_ENABLED
+          ? 'Aceptamos PDF, DOCX y audio en MP3, M4A, WAV, OGG u OPUS.'
+          : 'Aceptamos PDF y DOCX.',
+      };
+    case 'file_too_large':
+      return { title: 'El archivo es muy grande', message: `El máximo es ${maxBytesLabel}.` };
+    case 'voces_upload_forbidden':
+      return {
+        title: 'Sin permiso para subir voces',
+        message: 'Subir testimonios requiere el rol de investigador en este ecosistema.',
+      };
+    case 'unauthorized':
+      return { title: 'Tu sesión expiró', message: 'Vuelve a iniciar sesión para subir documentos.' };
+    default:
+      return { title: 'No se pudo subir el archivo', message: 'Inténtalo de nuevo en un momento.' };
+  }
+}
+
+/** What the panel says when someone picks an audio file while audio is off. */
+export const AUDIO_UPLOAD_OFF_COPY = {
+  title: 'Por ahora no se pueden subir grabaciones',
+  message: 'Sube un PDF o un DOCX. Pronto podrás subir audio.',
+} as const;

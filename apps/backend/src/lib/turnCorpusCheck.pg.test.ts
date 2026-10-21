@@ -104,6 +104,8 @@ describe.skipIf(!dockerOk)('the turn-corpus check on a real Postgres', () => {
       erased: 0,
       eraseFailed: 0,
       skipped: 0,
+      backendMessages: 1,
+      refused: null,
     })
     expect(erase).not.toHaveBeenCalled()
     expect(lines.filter((l) => l.startsWith('orphan-live')).map((l) => l.split('doc=')[1]).sort()).toEqual([
@@ -130,6 +132,28 @@ describe.skipIf(!dockerOk)('the turn-corpus check on a real Postgres', () => {
       'eco-1 msg-5',
     ])
     expect(report).toMatchObject({ erased: 4, skipped: 1 })
+  })
+
+  it('🔴 the backend connection the script opens refuses writes too, and still reads', async () => {
+    const backendReadOnly = drizzle(readOnlyUrl(pg.urlFor('turn_check_backend')))
+    try {
+      const report = await checkTurnCorpus({
+        ...sqlReaders(aiReadOnly, backendReadOnly),
+        erase: async () => {},
+        log: () => {},
+        apply: false,
+      })
+      expect(report).toMatchObject({ turnDocs: 6, orphanLive: 4, orphanStored: 1 })
+
+      const code = await backendReadOnly.execute(sql.raw(`DELETE FROM messages`)).then(
+        () => 'ok',
+        (err: unknown) =>
+          String((err as { cause?: { code?: string } })?.cause?.code ?? (err as { code?: string })?.code),
+      )
+      expect(code).toBe('25006') // read_only_sql_transaction
+    } finally {
+      await (backendReadOnly as unknown as { $client?: { end(): Promise<void> } }).$client?.end()
+    }
   })
 
   it('🔴 the ai-service connection refuses writes', async () => {

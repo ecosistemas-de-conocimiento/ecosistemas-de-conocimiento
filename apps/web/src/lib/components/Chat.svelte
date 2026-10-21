@@ -27,6 +27,12 @@
   let scrollRef: HTMLDivElement | undefined = $state();
   let busy = $state(false);
   let controller: AbortController | null = null;
+  /**
+   * The answer being waited on, and what it is waiting for (UX backlog #9).
+   * Kept here rather than on the message: it is screen state, never saved.
+   */
+  let waitingId = $state<string | null>(null);
+  let waitingPhase = $state<'searching' | 'writing'>('searching');
 
   // The turn's context scope. This product has one level of tenancy — a user's
   // organization — so every turn is organization-wide and there is no scope
@@ -88,6 +94,8 @@
 
     controller = new AbortController();
     busy = true;
+    waitingId = placeholder.id;
+    waitingPhase = 'searching';
     try {
       const fresh = app.active;
       if (!fresh) return;
@@ -122,6 +130,9 @@
       try {
         const result = await generateStream(payload, {
           signal: controller.signal,
+          onOpen: () => {
+            waitingPhase = 'writing';
+          },
           onDelta: (delta) => {
             received = true;
             acc += delta;
@@ -154,6 +165,7 @@
     } finally {
       busy = false;
       controller = null;
+      waitingId = null;
     }
   }
 
@@ -219,7 +231,7 @@
     <div class="max-w-3xl mx-auto p-4 space-y-3">
       {#if (app.active?.messages.length ?? 0) > 0}
         {#each app.active?.messages ?? [] as m (m.id)}
-          <Message msg={m} />
+          <Message msg={m} waiting={m.id === waitingId ? waitingPhase : 'searching'} />
         {/each}
       {:else}
         <div class="text-center text-ink-soft text-sm pt-16">
