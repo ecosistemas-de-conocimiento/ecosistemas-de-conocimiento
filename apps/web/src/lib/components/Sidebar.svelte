@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from '$lib/stores/app.svelte';
   import EcosystemPicker from './EcosystemPicker.svelte';
+  import { TITLE_MAX } from '$lib/sessionTitle';
 
   /**
    * ⚠ THE `/admin` ENTRY THAT USED TO LIVE HERE MOVED TO THE PRIMARY NAV.
@@ -28,6 +29,25 @@
    * visit must not silently re-arrange the desk someone left set up.
    */
   let { forceExpanded = false }: { forceExpanded?: boolean } = $props();
+
+  /** The conversation whose name is being edited, and the text so far. */
+  let renamingId = $state<string | null>(null);
+  let renameDraft = $state('');
+  /** The conversation whose "¿Borrar?" question is showing. */
+  let confirmingDeleteId = $state<string | null>(null);
+
+  function startRename(id: string, title: string): void {
+    confirmingDeleteId = null;
+    renameDraft = title;
+    renamingId = id;
+  }
+
+  async function saveRename(id: string): Promise<void> {
+    // Enter and the blur that follows it both land here; act once.
+    if (renamingId !== id) return;
+    renamingId = null;
+    await app.renameSession(id, renameDraft);
+  }
 
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
@@ -143,52 +163,121 @@
              plus `aria-current` so a screen reader is told outright rather
              than being expected to see it. -->
         <div
-          class="group flex items-center justify-between rounded-lg border-l-2 pl-1.5 pr-2 py-1.5 cursor-pointer transition-colors {isActive
+          class="group flex items-center gap-1 rounded-lg border-l-2 pl-1.5 pr-1 py-1 transition-colors {isActive
             ? 'bg-surface-accent text-ink border-brand font-semibold'
             : 'text-ink-soft border-transparent hover:bg-surface-soft hover:text-ink'}"
-          onclick={() => app.selectSession(s.id)}
-          onkeydown={(e) => e.key === 'Enter' && app.selectSession(s.id)}
-          role="button"
-          aria-current={isActive ? 'true' : undefined}
-          tabindex="0"
+          data-testid="session-row"
         >
-          <span class="truncate text-sm">{s.title}</span>
-          <button
-            class="opacity-0 group-hover:opacity-100 text-ink-soft hover:text-danger p-0.5"
-            onclick={(e) => {
-              e.stopPropagation();
-              if (confirm(`¿Eliminar "${s.title}"?`)) app.deleteSession(s.id);
-            }}
-            title="Eliminar conversación"
-            aria-label="Eliminar conversación"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+          {#if renamingId === s.id}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              class="flex-1 min-w-0 text-sm rounded border border-brand bg-surface px-1.5 py-0.5 text-ink font-normal"
+              bind:value={renameDraft}
+              maxlength={TITLE_MAX}
+              aria-label="Nuevo nombre de la conversación"
+              autofocus
+              onkeydown={(e) => {
+                if (e.key === 'Enter') void saveRename(s.id);
+                if (e.key === 'Escape') renamingId = null;
+              }}
+              onblur={() => void saveRename(s.id)}
+            />
+          {:else if confirmingDeleteId === s.id}
+            <!-- In-app confirm (UX backlog #19). The native confirm() box is a
+                 grey browser dialog that looks like an error on a phone. -->
+            <div class="flex-1 min-w-0 flex flex-col gap-1 py-0.5" role="group" aria-label="Confirmar borrado">
+              <span class="text-xs text-ink font-normal">¿Borrar esta conversación?</span>
+              <div class="flex gap-1">
+                <button
+                  class="text-xs px-2 py-1 rounded border border-danger text-danger font-semibold hover:bg-surface-soft"
+                  onclick={() => {
+                    confirmingDeleteId = null;
+                    void app.deleteSession(s.id);
+                  }}
+                  data-testid="session-delete-confirm"
+                >
+                  Sí, borrar
+                </button>
+                <button
+                  class="text-xs px-2 py-1 rounded border border-line text-ink hover:bg-surface-soft"
+                  onclick={() => (confirmingDeleteId = null)}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          {:else}
+            <!-- 🔴 THE OPEN CONVERSATION IS MARKED THREE WAYS, NOT ONE. The tint
+                 alone was the whole signal, and a tint is exactly what a
+                 colour-blind reader and a washed-out cheap screen both lose. Now
+                 there is also a bar down the left edge (a SHAPE) and bold weight,
+                 plus `aria-current` so a screen reader is told outright rather
+                 than being expected to see it. -->
+            <button
+              class="flex-1 min-w-0 text-left truncate text-sm py-0.5"
+              onclick={() => app.selectSession(s.id)}
+              aria-current={isActive ? 'true' : undefined}
+              title={s.title}
             >
-              <path
-                d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"
-              />
-            </svg>
-          </button>
+              {s.title}
+            </button>
+            <!-- ⚠ Always visible, not hover-only (UX backlog #19): a phone has
+                 no hover, so a hover-only button does not exist there. Soft
+                 until the row is hovered or focused. -->
+            <button
+              class="shrink-0 p-1 rounded text-ink-soft opacity-60 group-hover:opacity-100 focus:opacity-100 hover:text-brand"
+              onclick={() => startRename(s.id, s.title)}
+              title="Cambiar nombre"
+              aria-label={`Cambiar el nombre de "${s.title}"`}
+              data-testid="session-rename"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+              </svg>
+            </button>
+            <button
+              class="shrink-0 p-1 rounded text-ink-soft opacity-60 group-hover:opacity-100 focus:opacity-100 hover:text-danger"
+              onclick={() => {
+                renamingId = null;
+                confirmingDeleteId = s.id;
+              }}
+              title="Borrar conversación"
+              aria-label={`Borrar "${s.title}"`}
+              data-testid="session-delete"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"
+                />
+              </svg>
+            </button>
+          {/if}
         </div>
       {/each}
     </nav>
 
-    <div class="border-t border-line p-2 flex items-center justify-between text-[10px] text-ink-soft">
-      <span>guardado en el servidor</span>
-      <button
-        class="px-1.5 py-0.5 rounded hover:bg-surface-soft hover:text-ink"
-        onclick={logout}
-        title="Cerrar sesión"
-      >
-        cerrar sesión
+    <div class="border-t border-line p-2 flex items-center justify-end text-xs text-ink-soft">
+      <button class="px-1.5 py-0.5 rounded hover:bg-surface-soft hover:text-ink" onclick={logout}>
+        Cerrar sesión
       </button>
     </div>
   </aside>

@@ -56,6 +56,26 @@ describe('generateStream', () => {
     expect(fetchMock.mock.calls[0]![0]).toBe('/api/generate?stream=1');
   });
 
+  it('UX #9: fires onOpen once, before the first delta; never on an HTTP failure', async () => {
+    fetchMock.mockResolvedValueOnce(
+      sseResponse([
+        'data: {"type":"delta","text":"Hola"}\n\n',
+        'data: {"type":"done","text":"Hola"}\n\n',
+      ]),
+    );
+    const order: string[] = [];
+    await generateStream(input, {
+      onOpen: () => order.push('open'),
+      onDelta: () => order.push('delta'),
+    });
+    expect(order).toEqual(['open', 'delta']);
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 502, body: null, text: async () => '' });
+    const onOpen = vi.fn();
+    await expect(generateStream(input, { onOpen })).rejects.toBeInstanceOf(AIServiceError);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
   it('throws AIServiceError on a terminal error frame', async () => {
     fetchMock.mockResolvedValue(
       sseResponse([

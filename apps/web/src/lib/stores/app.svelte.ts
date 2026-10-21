@@ -10,7 +10,9 @@ import type {
 } from '../types';
 import type { AudioMeta } from '../types';
 import { toasts } from './toasts.svelte';
-import { MAX_UPLOAD_BYTES, formatBytes, isAudioUpload, maxUploadBytesFor } from '../config';
+import { uploadErrorToast } from '../uploadErrors';
+import { autoTitle, cleanTitle } from '../sessionTitle';
+import { formatBytes, isAudioUpload, maxUploadBytesFor } from '../config';
 import {
   isIngestStatus,
   isTerminalIngest,
@@ -46,69 +48,6 @@ import {
   type Ecosystem,
 } from '../ecosystems';
 
-/**
- * Map a BFF upload error code (see /api/sessions/[id]/documents +server.ts)
- * to user-facing toast copy. Unknown codes fall through to a generic message
- * so the UX still says something useful.
- */
-function uploadErrorToast(
-  code: string,
-  status: number,
-  limitBytes: number = MAX_UPLOAD_BYTES,
-): { title: string; message: string } {
-  switch (code) {
-    case 'file_too_large':
-      return {
-        title: 'El archivo es muy grande',
-        // The limit depends on what was being uploaded — audio gets a much
-        // larger one — so quote the cap that actually applied, not a constant.
-        message: `El máximo es ${formatBytes(limitBytes)}. Prueba con un archivo más chico, o con una grabación más corta.`,
-      };
-    case 'unsupported_media_type':
-    case 'unsupported_kind':
-      return {
-        title: 'Tipo de archivo no admitido',
-        message: 'Aceptamos PDF, DOCX y audio en MP3, M4A, WAV, OGG u OPUS.',
-      };
-    case 'unauthorized':
-      return {
-        title: 'Tu sesión expiró',
-        message: 'Vuelve a iniciar sesión para subir documentos.',
-      };
-    case 'forbidden':
-      return {
-        title: 'Sin permiso',
-        message: 'No puedes subir documentos a esta conversación.',
-      };
-    case 'voces_upload_forbidden':
-      return {
-        title: 'Sin permiso para subir voces',
-        message: 'Subir testimonios requiere el rol de investigador en este ecosistema.',
-      };
-    case 'invalid_content_kind':
-      return { title: 'Tipo de material no válido', message: 'Elige Documento o Voz / testimonio.' };
-    case 'media_upload_rejected':
-      return {
-        title: 'El servidor rechazó el archivo',
-        message: 'Prueba con otro documento.',
-      };
-    case 'upstream_unavailable':
-      return {
-        title: 'Algo falló en el servidor',
-        message: 'Inténtalo de nuevo en un momento.',
-      };
-    case 'upstream_unreachable':
-      return {
-        title: 'No se pudo conectar',
-        message: 'Revisa tu conexión e inténtalo de nuevo.',
-      };
-    case 'multipart_missing_file':
-    case 'media_id_missing':
-      return { title: 'No se pudo subir', message: 'Algo salió mal. Inténtalo de nuevo.' };
-    default:
-      return { title: 'No se pudo subir', message: `Error inesperado (HTTP ${status}).` };
-  }
-}
 
 /**
  * Reactive app store using Svelte 5 runes ($state).
@@ -608,10 +547,34 @@ class AppStore {
   }
 
   // ── session ops ────────────────────────────────────────────────────────
+  /**
+   * An existing conversation that is still empty — no title of its own, no
+   * messages, no documents — or `null`. UX backlog #25: pressing "Nueva
+   * conversación" (or starting one from a document) used to stack up empty
+   * "Nueva conversación" rows in the sidebar. We reuse the empty one instead.
+   *
+   * ⚠ Messages and documents load lazily, so the candidate is read first:
+   * "no messages in memory" is not "no messages".
+   */
+  private async findEmptySession(): Promise<Session | null> {
+    const candidate = this.sessions.find((x) => x.title === UNTITLED_SESSION);
+    if (!candidate) return null;
+    if (candidate.messages.length === 0) await this.loadMessages(candidate.id);
+    if (candidate.docs.length === 0) await this.loadDocs(candidate.id);
+    const fresh = this.sessions.find((x) => x.id === candidate.id);
+    if (!fresh || fresh.title !== UNTITLED_SESSION) return null;
+    return fresh.messages.length === 0 && fresh.docs.length === 0 ? fresh : null;
+  }
+
   async newSession(): Promise<string | null> {
     // Nothing to create a conversation IN. The screen already says so; firing
     // the request anyway would just add a toast on top of an explanation.
     if (this.hasNoEcosystem) return null;
+    const empty = await this.findEmptySession();
+    if (empty) {
+      await this.selectSession(empty.id);
+      return empty.id;
+    }
     try {
       const data = await fetchJson<{ doc: Record<string, unknown> }>('/api/sessions', {
         method: 'POST',
@@ -684,7 +647,11 @@ class AppStore {
     const prev = this.sessions;
     this.sessions = this.sessions.filter((s) => s.id !== id);
     if (this.activeSessionId === id) {
-      this.activeSessionId = this.sessions[0]?.id ?? null;
+      const next = this.sessions[0]?.id ?? null;
+      this.activeSessionId = next;
+      // Messages load lazily: without this the next conversation would show
+      // "Inicia una conversación" over a thread that has messages.
+      if (next) void this.selectSession(next);
     }
     try {
       await fetchJson(`/api/sessions/${id}`, {
@@ -694,13 +661,18 @@ class AppStore {
     } catch (err) {
       console.error('deleteSession failed', err);
       this.sessions = prev;
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo borrar la conversación',
+        message: 'Sigue en tu lista. Inténtalo de nuevo.',
+      });
     }
   }
 
   async renameSession(id: string, title: string): Promise<void> {
     const s = this.sessions.find((x) => x.id === id);
     if (!s) return;
-    const next = title.trim() || s.title;
+    const next = cleanTitle(title) ?? s.title;
     if (next === s.title) return;
     const prev = s.title;
     s.title = next;
@@ -714,7 +686,13 @@ class AppStore {
       });
     } catch (err) {
       console.error('renameSession failed', err);
-      s.title = prev;
+      // Only roll back if nothing renamed it again meanwhile.
+      if (s.title === next) s.title = prev;
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo cambiar el nombre',
+        message: 'La conversación conserva su nombre anterior. Inténtalo de nuevo.',
+      });
     }
   }
 
@@ -785,7 +763,7 @@ class AppStore {
     s.messages.push(message);
     s.updatedAt = message.createdAt;
     if (s.title === UNTITLED_SESSION && message.role === 'user' && message.content.trim()) {
-      const newTitle = message.content.slice(0, 48);
+      const newTitle = autoTitle(message.content);
       s.title = newTitle;
       // Fire-and-forget — no need to block the user.
       void fetchJson(`/api/sessions/${sessionId}`, {
@@ -1674,6 +1652,30 @@ class AppStore {
     }
     await this.loadDocs(sessionId);
     return true;
+  }
+
+  /**
+   * "Nueva conversación con este documento" (UX backlog #2): open a fresh
+   * conversation — or the empty one already waiting, see `findEmptySession` —
+   * with this document in it, and make it the active one.
+   *
+   * Returns the conversation id, or `null` when either step failed; both steps
+   * already told the user why. The caller navigates to the chat (`/`).
+   */
+  async startSessionWithDoc(
+    docId: string,
+    /** The filter "Mis documentos" is showing, so its re-read keeps it. */
+    filter: 'all' | 'sueltos' = 'all',
+  ): Promise<string | null> {
+    const sessionId = await this.newSession();
+    if (!sessionId) return null;
+    const ok = await this.attachDoc(sessionId, docId);
+    if (!ok) return null;
+    this.activeSessionId = sessionId;
+    // "Mis documentos" names the conversations a document is in; refresh it
+    // if it has been read, so it does not still say "Sin conversación".
+    if (this.ownedDocsReady) void this.loadOwnedDocs(filter);
+    return sessionId;
   }
 
   // ── Mis documentos ─────────────────────────────────────────────────────
