@@ -1,8 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `6d213a9` (held-publish fix, town rule,
-title-only retrieval), deployed 2026-10-21 14:58 UTC, with the 13 held-but-published testimonios
-repaired — see §4q. Before that, `a4643cb` (privacy gate, Voz-only seed, chat searches documents
+**Status:** live since 2026-10-17. Dev runs `main` @ `0e92026` (title match always shown as a
+source, Revisión follows the picker), deployed 2026-10-21 15:41 UTC — see §4r. Before that,
+`6d213a9` (held-publish fix, town rule, title-only retrieval; 14:58 UTC), with the 13
+held-but-published testimonios repaired — see §4q. Before that, `a4643cb` (privacy gate, Voz-only seed, chat searches documents
 only; 11:52 UTC) on freshly wiped and reseeded databases with two ecosistemas — see §4p. Before that, dev ran `2f60202` (UX batches 6–8; 09:17 UTC, §4o).
 Before that, dev ran `d12f0b4` (UX batches 1–5:
 pinned docs, documents page, closed sign-up, whole graph, Revisión wording; 08:51 UTC, §4n). Before that, dev ran `39823b3` (conversation delete erases its
@@ -892,6 +893,30 @@ After: 159 published, 57 ready drafts, 36 held; 0 sessions. **Spend tonight**: �
 
 **Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
 -af` (12.97 GB) and removing dev's `a4643cb` images. Images 7.8 GB, build cache 0.
+
+### 4r. ✅ Done 2026-10-21 15:40–16:05 UTC: `0e92026`, dev only
+
+All measured by the deploy agent. Staging was not touched. Web only (`b147846` a document named by
+title always shows as a source; `e8964e3` Revisión follows the ecosistema picker); no migration,
+no variable change. Backup `/root/backups/20261021T1540Z/` (`pg_restore -l` ok, sha256 matched
+off-box). Deploy 15:41:08 → 15:46:22 UTC; 6 containers `healthy`, health 200, no non-preview
+variable holds `:?` text.
+
+| check | result |
+|---|---|
+| Exact title as admin (doc 71) | **sources: 1, doc 71** (`metadata.docId` 71), listed once. The answer text still carries no `[n]`; the source comes from the title match, not from a citation |
+| Did the filtered retrieve come back empty? | No, inferred. ai-service does not log a returned-chunk count. Its one `rerank ok` for that turn reads `corpus eco-1, poolSize 1, scored 1`, and doc 71 has exactly 1 live chunk in ai-service. So the `docId`-filtered retrieve returned that chunk |
+| Revisión follows the picker | Picked "Red de Educación Comunitaria" in the chat sidebar picker, then opened `/revision` with no `?eco=`: current chip Educación, **23** holds. Picked Salud: **13**. Both match the database (`held` per org: 1→13, 3→23). The in-page chips still use `?eco=` links and work |
+| Normal chat smoke | "criaderos de mosquitos y agua estancada" → 200, 10.0 s, markers `[1, 2, 3, 4, 5]`, 5 sources |
+| ⚠ Same dengue question as §4q | 3 runs, 3 long Markdown answers (2,093–2,285 chars, 0 manifest names) with **no `[n]` markers**, so **0 sources** (sources are cited-only since `a4643cb`). On `6d213a9` it returned grouped markers and 7 sources once. The prompt did not change in this deploy (`git diff 6d213a9 0e92026`). The model sometimes drops citations on a broad question, and the UI then shows no source |
+| ⚠ web log | `[retrieve] rerank request failed (404); retrying without rerank`, 5 times since the deploy (the retry answers) |
+| Turns | 0 `msg-*` in ai-service; 0 sessions left |
+
+Spend: `usage_logs` $1.3670 → $1.3802 (**+$0.0132**, 6 chats). Tonight: $0.4786 + $1.3802 =
+**$1.8588**.
+
+**Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
+-af` (12.97 GB) and removing dev's `6d213a9` images. Images 7.8 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
