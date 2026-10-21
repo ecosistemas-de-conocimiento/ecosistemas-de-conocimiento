@@ -3,7 +3,19 @@
   import { renderMarkdown } from '$lib/markdown';
   import 'highlight.js/styles/github.css';
 
-  let { source, inline = false }: { source: string; inline?: boolean } = $props();
+  let {
+    source,
+    inline = false,
+    citations,
+    oncite,
+  }: {
+    source: string;
+    inline?: boolean;
+    /** Ordinals with a source: their `[N]` markers become buttons. */
+    citations?: number[];
+    /** Called with N when the reader clicks `[N]`. */
+    oncite?: (ordinal: number) => void;
+  } = $props();
 
   // DOMPurify requires `window`; defer rendering until the client mounts so
   // SSR markup and the first client paint agree (no hydration mismatch).
@@ -12,16 +24,35 @@
     mounted = true;
   });
 
-  const html = $derived(mounted ? renderMarkdown(source, { inline }) : '');
+  const html = $derived(mounted ? renderMarkdown(source, { inline, citations }) : '');
+
+  // One delegated listener: the buttons are inside `{@html}`.
+  function onclick(e: MouseEvent): void {
+    const btn = (e.target as HTMLElement | null)?.closest?.('button[data-cite]');
+    if (!btn || !oncite) return;
+    const n = Number(btn.getAttribute('data-cite'));
+    if (Number.isFinite(n)) oncite(n);
+  }
 </script>
 
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 {#if inline}
-  <span class="md-body">{@html html}</span>
+  <span class="md-body" {onclick}>{@html html}</span>
 {:else}
-  <div class="md-body">{@html html}</div>
+  <div class="md-body" {onclick}>{@html html}</div>
 {/if}
 
 <style>
+  .md-body :global(button.cite-ref) {
+    font: inherit;
+    font-weight: 600;
+    color: var(--edc-color-brand);
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 0 1px;
+    background: none;
+    border: 0;
+  }
   .md-body :global(p) {
     margin: 0.5em 0;
   }

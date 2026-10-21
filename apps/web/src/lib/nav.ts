@@ -75,7 +75,7 @@ export interface NavCapabilities {
  *
  * ⚠ ONLY PAGES THAT EXIST. `/`, `/documentos`, `/biblioteca`, `/grafo`,
  * `/revision` and `/admin` are the whole set of signed-in destinations under `src/routes` —
- * `/sign-in` and `/sign-up` are the way in, not sections, and
+ * `/sign-in` is the way in, not a section, and
  * `/biblioteca/[id]` is a detail view inside Biblioteca rather than a section of
  * its own. A menu entry for a page that does not exist is worse than a missing
  * menu: it teaches people the app is broken.
@@ -202,12 +202,12 @@ export function currentNavItem(
 /**
  * Routes that get NO primary navigation.
  *
- * 🔴 The sign-in and sign-up screens are deliberately bare. A menu offering
+ * 🔴 The sign-in screen is deliberately bare. A menu offering
  * "Biblioteca" to someone who is not signed in is three clicks that all end in
  * the same redirect back here, and it makes the sign-in page look like it has
  * failed rather than like it is waiting.
  */
-const CHROMELESS_PATHS = new Set(['/sign-in', '/sign-up']);
+const CHROMELESS_PATHS = new Set(['/sign-in']);
 
 /**
  * Should this request render the app shell (nav + content) at all?

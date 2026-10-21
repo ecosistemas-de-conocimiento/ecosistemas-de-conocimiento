@@ -33,9 +33,8 @@ describe('hydrationAction', () => {
     expect(hydrationAction({ pathname: '/', hydrated: true })).toBe('none');
   });
 
-  it('never hydrates on the sign-in or sign-up form', () => {
+  it('never hydrates on the sign-in form', () => {
     expect(hydrationAction({ pathname: '/sign-in', hydrated: false })).toBe('none');
-    expect(hydrationAction({ pathname: '/sign-up', hydrated: false })).toBe('none');
   });
 
   /**

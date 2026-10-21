@@ -30,7 +30,7 @@ export function parseGraphStatus(value: unknown): GraphStatus {
 
 export interface GraphBadge {
   label: string;
-  tone: 'pending' | 'ready' | 'failed' | 'muted';
+  tone: 'pending' | 'ready' | 'muted';
   title: string;
 }
 
@@ -40,31 +40,42 @@ export interface GraphBadge {
  * `n/a` gets no badge: a markdown note or a row older than the graph was never
  * meant to be in it, and a "sin grafo" chip on every note would be noise.
  */
-export function graphBadge(status: GraphStatus | undefined, error?: string | null): GraphBadge | null {
+/*
+ * ⚠ PLAIN WORDS, NOT "GRAFO" (UX demo backlog #21). The audience is
+ * non-technical; the nav already calls this view "Conexiones", so the badge
+ * says "Conexiones: …". A failed run is shown in a NEUTRAL tone, never red: the
+ * document still works in the chat, and a red chip on a working file reads as
+ * "your upload broke". The backend's raw `graphError` is not shown either; it
+ * is often English.
+ */
+export function graphBadge(status: GraphStatus | undefined): GraphBadge | null {
   switch (status) {
     case 'pending':
-      return { label: 'grafo en cola', tone: 'pending', title: 'El grafo de este documento está en cola.' };
     case 'extracting':
       return {
-        label: 'construyendo grafo…',
+        label: 'Conexiones: en preparación',
         tone: 'pending',
-        title: 'Se están extrayendo las entidades y relaciones de este documento.',
+        title:
+          'Estamos buscando los temas, lugares y personas de este documento para la vista de Conexiones.',
       };
     case 'ready':
-      return { label: 'grafo listo', tone: 'ready', title: 'Este documento ya forma parte del grafo.' };
+      return {
+        label: 'Conexiones: listas',
+        tone: 'ready',
+        title: 'Este documento ya aparece en la vista de Conexiones.',
+      };
     case 'failed':
       return {
-        label: 'grafo falló',
-        tone: 'failed',
-        title: error
-          ? `No se pudo construir el grafo: ${error}`
-          : 'No se pudo construir el grafo de este documento.',
+        label: 'Conexiones: sin terminar',
+        tone: 'muted',
+        title:
+          'No se terminaron de preparar las conexiones de este documento. El documento funciona igual en el chat.',
       };
     case 'skipped':
       return {
-        label: 'sin grafo',
+        label: 'Sin conexiones',
         tone: 'muted',
-        title: 'Este documento no tiene texto del que extraer un grafo. No es un error.',
+        title: 'Este documento no tiene texto del que sacar conexiones. No es un error.',
       };
     default:
       return null;
@@ -72,7 +83,7 @@ export function graphBadge(status: GraphStatus | undefined, error?: string | nul
 }
 
 /** The button's label. Lives here so the copy is asserted, not just rendered. */
-export const GRAPH_RETRY_LABEL = 'Reconstruir grafo';
+export const GRAPH_RETRY_LABEL = 'Preparar conexiones otra vez';
 
 /**
  * Show "Reconstruir grafo"?
@@ -92,7 +103,7 @@ export function canRetryGraph(doc: {
 
 /** Toast copy for a refused rebuild, keyed by the status the proxy passed through. */
 export function graphRetryErrorCopy(status: number): string {
-  if (status === 403) return 'Solo quien subió el documento puede reconstruir su grafo.';
-  if (status === 409) return 'Ahora no se puede reconstruir: ya está en curso o el documento no tiene texto.';
+  if (status === 403) return 'Solo quien subió el documento puede preparar sus conexiones otra vez.';
+  if (status === 409) return 'Ahora no se puede: ya está en curso o el documento no tiene texto.';
   return 'Inténtalo de nuevo en un momento.';
 }

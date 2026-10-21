@@ -15,7 +15,35 @@
   import { provenanceToCitations } from '@edc/chat-engine/core';
   import type { CitationLike, MentionRefLike } from '@edc/chat-engine/core';
 
-  let { msg }: { msg: Message } = $props();
+  let {
+    msg,
+    waiting = 'searching',
+  }: {
+    msg: Message;
+    /**
+     * What a still-empty answer is waiting on (UX backlog #9). `searching`
+     * until the stream opens — the server only opens it once it has searched
+     * the documents — then `writing` until the first words arrive.
+     */
+    waiting?: 'searching' | 'writing';
+  } = $props();
+
+  // A wait that runs long gets one more plain sentence, so 30 s of waiting
+  // does not look like a hang. 12 s is inferred from the 8–39 s first-word
+  // times in the UX backlog (#9), not measured here.
+  const SLOW_WAIT_MS = 12_000;
+  let slow = $state(false);
+  $effect(() => {
+    if (!(msg.pending && !msg.content)) {
+      slow = false;
+      return;
+    }
+    const t = setTimeout(() => (slow = true), SLOW_WAIT_MS);
+    return () => clearTimeout(t);
+  });
+
+  // The source list, so a click on `[N]` in the answer can open source N.
+  let citationCard: { reveal: (ordinal: number) => void } | undefined = $state();
   const isUser = $derived(msg.role === 'user');
   const isAssistant = $derived(msg.role === 'assistant');
 
@@ -59,6 +87,7 @@
   const marked = $derived(markDraftCitations(markAssistantCitations(rawCitations), draftIds));
   const citations = $derived(marked.citations);
   const hasCitations = $derived(isAssistant && !msg.error && citations.length > 0);
+  const ordinals = $derived(hasCitations ? citations.map((c) => c.ordinal) : []);
 
   // Rating is for ANSWERS only — never the user's own prompt, never a failed or
   // still-streaming turn, and never before the backend has issued the message
@@ -77,19 +106,31 @@
         : 'bg-surface-strong border border-elevated text-ink'}"
   >
     {#if msg.pending && !msg.content}
-      <span class="inline-flex gap-1 items-center text-ink-soft">
-        <span class="size-1.5 rounded-full bg-ink-soft animate-pulse"></span>
-        <span class="size-1.5 rounded-full bg-ink-soft animate-pulse [animation-delay:120ms]"
-        ></span>
-        <span class="size-1.5 rounded-full bg-ink-soft animate-pulse [animation-delay:240ms]"
-        ></span>
-      </span>
+      <div class="text-ink-soft" role="status" aria-live="polite" data-testid="answer-waiting">
+        <span class="inline-flex gap-2 items-center">
+          <span class="inline-flex gap-1 items-center" aria-hidden="true">
+            <span class="size-1.5 rounded-full bg-ink-soft animate-pulse"></span>
+            <span class="size-1.5 rounded-full bg-ink-soft animate-pulse [animation-delay:120ms]"
+            ></span>
+            <span class="size-1.5 rounded-full bg-ink-soft animate-pulse [animation-delay:240ms]"
+            ></span>
+          </span>
+          {waiting === 'writing' ? 'Escribiendo la respuesta…' : 'Buscando en los documentos…'}
+        </span>
+        {#if slow}
+          <p class="mt-1 text-xs">A veces tarda hasta un minuto. Seguimos trabajando en tu respuesta.</p>
+        {/if}
+      </div>
     {/if}
     {#if msg.content}
       {#if isUser && hasRefs}
         <MessageContent content={msg.content} {refs} registry={CHAT_KIND_REGISTRY} />
       {:else if isAssistant && !msg.error}
-        <Markdown source={msg.content} />
+        <Markdown
+          source={msg.content}
+          citations={ordinals}
+          oncite={(n) => citationCard?.reveal(n)}
+        />
       {:else}
         {msg.content}
       {/if}
@@ -105,7 +146,11 @@
 
     {#if hasCitations}
       <div class="mt-2 pt-2 border-t border-elevated">
+        <!-- Sources start OPEN (UX backlog #10): the list is how a reader
+             checks the answer, and a closed toggle hid it. -->
         <CitationCard
+          bind:this={citationCard}
+          sourcesOpenByDefault
           {citations}
           labels={CHAT_CITATION_LABELS}
           linkResolver={chatCitationHref}

@@ -16,6 +16,17 @@ export const CHUNK_DATA_RULE =
   'es una fuente primaria; no la presentes como documento. Cita solo con [N]; ' +
   'nunca repitas las etiquetas <fuente>.';
 
+/**
+ * The people reading the answers are not technical (UX backlog #10). The model
+ * used to echo the prompt's own vocabulary back at them: "según los fragmentos
+ * recuperados", "no se menciona en el contexto proporcionado".
+ */
+export const PLAIN_LANGUAGE_RULE =
+  'Quien te lee no es técnico. Nunca digas "fragmentos", "fragmentos ' +
+  'recuperados", "contexto", "contexto proporcionado" ni "contenido ' +
+  'recuperado": di "los documentos" o nombra el documento por su título. Si ' +
+  'los documentos no dicen algo, dilo así: "Los documentos no hablan de esto."';
+
 export const CHAT_SYSTEM_PROMPT =
   'Eres un asistente que ayuda a una persona a consultar los documentos de su ' +
   'ecosistema de conocimiento. Tienes acceso a un resumen del contexto (el ' +
@@ -27,6 +38,8 @@ export const CHAT_SYSTEM_PROMPT =
   'entre lo que consta en el contexto y tus propias sugerencias. Si el contexto ' +
   'no alcanza para responder algo, dilo explícitamente.\n\n' +
   CHUNK_DATA_RULE +
+  '\n\n' +
+  PLAIN_LANGUAGE_RULE +
   '\n\n' +
   'Responde en español, de forma clara y concisa. Usa Markdown (encabezados, ' +
   'listas, código) cuando ayude a la lectura.';

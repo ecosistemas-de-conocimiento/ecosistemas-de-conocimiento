@@ -397,8 +397,8 @@ test.describe('revisión — el camino de la decisión', () => {
   }) => {
     const { email, password } = adminCredentials();
 
-    // Provisioned through the backend's own REST API: sign-up is public, and
-    // the membership needs the admin, exactly as `world.ts` does it.
+    // Provisioned through the backend's own REST API by the admin: sign-up is
+    // closed (UX backlog #6), exactly as `world.ts` does it.
     const login = await fetch(`${backendUrl}/api/users/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -410,7 +410,7 @@ test.describe('revisión — el camino de la decisión', () => {
     const memberPassword = `E2e-${Math.random().toString(36).slice(2)}-Aa1`;
     const created = await fetch(`${backendUrl}/api/users`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `JWT ${adminToken}` },
       body: JSON.stringify({
         email: memberEmail,
         password: memberPassword,

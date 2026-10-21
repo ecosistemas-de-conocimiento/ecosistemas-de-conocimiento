@@ -11,6 +11,8 @@ import {
   describeError,
   readOnlyUrl,
   organizationOfTurnCorpus,
+  turnCheckEnv,
+  turnCheckExitCode,
   type AiTurnRow,
   type TurnCheckDeps,
 } from './turnCorpusCheck'
@@ -75,6 +77,7 @@ function deps(over: Partial<TurnCheckDeps> = {}) {
       { corpus: 'eco-1', org: 'edc-eco-1', externalId: '57', chunks: 2 },
     ],
     existingMessageIds: async (ids) => new Set(ids.filter((id) => id === '1')),
+    countMessages: async () => 1,
     erase,
     log: (line) => lines.push(line),
     ...over,
@@ -190,5 +193,144 @@ describe('describeError', () => {
 
   it('handles a non-Error', () => {
     expect(describeError('boom postgres://a:pw@h/d', [])).not.toContain('pw@')
+  })
+})
+
+describe('turnCheckEnv — the script reads both databases itself, read-only', () => {
+  const env = {
+    AI_DATABASE_URL: 'postgres://edc:ai-pw@db:5432/edc_ai',
+    DATABASE_URI: 'postgres://edc:be-pw@db:5432/edc_backend',
+  }
+  const readOnly = (url: string) => new URL(url).searchParams.get('options')
+
+  it('🔴 opens BOTH connections read-only, the backend one too', () => {
+    const cfg = turnCheckEnv(env)
+    expect(readOnly(cfg.aiUrl)).toBe('-c default_transaction_read_only=on')
+    expect(readOnly(cfg.backendUrl)).toBe('-c default_transaction_read_only=on')
+    expect(new URL(cfg.backendUrl).pathname).toBe('/edc_backend')
+    expect(cfg.apply).toBe(false)
+  })
+
+  it('applies only on TURN_CHECK_APPLY=1', () => {
+    expect(turnCheckEnv({ ...env, TURN_CHECK_APPLY: '1' }).apply).toBe(true)
+    expect(turnCheckEnv({ ...env, TURN_CHECK_APPLY: 'true' }).apply).toBe(false)
+  })
+
+  it('names a missing variable, never a value', () => {
+    expect(() => turnCheckEnv({ DATABASE_URI: env.DATABASE_URI })).toThrow(/AI_DATABASE_URL/)
+    expect(() => turnCheckEnv({ AI_DATABASE_URL: env.AI_DATABASE_URL })).toThrow(/DATABASE_URI/)
+  })
+
+  it('🔴 a malformed backend URL fails without carrying it', () => {
+    let caught: unknown
+    try {
+      turnCheckEnv({ ...env, DATABASE_URI: 'postgres://edc:s3cr3t-pw@[bad' })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(Error)
+    expect(JSON.stringify(caught, Object.getOwnPropertyNames(caught as object))).not.toContain('s3cr3t-pw')
+  })
+})
+
+describe('🔴 the APPLY guards — a wrong DATABASE_URI makes every turn look orphaned', () => {
+  const orphans = (n: number) => async () =>
+    Array.from({ length: n }, (_, i) => row({ externalId: `msg-${i + 100}` }))
+
+  it('refuses APPLY when the erasable orphans exceed the cap, and erases nothing', async () => {
+    const t = deps() // msg-2 and msg-3 erasable
+
+    const report = await checkTurnCorpus({ ...t.d, apply: true, maxErase: 1 })
+
+    expect(t.erase).not.toHaveBeenCalled()
+    expect(report.refused).toMatch(/TURN_CHECK_MAX_ERASE/)
+    expect(turnCheckExitCode(report)).toBe(1)
+  })
+
+  it('the default cap is 50: 50 orphans go, 51 are refused', async () => {
+    const fifty = deps({ readTurnRows: orphans(50) })
+    expect(await checkTurnCorpus({ ...fifty.d, apply: true })).toMatchObject({ erased: 50, refused: null })
+
+    const fiftyOne = deps({ readTurnRows: orphans(51) })
+    const report = await checkTurnCorpus({ ...fiftyOne.d, apply: true })
+    expect(fiftyOne.erase).not.toHaveBeenCalled()
+    expect(report.refused).toMatch(/51/)
+  })
+
+  it('an explicit cap raises the limit', async () => {
+    const t = deps({ readTurnRows: orphans(51) })
+    expect(await checkTurnCorpus({ ...t.d, apply: true, maxErase: 100 })).toMatchObject({ erased: 51 })
+  })
+
+  it('🔴 refuses APPLY when the backend has 0 messages but ai-service holds turns', async () => {
+    const t = deps({ countMessages: async () => 0 })
+
+    const report = await checkTurnCorpus({ ...t.d, apply: true })
+
+    expect(t.erase).not.toHaveBeenCalled()
+    expect(report.refused).toMatch(/0 messages/)
+    expect(report.refused).toMatch(/TURN_CHECK_FORCE/)
+  })
+
+  it('force lets the empty-backend case through, still under the cap', async () => {
+    const t = deps({ countMessages: async () => 0 })
+    expect(await checkTurnCorpus({ ...t.d, apply: true, force: true })).toMatchObject({ erased: 2, refused: null })
+
+    const big = deps({ countMessages: async () => 0, readTurnRows: orphans(51) })
+    expect((await checkTurnCorpus({ ...big.d, apply: true, force: true })).refused).toMatch(/TURN_CHECK_MAX_ERASE/)
+  })
+
+  it('read-only never refuses, but says what APPLY would refuse', async () => {
+    const t = deps({ countMessages: async () => 0 })
+
+    const report = await checkTurnCorpus({ ...t.d, apply: false })
+
+    expect(report.refused).toBeNull()
+    expect(t.lines.some((l) => l.startsWith('warning') && l.includes('0 messages'))).toBe(true)
+  })
+
+  it('🔴 APPLY exits non-zero when any erase failed', async () => {
+    const t = deps()
+    t.erase.mockImplementationOnce(async () => {
+      throw new Error('503')
+    })
+    const report = await checkTurnCorpus({ ...t.d, apply: true })
+    expect(turnCheckExitCode(report)).toBe(1)
+    expect(turnCheckExitCode(await checkTurnCorpus({ ...deps().d, apply: true }))).toBe(0)
+  })
+})
+
+describe('turnCheckEnv — the guard settings', () => {
+  const env = { AI_DATABASE_URL: 'postgres://a@h/x', DATABASE_URI: 'postgres://b@h/y' }
+
+  it('defaults the cap to 50 and force to off', () => {
+    expect(turnCheckEnv(env)).toMatchObject({ maxErase: 50, force: false })
+  })
+
+  it('reads an explicit cap and TURN_CHECK_FORCE=1', () => {
+    expect(turnCheckEnv({ ...env, TURN_CHECK_MAX_ERASE: '500', TURN_CHECK_FORCE: '1' })).toMatchObject({
+      maxErase: 500,
+      force: true,
+    })
+    expect(turnCheckEnv({ ...env, TURN_CHECK_MAX_ERASE: '0' }).maxErase).toBe(0)
+  })
+
+  it('refuses a junk cap rather than guessing one', () => {
+    expect(() => turnCheckEnv({ ...env, TURN_CHECK_MAX_ERASE: 'lots' })).toThrow(/TURN_CHECK_MAX_ERASE/)
+    expect(() => turnCheckEnv({ ...env, TURN_CHECK_MAX_ERASE: '-1' })).toThrow(/TURN_CHECK_MAX_ERASE/)
+  })
+})
+
+describe('describeError — keeps the Postgres cause', () => {
+  it('prints the cause code and a redacted cause message, never the URL', () => {
+    const url = 'postgres://edc:pw-cause@db:5432/edc_ai'
+    const cause = Object.assign(new Error(`password authentication failed (${url})`), { code: '28P01' })
+    const err = new Error('Failed query: SELECT 1', { cause })
+
+    const line = describeError(err, [url])
+
+    expect(line).toContain('28P01')
+    expect(line).toContain('password authentication failed')
+    expect(line).not.toContain('pw-cause')
   })
 })

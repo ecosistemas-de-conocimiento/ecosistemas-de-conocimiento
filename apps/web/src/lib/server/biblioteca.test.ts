@@ -204,6 +204,12 @@ describe('toLibraryItem', () => {
     expect(item.audioMeta).toBeNull();
     const out = JSON.stringify(item);
     for (const leak of ['María', 'López', 'Ana', 'tsotsil']) expect(out).not.toContain(leak);
+    expect(item.fromAudio).toBe(true);
+  });
+
+  // Backlog #12: the reader page keys the machine-transcript warning on this.
+  it('marks a PDF Voz as not from audio', () => {
+    expect(toLibraryItem({ id: 4, kind: 'pdf', contentKind: 'testimonio' }, null).fromAudio).toBe(false);
   });
 
   it('never shows the typed name on gated content, whatever the kind', () => {

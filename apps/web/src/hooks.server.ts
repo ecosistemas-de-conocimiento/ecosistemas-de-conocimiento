@@ -2,6 +2,12 @@ import { redirect, type Handle, type HandleServerError } from '@sveltejs/kit';
 import { SESSION_COOKIE, fetchMe } from '$lib/server/auth';
 
 // Public routes that don't require an authenticated user.
+//
+// ⚠ `/sign-up` stays on purpose. Sign-up is closed (UX backlog #6) and that
+// path is only a redirect to `/sign-in?registro=cerrado`, which shows the
+// "ask an administrator" note. The people following an old sign-up link are
+// signed OUT; without this entry they would be bounced to a bare `/sign-in`
+// by the guard below and never see why.
 const PUBLIC_PATHS = new Set(['/sign-in', '/sign-up']);
 // Public API endpoints (auth proxies in particular need to work without a session).
 const PUBLIC_API_PREFIXES = ['/api/auth/'];

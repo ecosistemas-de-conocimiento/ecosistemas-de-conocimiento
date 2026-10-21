@@ -29,7 +29,8 @@
  *
  * A SCRIPT, NOT A JANITOR: `edc_ai` is a separate database, and a janitor
  * would need its URL inside the backend container. Run it by hand:
- * `scripts/check-turn-corpus.ts`.
+ * `scripts/check-turn-corpus.ts`. It reads both databases over read-only
+ * connections (`turnCheckEnv`) and never boots Payload.
  */
 
 import { sql } from '@payloadcms/db-postgres'
@@ -112,6 +113,8 @@ export interface TurnCheckDeps {
   readValidityMismatches(): Promise<ValidityMismatchRow[]>
   /** Which of these `messages` ids still exist in the backend. */
   existingMessageIds(ids: string[]): Promise<Set<string>>
+  /** How many `messages` rows the backend has at all. The wrong-database guard. */
+  countMessages(): Promise<number>
   /** `admin.deleteDocument(corpus, externalId)` with that ecosistema's client. Used only with `apply`. */
   erase(corpus: string, externalId: string): Promise<void>
   log(line: string): void
@@ -127,15 +130,41 @@ export interface TurnCheckReport {
   eraseFailed: number
   /** Orphans not erased because they sit outside an `eco-<id>` corpus. */
   skipped: number
+  /** `messages` rows in the backend. 0 next to turn docs means a wrong DATABASE_URI. */
+  backendMessages: number
+  /** Why APPLY erased nothing, or null. Never set in read-only mode. */
+  refused: string | null
 }
 
-/** Ids only in every line: never turn text. */
-export async function checkTurnCorpus(deps: TurnCheckDeps & { apply: boolean }): Promise<TurnCheckReport> {
+/** Default for `TURN_CHECK_MAX_ERASE`. */
+export const DEFAULT_MAX_ERASE = 50
+
+/** 0 = ran clean. 1 = APPLY refused, or any erase failed. */
+export function turnCheckExitCode(report: TurnCheckReport): 0 | 1 {
+  return report.refused != null || report.eraseFailed > 0 ? 1 : 0
+}
+
+/**
+ * Ids only in every line: never turn text.
+ *
+ * 🔴 TWO GUARDS BEFORE ANY ERASE. Nothing proves the backend and ai-service
+ * databases belong to the same environment, and with the wrong DATABASE_URI
+ * every turn looks orphaned. So APPLY erases nothing when:
+ *   · the backend has 0 messages but ai-service holds `msg-*` docs, unless
+ *     `force` (`TURN_CHECK_FORCE=1`);
+ *   · the erasable orphans exceed `maxErase` (`TURN_CHECK_MAX_ERASE`, default
+ *     50). Setting it explicitly is how an operator raises the cap. `force`
+ *     does not lift it.
+ */
+export async function checkTurnCorpus(
+  deps: TurnCheckDeps & { apply: boolean; maxErase?: number; force?: boolean },
+): Promise<TurnCheckReport> {
   const rows = await deps.readTurnRows()
   const candidateIds = [...new Set(rows.map((r) => messageIdOf(r.externalId)).filter((id): id is string => id != null))]
   const existing = candidateIds.length > 0 ? await deps.existingMessageIds(candidateIds) : new Set<string>()
   const problems = classifyTurnRows(rows, existing)
   const mismatches = await deps.readValidityMismatches()
+  const backendMessages = await deps.countMessages()
 
   for (const p of problems) deps.log(`${p.kind} corpus=${p.corpus} org=${p.org} doc=${p.externalId}`)
   for (const m of mismatches) {
@@ -151,8 +180,29 @@ export async function checkTurnCorpus(deps: TurnCheckDeps & { apply: boolean }):
     erased: 0,
     eraseFailed: 0,
     skipped: 0,
+    backendMessages,
+    refused: null,
   }
+
+  const maxErase = deps.maxErase ?? DEFAULT_MAX_ERASE
+  const erasable = problems.filter((p) => organizationOfTurnCorpus(p.corpus) != null).length
+  const guards: string[] = []
+  if (backendMessages === 0 && rows.length > 0 && !deps.force) {
+    guards.push(
+      `the backend has 0 messages but ai-service holds ${rows.length} msg-* docs: is DATABASE_URI ` +
+        'the same environment? Set TURN_CHECK_FORCE=1 if it is',
+    )
+  }
+  if (erasable > maxErase) {
+    guards.push(`${erasable} orphans to erase, above the cap of ${maxErase}: set TURN_CHECK_MAX_ERASE to raise it`)
+  }
+  for (const g of guards) deps.log(`warning ${g}`)
   if (!deps.apply) return report
+  if (guards.length > 0) {
+    report.refused = guards.join('; ')
+    deps.log('refused: APPLY erased nothing')
+    return report
+  }
 
   for (const p of problems) {
     if (organizationOfTurnCorpus(p.corpus) == null) {
@@ -194,6 +244,38 @@ export function readOnlyUrl(url: string): string {
   return u.toString()
 }
 
+/**
+ * What `scripts/check-turn-corpus.ts` connects to: BOTH databases read-only,
+ * straight from the env, with no Payload boot. 🔴 Booting Payload for a check
+ * ran the admin seed, the demo-seed gate, the bucket check and every janitor
+ * (edc-1 runbook §4m); read-only then held for `edc_ai` only.
+ *
+ * Throws naming the missing variable, never a value.
+ */
+export function turnCheckEnv(env: Record<string, string | undefined>): {
+  apply: boolean
+  aiUrl: string
+  backendUrl: string
+  maxErase: number
+  force: boolean
+} {
+  const ai = env.AI_DATABASE_URL?.trim()
+  if (!ai) throw new Error('AI_DATABASE_URL is not set (the ai-service database, edc_ai).')
+  const backend = env.DATABASE_URI?.trim()
+  if (!backend) throw new Error('DATABASE_URI is not set (the backend database, edc_backend).')
+  const rawCap = env.TURN_CHECK_MAX_ERASE?.trim()
+  if (rawCap && !/^\d+$/.test(rawCap)) {
+    throw new Error('TURN_CHECK_MAX_ERASE must be a whole number of turns (0 or more).')
+  }
+  return {
+    apply: env.TURN_CHECK_APPLY === '1',
+    aiUrl: readOnlyUrl(ai),
+    backendUrl: readOnlyUrl(backend),
+    maxErase: rawCap ? Number(rawCap) : DEFAULT_MAX_ERASE,
+    force: env.TURN_CHECK_FORCE === '1',
+  }
+}
+
 const ANY_DB_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"]*@[^\s'"]*/gi
 
 /**
@@ -202,14 +284,17 @@ const ANY_DB_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"]*@[^\s'"]*/gi
  * replaced. 🔴 Never print the error object itself: Node's invalid-URL error
  * carries the full URL, password included, in `input`.
  */
-export function describeError(err: unknown, secrets: Array<string | undefined>): string {
-  const e = err as { name?: unknown; code?: unknown; message?: unknown } | null
+export function describeError(err: unknown, secrets: Array<string | undefined>, depth = 0): string {
+  const e = err as { name?: unknown; code?: unknown; message?: unknown; cause?: unknown } | null
   const name = err instanceof Error ? err.name : typeof e?.name === 'string' ? e.name : 'Error'
   const code = typeof e?.code === 'string' ? ` ${e.code}` : ''
   let message = err instanceof Error ? err.message : typeof err === 'string' ? err : 'unknown error'
   for (const secret of secrets) if (secret) message = message.split(secret).join('[redacted]')
   message = message.replace(ANY_DB_URL, '[redacted-url]')
-  return `${name}${code}: ${message}`
+  // The Postgres error behind a drizzle "Failed query" lives in `cause`: keep
+  // its code and redacted message, or the line says nothing useful.
+  const cause = e?.cause != null && depth < 3 ? ` <- cause ${describeError(e.cause, secrets, depth + 1)}` : ''
+  return `${name}${code}: ${message}${cause}`
 }
 
 type Exec = { execute(query: unknown): Promise<unknown> }
@@ -220,7 +305,7 @@ const rowsOf = async <T>(db: Exec, query: unknown): Promise<T[]> =>
 export function sqlReaders(
   ai: Exec,
   backend: Exec,
-): Pick<TurnCheckDeps, 'readTurnRows' | 'readValidityMismatches' | 'existingMessageIds'> {
+): Pick<TurnCheckDeps, 'readTurnRows' | 'readValidityMismatches' | 'existingMessageIds' | 'countMessages'> {
   return {
     readTurnRows: () => rowsOf<AiTurnRow>(ai, sql.raw(AI_TURN_ROWS_SQL)),
     readValidityMismatches: () => rowsOf<ValidityMismatchRow>(ai, sql.raw(AI_VALIDITY_MISMATCH_SQL)),
@@ -235,6 +320,10 @@ export function sqlReaders(
         )})`,
       )
       return new Set(found.map((r) => String(r.id)))
+    },
+    countMessages: async () => {
+      const [r] = await rowsOf<{ n: unknown }>(backend, sql.raw('SELECT count(*)::int AS n FROM messages'))
+      return Number(r?.n ?? 0)
     },
   }
 }

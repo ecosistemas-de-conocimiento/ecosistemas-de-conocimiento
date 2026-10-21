@@ -545,6 +545,47 @@ describe('POST /api/generate — prompt fence', () => {
   });
 });
 
+// ── Pinned documents (UX backlog #5) ─────────────────────────────────────────
+// 🔴 The docs panel says "Los documentos fijados se envían como contexto en
+// cada mensaje". A pinned document must reach the prompt without an @-mention;
+// an unpinned one must not.
+describe('POST /api/generate — pinned documents', () => {
+  const answerPrompt = () =>
+    JSON.stringify(
+      generates().find((c) => !JSON.stringify(c.body).includes('Escribe exactamente tres'))!.body,
+    );
+  const docReads = () =>
+    calls.filter((c) => c.url.host === 'backend.test' && c.url.pathname === '/api/documents/11');
+
+  it('🔴 sync: a pinned document reaches the model, fenced, with no @-mention', async () => {
+    world.sessionDocs = [{ ...world.sessionDocs[0]!, isPinned: true }];
+    await POST(event(turn()));
+    expect(answerPrompt()).toContain('<fuente id=\\"document:11\\">\\nDocumento adjunto: informe.pdf');
+  });
+
+  it('🔴 stream: a pinned document reaches the model too', async () => {
+    world.sessionDocs = [{ ...world.sessionDocs[0]!, isPinned: true }];
+    await readSse(await POST(event(turn(), true)));
+    expect(answerPrompt()).toContain('Documento adjunto: informe.pdf');
+  });
+
+  it('an unpinned document is not sent', async () => {
+    world.sessionDocs = [{ ...world.sessionDocs[0]!, isPinned: false }];
+    await POST(event(turn()));
+    expect(answerPrompt()).not.toContain('document:11');
+    expect(docReads()).toHaveLength(0);
+  });
+
+  it('a document both @-mentioned and pinned is read and sent once', async () => {
+    world.sessionDocs = [{ ...world.sessionDocs[0]!, isPinned: true }];
+    await POST(
+      event(turn({ contextRefs: [{ kind: 'document', id: '11', label: 'informe.pdf' }] })),
+    );
+    expect(docReads()).toHaveLength(1);
+    expect(answerPrompt().split('document:11').length - 1).toBe(1);
+  });
+});
+
 // ── Earlier assistant answers (owner ruling 2026-10-20) ──────────────────────
 // 🔴 Default: an earlier assistant answer never reaches the prompt or the
 // provenance, on any leg. `CHAT_RETRIEVE_ASSISTANT_CHUNKS=on` reverts that.

@@ -1,5 +1,10 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
+
+  // Old `/sign-up` links land here (sign-up is closed, UX backlog #6). Say why
+  // instead of silently showing a login form to someone with no account.
+  const registrationClosed = $derived($page.url.searchParams.get('registro') === 'cerrado');
 
   // ⚠ The server already answers in Spanish (`$lib/server/auth.ts`
   // `AUTH_ERROR_COPY`), and it decides WHICH sentence — a wrong password, a
@@ -45,7 +50,18 @@
 
 <div class="h-screen w-full flex items-center justify-center text-ink">
   <form onsubmit={submit} class="w-full max-w-sm space-y-3 p-6" autocomplete="off">
+    <!-- El nombre del producto: la primera pantalla tiene que decir dónde
+         estás. No hay logotipo en el repo; cuando lo haya, va aquí. -->
+    <p class="product-name font-display">Ecosistemas de Conocimiento</p>
+
     <h1 class="text-base font-display font-bold text-ink">Inicia sesión</h1>
+
+    {#if registrationClosed}
+      <p class="text-sm text-ink-soft closed-note" role="status">
+        Ya no se pueden crear cuentas desde esta página. Pide a quien administra la plataforma que
+        te cree una cuenta.
+      </p>
+    {/if}
 
     <label class="block text-xs text-ink-soft">
       Correo electrónico
@@ -86,13 +102,24 @@
     </button>
 
     <p class="text-xs text-ink-soft pt-2">
-      ¿Todavía no tienes cuenta?
-      <a href="/sign-up" class="underline hover:text-ink">Crea una</a>
+      ¿Todavía no tienes cuenta? Pide a quien administra la plataforma que te cree una cuenta.
     </p>
   </form>
 </div>
 
 <style>
+  .product-name {
+    margin: 0 0 1.25rem;
+    font-size: 1.35rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--edc-color-brand-strong);
+  }
+  .closed-note {
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--edc-radius-2);
+    background: var(--edc-color-brand-soft);
+  }
   .login-input {
     width: 100%;
     padding: 0.6rem 0.85rem;

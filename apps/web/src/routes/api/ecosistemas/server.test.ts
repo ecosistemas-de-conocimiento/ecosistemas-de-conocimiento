@@ -146,6 +146,29 @@ describe('GET /api/ecosistemas', () => {
     expect(body).toEqual({ ecosistemas: [], selectedId: null });
   });
 
+  it('🔴 a 403 on memberships after /me answered is zero memberships, not an outage (#6)', async () => {
+    // Payload's `withinMyOrganizations` refuses (403) a caller with no
+    // memberships. A brand-new account must get the "pide que te agreguen"
+    // screen, never the "problemas para llegar al servidor" banner.
+    mockedBackendFetch.mockImplementation(async (_t: unknown, p: string) =>
+      String(p).startsWith('/api/users/me')
+        ? jsonResponse({ user: { id: 7 } })
+        : jsonResponse({ errors: [{ message: 'You are not allowed to perform this action.' }] }, 403),
+    );
+    const cookies = makeCookies({ eco_selected: '2' });
+    const body = await (await GET(makeEvent({ cookies }))).json();
+    expect(body).toEqual({ ecosistemas: [], selectedId: null });
+    expect(body.degraded).toBeUndefined();
+    // Nothing left to point at: the stale choice is dropped.
+    expect(cookies.deleted).toEqual(['eco_selected']);
+  });
+
+  it('a 403 identifying the caller is still `degraded` — we do not know who they are', async () => {
+    mockedBackendFetch.mockImplementation(async () => jsonResponse({}, 403));
+    const body = await (await GET(makeEvent({}))).json();
+    expect(body.degraded).toBe(true);
+  });
+
   it('⚠ a failed read is `degraded`, NOT "you belong to no ecosistema"', async () => {
     // The zero-membership screen tells people to go ask for access. Showing it
     // because the backend is down tells someone with access to request access.

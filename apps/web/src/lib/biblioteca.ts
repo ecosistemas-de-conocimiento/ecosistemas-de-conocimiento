@@ -146,13 +146,17 @@ export interface KindLabel {
  * needs to know which they are looking at without guessing, so the difference
  * is a labelled chip with its own colour, not a subtle icon.
  */
-export function kindLabel(kind: LibraryKind): KindLabel {
+export function kindLabel(kind: LibraryKind, opts: { fromAudio?: boolean } = {}): KindLabel {
   switch (kind) {
     case 'testimonio':
+      // ⚠ A Voz can be a recording OR a PDF/DOCX. Saying "de viva voz" about a
+      // written file was false (UX demo backlog #12). `fromAudio` is the file
+      // format, set server-side in `toLibraryItem`.
       return {
         label: 'Voz',
-        description:
-          'Testimonio recogido de viva voz. Es anónimo: no se guarda quién lo contó.',
+        description: opts.fromAudio
+          ? 'Testimonio grabado en audio. Es anónimo: no se guarda quién lo contó.'
+          : 'Testimonio entregado por escrito. Es anónimo: no se guarda quién lo contó.',
         tone: 'voice',
       };
     case 'audio':
@@ -189,6 +193,16 @@ export const TESTIMONY_ANONYMITY_NOTE =
 /** The machine-transcription warning, reused verbatim from `$lib/ingest.ts`. */
 export const LIBRARY_TRANSCRIPT_NOTE =
   'Este texto se generó automáticamente a partir de un audio y puede contener errores.';
+
+/**
+ * 🔴 DOES THIS ROW'S TEXT COME FROM A MACHINE TRANSCRIPTION? Keyed on the FILE
+ * FORMAT, not on "is it a Voz": a testimonio uploaded as a PDF was written by a
+ * person, and labelling it machine-made was false (UX demo backlog #12). An
+ * audio testimonio still gets the warning.
+ */
+export function isMachineTranscript(item: { kind: LibraryKind; fromAudio?: boolean }): boolean {
+  return item.kind === 'audio' || item.fromAudio === true;
+}
 
 /**
  * ⚠ Said on the page, not only in a tooltip. The single most common misreading
@@ -315,6 +329,11 @@ export interface LibraryItem {
   lengua: string | null;
   /** Duration / language chips, for `audio`. Absent otherwise. */
   audioMeta?: Record<string, unknown> | null;
+  /**
+   * The uploaded FILE was audio. Needed because `kind` says `testimonio` for
+   * every Voz, whatever its format. Drives `isMachineTranscript`.
+   */
+  fromAudio: boolean;
 }
 
 /** A full document, as the reader page gets it. */

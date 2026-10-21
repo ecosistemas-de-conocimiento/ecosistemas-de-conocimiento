@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * 🔴 THE COPY-LEAK TEST.
  *
- * `/sign-in` and `/sign-up` are the first screens anyone sees on a
+ * `/sign-in` is the first screen anyone sees on a
  * Spanish-language product, and everything they can print comes from here.
  * Two things must hold, and neither is checkable by reading the happy path:
  *
@@ -12,9 +12,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *     answers with our plumbing ("fetch failed"). Both are classified into a
  *     code here; the English lands in `detail`, which only the log reads.
  *
- *  2. The classification is not flattened. A wrong password, a locked account,
- *     an already-taken email and an unreachable backend are four different
- *     situations that need four different instructions from the user. The
+ *  2. The classification is not flattened. A wrong password, a locked account
+ *     and an unreachable backend are three different situations that need
+ *     three different instructions from the user. The
  *     bodies asserted below are the real ones, captured from the running
  *     backend at :45402.
  */
@@ -25,7 +25,6 @@ const {
   AUTH_ERROR_COPY,
   authErrorMessage,
   loginWithBackend,
-  registerWithBackend,
 } = await import('./auth');
 
 /** Stub `fetch` with a JSON body + status, the way Payload replies. */
@@ -41,18 +40,6 @@ const WRONG_PASSWORD = { errors: [{ message: 'The email or password provided is 
 const LOCKED = {
   errors: [{ message: 'This user is locked due to having too many failed login attempts.' }],
 };
-/** Payload's 400 `ValidationError` — the useful sentence is nested under `data`. */
-function validationError(field: string, message: string) {
-  return {
-    errors: [
-      {
-        message: `The following field is invalid: ${field}`,
-        data: { collection: 'users', errors: [{ message, path: field }] },
-      },
-    ],
-  };
-}
-
 beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
@@ -111,46 +98,6 @@ describe('loginWithBackend', () => {
   });
 });
 
-describe('registerWithBackend', () => {
-  it('classifies a duplicate email', async () => {
-    replyOnce(
-      400,
-      validationError('email', 'A user with the given email is already registered.'),
-    );
-    expect((await registerWithBackend('a@b.mx', 'unaClaveLarga', 'A')).failure).toBe(
-      'email-taken',
-    );
-  });
-
-  it('classifies a malformed email', async () => {
-    replyOnce(400, validationError('Email', 'Please enter a valid email address.'));
-    expect((await registerWithBackend('no-es-correo', 'unaClaveLarga', 'A')).failure).toBe(
-      'email-invalid',
-    );
-  });
-
-  it('classifies the allowed-domain fence', async () => {
-    // Thrown by `Users.beforeValidate` when IDENTITY_ALLOWED_EMAIL_DOMAIN is set.
-    replyOnce(400, validationError('email', 'Only @cide.edu addresses may sign up.'));
-    const res = await registerWithBackend('a@gmail.com', 'unaClaveLarga', 'A');
-    expect(res.failure).toBe('email-domain');
-    // The fenced domain is an installation detail; it must not be echoed back.
-    expect(authErrorMessage('email-domain')).not.toContain('cide.edu');
-  });
-
-  it('classifies an unreachable backend', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
-        throw new TypeError('fetch failed');
-      }),
-    );
-    expect((await registerWithBackend('a@b.mx', 'unaClaveLarga', 'A')).failure).toBe(
-      'unreachable',
-    );
-  });
-});
-
 describe('AUTH_ERROR_COPY', () => {
   const entries = Object.entries(AUTH_ERROR_COPY);
 
@@ -181,13 +128,12 @@ describe('AUTH_ERROR_COPY', () => {
     }
   });
 
-  it('gives the four common failures four different sentences', () => {
-    const four = [
+  it('gives the three common failures three different sentences', () => {
+    const three = [
       AUTH_ERROR_COPY['invalid-credentials'],
       AUTH_ERROR_COPY['account-locked'],
-      AUTH_ERROR_COPY['email-taken'],
       AUTH_ERROR_COPY.unreachable,
     ];
-    expect(new Set(four).size).toBe(4);
+    expect(new Set(three).size).toBe(3);
   });
 });

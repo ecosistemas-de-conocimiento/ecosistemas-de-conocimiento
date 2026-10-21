@@ -114,8 +114,10 @@ Staging has no seed, so it was set up by hand on 2026-10-17:
 
 - Organization `Montaje` (slug `montaje`, id 1), created by the platform admin.
 - A platform admin cannot give itself a membership (by design). A second user,
-  `EDC_STAGE_SMOKE_USER_EMAIL` / `EDC_STAGE_SMOKE_USER_PASSWORD`, registered through the web sign-up
-  and was made `owner` of `Montaje` by the admin.
+  `EDC_STAGE_SMOKE_USER_EMAIL` / `EDC_STAGE_SMOKE_USER_PASSWORD`, was made `owner` of `Montaje` by
+  the admin. It was registered through the web sign-up on 2026-10-17; public sign-up has since been
+  closed (UX backlog #6), so a replacement is created by the platform admin in the Payload admin
+  panel (`/admin` → Users → Create, then Memberships → Create).
 
 ---
 

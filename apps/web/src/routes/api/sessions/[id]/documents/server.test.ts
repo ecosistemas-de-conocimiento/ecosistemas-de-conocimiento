@@ -5,6 +5,17 @@ vi.mock('$lib/server/auth', () => ({
   backendFetch: vi.fn(),
 }));
 
+// The audio switch ships OFF (backlog #8). The audio tests below describe the
+// route with it ON, so they keep guarding that path for the day it returns;
+// the "switch off" block flips it back and checks the refusal.
+const audioSwitch = vi.hoisted(() => ({ on: true }));
+vi.mock('$lib/uploadKind', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/uploadKind')>()),
+  get AUDIO_UPLOAD_ENABLED() {
+    return audioSwitch.on;
+  },
+}));
+
 import { POST } from './+server';
 import { mapUpstreamMediaError } from '$lib/server/documents';
 import { backendFetch } from '$lib/server/auth';
@@ -416,6 +427,62 @@ describe('POST /api/sessions/[id]/documents — audio', () => {
 // documento de otra conversación" possible without copying or moving the row.
 // Both create paths must send the list shape, not the scalar the field used to
 // be. See `documents/[docId]` for how the list grows and shrinks afterwards.
+
+// 🔴 Backlog #8: with the switch off, the SERVER refuses audio, so a direct
+// POST cannot get a recording past the hidden file picker.
+describe('POST /api/sessions/[id]/documents — audio switch off', () => {
+  beforeEach(() => {
+    audioSwitch.on = false;
+    return () => {
+      audioSwitch.on = true;
+    };
+  });
+
+  it.each([
+    ['junta.m4a', ''],
+    ['entrevista.mp3', 'audio/mpeg'],
+    ['grabacion.mp4', 'video/mp4'],
+  ])('refuses %s (%p) with 400 before the file goes up', async (name, type) => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const res = await POST(
+      makeEvent({ request: multipartRequest(new File(['x'], name, { type })) }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'unsupported_kind' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mockedBackendFetch).not.toHaveBeenCalled();
+  });
+
+  it('still accepts a PDF', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ doc: { id: 9 } }), { status: 200 }),
+    );
+    mockedBackendFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ doc: { id: 1 } }), { status: 201 }),
+    );
+    const res = await POST(
+      makeEvent({ request: multipartRequest(new File(['x'], 'a.pdf', { type: 'application/pdf' })) }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  // Payload validation text is English; the browser only ever gets a code.
+  it('never passes a backend validation message through', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ doc: { id: 9 } }), { status: 200 }),
+    );
+    mockedBackendFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ errors: [{ message: 'That conversation belongs to…' }] }), {
+        status: 400,
+      }),
+    );
+    const res = await POST(
+      makeEvent({ request: multipartRequest(new File(['x'], 'a.pdf', { type: 'application/pdf' })) }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'document_create_failed' });
+  });
+});
 
 describe('POST /api/sessions/[id]/documents — session is an array', () => {
   it('sends session as a one-element array on the markdown/JSON path', async () => {

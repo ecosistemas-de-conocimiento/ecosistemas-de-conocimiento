@@ -29,7 +29,7 @@
  * a test nobody runs.
  */
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Payload } from 'payload'
 
 import { staticDetector } from './anonymise'
@@ -41,8 +41,22 @@ import {
   messageIdFromExternalId,
   releaseConversationsWaitingOn,
   turnExternalId,
+  ingestAssistantTurnsEnabled,
   type ConversationIngester,
 } from './conversationIngest'
+
+/**
+ * ⚠ THE TESTS ABOVE THE LAST BLOCK RUN WITH ASSISTANT TURNS SWITCHED ON. They
+ * were written when every assistant answer went into the corpus, and the
+ * append / hold / release rules they pin hold for both roles. The production
+ * default (OFF) is pinned in `assistant turns stay out of the corpus` at the end.
+ */
+beforeEach(() => {
+  vi.stubEnv('INGEST_ASSISTANT_TURNS', 'true')
+})
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 // ---------------------------------------------------------------------------
 // The in-memory Payload
@@ -94,8 +108,12 @@ function fakePayload(db: Db) {
       if (!row) throw new Error('NotFound')
       return row
     }),
+    // COPIES, like a real read: a row the module updates must not change under
+    // a list it already read, or a filter it forgot to apply goes unseen.
     find: vi.fn(async ({ collection, where }: { collection: string; where?: unknown }) => ({
-      docs: table(collection).filter((row) => matches(row, where)),
+      docs: table(collection)
+        .filter((row) => matches(row, where))
+        .map((row) => ({ ...row })),
     })),
     update: vi.fn(async ({ collection, id, data }: { collection: string; id: unknown; data: Record<string, unknown> }) => {
       const row = table(collection).find((r) => String(r.id) === String(id))
@@ -893,5 +911,186 @@ describe('🔴 the anonymisation gate, per turn', () => {
     await run(db, client, countingDetector())
 
     expect(calls[0]!.documents[0]!.text).not.toContain('Carla Ibarra')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 🔴 ASSISTANT TURNS — OFF BY DEFAULT (ruling 2026-10-20)
+// ---------------------------------------------------------------------------
+
+describe('🔴 assistant turns stay out of the corpus by default', () => {
+  // An audit measured an earlier answer as the TOP-1 source in 6 of 14 chat
+  // turns, about 10 s after it was written: the assistant citing itself. The
+  // ruling stops ingesting answers; questions still go in.
+  beforeEach(() => {
+    vi.stubEnv('INGEST_ASSISTANT_TURNS', '')
+  })
+
+  it('enqueues the user turn only, and marks the answer `skipped`', async () => {
+    const db = seed([
+      { id: 1, role: 'user', content: 'Cual es el acuerdo vigente' },
+      { id: 2, role: 'assistant', content: 'El acuerdo vigente cubre el riego' },
+    ])
+    const { client, calls } = fakeClient()
+
+    const result = await run(db, client, countingDetector())
+
+    expect(result.ingested).toBe(1)
+    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-1'])
+    expect(db.messages[1]!.corpusStatus).toBe('skipped')
+  })
+
+  it('never sends an answer through the anonymisation gate — that is the saving', async () => {
+    const db = seed([
+      { id: 1, role: 'user', content: 'Pregunta' },
+      { id: 2, role: 'assistant', content: 'Respuesta larga' },
+    ])
+    const detector = countingDetector()
+
+    await run(db, fakeClient().client, detector)
+
+    // One gate run for the question: detect + verify. None for the answer.
+    const perUserTurn = detector.calls()
+    db.messages.push({ id: 3, session: SESSION, role: 'assistant', content: 'Otra respuesta' })
+    await run(db, fakeClient().client, detector)
+    expect(detector.calls()).toBe(perUserTurn)
+    expect(db.messages[2]!.redactedText).toBeUndefined()
+  })
+
+  it('an answer-only run enqueues nothing at all', async () => {
+    const db = seed([{ id: 1, role: 'assistant', content: 'Solo respuesta' }])
+    const { client, calls } = fakeClient()
+
+    const result = await run(db, client, countingDetector())
+
+    expect(result.ingested).toBe(0)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('⚠ leaves an answer ALREADY in the corpus alone — its status is the erase bookkeeping', async () => {
+    // Retrieval filters old answer chunks out (web lane). Rewriting their row to
+    // `skipped` would hide that the chunks still exist.
+    const db = seed([
+      { id: 1, role: 'assistant', content: 'Vieja respuesta', corpusStatus: 'ingested' },
+      { id: 2, role: 'assistant', content: 'En vuelo', corpusStatus: 'embedding' },
+      { id: 3, role: 'assistant', content: 'Retenida', corpusStatus: 'held-gate' },
+      { id: 4, role: 'user', content: 'Nueva pregunta' },
+    ])
+    const { client, calls } = fakeClient()
+
+    await run(db, client, countingDetector())
+
+    expect(db.messages.map((m) => m.corpusStatus)).toEqual(['ingested', 'embedding', 'held-gate', 'embedding'])
+    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-4'])
+  })
+
+  it('🔴 a `failed` answer becomes `skipped`, and the gate never sees it', async () => {
+    const db = seed([
+      { id: 1, role: 'assistant', content: 'Fallo antes', corpusStatus: 'failed' },
+      { id: 2, role: 'user', content: 'Pregunta' },
+    ])
+    const { client, calls } = fakeClient()
+    const seen: string[] = []
+    const detector: PersonDetector = {
+      name: 'recording',
+      async detect({ text }) {
+        seen.push(text)
+        return []
+      },
+    }
+
+    await run(db, client, detector)
+
+    expect(db.messages[0]!.corpusStatus).toBe('skipped')
+    expect(seen.some((t) => t.includes('Fallo antes'))).toBe(false)
+    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-2'])
+  })
+
+  it('a `held-drafts` answer becomes `skipped`', async () => {
+    const db = seed([{ id: 1, role: 'assistant', content: 'Retenida', corpusStatus: 'held-drafts' }])
+    const { client, calls } = fakeClient()
+
+    await run(db, client, countingDetector())
+
+    expect(db.messages[0]!.corpusStatus).toBe('skipped')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('🔴 a `failed` answer that KEEPS its ingest id stays `failed` — ai-service may hold it', async () => {
+    // The janitor gives up on a stalled turn by marking it `failed` without
+    // clearing `corpusIngestId` (lib/ingestRecovery.ts). ai-service may have
+    // stored it anyway. `skipped` would claim it never reached the corpus.
+    const db = seed([
+      { id: 1, role: 'assistant', content: 'Atascada', corpusStatus: 'failed', corpusIngestId: 'ing-9' },
+    ])
+    const { client, calls } = fakeClient()
+
+    await run(db, client, countingDetector())
+
+    expect(db.messages[0]!.corpusStatus).toBe('failed')
+    expect(db.messages[0]!.corpusIngestId).toBe('ing-9')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('a conversation released from a draft hold sends its questions, not its answers', async () => {
+    const db = seed(
+      [
+        { id: 1, role: 'user', content: 'Que dice el borrador' },
+        { id: 2, role: 'assistant', content: 'Segun el borrador', provenance: { chunks: [{ metadata: { docId: '933' } }] } },
+      ],
+      { documents: [{ id: 933, publicationStatus: 'draft' }] },
+    )
+    const { client, calls } = fakeClient()
+    const detector = countingDetector()
+
+    await run(db, client, detector)
+    expect(db.messages.map((m) => m.corpusStatus)).toEqual(['held-drafts', 'skipped'])
+
+    db.documents[0]!.publicationStatus = 'published'
+    await releaseConversationsWaitingOn({ payload: fakePayloadFor(db), documentId: 933, client, detector })
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-1'])
+  })
+
+  it('`INGEST_ASSISTANT_TURNS=true` puts answers back in, still marked `authoredBy: assistant`', async () => {
+    vi.stubEnv('INGEST_ASSISTANT_TURNS', 'true')
+    const db = seed([
+      { id: 1, role: 'user', content: 'Pregunta' },
+      { id: 2, role: 'assistant', content: 'Respuesta' },
+    ])
+    const { client, calls } = fakeClient()
+
+    await run(db, client, countingDetector())
+
+    expect(calls[0]!.documents.map((d) => [d.id, d.metadata?.authoredBy])).toEqual([
+      ['msg-1', 'user'],
+      ['msg-2', 'assistant'],
+    ])
+  })
+
+  it('an explicit `ingestAssistantTurns` argument wins over the env', async () => {
+    vi.stubEnv('INGEST_ASSISTANT_TURNS', 'true')
+    const db = seed([{ id: 1, role: 'assistant', content: 'Respuesta' }])
+    const { client, calls } = fakeClient()
+
+    await ingestConversationTurns({
+      payload: fakePayloadFor(db),
+      sessionId: SESSION,
+      client,
+      detector: countingDetector(),
+      ingestAssistantTurns: false,
+    })
+
+    expect(calls).toHaveLength(0)
+  })
+
+  it('reads the switch: only an explicit yes turns it on', () => {
+    for (const on of ['true', '1', 'on', 'yes', ' TRUE ']) {
+      expect(ingestAssistantTurnsEnabled({ INGEST_ASSISTANT_TURNS: on })).toBe(true)
+    }
+    for (const off of [undefined, '', 'false', '0', 'off', 'no', 'junk']) {
+      expect(ingestAssistantTurnsEnabled({ INGEST_ASSISTANT_TURNS: off })).toBe(false)
+    }
   })
 })
