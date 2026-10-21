@@ -39,9 +39,26 @@
  *      is as often a colonia, a hospital or a ranch as a town. "Vivo en San Juan
  *      Chamula, Chiapas" passes; "vivo en Santa Úrsula" holds.
  *
- * ⚠ THE RESIDUAL RISK, STATED: a colonia written by a bare, town-shaped name
- * with "en" before it ("vivo en Portales") that stage 3 also missed passes as a
- * town. There is no gazetteer here; the detector cannot tell them apart either.
+ *   5. NOT A PERSON: no word of the finding is a common given name, diminutive
+ *      or surname, and a one-word finding does not end in "-ez" ("Martínez").
+ *      Words after a saint ("San Juan Chamula") and state names are exempt.
+ *      And "en" counts only after a verb of residence or movement ("vivo en",
+ *      "me quedé en"), so "pienso en Soledad" holds.
+ *
+ * ⚠ THE TWO RESIDUAL RISKS, STATED. There is no gazetteer and no census here,
+ * so both directions of "looks like a town" can still be wrong:
+ *
+ *   1. A COLONIA (or paraje, or named building) written by a bare, town-shaped
+ *      name after a place verb and "en" — "vivo en Portales" — that stage 3
+ *      also missed passes as a town and ships in clear.
+ *   2. A PERSON the detector typed `lugar` whose name is not on the compact
+ *      lists — an uncommon given name or a surname not ending in "-ez",
+ *      after "vivo en" / "soy de" — passes as a town and ships in clear.
+ *      ("Vivo en Xiadani" passes.) Common names and every "-ez" surname hold.
+ *
+ * Both need the detector to have mistyped AND stage 3 to have missed it. The
+ * opposite error — a real town held — costs a reviewer one click and is the
+ * direction every rule above leans.
  *
  * ⚠ A `persona`, `contacto`, `identificador` or `otro` finding is never ignored.
  */
@@ -95,11 +112,124 @@ const TOWN_WORDS = [
 ]
 
 /** Words after which "de" introduces where someone is from. */
+/**
+ * Words after which "de" introduces where someone is from.
+ *
+ * ⚠ NOT es/era/son: "eso es de Soledad", "es de Ramírez" name an owner or a
+ * family as often as a place (re-audit, 2026-10-21).
+ */
 const ORIGIN_WORDS = [
-  'soy', 'es', 'era', 'eres', 'somos', 'son', 'vengo', 'venimos', 'viene', 'vienen',
+  'soy', 'eres', 'somos', 'vengo', 'venimos', 'viene', 'vienen',
   'originario', 'originaria', 'originarios', 'originarias', 'oriundo', 'oriunda',
   'nativo', 'nativa', 'salí', 'salimos', 'llegamos', 'llegué',
 ]
+
+/**
+ * 🔴 "en" counts only after a verb of residence or movement: "vivo en",
+ * "nací en", "me quedé en". "Pienso en Soledad", "confío en Pedro" hold.
+ * Stems for regular forms; exact forms where a stem would catch other words.
+ */
+const PLACE_VERB_STEMS = ['viv', 'nac', 'crec', 'lleg', 'trabaj', 'qued', 'mud', 'resid', 'habit', 'regres']
+const PLACE_VERB_FORMS = new Set([
+  // estar
+  'estar', 'estoy', 'está', 'estás', 'estamos', 'están', 'estaba', 'estábamos', 'estaban',
+  'estuve', 'estuvo', 'estuvimos', 'estuvieron', 'estado', 'estuvimos',
+  // ir
+  'ir', 'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'íbamos', 'iban', 'fui', 'fue', 'fuimos',
+  'fueron', 'ido',
+  // venir
+  'venir', 'vengo', 'viene', 'venimos', 'vienen', 'venía', 'veníamos', 'vine', 'vino',
+  'vinimos', 'vinieron', 'venido',
+  // volver
+  'volver', 'vuelvo', 'vuelve', 'volvemos', 'volví', 'volvió', 'volvimos', 'volvieron',
+])
+
+function isPlaceVerb(word: string): boolean {
+  return PLACE_VERB_FORMS.has(word) || PLACE_VERB_STEMS.some((stem) => word.startsWith(stem))
+}
+
+/**
+ * 🔴 PEOPLE'S NAMES. A one-word finding that is a common given name, a
+ * diminutive or a surname is a PERSON the detector mistyped, whatever the
+ * sentence around it. Compact on purpose — a seatbelt, not a census — and the
+ * direction of every doubt is "hold".
+ *
+ * ⚠ Towns that share a name (Dolores, Soledad, Guadalupe, Zapata, Juárez) are
+ * deliberately NOT exempted: a reviewer releases a town in one click; a name
+ * shown in clear cannot be taken back. State names pass (`STATES`).
+ */
+const GIVEN_NAMES = [
+  // mujeres
+  'maría', 'guadalupe', 'lupe', 'lupita', 'juana', 'rosa', 'rosario', 'chayo', 'josefina',
+  'josefa', 'chepa', 'pepa', 'ana', 'margarita', 'mago', 'verónica', 'vero', 'leticia', 'lety',
+  'elena', 'teresa', 'tere', 'patricia', 'paty', 'paola', 'alejandra', 'ale', 'gabriela', 'gaby',
+  'martha', 'marta', 'carmen', 'mari', 'lucía', 'luz', 'isabel', 'chabela', 'chela', 'graciela',
+  'silvia', 'laura', 'adriana', 'claudia', 'mónica', 'norma', 'irma', 'alicia', 'beatriz', 'bety',
+  'gloria', 'esperanza', 'dolores', 'lola', 'soledad', 'concepción', 'concha', 'conchita',
+  'socorro', 'refugio', 'cuca', 'antonia', 'francisca', 'pancha', 'paquita', 'catalina', 'cata',
+  'julia', 'sofía', 'fernanda', 'daniela', 'valeria', 'andrea', 'karla', 'diana', 'sandra',
+  'yolanda', 'yola', 'angélica', 'araceli', 'blanca', 'cecilia', 'cristina', 'elvira', 'eva',
+  'imelda', 'inés', 'irene', 'jazmín', 'lourdes', 'lulú', 'marisol', 'mercedes', 'micaela',
+  'natalia', 'olga', 'pilar', 'raquel', 'reyna', 'rocío', 'ruth', 'sara', 'susana', 'victoria',
+  'virginia', 'ximena', 'yesenia', 'úrsula',
+  // hombres
+  'josé', 'pepe', 'juan', 'juanito', 'pedro', 'luis', 'carlos', 'jorge', 'miguel', 'jesús',
+  'chucho', 'chuy', 'antonio', 'toño', 'francisco', 'paco', 'pancho', 'manuel', 'manolo',
+  'alejandro', 'roberto', 'beto', 'ricardo', 'fernando', 'javier', 'raúl', 'rafael', 'rafa',
+  'sergio', 'arturo', 'eduardo', 'lalo', 'enrique', 'kike', 'mario', 'martín', 'daniel',
+  'david', 'alberto', 'ramón', 'rubén', 'salvador', 'chava', 'gerardo', 'guillermo', 'memo',
+  'héctor', 'hugo', 'ignacio', 'nacho', 'jaime', 'joaquín', 'julio', 'leonardo', 'lorenzo',
+  'marco', 'mauricio', 'nicolás', 'óscar', 'pablo', 'rodrigo', 'samuel', 'santos', 'tomás',
+  'víctor', 'agustín', 'andrés', 'ángel', 'benito', 'cristian', 'diego', 'emiliano', 'ernesto',
+  'esteban', 'felipe', 'gabriel', 'gilberto', 'gustavo', 'isidro', 'jacinto', 'leonel',
+  'lucio', 'marcos', 'mateo', 'moisés', 'omar', 'porfirio', 'reynaldo', 'rogelio', 'saúl',
+  'simón', 'timoteo', 'ulises', 'vicente', 'germán', 'abel', 'adrián', 'aurelio', 'baltazar',
+  'camilo', 'cirilo', 'efraín', 'eusebio', 'fidel', 'gonzalo', 'heriberto', 'israel',
+]
+
+/** Common surnames that do not end in "-ez" (those are caught by {@link EZ_SURNAME}). */
+const SURNAMES = [
+  'garcía', 'flores', 'torres', 'rivera', 'morales', 'ortiz', 'cruz', 'reyes', 'ramos', 'romero',
+  'mendoza', 'castillo', 'vargas', 'guzmán', 'herrera', 'medina', 'aguilar', 'moreno', 'ruiz',
+  'díaz', 'silva', 'rojas', 'castro', 'ortega', 'delgado', 'vega', 'luna', 'ríos', 'campos',
+  'navarro', 'salazar', 'cortés', 'mejía', 'bravo', 'cervantes', 'escobar', 'estrada', 'fuentes',
+  'ibarra', 'lara', 'lozano', 'maldonado', 'mora', 'montes', 'muñoz', 'orozco', 'pacheco', 'peña',
+  'rangel', 'robles', 'rosales', 'salas', 'sandoval', 'serrano', 'solís', 'soto', 'velasco',
+  'zapata', 'acosta', 'ávila', 'barrera', 'bautista', 'cabrera', 'calderón', 'camacho', 'cano',
+  'carrillo', 'contreras', 'espinoza', 'espinosa', 'figueroa', 'gallegos', 'garza', 'gil',
+  'marín', 'miranda', 'molina', 'montoya', 'ochoa', 'olvera', 'padilla', 'ponce', 'quintero',
+  'rosas', 'trejo', 'valencia', 'zúñiga', 'santiago', 'león', 'zamora', 'mendez', 'vázquez',
+  'velázquez', 'domínguez',
+]
+
+/** "Martínez", "Gutiérrez", "Hernández", "Pérez": the patronymic ending. */
+const EZ_SURNAME = /^\p{Lu}\p{Ll}*[eé]z$/u
+
+/**
+ * Real towns that the "-ez" rule would hold, released by name. ⚠ EMPTY of
+ * anything that is also a common surname: "Juárez" alone holds (it is a
+ * surname first); "Ciudad Juárez" passes because "Ciudad" starts it, and
+ * "Gómez Farías" passes because the "-ez" rule reads one-word findings only.
+ */
+const EZ_TOWNS = new Set(['jerez'])
+
+const NAMES = new Set([...GIVEN_NAMES, ...SURNAMES])
+
+/** True when any word of the finding is a person's name (words after a saint are exempt). */
+function namesAPerson(words: readonly string[]): boolean {
+  if (words.length === 1) {
+    const only = lower(words[0]!)
+    if (STATE.has(only)) return false
+    if (EZ_SURNAME.test(words[0]!) && !EZ_TOWNS.has(only)) return true
+  }
+  for (let i = 0; i < words.length; i += 1) {
+    const w = lower(words[i]!)
+    // "San Juan Chamula", "Santa María Tonantzintla": the saint names the town.
+    if (SAINTS.has(w)) return false
+    if (NAMES.has(w) && !STATE.has(w)) return true
+  }
+  return false
+}
 
 /** The 32 Mexican states (and the capital), lower case: what a comma may introduce. */
 const STATES = [
@@ -183,7 +313,10 @@ function placeContext(text: string, at: number, needle: string, words: readonly 
       prev = bare(tokens[i] ?? '')
     }
     if (TOWN.has(prev)) townWordBefore = true
-    if (DIRECT_LOCATIVES.has(prev)) ok = true
+    if (prev === 'en') {
+      // 🔴 Only after a verb of residence or movement (`PLACE_VERB_*`).
+      ok = isPlaceVerb(bare(tokens[i - 1] ?? ''))
+    } else if (DIRECT_LOCATIVES.has(prev)) ok = true
     else if (prev === 'de' || prev === 'del') {
       const before = bare(tokens[i - 1] ?? '')
       if (ORIGIN.has(before)) ok = true
@@ -216,6 +349,7 @@ export function isTownLevelPlace(
   if (needle === '' || /[\d.#°º/]/u.test(needle)) return false
   const words = needle.split(/[\s,]+/u).filter(Boolean)
   if (!hasTownShape(words)) return false
+  if (namesAPerson(words)) return false
 
   const haystack = text.normalize('NFC')
   let from = 0

@@ -38,6 +38,10 @@ describe('🔴 a town, municipality, state or city found by verify does NOT hold
     ['Yo soy de Cuautla.', [{ text: 'Cuautla', type: 'lugar' }]],
     ['Mi familia es originaria de Tepoztlán, Morelos.', [{ text: 'Tepoztlán', type: 'lugar' }, { text: 'Morelos', type: 'lugar' }]],
     ['Trabajo en la Alcaldía Iztapalapa.', [{ text: 'Alcaldía Iztapalapa', type: 'lugar' }]],
+    ['Vivo en Cuernavaca.', [{ text: 'Cuernavaca', type: 'lugar' }]],
+    ['Nací en Oaxaca.', [{ text: 'Oaxaca', type: 'lugar' }]],
+    ['Vivo en Gómez Farías.', [{ text: 'Gómez Farías', type: 'lugar' }]],
+    ['Vivo en Ciudad Juárez.', [{ text: 'Ciudad Juárez', type: 'lugar' }]],
   ] as Array<[string, DetectorFinding[]]>)('%s → ready, town shown', async (text, late) => {
     const result = await gate(text, late)
     expect(result.status).toBe('ready')
@@ -91,6 +95,31 @@ describe('🔴 colonias, streets, numbers, C.P., ranchos, parajes, homes and peo
     expect(result.status).toBe('hold')
   })
 
+  // 🔴 The re-audit's measured passes (2026-10-21): a PERSON the detector
+  // typed `lugar`. Each must HOLD.
+  it.each([
+    ['vivo en Martínez', 'Vivo en Martínez desde hace años.', 'Martínez'],
+    ['trabajo en Gutiérrez', 'Trabajo en Gutiérrez todos los días.', 'Gutiérrez'],
+    ['me quedé en Zapata', 'Me quedé en Zapata una semana.', 'Zapata'],
+    ['vine desde Rosa', 'Vine desde Rosa con los niños.', 'Rosa'],
+    ['llegamos hasta Toño', 'Llegamos hasta Toño por la tarde.', 'Toño'],
+    ['estaba en Pedro', 'Estaba en Pedro cuando pasó.', 'Pedro'],
+    ['estoy en Lupita', 'Estoy en Lupita por ahora.', 'Lupita'],
+    ['soy de Hernández', 'Yo soy de Hernández.', 'Hernández'],
+    ['es de Ramírez', 'La tierra es de Ramírez.', 'Ramírez'],
+    ['pienso en Soledad', 'Siempre pienso en Soledad.', 'Soledad'],
+    ['confío en Pedro', 'Yo confío en Pedro.', 'Pedro'],
+    ['eso es de Soledad', 'Eso es de Soledad.', 'Soledad'],
+    ['la comunidad de Pedro Pérez', 'Vivo en la comunidad de Pedro Pérez.', 'Pedro Pérez'],
+    ['the same, whole phrase', 'Vivo en la comunidad de Pedro Pérez.', 'comunidad de Pedro Pérez'],
+    ['a bare "Juárez"', 'Vivo en Juárez desde niño.', 'Juárez'],
+    ['a "Nombre Apellido" pair', 'Vivo en Rosa Torres.', 'Rosa Torres'],
+    ['llegamos a Tepoztlán ("a" is not a locative)', 'Llegamos a Tepoztlán.', 'Tepoztlán'],
+  ])('%s → hold', async (_case, text, finding) => {
+    const result = await gate(text, [{ text: finding, type: 'lugar' }])
+    expect(result.status).toBe('hold')
+  })
+
   it('a town beside a held address does not save the address', async () => {
     const text = 'Vivo en Xoxocotla, Morelos, en la colonia Portales.'
     const result = await gate(text, [
@@ -130,6 +159,9 @@ describe('isTownLevelPlace — the two rules', () => {
     if (result.status !== 'ready') return
     expect(result.redactedText).not.toContain('Morelos 45')
     expect(result.redactedText).toContain('Xoxocotla')
+  })
+  it('⚠ documents residual risk 2: an uncommon name after "vivo en" still passes', () => {
+    expect(isTownLevelPlace({ text: 'Xiadani', type: 'lugar' }, 'Vivo en Xiadani.')).toBe(true)
   })
   it('refuses a finding that does not occur in the text', () => {
     expect(isTownLevelPlace({ text: 'Tlapa', type: 'lugar' }, text)).toBe(false)

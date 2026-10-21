@@ -275,6 +275,36 @@ describe('🔴 a stale gate run cannot overwrite a newer one (per-run claim toke
     expect(live).toMatchObject({ anonymisationStatus: 'ready', redactedText: 'Me llamo [Persona A].' })
   })
 
+  it('🔴 a NEWER run pending with its own token: the stale run\'s final write is rejected', async () => {
+    // Only the token tells the two runs apart: the row is `pending` either way.
+    const { payload, live } = oneRow(seededDraft())
+    let calls = 0
+    detector = {
+      name: 'stale',
+      async detect() {
+        calls += 1
+        if (calls === 1) {
+          // The sweep reset the row and a newer run claimed it; it is still running.
+          Object.assign(live, { anonymisationStatus: 'pending', anonymisationError: 'gate_running: newer-run' })
+          return []
+        }
+        return FINDINGS // the stale run would HOLD
+      },
+    }
+
+    const result = await anonymiseDocumentText({
+      payload: payload as never,
+      docId: 30,
+      contentKind: 'testimonio',
+      text: TEXT,
+      detector,
+    })
+
+    expect(result).toMatchObject({ ok: false, busy: true })
+    expect(live).toMatchObject({ anonymisationStatus: 'pending', anonymisationError: 'gate_running: newer-run' })
+    expect(live.heldText ?? null).toBeNull()
+  })
+
   it('the claim writes a token, and the run\'s own final write clears it', async () => {
     detector = { name: 'clean', detect: async () => [] }
     const { payload, live } = oneRow(seededDraft())
