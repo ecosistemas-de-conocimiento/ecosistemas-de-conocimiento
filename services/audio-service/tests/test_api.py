@@ -8,6 +8,7 @@ file and the route's ffprobe gate actually runs.
 from __future__ import annotations
 
 import io
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 
 import pytest
@@ -80,11 +81,19 @@ def client(tmp_path, monkeypatch, enqueued):
         redis, job_ttl=3600, transcript_ttl=3600, idempotency_ttl=3600, callback_ttl=3600
     )
     app.state.pool = object()
-    # NOT used as a context manager on purpose: that would run the lifespan,
-    # which dials a real Redis and a real arq pool.
-    test_client = TestClient(app)
-    test_client.seed_redis = fakeredis.FakeStrictRedis(server=server, decode_responses=True)
-    return test_client
+    # The real lifespan dials a real Redis and a real arq pool, so swap it for a
+    # no-op — but STILL enter the client as a context manager. ⚠ Without the
+    # `with`, TestClient runs every request on a fresh event loop, and the
+    # async fakeredis connection (bound to the first request's loop) fails the
+    # second request with "bound to a different event loop".
+    @asynccontextmanager
+    async def _no_lifespan(_app):
+        yield
+
+    app.router.lifespan_context = _no_lifespan
+    with TestClient(app) as test_client:
+        test_client.seed_redis = fakeredis.FakeStrictRedis(server=server, decode_responses=True)
+        yield test_client
 
 
 def _audio_bytes(tmp_path, seconds: float = 2.0) -> bytes:
