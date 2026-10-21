@@ -64,6 +64,18 @@ const ROWS: FakeRow[] = [
     nombre: 'Efrén Peralta Guzmán',
     text: 'E: Gracias por recibirnos. P: Mi pueblo queda en la sierra.',
   },
+  {
+    // ⚠ NOT A CORPUS GENRE. The corpus ships five formatos and all five are
+    // personal (#34); this row stands for a non-personal one, which must stay an
+    // ordinary, ungated `documento`.
+    id: 'SIM_0003',
+    archivo: 'SIM_0003_escuela_informe_tecnico_corta.txt',
+    ecosistema: 'escuela',
+    formato: 'informe_tecnico',
+    lengua: 'totonaco',
+    nombre: 'Rosa Elena Méndez',
+    text: 'Informe del taller de lectura: asistieron 14 familias.',
+  },
 ]
 
 let corpusDir: string
@@ -150,12 +162,13 @@ describe('reading the corpus in place', () => {
       'carta_presentacion',
       'testimonio',
       'biografia_oral',
+      'informe_tecnico',
     ])
   })
 
   it('drops a manifest row whose file is missing rather than failing the seed', () => {
     fs.rmSync(path.join(corpusDir, 'resultados', 'txt', ROWS[1].archivo))
-    expect(readCorpusManifest(corpusDir).map((e) => e.id)).toEqual(['SIM_0001', 'SIM_0002'])
+    expect(readCorpusManifest(corpusDir).map((e) => e.id)).toEqual(['SIM_0001', 'SIM_0002', 'SIM_0003'])
   })
 })
 
@@ -167,8 +180,8 @@ describe('seeding the corpus as documents', () => {
       uploaderId: 1,
       investigadorId: 2,
     })
-    expect(result?.created).toBe(3)
-    expect(created).toHaveLength(3)
+    expect(result?.created).toBe(4)
+    expect(created).toHaveLength(4)
     expect(created[0].data.extractedText).toBe(ROWS[0].text)
   })
 
@@ -183,15 +196,40 @@ describe('seeding the corpus as documents', () => {
     }
   })
 
-  it('maps only the testimonio genre onto the gated content kind', async () => {
-    // Everything else is somebody's own material, filed under their own name.
-    // See the reasoning on TESTIMONIO_FORMATOS.
+  it('🔴 gates every personal genre: carta, testimonio, biografía (owner, #34)', async () => {
+    // See the reasoning on GATED_FORMATOS. A carta and a biografía carry the
+    // person's name and town as much as a testimonio does.
     const { payload, created } = fakePayload()
     await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
     expect(created.map((d) => d.data.contentKind)).toEqual([
-      'documento',
+      'testimonio',
+      'testimonio',
       'testimonio',
       'documento',
+    ])
+  })
+
+  it('leaves a non-personal genre an ordinary documento, exactly as before', async () => {
+    const { payload, created } = fakePayload()
+    await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
+    const informe = created.find((d) => d.data.tema === 'escuela')!
+    expect(informe.data).toMatchObject({
+      contentKind: 'documento',
+      name: 'Documento — acompañamiento escolar (SIM_0003)',
+      lengua: 'totonaco',
+      publicationStatus: 'published',
+      extractedText: 'Informe del taller de lectura: asistieron 14 familias.',
+    })
+  })
+
+  it('titles a gated carta by genre, theme and number, with no corpus id', async () => {
+    const { payload, created } = fakePayload()
+    await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
+    expect(created.map((d) => d.data.name)).toEqual([
+      'Carta de presentación — traducción en salud (01)',
+      'Testimonio — traducción en salud (01)',
+      'Biografía oral — prevención del dengue (01)',
+      'Documento — acompañamiento escolar (SIM_0003)',
     ])
   })
 
@@ -201,7 +239,7 @@ describe('seeding the corpus as documents', () => {
     // anonymisation design refuses to keep.
     const { payload, created } = fakePayload()
     await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
-    const voz = created.find((d) => d.data.contentKind === 'testimonio')
+    const voz = created.find((d) => String(d.data.name).startsWith('Testimonio'))
     const title = String(voz?.data.name)
     expect(title).not.toContain('SIM_0015')
     for (const row of ROWS) {
@@ -216,7 +254,7 @@ describe('seeding the corpus as documents', () => {
     // Voz's own title. It groups the library and identifies nobody.
     const { payload, created } = fakePayload()
     await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
-    expect(created.map((d) => d.data.tema)).toEqual(['traduccion', 'traduccion', 'dengue'])
+    expect(created.map((d) => d.data.tema)).toEqual(['traduccion', 'traduccion', 'dengue', 'escuela'])
   })
 
   it('✅ puts the language on a documento — the positive half of the rule', async () => {
@@ -225,7 +263,7 @@ describe('seeding the corpus as documents', () => {
     const { payload, created } = fakePayload()
     await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
     const documentos = created.filter((d) => d.data.contentKind === 'documento')
-    expect(documentos.map((d) => d.data.lengua)).toEqual(['mazateco', 'náhuatl'])
+    expect(documentos.map((d) => d.data.lengua)).toEqual(['totonaco'])
   })
 
   it('🔴 NEVER puts the language on a testimonio', async () => {
@@ -235,8 +273,8 @@ describe('seeding the corpus as documents', () => {
     // `(tema, lengua)` cells the 59 testimonios fall into hold exactly one.
     const { payload, created } = fakePayload()
     await seedCorpusDocuments(payload as never, { organizationId: 7, uploaderId: 1 })
-    const voz = created.find((d) => d.data.contentKind === 'testimonio')
-    expect(voz?.data.lengua).toBeNull()
+    const gated = created.filter((d) => d.data.contentKind === 'testimonio')
+    expect(gated.map((d) => d.data.lengua)).toEqual([null, null, null])
     // …and the manifest really did carry one for that row, so this is a
     // suppression and not an absence.
     expect(ROWS.find((r) => r.formato === 'testimonio')?.lengua).toBe('mixteco')
@@ -288,9 +326,10 @@ describe('seeding the corpus as documents', () => {
     // seed cannot show the draft/publish flow.
     const many: FakeRow[] = Array.from({ length: 24 }, (_, i) => ({
       id: `SIM_${String(i).padStart(4, '0')}`,
-      archivo: `SIM_${String(i).padStart(4, '0')}_escuela_diario_personal_corta.txt`,
+      archivo: `SIM_${String(i).padStart(4, '0')}_escuela_informe_tecnico_corta.txt`,
       ecosistema: 'escuela',
-      formato: 'diario_personal',
+      // A non-personal genre: a personal one is gated and seeded as a draft (#34).
+      formato: 'informe_tecnico',
       lengua: 'totonaco',
       nombre: 'Persona Sintética',
       text: `Nota ${i}.`,
