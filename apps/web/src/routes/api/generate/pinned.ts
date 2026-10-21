@@ -17,7 +17,8 @@ export const MAX_TURN_REFS = 8;
  * `resolveEntity`, which already fences the text, gates testimonios to their
  * redacted text and clamps the size.
  *
- * Order: the user's own `@`-mentions first (they asked for those THIS turn),
+ * Order: the user's own `@`-mentions first (they asked for those THIS turn;
+ * the caller appends a document named by title, `$lib/server/titleMatch`),
  * then the pinned documents in the order the conversation got them. A document
  * both mentioned and pinned is sent once.
  *

@@ -1,6 +1,16 @@
 /**
  * CONVERSATIONS BECOME CORPUS — turn by turn, and never the thread twice.
  *
+ * 🔴 NOT CALLED IN PRODUCTION SINCE 2026-10-21 (owner ruling: chat searches
+ * documents only, never conversation turns). The `messages` afterChange hook
+ * and the publish-time release that called {@link ingestConversationTurns} /
+ * {@link releaseConversationsWaitingOn} are removed; `noConversationIngest.test.ts`
+ * fails if a caller comes back. The web side also drops every `msg-*` chunk
+ * from retrieval (`apps/web/src/lib/server/engine/chunkFence.ts`). What still
+ * runs from here: the id helpers (`turnExternalId`, `messageIdFromExternalId`)
+ * and the status list, which the erase path and the ingest callback use for
+ * turns ingested before the ruling.
+ *
  * ── 🔴 THE ONE THING THIS FILE EXISTS TO GET RIGHT ───────────────────────────
  *
  * **Append the new turns. Never re-ingest the thread.**

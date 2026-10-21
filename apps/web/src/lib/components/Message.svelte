@@ -11,8 +11,7 @@
   import { MessageContent, CitationCard } from '@edc/chat-engine/svelte';
   import { CHAT_KIND_REGISTRY } from '$lib/engine/registry';
   import { CHAT_CITATION_LABELS, chatCitationHref } from '$lib/engine/client';
-  import { markAssistantCitations } from '$lib/assistantChunks';
-  import { provenanceToCitations } from '@edc/chat-engine/core';
+  import { citationsWithOrdinals } from '$lib/citationOrdinals';
   import type { CitationLike, MentionRefLike } from '@edc/chat-engine/core';
 
   let {
@@ -63,7 +62,8 @@
   // persisted provenance to the engine's domain-agnostic `CitationLike[]`; the
   // body stays in this app's own Markdown renderer, so the card renders only
   // the quoted-passage cards + the "Fuentes consultadas" list.
-  const rawCitations = $derived<CitationLike[]>(provenanceToCitations(msg.provenance ?? null));
+  // Each source keeps the `[N]` the answer used for it (`$lib/citationOrdinals`).
+  const rawCitations = $derived<CitationLike[]>(citationsWithOrdinals(msg.provenance ?? null));
 
   /**
    * A user can chat against their OWN drafts, so an answer may quote a document
@@ -82,9 +82,7 @@
    * belongs to the conversations it was added to.
    */
   const draftIds = $derived(draftDocumentIds(app.active?.docs ?? []));
-  // An earlier assistant answer retrieved as a source is labelled as such, the
-  // same words the model reads in the prompt fence ($lib/assistantChunks).
-  const marked = $derived(markDraftCitations(markAssistantCitations(rawCitations), draftIds));
+  const marked = $derived(markDraftCitations(rawCitations, draftIds));
   const citations = $derived(marked.citations);
   const hasCitations = $derived(isAssistant && !msg.error && citations.length > 0);
   const ordinals = $derived(hasCitations ? citations.map((c) => c.ordinal) : []);

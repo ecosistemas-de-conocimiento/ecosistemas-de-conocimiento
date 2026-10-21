@@ -53,7 +53,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/sessions/[id]/messages', () => {
-  it('🔴 strips sessionId/authoredBy from persisted provenance and derives isAssistantAnswer', async () => {
+  it('🔴 strips sessionId/authoredBy from persisted provenance, and drops conversation-turn sources', async () => {
     mockedBackendFetch.mockResolvedValue(
       json({
         docs: [
@@ -67,13 +67,12 @@ describe('GET /api/sessions/[id]/messages', () => {
     const text = await res.text();
     expect(text).not.toContain('"authoredBy"');
     expect(text).not.toContain('"sessionId"');
-    const body = JSON.parse(text) as { docs: Array<{ provenance?: { chunks: Array<{ metadata: unknown }> } }> };
+    const body = JSON.parse(text) as { docs: Array<{ provenance?: { chunks: unknown[] } }> };
     expect(text).not.toContain('msg-41');
-    expect(body.docs[1]!.provenance!.chunks[0]!.metadata).toEqual({
-      publication: 'published',
-      title: 'Conversación',
-      isAssistantAnswer: true,
-    });
+    // 🔴 A conversation turn saved as a source before 2026-10-21 is dropped:
+    // no "Conversación" citation reaches the browser.
+    expect(text).not.toContain('Conversación');
+    expect(body.docs[1]!.provenance!.chunks).toEqual([]);
     expect(body.docs[1]).toMatchObject({ id: 2, role: 'assistant', content: 'a' });
   });
 });

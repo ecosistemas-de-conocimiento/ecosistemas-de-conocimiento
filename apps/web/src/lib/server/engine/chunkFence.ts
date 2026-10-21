@@ -15,11 +15,10 @@
  *   …chunk text, with every <fuente / </fuente look-alike neutralised…
  *   </fuente>
  *
- * Earlier assistant answers are DROPPED by default (owner ruling 2026-10-20,
- * `FenceOptions.retrieveAssistantChunks`). When an operator brings them back
- * they get `tipo="respuesta anterior del asistente, no es fuente primaria"` on
- * the opening tag. The system-prompt rule that gives the
- * fence its meaning is `CHUNK_DATA_RULE` (`./prompt`).
+ * 🔴 Conversation turns (questions AND answers) are DROPPED on every leg,
+ * always, with no flag (owner ruling 2026-10-21: chat searches documents
+ * only). See `$lib/turnChunks`. The system-prompt rule that gives the fence its
+ * meaning is `CHUNK_DATA_RULE` (`./prompt`).
  *
  * ⚠ The engine copies `RetrievedChunk.text` into the persisted provenance (the
  * citation card's quoted passage). `restorePassages` puts the ORIGINAL text
@@ -46,9 +45,7 @@ import type {
   RetrieveMatch,
 } from '@edc/chat-engine/core';
 // Relative, not `$lib`: the eval harness in apps/backend imports this file.
-import { ASSISTANT_CHUNK_LABEL, isAssistantAuthored } from '../../assistantChunks';
-
-export { ASSISTANT_CHUNK_LABEL };
+import { isConversationTurnChunk } from '../../turnChunks';
 
 /**
  * Look-alike detection works on a COMPARISON COPY of the text, one entry per
@@ -154,14 +151,13 @@ function safeId(id: string): string {
 }
 
 /** `<fuente id=…>` + neutralised text + `</fuente>`. */
-function fence(id: string, text: string, tipo = ''): string {
-  return `<fuente id="${safeId(id)}"${tipo}>\n${neutraliseFenceTags(text)}\n</fuente>`;
+function fence(id: string, text: string): string {
+  return `<fuente id="${safeId(id)}">\n${neutraliseFenceTags(text)}\n</fuente>`;
 }
 
 /** The fenced form of one chunk's text, as the model reads it. */
-export function fenceChunkText(chunk: Pick<RetrieveMatch, 'chunkId' | 'text' | 'metadata'>): string {
-  const tipo = isAssistantAuthored(chunk.metadata) ? ` tipo="${ASSISTANT_CHUNK_LABEL}"` : '';
-  return fence(chunk.chunkId, chunk.text ?? '', tipo);
+export function fenceChunkText(chunk: Pick<RetrieveMatch, 'chunkId' | 'text'>): string {
+  return fence(chunk.chunkId, chunk.text ?? '');
 }
 
 /**
@@ -179,40 +175,24 @@ export function withFencedRefs<A extends DomainAdapter>(adapter: A): A {
   };
 }
 
-export interface FenceOptions {
-  /**
-   * Are earlier assistant answers (chunk metadata `authoredBy: 'assistant'`)
-   * retrievable at all? Owner ruling 2026-10-20: NO, so the default is
-   * `false`. Production reads it from `CHAT_RETRIEVE_ASSISTANT_CHUNKS`
-   * (`retrieveAssistantChunks()` in `./config`); `true` brings them back,
-   * labelled. Every leg passes through this one wrapper: the published and
-   * draft legs, hybrid `retrieveMulti`, the graph provider's widened retrieve
-   * and the query-expansion variants.
-   */
-  retrieveAssistantChunks?: boolean;
-}
-
-/** `CHAT_RETRIEVE_ASSISTANT_CHUNKS` env value → on/off. Default OFF; on on/1/true/yes. */
-export function parseAssistantChunksFlag(raw: string | undefined): boolean {
-  return ['on', '1', 'true', 'yes'].includes((raw ?? '').trim().toLowerCase());
-}
-
 /**
- * Extra chunks each leg asks for while assistant answers are filtered out.
+ * Extra chunks each leg asks for, because conversation turns are dropped.
  *
  * The filter runs AFTER retrieval (ai-service's `filter` has no "not equal"),
- * so a dropped answer would cost its top-K slot. Each leg asks for `topK + 3`
- * (and `limit + 3` on `retrieveMulti`), drops the answers and trims back.
- * ⚠ 3 is inferred, not measured: audit 2026-10-17 saw an answer as the top-1
- * source in 6 of 14 turns, but did not count how many answers a turn held. A
- * leg that retrieves more than 3 answers still comes up short.
+ * so a dropped turn would cost its top-K slot. Each leg asks for `topK + 3`
+ * (and `limit + 3` on `retrieveMulti`), drops the turns and trims back.
+ * ⚠ 3 is inferred, not measured: audit 2026-10-17 saw an earlier answer as the
+ * top-1 source in 6 of 14 turns, but did not count how many turns a retrieve
+ * held. A leg that retrieves more than 3 turns still comes up short. Turns are
+ * no longer ingested (2026-10-21), so the corpus stops growing them; after a
+ * corpus wipe there are none and the over-fetch costs only rerank pool size.
  *
  * Rerank cost (inferred from ai-service's pool rule `min(topK × 4, 50)`,
  * quoted in `./rerank`, not measured): the published leg's pool grows from 20
  * to 32 candidates per turn; the draft leg stays at the 50 cap; the
  * graph-widened retrieve and the expansion variants are not reranked.
  */
-export const ASSISTANT_OVERFETCH = 3;
+export const TURN_OVERFETCH = 3;
 /** The engine's per-corpus topK when a request carries none. */
 const DEFAULT_TOPK = 5;
 
@@ -222,16 +202,15 @@ export interface FencedClient<T extends AIClient> {
   restorePassages<P extends Provenance | null | undefined>(provenance: P, cap: number): P;
 }
 
-export function withFencedChunks<T extends AIClient>(base: T, opts: FenceOptions = {}): FencedClient<T> {
-  const keepAssistant = opts.retrieveAssistantChunks ?? false;
+export function withFencedChunks<T extends AIClient>(base: T): FencedClient<T> {
   const originals = new Map<string, string>();
-  const extra = keepAssistant ? 0 : ASSISTANT_OVERFETCH;
+  const extra = TURN_OVERFETCH;
 
-  /** Drop answers, trim the over-fetch back to `cap`, fence what is left. */
+  /** Drop conversation turns, trim the over-fetch back to `cap`, fence what is left. */
   const fence = <M extends RetrieveMatch>(matches: M[], cap: number | undefined): M[] =>
     matches
-      .filter((x) => keepAssistant || !isAssistantAuthored(x.metadata))
-      .slice(0, keepAssistant ? undefined : cap)
+      .filter((x) => !isConversationTurnChunk(x.metadata))
+      .slice(0, cap)
       .map((x) => {
         // Strings only: a `text: null` from upstream must not make
         // `restorePassages` throw after the SSE stream has opened.
@@ -245,22 +224,18 @@ export function withFencedChunks<T extends AIClient>(base: T, opts: FenceOptions
     ingest: base.ingest.bind(base),
     async retrieve(req) {
       const topK = req.topK && req.topK > 0 ? req.topK : DEFAULT_TOPK;
-      const r = await base.retrieve(extra ? { ...req, topK: topK + extra } : req);
+      const r = await base.retrieve({ ...req, topK: topK + extra });
       return { ...r, matches: fence(r.matches, topK) };
     },
     ...(base.retrieveMulti
       ? {
           async retrieveMulti(req: Parameters<NonNullable<AIClient['retrieveMulti']>>[0]) {
-            const r = await base.retrieveMulti!(
-              extra
-                ? {
-                    ...req,
-                    ...(req.topK ? { topK: req.topK + extra } : {}),
-                    ...(req.limit ? { limit: req.limit + extra } : {}),
-                  }
-                : req,
-            );
-            // No `limit` → nothing to trim back to; the answers are still dropped.
+            const r = await base.retrieveMulti!({
+              ...req,
+              ...(req.topK ? { topK: req.topK + extra } : {}),
+              ...(req.limit ? { limit: req.limit + extra } : {}),
+            });
+            // No `limit` → nothing to trim back to; the turns are still dropped.
             return { ...r, matches: fence(r.matches, req.limit) };
           },
         }

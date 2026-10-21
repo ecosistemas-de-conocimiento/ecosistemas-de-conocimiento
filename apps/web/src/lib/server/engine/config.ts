@@ -13,7 +13,6 @@ import { DEFAULT_ENGINE_CONFIG } from '@edc/chat-engine/core';
 import { env } from '$env/dynamic/private';
 import { CHAT_KIND_REGISTRY } from '$lib/engine/registry';
 import { parseExpansionFlag } from './expand';
-import { parseAssistantChunksFlag } from './chunkFence';
 import { chatRetrievalPolicy, parseRerankFlag } from './rerank';
 import { hybridRetrievalForTurn } from './hybrid';
 import { CHAT_SYSTEM_PROMPT } from './prompt';
@@ -51,16 +50,6 @@ export const CHAT_ENGINE_CONFIG: EngineConfig = {
  */
 export function queryExpansionEnabled(): boolean {
   return parseExpansionFlag(env.QUERY_EXPANSION);
-}
-
-/**
- * Earlier assistant answers in chat retrieval (`./chunkFence`):
- * `CHAT_RETRIEVE_ASSISTANT_CHUNKS=on` brings them back, labelled. Default OFF
- * (owner ruling 2026-10-20). Read per call, so an operator can flip it without
- * a rebuild.
- */
-export function retrieveAssistantChunks(): boolean {
-  return parseAssistantChunksFlag(env.CHAT_RETRIEVE_ASSISTANT_CHUNKS);
 }
 
 /**

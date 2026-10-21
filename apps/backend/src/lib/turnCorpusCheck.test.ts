@@ -115,6 +115,30 @@ describe('checkTurnCorpus', () => {
     expect(report).toMatchObject({ erased: 2, eraseFailed: 0, skipped: 1 })
   })
 
+  it('🔴 allTurns (TURN_CHECK_ALL_TURNS=1): erases every turn, live message or not (ruling 2026-10-21)', async () => {
+    const t = deps()
+
+    const report = await checkTurnCorpus({ ...t.d, apply: true, allTurns: true })
+
+    expect(t.erase.mock.calls.map((c) => c.join(' ')).sort()).toEqual([
+      'eco-1 msg-1',
+      'eco-1 msg-2',
+      'eco-1 msg-3',
+    ])
+    expect(report).toMatchObject({ erased: 3, skipped: 1, orphanLive: 1, orphanStored: 2 })
+    expect(t.lines.some((l) => l.startsWith('turn ') && l.includes('msg-1'))).toBe(true)
+  })
+
+  it('allTurns is still read-only without apply, and still capped', async () => {
+    const t = deps()
+    expect(await checkTurnCorpus({ ...t.d, apply: false, allTurns: true })).toMatchObject({ erased: 0 })
+    expect(t.erase).not.toHaveBeenCalled()
+
+    const capped = await checkTurnCorpus({ ...t.d, apply: true, allTurns: true, maxErase: 2 })
+    expect(capped.refused).toMatch(/3 turns to erase, above the cap of 2/)
+    expect(t.erase).not.toHaveBeenCalled()
+  })
+
   it('a failed erase is counted and logged; the rest still runs', async () => {
     const t = deps()
     t.erase.mockImplementationOnce(async () => {
@@ -209,6 +233,12 @@ describe('turnCheckEnv — the script reads both databases itself, read-only', (
     expect(readOnly(cfg.backendUrl)).toBe('-c default_transaction_read_only=on')
     expect(new URL(cfg.backendUrl).pathname).toBe('/edc_backend')
     expect(cfg.apply).toBe(false)
+  })
+
+  it('all turns only on TURN_CHECK_ALL_TURNS=1', () => {
+    expect(turnCheckEnv(env).allTurns).toBe(false)
+    expect(turnCheckEnv({ ...env, TURN_CHECK_ALL_TURNS: '1' }).allTurns).toBe(true)
+    expect(turnCheckEnv({ ...env, TURN_CHECK_ALL_TURNS: 'true' }).allTurns).toBe(false)
   })
 
   it('applies only on TURN_CHECK_APPLY=1', () => {

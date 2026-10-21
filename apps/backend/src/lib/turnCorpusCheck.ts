@@ -11,6 +11,12 @@
  *   · `orphan-stored` the same, everything retired: hidden from every `asOf`
  *                     retrieve, but the text and vectors are still kept. A
  *                     delete whose after-commit erase failed leaves this.
+ *   · `turn`          only with `allTurns` (`TURN_CHECK_ALL_TURNS=1`): a
+ *                     `msg-<id>` document whose message row still exists.
+ *                     Chat searches documents only since 2026-10-21 and turns
+ *                     are no longer ingested, so every turn left in a corpus
+ *                     is dead weight. Retrieval already drops them (web,
+ *                     `apps/web/src/lib/turnChunks.ts`); this erases them.
  *   · `validity-mismatch` ANY ai-service document (turn or not) with a chunk
  *                     whose `valid_from` / `valid_to` differ from its
  *                     document's. ai-service mirrors validity onto chunks, so
@@ -54,7 +60,7 @@ export interface ValidityMismatchRow {
 }
 
 export interface TurnProblem {
-  kind: 'orphan-live' | 'orphan-stored'
+  kind: 'orphan-live' | 'orphan-stored' | 'turn'
   corpus: string
   org: string
   externalId: string
@@ -157,12 +163,28 @@ export function turnCheckExitCode(report: TurnCheckReport): 0 | 1 {
  *     does not lift it.
  */
 export async function checkTurnCorpus(
-  deps: TurnCheckDeps & { apply: boolean; maxErase?: number; force?: boolean },
+  deps: TurnCheckDeps & { apply: boolean; maxErase?: number; force?: boolean; allTurns?: boolean },
 ): Promise<TurnCheckReport> {
   const rows = await deps.readTurnRows()
   const candidateIds = [...new Set(rows.map((r) => messageIdOf(r.externalId)).filter((id): id is string => id != null))]
   const existing = candidateIds.length > 0 ? await deps.existingMessageIds(candidateIds) : new Set<string>()
-  const problems = classifyTurnRows(rows, existing)
+  const orphans = classifyTurnRows(rows, existing)
+  const orphanIds = new Set(orphans.map((p) => `${p.corpus}/${p.externalId}`))
+  // `allTurns`: every other `msg-<id>` doc too (see the header).
+  const problems: TurnProblem[] = deps.allTurns
+    ? [
+        ...orphans,
+        ...rows
+          .filter((r) => !orphanIds.has(`${r.corpus}/${r.externalId}`))
+          .map((r) => ({
+            kind: 'turn' as const,
+            corpus: r.corpus,
+            org: r.org,
+            externalId: r.externalId,
+            messageId: messageIdOf(r.externalId) ?? '',
+          })),
+      ]
+    : orphans
   const mismatches = await deps.readValidityMismatches()
   const backendMessages = await deps.countMessages()
 
@@ -194,7 +216,10 @@ export async function checkTurnCorpus(
     )
   }
   if (erasable > maxErase) {
-    guards.push(`${erasable} orphans to erase, above the cap of ${maxErase}: set TURN_CHECK_MAX_ERASE to raise it`)
+    guards.push(
+      `${erasable} ${deps.allTurns ? 'turns' : 'orphans'} to erase, above the cap of ${maxErase}: ` +
+        'set TURN_CHECK_MAX_ERASE to raise it',
+    )
   }
   for (const g of guards) deps.log(`warning ${g}`)
   if (!deps.apply) return report
@@ -258,6 +283,7 @@ export function turnCheckEnv(env: Record<string, string | undefined>): {
   backendUrl: string
   maxErase: number
   force: boolean
+  allTurns: boolean
 } {
   const ai = env.AI_DATABASE_URL?.trim()
   if (!ai) throw new Error('AI_DATABASE_URL is not set (the ai-service database, edc_ai).')
@@ -273,6 +299,7 @@ export function turnCheckEnv(env: Record<string, string | undefined>): {
     backendUrl: readOnlyUrl(backend),
     maxErase: rawCap ? Number(rawCap) : DEFAULT_MAX_ERASE,
     force: env.TURN_CHECK_FORCE === '1',
+    allTurns: env.TURN_CHECK_ALL_TURNS === '1',
   }
 }
 

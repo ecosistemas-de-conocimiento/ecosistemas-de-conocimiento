@@ -7,16 +7,13 @@ import type {
   RetrieveMultiRequest,
 } from '@edc/chat-engine/core';
 import {
-  ASSISTANT_CHUNK_LABEL,
-  ASSISTANT_OVERFETCH,
+  TURN_OVERFETCH,
   fenceChunkText,
-  parseAssistantChunksFlag,
   neutraliseFenceTags,
   withFencedChunks,
   withFencedRefs,
 } from './chunkFence';
 import { CHAT_SYSTEM_PROMPT, CHUNK_DATA_RULE } from './prompt';
-import { markAssistantCitations, ASSISTANT_CITATION_SUFFIX } from '$lib/assistantChunks';
 
 /**
  * Audit 2026-10-17 §3 item 3: retrieved chunks reached the prompt raw, as
@@ -157,13 +154,7 @@ describe('fenceChunkText', () => {
     expect(fenceChunkText(m(UUID_A, 'hola'))).toBe(`<fuente id="${UUID_A}">\nhola\n</fuente>`);
   });
 
-  it('labels an assistant-authored chunk as an earlier answer, not a primary source', () => {
-    const out = fenceChunkText(m(UUID_A, 'respuesta', { kind: 'conversacion', authoredBy: 'assistant' }));
-    expect(out.split('\n')[0]).toBe(`<fuente id="${UUID_A}" tipo="${ASSISTANT_CHUNK_LABEL}">`);
-  });
-
-  it('does not label a user turn or a document', () => {
-    expect(fenceChunkText(m(UUID_A, 'q', { kind: 'conversacion', authoredBy: 'user' }))).not.toContain('tipo=');
+  it('carries no `tipo` label: turns never reach the fence at all', () => {
     expect(fenceChunkText(m(UUID_A, 'q', { kind: 'documento' }))).not.toContain('tipo=');
   });
 
@@ -187,19 +178,16 @@ describe('system prompt', () => {
 describe('withFencedChunks through the real prepareTurn', () => {
   const matches = [
     m(UUID_A, INJECTION, { kind: 'documento', title: 'Informe' }),
-    m(UUID_B, 'Antes dije que el faro existe.', { kind: 'conversacion', authoredBy: 'assistant', title: 'Conversación' }),
+    m(UUID_B, 'El faro existe.', { kind: 'documento', title: 'Bitácora' }),
   ];
 
-  // These cases read how an assistant chunk is FENCED, so they keep it.
-  const keep = { retrieveAssistantChunks: true };
-
   it('every retrieved chunk is delimited, and the injection cannot close its delimiter', async () => {
-    const fenced = withFencedChunks(fakeClient(matches), keep);
+    const fenced = withFencedChunks(fakeClient(matches));
     const { user } = await turnFor(fenced.client);
     expect(openings(user)).toBe(2);
     expect(closings(user)).toBe(2);
     expect(user).toContain(`[1] <fuente id="${UUID_A}">\n`);
-    expect(user).toContain(`[2] <fuente id="${UUID_B}" tipo="${ASSISTANT_CHUNK_LABEL}">\n`);
+    expect(user).toContain(`[2] <fuente id="${UUID_B}">\n`);
     // The forged closing tag inside chunk 1 is neutralised: the first real
     // `</fuente>` comes AFTER the whole injected text.
     const firstClose = user.indexOf('</fuente>');
@@ -213,16 +201,16 @@ describe('withFencedChunks through the real prepareTurn', () => {
   });
 
   it('citations still map 1:1 by ordinal, with the ORIGINAL passage text restored', async () => {
-    const fenced = withFencedChunks(fakeClient(matches), keep);
+    const fenced = withFencedChunks(fakeClient(matches));
     const { prepared } = await turnFor(fenced.client);
     const provenance = fenced.restorePassages(prepared.provenance, 1200);
     expect(provenance?.chunks.map((c) => c.chunkId)).toEqual([UUID_A, UUID_B]);
     expect(provenance?.chunks[0]!.text).toBe(INJECTION);
-    expect(provenance?.chunks[1]!.text).toBe('Antes dije que el faro existe.');
+    expect(provenance?.chunks[1]!.text).toBe('El faro existe.');
     const citations = provenanceToCitations(provenance);
     expect(citations.map((c) => [c.ordinal, c.chunkId, c.title])).toEqual([
       [1, UUID_A, 'Informe'],
-      [2, UUID_B, 'Conversación'],
+      [2, UUID_B, 'Bitácora'],
     ]);
     expect(citations[0]!.passageText).toBe(INJECTION);
   });
@@ -260,24 +248,15 @@ describe('withFencedChunks through the real prepareTurn', () => {
     expect(out.matches.every((x) => x.text.startsWith('<fuente id="'))).toBe(true);
   });
 
-  it('fences the hybrid retrieveMulti leg too (kept assistant chunk included)', async () => {
-    const multi: AIClient = {
-      ...fakeClient(matches),
-      async retrieveMulti(_req: RetrieveMultiRequest) {
-        return { matches: matches.map((x) => ({ ...x, corpus: 'pub:1' })), corpora: [] };
-      },
-    };
-    const out = await withFencedChunks(multi, keep).client.retrieveMulti!({} as RetrieveMultiRequest);
-    expect(out.matches).toHaveLength(2);
-  });
 });
 
 /**
- * Owner ruling 2026-10-20: earlier assistant answers are NOT retrievable.
- * Dropped after retrieval, so each leg over-fetches by `ASSISTANT_OVERFETCH`
- * and trims back, and a turn keeps its full source count.
+ * Owner ruling 2026-10-21: chat searches DOCUMENTS ONLY. Every conversation
+ * turn (question or answer) is dropped after retrieval, with no flag, so each
+ * leg over-fetches by `TURN_OVERFETCH` and trims back, and a turn keeps its
+ * full source count.
  */
-describe('withFencedChunks — assistant answers are filtered out (default)', () => {
+describe('withFencedChunks — conversation turns are always filtered out', () => {
   const asst = (i: number) => m(`a${i}`, `respuesta ${i}`, { kind: 'conversacion', authoredBy: 'assistant' });
   const doc = (i: number) => m(`d${i}`, `documento ${i}`, { kind: 'documento', title: `Doc ${i}` });
 
@@ -300,15 +279,42 @@ describe('withFencedChunks — assistant answers are filtered out (default)', ()
     return { client, asked };
   }
 
-  it('is the default: no option drops them on retrieve', async () => {
+  it('drops answers AND questions on retrieve, with no option', async () => {
     const out = await withFencedChunks(fakeClient(matchesWithAssistant())).client.retrieve({ corpus: 'pub:1' } as never);
     expect(out.matches.map((x) => x.chunkId)).toEqual(['d1']);
   });
 
-  it('retrieve over-fetches by ASSISTANT_OVERFETCH and keeps the full topK of non-assistant chunks', async () => {
+  it("🔴 the user's own question never comes back as a source", async () => {
+    const question = m('q1', '¿Qué dice el informe de riego?', {
+      docId: 'msg-77',
+      kind: 'conversacion',
+      authoredBy: 'user',
+      title: 'Conversación',
+    });
+    const fenced = withFencedChunks(fakeClient([question, m('d1', 'Dato.', { kind: 'documento', title: 'Informe' })]));
+    const { prepared, user } = await turnFor(fenced.client);
+    expect(user).not.toContain('informe de riego?');
+    expect(prepared.provenance?.chunks.map((c) => c.chunkId)).toEqual(['d1']);
+    expect(provenanceToCitations(prepared.provenance).map((c) => c.title)).not.toContain('Conversación');
+  });
+
+  it('catches a turn by any one mark: kind, msg- docId, or authoredBy', async () => {
+    const turns = [
+      m('t1', 'a', { kind: 'conversacion' }),
+      m('t2', 'b', { docId: 'msg-12' }),
+      m('t3', 'c', { authoredBy: 'user' }),
+      m('t4', 'd', { authoredBy: 'assistant' }),
+    ];
+    const out = await withFencedChunks(fakeClient([...turns, m('d1', 'x', { docId: '12', kind: 'documento' })])).client.retrieve(
+      { corpus: 'pub:1' } as never,
+    );
+    expect(out.matches.map((x) => x.chunkId)).toEqual(['d1']);
+  });
+
+  it('retrieve over-fetches by TURN_OVERFETCH and keeps the full topK of non-assistant chunks', async () => {
     const { client, asked } = recordingClient(3);
     const out = await withFencedChunks(client).client.retrieve({ corpus: 'pub:1', topK: 5 } as never);
-    expect(asked).toEqual([{ topK: 5 + ASSISTANT_OVERFETCH }]);
+    expect(asked).toEqual([{ topK: 5 + TURN_OVERFETCH }]);
     expect(out.matches).toHaveLength(5);
     expect(out.matches.every((x) => x.chunkId.startsWith('d'))).toBe(true);
   });
@@ -322,52 +328,32 @@ describe('withFencedChunks — assistant answers are filtered out (default)', ()
   it('a retrieve without topK is treated as the engine default of 5', async () => {
     const { client, asked } = recordingClient(1);
     const out = await withFencedChunks(client).client.retrieve({ corpus: 'pub:1' } as never);
-    expect(asked).toEqual([{ topK: 5 + ASSISTANT_OVERFETCH }]);
+    expect(asked).toEqual([{ topK: 5 + TURN_OVERFETCH }]);
     expect(out.matches).toHaveLength(5);
   });
 
   it('retrieveMulti over-fetches topK and limit, drops assistant chunks, trims to limit', async () => {
     const { client, asked } = recordingClient(2);
     const out = await withFencedChunks(client).client.retrieveMulti!({ topK: 5, limit: 8 } as RetrieveMultiRequest);
-    expect(asked).toEqual([{ topK: 5 + ASSISTANT_OVERFETCH, limit: 8 + ASSISTANT_OVERFETCH }]);
+    expect(asked).toEqual([{ topK: 5 + TURN_OVERFETCH, limit: 8 + TURN_OVERFETCH }]);
     expect(out.matches).toHaveLength(8);
     expect(out.matches.every((x) => x.chunkId.startsWith('d'))).toBe(true);
-  });
-
-  it('retrieveAssistantChunks: true asks for exactly what the engine asked, and keeps them', async () => {
-    const { client, asked } = recordingClient(2);
-    const fenced = withFencedChunks(client, { retrieveAssistantChunks: true });
-    const out = await fenced.client.retrieve({ corpus: 'pub:1', topK: 5 } as never);
-    await fenced.client.retrieveMulti!({ topK: 5, limit: 8 } as RetrieveMultiRequest);
-    expect(asked).toEqual([{ topK: 5 }, { topK: 5, limit: 8 }]);
-    expect(out.matches.filter((x) => x.chunkId.startsWith('a'))).toHaveLength(2);
   });
 
   it('reaches the prompt and the provenance through the real prepareTurn', async () => {
     const fenced = withFencedChunks(fakeClient(matchesWithAssistant()));
     const { prepared, user } = await turnFor(fenced.client);
     expect(user).not.toContain('Antes dije');
-    expect(user).not.toContain(ASSISTANT_CHUNK_LABEL);
     expect(prepared.provenance?.chunks.map((c) => c.chunkId)).toEqual(['d1']);
   });
 
   function matchesWithAssistant() {
     return [
       m('a1', 'Antes dije que el faro existe.', { kind: 'conversacion', authoredBy: 'assistant' }),
+      m('u1', '¿Existe el faro?', { kind: 'conversacion', authoredBy: 'user', docId: 'msg-3' }),
       m('d1', 'Dato.', { kind: 'documento', title: 'Informe' }),
     ];
   }
-});
-
-describe('parseAssistantChunksFlag (CHAT_RETRIEVE_ASSISTANT_CHUNKS)', () => {
-  it('is off unless explicitly turned on', () => {
-    for (const v of [undefined, '', 'off', '0', 'false', 'no', 'nope']) {
-      expect(parseAssistantChunksFlag(v)).toBe(false);
-    }
-    for (const v of ['on', '1', 'true', 'yes', ' ON ', 'True']) {
-      expect(parseAssistantChunksFlag(v)).toBe(true);
-    }
-  });
 });
 
 describe('withFencedRefs (@-mentioned documents)', () => {
@@ -402,23 +388,5 @@ describe('withFencedRefs (@-mentioned documents)', () => {
 
   it('leaves an empty resolution empty', async () => {
     expect(await withFencedRefs(refAdapter('  ')).resolveEntity({ kind: 'document', id: '1' } as never)).toBe('  ');
-  });
-});
-
-describe('markAssistantCitations (citation card)', () => {
-  it('suffixes the title of a citation the server flagged isAssistantAnswer only', () => {
-    const out = markAssistantCitations([
-      { title: 'Conversación', metadata: { isAssistantAnswer: true } },
-      { title: 'Informe', metadata: { kind: 'documento' } },
-      { title: null, metadata: { isAssistantAnswer: true } },
-    ]);
-    expect(out[0]!.title).toBe(`Conversación${ASSISTANT_CITATION_SUFFIX}`);
-    expect(out[1]!.title).toBe('Informe');
-    expect(out[2]!.title).toBe(`Fuente sin título${ASSISTANT_CITATION_SUFFIX}`);
-  });
-
-  it('ignores a raw `authoredBy` — the browser never receives it (Fable audit #8)', () => {
-    const out = markAssistantCitations([{ title: 'X', metadata: { authoredBy: 'assistant' } }]);
-    expect(out[0]!.title).toBe('X');
   });
 });

@@ -18,17 +18,26 @@
  * `POST /api/sessions/[id]/ratings` drops the populated message from its echo
  * instead (collapsed to an id), so no provenance rides there at all.
  *
- * Only the fields the citation card reads survive. `authoredBy: 'assistant'`
- * becomes `isAssistantAnswer: true`, derived here, so the card can still say
- * "respuesta anterior del asistente".
+ * Only the fields the citation card reads survive.
+ *
+ * 🔴 CONVERSATION TURNS NEVER LEAVE (owner ruling 2026-10-21: chat cites
+ * documents only). Retrieval already drops them (`engine/chunkFence`); this
+ * drops them from answers saved BEFORE that too, so no "Conversación" source
+ * can reach a card. See `$lib/turnChunks`.
+ *
+ * 🔴 EACH CHUNK KEEPS ITS PROMPT ORDINAL. `ordinal` is the `[N]` the model
+ * wrote: the 1-based position in the prompt's chunk list. It is stamped here
+ * BEFORE anything is dropped (or kept from {@link citedBrowserProvenance}), so
+ * dropping a chunk never renumbers the others, and `[3]` in the answer still
+ * opens source 3. `$lib/citations` reads it back.
  *
  * ⚠ Adding a field the browser needs means adding it to an allowlist below.
  * That is the point: a new metadata key stays on the server until someone
  * decides it may leave.
  */
 
-import type { Provenance } from '@edc/chat-engine/core';
-import { isAssistantAuthored, ASSISTANT_ANSWER_FLAG } from '$lib/assistantChunks';
+import { citedProvenance, type Provenance } from '@edc/chat-engine/core';
+import { isConversationTurnChunk } from '$lib/turnChunks';
 import { DRAFT_PROVENANCE_FLAG } from '$lib/publication';
 
 /** Chunk fields the browser receives. Everything else is dropped. */
@@ -52,7 +61,7 @@ const CHUNK_FIELDS = [
  * Booleans: kept only when exactly `true`.
  */
 const METADATA_STRING_KEYS = ['title', 'publication'] as const;
-const METADATA_TRUE_KEYS = [DRAFT_PROVENANCE_FLAG, ASSISTANT_ANSWER_FLAG] as const;
+const METADATA_TRUE_KEYS = [DRAFT_PROVENANCE_FLAG] as const;
 
 type Chunk = Provenance['chunks'][number];
 
@@ -72,17 +81,24 @@ function browserMetadata(raw: unknown): Record<string, unknown> | null {
   for (const k of METADATA_TRUE_KEYS) {
     if (src[k] === true) out[k] = true;
   }
-  if (isAssistantAuthored(src)) out[ASSISTANT_ANSWER_FLAG] = true;
   return out;
 }
 
-function browserChunk(raw: unknown): Chunk | null {
+function isOrdinal(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v > 0;
+}
+
+/** `null` for an unreadable chunk AND for a conversation turn. */
+function browserChunk(raw: unknown, index: number): Chunk | null {
   if (!raw || typeof raw !== 'object') return null;
   const src = raw as Record<string, unknown>;
+  const meta = src.metadata && typeof src.metadata === 'object' ? (src.metadata as Record<string, unknown>) : null;
+  if (isConversationTurnChunk(meta)) return null;
   const out: Record<string, unknown> = {};
   for (const k of CHUNK_FIELDS) {
     if (src[k] !== undefined) out[k] = src[k];
   }
+  out.ordinal = isOrdinal(src.ordinal) ? src.ordinal : index + 1;
   out.metadata = browserMetadata(src.metadata);
   return out as unknown as Chunk;
 }
@@ -99,6 +115,25 @@ export function toBrowserProvenance(provenance: unknown): Provenance | null {
     : (provenance as { chunks?: unknown }).chunks;
   if (!Array.isArray(chunks)) return null;
   return { chunks: chunks.map(browserChunk).filter((c): c is Chunk => c !== null) };
+}
+
+/**
+ * 🔴 ONLY THE SOURCES THE ANSWER CITES (UX backlog #35). The engine puts every
+ * retrieved chunk on the provenance (`buildChatTurn`), cited or not, so a
+ * question about one document listed many unrelated ones. This keeps the
+ * chunks the COMPLETE answer marks with `[N]` (`citedProvenance`), each with
+ * its prompt ordinal, then applies the browser allowlist. An answer that cites
+ * nothing gets `null`: no sources shown.
+ *
+ * ⚠ Run it on the full answer text, never on a partial stream.
+ */
+export function citedBrowserProvenance(
+  provenance: Provenance | null | undefined,
+  answer: string,
+): Provenance | null {
+  const cited = citedProvenance(provenance, answer ?? '').map(({ relevance: _r, ...c }) => c);
+  const out = toBrowserProvenance({ chunks: cited });
+  return out && out.chunks.length > 0 ? out : null;
 }
 
 /** A message row with its provenance made browser-safe. Other fields untouched. */

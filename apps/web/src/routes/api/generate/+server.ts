@@ -19,20 +19,20 @@ import {
   makeChatDomainAdapter,
   makeEngineAIClient,
   queryExpansionEnabled,
-  retrieveAssistantChunks,
   useRegistryPrompt,
   withQueryExpansion,
 } from '$lib/server/engine';
 import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
 import { withPinnedRefs } from './pinned';
+import { fetchPublishedTitles, matchDocumentTitle, withTitleRef } from '$lib/server/titleMatch';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
 import { makeGraphProvider } from '$lib/server/graph';
 import { withFencedChunks, withFencedRefs } from '$lib/server/engine/chunkFence';
 import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { lenguaTurn } from '$lib/lengua';
 import { stampDraftProvenance } from '$lib/publication';
-import { toBrowserProvenance } from '$lib/server/citationProvenance';
+import { citedBrowserProvenance } from '$lib/server/citationProvenance';
 import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
 import { prepareTurn, respond, type ContextRef, type ContextScope } from '@edc/chat-engine/core';
 
@@ -198,7 +198,8 @@ function streamGenerate(
   upstream: Response,
   token: string | undefined,
   sessionId: string,
-  provenance: unknown,
+  /** The browser-safe provenance for the COMPLETE answer (cited sources only). */
+  provenanceFor: (answer: string) => unknown,
   sentSystemPrompt: string | undefined,
   /** Extra `generationMeta` fields for this turn (C-6: `expansionCostUsd`). */
   extraMeta: Record<string, unknown> = {},
@@ -253,6 +254,7 @@ function streamGenerate(
                 });
                 continue;
               }
+              const provenance = provenanceFor(evt.text ?? '');
               const messageId = await persistAssistantMessage(
                 token,
                 sessionId,
@@ -398,6 +400,11 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       ? fetchLenguaIndex(locals.token, organizationId).then((r) => r.index.lenguas)
       : null;
 
+  // The ecosistema's published document titles, for "tell me about <title>"
+  // (UX #35, `$lib/server/titleMatch`). Starts now, awaited when the inline
+  // refs are built. Best-effort: a failed read pins nothing.
+  const publishedTitles = fetchPublishedTitles(locals.token, organizationId);
+
   // Build the Domain Adapter + the engine's AIClient over this app's BFF client.
   const adapter = withFencedRefs(makeChatDomainAdapter({
     token: locals.token,
@@ -432,16 +439,14 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // widened retrieve) reach the prompt as `<fuente id=…>…</fuente>`; the
   // adapter above (`withFencedRefs`) fences `@`-mentioned documents the same way. Common tag
   // look-alikes and line-leading `[N]` inside the text are neutralised — a
-  // cheap fold, not a guarantee (see `neutraliseFenceTags`). Earlier assistant
-  // answers are labelled. The graph block and the summary are NOT fenced.
+  // cheap fold, not a guarantee (see `neutraliseFenceTags`). The graph block
+  // and the summary are NOT fenced.
   // `restorePassages` puts the original passage text back on the provenance
   // before it is persisted.
-  // Earlier assistant answers are dropped from every leg (owner ruling
-  // 2026-10-20), each leg over-fetching so the turn keeps its source count.
-  // `CHAT_RETRIEVE_ASSISTANT_CHUNKS=on` brings them back, labelled.
-  const fenced = withFencedChunks(unfencedAI, {
-    retrieveAssistantChunks: retrieveAssistantChunks(),
-  });
+  // 🔴 Conversation turns (questions and answers) are dropped from every leg,
+  // always (owner ruling 2026-10-21: documents only), each leg over-fetching
+  // so the turn keeps its source count. See `$lib/turnChunks`.
+  const fenced = withFencedChunks(unfencedAI);
   const engineAI = fenced.client;
 
   // 🔴 THE SECOND RETRIEVAL PATH — GraphRAG (ADR §8).
@@ -507,6 +512,8 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // generates. Best-effort throughout — a failing context step degrades to
   // empty inside the engine and never breaks the turn.
   const retrievalPolicy = chatTurnRetrievalPolicy(hybrid);
+  // A message that names exactly one published document pins it for this turn.
+  const titleMatch = matchDocumentTitle(userMessage, await publishedTitles);
   const engineTurnArgs = {
     config: CHAT_ENGINE_CONFIG,
     aiClient: turnAI,
@@ -518,9 +525,10 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     scope,
     history,
     userMessage,
-    // `@`-mentions plus every document pinned ("fijar") in this conversation.
-    // See `./pinned.ts`: the docs panel promises pinned documents are sent.
-    inlineRefs: withPinnedRefs(body.contextRefs, sessionDocs),
+    // `@`-mentions, then the document the message names by title, then every
+    // document pinned ("fijar") in this conversation. See `./pinned.ts`: the
+    // docs panel promises pinned documents are sent.
+    inlineRefs: withPinnedRefs(withTitleRef(body.contextRefs, titleMatch), sessionDocs),
     // Omitted entirely when there is no ecosistema to scope a graph read to,
     // so the engine takes exactly the code path it took before GraphRAG.
     ...(graphProvider ? { graphProvider } : {}),
@@ -579,11 +587,14 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
         // Mark chunks that came from THIS user's draft corpus before the turn
         // is persisted, so the citation stays labelled after a reload — the
         // corpus name is the exact signal, and it is only knowable here.
-        // Then the browser allowlist (Fable audit #8): what is saved is what
-        // every member's browser later reads back.
-        toBrowserProvenance(
-          stampDraftProvenance(fenced.restorePassages(prepared.provenance, PASSAGE_TEXT_CAP), draftCorpus),
-        ),
+        // Then only the sources the finished answer cites (UX #35), through
+        // the browser allowlist (Fable audit #8): what is saved is what every
+        // member's browser later reads back.
+        (answer) =>
+          citedBrowserProvenance(
+            stampDraftProvenance(fenced.restorePassages(prepared.provenance, PASSAGE_TEXT_CAP), draftCorpus),
+            answer,
+          ),
         upstream.unit.systemPrompt,
         turnMeta(),
       );
@@ -614,9 +625,10 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   try {
     const { generation, provenance: rawProvenance } = await respond(engineTurnArgs);
     // See the streaming branch: stamp the caller's own drafts before
-    // persisting, then the browser allowlist.
-    const provenance = toBrowserProvenance(
+    // persisting, keep the cited sources only, then the browser allowlist.
+    const provenance = citedBrowserProvenance(
       stampDraftProvenance(fenced.restorePassages(rawProvenance, PASSAGE_TEXT_CAP), draftCorpus),
+      generation.text,
     );
     const messageId = await persistAssistantMessage(
       locals.token,

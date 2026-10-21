@@ -10,8 +10,7 @@
  *
  * Fixture: 8 retrieved chunks (the chat policy's merged limit) of `chunkChars`
  * characters (default 1350, about a median eval prompt of 11,283 chars / 8,
- * quoted from apps/backend/src/eval/results.json), one an earlier assistant
- * answer, UUID chunk ids, and (unless `--no-ref`) one @-mentioned document of
+ * quoted from apps/backend/src/eval/results.json), UUID chunk ids, and (unless `--no-ref`) one @-mentioned document of
  * 3,500 chars.
  *
  * Tokens: `cl100k_base` via js-tiktoken, a PROXY — the chat model's own
@@ -62,7 +61,7 @@ const matches: RetrieveMatch[] = Array.from({ length: 8 }, (_, i) => ({
   chunkId: id(i),
   score: 0.8,
   text: fill(chunkChars),
-  metadata: i === 0 ? { kind: 'conversacion', authoredBy: 'assistant' } : { kind: 'documento' },
+  metadata: { kind: 'documento' },
 }));
 const client: AIClient = {
   async generateSync() {
@@ -106,9 +105,8 @@ async function measure(aiClient: AIClient, a: DomainAdapter, systemPrompt: strin
 
 const encode = loadTokenizer();
 const before = await measure(client, adapter, OLD_SYSTEM, encode);
-// Keep the assistant chunk: this measures the fence, including its labelled tag.
 const after = await measure(
-  withFencedChunks(client, { retrieveAssistantChunks: true }).client,
+  withFencedChunks(client).client,
   withFencedRefs(adapter),
   CHAT_SYSTEM_PROMPT,
   encode,

@@ -28,6 +28,10 @@
  *   TURN_CHECK_MAX_ERASE  cap on turns one APPLY may erase, default 50.
  *                       More orphans than that ⇒ APPLY erases nothing.
  *   TURN_CHECK_FORCE=1  APPLY even though the backend has 0 messages.
+ *   TURN_CHECK_ALL_TURNS=1  every `msg-*` turn, not only orphans: chat cites
+ *                       documents only since 2026-10-21, so with APPLY this
+ *                       retires every turn left in the shared corpora. The
+ *                       cap above still applies.
  *
  * 🔴 Nothing proves the two databases are the same environment. With the wrong
  * DATABASE_URI every turn looks orphaned, so APPLY refuses (exit 1) past the
@@ -56,11 +60,11 @@ type Closable = { $client?: { end(): Promise<void> } }
 
 async function main(): Promise<0 | 1> {
   // First, so a missing or malformed URL fails before anything connects.
-  const { apply, aiUrl, backendUrl, maxErase, force } = turnCheckEnv(process.env)
+  const { apply, aiUrl, backendUrl, maxErase, force, allTurns } = turnCheckEnv(process.env)
   const ai = drizzle(aiUrl)
   const backend = drizzle(backendUrl)
 
-  console.log(`[check-turn-corpus] mode=${apply ? 'APPLY' : 'read-only'}`)
+  console.log(`[check-turn-corpus] mode=${apply ? 'APPLY' : 'read-only'}${allTurns ? ' all-turns' : ''}`)
   try {
     const report = await checkTurnCorpus({
       ...sqlReaders(ai, backend),
@@ -73,10 +77,14 @@ async function main(): Promise<0 | 1> {
       apply,
       maxErase,
       force,
+      allTurns,
     })
     console.log(`[check-turn-corpus] ${JSON.stringify(report)}`)
     if (!apply && report.orphanLive + report.orphanStored > 0) {
       console.log('[check-turn-corpus] read-only — re-run with TURN_CHECK_APPLY=1 to erase the orphans.')
+    }
+    if (!apply && allTurns && report.turnDocs > 0) {
+      console.log(`[check-turn-corpus] read-only — TURN_CHECK_APPLY=1 would erase ${report.turnDocs} turn docs.`)
     }
     return turnCheckExitCode(report)
   } finally {
