@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { provenanceToCitations } from '@edc/chat-engine/core';
 import { citedBrowserProvenance, toBrowserProvenance, toBrowserMessage } from './citationProvenance';
 import { DRAFT_PROVENANCE_FLAG } from '$lib/publication';
+import { NO_ANSWER_REPLY } from '$lib/server/engine/prompt';
 import { citationsWithOrdinals } from '$lib/citationOrdinals';
 import { chatCitationHref } from '$lib/engine/client';
 
@@ -137,11 +138,7 @@ describe('citedBrowserProvenance — only the sources the answer cites (#35)', (
     ]);
   });
 
-  it('an answer that cites nothing shows no sources', () => {
-    expect(citedBrowserProvenance(five as never, 'Los documentos no hablan de esto.')).toBeNull();
-  });
-
-  it('a marker past the end is ignored', () => {
+  it('a marker past the end is ignored, and still counts as citing: no fallback', () => {
     expect(citedBrowserProvenance(five as never, 'Dato [9].')).toBeNull();
   });
 
@@ -153,6 +150,103 @@ describe('citedBrowserProvenance — only the sources the answer cites (#35)', (
 
   it('carries no `relevance` field to the browser', () => {
     expect(hasKeyDeep(citedBrowserProvenance(five as never, '[2]'), 'relevance')).toBe(false);
+  });
+});
+
+// 🔴 Measured on dev: "dengue" (3 runs) answered with no [N] and showed 0
+// sources. An answer with no marker at all lists the top retrieved ones.
+describe('citedBrowserProvenance — an answer with no [N] lists the top sources', () => {
+  const scored = (i: number, score: number, rerankScore?: number) => ({
+    chunkId: `s${i}`,
+    documentId: `uuid-${i}`,
+    score,
+    ...(rerankScore === undefined ? {} : { rerankScore }),
+    corpus: 'eco-7',
+    text: `Pasaje ${i}.`,
+    metadata: { docId: String(i), title: `Doc ${i}`, publication: 'published' },
+  });
+  const ids = (p: ReturnType<typeof citedBrowserProvenance>) => (p?.chunks ?? []).map((c) => c.chunkId);
+  const ords = (p: ReturnType<typeof citedBrowserProvenance>) =>
+    (p?.chunks ?? []).map((c) => (c as { ordinal?: number }).ordinal);
+
+  it('no [N]: the top 3 by rerank score, best first, each with its prompt ordinal', () => {
+    const p = { chunks: [scored(1, 0.9, 0.1), scored(2, 0.1, 0.8), scored(3, 0.5, 0.5), scored(4, 0.3, 0.9), scored(5, 0.2, 0.2)] };
+    const out = citedBrowserProvenance(p as never, 'El dengue se transmite por mosquitos.');
+    expect(ids(out)).toEqual(['s4', 's2', 's3']);
+    expect(ords(out)).toEqual([4, 2, 3]);
+  });
+
+  it('no rerank score: ranks by the retrieval score', () => {
+    const p = { chunks: [scored(1, 0.2), scored(2, 0.9), scored(3, 0.5), scored(4, 0.7)] };
+    expect(ids(citedBrowserProvenance(p as never, 'Sin marcas.'))).toEqual(['s2', 's4', 's3']);
+  });
+
+  it('fewer than 3 retrieved: lists them all; none retrieved: no sources', () => {
+    expect(ids(citedBrowserProvenance({ chunks: [scored(1, 0.2)] } as never, 'Sin marcas.'))).toEqual(['s1']);
+    expect(citedBrowserProvenance({ chunks: [] } as never, 'Sin marcas.')).toBeNull();
+    expect(citedBrowserProvenance(null, 'Sin marcas.')).toBeNull();
+  });
+
+  it('🔴 the no-answer reply (the prompt constant) lists no sources', () => {
+    const p = { chunks: [scored(1, 0.9), scored(2, 0.8)] };
+    expect(citedBrowserProvenance(p as never, NO_ANSWER_REPLY)).toBeNull();
+    expect(citedBrowserProvenance(p as never, `Lo siento. ${NO_ANSWER_REPLY}`)).toBeNull();
+  });
+
+  it('the no-answer reply with a title match: only the matched document, as before', () => {
+    const p = { chunks: [scored(1, 0.9), scored(2, 0.8)] };
+    const out = citedBrowserProvenance(p as never, NO_ANSWER_REPLY, { id: '2', name: 'Doc 2' });
+    expect(ids(out)).toEqual(['s2']);
+  });
+
+  it('a near-miss wording is not the reply: the fallback applies', () => {
+    const p = { chunks: [scored(1, 0.9)] };
+    expect(ids(citedBrowserProvenance(p as never, 'Los documentos no hablan de dengue.'))).toEqual(['s1']);
+  });
+
+  it('with [N]: cited only, the fallback never adds a top chunk', () => {
+    const p = { chunks: [scored(1, 0.9), scored(2, 0.1), scored(3, 0.5)] };
+    expect(ids(citedBrowserProvenance(p as never, 'Dato [2].'))).toEqual(['s2']);
+  });
+
+  it('🔴 a conversation turn never takes a slot', () => {
+    const p = { chunks: [{ ...userTurnChunk, score: 0.99 }, scored(2, 0.5), scored(3, 0.4), scored(4, 0.3), scored(5, 0.2)] };
+    expect(ids(citedBrowserProvenance(p as never, 'Sin marcas.'))).toEqual(['s2', 's3', 's4']);
+  });
+
+  it('🔴 a testimonio: published chunks only, titled "Testimonio"', () => {
+    const t = (id: string, publication: string, score: number) => ({
+      ...scored(9, score),
+      chunkId: id,
+      text: publication === 'published' ? 'REDACTADO [Persona A]' : 'ORIGINAL Juana',
+      metadata: { docId: '9', title: 'Carta de Juana', kind: 'testimonio', publication },
+    });
+    const p = { chunks: [t('t-draft', 'draft', 0.99), t('t-pub', 'published', 0.6), scored(2, 0.5)] };
+    const out = citedBrowserProvenance(p as never, 'Sin marcas.')!;
+    expect(ids(out)).toEqual(['t-pub', 's2']);
+    expect(out.chunks[0]!.metadata).toMatchObject({ title: 'Testimonio' });
+    expect(JSON.stringify(out)).not.toMatch(/Juana/);
+  });
+
+  describe('with a title match', () => {
+    const p = { chunks: [scored(1, 0.9), scored(2, 0.8), scored(3, 0.7), scored(4, 0.6), scored(5, 0.1)] };
+
+    it('matched doc outside the top 3: the top 3 plus it, 4 at most', () => {
+      const out = citedBrowserProvenance(p as never, 'Sin marcas.', { id: '5', name: 'Doc 5', contentKind: 'documento' } as never);
+      expect(ids(out)).toEqual(['s1', 's2', 's3', 's5']);
+      expect(ords(out)).toEqual([1, 2, 3, 5]);
+    });
+
+    it('matched doc inside the top 3: listed once, no duplicate', () => {
+      const out = citedBrowserProvenance(p as never, 'Sin marcas.', { id: '2', name: 'Doc 2', contentKind: 'documento' } as never);
+      expect(ids(out)).toEqual(['s1', 's2', 's3']);
+    });
+
+    it('matched doc not retrieved: the top 3 plus a document-level entry', () => {
+      const out = citedBrowserProvenance(p as never, 'Sin marcas.', { id: '77', name: 'Doc 77', contentKind: 'documento' } as never)!;
+      expect(ids(out)).toEqual(['s1', 's2', 's3', 'document:77']);
+      expect(new Set(ords(out)).size).toBe(4);
+    });
   });
 });
 

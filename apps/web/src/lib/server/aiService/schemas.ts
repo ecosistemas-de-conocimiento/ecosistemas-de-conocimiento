@@ -200,6 +200,12 @@ export const retrievedChunkSchema = z.object({
   ordinal: z.number(),
   text: z.string(),
   score: z.number(),
+  // Per-leg scores ai-service adds on hybrid and rerank retrieves. Without
+  // them zod strips the keys and a caller cannot tell a cross-encoder `score`
+  // from a cosine. Optional: a plain dense retrieve sends none.
+  denseScore: z.number().optional(),
+  lexicalScore: z.number().optional(),
+  rerankScore: z.number().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 

@@ -26,6 +26,7 @@ vi.mock('$env/dynamic/private', () => ({ env: ENV }));
 import { POST } from './+server';
 import { resetHybridCapabilityCache } from '$lib/server/engine/hybrid';
 import { ANSWER_NOT_SAVED_CODE } from '$lib/aiMessages';
+import { NO_ANSWER_REPLY } from '$lib/server/engine/prompt';
 
 const SESSION = '5';
 const ECO = '7';
@@ -816,8 +817,9 @@ describe('POST /api/generate — only cited sources are kept', () => {
     expect(ordinalsOf((saves()[0]!.body as Saved).provenance)).toEqual([2]);
   });
 
-  it('sync: an answer that cites nothing saves and returns no sources', async () => {
+  it('sync: no [N] and nothing retrieved saves and returns no sources', async () => {
     world.answerText = 'Los documentos no hablan de esto.';
+    world.retrievePool = [];
     const body = (await (await POST(event(turn()))).json()) as Saved & { provenance: unknown };
     expect(body.provenance).toBeNull();
     expect(saves()[0]!.body).not.toHaveProperty('provenance');
@@ -831,10 +833,66 @@ describe('POST /api/generate — only cited sources are kept', () => {
     expect(ordinalsOf((saves()[0]!.body as Saved).provenance)).toEqual([1]);
   });
 
-  it('stream: no citation, no sources', async () => {
+  it('stream: no citation and nothing retrieved, no sources', async () => {
     world.streamText = 'Respuesta sin citas.';
+    world.retrievePool = [];
     const frames = await readSse(await POST(event(turn(), true)));
     expect(frames.find((f) => f.type === 'done')!.provenance).toBeNull();
+  });
+});
+
+// ── No [N] at all: the top retrieved sources (owner's rule 2026-10-21) ──────
+// 🔴 Measured on dev: "dengue" (3 runs) answered with no marker and showed 0
+// sources. Both paths list the top 3 by score, and save exactly that.
+// ⚠ Ranked on `score` here: the GraphRAG leg (`$lib/server/graph`) rebuilds
+// each chunk it finds with `score` only, and the fuse keeps that copy, so no
+// `rerankScore` reaches this route in this fixture. The rerank-first rule is
+// covered in `$lib/server/citationProvenance.test.ts`.
+describe('POST /api/generate — an answer with no [N] lists the top 3 sources', () => {
+  type P = { chunks: Array<{ metadata: { docId: string } }> } | null;
+  const docIds = (p: unknown) => ((p as P)?.chunks ?? []).map((c) => c.metadata.docId);
+  const chunk = (docId: string, score: number, rerankScore: number) => ({
+    documentId: `uuid-${docId}`,
+    chunkId: `c-${docId}`,
+    score,
+    denseScore: score,
+    rerankScore,
+    text: `TEXTO ${docId}.`,
+    metadata: { docId, title: `Doc ${docId}.pdf` },
+  });
+  beforeEach(() => {
+    world.retrievePool = [chunk('1', 0.2, 0.2), chunk('2', 0.9, 0.9), chunk('3', 0.5, 0.5), chunk('4', 0.7, 0.7)];
+  });
+
+  it('sync: returns and saves the same top 3, best first', async () => {
+    world.answerText = 'El dengue se transmite por mosquitos.';
+    const body = (await (await POST(event(turn()))).json()) as { provenance: unknown };
+    expect(docIds(body.provenance)).toEqual(['2', '4', '3']);
+    expect((saves()[0]!.body as { provenance: unknown }).provenance).toEqual(body.provenance);
+  });
+
+  it('stream: the done frame and the save hold the same top 3', async () => {
+    world.streamText = 'El dengue se transmite por mosquitos.';
+    const frames = await readSse(await POST(event(turn(), true)));
+    const done = frames.find((f) => f.type === 'done')!;
+    expect(docIds(done.provenance)).toEqual(['2', '4', '3']);
+    expect((saves()[0]!.body as { provenance: unknown }).provenance).toEqual(done.provenance);
+  });
+
+  it('🔴 the no-answer reply lists no sources, sync and stream', async () => {
+    world.answerText = `${NO_ANSWER_REPLY} Puedo ayudarte con otra pregunta.`;
+    const body = (await (await POST(event(turn()))).json()) as { provenance: unknown };
+    expect(body.provenance).toBeNull();
+    world.streamText = NO_ANSWER_REPLY;
+    const frames = await readSse(await POST(event(turn(), true)));
+    expect(frames.find((f) => f.type === 'done')!.provenance).toBeNull();
+    for (const save of saves()) expect(save.body).not.toHaveProperty('provenance');
+  });
+
+  it('with [N]: still cited only', async () => {
+    world.answerText = 'El dengue se transmite por mosquitos [1].';
+    const body = (await (await POST(event(turn()))).json()) as { provenance: unknown };
+    expect(docIds(body.provenance)).toHaveLength(1);
   });
 });
 
@@ -1033,10 +1091,10 @@ describe('POST /api/generate — a title match retrieves only that document', ()
     expect(body.provenance.chunks[0]!.text).toBeUndefined();
   });
 
-  it('no title match and no [N]: still no sources', async () => {
+  it('no title match and no [N]: the top retrieved sources', async () => {
     world.answerText = 'Las parteras acompañan los nacimientos.';
     const res = await POST(event(ask(QUESTION)));
-    expect(((await res.json()) as { provenance: unknown }).provenance).toBeNull();
+    expect(sourceDocIds(((await res.json()) as { provenance: unknown }).provenance)).toEqual(['79', '31']);
   });
 
   describe('🔴 a testimonio named by title, uncited', () => {

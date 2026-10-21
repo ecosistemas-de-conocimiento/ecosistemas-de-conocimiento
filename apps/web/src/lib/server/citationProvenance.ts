@@ -36,10 +36,11 @@
  * decides it may leave.
  */
 
-import { citedProvenance, type Provenance } from '@edc/chat-engine/core';
+import { citedProvenance, parseCitedOrdinals, type Provenance } from '@edc/chat-engine/core';
 import { isConversationTurnChunk } from '$lib/turnChunks';
 import { DRAFT_PROVENANCE_FLAG } from '$lib/publication';
 import type { TitledDoc } from '$lib/server/titleMatch';
+import { NO_ANSWER_REPLY } from '$lib/server/engine/prompt';
 
 /** Chunk fields the browser receives. Everything else is dropped. */
 const CHUNK_FIELDS = [
@@ -133,6 +134,21 @@ export function toBrowserProvenance(provenance: unknown): Provenance | null {
  * source list. So when no cited source is that document, it is added once
  * ({@link titleMatchSource}). Every other uncited chunk is still dropped.
  *
+ * 🔴 AN ANSWER WITH NO `[N]` AT ALL LISTS THE TOP RETRIEVED SOURCES (owner's
+ * overnight rule, 2026-10-21). Measured on dev: a broad question ("dengue", 3
+ * runs) got long answers with no marker, so cited-only showed 0 sources. Then
+ * the {@link FALLBACK_SOURCES} best chunks by score ({@link topRetrieved}) are
+ * the sources. An answer with at least one marker stays cited-only, even when
+ * every marker points past the end. With a title match too, the matched
+ * document is added once if the top ones do not already include it: at most
+ * {@link FALLBACK_SOURCES} + 1 entries.
+ *
+ * 🔴 NOT FOR THE NO-ANSWER REPLY. An answer containing the prompt's exact
+ * {@link NO_ANSWER_REPLY} ("Los documentos no hablan de esto.") gets no
+ * fallback: listing sources under it would contradict it. Exact substring of
+ * the prompt constant, no fuzzy match. A title-matched document is still
+ * added, as before.
+ *
  * ⚠ Run it on the full answer text, never on a partial stream.
  */
 export function citedBrowserProvenance(
@@ -140,14 +156,54 @@ export function citedBrowserProvenance(
   answer: string,
   titleMatch: TitledDoc | null = null,
 ): Provenance | null {
-  const cited: Array<Chunk & { ordinal?: number }> = citedProvenance(provenance, answer ?? '').map(
-    ({ relevance: _r, ...c }) => c,
-  );
+  const text = answer ?? '';
+  const cited: Array<Chunk & { ordinal?: number }> =
+    parseCitedOrdinals(text).length > 0
+      ? citedProvenance(provenance, text).map(({ relevance: _r, ...c }) => c)
+      : text.includes(NO_ANSWER_REPLY)
+        ? []
+        : topRetrieved(provenance);
   if (titleMatch && !cited.some((c) => chunkDocId(c) === titleMatch.id)) {
     cited.push(titleMatchSource(provenance, titleMatch));
   }
   const out = toBrowserProvenance({ chunks: cited });
   return out && out.chunks.length > 0 ? out : null;
+}
+
+/** How many retrieved sources an answer with no `[N]` lists. */
+export const FALLBACK_SOURCES = 3;
+
+/** The rerank score when present, else the retrieval score. */
+function rankScore(c: Chunk): number {
+  if (typeof c.rerankScore === 'number') return c.rerankScore;
+  return typeof c.score === 'number' ? c.score : 0;
+}
+
+/**
+ * The {@link FALLBACK_SOURCES} best retrieved chunks, highest score first,
+ * each with its prompt ordinal. Ties keep prompt order.
+ *
+ * Skipped before ranking, so they never take a slot: conversation turns, and
+ * 🔴 a testimonio chunk that is not from the `published` corpus (only that
+ * corpus holds the gate's redacted text, see {@link titleMatchSource}). A
+ * kept testimonio chunk is titled "Testimonio", whatever its metadata says.
+ */
+function topRetrieved(provenance: Provenance | null | undefined): Array<Chunk & { ordinal: number }> {
+  return (provenance?.chunks ?? [])
+    .map((c, i) => ({ c, ordinal: i + 1 }))
+    .filter(({ c }) => c && typeof c === 'object' && !isConversationTurnChunk(c.metadata))
+    .filter(({ c }) => !isTestimonioChunk(c) || c.metadata?.publication === 'published')
+    .sort((a, b) => rankScore(b.c) - rankScore(a.c) || a.ordinal - b.ordinal)
+    .slice(0, FALLBACK_SOURCES)
+    .map(({ c, ordinal }) => ({
+      ...c,
+      ...(isTestimonioChunk(c) ? { metadata: { ...c.metadata, title: 'Testimonio' } } : {}),
+      ordinal,
+    }));
+}
+
+function isTestimonioChunk(c: Chunk): boolean {
+  return c.metadata?.kind === 'testimonio' || c.metadata?.title === 'Testimonio';
 }
 
 function chunkDocId(c: { metadata?: Record<string, unknown> | null }): string | null {

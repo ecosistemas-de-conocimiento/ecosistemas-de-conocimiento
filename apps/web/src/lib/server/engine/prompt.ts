@@ -21,11 +21,28 @@ export const CHUNK_DATA_RULE =
  * used to echo the prompt's own vocabulary back at them: "según los fragmentos
  * recuperados", "no se menciona en el contexto proporcionado".
  */
+/**
+ * The exact sentence the model is told to use when the documents say nothing.
+ * `citedBrowserProvenance` reads it back: an answer containing it lists no
+ * fallback sources.
+ */
+export const NO_ANSWER_REPLY = 'Los documentos no hablan de esto.';
+
 export const PLAIN_LANGUAGE_RULE =
   'Quien te lee no es técnico. Nunca digas "fragmentos", "fragmentos ' +
   'recuperados", "contexto", "contexto proporcionado" ni "contenido ' +
   'recuperado": di "los documentos" o nombra el documento por su título. Si ' +
-  'los documentos no dicen algo, dilo así: "Los documentos no hablan de esto."';
+  `los documentos no dicen algo, dilo así: "${NO_ANSWER_REPLY}"`;
+
+/**
+ * Measured on dev (2026-10-21): a broad question ("dengue", 3 runs) got long
+ * answers with no `[N]`, so the source list relied on the no-marker fallback
+ * (`citedBrowserProvenance`). This asks for the marker after each claim.
+ */
+export const CITE_RULE =
+  'Cada vez que uses lo que dice un documento, pon su número entre corchetes ' +
+  'justo después de la frase, así: "El riego empezó en 2020 [2]." Si usas ' +
+  'varios, pon todos: [1, 3]. No pongas números a tus propias ideas.';
 
 export const CHAT_SYSTEM_PROMPT =
   'Eres un asistente que ayuda a una persona a consultar los documentos de su ' +
@@ -38,6 +55,8 @@ export const CHAT_SYSTEM_PROMPT =
   'entre lo que consta en el contexto y tus propias sugerencias. Si el contexto ' +
   'no alcanza para responder algo, dilo explícitamente.\n\n' +
   CHUNK_DATA_RULE +
+  '\n\n' +
+  CITE_RULE +
   '\n\n' +
   PLAIN_LANGUAGE_RULE +
   '\n\n' +
