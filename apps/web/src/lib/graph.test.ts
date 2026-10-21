@@ -19,7 +19,6 @@ import {
   GRAPH_NO_ECOSYSTEM,
   GRAPH_NO_ECOSYSTEM_ADMIN,
   GRAPH_NO_RESULTS,
-  GRAPH_PICK_ENTITY,
   GRAPH_RELATION_TYPES,
   GRAPH_VIEW_TYPES,
   graphContextParagraph,
@@ -718,13 +717,6 @@ describe('the Spanish vocabulary', () => {
     for (const type of GRAPH_VIEW_TYPES) {
       const plural = typeListLabel(type).toLowerCase();
       expect(GRAPH_EMPTY_NOTHING_PUBLISHED_HINT.toLowerCase()).toContain(plural);
-    }
-  });
-
-  it('invites the reader to pick any of the types, persona included', () => {
-    expect(GRAPH_PICK_ENTITY).toContain('persona');
-    for (const type of GRAPH_VIEW_TYPES) {
-      expect(GRAPH_PICK_ENTITY.toLowerCase()).toContain(typeChipLabel(type));
     }
   });
 });

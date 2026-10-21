@@ -17,8 +17,8 @@
     busy?: boolean;
     sessionId: string;
     /**
-     * ⚠ Narrow screen. Only the placeholder depends on it — the full hint is
-     * clipped mid-word at 380px. See `composerPlaceholder` for why.
+     * ⚠ Narrow screen. Unused since the placeholder became one short string at
+     * every width; kept so `Chat.svelte`, which passes it, needs no change.
      */
     narrow?: boolean;
     /** Send the message text + the `@`-mention refs attached to it. */
@@ -172,7 +172,7 @@
       oninput={onInput}
       onkeyup={onInput}
       onclick={onInput}
-      placeholder={composerPlaceholder(busy, narrow)}
+      placeholder={composerPlaceholder(busy)}
       class="composer-input"
       data-testid="composer-input"
       disabled={busy}

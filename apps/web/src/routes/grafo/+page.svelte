@@ -38,7 +38,6 @@
     GRAPH_ENTITY_NOT_FOUND,
     GRAPH_ENTITY_UNAVAILABLE,
     GRAPH_KICKER,
-    GRAPH_PICK_ENTITY,
     GRAPH_UNAVAILABLE,
     noEcosystemCopy,
     resultsSummary,
@@ -172,9 +171,8 @@
             onSelectEdge={(id) => navigate(data.entity!.entity.id, id)}
             onRecentre={(id) => navigate(id, null)}
           />
-        {:else}
-          <p class="placeholder">{GRAPH_PICK_ENTITY}</p>
         {/if}
+        <!-- No "pick an entity" hint when nothing is selected (owner, 2026-10-21). -->
       </section>
     </div>
 
@@ -305,17 +303,6 @@
   .count {
     margin: 0 0 0.2rem;
     font-size: 0.78rem;
-    color: var(--edc-color-ink-soft);
-  }
-
-  .placeholder {
-    margin: 0;
-    padding: 2.5rem 1rem;
-    text-align: center;
-    border: 1px dashed var(--edc-color-elevated-border);
-    border-radius: var(--edc-radius-3);
-    background: var(--edc-color-surface-soft);
-    font-size: 0.88rem;
     color: var(--edc-color-ink-soft);
   }
 

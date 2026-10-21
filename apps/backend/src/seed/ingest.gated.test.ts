@@ -207,6 +207,29 @@ describe('ingestSeededDocuments — 🔴 personal genres pass the gate first (#3
     expect(result).toEqual({ enqueued: 1, failed: 0, held: 0 })
   })
 
+  it('🔴 a person\'s OWN documento draft, even titled like a seeded genre, is not published', async () => {
+    // A user upload keeps its behaviour: an ungated `documento`. The seed loads
+    // every row in the ecosistema, so it must leave this one a draft.
+    detector = {
+      name: 'must-not-run',
+      async detect() {
+        throw new Error('the seed gated a user documento')
+      },
+    }
+    const { payload, live } = fakePayload(
+      seededDraft({
+        contentKind: 'documento',
+        name: 'Carta de presentación — mi propuesta',
+        tema: null,
+        anonymisationStatus: 'n/a',
+      }),
+    )
+    await run(payload)
+    expect(enqueue).not.toHaveBeenCalled()
+    expect(live.publicationStatus).toBe('draft')
+    expect(live.anonymisationStatus).toBe('n/a')
+  })
+
   it('a seeded testimonio is NOT published by this path: it stays a draft', async () => {
     const { payload, live } = fakePayload(
       seededDraft({ name: 'Testimonio — traducción en salud (01)' }),
@@ -215,7 +238,7 @@ describe('ingestSeededDocuments — 🔴 personal genres pass the gate first (#3
     expect(live.publicationStatus).toBe('draft')
   })
 
-  it('a non-personal documento is published with its original text, ungated', async () => {
+  it('an already-published documento (a user upload, or an older seed) keeps its original text, ungated', async () => {
     const { payload, live } = fakePayload(
       seededDraft({
         contentKind: 'documento',
