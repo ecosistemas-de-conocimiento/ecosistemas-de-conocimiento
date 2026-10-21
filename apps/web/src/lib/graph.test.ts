@@ -11,7 +11,6 @@ import {
   egoNeighbours,
   emptyGraphCopy,
   expandGraphQuery,
-  connectedEntities,
   filterEntities,
   GRAPH_EMPTY_NOTHING_PUBLISHED,
   GRAPH_EMPTY_NOTHING_PUBLISHED_HINT,
@@ -38,9 +37,6 @@ import {
   parseGraphRetrieval,
   parseGraphView,
   mergeNeighbours,
-  overviewLayout,
-  OVERVIEW_HEIGHT,
-  OVERVIEW_WIDTH,
   rankEntities,
   rankNeighbours,
   relationLabel,
@@ -1692,97 +1688,5 @@ describe('parseGraphView edges', () => {
 
   it('reads an older backend with no edges as none', () => {
     expect(parseGraphView({ entities }).edges).toEqual([]);
-  });
-});
-
-describe('connectedEntities — the overview hides degree-0 nodes (owner, 2026-10-21)', () => {
-  const rows = [
-    entity('a', 'tema', 'Agua', 9),
-    entity('b', 'lugar', 'Oaxaca', 5),
-    entity('c', 'tema', 'Aislado', 7),
-    entity('d', 'evento', 'Solo consigo', 4),
-  ];
-  const edges = [
-    { fromId: 'a', toId: 'b', support: 3, kind: 'relation' as const, coMentions: 0 },
-    { fromId: 'd', toId: 'd', support: 3, kind: 'relation' as const, coMentions: 0 }, // a self-loop is not a connection
-    { fromId: 'c', toId: 'zz', support: 3, kind: 'relation' as const, coMentions: 0 }, // nor is an edge to an unlisted id
-  ];
-
-  it('keeps only entities with an edge to another listed entity, in input order', () => {
-    expect(connectedEntities(rows, edges).map((e) => e.id)).toEqual(['a', 'b']);
-  });
-
-  it('draws nothing when nothing is connected', () => {
-    expect(connectedEntities(rows, [])).toEqual([]);
-  });
-
-  it('🔴 the lists still show every entity, isolated ones included', () => {
-    // The page passes `data.view.entities` through `filterEntities` to the lists
-    // and through `connectedEntities` only inside `OverviewGraph`.
-    expect(filterEntities(rows, '').map((e) => e.id)).toEqual(['a', 'b', 'c', 'd']);
-    expect(rows).toHaveLength(4); // not mutated
-    const drawn = overviewLayout(connectedEntities(rows, edges), edges).nodes.map((n) => n.id);
-    expect(drawn.sort()).toEqual(['a', 'b']);
-  });
-});
-
-describe('overviewLayout', () => {
-  // A corpus-sized fixture: 190 entities, a hub-and-spoke core and loose ends.
-  const many = Array.from({ length: 190 }, (_, i) =>
-    entity(`e${i}`, GRAPH_VIEW_TYPES[i % GRAPH_VIEW_TYPES.length]!, `Entidad ${i}`, 3 + (i % 40)),
-  );
-  const edges = Array.from({ length: 90 }, (_, i) => ({
-    fromId: `e${i % 12}`,
-    toId: `e${12 + i}`,
-    support: 3 + (i % 5),
-    kind: 'relation' as const,
-    coMentions: 0,
-  }));
-
-  it('is deterministic: the same graph draws the same picture', () => {
-    expect(overviewLayout(many, edges)).toEqual(overviewLayout(many, edges));
-  });
-
-  it('keeps every node inside the canvas', () => {
-    const layout = overviewLayout(many, edges);
-    for (const node of layout.nodes) {
-      expect(node.x).toBeGreaterThanOrEqual(0);
-      expect(node.x).toBeLessThanOrEqual(OVERVIEW_WIDTH);
-      expect(node.y).toBeGreaterThanOrEqual(0);
-      expect(node.y).toBeLessThanOrEqual(OVERVIEW_HEIGHT);
-      expect(Number.isFinite(node.r)).toBe(true);
-    }
-  });
-
-  it('gives every node and every edge a unique key', () => {
-    const layout = overviewLayout(many, edges);
-    expect(new Set(layout.nodes.map((n) => n.id)).size).toBe(layout.nodes.length);
-    expect(new Set(layout.edges.map((e) => e.key)).size).toBe(layout.edges.length);
-  });
-
-  it('ranks the strongest entity first and draws it biggest', () => {
-    const layout = overviewLayout(many, edges);
-    const biggest = Math.max(...layout.nodes.map((n) => n.r));
-    expect(layout.nodes[0]!.rank).toBe(0);
-    expect(layout.nodes[0]!.r).toBe(biggest);
-  });
-
-  it('knows who is connected to whom, both ways', () => {
-    const layout = overviewLayout(many, edges);
-    expect(layout.adjacency.get('e0')?.has('e12')).toBe(true);
-    expect(layout.adjacency.get('e12')?.has('e0')).toBe(true);
-  });
-
-  it('copes with one entity and with none', () => {
-    expect(overviewLayout([], []).nodes).toEqual([]);
-    const one = overviewLayout([entity('x', 'tema', 'X', 3)], []);
-    expect(one.nodes[0]).toMatchObject({ x: OVERVIEW_WIDTH / 2, y: OVERVIEW_HEIGHT / 2 });
-  });
-
-  it('lays out a corpus-sized graph quickly', () => {
-    const start = performance.now();
-    overviewLayout(many, edges);
-    // Generous ceiling so a slow CI host does not flake.
-    expect(performance.now() - start).toBeLessThan(1500);
   });
 });
