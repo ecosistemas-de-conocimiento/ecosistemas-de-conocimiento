@@ -87,11 +87,48 @@ async function writeSessions(
   token: string | undefined,
   docId: string,
   sessionIds: string[],
+  extra: { isPinned?: boolean } = {},
 ): Promise<Response> {
   return backendFetch(token, `/api/documents/${encodeURIComponent(docId)}`, {
     method: 'PATCH',
-    body: JSON.stringify({ session: sessionIds.map(coerceRelationId) }),
+    body: JSON.stringify({ session: sessionIds.map(coerceRelationId), ...extra }),
   });
+}
+
+/**
+ * 🔴 BUG #37. The backend's `bindDocumentToEcosystem` answers a conversation
+ * that does not exist (or is not the caller's) with a 400 ValidationError,
+ * "No such conversation.", on `path: session`. A browser tab still listing a
+ * conversation deleted elsewhere hit exactly that, and the store could only
+ * say "HTTP 400". Recognise it, so the route can answer a plain
+ * `404 session_not_found` the store acts on (forget the conversation, retry).
+ *
+ * Payload nests the field errors under `errors[].data.errors[]`; a flatter
+ * `errors[]` shape is accepted too.
+ */
+function isNoSuchConversation(body: unknown): boolean {
+  const top = (body as { errors?: unknown })?.errors;
+  if (!Array.isArray(top)) return false;
+  const fieldErrors = top.flatMap((e) => {
+    const nested = (e as { data?: { errors?: unknown } })?.data?.errors;
+    return Array.isArray(nested) ? nested : [e];
+  });
+  return fieldErrors.some(
+    (e) =>
+      (e as { path?: unknown })?.path === 'session' &&
+      /no such conversation/i.test(String((e as { message?: unknown })?.message ?? '')),
+  );
+}
+
+/** `{ "pin": true }` in the body also pins the document. Any other body: no pin. */
+async function wantsPin(request: Request | undefined): Promise<boolean> {
+  if (!request) return false;
+  try {
+    const body = (await request.json()) as { pin?: unknown };
+    return body?.pin === true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -101,24 +138,39 @@ async function writeSessions(
  * writes nothing. A double click, a retried request and a stale picker all
  * mean the same thing to the user — "I want this here" — and it already is.
  */
-export const POST: RequestHandler = async ({ locals, params }) => {
+export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
 
   const sessionId = String(params.id);
   const docId = String(params.docId);
+  const pin = await wantsPin(request);
 
   const doc = await readDoc(locals.token, docId);
   if (!doc.ok) return json(doc.body, { status: doc.status });
 
   if (doc.sessionIds.includes(sessionId)) {
-    return json({ doc: doc.body, attached: true, changed: false }, { status: 200 });
+    if (!pin || doc.body?.isPinned === true) {
+      return json({ doc: doc.body, attached: true, changed: false }, { status: 200 });
+    }
+    // Already here but not pinned, and the caller asked for the pin.
+    const res = await writeSessions(locals.token, docId, doc.sessionIds, { isPinned: true });
+    const body = await res.json().catch(() => ({}));
+    return json(body, { status: res.status });
   }
 
   // Append. The existing ids are kept exactly as they were — this is the one
   // place where dropping them would silently detach the document from every
   // other conversation it lives in.
-  const res = await writeSessions(locals.token, docId, [...doc.sessionIds, sessionId]);
+  const res = await writeSessions(
+    locals.token,
+    docId,
+    [...doc.sessionIds, sessionId],
+    pin ? { isPinned: true } : {},
+  );
   const body = await res.json().catch(() => ({}));
+  if (res.status === 400 && isNoSuchConversation(body)) {
+    return json({ error: 'session_not_found' }, { status: 404 });
+  }
   return json(body, { status: res.status });
 };
 

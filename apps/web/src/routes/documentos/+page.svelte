@@ -334,17 +334,10 @@
           {/if}
 
           <div class="actions">
+            <!-- Backlog #2, owner ruling 2026-10-21: the primary action. The new
+                 conversation pins the document (`startSessionWithDoc`). -->
             <Button
-              variant="outline"
-              size="sm"
-              label="Usar en una conversación"
-              disabled={busyId === d.id}
-              dataTestId={`use-${d.id}`}
-              onClick={() => openPicker(d)}
-            />
-            <!-- Backlog #2. The store action lands from the chat lane. -->
-            <Button
-              variant="outline"
+              variant="solid"
               size="sm"
               label="Nueva conversación con este documento"
               disabled={busyId === d.id}
@@ -352,6 +345,14 @@
               onClick={async () => {
                 if (await app.startSessionWithDoc(d.id, filter)) await goto('/');
               }}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              label="Usar en una conversación"
+              disabled={busyId === d.id}
+              dataTestId={`use-${d.id}`}
+              onClick={() => openPicker(d)}
             />
             {#if gate.canPublish}
               <Button
