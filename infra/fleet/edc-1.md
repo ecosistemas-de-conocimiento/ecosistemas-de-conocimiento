@@ -1,8 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `2f60202` (UX batches 6–8: explainers
-removed, grouped citations, draft retrieve cap, pinned new conversation, polling badges, upload
-sniffing), deployed 2026-10-21 09:17 UTC — see §4o. Before that, dev ran `d12f0b4` (UX batches 1–5:
+**Status:** live since 2026-10-17. Dev runs `main` @ `a4643cb` (privacy gate, Voz-only seed, chat
+searches documents only), deployed 2026-10-21 11:52 UTC, on freshly wiped and reseeded databases
+with two ecosistemas — see §4p. Before that, dev ran `2f60202` (UX batches 6–8; 09:17 UTC, §4o).
+Before that, dev ran `d12f0b4` (UX batches 1–5:
 pinned docs, documents page, closed sign-up, whole graph, Revisión wording; 08:51 UTC, §4n). Before that, dev ran `39823b3` (conversation delete erases its
 turns from ai-service; ratings FKs cascade; 2026-10-20 20:10 UTC, §4m). Before that,
 dev ran `8b6a60b` (prompt-injection fence in the chat prompt; 19:54 UTC, §4l). Before that, dev ran `29f61b3` (backend migration
@@ -724,6 +725,125 @@ document; users 1 and 2.
 **Disk**, `df -h /` free: 60 GB before; 47 GB after each build; 60 GB after each `docker builder
 prune -af` (12.96 GB) and removing the previous dev images. Images 7.5 GB, build cache 0.
 
+### 4p. ✅ Done 2026-10-21 09:43–12:14 UTC: wipe and reseed, dev only (`a4643cb`)
+
+All measured by the deploy agent. Staging was not touched. Dev data is disposable (owner's ruling);
+both databases were wiped twice. Model spend is read from ai-service `usage_logs`. A wipe empties
+that table, so the two runs are added by hand: **$0.4786 + $0.9008 (still rising, see graph) ≈
+$1.38** for the night so far, under the $6 task cap and the $10 overnight cap.
+
+**How to wipe one environment's data** (the init script `infra/postgres/init/10-create-databases.sh`
+only runs `CREATE DATABASE … OWNER edc` on an empty volume; extensions come from ai-service's
+migrations):
+
+1. Back up both databases (§4e procedure).
+2. `docker stop` that env's web, backend and ai-service.
+3. In its postgres container: `DROP DATABASE "<db>" WITH (FORCE)`, then
+   `CREATE DATABASE "<db>" OWNER "edc"`, for `edc_backend` and `edc_ai`.
+4. `docker start` ai-service first: its schema gate adopts the empty `edc_ai` and applies 6
+   migrations (extensions `vector`, `pg_trgm`). Then backend (`payload migrate`: 3), then web.
+
+**Seeding the corpus on a Coolify box.** 🔴 Never run `pnpm` inside the slim backend image: on the
+first try, `pnpm seed:demo` ran its pre-script install, failed to resolve the workspace and
+**emptied `/repo/apps/backend/node_modules`**. The running server survived in memory, but the next
+restart would have failed at `payload migrate`. Fixed by recreating the container from its image
+(`docker compose -p <uuid> -f /data/coolify/applications/<uuid>/docker-compose.yaml up -d
+--no-deps --force-recreate backend`). Use the binary directly. The corpus is a sibling repo that
+is absent from a Coolify checkout. Copy it into the container (it is synthetic, `sintetico`
+column) and point the seed at it:
+
+```sh
+docker cp corpus.tgz <backend>:/tmp/ && docker exec <backend> sh -c 'cd /tmp && tar -xzf corpus.tgz'
+docker exec -d -w /repo/apps/backend <backend> sh -c \
+  'CORPUS_DIR=/tmp/corpus-generativo SEED_CORPUS_INGEST=1 node_modules/.bin/payload run src/seed/demo.cli.ts > /tmp/seed.log 2>&1'
+```
+
+`docker exec -d` matters: a `nohup docker exec …&` started over SSH died with the session. The
+`payload run` boot also runs the start-up seed in the same process, which seeds the corpus because
+`CORPUS_DIR` is set. The CLI's own pass then logs "already holds 252 documents … skipping". One set
+only (252 rows, 252 distinct names). The seed ends with in-process graph extraction.
+⚠ Held rows keep `ingest_status = pending` for good, so "nothing pending" never comes. Wait for
+the seed process to exit and for no row at `anonymisation_status` pending or `n/a`.
+
+**Run 1** (09:50–10:31 UTC, `b2801b4`, no detector pacing): 252 rows. 214 passed the gate, 38
+held (37 `verify`, 1 `structural`), 3 ingest `failed` among the held. 158 published. ai-service
+logged 75 responses with status 429 on `/v1/generate/sync` between 09:59 and 10:27. None became
+a hold: no stage note mentions an error. Spend $0.4786. This run was wiped by run 2.
+
+**Run 2, the final one.** Added on dev only, through the API: `ANONYMISE_DETECT_MIN_GAP_MS=2700`,
+`ANONYMISE_DETECT_CONCURRENCY=1` (literal, preview copies made by Coolify; the backend reads them
+through `env_file`; `printenv` shows both). Deployed `dd4e7cc` (10:32:52 → 10:38:15), wiped, and
+seeded 10:39:34 → 11:51:35 (≈ 72 min; the 2.7 s gap paces the detector). Then deployed `a4643cb`
+(11:52:31 → 11:56:28, web + backend, no wipe) before the smoke. `INGEST_ASSISTANT_TURNS` and
+`CHAT_RETRIEVE_ASSISTANT_CHUNKS` are unset. Backups: `/root/backups/20261021T0943Z/` (before run 1)
+and `20261021T1032Z` (before run 2), both checked with `pg_restore -l`, sha256 matched off-box.
+
+| gate result, 252 rows (250 corpus + 2 seeded review samples) | count |
+|---|---|
+| passed (`ready`), published | 157 |
+| passed, still draft | 56 |
+| held: `verify` | 38 |
+| held: `structural` (empty or unreadable text) | 1 |
+| held with "no pudo terminar" (infrastructure) | **0** |
+| ai-service responses with status 429 during the seed | **0** |
+
+What the 38 `verify` holds found (`anonymisation_survivors`, types only): `lugar` 65 in 34
+documents, `persona` 11 in 6, `contacto` 1, `otro` 1. Per document: 31 with only place findings,
+6 with a person finding, 1 other. So most holds are towns and places that verify still flags. This
+batch was meant to show towns, so the verify step and the town rule disagree.
+Spend: $0.8528 on `deepseek/deepseek-chat-v3.1` (1,620 calls: detector, verify and the seed's
+graph pass) + $0.0018 embeddings = **$0.8546**.
+
+🔴 **13 held testimonios are published.** `anonymisation_status = held`, `publication_status =
+published`, ingested into the shared corpus `eco-1` (ids 28, 29, 41, 134, 163, 188, 191, 208, 222,
+223, 227, 238, 246). Their `redacted_text` is NULL and no `anonymisation_reviews` row exists. The
+indexed text is the gate's pseudonymised output: 0 manifest names, 1–3 `[Persona X]` each, while
+the raw text has 2–4 name hits each. Biblioteca lists them as "Testimonio" with an empty body.
+Doc 227 carries 4 `persona` findings. Not fixed here; a code bug for the next lane.
+
+**Budget.** The organization-create hook gave `edc-eco-1` its $5 row. `demo-ecosistemas.sh`
+created `edc-eco-3`'s. Both were PUT again at $5 → 200. ⚠ The §6 command below gets **403** as
+written. It needs the delegation header: `-H 'X-AI-Org: eco-<id>'` with the path
+`/v1/budget/edc-eco-<id>` (measured from the backend container with its admin key).
+
+**`scripts/demo-ecosistemas.sh`**, dry run then `--apply`, identical output: renamed `demo` to
+"Red Comunitaria de Salud". Created "Red de Educación Comunitaria", slug `educacion-comunitaria`,
+**id 3**: the dry run consumed id 2 from the sequence. Copied 2 memberships and moved 120
+documents (71 published, 49 drafts). Moved 321 graph mentions and 174 relations, and copied 117
+entities; 90 left unused were removed. ai-service: 106 documents and 107 chunks moved into 2 new
+corpora, plus 1 budget created. Titles changed: 0 (the seed already writes them without SIM codes
+and numbers repeats, e.g. "Biografía oral — vida con discapacidad (04)"; 0 names match `SIM_`).
+After: Salud 132 documents (99 published, 14 held); Educación 120 (71 published, 25 held).
+
+**Graph backfill** (`GRAPH_BACKFILL_*`, `payload run src/lib/graph/backfill.cli.ts`), started
+11:57:51 after the split: the dry run listed 200 candidates, 39 to skip (held). ⚠ Still running
+at 12:14 UTC. Ready rows went 52 → 66 in 16 minutes: one extraction per ≈ 60 s, no 429s. At that
+pace the rest takes 3–4 hours (inferred). Spend during the backfill so far $0.0462; the whole
+backfill is ≈ $0.2 (inferred). It runs inside the backend container; a redeploy kills it.
+
+**Smoke on `a4643cb`** (as admin):
+
+| check | result |
+|---|---|
+| Biblioteca shows only Voces/Testimonios | 170 items (Salud 99, Educación 71), all `testimonio`, all titled "Testimonio" |
+| No personal names, 7 sampled published testimonios with text | 0 hits for the manifest's `nombre`/`pariente` names; 10 `[Persona X]` placeholders |
+| Towns visible | 12 hits for the manifest's `origen`/`residencia`/`sitio_ancla` towns in those 7 |
+| Person-heavy chat ("dame sus nombres completos") | 0 name hits, 5 sources, markers `[1]`–`[5]` |
+| Chat with citations (dengue) | 13.5 s, markers `[1]`–`[5]`, 5 sources, no "Conversación" source |
+| Off-topic question | 0 sources, no "Conversación" source |
+| Exact document title as admin (doc 71) | cites doc 71 **and** doc 79, markers `[2]` and `[5]`. ⚠ Not "only that doc". The 2 listed sources are the cited ones, keeping their `[n]` |
+| No turns in ai-service | 0 `msg-*` documents; the 4 assistant messages read `corpus_status = pending` |
+| Both ecosistemas | the switcher lists "Red Comunitaria de Salud" and "Red de Educación Comunitaria" |
+| Admin sign-in | works (seed re-created the admin from `SEED_ADMIN_PASSWORD`) |
+| Old explainer texts (composer placeholder, Conexiones, Administración, 14 strings from §4o) | none present |
+| `/grafo` | 13 entidades shown while the backfill runs |
+
+RustFS still holds the files of the wiped rows (no `media` rows point at them). Not cleaned.
+
+**Disk**, `df -h /` free: 60 GB before; 42 GB before the final prune (two builds); 60 GB after
+`docker builder prune -af` (16.53 GB) and removing dev's `2f60202`, `b2801b4` and `dd4e7cc`
+images. Images 7.5 GB, build cache 0.
+
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
 Backups taken before the deploy (both DBs, both envs, each checked with `pg_restore -l`, sha256
@@ -850,10 +970,13 @@ chat answers **402** until each existing ecosistema's org has one. After the fir
 environment, or after its `edc_ai` database is recreated, run inside that environment's ai-service
 container (it is not exposed publicly), once per ecosistema:
 
+⚠ Measured 2026-10-21 (§4p): without `X-AI-Org: eco-<organization id>` this answers 403.
+
 ```sh
 C=$(docker ps --format '{{.Names}}' | grep '^ai-service-<app uuid>')
 docker exec "$C" curl -s -X PUT \
   -H "Authorization: Bearer <AI_SERVICE_ADMIN_API_KEY of that env>" \
+  -H 'X-AI-Org: eco-<organization id>' \
   -H 'Content-Type: application/json' \
   http://127.0.0.1:3000/v1/budget/edc-eco-<organization id> -d '{"limitUsd":5}'
 ```
