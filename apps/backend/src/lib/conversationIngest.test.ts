@@ -29,7 +29,7 @@
  * a test nobody runs.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Payload } from 'payload'
 
 import { staticDetector } from './anonymise'
@@ -41,22 +41,12 @@ import {
   messageIdFromExternalId,
   releaseConversationsWaitingOn,
   turnExternalId,
-  ingestAssistantTurnsEnabled,
   type ConversationIngester,
 } from './conversationIngest'
 
-/**
- * ⚠ THE TESTS ABOVE THE LAST BLOCK RUN WITH ASSISTANT TURNS SWITCHED ON. They
- * were written when every assistant answer went into the corpus, and the
- * append / hold / release rules they pin hold for both roles. The production
- * default (OFF) is pinned in `assistant turns stay out of the corpus` at the end.
- */
-beforeEach(() => {
-  vi.stubEnv('INGEST_ASSISTANT_TURNS', 'true')
-})
-afterEach(() => {
-  vi.unstubAllEnvs()
-})
+// The claim and token writes go through `messageColumns`; its fake replays
+// them on the in-memory rows below with the same guards.
+vi.mock('./messageColumns', () => import('./messageColumns.testFake'))
 
 // ---------------------------------------------------------------------------
 // The in-memory Payload
@@ -679,7 +669,9 @@ describe('🔴 the metadata every turn carries', () => {
     // that only ever read the message bodies.
     expect(meta.title).toBe('Conversación')
     expect(meta.title).not.toBe('Sobre el acuerdo')
-    // No person id of any kind travels with a chunk.
+    // No uploader id travels with a chunk. The conversation owner's `userId`
+    // does (owner ruling 2026-10-21), for `CHAT_ORIENT_SCOPE=own`; it never
+    // reaches a browser (the web's provenance allowlist).
     expect(meta).not.toHaveProperty('uploadedBy')
   })
 
@@ -915,18 +907,11 @@ describe('🔴 the anonymisation gate, per turn', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 🔴 ASSISTANT TURNS — OFF BY DEFAULT (ruling 2026-10-20)
+// 🔴 EVERY TURN, BOTH ROLES (owner ruling 2026-10-21, #4 choice A)
 // ---------------------------------------------------------------------------
 
-describe('🔴 assistant turns stay out of the corpus by default', () => {
-  // An audit measured an earlier answer as the TOP-1 source in 6 of 14 chat
-  // turns, about 10 s after it was written: the assistant citing itself. The
-  // ruling stops ingesting answers; questions still go in.
-  beforeEach(() => {
-    vi.stubEnv('INGEST_ASSISTANT_TURNS', '')
-  })
-
-  it('enqueues the user turn only, and marks the answer `skipped`', async () => {
+describe('🔴 every turn goes in — "store, never cite in chat"', () => {
+  it('enqueues the question AND the answer, each marked with its role', async () => {
     const db = seed([
       { id: 1, role: 'user', content: 'Cual es el acuerdo vigente' },
       { id: 2, role: 'assistant', content: 'El acuerdo vigente cubre el riego' },
@@ -935,104 +920,132 @@ describe('🔴 assistant turns stay out of the corpus by default', () => {
 
     const result = await run(db, client, countingDetector())
 
-    expect(result.ingested).toBe(1)
-    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-1'])
-    expect(db.messages[1]!.corpusStatus).toBe('skipped')
-  })
-
-  it('never sends an answer through the anonymisation gate — that is the saving', async () => {
-    const db = seed([
-      { id: 1, role: 'user', content: 'Pregunta' },
-      { id: 2, role: 'assistant', content: 'Respuesta larga' },
+    expect(result.ingested).toBe(2)
+    expect(calls[0]!.documents.map((d) => [d.id, d.metadata?.authoredBy])).toEqual([
+      ['msg-1', 'user'],
+      ['msg-2', 'assistant'],
     ])
-    const detector = countingDetector()
-
-    await run(db, fakeClient().client, detector)
-
-    // One gate run for the question: detect + verify. None for the answer.
-    const perUserTurn = detector.calls()
-    db.messages.push({ id: 3, session: SESSION, role: 'assistant', content: 'Otra respuesta' })
-    await run(db, fakeClient().client, detector)
-    expect(detector.calls()).toBe(perUserTurn)
-    expect(db.messages[2]!.redactedText).toBeUndefined()
   })
 
-  it('an answer-only run enqueues nothing at all', async () => {
-    const db = seed([{ id: 1, role: 'assistant', content: 'Solo respuesta' }])
-    const { client, calls } = fakeClient()
-
-    const result = await run(db, client, countingDetector())
-
-    expect(result.ingested).toBe(0)
-    expect(calls).toHaveLength(0)
-  })
-
-  it('⚠ leaves an answer ALREADY in the corpus alone — its status is the erase bookkeeping', async () => {
-    // Retrieval filters old answer chunks out (web lane). Rewriting their row to
-    // `skipped` would hide that the chunks still exist.
-    const db = seed([
-      { id: 1, role: 'assistant', content: 'Vieja respuesta', corpusStatus: 'ingested' },
-      { id: 2, role: 'assistant', content: 'En vuelo', corpusStatus: 'embedding' },
-      { id: 3, role: 'assistant', content: 'Retenida', corpusStatus: 'held-gate' },
-      { id: 4, role: 'user', content: 'Nueva pregunta' },
-    ])
+  it('carries the conversation id and the conversation owner’s user id', async () => {
+    const db = seed([{ id: 1, role: 'user', content: 'Hola' }])
     const { client, calls } = fakeClient()
 
     await run(db, client, countingDetector())
 
-    expect(db.messages.map((m) => m.corpusStatus)).toEqual(['ingested', 'embedding', 'held-gate', 'embedding'])
-    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-4'])
+    const meta = calls[0]!.documents[0]!.metadata!
+    expect(meta).toMatchObject({ kind: 'conversacion', docId: 'msg-1', sessionId: String(SESSION), userId: String(ANA) })
   })
 
-  it('🔴 a `failed` answer becomes `skipped`, and the gate never sees it', async () => {
+  it('🔴 a turn is gated BEFORE it is embedded: the answer is redacted too', async () => {
     const db = seed([
-      { id: 1, role: 'assistant', content: 'Fallo antes', corpusStatus: 'failed' },
-      { id: 2, role: 'user', content: 'Pregunta' },
+      { id: 1, role: 'user', content: 'Pregunta' },
+      { id: 2, role: 'assistant', content: 'Según Rosa Méndez, el pago se aprobó' },
     ])
-    const { client, calls } = fakeClient()
     const seen: string[] = []
+    const inner = staticDetector([{ text: 'Rosa Méndez', type: 'persona' }])
     const detector: PersonDetector = {
       name: 'recording',
-      async detect({ text }) {
-        seen.push(text)
+      async detect(args) {
+        seen.push(args.text)
+        return inner.detect(args)
+      },
+    }
+    const { client, calls } = fakeClient()
+
+    await run(db, client, detector)
+
+    // The gate saw the raw answer; the corpus got only its redaction.
+    expect(seen.some((t) => t.includes('Rosa Méndez'))).toBe(true)
+    const sent = calls[0]!.documents.find((d) => d.id === 'msg-2')!.text
+    expect(sent).not.toContain('Rosa Méndez')
+    expect(sent).toContain('[Persona A]')
+    expect(db.messages[1]!.redactedText).toBe(sent)
+  })
+
+  it('🔴 a held turn is never embedded, and is not a Revisión item', async () => {
+    let pass = 0
+    const detector: PersonDetector = {
+      name: 'leaky',
+      async detect(): Promise<DetectorFinding[]> {
+        pass += 1
+        return pass === 1 ? [] : [{ text: 'Ruiz', type: 'persona' }]
+      },
+    }
+    const db = seed([{ id: 1, role: 'assistant', content: 'Ruiz firmó el acta' }])
+    const { client, calls } = fakeClient()
+
+    const result = await run(db, client, detector)
+
+    expect(result.heldByGate).toBe(1)
+    expect(calls).toHaveLength(0)
+    expect(db.messages[0]).toMatchObject({ corpusStatus: 'held-gate', redactedText: null })
+    // Revisión reads `documents` only; a held turn creates no document row.
+    expect(db.documents).toHaveLength(0)
+  })
+
+  it('🔴 a gate that could not RUN is retryable, not a hold (b5d025d semantics)', async () => {
+    const { DetectorFailure } = await import('./anonymise')
+    let down = true
+    const detector: PersonDetector = {
+      name: 'flaky',
+      async detect() {
+        if (down) throw new DetectorFailure('http_503', 'upstream unavailable', true)
+        return []
+      },
+    }
+    const db = seed([{ id: 1, role: 'user', content: 'Una pregunta' }])
+    const { client, calls } = fakeClient()
+
+    const first = await run(db, client, detector)
+
+    expect(first.heldByGate).toBe(0)
+    expect(calls).toHaveLength(0)
+    expect(db.messages[0]!.corpusStatus).toBe('failed')
+    expect(String(db.messages[0]!.corpusError)).toMatch(/^gate_unavailable: /)
+
+    // `failed` is runnable: the next turn's run retries and embeds it.
+    down = false
+    await run(db, client, detector)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-1'])
+  })
+
+  it('🔴 the claim: a turn another run holds (`embedding`) is not gated or enqueued again', async () => {
+    const db = seed([
+      { id: 1, role: 'user', content: 'En vuelo', corpusStatus: 'embedding', corpusError: 'gate_running: other' },
+      { id: 2, role: 'user', content: 'Nueva' },
+    ])
+    const detector = countingDetector()
+    const { client, calls } = fakeClient()
+
+    await run(db, client, detector)
+
+    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-2'])
+    expect(db.messages[0]!.corpusError).toBe('gate_running: other')
+  })
+
+  it('🔴 the token: a run that lost its turn to the stalled-turn sweep writes nothing', async () => {
+    const db = seed([{ id: 1, role: 'user', content: 'Lenta' }])
+    const { client, calls } = fakeClient()
+    const detector: PersonDetector = {
+      name: 'slow',
+      async detect() {
+        // The sweep (`sweepStalledMessages`) moves the turn on mid-gate.
+        Object.assign(db.messages[0]!, { corpusStatus: 'failed', corpusError: 'stalled' })
         return []
       },
     }
 
-    await run(db, client, detector)
+    const result = await run(db, client, detector)
 
-    expect(db.messages[0]!.corpusStatus).toBe('skipped')
-    expect(seen.some((t) => t.includes('Fallo antes'))).toBe(false)
-    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-2'])
-  })
-
-  it('a `held-drafts` answer becomes `skipped`', async () => {
-    const db = seed([{ id: 1, role: 'assistant', content: 'Retenida', corpusStatus: 'held-drafts' }])
-    const { client, calls } = fakeClient()
-
-    await run(db, client, countingDetector())
-
-    expect(db.messages[0]!.corpusStatus).toBe('skipped')
+    expect(result.ingested).toBe(0)
     expect(calls).toHaveLength(0)
+    expect(db.messages[0]).toMatchObject({ corpusStatus: 'failed', corpusError: 'stalled' })
+    expect(db.messages[0]!.redactedText).toBeUndefined()
   })
 
-  it('🔴 a `failed` answer that KEEPS its ingest id stays `failed` — ai-service may hold it', async () => {
-    // The janitor gives up on a stalled turn by marking it `failed` without
-    // clearing `corpusIngestId` (lib/ingestRecovery.ts). ai-service may have
-    // stored it anyway. `skipped` would claim it never reached the corpus.
-    const db = seed([
-      { id: 1, role: 'assistant', content: 'Atascada', corpusStatus: 'failed', corpusIngestId: 'ing-9' },
-    ])
-    const { client, calls } = fakeClient()
-
-    await run(db, client, countingDetector())
-
-    expect(db.messages[0]!.corpusStatus).toBe('failed')
-    expect(db.messages[0]!.corpusIngestId).toBe('ing-9')
-    expect(calls).toHaveLength(0)
-  })
-
-  it('a conversation released from a draft hold sends its questions, not its answers', async () => {
+  it('a conversation released from a draft hold sends both roles in one run', async () => {
     const db = seed(
       [
         { id: 1, role: 'user', content: 'Que dice el borrador' },
@@ -1044,53 +1057,25 @@ describe('🔴 assistant turns stay out of the corpus by default', () => {
     const detector = countingDetector()
 
     await run(db, client, detector)
-    expect(db.messages.map((m) => m.corpusStatus)).toEqual(['held-drafts', 'skipped'])
+    expect(db.messages.map((m) => m.corpusStatus)).toEqual(['held-drafts', 'held-drafts'])
 
     db.documents[0]!.publicationStatus = 'published'
     await releaseConversationsWaitingOn({ payload: fakePayloadFor(db), documentId: 933, client, detector })
 
     expect(calls).toHaveLength(1)
-    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-1'])
+    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-1', 'msg-2'])
   })
 
-  it('`INGEST_ASSISTANT_TURNS=true` puts answers back in, still marked `authoredBy: assistant`', async () => {
-    vi.stubEnv('INGEST_ASSISTANT_TURNS', 'true')
+  it('an answer `skipped` under the old INGEST_ASSISTANT_TURNS switch stays skipped', async () => {
     const db = seed([
-      { id: 1, role: 'user', content: 'Pregunta' },
-      { id: 2, role: 'assistant', content: 'Respuesta' },
+      { id: 1, role: 'assistant', content: 'Vieja', corpusStatus: 'skipped' },
+      { id: 2, role: 'user', content: 'Nueva' },
     ])
     const { client, calls } = fakeClient()
 
     await run(db, client, countingDetector())
 
-    expect(calls[0]!.documents.map((d) => [d.id, d.metadata?.authoredBy])).toEqual([
-      ['msg-1', 'user'],
-      ['msg-2', 'assistant'],
-    ])
-  })
-
-  it('an explicit `ingestAssistantTurns` argument wins over the env', async () => {
-    vi.stubEnv('INGEST_ASSISTANT_TURNS', 'true')
-    const db = seed([{ id: 1, role: 'assistant', content: 'Respuesta' }])
-    const { client, calls } = fakeClient()
-
-    await ingestConversationTurns({
-      payload: fakePayloadFor(db),
-      sessionId: SESSION,
-      client,
-      detector: countingDetector(),
-      ingestAssistantTurns: false,
-    })
-
-    expect(calls).toHaveLength(0)
-  })
-
-  it('reads the switch: only an explicit yes turns it on', () => {
-    for (const on of ['true', '1', 'on', 'yes', ' TRUE ']) {
-      expect(ingestAssistantTurnsEnabled({ INGEST_ASSISTANT_TURNS: on })).toBe(true)
-    }
-    for (const off of [undefined, '', 'false', '0', 'off', 'no', 'junk']) {
-      expect(ingestAssistantTurnsEnabled({ INGEST_ASSISTANT_TURNS: off })).toBe(false)
-    }
+    expect(db.messages[0]!.corpusStatus).toBe('skipped')
+    expect(calls[0]!.documents.map((d) => d.id)).toEqual(['msg-2'])
   })
 })

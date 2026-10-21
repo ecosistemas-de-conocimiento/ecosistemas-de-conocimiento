@@ -13,6 +13,8 @@ import { backendFetch } from '$lib/server/auth';
 import {
   buildChatUnitRequest,
   CHAT_ENGINE_CONFIG,
+  chatKindFilterAvailable,
+  chatOrientScope,
   chatTurnHybrid,
   chatTurnRetrievalPolicy,
   engineOrgId,
@@ -29,6 +31,7 @@ import { fetchPublishedTitles, matchDocumentTitle, titleRetrievalFilter, withTit
 import { sessionEcosystemId } from '$lib/server/ecosystem';
 import { makeGraphProvider } from '$lib/server/graph';
 import { withFencedChunks, withFencedRefs } from '$lib/server/engine/chunkFence';
+import { fetchOrientationTurns, orientationBlock, withOrientation } from '$lib/server/engine/orientation';
 import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { lenguaTurn } from '$lib/lengua';
 import { stampDraftProvenance } from '$lib/publication';
@@ -406,7 +409,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   const publishedTitles = fetchPublishedTitles(locals.token, organizationId);
 
   // Build the Domain Adapter + the engine's AIClient over this app's BFF client.
-  const adapter = withFencedRefs(makeChatDomainAdapter({
+  const baseAdapter = withFencedRefs(makeChatDomainAdapter({
     token: locals.token,
     sessionId: body.sessionId,
     corpora,
@@ -446,8 +449,35 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // 🔴 Conversation turns (questions and answers) are dropped from every leg,
   // always (owner ruling 2026-10-21: documents only), each leg over-fetching
   // so the turn keeps its source count. See `$lib/turnChunks`.
-  const fenced = withFencedChunks(unfencedAI);
+  // ai-service with `metadataFilterIn` drops turns BEFORE ranking too
+  // (`SOURCE_KINDS_FILTER`); the fence's post-filter stays either way.
+  const fenced = withFencedChunks(unfencedAI, { kindFilter: await chatKindFilterAvailable() });
   const engineAI = fenced.client;
+
+  // 🔴 ORIENTATION, NEVER SOURCES (owner ruling 2026-10-21, #4 choice A).
+  // Earlier conversation turns, anonymised at ingest, reach the model ONLY as
+  // a labelled background block outside the `<fuente>` fence: never an `[N]`,
+  // never in the provenance. One small extra retrieve over the published
+  // corpus, through the UNFENCED client (the fenced one drops every turn),
+  // started now so it overlaps the engine's condense call. This conversation's
+  // own turns are excluded. `CHAT_ORIENT_SCOPE` = ecosistema | own | off.
+  // See `$lib/server/engine/orientation`.
+  const orientScope = chatOrientScope();
+  const adapter =
+    orientScope === 'off'
+      ? baseAdapter
+      : withOrientation(
+          baseAdapter,
+          fetchOrientationTurns({
+            client: unfencedAI,
+            scope: orientScope,
+            corpus: publishedCorpus ?? null,
+            orgId: engineOrgId(),
+            sessionId: body.sessionId,
+            userId: locals.user.id != null ? String(locals.user.id) : null,
+            query: userMessage,
+          }).then(orientationBlock),
+        );
 
   // 🔴 THE SECOND RETRIEVAL PATH — GraphRAG (ADR §8).
   //

@@ -7,6 +7,7 @@ vi.mock('$env/dynamic/private', () => ({ env: process.env }));
 import {
   CHAT_SYSTEM_PROMPT,
   CHUNK_DATA_RULE,
+  ORIENTATION_RULE,
   CITE_RULE,
   CITE_RULE_VARIANTS,
   CITE_VARIANTS,
@@ -68,7 +69,16 @@ describe('CHAT_CITE_VARIANT — the dev prompt A/B', () => {
     expect(p).toContain(CITE_RULE_VARIANTS[v]);
     expect(p).toContain(PLAIN_LANGUAGE_RULE);
     expect(p).toContain(CHUNK_DATA_RULE);
+    // 🔴 Earlier conversations are background, never cited (ruling 2026-10-21, #4 A).
+    expect(p).toContain(ORIENTATION_RULE);
     expect(CITE_RULE_VARIANTS[v]).not.toMatch(/fragmento|contexto|recuperad/i);
+  });
+
+  it('the orientation rule names the block, forbids citing it, and uses no banned word', () => {
+    expect(ORIENTATION_RULE).toContain('Conversaciones anteriores');
+    expect(ORIENTATION_RULE).toContain('nunca lo cites con [N]');
+    expect(ORIENTATION_RULE).toContain('No repitas ni cites lo que preguntaron o dijeron otras personas');
+    expect(ORIENTATION_RULE).not.toMatch(/fragmento|contexto|recuperad/i);
   });
 
   it('the four variants differ from one another', () => {

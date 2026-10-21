@@ -148,6 +148,12 @@ export function chunkMetadata(args: {
   /** Only set for `conversacion`: which thread the turn came from. */
   sessionId?: string | number
   /**
+   * Only set for `conversacion`: the conversation's owner. Lets chat's
+   * orientation leg keep to the asker's own turns (`CHAT_ORIENT_SCOPE=own`).
+   * Never reaches a browser (the web's provenance allowlist).
+   */
+  userId?: string | number
+  /**
    * `documents.lengua` — the language of the PEOPLE a document is about. Lets
    * retrieval take ai-service's metadata `filter: { lengua }`.
    *
@@ -170,6 +176,7 @@ export function chunkMetadata(args: {
     title: titleFor(args.contentKind, args.title),
     ...(args.authoredBy ? { authoredBy: args.authoredBy } : {}),
     ...(args.sessionId === undefined ? {} : { sessionId: String(args.sessionId) }),
+    ...(args.userId === undefined ? {} : { userId: String(args.userId) }),
     ...(lengua ? { lengua } : {}),
   }
 }

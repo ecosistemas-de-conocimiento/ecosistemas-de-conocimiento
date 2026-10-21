@@ -126,8 +126,9 @@ first. Coolify names the project after the resource, so volumes are per environm
 |---|---|---|
 | `SEED_DOMAIN` | unset | 💤 dev may set `1`; stage is refused by the gate anyway |
 | `SEED_CORPUS_INGEST` | `0` | 💤 needs the corpus, which Coolify does not have |
-| `INGEST_ASSISTANT_TURNS` | unset | 💤 no effect since 2026-10-21: no chat turn (question or answer) is ingested at all; the callers are removed (`collections/Messages.ts`). Leave unset |
-| `CHAT_RETRIEVE_ASSISTANT_CHUNKS` | unset | 💤 removed 2026-10-21: chat always drops every conversation-turn chunk (over-fetching 3 per leg), so no switch remains (`apps/web/src/lib/turnChunks.ts`). Leave unset |
+| `INGEST_ASSISTANT_TURNS` | unset | 💤 removed 2026-10-21: every chat turn (question and answer) is ingested, anonymised, with no switch (owner ruling #4 choice A, `lib/conversationIngest.ts`). Leave unset |
+| `CHAT_RETRIEVE_ASSISTANT_CHUNKS` | unset | 💤 removed 2026-10-21: chat always drops every conversation-turn chunk from the sources (over-fetching 3 per leg), so no switch remains (`apps/web/src/lib/turnChunks.ts`). Leave unset |
+| `CHAT_ORIENT_SCOPE` | `ecosistema` | 💤 web. Earlier turns as a background block, never cited: `ecosistema` (every member's turns in this ecosistema, minus this conversation) \| `own` (this user's other conversations) \| `off`. Unknown ⇒ `off`. ⚠ `ecosistema` shows one member's anonymised words to another (`apps/web/src/lib/server/engine/orientation.ts`) |
 | `POSTGRES_USER`, `BACKEND_DB_NAME`, `AI_DB_NAME` | `edc`, `edc_backend`, `edc_ai` | 💤 per-env stores, so the defaults are fine |
 | `RUSTFS_MEMORY` | `1g` | 💤 |
 | `RERANK_API_KEY` | unset | 🔑 **the switch.** Hosted DeepInfra rerank, owner-approved. Setting it turns rerank on (guard in ai-service's `command:` exports `RERANK_ENABLED=true` when the key is non-empty and `RERANK_ENABLED` is unset). Unset ⇒ off, plus one boot warning about the missing key — expected. Not required |

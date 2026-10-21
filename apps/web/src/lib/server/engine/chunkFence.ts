@@ -15,9 +15,10 @@
  *   …chunk text, with every <fuente / </fuente look-alike neutralised…
  *   </fuente>
  *
- * 🔴 Conversation turns (questions AND answers) are DROPPED on every leg,
- * always, with no flag (owner ruling 2026-10-21: chat searches documents
- * only). See `$lib/turnChunks`. The system-prompt rule that gives the fence its
+ * 🔴 Conversation turns (questions AND answers) are DROPPED on every sources
+ * leg, always, with no flag: they are never a source. They reach the model
+ * only as background, in the separate orientation block (`./orientation`,
+ * owner ruling 2026-10-21, #4 choice A). See `$lib/turnChunks`. The system-prompt rule that gives the fence its
  * meaning is `CHUNK_DATA_RULE` (`./prompt`).
  *
  * ⚠ The engine copies `RetrievedChunk.text` into the persisted provenance (the
@@ -183,9 +184,13 @@ export function withFencedRefs<A extends DomainAdapter>(adapter: A): A {
  * (and `limit + 3` on `retrieveMulti`), drops the turns and trims back.
  * ⚠ 3 is inferred, not measured: audit 2026-10-17 saw an earlier answer as the
  * top-1 source in 6 of 14 turns, but did not count how many turns a retrieve
- * held. A leg that retrieves more than 3 turns still comes up short. Turns are
- * no longer ingested (2026-10-21), so the corpus stops growing them; after a
- * corpus wipe there are none and the over-fetch costs only rerank pool size.
+ * held. A leg that retrieves more than 3 turns still comes up short.
+ * ⚠ Turns are ingested again (owner ruling 2026-10-21, #4 choice A: stored
+ * for orientation, never cited), so the corpus GROWS them: a question many
+ * members ask may pull more than 3 turns into one leg and crowd documents
+ * out. The durable fix is a server-side `kind $in [documento, testimonio]` on
+ * the sources legs (ai-service `metadataFilterIn`); not done here.
+ * Turns reach the prompt only through `./orientation`.
  *
  * Rerank cost (inferred from ai-service's pool rule `min(topK × 4, 50)`,
  * quoted in `./rerank`, not measured): the published leg's pool grows from 20
@@ -193,6 +198,23 @@ export function withFencedRefs<A extends DomainAdapter>(adapter: A): A {
  * graph-widened retrieve and the expansion variants are not reranked.
  */
 export const TURN_OVERFETCH = 3;
+
+/**
+ * 🔴 The SOURCE kinds, as an ai-service `$in` (capability `metadataFilterIn`).
+ * Merged into every sources leg's `filter` so ai-service drops turn chunks
+ * BEFORE ranking: turns are ingested again (ruling 2026-10-21) and would
+ * otherwise crowd documents out of a leg's top-K. ⚠ Only when the capability
+ * is there: an older ai-service reads `{ $in: [...] }` as plain equality and
+ * would return nothing. The post-filter below stays as the second layer.
+ * Draft legs inherit it: `retrieveMultiScoped` spreads `filter` into each
+ * `corpusFilters` entry (`./aiClient`).
+ */
+export const SOURCE_KINDS_FILTER = { kind: { $in: ['documento', 'testimonio'] } } as const;
+
+export interface FencedChunksOptions {
+  /** ai-service has `metadataFilterIn`: send {@link SOURCE_KINDS_FILTER}. */
+  kindFilter?: boolean;
+}
 /** The engine's per-corpus topK when a request carries none. */
 const DEFAULT_TOPK = 5;
 
@@ -202,9 +224,13 @@ export interface FencedClient<T extends AIClient> {
   restorePassages<P extends Provenance | null | undefined>(provenance: P, cap: number): P;
 }
 
-export function withFencedChunks<T extends AIClient>(base: T): FencedClient<T> {
+export function withFencedChunks<T extends AIClient>(base: T, opts: FencedChunksOptions = {}): FencedClient<T> {
   const originals = new Map<string, string>();
   const extra = TURN_OVERFETCH;
+  // The engine types `filter` values as primitives; ai-service takes operators.
+  type Filter = Record<string, string | number | boolean>;
+  const withKinds = (filter: Filter | undefined): Filter | undefined =>
+    opts.kindFilter ? ({ ...(filter ?? {}), ...SOURCE_KINDS_FILTER } as unknown as Filter) : filter;
 
   /** Drop conversation turns, trim the over-fetch back to `cap`, fence what is left. */
   const fence = <M extends RetrieveMatch>(matches: M[], cap: number | undefined): M[] =>
@@ -224,14 +250,17 @@ export function withFencedChunks<T extends AIClient>(base: T): FencedClient<T> {
     ingest: base.ingest.bind(base),
     async retrieve(req) {
       const topK = req.topK && req.topK > 0 ? req.topK : DEFAULT_TOPK;
-      const r = await base.retrieve({ ...req, topK: topK + extra });
+      const filter = withKinds(req.filter);
+      const r = await base.retrieve({ ...req, topK: topK + extra, ...(filter ? { filter } : {}) });
       return { ...r, matches: fence(r.matches, topK) };
     },
     ...(base.retrieveMulti
       ? {
           async retrieveMulti(req: Parameters<NonNullable<AIClient['retrieveMulti']>>[0]) {
+            const filter = withKinds(req.filter);
             const r = await base.retrieveMulti!({
               ...req,
+              ...(filter ? { filter } : {}),
               ...(req.topK ? { topK: req.topK + extra } : {}),
               ...(req.limit ? { limit: req.limit + extra } : {}),
             });

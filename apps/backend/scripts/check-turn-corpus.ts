@@ -28,10 +28,11 @@
  *   TURN_CHECK_MAX_ERASE  cap on turns one APPLY may erase, default 50.
  *                       More orphans than that ⇒ APPLY erases nothing.
  *   TURN_CHECK_FORCE=1  APPLY even though the backend has 0 messages.
- *   TURN_CHECK_ALL_TURNS=1  every `msg-*` turn, not only orphans: chat cites
- *                       documents only since 2026-10-21, so with APPLY this
- *                       retires every turn left in the shared corpora. The
- *                       cap above still applies.
+ *   TURN_CHECK_ALL_TURNS=1  every `msg-*` turn, not only orphans. ⚠ Turns are
+ *                       ingested again for chat's orientation block (owner
+ *                       ruling 2026-10-21, #4 choice A), so with APPLY this
+ *                       erases LIVE orientation data, not leftovers. The cap
+ *                       above still applies.
  *
  * 🔴 Nothing proves the two databases are the same environment. With the wrong
  * DATABASE_URI every turn looks orphaned, so APPLY refuses (exit 1) past the
