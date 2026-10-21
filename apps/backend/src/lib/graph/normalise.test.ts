@@ -8,6 +8,14 @@ import { describe, expect, it } from 'vitest'
 import { canonicalKey, displayLabel, MAX_ALIASES, mergeAliases } from './normalise'
 
 describe('canonicalKey', () => {
+  it('drops double quotes, so a quoted name is the same node (backlog #16)', () => {
+    expect(canonicalKey('Escuela Primaria "Miguel Hidalgo"')).toBe('escuela primaria miguel hidalgo')
+    expect(canonicalKey('PILARES “Carlos Monsiváis”')).toBe(canonicalKey('PILARES Carlos Monsiváis'))
+    expect(canonicalKey('«La Jornada»')).toBe('la jornada')
+    // Apostrophes are part of a name.
+    expect(canonicalKey("O'Higgins")).toBe("o'higgins")
+  })
+
   it('lowercases, collapses whitespace and trims', () => {
     expect(canonicalKey('  Consulta   Indígena \n Regional ')).toBe('consulta indigena regional')
   })

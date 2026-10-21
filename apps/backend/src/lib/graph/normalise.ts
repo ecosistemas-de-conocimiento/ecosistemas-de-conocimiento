@@ -53,11 +53,17 @@ const N_TILDE_SENTINEL = '\u0001'
 /** Unicode combining diacritical marks — what NFD splits an accent out into. */
 const COMBINING_MARKS = /[\u0300-\u036f]/g
 
+/** Straight, curly and angle double quotes. */
+const DOUBLE_QUOTES = /["“”„«»]/g
+
 /**
  * The stored identity of an entity label.
  *
  * NFC → protect `ñ` → NFD → strip combining marks → restore `ñ` → lowercase →
- * collapse internal whitespace → trim.
+ * drop double quotes → collapse internal whitespace → trim.
+ *
+ * ⚠ CHANGING THIS CHANGES IDENTITY. Rows already stored keep the key they were
+ * written with; a re-extraction (`lib/graph/backfill.ts`) writes the new key.
  *
  * ⚠ THE LEADING `normalize('NFC')` IS NOT DECORATION. Text arriving from a
  * transcript, a PDF extractor or a macOS filesystem may already be decomposed,
@@ -77,6 +83,10 @@ export function canonicalKey(label: string | null | undefined): string {
     .replace(COMBINING_MARKS, '')
     .replace(new RegExp(N_TILDE_SENTINEL, 'g'), 'ñ')
     .toLowerCase()
+    // ⚠ DOUBLE QUOTES ARE PUNCTUATION, NOT PART OF THE NAME. `Escuela Primaria
+    // "Miguel Hidalgo"` and `Escuela Primaria Miguel Hidalgo` were two nodes in
+    // the demo corpus (backlog #16). Apostrophes stay: `O'Higgins`.
+    .replace(DOUBLE_QUOTES, '')
     .replace(/\s+/g, ' ')
     .trim()
 }

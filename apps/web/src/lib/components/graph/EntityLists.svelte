@@ -17,7 +17,6 @@
   import {
     groupByType,
     supportCopy,
-    typeListHint,
     typeListLabel,
     type GraphEntity,
   } from '$lib/graph';
@@ -48,7 +47,6 @@
         {typeListLabel(group.type)}
         <span class="group-count">{group.entities.length}</span>
       </h2>
-      <p class="group-hint">{typeListHint(group.type)}</p>
       <ul class="rows">
         {#each shown as entity (entity.id)}
           <li>
@@ -106,11 +104,6 @@
     font-family: var(--edc-font-mono);
     font-size: 0.7rem;
     font-weight: 600;
-    color: var(--edc-color-ink-soft);
-  }
-  .group-hint {
-    margin: 0;
-    font-size: 0.75rem;
     color: var(--edc-color-ink-soft);
   }
   .rows {

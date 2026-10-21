@@ -690,6 +690,82 @@ export function dropGenericEntities(window: ParsedWindow): ParsedWindow {
 }
 
 // ---------------------------------------------------------------------------
+// ⚠ QUALIFIED PLACE NAMES — "Cuernavaca, Morelos" IS CUERNAVACA (backlog #16)
+// ---------------------------------------------------------------------------
+
+/** `Lugar, Contenedor` — exactly one comma, both halves non-empty. */
+const QUALIFIED_PLACE = /^([^,]+),\s*([^,]+)$/
+
+/**
+ * Split a `lugar` written as "Cuernavaca, Morelos" into the place, the place
+ * that contains it, and the `ubicado_en` edge between them.
+ *
+ * WHY. The model writes a place with its state attached about as often as
+ * without, and `canonicalKey` rightly treats the two spellings as different
+ * strings. The demo corpus had twelve such pairs — Cuernavaca / "Cuernavaca,
+ * Morelos", Xoxocotla / "Xoxocotla, Morelos", Juchitán / "Juchitán, Oaxaca"…
+ * (measured 2026-10-21, local `edc_backend`, org 1) — so every one of those
+ * places showed up twice in "Lugares", each with half the support.
+ *
+ * The qualifier is not thrown away: it is the information "this place is in
+ * that one", which is exactly what `ubicado_en` says. Edges that named the
+ * qualified label are re-pointed at the bare place.
+ *
+ * ⚠ CONSERVATIVE BY DESIGN. Only `lugar`, only one comma, only when the
+ * container starts with a capital letter (a proper name, not "…, centro"), and
+ * only when the bare place still passes the generic-label rule. Anything else
+ * is left exactly as the model wrote it.
+ */
+export function splitQualifiedPlaces(window: ParsedWindow): ParsedWindow {
+  const renamed = new Map<string, string>()
+  const entities: RawEntity[] = []
+  const added: RawEntity[] = []
+  const relations: RawRelation[] = []
+
+  const knownPlaces = new Set(
+    window.entities.filter((e) => e.tipo === 'lugar').map((e) => canonicalKey(e.etiqueta)),
+  )
+
+  for (const entity of window.entities) {
+    const match = entity.tipo === 'lugar' ? QUALIFIED_PLACE.exec(entity.etiqueta) : null
+    const place = match ? displayLabel(match[1]) : ''
+    const container = match ? displayLabel(match[2]) : ''
+    if (
+      !match ||
+      !place ||
+      !container ||
+      !HAS_UPPERCASE.test(container.charAt(0)) ||
+      canonicalKey(place) === canonicalKey(container) ||
+      policyRejects('lugar', place) ||
+      policyRejects('lugar', container)
+    ) {
+      entities.push(entity)
+      continue
+    }
+    renamed.set(canonicalKey(entity.etiqueta), place)
+    entities.push({ ...entity, etiqueta: place })
+    const containerKey = canonicalKey(container)
+    if (!knownPlaces.has(containerKey)) {
+      knownPlaces.add(containerKey)
+      added.push({ tipo: 'lugar', etiqueta: container, menciones: 1, fragmento: null })
+    }
+    relations.push({ desde: place, hacia: container, tipo: 'ubicado_en' })
+  }
+
+  if (renamed.size === 0) return window
+
+  for (const relation of window.relations) {
+    relations.push({
+      ...relation,
+      desde: renamed.get(canonicalKey(relation.desde)) ?? relation.desde,
+      hacia: renamed.get(canonicalKey(relation.hacia)) ?? relation.hacia,
+    })
+  }
+
+  return { entities: [...entities, ...added], relations }
+}
+
+// ---------------------------------------------------------------------------
 // Merging windows
 // ---------------------------------------------------------------------------
 
@@ -825,6 +901,8 @@ export interface ExtractGraphArgs {
   maxWindows?: number
   /** Where a failed window is reported. Defaults to `console.warn`. */
   onWindowError?: (windowIndex: number, err: unknown) => void
+  /** Wait before the one retry of a transient failure. Test seam. */
+  retryDelayMs?: number
 }
 
 /**
@@ -883,7 +961,10 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
 
     let result: { parsed?: unknown; text?: string }
     try {
-      result = await callWindow({ client, docId, windowIndex: i, input, spec })
+      result = await callWindowWithRetry(
+        () => callWindow({ client, docId, windowIndex: i, input, spec }),
+        args.retryDelayMs ?? TRANSIENT_RETRY_DELAY_MS,
+      )
     } catch (err) {
       windowsFailed++
       // 🔴 A thrown client error may echo the response; a gated kind keeps only its class.
@@ -915,7 +996,11 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
     // runs whatever the model returned, and only then does the quality rule.
     // Neither depends on the other's output, so the order is a statement of
     // which one may never be skipped rather than a data dependency.
-    parsedWindows.push(dropGenericEntities(dropForbiddenPersonas(shaped, contentKind)))
+    // Then the place split: it only renames and adds `lugar`s, so it runs on
+    // what the two rules above already kept.
+    parsedWindows.push(
+      splitQualifiedPlaces(dropGenericEntities(dropForbiddenPersonas(shaped, contentKind))),
+    )
   }
 
   if (parsedWindows.length === 0) {
@@ -983,6 +1068,44 @@ function defaultWindowError(windowIndex: number, err: unknown): void {
   // Message only, capped: never the raw error object, which may carry a response body.
   const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
   console.warn('[graph] extraction window', windowIndex, 'failed:', message.slice(0, 400))
+}
+
+/**
+ * How long to wait before retrying a transient window failure.
+ *
+ * ⚠ WHY A RETRY EXISTS AT ALL (backlog #16). Two of the six `failed` rows in
+ * the local database say only `fetch failed` (measured 2026-10-21, local
+ * `edc_backend`, documents 347 and 348). Extraction starts on upload, at the
+ * same moment ingest is hitting ai-service, and one dropped connection was
+ * enough to paint a red "grafo falló" on a fresh upload. One retry turns that
+ * blip into nothing; a second failure is still recorded as before.
+ */
+const TRANSIENT_RETRY_DELAY_MS = 2000
+
+/**
+ * True for a failure worth ONE more try: a network error (`fetch failed`, a
+ * reset or refused connection) or an ai-service 5xx / 429. Never a 4xx — a bad
+ * request, a budget refusal or an auth error will fail the same way again.
+ */
+export function isTransientWindowError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { status?: unknown; name?: unknown; message?: unknown; code?: unknown; cause?: unknown }
+  if (typeof e.status === 'number') return e.status >= 500 || e.status === 429
+  const code = typeof e.code === 'string' ? e.code : (e.cause as { code?: unknown } | undefined)?.code
+  if (typeof code === 'string' && /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|UND_ERR_SOCKET)$/.test(code)) {
+    return true
+  }
+  return e.name === 'TypeError' && typeof e.message === 'string' && /fetch failed/i.test(e.message)
+}
+
+async function callWindowWithRetry<T>(call: () => Promise<T>, delayMs: number): Promise<T> {
+  try {
+    return await call()
+  } catch (err) {
+    if (!isTransientWindowError(err)) throw err
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+    return call()
+  }
 }
 
 /** One `/v1/generate/sync` call, with the built-in spec in the chosen slot. */

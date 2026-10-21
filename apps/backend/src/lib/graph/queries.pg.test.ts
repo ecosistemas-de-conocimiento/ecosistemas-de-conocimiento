@@ -32,9 +32,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { up as baselineUp } from '../../migrations/20260908_092211_baseline'
 import {
+  readEntityDetail,
+  readEntityView,
   readGraphRetrieval,
   retrieveDocumentsQuery,
   retrieveEdgesQuery,
+  viewEdgesQuery,
   type GraphQueryPayload,
 } from './queries'
 
@@ -201,6 +204,23 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
 
     expect(rows(await db.execute(retrieveEdgesQuery(ORG, [], MIN)))).toEqual([])
     expect(rows(await db.execute(retrieveDocumentsQuery(ORG, [], MIN)))).toEqual([])
+  })
+
+  it('readEntityView carries the whole-graph edges among the listed entities', async () => {
+    const view = await readEntityView(payload, { organizationId: ORG, minSupport: MIN })
+    expect(view.entities.map((e) => e.id)).toEqual([11, 12])
+    // e1–e3 is evidenced twice but e3 is below threshold, so it never shows.
+    expect(view.edges).toEqual([{ from: 11, to: 12, support: 2 }])
+    expect(rows(await db.execute(viewEdgesQuery(ORG, [], MIN)))).toEqual([])
+    // Another org's ids name nothing here.
+    expect(rows(await db.execute(viewEdgesQuery(ORG, [21, 11], MIN)))).toEqual([])
+  })
+
+  it('readEntityDetail reports which way each edge points, from the focal entity', async () => {
+    const fromConsulta = await readEntityDetail(payload, { organizationId: ORG, entityId: 11, minSupport: MIN })
+    expect(fromConsulta?.neighbours.map((n) => [n.entity.id, n.direction])).toEqual([[12, 'out']])
+    const fromOaxaca = await readEntityDetail(payload, { organizationId: ORG, entityId: 12, minSupport: MIN })
+    expect(fromOaxaca?.neighbours.map((n) => [n.entity.id, n.direction])).toEqual([[11, 'in']])
   })
 
   it('never crosses the ecosistema boundary, even when handed another org’s ids', async () => {
