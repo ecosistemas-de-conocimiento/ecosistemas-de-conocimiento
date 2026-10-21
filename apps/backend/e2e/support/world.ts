@@ -74,14 +74,14 @@ async function createOrg(admin: Caller, ns: string, suffix: string): Promise<Org
 }
 
 /**
- * ⚠ Sign-up is PUBLIC (`Users.access.create: () => true`), so this runs
- * anonymously on purpose — it is the same door the SvelteKit `/api/auth/register`
- * proxy uses, and exercising it is part of the point.
+ * ⚠ Sign-up is CLOSED (`Users.access.create: isPlatformAdmin`, UX backlog #6),
+ * so the platform admin creates every account — the same door a real admin
+ * uses in the Payload panel.
  */
-async function createPerson(ns: string, handle: string): Promise<Person> {
+async function createPerson(admin: Caller, ns: string, handle: string): Promise<Person> {
   const email = `${ns}-${handle}@e2e.local`
   const password = `E2e-${randomBytes(12).toString('hex')}`
-  const res = await apiJson({ token: '', label: 'anonymous' }, 'POST', '/api/users', {
+  const res = await apiJson(admin, 'POST', '/api/users', {
     email,
     password,
     displayName: `E2E ${handle} ${ns}`,
@@ -124,9 +124,9 @@ export async function provisionWorld(): Promise<World> {
 
   const [orgA, orgB] = [await createOrg(admin, ns, 'a'), await createOrg(admin, ns, 'b')]
 
-  const alice = await createPerson(ns, 'alice')
-  const bob = await createPerson(ns, 'bob')
-  const carol = await createPerson(ns, 'carol')
+  const alice = await createPerson(admin, ns, 'alice')
+  const bob = await createPerson(admin, ns, 'bob')
+  const carol = await createPerson(admin, ns, 'carol')
 
   await addMembership(admin, alice, orgA, 'owner')
   await addMembership(admin, bob, orgA, 'member')

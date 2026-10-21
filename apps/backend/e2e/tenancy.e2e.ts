@@ -120,6 +120,20 @@ describe.skipIf(stackDown)('tenancy and isolation', () => {
     }
   })
 
+  it('🔴 an owner of ecosistema B cannot add someone to ecosistema A', async () => {
+    // Payload ignores the WHERE that `create` access returns; the
+    // `refuseForeignOrganization` hook is what stops this. The target is the
+    // platform admin's account: not carol herself (the self-assignment hook
+    // would answer) and not already in A (the uniqueness hook would answer).
+    const res = await apiJson(world.carol.caller, 'POST', '/api/memberships', {
+      user: world.adminId,
+      organization: world.orgA.id,
+      role: 'owner',
+    })
+    expect(res.status).toBe(400)
+    expect(res.text).toContain('You can only add people to an ecosistema you administer.')
+  })
+
   it('the user roster is not browsable — a member sees only their own row', async () => {
     const res = await apiGet(world.bob.caller, '/api/users?limit=200&depth=0')
     expect(res.status).toBe(200)

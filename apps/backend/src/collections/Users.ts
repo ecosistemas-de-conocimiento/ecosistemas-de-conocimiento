@@ -22,23 +22,25 @@ import { canAccessAdminPanel, isPlatformAdmin, isSelfOrPlatformAdmin, platformAd
  *     a blank name because it read the wrong one. `lib/permissions.ts` and
  *     `endpoints/http.ts` were adapted to read `displayName`.
  *
- *   · PUBLIC SIGN-UP — KEPT from the product side. `create: () => true` is
- *     load-bearing: the SvelteKit app's `/api/auth/register` proxies straight
- *     to `POST /api/users`. The IdP was an internal directory with no signup;
- *     this product has one.
+ *   · SIGN-UP IS CLOSED (UX demo backlog #6, decided 2026-10-21). It used to
+ *     be public (`create: () => true`, proxied by the SvelteKit app's
+ *     `/api/auth/register`). A stranger who signed up got a login with no
+ *     memberships — nothing to do and a confusing screen. Now only a platform
+ *     admin creates accounts (Payload admin panel → Users → Create), then adds
+ *     the person to an ecosistema (Memberships → Create). The web
+ *     `/api/auth/register` route answers 403 and `/sign-up` redirects to
+ *     `/sign-in`.
  *
- *     ⚠ THAT MAKES THE FIELD-LEVEL GATES BELOW MANDATORY, not decorative. With
- *     an open create route, `isPlatformAdmin` writable at document level would
- *     mean anyone on the internet can register themselves as the owner of every
- *     organization. `platformAdminFieldAccess` is the only thing between those
- *     two facts. Do not relax it, and do not add another privilege-bearing
- *     field without the same gate.
+ *     ⚠ THE FIELD-LEVEL GATES BELOW STAY MANDATORY. `update` is still
+ *     self-scoped, so `isPlatformAdmin` writable at document level would let
+ *     any account promote itself. `platformAdminFieldAccess` is what stops it.
+ *     Do not relax it, and do not add another privilege-bearing field without
+ *     the same gate.
  *
- *     ⚠ A brand-new account resolves to NOTHING: no memberships, so no
- *     organizations, so no documents and no sessions. That is the intended
- *     posture — signing up gets you a login, not access. An admin adds you to
- *     an organization. Set `IDENTITY_ALLOWED_EMAIL_DOMAIN` to fence signup to
- *     one domain if the deployment wants a narrower door.
+ *     ⚠ A brand-new account still resolves to NOTHING: no memberships, so no
+ *     organizations, so no documents and no sessions, until an admin adds it.
+ *     `IDENTITY_ALLOWED_EMAIL_DOMAIN` still fences which addresses may be
+ *     created, if a deployment wants that.
  *
  *   · `isPlatformAdmin` / `isActive` — KEPT from the IdP side. `isActive` is
  *     the revoke switch the resolver checks (`lib/permissions.ts`); Payload's
@@ -72,9 +74,8 @@ export const Users: CollectionConfig = {
     defaultColumns: ['email', 'displayName', 'isPlatformAdmin', 'isActive'],
   },
   access: {
-    // Public sign-up. See the header — the field gates below are what make this
-    // safe, and the new account starts with access to nothing.
-    create: () => true,
+    // Closed sign-up: only a platform admin creates accounts. See the header.
+    create: isPlatformAdmin,
     // Self-scoped for a normal account (a WHERE constraint, not a boolean — so
     // the roster is not browsable), unrestricted for a platform admin.
     read: isSelfOrPlatformAdmin,
@@ -94,7 +95,7 @@ export const Users: CollectionConfig = {
         // and stray whitespace cannot fork one person into two accounts.
         if (typeof next.email === 'string') next.email = next.email.trim().toLowerCase()
 
-        // Optional domain fence for the open signup route. Empty/unset env =
+        // Optional domain fence on account creation. Empty/unset env =
         // no check, which is what a test database and a local sandbox want.
         const domain = (process.env.IDENTITY_ALLOWED_EMAIL_DOMAIN ?? '').trim().toLowerCase()
         if (operation === 'create' && domain && typeof next.email === 'string' && next.email) {
@@ -134,8 +135,8 @@ export const Users: CollectionConfig = {
     {
       // ⚠ THE ONE FIELD THAT CAN GIVE AWAY THE WHOLE INSTALLATION.
       //
-      // Anyone may create a user (public signup) and a person may update their
-      // own row, so without this field-level gate either operation could carry
+      // A person may update their own row (and sign-up was public until
+      // 2026-10-21), so without this field-level gate that update could carry
       // `isPlatformAdmin: true`. `platformAdminFieldAccess` makes reading AND
       // writing it admin-only: Payload STRIPS the field from an unauthorized
       // write rather than failing it, so the attempt simply does nothing.
