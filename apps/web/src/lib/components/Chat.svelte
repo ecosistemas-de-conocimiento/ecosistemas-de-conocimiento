@@ -6,7 +6,6 @@
   import { generateSync, generateStream, userFacingError, type SyncGenerateResult } from '$lib/api';
   import { answerNotice } from '$lib/aiMessages';
   import type { ContextRef, ContextScope } from '$lib/types';
-  import { emptyChatHint } from '$lib/layout';
   import {
     LENGUA_ALL,
     LENGUA_CHAT_HINT,
@@ -236,9 +235,6 @@
       {:else}
         <div class="text-center text-ink-soft text-sm pt-16">
           <p>Inicia una conversación.</p>
-          <!-- ⚠ Narrow-aware: on a phone there is no panel on the right.
-               See `emptyChatHint` in $lib/layout.ts. -->
-          <p class="text-xs mt-1">{emptyChatHint(hidePanelButtons)}</p>
         </div>
       {/if}
     </div>

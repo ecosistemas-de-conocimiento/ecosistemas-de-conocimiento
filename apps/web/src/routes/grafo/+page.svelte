@@ -65,18 +65,30 @@
    * the back button should undo a selection rather than leave the page. Same
    * reasoning as `/biblioteca`'s filters and `/admin`'s `?eco=`.
    */
-  function navigate(entidad: string | null, conexion: string | null) {
+  function navigate(entidad: string | null, conexion: string | null): Promise<void> {
     // 🔴 The scope params ride along. Rebuilding the URL without them drops a
     // platform admin's `?eco=` on their first click and quietly re-scopes the
     // page to a different ecosistema. See `graphEntityHref`.
     // `?lengua=` rides along too, so picking an entity keeps the filter.
-    void goto(withLengua(graphEntityHref(entidad, conexion, scopeParams), data.lengua), {
+    return goto(withLengua(graphEntityHref(entidad, conexion, scopeParams), data.lengua), {
       keepFocus: true,
       noScroll: true,
     });
   }
 
   const selectedId = $derived(data.entity?.entity.id ?? null);
+
+  /**
+   * Phone (UX backlog #24): the lists sit BELOW the map and the panel, so a
+   * tap on a topic changed a panel the reader could not see. Below the
+   * two-column breakpoint, bring the panel into view once it has loaded.
+   */
+  let panelEl = $state<HTMLElement | null>(null);
+  async function selectFromList(id: string) {
+    await navigate(id, null);
+    if (!window.matchMedia('(max-width: 59.99rem)').matches) return;
+    panelEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   /**
    * ⚠ `data.scope` is `null` for everybody who is not a platform admin — "no
@@ -146,7 +158,7 @@
         onSelect={(id) => navigate(id === selectedId ? null : id, null)}
       />
 
-      <section class="col-panel" aria-label="Conexiones" aria-busy={busy}>
+      <section class="col-panel" aria-label="Conexiones" aria-busy={busy} bind:this={panelEl}>
         {#if data.entityState === 'unavailable'}
           <p class="notice">{GRAPH_ENTITY_UNAVAILABLE}</p>
         {:else if data.entityState === 'not-found'}
@@ -196,7 +208,7 @@
         <EntityLists
           entities={visible}
           {selectedId}
-          onSelect={(id) => navigate(id, null)}
+          onSelect={(id) => void selectFromList(id)}
         />
 
       </section>

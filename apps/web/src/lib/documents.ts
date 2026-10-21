@@ -149,22 +149,6 @@ export function detachHintCopy(attachedCount: number): string {
     : 'Quitar el documento de esta conversación. NO se borra: sigue en las demás.';
 }
 
-/**
- * 🔴 THE SENTENCE "MIS DOCUMENTOS" EXISTS FOR.
- *
- * A document attached to no conversation is not broken and is not deleted — it
- * is simply not being read by anything. Nobody can guess that from a list, and
- * a person who does not know it will assume the assistant is using a file it
- * has never seen. It is stated on the row, not in a tooltip: a tooltip is a
- * thing you find only if you already suspected there was something to find.
- */
-export const LOOSE_DOC_EXPLANATION =
-  'No lo estás usando en ninguna conversación, así que el asistente no lo lee.';
-
-/** What to do about it, in the order the buttons appear. */
-export const LOOSE_DOC_OPTIONS =
-  'Puedes agregarlo a una conversación, publicarlo para que lo tenga todo tu ecosistema, o eliminarlo.';
-
 /** The confirmation for the destructive delete. Says what is lost. */
 export function deleteConfirmCopy(title: string, attachedCount: number): string {
   const head = `¿Eliminar "${title}"?`;

@@ -20,7 +20,6 @@
     uploadButtonTitle,
     mayUploadVoces,
     UPLOAD_CONTENT_KINDS,
-    UPLOAD_KIND_HINT,
     UPLOAD_KIND_LABELS,
     type UploadContentKind,
   } from '$lib/uploadKind';
@@ -32,16 +31,11 @@
     isTranscript,
     publishConfirmCopy,
     transcriptReadyCallToAction,
-    transcriptReviewPrompt,
     transcriptStatsCopy,
     transcriptEditGate,
-    transcriptEditBlockedCopy,
     TRANSCRIPT_EDIT_CANCEL,
-    TRANSCRIPT_EDIT_INVITATION,
-    TRANSCRIPT_EDIT_REINDEX_NOTE,
     TRANSCRIPT_EDIT_SAVE,
     TRANSCRIPT_EDIT_START,
-    TRANSCRIBING_REASSURANCE,
     TRANSCRIPT_PREVIEW_HIDE,
     TRANSCRIPT_PREVIEW_SHOW,
     TRANSCRIPT_PROVENANCE_LABEL,
@@ -370,7 +364,7 @@
             const d = await app.newDoc(s.id);
             if (d) expandedId = d.id;
           }}
-          title="Nueva nota — se guardará como borrador, solo tú la verás"
+          title="Nueva nota"
           aria-label="Nueva nota"
         >
           <svg
@@ -410,16 +404,10 @@
       </div>
     </header>
 
-    <!-- Said at the top of the panel, not only at the moment of upload: a user
-         who opens this panel later still needs to know what happens to a new
-         file before they add one. -->
-    <p class="px-3 py-1.5 text-[10px] text-ink-soft border-b border-elevated">
-      Todo lo que subas entra como <strong class="text-ink">borrador</strong>: solo tú lo ves.
-      Puedes usarlo en el chat y publicarlo cuando esté listo.
-    </p>
-
+    <!-- No explainer paragraphs in this panel (UX backlog #33/#36): every card
+         already says "Borrador · solo tú" or "Publicado". -->
     {#if canUploadVoces}
-      <div class="px-3 py-1.5 border-b border-elevated flex flex-col gap-1">
+      <div class="px-3 py-1.5 border-b border-elevated">
         <label class="text-[11px] text-ink-soft flex items-center gap-2">
           <span>Lo que vas a subir es:</span>
           <select
@@ -432,9 +420,6 @@
             {/each}
           </select>
         </label>
-        {#if uploadContentKind === 'testimonio'}
-          <p class="text-[10px] text-ink-soft">{UPLOAD_KIND_HINT}</p>
-        {/if}
       </div>
     {/if}
 
@@ -461,18 +446,8 @@
           {#if pickerLoading}
             <p class="text-[10px] text-ink-soft" role="status">Buscando tus documentos…</p>
           {:else if available.length === 0}
-            <!-- Plain, and not an error: "no encontramos nada" is the normal
-                 answer for someone who only ever uploaded files here. -->
-            <p class="text-[10px] text-ink-soft leading-snug">
-              No hay documentos tuyos en otras conversaciones para agregar aquí. Sube
-              uno con el ícono de subida, o escribe una nota con
-              <span class="font-mono">+</span>.
-            </p>
+            <p class="text-[10px] text-ink-soft leading-snug">No tienes otros documentos.</p>
           {:else}
-            <p class="text-[10px] text-ink-soft leading-snug mb-1.5">
-              Elige uno. Se agrega a esta conversación sin salir de donde ya estaba:
-              es el mismo documento en los dos lados.
-            </p>
             <ul class="space-y-1">
               {#each available as a (a.id)}
                 {@const aPub = publicationBadge(a.publicationStatus)}
@@ -529,7 +504,6 @@
             {/if}
           </div>
           <p class="text-[10px] text-ink-soft mt-1 break-words">{uploadingFile.name}</p>
-          <p class="text-[10px] text-ink-soft mt-0.5 leading-snug">{copy.message}</p>
         </div>
       {/if}
 
@@ -566,6 +540,7 @@
               <input
                 class="title-input flex-1 min-w-0 bg-transparent text-sm text-ink outline-none rounded px-1"
                 value={d.title}
+                title={d.title}
                 aria-label="Título del documento"
                 oninput={(e) => {
                   if (sid) {
@@ -698,7 +673,7 @@
                   dataTestId={`publish-${d.id}`}
                   onClick={() => publish(sid, d)}
                 />
-              {:else if gate.reason && gate.reason !== 'ingest-failed'}
+              {:else if gate.reason && gate.reason !== 'ingest-failed' && publishBlockedCopy(gate.reason)}
                 <!-- ⚠ `ingest-failed` is skipped here: the failure box below
                      already says what happened and offers "Reintentar" when a
                      retry can work. Its "Bórralo y súbelo de nuevo" sat right
@@ -753,7 +728,7 @@
                 publicationStatus: d.publicationStatus,
               })}
               <div class="transcript-cta">
-                <span class="block">{cta}</span>
+                <span>{cta}</span>
                 <button
                   class="transcript-cta-link"
                   onclick={() => (isOpen && isPreview ? togglePreview(d.id) : openTranscript(d.id))}
@@ -768,23 +743,9 @@
                  explanation and the retry button above stays available. -->
             {#if d.publicationStatus === 'failed'}
               <div class="publish-failed">
-                <strong class="text-danger">No se completó la publicación.</strong>
-                El documento sigue siendo privado: solo tú lo ves.
                 <!-- No raw `publicationError`: it is a backend string, often in
                      English (same rule as the ingest failure, backlog #8). -->
-                {#if gate.canPublish}
-                  <span class="block mt-0.5 text-ink-soft">
-                    Puedes reintentarlo con el botón de arriba.
-                  </span>
-                {/if}
-              </div>
-            {/if}
-
-            {#if d.publicationStatus === 'publishing'}
-              <div class="publish-progress">
-                Se está agregando al corpus compartido. Tarda varios minutos —
-                puedes cerrar esta pestaña y volver después; la publicación sigue
-                en el servidor.
+                <strong class="text-danger">No se completó la publicación.</strong>
               </div>
             {/if}
 
@@ -795,7 +756,6 @@
             {#if d.ingestStatus === 'transcribing'}
               <div class="publish-progress" role="status">
                 {transcriptionEtaCopy(d.audioMeta)}
-                <span class="block mt-0.5">{TRANSCRIBING_REASSURANCE}</span>
               </div>
             {/if}
 
@@ -818,10 +778,6 @@
                       dataTestId={`retry-ingest-${d.id}`}
                       onClick={() => retry(sid, d)}
                     />
-                  </span>
-                {:else}
-                  <span class="block mt-0.5 text-ink-soft">
-                    Bórralo y súbelo de nuevo con un archivo distinto.
                   </span>
                 {/if}
               </div>
@@ -878,11 +834,7 @@
                     })}
                     {@const isEditing = editingTranscriptId === d.id}
                     <div class="bg-surface-soft border-t border-elevated px-3 py-3">
-                      <p class="text-[10px] text-ink-soft leading-snug">
-                        {TRANSCRIPT_PROVENANCE_TOOLTIP}
-                        {transcriptReviewPrompt(d.publicationStatus) ?? ''}
-                        {#if stats}<span class="block mt-0.5">{stats}</span>{/if}
-                      </p>
+                      {#if stats}<p class="text-[10px] text-ink-soft">{stats}</p>{/if}
 
                       {#if isEditing}
                         <!-- 🔴 THE CORRECTION BOX. Machine text, a person who
@@ -894,16 +846,12 @@
                              saving re-indexes, because a correction that left
                              the chat quoting the old wording would be worse
                              than no correction at all. -->
-                        <p class="edit-invite mt-2">{TRANSCRIPT_EDIT_INVITATION}</p>
                         <textarea
                           class="transcript-editor mt-2 w-full text-xs"
                           bind:value={transcriptDraft}
                           aria-label="Texto de la transcripción"
                           data-testid={`transcript-editor-${d.id}`}
                         ></textarea>
-                        <p class="text-[10px] text-ink-soft mt-1 leading-snug">
-                          {TRANSCRIPT_EDIT_REINDEX_NOTE}
-                        </p>
                         <div class="flex items-center gap-2 mt-2">
                           <Button
                             tone="brand"
@@ -939,13 +887,6 @@
                           >
                             {TRANSCRIPT_EDIT_START}
                           </button>
-                        {:else if editGate.reason === 'published'}
-                          <!-- ⚠ Said, not silently omitted. A missing button
-                               reads as a missing feature; this says the text is
-                               frozen and why. -->
-                          <p class="text-[10px] text-ink-soft mt-2 leading-snug">
-                            {transcriptEditBlockedCopy(editGate.reason)}
-                          </p>
                         {/if}
                       {:else}
                         <p class="mt-2 text-xs text-ink-soft italic">{TRANSCRIPT_UNAVAILABLE}</p>
@@ -955,23 +896,15 @@
                   <div class="px-3 py-3 text-xs text-ink-soft bg-surface-soft border-t border-elevated space-y-1">
                     <div>
                       <span class="font-medium text-ink">{d.kind.toUpperCase()}</span>
-                      <!-- ⚠ No explanatory sentence for audio, on purpose. The
-                           states below already narrate what is happening
-                           ("Transcribiendo…", "Falta indexarla…"), so a standing
-                           description of the pipeline was instruction the reader
-                           did not ask for and could not act on. -->
-                      {#if !isTranscript(d.kind)}
-                        — procesado para que el chat pueda consultarlo.
-                      {/if}
                     </div>
                     {#if d.ingestStatus === 'pending'}
-                      <div>En cola. Participará en las respuestas cuando esté <span class="text-success">listo</span>.</div>
+                      <div>En cola.</div>
                     {:else if d.ingestStatus === 'extracting'}
                       <div>Extrayendo el texto del documento…</div>
                     {:else if d.ingestStatus === 'transcribing'}
                       <div>{transcriptionEtaCopy(d.audioMeta)}</div>
                     {:else if d.ingestStatus === 'transcribed'}
-                      <div>Transcripción terminada. Falta indexarla para que el chat la consulte.</div>
+                      <div>Transcripción terminada. Indexando…</div>
                     {:else if d.ingestStatus === 'embedding'}
                       <div>Indexando el contenido…</div>
                     {:else if d.ingestStatus === 'failed'}
@@ -984,26 +917,8 @@
                            in the backend's Documents record for whoever debugs. -->
                       <div class="text-danger">{failure.title}. {failure.message}</div>
                     {:else if d.ingestStatus === 'ready'}
-                      <!-- ⚠ Follows the "fijar" checkbox. Saying "Fíjalo" on a
-                           document that is already pinned read as broken (backlog #21). -->
-                      <div>
-                        {#if isTranscript(d.kind)}
-                          Transcripción lista.
-                          {d.includeInContext
-                            ? 'Está fijada: va en cada mensaje.'
-                            : 'Fíjala para incluirla en cada mensaje.'}
-                        {:else}
-                          Disponible para el chat.
-                          {d.includeInContext
-                            ? 'Está fijado: va en cada mensaje.'
-                            : 'Fíjalo para incluirlo en cada mensaje.'}
-                        {/if}
-                      </div>
+                      <div>{isTranscript(d.kind) ? 'Transcripción lista.' : 'Listo para el chat.'}</div>
                     {/if}
-                    {#if isTranscript(d.kind)}
-                      <div class="pt-1">{TRANSCRIPT_PROVENANCE_TOOLTIP}</div>
-                    {/if}
-                    <div class="pt-1">{pub.description}</div>
                   </div>
                   {/if}
                 {:else}
@@ -1060,30 +975,12 @@
         {/each}
       {:else if !uploadingFile}
         <!-- ⚠ `!uploadingFile`: "todavía no hay documentos" directly under a
-             card that says "subiendo la grabación…" contradicts itself, and the
-             contradiction lands exactly when the user is least sure the upload
-             worked. -->
+             card that says "subiendo…" contradicts itself. -->
         <div class="text-center text-ink-soft text-xs p-6">
-          Todavía no hay documentos en esta conversación.<br />
-          Usa <span class="font-mono">+</span> para escribir una nota, o el ícono de
-          subida para adjuntar un <span class="font-mono">.pdf</span>, un
-          <span class="font-mono">.docx</span> o una grabación de audio
-          (<span class="font-mono">.mp3</span>, <span class="font-mono">.m4a</span>,
-          <span class="font-mono">.wav</span>). Entran como borrador y solo tú los ves.
+          Todavía no hay documentos en esta conversación.
         </div>
       {/if}
     </div>
-
-    <footer class="border-t border-elevated p-2 text-[10px] text-ink-soft space-y-1">
-      <div>Los documentos fijados se envían como contexto en cada mensaje.</div>
-      <!-- ⚠ THE "Ver la biblioteca del ecosistema" LINK THAT USED TO SIT HERE
-           IS GONE ON PURPOSE. It was a stopgap for a missing menu: the library
-           was reachable only from inside a panel most people never opened.
-           Biblioteca is now a first-class entry in the primary navigation
-           (`$lib/components/PrimaryNav.svelte`), so re-adding a second door
-           here would put the same destination in two places and make neither
-           of them the one people learn. -->
-    </footer>
   </aside>
 {/if}
 
@@ -1180,6 +1077,10 @@
      `--edc-focus-ring` token for exactly these cases. */
   .title-input:focus {
     box-shadow: 0 0 0 3px var(--edc-focus-ring);
+  }
+  /* A cut title shows "…" (UX backlog #24); the full one is in the tooltip. */
+  .title-input {
+    text-overflow: ellipsis;
   }
 
   .publish-failed,

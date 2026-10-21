@@ -187,12 +187,10 @@ export function kindLabel(kind: LibraryKind, opts: { fromAudio?: boolean } = {})
  * author on one card and a name on the next assumes the data is incomplete and
  * goes looking. This says the quiet part: nobody knows, on purpose.
  */
-export const TESTIMONY_ANONYMITY_NOTE =
-  'Testimonio anónimo: el sistema no guarda quién lo contó.';
+export const TESTIMONY_ANONYMITY_NOTE = 'Testimonio anónimo';
 
 /** The machine-transcription warning, reused verbatim from `$lib/ingest.ts`. */
-export const LIBRARY_TRANSCRIPT_NOTE =
-  'Este texto se generó automáticamente a partir de un audio y puede contener errores.';
+export const LIBRARY_TRANSCRIPT_NOTE = 'Transcripción automática: puede tener errores.';
 
 /**
  * 🔴 DOES THIS ROW'S TEXT COME FROM A MACHINE TRANSCRIPTION? Keyed on the FILE
@@ -204,23 +202,11 @@ export function isMachineTranscript(item: { kind: LibraryKind; fromAudio?: boole
   return item.kind === 'audio' || item.fromAudio === true;
 }
 
-/**
- * ⚠ Said on the page, not only in a tooltip. The single most common misreading
- * of a shared library is "this is everything there is". It is not: it is
- * everything that has been PUBLISHED, and the drafts people are still working
- * on are deliberately not here.
- */
-export const LIBRARY_SCOPE_NOTE =
-  'Aquí solo aparece lo publicado: lo que alguien de tu ecosistema decidió compartir. Los borradores, incluidos los tuyos, no se ven en esta página.';
-
 export const LIBRARY_EMPTY = 'Todavía no hay nada publicado en tu ecosistema.';
-export const LIBRARY_EMPTY_HINT =
-  'Cuando alguien publique un documento o una voz, aparecerá aquí para todas las personas del ecosistema.';
 
 export const LIBRARY_NO_RESULTS = 'Ningún documento coincide con lo que buscas.';
 
-export const LIBRARY_UNAVAILABLE =
-  'No pudimos leer la biblioteca en este momento. Vuelve a intentarlo en un rato.';
+export const LIBRARY_UNAVAILABLE = 'No pudimos leer la biblioteca. Inténtalo más tarde.';
 
 // ── Filters ────────────────────────────────────────────────────────────────
 

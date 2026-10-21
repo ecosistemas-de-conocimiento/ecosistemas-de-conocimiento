@@ -4,18 +4,13 @@ import {
   INGEST_STATUSES,
   TRANSCRIPT_EDIT_CANCEL,
   TRANSCRIPT_EDIT_EMPTY_ERROR,
-  TRANSCRIPT_EDIT_INVITATION,
-  TRANSCRIPT_EDIT_REINDEX_NOTE,
   TRANSCRIPT_EDIT_SAVE,
   TRANSCRIPT_EDIT_SAVED_MESSAGE,
   TRANSCRIPT_EDIT_START,
   transcriptChanged,
-  transcriptEditBlockedCopy,
   transcriptEditGate,
-  TRANSCRIBING_REASSURANCE,
   TRANSCRIPT_PREVIEW_HIDE,
   TRANSCRIPT_PREVIEW_SHOW,
-  TRANSCRIPT_REVIEW_PROMPT,
   TRANSCRIPT_UNAVAILABLE,
   TRANSCRIPT_PROVENANCE_LABEL,
   TRANSCRIPT_PROVENANCE_TOOLTIP,
@@ -37,7 +32,6 @@ import {
   pollIntervalMs,
   publishConfirmCopy,
   transcriptReadyCallToAction,
-  transcriptReviewPrompt,
   transcriptStatsCopy,
   transcriptionEtaCopy,
   uploadInFlightCopy,
@@ -193,12 +187,9 @@ describe('ingestBadge', () => {
     expect(ingestBadge(status)?.tone).toBe(tone);
   });
 
-  // ⚠ Both halves are required: the ETA says how long, the reassurance says the
-  // work survives closing the tab. Either one alone leaves the user guessing.
-  it('carries both the ETA and the "you can close this" promise while transcribing', () => {
+  it('carries the ETA while transcribing', () => {
     const badge = ingestBadge('transcribing', 'audio', { durationSeconds: 3600 });
     expect(badge?.title).toContain(transcriptionEtaCopy({ durationSeconds: 3600 }));
-    expect(badge?.title).toContain(TRANSCRIBING_REASSURANCE);
     expect(badge?.title).toContain('1 h');
   });
 
@@ -358,7 +349,6 @@ describe('the transcript provenance copy', () => {
     ['TRANSCRIPT_PROVENANCE_LABEL', TRANSCRIPT_PROVENANCE_LABEL],
     ['TRANSCRIPT_PROVENANCE_TOOLTIP', TRANSCRIPT_PROVENANCE_TOOLTIP],
     ['TRANSCRIPT_PUBLISH_WARNING', TRANSCRIPT_PUBLISH_WARNING],
-    ['TRANSCRIBING_REASSURANCE', TRANSCRIBING_REASSURANCE],
   ])('%s exists, is non-empty and is in Spanish', (_name, value) => {
     expect(typeof value).toBe('string');
     expect(value.trim().length).toBeGreaterThan(0);
@@ -456,24 +446,16 @@ describe('audioLanguageChip / audioMetaChips', () => {
 });
 
 describe('uploadInFlightCopy', () => {
-  it('warns, while an audio upload is going up, that the long part comes after', () => {
-    const copy = uploadInFlightCopy(true);
-    expect(copy.title).toMatch(/grabación/i);
-    expect(copy.message).toMatch(/lo que dura la grabación/i);
+  it('names a recording while an audio upload is going up', () => {
+    expect(uploadInFlightCopy(true).title).toMatch(/grabación/i);
   });
 
   it('🔴 never promises audio will be quick', () => {
-    expect(uploadInFlightCopy(true).message).not.toMatch(IMPLIES_ALMOST_DONE);
     expect(uploadInFlightCopy(true).title).not.toMatch(IMPLIES_ALMOST_DONE);
   });
 
   it('is visibly a different message from the document one', () => {
-    const audio = uploadInFlightCopy(true);
-    const doc = uploadInFlightCopy(false);
-    expect(audio.title).not.toBe(doc.title);
-    expect(audio.message).not.toBe(doc.message);
-    // A PDF genuinely is quick; only that branch is allowed to say so.
-    expect(doc.message).toMatch(/poco/i);
+    expect(uploadInFlightCopy(true).title).not.toBe(uploadInFlightCopy(false).title);
   });
 });
 
@@ -493,15 +475,10 @@ describe('transcriptStatsCopy', () => {
 describe('transcriptReadyCallToAction', () => {
   const base = { kind: 'audio' as const, ingestStatus: 'ready' as const, publicationStatus: 'draft' };
 
-  it('🔴 tells the user the last step is theirs: a ready transcript is still private', () => {
+  it('says the transcript is ready, in one short line', () => {
     const cta = transcriptReadyCallToAction(base)!;
-    expect(cta).toMatch(/solo tú/i);
-    expect(cta).toMatch(/publíc/i);
-    expect(cta).toMatch(/ecosistema/i);
-  });
-
-  it('points at reviewing BEFORE publishing — the text is machine-made', () => {
-    expect(transcriptReadyCallToAction(base)).toMatch(/revísala/i);
+    expect(cta).toMatch(/lista/i);
+    expect(cta.split('. ').length).toBe(1);
   });
 
   it('stays quiet until the transcript actually exists', () => {
@@ -526,7 +503,6 @@ describe('transcriptReadyCallToAction', () => {
 describe('the transcript-review copy', () => {
   it('says the transcript can be wrong, wherever it is shown', () => {
     expect(TRANSCRIPT_PROVENANCE_TOOLTIP).toMatch(/errores/i);
-    expect(TRANSCRIPT_REVIEW_PROMPT).toMatch(/lé[ea]la/i);
   });
 
   it('labels the two preview states differently, so the toggle reads as a toggle', () => {
@@ -536,18 +512,6 @@ describe('the transcript-review copy', () => {
 
   it('does not imply a missing transcript was lost', () => {
     expect(TRANSCRIPT_UNAVAILABLE).not.toMatch(/error|falló|perdi/i);
-  });
-});
-
-describe('transcriptReviewPrompt', () => {
-  it('asks for a read while the transcript is still a private draft', () => {
-    expect(transcriptReviewPrompt('draft')).toBe(TRANSCRIPT_REVIEW_PROMPT);
-  });
-
-  it('stops asking once it is shared — advice about a step already taken is noise', () => {
-    for (const status of ['published', 'publishing', 'failed']) {
-      expect(transcriptReviewPrompt(status)).toBeNull();
-    }
   });
 });
 
@@ -597,17 +561,6 @@ describe('transcriptEditGate', () => {
     expect(transcriptEditGate({ ...editable, transcript }).reason).toBe('no-transcript');
   });
 
-  it('gives every blocked reason words the user can act on', () => {
-    for (const reason of ['not-a-transcript', 'published', 'in-progress', 'no-transcript'] as const) {
-      expect(transcriptEditBlockedCopy(reason).length).toBeGreaterThan(0);
-    }
-  });
-
-  // ⚠ "Ya está publicado" alone reads as an arbitrary rule. The reason it is
-  // frozen is that other people may already be citing it — so the copy says so.
-  it('says WHY a published transcript is frozen, not only that it is', () => {
-    expect(transcriptEditBlockedCopy('published')).toMatch(/citado|leído/i);
-  });
 });
 
 describe('transcriptChanged', () => {
@@ -632,18 +585,9 @@ describe('transcriptChanged', () => {
 });
 
 describe('the transcript-editing copy', () => {
-  // 🔴 NOT OPTIONAL. People do not proofread text they believe a person wrote.
-  // Saying a machine wrote it, right where the cursor goes, is what turns
-  // "léela" into "revísala".
-  it('says the text is machine-made, right at the edit box', () => {
-    expect(TRANSCRIPT_EDIT_INVITATION).toMatch(/máquina/i);
-    expect(TRANSCRIPT_EDIT_INVITATION).toMatch(/errores/i);
-  });
-
   // 🔴 A correction that left the chat quoting the old wording would be worse
   // than no correction at all, so the button says what saving actually does.
-  it('warns that saving re-indexes, and says so on the button too', () => {
-    expect(TRANSCRIPT_EDIT_REINDEX_NOTE).toMatch(/indexa/i);
+  it('says on the button that saving re-indexes', () => {
     expect(TRANSCRIPT_EDIT_SAVE).toMatch(/indexar/i);
     expect(TRANSCRIPT_EDIT_SAVED_MESSAGE).toMatch(/indexar|indexando/i);
   });

@@ -4,8 +4,6 @@ import {
   deleteConfirmCopy,
   detachConfirmCopy,
   detachHintCopy,
-  LOOSE_DOC_EXPLANATION,
-  LOOSE_DOC_OPTIONS,
   OWNED_DOCS_VIEW_NAME,
   relationIds,
   relationSessions,
@@ -246,25 +244,5 @@ describe('the two confirmations must never converge', () => {
     for (const n of counts) {
       expect(detachConfirmCopy('Riego 2024', n)).not.toContain('para siempre');
     }
-  });
-});
-
-describe('the copy for a document in no conversation', () => {
-  it('is not empty — it is the sentence "Mis documentos" exists for', () => {
-    expect(LOOSE_DOC_EXPLANATION.length).toBeGreaterThan(0);
-    expect(LOOSE_DOC_OPTIONS.length).toBeGreaterThan(0);
-  });
-
-  // A person who does not know this will assume the assistant is using a file
-  // it has never seen.
-  it('says outright that the assistant does not read the document', () => {
-    expect(LOOSE_DOC_EXPLANATION).toContain('el asistente no lo lee');
-  });
-
-  it('tells the reader all three ways out: add to a conversation, publish, or delete', () => {
-    const both = `${LOOSE_DOC_EXPLANATION} ${LOOSE_DOC_OPTIONS}`;
-    expect(both).toContain('agregarlo a una conversación');
-    expect(both).toContain('publicarlo');
-    expect(both).toContain('eliminarlo');
   });
 });

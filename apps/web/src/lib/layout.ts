@@ -133,21 +133,6 @@ export function isPanelOpen(current: MobilePanel, panel: MobilePanel): boolean {
 }
 
 /**
- * The empty-chat invitation.
- *
- * 🔴 THE OLD COPY LIED ON A PHONE. It said "sube documentos en el panel de la
- * derecha" — and on a narrow screen there is no panel on the right, there is a
- * button that says "Documentos". Telling someone to look at a place that does
- * not exist is worse than saying nothing: they conclude the app is broken, or
- * that they are.
- */
-export function emptyChatHint(narrow: boolean): string {
-  return narrow
-    ? 'Abre “Documentos” arriba para subir archivos, y usa @ para mencionarlos.'
-    : 'Sube documentos en el panel de la derecha y usa @ para mencionarlos.';
-}
-
-/**
  * What the message box says when it is empty.
  *
  * ⚠ THE LONG ONE DOES NOT FIT ON A PHONE. At 380px the full hint wraps to four

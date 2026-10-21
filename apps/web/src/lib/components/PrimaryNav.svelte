@@ -61,11 +61,9 @@
           data-interactive
           data-testid={`nav-${item.href === '/' ? 'chat' : item.href.slice(1)}`}
         >
+          <!-- The hint lives only in `title`: no explainer text under each
+               label (UX backlog #33). -->
           <span class="label">{item.label}</span>
-          <!-- The hint is `aria-hidden` because it is already the link's
-               `title`; announcing it twice makes the menu twice as long to
-               listen to. -->
-          <span class="hint" aria-hidden="true">{item.hint}</span>
         </a>
       </li>
     {/each}
@@ -129,7 +127,7 @@
 
   /* ⚠ SHRINK BEFORE SCROLLING (UX backlog #13). Each item starts at its
      natural one-line width; when the row is too wide, items give up width and
-     their HINT wraps to a second line. An item never shrinks below its label
+     their label stays on one line. An item never shrinks below its label
      (`min-width: auto` is the label's width, since the label never wraps), so
      past that point the row scrolls instead. At 1366 px all six items fit. */
   .items > li {
@@ -177,20 +175,10 @@
     color: var(--edc-color-brand-strong);
   }
 
-  .hint {
-    display: block;
-    font-size: 0.7rem;
-    line-height: 1.2;
-    color: var(--edc-color-ink-soft);
-  }
-
-  /* On a phone the hints would push the bar to a third of the screen. The
-     label stays; the explanation lives in the link's `title`. */
+  /* Phone: tighter items so more of the row fits before it scrolls. */
   @media (max-width: 40rem) {
-    .hint {
-      display: none;
-    }
     .item {
+      padding: 0.55rem 0.65rem;
       min-height: 2.6rem;
       display: flex;
       align-items: center;
