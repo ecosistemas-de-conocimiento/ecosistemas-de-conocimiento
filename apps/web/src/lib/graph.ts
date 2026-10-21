@@ -36,7 +36,7 @@
  * report. Never a participant in a testimony, and never someone whose name a
  * testimony happened to mention.
  *
- * ⚠ AND THEY ARE STILL SUBJECT TO EVERYTHING ELSE. `GRAPH_MIN_SUPPORT` applies
+ * ⚠ AND THEY ARE STILL SUBJECT TO EVERYTHING ELSE. `GRAPH_MIN_ENTITY_DOCS` applies
  * unchanged, so a person named in one or two published documents does not
  * appear at all; the published-only scope applies; and no snippet is ever
  * stored for a testimonio. The re-identification argument in ADR §7.3 rests on
@@ -152,7 +152,18 @@ export interface GraphNeighbour {
   relationType: GraphRelationType;
   /** See {@link GraphEdgeDirection}. An older backend sends none ⇒ `out`. */
   direction: GraphEdgeDirection;
+  /**
+   * Distinct published documents behind THIS CONNECTION. After
+   * {@link mergeNeighbours} that is the PAIR's weight — every relation type —
+   * when the backend sends `pairSupport`, else the strongest type's.
+   */
   support: number;
+  /**
+   * The per-type breakdown of a merged connection, strongest first. Present
+   * only after {@link mergeNeighbours}, and only when there is more than one
+   * type to show.
+   */
+  relations?: Array<{ relationType: GraphRelationType; direction: GraphEdgeDirection; support: number }>;
   /**
    * The published documents that EVIDENCE THIS EDGE — not the ones the two
    * entities happen to share. `graph_relations` holds one row per
@@ -162,10 +173,15 @@ export interface GraphNeighbour {
    * ⚠ `null` MEANS THE BACKEND DID NOT SEND THE FIELD, which is different from
    * an empty list. Absent ⇒ fall back to the old intersection. Empty ⇒ the
    * backend really found none, which should not happen (an edge exists only
-   * when at least `GRAPH_MIN_SUPPORT` documents evidence it) and is shown as
+   * when at least `GRAPH_MIN_EDGE_DOCS` documents evidence it) and is shown as
    * "none" rather than papered over.
    */
   documents: GraphDocument[] | null;
+  /**
+   * The PAIR's weight off the wire: documents behind any relation between the
+   * two. {@link mergeNeighbours} folds it into `support`.
+   */
+  pairSupport?: number;
 }
 
 export interface GraphDocument {
@@ -211,12 +227,32 @@ export interface GraphView {
   edges?: GraphViewEdge[];
 }
 
-/** One undirected edge of the whole-graph picture. */
+/**
+ * What drew an overview edge. `relation` ⇒ the extraction related the pair;
+ * `co-mention` ⇒ it did not, but published documents mention both (UI:
+ * "aparecen juntos").
+ */
+export type GraphViewEdgeKind = 'relation' | 'co-mention';
+
+/**
+ * One undirected edge of the whole-graph picture: ONE PER PAIR, every relation
+ * type and both directions folded in by the backend (owner, 2026-10-21).
+ */
 export interface GraphViewEdge {
   fromId: string;
   toId: string;
-  /** Distinct published documents behind the strongest relation of the pair. */
+  /**
+   * Distinct published documents behind the edge: any relation of the pair for
+   * `relation`, documents mentioning both for `co-mention`.
+   */
   support: number;
+  /** Absent from an older backend ⇒ `relation`. */
+  kind: GraphViewEdgeKind;
+  /** Published documents mentioning both ends. `0` when the backend did not say. */
+  coMentions: number;
+  /** `relation` only: the pair's most common type, and its way from `fromId`. */
+  relationType?: GraphRelationType;
+  direction?: GraphEdgeDirection;
 }
 
 export interface GraphEntityDetail {
@@ -414,7 +450,20 @@ function parseViewEdges(raw: unknown, entities: readonly GraphEntity[]): GraphVi
     const key = edge.fromId < edge.toId ? `${edge.fromId}|${edge.toId}` : `${edge.toId}|${edge.fromId}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ fromId: edge.fromId, toId: edge.toId, support: edge.support });
+    const row = item as Record<string, unknown>;
+    const kind: GraphViewEdgeKind = row.kind === 'co-mention' ? 'co-mention' : 'relation';
+    const parsed: GraphViewEdge = {
+      fromId: edge.fromId,
+      toId: edge.toId,
+      support: edge.support,
+      kind,
+      coMentions: count(row.coMentions),
+    };
+    if (kind === 'relation' && (row.relationType ?? row.type) != null) {
+      parsed.relationType = edge.relationType;
+      parsed.direction = row.direction === 'in' || row.direction === 'both' ? row.direction : 'out';
+    }
+    out.push(parsed);
   }
   return out;
 }
@@ -434,11 +483,14 @@ export function parseGraphNeighbour(raw: unknown): GraphNeighbour | null {
   // count, and the ego network would show a fat spoke for a thin edge.
   const declared =
     row.support === undefined || row.support === null ? null : count(row.support);
+  const pair =
+    row.pairSupport === undefined || row.pairSupport === null ? null : count(row.pairSupport);
   return {
     entity,
     relationType: toRelationType(row.relationType),
     direction: toDirection(row.direction),
     support: declared ?? entity.support,
+    ...(pair !== null ? { pairSupport: pair } : {}),
     // Absent stays `null`; see the field comment. `Array.isArray` is the whole
     // distinction, so an older backend degrades instead of showing "none".
     documents: Array.isArray(row.documents)
@@ -492,21 +544,41 @@ export function uniqueDocuments(documents: readonly GraphDocument[]): GraphDocum
  * `GraphNeighbour.documents`.
  */
 export function mergeNeighbours(neighbours: readonly GraphNeighbour[]): GraphNeighbour[] {
-  const byId = new Map<string, GraphNeighbour>();
+  const groups = new Map<string, GraphNeighbour[]>();
   for (const n of neighbours) {
-    const prev = byId.get(n.entity.id);
-    if (!prev) {
-      byId.set(n.entity.id, n.documents ? { ...n, documents: uniqueDocuments(n.documents) } : n);
-      continue;
-    }
-    const strongest = n.support > prev.support ? n : prev;
-    const documents =
-      prev.documents === null && n.documents === null
-        ? null
-        : uniqueDocuments([...(strongest.documents ?? []), ...(prev.documents ?? []), ...(n.documents ?? [])]);
-    byId.set(n.entity.id, { ...strongest, documents });
+    const list = groups.get(n.entity.id);
+    if (list) list.push(n);
+    else groups.set(n.entity.id, [n]);
   }
-  return [...byId.values()];
+  const out: GraphNeighbour[] = [];
+  for (const rows of groups.values()) {
+    // Strongest type first; a tie goes to the alphabetically first type, the
+    // same order the backend's overview edge uses, so the map and the panel
+    // name a tied pair the same way.
+    const ranked = [...rows].sort(
+      (x, y) => y.support - x.support || x.relationType.localeCompare(y.relationType),
+    );
+    const strongest = ranked[0]!;
+    const documents = rows.every((n) => n.documents === null)
+      ? null
+      : uniqueDocuments(ranked.flatMap((n) => n.documents ?? []));
+    const pair = rows.reduce((m, n) => Math.max(m, n.pairSupport ?? 0), 0);
+    const merged: GraphNeighbour = {
+      ...strongest,
+      support: Math.max(pair, strongest.support),
+      documents,
+    };
+    delete merged.pairSupport;
+    if (ranked.length > 1) {
+      merged.relations = ranked.map((n) => ({
+        relationType: n.relationType,
+        direction: n.direction,
+        support: n.support,
+      }));
+    }
+    out.push(merged);
+  }
+  return out;
 }
 
 export function parseGraphEdge(raw: unknown): GraphEdge | null {
@@ -1261,7 +1333,7 @@ export interface OverviewLayout {
  * returned, which are already past every filter (threshold, languages,
  * placeholders), so "isolated" means isolated in what the member can see.
  *
- * Why so many are isolated: an edge needs ≥ `GRAPH_MIN_SUPPORT` published
+ * Why so many are isolated: an edge needs ≥ `GRAPH_MIN_EDGE_DOCS` published
  * documents for the SAME (from, to, relation type), while an entity needs that
  * many documents mentioning it at all — see `queries.ts` `viewEdgesQuery`.
  */
@@ -1432,6 +1504,9 @@ export const OVERVIEW_DESCRIPTION = 'Mapa de conexiones';
 export function overviewLegend(): Array<{ type: GraphViewType; label: string }> {
   return GRAPH_VIEW_TYPES.map((type) => ({ type, label: typeListLabel(type) }));
 }
+
+/** Legend entry for a co-mention edge. A label, not an explanation (owner). */
+export const OVERVIEW_COMENTION_LEGEND = 'aparecen juntos';
 
 export const OVERVIEW_ZOOM_IN = 'Acercar';
 export const OVERVIEW_ZOOM_OUT = 'Alejar';

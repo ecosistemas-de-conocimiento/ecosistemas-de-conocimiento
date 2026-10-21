@@ -115,9 +115,11 @@ async function waitForQueries(candidate: Db): Promise<void> {
 //   e32 "[Persona B] y su hija") beside real words that look like one (e33
 //   "Personas con discapacidad", e34 "Personal docente", e35 "visitas a
 //   domicilio"), all in docs 301,302; e31 → e33, e32 → e34, e33 → e35.
+//   🔴 Org 4 — co-mentions and pair merging, at threshold 1 (see `seedCoMentions`).
 const ORG = 1
 const OTHER_ORG = 2
 const LOOKALIKE_ORG = 3
+const COMENTION_ORG = 4
 const MIN = 2
 
 async function seed(): Promise<void> {
@@ -169,6 +171,48 @@ async function seed(): Promise<void> {
   `)
 }
 
+/**
+ * Org 4, every threshold at 1.
+ *   401 documento: 41 Agua, 42 Morelos, 43 Sequía, 44 Juana (persona), 45 náhuatl, 46 [Persona C]
+ *   402 documento: 41, 42, 47 Comité, 48 Salud
+ *   403 testimonio: 41, 44 (a persona out of a testimonio: never counted), 49 Pedro (persona, only here)
+ *   404 draft:      41, 47, 48
+ * Relations: 41→42 afecta_a (401), 42→41 afecta_a (402), 41→42 relacionado_con (402)
+ *            ⇒ ONE pair edge, support 2, label afecta_a (2 docs), direction both.
+ *            41→43 relacionado_con (401) and 43→41 afecta_a (401)
+ *            ⇒ support 1, a tie, broken alphabetically: afecta_a, seen from 41 as `in`.
+ *            41→45 relacionado_con (401), to a noise entity ⇒ never drawn.
+ */
+async function seedCoMentions(): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO organizations (id, name, slug) VALUES (4, 'Org cuatro', 'cuatro');
+    INSERT INTO documents (id, organization_id, uploaded_by_id, name, publication_status, content_kind) VALUES
+      (401, 4, 1, 'informe-1.pdf', 'published', 'documento'),
+      (402, 4, 1, 'informe-2.pdf', 'published', 'documento'),
+      (403, 4, 1, 'relato.md',     'published', 'testimonio'),
+      (404, 4, 1, 'borrador.md',   'draft',     'documento');
+    INSERT INTO graph_entities (id, organization_id, type, label, canonical_key) VALUES
+      (41, 4, 'tema',         'Agua',        'agua'),
+      (42, 4, 'lugar',        'Morelos',     'morelos'),
+      (43, 4, 'evento',       'Sequía',      'sequia'),
+      (44, 4, 'persona',      'Juana',       'juana'),
+      (45, 4, 'tema',         'náhuatl',     'nahuatl'),
+      (46, 4, 'tema',         '[Persona C]', '[persona c]'),
+      (47, 4, 'organizacion', 'Comité',      'comite'),
+      (48, 4, 'tema',         'Salud',       'salud'),
+      (49, 4, 'persona',      'Pedro',       'pedro');
+    INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences) VALUES
+      (4, 401, 41, 1), (4, 401, 42, 1), (4, 401, 43, 1), (4, 401, 44, 1), (4, 401, 45, 1), (4, 401, 46, 1),
+      (4, 402, 41, 1), (4, 402, 42, 1), (4, 402, 47, 1), (4, 402, 48, 1),
+      (4, 403, 41, 1), (4, 403, 44, 1), (4, 403, 49, 1),
+      (4, 404, 41, 1), (4, 404, 47, 1), (4, 404, 48, 1);
+    INSERT INTO graph_relations (organization_id, document_id, from_entity_id, to_entity_id, type) VALUES
+      (4, 401, 41, 42, 'afecta_a'), (4, 402, 42, 41, 'afecta_a'), (4, 402, 41, 42, 'relacionado_con'),
+      (4, 401, 41, 43, 'relacionado_con'), (4, 401, 43, 41, 'afecta_a'),
+      (4, 401, 41, 45, 'relacionado_con');
+  `)
+}
+
 function rows(result: unknown): Record<string, unknown>[] {
   return (result as { rows: Record<string, unknown>[] }).rows
 }
@@ -180,6 +224,7 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
     await waitForQueries(db)
     await baselineUp({ db, payload: {}, req: {} } as unknown as MigrateUpArgs)
     await seed()
+    await seedCoMentions()
     payload = { db: { drizzle: db } } as GraphQueryPayload
   }, 60_000)
 
@@ -244,7 +289,9 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
     const view = await readEntityView(payload, { organizationId: ORG, minSupport: MIN })
     expect(view.entities.map((e) => e.id)).toEqual([11, 12])
     // e1–e3 is evidenced twice but e3 is below threshold, so it never shows.
-    expect(view.edges).toEqual([{ from: 11, to: 12, support: 2 }])
+    expect(view.edges).toEqual([
+      { from: 11, to: 12, kind: 'relation', support: 2, coMentions: 2, relationType: 'ocurre_en', direction: 'out' },
+    ])
     expect(rows(await db.execute(viewEdgesQuery(ORG, [], MIN)))).toEqual([])
     // Another org's ids name nothing here.
     expect(rows(await db.execute(viewEdgesQuery(ORG, [21, 11], MIN)))).toEqual([])
@@ -295,7 +342,13 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
   it('🔴 gate 4: a label that CONTAINS a placeholder is hidden; look-alike real words stay', async () => {
     const view = await readEntityView(payload, { organizationId: LOOKALIKE_ORG, minSupport: MIN })
     expect(view.entities.map((e) => e.id).sort()).toEqual([33, 34, 35])
-    expect(view.edges).toEqual([{ from: 33, to: 35, support: 2 }])
+    // The relation pair, plus the one co-mention between two real entities;
+    // nothing reaches 31 or 32.
+    expect(view.edges).toEqual([
+      { from: 33, to: 35, kind: 'relation', support: 2, coMentions: 2, relationType: 'relacionado_con', direction: 'out' },
+      { from: 33, to: 34, kind: 'co-mention', support: 2, coMentions: 2 },
+      { from: 34, to: 35, kind: 'co-mention', support: 2, coMentions: 2 },
+    ])
     for (const id of [31, 32]) {
       expect(
         await readEntityDetail(payload, { organizationId: LOOKALIKE_ORG, entityId: id, minSupport: MIN }),
@@ -316,6 +369,89 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
 
     expect(rows(await db.execute(retrieveDocumentsQuery(ORG, [21], MIN)))).toEqual([])
   })
+  describe('org 4 — pair merging and co-mentions, every threshold at 1', () => {
+    const at1 = { organizationId: COMENTION_ORG, minSupport: 1, minEdgeSupport: 1 }
+    const REL_41_42 = { from: 41, to: 42, kind: 'relation', support: 2, coMentions: 2, relationType: 'afecta_a', direction: 'both' }
+    const REL_41_43 = { from: 41, to: 43, kind: 'relation', support: 1, coMentions: 1, relationType: 'afecta_a', direction: 'in' }
+    const co = (from: number, to: number) => ({ from, to, kind: 'co-mention', support: 1, coMentions: 1 })
+
+    it('lists every gated entity: no noise, no persona out of a testimonio', async () => {
+      const view = await readEntityView(payload, at1)
+      expect(view.entities.map((e) => e.id).sort()).toEqual([41, 42, 43, 44, 47, 48])
+      // Juana counts 401 only; 403 is a testimonio.
+      expect(view.entities.find((e) => e.id === 44)?.support).toBe(1)
+      // Pedro is a persona named only by a testimonio.
+      expect(await readEntityDetail(payload, { ...at1, entityId: 49 })).toBeNull()
+    })
+
+    it('merges types and directions into one edge per pair, and adds every co-mention', async () => {
+      const view = await readEntityView(payload, at1)
+      expect(view.edges).toEqual([
+        REL_41_42,
+        REL_41_43,
+        co(41, 44), co(41, 47), co(41, 48), co(42, 43), co(42, 44), co(42, 47), co(42, 48),
+        co(43, 44), co(47, 48),
+      ])
+      const ends = view.edges.flatMap((e) => [e.from, e.to])
+      // 🔴 Noise and the testimonio-only persona are never an end.
+      for (const id of [45, 46, 49]) expect(ends).not.toContain(id)
+    })
+
+    it('caps co-mentions at the top K per node; relation pairs take no slot', async () => {
+      const result = rows(
+        await db.execute(
+          viewEdgesQuery(COMENTION_ORG, [41, 42, 43, 44, 45, 46, 47, 48, 49], {
+            entity: 1, edge: 1, coMention: 1, topK: 1,
+          }),
+        ),
+      )
+      expect(result.map((r) => [r.kind, r.from_id, r.to_id])).toEqual([
+        ['relation', 41, 42],
+        ['relation', 41, 43],
+        // Each node nominates its strongest partner, ties to the lower id:
+        // 41→44, 42→43, 43→42, 44→41, 47→41, 48→41.
+        ['co-mention', 41, 44],
+        ['co-mention', 41, 47],
+        ['co-mention', 41, 48],
+        ['co-mention', 42, 43],
+      ])
+    })
+
+    it('drops co-mentions below GRAPH_MIN_COMENTION_DOCS; a draft does not count', async () => {
+      const result = rows(
+        await db.execute(
+          viewEdgesQuery(COMENTION_ORG, [41, 42, 43, 44, 47, 48], { entity: 1, edge: 1, coMention: 2 }),
+        ),
+      )
+      // 41–42 shares two documents but is a relation; 47–48 shares 402 and the
+      // draft 404, which is one published document.
+      expect(result.filter((r) => r.kind === 'co-mention')).toEqual([])
+    })
+
+    it('a pair edge needs GRAPH_MIN_EDGE_DOCS over the PAIR, and the panel agrees', async () => {
+      const view = await readEntityView(payload, { ...at1, minEdgeSupport: 2 })
+      expect(view.edges.filter((e) => e.kind === 'relation')).toEqual([REL_41_42])
+      // 41–43 falls back to a co-mention.
+      expect(view.edges).toContainEqual(co(41, 43))
+
+      const panel = await readEntityDetail(payload, { ...at1, minEdgeSupport: 2, entityId: 41 })
+      expect(panel?.neighbours.map((n) => [n.entity.id, n.relationType, n.support, n.pairSupport])).toEqual([
+        [42, 'afecta_a', 2, 2],
+        [42, 'relacionado_con', 1, 2],
+      ])
+      // Evidence for a one-document type of an above-threshold pair is listed.
+      expect(panel?.neighbours[1]?.documents.map((d) => d.id)).toEqual([402])
+    })
+
+    it('the panel keeps the per-type breakdown and the direction seen from the focus', async () => {
+      const panel = await readEntityDetail(payload, { ...at1, entityId: 43 })
+      expect(panel?.neighbours.map((n) => [n.entity.id, n.relationType, n.direction, n.pairSupport])).toEqual([
+        [41, 'afecta_a', 'out', 1],
+        [41, 'relacionado_con', 'in', 1],
+      ])
+    })
+  })
+
   // ⚠ LAST: these mutate the seeded world.
   it('purge-graph-noise: the dry run counts and mutates nothing', async () => {
     const count = async () =>
@@ -323,7 +459,8 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
         (SELECT COUNT(*) FROM graph_mentions)::int AS m, (SELECT COUNT(*) FROM graph_relations)::int AS r`))[0]
     const before = await count()
     const all = await purgeGraphNoise(payload, {})
-    expect(all).toMatchObject({ apply: false, entities: 6, mentions: 12, relations: 12 })
+    // Org 4 adds two noise entities (náhuatl, [Persona C]), their two mentions and one relation.
+    expect(all).toMatchObject({ apply: false, entities: 8, mentions: 14, relations: 13 })
     const one = await purgeGraphNoise(payload, { organizationId: ORG })
     expect(one).toMatchObject({ entities: 3, mentions: 6, relations: 6 })
     expect([...one.sample].sort()).toEqual(['1/lugar/Domicilio 1', '1/tema/[Persona A]', '1/tema/náhuatl'])
@@ -334,14 +471,16 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
     const report = await purgeGraphNoise(payload, { apply: true, organizationId: ORG })
     expect(report).toMatchObject({ apply: true, entities: 3, mentions: 6, relations: 6 })
     const ids = rows(await db.execute(sql`SELECT id FROM graph_entities ORDER BY id`)).map((r) => r.id)
-    expect(ids).toEqual([11, 12, 13, 21, 22, 31, 32, 33, 34, 35]) // orgs 2 and 3 were out of scope
+    expect(ids).toEqual([11, 12, 13, 21, 22, 31, 32, 33, 34, 35, 41, 42, 43, 44, 45, 46, 47, 48, 49]) // orgs 2–4 were out of scope
     const rels = rows(await db.execute(sql`SELECT COUNT(*)::int AS n FROM graph_relations WHERE organization_id = 1`))
     expect(rels[0].n).toBe(4)
     const again = await purgeGraphNoise(payload, { apply: true, organizationId: ORG })
     expect(again).toMatchObject({ entities: 0, mentions: 0, relations: 0 })
     // The real graph is untouched.
     const view = await readEntityView(payload, { organizationId: ORG, minSupport: MIN })
-    expect(view.edges).toEqual([{ from: 11, to: 12, support: 2 }])
+    expect(view.edges).toEqual([
+      { from: 11, to: 12, kind: 'relation', support: 2, coMentions: 2, relationType: 'ocurre_en', direction: 'out' },
+    ])
   })
 
   it('🔴 purge-graph-noise: deletes rows that CONTAIN a placeholder, keeps the look-alikes', async () => {

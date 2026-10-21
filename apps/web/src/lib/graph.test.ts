@@ -130,7 +130,7 @@ const layoutNumbers = (l: EgoLayout): number[] => [
  * it is the test that must never be weakened.
  *
  * So a name here is a cited author or a named official in a public report --
- * and it still has to clear `GRAPH_MIN_SUPPORT` like everything else, so a
+ * and it still has to clear `GRAPH_MIN_ENTITY_DOCS` like everything else, so a
  * person named in one or two published documents does not appear at all.
  */
 describe('🔴 persona is shown like any other type — and why that is safe', () => {
@@ -1581,6 +1581,33 @@ describe('🔴 one row per neighbour (backlog #7, Svelte each_key_duplicate)', (
     expect(detail.documents.map((d) => d.id)).toEqual(['1', '2']);
   });
 
+  it('weighs the merged connection by the PAIR, and keeps the per-type breakdown', () => {
+    const detail = parseGraphEntityDetail({
+      entity: { id: 'm', type: 'lugar', label: 'Morelos', support: 9 },
+      neighbours: [
+        { entity: { id: 'x', type: 'lugar', label: 'Xoxocotla', support: 4 }, relationType: 'ubicado_en', direction: 'in', support: 2, pairSupport: 3 },
+        { entity: { id: 'x', type: 'lugar', label: 'Xoxocotla', support: 4 }, relationType: 'afecta_a', direction: 'out', support: 2, pairSupport: 3 },
+      ],
+      documents: [],
+    })!;
+    const [n] = detail.neighbours;
+    // A tie: the alphabetically first type names it, as on the map.
+    expect(n!.relationType).toBe('afecta_a');
+    expect(n!.direction).toBe('out');
+    expect(n!.support).toBe(3);
+    expect(n!.relations).toEqual([
+      { relationType: 'afecta_a', direction: 'out', support: 2 },
+      { relationType: 'ubicado_en', direction: 'in', support: 2 },
+    ]);
+    expect(n).not.toHaveProperty('pairSupport');
+  });
+
+  it('a single-type connection carries no breakdown', () => {
+    const merged = mergeNeighbours([neighbour(entity('x', 'tema', 'X', 4), 3, 'afecta_a')]);
+    expect(merged[0]).not.toHaveProperty('relations');
+    expect(merged[0]!.support).toBe(3);
+  });
+
   it('keeps `documents: null` when no row sent per-edge evidence', () => {
     const a = neighbour(entity('x', 'tema', 'X', 4), 3, 'afecta_a');
     const b = neighbour(entity('x', 'tema', 'X', 4), 4, 'ocurre_en');
@@ -1643,7 +1670,24 @@ describe('parseGraphView edges', () => {
         { from: 'a', to: 'a', support: 9 },
       ],
     });
-    expect(view.edges).toEqual([{ fromId: 'a', toId: 'b', support: 4 }]);
+    // An older backend sends no kind: it can only have meant a relation.
+    expect(view.edges).toEqual([{ fromId: 'a', toId: 'b', support: 4, kind: 'relation', coMentions: 0 }]);
+  });
+
+  it('reads both edge kinds, and the relation edge keeps its label and its co-mention weight', () => {
+    const view = parseGraphView({
+      entities: [...entities, { id: 'c', type: 'evento', label: 'Sequía', support: 2 }],
+      edges: [
+        { from: 'a', to: 'b', kind: 'relation', support: 3, coMentions: 6, relationType: 'ubicado_en', direction: 'in' },
+        { from: 'a', to: 'c', kind: 'co-mention', support: 2, coMentions: 2 },
+        // The same pair again as a co-mention: the first (the relation) wins.
+        { from: 'b', to: 'a', kind: 'co-mention', support: 6, coMentions: 6 },
+      ],
+    });
+    expect(view.edges).toEqual([
+      { fromId: 'a', toId: 'b', support: 3, kind: 'relation', coMentions: 6, relationType: 'ubicado_en', direction: 'in' },
+      { fromId: 'a', toId: 'c', support: 2, kind: 'co-mention', coMentions: 2 },
+    ]);
   });
 
   it('reads an older backend with no edges as none', () => {
@@ -1659,9 +1703,9 @@ describe('connectedEntities — the overview hides degree-0 nodes (owner, 2026-1
     entity('d', 'evento', 'Solo consigo', 4),
   ];
   const edges = [
-    { fromId: 'a', toId: 'b', support: 3 },
-    { fromId: 'd', toId: 'd', support: 3 }, // a self-loop is not a connection
-    { fromId: 'c', toId: 'zz', support: 3 }, // nor is an edge to an unlisted id
+    { fromId: 'a', toId: 'b', support: 3, kind: 'relation' as const, coMentions: 0 },
+    { fromId: 'd', toId: 'd', support: 3, kind: 'relation' as const, coMentions: 0 }, // a self-loop is not a connection
+    { fromId: 'c', toId: 'zz', support: 3, kind: 'relation' as const, coMentions: 0 }, // nor is an edge to an unlisted id
   ];
 
   it('keeps only entities with an edge to another listed entity, in input order', () => {
@@ -1691,6 +1735,8 @@ describe('overviewLayout', () => {
     fromId: `e${i % 12}`,
     toId: `e${12 + i}`,
     support: 3 + (i % 5),
+    kind: 'relation' as const,
+    coMentions: 0,
   }));
 
   it('is deterministic: the same graph draws the same picture', () => {

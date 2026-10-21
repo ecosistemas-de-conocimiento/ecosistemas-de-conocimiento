@@ -49,8 +49,18 @@
      */
     panelNeighbourIds?: string[];
     onSelect: (id: string) => void;
+    /** A click on empty space. */
+    onDeselect?: () => void;
   };
-  let { entities, edges, selectedId, matches, panelNeighbourIds = [], onSelect }: Props = $props();
+  let {
+    entities,
+    edges,
+    selectedId,
+    matches,
+    panelNeighbourIds = [],
+    onSelect,
+    onDeselect,
+  }: Props = $props();
 
   // Isolated entities are not drawn here; the lists below still show them.
   const layout = $derived(overviewLayout(connectedEntities(entities, edges), edges));
@@ -168,12 +178,22 @@
     }
   }
 
-  function onNodeClick(id: string) {
+  function onNodeClick(event: MouseEvent, id: string) {
+    event.stopPropagation();
     if (swallowClick) {
       swallowClick = false;
       return;
     }
     onSelect(id);
+  }
+
+  /** Empty space: anything that is not a node. A drag's closing click is not one. */
+  function onBackgroundClick() {
+    if (swallowClick) {
+      swallowClick = false;
+      return;
+    }
+    onDeselect?.();
   }
 
   // ⚠ `wheel` needs a NON-PASSIVE listener to stop the page from scrolling
@@ -233,6 +253,7 @@
       onpointermove={onPointerMove}
       onpointerup={onPointerUp}
       onpointercancel={onPointerUp}
+      onclick={onBackgroundClick}
     >
       <g transform={`translate(${tx} ${ty}) scale(${k})`}>
         {#each layout.edges as edge (edge.key)}
@@ -254,7 +275,7 @@
             class:dim={isDim(node.id)}
             class:active={node.id === selectedId}
             role="presentation"
-            onclick={() => onNodeClick(node.id)}
+            onclick={(event) => onNodeClick(event, node.id)}
             onpointerenter={() => (hoverId = node.id)}
             onpointerleave={() => (hoverId = hoverId === node.id ? null : hoverId)}
             data-testid={`grafo-punto-${node.id}`}

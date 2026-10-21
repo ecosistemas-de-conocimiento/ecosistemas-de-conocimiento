@@ -28,6 +28,7 @@
   import EntityLists from '$lib/components/graph/EntityLists.svelte';
   import EntityPanel from '$lib/components/graph/EntityPanel.svelte';
   import OverviewGraph from '$lib/components/graph/OverviewGraph.svelte';
+  import { isMapEscape, nextSelection, type SelectionEvent } from '$lib/components/graph/selection';
   import LenguaPanel from '$lib/components/graph/LenguaPanel.svelte';
   import { withLengua, type GrafoLenguaData } from '$lib/lengua';
   import {
@@ -77,6 +78,18 @@
 
   const selectedId = $derived(data.entity?.entity.id ?? null);
 
+  /** The map's selection rules (`selection.ts`): click, click again, Esc, empty space. */
+  function onMapSelection(event: SelectionEvent) {
+    const next = nextSelection(selectedId, event);
+    if (next === selectedId) return;
+    void navigate(next, null);
+  }
+
+  function onKeydown(event: KeyboardEvent) {
+    if (selectedId === null || !isMapEscape(event)) return;
+    onMapSelection({ kind: 'escape' });
+  }
+
   /**
    * Phone (UX backlog #24): the lists sit BELOW the map and the panel, so a
    * tap on a topic changed a panel the reader could not see. Below the
@@ -109,6 +122,8 @@
       : {},
   );
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <svelte:head><title>{GRAPH_KICKER} · Ecosistemas de Conocimiento</title></svelte:head>
 
@@ -154,7 +169,8 @@
         {selectedId}
         {matches}
         panelNeighbourIds={data.entity?.neighbours.map((n) => n.entity.id) ?? []}
-        onSelect={(id) => navigate(id === selectedId ? null : id, null)}
+        onSelect={(id) => onMapSelection({ kind: 'node', id })}
+        onDeselect={() => onMapSelection({ kind: 'background' })}
       />
 
       <section class="col-panel" aria-label="Conexiones" aria-busy={busy} bind:this={panelEl}>
