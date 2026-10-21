@@ -1,8 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `9285305` (sources fallback, cite rule in the
-prompt, no draft search without attachments), deployed 2026-10-21 16:00 UTC — see §4s; ⚠ off-topic
-answers now show sources. Before that, `0e92026` (title match always shown as a source, Revisión
+**Status:** live since 2026-10-17. Dev runs `main` @ `8b525fa` (tighter cite rule, no sources on a
+no-answer reply, at most 7 sources), deployed 2026-10-21 16:16 UTC — see §4t; ⚠ Educación questions
+get the no-answer reply. Before that, `9285305` (sources fallback, cite rule in the prompt, no draft
+search without attachments; 16:00 UTC, §4s). Before that, `0e92026` (title match always shown as a source, Revisión
 follows the picker; 15:41 UTC, §4r). Before that,
 `6d213a9` (held-publish fix, town rule, title-only retrieval; 14:58 UTC), with the 13
 held-but-published testimonios repaired — see §4q. Before that, `a4643cb` (privacy gate, Voz-only seed, chat searches documents
@@ -944,6 +945,42 @@ Spend: `usage_logs` $1.3802 → $1.3921 (**+$0.0119**, 9 chats). Tonight: $0.478
 
 **Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
 -af` (12.97 GB) and removing dev's `0e92026` images. Images 7.8 GB, build cache 0.
+
+### 4t. ⚠ Done with one failed check, 2026-10-21 16:16–16:30 UTC: `8b525fa`, dev only
+
+All measured by the deploy agent. Staging was not touched. Web only (`9dfb87c`: tighter cite rule,
+no sources on a no-answer reply, at most 7 sources). No migration. Backup
+`/root/backups/20261021T1616Z/` (`pg_restore -l` ok, sha256 matched off-box). Deploy 16:16:36 →
+16:22:07 UTC; 6 containers `healthy`, health 200, no non-preview variable holds `:?` text.
+
+Measured as user 1 (admin) through `POST /api/generate`, one new conversation per question:
+
+| question | time | answer | `[n]` numbers (groups) | sources |
+|---|---|---|---|---|
+| "¿Cuál es la capital de Francia?" #1 / #2 / #3 (Salud) | 10.4 / 9.2 / 10.2 s | 33 chars, a no-answer reply | 0 | **0 / 0 / 0** ✅ (was 5 in §4s) |
+| dengue #1 / #2 / #3 (Salud) | 14.9 / 9.2 / 9.6 s | 1,124 chars each (identical) | 19 (6) each | **6** each, docs 107, 77, 83, 80, 71, 79 ✅ (≤ 7) |
+| doc 71 by exact title (Salud) | 7.7 s | 496 chars | 2 (2) | **1, doc 71** ✅ |
+| 🔴 Educación: "Que cuentan las familias sobre el acompanamiento escolar de sus hijos?" | 3.7 s; again 4.4 s | "Los documentos no hablan de esto." | 0 | **0** |
+| 🔴 Educación: "…personas con discapacidad en la escuela?" | 9.7 s | "Los documentos no hablan de esto." | 0 | 0 |
+
+0 manifest names in any answer. **The Educación check fails.** Retrieval did return candidates for
+that ecosistema: ai-service logged `rerank ok` on `eco-3`, pool 32, 8 scored. The ecosistema has 62
+published documents, 63 live in ai-service. The new no-answer rule most likely makes the model
+refuse on-topic questions there (inferred); not fixed here.
+
+⚠ Reranker: the 6 dengue retrievals on `eco-1` (pool 32) all logged `rerank degraded … timeout`
+(8 s). Each was followed by "retrieval leg returned zero rows" for the rerank leg, so the answers
+used the unreranked order. The same DeepInfra timeout pattern as §4g; the `eco-3` and title
+retrievals reranked fine.
+
+Web log since the deploy: 0 `[retrieve] corpus "` lines, 0 `rerank request failed (404)`. 0 `msg-*`
+in ai-service; 0 sessions left.
+
+Spend: `usage_logs` $1.3921 → $1.4082 (**+$0.0161**, 11 chats). Tonight: $0.4786 + $1.4082 =
+**$1.8868**.
+
+**Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
+-af` (12.97 GB) and removing dev's `9285305` images. Images 7.8 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
