@@ -143,11 +143,20 @@ export function toBrowserProvenance(provenance: unknown): Provenance | null {
  * document is added once if the top ones do not already include it: at most
  * {@link FALLBACK_SOURCES} + 1 entries.
  *
- * 🔴 NOT FOR THE NO-ANSWER REPLY. An answer containing the prompt's exact
- * {@link NO_ANSWER_REPLY} ("Los documentos no hablan de esto.") gets no
- * fallback: listing sources under it would contradict it. Exact substring of
- * the prompt constant, no fuzzy match. A title-matched document is still
- * added, as before.
+ * 🔴 A NO-ANSWER REPLY LISTS NO RETRIEVED SOURCE, CITED OR NOT (owner's
+ * overnight rule, 2026-10-21). Measured on dev after 9285305: an off-topic
+ * question (3/3 runs) said the documents do not cover it, then cited
+ * [1, 2, 3, 4, 5]. An answer containing {@link NO_ANSWER_REPLY} or one of
+ * {@link NO_ANSWER_VARIANTS} ({@link isNoAnswer}, accent- and case-folded)
+ * drops its `[N]` sources and gets no fallback. A title-matched document is
+ * still added: the person named it, so it stays one click away.
+ * Only the FIRST sentence counts: an answer that covers part of the question
+ * and later says "los documentos no mencionan X" keeps its sources.
+ *
+ * 🔴 AT MOST {@link MAX_SOURCES} SOURCES. Measured on dev after 9285305: dengue
+ * answers cited 29–31 times. Cited sources keep citation order (first `[N]`
+ * first) and the first ones win. A title-matched document not among them
+ * takes the last slot, so the total never passes {@link MAX_SOURCES}.
  *
  * ⚠ Run it on the full answer text, never on a partial stream.
  */
@@ -157,17 +166,57 @@ export function citedBrowserProvenance(
   titleMatch: TitledDoc | null = null,
 ): Provenance | null {
   const text = answer ?? '';
-  const cited: Array<Chunk & { ordinal?: number }> =
-    parseCitedOrdinals(text).length > 0
+  let cited: Array<Chunk & { ordinal?: number }> = isNoAnswer(text)
+    ? []
+    : parseCitedOrdinals(text).length > 0
       ? citedProvenance(provenance, text).map(({ relevance: _r, ...c }) => c)
-      : text.includes(NO_ANSWER_REPLY)
-        ? []
-        : topRetrieved(provenance);
+      : topRetrieved(provenance);
+  cited = cited.slice(0, MAX_SOURCES);
   if (titleMatch && !cited.some((c) => chunkDocId(c) === titleMatch.id)) {
+    cited = cited.slice(0, MAX_SOURCES - 1);
     cited.push(titleMatchSource(provenance, titleMatch));
   }
   const out = toBrowserProvenance({ chunks: cited });
   return out && out.chunks.length > 0 ? out : null;
+}
+
+/** The most sources one answer shows, title-matched document included. */
+export const MAX_SOURCES = 7;
+
+/**
+ * Close wordings of {@link NO_ANSWER_REPLY} the model uses instead, already
+ * folded ({@link fold}). Short and explicit on purpose: each one says the
+ * documents lack the answer. A sentence that only mentions "documentos" is not
+ * one.
+ */
+export const NO_ANSWER_VARIANTS = [
+  'los documentos no hablan de',
+  'los documentos no mencionan',
+  'los documentos no tratan',
+  'los documentos no dicen nada',
+  'los documentos no contienen informacion',
+  'los documentos no incluyen informacion',
+  'no encontre informacion sobre',
+  'no encontre informacion en los documentos',
+  'no hay informacion en los documentos',
+  'no hay informacion sobre esto en los documentos',
+] as const;
+
+/** Lowercase, accents stripped, runs of whitespace collapsed. */
+function fold(s: string): string {
+  return s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * The answer OPENS by saying the documents do not answer the question: its
+ * first sentence (trimmed, up to the first `.`, `!`, `?` or line break)
+ * contains {@link NO_ANSWER_REPLY} or a variant. A later sentence that says
+ * "los documentos no mencionan X" is a partial answer, not a no-answer reply.
+ */
+export function isNoAnswer(answer: string): boolean {
+  const first = fold((answer ?? '').trim().split(/[.!?\n]/, 1)[0] ?? '');
+  const reply = fold(NO_ANSWER_REPLY).replace(/[.!?]+$/, '');
+  return first.includes(reply) || NO_ANSWER_VARIANTS.some((v) => first.includes(v));
 }
 
 /** How many retrieved sources an answer with no `[N]` lists. */

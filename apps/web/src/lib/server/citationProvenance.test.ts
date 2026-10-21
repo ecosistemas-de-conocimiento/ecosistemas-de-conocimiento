@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { provenanceToCitations } from '@edc/chat-engine/core';
-import { citedBrowserProvenance, toBrowserProvenance, toBrowserMessage } from './citationProvenance';
+import {
+  MAX_SOURCES,
+  NO_ANSWER_VARIANTS,
+  citedBrowserProvenance,
+  isNoAnswer,
+  toBrowserProvenance,
+  toBrowserMessage,
+} from './citationProvenance';
 import { DRAFT_PROVENANCE_FLAG } from '$lib/publication';
 import { NO_ANSWER_REPLY } from '$lib/server/engine/prompt';
 import { citationsWithOrdinals } from '$lib/citationOrdinals';
@@ -190,7 +197,7 @@ describe('citedBrowserProvenance — an answer with no [N] lists the top sources
   it('🔴 the no-answer reply (the prompt constant) lists no sources', () => {
     const p = { chunks: [scored(1, 0.9), scored(2, 0.8)] };
     expect(citedBrowserProvenance(p as never, NO_ANSWER_REPLY)).toBeNull();
-    expect(citedBrowserProvenance(p as never, `Lo siento. ${NO_ANSWER_REPLY}`)).toBeNull();
+    expect(citedBrowserProvenance(p as never, `  ${NO_ANSWER_REPLY} Puedo ayudarte con otra cosa.`)).toBeNull();
   });
 
   it('the no-answer reply with a title match: only the matched document, as before', () => {
@@ -199,9 +206,9 @@ describe('citedBrowserProvenance — an answer with no [N] lists the top sources
     expect(ids(out)).toEqual(['s2']);
   });
 
-  it('a near-miss wording is not the reply: the fallback applies', () => {
+  it('a close variant of the reply lists no sources either', () => {
     const p = { chunks: [scored(1, 0.9)] };
-    expect(ids(citedBrowserProvenance(p as never, 'Los documentos no hablan de dengue.'))).toEqual(['s1']);
+    expect(citedBrowserProvenance(p as never, 'Los documentos no hablan de dengue.')).toBeNull();
   });
 
   it('with [N]: cited only, the fallback never adds a top chunk', () => {
@@ -247,6 +254,81 @@ describe('citedBrowserProvenance — an answer with no [N] lists the top sources
       expect(ids(out)).toEqual(['s1', 's2', 's3', 'document:77']);
       expect(new Set(ords(out)).size).toBe(4);
     });
+  });
+});
+
+// 🔴 Measured on dev after 9285305: an off-topic question (3/3 runs) said the
+// documents do not cover it, then cited [1, 2, 3, 4, 5], so 5 sources showed.
+describe('citedBrowserProvenance — a no-answer reply shows no sources, cited or not', () => {
+  const doc = (i: number) => ({ ...docChunk, chunkId: `d${i}`, metadata: { docId: String(i), title: `Doc ${i}` } });
+  const five = { chunks: [doc(1), doc(2), doc(3), doc(4), doc(5)] };
+
+  it('🔴 the off-topic answer citing [1..5] after a no-answer phrase: no sources', () => {
+    const answer =
+      'Los documentos no hablan de la capital de Francia. Tratan de salud comunitaria [1, 2, 3, 4, 5].';
+    expect(citedBrowserProvenance(five as never, answer)).toBeNull();
+    expect(citedBrowserProvenance(five as never, `${NO_ANSWER_REPLY} [1, 2, 3, 4, 5]`)).toBeNull();
+  });
+
+  it('only the FIRST sentence counts: a later "no mencionan X" keeps its sources', () => {
+    const partial = 'El riego empezó en 2020 [2]. Los documentos no mencionan el costo [3].';
+    expect(isNoAnswer(partial)).toBe(false);
+    expect(citedBrowserProvenance(five as never, partial)!.chunks.map((c) => c.chunkId)).toEqual(['d2', 'd3']);
+    expect(isNoAnswer(`Lo siento. ${NO_ANSWER_REPLY}`)).toBe(false);
+  });
+
+  it('the first sentence after trimming fires, even with more sentences after it', () => {
+    const answer = '\n  No encontré información sobre París. Los documentos tratan de salud [1, 2].';
+    expect(isNoAnswer(answer)).toBe(true);
+    expect(citedBrowserProvenance(five as never, answer)).toBeNull();
+  });
+
+  it('a title-matched document is still shown: the person named it', () => {
+    const out = citedBrowserProvenance(five as never, `${NO_ANSWER_REPLY} [1, 2]`, { id: '4', name: 'Doc 4' })!;
+    expect(out.chunks.map((c) => c.chunkId)).toEqual(['d4']);
+  });
+
+  it.each([
+    ...NO_ANSWER_VARIANTS,
+    'LOS DOCUMENTOS NO MENCIONAN la capital.',
+    'No encontré información sobre París.',
+    'Lo siento, no hay información en los documentos sobre eso.',
+    'Los  documentos\tno hablan de esto',
+  ])('detects the variant %j, accent- and case-folded', (text) => {
+    expect(isNoAnswer(text)).toBe(true);
+  });
+
+  it.each([
+    'Los documentos describen el riego en 2020 [2].',
+    'Según los documentos, el dengue se transmite por mosquitos.',
+    'Los documentos hablan de tres comunidades.',
+    'No hay vacuna; los documentos recomiendan eliminar criaderos [1].',
+    'Encontré información sobre el riego en los documentos [3].',
+  ])('a normal sentence that mentions "documentos" is not one: %j', (text) => {
+    expect(isNoAnswer(text)).toBe(false);
+  });
+});
+
+describe('citedBrowserProvenance — at most 7 sources', () => {
+  const doc = (i: number) => ({ ...docChunk, chunkId: `d${i}`, metadata: { docId: String(i), title: `Doc ${i}` } });
+  const twelve = { chunks: Array.from({ length: 12 }, (_, i) => doc(i + 1)) };
+  const ords = (p: ReturnType<typeof citedBrowserProvenance>) =>
+    (p?.chunks ?? []).map((c) => (c as { ordinal?: number }).ordinal);
+  const cites12 = 'Uno [12]. Dos [3, 1]. Tres [5]. Cuatro [2, 7, 9]. Cinco [4]. Seis [6, 8]. Siete [10, 11].';
+
+  it('an answer citing 12 shows 7, in citation order', () => {
+    expect(MAX_SOURCES).toBe(7);
+    expect(ords(citedBrowserProvenance(twelve as never, cites12))).toEqual([12, 3, 1, 5, 2, 7, 9]);
+  });
+
+  it('a title-matched document past the cap takes the last slot: still 7', () => {
+    const out = citedBrowserProvenance(twelve as never, cites12, { id: '11', name: 'Doc 11' });
+    expect(ords(out)).toEqual([12, 3, 1, 5, 2, 7, 11]);
+  });
+
+  it('a title-matched document inside the first 7 is not added twice', () => {
+    const out = citedBrowserProvenance(twelve as never, cites12, { id: '3', name: 'Doc 3' });
+    expect(ords(out)).toEqual([12, 3, 1, 5, 2, 7, 9]);
   });
 });
 

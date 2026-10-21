@@ -17,32 +17,41 @@ export const CHUNK_DATA_RULE =
   'nunca repitas las etiquetas <fuente>.';
 
 /**
+ * The exact sentence the model is told to use when the documents do not answer
+ * the question ({@link CITE_RULE}). `citedBrowserProvenance` reads it back: an
+ * answer containing it, or a close variant, lists no sources.
+ */
+export const NO_ANSWER_REPLY = 'Los documentos no hablan de esto.';
+
+/**
  * The people reading the answers are not technical (UX backlog #10). The model
  * used to echo the prompt's own vocabulary back at them: "según los fragmentos
  * recuperados", "no se menciona en el contexto proporcionado".
  */
-/**
- * The exact sentence the model is told to use when the documents say nothing.
- * `citedBrowserProvenance` reads it back: an answer containing it lists no
- * fallback sources.
- */
-export const NO_ANSWER_REPLY = 'Los documentos no hablan de esto.';
-
 export const PLAIN_LANGUAGE_RULE =
   'Quien te lee no es técnico. Nunca digas "fragmentos", "fragmentos ' +
   'recuperados", "contexto", "contexto proporcionado" ni "contenido ' +
-  'recuperado": di "los documentos" o nombra el documento por su título. Si ' +
-  `los documentos no dicen algo, dilo así: "${NO_ANSWER_REPLY}"`;
+  'recuperado": di "los documentos" o nombra el documento por su título.';
 
 /**
  * Measured on dev (2026-10-21): a broad question ("dengue", 3 runs) got long
  * answers with no `[N]`, so the source list relied on the no-marker fallback
- * (`citedBrowserProvenance`). This asks for the marker after each claim.
+ * (`citedBrowserProvenance`). The first version of this rule ("cite after each
+ * claim") then overshot, measured on dev after 9285305: dengue answers carried
+ * 29–31 citations and took 41–63 s (12–13 s before; the longer output is the
+ * inferred cause), and an off-topic question (3/3 runs) said the documents do
+ * not cover it, then cited [1, 2, 3, 4, 5].
+ *
+ * This rule also owns the no-answer instruction: {@link PLAIN_LANGUAGE_RULE}
+ * no longer carries it, so the model reads it once.
  */
 export const CITE_RULE =
-  'Cada vez que uses lo que dice un documento, pon su número entre corchetes ' +
-  'justo después de la frase, así: "El riego empezó en 2020 [2]." Si usas ' +
-  'varios, pon todos: [1, 3]. No pongas números a tus propias ideas.';
+  'Cita solo los pasajes que apoyan directamente una afirmación: pon su número ' +
+  'entre corchetes al final de la frase, así: "El riego empezó en 2020 [2]." ' +
+  'Usa como máximo un grupo de números por frase, de uno a tres: [1, 3]. No ' +
+  'cites tus propias ideas ni una frase que diga que falta información. Si los ' +
+  `documentos no responden la pregunta, contesta exactamente "${NO_ANSWER_REPLY}" ` +
+  'y nada más.';
 
 export const CHAT_SYSTEM_PROMPT =
   'Eres un asistente que ayuda a una persona a consultar los documentos de su ' +

@@ -889,6 +889,18 @@ describe('POST /api/generate — an answer with no [N] lists the top 3 sources',
     for (const save of saves()) expect(save.body).not.toHaveProperty('provenance');
   });
 
+  // 🔴 Measured on dev after 9285305: off-topic (3/3 runs) said the documents
+  // do not cover it, then cited [1, 2, 3, 4, 5].
+  it('🔴 a no-answer phrase followed by [1..5] lists no sources, sync and stream', async () => {
+    world.answerText = 'Los documentos no hablan de la capital de Francia [1, 2, 3, 4, 5].';
+    const body = (await (await POST(event(turn()))).json()) as { provenance: unknown };
+    expect(body.provenance).toBeNull();
+    world.streamText = 'No encontré información sobre eso en los documentos [1, 2, 3, 4].';
+    const frames = await readSse(await POST(event(turn(), true)));
+    expect(frames.find((f) => f.type === 'done')!.provenance).toBeNull();
+    for (const save of saves()) expect(save.body).not.toHaveProperty('provenance');
+  });
+
   it('with [N]: still cited only', async () => {
     world.answerText = 'El dengue se transmite por mosquitos [1].';
     const body = (await (await POST(event(turn()))).json()) as { provenance: unknown };
