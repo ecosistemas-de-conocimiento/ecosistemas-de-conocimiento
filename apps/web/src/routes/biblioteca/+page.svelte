@@ -257,7 +257,7 @@
     {#if items.length > 0}
       <ul class="list">
         {#each items as item (item.id)}
-          {@const label = kindLabel(item.kind)}
+          {@const label = kindLabel(item.kind, { fromAudio: item.fromAudio })}
           {@const voice = isTestimony(item.kind)}
           <li class="card" class:voice>
             <a class="card-link" href={`/biblioteca/${item.id}`} data-testid={`library-item-${item.id}`}>
@@ -265,10 +265,14 @@
                 <!-- 🔴 A VOZ AND A DOCUMENTO MUST NOT LOOK THE SAME. They are
                      different kinds of source, and a reader weighing a passage
                      should not have to work out which one they are holding. -->
-                <span class="kind kind-{label.tone}" title={label.description}>{label.label}</span>
-                {#if item.lengua}
-                  <span class="chip" title={LENGUA_NOTE}>{item.lengua}</span>
-                {/if}
+                <!-- ⚠ The badges sit together on the left. `space-between`
+                     on three children floated the lengua mid-card (backlog #23). -->
+                <span class="badges">
+                  <span class="kind kind-{label.tone}" title={label.description}>{label.label}</span>
+                  {#if item.lengua}
+                    <span class="kind kind-lengua" title={LENGUA_NOTE}>{item.lengua}</span>
+                  {/if}
+                </span>
                 <span class="date">{formatLibraryDate(item.createdAt)}</span>
               </div>
               <h2 class="title">{item.title}</h2>
@@ -543,6 +547,18 @@
   .kind-document {
     background: var(--edc-color-surface-soft);
     color: var(--edc-color-ink-soft);
+  }
+  .badges {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  /* Same size as the kind badge; weight dropped so the kind stays the lead. */
+  .kind-lengua {
+    background: var(--edc-color-surface-soft);
+    color: var(--edc-color-ink-soft);
+    font-weight: 600;
   }
   .chip {
     padding: 0.05rem 0.35rem;

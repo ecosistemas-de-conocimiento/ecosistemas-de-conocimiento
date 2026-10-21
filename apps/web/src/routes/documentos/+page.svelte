@@ -34,6 +34,22 @@
   import { canRetryGraph, GRAPH_RETRY_LABEL, graphBadge } from '$lib/graphStatus';
   import { publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
   import type { WorkingDoc } from '$lib/types';
+  import { toasts } from '$lib/stores/toasts.svelte';
+  import { goto } from '$app/navigation';
+  import {
+    AUDIO_EXTENSIONS,
+    formatBytes,
+    isAudioUpload,
+    MAX_UPLOAD_BYTES,
+    UPLOAD_ACCEPT,
+  } from '$lib/config';
+  import {
+    AUDIO_UPLOAD_ENABLED,
+    AUDIO_UPLOAD_OFF_COPY,
+    looseUploadErrorCopy,
+    uploadAccept,
+    uploadButtonTitle,
+  } from '$lib/uploadKind';
 
   type Filter = 'all' | 'sueltos';
 
@@ -123,6 +139,91 @@
       busyId = null;
     }
   }
+
+  // ── Subir sin conversación (backlog #15) ──────────────────────────────────
+  //
+  // ⚠ Page-local, not in the store: the store's `uploadDoc` is per
+  // conversation. This posts to `POST /api/documentos` and re-reads the list.
+  let fileInput = $state<HTMLInputElement | null>(null);
+  let uploading = $state(false);
+
+  async function onFileChosen(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file || uploading) return;
+    if (!AUDIO_UPLOAD_ENABLED && isAudioUpload(file)) {
+      toasts.push({ kind: 'warning', ...AUDIO_UPLOAD_OFF_COPY });
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      toasts.push({
+        kind: 'error',
+        ...looseUploadErrorCopy('file_too_large', formatBytes(MAX_UPLOAD_BYTES)),
+      });
+      return;
+    }
+    uploading = true;
+    try {
+      const form = new FormData();
+      form.append('file', file, file.name);
+      const res = await fetch('/api/documentos', { method: 'POST', body: form });
+      if (!res.ok) {
+        const code = ((await res.json().catch(() => ({}))) as { error?: string }).error;
+        toasts.push({ kind: 'error', ...looseUploadErrorCopy(code, formatBytes(MAX_UPLOAD_BYTES)) });
+        return;
+      }
+      toasts.push({
+        kind: 'success',
+        title: 'Archivo subido',
+        message: 'Está en tu lista como borrador: solo tú lo ves.',
+      });
+      await app.loadOwnedDocs(filter);
+    } catch {
+      toasts.push({ kind: 'error', ...looseUploadErrorCopy(null, '') });
+    } finally {
+      uploading = false;
+    }
+  }
+
+  // ── Descargar original (backlog #15) ──────────────────────────────────────
+  //
+  // ⚠ fetch + blob rather than a plain link: a failed download would otherwise
+  // save a JSON error file under the document's name.
+  let downloadingId = $state<string | null>(null);
+
+  function hasOriginal(d: WorkingDoc): boolean {
+    return d.kind === 'pdf' || d.kind === 'docx' || d.kind === 'audio';
+  }
+
+  async function downloadOriginal(d: WorkingDoc) {
+    if (downloadingId) return;
+    downloadingId = d.id;
+    try {
+      const res = await fetch(`/api/documents/${encodeURIComponent(d.id)}/original`);
+      if (!res.ok) throw new Error(String(res.status));
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      // The title may have been renamed without its extension; put it back.
+      const title = d.title || 'documento';
+      const ext = d.kind === 'pdf' || d.kind === 'docx' ? `.${d.kind}` : '';
+      a.download = ext && !title.toLowerCase().endsWith(ext) ? `${title}${ext}` : title;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch {
+      toasts.push({
+        kind: 'error',
+        title: 'No se pudo descargar el original',
+        message: 'Inténtalo de nuevo en un momento.',
+      });
+    } finally {
+      downloadingId = null;
+    }
+  }
 </script>
 
 <svelte:head><title>Mis documentos · Ecosistemas de Conocimiento</title></svelte:head>
@@ -133,11 +234,32 @@
       <p class="kicker">Tus documentos</p>
       <h1>Mis documentos</h1>
       <p class="sub">
-        Todo lo que has subido{#if app.ecosystem}
-          a <strong>{app.ecosystem.name}</strong>{/if}, incluidos los que nadie más ve.
+        <!-- ⚠ The `{' '}` is load-bearing: Svelte trims the whitespace that
+             opens an `{#if}` block, which rendered "has subidoa" (backlog #20). -->
+        Todo lo que has subido{#if app.ecosystem}{' '}a <strong>{app.ecosystem.name}</strong
+          >{/if}, incluidos los que nadie más ve.
       </p>
     </div>
-    <a class="back" href="/" data-interactive>Volver al chat</a>
+    <div class="head-actions">
+      <input
+        bind:this={fileInput}
+        type="file"
+        accept={uploadAccept(UPLOAD_ACCEPT, AUDIO_EXTENSIONS)}
+        hidden
+        aria-label={uploadButtonTitle()}
+        onchange={onFileChosen}
+      />
+      <Button
+        variant="solid"
+        size="sm"
+        label={uploading ? 'Subiendo…' : 'Subir documento'}
+        loading={uploading}
+        disabled={uploading}
+        dataTestId="owned-upload"
+        onClick={() => fileInput?.click()}
+      />
+      <a class="back" href="/" data-interactive>Volver al chat</a>
+    </div>
   </header>
 
   <!-- The filter. Two options, always both visible: hiding "sueltos" behind a
@@ -183,8 +305,8 @@
       {#if filter === 'sueltos'}
         Todos tus documentos están en alguna conversación. No hay nada suelto.
       {:else}
-        Todavía no has subido ningún documento. Para subir uno, abre una conversación y usa el
-        panel de documentos.
+        Todavía no has subido ningún documento. Usa «Subir documento», arriba, o el panel de
+        documentos de una conversación.
       {/if}
     </p>
   {:else}
@@ -194,7 +316,7 @@
         {@const gate = gateOf(d)}
         {@const ing = ingestBadge(d.ingestStatus, d.kind, d.audioMeta)}
         {@const loose = isLoose(d)}
-        {@const graph = graphBadge(d.graphStatus, d.graphError)}
+        {@const graph = graphBadge(d.graphStatus)}
         <li class="row" class:loose data-testid={`owned-doc-${d.id}`}>
           <div class="row-head">
             <span class="name">{d.title}</span>
@@ -207,7 +329,7 @@
             <span class="pub-badge pub-{pub.tone}" title={pub.description}>{pub.label}</span>
             {#if graph}
               <span
-                class="chip graph-{graph.tone}"
+                class="chip graph graph-{graph.tone}"
                 title={graph.title}
                 data-testid={`graph-status-${d.id}`}>{graph.label}</span
               >
@@ -247,6 +369,17 @@
               dataTestId={`use-${d.id}`}
               onClick={() => openPicker(d)}
             />
+            <!-- Backlog #2. The store action lands from the chat lane. -->
+            <Button
+              variant="outline"
+              size="sm"
+              label="Nueva conversación con este documento"
+              disabled={busyId === d.id}
+              dataTestId={`new-session-${d.id}`}
+              onClick={async () => {
+                if (await app.startSessionWithDoc(d.id, filter)) await goto('/');
+              }}
+            />
             {#if gate.canPublish}
               <Button
                 tone={d.publicationStatus === 'failed' ? 'warning' : 'brand'}
@@ -260,6 +393,17 @@
               />
             {:else if gate.reason}
               <span class="blocked">{publishBlockedCopy(gate.reason)}</span>
+            {/if}
+            {#if hasOriginal(d)}
+              <Button
+                variant="ghost"
+                size="sm"
+                label="Descargar original"
+                loading={downloadingId === d.id}
+                disabled={downloadingId !== null}
+                dataTestId={`download-${d.id}`}
+                onClick={() => downloadOriginal(d)}
+              />
             {/if}
             {#if canRetryGraph(d)}
               <Button
@@ -378,6 +522,12 @@
   .sub strong {
     color: var(--edc-color-ink);
   }
+  .head-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
   .back {
     flex: none;
     padding: 0.4rem 0.85rem;
@@ -480,8 +630,44 @@
     letter-spacing: 0.06em;
     color: var(--edc-color-ink-soft);
   }
-  .chip.graph-failed {
-    border-color: var(--edc-color-danger);
+  /* Graph badge: a short sentence ("Conexiones: en preparación"), so no
+     uppercase. No red tone exists for it on purpose (backlog #21). */
+  .chip.graph {
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .chip.graph-ready {
+    border-color: var(--edc-color-success-outline);
+    color: var(--edc-color-success);
+  }
+  /* Publication badge, same look as in the documents panel. Scoped styles do
+     not cross components, so without these it rendered as plain large text. */
+  .pub-badge {
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--edc-radius-pill);
+    border: 1px solid transparent;
+    font-size: 0.62rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .pub-private {
+    border-color: var(--edc-color-neutral-outline);
+    background: var(--edc-color-neutral-soft);
+    color: var(--edc-color-ink);
+  }
+  .pub-progress {
+    border-color: var(--edc-color-warning-outline);
+    background: var(--edc-color-warning-soft);
+    color: var(--edc-color-warning);
+  }
+  .pub-shared {
+    border-color: var(--edc-color-success-outline);
+    background: var(--edc-color-success-soft);
+    color: var(--edc-color-success);
+  }
+  .pub-error {
+    border-color: var(--edc-color-danger-outline);
+    background: var(--edc-color-danger-soft);
     color: var(--edc-color-danger);
   }
   .loose-note {

@@ -225,6 +225,8 @@ export function toLibraryItem(
       !gated && kind === 'audio' && row.audioMeta && typeof row.audioMeta === 'object' && !Array.isArray(row.audioMeta)
         ? (row.audioMeta as Record<string, unknown>)
         : null,
+    // The FILE format, so a PDF Voz is not labelled machine-transcribed.
+    fromAudio: row.kind === 'audio',
   };
 }
 

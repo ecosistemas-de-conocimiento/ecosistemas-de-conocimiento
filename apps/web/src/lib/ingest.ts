@@ -25,6 +25,7 @@
  */
 
 import type { AudioMeta, DocKind, IngestStatus } from './types';
+import { AUDIO_UPLOAD_ENABLED } from './uploadKind';
 
 /** Backend values, mirrored. A value we do not know reads as `n/a`. */
 export const INGEST_STATUSES: readonly IngestStatus[] = [
@@ -257,7 +258,9 @@ export function ingestFailureCopy(ingestError: string | null | undefined): Inges
     case 'unsupported_media_type':
       return {
         title: 'Formato no admitido',
-        message: 'Aceptamos PDF, DOCX y audio en MP3, M4A, WAV, OGG u OPUS.',
+        message: AUDIO_UPLOAD_ENABLED
+          ? 'Aceptamos PDF, DOCX y audio en MP3, M4A, WAV, OGG u OPUS.'
+          : 'Aceptamos PDF y DOCX.',
         needsDifferentFile: true,
       };
     case 'payload_too_large':

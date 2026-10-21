@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatLibraryDate,
   isGatedContent,
+  isMachineTranscript,
   isTestimony,
   kindFilterWhere,
   libraryKindOf,
@@ -93,6 +94,26 @@ describe('kindLabel', () => {
   // machine-written and will be quoted as fact.
   it('says an audio document was transcribed by machine', () => {
     expect(kindLabel('audio').description).toMatch(/automática|máquina/i);
+  });
+
+  // UX demo backlog #12: a PDF Voz was described as recorded "de viva voz".
+  it('describes a Voz by its real source format', () => {
+    expect(kindLabel('testimonio', { fromAudio: true }).description).toMatch(/audio/i);
+    expect(kindLabel('testimonio', { fromAudio: false }).description).toMatch(/por escrito/i);
+    expect(kindLabel('testimonio').description).not.toMatch(/viva voz|audio/i);
+  });
+});
+
+describe('isMachineTranscript (backlog #12)', () => {
+  it('🔴 warns on an audio Voz and on any audio', () => {
+    expect(isMachineTranscript({ kind: 'testimonio', fromAudio: true })).toBe(true);
+    expect(isMachineTranscript({ kind: 'audio', fromAudio: true })).toBe(true);
+    expect(isMachineTranscript({ kind: 'audio' })).toBe(true);
+  });
+
+  it('does not call a PDF Voz machine-made', () => {
+    expect(isMachineTranscript({ kind: 'testimonio', fromAudio: false })).toBe(false);
+    expect(isMachineTranscript({ kind: 'pdf', fromAudio: false })).toBe(false);
   });
 });
 
