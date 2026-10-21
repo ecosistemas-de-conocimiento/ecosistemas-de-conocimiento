@@ -28,8 +28,9 @@
    * before new data lands (`app.switchEcosystem`), and an unreadable list shows
    * `No disponible` rather than claiming zero memberships.
    */
+  import { invalidate } from '$app/navigation';
   import { app } from '$lib/stores/app.svelte';
-  import { ecosystemInitials, ecosystemPickerView } from '$lib/ecosystems';
+  import { ECOSYSTEM_DEPENDENCY, ecosystemInitials, ecosystemPickerView } from '$lib/ecosystems';
 
   let { collapsed = false }: { collapsed?: boolean } = $props();
 
@@ -49,7 +50,8 @@
   async function choose(id: string) {
     open = false;
     if (id === app.ecosystemId) return;
-    await app.switchEcosystem(id);
+    // Re-run server loads scoped to the selection (e.g. `/revision`).
+    if (await app.switchEcosystem(id)) await invalidate(ECOSYSTEM_DEPENDENCY);
   }
 
   function onKeydown(e: KeyboardEvent) {

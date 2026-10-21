@@ -31,6 +31,13 @@ export interface Ecosystem {
 export const UNNAMED_ECOSYSTEM = 'Ecosistema sin nombre';
 
 /**
+ * SvelteKit `depends` key for server loads scoped to the picked ecosistema.
+ * `EcosystemPicker` invalidates it after a switch, so a page whose load reads
+ * the `eco_selected` cookie (which SvelteKit does not track) re-runs.
+ */
+export const ECOSYSTEM_DEPENDENCY = 'app:ecosystem';
+
+/**
  * Map a Payload `/api/organizations` list body into `Ecosystem[]`.
  *
  * Tolerant on purpose — a row missing a name still has to be selectable, or the

@@ -10,11 +10,17 @@
  *     here. Enforced in `load`, not by hiding the menu entry — anyone can type
  *     a URL, and a hidden link is a courtesy.
  *
- *  2. WHICH ECOSISTEMA? Resolved to ONE id, from `?eco=` validated by
- *     `readEcosystem`, and passed explicitly into the query. Same shape as
- *     `/admin`, which has the same oversight problem: this is a screen where
- *     somebody looks at material on behalf of a tenant, so the tenant has to be
- *     named, visible in the URL, and gone when you leave.
+ *  2. WHICH ECOSISTEMA? Resolved to ONE id and passed explicitly into the
+ *     query. In order: `?eco=` validated by `readEcosystem` (an explicit,
+ *     visible override, `/admin`'s shape); else the ecosistema the sidebar
+ *     picker selected (the `eco_selected` cookie, checked against the caller's
+ *     real memberships), so this screen agrees with `/biblioteca` and `/grafo`;
+ *     else the first ecosistema they may review here.
+ *
+ *     🔴 This used to skip the cookie and open on the first reviewable
+ *     ecosistema, so the queue ignored the picker and only `?eco=` moved it.
+ *     The load `depends` on `ECOSYSTEM_DEPENDENCY`, which the picker
+ *     invalidates after a switch.
  *
  *  3. MAY THEY REVIEW IN *THAT* ONE? `holds:review` is per-ecosistema. Being an
  *     investigador in one place says nothing about another.
@@ -25,7 +31,8 @@
  * sentence instead of an empty screen — if it were deleted, nothing would leak.
  *
  * ⚠ THIS ROUTE WRITES NOTHING, and in particular does not touch the
- * `eco_selected` cookie. That cookie decides where this person's own uploads
+ * `eco_selected` cookie: it READS it with the pure `resolveEcosystemSelection`,
+ * never with `resolveEcosystem`, which rewrites it. That cookie decides where this person's own uploads
  * land. Reviewing a tenant must never quietly re-point the tenant you work in.
  *
  * ── 🔴 WHAT THE QUEUE SHOWS, AND WHAT IT CANNOT ────────────────────────────
@@ -38,12 +45,17 @@
 
 import { denyAccess } from '$lib/server/deny';
 import { listAllEcosystems, readEcosystem } from '$lib/server/admin';
-import { listEcosystems } from '$lib/server/ecosystem';
+import { ECOSYSTEM_COOKIE, listEcosystems } from '$lib/server/ecosystem';
 import { listHolds, mayReviewAnywhere, mayReviewSlug, readReviewCapability } from '$lib/server/holds';
+import { ECOSYSTEM_DEPENDENCY, resolveEcosystemSelection } from '$lib/ecosystems';
 import { NOT_A_REVIEWER } from '$lib/holds';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ locals, url }) => {
+export const load: PageServerLoad = async ({ locals, url, cookies, depends }) => {
+  // Re-run when the sidebar picker switches. The cookie is not a tracked
+  // dependency, so without this a mounted page keeps the old ecosistema.
+  depends(ECOSYSTEM_DEPENDENCY);
+
   // `hooks.server.ts` already bounced anonymous callers; this is the belt to
   // that braces, and it is what makes the check readable here.
   const capability = locals.user ? await readReviewCapability(locals.token) : null;
@@ -75,7 +87,16 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // "no perteneces a ningún ecosistema", which is true and useless. The
   // directory is read ONLY to pick a default; the switcher above still lists
   // memberships, because 90 chips is not a switcher.
-  let fallback = reviewable[0] ?? null;
+  // ⚠ The picker's choice counts only if it is a real membership (`requested`,
+  // not `fallback`) AND this person may review there. Otherwise a member who
+  // reviews in A but picked B would open on a refusal.
+  const picked = resolveEcosystemSelection(mine.list, cookies.get(ECOSYSTEM_COOKIE));
+  const pickedEco =
+    picked.source === 'requested' && picked.selected && mayReviewSlug(capability, picked.selected.slug)
+      ? picked.selected
+      : null;
+
+  let fallback = pickedEco ?? reviewable[0] ?? null;
   if (!allowed && !fallback && capability.isPlatformAdmin) {
     const directory = await listAllEcosystems(locals.token, '');
     fallback = directory.rows[0] ?? null;
