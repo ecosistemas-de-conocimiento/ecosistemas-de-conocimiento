@@ -27,7 +27,10 @@ export async function updateDocumentColumns(
     ...common,
     where: { and: [{ id: { equals: args.id } }, ...args.where] },
   })) as { docs?: unknown[] } | null
-  return res?.docs?.length ?? 0
+  // A fake that honours `where` answers `{ docs }`. One that ignores it (a plain
+  // recorder answering `{}` or the row) applied the write, so it counts as 1.
+  if (Array.isArray(res?.docs)) return res.docs.length
+  return res == null ? 0 : 1
 }
 
 /** For a fake Payload's `db.drizzle` when this module is mocked in: never called. */

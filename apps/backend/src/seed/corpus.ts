@@ -545,6 +545,12 @@ export interface IngestSeedOptions {
    * and the CLI would exit with the gate still running.
    */
   awaitDrafts?: boolean
+  /**
+   * Only these document ids (as strings). For a targeted re-gate
+   * (`scripts/regate-place-holds.ts`): without it every published row is
+   * re-published as well.
+   */
+  onlyIds?: ReadonlySet<string>
   /** Injected in tests. */
   sleep?: (ms: number) => Promise<void>
   /** Injected in tests: the retry jitter. */
@@ -578,11 +584,42 @@ export interface IngestSeedOptions {
  * logged and skipped: 249 embedded documents and one loud line is a better
  * demo than a seed that aborted a third of the way through.
  */
-export async function ingestSeededDocuments(
+export type IngestSeedResult = { enqueued: number; failed: number; held: number }
+
+/**
+ * 🔴 ONE RUN PER ECOSISTEMA PER PROCESS. `payload run src/seed/demo.cli.ts`
+ * boots Payload, and the boot seed starts this detached; the CLI then calls it
+ * again in the same process. Two runs over the same snapshot gated the same
+ * rows twice and left 13 testimonios `held` + `published` on dev (2026-10-21).
+ * A second caller now waits for the run already going and gets its result.
+ * The gate's own claim (`GATE_CLAIM_GUARD`) covers the cross-process case.
+ */
+const inFlightIngests = new Map<number, Promise<IngestSeedResult>>()
+
+export function ingestSeededDocuments(
   payload: Payload,
   organizationId: number,
   opts: IngestSeedOptions = {},
-): Promise<{ enqueued: number; failed: number; held: number }> {
+): Promise<IngestSeedResult> {
+  const running = inFlightIngests.get(organizationId)
+  if (running) {
+    payload.logger.info(
+      `[seed-corpus] an ingest for ecosistema ${organizationId} is already running in this process — waiting for it.`,
+    )
+    return running
+  }
+  const run = runIngestSeededDocuments(payload, organizationId, opts).finally(() => {
+    inFlightIngests.delete(organizationId)
+  })
+  inFlightIngests.set(organizationId, run)
+  return run
+}
+
+async function runIngestSeededDocuments(
+  payload: Payload,
+  organizationId: number,
+  opts: IngestSeedOptions = {},
+): Promise<IngestSeedResult> {
   const { getAdminAIClient } = await import('@/lib/aiClient')
   const { ingestCallbackUrl } = await import('@/lib/callbackConfig')
   const { beginPublish } = await import('@/lib/publishDocument')
@@ -643,6 +680,7 @@ export async function ingestSeededDocuments(
   let unsettled = 0
   let held = 0
   let gateUnavailable = 0
+  let skipped = 0
 
   /**
    * 🔴 THE DETECTOR GETS THE SEED'S PATIENCE TOO. Its default budget (4 tries /
@@ -666,7 +704,10 @@ export async function ingestSeededDocuments(
   // ⚠ A row whose gate could not RUN is not held: it sits at `n/a` with a
   // `gate_unavailable` error, so it is in `todo` and is gated again here.
   const todo = rows.filter(
-    (row) => row.anonymisationStatus !== 'held' && row.anonymisationStatus !== 'rejected',
+    (row) =>
+      row.anonymisationStatus !== 'held' &&
+      row.anonymisationStatus !== 'rejected' &&
+      (!opts.onlyIds || opts.onlyIds.has(String(row.id))),
   )
 
   payload.logger.info(
@@ -701,6 +742,12 @@ export async function ingestSeededDocuments(
               detector,
             })
             if (!gated.ok) {
+              // 🔴 Not claimed: another run owns this row, or it is already
+              // decided or shared. Leave it alone — see `GATE_CLAIM_GUARD`.
+              if (gated.busy) {
+                skipped += 1
+                return
+              }
               // 🔴 A gate that could not run (429, 5xx, 402, timeout) is NOT a
               // hold: the row is left at `n/a` and the next run gates it again.
               if (gated.retryable) gateUnavailable += 1
@@ -767,6 +814,9 @@ export async function ingestSeededDocuments(
       `[seed-corpus] ${gateUnavailable} document(s) could not be gated (ai-service did not answer: ` +
         'rate limit, 5xx, budget or timeout). NOT in Revisión — re-run the seed ingest to gate them.',
     )
+  }
+  if (skipped > 0) {
+    payload.logger.info(`[seed-corpus] ${skipped} document(s) skipped: another gate run or a decision already holds them.`)
   }
   if (unsettled > 0) {
     payload.logger.warn(`[seed-corpus] ${unsettled} draft(s) were still in the gate when the seed moved on.`)

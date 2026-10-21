@@ -74,12 +74,15 @@ function fakePayload() {
     payload: {
       update: async (args: {
         collection: 'documents'
-        id: never
+        id?: never
+        /** A guarded write (the gate's claim) names its row in `where`. */
+        where?: { and?: Array<{ id?: { equals?: unknown } }> }
         data: Record<string, unknown>
         overrideAccess: boolean
         context?: Record<string, unknown>
       }) => {
-        updates.push({ collection: args.collection, id: args.id, data: args.data })
+        const id = args.id ?? args.where?.and?.[0]?.id?.equals
+        updates.push({ collection: args.collection, id, data: args.data })
         return {}
       },
     },

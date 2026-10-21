@@ -88,7 +88,7 @@ function param(value: unknown): Sql {
  * One Payload-style clause, `{ field: { op: value } }`, as SQL.
  *
  * Supports the operators the sweeps use and nothing more: `equals`, `in`,
- * `exists`, `less_than`. `exists: false` is `IS NULL`, as in Payload's own
+ * `not_in` (NULL counts as not in), `exists`, `less_than`. `exists: false` is `IS NULL`, as in Payload's own
  * postgres adapter.
  */
 function clause(where: Where): Sql {
@@ -113,6 +113,13 @@ function clause(where: Where): Sql {
     }
     case 'exists':
       return value === true || value === 'true' ? sql`${col} IS NOT NULL` : sql`${col} IS NULL`
+    case 'not_in': {
+      // ⚠ NULL-SAFE, unlike SQL's own NOT IN: an unset column is "not in the
+      // list", which is what a guard such as "not already claimed" means.
+      const values = Array.isArray(value) ? value : [value]
+      if (values.length === 0) return sql`TRUE`
+      return sql`(${col} IS NULL OR ${col} NOT IN (${sql.join(values.map(param), sql`, `)}))`
+    }
     case 'less_than':
       return sql`${col} < ${param(value)}`
     default:

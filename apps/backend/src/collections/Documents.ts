@@ -1871,6 +1871,14 @@ export async function enqueueIngestForDoc(args: {
     roster: [],
   })
 
+  if (!gated.ok && gated.busy) {
+    // 🔴 THE GATE DID NOT RUN: another run holds the row, a decision stands, or
+    // the row is shared (`GATE_CLAIM_GUARD`). Nothing was written and nothing is
+    // written here — stamping `failed` would clobber the run that owns it.
+    console.warn(`[documents] doc ${docId}: gate not claimed (${gated.reason}) — leaving the row as it is.`)
+    return
+  }
+
   if (!gated.ok) {
     console.warn(
       gated.retryable

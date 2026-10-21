@@ -47,6 +47,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Payload } from 'payload'
 
+// A gated publish moves to `publishing` through a guarded column write.
+vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
+
 import {
   NotPublishableError,
   beginPublish,

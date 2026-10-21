@@ -57,6 +57,7 @@ import { deterministicPass } from './deterministic'
 import { isGenericPlace } from './genericPlaces'
 import { createPseudonymAllocator } from './pseudonyms'
 import { structuralPass } from './structural'
+import { isTownLevelPlace } from './townPlaces'
 import { absorbTitles, onlyPlaceholders } from './titles'
 import type {
   DetectorFinding,
@@ -405,8 +406,15 @@ export async function runAnonymisationGate(
   // ⚠ `onlyPlaceholders`: a finding made of our placeholders, punctuation and
   // titles before a person ("[Domicilio AP], [Domicilio AQ]") names nobody.
   // It needs at least one placeholder, so a bare "Don" still holds.
+  // 🔴 `isTownLevelPlace`: a town, municipality, city or state is SHOWN (owner,
+  // 2026-10-21, #12), so it never holds — the prompt says so and the model
+  // still marked towns in 31 of 38 dev holds. Colonias, streets, numbers, C.P.,
+  // ranchos, parajes and house references still hold. See `townPlaces.ts`.
   const real = survivors.filter(
-    (f) => !coveredByPlaceholder(applied.text, spans, f.text) && !onlyPlaceholders(f.text),
+    (f) =>
+      !coveredByPlaceholder(applied.text, spans, f.text) &&
+      !onlyPlaceholders(f.text) &&
+      !isTownLevelPlace(f, applied.text),
   )
 
   // 🔴 ONE NUMBER FOR THE WHOLE SCREEN. The queue badge and the detail chips

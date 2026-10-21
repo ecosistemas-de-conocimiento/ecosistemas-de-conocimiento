@@ -47,6 +47,8 @@ function matchesClause(row: Row, clause: Clause): boolean {
     if ('equals' in op) return String(value ?? '') === String(op.equals)
     if ('like' in op) return String(value ?? '').toLowerCase().includes(String(op.like).toLowerCase())
     if ('in' in op) return (op.in as unknown[]).map(String).includes(String(value ?? ''))
+    // NULL-safe, like `documentColumns.ts`: an unset column is "not in".
+    if ('not_in' in op) return value == null || !(op.not_in as unknown[]).map(String).includes(String(value))
     if ('exists' in op) return (value != null) === Boolean(op.exists)
     if ('less_than' in op) {
       const t = new Date(String(value)).getTime()

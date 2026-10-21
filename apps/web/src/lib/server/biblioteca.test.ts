@@ -9,6 +9,7 @@ import { backendFetch } from '$lib/server/auth';
 import {
   contributorIdsToResolve,
   documentText,
+  isClearedForLibrary,
   isLibraryVisible,
   libraryListQuery,
   listPublished,
@@ -337,7 +338,7 @@ describe('listPublished', () => {
           hasNextPage: false,
           docs: [
             { id: 1, name: 'Acta', kind: 'pdf', contentKind: 'documento', uploadedBy: '10' },
-            { id: 2, name: 'Voz', kind: 'audio', contentKind: 'testimonio', uploadedBy: '11' },
+            { id: 2, name: 'Voz', kind: 'audio', contentKind: 'testimonio', anonymisationStatus: 'ready', uploadedBy: '11' },
           ],
         });
       }
@@ -361,7 +362,7 @@ describe('listPublished', () => {
   it('degrades to no contributor names when the users read fails', async () => {
     mockedBackendFetch.mockImplementation(async (_t: unknown, path: string) =>
       path.startsWith('/api/documents')
-        ? jsonResponse({ totalDocs: 1, docs: [{ id: 1, name: 'Acta', kind: 'pdf', uploadedBy: '10' }] })
+        ? jsonResponse({ totalDocs: 1, docs: [{ id: 1, name: 'Acta', kind: 'pdf', contentKind: 'documento', uploadedBy: '10' }] })
         : jsonResponse({}, 500),
     );
     const out = await listPublished('tok', {
@@ -437,6 +438,7 @@ describe('readPublished', () => {
             publicationStatus: 'published',
             extractedText: 'lo que dijo María López',
             redactedText: 'lo que dijo [Persona A]',
+            anonymisationStatus: 'ready',
             uploadedBy: '10',
           })
         : jsonResponse({ docs: [{ id: 10, displayName: 'Ana' }] }),
@@ -462,5 +464,66 @@ describe('readPublished', () => {
     mockedBackendFetch.mockResolvedValue(jsonResponse({}, 404));
     await readPublished('tok', '7', 'a b/../9');
     expect(mockedBackendFetch.mock.calls[0]![1] as string).toContain('/api/documents/a%20b%2F..%2F9?');
+  });
+});
+
+// 🔴 Measured on dev, 2026-10-21: 13 HELD testimonios were `published` and the
+// library showed them as empty "Testimonio" cards.
+describe('🔴 the library never shows uncleared or empty gated content', () => {
+  const base = { organizationId: '7', kind: 'todos' as const, search: '', page: 1 };
+
+  it('the list query asks for documentos, or gated rows that are cleared and redacted', () => {
+    for (const kind of ['todos', 'testimonio', 'audio'] as const) {
+      const qs = new URLSearchParams(libraryListQuery({ ...base, kind }));
+      expect(qs.get('where[or][0][contentKind][equals]')).toBe('documento');
+      expect(qs.get('where[or][1][and][0][anonymisationStatus][in]')).toBe('ready,approved');
+      expect(qs.get('where[or][1][and][1][redactedText][exists]')).toBe('true');
+    }
+  });
+
+  it('selects anonymisationStatus so the list can re-check each row', () => {
+    expect(LIBRARY_LIST_FIELDS).toContain('anonymisationStatus');
+  });
+
+  it.each([
+    ['a held testimonio', { contentKind: 'testimonio', anonymisationStatus: 'held' }, false],
+    ['a pending testimonio', { contentKind: 'testimonio', anonymisationStatus: 'pending' }, false],
+    ['a testimonio with no status', { contentKind: 'testimonio' }, false],
+    ['a ready testimonio with an empty redaction', { contentKind: 'testimonio', anonymisationStatus: 'ready', redactedText: '  ' }, false],
+    ['a ready testimonio with no redaction', { contentKind: 'testimonio', anonymisationStatus: 'ready', redactedText: null }, false],
+    ['a ready testimonio', { contentKind: 'testimonio', anonymisationStatus: 'ready', redactedText: 'texto' }, true],
+    ['an approved conversación', { contentKind: 'conversacion', anonymisationStatus: 'approved', redactedText: 'texto' }, true],
+    ['a list row (no text selected) that is ready', { contentKind: 'testimonio', anonymisationStatus: 'ready' }, true],
+    ['a documento', { contentKind: 'documento', anonymisationStatus: 'n/a' }, true],
+  ])('isClearedForLibrary: %s → %s', (_case, row, expected) => {
+    expect(isClearedForLibrary(row as Record<string, unknown>)).toBe(expected);
+  });
+
+  it('drops a held testimonio from a list page even if the backend returns it', async () => {
+    mockedBackendFetch.mockImplementation(async () =>
+      jsonResponse({
+        totalDocs: 2,
+        docs: [
+          { id: 1, contentKind: 'testimonio', anonymisationStatus: 'held', kind: 'pdf' },
+          { id: 2, contentKind: 'testimonio', anonymisationStatus: 'ready', kind: 'pdf' },
+        ],
+      }),
+    );
+    const out = await listPublished('tok', base);
+    expect(out.items.map((i) => i.id)).toEqual(['2']);
+  });
+
+  it('reads a published-but-held testimonio as not-found, never as an empty card', async () => {
+    mockedBackendFetch.mockResolvedValue(
+      jsonResponse({
+        id: 227,
+        contentKind: 'testimonio',
+        organization: '7',
+        publicationStatus: 'published',
+        anonymisationStatus: 'held',
+        redactedText: null,
+      }),
+    );
+    expect((await readPublished('tok', '7', '227')).state).toBe('not-found');
   });
 });

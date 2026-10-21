@@ -66,6 +66,9 @@ export const LIBRARY_LIST_FIELDS = [
   // every row, with no error.
   'lengua',
   'contentKind',
+  // 🔴 Read so the list can drop a gated row the gate has not cleared — see
+  // `isClearedForLibrary`.
+  'anonymisationStatus',
 ] as const;
 
 /**
@@ -117,11 +120,44 @@ export interface LibraryQueryInput {
  * table. A title search that is honest about being a title search beats a
  * full-text search that times out.
  */
+/** Statuses that clear gated content: the gate's own `ready`, or a reviewer's `approved`. */
+export const CLEARED_STATUSES = ['ready', 'approved'] as const;
+
+const CLEARED_WHERE: Array<[string, string]> = [
+  ['where[or][0][contentKind][equals]', 'documento'],
+  ['where[or][1][and][0][anonymisationStatus][in]', CLEARED_STATUSES.join(',')],
+  ['where[or][1][and][1][redactedText][exists]', 'true'],
+];
+
+/**
+ * 🔴 MAY THIS ROW SHOW IN THE LIBRARY AT ALL? A `documento` yes. Gated content
+ * (a testimonio, a conversación) only when cleared, and — when the row carries
+ * its text — only with a non-empty redaction, so there is never an empty card.
+ *
+ * ⚠ Separate from {@link isLibraryVisible} on purpose: that one answers "is it
+ * shared in this ecosistema", this one "is there something safe to show".
+ */
+export function isClearedForLibrary(row: Record<string, unknown> | null | undefined): boolean {
+  if (!row) return false;
+  if (!isGatedContent(row.contentKind)) return true;
+  if (!(CLEARED_STATUSES as readonly unknown[]).includes(row.anonymisationStatus)) return false;
+  if ('redactedText' in row) {
+    return typeof row.redactedText === 'string' && row.redactedText.trim() !== '';
+  }
+  return true;
+}
+
 export function libraryListQuery(input: LibraryQueryInput): string {
   const qs = new URLSearchParams();
   // 🔴 The two constraints. First, so they are the first thing anyone reads.
   qs.set('where[organization][equals]', input.organizationId);
   qs.set('where[publicationStatus][equals]', 'published');
+
+  // 🔴 THE THIRD CONSTRAINT: gated content only once the gate (or a reviewer)
+  // cleared it, and only with a redaction to show. Measured on dev, 2026-10-21:
+  // 13 held testimonios were `published` and showed as empty "Testimonio"
+  // cards. A `documento` is never gated. Mirrors `isClearedForLibrary`.
+  for (const [k, v] of CLEARED_WHERE) qs.set(k, v);
 
   for (const [k, v] of kindFilterWhere(input.kind)) qs.set(k, v);
 
@@ -351,7 +387,10 @@ export async function listPublished(
       totalDocs?: unknown;
       hasNextPage?: unknown;
     };
-    const rows = (Array.isArray(body.docs) ? body.docs : []) as Record<string, unknown>[];
+    // ⚠ Belt and braces: the query already says so (`CLEARED_WHERE`).
+    const rows = ((Array.isArray(body.docs) ? body.docs : []) as Record<string, unknown>[]).filter(
+      isClearedForLibrary,
+    );
     const names = await resolveContributors(token, contributorIdsToResolve(rows));
     const items = rows.map((row) => {
       const uploader = relationId(row.uploadedBy);
@@ -395,6 +434,8 @@ export async function readPublished(
     const row = (await res.json().catch(() => null)) as Record<string, unknown> | null;
     // 🔴 The re-check. See `isLibraryVisible`.
     if (!isLibraryVisible(row, organizationId)) return { state: 'not-found' };
+    // 🔴 And nothing uncleared or empty: a held testimonio reads as absent.
+    if (!isClearedForLibrary(row)) return { state: 'not-found' };
     const doc = row as Record<string, unknown>;
     const names = await resolveContributors(token, contributorIdsToResolve([doc]));
     const uploader = relationId(doc.uploadedBy);

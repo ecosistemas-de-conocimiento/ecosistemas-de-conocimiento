@@ -135,7 +135,42 @@ export type AnonymiseOutcome =
        * left retryable at `n/a`, not `held`. Still: do not ingest.
        */
       retryable?: true
+      /**
+       * 🔴 True when the gate did NOT run because it could not CLAIM the row:
+       * another gate run holds it (`pending`), a decision is already on it, or
+       * the row is not a draft. Nothing was written. Not a hold, not a failure:
+       * the caller leaves the row exactly as it is. See {@link GATE_CLAIM_GUARD}.
+       */
+      busy?: true
     }
+
+/**
+ * 🔴 THE CLAIM. The gate runs only on a row that matches this, and the match
+ * and the `pending` write are ONE `UPDATE … WHERE`, so two gate runs on the
+ * same row cannot both start — in one process or in two.
+ *
+ * Measured on dev, 2026-10-21 (§4p of the edc-1 runbook): 13 testimonios ended
+ * `held` + `published`. `payload run src/seed/demo.cli.ts` boots Payload, whose
+ * boot seed starts `ingestSeededDocuments` detached; the CLI then runs it AGAIN
+ * in the same process. Both read the 252 rows up front. Run A gated a row
+ * `ready` and published it; run B, holding its stale `n/a` snapshot, gated it
+ * again, the model answered differently, and B wrote `held` over a row already
+ * in the shared corpus — which the hold cannot take back.
+ *
+ *   · not `pending`             another run is on it right now
+ *   · not `held`/`rejected`/`approved`  a verdict or a human decision stands
+ *   · not publishing/published/unpublishing  🔴 a row in (or moving into) the
+ *     SHARED corpus is never re-gated. A different answer there cannot be
+ *     acted on, so the gate would only write a status that lies about what the
+ *     ecosistema can read. Unpublish first.
+ *
+ * ⚠ NULL passes both (`not_in` is NULL-safe in `documentColumns.ts`): a fresh
+ * row has no gate state yet.
+ */
+export const GATE_CLAIM_GUARD = [
+  { anonymisationStatus: { not_in: ['pending', 'held', 'rejected', 'approved'] } },
+  { publicationStatus: { not_in: ['publishing', 'published', 'unpublishing'] } },
+] as const
 
 /** Just the database handle this module writes through, so tests need no Payload. */
 type Updater = DocumentColumnsPayload
@@ -215,7 +250,21 @@ export async function anonymiseDocumentText(args: {
     return { ok: true, text: args.approvedText, report: null }
   }
 
-  await write({ anonymisationStatus: 'pending', anonymisationError: null })
+  // 🔴 CLAIM, OR DO NOTHING. See `GATE_CLAIM_GUARD`.
+  const claimed = await updateDocumentColumns(payload, {
+    id: docId,
+    data: { anonymisationStatus: 'pending', anonymisationError: null },
+    where: GATE_CLAIM_GUARD.map((clause) => ({ ...clause })) as never,
+  })
+  if (claimed === 0) {
+    return {
+      ok: false,
+      stage: 'claim',
+      reason: 'the row is already being gated, already decided, or not a draft',
+      report: null,
+      busy: true,
+    }
+  }
 
   const { runAnonymisationGate, aiServiceDetector } = await import('./anonymise')
   const detector =
