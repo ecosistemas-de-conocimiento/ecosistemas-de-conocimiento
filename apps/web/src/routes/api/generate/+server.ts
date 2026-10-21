@@ -25,7 +25,7 @@ import {
 import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
 import { withPinnedRefs } from './pinned';
-import { fetchPublishedTitles, matchDocumentTitle, withTitleRef } from '$lib/server/titleMatch';
+import { fetchPublishedTitles, matchDocumentTitle, titleRetrievalFilter, withTitleRef } from '$lib/server/titleMatch';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
 import { makeGraphProvider } from '$lib/server/graph';
 import { withFencedChunks, withFencedRefs } from '$lib/server/engine/chunkFence';
@@ -514,6 +514,9 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   const retrievalPolicy = chatTurnRetrievalPolicy(hybrid);
   // A message that names exactly one published document pins it for this turn.
   const titleMatch = matchDocumentTitle(userMessage, await publishedTitles);
+  // …and narrows retrieval to it, so its chunks are the turn's only `[N]`
+  // sources (see `$lib/server/titleMatch`). No match: the lengua filter alone.
+  const retrievalFilter = titleRetrievalFilter(lengua.retrievalFilter, titleMatch);
   const engineTurnArgs = {
     config: CHAT_ENGINE_CONFIG,
     aiClient: turnAI,
@@ -531,11 +534,12 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     inlineRefs: withPinnedRefs(withTitleRef(body.contextRefs, titleMatch), sessionDocs),
     // Omitted entirely when there is no ecosistema to scope a graph read to,
     // so the engine takes exactly the code path it took before GraphRAG.
-    ...(graphProvider ? { graphProvider } : {}),
+    // Skipped on a title match: its retrieve and block span the ecosistema.
+    ...(graphProvider && !titleMatch ? { graphProvider } : {}),
     // ai-service metadata filter, forwarded by the engine to every corpus leg.
     // Chunks embedded before `lengua` reached chunk metadata do not carry it
     // and are excluded until republished.
-    ...(lengua.retrievalFilter ? { retrievalFilter: lengua.retrievalFilter } : {}),
+    ...(retrievalFilter ? { retrievalFilter } : {}),
     // Cross-encoder rerank on each corpus retrieve, `CHAT_RERANK` (default ON).
     // Off → no policy, the engine's pre-policy retrieval exactly. A failing
     // rerank falls back to the plain retrieve. See `$lib/server/engine/rerank`.

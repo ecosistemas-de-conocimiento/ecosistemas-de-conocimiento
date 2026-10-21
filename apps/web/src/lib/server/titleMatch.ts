@@ -52,6 +52,17 @@
  * applies the projection before field access, and without them it hides
  * `name` on every gated row, even from the uploader.
  *
+ * ── ONLY THAT DOCUMENT IS RETRIEVED ──────────────────────────────────────────
+ *
+ * The inline ref carries no `[N]`, so an answer grounded in it alone cited
+ * nothing, and the retrieved chunks of OTHER documents (measured on dev: doc
+ * 79 beside a pinned doc 71) were the only citable sources. On a match the
+ * turn's retrieval is therefore narrowed to that document
+ * ({@link titleRetrievalFilter}, ai-service metadata `docId`), and the
+ * GraphRAG leg is skipped: its widened retrieve and its block cover the whole
+ * ecosistema. The document's own chunks become `[1]…[k]`, so the answer can
+ * cite it and its source card shows. No match: retrieval is unchanged.
+ *
  * ⚠ At most {@link TITLE_SCAN_LIMIT} documents, newest first (one Payload
  * page). An older document in a larger ecosistema is not matched.
  */
@@ -170,4 +181,17 @@ export function withTitleRef(userRefs: ContextRef[] | undefined, match: TitledDo
   // 🔴 Never a testimonio's name on the ref: it is free text the gate never saw.
   out.push({ kind: 'document', id: match.id, label: match.contentKind === 'testimonio' ? 'Testimonio' : match.name });
   return out;
+}
+
+/**
+ * The turn's retrieval filter: the lengua filter (if any) plus, on a title
+ * match, `docId` = that document. `docId` is a STRING in chunk metadata
+ * (`chunkMetadata`) and ai-service compares by type. `undefined` = unfiltered.
+ */
+export function titleRetrievalFilter(
+  base: Record<string, string> | undefined,
+  match: TitledDoc | null,
+): Record<string, string> | undefined {
+  if (!match) return base;
+  return { ...(base ?? {}), docId: String(match.id) };
 }

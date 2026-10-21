@@ -503,10 +503,18 @@ async function retrieveMultiScoped(
       );
       continue;
     }
+    // 🔴 A `docId` already on the shared filter (a title match,
+    // `$lib/server/titleMatch`) must not be widened back to every attached
+    // document: keep it only if it is attached here, else skip this corpus.
+    const pinned = req.filter?.docId;
+    if (pinned !== undefined && !ids.includes(String(pinned))) continue;
     corpora.push(corpus);
     // `docId` is stored as a STRING (`chunkMetadata`), and `$in` compares by
     // type: "12" matches, 12 does not. `ids` are strings.
-    corpusFilters[corpus] = { ...(req.filter ?? {}), docId: { $in: ids } };
+    corpusFilters[corpus] = {
+      ...(req.filter ?? {}),
+      docId: { $in: pinned !== undefined ? [String(pinned)] : ids },
+    };
   }
   if (corpora.length === 0) return empty;
 

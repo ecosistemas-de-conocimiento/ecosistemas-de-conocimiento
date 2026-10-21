@@ -54,6 +54,12 @@ interface World {
   streamText: string;
   /** What the published-titles read (`$lib/server/titleMatch`) answers. */
   publishedDocs: Array<Record<string, unknown>>;
+  /**
+   * The chunks `/v1/retrieve` ranks, in order, narrowed by the request's
+   * `filter.docId` the way ai-service's jsonb filter does. Unset: the one
+   * `informe.pdf` chunk below, filter ignored (the long-standing fake).
+   */
+  retrievePool?: Array<Record<string, unknown>>;
 }
 
 let calls: Call[];
@@ -159,6 +165,14 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     }
     if (url.pathname === '/v1/retrieve') {
       const corpus = (body as { corpus: string }).corpus;
+      if (world.retrievePool) {
+        const docId = (body as { filter?: { docId?: unknown } }).filter?.docId;
+        return json({
+          chunks: world.retrievePool
+            .filter((c) => docId === undefined || (c.metadata as { docId?: unknown }).docId === docId)
+            .map((c) => ({ ...c, chunkId: `${corpus}/${String(c.chunkId)}` })),
+        });
+      }
       return json({
         chunks: [
           ...(world.turnsInRetrieve
@@ -883,5 +897,116 @@ describe('POST /api/generate — a document named by title is pinned', () => {
     const res = await POST(event(ask('¿Qué dice el diagnostico comunitario de salud?')));
     expect(res.status).toBe(200);
     expect(answerPrompt()).not.toContain('document:31');
+  });
+});
+
+// ── A title match narrows retrieval to that document (UX backlog #35) ────────
+// 🔴 Measured on dev: a question naming doc 71 by title pinned it, and the
+// answer cited doc 79 too. On a unique match only the named document is
+// retrieved, so its chunks are `[1]…` and the source list shows it alone.
+describe('POST /api/generate — a title match retrieves only that document', () => {
+  const ask = (content: string, extra: Record<string, unknown> = {}) => ({
+    sessionId: SESSION,
+    messages: [{ role: 'user', content }],
+    ...extra,
+  });
+  const NAMED = '¿Qué dice el diagnostico comunitario de salud?';
+  const chunk = (docId: string, title: string, text: string, score: number) => ({
+    documentId: `uuid-${docId}`,
+    chunkId: `c-${docId}`,
+    score,
+    denseScore: score,
+    rerankScore: score,
+    text,
+    metadata: { docId, title },
+  });
+  const answerPrompt = () =>
+    JSON.stringify(
+      generates().find((c) => !JSON.stringify(c.body).includes('Escribe exactamente tres'))!.body,
+    );
+  const sourceDocIds = (provenance: unknown) =>
+    ((provenance as { chunks: Array<{ metadata: { docId: string } }> } | null)?.chunks ?? []).map(
+      (c) => c.metadata.docId,
+    );
+
+  beforeEach(() => {
+    // Doc 79 ranks first: without the narrowing it is `[1]`.
+    world.retrievePool = [
+      chunk('79', 'Otro documento.pdf', 'TEXTO DEL OTRO DOCUMENTO.', 0.95),
+      chunk('31', 'Diagnóstico Comunitario de Salud.pdf', 'FRAGMENTO DEL DIAGNOSTICO.', 0.5),
+    ];
+    world.answerText = 'El diagnóstico describe la salud comunitaria [1].';
+    world.streamText = 'El diagnóstico describe la salud comunitaria [1].';
+  });
+
+  it('🔴 sync: every retrieve is filtered to the named document, and [1] is it', async () => {
+    const res = await POST(event(ask(NAMED)));
+    const body = (await res.json()) as { provenance: unknown };
+    expect(retrieves().length).toBeGreaterThan(0);
+    for (const c of retrieves()) expect((c.body as { filter?: unknown }).filter).toEqual({ docId: '31' });
+    expect(answerPrompt()).toContain('FRAGMENTO DEL DIAGNOSTICO.');
+    expect(answerPrompt()).not.toContain('TEXTO DEL OTRO DOCUMENTO.');
+    expect(sourceDocIds(body.provenance)).toEqual(['31']);
+    expect((body.provenance as { chunks: Array<{ ordinal: number }> }).chunks[0]!.ordinal).toBe(1);
+    expect(sourceDocIds(saves()[0]!.body && (saves()[0]!.body as { provenance: unknown }).provenance)).toEqual(['31']);
+  });
+
+  it('🔴 stream: the done frame lists only the named document', async () => {
+    const frames = await readSse(await POST(event(ask(NAMED), true)));
+    const done = frames.find((f) => f.type === 'done')!;
+    for (const c of retrieves()) expect((c.body as { filter?: unknown }).filter).toEqual({ docId: '31' });
+    expect(sourceDocIds(done.provenance)).toEqual(['31']);
+  });
+
+  it('skips the graph leg, which spans the whole ecosistema', async () => {
+    await POST(event(ask(NAMED)));
+    expect(world.graphCalls).toBe(0);
+  });
+
+  it('keeps the lengua filter beside the docId', async () => {
+    await POST(event(ask(NAMED, { lengua: 'mixe' })));
+    for (const c of retrieves()) {
+      expect((c.body as { filter?: unknown }).filter).toEqual({ lengua: 'mixe', docId: '31' });
+    }
+  });
+
+  it('no title match: retrieval is unfiltered and cites what it found, as before', async () => {
+    const res = await POST(event(ask(QUESTION)));
+    const body = (await res.json()) as { provenance: unknown };
+    for (const c of retrieves()) expect((c.body as { filter?: unknown }).filter).toBeUndefined();
+    expect(world.graphCalls).toBeGreaterThan(0);
+    expect(sourceDocIds(body.provenance)).toEqual(['79']);
+  });
+
+  it('🔴 hybrid: the shared filter carries the docId, and a draft corpus without that document is not sent', async () => {
+    ENV.CHAT_RETRIEVAL_MODE = 'hybrid';
+    world.multiChunks = [
+      {
+        corpus: `eco-${ECO}`,
+        documentId: 'uuid-31',
+        chunkId: 'm-31',
+        score: 0.03,
+        text: 'FRAGMENTO DEL DIAGNOSTICO.',
+        metadata: { docId: '31', title: 'Diagnóstico Comunitario de Salud.pdf' },
+      },
+    ];
+    await POST(event(ask(NAMED)));
+    const multi = calls.find((c) => c.url.pathname === '/v1/retrieve/multi')!;
+    expect(multi.body).toMatchObject({ corpora: [`eco-${ECO}`], filter: { docId: '31' } });
+    expect((multi.body as { corpusFilters?: unknown }).corpusFilters).toBeUndefined();
+  });
+
+  it('🔴 hybrid: a draft corpus holding the named document is narrowed to it alone', async () => {
+    ENV.CHAT_RETRIEVAL_MODE = 'hybrid';
+    world.sessionDocs = [
+      { id: 11, name: 'informe.pdf', kind: 'pdf', contentKind: 'documento', publicationStatus: 'draft' },
+      { id: 31, name: 'Diagnóstico Comunitario de Salud.pdf', kind: 'pdf', contentKind: 'documento', publicationStatus: 'published' },
+    ];
+    await POST(event(ask(NAMED)));
+    const multi = calls.find((c) => c.url.pathname === '/v1/retrieve/multi')!;
+    expect(multi.body).toMatchObject({
+      corpora: [`eco-${ECO}`, `eco-${ECO}-draft-1`],
+      corpusFilters: { [`eco-${ECO}-draft-1`]: { docId: { $in: ['31'] } } },
+    });
   });
 });
