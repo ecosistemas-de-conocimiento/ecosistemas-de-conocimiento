@@ -199,10 +199,11 @@ export interface DetectorFinding {
   type: 'persona' | 'lugar' | 'contacto' | 'identificador' | 'otro'
   /**
    * `false` when the model itself judged the string identifies nobody: a bare
-   * title such as "el doctor" in "el doctor dijo". The gate neither redacts nor
-   * holds on it.
+   * title such as "el doctor" in "el doctor dijo".
    *
-   * 🔴 FAIL-CLOSED: anything other than an explicit `false` is identifying.
+   * 🔴 THE GATE DOES NOT ACT ON IT (re-audit 2026-10-21): stage 3 redacts and
+   * verify holds on every finding, whatever this says. Kept for measurement.
+   * Anything other than an explicit `false` is recorded as identifying.
    */
   identifying?: boolean
 }

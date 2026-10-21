@@ -9,7 +9,14 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { DETECT_SYSTEM_PROMPT, DetectorFailure, locateSpan, parseFindings } from './detector'
+import {
+  aiServiceDetector,
+  DETECT_SYSTEM_PROMPT,
+  DetectorFailure,
+  locateSpan,
+  parseFindings,
+  type SyncGenerator,
+} from './detector'
 import { ANONYMISE_VERIFY_ROUNDS_VAR, runAnonymisationGate } from './gate'
 import type { PersonDetector } from './types'
 
@@ -80,11 +87,11 @@ describe('🔴 `identifica: false` never lets a name through', () => {
     expect(r.redactedText).not.toContain('maestra')
   })
 
-  it('stage 3 may drop a bare title with no proper noun (owner: it names nobody)', async () => {
+  it('stage 3 redacts even a bare title marked non-identifying (over-redaction accepted)', async () => {
     const r = await gate('El doctor dijo que no.', [[persona('El doctor', false)], []])
     expect(r.status).toBe('ready')
     if (r.status !== 'ready') return
-    expect(r.redactedText).toBe('El doctor dijo que no.')
+    expect(r.redactedText).toBe('[Persona A] dijo que no.')
   })
 
   it('🔴 fail-closed: verify reporting a bare title, even as non-identifying, holds', async () => {
@@ -109,6 +116,27 @@ describe('🔴 `identifica: false` never lets a name through', () => {
   it('parseFindings leaves `identifying` unset when the model omits it', () => {
     const [f] = parseFindings('{"hallazgos":[{"texto":"Ana","tipo":"persona"}]}', 'Ana vino.')
     expect(f?.identifying).toBeUndefined()
+  })
+
+  it.each([0, null, 'false', 'no', true])(
+    'parseFindings treats `identifica: %j` as identifying',
+    (value) => {
+      const raw = JSON.stringify({ hallazgos: [{ texto: 'Ana', tipo: 'persona', identifica: value }] })
+      const [f] = parseFindings(raw, 'Ana vino.')
+      expect(f?.identifying).toBeUndefined()
+    },
+  )
+
+  it('parseFindings records a literal `false`', () => {
+    const raw = '{"hallazgos":[{"texto":"Ana","tipo":"persona","identifica":false}]}'
+    expect(parseFindings(raw, 'Ana vino.')[0]?.identifying).toBe(false)
+  })
+
+  it.each([0, null])('`identifica: %j` at stage 3 is redacted', async (value) => {
+    const r = await gate('Vino Lucrecia.', [[persona('Lucrecia', value)], []])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Vino [Persona A].')
   })
 })
 
@@ -255,5 +283,179 @@ describe('🔴 a leftover fragment too weak to redact globally holds instead', (
     expect(r.status).toBe('ready')
     if (r.status !== 'ready') return
     expect(r.redactedText).toBe('Vivo en [Domicilio A], [Persona A] lo sabe.')
+  })
+})
+
+/**
+ * 🔴 RE-AUDIT 2026-10-21: STAGE 3 REDACTS EVERY FINDING, like main. An earlier
+ * version kept a span marked `identifica: false` unless it held a capitalised
+ * word outside a sentence start; that let lower-case nicknames, names at a
+ * sentence start and ALL-CAPS speaker labels through. Verify is silent in every
+ * case below, so stage 3 is the only thing standing between the name and a
+ * `ready` text.
+ */
+describe('🔴 stage 3 redacts a finding marked `identifica: false`', () => {
+  const cases: Array<[string, string, string]> = [
+    ['lowercase nickname', 'Me trajo la güera ayer.', 'la güera'],
+    ['lowercase full name (speech-to-text)', 'y luego llegó el chacho melgarejo con la carta', 'el chacho melgarejo'],
+    ['single name mid-sentence', 'Vino Lucrecia.', 'Lucrecia'],
+    ['sentence start', 'Lucrecia llegó tarde. Nadie dijo nada.', 'Lucrecia'],
+    ['after a colon', 'Le dijo: Lucrecia, ven acá.', 'Lucrecia'],
+    ['ALL-CAPS speaker label', 'Entrevista\nLUCRECIA: bueno pues sí.', 'LUCRECIA'],
+    ['dialogue dash at line start', 'Gritó.\n—Lucrecia, ven.', 'Lucrecia'],
+    ['after a quote mid-sentence', 'Le gritó "Lucrecia, ven".', 'Lucrecia'],
+    ['after colon and quote', 'Le dijo: "Lucrecia, ven".', 'Lucrecia'],
+    ['after ¿', 'Oye. ¿Lucrecia vino?', 'Lucrecia'],
+    ['after an ellipsis', 'Pues… Lucrecia no vino.', 'Lucrecia'],
+    ['ALL CAPS mid-sentence', 'LLEGÓ EL CHACHO MELGAREJO.', 'EL CHACHO MELGAREJO'],
+    ['ALL CAPS single word at start', 'CHACHO LLEGÓ.', 'CHACHO'],
+    ['accented initial at start', 'Ángel vino solo.', 'Ángel'],
+    ['two words at start', 'Chacho Melgarejo llegó.', 'Chacho Melgarejo'],
+    ['lowercase surname only', 'Vino el de los melgarejo.', 'los melgarejo'],
+    ['nickname with article at start', 'El Chino llegó.', 'El Chino'],
+    ['lowercase alias', 'Llegó el chino con la carta.', 'el chino'],
+    ['after a semicolon', 'Vino tarde; Lucrecia no.', 'Lucrecia'],
+    ['inside parentheses', 'Vino (Lucrecia) tarde.', 'Lucrecia'],
+    ['model lowercases a capitalised span', 'Llegó el Chacho con la carta.', 'el chacho'],
+  ]
+
+  it.each(cases)('%s', async (_label, text, span) => {
+    const r = await gate(text, [[persona(span, false)], []])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText.toLowerCase()).not.toContain(span.toLowerCase())
+    expect(r.redactedText).toContain('[Persona A]')
+  })
+
+  it('a digit-bearing place marked non-identifying is redacted', async () => {
+    const r = await gate('Vive en la casa 45.', [[{ texto: 'casa 45', tipo: 'lugar', identifica: false }], []])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Vive en la [Domicilio A].')
+  })
+})
+
+/**
+ * Each input here would come out DIFFERENT if `safeFragment` let the weak piece
+ * through, so a weakened check turns the test red instead of being masked by
+ * the "nothing changed, hold" rule.
+ */
+describe('🔴 every weak-fragment check holds on its own', () => {
+  it('a lower-case fragment of 3+ letters holds (the capital check)', async () => {
+    const r = await gate(
+      'Ana con Eva vino. Vino con todo.',
+      [[persona('Ana'), persona('Eva')], [persona('[Persona A] con [Persona B]')], []],
+      { rounds: 3 },
+    )
+    expect(r.status).toBe('hold')
+    if (r.status !== 'hold') return
+    expect(r.redactedText).toContain('Vino con todo.')
+  })
+
+  it('a capitalised fragment under 3 letters holds (the length check)', async () => {
+    const r = await gate(
+      'ANA Y EVA vinieron. Y luego nada.',
+      [[persona('ANA'), persona('EVA')], [persona('[Persona A] Y [Persona B]')], []],
+      { rounds: 3 },
+    )
+    expect(r.status).toBe('hold')
+    if (r.status !== 'hold') return
+    expect(r.redactedText).toContain('Y luego nada.')
+  })
+
+  it('one weak fragment beside a strong one holds the whole leftover (hold, not filter)', async () => {
+    const r = await gate(
+      'Ana de Eva López vino.',
+      [[persona('Ana'), persona('Eva')], [persona('[Persona A] de [Persona B] López')], []],
+      { rounds: 3 },
+    )
+    expect(r.status).toBe('hold')
+    if (r.status !== 'hold') return
+    expect(r.stage).toBe('verify')
+  })
+})
+
+describe('🔴 a leftover is redacted in every spelling the text uses', () => {
+  it('"Lucrecia" also redacts "LUCRECIA", with the same label', async () => {
+    const r = await gate('Vino Lucrecia. LUCRECIA lo dijo.', [[], [persona('Lucrecia')], []], { rounds: 3 })
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Vino [Persona A]. [Persona A] lo dijo.')
+  })
+
+  it('accents are folded too: "Angel" also redacts "ÁNGEL"', async () => {
+    const r = await gate('Vino Angel. ÁNGEL lo dijo.', [[], [persona('Angel')], []], { rounds: 3 })
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Vino [Persona A]. [Persona A] lo dijo.')
+  })
+
+  it('a folded twin inside a longer word is left alone', async () => {
+    const r = await gate('Vino Ana. Mañana anabel vuelve.', [[], [persona('Ana')], []], { rounds: 3 })
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Vino [Persona A]. Mañana anabel vuelve.')
+  })
+
+  it('an absorbed leftover takes its other spellings with it', async () => {
+    const r = await gate(
+      'Vino María López. Luego María LÓPEZ habló.',
+      [[persona('María')], [persona('[Persona A] López')], []],
+      { rounds: 3 },
+    )
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Vino [Persona A]. Luego [Persona A] habló.')
+  })
+})
+
+/**
+ * 🔴 A PLACEHOLDER CUT IN TWO BY A CHUNK EDGE IS STILL A PLACEHOLDER. The
+ * chunker splits on words, so a chunk can end "…a [Domicilio " and the next
+ * begin "A] y ya…". Re-audit 2026-10-21 (also on main): "Domi" matched inside
+ * the cut "[Domicilio", was returned as found, and the gate then saw it only
+ * inside `[Domicilio A]`, called it covered, and shipped "la domi".
+ */
+describe('🔴 locateSpan and a placeholder cut at a chunk edge', () => {
+  // The chunker cuts only at whitespace, so a cut placeholder is "[Domicilio"
+  // at a chunk's end and "A]" at the next one's start, never mid-word.
+  it('skips a match inside a trailing cut placeholder', () => {
+    expect(locateSpan('la domi me trajo a [Domicilio ', 'Domi')).toBe('domi')
+    expect(locateSpan('me trajo a [Domicilio', 'Domi')).toBeNull()
+    expect(locateSpan('vino con [Persona', 'Persona')).toBeNull()
+    expect(locateSpan('no lo sé [Dato', 'dato')).toBeNull()
+  })
+
+  it('skips a match inside a leading cut placeholder', () => {
+    expect(locateSpan('omitido] y nada', 'omitido')).toBeNull()
+    expect(locateSpan('AB] y la Ab', 'AB')).toBe('Ab')
+  })
+
+  it('a bracket that is not one of ours stays text', () => {
+    expect(locateSpan('vino [Domi', 'Domi')).toBe('Domi')
+    expect(locateSpan('nota [ver Ana', 'Ana')).toBe('Ana')
+    expect(locateSpan('Ana] y nada', 'Ana')).toBe('Ana')
+  })
+
+  it('through the chunked detector, the document holds', async () => {
+    const client: SyncGenerator = {
+      generate: {
+        async sync(req) {
+          const t = req.unit.input.userPrompt
+          let hallazgos: H[] = []
+          if (t.includes('Flores')) hallazgos = [lugar('Flores')]
+          else if (t.includes('domi') && t.includes('[Domicilio')) hallazgos = [persona('Domi')]
+          return { text: JSON.stringify({ hallazgos }) }
+        },
+      },
+    }
+    const detector = aiServiceDetector({ client, chunkWords: 6, concurrency: 1, retry: { attempts: 1 } })
+    const r = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'la domi me trajo a Flores y ya nos quedamos ahí' },
+      { detector },
+    )
+    expect(r.status).toBe('hold')
+    if (r.status !== 'hold') return
+    expect(r.stage).toBe('verify')
   })
 })

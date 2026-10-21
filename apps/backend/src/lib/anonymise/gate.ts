@@ -55,7 +55,7 @@
  * MANY findings survived and nothing else.
  */
 
-import { positiveIntFromEnv } from './detector'
+import { foldedMatches, positiveIntFromEnv } from './detector'
 import { deterministicPass } from './deterministic'
 import { isGenericPlace } from './genericPlaces'
 import { createPseudonymAllocator } from './pseudonyms'
@@ -195,33 +195,46 @@ function coveredByPlaceholder(
  * Literal `indexOf` rather than a built RegExp: the finding is arbitrary user
  * text and `new RegExp(finding.text)` would either throw on a stray `(` or,
  * worse, silently match something else entirely.
+ *
+ * `folded`: also replace whole-word occurrences in any other case or accent
+ * spelling ("LUCRECIA" for "Lucrecia"). Verify rounds only; see `redactLeftovers`.
  */
 function replaceOutsidePlaceholders(
   text: string,
   needle: string,
   replacement: () => string,
+  folded = false,
 ): string | null {
   const spans = placeholderSpans(text)
+  const ranges: Array<[number, number]> = []
+  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + 1)) {
+    ranges.push([at, at + needle.length])
+  }
+  if (folded) ranges.push(...foldedMatches(text, needle).filter(([s, e]) => wholeWord(text, s, e)))
+  ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1])
   let label: string | undefined
   let result = ''
   let copied = 0
-  let search = 0
-  for (;;) {
-    const at = text.indexOf(needle, search)
-    if (at === -1) break
-    const end = at + needle.length
+  for (const [at, end] of ranges) {
+    // Overlaps one already replaced.
+    if (at < copied) continue
     const cuts = spans.some(([s, e]) => at < e && end > s && !(at <= s && end >= e))
-    if (cuts) {
-      search = at + 1
-      continue
-    }
+    if (cuts) continue
     label ??= replacement()
     result += text.slice(copied, at) + label
     copied = end
-    search = end
   }
   // `copied` only moves on a replacement, and a needle is never empty.
   return copied === 0 ? null : result + text.slice(copied)
+}
+
+/**
+ * True when `[start, end)` is not glued to a letter, digit or accent mark on
+ * either side, so a folded "ana" never matches inside "mañana".
+ */
+function wholeWord(text: string, start: number, end: number): boolean {
+  const word = /[\p{L}\p{N}\p{M}]/u
+  return !word.test(text.slice(Math.max(0, start - 1), start)) && !word.test(text.charAt(end))
 }
 
 /**
@@ -239,6 +252,7 @@ function applyFindings(
   findings: readonly DetectorFinding[],
   allocate: (name: string) => string,
   allocateAddress: (address: string) => string,
+  folded = false,
 ): { text: string; labels: string[] } {
   const ordered = [...findings].sort((a, b) => b.text.length - a.text.length)
   const labels: string[] = []
@@ -265,7 +279,7 @@ function applyFindings(
         : finding.type === 'lugar'
           ? allocateAddress(finding.text)
           : OMITTED_PLACEHOLDER
-    const next = replaceOutsidePlaceholders(out, finding.text, replacement)
+    const next = replaceOutsidePlaceholders(out, finding.text, replacement, folded)
     if (next === null) continue
     labels.push(finding.type)
     out = next
@@ -289,58 +303,6 @@ function applyFindings(
 function onlyPlaceholders(finding: string): boolean {
   if (!finding.match(PLACEHOLDER)) return false
   return !/[\p{L}\p{N}]/u.test(finding.replace(PLACEHOLDER, ''))
-}
-
-/**
- * True when `at` in `text` begins a sentence: nothing before it but spaces and
- * opening marks, back to the start or to `.`, `!`, `?`, `…`, `:` or a newline.
- */
-function atSentenceStart(text: string, at: number): boolean {
-  const before = text.slice(0, at)
-  if (/\n[\s¿¡"«“'(—–-]*$/u.test(before)) return true
-  const stripped = before.replace(/[\s¿¡"«“'(—–-]+$/u, '')
-  return stripped === '' || /[.!?…:]$/u.test(stripped)
-}
-
-/**
- * True when `span` holds a capitalised word anywhere it occurs in `text`,
- * except as the first word of a sentence ("El doctor dijo").
- *
- * ⚠ No occurrence at all counts as a proper noun: we cannot tell, so fail closed.
- */
-function hasProperNoun(text: string, span: string): boolean {
-  let from = 0
-  let seen = false
-  for (;;) {
-    const at = text.indexOf(span, from)
-    if (at === -1) return !seen
-    seen = true
-    for (const w of span.matchAll(/\p{L}+/gu)) {
-      if (!/^\p{Lu}/u.test(w[0])) continue
-      if (w.index === 0 && atSentenceStart(text, at)) continue
-      return true
-    }
-    from = at + 1
-  }
-}
-
-/**
- * STAGE 3 ONLY: may this finding be left in the text because the model judged
- * it names nobody? A bare title ("el doctor dijo") comes back with
- * `identifica: false` (see the detector prompt) and is not redacted.
- *
- * 🔴 THE MODEL'S `false` IS NOT TRUSTED ON ITS OWN. Measured in the 2026-10-21
- * audit: the model returned "Chacho Melgarejo" with `identifica: false`. So the
- * judgement is honoured only when the span has no proper noun (no capitalised
- * word outside a sentence start), no placeholder and no digit; anything else
- * is redacted anyway. ⚠ VERIFY NEVER CALLS THIS: there, every finding is a
- * leftover, whatever the model said about it. A bare title verify reports
- * holds — fail-closed; the prompt asks the model not to report one at all.
- */
-function mayKeepAsNonIdentifying(f: DetectorFinding, text: string): boolean {
-  if (f.identifying !== false) return false
-  if (/\p{N}/u.test(f.text) || f.text.match(PLACEHOLDER)) return false
-  return !hasProperNoun(text, f.text)
 }
 
 /** The placeholder family a finding type is redacted into, if it has one. */
@@ -410,7 +372,12 @@ function resolveLeftover(
 
 /**
  * Redact one round's leftovers with the document's allocator, so a name caught
- * late gets the label it already had. Returns the labels actually applied, or
+ * late gets the label it already had.
+ *
+ * 🔴 EVERY SPELLING. A leftover is redacted case- and accent-blind as a whole
+ * word, the way `locateSpan` finds it. Re-audit 2026-10-21: with rounds=3,
+ * "Lucrecia" was redacted, "LUCRECIA" stayed, the next round was silent and
+ * the text went `ready`. Exact occurrences are still replaced anywhere. Returns the labels actually applied, or
  * null when any leftover cannot be redacted safely (the round then holds).
  */
 function redactLeftovers(
@@ -430,12 +397,12 @@ function redactLeftovers(
       plain.push(...resolved.findings)
       continue
     }
-    const next = replaceOutsidePlaceholders(out, f.text, () => resolved.absorbInto)
+    const next = replaceOutsidePlaceholders(out, f.text, () => resolved.absorbInto, true)
     if (next === null) continue
     labels.push(f.type)
     out = next
   }
-  const applied = applyFindings(out, plain, allocate, allocateAddress)
+  const applied = applyFindings(out, plain, allocate, allocateAddress, true)
   return { text: applied.text, labels: [...labels, ...applied.labels] }
 }
 
@@ -562,9 +529,14 @@ export async function runAnonymisationGate(
     )
   }
 
+  // 🔴 EVERY FINDING IS REDACTED, whatever `identifica` says, exactly as on
+  // main. Re-audit 2026-10-21: trusting `false` unless the span held a
+  // mid-sentence capital let "la güera", "Lucrecia" at a sentence start and a
+  // "LUCRECIA:" speaker label through. A bare "el doctor" the model reports
+  // becomes `[Persona X]`: over-redaction, accepted.
   const applied = applyFindings(
     deterministic.text,
-    found.filter((f) => !mayKeepAsNonIdentifying(f, deterministic.text)),
+    found,
     (name) => allocator.labelFor(name),
     (address) => allocator.addressLabelFor(address),
   )
@@ -609,7 +581,7 @@ export async function runAnonymisationGate(
     // ("[Domicilio AP], [Domicilio AQ]") names nobody.
     // 🔴 NO `identifica: false` HERE. A verify finding is a leftover whatever
     // the model said about it (audit 2026-10-21: "Chacho Melgarejo" came back
-    // marked non-identifying). See `mayKeepAsNonIdentifying`.
+    // marked non-identifying). Stage 3 does not honour it either.
     // 🔴 `isTownLevelPlace`: a town, municipality, city or state is SHOWN (owner,
     // 2026-10-21, #12), so it never holds — the prompt says so and the model
     // still marked towns in 31 of 38 dev holds. Colonias, streets, numbers, C.P.,

@@ -163,7 +163,9 @@ export const DETECT_SYSTEM_PROMPT = [
   '- Teléfonos, correos, cuentas, identificadores oficiales y números de expediente.',
   '',
   // ⚠ Owner's rule, 2026-10-17: a bare title is not identifying and must not
-  // hold a document. The gate drops a finding marked "identifica": false.
+  // hold a document, so the model is asked not to report it. 🔴 The gate does
+  // NOT trust "identifica": false (re-audit 2026-10-21): a reported bare title
+  // is redacted at stage 3 and holds at verify. Over-redaction, accepted.
   'No es un hallazgo:',
   '- Un tratamiento o cargo SOLO, sin nombre ni apodo junto a él: "el doctor dijo",',
   '  "la maestra llegó". No identifica a nadie. No lo reportes; si lo reportas, pon',
@@ -264,28 +266,13 @@ function foldChar(ch: string): string {
 }
 
 /**
- * `needle` as the text spells it: exactly, else case- and accent-blind, giving
- * back the substring of `source` it matched. Null when it is not there at all.
+ * Every `[start, end)` range of `source` that equals `needle` once both are
+ * folded (lower case, accents dropped), in order. Overlapping matches included.
  *
  * ⚠ Folding is per character with an offset map, so a character that folds to
- * two (or none) never shifts the slice that is returned.
- *
- * 🔴 A MATCH WHOLLY INSIDE ONE OF OUR PLACEHOLDERS IS SKIPPED, exact or folded,
- * and the search goes on. Audit 2026-10-21: the model reported "Domi" for
- * "La domi", the first match was inside `[Domicilio A]`, the gate saw it as
- * covered, and "La domi" stayed in a ready text.
+ * two (or none) never shifts the ranges returned.
  */
-export function locateSpan(source: string, needle: string): string | null {
-  const spans = [...source.matchAll(PLACEHOLDER_PATTERN)].map(
-    (m) => [m.index, m.index + m[0].length] as const,
-  )
-  // Only a match wholly INSIDE a placeholder is skipped. One that straddles an
-  // edge ("Domicilio A], Ana") or contains one ("[Persona A] López") is real
-  // text the gate's `resolveLeftover` knows how to redact.
-  const clear = (at: number, end: number) => !spans.some(([s, e]) => at >= s && end <= e)
-  for (let at = source.indexOf(needle); at !== -1; at = source.indexOf(needle, at + 1)) {
-    if (clear(at, at + needle.length)) return needle
-  }
+export function foldedMatches(source: string, needle: string): Array<[number, number]> {
   let folded = ''
   const startOf: number[] = []
   for (let i = 0; i < source.length; ) {
@@ -298,11 +285,46 @@ export function locateSpan(source: string, needle: string): string | null {
     i += ch.length
   }
   const want = [...needle].map(foldChar).join('')
-  if (want.length === 0) return null
+  const out: Array<[number, number]> = []
+  if (want.length === 0) return out
   for (let at = folded.indexOf(want); at !== -1; at = folded.indexOf(want, at + 1)) {
     const begin = startOf[at] as number
     const lastStart = startOf[at + want.length - 1] as number
-    const end = lastStart + String.fromCodePoint(source.codePointAt(lastStart) as number).length
+    out.push([begin, lastStart + String.fromCodePoint(source.codePointAt(lastStart) as number).length])
+  }
+  return out
+}
+
+/**
+ * `needle` as the text spells it: exactly, else case- and accent-blind, giving
+ * back the substring of `source` it matched. Null when it is not there at all.
+ *
+ * 🔴 A MATCH WHOLLY INSIDE ONE OF OUR PLACEHOLDERS IS SKIPPED, exact or folded,
+ * and the search goes on. Audit 2026-10-21: the model reported "Domi" for
+ * "La domi", the first match was inside `[Domicilio A]`, the gate saw it as
+ * covered, and "La domi" stayed in a ready text.
+ */
+export function locateSpan(source: string, needle: string): string | null {
+  const spans = [...source.matchAll(PLACEHOLDER_PATTERN)].map(
+    (m) => [m.index, m.index + m[0].length] as const,
+  )
+  // 🔴 A PLACEHOLDER CUT AT A CHUNK EDGE IS STILL A PLACEHOLDER. The chunker
+  // cuts at whitespace, so `source` (one chunk) may end "[Domicilio" and the
+  // next begin "A]". Re-audit 2026-10-21: "Domi" matched inside the cut
+  // "[Domicilio", came back as found, and the gate, looking at the whole text,
+  // saw it only inside `[Domicilio A]` and let "la domi" through.
+  const tail = /\[(?:Persona|Domicilio|Dato)\s*$/.exec(source)
+  if (tail) spans.push([tail.index, source.length] as const)
+  const head = /^\s*(?:[A-Z]+|omitido)\]/.exec(source)
+  if (head) spans.push([0, head[0].length] as const)
+  // Only a match wholly INSIDE a placeholder is skipped. One that straddles an
+  // edge ("Domicilio A], Ana") or contains one ("[Persona A] López") is real
+  // text the gate's `resolveLeftover` knows how to redact.
+  const clear = (at: number, end: number) => !spans.some(([s, e]) => at >= s && end <= e)
+  for (let at = source.indexOf(needle); at !== -1; at = source.indexOf(needle, at + 1)) {
+    if (clear(at, at + needle.length)) return needle
+  }
+  for (const [begin, end] of foldedMatches(source, needle)) {
     if (clear(begin, end)) return source.slice(begin, end)
   }
   return null
