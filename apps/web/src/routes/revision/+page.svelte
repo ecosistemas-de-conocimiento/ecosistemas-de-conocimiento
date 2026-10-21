@@ -28,9 +28,9 @@
     REJECTED_TOAST,
     REVIEW_INTRO,
     REVIEW_TITLE,
-    stageLabel,
     survivorCountLabel,
   } from '$lib/holds';
+  import { holdSummary } from './holdSummary';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -99,6 +99,9 @@
     <p class="hint">{QUEUE_NO_TEXT_NOTE}</p>
     <ul class="list" data-testid="hold-queue">
       {#each data.holds as hold (hold.id)}
+        {@const summary = holdSummary(hold)}
+        <!-- ⚠ `summary` is built from the SAME count as the badge, never from
+             the stored reason's own number. See `holdSummary.ts`. -->
         <li class="card">
           <a class="card-link" href={`/revision/${encodeURIComponent(hold.id)}`}>
             <!-- 🔴 The gate's NEUTRAL title, rendered as sent. Nothing here
@@ -111,12 +114,8 @@
               <span class="date">{formatHoldDate(hold.updatedAt)}</span>
             {/if}
           </p>
-          <p class="why">{stageLabel(hold.stage)} lo detuvo.</p>
-          {#if hold.reason}
-            <!-- The gate's own words. ⚠ Counts and rule names only — it never
-                 quotes what it found. -->
-            <p class="reason">{hold.reason}</p>
-          {/if}
+          <p class="why">{summary.why}</p>
+          <p class="reason">{summary.detail}</p>
         </li>
       {/each}
     </ul>

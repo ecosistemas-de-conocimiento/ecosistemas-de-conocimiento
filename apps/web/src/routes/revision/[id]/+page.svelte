@@ -41,13 +41,13 @@
     REJECT_CONSEQUENCE,
     REJECT_LABEL,
     segmentHeldText,
-    stageLabel,
     STALE_HIGHLIGHTS_NOTICE,
     survivorBreakdown,
     SURVIVORS_HINT,
     SURVIVORS_TITLE,
     survivorLabel,
   } from '$lib/holds';
+  import { holdSummary } from '../holdSummary';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -83,6 +83,10 @@
   const stale = $derived(highlightsAreStale(original, text));
   const segments = $derived(original === null ? [] : segmentHeldText(text, hold?.survivors ?? []));
   const breakdown = $derived(survivorBreakdown(hold?.survivors ?? []));
+  /** ⚠ Counted from the same highlights as the chips below, so the numbers agree. */
+  const summary = $derived(
+    hold ? holdSummary({ ...hold, survivorCount: hold.survivors.length }) : null,
+  );
 </script>
 
 <svelte:head><title>Documento retenido · Ecosistemas de Conocimiento</title></svelte:head>
@@ -97,13 +101,13 @@
       <!-- 🔴 The gate's NEUTRAL title, as sent. -->
       <h1 data-testid="hold-title">{hold.title}</h1>
       <p class="sub">
-        {stageLabel(hold.stage)} lo detuvo.
+        {summary?.why}
         {#if formatHoldDate(hold.updatedAt)}
           <span class="date">{formatHoldDate(hold.updatedAt)}</span>
         {/if}
       </p>
-      {#if hold.reason}
-        <p class="reason">{hold.reason}</p>
+      {#if summary}
+        <p class="reason">{summary.detail}</p>
       {/if}
     </header>
 

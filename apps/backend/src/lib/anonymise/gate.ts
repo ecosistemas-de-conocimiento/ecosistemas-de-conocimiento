@@ -54,6 +54,7 @@
  */
 
 import { deterministicPass } from './deterministic'
+import { isGenericPlace } from './genericPlaces'
 import { createPseudonymAllocator } from './pseudonyms'
 import { structuralPass } from './structural'
 import { absorbTitles, onlyPlaceholders } from './titles'
@@ -83,6 +84,30 @@ export interface GateDeps {
  * failure, and a completely useless product.
  */
 const PLACEHOLDER = /\[Dato omitido\]|\[Persona [A-Z]+\]|\[Domicilio [A-Z]+\]/g
+
+/**
+ * What every refusal tells the person reading the queue. Plain Spanish, no
+ * "ingerir": the reader is a community reviewer, not an engineer.
+ */
+const NOT_ADDED = 'Todavía no se agregó a la búsqueda.'
+
+/** `1 dato que podría` / `7 datos que podrían`. The count is the number of HIGHLIGHTS. */
+function survivorsSentence(count: number): string {
+  return count === 1
+    ? 'Quedó 1 dato que podría identificar a alguien.'
+    : `Quedaron ${count} datos que podrían identificar a alguien.`
+}
+
+/**
+ * Drop findings that are only a common place noun ("la escuela").
+ *
+ * ⚠ Applied to stage 3 AND stage 4 alike. Dropping in one stage only would
+ * either leave a phrase verify then holds on, or redact one verify ignores.
+ * See `genericPlaces.ts` for how narrow the rule is.
+ */
+function withoutGenericPlaces(findings: readonly DetectorFinding[]): DetectorFinding[] {
+  return findings.filter((f) => !isGenericPlace(f.text))
+}
 
 function countsByLabel(entries: Iterable<string>): RedactionCount[] {
   const tally = new Map<string, number>()
@@ -294,7 +319,7 @@ export async function runAnonymisationGate(
     // upstream failed, which is a thing a human should see.
     return hold(
       'structural',
-      'El texto quedó vacío después de la limpieza estructural, así que no hay nada que ingerir. Revisa la extracción del documento.',
+      `El documento no tenía texto que se pudiera leer. ${NOT_ADDED}`,
     )
   }
 
@@ -312,10 +337,12 @@ export async function runAnonymisationGate(
   // ── 3. CONTENT ────────────────────────────────────────────────────────────
   let found: DetectorFinding[]
   try {
-    found = await deps.detector.detect({
-      text: deterministic.text,
-      contentKind: input.contentKind,
-    })
+    found = withoutGenericPlaces(
+      await deps.detector.detect({
+        text: deterministic.text,
+        contentKind: input.contentKind,
+      }),
+    )
   } catch (err) {
     // 🔴 A detector that could not run is NOT "nothing to redact". See
     // `detector.ts`: the whole reason it throws instead of returning `[]` is to
@@ -324,7 +351,7 @@ export async function runAnonymisationGate(
     // on it, so it travels with the refusal even though the model never ran.
     return hold(
       'content',
-      `No se pudo revisar el contenido con el modelo (${failureClassOf(err)}), así que no se ingirió nada.`,
+      `La revisión automática no pudo terminar (${failureClassOf(err)}). ${NOT_ADDED}`,
       { redactedText: deterministic.text },
     )
   }
@@ -345,14 +372,16 @@ export async function runAnonymisationGate(
   // rewriter by running it twice.
   let survivors: DetectorFinding[]
   try {
-    survivors = await deps.detector.detect({
-      text: applied.text,
-      contentKind: input.contentKind,
-    })
+    survivors = withoutGenericPlaces(
+      await deps.detector.detect({
+        text: applied.text,
+        contentKind: input.contentKind,
+      }),
+    )
   } catch (err) {
     return hold(
       'verify',
-      `No se pudo verificar el texto ya censurado (${failureClassOf(err)}), así que no se ingirió nada.`,
+      `La segunda revisión automática no pudo terminar (${failureClassOf(err)}). ${NOT_ADDED}`,
       { redactedText: applied.text },
     )
   }
@@ -365,13 +394,19 @@ export async function runAnonymisationGate(
     (f) => !coveredByPlaceholder(applied.text, spans, f.text) && !onlyPlaceholders(f.text),
   )
 
+  // 🔴 ONE NUMBER FOR THE WHOLE SCREEN. The queue badge and the detail chips
+  // count highlighted OCCURRENCES (`survivors.length`, see `holdReview.ts`), so
+  // the reason counts the same thing. Counting distinct findings here showed
+  // "7 datos señalados" next to "encontró 4" on dev, 2026-10-21.
+  const located = survivorSpans(applied.text, real)
+
   stages.push({
     stage: 'verify',
     removed: [],
     note:
       real.length === 0
-        ? 'La verificación no encontró datos personales en el texto censurado.'
-        : `La verificación encontró ${real.length} dato(s) personal(es) todavía presentes.`,
+        ? 'La segunda revisión no encontró datos personales en el texto ya tachado.'
+        : survivorsSentence(located.length),
   })
 
   if (real.length > 0) {
@@ -383,12 +418,12 @@ export async function runAnonymisationGate(
     // never returns.
     return hold(
       'verify',
-      `La verificación encontró ${real.length} dato(s) personal(es) que siguen en el texto, así que no se ingirió nada. Revisa el documento original.`,
+      `${survivorsSentence(located.length)} ${NOT_ADDED}`,
       {
         redactedText: applied.text,
         // 🔴 OFFSETS, NEVER THE STRINGS — and they only mean anything against the
         // `redactedText` on this same object. See `SurvivorSpan`.
-        survivors: survivorSpans(applied.text, real),
+        survivors: located,
       },
     )
   }
