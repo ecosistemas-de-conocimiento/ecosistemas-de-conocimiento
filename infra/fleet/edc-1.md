@@ -1,7 +1,8 @@
 # edc-1 — the dev + staging box
 
 **Status:** live since 2026-10-17. Dev runs `main` @ `ac47612` (audio-service under compose profile
-`audio`), redeployed 2026-10-21 23:18 UTC after a failed deploy — see §4x. Dev now has four ecosistemas
+`audio`), redeployed 2026-10-21 23:18 UTC after a failed deploy — see §4x. Dev now transcribes, gates and
+reranks on the owner's DGX Spark over Tailscale — see §4y. Dev now has four ecosistemas
 (ids 1, 3, 6, 7), a 2D/3D graph (`6fb558e`) and turns stored through the gate (`66790b5`). Before that,
 `08b32da` (graph: no language or placeholder nodes; 20:07 UTC) — see §4w, which also lists the dev
 demo accounts. Before that, `1a148aa` (cite A/B switch) and `8a1df66` (cite-rule fix
@@ -108,7 +109,7 @@ Both are one Coolify resource of type **Docker Compose** with the same settings:
 | Base directory | `/infra` |
 | Compose file | `/docker-compose.yml` |
 | Connect to predefined network | **OFF** (both) |
-| Services | `postgres`, `redis`, `rustfs`, `ai-service`, `backend`, `web` — no audio |
+| Services | `postgres`, `redis`, `rustfs`, `ai-service`, `backend`, `web`; dev adds `audio-service`, `audio-service-worker`, `audio-service-callbacks` (profile `audio`, §4y) |
 
 | | dev (`edc-dev`) | staging (`edc-staging`) |
 |---|---|---|
@@ -1200,6 +1201,94 @@ above; 33 GB after the `ac47612` redeploy; 58 GB after `docker builder prune -af
 deploy running) and removing dev's `66790b5` images. Images 9.4 GB (audio images added), build
 cache 0.
 
+### 4y. ✅ Done 2026-10-21 23:06–23:36 UTC: dev on the DGX Spark — audio, gate detector, rerank (`ac47612`)
+
+All measured by the deploy agent unless marked. Staging was not touched: it has no `COMPOSE_PROFILES`,
+no `PUBLIC_AUDIO_UPLOAD_ENABLED` and keeps DeepInfra rerank.
+
+**The Spark is not our box.** It is the owner's DGX Spark, reached over Tailscale only: edc-1 is
+`<edc-1-tailnet-ip>` on the tailnet, the Spark gateway is `<spark-url>`. That is plain HTTP
+inside WireGuard, a bearer-token proxy (`~/edc-whisper/proxy.py`). Routes: `POST /inference`
+(whisper.cpp large-v3), `POST /v1/chat/completions` (`qwen3-30b-a3b-instruct-2507`),
+`POST /v1/embeddings`, `POST /v1/rerank` (`qwen3-reranker-0.6b`), `GET /health`. The proxy needs
+`Content-Length`; chunked bodies fail. The token lives in `~/edc-whisper/token` on the Spark. Its
+local copy is `EDC_SPARK_GATEWAY_TOKEN`. Restart everything after a Spark reboot with
+`~/edc-whisper/start.sh`, which also fronts the llama-servers from `~/edc-llm/start.sh`. Request
+lines are logged in `~/edc-whisper/proxy.log`, in the Spark's local time (UTC−6). If the Spark is
+off, transcription and rerank stop. Rerank fails safe to the plain order. The detector falls back
+to ai-service (`ANONYMISE_DETECT_FALLBACK=hosted`).
+
+**How audio runs on Coolify.** The three audio containers sit in `infra/docker-compose.yml` under
+profile `audio`. Compose reads `COMPOSE_PROFILES` from Coolify's `--env-file` (measured with a toy
+compose on edc-1, Compose v5.6.0). So the variable `COMPOSE_PROFILES=audio` on `edc-dev` builds and
+starts them, and staging does not. The image is tagged `edc-audio-service:<EDC_ENV>`, has no host
+port and uses Redis db 2. `WHISPER_BAKE=0` skips baking the weights.
+
+Variables added to `edc-dev` (API, `is_literal`, main copies; no value is printed or stored here):
+
+| variable | value | read by |
+|---|---|---|
+| `COMPOSE_PROFILES` | `audio` | Compose |
+| `WHISPER_BACKEND` / `WHISPER_BAKE` | `remote` / `0` | audio-service (env and build arg) |
+| `WHISPER_REMOTE_URL` | `<spark-url>` | audio-service |
+| `WHISPER_REMOTE_TOKEN` | Spark token | audio-service |
+| `AUDIO_SERVICE_URL` | `http://audio-service:8080` | backend |
+| `AUDIO_SERVICE_API_KEY` / `AUDIO_SERVICE_ADMIN_API_KEY` | fresh, local `EDC_DEV_AUDIO_SERVICE_{,ADMIN_}API_KEY` | backend + audio-service `API_KEYS` (its `callbackSecret` is interpolated from the existing `CALLBACK_SECRET`) |
+| `PUBLIC_AUDIO_UPLOAD_ENABLED` | `1` | web, at runtime (`$env/dynamic/public`) |
+| `ANONYMISE_DETECT_URL` | `<spark-url>` (base; `/v1/chat/completions` is appended) | backend |
+| `ANONYMISE_DETECT_MODEL` | `qwen3-30b-a3b-instruct-2507` | backend |
+| `ANONYMISE_DETECT_API_KEY` | Spark token | backend |
+| `ANONYMISE_DETECT_FALLBACK` | `hosted` | backend. 🔴 **Set it to `none` before real testimony arrives.** `hosted` sends a testimony to OpenRouter whenever the Spark is down |
+
+Changed on `edc-dev` (the old values, for revert):
+
+| variable | was (DeepInfra, §4d/§4f) | now (Spark) |
+|---|---|---|
+| `RERANK_PROVIDER` | `deepinfra` | `rerank-api` |
+| `RERANK_URL` | `https://api.deepinfra.com` | `<spark-url>/v1/rerank` (full path, sent verbatim) |
+| `RERANK_MODEL` | `Qwen/Qwen3-Reranker-0.6B` | `qwen3-reranker-0.6b` |
+| `RERANK_API_KEY` | EDC DeepInfra key, sha256 `4dbc5b378dde` (local `RERANK_API_KEY`) | Spark token, sha256 `e6f5cb3e3b40` |
+
+The preview copies still hold the DeepInfra values. `RERANK_TIMEOUT_MS` stays at 8000.
+`RERANK_ENABLED` stays unset, so the key guard turns rerank on. ai-service's env schema accepts an
+`http://` private URL (`RERANK_URL: z.string().url()`), and its boot probe checks only `deepinfra`
+(read in `services/ai-service/src/config/env.ts`).
+
+**Revert.** Rerank: PATCH the four `RERANK_*` back to the "was" column, with the key from the local
+`RERANK_API_KEY`. Detector: delete the four `ANONYMISE_DETECT_*` variables, and the gate uses
+ai-service again. Audio: delete `COMPOSE_PROFILES` and `PUBLIC_AUDIO_UPLOAD_ENABLED`. Then deploy. A
+rerank-only revert without a build can use the §4d method: edit the generated `.env`, then run
+`up -d --no-deps --no-build ai-service`.
+
+**Deploy.** Backup `/root/backups/20261021T2306Z/` (`edc_ai` 2.3 MB, `edc_backend` 311 KB,
+`pg_restore -l` ok, sha256 matched off-box). Deploy `k3iirrwz…` (23:06:36 → 23:17:31) **failed** at
+`up -d`: "audio-service-worker: failed to mkdir …/pehgnxpqvnonhihabzvnwnil_audio-work/_data/uploads:
+file exists". Two containers copied the image's directory into the fresh volume at the same moment.
+Dev came back at 23:18 with `docker compose -p <uuid> -f docker-compose.yaml --env-file .env up -d
+--no-build` on the box (9 containers healthy, health 200). The infra lane then redeployed `ac47612`
+through Coolify (§4x). The volume now exists, so later deploys do not race. The compose fix (the
+worker waits for `audio-service` to start) is held for the next infra deploy.
+
+**Verify** (as admin, through the web API the UI uses, 23:30–23:36 UTC):
+
+| check | result |
+|---|---|
+| audio-service `/health/ready` | `worker.model`: `large-v3`, backend `whisper.cpp/remote`. The worker logged `remote whisper ready at <spark-url>` |
+| audio upload: `es_30s.mp3` (30 s of LibriVox *Lazarillo*, from the Spark's `samples/`), `POST /api/sessions/<id>/documents` | 201 `kind: audio`. `transcribing` → `transcribed` in 7.8 s (the Spark decoded it in 4.5 s). `ready` at 104 s. `audioMeta`: `large-v3`, `language es`, 8 segments, 29.97 s. The transcript is in the document (431 chars): "…comencé a echar agua por la ciudad. Este fue el primer escalón…". The proxy log shows `POST /inference` 200 |
+| ⚠ `transcribed` → `embedding` took ≈ 93 s | The callback was delivered at 23:30:21 (audio-service-callbacks: `delivered`, 200 on the public https callback). Ingest started on a later backend pass, inferred to be the transcription janitor. Not investigated |
+| chat on the audio | 200 in 5.6 s: "…le daba cada día a su amo **treinta maravedís** [1]", one source `es_30s.mp3`, `rerankScore` 0.99976 |
+| gate on a testimonio PDF | backend log: `gate detector backend: openai-compat at <spark-url>, model qwen3-30b-a3b-instruct-2507, falls back to ai-service when unavailable`, then 2 calls (1463 ms, 962 ms). `anonymisationReport.model`: `openai-compat:qwen3-30b-a3b-instruct-2507+fallback`. `redactedText` replaced the name with `[Persona A]` and the river with `[Domicilio A]`. `ready` in 7.7 s |
+| rerank on the Spark | 2 chats raised the proxy log's `POST /v1/rerank` count from 13 to 17 (all 200). ai-service logged 10 `rerank ok` with `provider: rerank-api` over the run. Cited chunks scored 0.99999 and 0.99976 |
+| plain PDF `documento` | `ready` in 4.2 s |
+| web flag | the `/documentos` HTML carries `PUBLIC_AUDIO_UPLOAD_ENABLED":"1"` |
+| in-container env, by hash | `RERANK_API_KEY` (ai-service), `ANONYMISE_DETECT_API_KEY` (backend) and `WHISPER_REMOTE_TOKEN` (worker) all hash to `e6f5cb3e3b40`, the local token |
+
+⚠ Smoke footgun: `POST /api/generate` needs `sessionId` as a **string**. A number reaches ai-service
+as `unit.unitKey`, which answers 400, and web turns that into a 500. The first smoke script also
+polled `/api/documents/None`. That caused the backend log's `invalid input syntax for type integer:
+"NaN"` errors between 23:25 and 23:29. The UI does neither. Cleanup: the 4 smoke conversations were
+deleted (200), and docs 253–255 are gone from the backend and ai-service (SQL: 0 / 0).
+
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
 Backups taken before the deploy (both DBs, both envs, each checked with `pg_restore -l`, sha256
@@ -1302,6 +1391,9 @@ Names in the local secrets file:
   inside `SERVICE_TOKENS={"web":…}`), `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`,
   `SEED_ADMIN_PASSWORD`, `AUTH_PRIVATE_KEY`, `AUTH_PUBLIC_KEY`.
 - Staging test user: `EDC_STAGE_SMOKE_USER_EMAIL`, `EDC_STAGE_SMOKE_USER_PASSWORD`.
+- DGX Spark gateway (§4y): `EDC_SPARK_GATEWAY_TOKEN` (copied into dev as `WHISPER_REMOTE_TOKEN`,
+  `ANONYMISE_DETECT_API_KEY` and `RERANK_API_KEY`). Dev audio-service: `EDC_DEV_AUDIO_SERVICE_API_KEY`,
+  `EDC_DEV_AUDIO_SERVICE_ADMIN_API_KEY`.
 - Dev demo users (§4w): `EDC_DEV_PARTICIPANT_EMAIL`, `EDC_DEV_PARTICIPANT_PASSWORD` (role
   `member`); `EDC_DEV_INVESTIGADOR_EMAIL`, `EDC_DEV_INVESTIGADOR_PASSWORD` (role `investigador`).
 
