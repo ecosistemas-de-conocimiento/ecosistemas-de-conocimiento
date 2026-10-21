@@ -21,6 +21,7 @@ describe('closed sign-up', () => {
     const res = await register({} as Parameters<typeof register>[0]);
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('Pide a quien administra');
+    // Only a PLATFORM admin creates accounts — an ecosistema admin cannot.
+    expect(body.error).toContain('Pide a quien administra la plataforma');
   });
 });

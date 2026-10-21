@@ -9,7 +9,7 @@ import type { RequestHandler } from './$types';
  * the same thing up front, in Spanish, without a backend round trip.
  */
 const REGISTRATION_CLOSED_MESSAGE =
-  'Ya no se pueden crear cuentas desde aquí. Pide a quien administra tu ecosistema que te cree una.';
+  'Ya no se pueden crear cuentas desde aquí. Pide a quien administra la plataforma que te cree una cuenta.';
 
 export const POST: RequestHandler = () =>
   json({ error: REGISTRATION_CLOSED_MESSAGE }, { status: 403 });

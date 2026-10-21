@@ -36,7 +36,7 @@ No bearer token and no service URL ever reaches the browser.
 - **`@`-mentions** — type `@` in the composer to cite the organization or one
   of the session's documents.
 - **Answer rating** — 1–5 stars under every assistant answer. See below.
-- **Sign-in** — Payload accounts, httpOnly cookie session. There is no public sign-up: an admin creates each account in the Payload admin panel (`/admin` on the backend) and adds it to an ecosistema. `/sign-up` redirects to `/sign-in` with a note saying who to ask.
+- **Sign-in** — Payload accounts, httpOnly cookie session. There is no public sign-up: a platform admin creates each account in the Payload admin panel (`/admin` on the backend) and adds it to an ecosistema. `/sign-up` redirects to `/sign-in` with a note saying who to ask.
 
 ## Which ecosistema am I in?
 

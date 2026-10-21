@@ -84,6 +84,14 @@ describe('existing auth behaviour is unchanged', () => {
     ).rejects.toMatchObject({ status: 303, location: '/sign-in' });
   });
 
+  it('lets a signed-out visitor reach /sign-up, so its "closed" redirect carries the note', async () => {
+    // Sign-up is closed (UX backlog #6); the route redirects to
+    // `/sign-in?registro=cerrado`. If the guard caught it first, an old link
+    // would land on a bare `/sign-in` with no explanation.
+    const res = await handle({ event: event('/sign-up') as never, resolve: resolve as never });
+    expect(res).toBe(resolved);
+  });
+
   it('still lets a public auth proxy through', async () => {
     const ev = event('/api/auth/login', { method: 'POST' });
     const res = await handle({ event: ev as never, resolve: resolve as never });

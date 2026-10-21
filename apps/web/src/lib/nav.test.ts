@@ -172,7 +172,6 @@ describe('where the menu is shown', () => {
 
   it('is hidden on the way in', () => {
     expect(shouldShowNav('/sign-in', member)).toBe(false);
-    expect(shouldShowNav('/sign-up', member)).toBe(false);
   });
 
   it('is hidden when nobody is signed in', () => {

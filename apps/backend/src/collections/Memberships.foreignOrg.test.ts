@@ -11,7 +11,13 @@
 import { describe, expect, it } from 'vitest'
 import type { PayloadRequest } from 'payload'
 
-import { FOREIGN_ORGANIZATION_MESSAGE, makeRefuseForeignOrganization } from './Memberships'
+import {
+  FOREIGN_ORGANIZATION_MESSAGE,
+  makeRefuseForeignOrganization,
+  Memberships,
+  refuseForeignOrganization,
+  refuseSelfAssignment,
+} from './Memberships'
 
 const PLATFORM_ADMIN = 1
 const ADMIN_OF_A = 2
@@ -117,5 +123,19 @@ describe('refuseForeignOrganization', () => {
   it('leaves the seed path alone (no req.user)', async () => {
     const data = { user: ANA, organization: ECO_B }
     await expect(run({ data, req: reqAs(null) })).resolves.toBe(data)
+  })
+})
+
+describe('the Memberships collection wires the hook in', () => {
+  // 🔴 Every test above calls the hook directly, so they would all keep
+  // passing if someone deleted it from the collection config — and the hole
+  // would be back. This one fails in that case.
+  it('runs refuseForeignOrganization on beforeValidate, after the self-assignment check', () => {
+    const hooks = Memberships.hooks?.beforeValidate ?? []
+    expect(hooks).toContain(refuseForeignOrganization)
+    expect(hooks).toContain(refuseSelfAssignment)
+    expect(hooks.indexOf(refuseForeignOrganization)).toBeGreaterThan(
+      hooks.indexOf(refuseSelfAssignment),
+    )
   })
 })
