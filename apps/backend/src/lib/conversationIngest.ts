@@ -545,13 +545,16 @@ export async function ingestConversationTurns(args: {
   let heldByGate = 0
 
   for (const message of claimed) {
-    const original = String(message.content)
+    // 🔴 Citation markers out BEFORE the gate and the embedding (bug: dev
+    // turn msg-* still carried 7 `[n]` groups after 68fd202, which stripped
+    // only at read time in the web's orientation block).
+    const original = stripCitationMarkers(String(message.content))
 
     // ⚠ REUSE A DECISION ALREADY MADE. A turn that cleared the gate on an
     // earlier run keeps its `redactedText`; re-running the gate would pay for
     // more model calls and could return a DIFFERENT redaction of text that
     // is already partly in the corpus.
-    let text = typeof message.redactedText === 'string' ? message.redactedText.trim() : ''
+    let text = typeof message.redactedText === 'string' ? stripCitationMarkers(message.redactedText) : ''
 
     if (!text) {
       const gated = await anonymiseTurn({
@@ -738,6 +741,27 @@ export async function releaseConversationsWaitingOn(args: {
  * notices we wrote — so putting them in the corpus would mean the assistant
  * retrieving its own instructions and citing them as if a member had said them.
  */
+/**
+ * One citation group: `[1]`, `[1, 2]`, `[2-4]`, `[1; 3]`, a trailing separator
+ * tolerated, and the empty `[]` a nested strip leaves behind ("[[3]]").
+ */
+const CITATION_GROUP = /\s*\[\s*(?:\d{1,4}(?:\s*[,;\u2013-]\s*\d{1,4})*\s*[,;]?)?\s*\]/g
+
+/**
+ * Every `[n]` / `[n, m, …]` group removed, nested ones included: the strip
+ * repeats until nothing changes, so "[[1]1]" and "[1, [2]]" go entirely.
+ * Only digit groups go — the gate's placeholders ("[Persona A]") and other
+ * bracketed words stay. Whitespace left before punctuation is folded.
+ */
+export function stripCitationMarkers(text: string): string {
+  let out = text
+  for (let prev = ''; prev !== out; ) {
+    prev = out
+    out = out.replace(CITATION_GROUP, '')
+  }
+  return out.replace(/[ \t]+([.,;:!?])/g, '$1').replace(/[ \t]{2,}/g, ' ').trim()
+}
+
 function isIngestableRole(role: unknown): boolean {
   return role === 'user' || role === 'assistant'
 }
