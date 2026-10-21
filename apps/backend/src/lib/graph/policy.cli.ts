@@ -10,7 +10,7 @@
  *     GRAPH_POLICY_ORG=1              🔴 OBLIGATORIA. Un solo ecosistema.
  *     GRAPH_POLICY_REQUIRE_NAME=...   simula OTRA política, sólo para esta
  *                                     medición (ver abajo).
- *     GRAPH_MIN_SUPPORT=3             umbral con el que se calcula "visible".
+ *     GRAPH_MIN_ENTITY_DOCS=1         umbral con el que se calcula "visible".
  *
  * ── PARA QUÉ SIRVE ─────────────────────────────────────────────────────────
  *
@@ -49,7 +49,7 @@ import config from '@payload-config'
 
 import { GRAPH_SHAPE_POLICY, GRAPH_WORD_CLASSES, policyRejects } from './extract'
 import { GRAPH_ENTITY_TYPES, type GraphEntityType } from './types'
-import { GRAPH_MIN_SUPPORT_DEFAULT } from './queries'
+import { graphMinEntityDocs } from './queries'
 
 const organizationId = process.env.GRAPH_POLICY_ORG?.trim()
 if (!organizationId) {
@@ -59,11 +59,7 @@ if (!organizationId) {
   process.exit(1)
 }
 
-const minSupportRaw = Number(process.env.GRAPH_MIN_SUPPORT)
-const minSupport =
-  Number.isFinite(minSupportRaw) && minSupportRaw >= 0
-    ? Math.floor(minSupportRaw)
-    : GRAPH_MIN_SUPPORT_DEFAULT
+const minSupport = graphMinEntityDocs()
 
 /** La política vigente, o la que se pidió simular. */
 const override = process.env.GRAPH_POLICY_REQUIRE_NAME?.trim()

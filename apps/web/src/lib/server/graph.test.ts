@@ -133,7 +133,7 @@ describe('fetchGraphView', () => {
   // backend cannot produce a person node from a testimonio at all
   // (`personaAllowed(contentKind)`, which fails closed on null). So a name that
   // arrives here came from a `documento` -- a cited author, a named official --
-  // and it still had to clear `GRAPH_MIN_SUPPORT` to be sent at all.
+  // and it still had to clear `GRAPH_MIN_ENTITY_DOCS` to be sent at all.
   it('passes persona entities through like any other type', async () => {
     backendFetch.mockResolvedValue(
       reply({

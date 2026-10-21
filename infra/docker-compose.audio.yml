@@ -102,6 +102,8 @@ services:
       args:
         # 🔴 MUST equal the WHISPER_MODEL env value below. Same variable, once.
         WHISPER_MODEL: ${WHISPER_MODEL:-small}
+        # 0 skips baking weights. Only with WHISPER_BACKEND=remote.
+        WHISPER_BAKE: ${WHISPER_BAKE:-1}
     # One image, three containers. The tag is shared so Compose builds it ONCE.
     image: edc-audio-service:local
     <<: [*restart, *logging]
@@ -133,6 +135,15 @@ services:
       # Spanish-language product. Pinning the language skips autodetect, which
       # mis-detects short Spanish clips as Portuguese often enough to matter.
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-es}
+      # ── Remote GPU backend (opt-in) ──
+      # `remote` sends each chunk to whisper.cpp `whisper-server` on the DGX
+      # Spark; the queue, chunking and callbacks stay here. Default `local`
+      # keeps today's in-process faster-whisper. With `remote`, the token is
+      # required in practice: the Spark's proxy 401s without it.
+      WHISPER_BACKEND: ${WHISPER_BACKEND:-local}
+      WHISPER_REMOTE_URL: ${WHISPER_REMOTE_URL:-}
+      WHISPER_REMOTE_TIMEOUT_S: ${WHISPER_REMOTE_TIMEOUT_S:-1800}
+      WHISPER_REMOTE_TOKEN: ${WHISPER_REMOTE_TOKEN:-}
       AUDIO_WORK_DIR: /var/lib/audio-service
     volumes:
       # See note 1 above. Shared with audio-service-worker, and ONLY with it.

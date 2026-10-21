@@ -22,11 +22,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { GraphEntityType } from './types'
+import { contentKindOf } from '../contentKind'
 import { GRAPH_NOISE_KEY_PATTERN } from './noise'
 
 import {
-  GRAPH_MIN_SUPPORT_DEFAULT,
+  GRAPH_COMENTION_TOP_K_DEFAULT,
+  GRAPH_MIN_COMENTION_DOCS_DEFAULT,
+  GRAPH_MIN_EDGE_DOCS_DEFAULT,
+  GRAPH_MIN_ENTITY_DOCS_DEFAULT,
+  MAX_COMENTION_TOP_K,
   MAX_EDGE_DOCUMENTS,
+  MAX_VIEW_ENTITIES,
   MAX_MATCHABLE_ENTITIES,
   MAX_NEIGHBOURS,
   entityDetailQuery,
@@ -35,6 +41,10 @@ import {
   entityNeighboursQuery,
   entityViewQuery,
   expansionTerms,
+  graphCoMentionTopK,
+  graphMinCoMentionDocs,
+  graphMinEdgeDocs,
+  graphMinEntityDocs,
   graphMinSupport,
   categoryMatchEntities,
   matchEntitiesToQuery,
@@ -87,6 +97,8 @@ function renderSql(query: GraphSql): Rendered {
 }
 
 const ORG = 7
+/** The entity threshold the statement table below is built with. */
+const MIN = GRAPH_MIN_ENTITY_DOCS_DEFAULT
 const ENTITY = 42
 
 /**
@@ -105,10 +117,10 @@ const graphStatements: Record<string, GraphSql> = {
   'entity neighbours': entityNeighboursQuery({ organizationId: ORG, entityId: ENTITY }),
   'entity documents': entityDocumentsQuery({ organizationId: ORG, entityId: ENTITY }),
   'entity edge documents': entityEdgeDocumentsQuery({ organizationId: ORG, entityId: ENTITY }),
-  'retrieve candidates': matchableEntitiesQuery(ORG, GRAPH_MIN_SUPPORT_DEFAULT),
-  'retrieve edges': retrieveEdgesQuery(ORG, [ENTITY], GRAPH_MIN_SUPPORT_DEFAULT),
-  'retrieve documents': retrieveDocumentsQuery(ORG, [ENTITY], GRAPH_MIN_SUPPORT_DEFAULT),
-  'view edges': viewEdgesQuery(ORG, [ENTITY, 43], GRAPH_MIN_SUPPORT_DEFAULT),
+  'retrieve candidates': matchableEntitiesQuery(ORG, MIN),
+  'retrieve edges': retrieveEdgesQuery(ORG, [ENTITY], MIN),
+  'retrieve documents': retrieveDocumentsQuery(ORG, [ENTITY], MIN),
+  'view edges': viewEdgesQuery(ORG, [ENTITY, 43], MIN),
 }
 
 describe('🔴 gate 4 — no language and no redaction placeholder, on every statement', () => {
@@ -117,6 +129,16 @@ describe('🔴 gate 4 — no language and no redaction placeholder, on every sta
       const { text, params } = renderSql(query)
       expect(text).toMatch(/AND NOT \((e|ne)\.canonical_key ~ \$\d+\)/)
       expect(params).toContain(GRAPH_NOISE_KEY_PATTERN)
+    })
+  }
+})
+
+describe('🔴 gate 5 — a persona is counted only from a documento, on every statement', () => {
+  for (const [name, query] of Object.entries(graphStatements)) {
+    it(`${name} drops persona mentions from testimonios and conversaciones in SQL`, () => {
+      expect(renderSql(query).text).toMatch(
+        /\((e|ne|ce)\.type <> 'persona' OR d\.content_kind = 'documento'\)/,
+      )
     })
   }
 })
@@ -180,7 +202,7 @@ describe('🔴 the three gates, on every statement that reads graph rows', () =>
         expect(text).toMatch(
           /(HAVING COUNT\(DISTINCT [a-z]+\.document_id\)|WHERE support) >= \$/,
         )
-        expect(params).toContain(GRAPH_MIN_SUPPORT_DEFAULT)
+        expect(params).toContain(MIN)
       })
     }
 
@@ -208,8 +230,8 @@ describe('🔴 the three gates, on every statement that reads graph rows', () =>
       // to show" (ADR §7.3.3).
       const view = renderSql(entityViewQuery({ organizationId: ORG })).params
       const retrieval = renderSql(matchableEntitiesQuery(ORG, graphMinSupport())).params
-      expect(view).toContain(GRAPH_MIN_SUPPORT_DEFAULT)
-      expect(retrieval).toContain(GRAPH_MIN_SUPPORT_DEFAULT)
+      expect(view).toContain(MIN)
+      expect(retrieval).toContain(MIN)
     })
   })
 
@@ -315,7 +337,7 @@ describe('🔴 no document title reaches a graph surface as raw `documents.name`
     // `contentKindOf` defaults to `documento` — the LEAST privileged reading.
     // Asserted here because the opposite default would silently unmask nothing
     // but would silently MASK a real document, and someone might "fix" it.
-    expect(GRAPH_MIN_SUPPORT_DEFAULT).toBe(3)
+    expect(contentKindOf({ contentKind: 'desconocido' })).toBe('documento')
   })
 })
 
@@ -358,40 +380,94 @@ describe('⚠ counts arrive from `pg` as strings', () => {
 })
 
 // ---------------------------------------------------------------------------
-// GRAPH_MIN_SUPPORT
+// GRAPH_MIN_ENTITY_DOCS, GRAPH_MIN_EDGE_DOCS, co-mention settings
 // ---------------------------------------------------------------------------
 
-describe('GRAPH_MIN_SUPPORT', () => {
+describe('graph thresholds from the environment', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
   })
 
-  it('defaults to 3', () => {
-    vi.stubEnv('GRAPH_MIN_SUPPORT', '')
-    expect(graphMinSupport()).toBe(GRAPH_MIN_SUPPORT_DEFAULT)
+  const readers = [
+    ['GRAPH_MIN_ENTITY_DOCS', graphMinEntityDocs, GRAPH_MIN_ENTITY_DOCS_DEFAULT],
+    ['GRAPH_MIN_EDGE_DOCS', graphMinEdgeDocs, GRAPH_MIN_EDGE_DOCS_DEFAULT],
+    ['GRAPH_MIN_COMENTION_DOCS', graphMinCoMentionDocs, GRAPH_MIN_COMENTION_DOCS_DEFAULT],
+    ['GRAPH_COMENTION_TOP_K', graphCoMentionTopK, GRAPH_COMENTION_TOP_K_DEFAULT],
+  ] as const
+
+  it('defaults: 1 document for entities, edges and co-mentions; 8 co-mentions per node', () => {
+    expect(GRAPH_MIN_ENTITY_DOCS_DEFAULT).toBe(1)
+    expect(GRAPH_MIN_EDGE_DOCS_DEFAULT).toBe(1)
+    expect(GRAPH_MIN_COMENTION_DOCS_DEFAULT).toBe(1)
+    expect(GRAPH_COMENTION_TOP_K_DEFAULT).toBe(8)
   })
 
-  it('accepts a deliberate override', () => {
-    vi.stubEnv('GRAPH_MIN_SUPPORT', '5')
-    expect(graphMinSupport()).toBe(5)
-    // 1 is a real, weaker choice somebody can make on purpose.
-    vi.stubEnv('GRAPH_MIN_SUPPORT', '1')
-    expect(graphMinSupport()).toBe(1)
+  for (const [name, read, fallback] of readers) {
+    it(`${name}: unset reads the default`, () => {
+      vi.stubEnv(name, '')
+      expect(read()).toBe(fallback)
+    })
+
+    it(`${name}: a deliberate override is taken`, () => {
+      vi.stubEnv(name, '5')
+      expect(read()).toBe(5)
+    })
+
+    it(`${name}: junk, zero and negatives fall back to the default`, () => {
+      for (const bad of ['0', '-1', 'tres', 'NaN', '  ']) {
+        vi.stubEnv(name, bad)
+        expect(read()).toBe(fallback)
+      }
+    })
+  }
+
+  it('caps GRAPH_COMENTION_TOP_K so a typo cannot ship a hairball', () => {
+    vi.stubEnv('GRAPH_COMENTION_TOP_K', '100000')
+    expect(graphCoMentionTopK()).toBe(MAX_COMENTION_TOP_K)
   })
 
-  it('🔴 falls back to the default on junk, zero and negatives — a typo must not disable the gate', () => {
-    for (const bad of ['0', '-1', 'tres', 'NaN', '  ']) {
-      vi.stubEnv('GRAPH_MIN_SUPPORT', bad)
-      expect(graphMinSupport()).toBe(GRAPH_MIN_SUPPORT_DEFAULT)
-    }
+  it('graphMinSupport is the entity threshold', () => {
+    vi.stubEnv('GRAPH_MIN_ENTITY_DOCS', '4')
+    expect(graphMinSupport()).toBe(4)
   })
 
-  it('reaches the SQL, so an override actually changes what is visible', () => {
-    vi.stubEnv('GRAPH_MIN_SUPPORT', '6')
+  it('the old GRAPH_MIN_SUPPORT is no longer read', () => {
+    vi.stubEnv('GRAPH_MIN_SUPPORT', '3')
+    expect(graphMinEntityDocs()).toBe(GRAPH_MIN_ENTITY_DOCS_DEFAULT)
+    expect(graphMinEdgeDocs()).toBe(GRAPH_MIN_EDGE_DOCS_DEFAULT)
+  })
+
+  it('reaches the SQL: the entity threshold and the edge threshold separately', () => {
+    vi.stubEnv('GRAPH_MIN_ENTITY_DOCS', '6')
+    vi.stubEnv('GRAPH_MIN_EDGE_DOCS', '9')
     expect(renderSql(entityViewQuery({ organizationId: ORG })).params).toContain(6)
     expect(
       renderSql(entityDocumentsQuery({ organizationId: ORG, entityId: ENTITY })).params,
     ).toContain(6)
+    const neighbours = renderSql(entityNeighboursQuery({ organizationId: ORG, entityId: ENTITY }))
+    expect(neighbours.params).toEqual(expect.arrayContaining([6, 9]))
+    const edgeDocs = renderSql(entityEdgeDocumentsQuery({ organizationId: ORG, entityId: ENTITY }))
+    expect(edgeDocs.params).toEqual(expect.arrayContaining([6, 9]))
+  })
+
+  it('reaches the view edges: co-mention minimum and top K from the environment', () => {
+    vi.stubEnv('GRAPH_MIN_COMENTION_DOCS', '7')
+    vi.stubEnv('GRAPH_COMENTION_TOP_K', '11')
+    const { text, params } = renderSql(viewEdgesQuery(ORG, [1, 2], { entity: 2, edge: 3 }))
+    expect(text).toMatch(/c\.weight >= \$(\d+)/)
+    const at = (re: RegExp) => params[Number(text.match(re)![1]) - 1]
+    expect(at(/c\.weight >= \$(\d+)/)).toBe(7)
+    expect(at(/co_ranked\.rn <= \$(\d+)/)).toBe(11)
+    expect(at(/HAVING COUNT\(DISTINCT rel\.document_id\) >= \$(\d+)/)).toBe(3)
+    expect(at(/HAVING COUNT\(DISTINCT m\.document_id\) >= \$(\d+)/)).toBe(2)
+  })
+
+  it('readEntityView reports both thresholds it applied', async () => {
+    vi.stubEnv('GRAPH_MIN_ENTITY_DOCS', '2')
+    vi.stubEnv('GRAPH_MIN_EDGE_DOCS', '3')
+    const view = await readEntityView(fakePayload([[], [{ n: 0 }]]), { organizationId: ORG })
+    expect(view.minSupport).toBe(2)
+    expect(view.minEdgeSupport).toBe(3)
   })
 })
 
@@ -409,7 +485,7 @@ describe('the view, when the threshold hides everything', () => {
       [{ n: 2 }],
     ])
     const view = await readEntityView(payload, { organizationId: ORG })
-    expect(view).toEqual({ entities: [], hidden: 12, minSupport: 3, publishedDocuments: 2, edges: [] })
+    expect(view).toEqual({ entities: [], hidden: 12, minSupport: 1, minEdgeSupport: 1, publishedDocuments: 2, edges: [] })
   })
 
   it('reports an ecosistema with nothing published as empty in BOTH senses', async () => {
@@ -419,12 +495,12 @@ describe('the view, when the threshold hides everything', () => {
     // carry both numbers.
     const payload = fakePayload([[], [{ n: 0 }]])
     const view = await readEntityView(payload, { organizationId: ORG })
-    expect(view).toEqual({ entities: [], hidden: 0, minSupport: 3, publishedDocuments: 0, edges: [] })
+    expect(view).toEqual({ entities: [], hidden: 0, minSupport: 1, minEdgeSupport: 1, publishedDocuments: 0, edges: [] })
   })
 
   it('caps what a caller can ask for', () => {
     const params = renderSql(entityViewQuery({ organizationId: ORG, limit: 100000 })).params
-    expect(params).toContain(200)
+    expect(params).toContain(MAX_VIEW_ENTITIES)
     expect(params).not.toContain(100000)
   })
 
@@ -473,7 +549,9 @@ describe('the entity detail', () => {
     // see, so it needs its own support check.
     const { text } = renderSql(entityNeighboursQuery({ organizationId: ORG, entityId: ENTITY }))
     expect(text).toContain('JOIN ent_support s ON s.entity_id = e.id')
+    // One for the neighbour (ent_support), one for the PAIR (pairs).
     expect(text.match(/HAVING COUNT\(DISTINCT/g)).toHaveLength(2)
+    expect(text).toContain('JOIN pairs ON pairs.neighbour_id = edges.neighbour_id')
   })
 
   it('holds the ego-network to ADR §7.2’s 20 neighbours', () => {
@@ -505,6 +583,8 @@ describe('the entity detail', () => {
       entity: { id: 5, type: 'lugar', label: 'Oaxaca', support: 9 },
       relationType: 'ocurre_en',
       support: 4,
+      // No `pair_support` came back, so the pair weighs what its one type does.
+      pairSupport: 4,
       // No `direction` column came back, so the edge reads as undirected.
       direction: 'both',
       // No evidence row came back for this edge, so the list is empty rather
@@ -1074,20 +1154,49 @@ describe('the whole-graph view edges', () => {
       [
         { id: 5, type: 'tema', label: 'Agua', support: 9, hidden: 0 },
         { id: 6, type: 'lugar', label: 'Oaxaca', support: 3, hidden: 0 },
+        { id: 7, type: 'tema', label: 'Salud', support: 3, hidden: 0 },
       ],
       [{ n: 11 }],
       [
-        { from_id: '5', to_id: '6', support: '4' },
+        {
+          from_id: '5', to_id: '6', kind: 'relation', support: '4', co_mentions: '6',
+          relation_type: 'afecta_a', direction: 'out',
+        },
+        { from_id: '5', to_id: '7', kind: 'co-mention', support: '2', co_mentions: '2' },
         // A self-loop is not an edge anyone can draw.
-        { from_id: '6', to_id: '6', support: '3' },
+        { from_id: '6', to_id: '6', kind: 'co-mention', support: '3', co_mentions: '3' },
       ],
     ])
     const view = await readEntityView(payload, { organizationId: ORG })
-    expect(view.edges).toEqual([{ from: 5, to: 6, support: 4 }])
+    expect(view.edges).toEqual([
+      {
+        from: 5, to: 6, kind: 'relation', support: 4, coMentions: 6,
+        relationType: 'afecta_a', direction: 'out',
+      },
+      { from: 5, to: 7, kind: 'co-mention', support: 2, coMentions: 2 },
+    ])
     // The id list is bound as parameters, never interpolated as text.
     const edgeSql = payload.executed[2]
-    expect(edgeSql?.params).toEqual(expect.arrayContaining([5, 6]))
+    expect(edgeSql?.params).toEqual(expect.arrayContaining([5, 6, 7]))
     expect(edgeSql?.text).not.toMatch(/ANY\(ARRAY\[5/)
+  })
+
+  it('keeps one edge per pair and orients it from the lower id', async () => {
+    const payload = fakePayload([
+      [
+        { id: 5, type: 'tema', label: 'Agua', support: 9, hidden: 0 },
+        { id: 6, type: 'lugar', label: 'Oaxaca', support: 3, hidden: 0 },
+      ],
+      [{ n: 2 }],
+      [
+        { from_id: 6, to_id: 5, kind: 'relation', support: 2, co_mentions: 2, relation_type: 'ubicado_en', direction: 'out' },
+        { from_id: 5, to_id: 6, kind: 'co-mention', support: 2, co_mentions: 2 },
+      ],
+    ])
+    const view = await readEntityView(payload, { organizationId: ORG })
+    expect(view.edges).toEqual([
+      { from: 5, to: 6, kind: 'relation', support: 2, coMentions: 2, relationType: 'ubicado_en', direction: 'in' },
+    ])
   })
 
   it('makes no third round trip when nothing is visible', async () => {
@@ -1096,13 +1205,44 @@ describe('the whole-graph view edges', () => {
     expect(payload.executed).toHaveLength(2)
   })
 
-  it('applies the edge threshold per relation type BEFORE folding the pair', () => {
-    const { text } = renderSql(viewEdgesQuery(ORG, [1, 2], GRAPH_MIN_SUPPORT_DEFAULT))
-    const having = text.indexOf('HAVING COUNT(DISTINCT r.document_id)')
-    const fold = text.indexOf('LEAST(edges.from_id, edges.to_id)')
-    expect(having).toBeGreaterThan(-1)
-    expect(fold).toBeGreaterThan(having)
-    expect(text).toContain('GROUP BY 1, 2, 3')
+  it('folds every type and both directions onto the pair BEFORE the edge threshold', () => {
+    const { text } = renderSql(viewEdgesQuery(ORG, [1, 2], MIN))
+    const fold = text.indexOf('LEAST(r.from_entity_id, r.to_entity_id)')
+    const having = text.indexOf('HAVING COUNT(DISTINCT rel.document_id)')
+    expect(fold).toBeGreaterThan(-1)
+    expect(having).toBeGreaterThan(fold)
+    expect(text).toContain('GROUP BY rel.a, rel.b\n')
+  })
+
+  it('labels the pair with its most common type, ties in a stable order', () => {
+    const { text } = renderSql(viewEdgesQuery(ORG, [1, 2], MIN))
+    expect(text).toContain(
+      'ORDER BY COUNT(DISTINCT rel.document_id) DESC, rel.relation_type ASC',
+    )
+    expect(text).toContain('rt.rn = 1')
+  })
+
+  it('computes co-mentions from mentions in SQL, gated like everything else', () => {
+    const { text } = renderSql(viewEdgesQuery(ORG, [1, 2], MIN))
+    expect(text).toContain('FROM graph_mentions m')
+    expect(text).toContain('JOIN ment y ON y.document_id = x.document_id AND y.entity_id > x.entity_id')
+    // Both ends must be listed AND above the entity threshold (ent_support).
+    expect(text).toContain('JOIN listed l ON l.entity_id = m.entity_id')
+    // No persona counted from a testimonio or a conversacion.
+    expect(text).toContain("(ce.type <> 'persona' OR d.content_kind = 'documento')")
+  })
+
+  it('caps co-mentions at the top K per node and never spends a slot on a relation pair', () => {
+    const { text, params } = renderSql(
+      viewEdgesQuery(ORG, [1, 2], { entity: 1, edge: 1, coMention: 1, topK: 3 }),
+    )
+    expect(text).toContain('PARTITION BY co_ends.node')
+    expect(text).toContain('WHERE rp.a IS NULL')
+    expect(params).toContain(3)
+    // A huge K is clamped.
+    const big = renderSql(viewEdgesQuery(ORG, [1, 2], { entity: 1, edge: 1, topK: 10_000 }))
+    expect(big.params).toContain(MAX_COMENTION_TOP_K)
+    expect(big.params).not.toContain(10_000)
   })
 })
 

@@ -19,9 +19,12 @@
  *      matters. Extraction runs on DRAFTS by design (ADR §5.1), so these tables
  *      are full of rows that must not be counted, ranked, retrieved or shown.
  *
- *   3. 🔴 MINIMUM SUPPORT, `GRAPH_MIN_SUPPORT` (default 3). An entity exists
- *      only if ≥ N DISTINCT PUBLISHED DOCUMENTS mention it; an edge only if
- *      ≥ N distinct published documents evidence it. Applied identically to the
+ *   3. 🔴 MINIMUM SUPPORT. An entity exists only if ≥ `GRAPH_MIN_ENTITY_DOCS`
+ *      DISTINCT PUBLISHED DOCUMENTS mention it; a relation edge only if
+ *      ≥ `GRAPH_MIN_EDGE_DOCS` distinct published documents evidence it for
+ *      that PAIR (any type, either direction); a co-mention edge only if
+ *      ≥ `GRAPH_MIN_COMENTION_DOCS` published documents mention both ends.
+ *      All default to 1 (owner, 2026-10-21; names are anonymised upstream). Applied identically to the
  *      view AND to GraphRAG retrieval — ADR §7.3.3 names retrieval as "the side
  *      door that leaks what the view refuses to show", and an unthresholded
  *      retrieve is that door.
@@ -94,33 +97,77 @@ export type GraphSql = ReturnType<typeof sql>
 // Configuration
 // ---------------------------------------------------------------------------
 
-/** ADR §7.3.3. Chosen by reasoning, not by looking at a real corpus — hence the env var. */
-export const GRAPH_MIN_SUPPORT_DEFAULT = 3
+/**
+ * ADR §7.3.3 chose 3 by reasoning. Owner ruling 2026-10-21: the default is 1,
+ * because entity names are already anonymised upstream, so the threshold is
+ * general privacy, not the security control it was written as. Every other
+ * gate stays: published only, gate-cleared text only, no noise labels, no
+ * `persona` out of a testimonio.
+ */
+export const GRAPH_MIN_ENTITY_DOCS_DEFAULT = 1
+export const GRAPH_MIN_EDGE_DOCS_DEFAULT = 1
+export const GRAPH_MIN_COMENTION_DOCS_DEFAULT = 1
+/** Co-mention edges each node keeps, strongest first. See {@link viewEdgesQuery}. */
+export const GRAPH_COMENTION_TOP_K_DEFAULT = 8
+/** Ceiling on `GRAPH_COMENTION_TOP_K`, so a typo cannot ship a hairball. */
+export const MAX_COMENTION_TOP_K = 50
 
 /**
- * How many distinct PUBLISHED documents must mention an entity (or evidence an
- * edge) before this product admits it exists.
+ * A positive integer from the environment, or `fallback`.
  *
  * ⚠ JUNK OR A NON-POSITIVE VALUE FALLS BACK TO THE DEFAULT rather than to 0.
- * `GRAPH_MIN_SUPPORT=0` would disable the one measure that answers the brief's
- * re-identification scenario, and a typo must not be able to do that silently.
- * A deployment that genuinely wants a weaker threshold sets `1`, which is
- * accepted — and is a decision somebody made on purpose.
+ * A threshold of 0 would count an entity no published document mentions, and a
+ * typo must not be able to do that silently.
+ */
+function positiveIntEnv(name: string, fallback: number, max = Number.MAX_SAFE_INTEGER): number {
+  const raw = process.env[name]
+  const n = raw == null || raw.trim() === '' ? Number.NaN : Number(raw)
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), max) : fallback
+}
+
+/** `GRAPH_MIN_ENTITY_DOCS`: distinct PUBLISHED documents that must mention an entity. */
+export function graphMinEntityDocs(): number {
+  return positiveIntEnv('GRAPH_MIN_ENTITY_DOCS', GRAPH_MIN_ENTITY_DOCS_DEFAULT)
+}
+
+/**
+ * `GRAPH_MIN_EDGE_DOCS`: distinct published documents that must evidence an
+ * extracted relation between one PAIR of entities, any type, either direction.
+ */
+export function graphMinEdgeDocs(): number {
+  return positiveIntEnv('GRAPH_MIN_EDGE_DOCS', GRAPH_MIN_EDGE_DOCS_DEFAULT)
+}
+
+/** `GRAPH_MIN_COMENTION_DOCS`: shared published documents for a co-mention edge. */
+export function graphMinCoMentionDocs(): number {
+  return positiveIntEnv('GRAPH_MIN_COMENTION_DOCS', GRAPH_MIN_COMENTION_DOCS_DEFAULT)
+}
+
+/** `GRAPH_COMENTION_TOP_K`: co-mention edges kept per node. Capped at {@link MAX_COMENTION_TOP_K}. */
+export function graphCoMentionTopK(): number {
+  return positiveIntEnv('GRAPH_COMENTION_TOP_K', GRAPH_COMENTION_TOP_K_DEFAULT, MAX_COMENTION_TOP_K)
+}
+
+/**
+ * Back-compat name for the ENTITY threshold. Every `minSupport` in this file
+ * is the entity threshold; the edge threshold rides as `minEdgeSupport`.
  */
 export function graphMinSupport(): number {
-  const raw = process.env.GRAPH_MIN_SUPPORT
-  const n = raw == null || raw.trim() === '' ? Number.NaN : Number(raw)
-  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : GRAPH_MIN_SUPPORT_DEFAULT
+  return graphMinEntityDocs()
 }
 
 /** Hard ceilings, so no caller can ask for the whole corpus in one page. */
-export const MAX_VIEW_ENTITIES = 200
 /**
- * Edges in the whole-graph view. ⚠ The demo corpus has 88 (measured
- * 2026-10-21, local `edc_backend`, org 1, threshold 3); the cap is what keeps a
- * grown corpus from shipping a hairball nobody can read.
+ * Entities in the whole-graph view. Owner 2026-10-21: the overview shows
+ * everything, so this is a ceiling against a runaway corpus, not a curation.
  */
-export const MAX_VIEW_EDGES = 1000
+export const MAX_VIEW_ENTITIES = 1500
+/**
+ * Edges in the whole-graph view, relation edges first, then co-mentions by
+ * weight. Co-mentions are already capped per node by `GRAPH_COMENTION_TOP_K`,
+ * so this only bites on a corpus far past the demo's size.
+ */
+export const MAX_VIEW_EDGES = 6000
 export const MAX_NEIGHBOURS = 20 // ADR §7.2: the ego-network is ≤ 20 neighbours.
 export const MAX_ENTITY_DOCUMENTS = 50
 /**
@@ -169,8 +216,10 @@ export interface GraphEntityView {
    * blank canvas (ADR §7.3.3).
    */
   hidden: number
-  /** The threshold in force, so the copy can name it without guessing. */
+  /** The ENTITY threshold in force, so the copy can name it without guessing. */
   minSupport: number
+  /** The relation-edge threshold in force (`GRAPH_MIN_EDGE_DOCS`). */
+  minEdgeSupport: number
   /**
    * Published documents in this ecosistema, ignoring the graph entirely.
    *
@@ -192,6 +241,12 @@ export interface GraphNeighbour {
   relationType: GraphRelationType
   /** DISTINCT published documents that evidence THIS EDGE. */
   support: number
+  /**
+   * DISTINCT published documents evidencing ANY relation between the focal
+   * entity and this neighbour — the pair's weight, the same number the
+   * overview edge carries. One row per type shares it.
+   */
+  pairSupport: number
   /**
    * 🔴 WHICH WAY THE EDGE POINTS, SEEN FROM THE FOCAL ENTITY.
    *
@@ -227,18 +282,37 @@ function toDirection(value: unknown): GraphEdgeDirection {
   return value === 'out' || value === 'in' ? value : 'both'
 }
 
+/** What drew an overview edge. */
+export type GraphViewEdgeKind = 'relation' | 'co-mention'
+
 /**
  * One edge of the WHOLE-GRAPH view (`/grafo` on load, backlog #3), between two
- * entities the same answer lists. Undirected and type-free on purpose: the
- * overview draws "these two are connected"; the panel says how.
+ * entities the same answer lists. ONE PER UNORDERED PAIR (owner, 2026-10-21):
+ * every relation type and both directions fold into it.
+ *
+ * `relation` ⇒ the extraction drew at least one relation between the pair.
+ * `co-mention` ⇒ none did, but published documents mention both.
  */
 export interface GraphViewEdge {
   /** The lower of the two entity ids. */
   from: number
   /** The higher of the two entity ids. */
   to: number
-  /** The strongest single relation type's DISTINCT published documents. */
+  kind: GraphViewEdgeKind
+  /**
+   * DISTINCT published documents behind the edge: for `relation`, documents
+   * evidencing ANY relation of the pair; for `co-mention`, documents
+   * mentioning both.
+   */
   support: number
+  /** Published documents mentioning both ends. Carried on relation edges too. */
+  coMentions: number
+  /**
+   * `relation` only: the type with the most documents (ties: alphabetical),
+   * and which way it points from `from` (`out` ⇒ from → to).
+   */
+  relationType?: GraphRelationType
+  direction?: GraphEdgeDirection
 }
 
 export interface GraphDocumentRef {
@@ -371,6 +445,22 @@ function notNoise(alias: 'e' | 'ne'): GraphSql {
 }
 
 /**
+ * 🔴 GATE 5 — A `persona` IS COUNTED ONLY FROM A `documento` (ADR §7.3.4).
+ *
+ * The extractor already drops every `persona` out of a testimonio or a
+ * conversacion (`extract.ts` `dropForbiddenPersonas`, and the response schema
+ * has no `persona` for them). This is the read-side belt over it: with the
+ * support threshold at 1 (owner, 2026-10-21) a stray row is no longer hidden by
+ * needing several documents, so the rule has to hold in SQL as well.
+ *
+ * Needs `d` (the published-documents join) in scope.
+ */
+function personaFromDocumentoOnly(alias: 'e' | 'ne' | 'ce'): GraphSql {
+  const col = alias === 'e' ? sql`e.type` : alias === 'ne' ? sql`ne.type` : sql`ce.type`
+  return sql` AND (${col} <> 'persona' OR d.content_kind = 'documento')`
+}
+
+/**
  * Entity support, gated, as a CTE body.
  *
  * `COUNT(DISTINCT m.document_id)` — DISTINCT DOCUMENTS, never occurrences. ADR
@@ -385,10 +475,31 @@ function entitySupportCte(organizationId: number, minSupport: number): GraphSql 
     ${joinPublishedDocuments('m', organizationId)}
     JOIN graph_entities ne
       ON ne.id = m.entity_id
-     AND ne.organization_id = ${organizationId}${notNoise('ne')}
+     AND ne.organization_id = ${organizationId}${notNoise('ne')}${personaFromDocumentoOnly('ne')}
     WHERE m.organization_id = ${organizationId}
     GROUP BY m.entity_id
     HAVING COUNT(DISTINCT m.document_id) >= ${minSupport}`
+}
+
+/**
+ * 🔴 THE EGO-NETWORK'S EDGE GATE, OVER THE PAIR (owner, 2026-10-21).
+ *
+ * One row per neighbour of `entityId` whose relations — ANY type, EITHER
+ * direction — are evidenced by `>= minEdge` distinct published documents. The
+ * same rule as the overview's `rel_pairs` in {@link viewEdgesQuery}, so a pair
+ * the map draws is a pair the panel lists, and the other way round.
+ */
+function neighbourPairsCte(organizationId: number, entityId: number, minEdge: number): GraphSql {
+  return sql`
+    SELECT CASE WHEN r.from_entity_id = ${entityId} THEN r.to_entity_id
+                ELSE r.from_entity_id END AS neighbour_id,
+           COUNT(DISTINCT r.document_id)::int AS pair_support
+    FROM graph_relations r
+    ${joinPublishedDocuments('r', organizationId)}
+    WHERE r.organization_id = ${organizationId}
+      AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
+    GROUP BY 1
+    HAVING COUNT(DISTINCT r.document_id) >= ${minEdge}`
 }
 
 // ---------------------------------------------------------------------------
@@ -403,6 +514,8 @@ export interface EntityViewArgs {
   q?: string | null
   limit?: number
   minSupport?: number
+  /** Relation-edge threshold. Defaults to `GRAPH_MIN_EDGE_DOCS`. */
+  minEdgeSupport?: number
 }
 
 /**
@@ -448,7 +561,7 @@ export function entityViewQuery(args: EntityViewArgs): GraphSql {
         ON m.entity_id = e.id
        AND m.organization_id = ${organizationId}
       ${joinPublishedDocuments('m', organizationId)}
-      WHERE e.organization_id = ${organizationId}${notNoise('e')}${typeFilter}${searchFilter}
+      WHERE e.organization_id = ${organizationId}${notNoise('e')}${personaFromDocumentoOnly('e')}${typeFilter}${searchFilter}
       GROUP BY e.id, e.type, e.label
     ),
     visible AS (
@@ -486,6 +599,7 @@ export async function readEntityView(
   args: EntityViewArgs,
 ): Promise<GraphEntityView> {
   const minSupport = args.minSupport ?? graphMinSupport()
+  const minEdgeSupport = args.minEdgeSupport ?? graphMinEdgeDocs()
   const [viewResult, countResult] = await Promise.all([
     payload.db.drizzle.execute(entityViewQuery({ ...args, minSupport })),
     payload.db.drizzle.execute(publishedDocumentCountQuery(args.organizationId)),
@@ -515,15 +629,38 @@ export async function readEntityView(
         viewEdgesQuery(
           args.organizationId,
           entities.map((e) => e.id),
-          minSupport,
+          { entity: minSupport, edge: minEdgeSupport },
         ),
       ),
     )
+    const seen = new Set<string>()
     for (const row of edgeRows) {
-      const from = toId(row.from_id)
-      const to = toId(row.to_id)
-      if (!from || !to || from === to) continue
-      edges.push({ from, to, support: toCount(row.support) })
+      const a = toId(row.from_id)
+      const b = toId(row.to_id)
+      if (!a || !b || a === b) continue
+      const from = Math.min(a, b)
+      const to = Math.max(a, b)
+      // One per pair. The statement already guarantees it; this keeps a later
+      // edit from shipping a duplicate key to a keyed list.
+      const key = `${from}|${to}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const kind: GraphViewEdgeKind = row.kind === 'relation' ? 'relation' : 'co-mention'
+      const edge: GraphViewEdge = {
+        from,
+        to,
+        kind,
+        support: toCount(row.support),
+        coMentions: toCount(row.co_mentions),
+      }
+      if (kind === 'relation') {
+        edge.relationType = toText(row.relation_type) as GraphRelationType
+        // The direction is from the row's `from_id`; flip it if the row came
+        // back with its ends swapped.
+        const direction = toDirection(row.direction)
+        edge.direction = a === from ? direction : flipDirection(direction)
+      }
+      edges.push(edge)
     }
   }
 
@@ -531,59 +668,186 @@ export async function readEntityView(
     entities,
     hidden,
     minSupport,
+    minEdgeSupport,
     publishedDocuments: toCount(rowsOf(countResult)[0]?.n),
     edges,
   }
 }
 
+function flipDirection(direction: GraphEdgeDirection): GraphEdgeDirection {
+  return direction === 'out' ? 'in' : direction === 'in' ? 'out' : 'both'
+}
+
+/** The thresholds one statement applies. A bare number sets entity AND edge. */
+export interface GraphThresholds {
+  entity: number
+  edge: number
+  /** Co-mention edges only. Default `GRAPH_MIN_COMENTION_DOCS`. */
+  coMention?: number
+  /** Co-mention edges kept per node. Default `GRAPH_COMENTION_TOP_K`. */
+  topK?: number
+}
+
+function thresholdsOf(value: number | GraphThresholds): Required<GraphThresholds> {
+  const t = typeof value === 'number' ? { entity: value, edge: value } : value
+  const topK = Math.floor(Number(t.topK ?? graphCoMentionTopK()))
+  return {
+    entity: t.entity,
+    edge: t.edge,
+    coMention: t.coMention ?? graphMinCoMentionDocs(),
+    topK: Number.isFinite(topK) ? Math.min(Math.max(1, topK), MAX_COMENTION_TOP_K) : GRAPH_COMENTION_TOP_K_DEFAULT,
+  }
+}
+
 /**
- * 🔴 THE EDGES OF THE WHOLE-GRAPH VIEW, WITH THE SAME THREE GATES.
+ * 🔴 THE EDGES OF THE WHOLE-GRAPH VIEW: RELATIONS, THEN CO-MENTIONS, SAME GATES.
  *
- * ⚠ THE SAME EDGE RULE AS THE EGO NETWORK. An edge is one
- * `(from, to, type)` with `>= min` distinct published documents — exactly the
- * `edges` CTE of {@link entityNeighboursQuery} — and only THEN are the types and
- * both directions folded into one undirected pair. Folding first would let
- * three thin relation types add up to an edge the panel refuses to show.
+ * ── RELATION EDGES, ONE PER PAIR (owner, 2026-10-21) ───────────────────────
  *
- * Both endpoints must be in `entityIds` (what the view listed) AND above
- * threshold on their own (`ent_support`) — the statement is exported, so it
- * holds the gate itself rather than trusting the id list.
+ * Every `graph_relations` row between two listed entities is folded onto the
+ * unordered pair `(LEAST, GREATEST)` FIRST, and the edge threshold is applied to
+ * the pair's distinct published documents (`rel_pairs`). The label is the type
+ * with the most documents, ties alphabetical (`rel_types.rn = 1`), with its
+ * direction seen from the lower id. The ego-network panel applies the SAME pair
+ * threshold ({@link entityNeighboursQuery}), so the map and the panel agree
+ * about which pairs are connected.
+ *
+ * ── CO-MENTION EDGES, AT QUERY TIME ────────────────────────────────────────
+ *
+ * Two entities mentioned in the same published document are linked
+ * (`co_all`), weighted by the published documents they share. Computed here
+ * from `graph_mentions` rather than cached: a materialised view would need a
+ * refresh on every publish and every extraction, and would hold draft rows the
+ * published-only gate must filter anyway. The self-join is per document, so it
+ * costs Σ (entities per document)² — measured in the lane report on the local
+ * corpus (`EXPLAIN ANALYZE`).
+ *
+ * 🔴 THE CO-MENTION SIDE CARRIES EVERY GATE THE RELATION SIDE DOES: tenant and
+ * published on the join to `documents`; noise labels and the entity threshold
+ * through `listed` (which is `ent_support`); and — belt over the extractor's
+ * `dropForbiddenPersonas` — no `persona` mention counted from anything but a
+ * `documento`.
+ *
+ * ⚠ TOP-K PER NODE (`GRAPH_COMENTION_TOP_K`). Each node nominates its K
+ * strongest co-mention partners (ties: the lower id); a pair is kept when
+ * EITHER end nominates it. A k-nearest-neighbour graph, chosen (review): no
+ * entity loses all its co-mentions to a hub, at the cost that a hub can exceed
+ * K. A pair that already has a relation edge is drawn as that edge, carries the
+ * co-mention weight in `co_mentions`, and takes no top-K slot.
+ *
+ * ⚠ NO SQL COMMENT IN THE STATEMENT: `queries.test.ts` greps the text for the
+ * gates, and a comment could pass the audit on prose alone.
  */
 export function viewEdgesQuery(
   organizationId: number,
   entityIds: readonly number[],
-  minSupport: number,
+  thresholds: number | GraphThresholds,
   limit = MAX_VIEW_EDGES,
 ): GraphSql {
+  const t = thresholdsOf(thresholds)
   const ids = entityIds.map((id) => Math.trunc(Number(id))).filter((id) => Number.isFinite(id))
   return sql`
-    WITH ent_support AS (${entitySupportCte(organizationId, minSupport)}),
-    edges AS (
-      SELECT r.from_entity_id AS from_id,
-             r.to_entity_id AS to_id,
+    WITH ent_support AS (${entitySupportCte(organizationId, t.entity)}),
+    listed AS (
+      SELECT s.entity_id AS entity_id
+      FROM ent_support s
+      WHERE s.entity_id = ANY(${intArray(ids)})
+    ),
+    rel AS (
+      SELECT LEAST(r.from_entity_id, r.to_entity_id) AS a,
+             GREATEST(r.from_entity_id, r.to_entity_id) AS b,
+             r.from_entity_id AS from_id,
              r.type AS relation_type,
-             COUNT(DISTINCT r.document_id)::int AS support
+             r.document_id AS document_id
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
+      JOIN listed lf ON lf.entity_id = r.from_entity_id
+      JOIN listed lt ON lt.entity_id = r.to_entity_id
       WHERE r.organization_id = ${organizationId}
-        AND r.from_entity_id = ANY(${intArray(ids)})
-        AND r.to_entity_id = ANY(${intArray(ids)})
-      GROUP BY 1, 2, 3
-      HAVING COUNT(DISTINCT r.document_id) >= ${minSupport}
+        AND r.from_entity_id <> r.to_entity_id
     ),
-    pairs AS (
-      SELECT LEAST(edges.from_id, edges.to_id) AS from_id,
-             GREATEST(edges.from_id, edges.to_id) AS to_id,
-             MAX(edges.support)::int AS support
-      FROM edges
-      WHERE edges.from_id <> edges.to_id
-      GROUP BY 1, 2
+    rel_pairs AS (
+      SELECT rel.a AS a, rel.b AS b, COUNT(DISTINCT rel.document_id)::int AS support
+      FROM rel
+      GROUP BY rel.a, rel.b
+      HAVING COUNT(DISTINCT rel.document_id) >= ${t.edge}
+    ),
+    rel_types AS (
+      SELECT rel.a AS a,
+             rel.b AS b,
+             rel.relation_type AS relation_type,
+             CASE WHEN BOOL_AND(rel.from_id = rel.a) THEN 'out'
+                  WHEN BOOL_AND(rel.from_id = rel.b) THEN 'in'
+                  ELSE 'both' END AS direction,
+             ROW_NUMBER() OVER (
+               PARTITION BY rel.a, rel.b
+               ORDER BY COUNT(DISTINCT rel.document_id) DESC, rel.relation_type ASC
+             ) AS rn
+      FROM rel
+      GROUP BY rel.a, rel.b, rel.relation_type
+    ),
+    ment AS (
+      SELECT DISTINCT m.document_id AS document_id, m.entity_id AS entity_id
+      FROM graph_mentions m
+      ${joinPublishedDocuments('m', organizationId)}
+      JOIN listed l ON l.entity_id = m.entity_id
+      JOIN graph_entities ce
+        ON ce.id = m.entity_id
+       AND ce.organization_id = ${organizationId}
+      WHERE m.organization_id = ${organizationId}${personaFromDocumentoOnly('ce')}
+    ),
+    co_all AS (
+      SELECT x.entity_id AS a, y.entity_id AS b, COUNT(DISTINCT x.document_id)::int AS weight
+      FROM ment x
+      JOIN ment y ON y.document_id = x.document_id AND y.entity_id > x.entity_id
+      GROUP BY x.entity_id, y.entity_id
+    ),
+    co_only AS (
+      SELECT c.a AS a, c.b AS b, c.weight AS weight
+      FROM co_all c
+      LEFT JOIN rel_pairs rp ON rp.a = c.a AND rp.b = c.b
+      WHERE rp.a IS NULL AND c.weight >= ${t.coMention}
+    ),
+    co_ends AS (
+      SELECT co_only.a AS node, co_only.b AS other, co_only.a AS a, co_only.b AS b,
+             co_only.weight AS weight
+      FROM co_only
+      UNION ALL
+      SELECT co_only.b, co_only.a, co_only.a, co_only.b, co_only.weight
+      FROM co_only
+    ),
+    co_ranked AS (
+      SELECT co_ends.a AS a, co_ends.b AS b, co_ends.weight AS weight,
+             ROW_NUMBER() OVER (
+               PARTITION BY co_ends.node
+               ORDER BY co_ends.weight DESC, co_ends.other ASC
+             ) AS rn
+      FROM co_ends
+    ),
+    co_kept AS (
+      SELECT co_ranked.a AS a, co_ranked.b AS b, MAX(co_ranked.weight)::int AS weight
+      FROM co_ranked
+      WHERE co_ranked.rn <= ${t.topK}
+      GROUP BY co_ranked.a, co_ranked.b
+    ),
+    out_edges AS (
+      SELECT rp.a AS from_id, rp.b AS to_id, 'relation' AS kind, 0 AS kind_rank,
+             rp.support AS support, COALESCE(c.weight, 0)::int AS co_mentions,
+             rt.relation_type AS relation_type, rt.direction AS direction
+      FROM rel_pairs rp
+      JOIN rel_types rt ON rt.a = rp.a AND rt.b = rp.b AND rt.rn = 1
+      LEFT JOIN co_all c ON c.a = rp.a AND c.b = rp.b
+      UNION ALL
+      SELECT k.a, k.b, 'co-mention', 1, k.weight, k.weight, NULL, NULL
+      FROM co_kept k
     )
-    SELECT pairs.from_id AS from_id, pairs.to_id AS to_id, pairs.support AS support
-    FROM pairs
-    JOIN ent_support fs ON fs.entity_id = pairs.from_id
-    JOIN ent_support ts ON ts.entity_id = pairs.to_id
-    ORDER BY pairs.support DESC, pairs.from_id ASC, pairs.to_id ASC
+    SELECT e.from_id AS from_id, e.to_id AS to_id, e.kind AS kind, e.support AS support,
+           e.co_mentions AS co_mentions, e.relation_type AS relation_type,
+           e.direction AS direction
+    FROM out_edges e
+    JOIN ent_support fs ON fs.entity_id = e.from_id
+    JOIN ent_support ts ON ts.entity_id = e.to_id
+    ORDER BY e.kind_rank ASC, e.support DESC, e.from_id ASC, e.to_id ASC
     LIMIT ${clampLimit(limit, MAX_VIEW_EDGES, MAX_VIEW_EDGES)}`
 }
 
@@ -599,6 +863,8 @@ export interface EntityDetailArgs {
   /** Supporting documents per EDGE. Capped at {@link MAX_EDGE_DOCUMENTS}. */
   edgeDocumentLimit?: number
   minSupport?: number
+  /** Relation-edge threshold, over the PAIR. Defaults to `GRAPH_MIN_EDGE_DOCS`. */
+  minEdgeSupport?: number
 }
 
 /**
@@ -621,7 +887,7 @@ export function entityDetailQuery(args: EntityDetailArgs): GraphSql {
       ON m.entity_id = e.id
      AND m.organization_id = ${organizationId}
     ${joinPublishedDocuments('m', organizationId)}
-    WHERE e.organization_id = ${organizationId}${notNoise('e')}
+    WHERE e.organization_id = ${organizationId}${notNoise('e')}${personaFromDocumentoOnly('e')}
       AND e.id = ${entityId}
     GROUP BY e.id, e.type, e.label
     HAVING COUNT(DISTINCT m.document_id) >= ${minSupport}`
@@ -630,9 +896,11 @@ export function entityDetailQuery(args: EntityDetailArgs): GraphSql {
 /**
  * One hop out of an entity.
  *
- * ⚠ TWO THRESHOLDS, NOT ONE. The EDGE needs `>= min` distinct published
- * documents evidencing it, and the NEIGHBOUR needs `>= min` distinct published
- * documents mentioning it (the `ent_support` join). In practice the writer
+ * ⚠ TWO THRESHOLDS, NOT ONE. The PAIR needs `>= GRAPH_MIN_EDGE_DOCS` distinct
+ * published documents evidencing any relation between the two (`pairs` — one
+ * rule with the overview, see {@link neighbourPairsCte}), and the NEIGHBOUR needs
+ * `>= GRAPH_MIN_ENTITY_DOCS` published documents mentioning it (`ent_support`).
+ * Each per-type row then carries both its own `edge_support` and the pair's. In practice the writer
  * always creates a mention alongside a relation endpoint, so the second is
  * usually implied — "usually" is not a privacy guarantee, and a neighbour is a
  * node the caller can see.
@@ -640,10 +908,12 @@ export function entityDetailQuery(args: EntityDetailArgs): GraphSql {
 export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
   const { organizationId, entityId } = args
   const minSupport = args.minSupport ?? graphMinSupport()
+  const minEdge = args.minEdgeSupport ?? graphMinEdgeDocs()
   const limit = clampLimit(args.neighbourLimit, MAX_NEIGHBOURS, MAX_NEIGHBOURS)
 
   return sql`
     WITH ent_support AS (${entitySupportCte(organizationId, minSupport)}),
+    pairs AS (${neighbourPairsCte(organizationId, entityId, minEdge)}),
     edges AS (
       SELECT CASE WHEN r.from_entity_id = ${entityId} THEN r.to_entity_id
                   ELSE r.from_entity_id END AS neighbour_id,
@@ -657,7 +927,6 @@ export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
       GROUP BY 1, 2
-      HAVING COUNT(DISTINCT r.document_id) >= ${minSupport}
     )
     SELECT e.id AS id,
            e.type AS type,
@@ -665,14 +934,17 @@ export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
            s.support AS support,
            edges.relation_type AS relation_type,
            edges.support AS edge_support,
+           pairs.pair_support AS pair_support,
            edges.direction AS direction
     FROM edges
+    JOIN pairs ON pairs.neighbour_id = edges.neighbour_id
     JOIN graph_entities e
       ON e.id = edges.neighbour_id
      AND e.organization_id = ${organizationId}
     JOIN ent_support s ON s.entity_id = e.id
     WHERE e.id <> ${entityId}
-    ORDER BY edges.support DESC, s.support DESC, e.label ASC
+    ORDER BY pairs.pair_support DESC, edges.support DESC, s.support DESC, e.label ASC,
+             edges.relation_type ASC
     LIMIT ${limit}`
 }
 
@@ -722,16 +994,14 @@ export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
  * ── THE THREE GATES, AND A FOURTH THING WORTH SAYING ───────────────────────
  *
  * Gates 1 and 2 ride on {@link joinPublishedDocuments}. Gate 3 is applied
- * TWICE, exactly as in {@link entityNeighboursQuery}: the EDGE needs `>= min`
- * distinct published documents evidencing it (the `HAVING`), and the NEIGHBOUR
- * needs `>= min` distinct published documents mentioning it (`ent_support`).
+ * TWICE, exactly as in {@link entityNeighboursQuery}: the PAIR needs
+ * `>= GRAPH_MIN_EDGE_DOCS` distinct published documents evidencing any relation
+ * between the two (`pairs`, {@link neighbourPairsCte}), and the NEIGHBOUR needs
+ * `>= GRAPH_MIN_ENTITY_DOCS` published documents mentioning it (`ent_support`).
  *
- * 🔴 That first threshold is also what makes this list safe to be PRECISE about.
- * A per-edge list is narrower than the intersection it replaces, and narrower
- * means more identifying — but an edge below `GRAPH_MIN_SUPPORT` does not exist
- * as far as this file is concerned, so the shortest list this can ever return is
- * `GRAPH_MIN_SUPPORT` documents long. It can never point at one testimony, which
- * is the scenario ADR §7.3 is written against.
+ * ⚠ At the default of 1 (owner, 2026-10-21) a list CAN point at one document.
+ * The owner accepted that because entity names are anonymised upstream; the
+ * snippet and title gates below still hold.
  *
  * ⚠ NO SNIPPET, DELIBERATELY, AND NOT ONLY BECAUSE THE TEST FORBIDS IT.
  * `graph_mentions.snippet` is per `(document, entity)`, so an EDGE has two
@@ -743,6 +1013,7 @@ export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
 export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
   const { organizationId, entityId } = args
   const minSupport = args.minSupport ?? graphMinSupport()
+  const minEdge = args.minEdgeSupport ?? graphMinEdgeDocs()
   const neighbourLimit = clampLimit(args.neighbourLimit, MAX_NEIGHBOURS, MAX_NEIGHBOURS)
   const perEdge = clampLimit(args.edgeDocumentLimit, MAX_EDGE_DOCUMENTS, MAX_EDGE_DOCUMENTS)
 
@@ -752,6 +1023,7 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
 
   return sql`
     WITH ent_support AS (${entitySupportCte(organizationId, minSupport)}),
+    pairs AS (${neighbourPairsCte(organizationId, entityId, minEdge)}),
     edges AS (
       SELECT CASE WHEN r.from_entity_id = ${entityId} THEN r.to_entity_id
                   ELSE r.from_entity_id END AS neighbour_id,
@@ -762,7 +1034,6 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
       GROUP BY 1, 2
-      HAVING COUNT(DISTINCT r.document_id) >= ${minSupport}
     ),
     evidence AS (
       SELECT CASE WHEN r.from_entity_id = ${entityId} THEN r.to_entity_id
@@ -791,6 +1062,7 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
       JOIN edges
         ON edges.neighbour_id = ev.neighbour_id
        AND edges.relation_type = ev.relation_type
+      JOIN pairs ON pairs.neighbour_id = ev.neighbour_id
       JOIN ent_support s ON s.entity_id = ev.neighbour_id
       WHERE ev.neighbour_id <> ${entityId}
     )
@@ -922,6 +1194,7 @@ export async function readEntityDetail(
       },
       relationType,
       support: toCount(row.edge_support),
+      pairSupport: toCount(row.pair_support ?? row.edge_support),
       direction: toDirection(row.direction),
       documents: edgeDocuments.get(`${id}|${relationType}`) ?? [],
     }
@@ -959,7 +1232,7 @@ export function matchableEntitiesQuery(organizationId: number, minSupport: numbe
       ON m.entity_id = e.id
      AND m.organization_id = ${organizationId}
     ${joinPublishedDocuments('m', organizationId)}
-    WHERE e.organization_id = ${organizationId}${notNoise('e')}
+    WHERE e.organization_id = ${organizationId}${notNoise('e')}${personaFromDocumentoOnly('e')}
     GROUP BY e.id, e.type, e.label, e.canonical_key
     HAVING COUNT(DISTINCT m.document_id) >= ${minSupport}
     ORDER BY support DESC, e.label ASC
@@ -1387,12 +1660,13 @@ function intArray(ids: readonly number[]): GraphSql {
 export function retrieveEdgesQuery(
   organizationId: number,
   seedIds: readonly number[],
-  minSupport: number,
+  thresholds: number | GraphThresholds,
   limit = MAX_RETRIEVE_EDGES,
 ): GraphSql {
+  const t = thresholdsOf(thresholds)
   const ids = seedIds.map((id) => Math.trunc(Number(id))).filter((id) => Number.isFinite(id))
   return sql`
-    WITH ent_support AS (${entitySupportCte(organizationId, minSupport)}),
+    WITH ent_support AS (${entitySupportCte(organizationId, t.entity)}),
     edges AS (
       SELECT r.from_entity_id AS from_id,
              r.to_entity_id AS to_id,
@@ -1403,7 +1677,7 @@ export function retrieveEdgesQuery(
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ANY(${intArray(ids)}) OR r.to_entity_id = ANY(${intArray(ids)}))
       GROUP BY 1, 2, 3
-      HAVING COUNT(DISTINCT r.document_id) >= ${minSupport}
+      HAVING COUNT(DISTINCT r.document_id) >= ${t.edge}
     )
     SELECT edges.relation_type AS relation_type,
            edges.support AS support,
@@ -1463,6 +1737,8 @@ export interface RetrieveArgs {
   /** How many seed entities to expand from. Capped at {@link MAX_RETRIEVE_SEEDS}. */
   limit?: number
   minSupport?: number
+  /** Per-relation-type threshold for the one-hop expansion. Default `GRAPH_MIN_EDGE_DOCS`. */
+  minEdgeSupport?: number
 }
 
 /**
@@ -1481,6 +1757,7 @@ export async function readGraphRetrieval(
   args: RetrieveArgs,
 ): Promise<GraphRetrieval> {
   const minSupport = args.minSupport ?? graphMinSupport()
+  const minEdge = args.minEdgeSupport ?? graphMinEdgeDocs()
   const seedLimit = clampLimit(args.limit, MAX_RETRIEVE_SEEDS, MAX_RETRIEVE_SEEDS)
   const empty: GraphRetrieval = { entities: [], edges: [], documents: [], terms: [] }
 
@@ -1499,7 +1776,9 @@ export async function readGraphRetrieval(
 
   const seedIds = seeds.map((entity) => entity.id)
   const [edgeResult, documentResult] = await Promise.all([
-    payload.db.drizzle.execute(retrieveEdgesQuery(args.organizationId, seedIds, minSupport)),
+    payload.db.drizzle.execute(
+      retrieveEdgesQuery(args.organizationId, seedIds, { entity: minSupport, edge: minEdge }),
+    ),
     payload.db.drizzle.execute(
       retrieveDocumentsQuery(args.organizationId, seedIds, minSupport),
     ),
