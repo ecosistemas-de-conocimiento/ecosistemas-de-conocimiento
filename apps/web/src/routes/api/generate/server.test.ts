@@ -576,6 +576,28 @@ describe('POST /api/generate — pinned documents', () => {
     expect(docReads()).toHaveLength(0);
   });
 
+  // Pinned documents ride as inline refs, never as retrieval depth.
+  it.each([0, 1, 3])('🔴 %i pinned documents leave the retrieve topK unchanged', async (n) => {
+    world.sessionDocs = Array.from({ length: Math.max(n, 1) }, (_, i) => ({
+      ...world.sessionDocs[0]!,
+      id: 11 + i,
+      name: `doc-${i}.pdf`,
+      isPinned: i < n,
+    }));
+    await POST(event(turn()));
+    const topKs = (corpus: string) =>
+      retrieves()
+        .filter((c) => {
+          const b = c.body as { corpus: string; query: string };
+          return b.corpus === corpus && b.query === QUESTION;
+        })
+        .map((c) => (c.body as { topK: number }).topK);
+    expect(topKs(`eco-${ECO}`)).not.toHaveLength(0);
+    for (const k of topKs(`eco-${ECO}`)) expect(k).toBe(8); // 5 + the fence's 3
+    expect(topKs(`eco-${ECO}-draft-1`)).not.toHaveLength(0);
+    for (const k of topKs(`eco-${ECO}-draft-1`)) expect(k).toBe(20); // capped
+  });
+
   it('a document both @-mentioned and pinned is read and sent once', async () => {
     world.sessionDocs = [{ ...world.sessionDocs[0]!, isPinned: true }];
     await POST(
@@ -612,10 +634,10 @@ describe('POST /api/generate — assistant answers are not retrieved', () => {
     const published = retrieveFor((b) => b.corpus === `eco-${ECO}` && b.query === QUESTION);
     expect(published.length).toBeGreaterThan(0);
     for (const c of published) expect((c.body as { topK: number }).topK).toBe(8);
-    // Draft leg: the draft over-fetch applies on top (8 × 4).
+    // Draft leg: the draft over-fetch applies on top (8 × 4), capped at 20.
     const draft = retrieveFor((b) => b.corpus === DRAFT && b.query === QUESTION);
     expect(draft.length).toBeGreaterThan(0);
-    for (const c of draft) expect((c.body as { topK: number }).topK).toBe(32);
+    for (const c of draft) expect((c.body as { topK: number }).topK).toBe(20);
     // Graph-widened leg: its own topK of 5, + 3.
     const widened = retrieveFor((b) => b.query.includes('parteras') && b.query !== QUESTION && b.query.includes('comadronas'));
     expect(widened).toHaveLength(1);

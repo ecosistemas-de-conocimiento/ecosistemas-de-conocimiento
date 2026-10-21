@@ -108,8 +108,14 @@ interface RawRetrieveChunk {
  * rank 6. So we ask wide, drop what does not belong here, and truncate back.
  */
 const DRAFT_OVERFETCH_FACTOR = 4;
-/** Ceiling on the over-fetch, so a large `topK` cannot ask for the world. */
-const DRAFT_OVERFETCH_MAX = 50;
+/**
+ * Ceiling on the over-fetch: 20, the draft leg's depth before 2026-10-20
+ * (engine topK 5 × 4). The assistant-answer fence (`./chunkFence`) asks every
+ * leg for topK + 3, and × 4 made that 32 here; a 32-deep draft retrieve timed
+ * out once on dev (reported 2026-10-21, not measured here). The fence only
+ * needs topK + 3 kept AFTER the session filter, which 20 still covers.
+ */
+const DRAFT_OVERFETCH_MAX = 20;
 /** `RetrieveRequest.topK` is optional; the engine always sends 5 today. */
 const DEFAULT_TOPK = 5;
 

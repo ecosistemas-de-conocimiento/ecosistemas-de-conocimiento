@@ -224,7 +224,12 @@ describe('the draft leg', () => {
 
   it('caps the over-fetch so a large topK cannot ask for the world', async () => {
     await withDocs(new Set(['10'])).retrieve(request(DRAFT, 40));
-    expect(sentBodies()[0]!.topK).toBe(50);
+    expect(sentBodies()[0]!.topK).toBe(20);
+  });
+
+  it('the fence\'s topK 8 (5 + 3) asks the draft leg for 20, not 32', async () => {
+    await withDocs(new Set(['10'])).retrieve(request(DRAFT, 8));
+    expect(sentBodies()[0]!.topK).toBe(20);
   });
 
   it('still sends asOf on the over-fetched call', async () => {
