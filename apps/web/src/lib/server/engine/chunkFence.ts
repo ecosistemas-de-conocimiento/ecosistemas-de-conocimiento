@@ -15,9 +15,10 @@
  *   …chunk text, with every <fuente / </fuente look-alike neutralised…
  *   </fuente>
  *
- * 🔴 Conversation turns (questions AND answers) are DROPPED on every leg,
- * always, with no flag (owner ruling 2026-10-21: chat searches documents
- * only). See `$lib/turnChunks`. The system-prompt rule that gives the fence its
+ * 🔴 Conversation turns (questions AND answers) are DROPPED on every sources
+ * leg, always, with no flag: they are never a source. They reach the model
+ * only as background, in the separate orientation block (`./orientation`,
+ * owner ruling 2026-10-21, #4 choice A). See `$lib/turnChunks`. The system-prompt rule that gives the fence its
  * meaning is `CHUNK_DATA_RULE` (`./prompt`).
  *
  * ⚠ The engine copies `RetrievedChunk.text` into the persisted provenance (the
@@ -183,9 +184,13 @@ export function withFencedRefs<A extends DomainAdapter>(adapter: A): A {
  * (and `limit + 3` on `retrieveMulti`), drops the turns and trims back.
  * ⚠ 3 is inferred, not measured: audit 2026-10-17 saw an earlier answer as the
  * top-1 source in 6 of 14 turns, but did not count how many turns a retrieve
- * held. A leg that retrieves more than 3 turns still comes up short. Turns are
- * no longer ingested (2026-10-21), so the corpus stops growing them; after a
- * corpus wipe there are none and the over-fetch costs only rerank pool size.
+ * held. A leg that retrieves more than 3 turns still comes up short.
+ * ⚠ Turns are ingested again (owner ruling 2026-10-21, #4 choice A: stored
+ * for orientation, never cited), so the corpus GROWS them: a question many
+ * members ask may pull more than 3 turns into one leg and crowd documents
+ * out. The durable fix is a server-side `kind $in [documento, testimonio]` on
+ * the sources legs (ai-service `metadataFilterIn`); not done here.
+ * Turns reach the prompt only through `./orientation`.
  *
  * Rerank cost (inferred from ai-service's pool rule `min(topK × 4, 50)`,
  * quoted in `./rerank`, not measured): the published leg's pool grows from 20

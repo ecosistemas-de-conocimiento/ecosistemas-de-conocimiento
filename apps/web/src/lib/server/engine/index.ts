@@ -8,6 +8,7 @@
 export {
   CHAT_ENGINE_CONFIG,
   CHAT_KIND_REGISTRY,
+  chatOrientScope,
   chatTurnHybrid,
   chatTurnRetrievalPolicy,
   engineOrgId,

@@ -61,6 +61,8 @@ interface World {
    * `informe.pdf` chunk below, filter ignored (the long-standing fake).
    */
   retrievePool?: Array<Record<string, unknown>>;
+  /** Extra chunks only the orientation retrieve (`filter.kind: conversacion`) returns, first. */
+  orientExtra?: Array<Record<string, unknown>>;
 }
 
 let calls: Call[];
@@ -166,6 +168,9 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     }
     if (url.pathname === '/v1/retrieve') {
       const corpus = (body as { corpus: string }).corpus;
+      if (isOrientation(body) && world.orientExtra) {
+        return json({ chunks: world.orientExtra });
+      }
       if (world.retrievePool) {
         const docId = (body as { filter?: { docId?: unknown } }).filter?.docId;
         return json({
@@ -297,8 +302,14 @@ const turn = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
+/** The orientation leg's retrieve (`$lib/server/engine/orientation`), told apart by its filter. */
+const isOrientation = (body: unknown) =>
+  (body as { filter?: { kind?: unknown } } | undefined)?.filter?.kind === 'conversacion';
+/** The SOURCES retrieves: every `/v1/retrieve` except the orientation leg's. */
 const retrieves = () =>
-  calls.filter((c) => c.url.host === 'ai.test' && c.url.pathname === '/v1/retrieve');
+  calls.filter((c) => c.url.host === 'ai.test' && c.url.pathname === '/v1/retrieve' && !isOrientation(c.body));
+const orientRetrieves = () =>
+  calls.filter((c) => c.url.host === 'ai.test' && c.url.pathname === '/v1/retrieve' && isOrientation(c.body));
 const generates = () =>
   calls.filter((c) => c.url.host === 'ai.test' && c.url.pathname.startsWith('/v1/generate'));
 const saves = () =>
@@ -340,6 +351,7 @@ beforeEach(() => {
     ],
   };
   ENV.CHAT_RETRIEVE_ASSISTANT_CHUNKS = undefined;
+  ENV.CHAT_ORIENT_SCOPE = undefined;
   ENV.QUERY_EXPANSION = undefined;
   ENV.CHAT_RERANK = undefined;
   ENV.CHAT_RETRIEVAL_MODE = undefined;
@@ -688,7 +700,13 @@ describe('POST /api/generate — pinned documents', () => {
 // ── Conversation turns (owner ruling 2026-10-21: documents only) ─────────────
 // 🔴 No earlier question or answer reaches the prompt or the provenance, on
 // any leg, whatever the env says.
-describe('POST /api/generate — conversation turns are not retrieved', () => {
+describe('POST /api/generate — conversation turns are not retrieved as sources', () => {
+  // These pin the SOURCES legs alone, so the orientation leg (which shows
+  // turns on purpose, outside the sources) is off here. With it on, see
+  // `earlier conversations orient, never cite` below.
+  beforeEach(() => {
+    ENV.CHAT_ORIENT_SCOPE = 'off';
+  });
   const DRAFT = `eco-${ECO}-draft-1`;
   const answerPrompt = () =>
     JSON.stringify(
@@ -1155,5 +1173,142 @@ describe('POST /api/generate — a title match retrieves only that document', ()
       corpora: [`eco-${ECO}`, `eco-${ECO}-draft-1`],
       corpusFilters: { [`eco-${ECO}-draft-1`]: { docId: { $in: ['31'] } } },
     });
+  });
+});
+
+// ── Earlier conversations: orientation only (owner ruling 2026-10-21, #4 A) ──
+// 🔴 "Store, never cite in chat … relevant for orienting conversations, even
+// if not cited." Turn chunks reach the prompt ONLY in the labelled block
+// (`$lib/server/engine/orientation`), never inside `<fuente>`, never with an
+// `[N]`, never in the provenance, the sources list or the saved row.
+describe('POST /api/generate — earlier conversations orient, never cite', () => {
+  /** The rendered prompt the chat model received (not the expansion call), as JSON text. */
+  const promptText = () =>
+    JSON.stringify(generates().find((c) => !JSON.stringify(c.body).includes('Escribe exactamente tres'))!.body);
+  /** The orientation block's body, between its tags. */
+  const block = () => {
+    const t = promptText();
+    const a = t.indexOf('<conversaciones_anteriores>');
+    const b = t.indexOf('</conversaciones_anteriores>');
+    return a >= 0 && b > a ? t.slice(a, b) : '';
+  };
+  /** Every `<fuente …>…</fuente>` section of the prompt. */
+  const fences = () => promptText().match(/<fuente id=[^>]*>[\s\S]*?<\/fuente>/g) ?? [];
+  const turnMeta = (extra: Record<string, unknown>) => ({
+    ...(assistantChunk('x').metadata as Record<string, unknown>),
+    ...extra,
+  });
+
+  beforeEach(() => {
+    world.turnsInRetrieve = true;
+  });
+
+  it('🔴 default scope: one small retrieve over the published corpus, turns only, no rerank', async () => {
+    await POST(event(turn()));
+    expect(orientRetrieves()).toHaveLength(1);
+    const req = orientRetrieves()[0]!.body as Record<string, unknown>;
+    expect(req).toMatchObject({ corpus: `eco-${ECO}`, query: QUESTION, topK: 8, filter: { kind: 'conversacion' } });
+    expect(req).not.toHaveProperty('rerank');
+    expect(req.asOf).toBeTruthy();
+  });
+
+  it('🔴 the block carries the earlier turns, labelled, and never a [N]', async () => {
+    await POST(event(turn()));
+    expect(promptText()).toContain('Conversaciones anteriores (no son fuentes; no las cites)');
+    expect(block()).toContain('RESPUESTA ANTERIOR: el faro existe.');
+    expect(block()).toContain('PREGUNTA ANTERIOR');
+    expect(block()).not.toMatch(/\[\s*\d+\s*\]/);
+    // …and no turn text inside any `<fuente>`.
+    expect(fences().length).toBeGreaterThan(0);
+    for (const f of fences()) {
+      expect(f).not.toContain('RESPUESTA ANTERIOR');
+      expect(f).not.toContain('PREGUNTA ANTERIOR');
+    }
+  });
+
+  it('🔴 an earlier answer’s own [N] markers are stripped in the block', async () => {
+    world.orientExtra = [{ ...assistantChunk('cited'), text: 'El faro existe [1] y el muelle también [2, 3].' }];
+    await POST(event(turn()));
+    expect(block()).toContain('El faro existe');
+    expect(block()).not.toMatch(/\[\s*\d/);
+  });
+
+  it('🔴 the system prompt says the block is background and never cited', async () => {
+    await POST(event(turn()));
+    expect(promptText()).toContain('Es solo orientación');
+    expect(promptText()).toContain('nunca lo cites con [N]');
+  });
+
+  it('🔴 the old bug stays fixed: an answer citing [1]..[5] never cites a turn, sync or stream', async () => {
+    world.answerText = 'Según [1], [2], [3], [4] y [5].';
+    world.streamText = world.answerText;
+    const body = await (await POST(event(turn()))).json();
+    const frames = await readSse(await POST(event(turn(), true)));
+    const done = frames.find((f) => f.type === 'done')!;
+    for (const out of [JSON.stringify(body.provenance), JSON.stringify(done.provenance), JSON.stringify(saves())]) {
+      expect(out).not.toContain('PREGUNTA ANTERIOR');
+      expect(out).not.toContain('RESPUESTA ANTERIOR');
+      expect(out).not.toContain('Conversación');
+      expect(out).not.toContain('msg-');
+    }
+  });
+
+  it('🔴 the no-[N] fallback lists documents only, never a turn', async () => {
+    world.answerText = 'Las parteras acompañan los nacimientos.';
+    const body = await (await POST(event(turn()))).json();
+    for (const out of [JSON.stringify(body.provenance), JSON.stringify(saves()[0]!.body)]) {
+      expect(out).not.toContain('ANTERIOR');
+      expect(out).not.toContain('Conversación');
+    }
+    expect(JSON.stringify(body.provenance)).toContain('informe.pdf');
+  });
+
+  it("🔴 the current conversation's own turns are excluded, so the question never echoes", async () => {
+    world.orientExtra = [
+      { ...userTurnChunk('own-q'), text: 'ECO DE ESTA CONVERSACION', metadata: turnMeta({ authoredBy: 'user', sessionId: SESSION }) },
+      assistantChunk('other-a'),
+    ];
+    await POST(event(turn()));
+    expect(promptText()).not.toContain('ECO DE ESTA CONVERSACION');
+    expect(block()).toContain('RESPUESTA ANTERIOR');
+  });
+
+  it('documents a filter-less ai-service returns are never shown as turns', async () => {
+    world.orientExtra = [
+      { documentId: 'uuid-11', chunkId: 'doc-x', score: 0.9, text: 'TEXTO DE DOCUMENTO', metadata: { docId: '11', kind: 'documento' } },
+    ];
+    await POST(event(turn()));
+    expect(promptText()).not.toContain('<conversaciones_anteriores>');
+  });
+
+  it('🔴 CHAT_ORIENT_SCOPE=off removes the leg and the block', async () => {
+    ENV.CHAT_ORIENT_SCOPE = 'off';
+    await POST(event(turn()));
+    expect(orientRetrieves()).toHaveLength(0);
+    expect(promptText()).not.toContain('<conversaciones_anteriores>');
+    expect(promptText()).not.toContain('RESPUESTA ANTERIOR');
+  });
+
+  it('an unknown CHAT_ORIENT_SCOPE fails closed: no leg', async () => {
+    ENV.CHAT_ORIENT_SCOPE = 'everyone';
+    await POST(event(turn()));
+    expect(orientRetrieves()).toHaveLength(0);
+  });
+
+  it('CHAT_ORIENT_SCOPE=own filters on the asker and drops other users’ turns', async () => {
+    ENV.CHAT_ORIENT_SCOPE = 'own';
+    world.orientExtra = [
+      { ...assistantChunk('mine'), text: 'MIA ANTERIOR', metadata: turnMeta({ userId: '1' }) },
+      { ...assistantChunk('theirs'), text: 'DE OTRA PERSONA', metadata: turnMeta({ userId: '9' }) },
+    ];
+    await POST(event(turn()));
+    expect((orientRetrieves()[0]!.body as { filter: unknown }).filter).toEqual({ kind: 'conversacion', userId: '1' });
+    expect(block()).toContain('MIA ANTERIOR');
+    expect(promptText()).not.toContain('DE OTRA PERSONA');
+  });
+
+  it('stream: the block reaches the model too', async () => {
+    await readSse(await POST(event(turn(), true)));
+    expect(block()).toContain('RESPUESTA ANTERIOR');
   });
 });
