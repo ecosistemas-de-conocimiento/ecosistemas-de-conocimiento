@@ -9,25 +9,34 @@ import {
   VOCES_UPLOAD,
 } from '$lib/uploadKind';
 
+export type UploadResult = { status: number; body: Record<string, unknown> };
+
 /**
- * Upload one file and create its `documents` row, with NO conversation.
- * Used by `POST /api/documentos` ("Subir documento" in Mis documentos, UX demo
- * backlog #15).
+ * Upload one file and create its `documents` row — THE one upload flow.
  *
- * ⚠ SAME RULES AS `POST /api/sessions/[id]/documents`, which keeps its own
- * copy of this flow (owned by another lane at write time). The two must agree
- * on: kind sniffing order (PDF/DOCX before audio), the size cap, the Voz
- * pre-check, and never trusting a client-supplied `kind`. Folding the session
- * route onto this function is the follow-up.
+ * Used by `POST /api/sessions/[id]/documents` (the panel in a conversation) and
+ * `POST /api/documentos` (Mis documentos, no conversation; UX demo backlog #15).
+ * Both used to keep a copy of these rules; one copy cannot drift.
  *
- * 🔴 The ecosistema is not named here. The backend derives it from the caller's
- * single membership when `session` is empty (`Documents.ts` beforeValidate) and
- * refuses when there are several; the route checks that first.
+ * Order matters, and every refusal happens BEFORE the bytes go up:
+ *   1. `contentKind` (documento | testimonio), and the Voz pre-check.
+ *   2. File kind, sniffed PDF → DOCX → audio. ⚠ PDF and DOCX first:
+ *      `isAudioUpload` accepts `.mp4`/`.mov` and a generous extension list, so
+ *      running it first would send an odd-MIME document to the transcriber.
+ *   3. A client-supplied `kind` is a HINT: honoured only when it agrees.
+ *   4. The size cap for that kind.
+ *
+ * 🔴 AUDIO IS REFUSED WHILE `AUDIO_UPLOAD_ENABLED` IS OFF (backlog #8). Server
+ * side, so a direct POST cannot slip a recording past the hidden picker.
+ *
+ * 🔴 The ecosistema is never named. The backend derives it from the session,
+ * or, with no session, from the caller's single membership.
  */
-export async function uploadLooseDocument(
+export async function uploadDocument(
   token: string | undefined,
   form: FormData,
-): Promise<{ status: number; body: Record<string, unknown> }> {
+  opts: { session: Array<string | number>; defaultPinned: boolean },
+): Promise<UploadResult> {
   const file = form.get('file');
   if (!(file instanceof File)) return { status: 400, body: { error: 'multipart_missing_file' } };
 
@@ -47,13 +56,23 @@ export async function uploadLooseDocument(
     /\.docx$/i.test(file.name)
   )
     kind = 'docx';
-  // 🔴 Audio is off (`AUDIO_UPLOAD_ENABLED`): refused here, before the bytes go up.
   else if (AUDIO_UPLOAD_ENABLED && isAudioUpload(file)) kind = 'audio';
   if (!kind) return { status: 400, body: { error: 'unsupported_kind' } };
 
+  const kindHint = form.get('kind');
+  if (typeof kindHint === 'string' && kindHint && kindHint !== kind) {
+    // A client that thinks it uploaded audio and gets a PDF back has a bug
+    // worth surfacing, not silently overriding.
+    return { status: 400, body: { error: 'unsupported_kind', inferred: kind } };
+  }
+
+  // The browser checks too, but it is not a security boundary: a body accepted
+  // here lands on the backend's disk before anything can refuse it.
   const cap = maxUploadBytesFor(file);
   if (file.size > cap) return { status: 413, body: { error: 'file_too_large', limit: cap, kind } };
 
+  // Payload's `POST /api/media` wants multipart with a `file` field. No
+  // content-type header: fetch generates the boundary.
   const mediaForm = new FormData();
   mediaForm.append('file', file, file.name);
   const headers = new Headers();
@@ -61,8 +80,15 @@ export async function uploadLooseDocument(
   let mediaRes: Response;
   try {
     mediaRes = await fetch(`${backendUrl()}/api/media`, { method: 'POST', headers, body: mediaForm });
-  } catch {
-    return { status: 502, body: { error: 'upstream_unreachable' } };
+  } catch (err) {
+    // `detail` is for logs and bug reports; the browser maps the code to Spanish.
+    return {
+      status: 502,
+      body: {
+        error: 'upstream_unreachable',
+        detail: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+      },
+    };
   }
   if (!mediaRes.ok) {
     return mapUpstreamMediaError(mediaRes.status, await mediaRes.text().catch(() => ''));
@@ -72,16 +98,19 @@ export async function uploadLooseDocument(
   if (mediaId == null) return { status: 502, body: { error: 'media_id_missing' } };
 
   const name = form.get('name');
+  const pinnedRaw = form.get('isPinned');
   const docRes = await backendFetch(token, '/api/documents', {
     method: 'POST',
     body: JSON.stringify({
-      session: [],
+      // ⚠ AN ARRAY, ALWAYS: `documents.session` is `hasMany`. Empty = no
+      // conversation (Mis documentos).
+      session: opts.session,
       kind,
       contentKind,
       mode: 'rag-retrieve',
       name: typeof name === 'string' && name.trim() ? name : file.name,
       mediaFile: mediaId,
-      isPinned: false,
+      isPinned: pinnedRaw === null ? opts.defaultPinned : pinnedRaw !== 'false',
       ingestStatus: 'pending',
     }),
   });
@@ -89,4 +118,9 @@ export async function uploadLooseDocument(
   // ⚠ Payload's validation messages are English. Never pass one to the browser.
   if (!docRes.ok) return { status: docRes.status, body: { error: 'document_create_failed' } };
   return { status: docRes.status, body };
+}
+
+/** Mis documentos: no conversation, not pinned anywhere. */
+export function uploadLooseDocument(token: string | undefined, form: FormData): Promise<UploadResult> {
+  return uploadDocument(token, form, { session: [], defaultPinned: false });
 }

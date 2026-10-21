@@ -1714,7 +1714,7 @@ class AppStore {
   }
 
   /**
-   * Rebuild one owned document's graph ("Reconstruir grafo" in Mis documentos).
+   * Rebuild one owned document's graph ("Preparar conexiones otra vez" in Mis documentos).
    *
    * Optimistic only about the request: on 202 the row shows `pending`, which is
    * what the backend said. No poll — the badge refreshes on the next list read.
@@ -1731,7 +1731,8 @@ class AppStore {
       if (!res.ok) {
         toasts.push({
           kind: 'error',
-          title: 'No se pudo reconstruir el grafo',
+          // Plain words, as on the badge (backlog #21).
+          title: 'No se pudieron preparar las conexiones',
           message: graphRetryErrorCopy(res.status),
         });
         return false;

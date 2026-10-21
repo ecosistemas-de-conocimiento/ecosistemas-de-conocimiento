@@ -1,4 +1,5 @@
 import { MAX_UPLOAD_BYTES, formatBytes } from './config';
+import { AUDIO_UPLOAD_ENABLED } from './uploadKind';
 
 /**
  * Map a BFF upload error code (see /api/sessions/[id]/documents +server.ts)
@@ -16,13 +17,18 @@ export function uploadErrorToast(
         title: 'El archivo es muy grande',
         // The limit depends on what was being uploaded — audio gets a much
         // larger one — so quote the cap that actually applied, not a constant.
-        message: `El máximo es ${formatBytes(limitBytes)}. Prueba con un archivo más chico, o con una grabación más corta.`,
+        message: AUDIO_UPLOAD_ENABLED
+          ? `El máximo es ${formatBytes(limitBytes)}. Prueba con un archivo más chico, o con una grabación más corta.`
+          : `El máximo es ${formatBytes(limitBytes)}. Prueba con un archivo más chico.`,
       };
     case 'unsupported_media_type':
     case 'unsupported_kind':
       return {
         title: 'Tipo de archivo no admitido',
-        message: 'Aceptamos PDF, DOCX y audio en MP3, M4A, WAV, OGG u OPUS.',
+        // Follows the audio switch (backlog #8): never offer what is turned off.
+        message: AUDIO_UPLOAD_ENABLED
+          ? 'Aceptamos PDF, DOCX y audio en MP3, M4A, WAV, OGG u OPUS.'
+          : 'Aceptamos PDF y DOCX.',
       };
     case 'unauthorized':
       return {
