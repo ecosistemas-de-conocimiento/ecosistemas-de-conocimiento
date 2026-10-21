@@ -1,7 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `0e92026` (title match always shown as a
-source, Revisión follows the picker), deployed 2026-10-21 15:41 UTC — see §4r. Before that,
+**Status:** live since 2026-10-17. Dev runs `main` @ `9285305` (sources fallback, cite rule in the
+prompt, no draft search without attachments), deployed 2026-10-21 16:00 UTC — see §4s; ⚠ off-topic
+answers now show sources. Before that, `0e92026` (title match always shown as a source, Revisión
+follows the picker; 15:41 UTC, §4r). Before that,
 `6d213a9` (held-publish fix, town rule, title-only retrieval; 14:58 UTC), with the 13
 held-but-published testimonios repaired — see §4q. Before that, `a4643cb` (privacy gate, Voz-only seed, chat searches documents
 only; 11:52 UTC) on freshly wiped and reseeded databases with two ecosistemas — see §4p. Before that, dev ran `2f60202` (UX batches 6–8; 09:17 UTC, §4o).
@@ -917,6 +919,31 @@ Spend: `usage_logs` $1.3670 → $1.3802 (**+$0.0132**, 6 chats). Tonight: $0.478
 
 **Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
 -af` (12.97 GB) and removing dev's `6d213a9` images. Images 7.8 GB, build cache 0.
+
+### 4s. ⚠ Done with one failed check, 2026-10-21 15:59–16:15 UTC: `9285305`, dev only
+
+All measured by the deploy agent. Staging was not touched. Web only (`c2d6ed7` skip the draft
+search when nothing is attached; `8ae68a3` an answer with no `[n]` lists its top 3 sources, and the
+prompt asks to cite with `[n]`). No migration. Backup `/root/backups/20261021T1559Z/` (`pg_restore
+-l` ok, sha256 matched off-box). Deploy 16:00:12 → 16:05:47 UTC; 6 containers `healthy`, health
+200, no non-preview variable holds `:?` text.
+
+Checks as user 1 (admin), ecosistema Salud, through `POST /api/generate`:
+
+| check | result |
+|---|---|
+| "dengue" question ×3 | each answer carries cited numbers (29, 31 and 29, in 8, 11 and 9 groups) and shows **7 sources** each. 0 manifest names. ⚠ It took **41.1 s, 43.2 s and 62.8 s**, against 12–13 s for the same question in §4q/§4r |
+| 🔴 Off-topic ("Cual es la capital de Francia?") | **shows 5 sources** in 3 of 3 runs. The answer is "La capital de Francia es París. Sin embargo, esta información no aparece en los documentos … [1, 2, 3, 4, 5]". The new cite rule makes the model cite every retrieved chunk even while saying they don't apply, and those markers make them sources. **Check failed**; not fixed here |
+| Web log since the deploy | 0 `[retrieve] corpus "` lines, 0 `rerank request failed (404)` (the §4r 404 is gone) |
+| Title question, doc 71 | 1 source, doc 71, listed once; 2 `[n]` in the answer now |
+| Normal smoke (mosquito breeding sites) | 200, 11.5 s, 21 cited numbers in 8 groups, 5 sources |
+| Turns | 0 `msg-*` in ai-service; 0 sessions left |
+
+Spend: `usage_logs` $1.3802 → $1.3921 (**+$0.0119**, 9 chats). Tonight: $0.4786 + $1.3921 =
+**$1.8707**.
+
+**Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
+-af` (12.97 GB) and removing dev's `0e92026` images. Images 7.8 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
