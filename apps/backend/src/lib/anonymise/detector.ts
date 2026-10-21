@@ -36,6 +36,11 @@
 import { withRateLimitRetry, type RetryOptions } from '@/lib/aiRetry'
 
 import { chunkText } from './chunk'
+import {
+  ANONYMISE_DETECT_MODEL_VAR,
+  ANONYMISE_DETECT_URL_VAR,
+  openaiCompatFromEnv,
+} from './openaiCompatGenerator'
 import { stripLeadingTitles } from './titles'
 import type { DetectorFinding, PersonDetector } from './types'
 
@@ -387,8 +392,18 @@ async function mapBounded<T, R>(
   return results
 }
 
+let backendLogged = false
+/** Which backend the gate uses, logged once per process. Host and model only, never the key. */
+function logBackendOnce(what: string): void {
+  if (backendLogged) return
+  backendLogged = true
+  console.info(`[anonymise-detect] gate detector backend: ${what}`)
+}
+
 /**
- * The real detector: ai-service `/v1/generate/sync` through `@edc/ai-client`.
+ * The real detector: ai-service `/v1/generate/sync` through `@edc/ai-client`,
+ * or, when `ANONYMISE_DETECT_URL` is set, a self-hosted OpenAI-compatible
+ * endpoint (`openaiCompatGenerator.ts`).
  *
  * ⚠ The client is imported LAZILY, matching `collections/Documents.ts`. Payload
  * collection modules are loaded during config construction, and a top-level
@@ -398,14 +413,32 @@ async function mapBounded<T, R>(
  */
 export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDetector {
   const nextKey = opts.unitKey ?? (() => `anonymise-${crypto.randomUUID()}`)
+  // 🔴 SELF-HOSTED WHEN CONFIGURED, AND THEN ONLY SELF-HOSTED. With
+  // `ANONYMISE_DETECT_URL` set the raw text goes to that box and NOWHERE else:
+  // any failure there throws → HOLD. Never fall back to ai-service, which would
+  // send the testimony to a hosted model. See `openaiCompatGenerator.ts`.
+  const selfHosted = !opts.client && (process.env[ANONYMISE_DETECT_URL_VAR] ?? '').trim() !== ''
+  const backend = selfHosted ? 'openai-compat' : 'ai-service'
 
   return {
-    name: opts.name ?? 'ai-service:anonymise-detect',
+    // Recorded on the gate row (`gate.ts`), so it names the backend that saw the text.
+    name:
+      opts.name ??
+      (selfHosted
+        ? `openai-compat:${(process.env[ANONYMISE_DETECT_MODEL_VAR] ?? '').trim() || 'unset'}`
+        : 'ai-service:anonymise-detect'),
     async detect({ text, contentKind }) {
       let client = opts.client
+      if (!client && selfHosted) {
+        const resolved = openaiCompatFromEnv()
+        if (!resolved) throw new Error(`${ANONYMISE_DETECT_URL_VAR} was unset after start`)
+        client = resolved.generator
+        logBackendOnce(`openai-compat at ${resolved.host}, model ${resolved.model}`)
+      }
       if (!client) {
         const { getAppAIClient } = await import('@/lib/aiClient')
         client = getAppAIClient(opts.organizationId) as unknown as SyncGenerator
+        logBackendOnce('ai-service /v1/generate/sync')
       }
 
       const material =
@@ -495,7 +528,7 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
             timedOut ? 'tiempo-agotado' : 'transporte',
             timedOut
               ? `The anonymisation detector timed out after ${timeoutMs} ms.`
-              : `The anonymisation detector could not reach ai-service: ${name}`,
+              : `The anonymisation detector could not reach ${backend}: ${name}`,
             // Every throw out of the CALL (as opposed to the parse below) means
             // the model never answered: rate limit, 5xx, budget, auth, network.
             true,
