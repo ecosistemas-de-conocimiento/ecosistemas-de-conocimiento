@@ -40,10 +40,18 @@
 #     discapacidad   "vida con discapacidad"    -> Educación (moves)
 #     traduccion     "traducción en salud"      -> Salud     (stays)
 #     dengue         "prevención del dengue"    -> Salud     (stays)
+#   The rule is tema-based: a row moves when its `tema` is an Educación tema.
 #   A row with no `tema` falls back to the theme label in its title, the same
 #   way `themeFromSeededTitle` reads it ("… — acompañamiento escolar (…").
-#   Anything else (e2e residue, uploads, conversation documents, rows tied to a
-#   conversation) stays in `demo`.
+#   Rows with no Educación theme (e2e residue, uploads) stay in `demo`.
+#
+#   EXCEPTIONS, which also stay in `demo` whatever their theme: a document
+#   uploaded in a conversation (`uploaded_in_session_id`, or `session_id` on an
+#   old push-mode local schema; the script detects which column exists), linked
+#   to one (`documents_rels.sessions_id`), pinned by one (`sessions_rels`), or
+#   cited by a message (`messages_rels`). Moving those would leave a demo
+#   conversation pointing into another ecosistema, so they are skipped and
+#   counted, never unpinned.
 #
 #   ⚠ `discapacidad` is the arguable one. Measured on the local stack
 #   (2026-10-21, edc_backend, 60 rows with that tema): 23 mention school words
@@ -127,6 +135,21 @@ MODE=$([[ ${APPLY} == 1 ]] && echo "APPLY" || echo "DRY RUN")
 echo "== demo-ecosistemas (${MODE}); Educación temas: ${EDUCACION_TEMAS}"
 
 # ── 1. backend ──────────────────────────────────────────────────────────────
+# Which column ties a document to the conversation it was uploaded in.
+# Migrated schema (dev, staging): uploaded_in_session_id (migration
+# 20261017_231817). Old push-mode local schema: session_id.
+SESSION_COL="$(psql_on backend -A -t <<'SQL'
+SELECT column_name FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'documents'
+  AND column_name IN ('uploaded_in_session_id', 'session_id')
+ORDER BY column_name = 'uploaded_in_session_id' DESC LIMIT 1;
+SQL
+)"
+case "${SESSION_COL}" in
+  uploaded_in_session_id|session_id) echo "  backend: documents.${SESSION_COL} ties a document to its conversation" ;;
+  *) echo "documents has neither uploaded_in_session_id nor session_id; refusing to guess." >&2; exit 1 ;;
+esac
+
 # Prints `ids=<comma list>` and `edu=<org id>` on their own lines for step 2.
 BACKEND_OUT="$(psql_on backend -A -t \
   -v apply="${APPLY}" -v demo_slug="${DEMO_SLUG}" -v demo_name="${DEMO_NAME}" \
@@ -164,16 +187,25 @@ WITH ins AS (
   ON CONFLICT (user_id, organization_id) DO NOTHING RETURNING 1
 ) SELECT 'msg=memberships copied: ' || count(*) FROM ins;
 
--- 1d. which documents move. Only seeded corpus rows; never a row tied to a
---     conversation.
-CREATE TEMP TABLE moving ON COMMIT DROP AS
-SELECT d.id, d.publication_status, d.content_kind
+-- 1d. which documents move: an Educación theme (tema, else title label), and
+--     not tied to any conversation in any way. See the header.
+CREATE TEMP TABLE themed ON COMMIT DROP AS
+SELECT d.id,
+       d.${SESSION_COL} IS NULL
+       AND NOT EXISTS (SELECT 1 FROM documents_rels r WHERE r.parent_id = d.id AND r.sessions_id IS NOT NULL)
+       AND NOT EXISTS (SELECT 1 FROM sessions_rels r WHERE r.documents_id = d.id)
+       AND NOT EXISTS (SELECT 1 FROM messages_rels r WHERE r.documents_id = d.id) AS free
 FROM documents d
 WHERE d.organization_id = current_setting('demo.id')::int
-  AND d.session_id IS NULL
-  AND NOT EXISTS (SELECT 1 FROM documents_rels r WHERE r.parent_id = d.id AND r.sessions_id IS NOT NULL)
   AND (d.tema IN (${TEMAS_SQL})
        OR (d.tema IS NULL AND d.name ~ (' — (' || :'labels_re' || ') \(')));
+
+SELECT 'msg=Educación documents skipped, tied to a conversation (pinned, cited or uploaded there): '
+  || count(*) FROM themed WHERE NOT free;
+
+CREATE TEMP TABLE moving ON COMMIT DROP AS
+SELECT d.id, d.publication_status, d.content_kind
+FROM documents d JOIN themed t ON t.id = d.id AND t.free;
 
 SELECT 'msg=documents to move: ' || count(*)
   || ' (published ' || count(*) FILTER (WHERE publication_status = 'published')
@@ -201,14 +233,6 @@ WITH u AS (
   FROM documents d JOIN moving m ON m.id = d.id
   WHERE x.id = d.media_file_id AND x.organization_id = current_setting('demo.id')::int RETURNING 1
 ) SELECT 'msg=media files moved: ' || count(*) FROM u;
-
--- A conversation in demo that pinned a moved document would point across
--- ecosistemas. Unpin it there.
-WITH d AS (
-  DELETE FROM sessions_rels r USING sessions s, moving m
-  WHERE r.parent_id = s.id AND r.documents_id = m.id
-    AND s.organization_id = current_setting('demo.id')::int RETURNING 1
-) SELECT 'msg=pins removed from demo conversations: ' || count(*) FROM d;
 
 -- 1e. graph: copy the entities the moved documents use, repoint their
 --     mentions and relations, drop entities left with nothing.
@@ -293,6 +317,20 @@ if [[ ${APPLY} != 1 ]]; then
 fi
 
 # ── 2. ai-service ───────────────────────────────────────────────────────────
+ai_failed() {
+  if [[ ${APPLY} == 1 ]]; then
+    echo "" >&2
+    echo "🔴 THE BACKEND STEP IS COMMITTED BUT THE AI-SERVICE STEP FAILED." >&2
+    echo "   The moved documents are in '${EDU_NAME}', but their search index is" >&2
+    echo "   still in the demo corpora, so the chat will not find them there." >&2
+    echo "   Fix the error above and RE-RUN THE SAME COMMAND WITH --apply TO FINISH." >&2
+    echo "   The re-run skips the finished backend work and completes ai-service." >&2
+  else
+    echo "DRY RUN: the ai-service step failed (error above). Nothing was kept." >&2
+  fi
+  exit 1
+}
+trap ai_failed ERR
 psql_on ai -A -t -v apply="${APPLY}" -v demo="${DEMO_ID}" -v edu="${EDU_ID}" -v ids="${IDS}" <<'SQL' | sed 's/^/  ai-service: /'
 BEGIN;
 
@@ -423,6 +461,7 @@ WHERE d.external_id IN (SELECT external_id FROM want);
   ROLLBACK;
 \endif
 SQL
+trap - ERR
 
 if [[ ${APPLY} == 1 ]]; then
   echo "APPLIED. Members of '${DEMO_NAME}' now also see '${EDU_NAME}' in the ecosistema switch."

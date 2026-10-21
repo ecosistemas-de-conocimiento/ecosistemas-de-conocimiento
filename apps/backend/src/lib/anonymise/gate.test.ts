@@ -697,7 +697,6 @@ describe('runAnonymisationGate — common place nouns do not hold a document', (
               : [
                   { text: 'la escuela', type: 'lugar' },
                   { text: 'la colonia', type: 'lugar' },
-                  { text: 'la barranca', type: 'lugar' },
                   { text: 'La escuela', type: 'lugar' },
                 ]
           },
@@ -726,6 +725,9 @@ describe('runAnonymisationGate — common place nouns do not hold a document', (
     ['a town written like a noun', 'Vivo en La Barranca desde niña.', 'La Barranca'],
     ['a barrio with a name', 'Vivo en el barrio de San Juan.', 'el barrio de San Juan'],
     ['a free-form reference', 'Vivo en la casa de la reja verde.', 'la casa de la reja verde'],
+    // ⚠ Off the list since the 2026-10-21 audit: also the name of colonias.
+    ['"la barranca" from the dev screenshot', SEEN, 'la barranca'],
+    ['"la presa"', 'Ahora vivo en la presa con mis hijos.', 'la presa'],
   ])('🔴 still HOLDS on %s that survives', async (_case, text, finding) => {
     let calls = 0
     const missesThenFinds: PersonDetector = {
@@ -742,6 +744,33 @@ describe('runAnonymisationGate — common place nouns do not hold a document', (
     expect(result.status).toBe('hold')
     if (result.status !== 'hold') return
     expect(result.stage).toBe('verify')
+  })
+
+  it('🔴 still REDACTS a surname spelled like a place noun', async () => {
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Me ayudó la familia de los barrios.' },
+      { detector: staticDetector([{ text: 'los barrios', type: 'persona' }]) },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).not.toContain('barrios')
+  })
+
+  it('🔴 a persona finding spelled like a generic noun still HOLDS in verify', async () => {
+    let calls = 0
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Me ayudó la familia de la escuela.' },
+      {
+        detector: {
+          name: 'late',
+          async detect() {
+            calls += 1
+            return calls === 1 ? [] : [{ text: 'la escuela', type: 'persona' }]
+          },
+        },
+      },
+    )
+    expect(result.status).toBe('hold')
   })
 
   it('🔴 still REDACTS a named place in stage 3', async () => {

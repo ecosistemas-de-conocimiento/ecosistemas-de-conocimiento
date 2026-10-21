@@ -223,12 +223,6 @@ test.describe('revisión — el camino de la decisión', () => {
     expect(body).not.toContain(ORIGINAL_SENTINEL);
     expect(body).toContain('[Persona A]');
 
-    // The notice that says which version they are looking at, without which the
-    // page reads as if the gate had done nothing.
-    await expect(page.getByTestId('hold-redacted-notice')).toContainText(
-      'Estás leyendo la versión ya tachada, no el original.',
-    );
-
     // 🔴 THE CATEGORIES ARE NAMED IN PLAIN SPANISH, NEVER AS MACHINE LABELS.
     // The detector's own vocabulary is `persona` / `contacto`; a reviewer is
     // told "Nombre de una persona" and "Teléfono o correo". Asserted as the

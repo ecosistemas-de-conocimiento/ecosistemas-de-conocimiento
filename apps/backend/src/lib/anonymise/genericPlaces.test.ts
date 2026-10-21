@@ -7,26 +7,37 @@
 import { describe, expect, it } from 'vitest'
 
 import { isGenericPlace } from './genericPlaces'
+import type { DetectorFinding } from './types'
+
+const lugar = (text: string) => ({ text, type: 'lugar' as const })
 
 describe('isGenericPlace — common nouns are not addresses', () => {
-  // Seen on dev 2026-10-21 (`/revision`, screenshot 81): all three held a testimony.
-  it.each(['la escuela', 'la colonia', 'la barranca', 'La escuela', 'La colonia'])(
-    'drops "%s"',
-    (finding) => {
-      expect(isGenericPlace(finding)).toBe(true)
-    },
-  )
+  // Seen on dev 2026-10-21 (`/revision`, screenshot 81).
+  it.each(['la escuela', 'la colonia', 'La escuela', 'La colonia'])('drops "%s"', (text) => {
+    expect(isGenericPlace(lugar(text))).toBe(true)
+  })
 
   it.each(['el centro de salud', 'mi pueblo', 'la milpa', 'el mercado', 'escuela', 'las calles'])(
     'drops "%s"',
-    (finding) => {
-      expect(isGenericPlace(finding)).toBe(true)
+    (text) => {
+      expect(isGenericPlace(lugar(text))).toBe(true)
     },
   )
 })
 
-describe('isGenericPlace — 🔴 anything that can name a place still counts', () => {
+describe('isGenericPlace — 🔴 anything that can name a place or a person still counts', () => {
   it.each([
+    // words that are also names of colonias, localities or surnames (audit 2026-10-21)
+    'vivo en la presa',
+    'la presa',
+    'la barranca',
+    'la loma',
+    'el cerro',
+    'el ejido',
+    'la unidad',
+    'los barrios',
+    'la telesecundaria',
+    'la prepa',
     // a name after the noun
     'la colonia Portales',
     'la escuela Benito Juárez',
@@ -50,7 +61,16 @@ describe('isGenericPlace — 🔴 anything that can name a place still counts', 
     // nothing at all, or only a determiner
     '',
     'la',
-  ])('keeps "%s"', (finding) => {
-    expect(isGenericPlace(finding)).toBe(false)
+  ])('keeps lugar "%s"', (text) => {
+    expect(isGenericPlace(lugar(text))).toBe(false)
   })
+
+  it.each<DetectorFinding['type']>(['persona', 'otro', 'contacto', 'identificador'])(
+    'never drops a %s finding, even one spelled like a place noun',
+    (type) => {
+      // "los barrios" as a surname ("la familia de los Barrios" said in lower case).
+      expect(isGenericPlace({ text: 'los barrios', type })).toBe(false)
+      expect(isGenericPlace({ text: 'la escuela', type })).toBe(false)
+    },
+  )
 })

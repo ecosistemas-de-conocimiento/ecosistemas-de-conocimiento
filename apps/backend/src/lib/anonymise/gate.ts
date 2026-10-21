@@ -106,7 +106,7 @@ function survivorsSentence(count: number): string {
  * See `genericPlaces.ts` for how narrow the rule is.
  */
 function withoutGenericPlaces(findings: readonly DetectorFinding[]): DetectorFinding[] {
-  return findings.filter((f) => !isGenericPlace(f.text))
+  return findings.filter((f) => !isGenericPlace(f))
 }
 
 function countsByLabel(entries: Iterable<string>): RedactionCount[] {
