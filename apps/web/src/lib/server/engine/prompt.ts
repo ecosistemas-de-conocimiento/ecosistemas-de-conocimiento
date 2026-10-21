@@ -1,5 +1,6 @@
 /**
- * The chat system prompt. Pure (no `$env`), so the eval harness in
+ * The chat system prompt. Pure (no `$env`; the request-time cite variant is
+ * read in `./config`), so the eval harness in
  * `apps/backend/src/eval` imports this exact string instead of a copy.
  *
  * `CHUNK_DATA_RULE` pairs with the `<fuente>` fence that `./chunkFence` puts
@@ -79,21 +80,79 @@ export const CITE_RULE =
   `cubren. Contesta exactamente "${NO_ANSWER_REPLY}" y nada más solo si ningún ` +
   'pasaje tiene relación con la pregunta.';
 
-export const CHAT_SYSTEM_PROMPT =
-  'Eres un asistente que ayuda a una persona a consultar los documentos de su ' +
-  'ecosistema de conocimiento. Tienes acceso a un resumen del contexto (el ' +
-  'ecosistema y los documentos de la conversación) y a fragmentos recuperados ' +
-  'de esos documentos.\n\n' +
-  'Puedes razonar, proponer ideas y aportar conocimiento general. Pero cuando ' +
-  'afirmes hechos sobre el ecosistema o sus documentos, básate en el resumen ' +
-  'y en el contenido recuperado; no inventes detalles. Distingue con claridad ' +
-  'entre lo que consta en el contexto y tus propias sugerencias. Si el contexto ' +
-  'no alcanza para responder algo, dilo explícitamente.\n\n' +
-  CHUNK_DATA_RULE +
-  '\n\n' +
-  CITE_RULE +
-  '\n\n' +
-  PLAIN_LANGUAGE_RULE +
-  '\n\n' +
-  'Responde en español, de forma clara y concisa. Usa Markdown (encabezados, ' +
-  'listas, código) cuando ayude a la lectura.';
+/**
+ * Dev-only prompt A/B (2026-10-21). `CHAT_CITE_VARIANT` picks one of these
+ * cite rules per request (`chatCiteVariant` in `./config`, which reads
+ * `$env/dynamic/private`; this module stays `$env`-free for the eval harness),
+ * so dev compares variants without a rebuild. `A` is {@link CITE_RULE}
+ * (8a1df66). Unset or unknown is `A`, so staging and production keep it.
+ * No variant is measured yet; each line says what it is meant to test.
+ *
+ * - B, "cite less, answer more": at most 5 `[N]` groups per answer, one per
+ *   paragraph; answer from any related passage and say briefly what is missing.
+ * - C, "no refusal instruction": B's citation limit and no word about
+ *   {@link NO_ANSWER_REPLY}. Relies on the server-side net (`isNoAnswer`,
+ *   `hasRefusalCue` in `$lib/server/citationProvenance`) and the engine's
+ *   user-turn preamble.
+ * - D: B plus a worked example of a partial answer.
+ */
+const CITE_LIMIT_RULE =
+  'Cita solo las afirmaciones clave: pon el número del pasaje entre corchetes ' +
+  'al final de la frase, así: "El riego empezó en 2020 [2]." Regla firme: en ' +
+  'toda la respuesta, como máximo cinco grupos de números (tres suelen ' +
+  'bastar), como máximo un grupo por párrafo, y cada grupo con uno a tres ' +
+  'números: [1, 3]. No cites cada frase, ni tus propias ideas, ni una frase ' +
+  'que diga que falta información.';
+
+const PARTIAL_ANSWER_RULE =
+  'Responde con cualquier pasaje que tenga relación con la pregunta, aunque ' +
+  'solo cubra una parte de ella: empieza por lo que dicen y di en una frase ' +
+  'breve qué parte no cubren.';
+
+const PARTIAL_ANSWER_EXAMPLE = 'Por ejemplo: "Los testimonios cuentan X [1]; no mencionan Y."';
+
+const NO_ANSWER_ONLY_IF_UNRELATED =
+  `Contesta exactamente "${NO_ANSWER_REPLY}" y nada más solo si ningún ` +
+  'pasaje tiene relación con la pregunta.';
+
+export const CITE_VARIANTS = ['A', 'B', 'C', 'D'] as const;
+export type CiteVariant = (typeof CITE_VARIANTS)[number];
+
+export const CITE_RULE_VARIANTS: Record<CiteVariant, string> = {
+  A: CITE_RULE,
+  B: `${CITE_LIMIT_RULE} ${PARTIAL_ANSWER_RULE} ${NO_ANSWER_ONLY_IF_UNRELATED}`,
+  C: CITE_LIMIT_RULE,
+  D: `${CITE_LIMIT_RULE} ${PARTIAL_ANSWER_RULE} ${PARTIAL_ANSWER_EXAMPLE} ${NO_ANSWER_ONLY_IF_UNRELATED}`,
+};
+
+/** `CHAT_CITE_VARIANT` → a variant. Unset, blank or unknown is `A`; case and spaces are ignored. */
+export function parseCiteVariant(raw: string | undefined): CiteVariant {
+  const v = (raw ?? '').trim().toUpperCase();
+  return (CITE_VARIANTS as readonly string[]).includes(v) ? (v as CiteVariant) : 'A';
+}
+
+/** The chat system prompt carrying the given variant's cite rule. */
+export function chatSystemPrompt(variant: CiteVariant = 'A'): string {
+  return (
+    'Eres un asistente que ayuda a una persona a consultar los documentos de su ' +
+    'ecosistema de conocimiento. Tienes acceso a un resumen del contexto (el ' +
+    'ecosistema y los documentos de la conversación) y a fragmentos recuperados ' +
+    'de esos documentos.\n\n' +
+    'Puedes razonar, proponer ideas y aportar conocimiento general. Pero cuando ' +
+    'afirmes hechos sobre el ecosistema o sus documentos, básate en el resumen ' +
+    'y en el contenido recuperado; no inventes detalles. Distingue con claridad ' +
+    'entre lo que consta en el contexto y tus propias sugerencias. Si el contexto ' +
+    'no alcanza para responder algo, dilo explícitamente.\n\n' +
+    CHUNK_DATA_RULE +
+    '\n\n' +
+    CITE_RULE_VARIANTS[variant] +
+    '\n\n' +
+    PLAIN_LANGUAGE_RULE +
+    '\n\n' +
+    'Responde en español, de forma clara y concisa. Usa Markdown (encabezados, ' +
+    'listas, código) cuando ayude a la lectura.'
+  );
+}
+
+/** Variant A, the 8a1df66 prompt: the eval harness and the default path. */
+export const CHAT_SYSTEM_PROMPT = chatSystemPrompt('A');
