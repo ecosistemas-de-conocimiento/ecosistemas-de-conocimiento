@@ -22,6 +22,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { GraphEntityType } from './types'
+import { GRAPH_NOISE_KEY_PATTERN } from './noise'
 
 import {
   GRAPH_MIN_SUPPORT_DEFAULT,
@@ -109,6 +110,16 @@ const graphStatements: Record<string, GraphSql> = {
   'retrieve documents': retrieveDocumentsQuery(ORG, [ENTITY], GRAPH_MIN_SUPPORT_DEFAULT),
   'view edges': viewEdgesQuery(ORG, [ENTITY, 43], GRAPH_MIN_SUPPORT_DEFAULT),
 }
+
+describe('🔴 gate 4 — no language and no redaction placeholder, on every statement', () => {
+  for (const [name, query] of Object.entries(graphStatements)) {
+    it(`${name} excludes noise keys in SQL, with the shared pattern bound`, () => {
+      const { text, params } = renderSql(query)
+      expect(text).toMatch(/AND NOT \((e|ne)\.canonical_key ~ \$\d+\)/)
+      expect(params).toContain(GRAPH_NOISE_KEY_PATTERN)
+    })
+  }
+})
 
 describe('🔴 the three gates, on every statement that reads graph rows', () => {
   describe('gate 1 — the ecosistema is named explicitly, never inferred', () => {

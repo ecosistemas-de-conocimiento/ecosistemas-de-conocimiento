@@ -11,6 +11,7 @@ import {
   egoNeighbours,
   emptyGraphCopy,
   expandGraphQuery,
+  connectedEntities,
   filterEntities,
   GRAPH_EMPTY_NOTHING_PUBLISHED,
   GRAPH_EMPTY_NOTHING_PUBLISHED_HINT,
@@ -1647,6 +1648,37 @@ describe('parseGraphView edges', () => {
 
   it('reads an older backend with no edges as none', () => {
     expect(parseGraphView({ entities }).edges).toEqual([]);
+  });
+});
+
+describe('connectedEntities — the overview hides degree-0 nodes (owner, 2026-10-21)', () => {
+  const rows = [
+    entity('a', 'tema', 'Agua', 9),
+    entity('b', 'lugar', 'Oaxaca', 5),
+    entity('c', 'tema', 'Aislado', 7),
+    entity('d', 'evento', 'Solo consigo', 4),
+  ];
+  const edges = [
+    { fromId: 'a', toId: 'b', support: 3 },
+    { fromId: 'd', toId: 'd', support: 3 }, // a self-loop is not a connection
+    { fromId: 'c', toId: 'zz', support: 3 }, // nor is an edge to an unlisted id
+  ];
+
+  it('keeps only entities with an edge to another listed entity, in input order', () => {
+    expect(connectedEntities(rows, edges).map((e) => e.id)).toEqual(['a', 'b']);
+  });
+
+  it('draws nothing when nothing is connected', () => {
+    expect(connectedEntities(rows, [])).toEqual([]);
+  });
+
+  it('🔴 the lists still show every entity, isolated ones included', () => {
+    // The page passes `data.view.entities` through `filterEntities` to the lists
+    // and through `connectedEntities` only inside `OverviewGraph`.
+    expect(filterEntities(rows, '').map((e) => e.id)).toEqual(['a', 'b', 'c', 'd']);
+    expect(rows).toHaveLength(4); // not mutated
+    const drawn = overviewLayout(connectedEntities(rows, edges), edges).nodes.map((n) => n.id);
+    expect(drawn.sort()).toEqual(['a', 'b']);
   });
 });
 

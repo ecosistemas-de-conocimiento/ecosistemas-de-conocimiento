@@ -11,6 +11,7 @@ import {
   __resetSpecSlotForTests,
   dropForbiddenPersonas,
   dropGenericEntities,
+  dropNoiseEntities,
   extractGraph,
   GRAPH_SHAPE_POLICY,
   GRAPH_WORD_CLASSES,
@@ -384,10 +385,11 @@ describe('🔴 GRAPH_SHAPE_POLICY — the graph-shape decision, as data', () => 
       expect(cls.cost.length, `${name}.cost`).toBeGreaterThan(20)
       expect(cls.words.length, `${name}.words`).toBeGreaterThan(0)
     }
-    // 🔴 The owner's decision (2026-10-16): `español` ONLY. The 2026-09-04
-    // correction that keeps the indigenous languages is cited where it holds.
+    // The word-class layer still names `español` only. Since 2026-10-21 every
+    // language is dropped by the separate noise rule (`noise.ts`), and the
+    // rationale says so.
     expect(GRAPH_WORD_CLASSES.lengua.words).toEqual(['español', 'castellano'])
-    expect(GRAPH_WORD_CLASSES.lengua.rationale).toContain('2026-09-04')
+    expect(GRAPH_WORD_CLASSES.lengua.rationale).toContain('2026-10-21')
   })
 })
 
@@ -521,6 +523,8 @@ describe('🔴 dropGenericEntities — scoped to the types that name a particula
    * graph) is the language almost the whole corpus is written in: it links
    * everything and distinguishes nothing.
    */
+  // ⚠ `dropGenericEntities` ALONE. Since 2026-10-21 `dropNoiseEntities` drops
+  // every language after it — see the `extractGraph` noise test below.
   it('🔴 keeps all 11 corpus languages as `tema`, and drops only `español`', () => {
     const languages = [
       'náhuatl', 'mixteco', 'mazateco', 'zapoteco', 'totonaco', 'tlahuica',
@@ -675,6 +679,53 @@ describe('extractGraph', () => {
   beforeEach(() => {
     __resetSpecSlotForTests()
     vi.restoreAllMocks()
+  })
+
+  it('🔴 drops languages and redaction placeholders, of any type, with their relations', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const { client } = fakeClient([
+      okResponse(
+        [
+          { tipo: 'tema', etiqueta: 'náhuatl' },
+          { tipo: 'tema', etiqueta: 'Amuzgo' },
+          { tipo: 'tema', etiqueta: 'tlapaneco (me’phaa)' },
+          { tipo: 'organizacion', etiqueta: 'Totonaco' },
+          { tipo: 'tema', etiqueta: 'idioma español' },
+          { tipo: 'lugar', etiqueta: '[Domicilio B]' },
+          { tipo: 'lugar', etiqueta: 'Domicilio 1' },
+          { tipo: 'lugar', etiqueta: '[Lugar B]' },
+          { tipo: 'organizacion', etiqueta: '[Dato omitido]' },
+          { tipo: 'evento', etiqueta: 'Persona A' },
+          { tipo: 'tema', etiqueta: 'traducción del zapoteco al español' },
+          { tipo: 'lugar', etiqueta: 'Tlayacapan' },
+          { tipo: 'tema', etiqueta: 'personas sordas' },
+        ],
+        [
+          { desde: 'náhuatl', hacia: 'Tlayacapan', tipo: 'relacionado_con' },
+          { desde: 'traducción del zapoteco al español', hacia: '[Domicilio B]', tipo: 'ubicado_en' },
+          { desde: 'traducción del zapoteco al español', hacia: 'Tlayacapan', tipo: 'ocurre_en' },
+        ],
+      ),
+    ])
+    const out = await extractGraph({
+      docId: 7,
+      contentKind: 'testimonio',
+      text,
+      client,
+      windowChars: 5000,
+      maxWindows: 8,
+    })
+    expect(out.entities.map((e) => e.label).sort()).toEqual(
+      ['Tlayacapan', 'personas sordas', 'traducción del zapoteco al español'].sort(),
+    )
+    expect(out.relations).toEqual([
+      { fromKey: 'traduccion del zapoteco al español', toKey: 'tlayacapan', type: 'ocurre_en' },
+    ])
+  })
+
+  it('dropNoiseEntities leaves a clean window untouched', () => {
+    const w = { entities: [{ tipo: 'tema' as const, etiqueta: 'dengue', menciones: 1, fragmento: null }], relations: [] }
+    expect(dropNoiseEntities(w)).toBe(w)
   })
 
   const text = ['P1 ' + 'x'.repeat(200), 'P2 ' + 'y'.repeat(200), 'P3 ' + 'z'.repeat(200)].join(

@@ -83,6 +83,7 @@
 import { sql } from '@payloadcms/db-postgres'
 
 import { contentKindOf, titleFor, type ContentKind } from '../contentKind'
+import { GRAPH_NOISE_KEY_PATTERN } from './noise'
 import { canonicalKey } from './normalise'
 import { snippetAllowed, type GraphEntityType, type GraphRelationType } from './types'
 
@@ -354,6 +355,22 @@ function joinPublishedDocuments(alias: 'm' | 'r', organizationId: number): Graph
 }
 
 /**
+ * 🔴 GATE 4 — NO LANGUAGE AND NO REDACTION PLACEHOLDER (owner, 2026-10-21).
+ *
+ * `noise.ts` holds the pattern and the reasoning; the extractor already drops
+ * these labels, and THIS hides the rows written before it did. Matched on
+ * `canonical_key` — the writer's own accent/case fold — with the pattern bound
+ * as a parameter, so JavaScript and Postgres run the same regex text.
+ *
+ * Every statement gets it either directly on `graph_entities` or through
+ * {@link entitySupportCte}, which every edge/neighbour/document statement joins.
+ */
+function notNoise(alias: 'e' | 'ne'): GraphSql {
+  const col = alias === 'e' ? sql`e.canonical_key` : sql`ne.canonical_key`
+  return sql` AND NOT (${col} ~ ${GRAPH_NOISE_KEY_PATTERN})`
+}
+
+/**
  * Entity support, gated, as a CTE body.
  *
  * `COUNT(DISTINCT m.document_id)` — DISTINCT DOCUMENTS, never occurrences. ADR
@@ -366,6 +383,9 @@ function entitySupportCte(organizationId: number, minSupport: number): GraphSql 
            COUNT(DISTINCT m.document_id)::int AS support
     FROM graph_mentions m
     ${joinPublishedDocuments('m', organizationId)}
+    JOIN graph_entities ne
+      ON ne.id = m.entity_id
+     AND ne.organization_id = ${organizationId}${notNoise('ne')}
     WHERE m.organization_id = ${organizationId}
     GROUP BY m.entity_id
     HAVING COUNT(DISTINCT m.document_id) >= ${minSupport}`
@@ -428,7 +448,7 @@ export function entityViewQuery(args: EntityViewArgs): GraphSql {
         ON m.entity_id = e.id
        AND m.organization_id = ${organizationId}
       ${joinPublishedDocuments('m', organizationId)}
-      WHERE e.organization_id = ${organizationId}${typeFilter}${searchFilter}
+      WHERE e.organization_id = ${organizationId}${notNoise('e')}${typeFilter}${searchFilter}
       GROUP BY e.id, e.type, e.label
     ),
     visible AS (
@@ -601,7 +621,7 @@ export function entityDetailQuery(args: EntityDetailArgs): GraphSql {
       ON m.entity_id = e.id
      AND m.organization_id = ${organizationId}
     ${joinPublishedDocuments('m', organizationId)}
-    WHERE e.organization_id = ${organizationId}
+    WHERE e.organization_id = ${organizationId}${notNoise('e')}
       AND e.id = ${entityId}
     GROUP BY e.id, e.type, e.label
     HAVING COUNT(DISTINCT m.document_id) >= ${minSupport}`
@@ -939,7 +959,7 @@ export function matchableEntitiesQuery(organizationId: number, minSupport: numbe
       ON m.entity_id = e.id
      AND m.organization_id = ${organizationId}
     ${joinPublishedDocuments('m', organizationId)}
-    WHERE e.organization_id = ${organizationId}
+    WHERE e.organization_id = ${organizationId}${notNoise('e')}
     GROUP BY e.id, e.type, e.label, e.canonical_key
     HAVING COUNT(DISTINCT m.document_id) >= ${minSupport}
     ORDER BY support DESC, e.label ASC

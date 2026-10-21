@@ -31,7 +31,9 @@ import type { MigrateUpArgs } from '@payloadcms/db-postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { up as baselineUp } from '../../migrations/20260908_092211_baseline'
+import { purgeGraphNoise } from './purgeNoise'
 import {
+  matchableEntitiesQuery,
   readEntityDetail,
   readEntityView,
   readGraphRetrieval,
@@ -104,6 +106,9 @@ async function waitForQueries(candidate: Db): Promise<void> {
 //   e3 "Agua"            — published doc 101 only                                → below threshold
 //   e1 → e2 ocurre_en in 101 and 102                                             → edge support 2
 //   e1 → e3 relacionado_con in 101,102 — but e3 is below threshold               → never returned
+//   🔴 NOISE (gate 4) — above threshold and connected, and still never returned:
+//   e4 "náhuatl" (language), e5 "[Persona A]", e6 "Domicilio 1" — docs 101,102,
+//   e1 → e4 / e1 → e5 / e6 → e2 in 101 and 102. e22 "amuzgo" sits in org 2.
 const ORG = 1
 const OTHER_ORG = 2
 const MIN = 2
@@ -123,15 +128,25 @@ async function seed(): Promise<void> {
       (11, 1, 'tema',  'Consulta previa', 'consulta previa'),
       (12, 1, 'lugar', 'Oaxaca',          'oaxaca'),
       (13, 1, 'tema',  'Agua',            'agua'),
-      (21, 2, 'tema',  'Consulta previa', 'consulta previa');
+      (14, 1, 'tema',  'náhuatl',         'nahuatl'),
+      (15, 1, 'tema',  '[Persona A]',     '[persona a]'),
+      (16, 1, 'lugar', 'Domicilio 1',     'domicilio 1'),
+      (21, 2, 'tema',  'Consulta previa', 'consulta previa'),
+      (22, 2, 'tema',  'amuzgo',          'amuzgo');
     INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences) VALUES
       (1, 101, 11, 4), (1, 102, 11, 1), (1, 103, 11, 2), (1, 104, 11, 9),
       (1, 101, 12, 1), (1, 102, 12, 3),
       (1, 101, 13, 1),
-      (2, 201, 21, 1), (2, 202, 21, 1);
+      (1, 101, 14, 5), (1, 102, 14, 5), (1, 101, 15, 2), (1, 102, 15, 2),
+      (1, 101, 16, 1), (1, 102, 16, 1),
+      (2, 201, 21, 1), (2, 202, 21, 1), (2, 201, 22, 1), (2, 202, 22, 1);
     INSERT INTO graph_relations (organization_id, document_id, from_entity_id, to_entity_id, type) VALUES
       (1, 101, 11, 12, 'ocurre_en'), (1, 102, 11, 12, 'ocurre_en'),
-      (1, 101, 11, 13, 'relacionado_con'), (1, 102, 11, 13, 'relacionado_con');
+      (1, 101, 11, 13, 'relacionado_con'), (1, 102, 11, 13, 'relacionado_con'),
+      (1, 101, 11, 14, 'relacionado_con'), (1, 102, 11, 14, 'relacionado_con'),
+      (1, 101, 11, 15, 'relacionado_con'), (1, 102, 11, 15, 'relacionado_con'),
+      (1, 101, 16, 12, 'ubicado_en'),      (1, 102, 16, 12, 'ubicado_en'),
+      (2, 201, 21, 22, 'relacionado_con'), (2, 202, 21, 22, 'relacionado_con');
   `)
 }
 
@@ -223,6 +238,20 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
     expect(fromOaxaca?.neighbours.map((n) => [n.entity.id, n.direction])).toEqual([[11, 'in']])
   })
 
+  it('🔴 gate 4: stored language and placeholder rows are hidden from every read', async () => {
+    const view = await readEntityView(payload, { organizationId: ORG, minSupport: MIN })
+    expect(view.entities.map((e) => e.id)).toEqual([11, 12])
+    expect(view.hidden).toBe(1) // only "Agua"; noise is neither shown nor counted
+    for (const id of [14, 15, 16]) {
+      expect(await readEntityDetail(payload, { organizationId: ORG, entityId: id, minSupport: MIN })).toBeNull()
+    }
+    const matchable = rows(await db.execute(matchableEntitiesQuery(ORG, MIN)))
+    expect(matchable.map((r) => r.id).sort()).toEqual([11, 12])
+    const edges = rows(await db.execute(retrieveEdgesQuery(ORG, [11, 12, 14, 15, 16], MIN)))
+    expect(edges.map((r) => [r.from_id, r.to_id])).toEqual([[11, 12]])
+    expect(rows(await db.execute(retrieveDocumentsQuery(ORG, [14, 15, 16], MIN)))).toEqual([])
+  })
+
   it('never crosses the ecosistema boundary, even when handed another org’s ids', async () => {
     const other = await readGraphRetrieval(payload, {
       organizationId: OTHER_ORG,
@@ -233,5 +262,32 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
     expect(other.documents.map((d) => d.id)).toEqual([202, 201])
 
     expect(rows(await db.execute(retrieveDocumentsQuery(ORG, [21], MIN)))).toEqual([])
+  })
+  // ⚠ LAST: these mutate the seeded world.
+  it('purge-graph-noise: the dry run counts and mutates nothing', async () => {
+    const count = async () =>
+      rows(await db.execute(sql`SELECT (SELECT COUNT(*) FROM graph_entities)::int AS e,
+        (SELECT COUNT(*) FROM graph_mentions)::int AS m, (SELECT COUNT(*) FROM graph_relations)::int AS r`))[0]
+    const before = await count()
+    const all = await purgeGraphNoise(payload, {})
+    expect(all).toMatchObject({ apply: false, entities: 4, mentions: 8, relations: 8 })
+    const one = await purgeGraphNoise(payload, { organizationId: ORG })
+    expect(one).toMatchObject({ entities: 3, mentions: 6, relations: 6 })
+    expect([...one.sample].sort()).toEqual(['1/lugar/Domicilio 1', '1/tema/[Persona A]', '1/tema/náhuatl'])
+    expect(await count()).toEqual(before)
+  })
+
+  it('purge-graph-noise: apply deletes only matching rows, scoped, and is idempotent', async () => {
+    const report = await purgeGraphNoise(payload, { apply: true, organizationId: ORG })
+    expect(report).toMatchObject({ apply: true, entities: 3, mentions: 6, relations: 6 })
+    const ids = rows(await db.execute(sql`SELECT id FROM graph_entities ORDER BY id`)).map((r) => r.id)
+    expect(ids).toEqual([11, 12, 13, 21, 22]) // org 2's "amuzgo" was out of scope
+    const rels = rows(await db.execute(sql`SELECT COUNT(*)::int AS n FROM graph_relations WHERE organization_id = 1`))
+    expect(rels[0].n).toBe(4)
+    const again = await purgeGraphNoise(payload, { apply: true, organizationId: ORG })
+    expect(again).toMatchObject({ entities: 0, mentions: 0, relations: 0 })
+    // The real graph is untouched.
+    const view = await readEntityView(payload, { organizationId: ORG, minSupport: MIN })
+    expect(view.edges).toEqual([{ from: 11, to: 12, support: 2 }])
   })
 })

@@ -1253,6 +1253,33 @@ export interface OverviewLayout {
 }
 
 /**
+ * The entities the WHOLE-GRAPH OVERVIEW draws: only those with at least one
+ * edge to another listed entity. Owner rule 2026-10-21, chosen (review).
+ *
+ * ⚠ OVERVIEW ONLY. The entity lists and the panel still get every entity, so
+ * an isolated one stays findable. Degree is counted on the edges the backend
+ * returned, which are already past every filter (threshold, languages,
+ * placeholders), so "isolated" means isolated in what the member can see.
+ *
+ * Why so many are isolated: an edge needs ≥ `GRAPH_MIN_SUPPORT` published
+ * documents for the SAME (from, to, relation type), while an entity needs that
+ * many documents mentioning it at all — see `queries.ts` `viewEdgesQuery`.
+ */
+export function connectedEntities(
+  entities: readonly GraphEntity[],
+  edges: readonly GraphViewEdge[],
+): GraphEntity[] {
+  const ids = new Set(entities.map((e) => e.id));
+  const linked = new Set<string>();
+  for (const e of edges) {
+    if (e.fromId === e.toId || !ids.has(e.fromId) || !ids.has(e.toId)) continue;
+    linked.add(e.fromId);
+    linked.add(e.toId);
+  }
+  return entities.filter((e) => linked.has(e.id));
+}
+
+/**
  * Lay the whole graph out. Pure and deterministic; see the section header.
  *
  * Fruchterman–Reingold with a weak pull to the centre, so entities with no

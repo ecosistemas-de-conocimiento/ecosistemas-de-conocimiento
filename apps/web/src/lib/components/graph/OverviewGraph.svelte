@@ -26,6 +26,7 @@
     OVERVIEW_RESET,
     OVERVIEW_ZOOM_IN,
     OVERVIEW_ZOOM_OUT,
+    connectedEntities,
     overviewLayout,
     overviewLegend,
     supportShort,
@@ -51,7 +52,8 @@
   };
   let { entities, edges, selectedId, matches, panelNeighbourIds = [], onSelect }: Props = $props();
 
-  const layout = $derived(overviewLayout(entities, edges));
+  // Isolated entities are not drawn here; the lists below still show them.
+  const layout = $derived(overviewLayout(connectedEntities(entities, edges), edges));
   const legend = overviewLegend();
 
   const MIN_K = 0.6;

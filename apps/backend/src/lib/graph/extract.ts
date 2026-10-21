@@ -43,6 +43,11 @@
  * {@link GRAPH_WORD_CLASSES} hold the reasoning and the measurement; read them
  * before widening the rule.
  *
+ * 🔴 LANGUAGES AND REDACTION PLACEHOLDERS are a separate rule since
+ * 2026-10-21 — {@link dropNoiseEntities}, `noise.ts` — dropped for EVERY type,
+ * and the one rule here that is also applied at read time. It supersedes the
+ * "indigenous languages stay `tema`" decision described above.
+ *
  * ⚠ IT RUNS AT EXTRACTION TIME, NEVER AT READ TIME. A filter in `queries.ts`
  * would change what the view shows the moment the code landed — unversioned,
  * unstamped and invisible to anyone measuring the graph. This one is stamped
@@ -54,6 +59,7 @@
  */
 
 import { mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
+import { isGraphNoiseLabel } from './noise'
 import { canonicalKey, displayLabel } from './normalise'
 import {
   GRAPH_EXTRACT_UNIT_TYPE,
@@ -500,11 +506,10 @@ export const GRAPH_WORD_CLASSES = {
     rule: 'La lengua en que está escrito casi todo el corpus: el español.',
     rationale:
       'Casi todo el corpus está en español, así que como nodo "español" une ' +
-      'casi todos los documentos y no distingue ninguno. 🔴 SÓLO el español. ' +
-      'Las 11 lenguas indígenas SIGUEN siendo tema, por decisión del dueño ' +
-      '(corrección del 2026-09-04, confirmada el 2026-10-16): distinguen ' +
-      'documentos, y para los testimonios la columna documents.lengua es NULL ' +
-      'a propósito (ADR §18.5), así que el grafo es donde su lengua se ve.',
+      'casi todos los documentos y no distingue ninguno. ⚠ Desde el ' +
+      '2026-10-21 el dueño quitó TODAS las lenguas del grafo, de cualquier ' +
+      'tipo (noise.ts, dropNoiseEntities); esta clase queda como la primera ' +
+      'versión de esa regla.',
     cost:
       'Medido en el grafo v3 el 2026-10-16: descarta un solo nodo, español ' +
       '(93 documentos), el más grande del grafo.',
@@ -684,6 +689,23 @@ export function dropGenericEntities(window: ParsedWindow): ParsedWindow {
   if (dropped.length === 0) return window
   console.log(
     '[graph] etiquetas genéricas descartadas:',
+    dropped.map((e) => `${e.tipo}/${e.etiqueta}`).join(', '),
+  )
+  return dropEntitiesWhere(window, reject)
+}
+
+/**
+ * 🔴 NO LANGUAGE AND NO REDACTION PLACEHOLDER IS EVER A NODE, of any type.
+ * Owner decision 2026-10-21; the label sets and the reasoning are in
+ * `noise.ts`. Unlike the shape policy above, this rule ALSO runs at read time
+ * (`queries.ts`), so rows written before it are hidden without a re-extraction.
+ */
+export function dropNoiseEntities(window: ParsedWindow): ParsedWindow {
+  const reject = (e: RawEntity): boolean => isGraphNoiseLabel(e.etiqueta)
+  const dropped = window.entities.filter(reject)
+  if (dropped.length === 0) return window
+  console.log(
+    '[graph] lenguas y marcadores de anonimización descartados:',
     dropped.map((e) => `${e.tipo}/${e.etiqueta}`).join(', '),
   )
   return dropEntitiesWhere(window, reject)
@@ -997,9 +1019,12 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
     // Neither depends on the other's output, so the order is a statement of
     // which one may never be skipped rather than a data dependency.
     // Then the place split: it only renames and adds `lugar`s, so it runs on
-    // what the two rules above already kept.
+    // what the two rules above already kept. The noise rule runs LAST, so a
+    // `[Domicilio A], Morelos` split into `[Domicilio A]` is still caught.
     parsedWindows.push(
-      splitQualifiedPlaces(dropGenericEntities(dropForbiddenPersonas(shaped, contentKind))),
+      dropNoiseEntities(
+        splitQualifiedPlaces(dropGenericEntities(dropForbiddenPersonas(shaped, contentKind))),
+      ),
     )
   }
 
