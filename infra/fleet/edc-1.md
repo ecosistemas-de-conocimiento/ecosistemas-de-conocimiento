@@ -1,8 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `d12f0b4` (UX batches 1–5: pinned docs,
-documents page, closed sign-up, whole graph, Revisión wording), deployed 2026-10-21 08:51 UTC — see
-§4n. Before that, dev ran `39823b3` (conversation delete erases its
+**Status:** live since 2026-10-17. Dev runs `main` @ `2f60202` (UX batches 6–8: explainers
+removed, grouped citations, draft retrieve cap, pinned new conversation, polling badges, upload
+sniffing), deployed 2026-10-21 09:17 UTC — see §4o. Before that, dev ran `d12f0b4` (UX batches 1–5:
+pinned docs, documents page, closed sign-up, whole graph, Revisión wording; 08:51 UTC, §4n). Before that, dev ran `39823b3` (conversation delete erases its
 turns from ai-service; ratings FKs cascade; 2026-10-20 20:10 UTC, §4m). Before that,
 dev ran `8b6a60b` (prompt-injection fence in the chat prompt; 19:54 UTC, §4l). Before that, dev ran `29f61b3` (backend migration
 `documents.uploaded_in_session_id`, testimonio drafts cascade, files deleted with their document),
@@ -664,6 +665,63 @@ After cleanup (SQL, `find`): 0 sessions; 257 backend documents (248 `ready`), 24
 ("Prueba bug 37", created 09:04 UTC) is not from this run and was left alone.
 
 **Disk**, `df -h /` free: 61 GB before; 47 GB after each build; 60 GB after each `docker builder
+prune -af` (12.96 GB) and removing the previous dev images. Images 7.5 GB, build cache 0.
+
+### 4o. ✅ Done 2026-10-21 09:08–09:35 UTC: `b7df3d1`, then `2f60202`, dev only
+
+All measured by the deploy agent. Staging was not touched. Dev was resolved by its domain through
+the API before each deploy. Web-only changes (`git diff --name-only`: `apps/web` only); no
+migration (`payload_migrations` 3, `edc_ai` current at 6). Desktop checks only (1366 px), as asked.
+
+| build | contents | deploy (API poll every 20 s) | backup, sha256 matched off-box |
+|---|---|---|---|
+| `b7df3d1` | UX batch 6: explainer paragraphs removed, phone layout, upload cap by kind | 09:08:53 → 09:14:38 | `/root/backups/20261021T0908Z/` |
+| `2f60202` | batch 7 `02a826b` (grouped citations clickable, draft retrieve capped at 20, graph labels) + batch 8 `a68466f` (attach fix, pinned new conversation, polling badges, uploads checked by first bytes) | 09:17:38 → 09:23:01 | `20261021T0916Z` |
+
+Coolify built `main`'s head at queue time, `2f60202`, so batch 7 was never built on its own. After
+each deploy: 6 containers `healthy`, health 200, `RERANK_API_KEY` `4dbc5b378dde` everywhere, no
+non-preview variable holds `:?` text.
+
+**Batch 6 on `b7df3d1`** (Playwright, admin, 1366 px; screenshots of sign-in, chat, Mis
+documentos, Biblioteca, Conexiones, Revisión, Administración). No horizontal scroll on any screen
+(`scrollWidth` 1366 = viewport). No page errors. Sign-in, chat, Mis documentos, Biblioteca and
+Revisión show no explainer paragraph. Text that still explains or instructs, quoted per screen:
+
+- Chat: the composer placeholder "Escribe un mensaje… (@ para mencionar · Enter envía,
+  Shift+Enter salto de línea)".
+- Conexiones: "Mapa con 124 elementos y 54 conexiones entre ellos. La lista de abajo tiene la misma
+  información." and "Elige un tema, lugar, evento, organización o persona para ver con qué se
+  conecta."
+- Administración: "Todo lo que ha reunido Organización Demo, y quién lo aportó." · "Quien los subió
+  puede reintentarlos desde su panel." · "Cada persona del ecosistema y lo que ha subido." · "Las
+  grabaciones se transcriben solas. Aquí se ve si funcionó." · "Todavía nadie ha subido audio a este
+  ecosistema. Cuando alguien suba una grabación, se transcribe sola y aparece aquí." · "Cuánto se
+  conversa, cuánto cuesta y con qué modelos. Nunca lo que se dijo." · "Presupuesto de IA: … Es todo
+  lo que el servicio de IA cobró a este ecosistema: respuestas, preparación de búsquedas e indexación
+  de documentos." · "Las estrellas y, sobre todo, los motivos." · "El corpus completo del ecosistema.
+  Solo el registro: quién lo subió, cuándo y en qué estado — nunca el contenido de un borrador."
+
+Chat smoke on `b7df3d1`: upload → `ready` in 2.2 s; two answers from it, first token 6.8 s / 6.4 s,
+full 8.5 s / 6.7 s; the conversation delete removed the upload from all 5 places of §4i.
+
+**Batches 7 and 8 on `2f60202`:**
+
+| check | result |
+|---|---|
+| Grouped citations | A stored answer held 11 groups such as `[1, 2, 3, 6, 8]` (`messages.content`). The UI rendered **39 buttons**, one per number in those groups; all 39 clicked without error. A group shows as `[1][2][3]…` |
+| Draft retrieve cap, 3 chats with a pinned doc | `eco-1-draft-1` topK **20** every time (was 32 in §4n); 0 `rerank degraded` over the run (16 `rerank ok` since the deploy). Answers 7.1–8.4 s |
+| `/grafo` labels | 16 visible labels, **0 overlapping pairs** (bounding boxes); a label can still sit over a dot (screenshot) |
+| Attach a doc to an existing conversation | `POST /api/sessions/<id>/documents/<doc>` → 200. To a deleted conversation → 404 `session_not_found` (no 400) |
+| Mis documentos "Nueva conversación con este documento" | opens a new chat with the doc in the panel and `fijar` **checked**. A question without `@` was answered from it: "…lo preside Rosa Elvira Tzompa. La meta para 2026 es reforestar 5 hectáreas junto al arroyo Tecolutla." |
+| Badge without reload | upload from Mis documentos: INDEXANDO… → **LISTO in 3.1 s**, no reload (closes the §4n item) |
+| mp3 renamed `.pdf` | 400 `unsupported_kind`, `reason: content_mismatch`, on `/api/documentos` and on `/api/sessions/<id>/documents`, with either content type (closes the §4n item) |
+
+Cleanup: my 7 conversations (including one the chat screen created on open) and 2 documents
+deleted. After (SQL, `find`): 0 sessions; 257 backend documents (248 `ready`), 248 ai-service,
+0 `msg-*`, 249 chunks, 0 orphan chunks; 5 `media` rows and 5 RustFS objects, 0 without a
+document; users 1 and 2.
+
+**Disk**, `df -h /` free: 60 GB before; 47 GB after each build; 60 GB after each `docker builder
 prune -af` (12.96 GB) and removing the previous dev images. Images 7.5 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
