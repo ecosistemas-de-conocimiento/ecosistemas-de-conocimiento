@@ -17,9 +17,7 @@ export function uploadErrorToast(
         title: 'El archivo es muy grande',
         // The limit depends on what was being uploaded — audio gets a much
         // larger one — so quote the cap that actually applied, not a constant.
-        message: AUDIO_UPLOAD_ENABLED
-          ? `El máximo es ${formatBytes(limitBytes)}. Prueba con un archivo más chico, o con una grabación más corta.`
-          : `El máximo es ${formatBytes(limitBytes)}. Prueba con un archivo más chico.`,
+        message: `El máximo es ${formatBytes(limitBytes)}.`,
       };
     case 'unsupported_media_type':
     case 'unsupported_kind':
@@ -74,7 +72,7 @@ export function uploadErrorToast(
       if (status === 401) return uploadErrorToast('unauthorized', status, limitBytes);
       return {
         title: 'No se pudo subir el archivo',
-        message: 'Algo falló de nuestro lado. Inténtalo de nuevo en un momento.',
+        message: 'Inténtalo de nuevo en un momento.',
       };
   }
 }

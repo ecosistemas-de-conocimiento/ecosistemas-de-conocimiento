@@ -17,7 +17,7 @@
    * what the ecosistema has PUBLISHED — shared, everyone's, read-only. This is
    * what YOU have, drafts and loose files included, with the actions that
    * change them. Someone holding both screens must never have to wonder which
-   * one to open, so each says whose documents it is showing in its subtitle.
+   * one to open, so each names whose documents it is showing in its heading.
    *
    * ⚠ NOTHING HERE NAMES A TENANT. The ecosistema is resolved server-side from
    * the validated selection cookie by `GET /api/documentos`; this file sends a
@@ -25,11 +25,7 @@
    */
   import { Button } from '$lib/primitives';
   import { app } from '$lib/stores/app.svelte';
-  import {
-    deleteConfirmCopy,
-    LOOSE_DOC_EXPLANATION,
-    LOOSE_DOC_OPTIONS,
-  } from '$lib/documents';
+  import { deleteConfirmCopy } from '$lib/documents';
   import { ingestBadge } from '$lib/ingest';
   import { canRetryGraph, GRAPH_RETRY_LABEL, graphBadge } from '$lib/graphStatus';
   import { publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
@@ -233,12 +229,6 @@
     <div>
       <p class="kicker">Tus documentos</p>
       <h1>Mis documentos</h1>
-      <p class="sub">
-        <!-- ⚠ The `{' '}` is load-bearing: Svelte trims the whitespace that
-             opens an `{#if}` block, which rendered "has subidoa" (backlog #20). -->
-        Todo lo que has subido{#if app.ecosystem}{' '}a <strong>{app.ecosystem.name}</strong
-          >{/if}, incluidos los que nadie más ve.
-      </p>
     </div>
     <div class="head-actions">
       <input
@@ -281,32 +271,22 @@
       onclick={() => (filter = 'sueltos')}
       data-testid="filter-sueltos"
     >
-      Sin conversación
+      Sin conversación{#if looseCount > 0}{' '}({looseCount}){/if}
     </button>
-    {#if filter === 'all' && looseCount > 0}
-      <span class="filter-hint">
-        {looseCount === 1
-          ? 'Tienes 1 documento que no está en ninguna conversación.'
-          : `Tienes ${looseCount} documentos que no están en ninguna conversación.`}
-      </span>
-    {/if}
   </div>
 
   {#if app.ownedDocsDegraded}
     <!-- ⚠ "No pudimos leer", never "no tienes". A failed read shown as an empty
          list tells someone their documents are gone. -->
-    <p class="notice">
-      No pudimos leer tus documentos en este momento. Vuelve a intentarlo en un rato.
-    </p>
+    <p class="notice">No pudimos leer tus documentos. Inténtalo más tarde.</p>
   {:else if app.ownedDocsLoading && !app.ownedDocsReady}
     <p class="notice">Cargando tus documentos…</p>
   {:else if docs.length === 0}
     <p class="notice">
       {#if filter === 'sueltos'}
-        Todos tus documentos están en alguna conversación. No hay nada suelto.
+        No hay documentos sin conversación.
       {:else}
-        Todavía no has subido ningún documento. Usa «Subir documento», arriba, o el panel de
-        documentos de una conversación.
+        Todavía no has subido ningún documento.
       {/if}
     </p>
   {:else}
@@ -319,7 +299,7 @@
         {@const graph = graphBadge(d.graphStatus)}
         <li class="row" class:loose data-testid={`owned-doc-${d.id}`}>
           <div class="row-head">
-            <span class="name">{d.title}</span>
+            <span class="name" title={d.title}>{d.title}</span>
             {#if d.kind && d.kind !== 'markdown'}
               <span class="chip">{d.kind}</span>
             {/if}
@@ -337,14 +317,7 @@
           </div>
 
           {#if loose}
-            <!-- 🔴 THE SENTENCE THIS SCREEN EXISTS FOR. On the row, in full,
-                 never in a tooltip: a person who does not know a loose document
-                 is unread will assume the assistant is using a file it has
-                 never seen. -->
-            <p class="loose-note" data-testid={`loose-note-${d.id}`}>
-              <strong>{LOOSE_DOC_EXPLANATION}</strong>
-              {LOOSE_DOC_OPTIONS}
-            </p>
+            <p class="loose-note" data-testid={`loose-note-${d.id}`}>Sin conversación</p>
           {:else}
             <p class="where">
               Se usa en:
@@ -361,17 +334,10 @@
           {/if}
 
           <div class="actions">
+            <!-- Backlog #2, owner ruling 2026-10-21: the primary action. The new
+                 conversation pins the document (`startSessionWithDoc`). -->
             <Button
-              variant="outline"
-              size="sm"
-              label="Usar en una conversación"
-              disabled={busyId === d.id}
-              dataTestId={`use-${d.id}`}
-              onClick={() => openPicker(d)}
-            />
-            <!-- Backlog #2. The store action lands from the chat lane. -->
-            <Button
-              variant="outline"
+              variant="solid"
               size="sm"
               label="Nueva conversación con este documento"
               disabled={busyId === d.id}
@@ -379,6 +345,14 @@
               onClick={async () => {
                 if (await app.startSessionWithDoc(d.id, filter)) await goto('/');
               }}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              label="Usar en una conversación"
+              disabled={busyId === d.id}
+              dataTestId={`use-${d.id}`}
+              onClick={() => openPicker(d)}
             />
             {#if gate.canPublish}
               <Button
@@ -438,9 +412,7 @@
                      it sends someone to create a conversation they already have. -->
                 <p class="picker-empty">Cargando tus conversaciones…</p>
               {:else if app.sessions.length === 0}
-                <p class="picker-empty">
-                  Todavía no tienes conversaciones. Crea una en el chat y vuelve aquí.
-                </p>
+                <p class="picker-empty">Todavía no tienes conversaciones.</p>
               {:else}
                 <label class="picker-label" for={`convo-${d.id}`}>
                   ¿En cuál conversación quieres usarlo?
@@ -469,9 +441,6 @@
                     onClick={() => attach(d)}
                   />
                 </div>
-                <p class="picker-note">
-                  El documento no se mueve: se agrega a esa conversación y sigue donde ya estaba.
-                </p>
               {/if}
             </div>
           {/if}
@@ -484,6 +453,9 @@
 <style>
   .page {
     min-height: 100vh;
+    /* Flex item of the layout's `.app-main`: without this a long unbroken
+       title sets the page's min-content width (same fix as /biblioteca). */
+    min-width: 0;
     max-width: 60rem;
     margin: 0 auto;
     padding: var(--edc-space-6) var(--edc-space-5) var(--edc-space-8);
@@ -512,14 +484,6 @@
     font-size: 1.7rem;
     font-weight: 800;
     letter-spacing: -0.02em;
-    color: var(--edc-color-ink);
-  }
-  .sub {
-    margin: 0;
-    font-size: 0.86rem;
-    color: var(--edc-color-ink-soft);
-  }
-  .sub strong {
     color: var(--edc-color-ink);
   }
   .head-actions {
@@ -571,10 +535,6 @@
     outline: none;
     box-shadow: 0 0 0 3px var(--edc-focus-ring);
   }
-  .filter-hint {
-    font-size: 0.78rem;
-    color: var(--edc-color-ink-soft);
-  }
 
   .notice {
     margin: 0;
@@ -614,11 +574,19 @@
     flex-wrap: wrap;
     gap: 0.4rem;
   }
+  /* Two lines at most, then "…" (UX backlog #24: phone titles were cut with
+     no sign that they were cut). The full title is in the tooltip. */
   .name {
     font-size: 0.95rem;
     font-weight: 700;
     color: var(--edc-color-ink);
     overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    min-width: 0;
   }
   .chip {
     padding: 0.1rem 0.4rem;
@@ -675,9 +643,6 @@
     font-size: 0.84rem;
     line-height: 1.55;
     color: var(--edc-color-ink-body);
-  }
-  .loose-note strong {
-    color: var(--edc-color-ink);
   }
   .where {
     margin: 0;
@@ -755,7 +720,6 @@
     outline: none;
     box-shadow: 0 0 0 3px var(--edc-focus-ring);
   }
-  .picker-note,
   .picker-empty {
     margin: 0;
     font-size: 0.75rem;

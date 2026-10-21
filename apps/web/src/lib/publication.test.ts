@@ -149,14 +149,14 @@ describe('publishGate', () => {
     });
   });
 
-  it('gives every blocked reason actionable copy', () => {
-    for (const reason of [
-      'already-published',
-      'in-progress',
-      'not-ingested',
-      'ingest-failed',
-    ] as const) {
-      expect(publishBlockedCopy(reason).length).toBeGreaterThan(0);
+  it('stays silent where the badge already says it, one short line otherwise', () => {
+    expect(publishBlockedCopy('already-published')).toBe('');
+    expect(publishBlockedCopy('in-progress')).toBe('');
+    for (const reason of ['not-ingested', 'ingest-failed'] as const) {
+      const copy = publishBlockedCopy(reason);
+      expect(copy.length).toBeGreaterThan(0);
+      // One sentence: no explainer (UX backlog #33).
+      expect(copy.split('. ').length).toBe(1);
     }
   });
 });

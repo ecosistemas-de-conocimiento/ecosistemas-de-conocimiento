@@ -226,19 +226,20 @@ export function publicationBadge(status: PublicationStatus): PublicationBadge {
   }
 }
 
-/** Why the publish button is unavailable, in words the user can act on. */
+/**
+ * Why the publish button is unavailable — one short line, or `''` when the
+ * card already shows it (the "Publicado" / "Publicando…" badge). No
+ * explainer sentences (UX backlog #33).
+ */
 export function publishBlockedCopy(reason: PublishBlockedReason): string {
   switch (reason) {
     case 'already-published':
-      return 'Ya está publicado en tu ecosistema.';
     case 'in-progress':
-      // Covers `publishing` AND `unpublishing`, so it names neither direction:
-      // "ya se está publicando" would be a lie on a document being unpublished.
-      return 'Hay un cambio de publicación en curso. Espera a que termine.';
+      return '';
     case 'not-ingested':
-      return 'Espera a que termine de procesarse el documento para publicarlo.';
+      return 'Se podrá publicar cuando esté listo.';
     case 'ingest-failed':
-      return 'No se pudo procesar el documento, así que no puede publicarse. Bórralo y súbelo de nuevo.';
+      return 'No se pudo procesar.';
   }
 }
 

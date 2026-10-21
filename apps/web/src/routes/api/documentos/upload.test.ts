@@ -14,6 +14,7 @@ vi.mock('$lib/server/holds', () => ({
 import { POST } from './+server';
 import { backendFetch } from '$lib/server/auth';
 import { resolveEcosystem } from '$lib/server/ecosystem';
+import { MAX_UPLOAD_BYTES } from '$lib/config';
 
 const mockedBackendFetch = backendFetch as unknown as ReturnType<typeof vi.fn>;
 const mockedResolve = resolveEcosystem as unknown as ReturnType<typeof vi.fn>;
@@ -85,6 +86,22 @@ describe('POST /api/documentos (upload with no conversation)', () => {
     const res = await POST(makeEvent(new File(['x'], 'voz.m4a', { type: 'audio/mp4' })));
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'unsupported_kind' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // Audit fix: the cap follows the SETTLED kind, not the browser's MIME. A PDF
+  // sent as `audio/mp4` used to get the 200 MB audio cap instead of 20 MB.
+  it('caps a PDF at the document limit even when its MIME type says audio', async () => {
+    const big = new File([new Uint8Array(MAX_UPLOAD_BYTES + 1)], 'informe.pdf', {
+      type: 'audio/mp4',
+    });
+    const res = await POST(makeEvent(big));
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({
+      error: 'file_too_large',
+      limit: MAX_UPLOAD_BYTES,
+      kind: 'pdf',
+    });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

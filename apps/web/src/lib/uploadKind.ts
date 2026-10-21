@@ -69,9 +69,6 @@ export const UPLOAD_KIND_LABELS: Record<UploadContentKind, string> = {
   testimonio: 'Voz / testimonio',
 };
 
-export const UPLOAD_KIND_HINT =
-  'Una voz es el testimonio de otra persona. Siempre es anónima: pasa por la anonimización antes de entrar al corpus, y las demás personas del ecosistema no verán el archivo original ni su nombre.';
-
 // ── Audio upload switch ─────────────────────────────────────────────────────
 
 /**
@@ -111,8 +108,8 @@ export function uploadAccept(
 /** The upload button's tooltip. */
 export function uploadButtonTitle(audioEnabled: boolean = AUDIO_UPLOAD_ENABLED): string {
   return audioEnabled
-    ? 'Subir documento o audio — PDF, DOCX, MP3, M4A, WAV, OGG u OPUS. Se guardará como borrador, solo tú lo verás.'
-    : 'Subir documento — PDF o DOCX. Se guardará como borrador, solo tú lo verás.';
+    ? 'Subir documento o audio (PDF, DOCX, MP3, M4A, WAV, OGG, OPUS)'
+    : 'Subir documento (PDF o DOCX)';
 }
 
 /**
@@ -129,7 +126,7 @@ export function looseUploadErrorCopy(
       return {
         title: 'Súbelo desde una conversación',
         message:
-          'Perteneces a varios ecosistemas. Abre una conversación del ecosistema donde va el archivo y súbelo ahí.',
+          'Perteneces a varios ecosistemas.',
       };
     case 'unsupported_kind':
     case 'unsupported_media_type':

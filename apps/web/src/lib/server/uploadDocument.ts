@@ -1,6 +1,6 @@
 import { backendFetch, backendUrl } from '$lib/server/auth';
 import { mapUpstreamMediaError } from '$lib/server/documents';
-import { isAudioUpload, maxUploadBytesFor } from '$lib/config';
+import { isAudioUpload, MAX_AUDIO_UPLOAD_BYTES, MAX_UPLOAD_BYTES } from '$lib/config';
 import { readReviewCapability } from '$lib/server/holds';
 import {
   AUDIO_UPLOAD_ENABLED,
@@ -10,6 +10,40 @@ import {
 } from '$lib/uploadKind';
 
 export type UploadResult = { status: number; body: Record<string, unknown> };
+
+/** A PDF header may sit after some junk; the spec reader looks in the first 1 KB. */
+const SNIFF_BYTES = 1024;
+
+const ascii = (bytes: Uint8Array, at: number, text: string): boolean =>
+  [...text].every((ch, i) => bytes[at + i] === ch.charCodeAt(0));
+
+function looksLikePdf(b: Uint8Array): boolean {
+  for (let i = 0; i + 5 <= b.length; i++) if (ascii(b, i, '%PDF-')) return true;
+  return false;
+}
+
+/** DOCX is a ZIP: local file header `PK\x03\x04`. */
+function looksLikeDocx(b: Uint8Array): boolean {
+  return b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04;
+}
+
+/** MP3 (ID3 or frame sync), AAC/ADTS, WAV, OGG/Opus, FLAC, M4A/MP4/MOV, WebM, AMR. */
+function looksLikeAudio(b: Uint8Array): boolean {
+  if (ascii(b, 0, 'ID3')) return true;
+  if (b[0] === 0xff && b[1] !== undefined && (b[1] & 0xe0) === 0xe0) return true;
+  if (ascii(b, 0, 'RIFF') && ascii(b, 8, 'WAVE')) return true;
+  if (ascii(b, 0, 'OggS') || ascii(b, 0, 'fLaC') || ascii(b, 0, '#!AMR')) return true;
+  if (ascii(b, 4, 'ftyp')) return true;
+  if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return true;
+  return false;
+}
+
+/** Do the file's first bytes agree with the kind its name and MIME settled on? */
+export function bytesMatchKind(head: Uint8Array, kind: 'pdf' | 'docx' | 'audio'): boolean {
+  if (kind === 'pdf') return looksLikePdf(head);
+  if (kind === 'docx') return looksLikeDocx(head);
+  return looksLikeAudio(head);
+}
 
 /**
  * Upload one file and create its `documents` row — THE one upload flow.
@@ -68,8 +102,17 @@ export async function uploadDocument(
 
   // The browser checks too, but it is not a security boundary: a body accepted
   // here lands on the backend's disk before anything can refuse it.
-  const cap = maxUploadBytesFor(file);
+  // The SETTLED kind, not the MIME: a PDF sent as `audio/mp4` gets the 20 MB cap.
+  const cap = kind === 'audio' ? MAX_AUDIO_UPLOAD_BYTES : MAX_UPLOAD_BYTES;
   if (file.size > cap) return { status: 413, body: { error: 'file_too_large', limit: cap, kind } };
+
+  // 🔴 The name and MIME are the client's word. The first bytes are the file's:
+  // an audio file renamed `a.pdf` used to go up as a PDF. A mismatch is refused
+  // with the ordinary "Tipo de archivo no admitido" copy (`unsupported_kind`).
+  const head = new Uint8Array(await file.slice(0, SNIFF_BYTES).arrayBuffer());
+  if (!bytesMatchKind(head, kind)) {
+    return { status: 400, body: { error: 'unsupported_kind', reason: 'content_mismatch', kind } };
+  }
 
   // Payload's `POST /api/media` wants multipart with a `file` field. No
   // content-type header: fetch generates the boundary.

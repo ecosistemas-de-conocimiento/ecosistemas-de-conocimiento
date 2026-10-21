@@ -17,6 +17,7 @@ function makeEvent(opts: {
   locals?: Partial<Locals>;
   sessionId?: string;
   docId?: string;
+  body?: unknown;
 }): Parameters<typeof POST>[0] {
   const locals: Locals = {
     user: opts.locals?.user === undefined ? { id: 1, email: 'u@test' } : opts.locals.user,
@@ -25,6 +26,10 @@ function makeEvent(opts: {
   return {
     locals,
     params: { id: opts.sessionId ?? '42', docId: opts.docId ?? '9' },
+    request: new Request('http://web.test/x', {
+      method: 'POST',
+      ...(opts.body === undefined ? {} : { body: JSON.stringify(opts.body) }),
+    }),
   } as unknown as Parameters<typeof POST>[0];
 }
 
@@ -285,5 +290,78 @@ describe('every call goes out as the caller', () => {
     for (const call of mockedBackendFetch.mock.calls) {
       expect(call[0]).toBe('caller-jwt');
     }
+  });
+});
+
+// ── Bug #37: a conversation that no longer exists ─────────────────────────
+
+describe('POST — the conversation is gone (bug #37)', () => {
+  // The body `bindDocumentToEcosystem` returns on dev (measured 2026-10-21)
+  // when a tab attaches to a conversation that was deleted elsewhere.
+  const noSuchConversation = {
+    errors: [
+      {
+        name: 'ValidationError',
+        data: {
+          collection: 'documents',
+          errors: [{ path: 'session', message: 'No such conversation.' }],
+        },
+        message: 'The following field is invalid: session',
+      },
+    ],
+  };
+
+  it('answers 404 session_not_found instead of a bare 400', async () => {
+    docRead([]);
+    mockedBackendFetch.mockResolvedValueOnce(jsonResponse(noSuchConversation, 400));
+
+    const res = await POST(makeEvent({}));
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'session_not_found' });
+  });
+
+  it('still forwards every other 400 verbatim', async () => {
+    docRead([7]);
+    const other = { errors: [{ path: 'session', message: 'That conversation is not yours.' }] };
+    mockedBackendFetch.mockResolvedValueOnce(jsonResponse(other, 400));
+
+    const res = await POST(makeEvent({}));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual(other);
+  });
+});
+
+describe('POST — pin on attach', () => {
+  it('sends isPinned: true with the attach when the body asks for it', async () => {
+    docRead([7]);
+    mockedBackendFetch.mockResolvedValueOnce(jsonResponse({ doc: { id: 9 } }, 200));
+
+    const res = await POST(makeEvent({ body: { pin: true } }));
+
+    expect(res.status).toBe(200);
+    expect(callBody(1)).toEqual({ session: [7, 42], isPinned: true });
+  });
+
+  it('does not touch isPinned without the flag', async () => {
+    docRead([7]);
+    mockedBackendFetch.mockResolvedValueOnce(jsonResponse({ doc: { id: 9 } }, 200));
+
+    await POST(makeEvent({}));
+
+    expect(callBody(1)).toEqual({ session: [7, 42] });
+  });
+
+  it('pins a document that is already attached but not pinned', async () => {
+    mockedBackendFetch.mockResolvedValueOnce(
+      jsonResponse({ id: 9, session: [42], isPinned: false }, 200),
+    );
+    mockedBackendFetch.mockResolvedValueOnce(jsonResponse({ doc: { id: 9 } }, 200));
+
+    const res = await POST(makeEvent({ body: { pin: true } }));
+
+    expect(res.status).toBe(200);
+    expect(callBody(1)).toEqual({ session: [42], isPinned: true });
   });
 });

@@ -49,14 +49,7 @@
     </h1>
 
     <p class="mt-2 text-sm text-ink-soft leading-relaxed">
-      Un ecosistema es el grupo con el que compartes documentos y conversaciones. Sin uno no hay
-      nada que consultar: los documentos, las conversaciones y las respuestas viven siempre dentro
-      de un ecosistema.
-    </p>
-
-    <p class="mt-3 text-sm text-ink-soft leading-relaxed">
-      Pide a quien administra el sistema que te agregue a uno. Cuando lo haga, vuelve a cargar esta
-      página{#if email}&nbsp;con esta misma cuenta ({email}){/if}.
+      Pide a quien administra el sistema que agregue tu cuenta{#if email}&nbsp;({email}){/if}.
     </p>
 
     <div class="mt-5 flex items-center justify-center gap-2">

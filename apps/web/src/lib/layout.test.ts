@@ -8,7 +8,6 @@ import {
   NARROW_MAX_WIDTH_REM,
   NARROW_MEDIA_QUERY,
   composerPlaceholder,
-  emptyChatHint,
   isPanelOpen,
   toggleMobilePanel,
   type MobilePanel,
@@ -112,21 +111,6 @@ describe('the aria wiring points at something real', () => {
 });
 
 describe('the copy tells the truth about the screen it is on', () => {
-  it('never points a phone user at a panel on the right', () => {
-    // 🔴 The wide copy said "el panel de la derecha". On a phone there is no
-    // panel on the right, there is a button. Sending someone to look at
-    // furniture that is not there teaches them the app is broken.
-    expect(emptyChatHint(false)).toContain('derecha');
-    expect(emptyChatHint(true)).not.toContain('derecha');
-  });
-
-  it('names the button a phone user can actually press', () => {
-    const narrowHint = emptyChatHint(true);
-    const documentos = MOBILE_PANEL_TOGGLES.find((t) => t.panel === 'documents');
-    expect(documentos).toBeDefined();
-    expect(narrowHint).toContain(documentos!.label);
-  });
-
   it('keeps the @-mention hint in both placeholders', () => {
     // It is the only half of the hint a touch user can act on.
     expect(composerPlaceholder(false, true)).toContain('@');

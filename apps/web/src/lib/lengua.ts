@@ -14,7 +14,7 @@
  * testimonio cannot reach this module with a language attached.
  *
  * ⚠ A CONSEQUENCE THE UI STATES: filtering by lengua hides every testimonio.
- * That is not a bug; they record no language. `LENGUA_NOTE` says so.
+ * That is not a bug; they record no language.
  */
 
 /** One language and how many published documentos are about it. */
@@ -36,8 +36,6 @@ export const MAX_LENGUA_LENGTH = 60;
 
 export const LENGUA_LABEL = 'Lengua';
 export const LENGUA_ALL = 'Todas las lenguas';
-export const LENGUA_NOTE =
-  'La lengua de las personas de las que habla cada documento. Los testimonios no la registran, para proteger el anonimato, así que no aparecen al filtrar por lengua.';
 export const LENGUA_PANEL_TITLE = 'Lenguas en los documentos publicados';
 export const LENGUA_PANEL_EMPTY = 'Ningún documento publicado registra una lengua todavía.';
 export const LENGUA_CHAT_HINT = 'Responder solo con documentos sobre personas que hablan esta lengua.';
