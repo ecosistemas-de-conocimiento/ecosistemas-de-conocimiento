@@ -35,6 +35,16 @@
  * `heldText`; the report lists any row without it (`unreviewable`) so a person
  * can reset it for a new gate run instead.
  *
+ * ⚠ RUN IT WITH INGESTS QUIET. A `publishing`/`unpublishing` row with a
+ * `publishIngestId` is mid-move and is skipped (`inFlight`), never retired
+ * under a live ingest.
+ *
+ * ⚠ GRAPH MENTIONS are not touched here. The existing cleanup removes them:
+ * `scripts/purge-unscrubbed-graph-rows.ts` deletes mentions and relations on
+ * every gated row `corpusTextFor` refuses — a held row is one — and marks it
+ * `graphStatus: skipped`. Run it after this script (dry run, then
+ * `PURGE_APPLY=1`).
+ *
  * ⚠ IDEMPOTENT: a repaired row is a draft, so it no longer matches. A second
  * run reports 0. ⚠ DRY RUN BY DEFAULT.
  */
@@ -58,6 +68,7 @@ interface Row {
   anonymisationError?: unknown
   redactedText?: unknown
   heldText?: unknown
+  publishIngestId?: unknown
 }
 
 export interface RepairHeldPublishedReport {
@@ -70,6 +81,14 @@ export interface RepairHeldPublishedReport {
   unreviewable: Array<number | string>
   /** Rows whose retire or write failed; left as they were. */
   failed: Array<number | string>
+  /**
+   * 🔴 Rows mid-move (`publishing`/`unpublishing` with a `publishIngestId`):
+   * skipped. Retiring now and letting the ingest land afterwards would leave
+   * live chunks in the shared corpus under a row that reads `draft`. The
+   * callback (`confirmPublish`) now withdraws an uncleared row itself; run this
+   * again once ingests are quiet if any stay listed.
+   */
+  inFlight: Array<number | string>
 }
 
 /** The selection rule, exported for the test. */
@@ -109,10 +128,16 @@ export async function repairHeldPublished(
     ids: [],
     unreviewable: [],
     failed: [],
+    inFlight: [],
   }
 
   for (const row of rows) {
     if (row.id == null || !isSharedButNotCleared(row)) continue
+    if (row.publicationStatus !== 'published' && typeof row.publishIngestId === 'string' && row.publishIngestId !== '') {
+      report.inFlight.push(row.id)
+      log(`doc ${row.id}: ${String(row.publicationStatus)} with an ingest in flight — skipped; run again when quiet`)
+      continue
+    }
     report.matched += 1
     report.ids.push(row.id)
     const reviewable = typeof row.heldText === 'string' && row.heldText.trim() !== ''
@@ -142,6 +167,13 @@ export async function repairHeldPublished(
             { id: { equals: row.id } },
             { publicationStatus: { equals: row.publicationStatus as string } },
             { anonymisationStatus: { equals: row.anonymisationStatus as string } },
+            // 🔴 And no move started since it was read.
+            {
+              publishIngestId:
+                typeof row.publishIngestId === 'string' && row.publishIngestId !== ''
+                  ? { equals: row.publishIngestId }
+                  : { exists: false },
+            },
           ],
         },
         data: {

@@ -13,9 +13,13 @@ function fakeDb(rows: Row[]) {
   const find = vi.fn(async (args: { where: { publicationStatus: { in: string[] } } }) => ({
     docs: store.filter((r) => args.where.publicationStatus.in.includes(String(r.publicationStatus))).map((r) => ({ ...r })),
   }))
-  const update = vi.fn(async (args: { where: { and: Array<Record<string, { equals: unknown }>> }; data: Row }) => {
+  const update = vi.fn(async (args: { where: { and: Array<Record<string, { equals?: unknown; exists?: boolean }>> }; data: Row }) => {
     const hits = store.filter((r) =>
-      args.where.and.every((clause) => Object.entries(clause).every(([k, op]) => r[k] === op.equals)),
+      args.where.and.every((clause) =>
+        Object.entries(clause).every(([k, op]) =>
+          'exists' in op ? (r[k] != null) === op.exists : r[k] === op.equals,
+        ),
+      ),
     )
     for (const r of hits) Object.assign(r, args.data)
     return { docs: hits }
@@ -125,6 +129,21 @@ describe('repairHeldPublished', () => {
       clientFor: () => ({ ingest: { enqueue: vi.fn() }, admin: { setDocumentValidity } }) as never,
     })
     expect(report).toMatchObject({ repaired: 1, failed: [] })
+  })
+
+  it('🔴 skips a publishing row whose ingest is still in flight', async () => {
+    const db = fakeDb([held(227, { publicationStatus: 'publishing', publishIngestId: 'ing-9' }), held(28)])
+    const ai = client()
+    const report = await repairHeldPublished(db.payload, { apply: true, clientFor: () => ai.mover })
+    expect(report).toMatchObject({ matched: 1, repaired: 1, inFlight: [227] })
+    expect(ai.setDocumentValidity.mock.calls.every((c) => c[1] !== '227')).toBe(true)
+    expect(db.store[0]!.publicationStatus).toBe('publishing')
+  })
+
+  it('a published row with a stale publishIngestId is still repaired', async () => {
+    const db = fakeDb([held(227, { publishIngestId: 'ing-old' })])
+    const report = await repairHeldPublished(db.payload, { apply: true, clientFor: () => client().mover })
+    expect(report).toMatchObject({ matched: 1, repaired: 1, inFlight: [] })
   })
 
   it('flags a matched row with no heldText as unreviewable', async () => {

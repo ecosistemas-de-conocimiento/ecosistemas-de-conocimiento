@@ -30,10 +30,13 @@ describe('🔴 a town, municipality, state or city found by verify does NOT hold
   it.each([
     ['Vivo en Xoxocotla, Morelos.', [{ text: 'Xoxocotla', type: 'lugar' }, { text: 'Morelos', type: 'lugar' }]],
     ['Vivo en Xoxocotla, Morelos.', [{ text: 'Xoxocotla, Morelos', type: 'lugar' }]],
-    ['Nací en San Juan Chamula y luego me fui a Tuxtla.', [{ text: 'San Juan Chamula', type: 'lugar' }, { text: 'Tuxtla', type: 'lugar' }]],
+    ['Nací en San Juan Chamula, Chiapas, y luego viví en Tuxtla.', [{ text: 'San Juan Chamula', type: 'lugar' }, { text: 'Tuxtla', type: 'lugar' }, { text: 'Chiapas', type: 'lugar' }]],
     ['Trabajo en el municipio de Tlaltizapán.', [{ text: 'municipio de Tlaltizapán', type: 'lugar' }]],
-    ['Llegamos a la Ciudad de México en 1990.', [{ text: 'Ciudad de México', type: 'lugar' }]],
-    ['Somos de Guerrero y de Oaxaca.', [{ text: 'Guerrero', type: 'lugar' }, { text: 'Oaxaca', type: 'lugar' }]],
+    ['Trabajo en el municipio de Tlaltizapán.', [{ text: 'Tlaltizapán', type: 'lugar' }]],
+    ['Vivimos en la Ciudad de México desde 1990.', [{ text: 'Ciudad de México', type: 'lugar' }]],
+    ['Somos de Guerrero.', [{ text: 'Guerrero', type: 'lugar' }]],
+    ['Yo soy de Cuautla.', [{ text: 'Cuautla', type: 'lugar' }]],
+    ['Mi familia es originaria de Tepoztlán, Morelos.', [{ text: 'Tepoztlán', type: 'lugar' }, { text: 'Morelos', type: 'lugar' }]],
     ['Trabajo en la Alcaldía Iztapalapa.', [{ text: 'Alcaldía Iztapalapa', type: 'lugar' }]],
   ] as Array<[string, DetectorFinding[]]>)('%s → ready, town shown', async (text, late) => {
     const result = await gate(text, late)
@@ -65,8 +68,31 @@ describe('🔴 colonias, streets, numbers, C.P., ranchos, parajes, homes and peo
     expect(result.stage).toBe('verify')
   })
 
+  // 🔴 The auditor's measured passes against the first version (2026-10-21).
+  // Each of these shipped in clear; each must HOLD.
+  it.each([
+    ['la hija de Soledad', 'Me cuidó la hija de Soledad.', 'Soledad'],
+    ['le dije a Soledad', 'Le dije a Soledad que no.', 'Soledad'],
+    ['Juan y Soledad', 'Llegaron Juan y Soledad.', 'Soledad'],
+    ['compramos en Doña Chela', 'Siempre compramos en Doña Chela.', 'Doña Chela'],
+    ['compramos en Chela, after doña', 'Siempre compramos con doña Chela en Chela.', 'Chela'],
+    ['estudié en la Benito Juárez', 'Estudié en la Benito Juárez.', 'Benito Juárez'],
+    ['en el Siglo XXI', 'Me operaron en el Siglo XXI.', 'Siglo XXI'],
+    ['en La Raza', 'Me atendieron en La Raza.', 'La Raza'],
+    ['en Los Pinos', 'Vivimos en Los Pinos.', 'Los Pinos'],
+    ['en Santa Úrsula', 'Vivimos en Santa Úrsula.', 'Santa Úrsula'],
+    ['en el Pedregal de Santo Domingo', 'Crecí en el Pedregal de Santo Domingo.', 'Pedregal de Santo Domingo'],
+    ['la casa está por Los Encinos', 'La casa está por Los Encinos.', 'Los Encinos'],
+    ['a town word after an address word', 'Vivo en la colonia de Cuautla.', 'Cuautla'],
+    ['an IMSS clinic', 'Me atendieron en el IMSS de Cuautla.', 'IMSS de Cuautla'],
+    ['a bare comma that is not a state', 'Fuimos Juan, Soledad y yo.', 'Soledad'],
+  ])('%s → hold', async (_case, text, finding) => {
+    const result = await gate(text, [{ text: finding, type: 'lugar' }])
+    expect(result.status).toBe('hold')
+  })
+
   it('a town beside a held address does not save the address', async () => {
-    const text = 'Vivo en la colonia Portales, en Xoxocotla, Morelos.'
+    const text = 'Vivo en Xoxocotla, Morelos, en la colonia Portales.'
     const result = await gate(text, [
       { text: 'Xoxocotla', type: 'lugar' },
       { text: 'colonia Portales', type: 'lugar' },

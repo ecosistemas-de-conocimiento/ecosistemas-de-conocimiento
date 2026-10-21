@@ -309,6 +309,14 @@ describe('sweepLostGateRuns', () => {
     expect(planIngestRetry(row as never)).toMatchObject({ anonymisationStatus: 'n/a', ingestStatus: 'pending' })
   })
 
+  it('🔴 resets the gate state from pending, so a seed re-run can claim the row again', async () => {
+    const db = fakeDb({ documents: [lostGate()] })
+    await sweepLostGateRuns(db.payload, { now: NOW, deadlineMs: 60 * 60_000 })
+    const row = db.row('documents', 1)
+    expect(row.anonymisationStatus).toBe('n/a')
+    expect(String(row.anonymisationError)).toMatch(/^gate_unavailable: /)
+  })
+
   it('leaves held, approved, settled-n/a, young and published rows alone', async () => {
     const db = fakeDb({
       documents: [

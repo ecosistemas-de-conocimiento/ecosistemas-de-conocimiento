@@ -36,6 +36,8 @@
  * ended as permanent Revisión holds that nothing ever retried.
  */
 
+import { randomUUID } from 'node:crypto'
+
 import type { ContentKind } from './contentKind'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import type { GateReport, PersonDetector } from './anonymise/types'
@@ -61,6 +63,12 @@ export const UNGATED_CONTENT_KIND: ContentKind = 'documento'
  * never answered). The row is RETRYABLE, never in Revisión. See the header.
  */
 export const GATE_UNAVAILABLE_CODE = 'gate_unavailable'
+
+/**
+ * Prefix of `anonymisationError` while a gate run holds the row (`pending`),
+ * followed by that run's token. See the claim in {@link anonymiseDocumentText}.
+ */
+export const GATE_RUNNING_CODE = 'gate_running'
 
 /**
  * Prefix of `ingestError` the draft path writes for the same case
@@ -251,9 +259,15 @@ export async function anonymiseDocumentText(args: {
   }
 
   // 🔴 CLAIM, OR DO NOTHING. See `GATE_CLAIM_GUARD`.
+  //
+  // ⚠ The claim carries a PER-RUN TOKEN in `anonymisationError` (no new column).
+  // Every final write below is guarded on `pending` + this token, so a run that
+  // outlived `sweepLostGateRuns` (which resets a stale `pending`) and a newer run
+  // that claimed the row since cannot be overwritten by the stale one.
+  const token = `${GATE_RUNNING_CODE}: ${randomUUID()}`
   const claimed = await updateDocumentColumns(payload, {
     id: docId,
-    data: { anonymisationStatus: 'pending', anonymisationError: null },
+    data: { anonymisationStatus: 'pending', anonymisationError: token },
     where: GATE_CLAIM_GUARD.map((clause) => ({ ...clause })) as never,
   })
   if (claimed === 0) {
@@ -265,6 +279,21 @@ export async function anonymiseDocumentText(args: {
       busy: true,
     }
   }
+
+  /** The run's final write. False when this run no longer owns the row. */
+  const finish = async (data: Record<string, unknown>): Promise<boolean> =>
+    (await updateDocumentColumns(payload, {
+      id: docId,
+      data,
+      where: [{ anonymisationStatus: { equals: 'pending' } }, { anonymisationError: { equals: token } }],
+    })) > 0
+  const superseded = (): AnonymiseOutcome => ({
+    ok: false,
+    stage: 'claim',
+    reason: 'a newer gate run or a sweep took the row over; this run wrote nothing',
+    report: null,
+    busy: true,
+  })
 
   const { runAnonymisationGate, aiServiceDetector } = await import('./anonymise')
   const detector =
@@ -292,7 +321,7 @@ export async function anonymiseDocumentText(args: {
     // already return `hold`; anything that escapes them is a bug, and a bug in
     // the redactor is the last thing that should be allowed to fail open.
     const reason = err instanceof Error ? err.message : String(err)
-    await write({
+    if (!(await finish({
       anonymisationStatus: 'held',
       anonymisationError: `gate_crashed: ${reason}`.slice(0, 500),
       // 🔴 CLEARED. See the hold branch below — a `redactedText` left over from
@@ -304,7 +333,7 @@ export async function anonymiseDocumentText(args: {
       // is worse than showing them nothing.
       heldText: null,
       anonymisationSurvivors: null,
-    })
+    }))) return superseded()
     return { ok: false, stage: 'content', reason, report: null }
   }
 
@@ -316,14 +345,14 @@ export async function anonymiseDocumentText(args: {
      * keeps it out of Revisión. Not ingested: `corpusTextFor` refuses `n/a` on
      * a gated kind, and the caller sees `ok: false`.
      */
-    await write({
+    if (!(await finish({
       anonymisationStatus: 'n/a',
       anonymisationError: `${GATE_UNAVAILABLE_CODE}: ${result.stage}: ${result.reason}`.slice(0, 500),
       anonymisationReport: result.report,
       redactedText: null,
       heldText: null,
       anonymisationSurvivors: null,
-    })
+    }))) return superseded()
     return {
       ok: false,
       stage: result.stage,
@@ -334,7 +363,7 @@ export async function anonymiseDocumentText(args: {
   }
 
   if (result.status === 'hold') {
-    await write({
+    if (!(await finish({
       anonymisationStatus: 'held',
       // ⚠ The reason is written by the gate and carries COUNTS ONLY, never the
       // text that triggered it. An error column that quoted the name it found
@@ -363,11 +392,11 @@ export async function anonymiseDocumentText(args: {
        */
       heldText: result.redactedText ?? null,
       anonymisationSurvivors: result.survivors ?? null,
-    })
+    }))) return superseded()
     return { ok: false, stage: result.stage, reason: result.reason, report: result.report }
   }
 
-  await write({
+  if (!(await finish({
     // ⚠ Stored BESIDE the original, not over it. `extractedText` is the record
     // of what was actually said and stays access-controlled in Postgres; only
     // `redactedText` is ever embedded. Overwriting the original would destroy
@@ -380,7 +409,7 @@ export async function anonymiseDocumentText(args: {
     // earlier attempt off a row that has since passed.
     heldText: null,
     anonymisationSurvivors: null,
-  })
+  }))) return superseded()
 
   return { ok: true, text: result.redactedText, report: result.report }
 }

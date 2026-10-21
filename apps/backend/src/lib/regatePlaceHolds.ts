@@ -3,26 +3,30 @@
  * that a town no longer holds (`anonymise/townPlaces.ts`).
  *
  * Measured on dev, 2026-10-21 (runbook `infra/fleet/edc-1.md` §4p): of 38
- * verify holds, 31 had place findings only. Those were held under the old rule;
- * under the new one most would pass. 🔴 THEY ARE RE-GATED, NOT RELEASED: the
- * gate runs again (two model calls per chunk), and whatever it says now stands.
+ * verify holds, 31 had place findings only. 🔴 THEY ARE RE-GATED, NOT
+ * RELEASED: the gate runs again (two model calls per chunk), and whatever it
+ * says now stands.
  *
- * Selection, all of it, on the stored row:
+ * Selection, all of it on the stored row:
  *
  *   · gated content, `anonymisation_status = held`, a DRAFT
  *   · held at `verify` (the reason starts `verify: `)
  *   · `anonymisation_survivors` non-empty and EVERY one of type `lugar`
+ *   · 🔴 checked OFFLINE first, no model call: every stored survivor passes the
+ *     current town rule against `heldText` ({@link everySurvivorIsTown}). A
+ *     place-only hold on a colonia or a hospital stays held and is not re-run.
  *
- * A hold with a `persona`, `contacto`, `identificador` or `otro` survivor is
- * never selected; nor is a `structural`/`content` hold or a decided row.
- *
- * Apply resets the gate columns to the retryable `n/a` state (the same
- * fields `planIngestRetry` clears), guarded on the row still being a held
- * draft. The caller then gates exactly these ids.
+ * Apply, ONE ROW AT A TIME: reset the gate columns to the retryable `n/a`
+ * state (the fields `planIngestRetry` clears), guarded on the row still being a
+ * held draft, then gate that one id before the next row is touched. A crash
+ * mid-run leaves at most one row reset and not yet gated, at the retryable
+ * `n/a`, where a seed re-run or this script picks it up.
  */
 
 import type { Payload } from 'payload'
 
+import { isTownLevelPlace } from './anonymise/townPlaces'
+import type { DetectorFinding } from './anonymise/types'
 import { mustPassAnonymisationGate } from './anonymiseDocument'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import { relationId } from './permissions'
@@ -35,6 +39,7 @@ interface Row {
   anonymisationStatus?: unknown
   anonymisationError?: unknown
   anonymisationSurvivors?: unknown
+  heldText?: unknown
 }
 
 export function isPlaceOnlyHold(row: Row): boolean {
@@ -47,17 +52,45 @@ export function isPlaceOnlyHold(row: Row): boolean {
   return survivors.every((s) => Boolean(s) && typeof s === 'object' && (s as { type?: unknown }).type === 'lugar')
 }
 
-export interface PlaceHoldsReport {
-  examined: number
-  matched: number
-  reset: number
-  /** Reset ids grouped by ecosistema, for the per-ecosistema gate run. */
-  byOrganization: Record<string, string[]>
+/**
+ * Would the CURRENT town rule ignore every finding verify left on this row?
+ * Each survivor is an offset into `heldText` (verify's own input), so its text
+ * and its context are exactly what `isTownLevelPlace` sees inside the gate.
+ */
+export function everySurvivorIsTown(row: Row): boolean {
+  const heldText = typeof row.heldText === 'string' ? row.heldText : ''
+  if (heldText === '' || !Array.isArray(row.anonymisationSurvivors)) return false
+  const survivors = row.anonymisationSurvivors as Array<{ start?: unknown; end?: unknown; type?: unknown }>
+  if (survivors.length === 0) return false
+  return survivors.every((s) => {
+    if (typeof s.start !== 'number' || typeof s.end !== 'number' || s.end <= s.start) return false
+    const text = heldText.slice(s.start, s.end)
+    return isTownLevelPlace({ text, type: s.type as DetectorFinding['type'] }, heldText)
+  })
 }
 
-export async function resetPlaceOnlyHolds(
+export interface PlaceHoldsReport {
+  examined: number
+  /** Held at verify with place findings only. */
+  placeOnly: number
+  /** …of which every finding passes the town rule offline: the ones re-run. */
+  matched: number
+  /** Reset and gated (apply only). */
+  regated: number
+  ids: string[]
+  /** Place-only holds the offline check keeps held. */
+  kept: string[]
+}
+
+export async function regatePlaceOnlyHolds(
   payload: Pick<Payload, 'find'> & DocumentColumnsPayload,
-  opts: { apply: boolean; limit?: number; log?: (line: string) => void },
+  opts: {
+    apply: boolean
+    /** Gate exactly one document. The script passes the seed's targeted ingest. */
+    gate?: (organizationId: number, documentId: string) => Promise<unknown>
+    limit?: number
+    log?: (line: string) => void
+  },
 ): Promise<PlaceHoldsReport> {
   const log = opts.log ?? (() => undefined)
   const found = (await payload.find({
@@ -68,17 +101,28 @@ export async function resetPlaceOnlyHolds(
     overrideAccess: true,
   })) as unknown as { docs?: Row[] }
   const rows = found.docs ?? []
-  const report: PlaceHoldsReport = { examined: rows.length, matched: 0, reset: 0, byOrganization: {} }
+  const report: PlaceHoldsReport = { examined: rows.length, placeOnly: 0, matched: 0, regated: 0, ids: [], kept: [] }
 
   for (const row of rows) {
     if (row.id == null || !isPlaceOnlyHold(row)) continue
-    report.matched += 1
-    const org = String(relationId(row.organization) ?? '')
-    log(`doc ${row.id}: ${(row.anonymisationSurvivors as unknown[]).length} place finding(s) in eco-${org}`)
-    if (!opts.apply) {
-      ;(report.byOrganization[org] ??= []).push(String(row.id))
+    report.placeOnly += 1
+    const id = String(row.id)
+    if (!everySurvivorIsTown(row)) {
+      report.kept.push(id)
+      log(`doc ${id}: a place finding is not a town under the current rule — stays held`)
       continue
     }
+    report.matched += 1
+    report.ids.push(id)
+    const org = relationId(row.organization)
+    log(`doc ${id}: every finding is a town — ${opts.apply ? 'gating again' : 'would gate again'} in eco-${String(org)}`)
+    if (!opts.apply || !opts.gate) continue
+    const orgNumber = Number(org)
+    if (!Number.isInteger(orgNumber) || orgNumber <= 0) {
+      log(`doc ${id}: no ecosistema on the row — left alone`)
+      continue
+    }
+
     const changed = await updateDocumentColumns(payload, {
       id: row.id,
       where: [{ anonymisationStatus: { equals: 'held' } }, { publicationStatus: { equals: 'draft' } }],
@@ -92,10 +136,13 @@ export async function resetPlaceOnlyHolds(
         ingestError: null,
       },
     })
-    if (changed > 0) {
-      report.reset += 1
-      ;(report.byOrganization[org] ??= []).push(String(row.id))
+    if (changed === 0) {
+      log(`doc ${id}: changed since it was read — left alone`)
+      continue
     }
+    const result = await opts.gate(orgNumber, id)
+    report.regated += 1
+    log(`doc ${id}: ${JSON.stringify(result)}`)
   }
   return report
 }

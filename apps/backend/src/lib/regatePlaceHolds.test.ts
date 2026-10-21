@@ -1,14 +1,26 @@
 /**
- * Selection and reset for the place-only re-gate. No model call: the gate
- * itself is not run here.
+ * Selection, the offline town check, and the one-at-a-time reset for the
+ * place-only re-gate. No model call: the gate is a recorded stub here.
  */
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
-const { isPlaceOnlyHold, resetPlaceOnlyHolds } = await import('./regatePlaceHolds')
+const { everySurvivorIsTown, isPlaceOnlyHold, regatePlaceOnlyHolds } = await import('./regatePlaceHolds')
 
 type Row = Record<string, unknown>
+
+/** Survivors as the gate stores them: offsets into `heldText`, type only. */
+function spansOf(heldText: string, findings: string[]): Array<{ start: number; end: number; type: string }> {
+  return findings.map((f) => {
+    const start = heldText.indexOf(f)
+    if (start === -1) throw new Error(`not in text: ${f}`)
+    return { start, end: start + f.length, type: 'lugar' }
+  })
+}
+
+const TOWNS = 'Vivo en Xoxocotla, Morelos, con [Persona A].'
+const COLONIA = 'Vivo en Santa Úrsula con [Persona A].'
 
 const hold = (id: number, over: Row = {}): Row => ({
   id,
@@ -17,11 +29,8 @@ const hold = (id: number, over: Row = {}): Row => ({
   publicationStatus: 'draft',
   anonymisationStatus: 'held',
   anonymisationError: 'verify: Quedaron 2 datos que podrían identificar a alguien.',
-  anonymisationSurvivors: [
-    { start: 0, end: 5, type: 'lugar' },
-    { start: 9, end: 14, type: 'lugar' },
-  ],
-  heldText: 'texto retenido',
+  heldText: TOWNS,
+  anonymisationSurvivors: spansOf(TOWNS, ['Xoxocotla', 'Morelos']),
   ...over,
 })
 
@@ -40,7 +49,24 @@ describe('isPlaceOnlyHold', () => {
   })
 })
 
-describe('resetPlaceOnlyHolds', () => {
+describe('everySurvivorIsTown — offline, against heldText', () => {
+  it('towns pass', () => {
+    expect(everySurvivorIsTown(hold(1))).toBe(true)
+  })
+  it('🔴 a colonia-like name stays held', () => {
+    expect(everySurvivorIsTown(hold(1, { heldText: COLONIA, anonymisationSurvivors: spansOf(COLONIA, ['Santa Úrsula']) }))).toBe(false)
+  })
+  it('one non-town among towns stays held', () => {
+    const text = 'Vivo en Xoxocotla, en la colonia Portales.'
+    expect(everySurvivorIsTown(hold(1, { heldText: text, anonymisationSurvivors: spansOf(text, ['Xoxocotla', 'Portales']) }))).toBe(false)
+  })
+  it('no heldText or broken offsets: stays held', () => {
+    expect(everySurvivorIsTown(hold(1, { heldText: null }))).toBe(false)
+    expect(everySurvivorIsTown(hold(1, { anonymisationSurvivors: [{ start: 5, end: 2, type: 'lugar' }] }))).toBe(false)
+  })
+})
+
+describe('regatePlaceOnlyHolds', () => {
   function fakeDb(rows: Row[]) {
     const store = rows.map((r) => ({ ...r }))
     const payload = {
@@ -57,21 +83,36 @@ describe('resetPlaceOnlyHolds', () => {
     return { payload, store }
   }
 
-  it('dry run lists, writes nothing', async () => {
-    const db = fakeDb([hold(1), hold(2, { anonymisationSurvivors: [{ start: 0, end: 1, type: 'persona' }] }), hold(3, { organization: 3 })])
-    const report = await resetPlaceOnlyHolds(db.payload as never, { apply: false })
-    expect(report).toMatchObject({ matched: 2, reset: 0, byOrganization: { '1': ['1'], '3': ['3'] } })
+  const rows = () => [
+    hold(1),
+    hold(2, { anonymisationSurvivors: [{ start: 0, end: 1, type: 'persona' }] }),
+    hold(3, { heldText: COLONIA, anonymisationSurvivors: spansOf(COLONIA, ['Santa Úrsula']) }),
+    hold(4, { organization: 3 }),
+  ]
+
+  it('dry run lists, writes nothing, gates nothing', async () => {
+    const db = fakeDb(rows())
+    const gate = vi.fn()
+    const report = await regatePlaceOnlyHolds(db.payload as never, { apply: false, gate })
+    expect(report).toMatchObject({ placeOnly: 3, matched: 2, regated: 0, ids: ['1', '4'], kept: ['3'] })
     expect(db.payload.update).not.toHaveBeenCalled()
+    expect(gate).not.toHaveBeenCalled()
   })
 
-  it('apply resets only the place-only holds to the retryable state', async () => {
-    const db = fakeDb([hold(1), hold(2, { anonymisationSurvivors: [{ start: 0, end: 1, type: 'persona' }] })])
-    const report = await resetPlaceOnlyHolds(db.payload as never, { apply: true })
-    expect(report).toMatchObject({ matched: 1, reset: 1, byOrganization: { '1': ['1'] } })
-    expect(db.store[0]).toMatchObject({ anonymisationStatus: 'n/a', heldText: null, anonymisationSurvivors: null, publicationStatus: 'draft' })
+  it('🔴 apply resets and gates ONE row at a time', async () => {
+    const db = fakeDb(rows())
+    const order: string[] = []
+    const gate = vi.fn(async (org: number, id: string) => {
+      // When row 1 is gated, row 4 must not have been reset yet.
+      order.push(`gate ${id} (row 4 is ${String(db.store[3]!.anonymisationStatus)})`)
+      expect(org).toBe(id === '4' ? 3 : 1)
+    })
+    const report = await regatePlaceOnlyHolds(db.payload as never, { apply: true, gate })
+    expect(report).toMatchObject({ matched: 2, regated: 2 })
+    expect(order).toEqual(['gate 1 (row 4 is held)', 'gate 4 (row 4 is n/a)'])
+    expect(db.store[0]).toMatchObject({ anonymisationStatus: 'n/a', heldText: null, publicationStatus: 'draft' })
+    // The person hold and the colonia hold are untouched.
     expect(db.store[1]!.anonymisationStatus).toBe('held')
-    // Idempotent.
-    const again = await resetPlaceOnlyHolds(db.payload as never, { apply: true })
-    expect(again.matched).toBe(0)
+    expect(db.store[2]!.anonymisationStatus).toBe('held')
   })
 })

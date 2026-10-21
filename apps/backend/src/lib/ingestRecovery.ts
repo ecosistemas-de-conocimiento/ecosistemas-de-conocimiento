@@ -64,7 +64,7 @@ import {
   startJanitor,
   stopJanitor,
 } from './janitorScheduler'
-import { GATE_UNAVAILABLE_INGEST_CODE } from './anonymiseDocument'
+import { GATE_UNAVAILABLE_CODE, GATE_UNAVAILABLE_INGEST_CODE } from './anonymiseDocument'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import { relationId } from './permissions'
 
@@ -261,7 +261,7 @@ async function failOutDocuments(
   payload: Pick<Payload, 'find' | 'update'>,
   where: Where[],
   reason: string,
-  opts: { limit: number; log?: Log; label: string },
+  opts: { limit: number; log?: Log; label: string; extra?: Record<string, unknown> },
 ): Promise<FailOutResult> {
   const page = (await payload.find({
     collection: 'documents',
@@ -279,7 +279,7 @@ async function failOutDocuments(
       const res = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
         id: doc.id,
         where,
-        data: { ingestStatus: 'failed', ingestError: reason.slice(0, 500) },
+        data: { ingestStatus: 'failed', ingestError: reason.slice(0, 500), ...(opts.extra ?? {}) },
       })
       if (res > 0) stalled += 1
     } catch (err) {
@@ -318,7 +318,23 @@ export function sweepLostGateRuns(
     payload,
     lostGateRunWhere(cutoffIso(now, ms)),
     gateStalledReason(Math.round(ms / 60_000)),
-    { limit: opts.limit ?? 500, log: opts.log, label: 'lost gate run' },
+    {
+      limit: opts.limit ?? 500,
+      log: opts.log,
+      label: 'lost gate run',
+      /**
+       * 🔴 THE GATE STATE TOO, not only the ingest. Left at `pending`, the row
+       * was skipped forever: the seed's gate claim refuses `pending`
+       * (`GATE_CLAIM_GUARD`), so a seed re-run never picked it up. `n/a` + the
+       * unavailable code is the retryable "gate not run" state. It also voids
+       * the lost run's token, so if that run is somehow still alive its final
+       * write matches nothing.
+       */
+      extra: {
+        anonymisationStatus: 'n/a',
+        anonymisationError: `${GATE_UNAVAILABLE_CODE}: stalled: the gate run did not finish`,
+      },
+    },
   )
 }
 

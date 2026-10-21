@@ -16,6 +16,10 @@
  * AI_SERVICE_URL and AI_SERVICE_ADMIN_API_KEY (retiring is an admin route).
  * Apply makes up to two `setDocumentValidity` calls per row (shared + draft
  * corpus). No model call.
+ *
+ * ⚠ Run with ingests quiet: rows mid-publish are skipped and listed (`inFlight`).
+ * ⚠ Then clean their graph mentions with the existing script (dry run first):
+ *     PURGE_APPLY=1 node_modules/.bin/payload run scripts/purge-unscrubbed-graph-rows.ts
  */
 
 import { repairHeldPublished } from '../src/lib/repairHeldPublished'

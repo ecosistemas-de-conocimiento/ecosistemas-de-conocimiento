@@ -244,6 +244,52 @@ describe('🔴 confirmPublish never flips a row that is no longer cleared to "pu
   })
 })
 
+describe('🔴 a stale gate run cannot overwrite a newer one (per-run claim token)', () => {
+  it('a run whose row was swept and re-claimed meanwhile writes nothing', async () => {
+    const { payload, live } = oneRow(seededDraft())
+    let calls = 0
+    detector = {
+      name: 'slow-then-held',
+      async detect() {
+        calls += 1
+        if (calls === 1) {
+          // While this run waits on the model: the lost-gate sweep resets the
+          // row, and a newer run claims it and clears it.
+          Object.assign(live, { anonymisationStatus: 'n/a', anonymisationError: 'gate_unavailable: stalled' })
+          Object.assign(live, { anonymisationStatus: 'ready', anonymisationError: null, redactedText: 'Me llamo [Persona A].' })
+          return []
+        }
+        return FINDINGS // the stale run's verify would HOLD
+      },
+    }
+
+    const result = await anonymiseDocumentText({
+      payload: payload as never,
+      docId: 30,
+      contentKind: 'testimonio',
+      text: TEXT,
+      detector,
+    })
+
+    expect(result).toMatchObject({ ok: false, busy: true })
+    expect(live).toMatchObject({ anonymisationStatus: 'ready', redactedText: 'Me llamo [Persona A].' })
+  })
+
+  it('the claim writes a token, and the run\'s own final write clears it', async () => {
+    detector = { name: 'clean', detect: async () => [] }
+    const { payload, live } = oneRow(seededDraft())
+    const result = await anonymiseDocumentText({
+      payload: payload as never,
+      docId: 30,
+      contentKind: 'testimonio',
+      text: TEXT,
+      detector: { name: 'peek', detect: async () => (expect(String(live.anonymisationError)).toMatch(/^gate_running: /), []) },
+    })
+    expect(result.ok).toBe(true)
+    expect(live).toMatchObject({ anonymisationStatus: 'ready', anonymisationError: null })
+  })
+})
+
 describe('onlyIds — the targeted re-gate of place-only holds', () => {
   it('leaves every row outside the set alone, and gates the row inside it', async () => {
     const model = clearsOnceThenHolds()
