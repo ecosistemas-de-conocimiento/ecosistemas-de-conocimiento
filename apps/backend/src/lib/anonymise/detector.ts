@@ -124,14 +124,30 @@ export const DETECT_SYSTEM_PROMPT = [
   'Domicilios (marca "lugar"). Incluye TODOS estos casos, completos o parciales:',
   '- Calles, avenidas, andadores, cerradas, privadas y sus números.',
   '- Colonias, barrios, fraccionamientos, unidades habitacionales, manzana y lote.',
-  '- Códigos postales, alcaldías, delegaciones y municipios cuando ubican un domicilio.',
+  '- Ranchos y parajes con nombre: "el rancho Los Pinos", "el paraje Tres Cruces".',
+  '- Códigos postales.',
   '- Referencias sin formato que permiten llegar a una casa: "enfrente de la tienda',
   '  de doña Mari", "subiendo por donde está el tanque", "la casa de la reja verde".',
   '- Un domicilio partido en varias frases cuenta como varios hallazgos, uno por trozo.',
   '',
-  '⚠ No marques como "lugar" un municipio, estado o pueblo mencionado solo como',
-  'origen o como tema ("el problema del agua en Cuernavaca"). Márcalo cuando ubique',
-  'dónde vive, trabaja o estudia alguien.',
+  // 🔴 OWNER'S RULING (2026-10-21, backlog #12): town and municipality names are
+  // SHOWN. They are what a testimony is about, and a town alone points at
+  // thousands of people, not at one home. The line between "shown" and "marked"
+  // is the size of the unit, not how the sentence uses it:
+  //   · shown: estado, municipio, alcaldía, ciudad, pueblo, comunidad, localidad,
+  //     ejido, congregación — WHATEVER ITS SIZE. A small locality is shown too:
+  //     a reader cannot tell a 300-person pueblo from a 3,000-person one, and a
+  //     size cut-off the model cannot check is a rule it applies at random.
+  //   · marked: anything inside a locality — colonia, barrio, fraccionamiento,
+  //     unidad habitacional, rancho, paraje, a street, a house.
+  // ⚠ "Rancho"/"paraje" are marked only when the WORD is said: in rural Mexico a
+  // rancho is often one family's land. A locality whose name merely contains
+  // "Rancho" ("vivo en Rancho Nuevo") is a town and is shown.
+  '⚠ NUNCA marques estados, municipios, alcaldías, ciudades, pueblos, comunidades,',
+  'localidades, ejidos ni congregaciones, aunque sean pequeños y aunque digan dónde',
+  'vive, trabaja o estudia alguien. En "vivo en Xoxocotla, Morelos" no hay hallazgo.',
+  'Marca solo lo que queda dentro de un pueblo: su colonia, barrio, rancho, paraje,',
+  'calle o casa. "Rancho Nuevo" como nombre de un pueblo no se marca.',
   '',
   'Tipos: "persona" para nombres de personas; "lugar" para domicilios y lugares identificables;',
   '"contacto" para teléfonos, correos y redes; "identificador" para folios, CURP, RFC y números',

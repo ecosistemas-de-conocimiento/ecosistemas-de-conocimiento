@@ -72,7 +72,7 @@ export const DETERMINISTIC_LABELS = {
   domicilio: 'domicilio',
   /** `C.P. 06700` on its own. */
   codigoPostal: 'codigo-postal',
-  /** `Col. Portales`, `Mz. 4 Lt. 12`, `Alcaldía Benito Juárez`. */
+  /** `Col. Portales`, `Fracc. Los Sauces`, `Mz. 4 Lt. 12`. */
   asentamiento: 'asentamiento',
 } as const
 
@@ -437,15 +437,12 @@ const DOMICILIO = new RegExp(
 const CODIGO_POSTAL = new RegExp(String.raw`(?<![\p{L}\p{N}])${CP_TOKEN}`, 'gu')
 
 /**
- * A settlement standing alone: `Col. Portales`, `Mz. 4 Lt. 12`,
- * `Alcaldía Benito Juárez`.
+ * A settlement standing alone: `Col. Portales`, `Fracc. Los Sauces`, `Mz. 4 Lt. 12`.
  *
- * ⚠ `Alcaldía` / `Delegación` ARE included spelled out, unlike `colonia`, and the
- * trade is named rather than hidden: "fui a la Alcaldía Benito Juárez a pedir
- * agua" is an institution, not a home, and it will be redacted. That costs a
- * little meaning. It buys the CDMX half of every address, which always carries
- * one — and unlike `colonia`, the corpus measurement found ZERO prose uses of
- * either word to weigh against it.
+ * 🔴 `Alcaldía` / `Delegación` ARE NOT HERE ANY MORE (owner's ruling,
+ * 2026-10-21, backlog #12: town and municipality names are shown). A CDMX
+ * alcaldía is a municipality of hundreds of thousands of people; it locates no
+ * home. The colonia, street and C.P. beside it are still caught.
  *
  * ⚠ `Mz`/`Mza` REQUIRE a following number, because "las visitas por manzana" is
  * a real sentence in that corpus and means a city block on a walking route.
@@ -455,16 +452,6 @@ const ASENTAMIENTO = new RegExp(
     // The dotted markers are postal notation, so the NAME after one may be
     // lower-cased — see `COLA_ASENTAMIENTO`.
     String.raw`${ASENTAMIENTO_ABREV}\s*${PALABRA_LIBRE}(?:\s+${PALABRA_NOMBRE}){0,4}` +
-    // ⚠ `Alcaldía` / `Delegación` are ordinary words, so their name run keeps the
-    // STRICT word and must be a proper noun. Loose words behind a spelled-out
-    // keyword is the combination that walks into a sentence.
-    String.raw`|(?:${anyCaseAlternation([
-      'alcaldía',
-      'alcaldia',
-      'delegación',
-      'delegacion',
-      'del.',
-    ])})\s*${PALABRA_NOMBRE}(?:\s+${PALABRA_NOMBRE}){0,4}` +
     String.raw`|(?:${anyCaseAlternation([
       'mz',
       'mz.',

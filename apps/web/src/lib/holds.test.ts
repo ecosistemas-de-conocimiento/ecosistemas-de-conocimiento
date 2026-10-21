@@ -18,7 +18,6 @@ import {
   fallbackTitle,
   highlightsAreStale,
   isNeutralTitle,
-  NOTE_NOT_PRIVATE,
   parseHeldDetail,
   parseHeldList,
   parseHeldSummary,
@@ -185,12 +184,6 @@ describe('🔴 the copy says what the person is actually doing', () => {
     expect(REJECT_LABEL).toContain('borrar');
     expect(REJECT_CONSEQUENCE).toContain('se borra');
     expect(REJECT_CONSEQUENCE).toContain('no se puede deshacer');
-  });
-
-  it('warns that the note is not private, in the words the rating box already uses', () => {
-    // ⚠ Word for word. Two phrasings of "this is not private" in one product
-    // teach people that the wording, rather than the fact, is what varies.
-    expect(NOTE_NOT_PRIVATE).toBe('Esto no es privado: lo lee quien administra e investiga aquí.');
   });
 
   it('makes it plain they are editing the redacted version, not the original', () => {

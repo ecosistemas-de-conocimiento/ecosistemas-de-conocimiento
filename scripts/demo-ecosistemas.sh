@@ -25,8 +25,9 @@
 #   1. Renames the ecosistema with slug `demo` ("Organización Demo") to
 #      "Red Comunitaria de Salud". The slug stays, so URLs keep working.
 #   2. Strips the " (SIM_0249)" suffix from document titles in both ecosistemas,
-#      in the backend AND in ai-service, where the title travels with every
-#      chunk and shows up as the chat's citation.
+#      and numbers the titles that would then repeat (TITLES, below). In the
+#      backend AND in ai-service, where the title travels with every chunk and
+#      shows up as the chat's citation.
 #   3. Creates a second ecosistema, "Red de Educación Comunitaria" (slug
 #      `educacion-comunitaria`), gives it the same members and roles as `demo`,
 #      and MOVES the education documents into it (rule below).
@@ -57,6 +58,22 @@
 #   (2026-10-21, edc_backend, 60 rows with that tema): 23 mention school words
 #   (escuela|maestr|alumn|clase), 13 mention health words. It also balances the
 #   split, 120 rows to 130. To keep it under Salud, set EDUCACION_TEMAS=escuela.
+#
+# TITLES
+#
+#   Without its SIM id, "Carta de presentación — traducción en salud" is the
+#   title of 21 documents. Titles that repeat within one ecosistema get a
+#   zero-padded number: "Carta de presentación — traducción en salud (03)".
+#     · Order: by SIM number, then by id (a title already stripped by an earlier
+#       run has no SIM number left, so it is ordered by id).
+#     · A title that is already numbered keeps its number; new duplicates
+#       continue after the highest one. So a second run changes nothing.
+#     · A title that does not repeat gets no number.
+#     · Seeded rows only (a `tema`, or a SIM id). A person's own upload keeps
+#       the name they gave it, repeated or not.
+#     · ai-service: `documento` rows only. A testimonio's citation title is
+#       "Testimonio", and its name never goes into a corpus.
+#   ⚠ Any title ending in " (NN)" or " (NNN)" counts as already numbered.
 #
 # WHY NO RE-INGEST IS NEEDED
 #
@@ -150,7 +167,7 @@ case "${SESSION_COL}" in
   *) echo "documents has neither uploaded_in_session_id nor session_id; refusing to guess." >&2; exit 1 ;;
 esac
 
-# Prints `ids=<comma list>` and `edu=<org id>` on their own lines for step 2.
+# Prints `ids=<comma list>`, `edu=<org id>` and `titles=<json>` on their own lines for step 2.
 BACKEND_OUT="$(psql_on backend -A -t \
   -v apply="${APPLY}" -v demo_slug="${DEMO_SLUG}" -v demo_name="${DEMO_NAME}" \
   -v edu_slug="${EDU_SLUG}" -v edu_name="${EDU_NAME}" -v edu_desc="${EDU_DESCRIPTION}" \
@@ -284,12 +301,58 @@ WITH d AS (
   RETURNING 1
 ) SELECT 'msg=graph entities left unused in demo, removed: ' || count(*) FROM d;
 
--- 2. titles, both ecosistemas
+-- 2. titles, both ecosistemas: drop " (SIM_0249)", then number the titles
+--    that would otherwise repeat within one ecosistema. See TITLES in the header.
+CREATE TEMP TABLE titled ON COMMIT DROP AS
+-- Seeded rows only: they carry a tema (seed/corpus.ts) or a SIM id. A title a
+-- person gave their own upload is never renumbered.
+SELECT d.id, d.organization_id AS org, d.name,
+       regexp_replace(regexp_replace(d.name, ' \(SIM_[0-9]+\)$', ''), ' \([0-9]{2,3}\)$', '') AS base,
+       substring(d.name from ' \(SIM_([0-9]+)\)$')::int AS sim,
+       substring(d.name from ' \(([0-9]{2,3})\)$')::int AS num
+FROM documents d
+WHERE d.organization_id IN (current_setting('demo.id')::int, current_setting('edu.id')::int)
+  AND (d.tema IS NOT NULL OR d.name ~ ' \(SIM_[0-9]+\)$');
+
+CREATE TEMP TABLE retitled ON COMMIT DROP AS
+WITH g AS (
+  SELECT t.*,
+         count(*) OVER (PARTITION BY org, base) AS n,
+         coalesce(max(num) OVER (PARTITION BY org, base), 0) AS taken
+  FROM titled t
+), nxt AS (
+  SELECT g.*,
+         CASE WHEN n > 1 AND num IS NULL
+              THEN taken + row_number() OVER (PARTITION BY org, base, num IS NULL
+                                              ORDER BY sim NULLS LAST, id)
+         END AS new_num
+  FROM g
+)
+SELECT id, name AS old_name,
+       CASE WHEN new_num IS NOT NULL
+            THEN base || ' (' || lpad(new_num::text, greatest(2, length((taken + n)::text)), '0') || ')'
+            ELSE regexp_replace(name, ' \(SIM_[0-9]+\)$', '')
+       END AS new_name
+FROM nxt;
+DELETE FROM retitled WHERE new_name = old_name;
+
 WITH u AS (
-  UPDATE documents SET name = regexp_replace(name, ' \(SIM_[0-9]+\)$', '')
-  WHERE organization_id IN (current_setting('demo.id')::int, current_setting('edu.id')::int)
-    AND name ~ ' \(SIM_[0-9]+\)$' RETURNING 1
-) SELECT 'msg=titles cleaned: ' || count(*) FROM u;
+  UPDATE documents d SET name = r.new_name
+  FROM retitled r WHERE d.id = r.id RETURNING 1
+) SELECT 'msg=titles changed: ' || count(*) FROM u;
+
+SELECT 'msg=⚠ seeded titles still repeated within an ecosistema (expected 0): ' || count(*)
+FROM (SELECT 1 FROM documents d JOIN titled t ON t.id = d.id
+      GROUP BY d.organization_id, d.name HAVING count(*) > 1) x;
+
+-- 🔴 The ai-service step copies these names into citation titles, so it gets
+-- documento rows only. A testimonio's citation title is "Testimonio" and its
+-- name never goes into a corpus (lib/contentKind.ts, titleFor).
+-- ⚠ No backticks in this heredoc: it is unquoted, so bash would run them.
+SELECT 'titles=' || coalesce(json_object_agg(id::text, name), '{}')::text
+FROM documents
+WHERE organization_id IN (current_setting('demo.id')::int, current_setting('edu.id')::int)
+  AND content_kind = 'documento';
 
 -- What the ai-service step needs: every document NOW in the education
 -- ecosistema (not only the ones moved this run, so a re-run finishes a
@@ -311,6 +374,8 @@ grep '^msg=' <<<"${BACKEND_OUT}" | sed 's/^msg=/  backend: /'
 DEMO_ID="$(grep '^demo=' <<<"${BACKEND_OUT}" | cut -d= -f2)"
 EDU_ID="$(grep '^edu=' <<<"${BACKEND_OUT}" | cut -d= -f2)"
 IDS="$(grep '^ids=' <<<"${BACKEND_OUT}" | cut -d= -f2)"
+TITLES="$(grep '^titles=' <<<"${BACKEND_OUT}" | cut -d= -f2-)"
+[[ -n "${TITLES}" ]] || TITLES='{}'
 [[ -n "${DEMO_ID}" && -n "${EDU_ID}" ]] || { echo "Backend step returned no ids:" >&2; echo "${BACKEND_OUT}" >&2; exit 1; }
 if [[ ${APPLY} != 1 ]]; then
   echo "  (dry run: the education ecosistema id ${EDU_ID} is provisional; the real one is assigned on --apply)"
@@ -331,7 +396,8 @@ ai_failed() {
   exit 1
 }
 trap ai_failed ERR
-psql_on ai -A -t -v apply="${APPLY}" -v demo="${DEMO_ID}" -v edu="${EDU_ID}" -v ids="${IDS}" <<'SQL' | sed 's/^/  ai-service: /'
+psql_on ai -A -t -v apply="${APPLY}" -v demo="${DEMO_ID}" -v edu="${EDU_ID}" -v ids="${IDS}" \
+  -v titles="${TITLES}" <<'SQL' | sed 's/^/  ai-service: /'
 BEGIN;
 
 CREATE TEMP TABLE want ON COMMIT DROP AS
@@ -427,29 +493,46 @@ WITH ins AS (
   ON CONFLICT (org) DO NOTHING RETURNING 1
 ) SELECT 'budgets created: ' || count(*) FROM ins;
 
--- Titles: the citation title travels in document and chunk metadata.
+-- Titles: the citation title travels in document and chunk metadata. Each one
+-- takes the backend's name, but only where the two are the same title apart
+-- from the " (SIM_…)" / " (NN)" suffix, so a title ai-service holds for another
+-- reason (a gated document's "Testimonio") is never overwritten.
 CREATE TEMP TABLE eco_corpora ON COMMIT DROP AS
 SELECT id FROM corpora
 WHERE name ~ ('^eco-(' || :'demo' || '|' || :'edu' || ')(-draft-[A-Za-z0-9_]+)?$');
 
+CREATE TEMP TABLE new_titles ON COMMIT DROP AS
+SELECT key AS external_id, value AS title,
+       regexp_replace(value, ' \([0-9]{2,3}\)$', '') AS base
+FROM jsonb_each_text(:'titles'::jsonb);
+
+CREATE FUNCTION pg_temp.title_base(t text) RETURNS text LANGUAGE sql IMMUTABLE AS
+$f$ SELECT regexp_replace(regexp_replace(t, ' \(SIM_[0-9]+\)$', ''), ' \([0-9]{2,3}\)$', '') $f$;
+
 WITH u AS (
-  UPDATE chunks k SET metadata = jsonb_set(k.metadata, '{title}',
-           to_jsonb(regexp_replace(k.metadata->>'title', ' \(SIM_[0-9]+\)$', '')))
-  WHERE k.corpus_id IN (SELECT id FROM eco_corpora) AND k.metadata->>'title' ~ ' \(SIM_[0-9]+\)$'
+  UPDATE chunks k SET metadata = jsonb_set(k.metadata, '{title}', to_jsonb(n.title))
+  FROM documents d JOIN new_titles n ON n.external_id = d.external_id
+  WHERE k.document_id = d.id AND k.corpus_id IN (SELECT id FROM eco_corpora)
+    AND k.metadata->>'title' IS DISTINCT FROM n.title
+    AND pg_temp.title_base(k.metadata->>'title') = n.base
   RETURNING 1
-) SELECT 'chunk titles cleaned: ' || count(*) FROM u;
+) SELECT 'chunk titles changed: ' || count(*) FROM u;
 
 WITH u AS (
   UPDATE documents d SET
-         title = regexp_replace(d.title, ' \(SIM_[0-9]+\)$', ''),
-         metadata = CASE WHEN d.metadata->>'title' ~ ' \(SIM_[0-9]+\)$'
-                         THEN jsonb_set(d.metadata, '{title}',
-                                to_jsonb(regexp_replace(d.metadata->>'title', ' \(SIM_[0-9]+\)$', '')))
+         title = CASE WHEN pg_temp.title_base(d.title) = n.base THEN n.title ELSE d.title END,
+         metadata = CASE WHEN pg_temp.title_base(d.metadata->>'title') = n.base
+                         THEN jsonb_set(d.metadata, '{title}', to_jsonb(n.title))
                          ELSE d.metadata END
-  WHERE d.corpus_id IN (SELECT id FROM eco_corpora)
-    AND (d.title ~ ' \(SIM_[0-9]+\)$' OR d.metadata->>'title' ~ ' \(SIM_[0-9]+\)$')
+  FROM new_titles n
+  WHERE n.external_id = d.external_id AND d.corpus_id IN (SELECT id FROM eco_corpora)
+    AND ((d.title IS DISTINCT FROM n.title AND pg_temp.title_base(d.title) = n.base)
+      OR (d.metadata->>'title' IS DISTINCT FROM n.title AND pg_temp.title_base(d.metadata->>'title') = n.base))
   RETURNING 1
-) SELECT 'document titles cleaned: ' || count(*) FROM u;
+) SELECT 'document titles changed: ' || count(*) FROM u;
+
+SELECT 'chunk titles still carrying a SIM id (expected 0): ' || count(*)
+FROM chunks k WHERE k.corpus_id IN (SELECT id FROM eco_corpora) AND k.metadata->>'title' ~ ' \(SIM_[0-9]+\)$';
 
 SELECT 'left behind in demo corpora (expected 0): ' || count(*)
 FROM documents d JOIN pairs p ON p.src_id = d.corpus_id

@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { staticDetector } from './detector'
+import { DETECT_SYSTEM_PROMPT, staticDetector } from './detector'
 import { runAnonymisationGate } from './gate'
 import type { DetectorFinding, GateInput, PersonDetector } from './types'
 
@@ -692,8 +692,9 @@ describe('runAnonymisationGate — common place nouns do not hold a document', (
           name: 'seen-on-dev',
           async detect() {
             calls += 1
+            // Stage 3 marks nothing: Papantla is a town, and towns are shown (#12).
             return calls === 1
-              ? [{ text: 'Papantla', type: 'lugar' }]
+              ? []
               : [
                   { text: 'la escuela', type: 'lugar' },
                   { text: 'la colonia', type: 'lugar' },
@@ -705,8 +706,8 @@ describe('runAnonymisationGate — common place nouns do not hold a document', (
     )
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return
-    // Stage 3 took the town; the common nouns stay readable.
-    expect(result.redactedText).not.toContain('Papantla')
+    // The town and the common nouns stay readable.
+    expect(result.redactedText).toContain('Papantla')
     expect(result.redactedText).toContain('la colonia')
   })
 
@@ -722,7 +723,7 @@ describe('runAnonymisationGate — common place nouns do not hold a document', (
 
   it.each([
     ['a named colonia', 'Vivo en la colonia Portales desde niña.', 'la colonia Portales'],
-    ['a town written like a noun', 'Vivo en La Barranca desde niña.', 'La Barranca'],
+    ['a proper name written like a noun', 'Vivo en La Barranca desde niña.', 'La Barranca'],
     ['a barrio with a name', 'Vivo en el barrio de San Juan.', 'el barrio de San Juan'],
     ['a free-form reference', 'Vivo en la casa de la reja verde.', 'la casa de la reja verde'],
     // ⚠ Off the list since the 2026-10-21 audit: also the name of colonias.
@@ -792,6 +793,68 @@ describe('runAnonymisationGate — common place nouns do not hold a document', (
     if (result.status !== 'ready') return
     expect(result.redactedText).not.toContain('Morelos')
     expect(result.redactedText).toContain('La calle es tranquila')
+  })
+})
+
+describe('runAnonymisationGate — 🔴 towns are shown, addresses are not (owner, 2026-10-21, #12)', () => {
+  it('the detector prompt says never to mark a town, municipality, city or state', () => {
+    expect(DETECT_SYSTEM_PROMPT).toContain('NUNCA marques estados, municipios, alcaldías, ciudades, pueblos')
+    expect(DETECT_SYSTEM_PROMPT).toContain('En "vivo en Xoxocotla, Morelos" no hay hallazgo.')
+    // The old rule — mark a town when it says where someone lives — is gone.
+    expect(DETECT_SYSTEM_PROMPT).not.toContain('Márcalo cuando ubique')
+    expect(DETECT_SYSTEM_PROMPT).not.toMatch(/municipios cuando ubican un domicilio/)
+  })
+
+  it('the detector prompt still asks for streets, colonias, ranchos, parajes, C.P. and house references', () => {
+    for (const kept of [
+      'Calles, avenidas',
+      'Colonias, barrios, fraccionamientos',
+      'Ranchos y parajes',
+      'Códigos postales',
+      'la casa de la reja verde',
+    ]) {
+      expect(DETECT_SYSTEM_PROMPT, kept).toContain(kept)
+    }
+  })
+
+  it('keeps "vivo en Xoxocotla, Morelos" when the detector follows the prompt', async () => {
+    const text = 'Vivo en Xoxocotla, Morelos, y trabajo en la Alcaldía Iztapalapa.'
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text },
+      { detector: staticDetector([]) },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe(text)
+    expect(result.report.addresses ?? 0).toBe(0)
+  })
+
+  it.each([
+    ['calle Morelos 45', 'Vivo en calle Morelos 45, Xoxocotla, Morelos.', 'calle Morelos 45'],
+    ['colonia Portales', 'Vivo en la colonia Portales, en la Ciudad de México.', 'colonia Portales'],
+    ['the rancho', 'Vivimos en el rancho Los Pinos, en Tlaquiltenango.', 'rancho Los Pinos'],
+  ])('🔴 still redacts %s and keeps the town beside it', async (_case, text, finding) => {
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text },
+      { detector: staticDetector([{ text: finding, type: 'lugar' }]) },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).not.toContain(finding)
+    expect(result.redactedText).toContain('[Domicilio A]')
+    for (const town of ['Xoxocotla', 'Ciudad de México', 'Tlaquiltenango']) {
+      if (text.includes(town)) expect(result.redactedText).toContain(town)
+    }
+  })
+
+  it('🔴 C.P. 06700 is redacted in code, with no help from the model', async () => {
+    const result = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Vivo en Xoxocotla, Morelos, C.P. 06700.' },
+      { detector: staticDetector([]) },
+    )
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe('Vivo en Xoxocotla, Morelos, [Domicilio A].')
   })
 })
 
