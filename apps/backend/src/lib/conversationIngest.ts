@@ -1,15 +1,26 @@
 /**
  * CONVERSATIONS BECOME CORPUS — turn by turn, and never the thread twice.
  *
- * 🔴 NOT CALLED IN PRODUCTION SINCE 2026-10-21 (owner ruling: chat searches
- * documents only, never conversation turns). The `messages` afterChange hook
- * and the publish-time release that called {@link ingestConversationTurns} /
- * {@link releaseConversationsWaitingOn} are removed; `noConversationIngest.test.ts`
- * fails if a caller comes back. The web side also drops every `msg-*` chunk
- * from retrieval (`apps/web/src/lib/server/engine/chunkFence.ts`). What still
- * runs from here: the id helpers (`turnExternalId`, `messageIdFromExternalId`)
- * and the status list, which the erase path and the ingest callback use for
- * turns ingested before the ruling.
+ * 🔴 OWNER RULING 2026-10-21 (#4, choice A): "store, never cite in chat".
+ * Every turn, the question AND the answer, enters the ecosistema's corpus
+ * through the anonymisation gate, so later chats can use earlier ones for
+ * ORIENTATION. Chat never cites a turn: the web drops turn chunks from every
+ * sources leg and reads them only in a separate, labelled orientation block
+ * (`apps/web/src/lib/server/engine/orientation.ts`). Turns feed no graph.
+ * The trigger is the `messages` afterChange hook (`collections/Messages.ts`),
+ * detached with `setImmediate`, so the chat reply never waits on it. A turn
+ * the gate holds is not embedded and is logged; it does NOT go to Revisión
+ * (chosen, review: one hold per chat message would flood the reviewers).
+ *
+ * ⏸ TODO (deferred, audit 2026-10-21; not demo-critical): when a document is
+ * UNPUBLISHED or DELETED, the turns whose `provenance` / `contextRefs` cite it
+ * ({@link citedDocumentIds}) stay in the corpus, so another member's
+ * orientation block can still carry what they said about it. Fix: on the
+ * unpublish confirm and the document delete, find those turns (state in
+ * `RETIRABLE_TURN_STATES`, `collections/Sessions.ts`) and retire + erase them
+ * as the conversation delete does (`conversationTurnErasure.ts`). Not done:
+ * that path is transaction-coupled to the session delete and needs its own
+ * after-commit plan, well past a small change.
  *
  * ── 🔴 THE ONE THING THIS FILE EXISTS TO GET RIGHT ───────────────────────────
  *
@@ -46,22 +57,14 @@
  * ecosistema while the thing it quotes is not. The answer would cite a source
  * nobody else can open.
  *
- * ── QUESTIONS GO IN. ANSWERS DO NOT, UNLESS SWITCHED ON ──────────────────────
+ * ── QUESTIONS AND ANSWERS BOTH GO IN ──────────────────────────────────────────
  *
- * 🔴 `INGEST_ASSISTANT_TURNS` IS OFF BY DEFAULT (owner's ruling 2026-10-20).
- * Ingesting answers is a feedback loop: the assistant retrieves its own prior
- * answers and cites them as sources, so its mistakes become "documented". An
- * audit measured it live: an earlier answer was the top-1 source in 6 of 14
- * chat turns, about 10 s after it was written (quoted from the ruling). With
- * the switch off an answer is marked `skipped` and never reaches the
- * anonymisation gate, so it also costs no model calls.
- *
- * ⚠ Answers ingested before the ruling stay where they are. Retrieval filters
- * them out (web); their rows keep the status the erase path relies on.
- *
- * ⚠ IF IT IS SWITCHED BACK ON, `metadata.authoredBy` is the mitigation, and it
- * is not optional. Every assistant turn is marked, so retrieval and citations
- * can say *"this came from a previous answer"*. See `lib/contentKind.ts`.
+ * `INGEST_ASSISTANT_TURNS` is gone (2026-10-21). It kept answers out because
+ * chat used to CITE retrieved turns, so an earlier answer became a "source"
+ * (an audit measured it as the top-1 source in 6 of 14 chat turns, quoted
+ * from the 2026-10-20 ruling). Chat now never cites a turn, so that loop is
+ * closed on the read side, and `metadata.authoredBy` still marks each turn.
+ * Answers `skipped` under the old switch stay skipped: `skipped` is terminal.
  *
  * ── EVERY TURN GOES THROUGH THE ANONYMISATION GATE ───────────────────────────
  *
@@ -72,12 +75,16 @@
  * the speakers ARE members; a testimony is the case where it does not.
  */
 
+import { randomUUID } from 'node:crypto'
+
 import type { Payload } from 'payload'
 
 import { chunkMetadata, titleFor } from './contentKind'
 import { publishedCorpus } from './corpus'
 import { relationId } from './permissions'
 import type { PersonDetector } from './anonymise/types'
+import { GATE_UNAVAILABLE_CODE } from './anonymiseDocument'
+import { claimTurn, finishTurn, TURN_RUNNING_CODE, type MessageColumnsPayload } from './messageColumns'
 
 /**
  * Where one chat turn stands with respect to the corpus.
@@ -187,17 +194,6 @@ export interface ConversationIngester {
 }
 
 const CORPUS_LANGUAGE = process.env.CORPUS_LANGUAGE?.trim() || 'spanish'
-
-/**
- * 🔴 `INGEST_ASSISTANT_TURNS`: whether assistant answers enter the shared
- * corpus. OFF unless set to an explicit yes (`true`, `1`, `on`, `yes`), so a
- * typo keeps the feedback loop closed. Read per run, not at import.
- */
-export function ingestAssistantTurnsEnabled(
-  env: Record<string, string | undefined> = process.env,
-): boolean {
-  return ['true', '1', 'on', 'yes'].includes(env.INGEST_ASSISTANT_TURNS?.trim().toLowerCase() ?? '')
-}
 
 // ---------------------------------------------------------------------------
 // Which drafts is this conversation waiting on?
@@ -420,12 +416,9 @@ export async function ingestConversationTurns(args: {
   callbackUrl?: string
   /** Test seam for the gate's model call. */
   detector?: PersonDetector
-  /** Overrides `INGEST_ASSISTANT_TURNS`. */
-  ingestAssistantTurns?: boolean
 }): Promise<ConversationIngestResult> {
   const { payload, sessionId } = args
   const empty: ConversationIngestResult = { ingested: 0, waitingOn: [], heldByGate: 0 }
-  const withAnswers = args.ingestAssistantTurns ?? ingestAssistantTurnsEnabled()
 
   const session = (await payload
     .findByID({ collection: 'sessions', id: sessionId as never, depth: 0, overrideAccess: true })
@@ -438,6 +431,9 @@ export async function ingestConversationTurns(args: {
     // cross-tenant write. Nothing to do, and nothing to fix at runtime.
     return empty
   }
+  // The conversation's owner, on every turn's chunk metadata, so the web's
+  // `CHAT_ORIENT_SCOPE=own` can keep orientation to the asker's own turns.
+  const userId = relationId(session.user)
 
   const all = (
     await payload.find({
@@ -458,30 +454,13 @@ export async function ingestConversationTurns(args: {
    * will never move — indistinguishable from a stuck pipeline. `skipped` is the
    * honest terminal state, and writing it once takes the row out of every future
    * scan.
-   *
-   * 🔴 An assistant turn with `INGEST_ASSISTANT_TURNS` off is skipped too, but
-   * ONLY from a runnable state. One already `embedding`, `ingested` or
-   * `held-gate` keeps its status: it says what is (or is not) in ai-service.
-   *
-   * 🔴 So does a `failed` turn that still carries a `corpusIngestId`. The
-   * janitor gives up on a stalled turn that way (`lib/ingestRecovery.ts`), and
-   * ai-service may have stored it anyway; `skipped` would claim it never got
-   * there, and the id is the only trace that it might have.
    */
-  const answerOff = (message: MessageRow) => !withAnswers && message.role === 'assistant'
-  const mayBeStored = (message: MessageRow) =>
-    corpusStateOf(message) === 'failed' &&
-    typeof message.corpusIngestId === 'string' &&
-    message.corpusIngestId.length > 0
   await Promise.all(
     all
       .filter(
         (message) =>
-          ((!isIngestableRole(message.role) || !hasText(message.content)) &&
-            corpusStateOf(message) !== 'skipped') ||
-          (answerOff(message) &&
-            RUNNABLE_STATES.includes(corpusStateOf(message)) &&
-            !mayBeStored(message)),
+          (!isIngestableRole(message.role) || !hasText(message.content)) &&
+          corpusStateOf(message) !== 'skipped',
       )
       .map((message) => writeMessage(payload, message.id, { corpusStatus: 'skipped' })),
   )
@@ -489,7 +468,6 @@ export async function ingestConversationTurns(args: {
   const outstanding = all.filter(
     (message) =>
       isIngestableRole(message.role) &&
-      !answerOff(message) &&
       hasText(message.content) &&
       RUNNABLE_STATES.includes(corpusStateOf(message)),
   )
@@ -498,7 +476,8 @@ export async function ingestConversationTurns(args: {
   // 🔴 THE HOLD, AND IT IS CHECKED AGAINST THE WHOLE THREAD, NOT JUST THE NEW
   // TURNS. A draft cited on turn 3 keeps turn 41 out too: releasing the tail of
   // a conversation whose head quotes a private document would put half an
-  // exchange in the corpus, citing something nobody else can open.
+  // exchange in the corpus, where another member's orientation block could
+  // read a draft only its author can see.
   // C-15: plus every unpublished draft ATTACHED here, cited or not.
   const [cited, attached] = await Promise.all([
     citedUnpublishedDocumentIds(payload, all),
@@ -520,42 +499,39 @@ export async function ingestConversationTurns(args: {
   }
 
   /**
-   * 🔴 CLAIM THE TURNS BEFORE DOING ANYTHING SLOW.
+   * 🔴 CLAIM THE TURNS BEFORE DOING ANYTHING SLOW, ONE GUARDED STATEMENT EACH.
    *
    * The trigger is an `afterChange` hook on `messages`, so a normal exchange
    * fires it twice in quick succession — once for the question, once for the
    * answer. The run in between takes SECONDS, because the anonymisation gate
-   * makes two model round trips per turn. Without a claim, the second run reads
-   * the first run's turns while they are still `pending` and enqueues them a
-   * second time: the embedding budget is spent twice, and whether that also
-   * duplicates chunks depends on ai-service's upsert semantics for a repeated
-   * external id — which is not a thing to bet a corpus on.
+   * makes model round trips per turn. Without a claim, the second run would
+   * gate and enqueue the first run's turns a second time.
    *
-   * `embedding` is not in `RUNNABLE_STATES`, so writing it here takes the turns
-   * out of every concurrent run's view.
+   * `claimTurn` is `UPDATE … WHERE corpus_status IN (<runnable>)`, so exactly
+   * one run gets each turn (`lib/messageColumns.ts`). It stamps this run's
+   * TOKEN in `corpusError`; every later write below is guarded on it, the same
+   * rule as the testimonio gate's claim (`anonymiseDocumentText`).
    *
-   * ⚠ THIS IS A CLAIM, NOT A LOCK. Two runs that read `outstanding` in the same
-   * instant can still both proceed — the window shrinks from seconds to
-   * microseconds, it does not close. Closing it properly needs a conditional
-   * UPDATE … WHERE corpus_status = 'pending', which Payload's update API cannot
-   * express. Worth knowing rather than discovering.
-   *
-   * ⚠ Every path out of here below RE-WRITES the status: `held-gate` when the
-   * gate refuses, `failed` when the enqueue throws, `embedding` again with the
-   * real ingest id on success. A turn must never be left claimed and forgotten.
+   * ⚠ Every path out of here RE-WRITES the status: `held-gate` when the gate
+   * refuses, `failed` when the gate could not run or the enqueue throws,
+   * `embedding` with the real ingest id on success. A run that dies in between
+   * leaves `embedding` with no ingest id, which the stalled-turn sweep moves to
+   * `failed` (`sweepStalledMessages`), and the next turn retries it.
    */
-  await Promise.all(
-    outstanding.map((message) =>
-      writeMessage(payload, message.id, { corpusStatus: 'embedding', corpusError: null }),
-    ),
-  )
+  const token = `${TURN_RUNNING_CODE}: ${randomUUID()}`
+  const db = payload as unknown as MessageColumnsPayload
+  const claimed: MessageRow[] = []
+  for (const message of outstanding) {
+    if (await claimTurn(db, message.id, token, RUNNABLE_STATES)) claimed.push(message)
+  }
+  if (claimed.length === 0) return empty
 
   const roster = await rosterForOrganization(payload, organizationId)
   /**
    * 🔴 NOT `session.title`. A session title is generated from the first thing
    * the person asked, so it is unredacted free text — "¿Puede Ana López pedir
-   * la prórroga?" would land on the citation card intact, past a gate that only
-   * ever looked at the message bodies.
+   * la prórroga?" would land in the corpus intact, past a gate that only ever
+   * looked at the message bodies.
    */
   const title = titleFor('conversacion')
 
@@ -568,26 +544,27 @@ export async function ingestConversationTurns(args: {
   const enqueuedIds: Array<number | string> = []
   let heldByGate = 0
 
-  for (const message of outstanding) {
+  for (const message of claimed) {
     const original = String(message.content)
 
     // ⚠ REUSE A DECISION ALREADY MADE. A turn that cleared the gate on an
     // earlier run keeps its `redactedText`; re-running the gate would pay for
-    // two more model calls and could return a DIFFERENT redaction of text that
+    // more model calls and could return a DIFFERENT redaction of text that
     // is already partly in the corpus.
     let text = typeof message.redactedText === 'string' ? message.redactedText.trim() : ''
 
     if (!text) {
-      const gated = await anonymiseDocumentTextForMessage({
+      const gated = await anonymiseTurn({
         payload,
         messageId: message.id,
+        token,
         text: original,
         roster,
         organizationId,
         ...(args.detector ? { detector: args.detector } : {}),
       })
       if (!gated.ok) {
-        heldByGate += 1
+        if (gated.held) heldByGate += 1
         continue
       }
       text = gated.text
@@ -608,11 +585,13 @@ export async function ingestConversationTurns(args: {
         // ecosistema, and no scrubber fixes that.
         publication: 'published',
         title,
-        // 🔴 THE FEEDBACK-LOOP MITIGATION. Without this an assistant answer is
-        // indistinguishable from a source document at retrieval time, and the
-        // model's own errors get laundered into "documented" over time.
+        // 🔴 Marks the chunk as a TURN, not a source. The web's sources legs
+        // drop anything carrying it (`apps/web/src/lib/turnChunks.ts`).
         authoredBy: message.role === 'assistant' ? 'assistant' : 'user',
+        // The orientation leg excludes the current conversation by this, and
+        // `CHAT_ORIENT_SCOPE=own` keeps to the asker's own turns by `userId`.
         sessionId,
+        ...(userId === null ? {} : { userId }),
       }),
     })
     enqueuedIds.push(message.id)
@@ -661,7 +640,7 @@ export async function ingestConversationTurns(args: {
     const reason = err instanceof Error ? err.message : String(err)
     await Promise.all(
       enqueuedIds.map((id) =>
-        writeMessage(payload, id, {
+        finishTurn(db, id, token, {
           corpusStatus: 'failed',
           corpusError: `ingest_enqueue_failed: ${reason}`.slice(0, 500),
         }),
@@ -670,9 +649,9 @@ export async function ingestConversationTurns(args: {
     return { ...empty, heldByGate }
   }
 
-  await Promise.all(
+  const finished = await Promise.all(
     enqueuedIds.map((id) =>
-      writeMessage(payload, id, {
+      finishTurn(db, id, token, {
         // `embedding`, not `ingested`: the callback is what confirms the chunks
         // exist. Claiming success here would leave a failed enqueue looking done.
         corpusStatus: 'embedding',
@@ -681,6 +660,17 @@ export async function ingestConversationTurns(args: {
       }),
     ),
   )
+  const lost = finished.filter((ok) => !ok).length
+  if (lost > 0) {
+    // A sweep or a newer run took these over while the enqueue was in flight.
+    // The turns ARE enqueued; their callback is ignored (no matching
+    // `corpusIngestId`) and a later run re-enqueues them under the same
+    // `msg-<id>`.
+    console.warn(
+      `[conversation] ${lost} turn(s) of session ${String(sessionId)} were taken over during the enqueue; ` +
+        'a later run re-enqueues them.',
+    )
+  }
 
   return { ingested: documents.length, waitingOn: [], heldByGate }
 }
@@ -705,7 +695,6 @@ export async function releaseConversationsWaitingOn(args: {
   client: ConversationClient
   callbackUrl?: string
   detector?: PersonDetector
-  ingestAssistantTurns?: boolean
 }): Promise<void> {
   const { payload, documentId } = args
   try {
@@ -730,9 +719,6 @@ export async function releaseConversationsWaitingOn(args: {
         client: args.client,
         ...(args.callbackUrl ? { callbackUrl: args.callbackUrl } : {}),
         ...(args.detector ? { detector: args.detector } : {}),
-        ...(args.ingestAssistantTurns !== undefined
-          ? { ingestAssistantTurns: args.ingestAssistantTurns }
-          : {}),
       })
     }
   } catch (err) {
@@ -785,22 +771,36 @@ function writeMessage(
 }
 
 /**
- * The gate, for one chat turn.
+ * The gate, for one chat turn. Same semantics as `anonymiseDocumentText`
+ * (`./anonymiseDocument`) for a testimonio; only the persistence differs,
+ * because a turn lives on `messages`, not `documents`.
  *
- * ⚠ It writes to `messages`, not `documents`, so it cannot reuse
- * `anonymiseDocumentText` as-is — that function persists onto a `documents` row.
- * The GATE ITSELF is shared; only the persistence differs, which is the right
- * seam: the rules for a conversation and a testimony are deliberately identical.
+ *   · cleared  → `redactedText` is stored beside `content`, and ONLY it is
+ *                embedded. `content` stays exactly as the person typed it.
+ *   · hold     → `held-gate`, never embedded, logged with counts only. NOT a
+ *                Revisión item (chosen, review): one hold per chat message
+ *                would flood the reviewers. `held-gate` is not runnable, so
+ *                the same text is not paid for twice.
+ *   · could not run (429, 5xx, 402, timeout: `retryable`) → `failed` with a
+ *                `gate_unavailable` reason, never a hold. `failed` is
+ *                runnable, so the next turn of the conversation retries it.
+ *   · crash    → a hold. A bug in the redactor must never fail open.
+ *
+ * 🔴 Every write is guarded on this run's claim token (`finishTurn`). A run
+ * that lost the turn to the stalled-turn sweep writes nothing and embeds
+ * nothing.
  */
-async function anonymiseDocumentTextForMessage(args: {
+async function anonymiseTurn(args: {
   payload: Payload
   messageId: number | string
+  token: string
   text: string
   roster: readonly string[]
   organizationId: number | string
   detector?: PersonDetector
-}): Promise<{ ok: true; text: string } | { ok: false }> {
-  const { payload, messageId, text, roster } = args
+}): Promise<{ ok: true; text: string } | { ok: false; held: boolean }> {
+  const { payload, messageId, token, text, roster } = args
+  const db = payload as unknown as MessageColumnsPayload
 
   const { runAnonymisationGate, aiServiceDetector } = await import('./anonymise')
   const detector = args.detector ?? aiServiceDetector({ organizationId: args.organizationId })
@@ -809,32 +809,53 @@ async function anonymiseDocumentTextForMessage(args: {
   try {
     result = await runAnonymisationGate({ contentKind: 'conversacion', text, roster }, { detector })
   } catch (err) {
-    // An unexpected throw is a HOLD, never a pass. A bug in the redactor is the
-    // last thing that should be allowed to fail open.
-    await writeMessage(payload, messageId, {
+    const owned = await finishTurn(db, messageId, token, {
       corpusStatus: 'held-gate',
       corpusError: `gate_crashed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 500),
+      redactedText: null,
     })
-    return { ok: false }
+    if (owned) console.warn(`[conversation] gate crashed on turn msg-${String(messageId)}; held, not embedded.`)
+    return { ok: false, held: owned }
+  }
+
+  if (result.status === 'hold' && result.retryable) {
+    await finishTurn(db, messageId, token, {
+      corpusStatus: 'failed',
+      corpusError: `${GATE_UNAVAILABLE_CODE}: ${result.stage}: ${result.reason}`.slice(0, 500),
+      anonymisationReport: result.report,
+      redactedText: null,
+    })
+    console.warn(
+      `[conversation] gate could not run on turn msg-${String(messageId)} (${result.stage}); ` +
+        'left retryable, not embedded.',
+    )
+    return { ok: false, held: false }
   }
 
   if (result.status === 'hold') {
-    await writeMessage(payload, messageId, {
+    const owned = await finishTurn(db, messageId, token, {
       corpusStatus: 'held-gate',
       // ⚠ Counts only. The gate's reason never quotes what it found.
       corpusError: `${result.stage}: ${result.reason}`.slice(0, 500),
       anonymisationReport: result.report,
+      // 🔴 Cleared, as on a testimonio: a redaction from an earlier run must
+      // never ride along with a hold.
+      redactedText: null,
     })
-    return { ok: false }
+    if (owned) {
+      console.info(
+        `[conversation] turn msg-${String(messageId)} held by the gate (${result.stage}); not embedded, not in Revisión.`,
+      )
+    }
+    return { ok: false, held: owned }
   }
 
-  await writeMessage(payload, messageId, {
-    // Beside the original, never over it. `messages.content` stays exactly as
-    // the person typed it — it is their conversation, and it is what the UI
-    // shows them.
+  // Beside the original, never over it. Status and token stay as claimed: the
+  // enqueue below still owns the turn.
+  const owned = await finishTurn(db, messageId, token, {
     redactedText: result.redactedText,
     anonymisationReport: result.report,
-    corpusError: null,
   })
+  if (!owned) return { ok: false, held: false }
   return { ok: true, text: result.redactedText }
 }

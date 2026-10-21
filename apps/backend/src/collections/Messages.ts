@@ -1,5 +1,6 @@
 import type {
   Access,
+  CollectionAfterChangeHook,
   CollectionBeforeValidateHook,
   CollectionConfig,
   Where,
@@ -47,7 +48,7 @@ const CORPUS_STATE_LABELS: Record<(typeof MESSAGE_CORPUS_STATES)[number], string
  * `create` access on this collection is "any signed-in user", because Payload's
  * create-time check has no document to constrain against. That was harmless
  * while a `messages` row was inert. It stopped being harmless the moment the
- * `afterChange` hook (removed 2026-10-21) started pushing turns into the ecosistema's SHARED
+ * `afterChange` hook below started pushing turns into the ecosistema's SHARED
  * corpus, because two separate gaps then compose into one injection:
  *
  *   1. Nothing checked that `session` belonged to the caller. Session ids are
@@ -201,13 +202,74 @@ export const protectMessageCorpusState: CollectionBeforeValidateHook = async ({
 }
 
 /**
- * 🔴 NO CONVERSATION INGEST (owner ruling 2026-10-21). Chat searches documents
- * only, so a new turn is never pushed into the ecosistema's corpus: neither the
- * question nor the answer. The `afterChange` hook that used to do it is gone,
- * and so is the publish-time release (`api/ai-service/callback`). The
- * `corpusStatus` fields stay: they are the erase bookkeeping for turns ingested
- * before the ruling (`Sessions.ts`, `scripts/check-turn-corpus.ts`).
+ * 🔴 THE TRIGGER. A new turn arrives; whatever is outstanding gets appended.
+ *
+ * Owner ruling 2026-10-21 (#4, choice A, "store, never cite in chat"): every
+ * turn, question and answer, goes into the ecosistema's corpus through the
+ * anonymisation gate, for orientation only. Chat never cites one (web
+ * `lib/turnChunks.ts`, `lib/server/engine/orientation.ts`). This reverses the
+ * removal in a4643cb.
+ *
+ * ⚠ `create` ONLY, AND GUARDED. Conversation ingest writes back to `messages`
+ * (status, `redactedText`), and those writes re-fire this hook. Without both the
+ * operation check and the context flag, one message would start a run that
+ * writes a status that starts a run — and each of those runs costs model calls.
+ *
+ * ⚠ Fired-and-forgotten through `setImmediate`, like the document ingest hook,
+ * for the same two reasons: the chat response must not wait on an embedding
+ * round trip, and the row has to be committed before a fresh Payload handle can
+ * read it back.
+ *
+ * ⚠ IT APPENDS. It does not re-ingest the thread — see `lib/conversationIngest.ts`,
+ * where that property is structural rather than a promise.
  */
+const ingestConversationHook: CollectionAfterChangeHook = ({ doc, req, operation }) => {
+  const ctx = req.context as { __skipConversationIngest?: boolean } | undefined
+  if (ctx?.__skipConversationIngest) return doc
+  if (operation !== 'create') return doc
+
+  const sessionId = (doc as { session?: unknown }).session
+  const id =
+    typeof sessionId === 'number' || typeof sessionId === 'string'
+      ? sessionId
+      : sessionId && typeof sessionId === 'object'
+        ? ((sessionId as { id?: number | string }).id ?? null)
+        : null
+  if (id === null) return doc
+
+  setImmediate(() => {
+    void (async () => {
+      const { getPayload } = await import('payload')
+      const config = (await import('@payload-config')).default
+      const payload = await getPayload({ config })
+
+      const { getAppAIClient } = await import('@/lib/aiClient')
+      const { ingestConversationTurns } = await import('@/lib/conversationIngest')
+      const { ingestCallbackUrl } = await import('@/lib/callbackConfig')
+
+      // Probe once so a bare local run (no ai-service) returns quietly; the
+      // ingest itself resolves the session's own ecosistema client.
+      try {
+        getAppAIClient()
+      } catch {
+        // No ai-service configured — a normal state for a bare local run. The
+        // turns stay `pending` and the next run picks them up.
+        return
+      }
+
+      await ingestConversationTurns({
+        payload,
+        sessionId: id,
+        client: ((organizationId: number | string) => getAppAIClient(organizationId)) as never,
+        ...(ingestCallbackUrl() ? { callbackUrl: ingestCallbackUrl() as string } : {}),
+      })
+    })().catch((err) => {
+      console.error('[messages] background conversation ingest failed for session', id, err)
+    })
+  })
+
+  return doc
+}
 
 export const Messages: CollectionConfig = {
   slug: 'messages',
@@ -342,7 +404,9 @@ export const Messages: CollectionConfig = {
     },
   ],
   hooks: {
-    // 🔴 FIRST AND ALWAYS. `redactedText` / `corpusStatus` are server-only.
+    // 🔴 FIRST AND ALWAYS. Without it the afterChange hook below is a corpus
+    // write anybody with an account can aim at anybody's ecosistema.
     beforeValidate: [protectMessageCorpusState],
+    afterChange: [ingestConversationHook],
   },
 }

@@ -126,8 +126,9 @@ first. Coolify names the project after the resource, so volumes are per environm
 |---|---|---|
 | `SEED_DOMAIN` | unset | 💤 dev may set `1`; stage is refused by the gate anyway |
 | `SEED_CORPUS_INGEST` | `0` | 💤 needs the corpus, which Coolify does not have |
-| `INGEST_ASSISTANT_TURNS` | unset | 💤 no effect since 2026-10-21: no chat turn (question or answer) is ingested at all; the callers are removed (`collections/Messages.ts`). Leave unset |
-| `CHAT_RETRIEVE_ASSISTANT_CHUNKS` | unset | 💤 removed 2026-10-21: chat always drops every conversation-turn chunk (over-fetching 3 per leg), so no switch remains (`apps/web/src/lib/turnChunks.ts`). Leave unset |
+| `INGEST_ASSISTANT_TURNS` | unset | 💤 removed 2026-10-21: every chat turn (question and answer) is ingested, anonymised, with no switch (owner ruling #4 choice A, `lib/conversationIngest.ts`). Leave unset |
+| `CHAT_RETRIEVE_ASSISTANT_CHUNKS` | unset | 💤 removed 2026-10-21: chat always drops every conversation-turn chunk from the sources (over-fetching 3 per leg), so no switch remains (`apps/web/src/lib/turnChunks.ts`). Leave unset |
+| `CHAT_ORIENT_SCOPE` | `ecosistema` | 💤 web. Earlier turns as a background block, never cited: `ecosistema` (every member's turns in this ecosistema, minus this conversation) \| `own` (this user's other conversations) \| `off`. Unknown ⇒ `off`. ⚠ `ecosistema` shows one member's anonymised words to another (`apps/web/src/lib/server/engine/orientation.ts`) |
 | `POSTGRES_USER`, `BACKEND_DB_NAME`, `AI_DB_NAME` | `edc`, `edc_backend`, `edc_ai` | 💤 per-env stores, so the defaults are fine |
 | `RUSTFS_MEMORY` | `1g` | 💤 |
 | `RERANK_API_KEY` | unset | 🔑 **the switch.** Hosted DeepInfra rerank, owner-approved. Setting it turns rerank on (guard in ai-service's `command:` exports `RERANK_ENABLED=true` when the key is non-empty and `RERANK_ENABLED` is unset). Unset ⇒ off, plus one boot warning about the missing key — expected. Not required |
@@ -153,7 +154,11 @@ values fall back to the default unless noted.
 | `GRAPH_EXTRACT_WINDOW_CHARS` | backend | `12000` | 💤 characters per extraction call (ADR §5.2) |
 | `GRAPH_EXTRACT_MAX_WINDOWS` | backend | `8` | 💤 runaway brake; a longer doc is extracted from its start only, and still shows `ready` |
 | `GRAPH_EXTRACT_MAX_CONCURRENCY` | backend | `2` | 💤 extractions at once per backend process; in-memory queue |
-| `GRAPH_MIN_SUPPORT` | backend | `3` | 💤 🔴 published docs that must mention an entity before it shows. A privacy control (ADR §7.3.3): values below 1 fall back to `3`, never to `0`. `1` is accepted |
+| `GRAPH_MIN_ENTITY_DOCS` | backend | `1` | 💤 distinct PUBLISHED docs that must mention an entity before `/grafo` and GraphRAG show it. Owner ruling 2026-10-21: names are anonymised upstream, so this is general privacy, not a security control. Published-only, gate-cleared text, the noise filters and "persona only from a documento" stay on regardless (`lib/graph/queries.ts`) |
+| `GRAPH_MIN_EDGE_DOCS` | backend | `1` | 💤 distinct published docs behind any relation between one PAIR of entities (all types and both directions fold into one edge) before it is drawn. The entity panel uses the same pair rule |
+| `GRAPH_MIN_COMENTION_DOCS` | backend | `1` | 💤 shared published docs before two entities get an "aparecen juntos" (co-mention) edge. Computed at query time from `graph_mentions`: 33–37 ms for 507 entities, measured 2026-10-21 on local `edc_backend`, org 1, load average ~3 |
+| `GRAPH_COMENTION_TOP_K` | backend | `8` | 💤 co-mention edges each entity keeps, strongest first; a pair stays if either end keeps it. Capped at 50. Org 1 locally (measured 2026-10-21): K=8 ⇒ 3,177 co-mention edges, K=4 ⇒ 1,856, K=2 ⇒ 974, beside 1,022 relation edges |
+| `GRAPH_MIN_SUPPORT` | backend | — | 🔴 **no longer read** (2026-10-21). Replaced by `GRAPH_MIN_ENTITY_DOCS` and `GRAPH_MIN_EDGE_DOCS`; an env that still sets it gets the new defaults. Delete it from Coolify |
 | `GRAPH_RATELIMIT_VIEW_USER_MAX` | backend | `120` | 💤 graph browsing, per user per minute |
 | `GRAPH_RATELIMIT_RETRIEVE_USER_MAX` | backend | `60` | 💤 the GraphRAG leg, per user per minute. Runs on every chat turn; hitting it silently drops graph context |
 | `GRAPH_RATELIMIT_ORG_MAX` | backend | `600` | 💤 one ecosistema, all members, per minute |

@@ -1,30 +1,19 @@
-# Ecosistemas de Conocimiento — AUDIO TRANSCRIPTION (opt-in)
+# Ecosistemas de Conocimiento — AUDIO TRANSCRIPTION, local overlay
 # =============================================================================
 #
-# Not part of the core stack and not deployed on Coolify yet. Add it on top of
-# the base file (and, locally, the override):
+# The three audio containers live in docker-compose.yml under the profile
+# `audio` (dev on edc-1 turns it on with COMPOSE_PROFILES=audio; see that file
+# and infra/fleet/edc-1.md §4x). Locally, turn the profile on and add this file:
 #
-#   docker compose -f docker-compose.yml -f docker-compose.override.yml \
+#   docker compose --profile audio -f docker-compose.yml \
+#                  -f docker-compose.override.yml \
 #                  -f docker-compose.audio.yml up -d --wait
 #
-# Without this file the backend runs with audio OFF: AUDIO_SERVICE_URL and
-# AUDIO_SERVICE_API_KEY are empty, the backend logs that at boot, and audio
-# uploads fail with a visible error. With this file both are set, and
-# AUDIO_SERVICE_API_KEY is REQUIRED — `config` fails loudly if it is missing,
-# so "audio on but unconfigured" cannot happen silently.
+# This overlay sets the backend's audio wiring and REQUIRES the key — `config`
+# fails loudly if it is missing, so "audio on but unconfigured" cannot happen
+# silently. Without the profile the backend runs with audio OFF.
 #
-# ⚠ The host port below is for local use. Before deploying audio on Coolify,
-#   drop the `ports:` entry (two environments on one box would collide).
-
-x-restart: &restart
-  restart: unless-stopped
-
-x-logging: &logging
-  logging:
-    driver: json-file
-    options:
-      max-size: "10m"
-      max-file: "3"
+# ⚠ The host port below is for local use only. Coolify never loads this file.
 
 services:
 
@@ -33,206 +22,7 @@ services:
       AUDIO_SERVICE_URL: http://audio-service:8080
       AUDIO_SERVICE_API_KEY: ${AUDIO_SERVICE_API_KEY:?AUDIO_SERVICE_API_KEY is required when audio is on}
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # AUDIO TRANSCRIPTION — 🔴 THREE CONTAINERS FROM ONE IMAGE. NOT ONE. NOT TWO.
-  # ═══════════════════════════════════════════════════════════════════════════
-  #
-  # ✅ Reconciled against the REAL service (2026-08-14): its `README.md`,
-  #    `Dockerfile`, `.env.example`, `app/config.py`, `app/worker.py` and the
-  #    `docker-compose.fragment.yml` its author left for this file. The previous
-  #    version of this block was a speculative placeholder written before the
-  #    service existed; everything in it that turned out to be wrong (a `/models`
-  #    volume, `WHISPER_MODEL_DIR`, `TRANSCRIBE_CONCURRENCY`, `AI_SERVICE_URL`,
-  #    a single container) has been deleted rather than adapted.
-  #
-  # ┌───────────────────────────────────────────────────────────────────────────┐
-  # │ 🔴 WHY THERE ARE THREE, AND WHAT HAPPENS IF YOU "SIMPLIFY" IT TO TWO      │
-  # │                                                                          │
-  # │   audio-service            uvicorn  — HTTP API. No model in RAM.         │
-  # │   audio-service-worker     arq WorkerSettings          — transcribes.    │
-  # │   audio-service-callbacks  arq CallbackWorkerSettings  — delivers hooks. │
-  # │                                                                          │
-  # │ DELETING `audio-service-callbacks` BREAKS NOTHING VISIBLY AND BREAKS THE │
-  # │ PRODUCT COMPLETELY. Transcriptions still succeed. No error is logged.    │
-  # │ The signed webhook is simply never delivered, so `apps/backend` is never │
-  # │ told the transcript exists and the document sits un-ready FOREVER.       │
-  # │                                                                          │
-  # │ It is a SEPARATE PROCESS ON A SEPARATE QUEUE on purpose. The             │
-  # │ transcription queue runs ONE job at a time with `job_timeout` of FOUR    │
-  # │ HOURS (`app/config.py: JOB_TIMEOUT_SECONDS`). A delivery sharing that    │
-  # │ queue would sit behind a running decode — which is precisely the case    │
-  # │ `transcribe.progress` events exist to report on. Sharing the queue makes │
-  # │ progress events impossible by construction.                              │
-  # │                                                                          │
-  # │ Same reasoning applies on the fleet: three Coolify apps (or one          │
-  # │ docker-compose app), never one. `infra/fleet/env-manifests.md` §4.       │
-  # └───────────────────────────────────────────────────────────────────────────┘
-  #
-  # ── The other four things that break silently if copied wrong ──────────────
-  # 1. `audio_work` MUST be mounted on the API **and** the transcription worker.
-  #    The API streams the upload to disk; the worker reads it back. Without the
-  #    shared volume every job fails with `source_missing`. The callback worker
-  #    touches no files and deliberately does not mount it.
-  # 2. Both workers set `healthcheck: disable: true`. They have NO HTTP listener,
-  #    and the image's inherited curl HEALTHCHECK would mark them permanently
-  #    unhealthy — which under `--wait` means `docker compose up` never returns.
-  #    The API's `/health/ready` is what reports on the transcription worker: it
-  #    503s until that worker publishes a heartbeat with the model loaded.
-  # 3. The image is OFFLINE at runtime (`HF_HUB_OFFLINE=1`) and the weights are
-  #    BAKED at build time. So `WHISPER_MODEL` must be identical in the build arg
-  #    and the environment, or the container tries to download at boot and dies.
-  #    That is why both read the SAME `${WHISPER_MODEL}` below. Change it in
-  #    `.env` and then `docker compose build` — an env-only change is a boot
-  #    failure, not a model switch.
-  # 4. `callbackSecret` inside `API_KEYS` must equal the backend's
-  #    `CALLBACK_SECRET`. It is not duplicated here — it is INTERPOLATED from the
-  #    one variable, so the two cannot drift. See §Shared secret in `.env.example`.
-
   audio-service:
-    # ── HTTP API. Validates, streams the upload to disk, enqueues. No model. ──
-    # ⚠ BUILD CONTEXT IS THE SERVICE DIRECTORY, not the repo root — the
-    #   exception to this file's rule, and correct: this is a Python service with
-    #   no `workspace:*` dependency and deliberately no `package.json`, so it
-    #   needs nothing from the root. (Its README explains why adding a
-    #   `package.json` would break `pnpm install --frozen-lockfile` for everyone
-    #   else.) A repo-root context here would ship the whole monorepo to the
-    #   daemon for nothing.
-    build: &audio-build
-      context: ../services/audio-service
-      args:
-        # 🔴 MUST equal the WHISPER_MODEL env value below. Same variable, once.
-        WHISPER_MODEL: ${WHISPER_MODEL:-small}
-    # One image, three containers. The tag is shared so Compose builds it ONCE.
-    image: edc-audio-service:local
-    <<: [*restart, *logging]
-    environment: &audio-env
-      NODE_ENV: production
-      LOG_LEVEL: ${AUDIO_LOG_LEVEL:-INFO}
-      # DB 2 keeps audio-service's `audio:`/`arq:` keys visually separate from
-      # ai-service's `bull:` keys. They cannot actually collide; this is hygiene.
-      REDIS_URL: redis://redis:6379/2
-      # 🔴 THE SHARED SECRET, ASSEMBLED HERE SO IT CANNOT DRIFT.
-      #    audio-service's `API_KEYS` has the same shape as ai-service's:
-      #      apiKey -> {org, project, role, callbackSecret}
-      #    Its `callbackSecret` is verified by `apps/backend` with the SAME
-      #    verifier and the SAME `CALLBACK_SECRET` it uses for ai-service — that
-      #    sharing is deliberate (services/audio-service/app/callbacks.py).
-      #    ⚠ A mismatch is SILENT: the backend rejects every callback with a 401
-      #      and the document never becomes ready. So the secret is written in
-      #      exactly ONE place (`CALLBACK_SECRET` in .env) and interpolated into
-      #      both consumers. Never paste a literal secret into this JSON.
-      API_KEYS: '{"${AUDIO_SERVICE_API_KEY:?AUDIO_SERVICE_API_KEY is required}":{"org":"demo","project":"demo","role":"app","callbackSecret":"${CALLBACK_SECRET:?CALLBACK_SECRET is required}"},"${AUDIO_SERVICE_ADMIN_API_KEY:-dev-audio-key-admin}":{"org":"demo","project":"demo","role":"admin"}}'
-      # ── CPU-ONLY, and that is the whole point ──
-      # 🔴 The prototypes' ADR-0002 assumed a GPU box for transcription. That box
-      #    was never racked. The service is built CPU-first precisely so we do
-      #    not repeat that: `cuda` + `float16` is a two-variable flip if a GPU
-      #    ever appears, with no code change and no re-bake.
-      WHISPER_DEVICE: cpu
-      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
-      WHISPER_MODEL: ${WHISPER_MODEL:-small}
-      # Spanish-language product. Pinning the language skips autodetect, which
-      # mis-detects short Spanish clips as Portuguese often enough to matter.
-      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-es}
-      AUDIO_WORK_DIR: /var/lib/audio-service
-    volumes:
-      # See note 1 above. Shared with audio-service-worker, and ONLY with it.
-      - audio_work:/var/lib/audio-service
-    depends_on:
-      redis:
-        condition: service_healthy
     ports:
-      # Container port 8080 (`PORT`, honoured by the image CMD). The backend
-      # reaches it as http://audio-service:8080 on the compose network; this
-      # mapping exists only so you can curl it from the host.
+      # Curl it from the host. Never on Coolify (two envs, one box).
       - "${AUDIO_HOST_PORT:-45403}:8080"
-    healthcheck:
-      # ⚠ /health is LIVENESS and touches nothing — a Redis blip must not restart
-      #   the container. /health/ready is the one that 503s until a worker has
-      #   the model loaded; probe THAT by hand, not from here (rule 2,
-      #   infra/fleet/runbook.md §6).
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
-      interval: 30s
-      timeout: 5s
-      # 30s, not 300s: this process loads NO model. Do not copy bge-m3's 240s.
-      start_period: 30s
-      retries: 3
-    deploy:
-      resources:
-        # Genuinely small — it is an I/O-bound uploader with one uvicorn worker.
-        limits: { cpus: "1.0", memory: 512m }
-
-  audio-service-worker:
-    # ── Holds the model. Does the transcription. THE heavy container. ─────────
-    build: *audio-build
-    image: edc-audio-service:local
-    <<: [*restart, *logging]
-    command: ["arq", "app.worker.WorkerSettings"]
-    environment:
-      <<: *audio-env
-      # 🔴 Leave at 1. One int8 transcription already saturates every core, and
-      #    two at once is SLOWER in total than doing them in sequence.
-      MAX_CONCURRENT_JOBS: "1"
-      # CTranslate2 intra-op threads. Must not exceed the cpus limit below or the
-      # container thrashes. 0 would mean "every core on the host", ignoring the
-      # cgroup — which is exactly how a demo machine locks up.
-      WHISPER_CPU_THREADS: ${AUDIO_CPUS:-4}
-    volumes:
-      - audio_work:/var/lib/audio-service
-    depends_on:
-      redis:
-        condition: service_healthy
-    healthcheck:
-      # 🔴 NOT AN OVERSIGHT. No HTTP listener here; the image's inherited curl
-      #    healthcheck would fail forever and hang `up --wait`. See note 2.
-      disable: true
-    deploy:
-      resources:
-        limits:
-          # 🔴 THE ONLY LIMIT IN THIS FILE THAT PROTECTS THE DEMO ITSELF.
-          #    Without it, a transcription takes every core and the UI you are
-          #    demoing goes unresponsive — which looks like a product bug in
-          #    front of an audience. Raise AUDIO_CPUS/AUDIO_MEMORY in `.env` on
-          #    a bigger machine; keep WHISPER_CPU_THREADS equal to AUDIO_CPUS.
-          cpus: "${AUDIO_CPUS:-4}"
-          memory: ${AUDIO_MEMORY:-4g}
-
-  audio-service-callbacks:
-    # ── Delivers the HMAC-signed webhooks. Same image, no model, ~100 MB. ─────
-    # 🔴🔴 DO NOT DELETE THIS SERVICE. Read the box at the top of this section.
-    #      Removing it does not produce an error. It produces documents that
-    #      transcribe successfully and then never become ready, forever.
-    build: *audio-build
-    image: edc-audio-service:local
-    <<: [*restart, *logging]
-    command: ["arq", "app.worker.CallbackWorkerSettings"]
-    environment:
-      <<: *audio-env
-      # No WHISPER_* is needed — this process never loads a model — but they are
-      # inherited harmlessly from the anchor and keep the three containers'
-      # config identical, which is one less thing to diff at 3am.
-      # No AUDIO_WORK_DIR volume either: deliveries read from Redis, not disk.
-    depends_on:
-      redis:
-        condition: service_healthy
-    healthcheck:
-      disable: true
-    deploy:
-      resources:
-        # Pure outbound HTTP. `CALLBACK_WORKER_MAX_JOBS` defaults to 8.
-        limits: { cpus: "0.5", memory: 256m }
-
-volumes:
-  # Transient audio only: the upload awaiting transcription, plus per-job
-  # scratch. Both are deleted the moment a transcript exists, and swept on a
-  # timer if a crash skipped that. Safe to `docker volume rm` at any time — you
-  # lose only in-flight jobs.
-  # 🔴 There is NO model-weights volume, and that is deliberate. The weights are
-  #    BAKED INTO THE IMAGE at build time (`scripts/bake_model.py`, then
-  #    `HF_HUB_OFFLINE=1`), so a container start never touches the network and
-  #    the demo works offline. A named volume at /opt/whisper-cache would be
-  #    seeded from the image on FIRST use only and then go sticky — so a rebuild
-  #    with a different WHISPER_MODEL would silently keep serving the OLD
-  #    weights until someone ran `docker volume rm`. The previous version of
-  #    this file had exactly that volume (`whisper_models:/models`); it was a
-  #    guess, and it was the wrong one.
-  audio_work:

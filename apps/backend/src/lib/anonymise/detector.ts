@@ -36,6 +36,12 @@
 import { withRateLimitRetry, type RetryOptions } from '@/lib/aiRetry'
 
 import { chunkText } from './chunk'
+import {
+  ANONYMISE_DETECT_MODEL_VAR,
+  ANONYMISE_DETECT_URL_VAR,
+  openaiCompatFromEnv,
+} from './openaiCompatGenerator'
+import { cooldownMsFromEnv, fallbackModeFromEnv, withHostedFallback } from './fallbackGenerator'
 import { PLACEHOLDER_PATTERN, type DetectorFinding, type PersonDetector } from './types'
 
 /** Env var names, so docs and tests never hand-type a string that can drift. */
@@ -366,6 +372,12 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
     // for "La maestra Nicasia Olvera"; dropping it lost the name. The span is
     // matched case- and accent-blind and replaced by the text's OWN spelling,
     // so the replacement still finds it.
+    //
+    // ⚠ TITLE HANDLING AWAITS RODRIGO'S DECISION (2026-10-21). Main strips a
+    // leading title list ("Don", "la maestra", ...) here and absorbs titles
+    // before person placeholders. This branch has no title list: the model owns
+    // the span, and a title left beside a placeholder is a verify leftover.
+    // Whichever rule he picks replaces this paragraph.
     const located = locateSpan(sourceText, trimmed)
     if (located === null) continue
 
@@ -456,8 +468,19 @@ async function mapBounded<T, R>(
   return results
 }
 
+let backendLogged = false
+/** Which backend the gate uses, logged once per process. Host and model only, never the key. */
+function logBackendOnce(what: string): void {
+  if (backendLogged) return
+  backendLogged = true
+  console.info(`[anonymise-detect] gate detector backend: ${what}`)
+}
+
 /**
- * The real detector: ai-service `/v1/generate/sync` through `@edc/ai-client`.
+ * The real detector: ai-service `/v1/generate/sync` through `@edc/ai-client`,
+ * or, when `ANONYMISE_DETECT_URL` is set, a self-hosted OpenAI-compatible
+ * endpoint (`openaiCompatGenerator.ts`) with ai-service behind it as a fallback
+ * (`fallbackGenerator.ts`).
  *
  * ⚠ The client is imported LAZILY, matching `collections/Documents.ts`. Payload
  * collection modules are loaded during config construction, and a top-level
@@ -467,14 +490,55 @@ async function mapBounded<T, R>(
  */
 export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDetector {
   const nextKey = opts.unitKey ?? (() => `anonymise-${crypto.randomUUID()}`)
+  // SELF-HOSTED FIRST WHEN CONFIGURED. With `ANONYMISE_DETECT_URL` set, the
+  // raw text goes to that box; when the box is unavailable the call falls back
+  // to ai-service (hosted model) unless `ANONYMISE_DETECT_FALLBACK=none`, which
+  // fails closed. See `fallbackGenerator.ts` for what counts as "unavailable".
+  const selfHosted = !opts.client && (process.env[ANONYMISE_DETECT_URL_VAR] ?? '').trim() !== ''
+  // ⚠ Read at construction for the NAME only; `detect` re-reads it so a bad
+  // value throws there (→ HOLD) instead of here.
+  let fallbackForName = true
+  try {
+    fallbackForName = fallbackModeFromEnv() === 'hosted'
+  } catch {
+    /* reported by detect() */
+  }
+  const backend = !selfHosted ? 'ai-service' : fallbackForName ? 'openai-compat+ai-service' : 'openai-compat'
+
+  const hostedClient = async (): Promise<SyncGenerator> => {
+    const { getAppAIClient } = await import('@/lib/aiClient')
+    return getAppAIClient(opts.organizationId) as unknown as SyncGenerator
+  }
 
   return {
-    name: opts.name ?? 'ai-service:anonymise-detect',
+    // Recorded on the gate row (`gate.ts`), so it names the backend that saw the text.
+    // ⚠ `+fallback` means "the Spark, or ai-service for any call the Spark could
+    // not answer". Which one answered each call is in the WARN log lines; the
+    // detector instance is shared across documents in the seed, so a per-call
+    // record on the row would need a per-document channel this interface lacks.
+    name:
+      opts.name ??
+      (selfHosted
+        ? `openai-compat:${(process.env[ANONYMISE_DETECT_MODEL_VAR] ?? '').trim() || 'unset'}${fallbackForName ? '+fallback' : ''}`
+        : 'ai-service:anonymise-detect'),
     async detect({ text, contentKind }) {
       let client = opts.client
+      if (!client && selfHosted) {
+        const resolved = openaiCompatFromEnv()
+        if (!resolved) throw new Error(`${ANONYMISE_DETECT_URL_VAR} was unset after start`)
+        const mode = fallbackModeFromEnv()
+        client =
+          mode === 'hosted'
+            ? withHostedFallback(resolved.generator, hostedClient, { cooldownMs: cooldownMsFromEnv() })
+            : resolved.generator
+        logBackendOnce(
+          `openai-compat at ${resolved.host}, model ${resolved.model}` +
+            (mode === 'hosted' ? ', falls back to ai-service when unavailable' : ', no fallback (fail closed)'),
+        )
+      }
       if (!client) {
-        const { getAppAIClient } = await import('@/lib/aiClient')
-        client = getAppAIClient(opts.organizationId) as unknown as SyncGenerator
+        client = await hostedClient()
+        logBackendOnce('ai-service /v1/generate/sync')
       }
 
       const material =
@@ -519,6 +583,10 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
           //
           // ⚠ The ceiling counts SLEEP, not attempts in flight: a chunk that
           // times out every time takes up to 4 × `timeoutMs` plus ~7 s.
+          //
+          // ⚠ WITH THE SPARK FALLBACK, the fallback runs INSIDE each attempt:
+          // 1 Spark try, then hosted tries; the breaker keeps later attempts off
+          // the Spark. Not 4 × 4. See `fallbackGenerator.ts`.
           result = await withRateLimitRetry(
             async () => {
               await paceDetectCall(opts.sleep ?? opts.retry?.sleep ?? realSleep)
@@ -564,7 +632,7 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
             timedOut ? 'tiempo-agotado' : 'transporte',
             timedOut
               ? `The anonymisation detector timed out after ${timeoutMs} ms.`
-              : `The anonymisation detector could not reach ai-service: ${name}`,
+              : `The anonymisation detector could not reach ${backend}: ${name}`,
             // Every throw out of the CALL (as opposed to the parse below) means
             // the model never answered: rate limit, 5xx, budget, auth, network.
             true,

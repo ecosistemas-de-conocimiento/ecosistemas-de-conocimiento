@@ -13,10 +13,10 @@
  *                     delete whose after-commit erase failed leaves this.
  *   · `turn`          only with `allTurns` (`TURN_CHECK_ALL_TURNS=1`): a
  *                     `msg-<id>` document whose message row still exists.
- *                     Chat searches documents only since 2026-10-21 and turns
- *                     are no longer ingested, so every turn left in a corpus
- *                     is dead weight. Retrieval already drops them (web,
- *                     `apps/web/src/lib/turnChunks.ts`); this erases them.
+ *                     ⚠ Turns are ingested again since the owner ruling of
+ *                     2026-10-21 (#4 choice A: stored for orientation, never
+ *                     cited), so this erases live orientation data. Use it
+ *                     only for a deliberate wipe.
  *   · `validity-mismatch` ANY ai-service document (turn or not) with a chunk
  *                     whose `valid_from` / `valid_to` differ from its
  *                     document's. ai-service mirrors validity onto chunks, so

@@ -50,7 +50,7 @@ from .store import (
     TERMINAL_JOB_STATUSES,
     now_iso,
 )
-from .transcriber import Transcriber
+from .transcriber import Transcriber, build_transcriber
 
 log = logging.getLogger("audio-service.worker")
 
@@ -63,6 +63,10 @@ NON_RETRYABLE_CODES = {
     "undecodable",
     "decode_failed",
     "source_missing",
+    # Remote Whisper answered 4xx (bad request, unreadable audio, wrong URL).
+    # Its sibling `whisper_remote_unavailable` (5xx, timeout, refused) is
+    # deliberately NOT here — a rebooting Spark should retry.
+    "whisper_remote_rejected",
 }
 
 
@@ -599,7 +603,10 @@ async def startup(ctx: Dict[str, Any]) -> None:
     """Transcription worker. Holds the model; the only heavy process."""
     settings = await _base_startup(ctx)
 
-    transcriber = Transcriber(settings)
+    # `WHISPER_BACKEND` picks faster-whisper in-process or a remote
+    # whisper-server. Remote `load()` is a /health probe that only warns.
+    transcriber = build_transcriber(settings)
+    log.info("whisper backend=%s", settings.WHISPER_BACKEND)
     ctx["transcriber"] = transcriber
     # Load off the event loop: it is several seconds of CPU-bound work and
     # blocking here would stall arq's own startup handshake.
@@ -665,6 +672,10 @@ async def shutdown(ctx: Dict[str, Any]) -> None:
     http = ctx.get("http")
     if http is not None:
         await http.aclose()
+    # Only the remote backend holds a connection pool.
+    closer = getattr(ctx.get("transcriber"), "close", None)
+    if closer is not None:
+        closer()
     pool = ctx.get("pool")
     if pool is not None:
         from .queue import close_pool

@@ -208,3 +208,19 @@ class Transcriber:
             language_probability=float(getattr(info, "language_probability", 0.0) or 0.0),
             duration=float(getattr(info, "duration", 0.0) or 0.0),
         )
+
+
+def build_transcriber(settings: Settings) -> Any:
+    """Pick the backend from `WHISPER_BACKEND`. The worker's only construction point.
+
+    Both backends expose `loaded`, `load()`, `warmup()`, `describe()` and
+    `transcribe(path, language) -> TranscriptPart`. The remote module is
+    imported lazily so `local` mode never builds an httpx client it does not
+    use, and `remote` mode never touches faster-whisper (that import lives
+    inside `Transcriber.load`, which remote mode never calls).
+    """
+    if settings.WHISPER_BACKEND == "remote":
+        from .remote_transcriber import RemoteTranscriber  # noqa: PLC0415
+
+        return RemoteTranscriber(settings)
+    return Transcriber(settings)

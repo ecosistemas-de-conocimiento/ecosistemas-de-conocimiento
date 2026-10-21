@@ -37,9 +37,11 @@
     "zod": "^4.4.3"
   },
   "dependencies": {
+    "3d-force-graph": "1.80.1",
     "@edc/ai-client": "workspace:*",
     "@edc/chat-engine": "workspace:*",
     "dompurify": "^3.4.4",
+    "force-graph": "1.52.0",
     "highlight.js": "^11.11.1",
     "markdown-it": "^14.1.1"
   }

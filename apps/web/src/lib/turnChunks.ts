@@ -1,16 +1,18 @@
 /**
  * Chunks that are CONVERSATION TURNS, not documents.
  *
- * 🔴 Owner ruling 2026-10-21: chat searches DOCUMENTS ONLY, never conversation
- * turns, neither the user's questions nor the assistant's answers. The backend
- * no longer ingests turns (`apps/backend/src/collections/Messages.ts`), but
- * turns ingested before that still sit in each ecosistema's corpus. On dev the
- * chat cited the user's own question as source [1] "Conversación".
+ * 🔴 Owner ruling 2026-10-21 (#4, choice A): "store, never cite in chat".
+ * Every turn, question and answer, is ingested (anonymised) into the
+ * ecosistema's corpus (`apps/backend/src/lib/conversationIngest.ts`), but a
+ * turn is NEVER a source. Before a4643cb the chat cited the user's own
+ * question as source [1] "Conversación".
  *
- * So every turn chunk is dropped, regardless of any flag:
- *   · at retrieval, on every leg (`$lib/server/engine/chunkFence`);
+ * So every turn chunk is dropped from the sources, regardless of any flag:
+ *   · at retrieval, on every sources leg (`$lib/server/engine/chunkFence`);
  *   · at the browser boundary, for answers saved before this
  *     (`$lib/server/citationProvenance`).
+ * Turns reach the model only as background, in the orientation block
+ * (`$lib/server/engine/orientation`), which never carries an `[N]`.
  *
  * A turn is recognised by ANY of the marks the backend wrote on it
  * (`chunkMetadata`, `apps/backend/src/lib/contentKind.ts`): `kind:
