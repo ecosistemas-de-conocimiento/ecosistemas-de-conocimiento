@@ -14,17 +14,19 @@
  * (Chrome: 16) and drop the oldest silently, so toggling 3D on and off must
  * not leak one. `destroy` disposes the renderer AND forces the context loss.
  *
- * Labels are HTML over the canvas, set with `textContent` (never markup), for
- * the most connected nodes plus the selected, hovered and neighbour ones.
+ * Labels are HTML over the canvas, set with `textContent` (never markup): a
+ * small top-N by degree PER LEVEL plus the selected and hovered node
+ * (`labels3d.ts`), staggered and scaled by rank so the top level's labels do
+ * not pile onto one line.
  */
 import ForceGraph3D, { type ConfigOptions, type ForceGraph3DInstance } from '3d-force-graph';
 
+import { labelLift3d, labelScale3d, labels3d } from './labels3d';
 import {
   linkState,
   nodeDim,
   nodeTooltipHtml,
   shortLabel,
-  wantsLabel,
   type MapData,
   type MapFocus,
   type MapLink,
@@ -54,8 +56,6 @@ export interface Graph3D {
   destroy(): void;
 }
 
-const MAX_LABELS = 40;
-
 function idOf(end: string | Node): string {
   return typeof end === 'string' ? end : end.id;
 }
@@ -77,6 +77,7 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
   let hoverId: string | null = null;
   let nodes: Node[] = [];
   const labelEls = new Map<string, HTMLElement>();
+  const labelRank = new Map<string, number>();
 
   // The default export is typed for the base node shape; its constructor is
   // generic only through the interface, hence the cast to our node and link.
@@ -135,12 +136,12 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
 
   /** Which labels exist: level of detail, capped, never markup. */
   function syncLabels() {
-    const forced = new Set([focus.selectedId, hoverId].filter((id): id is string => id !== null));
-    const wanted = nodes
-      .filter((n) => forced.has(n.id) || wantsLabel(n, focus, 1))
-      .sort((a, b) => Number(forced.has(b.id)) - Number(forced.has(a.id)) || a.degreeRank - b.degreeRank)
-      .slice(0, MAX_LABELS);
-    const keep = new Set(wanted.map((n) => n.id));
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const picked = labels3d(nodes, focus, hoverId);
+    labelRank.clear();
+    for (const l of picked) labelRank.set(l.id, l.rankInLevel);
+    const wanted = picked.map((l) => byId.get(l.id)!);
+    const keep = new Set(labelRank.keys());
     for (const [id, label] of labelEls) {
       if (!keep.has(id)) {
         label.remove();
@@ -169,7 +170,11 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
       const n = byId.get(id);
       if (!n || n.fx === undefined) continue;
       const p = graph.graph2ScreenCoords(n.fx, (n.fy ?? 0) + n.r, n.fz ?? 0);
-      label.style.transform = `translate(${Math.round(p.x)}px, ${Math.round(p.y)}px) translate(-50%, -100%)`;
+      // Stagger by rank in level: lower-ranked labels sit a row higher and a
+      // touch smaller, so neighbours on the crowded top level do not overlap.
+      const rank = labelRank.get(id) ?? 0;
+      const y = Math.round(p.y - labelLift3d(rank));
+      label.style.transform = `translate(${Math.round(p.x)}px, ${y}px) translate(-50%, -100%) scale(${labelScale3d(rank)})`;
     }
   }
 
