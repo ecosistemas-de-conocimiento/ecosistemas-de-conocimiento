@@ -34,7 +34,6 @@
     NO_SURVIVORS,
     NO_TEXT_NOTICE,
     NOTE_LABEL,
-    NOTE_NOT_PRIVATE,
     NOTE_PLACEHOLDER,
     REJECT_CONFIRM,
     REJECT_CONSEQUENCE,
@@ -187,8 +186,6 @@
       {/if}
 
       <div class="note-field">
-        <!-- ⚠ ABOVE the box, word for word the sentence the rating box uses. -->
-        <p class="hint" data-testid="hold-note-notice">{NOTE_NOT_PRIVATE}</p>
         <label for="hold-note">{NOTE_LABEL}</label>
         <textarea
           id="hold-note"
