@@ -1,8 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `8b525fa` (tighter cite rule, no sources on a
-no-answer reply, at most 7 sources), deployed 2026-10-21 16:16 UTC — see §4t; ⚠ Educación questions
-get the no-answer reply. Before that, `9285305` (sources fallback, cite rule in the prompt, no draft
+**Status:** live since 2026-10-17. Dev runs `main` @ `5fe43ff` (answer from partly relevant
+passages), deployed 2026-10-21 16:33 UTC — see §4u; ⚠ Educación questions still refuse or hedge.
+Before that, `8b525fa` (tighter cite rule, no sources on a no-answer reply, at most 7 sources;
+16:16 UTC, §4t). Before that, `9285305` (sources fallback, cite rule in the prompt, no draft
 search without attachments; 16:00 UTC, §4s). Before that, `0e92026` (title match always shown as a source, Revisión
 follows the picker; 15:41 UTC, §4r). Before that,
 `6d213a9` (held-publish fix, town rule, title-only retrieval; 14:58 UTC), with the 13
@@ -981,6 +982,46 @@ Spend: `usage_logs` $1.3921 → $1.4082 (**+$0.0161**, 11 chats). Tonight: $0.47
 
 **Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
 -af` (12.97 GB) and removing dev's `9285305` images. Images 7.8 GB, build cache 0.
+
+### 4u. ⚠ Done, Educación still refuses, 2026-10-21 16:27–16:45 UTC: `5fe43ff`, dev only
+
+All measured by the deploy agent. Staging was not touched.
+
+**Probe on `8b525fa` first** (read-only, 4 chats + direct retrieves; raw results in the deploy
+agent's scratchpad `educacion-probe.md`, chunk text redacted). Both Educación questions searched
+`eco-3` under org `edc-eco-3` (corpora `eco-3` + `eco-3-draft-1`, `asOf` set). ai-service logged
+`rerank ok`, pool 32, 8 scored. The same retrieve, replayed from the web container with its key,
+returned 8 chunks, every one an org-3 published testimonio with tema `escuela` (Q1) or
+`discapacidad` (Q2), `rerankScore` 0.66–0.987. The model still answered "Los documentos no hablan
+de esto." So retrieval is right and the refusal happens after it. The Salud control got the same
+refusal, but its chunks were off-topic (`traduccion`, rerank 0.88 → 0.002). The draft corpora
+answer 404 when called directly: none exist, and the web skips them since `c2d6ed7`.
+
+**Deploy** `5fe43ff` (web only: "answer from partly relevant passages; no-answer reply only when no
+passage is on topic"). Backup `/root/backups/20261021T1632Z/` (sha256 matched off-box). 16:33:05 →
+16:38:32 UTC; 6 containers `healthy`, health 200.
+
+| question (as admin) | time | answer | `[n]` (groups) | sources |
+|---|---|---|---|---|
+| Educación "familias … acompanamiento escolar" #1 | 5.5 s | hedges: "no contienen testimonios directos de familias…" (390 chars) | 0 | 3 (top-3 fallback) |
+| same, #2 | 14.1 s | hedges: "no incluyen testimonios directos de familia…" (310 chars) | 4 (1) | 4 |
+| Educación "personas con discapacidad en la escuela" | 4.5 s | "Los documentos no hablan de esto." | 0 | 0 |
+| "¿Cuál es la capital de Francia?" #1 | 4.4 s | paraphrased no-answer (81 chars) | 0 | **3** ⚠ |
+| same, #2 | 3.8 s | "Los documentos no hablan de esto." | 0 | 0 |
+| dengue #1 / #2 | 19.0 / 9.5 s | full answers (1,987 / 1,462 chars) | 29 (12) / 33 (10) | 5 / 7 |
+
+0 manifest names in any answer; 0 `msg-*`; 0 sessions left.
+
+- 🔴 **Educación still refuses or hedges** on on-topic questions whose retrieved chunks are on topic.
+- ⚠ The no-answer detection matches the exact sentence. A paraphrased refusal ("Los documentos de la
+  Red Comunitaria de Salud no hablan de la capital…") falls through to the top-3 fallback, so an
+  off-topic question showed 3 sources once in 2 runs.
+
+Spend: `usage_logs` $1.4082 → $1.4358 (**+$0.0276**: probe 4 chats + 4 retrieves, then 7 chats).
+Tonight: $0.4786 + $1.4358 = **$1.9144**.
+
+**Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
+-af` (12.97 GB) and removing dev's `8b525fa` images. Images 7.8 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
