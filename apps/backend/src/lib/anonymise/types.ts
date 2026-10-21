@@ -134,6 +134,12 @@ export interface GateHold {
   reason: string
   report: GateReport
   /**
+   * 🔴 THE MODEL NEVER ANSWERED (429, 5xx, 402, network, timeout). Still not
+   * ingested — but NOT a finding, so `anonymiseDocument.ts` leaves the row
+   * retryable instead of holding it for Revisión. Absent on every real hold.
+   */
+  retryable?: true
+  /**
    * The best-effort redacted text AT THE POINT OF REFUSAL, when there is one.
    *
    * 🔴 THIS IS NOT SAFE TO INGEST AND MUST NEVER BE STORED IN `redactedText` ON

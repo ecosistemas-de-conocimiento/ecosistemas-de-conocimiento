@@ -13,7 +13,7 @@ import type {
 import { ValidationError } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
-import { ANONYMISATION_STATES } from '../lib/anonymiseDocument'
+import { ANONYMISATION_STATES, GATE_UNAVAILABLE_INGEST_CODE } from '../lib/anonymiseDocument'
 import {
   CONTENT_KINDS,
   chunkMetadata,
@@ -1873,7 +1873,9 @@ export async function enqueueIngestForDoc(args: {
 
   if (!gated.ok) {
     console.warn(
-      `[documents] doc ${docId} HELD at the ${gated.stage} stage of the anonymisation gate — not ingested.`,
+      gated.retryable
+        ? `[documents] doc ${docId}: the anonymisation gate could not run (${gated.stage}) — not ingested, retryable.`
+        : `[documents] doc ${docId} HELD at the ${gated.stage} stage of the anonymisation gate — not ingested.`,
     )
     /**
      * 🔴 SAY SO ON `ingestStatus` TOO, OR THE USER WATCHES A SPINNER FOREVER.
@@ -1895,7 +1897,9 @@ export async function enqueueIngestForDoc(args: {
       id: docId as never,
       data: {
         ingestStatus: 'failed',
-        ingestError: `anonymisation_held: ${gated.stage}: ${gated.reason}`.slice(0, 500),
+        // ⚠ A gate that could not RUN gets its own code: `ingestRecovery.ts`
+        // re-drives exactly these rows (`sweepUnavailableGateRuns`).
+        ingestError: `${gated.retryable ? GATE_UNAVAILABLE_INGEST_CODE : 'anonymisation_held'}: ${gated.stage}: ${gated.reason}`.slice(0, 500),
       },
       overrideAccess: true,
       context: { __skipDocsExtract: true },

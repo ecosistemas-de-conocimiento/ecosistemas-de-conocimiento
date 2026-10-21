@@ -27,6 +27,13 @@
  * ⚠ A HELD DOCUMENT IS NOT A FAILED ONE, and the two statuses are separate for
  * that reason. `failed` invites a retry button. `held` means the gate looked at
  * this and said no; retrying the identical text will say no again.
+ *
+ * 🔴 AND A GATE THAT COULD NOT RUN IS NOT A HOLD. A 429, a 5xx, a 402 budget
+ * refusal or a timeout means the model never answered — nobody "said no". Those
+ * leave the row at `n/a` (gate not run yet, the same state `planIngestRetry`
+ * resets to) with a {@link GATE_UNAVAILABLE_CODE} error, so a seed re-run, the
+ * ingest-recovery sweep or a retry runs the gate again. Before 2026-10-21 they
+ * ended as permanent Revisión holds that nothing ever retried.
  */
 
 import type { ContentKind } from './contentKind'
@@ -48,6 +55,18 @@ import type { GateReport, PersonDetector } from './anonymise/types'
  * upload to get wrong.
  */
 export const UNGATED_CONTENT_KIND: ContentKind = 'documento'
+
+/**
+ * Prefix of `anonymisationError` on a row whose gate could not run (the model
+ * never answered). The row is RETRYABLE, never in Revisión. See the header.
+ */
+export const GATE_UNAVAILABLE_CODE = 'gate_unavailable'
+
+/**
+ * Prefix of `ingestError` the draft path writes for the same case
+ * (`enqueueIngestForDoc`). `ingestRecovery.ts` re-drives rows carrying it.
+ */
+export const GATE_UNAVAILABLE_INGEST_CODE = 'anonymisation_unavailable'
 
 /**
  * 🔴 THE ANONYMISATION POLICY. One function, one name, one place to read it.
@@ -80,7 +99,8 @@ export function mustPassAnonymisationGate(rawContentKind: unknown): boolean {
 /**
  * The statuses the gate — or a human reviewing its refusal — can leave on a row.
  *
- *   n/a       not gated: an ordinary `documento`
+ *   n/a       not gated: an ordinary `documento` — OR a gated kind whose gate
+ *             has not run yet (a retry reset, or {@link GATE_UNAVAILABLE_CODE})
  *   pending   the gate is running
  *   held      🔴 the gate refused. Not ingested. A human must look.
  *   approved  🔴 a human released a hold. AUDITED, and the only way past one.
@@ -105,7 +125,17 @@ export type AnonymiseOutcome =
   /**
    * 🔴 The caller MUST NOT ingest. Not a soft failure, not a retry hint.
    */
-  | { ok: false; stage: string; reason: string; report: GateReport | null }
+  | {
+      ok: false
+      stage: string
+      reason: string
+      report: GateReport | null
+      /**
+       * True when the gate could not RUN (model never answered). The row is
+       * left retryable at `n/a`, not `held`. Still: do not ingest.
+       */
+      retryable?: true
+    }
 
 /** Just the database handle this module writes through, so tests need no Payload. */
 type Updater = DocumentColumnsPayload
@@ -227,6 +257,31 @@ export async function anonymiseDocumentText(args: {
       anonymisationSurvivors: null,
     })
     return { ok: false, stage: 'content', reason, report: null }
+  }
+
+  if (result.status === 'hold' && result.retryable) {
+    /**
+     * 🔴 NOT A HOLD. The model never answered, so there is nothing for a human
+     * to review — only a run to repeat. `n/a` + the error puts the row back in
+     * every retry path (seed re-run, `planIngestRetry`, ingest recovery) and
+     * keeps it out of Revisión. Not ingested: `corpusTextFor` refuses `n/a` on
+     * a gated kind, and the caller sees `ok: false`.
+     */
+    await write({
+      anonymisationStatus: 'n/a',
+      anonymisationError: `${GATE_UNAVAILABLE_CODE}: ${result.stage}: ${result.reason}`.slice(0, 500),
+      anonymisationReport: result.report,
+      redactedText: null,
+      heldText: null,
+      anonymisationSurvivors: null,
+    })
+    return {
+      ok: false,
+      stage: result.stage,
+      reason: result.reason,
+      report: result.report,
+      retryable: true,
+    }
   }
 
   if (result.status === 'hold') {

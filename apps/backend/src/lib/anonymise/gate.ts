@@ -268,6 +268,15 @@ function survivorSpans(text: string, survivors: readonly DetectorFinding[]): Sur
 }
 
 /** Failure CLASS of a thrown detector error. ⚠ Never the message, never the text. */
+/**
+ * 🔴 DID THE MODEL NEVER ANSWER? Then the hold is RETRYABLE, not a finding.
+ * Only an explicit `infrastructure: true` from `detector.ts` counts; anything
+ * else (a parse failure, a bug) stays an ordinary hold — fail closed.
+ */
+function isInfrastructureFailure(err: unknown): boolean {
+  return (err as { infrastructure?: unknown } | null)?.infrastructure === true
+}
+
 function failureClassOf(err: unknown): string {
   const named = err as { failureClass?: unknown; name?: unknown }
   if (typeof named?.failureClass === 'string') return named.failureClass
@@ -299,7 +308,7 @@ export async function runAnonymisationGate(
   const hold = (
     stage: GateStage,
     reason: string,
-    extra?: { redactedText?: string; survivors?: SurvivorSpan[] },
+    extra?: { redactedText?: string; survivors?: SurvivorSpan[]; retryable?: true },
   ): GateResult => ({
     status: 'hold',
     stage,
@@ -352,7 +361,10 @@ export async function runAnonymisationGate(
     return hold(
       'content',
       `La revisión automática no pudo terminar (${failureClassOf(err)}). ${NOT_ADDED}`,
-      { redactedText: deterministic.text },
+      {
+        redactedText: deterministic.text,
+        ...(isInfrastructureFailure(err) ? { retryable: true as const } : {}),
+      },
     )
   }
 
@@ -382,7 +394,10 @@ export async function runAnonymisationGate(
     return hold(
       'verify',
       `La segunda revisión automática no pudo terminar (${failureClassOf(err)}). ${NOT_ADDED}`,
-      { redactedText: applied.text },
+      {
+        redactedText: applied.text,
+        ...(isInfrastructureFailure(err) ? { retryable: true as const } : {}),
+      },
     )
   }
 

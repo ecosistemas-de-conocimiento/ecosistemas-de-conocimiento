@@ -20,12 +20,22 @@ vi.mock('@/lib/callbackConfig', () => ({ ingestCallbackUrl: () => null }))
 vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
 let detector: PersonDetector
+/** What the seed built its detector with — the retry budget lives here. */
+let detectorOpts: Record<string, unknown> | undefined
+/** Set to build the REAL detector (over a fake client) from the seed's options. */
+let realDetectorFrom: ((opts: Record<string, unknown>) => PersonDetector) | null = null
 vi.mock('@/lib/anonymise', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/anonymise')>()),
-  aiServiceDetector: () => detector,
+  aiServiceDetector: (opts: Record<string, unknown>) => {
+    detectorOpts = opts
+    return realDetectorFrom ? realDetectorFrom(opts) : detector
+  },
 }))
 
 const { staticDetector } = await import('@/lib/anonymise')
+const { aiServiceDetector: realAiServiceDetector } =
+  await vi.importActual<typeof import('@/lib/anonymise')>('@/lib/anonymise')
+const { SEED_PUBLISH_RETRY } = await import('./corpus')
 const { ingestSeededDocuments } = await import('./corpus')
 
 const silentLogger = { info: () => undefined, warn: () => undefined, error: () => undefined }
@@ -71,6 +81,54 @@ beforeEach(() => {
   enqueue.mockReset()
   enqueue.mockResolvedValue({ ingestId: 'ing-1' })
   detector = staticDetector(CARTA_FINDINGS)
+  detectorOpts = undefined
+  realDetectorFrom = null
+})
+
+describe('ingestSeededDocuments — 🔴 a rate-limited gate is retryable, not held (2026-10-21)', () => {
+  it('🔴 a 429 past the SEED budget leaves the row retryable; a re-run gates and publishes it', async () => {
+    let calls = 0
+    const waits: number[] = []
+    const rateLimited = {
+      generate: {
+        async sync() {
+          calls += 1
+          throw Object.assign(new Error('rate limited'), { status: 429, retryAfterMs: 60_000 })
+        },
+      },
+    }
+    // The REAL detector, built from the options the seed passed.
+    realDetectorFrom = (opts) =>
+      realAiServiceDetector({
+        ...(opts as object),
+        client: rateLimited as never,
+        retry: {
+          ...(opts.retry as object),
+          sleep: async (ms: number) => {
+            waits.push(ms)
+          },
+        },
+      })
+    const { payload, live } = fakePayload(seededDraft())
+
+    const first = await run(payload)
+
+    // The seed's patient budget reached the detector, not the 4 tries / 120 s default.
+    expect(detectorOpts?.retry).toMatchObject(SEED_PUBLISH_RETRY)
+    expect(calls).toBeGreaterThan(4)
+    expect(waits.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(SEED_PUBLISH_RETRY.budgetMs)
+    expect(first).toEqual({ enqueued: 0, failed: 1, held: 0 })
+    expect(enqueue).not.toHaveBeenCalled()
+    expect(live).toMatchObject({ anonymisationStatus: 'n/a', publicationStatus: 'draft', redactedText: null })
+    expect(String(live.anonymisationError)).toMatch(/^gate_unavailable: /)
+
+    // ai-service is back: the re-run picks the row up and gates it.
+    realDetectorFrom = null
+    const second = await run(payload)
+    expect(second).toEqual({ enqueued: 1, failed: 0, held: 0 })
+    expect(live).toMatchObject({ anonymisationStatus: 'ready', publicationStatus: 'publishing' })
+    expect(enqueue.mock.calls[0]![0].documents[0].text).toContain('[Persona A]')
+  })
 })
 
 describe('ingestSeededDocuments — 🔴 personal genres pass the gate first (#34)', () => {

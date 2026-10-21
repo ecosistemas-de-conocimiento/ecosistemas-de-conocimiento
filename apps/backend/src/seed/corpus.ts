@@ -619,6 +619,7 @@ export async function ingestSeededDocuments(
   const { ingestCallbackUrl } = await import('@/lib/callbackConfig')
   const { beginPublish } = await import('@/lib/publishDocument')
   const { anonymiseDocumentText } = await import('@/lib/anonymiseDocument')
+  const { aiServiceDetector } = await import('@/lib/anonymise')
   const { throttledEach, waitForDraftSettled } = await import('./throttle')
 
   let client: unknown
@@ -673,10 +674,29 @@ export async function ingestSeededDocuments(
   let failed = 0
   let unsettled = 0
   let held = 0
+  let gateUnavailable = 0
+
+  /**
+   * 🔴 THE DETECTOR GETS THE SEED'S PATIENCE TOO. Its default budget (4 tries /
+   * 120 s, `aiRetry.ts`) is sized for a person waiting on an upload; two
+   * full-window 429s exhaust it. Nobody waits on a seed, so each chunk waits
+   * like `beginPublish` does. One detector per run: it holds no per-document
+   * state (the allocator lives in the gate).
+   */
+  const detector = aiServiceDetector({
+    organizationId,
+    retry: {
+      ...SEED_PUBLISH_RETRY,
+      ...(opts.sleep ? { sleep: opts.sleep } : {}),
+      ...(opts.random ? { random: opts.random } : {}),
+    },
+  })
 
   // ⚠ A HELD ROW IS LEFT ALONE. The gate refused it; re-saving it would do
   // nothing (the hook skips held rows) and publishing it would be refused by
   // `corpusTextFor`. Touching it here would only add noise to the log.
+  // ⚠ A row whose gate could not RUN is not held: it sits at `n/a` with a
+  // `gate_unavailable` error, so it is in `todo` and is gated again here.
   const todo = rows.filter(
     (row) => row.anonymisationStatus !== 'held' && row.anonymisationStatus !== 'rejected',
   )
@@ -710,9 +730,13 @@ export async function ingestSeededDocuments(
               organizationId,
               contentKind: row.contentKind,
               text: typeof row.extractedText === 'string' ? row.extractedText : '',
+              detector,
             })
             if (!gated.ok) {
-              held += 1
+              // 🔴 A gate that could not run (429, 5xx, 402, timeout) is NOT a
+              // hold: the row is left at `n/a` and the next run gates it again.
+              if (gated.retryable) gateUnavailable += 1
+              else held += 1
               return
             }
           }
@@ -768,6 +792,13 @@ export async function ingestSeededDocuments(
   )
   if (held > 0) {
     payload.logger.info(`[seed-corpus] ${held} document(s) were held by the gate; they wait in Revisión.`)
+  }
+  if (gateUnavailable > 0) {
+    failed += gateUnavailable
+    payload.logger.warn(
+      `[seed-corpus] ${gateUnavailable} document(s) could not be gated (ai-service did not answer: ` +
+        'rate limit, 5xx, budget or timeout). NOT in Revisión — re-run the seed ingest to gate them.',
+    )
   }
   if (unsettled > 0) {
     payload.logger.warn(`[seed-corpus] ${unsettled} draft(s) were still in the gate when the seed moved on.`)
