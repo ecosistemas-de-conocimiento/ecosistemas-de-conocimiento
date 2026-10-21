@@ -281,6 +281,34 @@ weights in RAM.
 
 ---
 
+## Remote GPU backend
+
+`WHISPER_BACKEND=remote` sends each chunk to a whisper.cpp `whisper-server`
+(large-v3 on the DGX Spark) instead of decoding it in-process. Upload, queue,
+Redis, chunking, retries and callbacks stay here. Only the model call moves.
+
+```yaml
+WHISPER_BACKEND: remote
+WHISPER_REMOTE_URL: <spark-url>   # we POST {url}/inference
+WHISPER_REMOTE_TOKEN: <token>                   # Bearer; the Spark's proxy 401s without it
+WHISPER_REMOTE_TIMEOUT_S: "1800"                # per chunk; chunks run up to 15 min
+```
+
+- **Errors.** Timeouts, connection errors, 5xx (including the proxy's 502),
+  408/429/499 retry as `whisper_remote_unavailable`. Any other 4xx (a bad
+  token's 401, an unreadable file's 400, a wrong URL's 404) fails the job at once
+  as `whisper_remote_rejected`.
+- **Boot.** The worker probes `{url}/health` once and only *warns* if the Spark
+  is down. It still reports ready, and jobs retry until the Spark is back.
+- **Image.** Build with `--build-arg WHISPER_BAKE=0` (compose: `WHISPER_BAKE=0`)
+  to skip baking weights. That image can no longer run `local`.
+- **Not sent:** VAD. whisper-server only does VAD when it is started with
+  `--vad-model`.
+- The wire mapping (verbose_json → `TranscriptPart`) is documented in
+  `app/remote_transcriber.py`.
+
+---
+
 ## Environment variables
 
 Full annotated list in [`.env.example`](./.env.example). Placeholders below are

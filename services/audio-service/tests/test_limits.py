@@ -15,8 +15,9 @@ import pytest
 
 pytest.importorskip("fastapi", reason="fastapi not installed")
 
-from fastapi import FastAPI  # noqa: E402
+from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from starlette.requests import ClientDisconnect  # noqa: E402
 
 from app.limits import BodySizeLimitMiddleware  # noqa: E402
 
@@ -28,7 +29,12 @@ def client():
     app = FastAPI()
 
     @app.post("/v1/echo")
-    async def echo(payload: bytes = b"") -> dict:  # pragma: no cover - not reached
+    async def echo(request: Request) -> dict:
+        # ⚠ Must READ the body, like the real upload route does. The streamed-size
+        # counter only runs as the app pulls bytes; a route that never reads
+        # (the old `payload: bytes = b""`, which FastAPI binds to the QUERY
+        # string) never trips it, and the chunked test passed a 200.
+        await request.body()
         return {"ok": True}
 
     @app.post("/v1/form")
@@ -89,7 +95,12 @@ def test_a_chunked_body_with_no_content_length_is_still_counted(client):
         for _ in range(8):
             yield b"y" * (MAX // 2)
 
-    response = client.post("/v1/echo", content=chunks())
     # Either the middleware's streaming counter refuses it, or the connection is
-    # torn down. What must NOT happen is a 2xx.
+    # torn down. What must NOT happen is a 2xx. TestClient re-raises server-side
+    # exceptions, so "torn down" surfaces here as Starlette's ClientDisconnect
+    # (under uvicorn it is a dropped connection).
+    try:
+        response = client.post("/v1/echo", content=chunks())
+    except ClientDisconnect:
+        return
     assert response.status_code >= 400
