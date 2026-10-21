@@ -56,6 +56,7 @@ function seededDraft(over: Record<string, unknown> = {}) {
     contentKind: 'testimonio',
     kind: 'pdf',
     name: 'Carta de presentación — traducción en salud (01)',
+    tema: 'traduccion',
     extractedText: CARTA_TEXT,
     publicationStatus: 'draft',
     anonymisationStatus: null,
@@ -127,6 +128,25 @@ describe('ingestSeededDocuments — 🔴 personal genres pass the gate first (#3
 
     expect(result).toEqual({ enqueued: 1, failed: 0, held: 0 })
     expect(enqueue.mock.calls[0]![0].documents[0].text).toBe('Me llamo [Persona A].')
+  })
+
+  it('🔴 a person\'s OWN draft titled like a seeded genre is never gated or published here', async () => {
+    // Same title shape, but no `tema` and no SIM id: not a seeded row. It takes
+    // the ordinary draft route (a plain re-save), never the gate-then-publish one.
+    detector = {
+      name: 'must-not-run',
+      async detect() {
+        throw new Error('the seed gated a user draft')
+      },
+    }
+    const { payload, live } = fakePayload(
+      seededDraft({ name: 'Diario personal — mis notas de campo', tema: null }),
+    )
+    const result = await run(payload)
+    expect(enqueue).not.toHaveBeenCalled()
+    expect(live.publicationStatus).toBe('draft')
+    expect(live.anonymisationStatus).toBeNull()
+    expect(result).toEqual({ enqueued: 1, failed: 0, held: 0 })
   })
 
   it('a seeded testimonio is NOT published by this path: it stays a draft', async () => {

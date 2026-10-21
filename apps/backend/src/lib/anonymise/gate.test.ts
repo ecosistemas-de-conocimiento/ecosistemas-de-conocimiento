@@ -800,6 +800,12 @@ describe('runAnonymisationGate — 🔴 towns are shown, addresses are not (owne
   it('the detector prompt says never to mark a town, municipality, city or state', () => {
     expect(DETECT_SYSTEM_PROMPT).toContain('NUNCA marques estados, municipios, alcaldías, ciudades, pueblos')
     expect(DETECT_SYSTEM_PROMPT).toContain('En "vivo en Xoxocotla, Morelos" no hay hallazgo.')
+    // A town rule must not narrow the address list or spare a person's name.
+    expect(DETECT_SYSTEM_PROMPT).toContain('Marca todo lo de la lista Domicilios aunque esté en una ciudad o pueblo.')
+    expect(DETECT_SYSTEM_PROMPT).not.toContain('Marca solo lo que queda dentro')
+    expect(DETECT_SYSTEM_PROMPT).toContain('El nombre de una persona SIEMPRE se marca como "persona"')
+    expect(DETECT_SYSTEM_PROMPT).toContain('en "mi tía Soledad" el hallazgo es "Soledad"')
+    expect(DETECT_SYSTEM_PROMPT).toContain('dijo" el hallazgo es "Dolores".')
     // The old rule — mark a town when it says where someone lives — is gone.
     expect(DETECT_SYSTEM_PROMPT).not.toContain('Márcalo cuando ubique')
     expect(DETECT_SYSTEM_PROMPT).not.toMatch(/municipios cuando ubican un domicilio/)

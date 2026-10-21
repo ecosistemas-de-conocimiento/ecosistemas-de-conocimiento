@@ -239,6 +239,37 @@ describe('deterministicPass — domicilios', () => {
     expect(run('Mi código es C.P. 06700.').text).toBe('Mi código es [Domicilio A].')
   })
 
+  it('🔴 swallows Mz./Lt. after a named settlement (audit leak, 2026-10-21)', () => {
+    // Was: `[Domicilio A]. 4 Lt. 12` — the block and lot numbers stayed.
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['U.H. Vicente Guerrero Mz. 4 Lt. 12', '[Domicilio A]'],
+      ['Vivo en U.H. Vicente Guerrero Mz. 4 Lt. 12, cerca del metro.', 'Vivo en [Domicilio A], cerca del metro.'],
+      ['Col. Las Palmas, Mz. 7, Lt. 3.', '[Domicilio A].'],
+      ['Cerrada Josefa Ortiz No. 7, U.H. Vicente Guerrero Mz. 4 Lt. 12.', '[Domicilio A].'],
+    ]
+    for (const [input, expected] of cases) {
+      expect(run(input).text, input).toBe(expected)
+    }
+  })
+
+  it('🔴 takes a lower-case colonia name whole (audit leak, 2026-10-21)', () => {
+    // Was: `[Domicilio A] cruz`.
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['col. santa cruz', '[Domicilio A]'],
+      ['Vivo en col. santa cruz, cerca de la iglesia.', 'Vivo en [Domicilio A], cerca de la iglesia.'],
+      ['col. santa maría la ribera.', '[Domicilio A].'],
+      ['calle ermita no. 12, col. santa cruz', '[Domicilio A]'],
+      ['col. santa cruz mz. 4 lt. 12', '[Domicilio A]'],
+      // ⚠ The brake: with no terminator, or at a clause word, it stops.
+      ['col. santa cruz desde hace años', '[Domicilio A] cruz desde hace años'],
+      ['col. portales y despues de eso ya no supe mas', '[Domicilio A] y despues de eso ya no supe mas'],
+      ['col. portales delante del pozo', '[Domicilio A] delante del pozo'],
+    ]
+    for (const [input, expected] of cases) {
+      expect(run(input).text, input).toBe(expected)
+    }
+  })
+
   it('🔴 does NOT match a loose word run with a bare number — the sentence trap', () => {
     // `en la calle hay 20 casas` is ordinary Spanish and is the sentence the
     // two-arm design in `DOMICILIO` exists to refuse. It matched while the
@@ -403,6 +434,12 @@ describe('deterministicPass — domicilios', () => {
        */
       'Calle Morelos No. 45' + ' '.repeat(100_000) + 'x',
       'Col. Portales' + '\n'.repeat(64_000) + 'x',
+      // The lower-case settlement name and the Mz./Lt. tail (2026-10-21).
+      'col. ' + 'santa '.repeat(20_000),
+      'col. santa' + ' '.repeat(100_000) + 'cruz maría de la ribera vive',
+      'col. santa cruz' + ' '.repeat(100_000) + 'x',
+      'U.H. Vicente Guerrero Mz.' + ' '.repeat(100_000) + 'x',
+      'Col. Las Palmas, Mz. 7' + ' '.repeat(100_000) + 'Lt',
     ]
     for (const text of cases) {
       const started = performance.now()

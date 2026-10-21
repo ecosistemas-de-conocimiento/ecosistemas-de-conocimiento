@@ -146,8 +146,13 @@ export const DETECT_SYSTEM_PROMPT = [
   '⚠ NUNCA marques estados, municipios, alcaldías, ciudades, pueblos, comunidades,',
   'localidades, ejidos ni congregaciones, aunque sean pequeños y aunque digan dónde',
   'vive, trabaja o estudia alguien. En "vivo en Xoxocotla, Morelos" no hay hallazgo.',
-  'Marca solo lo que queda dentro de un pueblo: su colonia, barrio, rancho, paraje,',
-  'calle o casa. "Rancho Nuevo" como nombre de un pueblo no se marca.',
+  'Marca todo lo de la lista Domicilios aunque esté en una ciudad o pueblo.',
+  '"Rancho Nuevo" como nombre de un pueblo no se marca.',
+  // ⚠ Many Mexican towns carry a person's name (Dolores, Soledad, Guadalupe).
+  // The town rule must not become a reason to leave a person's name in.
+  '⚠ El nombre de una persona SIEMPRE se marca como "persona", aunque también sea el',
+  'nombre de un pueblo: en "mi tía Soledad" el hallazgo es "Soledad"; en "Dolores me',
+  'dijo" el hallazgo es "Dolores".',
   '',
   'Tipos: "persona" para nombres de personas; "lugar" para domicilios y lugares identificables;',
   '"contacto" para teléfonos, correos y redes; "identificador" para folios, CURP, RFC y números',

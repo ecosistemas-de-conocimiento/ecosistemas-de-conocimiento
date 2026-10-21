@@ -177,15 +177,24 @@ function titleFor(entry: CorpusEntry, contentKind: 'documento' | 'testimonio', o
 }
 
 /**
- * True for a seeded row of a genre in {@link PUBLISHED_AFTER_GATE_FORMATOS}.
+ * True for a SEEDED row of a genre in {@link PUBLISHED_AFTER_GATE_FORMATOS}.
  *
- * ⚠ READ OFF THE TITLE, because the row has nowhere else that keeps the genre,
- * and it is this file's own title shape (`titleFor`). Used only by
- * {@link ingestSeededDocuments}, which runs on rows this seed wrote. A row that
- * does not match is simply not published — the safe direction.
+ * ⚠ THE GENRE IS READ OFF THE TITLE, because the row has nowhere else that
+ * keeps it, and it is this file's own title shape (`titleFor`).
+ *
+ * 🔴 AND THE ROW MUST BE SEEDED. {@link ingestSeededDocuments} loads EVERY
+ * document in the ecosistema, so a person's own draft that they happened to
+ * title "Diario personal — …" would otherwise be published by a forced seed
+ * (audit, 2026-10-21). Seeded means a `tema` (the seed writes one on every row;
+ * `documents.tema` takes no API writes — `gateWritesOnly` in
+ * `collections/Documents.ts`) or a SIM id in the title. A row that does not
+ * match is simply not published — the safe direction.
  */
-export function publishesAfterGate(name: unknown): boolean {
+export function publishesAfterGate(row: { name?: unknown; tema?: unknown }): boolean {
+  const name = row.name
   if (typeof name !== 'string') return false
+  const tema = typeof row.tema === 'string' ? row.tema.trim() : ''
+  if (tema === '' && !/\(SIM_\d+\)$/.test(name)) return false
   for (const formato of PUBLISHED_AFTER_GATE_FORMATOS) {
     if (name.startsWith(`${FORMATO_LABELS[formato]} — `)) return true
   }
@@ -637,6 +646,7 @@ export async function ingestSeededDocuments(
   const rows = found.docs as unknown as Array<{
     id: number | string
     name?: unknown
+    tema?: unknown
     contentKind?: unknown
     extractedText?: unknown
     publicationStatus?: unknown
@@ -680,7 +690,7 @@ export async function ingestSeededDocuments(
     todo,
     async (row) => {
       try {
-        if (row.publicationStatus !== 'published' && publishesAfterGate(row.name) && row.contentKind === 'testimonio') {
+        if (row.publicationStatus !== 'published' && publishesAfterGate(row) && row.contentKind === 'testimonio') {
           /**
            * 🔴 GATE, THEN PUBLISH — and nothing else (#34). A biografía, carta,
            * ficha or diario is meant for the library, which shows published
