@@ -1,8 +1,8 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `5fe43ff` (answer from partly relevant
-passages), deployed 2026-10-21 16:33 UTC — see §4u; ⚠ Educación questions still refuse or hedge.
-Before that, `8b525fa` (tighter cite rule, no sources on a no-answer reply, at most 7 sources;
+**Status:** live since 2026-10-17. Dev runs `main` @ `8a1df66` (cite-rule fix round 2), deployed
+2026-10-21 16:47 UTC — see §4v; ⚠ Educación answers still hedge. Before that, `5fe43ff` (answer from
+partly relevant passages; 16:33 UTC, §4u). Before that, `8b525fa` (tighter cite rule, no sources on a no-answer reply, at most 7 sources;
 16:16 UTC, §4t). Before that, `9285305` (sources fallback, cite rule in the prompt, no draft
 search without attachments; 16:00 UTC, §4s). Before that, `0e92026` (title match always shown as a source, Revisión
 follows the picker; 15:41 UTC, §4r). Before that,
@@ -1022,6 +1022,40 @@ Tonight: $0.4786 + $1.4358 = **$1.9144**.
 
 **Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
 -af` (12.97 GB) and removing dev's `8b525fa` images. Images 7.8 GB, build cache 0.
+
+### 4v. ⚠ Done, Educación still hedges, 2026-10-21 16:46–17:00 UTC: `8a1df66`, dev only
+
+All measured by the deploy agent. Staging was not touched. Web only (`8a1df66`: no-answer only when
+no passage relates; firmer one-group citation rule; refusal cues skip the source fallback). Backup
+`/root/backups/20261021T1646Z/` (sha256 matched off-box). Deploy 16:47:07 → 16:52:31 UTC;
+6 containers `healthy`, health 200.
+
+As admin, a fresh conversation per run, nothing pinned, `POST /api/generate`. "Refuses" = only a
+no-answer reply. "Hedges" = opens by saying the documents do not cover it, then answers from them.
+Sentences split on `.`, `!`, `?` and line breaks.
+
+| run | time | `[n]` numbers (groups) | sources | result | sentences with >1 group |
+|---|---|---|---|---|---|
+| Educación Q1 #1 | 8.9 s | 0 (0) | 0 | refuses ("no hablan específicamente del acompañamiento…", 81 chars) | 0 of 1 |
+| Educación Q1 #2 | 9.2 s | 6 (1) | 6 | hedges (445 chars) | 0 of 2 |
+| Educación Q1 #3 | 17.3 s | 6 (1) | 6 | hedges (463 chars) | 0 of 3 |
+| Educación Q2 #1 | 7.8 s | 7 (1) | 7 | hedges (366 chars) | 0 of 2 |
+| Educación Q2 #2 | 7.9 s | 22 (6) | 7 | hedges, then a real answer (1,228 chars) | **1** of 7 |
+| Educación Q2 #3 | 7.3 s | 0 (0) | 0 | hedges, no citation (295 chars) | 0 of 2 |
+| Francia #1 | 9.3 s | 0 | **0** | refuses (paraphrased, 108 chars) ✅ | 0 |
+| Francia #2 / #3 | 4.6 / 3.4 s | 0 | 0 / 0 | refuses ✅ | 0 |
+| dengue #1 / #2 / #3 | 57.8 / 14.5 / 4.8 s | 28 (8) / 20 (5) / 20 (5) | 7 / 7 / 7 | answers | 0 of 15 / 0 of 11 / 0 of 11 |
+
+0 manifest names in any answer; 0 `msg-*`; 0 sessions left. Off-topic now shows 0 sources in 3 of 3
+(the paraphrased refusal no longer falls through). Educación still mostly hedges or refuses (6 of 6
+runs open "Los documentos no …"). Citation groups stay at one per sentence in 11 of 12 runs.
+Dengue #1 took 57.8 s; #2 and #3 returned identical 1,502-char answers.
+
+Spend: `usage_logs` $1.4358 → $1.4598 (**+$0.0240**, 12 chats). Tonight: $0.4786 + $1.4598 =
+**$1.9384**.
+
+**Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
+-af` (12.97 GB) and removing dev's `5fe43ff` images. Images 7.8 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
