@@ -175,6 +175,7 @@ describe('aiServiceDetector — backend selection', () => {
     vi.stubEnv('ANONYMISE_DETECT_MODEL', 'qwen3-30b')
     vi.stubEnv('ANONYMISE_DETECT_API_KEY', 'k')
     vi.stubEnv('ANONYMISE_DETECT_MIN_GAP_MS', '0')
+    vi.stubEnv('ANONYMISE_DETECT_FALLBACK', 'none')
     vi.spyOn(console, 'info').mockImplementation(() => {})
     const urls: string[] = []
     vi.stubGlobal(
@@ -209,9 +210,10 @@ describe('aiServiceDetector — backend selection', () => {
     expect(bodies[0]?.messages[0]).toEqual({ role: 'system', content: DETECT_SYSTEM_PROMPT })
   })
 
-  it('an unreachable self-hosted box fails closed: DetectorFailure, no fallback call', async () => {
+  it('with ANONYMISE_DETECT_FALLBACK=none, an unreachable box fails closed: DetectorFailure, no fallback call', async () => {
     vi.stubEnv('ANONYMISE_DETECT_URL', 'http://spark.test')
     vi.stubEnv('ANONYMISE_DETECT_MODEL', 'm')
+    vi.stubEnv('ANONYMISE_DETECT_FALLBACK', 'none')
     vi.spyOn(console, 'info').mockImplementation(() => {})
     const fetchMock = vi.fn(async () => {
       throw new TypeError('fetch failed')

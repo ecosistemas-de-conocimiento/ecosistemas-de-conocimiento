@@ -41,6 +41,7 @@ import {
   ANONYMISE_DETECT_URL_VAR,
   openaiCompatFromEnv,
 } from './openaiCompatGenerator'
+import { cooldownMsFromEnv, fallbackModeFromEnv, withHostedFallback } from './fallbackGenerator'
 import { stripLeadingTitles } from './titles'
 import type { DetectorFinding, PersonDetector } from './types'
 
@@ -403,7 +404,8 @@ function logBackendOnce(what: string): void {
 /**
  * The real detector: ai-service `/v1/generate/sync` through `@edc/ai-client`,
  * or, when `ANONYMISE_DETECT_URL` is set, a self-hosted OpenAI-compatible
- * endpoint (`openaiCompatGenerator.ts`).
+ * endpoint (`openaiCompatGenerator.ts`) with ai-service behind it as a fallback
+ * (`fallbackGenerator.ts`).
  *
  * ⚠ The client is imported LAZILY, matching `collections/Documents.ts`. Payload
  * collection modules are loaded during config construction, and a top-level
@@ -413,31 +415,54 @@ function logBackendOnce(what: string): void {
  */
 export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDetector {
   const nextKey = opts.unitKey ?? (() => `anonymise-${crypto.randomUUID()}`)
-  // 🔴 SELF-HOSTED WHEN CONFIGURED, AND THEN ONLY SELF-HOSTED. With
-  // `ANONYMISE_DETECT_URL` set the raw text goes to that box and NOWHERE else:
-  // any failure there throws → HOLD. Never fall back to ai-service, which would
-  // send the testimony to a hosted model. See `openaiCompatGenerator.ts`.
+  // SELF-HOSTED FIRST WHEN CONFIGURED. With `ANONYMISE_DETECT_URL` set, the
+  // raw text goes to that box; when the box is unavailable the call falls back
+  // to ai-service (hosted model) unless `ANONYMISE_DETECT_FALLBACK=none`, which
+  // fails closed. See `fallbackGenerator.ts` for what counts as "unavailable".
   const selfHosted = !opts.client && (process.env[ANONYMISE_DETECT_URL_VAR] ?? '').trim() !== ''
-  const backend = selfHosted ? 'openai-compat' : 'ai-service'
+  // ⚠ Read at construction for the NAME only; `detect` re-reads it so a bad
+  // value throws there (→ HOLD) instead of here.
+  let fallbackForName = true
+  try {
+    fallbackForName = fallbackModeFromEnv() === 'hosted'
+  } catch {
+    /* reported by detect() */
+  }
+  const backend = !selfHosted ? 'ai-service' : fallbackForName ? 'openai-compat+ai-service' : 'openai-compat'
+
+  const hostedClient = async (): Promise<SyncGenerator> => {
+    const { getAppAIClient } = await import('@/lib/aiClient')
+    return getAppAIClient(opts.organizationId) as unknown as SyncGenerator
+  }
 
   return {
     // Recorded on the gate row (`gate.ts`), so it names the backend that saw the text.
+    // ⚠ `+fallback` means "the Spark, or ai-service for any call the Spark could
+    // not answer". Which one answered each call is in the WARN log lines; the
+    // detector instance is shared across documents in the seed, so a per-call
+    // record on the row would need a per-document channel this interface lacks.
     name:
       opts.name ??
       (selfHosted
-        ? `openai-compat:${(process.env[ANONYMISE_DETECT_MODEL_VAR] ?? '').trim() || 'unset'}`
+        ? `openai-compat:${(process.env[ANONYMISE_DETECT_MODEL_VAR] ?? '').trim() || 'unset'}${fallbackForName ? '+fallback' : ''}`
         : 'ai-service:anonymise-detect'),
     async detect({ text, contentKind }) {
       let client = opts.client
       if (!client && selfHosted) {
         const resolved = openaiCompatFromEnv()
         if (!resolved) throw new Error(`${ANONYMISE_DETECT_URL_VAR} was unset after start`)
-        client = resolved.generator
-        logBackendOnce(`openai-compat at ${resolved.host}, model ${resolved.model}`)
+        const mode = fallbackModeFromEnv()
+        client =
+          mode === 'hosted'
+            ? withHostedFallback(resolved.generator, hostedClient, { cooldownMs: cooldownMsFromEnv() })
+            : resolved.generator
+        logBackendOnce(
+          `openai-compat at ${resolved.host}, model ${resolved.model}` +
+            (mode === 'hosted' ? ', falls back to ai-service when unavailable' : ', no fallback (fail closed)'),
+        )
       }
       if (!client) {
-        const { getAppAIClient } = await import('@/lib/aiClient')
-        client = getAppAIClient(opts.organizationId) as unknown as SyncGenerator
+        client = await hostedClient()
         logBackendOnce('ai-service /v1/generate/sync')
       }
 
@@ -483,6 +508,10 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
           //
           // ⚠ The ceiling counts SLEEP, not attempts in flight: a chunk that
           // times out every time takes up to 4 × `timeoutMs` plus ~7 s.
+          //
+          // ⚠ WITH THE SPARK FALLBACK, the fallback runs INSIDE each attempt:
+          // 1 Spark try, then hosted tries; the breaker keeps later attempts off
+          // the Spark. Not 4 × 4. See `fallbackGenerator.ts`.
           result = await withRateLimitRetry(
             async () => {
               await paceDetectCall(opts.sleep ?? opts.retry?.sleep ?? realSleep)

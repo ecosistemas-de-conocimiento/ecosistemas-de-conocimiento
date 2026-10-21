@@ -5,10 +5,10 @@
  * 🔴 WHY THIS EXISTS: through ai-service, the raw testimony reaches a hosted
  * model (OpenRouter). Pointed at our own box, it never leaves our hosts.
  *
- * 🔴 FAIL CLOSED. When `ANONYMISE_DETECT_URL` is set, this is the ONLY backend
- * `detector.ts` uses. An unreachable box throws, the document is HELD, and
- * nothing falls back to ai-service — a fallback would send exactly the text
- * this module exists to keep in-house.
+ * ⚠ NOT FAIL-CLOSED ANY MORE BY DEFAULT (owner decision, 2026-10-21): when
+ * this box is unavailable, `detector.ts` sends that call to ai-service — a
+ * hosted model — through `fallbackGenerator.ts`. `ANONYMISE_DETECT_FALLBACK=none`
+ * restores fail-closed: an unreachable box throws and the document is HELD.
  *
  * ⚠ ai-service traces and usage logging do NOT see these calls. Each call logs
  * one line (latency, token counts from `usage`) instead. Never the text.
@@ -155,7 +155,8 @@ export function openaiCompatFromEnv(
 ): { generator: SyncGenerator; model: string; host: string } | null {
   const baseUrl = (env[ANONYMISE_DETECT_URL_VAR] ?? '').trim()
   if (baseUrl === '') return null
-  // 🔴 A URL without a model is a misconfiguration, not "use ai-service": throw → HOLD.
+  // 🔴 A URL without a model is a misconfiguration, not "use ai-service" and not a
+  // fallback case: throw → HOLD.
   const model = (env[ANONYMISE_DETECT_MODEL_VAR] ?? '').trim()
   if (model === '') {
     throw new Error(`${ANONYMISE_DETECT_URL_VAR} is set but ${ANONYMISE_DETECT_MODEL_VAR} is not`)
