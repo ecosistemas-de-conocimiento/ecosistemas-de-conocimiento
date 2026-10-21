@@ -4,6 +4,7 @@ import {
   matchDocumentTitle,
   MIN_TITLE_CHARS,
   publishedTitlesQuery,
+  titleRetrievalFilter,
   withTitleRef,
   type TitledDoc,
 } from './titleMatch';
@@ -124,5 +125,23 @@ describe('withTitleRef', () => {
   it('🔴 a testimonio ref is labelled "Testimonio", never its name', () => {
     const ref = withTitleRef([], { id: '41', name: 'Entrevista con Juana (01)', contentKind: 'testimonio' });
     expect(ref).toEqual([{ kind: 'document', id: '41', label: 'Testimonio' }]);
+  });
+});
+
+// 🔴 ai-service compares metadata by jsonb containment (`metadata @> filter`,
+// services/ai-service `metadata-filter.ts`), so `"71"` never matches `71`. The
+// backend writes `docId: String(doc.id)` (`chunkMetadata`, apps/backend
+// `lib/contentKind.ts`), so the filter must send a string too.
+describe('titleRetrievalFilter', () => {
+  it('🔴 docId is a STRING, the type chunk metadata stores, even off a numeric row id', () => {
+    const filter = titleRetrievalFilter(undefined, { id: 71 as unknown as string, name: 'x' });
+    expect(filter).toEqual({ docId: '71' });
+    expect(typeof filter!.docId).toBe('string');
+  });
+
+  it('keeps the base filter beside it; no match leaves the base alone', () => {
+    expect(titleRetrievalFilter({ lengua: 'mixe' }, DOCS[0]!)).toEqual({ lengua: 'mixe', docId: '31' });
+    expect(titleRetrievalFilter({ lengua: 'mixe' }, null)).toEqual({ lengua: 'mixe' });
+    expect(titleRetrievalFilter(undefined, null)).toBeUndefined();
   });
 });

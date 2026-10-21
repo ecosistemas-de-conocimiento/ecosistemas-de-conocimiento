@@ -593,11 +593,13 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
         // corpus name is the exact signal, and it is only knowable here.
         // Then only the sources the finished answer cites (UX #35), through
         // the browser allowlist (Fable audit #8): what is saved is what every
-        // member's browser later reads back.
+        // member's browser later reads back. A document named by title is
+        // always among them, cited or not (`citedBrowserProvenance`).
         (answer) =>
           citedBrowserProvenance(
             stampDraftProvenance(fenced.restorePassages(prepared.provenance, PASSAGE_TEXT_CAP), draftCorpus),
             answer,
+            titleMatch,
           ),
         upstream.unit.systemPrompt,
         turnMeta(),
@@ -633,6 +635,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     const provenance = citedBrowserProvenance(
       stampDraftProvenance(fenced.restorePassages(rawProvenance, PASSAGE_TEXT_CAP), draftCorpus),
       generation.text,
+      titleMatch,
     );
     const messageId = await persistAssistantMessage(
       locals.token,

@@ -996,6 +996,83 @@ describe('POST /api/generate — a title match retrieves only that document', ()
     expect((multi.body as { corpusFilters?: unknown }).corpusFilters).toBeUndefined();
   });
 
+  // 🔴 Measured on dev: a question naming doc 71 by title got an answer about
+  // it with no `[N]`, and so no source list. The named document is a source
+  // whether the answer cites it or not.
+  it('🔴 sync: an answer with no [N] still lists the named document, its top chunk', async () => {
+    world.answerText = 'El diagnóstico describe la salud comunitaria.';
+    const res = await POST(event(ask(NAMED)));
+    const body = (await res.json()) as { provenance: { chunks: Array<Record<string, unknown>> } };
+    expect(sourceDocIds(body.provenance)).toEqual(['31']);
+    expect(body.provenance.chunks[0]!.text).toBe('FRAGMENTO DEL DIAGNOSTICO.');
+    expect(body.provenance.chunks[0]!.ordinal).toBe(1);
+    expect(sourceDocIds((saves()[0]!.body as { provenance: unknown }).provenance)).toEqual(['31']);
+  });
+
+  it('🔴 stream: an answer with no [N] still lists the named document', async () => {
+    world.streamText = 'El diagnóstico describe la salud comunitaria.';
+    const frames = await readSse(await POST(event(ask(NAMED), true)));
+    expect(sourceDocIds(frames.find((f) => f.type === 'done')!.provenance)).toEqual(['31']);
+  });
+
+  it('🔴 an answer that cites [1], the named document, lists it once, not twice', async () => {
+    world.answerText = 'El diagnóstico describe la salud comunitaria [1] [1].';
+    const res = await POST(event(ask(NAMED)));
+    expect(sourceDocIds(((await res.json()) as { provenance: unknown }).provenance)).toEqual(['31']);
+  });
+
+  it('🔴 the filtered retrieve finds nothing: a document-level source, no passage', async () => {
+    world.retrievePool = [chunk('79', 'Otro documento.pdf', 'TEXTO DEL OTRO DOCUMENTO.', 0.95)];
+    world.answerText = 'El diagnóstico describe la salud comunitaria.';
+    const res = await POST(event(ask(NAMED)));
+    const body = (await res.json()) as { provenance: { chunks: Array<Record<string, unknown>> } };
+    expect(body.provenance.chunks).toHaveLength(1);
+    expect(body.provenance.chunks[0]).toMatchObject({
+      metadata: { docId: '31', title: 'Diagnóstico Comunitario de Salud.pdf', publication: 'published' },
+    });
+    expect(body.provenance.chunks[0]!.text).toBeUndefined();
+  });
+
+  it('no title match and no [N]: still no sources', async () => {
+    world.answerText = 'Las parteras acompañan los nacimientos.';
+    const res = await POST(event(ask(QUESTION)));
+    expect(((await res.json()) as { provenance: unknown }).provenance).toBeNull();
+  });
+
+  describe('🔴 a testimonio named by title, uncited', () => {
+    const TESTIMONIO = '¿Qué cuenta la carta de presentación, traducción en salud (41)?';
+    const testimonioChunk = (publication: string, text: string) => ({
+      ...chunk('41', 'Testimonio', text, 0.6),
+      chunkId: `c-41-${publication}`,
+      metadata: { docId: '41', title: 'Testimonio', publication, kind: 'testimonio' },
+    });
+    beforeEach(() => {
+      world.answerText = 'La carta cuenta una experiencia de traducción.';
+    });
+
+    it('shows its published (redacted) chunk, never a draft copy', async () => {
+      world.retrievePool = [
+        testimonioChunk('draft', 'ORIGINAL: me llamo Juana Pérez'),
+        testimonioChunk('published', 'REDACTADO: me llamo [Persona A]'),
+      ];
+      const res = await POST(event(ask(TESTIMONIO)));
+      const text = JSON.stringify(await res.json());
+      expect(text).toContain('REDACTADO: me llamo [Persona A]');
+      expect(text).not.toContain('Juana');
+      expect(text).not.toContain('Carta de presentación');
+    });
+
+    it('with no published chunk: "Testimonio", no passage, never the name', async () => {
+      world.retrievePool = [testimonioChunk('draft', 'ORIGINAL: me llamo Juana Pérez')];
+      const res = await POST(event(ask(TESTIMONIO)));
+      const body = (await res.json()) as { provenance: { chunks: Array<Record<string, unknown>> } };
+      expect(body.provenance.chunks).toHaveLength(1);
+      expect(body.provenance.chunks[0]).toMatchObject({ metadata: { docId: '41', title: 'Testimonio' } });
+      expect(body.provenance.chunks[0]!.text).toBeUndefined();
+      expect(JSON.stringify(body.provenance)).not.toMatch(/Juana|Carta de presentación/);
+    });
+  });
+
   it('🔴 hybrid: a draft corpus holding the named document is narrowed to it alone', async () => {
     ENV.CHAT_RETRIEVAL_MODE = 'hybrid';
     world.sessionDocs = [

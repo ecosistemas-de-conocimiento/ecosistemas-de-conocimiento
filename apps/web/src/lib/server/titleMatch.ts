@@ -63,6 +63,11 @@
  * ecosistema. The document's own chunks become `[1]…[k]`, so the answer can
  * cite it and its source card shows. No match: retrieval is unchanged.
  *
+ * 🔴 "CAN cite" is not "does": the model may still answer from the inline ref
+ * alone, with no `[N]`, or the filtered retrieve may return nothing. So the
+ * matched document is ALWAYS added to the turn's sources when no cited source
+ * is it (`citedBrowserProvenance` in `$lib/server/citationProvenance`).
+ *
  * ⚠ At most {@link TITLE_SCAN_LIMIT} documents, newest first (one Payload
  * page). An older document in a larger ecosistema is not matched.
  */

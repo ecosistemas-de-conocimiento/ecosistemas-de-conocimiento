@@ -39,6 +39,7 @@
 import { citedProvenance, type Provenance } from '@edc/chat-engine/core';
 import { isConversationTurnChunk } from '$lib/turnChunks';
 import { DRAFT_PROVENANCE_FLAG } from '$lib/publication';
+import type { TitledDoc } from '$lib/server/titleMatch';
 
 /** Chunk fields the browser receives. Everything else is dropped. */
 const CHUNK_FIELDS = [
@@ -125,15 +126,73 @@ export function toBrowserProvenance(provenance: unknown): Provenance | null {
  * its prompt ordinal, then applies the browser allowlist. An answer that cites
  * nothing gets `null`: no sources shown.
  *
+ * 🔴 EXCEPT THE DOCUMENT NAMED BY TITLE. On a unique title match
+ * (`$lib/server/titleMatch`) that document also rides the turn as an inline
+ * ref, which carries no `[N]`. The model can answer from it alone and cite
+ * nothing: measured on dev (doc 71), an answer about the document with no
+ * source list. So when no cited source is that document, it is added once
+ * ({@link titleMatchSource}). Every other uncited chunk is still dropped.
+ *
  * ⚠ Run it on the full answer text, never on a partial stream.
  */
 export function citedBrowserProvenance(
   provenance: Provenance | null | undefined,
   answer: string,
+  titleMatch: TitledDoc | null = null,
 ): Provenance | null {
-  const cited = citedProvenance(provenance, answer ?? '').map(({ relevance: _r, ...c }) => c);
+  const cited: Array<Chunk & { ordinal?: number }> = citedProvenance(provenance, answer ?? '').map(
+    ({ relevance: _r, ...c }) => c,
+  );
+  if (titleMatch && !cited.some((c) => chunkDocId(c) === titleMatch.id)) {
+    cited.push(titleMatchSource(provenance, titleMatch));
+  }
   const out = toBrowserProvenance({ chunks: cited });
   return out && out.chunks.length > 0 ? out : null;
+}
+
+function chunkDocId(c: { metadata?: Record<string, unknown> | null }): string | null {
+  const v = c.metadata?.docId;
+  return typeof v === 'string' || typeof v === 'number' ? String(v).trim() : null;
+}
+
+/**
+ * The source entry for a title-matched document the answer did not cite.
+ *
+ *   · Its best-ranked retrieved chunk, with its own prompt ordinal. The answer
+ *     has no `[N]` for it, so no marker in the text points anywhere else.
+ *   · Otherwise a document-level entry: no passage, `docId` for the "open the
+ *     source" link, and an ordinal past every prompt chunk, so it collides with
+ *     none.
+ *
+ * 🔴 TESTIMONIO: only a `published` chunk. The published corpus holds the
+ * gate's redacted text (backend `corpusTextFor`); a draft-corpus copy may not.
+ * The document-level entry carries no text at all, and the neutral title
+ * "Testimonio", never the name (`titleFor`, apps/backend `lib/contentKind.ts`).
+ */
+function titleMatchSource(
+  provenance: Provenance | null | undefined,
+  match: TitledDoc,
+): Chunk & { ordinal: number } {
+  const chunks = provenance?.chunks ?? [];
+  const testimonio = match.contentKind === 'testimonio';
+  const own = chunks
+    .map((c, i) => ({ c, ordinal: i + 1 }))
+    .filter(({ c }) => chunkDocId(c) === match.id && !isConversationTurnChunk(c.metadata));
+  const published = own.find(({ c }) => c.metadata?.publication === 'published');
+  const pick = published ?? (testimonio ? undefined : own[0]);
+  if (pick) return { ...pick.c, ordinal: pick.ordinal };
+  return {
+    chunkId: `document:${match.id}`,
+    documentId: '',
+    score: 0,
+    corpus: '',
+    metadata: {
+      docId: match.id,
+      title: testimonio ? 'Testimonio' : match.name,
+      publication: 'published',
+    },
+    ordinal: chunks.length + 1,
+  };
 }
 
 /** A message row with its provenance made browser-safe. Other fields untouched. */
