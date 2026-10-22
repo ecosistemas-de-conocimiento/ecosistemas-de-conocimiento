@@ -173,8 +173,8 @@ export function toBrowserProvenance(provenance: unknown): Provenance | null {
  * first) and the first ones win. A title-matched document not among them
  * takes the last slot, so the total never passes {@link MAX_SOURCES}.
  *
- * 🔴 VARIANT E (`CHAT_CITE_VARIANT=E`, owner ruling 2026-10-21: answers may
- * come "from the docs, the corpus, or the training weights") swaps the
+ * 🔴 VARIANT E (the default since 2026-10-22; owner ruling 2026-10-21: answers
+ * may come "from the docs, the corpus, or the training weights") swaps the
  * no-[N] and refusal rules above for {@link generalKnowledgeSources}. A–D keep
  * the rules above unchanged. `variant` defaults to the env value, read per
  * call like the system prompt (`chatCiteVariant` in `./engine/config`).
@@ -316,8 +316,13 @@ export function opensWithRefusal(answer: string): boolean {
  *
  *   · Nothing before the lead (an off-topic question): no sources. The answer
  *     is general knowledge, and a fallback would attribute it to documents.
- *   · `[N]` before the lead: those sources (cited-only), unless the first
- *     sentence is a refusal.
+ *   · `[N]` before the lead: those sources (cited-only), unless the answer
+ *     opens with the no-answer reply or a {@link NO_ANSWER_VARIANTS} wording
+ *     ({@link isNoAnswer}, A's rule for an answer with `[N]`). NOT the wider
+ *     {@link REFUSAL_CUES}: measured on dev (A/B run 13, Discapacidad Q2), an
+ *     E answer opening "Los documentos no contienen testimonios específicos
+ *     sobre …" then citing 2 `[N]` groups showed 0 sources, because the bare
+ *     cue "no contienen" fired on a hedge that went on to answer.
  *   · No `[N]` and a lead: no sources. The model was told to cite what came
  *     from the passages, and the part it chose to mark as general knowledge
  *     sits next to it, so a fallback would blur the two.
@@ -331,10 +336,11 @@ function generalKnowledgeSources(
 ): Array<Chunk & { ordinal?: number }> {
   const { documents, general } = splitGeneralKnowledge(answer);
   if (!/\p{L}/u.test(documents)) return [];
-  if (opensWithRefusal(documents)) return [];
   if (parseCitedOrdinals(documents).length > 0) {
+    if (isNoAnswer(documents)) return [];
     return citedProvenance(provenance, documents).map(({ relevance: _r, ...c }) => c);
   }
+  if (opensWithRefusal(documents)) return [];
   return general ? [] : topRetrieved(provenance);
 }
 

@@ -106,8 +106,9 @@ export const CITE_RULE =
  * cite rules per request (`chatCiteVariant` in `./config`, which reads
  * `$env/dynamic/private`; this module stays `$env`-free for the eval harness),
  * so dev compares variants without a rebuild. `A` is {@link CITE_RULE}
- * (8a1df66). Unset or unknown is `A`, so staging and production keep it.
- * No variant is measured yet; each line says what it is meant to test.
+ * (8a1df66). Unset, blank or unknown is {@link DEFAULT_CITE_VARIANT} (`E`,
+ * owner approval 2026-10-22 after the dev A/B); A–D stay selectable.
+ * Each line says what the variant is meant to test.
  *
  * - B, "cite less, answer more": at most 5 `[N]` groups per answer, one per
  *   paragraph; answer from any related passage and say briefly what is missing.
@@ -192,14 +193,36 @@ function missingContextSentence(variant: CiteVariant): string {
     : 'Si el contexto no alcanza para responder algo, dilo explícitamente.';
 }
 
-/** `CHAT_CITE_VARIANT` → a variant. Unset, blank or unknown is `A`; case and spaces are ignored. */
+/**
+ * The variant when `CHAT_CITE_VARIANT` is unset, blank or unknown: `E` (owner
+ * approval 2026-10-22, after the dev A/B in `infra/fleet/edc-1.md`).
+ */
+export const DEFAULT_CITE_VARIANT: CiteVariant = 'E';
+
+/** Raw values already warned about, so a bad env logs once, not every turn. */
+const warnedUnknown = new Set<string>();
+
+/**
+ * `CHAT_CITE_VARIANT` → a variant. Case and surrounding spaces are ignored.
+ * Unset or blank is {@link DEFAULT_CITE_VARIANT}. An unknown value is the
+ * default too, with a `console.warn` once per distinct value: a typo must be
+ * visible in the container logs, never a silent fallback.
+ */
 export function parseCiteVariant(raw: string | undefined): CiteVariant {
   const v = (raw ?? '').trim().toUpperCase();
-  return (CITE_VARIANTS as readonly string[]).includes(v) ? (v as CiteVariant) : 'A';
+  if ((CITE_VARIANTS as readonly string[]).includes(v)) return v as CiteVariant;
+  if (v !== '' && !warnedUnknown.has(v)) {
+    warnedUnknown.add(v);
+    console.warn(
+      `[prompt] unknown CHAT_CITE_VARIANT ${JSON.stringify(raw)}; using ${DEFAULT_CITE_VARIANT} ` +
+        `(valid: ${CITE_VARIANTS.join(', ')})`,
+    );
+  }
+  return DEFAULT_CITE_VARIANT;
 }
 
 /** The chat system prompt carrying the given variant's cite rule. */
-export function chatSystemPrompt(variant: CiteVariant = 'A'): string {
+export function chatSystemPrompt(variant: CiteVariant = DEFAULT_CITE_VARIANT): string {
   return (
     'Eres un asistente que ayuda a una persona a consultar los documentos de su ' +
     'ecosistema de conocimiento. Tienes acceso a un resumen del contexto (el ' +
@@ -224,5 +247,9 @@ export function chatSystemPrompt(variant: CiteVariant = 'A'): string {
   );
 }
 
-/** Variant A, the 8a1df66 prompt: the eval harness and the default path. */
+/**
+ * Variant A, the 8a1df66 prompt, pinned for the eval harness
+ * (`apps/backend/src/eval/engine.ts`) so its baselines stay comparable. The
+ * chat itself runs {@link DEFAULT_CITE_VARIANT} unless the env says otherwise.
+ */
 export const CHAT_SYSTEM_PROMPT = chatSystemPrompt('A');

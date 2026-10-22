@@ -17,7 +17,12 @@ import {
   answersFromGeneralKnowledge,
   chatSystemPrompt,
   parseCiteVariant,
+  DEFAULT_CITE_VARIANT,
 } from './prompt';
+// Static, not `await import` inside a test: loading `./config` pulls the engine
+// and timed out under full-suite load (5 s default); here it loads once at
+// collection, outside any test's timeout.
+import { CHAT_ENGINE_CONFIG, chatCiteVariant } from './config';
 
 describe('CHAT_SYSTEM_PROMPT', () => {
   it('carries the cite rule: only direct support, one [N] group per sentence', () => {
@@ -63,7 +68,12 @@ describe('CHAT_CITE_VARIANT — the dev prompt A/B', () => {
   it('A is the 8a1df66 rule and prompt, unchanged', () => {
     expect(CITE_RULE_VARIANTS.A).toBe(CITE_RULE);
     expect(chatSystemPrompt('A')).toBe(CHAT_SYSTEM_PROMPT);
-    expect(chatSystemPrompt()).toBe(CHAT_SYSTEM_PROMPT);
+  });
+
+  it('the default is E; CHAT_SYSTEM_PROMPT stays A for the eval harness', () => {
+    expect(DEFAULT_CITE_VARIANT).toBe('E');
+    expect(chatSystemPrompt()).toBe(chatSystemPrompt('E'));
+    expect(chatSystemPrompt()).not.toBe(CHAT_SYSTEM_PROMPT);
   });
 
   it.each(CITE_VARIANTS)('variant %s builds a full prompt with its own rule', (v) => {
@@ -109,14 +119,29 @@ describe('CHAT_CITE_VARIANT — the dev prompt A/B', () => {
     expect(CITE_RULE_VARIANTS.B).not.toContain('Los testimonios cuentan');
   });
 
-  it('unset, blank or unknown means A; case and spaces are ignored', () => {
-    expect(parseCiteVariant(undefined)).toBe('A');
-    expect(parseCiteVariant('')).toBe('A');
-    expect(parseCiteVariant('Z')).toBe('A');
-    expect(parseCiteVariant('BB')).toBe('A');
+  it('unset or blank means E, silently; case and spaces are ignored; A–D stay selectable', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(parseCiteVariant(undefined)).toBe('E');
+    expect(parseCiteVariant('')).toBe('E');
+    expect(parseCiteVariant('  ')).toBe('E');
+    expect(parseCiteVariant('a')).toBe('A');
+    expect(parseCiteVariant('B\n')).toBe('B');
     expect(parseCiteVariant(' c ')).toBe('C');
     expect(parseCiteVariant('d')).toBe('D');
     expect(parseCiteVariant(' e')).toBe('E');
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('🔴 an unknown value falls back to E and warns once per value', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(parseCiteVariant('Z')).toBe('E');
+    expect(parseCiteVariant('z')).toBe('E');
+    expect(parseCiteVariant('"E"')).toBe('E');
+    expect(parseCiteVariant('BB')).toBe('E');
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn.mock.calls[0]?.[0]).toMatch(/^\[prompt\] unknown CHAT_CITE_VARIANT "Z"; using E/);
+    warn.mockRestore();
   });
 });
 
@@ -171,21 +196,20 @@ describe('CHAT_ENGINE_CONFIG.systemPrompt reads CHAT_CITE_VARIANT per request', 
     vi.restoreAllMocks();
   });
 
-  it('unset is A', async () => {
+  it('unset is E', () => {
     delete process.env.CHAT_CITE_VARIANT;
-    const { CHAT_ENGINE_CONFIG } = await import('./config');
-    expect(CHAT_ENGINE_CONFIG.systemPrompt).toBe(CHAT_SYSTEM_PROMPT);
+    expect(CHAT_ENGINE_CONFIG.systemPrompt).toBe(chatSystemPrompt('E'));
   });
 
-  it('an unknown value is A', async () => {
+  it('an unknown value is E, with a warning', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     process.env.CHAT_CITE_VARIANT = 'nope';
-    const { CHAT_ENGINE_CONFIG } = await import('./config');
-    expect(CHAT_ENGINE_CONFIG.systemPrompt).toBe(CHAT_SYSTEM_PROMPT);
+    expect(CHAT_ENGINE_CONFIG.systemPrompt).toBe(chatSystemPrompt('E'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('unknown CHAT_CITE_VARIANT "nope"'));
   });
 
-  it('changing the env between two reads changes the prompt, and logs each variant', async () => {
+  it('changing the env between two reads changes the prompt, and logs each variant', () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
-    const { CHAT_ENGINE_CONFIG } = await import('./config');
     process.env.CHAT_CITE_VARIANT = 'B';
     const first = CHAT_ENGINE_CONFIG.systemPrompt;
     process.env.CHAT_CITE_VARIANT = 'C';
@@ -194,5 +218,17 @@ describe('CHAT_ENGINE_CONFIG.systemPrompt reads CHAT_CITE_VARIANT per request', 
     expect(second).toBe(chatSystemPrompt('C'));
     expect(debug).toHaveBeenNthCalledWith(1, '[prompt] cite variant B');
     expect(debug).toHaveBeenNthCalledWith(2, '[prompt] cite variant C');
+  });
+
+  it('🔴 logs the active variant at info level on first use and on each change, not every turn', () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    process.env.CHAT_CITE_VARIANT = 'D';
+    chatCiteVariant();
+    chatCiteVariant();
+    process.env.CHAT_CITE_VARIANT = 'a';
+    chatCiteVariant();
+    chatCiteVariant();
+    expect(info.mock.calls).toEqual([['[prompt] cite variant D'], ['[prompt] cite variant A']]);
   });
 });

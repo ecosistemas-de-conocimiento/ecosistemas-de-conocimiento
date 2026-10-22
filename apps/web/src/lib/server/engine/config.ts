@@ -41,7 +41,7 @@ export function engineOrgId(): string {
 export const CHAT_ENGINE_CONFIG: EngineConfig = {
   ...DEFAULT_ENGINE_CONFIG,
   surface: 'chat',
-  // `./prompt`: pure, so the eval harness imports the same string (variant A).
+  // `./prompt`: pure, so the eval harness can import a fixed string (variant A).
   // A getter, so `CHAT_CITE_VARIANT` is read per request: the engine reads
   // `systemPrompt` once per turn (`buildSystemPrompt` in chat-engine core).
   get systemPrompt() {
@@ -50,16 +50,30 @@ export const CHAT_ENGINE_CONFIG: EngineConfig = {
 };
 
 /**
- * Dev-only prompt A/B: `CHAT_CITE_VARIANT` = `A`|`B`|`C`|`D` picks the cite
- * rule (`CITE_RULE_VARIANTS` in `./prompt`). Unset or unknown is `A`, the
- * 8a1df66 prompt. Read per call, so an operator can flip it without a rebuild.
- * Logs the active variant at debug level, so a measurement can attribute runs.
+ * Prompt cite rule: `CHAT_CITE_VARIANT` = `A`|`B`|`C`|`D`|`E` picks it
+ * (`CITE_RULE_VARIANTS` in `./prompt`). Unset or blank is `E`
+ * (`DEFAULT_CITE_VARIANT`); an unknown value is `E` too, with a warning
+ * (`parseCiteVariant`). Case and surrounding spaces are ignored. Read per call
+ * from `$env/dynamic/private` (the container's runtime env, not the build), so
+ * an operator flips it with a container recreate, no rebuild.
+ *
+ * Logs `[prompt] cite variant X` at debug level on every call, so a
+ * measurement can attribute runs, and at info level on the first call and
+ * whenever the variant changes, so the active variant shows in the container
+ * logs even where debug output is filtered.
  */
 export function chatCiteVariant(): CiteVariant {
   const variant = parseCiteVariant(env.CHAT_CITE_VARIANT);
-  console.debug(`[prompt] cite variant ${variant}`);
+  const line = `[prompt] cite variant ${variant}`;
+  if (variant !== lastAnnouncedVariant) {
+    lastAnnouncedVariant = variant;
+    console.info(line);
+  }
+  console.debug(line);
   return variant;
 }
+
+let lastAnnouncedVariant: CiteVariant | null = null;
 
 /**
  * Query expansion on chat turns (`./expand`): `QUERY_EXPANSION=off` turns it

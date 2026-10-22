@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// The A–D blocks below were written for variant A's source rules, so this file
+// pins the env default to A. The variant E block passes 'E' explicitly, and
+// the "unset is E" test clears the value.
+const testEnv = vi.hoisted(() => ({ CHAT_CITE_VARIANT: 'A' as string | undefined }));
+vi.mock('$env/dynamic/private', () => ({ env: testEnv }));
 import { provenanceToCitations } from '@edc/chat-engine/core';
 import {
   MAX_SOURCES,
@@ -462,9 +468,70 @@ describe('citedBrowserProvenance — variant E: general knowledge lists no sourc
     expect(ids(citedBrowserProvenance(p as never, 'Sin marcas.', null, 'E'))).toEqual(['d2']);
   });
 
-  it('A is unchanged: the default variant still refuses on a cue anywhere', () => {
+  it('A is unchanged: still refuses on a cue anywhere', () => {
     const answer = 'Hay relatos de docentes. Los documentos disponibles no contienen testimonios de familias.';
-    expect(citedBrowserProvenance(five as never, answer)).toBeNull();
+    expect(citedBrowserProvenance(five as never, answer, null, 'A')).toBeNull();
     expect(ids(E(answer))).toEqual(['d2', 'd4', 'd3']);
+  });
+
+  it('🔴 unset CHAT_CITE_VARIANT runs the E source rule', () => {
+    const answer = 'Hay relatos de docentes. Los documentos disponibles no contienen testimonios de familias.';
+    const saved = testEnv.CHAT_CITE_VARIANT;
+    try {
+      testEnv.CHAT_CITE_VARIANT = undefined;
+      expect(ids(citedBrowserProvenance(five as never, answer))).toEqual(['d2', 'd4', 'd3']);
+    } finally {
+      testEnv.CHAT_CITE_VARIANT = saved;
+    }
+  });
+});
+
+// Dev A/B 2026-10-22, run 13 (variant E, Discapacidad Q2): "2 [n] groups, 0
+// sources". The A/B kept only the first sentence (verbatim below), the group
+// count (2) and the length (613 chars); the rest of this answer is rebuilt.
+// Root cause: E checked the FIRST sentence for any REFUSAL_CUES cue before
+// looking at [N], and "no contienen" is one, so a hedge that went on to answer
+// with citations lost every source.
+describe('citedBrowserProvenance — variant E: a hedging first sentence keeps its [N] sources', () => {
+  const doc = (i: number) => ({ ...docChunk, chunkId: `d${i}`, metadata: { docId: String(i), title: `Doc ${i}` } });
+  const six = { chunks: [1, 2, 3, 4, 5, 6].map(doc) };
+  const ids = (p: ReturnType<typeof citedBrowserProvenance>) => (p?.chunks ?? []).map((c) => c.chunkId);
+  const FIRST =
+    'Los documentos no contienen testimonios específicos sobre la experiencia de personas con discapacidad durante su etapa escolar.';
+  const run13 =
+    `${FIRST} Sí mencionan que algunas familias buscaron escuelas con apoyo para sus hijos y que la ` +
+    'distancia a la escuela fue un obstáculo [2]. También cuentan que una promotora acompañaba a niñas ' +
+    'y niños con discapacidad a sus consultas y hablaba con sus maestras [4, 5].';
+
+  it('🔴 run 13: the exact first sentence plus 2 [N] groups lists the cited sources', () => {
+    expect(ids(citedBrowserProvenance(six as never, run13, null, 'E'))).toEqual(['d2', 'd4', 'd5']);
+  });
+
+  it('the first sentence is a refusal cue but not a no-answer reply: the cue path was the culprit', () => {
+    expect(opensWithRefusal(run13)).toBe(true);
+    expect(isNoAnswer(run13)).toBe(false);
+    expect(splitGeneralKnowledge(run13).general).toBe(false);
+  });
+
+  // These two pass with or without the fix: they rule the suspects out.
+  it('ruled out: grouping formats "[1, 2]", "[1][2]" and "[1] [2]" all map to sources', () => {
+    for (const marks of ['[2, 4]', '[2][4]', '[2] [4]', '[2,4]']) {
+      expect(ids(citedBrowserProvenance(six as never, `Las familias cuentan algo ${marks}.`, null, 'E'))).toEqual(['d2', 'd4']);
+    }
+  });
+
+  it('ruled out: ordinals are prompt positions, so [N] opens chunk N even after a dropped turn', () => {
+    const p = { chunks: [{ ...assistantChunk }, doc(2), doc(3)] };
+    const out = citedBrowserProvenance(p as never, 'Las familias cuentan algo [3].', null, 'E');
+    expect(out?.chunks.map((c) => [c.chunkId, (c as { ordinal?: number }).ordinal])).toEqual([['d3', 3]]);
+  });
+
+  it('a true no-answer opening with [N] still lists nothing (A\'s rule)', () => {
+    expect(citedBrowserProvenance(six as never, 'Los documentos no hablan de esto [1, 2].', null, 'E')).toBeNull();
+    expect(citedBrowserProvenance(six as never, 'Los documentos no mencionan París. Tratan de salud [1].', null, 'E')).toBeNull();
+  });
+
+  it('without [N], an opening refusal cue still skips the fallback', () => {
+    expect(citedBrowserProvenance(six as never, FIRST, null, 'E')).toBeNull();
   });
 });
