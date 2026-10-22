@@ -426,3 +426,84 @@ describe('deterministicPass — domicilios: the postal code only', () => {
     }
   })
 })
+
+describe('deterministicPass — follow-ups to the audit of the one-pass rewrite', () => {
+  it('a local part over 64 characters is still ONE address, no prefix left', () => {
+    const address = `mariagonzalez${'x'.repeat(60)}@gmail.com`
+    expect(run(`Escribe a ${address} hoy`, ['María']).text).toBe('Escribe a [Dato omitido] hoy')
+    expect(run(`Escribe a ${address} hoy`).text).toBe('Escribe a [Dato omitido] hoy')
+  })
+
+  it('a domain over 255 characters is still an address', () => {
+    const text = `Escribe a ana@${'b'.repeat(300)}.com hoy`
+    expect(run(text, ['Ana']).text).toBe('Escribe a [Dato omitido] hoy')
+    expect(run(text).text).toBe('Escribe a [Dato omitido] hoy')
+    expect(run(`Es ana@${'b.'.repeat(200)}com hoy`).text).toBe('Es [Dato omitido] hoy')
+  })
+
+  it('a long domain leaves the full stop after it', () => {
+    expect(run(`Escribe a ana@${'b'.repeat(300)}.`).text).toBe('Escribe a [Dato omitido].')
+  })
+
+  // 🔴 Only labels this pipeline emits may be skipped. Anything else in
+  // brackets is ordinary text, so a name inside it is redacted.
+  it.each([
+    ['Vino [Persona ANA] y Ana', ['Ana'], 'Vino [Persona [Persona A]] y [Persona A]'],
+    ['En [Domicilio MARIA] vive María', ['María'], 'En [Domicilio [Persona A]] vive [Persona A]'],
+    ['[Persona ANA]@gmail.com', ['Ana'], '[Persona [Persona A]][Dato omitido]'],
+  ])('a bracket that only looks like a placeholder is text: %s', (text, roster, expected) => {
+    expect(run(text, roster).text).toBe(expected)
+  })
+
+  it('a label this document emits, already in the text, is still skipped', () => {
+    // Re-running on pipeline output: "Persona A" is the entry, `[Persona A]` its label.
+    expect(run('Ya [Persona A] y Persona A.', ['Persona A']).text).toBe(
+      'Ya [Persona A] y [Persona A].',
+    )
+  })
+
+  it('a shorter entry inside a name that joined an address joins it too', () => {
+    // "Ana" lies only on the part of "Ana María" OUTSIDE the email.
+    expect(run('Escribe a Ana maría@gmail.com hoy', ['Ana María', 'Ana']).text).toBe(
+      'Escribe a [Dato omitido] hoy',
+    )
+  })
+
+  it('an address a longer name already joined is no longer a member label', () => {
+    // "Pérez ana" (longer, first) joins the email; the entry that IS the email
+    // then finds an address that grew, and joins it as well.
+    expect(run('Vino Pérez ana@x.co hoy', ['Pérez ana', 'ana@x.co']).text).toBe(
+      'Vino [Dato omitido] hoy',
+    )
+  })
+
+  it('R9: an entry with no letter or digit matches nothing', () => {
+    expect(run('Hola.. Ana', ['..', 'Ana']).text).toBe('Hola.. [Persona A]')
+  })
+
+  it('R9: an entry of only accent marks takes no label', () => {
+    expect(run('Vino Ana', ['́́́', 'Ana']).text).toBe('Vino [Persona A]')
+  })
+
+  it('🔴 stays fast when names partly overlap thousands of addresses', () => {
+    // 500 KB. Audit measurement: 92 s on the rewrite, 63 ms before it.
+    const text = 'María @maría maria@x.com '.repeat(20_000)
+    const t0 = performance.now()
+    const out = run(text, ['María'])
+    expect(performance.now() - t0).toBeLessThan(3000)
+    expect(out.text).toBe('[Persona A] [Dato omitido] [Dato omitido] '.repeat(20_000))
+  })
+
+  it.each([
+    ['many placeholders', () => run('[Dato omitido] Ana '.repeat(20_000), ['Ana'])],
+    ['domains with no TLD', () => run(`${'a'.repeat(64)}@${'b.'.repeat(127)}1 `.repeat(500))],
+    ['long domains', () => run(`a@${'b'.repeat(400)} `.repeat(1000))],
+    ['long local and domain', () => run(`${'a'.repeat(200)}@${'b'.repeat(300)}.com `.repeat(1000))],
+  ])('stays fast on %s', (_, go) => {
+    // Loose bound: each case took 30–800 ms alone (measured 2026-10-21, host
+    // `torre`, load ~12). A quadratic sweep takes minutes.
+    const t0 = performance.now()
+    go()
+    expect(performance.now() - t0).toBeLessThan(4000)
+  })
+})

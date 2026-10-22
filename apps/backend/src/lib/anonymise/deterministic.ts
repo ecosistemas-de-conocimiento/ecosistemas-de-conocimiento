@@ -125,13 +125,12 @@ interface Span {
   person?: boolean
 }
 
-function overlaps(a: { start: number; end: number }, start: number, end: number): boolean {
-  return a.start < end && a.end > start
-}
-
 /**
  * Join overlapping spans into one. The span that starts first names the rule
  * (on a tie, the longer one): a URL that carries an email stays a `url`.
+ *
+ * ⚠ Sorts ONCE. Call it once per text, never inside a loop over matches: the
+ * audit measured 92 s on 500 KB when every partial overlap re-merged the list.
  */
 function mergeSpans(spans: readonly Span[]): Span[] {
   const sorted = [...spans].sort((x, y) => x.start - y.start || y.end - x.end)
@@ -140,6 +139,38 @@ function mergeSpans(spans: readonly Span[]): Span[] {
     const last = out[out.length - 1]
     if (last !== undefined && s.start < last.end) last.end = Math.max(last.end, s.end)
     else out.push({ ...s })
+  }
+  return out
+}
+
+/** Characters an email's local part and domain may hold. See {@link EMAIL}. */
+const LOCAL_CHAR = /[\p{L}\p{M}\p{N}._%+-]/u
+const DOMAIN_CHAR = /[\p{L}\p{M}\p{N}.-]/u
+
+/**
+ * Every email in `text`, each one WHOLE.
+ *
+ * {@link EMAIL} is bounded (64 / 255) so a failed search stays linear. A real
+ * text can still hold a longer part, and the bounded match then covers only
+ * the end of it: "mariagonz" was left before the placeholder (audit). So each
+ * match grows LEFT over local-part characters and RIGHT over domain
+ * characters, minus a trailing `.` or `-` (the full stop after an address).
+ *
+ * Linear: the search resumes where the grown match ends, and growing left
+ * stops at the `@` before it (not a local-part character), so a character is
+ * crossed by at most one later match. Overlaps are merged by the caller.
+ */
+function emailSpans(text: string): Span[] {
+  const out: Span[] = []
+  const re = new RegExp(EMAIL.source, EMAIL.flags)
+  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+    let start = m.index
+    let end = start + m[0].length
+    while (start > 0 && LOCAL_CHAR.test(text.charAt(start - 1))) start--
+    while (end < text.length && DOMAIN_CHAR.test(text.charAt(end))) end++
+    while (/[.-]/.test(text.charAt(end - 1))) end--
+    out.push({ start, end, rule: DETERMINISTIC_LABELS.email })
+    re.lastIndex = end
   }
   return out
 }
@@ -155,15 +186,15 @@ function mergeSpans(spans: readonly Span[]): Span[] {
  */
 function addressSpans(text: string): Span[] {
   const rules: Array<[RegExp, string]> = [
-    [EMAIL, DETERMINISTIC_LABELS.email],
     [URL, DETERMINISTIC_LABELS.url],
     [ARROBA, DETERMINISTIC_LABELS.arroba],
   ]
-  return mergeSpans(
-    rules.flatMap(([re, rule]) =>
+  return mergeSpans([
+    ...emailSpans(text),
+    ...rules.flatMap(([re, rule]) =>
       [...text.matchAll(re)].map((m) => ({ start: m.index, end: m.index + m[0].length, rule })),
     ),
-  )
+  ])
 }
 
 /**
@@ -177,22 +208,44 @@ function addressSpans(text: string): Span[] {
  *     span grows over the whole name, and the result is one `[Dato omitido]`.
  *     No placeholder is ever spliced into an address, and no letter of the name
  *     is ever left beside one;
- *   · a match inside a placeholder already in the text is skipped.
+ *   · a match inside a placeholder this pipeline emitted is skipped. 🔴 ONLY
+ *     those: `[Dato omitido]` and the labels in `ownLabels`. "[Persona ANA]"
+ *     typed into a document is ordinary text, and the "Ana" in it is a name
+ *     (audit).
  *
  * ⚠ A match rejected for being glued restarts the search ONE character later,
  * not after the match, so a real hit overlapping it is still found.
+ *
+ * ⚠ LINEAR in the text and the matches. What each character belongs to lives
+ * in per-character arrays, so a match costs its own length. The address list is
+ * sorted once, at the end; it used to be re-merged on every partial overlap.
  */
 function rosterAndAddresses(
   text: string,
   entries: readonly string[],
   labelOf: (entry: string) => string,
+  ownLabels: ReadonlySet<string>,
 ): { text: string; spans: Span[] } {
-  let addresses = addressSpans(text)
-  const placeholders = [...text.matchAll(PLACEHOLDER_PATTERN)].map((m) => ({
-    start: m.index,
-    end: m.index + m[0].length,
-  }))
-  const claimed = new Uint8Array(text.length)
+  const addresses = addressSpans(text)
+  const rules = [...new Set(addresses.map((a) => a.rule))]
+  /** Index of the address each character is in, or -1. */
+  const owner = new Int32Array(text.length).fill(-1)
+  /** 1 + index in `rules` for every character an address covers or has grown over. */
+  const ruleAt = new Uint8Array(text.length)
+  addresses.forEach((a, i) => {
+    owner.fill(i, a.start, a.end)
+    ruleAt.fill(1 + rules.indexOf(a.rule), a.start, a.end)
+  })
+  const grown = new Uint8Array(addresses.length)
+  const taken = new Uint8Array(addresses.length)
+  const joined: Span[] = []
+  /** Real placeholders and accepted names: no later match may touch them. */
+  const blocked = new Uint8Array(text.length)
+  for (const m of text.matchAll(PLACEHOLDER_PATTERN)) {
+    if (m[0] === OMITTED_PLACEHOLDER || ownLabels.has(m[0])) {
+      blocked.fill(1, m.index, m.index + m[0].length)
+    }
+  }
   const people: Span[] = []
 
   for (const entry of entries) {
@@ -211,26 +264,39 @@ function rosterAndAddresses(
       const ok =
         wholeWord(text, start, end) &&
         gaps.every((g) => g === undefined || breakAt(text, g[0])) &&
-        !placeholders.some((p) => overlaps(p, start, end)) &&
-        !claimed.subarray(start, end).includes(1)
+        !blocked.subarray(start, end).includes(1)
       if (!ok) {
         pattern.lastIndex = start + 1
         continue
       }
-      const hit = addresses.filter((a) => overlaps(a, start, end))
-      const [only] = hit
-      if (hit.length === 1 && only !== undefined && only.start === start && only.end === end) {
-        addresses = addresses.filter((a) => a !== only)
-      } else if (only !== undefined) {
-        addresses = mergeSpans([...addresses, { start, end, rule: only.rule }])
-        continue
+      const exact = owner[start] ?? -1
+      const isAddress =
+        exact >= 0 &&
+        addresses[exact]?.start === start &&
+        addresses[exact]?.end === end &&
+        grown[exact] === 0
+      if (isAddress) {
+        taken[exact] = 1
+      } else {
+        let code = 0
+        for (let i = start; i < end && code === 0; i++) code = ruleAt[i] ?? 0
+        if (code > 0) {
+          for (let i = start; i < end; i++) {
+            const a = owner[i] ?? -1
+            if (a >= 0) grown[a] = 1
+            if (ruleAt[i] === 0) ruleAt[i] = code
+          }
+          joined.push({ start, end, rule: rules[code - 1] ?? DETERMINISTIC_LABELS.email })
+          continue
+        }
       }
       people.push({ start, end, rule: labelOf(entry), person: true })
-      claimed.fill(1, start, end)
+      blocked.fill(1, start, end)
     }
   }
 
-  const spans = [...people, ...addresses].sort((x, y) => x.start - y.start)
+  const merged = mergeSpans([...addresses.filter((_, i) => taken[i] === 0), ...joined])
+  const spans = [...people, ...merged].sort((x, y) => x.start - y.start)
   let out = ''
   let copied = 0
   for (const s of spans) {
@@ -246,9 +312,12 @@ function rosterAndAddresses(
  *
  * Letters and accent marks of any script: it runs on decomposed text (see
  * {@link addressSpans}). ⚠ The parts are BOUNDED (64 / 255, the mail limits):
- * unbounded, a long run with no `@` cost quadratic time.
+ * unbounded, a long run with no `@` cost quadratic time. A longer part is
+ * still caught: the second branch takes a domain past 255 characters, and
+ * {@link emailSpans} grows every match over the rest of its address.
  */
-const EMAIL = /[\p{L}\p{M}\p{N}._%+-]{1,64}@[\p{L}\p{M}\p{N}.-]{1,255}\.[\p{L}\p{M}]{2,63}/gu
+const EMAIL =
+  /[\p{L}\p{M}\p{N}._%+-]{1,64}@(?:[\p{L}\p{M}\p{N}.-]{1,255}\.[\p{L}\p{M}]{2,63}|[\p{L}\p{M}\p{N}.-]{256})/gu
 
 /** 18-char CURP. Runs BEFORE the RFC rule, whose shape is its first 13 chars. */
 const CURP = /\b[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b/gi
@@ -441,7 +510,12 @@ export function deterministicPass(args: DeterministicArgs): {
   //
   // NFD→NFC is canonical-equivalence-preserving: it can change the BYTES of
   // text this stage did not redact, never the characters.
-  const first = rosterAndAddresses(out.normalize('NFD'), entries, (e) => labels.get(e) ?? '')
+  const first = rosterAndAddresses(
+    out.normalize('NFD'),
+    entries,
+    (e) => labels.get(e) ?? '',
+    new Set(labels.values()),
+  )
   out = first.text.normalize('NFC')
   const countOf = (rule: string) => first.spans.filter((s) => !s.person && s.rule === rule).length
   pushCount(removed, DETERMINISTIC_LABELS.rosterPerson, first.spans.filter((s) => s.person).length)
