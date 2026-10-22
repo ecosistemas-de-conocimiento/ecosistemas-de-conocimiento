@@ -53,11 +53,13 @@
  * can send, and the back button undoes a selection instead of leaving the page.
  * Same reasoning as `/biblioteca`'s `?q=` and `/admin`'s `?eco=`.
  *
- * ⚠ The search box is NOT in the URL and does NOT round-trip. The ranked lists
- * are loaded once and filtered in the browser, accent-insensitively — a Spanish
- * product where `migracion` does not find `Migración` reads as "eso no está".
+ * ⚠ The search box is NOT in the URL and this load does NOT re-run for it. It
+ * asks `/grafo/buscar` (full-text over the published documents, backlog #31)
+ * and only the highlight changes. Accent-insensitive — a Spanish product where
+ * `migracion` does not find `Migración` reads as "eso no está".
  */
 
+import { env } from '$env/dynamic/private';
 import type { PageServerLoad } from './$types';
 import { isPlatformAdmin } from '$lib/components/admin/summary';
 import { listAllEcosystems, readEcosystem } from '$lib/server/admin';
@@ -66,6 +68,7 @@ import { fetchGraphEntity, fetchGraphView } from '$lib/server/graph';
 import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { parseLengua, type GrafoLenguaData } from '$lib/lengua';
 import {
+  graphSearchEnabled,
   sharedDocuments,
   type GrafoPageData,
   type GraphScopePicker,
@@ -115,6 +118,7 @@ export const load: PageServerLoad = async ({
     entityState: 'none',
     edge: null,
     scope: null,
+    searchEnabled: graphSearchEnabled(env.GRAPH_SEARCH_ENABLED),
   };
 
   // `hooks.server.ts` already bounces anonymous callers to /sign-in; this is
@@ -219,5 +223,6 @@ export const load: PageServerLoad = async ({
     entityState: entityResult ? entityResult.state : 'none',
     edge,
     scope,
+    searchEnabled: base.searchEnabled,
   };
 };

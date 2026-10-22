@@ -345,6 +345,8 @@ export interface GrafoPageData {
    * nothing must not be told to go ask for access. See `noEcosystemCopy`.
    */
   scope: GraphScopePicker | null;
+  /** The full-text search box, `GRAPH_SEARCH_ENABLED` (see `graphSearchEnabled`). */
+  searchEnabled: boolean;
 }
 
 // ── Tolerant parsing ───────────────────────────────────────────────────────
@@ -654,18 +656,6 @@ export function rankNeighbours(neighbours: readonly GraphNeighbour[]): GraphNeig
   );
 }
 
-/**
- * Accent- and case-insensitive filter over the labels.
- *
- * ⚠ Not a nicety in a Spanish product: someone typing `migracion` must find
- * `Migración`, because that is how people type when they are in a hurry, and a
- * filter that silently returns nothing reads as "eso no está en el grafo".
- */
-export function filterEntities(entities: readonly GraphEntity[], query: string): GraphEntity[] {
-  const needle = foldText(query);
-  if (!needle) return [...entities];
-  return entities.filter((e) => foldText(e.label).includes(needle));
-}
 
 /** The four lists, always all four, always in ADR order — empty ones included. */
 export function groupByType(
@@ -872,13 +862,54 @@ export function noEcosystemCopy(canSwitch: boolean): string {
   return canSwitch ? GRAPH_NO_ECOSYSTEM_ADMIN : GRAPH_NO_ECOSYSTEM;
 }
 
+// ── Full-text search (backlog #31) ─────────────────────────────────────────
+//
+// The box sends its words to `/grafo/buscar`, which asks the backend's
+// `/api/graph/view?q=` — entities whose name matches, or that a matching
+// PUBLISHED document of this ecosistema mentions (Postgres `spanish` full-text
+// over the same text the corpus holds). The map dims everything else.
+
 /**
- * ⚠ THE /grafo SEARCH BOX IS HIDDEN FOR THE DEMO (backlog #30, owner's call
- * 2026-10-21). Flip to `true` to bring it back as it was — accent- and
- * case-insensitive name search over the lists (`filterEntities`). Full-text
- * search there is backlog #31, after the demo.
+ * 🔴 The search box's runtime switch, read from `GRAPH_SEARCH_ENABLED` in the
+ * web app's env. ON unless set to `false`/`0`/`off`/`no` (it was hidden for the
+ * demo, backlog #30; back on with #31).
  */
-export const GRAPH_SEARCH_ENABLED = false;
+export function graphSearchEnabled(raw: string | undefined): boolean {
+  return !['false', '0', 'off', 'no'].includes((raw ?? '').trim().toLowerCase());
+}
+
+/** Same cap on both sides of `/grafo/buscar`; the backend's own is 200. */
+export const GRAPH_SEARCH_MAX_LENGTH = 120;
+
+/** Typing pause before a search goes out, in ms. */
+export const GRAPH_SEARCH_DEBOUNCE_MS = 300;
+
+export const GRAPH_SEARCH_PLACEHOLDER = 'Buscar en los documentos…';
+
+/** The ids `/grafo/buscar` answered with, read tolerantly. Junk ⇒ `null`. */
+export function parseSearchIds(body: unknown): string[] | null {
+  if (!body || typeof body !== 'object') return null;
+  const ids = (body as { ids?: unknown }).ids;
+  if (!Array.isArray(ids)) return null;
+  return ids.map(str).filter((id): id is string => id !== null);
+}
+
+/**
+ * What the map highlights for a search: the result ids that are ON the map.
+ *
+ * `null` (nothing dimmed) for an empty query, and also while the answer is not
+ * in yet or failed — a map that goes dark because a request blinked reads as
+ * "nothing matches". An empty set is a real answer: nothing matches.
+ */
+export function searchHighlight(
+  entities: readonly GraphEntity[],
+  query: string,
+  resultIds: readonly string[] | null,
+): Set<string> | null {
+  if (query.trim() === '' || resultIds === null) return null;
+  const found = new Set(resultIds);
+  return new Set(entities.filter((e) => found.has(e.id)).map((e) => e.id));
+}
 
 export const GRAPH_NO_NEIGHBOURS =
   'Todavía no hay conexiones que mostrar para esto. Aparecerán cuando varios ' +
