@@ -103,8 +103,8 @@ export const DEFAULT_GATE_RETRY_LIMIT = 5
 export const DEFAULT_EXTRACTING_RECOVER_MIN = 10
 
 /**
- * Hand-backs per row before {@link recoverAbandonedClaims} gives up and fails
- * it out, retryable by a person. inferred: a row abandoned three times is
+ * Drive tries per row (abandoned or thrown, one shared count) before the row
+ * is failed out, retryable by a person. inferred: a row lost three times is
  * failing for a reason a re-drive will not fix.
  */
 export const DEFAULT_EXTRACTING_RECOVER_ATTEMPTS = 3
@@ -479,6 +479,25 @@ const attemptsOf = (ingestError: unknown): number => {
   return m ? Number(m[1]) : 0
 }
 
+/** Why a row whose drive threw on every attempt was failed out. */
+const EXTRACTION_THREW_REASON =
+  `${EXTRACTION_STALLED_CODE}: la preparación del documento falló varias veces seguidas. ` +
+  'No se envió nada al servicio de IA, así que puedes volver a intentarlo. Si vuelve a ' +
+  'pasar, avisa a quien administra la instalación.'
+
+/**
+ * The write that ends a claim with no live run: back to `transcribed` with one
+ * more attempt counted or, at the cap, the retryable failure. Shared by the
+ * drive's own hand-back and {@link recoverAbandonedClaims}, so both spend one
+ * budget.
+ */
+function handBack(attempts: number, cap: number, failReason: string): Record<string, unknown> {
+  // `attempts` counts the tries already handed back; this one is the next.
+  return attempts + 1 >= cap
+    ? { ingestStatus: 'failed', ingestError: failReason.slice(0, 500) }
+    : { ingestStatus: 'transcribed', ingestError: `${EXTRACTING_RECOVERED_CODE}: ${attempts + 1}/${cap}` }
+}
+
 /**
  * Hand an abandoned drive claim back to `transcribed` (owner's ruling,
  * 2026-10-22), so a run lost to a restart costs minutes, not a failed upload.
@@ -541,7 +560,7 @@ export async function recoverAbandonedClaims(
     for (const doc of docs) {
       if (doc?.id == null) continue
       const attempts = attemptsOf(doc.ingestError)
-      const exhausted = attempts >= cap
+      const exhausted = attempts + 1 >= cap
       const voidGateRun =
         gate === 'pending'
           ? {
@@ -553,17 +572,10 @@ export async function recoverAbandonedClaims(
         const res = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
           id: doc.id,
           where,
-          data: exhausted
-            ? {
-                ingestStatus: 'failed',
-                ingestError: extractionStalledReason(Math.round(ms / 60_000)).slice(0, 500),
-                ...voidGateRun,
-              }
-            : {
-                ingestStatus: 'transcribed',
-                ingestError: `${EXTRACTING_RECOVERED_CODE}: ${attempts + 1}/${cap}`,
-                ...voidGateRun,
-              },
+          data: {
+            ...handBack(attempts, cap, extractionStalledReason(Math.round(ms / 60_000))),
+            ...voidGateRun,
+          },
         })
         if (res > 0) {
           if (exhausted) result.failed += 1
@@ -614,6 +626,8 @@ export interface TranscribedRow {
   anonymisationStatus?: unknown
   redactedText?: unknown
   extractedText?: unknown
+  /** Carries the drive-try count (`extracting_recovered: n/cap`). */
+  ingestError?: unknown
 }
 
 export interface DriveResult {
@@ -760,8 +774,13 @@ export async function driveTranscribedDocument(
     // Hand the claim back so the next sweep re-drives the row. Only while it is
     // still OUR `extracting` with no gate run or verdict on it: past the
     // `embedding` write the row may have reached ai-service, and a `pending`
-    // gate belongs to `sweepStalledExtracting`. Otherwise it stays where
-    // `enqueueIngestForDoc` left it, for the stalled / embedding sweeps.
+    // gate belongs to `recoverAbandonedClaims`. Otherwise it stays where
+    // `enqueueIngestForDoc` left it, for the recovery / hold / embedding sweeps.
+    //
+    // 🔴 CAPPED, on the SAME counter as `recoverAbandonedClaims`: a run that
+    // throws every time would otherwise re-gate every minute, paying for the
+    // detector each time. The count is read off the row this run claimed (the
+    // claim does not touch `ingestError`) and re-asserted in the UPDATE.
     try {
       await updateDocumentColumns(db, {
         id: docId,
@@ -770,11 +789,18 @@ export async function driveTranscribedDocument(
           { ingestId: { exists: false } },
           { anonymisationStatus: { in: ['n/a', 'ready'] } },
           { publicationStatus: { equals: 'draft' } },
+          doc.ingestError == null
+            ? { ingestError: { exists: false } }
+            : { ingestError: { equals: doc.ingestError } },
         ],
-        data: { ingestStatus: 'transcribed' },
+        data: handBack(
+          attemptsOf(doc.ingestError),
+          DEFAULT_EXTRACTING_RECOVER_ATTEMPTS,
+          EXTRACTION_THREW_REASON,
+        ),
       })
     } catch {
-      // `sweepStalledExtracting` fails it out, retryable.
+      // Left at `extracting`: `recoverAbandonedClaims` takes it, on the same cap.
     }
     return 'skipped'
   }

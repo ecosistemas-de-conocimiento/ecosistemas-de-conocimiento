@@ -244,6 +244,32 @@ describe('🔴 the claim: two runners, one drive', () => {
 })
 
 describe('🔴 the hand-back after a throw touches only an unsent, ungated claim', () => {
+  it('🔴 a row whose drive throws EVERY time is failed out, retryable, on the 3rd try', async () => {
+    const db = fakeDb([transcribedRow()])
+    db.failWrites((data) => data.ingestStatus === 'embedding')
+    const statuses: unknown[] = []
+    for (let i = 0; i < 5; i++) {
+      await driveTranscribedDocument(db.payload, { ...db.row(42) })
+      statuses.push(db.row(42).ingestStatus)
+    }
+    expect(statuses).toEqual(['transcribed', 'transcribed', 'failed', 'failed', 'failed'])
+    expect(String(db.row(42).ingestError)).toMatch(new RegExp(`^${EXTRACTION_STALLED_CODE}:`))
+    expect(planIngestRetry(db.row(42) as never)).not.toBeNull()
+    expect(ingestPosts()).toBe(0)
+  })
+
+  it('a stale snapshot cannot reset the count: the hand-back re-asserts the `ingestError` it read', async () => {
+    const db = fakeDb([transcribedRow({ ingestError: 'extracting_recovered: 1/3' })])
+    db.failWrites((data) => {
+      if (data.ingestStatus !== 'embedding') return false
+      // Someone else counted a try while this run was in the gate.
+      db.row(42).ingestError = 'extracting_recovered: 2/3'
+      return true
+    })
+    await driveTranscribedDocument(db.payload, { ...db.row(42) })
+    expect(db.row(42)).toMatchObject({ ingestStatus: 'extracting', ingestError: 'extracting_recovered: 2/3' })
+  })
+
   it('a row already at `embedding` (the ingest may be at ai-service) is left there', async () => {
     const db = fakeDb([transcribedRow()])
     // The send succeeded; storing its id throws, and so does the `failed`
@@ -383,7 +409,7 @@ describe('🔴 recoverAbandonedClaims — a claim with no live run goes back to 
   it('🔴 at the cap the row is failed out, retryable, and the pdf/docx stall sweep never fights it', async () => {
     const db = fakeDb([
       abandoned({ id: 1, ingestError: 'extracting_recovered: 3/3', updatedAt: minutesBefore(90) }),
-      abandoned({ id: 2, ingestError: 'extracting_recovered: 2/3', updatedAt: minutesBefore(90) }),
+      abandoned({ id: 2, ingestError: 'extracting_recovered: 1/3', updatedAt: minutesBefore(90) }),
     ])
     // The 60-min stall sweep runs first and still leaves audio claims alone.
     expect(await sweepStalledExtracting(db.payload, { now: NOW, deadlineMs: 60 * 60_000 })).toMatchObject({
@@ -394,7 +420,7 @@ describe('🔴 recoverAbandonedClaims — a claim with no live run goes back to 
     expect(db.row(1).ingestStatus).toBe('failed')
     expect(String(db.row(1).ingestError)).toMatch(new RegExp(`^${EXTRACTION_STALLED_CODE}:`))
     expect(planIngestRetry(db.row(1) as never)).not.toBeNull()
-    expect(db.row(2)).toMatchObject({ ingestStatus: 'transcribed', ingestError: 'extracting_recovered: 3/3' })
+    expect(db.row(2)).toMatchObject({ ingestStatus: 'transcribed', ingestError: 'extracting_recovered: 2/3' })
   })
 
   it('recovers at most the per-pass limit, oldest first', async () => {
