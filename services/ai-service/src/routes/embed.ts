@@ -20,7 +20,10 @@ import type { FastifyPluginAsync } from 'fastify';
 import { env } from '../config/env.js';
 import { db } from '../db/client.js';
 import { usageLogs } from '../db/schema/index.js';
-import { callOpenRouterEmbedding } from '../services/ai/embeddings/openrouter.js';
+import {
+  callOpenRouterEmbedding,
+  embeddingProviderLabel,
+} from '../services/ai/embeddings/openrouter.js';
 import { embedRequestSchema } from '../contract/rag.js';
 import { BudgetEnforcer } from '../services/budget/enforcer.js';
 import { priceForEmbedding } from '../services/ai/router/task-profiles.js';
@@ -97,7 +100,7 @@ const embedRoutes: FastifyPluginAsync = async (app) => {
         org: req.auth.org,
         project: req.auth.project,
         userId: req.auth.apiKeyId,
-        provider: 'openrouter',
+        provider: embeddingProviderLabel(result),
         model: result.model,
         endpoint: '/v1/embed',
         inputTokens: result.usage.inputTokens,

@@ -20,6 +20,8 @@ const refundMock = vi.fn();
 vi.mock('../services/ai/embeddings/openrouter.js', () => ({
   callOpenRouterEmbedding: (...args: unknown[]) =>
     callOpenRouterEmbeddingMock(...args),
+  embeddingProviderLabel: (r: { servedBy?: string }) =>
+    r.servedBy === 'fallback' ? 'embeddings-fallback' : 'openrouter',
 }));
 
 vi.mock('../db/client.js', () => ({
@@ -94,6 +96,7 @@ describe('POST /v1/embed', () => {
     const row = insertedRows[0] as Record<string, unknown>;
     expect(row['endpoint']).toBe('/v1/embed');
     expect(row['inputTokens']).toBe(4);
+    expect(row['provider']).toBe('openrouter');
     // Reserve was called before the embedder; adjust after.
     expect(reserveMock).toHaveBeenCalledTimes(1);
     expect(adjustMock).toHaveBeenCalledTimes(1);

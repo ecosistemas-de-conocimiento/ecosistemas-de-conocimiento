@@ -26,8 +26,51 @@ import type {
 import { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 
-import { processIngestJob } from './ingest.worker.js';
+import { processIngestJob as rawProcessIngestJob, type IngestBudget } from './ingest.worker.js';
 import { WhereRecorder } from '../test/where-recorder.js';
+import { BudgetExceeded } from '../services/budget/errors.js';
+
+// ---------------------------------------------------------------------------
+// Fake budget
+// ---------------------------------------------------------------------------
+
+/** Records every budget call, in order, and holds a plain-number balance. */
+interface FakeBudget extends IngestBudget {
+  calls: Array<{ op: 'reserve' | 'adjust' | 'refund'; amountUsd: number; traceId?: string | undefined }>;
+}
+
+function makeFakeBudget(opts: { refuse?: boolean } = {}): FakeBudget {
+  const calls: FakeBudget['calls'] = [];
+  return {
+    calls,
+    reserve: async (input) => {
+      if (opts.refuse) throw new BudgetExceeded(input.org, input.amountUsd, 0);
+      calls.push({ op: 'reserve', amountUsd: input.amountUsd, traceId: input.traceId });
+      return { remainingUsd: 100, softCap: false };
+    },
+    adjust: async (input) => {
+      calls.push({ op: 'adjust', amountUsd: input.deltaUsd, traceId: input.traceId });
+    },
+    refund: async (input) => {
+      calls.push({ op: 'refund', amountUsd: input.amountUsd, traceId: input.traceId });
+    },
+    heldReserveUsd: async () => null,
+  };
+}
+
+/**
+ * Every test below runs against a fake budget unless it passes its own. The
+ * stub DB has no `budget_state`, and the real enforcer is fail-closed on a
+ * missing row — it would fail every document before the code under test ran.
+ * The real SQL is covered on Postgres in
+ * `src/services/budget/ingest-budget.integration.test.ts`.
+ */
+function processIngestJob(
+  job: Parameters<typeof rawProcessIngestJob>[0],
+  deps: Parameters<typeof rawProcessIngestJob>[1] = {},
+): Promise<void> {
+  return rawProcessIngestJob(job, { budget: makeFakeBudget(), ...deps });
+}
 
 // ---------------------------------------------------------------------------
 // Stub DB
@@ -1201,5 +1244,91 @@ describe('processIngestJob — callback outbox', () => {
     expect(state.documents).toHaveLength(1); // the document itself is fine
     expect(state.deliveries).toHaveLength(0);
     expect(await value()).toBe(before + 1);
+  });
+});
+
+describe('processIngestJob — budget (AIS-7)', () => {
+  it('reserves the estimate BEFORE the embed, then trues up to the actual cost under the same trace', async () => {
+    state.corpora.push(makeCorpus());
+    const budget = makeFakeBudget();
+    const order: string[] = [];
+    const reserve = budget.reserve;
+    budget.reserve = async (input) => {
+      order.push('reserve');
+      return reserve(input);
+    };
+    const inner = makeEmbedder({ cost: 0.00001 });
+    const embedder = vi.fn(async (o: { model: string; input: string | string[] }) => {
+      order.push('embed');
+      return inner(o);
+    });
+
+    await processIngestJob({ id: 'q-1', data: jobData() }, { db, embedder: embedder as never, budget });
+
+    expect(order).toEqual(['reserve', 'embed']);
+    const [res, adj, ...rest] = budget.calls;
+    expect(rest).toHaveLength(0);
+    expect(res!.op).toBe('reserve');
+    expect(res!.amountUsd).toBeGreaterThan(0);
+    expect(adj!.op).toBe('adjust');
+    // delta = estimate − actual: what lands on the counter is exactly the actual.
+    expect(res!.amountUsd - adj!.amountUsd).toBeCloseTo(0.00001, 12);
+    expect(adj!.traceId).toBe(res!.traceId);
+    expect(state.documents).toHaveLength(1);
+  });
+
+  it('refunds the whole hold when the embed throws', async () => {
+    state.corpora.push(makeCorpus());
+    const budget = makeFakeBudget();
+    const embedder = vi.fn(async () => {
+      throw new Error('upstream embedding 500');
+    });
+
+    await expect(
+      processIngestJob({ id: 'q-1', data: jobData() }, { db, embedder: embedder as never, budget }),
+    ).rejects.toThrow('upstream embedding 500');
+
+    expect(budget.calls.map((c) => c.op)).toEqual(['reserve', 'refund']);
+    expect(budget.calls[1]!.amountUsd).toBe(budget.calls[0]!.amountUsd);
+    expect(budget.calls[1]!.traceId).toBe(budget.calls[0]!.traceId);
+  });
+
+  it('charges, not refunds, once the provider answered — even if the vectors are then rejected', async () => {
+    state.corpora.push(makeCorpus());
+    const budget = makeFakeBudget();
+    const embedder = makeEmbedder({ embeddings: [new Array(512).fill(0.1)], cost: 0.00002 });
+
+    await expect(
+      processIngestJob({ id: 'q-1', data: jobData({ text: 'one short chunk' }) }, { db, embedder, budget }),
+    ).rejects.toThrow(/dimension mismatch/i);
+
+    expect(budget.calls.map((c) => c.op)).toEqual(['reserve', 'adjust']);
+  });
+
+  it('a refused reserve fails the document without calling the embedder or retrying', async () => {
+    state.corpora.push(makeCorpus());
+    state.requestRow = {
+      callbackUrl: 'http://203.0.113.7:1/cb',
+      apiKeyId: 'k',
+      corpus: 'test-corpus',
+      totalDocs: 1,
+      completedDocs: 0,
+      failedDocs: 1,
+      status: 'running',
+    };
+    const embedder = makeEmbedder();
+
+    // Resolves: a retry would meet the same cap.
+    await processIngestJob(
+      { id: 'q-1', data: jobData({ externalId: 'ext-broke' }) },
+      { db, embedder, budget: makeFakeBudget({ refuse: true }) },
+    );
+
+    expect(embedder).not.toHaveBeenCalled();
+    expect(state.documents).toHaveLength(0);
+    expect(JSON.parse(String(state.deliveries[0]!.body))).toMatchObject({
+      event: 'ingest.failed',
+      error: { code: 'ERR_BUDGET_EXCEEDED' },
+    });
   });
 });

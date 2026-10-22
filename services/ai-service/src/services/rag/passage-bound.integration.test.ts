@@ -269,6 +269,13 @@ describe('outbound passage bound (integration)', () => {
     const { db } = await import('../../db/client.js');
     const { fetchContext } = await import('../context/fetch.js');
     await seed({ overLongChars: 9000, normalChars: 500 });
+    // The default service is METERED (AIS-7) and fail-closed on an org with no
+    // budget row, so this org gets one.
+    await db.execute(sql`
+      INSERT INTO "budget_state" ("org", "limit_usd", "remaining_usd")
+      VALUES (${ORG}, 100::numeric, 100::numeric)
+      ON CONFLICT ("org") DO UPDATE SET "remaining_usd" = 100::numeric
+    `);
 
     const logger = { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() };
     const out = await fetchContext({

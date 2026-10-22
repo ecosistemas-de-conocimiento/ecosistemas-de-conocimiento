@@ -35,7 +35,7 @@
 // from BullMQ for the test to describe the real failure.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 
@@ -101,6 +101,11 @@ describe('ingest worker — a stalled job is not ingested twice (integration)', 
   });
 
   it('a stalled re-delivery produces ONE document, ONE set of chunks and ONE embedding charge', async () => {
+    // Ingest is charged against the org's cap (AIS-7); the enforcer is
+    // fail-closed on a missing row.
+    await db.execute(sql`
+      INSERT INTO "budget_state" ("org", "limit_usd", "remaining_usd") VALUES (${ORG}, 1, 1)
+    `);
     const corpusInsert = await db
       .insert(corpora)
       .values({
@@ -252,6 +257,11 @@ describe('ingest worker — a stalled job is not ingested twice (integration)', 
    * settled must do NOTHING — not re-embed, not insert.
    */
   it('a delivery whose job row is already `completed` does no work at all', async () => {
+    // Ingest is charged against the org's cap (AIS-7); the enforcer is
+    // fail-closed on a missing row.
+    await db.execute(sql`
+      INSERT INTO "budget_state" ("org", "limit_usd", "remaining_usd") VALUES (${ORG}, 1, 1)
+    `);
     const corpusInsert = await db
       .insert(corpora)
       .values({

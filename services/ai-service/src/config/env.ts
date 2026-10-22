@@ -128,6 +128,13 @@ const envSchema = z.object({
   TRUSTED_PROXY_HOPS: z.coerce.number().int().nonnegative().default(1),
 
   DATABASE_URL: z.string().url(),
+  // Optional DIRECT (non-pooled) Postgres URL, used ONLY by the migration path
+  // (`createMigrationClient`, `scripts/schema-gate.mjs`, `drizzle.config.ts`).
+  // Same convention as Prisma's `directUrl` and Supabase's direct connection:
+  // when `DATABASE_URL` points at PgBouncer in transaction mode, migrations
+  // want a real session (advisory locks, multi-statement DDL, startup
+  // parameters). Unset ⇒ migrations use `DATABASE_URL`, exactly as before.
+  DATABASE_URL_DIRECT: z.string().url().optional(),
   REDIS_URL: z.string().url(),
 
   // JSON map of apiKey -> { org, project, role? }
@@ -189,6 +196,38 @@ const envSchema = z.object({
    * free dial.
    */
   EMBEDDINGS_URL: z.string().url().default('https://openrouter.ai/api/v1/embeddings'),
+  /**
+   * `EMBEDDINGS_API_KEY` — optional Bearer token for `EMBEDDINGS_URL`. When set
+   * (non-empty), embedding calls send it INSTEAD of `OPENROUTER_API_KEY`, so a
+   * self-hosted or third-party embeddings host never receives the OpenRouter
+   * key. Unset or empty ⇒ unchanged behaviour (`OPENROUTER_API_KEY`, then
+   * `OPENAI_API_KEY`).
+   */
+  EMBEDDINGS_API_KEY: z.string().optional(),
+  /**
+   * Hosted fallback for embeddings — OPTIONAL, off when unset.
+   *
+   * `EMBEDDINGS_FALLBACK_URL` — a second OpenAI-compatible `/embeddings`
+   * endpoint serving the SAME model as `EMBEDDINGS_URL` (e.g. OpenRouter's
+   * `baai/bge-m3` behind a self-hosted bge-m3 primary). When the primary fails
+   * with a network error, a timeout, HTTP 5xx or 429, the call is retried here
+   * and the primary is skipped for `EMBEDDINGS_FALLBACK_COOLDOWN_S`. Other
+   * statuses (400/401/403…) never fall back, so config bugs surface. Unset ⇒
+   * behaviour is byte-identical to before this knob existed.
+   *
+   * `EMBEDDINGS_FALLBACK_API_KEY` — Bearer token for the fallback. Unset/empty ⇒
+   * `OPENROUTER_API_KEY`, then `OPENAI_API_KEY`. `EMBEDDINGS_API_KEY` is NEVER
+   * sent to the fallback, and this key is never sent to the primary.
+   *
+   * `EMBEDDINGS_PRIMARY_TIMEOUT_MS` — wall-clock cap on a primary call, applied
+   * ONLY when a fallback is configured (without one the primary call keeps its
+   * old shape: bounded by the caller's signal alone), so a dead primary costs
+   * one short wait instead of stalling ingest.
+   */
+  EMBEDDINGS_FALLBACK_URL: z.string().url().optional(),
+  EMBEDDINGS_FALLBACK_API_KEY: z.string().optional(),
+  EMBEDDINGS_FALLBACK_COOLDOWN_S: z.coerce.number().int().nonnegative().default(60),
+  EMBEDDINGS_PRIMARY_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
   /**
    * The OpenAI-compatible `/chat/completions` endpoint both chat paths (plain
    * and streaming) call. Defaults to OpenRouter. The companion of

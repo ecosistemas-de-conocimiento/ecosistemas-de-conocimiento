@@ -191,7 +191,38 @@ export type LoginResult = ({ ok: true } & MintedSession) | LoginFailure;
 
 // ── Options ─────────────────────────────────────────────────────────────────
 
-export interface IdentitySessionOptions {
+/** The audience slug, under its new name. */
+interface AudienceOption {
+  /**
+   * The audience slug tokens must be scoped to (`aud`), for example `chat`.
+   * A blank string counts as unset.
+   */
+  audience: string;
+  /**
+   * @deprecated Use `audience`. If both are set they must name the same slug,
+   * or construction throws {@link IdentityConfigError}.
+   */
+  project?: string;
+}
+
+/** The audience slug, under its deprecated name. */
+interface ProjectOption {
+  /**
+   * @deprecated Use `audience`. Same meaning: the slug tokens are scoped to.
+   * Still accepted during the fleet-wide rename (D1a, 2026-10-21).
+   */
+  project: string;
+  /** The audience slug. A blank string counts as unset. */
+  audience?: string;
+}
+
+/**
+ * Options for {@link createIdentitySession}. `audience` (or the deprecated
+ * `project`) is required: leaving both out does not compile.
+ */
+export type IdentitySessionOptions = IdentitySessionBaseOptions & (AudienceOption | ProjectOption);
+
+interface IdentitySessionBaseOptions {
   /**
    * The IdP's REST base, WITH the `/api` — `https://identity.dev.example.org/api`.
    * Payload mounts custom endpoints under `routes.api`, so a base without it
@@ -205,8 +236,6 @@ export interface IdentitySessionOptions {
    */
   baseUrl: string;
 
-  /** The project slug tokens must be scoped to (`aud`) — `chat`, `frontend-code`. */
-  project: string;
 
   /** Per-request persistence. See {@link IdentitySessionStore}. */
   store: IdentitySessionStore;
@@ -412,6 +441,39 @@ export interface IdentitySessionManager {
   forget(refreshToken: string): void;
 }
 
+/** A non-blank option, normalised the way the IdP compares slugs; else `undefined`. */
+function slugOption(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const slug = value.trim().toLowerCase();
+  return slug.length > 0 ? slug : undefined;
+}
+
+/**
+ * The one audience this manager mints for, from `audience` or the deprecated
+ * `project`. Two names that disagree are a deploy mistake (old and new env var
+ * set to different products), and guessing which one wins would mint tokens
+ * for the wrong product — so it throws.
+ */
+function resolveAudience(options: IdentitySessionOptions): string {
+  const audience = slugOption(options.audience);
+  const project = slugOption(options.project);
+  if (audience && project && audience !== project) {
+    throw new IdentityConfigError(
+      `createIdentitySession: \`audience\` ("${audience}") and the deprecated \`project\` ` +
+        `("${project}") name different slugs. Set only \`audience\`.`,
+    );
+  }
+  const slug = audience ?? project;
+  if (!slug) {
+    throw new IdentityConfigError(
+      'createIdentitySession: `audience` (or deprecated `project`) is required — it is the ' +
+        '`aud` every access token is scoped to. There is no fleet-wide token. Both were ' +
+        'unset or blank.',
+    );
+  }
+  return slug;
+}
+
 export function createIdentitySession(
   options: IdentitySessionOptions,
 ): IdentitySessionManager {
@@ -425,15 +487,9 @@ export function createIdentitySession(
         '(see IdentitySessionStore)',
     );
   }
-  if (typeof options.project !== 'string' || options.project.trim().length === 0) {
-    throw new IdentityConfigError(
-      'createIdentitySession: `project` is required — it is the `aud` every access token is ' +
-        'scoped to. There is no fleet-wide token.',
-    );
-  }
+  const project = resolveAudience(options);
 
   const baseUrl = typeof options.baseUrl === 'string' ? options.baseUrl.replace(/\/+$/, '') : '';
-  const project = options.project.trim().toLowerCase();
   const now = options.clock ?? Date.now;
   const call = { fetch: options.fetch, forwardedFor: options.forwardedFor };
   const ticketTtl = options.ticketTtlSeconds ?? DEFAULTS.ticketTtlSeconds;

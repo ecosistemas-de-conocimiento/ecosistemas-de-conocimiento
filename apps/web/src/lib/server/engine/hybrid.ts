@@ -48,7 +48,11 @@
  *   · The GraphRAG widened retrieve (`$lib/server/graph`) stays dense.
  */
 
-import { AIClient, METADATA_FILTER_IN_CAPABILITY } from '@edc/ai-client';
+import {
+  AIClient,
+  CapabilityNegotiationError,
+  METADATA_FILTER_IN_CAPABILITY,
+} from '@edc/ai-client';
 
 export type ChatRetrievalMode = 'dense' | 'hybrid';
 
@@ -91,30 +95,28 @@ export async function metadataFilterInAvailable(baseUrl: string, apiKey: string)
   if (inflight) return inflight;
   inflight = (async () => {
     try {
-      const result = await new AIClient({ baseUrl, apiKey }).capabilities.negotiate({
+      // Resolves only on `ok`; every other outcome throws (ai-client 0.32+).
+      await new AIClient({ baseUrl, apiKey }).capabilities.negotiate({
         consumer: 'edc-web',
         require: [METADATA_FILTER_IN_CAPABILITY],
-        // Never block a turn on this: a missing capability means dense.
-        mode: 'warn',
         attempts: 1,
         logger: { warn: () => {}, info: () => {} },
       });
-      const available = result.status === 'ok';
-      cached = {
-        available,
-        until: result.status === 'unreachable' ? Date.now() + UNREACHABLE_RETRY_MS : Infinity,
-      };
-      if (!available) {
-        logFallbackOnce(
-          result.status === 'unreachable'
+      cached = { available: true, until: Infinity };
+      return true;
+    } catch (err) {
+      // Never block a turn on this: a missing capability means dense.
+      const missing =
+        err instanceof CapabilityNegotiationError &&
+        (err.status === 'missing' || err.status === 'unsupported');
+      cached = { available: false, until: missing ? Infinity : Date.now() + UNREACHABLE_RETRY_MS };
+      logFallbackOnce(
+        missing
+          ? `ai-service lacks the capability "${METADATA_FILTER_IN_CAPABILITY}"`
+          : err instanceof CapabilityNegotiationError && err.status === 'unreachable'
             ? 'ai-service capabilities could not be read'
-            : `ai-service lacks the capability "${METADATA_FILTER_IN_CAPABILITY}"`,
-        );
-      }
-      return available;
-    } catch {
-      cached = { available: false, until: Date.now() + UNREACHABLE_RETRY_MS };
-      logFallbackOnce('the ai-service capability check failed');
+            : 'the ai-service capability check failed',
+      );
       return false;
     } finally {
       inflight = null;

@@ -302,6 +302,25 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "dense",
+                        "hybrid"
+                      ]
+                    },
+                    "rerank": {
+                      "type": "boolean"
+                    },
+                    "filter": {
+                      "type": "object",
+                      "additionalProperties": {},
+                      "description": "Metadata constraint applied before ranking. Per key: a value (jsonb containment) or { \"$in\": [...] } (1-500 strings or numbers; matches when metadata[key] equals one of them). Keys combine with AND."
+                    },
+                    "asOf": {
+                      "type": "string",
+                      "format": "date-time"
                     }
                   },
                   "required": [
@@ -575,6 +594,25 @@
                       "type": "number",
                       "minimum": 0,
                       "maximum": 1
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "dense",
+                        "hybrid"
+                      ]
+                    },
+                    "rerank": {
+                      "type": "boolean"
+                    },
+                    "filter": {
+                      "type": "object",
+                      "additionalProperties": {},
+                      "description": "Metadata constraint applied before ranking. Per key: a value (jsonb containment) or { \"$in\": [...] } (1-500 strings or numbers; matches when metadata[key] equals one of them). Keys combine with AND."
+                    },
+                    "asOf": {
+                      "type": "string",
+                      "format": "date-time"
                     }
                   },
                   "required": [
@@ -814,6 +852,25 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "dense",
+                  "hybrid"
+                ]
+              },
+              "rerank": {
+                "type": "boolean"
+              },
+              "filter": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "Metadata constraint applied before ranking. Per key: a value (jsonb containment) or { \"$in\": [...] } (1-500 strings or numbers; matches when metadata[key] equals one of them). Keys combine with AND."
+              },
+              "asOf": {
+                "type": "string",
+                "format": "date-time"
               }
             },
             "required": [
@@ -1890,6 +1947,13 @@
             "items": {
               "$ref": "#/components/schemas/ResponseWarning"
             }
+          },
+          "retrievalTrace": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RetrievalTraceEntry"
+            },
+            "description": "One entry per `includeContext` item, in request order: the chunk ids that grounded the prompt, the legs that ran, and any retrieval warnings. Present only when the request carried `includeContext`."
           }
         },
         "required": [
@@ -1931,6 +1995,71 @@
           "other"
         ],
         "description": "`stop` = model finished on its own. `length` = truncated at the output token cap (`effortProfile.maxOutputTokens`) — consumers metering credits must settle this differently from `stop`. `content_filter` = withheld on provider safety grounds. `other` = anything else, including provider reasons this service does not model."
+      },
+      "RetrievalTraceEntry": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The `__context` key the chunks were rendered under."
+          },
+          "corpus": {
+            "type": "string"
+          },
+          "chunkIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "In rank order; exactly the chunks the prompt got."
+          },
+          "legs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RetrievalLeg"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RetrievalWarning"
+            }
+          }
+        },
+        "required": [
+          "key",
+          "corpus",
+          "chunkIds",
+          "legs"
+        ]
+      },
+      "RetrievalLeg": {
+        "type": "string",
+        "enum": [
+          "dense",
+          "lexical",
+          "sparse",
+          "trigram",
+          "rerank"
+        ]
+      },
+      "RetrievalWarning": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ]
       },
       "GenerateStreamDelta": {
         "type": "object",
@@ -2412,7 +2541,7 @@
               "null"
             ],
             "additionalProperties": {},
-            "description": "OPEN. Keys are caller-invented recipe names; `services/context/fetch.ts` ignores an entry it cannot read rather than failing."
+            "description": "OPEN. Keys are caller-invented recipe names, each an inline `includeContext` item without `name`. An `includeContext: [{ name }]` with no entry here, or a malformed one, fails the generation with a 400 `SpecResolutionError` (cause `unknown context recipe`)."
           },
           "callbackUrl": {
             "type": [
@@ -2783,16 +2912,6 @@
           "ordinal",
           "text",
           "score"
-        ]
-      },
-      "RetrievalLeg": {
-        "type": "string",
-        "enum": [
-          "dense",
-          "lexical",
-          "sparse",
-          "trigram",
-          "rerank"
         ]
       },
       "CorpusIntrospection": {
@@ -5932,7 +6051,14 @@
                       "items": {
                         "$ref": "#/components/schemas/RetrievalLeg"
                       },
-                      "description": "The legs that returned CANDIDATE rows — not the legs requested, and not the legs whose rows survived into `chunks`. The unit differs by leg: `dense`, `lexical` and `sparse` count rows returned into the fusion POOL, before RRF and before the final top-K slice, while `rerank` counts rows in the RESPONSE. So `topK: 1` on a hybrid retrieve whose lexical leg returned 50 rows that all lost the fusion still reports `[dense, lexical]` alongside one dense chunk. Pool contribution is the liveness signal: a leg is alive when it produces candidates; whether they win slots is ranking, not health. `rerank` appears ONLY when the cross-encoder really scored rows; the rerank rung is fail-safe, so a timeout or a down reranker returns the fused order and omits `rerank` here. Read it as a SET: today a hybrid retrieve runs dense plus exactly ONE lexical leg (`SPARSE_ENABLED` picks which), so `[dense, lexical]` and `[dense, sparse]` are the shapes you see — plus `rerank` when the cross-encoder scored rows, and minus any leg that returned zero rows, which is the very case this field exposes. The declared next change fuses all three, so never key on length or index. OPTIONAL on the wire only because an OLDER deployment omits it entirely; a build that advertises the `retrievalLegs` capability always sends it. Check the capability, not the field, to decide whether absence means \"no legs ran\" (it never does) or \"old service\". Single-corpus only: `POST /v1/retrieve/multi` returns no `legs` at all, so nothing here describes that route."
+                      "description": "The legs that returned CANDIDATE rows — not the legs requested, and not the legs whose rows survived into `chunks`. The unit differs by leg: `dense`, `lexical` and `sparse` count rows returned into the fusion POOL, before RRF and before the final top-K slice, while `rerank` counts rows in the RESPONSE. So `topK: 1` on a hybrid retrieve whose lexical leg returned 50 rows that all lost the fusion still reports `[dense, lexical]` alongside one dense chunk. Pool contribution is the liveness signal: a leg is alive when it produces candidates; whether they win slots is ranking, not health. `rerank` appears ONLY when the cross-encoder really scored rows; the rerank rung is fail-safe, so a timeout or a down reranker returns the fused order and omits `rerank` here. Read it as a SET: today a hybrid retrieve runs dense plus exactly ONE lexical leg (`SPARSE_ENABLED` picks which), so `[dense, lexical]` and `[dense, sparse]` are the shapes you see — plus `rerank` when the cross-encoder scored rows, and minus any leg that returned zero rows, which is the very case this field exposes. The declared next change fuses all three, so never key on length or index. OPTIONAL on the wire only because an OLDER deployment omits it entirely; a build that advertises the `retrievalLegs` capability always sends it. Check the capability, not the field, to decide whether absence means \"no legs ran\" (it never does) or \"old service\". `POST /v1/retrieve/multi` carries its own `legs`: the union over every corpus queried, plus `rerank` for its post-fusion rung."
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RetrievalWarning"
+                      },
+                      "description": "Present only when something degraded. `RERANK_DEGRADED` replaces the old log-only signal for a rerank that timed out, failed, is not configured, or backfilled. Absent on older deployments."
                     }
                   },
                   "required": [
@@ -6085,6 +6211,18 @@
                         "score",
                         "cross-corpus-rrf"
                       ]
+                    },
+                    "legs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RetrievalLeg"
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RetrievalWarning"
+                      }
                     }
                   },
                   "required": [
