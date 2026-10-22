@@ -166,6 +166,9 @@ describe('variant E — documents first, then general knowledge, marked', () => 
     expect(E).toContain(`que empiece exactamente con "${GENERAL_KNOWLEDGE_LEAD}"`);
     expect(E).toContain('Ese párrafo no lleva números entre corchetes');
     expect(E).toContain('Si ningún pasaje tiene relación con la pregunta, responde solo con ese párrafo');
+    // Measured on dev at 7b2e27e: "París es la capital de Francia." came back
+    // with no lead, so the source rule could not tell it was general knowledge.
+    expect(E).toContain(`y empieza también con "${GENERAL_KNOWLEDGE_LEAD}" aunque la respuesta sea una sola frase`);
   });
 
   it('🔴 has no no-answer reply: an off-topic question gets an answer', () => {

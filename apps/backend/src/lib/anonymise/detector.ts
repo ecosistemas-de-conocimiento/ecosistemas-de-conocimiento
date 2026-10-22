@@ -154,6 +154,19 @@ export const DETECT_SYSTEM_PROMPT = [
   'Debes incluir:',
   '- Nombres de personas, apellidos, apodos y diminutivos.',
   '- Referencias de parentesco que nombran a alguien: en "mi hermana Lucía" el hallazgo es "Lucía".',
+  // ⚠ Measured 2026-10-21 (local stack, 6 runs, old and new prompt): without the
+  // next line the model returned "Mi hermana Lucía" whole in 5/6, so a later bare
+  // "Lucía" got a second label; with it, 0/3 (host torre, GATE_TEXT_FILE, 115
+  // words). The kinship word is not a title here.
+  '  El parentesco se queda fuera: solo el nombre. En "mi primo Arnulfo" el hallazgo es "Arnulfo".',
+  // 🔴 OWNER'S RULING, 2026-10-21: an unnamed relative is a person. "mi mamá"
+  // points at one person in the narrator's life; "el doctor" does not. The
+  // model decides what is kinship: no word list in code (owner, 2026-10-17).
+  // The possessive is part of the span, so "mi mamá" does not take "su mamá".
+  '- Una referencia de parentesco que señala a una persona concreta sin nombrarla es un',
+  '  hallazgo "tipo": "persona" con "identifica": true. Copia el tramo completo, con el',
+  '  posesivo: en "mi mamá me llevó" el hallazgo es "mi mamá"; también "mi abuelo",',
+  '  "su hermana", "la esposa de mi primo". No es un tratamiento o cargo solo.',
   // 🔴 THE MODEL OWNS SPAN BOUNDARIES (owner's rule, 2026-10-17: no word lists
   // in code). A span cut short leaves "Don [Persona F]" or "colonia [Domicilio L]".
   '- Devuelve el tramo COMPLETO que identifica. Un tratamiento o cargo que antecede al',
@@ -182,6 +195,8 @@ export const DETECT_SYSTEM_PROMPT = [
   '  "colonia [Domicilio L]".',
   '- Un tratamiento o cargo pegado a un marcador de persona: "la maestra [Persona A]",',
   '  "Don [Persona B]". Si lo reportas, pon "identifica": false.',
+  '- Una palabra de parentesco pegada a un marcador de persona: "mi hermana [Persona A]".',
+  '  El nombre ya está censurado. Si lo reportas, pon "identifica": false.',
   '- Pero un nombre, apellido o apodo pegado a un marcador de persona SÍ es hallazgo:',
   '  en "[Persona A] López" el hallazgo es "[Persona A] López".',
   '',

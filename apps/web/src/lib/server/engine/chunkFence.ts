@@ -26,6 +26,17 @@
  * back, so users never see the fence. Call it on every provenance this turn
  * produces, before persisting.
  *
+ * 🔴 `restorePassages` also puts back each chunk's `rerankScore`, the HIGHEST
+ * any retrieve this turn returned for that `chunkId`. The engine's
+ * `fuseMatches` (`packages/chat-engine/src/core/retrieve.ts`,
+ * `isRicher`) keeps ONE record per `chunkId`: the one with more metadata keys.
+ * The GraphRAG copy (`$lib/server/graph`) adds `metadata.path` and is never
+ * reranked, so when both legs found a chunk the graph copy won and the
+ * cross-encoder score was lost. Measured on dev 2026-10-21 (coordinator):
+ * dengue 5 of 7 cited sources unscored, Discapacidad 2 of 3. A chunk no retrieve scored stays unscored, never 0.
+ * The engine fix: `fuseMatches` should carry the max `rerankScore` (and
+ * `denseScore`) of every copy onto the record it keeps.
+ *
  * `@`-mentioned documents (`resolveEntity`, the engine's inline-refs block)
  * get the same fence through `withFencedRefs`.
  *
@@ -226,6 +237,8 @@ export interface FencedClient<T extends AIClient> {
 
 export function withFencedChunks<T extends AIClient>(base: T, opts: FencedChunksOptions = {}): FencedClient<T> {
   const originals = new Map<string, string>();
+  /** Highest `rerankScore` per `chunkId` across every retrieve this turn. */
+  const rerankScores = new Map<string, number>();
   const extra = TURN_OVERFETCH;
   // The engine types `filter` values as primitives; ai-service takes operators.
   type Filter = Record<string, string | number | boolean>;
@@ -241,6 +254,9 @@ export function withFencedChunks<T extends AIClient>(base: T, opts: FencedChunks
         // Strings only: a `text: null` from upstream must not make
         // `restorePassages` throw after the SSE stream has opened.
         if (typeof x.text === 'string') originals.set(x.chunkId, x.text);
+        if (typeof x.rerankScore === 'number') {
+          rerankScores.set(x.chunkId, Math.max(x.rerankScore, rerankScores.get(x.chunkId) ?? -Infinity));
+        }
         return { ...x, text: fenceChunkText(x) };
       });
 
@@ -279,9 +295,10 @@ export function withFencedChunks<T extends AIClient>(base: T, opts: FencedChunks
         ...provenance,
         chunks: provenance.chunks.map((c) => {
           const original = originals.get(c.chunkId);
-          return typeof original === 'string' && typeof c.text === 'string'
-            ? { ...c, text: original.slice(0, cap) }
-            : c;
+          const rerankScore = rerankScores.get(c.chunkId);
+          const withText =
+            typeof original === 'string' && typeof c.text === 'string' ? { ...c, text: original.slice(0, cap) } : c;
+          return rerankScore === undefined ? withText : { ...withText, rerankScore };
         }),
       };
     },
