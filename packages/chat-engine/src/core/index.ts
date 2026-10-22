@@ -55,8 +55,9 @@ export { escapeRegExp, splitContentByRefs, detectMention } from './mention.js';
 export { richTextToPlain, clamp } from './text.js';
 
 // Citation normalization (provenance → domain-agnostic CitationLike[])
-export type { ProvenanceToCitationsOptions, CitationSegment } from './citation.js';
-export { provenanceToCitations, splitContentByCitations } from './citation.js';
+// + the browser allowlist every server→browser provenance path runs through
+export type { ProvenanceToCitationsOptions, CitationSegment, BrowserProvenanceOptions } from './citation.js';
+export { provenanceToCitations, splitContentByCitations, toBrowserProvenance } from './citation.js';
 
 // Condense + title
 export { condenseQuery } from './condense.js';
@@ -106,7 +107,7 @@ export type {
   GraphProvider,
   GraphProviderResult,
 } from './respond.js';
-export { respond, prepareTurn } from './respond.js';
+export { respond, prepareTurn, MAX_INLINE_REFS } from './respond.js';
 
 // Generic corpus-sync scaffolding (the advanced-RAG ingest seam)
 export type { CorpusDoc, CorpusBatch, EntitySource } from './corpus-sync.js';

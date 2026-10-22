@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { respond, prepareTurn } from './respond.js';
+import { respond, prepareTurn, MAX_INLINE_REFS } from './respond.js';
 import { buildChatTurn } from './turn.js';
 import { condenseQuery } from './condense.js';
 import { retrieveContext } from './retrieve.js';
@@ -660,6 +660,52 @@ describe('respond() — survived failures warn', () => {
       ]);
       expect(warnings.raw()).not.toContain('sk-secret');
       expect(warnings.raw()).not.toContain('texto resuelto');
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('inline refs past the cap of 8 are dropped, warned ref.capped with the count, and returned as droppedRefs', async () => {
+    const warnings = captureWarnings();
+    try {
+      const resolved: Array<number | string | undefined> = [];
+      const adapter = fakeAdapter({
+        resolveEntity: async (ref) => {
+          resolved.push(ref.id);
+          return `ref ${String(ref.id)}`;
+        },
+      });
+      const refs = Array.from({ length: 11 }, (_, i) => ({ kind: 'project' as const, id: i + 1 }));
+      const prepared = await prepareTurn({ ...baseArgs(), adapter, inlineRefs: refs });
+      expect(MAX_INLINE_REFS).toBe(8);
+      expect(resolved).toEqual([1, 2, 3, 4, 5, 6, 7, 8]); // the cap itself is unchanged
+      expect(prepared.droppedRefs).toBe(3);
+      expect(warnings.events()).toEqual([{ event: 'ref.capped', dropped: 3 }]);
+      expect(warnings.raw()).not.toContain('ref 9');
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('droppedRefs is 0 and nothing warns at or under the cap', async () => {
+    const warnings = captureWarnings();
+    try {
+      const refs = Array.from({ length: 8 }, (_, i) => ({ kind: 'project' as const, id: i + 1 }));
+      const prepared = await prepareTurn({ ...baseArgs(), inlineRefs: refs });
+      expect(prepared.droppedRefs).toBe(0);
+      expect((await prepareTurn(baseArgs())).droppedRefs).toBe(0);
+      expect(warnings.events()).toEqual([]);
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  it('respond() carries droppedRefs too', async () => {
+    const warnings = captureWarnings();
+    try {
+      const refs = Array.from({ length: 9 }, (_, i) => ({ kind: 'project' as const, id: i + 1 }));
+      const res = await respond({ ...baseArgs(), inlineRefs: refs });
+      expect(res.droppedRefs).toBe(1);
     } finally {
       warnings.restore();
     }

@@ -31,7 +31,7 @@ import { condenseQuery } from './condense.js';
 import { DEFAULT_MERGED_CAP, fuseMatches, retrieveWithPolicy } from './retrieve.js';
 import { buildChatTurn } from './turn.js';
 import { maxDenseScore } from './relevance.js';
-import { warnEngine } from './warn.js';
+import { warnEngine, warnEngineCapped } from './warn.js';
 
 /**
  * What an optional second retrieval path contributes to a turn. Both fields
@@ -158,6 +158,12 @@ export interface PreparedTurn {
    * runs (best-effort); a product may surface partial grounding from this.
    */
   failedCorpora: string[];
+  /**
+   * `inlineRefs` past {@link MAX_INLINE_REFS} that were NOT resolved into the
+   * turn. ADDITIVE (0.8.0). `0` when none. Each turn with drops also warns
+   * `ref.capped`. A product may tell the reader some mentions were left out.
+   */
+  droppedRefs: number;
 }
 
 export interface RespondResult extends PreparedTurn {
@@ -166,17 +172,26 @@ export interface RespondResult extends PreparedTurn {
 }
 
 /**
+ * The most `@`-mention refs one turn resolves. Refs past it are dropped, warned
+ * `ref.capped` with the count, and reported as `PreparedTurn.droppedRefs`.
+ */
+export const MAX_INLINE_REFS = 8;
+
+/**
  * Resolve `@`-mention refs into one clean-text block. Best-effort per ref —
- * a failing/empty resolve is dropped, never thrown. Capped per the engine's
- * inline-ref budget at the adapter level (each `resolveEntity` self-caps).
+ * a failing/empty resolve is dropped, never thrown. At most
+ * {@link MAX_INLINE_REFS} refs are resolved; the rest are counted in
+ * `droppedRefs`, never silently (each `resolveEntity` also self-caps its text).
  */
 async function resolveInlineRefs(
   adapter: DomainAdapter,
   refs: ContextRef[] | undefined,
-): Promise<string> {
-  if (!refs || refs.length === 0) return '';
+): Promise<{ text: string; droppedRefs: number }> {
+  if (!refs || refs.length === 0) return { text: '', droppedRefs: 0 };
+  const droppedRefs = Math.max(0, refs.length - MAX_INLINE_REFS);
+  if (droppedRefs > 0) warnEngineCapped('ref.capped', droppedRefs);
   const blocks: string[] = [];
-  for (const ref of refs.slice(0, 8)) {
+  for (const ref of refs.slice(0, MAX_INLINE_REFS)) {
     try {
       const text = await adapter.resolveEntity(ref);
       if (text && text.trim()) blocks.push(text.trim());
@@ -184,7 +199,7 @@ async function resolveInlineRefs(
       warnEngine('ref.failed', err); // best-effort per ref, never silent
     }
   }
-  return blocks.join('\n\n');
+  return { text: blocks.join('\n\n'), droppedRefs };
 }
 
 /**
@@ -283,7 +298,7 @@ export async function prepareTurn(args: RespondArgs): Promise<PreparedTurn> {
   const graphContext = graph?.context?.trim() ? graph.context : '';
 
   // 4. Resolve @-mention refs into clean text (best-effort).
-  const inlineRefsText = await resolveInlineRefs(adapter, inlineRefs);
+  const { text: inlineRefsText, droppedRefs } = await resolveInlineRefs(adapter, inlineRefs);
 
   // 5. Assemble the turn — ALL factual context in the USER turn (invariant).
   const { messages, provenance } = buildChatTurn({
@@ -310,6 +325,7 @@ export async function prepareTurn(args: RespondArgs): Promise<PreparedTurn> {
     graphContext,
     maxDenseScore: maxDenseScore(vectorMatches),
     failedCorpora,
+    droppedRefs,
   };
 }
 

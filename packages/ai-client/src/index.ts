@@ -311,6 +311,14 @@ export {
 // the shipped policy; `AIClientOptions.retry` overrides it per client and
 // `JsonRequestOptions.retry` per call.
 export { DEFAULT_RETRY_POLICY, DEFAULT_TIMEOUT_MS, type RetryPolicy } from './http.js';
+export {
+  withRetry,
+  isRetryableError,
+  DEFAULT_WITH_RETRY_OPTIONS,
+  type WithRetryOptions,
+  type WithRetryAttempts,
+  type RetryInfo,
+} from './with-retry.js';
 export { RegistryAPI } from './registry.js';
 export { RetrieveAPI, type RetrieveCallOptions } from './retrieve.js';
 // Retrieval outcome rule (audit P2): a typed 404 or a 200 with no

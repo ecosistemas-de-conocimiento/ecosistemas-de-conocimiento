@@ -19,6 +19,7 @@ export type EngineWarningEvent =
   | 'condense.unusable'
   | 'scope.failed'
   | 'ref.failed'
+  | 'ref.capped'
   | 'retrieve.failed'
   | 'retrieve.multi_unavailable'
   | 'graph.failed'
@@ -36,6 +37,8 @@ export interface EngineWarning {
   errorName?: string;
   /** An integer `status` on the thrown value (HTTP status from the AI client). */
   status?: number;
+  /** How many items a cap dropped (`ref.capped`). A count, never the items. */
+  dropped?: number;
 }
 
 /**
@@ -58,8 +61,17 @@ export function describeError(err: unknown): Pick<EngineWarning, 'errorName' | '
 
 /** Warn once for a survived failure. Pass `err` only when something was thrown. */
 export function warnEngine(event: EngineWarningEvent, ...err: [] | [unknown]): void {
-  const payload: EngineWarning = { event, ...(err.length ? describeError(err[0]) : {}) };
+  emit({ event, ...(err.length ? describeError(err[0]) : {}) });
+}
+
+/** Warn once that a cap dropped `dropped` items. Logs the count only. */
+export function warnEngineCapped(event: EngineWarningEvent, dropped: number): void {
+  emit({ event, dropped });
+}
+
+function emit(payload: EngineWarning): void {
   const status = payload.status !== undefined ? ` status=${payload.status}` : '';
   const name = payload.errorName ? ` (${payload.errorName})` : '';
-  console.warn(`[chat-engine] ${event}${status}${name}`, payload);
+  const dropped = payload.dropped !== undefined ? ` dropped=${payload.dropped}` : '';
+  console.warn(`[chat-engine] ${payload.event}${status}${name}${dropped}`, payload);
 }
