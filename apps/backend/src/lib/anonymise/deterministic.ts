@@ -35,10 +35,12 @@
  *   · `url` run before `email` claims `correo.mx` out of the same address, with
  *     the same result from the other end.
  *
- * And the roster runs FIRST of all, ahead of `email`, on purpose: a roster entry
- * that happens to be an email address must become that member's `[Persona X]`
- * label — which keeps the sentence readable — rather than an anonymous
- * `[Dato omitido]` that loses the fact that the same person appears twice.
+ * And the roster runs FIRST of all, TOGETHER with `email`, `url` and `arroba`
+ * (`rosterAndAddresses`), on purpose: a roster entry that happens to be an
+ * email address must become that member's `[Persona X]` label — which keeps the
+ * sentence readable — rather than an anonymous `[Dato omitido]` that loses the
+ * fact that the same person appears twice. And a member's name INSIDE an
+ * address must go with the address, as one `[Dato omitido]`.
  *
  * ── PLACEHOLDERS ARE INERT BY CONSTRUCTION ──────────────────────────────────
  *
@@ -50,7 +52,7 @@
 
 import { createPseudonymAllocator } from './pseudonyms'
 import type { RedactionCount } from './types'
-import { OMITTED_PLACEHOLDER } from './types'
+import { OMITTED_PLACEHOLDER, PLACEHOLDER_PATTERN } from './types'
 import { breakAt, wholeWord } from './wordBreaks'
 
 /**
@@ -103,68 +105,150 @@ function escapeRegExp(source: string): string {
  */
 function rosterPattern(entry: string): RegExp {
   const base = entry.normalize('NFD').replace(new RegExp(`[${MARKS}]`, 'gu'), '')
-  const body = [...base]
-    .map((ch) => (/\s/.test(ch) ? '(\\s*)' : `${escapeRegExp(ch)}[${MARKS}]*`))
-    .join('')
+  // ⚠ A run of spaces is ONE gap. Two `(\s*)` side by side can split the same
+  // whitespace every possible way, and a failed match then backtracks through
+  // all of them: 12 spaces took minutes on 300 characters (re-audit).
+  const body = base
+    .trim()
+    .split(/\s+/)
+    .map((word) => [...word].map((ch) => `${escapeRegExp(ch)}[${MARKS}]*`).join(''))
+    .join('(\\s*)')
   return new RegExp(body, 'giud')
 }
 
+/** A stretch of the decomposed text that one placeholder replaces. */
+interface Span {
+  start: number
+  end: number
+  /** A `DETERMINISTIC_LABELS` rule for an address; the member's label for a person. */
+  rule: string
+  person?: boolean
+}
+
+function overlaps(a: { start: number; end: number }, start: number, end: number): boolean {
+  return a.start < end && a.end > start
+}
+
 /**
- * Replace every whole-word match of `entry` in `text` with `label`. Returns
- * the new text and how many matches were replaced.
+ * Join overlapping spans into one. The span that starts first names the rule
+ * (on a tie, the longer one): a URL that carries an email stays a `url`.
+ */
+function mergeSpans(spans: readonly Span[]): Span[] {
+  const sorted = [...spans].sort((x, y) => x.start - y.start || y.end - x.end)
+  const out: Span[] = []
+  for (const s of sorted) {
+    const last = out[out.length - 1]
+    if (last !== undefined && s.start < last.end) last.end = Math.max(last.end, s.end)
+    else out.push({ ...s })
+  }
+  return out
+}
+
+/**
+ * Every email, URL and handle in `text`, merged, computed ONCE per text.
+ *
+ * 🔴 Same text form and same character classes as the roster. These rules run
+ * on the decomposed text, with letters AND accent marks in their classes, so a
+ * name inside an address lies inside exactly one span. The ASCII-only versions
+ * stopped at the first accent: "maría@gmail.com" became "marí" + a span, and
+ * the name beside it survived (re-audit 2026-10-21).
+ */
+function addressSpans(text: string): Span[] {
+  const rules: Array<[RegExp, string]> = [
+    [EMAIL, DETERMINISTIC_LABELS.email],
+    [URL, DETERMINISTIC_LABELS.url],
+    [ARROBA, DETERMINISTIC_LABELS.arroba],
+  ]
+  return mergeSpans(
+    rules.flatMap(([re, rule]) =>
+      [...text.matchAll(re)].map((m) => ({ start: m.index, end: m.index + m[0].length, rule })),
+    ),
+  )
+}
+
+/**
+ * The roster and the address rules, in ONE pass over the decomposed `text`.
+ *
+ * Each entry, longest first, claims its whole-word matches. Then:
+ *
+ *   · a match that IS an address (a roster entry that is an email) takes the
+ *     member's label instead of `[Dato omitido]`;
+ *   · 🔴 a match that only PARTLY overlaps an address joins it: the address
+ *     span grows over the whole name, and the result is one `[Dato omitido]`.
+ *     No placeholder is ever spliced into an address, and no letter of the name
+ *     is ever left beside one;
+ *   · a match inside a placeholder already in the text is skipped.
  *
  * ⚠ A match rejected for being glued restarts the search ONE character later,
  * not after the match, so a real hit overlapping it is still found.
- *
- * 🔴 A MATCH INSIDE AN EMAIL, URL OR HANDLE IS SKIPPED unless it is the whole
- * thing (a roster entry that is an email). The fixed-shape rules below then
- * take the whole address as one `[Dato omitido]`. Splicing `[Persona A]` into
- * "juanMaria@gmail.com" broke the address, so the email rule no longer saw it
- * and "juan" and the domain stayed in the corpus (delta audit 2026-10-21).
  */
-function replaceRoster(
+function rosterAndAddresses(
   text: string,
-  entry: string,
-  label: string,
-): { text: string; count: number } {
-  const pattern = rosterPattern(entry)
+  entries: readonly string[],
+  labelOf: (entry: string) => string,
+): { text: string; spans: Span[] } {
+  let addresses = addressSpans(text)
+  const placeholders = [...text.matchAll(PLACEHOLDER_PATTERN)].map((m) => ({
+    start: m.index,
+    end: m.index + m[0].length,
+  }))
+  const claimed = new Uint8Array(text.length)
+  const people: Span[] = []
+
+  for (const entry of entries) {
+    const pattern = rosterPattern(entry.trim())
+    for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
+      const start = m.index
+      const end = start + m[0].length
+      // 🔴 Never accept an empty match: `exec` would return it again forever.
+      if (end === start) {
+        pattern.lastIndex = start + 1
+        continue
+      }
+      // Where an entry has a space: whitespace always starts a break; an empty
+      // gap ("MaríaLópez") must be one too.
+      const gaps = (m.indices ?? []).slice(1)
+      const ok =
+        wholeWord(text, start, end) &&
+        gaps.every((g) => g === undefined || breakAt(text, g[0])) &&
+        !placeholders.some((p) => overlaps(p, start, end)) &&
+        !claimed.subarray(start, end).includes(1)
+      if (!ok) {
+        pattern.lastIndex = start + 1
+        continue
+      }
+      const hit = addresses.filter((a) => overlaps(a, start, end))
+      const [only] = hit
+      if (hit.length === 1 && only !== undefined && only.start === start && only.end === end) {
+        addresses = addresses.filter((a) => a !== only)
+      } else if (only !== undefined) {
+        addresses = mergeSpans([...addresses, { start, end, rule: only.rule }])
+        continue
+      }
+      people.push({ start, end, rule: labelOf(entry), person: true })
+      claimed.fill(1, start, end)
+    }
+  }
+
+  const spans = [...people, ...addresses].sort((x, y) => x.start - y.start)
   let out = ''
   let copied = 0
-  let count = 0
-  const shaped = [EMAIL, URL, ARROBA].flatMap((re) =>
-    [...text.matchAll(re)].map((s) => [s.index, s.index + s[0].length] as const),
-  )
-  for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
-    const start = m.index
-    const end = start + m[0].length
-    // 🔴 Never accept an empty match: `exec` would return it again forever.
-    if (end === start) {
-      pattern.lastIndex = start + 1
-      continue
-    }
-    // Where an entry has a space: whitespace always starts a break; an empty
-    // gap ("MaríaLópez") must be one too.
-    const gaps = (m.indices ?? []).slice(1)
-    const ok =
-      wholeWord(text, start, end) &&
-      !shaped.some(([s, e]) => start < e && end > s && !(start <= s && end >= e)) &&
-      gaps.every((g) => g === undefined || breakAt(text, g[0]))
-    if (!ok) {
-      pattern.lastIndex = start + 1
-      continue
-    }
-    out += text.slice(copied, start) + label
-    copied = end
-    count += 1
+  for (const s of spans) {
+    out += text.slice(copied, s.start) + (s.person ? s.rule : OMITTED_PLACEHOLDER)
+    copied = s.end
   }
-  return { text: out + text.slice(copied), count }
+  return { text: out + text.slice(copied), spans }
 }
 
 /**
  * `ana.lopez+notas@correo.gob.mx`. Deliberately permissive on the local part —
  * a missed address is a leak, an over-matched one is a slightly uglier sentence.
+ *
+ * Letters and accent marks of any script: it runs on decomposed text (see
+ * {@link addressSpans}). ⚠ The parts are BOUNDED (64 / 255, the mail limits):
+ * unbounded, a long run with no `@` cost quadratic time.
  */
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g
+const EMAIL = /[\p{L}\p{M}\p{N}._%+-]{1,64}@[\p{L}\p{M}\p{N}.-]{1,255}\.[\p{L}\p{M}]{2,63}/gu
 
 /** 18-char CURP. Runs BEFORE the RFC rule, whose shape is its first 13 chars. */
 const CURP = /\b[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b/gi
@@ -186,14 +270,16 @@ const TELEFONO =
   /(?<!\d)(?:\+?52[\s.-]?)?(?:1[\s.-]?)?(?:\(\d{2,3}\)|\d{2,3})[\s.-]?\d{3,4}[\s.-]?\d{4}(?!\d)/g
 
 /**
- * `@anitalopez`. Runs after `email`, which has already consumed every real `@`.
+ * `@anitalopez`. Its lookbehind refuses an `@` with a letter before it, so it
+ * never starts inside an email; overlaps are merged anyway ({@link addressSpans}).
  *
  * ⚠ The handle may not END on a dot. `[A-Za-z0-9._]{2,30}` is greedy, so on
  * "escríbele a @anita." it swallowed the full stop and the sentence came back
  * without its punctuation — cosmetic here, but the same greed on "@anita.mx" is
  * the difference between a handle and a domain.
  */
-const ARROBA = /(?<![\w.@])@[A-Za-z0-9_][A-Za-z0-9._]{0,28}[A-Za-z0-9_](?!\w)/g
+const ARROBA =
+  /(?<![\p{L}\p{M}\p{N}_.@])@[\p{L}\p{N}_]\p{M}*(?:[\p{L}\p{N}._]\p{M}*){0,28}[\p{L}\p{N}_]\p{M}*(?![\p{L}\p{M}\p{N}_])/gu
 
 /**
  * The catch-all: any run of 8+ digits nothing more specific claimed. Employee
@@ -328,47 +414,40 @@ export function deterministicPass(args: DeterministicArgs): {
   const removed: RedactionCount[] = []
   let out = args.text
 
-  // ── Roster first. See the header: an entry that is an email must become that
-  // member's `[Persona X]`, not an anonymous `[Dato omitido]`.
+  // ── Roster and addresses first, together. See the header: an entry that is
+  // an email must become that member's `[Persona X]`, not `[Dato omitido]`.
   //
   // ⚠ Longest entry first, so "Ana López Ruiz" is not half-eaten by a separate
   // roster entry "Ana López" and left as "[Persona A] Ruiz" — a surname still in
   // the corpus, attached to a label, which is worse than either alone.
-  let rosterHits = 0
   const entries = [...(args.roster ?? [])]
     .filter((e) => e.trim().length >= 2)
     // 🔴 An entry of only accent marks has nothing to match; it looped forever.
     .filter((e) => /[\p{L}\p{N}]/u.test(e))
     .sort((a, b) => b.length - a.length)
+  // Labels in roster order, before any match: the letters do not depend on
+  // which entry happens to be found first.
+  const labels = new Map(entries.map((e) => [e, args.allocate(e)]))
 
-  if (entries.length > 0) {
-    // 🔴 THE TEXT IS DECOMPOSED FOR THE ROSTER PASS AND RECOMPOSED AFTER.
-    //
-    // `rosterPattern` builds `o\p{M}*` per letter, which matches a
-    // DECOMPOSED `ó` (o + U+0301) and NOT the precomposed U+00F3 that almost
-    // every real document actually contains. Without this round trip the roster
-    // silently matched nothing on any accented name — the one input it exists
-    // for — while the report said zero hits, which reads as "no members were
-    // named" rather than "the matcher is broken".
-    //
-    // NFD→NFC is canonical-equivalence-preserving: it can change the BYTES of
-    // text this stage did not redact, never the characters.
-    out = out.normalize('NFD')
-    for (const entry of entries) {
-      const label = args.allocate(entry)
-      const hit = replaceRoster(out, entry.trim(), label)
-      out = hit.text
-      rosterHits += hit.count
-    }
-    out = out.normalize('NFC')
-  }
-  pushCount(removed, DETERMINISTIC_LABELS.rosterPerson, rosterHits)
+  // 🔴 THE TEXT IS DECOMPOSED FOR THIS PASS AND RECOMPOSED AFTER.
+  //
+  // `rosterPattern` builds `o\p{M}*` per letter, which matches a DECOMPOSED `ó`
+  // (o + U+0301) and NOT the precomposed U+00F3 that almost every real document
+  // actually contains. Without this round trip the roster silently matched
+  // nothing on any accented name — the one input it exists for — while the
+  // report said zero hits, which reads as "no members were named" rather than
+  // "the matcher is broken". The address rules run on the same decomposed text,
+  // so both sides agree on every offset.
+  //
+  // NFD→NFC is canonical-equivalence-preserving: it can change the BYTES of
+  // text this stage did not redact, never the characters.
+  const first = rosterAndAddresses(out.normalize('NFD'), entries, (e) => labels.get(e) ?? '')
+  out = first.text.normalize('NFC')
+  const countOf = (rule: string) => first.spans.filter((s) => !s.person && s.rule === rule).length
+  pushCount(removed, DETERMINISTIC_LABELS.rosterPerson, first.spans.filter((s) => s.person).length)
+  pushCount(removed, DETERMINISTIC_LABELS.email, countOf(DETERMINISTIC_LABELS.email))
 
   // ── Then the shaped identifiers, specific → greedy. Do not reorder.
-  const email = omit(out, EMAIL)
-  out = email.text
-  pushCount(removed, DETERMINISTIC_LABELS.email, email.count)
-
   const curp = omit(out, CURP)
   out = curp.text
   pushCount(removed, DETERMINISTIC_LABELS.curp, curp.count)
@@ -377,13 +456,8 @@ export function deterministicPass(args: DeterministicArgs): {
   out = rfc.text
   pushCount(removed, DETERMINISTIC_LABELS.rfc, rfc.count)
 
-  const url = omit(out, URL)
-  out = url.text
-  pushCount(removed, DETERMINISTIC_LABELS.url, url.count)
-
-  const arroba = omit(out, ARROBA)
-  out = arroba.text
-  pushCount(removed, DETERMINISTIC_LABELS.arroba, arroba.count)
+  pushCount(removed, DETERMINISTIC_LABELS.url, countOf(DETERMINISTIC_LABELS.url))
+  pushCount(removed, DETERMINISTIC_LABELS.arroba, countOf(DETERMINISTIC_LABELS.arroba))
 
   // ── Then the postal code. BEFORE `telefono` and `numero-largo`, which would
   // otherwise claim its digits and leave `C.P.` beside a `[Dato omitido]`.

@@ -211,6 +211,94 @@ describe('deterministicPass — the roster', () => {
   })
 })
 
+/** Lower case, accents dropped: what "the name survived" means here. */
+function fold(s: string): string {
+  return s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+}
+
+describe('deterministicPass — 🔴 a member named inside an address (re-audit)', () => {
+  // Every row: the whole address becomes ONE placeholder and no letter of the
+  // member's name is left behind. The address rules used to read ASCII only,
+  // so an accent cut the address and the name beside it survived.
+  it.each([
+    ['A1', 'Escribe a maría@gmail.com hoy', ['María'], 'Escribe a [Dato omitido] hoy'],
+    ['A2', 'Escribe a maría.lopez@gmail.com hoy', ['María'], 'Escribe a [Dato omitido] hoy'],
+    ['A3', 'Escribe a Ana maría@gmail.com hoy', ['Ana María'], 'Escribe a [Dato omitido] hoy'],
+    ['A4', 'Escribe a núñez@gmail.com hoy', ['Núñez'], 'Escribe a [Dato omitido] hoy'],
+    ['A5', 'Escribe a josé.maría@gmail.com hoy', ['José', 'María'], 'Escribe a [Dato omitido] hoy'],
+    ['A6', 'Sígueme @núñez hoy', ['Núñez'], 'Sígueme [Dato omitido] hoy'],
+    ['A7', 'Sígueme @iñaki hoy', ['Iñaki'], 'Sígueme [Dato omitido] hoy'],
+    ['A8', 'Sígueme @maría hoy', ['María'], 'Sígueme [Dato omitido] hoy'],
+    ['A9', 'Sígueme @lucía_gomez hoy', ['Lucía', 'Gómez'], 'Sígueme [Dato omitido] hoy'],
+    ['A10', 'Sígueme @muñoz hoy', ['Muñoz'], 'Sígueme [Dato omitido] hoy'],
+    ['A11', 'Sígueme @josé hoy', ['José'], 'Sígueme [Dato omitido] hoy'],
+    ['A12', 'Escribe a ana.lópez@gmail.com hoy', ['Ana López', 'López', 'Ana'], 'Escribe a [Dato omitido] hoy'],
+    ['A13', 'Ve www.facebook.com/maría.núñez hoy', ['María', 'Núñez'], 'Ve [Dato omitido] hoy'],
+    ['A20', 'Escribe a x@maría.com hoy', ['María'], 'Escribe a [Dato omitido] hoy'],
+    ['A21', 'Ve https://x.com/maria/x?e=a@b.co hoy', ['María'], 'Ve [Dato omitido] hoy'],
+    ['A23', 'ESCRIBE A MARÍA@GMAIL.COM HOY', ['María'], 'ESCRIBE A [Dato omitido] HOY'],
+    ['A26', 'Sígueme @sofía.r hoy', ['Sofía'], 'Sígueme [Dato omitido] hoy'],
+  ])('%s: %s', (_, text, roster, expected) => {
+    const out = run(text, roster)
+    expect(out.text).toBe(expected)
+    for (const name of roster) expect(fold(out.text)).not.toContain(fold(name))
+  })
+
+  it('a roster entry that IS the address keeps the person label, accents or not', () => {
+    expect(run('Escribe a maria@gmail.com hoy', ['maría@gmail.com']).text).toBe(
+      'Escribe a [Persona A] hoy',
+    )
+    expect(run('Escribe a maría@gmail.com hoy', ['maria@gmail.com']).text).toBe(
+      'Escribe a [Persona A] hoy',
+    )
+  })
+
+  it('a name partly over an address takes the address with it, never a fragment', () => {
+    // "Ana María" starts outside the email and ends inside it.
+    const out = run('Escribe a Ana maría@gmail.com hoy', ['Ana María'])
+    expect(out.text).toBe('Escribe a [Dato omitido] hoy')
+    expect(out.text).not.toMatch(/\[[^\]]*\[|\][^[]*\]/)
+  })
+
+  it('a malformed address leaves the name to the roster', () => {
+    expect(run('Escribe a maria@gmail hoy', ['María']).text).toBe(
+      'Escribe a [Persona A]@gmail hoy',
+    )
+  })
+
+  it('never matches inside a placeholder already in the text', () => {
+    expect(run('Ya [Dato omitido] y Dato.', ['Dato']).text).toBe('Ya [Dato omitido] y [Persona A].')
+    expect(run('Ya [Dato omitido] y omitido.', ['omitido']).text).toBe(
+      'Ya [Dato omitido] y [Persona A].',
+    )
+  })
+
+  it('a name right after a placeholder is only touching it, not inside it', () => {
+    expect(run('[Dato omitido]María vino', ['María']).text).toBe('[Dato omitido][Persona A] vino')
+  })
+
+  it('a URL that carries an email from its first character counts as a url', () => {
+    const out = run('Ve www.ana@x.com/p hoy')
+    expect(out.text).toBe('Ve [Dato omitido] hoy')
+    expect(out.removed).toEqual([{ label: DETERMINISTIC_LABELS.url, count: 1 }])
+  })
+
+  it('an entry with a run of spaces does not backtrack forever', () => {
+    const t0 = performance.now()
+    run(`a${' '.repeat(2000)}c`, ['a            b'])
+    expect(performance.now() - t0).toBeLessThan(1500)
+    expect(run('Vino Ana   López.', ['Ana      López']).text).toBe('Vino [Persona A].')
+  })
+
+  it('stays linear: 50k characters with no spaces and 30 entries', () => {
+    const roster = Array.from({ length: 30 }, (_, i) => `Nombre${i}`)
+    const t0 = performance.now()
+    run(`Inicio. ${'x'.repeat(50_000)} fin.`, roster)
+    run(`Inicio. ${'a.'.repeat(25_000)} fin.`, roster)
+    expect(performance.now() - t0).toBeLessThan(1500)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // DOMICILIOS — owner's ruling 2026-10-21 (Q3, "A: fixed shapes only")
 // ---------------------------------------------------------------------------
