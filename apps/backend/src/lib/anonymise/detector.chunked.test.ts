@@ -126,7 +126,8 @@ describe('aiServiceDetector — chunked', () => {
     })
     const result = await runAnonymisationGate(
       { contentKind: 'testimonio', text },
-      { detector: aiServiceDetector({ client, chunkWords: 250, concurrency: 1 }) },
+      // One round: verify only judges, so the survivors stay in the held text.
+      { detector: aiServiceDetector({ client, chunkWords: 250, concurrency: 1 }), verifyRounds: 1 },
     )
     expect(result.status).toBe('hold')
     if (result.status !== 'hold') return
@@ -139,6 +140,28 @@ describe('aiServiceDetector — chunked', () => {
     const bounds = chunkText(red, 250).map((c) => c.end)
     const chunkOf = (at: number) => bounds.findIndex((b) => at < b)
     expect(new Set(spans.map((s) => chunkOf(s.start))).size).toBeGreaterThan(1)
+  })
+
+  it('🔴 a name one chunk calls "not identifying" and another calls identifying is identifying', async () => {
+    const text = longTestimony()
+    const { client } = fakeClient((prompt, n) =>
+      syncOk(
+        JSON.stringify({
+          hallazgos: NAMES.filter((name) => prompt.includes(name)).map((name) => ({
+            texto: name,
+            tipo: 'persona',
+            ...(n === 1 && name === 'Teodulfo' ? { identifica: false } : {}),
+          })),
+        }),
+      ),
+    )
+    const found = await aiServiceDetector({ client, chunkWords: 250, concurrency: 1 }).detect({
+      text,
+      contentKind: 'testimonio',
+    })
+    const teo = found.filter((f) => f.text === 'Teodulfo')
+    expect(teo).toHaveLength(1)
+    expect(teo[0]?.identifying).not.toBe(false)
   })
 
   it('🔴 fails closed: one bad chunk among many holds the document', async () => {

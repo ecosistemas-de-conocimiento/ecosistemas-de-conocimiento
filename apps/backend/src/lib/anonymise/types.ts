@@ -80,6 +80,12 @@ export interface GateStageReport {
   removed: RedactionCount[]
   /** Human-readable note for the admin panel. Must contain no removed text. */
   note?: string
+  /**
+   * Verify only: which round this entry records, from 1. Its `removed` counts
+   * what that round redacted, so a reviewer sees what each round caught.
+   * ⚠ Absent on reports stored before verify had rounds.
+   */
+  round?: number
 }
 
 export interface GateReport {
@@ -191,6 +197,16 @@ export interface DetectorFinding {
    * invents two houses where the testimony described one.
    */
   type: 'persona' | 'lugar' | 'contacto' | 'identificador' | 'otro'
+  /**
+   * `false` when the model itself judged the string identifies nobody: a bare
+   * title such as "el doctor" in "el doctor dijo".
+   *
+   * 🔴 STAGE 3 IGNORES IT: every finding is redacted. VERIFY USES IT ONLY FOR
+   * A `persona` WITH A BARE-TITLE SHAPE (owner's Q4/Q5, see `bareTitle` and
+   * `titleVerdict` in `gate.ts`): such a finding passes, or, as one capitalised
+   * word, is redacted. Anything other than an explicit `false` is identifying.
+   */
+  identifying?: boolean
 }
 
 /**
@@ -245,3 +261,10 @@ export const ADDRESS_PLACEHOLDER_PREFIX = '[Domicilio '
 
 /** What a non-person identifier is replaced by. Deliberately not enumerated. */
 export const OMITTED_PLACEHOLDER = '[Dato omitido]'
+
+/**
+ * Every placeholder this pipeline can emit, as a GLOBAL pattern. Shared by the
+ * gate (what verify may ignore) and the detector (where a model span may not
+ * be located). ⚠ Global: reset `lastIndex` or use `matchAll`/`match`/`replace`.
+ */
+export const PLACEHOLDER_PATTERN = /\[Dato omitido\]|\[Persona [A-Z]+\]|\[Domicilio [A-Z]+\]/g

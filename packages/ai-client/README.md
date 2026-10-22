@@ -511,6 +511,76 @@ the policy; `CapabilitiesAPI.probe` does exactly that.
 `/v1/ingest` is separately governed by the ingest gate below, which is a rate
 limiter rather than a retry loop and has its own, larger, budget.
 
+### Waiting out a rate limit: `withRetry` (opt-in, 0.34.0)
+
+The transport ladder above hands back what it cannot honestly wait out: a 429
+whose `Retry-After` exceeds `maxDelayMs` (ai-service's window is 1 minute), its
+own timeout, and anything on a non-idempotent call. `withRetry` is the outer
+layer for those. By default it retries a 429 and nothing else.
+
+```ts
+import { withRetry, RateLimitError, type WithRetryAttempts } from '@edc/ai-client'
+
+try {
+  const res = await withRetry(
+    () => client.http.json({ path: '/v1/x', retry: { attempts: 1 } }), // one ladder, not two
+    {
+      signal, // cancels the wait between attempts
+      onRetry: ({ attempt, waitMs }) => log.warn({ attempt, waitMs }, 'ai-service retry'),
+    },
+  )
+} catch (err) {
+  if (err instanceof RateLimitError) {
+    // the ORIGINAL 429, throttled for the whole budget: record it where a person can see it
+    log.error({ attempts: (err as WithRetryAttempts).retryAttempts }, 'gave up')
+  }
+  throw err
+}
+```
+
+| Failure | Retried? | Wait |
+|---|---|---|
+| 429 (`status` 429 or `name` `RateLimitError`) | yes | server's `retryAfterMs`, capped at `maxRetryAfterMs`; the full cap when no hint |
+| typed `retryable: true` (breaker 503, provider-timeout 504), network fault, own timeout | only with `retryTransient: true` | server's hint, else `baseDelayMs × 2^(n-1)`, same cap |
+| anything not marked retryable (4xx, 500, a "database unavailable" 503), caller cancel | no, rethrown unchanged | |
+
+The checks read the error's shape, not its class. A 429 from another copy of
+this package in the same process still matches.
+
+Every wait gets up to 25% jitter, at most 5 s, always late. Callers refused in
+the same second would otherwise wake together and re-stampede the window.
+
+The four defaults are quoted from a consumer's production retry helper, tuned
+against ai-service's own limiter.
+
+| Option | Default | Why |
+|---|---|---|
+| `attempts` | 4 | Total tries, first included. An integer ≥ 1 |
+| `maxElapsedMs` | 120 000 | Fits one full window plus jitter, short enough for a waiting user. Wall clock, measured from the first attempt; no sleep starts that would end past it |
+| `maxRetryAfterMs` | 61 000 | One ai-service window plus 1 s. A longer ask is not ai-service's limiter |
+| `baseDelayMs` | 1 000 | 1 s, 2 s, 4 s rides out a restart or a breaker cool-down |
+| `retryTransient` | false | Also retry the transient row above. Only for calls whose repeat is harmless |
+| `signal` | none | Abort cancels the wait and rethrows `signal.reason`. It does not cancel an attempt in flight |
+
+A non-integer, negative, `NaN` or infinite `attempts`, or a negative, `NaN` or
+infinite delay option, rejects with a `RangeError` before `fn` runs.
+
+Two unhinted 429s (61 s each) overrun the 120 s budget, so that case stops after
+two attempts. When the server will not say how long, a visible failure beats
+minutes of blind waiting.
+
+On giving up it rethrows the **original last error**, so `instanceof
+RateLimitError` (or `ProviderUnavailableError`) keeps working. It adds one
+non-enumerable field, `retryAttempts`: the attempts made, first included. Logs
+and `JSON.stringify` do not show it. Nothing is swallowed. `sleep`, `now` and
+`random` are injectable, so tests need no real waits.
+
+🔴 **`retryTransient` only for work whose repeat is harmless.** A 429 is
+refused before the handler runs. A 503, a dropped socket or a timeout can mean
+the work happened and the answer was lost. `POST /v1/generate/sync` has no
+dedupe, so a resend is a second generation and a second debit. Leave
+`retryTransient` off there.
+
 ## Errors
 
 All HTTP failures throw a subclass of `AIServiceError`. Pattern-match the
