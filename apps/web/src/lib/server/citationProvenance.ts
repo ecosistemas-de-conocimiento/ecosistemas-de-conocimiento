@@ -40,7 +40,14 @@ import { citedProvenance, parseCitedOrdinals, type Provenance } from '@edc/chat-
 import { isConversationTurnChunk } from '$lib/turnChunks';
 import { DRAFT_PROVENANCE_FLAG } from '$lib/publication';
 import type { TitledDoc } from '$lib/server/titleMatch';
-import { NO_ANSWER_REPLY } from '$lib/server/engine/prompt';
+import { env } from '$env/dynamic/private';
+import {
+  GENERAL_KNOWLEDGE_LEAD,
+  NO_ANSWER_REPLY,
+  answersFromGeneralKnowledge,
+  parseCiteVariant,
+  type CiteVariant,
+} from '$lib/server/engine/prompt';
 
 /** Chunk fields the browser receives. Everything else is dropped. */
 const CHUNK_FIELDS = [
@@ -166,16 +173,24 @@ export function toBrowserProvenance(provenance: unknown): Provenance | null {
  * first) and the first ones win. A title-matched document not among them
  * takes the last slot, so the total never passes {@link MAX_SOURCES}.
  *
+ * 🔴 VARIANT E (`CHAT_CITE_VARIANT=E`, owner ruling 2026-10-21: answers may
+ * come "from the docs, the corpus, or the training weights") swaps the
+ * no-[N] and refusal rules above for {@link generalKnowledgeSources}. A–D keep
+ * the rules above unchanged. `variant` defaults to the env value, read per
+ * call like the system prompt (`chatCiteVariant` in `./engine/config`).
+ *
  * ⚠ Run it on the full answer text, never on a partial stream.
  */
 export function citedBrowserProvenance(
   provenance: Provenance | null | undefined,
   answer: string,
   titleMatch: TitledDoc | null = null,
+  variant: CiteVariant = parseCiteVariant(env.CHAT_CITE_VARIANT),
 ): Provenance | null {
   const text = answer ?? '';
-  let cited: Array<Chunk & { ordinal?: number }> =
-    parseCitedOrdinals(text).length > 0
+  let cited: Array<Chunk & { ordinal?: number }> = answersFromGeneralKnowledge(variant)
+    ? generalKnowledgeSources(provenance, text)
+    : parseCitedOrdinals(text).length > 0
       ? isNoAnswer(text)
         ? []
         : citedProvenance(provenance, text).map(({ relevance: _r, ...c }) => c)
@@ -257,6 +272,70 @@ export function hasRefusalCue(answer: string): boolean {
     NO_ANSWER_VARIANTS.some((v) => all.includes(v)) ||
     REFUSAL_CUES.some((c) => all.includes(c))
   );
+}
+
+/**
+ * {@link GENERAL_KNOWLEDGE_LEAD} as the model writes it: any case, Markdown
+ * emphasis after it, and a colon or dash (not a comma: "lo que pasa fuera de
+ * los documentos, \u2026" is prose). The lead has no accented letter, so no
+ * folding is needed and indexes stay those of the answer.
+ */
+const GENERAL_KNOWLEDGE_RE = new RegExp(
+  `(?<!\\p{L})${GENERAL_KNOWLEDGE_LEAD.replace(/[:\s]+$/, '').replace(/ /g, '\\s+')}[*_]*\\s*[:\u2013\u2014-]`,
+  'iu',
+);
+
+/**
+ * Variant E's answer split in two: `documents`, the text before the first
+ * {@link GENERAL_KNOWLEDGE_LEAD}, and whether that lead occurs at all.
+ * Everything from the lead on is general knowledge: the prompt puts that part
+ * last.
+ */
+export function splitGeneralKnowledge(answer: string): { documents: string; general: boolean } {
+  const text = answer ?? '';
+  const m = GENERAL_KNOWLEDGE_RE.exec(text);
+  return m ? { documents: text.slice(0, m.index), general: true } : { documents: text, general: false };
+}
+
+/**
+ * The first sentence of the answer (same cut as {@link isNoAnswer}) carries a
+ * refusal: the no-answer reply, a variant or a {@link REFUSAL_CUES} cue. A
+ * later "los documentos no hablan de X" never counts.
+ */
+export function opensWithRefusal(answer: string): boolean {
+  const first = (answer ?? '').trim().split(/[.!?\n]/, 1)[0] ?? '';
+  return hasRefusalCue(first);
+}
+
+/**
+ * Variant E's sources, designed as one rule with its fallback and its
+ * no-answer guard (lesson: "every source rule needs a fallback; every fallback
+ * needs a no-answer guard"). Only the part before
+ * {@link GENERAL_KNOWLEDGE_LEAD} counts; the general-knowledge part never
+ * lists a source, even when it carries a stray `[N]`.
+ *
+ *   · Nothing before the lead (an off-topic question): no sources. The answer
+ *     is general knowledge, and a fallback would attribute it to documents.
+ *   · `[N]` before the lead: those sources (cited-only), unless the first
+ *     sentence is a refusal.
+ *   · No `[N]` and a lead: no sources. The model was told to cite what came
+ *     from the passages, and the part it chose to mark as general knowledge
+ *     sits next to it, so a fallback would blur the two.
+ *   · No `[N]` and no lead: the top-{@link FALLBACK_SOURCES} fallback (a
+ *     passage-based answer that forgot `[N]`), unless the FIRST sentence is a
+ *     refusal ({@link opensWithRefusal}); a later "no hablan" keeps it.
+ */
+function generalKnowledgeSources(
+  provenance: Provenance | null | undefined,
+  answer: string,
+): Array<Chunk & { ordinal?: number }> {
+  const { documents, general } = splitGeneralKnowledge(answer);
+  if (!/\p{L}/u.test(documents)) return [];
+  if (opensWithRefusal(documents)) return [];
+  if (parseCitedOrdinals(documents).length > 0) {
+    return citedProvenance(provenance, documents).map(({ relevance: _r, ...c }) => c);
+  }
+  return general ? [] : topRetrieved(provenance);
 }
 
 /** How many retrieved sources an answer with no `[N]` lists. */
