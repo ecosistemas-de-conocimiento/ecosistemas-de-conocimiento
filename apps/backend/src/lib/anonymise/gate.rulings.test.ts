@@ -295,6 +295,13 @@ describe('🔴 final audit 2026-10-21 — glued names are words', () => {
     expect(r.redactedText).toBe('Me escribió [Persona A]88 ayer.')
   })
 
+  it('a digit before a name ends a word too: "88lucrecia" loses the name (E4)', async () => {
+    const r = await gate('88lucrecia vino', [[persona('lucrecia')], []])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('88[Persona A] vino')
+  })
+
   it('a lower-to-upper change ends a word: "MaríaLópez" loses "López"', async () => {
     const r = await gate('Firmó MaríaLópez ayer.', [[persona('López')], []])
     expect(r.status).toBe('ready')
