@@ -146,6 +146,11 @@ describe('deterministicPass — the roster', () => {
     expect(out.text).toBe('na[Persona A] vino')
   })
 
+  it('…even when the real one starts one character after the glued one', () => {
+    // "aAa" at 0 is glued to the last "a"; "Aaa" at 1 starts on a break.
+    expect(run('aAaa vino', ['aaa']).text).toBe('a[Persona A] vino')
+  })
+
   it('still leaves "ana" inside "Mañana", "anabel" and "ANABEL"', () => {
     const out = run('Mañana viene anabel, ANABEL no. Ana sí.', ['Ana'])
     expect(out.text).toBe('Mañana viene anabel, ANABEL no. [Persona A] sí.')
@@ -154,6 +159,47 @@ describe('deterministicPass — the roster', () => {
   it('keeps one label per member across glued and spaced forms', () => {
     const out = run('MaríaLópez y María López y maria88.', ['María López', 'María'])
     expect(out.text).toBe('[Persona A] y [Persona A] y [Persona B]88.')
+  })
+
+  it('skips an entry made only of accent marks, and returns', { timeout: 2000 }, () => {
+    const out = run('Ana vino.', ['\u0301\u0301', '\u0301 \u0301'])
+    expect(out.text).toBe('Ana vino.')
+    expect(out.removed).toEqual([])
+  })
+
+  it.each([
+    ['tab', 'María\tLópez vino.'],
+    ['newline', 'María\nLópez vino.'],
+  ])('matches a %s between two roster words', (_, text) => {
+    expect(run(text, ['María López']).text).toBe('[Persona A] vino.')
+  })
+
+  it.each([
+    ['\u1DC4', 'U+1DC4'],
+    ['\uFE0F', 'VS16'],
+    ['\u20DD', 'U+20DD'],
+  ])('takes any trailing accent mark with the name (%s, %s)', (mark) => {
+    expect(run(`Ana${mark} vino`, ['Ana']).text).toBe('[Persona A] vino')
+  })
+
+  // An address that holds a member's name is ONE address: it becomes one
+  // `[Dato omitido]`, never a placeholder spliced into it (delta audit).
+  it.each([
+    'juanMaria@gmail.com',
+    'lucrecia88maria@gmail.com',
+    'maria88@gmail.com',
+    'juan.maria@gmail.com',
+    'juan_maria@gmail.com',
+    'juan-maria@gmail.com',
+    'www.facebook.com/juanMaria',
+    'www.facebook.com/maria88',
+    'https://x.com/juan.maria',
+    '@juanMaria',
+    '@lucrecia88maria',
+    '@juan_maria',
+  ])('keeps %s whole: one placeholder', (address) => {
+    const out = run(`Ve ${address} hoy`, ['María'])
+    expect(out.text).toBe('Ve [Dato omitido] hoy')
   })
 
   it('⚠ is close to useless with no roster — that is the testimony case', () => {

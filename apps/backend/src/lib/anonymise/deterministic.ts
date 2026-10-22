@@ -73,7 +73,8 @@ export const DETERMINISTIC_LABELS = {
   codigoPostal: 'codigo-postal',
 } as const
 
-const COMBINING = '\\u0300-\\u036f'
+/** Every Unicode mark, not only U+0300–036F: "Ana" + VS16 or U+20DD is still Ana. */
+const MARKS = '\\p{M}'
 
 function escapeRegExp(source: string): string {
   return source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -88,7 +89,7 @@ function escapeRegExp(source: string): string {
  * or "María  López" with the double space a transcriber left behind. Matching
  * only the exact bytes leaves a member's real name in the shared corpus, which
  * is the exact failure this stage exists to prevent. Decomposing turns `í` into
- * `i` + U+0301, so every letter can carry `[\\u0300-\\u036f]*` and the accents
+ * `i` + U+0301, so every letter can carry `\p{M}*` (any mark) and the accents
  * become optional without a hand-written variant table that always misses `ñ`.
  *
  * ⚠ `\b` IS NOT USED, AND NEITHER IS A LOOKAROUND. Word edges are decided by
@@ -101,9 +102,9 @@ function escapeRegExp(source: string): string {
  * by {@link replaceRoster}.
  */
 function rosterPattern(entry: string): RegExp {
-  const base = entry.normalize('NFD').replace(new RegExp(`[${COMBINING}]`, 'gu'), '')
+  const base = entry.normalize('NFD').replace(new RegExp(`[${MARKS}]`, 'gu'), '')
   const body = [...base]
-    .map((ch) => (/\s/.test(ch) ? '(\\s*)' : `${escapeRegExp(ch)}[${COMBINING}]*`))
+    .map((ch) => (/\s/.test(ch) ? '(\\s*)' : `${escapeRegExp(ch)}[${MARKS}]*`))
     .join('')
   return new RegExp(body, 'giud')
 }
@@ -114,6 +115,12 @@ function rosterPattern(entry: string): RegExp {
  *
  * ⚠ A match rejected for being glued restarts the search ONE character later,
  * not after the match, so a real hit overlapping it is still found.
+ *
+ * 🔴 A MATCH INSIDE AN EMAIL, URL OR HANDLE IS SKIPPED unless it is the whole
+ * thing (a roster entry that is an email). The fixed-shape rules below then
+ * take the whole address as one `[Dato omitido]`. Splicing `[Persona A]` into
+ * "juanMaria@gmail.com" broke the address, so the email rule no longer saw it
+ * and "juan" and the domain stayed in the corpus (delta audit 2026-10-21).
  */
 function replaceRoster(
   text: string,
@@ -124,13 +131,24 @@ function replaceRoster(
   let out = ''
   let copied = 0
   let count = 0
+  const shaped = [EMAIL, URL, ARROBA].flatMap((re) =>
+    [...text.matchAll(re)].map((s) => [s.index, s.index + s[0].length] as const),
+  )
   for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
     const start = m.index
     const end = start + m[0].length
+    // 🔴 Never accept an empty match: `exec` would return it again forever.
+    if (end === start) {
+      pattern.lastIndex = start + 1
+      continue
+    }
+    // Where an entry has a space: whitespace always starts a break; an empty
+    // gap ("MaríaLópez") must be one too.
     const gaps = (m.indices ?? []).slice(1)
     const ok =
       wholeWord(text, start, end) &&
-      gaps.every((g) => g === undefined || g[0] !== g[1] || breakAt(text, g[0]))
+      !shaped.some(([s, e]) => start < e && end > s && !(start <= s && end >= e)) &&
+      gaps.every((g) => g === undefined || breakAt(text, g[0]))
     if (!ok) {
       pattern.lastIndex = start + 1
       continue
@@ -319,12 +337,14 @@ export function deterministicPass(args: DeterministicArgs): {
   let rosterHits = 0
   const entries = [...(args.roster ?? [])]
     .filter((e) => e.trim().length >= 2)
+    // 🔴 An entry of only accent marks has nothing to match; it looped forever.
+    .filter((e) => /[\p{L}\p{N}]/u.test(e))
     .sort((a, b) => b.length - a.length)
 
   if (entries.length > 0) {
     // 🔴 THE TEXT IS DECOMPOSED FOR THE ROSTER PASS AND RECOMPOSED AFTER.
     //
-    // `rosterPattern` builds `o[\u0300-\u036f]*` per letter, which matches a
+    // `rosterPattern` builds `o\p{M}*` per letter, which matches a
     // DECOMPOSED `ó` (o + U+0301) and NOT the precomposed U+00F3 that almost
     // every real document actually contains. Without this round trip the roster
     // silently matched nothing on any accented name — the one input it exists
