@@ -145,10 +145,6 @@
    */
   const scope = $derived(data.scope);
 
-  // `combined` is a prop the map lane adds to `OverviewGraph`. Passed through a
-  // typed spread so this page compiles before and after that lane lands.
-  const overviewExtra = $derived({ combined: data.combined } as Record<string, unknown>);
-
   /**
    * The scope half of the URL, echoed back on every in-page navigation.
    *
@@ -204,7 +200,7 @@
          the URL, so the back button undoes it. -->
     <div class="stage">
       <OverviewGraph
-        {...overviewExtra}
+        combined={data.combined}
         entities={data.view.entities}
         edges={data.view.edges ?? []}
         {selectedId}
