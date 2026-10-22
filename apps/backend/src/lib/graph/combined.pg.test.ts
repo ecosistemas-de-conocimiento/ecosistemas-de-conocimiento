@@ -369,6 +369,73 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
     expect(labels).not.toContain('náhuatl')
     expect(view.entities.find((e) => e.label === 'Juana')?.ecosystems).toEqual([1])
   })
+
+  /**
+   * 🔴 Gate 5 inside ONE ecosistema — the persona-only-from-documento probe.
+   *   4: 401 documento (Rosa 41 persona, Agua 42, Morelos 43) · 402 testimonio (41, 42)
+   *      relations 42→43 afecta_a (401); 41→42 relacionado_con (402: a persona end
+   *      out of a testimonio — never counted)
+   *   5: 501 documento (agua 51)
+   * Seeded last and removed after, so the admin test above sees ecosistemas 1–3.
+   */
+  describe('🔴 a persona with a documento AND a testimonio mention in one ecosistema', () => {
+    const scope = { organizationIds: [4, 5], minSupport: 1, minEdgeSupport: 1 }
+    beforeAll(async () => {
+      await db.execute(sql`
+        INSERT INTO organizations (id, name, slug) VALUES (4, 'Eco cuatro', 'cuatro'), (5, 'Eco cinco', 'cinco');
+        INSERT INTO documents (id, organization_id, uploaded_by_id, name, publication_status, content_kind,
+                               anonymisation_status, extracted_text, redacted_text) VALUES
+          (401, 4, 1, 'cuatro-a.pdf', 'published', 'documento', 'n/a', 'Rosa y el agua.', NULL),
+          (402, 4, 1, 'Testimonio de Rosa.md', 'published', 'testimonio', 'ready',
+                      'Rosa habló del agua.', '[Persona A] habló del agua.'),
+          (501, 5, 1, 'cinco-a.pdf', 'published', 'documento', 'n/a', 'Agua.', NULL);
+        INSERT INTO graph_entities (id, organization_id, type, label, canonical_key) VALUES
+          (41, 4, 'persona', 'Rosa',    'rosa'),
+          (42, 4, 'tema',    'Agua',    'agua'),
+          (43, 4, 'lugar',   'Morelos', 'morelos'),
+          (51, 5, 'tema',    'agua',    'agua');
+        INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences, snippet) VALUES
+          (4, 401, 41, 1, 'Rosa'), (4, 401, 42, 1, NULL), (4, 401, 43, 1, NULL),
+          (4, 402, 41, 5, NULL), (4, 402, 42, 1, NULL),
+          (5, 501, 51, 1, NULL);
+        INSERT INTO graph_relations (organization_id, document_id, from_entity_id, to_entity_id, type) VALUES
+          (4, 401, 42, 43, 'afecta_a'), (4, 402, 41, 42, 'relacionado_con');
+      `)
+    })
+    afterAll(async () => {
+      await db.execute(sql`
+        DELETE FROM graph_relations WHERE organization_id IN (4, 5);
+        DELETE FROM graph_mentions WHERE organization_id IN (4, 5);
+        DELETE FROM graph_entities WHERE organization_id IN (4, 5);
+        DELETE FROM documents WHERE organization_id IN (4, 5);
+        DELETE FROM organizations WHERE id IN (4, 5);
+      `)
+    })
+
+    it('lists only her documento in the combined panel, never her testimonio', async () => {
+      const rosa = await readCombinedEntityDetail(payload, { ...scope, entityId: 41 })
+      expect(rosa?.entity).toMatchObject({ id: 41, support: 1, ecosystems: [4] })
+      expect(rosa?.documents.map((d) => d.id)).toEqual([401])
+      expect(rosa?.neighbours).toEqual([])
+    })
+
+    it('draws no relation edge from the testimonio, and agrees with the single views', async () => {
+      const view = await readCombinedView(payload, scope)
+      expect(view.edges.filter((e) => e.kind === 'relation').map((e) => [e.from, e.to])).toEqual([[42, 43]])
+      expect(view.edges.find((e) => e.from === 41 && e.to === 42)).toMatchObject({ kind: 'co-mention', support: 1 })
+      const singles = await Promise.all(
+        [4, 5].map((organizationId) => readEntityView(payload, { organizationId, minSupport: 1, minEdgeSupport: 1 })),
+      )
+      expect(normalise(view)).toEqual(mergeSingles(singles))
+    })
+
+    it('lists no persona neighbour and no testimonio evidence from the other end', async () => {
+      const agua = await readCombinedEntityDetail(payload, { ...scope, entityId: 51 })
+      expect(agua?.neighbours.map((n) => [n.entity.id, n.relationType, n.documents?.map((d) => d.id)])).toEqual([
+        [43, 'afecta_a', [401]],
+      ])
+    })
+  })
 })
 
 // ── The merge, written independently in the test ───────────────────────────

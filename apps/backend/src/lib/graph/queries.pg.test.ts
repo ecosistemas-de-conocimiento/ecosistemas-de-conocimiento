@@ -487,6 +487,81 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
     })
   })
 
+  /**
+   * Org 7, every threshold at 1 — the persona-only-from-documento probe.
+   *   701 documento:  71 Rosa (persona), 72 Agua, 73 Morelos
+   *   702 testimonio: 71 Rosa, 72 Agua
+   * Relations: 72→73 afecta_a (701), 71→73 ocurre_en (701) — from a documento, kept.
+   *            71→72 relacionado_con (702) — a persona end, from a testimonio: never counted.
+   */
+  describe('org 7 — 🔴 gate 5 on the document list and on relations', () => {
+    const at1 = { organizationId: 7, minSupport: 1, minEdgeSupport: 1 }
+    beforeAll(async () => {
+      await db.execute(sql`
+        INSERT INTO organizations (id, name, slug) VALUES (7, 'Org siete', 'siete');
+        INSERT INTO documents (id, organization_id, uploaded_by_id, name, publication_status, content_kind) VALUES
+          (701, 7, 1, 'informe.pdf',     'published', 'documento'),
+          (702, 7, 1, 'Testimonio de Rosa.md', 'published', 'testimonio');
+        INSERT INTO graph_entities (id, organization_id, type, label, canonical_key) VALUES
+          (71, 7, 'persona', 'Rosa',    'rosa'),
+          (72, 7, 'tema',    'Agua',    'agua'),
+          (73, 7, 'lugar',   'Morelos', 'morelos');
+        INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences) VALUES
+          (7, 701, 71, 1), (7, 701, 72, 1), (7, 701, 73, 1),
+          (7, 702, 71, 5), (7, 702, 72, 1);
+        INSERT INTO graph_relations (organization_id, document_id, from_entity_id, to_entity_id, type) VALUES
+          (7, 701, 72, 73, 'afecta_a'), (7, 701, 71, 73, 'ocurre_en'),
+          (7, 702, 71, 72, 'relacionado_con');
+      `)
+    })
+    afterAll(async () => {
+      await db.execute(sql`
+        DELETE FROM graph_relations WHERE organization_id = 7;
+        DELETE FROM graph_mentions WHERE organization_id = 7;
+        DELETE FROM graph_entities WHERE organization_id = 7;
+        DELETE FROM documents WHERE organization_id = 7;
+        DELETE FROM organizations WHERE id = 7;
+      `)
+    })
+
+    it('lists only the documentos behind a persona, never her testimonio', async () => {
+      const rosa = await readEntityDetail(payload, { ...at1, entityId: 71 })
+      expect(rosa?.entity.support).toBe(1)
+      expect(rosa?.documents.map((d) => d.id)).toEqual([701])
+      // Agua is no persona: its testimonio stays listed.
+      const agua = await readEntityDetail(payload, { ...at1, entityId: 72 })
+      expect(agua?.documents.map((d) => d.id).sort()).toEqual([701, 702])
+    })
+
+    it('draws no relation edge from a testimonio to a persona; the documento co-mention stays', async () => {
+      const view = await readEntityView(payload, at1)
+      expect(view.edges).toEqual([
+        { from: 71, to: 73, kind: 'relation', support: 1, coMentions: 1, relationType: 'ocurre_en', direction: 'out' },
+        { from: 72, to: 73, kind: 'relation', support: 1, coMentions: 1, relationType: 'afecta_a', direction: 'out' },
+        { from: 71, to: 72, kind: 'co-mention', support: 1, coMentions: 1 },
+      ])
+    })
+
+    it('the panel lists no such neighbour and no testimonio as its evidence, from either end', async () => {
+      const rosa = await readEntityDetail(payload, { ...at1, entityId: 71 })
+      expect(rosa?.neighbours.map((n) => [n.entity.id, n.relationType, n.documents?.map((d) => d.id)])).toEqual([
+        [73, 'ocurre_en', [701]],
+      ])
+      const agua = await readEntityDetail(payload, { ...at1, entityId: 72 })
+      expect(agua?.neighbours.map((n) => [n.entity.id, n.relationType, n.documents?.map((d) => d.id)])).toEqual([
+        [73, 'afecta_a', [701]],
+      ])
+    })
+
+    it('feeds chat retrieval no relation from a testimonio to a persona', async () => {
+      const result = rows(await db.execute(retrieveEdgesQuery(7, [71, 72], { entity: 1, edge: 1 })))
+      expect(result.map((r) => [r.from_id, r.to_id, r.relation_type])).toEqual(
+        expect.arrayContaining([[71, 73, 'ocurre_en'], [72, 73, 'afecta_a']]),
+      )
+      expect(result).toHaveLength(2)
+    })
+  })
+
   // ⚠ LAST: these mutate the seeded world.
   describe('org 5 — full-text search over published document text (#31)', () => {
     // Seeded and removed here, so the purge tests below see the world they expect.

@@ -62,6 +62,8 @@ describe('combined statements carry every gate, per row', () => {
       const { text } = render(statements[name]!)
       expect(text).toContain('d.organization_id = r.organization_id')
       expect(text).toContain('r.organization_id = ANY(')
+      // Gate 5 on both ends of the relation row.
+      expect(text).toContain("WHERE d.content_kind = 'documento' OR NOT EXISTS (SELECT 1 FROM graph_entities pe WHERE pe.id IN (r.from_entity_id, r.to_entity_id) AND pe.type = 'persona')")
       if (name === 'edges') {
         // Per-ecosistema pair count by window, and both ends from the relation's ecosistema.
         expect(text).toMatch(/rc\.org_pair_docs >= \$\d+/)

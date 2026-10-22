@@ -461,6 +461,34 @@ export function personaFromDocumentoOnly(alias: 'e' | 'ne' | 'ce'): GraphSql {
 }
 
 /**
+ * 🔴 GATE 5 ON A RELATION ROW: a row whose source is not a `documento` does not
+ * count when EITHER end is a `persona`. The same rule as
+ * {@link personaFromDocumentoOnly}, applied to both ends at once.
+ *
+ * The extractor already drops these rows; with the edge threshold at 1 one
+ * stray row would draw an edge and list a testimonio as its evidence.
+ *
+ * ⚠ A LATERAL `NOT EXISTS`, NOT TWO JOINS, measured. Joining both ends to
+ * `graph_entities` with the helper on each ON clause made Postgres guess ~60×
+ * too few relation rows (28 vs 1,648) and pick a nested loop between `rel_pairs` and
+ * `rel_types`: the single view on local `edc_backend` org 1 went from ~58 ms to
+ * ~110 ms (measured 2026-10-21, local docker Postgres, 3 runs each). This
+ * shape keeps it at ~58 ms; the combined reads were unchanged (~77 ms).
+ *
+ * Needs `r` (`graph_relations`) and `d` (the published-documents join) in
+ * scope; goes in the FROM list right after that join.
+ */
+export function relationEndsPersonaFromDocumentoOnly(): GraphSql {
+  return sql`
+    JOIN LATERAL (
+      SELECT 1 AS ok
+      WHERE d.content_kind = 'documento'
+         OR NOT EXISTS (SELECT 1 FROM graph_entities pe
+                        WHERE pe.id IN (r.from_entity_id, r.to_entity_id) AND pe.type = 'persona')
+    ) g5 ON TRUE`
+}
+
+/**
  * Entity support, gated, as a CTE body.
  *
  * `COUNT(DISTINCT m.document_id)` — DISTINCT DOCUMENTS, never occurrences. ADR
@@ -496,6 +524,7 @@ function neighbourPairsCte(organizationId: number, entityId: number, minEdge: nu
            COUNT(DISTINCT r.document_id)::int AS pair_support
     FROM graph_relations r
     ${joinPublishedDocuments('r', organizationId)}
+    ${relationEndsPersonaFromDocumentoOnly()}
     WHERE r.organization_id = ${organizationId}
       AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
     GROUP BY 1
@@ -722,11 +751,12 @@ export function thresholdsOf(value: number | GraphThresholds): Required<GraphThr
  * costs Σ (entities per document)² — measured in the lane report on the local
  * corpus (`EXPLAIN ANALYZE`).
  *
- * 🔴 THE CO-MENTION SIDE CARRIES EVERY GATE THE RELATION SIDE DOES: tenant and
- * published on the join to `documents`; noise labels and the entity threshold
- * through `listed` (which is `ent_support`); and — belt over the extractor's
- * `dropForbiddenPersonas` — no `persona` mention counted from anything but a
- * `documento`.
+ * 🔴 BOTH SIDES CARRY THE SAME GATES: tenant and published on the join to
+ * `documents`; noise labels and the entity threshold through `listed` (which
+ * is `ent_support`); and — belt over the extractor's `dropForbiddenPersonas` —
+ * no `persona` counted from anything but a `documento`: per mention on the
+ * co-mention side, per relation end ({@link relationEndsPersonaFromDocumentoOnly})
+ * on the relation side.
  *
  * ⚠ TOP-K PER NODE (`GRAPH_COMENTION_TOP_K`). Each node nominates its K
  * strongest co-mention partners (ties: the lower id); a pair is kept when
@@ -761,6 +791,7 @@ export function viewEdgesQuery(
              r.document_id AS document_id
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
+      ${relationEndsPersonaFromDocumentoOnly()}
       JOIN listed lf ON lf.entity_id = r.from_entity_id
       JOIN listed lt ON lt.entity_id = r.to_entity_id
       WHERE r.organization_id = ${organizationId}
@@ -924,6 +955,7 @@ export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
                   ELSE 'both' END AS direction
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
+      ${relationEndsPersonaFromDocumentoOnly()}
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
       GROUP BY 1, 2
@@ -998,6 +1030,8 @@ export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
  * `>= GRAPH_MIN_EDGE_DOCS` distinct published documents evidencing any relation
  * between the two (`pairs`, {@link neighbourPairsCte}), and the NEIGHBOUR needs
  * `>= GRAPH_MIN_ENTITY_DOCS` published documents mentioning it (`ent_support`).
+ * Gate 5 rides on every relation read ({@link relationEndsPersonaFromDocumentoOnly}),
+ * so a testimonio is never listed as evidence of an edge to a `persona`.
  *
  * ⚠ At the default of 1 (owner, 2026-10-21) a list CAN point at one document.
  * The owner accepted that because entity names are anonymised upstream; the
@@ -1031,6 +1065,7 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
              COUNT(DISTINCT r.document_id)::int AS support
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
+      ${relationEndsPersonaFromDocumentoOnly()}
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
       GROUP BY 1, 2
@@ -1044,6 +1079,7 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
              d.content_kind AS content_kind
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
+      ${relationEndsPersonaFromDocumentoOnly()}
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
       GROUP BY 1, 2, d.id, d.name, d.content_kind
@@ -1091,6 +1127,10 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
  * not a gate. With the join, a below-threshold entity's documents cannot be
  * listed by ANY caller — which is the property ADR §7.3.3 actually asks for.
  *
+ * 🔴 GATE 5 ON THE LIST: a `persona`'s testimonios and conversaciones are not
+ * listed — the same rule that keeps them out of her support count. Without it
+ * the panel showed a document the count said was not there.
+ *
  * ⚠ `d.name` IS SELECTED BUT NEVER RETURNED RAW. {@link mapDocumentRow} runs it
  * through `titleFor()`; see the file header.
  */
@@ -1107,8 +1147,9 @@ export function entityDocumentsQuery(args: EntityDetailArgs): GraphSql {
     FROM graph_mentions m
     ${joinPublishedDocuments('m', organizationId)}
     JOIN ent_support s ON s.entity_id = m.entity_id
+    JOIN graph_entities ce ON ce.id = m.entity_id AND ce.organization_id = ${organizationId}
     WHERE m.organization_id = ${organizationId}
-      AND m.entity_id = ${entityId}
+      AND m.entity_id = ${entityId}${personaFromDocumentoOnly('ce')}
     ORDER BY m.occurrences DESC, d.id DESC
     LIMIT ${limit}`
 }
@@ -1674,6 +1715,7 @@ export function retrieveEdgesQuery(
              COUNT(DISTINCT r.document_id)::int AS support
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
+      ${relationEndsPersonaFromDocumentoOnly()}
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ANY(${intArray(ids)}) OR r.to_entity_id = ANY(${intArray(ids)}))
       GROUP BY 1, 2, 3

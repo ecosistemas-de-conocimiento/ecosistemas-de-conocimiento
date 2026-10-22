@@ -144,6 +144,20 @@ describe('🔴 gate 5 — a persona is counted only from a documento, on every s
   }
 })
 
+describe('🔴 gate 5 — on every relation read, for both ends', () => {
+  const relationReads = ['entity neighbours', 'entity edge documents', 'retrieve edges', 'view edges']
+  for (const name of relationReads) {
+    it(`${name} drops a relation row with a persona end unless it comes from a documento`, () => {
+      const text = renderSql(graphStatements[name]!).text
+      const reads = text.match(/FROM graph_relations r\b/g)?.length ?? 0
+      expect(reads).toBeGreaterThan(0)
+      const gate =
+        /WHERE d\.content_kind = 'documento'\s+OR NOT EXISTS \(SELECT 1 FROM graph_entities pe\s+WHERE pe\.id IN \(r\.from_entity_id, r\.to_entity_id\) AND pe\.type = 'persona'\)/g
+      expect(text.match(gate)?.length).toBe(reads)
+    })
+  }
+})
+
 describe('🔴 the three gates, on every statement that reads graph rows', () => {
   describe('gate 1 — the ecosistema is named explicitly, never inferred', () => {
     for (const [name, query] of Object.entries(graphStatements)) {

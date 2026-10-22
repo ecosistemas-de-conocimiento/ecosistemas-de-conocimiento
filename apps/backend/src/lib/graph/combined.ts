@@ -24,7 +24,8 @@
  *      thresholding after would let three below-threshold ecosistemas add up
  *      to a visible node, which is exactly what the threshold refuses.
  *   4. 🔴 Noise/placeholder/language labels (`notNoise`), and
- *   5. 🔴 `persona` only from a `documento` — both per row, as in `queries.ts`.
+ *   5. 🔴 `persona` only from a `documento` — both per row, as in `queries.ts`:
+ *      on every mention read, and on every relation read for either end.
  *   6. 🔴 Full-text search (#31) matches an entity only through its OWN
  *      ecosistema's published, corpus-cleared text (`buildSearchFilter`).
  *
@@ -61,6 +62,7 @@ import {
   MAX_VIEW_ENTITIES,
   notNoise,
   personaFromDocumentoOnly,
+  relationEndsPersonaFromDocumentoOnly,
   rowsOf,
   thresholdsOf,
   toCount,
@@ -124,10 +126,12 @@ export function normaliseOrgIds(ids: readonly unknown[]): number[] {
 }
 
 /**
- * 🔴 GATES 1, 2 AND 5 FOR ONE MENTION OR RELATION ROW, PER ROW.
+ * 🔴 GATES 1 AND 2 FOR ONE MENTION OR RELATION ROW, PER ROW.
  *
  * `d` is joined to the row's OWN ecosistema, and that ecosistema must be
- * included. The single-ecosistema twin is `joinPublishedDocuments`.
+ * included. The single-ecosistema twin is `joinPublishedDocuments`. Gate 5
+ * needs the entity, so callers add it: `personaFromDocumentoOnly` on a mention
+ * read, `relationEndsPersonaFromDocumentoOnly` on a relation read.
  */
 function joinPublishedDocumentsPerRow(alias: 'm' | 'r', ids: GraphSql): GraphSql {
   const table = alias === 'm' ? sql`m` : sql`r`
@@ -313,6 +317,7 @@ export function combinedViewEdgesQuery(
              r.type AS relation_type, r.document_id AS document_id
       FROM graph_relations r
       ${joinPublishedDocumentsPerRow('r', ids)}
+      ${relationEndsPersonaFromDocumentoOnly()}
       WHERE r.organization_id = ANY(${ids})
     ),
     rel AS MATERIALIZED (
@@ -599,6 +604,7 @@ function focalRelationCtes(ids: GraphSql, minEdge: number): GraphSql {
              (r.from_entity_id = f.entity_id) AS is_out
       FROM graph_relations r
       ${joinPublishedDocumentsPerRow('r', ids)}
+      ${relationEndsPersonaFromDocumentoOnly()}
       JOIN focal f
         ON f.org_id = r.organization_id
        AND (r.from_entity_id = f.entity_id OR r.to_entity_id = f.entity_id)
@@ -699,8 +705,8 @@ export function combinedEdgeDocumentsQuery(args: CombinedDetailArgs): GraphSql {
 
 /**
  * The focal node's published documents, from included ecosistemas only.
- * 🔴 The snippet `CASE` is the same as `entityDocumentsQuery`'s; the persona
- * gate is applied to the list too (stricter than the single view).
+ * 🔴 The snippet `CASE` and the persona gate on the list are the same as
+ * `entityDocumentsQuery`'s.
  */
 export function combinedEntityDocumentsQuery(args: CombinedDetailArgs): GraphSql {
   const ids = intArray(normaliseOrgIds(args.organizationIds))
