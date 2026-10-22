@@ -399,6 +399,15 @@
     border-radius: 0 var(--edc-radius-2) var(--edc-radius-2) 0;
     border-left: 0;
   }
+  /* A finger needs 44 px; a mouse keeps the smaller desktop buttons. */
+  @media (pointer: coarse), (max-width: 40rem) {
+    .modes button,
+    .controls button {
+      min-width: 2.75rem;
+      height: auto;
+      min-height: 2.75rem;
+    }
+  }
   .modes button[aria-pressed='true'] {
     background: var(--edc-color-ink);
     color: var(--edc-color-surface);

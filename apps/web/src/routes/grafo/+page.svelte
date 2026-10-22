@@ -283,6 +283,10 @@
     margin: 0 auto;
     padding: var(--edc-space-6) var(--edc-space-5) var(--edc-space-8);
     display: grid;
+    /* One column that may shrink below its content's width: an implicit
+       `auto` column grows to a long ecosistema name, and `main` then
+       scrolls sideways on a phone. Same for `.stage` and `.board`. */
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--edc-space-4);
     align-content: start;
   }
@@ -308,6 +312,7 @@
   .stage,
   .board {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--edc-space-5);
     align-items: start;
   }
