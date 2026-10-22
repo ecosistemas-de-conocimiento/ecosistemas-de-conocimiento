@@ -64,3 +64,11 @@ describe('normaliseName', () => {
     expect(normaliseName('ÍÑIGO')).toBe('inigo')
   })
 })
+
+describe('titled aliases need a two-word name (audit 2026-10-21, X20)', () => {
+  it('a bare surname is not merged into a full name: two people can share it', () => {
+    const a = createPseudonymAllocator()
+    expect(a.labelFor('Ana López')).toBe('[Persona A]')
+    expect(a.labelFor('López')).toBe('[Persona B]')
+  })
+})

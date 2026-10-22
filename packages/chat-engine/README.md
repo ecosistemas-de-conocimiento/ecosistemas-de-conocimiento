@@ -23,6 +23,9 @@ One package, **two build outputs**:
   injected link to the original asset, plus a "Fuentes consultadas" list. It
   shows no relevance number (≥0.6.0). Feed it `CitationLike[]` — use the core
   `provenanceToCitations(provenance)` helper to map engine `Provenance`.
+  Before any provenance leaves your server, pass it through
+  `toBrowserProvenance(provenance)` (≥0.8.0): an allowlist of the fields the
+  card reads, so raw ingest metadata stays server-side.
 
 ## Workspace package — not published
 

@@ -118,3 +118,105 @@ export function provenanceToCitations(
     };
   });
 }
+
+// ── the browser allowlist ────────────────────────────────────────────────────
+
+/**
+ * Identifier fields of a chunk that may reach the browser. With `score`,
+ * `text` and `ordinal` (typed separately below) this is exactly what
+ * `provenanceToCitations` reads, plus the `[N]` a cited-only provenance
+ * carries. Other scores (`denseScore`, `lexicalScore`, `rerankScore`,
+ * `relevance`) are server-side ranking data and stay there.
+ */
+const BROWSER_CHUNK_IDS = ['chunkId', 'documentId', 'corpus'] as const;
+
+export interface BrowserProvenanceOptions {
+  /**
+   * Metadata keys probed for the card's title. Defaults to the keys
+   * `provenanceToCitations` probes. Pass the same override you pass there.
+   */
+  titleKeys?: readonly string[];
+  /**
+   * Extra metadata keys your own client code reads (for example a document id
+   * your link resolver uses). Primitive values only.
+   */
+  metadataKeys?: readonly string[];
+  /**
+   * Extra top-level provenance keys to keep beside `chunks` (for example a
+   * diagnostic flag your client reads). Primitive values only.
+   */
+  topLevelKeys?: readonly string[];
+}
+
+function isPrimitive(v: unknown): v is string | number | boolean {
+  return typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v));
+}
+
+function pickPrimitives(src: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of keys) {
+    const v = src[k];
+    if (isPrimitive(v)) out[k] = v;
+  }
+  return out;
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+type ProvenanceChunk = Provenance['chunks'][number];
+
+function browserChunk(raw: unknown, metadataKeys: readonly string[]): ProvenanceChunk | null {
+  const src = asRecord(raw);
+  if (!src) return null;
+  const out: Record<string, unknown> = {};
+  for (const k of BROWSER_CHUNK_IDS) {
+    const v = src[k];
+    if (typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v))) out[k] = v;
+  }
+  if (typeof src.score === 'number' && Number.isFinite(src.score)) out.score = src.score;
+  if (typeof src.text === 'string') out.text = src.text;
+  if (typeof src.ordinal === 'number' && Number.isInteger(src.ordinal) && src.ordinal > 0) {
+    out.ordinal = src.ordinal;
+  }
+  const meta = asRecord(src.metadata);
+  out.metadata = meta ? pickPrimitives(meta, metadataKeys) : null;
+  return out as unknown as ProvenanceChunk;
+}
+
+/**
+ * The browser-safe copy of a provenance: an ALLOWLIST, never a denylist.
+ *
+ * Retrieved chunks carry free-form ai-service metadata, whatever the ingest
+ * pipeline stamped (`sessionId`, `authoredBy`, internal ids). Only what the
+ * citation card renders leaves the server:
+ *   · per chunk: `chunkId`, `documentId`, `score`, `corpus`, `text`, `ordinal`;
+ *   · in `metadata`: the title keys (`titleKeys`) plus `metadataKeys`;
+ *   · at the top level: `chunks` plus `topLevelKeys`.
+ * Listed keys must hold primitives (string, finite number, boolean); a nested
+ * object is dropped whole. A key added to ingest metadata tomorrow stays on
+ * the server until someone lists it.
+ *
+ * Accepts anything, because persisted rows predate it: a `{ chunks }` object
+ * or a bare chunk array (an older shape). Unreadable input → `null`, which
+ * the card renders as "no sources"; unreadable chunks are dropped. Never
+ * mutates its input.
+ *
+ * Run it on EVERY server→browser path that carries provenance: the sync JSON
+ * reply, the stream's terminal frame, persisted turns read back, and any echo
+ * of a stored message (a create reply, a populated relation).
+ */
+export function toBrowserProvenance(
+  provenance: unknown,
+  options: BrowserProvenanceOptions = {},
+): Provenance | null {
+  const top = Array.isArray(provenance) ? { chunks: provenance } : asRecord(provenance);
+  if (!top || !Array.isArray(top.chunks)) return null;
+  const metadataKeys = [...(options.titleKeys ?? DEFAULT_TITLE_KEYS), ...(options.metadataKeys ?? [])];
+  const chunks = top.chunks
+    .map((c) => browserChunk(c, metadataKeys))
+    .filter((c): c is ProvenanceChunk => c !== null);
+  const extra = pickPrimitives(top, (options.topLevelKeys ?? []).filter((k) => k !== 'chunks'));
+  return { ...extra, chunks };
+}

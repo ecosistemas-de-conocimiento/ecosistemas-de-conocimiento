@@ -8,8 +8,9 @@
  *      identical HMAC scheme on purpose, so these events go through the existing
  *      verification code untouched. The first describe block proves that — if it
  *      ever fails, someone added a second verifier and the two will drift.
- *   2. **The callback only persists.** `transcribe.completed` writes the text
- *      and `transcribed`, and stops. `lib/ingestRecovery.ts` runs the gate and
+ *   2. **The callback only persists, then hands off.** `transcribe.completed`
+ *      writes the text and `transcribed`, then starts `driveTranscribedSoon`
+ *      detached (mocked here) and answers. `lib/ingestRecovery.ts` runs the gate and
  *      `enqueueIngestForDoc`; its tests assert the PRIVATE draft corpus name.
  *   3. **A stale job cannot clobber a live one.** A retry mints a new
  *      transcribeId while the old job may still be alive; both callbacks carry
@@ -51,6 +52,18 @@ const ingestEnqueue = vi.fn(async (_req: { corpus: string }) => ({
 }))
 vi.mock('@/lib/aiClient', () => ({
   getAppAIClient: () => ({ ingest: { enqueue: ingestEnqueue } }),
+}))
+
+// The detached gate + ingest. Mocked so a run never outlives its test; its own
+// tests are in `lib/driveTranscribedSoon.test.ts`.
+const driveTranscribedSoon = vi.fn()
+/** The row status the handler had written when it handed off. */
+let statusAtHandOff: unknown
+vi.mock('@/lib/driveTranscribedSoon', () => ({
+  driveTranscribedSoon: (...a: unknown[]) => {
+    statusAtHandOff = (updated.at(-1)?.data as Record<string, unknown> | undefined)?.ingestStatus
+    return driveTranscribedSoon(...a)
+  },
 }))
 
 const fetchTranscriptText = vi.fn(async () => 'texto completo desde el GET')
@@ -141,6 +154,7 @@ beforeEach(() => {
   created.length = 0
   updated.length = 0
   ingestEnqueue.mockClear()
+  driveTranscribedSoon.mockClear()
   fetchTranscriptText.mockClear()
   findByIDImpl = async () => transcribingRow()
   vi.stubEnv('CALLBACK_SECRET', SECRET)
@@ -255,10 +269,10 @@ describe('transcribe.completed — the join into the EXISTING ingest path', () =
     })
   })
 
-  it('🔴 stops at `transcribed`: the gate and the enqueue are left to the recovery sweep', async () => {
+  it('🔴 stops at `transcribed` inline, and starts the gate + ingest detached right after', async () => {
     // audio-service gives up on a callback after 20 s, and the gate is two model
-    // calls. `lib/ingestRecovery.ts` drives the row from here; its tests cover
-    // the corpus name and the tenant-from-the-row rule that used to live here.
+    // calls, so the request never waits on them. `lib/ingestRecovery.ts` drives
+    // the row; its tests cover the corpus name and the tenant-from-the-row rule.
     const body = completed()
     const res = await post(body, headersFor(body))
     expect(res.status).toBe(200)
@@ -268,6 +282,26 @@ describe('transcribe.completed — the join into the EXISTING ingest path', () =
     expect(statuses).toEqual(['transcribed'])
     expect(ingestEnqueue).not.toHaveBeenCalled()
     expect(written().ingestId).toBeUndefined()
+    // 🔴 Handed off once, for this row, and only AFTER the `transcribed` write.
+    expect(driveTranscribedSoon).toHaveBeenCalledTimes(1)
+    expect(driveTranscribedSoon.mock.calls[0]![1]).toBe(42)
+    expect(statusAtHandOff).toBe('transcribed')
+  })
+
+  it('does not hand off when the transcript write throws (500, audio-service retries)', async () => {
+    fakePayload.update = async () => {
+      throw new Error('db down')
+    }
+    try {
+      const body = completed()
+      expect((await post(body, headersFor(body))).status).toBe(500)
+      expect(driveTranscribedSoon).not.toHaveBeenCalled()
+    } finally {
+      fakePayload.update = async (args: Record<string, unknown>) => {
+        updated.push(args)
+        return {}
+      }
+    }
   })
 
   it('answers 500 when the transcript cannot be written, so audio-service retries', async () => {
@@ -322,6 +356,7 @@ describe('transcribe.completed — a transcript too big for the webhook', () => 
     expect(String(written().ingestError)).toContain('empty_transcript')
     // Still records what we learned about the audio — useful in a bug report.
     expect(written().audioMeta).toBeTruthy()
+    expect(driveTranscribedSoon).not.toHaveBeenCalled()
   })
 })
 
@@ -376,6 +411,7 @@ describe('a superseded job cannot clobber a live one', () => {
     await post(body, headersFor(body))
     expect(updated).toHaveLength(0)
     expect(ingestEnqueue).not.toHaveBeenCalled()
+    expect(driveTranscribedSoon).not.toHaveBeenCalled()
   })
 })
 

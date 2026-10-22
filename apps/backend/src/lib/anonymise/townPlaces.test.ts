@@ -150,14 +150,16 @@ describe('isTownLevelPlace — the two rules', () => {
     expect(isTownLevelPlace({ text: 'Morelos 45', type: 'lugar' }, 'Vivo en Morelos 45.')).toBe(false)
     expect(isTownLevelPlace({ text: 'Col. Centro', type: 'lugar' }, 'Vivo en Col. Centro.')).toBe(false)
   })
-  it('🔴 never ignores "calle Morelos 45" or a C.P. (stage 2 also removes both in code)', async () => {
+  it('🔴 never ignores "calle Morelos 45" or a C.P. (stage 2 removes the C.P. in code)', async () => {
     expect(isTownLevelPlace({ text: 'calle Morelos 45', type: 'lugar' }, 'Vivo en calle Morelos 45.')).toBe(false)
     expect(isTownLevelPlace({ text: 'C.P. 62790', type: 'lugar' }, 'Vivo en C.P. 62790.')).toBe(false)
-    // And the gate removes it before the model sees it, town kept.
-    const result = await gate('Vivo en calle Morelos 45, en Xoxocotla.', [])
-    expect(result.status).toBe('ready')
-    if (result.status !== 'ready') return
-    expect(result.redactedText).not.toContain('Morelos 45')
+    // The street is the model's (owner, Q3): found only at verify, it holds.
+    const result = await gate('Vivo en calle Morelos 45, C.P. 62790, en Xoxocotla.', [
+      { text: 'calle Morelos 45', type: 'lugar' },
+    ])
+    expect(result.status).toBe('hold')
+    if (result.status !== 'hold') return
+    expect(result.redactedText).not.toContain('62790')
     expect(result.redactedText).toContain('Xoxocotla')
   })
   it('⚠ documents residual risk 2: an uncommon name after "vivo en" still passes', () => {
