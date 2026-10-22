@@ -1577,6 +1577,9 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
   // `ready` row back to `embedding`. A retry resets the row to `pending`, so
   // this never blocks a deliberate re-run. `Documents.callbackRace.test.ts`.
   if (fresh.ingestId || fresh.ingestStatus === 'embedding' || fresh.ingestStatus === 'ready') return
+  // ⚠ An audio transcript is driven by `driveTranscribedDocument` only, behind
+  // its claim. A rename here would otherwise drive it a second time.
+  if (fresh.kind === 'audio' && (fresh.ingestStatus === 'transcribed' || fresh.ingestStatus === 'extracting')) return
 
   await enqueueIngestForDoc({
     payload,

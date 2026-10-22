@@ -15,8 +15,10 @@
  * ⚠ ONE AT A TIME PER PROCESS. A burst of callbacks queues here instead of
  * gating N documents in parallel. Every detector call still goes through the
  * process-wide `ANONYMISE_DETECT_MIN_GAP_MS` pacing in
- * `lib/anonymise/detector.ts`, and the per-document concurrency cap stays the
- * real bound because only one document is gated from this path at a time.
+ * `lib/anonymise/detector.ts`. ⚠ The `ingestRecovery` sweep gates its own
+ * document alongside this queue, so with that gap unset, detector calls in
+ * flight can reach 2 × `ANONYMISE_DETECT_CONCURRENCY` (one document here, one
+ * in the sweep). The gap is the only process-wide bound.
  *
  * ⚠ A DROPPED OR FAILED RUN IS NOT LOST. The row stays (or is handed back to)
  * `transcribed`, and the sweep drives it on its next pass. A run racing the
