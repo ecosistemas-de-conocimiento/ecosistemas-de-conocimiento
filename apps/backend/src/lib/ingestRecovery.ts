@@ -15,8 +15,11 @@
  *      gate (two model calls) and the enqueue inside the webhook request;
  *      audio-service gives up after 20 s (`services/audio-service/app/config.py`)
  *      and the receiver answered 200 even when the handler threw. Now the
- *      callback only persists the text and writes `transcribed`, and this sweep
- *      runs `enqueueIngestForDoc` — the same function every other path uses.
+ *      callback only persists the text and writes `transcribed`, then starts
+ *      `driveTranscribedDocument` detached (`lib/driveTranscribedSoon.ts`); this
+ *      sweep is the safety net for a run that was dropped. Both run
+ *      `enqueueIngestForDoc` — the same function every other path uses — behind
+ *      one atomic claim, so only one of them ever drives a row.
  *      Re-driving is safe HERE (unlike `embedding`) because `enqueueIngestForDoc`
  *      writes `embedding` before it calls ai-service: a row still at
  *      `transcribed` has provably not been sent.
@@ -95,7 +98,9 @@ export const DEFAULT_INTERVAL_MIN = 1
 
 /**
  * A `transcribed` row is driven once it is this old. The callback is the only
- * writer of `transcribed`, so this is a margin, not a wait for anything.
+ * writer of `transcribed` and it starts the drive itself, so this is a head
+ * start for that run, not a wait for a commit. Safety rests on the claim in
+ * {@link driveTranscribedDocument}, not on this age.
  */
 export const DEFAULT_TRANSCRIBED_DRIVE_MIN = 1
 
@@ -147,12 +152,20 @@ const cutoffIso = (now: Date, ms: number): string => new Date(now.getTime() - ms
  * `approved` never sit at `transcribed`.
  */
 export function transcribedWhere(cutoff: string): Where[] {
+  return [...transcribedClaimWhere(), { updatedAt: { less_than: cutoff } }]
+}
+
+/**
+ * {@link transcribedWhere} without the age clause: the guard on the CLAIM in
+ * {@link driveTranscribedDocument}. The callback's immediate drive uses it
+ * as-is; the sweep adds its cutoff.
+ */
+export function transcribedClaimWhere(): Where[] {
   return [
     { ingestStatus: { equals: 'transcribed' } },
     { ingestId: { exists: false } },
     { anonymisationStatus: { in: ['n/a', 'ready'] } },
     { publicationStatus: { equals: 'draft' } },
-    { updatedAt: { less_than: cutoff } },
   ]
 }
 
@@ -389,7 +402,7 @@ export async function sweepUnavailableGateRuns(
 }
 
 /** The slice of a `transcribed` row the drive reads. */
-interface TranscribedRow {
+export interface TranscribedRow {
   id?: number | string
   organization?: unknown
   uploadedBy?: unknown
@@ -441,79 +454,139 @@ export async function driveTranscribedDocuments(
   let driven = 0
   let failed = 0
   for (const doc of docs) {
-    if (doc?.id == null) continue
-    const docId = doc.id
-    const organizationId = relationId(doc.organization)
-    const uploadedById = relationId(doc.uploadedBy)
-    const text = str(doc.extractedText) ?? ''
-
-    // Refuse rather than guess: a guessed corpus is a cross-tenant write.
-    const refusal =
-      organizationId == null || uploadedById == null
-        ? `${NO_TENANT_CODE}: the document has no ecosistema or uploader, so it has no corpus`
-        : !text.trim()
-          ? `${EMPTY_TRANSCRIPT_CODE}: no speech was detected in the recording`
-          : null
-    if (refusal) {
-      try {
-        const res = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
-          id: docId,
-          where,
-          data: { ingestStatus: 'failed', ingestError: refusal },
-        })
-        if (res > 0) failed += 1
-      } catch (err) {
-        opts.log?.warn(
-          { documentId: String(docId), err: err instanceof Error ? err.message : String(err) },
-          '[ingest-recovery] could not fail out a transcript with no corpus',
-        )
-      }
-      continue
-    }
-
-    const { enqueueIngestForDoc, scheduleGraphExtractionForDoc } = await import(
-      '@/collections/Documents'
-    )
-    try {
-      await enqueueIngestForDoc({
-        payload,
-        docId,
-        organizationId: organizationId as number | string,
-        uploadedById: uploadedById as number | string,
-        fresh: {
-          name: str(doc.name),
-          kind: str(doc.kind) ?? 'audio',
-          // 🔴 CARRIED, NOT DEFAULTED: the gate decides on this column, and a
-          // Voz is normally a recording.
-          contentKind: str(doc.contentKind) as never,
-          lengua: str(doc.lengua),
-          anonymisationStatus: str(doc.anonymisationStatus),
-          redactedText: str(doc.redactedText),
-        },
-        extractedText: text,
-      })
-    } catch (err) {
-      // The row stays where `enqueueIngestForDoc` left it; the next pass, or
-      // the lost-gate / embedding sweeps, pick it up from there.
-      opts.log?.warn(
-        { documentId: String(docId), err: err instanceof Error ? err.message : String(err) },
-        '[ingest-recovery] driving a transcript into the ingest threw',
-      )
-      continue
-    }
-    driven += 1
-
-    // The audio path's corpus-graph trigger. Never throws, and passes NO text:
-    // the graph re-reads the row and takes what the corpus got.
-    await scheduleGraphExtractionForDoc({
-      payload: payload as never,
-      docId,
-      organizationId: organizationId as number | string,
-      fresh: { name: str(doc.name), contentKind: str(doc.contentKind) as never },
-    })
+    const outcome = await driveTranscribedDocument(payload, doc, { where, log: opts.log })
+    if (outcome === 'driven') driven += 1
+    if (outcome === 'failed') failed += 1
   }
 
   return { examined: docs.length, driven, failed }
+}
+
+/** What {@link driveTranscribedDocument} did with one row. */
+export type DriveOutcome = 'driven' | 'failed' | 'skipped'
+
+/**
+ * Drive ONE `transcribed` row: the sweep's per-row step, also called straight
+ * from the `transcribe.completed` callback (`lib/driveTranscribedSoon.ts`).
+ *
+ * 🔴 CLAIM, OR DO NOTHING. Before the gate, one conditional UPDATE moves the
+ * row `transcribed` → `extracting` under `where` (default
+ * {@link transcribedClaimWhere}) and counts the rows it changed. Two runners
+ * holding the same row — the callback's and the sweep's — race on that one
+ * statement; Postgres row-locks the UPDATE, the loser re-checks the WHERE
+ * against the committed `extracting` and changes 0 rows, and returns
+ * `skipped`. Without it the gate's own claim did not cover this: it accepts
+ * `ready`, so a second runner arriving after the first gate finished would gate
+ * (and enqueue) the transcript a second time.
+ *
+ * `extracting` is the state the pdf/docx path runs the gate in, so a run lost
+ * to a restart is failed out, retryable, by {@link sweepStalledExtracting}.
+ * A run that THROWS hands the row back to `transcribed` (guarded the same way),
+ * so the next sweep re-drives it.
+ */
+export async function driveTranscribedDocument(
+  payload: Pick<Payload, 'update'>,
+  doc: TranscribedRow,
+  opts: { where?: Where[]; log?: Log } = {},
+): Promise<DriveOutcome> {
+  if (doc?.id == null) return 'skipped'
+  const where = opts.where ?? transcribedClaimWhere()
+  const db = payload as unknown as DocumentColumnsPayload
+  const docId = doc.id
+  const organizationId = relationId(doc.organization)
+  const uploadedById = relationId(doc.uploadedBy)
+  const text = str(doc.extractedText) ?? ''
+
+  // Refuse rather than guess: a guessed corpus is a cross-tenant write.
+  const refusal =
+    organizationId == null || uploadedById == null
+      ? `${NO_TENANT_CODE}: the document has no ecosistema or uploader, so it has no corpus`
+      : !text.trim()
+        ? `${EMPTY_TRANSCRIPT_CODE}: no speech was detected in the recording`
+        : null
+  if (refusal) {
+    try {
+      // Guarded by the same `where`: a refusal is itself a claim.
+      const res = await updateDocumentColumns(db, {
+        id: docId,
+        where,
+        data: { ingestStatus: 'failed', ingestError: refusal },
+      })
+      if (res > 0) return 'failed'
+    } catch (err) {
+      opts.log?.warn(
+        { documentId: String(docId), err: err instanceof Error ? err.message : String(err) },
+        '[ingest-recovery] could not fail out a transcript with no corpus',
+      )
+    }
+    return 'skipped'
+  }
+
+  // 🔴 THE CLAIM. See the doc comment. A throw here leaves the row untouched.
+  const claimed = await updateDocumentColumns(db, {
+    id: docId,
+    where,
+    data: { ingestStatus: 'extracting' },
+  })
+  if (claimed === 0) return 'skipped'
+
+  const { enqueueIngestForDoc, scheduleGraphExtractionForDoc } = await import(
+    '@/collections/Documents'
+  )
+  try {
+    await enqueueIngestForDoc({
+      payload,
+      docId,
+      organizationId: organizationId as number | string,
+      uploadedById: uploadedById as number | string,
+      fresh: {
+        name: str(doc.name),
+        kind: str(doc.kind) ?? 'audio',
+        // 🔴 CARRIED, NOT DEFAULTED: the gate decides on this column, and a
+        // Voz is normally a recording.
+        contentKind: str(doc.contentKind) as never,
+        lengua: str(doc.lengua),
+        anonymisationStatus: str(doc.anonymisationStatus),
+        redactedText: str(doc.redactedText),
+      },
+      extractedText: text,
+    })
+  } catch (err) {
+    opts.log?.warn(
+      { documentId: String(docId), err: err instanceof Error ? err.message : String(err) },
+      '[ingest-recovery] driving a transcript into the ingest threw',
+    )
+    // Hand the claim back so the next sweep re-drives the row. Only while it is
+    // still OUR `extracting` with no gate run or verdict on it: past the
+    // `embedding` write the row may have reached ai-service, and a `pending`
+    // gate belongs to `sweepStalledExtracting`. Otherwise it stays where
+    // `enqueueIngestForDoc` left it, for the stalled / embedding sweeps.
+    try {
+      await updateDocumentColumns(db, {
+        id: docId,
+        where: [
+          { ingestStatus: { equals: 'extracting' } },
+          { ingestId: { exists: false } },
+          { anonymisationStatus: { in: ['n/a', 'ready'] } },
+          { publicationStatus: { equals: 'draft' } },
+        ],
+        data: { ingestStatus: 'transcribed' },
+      })
+    } catch {
+      // `sweepStalledExtracting` fails it out, retryable.
+    }
+    return 'skipped'
+  }
+
+  // The audio path's corpus-graph trigger. Never throws, and passes NO text:
+  // the graph re-reads the row and takes what the corpus got.
+  await scheduleGraphExtractionForDoc({
+    payload: payload as never,
+    docId,
+    organizationId: organizationId as number | string,
+    fresh: { name: str(doc.name), contentKind: str(doc.contentKind) as never },
+  })
+  return 'driven'
 }
 
 /** The slice of a `messages` row the message sweep reads. */

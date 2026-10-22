@@ -40,7 +40,9 @@
  * after 20 s (`services/audio-service/app/config.py`). `transcribe.completed`
  * used to run the anonymisation gate (two model calls) and the ingest enqueue
  * inside this request; now it only persists the transcript and writes
- * `transcribed`, and `lib/ingestRecovery.ts` runs the gate and the enqueue.
+ * `transcribed`, then starts the gate and the enqueue DETACHED
+ * (`lib/driveTranscribedSoon.ts`, a `setImmediate` like the Documents ingest
+ * hook). `lib/ingestRecovery.ts` re-drives any row that run dropped.
  *
  * Dispatch model: we run the Documents update INLINE before responding.
  * A <200ms turnaround via `queueMicrotask` was tried and abandoned: on
@@ -769,6 +771,13 @@ async function dispatchTranscribeCompleted(
     overrideAccess: true,
     context: { __skipDocsExtract: true },
   })
+
+  // 🔴 START THE GATE + INGEST NOW, detached. The write above has committed
+  // (Payload's own transaction), so the run sees `transcribed`. Not awaited:
+  // this webhook must stay short. The sweep remains the safety net, and the
+  // claim in `driveTranscribedDocument` makes a race with it a no-op.
+  const { driveTranscribedSoon } = await import('@/lib/driveTranscribedSoon')
+  driveTranscribedSoon(payload, docId)
 }
 
 /**
