@@ -76,7 +76,7 @@ async function signIn(page: Page): Promise<void> {
 function seedGraph(ns: string, userId: number): number {
   const orgId = Number(
     insertReturning(`insert into organizations (name, slug) values (:'name', :'slug') returning id`, {
-      // Short on purpose: a long name widens the page (see the `fixme` below).
+      // Short here; the last test renames it to a long one.
       name: `Táctil ${ns.slice(-6)}`,
       slug: ns,
     }),
@@ -270,6 +270,7 @@ test.describe('grafo — el mapa en un teléfono, con el dedo', () => {
       const b = (await page.getByRole('button', { name, exact: true }).boundingBox())!;
       expect(b.x).toBeGreaterThanOrEqual(stage.x);
       expect(b.x + b.width).toBeLessThanOrEqual(Math.min(stage.x + stage.width, 390));
+      expect(Math.min(b.width, b.height), `${name} is smaller than a 44 px touch target`).toBeGreaterThanOrEqual(44);
     }
     await page.screenshot({ path: `${SHOTS}/2d-01-initial.png` });
 
@@ -365,13 +366,10 @@ test.describe('grafo — el mapa en un teléfono, con el dedo', () => {
     await page.screenshot({ path: `${SHOTS}/3d-03-back-to-2d.png` });
   });
 
-  // ⚠ KNOWN, NOT FIXED HERE (routes/grafo/+page.svelte, another lane's file):
-  // `.page` and `.stage` are grids with an implicit `auto` column, so a long
-  // ecosistema name's min-content widens them past 390 px; `main` then scrolls
-  // sideways and the map's "Ver todo" is cut off. Fix: give `.page`, `.stage`
-  // and `.board` `grid-template-columns: minmax(0, 1fr)` below 60rem.
-  // Turn this on when that lands.
-  test.fixme('a long ecosistema name does not widen the page', async ({ page }) => {
+  // `.page`, `.stage` and `.board` (routes/grafo/+page.svelte) are grids; an
+  // implicit `auto` column would grow to a long name's min-content, so they
+  // pin `grid-template-columns: minmax(0, 1fr)`.
+  test('a long ecosistema name does not widen the page', async ({ page }) => {
     // Runs last (serial): renames the seeded ecosistema.
     execute(`update organizations set name = :'name' where id = :'id'`, {
       name: `E2E grafo táctil con un nombre largo ${Date.now().toString(36)}`,
