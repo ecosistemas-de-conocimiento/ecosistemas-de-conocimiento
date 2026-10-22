@@ -1,7 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// The A–D blocks below were written for variant A's source rules, so this file
+// pins the env default to A. The variant E block passes 'E' explicitly, and
+// the "unset is E" test clears the value.
+const testEnv = vi.hoisted(() => ({
+  CHAT_CITE_VARIANT: 'A' as string | undefined,
+  CHAT_FALLBACK_MIN_RERANK: undefined as string | undefined,
+}));
+vi.mock('$env/dynamic/private', () => ({ env: testEnv }));
 import { provenanceToCitations } from '@edc/chat-engine/core';
 import {
+  DEFAULT_FALLBACK_MIN_RERANK,
   MAX_SOURCES,
+  fallbackMinRerank,
   NO_ANSWER_VARIANTS,
   citedBrowserProvenance,
   REFUSAL_CUES,
@@ -462,9 +473,156 @@ describe('citedBrowserProvenance — variant E: general knowledge lists no sourc
     expect(ids(citedBrowserProvenance(p as never, 'Sin marcas.', null, 'E'))).toEqual(['d2']);
   });
 
-  it('A is unchanged: the default variant still refuses on a cue anywhere', () => {
+  it('A is unchanged: still refuses on a cue anywhere', () => {
     const answer = 'Hay relatos de docentes. Los documentos disponibles no contienen testimonios de familias.';
-    expect(citedBrowserProvenance(five as never, answer)).toBeNull();
+    expect(citedBrowserProvenance(five as never, answer, null, 'A')).toBeNull();
     expect(ids(E(answer))).toEqual(['d2', 'd4', 'd3']);
+  });
+
+  it('🔴 unset CHAT_CITE_VARIANT runs the E source rule', () => {
+    const answer = 'Hay relatos de docentes. Los documentos disponibles no contienen testimonios de familias.';
+    const saved = testEnv.CHAT_CITE_VARIANT;
+    try {
+      testEnv.CHAT_CITE_VARIANT = undefined;
+      expect(ids(citedBrowserProvenance(five as never, answer))).toEqual(['d2', 'd4', 'd3']);
+    } finally {
+      testEnv.CHAT_CITE_VARIANT = saved;
+    }
+  });
+});
+
+// Dev A/B 2026-10-22, run 13 (variant E, Discapacidad Q2): "2 [n] groups, 0
+// sources". The A/B kept only the first sentence (verbatim below), the group
+// count (2) and the length (613 chars); the rest of this answer is rebuilt.
+// Root cause: E checked the FIRST sentence for any REFUSAL_CUES cue before
+// looking at [N], and "no contienen" is one, so a hedge that went on to answer
+// with citations lost every source.
+describe('citedBrowserProvenance — variant E: a hedging first sentence keeps its [N] sources', () => {
+  const doc = (i: number) => ({ ...docChunk, chunkId: `d${i}`, metadata: { docId: String(i), title: `Doc ${i}` } });
+  const six = { chunks: [1, 2, 3, 4, 5, 6].map(doc) };
+  const ids = (p: ReturnType<typeof citedBrowserProvenance>) => (p?.chunks ?? []).map((c) => c.chunkId);
+  const FIRST =
+    'Los documentos no contienen testimonios específicos sobre la experiencia de personas con discapacidad durante su etapa escolar.';
+  const run13 =
+    `${FIRST} Sí mencionan que algunas familias buscaron escuelas con apoyo para sus hijos y que la ` +
+    'distancia a la escuela fue un obstáculo [2]. También cuentan que una promotora acompañaba a niñas ' +
+    'y niños con discapacidad a sus consultas y hablaba con sus maestras [4, 5].';
+
+  it('🔴 run 13: the exact first sentence plus 2 [N] groups lists the cited sources', () => {
+    expect(ids(citedBrowserProvenance(six as never, run13, null, 'E'))).toEqual(['d2', 'd4', 'd5']);
+  });
+
+  it('the first sentence is a refusal cue but not a no-answer reply: the cue path was the culprit', () => {
+    expect(opensWithRefusal(run13)).toBe(true);
+    expect(isNoAnswer(run13)).toBe(false);
+    expect(splitGeneralKnowledge(run13).general).toBe(false);
+  });
+
+  // These two pass with or without the fix: they rule the suspects out.
+  it('ruled out: grouping formats "[1, 2]", "[1][2]" and "[1] [2]" all map to sources', () => {
+    for (const marks of ['[2, 4]', '[2][4]', '[2] [4]', '[2,4]']) {
+      expect(ids(citedBrowserProvenance(six as never, `Las familias cuentan algo ${marks}.`, null, 'E'))).toEqual(['d2', 'd4']);
+    }
+  });
+
+  it('ruled out: ordinals are prompt positions, so [N] opens chunk N even after a dropped turn', () => {
+    const p = { chunks: [{ ...assistantChunk }, doc(2), doc(3)] };
+    const out = citedBrowserProvenance(p as never, 'Las familias cuentan algo [3].', null, 'E');
+    expect(out?.chunks.map((c) => [c.chunkId, (c as { ordinal?: number }).ordinal])).toEqual([['d3', 3]]);
+  });
+
+  it('a true no-answer opening with [N] still lists nothing (A\'s rule)', () => {
+    expect(citedBrowserProvenance(six as never, 'Los documentos no hablan de esto [1, 2].', null, 'E')).toBeNull();
+    expect(citedBrowserProvenance(six as never, 'Los documentos no mencionan París. Tratan de salud [1].', null, 'E')).toBeNull();
+  });
+
+  it('without [N], an opening refusal cue still skips the fallback', () => {
+    expect(citedBrowserProvenance(six as never, FIRST, null, 'E')).toBeNull();
+  });
+});
+
+// Measured on dev at 7b2e27e (variant E, twice): "¿Cuál es la capital de
+// Francia?" → "París es la capital de Francia." with no [N] and no lead; the
+// fallback listed 3 chunks the reranker scored ~1e-4.
+describe('citedBrowserProvenance — the no-[N] fallback needs a rerank score above the floor', () => {
+  const PARIS = 'París es la capital de Francia.';
+  const chunk = (i: number, rerankScore?: number, score = 0.6) => ({
+    chunkId: `r${i}`,
+    documentId: `uuid-${i}`,
+    score,
+    ...(rerankScore === undefined ? {} : { rerankScore }),
+    corpus: 'eco-7',
+    text: `Pasaje ${i}.`,
+    metadata: { docId: String(i), title: `Doc ${i}`, publication: 'published' },
+  });
+  const ids = (p: ReturnType<typeof citedBrowserProvenance>) => (p?.chunks ?? []).map((c) => c.chunkId);
+  const irrelevant = { chunks: [chunk(1, 1.2e-4), chunk(2, 9.8e-5), chunk(3, 3.1e-5), chunk(4, 2e-6)] };
+
+  afterEach(() => {
+    testEnv.CHAT_FALLBACK_MIN_RERANK = undefined;
+    vi.restoreAllMocks();
+  });
+
+  it('🔴 the Paris answer over chunks scored ~1e-4 lists 0 sources (E and A)', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    expect(citedBrowserProvenance(irrelevant as never, PARIS, null, 'E')).toBeNull();
+    expect(citedBrowserProvenance(irrelevant as never, PARIS, null, 'A')).toBeNull();
+  });
+
+  it('a passage answer that forgot [N] still gets the fallback from high-score chunks', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const p = { chunks: [chunk(1, 1.2e-4), chunk(2, 0.998), chunk(3, 0.991), chunk(4, 3e-5), chunk(5, 0.999)] };
+    expect(ids(citedBrowserProvenance(p as never, 'El dengue se transmite por mosquitos.', null, 'E'))).toEqual([
+      'r5',
+      'r2',
+      'r3',
+    ]);
+  });
+
+  it('only the chunks above the floor: one relevant chunk lists one source', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const p = { chunks: [chunk(1, 0.995), chunk(2, 1e-4), chunk(3, 2e-5)] };
+    expect(ids(citedBrowserProvenance(p as never, 'El riego empezó en 2020.', null, 'E'))).toEqual(['r1']);
+  });
+
+  it('🔴 fails open: no rerank score (rerank off or failed) keeps the fallback', () => {
+    const p = { chunks: [chunk(1, undefined, 0.01), chunk(2, undefined, 0.02), chunk(3, undefined, 0.03)] };
+    expect(ids(citedBrowserProvenance(p as never, PARIS, null, 'E'))).toEqual(['r3', 'r2', 'r1']);
+  });
+
+  it('a mixed set: an unscored chunk is never read as 0', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const p = { chunks: [chunk(1, 1e-4, 0.9), chunk(2, undefined, 0.5)] };
+    expect(ids(citedBrowserProvenance(p as never, PARIS, null, 'E'))).toEqual(['r2']);
+  });
+
+  it('CHAT_FALLBACK_MIN_RERANK=0 turns the floor off', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    testEnv.CHAT_FALLBACK_MIN_RERANK = '0';
+    expect(ids(citedBrowserProvenance(irrelevant as never, PARIS, null, 'E'))).toEqual(['r1', 'r2', 'r3']);
+  });
+
+  it('the floor is env-tunable; blank or invalid is the default', () => {
+    expect(DEFAULT_FALLBACK_MIN_RERANK).toBe(0.1);
+    expect(fallbackMinRerank(undefined)).toBe(0.1);
+    expect(fallbackMinRerank('  ')).toBe(0.1);
+    expect(fallbackMinRerank('abc')).toBe(0.1);
+    expect(fallbackMinRerank('-1')).toBe(0.1);
+    expect(fallbackMinRerank('0.5')).toBe(0.5);
+    expect(fallbackMinRerank('0')).toBe(0);
+  });
+
+  it('logs the top rerank scores of the candidates at info, never the text', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    citedBrowserProvenance(irrelevant as never, PARIS, null, 'E');
+    expect(info).toHaveBeenCalledTimes(1);
+    const line = String(info.mock.calls[0]![0]);
+    expect(line).toBe('[sources] fallback rerank floor=0.1 top=[1.20e-4, 9.80e-5, 3.10e-5, 2.00e-6] kept=0');
+  });
+
+  it('no rerank scores: no log line', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    citedBrowserProvenance({ chunks: [chunk(1)] } as never, PARIS, null, 'E');
+    expect(info).not.toHaveBeenCalled();
   });
 });

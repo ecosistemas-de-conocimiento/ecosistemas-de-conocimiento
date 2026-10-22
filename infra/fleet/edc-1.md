@@ -1,7 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `0d21852` (`[n]` stripped from stored turns,
-3D label declutter, ai-stack update), deployed 2026-10-22 00:13 UTC — see §4z. Before that, `ac47612`
+**Status:** live since 2026-10-17. Dev runs `main` @ `7e51205` (`/grafo` phone CSS, 3D labels by
+screen overlap), deployed 2026-10-22 00:42 UTC, with embeddings on the Spark and a hosted fallback
+(§4za) — see §4zb. Before that (`[n]` stripped from stored turns, 3D label
+declutter, ai-stack update; 00:13 UTC) — see §4z. Before that
 (audio-service under compose profile `audio`), redeployed 2026-10-21 23:18 UTC after a failed deploy
 — see §4x. Dev now has four ecosistemas
 (ids 1, 3, 6, 7), a 2D/3D graph (`6fb558e`) and turns stored through the gate (`66790b5`). Before that,
@@ -1236,6 +1238,90 @@ Spend: `usage_logs` $1.5317 → $1.5362 (**+$0.0045**). The total also holds edc
 §4x (+$0.0080). Tonight: $0.4786 + $1.5362 = **$2.0148** of the $10 cap.
 
 **Disk**, `df -h /` free: 57 GB before; 43 GB after the build; 57 GB after the cleanup. Images
+10.4 GB, build cache 0.
+
+### 4za. ✅ Done 2026-10-22 00:24–00:40 UTC: embeddings on the Spark with a hosted fallback (`65d3317`), dev only
+
+All measured by the deploy agent. Staging was not touched. Spark proxy log times are CST (UTC−6).
+
+Variables added to `edc-dev` through the API, literal (Coolify also made the preview copies):
+
+| variable | value |
+|---|---|
+| `EMBEDDINGS_URL` | `<spark-url>/v1/embeddings` (full path; ai-service sends it verbatim) |
+| `EMBEDDINGS_API_KEY` | the Spark proxy token (`~/edc-whisper/token`; sha256 prefix equals `RERANK_API_KEY`'s) |
+| `EMBEDDINGS_FALLBACK_URL` | `https://openrouter.ai/api/v1/embeddings` |
+| `EMBEDDINGS_FALLBACK_COOLDOWN_S` | `60` |
+| `EMBEDDINGS_PRIMARY_TIMEOUT_MS` | `5000` |
+
+`EMBEDDINGS_FALLBACK_API_KEY` stays unset, so the fallback uses `OPENROUTER_API_KEY` (present,
+73 chars). No variable holds `:?` text. **Revert:** delete the five `EMBEDDINGS_*` variables (both
+the normal and the preview copies) and redeploy; ai-service then embeds on OpenRouter as before.
+
+Deploy `pfsw0ethnqcddkxa9znljlyn`, `65d3317` (origin/main): 00:26:05 → 00:32:21 UTC; 9
+containers up, both health URLs 200. No migration. The container sees all five values. ai-service
+runs ingest and query in one Node process, so the cooldown covers both.
+
+| check | result |
+|---|---|
+| 1. normal path | PDF upload → `ready` in 3.1 s; chat 4.7 s, answer cites the upload. Proxy: 1 `POST /v1/embeddings` for the ingest, 9 for the chat turn (all 200). No fallback warning |
+| 2. dead primary (embed `llama-server` killed; proxy 502) | chat 6.6 s, PDF ingest → `ready` in 2.9 s, second chat 5.0 s; all answers correct. One 502 in the proxy log, then no Spark embeddings calls for the cooldown. One warning `reason: http_502`; `usage_logs` has `embeddings-fallback` on `/v1/ingest` |
+| 3. hanging primary (`kill -STOP` on embed) | first chat **11.7 s** (9 `reason: timeout` warnings: the calls already in flight each waited their 5 s); second chat right after **4.5 s**, no Spark embeddings call (only rerank). The 9 held requests finished on `kill -CONT` |
+| 4. recovery | proxy curl 200 in 0.58 s; after the cooldown a chat took 4.0 s with 10 new Spark embeddings lines, no warning |
+| 5. audio, real speech (30 s Lazarillo clip, 240 KB mp3) | upload → `ready` in **107.7 s**: Spark whisper decoded in 4.2 s and the callback was delivered at +5 s. The rest is the `ingestRecovery` sweep, which moves a `transcribed` row on after ≥ 1 min, every minute: by design. Transcript 431 chars of correct Spanish |
+
+⚠ In-flight calls do not see the cooldown. A hanging Spark costs the first chat turn up to about
+two primary timeouts (11.7 s against 4.7 s), not one.
+
+Test conversations deleted: 3 sessions, documents 257–259, 0 `msg-*` left in ai-service.
+Spend: `usage_logs` $1.5362 → $1.5525 (**+$0.0163**). Disk `df -h /` free: 57 GB before, 43 GB
+after the build; no image prune was run.
+
+### 4zb. ✅ Done 2026-10-22 00:42–01:15 UTC: `7e51205` and the cite variant E A/B, dev only
+
+All measured by the deploy agent. Staging was not touched. `GRAPH_SEARCH_ENABLED` and
+`CHAT_CITE_VARIANT` are unset in Coolify (search on by default); no variable holds `:?` text; the
+Spark variables of §4za were left as they were. `7e51205` is web only since `65d3317`: `/grafo`
+phone CSS (`60ba6da`) and 3D labels decluttered by screen overlap, re-run on camera moves (`c8335ae`).
+
+Backup `/root/backups/20261022T0042Z/` (sha256 matched off-box). Deploy 00:42:12 → 00:46:31 UTC;
+9 containers up, health 200.
+
+Smoke as the participant (Playwright; SwiftShader WebGL; screenshots):
+
+| check | result |
+|---|---|
+| `/grafo` search via document text | "cubetas" is no entity label; the backend view `?q=cubetas` returns 46 entities, and the search box narrows the map to "46 de 73 entidades" (Prevención del dengue) |
+| 3D labels | 14 visible: places 5, topics 6, events 3 (each label's type from `GET /api/graph/view`). "App-Salud Aedes" is typed `tema`, so the topic floor is one over "≤ 5". **0 overlapping pairs** before and after an orbit (drag on the canvas) |
+| 390 px, all four ecosistemas | `scrollWidth` = 390 on `/grafo` and on the chat for ids 3, 6, 7 and 1 (incl. "Acompañamiento escolar") |
+| chat in Dengue | 7 sources in every run below |
+
+**Cite variant E A/B** (raw table in the deploy agent's scratchpad, `cite-ab-E.md`). `CHAT_CITE_VARIANT`
+set in the generated `.env` + `docker compose … up -d --no-deps --no-build web`. ⚠ The first switch
+to E did not take: `printenv` unset, 0 lines, every run logged `cite variant A`. Set by hand right
+after, it worked (`printenv` E, 1 line); the cause was not found. So the first 8 runs are the A
+baseline, and E has its own 8 runs. A planned extra A pass came back cached (≈ 3.4 s, no streamed
+tokens, identical text) and is not counted. The variable was removed after; web re-created,
+`printenv` unset, dev runs A.
+
+| question (ecosistema) | A (2 runs) | E (2 runs) |
+|---|---|---|
+| Discapacidad Q2 (7) | 1 answer with a caveat (3 groups, 7 sources), 1 hedge (0 sources) | 1 answer (3 groups, 7 sources), 1 hedge with **2 `[n]` groups but 0 sources** |
+| Acompañamiento escolar Q1 (3) | 1 hedge (1 group, 7 sources), 1 refusal | **answers both times** (5 groups, 7 sources; run 2 cached) |
+| dengue (6) | 11 groups, 7 sources, 16.0 s / 91.0 s | 7 / 10 groups, 7 sources, 52.7 / 56.5 s; "Fuera de los documentos" once |
+| capital de Francia (6) | refusal, 0 sources ×2 | paraphrased refusal, **0 sources** ×2 |
+
+E answers the Educación question that A refuses, and keeps off-topic at 0 sources. Dengue stays
+slow under both (16–91 s). ⚠ The A dengue run 2 answer contains "Antonio", found in neither the
+shown sources' capped text nor the question; check it by hand.
+
+Cleanup once nothing was deploying or building: `docker rmi` of dev's `65d3317` and `0d21852`
+images by name, then `docker builder prune -af` (18.55 GB). Test conversations deleted (0 left).
+
+Spend: `usage_logs` $1.5525 → $1.5783 (**+$0.0258**; graph search, 3D and 20 chats). Tonight:
+$0.4786 + $1.5783 = **$2.0569** of the $10 cap.
+
+**Disk**, `df -h /` free: 43 GB before; 38 GB after the build; 57 GB after the cleanup. Images
 10.4 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs

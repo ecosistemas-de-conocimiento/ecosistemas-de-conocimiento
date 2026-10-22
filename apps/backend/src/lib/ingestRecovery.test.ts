@@ -471,7 +471,9 @@ describe('runIngestRecoveryPass', () => {
     const find = db.payload.find as unknown as ReturnType<typeof vi.fn>
     const realFind = find.getMockImplementation()!
     find.mockImplementation(async (args: Record<string, unknown>) => {
-      if (JSON.stringify(args.where).includes('"extracting"')) throw new Error('db down')
+      // Only the pdf/docx stall sweep's query: it is the one that names "docx".
+      const w = JSON.stringify(args.where)
+      if (w.includes('"extracting"') && w.includes('"docx"')) throw new Error('db down')
       return realFind(args)
     })
     vi.useFakeTimers({ now: NOW, toFake: ['Date'] })

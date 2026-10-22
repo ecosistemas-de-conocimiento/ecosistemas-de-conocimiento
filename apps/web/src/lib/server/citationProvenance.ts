@@ -173,8 +173,14 @@ export function toBrowserProvenance(provenance: unknown): Provenance | null {
  * first) and the first ones win. A title-matched document not among them
  * takes the last slot, so the total never passes {@link MAX_SOURCES}.
  *
- * 🔴 VARIANT E (`CHAT_CITE_VARIANT=E`, owner ruling 2026-10-21: answers may
- * come "from the docs, the corpus, or the training weights") swaps the
+ * 🔴 THE NO-`[N]` FALLBACK SKIPS A PASSAGE THE RERANKER CALLED IRRELEVANT
+ * ({@link fallbackMinRerank}). Measured on dev at 7b2e27e (variant E):
+ * "¿Cuál es la capital de Francia?" got "París es la capital de Francia." with
+ * no `[N]` and no general-knowledge lead, so the fallback listed 3 chunks with
+ * rerank scores near 1e-4.
+ *
+ * 🔴 VARIANT E (the default since 2026-10-22; owner ruling 2026-10-21: answers
+ * may come "from the docs, the corpus, or the training weights") swaps the
  * no-[N] and refusal rules above for {@link generalKnowledgeSources}. A–D keep
  * the rules above unchanged. `variant` defaults to the env value, read per
  * call like the system prompt (`chatCiteVariant` in `./engine/config`).
@@ -316,8 +322,13 @@ export function opensWithRefusal(answer: string): boolean {
  *
  *   · Nothing before the lead (an off-topic question): no sources. The answer
  *     is general knowledge, and a fallback would attribute it to documents.
- *   · `[N]` before the lead: those sources (cited-only), unless the first
- *     sentence is a refusal.
+ *   · `[N]` before the lead: those sources (cited-only), unless the answer
+ *     opens with the no-answer reply or a {@link NO_ANSWER_VARIANTS} wording
+ *     ({@link isNoAnswer}, A's rule for an answer with `[N]`). NOT the wider
+ *     {@link REFUSAL_CUES}: measured on dev (A/B run 13, Discapacidad Q2), an
+ *     E answer opening "Los documentos no contienen testimonios específicos
+ *     sobre …" then citing 2 `[N]` groups showed 0 sources, because the bare
+ *     cue "no contienen" fired on a hedge that went on to answer.
  *   · No `[N]` and a lead: no sources. The model was told to cite what came
  *     from the passages, and the part it chose to mark as general knowledge
  *     sits next to it, so a fallback would blur the two.
@@ -331,15 +342,45 @@ function generalKnowledgeSources(
 ): Array<Chunk & { ordinal?: number }> {
   const { documents, general } = splitGeneralKnowledge(answer);
   if (!/\p{L}/u.test(documents)) return [];
-  if (opensWithRefusal(documents)) return [];
   if (parseCitedOrdinals(documents).length > 0) {
+    if (isNoAnswer(documents)) return [];
     return citedProvenance(provenance, documents).map(({ relevance: _r, ...c }) => c);
   }
+  if (opensWithRefusal(documents)) return [];
   return general ? [] : topRetrieved(provenance);
 }
 
 /** How many retrieved sources an answer with no `[N]` lists. */
 export const FALLBACK_SOURCES = 3;
+
+/**
+ * The lowest cross-encoder score a chunk needs to be a no-`[N]` fallback
+ * source (`CHAT_FALLBACK_MIN_RERANK`).
+ *
+ * Default {@link DEFAULT_FALLBACK_MIN_RERANK} = 0.1, INFERRED from a small
+ * sample (measured 2026-10-21 on the DGX Spark, Qwen3-Reranker-0.6B Q8 via
+ * llama.cpp; DeepInfra serves the same model): relevant Spanish passages
+ * scored 0.99–1.0, irrelevant ones 1e-6 to 1e-4. Any floor between 1e-3 and
+ * 0.9 splits that sample; 0.1 sits three orders of magnitude above the
+ * irrelevant ones and ten times below the relevant ones. Recalibrate from the
+ * `[sources] fallback rerank` log line ({@link topRetrieved}).
+ *
+ * 🔴 FAILS OPEN. Only a chunk carrying `rerankScore` is tested: ai-service
+ * sets that field only when the rerank ran (`./engine/rerank`). A chunk
+ * without it (rerank off, timed out, errored, or the GraphRAG leg) is kept,
+ * never read as 0. `0` turns the floor off; blank or invalid is the default.
+ */
+export const DEFAULT_FALLBACK_MIN_RERANK = 0.1;
+
+export function fallbackMinRerank(raw: string | undefined = env.CHAT_FALLBACK_MIN_RERANK): number {
+  const v = Number((raw ?? '').trim());
+  return (raw ?? '').trim() !== '' && Number.isFinite(v) && v >= 0 ? v : DEFAULT_FALLBACK_MIN_RERANK;
+}
+
+/** The chunk has a rerank score and it is below the floor. Unscored: false. */
+function belowRerankFloor(c: Chunk, floor: number): boolean {
+  return typeof c.rerankScore === 'number' && c.rerankScore < floor;
+}
 
 /** The rerank score when present, else the retrieval score. */
 function rankScore(c: Chunk): number {
@@ -351,17 +392,29 @@ function rankScore(c: Chunk): number {
  * The {@link FALLBACK_SOURCES} best retrieved chunks, highest score first,
  * each with its prompt ordinal. Ties keep prompt order.
  *
- * Skipped before ranking, so they never take a slot: conversation turns, and
+ * Skipped before ranking, so they never take a slot: conversation turns, a
+ * chunk the reranker scored below {@link fallbackMinRerank}, and
  * 🔴 a testimonio chunk that is not from the `published` corpus (only that
  * corpus holds the gate's redacted text, see {@link titleMatchSource}). A
  * kept testimonio chunk is titled "Testimonio", whatever its metadata says.
  */
 function topRetrieved(provenance: Provenance | null | undefined): Array<Chunk & { ordinal: number }> {
-  return (provenance?.chunks ?? [])
+  const candidates = (provenance?.chunks ?? [])
     .map((c, i) => ({ c, ordinal: i + 1 }))
     .filter(({ c }) => c && typeof c === 'object' && !isConversationTurnChunk(c.metadata))
     .filter(({ c }) => !isTestimonioChunk(c) || c.metadata?.publication === 'published')
-    .sort((a, b) => rankScore(b.c) - rankScore(a.c) || a.ordinal - b.ordinal)
+    .sort((a, b) => rankScore(b.c) - rankScore(a.c) || a.ordinal - b.ordinal);
+  const floor = fallbackMinRerank();
+  const kept = candidates.filter(({ c }) => !belowRerankFloor(c, floor));
+  const reranked = candidates.filter(({ c }) => typeof c.rerankScore === 'number');
+  if (reranked.length > 0) {
+    // Scores only, never text: calibration data for the floor.
+    const top = reranked.slice(0, 5).map(({ c }) => Number(c.rerankScore).toExponential(2));
+    console.info(
+      `[sources] fallback rerank floor=${floor} top=[${top.join(', ')}] kept=${Math.min(kept.length, FALLBACK_SOURCES)}`,
+    );
+  }
+  return kept
     .slice(0, FALLBACK_SOURCES)
     .map(({ c, ordinal }) => ({
       ...c,
