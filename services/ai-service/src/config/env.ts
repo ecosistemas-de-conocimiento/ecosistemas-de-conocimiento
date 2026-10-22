@@ -205,6 +205,30 @@ const envSchema = z.object({
    */
   EMBEDDINGS_API_KEY: z.string().optional(),
   /**
+   * Hosted fallback for embeddings — OPTIONAL, off when unset.
+   *
+   * `EMBEDDINGS_FALLBACK_URL` — a second OpenAI-compatible `/embeddings`
+   * endpoint serving the SAME model as `EMBEDDINGS_URL` (e.g. OpenRouter's
+   * `baai/bge-m3` behind a self-hosted bge-m3 primary). When the primary fails
+   * with a network error, a timeout, HTTP 5xx or 429, the call is retried here
+   * and the primary is skipped for `EMBEDDINGS_FALLBACK_COOLDOWN_S`. Other
+   * statuses (400/401/403…) never fall back, so config bugs surface. Unset ⇒
+   * behaviour is byte-identical to before this knob existed.
+   *
+   * `EMBEDDINGS_FALLBACK_API_KEY` — Bearer token for the fallback. Unset/empty ⇒
+   * `OPENROUTER_API_KEY`, then `OPENAI_API_KEY`. `EMBEDDINGS_API_KEY` is NEVER
+   * sent to the fallback, and this key is never sent to the primary.
+   *
+   * `EMBEDDINGS_PRIMARY_TIMEOUT_MS` — wall-clock cap on a primary call, applied
+   * ONLY when a fallback is configured (without one the primary call keeps its
+   * old shape: bounded by the caller's signal alone), so a dead primary costs
+   * one short wait instead of stalling ingest.
+   */
+  EMBEDDINGS_FALLBACK_URL: z.string().url().optional(),
+  EMBEDDINGS_FALLBACK_API_KEY: z.string().optional(),
+  EMBEDDINGS_FALLBACK_COOLDOWN_S: z.coerce.number().int().nonnegative().default(60),
+  EMBEDDINGS_PRIMARY_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  /**
    * The OpenAI-compatible `/chat/completions` endpoint both chat paths (plain
    * and streaming) call. Defaults to OpenRouter. The companion of
    * `EMBEDDINGS_URL`; tests and consumer e2e point both at the TEST-ONLY fake
