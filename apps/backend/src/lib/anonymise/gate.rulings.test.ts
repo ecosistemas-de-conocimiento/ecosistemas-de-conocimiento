@@ -243,3 +243,158 @@ describe('Q5 — a one-word name at a sentence start is redacted, whatever `iden
     expect(r.redactedText).toBe('[Persona A] llegó. Vino [Persona B].')
   })
 })
+
+const lugar = (texto: string, identifica?: unknown): H =>
+  identifica === undefined ? { texto, tipo: 'lugar' } : { texto, tipo: 'lugar', identifica }
+
+describe('🔴 final audit 2026-10-21 — B1: a Q5 redaction that changes nothing holds', () => {
+  it.each([
+    ['José llegó tarde.', 'José', '[Persona A] llegó tarde.'],
+    ['JOSÉ: bueno.', 'JOSÉ', '[Persona A]: bueno.'],
+  ])('decomposed (NFD) "%s" is redacted', async (text, name, want) => {
+    const r = await gate(text.normalize('NFD'), [[], [persona(name, false)]])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe(want)
+  })
+
+  it('decomposed text found by stage 3 is redacted too', async () => {
+    const r = await gate('Vino José. Luego JOSÉ habló.'.normalize('NFD'), [[persona('José')], []])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Vino [Persona A]. Luego [Persona A] habló.')
+  })
+
+  it('a one-word name the redaction cannot reach holds instead of passing', async () => {
+    // A typo glued to the name: whole-word matching leaves it, so it must hold.
+    const r = await gate('Lucreciaa llegó tarde.', [[], [persona('Lucreciaa', false)]])
+    expect(r.status).toBe('ready')
+    const glued = await gate('Lucreciaa llegó tarde.', [[], [persona('Lucrecia', false)]])
+    expect(glued.status).toBe('hold')
+  })
+})
+
+describe('🔴 final audit 2026-10-21 — B2: only a `persona` can be a bare title', () => {
+  it.each([
+    ['Vivo en la calle hidalgo desde niña.', lugar('calle hidalgo', false)],
+    ['Vivo en la col. portales desde niña.', lugar('col. portales', false)],
+    ['Mi número es cinco cinco uno dos tres cuatro.', { texto: 'cinco cinco uno dos tres cuatro', tipo: 'contacto', identifica: false }],
+    ['Vivo en manzana cuatro lote doce.', lugar('manzana cuatro lote doce', false)],
+    ['Su clave es equis ye zeta.', { texto: 'equis ye zeta', tipo: 'identificador', identifica: false }],
+  ] as Array<[string, H]>)('"%s" holds', async (text, finding) => {
+    const r = await gate(text, [[], [finding]])
+    expect(r.status).toBe('hold')
+  })
+})
+
+describe('🔴 final audit 2026-10-21 — glued names are words', () => {
+  it('a digit ends a word: "lucrecia88" loses the name', async () => {
+    const r = await gate('Me escribió lucrecia88 ayer.', [[persona('lucrecia')], []])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Me escribió [Persona A]88 ayer.')
+  })
+
+  it('a lower-to-upper change ends a word: "MaríaLópez" loses "López"', async () => {
+    const r = await gate('Firmó MaríaLópez ayer.', [[persona('López')], []])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Firmó María[Persona A] ayer.')
+  })
+
+  it('…and still leaves "Mañana" and "anabel" alone for "ana"', async () => {
+    const r = await gate('Mañana viene anabel. Ana no.', [[persona('Ana')], []])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Mañana viene anabel. [Persona A] no.')
+  })
+})
+
+describe('🔴 final audit 2026-10-21 — surviving mutants', () => {
+  it('X7: a finding is never written inside a placeholder stage 2 made', async () => {
+    const r = await gate('C.P. 06700. Domicilio conocido de Ana.', [[persona('Domicilio')], []])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('[Domicilio A]. [Persona A] conocido de Ana.')
+  })
+
+  it('X12: one unsafe leftover holds the round, even beside a safe one', async () => {
+    const r = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Vino Ana de Rosa. Vino Chacho.' },
+      {
+        detector: scripted([
+          [persona('Ana'), persona('Rosa')],
+          [persona('[Persona B] de [Persona A]'), persona('Chacho')],
+          [],
+        ]),
+        verifyRounds: 3,
+      },
+    )
+    expect(r.status).toBe('hold')
+  })
+
+  it('X28: a two-letter capitalised fragment is too weak to redact globally', async () => {
+    const r = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'ANA Lu EVA vinieron. Lu también.' },
+      {
+        detector: scripted([[persona('ANA'), persona('EVA')], [persona('[Persona A] Lu [Persona B]')], []]),
+        verifyRounds: 3,
+      },
+    )
+    expect(r.status).toBe('hold')
+  })
+})
+
+describe('final audit 2026-10-21 — more surviving mutants', () => {
+  it('X10: a round whose redaction changes nothing holds', async () => {
+    const r = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Vino Lucreciaa ayer.' },
+      { detector: scripted([[], [persona('Lucrecia')], []]), verifyRounds: 3 },
+    )
+    expect(r.status).toBe('hold')
+  })
+
+  it('X16: a colon does not start a sentence', async () => {
+    const r = await gate('Dijo: El doctor vino.', [[], [persona('El doctor', false)]])
+    expect(r.status).toBe('hold')
+  })
+
+  it('X17: an ellipsis does', async () => {
+    const r = await gate('Ya… El doctor vino.', [[], [persona('El doctor', false)]])
+    expect(r.status).toBe('ready')
+  })
+
+  it('X18: the hold counts every highlighted occurrence', async () => {
+    const r = await gate('Vino Chacho. Luego Chacho se fue.', [[], [persona('Chacho')]])
+    expect(r.status).toBe('hold')
+    if (r.status !== 'hold') return
+    expect(r.reason).toContain('Quedaron 2 datos')
+    expect(r.report.stages.at(-1)?.note).toContain('Quedaron 2 datos')
+  })
+})
+
+describe('final audit 2026-10-21 — accent marks NFC cannot compose', () => {
+  // "a" + U+030B has no precomposed form, so it survives the gate's NFC step.
+  const MARK = '̋'
+
+  it('a trailing mark is part of the name it sits on', async () => {
+    const r = await gate(`Vino Ana${MARK} ayer.`, [[persona('Ana')], []])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Vino [Persona A] ayer.')
+  })
+
+  it('a mark before a capital does not hide the case break', async () => {
+    const r = await gate(`Firmó Ana${MARK}López ayer.`, [[persona('López')], []])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe(`Firmó Ana${MARK}[Persona A] ayer.`)
+  })
+
+  it('upper to upper is not a break: "ANABEL" keeps its "ANA"', async () => {
+    const r = await gate('ANABEL vino. Ana no.', [[persona('Ana')], []])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('ANABEL vino. [Persona A] no.')
+  })
+})

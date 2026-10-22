@@ -201,9 +201,10 @@ export interface DetectorFinding {
    * `false` when the model itself judged the string identifies nobody: a bare
    * title such as "el doctor" in "el doctor dijo".
    *
-   * 🔴 THE GATE DOES NOT ACT ON IT (re-audit 2026-10-21): stage 3 redacts and
-   * verify holds on every finding, whatever this says. Kept for measurement.
-   * Anything other than an explicit `false` is recorded as identifying.
+   * 🔴 STAGE 3 IGNORES IT: every finding is redacted. VERIFY USES IT ONLY FOR
+   * A `persona` WITH A BARE-TITLE SHAPE (owner's Q4/Q5, see `bareTitle` and
+   * `titleVerdict` in `gate.ts`): such a finding passes, or, as one capitalised
+   * word, is redacted. Anything other than an explicit `false` is identifying.
    */
   identifying?: boolean
 }

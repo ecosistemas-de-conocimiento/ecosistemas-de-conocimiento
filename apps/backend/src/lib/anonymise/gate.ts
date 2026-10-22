@@ -229,13 +229,35 @@ function replaceOutsidePlaceholders(
   return copied === 0 ? null : result + text.slice(copied)
 }
 
+const WORD_CHAR = /[\p{L}\p{N}\p{M}]/u
+
+/** The character at or before `i`, skipping accent marks: the letter they sit on. */
+function baseAt(text: string, i: number): string {
+  while (i >= 0 && /\p{M}/u.test(text.charAt(i))) i--
+  return i >= 0 ? text.charAt(i) : ''
+}
+
 /**
- * True when `[start, end)` is not glued to a letter, digit or accent mark on
- * either side, so a folded "ana" never matches inside "mañana".
+ * True when `left` and `right`, side by side, belong to ONE word.
+ *
+ * An accent mark is always part of the letter before it. A letter-digit change
+ * and a lower-to-upper change are word breaks (final audit 2026-10-21): a name
+ * glued to digits ("lucrecia88") or to another name ("MaríaLópez") is still a
+ * word of its own. "ana" inside "mañana" or "anabel" is not.
  */
+function glued(left: string, right: string): boolean {
+  if (!WORD_CHAR.test(left) || !WORD_CHAR.test(right)) return false
+  if (/\p{M}/u.test(right)) return true
+  if (/\p{N}/u.test(left) !== /\p{N}/u.test(right)) return false
+  return !(/\p{Ll}/u.test(left) && /\p{Lu}/u.test(right))
+}
+
+/** True when `[start, end)` is a whole word: not glued to the text on either side. */
 function wholeWord(text: string, start: number, end: number): boolean {
-  const word = /[\p{L}\p{N}\p{M}]/u
-  return !word.test(text.slice(Math.max(0, start - 1), start)) && !word.test(text.charAt(end))
+  return (
+    !glued(baseAt(text, start - 1), text.charAt(start)) &&
+    !glued(baseAt(text, end - 1), text.charAt(end))
+  )
 }
 
 /**
@@ -411,7 +433,9 @@ function titleVerdict(f: DetectorFinding, text: string): 'leftover' | 'pass' | '
 }
 
 function bareTitleShape(f: DetectorFinding, text: string): boolean {
-  if (f.identifying !== false) return false
+  // 🔴 Only a person can be a bare title (final audit 2026-10-21): a place,
+  // contact or identifier marked false is still a leftover.
+  if (f.identifying !== false || f.type !== 'persona') return false
   if (/\p{N}/u.test(f.text.replace(PLACEHOLDER, ''))) return false
   const capitals: number[] = []
   for (const m of f.text.matchAll(/[\p{L}\p{M}\p{N}]+/gu)) {
@@ -433,7 +457,7 @@ function bareTitleShape(f: DetectorFinding, text: string): boolean {
  * 🔴 EVERY SPELLING. A leftover is redacted case- and accent-blind as a whole
  * word, the way `locateSpan` finds it. Re-audit 2026-10-21: with rounds=3,
  * "Lucrecia" was redacted, "LUCRECIA" stayed, the next round was silent and
- * the text went `ready`. Exact occurrences are still replaced anywhere. Returns the labels actually applied, or
+ * the text went `ready`. Exact occurrences are whole words too. Returns the labels actually applied, or
  * null when any leftover cannot be redacted safely (the round then holds).
  */
 function redactLeftovers(
@@ -535,7 +559,9 @@ export async function runAnonymisationGate(
   })
 
   // ── 1. STRUCTURAL ─────────────────────────────────────────────────────────
-  const structural = structuralPass(input.text)
+  // 🔴 NFC FIRST, so the roster pass, the model and every matcher see one
+  // spelling of "é" (final audit 2026-10-21: decomposed "José" was missed).
+  const structural = structuralPass(input.text.normalize('NFC'))
   stages.push({ stage: 'structural', removed: structural.removed })
 
   if (structural.text.trim().length === 0) {
@@ -662,8 +688,9 @@ export async function runAnonymisationGate(
         (name) => allocator.labelFor(name),
         (address) => allocator.addressLabelFor(address),
       )
-      // A plain one-word finding always resolves; null would be a bug, so hold.
-      if (done !== null) {
+      // 🔴 A redaction that changed nothing (null, or the same text) is not a
+      // redaction: fall through and HOLD (final audit 2026-10-21, B1).
+      if (done !== null && done.text !== current) {
         stages.push({
           stage: 'verify',
           round,

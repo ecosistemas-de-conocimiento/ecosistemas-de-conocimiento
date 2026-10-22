@@ -183,6 +183,10 @@ describe('deterministicPass — domicilios: the postal code only', () => {
     )
   })
 
+  it('X25: the marker must start a word', () => {
+    expect(labels(run('Folio ABCP 12345.').removed)).not.toContain(DETERMINISTIC_LABELS.codigoPostal)
+  })
+
   it('needs the marker and exactly five digits', () => {
     for (const line of ['Pagué 62577 pesos.', 'C.P. 6257 o algo así.', 'C.P. 625770']) {
       expect(labels(run(line).removed), line).not.toContain(DETERMINISTIC_LABELS.codigoPostal)

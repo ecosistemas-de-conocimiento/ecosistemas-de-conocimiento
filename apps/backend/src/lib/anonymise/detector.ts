@@ -290,7 +290,12 @@ export function foldedMatches(source: string, needle: string): Array<[number, nu
   for (let at = folded.indexOf(want); at !== -1; at = folded.indexOf(want, at + 1)) {
     const begin = startOf[at] as number
     const lastStart = startOf[at + want.length - 1] as number
-    out.push([begin, lastStart + String.fromCodePoint(source.codePointAt(lastStart) as number).length])
+    let end = lastStart + String.fromCodePoint(source.codePointAt(lastStart) as number).length
+    // 🔴 Trailing accent marks belong to the last letter (final audit
+    // 2026-10-21): decomposed "José" ended before its accent, and the gate then
+    // saw the match glued to a letter and redacted nothing.
+    while (end < source.length && /\p{M}/u.test(source.charAt(end))) end++
+    out.push([begin, end])
   }
   return out
 }
