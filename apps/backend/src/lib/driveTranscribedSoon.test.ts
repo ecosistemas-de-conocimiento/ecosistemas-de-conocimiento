@@ -224,6 +224,36 @@ describe('🔴 the claim: two runners, one drive', () => {
   })
 })
 
+describe('🔴 the hand-back after a throw touches only an unsent, ungated claim', () => {
+  it('a row already at `embedding` (the ingest may be at ai-service) is left there', async () => {
+    const db = fakeDb([transcribedRow()])
+    // The send succeeded; storing its id throws, and so does the `failed`
+    // write in the catch, so the error leaves `enqueueIngestForDoc`.
+    db.failWrites((data) => typeof data.ingestId === 'string' || data.ingestStatus === 'failed')
+    expect(await driveTranscribedDocument(db.payload, { ...db.row(42) })).toBe('skipped')
+    expect(ingestPosts()).toBe(1)
+    expect(db.row(42).ingestStatus).toBe('embedding')
+
+    // So no sweep can send it a second time.
+    db.failWrites(() => false)
+    expect(await driveTranscribedDocuments(db.payload, { now: LATER })).toMatchObject({ examined: 0 })
+    expect(ingestPosts()).toBe(1)
+  })
+
+  it('a row the gate HELD (its `failed` write lost) is left at `extracting` + `held`', async () => {
+    const db = fakeDb([transcribedRow({ contentKind: 'testimonio' })])
+    // The gate's verdict lands, then the status write after it throws.
+    db.failWrites((data) => {
+      if (data.ingestStatus !== 'failed') return false
+      db.row(42).anonymisationStatus = 'held'
+      return true
+    })
+    expect(await driveTranscribedDocument(db.payload, { ...db.row(42) })).toBe('skipped')
+    expect(db.row(42)).toMatchObject({ ingestStatus: 'extracting', anonymisationStatus: 'held' })
+    expect(ingestPosts()).toBe(0)
+  })
+})
+
 describe('🔴 a burst of callbacks keeps the detector pacing', () => {
   it('N simultaneous hand-offs: one document at a time, call starts ≥ ANONYMISE_DETECT_MIN_GAP_MS apart', async () => {
     const GAP = 60
