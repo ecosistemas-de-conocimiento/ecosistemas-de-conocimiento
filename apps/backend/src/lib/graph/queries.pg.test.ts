@@ -232,16 +232,19 @@ async function seedSearch(): Promise<void> {
       (502, 5, 1, 'voz-1.md',     'published', 'testimonio', 'ready', 'Juana Pérez habló de la sequía.', '[Persona A] habló de la sequía.'),
       (503, 5, 1, 'voz-2.md',     'published', 'testimonio', 'held',  'El río está contaminado.', NULL),
       (504, 5, 1, 'borrador.pdf', 'draft',     'documento',  'n/a',   'Otra migración.', NULL),
-      (505, 5, 1, 'otro.pdf',     'published', 'documento',  'n/a',   'Nada que ver.', NULL);
+      (505, 5, 1, 'otro.pdf',     'published', 'documento',  'n/a',   'Nada que ver.', NULL),
+      (601, 5, 1, 'acta.pdf',     'published', 'documento',  'n/a',   'Juana Ruiz coordina el comité.', NULL),
+      (602, 5, 1, 'voz-3.md',     'published', 'testimonio', 'ready', 'Juana Ruiz habló de la helada.', '[Persona A] habló de la helada.');
     INSERT INTO graph_entities (id, organization_id, type, label, canonical_key) VALUES
       (51, 5, 'tema',    'Movilidad',  'movilidad'),
       (52, 5, 'evento',  'Sequía',     'sequia'),
       (53, 5, 'lugar',   'Río Atoyac', 'rio atoyac'),
       (54, 5, 'lugar',   'Frontera',   'frontera'),
-      (56, 5, 'persona', 'Juana',      'juana');
+      (56, 5, 'persona', 'Juana',      'juana'),
+      (57, 5, 'persona', 'Juana Ruiz', 'juana ruiz');
     INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences) VALUES
       (5, 501, 51, 1), (5, 502, 52, 1), (5, 502, 56, 1), (5, 503, 53, 1),
-      (5, 504, 54, 1), (5, 505, 54, 1);
+      (5, 504, 54, 1), (5, 505, 54, 1), (5, 601, 57, 1), (5, 602, 57, 1);
   `)
 }
 
@@ -518,6 +521,19 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
 
     it('🔴 a held testimonio and a draft contribute no text', async () => {
       expect(await search('contaminado')).toEqual([])
+    })
+
+    // The audit's probe (2026-10-21): Juana Ruiz is visible through documento
+    // 601, and testimonio 602's redacted text says "habló de la helada".
+    it('🔴 gate 5 inside the search: a persona never matches through a testimonio', async () => {
+      expect(await search('habló')).toEqual([52])
+      expect(await search('helada')).toEqual([])
+      expect(await search('comité')).toEqual([57])
+    })
+
+    it('a query with no searchable characters matches nothing; a NUL byte is not a 500', async () => {
+      expect(await search('"')).toEqual([])
+      expect(await search('migración\u0000')).toEqual([51])
     })
 
     it('still matches entity names, and survives stopwords and punctuation', async () => {

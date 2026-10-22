@@ -30,7 +30,7 @@ const view = (ids: string[]) => ({
 });
 
 beforeEach(() => {
-  delete env.GRAPH_SEARCH_ENABLED;
+  env.GRAPH_SEARCH_ENABLED = 'true';
   mockedResolve.mockReset();
   mockedView.mockReset();
   mockedResolve.mockResolvedValue({ ok: true, selected: { id: '7', name: 'Eco' }, list: [], source: 'cookie' });
@@ -75,9 +75,19 @@ describe('POST /grafo/buscar', () => {
     expect((await POST(makeEvent({ q: 'x' }))).status).toBe(502);
   });
 
-  it('404s when GRAPH_SEARCH_ENABLED is off', async () => {
-    env.GRAPH_SEARCH_ENABLED = 'false';
+  it('strips NUL bytes before the backend sees them', async () => {
+    await POST(makeEvent({ q: 'agua\u0000' }));
+    expect(mockedView).toHaveBeenCalledWith('tok', { organizationId: '7', q: 'agua' });
+  });
+
+  it.each(['false', '0', 'off', 'no'])('404s when GRAPH_SEARCH_ENABLED is %p', async (raw) => {
+    env.GRAPH_SEARCH_ENABLED = raw;
     expect((await POST(makeEvent({ q: 'x' }))).status).toBe(404);
     expect(mockedView).not.toHaveBeenCalled();
+  });
+
+  it('is on when GRAPH_SEARCH_ENABLED is unset', async () => {
+    delete env.GRAPH_SEARCH_ENABLED;
+    expect((await POST(makeEvent({ q: 'x' }))).status).toBe(200);
   });
 });

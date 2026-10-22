@@ -871,8 +871,8 @@ export function noEcosystemCopy(canSwitch: boolean): string {
 
 /**
  * 🔴 The search box's runtime switch, read from `GRAPH_SEARCH_ENABLED` in the
- * web app's env. ON unless set to `false`/`0`/`off`/`no` (it was hidden for the
- * demo, backlog #30; back on with #31).
+ * web app's env. ON unless set to `false`/`0`/`off`/`no` (owner, 2026-10-21:
+ * "On by default everywhere"). Off hides the box and 404s `/grafo/buscar`.
  */
 export function graphSearchEnabled(raw: string | undefined): boolean {
   return !['false', '0', 'off', 'no'].includes((raw ?? '').trim().toLowerCase());

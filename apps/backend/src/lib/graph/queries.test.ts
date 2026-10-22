@@ -545,6 +545,21 @@ describe('the view, when the threshold hides everything', () => {
       )
     })
 
+    it('🔴 repeats gate 5 inside the subquery: a persona matches only via a documento', () => {
+      expect(text).toContain("(se.type <> 'persona' OR sd.content_kind = 'documento')")
+      expect(text).toMatch(/se\.organization_id = \$\d+/)
+    })
+
+    it('matches nothing (not everything) when `q` has no searchable characters', () => {
+      expect(renderSql(entityViewQuery({ organizationId: ORG, q: '"' })).text).toContain('AND FALSE')
+    })
+
+    it('strips NUL bytes from `q`', () => {
+      const bound = renderSql(entityViewQuery({ organizationId: ORG, q: 'agua\u0000' })).params
+      expect(bound).toContain('agua')
+      expect(bound.some((p) => typeof p === 'string' && p.includes('\u0000'))).toBe(false)
+    })
+
     it('caps the query text', () => {
       const long = 'a'.repeat(MAX_SEARCH_CHARS + 50)
       const bound = renderSql(entityViewQuery({ organizationId: ORG, q: long })).params

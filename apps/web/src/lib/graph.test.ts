@@ -622,6 +622,7 @@ describe('full-text search on /grafo (#31)', () => {
   });
 
   describe('graphSearchEnabled', () => {
+    // Owner, 2026-10-21: "On by default everywhere".
     it.each([undefined, '', 'true', '1', 'on'])('is ON by default and for %p', (raw) => {
       expect(graphSearchEnabled(raw)).toBe(true);
     });

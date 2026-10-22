@@ -27,7 +27,11 @@ export const POST: RequestHandler = async ({ locals, cookies, request }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
 
   const body = (await request.json().catch(() => null)) as { q?: unknown; eco?: unknown } | null;
-  const q = (typeof body?.q === 'string' ? body.q : '').trim().slice(0, GRAPH_SEARCH_MAX_LENGTH);
+  // NUL bytes would 500 in Postgres; the backend strips them too.
+  const q = (typeof body?.q === 'string' ? body.q : '')
+    .replaceAll('\u0000', '')
+    .trim()
+    .slice(0, GRAPH_SEARCH_MAX_LENGTH);
   if (q === '') return json({ ids: [] });
 
   let organizationId: string | null = null;

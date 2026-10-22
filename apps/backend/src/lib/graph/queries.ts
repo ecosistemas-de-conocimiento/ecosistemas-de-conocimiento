@@ -1886,10 +1886,18 @@ const SEARCHABLE_TEXT = sql`coalesce(CASE
  * stemmer's suffixes are accented, so "migración" finds "migraciones") and
  * accent-folded on both sides (so "migracion" finds "migración").
  *
- * 🔴 SAME GATES AS EVERY OTHER STATEMENT. The documents are this ecosistema's
- * and published, and their text is {@link SEARCHABLE_TEXT}. The entity still
- * goes through the outer statement's support threshold and noise/persona
- * gates, so search can only narrow the visible graph, never widen it.
+ * 🔴 THE GATES, IN THE SUBQUERY TOO. The documents are this ecosistema's and
+ * published, and their text is {@link SEARCHABLE_TEXT}. Gate 5 is repeated
+ * INSIDE the subquery: a `persona` matches only through a `documento`'s text.
+ * The outer statement's persona gate alone is not enough — a persona that a
+ * documento makes visible would otherwise light up because a TESTIMONIO
+ * mentioning it matched (audit, 2026-10-21). The outer threshold and noise
+ * gate still apply, so search can only narrow the visible graph.
+ *
+ * ⚠ `GRAPH_SEARCH_ENABLED=false` hides the web box and 404s its route, but
+ * this `q=` path stays reachable to any member calling the API. That is
+ * acceptable because it only answers over published, corpus-cleared text of
+ * an ecosistema the caller may already read in full.
  *
  * ⚠ No index: the vectors are built per query. Fine at today's corpus size
  * (see the commit that added this); a stored `tsvector` column is the next step.
@@ -1909,10 +1917,13 @@ const SEARCHABLE_TEXT = sql`coalesce(CASE
  * "CIDE"; that works. "el CIDÉ" would not.
  */
 function buildSearchFilter(q: string | null | undefined, organizationId: number): GraphSql {
-  const raw = typeof q === 'string' ? q.trim().slice(0, MAX_SEARCH_CHARS) : ''
+  // NUL bytes: Postgres rejects them in a text parameter (a 500, not a miss).
+  const raw = typeof q === 'string' ? q.replaceAll('\u0000', '').trim().slice(0, MAX_SEARCH_CHARS) : ''
   if (raw === '') return sql``
   const key = canonicalKey(raw)
-  if (key === '') return sql``
+  // A query with no searchable characters (a lone `"`) matches nothing — not
+  // everything, which is what dropping the clause would do.
+  if (key === '') return sql` AND FALSE`
   const lowered = raw.toLowerCase()
   return sql` AND (
     strpos(e.canonical_key, ${key}) > 0
@@ -1929,7 +1940,11 @@ function buildSearchFilter(q: string | null | undefined, organizationId: number)
         ON sd.id = sm.document_id
        AND sd.organization_id = ${organizationId}
        AND sd.publication_status = 'published'
+      JOIN graph_entities se
+        ON se.id = sm.entity_id
+       AND se.organization_id = ${organizationId}
       WHERE sm.organization_id = ${organizationId}
+        AND (se.type <> 'persona' OR sd.content_kind = 'documento')
         AND (
           to_tsvector('spanish', ${SEARCHABLE_TEXT}) @@ websearch_to_tsquery('spanish', ${raw})
           OR to_tsvector('spanish', translate(${SEARCHABLE_TEXT}, ${ACCENTED}, ${UNACCENTED}))
