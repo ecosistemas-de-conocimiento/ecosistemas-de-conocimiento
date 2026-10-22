@@ -441,6 +441,58 @@ describe('deterministicPass — follow-ups to the audit of the one-pass rewrite'
     expect(run(`Es ana@${'b.'.repeat(200)}com hoy`).text).toBe('Es [Dato omitido] hoy')
   })
 
+  // 🔴 Growing right must not eat the NEXT email's local part: the search then
+  // resumed at its "@" and the second domain was left, or split by a name.
+  it.each([
+    ['dash', 'Ve ana@x.com-juan@familia-lopez.mx hoy', []],
+    ['dash, roster', 'Ve ana@x.com-juan@familia-lopez.mx hoy', ['López']],
+    ['digit, roster', 'Ve ana@x.com2juan@lopez.mx hoy', ['López']],
+    ['letters', 'Ve ana@x.comjuan@y.com hoy', []],
+    ['TLD over 63', `Ve ana@b.${'c'.repeat(70)}@e.ff hoy`, []],
+    ['TLD over 63, roster', `Ve ana@b.${'c'.repeat(70)}maria@e.ff hoy`, ['María']],
+    ['domain over 255', `Ve a@${'b'.repeat(300)}.com@c.dd hoy`, []],
+    ['roster email second', 'Ve ana@x.com-juan@y.com hoy', ['juan@y.com']],
+  ])('two emails glued (%s) leave nothing of either', (_, text, roster) => {
+    // Overlapping addresses merge: one placeholder for the glued pair.
+    expect(run(text, roster).text).toBe('Ve [Dato omitido] hoy')
+  })
+
+  it('reads a long domain once: the search resumes after it, not inside it', () => {
+    // Accent marks fill the domain; re-reading 1M of them cost ~1.5 s, once ~0.1 s
+    // (measured 2026-10-21, host torre, load ~8, at 2M: 3.0 s against 0.2 s).
+    const t0 = performance.now()
+    expect(run(`x@${'́'.repeat(1_000_000)}.co`).text).toBe('[Dato omitido]')
+    expect(performance.now() - t0).toBeLessThan(800)
+  })
+
+  it('grows left over every local-part character, "_ % +" included', () => {
+    for (const sep of ['_', '%', '+']) {
+      const text = `Ve maria${sep}${'x'.repeat(64)}@gmail.com hoy`
+      expect(run(text, ['María']).text, sep).toBe('Ve [Dato omitido] hoy')
+    }
+  })
+
+  it('an email inside a URL is one address, even when it IS a roster entry', () => {
+    expect(run('Ve https://ana@x.com hoy', ['ana@x.com']).text).toBe('Ve [Dato omitido] hoy')
+  })
+
+  it('an email that holds a URL is merged with it before the roster looks', () => {
+    // "www.x.com" lies inside the email. Unmerged, the entry took the email as
+    // a member and the URL was spliced in after it.
+    expect(run('Ve ana@www.x.com hoy', ['ana@www.x.com']).text).toBe('Ve [Persona A] hoy')
+  })
+
+  it('a long domain stops at a character no domain holds, and drops a trailing "-"', () => {
+    const domain = 'b'.repeat(300)
+    expect(run(`Ve ana@${domain}+1 hoy`).text).toBe('Ve [Dato omitido]+1 hoy')
+    expect(run(`Ve ana@${domain}-, hoy`).text).toBe('Ve [Dato omitido]-, hoy')
+  })
+
+  it('with no TLD, only a domain past 255 characters is taken', () => {
+    expect(run(`Ve a@${'b'.repeat(255)} hoy`).text).toBe(`Ve a@${'b'.repeat(255)} hoy`)
+    expect(run(`Ve a@${'b'.repeat(256)} hoy`).text).toBe('Ve [Dato omitido] hoy')
+  })
+
   it('a long domain leaves the full stop after it', () => {
     expect(run(`Escribe a ana@${'b'.repeat(300)}.`).text).toBe('Escribe a [Dato omitido].')
   })

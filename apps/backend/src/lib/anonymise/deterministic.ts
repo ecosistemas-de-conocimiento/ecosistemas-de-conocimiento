@@ -156,9 +156,11 @@ const DOMAIN_CHAR = /[\p{L}\p{M}\p{N}.-]/u
  * match grows LEFT over local-part characters and RIGHT over domain
  * characters, minus a trailing `.` or `-` (the full stop after an address).
  *
- * Linear: the search resumes where the grown match ends, and growing left
- * stops at the `@` before it (not a local-part character), so a character is
- * crossed by at most one later match. Overlaps are merged by the caller.
+ * Linear: the search resumes after the grown match, or, glued to the next
+ * email, after this match's "@", re-reading its domain once and no more;
+ * growing left stops at the `@` before it (not a local-part character), so a
+ * character is crossed by at most one later match. Overlaps are merged by the
+ * caller.
  */
 function emailSpans(text: string): Span[] {
   const out: Span[] = []
@@ -166,11 +168,20 @@ function emailSpans(text: string): Span[] {
   for (let m = re.exec(text); m !== null; m = re.exec(text)) {
     let start = m.index
     let end = start + m[0].length
-    while (start > 0 && LOCAL_CHAR.test(text.charAt(start - 1))) start--
-    while (end < text.length && DOMAIN_CHAR.test(text.charAt(end))) end++
+    // `charAt` past either end is "", which neither class matches.
+    while (LOCAL_CHAR.test(text.charAt(start - 1))) start--
+    while (DOMAIN_CHAR.test(text.charAt(end))) end++
+    // 🔴 GLUED TO THE NEXT EMAIL ("ana@x.com-juan@y.mx", "ana@x.comjuan@y.com"):
+    // this domain grew, or was matched, over that email's local part, and
+    // resuming at `end` restarted at ITS "@" and left its domain, with a
+    // member's name in it spliced (audit of the one-pass rewrite). Search
+    // again from just after THIS "@": the next email is found whole, overlaps
+    // this one, and the two merge. Otherwise resume at `end`, so a long domain
+    // is not read twice.
+    const glued = text.charAt(end) === '@'
     while (/[.-]/.test(text.charAt(end - 1))) end--
     out.push({ start, end, rule: DETERMINISTIC_LABELS.email })
-    re.lastIndex = end
+    re.lastIndex = glued ? m.index + m[0].indexOf('@') + 1 : end
   }
   return out
 }
@@ -284,8 +295,10 @@ function rosterAndAddresses(
           for (let i = start; i < end; i++) {
             const a = owner[i] ?? -1
             if (a >= 0) grown[a] = 1
-            if (ruleAt[i] === 0) ruleAt[i] = code
           }
+          // Overwriting another rule's characters is harmless: the merged span
+          // takes the rule of whichever span STARTS first, never of this one.
+          ruleAt.fill(code, start, end)
           joined.push({ start, end, rule: rules[code - 1] ?? DETERMINISTIC_LABELS.email })
           continue
         }
