@@ -16,7 +16,19 @@ vi.mock('@/lib/graph/schedule', () => ({ scheduleGraphExtraction: vi.fn() }))
 
 import { _resetAIClientsForTests } from './aiClient'
 import { _drainTranscribedDrives, driveTranscribedSoon } from './driveTranscribedSoon'
-import { driveTranscribedDocument, driveTranscribedDocuments } from './ingestRecovery'
+import { planIngestRetry } from '@/collections/Documents'
+import { GATE_UNAVAILABLE_CODE } from './anonymiseDocument'
+import {
+  DEFAULT_GATE_RETRY_LIMIT,
+  EXTRACTION_STALLED_CODE,
+  HELD_CODE,
+  driveTranscribedDocument,
+  driveTranscribedDocuments,
+  recoverAbandonedClaims,
+  sweepStalledExtracting,
+  sweepStalledHolds,
+  sweepUnavailableGateRuns,
+} from './ingestRecovery'
 
 type Row = Record<string, unknown>
 type Clause = Record<string, Record<string, unknown>>
@@ -29,6 +41,7 @@ function matchesClause(row: Row, clause: Clause): boolean {
   return Object.entries(clause).every(([field, op]) => {
     const value = row[field]
     if ('equals' in op) return String(value ?? '') === String(op.equals)
+    if ('like' in op) return String(value ?? '').toLowerCase().includes(String(op.like).toLowerCase())
     if ('in' in op) return (op.in as unknown[]).map(String).includes(String(value ?? ''))
     if ('not_in' in op) return value == null || !(op.not_in as unknown[]).map(String).includes(String(value))
     if ('exists' in op) return (value != null) === Boolean(op.exists)
@@ -41,11 +54,13 @@ const matches = (row: Row, where: unknown): boolean =>
 
 function fakeDb(rows: Row[]) {
   const store = rows.map((r) => ({ ...r }))
-  /** Return true to make this update throw instead of writing. */
-  let failWrite: (data: Row) => boolean = () => false
+  /** true: this update throws. 'hang': it never settles (the process died). */
+  let failWrite: (data: Row) => boolean | 'hang' = () => false
   const update = vi.fn(async (args: Record<string, unknown>) => {
     const data = args.data as Row
-    if (failWrite(data)) throw new Error('db hiccup')
+    const fail = failWrite(data)
+    if (fail === 'hang') return new Promise<never>(() => {})
+    if (fail) throw new Error('db hiccup')
     const hits =
       args.id !== undefined
         ? store.filter((r) => r.id === args.id)
@@ -54,7 +69,11 @@ function fakeDb(rows: Row[]) {
     return args.id !== undefined ? { ...hits[0] } : { docs: hits.map((r) => ({ ...r })) }
   })
   const find = vi.fn(async (args: Record<string, unknown>) => ({
-    docs: store.filter((r) => matches(r, args.where)).map((r) => ({ ...r })),
+    docs: store
+      .filter((r) => matches(r, args.where))
+      .sort((a, b) => Date.parse(String(a.updatedAt)) - Date.parse(String(b.updatedAt)))
+      .slice(0, Number(args.limit ?? 500))
+      .map((r) => ({ ...r })),
   }))
   const findByID = vi.fn(async (args: Record<string, unknown>) => {
     const hit = store.find((r) => r.id === args.id)
@@ -67,7 +86,7 @@ function fakeDb(rows: Row[]) {
       'find' | 'update' | 'findByID'
     >,
     row: (id: number) => store.find((r) => r.id === id)!,
-    failWrites: (f: (data: Row) => boolean) => {
+    failWrites: (f: (data: Row) => boolean | 'hang') => {
       failWrite = f
     },
   }
@@ -285,5 +304,137 @@ describe('🔴 a burst of callbacks keeps the detector pacing', () => {
       expect(db.row(i).ingestStatus).toBe('failed')
       expect(String(db.row(i).ingestError)).toMatch(/^anonymisation_unavailable: /)
     }
+  })
+})
+
+// ── Abandoned claims and lost holds (the sweep's side) ─────────────────────
+
+const minutesAfter = (n: number) => new Date(NOW.getTime() + n * 60_000)
+const minutesBefore = (n: number) => new Date(NOW.getTime() - n * 60_000).toISOString()
+
+/** A row a drive claimed `minutes` ago and nobody is running any more. */
+const abandoned = (over: Row = {}): Row =>
+  transcribedRow({ ingestStatus: 'extracting', updatedAt: minutesBefore(15), ...over })
+
+describe('🔴 recoverAbandonedClaims — a claim with no live run goes back to `transcribed`', () => {
+  it('a claimed-then-abandoned row is recovered, then driven once', async () => {
+    const db = fakeDb([transcribedRow()])
+    // The process dies inside the gate: the claim is written, nothing after it.
+    let died = false
+    db.failWrites((data) => (data.anonymisationStatus === 'n/a' ? ((died = true), 'hang') : false))
+    void driveTranscribedDocument(db.payload, { ...db.row(42) })
+    await vi.waitFor(() => expect(died).toBe(true))
+    expect(db.row(42).ingestStatus).toBe('extracting')
+    db.failWrites(() => false)
+
+    // Young: a live run could still own it.
+    expect(await recoverAbandonedClaims(db.payload, { now: minutesAfter(5) })).toMatchObject({ recovered: 0 })
+
+    const res = await recoverAbandonedClaims(db.payload, { now: minutesAfter(11) })
+    expect(res).toEqual({ examined: 1, recovered: 1, failed: 0 })
+    expect(db.row(42)).toMatchObject({ ingestStatus: 'transcribed', ingestError: 'extracting_recovered: 1/3' })
+
+    expect(await driveTranscribedDocuments(db.payload, { now: minutesAfter(20) })).toMatchObject({ driven: 1 })
+    expect(db.row(42)).toMatchObject({ ingestStatus: 'embedding', ingestError: null })
+    expect(ingestPosts()).toBe(1)
+  })
+
+  it('leaves alone: a young claim, a sent row, a pdf, a held row', async () => {
+    const db = fakeDb([
+      abandoned({ id: 1, updatedAt: minutesBefore(5) }),
+      abandoned({ id: 2, ingestId: 'ing_x' }),
+      abandoned({ id: 3, kind: 'pdf' }),
+      abandoned({ id: 4, anonymisationStatus: 'held' }),
+    ])
+    expect(await recoverAbandonedClaims(db.payload, { now: NOW })).toEqual({ examined: 0, recovered: 0, failed: 0 })
+  })
+
+  it('🔴 a gate run that never finished: back after 60 min, its token voided in the SAME write', async () => {
+    const token = 'anonymisation_running: tok-1'
+    const db = fakeDb([
+      abandoned({ id: 1, anonymisationStatus: 'pending', anonymisationError: token, updatedAt: minutesBefore(61) }),
+      abandoned({ id: 2, anonymisationStatus: 'pending', anonymisationError: token, updatedAt: minutesBefore(30) }),
+    ])
+    const res = await recoverAbandonedClaims(db.payload, { now: NOW })
+    expect(res).toMatchObject({ recovered: 1 })
+    expect(db.row(1)).toMatchObject({
+      ingestStatus: 'transcribed',
+      anonymisationStatus: 'n/a',
+      anonymisationError: `${GATE_UNAVAILABLE_CODE}: stalled: the gate run did not finish`,
+    })
+    expect(db.row(2).ingestStatus).toBe('extracting')
+
+    // The slow run wakes up and makes its final write, guarded on its token: no-op.
+    const late = (await db.payload.update({
+      collection: 'documents',
+      where: {
+        and: [
+          { id: { equals: 1 } },
+          { anonymisationStatus: { equals: 'pending' } },
+          { anonymisationError: { equals: token } },
+        ],
+      },
+      data: { anonymisationStatus: 'ready' },
+    } as never)) as unknown as { docs: unknown[] }
+    expect(late.docs).toHaveLength(0)
+    expect(db.row(1).anonymisationStatus).toBe('n/a')
+  })
+
+  it('🔴 at the cap the row is failed out, retryable, and the pdf/docx stall sweep never fights it', async () => {
+    const db = fakeDb([
+      abandoned({ id: 1, ingestError: 'extracting_recovered: 3/3', updatedAt: minutesBefore(90) }),
+      abandoned({ id: 2, ingestError: 'extracting_recovered: 2/3', updatedAt: minutesBefore(90) }),
+    ])
+    // The 60-min stall sweep runs first and still leaves audio claims alone.
+    expect(await sweepStalledExtracting(db.payload, { now: NOW, deadlineMs: 60 * 60_000 })).toMatchObject({
+      examined: 0,
+    })
+    const res = await recoverAbandonedClaims(db.payload, { now: NOW })
+    expect(res).toEqual({ examined: 2, recovered: 1, failed: 1 })
+    expect(db.row(1).ingestStatus).toBe('failed')
+    expect(String(db.row(1).ingestError)).toMatch(new RegExp(`^${EXTRACTION_STALLED_CODE}:`))
+    expect(planIngestRetry(db.row(1) as never)).not.toBeNull()
+    expect(db.row(2)).toMatchObject({ ingestStatus: 'transcribed', ingestError: 'extracting_recovered: 3/3' })
+  })
+
+  it('recovers at most the per-pass limit, oldest first', async () => {
+    const db = fakeDb(
+      Array.from({ length: DEFAULT_GATE_RETRY_LIMIT + 2 }, (_, i) =>
+        abandoned({ id: i + 1, updatedAt: minutesBefore(60 - i) }),
+      ),
+    )
+    const res = await recoverAbandonedClaims(db.payload, { now: NOW })
+    expect(res.recovered).toBe(DEFAULT_GATE_RETRY_LIMIT)
+  })
+
+  it('two sweeps at once recover a row once, and count one attempt', async () => {
+    const db = fakeDb([abandoned()])
+    const [a, b] = await Promise.all([
+      recoverAbandonedClaims(db.payload, { now: NOW }),
+      recoverAbandonedClaims(db.payload, { now: NOW }),
+    ])
+    expect(a.recovered + b.recovered).toBe(1)
+    expect(db.row(42).ingestError).toBe('extracting_recovered: 1/3')
+  })
+})
+
+describe('🔴 sweepStalledHolds — a hold whose `failed` write was lost', () => {
+  it('stamps it failed with the hold code, keeps it `held` for review, and never re-drives it', async () => {
+    const db = fakeDb([
+      abandoned({ id: 1, anonymisationStatus: 'held' }),
+      abandoned({ id: 2, anonymisationStatus: 'held', updatedAt: minutesBefore(5) }),
+      abandoned({ id: 3, kind: 'pdf', anonymisationStatus: 'held' }),
+    ])
+    const res = await sweepStalledHolds(db.payload, { now: NOW })
+    expect(res).toEqual({ examined: 2, stalled: 2 })
+    expect(db.row(1)).toMatchObject({ ingestStatus: 'failed', anonymisationStatus: 'held' })
+    expect(String(db.row(1).ingestError)).toMatch(new RegExp(`^${HELD_CODE}:`))
+    expect(db.row(2).ingestStatus).toBe('extracting')
+
+    // No automatic way back: neither the gate re-drive nor the claim recovery takes it.
+    expect(await sweepUnavailableGateRuns(db.payload, { now: minutesAfter(60), deadlineMs: 0 })).toMatchObject({
+      examined: 0,
+    })
+    expect(await recoverAbandonedClaims(db.payload, { now: minutesAfter(120) })).toMatchObject({ examined: 0 })
   })
 })

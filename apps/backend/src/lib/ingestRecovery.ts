@@ -41,6 +41,11 @@
  *      reset `POST /:id/retry` uses. Nothing was sent to the corpus, so a
  *      repeat cannot duplicate anything; it costs at most two model calls.
  *
+ *   6. An audio drive's claim (`extracting`) with no live run behind it.
+ *      🔴 HANDED BACK to `transcribed`, capped (`recoverAbandonedClaims`);
+ *      nothing is sent before `embedding`. A hold whose `failed` write was
+ *      lost is stamped `failed` and left for review (`sweepStalledHolds`).
+ *
  * ⚠ 2–4 NEVER RE-DRIVE. Same reasons as `embeddingJanitor.ts`: an outcome we
  * cannot see, and a shared 100 req/min ai-service bucket.
  *
@@ -77,6 +82,7 @@ export const TRANSCRIBED_DRIVE_MIN_VAR = 'INGEST_RECOVERY_TRANSCRIBED_MIN'
 export const STAGE_STUCK_MIN_VAR = 'INGEST_RECOVERY_STAGE_STUCK_MIN'
 export const MESSAGE_STUCK_MIN_VAR = 'INGEST_RECOVERY_MESSAGE_STUCK_MIN'
 export const GATE_RETRY_MIN_VAR = 'INGEST_RECOVERY_GATE_RETRY_MIN'
+export const EXTRACTING_RECOVER_MIN_VAR = 'INGEST_RECOVERY_EXTRACTING_MIN'
 
 /**
  * A row whose gate could not run is re-driven once it is this old. inferred:
@@ -87,6 +93,21 @@ export const DEFAULT_GATE_RETRY_MIN = 15
 
 /** At most this many unavailable-gate rows are re-driven per pass. */
 export const DEFAULT_GATE_RETRY_LIMIT = 5
+
+/**
+ * An audio row the drive claimed (`extracting`) with no gate run on it is
+ * handed back to `transcribed` once it is this old. inferred: a live drive
+ * leaves this shape within milliseconds (the gate writes `pending` or `n/a`,
+ * then `embedding` follows), so ten minutes means the run is gone.
+ */
+export const DEFAULT_EXTRACTING_RECOVER_MIN = 10
+
+/**
+ * Hand-backs per row before {@link recoverAbandonedClaims} gives up and fails
+ * it out, retryable by a person. inferred: a row abandoned three times is
+ * failing for a reason a re-drive will not fix.
+ */
+export const DEFAULT_EXTRACTING_RECOVER_ATTEMPTS = 3
 
 /**
  * Every minute (the scheduler's floor). This sweep is now the step that moves
@@ -130,6 +151,9 @@ export const GATE_STALLED_CODE = 'anonymisation_stalled'
 export const NO_TENANT_CODE = 'no_tenant'
 export const EMPTY_TRANSCRIPT_CODE = 'empty_transcript'
 export const MESSAGE_STALLED_CODE = 'embedding_stalled'
+/** Written by {@link recoverAbandonedClaims}: `extracting_recovered: <n>/<cap>`. */
+export const EXTRACTING_RECOVERED_CODE = 'extracting_recovered'
+export const HELD_CODE = 'anonymisation_held'
 
 function minutesFromEnv(varName: string, fallback: number): number {
   const raw = Number(process.env[varName])
@@ -169,14 +193,54 @@ export function transcribedClaimWhere(): Where[] {
   ]
 }
 
-/** `extracting` that outlived its deadline. Gate state not settled by a human. */
+/**
+ * `extracting` that outlived its deadline. Gate state not settled by a human.
+ *
+ * ⚠ NOT AUDIO. An audio row reaches `extracting` only through the claim in
+ * {@link driveTranscribedDocument}, and {@link recoverAbandonedClaims} owns
+ * it: it hands the row back, and fails it out itself once the cap is reached.
+ */
 export function stalledExtractingWhere(cutoff: string): Where[] {
   return [
     { ingestStatus: { equals: 'extracting' } },
     { ingestId: { exists: false } },
     { anonymisationStatus: { in: ['n/a', 'pending', 'ready'] } },
     { publicationStatus: { equals: 'draft' } },
-    { kind: { in: [...PENDING_SWEEP_KINDS] } },
+    { kind: { in: PENDING_SWEEP_KINDS.filter((k) => k !== 'audio') } },
+    { updatedAt: { less_than: cutoff } },
+  ]
+}
+
+/**
+ * A drive's claim with no live run behind it: an audio row at `extracting`,
+ * never sent (no `ingestId`; the row would be `embedding` past the send).
+ *
+ *   `gate: 'none'`     the gate never ran (`n/a`) or finished `ready`.
+ *   `gate: 'pending'`  a gate run started and did not finish.
+ */
+export function abandonedClaimWhere(cutoff: string, gate: 'none' | 'pending'): Where[] {
+  return [
+    { ingestStatus: { equals: 'extracting' } },
+    { kind: { equals: 'audio' } },
+    { ingestId: { exists: false } },
+    gate === 'pending'
+      ? { anonymisationStatus: { equals: 'pending' } }
+      : { anonymisationStatus: { in: ['n/a', 'ready'] } },
+    { publicationStatus: { equals: 'draft' } },
+    { updatedAt: { less_than: cutoff } },
+  ]
+}
+
+/**
+ * The gate HELD the row, and the write that should have made it `failed` was
+ * lost, so it shows a spinner forever. Any kind: every path writes the hold
+ * from inside `extracting` the same way.
+ */
+export function stalledHeldWhere(cutoff: string): Where[] {
+  return [
+    { ingestStatus: { equals: 'extracting' } },
+    { anonymisationStatus: { equals: 'held' } },
+    { ingestId: { exists: false } },
     { updatedAt: { less_than: cutoff } },
   ]
 }
@@ -399,6 +463,143 @@ export async function sweepUnavailableGateRuns(
     }
   }
   return { examined: docs.length, redriven }
+}
+
+export interface RecoverResult {
+  examined: number
+  /** Handed back to `transcribed`; the next drive picks them up. */
+  recovered: number
+  /** At the cap: `failed`, retryable by a person. */
+  failed: number
+}
+
+const RECOVERED_RE = new RegExp(`^${EXTRACTING_RECOVERED_CODE}: (\\d+)`)
+const attemptsOf = (ingestError: unknown): number => {
+  const m = RECOVERED_RE.exec(String(ingestError ?? ''))
+  return m ? Number(m[1]) : 0
+}
+
+/**
+ * Hand an abandoned drive claim back to `transcribed` (owner's ruling,
+ * 2026-10-22), so a run lost to a restart costs minutes, not a failed upload.
+ *
+ * 🔴 SAFE BECAUSE NOTHING IS SENT BEFORE `embedding`. Every row here is still
+ * `extracting` with no `ingestId`, and `enqueueIngestForDoc` writes `embedding`
+ * before it calls ai-service, so no copy exists in any corpus.
+ *
+ *   · No gate run (`n/a`/`ready`): after {@link DEFAULT_EXTRACTING_RECOVER_MIN}.
+ *   · A gate run that never finished (`pending`): after the stage deadline
+ *     ({@link DEFAULT_STAGE_STUCK_MIN}). 🔴 The SAME UPDATE voids the run's
+ *     token (`n/a` + the unavailable code, as {@link sweepLostGateRuns} does),
+ *     so a slow run that is still alive writes nothing when it finishes: its
+ *     final write is guarded on `pending` + its token.
+ *
+ * ⚠ CAPPED. The attempt count rides in `ingestError` (no new column); the
+ * claim leaves it alone and the `embedding` write clears it. At the cap the
+ * row is failed out, retryable, instead: that is the end state, and it is why
+ * {@link stalledExtractingWhere} leaves audio to this sweep. At most
+ * {@link DEFAULT_GATE_RETRY_LIMIT} rows per shape per pass, like the gate
+ * re-drive; the age threshold is the cooldown between attempts.
+ *
+ * ⚠ EVERY WRITE IS ONE CONDITIONAL UPDATE on the predicate it read with, and
+ * every write moves the row off `extracting`, so a row that moved, or that a
+ * second runner already recovered, changes 0 rows.
+ */
+export async function recoverAbandonedClaims(
+  payload: Pick<Payload, 'find' | 'update'>,
+  opts: SweepOpts & { gateDeadlineMs?: number; maxAttempts?: number } = {},
+): Promise<RecoverResult> {
+  const now = opts.now ?? new Date()
+  const cap = opts.maxAttempts ?? DEFAULT_EXTRACTING_RECOVER_ATTEMPTS
+  const shapes = [
+    {
+      gate: 'none' as const,
+      ms:
+        opts.deadlineMs ??
+        minutesFromEnv(EXTRACTING_RECOVER_MIN_VAR, DEFAULT_EXTRACTING_RECOVER_MIN) * 60_000,
+    },
+    {
+      gate: 'pending' as const,
+      ms:
+        opts.gateDeadlineMs ??
+        minutesFromEnv(STAGE_STUCK_MIN_VAR, DEFAULT_STAGE_STUCK_MIN) * 60_000,
+    },
+  ]
+  const result: RecoverResult = { examined: 0, recovered: 0, failed: 0 }
+  for (const { gate, ms } of shapes) {
+    const where = abandonedClaimWhere(cutoffIso(now, ms), gate)
+    const page = (await payload.find({
+      collection: 'documents',
+      where: { and: where },
+      sort: 'updatedAt',
+      limit: opts.limit ?? DEFAULT_GATE_RETRY_LIMIT,
+      depth: 0,
+      overrideAccess: true,
+    })) as unknown as { docs?: Array<{ id?: number | string; ingestError?: unknown }> }
+    const docs = page?.docs ?? []
+    result.examined += docs.length
+    for (const doc of docs) {
+      if (doc?.id == null) continue
+      const attempts = attemptsOf(doc.ingestError)
+      const exhausted = attempts >= cap
+      const voidGateRun =
+        gate === 'pending'
+          ? {
+              anonymisationStatus: 'n/a',
+              anonymisationError: `${GATE_UNAVAILABLE_CODE}: stalled: the gate run did not finish`,
+            }
+          : {}
+      try {
+        const res = await updateDocumentColumns(payload as unknown as DocumentColumnsPayload, {
+          id: doc.id,
+          where,
+          data: exhausted
+            ? {
+                ingestStatus: 'failed',
+                ingestError: extractionStalledReason(Math.round(ms / 60_000)).slice(0, 500),
+                ...voidGateRun,
+              }
+            : {
+                ingestStatus: 'transcribed',
+                ingestError: `${EXTRACTING_RECOVERED_CODE}: ${attempts + 1}/${cap}`,
+                ...voidGateRun,
+              },
+        })
+        if (res > 0) {
+          if (exhausted) result.failed += 1
+          else result.recovered += 1
+        }
+      } catch (err) {
+        opts.log?.warn(
+          { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+          '[ingest-recovery] could not recover an abandoned drive claim',
+        )
+      }
+    }
+  }
+  return result
+}
+
+/**
+ * `extracting` + `held` → `failed` with the hold's code, what
+ * `enqueueIngestForDoc` would have written. 🔴 NO AUTO-RETRY: a person
+ * reviews holds. `anonymisationStatus` stays `held`, so the row stays in the
+ * review queue (`lib/holdReview.ts` lists on it).
+ */
+export function sweepStalledHolds(
+  payload: Pick<Payload, 'find' | 'update'>,
+  opts: SweepOpts = {},
+): Promise<FailOutResult> {
+  const now = opts.now ?? new Date()
+  const ms =
+    opts.deadlineMs ??
+    minutesFromEnv(EXTRACTING_RECOVER_MIN_VAR, DEFAULT_EXTRACTING_RECOVER_MIN) * 60_000
+  return failOutDocuments(
+    payload,
+    stalledHeldWhere(cutoffIso(now, ms)),
+    `${HELD_CODE}: the anonymisation gate held this document; it waits for review`,
+    { limit: opts.limit ?? 500, log: opts.log, label: 'stalled hold' },
+  )
 }
 
 /** The slice of a `transcribed` row the drive reads. */
@@ -746,6 +947,8 @@ export async function runIngestRecoveryPass(
     }
   }
   try {
+    await step('recover', () => recoverAbandonedClaims(payload, { log }))
+    await step('held', () => sweepStalledHolds(payload, { log }))
     await step('transcribed', () => driveTranscribedDocuments(payload, { log }))
     await step('extracting', () => sweepStalledExtracting(payload, { log }))
     await step('gate', () => sweepLostGateRuns(payload, { log }))
