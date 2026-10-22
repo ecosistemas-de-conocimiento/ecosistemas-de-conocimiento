@@ -8,6 +8,7 @@
 
 import { env } from '../../config/env.js';
 import type { Db } from '../../db/client.js';
+import { isAiServiceError } from '../../errors/base.js';
 import { callRerank, type Reranker, type RerankResult } from '../ai/rerank/rerank-client.js';
 import type { LLMRouter } from '../ai/router/types.js';
 import { createOpenRouter } from '../ai/router/openrouter.js';
@@ -18,17 +19,26 @@ import {
   RERANK_OK_MESSAGE,
   RetrieveService,
   SILENT_LEG_MESSAGE,
+  budgetSoftCapWarning,
+  rerankDegradedWireWarning,
   rerankOkLine,
+  type RerankDegradation,
   type RetrieveContext,
   type RetrieveLogger,
   type SilentLegWarning,
 } from './retrieve.js';
+import { RetrievalMeter, type RetrievalBudget } from './retrieval-meter.js';
 import type {
   CorpusDiagnostics,
   MultiRetrievedChunk,
+  RetrievalLeg,
+  RetrievalWarning,
   RetrieveMultiRequest,
   RetrieveMultiResult,
 } from './types.js';
+
+/** Wire order of `legs` — stable, so a consumer diffing it sees a set change, not a shuffle. */
+const LEG_ORDER: readonly RetrievalLeg[] = ['dense', 'lexical', 'sparse', 'trigram', 'rerank'];
 
 const DEFAULT_TOP_K = 10;
 
@@ -119,6 +129,12 @@ export interface RetrieveMultiServiceOptions {
   reranker?: Reranker;
   /** Optional logger for the rerank fail-safe path; absent ⇒ warnings are swallowed. */
   logger?: RetrieveLogger;
+  /**
+   * Budget for the post-fusion rerank, and for the per-corpus query embeds
+   * when this service builds its own `RetrieveService`. An injected
+   * `retrieveService` meters itself (or not) with whatever it was built with.
+   */
+  budget?: RetrievalBudget;
 }
 
 export class RetrieveMultiService {
@@ -128,6 +144,7 @@ export class RetrieveMultiService {
   /** True when a reranker was injected — forces rerank availability (see options). */
   private readonly rerankInjected: boolean;
   private readonly logger: RetrieveLogger | undefined;
+  private readonly budget: RetrievalBudget | undefined;
 
   constructor(opts: RetrieveMultiServiceOptions) {
     // Forward the logger into the composed per-corpus service UNWRAPPED. Without
@@ -142,11 +159,13 @@ export class RetrieveMultiService {
       new RetrieveService({
         db: opts.db,
         ...(opts.logger ? { logger: opts.logger } : {}),
+        ...(opts.budget ? { budget: opts.budget } : {}),
       });
     this.router = opts.router ?? createOpenRouter();
     this.reranker = opts.reranker ?? callRerank;
     this.rerankInjected = opts.reranker !== undefined;
     this.logger = opts.logger;
+    this.budget = opts.budget;
   }
 
   async retrieveMulti(
@@ -216,6 +235,10 @@ export class RetrieveMultiService {
     //    Per-call by construction: two concurrent fan-outs over the same corpus
     //    hold different buffers and cannot settle each other's warnings.
     const diagnostics: CorpusDiagnostics[] = [];
+    // Union of the per-corpus `legs`, and every per-corpus warning, so the
+    // multi response carries the same degradation signal single retrieve does.
+    const legsSeen = new Set<RetrievalLeg>();
+    const warnings: RetrievalWarning[] = [];
     const legs = await Promise.all(
       corpora.map(async (corpus): Promise<MultiRetrievedChunk[]> => {
         const silentLegs: SilentLegWarning[] = [];
@@ -237,9 +260,16 @@ export class RetrieveMultiService {
             legCtx,
           );
           diagnostics.push({ corpus, matched: r.chunks.length });
+          // `?? []`: an injected service built before `legs` existed may omit it.
+          for (const leg of (r.legs as RetrievalLeg[] | undefined) ?? []) legsSeen.add(leg);
+          if (r.warnings) warnings.push(...r.warnings);
           alreadyReported = r.chunks.length === 0;
           return r.chunks.map((c) => ({ ...c, corpus }));
         } catch (err) {
+          // A budget refusal (402) is NOT a per-corpus fault: the org cannot
+          // pay for this call at all. Swallowing it into `error: 'failed'`
+          // would answer an over-cap caller 200 with fewer chunks.
+          if (isAiServiceError(err) && err.status === 402) throw err;
           // An errored leg is NOT the routine zero-match case: `matched: 0`
           // here carries an `error`, and whatever the legs reported on the way
           // down is part of that story. Left to be logged.
@@ -327,25 +357,51 @@ export class RetrieveMultiService {
       const poolDepth = Math.min(limit * RERANK_POOL_MULTIPLIER, RERANK_POOL_CAP);
       const pool = fused.slice(0, poolDepth);
       const model = req.rerankModel ?? env.RERANK_MODEL;
-      chunks = await this.applyRerank(pool, fused, query, model, limit, (scored, egress) =>
-        this.logger?.info?.(
-          rerankOkLine(
-            {
-              corpus: corpora,
-              org: ctx.org,
-              project: ctx.project,
-              model,
-              poolSize: pool.length,
-              scored,
-              topK: limit,
-            },
-            egress,
-          ),
-          RERANK_OK_MESSAGE,
-        ),
-      );
+      // The rerank has no price table: reserve $0 (still fail-closed on an
+      // unconfigured org) and charge the provider-reported cost at close.
+      const meter = await RetrievalMeter.open(this.budget, {
+        org: ctx.org,
+        project: ctx.project,
+        estimateUsd: 0,
+      });
+      if (meter.softCap) warnings.push(budgetSoftCapWarning(ctx.org));
+      try {
+        chunks = await this.applyRerank(
+          pool,
+          fused,
+          query,
+          model,
+          limit,
+          (reason) => warnings.push(rerankDegradedWireWarning(reason)),
+          (usd) => meter.charge(usd),
+          (scored, egress) =>
+            this.logger?.info?.(
+              rerankOkLine(
+                {
+                  corpus: corpora,
+                  org: ctx.org,
+                  project: ctx.project,
+                  model,
+                  poolSize: pool.length,
+                  scored,
+                  topK: limit,
+                },
+                egress,
+              ),
+              RERANK_OK_MESSAGE,
+            ),
+        );
+      } finally {
+        await meter.close();
+      }
+      if (chunks.some((c) => c.rerankScore !== undefined)) legsSeen.add('rerank');
     } else {
       chunks = fused.slice(0, limit);
+      // Asked for, and nothing is configured to answer. Said on the wire, not
+      // only in a log nobody on the consumer side reads.
+      if (req.rerank === true && !rerankAvailable) {
+        warnings.push(rerankDegradedWireWarning('unavailable'));
+      }
     }
 
     // Report diagnostics in the request's corpus order (Promise.all preserves
@@ -381,7 +437,16 @@ export class RetrieveMultiService {
       }
     }
 
-    return { query, rewritten, chunks, corpora: diagnostics, fusion };
+    const uniqueWarnings = dedupeWarnings(warnings);
+    return {
+      query,
+      rewritten,
+      chunks,
+      corpora: diagnostics,
+      fusion,
+      legs: LEG_ORDER.filter((leg) => legsSeen.has(leg)),
+      ...(uniqueWarnings.length > 0 ? { warnings: uniqueWarnings } : {}),
+    };
   }
 
   /**
@@ -417,24 +482,35 @@ export class RetrieveMultiService {
     query: string,
     model: string,
     limit: number,
+    onDegraded: (reason: RerankDegradation) => void,
+    onCost: (usd: number) => void,
     onOk: (scored: number, egress: RerankResult['egress']) => void,
   ): Promise<MultiRetrievedChunk[]> {
     if (pool.length === 0) return fused.slice(0, limit);
 
     const controller = new AbortController();
     const timeoutMs = env.RERANK_TIMEOUT_MS;
+    // Set by the timer, not inferred from the error — see the same flag in
+    // `RetrieveService.applyRerank`.
+    let timedOut = false;
     const timer =
-      timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+      timeoutMs > 0
+        ? setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+          }, timeoutMs)
+        : undefined;
 
     try {
       const documents = pool.map((c) => c.text);
-      const { results, egress } = await this.reranker({
+      const { results, egress, usage } = await this.reranker({
         model,
         query,
         documents,
         topN: limit,
         signal: controller.signal,
       });
+      onCost((usage as RerankResult['usage'] | undefined)?.estimatedCostUsd ?? 0);
 
       // Map results back to the pool by index; higher relevanceScore first.
       // Defensive re-sort — a compliant backend already sorts, but ordering IS
@@ -467,6 +543,9 @@ export class RetrieveMultiService {
           seen.add(cand.chunkId);
           selected.push(cand);
         }
+        // A pool smaller than `limit` is a small result, not a misbehaving
+        // reranker — same rule as the single-corpus rung.
+        if (scored < Math.min(limit, pool.length)) onDegraded('backfilled');
       }
 
       // Isolated: the rerank already SUCCEEDED here. Inside the bare `try`, a
@@ -483,9 +562,21 @@ export class RetrieveMultiService {
         { err, model, poolSize: pool.length },
         'multi-corpus rerank failed; falling back to fused order',
       );
+      onDegraded(timedOut ? 'timeout' : 'error');
       return fused.slice(0, limit);
     } finally {
       if (timer) clearTimeout(timer);
     }
   }
+}
+
+/** One warning per `(code, reason)`: N corpora crossing the same soft cap say it once. */
+function dedupeWarnings(warnings: RetrievalWarning[]): RetrievalWarning[] {
+  const seen = new Set<string>();
+  return warnings.filter((w) => {
+    const key = `${w.code}:${w.reason ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

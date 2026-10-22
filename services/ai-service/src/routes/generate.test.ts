@@ -17,6 +17,8 @@ const cancelGenerationMock = vi.fn();
 const resolveSpecMock = vi.fn();
 const createOpenRouterMock = vi.fn();
 const fetchContextMock = vi.fn();
+/** The `retrievalTrace` the mocked `fetchContextWithTrace` returns. */
+const retrievalTraceMock = vi.fn((): unknown[] => []);
 
 // ⚠ `snapshotWhere` and `RecordedWhere` used to be defined here. They now come
 // from `src/test/where-recorder.ts`: eighteen further test files carried the
@@ -87,6 +89,11 @@ vi.mock('../services/ai/router/openrouter.js', () => ({
 
 vi.mock('../services/context/fetch.js', () => ({
   fetchContext: (...args: unknown[]) => fetchContextMock(...args),
+  // The routes call the trace variant; it wraps the same mock.
+  fetchContextWithTrace: async (...args: unknown[]) => ({
+    context: await fetchContextMock(...args),
+    retrievalTrace: retrievalTraceMock(),
+  }),
 }));
 
 vi.mock('../db/client.js', () => {
@@ -142,6 +149,7 @@ import {
   IdempotencyConflictError,
   SpecResolutionError,
 } from '../services/generation/orchestrator.js';
+import { CorpusNotFoundError } from '../services/rag/errors.js';
 
 import { useBuildServer } from '../test/server-harness.js';
 
@@ -164,6 +172,8 @@ beforeEach(() => {
   resolveSpecMock.mockReset();
   createOpenRouterMock.mockReset();
   fetchContextMock.mockReset();
+  retrievalTraceMock.mockReset();
+  retrievalTraceMock.mockReturnValue([]);
   // Default: no context fetched. Individual tests override.
   fetchContextMock.mockResolvedValue({});
   dbState.requestRows = [];
@@ -688,34 +698,71 @@ describe('POST /v1/generate/sync', () => {
     await app.close();
   });
 
-  it('includeContext: missing-corpus result (empty key) is non-fatal', async () => {
+  it('includeContext: a missing corpus is a 404 and the model is never called', async () => {
+    // AIS-3: this used to render an empty `__context` and answer 200 —
+    // ungrounded, and indistinguishable from a grounded answer.
     const app = await makeApp();
-    resolveSpecMock.mockResolvedValueOnce(
-      syncSpecForTemplate(
-        'Q: {{q}}\n{{#each __context.missing}}- {{this}}\n{{/each}}',
-      ),
+    resolveSpecMock.mockResolvedValueOnce(syncSpecForTemplate('Q: {{q}}'));
+    fetchContextMock.mockRejectedValueOnce(
+      new CorpusNotFoundError({ corpus: 'missing', org: ORG, project: PROJECT }),
     );
-    // fetchContext's contract per services/context/fetch.ts:118 is to return
-    // an empty array on CorpusNotFoundError — no throw. Mirror that here.
-    fetchContextMock.mockResolvedValueOnce({ missing: [] });
     const routeMock = syncRouteMock();
     createOpenRouterMock.mockReturnValue({ route: routeMock });
 
-    const res = await app.inject({
-      method: 'POST',
-      url: '/v1/generate/sync',
-      headers: { authorization: `Bearer ${APP_TOKEN}` },
-      payload: {
-        unit: { unitKey: 'u-sync', input: { q: 'hi' } },
-        includeContext: [{ corpus: 'missing', query: 'hi' }],
-      },
-    });
-    expect(res.statusCode).toBe(200);
-    // Prompt renders cleanly with no chunks (template's #each iterates []).
-    const calls = routeMock.mock.calls as unknown as Array<
-      [{ messages: Array<{ content: string }> }]
-    >;
-    expect(calls[0]![0].messages[0]!.content).toBe('Q: hi\n');
+    for (const url of ['/v1/generate/sync', '/v1/generate/stream']) {
+      if (url.endsWith('stream')) {
+        resolveSpecMock.mockResolvedValueOnce(syncSpecForTemplate('Q: {{q}}'));
+        fetchContextMock.mockRejectedValueOnce(
+          new CorpusNotFoundError({ corpus: 'missing', org: ORG, project: PROJECT }),
+        );
+      }
+      const res = await app.inject({
+        method: 'POST',
+        url,
+        headers: { authorization: `Bearer ${APP_TOKEN}` },
+        payload: {
+          unit: { unitKey: 'u-sync', input: { q: 'hi' } },
+          includeContext: [{ corpus: 'missing', query: 'hi' }],
+        },
+      });
+      expect(res.statusCode, url).toBe(404);
+      expect(res.json(), url).toEqual({
+        error: { code: 'CORPUS_NOT_FOUND', message: expect.stringContaining('missing') },
+      });
+    }
+    expect(routeMock).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('includeContext: the response carries the retrievalTrace (sync body and stream done frame)', async () => {
+    const app = await makeApp();
+    const trace = [{ key: 'docs', corpus: 'docs', chunkIds: ['c1'], legs: ['dense'] }];
+    for (const url of ['/v1/generate/sync', '/v1/generate/stream']) {
+      resolveSpecMock.mockResolvedValueOnce(syncSpecForTemplate('Q: {{q}}'));
+      fetchContextMock.mockResolvedValueOnce({ docs: ['chunk-one'] });
+      retrievalTraceMock.mockReturnValueOnce(trace);
+      createOpenRouterMock.mockReturnValue({ route: syncRouteMock() });
+      const res = await app.inject({
+        method: 'POST',
+        url,
+        headers: { authorization: `Bearer ${APP_TOKEN}` },
+        payload: {
+          unit: { unitKey: 'u-sync', input: { q: 'hi' } },
+          includeContext: [{ corpus: 'docs', query: 'hi' }],
+        },
+      });
+      expect(res.statusCode, url).toBe(200);
+      const body = url.endsWith('sync')
+        ? res.json()
+        : (JSON.parse(
+            res.body
+              .split('\n\n')
+              .filter((f) => f.startsWith('data: '))
+              .map((f) => f.slice('data: '.length))
+              .find((f) => f.includes('"done"'))!,
+          ) as Record<string, unknown>);
+      expect(body.retrievalTrace, url).toEqual(trace);
+    }
     await app.close();
   });
 

@@ -473,7 +473,10 @@ export const liveSchemaFingerprint = async (url) => {
 const LABEL = '[schema-gate]';
 
 const databaseUrl = () => {
-  const url = process.env.DATABASE_URL;
+  // DIRECT (non-pooled) URL first, same as `createMigrationClient` in
+  // `src/db/client.ts`: the gate must read and stamp the database the migrate
+  // step writes. `||` so a blank var falls back too. Unset ⇒ today's behaviour.
+  const url = process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL;
   if (!url) {
     // Same posture as a connection failure: this is not staleness. The migrate
     // step next in the chain reports a missing DATABASE_URL properly.
@@ -508,11 +511,16 @@ const pinnedClient = (url) =>
     max: 1,
     connect_timeout: 10,
     idle_timeout: 2,
+    // Unnamed statements: safe through a transaction-mode pooler. (The
+    // startup-packet `search_path` below still needs a session — use
+    // DATABASE_URL_DIRECT behind PgBouncer.)
+    prepare: false,
     connection: { search_path: 'pg_catalog', application_name: 'ai-service-schema-fingerprint' },
   });
 
 /** The gate's own connection: stamp reads and writes. NOT the fingerprint's. */
-const connect = (url) => postgres(url, { max: 1, connect_timeout: 10, idle_timeout: 2 });
+const connect = (url) =>
+  postgres(url, { max: 1, connect_timeout: 10, idle_timeout: 2, prepare: false });
 
 /** The stamp on the database this connection is attached to, or null. */
 const readClaim = async (client) => {

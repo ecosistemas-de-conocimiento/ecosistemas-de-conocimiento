@@ -176,6 +176,16 @@ export async function buildHarness(opts: HarnessOptions): Promise<Harness> {
     .returning({ id: corpora.id });
   const corpusId = inserted[0]!.id;
 
+  // Ingest is charged against the org's cap and the enforcer is fail-closed
+  // on a missing row, so the eval org needs one. DO NOTHING keeps a caller's
+  // own seed (a budget-focused test) intact. Eval data is fixture-embedded:
+  // nothing here is paid.
+  await db.execute(sql`
+    INSERT INTO "budget_state" ("org", "limit_usd", "remaining_usd")
+    VALUES (${org}, 100, 100)
+    ON CONFLICT ("org") DO NOTHING
+  `);
+
   // One ingest job per fixture doc, through the real worker.
   const ingestId = randomUUID();
   for (const doc of docs) {

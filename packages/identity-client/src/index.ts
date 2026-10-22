@@ -2,7 +2,8 @@
 //
 // Five things, nothing more:
 //   1. verifyIdentityToken — is this token real, and what does it claim?
-//   2. can / canInProject  — pure checks over that claim.
+//   2. can / canInAudience — pure checks over that claim (canInProject is
+//      the same function under its older name).
 //   3. resolveGrant        — server-to-server lookup when no token exists.
 //   4. resolveExport       — every member of one project, for seeding.
 //   5. loginWithPassword / refreshSession / revokeSession — run ONE human's
@@ -32,6 +33,7 @@ export {
 
 export {
   can,
+  canInAudience,
   canInProject,
   grantOf,
   hasRoleInProject,
