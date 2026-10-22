@@ -171,11 +171,25 @@ export function createPseudonymAllocator(): PseudonymAllocator {
    *
    * ⚠ No title list: any leading words count. Two words minimum, so a bare
    * "López" or "Fernando" never merges two people who share one name.
+   *
+   * 🔴 "LA ESPOSA DE MI PRIMO" IS NOT "MI PRIMO" (owner ruling Q6, 2026-10-21).
+   * It ends with the same words, but its head is another person: Spanish says
+   * "X of Y" as "X de Y". So when the leading words hold the preposition
+   * `de` / `del`, the long span names someone RELATED to the short one, and it
+   * gets its own label. A title ("Don", "doña", "Lic.") never holds a `de`.
+   *
+   * ⚠ This is grammar, not a vocabulary list: no kinship word appears here, and
+   * the owner forbids one (2026-10-17). A `de` INSIDE the shared tail
+   * ("Don José de la Cruz" / "José de la Cruz") is not in the leading words, so
+   * that titled pair still merges.
    */
   const titledAlias = (key: string): string | undefined => {
     for (const [other, label] of assigned) {
       const [short, long] = other.length < key.length ? [other, key] : [key, other]
-      if (short.split(' ').length >= 2 && long.endsWith(` ${short}`)) return label
+      if (short.split(' ').length < 2 || !long.endsWith(` ${short}`)) continue
+      const leading = long.slice(0, -short.length).trim().split(' ')
+      if (leading.some((w) => w === 'de' || w === 'del')) continue
+      return label
     }
     return undefined
   }
