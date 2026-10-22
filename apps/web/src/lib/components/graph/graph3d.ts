@@ -15,13 +15,14 @@
  * not leak one. `destroy` disposes the renderer AND forces the context loss.
  *
  * Labels are HTML over the canvas, set with `textContent` (never markup): a
- * small top-N by degree PER LEVEL plus the selected and hovered node
- * (`labels3d.ts`), staggered and scaled by rank so the top level's labels do
- * not pile onto one line.
+ * few candidates by degree PER LEVEL plus the selected and hovered node
+ * (`labels3d.ts`), then decluttered in SCREEN space after projection: at most
+ * five drawn per level, none overlapping. The declutter re-runs on every
+ * camera move, at most once per animation frame.
  */
 import ForceGraph3D, { type ConfigOptions, type ForceGraph3DInstance } from '3d-force-graph';
 
-import { labelLift3d, labelScale3d, labels3d } from './labels3d';
+import { declutter3d, labelBox3d, labelScale3d, labels3d, type Label3D, type Placed3D } from './labels3d';
 import {
   linkState,
   nodeDim,
@@ -79,7 +80,9 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
   const labelEls = new Map<string, HTMLElement>();
   /** Last pointer was a finger or pen: no hover, no tooltip. Same rule as `graph2d.ts`. */
   let touchInput = false;
-  const labelRank = new Map<string, number>();
+  /** Candidates in priority order, as `labels3d` returns them. */
+  let candidates: Label3D[] = [];
+  let frame = 0;
 
   // The default export is typed for the base node shape; its constructor is
   // generic only through the interface, hence the cast to our node and link.
@@ -121,7 +124,7 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     removeEventListener(type: 'change', fn: () => void): void;
     target: { x: number; y: number; z: number };
   };
-  const onCamera = () => placeLabels();
+  const onCamera = () => schedulePlace();
   controls.addEventListener('change', onCamera);
 
   function nodeColor(n: Node): string {
@@ -143,14 +146,12 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     syncLabels();
   }
 
-  /** Which labels exist: level of detail, capped, never markup. */
+  /** Which labels may show: candidates by rank, capped, never markup. */
   function syncLabels() {
     const byId = new Map(nodes.map((n) => [n.id, n]));
-    const picked = labels3d(nodes, focus, hoverId);
-    labelRank.clear();
-    for (const l of picked) labelRank.set(l.id, l.rankInLevel);
-    const wanted = picked.map((l) => byId.get(l.id)!);
-    const keep = new Set(labelRank.keys());
+    candidates = labels3d(nodes, focus, hoverId);
+    const wanted = candidates.map((l) => byId.get(l.id)!);
+    const keep = new Set(candidates.map((l) => l.id));
     for (const [id, label] of labelEls) {
       if (!keep.has(id)) {
         label.remove();
@@ -162,6 +163,7 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
       if (!label) {
         label = document.createElement('span');
         label.className = 'map3d-label';
+        label.hidden = true;
         label.textContent = shortLabel(n.label);
         options.labelLayer.append(label);
         labelEls.set(n.id, label);
@@ -172,18 +174,47 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     placeLabels();
   }
 
+  /** Camera moves fire many times a frame; place labels once, on the next one. */
+  function schedulePlace() {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      placeLabels();
+    });
+  }
+
+  /** Project every candidate, declutter by screen overlap, show what is kept. */
   function placeLabels() {
     if (labelEls.size === 0) return;
     const byId = new Map(nodes.map((n) => [n.id, n]));
-    for (const [id, label] of labelEls) {
-      const n = byId.get(id);
-      if (!n || n.fx === undefined) continue;
-      const p = graph.graph2ScreenCoords(n.fx, (n.fy ?? 0) + n.r, n.fz ?? 0);
-      // Stagger by rank in level: lower-ranked labels sit a row higher and a
-      // touch smaller, so neighbours on the crowded top level do not overlap.
-      const rank = labelRank.get(id) ?? 0;
-      const y = Math.round(p.y - labelLift3d(rank));
-      label.style.transform = `translate(${Math.round(p.x)}px, ${y}px) translate(-50%, -100%) scale(${labelScale3d(rank)})`;
+    // View-space depth: three's camera looks down its own -z, so a point
+    // with z >= 0 there is behind it, and `graph2ScreenCoords` would mirror it.
+    const m = (graph.camera() as { matrixWorldInverse: { elements: number[] } }).matrixWorldInverse.elements;
+    const at = new Map<string, { x: number; y: number }>();
+    const placed: Placed3D[] = candidates.map((c) => {
+      const n = byId.get(c.id);
+      const label = labelEls.get(c.id);
+      if (!n || !label || n.fx === undefined) return { id: c.id, level: c.level, forced: c.forced, box: null };
+      const y3 = (n.fy ?? 0) + n.r;
+      const z3 = n.fz ?? 0;
+      if ((m[2] ?? 0) * n.fx + (m[6] ?? 0) * y3 + (m[10] ?? 1) * z3 + (m[14] ?? -1) >= 0) return { id: c.id, level: c.level, forced: c.forced, box: null };
+      const p = graph.graph2ScreenCoords(n.fx, y3, z3);
+      at.set(c.id, p);
+      const box = labelBox3d(label.textContent ?? '', p.x, p.y, labelScale3d(c.rankInLevel));
+      return { id: c.id, level: c.level, forced: c.forced, box };
+    });
+    const shown = declutter3d(placed, { width: graph.width(), height: graph.height() });
+    for (const c of candidates) {
+      const label = labelEls.get(c.id);
+      if (!label) continue;
+      const p = at.get(c.id);
+      const show = shown.has(c.id) && p !== undefined;
+      label.hidden = !show;
+      // A hidden label drops its position too, so nothing reads a stale spot
+      // from it (the touch e2e aims taps at label positions).
+      label.style.transform = show
+        ? `translate(${Math.round(p.x)}px, ${Math.round(p.y)}px) translate(-50%, -100%) scale(${labelScale3d(c.rankInLevel)})`
+        : '';
     }
   }
 
@@ -243,6 +274,7 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     },
     fit,
     destroy() {
+      cancelAnimationFrame(frame);
       controls.removeEventListener('change', onCamera);
       el.removeEventListener('pointerdown', notePointer, { capture: true });
       el.removeEventListener('pointermove', notePointer, { capture: true });
