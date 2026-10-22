@@ -81,6 +81,16 @@ export function mountGraph2D(el: HTMLElement, options: Graph2DOptions): Graph2D 
   let labelKey = '';
   /** When the current layout was handed in; `null` once it has settled. */
   let layoutStart: number | null = null;
+  /**
+   * Whether the last pointer was a finger or a pen.
+   *
+   * ⚠ A TOUCH HAS NO HOVER. `force-graph` hovers whatever sits under the LAST
+   * touch point and keeps it there, so a tap left its tooltip over the map
+   * (and a pan that ended on a node popped one up). Measured at 390 px in
+   * Chromium with touch, 2026-10-21. On touch there is no tooltip and no hover;
+   * the panel already names what a tap selected.
+   */
+  let touchInput = false;
 
   const graph = new ForceGraph<Node, Link>(el)
     .nodeId('id')
@@ -88,12 +98,12 @@ export function mountGraph2D(el: HTMLElement, options: Graph2DOptions): Graph2D 
     .warmupTicks(WARMUP_TICKS)
     .cooldownTicks(0)
     .linkHoverPrecision(0)
-    .nodeLabel((n) => nodeTooltipHtml(n))
+    .nodeLabel((n) => (touchInput ? '' : nodeTooltipHtml(n)))
     .nodeVal((n) => n.r * n.r)
     .nodeRelSize(1)
     .onNodeClick((n) => options.onNodeClick(n.id))
     .onBackgroundClick(() => options.onBackgroundClick())
-    .onNodeHover((n) => options.onHover(n ? n.id : null))
+    .onNodeHover((n) => options.onHover(n && !touchInput ? n.id : null))
     .onZoom(({ k }) => {
       zoom = k;
     })
@@ -129,6 +139,12 @@ export function mountGraph2D(el: HTMLElement, options: Graph2DOptions): Graph2D 
   const markTouched = () => (touched = true);
   el.addEventListener('wheel', markTouched, { passive: true });
   el.addEventListener('pointerdown', markTouched);
+  // Capture phase: decided before `force-graph`'s own listeners (on a child) read it.
+  const notePointer = (ev: PointerEvent) => {
+    touchInput = ev.pointerType !== 'mouse';
+  };
+  el.addEventListener('pointerdown', notePointer, { capture: true, passive: true });
+  el.addEventListener('pointermove', notePointer, { capture: true, passive: true });
 
   // Co-mentions pull less than relations. `d3-force`'s default strength is
   // 1 / min(degree) per link; it is kept for relations.
@@ -285,6 +301,8 @@ export function mountGraph2D(el: HTMLElement, options: Graph2DOptions): Graph2D 
     destroy() {
       el.removeEventListener('wheel', markTouched);
       el.removeEventListener('pointerdown', markTouched);
+      el.removeEventListener('pointerdown', notePointer, { capture: true });
+      el.removeEventListener('pointermove', notePointer, { capture: true });
       graph._destructor();
       el.replaceChildren();
     },

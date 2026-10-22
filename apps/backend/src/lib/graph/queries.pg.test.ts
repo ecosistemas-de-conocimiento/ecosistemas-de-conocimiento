@@ -213,6 +213,41 @@ async function seedCoMentions(): Promise<void> {
   `)
 }
 
+/**
+ * Org 5, full-text search (#31), every threshold at 1.
+ *   501 documento, published: "La migración hacia la ciudad"      → 51 Movilidad
+ *   502 testimonio, published, gate `ready`: raw names Juana, redacted does not
+ *                                                                   → 52 Sequía, 56 Juana (persona)
+ *   503 testimonio, published, gate `held` (no redacted text)      → 53 Río Atoyac
+ *   504 documento, DRAFT: "migración"                              → 54 Frontera
+ *   505 documento, published: "nada que ver"                       → 54 Frontera
+ */
+const SEARCH_ORG = 5
+async function seedSearch(): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO organizations (id, name, slug) VALUES (5, 'Org cinco', 'cinco');
+    INSERT INTO documents (id, organization_id, uploaded_by_id, name, publication_status, content_kind,
+                           anonymisation_status, extracted_text, redacted_text) VALUES
+      (501, 5, 1, 'informe.pdf',  'published', 'documento',  'n/a',   'La migración hacia la ciudad creció.', NULL),
+      (502, 5, 1, 'voz-1.md',     'published', 'testimonio', 'ready', 'Juana Pérez habló de la sequía.', '[Persona A] habló de la sequía.'),
+      (503, 5, 1, 'voz-2.md',     'published', 'testimonio', 'held',  'El río está contaminado.', NULL),
+      (504, 5, 1, 'borrador.pdf', 'draft',     'documento',  'n/a',   'Otra migración.', NULL),
+      (505, 5, 1, 'otro.pdf',     'published', 'documento',  'n/a',   'Nada que ver.', NULL),
+      (601, 5, 1, 'acta.pdf',     'published', 'documento',  'n/a',   'Juana Ruiz coordina el comité.', NULL),
+      (602, 5, 1, 'voz-3.md',     'published', 'testimonio', 'ready', 'Juana Ruiz habló de la helada.', '[Persona A] habló de la helada.');
+    INSERT INTO graph_entities (id, organization_id, type, label, canonical_key) VALUES
+      (51, 5, 'tema',    'Movilidad',  'movilidad'),
+      (52, 5, 'evento',  'Sequía',     'sequia'),
+      (53, 5, 'lugar',   'Río Atoyac', 'rio atoyac'),
+      (54, 5, 'lugar',   'Frontera',   'frontera'),
+      (56, 5, 'persona', 'Juana',      'juana'),
+      (57, 5, 'persona', 'Juana Ruiz', 'juana ruiz');
+    INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences) VALUES
+      (5, 501, 51, 1), (5, 502, 52, 1), (5, 502, 56, 1), (5, 503, 53, 1),
+      (5, 504, 54, 1), (5, 505, 54, 1), (5, 601, 57, 1), (5, 602, 57, 1);
+  `)
+}
+
 function rows(result: unknown): Record<string, unknown>[] {
   return (result as { rows: Record<string, unknown>[] }).rows
 }
@@ -453,6 +488,66 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
   })
 
   // ⚠ LAST: these mutate the seeded world.
+  describe('org 5 — full-text search over published document text (#31)', () => {
+    // Seeded and removed here, so the purge tests below see the world they expect.
+    beforeAll(seedSearch)
+    afterAll(async () => {
+      await db.execute(sql`
+        DELETE FROM graph_mentions WHERE organization_id = 5;
+        DELETE FROM graph_entities WHERE organization_id = 5;
+        DELETE FROM documents WHERE organization_id = 5;
+        DELETE FROM organizations WHERE id = 5;
+      `)
+    })
+
+    const search = async (q: string) =>
+      (await readEntityView(payload, { organizationId: SEARCH_ORG, minSupport: 1, minEdgeSupport: 1, q }))
+        .entities.map((e) => e.id)
+        .sort()
+
+    it('finds the entities a matching document mentions, with or without accents, across plurals', async () => {
+      expect(await search('migración')).toEqual([51])
+      expect(await search('migracion')).toEqual([51])
+      expect(await search('MIGRACIONES')).toEqual([51])
+      expect(await search('"hacia la ciudad"')).toEqual([51])
+    })
+
+    it('🔴 searches the REDACTED text of gated content, never the raw transcript', async () => {
+      expect(await search('Juana Pérez')).toEqual([])
+      // 52 matches through the redacted text; 56 is a persona out of a
+      // testimonio, which gate 5 never shows.
+      expect(await search('sequía')).toEqual([52])
+    })
+
+    it('🔴 a held testimonio and a draft contribute no text', async () => {
+      expect(await search('contaminado')).toEqual([])
+    })
+
+    // The audit's probe (2026-10-21): Juana Ruiz is visible through documento
+    // 601, and testimonio 602's redacted text says "habló de la helada".
+    it('🔴 gate 5 inside the search: a persona never matches through a testimonio', async () => {
+      expect(await search('habló')).toEqual([52])
+      expect(await search('helada')).toEqual([])
+      expect(await search('comité')).toEqual([57])
+    })
+
+    it('a query with no searchable characters matches nothing; a NUL byte is not a 500', async () => {
+      expect(await search('"')).toEqual([])
+      expect(await search('migración\u0000')).toEqual([51])
+    })
+
+    it('still matches entity names, and survives stopwords and punctuation', async () => {
+      expect(await search('movil')).toEqual([51])
+      expect(await search('de la')).toEqual([])
+      expect(await search('agua & | !( :*')).toEqual([])
+    })
+
+    it('never crosses the ecosistema boundary', async () => {
+      const other = await readEntityView(payload, { organizationId: ORG, minSupport: 1, q: 'migración' })
+      expect(other.entities).toEqual([])
+    })
+  })
+
   it('purge-graph-noise: the dry run counts and mutates nothing', async () => {
     const count = async () =>
       rows(await db.execute(sql`SELECT (SELECT COUNT(*) FROM graph_entities)::int AS e,

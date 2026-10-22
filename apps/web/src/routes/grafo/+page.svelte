@@ -33,30 +33,66 @@
   import { withLengua, type GrafoLenguaData } from '$lib/lengua';
   import {
     emptyGraphCopy,
-    filterEntities,
     graphEntityHref,
-    GRAPH_SEARCH_ENABLED,
+    GRAPH_SEARCH_DEBOUNCE_MS,
+    GRAPH_SEARCH_MAX_LENGTH,
+    GRAPH_SEARCH_PLACEHOLDER,
     GRAPH_ENTITY_NOT_FOUND,
     GRAPH_ENTITY_UNAVAILABLE,
     GRAPH_KICKER,
     GRAPH_UNAVAILABLE,
     noEcosystemCopy,
+    parseSearchIds,
     resultsSummary,
+    searchHighlight,
     type GrafoPageData,
   } from '$lib/graph';
 
   type Props = { data: GrafoPageData & GrafoLenguaData };
   let { data }: Props = $props();
 
-  /** Same cap the backend search takes; keeps a pasted essay out of the filter. */
-  const MAX_SEARCH_LENGTH = 120;
-
   let search = $state('');
+  /** The last answer from `/grafo/buscar`; `null` = none yet, or it failed. */
+  let resultIds = $state<string[] | null>(null);
+  /** Only the newest request may write `resultIds`. */
+  let searchSeq = 0;
 
-  const visible = $derived(filterEntities(data.view.entities, search));
-  const filtered = $derived(search.trim() !== '');
-  /** What the search box matches, for dimming the rest of the map. */
-  const matches = $derived(filtered ? new Set(visible.map((e) => e.id)) : null);
+  /**
+   * Full-text search (backlog #31): a typing pause, then one request. The
+   * previous highlight stays until the new answer lands, so the map does not
+   * flash undimmed between keystrokes. An empty box clears it at once.
+   */
+  $effect(() => {
+    const q = search.trim();
+    const eco = data.ecosystem?.id ?? null;
+    const seq = ++searchSeq;
+    if (q === '' || !data.searchEnabled) {
+      resultIds = null;
+      return;
+    }
+    const timer = setTimeout(async () => {
+      let ids: string[] | null = null;
+      try {
+        const res = await fetch('/grafo/buscar', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ q, eco }),
+        });
+        ids = res.ok ? parseSearchIds(await res.json()) : null;
+      } catch {
+        ids = null;
+      }
+      if (seq === searchSeq) resultIds = ids;
+    }, GRAPH_SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  });
+
+  /** What the search matches, for dimming the rest of the map. */
+  const matches = $derived(searchHighlight(data.view.entities, search, resultIds));
+  const filtered = $derived(matches !== null);
+  const visible = $derived(
+    matches ? data.view.entities.filter((e) => matches.has(e.id)) : data.view.entities,
+  );
   const busy = $derived(Boolean($navigating));
 
   /**
@@ -197,15 +233,15 @@
 
     <div class="board">
       <section class="col-lists" aria-label="Entidades del grafo">
-        <!-- Hidden for the demo (backlog #30); see `GRAPH_SEARCH_ENABLED`. -->
-        {#if GRAPH_SEARCH_ENABLED}
+        <!-- Full-text search (backlog #31); env switch `GRAPH_SEARCH_ENABLED`. -->
+        {#if data.searchEnabled}
           <label class="search">
-            <span class="sr-only">Buscar por nombre</span>
+            <span class="sr-only">{GRAPH_SEARCH_PLACEHOLDER}</span>
             <input
               type="search"
               class="search-input"
-              placeholder="Buscar por nombre…"
-              maxlength={MAX_SEARCH_LENGTH}
+              placeholder={GRAPH_SEARCH_PLACEHOLDER}
+              maxlength={GRAPH_SEARCH_MAX_LENGTH}
               bind:value={search}
               data-testid="grafo-busqueda"
             />

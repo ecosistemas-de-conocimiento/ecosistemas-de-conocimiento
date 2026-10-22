@@ -77,6 +77,8 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
   let hoverId: string | null = null;
   let nodes: Node[] = [];
   const labelEls = new Map<string, HTMLElement>();
+  /** Last pointer was a finger or pen: no hover, no tooltip. Same rule as `graph2d.ts`. */
+  let touchInput = false;
   const labelRank = new Map<string, number>();
 
   // The default export is typed for the base node shape; its constructor is
@@ -97,15 +99,22 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     .nodeVal((n) => n.r * n.r)
     .nodeResolution(8)
     .nodeOpacity(0.95)
-    .nodeLabel((n) => nodeTooltipHtml(n))
+    .nodeLabel((n) => (touchInput ? '' : nodeTooltipHtml(n)))
     .linkOpacity(1)
     .linkWidth(0)
     .onNodeClick((n) => options.onNodeClick(n.id))
     .onBackgroundClick(() => options.onBackgroundClick())
     .onNodeHover((n) => {
       el.style.cursor = n ? 'pointer' : '';
-      options.onHover(n ? n.id : null);
+      options.onHover(n && !touchInput ? n.id : null);
     });
+
+  // Capture phase, so it is set before `three-render-objects` (on a child) reads it.
+  const notePointer = (ev: PointerEvent) => {
+    touchInput = ev.pointerType !== 'mouse';
+  };
+  el.addEventListener('pointerdown', notePointer, { capture: true, passive: true });
+  el.addEventListener('pointermove', notePointer, { capture: true, passive: true });
 
   const controls = graph.controls() as {
     addEventListener(type: 'change', fn: () => void): void;
@@ -235,6 +244,8 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     fit,
     destroy() {
       controls.removeEventListener('change', onCamera);
+      el.removeEventListener('pointerdown', notePointer, { capture: true });
+      el.removeEventListener('pointermove', notePointer, { capture: true });
       for (const label of labelEls.values()) label.remove();
       labelEls.clear();
       const renderer = graph.renderer();

@@ -11,7 +11,9 @@ import {
   egoNeighbours,
   emptyGraphCopy,
   expandGraphQuery,
-  filterEntities,
+  graphSearchEnabled,
+  parseSearchIds,
+  searchHighlight,
   GRAPH_EMPTY_NOTHING_PUBLISHED,
   GRAPH_EMPTY_NOTHING_PUBLISHED_HINT,
   GRAPH_EMPTY_THRESHOLD,
@@ -583,46 +585,51 @@ describe('rankNeighbours', () => {
   });
 });
 
-describe('filterEntities', () => {
+describe('full-text search on /grafo (#31)', () => {
   const rows = [
     entity('a', 'tema', 'Migración', 5),
     entity('b', 'evento', 'Sesión del consejo', 4),
     entity('c', 'lugar', 'Ejido Norte', 3),
   ];
 
-  // ⚠ Not a nicety in a Spanish product. People in a hurry type without
-  // accents, and a filter that silently returns nothing reads as
-  // "eso no está en el grafo" — a false statement about the corpus.
-  it.each([
-    ['migracion', 'a'],
-    ['MIGRACIÓN', 'a'],
-    ['MIGRACION', 'a'],
-    ['Migración', 'a'],
-    ['SESION', 'b'],
-    ['sesión', 'b'],
-    ['  norte  ', 'c'],
-  ])('finds the right row for %p', (query, id) => {
-    expect(filterEntities(rows, query).map((e) => e.id)).toEqual([id]);
+  describe('searchHighlight', () => {
+    it('highlights the result ids that are on the map, and nothing else', () => {
+      expect(searchHighlight(rows, 'agua', ['c', 'a', 'zz'])).toEqual(new Set(['a', 'c']));
+    });
+
+    it('is an EMPTY set — everything dimmed — when nothing matches', () => {
+      expect(searchHighlight(rows, 'agua', [])).toEqual(new Set());
+    });
+
+    it.each(['', '   '])('clears the highlight for the empty query %p', (q) => {
+      expect(searchHighlight(rows, q, ['a'])).toBeNull();
+    });
+
+    // A failed or pending request must not read as "nothing matches".
+    it('dims nothing while there is no answer', () => {
+      expect(searchHighlight(rows, 'agua', null)).toBeNull();
+    });
   });
 
-  it('matches anywhere in the label, not just the start', () => {
-    expect(filterEntities(rows, 'consejo').map((e) => e.id)).toEqual(['b']);
+  describe('parseSearchIds', () => {
+    it('reads ids as strings and drops junk entries', () => {
+      expect(parseSearchIds({ ids: ['1', 2, null, '', { x: 1 }] })).toEqual(['1', '2']);
+    });
+
+    it.each([null, 'x', {}, { ids: 'a' }])('is null for a body it cannot read: %p', (body) => {
+      expect(parseSearchIds(body)).toBeNull();
+    });
   });
 
-  it('returns nothing when nothing matches', () => {
-    expect(filterEntities(rows, 'zzz')).toEqual([]);
-  });
+  describe('graphSearchEnabled', () => {
+    // Owner, 2026-10-21: "On by default everywhere".
+    it.each([undefined, '', 'true', '1', 'on'])('is ON by default and for %p', (raw) => {
+      expect(graphSearchEnabled(raw)).toBe(true);
+    });
 
-  it.each(['', '   '])('returns everything for the empty query %p', (query) => {
-    expect(filterEntities(rows, query)).toEqual(rows);
-  });
-
-  // A copy, not the same array: callers sort and slice the result, and a
-  // shared reference would reorder the caller's own source list.
-  it('returns a copy even when it filters nothing out', () => {
-    const out = filterEntities(rows, '');
-    expect(out).not.toBe(rows);
-    expect(filterEntities(rows, 'a')).not.toBe(rows);
+    it.each(['false', '0', 'off', 'no', ' FALSE '])('is OFF for %p', (raw) => {
+      expect(graphSearchEnabled(raw)).toBe(false);
+    });
   });
 });
 
