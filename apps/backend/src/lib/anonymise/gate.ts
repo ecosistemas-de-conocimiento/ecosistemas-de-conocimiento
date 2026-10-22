@@ -73,6 +73,7 @@ import type {
   SurvivorSpan,
 } from './types'
 import { OMITTED_PLACEHOLDER, PLACEHOLDER_PATTERN } from './types'
+import { wholeWord } from './wordBreaks'
 
 export interface GateDeps {
   detector: PersonDetector
@@ -227,37 +228,6 @@ function replaceOutsidePlaceholders(
   }
   // `copied` only moves on a replacement, and a needle is never empty.
   return copied === 0 ? null : result + text.slice(copied)
-}
-
-const WORD_CHAR = /[\p{L}\p{N}\p{M}]/u
-
-/** The character at or before `i`, skipping accent marks: the letter they sit on. */
-function baseAt(text: string, i: number): string {
-  while (i >= 0 && /\p{M}/u.test(text.charAt(i))) i--
-  return i >= 0 ? text.charAt(i) : ''
-}
-
-/**
- * True when `left` and `right`, side by side, belong to ONE word.
- *
- * An accent mark is always part of the letter before it. A letter-digit change
- * and a lower-to-upper change are word breaks (final audit 2026-10-21): a name
- * glued to digits ("lucrecia88") or to another name ("MaríaLópez") is still a
- * word of its own. "ana" inside "mañana" or "anabel" is not.
- */
-function glued(left: string, right: string): boolean {
-  if (!WORD_CHAR.test(left) || !WORD_CHAR.test(right)) return false
-  if (/\p{M}/u.test(right)) return true
-  if (/\p{N}/u.test(left) !== /\p{N}/u.test(right)) return false
-  return !(/\p{Ll}/u.test(left) && /\p{Lu}/u.test(right))
-}
-
-/** True when `[start, end)` is a whole word: not glued to the text on either side. */
-function wholeWord(text: string, start: number, end: number): boolean {
-  return (
-    !glued(baseAt(text, start - 1), text.charAt(start)) &&
-    !glued(baseAt(text, end - 1), text.charAt(end))
-  )
 }
 
 /**

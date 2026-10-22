@@ -3,6 +3,7 @@ import { DEFAULT_ENGINE_CONFIG, prepareTurn, provenanceToCitations } from '@edc/
 import type {
   AIClient,
   DomainAdapter,
+  Provenance,
   RetrieveMatch,
   RetrieveMultiRequest,
 } from '@edc/chat-engine/core';
@@ -249,6 +250,86 @@ describe('withFencedChunks through the real prepareTurn', () => {
     expect(out.matches.every((x) => x.text.startsWith('<fuente id="'))).toBe(true);
   });
 
+});
+
+/**
+ * Measured on dev 2026-10-21 (coordinator): most cited sources carried no
+ * `rerankScore`. Cause: the engine's `fuseMatches` keeps one record per
+ * `chunkId`, the one with more metadata keys, and the GraphRAG copy adds
+ * `metadata.path` and is never reranked. Hermetic: the real `prepareTurn` and
+ * `fuseMatches`, a graph provider built the way `$lib/server/graph` builds it.
+ */
+describe('withFencedChunks — rerankScore survives graph fusion', () => {
+  const doc = { kind: 'documento', title: 'Dengue', docId: '7' };
+  const vector: RetrieveMatch[] = [
+    { ...m('shared', 'El mosquito.', doc), score: 0.97, rerankScore: 0.97 },
+    { ...m('vonly', 'Otro pasaje.', doc), score: 0.4, rerankScore: 0.4 },
+  ];
+  const fakeAI = (): AIClient => ({
+    ...fakeClient([]),
+    async retrieve(req) {
+      if (req.corpus === 'pub:1') return { matches: vector };
+      // The graph leg: the same chunk, NOT reranked, plus one only it finds.
+      return { matches: [{ ...m('shared', 'El mosquito.', doc), score: 0.6 }, m('gonly', 'Grafo.', doc)] };
+    },
+  });
+
+  async function graphTurn(client: AIClient) {
+    return prepareTurn({
+      config: { ...DEFAULT_ENGINE_CONFIG, systemPrompt: CHAT_SYSTEM_PROMPT },
+      aiClient: client,
+      adapter,
+      orgId: 'edc',
+      userId: 'u1',
+      scopeId: 's1',
+      threadId: 's1',
+      scope: { refs: [{ kind: 'org' }] },
+      history: [],
+      userMessage: '¿qué dicen del dengue?',
+      includePassageText: 1200,
+      // As `$lib/server/graph` builds its chunks: `path` is the only key added.
+      graphProvider: async () => {
+        const r = await client.retrieve({ orgId: 'edc', scopeId: 's1', corpus: 'graph', query: 'dengue mosquito' });
+        return {
+          chunks: r.matches.map((x) => ({ ...x, corpus: 'graph', metadata: { ...(x.metadata ?? {}), path: 'graph' } })),
+        };
+      },
+    });
+  }
+  const byId = (p: { chunks: Array<{ chunkId: string; rerankScore?: number }> } | null | undefined) =>
+    Object.fromEntries((p?.chunks ?? []).map((c) => [c.chunkId, c.rerankScore]));
+
+  it('🔴 the cause: the engine keeps the graph copy, so the fused chunk loses its rerankScore', async () => {
+    const fenced = withFencedChunks(fakeAI());
+    const prepared = await graphTurn(fenced.client);
+    const shared = prepared.provenance!.chunks.find((c) => c.chunkId === 'shared')!;
+    expect(shared.metadata).toMatchObject({ path: 'graph' });
+    expect('rerankScore' in shared).toBe(false);
+  });
+
+  it('restorePassages puts the reranked score back by chunkId; an unscored chunk stays unscored', async () => {
+    const fenced = withFencedChunks(fakeAI());
+    const prepared = await graphTurn(fenced.client);
+    const out = fenced.restorePassages(prepared.provenance, 1200);
+    expect(byId(out)).toEqual({ shared: 0.97, vonly: 0.4, gonly: undefined });
+    expect('rerankScore' in out!.chunks.find((c) => c.chunkId === 'gonly')!).toBe(false);
+  });
+
+  it('several reranked copies of one chunk: the highest score wins', async () => {
+    let call = 0;
+    const base: AIClient = {
+      ...fakeClient([]),
+      async retrieve() {
+        call += 1;
+        return { matches: [{ ...m('c', 'x'), rerankScore: call === 1 ? 0.2 : 0.9 }] };
+      },
+    };
+    const fenced = withFencedChunks(base);
+    await fenced.client.retrieve({ corpus: 'a' } as never);
+    await fenced.client.retrieve({ corpus: 'b' } as never);
+    const prov: Provenance = { chunks: [{ chunkId: 'c', documentId: 'd', score: 1, corpus: 'a', metadata: null, text: 'x' }] };
+    expect(fenced.restorePassages(prov, 1200).chunks[0]!.rerankScore).toBe(0.9);
+  });
 });
 
 /**

@@ -1,13 +1,18 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // The A–D blocks below were written for variant A's source rules, so this file
 // pins the env default to A. The variant E block passes 'E' explicitly, and
 // the "unset is E" test clears the value.
-const testEnv = vi.hoisted(() => ({ CHAT_CITE_VARIANT: 'A' as string | undefined }));
+const testEnv = vi.hoisted(() => ({
+  CHAT_CITE_VARIANT: 'A' as string | undefined,
+  CHAT_FALLBACK_MIN_RERANK: undefined as string | undefined,
+}));
 vi.mock('$env/dynamic/private', () => ({ env: testEnv }));
 import { provenanceToCitations } from '@edc/chat-engine/core';
 import {
+  DEFAULT_FALLBACK_MIN_RERANK,
   MAX_SOURCES,
+  fallbackMinRerank,
   NO_ANSWER_VARIANTS,
   citedBrowserProvenance,
   REFUSAL_CUES,
@@ -533,5 +538,115 @@ describe('citedBrowserProvenance — variant E: a hedging first sentence keeps i
 
   it('without [N], an opening refusal cue still skips the fallback', () => {
     expect(citedBrowserProvenance(six as never, FIRST, null, 'E')).toBeNull();
+  });
+});
+
+// Measured on dev at 7b2e27e (variant E, twice): "¿Cuál es la capital de
+// Francia?" → "París es la capital de Francia." with no [N] and no lead; the
+// fallback listed 3 chunks the reranker scored ~1e-4.
+describe('citedBrowserProvenance — the no-[N] fallback needs a rerank score above the floor', () => {
+  const PARIS = 'París es la capital de Francia.';
+  const chunk = (i: number, rerankScore?: number, score = 0.6) => ({
+    chunkId: `r${i}`,
+    documentId: `uuid-${i}`,
+    score,
+    ...(rerankScore === undefined ? {} : { rerankScore }),
+    corpus: 'eco-7',
+    text: `Pasaje ${i}.`,
+    metadata: { docId: String(i), title: `Doc ${i}`, publication: 'published' },
+  });
+  const ids = (p: ReturnType<typeof citedBrowserProvenance>) => (p?.chunks ?? []).map((c) => c.chunkId);
+  const irrelevant = { chunks: [chunk(1, 1.2e-4), chunk(2, 9.8e-5), chunk(3, 3.1e-5), chunk(4, 2e-6)] };
+
+  afterEach(() => {
+    testEnv.CHAT_FALLBACK_MIN_RERANK = undefined;
+    vi.restoreAllMocks();
+  });
+
+  it('🔴 the Paris answer over chunks scored ~1e-4 lists 0 sources (E and A)', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    expect(citedBrowserProvenance(irrelevant as never, PARIS, null, 'E')).toBeNull();
+    expect(citedBrowserProvenance(irrelevant as never, PARIS, null, 'A')).toBeNull();
+  });
+
+  it('a passage answer that forgot [N] still gets the fallback from high-score chunks', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const p = { chunks: [chunk(1, 1.2e-4), chunk(2, 0.998), chunk(3, 0.991), chunk(4, 3e-5), chunk(5, 0.999)] };
+    expect(ids(citedBrowserProvenance(p as never, 'El dengue se transmite por mosquitos.', null, 'E'))).toEqual([
+      'r5',
+      'r2',
+      'r3',
+    ]);
+  });
+
+  it('only the chunks above the floor: one relevant chunk lists one source', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const p = { chunks: [chunk(1, 0.995), chunk(2, 1e-4), chunk(3, 2e-5)] };
+    expect(ids(citedBrowserProvenance(p as never, 'El riego empezó en 2020.', null, 'E'))).toEqual(['r1']);
+  });
+
+  it('🔴 fails open: no rerank score (rerank off or failed) keeps the fallback', () => {
+    const p = { chunks: [chunk(1, undefined, 0.01), chunk(2, undefined, 0.02), chunk(3, undefined, 0.03)] };
+    expect(ids(citedBrowserProvenance(p as never, PARIS, null, 'E'))).toEqual(['r3', 'r2', 'r1']);
+  });
+
+  it('a mixed set: an unscored chunk is never read as 0', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const p = { chunks: [chunk(1, 1e-4, 0.9), chunk(2, undefined, 0.5)] };
+    expect(ids(citedBrowserProvenance(p as never, PARIS, null, 'E'))).toEqual(['r2']);
+  });
+
+  // ai-service `RerankDegradation` 'backfilled': the reranker scored only part
+  // of the list, the tail carries no `rerankScore`. See `topRetrieved`.
+  it('🔴 a partial rerank: low scored drop, unscored stay, scored-relevant rank first', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    testEnv.CHAT_FALLBACK_MIN_RERANK = '0.1';
+    const p = {
+      chunks: [
+        chunk(1, undefined, 0.9), // unscored, high cosine
+        chunk(2, 2e-5, 0.95), // scored irrelevant
+        chunk(3, 0.4, 0.3), // scored relevant
+        chunk(4, 0.99, 0.2), // scored relevant
+        chunk(5, undefined, 0.5), // unscored
+      ],
+    };
+    expect(ids(citedBrowserProvenance(p as never, 'El dengue se transmite por mosquitos.', null, 'E'))).toEqual([
+      'r4',
+      'r3',
+      'r1',
+    ]);
+    // With one scored-relevant chunk, the unscored ones fill the rest by score.
+    const q = { chunks: [chunk(1, undefined, 0.2), chunk(2, 0.5, 0.1), chunk(3, 1e-4), chunk(4, undefined, 0.8)] };
+    expect(ids(citedBrowserProvenance(q as never, 'Sin marcas.', null, 'E'))).toEqual(['r2', 'r4', 'r1']);
+  });
+
+  it('CHAT_FALLBACK_MIN_RERANK=0 turns the floor off', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    testEnv.CHAT_FALLBACK_MIN_RERANK = '0';
+    expect(ids(citedBrowserProvenance(irrelevant as never, PARIS, null, 'E'))).toEqual(['r1', 'r2', 'r3']);
+  });
+
+  it('the floor is env-tunable; blank or invalid is the default', () => {
+    expect(DEFAULT_FALLBACK_MIN_RERANK).toBe(0.1);
+    expect(fallbackMinRerank(undefined)).toBe(0.1);
+    expect(fallbackMinRerank('  ')).toBe(0.1);
+    expect(fallbackMinRerank('abc')).toBe(0.1);
+    expect(fallbackMinRerank('-1')).toBe(0.1);
+    expect(fallbackMinRerank('0.5')).toBe(0.5);
+    expect(fallbackMinRerank('0')).toBe(0);
+  });
+
+  it('logs the top rerank scores of the candidates at info, never the text', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    citedBrowserProvenance(irrelevant as never, PARIS, null, 'E');
+    expect(info).toHaveBeenCalledTimes(1);
+    const line = String(info.mock.calls[0]![0]);
+    expect(line).toBe('[sources] fallback rerank floor=0.1 top=[1.20e-4, 9.80e-5, 3.10e-5, 2.00e-6] kept=0');
+  });
+
+  it('no rerank scores: no log line', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    citedBrowserProvenance({ chunks: [chunk(1)] } as never, PARIS, null, 'E');
+    expect(info).not.toHaveBeenCalled();
   });
 });

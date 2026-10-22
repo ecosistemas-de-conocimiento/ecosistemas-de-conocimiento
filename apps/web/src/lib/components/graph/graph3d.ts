@@ -5,10 +5,16 @@
  *
  * ⚠ NO LAYOUT RUNS HERE. Every node is pinned (`fx`, `fy`, `fz`): the floor
  * plane is the 2D map's settled x/y, so the two views agree, and the height is
- * the node type's level, "del suelo a las ideas" (`MAP_LEVELS`): places on the
- * floor, topics at the top. Co-mention edges then rise from towns to the ideas
- * above. three.js's "up" is y, so the 2D x/y go to three's x/z and the level
- * to three's y; seen from above, the 3D view is the 2D picture.
+ * the node's FLOOR from the z-axis selector (`zAxis.ts`; by default its type,
+ * "del suelo a las ideas": places on the ground, topics at the top). three.js's
+ * "up" is y, so the 2D x/y go to three's x/z and the floor to three's y; seen
+ * from above, the 3D view is the 2D picture. A floor replaces the node's
+ * `level`, so the label declutter (`labels3d.ts`) works per floor.
+ *
+ * ⚠ CHANGING THE FLOORS TWEENS THE HEIGHTS (`Z_TWEEN_MS`) without a layout:
+ * each frame sets `fy`/`y` and asks the engine for one tick. With
+ * `cooldownTicks(0)` that tick only copies node positions into the scene and
+ * re-draws the links; it never runs a force. Reduced motion snaps.
  *
  * ⚠ ONE WebGL CONTEXT, RELEASED ON `destroy()`. Browsers cap live contexts
  * (Chrome: 16) and drop the oldest silently, so toggling 3D on and off must
@@ -48,7 +54,10 @@ export interface Graph3DOptions {
 }
 
 export interface Graph3D {
-  setData(data: MapData, positions: Map<string, { x: number; y: number }>): void;
+  /** `floors`: node id → floor (`zAxis.ts`); a node missing from it sits on the ground. */
+  setData(data: MapData, positions: Map<string, { x: number; y: number }>, floors: Map<string, number>): void;
+  /** New floors for the same data: the heights tween there. */
+  setFloors(floors: Map<string, number>): void;
   setFocus(focus: MapFocus, hoverId: string | null): void;
   setColors(colors: MapColors): void;
   resize(width: number, height: number): void;
@@ -61,8 +70,14 @@ function idOf(end: string | Node): string {
   return typeof end === 'string' ? end : end.id;
 }
 
-/** Height between levels: a fifth of the layout's width, so the stack reads as one. */
-function levelStep(positions: Map<string, { x: number; y: number }>): number {
+/** How long a change of floors takes to rise or sink, ms. */
+export const Z_TWEEN_MS = 400;
+
+/**
+ * A fifth of the layout's width: the height between floors for four floors
+ * or fewer, so the stack reads as one (and `tipo` keeps its old look).
+ */
+function baseStep(positions: Map<string, { x: number; y: number }>): number {
   let min = Infinity;
   let max = -Infinity;
   for (const p of positions.values()) {
@@ -71,6 +86,15 @@ function levelStep(positions: Map<string, { x: number; y: number }>): number {
   }
   return Number.isFinite(max - min) && max > min ? (max - min) / 5 : 60;
 }
+
+/** Height between floors: the base step, shrunk so the whole stack is at most four base steps tall. */
+function floorStep(base: number, floors: Map<string, number>): number {
+  let top = 0;
+  for (const f of floors.values()) top = Math.max(top, f);
+  return top > 4 ? (base * 4) / top : base;
+}
+
+const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
 
 export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D {
   let colors = options.colors;
@@ -83,6 +107,8 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
   /** Candidates in priority order, as `labels3d` returns them. */
   let candidates: Label3D[] = [];
   let frame = 0;
+  let base = 60;
+  let tween = 0;
 
   // The default export is typed for the base node shape; its constructor is
   // generic only through the interface, hence the cast to our node and link.
@@ -218,19 +244,61 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     }
   }
 
-  function setData(data: MapData, positions: Map<string, { x: number; y: number }>) {
-    const step = levelStep(positions);
+  function setData(data: MapData, positions: Map<string, { x: number; y: number }>, floors: Map<string, number>) {
+    cancelAnimationFrame(tween);
+    tween = 0;
+    base = baseStep(positions);
+    const step = floorStep(base, floors);
     nodes = data.nodes.map((n) => {
       const p = positions.get(n.id) ?? { x: n.x, y: n.y };
-      const height = n.level * step;
-      return { ...n, fx: p.x, fy: height, fz: p.y, x: p.x, y: height, z: p.y };
+      const level = floors.get(n.id) ?? 0;
+      const height = level * step;
+      return { ...n, level, fx: p.x, fy: height, fz: p.y, x: p.x, y: height, z: p.y };
     });
     graph.graphData({ nodes, links: data.links.map((l) => ({ ...l })) });
     applyStyle();
-    // Tilted, from above and in front, so the levels read as floors rather
-    // than one flat disc. `zoomToFit` keeps this direction.
-    graph.cameraPosition({ x: 0, y: step * 6, z: step * 9 }, { x: 0, y: step * 1.5, z: 0 });
+    // Tilted, from above and in front, so the floors read as floors rather
+    // than one flat disc; aimed at the middle of the stack (`tipo`'s three
+    // steps: 1.5). `zoomToFit` keeps this direction.
+    graph.cameraPosition({ x: 0, y: base * 6, z: base * 9 }, { x: 0, y: base * 1.5, z: 0 });
     requestAnimationFrame(() => fit(0));
+  }
+
+  /** One engine tick: copies `x`/`y`/`z` into the scene and re-draws the links. No force runs. */
+  function redraw() {
+    graph.d3ReheatSimulation();
+  }
+
+  function setFloors(floors: Map<string, number>) {
+    cancelAnimationFrame(tween);
+    tween = 0;
+    if (nodes.length === 0) return;
+    const step = floorStep(base, floors);
+    const from = nodes.map((n) => n.fy ?? 0);
+    const to = nodes.map((n) => (floors.get(n.id) ?? 0) * step);
+    if (to.every((h, i) => h === from[i])) return;
+    // The new floors group the labels at once; heights catch up below.
+    for (const n of nodes) n.level = floors.get(n.id) ?? 0;
+    syncLabels();
+    const set = (t: number) => {
+      nodes.forEach((n, i) => {
+        n.fy = n.y = from[i]! + (to[i]! - from[i]!) * t;
+      });
+      redraw();
+      placeLabels();
+    };
+    const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) {
+      set(1);
+      return;
+    }
+    const start = performance.now();
+    const step1 = (now: number) => {
+      const t = Math.min(1, (now - start) / Z_TWEEN_MS);
+      set(easeInOut(t));
+      tween = t < 1 ? requestAnimationFrame(step1) : 0;
+    };
+    tween = requestAnimationFrame(step1);
   }
 
   function fit(ms = 300) {
@@ -240,6 +308,7 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
 
   return {
     setData,
+    setFloors,
     setFocus(next, hover) {
       // ⚠ A HOVER ONLY MOVES LABELS. Re-setting the colour accessors makes
       // three-forcegraph revisit every node and link object (4,199 links on the
@@ -275,6 +344,7 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     fit,
     destroy() {
       cancelAnimationFrame(frame);
+      cancelAnimationFrame(tween);
       controls.removeEventListener('change', onCamera);
       el.removeEventListener('pointerdown', notePointer, { capture: true });
       el.removeEventListener('pointermove', notePointer, { capture: true });

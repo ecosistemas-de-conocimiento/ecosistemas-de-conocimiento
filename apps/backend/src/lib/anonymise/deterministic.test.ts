@@ -112,12 +112,190 @@ describe('deterministicPass — the roster', () => {
     expect(out.text).toBe('La empresa Anaconda no es nadie.')
   })
 
+  // Rodrigo's ruling 2026-10-21: the roster uses stage 3's word breaks
+  // (`wordBreaks.ts`). A digit and a lower-to-upper change end a word.
+  it('a lower-to-upper change is a word break: "MaríaLópez" is the member', () => {
+    const out = run('MaríaLópez vino.', ['María López'])
+    expect(out.text).toBe('[Persona A] vino.')
+  })
+
+  it('a name run together with no break stays one unknown word', () => {
+    const out = run('Marialopez vino.', ['María López'])
+    expect(out.text).toBe('Marialopez vino.')
+  })
+
+  it('a digit after the name is a word break: "maria88"', () => {
+    const out = run('maria88 llegó', ['María'])
+    expect(out.text).toBe('[Persona A]88 llegó')
+  })
+
+  it('a digit before the name is a word break: "88maria"', () => {
+    const out = run('88maria llegó', ['María'])
+    expect(out.text).toBe('88[Persona A] llegó')
+  })
+
+  it('a later match counts after an earlier glued one is skipped', () => {
+    const out = run('anabel y Ana.', ['Ana'])
+    expect(out.text).toBe('anabel y [Persona A].')
+    expect(out.removed).toEqual([{ label: DETERMINISTIC_LABELS.rosterPerson, count: 1 }])
+  })
+
+  it('a glued match does not hide a real one that overlaps it', () => {
+    // "naNa" is glued to the next "n"; "Nana" starts on a lower-to-upper break.
+    const out = run('naNana vino', ['nana'])
+    expect(out.text).toBe('na[Persona A] vino')
+  })
+
+  it('…even when the real one starts one character after the glued one', () => {
+    // "aAa" at 0 is glued to the last "a"; "Aaa" at 1 starts on a break.
+    expect(run('aAaa vino', ['aaa']).text).toBe('a[Persona A] vino')
+  })
+
+  it('still leaves "ana" inside "Mañana", "anabel" and "ANABEL"', () => {
+    const out = run('Mañana viene anabel, ANABEL no. Ana sí.', ['Ana'])
+    expect(out.text).toBe('Mañana viene anabel, ANABEL no. [Persona A] sí.')
+  })
+
+  it('keeps one label per member across glued and spaced forms', () => {
+    const out = run('MaríaLópez y María López y maria88.', ['María López', 'María'])
+    expect(out.text).toBe('[Persona A] y [Persona A] y [Persona B]88.')
+  })
+
+  it('skips an entry made only of accent marks, and returns', { timeout: 2000 }, () => {
+    const out = run('Ana vino.', ['\u0301\u0301', '\u0301 \u0301'])
+    expect(out.text).toBe('Ana vino.')
+    expect(out.removed).toEqual([])
+  })
+
+  it.each([
+    ['tab', 'María\tLópez vino.'],
+    ['newline', 'María\nLópez vino.'],
+  ])('matches a %s between two roster words', (_, text) => {
+    expect(run(text, ['María López']).text).toBe('[Persona A] vino.')
+  })
+
+  it.each([
+    ['\u1DC4', 'U+1DC4'],
+    ['\uFE0F', 'VS16'],
+    ['\u20DD', 'U+20DD'],
+  ])('takes any trailing accent mark with the name (%s, %s)', (mark) => {
+    expect(run(`Ana${mark} vino`, ['Ana']).text).toBe('[Persona A] vino')
+  })
+
+  // An address that holds a member's name is ONE address: it becomes one
+  // `[Dato omitido]`, never a placeholder spliced into it (delta audit).
+  it.each([
+    'juanMaria@gmail.com',
+    'lucrecia88maria@gmail.com',
+    'maria88@gmail.com',
+    'juan.maria@gmail.com',
+    'juan_maria@gmail.com',
+    'juan-maria@gmail.com',
+    'www.facebook.com/juanMaria',
+    'www.facebook.com/maria88',
+    'https://x.com/juan.maria',
+    '@juanMaria',
+    '@lucrecia88maria',
+    '@juan_maria',
+  ])('keeps %s whole: one placeholder', (address) => {
+    const out = run(`Ve ${address} hoy`, ['María'])
+    expect(out.text).toBe('Ve [Dato omitido] hoy')
+  })
+
   it('⚠ is close to useless with no roster — that is the testimony case', () => {
     // No dictionary, so the name survives stage 2 untouched. Stage 3 is the
     // mechanism for a Voz; see the header of `deterministic.ts`.
     const out = run('Mi hermana Lucía me acompañó.')
     expect(out.text).toContain('Lucía')
     expect(out.removed).toEqual([])
+  })
+})
+
+/** Lower case, accents dropped: what "the name survived" means here. */
+function fold(s: string): string {
+  return s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+}
+
+describe('deterministicPass — 🔴 a member named inside an address (re-audit)', () => {
+  // Every row: the whole address becomes ONE placeholder and no letter of the
+  // member's name is left behind. The address rules used to read ASCII only,
+  // so an accent cut the address and the name beside it survived.
+  it.each([
+    ['A1', 'Escribe a maría@gmail.com hoy', ['María'], 'Escribe a [Dato omitido] hoy'],
+    ['A2', 'Escribe a maría.lopez@gmail.com hoy', ['María'], 'Escribe a [Dato omitido] hoy'],
+    ['A3', 'Escribe a Ana maría@gmail.com hoy', ['Ana María'], 'Escribe a [Dato omitido] hoy'],
+    ['A4', 'Escribe a núñez@gmail.com hoy', ['Núñez'], 'Escribe a [Dato omitido] hoy'],
+    ['A5', 'Escribe a josé.maría@gmail.com hoy', ['José', 'María'], 'Escribe a [Dato omitido] hoy'],
+    ['A6', 'Sígueme @núñez hoy', ['Núñez'], 'Sígueme [Dato omitido] hoy'],
+    ['A7', 'Sígueme @iñaki hoy', ['Iñaki'], 'Sígueme [Dato omitido] hoy'],
+    ['A8', 'Sígueme @maría hoy', ['María'], 'Sígueme [Dato omitido] hoy'],
+    ['A9', 'Sígueme @lucía_gomez hoy', ['Lucía', 'Gómez'], 'Sígueme [Dato omitido] hoy'],
+    ['A10', 'Sígueme @muñoz hoy', ['Muñoz'], 'Sígueme [Dato omitido] hoy'],
+    ['A11', 'Sígueme @josé hoy', ['José'], 'Sígueme [Dato omitido] hoy'],
+    ['A12', 'Escribe a ana.lópez@gmail.com hoy', ['Ana López', 'López', 'Ana'], 'Escribe a [Dato omitido] hoy'],
+    ['A13', 'Ve www.facebook.com/maría.núñez hoy', ['María', 'Núñez'], 'Ve [Dato omitido] hoy'],
+    ['A20', 'Escribe a x@maría.com hoy', ['María'], 'Escribe a [Dato omitido] hoy'],
+    ['A21', 'Ve https://x.com/maria/x?e=a@b.co hoy', ['María'], 'Ve [Dato omitido] hoy'],
+    ['A23', 'ESCRIBE A MARÍA@GMAIL.COM HOY', ['María'], 'ESCRIBE A [Dato omitido] HOY'],
+    ['A26', 'Sígueme @sofía.r hoy', ['Sofía'], 'Sígueme [Dato omitido] hoy'],
+  ])('%s: %s', (_, text, roster, expected) => {
+    const out = run(text, roster)
+    expect(out.text).toBe(expected)
+    for (const name of roster) expect(fold(out.text)).not.toContain(fold(name))
+  })
+
+  it('a roster entry that IS the address keeps the person label, accents or not', () => {
+    expect(run('Escribe a maria@gmail.com hoy', ['maría@gmail.com']).text).toBe(
+      'Escribe a [Persona A] hoy',
+    )
+    expect(run('Escribe a maría@gmail.com hoy', ['maria@gmail.com']).text).toBe(
+      'Escribe a [Persona A] hoy',
+    )
+  })
+
+  it('a name partly over an address takes the address with it, never a fragment', () => {
+    // "Ana María" starts outside the email and ends inside it.
+    const out = run('Escribe a Ana maría@gmail.com hoy', ['Ana María'])
+    expect(out.text).toBe('Escribe a [Dato omitido] hoy')
+    expect(out.text).not.toMatch(/\[[^\]]*\[|\][^[]*\]/)
+  })
+
+  it('a malformed address leaves the name to the roster', () => {
+    expect(run('Escribe a maria@gmail hoy', ['María']).text).toBe(
+      'Escribe a [Persona A]@gmail hoy',
+    )
+  })
+
+  it('never matches inside a placeholder already in the text', () => {
+    expect(run('Ya [Dato omitido] y Dato.', ['Dato']).text).toBe('Ya [Dato omitido] y [Persona A].')
+    expect(run('Ya [Dato omitido] y omitido.', ['omitido']).text).toBe(
+      'Ya [Dato omitido] y [Persona A].',
+    )
+  })
+
+  it('a name right after a placeholder is only touching it, not inside it', () => {
+    expect(run('[Dato omitido]María vino', ['María']).text).toBe('[Dato omitido][Persona A] vino')
+  })
+
+  it('a URL that carries an email from its first character counts as a url', () => {
+    const out = run('Ve www.ana@x.com/p hoy')
+    expect(out.text).toBe('Ve [Dato omitido] hoy')
+    expect(out.removed).toEqual([{ label: DETERMINISTIC_LABELS.url, count: 1 }])
+  })
+
+  it('an entry with a run of spaces does not backtrack forever', () => {
+    const t0 = performance.now()
+    run(`a${' '.repeat(2000)}c`, ['a            b'])
+    expect(performance.now() - t0).toBeLessThan(1500)
+    expect(run('Vino Ana   López.', ['Ana      López']).text).toBe('Vino [Persona A].')
+  })
+
+  it('stays linear: 50k characters with no spaces and 30 entries', () => {
+    const roster = Array.from({ length: 30 }, (_, i) => `Nombre${i}`)
+    const t0 = performance.now()
+    run(`Inicio. ${'x'.repeat(50_000)} fin.`, roster)
+    run(`Inicio. ${'a.'.repeat(25_000)} fin.`, roster)
+    expect(performance.now() - t0).toBeLessThan(1500)
   })
 })
 
