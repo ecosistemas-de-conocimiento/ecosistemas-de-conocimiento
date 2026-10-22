@@ -112,6 +112,50 @@ describe('deterministicPass — the roster', () => {
     expect(out.text).toBe('La empresa Anaconda no es nadie.')
   })
 
+  // Rodrigo's ruling 2026-10-21: the roster uses stage 3's word breaks
+  // (`wordBreaks.ts`). A digit and a lower-to-upper change end a word.
+  it('a lower-to-upper change is a word break: "MaríaLópez" is the member', () => {
+    const out = run('MaríaLópez vino.', ['María López'])
+    expect(out.text).toBe('[Persona A] vino.')
+  })
+
+  it('a name run together with no break stays one unknown word', () => {
+    const out = run('Marialopez vino.', ['María López'])
+    expect(out.text).toBe('Marialopez vino.')
+  })
+
+  it('a digit after the name is a word break: "maria88"', () => {
+    const out = run('maria88 llegó', ['María'])
+    expect(out.text).toBe('[Persona A]88 llegó')
+  })
+
+  it('a digit before the name is a word break: "88maria"', () => {
+    const out = run('88maria llegó', ['María'])
+    expect(out.text).toBe('88[Persona A] llegó')
+  })
+
+  it('a later match counts after an earlier glued one is skipped', () => {
+    const out = run('anabel y Ana.', ['Ana'])
+    expect(out.text).toBe('anabel y [Persona A].')
+    expect(out.removed).toEqual([{ label: DETERMINISTIC_LABELS.rosterPerson, count: 1 }])
+  })
+
+  it('a glued match does not hide a real one that overlaps it', () => {
+    // "naNa" is glued to the next "n"; "Nana" starts on a lower-to-upper break.
+    const out = run('naNana vino', ['nana'])
+    expect(out.text).toBe('na[Persona A] vino')
+  })
+
+  it('still leaves "ana" inside "Mañana", "anabel" and "ANABEL"', () => {
+    const out = run('Mañana viene anabel, ANABEL no. Ana sí.', ['Ana'])
+    expect(out.text).toBe('Mañana viene anabel, ANABEL no. [Persona A] sí.')
+  })
+
+  it('keeps one label per member across glued and spaced forms', () => {
+    const out = run('MaríaLópez y María López y maria88.', ['María López', 'María'])
+    expect(out.text).toBe('[Persona A] y [Persona A] y [Persona B]88.')
+  })
+
   it('⚠ is close to useless with no roster — that is the testimony case', () => {
     // No dictionary, so the name survives stage 2 untouched. Stage 3 is the
     // mechanism for a Voz; see the header of `deterministic.ts`.

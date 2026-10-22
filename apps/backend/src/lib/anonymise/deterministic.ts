@@ -51,6 +51,7 @@
 import { createPseudonymAllocator } from './pseudonyms'
 import type { RedactionCount } from './types'
 import { OMITTED_PLACEHOLDER } from './types'
+import { breakAt, wholeWord } from './wordBreaks'
 
 /**
  * The rule names that appear in {@link RedactionCount.label}.
@@ -90,16 +91,55 @@ function escapeRegExp(source: string): string {
  * `i` + U+0301, so every letter can carry `[\\u0300-\\u036f]*` and the accents
  * become optional without a hand-written variant table that always misses `ñ`.
  *
- * ⚠ `\b` IS NOT USED. In decomposed text `\b` fires between a letter and its own
- * combining accent, so `\bLopez\b` would match inside `Lópezcorp`. Unicode
- * property lookarounds are the version that actually holds.
+ * ⚠ `\b` IS NOT USED, AND NEITHER IS A LOOKAROUND. Word edges are decided by
+ * `wordBreaks.ts`, the same rules stage 3 uses (Rodrigo's ruling 2026-10-21):
+ * a digit and a lower-to-upper change end a word ("maria88", "MaríaLópez"), an
+ * accent mark never does ("Mañana" keeps its "ana"). A space in the entry may
+ * be absent in the text only where the text has a word break there.
+ *
+ * Each space in the entry becomes a capture group, read back with the `d` flag
+ * by {@link replaceRoster}.
  */
 function rosterPattern(entry: string): RegExp {
   const base = entry.normalize('NFD').replace(new RegExp(`[${COMBINING}]`, 'gu'), '')
   const body = [...base]
-    .map((ch) => (/\s/.test(ch) ? '\\s+' : `${escapeRegExp(ch)}[${COMBINING}]*`))
+    .map((ch) => (/\s/.test(ch) ? '(\\s*)' : `${escapeRegExp(ch)}[${COMBINING}]*`))
     .join('')
-  return new RegExp(`(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, 'giu')
+  return new RegExp(body, 'giud')
+}
+
+/**
+ * Replace every whole-word match of `entry` in `text` with `label`. Returns
+ * the new text and how many matches were replaced.
+ *
+ * ⚠ A match rejected for being glued restarts the search ONE character later,
+ * not after the match, so a real hit overlapping it is still found.
+ */
+function replaceRoster(
+  text: string,
+  entry: string,
+  label: string,
+): { text: string; count: number } {
+  const pattern = rosterPattern(entry)
+  let out = ''
+  let copied = 0
+  let count = 0
+  for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
+    const start = m.index
+    const end = start + m[0].length
+    const gaps = (m.indices ?? []).slice(1)
+    const ok =
+      wholeWord(text, start, end) &&
+      gaps.every((g) => g === undefined || g[0] !== g[1] || breakAt(text, g[0]))
+    if (!ok) {
+      pattern.lastIndex = start + 1
+      continue
+    }
+    out += text.slice(copied, start) + label
+    copied = end
+    count += 1
+  }
+  return { text: out + text.slice(copied), count }
 }
 
 /**
@@ -296,10 +336,9 @@ export function deterministicPass(args: DeterministicArgs): {
     out = out.normalize('NFD')
     for (const entry of entries) {
       const label = args.allocate(entry)
-      out = out.replace(rosterPattern(entry.trim()), () => {
-        rosterHits += 1
-        return label
-      })
+      const hit = replaceRoster(out, entry.trim(), label)
+      out = hit.text
+      rosterHits += hit.count
     }
     out = out.normalize('NFC')
   }
