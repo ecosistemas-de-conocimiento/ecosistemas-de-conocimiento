@@ -596,6 +596,30 @@ describe('citedBrowserProvenance — the no-[N] fallback needs a rerank score ab
     expect(ids(citedBrowserProvenance(p as never, PARIS, null, 'E'))).toEqual(['r2']);
   });
 
+  // ai-service `RerankDegradation` 'backfilled': the reranker scored only part
+  // of the list, the tail carries no `rerankScore`. See `topRetrieved`.
+  it('🔴 a partial rerank: low scored drop, unscored stay, scored-relevant rank first', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    testEnv.CHAT_FALLBACK_MIN_RERANK = '0.1';
+    const p = {
+      chunks: [
+        chunk(1, undefined, 0.9), // unscored, high cosine
+        chunk(2, 2e-5, 0.95), // scored irrelevant
+        chunk(3, 0.4, 0.3), // scored relevant
+        chunk(4, 0.99, 0.2), // scored relevant
+        chunk(5, undefined, 0.5), // unscored
+      ],
+    };
+    expect(ids(citedBrowserProvenance(p as never, 'El dengue se transmite por mosquitos.', null, 'E'))).toEqual([
+      'r4',
+      'r3',
+      'r1',
+    ]);
+    // With one scored-relevant chunk, the unscored ones fill the rest by score.
+    const q = { chunks: [chunk(1, undefined, 0.2), chunk(2, 0.5, 0.1), chunk(3, 1e-4), chunk(4, undefined, 0.8)] };
+    expect(ids(citedBrowserProvenance(q as never, 'Sin marcas.', null, 'E'))).toEqual(['r2', 'r4', 'r1']);
+  });
+
   it('CHAT_FALLBACK_MIN_RERANK=0 turns the floor off', () => {
     vi.spyOn(console, 'info').mockImplementation(() => {});
     testEnv.CHAT_FALLBACK_MIN_RERANK = '0';
