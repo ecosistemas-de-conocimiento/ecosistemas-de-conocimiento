@@ -14,6 +14,7 @@ import {
   combinedViewEdgesQuery,
   normaliseOrgIds,
 } from './combined'
+import { MENTION_GATE, RELATION_GATE, readSites } from './gateSites.testutil'
 import type { GraphSql } from './queries'
 
 function render(query: GraphSql): { text: string; params: unknown[] } {
@@ -54,6 +55,14 @@ describe('combined statements carry every gate, per row', () => {
       expect(text).toContain('a.support >= $')
       expect(text).toMatch(/NOT \(e\.canonical_key ~ \$\d+\)/)
       expect(text).toContain("(e.type <> 'persona' OR d.content_kind = 'documento')")
+    })
+
+    it(`🔴 ${name}: gate 5 at every mention and relation read site, not only somewhere`, () => {
+      const { text } = render(query)
+      const mentions = readSites(text, 'graph_mentions')
+      expect(mentions.length).toBeGreaterThan(0)
+      for (const site of mentions) expect(site).toMatch(MENTION_GATE)
+      for (const site of readSites(text, 'graph_relations')) expect(site).toMatch(RELATION_GATE)
     })
   }
 

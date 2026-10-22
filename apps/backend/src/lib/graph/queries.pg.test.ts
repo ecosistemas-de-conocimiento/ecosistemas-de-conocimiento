@@ -560,6 +560,95 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
       )
       expect(result).toHaveLength(2)
     })
+
+    it('feeds chat retrieval no testimonio through a persona seed (POST /api/graph/retrieve)', async () => {
+      const rosa = rows(await db.execute(retrieveDocumentsQuery(7, [71], 1)))
+      expect(rosa.map((r) => r.id)).toEqual([701])
+      // Agua is no persona: through her the testimonio still comes back, and
+      // with both seeds it counts one matched entity, not two.
+      const both = rows(await db.execute(retrieveDocumentsQuery(7, [71, 72], 1)))
+      expect(both.map((r) => [r.id, r.matched_entities])).toEqual([[701, 2], [702, 1]])
+    })
+  })
+
+  /**
+   * Org 8, every threshold at 1 — gate 5 with the persona at the `to` END of
+   * every relation (org 7 has her at `from`), plus a conversacion.
+   *   801 documento:    81 Lucía (persona), 82 Agua, 83 Morelos
+   *   802 testimonio:   81, 82 · 803 conversacion: 81, 83
+   * Relations: 82→83 afecta_a (801), 83→81 ocurre_en (801) — from a documento, kept.
+   *            82→81 relacionado_con (802), 83→81 afecta_a (803) — a persona
+   *            end from a testimonio / conversacion: never counted.
+   */
+  describe('org 8 — 🔴 gate 5 with the persona at the `to` end', () => {
+    const at1 = { organizationId: 8, minSupport: 1, minEdgeSupport: 1 }
+    beforeAll(async () => {
+      await db.execute(sql`
+        INSERT INTO organizations (id, name, slug) VALUES (8, 'Org ocho', 'ocho');
+        INSERT INTO documents (id, organization_id, uploaded_by_id, name, publication_status, content_kind) VALUES
+          (801, 8, 1, 'informe.pdf',           'published', 'documento'),
+          (802, 8, 1, 'Testimonio de Lucía.md', 'published', 'testimonio'),
+          (803, 8, 1, 'Charla con Lucía.md',   'published', 'conversacion');
+        INSERT INTO graph_entities (id, organization_id, type, label, canonical_key) VALUES
+          (81, 8, 'persona', 'Lucía',   'lucia'),
+          (82, 8, 'tema',    'Agua',    'agua'),
+          (83, 8, 'lugar',   'Morelos', 'morelos');
+        INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences) VALUES
+          (8, 801, 81, 1), (8, 801, 82, 1), (8, 801, 83, 1),
+          (8, 802, 81, 5), (8, 802, 82, 1), (8, 803, 81, 5), (8, 803, 83, 1);
+        INSERT INTO graph_relations (organization_id, document_id, from_entity_id, to_entity_id, type) VALUES
+          (8, 801, 82, 83, 'afecta_a'), (8, 801, 83, 81, 'ocurre_en'),
+          (8, 802, 82, 81, 'relacionado_con'), (8, 803, 83, 81, 'afecta_a');
+      `)
+    })
+    afterAll(async () => {
+      await db.execute(sql`
+        DELETE FROM graph_relations WHERE organization_id = 8;
+        DELETE FROM graph_mentions WHERE organization_id = 8;
+        DELETE FROM graph_entities WHERE organization_id = 8;
+        DELETE FROM documents WHERE organization_id = 8;
+        DELETE FROM organizations WHERE id = 8;
+      `)
+    })
+
+    it('draws only the documento relations; the documento co-mention stays', async () => {
+      const view = await readEntityView(payload, at1)
+      // The view orders a pair by id, so 83→81 reads as 81–83 `in`.
+      expect(view.edges).toEqual([
+        { from: 81, to: 83, kind: 'relation', support: 1, coMentions: 1, relationType: 'ocurre_en', direction: 'in' },
+        { from: 82, to: 83, kind: 'relation', support: 1, coMentions: 1, relationType: 'afecta_a', direction: 'out' },
+        { from: 81, to: 82, kind: 'co-mention', support: 1, coMentions: 1 },
+      ])
+    })
+
+    it('the panel, seen from the persona and from each other end, lists no testimonio or conversacion', async () => {
+      const lucia = await readEntityDetail(payload, { ...at1, entityId: 81 })
+      expect(lucia?.documents.map((d) => d.id)).toEqual([801])
+      expect(lucia?.neighbours.map((n) => [n.entity.id, n.relationType, n.direction, n.documents?.map((d) => d.id)])).toEqual([
+        [83, 'ocurre_en', 'in', [801]],
+      ])
+      const agua = await readEntityDetail(payload, { ...at1, entityId: 82 })
+      expect(agua?.neighbours.map((n) => [n.entity.id, n.relationType, n.documents?.map((d) => d.id)])).toEqual([
+        [83, 'afecta_a', [801]],
+      ])
+      const morelos = await readEntityDetail(payload, { ...at1, entityId: 83 })
+      expect(
+        morelos?.neighbours.map((n) => [n.entity.id, n.relationType, n.documents?.map((d) => d.id)]).sort(),
+      ).toEqual([
+        [81, 'ocurre_en', [801]],
+        [82, 'afecta_a', [801]],
+      ])
+    })
+
+    it('chat retrieval: no such edge, no testimonio or conversacion through the persona', async () => {
+      const edges = rows(await db.execute(retrieveEdgesQuery(8, [81], { entity: 1, edge: 1 })))
+      expect(edges.map((r) => [r.from_id, r.to_id, r.relation_type])).toEqual([[83, 81, 'ocurre_en']])
+      const docs = rows(await db.execute(retrieveDocumentsQuery(8, [81], 1)))
+      expect(docs.map((r) => r.id)).toEqual([801])
+      const result = await readGraphRetrieval(payload, { ...at1, query: '¿qué contó Lucía?' })
+      expect(result.entities.map((e) => e.id)).toEqual([81])
+      expect(result.documents.map((d) => d.id)).toEqual([801])
+    })
   })
 
   // ⚠ LAST: these mutate the seeded world.

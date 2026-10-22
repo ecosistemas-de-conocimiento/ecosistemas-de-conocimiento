@@ -374,7 +374,8 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
    * 🔴 Gate 5 inside ONE ecosistema — the persona-only-from-documento probe.
    *   4: 401 documento (Rosa 41 persona, Agua 42, Morelos 43) · 402 testimonio (41, 42)
    *      relations 42→43 afecta_a (401); 41→42 relacionado_con (402: a persona end
-   *      out of a testimonio — never counted)
+   *      out of a testimonio — never counted); 43→41 ocurre_en (402: the persona
+ *      at the `to` end — never counted either)
    *   5: 501 documento (agua 51)
    * Seeded last and removed after, so the admin test above sees ecosistemas 1–3.
    */
@@ -399,7 +400,8 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
           (4, 402, 41, 5, NULL), (4, 402, 42, 1, NULL),
           (5, 501, 51, 1, NULL);
         INSERT INTO graph_relations (organization_id, document_id, from_entity_id, to_entity_id, type) VALUES
-          (4, 401, 42, 43, 'afecta_a'), (4, 402, 41, 42, 'relacionado_con');
+          (4, 401, 42, 43, 'afecta_a'), (4, 402, 41, 42, 'relacionado_con'),
+          (4, 402, 43, 41, 'ocurre_en');
       `)
     })
     afterAll(async () => {
@@ -433,6 +435,11 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
       const agua = await readCombinedEntityDetail(payload, { ...scope, entityId: 51 })
       expect(agua?.neighbours.map((n) => [n.entity.id, n.relationType, n.documents?.map((d) => d.id)])).toEqual([
         [43, 'afecta_a', [401]],
+      ])
+      // From the `from` end of 43→41: Agua only, never the persona.
+      const morelos = await readCombinedEntityDetail(payload, { ...scope, entityId: 43 })
+      expect(morelos?.neighbours.map((n) => [n.relationType, n.documents?.map((d) => d.id)])).toEqual([
+        ['afecta_a', [401]],
       ])
     })
   })

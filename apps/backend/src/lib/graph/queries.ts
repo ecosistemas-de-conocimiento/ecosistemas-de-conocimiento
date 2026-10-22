@@ -1748,6 +1748,14 @@ export function retrieveEdgesQuery(
  * ⚠ The `ent_support` join is here for the same reason as in
  * {@link entityDocumentsQuery}: the statement is exported, so it has to hold the
  * threshold on its own rather than trust the id list it was handed.
+ *
+ * 🔴 GATE 5 ON THE LIST, as in {@link entityDocumentsQuery}: a `persona` seed
+ * never brings in her testimonios or conversaciones (audit probe, 2026-10-21:
+ * persona seed 13 returned testimonio 104 and conversacion 105 before this
+ * filter). A testimonio still comes back through a non-persona seed it mentions.
+ * One extra join, as in {@link entityDocumentsQuery}: ~15 ms before and after
+ * for 11 seeds on local `edc_backend` org 1 (measured 2026-10-21, local docker
+ * Postgres, EXPLAIN ANALYZE, 6 runs each; same plan shape plus one hash join).
  */
 export function retrieveDocumentsQuery(
   organizationId: number,
@@ -1766,8 +1774,9 @@ export function retrieveDocumentsQuery(
     FROM graph_mentions m
     ${joinPublishedDocuments('m', organizationId)}
     JOIN ent_support s ON s.entity_id = m.entity_id
+    JOIN graph_entities ce ON ce.id = m.entity_id AND ce.organization_id = ${organizationId}
     WHERE m.organization_id = ${organizationId}
-      AND m.entity_id = ANY(${intArray(ids)})
+      AND m.entity_id = ANY(${intArray(ids)})${personaFromDocumentoOnly('ce')}
     GROUP BY d.id, d.name, d.content_kind
     ORDER BY matched_entities DESC, occurrences DESC, d.id DESC
     LIMIT ${clampLimit(limit, MAX_RETRIEVE_DOCUMENTS, MAX_RETRIEVE_DOCUMENTS)}`

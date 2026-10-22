@@ -24,6 +24,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { GraphEntityType } from './types'
 import { contentKindOf } from '../contentKind'
 import { GRAPH_NOISE_KEY_PATTERN } from './noise'
+import { MENTION_GATE, RELATION_GATE, readSites } from './gateSites.testutil'
 
 import {
   GRAPH_COMENTION_TOP_K_DEFAULT,
@@ -134,28 +135,40 @@ describe('🔴 gate 4 — no language and no redaction placeholder, on every sta
   }
 })
 
-describe('🔴 gate 5 — a persona is counted only from a documento, on every statement', () => {
+describe('🔴 gate 5 — a persona is counted only from a documento, at every read site', () => {
+  // Per site, not per statement: `entitySupportCte` carries the filter into
+  // every statement, so a whole-statement match passed while a statement's own
+  // mention read had none (see `gateSites.testutil.ts`).
   for (const [name, query] of Object.entries(graphStatements)) {
-    it(`${name} drops persona mentions from testimonios and conversaciones in SQL`, () => {
-      expect(renderSql(query).text).toMatch(
-        /\((e|ne|ce)\.type <> 'persona' OR d\.content_kind = 'documento'\)/,
-      )
+    it(`${name} drops persona mentions from testimonios and conversaciones at each mention read`, () => {
+      const sites = readSites(renderSql(query).text, 'graph_mentions')
+      expect(sites.length).toBeGreaterThan(0)
+      for (const site of sites) expect(site).toMatch(MENTION_GATE)
     })
-  }
-})
-
-describe('🔴 gate 5 — on every relation read, for both ends', () => {
-  const relationReads = ['entity neighbours', 'entity edge documents', 'retrieve edges', 'view edges']
-  for (const name of relationReads) {
     it(`${name} drops a relation row with a persona end unless it comes from a documento`, () => {
-      const text = renderSql(graphStatements[name]!).text
-      const reads = text.match(/FROM graph_relations r\b/g)?.length ?? 0
-      expect(reads).toBeGreaterThan(0)
-      const gate =
-        /WHERE d\.content_kind = 'documento'\s+OR NOT EXISTS \(SELECT 1 FROM graph_entities pe\s+WHERE pe\.id IN \(r\.from_entity_id, r\.to_entity_id\) AND pe\.type = 'persona'\)/g
-      expect(text.match(gate)?.length).toBe(reads)
+      for (const site of readSites(renderSql(query).text, 'graph_relations')) {
+        expect(site).toMatch(RELATION_GATE)
+      }
     })
   }
+
+  it('the four relation statements do read relations', () => {
+    for (const name of ['entity neighbours', 'entity edge documents', 'retrieve edges', 'view edges']) {
+      expect(readSites(renderSql(graphStatements[name]!).text, 'graph_relations').length).toBeGreaterThan(0)
+    }
+  })
+
+  it('the site check fails a read whose shared CTE has the filter but its own read does not', () => {
+    const text = `
+      WITH ent_support AS (SELECT m.entity_id FROM graph_mentions m JOIN documents d ON d.id = m.document_id
+        JOIN graph_entities ne ON ne.id = m.entity_id AND (ne.type <> 'persona' OR d.content_kind = 'documento'))
+      SELECT d.id FROM graph_mentions m JOIN documents d ON d.id = m.document_id
+      JOIN ent_support s ON s.entity_id = m.entity_id WHERE m.entity_id = 1`
+    const sites = readSites(text, 'graph_mentions')
+    expect(sites).toHaveLength(2)
+    expect(sites[0]).toMatch(MENTION_GATE)
+    expect(sites[1]).not.toMatch(MENTION_GATE)
+  })
 })
 
 describe('🔴 the three gates, on every statement that reads graph rows', () => {
