@@ -64,10 +64,14 @@ import type { PageServerLoad } from './$types';
 import { isPlatformAdmin } from '$lib/components/admin/summary';
 import { listAllEcosystems, readEcosystem } from '$lib/server/admin';
 import { resolveEcosystem } from '$lib/server/ecosystem';
-import { fetchGraphEntity, fetchGraphView } from '$lib/server/graph';
+import { fetchGraphEntity, fetchGraphView, mergeLenguaIndexes } from '$lib/server/graph';
 import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { parseLengua, type GrafoLenguaData } from '$lib/lengua';
 import {
+  canCombineEcosystems,
+  GRAPH_COMBINED_ECO,
+  GRAPH_COMBINED_LABEL,
+  GRAPH_COMBINED_ORGANIZATION,
   graphSearchEnabled,
   sharedDocuments,
   type GrafoPageData,
@@ -94,6 +98,9 @@ function readId(raw: string | null): string {
   return (raw ?? '').trim().slice(0, MAX_ID_LENGTH);
 }
 
+/** Combined view: lengua reads, one per ecosistema, at most this many. */
+const MAX_LENGUA_READS = 20;
+
 const EMPTY_VIEW: GraphView = { entities: [], hidden: 0, minSupport: null, publishedDocuments: null };
 
 export const load: PageServerLoad = async ({
@@ -119,6 +126,8 @@ export const load: PageServerLoad = async ({
     edge: null,
     scope: null,
     searchEnabled: graphSearchEnabled(env.GRAPH_SEARCH_ENABLED),
+    combined: false,
+    ecosystemNames: {},
   };
 
   // `hooks.server.ts` already bounces anonymous callers to /sign-in; this is
@@ -128,7 +137,11 @@ export const load: PageServerLoad = async ({
   // 🔴 The ONE role check on this route, and the only thing it unlocks is which
   // ecosistema may be named. See the header.
   const admin = isPlatformAdmin(locals.user);
-  const requestedEcoId = admin ? readId(url.searchParams.get('eco')) : '';
+  const rawEco = readId(url.searchParams.get('eco'));
+  // 🔴 `?eco=todos` is a WORD, not a list: the backend derives the set from
+  // the caller's memberships (`authoriseCombined`). See `$lib/graph.ts`.
+  const wantsCombined = rawEco === GRAPH_COMBINED_ECO;
+  const requestedEcoId = admin && !wantsCombined ? rawEco : '';
   const ecoSearch = admin ? (url.searchParams.get('q') ?? '').slice(0, MAX_SEARCH_LENGTH) : '';
 
   // One round trip's latency for all three: the caller's memberships (which is
@@ -141,6 +154,13 @@ export const load: PageServerLoad = async ({
     admin && requestedEcoId ? readEcosystem(locals.token, requestedEcoId) : null,
   ]);
 
+  const combinedOffered = canCombineEcosystems(eco.list.length, admin);
+  const combined = wantsCombined && combinedOffered;
+  // A member (2+ ecosistemas) may name one of THEIR OWN in `?eco=`; anything
+  // else is ignored, and the backend re-checks membership regardless.
+  const memberPick =
+    !admin && rawEco && !wantsCombined ? (eco.list.find((e) => e.id === rawEco) ?? null) : null;
+
   const scope: GraphScopePicker | null =
     admin && directory
       ? {
@@ -152,10 +172,31 @@ export const load: PageServerLoad = async ({
           // ⚠ Membership LABELS the rows; it restricts nothing. See the type.
           mine: eco.list.map((e) => e.id),
           notFound: Boolean(requestedEcoId) && requestedEco === null,
+          admin: true,
+          combined: combinedOffered,
         }
-      : null;
+      : combinedOffered
+        ? {
+            rows: eco.list,
+            total: eco.list.length,
+            truncated: false,
+            ok: eco.ok,
+            search: '',
+            mine: eco.list.map((e) => e.id),
+            notFound: Boolean(rawEco) && !wantsCombined && memberPick === null,
+            admin: false,
+            combined: true,
+          }
+        : null;
 
-  const selected = requestedEco ?? eco.selected ?? directory?.rows[0] ?? null;
+  const ecosystemNames: Record<string, string> = {};
+  for (const e of [...(directory?.rows ?? []), ...eco.list, ...(requestedEco ? [requestedEco] : [])]) {
+    ecosystemNames[e.id] = e.name;
+  }
+
+  const selected = combined
+    ? { id: GRAPH_COMBINED_ECO, name: GRAPH_COMBINED_LABEL }
+    : (requestedEco ?? memberPick ?? eco.selected ?? directory?.rows[0] ?? null);
 
   // ⚠ Three different "nothing to show" cases, and they must not read the same.
   // `ok: false` means we could not tell — saying "no perteneces a ningún
@@ -167,7 +208,7 @@ export const load: PageServerLoad = async ({
     return { ...base, scope, state: couldNotTell ? 'unavailable' : 'no-ecosystem' };
   }
 
-  const organizationId = selected.id;
+  const organizationId = combined ? GRAPH_COMBINED_ORGANIZATION : selected.id;
   const entityId = readId(url.searchParams.get('entidad'));
   const edgeId = readId(url.searchParams.get('conexion'));
 
@@ -180,7 +221,12 @@ export const load: PageServerLoad = async ({
       ? fetchGraphEntity(locals.token, organizationId, edgeId)
       : null,
     // Best-effort: a failed read just leaves the lengua panel and chips out.
-    fetchLenguaIndex(locals.token, organizationId),
+    // Combined: one read per ecosistema the caller may name, merged.
+    combined
+      ? Promise.all(
+          (admin ? (directory?.rows ?? []) : eco.list).slice(0, MAX_LENGUA_READS).map((e) => fetchLenguaIndex(locals.token, e.id)),
+        ).then((all) => ({ index: mergeLenguaIndexes(all.map((r) => r.index)) }))
+      : fetchLenguaIndex(locals.token, organizationId),
   ]);
 
   const detail = entityResult?.state === 'ok' ? entityResult.detail : null;
@@ -224,5 +270,7 @@ export const load: PageServerLoad = async ({
     edge,
     scope,
     searchEnabled: base.searchEnabled,
+    combined,
+    ecosystemNames,
   };
 };

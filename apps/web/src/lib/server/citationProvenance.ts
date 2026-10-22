@@ -389,8 +389,27 @@ function rankScore(c: Chunk): number {
 }
 
 /**
+ * Reranked chunks first (0), unscored after (1). The two scores are on
+ * different scales (cross-encoder 0–1 vs cosine or RRF), so they are never
+ * compared to each other.
+ */
+function rerankTier(c: Chunk): number {
+  return typeof c.rerankScore === 'number' ? 0 : 1;
+}
+
+/**
  * The {@link FALLBACK_SOURCES} best retrieved chunks, highest score first,
  * each with its prompt ordinal. Ties keep prompt order.
+ *
+ * 🔴 A PARTIAL RERANK. ai-service can rerank only part of a list: on a
+ * `backfilled` degradation (ai-service `src/services/rag/retrieve.ts`,
+ * `RerankDegradation`) the reranker returned fewer than `topK` results and the
+ * tail is fused order with no `rerankScore`; the GraphRAG leg's own chunks are
+ * never reranked either. Then, with the floor on ({@link fallbackMinRerank}):
+ *   · a scored chunk below the floor is dropped;
+ *   · a scored chunk at or above it ranks FIRST, by rerank score;
+ *   · an unscored chunk is kept (fails open) and ranks AFTER every scored one,
+ *     by its retrieval score. Never read as 0, never compared to a rerank score.
  *
  * Skipped before ranking, so they never take a slot: conversation turns, a
  * chunk the reranker scored below {@link fallbackMinRerank}, and
@@ -403,7 +422,10 @@ function topRetrieved(provenance: Provenance | null | undefined): Array<Chunk & 
     .map((c, i) => ({ c, ordinal: i + 1 }))
     .filter(({ c }) => c && typeof c === 'object' && !isConversationTurnChunk(c.metadata))
     .filter(({ c }) => !isTestimonioChunk(c) || c.metadata?.publication === 'published')
-    .sort((a, b) => rankScore(b.c) - rankScore(a.c) || a.ordinal - b.ordinal);
+    .sort(
+      (a, b) =>
+        rerankTier(a.c) - rerankTier(b.c) || rankScore(b.c) - rankScore(a.c) || a.ordinal - b.ordinal,
+    );
   const floor = fallbackMinRerank();
   const kept = candidates.filter(({ c }) => !belowRerankFloor(c, floor));
   const reranked = candidates.filter(({ c }) => typeof c.rerankScore === 'number');

@@ -4,7 +4,13 @@ import type { RequestHandler } from './$types';
 import { isPlatformAdmin } from '$lib/components/admin/summary';
 import { resolveEcosystem } from '$lib/server/ecosystem';
 import { fetchGraphView } from '$lib/server/graph';
-import { GRAPH_SEARCH_MAX_LENGTH, graphSearchEnabled } from '$lib/graph';
+import {
+  canCombineEcosystems,
+  GRAPH_COMBINED_ECO,
+  GRAPH_COMBINED_ORGANIZATION,
+  GRAPH_SEARCH_MAX_LENGTH,
+  graphSearchEnabled,
+} from '$lib/graph';
 
 /**
  * `POST /grafo/buscar` `{ q, eco? }` → `{ ids }` — the /grafo full-text search
@@ -34,12 +40,21 @@ export const POST: RequestHandler = async ({ locals, cookies, request }) => {
     .slice(0, GRAPH_SEARCH_MAX_LENGTH);
   if (q === '') return json({ ids: [] });
 
+  const admin = isPlatformAdmin(locals.user);
+  const requested = typeof body?.eco === 'string' ? body.eco.trim().slice(0, 120) : '';
   let organizationId: string | null = null;
-  if (isPlatformAdmin(locals.user) && typeof body?.eco === 'string' && body.eco.trim()) {
-    organizationId = body.eco.trim().slice(0, 120);
+  if (requested === GRAPH_COMBINED_ECO) {
+    // 🔴 The combined scope is a WORD: the backend derives the ecosistemas from
+    // the caller's memberships and 403s a member of fewer than two.
+    const eco = admin ? null : await resolveEcosystem(cookies, locals.token);
+    if (!admin && !canCombineEcosystems(eco?.list.length ?? 0, false)) return json({ ids: [] });
+    organizationId = GRAPH_COMBINED_ORGANIZATION;
+  } else if (admin && requested) {
+    organizationId = requested;
   } else {
     const eco = await resolveEcosystem(cookies, locals.token);
-    organizationId = eco.selected?.id ?? null;
+    // A member may name one of their own ecosistemas (the /grafo picker).
+    organizationId = eco.list.find((e) => e.id === requested)?.id ?? eco.selected?.id ?? null;
   }
   if (!organizationId) return json({ ids: [] });
 

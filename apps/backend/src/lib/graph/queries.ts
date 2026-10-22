@@ -278,7 +278,7 @@ export interface GraphNeighbour {
 
 export type GraphEdgeDirection = 'out' | 'in' | 'both'
 
-function toDirection(value: unknown): GraphEdgeDirection {
+export function toDirection(value: unknown): GraphEdgeDirection {
   return value === 'out' || value === 'in' ? value : 'both'
 }
 
@@ -361,7 +361,7 @@ export interface GraphQueryPayload {
   db: { drizzle: { execute(query: GraphSql): Promise<unknown> } }
 }
 
-type Row = Record<string, unknown>
+export type Row = Record<string, unknown>
 
 /**
  * The rows out of a `db.drizzle.execute()`.
@@ -372,7 +372,7 @@ type Row = Record<string, unknown>
  * is the worst failure this file could have — it looks exactly like a young
  * ecosistema.
  */
-function rowsOf(result: unknown): Row[] {
+export function rowsOf(result: unknown): Row[] {
   if (Array.isArray(result)) return result as Row[]
   if (result && typeof result === 'object') {
     const rows = (result as { rows?: unknown }).rows
@@ -398,11 +398,11 @@ export function toCount(value: unknown): number {
   return 0
 }
 
-function toId(value: unknown): number {
+export function toId(value: unknown): number {
   return toCount(value)
 }
 
-function toText(value: unknown): string {
+export function toText(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value)
 }
 
@@ -439,7 +439,7 @@ function joinPublishedDocuments(alias: 'm' | 'r', organizationId: number): Graph
  * Every statement gets it either directly on `graph_entities` or through
  * {@link entitySupportCte}, which every edge/neighbour/document statement joins.
  */
-function notNoise(alias: 'e' | 'ne'): GraphSql {
+export function notNoise(alias: 'e' | 'ne'): GraphSql {
   const col = alias === 'e' ? sql`e.canonical_key` : sql`ne.canonical_key`
   return sql` AND NOT (${col} ~ ${GRAPH_NOISE_KEY_PATTERN})`
 }
@@ -455,9 +455,37 @@ function notNoise(alias: 'e' | 'ne'): GraphSql {
  *
  * Needs `d` (the published-documents join) in scope.
  */
-function personaFromDocumentoOnly(alias: 'e' | 'ne' | 'ce'): GraphSql {
+export function personaFromDocumentoOnly(alias: 'e' | 'ne' | 'ce'): GraphSql {
   const col = alias === 'e' ? sql`e.type` : alias === 'ne' ? sql`ne.type` : sql`ce.type`
   return sql` AND (${col} <> 'persona' OR d.content_kind = 'documento')`
+}
+
+/**
+ * 🔴 GATE 5 ON A RELATION ROW: a row whose source is not a `documento` does not
+ * count when EITHER end is a `persona`. The same rule as
+ * {@link personaFromDocumentoOnly}, applied to both ends at once.
+ *
+ * The extractor already drops these rows; with the edge threshold at 1 one
+ * stray row would draw an edge and list a testimonio as its evidence.
+ *
+ * ⚠ A LATERAL `NOT EXISTS`, NOT TWO JOINS, measured. Joining both ends to
+ * `graph_entities` with the helper on each ON clause made Postgres guess ~60×
+ * too few relation rows (28 vs 1,648) and pick a nested loop between `rel_pairs` and
+ * `rel_types`: the single view on local `edc_backend` org 1 went from ~58 ms to
+ * ~110 ms (measured 2026-10-21, local docker Postgres, 3 runs each). This
+ * shape keeps it at ~58 ms; the combined reads were unchanged (~77 ms).
+ *
+ * Needs `r` (`graph_relations`) and `d` (the published-documents join) in
+ * scope; goes in the FROM list right after that join.
+ */
+export function relationEndsPersonaFromDocumentoOnly(): GraphSql {
+  return sql`
+    JOIN LATERAL (
+      SELECT 1 AS ok
+      WHERE d.content_kind = 'documento'
+         OR NOT EXISTS (SELECT 1 FROM graph_entities pe
+                        WHERE pe.id IN (r.from_entity_id, r.to_entity_id) AND pe.type = 'persona')
+    ) g5 ON TRUE`
 }
 
 /**
@@ -496,6 +524,7 @@ function neighbourPairsCte(organizationId: number, entityId: number, minEdge: nu
            COUNT(DISTINCT r.document_id)::int AS pair_support
     FROM graph_relations r
     ${joinPublishedDocuments('r', organizationId)}
+    ${relationEndsPersonaFromDocumentoOnly()}
     WHERE r.organization_id = ${organizationId}
       AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
     GROUP BY 1
@@ -674,7 +703,7 @@ export async function readEntityView(
   }
 }
 
-function flipDirection(direction: GraphEdgeDirection): GraphEdgeDirection {
+export function flipDirection(direction: GraphEdgeDirection): GraphEdgeDirection {
   return direction === 'out' ? 'in' : direction === 'in' ? 'out' : 'both'
 }
 
@@ -688,7 +717,7 @@ export interface GraphThresholds {
   topK?: number
 }
 
-function thresholdsOf(value: number | GraphThresholds): Required<GraphThresholds> {
+export function thresholdsOf(value: number | GraphThresholds): Required<GraphThresholds> {
   const t = typeof value === 'number' ? { entity: value, edge: value } : value
   const topK = Math.floor(Number(t.topK ?? graphCoMentionTopK()))
   return {
@@ -722,11 +751,12 @@ function thresholdsOf(value: number | GraphThresholds): Required<GraphThresholds
  * costs Σ (entities per document)² — measured in the lane report on the local
  * corpus (`EXPLAIN ANALYZE`).
  *
- * 🔴 THE CO-MENTION SIDE CARRIES EVERY GATE THE RELATION SIDE DOES: tenant and
- * published on the join to `documents`; noise labels and the entity threshold
- * through `listed` (which is `ent_support`); and — belt over the extractor's
- * `dropForbiddenPersonas` — no `persona` mention counted from anything but a
- * `documento`.
+ * 🔴 BOTH SIDES CARRY THE SAME GATES: tenant and published on the join to
+ * `documents`; noise labels and the entity threshold through `listed` (which
+ * is `ent_support`); and — belt over the extractor's `dropForbiddenPersonas` —
+ * no `persona` counted from anything but a `documento`: per mention on the
+ * co-mention side, per relation end ({@link relationEndsPersonaFromDocumentoOnly})
+ * on the relation side.
  *
  * ⚠ TOP-K PER NODE (`GRAPH_COMENTION_TOP_K`). Each node nominates its K
  * strongest co-mention partners (ties: the lower id); a pair is kept when
@@ -761,6 +791,7 @@ export function viewEdgesQuery(
              r.document_id AS document_id
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
+      ${relationEndsPersonaFromDocumentoOnly()}
       JOIN listed lf ON lf.entity_id = r.from_entity_id
       JOIN listed lt ON lt.entity_id = r.to_entity_id
       WHERE r.organization_id = ${organizationId}
@@ -924,6 +955,7 @@ export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
                   ELSE 'both' END AS direction
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
+      ${relationEndsPersonaFromDocumentoOnly()}
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
       GROUP BY 1, 2
@@ -998,6 +1030,8 @@ export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
  * `>= GRAPH_MIN_EDGE_DOCS` distinct published documents evidencing any relation
  * between the two (`pairs`, {@link neighbourPairsCte}), and the NEIGHBOUR needs
  * `>= GRAPH_MIN_ENTITY_DOCS` published documents mentioning it (`ent_support`).
+ * Gate 5 rides on every relation read ({@link relationEndsPersonaFromDocumentoOnly}),
+ * so a testimonio is never listed as evidence of an edge to a `persona`.
  *
  * ⚠ At the default of 1 (owner, 2026-10-21) a list CAN point at one document.
  * The owner accepted that because entity names are anonymised upstream; the
@@ -1031,6 +1065,7 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
              COUNT(DISTINCT r.document_id)::int AS support
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
+      ${relationEndsPersonaFromDocumentoOnly()}
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
       GROUP BY 1, 2
@@ -1044,6 +1079,7 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
              d.content_kind AS content_kind
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
+      ${relationEndsPersonaFromDocumentoOnly()}
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
       GROUP BY 1, 2, d.id, d.name, d.content_kind
@@ -1091,6 +1127,10 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
  * not a gate. With the join, a below-threshold entity's documents cannot be
  * listed by ANY caller — which is the property ADR §7.3.3 actually asks for.
  *
+ * 🔴 GATE 5 ON THE LIST: a `persona`'s testimonios and conversaciones are not
+ * listed — the same rule that keeps them out of her support count. Without it
+ * the panel showed a document the count said was not there.
+ *
  * ⚠ `d.name` IS SELECTED BUT NEVER RETURNED RAW. {@link mapDocumentRow} runs it
  * through `titleFor()`; see the file header.
  */
@@ -1107,8 +1147,9 @@ export function entityDocumentsQuery(args: EntityDetailArgs): GraphSql {
     FROM graph_mentions m
     ${joinPublishedDocuments('m', organizationId)}
     JOIN ent_support s ON s.entity_id = m.entity_id
+    JOIN graph_entities ce ON ce.id = m.entity_id AND ce.organization_id = ${organizationId}
     WHERE m.organization_id = ${organizationId}
-      AND m.entity_id = ${entityId}
+      AND m.entity_id = ${entityId}${personaFromDocumentoOnly('ce')}
     ORDER BY m.occurrences DESC, d.id DESC
     LIMIT ${limit}`
 }
@@ -1121,7 +1162,7 @@ export function entityDocumentsQuery(args: EntityDetailArgs): GraphSql {
  * duplicate a rule already enforced upstream, and both are here because this is
  * the last point before the bytes leave the process.
  */
-function mapDocumentRow(row: Row, withSnippet: boolean): GraphDocumentRef {
+export function mapDocumentRow(row: Row, withSnippet: boolean): GraphDocumentRef {
   const contentKind = contentKindOf({ contentKind: row.content_kind })
   const ref: GraphDocumentRef = {
     id: toId(row.id),
@@ -1642,7 +1683,7 @@ export function seedEntitiesForQuery(
  * Each id is its own scalar parameter, so nothing is inlined. An empty list
  * renders `ARRAY[]::int[]`, which Postgres accepts and `ANY` treats as no match.
  */
-function intArray(ids: readonly number[]): GraphSql {
+export function intArray(ids: readonly number[]): GraphSql {
   return sql`ARRAY[${sql.join(
     ids.map((id) => sql`${id}`),
     sql`, `,
@@ -1674,6 +1715,7 @@ export function retrieveEdgesQuery(
              COUNT(DISTINCT r.document_id)::int AS support
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
+      ${relationEndsPersonaFromDocumentoOnly()}
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ANY(${intArray(ids)}) OR r.to_entity_id = ANY(${intArray(ids)}))
       GROUP BY 1, 2, 3
@@ -1706,6 +1748,14 @@ export function retrieveEdgesQuery(
  * ⚠ The `ent_support` join is here for the same reason as in
  * {@link entityDocumentsQuery}: the statement is exported, so it has to hold the
  * threshold on its own rather than trust the id list it was handed.
+ *
+ * 🔴 GATE 5 ON THE LIST, as in {@link entityDocumentsQuery}: a `persona` seed
+ * never brings in her testimonios or conversaciones (audit probe, 2026-10-21:
+ * persona seed 13 returned testimonio 104 and conversacion 105 before this
+ * filter). A testimonio still comes back through a non-persona seed it mentions.
+ * One extra join, as in {@link entityDocumentsQuery}: ~15 ms before and after
+ * for 11 seeds on local `edc_backend` org 1 (measured 2026-10-21, local docker
+ * Postgres, EXPLAIN ANALYZE, 6 runs each; same plan shape plus one hash join).
  */
 export function retrieveDocumentsQuery(
   organizationId: number,
@@ -1724,8 +1774,9 @@ export function retrieveDocumentsQuery(
     FROM graph_mentions m
     ${joinPublishedDocuments('m', organizationId)}
     JOIN ent_support s ON s.entity_id = m.entity_id
+    JOIN graph_entities ce ON ce.id = m.entity_id AND ce.organization_id = ${organizationId}
     WHERE m.organization_id = ${organizationId}
-      AND m.entity_id = ANY(${intArray(ids)})
+      AND m.entity_id = ANY(${intArray(ids)})${personaFromDocumentoOnly('ce')}
     GROUP BY d.id, d.name, d.content_kind
     ORDER BY matched_entities DESC, occurrences DESC, d.id DESC
     LIMIT ${clampLimit(limit, MAX_RETRIEVE_DOCUMENTS, MAX_RETRIEVE_DOCUMENTS)}`
@@ -1842,7 +1893,7 @@ export function expansionTerms(
 // Shared bits
 // ---------------------------------------------------------------------------
 
-function clampLimit(requested: unknown, fallback: number, max: number): number {
+export function clampLimit(requested: unknown, fallback: number, max: number): number {
   const n = typeof requested === 'number' ? requested : Number(requested)
   if (!Number.isFinite(n) || n < 1) return Math.min(fallback, max)
   return Math.min(Math.floor(n), max)
@@ -1916,7 +1967,21 @@ const SEARCHABLE_TEXT = sql`coalesce(CASE
  * the only fold available in SQL is `lower()`. Aliases exist so "el CIDE" finds
  * "CIDE"; that works. "el CIDÉ" would not.
  */
-function buildSearchFilter(q: string | null | undefined, organizationId: number): GraphSql {
+export function buildSearchFilter(
+  q: string | null | undefined,
+  organizationId: number | { anyOf: GraphSql },
+): GraphSql {
+  // `{ anyOf }` (the combined view, `combined.ts`): any included ecosistema,
+  // with every row tied to the MENTION's own ecosistema. `se` is `e` itself
+  // (same id), so an entity only matches through its own ecosistema's text.
+  // ⚠ Uncorrelated on purpose: a subquery that reads `e.organization_id` is
+  // re-run per entity, and the full-text work with it (measured 29 s locally).
+  const single = typeof organizationId === 'number'
+  const docOrg = single
+    ? sql`${organizationId}`
+    : sql`sm.organization_id AND sd.organization_id = ANY(${organizationId.anyOf})`
+  const entOrg = single ? sql`${organizationId}` : sql`sm.organization_id`
+  const mentionOrg = single ? sql`${organizationId}` : sql`ANY(${organizationId.anyOf})`
   // NUL bytes: Postgres rejects them in a text parameter (a 500, not a miss).
   const raw = typeof q === 'string' ? q.replaceAll('\u0000', '').trim().slice(0, MAX_SEARCH_CHARS) : ''
   if (raw === '') return sql``
@@ -1938,12 +2003,12 @@ function buildSearchFilter(q: string | null | undefined, organizationId: number)
       FROM graph_mentions sm
       JOIN documents sd
         ON sd.id = sm.document_id
-       AND sd.organization_id = ${organizationId}
+       AND sd.organization_id = ${docOrg}
        AND sd.publication_status = 'published'
       JOIN graph_entities se
         ON se.id = sm.entity_id
-       AND se.organization_id = ${organizationId}
-      WHERE sm.organization_id = ${organizationId}
+       AND se.organization_id = ${entOrg}
+      WHERE sm.organization_id = ${mentionOrg}
         AND (se.type <> 'persona' OR sd.content_kind = 'documento')
         AND (
           to_tsvector('spanish', ${SEARCHABLE_TEXT}) @@ websearch_to_tsquery('spanish', ${raw})

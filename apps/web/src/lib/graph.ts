@@ -135,6 +135,14 @@ export interface GraphEntity {
   label: string;
   /** Distinct PUBLISHED documents this entity appears in. Never a mention count. */
   support: number;
+  /**
+   * COMBINED VIEW ONLY ("Todos mis ecosistemas"): ids of the included
+   * ecosistemas this merged node appears in, ascending. Absent in a
+   * single-ecosistema view.
+   */
+  ecosystems?: number[];
+  /** Combined view only: support per ecosistema, aligned with `ecosystems`. */
+  ecosystemSupport?: number[];
 }
 
 /**
@@ -347,6 +355,10 @@ export interface GrafoPageData {
   scope: GraphScopePicker | null;
   /** The full-text search box, `GRAPH_SEARCH_ENABLED` (see `graphSearchEnabled`). */
   searchEnabled: boolean;
+  /** `true` ⇒ the page shows "Todos mis ecosistemas" (`?eco=todos`). */
+  combined: boolean;
+  /** Ecosistema id → name, for the combined view's per-node ecosistema chips. */
+  ecosystemNames: Record<string, string>;
 }
 
 // ── Tolerant parsing ───────────────────────────────────────────────────────
@@ -398,7 +410,34 @@ export function parseGraphEntity(raw: unknown): GraphEntity | null {
   const id = str(row.id);
   const label = str(row.label) ?? str(row.name);
   if (!id || !label || !isViewableEntityType(row.type)) return null;
-  return { id, type: row.type, label, support: count(row.support ?? row.documentCount) };
+  const entity: GraphEntity = { id, type: row.type, label, support: count(row.support ?? row.documentCount) };
+  const ecosystems = parseEcosystems(row.ecosystems, row.ecosystemSupport);
+  if (ecosystems) {
+    entity.ecosystems = ecosystems.map((e) => e.id);
+    entity.ecosystemSupport = ecosystems.map((e) => e.support);
+  }
+  return entity;
+}
+
+/**
+ * The combined view's `ecosystems` (and the aligned `ecosystemSupport`):
+ * positive integer ids, de-duplicated, ascending — the data contract.
+ * `null` when absent, so a single-ecosistema entity stays without the field.
+ */
+export function parseEcosystems(
+  rawIds: unknown,
+  rawSupport: unknown,
+): Array<{ id: number; support: number }> | null {
+  if (!Array.isArray(rawIds)) return null;
+  const supports = Array.isArray(rawSupport) ? rawSupport : [];
+  const byId = new Map<number, number>();
+  rawIds.forEach((v, i) => {
+    const n = typeof v === 'number' ? v : Number(v);
+    if (Number.isSafeInteger(n) && n > 0) byId.set(n, (byId.get(n) ?? 0) + count(supports[i]));
+  });
+  return [...byId]
+    .sort(([a], [b]) => a - b)
+    .map(([id, support]) => ({ id, support }));
 }
 
 export function parseGraphDocument(raw: unknown): GraphDocument | null {
@@ -1024,6 +1063,39 @@ export interface GraphScopePicker {
   mine: string[];
   /** `true` ⇒ `?eco=` named an ecosistema that does not exist. Say so. */
   notFound: boolean;
+  /** `true` ⇒ the rows are the whole installation (platform admin). */
+  admin: boolean;
+  /** `true` ⇒ offer "Todos mis ecosistemas". See `canCombineEcosystems`. */
+  combined: boolean;
+}
+
+/**
+ * 🔴 THE COMBINED GRAPH ("Todos mis ecosistemas", owner 2026-10-21).
+ *
+ * `?eco=todos` asks for every ecosistema the caller belongs to (a platform
+ * admin: every one). The BFF sends the word, never a list: the backend
+ * derives the set from the caller's memberships (`authoriseCombined`).
+ */
+export const GRAPH_COMBINED_ECO = 'todos';
+/** What the BFF sends the backend as `organization` for the combined graph. */
+export const GRAPH_COMBINED_ORGANIZATION = 'all';
+export const GRAPH_COMBINED_LABEL = 'Todos mis ecosistemas';
+/** Fewest memberships that offer the combined graph to a non-admin. */
+export const GRAPH_COMBINED_MIN_MEMBERSHIPS = 2;
+
+/** Offered to a platform admin, or to anyone in two or more ecosistemas. */
+export function canCombineEcosystems(memberships: number, admin: boolean): boolean {
+  return admin || memberships >= GRAPH_COMBINED_MIN_MEMBERSHIPS;
+}
+
+/** The names of a merged node's ecosistemas, in id order; unknown ids skipped. */
+export function entityEcosystemNames(
+  entity: Pick<GraphEntity, 'ecosystems'>,
+  names: Readonly<Record<string, string>>,
+): string[] {
+  return (entity.ecosystems ?? [])
+    .map((id) => names[String(id)])
+    .filter((n): n is string => typeof n === 'string' && n !== '');
 }
 
 /**

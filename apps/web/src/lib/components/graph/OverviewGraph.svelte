@@ -23,6 +23,11 @@
    * ⚠ ACCESSIBILITY. The canvases are `aria-hidden`; the entity LISTS below the
    * picture are the real, keyboard-operable control. The zoom and 2D/3D
    * buttons are real buttons. A screen reader gets `OVERVIEW_DESCRIPTION`.
+   *
+   * ⚠ 3D HEIGHT (`zAxis.ts`): a compact selector, shown in 3D only, picks what
+   * the height means. "Ecosistemas compartidos" exists only when `combined`,
+   * and is then the default. One remembered choice per view kind (single vs
+   * combined). Floors are computed only while 3D is on.
    */
   import { onMount } from 'svelte';
 
@@ -40,6 +45,15 @@
   import type { Graph3D } from './graph3d';
   import { buildMapData, focusNeighbours, type MapFocus } from './mapModel';
   import { readMapColors, watchTheme, type MapColors } from './mapTheme';
+  import {
+    Z_AXIS_LABELS,
+    Z_AXIS_TITLE,
+    readZAxis,
+    writeZAxis,
+    zAxisOptions,
+    zFloors,
+    type ZAxis,
+  } from './zAxis';
   import {
     NO_WEBGL_COPY,
     readViewMode,
@@ -65,6 +79,8 @@
     onDeselect?: () => void;
     /** Measurement hook: ms from data to the settled 2D picture. */
     onSettled?: (ms: number) => void;
+    /** The cross-ecosistema view: offers "Ecosistemas compartidos" as the height, and starts on it. */
+    combined?: boolean;
   };
   let {
     entities,
@@ -75,6 +91,7 @@
     onSelect,
     onDeselect,
     onSettled,
+    combined = false,
   }: Props = $props();
 
   const legend = overviewLegend();
@@ -91,6 +108,7 @@
   let ready2d = $state(false);
   let settled2d = $state(false);
   let ready3d = $state(false);
+  let zAxis = $state<ZAxis>('tipo');
 
   let stage = $state<HTMLElement | null>(null);
   let host2d = $state<HTMLElement | null>(null);
@@ -107,6 +125,26 @@
   let load3d = 0;
 
   const storage = () => (typeof localStorage === 'undefined' ? null : localStorage);
+
+  /** `ecosystems` arrives with the combined view; read structurally so this compiles either way. */
+  type WithEcosystems = GraphEntity & { ecosystems?: number[] };
+
+  /** Floors for the current data and height option. Only read while 3D is on. */
+  function floorsFor(axis: ZAxis) {
+    const byId = new Map(entities.map((e) => [e.id, e as WithEcosystems]));
+    const nodes = data.nodes.map((n) => ({ ...n, ecosystems: byId.get(n.id)?.ecosystems }));
+    return zFloors(nodes, data.links, axis);
+  }
+
+  // The remembered height option, per view kind; re-read when the kind changes.
+  $effect(() => {
+    zAxis = readZAxis(storage, combined);
+  });
+
+  function setZAxis(next: ZAxis) {
+    zAxis = next;
+    writeZAxis(storage, combined, next);
+  }
 
   const handlers = {
     onNodeClick: (id: string) => onSelect(id),
@@ -167,10 +205,15 @@
     if (ready2d) g2?.setData(next);
   });
 
-  // Settled 2D positions → 3D, once both exist.
+  // Settled 2D positions → 3D, once both exist. New data: a fresh picture.
+  let shown3d: { data: unknown; g3: unknown } = { data: null, g3: null };
   $effect(() => {
     const next = data;
-    if (ready3d && settled2d && g2) g3?.setData(next, g2.positions());
+    const axis = zAxis;
+    if (!(ready3d && settled2d && g2 && g3)) return;
+    if (shown3d.data === next && shown3d.g3 === g3) g3.setFloors(floorsFor(axis));
+    else g3.setData(next, g2.positions(), floorsFor(axis));
+    shown3d = { data: next, g3 };
   });
 
   $effect(() => {
@@ -238,6 +281,21 @@
       <button type="button" aria-pressed={mode === '2d'} onclick={() => setMode('2d')}>2D</button>
       <button type="button" aria-pressed={mode === '3d'} onclick={() => setMode('3d')} data-testid="grafo-3d">3D</button>
     </div>
+
+    {#if mode === '3d'}
+      <select
+        class="zaxis"
+        aria-label={Z_AXIS_TITLE}
+        title={Z_AXIS_TITLE}
+        data-testid="grafo-altura"
+        value={zAxis}
+        onchange={(e) => setZAxis(e.currentTarget.value as ZAxis)}
+      >
+        {#each zAxisOptions(combined) as option (option)}
+          <option value={option}>{Z_AXIS_LABELS[option]}</option>
+        {/each}
+      </select>
+    {/if}
 
     <div class="controls">
       <button type="button" onclick={() => zoomBy(1.4)} aria-label={OVERVIEW_ZOOM_IN} title={OVERVIEW_ZOOM_IN}>+</button>
@@ -411,6 +469,34 @@
   .modes button[aria-pressed='true'] {
     background: var(--edc-color-ink);
     color: var(--edc-color-surface);
+  }
+  /* Bottom-right: clear of the 2D/3D and zoom buttons at 390 px, and of the
+     bottom-left corner the touch e2e taps as empty space. */
+  .zaxis {
+    position: absolute;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    max-width: calc(100% - 1rem);
+    height: 2.2rem;
+    padding: 0 0.4rem;
+    border-radius: var(--edc-radius-2);
+    border: 1px solid var(--edc-color-neutral-outline);
+    background: var(--edc-color-surface);
+    color: var(--edc-color-ink);
+    font-family: inherit;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  @media (pointer: coarse), (max-width: 40rem) {
+    .zaxis {
+      height: auto;
+      min-height: 2.75rem;
+    }
+  }
+  .zaxis:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--edc-focus-ring);
   }
   .controls .reset {
     font-size: 0.78rem;

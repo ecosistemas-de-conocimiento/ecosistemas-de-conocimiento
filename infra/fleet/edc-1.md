@@ -1,6 +1,8 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `7e51205` (`/grafo` phone CSS, 3D labels by
+**Status:** live since 2026-10-17. Dev runs `main` @ `47ce647` (cite variant E by default; no-`[n]`
+fallback sources need a rerank score), deployed 2026-10-22 02:50 UTC — see §4zc. Before that,
+`7b2e27e` (deployed by edcai), and before that `7e51205` (`/grafo` phone CSS, 3D labels by
 screen overlap), deployed 2026-10-22 00:42 UTC, with embeddings on the Spark and a hosted fallback
 (§4za) — see §4zb. Before that (`[n]` stripped from stored turns, 3D label
 declutter, ai-stack update; 00:13 UTC) — see §4z. Before that
@@ -1322,6 +1324,42 @@ Spend: `usage_logs` $1.5525 → $1.5783 (**+$0.0258**; graph search, 3D and 20 c
 $0.4786 + $1.5783 = **$2.0569** of the $10 cap.
 
 **Disk**, `df -h /` free: 43 GB before; 38 GB after the build; 57 GB after the cleanup. Images
+10.4 GB, build cache 0.
+
+### 4zc. ✅ Done 2026-10-22 02:50–03:05 UTC: `47ce647`, dev only
+
+All measured by the deploy agent. Staging was not touched. Dev ran `7b2e27e` (deployed by edcai).
+`47ce647` is web only: an answer with no `[n]` falls back to sources only when their
+`rerankScore` ≥ `CHAT_FALLBACK_MIN_RERANK` (default 0.1, **not set**), and the E prompt requires the
+"Fuera de los documentos" label. E is now the default (`DEFAULT_CITE_VARIANT`;
+`CHAT_CITE_VARIANT` unset); every run below logged `[prompt] cite variant E`.
+
+Backup `/root/backups/20261022T0250Z/` (sha256 matched off-box). Deploy 02:50:14 → 02:54:11 UTC;
+9 containers up, health 200; in web `printenv` shows both `CHAT_CITE_VARIANT` and
+`CHAT_FALLBACK_MIN_RERANK` unset.
+
+As the participant, a fresh conversation per question:
+
+| question (ecosistema) | time | `[n]` groups | sources (rerankScore) | "Fuera de los documentos" | first line |
+|---|---|---|---|---|---|
+| capital de Francia #1 (6) | 7.3 s | 0 | **0** | **yes** | "Fuera de los documentos: La capital de Francia es París." |
+| capital de Francia #2 (6) | 9.7 s | 0 | **0** | **yes** | "Los documentos disponibles tratan sobre prevención del dengue … no mencionan …", then the label |
+| dengue (6) | 83.7 s | 13 | 7 (0, 0, 0, 1.0, 0.999, 0, 0) | no | "Los testimonios describen la prevención del dengue en las colonias…" |
+| Discapacidad Q2 (7) | 15.3 s | 2 | 3 (0, 0.991, 0) | no | "Los documentos no contienen testimonios específicos…" (hedges, then cites) |
+
+Web log since the deploy: **0** `[sources] fallback rerank floor=` lines. No answer took the
+no-`[n]` fallback path: both on-topic answers carried `[n]`, and France had none and no sources.
+⚠ Several cited sources show `rerankScore` 0: those passages were cited but scored 0 or unscored by
+the reranker. The fallback floor does not apply to cited sources. Dengue at 83.7 s is still slow.
+
+Cleanup only after the deploy finished (`GET /api/v1/deployments` empty, no compose build):
+`docker rmi` by name of dev's `7b2e27e`, `45248be` and `7e51205` images (none in use), then
+`docker builder prune -af` (22.38 GB). Test conversations deleted (0 left).
+
+Spend: `usage_logs` $1.5847 → $1.5915 (**+$0.0068**). (Since §4zb, edcai's deploys and checks used
+$0.0064.) Tonight: $0.4786 + $1.5915 = **$2.0701** of the $10 cap.
+
+**Disk**, `df -h /` free: 38 GB before; 34 GB after the build; 57 GB after the cleanup. Images
 10.4 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs

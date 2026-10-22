@@ -77,6 +77,7 @@
 
 import type { AIClient, GraphProvider, RetrievedChunk } from '@edc/chat-engine/core';
 import { backendFetch } from '$lib/server/auth';
+import type { LenguaIndex } from '$lib/lengua';
 import {
   expandGraphQuery,
   graphContextParagraph,
@@ -394,4 +395,21 @@ export function makeGraphProvider(opts: GraphProviderOptions): GraphProvider | n
     if (!context && chunks.length === 0) return null;
     return { ...(chunks.length > 0 ? { chunks } : {}), ...(context ? { context } : {}) };
   };
+}
+
+/**
+ * The combined view's lengua index: one per ecosistema, merged. Document ids
+ * are global, so the map is a plain union; facet counts add up.
+ */
+export function mergeLenguaIndexes(indexes: readonly LenguaIndex[]): LenguaIndex {
+  const counts = new Map<string, number>();
+  const byDocument: Record<string, string> = {};
+  for (const index of indexes) {
+    for (const f of index.lenguas) counts.set(f.lengua, (counts.get(f.lengua) ?? 0) + f.documentos);
+    Object.assign(byDocument, index.byDocument);
+  }
+  const lenguas = [...counts]
+    .map(([lengua, documentos]) => ({ lengua, documentos }))
+    .sort((a, b) => b.documentos - a.documentos || a.lengua.localeCompare(b.lengua, 'es'));
+  return { lenguas, byDocument };
 }
