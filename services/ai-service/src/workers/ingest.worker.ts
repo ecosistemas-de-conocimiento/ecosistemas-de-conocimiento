@@ -47,7 +47,10 @@ import {
   type IngestJobData,
   type WorkerRuntimeOptions,
 } from '../queue/queues.js';
-import { callOpenRouterEmbedding } from '../services/ai/embeddings/openrouter.js';
+import {
+  callOpenRouterEmbedding,
+  embeddingProviderLabel,
+} from '../services/ai/embeddings/openrouter.js';
 import {
   callSparseEmbed,
   toSparsevecLiteral,
@@ -870,7 +873,7 @@ async function runIngestJob(
     await tx.insert(usageLogs).values({
       org: data.org,
       project: data.project,
-      provider: 'openrouter',
+      provider: embeddingProviderLabel(embedResult),
       model: corpus.embeddingModel,
       endpoint: '/v1/ingest',
       inputTokens: embedResult.usage.inputTokens,

@@ -14,17 +14,20 @@
  * (Chrome: 16) and drop the oldest silently, so toggling 3D on and off must
  * not leak one. `destroy` disposes the renderer AND forces the context loss.
  *
- * Labels are HTML over the canvas, set with `textContent` (never markup), for
- * the most connected nodes plus the selected, hovered and neighbour ones.
+ * Labels are HTML over the canvas, set with `textContent` (never markup): a
+ * few candidates by degree PER LEVEL plus the selected and hovered node
+ * (`labels3d.ts`), then decluttered in SCREEN space after projection: at most
+ * five drawn per level, none overlapping. The declutter re-runs on every
+ * camera move, at most once per animation frame.
  */
 import ForceGraph3D, { type ConfigOptions, type ForceGraph3DInstance } from '3d-force-graph';
 
+import { declutter3d, labelBox3d, labelScale3d, labels3d, type Label3D, type Placed3D } from './labels3d';
 import {
   linkState,
   nodeDim,
   nodeTooltipHtml,
   shortLabel,
-  wantsLabel,
   type MapData,
   type MapFocus,
   type MapLink,
@@ -54,8 +57,6 @@ export interface Graph3D {
   destroy(): void;
 }
 
-const MAX_LABELS = 40;
-
 function idOf(end: string | Node): string {
   return typeof end === 'string' ? end : end.id;
 }
@@ -77,6 +78,11 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
   let hoverId: string | null = null;
   let nodes: Node[] = [];
   const labelEls = new Map<string, HTMLElement>();
+  /** Last pointer was a finger or pen: no hover, no tooltip. Same rule as `graph2d.ts`. */
+  let touchInput = false;
+  /** Candidates in priority order, as `labels3d` returns them. */
+  let candidates: Label3D[] = [];
+  let frame = 0;
 
   // The default export is typed for the base node shape; its constructor is
   // generic only through the interface, hence the cast to our node and link.
@@ -96,22 +102,29 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     .nodeVal((n) => n.r * n.r)
     .nodeResolution(8)
     .nodeOpacity(0.95)
-    .nodeLabel((n) => nodeTooltipHtml(n))
+    .nodeLabel((n) => (touchInput ? '' : nodeTooltipHtml(n)))
     .linkOpacity(1)
     .linkWidth(0)
     .onNodeClick((n) => options.onNodeClick(n.id))
     .onBackgroundClick(() => options.onBackgroundClick())
     .onNodeHover((n) => {
       el.style.cursor = n ? 'pointer' : '';
-      options.onHover(n ? n.id : null);
+      options.onHover(n && !touchInput ? n.id : null);
     });
+
+  // Capture phase, so it is set before `three-render-objects` (on a child) reads it.
+  const notePointer = (ev: PointerEvent) => {
+    touchInput = ev.pointerType !== 'mouse';
+  };
+  el.addEventListener('pointerdown', notePointer, { capture: true, passive: true });
+  el.addEventListener('pointermove', notePointer, { capture: true, passive: true });
 
   const controls = graph.controls() as {
     addEventListener(type: 'change', fn: () => void): void;
     removeEventListener(type: 'change', fn: () => void): void;
     target: { x: number; y: number; z: number };
   };
-  const onCamera = () => placeLabels();
+  const onCamera = () => schedulePlace();
   controls.addEventListener('change', onCamera);
 
   function nodeColor(n: Node): string {
@@ -133,14 +146,12 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     syncLabels();
   }
 
-  /** Which labels exist: level of detail, capped, never markup. */
+  /** Which labels may show: candidates by rank, capped, never markup. */
   function syncLabels() {
-    const forced = new Set([focus.selectedId, hoverId].filter((id): id is string => id !== null));
-    const wanted = nodes
-      .filter((n) => forced.has(n.id) || wantsLabel(n, focus, 1))
-      .sort((a, b) => Number(forced.has(b.id)) - Number(forced.has(a.id)) || a.degreeRank - b.degreeRank)
-      .slice(0, MAX_LABELS);
-    const keep = new Set(wanted.map((n) => n.id));
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    candidates = labels3d(nodes, focus, hoverId);
+    const wanted = candidates.map((l) => byId.get(l.id)!);
+    const keep = new Set(candidates.map((l) => l.id));
     for (const [id, label] of labelEls) {
       if (!keep.has(id)) {
         label.remove();
@@ -152,6 +163,7 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
       if (!label) {
         label = document.createElement('span');
         label.className = 'map3d-label';
+        label.hidden = true;
         label.textContent = shortLabel(n.label);
         options.labelLayer.append(label);
         labelEls.set(n.id, label);
@@ -162,14 +174,47 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     placeLabels();
   }
 
+  /** Camera moves fire many times a frame; place labels once, on the next one. */
+  function schedulePlace() {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      placeLabels();
+    });
+  }
+
+  /** Project every candidate, declutter by screen overlap, show what is kept. */
   function placeLabels() {
     if (labelEls.size === 0) return;
     const byId = new Map(nodes.map((n) => [n.id, n]));
-    for (const [id, label] of labelEls) {
-      const n = byId.get(id);
-      if (!n || n.fx === undefined) continue;
-      const p = graph.graph2ScreenCoords(n.fx, (n.fy ?? 0) + n.r, n.fz ?? 0);
-      label.style.transform = `translate(${Math.round(p.x)}px, ${Math.round(p.y)}px) translate(-50%, -100%)`;
+    // View-space depth: three's camera looks down its own -z, so a point
+    // with z >= 0 there is behind it, and `graph2ScreenCoords` would mirror it.
+    const m = (graph.camera() as { matrixWorldInverse: { elements: number[] } }).matrixWorldInverse.elements;
+    const at = new Map<string, { x: number; y: number }>();
+    const placed: Placed3D[] = candidates.map((c) => {
+      const n = byId.get(c.id);
+      const label = labelEls.get(c.id);
+      if (!n || !label || n.fx === undefined) return { id: c.id, level: c.level, forced: c.forced, box: null };
+      const y3 = (n.fy ?? 0) + n.r;
+      const z3 = n.fz ?? 0;
+      if ((m[2] ?? 0) * n.fx + (m[6] ?? 0) * y3 + (m[10] ?? 1) * z3 + (m[14] ?? -1) >= 0) return { id: c.id, level: c.level, forced: c.forced, box: null };
+      const p = graph.graph2ScreenCoords(n.fx, y3, z3);
+      at.set(c.id, p);
+      const box = labelBox3d(label.textContent ?? '', p.x, p.y, labelScale3d(c.rankInLevel));
+      return { id: c.id, level: c.level, forced: c.forced, box };
+    });
+    const shown = declutter3d(placed, { width: graph.width(), height: graph.height() });
+    for (const c of candidates) {
+      const label = labelEls.get(c.id);
+      if (!label) continue;
+      const p = at.get(c.id);
+      const show = shown.has(c.id) && p !== undefined;
+      label.hidden = !show;
+      // A hidden label drops its position too, so nothing reads a stale spot
+      // from it (the touch e2e aims taps at label positions).
+      label.style.transform = show
+        ? `translate(${Math.round(p.x)}px, ${Math.round(p.y)}px) translate(-50%, -100%) scale(${labelScale3d(c.rankInLevel)})`
+        : '';
     }
   }
 
@@ -229,7 +274,10 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     },
     fit,
     destroy() {
+      cancelAnimationFrame(frame);
       controls.removeEventListener('change', onCamera);
+      el.removeEventListener('pointerdown', notePointer, { capture: true });
+      el.removeEventListener('pointermove', notePointer, { capture: true });
       for (const label of labelEls.values()) label.remove();
       labelEls.clear();
       const renderer = graph.renderer();

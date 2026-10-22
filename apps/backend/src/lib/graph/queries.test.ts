@@ -32,6 +32,7 @@ import {
   GRAPH_MIN_ENTITY_DOCS_DEFAULT,
   MAX_COMENTION_TOP_K,
   MAX_EDGE_DOCUMENTS,
+  MAX_SEARCH_CHARS,
   MAX_VIEW_ENTITIES,
   MAX_MATCHABLE_ENTITIES,
   MAX_NEIGHBOURS,
@@ -515,6 +516,56 @@ describe('the view, when the threshold hides everything', () => {
   it('canonicalises `q` with the same helper the writer used, so accents do not matter', () => {
     const { params } = renderSql(entityViewQuery({ organizationId: ORG, q: '  MÉXICO  ' }))
     expect(params).toContain('mexico')
+  })
+
+  describe('full-text over published document text (#31)', () => {
+    const { text, params } = renderSql(entityViewQuery({ organizationId: ORG, q: 'migración' }))
+
+    it('uses Postgres `spanish` full-text search, websearch syntax, accent-folded too', () => {
+      expect(text.match(/to_tsvector\('spanish', /g)).toHaveLength(2)
+      expect(text.match(/websearch_to_tsquery\('spanish', /g)).toHaveLength(2)
+      expect(text).toContain('translate(')
+      expect(params).toContain('migración')
+    })
+
+    it('🔴 searches only this ecosistema’s PUBLISHED documents', () => {
+      expect(text).toMatch(/sd\.organization_id = \$\d+/)
+      expect(text).toMatch(/sm\.organization_id = \$\d+/)
+      expect(text).toContain("sd.publication_status = 'published'")
+    })
+
+    it('🔴 reads the corpus text: extracted for a documento, redacted only once cleared', () => {
+      expect(text).toContain("WHEN sd.content_kind = 'documento' THEN sd.extracted_text")
+      expect(text).toContain(
+        "WHEN sd.anonymisation_status IN ('ready', 'approved') THEN sd.redacted_text",
+      )
+      // No other path to the raw text of gated content.
+      expect(text.match(/sd\.extracted_text/g)?.length).toBe(
+        text.match(/WHEN sd\.content_kind = 'documento' THEN sd\.extracted_text/g)?.length,
+      )
+    })
+
+    it('🔴 repeats gate 5 inside the subquery: a persona matches only via a documento', () => {
+      expect(text).toContain("(se.type <> 'persona' OR sd.content_kind = 'documento')")
+      expect(text).toMatch(/se\.organization_id = \$\d+/)
+    })
+
+    it('matches nothing (not everything) when `q` has no searchable characters', () => {
+      expect(renderSql(entityViewQuery({ organizationId: ORG, q: '"' })).text).toContain('AND FALSE')
+    })
+
+    it('strips NUL bytes from `q`', () => {
+      const bound = renderSql(entityViewQuery({ organizationId: ORG, q: 'agua\u0000' })).params
+      expect(bound).toContain('agua')
+      expect(bound.some((p) => typeof p === 'string' && p.includes('\u0000'))).toBe(false)
+    })
+
+    it('caps the query text', () => {
+      const long = 'a'.repeat(MAX_SEARCH_CHARS + 50)
+      const bound = renderSql(entityViewQuery({ organizationId: ORG, q: long })).params
+      expect(bound).toContain('a'.repeat(MAX_SEARCH_CHARS))
+      expect(bound).not.toContain(long)
+    })
   })
 
   it('adds no search clause for an empty or whitespace-only `q`', () => {

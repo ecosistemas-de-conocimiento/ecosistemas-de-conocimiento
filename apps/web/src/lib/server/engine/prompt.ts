@@ -84,13 +84,17 @@ export const PLAIN_LANGUAGE_RULE =
  * dengue answers carried 29–33 `[N]` in 10–12 groups again, so the group
  * limit is stated as a firm rule plus "do not cite every sentence".
  */
-export const CITE_RULE =
+/** A's citation sentences alone; variant E reuses them (the over-citation guard). */
+const CITE_SUPPORT_RULE =
   'Cita solo los pasajes que apoyan directamente una afirmación: pon su número ' +
   'entre corchetes al final de la frase, así: "El riego empezó en 2020 [2]." ' +
   'Regla firme: como máximo un grupo de números por frase, con uno a tres ' +
   'números: [1, 3]. No cites cada frase: en una lista o en un párrafo que ' +
   'resume varios pasajes, cita una sola vez, al final. No cites tus propias ' +
-  'ideas ni una frase que diga que falta información. ' +
+  'ideas ni una frase que diga que falta información.';
+
+export const CITE_RULE =
+  `${CITE_SUPPORT_RULE} ` +
   'Responde con lo que dicen los pasajes que tienen relación con la pregunta, ' +
   'aunque solo cubran una parte de ella (por ejemplo, el tema pero no el ' +
   'lugar): empieza por lo que dicen y después, si hace falta, di qué parte no ' +
@@ -112,6 +116,15 @@ export const CITE_RULE =
  *   `hasRefusalCue` in `$lib/server/citationProvenance`) and the engine's
  *   user-turn preamble.
  * - D: B plus a worked example of a partial answer.
+ * - E, "always answer" (owner ruling 2026-10-21: "we can still have answers,
+ *   either from the docs, the corpus, or the training weights"): A's citation
+ *   sentences (the over-citation guard), answer from the passages first, never
+ *   open with what is missing, and complete from general knowledge in a part
+ *   that starts with {@link GENERAL_KNOWLEDGE_LEAD}, with no `[N]`. No
+ *   no-answer reply at all: an off-topic question gets a general-knowledge
+ *   answer. Its source rule differs too (`citedBrowserProvenance` in
+ *   `$lib/server/citationProvenance`, via {@link answersFromGeneralKnowledge}),
+ *   and so does the general instruction in {@link chatSystemPrompt}.
  */
 const CITE_LIMIT_RULE =
   'Cita solo las afirmaciones clave: pon el número del pasaje entre corchetes ' +
@@ -132,7 +145,24 @@ const NO_ANSWER_ONLY_IF_UNRELATED =
   `Contesta exactamente "${NO_ANSWER_REPLY}" y nada más solo si ningún ` +
   'pasaje tiene relación con la pregunta.';
 
-export const CITE_VARIANTS = ['A', 'B', 'C', 'D'] as const;
+/**
+ * How variant E opens the part of an answer that is not from the documents.
+ * `citationProvenance` reads it back: that part lists no source, and an answer
+ * that opens with it lists none at all.
+ */
+export const GENERAL_KNOWLEDGE_LEAD = 'Fuera de los documentos:';
+
+const GENERAL_KNOWLEDGE_RULE =
+  'Responde primero con lo que dicen los pasajes que tienen relación con la ' +
+  'pregunta, aunque solo cubran una parte de ella. Empieza directamente por la ' +
+  'respuesta: nunca abras diciendo lo que falta ni lo que los documentos no ' +
+  'dicen. Si los pasajes no alcanzan, completa con tu conocimiento general en ' +
+  `un párrafo aparte, al final, que empiece exactamente con "${GENERAL_KNOWLEDGE_LEAD}". ` +
+  'Ese párrafo no lleva números entre corchetes. Si ningún pasaje tiene ' +
+  'relación con la pregunta, responde solo con ese párrafo. Nunca presentes ' +
+  'como dicho por los documentos algo que no dicen.';
+
+export const CITE_VARIANTS = ['A', 'B', 'C', 'D', 'E'] as const;
 export type CiteVariant = (typeof CITE_VARIANTS)[number];
 
 export const CITE_RULE_VARIANTS: Record<CiteVariant, string> = {
@@ -140,7 +170,27 @@ export const CITE_RULE_VARIANTS: Record<CiteVariant, string> = {
   B: `${CITE_LIMIT_RULE} ${PARTIAL_ANSWER_RULE} ${NO_ANSWER_ONLY_IF_UNRELATED}`,
   C: CITE_LIMIT_RULE,
   D: `${CITE_LIMIT_RULE} ${PARTIAL_ANSWER_RULE} ${PARTIAL_ANSWER_EXAMPLE} ${NO_ANSWER_ONLY_IF_UNRELATED}`,
+  E: `${CITE_SUPPORT_RULE} ${GENERAL_KNOWLEDGE_RULE}`,
 };
+
+/** The variant may answer from general knowledge, marked with {@link GENERAL_KNOWLEDGE_LEAD}. */
+export function answersFromGeneralKnowledge(variant: CiteVariant): boolean {
+  return variant === 'E';
+}
+
+/**
+ * The last sentence of the general instruction. A–D keep the 8a1df66 wording
+ * byte for byte; E points to its general-knowledge part instead of telling
+ * the model to say the documents fall short.
+ */
+function missingContextSentence(variant: CiteVariant): string {
+  return answersFromGeneralKnowledge(variant)
+    ? 'Si el contexto no alcanza para responder algo, complétalo con tu ' +
+        'conocimiento general como indica la regla de citas, sin atribuirlo ' +
+        'a los documentos. Las reglas sobre datos que faltan valen para los ' +
+        'datos del ecosistema y de sus documentos, no para el conocimiento general.'
+    : 'Si el contexto no alcanza para responder algo, dilo explícitamente.';
+}
 
 /** `CHAT_CITE_VARIANT` → a variant. Unset, blank or unknown is `A`; case and spaces are ignored. */
 export function parseCiteVariant(raw: string | undefined): CiteVariant {
@@ -158,8 +208,9 @@ export function chatSystemPrompt(variant: CiteVariant = 'A'): string {
     'Puedes razonar, proponer ideas y aportar conocimiento general. Pero cuando ' +
     'afirmes hechos sobre el ecosistema o sus documentos, básate en el resumen ' +
     'y en el contenido recuperado; no inventes detalles. Distingue con claridad ' +
-    'entre lo que consta en el contexto y tus propias sugerencias. Si el contexto ' +
-    'no alcanza para responder algo, dilo explícitamente.\n\n' +
+    'entre lo que consta en el contexto y tus propias sugerencias. ' +
+    missingContextSentence(variant) +
+    '\n\n' +
     CHUNK_DATA_RULE +
     '\n\n' +
     ORIENTATION_RULE +

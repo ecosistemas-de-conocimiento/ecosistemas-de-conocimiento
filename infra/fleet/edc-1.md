@@ -1,7 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `ac47612` (audio-service under compose profile
-`audio`), redeployed 2026-10-21 23:18 UTC after a failed deploy — see §4x. Dev now has four ecosistemas
+**Status:** live since 2026-10-17. Dev runs `main` @ `0d21852` (`[n]` stripped from stored turns,
+3D label declutter, ai-stack update), deployed 2026-10-22 00:13 UTC — see §4z. Before that, `ac47612`
+(audio-service under compose profile `audio`), redeployed 2026-10-21 23:18 UTC after a failed deploy
+— see §4x. Dev now has four ecosistemas
 (ids 1, 3, 6, 7), a 2D/3D graph (`6fb558e`) and turns stored through the gate (`66790b5`). Before that,
 `08b32da` (graph: no language or placeholder nodes; 20:07 UTC) — see §4w, which also lists the dev
 demo accounts. Before that, `1a148aa` (cite A/B switch) and `8a1df66` (cite-rule fix
@@ -1199,6 +1201,42 @@ $0.0106). Tonight: $0.4786 + $1.5237 = **$2.0023** of the $10 cap.
 above; 33 GB after the `ac47612` redeploy; 58 GB after `docker builder prune -af` (26.47 GB, no
 deploy running) and removing dev's `66790b5` images. Images 9.4 GB (audio images added), build
 cache 0.
+
+### 4z. ✅ Done 2026-10-22 00:13–00:35 UTC: `0d21852`, dev only
+
+All measured by the deploy agent. Staging was not touched. The edcai session held off the box until
+this was done. Its Spark and audio variables (`WHISPER_*`, `AUDIO_*`, `ANONYMISE_DETECT_*`,
+`COMPOSE_PROFILES`, `PUBLIC_AUDIO_UPLOAD_ENABLED`) were left as they were; no variable holds `:?`
+text. The build: `[n]` stripped from turn text before the gate and the embedding; 3D
+labels decluttered; edcai's ai-stack update, ai-client 0.33.0 and identity-client 0.4.0,
+with the optional hosted-embeddings fallback still unset. No migration
+(`edc_ai` 6, schema gate stamped).
+
+Backup `/root/backups/20261022T0013Z/` (sha256 matched off-box). Deploy 00:13:14 → 00:19:25 UTC;
+9 containers up (6 `healthy` with checks, plus the audio worker and callbacks), health 200.
+
+Smoke as the participant in Prevención del dengue (id 6):
+
+| check | result |
+|---|---|
+| chat | 200, 19.1 s, 12 `[n]` groups in the answer, 7 sources |
+| stored turn after the gate | turn 86 `ingested` with `redacted_text`; ai-service `msg-86` 2,600 chars with **0 `[n]` groups** (the backend `redacted_text` has 0 too). §4x had 7 |
+| 2D unchanged | canvas `toDataURL` sha256 `0289eaab2fde`, the same as on `6fb558e` |
+| 3D labels | 17 visible labels, all 11 px. From the screenshot: about 7 on topics (top), 4 on events, 6 on places, so slightly over "≈ 5 per level" on topics. 4 overlapping label pairs remain in the topic layer (e.g. "prevención" over "dengue"). Readable; not fully decluttered |
+| audio upload (Spark) | a 5 s 440 Hz tone (`prueba-4z.mp3`, 20 KB, no speech): upload 201; the transcription job (`transcribe_id` set) answered in ≈ 4 s; the document ended `failed` with `empty_transcript: Transcription produced no text…`. That is the correct outcome for silence: the pipeline and callback work end to end. No spoken test clip was available on the agent's machine |
+
+Test conversations deleted (0 participant sessions, 0 `msg-*` left; the audio document went with its
+conversation).
+
+Cleanup only after the deploy was `finished`: `GET /api/v1/deployments` empty and no compose build
+running, then `docker rmi` of the three `ac47612` images by name and `docker builder prune -af`
+(14.73 GB).
+
+Spend: `usage_logs` $1.5317 → $1.5362 (**+$0.0045**). The total also holds edcai's own use since
+§4x (+$0.0080). Tonight: $0.4786 + $1.5362 = **$2.0148** of the $10 cap.
+
+**Disk**, `df -h /` free: 57 GB before; 43 GB after the build; 57 GB after the cleanup. Images
+10.4 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 

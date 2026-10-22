@@ -40,6 +40,7 @@ import {
   ingestConversationTurns,
   messageIdFromExternalId,
   releaseConversationsWaitingOn,
+  stripCitationMarkers,
   turnExternalId,
   type ConversationIngester,
 } from './conversationIngest'
@@ -909,6 +910,53 @@ describe('🔴 the anonymisation gate, per turn', () => {
 // ---------------------------------------------------------------------------
 // 🔴 EVERY TURN, BOTH ROLES (owner ruling 2026-10-21, #4 choice A)
 // ---------------------------------------------------------------------------
+
+describe('🔴 citation markers never reach the corpus', () => {
+  it('strips single, grouped, ranged and nested [n] groups', () => {
+    expect(stripCitationMarkers('El riego [1] cubre [1, 2] y [3,4,5] según [2-4].')).toBe('El riego cubre y según.')
+    expect(stripCitationMarkers('Nested [[1]1] and [1, [2]] and [[3]]')).toBe('Nested and and')
+    expect(stripCitationMarkers('Spaced [ 1 ,  2 ] and semicolons [1; 2]')).toBe('Spaced and semicolons')
+  })
+
+  it('keeps the gate placeholders and other brackets', () => {
+    expect(stripCitationMarkers('Hablé con [Persona A] sobre [el acuerdo] [1]')).toBe('Hablé con [Persona A] sobre [el acuerdo]')
+  })
+
+  it('🔴 the gate and the embedding both see the stripped text', async () => {
+    const db = seed([
+      { id: 1, role: 'user', content: 'Pregunta' },
+      { id: 2, role: 'assistant', content: 'Según Rosa Méndez [1], el pago se aprobó [1, 2] y [[3]2].' },
+    ])
+    const seen: string[] = []
+    const inner = staticDetector([{ text: 'Rosa Méndez', type: 'persona' }])
+    const detector: PersonDetector = {
+      name: 'recording',
+      async detect(args) {
+        seen.push(args.text)
+        return inner.detect(args)
+      },
+    }
+    const { client, calls } = fakeClient()
+
+    await run(db, client, detector)
+
+    expect(seen.some((t) => /\[\s*\d/.test(t))).toBe(false)
+    const sent = calls[0]!.documents.find((d) => d.id === 'msg-2')!.text
+    expect(sent).not.toMatch(/\[\s*\d/)
+    expect(sent).toContain('[Persona A]')
+    // `content` stays as the person/assistant wrote it.
+    expect(db.messages[1]!.content).toContain('[1, 2]')
+  })
+
+  it('strips a redactedText stored before the fix', async () => {
+    const db = seed([{ id: 1, role: 'assistant', content: 'x [1]', redactedText: 'Con [Persona A] [1, 2] listo' }])
+    const { client, calls } = fakeClient()
+
+    await run(db, client, countingDetector())
+
+    expect(calls[0]!.documents[0]!.text).toBe('Con [Persona A] listo')
+  })
+})
 
 describe('🔴 every turn goes in — "store, never cite in chat"', () => {
   it('enqueues the question AND the answer, each marked with its role', async () => {

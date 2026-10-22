@@ -11,8 +11,10 @@ import {
   CITE_RULE,
   CITE_RULE_VARIANTS,
   CITE_VARIANTS,
+  GENERAL_KNOWLEDGE_LEAD,
   NO_ANSWER_REPLY,
   PLAIN_LANGUAGE_RULE,
+  answersFromGeneralKnowledge,
   chatSystemPrompt,
   parseCiteVariant,
 } from './prompt';
@@ -81,8 +83,8 @@ describe('CHAT_CITE_VARIANT — the dev prompt A/B', () => {
     expect(ORIENTATION_RULE).not.toMatch(/fragmento|contexto|recuperad/i);
   });
 
-  it('the four variants differ from one another', () => {
-    expect(new Set(CITE_VARIANTS.map((v) => chatSystemPrompt(v))).size).toBe(4);
+  it('the five variants differ from one another', () => {
+    expect(new Set(CITE_VARIANTS.map((v) => chatSystemPrompt(v))).size).toBe(5);
   });
 
   it('B and D cap citations and keep the no-answer reply for unrelated passages only', () => {
@@ -114,6 +116,50 @@ describe('CHAT_CITE_VARIANT — the dev prompt A/B', () => {
     expect(parseCiteVariant('BB')).toBe('A');
     expect(parseCiteVariant(' c ')).toBe('C');
     expect(parseCiteVariant('d')).toBe('D');
+    expect(parseCiteVariant(' e')).toBe('E');
+  });
+});
+
+// Owner ruling 2026-10-21: "we can still have answers, either from the docs,
+// the corpus, or the training weights".
+describe('variant E — documents first, then general knowledge, marked', () => {
+  const E = CITE_RULE_VARIANTS.E;
+  const ALL_SENTENCE = 'Si el contexto no alcanza para responder algo, dilo explícitamente.';
+
+  it('keeps A\'s over-citation guard word for word', () => {
+    expect(E.startsWith(CITE_RULE.slice(0, CITE_RULE.indexOf(' Responde con lo que dicen')))).toBe(true);
+    expect(E).toContain('Regla firme: como máximo un grupo de números por frase');
+  });
+
+  it('answers from the passages first and never opens with what is missing', () => {
+    expect(E).toContain('Responde primero con lo que dicen los pasajes');
+    expect(E).toContain('nunca abras diciendo lo que falta');
+  });
+
+  it('completes from general knowledge in a part that starts with the lead and has no [N]', () => {
+    expect(GENERAL_KNOWLEDGE_LEAD).toBe('Fuera de los documentos:');
+    expect(E).toContain(`que empiece exactamente con "${GENERAL_KNOWLEDGE_LEAD}"`);
+    expect(E).toContain('Ese párrafo no lleva números entre corchetes');
+    expect(E).toContain('Si ningún pasaje tiene relación con la pregunta, responde solo con ese párrafo');
+  });
+
+  it('🔴 has no no-answer reply: an off-topic question gets an answer', () => {
+    expect(chatSystemPrompt('E')).not.toContain(NO_ANSWER_REPLY);
+    expect(E).not.toMatch(/contesta exactamente/i);
+  });
+
+  it('swaps the "dilo explícitamente" instruction only under E; A–D keep it', () => {
+    expect(chatSystemPrompt('E')).not.toContain(ALL_SENTENCE);
+    expect(chatSystemPrompt('E')).toContain('complétalo con tu conocimiento general');
+    for (const v of ['A', 'B', 'C', 'D'] as const) expect(chatSystemPrompt(v)).toContain(ALL_SENTENCE);
+  });
+
+  it('keeps the orientation block uncited', () => {
+    expect(chatSystemPrompt('E')).toContain(ORIENTATION_RULE);
+  });
+
+  it('only E answers from general knowledge', () => {
+    expect(CITE_VARIANTS.filter(answersFromGeneralKnowledge)).toEqual(['E']);
   });
 });
 

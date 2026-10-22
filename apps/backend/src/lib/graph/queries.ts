@@ -547,7 +547,7 @@ export function entityViewQuery(args: EntityViewArgs): GraphSql {
   const limit = clampLimit(args.limit, MAX_VIEW_ENTITIES, MAX_VIEW_ENTITIES)
 
   const typeFilter = args.type ? sql` AND e.type = ${args.type}` : sql``
-  const searchFilter = buildSearchFilter(args.q)
+  const searchFilter = buildSearchFilter(args.q, organizationId)
 
   return sql`
     WITH supported AS (
@@ -1848,9 +1848,61 @@ function clampLimit(requested: unknown, fallback: number, max: number): number {
   return Math.min(Math.floor(n), max)
 }
 
+/** Longest `q` worth searching; the web caps its box at 120. */
+export const MAX_SEARCH_CHARS = 200
+
 /**
- * The `q=` filter.
+ * Accented letters folded for the accent-blind half of the full-text match.
+ * `Ñ` → `ñ` because `to_tsvector` lowercases with the database's ctype, which
+ * may be `C` (ASCII only).
+ */
+const ACCENTED = 'áéíóúüÁÉÍÓÚÜÑ'
+const UNACCENTED = 'aeiouuAEIOUUñ'
+
+/**
+ * 🔴 THE TEXT A DOCUMENT CONTRIBUTES TO SEARCH = THE TEXT IT CONTRIBUTES TO THE
+ * CORPUS. The SQL mirror of `corpusTextFor` (`lib/anonymiseDocument.ts`): a
+ * `documento` searches its `extracted_text`; anything else searches its
+ * `redacted_text`, and only once the gate (or a human) has cleared it.
  *
+ * ⚠ NEVER `extracted_text` FOR GATED CONTENT. The raw transcript of a
+ * testimonio still holds the names the gate removed; matching against it would
+ * turn the search box into an oracle ("does any Voz mention Juana Pérez?").
+ */
+const SEARCHABLE_TEXT = sql`coalesce(CASE
+      WHEN sd.content_kind = 'documento' THEN sd.extracted_text
+      WHEN sd.anonymisation_status IN ('ready', 'approved') THEN sd.redacted_text
+    END, '')`
+
+/**
+ * The `q=` filter: an entity matches if its NAME contains the text, or if it
+ * is mentioned by a published document of this ecosistema whose TEXT matches
+ * (backlog #31, `/grafo` search).
+ *
+ * ── Text ──
+ * Postgres full-text search with the `spanish` config ("migraciones" stems to
+ * "migr"); `websearch_to_tsquery`, so quotes and `-palabra` work and stray
+ * punctuation cannot raise a syntax error. Two vectors, OR-ed: as written (the
+ * stemmer's suffixes are accented, so "migración" finds "migraciones") and
+ * accent-folded on both sides (so "migracion" finds "migración").
+ *
+ * 🔴 THE GATES, IN THE SUBQUERY TOO. The documents are this ecosistema's and
+ * published, and their text is {@link SEARCHABLE_TEXT}. Gate 5 is repeated
+ * INSIDE the subquery: a `persona` matches only through a `documento`'s text.
+ * The outer statement's persona gate alone is not enough — a persona that a
+ * documento makes visible would otherwise light up because a TESTIMONIO
+ * mentioning it matched (audit, 2026-10-21). The outer threshold and noise
+ * gate still apply, so search can only narrow the visible graph.
+ *
+ * ⚠ `GRAPH_SEARCH_ENABLED=false` hides the web box and 404s its route, but
+ * this `q=` path stays reachable to any member calling the API. That is
+ * acceptable because it only answers over published, corpus-cleared text of
+ * an ecosistema the caller may already read in full.
+ *
+ * ⚠ No index: the vectors are built per query. Fine at today's corpus size
+ * (see the commit that added this); a stored `tsvector` column is the next step.
+ *
+ * ── Name ──
  * ⚠ `strpos`, NOT `LIKE`. A `LIKE '%' || $1 || '%'` would treat `%` and `_`
  * inside the user's text as wildcards, so a search for "50%" would match
  * everything. `strpos` is a literal substring search with nothing to escape.
@@ -1864,11 +1916,14 @@ function clampLimit(requested: unknown, fallback: number, max: number): number {
  * the only fold available in SQL is `lower()`. Aliases exist so "el CIDE" finds
  * "CIDE"; that works. "el CIDÉ" would not.
  */
-function buildSearchFilter(q: string | null | undefined): GraphSql {
-  const raw = typeof q === 'string' ? q.trim() : ''
+function buildSearchFilter(q: string | null | undefined, organizationId: number): GraphSql {
+  // NUL bytes: Postgres rejects them in a text parameter (a 500, not a miss).
+  const raw = typeof q === 'string' ? q.replaceAll('\u0000', '').trim().slice(0, MAX_SEARCH_CHARS) : ''
   if (raw === '') return sql``
   const key = canonicalKey(raw)
-  if (key === '') return sql``
+  // A query with no searchable characters (a lone `"`) matches nothing — not
+  // everything, which is what dropping the clause would do.
+  if (key === '') return sql` AND FALSE`
   const lowered = raw.toLowerCase()
   return sql` AND (
     strpos(e.canonical_key, ${key}) > 0
@@ -1877,6 +1932,24 @@ function buildSearchFilter(q: string | null | undefined): GraphSql {
         CASE WHEN jsonb_typeof(e.aliases) = 'array' THEN e.aliases ELSE '[]'::jsonb END
       ) AS alias
       WHERE strpos(lower(alias), ${lowered}) > 0
+    )
+    OR e.id IN (
+      SELECT sm.entity_id
+      FROM graph_mentions sm
+      JOIN documents sd
+        ON sd.id = sm.document_id
+       AND sd.organization_id = ${organizationId}
+       AND sd.publication_status = 'published'
+      JOIN graph_entities se
+        ON se.id = sm.entity_id
+       AND se.organization_id = ${organizationId}
+      WHERE sm.organization_id = ${organizationId}
+        AND (se.type <> 'persona' OR sd.content_kind = 'documento')
+        AND (
+          to_tsvector('spanish', ${SEARCHABLE_TEXT}) @@ websearch_to_tsquery('spanish', ${raw})
+          OR to_tsvector('spanish', translate(${SEARCHABLE_TEXT}, ${ACCENTED}, ${UNACCENTED}))
+             @@ websearch_to_tsquery('spanish', translate(${raw}, ${ACCENTED}, ${UNACCENTED}))
+        )
     )
   )`
 }

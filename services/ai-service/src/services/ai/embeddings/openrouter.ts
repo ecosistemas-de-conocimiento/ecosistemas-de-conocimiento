@@ -24,7 +24,9 @@
 
 import { env } from '../../../config/env.js';
 import { minimiseEgress } from '../pii-egress.js';
+import type { ComponentLogger } from '../../../logger.js';
 import { priceForEmbedding } from '../router/task-profiles.js';
+import { withRequestTimeout } from '../router/timeout-signal.js';
 
 // The embeddings endpoint is config-driven (`env.EMBEDDINGS_URL`) so the model
 // can be served by a managed provider in dev and a self-hosted box in prod with
@@ -50,6 +52,12 @@ export interface EmbedResult {
     inputTokens: number;
     estimatedCostUsd: number;
   };
+  /**
+   * Which endpoint served the call: `EMBEDDINGS_URL` (`'primary'`) or
+   * `EMBEDDINGS_FALLBACK_URL` (`'fallback'`). Optional so injected test
+   * embedders need not set it; absent reads as primary.
+   */
+  servedBy?: EmbeddingEndpoint;
 }
 
 interface OpenRouterEmbeddingsApiResponse {
@@ -100,37 +108,181 @@ function appHeaders(apiKey: string): Record<string, string> {
   };
 }
 
+/** Which configured endpoint served an embedding call. */
+export type EmbeddingEndpoint = 'primary' | 'fallback';
+
 /**
- * POST to OpenRouter's embeddings endpoint. Returns one vector per input,
- * in submission order. Throws `OpenRouterEmbeddingHttpError` on non-OK HTTP
- * or error envelopes.
+ * The `usage_logs.provider` label for an embedding result. The primary keeps
+ * the historical `'openrouter'` label (rows read the same as before the
+ * fallback existed); a call the hosted fallback served is labelled apart so
+ * cost accounting can tell which endpoint charged it.
+ */
+export function embeddingProviderLabel(result: Pick<EmbedResult, 'servedBy'>): string {
+  return result.servedBy === 'fallback' ? 'embeddings-fallback' : 'openrouter';
+}
+
+// ── Hosted-fallback circuit breaker ─────────────────────────────────────────
+// In-process and per-replica on purpose: after a fallback-triggering primary
+// failure, every call goes straight to the fallback until `primaryDownUntil`;
+// the first call after that probes the primary again. A probe that fails just
+// re-opens the window.
+let primaryDownUntil = 0;
+
+/** Test-only: close the circuit so the next call tries the primary. */
+export function __resetEmbeddingFallbackCircuit(): void {
+  primaryDownUntil = 0;
+}
+
+// Lazy so this module never loads pino at import time: several suites mock
+// `config/env.js` without `LOG_LEVEL`, and pino throws on an undefined level.
+// Only reached when a fallback actually happens.
+let fallbackLog: ComponentLogger | undefined;
+async function getFallbackLog(): Promise<ComponentLogger> {
+  fallbackLog ??= (await import('../../../logger.js')).rootLogger;
+  return fallbackLog;
+}
+
+const NETWORK_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ETIMEDOUT',
+  'EPIPE',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CLOSED',
+]);
+
+function errorCode(err: unknown): string | undefined {
+  if (!err || typeof err !== 'object') return undefined;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+/**
+ * Why a primary failure should go to the fallback, or `undefined` when it must
+ * surface instead. Falls back on network errors, timeouts, HTTP 5xx and 429.
+ * Never on 400/401/403/… — those are config bugs and must stay visible.
+ */
+function fallbackReason(err: unknown): string | undefined {
+  if (err instanceof OpenRouterEmbeddingHttpError) {
+    if (err.status >= 500 || err.status === 429) return `http_${err.status}`;
+    return undefined;
+  }
+  if (err instanceof Error && err.name === 'TimeoutError') return 'timeout';
+  const code = errorCode(err) ?? (err instanceof Error ? errorCode(err.cause) : undefined);
+  if (code && NETWORK_ERROR_CODES.has(code)) return `network_${code}`;
+  // undici's `fetch` rejects every transport failure as `TypeError('fetch failed')`.
+  if (err instanceof TypeError) return 'network';
+  return undefined;
+}
+
+function resolveFallbackApiKey(): string {
+  // Deliberately NOT `EMBEDDINGS_API_KEY`: that key belongs to the primary host.
+  const key = env.EMBEDDINGS_FALLBACK_API_KEY || env.OPENROUTER_API_KEY || env.OPENAI_API_KEY;
+  if (!key) {
+    throw new Error(
+      'Embeddings fallback API key missing: set EMBEDDINGS_FALLBACK_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY.',
+    );
+  }
+  return key;
+}
+
+/**
+ * Embed `opts.input`. Returns one vector per input, in submission order.
+ * Throws `OpenRouterEmbeddingHttpError` on non-OK HTTP or error envelopes.
+ *
+ * With `EMBEDDINGS_FALLBACK_URL` set, a primary failure that is a network
+ * error, timeout, 5xx or 429 is retried once against the fallback, with the
+ * same `model` and the same already-minimised input (see `fallbackReason`).
  */
 export async function callOpenRouterEmbedding(opts: EmbedOptions): Promise<EmbedResult> {
-  const apiKey = resolveApiKey(opts);
+  const fallbackUrl = env.EMBEDDINGS_FALLBACK_URL;
+  const circuitOpen = Boolean(fallbackUrl) && Date.now() < primaryDownUntil;
+  // Resolved before any egress work, as before; skipped only when the primary
+  // will not be called at all.
+  const primaryKey = circuitOpen ? undefined : resolveApiKey(opts);
+
+  // 🔴 EGRESS SEAM 3 of 5 (§9.4; see `../pii-egress.ts`). This is the "ingest embeddings" site: ingest
+  // (`src/workers/ingest.worker.ts`), `/v1/embed` and retrieve all embed
+  // through this one function, so scrubbing here covers all three and makes a
+  // future caller opt in by default. Done ONCE, before the endpoint choice, so
+  // the fallback receives exactly the text the primary would have.
+  //
+  // ⚠ CONSEQUENCE, stated so nobody discovers it as a retrieval bug: a chunk
+  // whose text carries a CURP is embedded as `[CURP]`, and a query carrying
+  // the same CURP is embedded as `[CURP]` too — the two stay consistent, but a
+  // corpus ingested BEFORE this change was embedded from the raw text. Mixing
+  // them degrades recall on such chunks; re-ingest is the fix.
+  const input = await minimiseEgress(opts.input, opts.signal);
+
+  if (!fallbackUrl) {
+    // No fallback configured: exactly the pre-fallback call (no extra timeout).
+    return postEmbeddings(OPENROUTER_EMBEDDINGS_URL, primaryKey!, opts, input, opts.signal, 'primary');
+  }
+
+  const callFallback = (): Promise<EmbedResult> =>
+    postEmbeddings(fallbackUrl, resolveFallbackApiKey(), opts, input, opts.signal, 'fallback');
+
+  if (circuitOpen) return callFallback();
+
+  const deadline = withRequestTimeout(opts.signal, env.EMBEDDINGS_PRIMARY_TIMEOUT_MS);
+  let reason: string | undefined;
+  try {
+    return await postEmbeddings(
+      OPENROUTER_EMBEDDINGS_URL,
+      primaryKey!,
+      opts,
+      input,
+      deadline.signal,
+      'primary',
+    );
+  } catch (err) {
+    // A caller abort (shutdown, client disconnect) is not a primary outage.
+    if (opts.signal?.aborted) throw err;
+    reason = deadline.cause() === 'timeout' ? 'timeout' : fallbackReason(err);
+    if (!reason) throw err;
+  } finally {
+    deadline.dispose();
+  }
+
+  primaryDownUntil = Date.now() + env.EMBEDDINGS_FALLBACK_COOLDOWN_S * 1000;
+  // Reason and model only — never keys, never input text.
+  (await getFallbackLog()).warn(
+    { reason, model: opts.model, cooldownS: env.EMBEDDINGS_FALLBACK_COOLDOWN_S },
+    'embeddings: primary failed; serving this call from EMBEDDINGS_FALLBACK_URL',
+  );
+  return callFallback();
+}
+
+/** One POST to one OpenAI-compatible `/embeddings` endpoint, parsed. */
+async function postEmbeddings(
+  url: string,
+  apiKey: string,
+  opts: EmbedOptions,
+  input: EmbedOptions['input'],
+  signal: AbortSignal | undefined,
+  servedBy: EmbeddingEndpoint,
+): Promise<EmbedResult> {
   const body = {
     model: opts.model,
-    // 🔴 EGRESS SEAM 3 of 5 (§9.4; see `../pii-egress.ts`). This is the "ingest embeddings" site: ingest
-    // (`src/workers/ingest.worker.ts`), `/v1/embed` and retrieve all embed
-    // through this one function, so scrubbing here covers all three and makes a
-    // future caller opt in by default.
-    //
-    // ⚠ CONSEQUENCE, stated so nobody discovers it as a retrieval bug: a chunk
-    // whose text carries a CURP is embedded as `[CURP]`, and a query carrying
-    // the same CURP is embedded as `[CURP]` too — the two stay consistent, but a
-    // corpus ingested BEFORE this change was embedded from the raw text. Mixing
-    // them degrades recall on such chunks; re-ingest is the fix.
-    input: await minimiseEgress(opts.input, opts.signal),
+    input,
     // Force float arrays. Some OpenRouter-routed hosts (and the open models we
     // now use, e.g. bge-m3) can return base64-packed floats otherwise, which
     // this adapter deliberately rejects rather than decodes (see below).
     encoding_format: 'float',
   };
 
-  const res = await fetch(OPENROUTER_EMBEDDINGS_URL, {
+  const res = await fetch(url, {
     method: 'POST',
     headers: appHeaders(apiKey),
     body: JSON.stringify(body),
-    signal: opts.signal,
+    signal,
   });
 
   const text = await res.text();
@@ -188,6 +340,7 @@ export async function callOpenRouterEmbedding(opts: EmbedOptions): Promise<Embed
     embeddings,
     model,
     usage: { inputTokens, estimatedCostUsd },
+    servedBy,
   };
 }
 
