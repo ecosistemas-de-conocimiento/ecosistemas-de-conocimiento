@@ -156,3 +156,90 @@ describe('Q4 — a bare title verify marks non-identifying does not hold the tex
     expect(r.redactedText).toBe('[Persona A] dijo que no.')
   })
 })
+
+describe('Q5 — a one-word name at a sentence start is redacted, whatever `identifica` says', () => {
+  it('"Lucrecia llegó tarde." → ready, redacted, at the default of one round', async () => {
+    const r = await gate('Lucrecia llegó tarde.', [[], [persona('Lucrecia', false)]])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('[Persona A] llegó tarde.')
+  })
+
+  it('a speaker label "LUCRECIA:" is redacted, every spelling with one label', async () => {
+    const r = await gate('LUCRECIA: bueno pues sí. Luego Lucrecia se fue.', [
+      [],
+      [persona('LUCRECIA', false)],
+    ])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('[Persona A]: bueno pues sí. Luego [Persona A] se fue.')
+    expect(r.report.pseudonyms).toBe(1)
+  })
+
+  it('uses the document allocator: a first name alone is not merged into a full name', async () => {
+    const r = await gate('Vino Lucrecia Gómez. Lucrecia llegó tarde.', [
+      [persona('Lucrecia Gómez')],
+      [persona('Lucrecia', false)],
+    ])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Vino [Persona A]. [Persona B] llegó tarde.')
+  })
+
+  it('a one-word title at a line start is redacted too (accepted by the owner)', async () => {
+    const r = await gate('Doctor: ya está.', [[], [persona('Doctor', false)]])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('[Persona A]: ya está.')
+  })
+
+  it('a lower-case single word marked false still passes untouched (Q4 accepted risk)', async () => {
+    const r = await gate('Me trajo chela ayer.', [[], [persona('chela', false)]])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Me trajo chela ayer.')
+  })
+
+  it('"Don [Persona A]" at a sentence start, marked false, passes (Q1 title, not one word)', async () => {
+    const r = await gate('Don Fermín llegó.', [[persona('Fermín')], [persona('Don [Persona A]', false)]])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Don [Persona A] llegó.')
+  })
+
+  it('"El doctor llegó" marked false still passes untouched (Q4)', async () => {
+    const r = await gate('El doctor llegó.', [[], [persona('El doctor', false)]])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('El doctor llegó.')
+  })
+
+  it('"Llegó Chacho Melgarejo" marked false still holds', async () => {
+    const r = await gate('Llegó Chacho Melgarejo.', [[], [persona('Chacho Melgarejo', false)]])
+    expect(r.status).toBe('hold')
+  })
+
+  it('🔴 beside another leftover the document still holds, and the name is highlighted', async () => {
+    const r = await gate('Lucrecia llegó. Vino Chacho.', [
+      [],
+      [persona('Lucrecia', false), persona('Chacho')],
+    ])
+    expect(r.status).toBe('hold')
+    if (r.status !== 'hold') return
+    const marked = (r.survivors ?? []).map((s) => r.redactedText?.slice(s.start, s.end))
+    expect(marked).toEqual(['Lucrecia', 'Chacho'])
+  })
+
+  it('with opt-in rounds it is redacted with the other leftovers', async () => {
+    const r = await runAnonymisationGate(
+      { contentKind: 'testimonio', text: 'Lucrecia llegó. Vino Chacho.' },
+      {
+        detector: scripted([[], [persona('Lucrecia', false), persona('Chacho')], []]),
+        verifyRounds: 3,
+      },
+    )
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('[Persona A] llegó. Vino [Persona B].')
+  })
+})

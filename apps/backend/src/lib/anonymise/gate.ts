@@ -391,6 +391,26 @@ function sentenceStart(text: string, at: number): boolean {
  * text is enough to count. Stage 3 still redacts every finding.
  */
 function bareTitle(f: DetectorFinding, text: string): boolean {
+  return titleVerdict(f, text) !== 'leftover'
+}
+
+/**
+ * ONE CAPITALISED WORD: a bare title by shape that is redacted, not passed.
+ *
+ * 🔴 OWNER'S RULING, 2026-10-21 (Q5, "names get anonimized, independently of
+ * num of words"): "Lucrecia llegó." and a "LUCRECIA:" speaker label pass the
+ * Q4 shape test only because the capital starts a sentence. Such a finding is
+ * redacted, in every spelling, even on the last round: that only removes text.
+ * Accepted: a one-word title ("Doctor:") is redacted too.
+ */
+function titleVerdict(f: DetectorFinding, text: string): 'leftover' | 'pass' | 'redact' {
+  if (!bareTitleShape(f, text)) return 'leftover'
+  // A placeholder is two words ("Persona", "A"), so "Don [Persona A]" is not one word.
+  const oneWord = (f.text.match(/[\p{L}\p{M}\p{N}]+/gu) ?? []).length === 1
+  return oneWord && /\p{Lu}/u.test(f.text) ? 'redact' : 'pass'
+}
+
+function bareTitleShape(f: DetectorFinding, text: string): boolean {
   if (f.identifying !== false) return false
   if (/\p{N}/u.test(f.text.replace(PLACEHOLDER, ''))) return false
   const capitals: number[] = []
@@ -625,15 +645,36 @@ export async function runAnonymisationGate(
     // 2026-10-21, #12), so it never holds — the prompt says so and the model
     // still marked towns in 31 of 38 dev holds. Colonias, streets, numbers, C.P.,
     // ranchos, parajes and house references still hold. See `townPlaces.ts`.
-    const real = survivors.filter(
+    const standing = survivors.filter(
       (f) =>
         !coveredByPlaceholder(current, spans, f.text) &&
         !onlyPlaceholders(f.text) &&
-        !isTownLevelPlace(f, current) &&
-        !bareTitle(f, current),
+        !isTownLevelPlace(f, current),
     )
+    const real = standing.filter((f) => !bareTitle(f, current))
+    // 🔴 Q5: a one-word name at a sentence start, redacted on ANY round.
+    const forced = standing.filter((f) => titleVerdict(f, current) === 'redact')
 
-    if (real.length === 0) {
+    if (real.length === 0 && forced.length > 0) {
+      const done = redactLeftovers(
+        current,
+        forced,
+        (name) => allocator.labelFor(name),
+        (address) => allocator.addressLabelFor(address),
+      )
+      // A plain one-word finding always resolves; null would be a bug, so hold.
+      if (done !== null) {
+        stages.push({
+          stage: 'verify',
+          round,
+          removed: countsByLabel(done.labels),
+          note: `Ronda ${round}: se tacharon ${forced.length} nombre(s) de una palabra al inicio de una oración.`,
+        })
+        return { status: 'ready', redactedText: done.text, report: report() }
+      }
+    }
+
+    if (real.length === 0 && forced.length === 0) {
       stages.push({
         stage: 'verify',
         round,
@@ -647,7 +688,7 @@ export async function runAnonymisationGate(
       round < rounds
         ? redactLeftovers(
             current,
-            real,
+            [...real, ...forced],
             (name) => allocator.labelFor(name),
             (address) => allocator.addressLabelFor(address),
           )
@@ -660,7 +701,8 @@ export async function runAnonymisationGate(
       // count highlighted OCCURRENCES (`survivors.length`, see `holdReview.ts`),
       // so the reason counts the same thing. Counting distinct findings here
       // showed "7 datos señalados" next to "encontró 4" on dev, 2026-10-21.
-      const located = survivorSpans(current, real)
+      // Q5 names are highlighted too, so the reviewer sees them.
+      const located = survivorSpans(current, [...real, ...forced])
       stages.push({
         stage: 'verify',
         round,
