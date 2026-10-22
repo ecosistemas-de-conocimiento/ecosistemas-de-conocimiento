@@ -16,12 +16,27 @@ vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 type Row = Record<string, unknown>
 let row: Row
 
+type Clause = Record<string, Record<string, unknown>>
+const matchesClause = (clause: Clause): boolean =>
+  Object.entries(clause).every(([field, op]) => {
+    if (field === 'id') return true
+    const value = row[field]
+    if ('equals' in op) return String(value ?? '') === String(op.equals)
+    if ('exists' in op) return (value != null) === Boolean(op.exists)
+    if ('in' in op) return (op.in as unknown[]).map(String).includes(String(value ?? ''))
+    if ('not_in' in op) return value == null || !(op.not_in as unknown[]).map(String).includes(String(value))
+    throw new Error(`fake: unsupported operator ${JSON.stringify(op)} on ${field}`)
+  })
+
 const fakePayload = {
   findByID: async () => ({ ...row }),
   create: async () => ({}),
   find: async () => ({ docs: [] }),
   delete: async () => ({}),
-  update: async (args: { data: Row; context?: Row }) => {
+  update: async (args: { data: Row; context?: Row; where?: { and?: Clause[] } }) => {
+    // A guarded write (`documentColumns.testFake` passes `where`) applies only
+    // if the row matches, like the real conditional UPDATE.
+    if (args.where && !(args.where.and ?? []).every(matchesClause)) return { docs: [] }
     const previousDoc = { ...row }
     row = { ...row, ...args.data }
     if (!args.context?.__skipDocsExtract) {
@@ -35,7 +50,7 @@ const fakePayload = {
         } as never)
       }
     }
-    return { ...row }
+    return args.where ? { docs: [{ ...row }] } : { ...row }
   },
 }
 
@@ -92,6 +107,16 @@ describe('renaming an audio row the drive owns', () => {
     expect(row.ingestStatus).toBe(status)
     // The first case pays the cold import of `Documents`: 6 s measured on a
     // host at load average 24.
+  }, 20_000)
+
+  it('🔴 the retry path: an audio row with its transcript at `pending` still reaches the enqueue', async () => {
+    // `POST /:id/retry` resets the row to `pending` and keeps the text; the
+    // guard above must not swallow that.
+    row = base({ ingestStatus: 'pending' })
+    await fakePayload.update({ data: {} })
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1), { timeout: 5000, interval: 10 })
+    await vi.waitFor(() => expect(row.ingestId).toBe('ing_1'), { timeout: 5000, interval: 10 })
+    expect(row.ingestStatus).toBe('embedding')
   }, 20_000)
 
   it('control: the same save on a pdf with text does reach the enqueue', async () => {

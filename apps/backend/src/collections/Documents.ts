@@ -1580,6 +1580,17 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
   // ⚠ An audio transcript is driven by `driveTranscribedDocument` only, behind
   // its claim. A rename here would otherwise drive it a second time.
   if (fresh.kind === 'audio' && (fresh.ingestStatus === 'transcribed' || fresh.ingestStatus === 'extracting')) return
+  // Cached text skipped the `extracting` write above; `enqueueIngestForDoc`
+  // sends only from `extracting`.
+  if (fresh.ingestStatus !== 'extracting' && extractedText === fresh.extractedText) {
+    await payload.update({
+      collection: 'documents',
+      id: docId as never,
+      data: { ingestStatus: 'extracting' },
+      overrideAccess: true,
+      context: { __skipDocsExtract: true },
+    })
+  }
 
   await enqueueIngestForDoc({
     payload,
@@ -1922,15 +1933,23 @@ export async function enqueueIngestForDoc(args: {
 
   // From the UI's POV, the wait between enqueue and the ai-service callback
   // *is* the embedding phase (ai-service workers chunk + embed + upsert).
-  await payload.update({
-    collection: 'documents',
-    id: docId as never,
-    // `ingestError: null` clears whatever a previous failed attempt left behind.
-    // A retry that succeeded must not keep showing the reason it failed before.
+  //
+  // 🔴 CONDITIONAL, AND IT IS THE LAST GATE BEFORE THE SEND. Only from
+  // `extracting` with no `ingestId`: every caller runs at `extracting` (the
+  // pdf/docx path writes it, the audio drive claims it). A run that hung long
+  // enough for `lib/ingestRecovery.ts:recoverAbandonedClaims` to hand its row
+  // back has lost the claim; its late write changes 0 rows and it sends
+  // nothing. `ingestError: null` clears what a previous failed attempt left.
+  const { updateDocumentColumns: writeColumns } = await import('@/lib/documentColumns')
+  const stillOurs = await writeColumns(payload as never, {
+    id: docId,
+    where: [{ ingestStatus: { equals: 'extracting' } }, { ingestId: { exists: false } }],
     data: { ingestStatus: 'embedding', ingestError: null },
-    overrideAccess: true,
-    context: { __skipDocsExtract: true },
   })
+  if (stillOurs === 0) {
+    console.warn(`[documents] doc ${docId}: no longer \`extracting\` — this run lost it, nothing sent.`)
+    return
+  }
 
   // Lazy-import the client + helpers so we don't pull @edc/ai-client
   // into the payload-types-only `payload generate:types` build path.

@@ -54,12 +54,17 @@ const matches = (row: Row, where: unknown): boolean =>
 
 function fakeDb(rows: Row[]) {
   const store = rows.map((r) => ({ ...r }))
-  /** true: this update throws. 'hang': it never settles (the process died). */
-  let failWrite: (data: Row) => boolean | 'hang' = () => false
+  /**
+   * true: this update throws. 'hang': it never settles (the process died).
+   * A promise: the update waits for it, then writes (a run that hung).
+   */
+  let failWrite: (data: Row) => boolean | 'hang' | Promise<void> = () => false
   const update = vi.fn(async (args: Record<string, unknown>) => {
     const data = args.data as Row
     const fail = failWrite(data)
     if (fail === 'hang') return new Promise<never>(() => {})
+    if (fail instanceof Promise) await fail
+    else
     if (fail) throw new Error('db hiccup')
     const hits =
       args.id !== undefined
@@ -86,7 +91,7 @@ function fakeDb(rows: Row[]) {
       'find' | 'update' | 'findByID'
     >,
     row: (id: number) => store.find((r) => r.id === id)!,
-    failWrites: (f: (data: Row) => boolean | 'hang') => {
+    failWrites: (f: (data: Row) => boolean | 'hang' | Promise<void>) => {
       failWrite = f
     },
   }
@@ -362,6 +367,27 @@ describe('🔴 recoverAbandonedClaims — a claim with no live run goes back to 
 
     expect(await driveTranscribedDocuments(db.payload, { now: minutesAfter(20) })).toMatchObject({ driven: 1 })
     expect(db.row(42)).toMatchObject({ ingestStatus: 'embedding', ingestError: null })
+    expect(ingestPosts()).toBe(1)
+  })
+
+  it('🔴 a hung run that wakes up after the hand-back sends nothing: its `embedding` write is a no-op', async () => {
+    const db = fakeDb([transcribedRow()])
+    let wake!: () => void
+    const asleep = new Promise<void>((r) => (wake = r))
+    let hung = false
+    db.failWrites((data) => (data.anonymisationStatus === 'n/a' ? ((hung = true), asleep) : false))
+    const run = driveTranscribedDocument(db.payload, { ...db.row(42) })
+    await vi.waitFor(() => expect(hung).toBe(true))
+    db.failWrites(() => false)
+
+    expect(await recoverAbandonedClaims(db.payload, { now: minutesAfter(11) })).toMatchObject({ recovered: 1 })
+    wake()
+    await run
+    expect(ingestPosts()).toBe(0)
+    expect(db.row(42)).toMatchObject({ ingestStatus: 'transcribed', ingestError: 'extracting_recovered: 1/3' })
+
+    // The next drive owns it and sends it once.
+    expect(await driveTranscribedDocument(db.payload, { ...db.row(42) })).toBe('driven')
     expect(ingestPosts()).toBe(1)
   })
 
