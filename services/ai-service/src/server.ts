@@ -11,6 +11,7 @@ import { Redis } from 'ioredis';
 
 import { loadConfig, type Config } from './config/config.js';
 import { createRuntime, type Runtime } from './runtime.js';
+import { isDatabaseUnavailableError } from './db/unavailable.js';
 import { isAiServiceError } from './errors/base.js';
 import { getFastifyOtelPlugin } from './telemetry/otel.js';
 import { authPlugin, deriveApiKeyId } from './plugins/auth.js';
@@ -569,6 +570,27 @@ export async function buildServer(injectedRuntime?: Runtime): Promise<FastifyIns
           return reply
             .code(500)
             .send({ statusCode: 500, error: 'Internal Server Error', message: 'internal error' });
+        }
+        // The database (or the pooler in front of it) is unreachable. That is
+        // a transient outage, not a bug in the request, so answer 503 and say
+        // when to retry. The body stays generic, like the 500 below; the
+        // readiness endpoint already reports "database down" in public, so
+        // the status line leaks nothing new. See `isDatabaseUnavailableError`.
+        if (isDatabaseUnavailableError(error)) {
+          req.log.error(
+            {
+              err: error,
+              org: (req.auth as { org?: string } | undefined)?.org,
+              project: (req.auth as { project?: string } | undefined)?.project,
+              httpRequestId: req.id,
+            },
+            'database unavailable on /v1',
+          );
+          return reply.code(503).header('retry-after', '1').send({
+            statusCode: 503,
+            error: 'Service Unavailable',
+            message: 'database unavailable',
+          });
         }
         // Not ours. The LOG LEVEL is decided the same way for both remaining
         // arms: a caller's own 4xx is not an ai-service fault, and logging it

@@ -158,10 +158,11 @@ export const retrieveRequestSchema = z
      *
      * NO-OP unless the SERVER has `RERANK_ENABLED=true` and a configured
      * `RERANK_URL`: on any environment where rerank isn't wired, `rerank: true`
-     * degrades silently to the un-reranked order (byte-identical response minus
-     * `rerankScore`). FAILS SAFE to the fused order on any rerank error/timeout
-     * — reranking is a relevance-polish rung, never a correctness gate, so it
-     * must not turn a slow reranker into a failed query.
+     * degrades to the un-reranked order. FAILS SAFE to the fused order on any
+     * rerank error/timeout — reranking is a relevance-polish rung, never a
+     * correctness gate, so it must not turn a slow reranker into a failed
+     * query. Neither is silent: the response carries a `RERANK_DEGRADED`
+     * entry in `warnings` naming the reason, and `legs` omits `rerank`.
      *
      * Mutually exclusive with `mmr`: if both are set, rerank wins and `mmr` is
      * ignored (they optimise opposite things — relevance vs diversity — so
@@ -287,9 +288,10 @@ export const retrieveMultiRequestSchema = z
      * corpora. `corpus` provenance is preserved on every returned chunk.
      *
      * NO-OP unless the SERVER has `RERANK_ENABLED=true` and a configured
-     * `RERANK_URL`: where rerank isn't wired, `rerank: true` degrades silently
-     * to the fused order (byte-identical response minus `rerankScore`). FAILS
-     * SAFE to the fused order on any rerank error/timeout — never a 500.
+     * `RERANK_URL`: where rerank isn't wired, `rerank: true` degrades to the
+     * fused order. FAILS SAFE to the fused order on any rerank error/timeout —
+     * never a 500. Either way the response says so: a `RERANK_DEGRADED`
+     * warning, and no `rerank` in `legs`.
      *
      * Mutually exclusive with `mmr`: when rerank is active, `mmr` is NOT
      * forwarded to the per-corpus legs (rerank wins, mirroring single

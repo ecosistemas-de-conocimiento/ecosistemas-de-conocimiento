@@ -283,3 +283,254 @@ describe('callOpenRouterEmbedding', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+// `EMBEDDINGS_API_KEY` lets a non-OpenRouter `EMBEDDINGS_URL` (e.g. a
+// self-hosted llama.cpp bge-m3) get its own token, so the OpenRouter key is
+// never sent to a third-party host. Unset ⇒ behaviour is unchanged.
+describe('callOpenRouterEmbedding — EMBEDDINGS_API_KEY resolution', () => {
+  async function authHeaderWith(
+    envKeys: { EMBEDDINGS_API_KEY?: string; OPENROUTER_API_KEY?: string },
+    apiKey?: string,
+  ): Promise<string> {
+    vi.resetModules();
+    vi.doMock('../router/task-profiles.js', () => ({ priceForEmbedding: () => 0 }));
+    vi.doMock('../../../config/env.js', () => ({
+      env: {
+        OPENAI_API_KEY: undefined,
+        EMBEDDINGS_URL: 'https://embeddings.example.test/v1/embeddings',
+        EMBEDDING_MODEL: 'baai/bge-m3',
+        EMBEDDING_DIM: 1024,
+        ...envKeys,
+      },
+    }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      makeResponse({ ok: true, status: 200, body: { data: [{ index: 0, embedding: [0.1] }] } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const mod = await import('./openrouter.js');
+      await mod.callOpenRouterEmbedding({ model: 'baai/bge-m3', input: 'x', apiKey });
+      const init = fetchMock.mock.calls[0]![1] as RequestInit;
+      return (init.headers as Record<string, string>).Authorization!;
+    } finally {
+      vi.unstubAllGlobals();
+      vi.doUnmock('../router/task-profiles.js');
+      vi.doUnmock('../../../config/env.js');
+    }
+  }
+
+  it('sends EMBEDDINGS_API_KEY instead of OPENROUTER_API_KEY when set', async () => {
+    expect(
+      await authHeaderWith({ EMBEDDINGS_API_KEY: 'embed-key', OPENROUTER_API_KEY: 'or-key' }),
+    ).toBe('Bearer embed-key');
+  });
+
+  it('falls back to OPENROUTER_API_KEY when EMBEDDINGS_API_KEY is unset', async () => {
+    expect(await authHeaderWith({ OPENROUTER_API_KEY: 'or-key' })).toBe('Bearer or-key');
+  });
+
+  it('treats an empty EMBEDDINGS_API_KEY as unset', async () => {
+    expect(
+      await authHeaderWith({ EMBEDDINGS_API_KEY: '', OPENROUTER_API_KEY: 'or-key' }),
+    ).toBe('Bearer or-key');
+  });
+
+  it('an explicit opts.apiKey still wins over EMBEDDINGS_API_KEY', async () => {
+    expect(
+      await authHeaderWith({ EMBEDDINGS_API_KEY: 'embed-key', OPENROUTER_API_KEY: 'or-key' }, 'inline'),
+    ).toBe('Bearer inline');
+  });
+});
+
+// Hosted fallback: `EMBEDDINGS_FALLBACK_URL` takes over when the primary
+// (e.g. a self-hosted bge-m3 over a VPN) is unreachable, slow, 5xx or 429.
+describe('callOpenRouterEmbedding — EMBEDDINGS_FALLBACK_URL', () => {
+  const PRIMARY = 'https://gpu-box.vpn.test/v1/embeddings';
+  const FALLBACK = 'https://openrouter.ai/api/v1/embeddings';
+  const okBody = { data: [{ index: 0, embedding: [0.5] }], usage: { prompt_tokens: 1 } };
+  const warnMock = vi.fn();
+
+  type Mod = typeof import('./openrouter.js');
+
+  async function load(envOver: Record<string, unknown> = {}): Promise<Mod> {
+    vi.resetModules();
+    vi.doMock('../router/task-profiles.js', () => ({ priceForEmbedding: () => 0 }));
+    vi.doMock('../../../logger.js', () => ({
+      rootLogger: { warn: warnMock, info: vi.fn(), error: vi.fn() },
+    }));
+    vi.doMock('../../../config/env.js', () => ({
+      env: {
+        OPENAI_API_KEY: undefined,
+        OPENROUTER_API_KEY: 'or-key',
+        EMBEDDINGS_API_KEY: 'primary-key',
+        EMBEDDINGS_URL: PRIMARY,
+        EMBEDDINGS_FALLBACK_URL: FALLBACK,
+        EMBEDDINGS_FALLBACK_COOLDOWN_S: 60,
+        EMBEDDINGS_PRIMARY_TIMEOUT_MS: 50,
+        EMBEDDING_MODEL: 'baai/bge-m3',
+        EMBEDDING_DIM: 1024,
+        ...envOver,
+      },
+    }));
+    return import('./openrouter.js');
+  }
+
+  function call(mod: Mod, signal?: AbortSignal) {
+    return mod.callOpenRouterEmbedding({
+      model: 'baai/bge-m3',
+      input: 'x',
+      ...(signal ? { signal } : {}),
+    });
+  }
+
+  function calls(fetchMock: ReturnType<typeof vi.fn>) {
+    return fetchMock.mock.calls.map(([url, init]) => {
+      const i = init as RequestInit;
+      return {
+        url: url as string,
+        auth: (i.headers as Record<string, string>).Authorization,
+        model: (JSON.parse(i.body as string) as { model: string }).model,
+      };
+    });
+  }
+
+  function connRefused(): Error {
+    const cause = Object.assign(new Error('connect ECONNREFUSED 10.0.0.2:8080'), {
+      code: 'ECONNREFUSED',
+    });
+    return new TypeError('fetch failed', { cause });
+  }
+
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    warnMock.mockReset();
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.doUnmock('../router/task-profiles.js');
+    vi.doUnmock('../../../logger.js');
+    vi.doUnmock('../../../config/env.js');
+  });
+
+  it('falls back on ECONNREFUSED, same model, keys never cross', async () => {
+    const mod = await load();
+    fetchMock
+      .mockRejectedValueOnce(connRefused())
+      .mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
+
+    const res = await call(mod);
+
+    expect(res.servedBy).toBe('fallback');
+    expect(mod.embeddingProviderLabel(res)).toBe('embeddings-fallback');
+    expect(calls(fetchMock)).toEqual([
+      { url: PRIMARY, auth: 'Bearer primary-key', model: 'baai/bge-m3' },
+      { url: FALLBACK, auth: 'Bearer or-key', model: 'baai/bge-m3' },
+    ]);
+    expect(warnMock).toHaveBeenCalledTimes(1);
+    const [logObj] = warnMock.mock.calls[0]! as [Record<string, unknown>];
+    expect(logObj.reason).toBe('network_ECONNREFUSED');
+    expect(JSON.stringify(warnMock.mock.calls)).not.toMatch(/primary-key|or-key|"x"/);
+  });
+
+  it('uses EMBEDDINGS_FALLBACK_API_KEY for the fallback only', async () => {
+    const mod = await load({ EMBEDDINGS_FALLBACK_API_KEY: 'fb-key' });
+    fetchMock
+      .mockResolvedValueOnce(makeResponse({ ok: false, status: 503, body: 'upstream down' }))
+      .mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
+
+    await call(mod);
+
+    expect(calls(fetchMock).map((c) => c.auth)).toEqual(['Bearer primary-key', 'Bearer fb-key']);
+  });
+
+  it.each([503, 429])('falls back on HTTP %i', async (status) => {
+    const mod = await load();
+    fetchMock
+      .mockResolvedValueOnce(
+        makeResponse({ ok: false, status, body: { error: { message: 'busy' } } }),
+      )
+      .mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
+
+    const res = await call(mod);
+
+    expect(res.servedBy).toBe('fallback');
+    expect(calls(fetchMock).map((c) => c.url)).toEqual([PRIMARY, FALLBACK]);
+    expect((warnMock.mock.calls[0]![0] as { reason: string }).reason).toBe(`http_${status}`);
+  });
+
+  it('falls back when the primary exceeds EMBEDDINGS_PRIMARY_TIMEOUT_MS', async () => {
+    const mod = await load();
+    fetchMock
+      .mockImplementationOnce(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal!.addEventListener('abort', () => reject(init.signal!.reason));
+          }),
+      )
+      .mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
+
+    const res = await call(mod);
+
+    expect(res.servedBy).toBe('fallback');
+    expect((warnMock.mock.calls[0]![0] as { reason: string }).reason).toBe('timeout');
+  });
+
+  it('does NOT fall back on 401 (config bugs surface)', async () => {
+    const mod = await load();
+    fetchMock.mockResolvedValueOnce(
+      makeResponse({ ok: false, status: 401, body: { error: { message: 'bad key' } } }),
+    );
+
+    await expect(call(mod)).rejects.toMatchObject({ status: 401 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(warnMock).not.toHaveBeenCalled();
+  });
+
+  it('does NOT fall back when the caller aborted', async () => {
+    const mod = await load();
+    const ctrl = new AbortController();
+    fetchMock.mockImplementationOnce(() => {
+      ctrl.abort();
+      return Promise.reject(new DOMException('aborted', 'AbortError'));
+    });
+
+    await expect(call(mod, ctrl.signal)).rejects.toThrow('aborted');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the primary during the cooldown, then probes it again', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-21T00:00:00Z'));
+    const mod = await load();
+    fetchMock
+      .mockRejectedValueOnce(connRefused())
+      .mockResolvedValue(makeResponse({ ok: true, status: 200, body: okBody }));
+
+    await call(mod); // primary fails → fallback; circuit opens
+    vi.setSystemTime(new Date('2026-10-21T00:00:59Z'));
+    const during = await call(mod); // inside the 60 s cooldown → straight to fallback
+    vi.setSystemTime(new Date('2026-10-21T00:01:01Z'));
+    const after = await call(mod); // cooldown over → primary probed, succeeds
+
+    expect(calls(fetchMock).map((c) => c.url)).toEqual([PRIMARY, FALLBACK, FALLBACK, PRIMARY]);
+    expect(during.servedBy).toBe('fallback');
+    expect(after.servedBy).toBe('primary');
+    expect(mod.embeddingProviderLabel(after)).toBe('openrouter');
+    expect(calls(fetchMock)[2]!.auth).toBe('Bearer or-key');
+    expect(calls(fetchMock)[3]!.auth).toBe('Bearer primary-key');
+  });
+
+  it('unset EMBEDDINGS_FALLBACK_URL → no fallback, no timeout, error surfaces', async () => {
+    const mod = await load({ EMBEDDINGS_FALLBACK_URL: undefined });
+    fetchMock.mockRejectedValueOnce(connRefused());
+
+    await expect(call(mod)).rejects.toThrow('fetch failed');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The caller's own signal (none here), not a timeout-wrapped one.
+    expect((fetchMock.mock.calls[0]![1] as RequestInit).signal).toBeUndefined();
+    expect(warnMock).not.toHaveBeenCalled();
+  });
+});

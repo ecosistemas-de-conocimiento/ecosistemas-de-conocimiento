@@ -137,6 +137,13 @@ export function canInProject(
   return grantOf(principal, projectSlug).permissions.includes(permission);
 }
 
+/**
+ * {@link canInProject} under its new name — the SAME function object, not a
+ * wrapper (D1a, 2026-10-21: the IdP's "project" is the token's audience).
+ * Prefer this name in new code; `canInProject` stays for existing callers.
+ */
+export const canInAudience = canInProject;
+
 /** Does the principal hold `role` in `projectSlug`? Prefer permissions over roles. */
 export function hasRoleInProject(
   principal: Principal,

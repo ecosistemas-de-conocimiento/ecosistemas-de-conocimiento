@@ -44,6 +44,12 @@ describe('DocumentValidityService (integration)', () => {
     await db.execute(sql`DELETE FROM "chunks" WHERE "org" = ${ORG}`);
     await db.execute(sql`DELETE FROM "documents" WHERE "org" = ${ORG}`);
     await db.execute(sql`DELETE FROM "corpora" WHERE "org" = ${ORG}`);
+    // Ingest is charged against the org's cap; the enforcer is fail-closed on a missing row.
+    await db.execute(sql`
+      INSERT INTO "budget_state" ("org", "limit_usd", "remaining_usd")
+      VALUES (${ORG}, 100, 100)
+      ON CONFLICT ("org") DO UPDATE SET "limit_usd" = 100, "remaining_usd" = 100
+    `);
 
     const inserted = await db.execute(sql`
       INSERT INTO "corpora" ("org", "project", "name", "embedding_model", "text_search_config")

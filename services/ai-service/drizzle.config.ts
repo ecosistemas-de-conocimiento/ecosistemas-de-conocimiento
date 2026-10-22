@@ -7,7 +7,9 @@ import { defineConfig } from 'drizzle-kit';
 // env behaviour in a CLI tool. Just the one var drizzle-kit needs.
 loadDotenv();
 
-const databaseUrl = process.env.DATABASE_URL;
+// DIRECT (non-pooled) URL first, same as `createMigrationClient`; `||` so a
+// blank var falls back too.
+const databaseUrl = process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL;
 if (!databaseUrl) {
   throw new Error('DATABASE_URL must be set (see .env.example) to run drizzle-kit.');
 }

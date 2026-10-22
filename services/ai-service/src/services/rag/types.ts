@@ -118,12 +118,10 @@ export interface RetrieveResult {
    * produces candidates. Whether those candidates win slots is ranking, not
    * health, and a healthy leg losing every slot on one query is ordinary.
    *
-   * ⚠ `/v1/retrieve` ONLY. `RetrieveMultiResult` below carries no `legs`, and
-   * adding one is a separate, deferred lane — so a cross-corpus retrieve still
-   * has no degradation signal at all, including for the rerank rung that runs
-   * only there (once, after cross-corpus fusion).
+   * `RetrieveMultiResult` below carries the union of its corpora's `legs`
+   * plus its own post-fusion `rerank`.
    *
-   * On this route, it is the field that makes retrieval degradation visible. A dead
+   * It is the field that makes retrieval degradation visible. A dead
    * reranker, an empty sparse column, a tsvector leg that was never
    * backfilled: each of those used to produce a perfectly ordinary-looking
    * 200 that was byte-identical to a response where the leg had simply not
@@ -142,6 +140,21 @@ export interface RetrieveResult {
    * `legs[1]`, breaks on that release.
    */
   legs: RetrievalLeg[];
+  /**
+   * Advisory flags — present only when non-empty. See `retrievalWarningSchema`
+   * in `src/contract/responses.ts` for the codes.
+   */
+  warnings?: RetrievalWarning[];
+}
+
+/** Why a rerank warning was raised; mirrors `RerankDegradation` in `retrieve.ts`. */
+export type RetrievalWarningCode = 'RERANK_DEGRADED' | 'BUDGET_SOFT_CAP';
+
+/** One advisory flag on a retrieval response. Never carries query or chunk text. */
+export interface RetrievalWarning {
+  code: RetrievalWarningCode;
+  message: string;
+  reason?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +224,10 @@ export interface RetrieveMultiResult {
    * ai-client compiled against the previous shape still type-checks.
    */
   fusion?: 'score' | 'cross-corpus-rrf';
+  /** Union of per-corpus `legs`, plus `rerank` for the post-fusion rung. */
+  legs: RetrievalLeg[];
+  /** Advisory flags, deduplicated across corpora; present only when non-empty. */
+  warnings?: RetrievalWarning[];
 }
 
 /**

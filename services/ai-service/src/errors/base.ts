@@ -155,9 +155,9 @@ export abstract class CodedEnvelopeError extends AiServiceError {
  * Converting them to flat would break every consumer on a client older than
  * 0.17.0 for no functional gain.
  *
- * `services/context/fetch.ts` still SWALLOWS `CorpusNotFoundError` to return an
- * empty context. That is not a second envelope — it is a deliberate non-error
- * path with no wire shape at all.
+ * `services/context/fetch.ts` used to SWALLOW `CorpusNotFoundError` into an
+ * empty context; since AIS-3 it lets it through, so `/v1/generate*` answers a
+ * missing `includeContext` corpus with this same 404 envelope.
  */
 export abstract class NestedEnvelopeError extends AiServiceError {
   /**

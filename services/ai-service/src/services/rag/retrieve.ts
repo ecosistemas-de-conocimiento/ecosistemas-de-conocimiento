@@ -29,9 +29,16 @@ import {
 import { callRerank, type Reranker, type RerankResult } from '../ai/rerank/rerank-client.js';
 import { clampPassageText, corpusPassageBound } from './passage-bound.js';
 import { metadataFilterClause } from './metadata-filter.js';
+import { priceForEmbedding } from '../ai/router/task-profiles.js';
+import {
+  RetrievalMeter,
+  estimateQueryEmbedUsd,
+  type RetrievalBudget,
+} from './retrieval-meter.js';
 import type {
   CorpusRow,
   RetrievalLeg,
+  RetrievalWarning,
   RetrieveRequest,
   RetrieveResult,
   RetrievedChunk,
@@ -111,6 +118,35 @@ export interface RetrieveServiceOptions {
   trigramThreshold?: number;
   /** Optional logger for the rerank fail-safe path; absent ⇒ warnings are swallowed. */
   logger?: RetrieveLogger;
+  /**
+   * Budget the query embed and the rerank are metered against (reserve before,
+   * true up after). The HTTP routes and `fetchContext` pass the real
+   * `BudgetEnforcer`; absent ⇒ unmetered, which only eval and tests do.
+   */
+  budget?: RetrievalBudget;
+}
+
+/**
+ * The wire form of a `RerankDegradedWarning`. Carries the reason only: `detail`
+ * can hold upstream error text and stays in the log.
+ */
+export function rerankDegradedWireWarning(reason: RerankDegradation): RetrievalWarning {
+  return {
+    code: 'RERANK_DEGRADED',
+    reason,
+    message:
+      reason === 'backfilled'
+        ? 'rerank scored fewer rows than returned; the tail is in fused order'
+        : `rerank ${reason}; results are in fused order`,
+  };
+}
+
+/** The wire form of a soft-cap crossing on a metered retrieve. */
+export function budgetSoftCapWarning(org: string): RetrievalWarning {
+  return {
+    code: 'BUDGET_SOFT_CAP',
+    message: `Budget is below 10% remaining for org=${org}`,
+  };
 }
 
 /**
@@ -587,6 +623,7 @@ export class RetrieveService {
   private readonly lexicalLeg: LexicalLegChoice;
   private readonly trigramThreshold: number;
   private readonly logger: RetrieveLogger | undefined;
+  private readonly budget: RetrievalBudget | undefined;
 
   constructor(opts: RetrieveServiceOptions) {
     this.db = opts.db;
@@ -598,6 +635,7 @@ export class RetrieveService {
     this.lexicalLeg = opts.lexicalLeg ?? env.HYBRID_LEXICAL_LEG;
     this.trigramThreshold = opts.trigramThreshold ?? env.TRIGRAM_THRESHOLD;
     this.logger = opts.logger;
+    this.budget = opts.budget;
   }
 
   async retrieve(req: RetrieveRequest, ctx: RetrieveContext): Promise<RetrieveResult> {
@@ -606,11 +644,38 @@ export class RetrieveService {
       throw new CorpusNotFoundError({ corpus: req.corpus, org: ctx.org, project: ctx.project });
     }
 
+    // Reserve BEFORE the first paid call. A refusal throws the budget 402
+    // classes, so an over-cap retrieve fails the way `/v1/generate` does. The
+    // meter is closed on every exit — success or throw — against what was
+    // actually spent.
+    const meter = await RetrievalMeter.open(this.budget, {
+      org: ctx.org,
+      project: ctx.project,
+      estimateUsd: estimateQueryEmbedUsd(corpusRow.embeddingModel, req.query),
+    });
+    try {
+      const result = await this.retrieveMetered(req, ctx, corpusRow, meter);
+      if (meter.softCap) {
+        result.warnings = [...(result.warnings ?? []), budgetSoftCapWarning(ctx.org)];
+      }
+      return result;
+    } finally {
+      await meter.close();
+    }
+  }
+
+  private async retrieveMetered(
+    req: RetrieveRequest,
+    ctx: RetrieveContext,
+    corpusRow: CorpusRow,
+    meter: RetrievalMeter,
+  ): Promise<RetrieveResult> {
+
     const topK = req.topK ?? DEFAULT_TOP_K;
     // Rerank availability: an injected reranker (eval/tests) always counts; the
     // real client requires the production env gate (`RERANK_ENABLED` + a
     // configured `RERANK_URL`). A `rerank: true` request on an environment where
-    // rerank isn't wired degrades to a silent no-op — the un-reranked order.
+    // rerank isn't wired degrades to the un-reranked order, with a `RERANK_DEGRADED` warning.
     const rerankAvailable = this.rerankInjected || (env.RERANK_ENABLED && Boolean(env.RERANK_URL));
     const wantRerank = req.rerank === true && rerankAvailable;
     // Rerank and MMR are alternatives, not a stack (they optimise opposite
@@ -641,6 +706,7 @@ export class RetrieveService {
       model: corpusRow.embeddingModel,
       input: req.query,
     });
+    meter.charge(priceForEmbedding(embedResult.model, embedResult.usage.inputTokens));
     const queryVec = embedResult.embeddings[0];
     if (!queryVec) {
       throw new Error('RetrieveService.retrieve: embedder returned no vector');
@@ -747,6 +813,7 @@ export class RetrieveService {
     // holds the corpus row and `ctx`; `applyRerank` stays ignorant of both and
     // just reports what it saw. Same shape as the silent-leg disposition below.
     const rerankModel = req.rerankModel ?? env.RERANK_MODEL;
+    const warnings: RetrievalWarning[] = [];
     const reportRerankDegraded = (
       reason: RerankDegradation,
       scored: number,
@@ -765,6 +832,9 @@ export class RetrieveService {
         timeoutMs: env.RERANK_TIMEOUT_MS,
         ...(detail !== undefined ? { detail } : {}),
       };
+      // On the wire ALWAYS (the caller asked for rerank and must be able to
+      // see it did not happen); in the log unless the caller took the hook.
+      warnings.push(rerankDegradedWireWarning(reason));
       if (ctx.onRerankDegraded) ctx.onRerankDegraded(warning);
       else this.logger?.warn(warning, RERANK_DEGRADED_MESSAGE);
     };
@@ -781,6 +851,7 @@ export class RetrieveService {
         rerankModel,
         topK,
         reportRerankDegraded,
+        (usd) => meter.charge(usd),
         (scored, egress) =>
           this.logger?.info?.(
             rerankOkLine(
@@ -907,7 +978,7 @@ export class RetrieveService {
         : {}),
       metadata: (row.metadata ?? undefined) as Record<string, unknown> | undefined,
     }));
-    return { chunks, legs };
+    return { chunks, legs, ...(warnings.length > 0 ? { warnings } : {}) };
   }
 
   /**
@@ -932,6 +1003,7 @@ export class RetrieveService {
     model: string,
     topK: number,
     onDegraded: (reason: RerankDegradation, scored: number, detail?: string) => void,
+    onCost: (usd: number) => void,
     onOk: (scored: number, egress: RerankResult['egress']) => void,
   ): Promise<FusedCandidate[]> {
     if (pool.length === 0) return [];
@@ -953,13 +1025,17 @@ export class RetrieveService {
 
     try {
       const documents = pool.map((c) => c.text);
-      const { results, egress } = await this.reranker({
+      const { results, egress, usage } = await this.reranker({
         model,
         query,
         documents,
         topN: topK,
         signal: controller.signal,
       });
+      // Charged as soon as the call returned: it was paid for even if a later
+      // step falls into the fail-safe below. Read defensively: an injected
+      // reranker that omits `usage` must not turn a good rerank into an error.
+      onCost((usage as RerankResult['usage'] | undefined)?.estimatedCostUsd ?? 0);
 
       // Map results back to the pool by index; higher relevanceScore first.
       // Defensive re-sort — a compliant backend already sorts, but we do not

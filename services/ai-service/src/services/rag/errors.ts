@@ -3,10 +3,11 @@
 // `CorpusNotFoundError` used to be defined THREE times — in `corpus-crud.ts`,
 // `document-validity.ts` and `retrieve.ts` — with the same name and three
 // different class identities. Anything holding one of them and testing another
-// with `instanceof` silently said "no": `services/context/fetch.ts` swallows
-// this error to return an empty context, and it could only ever recognise the
-// `retrieve.ts` copy. One definition, re-exported from each of those three
-// modules so no import site had to move.
+// with `instanceof` silently said "no": `services/context/fetch.ts` used to
+// swallow this error to return an empty context, and it could only ever
+// recognise the `retrieve.ts` copy. (It now lets it through as a 404.) One
+// definition, re-exported from each of those three modules so no import site
+// had to move.
 
 import { NestedEnvelopeError } from '../../errors/base.js';
 

@@ -303,6 +303,17 @@ describe('tenant isolation against a real Postgres', () => {
   // dropped from `retrieve.ts`, tenant A does not get a 404 — it gets 200 and
   // that marker string in the response body, which is the leak itself.
   describe('POST /v1/retrieve', () => {
+
+    // `/v1/retrieve*` is metered (AIS-7) and fail-closed: each org needs a
+    // budget row. Scoped to this block — the /v1/budget cases need A WITHOUT one.
+    beforeEach(async () => {
+      const db = await dbHandle();
+      await db.execute(sql`
+        INSERT INTO "budget_state" ("org", "limit_usd", "remaining_usd")
+        VALUES ('acme', 100::numeric, 100::numeric), ('other', 100::numeric, 100::numeric)
+        ON CONFLICT ("org") DO UPDATE SET "remaining_usd" = 100::numeric
+      `);
+    });
     const QUERY = 'what is the quarterly figure';
     const SECRET = 'B-ONLY: quarterly figure is 41.7M';
 
@@ -899,6 +910,17 @@ describe('tenant isolation against a real Postgres', () => {
   // this file where the fixture is deliberately something the API would refuse
   // to produce; the point is that the READ path refuses it anyway.
   describe('POST /v1/retrieve via an alias', () => {
+
+    // `/v1/retrieve*` is metered (AIS-7) and fail-closed: each org needs a
+    // budget row. Scoped to this block — the /v1/budget cases need A WITHOUT one.
+    beforeEach(async () => {
+      const db = await dbHandle();
+      await db.execute(sql`
+        INSERT INTO "budget_state" ("org", "limit_usd", "remaining_usd")
+        VALUES ('acme', 100::numeric, 100::numeric), ('other', 100::numeric, 100::numeric)
+        ON CONFLICT ("org") DO UPDATE SET "remaining_usd" = 100::numeric
+      `);
+    });
     const SECRET = 'B-ONLY: alias-reachable secret 41.7M';
 
     async function makeAlias(tenant: Tenant, name: string, targetCorpusId: string) {

@@ -62,14 +62,15 @@ const SHARED = [
 ];
 const ALL_DRAFTS = DRAFTS.map((d) => d.text).sort();
 
-type Mode = 'dense' | 'hybrid' | 'hybrid+sparse';
-const MODES: Mode[] = ['dense', 'hybrid', 'hybrid+sparse'];
+type Mode = 'dense' | 'hybrid' | 'hybrid+sparse' | 'hybrid+trigram';
+const MODES: Mode[] = ['dense', 'hybrid', 'hybrid+sparse', 'hybrid+trigram'];
 
 /** The legs a full (unfiltered) response must report per mode. */
 const EXPECTED_LEGS: Record<Mode, string[]> = {
   dense: ['dense'],
   hybrid: ['dense', 'lexical'],
   'hybrid+sparse': ['dense', 'sparse'],
+  'hybrid+trigram': ['dense', 'trigram'],
 };
 
 function serviceFor(mode: Mode, db: never) {
@@ -77,6 +78,9 @@ function serviceFor(mode: Mode, db: never) {
     db,
     embedder,
     ...(mode === 'hybrid+sparse' ? { sparseEmbedder } : {}),
+    // The opt-in pg_trgm leg (`HYBRID_LEXICAL_LEG=trigram`). Pinned here rather
+    // than read from env so this mode runs whatever the test env sets.
+    ...(mode === 'hybrid+trigram' ? { lexicalLeg: 'trigram' as const } : {}),
   });
 }
 const wireMode = (mode: Mode) => (mode === 'dense' ? 'dense' : 'hybrid');
@@ -160,6 +164,25 @@ describe('retrieve metadata filter `$in` (integration)', () => {
           'budget draft thirtyfour',
           'budget draft twelve',
         ]);
+      });
+
+      it('asOf excludes a superseded chunk on every leg', async () => {
+        const { db } = await import('../../db/client.js');
+        // Every leg returns every draft chunk unfiltered (baseline above), so a
+        // leg that skipped the validity predicate would carry the expired chunk
+        // into the fused result on its own.
+        await db.execute(sql`
+          UPDATE "chunks" SET "valid_to" = '2020-01-01T00:00:00Z'::timestamptz
+          WHERE "text" = 'budget draft twelve'
+        `);
+        const out = await serviceFor(mode, db as never).retrieve(
+          { corpus: 'drafts', query: 'budget', mode: wireMode(mode), asOf: '2026-01-01T00:00:00Z' },
+          CTX,
+        );
+        expect(out.chunks.map((c) => c.text).sort()).toEqual(
+          ALL_DRAFTS.filter((t) => t !== 'budget draft twelve'),
+        );
+        expect([...(out.legs ?? [])].sort()).toEqual(EXPECTED_LEGS[mode]);
       });
 
       it('$in is type-sensitive like jsonb: number 78 matches 78, string "78" does not', async () => {
