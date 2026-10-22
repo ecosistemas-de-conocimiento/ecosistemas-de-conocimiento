@@ -457,12 +457,35 @@ describe('deterministicPass — follow-ups to the audit of the one-pass rewrite'
     expect(run(text, roster).text).toBe('Ve [Dato omitido] hoy')
   })
 
+  // Chains of three or more (inputs from the audit's generator). The whole
+  // chain is one address: one placeholder, no "@", no letter of a domain.
+  it.each([
+    ['ana@x.com-juan@lopez.mx-maria@familia.mx', ['López', 'María', 'Ana', 'Juan']],
+    ['a@x.com-b@y.mx-c@familia-lopez.mx', ['López']],
+    ['ana@x.comjuan@y.commaria@z.comlopez@w.mx', ['López', 'María']],
+    ['ana@x.com2juan@y.mx3maria@lopez.mx', ['María López']],
+    [`a@${'b'.repeat(300)}-maria@${'b'.repeat(300)}.com-lopez@${'b'.repeat(70)}.mx`, ['López', 'María']],
+    [`a@b.${'c'.repeat(70)}maria@b.${'c'.repeat(70)}lopez@e.ff`, ['López', 'María']],
+  ])('a chain of glued emails is one placeholder: %s', (chain, roster) => {
+    expect(run(`Ve ${chain} hoy`, roster).text).toBe('Ve [Dato omitido] hoy')
+    expect(run(`Ve ${chain} hoy`).text).toBe('Ve [Dato omitido] hoy')
+  })
+
   it('reads a long domain once: the search resumes after it, not inside it', () => {
-    // Accent marks fill the domain; re-reading 1M of them cost ~1.5 s, once ~0.1 s
-    // (measured 2026-10-21, host torre, load ~8, at 2M: 3.0 s against 0.2 s).
-    const t0 = performance.now()
-    expect(run(`x@${'́'.repeat(1_000_000)}.co`).text).toBe('[Dato omitido]')
-    expect(performance.now() - t0).toBeLessThan(800)
+    // Re-reading the domain costs what scanning text with no "@" costs. A RATIO
+    // of two runs on the same box, so load does not decide it. Measured
+    // 2026-10-21 (host torre, load 8-22) at 2M marks: read once 0.13-0.2 s,
+    // read twice 3.0 s.
+    const marks = '́'.repeat(1_000_000)
+    const time = (text: string) => {
+      const t0 = performance.now()
+      const out = run(text).text
+      return { ms: performance.now() - t0, out }
+    }
+    const reference = time(`x${marks}.co`)
+    const email = time(`x@${marks}.co`)
+    expect(email.out).toBe('[Dato omitido]')
+    expect(email.ms).toBeLessThan(reference.ms / 3)
   })
 
   it('grows left over every local-part character, "_ % +" included', () => {
