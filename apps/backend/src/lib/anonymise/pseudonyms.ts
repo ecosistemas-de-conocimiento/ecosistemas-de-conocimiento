@@ -182,19 +182,45 @@ export function createPseudonymAllocator(): PseudonymAllocator {
    * the owner forbids one (2026-10-17). A `de` INSIDE the shared tail
    * ("Don José de la Cruz" / "José de la Cruz") is not in the leading words, so
    * that titled pair still merges.
+   *
+   * ⚠ A COMPOUND FIRST NAME IS NOT A CHAIN (audit 2026-10-21). "María del
+   * Carmen López" is "Carmen López". The tell is the word right before the
+   * `de`: a capitalised word is part of a name ("María del", "José de"); a
+   * lowercase one is a common noun heading another person ("esposa de",
+   * "hijo de"). Case is read from the span as written, because the key is
+   * already lower-cased. ⚠ An all-lowercase transcription of a compound name
+   * therefore splits; that errs toward two labels, never a false merge.
    */
+  const written = new Map<string, string[]>()
+  const isChain = (long: string, short: string): boolean => {
+    const words = written.get(long) ?? long.split(' ')
+    const leading = words.length - short.split(' ').length
+    for (let i = 0; i < leading; i += 1) {
+      const w = normaliseName(words[i])
+      if (w !== 'de' && w !== 'del') continue
+      if (i > 0 && !/^\p{Lu}/u.test(words[i - 1])) return true
+    }
+    return false
+  }
   const titledAlias = (key: string): string | undefined => {
     for (const [other, label] of assigned) {
       const [short, long] = other.length < key.length ? [other, key] : [key, other]
       if (short.split(' ').length < 2 || !long.endsWith(` ${short}`)) continue
-      const leading = long.slice(0, -short.length).trim().split(' ')
-      if (leading.some((w) => w === 'de' || w === 'del')) continue
+      if (isChain(long, short)) continue
       return label
     }
     return undefined
   }
 
-  const people = labeller(assigned, PERSON_PLACEHOLDER_PREFIX, normaliseName, titledAlias)
+  // Remember each key's first written form, for the case test in `isChain`.
+  // Same lifetime as `assigned`: one document, never persisted.
+  const foldName = (raw: string): string => {
+    const key = normaliseName(raw)
+    if (!written.has(key)) written.set(key, raw.trim().split(/\s+/))
+    return key
+  }
+
+  const people = labeller(assigned, PERSON_PLACEHOLDER_PREFIX, foldName, titledAlias)
   const places = labeller(addresses, ADDRESS_PLACEHOLDER_PREFIX, normaliseAddress)
 
   return {

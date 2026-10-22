@@ -132,4 +132,34 @@ describe('a relative of a relative is a different person (owner ruling Q6, 2026-
     const [ana, luis] = labels('Ana López', 'Luis López')
     expect(luis).not.toBe(ana)
   })
+
+  it('"del" chains too: "la esposa del señor Ruiz" is not "señor Ruiz"', () => {
+    const [ruiz, esposa] = labels('señor Ruiz', 'la esposa del señor Ruiz')
+    expect(esposa).not.toBe(ruiz)
+  })
+
+  it('"de" counts only as a whole word: "Presidente Juan Pérez" is "Juan Pérez"', () => {
+    const [pres, bare] = labels('Presidente Juan Pérez', 'Juan Pérez')
+    expect(bare).toBe(pres)
+    // A lowercase word before it, so a substring match WOULD read it as a chain.
+    const [elPres, juan] = labels('el presidente Juan Pérez', 'Juan Pérez')
+    expect(juan).toBe(elPres)
+  })
+})
+
+describe('a compound first name is one person, not a chain (audit 2026-10-21)', () => {
+  // A capitalised word right before "de"/"del" makes it part of a name
+  // ("María del Carmen"), so the titled merge proceeds as before.
+  const same = (long: string, short: string) => {
+    const a = createPseudonymAllocator()
+    expect(a.labelFor(short)).toBe(a.labelFor(long))
+    const b = createPseudonymAllocator()
+    expect(b.labelFor(long)).toBe(b.labelFor(short))
+  }
+
+  it('"María del Carmen López" is "Carmen López"', () => same('María del Carmen López', 'Carmen López'))
+  it('"José de Jesús Ramírez" is "Jesús Ramírez"', () => same('José de Jesús Ramírez', 'Jesús Ramírez'))
+  it('"Juan de Dios Martínez" is "Dios Martínez"', () => same('Juan de Dios Martínez', 'Dios Martínez'))
+  it('"Doña María de los Ángeles Pérez" is "Ángeles Pérez"', () =>
+    same('Doña María de los Ángeles Pérez', 'Ángeles Pérez'))
 })
