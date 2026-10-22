@@ -160,7 +160,8 @@ const GENERAL_KNOWLEDGE_RULE =
   'dicen. Si los pasajes no alcanzan, completa con tu conocimiento general en ' +
   `un párrafo aparte, al final, que empiece exactamente con "${GENERAL_KNOWLEDGE_LEAD}". ` +
   'Ese párrafo no lleva números entre corchetes. Si ningún pasaje tiene ' +
-  'relación con la pregunta, responde solo con ese párrafo. Nunca presentes ' +
+  'relación con la pregunta, responde solo con ese párrafo, y empieza también ' +
+  `con "${GENERAL_KNOWLEDGE_LEAD}" aunque la respuesta sea una sola frase. Nunca presentes ` +
   'como dicho por los documentos algo que no dicen.';
 
 export const CITE_VARIANTS = ['A', 'B', 'C', 'D', 'E'] as const;
