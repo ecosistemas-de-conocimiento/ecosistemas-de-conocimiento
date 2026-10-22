@@ -322,13 +322,17 @@ describe('runAnonymisationGate — domicilios', () => {
    * written twice at different lengths.
    */
 
-  it('🔴 removes the address in stage 2 and still returns ready', async () => {
-    // The measured failure this closes: the model missed a street address, and
-    // stage 4 held the document. Correct, and useless — the address should have
-    // been removed. Now it never reaches the model at all.
+  /** Stage 2 takes the C.P.; the street and the colonia are the model's (owner, Q3). */
+  const MODELO = staticDetector([
+    { text: 'Lucía', type: 'persona' },
+    { text: 'Calle Morelos No. 45', type: 'lugar' },
+    { text: 'Col. Portales', type: 'lugar' },
+  ])
+
+  it('🔴 stage 2 takes the C.P., the model the street and colonia, and it returns ready', async () => {
     const result = await runAnonymisationGate(
       { contentKind: 'testimonio', text: CON_DOMICILIO },
-      { detector: staticDetector([{ text: 'Lucía', type: 'persona' }]) },
+      { detector: MODELO },
     )
 
     expect(result.status).toBe('ready')
@@ -340,17 +344,22 @@ describe('runAnonymisationGate — domicilios', () => {
     expect(result.redactedText).toContain('[Domicilio A]')
   })
 
-  it('🔴 the same address in two sentences gets the SAME label', async () => {
+  it('🔴 the same address in two spellings gets the SAME labels', async () => {
     const result = await runAnonymisationGate(
       { contentKind: 'testimonio', text: CON_DOMICILIO },
-      { detector: staticDetector([{ text: 'Lucía', type: 'persona' }]) },
+      { detector: MODELO },
     )
     if (result.status !== 'ready') throw new Error('expected ready')
 
-    // One house, said twice. Two `[Dato omitido]`s would erase that it was the
-    // same house; `[Domicilio B]` would claim it was a different one.
-    expect(result.redactedText).not.toContain('[Domicilio B]')
-    expect(result.report.addresses).toBe(1)
+    // One house, said twice. The lower-case line is caught by stage 3's case-
+    // and accent-blind match (owner, Q2) and takes the same three labels.
+    expect(result.redactedText).toBe(
+      [
+        'Vivo en [Domicilio B], [Domicilio C], [Domicilio A].',
+        'Mi hermana [Persona A] se quedó en [Domicilio B], [Domicilio C], [Domicilio A].',
+      ].join('\n'),
+    )
+    expect(result.report.addresses).toBe(3)
   })
 
   it('🔴 stage 4 does not HOLD on our own [Domicilio X] placeholder', async () => {
@@ -366,7 +375,7 @@ describe('runAnonymisationGate — domicilios', () => {
      * decides it looks like a place.
      */
     const result = await runAnonymisationGate(
-      { contentKind: 'testimonio', text: 'Vivo en Calle Morelos No. 45.' },
+      { contentKind: 'testimonio', text: 'Vivo en C.P. 03300.' },
       { detector: staticDetector([{ text: '[Domicilio A]', type: 'lugar' }]) },
     )
 
@@ -380,7 +389,7 @@ describe('runAnonymisationGate — domicilios', () => {
     const result = await runAnonymisationGate(
       {
         contentKind: 'testimonio',
-        text: 'Vivo en Calle Morelos No. 45 y trabajo en la Clínica del Valle.',
+        text: 'Vivo en C.P. 03300 y trabajo en la Clínica del Valle.',
       },
       { detector: staticDetector([{ text: 'Clínica del Valle', type: 'lugar' }]) },
     )
@@ -397,7 +406,7 @@ describe('runAnonymisationGate — domicilios', () => {
   it('⚠ the report counts addresses and never quotes one', async () => {
     const result = await runAnonymisationGate(
       { contentKind: 'testimonio', text: CON_DOMICILIO },
-      { detector: staticDetector([{ text: 'Lucía', type: 'persona' }]) },
+      { detector: MODELO },
     )
     if (result.status !== 'ready') throw new Error('expected ready')
 
@@ -405,7 +414,7 @@ describe('runAnonymisationGate — domicilios', () => {
     for (const leak of ['Morelos', 'Portales', '03300', 'Lucía']) {
       expect(serialized, leak).not.toContain(leak)
     }
-    expect(result.report.addresses).toBe(1)
+    expect(result.report.addresses).toBe(3)
   })
 
   it('⚠ an address the gate could not remove still HOLDS — verify is not weakened', async () => {
@@ -705,10 +714,16 @@ describe('runAnonymisationGate — common place nouns do not hold a document', (
     expect(result.redactedText).not.toContain('Portales')
   })
 
-  it('🔴 a street address is still gone, even when the model flags only "la calle"', async () => {
+  it('🔴 a generic "La calle" is dropped while the street the model found is redacted', async () => {
     const result = await runAnonymisationGate(
       { contentKind: 'testimonio', text: 'Vivo en calle Morelos No. 45. La calle es tranquila.' },
-      { detector: staticDetector([{ text: 'La calle', type: 'lugar' }]) },
+      // The street is the model's finding now (owner, Q3), beside the generic one.
+      {
+        detector: staticDetector([
+          { text: 'La calle', type: 'lugar' },
+          { text: 'calle Morelos No. 45', type: 'lugar' },
+        ]),
+      },
     )
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return

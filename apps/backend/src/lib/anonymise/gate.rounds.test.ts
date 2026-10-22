@@ -180,10 +180,12 @@ describe('runAnonymisationGate — verify rounds (opt-in: 3)', () => {
 
 describe('runAnonymisationGate — 🔴 placeholders stay consistent across rounds', () => {
   it('a variant spelling caught in a later round gets the SAME label', async () => {
-    const text = 'Lucía Méndez llegó. Luego vino Teodulfo. Al final lucia mendez se fue.'
+    // ⚠ A double space: stage 3's case- and accent-blind match (owner, Q2)
+    // already takes "lucia mendez", so the variant here is one it cannot reach.
+    const text = 'Lucía Méndez llegó. Luego vino Teodulfo. Al final Lucia  Mendez se fue.'
     const { detector } = scripted([
       [persona('Lucía Méndez')],
-      [persona('lucia mendez')],
+      [persona('Lucia  Mendez')],
       [persona('Teodulfo')],
       [],
     ])

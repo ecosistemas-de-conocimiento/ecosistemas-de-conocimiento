@@ -163,9 +163,10 @@ export const DETECT_SYSTEM_PROMPT = [
   '- Teléfonos, correos, cuentas, identificadores oficiales y números de expediente.',
   '',
   // ⚠ Owner's rule, 2026-10-17: a bare title is not identifying and must not
-  // hold a document, so the model is asked not to report it. 🔴 The gate does
-  // NOT trust "identifica": false (re-audit 2026-10-21): a reported bare title
-  // is redacted at stage 3 and holds at verify. Over-redaction, accepted.
+  // hold a document, so the model is asked not to report it. If it does, stage
+  // 3 still redacts it (over-redaction, accepted), and verify lets it pass only
+  // when it is marked false and has no digit and no mid-sentence capital
+  // (owner, 2026-10-21, Q4; `bareTitle` in `gate.ts`).
   'No es un hallazgo:',
   '- Un tratamiento o cargo SOLO, sin nombre ni apodo junto a él: "el doctor dijo",',
   '  "la maestra llegó". No identifica a nadie. No lo reportes; si lo reportas, pon',
@@ -173,24 +174,23 @@ export const DETECT_SYSTEM_PROMPT = [
   // ⚠ ONE PROMPT FOR DETECT AND VERIFY, measured 2026-10-17 on the chunk holding
   // "el Chacho Melgarejo": a separate verify addendum ("this text is already
   // redacted…") caught it 0/6 and 3/6; the shared prompt 10/12.
-  // 🔴 A TITLE OR CARGO NEXT TO A PERSON PLACEHOLDER IS A FINDING (audit
-  // 2026-10-21): "la maestra [Persona A]" in a village names one person, which
-  // is what the "cargos tan precisos" line above says. Only a generic PLACE
-  // word next to a place placeholder is exempt.
+  // 🔴 OWNER'S RULING, 2026-10-21 (Q1, "accept leftover titles"): a title or
+  // cargo left beside a person placeholder is published, so it is not asked
+  // for. A name, surname or nickname beside one still is.
   '- Los marcadores entre corchetes ([Persona A], [Domicilio B], [Dato omitido]): ya están',
   '  censurados. Tampoco una palabra genérica de lugar pegada a un marcador de lugar:',
   '  "colonia [Domicilio L]".',
-  '- Pero un nombre, apellido, tratamiento o cargo pegado a un marcador de persona SÍ es',
-  '  hallazgo: en "[Persona A] López" el hallazgo es "[Persona A] López"; en',
-  '  "la maestra [Persona A]" el hallazgo es "la maestra [Persona A]".',
+  '- Un tratamiento o cargo pegado a un marcador de persona: "la maestra [Persona A]",',
+  '  "Don [Persona B]". Si lo reportas, pon "identifica": false.',
+  '- Pero un nombre, apellido o apodo pegado a un marcador de persona SÍ es hallazgo:',
+  '  en "[Persona A] López" el hallazgo es "[Persona A] López".',
   '',
   // 🔴 ADDRESSES GET THEIR OWN SECTION BECAUSE ONE LINE WAS NOT ENOUGH. Measured:
   // on a live test testimony a street address went past this prompt, and the
-  // verify stage held the document. The shaped forms (`C.P. 06700`,
-  // `Calle X No. 45`) are now removed deterministically before the model ever
-  // sees them — see `deterministic.ts`. What is left for the model is the
-  // free-form half, which is the half regexes cannot reach, so it is spelled out
-  // with examples rather than named in passing.
+  // verify stage held the document. Only the postal code (`C.P. 06700`) is
+  // removed deterministically before the model sees the text (owner, Q3, see
+  // `deterministic.ts`). Every street line, colonia and manzana is the model's,
+  // so the list is spelled out with examples rather than named in passing.
   'Domicilios (marca "lugar"). Incluye TODOS estos casos, completos o parciales:',
   '- Calles, avenidas, andadores, cerradas, privadas y sus números.',
   '- Colonias, barrios, fraccionamientos, unidades habitacionales, manzana y lote.',
@@ -394,12 +394,7 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
     // for "La maestra Nicasia Olvera"; dropping it lost the name. The span is
     // matched case- and accent-blind and replaced by the text's OWN spelling,
     // so the replacement still finds it.
-    //
-    // ⚠ TITLE HANDLING AWAITS RODRIGO'S DECISION (2026-10-21). Main strips a
-    // leading title list ("Don", "la maestra", ...) here and absorbs titles
-    // before person placeholders. This branch has no title list: the model owns
-    // the span, and a title left beside a placeholder is a verify leftover.
-    // Whichever rule he picks replaces this paragraph.
+    // Titles: no word list; a title left beside a placeholder is published (owner, 2026-10-21, Q1).
     const located = locateSpan(sourceText, trimmed)
     if (located === null) continue
 

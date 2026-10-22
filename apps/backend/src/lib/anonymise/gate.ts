@@ -23,7 +23,7 @@
  * ── THE FOUR STAGES, AND WHY THE ORDER IS THIS ORDER ────────────────────────
  *
  *   1 structural     dates coarsened, uuids and author markers stripped
- *   2 deterministic  emails, phones, CURP/RFC, urls, roster members
+ *   2 deterministic  emails, phones, CURP/RFC, C.P., urls, roster members
  *   3 content        the model DETECTS; this file REPLACES
  *   4 verify         the same detector, re-run over the REDACTED text; by
  *                    default it only judges (leftover → hold). Opt-in
@@ -196,8 +196,9 @@ function coveredByPlaceholder(
  * text and `new RegExp(finding.text)` would either throw on a stray `(` or,
  * worse, silently match something else entirely.
  *
- * `folded`: also replace whole-word occurrences in any other case or accent
- * spelling ("LUCRECIA" for "Lucrecia"). Verify rounds only; see `redactLeftovers`.
+ * `folded`: replace every case and accent spelling ("LUCRECIA" for "Lucrecia"),
+ * and WHOLE WORDS ONLY, exact matches included: "Ana" never takes the "Ana" in
+ * "Anabel" nor the "ana" in "mañana". Stage 3 and verify rounds both pass it.
  */
 function replaceOutsidePlaceholders(
   text: string,
@@ -208,7 +209,7 @@ function replaceOutsidePlaceholders(
   const spans = placeholderSpans(text)
   const ranges: Array<[number, number]> = []
   for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + 1)) {
-    ranges.push([at, at + needle.length])
+    if (!folded || wholeWord(text, at, at + needle.length)) ranges.push([at, at + needle.length])
   }
   if (folded) ranges.push(...foldedMatches(text, needle).filter(([s, e]) => wholeWord(text, s, e)))
   ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1])
@@ -286,10 +287,8 @@ function applyFindings(
   }
 
   // ⚠ No title clean-up here: the model owns span boundaries and includes a
-  // leading title in the name (detector prompt). If it does not, verify sees
-  // "la maestra [Persona F]", which the prompt asks it to REPORT: at the default
-  // of one round the document holds; an opt-in round absorbs the title into
-  // `[Persona F]` (see `resolveLeftover`).
+  // leading title in the name (detector prompt). If it does not, "la maestra
+  // [Persona F]" is published as it stands (owner, 2026-10-21, Q1).
   return { text: out, labels }
 }
 
@@ -368,6 +367,43 @@ function resolveLeftover(
   // pieces only would report a round as clean that left the weak one in.
   if (!pieces.every(safeFragment)) return { unsafe: true }
   return { findings: pieces.map((text) => ({ text, type: f.type })) }
+}
+
+/** Opening marks a sentence may start with: `¿El doctor?`, `«La maestra…`. */
+const OPENERS = /[\s"'“‘«¿¡(—–-]/u
+
+/** True when `at` starts a sentence: text start, or after `.`, `!`, `?`, `…` or a line break. */
+function sentenceStart(text: string, at: number): boolean {
+  let i = at - 1
+  while (i >= 0 && text[i] !== '\n' && OPENERS.test(text[i] as string)) i--
+  return i < 0 || /[\n.!?…]/u.test(text[i] as string)
+}
+
+/**
+ * A BARE TITLE, by shape: verify marked it `identifica: false`, it has no digit,
+ * and no capitalised word except one that starts a sentence. "El doctor",
+ * "la maestra", "la maestra [Persona A]" (placeholders do not count).
+ *
+ * 🔴 OWNER'S RULING, 2026-10-21 (Q4, "do process the doc, dont freeze it"): such
+ * a finding is not a leftover. Accepted risk: a lower-case nickname ("la
+ * güera") passes as a bare title. "Chacho Melgarejo" mid-sentence still holds,
+ * and so does every occurrence check: ONE mid-sentence capital anywhere in the
+ * text is enough to count. Stage 3 still redacts every finding.
+ */
+function bareTitle(f: DetectorFinding, text: string): boolean {
+  if (f.identifying !== false) return false
+  if (/\p{N}/u.test(f.text.replace(PLACEHOLDER, ''))) return false
+  const capitals: number[] = []
+  for (const m of f.text.matchAll(/[\p{L}\p{M}\p{N}]+/gu)) {
+    if (!/\p{Lu}/u.test(m[0])) continue
+    // Inside one of our placeholders: not a word of the finding.
+    if ([...f.text.matchAll(PLACEHOLDER)].some((p) => m.index >= p.index && m.index < p.index + p[0].length)) continue
+    capitals.push(m.index)
+  }
+  for (let at = text.indexOf(f.text); at !== -1; at = text.indexOf(f.text, at + 1)) {
+    if (!capitals.every((k) => sentenceStart(text, at + k))) return false
+  }
+  return true
 }
 
 /**
@@ -534,11 +570,14 @@ export async function runAnonymisationGate(
   // mid-sentence capital let "la güera", "Lucrecia" at a sentence start and a
   // "LUCRECIA:" speaker label through. A bare "el doctor" the model reports
   // becomes `[Persona X]`: over-redaction, accepted.
+  // 🔴 EVERY SPELLING, WHOLE WORDS (owner, 2026-10-21, Q2): "Lucrecia" also
+  // takes "LUCRECIA" and "lucrecia", with the same label.
   const applied = applyFindings(
     deterministic.text,
     found,
     (name) => allocator.labelFor(name),
     (address) => allocator.addressLabelFor(address),
+    true,
   )
   stages.push({ stage: 'content', removed: countsByLabel(applied.labels) })
 
@@ -579,9 +618,9 @@ export async function runAnonymisationGate(
     const spans = placeholderSpans(current)
     // ⚠ `onlyPlaceholders`: a finding made of our placeholders and punctuation
     // ("[Domicilio AP], [Domicilio AQ]") names nobody.
-    // 🔴 NO `identifica: false` HERE. A verify finding is a leftover whatever
-    // the model said about it (audit 2026-10-21: "Chacho Melgarejo" came back
-    // marked non-identifying). Stage 3 does not honour it either.
+    // 🔴 `identifica: false` COUNTS ONLY ON A BARE TITLE (`bareTitle`, owner's
+    // Q4). Anything else is a leftover whatever the model said about it (audit
+    // 2026-10-21: "Chacho Melgarejo" came back marked non-identifying).
     // 🔴 `isTownLevelPlace`: a town, municipality, city or state is SHOWN (owner,
     // 2026-10-21, #12), so it never holds — the prompt says so and the model
     // still marked towns in 31 of 38 dev holds. Colonias, streets, numbers, C.P.,
@@ -590,7 +629,8 @@ export async function runAnonymisationGate(
       (f) =>
         !coveredByPlaceholder(current, spans, f.text) &&
         !onlyPlaceholders(f.text) &&
-        !isTownLevelPlace(f, current),
+        !isTownLevelPlace(f, current) &&
+        !bareTitle(f, current),
     )
 
     if (real.length === 0) {

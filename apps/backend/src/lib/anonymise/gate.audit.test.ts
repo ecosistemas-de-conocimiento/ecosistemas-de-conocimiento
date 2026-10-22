@@ -94,8 +94,15 @@ describe('🔴 `identifica: false` never lets a name through', () => {
     expect(r.redactedText).toBe('[Persona A] dijo que no.')
   })
 
-  it('🔴 fail-closed: verify reporting a bare title, even as non-identifying, holds', async () => {
+  // ⚠ Reversed by the owner's ruling of 2026-10-21 (Q4): a bare title marked
+  // non-identifying passes verify. See `gate.rulings.test.ts`.
+  it('verify reporting a bare title as non-identifying does not hold (owner, Q4)', async () => {
     const r = await gate('El doctor dijo que no.', [[], [persona('El doctor', false)]])
+    expect(r.status).toBe('ready')
+  })
+
+  it('🔴 fail-closed: verify reporting a bare title WITHOUT `false` holds', async () => {
+    const r = await gate('El doctor dijo que no.', [[], [persona('El doctor')]])
     expect(r.status).toBe('hold')
   })
 
@@ -140,8 +147,10 @@ describe('🔴 `identifica: false` never lets a name through', () => {
   })
 })
 
-describe('🔴 a role or cargo next to a placeholder is judged by verify, not exempted', () => {
-  it('the prompt asks for "la maestra [Persona A]" as a finding, and still not a bare title', () => {
+// ⚠ Owner's ruling 2026-10-21 (Q1): the title may stay. The prompt no longer
+// asks for it; these cases are the model reporting it as IDENTIFYING anyway.
+describe('🔴 a role or cargo next to a placeholder, reported as identifying, is judged by verify', () => {
+  it('the prompt names "la maestra [Persona A]", and still not a bare title', () => {
     expect(DETECT_SYSTEM_PROMPT).toContain('"la maestra [Persona A]"')
     expect(DETECT_SYSTEM_PROMPT).not.toContain('"Don\n  [Persona F]"')
     expect(DETECT_SYSTEM_PROMPT).not.toMatch(/Don\s+\[Persona F\]/)
