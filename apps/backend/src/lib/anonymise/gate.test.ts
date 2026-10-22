@@ -137,9 +137,10 @@ describe('runAnonymisationGate — 🔴 every uncertain outcome is a hold', () =
     expect(result.stage).toBe('verify')
   })
 
-  it('holds at `verify` when a name survives the scrub', async () => {
+  it('holds at `verify` when a name survives the LAST verify round', async () => {
     // A detector that misses Ricardo on the first pass and catches him on the
-    // second — the exact case stage 4 exists for.
+    // second — the exact case stage 4 exists for. With one round, verify only
+    // judges; see `gate.rounds.test.ts` for the redacting rounds.
     let calls = 0
     const lateWaker: PersonDetector = {
       name: 'late-waker',
@@ -150,7 +151,7 @@ describe('runAnonymisationGate — 🔴 every uncertain outcome is a hold', () =
       },
     }
 
-    const result = await runAnonymisationGate(input(), { detector: lateWaker })
+    const result = await runAnonymisationGate(input(), { detector: lateWaker, verifyRounds: 1 })
     expect(result.status).toBe('hold')
     if (result.status !== 'hold') return
     expect(result.stage).toBe('verify')
@@ -289,6 +290,7 @@ describe('runAnonymisationGate — 🔴 the report is not a re-identification ma
             }
           })(),
         },
+        verifyRounds: 1,
       },
     )
 
@@ -320,13 +322,17 @@ describe('runAnonymisationGate — domicilios', () => {
    * written twice at different lengths.
    */
 
-  it('🔴 removes the address in stage 2 and still returns ready', async () => {
-    // The measured failure this closes: the model missed a street address, and
-    // stage 4 held the document. Correct, and useless — the address should have
-    // been removed. Now it never reaches the model at all.
+  /** Stage 2 takes the C.P.; the street and the colonia are the model's (owner, Q3). */
+  const MODELO = staticDetector([
+    { text: 'Lucía', type: 'persona' },
+    { text: 'Calle Morelos No. 45', type: 'lugar' },
+    { text: 'Col. Portales', type: 'lugar' },
+  ])
+
+  it('🔴 stage 2 takes the C.P., the model the street and colonia, and it returns ready', async () => {
     const result = await runAnonymisationGate(
       { contentKind: 'testimonio', text: CON_DOMICILIO },
-      { detector: staticDetector([{ text: 'Lucía', type: 'persona' }]) },
+      { detector: MODELO },
     )
 
     expect(result.status).toBe('ready')
@@ -338,17 +344,22 @@ describe('runAnonymisationGate — domicilios', () => {
     expect(result.redactedText).toContain('[Domicilio A]')
   })
 
-  it('🔴 the same address in two sentences gets the SAME label', async () => {
+  it('🔴 the same address in two spellings gets the SAME labels', async () => {
     const result = await runAnonymisationGate(
       { contentKind: 'testimonio', text: CON_DOMICILIO },
-      { detector: staticDetector([{ text: 'Lucía', type: 'persona' }]) },
+      { detector: MODELO },
     )
     if (result.status !== 'ready') throw new Error('expected ready')
 
-    // One house, said twice. Two `[Dato omitido]`s would erase that it was the
-    // same house; `[Domicilio B]` would claim it was a different one.
-    expect(result.redactedText).not.toContain('[Domicilio B]')
-    expect(result.report.addresses).toBe(1)
+    // One house, said twice. The lower-case line is caught by stage 3's case-
+    // and accent-blind match (owner, Q2) and takes the same three labels.
+    expect(result.redactedText).toBe(
+      [
+        'Vivo en [Domicilio B], [Domicilio C], [Domicilio A].',
+        'Mi hermana [Persona A] se quedó en [Domicilio B], [Domicilio C], [Domicilio A].',
+      ].join('\n'),
+    )
+    expect(result.report.addresses).toBe(3)
   })
 
   it('🔴 stage 4 does not HOLD on our own [Domicilio X] placeholder', async () => {
@@ -364,7 +375,7 @@ describe('runAnonymisationGate — domicilios', () => {
      * decides it looks like a place.
      */
     const result = await runAnonymisationGate(
-      { contentKind: 'testimonio', text: 'Vivo en Calle Morelos No. 45.' },
+      { contentKind: 'testimonio', text: 'Vivo en C.P. 03300.' },
       { detector: staticDetector([{ text: '[Domicilio A]', type: 'lugar' }]) },
     )
 
@@ -378,7 +389,7 @@ describe('runAnonymisationGate — domicilios', () => {
     const result = await runAnonymisationGate(
       {
         contentKind: 'testimonio',
-        text: 'Vivo en Calle Morelos No. 45 y trabajo en la Clínica del Valle.',
+        text: 'Vivo en C.P. 03300 y trabajo en la Clínica del Valle.',
       },
       { detector: staticDetector([{ text: 'Clínica del Valle', type: 'lugar' }]) },
     )
@@ -395,7 +406,7 @@ describe('runAnonymisationGate — domicilios', () => {
   it('⚠ the report counts addresses and never quotes one', async () => {
     const result = await runAnonymisationGate(
       { contentKind: 'testimonio', text: CON_DOMICILIO },
-      { detector: staticDetector([{ text: 'Lucía', type: 'persona' }]) },
+      { detector: MODELO },
     )
     if (result.status !== 'ready') throw new Error('expected ready')
 
@@ -403,7 +414,7 @@ describe('runAnonymisationGate — domicilios', () => {
     for (const leak of ['Morelos', 'Portales', '03300', 'Lucía']) {
       expect(serialized, leak).not.toContain(leak)
     }
-    expect(result.report.addresses).toBe(1)
+    expect(result.report.addresses).toBe(3)
   })
 
   it('⚠ an address the gate could not remove still HOLDS — verify is not weakened', async () => {
@@ -429,7 +440,7 @@ describe('runAnonymisationGate — domicilios', () => {
 
     const result = await runAnonymisationGate(
       { contentKind: 'testimonio', text },
-      { detector: missesThenFinds },
+      { detector: missesThenFinds, verifyRounds: 1 },
     )
 
     expect(result.status).toBe('hold')
@@ -437,108 +448,25 @@ describe('runAnonymisationGate — domicilios', () => {
     expect(result.stage).toBe('verify')
     // ⚠ Counts only. The reason is stored on the row and shown to a reviewer.
     expect(result.reason).not.toContain('Mari')
+
+    // With the 3-round opt-in, the round that caught it redacts it and the next
+    // one verifies.
+    calls = 0
+    const rounds = await runAnonymisationGate(
+      { contentKind: 'testimonio', text },
+      { detector: missesThenFinds, verifyRounds: 3 },
+    )
+    expect(rounds.status).toBe('ready')
+    if (rounds.status !== 'ready') return
+    expect(rounds.redactedText).toBe('Vivo [Domicilio A].')
   })
 })
 
-describe('runAnonymisationGate — 🔴 a title before a name is part of the name', () => {
-  // Measured 2026-10-17 on the local stack: the content stage redacted the name
-  // and left the title, and verify held on "Don [Persona F]" and
-  // "La maestra [Persona J]". Rodrigo's rule: the title goes with the name.
-  const TITLED = [
-    'Don Fernando Vázquez nos prestaba su camioneta.',
-    'La maestra Imelda nos daba clases los sábados.',
-    'Después Fernando Vázquez se fue al norte.',
-  ].join('\n')
-
-  /** Stage 3 finds the bare names; stage 4 reports any title still glued to a placeholder. */
-  function titleBlindDetector(): PersonDetector {
-    let calls = 0
-    return {
-      name: 'title-blind',
-      async detect({ text }) {
-        calls += 1
-        if (calls === 1) {
-          return [
-            { text: 'Fernando Vázquez', type: 'persona' },
-            { text: 'Imelda', type: 'persona' },
-          ]
-        }
-        return [...text.matchAll(/(?:Don|La maestra) \[Persona [A-Z]+\]/g)].map((m) => ({
-          text: m[0],
-          type: 'persona' as const,
-        }))
-      },
-    }
-  }
-
-  it('verify can no longer see "Don [Persona F]": redaction absorbed the title', async () => {
-    const result = await runAnonymisationGate(input({ text: TITLED }), {
-      detector: titleBlindDetector(),
-    })
-    expect(result.status).toBe('ready')
-    if (result.status !== 'ready') return
-    expect(result.redactedText).toBe(
-      [
-        '[Persona A] nos prestaba su camioneta.',
-        '[Persona B] nos daba clases los sábados.',
-        'Después [Persona A] se fue al norte.',
-      ].join('\n'),
-    )
-  })
-
-  it('a titled span from the model gets the SAME label as the bare name', async () => {
-    const result = await runAnonymisationGate(input({ text: TITLED }), {
-      detector: staticDetector([
-        { text: 'Don Fernando Vázquez', type: 'persona' },
-        { text: 'Fernando Vázquez', type: 'persona' },
-        { text: 'La maestra Imelda', type: 'persona' },
-      ]),
-    })
-    expect(result.status).toBe('ready')
-    if (result.status !== 'ready') return
-    expect(result.report.pseudonyms).toBe(2)
-    expect(result.redactedText).not.toMatch(/Don|maestra/)
-  })
-
-  it('a roster name keeps its title out too', async () => {
-    const result = await runAnonymisationGate(
-      input({
-        contentKind: 'conversacion',
-        text: 'Le pregunté a doña Ana López.',
-        roster: ['Ana López'],
-      }),
-      {
-        detector: staticDetector((text) =>
-          /doña \[/i.test(text) ? [{ text: 'doña', type: 'persona' }] : [],
-        ),
-      },
-    )
-    expect(result.status).toBe('ready')
-    if (result.status !== 'ready') return
-    expect(result.redactedText).toBe('Le pregunté a [Persona A].')
-  })
-
-  it('🔴 "[Persona A] López" still HOLDS: a surname after the placeholder is a leak', async () => {
-    let calls = 0
-    const result = await runAnonymisationGate(input({ text: 'Don Fernando López nos ayudó.' }), {
-      detector: {
-        name: 'half',
-        async detect({ text }) {
-          calls += 1
-          if (calls === 1) return [{ text: 'Fernando', type: 'persona' }]
-          return text.includes('[Persona A] López')
-            ? [{ text: '[Persona A] López', type: 'persona' }]
-            : []
-        },
-      },
-    })
-    expect(result.status).toBe('hold')
-    if (result.status !== 'hold') return
-    expect(result.stage).toBe('verify')
-    expect(result.redactedText).toBe('[Persona A] López nos ayudó.')
-  })
-
-  it('🔴 a bare surname still HOLDS', async () => {
+describe('runAnonymisationGate — 🔴 what verify counts as a leftover', () => {
+  // Title and span-boundary behaviour lives in `gate.rounds.test.ts`, with the
+  // model faked at the fetch boundary: the model owns span boundaries, so there
+  // is no word list here to test.
+  it('🔴 a bare surname HOLDS on the last round', async () => {
     let calls = 0
     const result = await runAnonymisationGate(
       input({ text: 'La maestra Imelda llegó. Ya conocíamos a Ortiz.' }),
@@ -551,6 +479,7 @@ describe('runAnonymisationGate — 🔴 a title before a name is part of the nam
             return text.includes('Ortiz') ? [{ text: 'Ortiz', type: 'persona' }] : []
           },
         },
+        verifyRounds: 1,
       },
     )
     expect(result.status).toBe('hold')
@@ -580,7 +509,7 @@ describe('runAnonymisationGate — 🔴 a title before a name is part of the nam
     expect(result.status).toBe('ready')
   })
 
-  it('🔴 a title-only finding with no placeholder still HOLDS', async () => {
+  it('🔴 a title-only finding with no placeholder HOLDS on the last round', async () => {
     let calls = 0
     const result = await runAnonymisationGate(input({ text: 'Llegó Don y se sentó.' }), {
       detector: {
@@ -590,6 +519,7 @@ describe('runAnonymisationGate — 🔴 a title before a name is part of the nam
           return calls === 1 ? [] : [{ text: 'Don', type: 'persona' }]
         },
       },
+      verifyRounds: 1,
     })
     expect(result.status).toBe('hold')
   })
@@ -784,10 +714,16 @@ describe('runAnonymisationGate — common place nouns do not hold a document', (
     expect(result.redactedText).not.toContain('Portales')
   })
 
-  it('🔴 a street address is still gone, even when the model flags only "la calle"', async () => {
+  it('🔴 a generic "La calle" is dropped while the street the model found is redacted', async () => {
     const result = await runAnonymisationGate(
       { contentKind: 'testimonio', text: 'Vivo en calle Morelos No. 45. La calle es tranquila.' },
-      { detector: staticDetector([{ text: 'La calle', type: 'lugar' }]) },
+      // The street is the model's finding now (owner, Q3), beside the generic one.
+      {
+        detector: staticDetector([
+          { text: 'La calle', type: 'lugar' },
+          { text: 'calle Morelos No. 45', type: 'lugar' },
+        ]),
+      },
     )
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return

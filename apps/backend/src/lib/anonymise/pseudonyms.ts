@@ -42,7 +42,6 @@
  * backwards.
  */
 
-import { stripLeadingTitles } from './titles'
 import { ADDRESS_PLACEHOLDER_PREFIX, PERSON_PLACEHOLDER_PREFIX } from './types'
 
 /** Alphabet for the label suffix. After `Z` it rolls over to `AA`, `AB`, … */
@@ -75,9 +74,7 @@ function labelSuffix(index: number): string {
  * person in exactly the documents that matter most.
  */
 export function normaliseName(name: string): string {
-  // ⚠ "Don Fernando Vázquez" and "Fernando Vázquez" are one person. The title
-  // is redacted WITH the name (see `titles.ts`), so it must not split the bucket.
-  return stripLeadingTitles(name)
+  return name
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/gu, '')
     .toLowerCase()
@@ -136,29 +133,64 @@ export function createPseudonymAllocator(): PseudonymAllocator {
   const assigned = new Map<string, string>()
   const addresses = new Map<string, string>()
 
-  /** One bucket-and-label loop, so the two namespaces cannot drift apart. */
-  const labeller =
-    (into: Map<string, string>, prefix: string, fold: (raw: string) => string) =>
-    (raw: string): string => {
+  /**
+   * One bucket-and-label loop, so the two namespaces cannot drift apart.
+   * `sameAs` may map a NEW key onto an existing label; `labels` counts distinct
+   * labels, so an alias neither skips a letter nor inflates the count.
+   */
+  const labeller = (
+    into: Map<string, string>,
+    prefix: string,
+    fold: (raw: string) => string,
+    sameAs: (key: string) => string | undefined = () => undefined,
+  ) => {
+    const labels = new Set<string>()
+    const labelFor = (raw: string): string => {
       const key = fold(raw)
-      const existing = into.get(key)
-      if (existing !== undefined) return existing
+      const existing = into.get(key) ?? sameAs(key)
+      if (existing !== undefined) {
+        into.set(key, existing)
+        return existing
+      }
       // Built from the constants in `types.ts` so the gate's "is this string one
       // of OUR placeholders?" check in stage 4 can never drift out of step with
       // the strings this allocator actually emits.
-      const label = `${prefix}${labelSuffix(into.size)}]`
+      const label = `${prefix}${labelSuffix(labels.size)}]`
+      labels.add(label)
       into.set(key, label)
       return label
     }
+    return { labelFor, size: () => labels.size }
+  }
+
+  /**
+   * 🔴 "Don Fernando Vázquez" AND "Fernando Vázquez" ARE ONE PERSON. The model
+   * includes a leading title in its span (see the detector prompt), so the same
+   * name arrives with and without words in front. A key that ENDS WITH another
+   * key of at least two words, at a word boundary, shares its label.
+   *
+   * ⚠ No title list: any leading words count. Two words minimum, so a bare
+   * "López" or "Fernando" never merges two people who share one name.
+   */
+  const titledAlias = (key: string): string | undefined => {
+    for (const [other, label] of assigned) {
+      const [short, long] = other.length < key.length ? [other, key] : [key, other]
+      if (short.split(' ').length >= 2 && long.endsWith(` ${short}`)) return label
+    }
+    return undefined
+  }
+
+  const people = labeller(assigned, PERSON_PLACEHOLDER_PREFIX, normaliseName, titledAlias)
+  const places = labeller(addresses, ADDRESS_PLACEHOLDER_PREFIX, normaliseAddress)
 
   return {
-    labelFor: labeller(assigned, PERSON_PLACEHOLDER_PREFIX, normaliseName),
-    addressLabelFor: labeller(addresses, ADDRESS_PLACEHOLDER_PREFIX, normaliseAddress),
+    labelFor: people.labelFor,
+    addressLabelFor: places.labelFor,
     get count(): number {
-      return assigned.size
+      return people.size()
     },
     get addressCount(): number {
-      return addresses.size
+      return places.size()
     },
   }
 }

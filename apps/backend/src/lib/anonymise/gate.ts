@@ -23,9 +23,11 @@
  * ── THE FOUR STAGES, AND WHY THE ORDER IS THIS ORDER ────────────────────────
  *
  *   1 structural     dates coarsened, uuids and author markers stripped
- *   2 deterministic  emails, phones, CURP/RFC, urls, roster members
+ *   2 deterministic  emails, phones, CURP/RFC, C.P., urls, roster members
  *   3 content        the model DETECTS; this file REPLACES
- *   4 verify         the same detector, re-run over the REDACTED text
+ *   4 verify         the same detector, re-run over the REDACTED text; by
+ *                    default it only judges (leftover → hold). Opt-in
+ *                    rounds redact leftovers and verify again
  *
  * The two cheap deterministic stages run first so the text the model sees is
  * already smaller and so their removals are never charged to the model's
@@ -53,12 +55,12 @@
  * MANY findings survived and nothing else.
  */
 
+import { foldedMatches, positiveIntFromEnv } from './detector'
 import { deterministicPass } from './deterministic'
 import { isGenericPlace } from './genericPlaces'
 import { createPseudonymAllocator } from './pseudonyms'
 import { structuralPass } from './structural'
 import { isTownLevelPlace } from './townPlaces'
-import { absorbTitles, onlyPlaceholders } from './titles'
 import type {
   DetectorFinding,
   GateInput,
@@ -70,11 +72,40 @@ import type {
   RedactionCount,
   SurvivorSpan,
 } from './types'
-import { OMITTED_PLACEHOLDER } from './types'
+import { OMITTED_PLACEHOLDER, PLACEHOLDER_PATTERN } from './types'
 
 export interface GateDeps {
   detector: PersonDetector
+  /** Verify rounds. Default: `ANONYMISE_VERIFY_ROUNDS`, else {@link DEFAULT_VERIFY_ROUNDS}. */
+  verifyRounds?: number
 }
+
+/** Env var name, so docs and tests never hand-type a string that can drift. */
+export const ANONYMISE_VERIFY_ROUNDS_VAR = 'ANONYMISE_VERIFY_ROUNDS'
+
+/**
+ * Verify passes at most, per document. Each pass that finds leftovers redacts
+ * them and hands the text to the next pass; the LAST pass only judges.
+ *
+ * 🔴 DEFAULT 1: verify only judges, and any leftover HOLDS the document. That
+ * is fail-closed: a human reads every text verify was unsure about.
+ *
+ * More rounds are an opt-in (`ANONYMISE_VERIFY_ROUNDS=3`), not the default,
+ * because they let whole names through. Measured 2026-10-17 (UTC 22:27-23:08),
+ * host `torre`, local stack, real model, up to 3 rounds, 1,195 / 4,866 / 9,454
+ * words: 2 of 18 runs reached `ready` with a whole name still in it ("el Chacho
+ * Melgarejo", "Lucrecia"), both on the 4,866-word text (2 of 12 in the last two
+ * batches). A later round that finds nothing does not prove an earlier round
+ * redacted everything. Raw rows: `scripts/measurements/anonymise-gate-2026-10-17-
+ * rounds-batch{1,2,3}.jsonl`.
+ *
+ * At the default — measured 2026-10-21 (UTC 22:54-23:03), host `torre`, load
+ * average 3-19, same harness and sizes, 2 runs each, GATE_VARY=1: 6 of 6 runs
+ * held at verify, 0 reached `ready`; $0.236 in total. Raw rows:
+ * `scripts/measurements/anonymise-gate-2026-10-21-1round.jsonl`. Each extra
+ * round costs about what stage 3 costs (inferred: same chunks, same prompt).
+ */
+export const DEFAULT_VERIFY_ROUNDS = 1
 
 /**
  * Every placeholder this pipeline can emit.
@@ -84,7 +115,7 @@ export interface GateDeps {
  * would HOLD on every document it successfully redacted — the safest possible
  * failure, and a completely useless product.
  */
-const PLACEHOLDER = /\[Dato omitido\]|\[Persona [A-Z]+\]|\[Domicilio [A-Z]+\]/g
+const PLACEHOLDER = PLACEHOLDER_PATTERN
 
 /**
  * What every refusal tells the person reading the queue. Plain Spanish, no
@@ -164,33 +195,69 @@ function coveredByPlaceholder(
  * Literal `indexOf` rather than a built RegExp: the finding is arbitrary user
  * text and `new RegExp(finding.text)` would either throw on a stray `(` or,
  * worse, silently match something else entirely.
+ *
+ * `folded`: replace every case and accent spelling ("LUCRECIA" for "Lucrecia"),
+ * and WHOLE WORDS ONLY, exact matches included: "Ana" never takes the "Ana" in
+ * "Anabel" nor the "ana" in "mañana". Stage 3 and verify rounds both pass it.
  */
 function replaceOutsidePlaceholders(
   text: string,
   needle: string,
   replacement: () => string,
+  folded = false,
 ): string | null {
   const spans = placeholderSpans(text)
+  const ranges: Array<[number, number]> = []
+  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + 1)) {
+    if (!folded || wholeWord(text, at, at + needle.length)) ranges.push([at, at + needle.length])
+  }
+  if (folded) ranges.push(...foldedMatches(text, needle).filter(([s, e]) => wholeWord(text, s, e)))
+  ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1])
   let label: string | undefined
   let result = ''
   let copied = 0
-  let search = 0
-  for (;;) {
-    const at = text.indexOf(needle, search)
-    if (at === -1) break
-    const end = at + needle.length
+  for (const [at, end] of ranges) {
+    // Overlaps one already replaced.
+    if (at < copied) continue
     const cuts = spans.some(([s, e]) => at < e && end > s && !(at <= s && end >= e))
-    if (cuts) {
-      search = at + 1
-      continue
-    }
+    if (cuts) continue
     label ??= replacement()
     result += text.slice(copied, at) + label
     copied = end
-    search = end
   }
   // `copied` only moves on a replacement, and a needle is never empty.
   return copied === 0 ? null : result + text.slice(copied)
+}
+
+const WORD_CHAR = /[\p{L}\p{N}\p{M}]/u
+
+/** The character at or before `i`, skipping accent marks: the letter they sit on. */
+function baseAt(text: string, i: number): string {
+  while (i >= 0 && /\p{M}/u.test(text.charAt(i))) i--
+  return i >= 0 ? text.charAt(i) : ''
+}
+
+/**
+ * True when `left` and `right`, side by side, belong to ONE word.
+ *
+ * An accent mark is always part of the letter before it. A letter-digit change
+ * and a lower-to-upper change are word breaks (final audit 2026-10-21): a name
+ * glued to digits ("lucrecia88") or to another name ("MaríaLópez") is still a
+ * word of its own. "ana" inside "mañana" or "anabel" is not.
+ */
+function glued(left: string, right: string): boolean {
+  if (!WORD_CHAR.test(left) || !WORD_CHAR.test(right)) return false
+  if (/\p{M}/u.test(right)) return true
+  if (/\p{N}/u.test(left) !== /\p{N}/u.test(right)) return false
+  return !(/\p{Ll}/u.test(left) && /\p{Lu}/u.test(right))
+}
+
+/** True when `[start, end)` is a whole word: not glued to the text on either side. */
+function wholeWord(text: string, start: number, end: number): boolean {
+  return (
+    !glued(baseAt(text, start - 1), text.charAt(start)) &&
+    !glued(baseAt(text, end - 1), text.charAt(end))
+  )
 }
 
 /**
@@ -208,6 +275,7 @@ function applyFindings(
   findings: readonly DetectorFinding[],
   allocate: (name: string) => string,
   allocateAddress: (address: string) => string,
+  folded = false,
 ): { text: string; labels: string[] } {
   const ordered = [...findings].sort((a, b) => b.text.length - a.text.length)
   const labels: string[] = []
@@ -234,16 +302,188 @@ function applyFindings(
         : finding.type === 'lugar'
           ? allocateAddress(finding.text)
           : OMITTED_PLACEHOLDER
-    const next = replaceOutsidePlaceholders(out, finding.text, replacement)
+    const next = replaceOutsidePlaceholders(out, finding.text, replacement, folded)
     if (next === null) continue
     labels.push(finding.type)
     out = next
   }
 
-  // 🔴 A title before a name is part of the name: "Don [Persona F]" becomes
-  // "[Persona F]". Without this, verify reads the title as a leftover and holds
-  // a document whose names are all gone. See `titles.ts`.
-  return { text: absorbTitles(out), labels }
+  // ⚠ No title clean-up here: the model owns span boundaries and includes a
+  // leading title in the name (detector prompt). If it does not, "la maestra
+  // [Persona F]" is published as it stands (owner, 2026-10-21, Q1).
+  return { text: out, labels }
+}
+
+/**
+ * True when `finding` holds at least one of our placeholders and nothing else
+ * but punctuation and spaces: "[Domicilio AP], [Domicilio AQ]".
+ *
+ * 🔴 ANY LETTER OR DIGIT OUTSIDE A PLACEHOLDER MAKES IT A LEFTOVER, so
+ * "[Persona A] López" and "la maestra [Persona A]" are never dismissed here.
+ */
+function onlyPlaceholders(finding: string): boolean {
+  if (!finding.match(PLACEHOLDER)) return false
+  return !/[\p{L}\p{N}]/u.test(finding.replace(PLACEHOLDER, ''))
+}
+
+/** The placeholder family a finding type is redacted into, if it has one. */
+const FAMILY: Partial<Record<DetectorFinding['type'], RegExp>> = {
+  persona: /^\[Persona [A-Z]+\]$/,
+  lugar: /^\[Domicilio [A-Z]+\]$/,
+}
+
+/** Edge punctuation and spaces, trimmed from what is left around a placeholder. */
+const EDGE = /^[\s\p{P}]+|[\s\p{P}]+$/gu
+
+/**
+ * A fragment cut out from between placeholders is redacted GLOBALLY, as a
+ * literal string, so it must look like a name: at least 3 characters and a
+ * capital letter. 🔴 Measured in the 2026-10-21 audit: "[Persona A] de
+ * [Persona B]" reduced to "de", and every "de" in the text was replaced.
+ */
+const MIN_FRAGMENT = 3
+function safeFragment(piece: string): boolean {
+  return piece.length >= MIN_FRAGMENT && /\p{Lu}/u.test(piece)
+}
+
+/**
+ * Turn one verify leftover into what to redact, without ever writing inside a
+ * placeholder. `{ unsafe: true }` means it cannot be redacted safely: the
+ * round HOLDS instead.
+ *
+ * ⚠ THREE SHAPES:
+ *
+ *   · No placeholder in it ("Jiutepec"): redact it as it is.
+ *   · It extends ONE placeholder of its own family ("[Persona A] López",
+ *     "[Domicilio C], Oaxaca"): the leftover is more of THAT entity, so the
+ *     whole span becomes that same placeholder. A fresh label would split one
+ *     person into two.
+ *   · Anything else that touches a placeholder ("Domicilio A], Ana", two
+ *     placeholders and a word): only the text OUTSIDE the placeholders is
+ *     redacted, piece by piece. A placeholder fragment at either edge is
+ *     dropped first, so `[Domicilio A]` is never rewritten into
+ *     `[[Domicilio AH]A]`.
+ */
+function resolveLeftover(
+  f: DetectorFinding,
+): { absorbInto: string } | { findings: DetectorFinding[] } | { unsafe: true } {
+  const inside = f.text.match(PLACEHOLDER) ?? []
+  const only = inside[0]
+  if (inside.length === 1 && only !== undefined && FAMILY[f.type]?.test(only)) {
+    return { absorbInto: only }
+  }
+  // No placeholder, whole or cut: a plain finding, redacted as it is.
+  if (!/[[\]]/.test(f.text)) return { findings: [f] }
+  const parts = f.text.split(PLACEHOLDER)
+  const pieces = parts
+    .map((piece, i) => {
+      let p = piece
+      // A placeholder cut by the model's span: "A]" or "Domicilio A]" at the
+      // start, "[Persona" at the end.
+      if (i === 0) p = p.replace(/^[^[\]]*\]/, '')
+      if (i === parts.length - 1) p = p.replace(/\[[^[\]]*$/, '')
+      return p.replace(EDGE, '')
+    })
+    .filter((p) => /[\p{L}\p{N}]/u.test(p))
+  // 🔴 One weak fragment and the whole leftover holds: redacting the strong
+  // pieces only would report a round as clean that left the weak one in.
+  if (!pieces.every(safeFragment)) return { unsafe: true }
+  return { findings: pieces.map((text) => ({ text, type: f.type })) }
+}
+
+/** Opening marks a sentence may start with: `¿El doctor?`, `«La maestra…`. */
+const OPENERS = /[\s"'“‘«¿¡(—–-]/u
+
+/** True when `at` starts a sentence: text start, or after `.`, `!`, `?`, `…` or a line break. */
+function sentenceStart(text: string, at: number): boolean {
+  let i = at - 1
+  while (i >= 0 && text[i] !== '\n' && OPENERS.test(text[i] as string)) i--
+  return i < 0 || /[\n.!?…]/u.test(text[i] as string)
+}
+
+/**
+ * A BARE TITLE, by shape: verify marked it `identifica: false`, it has no digit,
+ * and no capitalised word except one that starts a sentence. "El doctor",
+ * "la maestra", "la maestra [Persona A]" (placeholders do not count).
+ *
+ * 🔴 OWNER'S RULING, 2026-10-21 (Q4, "do process the doc, dont freeze it"): such
+ * a finding is not a leftover. Accepted risk: a lower-case nickname ("la
+ * güera") passes as a bare title. "Chacho Melgarejo" mid-sentence still holds,
+ * and so does every occurrence check: ONE mid-sentence capital anywhere in the
+ * text is enough to count. Stage 3 still redacts every finding.
+ */
+function bareTitle(f: DetectorFinding, text: string): boolean {
+  return titleVerdict(f, text) !== 'leftover'
+}
+
+/**
+ * ONE CAPITALISED WORD: a bare title by shape that is redacted, not passed.
+ *
+ * 🔴 OWNER'S RULING, 2026-10-21 (Q5, "names get anonimized, independently of
+ * num of words"): "Lucrecia llegó." and a "LUCRECIA:" speaker label pass the
+ * Q4 shape test only because the capital starts a sentence. Such a finding is
+ * redacted, in every spelling, even on the last round: that only removes text.
+ * Accepted: a one-word title ("Doctor:") is redacted too.
+ */
+function titleVerdict(f: DetectorFinding, text: string): 'leftover' | 'pass' | 'redact' {
+  if (!bareTitleShape(f, text)) return 'leftover'
+  // A placeholder is two words ("Persona", "A"), so "Don [Persona A]" is not one word.
+  const oneWord = (f.text.match(/[\p{L}\p{M}\p{N}]+/gu) ?? []).length === 1
+  return oneWord && /\p{Lu}/u.test(f.text) ? 'redact' : 'pass'
+}
+
+function bareTitleShape(f: DetectorFinding, text: string): boolean {
+  // 🔴 Only a person can be a bare title (final audit 2026-10-21): a place,
+  // contact or identifier marked false is still a leftover.
+  if (f.identifying !== false || f.type !== 'persona') return false
+  if (/\p{N}/u.test(f.text.replace(PLACEHOLDER, ''))) return false
+  const capitals: number[] = []
+  for (const m of f.text.matchAll(/[\p{L}\p{M}\p{N}]+/gu)) {
+    if (!/\p{Lu}/u.test(m[0])) continue
+    // Inside one of our placeholders: not a word of the finding.
+    if ([...f.text.matchAll(PLACEHOLDER)].some((p) => m.index >= p.index && m.index < p.index + p[0].length)) continue
+    capitals.push(m.index)
+  }
+  for (let at = text.indexOf(f.text); at !== -1; at = text.indexOf(f.text, at + 1)) {
+    if (!capitals.every((k) => sentenceStart(text, at + k))) return false
+  }
+  return true
+}
+
+/**
+ * Redact one round's leftovers with the document's allocator, so a name caught
+ * late gets the label it already had.
+ *
+ * 🔴 EVERY SPELLING. A leftover is redacted case- and accent-blind as a whole
+ * word, the way `locateSpan` finds it. Re-audit 2026-10-21: with rounds=3,
+ * "Lucrecia" was redacted, "LUCRECIA" stayed, the next round was silent and
+ * the text went `ready`. Exact occurrences are whole words too. Returns the labels actually applied, or
+ * null when any leftover cannot be redacted safely (the round then holds).
+ */
+function redactLeftovers(
+  text: string,
+  leftovers: readonly DetectorFinding[],
+  allocate: (name: string) => string,
+  allocateAddress: (address: string) => string,
+): { text: string; labels: string[] } | null {
+  const labels: string[] = []
+  const plain: DetectorFinding[] = []
+  let out = text
+  // Longest first, for the reason on `applyFindings`.
+  for (const f of [...leftovers].sort((a, b) => b.text.length - a.text.length)) {
+    const resolved = resolveLeftover(f)
+    if ('unsafe' in resolved) return null
+    if ('findings' in resolved) {
+      plain.push(...resolved.findings)
+      continue
+    }
+    const next = replaceOutsidePlaceholders(out, f.text, () => resolved.absorbInto, true)
+    if (next === null) continue
+    labels.push(f.type)
+    out = next
+  }
+  const applied = applyFindings(out, plain, allocate, allocateAddress, true)
+  return { text: applied.text, labels: [...labels, ...applied.labels] }
 }
 
 /**
@@ -319,7 +559,9 @@ export async function runAnonymisationGate(
   })
 
   // ── 1. STRUCTURAL ─────────────────────────────────────────────────────────
-  const structural = structuralPass(input.text)
+  // 🔴 NFC FIRST, so the roster pass, the model and every matcher see one
+  // spelling of "é" (final audit 2026-10-21: decomposed "José" was missed).
+  const structural = structuralPass(input.text.normalize('NFC'))
   stages.push({ stage: 'structural', removed: structural.removed })
 
   if (structural.text.trim().length === 0) {
@@ -369,87 +611,151 @@ export async function runAnonymisationGate(
     )
   }
 
+  // 🔴 EVERY FINDING IS REDACTED, whatever `identifica` says, exactly as on
+  // main. Re-audit 2026-10-21: trusting `false` unless the span held a
+  // mid-sentence capital let "la güera", "Lucrecia" at a sentence start and a
+  // "LUCRECIA:" speaker label through. A bare "el doctor" the model reports
+  // becomes `[Persona X]`: over-redaction, accepted.
+  // 🔴 EVERY SPELLING, WHOLE WORDS (owner, 2026-10-21, Q2): "Lucrecia" also
+  // takes "LUCRECIA" and "lucrecia", with the same label.
   const applied = applyFindings(
     deterministic.text,
     found,
     (name) => allocator.labelFor(name),
     (address) => allocator.addressLabelFor(address),
+    true,
   )
   stages.push({ stage: 'content', removed: countsByLabel(applied.labels) })
 
-  // ── 4. VERIFY ─────────────────────────────────────────────────────────────
+  // ── 4. VERIFY, IN ROUNDS ──────────────────────────────────────────────────
   //
   // The same detector, over the OUTPUT. This is the only check in the pipeline
   // that can catch stage 3 having missed something, and it is the reason stage 3
   // was built as a detector rather than a rewriter — you cannot verify a
   // rewriter by running it twice.
-  let survivors: DetectorFinding[]
-  try {
-    survivors = withoutGenericPlaces(
-      await deps.detector.detect({
-        text: applied.text,
-        contentKind: input.contentKind,
-      }),
+  //
+  // 🔴 A round that finds leftovers REDACTS them, with the same allocator, and
+  // the next round verifies again. The LAST round only judges: what it finds is
+  // held, never redacted, because nothing would verify that redaction. A
+  // detector error in any round is a hold.
+  const rounds =
+    deps.verifyRounds !== undefined && deps.verifyRounds >= 1
+      ? Math.floor(deps.verifyRounds)
+      : positiveIntFromEnv(ANONYMISE_VERIFY_ROUNDS_VAR, DEFAULT_VERIFY_ROUNDS)
+  let current = applied.text
+
+  for (let round = 1; ; round++) {
+    let survivors: DetectorFinding[]
+    try {
+      survivors = withoutGenericPlaces(
+        await deps.detector.detect({ text: current, contentKind: input.contentKind }),
+      )
+    } catch (err) {
+      return hold(
+        'verify',
+        `La segunda revisión automática no pudo terminar (${failureClassOf(err)}). ${NOT_ADDED}`,
+        {
+          redactedText: current,
+          ...(isInfrastructureFailure(err) ? { retryable: true as const } : {}),
+        },
+      )
+    }
+
+    const spans = placeholderSpans(current)
+    // ⚠ `onlyPlaceholders`: a finding made of our placeholders and punctuation
+    // ("[Domicilio AP], [Domicilio AQ]") names nobody.
+    // 🔴 `identifica: false` COUNTS ONLY ON A BARE TITLE (`bareTitle`, owner's
+    // Q4). Anything else is a leftover whatever the model said about it (audit
+    // 2026-10-21: "Chacho Melgarejo" came back marked non-identifying).
+    // 🔴 `isTownLevelPlace`: a town, municipality, city or state is SHOWN (owner,
+    // 2026-10-21, #12), so it never holds — the prompt says so and the model
+    // still marked towns in 31 of 38 dev holds. Colonias, streets, numbers, C.P.,
+    // ranchos, parajes and house references still hold. See `townPlaces.ts`.
+    const standing = survivors.filter(
+      (f) =>
+        !coveredByPlaceholder(current, spans, f.text) &&
+        !onlyPlaceholders(f.text) &&
+        !isTownLevelPlace(f, current),
     )
-  } catch (err) {
-    return hold(
-      'verify',
-      `La segunda revisión automática no pudo terminar (${failureClassOf(err)}). ${NOT_ADDED}`,
-      {
-        redactedText: applied.text,
-        ...(isInfrastructureFailure(err) ? { retryable: true as const } : {}),
-      },
-    )
-  }
+    const real = standing.filter((f) => !bareTitle(f, current))
+    // 🔴 Q5: a one-word name at a sentence start, redacted on ANY round.
+    const forced = standing.filter((f) => titleVerdict(f, current) === 'redact')
 
-  const spans = placeholderSpans(applied.text)
-  // ⚠ `onlyPlaceholders`: a finding made of our placeholders, punctuation and
-  // titles before a person ("[Domicilio AP], [Domicilio AQ]") names nobody.
-  // It needs at least one placeholder, so a bare "Don" still holds.
-  // 🔴 `isTownLevelPlace`: a town, municipality, city or state is SHOWN (owner,
-  // 2026-10-21, #12), so it never holds — the prompt says so and the model
-  // still marked towns in 31 of 38 dev holds. Colonias, streets, numbers, C.P.,
-  // ranchos, parajes and house references still hold. See `townPlaces.ts`.
-  const real = survivors.filter(
-    (f) =>
-      !coveredByPlaceholder(applied.text, spans, f.text) &&
-      !onlyPlaceholders(f.text) &&
-      !isTownLevelPlace(f, applied.text),
-  )
+    if (real.length === 0 && forced.length > 0) {
+      const done = redactLeftovers(
+        current,
+        forced,
+        (name) => allocator.labelFor(name),
+        (address) => allocator.addressLabelFor(address),
+      )
+      // 🔴 A redaction that changed nothing (null, or the same text) is not a
+      // redaction: fall through and HOLD (final audit 2026-10-21, B1).
+      if (done !== null && done.text !== current) {
+        stages.push({
+          stage: 'verify',
+          round,
+          removed: countsByLabel(done.labels),
+          note: `Ronda ${round}: se tacharon ${forced.length} nombre(s) de una palabra al inicio de una oración.`,
+        })
+        return { status: 'ready', redactedText: done.text, report: report() }
+      }
+    }
 
-  // 🔴 ONE NUMBER FOR THE WHOLE SCREEN. The queue badge and the detail chips
-  // count highlighted OCCURRENCES (`survivors.length`, see `holdReview.ts`), so
-  // the reason counts the same thing. Counting distinct findings here showed
-  // "7 datos señalados" next to "encontró 4" on dev, 2026-10-21.
-  const located = survivorSpans(applied.text, real)
+    if (real.length === 0 && forced.length === 0) {
+      stages.push({
+        stage: 'verify',
+        round,
+        removed: [],
+        note: `Ronda ${round}: la segunda revisión no encontró datos personales en el texto ya tachado.`,
+      })
+      return { status: 'ready', redactedText: current, report: report() }
+    }
 
-  stages.push({
-    stage: 'verify',
-    removed: [],
-    note:
-      real.length === 0
-        ? 'La segunda revisión no encontró datos personales en el texto ya tachado.'
-        : survivorsSentence(located.length),
-  })
+    const redacted =
+      round < rounds
+        ? redactLeftovers(
+            current,
+            [...real, ...forced],
+            (name) => allocator.labelFor(name),
+            (address) => allocator.addressLabelFor(address),
+          )
+        : null
 
-  if (real.length > 0) {
-    // ⚠ THE COUNT, NEVER THE STRINGS. This reason is stored on the row and shown
-    // in the admin panel; quoting the surviving names would put them straight
-    // back into the database the gate just kept them out of. Whoever reviews the
-    // hold reads `redactedText` below, with `survivors` marking where the model
-    // saw something — ⚠ NOT the original, which `lib/holdReview.ts` deliberately
-    // never returns.
-    return hold(
-      'verify',
-      `${survivorsSentence(located.length)} ${NOT_ADDED}`,
-      {
-        redactedText: applied.text,
-        // 🔴 OFFSETS, NEVER THE STRINGS — and they only mean anything against the
-        // `redactedText` on this same object. See `SurvivorSpan`.
+    // ⚠ A round that changed nothing would only see the same leftovers again:
+    // hold now instead of paying for that.
+    if (redacted === null || redacted.text === current) {
+      // 🔴 ONE NUMBER FOR THE WHOLE SCREEN. The queue badge and the detail chips
+      // count highlighted OCCURRENCES (`survivors.length`, see `holdReview.ts`),
+      // so the reason counts the same thing. Counting distinct findings here
+      // showed "7 datos señalados" next to "encontró 4" on dev, 2026-10-21.
+      // Q5 names are highlighted too, so the reviewer sees them.
+      const located = survivorSpans(current, [...real, ...forced])
+      stages.push({
+        stage: 'verify',
+        round,
+        removed: [],
+        note: `Ronda ${round}: ${survivorsSentence(located.length)}`,
+      })
+      // ⚠ THE COUNT, NEVER THE STRINGS. This reason is stored on the row and
+      // shown in the admin panel; quoting the surviving names would put them
+      // straight back into the database the gate just kept them out of. Whoever
+      // reviews the hold reads `redactedText` below, with `survivors` marking
+      // where the model saw something — ⚠ NOT the original, which
+      // `lib/holdReview.ts` deliberately never returns.
+      return hold('verify', `${survivorsSentence(located.length)} ${NOT_ADDED}`, {
+        redactedText: current,
+        // 🔴 OFFSETS, NEVER THE STRINGS — and they only mean anything against
+        // the `redactedText` on this same object. See `SurvivorSpan`.
         survivors: located,
-      },
-    )
-  }
+      })
+    }
 
-  return { status: 'ready', redactedText: applied.text, report: report() }
+    stages.push({
+      stage: 'verify',
+      round,
+      removed: countsByLabel(redacted.labels),
+      note: `Ronda ${round}: la segunda revisión encontró ${real.length} dato(s) personal(es); se tacharon y se revisa de nuevo.`,
+    })
+    current = redacted.text
+  }
 }

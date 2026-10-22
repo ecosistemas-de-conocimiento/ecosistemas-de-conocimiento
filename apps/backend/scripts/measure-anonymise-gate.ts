@@ -6,7 +6,8 @@
  * unchanged, except for the optional vary line below.
  *
  * 🔴 PAID MODEL CALLS unless GATE_DRY=1. Every chunk of every transcript goes to
- * ai-service twice (detect, then verify). Measured 2026-10-17 on host `torre`
+ * ai-service once for detect and once per verify round (up to
+ * `ANONYMISE_VERIFY_ROUNDS`, default 1). Before rounds, measured 2026-10-17 on host `torre`
  * (local stack, load average 18-45), summing `costUsd` over the JSONL rows: two
  * batches of 6 runs at 1.2k / 4.9k / 9.5k words (GATE_WORDS=1000,5000,10000
  * GATE_RUNS=2 GATE_VARY=1) cost $0.164 and $0.160, about $0.33 together, so
@@ -175,6 +176,11 @@ async function one(nominal: number, text: string, run: number) {
     loadavg: load,
     vary,
     status: result.status,
+    // Verify rounds the gate ran (`ANONYMISE_VERIFY_ROUNDS`), and what each redacted.
+    rounds: result.report.stages.filter((s) => s.stage === 'verify').length,
+    roundRemoved: result.report.stages
+      .filter((s) => s.stage === 'verify')
+      .map((s) => s.removed.reduce((a, c) => a + c.count, 0)),
     stage: result.status === 'hold' ? result.stage : undefined,
     reason: result.status === 'hold' ? result.reason : undefined,
     plantedTotal: PLANTED.length,
@@ -211,6 +217,8 @@ console.table(
     words: r.words,
     run: r.run,
     result: r.stage ? `${r.status}:${r.stage}` : r.status,
+    rounds: r.rounds,
+    perRound: r.roundRemoved.join('/'),
     caught: `${r.caught}/${r.plantedTotal}`,
     missed: r.missed.join('; '),
     seconds: Math.round(r.totalMs / 1000),

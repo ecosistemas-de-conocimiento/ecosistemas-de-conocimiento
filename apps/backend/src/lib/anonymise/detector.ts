@@ -42,8 +42,7 @@ import {
   openaiCompatFromEnv,
 } from './openaiCompatGenerator'
 import { cooldownMsFromEnv, fallbackModeFromEnv, withHostedFallback } from './fallbackGenerator'
-import { stripLeadingTitles } from './titles'
-import type { DetectorFinding, PersonDetector } from './types'
+import { PLACEHOLDER_PATTERN, type DetectorFinding, type PersonDetector } from './types'
 
 /** Env var names, so docs and tests never hand-type a string that can drift. */
 export const ANONYMISE_CHUNK_WORDS_VAR = 'ANONYMISE_CHUNK_WORDS'
@@ -112,7 +111,7 @@ export const DEFAULT_CONCURRENCY = 3
  */
 export const DEFAULT_TIMEOUT_MS = 90_000
 
-function positiveIntFromEnv(name: string, fallback: number): number {
+export function positiveIntFromEnv(name: string, fallback: number): number {
   // ⚠ Blank is "unset", not 0 — same rule as `aiRetry.ts`.
   const text = (process.env[name] ?? '').trim()
   if (text === '') return fallback
@@ -143,7 +142,7 @@ export const DETECT_SYSTEM_PROMPT = [
   'Eres un detector de datos personales en textos en español de México.',
   '',
   'Tu única tarea es LOCALIZAR, no reescribir. Devuelves exclusivamente JSON válido con esta forma:',
-  '{"hallazgos":[{"texto":"...","tipo":"persona|lugar|contacto|identificador|otro"}]}',
+  '{"hallazgos":[{"texto":"...","tipo":"persona|lugar|contacto|identificador|otro","identifica":true}]}',
   '',
   'Reglas obligatorias:',
   '- Copia en "texto" la cadena EXACTAMENTE como aparece en la entrada, con sus mismas',
@@ -155,22 +154,43 @@ export const DETECT_SYSTEM_PROMPT = [
   'Debes incluir:',
   '- Nombres de personas, apellidos, apodos y diminutivos.',
   '- Referencias de parentesco que nombran a alguien: en "mi hermana Lucía" el hallazgo es "Lucía".',
-  // ⚠ Titles are part of the name (owner's rule, 2026-10-17); `titles.ts` also
-  // absorbs them in code, so a model that ignores this line is still covered.
-  '- Un tratamiento o cargo que antecede al nombre es parte del nombre: incluye "don", "doña",',
-  '  "señor", "señora", "la maestra", "el maestro", "el profe", "el doctor", "la doctora",',
-  '  "licenciado", "ingeniero", "el padre" y similares. En "Don Fernando Vázquez" el hallazgo',
-  '  es "Don Fernando Vázquez"; en "la maestra Imelda" es "la maestra Imelda".',
+  // 🔴 THE MODEL OWNS SPAN BOUNDARIES (owner's rule, 2026-10-17: no word lists
+  // in code). A span cut short leaves "Don [Persona F]" or "colonia [Domicilio L]".
+  '- Devuelve el tramo COMPLETO que identifica. Un tratamiento o cargo que antecede al',
+  '  nombre es parte del nombre: en "Don Fernando Vázquez" el hallazgo es',
+  '  "Don Fernando Vázquez"; en "la maestra Nicasia Olvera" es "la maestra Nicasia Olvera".',
   '- Centros de trabajo, escuelas o cargos tan precisos que identifican a una persona.',
   '- Teléfonos, correos, cuentas, identificadores oficiales y números de expediente.',
   '',
+  // ⚠ Owner's rule, 2026-10-17: a bare title is not identifying and must not
+  // hold a document, so the model is asked not to report it. If it does, stage
+  // 3 still redacts it (over-redaction, accepted), and verify lets it pass only
+  // when it is marked false and has no digit and no mid-sentence capital
+  // (owner, 2026-10-21, Q4; `bareTitle` in `gate.ts`).
+  'No es un hallazgo:',
+  '- Un tratamiento o cargo SOLO, sin nombre ni apodo junto a él: "el doctor dijo",',
+  '  "la maestra llegó". No identifica a nadie. No lo reportes; si lo reportas, pon',
+  '  "identifica": false. Pon "identifica": true en todo lo demás.',
+  // ⚠ ONE PROMPT FOR DETECT AND VERIFY, measured 2026-10-17 on the chunk holding
+  // "el Chacho Melgarejo": a separate verify addendum ("this text is already
+  // redacted…") caught it 0/6 and 3/6; the shared prompt 10/12.
+  // 🔴 OWNER'S RULING, 2026-10-21 (Q1, "accept leftover titles"): a title or
+  // cargo left beside a person placeholder is published, so it is not asked
+  // for. A name, surname or nickname beside one still is.
+  '- Los marcadores entre corchetes ([Persona A], [Domicilio B], [Dato omitido]): ya están',
+  '  censurados. Tampoco una palabra genérica de lugar pegada a un marcador de lugar:',
+  '  "colonia [Domicilio L]".',
+  '- Un tratamiento o cargo pegado a un marcador de persona: "la maestra [Persona A]",',
+  '  "Don [Persona B]". Si lo reportas, pon "identifica": false.',
+  '- Pero un nombre, apellido o apodo pegado a un marcador de persona SÍ es hallazgo:',
+  '  en "[Persona A] López" el hallazgo es "[Persona A] López".',
+  '',
   // 🔴 ADDRESSES GET THEIR OWN SECTION BECAUSE ONE LINE WAS NOT ENOUGH. Measured:
   // on a live test testimony a street address went past this prompt, and the
-  // verify stage held the document. The shaped forms (`C.P. 06700`,
-  // `Calle X No. 45`) are now removed deterministically before the model ever
-  // sees them — see `deterministic.ts`. What is left for the model is the
-  // free-form half, which is the half regexes cannot reach, so it is spelled out
-  // with examples rather than named in passing.
+  // verify stage held the document. Only the postal code (`C.P. 06700`) is
+  // removed deterministically before the model sees the text (owner, Q3, see
+  // `deterministic.ts`). Every street line, colonia and manzana is the model's,
+  // so the list is spelled out with examples rather than named in passing.
   'Domicilios (marca "lugar"). Incluye TODOS estos casos, completos o parciales:',
   '- Calles, avenidas, andadores, cerradas, privadas y sus números.',
   '- Colonias, barrios, fraccionamientos, unidades habitacionales, manzana y lote.',
@@ -179,6 +199,8 @@ export const DETECT_SYSTEM_PROMPT = [
   '- Referencias sin formato que permiten llegar a una casa: "enfrente de la tienda',
   '  de doña Mari", "subiendo por donde está el tanque", "la casa de la reja verde".',
   '- Un domicilio partido en varias frases cuenta como varios hallazgos, uno por trozo.',
+  '- Incluye en el tramo la palabra genérica que encabeza el lugar: "colonia Las Flores",',
+  '  "tortillería de Doña Lupe", no solo "Las Flores" ni "Doña Lupe".',
   '',
   // 🔴 OWNER'S RULING (2026-10-21, backlog #12): town and municipality names are
   // SHOWN. They are what a testimony is about, and a town alone points at
@@ -236,6 +258,81 @@ export class DetectorFailure extends Error {
     super(message)
     this.name = 'DetectorFailure'
   }
+}
+
+/** Fold one character for matching: lower case, accents dropped. */
+function foldChar(ch: string): string {
+  return ch.normalize('NFD').replace(/[\u0300-\u036f]/gu, '').toLowerCase()
+}
+
+/**
+ * Every `[start, end)` range of `source` that equals `needle` once both are
+ * folded (lower case, accents dropped), in order. Overlapping matches included.
+ *
+ * ⚠ Folding is per character with an offset map, so a character that folds to
+ * two (or none) never shifts the ranges returned.
+ */
+export function foldedMatches(source: string, needle: string): Array<[number, number]> {
+  let folded = ''
+  const startOf: number[] = []
+  for (let i = 0; i < source.length; ) {
+    const cp = source.codePointAt(i) as number
+    const ch = String.fromCodePoint(cp)
+    for (const f of foldChar(ch)) {
+      folded += f
+      startOf.push(i)
+    }
+    i += ch.length
+  }
+  const want = [...needle].map(foldChar).join('')
+  const out: Array<[number, number]> = []
+  if (want.length === 0) return out
+  for (let at = folded.indexOf(want); at !== -1; at = folded.indexOf(want, at + 1)) {
+    const begin = startOf[at] as number
+    const lastStart = startOf[at + want.length - 1] as number
+    let end = lastStart + String.fromCodePoint(source.codePointAt(lastStart) as number).length
+    // 🔴 Trailing accent marks belong to the last letter (final audit
+    // 2026-10-21): decomposed "José" ended before its accent, and the gate then
+    // saw the match glued to a letter and redacted nothing.
+    while (end < source.length && /\p{M}/u.test(source.charAt(end))) end++
+    out.push([begin, end])
+  }
+  return out
+}
+
+/**
+ * `needle` as the text spells it: exactly, else case- and accent-blind, giving
+ * back the substring of `source` it matched. Null when it is not there at all.
+ *
+ * 🔴 A MATCH WHOLLY INSIDE ONE OF OUR PLACEHOLDERS IS SKIPPED, exact or folded,
+ * and the search goes on. Audit 2026-10-21: the model reported "Domi" for
+ * "La domi", the first match was inside `[Domicilio A]`, the gate saw it as
+ * covered, and "La domi" stayed in a ready text.
+ */
+export function locateSpan(source: string, needle: string): string | null {
+  const spans = [...source.matchAll(PLACEHOLDER_PATTERN)].map(
+    (m) => [m.index, m.index + m[0].length] as const,
+  )
+  // 🔴 A PLACEHOLDER CUT AT A CHUNK EDGE IS STILL A PLACEHOLDER. The chunker
+  // cuts at whitespace, so `source` (one chunk) may end "[Domicilio" and the
+  // next begin "A]". Re-audit 2026-10-21: "Domi" matched inside the cut
+  // "[Domicilio", came back as found, and the gate, looking at the whole text,
+  // saw it only inside `[Domicilio A]` and let "la domi" through.
+  const tail = /\[(?:Persona|Domicilio|Dato)\s*$/.exec(source)
+  if (tail) spans.push([tail.index, source.length] as const)
+  const head = /^\s*(?:[A-Z]+|omitido)\]/.exec(source)
+  if (head) spans.push([0, head[0].length] as const)
+  // Only a match wholly INSIDE a placeholder is skipped. One that straddles an
+  // edge ("Domicilio A], Ana") or contains one ("[Persona A] López") is real
+  // text the gate's `resolveLeftover` knows how to redact.
+  const clear = (at: number, end: number) => !spans.some(([s, e]) => at >= s && end <= e)
+  for (let at = source.indexOf(needle); at !== -1; at = source.indexOf(needle, at + 1)) {
+    if (clear(at, at + needle.length)) return needle
+  }
+  for (const [begin, end] of foldedMatches(source, needle)) {
+    if (clear(begin, end)) return source.slice(begin, end)
+  }
+  return null
 }
 
 /**
@@ -297,22 +394,22 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
     // permissive: the text it claims to describe is still in the document and
     // stage 4 still runs over the result.
     //
-    // ⚠ ONE RESCUE: a titled span whose TITLE is in the wrong case. Measured
-    // 2026-10-17, 9,454 words: asked to include titles, the model returned
-    // "la maestra Nicasia Olvera" for "La maestra Nicasia Olvera"; dropping it
-    // lost the name. The bare name is a literal substring, so it is kept, and
-    // `titles.ts` absorbs the title once the name is a placeholder.
-    let located = trimmed
-    if (!sourceText.includes(located)) {
-      located = stripLeadingTitles(trimmed).trim()
-      if (located === trimmed || located.length < 2 || !sourceText.includes(located)) continue
-    }
+    // ⚠ ONE RESCUE: a span in the wrong case or without its accents. Measured
+    // 2026-10-17, 9,454 words: the model returned "la maestra Nicasia Olvera"
+    // for "La maestra Nicasia Olvera"; dropping it lost the name. The span is
+    // matched case- and accent-blind and replaced by the text's OWN spelling,
+    // so the replacement still finds it.
+    // Titles: no word list; a title left beside a placeholder is published (owner, 2026-10-21, Q1).
+    const located = locateSpan(sourceText, trimmed)
+    if (located === null) continue
 
     out.push({
       text: located,
       type: (FINDING_TYPES as readonly unknown[]).includes(tipo)
         ? (tipo as DetectorFinding['type'])
         : 'otro',
+      // 🔴 Only a literal `false` counts; a missing or odd value is identifying.
+      ...((item as { identifica?: unknown }).identifica === false ? { identifying: false } : {}),
     })
   }
   return out
@@ -567,15 +664,14 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
       })
 
       // A name repeated across chunks is one finding.
-      const seen = new Set<string>()
-      const out: DetectorFinding[] = []
+      // 🔴 If any chunk judged it identifying, it is identifying: fail-closed.
+      const byKey = new Map<string, DetectorFinding>()
       for (const f of perChunk.flat()) {
         const key = `${f.type}\u0000${f.text}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        out.push(f)
+        const prior = byKey.get(key)
+        if (prior === undefined || prior.identifying === false) byKey.set(key, f)
       }
-      return out
+      return [...byKey.values()]
     },
   }
 }

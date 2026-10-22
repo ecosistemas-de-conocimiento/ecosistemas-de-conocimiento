@@ -122,92 +122,78 @@ describe('deterministicPass — the roster', () => {
 })
 
 // ---------------------------------------------------------------------------
-// DOMICILIOS
+// DOMICILIOS — owner's ruling 2026-10-21 (Q3, "A: fixed shapes only")
 // ---------------------------------------------------------------------------
 
 /**
- * ── 🔴 THE NEGATIVES ARE THE REAL TEST, AND THEY ARE REAL STRINGS ────────────
+ * Stage 2 keeps ONE address shape: the postal code, five digits behind a
+ * `C.P.` marker. Street lines (`Calle Morelos No. 45`), settlements
+ * (`Col. Portales`) and blocks (`Mz. 4 Lt. 12`) are free-form and go to the
+ * model (stage 3), whose prompt lists them.
  *
- * The owner asked for addresses to be anonymised after the gate HELD a live test
- * testimony on a street address that survived every pass.
- *
- * Before writing a single pattern we grepped the 250-document synthetic corpus
- * (`corpus-generativo`). It contains ZERO addresses — no `Calle X 45`, no
- * `C.P. NNNNN`, no `Av.`, not one — and a great many address-shaped WORDS used
- * as ordinary Spanish:
- *
- *     `calle`     20 hits / 16 docs — every one `[se escucha ruido de calle]`
- *     `colonia`   365 hits / 159 docs — ~60% the common noun
- *     `manzana`   19 hits / 19 docs — a city block on a walking route
- *     `camino`    39 hits / 37 docs — metaphor
- *     `dirección` 26 hits / 22 docs — the school principal's office
- *
- * So a keyword rule would have redacted two thirds of that corpus, deleted the
- * thing those testimonies are ABOUT — the neighbourhood — and removed no address,
- * because there are none. `NO_DEBE_TOCAR` below is copied VERBATIM out of the
- * corpus and is the regression that keeps that from being shipped.
- *
- * ⚠ `DEBE_TOCAR` is CONSTRUCTED, and honestly so: there was nothing to copy. The
- * street forms come from the owner's own list; the place names inside them
- * (`Portales`, `Antonio Barona`, `Satélite`, `Ampliación Lázaro Cárdenas`,
- * Cuernavaca) are real strings from the corpus, so the false-positive traps that
- * matter are still exercised inside the positives.
+ * `NO_DEBE_TOCAR` is copied VERBATIM from the synthetic corpus
+ * (`corpus-generativo`): address-shaped WORDS used as ordinary Spanish.
  */
-const DEBE_TOCAR: ReadonlyArray<readonly [string, string]> = [
-  ['Vivo en Calle Morelos No. 45, Col. Portales, C.P. 03300.', 'Vivo en [Domicilio A].'],
-  [
-    'Nos reunimos en Av. Emiliano Zapata 128, Cuernavaca.',
-    'Nos reunimos en [Domicilio A], Cuernavaca.',
-  ],
-  ['La casa está en Andador 5 de Mayo #12, int. 3.', 'La casa está en [Domicilio A].'],
-  [
-    'Mi domicilio es Priv. de los Pinos s/n, Col. Antonio Barona.',
-    'Mi domicilio es [Domicilio A].',
-  ],
-  ['Calz. de la Viga 1450-B, C.P. 09810.', '[Domicilio A].'],
-  ['Cerrada Josefa Ortiz No. 7, U.H. Vicente Guerrero.', '[Domicilio A].'],
-  ['Boulevard Benito Juárez 300, Col. Satélite, CP 53100.', '[Domicilio A].'],
-  // Lower-cased, the way a transcriber writes it when nobody dictated the caps.
-  ['Vivo en calle morelos no. 45 desde hace años.', 'Vivo en [Domicilio A] desde hace años.'],
-]
-
-/** Copied verbatim from `corpus-generativo`. Not one of these is an address. */
 const NO_DEBE_TOCAR: readonly string[] = [
   '[se escucha ruido de calle]',
   'Seguimos porque la colonia es nuestra.',
   'La escuela es el corazón de la colonia.',
   'Rol en el ecosistema: delegada de colonia',
-  'ella conoce a las señoras de la colonia y sin ella no se abre ni la mitad de las puertas.',
   'Coordino con el delegado Reynaldo Ocampo las visitas por manzana.',
-  'Parte de este camino lo he hecho junto a mi hermana Lucía, que también participa en estas actividades',
-  'que lo que vemos en campo llegue arriba sin que se le caiga la mitad en el camino',
   'el problema lo vivimos nosotros con dirección y código postal',
-  'La dirección no tenía manera de atenderla y yo apenas la ayudé con lo que pude.',
-  'entre la familia nos vamos pasando el oficio y la terquedad',
-  'entre el riesgo de allá abajo y el descuido de allá arriba',
   'Cuernavaca, a 20 de mayo de 2026.',
-  'Villa de Ayala, a 27 de febrero de 2026.',
   'Residencia actual: Cuernavaca, Morelos (colonia Ciudad Chapultepec)',
-  'Residencia actual: Ciudad de México (colonia Pedregal de Santo Domingo)',
-  'Lugar de origen: San Juan Atzingo, Estado de México',
-  'Escuela Primaria “Miguel Hidalgo” de la colonia Ciudad Chapultepec',
-  'PILARES "Carlos Monsiváis" de la colonia Portales',
-  'Soy comerciante del mercado en la colonia Ampliación Lázaro Cárdenas.',
-  'Participé en la jornada de descacharrización de marzo de 2026 en la colonia La Carolina.',
   'Mi pueblo es San Juan Atzingo, Estado de México.',
   'Proyecto: IH-2025-I-445 · Fecha de registro: 14 de enero de 2026',
 ]
 
-describe('deterministicPass — domicilios', () => {
-  it('redacts a street line as ONE label, tails and all', () => {
-    for (const [input, expected] of DEBE_TOCAR) {
-      expect(run(input).text, input).toBe(expected)
+describe('deterministicPass — domicilios: the postal code only', () => {
+  it('🔴 leaves free-form street lines and settlements to the model (Q3)', () => {
+    for (const line of [
+      'Vivo en Calle Morelos No. 45 desde hace años.',
+      'Nos reunimos en Av. Emiliano Zapata 128, Cuernavaca.',
+      'La casa está en Andador 5 de Mayo #12, int. 3.',
+      'Mi domicilio es Priv. de los Pinos s/n, Col. Antonio Barona.',
+      'Vivo en U.H. Vicente Guerrero Mz. 4 Lt. 12, cerca del metro.',
+      'Fracc. Los Sauces, casa 22.',
+      'Vivo en col. santa cruz, cerca de la iglesia.',
+    ]) {
+      const out = run(line)
+      expect(out.text, line).toBe(line)
+      expect(out.removed, line).toEqual([])
     }
   })
 
-  it('🔴 leaves every address-shaped sentence in the real corpus completely alone', () => {
-    // See the block comment above. This is the assertion that stops the next
-    // person "improving" the rules into a keyword match.
+  it('🔴 the labels for street lines and settlements are gone', () => {
+    expect(Object.values(DETERMINISTIC_LABELS)).not.toContain('domicilio')
+    expect(Object.values(DETERMINISTIC_LABELS)).not.toContain('asentamiento')
+  })
+
+  it('redacts a postal code in every marker spelling, labelled `codigo-postal`', () => {
+    for (const cp of ['C.P. 62577', 'c.p. 62577', 'C. P. 62577', 'CP 62577', 'Código Postal: 62577', 'codigo postal 62577']) {
+      const out = run(`El expediente dice ${cp} y nada más.`)
+      expect(out.text, cp).toBe('El expediente dice [Domicilio A] y nada más.')
+      expect(labels(out.removed), cp).toEqual([DETERMINISTIC_LABELS.codigoPostal])
+    }
+  })
+
+  it('a postal code inside a street line is the only part taken', () => {
+    expect(run('Vivo en Calle Morelos No. 45, Col. Portales, C.P. 03300.').text).toBe(
+      'Vivo en Calle Morelos No. 45, Col. Portales, [Domicilio A].',
+    )
+  })
+
+  it('X25: the marker must start a word', () => {
+    expect(labels(run('Folio ABCP 12345.').removed)).not.toContain(DETERMINISTIC_LABELS.codigoPostal)
+  })
+
+  it('needs the marker and exactly five digits', () => {
+    for (const line of ['Pagué 62577 pesos.', 'C.P. 6257 o algo así.', 'C.P. 625770']) {
+      expect(labels(run(line).removed), line).not.toContain(DETERMINISTIC_LABELS.codigoPostal)
+    }
+  })
+
+  it('🔴 leaves every address-shaped sentence in the real corpus alone', () => {
     for (const line of NO_DEBE_TOCAR) {
       const out = run(line)
       expect(out.text, line).toBe(line)
@@ -216,232 +202,46 @@ describe('deterministicPass — domicilios', () => {
   })
 
   it('🔴 shows towns, municipalities, alcaldías and states (owner, 2026-10-21, #12)', () => {
-    // A town points at thousands of people, not at one home. The street, the
-    // colonia and the C.P. beside it are still caught — see the next assertion.
     for (const line of [
       'Vivo en Xoxocotla, Morelos.',
-      'Trabajo en el municipio de Puente de Ixtla.',
       'Vivo en la Alcaldía Iztapalapa, cerca del metro.',
-      'fui a la Alcaldía Benito Juárez y luego de eso me fui',
-      'Estudio en la Delegación Coyoacán.',
       'Soy de Rancho Nuevo, Chiapas.',
-    ]) {
-      const out = run(line)
-      expect(out.text, line).toBe(line)
-      expect(out.removed, line).toEqual([])
-    }
-    expect(run('Vivo en calle Morelos No. 45, Xoxocotla, Morelos, C.P. 62680.').text).toBe(
-      'Vivo en [Domicilio A], Xoxocotla, Morelos, [Domicilio B].',
-    )
-    expect(run('Vivo en Col. Portales, Alcaldía Benito Juárez.').text).toBe(
-      'Vivo en [Domicilio A], Alcaldía Benito Juárez.',
-    )
-    expect(run('Mi código es C.P. 06700.').text).toBe('Mi código es [Domicilio A].')
-  })
-
-  it('🔴 swallows Mz./Lt. after a named settlement (audit leak, 2026-10-21)', () => {
-    // Was: `[Domicilio A]. 4 Lt. 12` — the block and lot numbers stayed.
-    const cases: ReadonlyArray<readonly [string, string]> = [
-      ['U.H. Vicente Guerrero Mz. 4 Lt. 12', '[Domicilio A]'],
-      ['Vivo en U.H. Vicente Guerrero Mz. 4 Lt. 12, cerca del metro.', 'Vivo en [Domicilio A], cerca del metro.'],
-      ['Col. Las Palmas, Mz. 7, Lt. 3.', '[Domicilio A].'],
-      ['Cerrada Josefa Ortiz No. 7, U.H. Vicente Guerrero Mz. 4 Lt. 12.', '[Domicilio A].'],
-    ]
-    for (const [input, expected] of cases) {
-      expect(run(input).text, input).toBe(expected)
-    }
-  })
-
-  it('🔴 takes a lower-case colonia name whole (audit leak, 2026-10-21)', () => {
-    // Was: `[Domicilio A] cruz`.
-    const cases: ReadonlyArray<readonly [string, string]> = [
-      ['col. santa cruz', '[Domicilio A]'],
-      ['Vivo en col. santa cruz, cerca de la iglesia.', 'Vivo en [Domicilio A], cerca de la iglesia.'],
-      ['col. santa maría la ribera.', '[Domicilio A].'],
-      ['calle ermita no. 12, col. santa cruz', '[Domicilio A]'],
-      ['col. santa cruz mz. 4 lt. 12', '[Domicilio A]'],
-      // ⚠ The brake: with no terminator, or at a clause word, it stops.
-      ['col. santa cruz desde hace años', '[Domicilio A] cruz desde hace años'],
-      ['col. portales y despues de eso ya no supe mas', '[Domicilio A] y despues de eso ya no supe mas'],
-      ['col. portales delante del pozo', '[Domicilio A] delante del pozo'],
-    ]
-    for (const [input, expected] of cases) {
-      expect(run(input).text, input).toBe(expected)
-    }
-  })
-
-  it('🔴 does NOT match a loose word run with a bare number — the sentence trap', () => {
-    // `en la calle hay 20 casas` is ordinary Spanish and is the sentence the
-    // two-arm design in `DOMICILIO` exists to refuse. It matched while the
-    // pattern carried the `i` flag, because `i` makes \p{Lu} match lower-case
-    // letters and "a capitalised street name" silently became "any word".
-    for (const line of [
-      'En la calle hay 20 casas sin agua.',
-      'En el camino nos faltaron 3 garrafones.',
-      'Por esa avenida pasan 40 camiones al día.',
     ]) {
       expect(run(line).text, line).toBe(line)
     }
   })
 
-  it('redacts a bare postal code, and labels it `codigo-postal`', () => {
-    const out = run('El expediente dice C.P. 62577 y nada más.')
-    expect(out.text).toBe('El expediente dice [Domicilio A] y nada más.')
-    expect(labels(out.removed)).toEqual([DETERMINISTIC_LABELS.codigoPostal])
-  })
-
-  it('redacts abbreviated settlements: Col., Fracc., Mz./Lt.', () => {
-    for (const line of [
-      'Col. Portales, por el mercado.',
-      'Fracc. Los Sauces, casa 22.',
-      'Mz. 4 Lt. 12, por allá.',
-    ]) {
-      const out = run(line)
-      expect(out.text, line).toContain('[Domicilio A]')
-      expect(labels(out.removed), line).toEqual([DETERMINISTIC_LABELS.asentamiento])
-    }
-  })
-
-  it('🔴 the same address said twice gets the SAME label', () => {
-    // The point of a label rather than a redaction bar. Two `[Dato omitido]`s
-    // erase whether the person came back to the same house; two `[Domicilio A]`s
-    // keep it. Matching is punctuation- and case-insensitive because a
-    // transcriber writes the address a different way every time.
-    const out = run('Nací en Calle Morelos No. 45 y volví a calle morelos no. 45 en 2020.')
-    expect(out.text).toBe('Nací en [Domicilio A] y volví a [Domicilio A] en 2020.')
-    expect(out.allocator.addressCount).toBe(1)
-  })
-
-  it('🔴 two different addresses get DIFFERENT labels', () => {
-    const out = run('Me mudé de Calle Morelos No. 45 a Av. Zapata 128.')
-    expect(out.text).toBe('Me mudé de [Domicilio A] a [Domicilio B].')
-    expect(out.allocator.addressCount).toBe(2)
+  it('🔴 the same postal code said twice gets the SAME label, two get two', () => {
+    const same = run('Nací en C.P. 03300 y volví al c.p. 03300 en 2020.')
+    expect(same.text).toBe('Nací en [Domicilio A] y volví al [Domicilio A] en 2020.')
+    expect(same.allocator.addressCount).toBe(1)
+    const two = run('Me mudé de C.P. 03300 a C.P. 62577.')
+    expect(two.text).toBe('Me mudé de [Domicilio A] a [Domicilio B].')
   })
 
   it('🔴 people and addresses have SEPARATE sequences — both start at A', () => {
-    // A shared counter would make the report's `pseudonyms` number — which an
-    // admin reads as "how many people are in this testimony" — silently wrong.
-    const out = run('Ana López vive en Calle Morelos No. 45.', ['Ana López'])
+    const out = run('Ana López vive en C.P. 03300.', ['Ana López'])
     expect(out.text).toBe('[Persona A] vive en [Domicilio A].')
     expect(out.allocator.count).toBe(1)
     expect(out.allocator.addressCount).toBe(1)
   })
 
-  it('⚠ runs BEFORE numero-largo, so a postal code is never scored as a long number', () => {
-    // Same specific-before-greedy discipline as `email` before `numero-largo`.
-    // If the order flipped, `C.P. 06700` would report as `numero-largo` and the
-    // `C.P.` marker would stay in the corpus next to a `[Dato omitido]`.
+  it('⚠ runs BEFORE telefono and numero-largo, so a postal code is never scored as a number', () => {
     const out = run('C.P. 06700')
     expect(labels(out.removed)).toEqual([DETERMINISTIC_LABELS.codigoPostal])
-    expect(labels(out.removed)).not.toContain(DETERMINISTIC_LABELS.numeroLargo)
   })
 
-  it('⚠ the report names the RULE and never the address', () => {
-    const out = run('Vivo en Calle Morelos No. 45, Col. Portales, C.P. 03300.')
-    const serialized = JSON.stringify(out.removed)
-    expect(serialized).not.toContain('Morelos')
-    expect(serialized).not.toContain('Portales')
-    expect(serialized).not.toContain('03300')
-  })
-  it('🔴 stops at the clause boundary instead of eating the sentence', () => {
-    /**
-     * THREE MEASURED OVER-MATCHES, ALL FROM THE SAME GREEDY TAIL.
-     *
-     * `(?:\s+WORD){0,4}` after `Col.` / `Alcaldía` has no terminator, so with a
-     * LOOSE word it ran straight into the next clause. Two consequences, and the
-     * second is the worse one: the sentence is destroyed, AND the match differs
-     * per occurrence, so the same colonia collects `[Domicilio A]`,
-     * `[Domicilio B]`, … — which defeats the entire reason these are labels and
-     * not redaction bars.
-     *
-     * Fixed by making every word after the first STRICT (capitalised), and by
-     * dropping `y` from the connector list — it is the word that joins an
-     * address to whatever comes next.
-     */
-    const cases: ReadonlyArray<readonly [string, string]> = [
-      [
-        'Calle Morelos No. 45, Col. Portales y ahí vivía mi tía Rosa',
-        '[Domicilio A] y ahí vivía mi tía Rosa',
-      ],
-      ['Col. Portales y despues de eso ya no supe mas', '[Domicilio A] y despues de eso ya no supe mas'],
-    ]
-    for (const [input, expected] of cases) {
-      expect(run(input).text, input).toBe(expected)
-    }
+  it('⚠ the report names the RULE and never the postal code', () => {
+    expect(JSON.stringify(run('Vivo en C.P. 03300.').removed)).not.toContain('03300')
   })
 
-  it('🔴 a connector never matches the PREFIX of a longer word', () => {
-    // `de` was an alternative in a group with nothing after it, so it matched
-    // the first two letters of `despues` and the redaction came back as
-    // `[Domicilio A]spues de eso` — a shredded word, not a redaction. The
-    // trailing boundary on the connector list is what stops it.
-    expect(run('Col. Portales despues de eso').text).toBe('[Domicilio A] despues de eso')
-    expect(run('Col. Portales delante del pozo').text).toBe('[Domicilio A] delante del pozo')
-  })
-
-  it('leaves `camino` and spelled-out `número` alone — both are prose', () => {
-    // `camino` occurs 39 times in the corpus and is a metaphor every time; it is
-    // deliberately not a vía. `número` spelled out is not a marker, because "la
-    // casa número 3" is an ordinary sentence and the loose arm's any-word run
-    // sat right in front of it.
-    for (const line of [
-      'camino de regreso a la casa número 3 de la escuela',
-      'el camino de Dios 40 años después',
-      'que no se le caiga la mitad en el camino',
-    ]) {
-      expect(run(line).text, line).toBe(line)
-    }
-  })
-
-  it('⚠ a KNOWN over-match, written down rather than pretended away', () => {
-    // `privada` + a capitalised word + a bare number matches, and here the
-    // capitalised word is a person and the number is an age. Over-redaction, so
-    // it costs meaning and never leaks — the safe direction — and tightening it
-    // further would cost `Av. Zapata 128`, which is the shape the rule exists
-    // for. Recorded so the next reader knows it was weighed, not missed.
-    expect(run('la privada Ana 20 años tenía').text).toBe('la [Domicilio A] años tenía')
-  })
-
-  it('⚠ stays LINEAR on a whole transcript — these run on every document', () => {
-    /**
-     * 🔴 THE ADDRESS PATTERNS NEST A QUANTIFIER INSIDE AN ALTERNATION
-     * (`(?:\s+WORD){1,6}` on two arms), which is the shape catastrophic
-     * backtracking comes from. This stage runs on the FULL text of every
-     * testimony before the model ever sees it, so a pathological input would
-     * hang the ingest worker rather than merely be slow.
-     *
-     * What keeps it linear is the `{1,6}` CEILING — the run cannot grow with the
-     * input. Measured here rather than reasoned about, because the reasoning is
-     * exactly the kind that is quietly wrong after the next edit.
-     *
-     * The bound is deliberately loose (2s against a measured ~4ms) so this fails
-     * on a real blow-up and not on a loaded CI box.
-     */
-    const cases = [
-      'Calle ' + 'Morelos '.repeat(400),
-      'Calle ' + 'Morelos '.repeat(400) + '45',
-      'En la calle Morelos Zapata Juarez Hidalgo Allende '.repeat(400),
-      'calle ' + 'palabra '.repeat(400) + 'no. 45',
+  it('⚠ stays LINEAR on a whole transcript', () => {
+    // Loose bound (2s) so this fails on a real blow-up, not on a loaded box.
+    for (const text of [
+      'C.P.' + ' '.repeat(100_000) + 'x',
+      'código postal' + ' '.repeat(100_000) + ':x',
       'Vivo en Calle Morelos No. 45, Col. Portales, C.P. 03300. '.repeat(2000),
-      /**
-       * 🔴 THE QUADRATIC CASE, AND IT WAS REAL. `\s*,?\s*` puts two `\s*` either
-       * side of an optional comma, so a run of n spaces can be split n ways and
-       * the engine tries every split when the literal after it fails. Measured
-       * before the fix: 16k spaces 0.7s, 32k 2.8s, 64k 10.8s, 100k 26.2s — on the
-       * server thread, on text any uploader controls, and PDF extraction produces
-       * long whitespace runs BY ACCIDENT. `\s*(?:,\s*)?` is unambiguous: 1.4ms at
-       * 100k.
-       */
-      'Calle Morelos No. 45' + ' '.repeat(100_000) + 'x',
-      'Col. Portales' + '\n'.repeat(64_000) + 'x',
-      // The lower-case settlement name and the Mz./Lt. tail (2026-10-21).
-      'col. ' + 'santa '.repeat(20_000),
-      'col. santa' + ' '.repeat(100_000) + 'cruz maría de la ribera vive',
-      'col. santa cruz' + ' '.repeat(100_000) + 'x',
-      'U.H. Vicente Guerrero Mz.' + ' '.repeat(100_000) + 'x',
-      'Col. Las Palmas, Mz. 7' + ' '.repeat(100_000) + 'Lt',
-    ]
-    for (const text of cases) {
+    ]) {
       const started = performance.now()
       run(text)
       expect(performance.now() - started, `${text.length} chars`).toBeLessThan(2000)
