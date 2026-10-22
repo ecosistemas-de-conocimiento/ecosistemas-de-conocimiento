@@ -33,6 +33,11 @@
  *   GATE_OUT          JSONL file to append rows to. Default: a file in the OS
  *                     temp dir, printed at the end.
  *   GATE_DRY=1        build and print transcript stats only.
+ *   GATE_TEXT_FILE    measure this one text instead of the corpus transcripts
+ *                     (GATE_CORPUS_DIR and GATE_WORDS are then ignored). The
+ *                     planted-name columns mean nothing for it, so each row
+ *                     carries `redactedText` to read instead. ⚠ Only for a
+ *                     synthetic text: the row lands in a file in plain text.
  *   plus the backend's usual env: AI_SERVICE_URL, AI_SERVICE_API_KEY (DATABASE_URI
  *   is not used: the gate needs no database). Nothing here embeds a secret.
  *
@@ -44,7 +49,7 @@
  * capitalised word of it appears in the output more often than in the
  * unplanted text, so a half-caught "Nicasia [Persona C]" is a miss.
  */
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, readFileSync } from 'node:fs'
 import { hostname, loadavg, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -60,8 +65,9 @@ for (const v of [
   process.env[v] = 'false'
 }
 
+const textFile = process.env.GATE_TEXT_FILE
 const corpusDir = process.env.GATE_CORPUS_DIR
-if (!corpusDir) {
+if (!corpusDir && !textFile) {
   console.error('GATE_CORPUS_DIR is required (root of the corpus repo).')
   process.exit(1)
 }
@@ -76,8 +82,10 @@ const dry = process.env.GATE_DRY === '1'
 const org = process.env.GATE_ORG || '1'
 const outFile = process.env.GATE_OUT || join(tmpdir(), `anonymise-gate-${Date.now()}.jsonl`)
 
-const { paragraphs, files } = loadParagraphs(corpusDir)
-const transcripts = sizes.map((nominal) => ({ nominal, text: buildTranscript(paragraphs, nominal) }))
+const { paragraphs, files } = textFile ? { paragraphs: [], files: 0 } : loadParagraphs(corpusDir as string)
+const transcripts = textFile
+  ? [{ nominal: 0, text: readFileSync(textFile, 'utf8') }]
+  : sizes.map((nominal) => ({ nominal, text: buildTranscript(paragraphs, nominal) }))
 
 const { chunkText } = await import('../src/lib/anonymise/chunk')
 const { DEFAULT_CHUNK_WORDS } = await import('../src/lib/anonymise/detector')
@@ -190,6 +198,7 @@ async function one(nominal: number, text: string, run: number) {
     titleLeftovers: [...out.matchAll(titleRe)].map((m) => m[0]),
     survivorTexts: [...new Set(survivors.map((s) => out.slice(s.start, s.end)))],
     survivorContext: survivors.slice(0, 15).map((s) => out.slice(Math.max(0, s.start - 50), s.end + 30)),
+    ...(textFile ? { redactedText: out } : {}),
     costUsd: calls.reduce((a, c) => a + (c.costUsd ?? 0), 0),
     nCalls: calls.length,
     nCached: calls.filter((c) => c.cached).length,
