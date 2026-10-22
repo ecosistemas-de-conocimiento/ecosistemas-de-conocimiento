@@ -145,6 +145,10 @@
    */
   const scope = $derived(data.scope);
 
+  // `combined` is a prop the map lane adds to `OverviewGraph`. Passed through a
+  // typed spread so this page compiles before and after that lane lands.
+  const overviewExtra = $derived({ combined: data.combined } as Record<string, unknown>);
+
   /**
    * The scope half of the URL, echoed back on every in-page navigation.
    *
@@ -181,7 +185,7 @@
     <!-- ⚠ Two different sentences. A member is told to ask for access; an admin
          is told the installation has no ecosistema — telling THEM to ask for
          access sends them to themselves. See `noEcosystemCopy`. -->
-    <p class="notice">{noEcosystemCopy(scope !== null)}</p>
+    <p class="notice">{noEcosystemCopy(scope?.admin === true)}</p>
   {:else if data.state === 'unavailable' || !data.viewOk}
     <!-- ⚠ An outage is not an empty ecosistema, and must not read like one. -->
     <p class="notice">{GRAPH_UNAVAILABLE}</p>
@@ -200,14 +204,14 @@
          the URL, so the back button undoes it. -->
     <div class="stage">
       <OverviewGraph
+        {...overviewExtra}
         entities={data.view.entities}
         edges={data.view.edges ?? []}
         {selectedId}
         {matches}
         panelNeighbourIds={data.entity?.neighbours.map((n) => n.entity.id) ?? []}
         onSelect={(id) => onMapSelection({ kind: 'node', id })}
-        onDeselect={() => onMapSelection({ kind: 'background' })}
-      />
+        onDeselect={() => onMapSelection({ kind: 'background' })}      />
 
       <section class="col-panel" aria-label="Conexiones" aria-busy={busy} bind:this={panelEl}>
         {#if data.entityState === 'unavailable'}
@@ -222,6 +226,7 @@
             lenguaByDocument={data.lenguaByDocument}
             onSelectEdge={(id) => navigate(data.entity!.entity.id, id)}
             onRecentre={(id) => navigate(id, null)}
+            ecosystemNames={data.combined ? data.ecosystemNames : undefined}
           />
         {/if}
         <!-- No "pick an entity" hint when nothing is selected (owner, 2026-10-21). -->

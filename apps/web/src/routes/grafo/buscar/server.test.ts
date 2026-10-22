@@ -90,4 +90,32 @@ describe('POST /grafo/buscar', () => {
     delete env.GRAPH_SEARCH_ENABLED;
     expect((await POST(makeEvent({ q: 'x' }))).status).toBe(200);
   });
+
+  describe('combined scope (`eco: todos`)', () => {
+    const two = { ok: true, selected: { id: '7', name: 'A' }, list: [{ id: '7', name: 'A' }, { id: '8', name: 'B' }], source: 'cookie' };
+
+    it('🔴 sends the WORD `all`, never a list, for a member of two or more', async () => {
+      mockedResolve.mockResolvedValue(two);
+      await POST(makeEvent({ q: 'x', eco: 'todos' }));
+      expect(mockedView).toHaveBeenCalledWith('tok', { organizationId: 'all', q: 'x' });
+    });
+
+    it('answers nothing, without a backend call, for a member of one', async () => {
+      expect(await (await POST(makeEvent({ q: 'x', eco: 'todos' }))).json()).toEqual({ ids: [] });
+      expect(mockedView).not.toHaveBeenCalled();
+    });
+
+    it('lets a platform admin search the combined scope', async () => {
+      await POST(makeEvent({ q: 'x', eco: 'todos' }, { id: 1, isPlatformAdmin: true }));
+      expect(mockedView).toHaveBeenCalledWith('tok', { organizationId: 'all', q: 'x' });
+    });
+
+    it('lets a member name one of their OWN ecosistemas, and only those', async () => {
+      mockedResolve.mockResolvedValue(two);
+      await POST(makeEvent({ q: 'x', eco: '8' }));
+      expect(mockedView).toHaveBeenLastCalledWith('tok', { organizationId: '8', q: 'x' });
+      await POST(makeEvent({ q: 'x', eco: '999' }));
+      expect(mockedView).toHaveBeenLastCalledWith('tok', { organizationId: '7', q: 'x' });
+    });
+  });
 });

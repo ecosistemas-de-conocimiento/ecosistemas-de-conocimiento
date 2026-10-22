@@ -8,6 +8,10 @@
  *                            EDGE, not the intersection of two entity lists.
  *   POST /api/graph/retrieve      { organization, query, limit? }
  *
+ *   `organization=all` on the first two: the COMBINED graph over the caller's
+ *   own ecosistemas (`authoriseCombined`; `lib/graph/combined.ts`). Retrieval
+ *   (chat) stays one ecosistema.
+ *
  * ⚠ THESE THREE ROUTES ARE THE ONLY WAY TO READ THE GRAPH. The collections
  * themselves have `read: () => false` for everyone, platform admins included
  * (`collections/GraphEntities.ts` carries the full argument): Payload's access
@@ -82,6 +86,12 @@ import {
   readJsonBody,
 } from './http'
 import { rateLimits } from '../lib/rateLimit'
+import { sql } from '@payloadcms/db-postgres'
+import {
+  normaliseOrgIds,
+  readCombinedEntityDetail,
+  readCombinedView,
+} from '../lib/graph/combined'
 
 /**
  * ⚠ `no-store` ON EVERY RESPONSE. A graph answer is scoped to one ecosistema and
@@ -160,6 +170,70 @@ function isAuthorised(value: Authorised | Response): value is Authorised {
 }
 
 /**
+ * `organization=all` asks for the COMBINED graph ("Todos mis ecosistemas").
+ * The word is the whole request: the set itself is never read from the client.
+ */
+export const COMBINED_ORGANIZATION = 'all'
+
+function isCombinedRequest(raw: unknown): boolean {
+  return typeof raw === 'string' && raw.trim() === COMBINED_ORGANIZATION
+}
+
+/** Fewest memberships that unlock the combined graph for a non-admin. */
+export const MIN_COMBINED_MEMBERSHIPS = 2
+
+/**
+ * 🔴 GATE 1 FOR THE COMBINED GRAPH: WHICH ECOSISTEMAS DOES IT COVER?
+ *
+ * Derived ONLY here, from the caller's own memberships (`organizationIdsForUser`,
+ * the resolver `authoriseOrganization` uses). A platform admin gets every
+ * ecosistema, under the same gates a member gets (ADR §7.1). A member of fewer
+ * than {@link MIN_COMBINED_MEMBERSHIPS} gets a 403: there is nothing to combine.
+ */
+export async function authoriseCombined(
+  req: PayloadRequest,
+): Promise<{ organizationIds: number[] } | Response> {
+  const user = getAuthenticatedUser(req)
+  if (!user) return errorResponse(401, 'Necesitas iniciar sesión.')
+
+  if (isPlatformAdminUser(req.user)) {
+    const rows = await asQueryPayload(req).db.drizzle.execute(
+      sql`SELECT id FROM organizations ORDER BY id`,
+    )
+    const list = Array.isArray(rows) ? rows : ((rows as { rows?: unknown[] })?.rows ?? [])
+    return { organizationIds: normaliseOrgIds(list.map((r) => (r as { id?: unknown })?.id)) }
+  }
+
+  const organizationIds = normaliseOrgIds(await organizationIdsForUser(req.payload, user.id))
+  if (organizationIds.length < MIN_COMBINED_MEMBERSHIPS) {
+    return errorResponse(403, 'No perteneces a varios ecosistemas.')
+  }
+  return { organizationIds }
+}
+
+/**
+ * Rate limit for a combined read. ⚠ One bucket per CALLER for the combined
+ * scope, not a charge to every included ecosistema's bucket: one person's map
+ * must not spend the budget of tenants they merely belong to.
+ */
+async function guardCombined(req: PayloadRequest): Promise<Response | null> {
+  const user = getAuthenticatedUser(req)
+  if (!user) return errorResponse(401, 'Necesitas iniciar sesión.')
+  return guardRateLimit(req, [
+    {
+      scope: 'graph:view:user',
+      key: `graph:view:user:${user.id}`,
+      limit: rateLimits.graphViewPerUser(),
+    },
+    {
+      scope: 'graph:org',
+      key: `graph:org:combined:${user.id}`,
+      limit: rateLimits.graphPerOrganization(),
+    },
+  ])
+}
+
+/**
  * Count one authorised graph request against its two buckets.
  *
  * Returns a `429` to hand straight back, or `null` to continue — the same shape
@@ -234,6 +308,28 @@ export const graphViewEndpoint: Endpoint = {
   path: '/graph/view',
   method: 'get',
   handler: async (req) => {
+    if (isCombinedRequest(queryParam(req, 'organization'))) {
+      const combined = await authoriseCombined(req)
+      if (combined instanceof Response) return combined
+      const limitedCombined = await guardCombined(req)
+      if (limitedCombined) return limitedCombined
+      const combinedType = parseEntityType(queryParam(req, 'type'))
+      if (combinedType === undefined) {
+        return errorResponse(
+          400,
+          `El parámetro \`type\` debe ser uno de: ${GRAPH_ENTITY_TYPES.join(', ')}.`,
+        )
+      }
+      return ok(
+        await readCombinedView(asQueryPayload(req), {
+          organizationIds: combined.organizationIds,
+          type: combinedType,
+          q: queryParam(req, 'q'),
+          limit: positiveIntParam(queryParam(req, 'limit')) ?? MAX_VIEW_ENTITIES,
+        }),
+      )
+    }
+
     const auth = await authoriseOrganization(req, queryParam(req, 'organization'))
     if (!isAuthorised(auth)) return auth
 
@@ -294,6 +390,21 @@ export const graphEntityEndpoint: Endpoint = {
   path: '/graph/entity/:id',
   method: 'get',
   handler: async (req) => {
+    if (isCombinedRequest(queryParam(req, 'organization'))) {
+      const combined = await authoriseCombined(req)
+      if (combined instanceof Response) return combined
+      const limitedCombined = await guardCombined(req)
+      if (limitedCombined) return limitedCombined
+      const combinedId = positiveIntParam((req.routeParams as { id?: string } | undefined)?.id)
+      if (combinedId === null) return errorResponse(400, 'Id de nodo inválido.')
+      const combinedDetail = await readCombinedEntityDetail(asQueryPayload(req), {
+        organizationIds: combined.organizationIds,
+        entityId: combinedId,
+      })
+      if (!combinedDetail) return errorResponse(404, 'Ese nodo no existe en tus ecosistemas.')
+      return ok(combinedDetail)
+    }
+
     const auth = await authoriseOrganization(req, queryParam(req, 'organization'))
     if (!isAuthorised(auth)) return auth
 

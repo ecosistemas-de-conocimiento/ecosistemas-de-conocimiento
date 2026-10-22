@@ -31,6 +31,7 @@
     GRAPH_RECENTRE_LABEL,
     relationLabel,
     supportCopy,
+    entityEcosystemNames,
     supportShort,
     typeChipLabel,
     type GraphEntityDetail,
@@ -52,6 +53,8 @@
     lengua?: string;
     /** Documento id → lengua, from `/api/lenguas`. A testimonio is never in it. */
     lenguaByDocument?: Record<string, string>;
+    /** Combined view: ecosistema id → name, for the merged node's chips. */
+    ecosystemNames?: Record<string, string>;
   };
   let {
     detail,
@@ -60,7 +63,12 @@
     onRecentre,
     lengua = '',
     lenguaByDocument = {},
+    ecosystemNames,
   }: Props = $props();
+
+  const ecoNames = $derived(
+    ecosystemNames ? entityEcosystemNames(detail.entity, ecosystemNames) : [],
+  );
 
   const allDocuments = $derived(edge ? edge.documents : detail.documents);
   const documents = $derived(filterByLengua(allDocuments, lenguaByDocument, lengua));
@@ -97,6 +105,11 @@
       <span class="chip">{typeChipLabel(detail.entity.type)}</span>
       <span>{supportCopy(detail.entity.support)}</span>
     </p>
+    {#if ecoNames.length > 0}
+      <ul class="ecos" data-testid="grafo-entidad-ecosistemas">
+        {#each ecoNames as name (name)}<li class="chip">{name}</li>{/each}
+      </ul>
+    {/if}
   </header>
 
   {#if detail.neighbours.length === 0}
@@ -193,6 +206,16 @@
     font-weight: 800;
     letter-spacing: -0.015em;
     color: var(--edc-color-ink);
+  }
+  .ecos {
+    margin: 0.35rem 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    font-size: 0.72rem;
+    color: var(--edc-color-ink-soft);
   }
   .meta {
     margin: 0;

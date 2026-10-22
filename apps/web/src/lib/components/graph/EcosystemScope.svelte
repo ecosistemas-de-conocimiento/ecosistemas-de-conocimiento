@@ -54,6 +54,8 @@
     GRAPH_SWITCHER_SEARCH_GO,
     GRAPH_SWITCHER_SEARCH_LABEL,
     GRAPH_SWITCHER_SEARCH_PLACEHOLDER,
+    GRAPH_COMBINED_ECO,
+    GRAPH_COMBINED_LABEL,
     switcherCountCopy,
     switcherNoMatches,
     type GraphScopePicker,
@@ -131,6 +133,7 @@
            reaches the backend when the list is bigger than one page. ⚠ It posts
            to `/grafo` with only `eco` and `q` — the entity selection is left
            behind on purpose, same reason as `graphEcosystemHref`. -->
+      {#if scope.admin}
       <form class="search" method="GET" action="/grafo">
         {#if selected}<input type="hidden" name="eco" value={selected.id} />{/if}
         <label class="sr-only" for="grafo-eco-search">{GRAPH_SWITCHER_SEARCH_LABEL}</label>
@@ -160,6 +163,22 @@
           filtered,
         })}
       </p>
+      {/if}
+
+      {#if scope.combined}
+        {@const isCombined = selected?.id === GRAPH_COMBINED_ECO}
+        <a
+          class="row combined-row"
+          class:current-row={isCombined}
+          href={graphEcosystemHref(GRAPH_COMBINED_ECO, scope.search)}
+          aria-current={isCombined ? 'true' : undefined}
+          data-testid="grafo-todos-mis-ecosistemas"
+          data-interactive
+        >
+          <span class="tick" aria-hidden="true">{isCombined ? '✓' : ''}</span>
+          <span class="row-name">{GRAPH_COMBINED_LABEL}</span>
+        </a>
+      {/if}
 
       {#if matches.length === 0}
         <p class="note">{switcherNoMatches(term)}</p>
@@ -178,7 +197,7 @@
                 <span class="tick" aria-hidden="true">{isCurrent ? '✓' : ''}</span>
                 <span class="row-name">{eco.name}</span>
                 {#if eco.slug}<span class="slug">{eco.slug}</span>{/if}
-                {#if memberOf.has(eco.id)}
+                {#if scope.admin && memberOf.has(eco.id)}
                   <!-- 🔴 Membership is a LABEL here, never a filter. You may look
                        at all of them; you belong to some of them. -->
                   <span class="member">{GRAPH_SWITCHER_MEMBER_TAG}</span>
@@ -318,6 +337,11 @@
     font-size: 0.85rem;
     text-decoration: none;
     color: var(--edc-color-ink-body);
+  }
+  .combined-row {
+    border-radius: var(--edc-radius-1);
+    border: 1px solid var(--edc-color-line);
+    background: var(--edc-color-surface);
   }
   .row:hover {
     background: var(--edc-color-surface-soft);

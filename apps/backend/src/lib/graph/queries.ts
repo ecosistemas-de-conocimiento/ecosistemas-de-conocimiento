@@ -278,7 +278,7 @@ export interface GraphNeighbour {
 
 export type GraphEdgeDirection = 'out' | 'in' | 'both'
 
-function toDirection(value: unknown): GraphEdgeDirection {
+export function toDirection(value: unknown): GraphEdgeDirection {
   return value === 'out' || value === 'in' ? value : 'both'
 }
 
@@ -361,7 +361,7 @@ export interface GraphQueryPayload {
   db: { drizzle: { execute(query: GraphSql): Promise<unknown> } }
 }
 
-type Row = Record<string, unknown>
+export type Row = Record<string, unknown>
 
 /**
  * The rows out of a `db.drizzle.execute()`.
@@ -372,7 +372,7 @@ type Row = Record<string, unknown>
  * is the worst failure this file could have — it looks exactly like a young
  * ecosistema.
  */
-function rowsOf(result: unknown): Row[] {
+export function rowsOf(result: unknown): Row[] {
   if (Array.isArray(result)) return result as Row[]
   if (result && typeof result === 'object') {
     const rows = (result as { rows?: unknown }).rows
@@ -398,11 +398,11 @@ export function toCount(value: unknown): number {
   return 0
 }
 
-function toId(value: unknown): number {
+export function toId(value: unknown): number {
   return toCount(value)
 }
 
-function toText(value: unknown): string {
+export function toText(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value)
 }
 
@@ -439,7 +439,7 @@ function joinPublishedDocuments(alias: 'm' | 'r', organizationId: number): Graph
  * Every statement gets it either directly on `graph_entities` or through
  * {@link entitySupportCte}, which every edge/neighbour/document statement joins.
  */
-function notNoise(alias: 'e' | 'ne'): GraphSql {
+export function notNoise(alias: 'e' | 'ne'): GraphSql {
   const col = alias === 'e' ? sql`e.canonical_key` : sql`ne.canonical_key`
   return sql` AND NOT (${col} ~ ${GRAPH_NOISE_KEY_PATTERN})`
 }
@@ -455,7 +455,7 @@ function notNoise(alias: 'e' | 'ne'): GraphSql {
  *
  * Needs `d` (the published-documents join) in scope.
  */
-function personaFromDocumentoOnly(alias: 'e' | 'ne' | 'ce'): GraphSql {
+export function personaFromDocumentoOnly(alias: 'e' | 'ne' | 'ce'): GraphSql {
   const col = alias === 'e' ? sql`e.type` : alias === 'ne' ? sql`ne.type` : sql`ce.type`
   return sql` AND (${col} <> 'persona' OR d.content_kind = 'documento')`
 }
@@ -674,7 +674,7 @@ export async function readEntityView(
   }
 }
 
-function flipDirection(direction: GraphEdgeDirection): GraphEdgeDirection {
+export function flipDirection(direction: GraphEdgeDirection): GraphEdgeDirection {
   return direction === 'out' ? 'in' : direction === 'in' ? 'out' : 'both'
 }
 
@@ -688,7 +688,7 @@ export interface GraphThresholds {
   topK?: number
 }
 
-function thresholdsOf(value: number | GraphThresholds): Required<GraphThresholds> {
+export function thresholdsOf(value: number | GraphThresholds): Required<GraphThresholds> {
   const t = typeof value === 'number' ? { entity: value, edge: value } : value
   const topK = Math.floor(Number(t.topK ?? graphCoMentionTopK()))
   return {
@@ -1121,7 +1121,7 @@ export function entityDocumentsQuery(args: EntityDetailArgs): GraphSql {
  * duplicate a rule already enforced upstream, and both are here because this is
  * the last point before the bytes leave the process.
  */
-function mapDocumentRow(row: Row, withSnippet: boolean): GraphDocumentRef {
+export function mapDocumentRow(row: Row, withSnippet: boolean): GraphDocumentRef {
   const contentKind = contentKindOf({ contentKind: row.content_kind })
   const ref: GraphDocumentRef = {
     id: toId(row.id),
@@ -1642,7 +1642,7 @@ export function seedEntitiesForQuery(
  * Each id is its own scalar parameter, so nothing is inlined. An empty list
  * renders `ARRAY[]::int[]`, which Postgres accepts and `ANY` treats as no match.
  */
-function intArray(ids: readonly number[]): GraphSql {
+export function intArray(ids: readonly number[]): GraphSql {
   return sql`ARRAY[${sql.join(
     ids.map((id) => sql`${id}`),
     sql`, `,
@@ -1842,7 +1842,7 @@ export function expansionTerms(
 // Shared bits
 // ---------------------------------------------------------------------------
 
-function clampLimit(requested: unknown, fallback: number, max: number): number {
+export function clampLimit(requested: unknown, fallback: number, max: number): number {
   const n = typeof requested === 'number' ? requested : Number(requested)
   if (!Number.isFinite(n) || n < 1) return Math.min(fallback, max)
   return Math.min(Math.floor(n), max)
@@ -1916,7 +1916,21 @@ const SEARCHABLE_TEXT = sql`coalesce(CASE
  * the only fold available in SQL is `lower()`. Aliases exist so "el CIDE" finds
  * "CIDE"; that works. "el CIDÉ" would not.
  */
-function buildSearchFilter(q: string | null | undefined, organizationId: number): GraphSql {
+export function buildSearchFilter(
+  q: string | null | undefined,
+  organizationId: number | { anyOf: GraphSql },
+): GraphSql {
+  // `{ anyOf }` (the combined view, `combined.ts`): any included ecosistema,
+  // with every row tied to the MENTION's own ecosistema. `se` is `e` itself
+  // (same id), so an entity only matches through its own ecosistema's text.
+  // ⚠ Uncorrelated on purpose: a subquery that reads `e.organization_id` is
+  // re-run per entity, and the full-text work with it (measured 29 s locally).
+  const single = typeof organizationId === 'number'
+  const docOrg = single
+    ? sql`${organizationId}`
+    : sql`sm.organization_id AND sd.organization_id = ANY(${organizationId.anyOf})`
+  const entOrg = single ? sql`${organizationId}` : sql`sm.organization_id`
+  const mentionOrg = single ? sql`${organizationId}` : sql`ANY(${organizationId.anyOf})`
   // NUL bytes: Postgres rejects them in a text parameter (a 500, not a miss).
   const raw = typeof q === 'string' ? q.replaceAll('\u0000', '').trim().slice(0, MAX_SEARCH_CHARS) : ''
   if (raw === '') return sql``
@@ -1938,12 +1952,12 @@ function buildSearchFilter(q: string | null | undefined, organizationId: number)
       FROM graph_mentions sm
       JOIN documents sd
         ON sd.id = sm.document_id
-       AND sd.organization_id = ${organizationId}
+       AND sd.organization_id = ${docOrg}
        AND sd.publication_status = 'published'
       JOIN graph_entities se
         ON se.id = sm.entity_id
-       AND se.organization_id = ${organizationId}
-      WHERE sm.organization_id = ${organizationId}
+       AND se.organization_id = ${entOrg}
+      WHERE sm.organization_id = ${mentionOrg}
         AND (se.type <> 'persona' OR sd.content_kind = 'documento')
         AND (
           to_tsvector('spanish', ${SEARCHABLE_TEXT}) @@ websearch_to_tsquery('spanish', ${raw})
