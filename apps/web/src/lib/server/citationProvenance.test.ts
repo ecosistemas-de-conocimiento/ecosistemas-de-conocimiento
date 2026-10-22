@@ -7,6 +7,8 @@ import {
   REFUSAL_CUES,
   hasRefusalCue,
   isNoAnswer,
+  opensWithRefusal,
+  splitGeneralKnowledge,
   toBrowserProvenance,
   toBrowserMessage,
 } from './citationProvenance';
@@ -386,5 +388,83 @@ describe('toBrowserMessage', () => {
 
   it('leaves a message without provenance unchanged', () => {
     expect(toBrowserMessage({ id: 1, role: 'user', content: 'q' })).toEqual({ id: 1, role: 'user', content: 'q' });
+  });
+});
+
+// Variant E (`CHAT_CITE_VARIANT=E`). Owner ruling 2026-10-21: "we can still
+// have answers, either from the docs, the corpus, or the training weights".
+// Source rule, fallback and no-answer guard, designed together.
+describe('citedBrowserProvenance — variant E: general knowledge lists no sources', () => {
+  const doc = (i: number, score = 0.5) => ({
+    ...docChunk,
+    chunkId: `d${i}`,
+    score,
+    metadata: { docId: String(i), title: `Doc ${i}` },
+  });
+  const five = { chunks: [doc(1, 0.1), doc(2, 0.9), doc(3, 0.5), doc(4, 0.7), doc(5, 0.2)] };
+  const ids = (p: ReturnType<typeof citedBrowserProvenance>) => (p?.chunks ?? []).map((c) => c.chunkId);
+  const E = (answer: string, titleMatch: { id: string; name: string } | null = null) =>
+    citedBrowserProvenance(five as never, answer, titleMatch, 'E');
+
+  it('🔴 off-topic: a general-knowledge answer shows 0 sources', () => {
+    expect(E('Fuera de los documentos: la capital de Francia es París.')).toBeNull();
+    expect(E('**Fuera de los documentos:** la capital de Francia es París.')).toBeNull();
+    expect(E('## Respuesta\n\nFUERA DE LOS DOCUMENTOS — París.')).toBeNull();
+  });
+
+  it('🔴 a stray [N] inside the general-knowledge part never becomes a source', () => {
+    expect(E('Fuera de los documentos: París es la capital [1, 2, 3, 4, 5].')).toBeNull();
+    expect(ids(E('El riego empezó en 2020 [2].\n\nFuera de los documentos: el riego por goteo ahorra agua [4].'))).toEqual([
+      'd2',
+    ]);
+  });
+
+  it('documents first with [N], then general knowledge: only the cited sources', () => {
+    const answer = 'Las familias valoran la llamada semanal [3].\n\nFuera de los documentos: suele ayudar a la asistencia.';
+    expect(ids(E(answer))).toEqual(['d3']);
+  });
+
+  it('a passage-based answer that forgot [N] still gets the top-3 fallback', () => {
+    expect(ids(E('El dengue se transmite por mosquitos.'))).toEqual(['d2', 'd4', 'd3']);
+  });
+
+  it('🔴 no [N] and a general-knowledge part: no fallback, so general knowledge is never attributed', () => {
+    expect(E('Los documentos tratan de salud comunitaria.\n\nFuera de los documentos: París.')).toBeNull();
+  });
+
+  it('🔴 a refusal cue counts only in the FIRST sentence', () => {
+    // Later "no hablan" keeps the fallback (A would hide it: cue anywhere).
+    const later = 'Las familias cuentan que la maestra llamaba. Los documentos no hablan del transporte.';
+    expect(opensWithRefusal(later)).toBe(false);
+    expect(ids(E(later))).toEqual(['d2', 'd4', 'd3']);
+    expect(citedBrowserProvenance(five as never, later, null, 'A')).toBeNull();
+    // An opening refusal still lists nothing, with or without [N].
+    expect(E('Los documentos no hablan de esto.')).toBeNull();
+    expect(E('Los documentos no mencionan París. Tratan de salud [1, 2, 3].')).toBeNull();
+    expect(opensWithRefusal('Los textos no tratan París. Pero sí el riego.')).toBe(true);
+  });
+
+  it('a title-matched document is still shown: the person named it', () => {
+    expect(ids(E('Fuera de los documentos: París.', { id: '4', name: 'Doc 4' }))).toEqual(['d4']);
+  });
+
+  it('"fuera de los documentos" in prose, without a colon or dash, is not the lead', () => {
+    expect(splitGeneralKnowledge('Lo que pasa fuera de los documentos, nadie lo sabe.').general).toBe(false);
+    expect(splitGeneralKnowledge('Afuera de los documentos: no.').general).toBe(false);
+    const { documents, general } = splitGeneralKnowledge('Dato [1].\nFuera de los documentos: otro.');
+    expect(general).toBe(true);
+    expect(documents).toBe('Dato [1].\n');
+  });
+
+  it('never lists a conversation turn, and caps at the source limit', () => {
+    const p = { chunks: [{ ...assistantChunk }, doc(2)] };
+    expect(ids(citedBrowserProvenance(p as never, 'Según [1] y [2].', null, 'E'))).toEqual(['d2']);
+    expect(ids(citedBrowserProvenance(p as never, 'Sin marcas.', null, 'E'))).toEqual(['d2']);
+  });
+
+  it('A is unchanged: the default variant still refuses on a cue anywhere', () => {
+    const answer = 'Hay relatos de docentes. Los documentos disponibles no contienen testimonios de familias.';
+    expect(citedBrowserProvenance(five as never, answer)).toBeNull();
+    expect(ids(E(answer))).toEqual(['d2', 'd4', 'd3']);
   });
 });
