@@ -368,6 +368,25 @@ export function locateSpan(source: string, needle: string): string | null {
 }
 
 /**
+ * 🔴 THE MASK TOKENS ai-service PUTS IN EVERY OUTGOING PROMPT. Its PII
+ * minimiser replaces addresses, phones, emails, CURP, RFC and names with these
+ * before the prompt leaves, so the model sees "[DIRECCION]" where the text says
+ * "calle Hidalgo 45". KEEP IN SYNC with `DEFAULT_PLACEHOLDERS` in
+ * `services/ai-service/src/services/ai/pii/types.ts`.
+ *
+ * Stored folded (lower case, no accents) so "[Dirección]" matches too. EDC's
+ * own placeholders (`[Domicilio A]`, `[Dato omitido]`) are a different set.
+ */
+const AI_SERVICE_MASK_TOKENS: readonly string[] = [
+  '[curp]',
+  '[rfc]',
+  '[email]',
+  '[telefono]',
+  '[direccion]',
+  '[nombre]',
+]
+
+/**
  * Pull `hallazgos` out of whatever the model actually said.
  *
  * ⚠ DEFENSIVE ABOUT SHAPE, NEVER ABOUT FAILURE. Fences and prose around the JSON
@@ -433,7 +452,23 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
     // so the replacement still finds it.
     // Titles: no word list; a title left beside a placeholder is published (owner, 2026-10-21, Q1).
     const located = locateSpan(sourceText, trimmed)
-    if (located === null) continue
+    // 🔴 A MASKED FINDING IS NOT A HALLUCINATION. Measured 3/3 runs: the model
+    // reported "[DIRECCION]", the drop below discarded it, and the real street
+    // shipped in a ready document. A finding carrying an ai-service mask token
+    // that we cannot place in the text means personal data we cannot see:
+    // hold for a human. Not retryable — the same prompt is masked again.
+    // A finding that IS in the text (a document really saying "[DIRECCION]")
+    // is located and redacted like any other.
+    if (located === null) {
+      const folded = [...trimmed].map(foldChar).join('')
+      if (AI_SERVICE_MASK_TOKENS.some((token) => folded.includes(token))) {
+        throw new DetectorFailure(
+          'dato-enmascarado',
+          'El modelo vio un dato enmascarado (una dirección, teléfono, correo, CURP, RFC o nombre) y no se puede ubicar en el texto. Una persona tiene que revisarlo.',
+        )
+      }
+      continue
+    }
 
     out.push({
       text: located,
