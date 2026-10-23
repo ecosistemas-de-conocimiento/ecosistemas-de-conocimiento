@@ -287,11 +287,11 @@ describe('🔴 a leftover fragment too weak to redact globally holds instead', (
   })
 
   it('a fragment with a proper noun is still redacted', async () => {
-    const text = 'Vivo en Tlapa, Ana lo sabe.'
+    const text = 'Vivo por Tlapa, Ana lo sabe.'
     const r = await gate(text, [[lugar('Tlapa')], [persona('Domicilio A], Ana')], []], { rounds: 3 })
     expect(r.status).toBe('ready')
     if (r.status !== 'ready') return
-    expect(r.redactedText).toBe('Vivo en [Domicilio A], [Persona A] lo sabe.')
+    expect(r.redactedText).toBe('Vivo por [Domicilio A], [Persona A] lo sabe.')
   })
 })
 

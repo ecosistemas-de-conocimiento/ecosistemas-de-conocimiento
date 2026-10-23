@@ -36,8 +36,9 @@
  *   GATE_TEXT_FILE    measure this one text instead of the corpus transcripts
  *                     (GATE_CORPUS_DIR and GATE_WORDS are then ignored). The
  *                     planted-name columns mean nothing for it, so each row
- *                     carries `redactedText` to read instead. ⚠ Only for a
- *                     synthetic text: the row lands in a file in plain text.
+ *                     carries `redactedText`, and each call the model's `raw`
+ *                     answer, to read instead. ⚠ Only for a synthetic text:
+ *                     the row lands in a file in plain text.
  *   plus the backend's usual env: AI_SERVICE_URL, AI_SERVICE_API_KEY (DATABASE_URI
  *   is not used: the gate needs no database). Nothing here embeds a secret.
  *
@@ -140,7 +141,7 @@ async function one(nominal: number, text: string, run: number) {
             json = (e as { failureClass?: string }).failureClass ?? 'error'
           }
           const { text: _t, parsed: _p, ...meta } = res as typeof res & { parsed?: unknown }
-          calls.push({ timeoutMs: opts?.timeoutMs, ms: Date.now() - t0, inputChars, outChars: raw.length, json, findings, rawTail: raw.slice(-60), ...meta })
+          calls.push({ timeoutMs: opts?.timeoutMs, ms: Date.now() - t0, inputChars, outChars: raw.length, json, findings, rawTail: raw.slice(-60), ...(textFile ? { raw } : {}), ...meta })
           return res
         } catch (e) {
           const err = e as { name?: string; status?: number; message?: string }

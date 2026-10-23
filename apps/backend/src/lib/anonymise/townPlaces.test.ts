@@ -169,3 +169,43 @@ describe('isTownLevelPlace — the two rules', () => {
     expect(isTownLevelPlace({ text: 'Tlapa', type: 'lugar' }, text)).toBe(false)
   })
 })
+
+describe('isTownLevelPlace — the span the model returns (2026-10-23)', () => {
+  const text = 'Yo vivo en Xochitepec con mi familia.'
+  it('reads past ONE lead: a preposition, or a residence/origin verb and a preposition', () => {
+    expect(isTownLevelPlace({ text: 'Xochitepec', type: 'lugar' }, text)).toBe(true)
+    expect(isTownLevelPlace({ text: 'en Xochitepec', type: 'lugar' }, text)).toBe(true)
+    expect(isTownLevelPlace({ text: 'vivo en Xochitepec', type: 'lugar' }, text)).toBe(true)
+    expect(isTownLevelPlace({ text: 'de Xochitepec', type: 'lugar' }, 'Soy de Xochitepec.')).toBe(true)
+    expect(isTownLevelPlace({ text: 'soy de Xochitepec', type: 'lugar' }, 'Soy de Xochitepec.')).toBe(true)
+  })
+  it('🔴 the lead is not a pass: the town after it still needs its own context', () => {
+    expect(isTownLevelPlace({ text: 'Yo vivo en Xochitepec', type: 'lugar' }, text)).toBe(false)
+    expect(isTownLevelPlace({ text: 'en Xiadani', type: 'lugar' }, 'Pienso en Xiadani.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'de Soledad', type: 'lugar' }, 'Es la hija de Soledad.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'de Xiadani', type: 'lugar' }, 'Es la hija de Xiadani.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'en Santa Úrsula', type: 'lugar' }, 'Vivo en Santa Úrsula.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'en Xochitepec', type: 'otro' }, text)).toBe(false)
+  })
+  it('🔴 streets, colonias, ranchos and parajes, with or without the lead, are not towns', () => {
+    for (const [span, t] of [
+      ['calle Hidalgo 12', 'Vivo en calle Hidalgo 12.'],
+      ['en calle Hidalgo 12', 'Vivo en calle Hidalgo 12.'],
+      ['colonia Las Flores', 'Vivo en la colonia Las Flores.'],
+      ['Las Flores', 'Vivo en la colonia Las Flores.'],
+      ['en la colonia Las Flores', 'Vivo en la colonia Las Flores.'],
+      ['rancho El Mezquite', 'Vivo en el rancho El Mezquite.'],
+      ['El Mezquite', 'Vivo en el rancho El Mezquite.'],
+      ['paraje Tres Cruces', 'Trabajo en el paraje Tres Cruces.'],
+      ['Tres Cruces', 'Trabajo en el paraje Tres Cruces.'],
+      ['en el paraje Tres Cruces', 'Trabajo en el paraje Tres Cruces.'],
+    ] as const) {
+      expect(isTownLevelPlace({ text: span, type: 'lugar' }, t), span).toBe(false)
+    }
+  })
+  it('🔴 every spelling counts: a caps or glued occurrence out of a town context is not a town', () => {
+    expect(isTownLevelPlace({ text: 'Xiadani', type: 'lugar' }, 'Vivo en Xiadani. XIADANI me dijo.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'Xiadani', type: 'lugar' }, 'Vivo en Xiadani. Xiadanita me dijo.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'Xochitepec', type: 'lugar' }, 'Vivo en XOCHITEPEC.')).toBe(true)
+  })
+})

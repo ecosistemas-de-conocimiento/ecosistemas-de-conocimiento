@@ -9,10 +9,12 @@
  * on dev the same day (runbook `infra/fleet/edc-1.md` §4p), 31 of the 38
  * verify holds had place findings only.
  *
- * So the rule is repeated in code, on the HOLD DECISION only. 🔴 A finding this
- * file ignores SHIPS IN CLEAR (`gate.ts`), so every doubt goes to "hold": a
- * town held by mistake costs a reviewer one click; a person or a home let
- * through costs the person.
+ * So the rule is repeated in code, in TWO places of `gate.ts`: stage 3 does not
+ * redact a town, and verify does not hold on one. (Until 2026-10-23 it ran on
+ * verify only, and stage 3 turned "vivo en Xochitepec" into "vivo en
+ * [Domicilio A]" on dev.) 🔴 A finding this file ignores SHIPS IN CLEAR, so
+ * every doubt goes to "redact" / "hold": a town redacted or held by mistake
+ * costs a reviewer one click; a person or a home let through costs the person.
  *
  * ── THE RULES (all must pass, for EVERY occurrence) ──────────────────────────
  *
@@ -63,6 +65,7 @@
  * ⚠ A `persona`, `contacto`, `identificador` or `otro` finding is never ignored.
  */
 
+import { foldedMatches } from './detector'
 import type { DetectorFinding } from './types'
 
 /** Words that make a finding an address, a home, or an institution. Lower case, accents kept. */
@@ -283,9 +286,9 @@ function stateFollows(after: string): boolean {
 }
 
 /** Rules 2–4 for one occurrence. */
-function placeContext(text: string, at: number, needle: string, words: readonly string[]): boolean {
+function placeContext(text: string, at: number, end: number, words: readonly string[]): boolean {
   const beforeRaw = text.slice(0, at)
-  const after = text.slice(at + needle.length)
+  const after = text.slice(end)
   const first = lower(words[0]!)
   const startsWithTownWord = TOWN.has(first)
   const weak = ARTICLES.has(first) || SAINTS.has(first)
@@ -333,32 +336,60 @@ function placeContext(text: string, at: number, needle: string, words: readonly 
   return true
 }
 
+/** What may stand before a town inside the finding's own span: "en Xochitepec". */
+const LEAD_PREPOSITIONS = new Set(['en', 'de', 'del', 'desde', 'hasta', 'hacia'])
+
+/**
+ * The town the model's span wraps, or the span itself.
+ *
+ * Measured 2026-10-23 (fake-model tests, `gate.towns.test.ts`): models mark a
+ * town as "Xochitepec", "en Xochitepec" or "vivo en Xochitepec". Only ONE
+ * lead is cut — a locative preposition, optionally after one verb of residence
+ * or origin — and the rest must then pass every rule at every occurrence in
+ * the text, with the text's own words before it. "Yo vivo en …" is not cut:
+ * the whole span stays a finding and is redacted.
+ */
+function withoutLead(needle: string): string {
+  const parts = needle.split(/\s+/u)
+  let cut = 0
+  if (parts.length >= 2 && LEAD_PREPOSITIONS.has(bare(parts[0]!))) cut = 1
+  else if (
+    parts.length >= 3 &&
+    (isPlaceVerb(bare(parts[0]!)) || ORIGIN.has(bare(parts[0]!))) &&
+    LEAD_PREPOSITIONS.has(bare(parts[1]!))
+  ) {
+    cut = 2
+  }
+  let rest = needle
+  for (let i = 0; i < cut; i += 1) rest = rest.replace(/^\S+\s+/u, '')
+  return rest
+}
+
 /**
  * True when a `lugar` finding is a town-level place (shown by the owner's
- * ruling) and so must not hold the document. See the file header: every rule
- * must pass at every occurrence, and anything unsure is NOT a town.
+ * ruling) and so must not be redacted (stage 3) nor hold the document
+ * (verify). See the file header: every rule must pass at every occurrence,
+ * and anything unsure is NOT a town.
  *
- * @param text the text the finding was found in (verify's input).
+ * 🔴 EVERY OCCURRENCE, IN EVERY SPELLING. Stage 3 redacts case- and
+ * accent-blind (`gate.ts`), so skipping a town there skips "XOCHITEPEC" too:
+ * each folded occurrence, glued or not, must stand in a town context.
+ *
+ * @param text the text the finding was found in (stage 3's or verify's input).
  */
 export function isTownLevelPlace(
   finding: Pick<DetectorFinding, 'text' | 'type'>,
   text: string,
 ): boolean {
   if (finding.type !== 'lugar') return false
-  const needle = finding.text.normalize('NFC').trim()
+  const needle = withoutLead(finding.text.normalize('NFC').trim())
   if (needle === '' || /[\d.#°º/]/u.test(needle)) return false
   const words = needle.split(/[\s,]+/u).filter(Boolean)
   if (!hasTownShape(words)) return false
   if (namesAPerson(words)) return false
 
   const haystack = text.normalize('NFC')
-  let from = 0
-  let seen = 0
-  for (;;) {
-    const at = haystack.indexOf(needle, from)
-    if (at === -1) return seen > 0
-    seen += 1
-    from = at + 1
-    if (!placeContext(haystack, at, needle, words)) return false
-  }
+  const occurrences = foldedMatches(haystack, needle)
+  if (occurrences.length === 0) return false
+  return occurrences.every(([at, end]) => placeContext(haystack, at, end, words))
 }

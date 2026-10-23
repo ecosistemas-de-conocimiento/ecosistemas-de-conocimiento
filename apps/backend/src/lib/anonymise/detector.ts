@@ -422,7 +422,12 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
       text: located,
       type: (FINDING_TYPES as readonly unknown[]).includes(tipo)
         ? (tipo as DetectorFinding['type'])
-        : 'otro',
+        : // The prompt files homes under "Domicilios (marca \"lugar\")"; a model
+          // that answers "domicilio" means `lugar`. Still redacted, as an
+          // address; and the town rule (`townPlaces.ts`) reads it (2026-10-23).
+          tipo === 'domicilio'
+          ? 'lugar'
+          : 'otro',
       // 🔴 Only a literal `false` counts; a missing or odd value is identifying.
       ...((item as { identifica?: unknown }).identifica === false ? { identifying: false } : {}),
     })
