@@ -50,6 +50,12 @@ describe('toLibraryItem — testimonio label and excerpt', () => {
     for (const leak of ['Juana', 'Pérez', 'Las Flores', 'Ana']) expect(json).not.toContain(leak);
   });
 
+  it('🔴 shows the first line, origin and age included, with BIBLIOTECA_EXCERPT_SKIP_INTRO unset (owner ruling 2026-10-23, option A)', () => {
+    const intro = 'Nací hace 32 años en Huautla de Jiménez, Oaxaca, y ahí aprendí el mazateco.';
+    const item = toLibraryItem({ ...voz, redactedText: `${intro}\n\n${REDACTED}` }, null);
+    expect(item.excerpt).toBe(intro);
+  });
+
   it('🔴 never sends the redacted text itself, only the excerpt', () => {
     const long = `${REDACTED} ${'y luego seguimos caminando por el monte '.repeat(10)}`;
     const item = toLibraryItem({ ...voz, redactedText: long }, null);
