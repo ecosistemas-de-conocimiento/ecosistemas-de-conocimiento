@@ -32,6 +32,15 @@ function scriptedClient(perCall: H[][]): SyncGenerator {
   return new AIClient({ baseUrl: 'http://ai.test', apiKey: 'k', fetch: fetchImpl }) as unknown as SyncGenerator
 }
 
+/** Stage 3 silent; verify gives the answer (owner Q10 A: stage 3 redacts all it is told). */
+async function verifyOut(text: string, answers: H[]): Promise<string> {
+  const r = await runAnonymisationGate(
+    { contentKind: 'testimonio', text },
+    { detector: aiServiceDetector({ client: scriptedClient([[], answers, answers]) }) },
+  )
+  return r.status === 'ready' ? r.redactedText : `HOLD ${r.redactedText ?? ''}`
+}
+
 /** The same answer at stage 3 and at every verify call. */
 async function gateOut(text: string, answers: H[]): Promise<string> {
   const r = await runAnonymisationGate(
@@ -129,6 +138,16 @@ describe('🔴 audit 2026-10-23: never shown, at stage 3 or at verify', () => {
   }
 })
 
+// 🔴 The mode that matters since owner Q10 A: stage 3 redacts whatever the model
+// reports, so the town rule only decides verify's hold.
+describe('🔴 audit 2026-10-23: only verify finds it → hold', () => {
+  for (const [text, answers] of MUST_NOT_SHOW) {
+    it(`${JSON.stringify(text)} with ${JSON.stringify(answers)} → hold`, async () => {
+      expect(await verifyOut(text, answers)).toMatch(/^HOLD /)
+    })
+  }
+})
+
 // ⚠ ONE bare capitalised word after "vivo en" / "vengo de", typed `lugar`, with
 // nothing street-like after it, is shown. The owner is deciding this rule
 // (2026-10-23); these pin today's behaviour, not a ruling.
@@ -138,8 +157,8 @@ describe('one bare word after a residence or origin verb: shown (owner deciding)
     ['Vivo en Insurgentes.', [l('Insurgentes')]],
     ['Vengo de Xiadani.', [l('de Xiadani')]],
   ] as Array<[string, H[]]>) {
-    it(`${JSON.stringify(text)} → unchanged`, async () => {
-      expect(await gateOut(text, answers)).toBe(text)
+    it(`${JSON.stringify(text)} at verify → unchanged`, async () => {
+      expect(await verifyOut(text, answers)).toBe(text)
     })
   }
 })
@@ -155,8 +174,8 @@ describe('towns with an anchor stay shown', () => {
     ['Vivo en Baja California Sur.', [l('Baja California Sur')]],
     ['Vivo en Queretaro.', [l('Queretaro')]],
   ] as Array<[string, H[]]>) {
-    it(`${JSON.stringify(text)} with ${JSON.stringify(answers)} → unchanged`, async () => {
-      expect(await gateOut(text, answers)).toBe(text)
+    it(`${JSON.stringify(text)} with ${JSON.stringify(answers)} at verify → unchanged`, async () => {
+      expect(await verifyOut(text, answers)).toBe(text)
     })
   }
 })

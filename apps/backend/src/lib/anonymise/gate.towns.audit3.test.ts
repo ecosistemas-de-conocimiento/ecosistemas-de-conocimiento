@@ -209,9 +209,8 @@ describe('still shown (Q8, and towns with a state or a town word)', () => {
     // A state abbreviation counts only with its dot: "son" is a verb.
     ['Vivo en Hidalgo y son buenos vecinos.', 'Hidalgo'],
   ] as Array<[string, string]>) {
-    it(`${JSON.stringify(text)} / ${place} → unchanged, both and verify only`, async () => {
-      const both = await run(text, [[l(place)], [l(place)]])
-      expect(both.status === 'ready' && both.redactedText).toBe(text)
+    // Verify only: stage 3 redacts whatever it is told (owner Q10 A).
+    it(`${JSON.stringify(text)} / ${place} → unchanged at verify`, async () => {
       const late = await run(text, [[], [l(place)]])
       expect(late.status === 'ready' && late.redactedText).toBe(text)
     })

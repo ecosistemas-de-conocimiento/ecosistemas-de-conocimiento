@@ -9,12 +9,13 @@
  * on dev the same day (runbook `infra/fleet/edc-1.md` §4p), 31 of the 38
  * verify holds had place findings only.
  *
- * So the rule is repeated in code, in TWO places of `gate.ts`: stage 3 does not
- * redact a town, and verify does not hold on one. (Until 2026-10-23 it ran on
- * verify only, and stage 3 turned "vivo en Xochitepec" into "vivo en
- * [Domicilio A]" on dev.) 🔴 A finding this file ignores SHIPS IN CLEAR, so
- * every doubt goes to "redact" / "hold": a town redacted or held by mistake
- * costs a reviewer one click; a person or a home let through costs the person.
+ * So the rule is repeated in code, on VERIFY'S HOLD DECISION (`gate.ts`) and
+ * the place-hold re-run (`regatePlaceHolds.ts`) only. 🔴 Stage 3 redacts every
+ * finding the model reports, towns included (owner, Q10 A, 2026-10-23: "the
+ * model decides"); the prompt is what keeps towns out. A finding this file
+ * ignores at verify SHIPS IN CLEAR, so every doubt goes to "hold": a town held
+ * by mistake costs a reviewer one click; a person or a home let through costs
+ * the person.
  *
  * ── THE RULES (all must pass, for EVERY occurrence) ──────────────────────────
  *
@@ -75,11 +76,10 @@
  *      after "vivo en" / "soy de" — passes as a town and ships in clear.
  *      ("Vivo en Xiadani" passes.) Common names and every "-ez" surname hold.
  *
- * 🔴 ONE MODEL ANSWER IS ENOUGH for either. Since 2026-10-23 stage 3 applies
- * this exemption too, so a single `lugar` answer shows the name; nothing later
- * redacts it (verify ignores it by the same rule). The opposite error — a real
- * town redacted or held — costs a reviewer one click and is the direction
- * every rule above leans. (Rule for one bare word: owner's decision pending.)
+ * Both need the detector to have missed it at stage 3 (which redacts every
+ * finding, owner Q10 A) AND to report it at verify typed `lugar`. The opposite
+ * error — a real town held — costs a reviewer one click and is the direction
+ * every rule above leans. One bare word after "vivo en" passes (owner, Q8).
  *
  * ⚠ A `persona`, `contacto`, `identificador` or `otro` finding is never ignored.
  */
@@ -534,15 +534,15 @@ function withoutLead(needle: string): string {
 
 /**
  * True when a `lugar` finding is a town-level place (shown by the owner's
- * ruling) and so must not be redacted (stage 3) nor hold the document
- * (verify). See the file header: every rule must pass at every occurrence,
+ * ruling) and so must not hold the document at verify. Stage 3 does not ask
+ * (owner, Q10 A). See the file header: every rule must pass at every occurrence,
  * and anything unsure is NOT a town.
  *
- * 🔴 EVERY OCCURRENCE, IN EVERY SPELLING. Stage 3 redacts case- and
- * accent-blind (`gate.ts`), so skipping a town there skips "XOCHITEPEC" too:
- * each folded occurrence, glued or not, must stand in a town context.
+ * 🔴 EVERY OCCURRENCE, IN EVERY SPELLING. Verify rounds redact case- and
+ * accent-blind (`gate.ts`), so each folded occurrence, glued or not, must
+ * stand in a town context.
  *
- * @param text the text the finding was found in (stage 3's or verify's input).
+ * @param text the text the finding was found in (verify's input).
  */
 export function isTownLevelPlace(
   finding: Pick<DetectorFinding, 'text' | 'type' | 'typedAddress'>,

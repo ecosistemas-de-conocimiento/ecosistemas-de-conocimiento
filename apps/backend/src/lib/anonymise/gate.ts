@@ -588,14 +588,14 @@ export async function runAnonymisationGate(
   // becomes `[Persona X]`: over-redaction, accepted.
   // 🔴 EVERY SPELLING, WHOLE WORDS (owner, 2026-10-21, Q2): "Lucrecia" also
   // takes "LUCRECIA" and "lucrecia", with the same label.
-  // 🔴 A TOWN IS SHOWN HERE TOO (owner, 2026-10-21, #12; dev 2026-10-23: "vivo
-  // en Xochitepec" became "vivo en [Domicilio A]"). The town rule used to run
-  // on verify's hold decision only, so a town the model marked here was
-  // redacted anyway. Same rule, same function: `townPlaces.ts`. A town and a
-  // person in one finding is not a town; `persona` findings are untouched.
+  // 🔴 OWNER'S RULING Q10 A (2026-10-23), "the model decides": stage 3 redacts
+  // EVERY finding, towns included. Towns stay visible because the prompt says
+  // they are not personal data (`DETECT_SYSTEM_PROMPT`), not because code
+  // second-guesses a model that reported one. The town rule (`townPlaces.ts`)
+  // only decides verify's hold, below, and the place-hold re-run.
   const applied = applyFindings(
     deterministic.text,
-    found.filter((f) => !isTownLevelPlace(f, deterministic.text)),
+    found,
     (name) => allocator.labelFor(name),
     (address) => allocator.addressLabelFor(address),
     true,

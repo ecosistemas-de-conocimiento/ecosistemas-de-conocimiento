@@ -169,9 +169,12 @@ export const DETECT_SYSTEM_PROMPT = [
   '  "su hermana", "la esposa de mi primo". No es un tratamiento o cargo solo.',
   // 🔴 THE MODEL OWNS SPAN BOUNDARIES (owner's rule, 2026-10-17: no word lists
   // in code). A span cut short leaves "Don [Persona F]" or "colonia [Domicilio L]".
+  // 🔴 OWNER, 2026-10-23: titles are the model's to include, no word list.
   '- Devuelve el tramo COMPLETO que identifica. Un tratamiento o cargo que antecede al',
-  '  nombre es parte del nombre: en "Don Fernando Vázquez" el hallazgo es',
-  '  "Don Fernando Vázquez"; en "la maestra Nicasia Olvera" es "la maestra Nicasia Olvera".',
+  '  nombre es parte del nombre, con su artículo, en UN solo hallazgo: en "Don Fernando',
+  '  Vázquez" el hallazgo es "Don Fernando Vázquez"; en "la maestra Nicasia Olvera" es',
+  '  "la maestra Nicasia Olvera"; en "la maestra Lucrecia" es "la maestra Lucrecia"; en',
+  '  "el delegado Abundio Cázares" es "el delegado Abundio Cázares".',
   '- Centros de trabajo, escuelas o cargos tan precisos que identifican a una persona.',
   '- Teléfonos, correos, cuentas, identificadores oficiales y números de expediente.',
   '',
@@ -209,7 +212,12 @@ export const DETECT_SYSTEM_PROMPT = [
   'Domicilios (marca "lugar"). Incluye TODOS estos casos, completos o parciales:',
   '- Calles, avenidas, andadores, cerradas, privadas y sus números.',
   '- Colonias, barrios, fraccionamientos, unidades habitacionales, manzana y lote.',
-  '- Ranchos y parajes con nombre: "el rancho Los Pinos", "el paraje Tres Cruces".',
+  '- Ranchos, parajes y haciendas con nombre: "el rancho Los Pinos", "el paraje Tres',
+  '  Cruces", "la hacienda San José".',
+  // 🔴 OWNER, 2026-10-23: an institution where someone lives or is held points
+  // at them, also next to a town.
+  '- Instituciones donde está o vive una persona: un penal o Cereso, un hospital, una escuela.',
+  '  También junto a un pueblo: en "estoy en Atlacholoaya, en el Cereso" el hallazgo es "el Cereso".',
   '- Códigos postales.',
   '- Referencias sin formato que permiten llegar a una casa: "enfrente de la tienda',
   '  de doña Mari", "subiendo por donde está el tanque", "la casa de la reja verde".',
@@ -230,6 +238,10 @@ export const DETECT_SYSTEM_PROMPT = [
   // ⚠ "Rancho"/"paraje" are marked only when the WORD is said: in rural Mexico a
   // rancho is often one family's land. A locality whose name merely contains
   // "Rancho" ("vivo en Rancho Nuevo") is a town and is shown.
+  // 🔴 OWNER, 2026-10-23 (Q10 A): "we dont need to redact towns, states". Stage
+  // 3 redacts whatever the model reports, so this line is what keeps them.
+  '⚠ Los pueblos, municipios, ciudades, ejidos y estados NO son datos personales y NO se',
+  '  reportan. En "Vivo en Xochitepec, Morelos" no hay ningún hallazgo.',
   '⚠ NUNCA marques estados, municipios, alcaldías, ciudades, pueblos, comunidades,',
   'localidades, ejidos ni congregaciones, aunque sean pequeños y aunque digan dónde',
   'vive, trabaja o estudia alguien. En "vivo en Xoxocotla, Morelos" no hay hallazgo.',

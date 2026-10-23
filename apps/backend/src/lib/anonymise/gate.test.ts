@@ -751,7 +751,7 @@ describe('runAnonymisationGate — 🔴 towns are shown, addresses are not (owne
     for (const kept of [
       'Calles, avenidas',
       'Colonias, barrios, fraccionamientos',
-      'Ranchos y parajes',
+      'Ranchos, parajes y haciendas',
       'Códigos postales',
       'la casa de la reja verde',
     ]) {

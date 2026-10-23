@@ -1,12 +1,13 @@
 /**
  * OWNER'S RULING, 2026-10-21 (#12), RE-STATED 2026-10-23: A TOWN STAYS VISIBLE.
  *
- * Dev, 2026-10-23: "vivo en Xochitepec" came out as "vivo en [Domicilio A]".
- * Stage 3 replaced every `lugar` finding; the town rule (`townPlaces.ts`) ran
- * only on verify's hold decision. These tests fake the model at the fetch
- * boundary, under the REAL `AIClient`, `aiServiceDetector` and gate, with the
- * answers a model plausibly gives for a town — and check that streets,
- * colonias, ranchos and parajes still go.
+ * Dev, 2026-10-23: "vivo en Xochitepec" came out as "vivo en [Domicilio A]":
+ * the model reported the town at stage 3, which redacts every finding. Owner
+ * Q10 A (same day): keep it that way; the PROMPT keeps towns out, and the town
+ * rule (`townPlaces.ts`) only decides verify's hold. These tests fake the model
+ * at the fetch boundary, under the REAL `AIClient`, `aiServiceDetector` and
+ * gate, with the answers a model plausibly gives for a town at verify — and
+ * check that streets, colonias, ranchos and parajes still go.
  */
 
 import { AIClient } from '@edc/ai-client'
@@ -96,7 +97,9 @@ describe('a span the model typed `domicilio` is redacted as an address, town-sha
   })
 })
 
-describe('a bare town after a residence or origin verb is shown', () => {
+// Owner Q10 A (2026-10-23): stage 3 redacts whatever the model reports; the
+// town rule decides only VERIFY's hold. So these give the town to verify.
+describe('at verify, a bare town after a residence or origin verb does not hold', () => {
   const TEXTS = [
     'Yo vivo en Xochitepec con mi familia.',
     'Nací en Xochitepec y ahí crecí.',
@@ -106,8 +109,8 @@ describe('a bare town after a residence or origin verb is shown', () => {
     for (const answer of TOWN_ANSWERS) {
       const shown = text.includes(answer.texto) || answer.texto === 'XOCHITEPEC'
       if (!shown) continue
-      it(`${JSON.stringify(text)} with ${JSON.stringify(answer)} in stage 3 and verify → unchanged`, async () => {
-        const r = await gate(text, [[answer], [answer]])
+      it(`${JSON.stringify(text)} with ${JSON.stringify(answer)} at verify → unchanged`, async () => {
+        const r = await gate(text, [[], [answer]])
         expect(r.status).toBe('ready')
         if (r.status !== 'ready') return
         expect(r.redactedText).toBe(text)
@@ -119,7 +122,7 @@ describe('a bare town after a residence or origin verb is shown', () => {
   it('"de Xochitepec" after "soy" → unchanged', async () => {
     const text = 'Soy de Xochitepec.'
     const answer = { texto: 'de Xochitepec', tipo: 'lugar' }
-    const r = await gate(text, [[answer], [answer]])
+    const r = await gate(text, [[], [answer]])
     expect(r.status).toBe('ready')
     if (r.status !== 'ready') return
     expect(r.redactedText).toBe(text)
@@ -127,13 +130,7 @@ describe('a bare town after a residence or origin verb is shown', () => {
 
   it('the town shows while the person beside it is redacted', async () => {
     const text = 'Me llamo Xiadani y vivo en Xochitepec.'
-    const r = await gate(text, [
-      [
-        { texto: 'Xiadani', tipo: 'persona' },
-        { texto: 'Xochitepec', tipo: 'lugar' },
-      ],
-      [],
-    ])
+    const r = await gate(text, [[{ texto: 'Xiadani', tipo: 'persona' }], [{ texto: 'Xochitepec', tipo: 'lugar' }]])
     expect(r.status).toBe('ready')
     if (r.status !== 'ready') return
     expect(r.redactedText).toBe('Me llamo [Persona A] y vivo en Xochitepec.')
@@ -157,9 +154,9 @@ describe('what is inside a town is still redacted', () => {
   for (const [text, texto, expected] of CASES) {
     for (const tipo of ['lugar', 'domicilio']) {
       it(`${JSON.stringify(texto)} as ${tipo} in ${JSON.stringify(text)} → redacted`, async () => {
-        const answers: H[] = [{ texto, tipo }]
-        if (text.includes('Xochitepec')) answers.push({ texto: 'Xochitepec', tipo: 'lugar' })
-        const r = await gate(text, [answers, []])
+        // The town is reported at verify only (stage 3 would redact it, Q10 A).
+        const late: H[] = text.includes('Xochitepec') ? [{ texto: 'Xochitepec', tipo: 'lugar' }] : []
+        const r = await gate(text, [[{ texto, tipo }], late])
         expect(r.status).toBe('ready')
         if (r.status !== 'ready') return
         expect(r.redactedText).toBe(expected)

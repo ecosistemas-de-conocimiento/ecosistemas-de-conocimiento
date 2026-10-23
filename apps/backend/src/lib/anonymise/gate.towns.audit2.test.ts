@@ -134,9 +134,8 @@ describe('still shown: one bare word (Q8), a town word before, a state alone', (
     ['Vivo en la Ciudad de México.', 'Ciudad de México'],
     ['Vivo en Baja California Sur.', 'Baja California Sur'],
   ] as Array<[string, string]>) {
-    it(`${JSON.stringify(text)} / ${JSON.stringify(span)} → unchanged, at both stages`, async () => {
-      const both = await run(text, [[l(span)], [l(span)]])
-      expect(both.status === 'ready' && both.redactedText).toBe(text)
+    // Verify only: stage 3 redacts whatever it is told (owner Q10 A).
+    it(`${JSON.stringify(text)} / ${JSON.stringify(span)} → unchanged at verify`, async () => {
       const late = await run(text, [[], [l(span)]])
       expect(late.status === 'ready' && late.redactedText).toBe(text)
     })
