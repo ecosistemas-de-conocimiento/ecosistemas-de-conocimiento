@@ -47,16 +47,19 @@
  *      And "en" counts only after a verb of residence or movement ("vivo en",
  *      "me quedé en"), so "pienso en Soledad" holds. Work is not residence:
  *      "trabajo en Coppel" names an employer.
- *   6. NOTHING STREET-LIKE AFTER, in the next five words: no digit, "#",
- *      "s/n", street word ("casi esquina con", "a dos cuadras", "dpto 4"),
- *      spelled-out number ("cuarenta y cinco") or "N° 45". ⚠ A year counts
+ *   6. NOTHING STREET-LIKE AFTER, in the next eight words (two past a
+ *      sentence end): no digit, "#", "s/n", "c/", address placeholder, street
+ *      or relation word ("casi junto al", "a dos cuadras", "dpto 4"),
+ *      spelled-out number ("cuarenta y cinco", "el cinco"), Roman numeral or
+ *      ordinal ("Hidalgo II", "Tepito Segunda"). ⚠ A year or a phone counts
  *      too: "vivo en Xochitepec desde 2010" redacts the town (fail-closed).
  *   7. ONE PIECE, ONE PROPER WORD, unless a town word comes before it or
  *      starts it ("el municipio de Gómez Farías", "Ciudad Juárez"). 🔴 A state
  *      after it is NOT an anchor (re-audit 2026-10-23): "Insurgentes Sur,
  *      CDMX", "Santa Úrsula, CDMX" are redacted, and so are real towns such
  *      as "Gómez Farías, Jalisco" (fail-closed; a reviewer approves). A state
- *      paired with a state ("Hidalgo, Morelos") is a street.
+ *      name with a state after it in any form ("Hidalgo, Morelos", "Hidalgo
+ *      (Morelos)", "Hidalgo, Edo. de Morelos", "Morelos, Edo. Méx.") is a street.
  *   ·  A finding the model typed `domicilio` is never a town (`typedAddress`).
  *   ·  Every set lookup is case- and accent-folded ("Callejon" = "callejón").
  *
@@ -107,11 +110,12 @@ const STREET_WORDS: readonly string[] = [
   'calle', 'avenida', 'av', 'avda', 'andador', 'cerrada', 'cda', 'privada', 'priv',
   'callejón', 'cjon', 'calzada', 'calz', 'boulevard', 'bulevar', 'blvd',
   'prolongación', 'prol', 'carretera', 'carr', 'camino', 'brecha', 'vereda',
-  'kilómetro', 'km', 'esquina', 'entre', 'número', 'núm', 'num', 'nro', 'retorno',
-  'circuito', 'cto', 'pasaje', 'cuadra', 'cuadras', 'frente', 'enfrente',
+  'kilómetro', 'km', 'esquina', 'esq', 'entre', 'número', 'núm', 'num', 'nro', 'retorno',
+  'circuito', 'cto', 'pasaje', 'cuadra', 'cuadras', 'frente', 'enfrente', 'fte',
+  'ext', 'bis', 'letra', 'local', 'st', 'ave', 'rd', 'street',
   // dentro de una localidad
   'colonia', 'col', 'barrio', 'fraccionamiento', 'fracc', 'frac', 'unidad', 'habitacional',
-  'manzana', 'mz', 'supermanzana', 'smz', 'lote', 'lt', 'sector', 'sección', 'secc',
+  'manzana', 'mz', 'mza', 'mzna', 'supermanzana', 'smz', 'lote', 'lt', 'sector', 'sección', 'secc',
   'ampliación', 'ampl', 'residencial', 'condominio', 'conjunto', 'infonavit',
   'fovissste', 'privadas', 'villas',
   // el edificio
@@ -318,66 +322,114 @@ function hasTownShape(words: readonly string[]): boolean {
   return proper > 0
 }
 
-/** "Xoxocotla, Morelos." → true after "Xoxocotla". */
-function stateFollows(after: string): boolean {
-  const m = /^\s*,\s*([\p{L} ]+)/u.exec(after)
-  if (!m) return false
-  const words = m[1]!.trim().split(/\s+/u).map(lower)
-  // Longest match first: "baja california sur" before "baja california".
-  for (let n = Math.min(4, words.length); n >= 1; n -= 1) {
-    if (STATE.has(words.slice(0, n).join(' '))) return true
-  }
-  return false
-}
-
-/** Rule 6: a house number spelled out. Tens and hundreds anywhere near; a unit only right after. */
+/** Rule 6: a house number spelled out. Tens, hundreds and "mil" anywhere near. */
 const NUMBER_TENS = foldedSet([
   'diez', 'once', 'doce', 'trece', 'catorce', 'quince', 'dieciséis', 'diecisiete',
   'dieciocho', 'diecinueve', 'veinte', 'treinta', 'cuarenta', 'cincuenta', 'sesenta',
   'setenta', 'ochenta', 'noventa', 'cien', 'ciento', 'doscientos', 'trescientos',
-  'cuatrocientos', 'quinientos',
+  'cuatrocientos', 'quinientos', 'seiscientos', 'setecientos', 'ochocientos',
+  'novecientos', 'mil',
 ])
-const NUMBER_UNITS = foldedSet(['uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve'])
-/** "n. 45", "No 45", "Nº 45", "N° 45": a marker that is a number only before one. */
+/** Units count right after the place, after an article ("el cinco") or after a marker. */
+const NUMBER_UNITS = foldedSet(['cero', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve'])
+/** "cuarentaicinco", "veintidós": a ten glued to its unit. */
+const GLUED_TENS = /^(?:veinti|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa)\p{L}+$/u
+/** "Tepito Segunda", "la segunda casa", "Hidalgo, Primera". */
+const ORDINALS = foldedSet(['primera', 'primero', 'primer', 'segunda', 'segundo', 'tercera', 'tercero', 'tercer', 'cuarta'])
+/** "Hidalgo II", "Hidalgo XII". Upper case only, so "vi" or "mil" never match. */
+const ROMAN = /^[IVXLC]{1,6}$/u
+/** "nº cinco": a unit after one of these is a number. (A digit after one is a digit.) */
 const NUMBER_MARKERS = foldedSet(['n', 'no', 'nº', 'num', 'núm', 'nro', 'número'])
+/** How a house is placed against something else: counted anywhere in the window. */
+const RELATION = foldedSet([
+  'junto', 'atrás', 'detrás', 'lado', 'enfrente', 'frente', 'cerca', 'esquina', 'cuadra',
+  'cuadras', 'entre',
+])
+/** "Mor.", "Méx.": a state abbreviation, only with its dot. */
+const STATE_ABBREVIATIONS = foldedSet([
+  'ags', 'bc', 'bcs', 'camp', 'chis', 'chih', 'coah', 'col', 'dgo', 'gto', 'gro', 'hgo',
+  'jal', 'méx', 'mich', 'mor', 'nay', 'nl', 'oax', 'pue', 'qro', 'qroo', 'slp', 'sin',
+  'son', 'tab', 'tamps', 'tlax', 'ver', 'yuc', 'zac', 'edomex', 'df',
+])
 const STREET = foldedSet(STREET_WORDS)
-/** How many words after a place rule 6 reads. */
-const AFTER_WINDOW = 5
+/** How many words after a place rule 6 reads, and how many past a sentence end. */
+const AFTER_WINDOW = 8
+const AFTER_SENTENCE = 2
 
-const isNumberWord = (w: string) =>
-  NUMBER_TENS.has(w) || /^veinti\p{L}+$/u.test(w) || NUMBER_UNITS.has(w)
+function isNumberWord(w: string): boolean {
+  if (NUMBER_TENS.has(w) || NUMBER_UNITS.has(w) || GLUED_TENS.test(w)) return true
+  // "cuarenta-y-cinco"
+  return w.includes('-') && w.split('-').some((part) => NUMBER_TENS.has(part) || NUMBER_UNITS.has(part))
+}
 
 /**
- * Rule 6 — what stands AFTER (audit 2026-10-23, two passes). In the next
- * {@link AFTER_WINDOW} words: a digit, a "#", "s/n", a street word ("casi
- * esquina con", "a dos cuadras de", "dpto 4", "torre B"), a spelled-out
- * ten ("cuarenta y cinco"), or a number marker before a number ("N° 45").
- * The word right after may also be any address word or a unit ("Hidalgo
- * cinco"). The window stops at a sentence end, but the first word of the
- * next sentence still counts ("Vivo en Hidalgo. Número 45.").
+ * The words of rule 6's window, raw: up to {@link AFTER_WINDOW}, and only
+ * {@link AFTER_SENTENCE} more once a sentence ends (".", "!", "?", ";").
+ */
+function afterWindow(after: string): string[] {
+  const out: string[] = []
+  let budget = AFTER_WINDOW
+  for (const t of after.split(/\s+/u)) {
+    if (t === '' || budget <= 0) continue
+    const w = bare(t)
+    // "familia." ends a sentence; "n.", "int.", "Ote.", "edif." do not. (A
+    // longer street word with a dot, "depto.", triggers rule 6 by itself.)
+    const abbreviation = w.length <= 4
+    const sentenceEnd = /^[^\p{L}\p{N}]+$/u.test(t)
+      ? /[.!?;]/u.test(t)
+      : /[!?;]["')]*$/u.test(t) || (/\.["')]*$/u.test(t) && !abbreviation)
+    if (/[\p{L}\p{N}#/[]/u.test(t)) {
+      out.push(t)
+      budget -= 1
+    }
+    if (sentenceEnd) budget = Math.min(budget, AFTER_SENTENCE)
+  }
+  return out
+}
+
+/**
+ * Rule 6 — what stands AFTER (audits 2026-10-23, three passes). Within the
+ * window ({@link afterWindow}): a digit, "#", "s/n", "c/", one of our address
+ * placeholders, a street or relation word ("casi junto al", "a un lado de"),
+ * a spelled-out ten, hundred or "mil", a Roman numeral or an ordinal, or a
+ * unit after an article or a number marker ("el cinco", "nº cinco"). The
+ * word right after may also be any address word or a unit ("Hidalgo
+ * cinco").
  */
 function streetFollows(after: string): boolean {
-  const tokens = after.split(/\s+/u).filter((t) => t !== '')
-  let seen = 0
-  for (let i = 0; i < tokens.length && seen < AFTER_WINDOW; i += 1) {
+  const tokens = afterWindow(after)
+  for (let i = 0; i < tokens.length; i += 1) {
     const t = tokens[i]!
-    // "familia." ends a sentence; "n.", "int.", "edif." are abbreviations.
-    const abbreviation = ADDRESS.has(bare(t)) || NUMBER_MARKERS.has(bare(t)) || bare(t).length <= 3
-    const sentenceEnd = /^[.!?;:]+$/u.test(t) || /[!?;]$/u.test(t) || (/\.$/u.test(t) && !abbreviation)
-    if (!/[\p{L}\p{N}#]/u.test(t)) {
-      if (sentenceEnd) seen = AFTER_WINDOW - 1
-      continue
-    }
-    seen += 1
     const w = bare(t)
-    if (/[\p{N}#]/u.test(t) || /^s\/n\.?$/iu.test(t)) return true
-    if (STREET.has(w) || NUMBER_TENS.has(w) || /^veinti\p{L}+$/u.test(w)) return true
-    if (seen === 1 && (ADDRESS.has(w) || NUMBER_UNITS.has(w))) return true
-    if (NUMBER_MARKERS.has(w)) {
-      const nextT = tokens[i + 1] ?? ''
-      if (/\p{N}/u.test(nextT) || isNumberWord(bare(nextT))) return true
+    // 🔴 Punctuation stripped before every marker test: "(s/n).", "s.n.", "s/n;".
+    const mark = lower(t).replace(/[^\p{L}\p{N}/#]/gu, '')
+    const prev = i === 0 ? '' : bare(tokens[i - 1]!)
+    if (/[\p{N}#]/u.test(t)) return true
+    // 🔴 Our own address or data placeholder: stage 3 already took the number.
+    if (/\[(?:Domicilio|Dato)\b/u.test(t)) return true
+    if (mark === 's/n' || mark === 'sn' || mark.startsWith('c/')) return true
+    if (STREET.has(w) || RELATION.has(w) || ORDINALS.has(w)) return true
+    if (NUMBER_TENS.has(w) || GLUED_TENS.test(w) || (w.includes('-') && isNumberWord(w))) return true
+    if (ROMAN.test(t.replace(/[^\p{L}]/gu, ''))) return true
+    if (NUMBER_UNITS.has(w) && (i === 0 || ARTICLES.has(prev) || NUMBER_MARKERS.has(prev))) return true
+    if (i === 0 && ADDRESS.has(w)) return true
+  }
+  return false
+}
+
+/**
+ * A state named in rule 6's window, in any form: "Morelos", "(Morelos)",
+ * "; Morelos", "Estado de Morelos", "Edo. de Morelos", "Mor.", "Edo. Méx.".
+ */
+function stateInWindow(after: string): boolean {
+  const tokens = afterWindow(after)
+  const words = tokens.map(bare)
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (words[i] === 'estado' || words[i] === 'edo') return true
+    if (/\.["')]*$/u.test(tokens[i]!) && STATE_ABBREVIATIONS.has(words[i]!)) return true
+    for (let n = Math.min(4, words.length - i); n >= 1; n -= 1) {
+      if (STATE.has(words.slice(i, i + n).join(' '))) return true
     }
-    if (sentenceEnd) seen = AFTER_WINDOW - 1
   }
   return false
 }
@@ -530,7 +582,9 @@ export function isTownLevelPlace(
   if (occurrences.length === 0) return false
   return occurrences.every(
     ([at, end]) =>
-      !(pairedWithState && stateFollows(haystack.slice(end))) &&
+      // Rule 7: "Hidalgo, Estado de Morelos", "Hidalgo (Morelos)", "Hidalgo
+      // Morelos": a state-named place with a state after it is a street.
+      !(pairedWithState && stateInWindow(haystack.slice(end))) &&
       placeContext(haystack, at, end, words, anchorRequired, anchoredInSpan),
   )
 }

@@ -142,10 +142,10 @@ describe('a bare town after a residence or origin verb is shown', () => {
 
 describe('what is inside a town is still redacted', () => {
   const CASES: Array<[string, string, string]> = [
-    // ⚠ Not "Xochitepec, en la calle…": a street word within five words after
+    // ⚠ Not "Xochitepec, en la calle…": a street word within eight words after
     // a town redacts the town too (rule 6, re-audit 2026-10-23).
-    ['Vivo en Xochitepec y mi casa está en la calle Hidalgo 12.', 'calle Hidalgo 12', 'Vivo en Xochitepec y mi casa está en la [Domicilio A].'],
-    ['Vivo en Xochitepec y mi casa está en la calle Hidalgo 12.', 'en la calle Hidalgo 12', 'Vivo en Xochitepec y mi casa está [Domicilio A].'],
+    ['Vivo en Xochitepec con mi familia. Mi casa está en la calle Hidalgo 12.', 'calle Hidalgo 12', 'Vivo en Xochitepec con mi familia. Mi casa está en la [Domicilio A].'],
+    ['Vivo en Xochitepec con mi familia. Mi casa está en la calle Hidalgo 12.', 'en la calle Hidalgo 12', 'Vivo en Xochitepec con mi familia. Mi casa está [Domicilio A].'],
     ['Vivo en la colonia Las Flores.', 'colonia Las Flores', 'Vivo en la [Domicilio A].'],
     ['Vivo en la colonia Las Flores.', 'Las Flores', 'Vivo en la colonia [Domicilio A].'],
     ['Vivo en el rancho El Mezquite.', 'rancho El Mezquite', 'Vivo en el [Domicilio A].'],
