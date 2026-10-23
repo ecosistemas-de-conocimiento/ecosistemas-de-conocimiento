@@ -217,11 +217,6 @@
     const input = e.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
-    const s = app.active;
-    if (!s) {
-      input.value = '';
-      return;
-    }
     // 🔴 Audio is switched off (`AUDIO_UPLOAD_ENABLED`). The picker already
     // hides audio, but "Todos los archivos" in the OS dialog still lets one through.
     if (!AUDIO_UPLOAD_ENABLED && isAudioUpload(file)) {
@@ -232,10 +227,14 @@
     uploading = true;
     uploadingFile = { name: file.name, isAudio: isAudioUpload(file) };
     try {
+      // No conversation open yet: create it, then upload INTO it, so the
+      // conversation-upload rules apply. Never a standalone upload from here.
+      const sessionId = await app.ensureSession();
+      if (!sessionId) return;
       // uploadDoc handles all error UX via toasts (size cap, server errors,
       // network failure). We just react to the success/failure result here.
       const doc = await app.uploadDoc(
-        s.id,
+        sessionId,
         file,
         canUploadVoces ? uploadContentKind : 'documento',
       );
@@ -333,7 +332,7 @@
         <button
           class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft disabled:opacity-40"
           onclick={() => fileInput?.click()}
-          disabled={uploading || !app.active}
+          disabled={uploading}
           title={uploadButtonTitle()}
           aria-label={AUDIO_UPLOAD_ENABLED ? 'Subir documento o audio' : 'Subir documento'}
         >
@@ -359,9 +358,9 @@
         <button
           class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft"
           onclick={async () => {
-            const s = app.active;
-            if (!s) return;
-            const d = await app.newDoc(s.id);
+            const sessionId = await app.ensureSession();
+            if (!sessionId) return;
+            const d = await app.newDoc(sessionId);
             if (d) expandedId = d.id;
           }}
           title="Nueva nota"

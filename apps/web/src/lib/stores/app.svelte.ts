@@ -641,6 +641,28 @@ class AppStore {
     }
   }
 
+  /** The create `ensureSession` is waiting on, so a second caller joins it. */
+  private ensuring: Promise<string | null> | null = null;
+
+  /**
+   * The open conversation's id, creating one first when none is open.
+   *
+   * A person with no conversations lands on an empty composer and NO session:
+   * creating one on every sign-in piled up blank "Nueva conversación" rows in
+   * the sidebar. The first send — or the first upload into the chat panel —
+   * creates it here instead.
+   *
+   * ⚠ Concurrent callers share one create (a double Enter, or a send racing an
+   * upload), so the first action never makes two conversations.
+   */
+  async ensureSession(): Promise<string | null> {
+    if (this.active) return this.active.id;
+    this.ensuring ??= this.newSession().finally(() => {
+      this.ensuring = null;
+    });
+    return this.ensuring;
+  }
+
   async selectSession(id: string): Promise<void> {
     this.activeSessionId = id;
     const s = this.sessions.find((x) => x.id === id);
