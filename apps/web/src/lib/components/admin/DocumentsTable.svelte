@@ -147,8 +147,8 @@
             <td>{uploader(d.uploaderId)}</td>
             <td class="nowrap">{formatDay(d.createdAt)}</td>
             <td>
-              <span title={pub.description}>
-                <Badge label={pub.label} tone={pubTone(pub.tone)} size="sm" />
+              <span>
+                <Badge label={pub.label.replace('solo tú', 'solo quien lo subió')} tone={pubTone(pub.tone)} size="sm" />
               </span>
             </td>
             <td>

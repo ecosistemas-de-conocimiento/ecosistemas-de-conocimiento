@@ -52,6 +52,7 @@
     total: number;
     page: number;
     hasNextPage: boolean;
+    pageSize?: number;
     /** The ecosistema's languages, for the filter. Empty ⇒ no control. */
     lenguas?: LenguaFacet[];
   }
@@ -281,7 +282,9 @@
           >
             ← Anterior
           </button>
-          <span class="page-no">Página {query.page}</span>
+          <span class="page-no"
+            >Página {query.page}{#if data?.pageSize}{' '}de {Math.max(1, Math.ceil(data.total / data.pageSize))}{/if}</span
+          >
           <button
             class="page-btn"
             disabled={!data?.hasNextPage}

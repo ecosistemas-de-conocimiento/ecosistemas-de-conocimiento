@@ -140,5 +140,5 @@ export function isPanelOpen(current: MobilePanel, panel: MobilePanel): boolean {
  * wide screen they were noise.
  */
 export function composerPlaceholder(busy: boolean): string {
-  return busy ? 'Generando…  (Esc o Detener para cancelar)' : 'Escribe un mensaje…';
+  return busy ? 'Generando…' : 'Escribe un mensaje…';
 }

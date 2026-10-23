@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
 
@@ -24,6 +25,10 @@
   let password = $state('');
   let error = $state<string | null>(null);
   let submitting = $state(false);
+  // Enter pressed before the page hydrates would run the browser's own GET
+  // submit: no login, and the password lands in the URL. Wait for the script.
+  let ready = $state(false);
+  onMount(() => (ready = true));
 
   async function submit(e: Event) {
     e.preventDefault();
@@ -53,15 +58,9 @@
 </script>
 
 <div class="h-screen w-full flex items-center justify-center text-ink">
-  <!-- 🔴 `method="post"`: a submit before hydration must never become a GET,
-       which would put the email and password in the URL and the logs. With
-       no JS it lands on the default action in `+page.server.ts`. -->
-  <form
-    method="post"
-    onsubmit={submit}
-    class="w-full max-w-sm space-y-3 p-6"
-    autocomplete="off"
-  >
+  <!-- 🔴 `method="post"`: a native submit lands on the default action in
+       `+page.server.ts`, never a GET with the password in the URL. -->
+  <form method="post" onsubmit={submit} class="w-full max-w-sm space-y-3 p-6" autocomplete="off">
     <!-- El nombre del producto: la primera pantalla tiene que decir dónde
          estás. No hay logotipo en el repo; cuando lo haya, va aquí. -->
     <p class="product-name font-display">Ecosistemas de Conocimiento</p>
@@ -108,7 +107,7 @@
       <p class="text-sm text-danger" role="alert">{error ?? form?.error}</p>
     {/if}
 
-    <button type="submit" disabled={submitting} class="login-submit">
+    <button type="submit" disabled={submitting || !ready} class="login-submit">
       {submitting ? 'Entrando…' : 'Entrar'}
     </button>
   </form>

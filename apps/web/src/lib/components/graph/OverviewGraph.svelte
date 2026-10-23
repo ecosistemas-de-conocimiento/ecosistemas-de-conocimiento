@@ -94,7 +94,7 @@
     combined = false,
   }: Props = $props();
 
-  const legend = overviewLegend();
+  const legend = $derived(overviewLegend(new Set(entities.map((e) => e.type))));
   const data = $derived(buildMapData(entities, edges));
   const focus = $derived<MapFocus>({
     selectedId,
@@ -292,7 +292,7 @@
         onchange={(e) => setZAxis(e.currentTarget.value as ZAxis)}
       >
         {#each zAxisOptions(combined) as option (option)}
-          <option value={option}>{Z_AXIS_LABELS[option]}</option>
+          <option value={option}>{Z_AXIS_TITLE}: {Z_AXIS_LABELS[option]}</option>
         {/each}
       </select>
     {/if}

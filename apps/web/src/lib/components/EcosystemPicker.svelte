@@ -99,7 +99,7 @@
           title={name}
         >
           <span class="eco-initials" aria-hidden="true">{ecosystemInitials(view.value)}</span>
-          <span class="eco-name text-sm font-medium text-ink flex-1 text-left">{view.value}</span>
+          <span class="text-sm font-medium text-ink line-clamp-2 leading-tight flex-1 text-left">{view.value}</span>
           <svg
             width="14"
             height="14"
@@ -156,7 +156,7 @@
           <span class="eco-initials" aria-hidden="true">{ecosystemInitials(view.value)}</span>
         {/if}
         <span
-          class="eco-name text-sm flex-1 {view.mode === 'single'
+          class="text-sm line-clamp-2 leading-tight flex-1 {view.mode === 'single'
             ? 'font-medium text-ink'
             : 'text-ink-soft'}"
         >
@@ -210,19 +210,6 @@
   .eco-field-muted {
     border-style: dashed;
     background: transparent;
-  }
-  /* The name wraps to two lines, then clamps. One line cut names like
-     "Acompañamiento escolar…" to "Acompañamiento esco…"; the full name is in
-     the field's `title`. */
-  .eco-name {
-    min-width: 0;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    overflow: hidden;
-    overflow-wrap: anywhere;
-    line-height: 1.25;
   }
   .eco-initials {
     flex-shrink: 0;

@@ -262,6 +262,9 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     // steps: 1.5). `zoomToFit` keeps this direction.
     graph.cameraPosition({ x: 0, y: base * 6, z: base * 9 }, { x: 0, y: base * 1.5, z: 0 });
     requestAnimationFrame(() => fit(0));
+    // ⚠ The first fit can run before the engine has placed the spheres, and
+    // then frames the origin (camera inside a big graph). Fit again once drawn.
+    setTimeout(() => fit(0), 250);
   }
 
   /** One engine tick: copies `x`/`y`/`z` into the scene and re-draws the links. No force runs. */

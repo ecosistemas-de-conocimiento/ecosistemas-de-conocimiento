@@ -343,8 +343,8 @@ export function resultsSummary(input: {
   if (input.total === 0) return input.filtered ? LIBRARY_NO_RESULTS : LIBRARY_EMPTY;
   const noun = input.total === 1 ? 'publicación' : 'publicaciones';
   const total = input.total.toLocaleString('es-MX');
-  if (input.shown >= input.total) return `${total} ${noun}`;
-  return `${input.shown.toLocaleString('es-MX')} de ${total} ${noun}`;
+  // The pager says which page; "30 de 31" read as one item missing (demo pass).
+  return `${total} ${noun}`;
 }
 
 /** `'hola que tal'` → `3 palabras`. Null for empty text. Mirrors ingest.ts. */

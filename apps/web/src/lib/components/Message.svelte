@@ -83,7 +83,8 @@
    */
   const draftIds = $derived(draftDocumentIds(app.active?.docs ?? []));
   const marked = $derived(markDraftCitations(rawCitations, draftIds));
-  const citations = $derived(marked.citations);
+  // Listed in [N] order so the reader can match the numbers in the answer.
+  const citations = $derived([...marked.citations].sort((a, b) => a.ordinal - b.ordinal));
   const hasCitations = $derived(isAssistant && !msg.error && citations.length > 0);
   const ordinals = $derived(hasCitations ? citations.map((c) => c.ordinal) : []);
 
@@ -143,7 +144,8 @@
     {/if}
 
     {#if hasCitations}
-      <div class="mt-2 pt-2 border-t border-elevated">
+      <!-- No top border here: the card's sources list draws its own. -->
+      <div class="mt-2">
         <!-- Sources start OPEN (UX backlog #10): the list is how a reader
              checks the answer, and a closed toggle hid it. -->
         <CitationCard
