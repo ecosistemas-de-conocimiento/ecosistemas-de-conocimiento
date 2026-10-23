@@ -840,3 +840,20 @@ describe('runAnonymisationGate — one count on the whole review screen', () => 
     )
   })
 })
+
+describe('runAnonymisationGate — NFC before stage 1 (mutant E3)', () => {
+  // Decomposed, "é" is "e" + U+0301, and the "e" glues to the date or UUID
+  // before it: stage 1's word edge (`\b`) is gone and the identifier survives.
+  // The gate composes first, so it is caught.
+  it.each([
+    ['a date', 'Llegó el 2026-08-15é.', '2026-08-15'],
+    ['a UUID', 'Folio 123e4567-e89b-12d3-a456-426614174000é.', '426614174000'],
+  ])('🔴 redacts %s glued to an accented letter in NFD input', async (_, text, secret) => {
+    const result = await runAnonymisationGate(input({ text: text.normalize('NFD') }), {
+      detector: staticDetector([]),
+    })
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).not.toContain(secret)
+  })
+})
