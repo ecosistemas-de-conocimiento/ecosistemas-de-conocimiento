@@ -257,17 +257,19 @@ export function isIntroLine(line: string): boolean {
 }
 
 /**
- * `BIBLIOTECA_EXCERPT_SKIP_INTRO`: on unless `false`, `0`, `off` or `no`.
- * Default on pending the owner's answer on whether an excerpt may carry a
- * testimonio's origin, language or age. Read by the server callers only.
+ * `BIBLIOTECA_EXCERPT_SKIP_INTRO`: off unless `true`, `1`, `on` or `yes`.
+ * 🔴 Default OFF (owner ruling 2026-10-23, option A): the excerpt SHOWS the
+ * first line, origin, language or age included ("its relevant demographics in
+ * some cases"). The switch stays for turning the skip back on. Read by the
+ * server callers only.
  */
 export function parseSkipIntro(raw: string | undefined): boolean {
-  return !/^(false|0|off|no)$/i.test((raw ?? '').trim());
+  return /^(true|1|on|yes)$/i.test((raw ?? '').trim());
 }
 
 export interface ExcerptOptions {
   max?: number;
-  /** Skip self-introduction lines ({@link isIntroLine}). Default true. */
+  /** Skip self-introduction lines ({@link isIntroLine}). Default false. */
   skipIntro?: boolean;
 }
 
@@ -291,7 +293,7 @@ export interface ExcerptOptions {
  */
 export function excerptFrom(text: unknown, opts: ExcerptOptions = {}): string | null {
   const max = opts.max ?? EXCERPT_MAX;
-  const skipIntro = opts.skipIntro ?? true;
+  const skipIntro = opts.skipIntro ?? false;
   if (typeof text !== 'string' || !text.trim()) return null;
   let lines = text.split(/\r?\n/);
   const head = lines.slice(0, 15);

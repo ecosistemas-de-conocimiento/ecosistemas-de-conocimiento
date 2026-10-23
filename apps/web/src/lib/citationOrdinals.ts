@@ -43,10 +43,19 @@ export function citationsWithOrdinals(provenance: Provenance | null | undefined)
  * shown source is dropped; a group left empty is removed with the spaces
  * before it. Inline and fenced code are left alone.
  *
+ * 🔴 SAME MARKER PATTERN AS THE SERVER. The engine's `parseCitedOrdinals`
+ * (packages/chat-engine `core/relevance.ts`) reads `[ 7 ]` and `[7 ]` as a
+ * citation of 7, so the server saves a source for them. This regex once
+ * required no inner spaces: a `[ 7 ]` whose source was capped away stayed in
+ * the text, raw, beside the dense `[7]` of another source. Kept in step on
+ * purpose; {@link CITATION_MARKER} is the one copy the browser uses.
+ *
  * Display-only: the saved answer and provenance keep prompt ordinals, so a
  * reload renumbers the same way.
  */
-const MARKER_RE = /[ \t]*\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\]/g;
+/** One `[N]` / `[N, M]` marker, inner spaces allowed. Group 1 is the digits. */
+export const CITATION_MARKER = String.raw`\[\s*(\d+(?:\s*,\s*\d+)*)\s*\]`;
+const MARKER_RE = new RegExp(`[ \\t]*${CITATION_MARKER}`, 'g');
 const CODE_RE = /(```[\s\S]*?(?:```|$)|`[^`\n]*`)/;
 
 export function denseCitations<T extends CitationLike>(

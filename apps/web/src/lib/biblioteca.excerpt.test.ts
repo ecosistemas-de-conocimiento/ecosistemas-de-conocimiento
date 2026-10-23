@@ -175,17 +175,21 @@ describe('excerptFrom — skipIntro (BIBLIOTECA_EXCERPT_SKIP_INTRO)', () => {
     'Empecé a acompañar a la gente casi sin darme cuenta, una vecina tras otra.',
   ].join('\n\n');
 
-  it('is on by default: skips origin, language and age lines', () => {
-    expect(excerptFrom(intro)).toBe('Empecé a acompañar a la gente casi sin darme cuenta, una vecina tras otra.');
+  it('🔴 is off by default (owner ruling 2026-10-23, option A): the first prose line shows', () => {
+    expect(excerptFrom(intro)).toMatch(/^Soy de Chenalhó/);
   });
 
-  it('off: the first prose line, as before', () => {
-    expect(excerptFrom(intro, { skipIntro: false })).toMatch(/^Soy de Chenalhó/);
+  it('on: skips origin, language and age lines', () => {
+    expect(excerptFrom(intro, { skipIntro: true })).toBe(
+      'Empecé a acompañar a la gente casi sin darme cuenta, una vecina tras otra.',
+    );
   });
 
-  it('only headings and intro lines left: no excerpt', () => {
-    expect(excerptFrom('Soy de Xoxocotla, Morelos.\nCrecí hablando náhuatl.')).toBeNull();
-    expect(excerptFrom('SEMBLANZA (en palabras de la persona):\n\nNací hace 25 años en Potoichán.')).toBeNull();
+  it('on, only headings and intro lines left: no excerpt', () => {
+    expect(excerptFrom('Soy de Xoxocotla, Morelos.\nCrecí hablando náhuatl.', { skipIntro: true })).toBeNull();
+    expect(
+      excerptFrom('SEMBLANZA (en palabras de la persona):\n\nNací hace 25 años en Potoichán.', { skipIntro: true }),
+    ).toBeNull();
   });
 
   it.each([
@@ -198,13 +202,15 @@ describe('excerptFrom — skipIntro (BIBLIOTECA_EXCERPT_SKIP_INTRO)', () => {
   });
 
   it.each([
-    [undefined, true],
-    ['', true],
-    ['true', true],
+    [undefined, false],
+    ['', false],
     ['false', false],
     ['0', false],
-    [' OFF ', false],
     ['no', false],
+    ['true', true],
+    ['1', true],
+    [' ON ', true],
+    ['yes', true],
   ])('parseSkipIntro(%j) = %s', (raw, expected) => {
     expect(parseSkipIntro(raw)).toBe(expected);
   });

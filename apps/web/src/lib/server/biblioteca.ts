@@ -284,7 +284,7 @@ export function toLibraryItem(
     fromAudio: row.kind === 'audio',
     // 🔴 From `redactedText` only, and only once the gate cleared the row
     // (`isClearedForLibrary`). Never the original; no fallback to it.
-    // `BIBLIOTECA_EXCERPT_SKIP_INTRO` (default on): skip origin/language/age lines.
+    // `BIBLIOTECA_EXCERPT_SKIP_INTRO` (default off): `true` skips origin/language/age lines.
     excerpt:
       testimonio && isClearedForLibrary(row)
         ? excerptFrom(row.redactedText, { skipIntro: parseSkipIntro(env.BIBLIOTECA_EXCERPT_SKIP_INTRO) })
