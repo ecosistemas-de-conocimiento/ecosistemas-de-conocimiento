@@ -1375,8 +1375,11 @@ export function egoDescription(centre: GraphEntity, drawn: number): string {
 export const OVERVIEW_DESCRIPTION = 'Mapa de conexiones';
 
 /** Plain-Spanish labels for the colour key, one per drawn type. */
-export function overviewLegend(): Array<{ type: GraphViewType; label: string }> {
-  return GRAPH_VIEW_TYPES.map((type) => ({ type, label: typeListLabel(type) }));
+export function overviewLegend(
+  present?: ReadonlySet<GraphViewType>,
+): Array<{ type: GraphViewType; label: string }> {
+  // Only the types on the map: a swatch for a colour nobody can find reads as missing data.
+  return GRAPH_VIEW_TYPES.filter((t) => !present || present.has(t)).map((type) => ({ type, label: typeListLabel(type) }));
 }
 
 /** Legend entry for a co-mention edge. A label, not an explanation (owner). */
