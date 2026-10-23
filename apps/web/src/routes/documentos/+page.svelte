@@ -301,19 +301,34 @@
           <div class="row-head">
             <span class="name" title={d.title}>{d.title}</span>
             {#if d.kind && d.kind !== 'markdown'}
-              <span class="chip">{d.kind}</span>
+              <span class="chip kind">{d.kind}</span>
             {/if}
             {#if ing}
-              <span class="chip" title={ing.title}>{ing.label}</span>
+              <span class="chip" title={ing.title}
+                >{ing.label.charAt(0).toUpperCase() + ing.label.slice(1)}</span
+              >
             {/if}
             <span class="pub-badge pub-{pub.tone}" title={pub.description}>{pub.label}</span>
-            {#if graph}
+            <!-- Demo pass, chosen (review): "listas" and "sin conexiones" are
+                 not news on this screen; only in-progress and failed show. -->
+            {#if graph && d.graphStatus !== 'ready' && d.graphStatus !== 'skipped'}
               <span
                 class="chip graph graph-{graph.tone}"
                 title={graph.title}
                 data-testid={`graph-status-${d.id}`}>{graph.label}</span
               >
             {/if}
+            <!-- 🔴 The destructive verb, and the only one on this screen that
+                 destroys anything. Toned as danger and worded as "Eliminar",
+                 so it never reads like the panel's "Quitar". -->
+            <button
+              class="danger-link"
+              disabled={busyId === d.id}
+              onclick={() => remove(d)}
+              data-testid={`delete-${d.id}`}
+            >
+              Eliminar
+            </button>
           </div>
 
           {#if loose}
@@ -391,17 +406,6 @@
                 onClick={() => app.retryGraph(d.id)}
               />
             {/if}
-            <!-- 🔴 The destructive verb, and the only one on this screen that
-                 destroys anything. Toned as danger and worded as "Eliminar",
-                 so it never reads like the panel's "Quitar". -->
-            <button
-              class="danger-link"
-              disabled={busyId === d.id}
-              onclick={() => remove(d)}
-              data-testid={`delete-${d.id}`}
-            >
-              Eliminar
-            </button>
           </div>
 
           {#if pickerFor === d.id}
@@ -564,10 +568,8 @@
   }
   /* A loose document is marked on the row itself, not only by its sentence:
      the whole point of this screen is that these are findable at a glance. */
-  .row.loose {
-    border-color: var(--edc-color-warning-outline);
-    background: var(--edc-color-warning-soft);
-  }
+  /* Demo pass: no tint. Most rows are loose, so a tinted row read as a
+     warning on every document; the "Sin conversación" line marks it. */
   .row-head {
     display: flex;
     align-items: center;
@@ -594,15 +596,11 @@
     border: 1px solid var(--edc-color-neutral-outline);
     background: var(--edc-color-neutral-soft);
     font-size: 0.62rem;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
     color: var(--edc-color-ink-soft);
   }
-  /* Graph badge: a short sentence ("Conexiones: en preparación"), so no
-     uppercase. No red tone exists for it on purpose (backlog #21). */
-  .chip.graph {
-    text-transform: none;
-    letter-spacing: 0;
+  .chip.kind {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
   }
   .chip.graph-ready {
     border-color: var(--edc-color-success-outline);

@@ -48,7 +48,7 @@
   <header class="head">
     <p class="kicker">Revisión</p>
     <h1>{REVIEW_TITLE}</h1>
-    {#if data.selected}
+    {#if data.selected && data.ecosystems.length <= 1}
       <p class="sub">En <strong>{data.selected.name}</strong>.</p>
     {/if}
   </header>
@@ -109,7 +109,6 @@
             {/if}
           </p>
           <p class="why">{summary.why}</p>
-          <p class="reason">{summary.detail}</p>
         </li>
       {/each}
     </ul>
@@ -138,13 +137,8 @@
   }
   .sub,
   .notice,
-  .why,
-  .reason {
+  .why {
     margin: 0.6rem 0 0;
-  }
-  .reason {
-    font-size: 0.85rem;
-    color: var(--edc-color-ink-soft);
   }
   .notice {
     padding: 0.8rem 1rem;

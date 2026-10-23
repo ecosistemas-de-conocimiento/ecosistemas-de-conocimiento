@@ -172,6 +172,57 @@ export async function loginWithBackend(
   }
 }
 
+/** What `signIn` needs from SvelteKit's `cookies` — kept narrow for tests. */
+interface CookieSetter {
+  set(name: string, value: string, opts: { path: string } & Record<string, unknown>): void;
+}
+
+export type SignInResult =
+  | { ok: true; user: BackendUser }
+  | { ok: false; status: 400 | 401 | 503; error: string };
+
+/**
+ * The ONE sign-in path: validate, log in against the backend, set the session
+ * cookie. Shared by the JSON endpoint (`/api/auth/login`, the JS path) and the
+ * `/sign-in` form action (the pre-hydration / no-JS path), so both behave the
+ * same. 🔴 Never log `email` or `password` here — only the failure code and
+ * the backend's own `detail`.
+ */
+export async function signIn(
+  rawEmail: unknown,
+  rawPassword: unknown,
+  cookies: CookieSetter,
+  secure: boolean,
+): Promise<SignInResult> {
+  const email = typeof rawEmail === 'string' ? rawEmail.trim() : '';
+  const password = typeof rawPassword === 'string' ? rawPassword : '';
+  if (!email || !password) {
+    return { ok: false, status: 400, error: authErrorMessage('missing-fields') };
+  }
+
+  const result = await loginWithBackend(email, password);
+  if (!result.ok || !result.token || !result.user) {
+    const failure = result.failure ?? 'login-failed';
+    // 🔴 The split: the technical detail goes to the LOG, the Spanish sentence
+    // goes to the screen. `detail` holds Payload's English or a raw
+    // `fetch failed`; neither is ever put in the response body.
+    console.warn(`[auth] login failed (${failure}): ${result.detail ?? 'sin detalle'}`);
+    // An unreachable or broken backend is not the user's fault, so it must not
+    // answer 401 — that reads as "wrong password" to every caller.
+    const status = failure === 'unreachable' || failure === 'server' ? 503 : 401;
+    return { ok: false, status, error: authErrorMessage(failure) };
+  }
+
+  cookies.set(SESSION_COOKIE, result.token, {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'lax',
+    secure,
+    maxAge: SESSION_TTL_SECONDS,
+  });
+  return { ok: true, user: result.user };
+}
+
 /**
  * Proxy a fetch through to the backend with the user's JWT attached. Used
  * by SvelteKit server routes that delegate to Payload REST.

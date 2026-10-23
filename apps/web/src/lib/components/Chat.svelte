@@ -75,8 +75,21 @@
   });
 
   async function handleSend(text: string, refs: ContextRef[]) {
-    const s = app.active;
-    if (!s) return;
+    // With no conversation open, this send creates it. `busy` goes up first so
+    // a second Enter while the create is on the wire is ignored by Composer.
+    if (busy) return;
+    let s = app.active;
+    if (!s) {
+      busy = true;
+      try {
+        await app.ensureSession();
+      } finally {
+        busy = false;
+      }
+      s = app.active;
+      // The create failed and `newSession` already said why.
+      if (!s) return;
+    }
 
     const userMsg = app.addLocalMessage(s.id, { role: 'user', content: text, contextRefs: refs });
     const placeholder = app.addLocalMessage(s.id, {

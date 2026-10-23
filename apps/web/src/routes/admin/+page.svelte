@@ -127,7 +127,7 @@
            ecosistema. Cost IS per message in our own rows. Ecosistema-wide,
            from the backend's `/api/metrics/usage`. -->
       <StatTile
-        label="Costo del chat (solo respuestas)"
+        label="Costo del chat"
         value={overview.usage.ok ? formatCostUsd(overview.usage.summary.costUsd) : '—'}
         hint={overview.usage.ok && !overview.usage.summary.costIsComplete
           ? 'Mínimo: faltan respuestas sin dato de costo.'

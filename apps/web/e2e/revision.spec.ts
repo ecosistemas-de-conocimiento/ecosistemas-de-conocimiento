@@ -77,11 +77,11 @@ function survivorSpans() {
 // construction — it would still pass if every sentence were replaced with the
 // wrong one. The unit tests import; an e2e assertion on visible text should not.
 
-const APPROVE_LABEL = 'Aprobar y dejar que entre al corpus';
+const APPROVE_LABEL = 'Aprobar y agregar a la biblioteca';
 const REJECT_LABEL = 'Rechazar y borrar el texto retenido';
-const APPROVE_CONFIRM = '¿Aprobar este documento y dejar que entre al corpus?';
+const APPROVE_CONFIRM = '¿Aprobar este documento y dejar que entre a la biblioteca?';
 const REJECT_CONFIRM = '¿Rechazar este documento y borrar el texto retenido?';
-const APPROVED_TOAST = 'Aprobado. El documento va a entrar al corpus.';
+const APPROVED_TOAST = 'Aprobado. El documento va a entrar a la biblioteca.';
 const NOT_A_REVIEWER =
   'Esta sección es para quien revisa los documentos que la anonimización detuvo.';
 

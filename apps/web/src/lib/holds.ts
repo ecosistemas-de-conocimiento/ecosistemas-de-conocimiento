@@ -459,7 +459,7 @@ export function wasEdited(input: Pick<DecisionInput, 'text' | 'originalText'>): 
 export const REVIEW_TITLE = 'Documentos retenidos';
 
 export const REVIEW_INTRO =
-  'Antes de entrar al corpus, cada documento pasa por una revisión automática que quita nombres, correos, teléfonos, CURP y domicilios. Cuando queda algo que puede identificar a una persona, el documento se detiene aquí y alguien tiene que leerlo.';
+  'Antes de entrar a la biblioteca, cada documento pasa por una revisión automática que quita nombres, correos, teléfonos, CURP y domicilios. Cuando queda algo que puede identificar a una persona, el documento se detiene aquí y alguien tiene que leerlo.';
 
 /** ⚠ Said out loud, because an empty queue and a broken queue look the same. */
 export const QUEUE_EMPTY = 'No hay documentos retenidos en este ecosistema.';
@@ -480,7 +480,7 @@ export const QUEUE_NO_TEXT_NOTE = 'La lista no muestra el texto. Ábrelo para le
  * "edit" here means "finish the redaction", never "restore the words".
  */
 export const EDITING_REDACTED_NOTICE =
-  'Estás leyendo la versión ya tachada, no el original. Los datos que la revisión alcanzó a quitar aparecen como [Persona 1], [Domicilio 1] o [Dato omitido]. El original no se muestra aquí y nunca entra al corpus.';
+  'Estás leyendo la versión ya tachada, no el original. Los datos que la revisión alcanzó a quitar aparecen como [Persona 1], [Domicilio 1] o [Dato omitido]. El original no se muestra aquí y nunca entra a la biblioteca.';
 
 export const EDIT_HINT =
   'Si quedó un dato que identifica a alguien, quítalo aquí. Lo que dejes escrito es lo que se guarda.';
@@ -489,7 +489,7 @@ export const EDIT_HINT =
 export const STALE_HIGHLIGHTS_NOTICE =
   'Cambiaste el texto, así que ya no marcamos dónde estaban los datos. Las marcas solo sirven para el texto tal como te lo mostramos.';
 
-export const SURVIVORS_TITLE = 'Esto es lo que la revisión encontró todavía escrito';
+export const SURVIVORS_TITLE = 'Datos que la revisión encontró';
 export const SURVIVORS_HINT = 'Está resaltado en el texto de abajo.';
 export const NO_SURVIVORS =
   'La revisión no señaló posiciones concretas en este documento.';
@@ -505,15 +505,15 @@ export const NO_TEXT_NOTICE =
 // and the sentence next to it names the consequence, including the part that is
 // about them: it is recorded, with their name on it.
 
-export const APPROVE_LABEL = 'Aprobar y dejar que entre al corpus';
+export const APPROVE_LABEL = 'Aprobar y agregar a la biblioteca';
 
 export const APPROVE_CONSEQUENCE =
-  'La revisión automática detuvo este documento porque encontró datos que pueden identificar a una persona. Si lo apruebas, estás diciendo que el texto de arriba ya se puede compartir: entra al corpus y el chat podrá citarlo dentro de este ecosistema.';
+  'La revisión automática detuvo este documento porque encontró datos que pueden identificar a una persona. Si lo apruebas, estás diciendo que el texto de arriba ya se puede compartir: entra a la biblioteca y el chat podrá citarlo dentro de este ecosistema.';
 
 export const APPROVE_RECORDED =
   'Queda registrado que tú lo aprobaste, en qué fecha y qué encontró la revisión. Ese registro no se borra.';
 
-export const APPROVE_CONFIRM = '¿Aprobar este documento y dejar que entre al corpus?';
+export const APPROVE_CONFIRM = '¿Aprobar este documento y dejar que entre a la biblioteca?';
 
 // ── Rejecting ──────────────────────────────────────────────────────────────
 
@@ -521,7 +521,7 @@ export const REJECT_LABEL = 'Rechazar y borrar el texto retenido';
 
 /** 🔴 Not undoable, and it destroys the text. Said before the click, not after. */
 export const REJECT_CONSEQUENCE =
-  'Si lo rechazas, el documento no entra al corpus y el texto retenido se borra. Ya no se podrá volver a revisar aquí. Esto no se puede deshacer.';
+  'Si lo rechazas, el documento no entra a la biblioteca y el texto retenido se borra. Ya no se podrá volver a revisar aquí. Esto no se puede deshacer.';
 
 export const REJECT_CONFIRM = '¿Rechazar este documento y borrar el texto retenido?';
 
@@ -535,7 +535,7 @@ export const NOTE_PLACEHOLDER = 'Por qué lo apruebas o lo rechazas';
 
 // ── Outcomes ───────────────────────────────────────────────────────────────
 
-export const APPROVED_TOAST = 'Aprobado. El documento va a entrar al corpus.';
+export const APPROVED_TOAST = 'Aprobado. El documento va a entrar a la biblioteca.';
 export const REJECTED_TOAST = 'Rechazado. El texto retenido se borró.';
 export const DECISION_FAILED =
   'No pudimos guardar tu decisión. El documento sigue retenido. Vuelve a intentarlo.';
