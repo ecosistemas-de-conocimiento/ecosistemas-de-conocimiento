@@ -10,7 +10,7 @@ import type {
   FieldAccess,
   Where,
 } from 'payload'
-import { ValidationError } from 'payload'
+import { Forbidden, ValidationError } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
 import { ANONYMISATION_STATES, GATE_UNAVAILABLE_INGEST_CODE } from '../lib/anonymiseDocument'
@@ -642,9 +642,20 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
     }
   } else if (operation === 'create') {
     // No session — an upload straight into the ecosistema, with no conversation
-    // attached. Only unambiguous when the person belongs to exactly one.
+    // attached (Mis documentos).
     const organizationIds = await organizationIdsForUser(req.payload, user.id)
-    if (organizationIds.length === 1) {
+    // 🔴 A NAMED ECOSISTEMA IS A REQUEST, CHECKED AGAINST MEMBERSHIP. The web
+    // app sends the one selected in its switcher, so a person in several
+    // ecosistemas can upload without a conversation. A tenant the caller is
+    // not a member of is refused (403), never silently replaced: filing the
+    // document somewhere else than asked is the bug this branch guards against.
+    const requested = resolveId(next.organization)
+    if (requested != null) {
+      if (!organizationIds.some((id) => String(id) === String(requested))) {
+        throw new Forbidden(req.t)
+      }
+      next.organization = organizationIds.find((id) => String(id) === String(requested))
+    } else if (organizationIds.length === 1) {
       next.organization = organizationIds[0]
     } else {
       throw new ValidationError({

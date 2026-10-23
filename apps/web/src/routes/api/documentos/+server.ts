@@ -4,7 +4,7 @@ import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
 import { degradeListResponse } from '$lib/server/degrade';
 import { relationIds, relationSessions } from '$lib/documents';
-import { resolveEcosystem } from '$lib/server/ecosystem';
+import { ECOSYSTEM_COOKIE, resolveEcosystem } from '$lib/server/ecosystem';
 import { uploadLooseDocument } from '$lib/server/uploadDocument';
 
 /**
@@ -150,11 +150,14 @@ export const GET: RequestHandler = async ({ locals, cookies, url }) => {
  * POST /api/documentos — upload a file into the ecosistema with no
  * conversation ("Subir documento" in Mis documentos, UX demo backlog #15).
  *
- * ⚠ ONLY FOR SOMEONE IN EXACTLY ONE ECOSISTEMA. The backend derives the
- * ecosistema of a conversation-less document from the caller's memberships and
- * refuses when there are several (`Documents.ts`). Checked here first, so the
- * file never goes up just to be refused — and so a platform admin looking at a
- * different ecosistema cannot file a document somewhere they are not looking.
+ * 🔴 IT GOES TO THE SELECTED ECOSISTEMA — the switcher cookie, validated by
+ * `resolveEcosystem` against the caller's memberships. The backend checks the
+ * membership again (`Documents.ts`), so neither layer trusts the other.
+ *
+ * 🔴 A COOKIE NAMING A NON-MEMBER ECOSISTEMA IS REFUSED (403), not quietly
+ * replaced by the fallback: the person would be looking at one ecosistema and
+ * filing into another. The list read already rewrote the cookie, so the next
+ * page load shows the ecosistema they really are in.
  */
 export const POST: RequestHandler = async ({ locals, cookies, request }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
@@ -162,12 +165,18 @@ export const POST: RequestHandler = async ({ locals, cookies, request }) => {
     return json({ error: 'multipart_missing_file' }, { status: 400 });
   }
 
-  const { selected, list, ok } = await resolveEcosystem(cookies, locals.token);
+  const requested = cookies.get(ECOSYSTEM_COOKIE);
+  const { selected, ok } = await resolveEcosystem(cookies, locals.token);
   if (!ok) return json({ error: 'upstream_unavailable' }, { status: 503 });
-  if (!selected || list.length !== 1 || list[0]!.id !== selected.id) {
-    return json({ error: 'needs_conversation' }, { status: 409 });
+  if (!selected) return json({ error: 'no_ecosystem' }, { status: 403 });
+  if (requested && requested !== selected.id) {
+    return json({ error: 'ecosystem_forbidden' }, { status: 403 });
   }
 
-  const { status, body } = await uploadLooseDocument(locals.token, await request.formData());
+  const { status, body } = await uploadLooseDocument(
+    locals.token,
+    await request.formData(),
+    selected.id,
+  );
   return json(body, { status });
 };

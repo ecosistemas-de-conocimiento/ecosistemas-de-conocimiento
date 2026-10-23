@@ -5,6 +5,7 @@ vi.mock('$lib/server/auth', () => ({
   backendFetch: vi.fn(),
 }));
 vi.mock('$lib/server/ecosystem', () => ({
+  ECOSYSTEM_COOKIE: 'eco_selected',
   resolveEcosystem: vi.fn(),
 }));
 vi.mock('$lib/server/holds', () => ({
@@ -22,13 +23,21 @@ const fetchSpy = vi.fn();
 
 const ECO = { id: '3', name: 'Organización Demo' };
 
-function makeEvent(file: File | null, user: { id: number } | null = { id: 5 }) {
+function makeEvent(
+  file: File | null,
+  user: { id: number } | null = { id: 5 },
+  cookie?: string,
+) {
   const form = new FormData();
   if (file) form.append('file', file);
   const request = new Request('http://app.test/api/documentos', { method: 'POST', body: form });
   return {
     locals: { user, token: 'tok' },
-    cookies: { get: () => undefined, set: () => {}, delete: () => {} },
+    cookies: {
+      get: (name: string) => (name === 'eco_selected' ? cookie : undefined),
+      set: () => {},
+      delete: () => {},
+    },
     request,
   } as unknown as Parameters<typeof POST>[0];
 }
@@ -60,19 +69,55 @@ describe('POST /api/documentos (upload with no conversation)', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  // The backend refuses a conversation-less document for someone in several
-  // ecosistemas. Refused here before the file goes up.
-  it('409s someone in more than one ecosistema, before uploading', async () => {
+  // Someone in several ecosistemas uploads into the one selected in the switcher.
+  it('files it in the SELECTED ecosistema for someone in several', async () => {
+    const OTRO = { id: '4', name: 'Otro' };
+    mockedResolve.mockResolvedValue({
+      ok: true,
+      selected: OTRO,
+      list: [ECO, OTRO],
+      source: 'requested',
+    });
+    fetchSpy.mockResolvedValue(jsonResponse({ doc: { id: 11 } }, 201));
+    mockedBackendFetch.mockResolvedValue(jsonResponse({ doc: { id: 21 } }, 201));
+    const res = await POST(makeEvent(pdf(), { id: 5 }, '4'));
+    expect(res.status).toBe(201);
+    const sent = JSON.parse(mockedBackendFetch.mock.calls[0]![2].body as string);
+    expect(sent).toMatchObject({ session: [], organization: '4' });
+  });
+
+  // 🔴 A forged cookie: `resolveEcosystem` falls back to a real membership, but
+  // the upload must not silently land there.
+  it('403s a cookie naming an ecosistema the caller is not in, before uploading', async () => {
     mockedResolve.mockResolvedValue({
       ok: true,
       selected: ECO,
       list: [ECO, { id: '4', name: 'Otro' }],
-      source: 'cookie',
+      source: 'fallback',
     });
-    const res = await POST(makeEvent(pdf()));
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: 'needs_conversation' });
+    const res = await POST(makeEvent(pdf(), { id: 5 }, '999'));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'ecosystem_forbidden' });
     expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mockedBackendFetch).not.toHaveBeenCalled();
+  });
+
+  it('403s someone with no ecosistema, before uploading', async () => {
+    mockedResolve.mockResolvedValue({ ok: true, selected: null, list: [], source: 'none' });
+    const res = await POST(makeEvent(pdf()));
+    expect(res.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // The backend refuses a non-member org too; its 403 reaches the browser as a 403.
+  it('passes a backend membership refusal through as 403', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ doc: { id: 11 } }, 201));
+    mockedBackendFetch.mockResolvedValue(
+      jsonResponse({ errors: [{ message: 'You are not allowed to perform this action.' }] }, 403),
+    );
+    const res = await POST(makeEvent(pdf()));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'document_create_failed' });
   });
 
   it('503s when the ecosistema cannot be read', async () => {
@@ -105,6 +150,8 @@ describe('POST /api/documentos (upload with no conversation)', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  // Single-ecosistema person, no cookie yet: same flow as before, now naming
+  // their only ecosistema explicitly.
   it('uploads a PDF and creates a document attached to no conversation', async () => {
     fetchSpy.mockResolvedValue(jsonResponse({ doc: { id: 11 } }, 201));
     mockedBackendFetch.mockResolvedValue(jsonResponse({ doc: { id: 21 } }, 201));
@@ -119,8 +166,8 @@ describe('POST /api/documentos (upload with no conversation)', () => {
       mediaFile: 11,
       name: 'informe.pdf',
     });
-    // 🔴 Never names the ecosistema: the backend derives it.
-    expect(sent).not.toHaveProperty('organization');
+    // The validated selection, never anything from the request body.
+    expect(sent.organization).toBe('3');
   });
 
   it('never passes a backend validation message to the browser', async () => {

@@ -30,7 +30,7 @@ describe('audio upload switch (UX demo backlog #8)', () => {
   });
 
   it('Mis documentos upload errors are Spanish and never echo the code', () => {
-    for (const code of ['needs_conversation', 'unsupported_kind', 'file_too_large', 'boom', null]) {
+    for (const code of ['ecosystem_forbidden', 'unsupported_kind', 'file_too_large', 'boom', null]) {
       const copy = looseUploadErrorCopy(code, '20.0 MB');
       expect(`${copy.title} ${copy.message}`).not.toMatch(/_|boom/);
     }

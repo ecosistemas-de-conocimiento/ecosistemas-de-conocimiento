@@ -126,12 +126,6 @@ export function looseUploadErrorCopy(
   maxBytesLabel: string,
 ): { title: string; message: string } {
   switch (code) {
-    case 'needs_conversation':
-      return {
-        title: 'Súbelo desde una conversación',
-        message:
-          'Perteneces a varios ecosistemas.',
-      };
     case 'unsupported_kind':
     case 'unsupported_media_type':
       return {
