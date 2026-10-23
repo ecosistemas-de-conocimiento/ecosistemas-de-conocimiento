@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { GraphEntity, GraphViewEdge, GraphViewType } from '$lib/graph';
+import { parseGraphView, type GraphEntity, type GraphViewEdge, type GraphViewType } from '$lib/graph';
 import {
   MAP_ALWAYS_LABELLED,
   MAP_LEVELS,
@@ -96,6 +96,102 @@ describe('buildMapData — the same input, the same picture', () => {
     expect(MAP_LEVELS.persona).toBe(MAP_LEVELS.organizacion);
     expect(MAP_LEVELS.evento).toBeGreaterThan(MAP_LEVELS.persona);
     expect(MAP_LEVELS.tema).toBeGreaterThan(MAP_LEVELS.evento);
+  });
+});
+
+describe('🔴 a town whose only extracted relation is its state is not drawn (owner 2026-10-23)', () => {
+  type Way = 'out' | 'in' | 'both';
+  const inside = (fromId: string, toId: string, direction: Way = 'out'): GraphViewEdge => ({
+    ...rel(fromId, toId),
+    relationType: 'ubicado_en',
+    direction,
+  });
+  const places = [
+    entity('cva', 'lugar', 'Cuernavaca', 4),
+    entity('xox', 'lugar', 'Xoxocotla', 3),
+    entity('mor', 'lugar', 'Morelos', 9),
+    entity('agua', 'tema', 'Agua', 6),
+  ];
+  const ids = (data: ReturnType<typeof buildMapData>) => data.nodes.map((n) => n.id).sort();
+  const keys = (data: ReturnType<typeof buildMapData>) => data.links.map((l) => l.key).sort();
+
+  it('hides a town whose only link is its state, and that link', () => {
+    const data = buildMapData(places, [inside('xox', 'mor'), inside('cva', 'mor'), rel('cva', 'agua')]);
+    expect(keys(data)).toEqual(['agua|cva', 'cva|mor']);
+    expect(ids(data)).toEqual(['agua', 'cva', 'mor']);
+  });
+
+  it('hides a town with co-mentions but no other relation, co-mentions included', () => {
+    const data = buildMapData(places, [
+      inside('xox', 'mor'),
+      co('xox', 'agua'),
+      co('xox', 'cva'),
+      rel('cva', 'agua'),
+    ]);
+    expect(ids(data)).not.toContain('xox');
+    expect(keys(data)).toEqual(['agua|cva']);
+  });
+
+  it('keeps a town with another relation, and its state link', () => {
+    const data = buildMapData(places, [inside('cva', 'mor'), rel('agua', 'cva')]);
+    expect(keys(data)).toEqual(['agua|cva', 'cva|mor']);
+  });
+
+  it('keeps the state while it has drawn links; the degree-0 rule hides it otherwise', () => {
+    const kept = buildMapData(places, [inside('xox', 'mor'), co('mor', 'agua')]);
+    expect(ids(kept)).toEqual(['agua', 'mor']);
+    expect(kept.nodes.find((n) => n.id === 'mor')?.degree).toBe(1);
+    const alone = buildMapData(places, [inside('xox', 'mor'), co('cva', 'agua')]);
+    expect(ids(alone)).toEqual(['agua', 'cva']);
+  });
+
+  it('reads the town off the direction: `in` means toId is the town', () => {
+    // Morelos has only this relation but is the state: it stays.
+    const data = buildMapData(places, [inside('mor', 'cva', 'in'), rel('cva', 'agua')]);
+    expect(keys(data)).toEqual(['agua|cva', 'cva|mor']);
+    const lone = buildMapData(places, [inside('mor', 'xox', 'in'), co('mor', 'agua')]);
+    expect(ids(lone)).toEqual(['agua', 'mor']);
+  });
+
+  it('one pass: hiding a town does not cascade to its state', () => {
+    const mex = entity('mex', 'lugar', 'México', 12);
+    const data = buildMapData([...places, mex], [inside('xox', 'mor'), inside('mor', 'mex'), co('mex', 'agua')]);
+    expect(keys(data)).toEqual(['agua|mex', 'mex|mor']);
+  });
+
+  it('leaves other relation types, non-places and plain co-mentions alone', () => {
+    const other = { ...rel('xox', 'mor'), relationType: 'relacionado_con' as const };
+    expect(keys(buildMapData(places, [other]))).toEqual(['mor|xox']);
+    expect(keys(buildMapData(places, [inside('agua', 'mor')]))).toEqual(['agua|mor']);
+    expect(keys(buildMapData(places, [co('xox', 'mor')]))).toEqual(['mor|xox']);
+  });
+
+  it('the combined view: a town hidden in one ecosistema stays when another adds a relation', () => {
+    const wire = (edges: unknown[]) =>
+      parseGraphView({
+        entities: [
+          { id: 1, type: 'lugar', label: 'Xoxocotla', support: 3, ecosystems: [1, 165] },
+          { id: 2, type: 'lugar', label: 'Morelos', support: 9, ecosystems: [1, 165] },
+          { id: 3, type: 'tema', label: 'Agua', support: 6, ecosystems: [165] },
+        ],
+        edges,
+        ecosystems: [1, 165],
+      });
+    const town = {
+      from: 1,
+      to: 2,
+      kind: 'relation',
+      support: 2,
+      coMentions: 2,
+      relationType: 'ubicado_en',
+      direction: 'out',
+    };
+    const coMention = { from: 1, to: 3, kind: 'co-mention', support: 1, coMentions: 1 };
+    const single = wire([town, coMention]);
+    expect(buildMapData(single.entities, single.edges ?? []).nodes).toEqual([]);
+    const relation = { ...coMention, kind: 'relation', relationType: 'relacionado_con', direction: 'out' };
+    const combined = wire([town, relation]);
+    expect(keys(buildMapData(combined.entities, combined.edges ?? []))).toEqual(['1|2', '1|3']);
   });
 });
 
