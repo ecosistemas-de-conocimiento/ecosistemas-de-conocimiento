@@ -503,35 +503,6 @@ function placeContext(
   return true
 }
 
-/** What may stand before a town inside the finding's own span: "en Xochitepec". */
-const LEAD_PREPOSITIONS = new Set(['en', 'de', 'del', 'desde', 'hasta', 'hacia'])
-
-/**
- * The town the model's span wraps, or the span itself.
- *
- * Measured 2026-10-23 (fake-model tests, `gate.towns.test.ts`): models mark a
- * town as "Xochitepec", "en Xochitepec" or "vivo en Xochitepec". Only ONE
- * lead is cut — a locative preposition, optionally after one verb of residence
- * or origin — and the rest must then pass every rule at every occurrence in
- * the text, with the text's own words before it. "Yo vivo en …" is not cut:
- * the whole span stays a finding and is redacted.
- */
-function withoutLead(needle: string): string {
-  const parts = needle.split(/\s+/u)
-  let cut = 0
-  if (parts.length >= 2 && LEAD_PREPOSITIONS.has(bare(parts[0]!))) cut = 1
-  else if (
-    parts.length >= 3 &&
-    (isPlaceVerb(bare(parts[0]!)) || ORIGIN.has(bare(parts[0]!))) &&
-    LEAD_PREPOSITIONS.has(bare(parts[1]!))
-  ) {
-    cut = 2
-  }
-  let rest = needle
-  for (let i = 0; i < cut; i += 1) rest = rest.replace(/^\S+\s+/u, '')
-  return rest
-}
-
 /**
  * True when a `lugar` finding is a town-level place (shown by the owner's
  * ruling) and so must not hold the document at verify. Stage 3 does not ask
@@ -549,7 +520,9 @@ export function isTownLevelPlace(
   text: string,
 ): boolean {
   if (finding.type !== 'lugar' || finding.typedAddress) return false
-  const needle = withoutLead(finding.text.normalize('NFC').trim())
+  // 🔴 The span as the model gave it: no lead is cut ("de Xiadani", "vivo en
+  // Tepito" hold, as before the town work; audit of 9edaa22).
+  const needle = finding.text.normalize('NFC').trim()
   if (needle === '' || /[\d.#°º/]/u.test(needle)) return false
   const words = needle.split(/[\s,]+/u).filter(Boolean)
   if (!hasTownShape(words)) return false

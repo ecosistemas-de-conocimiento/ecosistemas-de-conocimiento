@@ -216,8 +216,12 @@ export const DETECT_SYSTEM_PROMPT = [
   '  Cruces", "la hacienda San José".',
   // 🔴 OWNER, 2026-10-23: an institution where someone lives or is held points
   // at them, also next to a town.
-  '- Instituciones donde está o vive una persona: un penal o Cereso, un hospital, una escuela.',
-  '  También junto a un pueblo: en "estoy en Atlacholoaya, en el Cereso" el hallazgo es "el Cereso".',
+  // ⚠ Named, or next to a town: an unnamed "el hospital" is dropped as a
+  // generic place (`genericPlaces.ts`), so the prompt does not ask for it.
+  '- Una institución CON NOMBRE, o junto a un pueblo, donde está o vive una persona:',
+  '  "el Cereso", "el hospital de Xochitepec", "la escuela Benito Juárez". En "estoy en',
+  '  Atlacholoaya, en el Cereso" el hallazgo es "el Cereso". Un "el hospital" o "la escuela"',
+  '  solo, sin nombre ni pueblo, no se reporta.',
   '- Códigos postales.',
   '- Referencias sin formato que permiten llegar a una casa: "enfrente de la tienda',
   '  de doña Mari", "subiendo por donde está el tanque", "la casa de la reja verde".',
@@ -240,11 +244,12 @@ export const DETECT_SYSTEM_PROMPT = [
   // "Rancho" ("vivo en Rancho Nuevo") is a town and is shown.
   // 🔴 OWNER, 2026-10-23 (Q10 A): "we dont need to redact towns, states". Stage
   // 3 redacts whatever the model reports, so this line is what keeps them.
-  '⚠ Los pueblos, municipios, ciudades, ejidos y estados NO son datos personales y NO se',
-  '  reportan. En "Vivo en Xochitepec, Morelos" no hay ningún hallazgo.',
-  '⚠ NUNCA marques estados, municipios, alcaldías, ciudades, pueblos, comunidades,',
-  'localidades, ejidos ni congregaciones, aunque sean pequeños y aunque digan dónde',
-  'vive, trabaja o estudia alguien. En "vivo en Xoxocotla, Morelos" no hay hallazgo.',
+  '⚠ Los pueblos, municipios, alcaldías, ciudades, comunidades, localidades, ejidos,',
+  '  congregaciones y estados NO son datos personales y NO se reportan, aunque sean',
+  '  pequeños y aunque digan dónde vive, trabaja o estudia alguien. En "Vivo en',
+  '  Xochitepec, Morelos" no hay ningún hallazgo.',
+  'Una calle o colonia con nombre de pueblo o estado SÍ se marca: "calle Morelos 12",',
+  '"colonia Xochitepec", "Hidalgo 12".',
   'Marca todo lo de la lista Domicilios aunque esté en una ciudad o pueblo.',
   '"Rancho Nuevo" como nombre de un pueblo no se marca.',
   // ⚠ Many Mexican towns carry a person's name (Dolores, Soledad, Guadalupe).

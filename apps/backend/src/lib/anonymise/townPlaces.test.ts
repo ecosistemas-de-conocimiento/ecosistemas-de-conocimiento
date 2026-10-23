@@ -179,12 +179,13 @@ describe('isTownLevelPlace — the two rules', () => {
 
 describe('isTownLevelPlace — the span the model returns (2026-10-23)', () => {
   const text = 'Yo vivo en Xochitepec con mi familia.'
-  it('reads past ONE lead: a preposition, or a residence/origin verb and a preposition', () => {
+  it('🔴 reads the span as given: a lead in it is not cut (audit of 9edaa22)', () => {
     expect(isTownLevelPlace({ text: 'Xochitepec', type: 'lugar' }, text)).toBe(true)
-    expect(isTownLevelPlace({ text: 'en Xochitepec', type: 'lugar' }, text)).toBe(true)
-    expect(isTownLevelPlace({ text: 'vivo en Xochitepec', type: 'lugar' }, text)).toBe(true)
-    expect(isTownLevelPlace({ text: 'de Xochitepec', type: 'lugar' }, 'Soy de Xochitepec.')).toBe(true)
-    expect(isTownLevelPlace({ text: 'soy de Xochitepec', type: 'lugar' }, 'Soy de Xochitepec.')).toBe(true)
+    expect(isTownLevelPlace({ text: 'Xochitepec', type: 'lugar' }, 'Soy de Xochitepec.')).toBe(true)
+    expect(isTownLevelPlace({ text: 'en Xochitepec', type: 'lugar' }, text)).toBe(false)
+    expect(isTownLevelPlace({ text: 'vivo en Xochitepec', type: 'lugar' }, text)).toBe(false)
+    expect(isTownLevelPlace({ text: 'de Xochitepec', type: 'lugar' }, 'Soy de Xochitepec.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'soy de Xochitepec', type: 'lugar' }, 'Soy de Xochitepec.')).toBe(false)
   })
   it('🔴 the lead is not a pass: the town after it still needs its own context', () => {
     expect(isTownLevelPlace({ text: 'Yo vivo en Xochitepec', type: 'lugar' }, text)).toBe(false)
@@ -210,12 +211,10 @@ describe('isTownLevelPlace — the span the model returns (2026-10-23)', () => {
       expect(isTownLevelPlace({ text: span, type: 'lugar' }, t), span).toBe(false)
     }
   })
-  it('🔴 the two-word lead is cut only after a residence or origin verb', () => {
-    // Cut after "Real" (not a verb), "Catorce" would follow "Real de", not an
-    // origin word, and the town would be lost; uncut, the span passes.
+  it('a town word before a many-word town anchors it', () => {
     const t = 'Vivo en el municipio de Real de Catorce.'
     expect(isTownLevelPlace({ text: 'Real de Catorce', type: 'lugar' }, t)).toBe(true)
-    expect(isTownLevelPlace({ text: 'vivo en Real de Catorce', type: 'lugar' }, t)).toBe(true)
+    expect(isTownLevelPlace({ text: 'vivo en Real de Catorce', type: 'lugar' }, t)).toBe(false)
   })
   it('🔴 work is not residence: "trabajo en" is no town context', () => {
     expect(isTownLevelPlace({ text: 'Coppel', type: 'lugar' }, 'Trabajo en Coppel.')).toBe(false)

@@ -734,8 +734,10 @@ describe('runAnonymisationGate — common place nouns do not hold a document', (
 
 describe('runAnonymisationGate — 🔴 towns are shown, addresses are not (owner, 2026-10-21, #12)', () => {
   it('the detector prompt says never to mark a town, municipality, city or state', () => {
-    expect(DETECT_SYSTEM_PROMPT).toContain('NUNCA marques estados, municipios, alcaldías, ciudades, pueblos')
-    expect(DETECT_SYSTEM_PROMPT).toContain('En "vivo en Xoxocotla, Morelos" no hay hallazgo.')
+    // One paragraph since 2026-10-23 (owner Q10 A); exact wording in gate.q10.test.ts.
+    expect(DETECT_SYSTEM_PROMPT.replace(/\s+/g, ' ')).toContain(
+      'Los pueblos, municipios, alcaldías, ciudades, comunidades, localidades, ejidos, congregaciones y estados NO son datos personales',
+    )
     // A town rule must not narrow the address list or spare a person's name.
     expect(DETECT_SYSTEM_PROMPT).toContain('Marca todo lo de la lista Domicilios aunque esté en una ciudad o pueblo.')
     expect(DETECT_SYSTEM_PROMPT).not.toContain('Marca solo lo que queda dentro')

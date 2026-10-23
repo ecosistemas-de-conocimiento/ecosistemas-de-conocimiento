@@ -155,7 +155,8 @@ describe('one bare word after a residence or origin verb: shown (owner deciding)
   for (const [text, answers] of [
     ['Vivo en Tepito.', [l('Tepito')]],
     ['Vivo en Insurgentes.', [l('Insurgentes')]],
-    ['Vengo de Xiadani.', [l('de Xiadani')]],
+    // The bare word only: "de Xiadani" with its lead holds (gate.q10b.test.ts).
+    ['Vengo de Xiadani.', [l('Xiadani')]],
   ] as Array<[string, H[]]>) {
     it(`${JSON.stringify(text)} at verify → unchanged`, async () => {
       expect(await verifyOut(text, answers)).toBe(text)

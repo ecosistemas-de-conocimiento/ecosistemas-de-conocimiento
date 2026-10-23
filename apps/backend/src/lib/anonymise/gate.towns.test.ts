@@ -49,12 +49,12 @@ afterEach(() => {
   vi.unstubAllEnvs()
 })
 
+// Only the town itself. A span with a lead ("en Xochitepec", "vivo en
+// Xochitepec") HOLDS at verify, as before the town work (audit of 9edaa22):
+// see `gate.q10b.test.ts`.
 const TOWN_ANSWERS: H[] = [
   { texto: 'Xochitepec', tipo: 'lugar', identifica: true },
   { texto: 'Xochitepec', tipo: 'lugar', identifica: false },
-  { texto: 'en Xochitepec', tipo: 'lugar', identifica: true },
-  { texto: 'en Xochitepec', tipo: 'lugar', identifica: false },
-  { texto: 'vivo en Xochitepec', tipo: 'lugar', identifica: true },
   { texto: 'XOCHITEPEC', tipo: 'lugar', identifica: true },
 ]
 
@@ -119,13 +119,9 @@ describe('at verify, a bare town after a residence or origin verb does not hold'
     }
   }
 
-  it('"de Xochitepec" after "soy" → unchanged', async () => {
-    const text = 'Soy de Xochitepec.'
-    const answer = { texto: 'de Xochitepec', tipo: 'lugar' }
-    const r = await gate(text, [[], [answer]])
-    expect(r.status).toBe('ready')
-    if (r.status !== 'ready') return
-    expect(r.redactedText).toBe(text)
+  it('"de Xochitepec" (with its lead) after "soy" → hold', async () => {
+    const r = await gate('Soy de Xochitepec.', [[], [{ texto: 'de Xochitepec', tipo: 'lugar' }]])
+    expect(r.status).toBe('hold')
   })
 
   it('the town shows while the person beside it is redacted', async () => {

@@ -87,9 +87,18 @@ describe('the prompt: towns are not personal data; addresses and institutions ar
 
   it('says towns, municipalities, ejidos and states are not personal data', () => {
     expect(flat).toContain(
-      'Los pueblos, municipios, ciudades, ejidos y estados NO son datos personales y NO se reportan',
+      'Los pueblos, municipios, alcaldías, ciudades, comunidades, localidades, ejidos, congregaciones y estados NO son datos personales y NO se reportan',
     )
     expect(flat).toContain('En "Vivo en Xochitepec, Morelos" no hay ningún hallazgo.')
+    // One town paragraph, not two (audit of 9edaa22).
+    expect(flat).not.toContain('NUNCA marques estados')
+    expect(flat.match(/no hay (ningún )?hallazgo/g)).toHaveLength(1)
+  })
+
+  it('says a street or colonia named after a town or state IS reported', () => {
+    expect(flat).toContain(
+      'Una calle o colonia con nombre de pueblo o estado SÍ se marca: "calle Morelos 12", "colonia Xochitepec", "Hidalgo 12".',
+    )
   })
 
   it('still asks for streets, numbers, colonias, ranchos, parajes, haciendas and institutions', () => {
@@ -97,9 +106,11 @@ describe('the prompt: towns are not personal data; addresses and institutions ar
     expect(flat).toContain('- Colonias, barrios, fraccionamientos, unidades habitacionales, manzana y lote.')
     expect(flat).toContain('- Ranchos, parajes y haciendas con nombre')
     expect(flat).toContain(
-      '- Instituciones donde está o vive una persona: un penal o Cereso, un hospital, una escuela.',
+      '- Una institución CON NOMBRE, o junto a un pueblo, donde está o vive una persona: "el Cereso", "el hospital de Xochitepec", "la escuela Benito Juárez".',
     )
-    expect(flat).toContain('También junto a un pueblo: en "estoy en Atlacholoaya, en el Cereso" el hallazgo es "el Cereso".')
+    expect(flat).toContain('En "estoy en Atlacholoaya, en el Cereso" el hallazgo es "el Cereso".')
+    // Reconciled with `genericPlaces.ts`, which drops an unnamed one.
+    expect(flat).toContain('Un "el hospital" o "la escuela" solo, sin nombre ni pueblo, no se reporta.')
   })
 
   it('asks for a title before a name inside the name, and keeps a bare title out', () => {
@@ -145,7 +156,7 @@ describe('titles: the model returns the title with the name', () => {
     expect(r.redactedText).toBe(text)
   })
 
-  it('Q5: a one-word name is redacted', async () => {
+  it('Q5 at stage 3: a one-word name is redacted (verify: gate.q10b.test.ts)', async () => {
     const r = await run('Lucrecia llegó tarde.', [[{ texto: 'Lucrecia', tipo: 'persona' }], []])
     expect(r.status).toBe('ready')
     if (r.status !== 'ready') return
