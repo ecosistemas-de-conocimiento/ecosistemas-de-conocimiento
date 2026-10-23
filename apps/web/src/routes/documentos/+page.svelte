@@ -26,7 +26,7 @@
   import { Button } from '$lib/primitives';
   import { app } from '$lib/stores/app.svelte';
   import { deleteConfirmCopy } from '$lib/documents';
-  import { ingestBadge } from '$lib/ingest';
+  import { docStatusBadge } from '$lib/docStatus';
   import { canRetryGraph, GRAPH_RETRY_LABEL, graphBadge } from '$lib/graphStatus';
   import { publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
   import type { WorkingDoc } from '$lib/types';
@@ -294,7 +294,7 @@
       {#each docs as d (d.id)}
         {@const pub = publicationBadge(d.publicationStatus)}
         {@const gate = gateOf(d)}
-        {@const ing = ingestBadge(d.ingestStatus, d.kind, d.audioMeta)}
+        {@const ing = docStatusBadge(d)}
         {@const loose = isLoose(d)}
         {@const graph = graphBadge(d.graphStatus)}
         <li class="row" class:loose data-testid={`owned-doc-${d.id}`}>

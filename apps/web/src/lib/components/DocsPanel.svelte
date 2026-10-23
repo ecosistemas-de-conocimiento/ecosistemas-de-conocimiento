@@ -23,10 +23,10 @@
     UPLOAD_KIND_LABELS,
     type UploadContentKind,
   } from '$lib/uploadKind';
+  import { docStatusBadge, gateState, isIngestFailure } from '$lib/docStatus';
   import {
     audioMetaChips,
     canRetryIngest,
-    ingestBadge,
     ingestFailureCopy,
     isTranscript,
     publishConfirmCopy,
@@ -254,7 +254,7 @@
    * the ones that must not drift. Here we only map a tone to a CSS class.
    */
   function statusBadge(d: WorkingDoc) {
-    const badge = ingestBadge(d.ingestStatus, d.kind, d.audioMeta);
+    const badge = docStatusBadge(d);
     if (!badge) return null;
     return { ...badge, classes: `ingest-${badge.tone}` };
   }
@@ -760,7 +760,7 @@
 
             <!-- A failed ingest is never a silent revert: the reason stays on
                  the card, in Spanish, with the way out next to it. -->
-            {#if d.ingestStatus === 'failed'}
+            {#if isIngestFailure(d)}
               {@const failure = ingestFailureCopy(d.ingestError)}
               <div class="publish-failed">
                 <strong class="text-danger">{failure.title}.</strong>
@@ -896,7 +896,11 @@
                     <div>
                       <span class="font-medium text-ink">{d.kind.toUpperCase()}</span>
                     </div>
-                    {#if d.ingestStatus === 'pending'}
+                    {#if gateState(d) === 'review'}
+                      <div>En revisión.</div>
+                    {:else if gateState(d) === 'rejected'}
+                      <div>Rechazado.</div>
+                    {:else if d.ingestStatus === 'pending'}
                       <div>En cola.</div>
                     {:else if d.ingestStatus === 'extracting'}
                       <div>Extrayendo el texto del documento…</div>
@@ -906,7 +910,7 @@
                       <div>Transcripción terminada. Indexando…</div>
                     {:else if d.ingestStatus === 'embedding'}
                       <div>Indexando el contenido…</div>
-                    {:else if d.ingestStatus === 'failed'}
+                    {:else if isIngestFailure(d)}
                       {@const failure = ingestFailureCopy(d.ingestError)}
                       <!-- 🔴 No raw `ingestError` here. It used to render as
                            "Detalle: audio_service_not_configured: … (missing:

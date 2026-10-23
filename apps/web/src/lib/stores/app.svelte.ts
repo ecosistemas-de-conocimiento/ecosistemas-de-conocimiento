@@ -40,6 +40,7 @@ import {
 } from '../publication';
 import { relationIds, relationSessions } from '../documents';
 import { graphRetryErrorCopy, parseGraphStatus } from '../graphStatus';
+import { parseAnonymisationStatus } from '../docStatus';
 import {
   belongsTo,
   clearEcosystemScopedState,
@@ -149,6 +150,7 @@ function docFromBackend(row: Record<string, unknown>): WorkingDoc {
     kind,
     ingestStatus,
     ingestError: typeof row.ingestError === 'string' ? row.ingestError : null,
+    anonymisationStatus: parseAnonymisationStatus(row.anonymisationStatus),
     // `audioMeta` is a JSON column: anything could be in it. Take it only when
     // it is an object, so a malformed value cannot crash the duration chip.
     audioMeta:

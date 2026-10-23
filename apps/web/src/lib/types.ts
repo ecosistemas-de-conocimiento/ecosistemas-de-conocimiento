@@ -1,6 +1,7 @@
 import type { Provenance } from '@edc/chat-engine/core';
 import type { PublicationStatus } from './publication';
 import type { GraphStatus } from './graphStatus';
+import type { AnonymisationStatus } from './docStatus';
 
 export type { PublicationStatus };
 
@@ -156,6 +157,11 @@ export interface WorkingDoc {
    * "wrong file" (they must fix it) from "the service was down" (just retry).
    */
   ingestError?: string | null;
+  /**
+   * Backend `documents.anonymisationStatus` (the testimonio gate). Read with
+   * `ingestStatus` by `$lib/docStatus`: a held row reads "en revisión".
+   */
+  anonymisationStatus?: AnonymisationStatus;
   /** Present for `kind: 'audio'`. Drives the ETA and the provenance chip. */
   audioMeta?: AudioMeta | null;
   /**
