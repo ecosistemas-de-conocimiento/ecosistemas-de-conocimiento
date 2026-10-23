@@ -555,10 +555,10 @@
               {#if statusBadge(d)}
                 {@const b = statusBadge(d)!}
                 <span
-                  class="chip text-[9px] uppercase tracking-wider {b.classes}"
+                  class="chip text-[10px] {b.classes}"
                   title={b.title}
                 >
-                  {b.label}
+                  {b.label.charAt(0).toUpperCase() + b.label.slice(1)}
                 </span>
               {/if}
               <label

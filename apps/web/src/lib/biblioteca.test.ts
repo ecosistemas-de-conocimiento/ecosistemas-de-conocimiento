@@ -172,8 +172,8 @@ describe('resultsSummary', () => {
     expect(resultsSummary({ total: 4, shown: 4, filtered: false })).toBe('4 publicaciones');
   });
 
-  it('says how many of how many when the page is a prefix', () => {
-    expect(resultsSummary({ total: 90, shown: 30, filtered: false })).toBe('30 de 90 publicaciones');
+  it('says the total even when the page shows a prefix; the pager names the page', () => {
+    expect(resultsSummary({ total: 90, shown: 30, filtered: false })).toBe('90 publicaciones');
   });
 });
 
