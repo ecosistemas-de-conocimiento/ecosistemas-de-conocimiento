@@ -8,7 +8,9 @@ import {
   chatSourceTitle,
   excerptFrom,
   EXCERPT_MAX,
+  isIntroLine,
   libraryTitleFor,
+  parseSkipIntro,
   testimonyLabel,
   testimonyTopic,
 } from './biblioteca';
@@ -44,7 +46,7 @@ describe('excerptFrom', () => {
   });
 
   it('keeps a short first line whole, placeholders as they are', () => {
-    const line = 'Me llamo [Persona A] y vivo en Cuautla desde hace muchos años.';
+    const line = 'Me llamo [Persona A] y vivo en Cuautla desde hace mucho tiempo.';
     expect(excerptFrom(line)).toBe(line);
   });
 
@@ -89,7 +91,7 @@ describe('excerptFrom', () => {
       '',
       'Nací hace 32 años en Huautla de Jiménez, Oaxaca. Mi madre me enseñó el mazateco.',
     ].join('\n');
-    expect(excerptFrom(text)).toBe('Nací hace 32 años en Huautla de Jiménez, Oaxaca. Mi madre me enseñó el mazateco.');
+    expect(excerptFrom(text, { skipIntro: false })).toBe('Nací hace 32 años en Huautla de Jiménez, Oaxaca. Mi madre me enseñó el mazateco.');
   });
 
   it('skips the header block above a rule line, the interviewer question and the speaker label', () => {
@@ -103,7 +105,7 @@ describe('excerptFrom', () => {
       '',
       'P: Este..., nací hace 39 años en San Juan Atzingo, Estado de México.',
     ].join('\n');
-    expect(excerptFrom(text)).toBe('Este..., nací hace 39 años en San Juan Atzingo, Estado de México.');
+    expect(excerptFrom(text, { skipIntro: false })).toBe('Este..., nací hace 39 años en San Juan Atzingo, Estado de México.');
   });
 
   it('skips a date line and a salutation (carta shape)', () => {
@@ -146,16 +148,64 @@ describe('excerptFrom', () => {
 
 describe('chatSourceTitle', () => {
   it('a testimonio reads "Testimonio · <ecosistema> — «excerpt»"', () => {
-    expect(chatSourceTitle('Testimonio', { excerpt: 'nací en Cuautla…' }, 'Discapacidad')).toBe(
+    expect(chatSourceTitle('Testimonio', { kind: 'testimonio', excerpt: 'nací en Cuautla…' }, 'Discapacidad')).toBe(
       'Testimonio · Discapacidad — «nací en Cuautla…»',
     );
   });
   it('without excerpt or ecosistema it degrades to the label', () => {
-    expect(chatSourceTitle('Testimonio', null, 'Discapacidad')).toBe('Testimonio · Discapacidad');
-    expect(chatSourceTitle('Testimonio', {}, null)).toBe('Testimonio');
+    expect(chatSourceTitle('Testimonio', { kind: 'testimonio' }, 'Discapacidad')).toBe('Testimonio · Discapacidad');
+    expect(chatSourceTitle('Testimonio', { kind: 'testimonio' }, null)).toBe('Testimonio');
   });
   it('a documento keeps its title, excerpt or not', () => {
     expect(chatSourceTitle('Acta.pdf', { excerpt: 'x' }, 'Eco')).toBe('Acta.pdf');
     expect(chatSourceTitle(null, null, 'Eco')).toBeNull();
+  });
+  it('🔴 a documento TITLED "Testimonio" is not labelled as one', () => {
+    expect(chatSourceTitle('Testimonio', { kind: 'documento', excerpt: 'x' }, 'Eco')).toBe('Testimonio');
+    expect(chatSourceTitle('Testimonio', { excerpt: 'x' }, 'Eco')).toBe('Testimonio');
+  });
+});
+
+describe('excerptFrom — skipIntro (BIBLIOTECA_EXCERPT_SKIP_INTRO)', () => {
+  const intro = [
+    'Soy de Chenalhó, Chiapas. Crecí hablando tsotsil; el español lo aprendí después.',
+    'Nací hace 79 años en San Juan Mixtepec, Oaxaca, en una familia de campesinos.',
+    'Mi pueblo es Hueyapan, Morelos. Ahí aprendí de mis abuelos el náhuatl y a escuchar.',
+    'Hace 16 años que hago traducción en los servicios de salud de la región.',
+    'Empecé a acompañar a la gente casi sin darme cuenta, una vecina tras otra.',
+  ].join('\n\n');
+
+  it('is on by default: skips origin, language and age lines', () => {
+    expect(excerptFrom(intro)).toBe('Empecé a acompañar a la gente casi sin darme cuenta, una vecina tras otra.');
+  });
+
+  it('off: the first prose line, as before', () => {
+    expect(excerptFrom(intro, { skipIntro: false })).toMatch(/^Soy de Chenalhó/);
+  });
+
+  it('only headings and intro lines left: no excerpt', () => {
+    expect(excerptFrom('Soy de Xoxocotla, Morelos.\nCrecí hablando náhuatl.')).toBeNull();
+    expect(excerptFrom('SEMBLANZA (en palabras de la persona):\n\nNací hace 25 años en Potoichán.')).toBeNull();
+  });
+
+  it.each([
+    ['Mi abuela hablaba mixe en la casa y en la milpa.', true],
+    ['El otomí se hablaba en la plaza.', true],
+    ['Me enseñó a curar con hierbas del monte, una por una.', false],
+    ['Los mixes no vinieron.', false],
+  ])('isIntroLine(%j) = %s', (line, expected) => {
+    expect(isIntroLine(line)).toBe(expected);
+  });
+
+  it.each([
+    [undefined, true],
+    ['', true],
+    ['true', true],
+    ['false', false],
+    ['0', false],
+    [' OFF ', false],
+    ['no', false],
+  ])('parseSkipIntro(%j) = %s', (raw, expected) => {
+    expect(parseSkipIntro(raw)).toBe(expected);
   });
 });

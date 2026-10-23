@@ -40,7 +40,7 @@ import { citedProvenance, parseCitedOrdinals, type Provenance } from '@edc/chat-
 import { isConversationTurnChunk } from '$lib/turnChunks';
 import { DRAFT_PROVENANCE_FLAG } from '$lib/publication';
 import type { TitledDoc } from '$lib/server/titleMatch';
-import { excerptFrom } from '$lib/biblioteca';
+import { excerptFrom, parseSkipIntro } from '$lib/biblioteca';
 import { env } from '$env/dynamic/private';
 import {
   GENERAL_KNOWLEDGE_LEAD,
@@ -69,7 +69,8 @@ const CHUNK_FIELDS = [
  *     (`chatCitationHref`);
  *   · `edcIsDraft`  — the "borrador, solo tú lo ves" label (`markDraftCitations`);
  *   · `excerpt`     — a testimonio's short line (`chatSourceTitle`), cut HERE
- *     from the chunk's own text ({@link testimonioExcerpt}), never sent in.
+ *     from the chunk's own text ({@link testimonioExcerpt}), never sent in;
+ *   · `kind`        — only the value `testimonio`, the excerpt's marker.
  * Booleans: kept only when exactly `true`.
  */
 const METADATA_STRING_KEYS = ['title', 'publication'] as const;
@@ -87,11 +88,16 @@ type Chunk = Provenance['chunks'][number];
  * Only `published` chunks: a draft-corpus copy may not be redacted (see
  * {@link titleMatchSource}). Recomputed on every pass, so a stored value is
  * never trusted, and a persisted turn gets one on read.
+ *
+ * 🔴 ONLY ON A KNOWN KIND (`kind === 'testimonio'`), never on the title: a
+ * documento may be titled "Testimonio". No other metadata key is unique to
+ * testimonios, so the browser copy now keeps `kind: 'testimonio'` (that value
+ * only). Turns saved before this have no `kind`: they keep their "Testimonio"
+ * title and get no excerpt.
  */
 function testimonioExcerpt(src: Record<string, unknown>, meta: Record<string, unknown> | null): string | null {
-  if (!meta || !(meta.kind === 'testimonio' || meta.title === 'Testimonio')) return null;
-  if (meta.publication !== 'published') return null;
-  return excerptFrom(src.text);
+  if (meta?.kind !== 'testimonio' || meta.publication !== 'published') return null;
+  return excerptFrom(src.text, { skipIntro: parseSkipIntro(env.BIBLIOTECA_EXCERPT_SKIP_INTRO) });
 }
 
 function browserMetadata(raw: unknown): Record<string, unknown> | null {
@@ -99,7 +105,12 @@ function browserMetadata(raw: unknown): Record<string, unknown> | null {
   const src = raw as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   // 🔴 A testimonio is titled "Testimonio", whatever its metadata says.
-  if (src.kind === 'testimonio') out.title = 'Testimonio';
+  // `kind` leaves only as this one value: the marker the excerpt and the
+  // label key on (`testimonioExcerpt`, `chatSourceTitle`).
+  if (src.kind === 'testimonio') {
+    out.title = 'Testimonio';
+    out.kind = 'testimonio';
+  }
   for (const k of METADATA_STRING_KEYS) {
     const v = src[k];
     if (typeof v === 'string' && !(k === 'title' && out.title)) out[k] = v;

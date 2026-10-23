@@ -30,6 +30,7 @@
  * (keyed on `contentKind`, never on the file-format `kind`).
  */
 
+import { env } from '$env/dynamic/private';
 import { backendFetch } from '$lib/server/auth';
 import {
   excerptFrom,
@@ -38,6 +39,7 @@ import {
   libraryKindOf,
   libraryTitleFor,
   normalizeSearch,
+  parseSkipIntro,
   testimonyTopic,
   type KindFilter,
   type LibraryDocument,
@@ -282,7 +284,11 @@ export function toLibraryItem(
     fromAudio: row.kind === 'audio',
     // 🔴 From `redactedText` only, and only once the gate cleared the row
     // (`isClearedForLibrary`). Never the original; no fallback to it.
-    excerpt: testimonio && isClearedForLibrary(row) ? excerptFrom(row.redactedText) : null,
+    // `BIBLIOTECA_EXCERPT_SKIP_INTRO` (default on): skip origin/language/age lines.
+    excerpt:
+      testimonio && isClearedForLibrary(row)
+        ? excerptFrom(row.redactedText, { skipIntro: parseSkipIntro(env.BIBLIOTECA_EXCERPT_SKIP_INTRO) })
+        : null,
   };
 }
 

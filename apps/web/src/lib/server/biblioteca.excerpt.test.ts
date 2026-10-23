@@ -24,8 +24,8 @@ beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
-const RAW = 'Me llamo Juana Pérez y vivo en la colonia Las Flores, en Cuautla, desde hace veinte años.';
-const REDACTED = 'Me llamo [Persona A] y vivo en la colonia [Lugar B], en Cuautla, desde hace veinte años.';
+const RAW = 'Me llamo Juana Pérez y vivo en la colonia Las Flores, en Cuautla, desde hace mucho tiempo.';
+const REDACTED = 'Me llamo [Persona A] y vivo en la colonia [Lugar B], en Cuautla, desde hace mucho tiempo.';
 
 const voz = {
   id: 5,
@@ -80,6 +80,18 @@ describe('toLibraryItem — testimonio label and excerpt', () => {
     expect(toLibraryItem({ ...voz, redactedText: null }, null).excerpt).toBeNull();
     expect(toLibraryItem({ ...voz, redactedText: '   ' }, null).excerpt).toBeNull();
   });
+
+  // Kills `const testimonio = true`: a cleared row with a redaction that is
+  // NOT a testimonio (a conversación, a documento) gets no excerpt.
+  it.each(['conversacion', 'documento', undefined])(
+    '🔴 a %s row with redactedText gets no excerpt',
+    (contentKind) => {
+      const item = toLibraryItem({ ...voz, contentKind }, null, 'Eco');
+      expect(item.excerpt).toBeNull();
+      expect(item.title).not.toMatch(/^Testimonio · /);
+      expect(JSON.stringify(item)).not.toContain('[Persona A]');
+    },
+  );
 
   it('a documento keeps its real title and gets no excerpt', () => {
     const item = toLibraryItem(

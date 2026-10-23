@@ -147,7 +147,7 @@ export function testimonyLabel(topic: string | null | undefined): string {
 }
 
 /**
- * A chat source's title. A testimonio (titled `Testimonio` by the backend and
+ * A chat source's title. A testimonio (`metadata.kind === 'testimonio'`, kept
  * by `$lib/server/citationProvenance`) reads `Testimonio · <ecosistema> —
  * «excerpt»`; anything else keeps its own title.
  *
@@ -160,7 +160,8 @@ export function chatSourceTitle(
   metadata: Record<string, unknown> | null | undefined,
   ecosystemName: string | null | undefined,
 ): string | null | undefined {
-  if (title?.trim() !== 'Testimonio') return title;
+  // 🔴 A known kind, never the title: a documento may be titled "Testimonio".
+  if (metadata?.kind !== 'testimonio') return title;
   const label = testimonyLabel(testimonyTopic(null, ecosystemName));
   const excerpt = typeof metadata?.excerpt === 'string' ? metadata.excerpt.trim() : '';
   return excerpt ? `${label} — «${excerpt}»` : label;
@@ -230,6 +231,47 @@ function clip(text: string, max: number): string {
 }
 
 /**
+ * The 11 languages of the seeded corpus (handoff R8; backend
+ * `lib/graph/noise.ts` holds a longer list this app cannot import), plus
+ * spelling variants. ⚠ For the excerpt's intro skip only. It is not an
+ * anonymisation list: the gate decides what is redacted, never this.
+ */
+const INTRO_LANGUAGES = [
+  'náhuatl', 'nahuatl', 'mixteco', 'mazateco', 'zapoteco', 'totonaco', 'tlahuica',
+  'tlapaneco', "me'phaa", 'me’phaa', 'amuzgo', 'hñähñu', 'otomí', 'otomi', 'tsotsil',
+  'tzotzil', 'mixe',
+];
+
+const INTRO_LINE = new RegExp(
+  `(?<!\\p{L})(?:soy de|nací|naci|crecí hablando|años|${INTRO_LANGUAGES.join('|')})(?!\\p{L})`,
+  'iu',
+);
+
+/**
+ * A self-introduction: origin, language or age (`Soy de Chenalhó, Chiapas.
+ * Crecí hablando tsotsil…`, `Nací hace 79 años en…`). The 10-23 audit measured
+ * the first prose line was one of these on 59/59 raw seeded testimonios.
+ */
+export function isIntroLine(line: string): boolean {
+  return INTRO_LINE.test(line);
+}
+
+/**
+ * `BIBLIOTECA_EXCERPT_SKIP_INTRO`: on unless `false`, `0`, `off` or `no`.
+ * Default on pending the owner's answer on whether an excerpt may carry a
+ * testimonio's origin, language or age. Read by the server callers only.
+ */
+export function parseSkipIntro(raw: string | undefined): boolean {
+  return !/^(false|0|off|no)$/i.test((raw ?? '').trim());
+}
+
+export interface ExcerptOptions {
+  max?: number;
+  /** Skip self-introduction lines ({@link isIntroLine}). Default true. */
+  skipIntro?: boolean;
+}
+
+/**
  * 🔴 A SHORT EXCERPT OF A TESTIMONIO, FROM ITS REDACTED TEXT ONLY.
  *
  * The caller passes the gate's `redactedText` (or a published chunk, which is
@@ -241,12 +283,15 @@ function clip(text: string, max: number): string {
  * its first 15 lines is skipped (up to the last such rule), as are headings in
  * capitals, short lines (fields, salutations), datelines, lines with ` · `
  * (metadata), questions and the interviewer's turns. A leading speaker label
- * is dropped. With no such line, the
- * first non-empty line. Whitespace collapsed, then {@link clip}ped.
+ * is dropped. With `skipIntro`, every self-introduction line is skipped too
+ * ({@link isIntroLine}). With no such line, the first non-empty line that is
+ * neither a heading nor an intro; with none, null. Whitespace collapsed, then {@link clip}ped.
  *
  * Returns the text as plain text: render it with `{…}`, never `{@html}`.
  */
-export function excerptFrom(text: unknown, max: number = EXCERPT_MAX): string | null {
+export function excerptFrom(text: unknown, opts: ExcerptOptions = {}): string | null {
+  const max = opts.max ?? EXCERPT_MAX;
+  const skipIntro = opts.skipIntro ?? true;
   if (typeof text !== 'string' || !text.trim()) return null;
   let lines = text.split(/\r?\n/);
   const head = lines.slice(0, 15);
@@ -255,13 +300,16 @@ export function excerptFrom(text: unknown, max: number = EXCERPT_MAX): string | 
   const cleaned = lines
     .filter((l) => !RULE_LINE.test(l))
     .map((l) => ({ heading: /^\s*#/.test(l), text: stripMarkdown(l).replace(/\s+/g, ' ') }))
-    .filter((l) => /[\p{L}\p{N}]/u.test(l.text));
+    .filter((l) => /[\p{L}\p{N}]/u.test(l.text))
+    .filter((l) => !(skipIntro && isIntroLine(l.text)));
   const prose = cleaned.find(({ heading, text: t }) => {
     if (heading || isShoutedHeading(t) || t.includes(' · ') || /[?¿]$/.test(t)) return false;
     if (DATE_LINE.test(t) || INTERVIEWER.test(t)) return false;
     return wordCount(t.replace(SPEAKER_LABEL, '')) >= EXCERPT_MIN_WORDS;
   });
-  const line = prose ? prose.text.replace(SPEAKER_LABEL, '') : cleaned[0]?.text;
+  const line = prose
+    ? prose.text.replace(SPEAKER_LABEL, '')
+    : cleaned.find((l) => !l.heading && !isShoutedHeading(l.text))?.text;
   return line ? clip(line.trim(), max) : null;
 }
 
