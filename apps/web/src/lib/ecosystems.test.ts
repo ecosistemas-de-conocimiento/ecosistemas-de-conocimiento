@@ -91,7 +91,8 @@ describe('ecosystemInitials', () => {
   it('takes up to two initials', () => {
     expect(ecosystemInitials('Ecosistema Norte')).toBe('EN');
     expect(ecosystemInitials('Norte')).toBe('N');
-    expect(ecosystemInitials('  centro de investigación  ')).toBe('CD');
+    expect(ecosystemInitials('  centro de investigación  ')).toBe('CI');
+    expect(ecosystemInitials('Traducción en salud')).toBe('TS');
   });
 
   it('never renders empty', () => {
