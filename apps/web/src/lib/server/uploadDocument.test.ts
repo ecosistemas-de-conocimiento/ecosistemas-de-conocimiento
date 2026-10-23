@@ -76,3 +76,37 @@ describe('uploadDocument — content sniffing', () => {
     expect(res.body).toMatchObject({ reason: 'content_mismatch', kind: 'docx' });
   });
 });
+
+describe('uploadDocument — which ecosistema the create names', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    (backendFetch as unknown as ReturnType<typeof vi.fn>).mockReset();
+  });
+
+  async function sentBody(opts: Parameters<typeof uploadDocument>[2]) {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ doc: { id: 11 } }), { status: 201 }),
+    );
+    (backendFetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
+      new Response(JSON.stringify({ doc: { id: 21 } }), { status: 201 }),
+    );
+    const form = new FormData();
+    form.append('file', new File([PDF], 'informe.pdf', { type: 'application/pdf' }));
+    form.append('contentKind', 'documento');
+    const res = await uploadDocument('tok', form, opts);
+    expect(res.status).toBe(201);
+    const call = (backendFetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    return JSON.parse(call[2].body as string) as Record<string, unknown>;
+  }
+
+  it('names the given ecosistema on a conversation-less upload', async () => {
+    expect(await sentBody({ session: [], defaultPinned: false, organization: '4' })).toMatchObject({
+      session: [],
+      organization: '4',
+    });
+  });
+
+  it('names none on a conversation upload: the backend derives it from the session', async () => {
+    expect(await sentBody({ session: [7], defaultPinned: true })).not.toHaveProperty('organization');
+  });
+});

@@ -127,7 +127,9 @@ export function toBackendId(id: string): string | number {
 export function ecosystemInitials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return '?';
-  const letters = words.slice(0, 2).map((w) => [...w][0] ?? '');
+  // Skip Spanish connectors: "Traducción en salud" is TS, not TE.
+  const content = words.filter((w) => !/^(de|del|el|en|la|las|los|para|por|y)$/i.test(w));
+  const letters = (content.length ? content : words).slice(0, 2).map((w) => [...w][0] ?? '');
   return letters.join('').toUpperCase();
 }
 

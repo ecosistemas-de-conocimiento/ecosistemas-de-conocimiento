@@ -113,9 +113,62 @@ export function spiralSeed(rank: number): { x: number; y: number } {
 }
 
 /**
+ * 🔴 A TOWN WHOSE ONLY EXTRACTED RELATION IS ITS STATE IS NOT DRAWN (owner,
+ * 2026-10-23, verbatim: "if town has only the state link, dont show the town").
+ *
+ * Towns and states are both `lugar`; the extraction has no town/state subtype.
+ * What tells them apart is the `ubicado_en` relation the extraction writes for
+ * "Cuernavaca, Morelos" (backend `splitQualifiedPlaces`): its `from` side is
+ * the town. So a town↔state edge is a `relation` edge between two `lugar`
+ * nodes whose pair's most common type is `ubicado_en`. The edge's `direction`
+ * names the town: `out` ⇒ `fromId`, `in` ⇒ `toId`; `both` (or no direction)
+ * leaves it open, and either end counts.
+ *
+ * ⚠ ONLY EXTRACTED RELATIONS COUNT, NOT CO-MENTIONS. A `lugar` whose single
+ * `relation` edge is that state link is removed entirely: the state link AND
+ * its co-mention edges. Counting co-mentions would hide nothing — they give
+ * every entity up to K=8 partners, so every town had 5+ edges (measured
+ * 2026-10-23, local 4-ecosistema copy `edc_backend_combo`). A town with any
+ * other relation stays, and so does its state link. The state stays while it
+ * still has a drawn edge; the degree-0 rule in {@link buildMapData} hides it
+ * otherwise. On that copy it hides 2–6 places per ecosistema and 5 in the
+ * combined view, 22–65 edges each (measured 2026-10-23, default thresholds).
+ *
+ * ⚠ ONE PASS, ON PURPOSE. Relations are counted once over the edges as the
+ * backend sent them. Hiding a town does not make its state a "lone town" of
+ * its own `ubicado_en` (Morelos → México) in a second round.
+ *
+ * Overview map only: 2D and 3D, single and combined views all go through
+ * {@link buildMapData}. The entity panel's neighbour list, the ego network and
+ * the lists still show the town. `GraphView.hidden` (the backend's threshold
+ * count) is not touched; the page no longer prints it (`$lib/graph`, #28).
+ *
+ * @returns the ids of the towns to hide.
+ */
+export function loneTowns(edges: readonly GraphViewEdge[], entities: readonly GraphEntity[]): Set<string> {
+  const placeIds = new Set(entities.filter((e) => e.type === 'lugar').map((e) => e.id));
+  const relations = new Map<string, number>();
+  for (const e of edges) {
+    if (e.kind !== 'relation') continue;
+    relations.set(e.fromId, (relations.get(e.fromId) ?? 0) + 1);
+    relations.set(e.toId, (relations.get(e.toId) ?? 0) + 1);
+  }
+  const towns = new Set<string>();
+  for (const e of edges) {
+    if (e.kind !== 'relation' || e.relationType !== 'ubicado_en') continue;
+    if (!placeIds.has(e.fromId) || !placeIds.has(e.toId)) continue;
+    const candidates =
+      e.direction === 'out' ? [e.fromId] : e.direction === 'in' ? [e.toId] : [e.fromId, e.toId];
+    for (const id of candidates) if (relations.get(id) === 1) towns.add(id);
+  }
+  return towns;
+}
+
+/**
  * Build the map. Owner rule 2026-10-21, chosen (review): degree-0 entities are
  * not drawn (the lists still show them). With co-mention edges there are
  * rarely any: 0 of 507 on the local corpus (measured 2026-10-21, org 1, K=8).
+ * Towns whose only relation is their state are removed first: {@link loneTowns}.
  */
 export function buildMapData(
   entities: readonly GraphEntity[],
@@ -131,6 +184,10 @@ export function buildMapData(
     if (seen.has(key)) continue;
     seen.add(key);
     kept.push(e);
+  }
+  const hiddenTowns = loneTowns(kept, entities);
+  const shown = kept.filter((e) => !hiddenTowns.has(e.fromId) && !hiddenTowns.has(e.toId));
+  for (const e of shown) {
     degree.set(e.fromId, (degree.get(e.fromId) ?? 0) + 1);
     degree.set(e.toId, (degree.get(e.toId) ?? 0) + 1);
   }
@@ -155,14 +212,14 @@ export function buildMapData(
     level: MAP_LEVELS[e.type],
   }));
 
-  const maxRelation = kept.reduce((m, e) => (e.kind === 'relation' ? Math.max(m, e.support) : m), 1);
+  const maxRelation = shown.reduce((m, e) => (e.kind === 'relation' ? Math.max(m, e.support) : m), 1);
   const adjacency = new Map<string, Set<string>>();
   const link = (a: string, b: string) => {
     const set = adjacency.get(a) ?? new Set<string>();
     set.add(b);
     adjacency.set(a, set);
   };
-  const links: MapLink[] = kept.map((e) => {
+  const links: MapLink[] = shown.map((e) => {
     link(e.fromId, e.toId);
     link(e.toId, e.fromId);
     return {

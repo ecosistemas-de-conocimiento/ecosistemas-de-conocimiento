@@ -169,8 +169,8 @@ describe('survivors are described in words a person can act on', () => {
 describe('🔴 the copy says what the person is actually doing', () => {
   it('does not offer a bare "Aprobar" with no consequence stated', () => {
     expect(APPROVE_LABEL).not.toBe('Aprobar');
-    expect(APPROVE_LABEL).toContain('corpus');
-    expect(APPROVE_CONSEQUENCE).toContain('corpus');
+    expect(APPROVE_LABEL).toContain('Aprobar');
+    expect(APPROVE_CONSEQUENCE).toContain('biblioteca');
     // The reason it was held is restated where the decision happens.
     expect(APPROVE_CONSEQUENCE).toContain('identificar');
   });
@@ -188,7 +188,7 @@ describe('🔴 the copy says what the person is actually doing', () => {
 
   it('makes it plain they are editing the redacted version, not the original', () => {
     expect(EDITING_REDACTED_NOTICE).toContain('no el original');
-    expect(EDITING_REDACTED_NOTICE).toContain('nunca entra al corpus');
+    expect(EDITING_REDACTED_NOTICE).toContain('nunca entra a la biblioteca');
   });
 });
 

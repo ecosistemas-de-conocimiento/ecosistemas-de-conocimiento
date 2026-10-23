@@ -41,6 +41,13 @@
     visibleNavItems($page.data.user, { canReviewHolds: $page.data.canReviewHolds }),
   );
   const pathname = $derived($page.url.pathname);
+
+  // Sign-out on every page, not only in the chat sidebar: a demo switches
+  // between roles from Revisión and Administración too.
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+    window.location.href = '/sign-in';
+  }
 </script>
 
 <!-- ⚠ First thing in the tab order, visible only when focused. Without it a
@@ -67,6 +74,13 @@
         </a>
       </li>
     {/each}
+    {#if $page.data.user && pathname !== '/'}
+      <li class="end">
+        <button type="button" class="item" onclick={logout} data-testid="nav-logout">
+          <span class="label">Cerrar sesión</span>
+        </button>
+      </li>
+    {/if}
   </ul>
 </nav>
 
@@ -134,6 +148,16 @@
     flex: 0 1 auto;
   }
 
+  .end {
+    margin-left: auto;
+  }
+  button.item {
+    border-top: 0;
+    border-left: 0;
+    border-right: 0;
+    background: none;
+    cursor: pointer;
+  }
   .item {
     display: block;
     /* ⚠ A comfortable target on a phone, not a 20px line of text. */

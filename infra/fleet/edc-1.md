@@ -1,8 +1,10 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `e3fe6ee` (combined graph "Todos mis
-ecosistemas", 3D "Altura", rerank score restored, persona-privacy fixes), deployed 2026-10-22
-07:34 UTC — see §4zd. Before that, `47ce647` (cite variant E by default; no-`[n]` fallback sources
+**Status:** live since 2026-10-17. Dev runs `main` @ `8984fec` (Payload `/duplicate` refused; uploads
+follow the selected ecosistema), deployed 2026-10-23 15:34 UTC — see §4zf. Before that, `45c30fd`
+(four demo-polish branches; 07:35 UTC, §4ze). Before that, `e3fe6ee` (combined graph "Todos mis
+ecosistemas", 3D "Altura", rerank score restored, persona-privacy fixes; 2026-10-22 07:34 UTC,
+§4zd). Before that, `47ce647` (cite variant E by default; no-`[n]` fallback sources
 need a rerank score; 02:50 UTC, §4zc). Before that,
 `7b2e27e` (deployed by edcai), and before that `7e51205` (`/grafo` phone CSS, 3D labels by
 screen overlap), deployed 2026-10-22 00:42 UTC, with embeddings on the Spark and a hosted fallback
@@ -1408,6 +1410,77 @@ Spend: `usage_logs` $1.5915 → $1.5985 (**+$0.0070**). Tonight's runs: $0.4786 
 **$2.0771**.
 
 **Disk**, `df -h /` free: 57 GB before; 58 GB at the end. Images 9.6 GB, build cache 0.
+
+### 4ze. ✅ Done 2026-10-23 07:30–07:50 UTC: `45c30fd`, dev only
+
+All measured by the deploy agent. Staging was not touched; edcai held off. `45c30fd` = four
+demo-polish branches (chat, graph, documents/biblioteca, shell/revisión/admin) plus `1e92ac4` and
+`e6d650a`. No migration: `payload_migrations` 3, `edc_ai` 6. No variable holds `:?` text.
+
+Backup `/root/backups/20261023T0735Z/`. The off-box copy now runs with `timeout 180 scp -o
+ServerAliveInterval=10`, and the deploy only starts after both dumps' sha256 match (`&&` chain,
+§4zd lesson). Deploy 07:35:31 → 07:41:42 UTC; 9 containers up, health 200.
+
+**"Stuck" documents of the investigador: not stuck, held; left in place.** Read only: every
+document at "En cola" or "Error" is a testimonio the anonymisation gate **held** for Revisión.
+
+| ecosistema | `ingest_status = pending` ("En cola") | `ingest_status = failed` ("Error") |
+|---|---|---|
+| 1 Traducción en salud | 6 | 2 |
+| 3 Acompañamiento escolar | 9 | 3 |
+| 6 Prevención del dengue | 4 | 1 |
+| 7 Discapacidad | 3 | 8 |
+
+All 36 are `anonymisation_status = held` (21 + 14 `verify`, 1 `structural`). The failed ones carry
+`ingest_error` "anonymisation_held: verify: Quedaron N datos que podrían identificar a alguien…".
+No non-held document is stuck (0), and `anonymisation_reviews` is empty (nobody has reviewed yet).
+`lib/ingestRecovery.ts` deliberately re-drives only `n/a` and `ready` rows. Re-queuing a held row
+would send gated text toward the corpus, so it is **not safe**. Deleting them would empty the
+Revisión queue that the following screen audit needs. **Nothing was changed.** ⚠ "Mis documentos"
+labels these rows "En cola" / "Error" where "En revisión" would be accurate; that is a UI follow-up.
+
+Smoke: health 200 on `dev.` and `api.dev.`; chat in Prevención del dengue as the participant →
+200, 30.4 s, 5 `[n]` groups, 7 sources (5 with a non-zero `rerankScore`). Test conversations
+deleted. The full screen check is the auditor's.
+
+Cleanup after the deploy finished (no deploy queued, no compose build): `docker rmi` of dev's three
+`e3fe6ee` images by name, `docker builder prune -af` (14.74 GB).
+
+Spend: `usage_logs` $1.6034 → $1.6055 (**+$0.0021**). Since §4zd, others used $0.0049. Overnight
+runs: $0.4786 + $1.6055 = **$2.0841**.
+
+**Disk**, `df -h /` free: 58 GB before; 44 GB after the build; 58 GB after the cleanup. Images
+9.6 GB, build cache 0.
+
+### 4zf. ✅ Done 2026-10-23 15:34–16:05 UTC: `8984fec`, dev only — Payload `/duplicate` leak closed
+
+All measured by the deploy agent. Staging was not touched. The 36 held testimonios were kept (owner's
+option A); nothing of theirs was changed. `8984fec` = `69cc397` (refuse Payload's
+`POST /api/<slug>/:id/duplicate` on every collection: it filled omitted fields from the source row
+with field read access skipped, so a member could duplicate a published testimonio and read its
+unredacted text), `8984fec` (a standalone upload lands in the selected ecosistema), chat source
+renumbering, sign-in without JS, no blank chat on login. No migration (`payload_migrations` 3,
+`edc_ai` 6). `d794184` (held rows read "En revisión"; sign-in posts before hydration) landed on `main`
+after this deploy and is **not** deployed.
+
+Backup `/root/backups/20261023T1534Z/`, copy time-limited, deploy chained on matching sha256.
+Deploy 15:34:11 → 15:40:43 UTC; 9 containers up, health 200.
+
+| check | result |
+|---|---|
+| 1. `/duplicate` as the participant | `POST /api/documents/<published testimonio>/duplicate` (doc 1) on the backend → **405** "Duplicating is not allowed." (also with `?locale=es`); through the web origin → 404. Documents count/max id 252/252 before and after: **no new row** |
+| 2. upload follows the selection | the investigador picked "Discapacidad" in the chat sidebar picker (`selectedId` 7), then "Subir documento" in Mis documentos → doc 265 in **organization 7**, `uploaded_in_session_id` none, `ready`. Deleted afterwards (backend and ai-service rows 0) |
+| 3. no blank chat on sign-in | the participant signed in fresh: requests `POST /api/auth/login`, `GET /api/sessions` and no `POST /api/sessions`; their session count 0 before and 0 after. The investigador's 4 empty "Nueva conversación" rows date from 07:28–07:30 UTC, before this deploy |
+| 4. sources numbered 1..n | Prevención del dengue: `[n]` uses 1–6, 6 sources with ordinals {1–6}: match (the provenance array arrives in the order 1, 4, 5, 6, 3, 2). ⚠ **Discapacidad: the answer uses [1]–[8], but 7 sources come back with ordinals {1, 2, 3, 4, 5, 6, 8}: `[7]` has no source.** Not fixed here |
+
+Cleanup after the deploy finished (no deploy queued, no compose build): `docker rmi` of dev's three
+`45c30fd` images by name, `docker builder prune -af` (14.74 GB). Test conversations deleted.
+
+Spend: `usage_logs` $1.6055 → $1.6108 (**+$0.0053**). Overnight runs: $0.4786 + $1.6108 =
+**$2.0894**.
+
+**Disk**, `df -h /` free: 58 GB before; 43 GB after the build; 57 GB after the cleanup. Images
+10.3 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 

@@ -391,6 +391,32 @@ describe('uploading with no conversation attached', () => {
   it('REFUSES when the person belongs to none', async () => {
     await expect(create({ name: 'homeless.pdf' }, NOBODY)).rejects.toThrow()
   })
+
+  it('files it in the NAMED ecosistema when the person belongs to several', async () => {
+    const a = await create({ name: 'a.pdf', organization: ECO_A }, DUAL)
+    expect(a.organization).toBe(ECO_A)
+    // String ids from the wire match numeric membership ids.
+    const b = await create({ name: 'b.pdf', organization: String(ECO_B) }, DUAL)
+    expect(b.organization).toBe(ECO_B)
+    expect(b.uploadedBy).toBe(DUAL)
+  })
+
+  it('🔴 REFUSES (403) a named ecosistema the person is not a member of', async () => {
+    await expect(create({ name: 'x.pdf', organization: ECO_B }, ANA)).rejects.toMatchObject({
+      status: 403,
+    })
+    await expect(create({ name: 'x.pdf', organization: 99 }, DUAL)).rejects.toMatchObject({
+      status: 403,
+    })
+    await expect(create({ name: 'x.pdf', organization: ECO_A }, NOBODY)).rejects.toMatchObject({
+      status: 403,
+    })
+  })
+
+  it('accepts a single-membership person naming their own ecosistema', async () => {
+    const result = await create({ name: 'own.pdf', organization: { id: ECO_A } }, ANA)
+    expect(result.organization).toBe(ECO_A)
+  })
 })
 
 describe('server-side writes', () => {

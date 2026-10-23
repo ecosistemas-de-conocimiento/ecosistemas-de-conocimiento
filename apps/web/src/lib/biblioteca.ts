@@ -107,11 +107,212 @@ export function libraryKindOf(row: { kind?: unknown; contentKind?: unknown }): L
  * free text the uploader typed (usually the filename) and never went through
  * the anonymisation gate.
  */
-export function libraryTitleFor(contentKind: unknown, name: unknown): string {
-  if (contentKind === 'testimonio') return 'Testimonio';
+export function libraryTitleFor(contentKind: unknown, name: unknown, topic: string | null = null): string {
+  if (contentKind === 'testimonio') return testimonyLabel(topic);
   if (contentKind === 'conversacion') return 'Conversación';
   if (isGatedContent(contentKind)) return 'Documento sin título';
   return typeof name === 'string' && name.trim() ? name.trim() : 'Documento sin título';
+}
+
+// ── Testimonio label and excerpt (owner ruling 2026-10-23) ─────────────────
+
+/**
+ * Plain names for the backend's `documents.tema` values (seed/corpus.ts).
+ * Spelled like the four ecosistemas they map to, so a card in the library and
+ * a source in chat read the same. An unknown value is shown as stored.
+ */
+const TEMA_LABELS: Record<string, string> = {
+  dengue: 'Prevención del dengue',
+  discapacidad: 'Discapacidad',
+  traduccion: 'Traducción en salud',
+  escuela: 'Acompañamiento escolar',
+};
+
+/**
+ * The topic after "Testimonio ·": the row's `tema` when it has one, else the
+ * ecosistema's name. Neither names a person (`tema` is one of four values,
+ * readable on every row by backend design: `lenguaReadable` notes).
+ */
+export function testimonyTopic(tema: unknown, ecosystemName: unknown): string | null {
+  const t = typeof tema === 'string' ? tema.trim() : '';
+  if (t) return TEMA_LABELS[t] ?? t;
+  const e = typeof ecosystemName === 'string' ? ecosystemName.trim() : '';
+  return e || null;
+}
+
+/** `Testimonio · <topic>`, or plain `Testimonio` with no topic. */
+export function testimonyLabel(topic: string | null | undefined): string {
+  const t = typeof topic === 'string' ? topic.trim() : '';
+  return t ? `Testimonio · ${t}` : 'Testimonio';
+}
+
+/**
+ * A chat source's title. A testimonio (`metadata.kind === 'testimonio'`, kept
+ * by `$lib/server/citationProvenance`) reads `Testimonio · <ecosistema> —
+ * «excerpt»`; anything else keeps its own title.
+ *
+ * ⚠ The ecosistema name, not `tema`: chunk metadata carries no `tema`, and
+ * each ecosistema is one corpus topic (owner ruling, 4 ecosistemas). The
+ * excerpt was cut server-side; this only joins strings, rendered as text.
+ */
+export function chatSourceTitle(
+  title: string | null | undefined,
+  metadata: Record<string, unknown> | null | undefined,
+  ecosystemName: string | null | undefined,
+): string | null | undefined {
+  // 🔴 A known kind, never the title: a documento may be titled "Testimonio".
+  if (metadata?.kind !== 'testimonio') return title;
+  const label = testimonyLabel(testimonyTopic(null, ecosystemName));
+  const excerpt = typeof metadata?.excerpt === 'string' ? metadata.excerpt.trim() : '';
+  return excerpt ? `${label} — «${excerpt}»` : label;
+}
+
+/** The longest excerpt, "…" included. */
+export const EXCERPT_MAX = 120;
+
+/** Fewer words than this and a line is a heading, a date or a field, not prose. */
+const EXCERPT_MIN_WORDS = 8;
+
+/** `---`, `***`, `===`, `___`: a rule line. */
+const RULE_LINE = /^\s*([-*_=])\1{2,}\s*$/;
+
+/** `# `, `> `, `- `, `1. ` and emphasis markers at the start of a line. */
+function stripMarkdown(line: string): string {
+  return line
+    .replace(/^\s*#{1,6}\s+/, '')
+    .replace(/^\s*(>\s*)+/, '')
+    .replace(/^\s*(?:[-*+•]|\d+[.)])\s+/, '')
+    .replace(/(\*\*|__)/g, '')
+    .trim();
+}
+
+/**
+ * A speaker or field label (`E:`, `P:`, `Entrevistadora:`, `Lugar de origen:`):
+ * one to four words before a colon. ⚠ Never a `[Persona A]` placeholder: the
+ * label must start with a letter, and placeholders stay as they are.
+ */
+const SPEAKER_LABEL = /^\p{L}[\p{L}\d.()]*(?: [\p{L}\d.()]+){0,3}:\s+/u;
+
+/**
+ * All capitals once placeholders and parentheses are set aside, or before the
+ * first ` — ` (`NOTAS DE CAMPO — [Persona A]`): a heading.
+ */
+function isShoutedHeading(line: string): boolean {
+  const shouted = (s: string) => {
+    const letters = s.replace(/\[[^\]]*\]|\([^)]*\)/g, '').replace(/[^\p{L}]/gu, '');
+    return letters.length >= 4 && letters === letters.toUpperCase();
+  };
+  return shouted(line) || (line.includes(' — ') && shouted(line.split(' — ')[0]!));
+}
+
+/** A dateline (`Villa de Ayala, a 6 de marzo de 2026.`) or a diary date. */
+const DATE_LINE = /\b\d{1,2} de \p{L}+ de \d{4}\.?$/u;
+
+/** The interviewer's turn (`E:`, `Entrevistadora:`): not the testimonio's voice. */
+const INTERVIEWER = /^(?:E|Entrevistador|Entrevistadora)\s*:/u;
+
+function wordCount(s: string): number {
+  return s.split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Cut at a word boundary to at most `max` chars, "…" included. Never leaves a
+ * placeholder half open: `[Persona` becomes nothing rather than a fragment.
+ */
+function clip(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let cut = text.slice(0, max - 1);
+  const space = cut.lastIndexOf(' ');
+  if (space > 0) cut = cut.slice(0, space);
+  const open = cut.lastIndexOf('[');
+  if (open > cut.lastIndexOf(']')) cut = cut.slice(0, open);
+  cut = cut.replace(/[\s,;:.—–-]+$/u, '');
+  return `${cut}…`;
+}
+
+/**
+ * The 11 languages of the seeded corpus (handoff R8; backend
+ * `lib/graph/noise.ts` holds a longer list this app cannot import), plus
+ * spelling variants. ⚠ For the excerpt's intro skip only. It is not an
+ * anonymisation list: the gate decides what is redacted, never this.
+ */
+const INTRO_LANGUAGES = [
+  'náhuatl', 'nahuatl', 'mixteco', 'mazateco', 'zapoteco', 'totonaco', 'tlahuica',
+  'tlapaneco', "me'phaa", 'me’phaa', 'amuzgo', 'hñähñu', 'otomí', 'otomi', 'tsotsil',
+  'tzotzil', 'mixe',
+];
+
+const INTRO_LINE = new RegExp(
+  `(?<!\\p{L})(?:soy de|nací|naci|crecí hablando|años|${INTRO_LANGUAGES.join('|')})(?!\\p{L})`,
+  'iu',
+);
+
+/**
+ * A self-introduction: origin, language or age (`Soy de Chenalhó, Chiapas.
+ * Crecí hablando tsotsil…`, `Nací hace 79 años en…`). The 10-23 audit measured
+ * the first prose line was one of these on 59/59 raw seeded testimonios.
+ */
+export function isIntroLine(line: string): boolean {
+  return INTRO_LINE.test(line);
+}
+
+/**
+ * `BIBLIOTECA_EXCERPT_SKIP_INTRO`: off unless `true`, `1`, `on` or `yes`.
+ * 🔴 Default OFF (owner ruling 2026-10-23, option A): the excerpt SHOWS the
+ * first line, origin, language or age included ("its relevant demographics in
+ * some cases"). The switch stays for turning the skip back on. Read by the
+ * server callers only.
+ */
+export function parseSkipIntro(raw: string | undefined): boolean {
+  return /^(true|1|on|yes)$/i.test((raw ?? '').trim());
+}
+
+export interface ExcerptOptions {
+  max?: number;
+  /** Skip self-introduction lines ({@link isIntroLine}). Default false. */
+  skipIntro?: boolean;
+}
+
+/**
+ * 🔴 A SHORT EXCERPT OF A TESTIMONIO, FROM ITS REDACTED TEXT ONLY.
+ *
+ * The caller passes the gate's `redactedText` (or a published chunk, which is
+ * cut from it). Never `extractedText` or `bodyMarkdown`: those are the raw
+ * original. This function cannot tell them apart, so the rule lives at the
+ * call sites (`toLibraryItem`, `$lib/server/citationProvenance`).
+ *
+ * The first line that reads as prose: a header block closed by a rule line in
+ * its first 15 lines is skipped (up to the last such rule), as are headings in
+ * capitals, short lines (fields, salutations), datelines, lines with ` · `
+ * (metadata), questions and the interviewer's turns. A leading speaker label
+ * is dropped. With `skipIntro`, every self-introduction line is skipped too
+ * ({@link isIntroLine}). With no such line, the first non-empty line that is
+ * neither a heading nor an intro; with none, null. Whitespace collapsed, then {@link clip}ped.
+ *
+ * Returns the text as plain text: render it with `{…}`, never `{@html}`.
+ */
+export function excerptFrom(text: unknown, opts: ExcerptOptions = {}): string | null {
+  const max = opts.max ?? EXCERPT_MAX;
+  const skipIntro = opts.skipIntro ?? false;
+  if (typeof text !== 'string' || !text.trim()) return null;
+  let lines = text.split(/\r?\n/);
+  const head = lines.slice(0, 15);
+  const rule = head.length - 1 - [...head].reverse().findIndex((l) => RULE_LINE.test(l));
+  if (rule < head.length) lines = lines.slice(rule + 1);
+  const cleaned = lines
+    .filter((l) => !RULE_LINE.test(l))
+    .map((l) => ({ heading: /^\s*#/.test(l), text: stripMarkdown(l).replace(/\s+/g, ' ') }))
+    .filter((l) => /[\p{L}\p{N}]/u.test(l.text))
+    .filter((l) => !(skipIntro && isIntroLine(l.text)));
+  const prose = cleaned.find(({ heading, text: t }) => {
+    if (heading || isShoutedHeading(t) || t.includes(' · ') || /[?¿]$/.test(t)) return false;
+    if (DATE_LINE.test(t) || INTERVIEWER.test(t)) return false;
+    return wordCount(t.replace(SPEAKER_LABEL, '')) >= EXCERPT_MIN_WORDS;
+  });
+  const line = prose
+    ? prose.text.replace(SPEAKER_LABEL, '')
+    : cleaned.find((l) => !l.heading && !isShoutedHeading(l.text))?.text;
+  return line ? clip(line.trim(), max) : null;
 }
 
 /**
@@ -320,6 +521,12 @@ export interface LibraryItem {
    * every Voz, whatever its format. Drives `isMachineTranscript`.
    */
   fromAudio: boolean;
+  /**
+   * A short line from a testimonio's REDACTED text ({@link excerptFrom}), cut
+   * server-side. 🔴 `null` on anything else, and on a testimonio the gate has
+   * not cleared. The full redacted text never rides the list.
+   */
+  excerpt: string | null;
 }
 
 /** A full document, as the reader page gets it. */
@@ -343,8 +550,8 @@ export function resultsSummary(input: {
   if (input.total === 0) return input.filtered ? LIBRARY_NO_RESULTS : LIBRARY_EMPTY;
   const noun = input.total === 1 ? 'publicación' : 'publicaciones';
   const total = input.total.toLocaleString('es-MX');
-  if (input.shown >= input.total) return `${total} ${noun}`;
-  return `${input.shown.toLocaleString('es-MX')} de ${total} ${noun}`;
+  // The pager says which page; "30 de 31" read as one item missing (demo pass).
+  return `${total} ${noun}`;
 }
 
 /** `'hola que tal'` → `3 palabras`. Null for empty text. Mirrors ingest.ts. */

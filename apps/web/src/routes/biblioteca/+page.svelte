@@ -52,6 +52,7 @@
     total: number;
     page: number;
     hasNextPage: boolean;
+    pageSize?: number;
     /** The ecosistema's languages, for the filter. Empty ⇒ no control. */
     lenguas?: LenguaFacet[];
   }
@@ -252,6 +253,10 @@
                 <span class="date">{formatLibraryDate(item.createdAt)}</span>
               </div>
               <h2 class="title" title={item.title}>{item.title}</h2>
+              {#if item.excerpt}
+                <!-- Plain text from the redacted Voz, cut server-side. Never {@html}. -->
+                <p class="excerpt">{item.excerpt}</p>
+              {/if}
               {#if voice}
                 <!-- 🔴 NO AUTHOR SLOT EXISTS HERE, and this line is why the
                      absence does not read as missing data. The server never
@@ -281,7 +286,9 @@
           >
             ← Anterior
           </button>
-          <span class="page-no">Página {query.page}</span>
+          <span class="page-no"
+            >Página {query.page}{#if data?.pageSize}{' '}de {Math.max(1, Math.ceil(data.total / data.pageSize))}{/if}</span
+          >
           <button
             class="page-btn"
             disabled={!data?.hasNextPage}
@@ -483,6 +490,12 @@
     -webkit-line-clamp: 2;
     line-clamp: 2;
     overflow: hidden;
+  }
+  .excerpt {
+    margin: 0.25rem 0 0;
+    font-size: 0.85rem;
+    color: var(--edc-color-ink-soft);
+    overflow-wrap: anywhere;
   }
   .date {
     font-size: 0.72rem;

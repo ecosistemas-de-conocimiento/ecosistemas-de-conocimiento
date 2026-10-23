@@ -16,9 +16,15 @@
     'No pudimos conectar con el servidor. Revisa tu conexión e inténtalo de nuevo en un momento.';
   const GENERIC = 'No pudimos iniciar tu sesión. Inténtalo de nuevo en un momento.';
 
+  // `form` is the answer of the no-JS form action (`+page.server.ts`) — set
+  // only when a submit before hydration failed.
+  let { form }: { form?: { error?: string } | null } = $props();
+
   let email = $state('');
   let password = $state('');
   let error = $state<string | null>(null);
+  // ⚠ NO HYDRATION WAIT on the button. Before the script runs (or with JS
+  // off), a submit is a native POST to the form action in `+page.server.ts`.
   let submitting = $state(false);
 
   async function submit(e: Event) {
@@ -49,7 +55,9 @@
 </script>
 
 <div class="h-screen w-full flex items-center justify-center text-ink">
-  <form onsubmit={submit} class="w-full max-w-sm space-y-3 p-6" autocomplete="off">
+  <!-- 🔴 `method="post"`: a native submit lands on the default action in
+       `+page.server.ts`, never a GET with the password in the URL. -->
+  <form method="post" onsubmit={submit} class="w-full max-w-sm space-y-3 p-6" autocomplete="off">
     <!-- El nombre del producto: la primera pantalla tiene que decir dónde
          estás. No hay logotipo en el repo; cuando lo haya, va aquí. -->
     <p class="product-name font-display">Ecosistemas de Conocimiento</p>
@@ -92,8 +100,8 @@
 
     <!-- `role="alert"` so a screen reader reads the problem out loud instead of
          leaving it silently on screen. -->
-    {#if error}
-      <p class="text-sm text-danger" role="alert">{error}</p>
+    {#if error ?? form?.error}
+      <p class="text-sm text-danger" role="alert">{error ?? form?.error}</p>
     {/if}
 
     <button type="submit" disabled={submitting} class="login-submit">

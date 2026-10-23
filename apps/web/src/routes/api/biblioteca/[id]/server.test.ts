@@ -55,10 +55,10 @@ describe('GET /api/biblioteca/[id]', () => {
   });
 
   // 🔴 The ecosistema comes from the session, never from the request.
-  it('reads under the resolved ecosistema', async () => {
+  it('reads under the resolved ecosistema, passing its name for the testimonio label', async () => {
     mockedRead.mockResolvedValue({ state: 'not-found' });
     await GET(makeEvent({ id: '5' }));
-    expect(mockedRead.mock.calls[0]!.slice(1)).toEqual(['7', '5']);
+    expect(mockedRead.mock.calls[0]!.slice(1)).toEqual(['7', '5', 'Eco']);
   });
 
   // ⚠ 404, never 403. A 403 confirms the id exists in some other ecosistema.

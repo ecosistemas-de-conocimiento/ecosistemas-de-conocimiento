@@ -19,6 +19,7 @@ import { Organizations } from './collections/Organizations'
 import { Teams } from './collections/Teams'
 import { Projects } from './collections/Projects'
 import { Memberships } from './collections/Memberships'
+import { withoutDuplicate } from './collections/hooks/refuseDuplicate'
 
 import { graphEndpoints } from './endpoints/graph'
 import { lenguasEndpoint } from './endpoints/lenguas'
@@ -86,6 +87,12 @@ export default buildConfig({
     headers: ['authorization', 'content-type', 'x-csrf-token'],
   },
   csrf: allowedOrigins,
+  /**
+   * 🔴 `withoutDuplicate` wraps EVERY collection: Payload's duplicate copies the
+   * source row with field read access skipped, which leaked a testimonio's
+   * unredacted original. `disableDuplicate` alone leaves the REST route open in
+   * 3.88. See `collections/hooks/refuseDuplicate.ts`.
+   */
   collections: [
     // Identity + tenancy
     Users,
@@ -119,7 +126,7 @@ export default buildConfig({
     GraphRelations,
     // Plumbing
     AiServiceCallbacks,
-  ],
+  ].map(withoutDuplicate),
   /**
    * The identity surface. Payload prefixes custom endpoints with `routes.api`,
    * so these answer at `/api/v1/identity/*`.

@@ -11,7 +11,8 @@
   import { MessageContent, CitationCard } from '@edc/chat-engine/svelte';
   import { CHAT_KIND_REGISTRY } from '$lib/engine/registry';
   import { CHAT_CITATION_LABELS, chatCitationHref } from '$lib/engine/client';
-  import { citationsWithOrdinals } from '$lib/citationOrdinals';
+  import { citationsWithOrdinals, denseCitations } from '$lib/citationOrdinals';
+  import { chatSourceTitle } from '$lib/biblioteca';
   import type { CitationLike, MentionRefLike } from '@edc/chat-engine/core';
 
   let {
@@ -63,7 +64,14 @@
   // body stays in this app's own Markdown renderer, so the card renders only
   // the quoted-passage cards + the "Fuentes consultadas" list.
   // Each source keeps the `[N]` the answer used for it (`$lib/citationOrdinals`).
-  const rawCitations = $derived<CitationLike[]>(citationsWithOrdinals(msg.provenance ?? null));
+  // A testimonio reads "Testimonio · <ecosistema> — «excerpt»"; the excerpt
+  // was cut server-side from the redacted passage (`$lib/server/citationProvenance`).
+  const rawCitations = $derived<CitationLike[]>(
+    citationsWithOrdinals(msg.provenance ?? null).map((c) => ({
+      ...c,
+      title: chatSourceTitle(c.title, c.metadata, app.ecosystem?.name),
+    })),
+  );
 
   /**
    * A user can chat against their OWN drafts, so an answer may quote a document
@@ -83,7 +91,15 @@
    */
   const draftIds = $derived(draftDocumentIds(app.active?.docs ?? []));
   const marked = $derived(markDraftCitations(rawCitations, draftIds));
-  const citations = $derived(marked.citations);
+  // Listed in [N] order and renumbered 1..n with the answer's markers
+  // (`denseCitations`). A streaming answer keeps its raw markers until done:
+  // its sources arrive only with the final frame.
+  const dense = $derived(
+    isAssistant && !msg.error && !msg.pending
+      ? denseCitations(msg.content ?? '', marked.citations)
+      : { content: msg.content, citations: [...marked.citations].sort((a, b) => a.ordinal - b.ordinal) },
+  );
+  const citations = $derived(dense.citations);
   const hasCitations = $derived(isAssistant && !msg.error && citations.length > 0);
   const ordinals = $derived(hasCitations ? citations.map((c) => c.ordinal) : []);
 
@@ -125,7 +141,7 @@
         <MessageContent content={msg.content} {refs} registry={CHAT_KIND_REGISTRY} />
       {:else if isAssistant && !msg.error}
         <Markdown
-          source={msg.content}
+          source={dense.content}
           citations={ordinals}
           oncite={(n) => citationCard?.reveal(n)}
         />
@@ -143,7 +159,8 @@
     {/if}
 
     {#if hasCitations}
-      <div class="mt-2 pt-2 border-t border-elevated">
+      <!-- No top border here: the card's sources list draws its own. -->
+      <div class="mt-2 sources">
         <!-- Sources start OPEN (UX backlog #10): the list is how a reader
              checks the answer, and a closed toggle hid it. -->
         <CitationCard
@@ -171,4 +188,10 @@
      defined as a bare `var(--edc-…)`: that needs the `<alpha-value>` channel
      form, so those utilities silently produce NO colour. The design system
      ships `-soft` / `-outline` pairs for exactly this case — use them. */
+
+  /* One link per source: the title. The engine's list also renders an
+     "Abrir documento" link beside it; the expanded card keeps its own. */
+  .sources :global(.citation-source-open) {
+    display: none;
+  }
 </style>

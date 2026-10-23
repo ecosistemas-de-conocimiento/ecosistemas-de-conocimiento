@@ -63,13 +63,15 @@ export function bytesMatchKind(head: Uint8Array, kind: 'pdf' | 'docx' | 'audio')
  * 🔴 AUDIO IS REFUSED WHILE `AUDIO_UPLOAD_ENABLED` IS OFF (backlog #8). Server
  * side, so a direct POST cannot slip a recording past the hidden picker.
  *
- * 🔴 The ecosistema is never named. The backend derives it from the session,
- * or, with no session, from the caller's single membership.
+ * 🔴 With a conversation the ecosistema is never named: the backend derives it
+ * from the session. Without one (`organization`), the caller passes the
+ * ecosistema `resolveEcosystem` validated, and the backend checks membership
+ * again before filing the document there.
  */
 export async function uploadDocument(
   token: string | undefined,
   form: FormData,
-  opts: { session: Array<string | number>; defaultPinned: boolean },
+  opts: { session: Array<string | number>; defaultPinned: boolean; organization?: string },
 ): Promise<UploadResult> {
   const file = form.get('file');
   if (!(file instanceof File)) return { status: 400, body: { error: 'multipart_missing_file' } };
@@ -148,6 +150,7 @@ export async function uploadDocument(
       // ⚠ AN ARRAY, ALWAYS: `documents.session` is `hasMany`. Empty = no
       // conversation (Mis documentos).
       session: opts.session,
+      ...(opts.organization ? { organization: opts.organization } : {}),
       kind,
       contentKind,
       mode: 'rag-retrieve',
@@ -163,7 +166,14 @@ export async function uploadDocument(
   return { status: docRes.status, body };
 }
 
-/** Mis documentos: no conversation, not pinned anywhere. */
-export function uploadLooseDocument(token: string | undefined, form: FormData): Promise<UploadResult> {
-  return uploadDocument(token, form, { session: [], defaultPinned: false });
+/**
+ * Mis documentos: no conversation, not pinned anywhere, filed in `organization`.
+ * ⚠ Pass only an id `resolveEcosystem` returned — never one from the request.
+ */
+export function uploadLooseDocument(
+  token: string | undefined,
+  form: FormData,
+  organization: string,
+): Promise<UploadResult> {
+  return uploadDocument(token, form, { session: [], defaultPinned: false, organization });
 }

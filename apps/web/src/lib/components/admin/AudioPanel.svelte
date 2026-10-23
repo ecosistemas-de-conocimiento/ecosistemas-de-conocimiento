@@ -17,6 +17,7 @@
   import { Badge } from '$lib/primitives';
   import { audioDurationChip, TRANSCRIPT_PROVENANCE_TOOLTIP } from '$lib/ingest';
   import { formatDay, type AdminDocRow, type AudioSummary } from './summary';
+  import { isIngestFailure } from '$lib/docStatus';
 
   type Props = {
     summary: AudioSummary;
@@ -73,7 +74,7 @@
                     size="sm"
                   />
                 </span>
-              {:else if d.ingestStatus === 'failed'}
+              {:else if isIngestFailure(d)}
                 <Badge label="No se pudo transcribir" tone="danger" size="sm" />
               {:else}
                 <Badge label="Todavía no" tone="warning" size="sm" />

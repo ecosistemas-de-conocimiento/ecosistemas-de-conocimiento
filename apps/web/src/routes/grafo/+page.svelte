@@ -134,7 +134,7 @@
   let panelEl = $state<HTMLElement | null>(null);
   async function selectFromList(id: string) {
     await navigate(id, null);
-    if (!window.matchMedia('(max-width: 59.99rem)').matches) return;
+    // Desktop too: the lists sit below the fold, so the panel beside the map is out of sight.
     panelEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
@@ -198,7 +198,7 @@
     <!-- The whole graph first (backlog #3), the selected entity's panel
          beside it. Clicking a point selects exactly as the lists do: through
          the URL, so the back button undoes it. -->
-    <div class="stage">
+    <div class="stage" class:with-panel={data.entity || data.entityState === 'unavailable' || data.entityState === 'not-found'}>
       <OverviewGraph
         combined={data.combined}
         entities={data.view.entities}
@@ -318,7 +318,8 @@
     align-items: start;
   }
   @media (min-width: 60rem) {
-    .stage {
+    /* The panel column exists only with something in it: no empty third of the screen. */
+    .stage.with-panel {
       grid-template-columns: minmax(0, 1fr) minmax(0, 26rem);
     }
     /* The panel scrolls beside the map instead of pushing the page down. */
