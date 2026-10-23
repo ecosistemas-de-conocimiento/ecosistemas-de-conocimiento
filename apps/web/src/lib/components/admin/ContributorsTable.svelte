@@ -15,7 +15,7 @@
   let { rows }: Props = $props();
 
   const ROLE_LABELS: Record<string, string> = {
-    owner: 'dueña/o',
+    owner: 'responsable',
     admin: 'administra',
     member: 'integrante',
   };
