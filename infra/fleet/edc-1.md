@@ -1,8 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `e3fe6ee` (combined graph "Todos mis
-ecosistemas", 3D "Altura", rerank score restored, persona-privacy fixes), deployed 2026-10-22
-07:34 UTC — see §4zd. Before that, `47ce647` (cite variant E by default; no-`[n]` fallback sources
+**Status:** live since 2026-10-17. Dev runs `main` @ `45c30fd` (four demo-polish branches),
+deployed 2026-10-23 07:35 UTC — see §4ze. Before that, `e3fe6ee` (combined graph "Todos mis
+ecosistemas", 3D "Altura", rerank score restored, persona-privacy fixes; 2026-10-22 07:34 UTC,
+§4zd). Before that, `47ce647` (cite variant E by default; no-`[n]` fallback sources
 need a rerank score; 02:50 UTC, §4zc). Before that,
 `7b2e27e` (deployed by edcai), and before that `7e51205` (`/grafo` phone CSS, 3D labels by
 screen overlap), deployed 2026-10-22 00:42 UTC, with embeddings on the Spark and a hosted fallback
@@ -1408,6 +1409,47 @@ Spend: `usage_logs` $1.5915 → $1.5985 (**+$0.0070**). Tonight's runs: $0.4786 
 **$2.0771**.
 
 **Disk**, `df -h /` free: 57 GB before; 58 GB at the end. Images 9.6 GB, build cache 0.
+
+### 4ze. ✅ Done 2026-10-23 07:30–07:50 UTC: `45c30fd`, dev only
+
+All measured by the deploy agent. Staging was not touched; edcai held off. `45c30fd` = four
+demo-polish branches (chat, graph, documents/biblioteca, shell/revisión/admin) plus `1e92ac4` and
+`e6d650a`. No migration: `payload_migrations` 3, `edc_ai` 6. No variable holds `:?` text.
+
+Backup `/root/backups/20261023T0735Z/`. The off-box copy now runs with `timeout 180 scp -o
+ServerAliveInterval=10`, and the deploy only starts after both dumps' sha256 match (`&&` chain,
+§4zd lesson). Deploy 07:35:31 → 07:41:42 UTC; 9 containers up, health 200.
+
+**"Stuck" documents of the investigador: not stuck, held; left in place.** Read only: every
+document at "En cola" or "Error" is a testimonio the anonymisation gate **held** for Revisión.
+
+| ecosistema | `ingest_status = pending` ("En cola") | `ingest_status = failed` ("Error") |
+|---|---|---|
+| 1 Traducción en salud | 6 | 2 |
+| 3 Acompañamiento escolar | 9 | 3 |
+| 6 Prevención del dengue | 4 | 1 |
+| 7 Discapacidad | 3 | 8 |
+
+All 36 are `anonymisation_status = held` (21 + 14 `verify`, 1 `structural`). The failed ones carry
+`ingest_error` "anonymisation_held: verify: Quedaron N datos que podrían identificar a alguien…".
+No non-held document is stuck (0), and `anonymisation_reviews` is empty (nobody has reviewed yet).
+`lib/ingestRecovery.ts` deliberately re-drives only `n/a` and `ready` rows. Re-queuing a held row
+would send gated text toward the corpus, so it is **not safe**. Deleting them would empty the
+Revisión queue that the following screen audit needs. **Nothing was changed.** ⚠ "Mis documentos"
+labels these rows "En cola" / "Error" where "En revisión" would be accurate; that is a UI follow-up.
+
+Smoke: health 200 on `dev.` and `api.dev.`; chat in Prevención del dengue as the participant →
+200, 30.4 s, 5 `[n]` groups, 7 sources (5 with a non-zero `rerankScore`). Test conversations
+deleted. The full screen check is the auditor's.
+
+Cleanup after the deploy finished (no deploy queued, no compose build): `docker rmi` of dev's three
+`e3fe6ee` images by name, `docker builder prune -af` (14.74 GB).
+
+Spend: `usage_logs` $1.6034 → $1.6055 (**+$0.0021**). Since §4zd, others used $0.0049. Overnight
+runs: $0.4786 + $1.6055 = **$2.0841**.
+
+**Disk**, `df -h /` free: 58 GB before; 44 GB after the build; 58 GB after the cleanup. Images
+9.6 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
