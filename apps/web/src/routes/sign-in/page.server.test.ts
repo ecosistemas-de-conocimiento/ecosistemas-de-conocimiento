@@ -38,7 +38,7 @@ function formPost(fields: Record<string, string>) {
 
 async function runAction(request: Request, cookies = fakeCookies()) {
   try {
-    const out = await actions.default({ request, cookies } as never);
+    const out = await actions.default!({ request, cookies } as never);
     return { out, cookies };
   } catch (thrown) {
     return { thrown, cookies };
@@ -72,8 +72,9 @@ describe('/sign-in form action (no JS)', () => {
     } as never);
     expect(res.status).toBe(200);
     expect(cookies.set.mock.calls).toEqual(apiCookies.set.mock.calls);
-    expect(cookies.set.mock.calls[0][0]).toBe('chat_auth');
-    expect(cookies.set.mock.calls[0][2]).toMatchObject({ httpOnly: true, path: '/' });
+    const [name, , opts] = cookies.set.mock.calls[0]!;
+    expect(name).toBe('chat_auth');
+    expect(opts).toMatchObject({ httpOnly: true, path: '/' });
   });
 
   it('a wrong password fails in Spanish, sets no cookie, echoes no credentials, logs none', async () => {
