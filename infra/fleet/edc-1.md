@@ -1,7 +1,8 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `45c30fd` (four demo-polish branches),
-deployed 2026-10-23 07:35 UTC — see §4ze. Before that, `e3fe6ee` (combined graph "Todos mis
+**Status:** live since 2026-10-17. Dev runs `main` @ `8984fec` (Payload `/duplicate` refused; uploads
+follow the selected ecosistema), deployed 2026-10-23 15:34 UTC — see §4zf. Before that, `45c30fd`
+(four demo-polish branches; 07:35 UTC, §4ze). Before that, `e3fe6ee` (combined graph "Todos mis
 ecosistemas", 3D "Altura", rerank score restored, persona-privacy fixes; 2026-10-22 07:34 UTC,
 §4zd). Before that, `47ce647` (cite variant E by default; no-`[n]` fallback sources
 need a rerank score; 02:50 UTC, §4zc). Before that,
@@ -1450,6 +1451,36 @@ runs: $0.4786 + $1.6055 = **$2.0841**.
 
 **Disk**, `df -h /` free: 58 GB before; 44 GB after the build; 58 GB after the cleanup. Images
 9.6 GB, build cache 0.
+
+### 4zf. ✅ Done 2026-10-23 15:34–16:05 UTC: `8984fec`, dev only — Payload `/duplicate` leak closed
+
+All measured by the deploy agent. Staging was not touched. The 36 held testimonios were kept (owner's
+option A); nothing of theirs was changed. `8984fec` = `69cc397` (refuse Payload's
+`POST /api/<slug>/:id/duplicate` on every collection: it filled omitted fields from the source row
+with field read access skipped, so a member could duplicate a published testimonio and read its
+unredacted text), `8984fec` (a standalone upload lands in the selected ecosistema), chat source
+renumbering, sign-in without JS, no blank chat on login. No migration (`payload_migrations` 3,
+`edc_ai` 6). `d794184` (held rows read "En revisión"; sign-in posts before hydration) landed on `main`
+after this deploy and is **not** deployed.
+
+Backup `/root/backups/20261023T1534Z/`, copy time-limited, deploy chained on matching sha256.
+Deploy 15:34:11 → 15:40:43 UTC; 9 containers up, health 200.
+
+| check | result |
+|---|---|
+| 1. `/duplicate` as the participant | `POST /api/documents/<published testimonio>/duplicate` (doc 1) on the backend → **405** "Duplicating is not allowed." (also with `?locale=es`); through the web origin → 404. Documents count/max id 252/252 before and after: **no new row** |
+| 2. upload follows the selection | the investigador picked "Discapacidad" in the chat sidebar picker (`selectedId` 7), then "Subir documento" in Mis documentos → doc 265 in **organization 7**, `uploaded_in_session_id` none, `ready`. Deleted afterwards (backend and ai-service rows 0) |
+| 3. no blank chat on sign-in | the participant signed in fresh: requests `POST /api/auth/login`, `GET /api/sessions` and no `POST /api/sessions`; their session count 0 before and 0 after. The investigador's 4 empty "Nueva conversación" rows date from 07:28–07:30 UTC, before this deploy |
+| 4. sources numbered 1..n | Prevención del dengue: `[n]` uses 1–6, 6 sources with ordinals {1–6}: match (the provenance array arrives in the order 1, 4, 5, 6, 3, 2). ⚠ **Discapacidad: the answer uses [1]–[8], but 7 sources come back with ordinals {1, 2, 3, 4, 5, 6, 8}: `[7]` has no source.** Not fixed here |
+
+Cleanup after the deploy finished (no deploy queued, no compose build): `docker rmi` of dev's three
+`45c30fd` images by name, `docker builder prune -af` (14.74 GB). Test conversations deleted.
+
+Spend: `usage_logs` $1.6055 → $1.6108 (**+$0.0053**). Overnight runs: $0.4786 + $1.6108 =
+**$2.0894**.
+
+**Disk**, `df -h /` free: 58 GB before; 43 GB after the build; 57 GB after the cleanup. Images
+10.3 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
