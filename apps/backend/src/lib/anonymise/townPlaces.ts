@@ -47,11 +47,16 @@
  *      And "en" counts only after a verb of residence or movement ("vivo en",
  *      "me quedé en"), so "pienso en Soledad" holds. Work is not residence:
  *      "trabajo en Coppel" names an employer.
- *   6. NOTHING STREET-LIKE RIGHT AFTER: no digit, "#" or address word in the
- *      next token — "Morelos 45", "Hidalgo número 45", "Hidalgo esquina con…".
- *   7. ONE PIECE, ONE PROPER WORD, unless anchored like rule 4: "Insurgentes,
- *      Cuernavaca" is never a town; "Ranchito El Huizache", "Priv Hidalgo",
- *      "Jiutepec Civac" need a state after or a town word before.
+ *   6. NOTHING STREET-LIKE AFTER, in the next five words: no digit, "#",
+ *      "s/n", street word ("casi esquina con", "a dos cuadras", "dpto 4"),
+ *      spelled-out number ("cuarenta y cinco") or "N° 45". ⚠ A year counts
+ *      too: "vivo en Xochitepec desde 2010" redacts the town (fail-closed).
+ *   7. ONE PIECE, ONE PROPER WORD, unless a town word comes before it or
+ *      starts it ("el municipio de Gómez Farías", "Ciudad Juárez"). 🔴 A state
+ *      after it is NOT an anchor (re-audit 2026-10-23): "Insurgentes Sur,
+ *      CDMX", "Santa Úrsula, CDMX" are redacted, and so are real towns such
+ *      as "Gómez Farías, Jalisco" (fail-closed; a reviewer approves). A state
+ *      paired with a state ("Hidalgo, Morelos") is a street.
  *   ·  A finding the model typed `domicilio` is never a town (`typedAddress`).
  *   ·  Every set lookup is case- and accent-folded ("Callejon" = "callejón").
  *
@@ -91,24 +96,41 @@ function foldedSet(words: readonly string[]): Set<string> {
   return new Set(words.map(lower))
 }
 
+/**
+ * Street, settlement and building words, abbreviations included. Matched
+ * case- and accent-folded, with or without a dot ("Priv.", "Cda", "Calz").
+ * These also count in the few words AFTER a place (rule 6).
+ * ⚠ Not "ejido": the owner ruled ejidos are shown (`TOWN_WORDS`).
+ */
+const STREET_WORDS: readonly string[] = [
+  // calles
+  'calle', 'avenida', 'av', 'avda', 'andador', 'cerrada', 'cda', 'privada', 'priv',
+  'callejón', 'cjon', 'calzada', 'calz', 'boulevard', 'bulevar', 'blvd',
+  'prolongación', 'prol', 'carretera', 'carr', 'camino', 'brecha', 'vereda',
+  'kilómetro', 'km', 'esquina', 'entre', 'número', 'núm', 'num', 'nro', 'retorno',
+  'circuito', 'cto', 'pasaje', 'cuadra', 'cuadras', 'frente', 'enfrente',
+  // dentro de una localidad
+  'colonia', 'col', 'barrio', 'fraccionamiento', 'fracc', 'frac', 'unidad', 'habitacional',
+  'manzana', 'mz', 'supermanzana', 'smz', 'lote', 'lt', 'sector', 'sección', 'secc',
+  'ampliación', 'ampl', 'residencial', 'condominio', 'conjunto', 'infonavit',
+  'fovissste', 'privadas', 'villas',
+  // el edificio
+  'edificio', 'edif', 'torre', 'departamento', 'depto', 'dpto', 'interior', 'int', 'piso',
+]
+
 /** Words that make a finding an address, a home, or an institution. Lower case, accents kept. */
 export const ADDRESS_WORDS: readonly string[] = [
-  // calles
-  'calle', 'avenida', 'av', 'andador', 'cerrada', 'privada', 'callejón', 'calzada',
-  'boulevard', 'bulevar', 'blvd', 'prolongación', 'carretera', 'camino', 'brecha',
-  'vereda', 'kilómetro', 'km', 'esquina', 'entre', 'número', 'núm', 'no', 'sin',
-  // dentro de una localidad
-  'colonia', 'col', 'barrio', 'fraccionamiento', 'fracc', 'unidad', 'habitacional',
-  'manzana', 'mz', 'lote', 'lt', 'sector', 'sección', 'ampliación', 'residencial',
-  'condominio', 'conjunto', 'infonavit', 'fovissste', 'privadas', 'villas',
+  ...STREET_WORDS,
+  'no', 'sin',
   // nombres frecuentes de colonias (auditoría de `genericPlaces.ts`, 2026-10-21)
   'barranca', 'presa', 'loma', 'lomas', 'jardín', 'jardines', 'pedregal',
   // ranchos, parajes, tierras
-  'rancho', 'ranchería', 'paraje', 'predio', 'finca', 'parcela', 'terreno', 'huerta',
-  'milpa', 'potrero',
+  'rancho', 'rcho', 'ranchito', 'ranchería', 'paraje', 'predio', 'finca', 'parcela',
+  'terreno', 'huerta', 'milpa', 'potrero', 'hacienda', 'granja', 'quinta',
+  // reclusión (audit 2026-10-23: "Cereso Atlacholoaya, Morelos" was shown)
+  'cereso', 'cefereso', 'penal', 'reclusorio', 'penitenciaría', 'cárcel',
   // la casa y cómo llegar
-  'casa', 'domicilio', 'edificio', 'departamento', 'depto', 'interior', 'piso',
-  'cuarto', 'enfrente', 'frente', 'junto', 'atrás', 'detrás', 'lado', 'subiendo',
+  'casa', 'domicilio', 'cuarto', 'junto', 'atrás', 'detrás', 'lado', 'subiendo',
   'bajando', 'cerca', 'reja', 'puerta', 'zaguán', 'tanque',
   // código postal
   'código', 'postal', 'cp',
@@ -118,7 +140,8 @@ export const ADDRESS_WORDS: readonly string[] = [
   'centro', 'salud', 'consultorio', 'imss', 'issste', 'issstep', 'seguro', 'siglo',
   'xxi', 'raza', 'iglesia', 'parroquia', 'capilla', 'templo', 'mercado', 'tienda',
   'tiendita', 'plaza', 'panteón', 'cancha', 'oficina', 'empresa', 'fábrica',
-  'taller', 'cooperativa', 'albergue', 'refugio',
+  'taller', 'cooperativa', 'albergue', 'refugio', 'sanatorio', 'asilo', 'internado',
+  'orfanato', 'cuartel',
 ]
 
 /** Honorifics and kin words: a finding with one of these, or right after one, is a person. */
@@ -307,16 +330,56 @@ function stateFollows(after: string): boolean {
   return false
 }
 
+/** Rule 6: a house number spelled out. Tens and hundreds anywhere near; a unit only right after. */
+const NUMBER_TENS = foldedSet([
+  'diez', 'once', 'doce', 'trece', 'catorce', 'quince', 'dieciséis', 'diecisiete',
+  'dieciocho', 'diecinueve', 'veinte', 'treinta', 'cuarenta', 'cincuenta', 'sesenta',
+  'setenta', 'ochenta', 'noventa', 'cien', 'ciento', 'doscientos', 'trescientos',
+  'cuatrocientos', 'quinientos',
+])
+const NUMBER_UNITS = foldedSet(['uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve'])
+/** "n. 45", "No 45", "Nº 45", "N° 45": a marker that is a number only before one. */
+const NUMBER_MARKERS = foldedSet(['n', 'no', 'nº', 'num', 'núm', 'nro', 'número'])
+const STREET = foldedSet(STREET_WORDS)
+/** How many words after a place rule 6 reads. */
+const AFTER_WINDOW = 5
+
+const isNumberWord = (w: string) =>
+  NUMBER_TENS.has(w) || /^veinti\p{L}+$/u.test(w) || NUMBER_UNITS.has(w)
+
 /**
- * Rule 6 — what stands right AFTER. A number, a "#" or an address word in the
- * next token means a street: "Morelos 45", "Hidalgo número 45", "Insurgentes,
- * número 45", "Hidalgo esquina con Morelos", "Hidalgo, frente a la iglesia"
- * (audit 2026-10-23). Punctuation-only tokens are skipped.
+ * Rule 6 — what stands AFTER (audit 2026-10-23, two passes). In the next
+ * {@link AFTER_WINDOW} words: a digit, a "#", "s/n", a street word ("casi
+ * esquina con", "a dos cuadras de", "dpto 4", "torre B"), a spelled-out
+ * ten ("cuarenta y cinco"), or a number marker before a number ("N° 45").
+ * The word right after may also be any address word or a unit ("Hidalgo
+ * cinco"). The window stops at a sentence end, but the first word of the
+ * next sentence still counts ("Vivo en Hidalgo. Número 45.").
  */
 function streetFollows(after: string): boolean {
-  const next = after.split(/\s+/u).filter((t) => /[\p{L}\p{N}#]/u.test(t))[0]
-  if (next === undefined) return false
-  return /[\p{N}#]/u.test(next) || ADDRESS.has(bare(next))
+  const tokens = after.split(/\s+/u).filter((t) => t !== '')
+  let seen = 0
+  for (let i = 0; i < tokens.length && seen < AFTER_WINDOW; i += 1) {
+    const t = tokens[i]!
+    // "familia." ends a sentence; "n.", "int.", "edif." are abbreviations.
+    const abbreviation = ADDRESS.has(bare(t)) || NUMBER_MARKERS.has(bare(t)) || bare(t).length <= 3
+    const sentenceEnd = /^[.!?;:]+$/u.test(t) || /[!?;]$/u.test(t) || (/\.$/u.test(t) && !abbreviation)
+    if (!/[\p{L}\p{N}#]/u.test(t)) {
+      if (sentenceEnd) seen = AFTER_WINDOW - 1
+      continue
+    }
+    seen += 1
+    const w = bare(t)
+    if (/[\p{N}#]/u.test(t) || /^s\/n\.?$/iu.test(t)) return true
+    if (STREET.has(w) || NUMBER_TENS.has(w) || /^veinti\p{L}+$/u.test(w)) return true
+    if (seen === 1 && (ADDRESS.has(w) || NUMBER_UNITS.has(w))) return true
+    if (NUMBER_MARKERS.has(w)) {
+      const nextT = tokens[i + 1] ?? ''
+      if (/\p{N}/u.test(nextT) || isNumberWord(bare(nextT))) return true
+    }
+    if (sentenceEnd) seen = AFTER_WINDOW - 1
+  }
+  return false
 }
 
 /**
@@ -381,9 +444,10 @@ function placeContext(
   // Rule 6: nothing street-like right after.
   if (streetFollows(after)) return false
 
-  // Rules 4 and 7: a weak or many-word name needs a state after it or a town
-  // word before it.
-  if (anchorRequired && !anchoredInSpan && !townWordBefore && !stateFollows(after)) return false
+  // Rules 4 and 7: a weak or many-word name needs a town word before it. 🔴 A
+  // state after it is NOT enough (re-audit 2026-10-23: "Insurgentes Sur, CDMX",
+  // "Santa Úrsula, CDMX" were shown).
+  if (anchorRequired && !anchoredInSpan && !townWordBefore) return false
   return true
 }
 
@@ -450,17 +514,23 @@ export function isTownLevelPlace(
   const endsInState = pieces.length >= 2 && isState(pieces[pieces.length - 1]!)
   const core = endsInState ? pieces.slice(0, -1) : pieces
   if (core.length > 1) return false
+  // "Hidalgo, Morelos": a state paired with a state is a street, not a town.
+  if (endsInState && isState(core[0]!)) return false
+  const pairedWithState = !endsInState && isState(core[0]!)
   const coreWords = core[0]!.split(/\s+/u)
   const proper = coreWords.filter((w) => !CONNECTOR.has(lower(w)) && !TOWN.has(lower(w))).length
   const first = lower(coreWords[0]!)
   const weak = ARTICLES.has(first) || SAINTS.has(first)
   const anchorRequired = weak || proper > 1
-  const anchoredInSpan = endsInState || TOWN.has(first) || isState(core[0]!)
+  // A town word starting the span, or the span being a state, anchors it.
+  const anchoredInSpan = TOWN.has(first) || isState(core[0]!)
 
   const haystack = text.normalize('NFC')
   const occurrences = foldedMatches(haystack, needle)
   if (occurrences.length === 0) return false
-  return occurrences.every(([at, end]) =>
-    placeContext(haystack, at, end, words, anchorRequired, anchoredInSpan),
+  return occurrences.every(
+    ([at, end]) =>
+      !(pairedWithState && stateFollows(haystack.slice(end))) &&
+      placeContext(haystack, at, end, words, anchorRequired, anchoredInSpan),
   )
 }
