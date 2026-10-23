@@ -30,13 +30,17 @@
  * (keyed on `contentKind`, never on the file-format `kind`).
  */
 
+import { env } from '$env/dynamic/private';
 import { backendFetch } from '$lib/server/auth';
 import {
+  excerptFrom,
   isGatedContent,
   kindFilterWhere,
   libraryKindOf,
   libraryTitleFor,
   normalizeSearch,
+  parseSkipIntro,
+  testimonyTopic,
   type KindFilter,
   type LibraryDocument,
   type LibraryItem,
@@ -48,9 +52,15 @@ export const LIBRARY_PAGE_SIZE = 30;
 /**
  * The fields the LIST reads.
  *
- * ⚠ `extractedText` is absent on purpose. A few hundred documents' full text is
- * megabytes of JSON to render a list of titles, and the list never shows a word
- * of it. The reader route fetches the text for exactly one document.
+ * ⚠ `extractedText` and `bodyMarkdown` are absent on purpose: the raw
+ * original never feeds the list, and a documento's full text is never shown
+ * there. The reader route fetches the text for exactly one document.
+ *
+ * 🔴 `redactedText` IS READ, SERVER-SIDE ONLY: the BFF cuts the testimonio's
+ * excerpt from it (`toLibraryItem`) and drops it. The browser gets the excerpt
+ * line, never the text. Members could already read it on the reader page; the
+ * backend's access to it is unchanged. Cost: one list page carries up to 30
+ * full redacted texts from backend to BFF (not measured), never to the browser.
  */
 export const LIBRARY_LIST_FIELDS = [
   'name',
@@ -69,22 +79,22 @@ export const LIBRARY_LIST_FIELDS = [
   // 🔴 Read so the list can drop a gated row the gate has not cleared — see
   // `isClearedForLibrary`.
   'anonymisationStatus',
+  // 🔴 For the excerpt only — see above. Dropped before the row leaves.
+  'redactedText',
+  // The testimonio's topic ("Testimonio · Discapacidad"); no personal content.
+  'tema',
 ] as const;
 
 /**
  * The reader adds the text itself.
  *
- * 🔴 `redactedText` IS THE TEXT OF A TESTIMONIO. `extractedText` and
- * `bodyMarkdown` are the unredacted original; the backend hides them from
- * everyone but the uploader on gated rows (`mayReadGatedOriginal`), and
- * {@link documentText} never reads them for one either.
+ * 🔴 `redactedText` IS THE TEXT OF A TESTIMONIO (already in the list fields).
+ * `extractedText` and `bodyMarkdown` are the unredacted original; the backend
+ * hides them from everyone but the uploader on gated rows
+ * (`mayReadGatedOriginal`), and {@link documentText} never reads them for one
+ * either.
  */
-export const LIBRARY_DOC_FIELDS = [
-  ...LIBRARY_LIST_FIELDS,
-  'extractedText',
-  'bodyMarkdown',
-  'redactedText',
-] as const;
+export const LIBRARY_DOC_FIELDS = [...LIBRARY_LIST_FIELDS, 'extractedText', 'bodyMarkdown'] as const;
 
 function selectParams(fields: readonly string[]): Array<[string, string]> {
   return fields.map((f) => [`select[${f}]`, 'true']);
@@ -105,6 +115,8 @@ export interface LibraryQueryInput {
    * it is never sent as an empty `in`.
    */
   documentIds?: readonly string[];
+  /** The topic of a testimonio with no `tema` (`testimonyTopic`). */
+  ecosystemName?: string | null;
 }
 
 /**
@@ -237,15 +249,22 @@ export function isLibraryVisible(
 export function toLibraryItem(
   row: Record<string, unknown>,
   contributorName: string | null,
+  ecosystemName: string | null = null,
 ): LibraryItem {
   const kind = libraryKindOf(row);
   // 🔴 `contentKind`, not `kind`. See `isGatedContent`.
   const gated = isGatedContent(row.contentKind);
+  const testimonio = row.contentKind === 'testimonio';
   return {
     id: String(row.id ?? ''),
     // 🔴 Never the uploader's filename on gated content, even when the backend
     // hands it over (it does, to the uploader and to a platform admin).
-    title: libraryTitleFor(row.contentKind, row.name),
+    // A testimonio reads "Testimonio · <tema or ecosistema>".
+    title: libraryTitleFor(
+      row.contentKind,
+      row.name,
+      testimonio ? testimonyTopic(row.tema, ecosystemName) : null,
+    ),
     kind,
     createdAt: epoch(row.createdAt),
     updatedAt: epoch(row.updatedAt ?? row.createdAt),
@@ -263,6 +282,13 @@ export function toLibraryItem(
         : null,
     // The FILE format, so a PDF Voz is not labelled machine-transcribed.
     fromAudio: row.kind === 'audio',
+    // 🔴 From `redactedText` only, and only once the gate cleared the row
+    // (`isClearedForLibrary`). Never the original; no fallback to it.
+    // `BIBLIOTECA_EXCERPT_SKIP_INTRO` (default on): skip origin/language/age lines.
+    excerpt:
+      testimonio && isClearedForLibrary(row)
+        ? excerptFrom(row.redactedText, { skipIntro: parseSkipIntro(env.BIBLIOTECA_EXCERPT_SKIP_INTRO) })
+        : null,
   };
 }
 
@@ -394,7 +420,7 @@ export async function listPublished(
     const names = await resolveContributors(token, contributorIdsToResolve(rows));
     const items = rows.map((row) => {
       const uploader = relationId(row.uploadedBy);
-      return toLibraryItem(row, uploader ? (names[uploader] ?? null) : null);
+      return toLibraryItem(row, uploader ? (names[uploader] ?? null) : null, input.ecosystemName ?? null);
     });
     return {
       items,
@@ -419,6 +445,7 @@ export async function readPublished(
   token: string | undefined,
   organizationId: string,
   id: string,
+  ecosystemName: string | null = null,
 ): Promise<LibraryReadResult> {
   try {
     const res = await backendFetch(
@@ -442,7 +469,7 @@ export async function readPublished(
     return {
       state: 'ok',
       doc: {
-        ...toLibraryItem(doc, uploader ? (names[uploader] ?? null) : null),
+        ...toLibraryItem(doc, uploader ? (names[uploader] ?? null) : null, ecosystemName),
         text: documentText(doc),
       },
     };

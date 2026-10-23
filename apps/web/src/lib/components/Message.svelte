@@ -12,6 +12,7 @@
   import { CHAT_KIND_REGISTRY } from '$lib/engine/registry';
   import { CHAT_CITATION_LABELS, chatCitationHref } from '$lib/engine/client';
   import { citationsWithOrdinals, denseCitations } from '$lib/citationOrdinals';
+  import { chatSourceTitle } from '$lib/biblioteca';
   import type { CitationLike, MentionRefLike } from '@edc/chat-engine/core';
 
   let {
@@ -63,7 +64,14 @@
   // body stays in this app's own Markdown renderer, so the card renders only
   // the quoted-passage cards + the "Fuentes consultadas" list.
   // Each source keeps the `[N]` the answer used for it (`$lib/citationOrdinals`).
-  const rawCitations = $derived<CitationLike[]>(citationsWithOrdinals(msg.provenance ?? null));
+  // A testimonio reads "Testimonio · <ecosistema> — «excerpt»"; the excerpt
+  // was cut server-side from the redacted passage (`$lib/server/citationProvenance`).
+  const rawCitations = $derived<CitationLike[]>(
+    citationsWithOrdinals(msg.provenance ?? null).map((c) => ({
+      ...c,
+      title: chatSourceTitle(c.title, c.metadata, app.ecosystem?.name),
+    })),
+  );
 
   /**
    * A user can chat against their OWN drafts, so an answer may quote a document

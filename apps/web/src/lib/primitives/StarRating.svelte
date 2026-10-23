@@ -18,6 +18,9 @@
    *    lock the group (`busy`) and swallow the next key press. The APG allows
    *    exactly this exception — focus-only movement plus an explicit Space or
    *    Enter to select — and it is what makes the keyboard path usable at all.
+   *  - The group itself carries `tabindex="-1"`: focusable from script, never
+   *    a Tab stop (the roving star stays the only one). Svelte's
+   *    `a11y_interactive_supports_focus` asks for it on a `radiogroup`.
    *  - The stars are `aria-hidden` glyphs; every accessible name comes from
    *    `optionLabel`, never from the ★ character.
    *
@@ -114,6 +117,7 @@
 <div
   class={`star-rating size-${size} ${locked ? 'is-locked' : ''}`}
   role="radiogroup"
+  tabindex="-1"
   aria-label={label}
   aria-disabled={locked ? 'true' : undefined}
   aria-busy={busy ? 'true' : undefined}
@@ -152,6 +156,11 @@
     display: inline-flex;
     align-items: center;
     gap: 0.05rem;
+  }
+
+  /* Focusable only from script (`tabindex="-1"`): no ring of its own. */
+  .star-rating:focus {
+    outline: none;
   }
 
   .star {

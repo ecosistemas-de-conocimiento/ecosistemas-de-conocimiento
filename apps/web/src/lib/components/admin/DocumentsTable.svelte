@@ -5,15 +5,16 @@
    * Every document in the ecosistema, with who put it there and what state it
    * is in.
    *
-   * ⚠ The status copy is NOT written here. `publicationBadge` and `ingestBadge`
-   * are the app's own words, already tested in `$lib/publication` and
-   * `$lib/ingest`, and already what the uploader sees in `DocsPanel`. An admin
+   * ⚠ The status copy is NOT written here. `publicationBadge` and
+   * `docStatusBadge` are the app's own words, already tested in
+   * `$lib/publication` and `$lib/docStatus`, and already what the uploader sees in `DocsPanel`. An admin
    * reading "transcribiendo…" here and the uploader reading something else for
    * the same row is a support call, not a wording difference.
    */
   import { Badge } from '$lib/primitives';
   import type { Tone } from '$lib/primitives/types';
-  import { audioDurationChip, ingestBadge } from '$lib/ingest';
+  import { audioDurationChip } from '$lib/ingest';
+  import { docStatusBadge } from '$lib/docStatus';
   import { publicationBadge, type BadgeTone } from '$lib/publication';
   import {
     EMPTY_DOC_FILTER,
@@ -136,7 +137,7 @@
       <tbody>
         {#each visible as d (d.id)}
           {@const pub = publicationBadge(d.publicationStatus)}
-          {@const ing = ingestBadge(d.ingestStatus, d.kind, d.audioMeta)}
+          {@const ing = docStatusBadge(d)}
           {@const audio = audioDurationChip(d.audioMeta)}
           <tr>
             <th scope="row">

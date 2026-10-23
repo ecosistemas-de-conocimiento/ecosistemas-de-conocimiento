@@ -119,6 +119,8 @@ export const DOC_FIELDS = [
   'kind',
   'publicationStatus',
   'ingestStatus',
+  'ingestError',
+  'anonymisationStatus',
   'uploadedBy',
   'audioMeta',
   'createdAt',
