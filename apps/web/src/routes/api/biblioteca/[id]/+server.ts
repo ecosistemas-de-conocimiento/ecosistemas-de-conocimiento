@@ -30,7 +30,7 @@ export const GET: RequestHandler = async ({ locals, cookies, params }) => {
   if (!eco.ok) return json({ error: 'upstream_unavailable' }, { status: 502 });
   if (!eco.selected) return json({ error: 'not_found' }, { status: 404 });
 
-  const result = await readPublished(locals.token, eco.selected.id, id);
+  const result = await readPublished(locals.token, eco.selected.id, id, eco.selected.name);
   if (result.state === 'not-found') return json({ error: 'not_found' }, { status: 404 });
   if (result.state === 'unavailable') return json({ error: 'upstream_unavailable' }, { status: 502 });
 

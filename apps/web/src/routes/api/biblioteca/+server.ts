@@ -83,6 +83,7 @@ export const GET: RequestHandler = async ({ locals, cookies, url }) => {
     search,
     page,
     ...(documentIds ? { documentIds } : {}),
+    ecosystemName: eco.selected.name,
   });
 
   return json(
