@@ -116,8 +116,9 @@ describe('the copy tells the truth about the screen it is on', () => {
     expect(composerPlaceholder(false)).toBe('Escribe un mensaje…');
   });
 
-  it('says how to cancel while generating', () => {
-    expect(composerPlaceholder(true)).toContain('Detener');
+  // The red "Detener" button beside the box already says how to cancel.
+  it('stays short while generating', () => {
+    expect(composerPlaceholder(true)).toBe('Generando…');
   });
 });
 
