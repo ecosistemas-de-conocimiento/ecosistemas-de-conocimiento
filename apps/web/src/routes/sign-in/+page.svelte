@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
 
@@ -24,11 +23,9 @@
   let email = $state('');
   let password = $state('');
   let error = $state<string | null>(null);
+  // ⚠ NO HYDRATION WAIT on the button. Before the script runs (or with JS
+  // off), a submit is a native POST to the form action in `+page.server.ts`.
   let submitting = $state(false);
-  // Enter pressed before the page hydrates would run the browser's own GET
-  // submit: no login, and the password lands in the URL. Wait for the script.
-  let ready = $state(false);
-  onMount(() => (ready = true));
 
   async function submit(e: Event) {
     e.preventDefault();
@@ -107,7 +104,7 @@
       <p class="text-sm text-danger" role="alert">{error ?? form?.error}</p>
     {/if}
 
-    <button type="submit" disabled={submitting || !ready} class="login-submit">
+    <button type="submit" disabled={submitting} class="login-submit">
       {submitting ? 'Entrando…' : 'Entrar'}
     </button>
   </form>
