@@ -113,9 +113,8 @@ export function spiralSeed(rank: number): { x: number; y: number } {
 }
 
 /**
- * 🔴 A TOWN WHOSE ONLY LINK IS ITS STATE IS NOT DRAWN (owner, 2026-10-23,
- * chosen (review)): "no point in showing city–state connections when that's
- * the only link a town has".
+ * 🔴 A TOWN WHOSE ONLY EXTRACTED RELATION IS ITS STATE IS NOT DRAWN (owner,
+ * 2026-10-23, verbatim: "if town has only the state link, dont show the town").
  *
  * Towns and states are both `lugar`; the extraction has no town/state subtype.
  * What tells them apart is the `ubicado_en` relation the extraction writes for
@@ -125,50 +124,51 @@ export function spiralSeed(rank: number): { x: number; y: number } {
  * names the town: `out` ⇒ `fromId`, `in` ⇒ `toId`; `both` (or no direction)
  * leaves it open, and either end counts.
  *
- * The edge is dropped when the town has no other drawn edge — relation or
- * co-mention, after the backend's thresholds. The town then has degree 0 and
- * the degree-0 rule in {@link buildMapData} hides it. The state stays while it
- * has other edges.
+ * ⚠ ONLY EXTRACTED RELATIONS COUNT, NOT CO-MENTIONS. A `lugar` whose single
+ * `relation` edge is that state link is removed entirely: the state link AND
+ * its co-mention edges. Counting co-mentions would hide nothing — they give
+ * every entity up to K=8 partners, so every town had 5+ edges (measured
+ * 2026-10-23, local 4-ecosistema copy `edc_backend_combo`). A town with any
+ * other relation stays, and so does its state link. The state stays while it
+ * still has a drawn edge; the degree-0 rule in {@link buildMapData} hides it
+ * otherwise. On that copy it hides 2–6 places per ecosistema and 5 in the
+ * combined view, 22–65 edges each (measured 2026-10-23, default thresholds).
  *
- * ⚠ ONE PASS, ON PURPOSE. Degree is counted once over the edges as the
- * backend sent them. Dropping a lone town's edge does not make the state a
- * "lone town" of its own `ubicado_en` (Morelos → México) in a second round.
- *
- * ⚠ IT HID NOTHING ON THE LOCAL 4-ECOSISTEMA COPY (measured 2026-10-23,
- * `edc_backend_combo`, default thresholds, K=8): every town there has 5+
- * edges, because co-mentions give each entity up to 8 more partners.
+ * ⚠ ONE PASS, ON PURPOSE. Relations are counted once over the edges as the
+ * backend sent them. Hiding a town does not make its state a "lone town" of
+ * its own `ubicado_en` (Morelos → México) in a second round.
  *
  * Overview map only: 2D and 3D, single and combined views all go through
- * {@link buildMapData}. The entity panel's neighbour list and the ego network
- * still show the town↔state relation, and the lists still list the town.
- * `GraphView.hidden` (the backend's threshold count) is not touched; the page
- * no longer prints it (`$lib/graph`, backlog #28).
+ * {@link buildMapData}. The entity panel's neighbour list, the ego network and
+ * the lists still show the town. `GraphView.hidden` (the backend's threshold
+ * count) is not touched; the page no longer prints it (`$lib/graph`, #28).
+ *
+ * @returns the ids of the towns to hide.
  */
-export function dropLoneTownStateEdges<E extends GraphViewEdge>(
-  edges: readonly E[],
-  entities: readonly GraphEntity[],
-): E[] {
+export function loneTowns(edges: readonly GraphViewEdge[], entities: readonly GraphEntity[]): Set<string> {
   const placeIds = new Set(entities.filter((e) => e.type === 'lugar').map((e) => e.id));
-  const degree = new Map<string, number>();
+  const relations = new Map<string, number>();
   for (const e of edges) {
-    degree.set(e.fromId, (degree.get(e.fromId) ?? 0) + 1);
-    degree.set(e.toId, (degree.get(e.toId) ?? 0) + 1);
+    if (e.kind !== 'relation') continue;
+    relations.set(e.fromId, (relations.get(e.fromId) ?? 0) + 1);
+    relations.set(e.toId, (relations.get(e.toId) ?? 0) + 1);
   }
-  const lone = (id: string) => degree.get(id) === 1;
-  return edges.filter((e) => {
-    if (e.kind !== 'relation' || e.relationType !== 'ubicado_en') return true;
-    if (!placeIds.has(e.fromId) || !placeIds.has(e.toId)) return true;
-    if (e.direction === 'out') return !lone(e.fromId);
-    if (e.direction === 'in') return !lone(e.toId);
-    return !lone(e.fromId) && !lone(e.toId);
-  });
+  const towns = new Set<string>();
+  for (const e of edges) {
+    if (e.kind !== 'relation' || e.relationType !== 'ubicado_en') continue;
+    if (!placeIds.has(e.fromId) || !placeIds.has(e.toId)) continue;
+    const candidates =
+      e.direction === 'out' ? [e.fromId] : e.direction === 'in' ? [e.toId] : [e.fromId, e.toId];
+    for (const id of candidates) if (relations.get(id) === 1) towns.add(id);
+  }
+  return towns;
 }
 
 /**
  * Build the map. Owner rule 2026-10-21, chosen (review): degree-0 entities are
  * not drawn (the lists still show them). With co-mention edges there are
  * rarely any: 0 of 507 on the local corpus (measured 2026-10-21, org 1, K=8).
- * Lone town↔state edges are dropped first: {@link dropLoneTownStateEdges}.
+ * Towns whose only relation is their state are removed first: {@link loneTowns}.
  */
 export function buildMapData(
   entities: readonly GraphEntity[],
@@ -185,7 +185,8 @@ export function buildMapData(
     seen.add(key);
     kept.push(e);
   }
-  const shown = dropLoneTownStateEdges(kept, entities);
+  const hiddenTowns = loneTowns(kept, entities);
+  const shown = kept.filter((e) => !hiddenTowns.has(e.fromId) && !hiddenTowns.has(e.toId));
   for (const e of shown) {
     degree.set(e.fromId, (degree.get(e.fromId) ?? 0) + 1);
     degree.set(e.toId, (degree.get(e.toId) ?? 0) + 1);
