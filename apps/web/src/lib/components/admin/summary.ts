@@ -25,7 +25,13 @@ import { formatDuration } from '$lib/ingest';
 import { parsePublicationStatus, type PublicationStatus } from '$lib/publication';
 import { HIGH_SCORE_REASONS, LOW_SCORE_REASONS, OTHER_REASON, OTHER_REASON_LABEL } from '$lib/ratings';
 import type { AudioMeta, DocKind, IngestStatus } from '$lib/types';
-import { isIngestStatus } from '$lib/ingest';
+import { ingestErrorCode, isIngestStatus } from '$lib/ingest';
+import {
+  gateState,
+  isIngestFailure,
+  parseAnonymisationStatus,
+  type AnonymisationStatus,
+} from '$lib/docStatus';
 
 // ── Identity ───────────────────────────────────────────────────────────────
 
@@ -58,6 +64,14 @@ export interface AdminDocRow {
   createdAt: string | null;
   publicationStatus: PublicationStatus;
   ingestStatus: IngestStatus;
+  /**
+   * The CODE of `documents.ingestError` (`anonymisation_held`, …), never the
+   * message: `$lib/docStatus` only needs the code, and the message can carry
+   * backend detail an admin page's HTML has no use for.
+   */
+  ingestError: string | null;
+  /** Backend `documents.anonymisationStatus` (the testimonio gate). */
+  anonymisationStatus: AnonymisationStatus;
   audioMeta: AudioMeta | null;
   /**
    * Characters of transcript, for audio only.
@@ -141,6 +155,8 @@ export function parseDocRow(raw: unknown): AdminDocRow | null {
     createdAt: typeof row.createdAt === 'string' ? row.createdAt : null,
     publicationStatus: parsePublicationStatus(row.publicationStatus),
     ingestStatus: isIngestStatus(row.ingestStatus) ? row.ingestStatus : 'n/a',
+    ingestError: ingestErrorCode(typeof row.ingestError === 'string' ? row.ingestError : null) || null,
+    anonymisationStatus: parseAnonymisationStatus(row.anonymisationStatus),
     audioMeta: parseAudioMeta(row.audioMeta),
     transcriptChars: null,
   };
@@ -242,7 +258,11 @@ export interface DocumentSummary {
   byKind: Record<DocKind, number>;
   /** Still moving through the pipeline — nothing for a human to do yet. */
   inProgress: number;
-  /** `ingestStatus: 'failed'` — a real backlog item, retryable by the owner. */
+  /**
+   * A real pipeline failure (`isIngestFailure`), retryable by the owner. A
+   * testimonio the gate held or rejected counts in neither this nor
+   * `inProgress`: it waits on a reviewer, not on the pipeline.
+   */
   failed: number;
 }
 
@@ -259,7 +279,8 @@ export function summarizeDocuments(docs: readonly AdminDocRow[]): DocumentSummar
     if (d.publicationStatus === 'published') out.published += 1;
     else out.drafts += 1;
     out.byKind[d.kind] += 1;
-    if (d.ingestStatus === 'failed') out.failed += 1;
+    if (isIngestFailure(d)) out.failed += 1;
+    else if (gateState(d) !== null) continue;
     else if (d.ingestStatus !== 'ready' && d.ingestStatus !== 'n/a') out.inProgress += 1;
   }
   return out;
@@ -414,7 +435,7 @@ export function summarizeAudio(docs: readonly AdminDocRow[]): AudioSummary {
     if (typeof secs === 'number' && secs > 0) durationSeconds += secs;
     if (typeof d.transcriptChars === 'number') transcriptChars += d.transcriptChars;
     if (TRANSCRIBED_STATES.includes(d.ingestStatus)) transcribed += 1;
-    else if (d.ingestStatus === 'failed') failed += 1;
+    else if (isIngestFailure(d)) failed += 1;
     else inProgress += 1;
   }
   return {

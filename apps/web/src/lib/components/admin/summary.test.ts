@@ -47,6 +47,8 @@ function doc(over: Partial<AdminDocRow> = {}): AdminDocRow {
     createdAt: '2026-08-01T00:00:00.000Z',
     publicationStatus: 'draft',
     ingestStatus: 'ready',
+    ingestError: null,
+    anonymisationStatus: 'n/a',
     audioMeta: null,
     transcriptChars: null,
     ...over,
@@ -130,6 +132,19 @@ describe('parseDocRow', () => {
     expect(row?.audioMeta?.durationSeconds).toBe(45);
     expect(row?.audioMeta?.language).toBe('es');
     expect(row?.audioMeta?.segmentCount).toBeNull();
+  });
+
+  it('reads the gate status and keeps only the ingestError code', () => {
+    const row = parseDocRow({
+      id: 1,
+      ingestStatus: 'failed',
+      ingestError: 'anonymisation_held: stalled hold swept at 2026-10-20',
+      anonymisationStatus: 'held',
+    });
+    expect(row?.anonymisationStatus).toBe('held');
+    expect(row?.ingestError).toBe('anonymisation_held');
+    expect(parseDocRow({ id: 1, anonymisationStatus: 'weird' })?.anonymisationStatus).toBe('n/a');
+    expect(parseDocRow({ id: 1 })?.ingestError).toBeNull();
   });
 
   it('never carries document text', () => {
@@ -608,5 +623,23 @@ describe('budgetLine (C-6)', () => {
     expect(budgetLine({ ok: true, limitUsd: 0, spentUsd: 0, remainingUsd: 0, currency: 'USD' })).toBe(
       '$0.00 USD de $0.00 USD',
     );
+  });
+});
+
+describe('held and rejected testimonios are not pipeline failures', () => {
+  const held = doc({ id: 'h', kind: 'audio', ingestStatus: 'failed', anonymisationStatus: 'held' });
+  const swept = doc({ id: 's', kind: 'audio', ingestStatus: 'failed', ingestError: 'anonymisation_held' });
+  const rejected = doc({ id: 'r', kind: 'audio', ingestStatus: 'pending', anonymisationStatus: 'rejected' });
+  const broken = doc({ id: 'b', kind: 'audio', ingestStatus: 'failed', ingestError: 'no_audio_stream' });
+
+  it('summarizeDocuments counts only the real failure', () => {
+    const s = summarizeDocuments([held, swept, rejected, broken]);
+    expect(s.failed).toBe(1);
+    expect(s.inProgress).toBe(0);
+    expect(s.total).toBe(4);
+  });
+
+  it('summarizeAudio counts only the real failure', () => {
+    expect(summarizeAudio([held, swept, rejected, broken]).failed).toBe(1);
   });
 });
