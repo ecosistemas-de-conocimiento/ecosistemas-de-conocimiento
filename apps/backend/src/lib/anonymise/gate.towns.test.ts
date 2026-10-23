@@ -51,14 +51,50 @@ afterEach(() => {
 const TOWN_ANSWERS: H[] = [
   { texto: 'Xochitepec', tipo: 'lugar', identifica: true },
   { texto: 'Xochitepec', tipo: 'lugar', identifica: false },
-  { texto: 'Xochitepec', tipo: 'domicilio', identifica: true },
-  { texto: 'Xochitepec', tipo: 'domicilio', identifica: false },
   { texto: 'en Xochitepec', tipo: 'lugar', identifica: true },
   { texto: 'en Xochitepec', tipo: 'lugar', identifica: false },
-  { texto: 'en Xochitepec', tipo: 'domicilio', identifica: true },
   { texto: 'vivo en Xochitepec', tipo: 'lugar', identifica: true },
   { texto: 'XOCHITEPEC', tipo: 'lugar', identifica: true },
 ]
+
+// 🔴 Audit 2026-10-23: the model calling it `domicilio` means a home. It is
+// never exempted as a town, and it keeps an address label.
+describe('a span the model typed `domicilio` is redacted as an address, town-shaped or not', () => {
+  for (const answer of [
+    { texto: 'Xochitepec', tipo: 'domicilio', identifica: true },
+    { texto: 'Xochitepec', tipo: 'domicilio', identifica: false },
+  ]) {
+    it(JSON.stringify(answer), async () => {
+      const r = await gate('Yo vivo en Xochitepec con mi familia.', [[answer], []])
+      expect(r.status).toBe('ready')
+      if (r.status !== 'ready') return
+      expect(r.redactedText).toBe('Yo vivo en [Domicilio A] con mi familia.')
+    })
+  }
+  it('"en Xochitepec" typed domicilio → the whole span', async () => {
+    const r = await gate('Nací en Xochitepec y ahí crecí.', [[{ texto: 'en Xochitepec', tipo: 'domicilio' }], []])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Nací [Domicilio A] y ahí crecí.')
+  })
+  it('🔴 at verify, a `domicilio` town-shaped leftover HOLDS', async () => {
+    const answer = { texto: 'Insurgentes', tipo: 'domicilio' }
+    const r = await gate('Vivo en Insurgentes.', [[], [answer]])
+    expect(r.status).toBe('hold')
+  })
+  it('🔴 one chunk typing it `lugar` and another `domicilio`: domicilio wins', async () => {
+    const r = await gate('Vivo en Insurgentes.', [
+      [
+        { texto: 'Insurgentes', tipo: 'lugar' },
+        { texto: 'Insurgentes', tipo: 'domicilio' },
+      ],
+      [],
+    ])
+    expect(r.status).toBe('ready')
+    if (r.status !== 'ready') return
+    expect(r.redactedText).toBe('Vivo en [Domicilio A].')
+  })
+})
 
 describe('a bare town after a residence or origin verb is shown', () => {
   const TEXTS = [

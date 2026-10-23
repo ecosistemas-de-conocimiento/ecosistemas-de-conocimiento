@@ -207,6 +207,11 @@ export interface DetectorFinding {
    * word, is redacted. Anything other than an explicit `false` is identifying.
    */
   identifying?: boolean
+  /**
+   * `true` when the model typed it `domicilio`: still a `lugar` for its label,
+   * but 🔴 NEVER exempted as a town (`townPlaces.ts`). Audit 2026-10-23.
+   */
+  typedAddress?: true
 }
 
 /**

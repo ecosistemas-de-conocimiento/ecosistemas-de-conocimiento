@@ -45,28 +45,51 @@
  *      or surname, and a one-word finding does not end in "-ez" ("Martínez").
  *      Words after a saint ("San Juan Chamula") and state names are exempt.
  *      And "en" counts only after a verb of residence or movement ("vivo en",
- *      "me quedé en"), so "pienso en Soledad" holds.
+ *      "me quedé en"), so "pienso en Soledad" holds. Work is not residence:
+ *      "trabajo en Coppel" names an employer.
+ *   6. NOTHING STREET-LIKE RIGHT AFTER: no digit, "#" or address word in the
+ *      next token — "Morelos 45", "Hidalgo número 45", "Hidalgo esquina con…".
+ *   7. ONE PIECE, ONE PROPER WORD, unless anchored like rule 4: "Insurgentes,
+ *      Cuernavaca" is never a town; "Ranchito El Huizache", "Priv Hidalgo",
+ *      "Jiutepec Civac" need a state after or a town word before.
+ *   ·  A finding the model typed `domicilio` is never a town (`typedAddress`).
+ *   ·  Every set lookup is case- and accent-folded ("Callejon" = "callejón").
  *
  * ⚠ THE TWO RESIDUAL RISKS, STATED. There is no gazetteer and no census here,
  * so both directions of "looks like a town" can still be wrong:
  *
- *   1. A COLONIA (or paraje, or named building) written by a bare, town-shaped
- *      name after a place verb and "en" — "vivo en Portales" — that stage 3
- *      also missed passes as a town and ships in clear.
+ *   1. A COLONIA, STREET (or paraje, or named building) written as ONE bare,
+ *      capitalised word after a place verb and "en", with nothing street-like
+ *      after it — "vivo en Portales", "vivo en Insurgentes", "vivo en Tepito"
+ *      — that the model typed `lugar` passes as a town and ships in clear.
  *   2. A PERSON the detector typed `lugar` whose name is not on the compact
  *      lists — an uncommon given name or a surname not ending in "-ez",
  *      after "vivo en" / "soy de" — passes as a town and ships in clear.
  *      ("Vivo en Xiadani" passes.) Common names and every "-ez" surname hold.
  *
- * Both need the detector to have mistyped AND stage 3 to have missed it. The
- * opposite error — a real town held — costs a reviewer one click and is the
- * direction every rule above leans.
+ * 🔴 ONE MODEL ANSWER IS ENOUGH for either. Since 2026-10-23 stage 3 applies
+ * this exemption too, so a single `lugar` answer shows the name; nothing later
+ * redacts it (verify ignores it by the same rule). The opposite error — a real
+ * town redacted or held — costs a reviewer one click and is the direction
+ * every rule above leans. (Rule for one bare word: owner's decision pending.)
  *
  * ⚠ A `persona`, `contacto`, `identificador` or `otro` finding is never ignored.
  */
 
 import { foldedMatches } from './detector'
 import type { DetectorFinding } from './types'
+
+/**
+ * 🔴 FOLDED: lower case AND accents dropped, on both sides of every set lookup
+ * (audit 2026-10-23: "Callejon", "Prolongacion", "Seccion" missed their
+ * accented head nouns). Folding only ever makes a lookup match more.
+ */
+const lower = (word: string) =>
+  word.normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('es')
+
+function foldedSet(words: readonly string[]): Set<string> {
+  return new Set(words.map(lower))
+}
 
 /** Words that make a finding an address, a home, or an institution. Lower case, accents kept. */
 export const ADDRESS_WORDS: readonly string[] = [
@@ -132,8 +155,9 @@ const ORIGIN_WORDS = [
  * "nací en", "me quedé en". "Pienso en Soledad", "confío en Pedro" hold.
  * Stems for regular forms; exact forms where a stem would catch other words.
  */
-const PLACE_VERB_STEMS = ['viv', 'nac', 'crec', 'lleg', 'trabaj', 'qued', 'mud', 'resid', 'habit', 'regres']
-const PLACE_VERB_FORMS = new Set([
+// ⚠ NOT "trabaj": "trabajo en Coppel" names an employer (audit 2026-10-23).
+const PLACE_VERB_STEMS = ['viv', 'nac', 'crec', 'lleg', 'qued', 'mud', 'resid', 'habit', 'regres']
+const PLACE_VERB_FORMS = foldedSet([
   // estar
   'estar', 'estoy', 'está', 'estás', 'estamos', 'están', 'estaba', 'estábamos', 'estaban',
   'estuve', 'estuvo', 'estuvimos', 'estuvieron', 'estado', 'estuvimos',
@@ -214,9 +238,9 @@ const EZ_SURNAME = /^\p{Lu}\p{Ll}*[eé]z$/u
  * surname first); "Ciudad Juárez" passes because "Ciudad" starts it, and
  * "Gómez Farías" passes because the "-ez" rule reads one-word findings only.
  */
-const EZ_TOWNS = new Set(['jerez'])
+const EZ_TOWNS = foldedSet(['jerez'])
 
-const NAMES = new Set([...GIVEN_NAMES, ...SURNAMES])
+const NAMES = foldedSet([...GIVEN_NAMES, ...SURNAMES])
 
 /** True when any word of the finding is a person's name (words after a saint are exempt). */
 function namesAPerson(words: readonly string[]): boolean {
@@ -244,17 +268,15 @@ const STATES = [
   'zacatecas', 'ciudad de méxico', 'cdmx',
 ]
 
-const DIRECT_LOCATIVES = new Set(['en', 'desde', 'hasta', 'hacia', 'rumbo', ...TOWN_WORDS])
-const ARTICLES = new Set(['el', 'la', 'los', 'las'])
-const SAINTS = new Set(['san', 'santa', 'santo'])
-const ADDRESS = new Set(ADDRESS_WORDS)
-const PERSON = new Set(PERSON_WORDS)
-const TOWN = new Set(TOWN_WORDS)
-const ORIGIN = new Set(ORIGIN_WORDS)
-const STATE = new Set(STATES)
-const CONNECTOR = new Set(['de', 'del', 'la', 'las', 'los', 'el'])
-
-const lower = (word: string) => word.normalize('NFC').toLocaleLowerCase('es')
+const DIRECT_LOCATIVES = foldedSet(['en', 'desde', 'hasta', 'hacia', 'rumbo', ...TOWN_WORDS])
+const ARTICLES = foldedSet(['el', 'la', 'los', 'las'])
+const SAINTS = foldedSet(['san', 'santa', 'santo'])
+const ADDRESS = foldedSet(ADDRESS_WORDS)
+const PERSON = foldedSet(PERSON_WORDS)
+const TOWN = foldedSet(TOWN_WORDS)
+const ORIGIN = foldedSet(ORIGIN_WORDS)
+const STATE = foldedSet(STATES)
+const CONNECTOR = foldedSet(['de', 'del', 'la', 'las', 'los', 'el'])
 const bare = (token: string) => lower(token).replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '')
 const isCapitalised = (word: string) => /^\p{Lu}/u.test(word)
 
@@ -285,13 +307,38 @@ function stateFollows(after: string): boolean {
   return false
 }
 
-/** Rules 2–4 for one occurrence. */
-function placeContext(text: string, at: number, end: number, words: readonly string[]): boolean {
+/**
+ * Rule 6 — what stands right AFTER. A number, a "#" or an address word in the
+ * next token means a street: "Morelos 45", "Hidalgo número 45", "Insurgentes,
+ * número 45", "Hidalgo esquina con Morelos", "Hidalgo, frente a la iglesia"
+ * (audit 2026-10-23). Punctuation-only tokens are skipped.
+ */
+function streetFollows(after: string): boolean {
+  const next = after.split(/\s+/u).filter((t) => /[\p{L}\p{N}#]/u.test(t))[0]
+  if (next === undefined) return false
+  return /[\p{N}#]/u.test(next) || ADDRESS.has(bare(next))
+}
+
+/**
+ * Rules 2–4 and 6 for one occurrence.
+ *
+ * @param anchorRequired rule 4 (weak name) or rule 7 (several proper words):
+ *   the occurrence needs a town word before it or a state after it.
+ * @param anchoredInSpan the span itself already carries that anchor (it ends
+ *   in ", <state>", starts with a town word, or is a state).
+ */
+function placeContext(
+  text: string,
+  at: number,
+  end: number,
+  words: readonly string[],
+  anchorRequired: boolean,
+  anchoredInSpan: boolean,
+): boolean {
   const beforeRaw = text.slice(0, at)
   const after = text.slice(end)
   const first = lower(words[0]!)
   const startsWithTownWord = TOWN.has(first)
-  const weak = ARTICLES.has(first) || SAINTS.has(first)
 
   // Rule 2: no address or person word in the 3 tokens before.
   const tokens = beforeRaw.trimEnd().split(/\s+/u).filter(Boolean)
@@ -331,8 +378,12 @@ function placeContext(text: string, at: number, end: number, words: readonly str
   }
   if (!ok) return false
 
-  // Rule 4: a weak name needs a state after it or a town word before it.
-  if (weak && !townWordBefore && !stateFollows(after)) return false
+  // Rule 6: nothing street-like right after.
+  if (streetFollows(after)) return false
+
+  // Rules 4 and 7: a weak or many-word name needs a state after it or a town
+  // word before it.
+  if (anchorRequired && !anchoredInSpan && !townWordBefore && !stateFollows(after)) return false
   return true
 }
 
@@ -378,18 +429,38 @@ function withoutLead(needle: string): string {
  * @param text the text the finding was found in (stage 3's or verify's input).
  */
 export function isTownLevelPlace(
-  finding: Pick<DetectorFinding, 'text' | 'type'>,
+  finding: Pick<DetectorFinding, 'text' | 'type' | 'typedAddress'>,
   text: string,
 ): boolean {
-  if (finding.type !== 'lugar') return false
+  if (finding.type !== 'lugar' || finding.typedAddress) return false
   const needle = withoutLead(finding.text.normalize('NFC').trim())
   if (needle === '' || /[\d.#°º/]/u.test(needle)) return false
   const words = needle.split(/[\s,]+/u).filter(Boolean)
   if (!hasTownShape(words)) return false
   if (namesAPerson(words)) return false
 
+  // Rule 7 (audit 2026-10-23): ONE piece, and one proper word, unless anchored.
+  // "Insurgentes, Cuernavaca", "Hidalgo, Xochitepec, Morelos": more than one
+  // piece before a closing state is never a town. "Ranchito El Huizache",
+  // "Hacienda San José", "Priv Hidalgo", "Jiutepec Civac": several proper words
+  // need a town word before or a state after, like a weak name (rule 4). A real
+  // many-word town without one is redacted: fail-closed, accepted.
+  const pieces = needle.split(',').map((p) => p.trim()).filter(Boolean)
+  const isState = (piece: string) => STATE.has(piece.split(/\s+/u).map(lower).join(' '))
+  const endsInState = pieces.length >= 2 && isState(pieces[pieces.length - 1]!)
+  const core = endsInState ? pieces.slice(0, -1) : pieces
+  if (core.length > 1) return false
+  const coreWords = core[0]!.split(/\s+/u)
+  const proper = coreWords.filter((w) => !CONNECTOR.has(lower(w)) && !TOWN.has(lower(w))).length
+  const first = lower(coreWords[0]!)
+  const weak = ARTICLES.has(first) || SAINTS.has(first)
+  const anchorRequired = weak || proper > 1
+  const anchoredInSpan = endsInState || TOWN.has(first) || isState(core[0]!)
+
   const haystack = text.normalize('NFC')
   const occurrences = foldedMatches(haystack, needle)
   if (occurrences.length === 0) return false
-  return occurrences.every(([at, end]) => placeContext(haystack, at, end, words))
+  return occurrences.every(([at, end]) =>
+    placeContext(haystack, at, end, words, anchorRequired, anchoredInSpan),
+  )
 }

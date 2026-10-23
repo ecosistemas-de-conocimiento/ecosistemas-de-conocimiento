@@ -423,11 +423,13 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
       type: (FINDING_TYPES as readonly unknown[]).includes(tipo)
         ? (tipo as DetectorFinding['type'])
         : // The prompt files homes under "Domicilios (marca \"lugar\")"; a model
-          // that answers "domicilio" means `lugar`. Still redacted, as an
-          // address; and the town rule (`townPlaces.ts`) reads it (2026-10-23).
+          // that answers "domicilio" means an address: labelled `[Domicilio X]`.
           tipo === 'domicilio'
           ? 'lugar'
           : 'otro',
+      // 🔴 …and NEVER a town: the model itself called it a home (audit
+      // 2026-10-23: "Vivo en Hidalgo 12" typed domicilio was shown).
+      ...(tipo === 'domicilio' ? { typedAddress: true as const } : {}),
       // 🔴 Only a literal `false` counts; a missing or odd value is identifying.
       ...((item as { identifica?: unknown }).identifica === false ? { identifying: false } : {}),
     })
@@ -689,7 +691,9 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
       for (const f of perChunk.flat()) {
         const key = `${f.type}\u0000${f.text}`
         const prior = byKey.get(key)
-        if (prior === undefined || prior.identifying === false) byKey.set(key, f)
+        const kept = prior === undefined || prior.identifying === false ? f : prior
+        // 🔴 If any chunk typed it `domicilio`, it is never a town: fail-closed.
+        byKey.set(key, prior?.typedAddress || f.typedAddress ? { ...kept, typedAddress: true } : kept)
       }
       return [...byKey.values()]
     },
