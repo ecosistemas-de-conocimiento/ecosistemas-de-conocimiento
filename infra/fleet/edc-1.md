@@ -1,7 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `47ce647` (cite variant E by default; no-`[n]`
-fallback sources need a rerank score), deployed 2026-10-22 02:50 UTC — see §4zc. Before that,
+**Status:** live since 2026-10-17. Dev runs `main` @ `e3fe6ee` (combined graph "Todos mis
+ecosistemas", 3D "Altura", rerank score restored, persona-privacy fixes), deployed 2026-10-22
+07:34 UTC — see §4zd. Before that, `47ce647` (cite variant E by default; no-`[n]` fallback sources
+need a rerank score; 02:50 UTC, §4zc). Before that,
 `7b2e27e` (deployed by edcai), and before that `7e51205` (`/grafo` phone CSS, 3D labels by
 screen overlap), deployed 2026-10-22 00:42 UTC, with embeddings on the Spark and a hosted fallback
 (§4za) — see §4zb. Before that (`[n]` stripped from stored turns, 3D label
@@ -1361,6 +1363,51 @@ $0.0064.) Tonight: $0.4786 + $1.5915 = **$2.0701** of the $10 cap.
 
 **Disk**, `df -h /` free: 38 GB before; 34 GB after the build; 57 GB after the cleanup. Images
 10.4 GB, build cache 0.
+
+### 4zd. ✅ Done 2026-10-22 05:00 – 2026-10-23 UTC: `e3fe6ee`, dev only
+
+All measured by the deploy agent. Staging was not touched; edcai held off. `e3fe6ee` = c4 (roster
+word breaks `bd33e58`, unnamed relatives `6a3dac6`) + -0a (rerank score restored `814f2fd`, 3D
+"Altura" selector `3c023b1`, combined graph "Todos mis ecosistemas" `22a2158`, persona-privacy
+fixes `398eb5f`, `e3fe6ee`). No migration: `payload_migrations` 3, `edc_ai` 6. No variable holds
+`:?` text.
+
+Backup `/root/backups/20261022T0500Z/`. ⚠ The off-box `scp` stalled for ≈ 18 min at 1.5 of
+2.2 MB, a network stall. Re-copied with `timeout 120 scp -o ServerAliveInterval=10`; sha256 of
+both dumps matched. Because the deploy came after a `;`, the stalled command still went on to
+deploy once the copy ended: `e3fe6ee` finished at 07:39:57 UTC on 2026-10-22. 9 containers up,
+health 200. The smoke below ran the next day. **Lesson: chain the deploy with `&&` after the
+copy, and give `scp` a timeout.**
+
+Smoke, desktop, as the participant (member of the four) unless noted:
+
+| check | result |
+|---|---|
+| 1. "Todos mis ecosistemas" | offered in the `/grafo` picker ("Cambiar de ecosistema"). `?eco=todos` loads the combined view: **245 entities, 1,781 edges** (303 relations + 1,478 co-mentions), 0 isolated (`GET /api/graph/view?organization=all`, 1.3 s). The 2D canvas settled 1.55 s after navigation (unchanged ≥ 1 s) |
+| 2. 3D "Altura" | options Tipo / Ecosistemas compartidos / Frecuencia / Centralidad / Comunidad; each draws the 3D canvas with no fallback and 0 page or console errors (one screenshot each) |
+| 3. scoping | a throwaway user, `member` of Prevención del dengue only: no picker, no "Todos mis ecosistemas"; `?eco=todos` and `?eco=7` (Discapacidad) both stay on Dengue (73 entities). The participant with `?eco=7` sees Discapacidad (84), as a member. The throwaway user, its membership and its conversation were deleted |
+| 4. persona panel | **not testable**: there are 0 `persona` entities in `graph_entities` (tema 212, lugar 86, evento 47, organizacion 14) |
+| 5. chat in Dengue | 61.5 s, 7 sources; `rerankScore` 1.0, 0.999, 1.0, 0.999, 0, 0.999, 0: **5 of 7 non-zero** (§4zc had 2 of 7) |
+| 6. anonymisation | a fictional testimonio (uploaded as the investigador; the participant gets 403 `voces_upload_forbidden`) passed the gate (`ready`, 12 s, 0 survivors) |
+
+Redacted output of check 6 (placeholders only):
+
+> Me llamo [Persona A] y vivo en [Domicilio A]. [Persona C] me llevaba al centro de salud cada mes.
+> Mi primo [Persona D] nos acompañaba, y la esposa de mi primo cuidaba a los niños. Mi vecina
+> [Persona B] nos avisaba de las brigadas.
+
+"Mi mamá" → `[Persona C]`; the cousin's name → `[Persona D]` ("mi primo" kept); "MaríaLópez" (glued) →
+`[Persona B]`. "La esposa de mi primo" is unchanged; its own label comes in a later fix. ⚠ The
+town in "vivo en Xochitepec" became `[Domicilio A]`: a residence phrase is treated as an address
+even though towns are meant to show. The test document went with its conversation.
+
+Cleanup: nothing was deploying or building; only `e3fe6ee` images were left (pruned before), build
+cache 0. Test conversations of the participant and investigador deleted.
+
+Spend: `usage_logs` $1.5915 → $1.5985 (**+$0.0070**). Tonight's runs: $0.4786 + $1.5985 =
+**$2.0771**.
+
+**Disk**, `df -h /` free: 57 GB before; 58 GB at the end. Images 9.6 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
