@@ -41,6 +41,7 @@ import {
 import { relationIds, relationSessions } from '../documents';
 import { graphRetryErrorCopy, parseGraphStatus } from '../graphStatus';
 import { parseAnonymisationStatus } from '../docStatus';
+import { workingDocHeading } from '../biblioteca';
 import {
   belongsTo,
   clearEcosystemScopedState,
@@ -138,9 +139,11 @@ function docFromBackend(row: Record<string, unknown>): WorkingDoc {
     kindRaw === 'pdf' || kindRaw === 'docx' || kindRaw === 'audio' ? kindRaw : 'markdown';
   const statusRaw = row.ingestStatus as string | undefined;
   const ingestStatus: IngestStatus = isIngestStatus(statusRaw) ? statusRaw : 'n/a';
+  const heading = workingDocHeading(row);
   return {
     id: idOf(row.id),
-    title: typeof row.name === 'string' && row.name ? row.name : 'Documento sin título',
+    title: heading.title,
+    subtitle: heading.subtitle,
     body: typeof row.bodyMarkdown === 'string' ? row.bodyMarkdown : '',
     includeInContext: row.isPinned !== false,
     // The conversations this row is attached to. Empty means "the backend did

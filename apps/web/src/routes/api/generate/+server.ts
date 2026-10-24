@@ -36,8 +36,9 @@ import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { lenguaTurn } from '$lib/lengua';
 import { stampDraftProvenance } from '$lib/publication';
 import { citedBrowserProvenance, toBrowserMessage } from '$lib/server/citationProvenance';
+import { backendTitleFetcher, withTestimonioTitles } from '$lib/server/testimonioTitles';
 import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
-import { prepareTurn, respond, type ContextRef, type ContextScope } from '@edc/chat-engine/core';
+import { prepareTurn, respond, type ContextRef, type ContextScope, type Provenance } from '@edc/chat-engine/core';
 
 /** Max characters of each chunk's passage persisted on the provenance. */
 const PASSAGE_TEXT_CAP = 1200;
@@ -137,7 +138,16 @@ async function findSavedTurn(
     const row = docs.find(
       (d) => d.id != null && (d.generationMeta as { turnId?: unknown } | null)?.turnId === turnId,
     );
-    return row ? toBrowserMessage(row) : null;
+    if (!row) return null;
+    const browser = toBrowserMessage(row);
+    // The testimonio titles, per read (`$lib/server/testimonioTitles`).
+    return {
+      ...browser,
+      provenance: await withTestimonioTitles(
+        (browser.provenance as Provenance | null) ?? null,
+        backendTitleFetcher(token),
+      ),
+    };
   } catch {
     return null;
   }
@@ -343,7 +353,11 @@ function streamGenerate(
               emit({
                 ...evt,
                 messageId,
-                provenance: provenance ?? null,
+                // Titles on the browser copy only; the saved one never carries them.
+                provenance: await withTestimonioTitles(
+                  (provenance as Provenance | null) ?? null,
+                  backendTitleFetcher(token),
+                ),
                 ...(warnings ? { warnings } : {}),
               });
             } else if (evt.type === 'error') {
@@ -785,7 +799,8 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     return json({
       ...generation,
       messageId,
-      provenance: provenance ?? null,
+      // Titles on the browser copy only; the saved one never carries them.
+      provenance: await withTestimonioTitles(provenance ?? null, backendTitleFetcher(locals.token)),
       ...(warnings ? { warnings } : {}),
     });
   } catch (err) {

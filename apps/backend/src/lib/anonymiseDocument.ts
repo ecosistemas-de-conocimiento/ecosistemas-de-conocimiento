@@ -267,7 +267,9 @@ export async function anonymiseDocumentText(args: {
   const token = `${GATE_RUNNING_CODE}: ${randomUUID()}`
   const claimed = await updateDocumentColumns(payload, {
     id: docId,
-    data: { anonymisationStatus: 'pending', anonymisationError: token },
+    // 🔴 `testimonioTitle` cleared with the claim: it was made from the text
+    // this run is about to replace (`lib/testimonioTitle.ts`).
+    data: { anonymisationStatus: 'pending', anonymisationError: token, testimonioTitle: null },
     where: GATE_CLAIM_GUARD.map((clause) => ({ ...clause })) as never,
   })
   if (claimed === 0) {
@@ -393,6 +395,29 @@ export async function anonymiseDocumentText(args: {
       heldText: result.redactedText ?? null,
       anonymisationSurvivors: result.survivors ?? null,
     }))) return superseded()
+    /**
+     * A held testimonio gets a title too (owner ruling 2026-10-24: Revisión
+     * lists them), from the gate's REDACTED output at the hold — never the
+     * original. What verify flagged is forbidden in it. Detached; a structural
+     * hold has no output, so no title and the fallback label.
+     */
+    if (
+      contentKind === 'testimonio' &&
+      args.organizationId !== undefined &&
+      typeof result.redactedText === 'string'
+    ) {
+      const heldText = result.redactedText
+      const { scheduleTestimonioTitle } = await import('./testimonioTitle')
+      scheduleTestimonioTitle({
+        contentKind,
+        docId,
+        organizationId: args.organizationId,
+        redactedText: heldText,
+        source: 'held',
+        forbidden: (result.survivors ?? []).map((sp) => heldText.slice(sp.start, sp.end)),
+        payload: payload as never,
+      })
+    }
     return { ok: false, stage: result.stage, reason: result.reason, report: result.report }
   }
 

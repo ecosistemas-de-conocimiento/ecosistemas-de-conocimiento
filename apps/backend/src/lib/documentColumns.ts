@@ -62,6 +62,7 @@ const COLUMNS = {
   anonymisationSurvivors: 'anonymisation_survivors',
   redactedText: 'redacted_text',
   heldText: 'held_text',
+  testimonioTitle: 'testimonio_title',
   updatedAt: 'updated_at',
 } as const
 

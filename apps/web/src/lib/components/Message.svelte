@@ -113,7 +113,7 @@
 
 <div class="flex {isUser ? 'justify-end' : 'justify-start'}">
   <div
-    class="max-w-[80%] rounded-lg px-3 py-2 text-sm leading-relaxed shadow-1 {isUser
+    class="max-w-[80%] min-w-0 [overflow-wrap:anywhere] rounded-lg px-3 py-2 text-sm leading-relaxed shadow-1 {isUser
       ? 'bg-brand text-on-brand whitespace-pre-wrap'
       : msg.error
         ? 'bg-surface-strong border border-danger text-danger whitespace-pre-wrap'

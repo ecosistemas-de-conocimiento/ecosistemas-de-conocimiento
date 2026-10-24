@@ -142,6 +142,7 @@
           <tr>
             <th scope="row">
               <span class="title">{d.title}</span>
+              {#if d.subtitle}<span class="sub">{d.subtitle}</span>{/if}
               {#if audio}<span class="sub">{audio}</span>{/if}
             </th>
             <td><Badge label={kindLabel(d.kind)} tone="neutral" emphasis="outline" size="sm" /></td>

@@ -77,6 +77,16 @@ export interface HeldSummary {
    * on the index page, before anyone opened anything.
    */
   title: string
+  /**
+   * The neutral kind label ("Testimonio retenido"), shown as the secondary
+   * line when `title` is a generated one; equal to `title` otherwise.
+   */
+  label: string
+  /**
+   * 🔴 The system-proposed title (`documents.testimonioTitle`), made from the
+   * gate's REDACTED held output, never `name`. `null` ⇒ `title` is the label.
+   */
+  generatedTitle: string | null
   contentKind: ContentKind
   /** Which stage refused. `structural | deterministic | content | verify`. */
   stage: string | null
@@ -175,6 +185,7 @@ type DocumentRow = {
   anonymisationReport?: unknown
   anonymisationSurvivors?: unknown
   heldText?: unknown
+  testimonioTitle?: unknown
   redactedText?: unknown
   extractedText?: unknown
   updatedAt?: unknown
@@ -217,9 +228,15 @@ function neutralTitle(kind: ContentKind): string {
 function summarize(row: DocumentRow): HeldSummary {
   const { stage, reason } = splitError(row.anonymisationError)
   const kind = contentKindOf(row)
+  const generated =
+    kind === 'testimonio' && typeof row.testimonioTitle === 'string' && row.testimonioTitle.trim()
+      ? row.testimonioTitle.trim()
+      : null
   return {
     id: String(row.id),
-    title: neutralTitle(kind),
+    title: generated ?? neutralTitle(kind),
+    label: neutralTitle(kind),
+    generatedTitle: generated,
     contentKind: kind,
     stage,
     reason,
@@ -502,6 +519,8 @@ export async function decideOnHold(args: {
         // curious reviewer would make the rejection cosmetic.
         heldText: null,
         anonymisationSurvivors: null,
+        // 🔴 Made from the `heldText` this rejection discards.
+        testimonioTitle: null,
         ingestError: 'anonymisation_rejected: a reviewer refused this document.',
       },
       // ⚠ Suppress the extract+ingest hook. `rejected` is terminal and the hook

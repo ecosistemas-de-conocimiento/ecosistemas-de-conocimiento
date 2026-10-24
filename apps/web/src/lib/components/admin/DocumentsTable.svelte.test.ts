@@ -13,6 +13,7 @@ function doc(over: Partial<AdminDocRow>): AdminDocRow {
   return {
     id: 'd',
     title: 'Doc',
+    subtitle: null,
     kind: 'audio',
     uploaderId: 'u1',
     createdAt: '2026-10-20T00:00:00.000Z',

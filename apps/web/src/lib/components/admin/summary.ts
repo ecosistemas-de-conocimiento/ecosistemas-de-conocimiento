@@ -22,6 +22,7 @@
  */
 
 import { formatDuration } from '$lib/ingest';
+import { testimonyHeading, testimonyTopic } from '$lib/biblioteca';
 import { parsePublicationStatus, type PublicationStatus } from '$lib/publication';
 import { HIGH_SCORE_REASONS, LOW_SCORE_REASONS, OTHER_REASON, OTHER_REASON_LABEL } from '$lib/ratings';
 import type { AudioMeta, DocKind, IngestStatus } from '$lib/types';
@@ -58,6 +59,11 @@ export function isPlatformAdmin(user: unknown): boolean {
 export interface AdminDocRow {
   id: string;
   title: string;
+  /**
+   * The line under the title: "Testimonio · <tema>" under a testimonio's
+   * system-proposed title (owner ruling 2026-10-24); `null` otherwise.
+   */
+  subtitle: string | null;
   kind: DocKind;
   /** Stringified `documents.uploadedBy`. Empty when the backend sent none. */
   uploaderId: string;
@@ -147,9 +153,15 @@ export function parseDocRow(raw: unknown): AdminDocRow | null {
   const id = relationId(row.id);
   if (!id) return null;
   const name = typeof row.name === 'string' && row.name.trim() ? row.name.trim() : 'Sin título';
+  // A testimonio: its generated title over "Testimonio · <tema>", or that label
+  // alone. Never the filename, which nobody chose as a title (participants
+  // never type one).
+  const heading =
+    row.contentKind === 'testimonio' ? testimonyHeading(row.testimonioTitle, testimonyTopic(row.tema, null)) : null;
   return {
     id,
-    title: name,
+    title: heading ? heading.title : name,
+    subtitle: heading ? heading.subtitle : null,
     kind: parseKind(row.kind),
     uploaderId: relationId(row.uploadedBy),
     createdAt: typeof row.createdAt === 'string' ? row.createdAt : null,

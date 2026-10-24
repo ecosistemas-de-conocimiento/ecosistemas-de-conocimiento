@@ -99,6 +99,7 @@
         <span class="date">{formatLibraryDate(doc.createdAt)}</span>
       </div>
       <h1>{doc.title}</h1>
+      {#if doc.subtitle}<p class="subtitle">{doc.subtitle}</p>{/if}
 
       <div class="meta">
         {#if voice}
@@ -155,6 +156,11 @@
 </div>
 
 <style>
+  .subtitle {
+    margin: 0.1rem 0 0;
+    font-size: 0.9rem;
+    color: var(--edc-color-ink-soft);
+  }
   .page {
     min-height: 100%;
     max-width: 46rem;

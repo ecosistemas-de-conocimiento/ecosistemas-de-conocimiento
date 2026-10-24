@@ -253,6 +253,7 @@
                 <span class="date">{formatLibraryDate(item.createdAt)}</span>
               </div>
               <h2 class="title" title={item.title}>{item.title}</h2>
+              {#if item.subtitle}<p class="subtitle">{item.subtitle}</p>{/if}
               {#if item.excerpt}
                 <!-- Plain text from the redacted Voz, cut server-side. Never {@html}. -->
                 <p class="excerpt">{item.excerpt}</p>
@@ -490,6 +491,12 @@
     -webkit-line-clamp: 2;
     line-clamp: 2;
     overflow: hidden;
+  }
+  .subtitle {
+    margin: 0.1rem 0 0;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--edc-color-ink-soft);
   }
   .excerpt {
     margin: 0.25rem 0 0;
