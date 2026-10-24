@@ -61,14 +61,38 @@ describe('backfillTestimonioTitles', () => {
     expect(report.inputChars).toBe(READY.redactedText.length + HELD.heldText.length)
   })
 
-  it('asks for untitled testimonios only, unless force', async () => {
+  it('scopes the read to gated testimonios (and the org); force re-titles every one', async () => {
     const p = fakePayload([])
     await backfillTestimonioTitles(p as never, () => fakes([]).client, { organizationId: 2 })
     const where = (p.find.mock.calls[0]![0] as { where: { and: unknown[] } }).where.and
-    expect(where).toEqual([...TITLE_BACKFILL_WHERE, { testimonioTitle: { exists: false } }, { organization: { equals: 2 } }])
+    expect(where).toEqual([...TITLE_BACKFILL_WHERE, { organization: { equals: 2 } }])
     const p2 = fakePayload([])
     await backfillTestimonioTitles(p2 as never, () => fakes([]).client, { force: true })
     expect((p2.find.mock.calls[0]![0] as { where: { and: unknown[] } }).where.and).toEqual(TITLE_BACKFILL_WHERE)
+  })
+
+  it('🔴 also picks titled rows whose title predates their text: approved rows, and titles the current rules refuse', async () => {
+    const p = fakePayload([
+      { ...READY, testimonioTitle: 'Una madre pide intérprete de señas' }, // still valid: skipped
+      { ...READY, id: 21, testimonioTitle: 'Juana pide intérprete de señas' }, // invalid now: re-titled
+      { ...READY, id: 22, anonymisationStatus: 'approved', testimonioTitle: 'Una madre pide intérprete de señas' },
+    ])
+    const { client, store } = fakes([])
+    const report = await backfillTestimonioTitles(p as never, () => client, { store })
+    const and = (p.find.mock.calls[0]![0] as { where: { and: unknown[] } }).where.and
+    expect(and).not.toContainEqual({ testimonioTitle: { exists: false } })
+    expect(report).toMatchObject({ candidates: 2, lastId: '22' })
+  })
+
+  it('🔴 no client for the row (held without Spark, FALLBACK=none): no call, counted failed', async () => {
+    const { store, writes } = fakes([])
+    const report = await backfillTestimonioTitles(fakePayload([HELD]) as never, () => null, {
+      apply: true,
+      store,
+      sleep: async () => {},
+    })
+    expect(report).toMatchObject({ candidates: 1, failed: 1, written: 0 })
+    expect(writes).toEqual([])
   })
 
   it('with apply: titles each row from its gate output, with the right guard', async () => {

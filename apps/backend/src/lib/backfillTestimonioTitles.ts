@@ -3,15 +3,17 @@
  * (owner ruling 2026-10-24). Driven by `scripts/backfill-testimonio-titles.ts`;
  * the logic lives here so it is tested.
  *
- * Candidates: `contentKind = testimonio` with no `testimonioTitle` yet
- * (`force` re-titles those too), and either
+ * Candidates: `contentKind = testimonio` that {@link needsTitle} (no title,
+ * `approved`, or a title the current rules refuse; `force` re-titles all), and either
  *   · `ready`/`approved` with a `redactedText` — titled from it, or
  *   · `held` with a `heldText` (owner ruling 2026-10-24: Revisión gets titles)
  *     — titled from the gate's redacted held output, its survivors forbidden.
  * A held row with no `heldText` (structural hold) is skipped: fallback label.
  *
  * 🔴 DRY RUN BY DEFAULT: reads, counts, calls no model. With `apply`, one or two
- * `generate.sync` calls per row through the ecosistema's ai-service org, paced
+ * `generate.sync` calls per row through the gate detector's backend
+ * (`titleClientFromEnv`: Spark first; hosted only when allowed, never for a
+ * held row), paced
  * by `ANONYMISE_DETECT_MIN_GAP_MS` (shared with the gate detector) plus
  * `delayMs` between rows. Each write is guarded exactly like the live path.
  */
@@ -21,9 +23,11 @@ import type { Payload, Where } from 'payload'
 import { relationId } from './permissions'
 import {
   TESTIMONIO_TITLE_INPUT_CHARS,
+  cleanTitle,
   payloadTitleStore,
   refreshTestimonioTitle,
   type TitleGenerator,
+  type TitleSource,
   type TitleStore,
 } from './testimonioTitle'
 
@@ -71,9 +75,24 @@ export interface TitleBackfillReport {
   lastId: string | null
 }
 
+/**
+ * 🔴 DOES THIS ROW NEED A (NEW) TITLE? No title yet; or `approved` (a title
+ * from before 2026-10-24's clear-on-approve fix can be the held text's); or a
+ * title today's {@link cleanTitle} refuses against the row's CURRENT gate
+ * output. No source hash is stored: these three catch every stale case the
+ * write paths can leave, without a migration.
+ */
+export function needsTitle(row: Record<string, unknown>, picked: { text: string; forbidden: string[] }): boolean {
+  const title = typeof row.testimonioTitle === 'string' ? row.testimonioTitle.trim() : ''
+  if (title === '') return true
+  if (row.anonymisationStatus === 'approved') return true
+  return cleanTitle(title, picked.text, picked.forbidden) !== title
+}
+
 export async function backfillTestimonioTitles(
   payload: Pick<Payload, 'find'>,
-  clientFor: (organizationId: number | string) => TitleGenerator,
+  /** `null` = no allowed backend for this row (`titleClientFromEnv`): no call. */
+  clientFor: (organizationId: number | string, source: TitleSource) => TitleGenerator | null,
   opts: {
     apply?: boolean
     force?: boolean
@@ -91,7 +110,6 @@ export async function backfillTestimonioTitles(
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const where: Where[] = [
     ...TITLE_BACKFILL_WHERE,
-    ...(opts.force ? [] : [{ testimonioTitle: { exists: false } } as Where]),
     ...(opts.organizationId !== undefined ? [{ organization: { equals: opts.organizationId } } as Where] : []),
     ...(opts.afterId !== undefined ? [{ id: { greater_than: opts.afterId } } as Where] : []),
   ]
@@ -110,6 +128,7 @@ export async function backfillTestimonioTitles(
       anonymisationSurvivors: true,
       contentKind: true,
       anonymisationStatus: true,
+      testimonioTitle: true,
     },
   } as never)
   const report: TitleBackfillReport = {
@@ -127,6 +146,7 @@ export async function backfillTestimonioTitles(
     const picked = titleSourceOf(raw)
     const org = relationId(raw.organization as never)
     if (!picked || org === null) continue
+    if (!opts.force && !needsTitle(raw, picked)) continue
     const { text } = picked
     report.candidates += 1
     if (picked.source === 'held') report.held += 1
@@ -136,6 +156,12 @@ export async function backfillTestimonioTitles(
       opts.log?.(`would title document ${raw.id} (org ${org})`)
       continue
     }
+    const client = clientFor(org, picked.source)
+    if (!client) {
+      report.failed += 1
+      opts.log?.(`document ${raw.id}: no allowed model (held rows are Spark-only; FALLBACK=none is no hosted)`)
+      continue
+    }
     try {
       const out = await refreshTestimonioTitle({
         docId: raw.id as number,
@@ -143,7 +169,7 @@ export async function backfillTestimonioTitles(
         redactedText: text,
         source: picked.source,
         forbidden: picked.forbidden,
-        client: clientFor(org),
+        client,
         store,
         sleep,
       })

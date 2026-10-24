@@ -6,6 +6,8 @@
   import { searchContext } from '$lib/engine/client';
   import type { ContextRef } from '$lib/types';
   import { composerPlaceholder } from '$lib/layout';
+  import { AUDIO_UPLOAD_ENABLED } from '$lib/uploadKind';
+  import MicButton from './MicButton.svelte';
 
   let {
     busy = false,
@@ -27,6 +29,8 @@
   } = $props();
 
   let text = $state('');
+  /** Live partial text while recording; raw, pre-gate — see MicButton. */
+  let liveText = $state<string | null>(null);
   let textarea: HTMLTextAreaElement | undefined = $state();
 
   // Refs the user has @-mentioned in the current draft. Keyed by `@label`; we
@@ -149,6 +153,9 @@
 </script>
 
 <div class="border-t border-line bg-surface backdrop-blur p-3">
+  {#if liveText !== null}
+    <p class="live-text max-w-3xl mx-auto" data-testid="live-text" aria-live="polite">{liveText}</p>
+  {/if}
   <div class="flex gap-2 items-end max-w-3xl mx-auto relative">
     {#if menuOpen}
       <div class="mention-anchor" data-testid="mention-menu">
@@ -177,6 +184,9 @@
       data-testid="composer-input"
       disabled={busy}
     ></textarea>
+    {#if AUDIO_UPLOAD_ENABLED}
+      <MicButton disabled={busy} ontext={(line) => (liveText = line)} />
+    {/if}
     {#if busy}
       <Button
         tone="danger"
@@ -247,6 +257,15 @@
   .composer-input:focus {
     border-color: var(--edc-color-brand-outline);
     box-shadow: 0 0 0 4px var(--edc-focus-ring);
+  }
+  .live-text {
+    margin-bottom: 0.5rem;
+    padding: 0 0.25rem;
+    max-height: 6rem;
+    overflow-y: auto;
+    font-size: 0.875rem;
+    color: var(--edc-color-ink-soft);
+    white-space: pre-wrap;
   }
   .composer-input:disabled {
     opacity: 0.7;
