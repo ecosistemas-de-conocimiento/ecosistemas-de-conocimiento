@@ -121,8 +121,9 @@ export function spiralSeed(rank: number): { x: number; y: number } {
  * "Cuernavaca, Morelos" (backend `splitQualifiedPlaces`): its `from` side is
  * the town. So a town↔state edge is a `relation` edge between two `lugar`
  * nodes whose pair's most common type is `ubicado_en`. The edge's `direction`
- * names the town: `out` ⇒ `fromId`, `in` ⇒ `toId`; `both` (or no direction)
- * leaves it open, and either end counts.
+ * names the town: `out` ⇒ `fromId`, `in` ⇒ `toId`. `both` (or no direction)
+ * cannot say which end is the state, so neither end is hidden: a state is
+ * never hidden by this rule.
  *
  * ⚠ ONLY EXTRACTED RELATIONS COUNT, NOT CO-MENTIONS. A `lugar` whose single
  * `relation` edge is that state link is removed entirely: the state link AND
@@ -157,9 +158,8 @@ export function loneTowns(edges: readonly GraphViewEdge[], entities: readonly Gr
   for (const e of edges) {
     if (e.kind !== 'relation' || e.relationType !== 'ubicado_en') continue;
     if (!placeIds.has(e.fromId) || !placeIds.has(e.toId)) continue;
-    const candidates =
-      e.direction === 'out' ? [e.fromId] : e.direction === 'in' ? [e.toId] : [e.fromId, e.toId];
-    for (const id of candidates) if (relations.get(id) === 1) towns.add(id);
+    const town = e.direction === 'out' ? e.fromId : e.direction === 'in' ? e.toId : null;
+    if (town !== null && relations.get(town) === 1) towns.add(town);
   }
   return towns;
 }

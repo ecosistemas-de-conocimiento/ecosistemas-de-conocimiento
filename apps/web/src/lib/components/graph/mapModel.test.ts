@@ -153,6 +153,20 @@ describe('🔴 a town whose only extracted relation is its state is not drawn (o
     expect(ids(lone)).toEqual(['agua', 'mor']);
   });
 
+  it('🔴 `both` never hides the state: the pair is ambiguous, so neither end is hidden', () => {
+    // Morelos's only relation is this one; it is still the state.
+    const data = buildMapData(places, [inside('cva', 'mor', 'both'), rel('cva', 'agua')]);
+    expect(keys(data)).toEqual(['agua|cva', 'cva|mor']);
+    const lone = buildMapData(places, [inside('xox', 'mor', 'both'), co('mor', 'agua')]);
+    expect(ids(lone)).toEqual(['agua', 'mor', 'xox']);
+  });
+
+  it('🔴 no direction reads as `both`: the state is never hidden', () => {
+    const open = { ...inside('xox', 'mor'), direction: undefined };
+    const data = buildMapData(places, [open, co('mor', 'agua')]);
+    expect(ids(data)).toEqual(['agua', 'mor', 'xox']);
+  });
+
   it('one pass: hiding a town does not cascade to its state', () => {
     const mex = entity('mex', 'lugar', 'México', 12);
     const data = buildMapData([...places, mex], [inside('xox', 'mor'), inside('mor', 'mex'), co('mex', 'agua')]);
