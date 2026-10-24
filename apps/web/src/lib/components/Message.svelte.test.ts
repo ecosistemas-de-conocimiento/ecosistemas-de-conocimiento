@@ -108,3 +108,19 @@ describe('🔴 source numbering: 8 cited markers, 7 shown sources, no source 7',
     expect(listedOrdinals(body)).toEqual([]);
   });
 });
+
+// 🔴 Dev 020ebec (2026-10-24): an answer cited "[266]", a backend document id,
+// and its provenance was empty. The server now never shows the model a number
+// but `[1]…[k]` (`$lib/server/engine/chunkFence`); this pins the display net
+// underneath: a marker no source answers never reaches the reader.
+describe('a marker with no source is dropped, even when no source is listed at all', () => {
+  const answer = 'La milpa se siembra en mayo [266]. Las lluvias llegan después [ 266 ][3].';
+  for (const provenance of [null, citedBrowserProvenance(retrieved as never, answer, null, 'E')]) {
+    it(`provenance ${provenance === null ? 'null' : 'from an answer citing [266] and [3]'}`, () => {
+      const v = view({ id: '902', role: 'assistant', content: answer, createdAt: 0, pending: false, provenance });
+      expect(v.content).not.toMatch(/266/);
+      expect(v.html).not.toMatch(/\[\s*\d+\s*\](?![^<]*<\/button>)/);
+      expect(listedOrdinals(v.body)).toEqual(provenance ? [1] : []);
+    });
+  }
+});
