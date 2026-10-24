@@ -1,0 +1,191 @@
+<script lang="ts">
+  /**
+   * Record from the mic with live partial text; on stop the whole recording
+   * uploads as a normal audio document (same route, gate and titles).
+   *
+   * 🔴 The live text is raw, pre-gate testimony from `LiveUplink`. It lives in
+   * this component's state only, is shown to the speaker, and is dropped when
+   * the upload starts.
+   *
+   * Simulator (dev/test): `?simvoz=1` makes the button pick an audio file and
+   * play it into the same recorder at real-time pace, instead of the mic.
+   */
+  import { onDestroy } from 'svelte';
+  import { page } from '$app/stores';
+  import { IconButton } from '$lib/primitives';
+  import { app } from '$lib/stores/app.svelte';
+  import { toasts } from '$lib/stores/toasts.svelte';
+  import { LiveUplink, liveLine } from '$lib/liveCapture';
+  import { mayUploadVoces } from '$lib/uploadKind';
+
+  let { disabled = false, ontext }: { disabled?: boolean; ontext: (line: string | null) => void } =
+    $props();
+
+  /** One slice per this many ms. Each POST carries ~2.5 s of new audio. */
+  const SLICE_MS = 2500;
+
+  let recording = $state(false);
+  let saving = $state(false);
+  let elapsed = $state(0);
+
+  let recorder: MediaRecorder | null = null;
+  let stream: MediaStream | null = null;
+  let audioCtx: AudioContext | null = null;
+  let uplink: LiveUplink | null = null;
+  let chunks: Blob[] = [];
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let fileInput: HTMLInputElement | undefined = $state();
+
+  const simulate = $derived($page.url.searchParams.get('simvoz') === '1');
+  const canUploadVoces = $derived(mayUploadVoces($page.data?.vocesUpload, app.ecosystem?.slug));
+
+  function pickMime(): string | undefined {
+    const preferred = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+    return preferred.find((m) => MediaRecorder.isTypeSupported(m));
+  }
+
+  /** An audio file played into a MediaStream at real-time pace. */
+  async function fileStream(file: File): Promise<MediaStream> {
+    audioCtx = new AudioContext();
+    const buffer = await audioCtx.decodeAudioData(await file.arrayBuffer());
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    const dest = audioCtx.createMediaStreamDestination();
+    source.connect(dest);
+    source.onended = () => void stop();
+    source.start();
+    return dest.stream;
+  }
+
+  async function start(input: MediaStream): Promise<void> {
+    stream = input;
+    chunks = [];
+    uplink = new LiveUplink((t) => ontext(liveLine(t) || '…'));
+    const mimeType = pickMime();
+    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    recorder.ondataavailable = async (e) => {
+      if (!e.data.size) return;
+      chunks.push(e.data);
+      uplink?.push(new Uint8Array(await e.data.arrayBuffer()));
+    };
+    recorder.onstop = () => void finish();
+    recorder.start(SLICE_MS);
+    recording = true;
+    elapsed = 0;
+    ontext('…');
+    const t0 = Date.now();
+    timer = setInterval(() => (elapsed = Math.floor((Date.now() - t0) / 1000)), 500);
+  }
+
+  async function begin(): Promise<void> {
+    if (recording || saving) return;
+    if (simulate) {
+      fileInput?.click();
+      return;
+    }
+    try {
+      await start(await navigator.mediaDevices.getUserMedia({ audio: true }));
+    } catch {
+      toasts.push({ kind: 'error', message: 'Sin acceso al micrófono.' });
+    }
+  }
+
+  async function onSimFile(e: Event): Promise<void> {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (file) await start(await fileStream(file));
+  }
+
+  async function stop(): Promise<void> {
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+  }
+
+  function release(): void {
+    if (timer) clearInterval(timer);
+    timer = null;
+    stream?.getTracks().forEach((t) => t.stop());
+    stream = null;
+    void audioCtx?.close();
+    audioCtx = null;
+    recording = false;
+  }
+
+  async function finish(): Promise<void> {
+    const type = recorder?.mimeType || 'audio/webm';
+    recorder = null;
+    release();
+    const closing = uplink?.close();
+    uplink = null;
+    ontext(null);
+    if (!chunks.length) return;
+    const ext = type.includes('mp4') ? 'm4a' : 'webm';
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', 'h');
+    const file = new File(chunks, `Grabación ${stamp}.${ext}`, { type: type.split(';')[0] });
+    chunks = [];
+    saving = true;
+    try {
+      const sessionId = await app.ensureSession();
+      if (sessionId) await app.uploadDoc(sessionId, file, canUploadVoces ? 'testimonio' : 'documento');
+    } finally {
+      saving = false;
+      await closing;
+    }
+  }
+
+  onDestroy(() => {
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.onstop = null;
+      recorder.stop();
+    }
+    release();
+    void uplink?.close();
+  });
+
+  const clock = $derived(`${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`);
+</script>
+
+{#if simulate}
+  <input
+    bind:this={fileInput}
+    type="file"
+    accept="audio/*"
+    class="hidden"
+    data-testid="mic-sim-file"
+    onchange={onSimFile}
+  />
+{/if}
+
+{#if recording}
+  <span class="clock" data-testid="mic-clock">{clock}</span>
+  <IconButton label="Detener grabación" tone="danger" selected dataTestId="mic-stop" onClick={stop}>
+    {#snippet icon()}
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <rect x="6" y="6" width="12" height="12" rx="1.5" />
+      </svg>
+    {/snippet}
+  </IconButton>
+{:else}
+  <IconButton
+    label={saving ? 'Guardando grabación' : 'Grabar'}
+    disabled={disabled || saving}
+    dataTestId="mic-start"
+    onClick={begin}
+  >
+    {#snippet icon()}
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <rect x="9" y="3" width="6" height="11" rx="3" />
+        <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+      </svg>
+    {/snippet}
+  </IconButton>
+{/if}
+
+<style>
+  .clock {
+    align-self: center;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.8rem;
+    color: var(--edc-color-ink-soft);
+  }
+</style>

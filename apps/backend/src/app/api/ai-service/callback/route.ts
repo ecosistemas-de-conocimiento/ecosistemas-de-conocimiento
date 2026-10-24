@@ -410,8 +410,31 @@ async function dispatchCallback(
           docIdRaw,
           envelope.error ?? '<no error payload>',
         )
+        // A failed write throws to `POST`, which answers 500 so the sender retries.
+        return
       }
-      // A failed write throws to `POST`, which answers 500 so the sender retries.
+
+      /**
+       * 🔴 A PARTICIPANT'S DRAFT IS PUBLISHED HERE, BY THE SYSTEM (owner rule,
+       * 2026-10-24). Only once the draft ingest has landed, and only what the
+       * gate cleared. `lib/autoPublish.ts` decides; `beginPublish` re-checks the
+       * gate on the stored row. It never throws, and the catch is the belt: the
+       * ingest DID land, so a 500 here would make ai-service resend it.
+       */
+      try {
+        const { autoPublishParticipantDocument } = await import('@/lib/autoPublish')
+        const { getAdminAIClient } = await import('@/lib/aiClient')
+        const { ingestCallbackUrl } = await import('@/lib/callbackConfig')
+        const callbackUrl = ingestCallbackUrl()
+        await autoPublishParticipantDocument({
+          payload,
+          documentId: docId,
+          clientFor: (organizationId) => getAdminAIClient(organizationId) as never,
+          ...(callbackUrl ? { callbackUrl } : {}),
+        })
+      } catch (err) {
+        console.warn('[callback] auto-publish failed for doc', docIdRaw, err)
+      }
       return
     }
     case 'ingest.progress':

@@ -158,6 +158,26 @@ class RemoteTranscriber:
         """Decode one 16 kHz mono WAV on the remote server. BLOCKING."""
         if not self._loaded:
             raise RuntimeError("RemoteTranscriber.load() was never called")
+        # 🔴 Read into BYTES, not a streamed handle. The token proxy in front of
+        # the Spark answers 411 to a chunked upload; bytes guarantee httpx sets
+        # Content-Length. A 15-min 16 kHz s16 chunk is ~29 MB — fine in RAM.
+        with open(wav_path, "rb") as handle:
+            audio = handle.read()
+        return self.transcribe_bytes(audio, os.path.basename(wav_path), language)
+
+    def transcribe_bytes(
+        self,
+        audio: bytes,
+        filename: str = "audio.wav",
+        language: Optional[str] = None,
+        *,
+        keep_spacing: bool = False,
+    ) -> TranscriptPart:
+        """Same as `transcribe`, for a WAV already in memory (the live route).
+
+        `keep_spacing` leaves each segment's leading space on its `text`, so a
+        caller re-joining segments can tell a word start from a mid-word split.
+        """
 
         settings = self.settings
         resolved_language = language if language is not None else settings.WHISPER_LANGUAGE
@@ -182,16 +202,11 @@ class RemoteTranscriber:
         # become a problem.
 
         url = f"{self._base}/inference"
-        # 🔴 Read into BYTES, not a streamed handle. The token proxy in front of
-        # the Spark answers 411 to a chunked upload; bytes guarantee httpx sets
-        # Content-Length. A 15-min 16 kHz s16 chunk is ~29 MB — fine in RAM.
-        with open(wav_path, "rb") as handle:
-            audio = handle.read()
         try:
             response = self._client.post(
                 url,
                 data=data,
-                files={"file": (os.path.basename(wav_path), audio, "audio/wav")},
+                files={"file": (filename, audio, "audio/wav")},
             )
         except httpx.TimeoutException as exc:
             raise RemoteTranscriberError(
@@ -222,15 +237,28 @@ class RemoteTranscriber:
                 code=CODE_UNAVAILABLE,
                 status=status,
             ) from exc
-        return _to_part(payload, requested=None if autodetect else resolved_language)
+        return _to_part(
+            payload,
+            requested=None if autodetect else resolved_language,
+            keep_spacing=keep_spacing,
+        )
 
 
-def _to_part(payload: Dict[str, Any], *, requested: Optional[str]) -> TranscriptPart:
-    """Map whisper.cpp verbose_json onto the local backend's `TranscriptPart`."""
+def _to_part(
+    payload: Dict[str, Any], *, requested: Optional[str], keep_spacing: bool = False
+) -> TranscriptPart:
+    """Map whisper.cpp verbose_json onto the local backend's `TranscriptPart`.
+
+    ⚠ Whisper marks a word start with a LEADING SPACE on the segment text, and
+    it does split segments mid-word ("pu" + "ertas", measured 2026-10-24 on the
+    Spark with SIM_0015). So the joined `text` keeps those spaces instead of
+    putting one between every pair of segments.
+    """
     segments: List[Dict[str, Any]] = []
     pieces: List[str] = []
     for raw in payload.get("segments") or []:
-        text = (raw.get("text") or "").strip()
+        raw_text = (raw.get("text") or "").rstrip()
+        text = raw_text.strip()
         # Drop empty AND punctuation-only segments: large-v3 on the Spark was
         # seen emitting a stray "," as the last segment (measured, coordinator).
         if not any(ch.isalnum() for ch in text):
@@ -240,11 +268,11 @@ def _to_part(payload: Dict[str, Any], *, requested: Optional[str]) -> Transcript
                 "id": len(segments),
                 "start": round(float(raw.get("start", 0.0) or 0.0), 3),
                 "end": round(float(raw.get("end", 0.0) or 0.0), 3),
-                "text": text,
+                "text": raw_text if keep_spacing else text,
                 "noSpeechProb": round(float(raw.get("no_speech_prob", 0.0) or 0.0), 4),
             }
         )
-        pieces.append(text)
+        pieces.append(raw_text)
 
     if requested:
         # Forced language: faster-whisper reports probability 1.0 here too.
@@ -260,7 +288,7 @@ def _to_part(payload: Dict[str, Any], *, requested: Optional[str]) -> Transcript
         probability = float(payload.get("detected_language_probability", 0.0) or 0.0)
 
     return TranscriptPart(
-        text=" ".join(pieces),
+        text="".join(pieces).strip(),
         segments=segments,
         language=language,
         language_probability=probability,

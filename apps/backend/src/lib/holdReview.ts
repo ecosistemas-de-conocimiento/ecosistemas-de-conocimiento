@@ -61,10 +61,15 @@ type Id = number | string
 /**
  * One row in the review queue.
  *
- * ⚠ NO TEXT. A queue is a list of things to open, and a list endpoint that
+ * ⚠ NO HELD TEXT. A queue is a list of things to open, and a list endpoint that
  * carried every held transcript would put the unredacted-ish material of a whole
  * ecosistema in one response, cached by whatever sits in front of it. The text
  * arrives one document at a time, from {@link heldDocument}.
+ *
+ * ⚠ The ONE string derived from it is `generatedTitle`: a few words made from
+ * the redacted `heldText`, refused by `cleanTitle` when it carries a flagged
+ * span, a placeholder or a proper noun that is not a town, state or language
+ * (`lib/testimonioTitle.ts`), and never made by a hosted model for a held row.
  */
 export interface HeldSummary {
   id: string
@@ -552,6 +557,10 @@ export async function decideOnHold(args: {
     anonymisationError: null,
     heldText: null,
     anonymisationSurvivors: null,
+    // 🔴 Made from the `heldText` this approval replaces. The ingest hook this
+    // write triggers re-titles from the approved `redactedText`
+    // (`collections/Documents.ts`, `scheduleTestimonioTitle`).
+    testimonioTitle: null,
     ingestStatus: 'pending',
     ingestError: null,
     ingestId: null,

@@ -30,7 +30,9 @@ import {
   organizationIdsForUserWithPermission,
   PERMISSIONS,
   relationId,
+  roleInOrganization,
 } from '../lib/permissions'
+import { fileParticipantAudioAsTestimonio } from '../lib/autoPublish'
 import {
   consumeCorpusCleanupSkip,
   planDocumentMediaCleanup,
@@ -1016,6 +1018,22 @@ async function enforceVocesUploadRights(args: {
 
   const declared = isContentKind(next.contentKind) ? next.contentKind : DEFAULT_CONTENT_KIND
   next.contentKind = declared
+
+  /**
+   * 🔴 A PARTICIPANT'S AUDIO GOES THROUGH THE GATE (owner rule, 2026-10-24).
+   * Their uploads are published by the system (`lib/autoPublish.ts`), and a
+   * `documento` skips the gate, so their recordings are filed as `testimonio`.
+   * The system decides this, so the Voz permission below does not apply.
+   */
+  if (declared === 'documento' && next.kind === 'audio') {
+    const organizationId = relationId(next.organization)
+    const role =
+      organizationId === null ? null : await roleInOrganization(req.payload, user.id, organizationId)
+    if (fileParticipantAudioAsTestimonio({ declared, kind: next.kind, role, platformAdmin: isPlatformAdminUser(user) })) {
+      next.contentKind = 'testimonio'
+      return
+    }
+  }
 
   if (declared === 'documento') return
 

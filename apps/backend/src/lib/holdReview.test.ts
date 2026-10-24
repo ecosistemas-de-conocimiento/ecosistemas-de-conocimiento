@@ -389,6 +389,12 @@ describe('holds — 🔴 approving is an audited override, and the only way out'
     expect(updated[0]!.data.anonymisationSurvivors).toBeNull()
   })
 
+  it('🔴 clears the title made from the held text; the ingest hook re-titles from the approved text', async () => {
+    const { payload, updated } = fakePayload()
+    await decideOnHold({ payload, documentId: DOC, user: user(), decision: 'approve' })
+    expect(updated[0]!.data).toHaveProperty('testimonioTitle', null)
+  })
+
   it('⚠ re-enters the ORDINARY ingest hook — no second, subtly-different path', async () => {
     // `__skipDocsExtract` absent is the mechanism: the afterChange hook picks the
     // row up, sees `approved`, skips the gate and enqueues `redactedText`.

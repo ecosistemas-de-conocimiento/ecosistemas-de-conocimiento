@@ -142,6 +142,27 @@ describe('publishGate', () => {
     }
   });
 
+  // 🔴 Owner rule 2026-10-24: a participant never publishes by hand. The
+  // system publishes what the gate clears; only a failed publish is retryable.
+  it('a participant gets no publish button on a draft', () => {
+    expect(publishGate({ publicationStatus: 'draft', ingestStatus: 'ready', manual: false })).toEqual({
+      canPublish: false,
+      reason: 'automatic',
+    });
+    expect(publishGate({ publicationStatus: 'draft', ingestStatus: 'pending', manual: false })).toEqual({
+      canPublish: false,
+      reason: 'automatic',
+    });
+    expect(publishBlockedCopy('automatic')).toBe('');
+  });
+
+  it('a participant can still retry a failed publish', () => {
+    expect(publishGate({ publicationStatus: 'failed', ingestStatus: 'ready', manual: false })).toEqual({
+      canPublish: true,
+      reason: null,
+    });
+  });
+
   it('blocks a document whose ingest failed — there is nothing to index', () => {
     expect(publishGate({ publicationStatus: 'draft', ingestStatus: 'failed' })).toEqual({
       canPublish: false,

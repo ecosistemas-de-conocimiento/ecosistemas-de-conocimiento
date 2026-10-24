@@ -29,6 +29,8 @@
   import { docStatusBadge } from '$lib/docStatus';
   import { canRetryGraph, GRAPH_RETRY_LABEL, graphBadge } from '$lib/graphStatus';
   import { publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
+  import { mayUploadVoces } from '$lib/uploadKind';
+  import { page } from '$app/stores';
   import type { WorkingDoc } from '$lib/types';
   import { toasts } from '$lib/stores/toasts.svelte';
   import { goto } from '$app/navigation';
@@ -82,10 +84,15 @@
   }
   const looseCount = $derived(docs.filter(isLoose).length);
 
+  // A participant never publishes by hand (owner rule, 2026-10-24); Voz rights
+  // are the investigador-and-up signal the layout already loads.
+  const manualPublish = $derived(mayUploadVoces($page.data?.vocesUpload, app.ecosystem?.slug));
+
   function gateOf(d: WorkingDoc) {
     return publishGate({
       publicationStatus: d.publicationStatus,
       ingestStatus: d.ingestStatus,
+      manual: manualPublish,
     });
   }
 

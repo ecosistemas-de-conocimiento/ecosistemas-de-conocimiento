@@ -3,9 +3,13 @@
  *
  * Owner ruling 2026-10-24: a participant uploads audio or chats and never types
  * a title, so every testimonio read "Testimonio · <tema>" and lists of them
- * could not be told apart. This module asks the ecosistema's model for a short
- * Spanish title (4–9 words, the concrete subject) and stores it on
- * `documents.testimonioTitle`.
+ * could not be told apart. This module asks a model for a short Spanish title
+ * (4–9 words, the concrete subject) and stores it on `documents.testimonioTitle`.
+ *
+ * 🔴 WHICH MODEL: the gate detector's own backend choice
+ * ({@link titleClientFromEnv}) — the self-hosted box when `ANONYMISE_DETECT_URL`
+ * is set, the hosted model only when `ANONYMISE_DETECT_FALLBACK` allows it, and
+ * never the hosted model for a held row.
  *
  * ── 🔴 WHAT THE MODEL SEES: THE GATE'S OUTPUT, NOTHING ELSE ────────────────
  *
@@ -23,11 +27,13 @@
  *
  * Never a person's name, never a redacted value or a placeholder. A town and a
  * language MAY appear. {@link cleanTitle} refuses an answer that breaks this in
- * a way code can see — any `[`/`]` (so `[Persona A]` never shows), a
- * capitalised word after the first that the redacted source does not contain
- * (Spanish titles are sentence case, so it is a proper noun the model invented
- * or one the gate removed), or a `forbidden` span. A refused answer is retried
- * once, then the title stays NULL and the UI shows the old label.
+ * a way code can see — any `[`/`]` or placeholder words without them
+ * ("Persona A", "Dato omitido"); a person name as the first word; a capitalised
+ * word that is not a town, state or language the redacted source carries
+ * (Spanish titles are sentence case, so it is a proper noun the model invented,
+ * one the gate removed, or one it missed); a `forbidden` span or any ≥3-letter
+ * token of one. A refused answer is retried once, then the title stays NULL and
+ * the UI shows the old label.
  *
  * ── 🔴 NEVER ON THE CRITICAL PATH ───────────────────────────────────────────
  *
@@ -50,6 +56,9 @@ import { randomUUID } from 'node:crypto'
 
 import { withRateLimitRetry } from './aiRetry'
 import { paceDetectCall } from './anonymise/detector'
+import { cooldownMsFromEnv, fallbackModeFromEnv, withHostedFallback } from './anonymise/fallbackGenerator'
+import { openaiCompatFromEnv } from './anonymise/openaiCompatGenerator'
+import { isPersonNameWord, isStateName, isTownLevelPlace } from './anonymise/townPlaces'
 
 export const TESTIMONIO_TITLE_UNIT_TYPE = 'testimonio-title'
 
@@ -112,11 +121,63 @@ function appearsIn(source: string, word: string): boolean {
   return new RegExp(`(?<![\\p{L}\\p{N}])${esc}(?![\\p{L}\\p{N}])`, 'u').test(source)
 }
 
+/** `word`, capitalised, somewhere other than a sentence start: a proper noun in the source. */
+function appearsMidSentence(source: string, word: string): boolean {
+  if (word === '') return false
+  const esc = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?<=[\\p{L}\\p{N},;:\\]]\\s+)${esc}(?![\\p{L}\\p{N}])`, 'u').test(source)
+}
+
+/** Letters only, folded: the unit every token comparison below uses. */
+const letterTokens = (s: string): string[] => foldTitle(s).split(/[^\p{L}]+/u).filter(Boolean)
+
+/** Leading/trailing punctuation off one word. */
+const bareWord = (w: string): string => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
+
+/**
+ * 🔴 The placeholder vocabulary (`anonymise/types.ts`) WITHOUT its brackets:
+ * "Persona A", "domicilio B", "Dato omitido". The letter after Persona or
+ * Domicilio is upper case in every placeholder, so "una persona mayor" stays.
+ */
+const PLACEHOLDER_WORDS =
+  /(?<!\p{L})[Pp]ersona\s+\p{Lu}{1,3}(?!\p{L})|(?<!\p{L})[Dd]omicilio\s+\p{Lu}{1,3}(?!\p{L})|(?<!\p{L})[Dd]atos?\s+[Oo]mitidos?(?!\p{L})/u
+
+/**
+ * Languages a title may name capitalised (owner ruling 2026-10-24). Folded.
+ * Compact on purpose: a language missing here is refused only when written
+ * with a capital, which costs the fallback label, and titles are sentence case.
+ */
+const LANGUAGES = new Set(
+  [
+    'español', 'castellano', 'inglés', 'náhuatl', 'maya', 'zapoteco', 'mixteco', 'otomí', 'hñähñu',
+    'totonaco', 'tsotsil', 'tzotzil', 'tseltal', 'tzeltal', 'mazahua', 'mazateco', 'chol', 'purépecha',
+    'tarahumara', 'rarámuri', 'mixe', 'ayuuk', 'huasteco', 'tének', 'triqui', 'chinanteco', 'tlapaneco',
+    'amuzgo', 'popoluca', 'tojolabal', 'zoque', 'huichol', 'wixárika', 'yaqui', 'cora', 'tepehuano', 'lsm',
+  ].map(foldTitle),
+)
+const CONNECTORS = new Set(['de', 'del', 'la', 'las', 'los', 'el'])
+
+/**
+ * 🔴 A capitalised run ("Xoxocotla", "San Juan Chamula") may stay only when
+ * the redacted source has it AND it is a language, a state, or a town by the
+ * gate's own town rule (`isTownLevelPlace`: every occurrence in a town
+ * context). Anything else capitalised is a person, a home or an institution.
+ */
+function isShowablePlaceOrLanguage(run: string, source: string): boolean {
+  if (run === '' || !appearsIn(source, run)) return false
+  if (isStateName(run)) return true
+  const ws = words(run)
+  if (ws.every((w) => CONNECTORS.has(foldTitle(w)) || LANGUAGES.has(foldTitle(w)))) return true
+  if (ws.some((w) => isPersonNameWord(w))) return false
+  return isTownLevelPlace({ text: run, type: 'lugar' }, source)
+}
+
 /**
  * The model's answer → a title, or `null` when it breaks a rule code can check.
  * `source` is the redacted text the title was made from: a capitalised word
- * after the first must occur in it (without it, any such word is refused).
- * `forbidden`: spans that must not appear (a hold's flagged survivors).
+ * must occur in it as a town, state or language (without `source`, any
+ * capitalised word after the first is refused). `forbidden`: spans that must
+ * not appear (a hold's flagged survivors), nor any ≥3-letter token of one.
  */
 export function cleanTitle(raw: unknown, source?: string, forbidden: readonly string[] = []): string | null {
   if (typeof raw !== 'string') return null
@@ -129,17 +190,43 @@ export function cleanTitle(raw: unknown, source?: string, forbidden: readonly st
     .replace(/\s+/g, ' ')
     .trim()
   if (t === '' || t.length > MAX_TITLE_CHARS) return null
-  // 🔴 A placeholder, whole or cut, never reaches a title.
-  if (/[[\]]/.test(t)) return null
+  // 🔴 A placeholder, whole or cut, bracketed or not, never reaches a title.
+  if (/[[\]]/.test(t) || PLACEHOLDER_WORDS.test(t)) return null
   t = t[0]!.toUpperCase() + t.slice(1)
   const ws = words(t)
   if (ws.length < MIN_TITLE_WORDS || ws.length > MAX_TITLE_WORDS) return null
-  // 🔴 Sentence case: a capital after the first word is a proper noun. It may
-  // stay only when the redacted source has it (a town the gate kept); one the
-  // source lacks is invented or was redacted.
-  if (ws.slice(1).some((w) => startsUpper(w) && !(source !== undefined && appearsIn(source, w)))) return null
+
+  // 🔴 Forbidden spans: the whole span, or ANY ≥3-letter token of one, folded.
   const folded = foldTitle(t)
   if (forbidden.some((f) => f.trim() !== '' && folded.includes(foldTitle(f)))) return null
+  const banned = new Set(forbidden.flatMap(letterTokens).filter((tok) => tok.length >= 3))
+  if (letterTokens(t).some((tok) => banned.has(tok))) return null
+
+  // 🔴 Proper nouns. Sentence case: a capital after the first word is one. The
+  // first word is one when it is a person name, or when the source writes it
+  // capitalised and never in lower case (not an ordinary opening word).
+  // ⚠ RESIDUAL: a first word the source lacks and the name list lacks passes
+  // ("Hablar", "Ir" open real titles). The model sees redacted text only, so
+  // such a name would be invented, not leaked.
+  const proper = ws.map((w, i) => {
+    if (i > 0) return startsUpper(w)
+    if (isPersonNameWord(w)) return true
+    if (source === undefined) return false
+    const b = bareWord(w)
+    return !appearsIn(source, b.charAt(0).toLowerCase() + b.slice(1)) && appearsMidSentence(source, b)
+  })
+  for (let i = 0; i < ws.length; i += 1) {
+    if (!proper[i]) continue
+    // Without the source nothing proper can be checked: fail closed.
+    if (source === undefined) return null
+    // The run of proper words this one starts, connectors between ("San Juan de los Lagos").
+    let j = i
+    while (j + 1 < ws.length && (proper[j + 1] || (CONNECTORS.has(foldTitle(ws[j + 1]!)) && proper[j + 2]))) j += 1
+    const run = bareWord(ws.slice(i, j + 1).join(' '))
+    const each = ws.slice(i, j + 1).filter((_, k) => proper[i + k]).map(bareWord)
+    if (!isShowablePlaceOrLanguage(run, source) && !each.every((w) => isShowablePlaceOrLanguage(w, source))) return null
+    i = j
+  }
   return t
 }
 
@@ -295,6 +382,11 @@ export function payloadTitleStore(payload: TitleStorePayload): TitleStore {
           and: [
             { organization: { equals: organizationId } },
             { contentKind: { equals: 'testimonio' } },
+            // 🔴 Only titles the ecosistema already shows: a held row's title
+            // is made from text that may still carry what the gate flagged, and
+            // it must not travel into another document's prompt.
+            { anonymisationStatus: { in: ['ready', 'approved'] } },
+            { publicationStatus: { equals: 'published' } },
             { testimonioTitle: { exists: true } },
             { id: { not_equals: excludeDocId } },
           ],
@@ -332,6 +424,53 @@ export function payloadTitleStore(payload: TitleStorePayload): TitleStore {
   }
 }
 
+/**
+ * 🔴 THE MODEL A TITLE IS ASKED OF: THE GATE DETECTOR'S BACKEND CHOICE.
+ *
+ * Same switches as `anonymise/detector.ts` (`aiServiceDetector`):
+ *   · `ANONYMISE_DETECT_URL` set → the self-hosted box (the DGX Spark) first;
+ *     when it is unavailable, the hosted model (ai-service) only if
+ *     `ANONYMISE_DETECT_FALLBACK` is `hosted` (the default).
+ *   · unset → the hosted model, unless `ANONYMISE_DETECT_FALLBACK=none`, which
+ *     means "no text to a hosted model": no client, so no title.
+ *   · 🔴 a HELD row (`source: 'held'`) NEVER reaches the hosted model: its text
+ *     can still carry what verify flagged. Spark only, or no client.
+ *   · a bad `ANONYMISE_DETECT_FALLBACK` value or Spark config fails closed: no
+ *     hosted call. `null` = no title, the UI shows the fallback label.
+ */
+export function titleClientFromEnv(args: {
+  organizationId: number | string
+  source: TitleSource
+  env?: Record<string, string | undefined>
+  /** Test seam for the self-hosted box. */
+  fetch?: typeof fetch
+}): TitleGenerator | null {
+  const env = args.env ?? process.env
+  let mode: 'hosted' | 'none'
+  try {
+    mode = fallbackModeFromEnv(env)
+  } catch {
+    mode = 'none'
+  }
+  if (args.source === 'held') mode = 'none'
+  let spark: TitleGenerator | null = null
+  try {
+    spark = openaiCompatFromEnv(env, args.fetch ? { fetch: args.fetch } : {})?.generator ?? null
+  } catch {
+    // URL without a model, or a bad URL: a config bug. Fail closed.
+    return null
+  }
+  const hosted = async (): Promise<TitleGenerator> => {
+    const { getAppAIClient } = await import('./aiClient')
+    return getAppAIClient(args.organizationId) as unknown as TitleGenerator
+  }
+  if (spark) {
+    return mode === 'hosted' ? withHostedFallback(spark, hosted, { cooldownMs: cooldownMsFromEnv(env) }) : spark
+  }
+  if (mode === 'none') return null
+  return { generate: { sync: async (req, opts) => (await hosted()).generate.sync(req, opts) } }
+}
+
 export function testimonioTitlesEnabled(): boolean {
   return !/^(off|0|false|no)$/i.test((process.env[TESTIMONIO_TITLES_VAR] ?? '').trim())
 }
@@ -340,8 +479,8 @@ export function testimonioTitlesEnabled(): boolean {
  * 🔴 FIRE AND FORGET, AFTER THE GATE CLEARED A TESTIMONIO.
  *
  * Returns whether a run started. `run` is the test seam; production builds one
- * from `payload` against the ecosistema's ai-service org (`getAppAIClient`,
- * which sends `X-AI-Org: eco-<id>`, so the call is booked to its budget).
+ * from `payload` and {@link titleClientFromEnv} (a hosted call goes through
+ * `getAppAIClient`, `X-AI-Org: eco-<id>`, so it is booked to that budget).
  *
  * ⚠ `redactedText` must be the gate's output: `gated.text` on a `testimonio`
  * that passed, the approved text, or (`source: 'held'`) the hold's `heldText`
@@ -366,12 +505,15 @@ export function scheduleTestimonioTitle(args: {
     args.run ??
     (async () => {
       if (!args.payload) throw new Error('scheduleTestimonioTitle: no payload')
-      const { getAppAIClient } = await import('./aiClient')
+      const client = titleClientFromEnv({ organizationId: args.organizationId, source: args.source ?? 'redacted' })
+      // No allowed backend: no call, no write. The column is already NULL
+      // (cleared by the gate's claim or the decision), so the fallback label.
+      if (!client) return { status: 'failed', title: null } as const
       return refreshTestimonioTitle({
         docId: args.docId,
         organizationId: args.organizationId,
         redactedText: args.redactedText,
-        client: getAppAIClient(args.organizationId) as unknown as TitleGenerator,
+        client,
         store: payloadTitleStore(args.payload),
         ...(args.source ? { source: args.source } : {}),
         ...(args.forbidden ? { forbidden: args.forbidden } : {}),

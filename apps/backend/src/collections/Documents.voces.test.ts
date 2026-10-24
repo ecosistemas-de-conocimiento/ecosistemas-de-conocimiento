@@ -360,6 +360,47 @@ describe('the default', () => {
   })
 })
 
+/**
+ * 🔴 Owner rule 2026-10-24: a participant's contribution is published by the
+ * system, and the gate decides. A `documento` skips the gate, so a
+ * participant's AUDIO is filed as a `testimonio`. See `lib/autoPublish.ts`.
+ */
+describe('🔴 a participant’s audio is filed as a testimonio', () => {
+  it('a member’s audio documento becomes a testimonio', async () => {
+    const next = await create({ kind: 'audio', contentKind: 'documento' }, ANA)
+    expect(next.contentKind).toBe('testimonio')
+  })
+
+  it('a member’s audio with no declared kind becomes a testimonio too', async () => {
+    const next = await create({ kind: 'audio' }, ANA)
+    expect(next.contentKind).toBe('testimonio')
+  })
+
+  it('a member’s PDF stays a documento', async () => {
+    const next = await create({ kind: 'pdf', contentKind: 'documento', name: 'a.pdf' }, ANA)
+    expect(next.contentKind).toBe('documento')
+  })
+
+  it.each([
+    ['investigador', IRIS],
+    ['admin', ADA],
+    ['owner', OSCAR],
+    ['platform admin', ROOT],
+  ])('an %s’s audio documento stays a documento', async (_role, user) => {
+    const next = await create({ kind: 'audio', contentKind: 'documento' }, user)
+    expect(next.contentKind).toBe('documento')
+  })
+
+  it('an update never reclassifies an existing row', async () => {
+    const next = await update(
+      { name: 'x' },
+      { contentKind: 'documento', kind: 'audio', organization: ECO_A, session: [SESSION_OF[ANA]] },
+      ANA,
+    )
+    expect(next.contentKind).toBe('documento')
+  })
+})
+
 describe('🔴 a hold is visible and has exactly one way out', () => {
   it('a held document is retryable, and the retry is what clears the hold', () => {
     // 🔴 THE TWO BUGS THIS PINS.

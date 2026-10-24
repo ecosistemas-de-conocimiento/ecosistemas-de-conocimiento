@@ -234,3 +234,17 @@ def test_remote_never_imports_faster_whisper(wav):
 def test_remote_requires_url():
     with pytest.raises(ValueError, match="WHISPER_REMOTE_URL"):
         Settings(WHISPER_BACKEND="remote", WHISPER_REMOTE_URL="")
+
+
+def test_mid_word_segment_split_rejoins_without_a_space(wav):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"segments": [
+            {"text": " puertas que se abren con el español y pu", "start": 0.0, "end": 2.0},
+            {"text": "ertas que solo se abren", "start": 2.0, "end": 3.0},
+            {"text": " con la confianza.", "start": 3.0, "end": 4.0},
+        ]})
+
+    part = _make(handler).transcribe(wav)
+    assert part.text == "puertas que se abren con el español y puertas que solo se abren con la confianza."
+    # Callback segments stay stripped; the live path opts into the raw spacing.
+    assert part.segments[1]["text"] == "ertas que solo se abren"

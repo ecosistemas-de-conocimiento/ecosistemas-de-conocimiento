@@ -34,6 +34,7 @@ from .limits import BodySizeLimitMiddleware
 from .queue import close_pool, create_queue_pool
 from .routes import admin as admin_routes
 from .routes import health as health_routes
+from .routes import live as live_routes
 from .routes import transcribe as transcribe_routes
 from .store import JobStore
 
@@ -148,6 +149,7 @@ def create_app() -> FastAPI:
     app.include_router(health_routes.router)
     app.include_router(transcribe_routes.router, prefix="/v1/transcribe", tags=["transcribe"])
     app.include_router(admin_routes.router, prefix="/v1/admin", tags=["admin"])
+    app.include_router(live_routes.router, prefix="/v1/live", tags=["live"])
 
     # 🔴 MUST be added AFTER the routers and OUTSIDE the lifespan, and it must
     # be raw ASGI. FastAPI parses a multipart body BEFORE it resolves
