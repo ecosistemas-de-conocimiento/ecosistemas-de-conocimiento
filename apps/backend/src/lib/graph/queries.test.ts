@@ -135,17 +135,17 @@ describe('🔴 gate 4 — no language and no redaction placeholder, on every sta
   }
 })
 
-describe('🔴 gate 5 — a persona is counted only from a documento, at every read site', () => {
+describe('🔴 gate 5 — no private persona, at every read site', () => {
   // Per site, not per statement: `entitySupportCte` carries the filter into
   // every statement, so a whole-statement match passed while a statement's own
   // mention read had none (see `gateSites.testutil.ts`).
   for (const [name, query] of Object.entries(graphStatements)) {
-    it(`${name} drops persona mentions from testimonios and conversaciones at each mention read`, () => {
+    it(`${name} drops every persona mention at each mention read`, () => {
       const sites = readSites(renderSql(query).text, 'graph_mentions')
       expect(sites.length).toBeGreaterThan(0)
       for (const site of sites) expect(site).toMatch(MENTION_GATE)
     })
-    it(`${name} drops a relation row with a persona end unless it comes from a documento`, () => {
+    it(`${name} drops a relation row with a persona end`, () => {
       for (const site of readSites(renderSql(query).text, 'graph_relations')) {
         expect(site).toMatch(RELATION_GATE)
       }
@@ -161,7 +161,7 @@ describe('🔴 gate 5 — a persona is counted only from a documento, at every r
   it('the site check fails a read whose shared CTE has the filter but its own read does not', () => {
     const text = `
       WITH ent_support AS (SELECT m.entity_id FROM graph_mentions m JOIN documents d ON d.id = m.document_id
-        JOIN graph_entities ne ON ne.id = m.entity_id AND (ne.type <> 'persona' OR d.content_kind = 'documento'))
+        JOIN graph_entities ne ON ne.id = m.entity_id AND ne.type <> 'persona')
       SELECT d.id FROM graph_mentions m JOIN documents d ON d.id = m.document_id
       JOIN ent_support s ON s.entity_id = m.entity_id WHERE m.entity_id = 1`
     const sites = readSites(text, 'graph_mentions')
@@ -572,8 +572,9 @@ describe('the view, when the threshold hides everything', () => {
       )
     })
 
-    it('🔴 repeats gate 5 inside the subquery: a persona matches only via a documento', () => {
-      expect(text).toContain("(se.type <> 'persona' OR sd.content_kind = 'documento')")
+    it('🔴 repeats gate 5 inside the subquery: no persona matches at all', () => {
+      expect(text).toContain("AND se.type <> 'persona'")
+      expect(text).not.toContain("se.type <> 'persona' OR")
       expect(text).toMatch(/se\.organization_id = \$\d+/)
     })
 
@@ -1306,8 +1307,8 @@ describe('the whole-graph view edges', () => {
     expect(text).toContain('JOIN ment y ON y.document_id = x.document_id AND y.entity_id > x.entity_id')
     // Both ends must be listed AND above the entity threshold (ent_support).
     expect(text).toContain('JOIN listed l ON l.entity_id = m.entity_id')
-    // No persona counted from a testimonio or a conversacion.
-    expect(text).toContain("(ce.type <> 'persona' OR d.content_kind = 'documento')")
+    // No persona listed at all (owner, 2026-10-24: no private individuals).
+    expect(text).toMatch(MENTION_GATE)
   })
 
   it('caps co-mentions at the top K per node and never spends a slot on a relation pair', () => {

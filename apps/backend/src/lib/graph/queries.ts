@@ -445,28 +445,30 @@ export function notNoise(alias: 'e' | 'ne'): GraphSql {
 }
 
 /**
- * 🔴 GATE 5 — A `persona` IS COUNTED ONLY FROM A `documento` (ADR §7.3.4).
+ * 🔴 GATE 5 — NO PRIVATE INDIVIDUAL IN THE GRAPH (owner, 2026-10-24).
  *
- * The extractor already drops every `persona` out of a testimonio or a
- * conversacion (`extract.ts` `dropForbiddenPersonas`, and the response schema
- * has no `persona` for them). This is the read-side belt over it: with the
- * support threshold at 1 (owner, 2026-10-21) a stray row is no longer hidden by
- * needing several documents, so the rule has to hold in SQL as well.
+ * Only public figures may appear as `persona` nodes. Nothing stored today says
+ * which personas are public, so this FAILS CLOSED: no `persona` row passes, on
+ * any read. It replaces the earlier rule (a `persona` counted only from a
+ * `documento`, ADR §7.3.4), which it strictly contains — the extractor still
+ * drops every `persona` out of a testimonio or a conversacion
+ * (`extract.ts` `dropForbiddenPersonas`).
  *
- * Needs `d` (the published-documents join) in scope.
+ * Applied per read site, not once per statement: `gateSites.testutil.ts`
+ * checks every mention and relation read for it.
  */
-export function personaFromDocumentoOnly(alias: 'e' | 'ne' | 'ce'): GraphSql {
+export function publicPersonaOnly(alias: 'e' | 'ne' | 'ce'): GraphSql {
   const col = alias === 'e' ? sql`e.type` : alias === 'ne' ? sql`ne.type` : sql`ce.type`
-  return sql` AND (${col} <> 'persona' OR d.content_kind = 'documento')`
+  return sql` AND ${col} <> 'persona'`
 }
 
 /**
- * 🔴 GATE 5 ON A RELATION ROW: a row whose source is not a `documento` does not
- * count when EITHER end is a `persona`. The same rule as
- * {@link personaFromDocumentoOnly}, applied to both ends at once.
+ * 🔴 GATE 5 ON A RELATION ROW: a row does not count when EITHER end is a
+ * `persona` that {@link publicPersonaOnly} hides. The same rule, applied to
+ * both ends at once.
  *
- * The extractor already drops these rows; with the edge threshold at 1 one
- * stray row would draw an edge and list a testimonio as its evidence.
+ * With the edge threshold at 1 one stray row would draw an edge and list its
+ * document as evidence of a link to a hidden person.
  *
  * ⚠ A LATERAL `NOT EXISTS`, NOT TWO JOINS, measured. Joining both ends to
  * `graph_entities` with the helper on each ON clause made Postgres guess ~60×
@@ -478,12 +480,11 @@ export function personaFromDocumentoOnly(alias: 'e' | 'ne' | 'ce'): GraphSql {
  * Needs `r` (`graph_relations`) and `d` (the published-documents join) in
  * scope; goes in the FROM list right after that join.
  */
-export function relationEndsPersonaFromDocumentoOnly(): GraphSql {
+export function relationEndsPublicPersonaOnly(): GraphSql {
   return sql`
     JOIN LATERAL (
       SELECT 1 AS ok
-      WHERE d.content_kind = 'documento'
-         OR NOT EXISTS (SELECT 1 FROM graph_entities pe
+      WHERE NOT EXISTS (SELECT 1 FROM graph_entities pe
                         WHERE pe.id IN (r.from_entity_id, r.to_entity_id) AND pe.type = 'persona')
     ) g5 ON TRUE`
 }
@@ -503,7 +504,7 @@ function entitySupportCte(organizationId: number, minSupport: number): GraphSql 
     ${joinPublishedDocuments('m', organizationId)}
     JOIN graph_entities ne
       ON ne.id = m.entity_id
-     AND ne.organization_id = ${organizationId}${notNoise('ne')}${personaFromDocumentoOnly('ne')}
+     AND ne.organization_id = ${organizationId}${notNoise('ne')}${publicPersonaOnly('ne')}
     WHERE m.organization_id = ${organizationId}
     GROUP BY m.entity_id
     HAVING COUNT(DISTINCT m.document_id) >= ${minSupport}`
@@ -524,7 +525,7 @@ function neighbourPairsCte(organizationId: number, entityId: number, minEdge: nu
            COUNT(DISTINCT r.document_id)::int AS pair_support
     FROM graph_relations r
     ${joinPublishedDocuments('r', organizationId)}
-    ${relationEndsPersonaFromDocumentoOnly()}
+    ${relationEndsPublicPersonaOnly()}
     WHERE r.organization_id = ${organizationId}
       AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
     GROUP BY 1
@@ -590,7 +591,7 @@ export function entityViewQuery(args: EntityViewArgs): GraphSql {
         ON m.entity_id = e.id
        AND m.organization_id = ${organizationId}
       ${joinPublishedDocuments('m', organizationId)}
-      WHERE e.organization_id = ${organizationId}${notNoise('e')}${personaFromDocumentoOnly('e')}${typeFilter}${searchFilter}
+      WHERE e.organization_id = ${organizationId}${notNoise('e')}${publicPersonaOnly('e')}${typeFilter}${searchFilter}
       GROUP BY e.id, e.type, e.label
     ),
     visible AS (
@@ -755,7 +756,7 @@ export function thresholdsOf(value: number | GraphThresholds): Required<GraphThr
  * `documents`; noise labels and the entity threshold through `listed` (which
  * is `ent_support`); and — belt over the extractor's `dropForbiddenPersonas` —
  * no `persona` counted from anything but a `documento`: per mention on the
- * co-mention side, per relation end ({@link relationEndsPersonaFromDocumentoOnly})
+ * co-mention side, per relation end ({@link relationEndsPublicPersonaOnly})
  * on the relation side.
  *
  * ⚠ TOP-K PER NODE (`GRAPH_COMENTION_TOP_K`). Each node nominates its K
@@ -791,7 +792,7 @@ export function viewEdgesQuery(
              r.document_id AS document_id
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
-      ${relationEndsPersonaFromDocumentoOnly()}
+      ${relationEndsPublicPersonaOnly()}
       JOIN listed lf ON lf.entity_id = r.from_entity_id
       JOIN listed lt ON lt.entity_id = r.to_entity_id
       WHERE r.organization_id = ${organizationId}
@@ -825,7 +826,7 @@ export function viewEdgesQuery(
       JOIN graph_entities ce
         ON ce.id = m.entity_id
        AND ce.organization_id = ${organizationId}
-      WHERE m.organization_id = ${organizationId}${personaFromDocumentoOnly('ce')}
+      WHERE m.organization_id = ${organizationId}${publicPersonaOnly('ce')}
     ),
     co_all AS (
       SELECT x.entity_id AS a, y.entity_id AS b, COUNT(DISTINCT x.document_id)::int AS weight
@@ -918,7 +919,7 @@ export function entityDetailQuery(args: EntityDetailArgs): GraphSql {
       ON m.entity_id = e.id
      AND m.organization_id = ${organizationId}
     ${joinPublishedDocuments('m', organizationId)}
-    WHERE e.organization_id = ${organizationId}${notNoise('e')}${personaFromDocumentoOnly('e')}
+    WHERE e.organization_id = ${organizationId}${notNoise('e')}${publicPersonaOnly('e')}
       AND e.id = ${entityId}
     GROUP BY e.id, e.type, e.label
     HAVING COUNT(DISTINCT m.document_id) >= ${minSupport}`
@@ -955,7 +956,7 @@ export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
                   ELSE 'both' END AS direction
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
-      ${relationEndsPersonaFromDocumentoOnly()}
+      ${relationEndsPublicPersonaOnly()}
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
       GROUP BY 1, 2
@@ -1030,7 +1031,7 @@ export function entityNeighboursQuery(args: EntityDetailArgs): GraphSql {
  * `>= GRAPH_MIN_EDGE_DOCS` distinct published documents evidencing any relation
  * between the two (`pairs`, {@link neighbourPairsCte}), and the NEIGHBOUR needs
  * `>= GRAPH_MIN_ENTITY_DOCS` published documents mentioning it (`ent_support`).
- * Gate 5 rides on every relation read ({@link relationEndsPersonaFromDocumentoOnly}),
+ * Gate 5 rides on every relation read ({@link relationEndsPublicPersonaOnly}),
  * so a testimonio is never listed as evidence of an edge to a `persona`.
  *
  * ⚠ At the default of 1 (owner, 2026-10-21) a list CAN point at one document.
@@ -1065,7 +1066,7 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
              COUNT(DISTINCT r.document_id)::int AS support
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
-      ${relationEndsPersonaFromDocumentoOnly()}
+      ${relationEndsPublicPersonaOnly()}
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
       GROUP BY 1, 2
@@ -1079,7 +1080,7 @@ export function entityEdgeDocumentsQuery(args: EntityDetailArgs): GraphSql {
              d.content_kind AS content_kind
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
-      ${relationEndsPersonaFromDocumentoOnly()}
+      ${relationEndsPublicPersonaOnly()}
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ${entityId} OR r.to_entity_id = ${entityId})
       GROUP BY 1, 2, d.id, d.name, d.content_kind
@@ -1149,7 +1150,7 @@ export function entityDocumentsQuery(args: EntityDetailArgs): GraphSql {
     JOIN ent_support s ON s.entity_id = m.entity_id
     JOIN graph_entities ce ON ce.id = m.entity_id AND ce.organization_id = ${organizationId}
     WHERE m.organization_id = ${organizationId}
-      AND m.entity_id = ${entityId}${personaFromDocumentoOnly('ce')}
+      AND m.entity_id = ${entityId}${publicPersonaOnly('ce')}
     ORDER BY m.occurrences DESC, d.id DESC
     LIMIT ${limit}`
 }
@@ -1273,7 +1274,7 @@ export function matchableEntitiesQuery(organizationId: number, minSupport: numbe
       ON m.entity_id = e.id
      AND m.organization_id = ${organizationId}
     ${joinPublishedDocuments('m', organizationId)}
-    WHERE e.organization_id = ${organizationId}${notNoise('e')}${personaFromDocumentoOnly('e')}
+    WHERE e.organization_id = ${organizationId}${notNoise('e')}${publicPersonaOnly('e')}
     GROUP BY e.id, e.type, e.label, e.canonical_key
     HAVING COUNT(DISTINCT m.document_id) >= ${minSupport}
     ORDER BY support DESC, e.label ASC
@@ -1715,7 +1716,7 @@ export function retrieveEdgesQuery(
              COUNT(DISTINCT r.document_id)::int AS support
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
-      ${relationEndsPersonaFromDocumentoOnly()}
+      ${relationEndsPublicPersonaOnly()}
       WHERE r.organization_id = ${organizationId}
         AND (r.from_entity_id = ANY(${intArray(ids)}) OR r.to_entity_id = ANY(${intArray(ids)}))
       GROUP BY 1, 2, 3
@@ -1776,7 +1777,7 @@ export function retrieveDocumentsQuery(
     JOIN ent_support s ON s.entity_id = m.entity_id
     JOIN graph_entities ce ON ce.id = m.entity_id AND ce.organization_id = ${organizationId}
     WHERE m.organization_id = ${organizationId}
-      AND m.entity_id = ANY(${intArray(ids)})${personaFromDocumentoOnly('ce')}
+      AND m.entity_id = ANY(${intArray(ids)})${publicPersonaOnly('ce')}
     GROUP BY d.id, d.name, d.content_kind
     ORDER BY matched_entities DESC, occurrences DESC, d.id DESC
     LIMIT ${clampLimit(limit, MAX_RETRIEVE_DOCUMENTS, MAX_RETRIEVE_DOCUMENTS)}`
@@ -1938,11 +1939,11 @@ const SEARCHABLE_TEXT = sql`coalesce(CASE
  * accent-folded on both sides (so "migracion" finds "migración").
  *
  * 🔴 THE GATES, IN THE SUBQUERY TOO. The documents are this ecosistema's and
- * published, and their text is {@link SEARCHABLE_TEXT}. Gate 5 is repeated
- * INSIDE the subquery: a `persona` matches only through a `documento`'s text.
- * The outer statement's persona gate alone is not enough — a persona that a
- * documento makes visible would otherwise light up because a TESTIMONIO
- * mentioning it matched (audit, 2026-10-21). The outer threshold and noise
+ * published, and their text is {@link SEARCHABLE_TEXT}. Gate 5
+ * ({@link publicPersonaOnly}) is repeated INSIDE the subquery, so no hidden
+ * `persona` row is ever read here; the outer statement's gate alone was not
+ * enough under the earlier documento-only rule (audit, 2026-10-21), and the
+ * per-site check keeps both. The outer threshold and noise
  * gate still apply, so search can only narrow the visible graph.
  *
  * ⚠ `GRAPH_SEARCH_ENABLED=false` hides the web box and 404s its route, but
@@ -2009,7 +2010,7 @@ export function buildSearchFilter(
         ON se.id = sm.entity_id
        AND se.organization_id = ${entOrg}
       WHERE sm.organization_id = ${mentionOrg}
-        AND (se.type <> 'persona' OR sd.content_kind = 'documento')
+        AND se.type <> 'persona'
         AND (
           to_tsvector('spanish', ${SEARCHABLE_TEXT}) @@ websearch_to_tsquery('spanish', ${raw})
           OR to_tsvector('spanish', translate(${SEARCHABLE_TEXT}, ${ACCENTED}, ${UNACCENTED}))

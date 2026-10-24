@@ -193,8 +193,7 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
       { id: 12, type: 'lugar', label: 'Morelos', support: 4, ecosystems: [1, 2], ecosystemSupport: [2, 2] },
       { id: 16, type: 'tema', label: 'Lluvia', support: 2, ecosystems: [1, 2], ecosystemSupport: [1, 1] },
       { id: 23, type: 'tema', label: 'Dengue', support: 1, ecosystems: [2], ecosystemSupport: [1] },
-      // Juana of ecosistema 2 is only in a testimonio: gate 5 keeps her out.
-      { id: 13, type: 'persona', label: 'Juana', support: 1, ecosystems: [1], ecosystemSupport: [1] },
+      // 🔴 No Juana: gate 5 hides every persona not marked public (owner, 2026-10-24).
     ])
     expect(view.publishedDocuments).toBe(5)
   })
@@ -211,14 +210,12 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
       expect.arrayContaining([
         [11, 16, 2],
         [12, 16, 2],
-        [11, 13, 1],
         [11, 23, 1],
-        [12, 13, 1],
-        [13, 16, 1],
         [16, 23, 1],
       ]),
     )
-    expect(co).toHaveLength(7)
+    // 🔴 No co-mention reaches the hidden persona Juana 13.
+    expect(co).toHaveLength(4)
   })
 
   it('equals the merge of the single-ecosistema views (nodes and edges)', async () => {
@@ -228,8 +225,8 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
       ),
     )
     const combined = await readCombinedView(payload, { organizationIds: [1, 2], minSupport: 1, minEdgeSupport: 1 })
-    expect(singles.reduce((n, v) => n + v.entities.length, 0)).toBe(8)
-    expect(singles.reduce((n, v) => n + v.edges.length, 0)).toBe(12)
+    expect(singles.reduce((n, v) => n + v.entities.length, 0)).toBe(7)
+    expect(singles.reduce((n, v) => n + v.edges.length, 0)).toBe(9)
     expect(normalise(combined)).toEqual(mergeSingles(singles))
   })
 
@@ -238,8 +235,8 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
     // threshold of 2. Per ecosistema it passes nowhere.
     const view = await readCombinedView(payload, { organizationIds: [1, 2], minSupport: 2, minEdgeSupport: 1 })
     expect(view.entities.map((e) => e.label)).toEqual(['Agua', 'Morelos'])
-    // Lluvia, Juana, Dengue. Draft-only Salud and noise náhuatl are not candidates at all.
-    expect(view.hidden).toBe(3)
+    // Lluvia, Dengue. Draft-only Salud, noise náhuatl and persona Juana are not candidates at all.
+    expect(view.hidden).toBe(2)
   })
 
   it('🔴 applies the edge threshold per ecosistema, before summing', async () => {
@@ -363,11 +360,11 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
     expect(view.ecosystems).toEqual([1, 2, 3])
     expect(view.entities.find((e) => e.id === 11)).toMatchObject({ support: 5, ecosystems: [1, 2, 3] })
     expect(view.entities.some((e) => e.label === 'Secreto C')).toBe(true)
-    // Still no draft, no noise, no testimonio persona.
+    // Still no draft, no noise, no private persona.
     const labels = view.entities.map((e) => e.label)
     expect(labels).not.toContain('Salud')
     expect(labels).not.toContain('náhuatl')
-    expect(view.entities.find((e) => e.label === 'Juana')?.ecosystems).toEqual([1])
+    expect(labels).not.toContain('Juana')
   })
 
   /**
@@ -414,17 +411,16 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
       `)
     })
 
-    it('lists only her documento in the combined panel, never her testimonio', async () => {
-      const rosa = await readCombinedEntityDetail(payload, { ...scope, entityId: 41 })
-      expect(rosa?.entity).toMatchObject({ id: 41, support: 1, ecosystems: [4] })
-      expect(rosa?.documents.map((d) => d.id)).toEqual([401])
-      expect(rosa?.neighbours).toEqual([])
+    it('🔴 opens no panel for a persona not marked public, even from a documento', async () => {
+      expect(await readCombinedEntityDetail(payload, { ...scope, entityId: 41 })).toBeNull()
     })
 
     it('draws no relation edge from the testimonio, and agrees with the single views', async () => {
       const view = await readCombinedView(payload, scope)
       expect(view.edges.filter((e) => e.kind === 'relation').map((e) => [e.from, e.to])).toEqual([[42, 43]])
-      expect(view.edges.find((e) => e.from === 41 && e.to === 42)).toMatchObject({ kind: 'co-mention', support: 1 })
+      // 🔴 Not even the documento co-mention: the persona is hidden.
+      expect(view.edges.some((e) => e.from === 41 || e.to === 41)).toBe(false)
+      expect(view.entities.some((e) => e.id === 41)).toBe(false)
       const singles = await Promise.all(
         [4, 5].map((organizationId) => readEntityView(payload, { organizationId, minSupport: 1, minEdgeSupport: 1 })),
       )

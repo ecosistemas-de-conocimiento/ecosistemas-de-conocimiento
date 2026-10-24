@@ -410,12 +410,11 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
     const REL_41_43 = { from: 41, to: 43, kind: 'relation', support: 1, coMentions: 1, relationType: 'afecta_a', direction: 'in' }
     const co = (from: number, to: number) => ({ from, to, kind: 'co-mention', support: 1, coMentions: 1 })
 
-    it('lists every gated entity: no noise, no persona out of a testimonio', async () => {
+    it('lists every gated entity: no noise, no private persona', async () => {
       const view = await readEntityView(payload, at1)
-      expect(view.entities.map((e) => e.id).sort()).toEqual([41, 42, 43, 44, 47, 48])
-      // Juana counts 401 only; 403 is a testimonio.
-      expect(view.entities.find((e) => e.id === 44)?.support).toBe(1)
-      // Pedro is a persona named only by a testimonio.
+      // 🔴 Juana 44 (documento) and Pedro 49 (testimonio) are personas not marked public.
+      expect(view.entities.map((e) => e.id).sort()).toEqual([41, 42, 43, 47, 48])
+      expect(await readEntityDetail(payload, { ...at1, entityId: 44 })).toBeNull()
       expect(await readEntityDetail(payload, { ...at1, entityId: 49 })).toBeNull()
     })
 
@@ -424,12 +423,11 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
       expect(view.edges).toEqual([
         REL_41_42,
         REL_41_43,
-        co(41, 44), co(41, 47), co(41, 48), co(42, 43), co(42, 44), co(42, 47), co(42, 48),
-        co(43, 44), co(47, 48),
+        co(41, 47), co(41, 48), co(42, 43), co(42, 47), co(42, 48), co(47, 48),
       ])
       const ends = view.edges.flatMap((e) => [e.from, e.to])
-      // 🔴 Noise and the testimonio-only persona are never an end.
-      for (const id of [45, 46, 49]) expect(ends).not.toContain(id)
+      // 🔴 Noise and every private persona are never an end.
+      for (const id of [44, 45, 46, 49]) expect(ends).not.toContain(id)
     })
 
     it('caps co-mentions at the top K per node; relation pairs take no slot', async () => {
@@ -444,8 +442,7 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
         ['relation', 41, 42],
         ['relation', 41, 43],
         // Each node nominates its strongest partner, ties to the lower id:
-        // 41→44, 42→43, 43→42, 44→41, 47→41, 48→41.
-        ['co-mention', 41, 44],
+        // 41→47, 42→43, 43→42, 47→41, 48→41. Persona 44 is hidden.
         ['co-mention', 41, 47],
         ['co-mention', 41, 48],
         ['co-mention', 42, 43],
@@ -524,28 +521,17 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
       `)
     })
 
-    it('lists only the documentos behind a persona, never her testimonio', async () => {
-      const rosa = await readEntityDetail(payload, { ...at1, entityId: 71 })
-      expect(rosa?.entity.support).toBe(1)
-      expect(rosa?.documents.map((d) => d.id)).toEqual([701])
+    it('🔴 opens no panel for a persona not marked public, even from a documento', async () => {
+      expect(await readEntityDetail(payload, { ...at1, entityId: 71 })).toBeNull()
       // Agua is no persona: its testimonio stays listed.
       const agua = await readEntityDetail(payload, { ...at1, entityId: 72 })
       expect(agua?.documents.map((d) => d.id).sort()).toEqual([701, 702])
     })
 
-    it('draws no relation edge from a testimonio to a persona; the documento co-mention stays', async () => {
+    it('🔴 draws no edge to the persona at all, not even the documento ones', async () => {
       const view = await readEntityView(payload, at1)
       expect(view.edges).toEqual([
-        { from: 71, to: 73, kind: 'relation', support: 1, coMentions: 1, relationType: 'ocurre_en', direction: 'out' },
         { from: 72, to: 73, kind: 'relation', support: 1, coMentions: 1, relationType: 'afecta_a', direction: 'out' },
-        { from: 71, to: 72, kind: 'co-mention', support: 1, coMentions: 1 },
-      ])
-    })
-
-    it('the panel lists no such neighbour and no testimonio as its evidence, from either end', async () => {
-      const rosa = await readEntityDetail(payload, { ...at1, entityId: 71 })
-      expect(rosa?.neighbours.map((n) => [n.entity.id, n.relationType, n.documents?.map((d) => d.id)])).toEqual([
-        [73, 'ocurre_en', [701]],
       ])
       const agua = await readEntityDetail(payload, { ...at1, entityId: 72 })
       expect(agua?.neighbours.map((n) => [n.entity.id, n.relationType, n.documents?.map((d) => d.id)])).toEqual([
@@ -553,21 +539,13 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
       ])
     })
 
-    it('feeds chat retrieval no relation from a testimonio to a persona', async () => {
+    it('🔴 feeds chat retrieval no edge and no document through the persona', async () => {
       const result = rows(await db.execute(retrieveEdgesQuery(7, [71, 72], { entity: 1, edge: 1 })))
-      expect(result.map((r) => [r.from_id, r.to_id, r.relation_type])).toEqual(
-        expect.arrayContaining([[71, 73, 'ocurre_en'], [72, 73, 'afecta_a']]),
-      )
-      expect(result).toHaveLength(2)
-    })
-
-    it('feeds chat retrieval no testimonio through a persona seed (POST /api/graph/retrieve)', async () => {
-      const rosa = rows(await db.execute(retrieveDocumentsQuery(7, [71], 1)))
-      expect(rosa.map((r) => r.id)).toEqual([701])
-      // Agua is no persona: through her the testimonio still comes back, and
-      // with both seeds it counts one matched entity, not two.
+      expect(result.map((r) => [r.from_id, r.to_id, r.relation_type])).toEqual([[72, 73, 'afecta_a']])
+      expect(rows(await db.execute(retrieveDocumentsQuery(7, [71], 1)))).toEqual([])
+      // Agua is no persona: through her both documents come back.
       const both = rows(await db.execute(retrieveDocumentsQuery(7, [71, 72], 1)))
-      expect(both.map((r) => [r.id, r.matched_entities])).toEqual([[701, 2], [702, 1]])
+      expect(both.map((r) => [r.id, r.matched_entities])).toEqual([[702, 1], [701, 1]])
     })
   })
 
@@ -611,43 +589,31 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
       `)
     })
 
-    it('draws only the documento relations; the documento co-mention stays', async () => {
+    it('🔴 draws no edge to the persona, from any content kind', async () => {
       const view = await readEntityView(payload, at1)
-      // The view orders a pair by id, so 83→81 reads as 81–83 `in`.
       expect(view.edges).toEqual([
-        { from: 81, to: 83, kind: 'relation', support: 1, coMentions: 1, relationType: 'ocurre_en', direction: 'in' },
         { from: 82, to: 83, kind: 'relation', support: 1, coMentions: 1, relationType: 'afecta_a', direction: 'out' },
-        { from: 81, to: 82, kind: 'co-mention', support: 1, coMentions: 1 },
       ])
     })
 
-    it('the panel, seen from the persona and from each other end, lists no testimonio or conversacion', async () => {
-      const lucia = await readEntityDetail(payload, { ...at1, entityId: 81 })
-      expect(lucia?.documents.map((d) => d.id)).toEqual([801])
-      expect(lucia?.neighbours.map((n) => [n.entity.id, n.relationType, n.direction, n.documents?.map((d) => d.id)])).toEqual([
-        [83, 'ocurre_en', 'in', [801]],
-      ])
+    it('🔴 the panel: none for the persona, and no other end lists her', async () => {
+      expect(await readEntityDetail(payload, { ...at1, entityId: 81 })).toBeNull()
       const agua = await readEntityDetail(payload, { ...at1, entityId: 82 })
       expect(agua?.neighbours.map((n) => [n.entity.id, n.relationType, n.documents?.map((d) => d.id)])).toEqual([
         [83, 'afecta_a', [801]],
       ])
       const morelos = await readEntityDetail(payload, { ...at1, entityId: 83 })
-      expect(
-        morelos?.neighbours.map((n) => [n.entity.id, n.relationType, n.documents?.map((d) => d.id)]).sort(),
-      ).toEqual([
-        [81, 'ocurre_en', [801]],
+      expect(morelos?.neighbours.map((n) => [n.entity.id, n.relationType, n.documents?.map((d) => d.id)])).toEqual([
         [82, 'afecta_a', [801]],
       ])
     })
 
-    it('chat retrieval: no such edge, no testimonio or conversacion through the persona', async () => {
-      const edges = rows(await db.execute(retrieveEdgesQuery(8, [81], { entity: 1, edge: 1 })))
-      expect(edges.map((r) => [r.from_id, r.to_id, r.relation_type])).toEqual([[83, 81, 'ocurre_en']])
-      const docs = rows(await db.execute(retrieveDocumentsQuery(8, [81], 1)))
-      expect(docs.map((r) => r.id)).toEqual([801])
+    it('🔴 chat retrieval: no edge, no document, no seed for the persona', async () => {
+      expect(rows(await db.execute(retrieveEdgesQuery(8, [81], { entity: 1, edge: 1 })))).toEqual([])
+      expect(rows(await db.execute(retrieveDocumentsQuery(8, [81], 1)))).toEqual([])
       const result = await readGraphRetrieval(payload, { ...at1, query: '¿qué contó Lucía?' })
-      expect(result.entities.map((e) => e.id)).toEqual([81])
-      expect(result.documents.map((d) => d.id)).toEqual([801])
+      expect(result.entities).toEqual([])
+      expect(result.documents).toEqual([])
     })
   })
 
@@ -689,10 +655,11 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
 
     // The audit's probe (2026-10-21): Juana Ruiz is visible through documento
     // 601, and testimonio 602's redacted text says "habló de la helada".
-    it('🔴 gate 5 inside the search: a persona never matches through a testimonio', async () => {
+    it('🔴 gate 5 inside the search: a private persona never matches, from any text', async () => {
       expect(await search('habló')).toEqual([52])
       expect(await search('helada')).toEqual([])
-      expect(await search('comité')).toEqual([57])
+      expect(await search('comité')).toEqual([])
+      expect(await search('Juana Ruiz')).toEqual([])
     })
 
     it('a query with no searchable characters matches nothing; a NUL byte is not a 500', async () => {

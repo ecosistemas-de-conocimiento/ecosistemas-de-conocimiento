@@ -24,7 +24,7 @@
  *      thresholding after would let three below-threshold ecosistemas add up
  *      to a visible node, which is exactly what the threshold refuses.
  *   4. 🔴 Noise/placeholder/language labels (`notNoise`), and
- *   5. 🔴 `persona` only from a `documento` — both per row, as in `queries.ts`:
+ *   5. 🔴 No private `persona` (`publicPersonaOnly`) — per row, as in `queries.ts`:
  *      on every mention read, and on every relation read for either end.
  *   6. 🔴 Full-text search (#31) matches an entity only through its OWN
  *      ecosistema's published, corpus-cleared text (`buildSearchFilter`).
@@ -61,8 +61,8 @@ import {
   MAX_VIEW_EDGES,
   MAX_VIEW_ENTITIES,
   notNoise,
-  personaFromDocumentoOnly,
-  relationEndsPersonaFromDocumentoOnly,
+  publicPersonaOnly,
+  relationEndsPublicPersonaOnly,
   rowsOf,
   thresholdsOf,
   toCount,
@@ -130,8 +130,8 @@ export function normaliseOrgIds(ids: readonly unknown[]): number[] {
  *
  * `d` is joined to the row's OWN ecosistema, and that ecosistema must be
  * included. The single-ecosistema twin is `joinPublishedDocuments`. Gate 5
- * needs the entity, so callers add it: `personaFromDocumentoOnly` on a mention
- * read, `relationEndsPersonaFromDocumentoOnly` on a relation read.
+ * needs the entity, so callers add it: `publicPersonaOnly` on a mention
+ * read, `relationEndsPublicPersonaOnly` on a relation read.
  */
 function joinPublishedDocumentsPerRow(alias: 'm' | 'r', ids: GraphSql): GraphSql {
   const table = alias === 'm' ? sql`m` : sql`r`
@@ -181,7 +181,7 @@ function memberCtes(ids: GraphSql, opts: MemberOpts): GraphSql {
        AND m.organization_id = e.organization_id
        AND m.organization_id = ANY(${ids})
       ${joinPublishedDocumentsPerRow('m', ids)}
-      WHERE e.organization_id = ANY(${ids})${notNoise('e')}${personaFromDocumentoOnly('e')}${typeFilter}
+      WHERE e.organization_id = ANY(${ids})${notNoise('e')}${publicPersonaOnly('e')}${typeFilter}
       GROUP BY e.organization_id, e.id, e.type, e.label, e.canonical_key
     ),
     member AS (
@@ -317,7 +317,7 @@ export function combinedViewEdgesQuery(
              r.type AS relation_type, r.document_id AS document_id
       FROM graph_relations r
       ${joinPublishedDocumentsPerRow('r', ids)}
-      ${relationEndsPersonaFromDocumentoOnly()}
+      ${relationEndsPublicPersonaOnly()}
       WHERE r.organization_id = ANY(${ids})
     ),
     rel AS MATERIALIZED (
@@ -380,7 +380,7 @@ export function combinedViewEdgesQuery(
       JOIN graph_entities ce
         ON ce.id = m.entity_id
        AND ce.organization_id = m.organization_id
-      WHERE m.organization_id = ANY(${ids})${personaFromDocumentoOnly('ce')}
+      WHERE m.organization_id = ANY(${ids})${publicPersonaOnly('ce')}
     ),
     doc_nodes AS MATERIALIZED (
       SELECT mr.org_id AS org_id, mr.document_id AS document_id,
@@ -604,7 +604,7 @@ function focalRelationCtes(ids: GraphSql, minEdge: number): GraphSql {
              (r.from_entity_id = f.entity_id) AS is_out
       FROM graph_relations r
       ${joinPublishedDocumentsPerRow('r', ids)}
-      ${relationEndsPersonaFromDocumentoOnly()}
+      ${relationEndsPublicPersonaOnly()}
       JOIN focal f
         ON f.org_id = r.organization_id
        AND (r.from_entity_id = f.entity_id OR r.to_entity_id = f.entity_id)
@@ -722,7 +722,7 @@ export function combinedEntityDocumentsQuery(args: CombinedDetailArgs): GraphSql
     ${joinPublishedDocumentsPerRow('m', ids)}
     JOIN focal f ON f.entity_id = m.entity_id AND f.org_id = m.organization_id
     JOIN graph_entities ce ON ce.id = m.entity_id AND ce.organization_id = m.organization_id
-    WHERE m.organization_id = ANY(${ids})${personaFromDocumentoOnly('ce')}
+    WHERE m.organization_id = ANY(${ids})${publicPersonaOnly('ce')}
     ORDER BY m.occurrences DESC, d.id DESC
     LIMIT ${limit}`
 }

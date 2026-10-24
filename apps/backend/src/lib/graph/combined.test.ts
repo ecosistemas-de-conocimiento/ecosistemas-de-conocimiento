@@ -54,7 +54,7 @@ describe('combined statements carry every gate, per row', () => {
       expect(text).toContain("d.publication_status = 'published'")
       expect(text).toContain('a.support >= $')
       expect(text).toMatch(/NOT \(e\.canonical_key ~ \$\d+\)/)
-      expect(text).toContain("(e.type <> 'persona' OR d.content_kind = 'documento')")
+      expect(text).toContain("AND e.type <> 'persona'")
     })
 
     it(`🔴 ${name}: gate 5 at every mention and relation read site, not only somewhere`, () => {
@@ -72,7 +72,7 @@ describe('combined statements carry every gate, per row', () => {
       expect(text).toContain('d.organization_id = r.organization_id')
       expect(text).toContain('r.organization_id = ANY(')
       // Gate 5 on both ends of the relation row.
-      expect(text).toContain("WHERE d.content_kind = 'documento' OR NOT EXISTS (SELECT 1 FROM graph_entities pe WHERE pe.id IN (r.from_entity_id, r.to_entity_id) AND pe.type = 'persona')")
+      expect(text).toMatch(RELATION_GATE)
       if (name === 'edges') {
         // Per-ecosistema pair count by window, and both ends from the relation's ecosistema.
         expect(text).toMatch(/rc\.org_pair_docs >= \$\d+/)
@@ -88,7 +88,8 @@ describe('combined statements carry every gate, per row', () => {
     const { text } = render(statements['view (search)']!)
     expect(text).toContain('sd.organization_id = sm.organization_id')
     expect(text).toContain('se.organization_id = sm.organization_id')
-    expect(text).toContain("(se.type <> 'persona' OR sd.content_kind = 'documento')")
+    expect(text).toContain("AND se.type <> 'persona'")
+    expect(text).not.toContain("se.type <> 'persona' OR")
   })
 
   it('🔴 only the entity documents statement selects a snippet, behind the documento CASE', () => {
