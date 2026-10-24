@@ -3,7 +3,7 @@
   import Message from './Message.svelte';
   import Composer from './Composer.svelte';
   import { app } from '$lib/stores/app.svelte';
-  import { generateSync, generateStream, userFacingError, type SyncGenerateResult } from '$lib/api';
+  import { runTurn, userFacingError, type SyncGenerateResult } from '$lib/api';
   import { answerNotice } from '$lib/aiMessages';
   import type { ContextRef, ContextScope } from '$lib/types';
   import {
@@ -108,6 +108,9 @@
     busy = true;
     waitingId = placeholder.id;
     waitingPhase = 'searching';
+    // The answer streamed so far. Kept on screen above the error when the
+    // server fails part way, as before `runTurn`.
+    let acc = '';
     try {
       const fresh = app.active;
       if (!fresh) return;
@@ -137,39 +140,30 @@
         });
       };
 
-      let acc = '';
-      let received = false;
-      try {
-        const result = await generateStream(payload, {
-          signal: controller.signal,
-          onOpen: () => {
-            waitingPhase = 'writing';
-          },
-          onDelta: (delta) => {
-            received = true;
-            acc += delta;
-            app.updateMessage(s.id, placeholder.id, { content: acc });
-          },
-        });
-        finalize(result);
-      } catch (streamErr) {
-        if (streamErr instanceof Error && streamErr.name === 'AbortError') throw streamErr;
-        if (received) {
-          app.updateMessage(s.id, placeholder.id, {
-            pending: false,
-            error: userFacingError(streamErr),
-          });
-        } else {
-          const result = await generateSync(payload, { signal: controller.signal });
-          finalize(result);
-        }
-      }
+      // Stream, then sync, then the saved conversation: see `runTurn`.
+      const result = await runTurn(payload, {
+        signal: controller.signal,
+        knownMessageIds: fresh.messages.map((m) => m.id),
+        onOpen: () => {
+          waitingPhase = 'writing';
+        },
+        onDelta: (delta) => {
+          acc += delta;
+          app.updateMessage(s.id, placeholder.id, { content: acc });
+        },
+        onRestart: () => {
+          acc = '';
+          waitingPhase = 'searching';
+          app.updateMessage(s.id, placeholder.id, { content: '' });
+        },
+      });
+      finalize(result);
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         app.deleteMessage(s.id, placeholder.id);
       } else {
         app.updateMessage(s.id, placeholder.id, {
-          content: '',
+          content: acc,
           pending: false,
           error: userFacingError(err),
         });

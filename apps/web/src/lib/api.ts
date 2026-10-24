@@ -58,6 +58,24 @@ export class AIServiceError extends Error {
 }
 
 /**
+ * The browser lost the connection to our own server: the request never got an
+ * answer, or the answer stopped part way. The server may still have finished
+ * the turn and saved it, so this is the one failure worth checking the saved
+ * conversation for (`runTurn`). A failure the SERVER declared (an HTTP status,
+ * an `error` frame) is a plain `AIServiceError`.
+ */
+export class ConnectionLostError extends AIServiceError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConnectionLostError';
+  }
+}
+
+function isAbort(err: unknown): boolean {
+  return (err as Error)?.name === 'AbortError';
+}
+
+/**
  * The message to actually show a user for a failed turn.
  *
  * When the server tagged the failure `ai_unavailable` we render the canonical
@@ -120,8 +138,8 @@ export async function generateStream(
       signal: opts.signal,
     });
   } catch (err) {
-    if ((err as Error)?.name === 'AbortError') throw err;
-    throw new AIServiceError(`Network error: ${(err as Error).message}`);
+    if (isAbort(err)) throw err;
+    throw new ConnectionLostError(`Network error: ${(err as Error).message}`);
   }
 
   if (!res.ok || !res.body) {
@@ -149,7 +167,14 @@ export async function generateStream(
   let result: SyncGenerateResult | null = null;
 
   for (;;) {
-    const { value, done } = await reader.read();
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (err) {
+      if (isAbort(err)) throw err;
+      throw new ConnectionLostError(`Stream interrupted: ${(err as Error)?.message ?? err}`);
+    }
+    const { value, done } = chunk;
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     let idx: number;
@@ -191,7 +216,7 @@ export async function generateStream(
     }
   }
 
-  if (!result) throw new AIServiceError('Stream ended without a completion.');
+  if (!result) throw new ConnectionLostError('Stream ended without a completion.');
   return result;
 }
 
@@ -212,8 +237,8 @@ export async function generateSync(
   } catch (err) {
     // Let AbortError propagate so callers can distinguish user cancellation
     // from genuine network failures.
-    if ((err as Error)?.name === 'AbortError') throw err;
-    throw new AIServiceError(`Network error: ${(err as Error).message}`);
+    if (isAbort(err)) throw err;
+    throw new ConnectionLostError(`Network error: ${(err as Error).message}`);
   }
 
   let parsed: unknown;
@@ -242,4 +267,121 @@ export async function generateSync(
     throw new AIServiceError('Server returned unexpected payload.');
   }
   return data as SyncGenerateResult;
+}
+
+export interface RunTurnOptions extends StreamGenerateOptions {
+  /**
+   * Ids of the messages this conversation already shows. An assistant message
+   * outside this list, found in the saved conversation, is this turn's answer.
+   */
+  knownMessageIds: string[];
+  /**
+   * The connection dropped part way through the answer and the turn is being
+   * asked again: drop the partial text shown so far.
+   */
+  onRestart?: () => void;
+  /** How many times to look for a saved answer. Default 12. */
+  recoverAttempts?: number;
+  /** Wait between those looks. Default 2.5 s, so about 30 s in all. */
+  recoverIntervalMs?: number;
+}
+
+/**
+ * One chat turn, end to end. What `Chat.svelte` calls.
+ *
+ *   1. Stream (`generateStream`).
+ *   2. The stream failed with nothing shown, or the CONNECTION dropped part
+ *      way: ask again on sync (`generateSync`), the whole turn from scratch.
+ *      A server-declared error after part of the answer is final.
+ *   3. The sync request lost its connection too: the server may still finish
+ *      and save the answer, so look for it in the saved conversation before
+ *      reporting a failure.
+ *
+ * Step 3 is the fix for run 1 of the 2026-10-23 dev check (runbook §4zg): the
+ * stream request died before its headers, the sync fallback died at ~30 s, and
+ * the server had saved the answer while the screen said "No se pudo obtener
+ * la respuesta". `api.turn.test.ts` replays it.
+ */
+export async function runTurn(
+  input: SyncGenerateInput,
+  opts: RunTurnOptions,
+): Promise<SyncGenerateResult> {
+  let received = false;
+  try {
+    return await generateStream(input, {
+      signal: opts.signal,
+      onOpen: opts.onOpen,
+      onDelta: (text) => {
+        received = true;
+        opts.onDelta?.(text);
+      },
+    });
+  } catch (err) {
+    if (isAbort(err)) throw err;
+    if (received && !(err instanceof ConnectionLostError)) throw err;
+    if (received) opts.onRestart?.();
+  }
+  try {
+    return await generateSync(input, { signal: opts.signal });
+  } catch (err) {
+    if (isAbort(err) || !(err instanceof ConnectionLostError)) throw err;
+    const saved = await findSavedAnswer(input.sessionId, opts);
+    if (saved) return saved;
+    throw err;
+  }
+}
+
+/** This turn's answer, if the server saved it. `null` when it never shows up. */
+async function findSavedAnswer(
+  sessionId: string,
+  opts: RunTurnOptions,
+): Promise<SyncGenerateResult | null> {
+  const known = new Set(opts.knownMessageIds);
+  const attempts = opts.recoverAttempts ?? 12;
+  const interval = opts.recoverIntervalMs ?? 2500;
+  for (let i = 0; i < attempts; i++) {
+    if (i > 0) await sleep(interval, opts.signal);
+    let docs: Record<string, unknown>[] = [];
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
+        credentials: 'same-origin',
+        signal: opts.signal,
+      });
+      if (res.ok) docs = ((await res.json()) as { docs?: Record<string, unknown>[] }).docs ?? [];
+    } catch (err) {
+      if (isAbort(err)) throw err;
+      // Still offline: look again.
+    }
+    const answer = docs.findLast(
+      (d) => d.role === 'assistant' && d.id != null && !known.has(String(d.id)),
+    );
+    if (answer) {
+      const meta = (answer.generationMeta ?? {}) as Record<string, unknown>;
+      return {
+        text: typeof answer.content === 'string' ? answer.content : '',
+        messageId: String(answer.id),
+        provenance: (answer.provenance as Provenance | null | undefined) ?? null,
+        modelUsed: meta.modelUsed as string | undefined,
+        provider: meta.provider as string | undefined,
+        costUsd: meta.costUsd as number | undefined,
+        traceId: meta.traceId as string | undefined,
+      };
+    }
+  }
+  return null;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(t);
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      },
+      { once: true },
+    );
+  });
 }
