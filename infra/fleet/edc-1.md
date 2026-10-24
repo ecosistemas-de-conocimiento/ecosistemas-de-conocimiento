@@ -1,6 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `020ebec` (anonymisation town rule, `/grafo`
+**Status:** live since 2026-10-17. Dev runs `main` @ `f0f3266` (persona public-figure mark with
+migration `20261024_201817_graph_entities_public_figure`, no private persona in the graph,
+`/miembros`, source cards for used and pinned attachments), deployed 2026-10-24 20:34 UTC — see
+§4zi. Before that, `020ebec` (anonymisation town rule, `/grafo`
 hides lone towns but never a state, chat turn recovery by turn id), deployed 2026-10-24 19:31 UTC —
 see §4zh. Before that, `47b140c` ("En revisión" labels, testimonio
 excerpts, dense `[n]` numbering), deployed 2026-10-23 18:46 UTC — see §4zg. Before that, `8984fec`
@@ -1546,6 +1549,43 @@ Spend: `usage_logs` $1.6240 → $1.6318 (**+$0.0078**, all this run: 2 chats ≈
 measured — about twice the $0.002 estimate).
 
 **Disk**, `df -h /` free: 56 GB before; 42 GB after the build; 56 GB after the cleanup. Images
+11.6 GB, build cache 0.
+
+### 4zi. ✅ Done 2026-10-24 20:34–20:50 UTC: `f0f3266`, dev only — one Payload migration
+
+All measured by the deploy agent. Staging was not touched (still `97d5316`, `docker ps`). edcai was
+told before the deploy by the coordinator. `f0f3266` = no private persona in the graph, every read
+fail-closed (`efd9a25`); the public-figure mark on `persona` at extraction, prompt `v5`
+(`d61af6e`); the model never sees a citable document id (`1284a13`); a source card for an
+attachment the answer uses (`2ffb414`) and for a pinned upload when no retrieved source is listed
+(`88cee20`); `/miembros` for an ecosistema's responsable (`f88dec0`). No compose or variable change.
+
+**Migration.** `payload_migrations` 3 → 4: `20261024_201817_graph_entities_public_figure` applied
+at 20:41:02 UTC. It adds `graph_entities.public_figure boolean NOT NULL DEFAULT false`, with no
+backfill, so every stored persona stays hidden until a prompt-`v5` re-extraction marks it.
+`edc_ai` unchanged at 6. Dev holds 1 `persona` row (ecosistema 7, `public_figure = false`).
+
+Backup `/root/backups/20261024T2034Z/` (`edc_ai` 2.4 MB, `edc_backend` 316 KB; `pg_restore -l`
+137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261024T2034Z/`
+with `timeout 180 scp`; sha256 of both dumps matched before the deploy. Deploy
+`27ziugdmodpi3e1kbqfuiomw` 20:34:50 → 20:41:07 UTC. 9 containers up; `web`, `backend` and
+`ai-service` run image tag `f0f3266ef00e…` (`docker ps`). Health 200 on `dev.` and `api.dev.`.
+0 error/fatal lines in the web, backend and ai-service logs at startup and after the smoke.
+
+| check | result |
+|---|---|
+| 1. chat, participant, Prevención del dengue | "¿Qué hacen las familias para eliminar los criaderos del mosquito?" → 200, 10.4 s; cite buttons [1]–[6], "Fuentes consultadas (6)", every marker has a source, 0 bare `[n]` in the text |
+| 2. pinned upload, participant, Dengue | a one-page fictitious PDF ("Brigada Tinaco Azul", lavado los jueves) uploaded in the chat → `ready` in 2.7 s, `fijar` checked by default. Question about it → 200, 9.9 s; answer correct ("Brigada Tinaco Azul", jueves), no `[n]` in it, 0 bare `[n]`; "Fuentes consultadas (1)": "acta-tinaco-azul.pdf · borrador, solo tú lo ves" (the `88cee20` card). Conversations 165 and 166 deleted (200); document 267 gone from `edc_backend`, 0 rows in `edc_ai` |
+| 3. `/grafo` 2D, participant | `?eco=7` and `?eco=todos`: `data-vista="2d"`, one canvas, 84 / 245 entities, 0 page errors. 0 `persona`-type entries in `/grafo/__data.json`; the persona's label is absent. `POST /grafo/buscar` with the persona's label → 200, `ids: []`; the search box shows "0 de 84" / "0 de 245". Control: "escuela" in `todos` → 161 ids |
+| 4. `/miembros`, owner (seed admin, `owner` of all four) | loads; ecosistema tabs for the four; "Miembros (3)": Admin (responsable), Investigadora (investigador), Participante (participante). Nothing added, changed or removed |
+
+Cleanup after the deploy finished (0 deployments queued, no compose build): `docker rmi` of dev's
+three `020ebec` images by name, `docker builder prune -af` (14.74 GB).
+
+Spend: `usage_logs` `actual_cost_usd` $1.6368 → $1.6464 (**+$0.0096**, all this run: 2 chats in
+`edc-eco-6`, ≈ $0.0037 and ≈ $0.0059 including their router calls).
+
+**Disk**, `df -h /` free: 56 GB before; 41 GB after the build; 56 GB after the cleanup. Images
 11.6 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
