@@ -20,6 +20,12 @@
  * (Chrome: 16) and drop the oldest silently, so toggling 3D on and off must
  * not leak one. `destroy` disposes the renderer AND forces the context loss.
  *
+ * NODES ARE FLAT DISCS, NOT SPHERES (owner, 10-24: the low-poly spheres
+ * looked ugly). Each is a `THREE.Sprite`, which always faces the camera, so
+ * a node reads as the same crisp dot from any angle. All sprites share one
+ * high-resolution circle texture, mipmapped so a small dot stays smooth; the
+ * type colour and the dim are the sprite material's colour and opacity.
+ *
  * Labels are HTML over the canvas, set with `textContent` (never markup): a
  * few candidates by degree PER LEVEL plus the selected and hovered node
  * (`labels3d.ts`), then decluttered in SCREEN space after projection: at most
@@ -27,6 +33,7 @@
  * camera move, at most once per animation frame.
  */
 import ForceGraph3D, { type ConfigOptions, type ForceGraph3DInstance } from '3d-force-graph';
+import { CanvasTexture, Color, SRGBColorSpace, Sprite, SpriteMaterial } from 'three';
 
 import { declutter3d, labelBox3d, labelScale3d, labels3d, type Label3D, type Placed3D } from './labels3d';
 import {
@@ -94,6 +101,37 @@ function floorStep(base: number, floors: Map<string, number>): number {
   return top > 4 ? (base * 4) / top : base;
 }
 
+/** The disc's diameter in scene units: the old sphere's (radius `3 * cbrt(r²)`), so sizes keep their order and scale. */
+function discSize(r: number): number {
+  return 2 * 3 * Math.cbrt(r * r);
+}
+
+/** Opacity of a node at rest and when dimmed by a selection or search. */
+const DISC_OPACITY = 0.95;
+const DISC_DIM_OPACITY = 0.15;
+
+/**
+ * One white circle on a transparent canvas, shared by every disc. 256 px
+ * with a one-pixel soft edge: antialiased at any zoom, and its mipmaps keep a
+ * far-away dot smooth. White, so the material colour tints it exactly.
+ */
+function circleTexture(): CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
 const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
 
 export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D {
@@ -109,6 +147,9 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
   let frame = 0;
   let base = 60;
   let tween = 0;
+  const texture = circleTexture();
+  const discs = new Map<string, Sprite>();
+  const scratch = new Color();
 
   // The default export is typed for the base node shape; its constructor is
   // generic only through the interface, hence the cast to our node and link.
@@ -122,12 +163,7 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     .enableNodeDrag(false)
     .warmupTicks(0)
     .cooldownTicks(0)
-    // three-forcegraph sizes a sphere by the cube root of `nodeVal`; this
-    // keeps the 2D size order, large enough to see against the layout's span.
-    .nodeRelSize(3)
-    .nodeVal((n) => n.r * n.r)
-    .nodeResolution(8)
-    .nodeOpacity(0.95)
+    .nodeThreeObject((n) => disc(n))
     .nodeLabel((n) => (touchInput ? '' : nodeTooltipHtml(n)))
     .linkOpacity(1)
     .linkWidth(0)
@@ -153,9 +189,30 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
   const onCamera = () => schedulePlace();
   controls.addEventListener('change', onCamera);
 
-  function nodeColor(n: Node): string {
-    const base = colors.types[n.type];
-    return nodeDim(n.id, focus) ? withAlpha(base, 0.15) : base;
+  /** The node's disc, made once per data set; `paint` colours it. */
+  function disc(n: Node): Sprite {
+    const material = new SpriteMaterial({
+      map: texture,
+      transparent: true,
+      // Drop the fully clear corners so they never hide what is behind.
+      alphaTest: 0.01,
+    });
+    const sprite = new Sprite(material);
+    const size = discSize(n.r);
+    sprite.scale.set(size, size, 1);
+    discs.set(n.id, sprite);
+    paint(n, sprite);
+    return sprite;
+  }
+
+  function paint(n: Node, sprite: Sprite) {
+    sprite.material.color.copy(scratch.set(colors.types[n.type]));
+    sprite.material.opacity = nodeDim(n.id, focus) ? DISC_DIM_OPACITY : DISC_OPACITY;
+  }
+
+  function disposeDiscs() {
+    for (const sprite of discs.values()) sprite.material.dispose();
+    discs.clear();
   }
 
   function linkColor(l: Link): string {
@@ -168,7 +225,11 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
   }
 
   function applyStyle() {
-    graph.nodeColor((n) => nodeColor(n)).linkColor((l) => linkColor(l));
+    for (const n of nodes) {
+      const sprite = discs.get(n.id);
+      if (sprite) paint(n, sprite);
+    }
+    graph.linkColor((l) => linkColor(l));
     syncLabels();
   }
 
@@ -248,6 +309,7 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     cancelAnimationFrame(tween);
     tween = 0;
     base = baseStep(positions);
+    disposeDiscs();
     const step = floorStep(base, floors);
     nodes = data.nodes.map((n) => {
       const p = positions.get(n.id) ?? { x: n.x, y: n.y };
@@ -262,7 +324,7 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
     // steps: 1.5). `zoomToFit` keeps this direction.
     graph.cameraPosition({ x: 0, y: base * 6, z: base * 9 }, { x: 0, y: base * 1.5, z: 0 });
     requestAnimationFrame(() => fit(0));
-    // ⚠ The first fit can run before the engine has placed the spheres, and
+    // ⚠ The first fit can run before the engine has placed the discs, and
     // then frames the origin (camera inside a big graph). Fit again once drawn.
     setTimeout(() => fit(0), 250);
   }
@@ -356,6 +418,8 @@ export function mountGraph3D(el: HTMLElement, options: Graph3DOptions): Graph3D 
       const renderer = graph.renderer();
       graph.pauseAnimation();
       graph._destructor();
+      disposeDiscs();
+      texture.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
       el.replaceChildren();
