@@ -270,8 +270,11 @@ describe('parsing a detail response', () => {
     // 🔴 The shape has no place to put an uploader, a speaker or a consent flag.
     expect(Object.keys(detail!).sort()).toEqual([
       'contentKind',
+      // The system-proposed title (from redacted text) and the neutral label.
+      'generatedTitle',
       'heldText',
       'id',
+      'label',
       'reason',
       'report',
       'stage',

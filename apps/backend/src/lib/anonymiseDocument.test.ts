@@ -268,6 +268,13 @@ describe('anonymiseDocumentText — a testimonio that clears the gate', () => {
     expect(fake.updates.at(-1)!.data.anonymisationStatus).toBe('ready')
   })
 
+  it('🔴 the claim clears `testimonioTitle`: a re-gated row never shows a title made from old text', async () => {
+    const fake = fakePayload()
+    await run(fake, { contentKind: 'testimonio', detector: findsTheName() })
+    expect(fake.updates[0]!.data.anonymisationStatus).toBe('pending')
+    expect(fake.updates[0]!.data).toHaveProperty('testimonioTitle', null)
+  })
+
   it('guards every write against re-entrancy', async () => {
     // ⚠ Without `__skipDocsExtract` the afterChange hook re-fires and re-runs the
     // whole extract+ingest pass — for a testimony that means paying for the

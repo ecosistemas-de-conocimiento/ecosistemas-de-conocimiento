@@ -624,6 +624,7 @@ async function runIngestSeededDocuments(
   const { ingestCallbackUrl } = await import('@/lib/callbackConfig')
   const { beginPublish } = await import('@/lib/publishDocument')
   const { anonymiseDocumentText } = await import('@/lib/anonymiseDocument')
+  const { scheduleTestimonioTitle } = await import('@/lib/testimonioTitle')
   const { aiServiceDetector } = await import('@/lib/anonymise')
   const { throttledEach, waitForDraftSettled } = await import('./throttle')
 
@@ -754,6 +755,14 @@ async function runIngestSeededDocuments(
               else held += 1
               return
             }
+            // The title, from the gate's output only; detached, never awaited.
+            scheduleTestimonioTitle({
+              contentKind: row.contentKind,
+              docId: row.id,
+              organizationId,
+              redactedText: gated.text,
+              payload: payload as never,
+            })
           }
           const fresh = await payload.findByID({
             collection: 'documents',

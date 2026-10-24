@@ -146,10 +146,61 @@ export function testimonyLabel(topic: string | null | undefined): string {
   return t ? `Testimonio · ${t}` : 'Testimonio';
 }
 
+// ── System-proposed testimonio titles (owner ruling 2026-10-24) ─────────────
+
+/**
+ * A testimonio's generated title (backend `documents.testimonioTitle`, made
+ * from the gate's REDACTED output), or `null` when absent or unusable.
+ *
+ * ⚠ Belt and braces over the backend's own check: a bracket means a
+ * placeholder (`[Persona A]`) and is never shown; over 120 chars is not a title.
+ */
+export function generatedTestimonyTitle(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const t = raw.replace(/\s+/g, ' ').trim();
+  if (!t || t.length > 120 || /[[\]]/.test(t)) return null;
+  return t;
+}
+
+/**
+ * What a testimonio card shows: the generated title with "Testimonio · <topic>"
+ * under it, or — no title yet, or generation failed — the label alone.
+ */
+export function testimonyHeading(
+  generated: unknown,
+  topic: string | null | undefined,
+): { title: string; subtitle: string | null } {
+  const label = testimonyLabel(topic);
+  const title = generatedTestimonyTitle(generated);
+  return title ? { title, subtitle: label } : { title: label, subtitle: null };
+}
+
+/**
+ * A document row as "Mis documentos" and the conversation panel show it.
+ *
+ * A testimonio with a system-proposed title shows that title, with
+ * "Testimonio · <tema>" under it; anything else keeps the name the backend let
+ * this caller read (the uploader's own filename), with no subtitle.
+ */
+export function workingDocHeading(row: {
+  name?: unknown;
+  contentKind?: unknown;
+  tema?: unknown;
+  testimonioTitle?: unknown;
+}): { title: string; subtitle: string | null } {
+  const name = typeof row.name === 'string' && row.name ? row.name : 'Documento sin título';
+  if (row.contentKind !== 'testimonio') return { title: name, subtitle: null };
+  const generated = generatedTestimonyTitle(row.testimonioTitle);
+  return generated
+    ? { title: generated, subtitle: testimonyLabel(testimonyTopic(row.tema, null)) }
+    : { title: name, subtitle: null };
+}
+
 /**
  * A chat source's title. A testimonio (`metadata.kind === 'testimonio'`, kept
- * by `$lib/server/citationProvenance`) reads `Testimonio · <ecosistema> —
- * «excerpt»`; anything else keeps its own title.
+ * by `$lib/server/citationProvenance`) reads `<generated title> — Testimonio ·
+ * <ecosistema>` when it has one, else `Testimonio · <ecosistema> — «excerpt»`;
+ * anything else keeps its own title.
  *
  * ⚠ The ecosistema name, not `tema`: chunk metadata carries no `tema`, and
  * each ecosistema is one corpus topic (owner ruling, 4 ecosistemas). The
@@ -163,6 +214,9 @@ export function chatSourceTitle(
   // 🔴 A known kind, never the title: a documento may be titled "Testimonio".
   if (metadata?.kind !== 'testimonio') return title;
   const label = testimonyLabel(testimonyTopic(null, ecosystemName));
+  // The generated title (added server-side per read, `withTestimonioTitles`).
+  const generated = generatedTestimonyTitle(metadata?.testimonioTitle);
+  if (generated) return `${generated} — ${label}`;
   const excerpt = typeof metadata?.excerpt === 'string' ? metadata.excerpt.trim() : '';
   return excerpt ? `${label} — «${excerpt}»` : label;
 }
@@ -527,6 +581,11 @@ export interface LibraryItem {
    * not cleared. The full redacted text never rides the list.
    */
   excerpt: string | null;
+  /**
+   * The line under the title. For a testimonio with a system-proposed title,
+   * "Testimonio · <tema>" (owner ruling 2026-10-24); `null` otherwise.
+   */
+  subtitle: string | null;
 }
 
 /** A full document, as the reader page gets it. */

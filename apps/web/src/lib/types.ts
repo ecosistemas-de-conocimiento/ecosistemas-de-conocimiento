@@ -144,6 +144,12 @@ export interface WorkingDoc {
    * backend sent the relationship unpopulated.
    */
   attachedSessions?: Array<{ id: string; title: string }>;
+  /**
+   * The line under the title: "Testimonio · <tema>" when `title` is a
+   * testimonio's system-proposed title (owner ruling 2026-10-24). Its presence
+   * also means `title` is not the editable name: the title field is read-only.
+   */
+  subtitle?: string | null;
   updatedAt: number;
   /** M6 — what storage path this doc takes. */
   kind: DocKind;

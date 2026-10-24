@@ -539,8 +539,9 @@
               <input
                 class="title-input flex-1 min-w-0 bg-transparent text-sm text-ink outline-none rounded px-1"
                 value={d.title}
-                title={d.title}
+                title={d.subtitle ? `${d.title} — ${d.subtitle}` : d.title}
                 aria-label="Título del documento"
+                readonly={Boolean(d.subtitle)}
                 oninput={(e) => {
                   if (sid) {
                     d.title = e.currentTarget.value;

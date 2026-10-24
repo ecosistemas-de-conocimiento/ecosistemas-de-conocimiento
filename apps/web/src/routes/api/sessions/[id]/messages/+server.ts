@@ -4,6 +4,7 @@ import { backendFetch } from '$lib/server/auth';
 import { degradeListResponse } from '$lib/server/degrade';
 import { refsToRelationships, relationshipsToRefs } from '$lib/server/contextRefs';
 import { toBrowserMessage } from '$lib/server/citationProvenance';
+import { backendTitleFetcher, messagesWithTestimonioTitles } from '$lib/server/testimonioTitles';
 import type { ContextRef } from '$lib/types';
 
 // GET /api/sessions/[id]/messages → ordered messages for this session.
@@ -31,6 +32,9 @@ export const GET: RequestHandler = async ({ locals, params }) => {
     body.docs = body.docs.map((doc) =>
       toBrowserMessage({ ...doc, contextRefs: relationshipsToRefs(doc.contextRefs) }),
     );
+    // Testimonio sources get their system-proposed titles, one lookup for the
+    // whole history, read with the caller's token (`$lib/server/testimonioTitles`).
+    body.docs = await messagesWithTestimonioTitles(body.docs, backendTitleFetcher(locals.token));
   }
   const out = degradeListResponse(res, body, 'messages');
   return json(out.body, { status: out.status });

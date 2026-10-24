@@ -10,6 +10,7 @@ The chain since then:
 | `20261017_231817_documents_uploaded_in_session` | `documents.uploaded_in_session_id`, FK to `sessions` `ON DELETE set null` (the column is nullable, so that is correct here), and its index | SQL: none (the header comment is hand-written); no backfill, on purpose (the header says why) |
 | `20261020_193707_ratings_fk_cascade` | all four `ratings` FKs (`message_id`, `session_id`, `organization_id`, `user_id`) rewritten to `ON DELETE cascade` | 🔴 SQL: ALL of it. `migrate:create` emitted an empty migration; the `.json` still says `set null`. See "The ratings foreign keys" below |
 | `20261024_201817_graph_entities_public_figure` | `graph_entities.public_figure boolean DEFAULT false NOT NULL` — the persona public-figure mark; existing rows stay false (hidden) | SQL: none (the header comment is hand-written); no backfill, on purpose |
+| `20261024_230631_documents_testimonio_title` | `documents.testimonio_title varchar` (nullable) — a testimonio's system-proposed title; NULL shows the fallback label | SQL: none (the header comment is hand-written); backfill is `scripts/backfill-testimonio-titles.ts`, not the migration |
 
 ⚠ A migration file is frozen once committed, comments included. Nothing had ever been deployed
 — no CI, no deploy script, and `edc_backend` on `localhost:45432` was the only

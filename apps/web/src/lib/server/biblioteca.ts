@@ -40,6 +40,7 @@ import {
   libraryTitleFor,
   normalizeSearch,
   parseSkipIntro,
+  testimonyHeading,
   testimonyTopic,
   type KindFilter,
   type LibraryDocument,
@@ -83,6 +84,10 @@ export const LIBRARY_LIST_FIELDS = [
   'redactedText',
   // The testimonio's topic ("Testimonio · Discapacidad"); no personal content.
   'tema',
+  // 🔴 The system-proposed title, from the gate's redacted output (owner ruling
+  // 2026-10-24). A PAIR with `anonymisationStatus` above: the backend's read
+  // rule (`mayReadTestimonioTitle`) reads the status off the projected row.
+  'testimonioTitle',
 ] as const;
 
 /**
@@ -255,16 +260,17 @@ export function toLibraryItem(
   // 🔴 `contentKind`, not `kind`. See `isGatedContent`.
   const gated = isGatedContent(row.contentKind);
   const testimonio = row.contentKind === 'testimonio';
+  // A testimonio: its generated title over "Testimonio · <tema or ecosistema>",
+  // or that label alone when it has none.
+  const heading = testimonio
+    ? testimonyHeading(row.testimonioTitle, testimonyTopic(row.tema, ecosystemName))
+    : null;
   return {
     id: String(row.id ?? ''),
     // 🔴 Never the uploader's filename on gated content, even when the backend
     // hands it over (it does, to the uploader and to a platform admin).
-    // A testimonio reads "Testimonio · <tema or ecosistema>".
-    title: libraryTitleFor(
-      row.contentKind,
-      row.name,
-      testimonio ? testimonyTopic(row.tema, ecosystemName) : null,
-    ),
+    title: heading ? heading.title : libraryTitleFor(row.contentKind, row.name, null),
+    subtitle: heading ? heading.subtitle : null,
     kind,
     createdAt: epoch(row.createdAt),
     updatedAt: epoch(row.updatedAt ?? row.createdAt),

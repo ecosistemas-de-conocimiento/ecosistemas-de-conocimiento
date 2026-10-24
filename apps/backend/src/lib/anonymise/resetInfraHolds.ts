@@ -86,6 +86,8 @@ export async function resetInfraHolds(
       redactedText: null,
       heldText: null,
       anonymisationSurvivors: null,
+      // Made from the `heldText` cleared above.
+      testimonioTitle: null,
     }
     // A draft-path row also carries `ingestStatus: 'failed'` + `anonymisation_held`.
     // Relabel it so the ingest-recovery sweep re-drives it.

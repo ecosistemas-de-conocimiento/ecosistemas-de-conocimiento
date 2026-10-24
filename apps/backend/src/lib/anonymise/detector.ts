@@ -66,7 +66,7 @@ export const ANONYMISE_DETECT_MIN_GAP_MS_VAR = 'ANONYMISE_DETECT_MIN_GAP_MS'
 let nextDetectSlotAt = 0
 
 /** Reserve the next start slot synchronously, then wait for it. */
-async function paceDetectCall(sleep: (ms: number) => Promise<void>): Promise<void> {
+export async function paceDetectCall(sleep: (ms: number) => Promise<void>): Promise<void> {
   const gap = nonNegativeIntFromEnv(ANONYMISE_DETECT_MIN_GAP_MS_VAR, 0)
   if (gap <= 0) return
   const now = Date.now()

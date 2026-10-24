@@ -37,6 +37,11 @@ vi.mock('@/lib/aiClient', () => ({
   getAppAIClient: () => ({ ingest: { enqueue } }),
 }))
 
+const scheduleTitle = vi.fn((_args: Record<string, unknown>) => true)
+vi.mock('@/lib/testimonioTitle', () => ({
+  scheduleTestimonioTitle: (args: Record<string, unknown>) => scheduleTitle(args),
+}))
+
 const updates: Array<Record<string, unknown>> = []
 const fakePayload = {
   update: async (args: Record<string, unknown>) => {
@@ -288,6 +293,40 @@ describe('🔴 enqueueIngestForDoc refuses a settled row', () => {
     const wire = JSON.stringify(enqueue.mock.calls[0]![0])
     expect(wire).toContain('Lo que [Persona A] aprobó.')
     expect(wire).not.toContain('María López')
+  })
+
+  it('🔴 schedules the testimonio title from the CLEARED text, never the original', async () => {
+    scheduleTitle.mockClear()
+    await enqueueIngestForDoc({
+      ...settled('approved'),
+      fresh: {
+        name: 'Voz de la asamblea',
+        kind: 'audio',
+        contentKind: 'testimonio',
+        anonymisationStatus: 'approved',
+        redactedText: 'Lo que [Persona A] aprobó.',
+      },
+      extractedText: 'El original, con María López en él.',
+    })
+    expect(scheduleTitle).toHaveBeenCalledTimes(1)
+    expect(scheduleTitle.mock.calls[0]![0]).toMatchObject({
+      contentKind: 'testimonio',
+      docId: 42,
+      organizationId: 10,
+      redactedText: 'Lo que [Persona A] aprobó.',
+    })
+  })
+
+  it('schedules no title for a documento', async () => {
+    scheduleTitle.mockClear()
+    await run()
+    expect(scheduleTitle).not.toHaveBeenCalled()
+  })
+
+  it('schedules no title for a HELD row', async () => {
+    scheduleTitle.mockClear()
+    await enqueueIngestForDoc(settled('held'))
+    expect(scheduleTitle).not.toHaveBeenCalled()
   })
 })
 

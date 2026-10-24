@@ -244,6 +244,30 @@ describe('holds — 🔴 what the reviewer sees, and what never leaves', () => {
     expect(holds[0]!.survivorCount).toBe(1)
   })
 
+  it('a held testimonio with a generated title lists it, the neutral label as secondary', async () => {
+    const { payload } = fakePayload({
+      rows: [{ ...HELD_ROW, testimonioTitle: 'Vivir con la familia en el barrio' }],
+    })
+    const { holds } = await listHeldDocuments({ payload, organizationId: ORG, user: user() })
+    expect(holds[0]).toMatchObject({
+      title: 'Vivir con la familia en el barrio',
+      label: 'Testimonio retenido',
+      generatedTitle: 'Vivir con la familia en el barrio',
+    })
+  })
+
+  it('without a generated title the label is the title', async () => {
+    const { payload } = fakePayload()
+    const { holds } = await listHeldDocuments({ payload, organizationId: ORG, user: user() })
+    expect(holds[0]).toMatchObject({ title: 'Testimonio retenido', label: 'Testimonio retenido', generatedTitle: null })
+  })
+
+  it('🔴 a rejection clears the title made from the discarded held text', async () => {
+    const { payload, updated } = fakePayload()
+    await decideOnHold({ payload, documentId: DOC, user: user(), decision: 'reject' })
+    expect(updated.at(-1)!.data).toHaveProperty('testimonioTitle', null)
+  })
+
   it('⚠ nothing in the response identifies the speaker', async () => {
     const { payload } = fakePayload()
     const detail = await heldDocument({ payload, documentId: DOC, user: user() })
@@ -363,6 +387,12 @@ describe('holds — 🔴 approving is an audited override, and the only way out'
     await decideOnHold({ payload, documentId: DOC, user: user(), decision: 'approve' })
     expect(updated[0]!.data.heldText).toBeNull()
     expect(updated[0]!.data.anonymisationSurvivors).toBeNull()
+  })
+
+  it('🔴 clears the title made from the held text; the ingest hook re-titles from the approved text', async () => {
+    const { payload, updated } = fakePayload()
+    await decideOnHold({ payload, documentId: DOC, user: user(), decision: 'approve' })
+    expect(updated[0]!.data).toHaveProperty('testimonioTitle', null)
   })
 
   it('⚠ re-enters the ORDINARY ingest hook — no second, subtly-different path', async () => {
