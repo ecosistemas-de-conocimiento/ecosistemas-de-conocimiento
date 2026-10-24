@@ -11,8 +11,8 @@
  * same client. So wrapping that client fences every leg, and the engine's
  * `[N]` ordinals, fusion and provenance order are untouched:
  *
- *   [1] <fuente id="<chunkId>">
- *   …chunk text, with every <fuente / </fuente look-alike neutralised…
+ *   [1] <fuente>
+ *   …chunk text, every <fuente / </fuente look-alike and [N] neutralised…
  *   </fuente>
  *
  * 🔴 Conversation turns (questions AND answers) are DROPPED on every sources
@@ -134,13 +134,22 @@ function comparisonCopy(text: string): { copy: string; from: number[]; to: numbe
 }
 
 const TAG_IN_COPY = /<\s*(\/?)\s*fuente/g;
-/** A `[N]` at the start of a line reads like one of the engine's own ordinals. */
-const LINE_ORDINAL = /^([ \t]*)\[\s*(\d{1,4})\s*\]/gm;
+/**
+ * Any `[N]` or `[N, M]` inside the text, anywhere on a line. Same shape the
+ * engine's `parseCitedOrdinals` reads as a citation (inner spaces allowed).
+ */
+const ORDINAL_MARKER = /\[\s*(\d+(?:\s*,\s*\d+)*)\s*\]/g;
 
 /**
  * Break every fence-tag look-alike inside chunk text by replacing it with
- * `‹fuente` / `‹/fuente` (U+2039), and turn a line-leading `[N]` into `(N)`.
+ * `‹fuente` / `‹/fuente` (U+2039), and turn every `[N]` into `(N)`.
  * The words stay readable; only the tag stops being a tag.
+ *
+ * 🔴 EVERY `[N]`, not only a line-leading one. The model copies what it reads:
+ * a document's own footnote "[2]" written into an answer is parsed as a
+ * citation of prompt passage 2 (`parseCitedOrdinals`), a different document,
+ * or as a marker no source answers. The only `[N]` the model may see is the
+ * engine's own ordinal in front of each fence.
  */
 export function neutraliseFenceTags(text: string): string {
   const { copy, from, to } = comparisonCopy(text);
@@ -154,35 +163,47 @@ export function neutraliseFenceTags(text: string): string {
     last = b;
   }
   out += text.slice(last);
-  return out.replace(LINE_ORDINAL, (_m, lead: string, n: string) => `${lead}(${n})`);
-}
-
-/** Ids land inside an attribute: keep them to a safe alphabet. */
-function safeId(id: string): string {
-  return String(id).replace(/[^\w.:#-]/g, '_');
-}
-
-/** `<fuente id=…>` + neutralised text + `</fuente>`. */
-function fence(id: string, text: string): string {
-  return `<fuente id="${safeId(id)}">\n${neutraliseFenceTags(text)}\n</fuente>`;
-}
-
-/** The fenced form of one chunk's text, as the model reads it. */
-export function fenceChunkText(chunk: Pick<RetrieveMatch, 'chunkId' | 'text'>): string {
-  return fence(chunk.chunkId, chunk.text ?? '');
+  return out.replace(ORDINAL_MARKER, (_m, group: string) => `(${group.split(/\s*,\s*/).join(', ')})`);
 }
 
 /**
- * Fence what `resolveEntity` returns for an `@`-mention (an attached
- * document's text, up to `REF_BLOCK_MAX`), with the same marker. The id is
- * `<kind>:<id>`. Empty results stay empty, so the engine still drops them.
+ * 🔴 THE FENCE CARRIES NO ID AND NO NUMBER. Measured on dev 020ebec
+ * (2026-10-24): an audio document attached to the conversation (backend doc
+ * 266) rode the turn fenced as `<fuente id="document:266">`. The system rule
+ * says "cite only with [N]", and 266 was the only number on that fence, so
+ * the answer cited "[266]". No prompt passage is 266, so the marker mapped to
+ * no source and the source list was empty, sync and stream. A chunk id is the
+ * same hazard (ai-service ids are UUIDs, full of digit runs). Nothing reads
+ * the attribute: `restorePassages` keys on `chunkId` from the match itself.
+ * So the model's only numbers are the engine's dense `[1]…[k]`.
+ *
+ * Retrieved passages: `<fuente>`. Attached documents (`@`-mention, pinned,
+ * named by title): `<fuente tipo="adjunto">`, which `CHUNK_DATA_RULE`
+ * (`./prompt`) says is never cited with `[N]`.
+ */
+export const ATTACHED_FENCE_OPEN = '<fuente tipo="adjunto">';
+
+function fence(text: string, open = '<fuente>'): string {
+  return `${open}\n${neutraliseFenceTags(text)}\n</fuente>`;
+}
+
+/** The fenced form of one chunk's text, as the model reads it. */
+export function fenceChunkText(chunk: Pick<RetrieveMatch, 'text'>): string {
+  return fence(chunk.text ?? '');
+}
+
+/**
+ * Fence what `resolveEntity` returns for an `@`-mention or a pinned or
+ * title-named document (its text, up to `REF_BLOCK_MAX`) with
+ * {@link ATTACHED_FENCE_OPEN}. Empty results stay empty, so the engine still
+ * drops them.
  */
 export function withFencedRefs<A extends DomainAdapter>(adapter: A): A {
   return {
     ...adapter,
     async resolveEntity(ref: ContextRef) {
       const text = await adapter.resolveEntity(ref);
-      return typeof text === 'string' && text.trim() ? fence(`${ref.kind}:${ref.id}`, text) : text;
+      return typeof text === 'string' && text.trim() ? fence(text, ATTACHED_FENCE_OPEN) : text;
     },
   };
 }

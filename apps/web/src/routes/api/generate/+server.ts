@@ -513,9 +513,12 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // 🔴 PROMPT-INJECTION FENCE (audit 2026-10-17 §3 item 3), a partial
   // mitigation. Retrieved chunks from every leg that goes through this client
   // (published and draft legs, hybrid `retrieveMulti`, the graph provider's
-  // widened retrieve) reach the prompt as `<fuente id=…>…</fuente>`; the
-  // adapter above (`withFencedRefs`) fences `@`-mentioned documents the same way. Common tag
-  // look-alikes and line-leading `[N]` inside the text are neutralised — a
+  // widened retrieve) reach the prompt as `[N] <fuente>…</fuente>`; the
+  // adapter above (`withFencedRefs`) fences attached documents (`@`-mentioned,
+  // pinned, named by title) as `<fuente tipo="adjunto">`, with no number: a
+  // fence id once put "document:266" in front of the model, and it cited
+  // "[266]" (dev 020ebec). Common tag look-alikes and every `[N]` inside the
+  // text are neutralised — a
   // cheap fold, not a guarantee (see `neutraliseFenceTags`). The graph block
   // and the summary are NOT fenced.
   // `restorePassages` puts the original passage text back on the provenance
