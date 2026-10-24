@@ -1423,6 +1423,23 @@ describe('🔴 audit 2026-10-24: one saved answer per turn (`turnId`)', () => {
     expect(body.text).toBe('La respuesta ya guardada [1].');
   });
 
+  it('🔴 sync: a retry that arrives while the same turn is still generating waits for it, no second answer', async () => {
+    await POST(event(turn({ turnId: 'solo' })));
+    const onePass = generates().length;
+    calls = [];
+
+    const [a, b] = await Promise.all([
+      POST(event(turn({ turnId: TURN }))),
+      POST(event(turn({ turnId: TURN }))),
+    ]);
+    const [ja, jb] = (await Promise.all([a.json(), b.json()])) as Record<string, unknown>[];
+
+    expect(generates()).toHaveLength(onePass);
+    expect(saves()).toHaveLength(1);
+    expect(jb!.text).toBe(ja!.text);
+    expect(jb!.messageId).toBe(ja!.messageId);
+  });
+
   it('another turn\'s saved answer is ignored', async () => {
     world.savedMessages = [{ ...savedRow, generationMeta: { turnId: 'other' } }];
     await POST(event(turn({ turnId: TURN })));

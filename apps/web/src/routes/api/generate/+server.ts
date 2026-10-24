@@ -392,7 +392,49 @@ function streamGenerate(
   });
 }
 
-export const POST: RequestHandler = async ({ request, locals, url }) => {
+/**
+ * Sync turns being answered right now, by `<userId>:<sessionId>:<turnId>`. Each holds a
+ * copy of the answer's response, or `null` when the request failed.
+ */
+const inflightTurns = new Map<string, Promise<Response | null>>();
+
+/**
+ * 🔴 A sync retry that arrives while the SAME turn is still being answered
+ * waits for that answer instead of paying for a second one. `runTurn` resends
+ * the turn when its connection drops (dev 2026-10-24, session 180), and the
+ * first request may still be generating. The saved-answer check below cannot
+ * see an answer that is not saved yet. One web process on dev and staging, so
+ * an in-memory map covers it.
+ */
+export const POST: RequestHandler = async (event) => {
+  let key: string | null = null;
+  if (event.url.searchParams.get('stream') !== '1') {
+    const body = (await event.request.clone().json().catch(() => null)) as IncomingBody | null;
+    const turnId = turnIdOf(body?.turnId);
+    // The user too: a turn id is unguessable, but an answer is never handed across accounts.
+    if (event.locals.user && turnId) key = `${String(event.locals.user.id)}:${String(body?.sessionId)}:${turnId}`;
+  }
+  if (!key) return answerTurn(event);
+
+  const running = inflightTurns.get(key);
+  if (running) {
+    const done = await running;
+    if (done) return done.clone();
+  }
+  const own = Promise.resolve(answerTurn(event));
+  const shared = own.then(
+    (res) => (res.ok ? res.clone() : null),
+    () => null,
+  );
+  inflightTurns.set(key, shared);
+  try {
+    return await own;
+  } finally {
+    if (inflightTurns.get(key) === shared) inflightTurns.delete(key);
+  }
+};
+
+const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   if (!locals.user) throw error(401, 'Unauthorized');
   const stream = url.searchParams.get('stream') === '1';
 
