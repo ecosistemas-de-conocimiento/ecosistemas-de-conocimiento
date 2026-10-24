@@ -260,7 +260,7 @@ export function citedBrowserProvenance(
         : topRetrieved(provenance);
   let cited = all.slice(0, MAX_SOURCES);
   const seen = new Set<string>();
-  const used = usedAttachments(asAttachments(attachments), text).filter((a) => !seen.has(a.id) && !!seen.add(a.id));
+  const used = usedAttachments(asAttachments(attachments), text, all.length > 0).filter((a) => !seen.has(a.id) && !!seen.add(a.id));
   // Attachments not already shown as a cited source. Cited sources drop from
   // the end until both fit: an attachment whose cited chunk is dropped comes
   // back as a card (keeping its `[N]`, `attachmentSource`).
@@ -298,19 +298,32 @@ function asAttachments(a: TitledDoc | readonly TurnAttachment[] | null): readonl
  *     knowledge answer). The prompt tells the model to name an attachment by
  *     its title (`CHUNK_DATA_RULE`), so the title is the signal it was asked
  *     to give. An answer about other documents does not name it, so no card.
- *     Cost: an answer that uses a pinned document without naming it shows no
- *     card for it, as before this rule.
+ *     ALSO (owner ruling via the coordinator, 2026-10-24, the doc-266 demo
+ *     "El audio cuenta que…"): when the answer lists NO retrieved source (no
+ *     `[N]` maps to one, and the no-`[N]` fallback found none), every
+ *     attachment of the turn is used: the content can only have come from
+ *     them. A no-`[N]` answer that the fallback gives retrieved sources keeps
+ *     the title rule: its content may have come from those passages. ⚠ An off-topic answer that forgets both `[N]` and
+ *     the general-knowledge lead then shows the pinned cards too.
  *   · testimonios and other gated kinds are never matched by title: their
- *     label is neutral ("Testimonio"), not a name the answer can use.
+ *     label is neutral ("Testimonio"), not a name the answer can use. The
+ *     no-`[N]` case above still shows them, as "Testimonio", no draft text.
  */
-function usedAttachments(attachments: readonly TurnAttachment[], answer: string): TurnAttachment[] {
+function usedAttachments(
+  attachments: readonly TurnAttachment[],
+  answer: string,
+  listsRetrieved: boolean,
+): TurnAttachment[] {
   if (attachments.length === 0) return [];
   const { documents } = splitGeneralKnowledge(answer);
   const refused = !/\p{L}/u.test(documents) || isNoAnswer(documents) || opensWithRefusal(documents);
+  if (refused) return attachments.filter((a) => a.named);
+  // The answer lists no retrieved source (no `[N]` maps to one, and the
+  // no-`[N]` fallback found none): the content can only have come from the
+  // attachments, so every one of them is used.
+  if (!listsRetrieved) return [...attachments];
   return attachments.filter(
-    (a) =>
-      a.named ||
-      (!refused && (a.contentKind ?? 'documento') === 'documento' && namesTitle(documents, a.name)),
+    (a) => a.named || ((a.contentKind ?? 'documento') === 'documento' && namesTitle(documents, a.name)),
   );
 }
 

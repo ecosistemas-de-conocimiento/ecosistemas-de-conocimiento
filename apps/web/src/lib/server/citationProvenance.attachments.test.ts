@@ -66,6 +66,26 @@ describe('citedBrowserProvenance — an attachment the answer uses gets a card',
     expect(chatCitationHref(citationsWithOrdinals(out)[0]!)).toBeNull();
   });
 
+  it('🔴 no retrieved source listed: every attachment is used, named or not (doc-266 demo)', () => {
+    const answer = 'El audio cuenta que la milpa se siembra en mayo.';
+    const t = pinned({ id: '50', name: 'Testimonio', contentKind: 'testimonio' });
+    expect(rows(citedBrowserProvenance({ chunks: [] } as never, answer, [pinned(), t], 'E'))).toEqual([
+      [1, '266'],
+      [2, '50'],
+    ]);
+    // Variant A, markers that map to nothing: no retrieved source, so the same.
+    expect(rows(citedBrowserProvenance(three as never, `${answer} [9]`, [pinned()], 'A'))).toEqual([[4, '266']]);
+  });
+
+  it('no [N] but the fallback lists retrieved passages: the title rule decides', () => {
+    const answer = 'El audio cuenta que la milpa se siembra en mayo.';
+    expect(rows(citedBrowserProvenance(three as never, answer, [pinned()], 'E'))).toEqual([
+      [1, '1'],
+      [2, '2'],
+      [3, '3'],
+    ]);
+  });
+
   it('the file name with its extension counts too, any case and accents', () => {
     const answer = 'El archivo NOTA DE VOZ.WEBM dice que la milpa se siembra en mayo.';
     expect(rows(citedBrowserProvenance(null, answer, [pinned()], 'E'))).toEqual([[1, '266']]);
@@ -141,8 +161,8 @@ describe('citedBrowserProvenance — an attachment the answer uses gets a card',
   it('a short or one-word title never matches prose ("Acta", a testimonio label)', () => {
     const acta = pinned({ name: 'Acta.pdf' });
     const testimonio = pinned({ name: 'Testimonio', contentKind: 'testimonio' });
-    const answer = 'El acta dice que el testimonio de la comunidad fue leído.';
-    expect(citedBrowserProvenance(null, answer, [acta, testimonio], 'E')).toBeNull();
+    const answer = 'El acta dice que el testimonio de la comunidad fue leído [1].';
+    expect(rows(citedBrowserProvenance(three as never, answer, [acta, testimonio], 'E'))).toEqual([[1, '1']]);
   });
 
   it('🔴 a testimonio attachment: no draft passage, titled "Testimonio", no name, no excerpt', () => {

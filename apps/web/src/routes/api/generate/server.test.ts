@@ -882,6 +882,9 @@ describe('POST /api/generate — only cited sources are kept', () => {
   it('stream: no citation and nothing retrieved, no sources', async () => {
     world.streamText = 'Respuesta sin citas.';
     world.retrievePool = [];
+    // Unpinned: a pinned document WOULD get a card here (no retrieved source,
+    // so the content came from the attachments; owner ruling 2026-10-24).
+    world.sessionDocs = [{ ...world.sessionDocs[0]!, isPinned: false }];
     const frames = await readSse(await POST(event(turn(), true)));
     expect(frames.find((f) => f.type === 'done')!.provenance).toBeNull();
   });
@@ -1138,6 +1141,7 @@ describe('POST /api/generate — a title match retrieves only that document', ()
   });
 
   it('🔴 the filtered retrieve finds nothing: a document-level source, no passage', async () => {
+    world.sessionDocs = []; // a pinned upload would add its own card (no retrieved source listed)
     world.retrievePool = [chunk('79', 'Otro documento.pdf', 'TEXTO DEL OTRO DOCUMENTO.', 0.95)];
     world.answerText = 'El diagnóstico describe la salud comunitaria.';
     const res = await POST(event(ask(NAMED)));
@@ -1179,6 +1183,7 @@ describe('POST /api/generate — a title match retrieves only that document', ()
     });
 
     it('with no published chunk: "Testimonio", no passage, never the name', async () => {
+      world.sessionDocs = []; // a pinned upload would add its own card (no retrieved source listed)
       world.retrievePool = [testimonioChunk('draft', 'ORIGINAL: me llamo Juana Pérez')];
       const res = await POST(event(ask(TESTIMONIO)));
       const body = (await res.json()) as { provenance: { chunks: Array<Record<string, unknown>> } };
@@ -1628,6 +1633,21 @@ describe('POST /api/generate — an attachment the answer uses gets a card', () 
       expect(reloaded.provenance).toEqual(provenance);
     });
 
+    // 🔴 The doc-266 demo shape: an audio upload pinned in the conversation,
+    // nothing retrieved, and an answer with no marker and no title.
+    it(`🔴 ${path}: doc 266 — "El audio cuenta que…", no marker, no title: a card; saved, same on reload`, async () => {
+      const provenance = await ask('El audio cuenta que la milpa se siembra en mayo, cuando llegan las lluvias.', stream);
+      expect(rows(provenance)).toEqual([[1, AUDIO_ID]]);
+      expect(provenance!.chunks[0]!.metadata).toMatchObject({ title: 'nota de voz.webm', edcIsDraft: true });
+      expect(savedProvenance()).toEqual(provenance);
+      const reloaded = toBrowserMessage({
+        id: 99,
+        role: 'assistant',
+        provenance: JSON.parse(JSON.stringify(savedProvenance())),
+      });
+      expect(reloaded.provenance).toEqual(provenance);
+    });
+
     it(`🔴 ${path}: a refusal or an all-general-knowledge answer gets no card`, async () => {
       expect(await ask(`${NO_ANSWER_REPLY} La nota de voz no trata eso.`, stream)).toBeNull();
       expect(await ask('Fuera de los documentos: París es la capital de Francia.', stream)).toBeNull();
@@ -1660,7 +1680,7 @@ describe('POST /api/generate — an attachment the answer uses gets a card', () 
     expect(rows(provenance).map((r) => r[1])).toEqual([AUDIO_ID]);
   });
 
-  it('a pinned upload the answer does not name gets no card', async () => {
+  it('🔴 an answer citing retrieved [1] that does not name the pinned upload: no pinned card', async () => {
     world.retrievePool = [pubChunk];
     expect(rows(await ask('Hubo tres brotes [1].', false))).toEqual([[1, '31']]);
   });
