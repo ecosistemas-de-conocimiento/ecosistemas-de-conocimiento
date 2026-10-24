@@ -285,6 +285,21 @@ function namesAPerson(words: readonly string[]): boolean {
   return false
 }
 
+/**
+ * One word that is a common given name, a surname or an "-ez" patronymic, and
+ * not a state. Used by `lib/testimonioTitle.ts` to refuse a name in a title.
+ */
+export function isPersonNameWord(word: string): boolean {
+  const w = word.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '')
+  if (w === '') return false
+  return namesAPerson([w])
+}
+
+/** True when the words are a state name ("Morelos", "Nuevo León"), any case or accents. */
+export function isStateName(text: string): boolean {
+  return STATE.has(text.trim().split(/\s+/u).map(lower).join(' '))
+}
+
 /** The 32 Mexican states (and the capital), lower case: what a comma may introduce. */
 const STATES = [
   'aguascalientes', 'baja california', 'baja california sur', 'campeche', 'chiapas',

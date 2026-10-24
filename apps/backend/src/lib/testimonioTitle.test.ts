@@ -6,6 +6,7 @@ import {
   buildTitlePrompt,
   cleanTitle,
   generateTestimonioTitle,
+  payloadTitleStore,
   refreshTestimonioTitle,
   scheduleTestimonioTitle,
   type TitleGenerator,
@@ -71,7 +72,8 @@ describe('cleanTitle', () => {
   })
 
   it('🔴 refuses a capitalised word the redacted source does not contain (an invented or redacted name)', () => {
-    const source = 'En Cuautla la escuela no tiene intérprete. [Persona A] fue a la dirección.'
+    // ⚠ "Vivo en": the town must stand in a town context by the gate's own rule.
+    const source = 'Vivo en Cuautla y la escuela no tiene intérprete. [Persona A] fue a la dirección.'
     expect(cleanTitle('La escuela de Cuautla no tiene intérprete', source)).toBe(
       'La escuela de Cuautla no tiene intérprete',
     )
@@ -90,6 +92,37 @@ describe('cleanTitle', () => {
     expect(cleanTitle('Ir al centro de salud por el dengue', source, ['Ofelia Ramos'])).toBe(
       'Ir al centro de salud por el dengue',
     )
+  })
+
+  it('🔴 refuses ANY ≥3-letter token of a forbidden span, case- and accent-blind, first word too', () => {
+    const source = 'Fui con Ofelia Ramírez al centro de salud por el dengue.'
+    const forbidden = ['Ofelia Ramírez']
+    expect(cleanTitle('Ofelia va al centro de salud por el dengue', source, forbidden)).toBeNull()
+    expect(cleanTitle('El dengue y la familia ramirez en el centro', source, forbidden)).toBeNull()
+    expect(cleanTitle('Ir al centro de salud por el dengue', source, forbidden)).toBe('Ir al centro de salud por el dengue')
+  })
+
+  it('🔴 refuses placeholder words without brackets (Persona A, Domicilio B, Dato omitido)', () => {
+    const source = '[Persona A] fue a la escuela de [Domicilio B]. [Dato omitido] llamó.'
+    expect(cleanTitle('Persona A pide intérprete en la escuela', source)).toBeNull()
+    expect(cleanTitle('La escuela cerca de domicilio B sin intérprete', source)).toBeNull()
+    expect(cleanTitle('Un dato omitido sobre la escuela del barrio', source)).toBeNull()
+    expect(cleanTitle('Una persona mayor pide ayuda en la escuela', 'Una persona mayor pide ayuda en la escuela.')).toBe(
+      'Una persona mayor pide ayuda en la escuela',
+    )
+  })
+
+  it('🔴 refuses a first word that is a person name, even when the source carries it', () => {
+    const source = 'Juana cuenta que la escuela no tenía intérprete. juana lloró.'
+    expect(cleanTitle('Juana pide intérprete para la escuela', source)).toBeNull()
+  })
+
+  it('🔴 a capitalised word the source has is kept only when it is a town, state or language', () => {
+    const source = 'Le dije a Ofelia que vivo en Xoxocotla, Morelos y hablo Náhuatl.'
+    expect(cleanTitle('Hablar Náhuatl en la escuela de Xoxocotla', source)).toBe('Hablar Náhuatl en la escuela de Xoxocotla')
+    expect(cleanTitle('La vida en Morelos sin intérprete de señas', source)).toBe('La vida en Morelos sin intérprete de señas')
+    // In the source, capitalised, not a town: a name the gate missed.
+    expect(cleanTitle('La escuela de Ofelia sin intérprete', source)).toBeNull()
   })
 
   it('refuses too short, too long, or empty answers', () => {
@@ -192,6 +225,22 @@ describe('refreshTestimonioTitle', () => {
     const { store } = fakeStore([], 0)
     const out = await refreshTestimonioTitle({ docId: 7, organizationId: 1, redactedText: REDACTED, client, store })
     expect(out.status).toBe('stale')
+  })
+})
+
+describe('payloadTitleStore.otherTitles', () => {
+  it('🔴 lists only PUBLISHED, cleared (ready/approved) testimonio titles of the same ecosistema', async () => {
+    const find = vi.fn(async (_args: Record<string, unknown>) => ({ docs: [{ testimonioTitle: 'Uno' }] }))
+    const store = payloadTitleStore({ find, db: { drizzle: { execute: vi.fn() } } })
+    expect(await store.otherTitles(3, 9)).toEqual(['Uno'])
+    const and = (find.mock.calls[0]![0] as { where: { and: unknown[] } }).where.and
+    expect(and).toEqual(
+      expect.arrayContaining([
+        { organization: { equals: 3 } },
+        { anonymisationStatus: { in: ['ready', 'approved'] } },
+        { publicationStatus: { equals: 'published' } },
+      ]),
+    )
   })
 })
 
