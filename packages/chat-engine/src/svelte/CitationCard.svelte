@@ -288,9 +288,13 @@
 
   .citation-cards {
     display: grid;
+    /* A grid track defaults to min-content: one unbroken filename or URL
+       would size the whole column past the chat bubble. */
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.5rem;
   }
   .citation-card {
+    min-width: 0;
     margin-top: 0.6rem;
     border: 1px solid var(--edc-color-brand-outline, var(--edc-color-line));
     border-left: 3px solid var(--edc-color-brand, currentColor);
@@ -298,8 +302,11 @@
     background: var(--edc-color-brand-soft, transparent);
     padding: 0.55rem 0.75rem;
   }
+  /* `wrap`: a long title takes the row and "Abrir documento" drops below,
+     instead of squeezing the title into a one-word column at 390 px. */
   .citation-card-head {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     gap: 0.5rem;
     font-size: 0.85rem;
@@ -310,13 +317,12 @@
     color: var(--edc-color-brand-strong, currentColor);
     flex: 0 0 auto;
   }
+  /* Titles wrap, never clip: uploaded filenames have no spaces. */
   .citation-card-title {
     font-weight: 600;
-    flex: 1 1 auto;
+    flex: 1 1 10rem; /* basis, not `auto`: keeps [N] beside the title */
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
   .citation-card-open,
   .citation-source-open {
@@ -337,9 +343,11 @@
     color: var(--edc-color-ink-body, var(--edc-color-ink));
     font-style: italic;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   .citation-sources {
+    min-width: 0;
     margin-top: 0.65rem;
     border-top: 1px solid var(--edc-color-line);
     padding-top: 0.5rem;
@@ -368,9 +376,11 @@
     padding-left: 1.2rem;
     font-size: 0.85rem;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.2rem;
   }
   .citation-source {
+    min-width: 0;
     display: flex;
     gap: 0.5rem;
     align-items: baseline;
@@ -401,8 +411,6 @@
   .citation-source-title {
     flex: 1 1 auto;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
 </style>
