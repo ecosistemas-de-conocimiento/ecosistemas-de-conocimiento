@@ -87,6 +87,41 @@ export interface TitledDoc {
   contentKind?: 'documento' | 'testimonio';
 }
 
+/**
+ * A document that rode THIS turn's prompt as an attachment (`<fuente
+ * tipo="adjunto">`, no number): an `@`-mention, the title-named document, or
+ * a pinned document of the conversation (`routes/api/generate/pinned.ts`,
+ * `turnAttachments`). `citedBrowserProvenance` gives it a source card when
+ * the answer uses it (owner ruling 2026-10-24).
+ *
+ * `name` is already browser-safe: a session row's name went through
+ * `libraryTitleFor`, a published title is one the backend let the caller read.
+ */
+export interface TurnAttachment extends TitledDoc {
+  /**
+   * The person named it this turn: an `@`-mention, the title match, or a
+   * pinned document whose title the message names. Listed whatever the
+   * answer says, as the title match always was (owner rule 2026-10-21).
+   */
+  named: boolean;
+  /** The row's `publicationStatus`. Only `published` gets a library link. */
+  publication: string | null;
+}
+
+/**
+ * The text names this title: the folded title (extension stripped, or the
+ * whole file name) appears as whole words, and it has at least
+ * {@link MIN_TITLE_WORDS} words. Fewer words never match ("Acta" in prose).
+ * Looser than {@link matchDocumentTitle} (no character floor): "nota de
+ * voz.webm" is 11 characters, and only the turn's own attachments are tested.
+ */
+export function namesTitle(text: string, name: string): boolean {
+  const hay = ` ${foldTitle(text ?? '')} `;
+  return [foldDocName(name ?? ''), foldTitle(name ?? '')].some(
+    (t) => t !== '' && t.split(' ').length >= MIN_TITLE_WORDS && hay.includes(` ${t} `),
+  );
+}
+
 /** The gate verdicts that let gated text be shared (backend `corpusTextFor`). */
 export const GATE_CLEARED = ['ready', 'approved'] as const;
 

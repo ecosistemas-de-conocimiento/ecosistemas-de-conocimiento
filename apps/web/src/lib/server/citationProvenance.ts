@@ -39,7 +39,7 @@
 import { citedProvenance, parseCitedOrdinals, type Provenance } from '@edc/chat-engine/core';
 import { isConversationTurnChunk } from '$lib/turnChunks';
 import { DRAFT_PROVENANCE_FLAG } from '$lib/publication';
-import type { TitledDoc } from '$lib/server/titleMatch';
+import { namesTitle, type TitledDoc, type TurnAttachment } from '$lib/server/titleMatch';
 import { excerptFrom, parseSkipIntro } from '$lib/biblioteca';
 import { env } from '$env/dynamic/private';
 import {
@@ -86,7 +86,7 @@ type Chunk = Provenance['chunks'][number];
  * `published` chunk is cut from the gate's redacted text (backend
  * `corpusTextFor`). So the excerpt adds no new data and needs no extra read.
  * Only `published` chunks: a draft-corpus copy may not be redacted (see
- * {@link titleMatchSource}). Recomputed on every pass, so a stored value is
+ * {@link attachmentSource}). Recomputed on every pass, so a stored value is
  * never trusted, and a persisted turn gets one on read.
  *
  * 🔴 ONLY ON A KNOWN KIND (`kind === 'testimonio'`), never on the title: a
@@ -174,7 +174,7 @@ export function toBrowserProvenance(provenance: unknown): Provenance | null {
  * ref, which carries no `[N]`. The model can answer from it alone and cite
  * nothing: measured on dev (doc 71), an answer about the document with no
  * source list. So when no cited source is that document, it is added once
- * ({@link titleMatchSource}). Every other uncited chunk is still dropped.
+ * ({@link attachmentSource}). Every other uncited chunk is still dropped.
  *
  * 🔴 AN ANSWER WITH NO `[N]` AT ALL LISTS THE TOP RETRIEVED SOURCES (owner's
  * overnight rule, 2026-10-21). Measured on dev: a broad question ("dengue", 3
@@ -220,16 +220,36 @@ export function toBrowserProvenance(provenance: unknown): Provenance | null {
  * the rules above unchanged. `variant` defaults to the env value, read per
  * call like the system prompt (`chatCiteVariant` in `./engine/config`).
  *
+ * 🔴 A DOCUMENT ATTACHED TO THE TURN GETS A CARD WHEN THE ANSWER USES IT
+ * (owner ruling 2026-10-24). Attachments (`@`-mentions, the title match,
+ * pinned documents; {@link TurnAttachment}) ride the prompt with no number
+ * since 1284a13, so the answer cannot cite them. {@link usedAttachments}
+ * decides "uses"; the title match above is one case of it. Then:
+ *   · cited retrieved sources first, each keeping its prompt ordinal (the
+ *     `[N]` mapping is unchanged), the attachment cards after them, numbered
+ *     past every prompt chunk, so the dense display lists them last;
+ *   · an attachment whose document is already a cited source shows once, as
+ *     that cited source;
+ *   · "every marker matches nothing → no sources" still holds for RETRIEVED
+ *     sources; an attachment card does not depend on markers, so it shows;
+ *   · attachment cards reserve their slots within {@link MAX_SOURCES}, but a
+ *     cited answer always keeps its first cited source.
+ * The cards are part of the returned provenance, which is what the route
+ * saves, so a reload shows the same cards.
+ *
+ * `attachments` also takes a single {@link TitledDoc}: the title match, as
+ * callers passed it before attachments existed.
+ *
  * ⚠ Run it on the full answer text, never on a partial stream.
  */
 export function citedBrowserProvenance(
   provenance: Provenance | null | undefined,
   answer: string,
-  titleMatch: TitledDoc | null = null,
+  attachments: TitledDoc | readonly TurnAttachment[] | null = null,
   variant: CiteVariant = parseCiteVariant(env.CHAT_CITE_VARIANT),
 ): Provenance | null {
   const text = answer ?? '';
-  let cited: Array<Chunk & { ordinal?: number }> = answersFromGeneralKnowledge(variant)
+  const all: Array<Chunk & { ordinal?: number }> = answersFromGeneralKnowledge(variant)
     ? generalKnowledgeSources(provenance, text)
     : parseCitedOrdinals(text).length > 0
       ? isNoAnswer(text)
@@ -238,13 +258,60 @@ export function citedBrowserProvenance(
       : hasRefusalCue(text)
         ? []
         : topRetrieved(provenance);
-  cited = cited.slice(0, MAX_SOURCES);
-  if (titleMatch && !cited.some((c) => chunkDocId(c) === titleMatch.id)) {
-    cited = cited.slice(0, MAX_SOURCES - 1);
-    cited.push(titleMatchSource(provenance, titleMatch));
-  }
-  const out = toBrowserProvenance({ chunks: cited });
+  let cited = all.slice(0, MAX_SOURCES);
+  const seen = new Set<string>();
+  const used = usedAttachments(asAttachments(attachments), text).filter((a) => !seen.has(a.id) && !!seen.add(a.id));
+  // Attachments not already shown as a cited source. Cited sources drop from
+  // the end until both fit: an attachment whose cited chunk is dropped comes
+  // back as a card (keeping its `[N]`, `attachmentSource`).
+  const notCited = () => {
+    const docs = new Set(cited.map(chunkDocId));
+    return used.filter((a) => !docs.has(a.id));
+  };
+  while (cited.length > 1 && cited.length + notCited().length > MAX_SOURCES) cited = cited.slice(0, -1);
+  const extra = notCited().slice(0, MAX_SOURCES - cited.length);
+  const past = provenance?.chunks?.length ?? 0;
+  const cards = extra.map((a, i) => attachmentSource(provenance, all, a, past + 1 + i));
+  const out = toBrowserProvenance({ chunks: [...cited, ...cards] });
   return out && out.chunks.length > 0 ? out : null;
+}
+
+function asAttachments(a: TitledDoc | readonly TurnAttachment[] | null): readonly TurnAttachment[] {
+  if (!a) return [];
+  if (Array.isArray(a)) return a;
+  // The title match: named by the person, and published (`fetchPublishedTitles`).
+  return [{ ...(a as TitledDoc), named: true, publication: 'published' }];
+}
+
+/**
+ * 🔴 WHICH ATTACHMENTS THE ANSWER USES (owner ruling 2026-10-24). Designed
+ * with its guard (lesson: "every fallback needs a no-answer guard"):
+ *
+ *   · `named` (an `@`-mention, the title match, a pinned document the message
+ *     names): always. The person asked for it this turn; the title match
+ *     already showed under a refusal (owner rule 2026-10-21).
+ *   · any other attachment (a pinned document: it rides EVERY turn of the
+ *     conversation): only when the answer names its title ({@link namesTitle})
+ *     in its document part (before {@link GENERAL_KNOWLEDGE_LEAD}), and that
+ *     part is not a no-answer ({@link isNoAnswer}), does not open with a
+ *     refusal ({@link opensWithRefusal}), and is not empty (an all-general-
+ *     knowledge answer). The prompt tells the model to name an attachment by
+ *     its title (`CHUNK_DATA_RULE`), so the title is the signal it was asked
+ *     to give. An answer about other documents does not name it, so no card.
+ *     Cost: an answer that uses a pinned document without naming it shows no
+ *     card for it, as before this rule.
+ *   · testimonios and other gated kinds are never matched by title: their
+ *     label is neutral ("Testimonio"), not a name the answer can use.
+ */
+function usedAttachments(attachments: readonly TurnAttachment[], answer: string): TurnAttachment[] {
+  if (attachments.length === 0) return [];
+  const { documents } = splitGeneralKnowledge(answer);
+  const refused = !/\p{L}/u.test(documents) || isNoAnswer(documents) || opensWithRefusal(documents);
+  return attachments.filter(
+    (a) =>
+      a.named ||
+      (!refused && (a.contentKind ?? 'documento') === 'documento' && namesTitle(documents, a.name)),
+  );
 }
 
 /** The most sources one answer shows, title-matched document included. */
@@ -449,7 +516,7 @@ function rerankTier(c: Chunk): number {
  * Skipped before ranking, so they never take a slot: conversation turns, a
  * chunk the reranker scored below {@link fallbackMinRerank}, and
  * 🔴 a testimonio chunk that is not from the `published` corpus (only that
- * corpus holds the gate's redacted text, see {@link titleMatchSource}). A
+ * corpus holds the gate's redacted text, see {@link attachmentSource}). A
  * kept testimonio chunk is titled "Testimonio", whatever its metadata says.
  */
 function topRetrieved(provenance: Provenance | null | undefined): Array<Chunk & { ordinal: number }> {
@@ -490,42 +557,51 @@ function chunkDocId(c: { metadata?: Record<string, unknown> | null }): string | 
 }
 
 /**
- * The source entry for a title-matched document the answer did not cite.
+ * The source entry for an attachment the answer uses ({@link usedAttachments}).
  *
- *   · Its best-ranked retrieved chunk, with its own prompt ordinal. The answer
- *     has no `[N]` for it, so no marker in the text points anywhere else.
+ *   · A chunk of it that the answer CITED (past the {@link MAX_SOURCES} cap):
+ *     that chunk, with its prompt ordinal, so its `[N]` still opens it.
+ *   · Else its best-ranked retrieved chunk, renumbered to `ordinal` (past
+ *     every prompt chunk): the answer has no `[N]` for it, and the dense
+ *     display then lists it after every cited source.
  *   · Otherwise a document-level entry: no passage, `docId` for the "open the
- *     source" link, and an ordinal past every prompt chunk, so it collides with
- *     none.
+ *     source" link (only when `published`, `chatCitationHref`), the draft label
+ *     on the caller's own draft.
  *
  * 🔴 TESTIMONIO: only a `published` chunk. The published corpus holds the
  * gate's redacted text (backend `corpusTextFor`); a draft-corpus copy may not.
  * The document-level entry carries no text at all, and the neutral title
  * "Testimonio", never the name (`titleFor`, apps/backend `lib/contentKind.ts`).
  */
-function titleMatchSource(
+function attachmentSource(
   provenance: Provenance | null | undefined,
-  match: TitledDoc,
+  cited: ReadonlyArray<Chunk & { ordinal?: number }>,
+  doc: TurnAttachment,
+  ordinal: number,
 ): Chunk & { ordinal: number } {
-  const chunks = provenance?.chunks ?? [];
-  const testimonio = match.contentKind === 'testimonio';
-  const own = chunks
-    .map((c, i) => ({ c, ordinal: i + 1 }))
-    .filter(({ c }) => chunkDocId(c) === match.id && !isConversationTurnChunk(c.metadata));
-  const published = own.find(({ c }) => c.metadata?.publication === 'published');
-  const pick = published ?? (testimonio ? undefined : own[0]);
-  if (pick) return { ...pick.c, ordinal: pick.ordinal };
+  const testimonio = doc.contentKind === 'testimonio';
+  const usable = (c: Chunk) =>
+    chunkDocId(c) === doc.id &&
+    !isConversationTurnChunk(c.metadata) &&
+    (!testimonio || c.metadata?.publication === 'published');
+  const wasCited = cited.find((c) => usable(c) && isOrdinal(c.ordinal));
+  if (wasCited) return { ...wasCited, ordinal: wasCited.ordinal! };
+  const own = (provenance?.chunks ?? []).filter((c) => c && typeof c === 'object' && usable(c));
+  const pick = own.find((c) => c.metadata?.publication === 'published') ?? own[0];
+  if (pick) return { ...pick, ordinal };
+  const publication = doc.publication ?? 'published';
   return {
-    chunkId: `document:${match.id}`,
+    chunkId: `document:${doc.id}`,
     documentId: '',
     score: 0,
     corpus: '',
     metadata: {
-      docId: match.id,
-      title: testimonio ? 'Testimonio' : match.name,
-      publication: 'published',
+      docId: doc.id,
+      title: testimonio ? 'Testimonio' : doc.name,
+      publication,
+      ...(publication === 'draft' ? { [DRAFT_PROVENANCE_FLAG]: true } : {}),
     },
-    ordinal: chunks.length + 1,
+    ordinal,
   };
 }
 
