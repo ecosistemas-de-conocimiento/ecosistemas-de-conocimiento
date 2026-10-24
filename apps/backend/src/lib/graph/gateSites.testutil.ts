@@ -17,14 +17,15 @@ export type GraphTable = 'graph_mentions' | 'graph_relations'
 
 /**
  * The no-private-persona filter on a mention read, any aliases (owner,
- * 2026-10-24: no private individuals in the graph). Until a public-figure mark
- * exists, NO persona passes — fail-closed.
+ * 2026-10-24: no private individuals in the graph). A persona passes only when
+ * the row is marked public AND the mention comes from a `documento`.
  */
-export const MENTION_GATE = / AND \w+\.type <> 'persona'(?! OR\b)/
+export const MENTION_GATE =
+  /\((\w+)\.type <> 'persona' OR \(\w+\.content_kind = 'documento' AND \1\.public_figure\)\)/
 
 /** The no-private-persona filter on a relation read, both ends. */
 export const RELATION_GATE =
-  /JOIN LATERAL \( SELECT 1 AS ok WHERE NOT EXISTS \(SELECT 1 FROM graph_entities pe WHERE pe\.id IN \(r\.from_entity_id, r\.to_entity_id\) AND pe\.type = 'persona'\) \) g5 ON TRUE/
+  /JOIN LATERAL \( SELECT 1 AS ok WHERE NOT EXISTS \(SELECT 1 FROM graph_entities pe WHERE pe\.id IN \(r\.from_entity_id, r\.to_entity_id\) AND pe\.type = 'persona' AND NOT \(d\.content_kind = 'documento' AND pe\.public_figure\)\) \) g5 ON TRUE/
 
 /** Index of the paren that closes the group opened at `open`, or -1. */
 function closing(text: string, open: number): number {

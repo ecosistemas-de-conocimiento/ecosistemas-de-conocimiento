@@ -72,6 +72,7 @@ import {
   isGraphEntityType,
   isGraphRelationType,
   personaAllowed,
+  publicPersonaKept,
   snippetAllowed,
   type GraphEntityType,
   type GraphExtraction,
@@ -180,6 +181,8 @@ interface RawEntity {
   etiqueta: string
   menciones: number
   fragmento: string | null
+  /** The model's `figura_publica`, true only when it said literally `true`. */
+  figuraPublica?: boolean
 }
 
 interface RawRelation {
@@ -233,6 +236,8 @@ export function parseWindowResponse(parsed: unknown): ParsedWindow | null {
       etiqueta,
       menciones: Number.isFinite(menciones) && menciones >= 1 ? Math.floor(menciones) : 1,
       fragmento,
+      // 🔴 Fail-closed: anything but a literal `true` is "not public".
+      figuraPublica: row.figura_publica === true,
     })
   }
 
@@ -298,8 +303,14 @@ export function dropForbiddenPersonas(
   window: ParsedWindow,
   contentKind: string | null | undefined,
 ): ParsedWindow {
-  if (personaAllowed(contentKind)) return window
-  return dropEntitiesWhere(window, (e) => e.tipo === 'persona')
+  // 🔴 Owner, 2026-10-24: no private individuals in the graph. A `documento`
+  // keeps only the personas the model marked `figura_publica: true`; the mark
+  // is judged per window, so one window marking her public is enough for that
+  // window's mention to survive.
+  return dropEntitiesWhere(
+    window,
+    (e) => e.tipo === 'persona' && !publicPersonaKept(contentKind, e.figuraPublica),
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -833,6 +844,7 @@ export function mergeWindows(
           // ⚠ Held, not yet stored. `writer.ts` drops it unless the document is
           // a `documento` (ADR §7.3.4).
           snippet: snippetAllowed(contentKind) ? raw.fragmento : null,
+          publicFigure: raw.tipo === 'persona' && publicPersonaKept(contentKind, raw.figuraPublica),
         }
         byKey.set(id, entity)
         // First type wins for an ambiguous canonical key; see below.

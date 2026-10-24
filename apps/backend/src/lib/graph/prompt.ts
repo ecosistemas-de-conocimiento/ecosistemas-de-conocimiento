@@ -103,7 +103,7 @@ import {
  * Only this stamp can find the rows any of that leaves stale.
  * `lib/graph/backfill.ts` selects on `graphPromptVersion != GRAPH_PROMPT_VERSION`.
  */
-export const GRAPH_PROMPT_VERSION = 'v4'
+export const GRAPH_PROMPT_VERSION = 'v5'
 
 /**
  * The registry unit-type. A project takes ownership of extraction by
@@ -191,6 +191,13 @@ export function graphResponseSchema(allowPersona: boolean): Record<string, unkno
              * entity is there, for an ordinary document either.
              */
             fragmento: { type: 'string', maxLength: GRAPH_FRAGMENT_MAX_CHARS },
+            /**
+             * 🔴 THE PUBLIC-FIGURE MARK (owner, 2026-10-24: no private
+             * individuals in the graph). Asked only where `persona` exists.
+             * Optional on purpose: a missing mark reads as "not public" and the
+             * persona is dropped (`extract.ts` `dropForbiddenPersonas`).
+             */
+            ...(allowPersona ? { figura_publica: { type: 'boolean' } } : {}),
           },
         },
       },
@@ -224,9 +231,13 @@ export function graphResponseSchema(allowPersona: boolean): Record<string, unkno
  * trusted — see the post-filter.
  */
 const PERSONA_RULE_ALLOWED = [
-  '8. Extrae `persona` SOLO cuando el texto nombra explícitamente a alguien y esa',
-  '   persona es relevante para el contenido (una autoridad, una figura pública,',
-  '   una firmante). No inventes nombres ni deduzcas identidades.',
+  '8. Extrae `persona` SOLO para FIGURAS PÚBLICAS que el texto nombra',
+  '   explícitamente: una funcionaria o autoridad, quien representa con su cargo',
+  '   a una institución pública, o una figura histórica o pública conocida.',
+  '   NUNCA extraigas a un particular (vecina, participante, familiar, alguien',
+  '   que sólo da su testimonio): no lo pongas en `entidades` ni lo relaciones.',
+  '   En cada `persona` pon `figura_publica: true` si es una figura pública y',
+  '   `figura_publica: false` si dudas. No inventes nombres ni deduzcas identidades.',
 ].join('\n')
 
 const PERSONA_RULE_FORBIDDEN = [

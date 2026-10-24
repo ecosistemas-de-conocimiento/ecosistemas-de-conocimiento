@@ -351,6 +351,7 @@ describe('writeGraphForDocument', () => {
       type: 'persona',
       label: 'Ernesto Ramírez',
       canonicalKey: 'ernesto ramirez',
+      publicFigure: true,
     })
     const tema = entity()
 
@@ -384,7 +385,7 @@ describe('writeGraphForDocument', () => {
       expect(created.filter((c) => c.collection === 'graphRelations')).toHaveLength(0)
     })
 
-    it('keeps the persona for a real `documento`', async () => {
+    it('keeps a public persona for a real `documento`, and stores the mark', async () => {
       const { payload, created } = fakePayload()
       await writeGraphForDocument({
         payload,
@@ -393,7 +394,42 @@ describe('writeGraphForDocument', () => {
         contentKind: 'documento',
         extraction: extraction([persona, tema]),
       })
-      expect(JSON.stringify(created)).toContain('Ernesto')
+      const rows = created.filter((c) => c.collection === 'graphEntities').map((c) => c.data)
+      expect(rows.map((r) => [r.label, r.publicFigure])).toEqual([
+        ['Ernesto Ramírez', true],
+        [tema.label, false],
+      ])
+    })
+
+    it('🔴 stores nothing for a persona not marked public, even from a `documento`', async () => {
+      for (const publicFigure of [false, undefined]) {
+        const { payload, created } = fakePayload()
+        const result = await writeGraphForDocument({
+          payload,
+          docId: 1,
+          organizationId: 1,
+          contentKind: 'documento',
+          extraction: extraction([{ ...persona, publicFigure }, tema], [
+            { fromKey: persona.canonicalKey, toKey: tema.canonicalKey, type: 'afecta_a' },
+          ]),
+        })
+        expect(JSON.stringify(created)).not.toContain('Ernesto')
+        expect(result.relationsDropped).toBe(1)
+      }
+    })
+
+    it('marks an existing persona row public when a documento names her as public', async () => {
+      const { payload, updated } = fakePayload({ 'persona::ernesto ramirez': 7 })
+      await writeGraphForDocument({
+        payload,
+        docId: 1,
+        organizationId: 1,
+        contentKind: 'documento',
+        extraction: extraction([persona]),
+      })
+      expect(updated).toContainEqual(
+        expect.objectContaining({ collection: 'graphEntities', id: 7, data: expect.objectContaining({ publicFigure: true }) }),
+      )
     })
 
     it('⚠ fails closed on an unknown content kind', async () => {

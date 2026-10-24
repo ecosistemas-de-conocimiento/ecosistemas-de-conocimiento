@@ -36,7 +36,7 @@
 import { canonicalKey, mergeAliases } from './normalise'
 import {
   SYMMETRIC_RELATION_TYPES,
-  personaAllowed,
+  publicPersonaKept,
   snippetAllowed,
   type GraphEntityType,
   type GraphExtraction,
@@ -85,6 +85,7 @@ interface EntityRow {
   id: number | string
   label?: unknown
   aliases?: unknown
+  publicFigure?: unknown
 }
 
 // ---------------------------------------------------------------------------
@@ -144,9 +145,12 @@ export async function writeGraphForDocument(args: WriteGraphArgs): Promise<Write
   // caught by the snippet rule. Cheap, and it makes "no path into these tables
   // can write a person for a testimony" literally true rather than true of the
   // paths that exist today.
-  const entities = personaAllowed(contentKind)
-    ? extraction.entities
-    : extraction.entities.filter((e) => e.type !== 'persona')
+  //
+  // 🔴 And since 2026-10-24 (owner: no private individuals in the graph), a
+  // persona needs the public-figure mark too, whatever the content kind.
+  const entities = extraction.entities.filter(
+    (e) => e.type !== 'persona' || publicPersonaKept(contentKind, e.publicFigure),
+  )
 
   // 1. Upsert entities. Not transactional — see the note above.
   //
@@ -171,6 +175,7 @@ export async function writeGraphForDocument(args: WriteGraphArgs): Promise<Write
       canonicalKey: key,
       label: entity.label,
       aliases: entity.aliases,
+      publicFigure: entity.type === 'persona' && entity.publicFigure === true,
     })
     if (id == null) continue
     entitiesUpserted++
@@ -303,8 +308,14 @@ async function upsertEntity(args: {
   canonicalKey: string
   label: string
   aliases: string[]
+  /**
+   * Only ever true here for a persona: a non-public one never reaches the
+   * writer. An existing row is raised to true, never lowered — the mark means
+   * "some documento named her as a public figure".
+   */
+  publicFigure: boolean
 }): Promise<number | string | null> {
-  const { payload, organizationId, type, canonicalKey: key, label, aliases } = args
+  const { payload, organizationId, type, canonicalKey: key, label, aliases, publicFigure } = args
 
   const where = {
     // 🔴 Tenancy first, always, in its own predicate.
@@ -337,11 +348,16 @@ async function upsertEntity(args: {
     // ⚠ COMPARE CONTENTS, NOT LENGTH. A length check stops updating for good
     // once the list reaches `MAX_ALIASES`, and it also misses a same-length
     // list whose members changed.
-    if (nextAliases.join(' ') !== currentAliases.join(' ')) {
+    const aliasesChanged = nextAliases.join(' ') !== currentAliases.join(' ')
+    const raisePublic = publicFigure && existing.publicFigure !== true
+    if (aliasesChanged || raisePublic) {
       await payload.update({
         collection: 'graphEntities',
         id: existing.id,
-        data: { aliases: nextAliases },
+        data: {
+          ...(aliasesChanged ? { aliases: nextAliases } : {}),
+          ...(raisePublic ? { publicFigure: true } : {}),
+        },
         overrideAccess: true,
       })
     }
@@ -357,6 +373,7 @@ async function upsertEntity(args: {
         label,
         canonicalKey: key,
         aliases: mergeAliases([], label, aliases),
+        publicFigure,
       },
       overrideAccess: true,
     })) as { id?: number | string } | null
@@ -380,12 +397,17 @@ async function upsertEntity(args: {
       ? (winner.aliases as unknown[]).filter((a): a is string => typeof a === 'string')
       : []
     const merged = mergeAliases(winnerAliases, winnerLabel, [...aliases, label])
-    if (merged.join(' ') !== winnerAliases.join(' ')) {
+    const mergedChanged = merged.join(' ') !== winnerAliases.join(' ')
+    const raiseWinner = publicFigure && winner.publicFigure !== true
+    if (mergedChanged || raiseWinner) {
       await payload
         .update({
           collection: 'graphEntities',
           id: winner.id,
-          data: { aliases: merged },
+          data: {
+            ...(mergedChanged ? { aliases: merged } : {}),
+            ...(raiseWinner ? { publicFigure: true } : {}),
+          },
           overrideAccess: true,
         })
         .catch(() => undefined)

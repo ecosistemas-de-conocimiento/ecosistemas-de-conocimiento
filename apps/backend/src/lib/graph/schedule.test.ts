@@ -155,7 +155,8 @@ describe('runGraphExtraction', () => {
   describe('🔴 the person rule at the storage boundary', () => {
     const personaResponse = response(
       [
-        { tipo: 'persona', etiqueta: 'Ernesto Ramírez', menciones: 4, fragmento: 'me llamo Ernesto' },
+        // Marked public, so only the content kind decides below.
+        { tipo: 'persona', etiqueta: 'Ernesto Ramírez', menciones: 4, fragmento: 'me llamo Ernesto', figura_publica: true },
         { tipo: 'organizacion', etiqueta: 'Asamblea Ejidal', menciones: 2 },
       ],
       [{ desde: 'Ernesto Ramírez', hacia: 'Asamblea Ejidal', tipo: 'participa_en' }],
@@ -183,7 +184,28 @@ describe('runGraphExtraction', () => {
       expect(created.filter((c) => c.collection === 'graphRelations')).toHaveLength(0)
     })
 
-    it('stores the persona when the document really is a `documento`', async () => {
+    it('🔴 stores NOTHING for a persona the model did not mark public, even in a documento', async () => {
+      const privateResponse = response(
+        [
+          { tipo: 'persona', etiqueta: 'Ernesto Ramírez', menciones: 4, figura_publica: false },
+          { tipo: 'organizacion', etiqueta: 'Asamblea Ejidal', menciones: 2 },
+        ],
+        [{ desde: 'Ernesto Ramírez', hacia: 'Asamblea Ejidal', tipo: 'participa_en' }],
+      )
+      const { payload, client, created } = harness(privateResponse)
+      await runGraphExtraction({
+        payload,
+        docId: 12,
+        organizationId: 5,
+        contentKind: 'documento',
+        text: LONG_TEXT,
+        client,
+      })
+      expect(JSON.stringify(created)).not.toContain('Ernesto')
+      expect(created.filter((c) => c.collection === 'graphRelations')).toHaveLength(0)
+    })
+
+    it('stores the public persona when the document really is a `documento`', async () => {
       const { payload, client, created } = harness(personaResponse)
       await runGraphExtraction({
         payload,

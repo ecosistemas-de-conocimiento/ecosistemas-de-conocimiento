@@ -54,7 +54,7 @@ describe('combined statements carry every gate, per row', () => {
       expect(text).toContain("d.publication_status = 'published'")
       expect(text).toContain('a.support >= $')
       expect(text).toMatch(/NOT \(e\.canonical_key ~ \$\d+\)/)
-      expect(text).toContain("AND e.type <> 'persona'")
+      expect(text).toContain("(e.type <> 'persona' OR (d.content_kind = 'documento' AND e.public_figure))")
     })
 
     it(`🔴 ${name}: gate 5 at every mention and relation read site, not only somewhere`, () => {
@@ -88,8 +88,7 @@ describe('combined statements carry every gate, per row', () => {
     const { text } = render(statements['view (search)']!)
     expect(text).toContain('sd.organization_id = sm.organization_id')
     expect(text).toContain('se.organization_id = sm.organization_id')
-    expect(text).toContain("AND se.type <> 'persona'")
-    expect(text).not.toContain("se.type <> 'persona' OR")
+    expect(text).toContain("(se.type <> 'persona' OR (sd.content_kind = 'documento' AND se.public_figure))")
   })
 
   it('🔴 only the entity documents statement selects a snippet, behind the documento CASE', () => {

@@ -150,6 +150,26 @@ export const GraphEntities: CollectionConfig = {
       },
     },
     {
+      /**
+       * 🔴 THE PUBLIC-FIGURE MARK (owner, 2026-10-24: no private individuals in
+       * the graph). Meaningful only for a `persona`; false for every other type.
+       *
+       * Set by extraction from the model's `figura_publica` (prompt `v5`), and
+       * only ever to true: a persona the model did not mark public is dropped
+       * before the writer, so it never gets a row. Every row written before `v5`
+       * is false, which gate 5 in `lib/graph/queries.ts` hides — fail-closed
+       * until the backfill re-extracts it.
+       */
+      name: 'publicFigure',
+      type: 'checkbox',
+      required: true,
+      defaultValue: false,
+      admin: {
+        readOnly: true,
+        description: 'Persona pública (funcionaria, autoridad, figura histórica). Sólo estas aparecen en el grafo.',
+      },
+    },
+    {
       name: 'aliases',
       type: 'json',
       admin: {

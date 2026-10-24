@@ -21,6 +21,7 @@ import type { PayloadRequest } from 'payload'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { up as baselineUp } from '../../migrations/20260908_092211_baseline'
+import { up as publicFigureUp } from '../../migrations/20261024_201817_graph_entities_public_figure'
 import { graphEntityEndpoint, graphViewEndpoint } from '../../endpoints/graph'
 import { readCombinedEntityDetail, readCombinedView, type CombinedView } from './combined'
 import { readEntityView, type GraphEntityView, type GraphQueryPayload } from './queries'
@@ -174,6 +175,7 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
     db = drizzle(url)
     await waitForQueries(db)
     await baselineUp({ db, payload: {}, req: {} } as unknown as MigrateUpArgs)
+    await publicFigureUp({ db, payload: {}, req: {} } as unknown as MigrateUpArgs)
     await seed()
     payload = { db: { drizzle: db } } as GraphQueryPayload
   }, 60_000)
@@ -193,7 +195,7 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
       { id: 12, type: 'lugar', label: 'Morelos', support: 4, ecosystems: [1, 2], ecosystemSupport: [2, 2] },
       { id: 16, type: 'tema', label: 'Lluvia', support: 2, ecosystems: [1, 2], ecosystemSupport: [1, 1] },
       { id: 23, type: 'tema', label: 'Dengue', support: 1, ecosystems: [2], ecosystemSupport: [1] },
-      // 🔴 No Juana: gate 5 hides every persona not marked public (owner, 2026-10-24).
+      // 🔴 No Juana: neither row is marked public (owner, 2026-10-24).
     ])
     expect(view.publishedDocuments).toBe(5)
   })
@@ -369,7 +371,7 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
 
   /**
    * 🔴 Gate 5 inside ONE ecosistema — the persona-only-from-documento probe.
-   *   4: 401 documento (Rosa 41 persona, Agua 42, Morelos 43) · 402 testimonio (41, 42)
+   *   4: 401 documento (Rosa 41 persona MARKED PUBLIC, Agua 42, Morelos 43) · 402 testimonio (41, 42)
    *      relations 42→43 afecta_a (401); 41→42 relacionado_con (402: a persona end
    *      out of a testimonio — never counted); 43→41 ocurre_en (402: the persona
  *      at the `to` end — never counted either)
@@ -399,6 +401,7 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
         INSERT INTO graph_relations (organization_id, document_id, from_entity_id, to_entity_id, type) VALUES
           (4, 401, 42, 43, 'afecta_a'), (4, 402, 41, 42, 'relacionado_con'),
           (4, 402, 43, 41, 'ocurre_en');
+        UPDATE graph_entities SET public_figure = TRUE WHERE id = 41;
       `)
     })
     afterAll(async () => {
@@ -411,20 +414,33 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
       `)
     })
 
-    it('🔴 opens no panel for a persona not marked public, even from a documento', async () => {
-      expect(await readCombinedEntityDetail(payload, { ...scope, entityId: 41 })).toBeNull()
+    it('lists only her documento in the combined panel, never her testimonio', async () => {
+      const rosa = await readCombinedEntityDetail(payload, { ...scope, entityId: 41 })
+      expect(rosa?.entity).toMatchObject({ id: 41, support: 1, ecosystems: [4] })
+      expect(rosa?.documents.map((d) => d.id)).toEqual([401])
+      expect(rosa?.neighbours).toEqual([])
     })
 
     it('draws no relation edge from the testimonio, and agrees with the single views', async () => {
       const view = await readCombinedView(payload, scope)
       expect(view.edges.filter((e) => e.kind === 'relation').map((e) => [e.from, e.to])).toEqual([[42, 43]])
-      // 🔴 Not even the documento co-mention: the persona is hidden.
-      expect(view.edges.some((e) => e.from === 41 || e.to === 41)).toBe(false)
-      expect(view.entities.some((e) => e.id === 41)).toBe(false)
+      expect(view.edges.find((e) => e.from === 41 && e.to === 42)).toMatchObject({ kind: 'co-mention', support: 1 })
       const singles = await Promise.all(
         [4, 5].map((organizationId) => readEntityView(payload, { organizationId, minSupport: 1, minEdgeSupport: 1 })),
       )
       expect(normalise(view)).toEqual(mergeSingles(singles))
+    })
+
+    it('🔴 the same persona, NOT marked public, has no panel and no edge', async () => {
+      await db.execute(sql`UPDATE graph_entities SET public_figure = FALSE WHERE id = 41`)
+      try {
+        expect(await readCombinedEntityDetail(payload, { ...scope, entityId: 41 })).toBeNull()
+        const view = await readCombinedView(payload, scope)
+        expect(view.entities.some((e) => e.id === 41)).toBe(false)
+        expect(view.edges.some((e) => e.from === 41 || e.to === 41)).toBe(false)
+      } finally {
+        await db.execute(sql`UPDATE graph_entities SET public_figure = TRUE WHERE id = 41`)
+      }
     })
 
     it('lists no persona neighbour and no testimonio evidence from the other end', async () => {

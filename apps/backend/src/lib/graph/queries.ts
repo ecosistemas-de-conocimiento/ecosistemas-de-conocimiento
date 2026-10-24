@@ -447,19 +447,21 @@ export function notNoise(alias: 'e' | 'ne'): GraphSql {
 /**
  * 🔴 GATE 5 — NO PRIVATE INDIVIDUAL IN THE GRAPH (owner, 2026-10-24).
  *
- * Only public figures may appear as `persona` nodes. Nothing stored today says
- * which personas are public, so this FAILS CLOSED: no `persona` row passes, on
- * any read. It replaces the earlier rule (a `persona` counted only from a
- * `documento`, ADR §7.3.4), which it strictly contains — the extractor still
- * drops every `persona` out of a testimonio or a conversacion
- * (`extract.ts` `dropForbiddenPersonas`).
+ * Only public figures may appear as `persona` nodes. A `persona` row counts
+ * only when `graph_entities.public_figure` is true AND the mention comes from a
+ * `documento` (the earlier rule, ADR §7.3.4, kept inside this one). Rows
+ * written before prompt `v5` are false, so they stay hidden — fail-closed until
+ * re-extraction. The extractor already drops a persona that is not public or
+ * not from a `documento` (`extract.ts` `dropForbiddenPersonas`); this is the
+ * read-side belt over it.
  *
  * Applied per read site, not once per statement: `gateSites.testutil.ts`
- * checks every mention and relation read for it.
+ * checks every mention and relation read for it. Needs `d` (the
+ * published-documents join) in scope.
  */
 export function publicPersonaOnly(alias: 'e' | 'ne' | 'ce'): GraphSql {
-  const col = alias === 'e' ? sql`e.type` : alias === 'ne' ? sql`ne.type` : sql`ce.type`
-  return sql` AND ${col} <> 'persona'`
+  const ref = alias === 'e' ? sql`e` : alias === 'ne' ? sql`ne` : sql`ce`
+  return sql` AND (${ref}.type <> 'persona' OR (d.content_kind = 'documento' AND ${ref}.public_figure))`
 }
 
 /**
@@ -485,7 +487,8 @@ export function relationEndsPublicPersonaOnly(): GraphSql {
     JOIN LATERAL (
       SELECT 1 AS ok
       WHERE NOT EXISTS (SELECT 1 FROM graph_entities pe
-                        WHERE pe.id IN (r.from_entity_id, r.to_entity_id) AND pe.type = 'persona')
+                        WHERE pe.id IN (r.from_entity_id, r.to_entity_id) AND pe.type = 'persona'
+                          AND NOT (d.content_kind = 'documento' AND pe.public_figure))
     ) g5 ON TRUE`
 }
 
@@ -2010,7 +2013,7 @@ export function buildSearchFilter(
         ON se.id = sm.entity_id
        AND se.organization_id = ${entOrg}
       WHERE sm.organization_id = ${mentionOrg}
-        AND se.type <> 'persona'
+        AND (se.type <> 'persona' OR (sd.content_kind = 'documento' AND se.public_figure))
         AND (
           to_tsvector('spanish', ${SEARCHABLE_TEXT}) @@ websearch_to_tsquery('spanish', ${raw})
           OR to_tsvector('spanish', translate(${SEARCHABLE_TEXT}, ${ACCENTED}, ${UNACCENTED}))

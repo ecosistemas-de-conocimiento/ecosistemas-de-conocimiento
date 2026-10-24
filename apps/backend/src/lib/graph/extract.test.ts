@@ -151,6 +151,23 @@ describe('parseWindowResponse', () => {
     expect(parsed?.entities.map((e) => e.etiqueta)).toEqual(['Agua'])
   })
 
+  it('🔴 reads `figura_publica` as public ONLY when it is literally true', () => {
+    const parsed = parseWindowResponse(
+      okResponse([
+        { tipo: 'persona', etiqueta: 'Claudia Sheinbaum', figura_publica: true },
+        { tipo: 'persona', etiqueta: 'Ernesto Ramírez', figura_publica: false },
+        { tipo: 'persona', etiqueta: 'Rosa Pérez', figura_publica: 'true' },
+        { tipo: 'persona', etiqueta: 'Juana Ruiz' },
+      ]),
+    )
+    expect(parsed?.entities.map((e) => [e.etiqueta, e.figuraPublica])).toEqual([
+      ['Claudia Sheinbaum', true],
+      ['Ernesto Ramírez', false],
+      ['Rosa Pérez', false],
+      ['Juana Ruiz', false],
+    ])
+  })
+
   it('drops relations with an unknown predicate or a missing endpoint', () => {
     const parsed = parseWindowResponse(
       okResponse(
@@ -169,7 +186,7 @@ describe('parseWindowResponse', () => {
 describe('🔴 dropForbiddenPersonas — the person rule, mechanism 2', () => {
   const withPersona: ParsedWindow = {
     entities: [
-      { tipo: 'persona', etiqueta: 'Ernesto Ramírez', menciones: 3, fragmento: null },
+      { tipo: 'persona', etiqueta: 'Ernesto Ramírez', menciones: 3, fragmento: null, figuraPublica: true },
       { tipo: 'organizacion', etiqueta: 'Asamblea Ejidal', menciones: 2, fragmento: null },
       { tipo: 'tema', etiqueta: 'Acceso al agua', menciones: 5, fragmento: null },
     ],
@@ -179,10 +196,23 @@ describe('🔴 dropForbiddenPersonas — the person rule, mechanism 2', () => {
     ],
   }
 
-  it('keeps personas for a `documento`', () => {
+  it('keeps a persona the model marked public, for a `documento`', () => {
     const out = dropForbiddenPersonas(withPersona, 'documento')
     expect(out.entities.map((e) => e.tipo)).toContain('persona')
     expect(out.relations).toHaveLength(2)
+  })
+
+  it('🔴 drops a persona not marked public, even for a `documento` (owner, 2026-10-24)', () => {
+    for (const figuraPublica of [false, undefined]) {
+      const window: ParsedWindow = {
+        entities: withPersona.entities.map((e) => (e.tipo === 'persona' ? { ...e, figuraPublica } : e)),
+        relations: withPersona.relations,
+      }
+      const out = dropForbiddenPersonas(window, 'documento')
+      expect(out.entities.map((e) => e.tipo)).not.toContain('persona')
+      // Its edges go with it.
+      expect(out.relations.map((r) => r.desde)).toEqual(['Asamblea Ejidal'])
+    }
   })
 
   it('drops personas for a `testimonio`, whatever the model returned', () => {
@@ -665,6 +695,20 @@ describe('mergeWindows', () => {
     expect(mergeWindows([w], 'documento').relations).toEqual([])
   })
 
+  it('🔴 carries the public-figure mark onto a persona, and false onto everything else', () => {
+    const w: ParsedWindow = {
+      entities: [
+        { tipo: 'persona', etiqueta: 'Claudia Sheinbaum', menciones: 1, fragmento: null, figuraPublica: true },
+        { tipo: 'tema', etiqueta: 'Agua', menciones: 1, fragmento: null, figuraPublica: true },
+      ],
+      relations: [],
+    }
+    expect(mergeWindows([w], 'documento').entities.map((e) => [e.label, e.publicFigure])).toEqual([
+      ['Claudia Sheinbaum', true],
+      ['Agua', false],
+    ])
+  })
+
   it('🔴 never carries a snippet for a testimonio', () => {
     const w: ParsedWindow = {
       entities: [{ tipo: 'tema', etiqueta: 'Agua', menciones: 1, fragmento: 'cita literal' }],
@@ -895,6 +939,32 @@ describe('extractGraph', () => {
     })
     expect(result.entities.map((e) => e.type)).not.toContain('persona')
     expect(result.entities).toHaveLength(1)
+    expect(result.relations).toEqual([])
+  })
+
+  it('🔴 a documento keeps only the personas the model marked public, end to end', async () => {
+    const { client } = fakeClient([
+      okResponse(
+        [
+          { tipo: 'persona', etiqueta: 'Claudia Sheinbaum', menciones: 1, figura_publica: true },
+          { tipo: 'persona', etiqueta: 'Ernesto Ramírez', menciones: 4, figura_publica: false },
+          { tipo: 'persona', etiqueta: 'Juana Ruiz', menciones: 2 },
+          { tipo: 'tema', etiqueta: 'Acceso al agua', menciones: 2 },
+        ],
+        [{ desde: 'Ernesto Ramírez', hacia: 'Acceso al agua', tipo: 'afecta_a' }],
+      ),
+    ])
+    const result = await extractGraph({
+      docId: 7,
+      contentKind: 'documento',
+      text,
+      client,
+      windowChars: 5000,
+    })
+    expect(result.entities.map((e) => [e.label, e.type, e.publicFigure])).toEqual([
+      ['Claudia Sheinbaum', 'persona', true],
+      ['Acceso al agua', 'tema', false],
+    ])
     expect(result.relations).toEqual([])
   })
 

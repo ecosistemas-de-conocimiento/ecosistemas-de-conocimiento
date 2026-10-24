@@ -158,10 +158,17 @@ describe('🔴 gate 5 — no private persona, at every read site', () => {
     }
   })
 
+  it('🔴 the site check refuses the old documento-only rule, which let private personas through', () => {
+    expect(" AND (ce.type <> 'persona' OR d.content_kind = 'documento')").not.toMatch(MENTION_GATE)
+    // The public mark must sit on the SAME entity alias whose type is checked.
+    expect(" AND (ce.type <> 'persona' OR (d.content_kind = 'documento' AND ne.public_figure))").not.toMatch(MENTION_GATE)
+    expect(" AND (ce.type <> 'persona' OR (d.content_kind = 'documento' AND ce.public_figure))").toMatch(MENTION_GATE)
+  })
+
   it('the site check fails a read whose shared CTE has the filter but its own read does not', () => {
     const text = `
       WITH ent_support AS (SELECT m.entity_id FROM graph_mentions m JOIN documents d ON d.id = m.document_id
-        JOIN graph_entities ne ON ne.id = m.entity_id AND ne.type <> 'persona')
+        JOIN graph_entities ne ON ne.id = m.entity_id AND (ne.type <> 'persona' OR (d.content_kind = 'documento' AND ne.public_figure)))
       SELECT d.id FROM graph_mentions m JOIN documents d ON d.id = m.document_id
       JOIN ent_support s ON s.entity_id = m.entity_id WHERE m.entity_id = 1`
     const sites = readSites(text, 'graph_mentions')
@@ -572,9 +579,8 @@ describe('the view, when the threshold hides everything', () => {
       )
     })
 
-    it('🔴 repeats gate 5 inside the subquery: no persona matches at all', () => {
-      expect(text).toContain("AND se.type <> 'persona'")
-      expect(text).not.toContain("se.type <> 'persona' OR")
+    it('🔴 repeats gate 5 inside the subquery: only a public persona, only via a documento', () => {
+      expect(text).toContain("(se.type <> 'persona' OR (sd.content_kind = 'documento' AND se.public_figure))")
       expect(text).toMatch(/se\.organization_id = \$\d+/)
     })
 

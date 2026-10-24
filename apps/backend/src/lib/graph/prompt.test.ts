@@ -48,6 +48,11 @@ describe('graphResponseSchema', () => {
     expect(types).toEqual(['tema', 'lugar', 'evento', 'organizacion'])
   })
 
+  it('🔴 asks for `figura_publica` (boolean) only in the variant that allows personas', () => {
+    expect(entityItem(graphResponseSchema(true)).properties.figura_publica).toEqual({ type: 'boolean' })
+    expect(entityItem(graphResponseSchema(false)).properties.figura_publica).toBeUndefined()
+  })
+
   it('⚠ keeps `organizacion` in the restricted variant', () => {
     // ADR §5.3: organisations are always extracted. Naming an institution does
     // not identify a participant, and losing them would gut the analysis.
@@ -289,6 +294,13 @@ describe('graphPromptTemplate', () => {
     }
   })
 
+  it('🔴 tells the model to extract only PUBLIC figures, and to mark them', () => {
+    const allowed = graphPromptTemplate(true)
+    expect(allowed).toContain('`figura_publica: true`')
+    expect(allowed).toContain('NUNCA extraigas a un particular')
+    expect(allowed).toContain('funcionaria')
+  })
+
   it('🔴 tells the model not to extract people when personas are forbidden', () => {
     const forbidden = graphPromptTemplate(false)
     expect(forbidden).toContain('PROHIBIDO EXTRAER PERSONAS')
@@ -330,7 +342,14 @@ describe('GRAPH_PROMPT_VERSION', () => {
     expect(GRAPH_PROMPT_VERSION).not.toBe('v1')
   })
 
-  it('🔴 is `v4`, the stamp the language/place re-extraction is findable by', () => {
+  it('🔴 is `v5`, the stamp the public-figure re-extraction is findable by', () => {
+    // `v4` rows carry no `figura_publica`: every persona they wrote is stored
+    // with `public_figure = false` and hidden by gate 5. Only this stamp lets
+    // the backfill find them and ask the model again (owner, 2026-10-24).
+    expect(GRAPH_PROMPT_VERSION).toBe('v5')
+  })
+
+  it('🔴 stays past `v3`, which the language/place re-extraction is findable by', () => {
     // `v2` rows were extracted under a contract that let `barranca`, `español`,
     // `escuela` and `discapacidad` become the corpus's biggest nodes. The ONLY
     // thing that can find them afterwards is this string: `backfill.ts` selects
@@ -339,6 +358,6 @@ describe('GRAPH_PROMPT_VERSION', () => {
     // tell the halves apart — which is exactly what happened at `v1`.
     // `v3` rows carry `tema|español` (93 documents) and `tema|barranca` (24);
     // `v4` refuses both, and only this stamp finds the rows still carrying them.
-    expect(GRAPH_PROMPT_VERSION).toBe('v4')
+    for (const stale of ['v2', 'v3']) expect(GRAPH_PROMPT_VERSION).not.toBe(stale)
   })
 })

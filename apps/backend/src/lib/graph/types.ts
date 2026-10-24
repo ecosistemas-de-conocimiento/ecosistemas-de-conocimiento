@@ -105,6 +105,22 @@ export function personaAllowed(contentKind: string | null | undefined): boolean 
 }
 
 /**
+ * 🔴 NO PRIVATE INDIVIDUAL IN THE GRAPH (owner, 2026-10-24).
+ *
+ * A `persona` is kept only when {@link personaAllowed} holds for the content
+ * kind AND extraction marked her a public figure — an official, a named public
+ * institution's representative, a historical or public person. The mark is the
+ * model's `figura_publica`, read as public only when it is literally `true`, so
+ * a missing or malformed mark fails closed.
+ */
+export function publicPersonaKept(
+  contentKind: string | null | undefined,
+  publicFigure: unknown,
+): boolean {
+  return personaAllowed(contentKind) && publicFigure === true
+}
+
+/**
  * 🔴 SNIPPETS ARE NEVER STORED FOR A TESTIMONY (ADR §7.3.4).
  *
  * `graph_mentions.snippet` is a short verbatim quotation answering "why is this
@@ -171,6 +187,12 @@ export interface MergedEntity {
    * {@link snippetAllowed}.
    */
   snippet: string | null
+  /**
+   * 🔴 The public-figure mark ({@link publicPersonaKept}). True only for a
+   * `persona` the model marked public; absent or false means "not public", and
+   * the writer stores no such persona.
+   */
+  publicFigure?: boolean
 }
 
 /**
