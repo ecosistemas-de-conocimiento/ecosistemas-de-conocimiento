@@ -12,7 +12,10 @@ vi.mock('$lib/server/holds', async () => {
   return { ...actual, readReviewCapability: vi.fn(), listHolds: vi.fn() };
 });
 
-import { load } from './+page.server';
+vi.mock('$lib/server/published', () => ({ listPublished: vi.fn(), rejectPublishedDoc: vi.fn() }));
+
+import { actions, load } from './+page.server';
+import { listPublished, rejectPublishedDoc } from '$lib/server/published';
 import { ECOSYSTEM_COOKIE, listEcosystems } from '$lib/server/ecosystem';
 import { listAllEcosystems, readEcosystem } from '$lib/server/admin';
 import { listHolds, readReviewCapability } from '$lib/server/holds';
@@ -23,6 +26,8 @@ const mockedRead = readEcosystem as unknown as ReturnType<typeof vi.fn>;
 const mockedDirectory = listAllEcosystems as unknown as ReturnType<typeof vi.fn>;
 const mockedHolds = listHolds as unknown as ReturnType<typeof vi.fn>;
 const mockedCap = readReviewCapability as unknown as ReturnType<typeof vi.fn>;
+const mockedPublished = listPublished as unknown as ReturnType<typeof vi.fn>;
+const mockedReject = rejectPublishedDoc as unknown as ReturnType<typeof vi.fn>;
 
 const A = { id: '1', name: 'Alfa', slug: 'alfa' };
 const B = { id: '2', name: 'Beta', slug: 'beta' };
@@ -65,6 +70,10 @@ beforeEach(() => {
   mockedHolds.mockImplementation(async (_t: string, eco: string) => ({
     state: 'ready',
     value: [{ id: `hold-of-${eco}` }],
+  }));
+  mockedPublished.mockImplementation(async (_t: string, eco: string) => ({
+    state: 'ready',
+    value: [{ id: `pub-of-${eco}`, title: 'La siembra', updatedAt: null }],
   }));
 });
 
@@ -123,5 +132,51 @@ describe('/revision load — follows the sidebar picker', () => {
     mockedCap.mockResolvedValue({ isPlatformAdmin: true, slugs: [], ok: true });
     const data = await run({ cookie: C.id }).result;
     expect(data.selected?.id).toBe(C.id);
+  });
+});
+
+// Owner rule 2026-10-24: participants' testimonios publish automatically, so
+// review is after the fact. Revisión lists the published ones and can reject.
+describe('/revision — published testimonios', () => {
+  it('lists the selected ecosistema’s published testimonios', async () => {
+    const data = (await run({ cookie: B.id }).result) as Result & { published: Array<{ id: string }> };
+    expect(mockedPublished.mock.calls.at(-1)?.[1]).toBe(B.id);
+    expect(data.published).toEqual([{ id: `pub-of-${B.id}`, title: 'La siembra', updatedAt: null }]);
+  });
+
+  it('an unreadable list is empty, not an error page', async () => {
+    mockedPublished.mockResolvedValue({ state: 'unavailable' });
+    const data = (await run({ cookie: B.id }).result) as Result & { published: unknown[] };
+    expect(data.published).toEqual([]);
+  });
+
+  function rejectEvent(form: Record<string, string>) {
+    const body = new FormData();
+    for (const [k, v] of Object.entries(form)) body.set(k, v);
+    return {
+      locals: { user: { id: 9 }, token: 'tok' },
+      request: new Request('http://web.test/revision?/rechazar', { method: 'POST', body }),
+    } as unknown as Parameters<NonNullable<typeof actions.rechazar>>[0];
+  }
+
+  it('rejects one and redirects, so a refresh cannot repeat it', async () => {
+    mockedReject.mockResolvedValue({ state: 'ready', value: { id: '7' } });
+    await expect(actions.rechazar!(rejectEvent({ id: '7' }))).rejects.toMatchObject({
+      status: 303,
+      location: '/revision?hecho=rejected',
+    });
+    expect(mockedReject).toHaveBeenCalledWith('tok', '7', undefined);
+  });
+
+  it('a refused reject is a 404 failure, not a redirect', async () => {
+    mockedReject.mockResolvedValue({ state: 'not-found' });
+    const out = (await actions.rechazar!(rejectEvent({ id: '7' }))) as { status: number };
+    expect(out.status).toBe(404);
+  });
+
+  it('a non-reviewer is refused before anything is sent', async () => {
+    mockedCap.mockResolvedValue({ isPlatformAdmin: false, slugs: [], ok: true });
+    await expect(actions.rechazar!(rejectEvent({ id: '7' }))).rejects.toBeTruthy();
+    expect(mockedReject).not.toHaveBeenCalled();
   });
 });
