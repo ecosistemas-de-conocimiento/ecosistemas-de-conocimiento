@@ -19,6 +19,7 @@ describe('the menu only offers pages that exist', () => {
       '/biblioteca',
       '/grafo',
       '/revision',
+      '/miembros',
       '/admin',
     ]);
   });
@@ -30,6 +31,7 @@ describe('the menu only offers pages that exist', () => {
       'Biblioteca',
       'Conexiones',
       'Revisión',
+      'Miembros',
       'Administración',
     ]);
   });
@@ -124,6 +126,24 @@ describe('who sees the review queue', () => {
   it('marks the review section on a document inside it', () => {
     expect(isCurrentSection('/revision/42', '/revision')).toBe(true);
     expect(isCurrentSection('/revisiones', '/revision')).toBe(false);
+  });
+});
+
+describe('who sees the members entry', () => {
+  // ⚠ Presentation only. `routes/miembros/+page.server.ts` and the backend's
+  // `/api/miembros` are the control.
+  it('shows it to someone the server said manages members', () => {
+    expect(visibleNavItems(member, { canManageMembers: true }).map((i) => i.href)).toContain(
+      '/miembros',
+    );
+  });
+
+  it('hides it otherwise, including for a garbled flag', () => {
+    for (const caps of [{}, { canManageMembers: 'true' }, { canReviewHolds: true }]) {
+      expect(
+        visibleNavItems(member, caps as { canManageMembers?: boolean }).map((i) => i.href),
+      ).not.toContain('/miembros');
+    }
   });
 });
 

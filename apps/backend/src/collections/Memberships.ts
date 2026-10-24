@@ -1,11 +1,14 @@
-import type { CollectionBeforeValidateHook, CollectionConfig } from 'payload'
-import { ValidationError } from 'payload'
+import type { CollectionBeforeDeleteHook, CollectionBeforeValidateHook, CollectionConfig } from 'payload'
+import { APIError, ValidationError } from 'payload'
 
 import { isPlatformAdminUser, withinMyOrganizations, withinMyOrganizationsWithRole } from '../access'
 import {
   DEFAULT_ORG_ROLE,
+  isOrgRole,
   ORG_ROLES,
   organizationIdsForUserWithMinRole,
+  outranks,
+  roleInOrganization,
   type OrgRole,
 } from '../lib/permissions'
 
@@ -157,6 +160,87 @@ export const makeRefuseForeignOrganization =
 
 export const refuseForeignOrganization = makeRefuseForeignOrganization()
 
+/**
+ * 🔴 NOBODY GRANTS, CHANGES OR REMOVES A ROLE ABOVE THEIR OWN.
+ *
+ * `create`/`update`/`delete` access is `withinMyOrganizationsWithRole('admin')`:
+ * it decides WHO may write a membership, never WHAT role it may carry. Without
+ * this an `admin` could create an `owner` (an escalation by proxy), promote a
+ * colleague to `owner`, or demote and remove the `owner` above them.
+ *
+ * The rule, per write, against the caller's role in the TARGET ecosistema:
+ *  · the role the row ends up with must not outrank the caller's;
+ *  · on update and delete, the role the row HAD must not outrank it either.
+ *
+ * Platform admins and the seed path (no `req.user`) are unaffected, like the
+ * hooks above. A caller with no role in the target is refused here too; the
+ * foreign-organization hook normally refuses them first.
+ */
+export const ROLE_CEILING_MESSAGE = 'No puedes dar, cambiar ni quitar un rol superior al tuyo.'
+
+type RoleResolver = (
+  payload: Parameters<typeof roleInOrganization>[0],
+  userId: number | string,
+  organizationId: number | string,
+) => Promise<OrgRole | null>
+
+const roleOrDefault = (value: unknown): OrgRole => (isOrgRole(value) ? value : DEFAULT_ORG_ROLE)
+
+export const makeRefuseRoleAboveOwn =
+  (roleIn: RoleResolver = roleInOrganization): CollectionBeforeValidateHook =>
+  async ({ data, operation, originalDoc, req }) => {
+    const caller = req?.user
+    const callerId = (caller as { id?: unknown } | null | undefined)?.id
+    if (callerId === null || callerId === undefined) return data
+    if (isPlatformAdminUser(caller)) return data
+
+    const patch = (data ?? {}) as Record<string, unknown>
+    const stored = (originalDoc ?? {}) as Record<string, unknown>
+    const target = toRelationId('organization' in patch ? patch.organization : stored.organization)
+    if (target === null) return data
+
+    const refuse = () =>
+      new ValidationError({
+        collection: 'memberships',
+        errors: [{ path: 'role', message: ROLE_CEILING_MESSAGE }],
+        req,
+      })
+
+    const mine = await roleIn(req.payload, callerId as number | string, target as number | string)
+    if (mine === null) throw refuse()
+
+    const isUpdate = operation === 'update'
+    const next = roleOrDefault('role' in patch ? patch.role : isUpdate ? stored.role : undefined)
+    if (outranks(next, mine)) throw refuse()
+    if (isUpdate && outranks(roleOrDefault(stored.role), mine)) throw refuse()
+    return data
+  }
+
+export const refuseRoleAboveOwn = makeRefuseRoleAboveOwn()
+
+export const makeRefuseDeleteAboveOwn =
+  (roleIn: RoleResolver = roleInOrganization): CollectionBeforeDeleteHook =>
+  async ({ id, req }) => {
+    const caller = req?.user
+    const callerId = (caller as { id?: unknown } | null | undefined)?.id
+    if (callerId === null || callerId === undefined) return
+    if (isPlatformAdminUser(caller)) return
+
+    const row = (await req.payload
+      .findByID({ collection: 'memberships', id, depth: 0, overrideAccess: true, req })
+      .catch(() => null)) as Record<string, unknown> | null
+    // No such row: Payload answers 404 itself. A row outside the caller's
+    // ecosistemas: delete access refuses it. Neither is this hook's call.
+    if (!row) return
+    const organization = toRelationId(row.organization)
+    if (organization === null) return
+    const mine = await roleIn(req.payload, callerId as number | string, organization as number | string)
+    if (mine === null) return
+    if (outranks(roleOrDefault(row.role), mine)) throw new APIError(ROLE_CEILING_MESSAGE, 403, undefined, true)
+  }
+
+export const refuseDeleteAboveOwn = makeRefuseDeleteAboveOwn()
+
 /** Admin-panel labels. Exhaustive by type, so adding a role forces a label. */
 const ROLE_LABELS: Record<OrgRole, string> = {
   member: 'Member — read, upload, chat, rate answers',
@@ -224,6 +308,8 @@ export const Memberships: CollectionConfig = {
       refuseSelfAssignment,
       // 🔴 Then the tenant boundary on the TARGET row — see the hook's header.
       refuseForeignOrganization,
+      // 🔴 And the role ceiling — see `refuseRoleAboveOwn`.
+      refuseRoleAboveOwn,
       compoundUnique({
         collection: 'memberships',
         fields: ['user', 'organization'],
@@ -231,6 +317,7 @@ export const Memberships: CollectionConfig = {
         message: 'This person already has a membership in this organization.',
       }),
     ],
+    beforeDelete: [refuseDeleteAboveOwn],
   },
   fields: [
     {
