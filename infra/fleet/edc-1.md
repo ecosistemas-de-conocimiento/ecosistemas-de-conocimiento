@@ -1,6 +1,8 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `47b140c` ("En revisión" labels, testimonio
+**Status:** live since 2026-10-17. Dev runs `main` @ `020ebec` (anonymisation town rule, `/grafo`
+hides lone towns but never a state, chat turn recovery by turn id), deployed 2026-10-24 19:31 UTC —
+see §4zh. Before that, `47b140c` ("En revisión" labels, testimonio
 excerpts, dense `[n]` numbering), deployed 2026-10-23 18:46 UTC — see §4zg. Before that, `8984fec`
 (Payload `/duplicate` refused; uploads follow the selected ecosistema; 15:34 UTC, §4zf). Before that, `45c30fd`
 (four demo-polish branches; 07:35 UTC, §4ze). Before that, `e3fe6ee` (combined graph "Todos mis
@@ -1512,6 +1514,39 @@ Spend: `usage_logs` $1.6108 → $1.6218 (**+$0.0110**). Overnight runs: $0.4786 
 
 **Disk**, `df -h /` free: 57 GB before; 43 GB after the build; 57 GB after the cleanup. Images
 10.3 GB, build cache 0.
+
+### 4zh. ✅ Done 2026-10-24 19:31–19:45 UTC: `020ebec`, dev only
+
+All measured by the deploy agent. Staging was not touched (still `97d5316`). edcai was told before
+and after (relayed by the coordinator). `020ebec` = anonymisation town rule and verify fixes
+(`af63740` … `8bdbb77`, backend), `/grafo` hides a town whose only relation is its state
+(`e0d3914`, `0dcaf0d`) but never a state on a `both` pair (`179db01`), and a chat turn whose
+connection drops shows the saved answer, recovered by its own turn id (`3d93409`, `020ebec`).
+No migration (`payload_migrations` 3; no migration file in `47b140c..020ebec`); no compose or
+variable change.
+
+Backup `/root/backups/20261024T1931Z/` (`edc_ai` 2.4 MB, `edc_backend` 316 KB; `pg_restore -l`
+152 / 411 entries), off-box copy with `timeout 180 scp`, sha256 of both dumps matched. Deploy
+`kgnchqsqzgicgtobfzh350jh` 19:31:48 → 19:38:03 UTC. 9 containers up; `web`, `backend` and
+`ai-service` run image tag `020ebec5c791…` (`docker inspect`). Health 200 on `dev.` and `api.dev.`.
+0 error/fatal lines in any dev container's log at startup and after the smoke.
+
+| check | result |
+|---|---|
+| 1. chat, participant, Prevención del dengue | "¿Qué hacen las familias para eliminar los criaderos del mosquito?" → 200, 9.8 s; markers [1]–[7] in the answer, "Fuentes consultadas (7)", every marker has a source. ⚠ A first run went to Acompañamiento escolar (the smoke clicked the picker before hydration); it also answered with [1]–[3] and 3 sources |
+| 2. `/grafo` 2D, participant | `?eco=` 1, 3, 6, 7 and `todos`: `data-vista="2d"`, one canvas, 101 / 58 / 73 / 84 / 245 entities, 0 page errors. Map rule run on each view's `/grafo/__data.json`: every state-side end of an `ubicado_en` pair is drawn (6/6, 4/4, 6/6, 9/9, 11/11); 0 ends of a `both` pair hidden. ⚠ Dev data has no `both` or undirected `ubicado_en` pairs (all `in`/`out`), so the old and new rule draw the same map here (93 / 50 / 63 / 75 / 230 nodes) |
+| 3. investigador, Mis documentos | "En revisión": Traducción 8, Acompañamiento escolar 12, Prevención del dengue 5, Discapacidad 11 (= the 36 held). 0 "En cola", 0 "Error", 0 "Rechazado". Same as before the deploy |
+
+Both test conversations deleted (sessions 162, 163 → 200; the participant has 0 sessions after).
+
+Cleanup after the deploy finished (0 deployments queued, no compose build): `docker rmi` of dev's
+three `47b140c` images by name, `docker builder prune -af` (14.74 GB).
+
+Spend: `usage_logs` $1.6240 → $1.6318 (**+$0.0078**, all this run: 2 chats ≈ $0.0039 each,
+measured — about twice the $0.002 estimate).
+
+**Disk**, `df -h /` free: 56 GB before; 42 GB after the build; 56 GB after the cleanup. Images
+11.6 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
