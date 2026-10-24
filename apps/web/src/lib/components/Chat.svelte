@@ -143,7 +143,6 @@
       // Stream, then sync, then the saved conversation: see `runTurn`.
       const result = await runTurn(payload, {
         signal: controller.signal,
-        knownMessageIds: fresh.messages.map((m) => m.id),
         onOpen: () => {
           waitingPhase = 'writing';
         },

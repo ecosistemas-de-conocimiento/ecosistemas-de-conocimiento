@@ -20,6 +20,12 @@ export interface SyncGenerateInput {
   scope?: ContextScope;
   /** Retrieve only documentos about speakers of this language. See `$lib/lengua.ts`. */
   lengua?: string;
+  /**
+   * This turn's id, made by `runTurn`. The server stamps it on the saved
+   * answer (`generationMeta.turnId`), so a retry or a recovery finds THIS
+   * turn's answer and never another's, and never saves a second one.
+   */
+  turnId?: string;
 }
 
 export interface SyncGenerateResult {
@@ -271,11 +277,6 @@ export async function generateSync(
 
 export interface RunTurnOptions extends StreamGenerateOptions {
   /**
-   * Ids of the messages this conversation already shows. An assistant message
-   * outside this list, found in the saved conversation, is this turn's answer.
-   */
-  knownMessageIds: string[];
-  /**
    * The connection dropped part way through the answer and the turn is being
    * asked again: drop the partial text shown so far.
    */
@@ -292,7 +293,9 @@ export interface RunTurnOptions extends StreamGenerateOptions {
  *   1. Stream (`generateStream`).
  *   2. The stream failed with nothing shown, or the CONNECTION dropped part
  *      way: ask again on sync (`generateSync`), the whole turn from scratch.
- *      A server-declared error after part of the answer is final.
+ *      A server-declared error after part of the answer is final. After a
+ *      lost connection, look once in the saved conversation first: the
+ *      server may have saved the answer, and asking again would pay twice.
  *   3. The sync request lost its connection too: the server may still finish
  *      and save the answer, so look for it in the saved conversation before
  *      reporting a failure.
@@ -301,11 +304,16 @@ export interface RunTurnOptions extends StreamGenerateOptions {
  * stream request died before its headers, the sync fallback died at ~30 s, and
  * the server had saved the answer while the screen said "No se pudo obtener
  * la respuesta". `api.turn.test.ts` replays it.
+ *
+ * Every request carries the same `turnId`; a saved answer counts only when its
+ * `generationMeta.turnId` matches (audit 2026-10-24: a previous turn's
+ * late-saved answer was shown as this one).
  */
 export async function runTurn(
-  input: SyncGenerateInput,
-  opts: RunTurnOptions,
+  turnInput: SyncGenerateInput,
+  opts: RunTurnOptions = {},
 ): Promise<SyncGenerateResult> {
+  const input = { ...turnInput, turnId: turnInput.turnId ?? crypto.randomUUID() };
   let received = false;
   try {
     return await generateStream(input, {
@@ -319,13 +327,17 @@ export async function runTurn(
   } catch (err) {
     if (isAbort(err)) throw err;
     if (received && !(err instanceof ConnectionLostError)) throw err;
+    if (err instanceof ConnectionLostError) {
+      const saved = await findSavedAnswer(input.sessionId, input.turnId, { ...opts, recoverAttempts: 1 });
+      if (saved) return saved;
+    }
     if (received) opts.onRestart?.();
   }
   try {
     return await generateSync(input, { signal: opts.signal });
   } catch (err) {
     if (isAbort(err) || !(err instanceof ConnectionLostError)) throw err;
-    const saved = await findSavedAnswer(input.sessionId, opts);
+    const saved = await findSavedAnswer(input.sessionId, input.turnId, opts);
     if (saved) return saved;
     throw err;
   }
@@ -334,9 +346,9 @@ export async function runTurn(
 /** This turn's answer, if the server saved it. `null` when it never shows up. */
 async function findSavedAnswer(
   sessionId: string,
+  turnId: string,
   opts: RunTurnOptions,
 ): Promise<SyncGenerateResult | null> {
-  const known = new Set(opts.knownMessageIds);
   const attempts = opts.recoverAttempts ?? 12;
   const interval = opts.recoverIntervalMs ?? 2500;
   for (let i = 0; i < attempts; i++) {
@@ -352,8 +364,11 @@ async function findSavedAnswer(
       if (isAbort(err)) throw err;
       // Still offline: look again.
     }
-    const answer = docs.findLast(
-      (d) => d.role === 'assistant' && d.id != null && !known.has(String(d.id)),
+    const answer = docs.find(
+      (d) =>
+        d.role === 'assistant' &&
+        d.id != null &&
+        (d.generationMeta as { turnId?: unknown } | null | undefined)?.turnId === turnId,
     );
     if (answer) {
       const meta = (answer.generationMeta ?? {}) as Record<string, unknown>;

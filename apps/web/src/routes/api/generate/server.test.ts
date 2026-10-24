@@ -65,6 +65,12 @@ interface World {
   retrievePool?: Array<Record<string, unknown>>;
   /** Extra chunks only the orientation retrieve (`filter.kind: conversacion`) returns, first. */
   orientExtra?: Array<Record<string, unknown>>;
+  /**
+   * The session's saved messages, as `GET /api/messages` answers them. Once
+   * `afterGenerate` is set, rows that only exist after a generate call.
+   */
+  savedMessages: Array<Record<string, unknown>>;
+  savedAfterGenerate?: Array<Record<string, unknown>>;
 }
 
 let calls: Call[];
@@ -150,6 +156,12 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
         documents: [],
         terms: ['parteras', 'comadronas'],
       });
+    }
+    if (p === '/api/messages' && method === 'GET') {
+      const late = calls.some((c) => c.url.pathname.startsWith('/v1/generate'))
+        ? (world.savedAfterGenerate ?? [])
+        : [];
+      return json({ docs: [...world.savedMessages, ...late] });
     }
     if (p === '/api/messages' && method === 'POST') {
       return world.saveStatus < 300
@@ -339,6 +351,7 @@ beforeEach(() => {
     turnsInRetrieve: false,
     answerText: 'Según el informe, las parteras acompañan los nacimientos [1].',
     streamText: 'Respuesta en streaming [1].',
+    savedMessages: [],
     publishedDocs: [
       { id: 31, name: 'Diagnóstico Comunitario de Salud.pdf', contentKind: 'documento', publicationStatus: 'published' },
       { id: 32, name: 'Acta', contentKind: 'documento', publicationStatus: 'published' },
@@ -1342,5 +1355,60 @@ describe('POST /api/generate — sources legs ask ai-service for documents only'
     const prompt = JSON.stringify(generates().find((c) => !JSON.stringify(c.body).includes('Escribe exactamente tres'))!.body);
     expect(prompt).not.toContain('RESPUESTA ANTERIOR');
     expect(prompt).not.toContain('PREGUNTA ANTERIOR');
+  });
+});
+
+describe('🔴 audit 2026-10-24: one saved answer per turn (`turnId`)', () => {
+  const TURN = 'turn-abc';
+  const savedRow = {
+    id: 77,
+    role: 'assistant',
+    content: 'La respuesta ya guardada [1].',
+    generationMeta: { turnId: TURN, traceId: 't0', modelUsed: 'chat-model', provider: 'fake', costUsd: 0.003 },
+    provenance: { chunks: [] },
+  };
+  const meta = () => (saves()[0]!.body as { generationMeta: Record<string, unknown> }).generationMeta;
+
+  it('sync: stamps the turn id on the saved answer', async () => {
+    await POST(event(turn({ turnId: TURN })));
+    expect(meta().turnId).toBe(TURN);
+  });
+
+  it('stream: stamps the turn id on the saved answer', async () => {
+    await readSse(await POST(event(turn({ turnId: TURN }), true)));
+    expect(meta().turnId).toBe(TURN);
+  });
+
+  it('sync: a turn whose answer is already saved returns it, with no second answer or save', async () => {
+    world.savedMessages = [{ id: 1, role: 'user', content: QUESTION }, savedRow];
+    const body = (await (await POST(event(turn({ turnId: TURN })))).json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ text: 'La respuesta ya guardada [1].', messageId: '77', traceId: 't0' });
+    expect(generates()).toHaveLength(0);
+    expect(saves()).toHaveLength(0);
+  });
+
+  it('stream: a turn whose answer is already saved returns it as the done frame', async () => {
+    world.savedMessages = [savedRow];
+    const frames = await readSse(await POST(event(turn({ turnId: TURN }), true)));
+    expect(frames).toEqual([
+      expect.objectContaining({ type: 'done', text: 'La respuesta ya guardada [1].', messageId: '77' }),
+    ]);
+    expect(generates()).toHaveLength(0);
+    expect(saves()).toHaveLength(0);
+  });
+
+  it('an answer saved while this one was generating is not saved twice', async () => {
+    world.savedAfterGenerate = [savedRow];
+    const body = (await (await POST(event(turn({ turnId: TURN })))).json()) as Record<string, unknown>;
+    expect(saves()).toHaveLength(0);
+    expect(body.messageId).toBe('77');
+    expect(body.text).toBe('La respuesta ya guardada [1].');
+  });
+
+  it('another turn\'s saved answer is ignored', async () => {
+    world.savedMessages = [{ ...savedRow, generationMeta: { turnId: 'other' } }];
+    await POST(event(turn({ turnId: TURN })));
+    expect(generates().length).toBeGreaterThan(0);
+    expect(saves()).toHaveLength(1);
   });
 });

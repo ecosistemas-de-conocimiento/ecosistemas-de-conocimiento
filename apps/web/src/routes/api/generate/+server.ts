@@ -35,7 +35,7 @@ import { fetchOrientationTurns, orientationBlock, withOrientation } from '$lib/s
 import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { lenguaTurn } from '$lib/lengua';
 import { stampDraftProvenance } from '$lib/publication';
-import { citedBrowserProvenance } from '$lib/server/citationProvenance';
+import { citedBrowserProvenance, toBrowserMessage } from '$lib/server/citationProvenance';
 import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
 import { prepareTurn, respond, type ContextRef, type ContextScope } from '@edc/chat-engine/core';
 
@@ -99,6 +99,62 @@ interface IncomingBody {
    * `lenguaTurn`; it names a value, never a tenant or a corpus.
    */
   lengua?: unknown;
+  /**
+   * The browser's id for this turn (`runTurn`), stamped on the saved answer
+   * as `generationMeta.turnId`. A retry of a turn whose answer is already
+   * saved gets that answer back: no second paid answer, no second saved row.
+   */
+  turnId?: unknown;
+}
+
+/** A usable `turnId`, or `undefined`. It names a turn, nothing else. */
+function turnIdOf(raw: unknown): string | undefined {
+  return typeof raw === 'string' && /^[\w-]{1,100}$/.test(raw) ? raw : undefined;
+}
+
+/**
+ * The assistant answer already saved for `turnId` in this session, as the
+ * browser may see it (provenance allowlist). `null` when there is none or the
+ * read fails: the turn then runs as usual.
+ */
+async function findSavedTurn(
+  token: string | undefined,
+  sessionId: string,
+  turnId: string | undefined,
+): Promise<Record<string, unknown> | null> {
+  if (!turnId) return null;
+  try {
+    const qs = new URLSearchParams({
+      'where[session][equals]': sessionId,
+      'where[role][equals]': 'assistant',
+      sort: '-createdAt',
+      limit: '100',
+      depth: '0',
+    });
+    const res = await backendFetch(token, `/api/messages?${qs.toString()}`, { method: 'GET' });
+    if (!res.ok) return null;
+    const docs = ((await res.json()) as { docs?: Record<string, unknown>[] }).docs ?? [];
+    const row = docs.find(
+      (d) => d.id != null && (d.generationMeta as { turnId?: unknown } | null)?.turnId === turnId,
+    );
+    return row ? toBrowserMessage(row) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A saved answer in the shape a finished turn returns. */
+function savedTurnResult(row: Record<string, unknown>): Record<string, unknown> {
+  const meta = (row.generationMeta ?? {}) as Record<string, unknown>;
+  return {
+    text: typeof row.content === 'string' ? row.content : '',
+    messageId: String(row.id),
+    provenance: row.provenance ?? null,
+    traceId: meta.traceId,
+    modelUsed: meta.modelUsed,
+    provider: meta.provider,
+    costUsd: meta.costUsd,
+  };
 }
 
 async function persistAssistantMessage(
@@ -204,8 +260,9 @@ function streamGenerate(
   /** The browser-safe provenance for the COMPLETE answer (cited sources only). */
   provenanceFor: (answer: string) => unknown,
   sentSystemPrompt: string | undefined,
-  /** Extra `generationMeta` fields for this turn (C-6: `expansionCostUsd`). */
+  /** Extra `generationMeta` fields for this turn (C-6: `expansionCostUsd`, `turnId`). */
   extraMeta: Record<string, unknown> = {},
+  turnId?: string,
 ): Response {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
@@ -255,6 +312,12 @@ function streamGenerate(
                     `(${detail}). The answer was generated without chat's instructions ` +
                     'and has been discarded.',
                 });
+                continue;
+              }
+              // Saved meanwhile by another request for this turn: return that one.
+              const already = await findSavedTurn(token, sessionId, turnId);
+              if (already) {
+                emit({ type: 'done', ...savedTurnResult(already) });
                 continue;
               }
               const provenance = provenanceFor(evt.text ?? '');
@@ -324,6 +387,17 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     body = (await request.json()) as IncomingBody;
   } catch {
     throw error(400, 'Invalid JSON body.');
+  }
+
+  // A retry of a turn whose answer is already saved: hand that answer back.
+  const turnId = turnIdOf(body.turnId);
+  const already = await findSavedTurn(locals.token, body.sessionId, turnId);
+  if (already) {
+    const result = savedTurnResult(already);
+    if (!stream) return json(result);
+    return new Response(`data: ${JSON.stringify({ type: 'done', ...result })}\n\n`, {
+      headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },
+    });
   }
 
   // Fail fast on a misconfigured server, before any backend round trip. The
@@ -532,8 +606,10 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
         },
       })
     : engineAI;
-  const turnMeta = (): Record<string, unknown> =>
-    expansionCostUsd > 0 ? { expansionCostUsd } : {};
+  const turnMeta = (): Record<string, unknown> => ({
+    ...(expansionCostUsd > 0 ? { expansionCostUsd } : {}),
+    ...(turnId ? { turnId } : {}),
+  });
 
   // The full engine turn spec (condense → summary → scoped retrieve → @-refs →
   // user-turn injection). Identical shape for both transports: the streaming
@@ -633,6 +709,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
           ),
         upstream.unit.systemPrompt,
         turnMeta(),
+        turnId,
       );
     } catch (err) {
       if ((err as Error)?.name === 'AbortError' || request.signal.aborted) {
@@ -667,6 +744,9 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       generation.text,
       titleMatch,
     );
+    // Saved meanwhile by another request for this turn: return that one.
+    const savedMeanwhile = await findSavedTurn(locals.token, body.sessionId, turnId);
+    if (savedMeanwhile) return json(savedTurnResult(savedMeanwhile));
     const messageId = await persistAssistantMessage(
       locals.token,
       body.sessionId,

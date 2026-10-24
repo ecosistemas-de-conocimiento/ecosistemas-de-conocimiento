@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runTurn, userFacingError, TURN_FAILED_MESSAGE, AIServiceError } from './api';
 
-const input = { sessionId: 's1', messages: [{ role: 'user' as const, content: 'hola' }] };
+const input = { sessionId: 's1', turnId: 'turn-2', messages: [{ role: 'user' as const, content: 'hola' }] };
 const fast = { recoverAttempts: 3, recoverIntervalMs: 0 };
 
 function sse(frames: string[], opts: { failAfter?: boolean } = {}): Response {
@@ -47,7 +47,7 @@ const savedAnswer = {
   id: 99,
   role: 'assistant',
   content: 'La respuesta guardada [1].',
-  generationMeta: { traceId: 't9', modelUsed: 'm', provider: 'p', costUsd: 0.001 },
+  generationMeta: { traceId: 't9', modelUsed: 'm', provider: 'p', costUsd: 0.001, turnId: 'turn-2' },
   provenance: { chunks: [] },
 };
 
@@ -68,55 +68,105 @@ describe('runTurn', () => {
   it('run 1 replay: both requests drop, the saved answer is shown instead of an error', async () => {
     fetchMock
       .mockRejectedValueOnce(new TypeError('Failed to fetch')) // stream
+      .mockResolvedValueOnce(savedMessages([])) // looked once before asking again
       .mockRejectedValueOnce(new TypeError('Failed to fetch')) // sync fallback
       // Not saved yet on the first look, saved on the second.
       .mockResolvedValueOnce(savedMessages([{ id: 1, role: 'user', content: 'hola' }]))
       .mockResolvedValueOnce(savedMessages([{ id: 1, role: 'user', content: 'hola' }, savedAnswer]));
 
-    const result = await runTurn(input, { knownMessageIds: ['1'], ...fast });
+    const result = await runTurn(input, fast);
 
     expect(result.text).toBe('La respuesta guardada [1].');
     expect(result.messageId).toBe('99');
     expect(result.traceId).toBe('t9');
     expect(result.provenance).toEqual({ chunks: [] });
-    expect(fetchMock.mock.calls[2]![0]).toBe('/api/sessions/s1/messages');
+    expect(fetchMock.mock.calls[1]![0]).toBe('/api/sessions/s1/messages');
+    expect(fetchMock.mock.calls[3]![0]).toBe('/api/sessions/s1/messages');
   });
 
-  it('ignores assistant messages the conversation already had', async () => {
-    const old = { ...savedAnswer, id: 7, content: 'respuesta anterior' };
-    fetchMock
-      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
-      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
-      .mockResolvedValue(savedMessages([old]));
+  it('ignores assistant messages of other turns', async () => {
+    const old = { ...savedAnswer, id: 7, content: 'respuesta anterior', generationMeta: {} };
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/generate')) throw new TypeError('Failed to fetch');
+      return savedMessages([old]);
+    });
 
-    const err = await runTurn(input, { knownMessageIds: ['7'], ...fast }).catch((e) => e);
+    const err = await runTurn(input, fast).catch((e) => e);
 
     expect(err).toBeInstanceOf(AIServiceError);
     expect(userFacingError(err)).toBe(TURN_FAILED_MESSAGE);
-    // stream + sync + 3 looks at the saved conversation
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    // stream + 1 look + sync + 3 looks at the saved conversation
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it('🔴 audit: a late-saved answer of the PREVIOUS turn is never shown as this one', async () => {
+    // Turn 1 failed in the browser; the server saved its answer (id 50)
+    // afterwards, so the browser never learned that id.
+    const saved = [
+      { id: 1, role: 'user', content: 'pregunta 1' },
+      { id: 50, role: 'assistant', content: 'RESPUESTA 1', generationMeta: { turnId: 'turn-1' } },
+      { id: 2, role: 'user', content: 'hola' },
+    ];
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/generate')) throw new TypeError('Failed to fetch');
+      return savedMessages(saved);
+    });
+
+    const err = await runTurn(input, fast).catch((e) => e);
+
+    expect(err).toBeInstanceOf(AIServiceError);
+  });
+
+  it('🔴 gives the turn an id and sends the same one on the stream and on the sync retry', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(500, { message: 'boom' }))
+      .mockResolvedValueOnce(jsonResponse(200, { text: 'ok', messageId: '5' }));
+
+    await runTurn({ sessionId: 's1', messages: input.messages }, fast);
+
+    const bodies = fetchMock.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    expect(typeof bodies[0].turnId).toBe('string');
+    expect(bodies[0].turnId.length).toBeGreaterThan(8);
+    expect(bodies[1].turnId).toBe(bodies[0].turnId);
+  });
+
+  it('🔴 audit: a dropped stream whose answer was saved is not asked again', async () => {
+    fetchMock
+      .mockResolvedValueOnce(sse(['data: {"type":"delta","text":"Hal"}\n\n'], { failAfter: true }))
+      .mockResolvedValueOnce(savedMessages([{ id: 1, role: 'user', content: 'hola' }, savedAnswer]));
+    const onRestart = vi.fn();
+
+    const result = await runTurn(input, { ...fast, onRestart });
+
+    expect(result.text).toBe('La respuesta guardada [1].');
+    expect(result.messageId).toBe('99');
+    expect(onRestart).not.toHaveBeenCalled();
+    // No second /api/generate: no second paid answer, no second saved turn.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('a stream that ends with no completion falls back to sync', async () => {
     fetchMock
       .mockResolvedValueOnce(sse([': ok\n\n']))
+      .mockResolvedValueOnce(savedMessages([]))
       .mockResolvedValueOnce(jsonResponse(200, { text: 'sync answer', messageId: '5' }));
 
-    const result = await runTurn(input, { knownMessageIds: [], ...fast });
+    const result = await runTurn(input, fast);
 
     expect(result.text).toBe('sync answer');
-    expect(fetchMock.mock.calls[1]![0]).toBe('/api/generate');
+    expect(fetchMock.mock.calls[1]![0]).toBe('/api/sessions/s1/messages');
+    expect(fetchMock.mock.calls[2]![0]).toBe('/api/generate');
   });
 
   it('a connection lost mid-answer restarts the turn on sync instead of failing', async () => {
     fetchMock
       .mockResolvedValueOnce(sse(['data: {"type":"delta","text":"Hal"}\n\n'], { failAfter: true }))
+      .mockResolvedValueOnce(savedMessages([]))
       .mockResolvedValueOnce(jsonResponse(200, { text: 'Hola completo', messageId: '6' }));
     const deltas: string[] = [];
     const onRestart = vi.fn();
 
     const result = await runTurn(input, {
-      knownMessageIds: [],
       onDelta: (t) => deltas.push(t),
       onRestart,
       ...fast,
@@ -135,7 +185,7 @@ describe('runTurn', () => {
       ]),
     );
 
-    await expect(runTurn(input, { knownMessageIds: [], ...fast })).rejects.toBeInstanceOf(
+    await expect(runTurn(input, fast)).rejects.toBeInstanceOf(
       AIServiceError,
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -146,7 +196,7 @@ describe('runTurn', () => {
       .mockResolvedValueOnce(jsonResponse(500, { message: 'ai-service: boom' }))
       .mockResolvedValueOnce(jsonResponse(500, { message: 'ai-service: boom' }));
 
-    await expect(runTurn(input, { knownMessageIds: [], ...fast })).rejects.toBeInstanceOf(
+    await expect(runTurn(input, fast)).rejects.toBeInstanceOf(
       AIServiceError,
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -156,7 +206,7 @@ describe('runTurn', () => {
     const abort = Object.assign(new Error('aborted'), { name: 'AbortError' });
     fetchMock.mockRejectedValueOnce(abort);
 
-    await expect(runTurn(input, { knownMessageIds: [], ...fast })).rejects.toMatchObject({
+    await expect(runTurn(input, fast)).rejects.toMatchObject({
       name: 'AbortError',
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
