@@ -169,9 +169,12 @@ export const DETECT_SYSTEM_PROMPT = [
   '  "su hermana", "la esposa de mi primo". No es un tratamiento o cargo solo.',
   // 🔴 THE MODEL OWNS SPAN BOUNDARIES (owner's rule, 2026-10-17: no word lists
   // in code). A span cut short leaves "Don [Persona F]" or "colonia [Domicilio L]".
+  // 🔴 OWNER, 2026-10-23: titles are the model's to include, no word list.
   '- Devuelve el tramo COMPLETO que identifica. Un tratamiento o cargo que antecede al',
-  '  nombre es parte del nombre: en "Don Fernando Vázquez" el hallazgo es',
-  '  "Don Fernando Vázquez"; en "la maestra Nicasia Olvera" es "la maestra Nicasia Olvera".',
+  '  nombre es parte del nombre, con su artículo, en UN solo hallazgo: en "Don Fernando',
+  '  Vázquez" el hallazgo es "Don Fernando Vázquez"; en "la maestra Nicasia Olvera" es',
+  '  "la maestra Nicasia Olvera"; en "la maestra Lucrecia" es "la maestra Lucrecia"; en',
+  '  "el delegado Abundio Cázares" es "el delegado Abundio Cázares".',
   '- Centros de trabajo, escuelas o cargos tan precisos que identifican a una persona.',
   '- Teléfonos, correos, cuentas, identificadores oficiales y números de expediente.',
   '',
@@ -209,7 +212,16 @@ export const DETECT_SYSTEM_PROMPT = [
   'Domicilios (marca "lugar"). Incluye TODOS estos casos, completos o parciales:',
   '- Calles, avenidas, andadores, cerradas, privadas y sus números.',
   '- Colonias, barrios, fraccionamientos, unidades habitacionales, manzana y lote.',
-  '- Ranchos y parajes con nombre: "el rancho Los Pinos", "el paraje Tres Cruces".',
+  '- Ranchos, parajes y haciendas con nombre: "el rancho Los Pinos", "el paraje Tres',
+  '  Cruces", "la hacienda San José".',
+  // 🔴 OWNER, 2026-10-23: an institution where someone lives or is held points
+  // at them, also next to a town.
+  // ⚠ Named, or next to a town: an unnamed "el hospital" is dropped as a
+  // generic place (`genericPlaces.ts`), so the prompt does not ask for it.
+  '- Una institución CON NOMBRE, o junto a un pueblo, donde está o vive una persona:',
+  '  "el Cereso", "el hospital de Xochitepec", "la escuela Benito Juárez". En "estoy en',
+  '  Atlacholoaya, en el Cereso" el hallazgo es "el Cereso". Un "el hospital" o "la escuela"',
+  '  solo, sin nombre ni pueblo, no se reporta.',
   '- Códigos postales.',
   '- Referencias sin formato que permiten llegar a una casa: "enfrente de la tienda',
   '  de doña Mari", "subiendo por donde está el tanque", "la casa de la reja verde".',
@@ -230,9 +242,14 @@ export const DETECT_SYSTEM_PROMPT = [
   // ⚠ "Rancho"/"paraje" are marked only when the WORD is said: in rural Mexico a
   // rancho is often one family's land. A locality whose name merely contains
   // "Rancho" ("vivo en Rancho Nuevo") is a town and is shown.
-  '⚠ NUNCA marques estados, municipios, alcaldías, ciudades, pueblos, comunidades,',
-  'localidades, ejidos ni congregaciones, aunque sean pequeños y aunque digan dónde',
-  'vive, trabaja o estudia alguien. En "vivo en Xoxocotla, Morelos" no hay hallazgo.',
+  // 🔴 OWNER, 2026-10-23 (Q10 A): "we dont need to redact towns, states". Stage
+  // 3 redacts whatever the model reports, so this line is what keeps them.
+  '⚠ Los pueblos, municipios, alcaldías, ciudades, comunidades, localidades, ejidos,',
+  '  congregaciones y estados NO son datos personales y NO se reportan, aunque sean',
+  '  pequeños y aunque digan dónde vive, trabaja o estudia alguien. En "Vivo en',
+  '  Xochitepec, Morelos" no hay ningún hallazgo.',
+  'Una calle o colonia con nombre de pueblo o estado SÍ se marca: "calle Morelos 12",',
+  '"colonia Xochitepec", "Hidalgo 12".',
   'Marca todo lo de la lista Domicilios aunque esté en una ciudad o pueblo.',
   '"Rancho Nuevo" como nombre de un pueblo no se marca.',
   // ⚠ Many Mexican towns carry a person's name (Dolores, Soledad, Guadalupe).
@@ -351,6 +368,25 @@ export function locateSpan(source: string, needle: string): string | null {
 }
 
 /**
+ * 🔴 THE MASK TOKENS ai-service PUTS IN EVERY OUTGOING PROMPT. Its PII
+ * minimiser replaces addresses, phones, emails, CURP, RFC and names with these
+ * before the prompt leaves, so the model sees "[DIRECCION]" where the text says
+ * "calle Hidalgo 45". KEEP IN SYNC with `DEFAULT_PLACEHOLDERS` in
+ * `services/ai-service/src/services/ai/pii/types.ts`.
+ *
+ * Stored folded (lower case, no accents) so "[Dirección]" matches too. EDC's
+ * own placeholders (`[Domicilio A]`, `[Dato omitido]`) are a different set.
+ */
+const AI_SERVICE_MASK_TOKENS: readonly string[] = [
+  '[curp]',
+  '[rfc]',
+  '[email]',
+  '[telefono]',
+  '[direccion]',
+  '[nombre]',
+]
+
+/**
  * Pull `hallazgos` out of whatever the model actually said.
  *
  * ⚠ DEFENSIVE ABOUT SHAPE, NEVER ABOUT FAILURE. Fences and prose around the JSON
@@ -416,13 +452,36 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
     // so the replacement still finds it.
     // Titles: no word list; a title left beside a placeholder is published (owner, 2026-10-21, Q1).
     const located = locateSpan(sourceText, trimmed)
-    if (located === null) continue
+    // 🔴 A MASKED FINDING IS NOT A HALLUCINATION. Measured 3/3 runs: the model
+    // reported "[DIRECCION]", the drop below discarded it, and the real street
+    // shipped in a ready document. A finding carrying an ai-service mask token
+    // that we cannot place in the text means personal data we cannot see:
+    // hold for a human. Not retryable — the same prompt is masked again.
+    // A finding that IS in the text (a document really saying "[DIRECCION]")
+    // is located and redacted like any other.
+    if (located === null) {
+      const folded = [...trimmed].map(foldChar).join('')
+      if (AI_SERVICE_MASK_TOKENS.some((token) => folded.includes(token))) {
+        throw new DetectorFailure(
+          'dato-enmascarado',
+          'El modelo vio un dato enmascarado (una dirección, teléfono, correo, CURP, RFC o nombre) y no se puede ubicar en el texto. Una persona tiene que revisarlo.',
+        )
+      }
+      continue
+    }
 
     out.push({
       text: located,
       type: (FINDING_TYPES as readonly unknown[]).includes(tipo)
         ? (tipo as DetectorFinding['type'])
-        : 'otro',
+        : // The prompt files homes under "Domicilios (marca \"lugar\")"; a model
+          // that answers "domicilio" means an address: labelled `[Domicilio X]`.
+          tipo === 'domicilio'
+          ? 'lugar'
+          : 'otro',
+      // 🔴 …and NEVER a town: the model itself called it a home (audit
+      // 2026-10-23: "Vivo en Hidalgo 12" typed domicilio was shown).
+      ...(tipo === 'domicilio' ? { typedAddress: true as const } : {}),
       // 🔴 Only a literal `false` counts; a missing or odd value is identifying.
       ...((item as { identifica?: unknown }).identifica === false ? { identifying: false } : {}),
     })
@@ -684,7 +743,9 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
       for (const f of perChunk.flat()) {
         const key = `${f.type}\u0000${f.text}`
         const prior = byKey.get(key)
-        if (prior === undefined || prior.identifying === false) byKey.set(key, f)
+        const kept = prior === undefined || prior.identifying === false ? f : prior
+        // 🔴 If any chunk typed it `domicilio`, it is never a town: fail-closed.
+        byKey.set(key, prior?.typedAddress || f.typedAddress ? { ...kept, typedAddress: true } : kept)
       }
       return [...byKey.values()]
     },

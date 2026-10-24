@@ -9,10 +9,13 @@
  * on dev the same day (runbook `infra/fleet/edc-1.md` §4p), 31 of the 38
  * verify holds had place findings only.
  *
- * So the rule is repeated in code, on the HOLD DECISION only. 🔴 A finding this
- * file ignores SHIPS IN CLEAR (`gate.ts`), so every doubt goes to "hold": a
- * town held by mistake costs a reviewer one click; a person or a home let
- * through costs the person.
+ * So the rule is repeated in code, on VERIFY'S HOLD DECISION (`gate.ts`) and
+ * the place-hold re-run (`regatePlaceHolds.ts`) only. 🔴 Stage 3 redacts every
+ * finding the model reports, towns included (owner, Q10 A, 2026-10-23: "the
+ * model decides"); the prompt is what keeps towns out. A finding this file
+ * ignores at verify SHIPS IN CLEAR, so every doubt goes to "hold": a town held
+ * by mistake costs a reviewer one click; a person or a home let through costs
+ * the person.
  *
  * ── THE RULES (all must pass, for EVERY occurrence) ──────────────────────────
  *
@@ -43,46 +46,95 @@
  *      or surname, and a one-word finding does not end in "-ez" ("Martínez").
  *      Words after a saint ("San Juan Chamula") and state names are exempt.
  *      And "en" counts only after a verb of residence or movement ("vivo en",
- *      "me quedé en"), so "pienso en Soledad" holds.
+ *      "me quedé en"), so "pienso en Soledad" holds. Work is not residence:
+ *      "trabajo en Coppel" names an employer.
+ *   6. NOTHING STREET-LIKE AFTER, in the next eight words (two past a
+ *      sentence end): no digit, "#", "s/n", "c/", address placeholder, street
+ *      or relation word ("casi junto al", "a dos cuadras", "dpto 4"),
+ *      spelled-out number ("cuarenta y cinco", "el cinco"), Roman numeral or
+ *      ordinal ("Hidalgo II", "Tepito Segunda"). ⚠ A year or a phone counts
+ *      too: "vivo en Xochitepec desde 2010" redacts the town (fail-closed).
+ *   7. ONE PIECE, ONE PROPER WORD, unless a town word comes before it or
+ *      starts it ("el municipio de Gómez Farías", "Ciudad Juárez"). 🔴 A state
+ *      after it is NOT an anchor (re-audit 2026-10-23): "Insurgentes Sur,
+ *      CDMX", "Santa Úrsula, CDMX" are redacted, and so are real towns such
+ *      as "Gómez Farías, Jalisco" (fail-closed; a reviewer approves). A state
+ *      name with a state after it in any form ("Hidalgo, Morelos", "Hidalgo
+ *      (Morelos)", "Hidalgo, Edo. de Morelos", "Morelos, Edo. Méx.") is a street.
+ *   ·  A finding the model typed `domicilio` is never a town (`typedAddress`).
+ *   ·  Every set lookup is case- and accent-folded ("Callejon" = "callejón").
  *
  * ⚠ THE TWO RESIDUAL RISKS, STATED. There is no gazetteer and no census here,
  * so both directions of "looks like a town" can still be wrong:
  *
- *   1. A COLONIA (or paraje, or named building) written by a bare, town-shaped
- *      name after a place verb and "en" — "vivo en Portales" — that stage 3
- *      also missed passes as a town and ships in clear.
+ *   1. A COLONIA, STREET (or paraje, or named building) written as ONE bare,
+ *      capitalised word after a place verb and "en", with nothing street-like
+ *      after it — "vivo en Portales", "vivo en Insurgentes", "vivo en Tepito"
+ *      — that the model typed `lugar` passes as a town and ships in clear.
  *   2. A PERSON the detector typed `lugar` whose name is not on the compact
  *      lists — an uncommon given name or a surname not ending in "-ez",
  *      after "vivo en" / "soy de" — passes as a town and ships in clear.
  *      ("Vivo en Xiadani" passes.) Common names and every "-ez" surname hold.
  *
- * Both need the detector to have mistyped AND stage 3 to have missed it. The
- * opposite error — a real town held — costs a reviewer one click and is the
- * direction every rule above leans.
+ * Both need the detector to have missed it at stage 3 (which redacts every
+ * finding, owner Q10 A) AND to report it at verify typed `lugar`. The opposite
+ * error — a real town held — costs a reviewer one click and is the direction
+ * every rule above leans. One bare word after "vivo en" passes (owner, Q8).
  *
  * ⚠ A `persona`, `contacto`, `identificador` or `otro` finding is never ignored.
  */
 
+import { foldedMatches } from './detector'
 import type { DetectorFinding } from './types'
+
+/**
+ * 🔴 FOLDED: lower case AND accents dropped, on both sides of every set lookup
+ * (audit 2026-10-23: "Callejon", "Prolongacion", "Seccion" missed their
+ * accented head nouns). Folding only ever makes a lookup match more.
+ */
+const lower = (word: string) =>
+  word.normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('es')
+
+function foldedSet(words: readonly string[]): Set<string> {
+  return new Set(words.map(lower))
+}
+
+/**
+ * Street, settlement and building words, abbreviations included. Matched
+ * case- and accent-folded, with or without a dot ("Priv.", "Cda", "Calz").
+ * These also count in the few words AFTER a place (rule 6).
+ * ⚠ Not "ejido": the owner ruled ejidos are shown (`TOWN_WORDS`).
+ */
+const STREET_WORDS: readonly string[] = [
+  // calles
+  'calle', 'avenida', 'av', 'avda', 'andador', 'cerrada', 'cda', 'privada', 'priv',
+  'callejón', 'cjon', 'calzada', 'calz', 'boulevard', 'bulevar', 'blvd',
+  'prolongación', 'prol', 'carretera', 'carr', 'camino', 'brecha', 'vereda',
+  'kilómetro', 'km', 'esquina', 'esq', 'entre', 'número', 'núm', 'num', 'nro', 'retorno',
+  'circuito', 'cto', 'pasaje', 'cuadra', 'cuadras', 'frente', 'enfrente', 'fte',
+  'ext', 'bis', 'letra', 'local', 'st', 'ave', 'rd', 'street',
+  // dentro de una localidad
+  'colonia', 'col', 'barrio', 'fraccionamiento', 'fracc', 'frac', 'unidad', 'habitacional',
+  'manzana', 'mz', 'mza', 'mzna', 'supermanzana', 'smz', 'lote', 'lt', 'sector', 'sección', 'secc',
+  'ampliación', 'ampl', 'residencial', 'condominio', 'conjunto', 'infonavit',
+  'fovissste', 'privadas', 'villas',
+  // el edificio
+  'edificio', 'edif', 'torre', 'departamento', 'depto', 'dpto', 'interior', 'int', 'piso',
+]
 
 /** Words that make a finding an address, a home, or an institution. Lower case, accents kept. */
 export const ADDRESS_WORDS: readonly string[] = [
-  // calles
-  'calle', 'avenida', 'av', 'andador', 'cerrada', 'privada', 'callejón', 'calzada',
-  'boulevard', 'bulevar', 'blvd', 'prolongación', 'carretera', 'camino', 'brecha',
-  'vereda', 'kilómetro', 'km', 'esquina', 'entre', 'número', 'núm', 'no', 'sin',
-  // dentro de una localidad
-  'colonia', 'col', 'barrio', 'fraccionamiento', 'fracc', 'unidad', 'habitacional',
-  'manzana', 'mz', 'lote', 'lt', 'sector', 'sección', 'ampliación', 'residencial',
-  'condominio', 'conjunto', 'infonavit', 'fovissste', 'privadas', 'villas',
+  ...STREET_WORDS,
+  'no', 'sin',
   // nombres frecuentes de colonias (auditoría de `genericPlaces.ts`, 2026-10-21)
   'barranca', 'presa', 'loma', 'lomas', 'jardín', 'jardines', 'pedregal',
   // ranchos, parajes, tierras
-  'rancho', 'ranchería', 'paraje', 'predio', 'finca', 'parcela', 'terreno', 'huerta',
-  'milpa', 'potrero',
+  'rancho', 'rcho', 'ranchito', 'ranchería', 'paraje', 'predio', 'finca', 'parcela',
+  'terreno', 'huerta', 'milpa', 'potrero', 'hacienda', 'granja', 'quinta',
+  // reclusión (audit 2026-10-23: "Cereso Atlacholoaya, Morelos" was shown)
+  'cereso', 'cefereso', 'penal', 'reclusorio', 'penitenciaría', 'cárcel',
   // la casa y cómo llegar
-  'casa', 'domicilio', 'edificio', 'departamento', 'depto', 'interior', 'piso',
-  'cuarto', 'enfrente', 'frente', 'junto', 'atrás', 'detrás', 'lado', 'subiendo',
+  'casa', 'domicilio', 'cuarto', 'junto', 'atrás', 'detrás', 'lado', 'subiendo',
   'bajando', 'cerca', 'reja', 'puerta', 'zaguán', 'tanque',
   // código postal
   'código', 'postal', 'cp',
@@ -92,7 +144,8 @@ export const ADDRESS_WORDS: readonly string[] = [
   'centro', 'salud', 'consultorio', 'imss', 'issste', 'issstep', 'seguro', 'siglo',
   'xxi', 'raza', 'iglesia', 'parroquia', 'capilla', 'templo', 'mercado', 'tienda',
   'tiendita', 'plaza', 'panteón', 'cancha', 'oficina', 'empresa', 'fábrica',
-  'taller', 'cooperativa', 'albergue', 'refugio',
+  'taller', 'cooperativa', 'albergue', 'refugio', 'sanatorio', 'asilo', 'internado',
+  'orfanato', 'cuartel',
 ]
 
 /** Honorifics and kin words: a finding with one of these, or right after one, is a person. */
@@ -129,8 +182,9 @@ const ORIGIN_WORDS = [
  * "nací en", "me quedé en". "Pienso en Soledad", "confío en Pedro" hold.
  * Stems for regular forms; exact forms where a stem would catch other words.
  */
-const PLACE_VERB_STEMS = ['viv', 'nac', 'crec', 'lleg', 'trabaj', 'qued', 'mud', 'resid', 'habit', 'regres']
-const PLACE_VERB_FORMS = new Set([
+// ⚠ NOT "trabaj": "trabajo en Coppel" names an employer (audit 2026-10-23).
+const PLACE_VERB_STEMS = ['viv', 'nac', 'crec', 'lleg', 'qued', 'mud', 'resid', 'habit', 'regres']
+const PLACE_VERB_FORMS = foldedSet([
   // estar
   'estar', 'estoy', 'está', 'estás', 'estamos', 'están', 'estaba', 'estábamos', 'estaban',
   'estuve', 'estuvo', 'estuvimos', 'estuvieron', 'estado', 'estuvimos',
@@ -211,9 +265,9 @@ const EZ_SURNAME = /^\p{Lu}\p{Ll}*[eé]z$/u
  * surname first); "Ciudad Juárez" passes because "Ciudad" starts it, and
  * "Gómez Farías" passes because the "-ez" rule reads one-word findings only.
  */
-const EZ_TOWNS = new Set(['jerez'])
+const EZ_TOWNS = foldedSet(['jerez'])
 
-const NAMES = new Set([...GIVEN_NAMES, ...SURNAMES])
+const NAMES = foldedSet([...GIVEN_NAMES, ...SURNAMES])
 
 /** True when any word of the finding is a person's name (words after a saint are exempt). */
 function namesAPerson(words: readonly string[]): boolean {
@@ -241,17 +295,15 @@ const STATES = [
   'zacatecas', 'ciudad de méxico', 'cdmx',
 ]
 
-const DIRECT_LOCATIVES = new Set(['en', 'desde', 'hasta', 'hacia', 'rumbo', ...TOWN_WORDS])
-const ARTICLES = new Set(['el', 'la', 'los', 'las'])
-const SAINTS = new Set(['san', 'santa', 'santo'])
-const ADDRESS = new Set(ADDRESS_WORDS)
-const PERSON = new Set(PERSON_WORDS)
-const TOWN = new Set(TOWN_WORDS)
-const ORIGIN = new Set(ORIGIN_WORDS)
-const STATE = new Set(STATES)
-const CONNECTOR = new Set(['de', 'del', 'la', 'las', 'los', 'el'])
-
-const lower = (word: string) => word.normalize('NFC').toLocaleLowerCase('es')
+const DIRECT_LOCATIVES = foldedSet(['en', 'desde', 'hasta', 'hacia', 'rumbo', ...TOWN_WORDS])
+const ARTICLES = foldedSet(['el', 'la', 'los', 'las'])
+const SAINTS = foldedSet(['san', 'santa', 'santo'])
+const ADDRESS = foldedSet(ADDRESS_WORDS)
+const PERSON = foldedSet(PERSON_WORDS)
+const TOWN = foldedSet(TOWN_WORDS)
+const ORIGIN = foldedSet(ORIGIN_WORDS)
+const STATE = foldedSet(STATES)
+const CONNECTOR = foldedSet(['de', 'del', 'la', 'las', 'los', 'el'])
 const bare = (token: string) => lower(token).replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '')
 const isCapitalised = (word: string) => /^\p{Lu}/u.test(word)
 
@@ -270,25 +322,138 @@ function hasTownShape(words: readonly string[]): boolean {
   return proper > 0
 }
 
-/** "Xoxocotla, Morelos." → true after "Xoxocotla". */
-function stateFollows(after: string): boolean {
-  const m = /^\s*,\s*([\p{L} ]+)/u.exec(after)
-  if (!m) return false
-  const words = m[1]!.trim().split(/\s+/u).map(lower)
-  // Longest match first: "baja california sur" before "baja california".
-  for (let n = Math.min(4, words.length); n >= 1; n -= 1) {
-    if (STATE.has(words.slice(0, n).join(' '))) return true
+/** Rule 6: a house number spelled out. Tens, hundreds and "mil" anywhere near. */
+const NUMBER_TENS = foldedSet([
+  'diez', 'once', 'doce', 'trece', 'catorce', 'quince', 'dieciséis', 'diecisiete',
+  'dieciocho', 'diecinueve', 'veinte', 'treinta', 'cuarenta', 'cincuenta', 'sesenta',
+  'setenta', 'ochenta', 'noventa', 'cien', 'ciento', 'doscientos', 'trescientos',
+  'cuatrocientos', 'quinientos', 'seiscientos', 'setecientos', 'ochocientos',
+  'novecientos', 'mil',
+])
+/** Units count right after the place, after an article ("el cinco") or after a marker. */
+const NUMBER_UNITS = foldedSet(['cero', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve'])
+/** "cuarentaicinco", "veintidós": a ten glued to its unit. */
+const GLUED_TENS = /^(?:veinti|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa)\p{L}+$/u
+/** "Tepito Segunda", "la segunda casa", "Hidalgo, Primera". */
+const ORDINALS = foldedSet(['primera', 'primero', 'primer', 'segunda', 'segundo', 'tercera', 'tercero', 'tercer', 'cuarta'])
+/** "Hidalgo II", "Hidalgo XII". Upper case only, so "vi" or "mil" never match. */
+const ROMAN = /^[IVXLC]{1,6}$/u
+/** "nº cinco": a unit after one of these is a number. (A digit after one is a digit.) */
+const NUMBER_MARKERS = foldedSet(['n', 'no', 'nº', 'num', 'núm', 'nro', 'número'])
+/** How a house is placed against something else: counted anywhere in the window. */
+const RELATION = foldedSet([
+  'junto', 'atrás', 'detrás', 'lado', 'enfrente', 'frente', 'cerca', 'esquina', 'cuadra',
+  'cuadras', 'entre',
+])
+/** "Mor.", "Méx.": a state abbreviation, only with its dot. */
+const STATE_ABBREVIATIONS = foldedSet([
+  'ags', 'bc', 'bcs', 'camp', 'chis', 'chih', 'coah', 'col', 'dgo', 'gto', 'gro', 'hgo',
+  'jal', 'méx', 'mich', 'mor', 'nay', 'nl', 'oax', 'pue', 'qro', 'qroo', 'slp', 'sin',
+  'son', 'tab', 'tamps', 'tlax', 'ver', 'yuc', 'zac', 'edomex', 'df',
+])
+const STREET = foldedSet(STREET_WORDS)
+/** How many words after a place rule 6 reads, and how many past a sentence end. */
+const AFTER_WINDOW = 8
+const AFTER_SENTENCE = 2
+
+function isNumberWord(w: string): boolean {
+  if (NUMBER_TENS.has(w) || NUMBER_UNITS.has(w) || GLUED_TENS.test(w)) return true
+  // "cuarenta-y-cinco"
+  return w.includes('-') && w.split('-').some((part) => NUMBER_TENS.has(part) || NUMBER_UNITS.has(part))
+}
+
+/**
+ * The words of rule 6's window, raw: up to {@link AFTER_WINDOW}, and only
+ * {@link AFTER_SENTENCE} more once a sentence ends (".", "!", "?", ";").
+ */
+function afterWindow(after: string): string[] {
+  const out: string[] = []
+  let budget = AFTER_WINDOW
+  for (const t of after.split(/\s+/u)) {
+    if (t === '' || budget <= 0) continue
+    const w = bare(t)
+    // "familia." ends a sentence; "n.", "int.", "Ote.", "edif." do not. (A
+    // longer street word with a dot, "depto.", triggers rule 6 by itself.)
+    const abbreviation = w.length <= 4
+    const sentenceEnd = /^[^\p{L}\p{N}]+$/u.test(t)
+      ? /[.!?;]/u.test(t)
+      : /[!?;]["')]*$/u.test(t) || (/\.["')]*$/u.test(t) && !abbreviation)
+    if (/[\p{L}\p{N}#/[]/u.test(t)) {
+      out.push(t)
+      budget -= 1
+    }
+    if (sentenceEnd) budget = Math.min(budget, AFTER_SENTENCE)
+  }
+  return out
+}
+
+/**
+ * Rule 6 — what stands AFTER (audits 2026-10-23, three passes). Within the
+ * window ({@link afterWindow}): a digit, "#", "s/n", "c/", one of our address
+ * placeholders, a street or relation word ("casi junto al", "a un lado de"),
+ * a spelled-out ten, hundred or "mil", a Roman numeral or an ordinal, or a
+ * unit after an article or a number marker ("el cinco", "nº cinco"). The
+ * word right after may also be any address word or a unit ("Hidalgo
+ * cinco").
+ */
+function streetFollows(after: string): boolean {
+  const tokens = afterWindow(after)
+  for (let i = 0; i < tokens.length; i += 1) {
+    const t = tokens[i]!
+    const w = bare(t)
+    // 🔴 Punctuation stripped before every marker test: "(s/n).", "s.n.", "s/n;".
+    const mark = lower(t).replace(/[^\p{L}\p{N}/#]/gu, '')
+    const prev = i === 0 ? '' : bare(tokens[i - 1]!)
+    if (/[\p{N}#]/u.test(t)) return true
+    // 🔴 Our own address or data placeholder: stage 3 already took the number.
+    if (/\[(?:Domicilio|Dato)\b/u.test(t)) return true
+    if (mark === 's/n' || mark === 'sn' || mark.startsWith('c/')) return true
+    if (STREET.has(w) || RELATION.has(w) || ORDINALS.has(w)) return true
+    if (NUMBER_TENS.has(w) || GLUED_TENS.test(w) || (w.includes('-') && isNumberWord(w))) return true
+    if (ROMAN.test(t.replace(/[^\p{L}]/gu, ''))) return true
+    if (NUMBER_UNITS.has(w) && (i === 0 || ARTICLES.has(prev) || NUMBER_MARKERS.has(prev))) return true
+    if (i === 0 && ADDRESS.has(w)) return true
   }
   return false
 }
 
-/** Rules 2–4 for one occurrence. */
-function placeContext(text: string, at: number, needle: string, words: readonly string[]): boolean {
+/**
+ * A state named in rule 6's window, in any form: "Morelos", "(Morelos)",
+ * "; Morelos", "Estado de Morelos", "Edo. de Morelos", "Mor.", "Edo. Méx.".
+ */
+function stateInWindow(after: string): boolean {
+  const tokens = afterWindow(after)
+  const words = tokens.map(bare)
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (words[i] === 'estado' || words[i] === 'edo') return true
+    if (/\.["')]*$/u.test(tokens[i]!) && STATE_ABBREVIATIONS.has(words[i]!)) return true
+    for (let n = Math.min(4, words.length - i); n >= 1; n -= 1) {
+      if (STATE.has(words.slice(i, i + n).join(' '))) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Rules 2–4 and 6 for one occurrence.
+ *
+ * @param anchorRequired rule 4 (weak name) or rule 7 (several proper words):
+ *   the occurrence needs a town word before it or a state after it.
+ * @param anchoredInSpan the span itself already carries that anchor (it ends
+ *   in ", <state>", starts with a town word, or is a state).
+ */
+function placeContext(
+  text: string,
+  at: number,
+  end: number,
+  words: readonly string[],
+  anchorRequired: boolean,
+  anchoredInSpan: boolean,
+): boolean {
   const beforeRaw = text.slice(0, at)
-  const after = text.slice(at + needle.length)
+  const after = text.slice(end)
   const first = lower(words[0]!)
   const startsWithTownWord = TOWN.has(first)
-  const weak = ARTICLES.has(first) || SAINTS.has(first)
 
   // Rule 2: no address or person word in the 3 tokens before.
   const tokens = beforeRaw.trimEnd().split(/\s+/u).filter(Boolean)
@@ -328,37 +493,71 @@ function placeContext(text: string, at: number, needle: string, words: readonly 
   }
   if (!ok) return false
 
-  // Rule 4: a weak name needs a state after it or a town word before it.
-  if (weak && !townWordBefore && !stateFollows(after)) return false
+  // Rule 6: nothing street-like right after.
+  if (streetFollows(after)) return false
+
+  // Rules 4 and 7: a weak or many-word name needs a town word before it. 🔴 A
+  // state after it is NOT enough (re-audit 2026-10-23: "Insurgentes Sur, CDMX",
+  // "Santa Úrsula, CDMX" were shown).
+  if (anchorRequired && !anchoredInSpan && !townWordBefore) return false
   return true
 }
 
 /**
  * True when a `lugar` finding is a town-level place (shown by the owner's
- * ruling) and so must not hold the document. See the file header: every rule
- * must pass at every occurrence, and anything unsure is NOT a town.
+ * ruling) and so must not hold the document at verify. Stage 3 does not ask
+ * (owner, Q10 A). See the file header: every rule must pass at every occurrence,
+ * and anything unsure is NOT a town.
+ *
+ * 🔴 EVERY OCCURRENCE, IN EVERY SPELLING. Verify rounds redact case- and
+ * accent-blind (`gate.ts`), so each folded occurrence, glued or not, must
+ * stand in a town context.
  *
  * @param text the text the finding was found in (verify's input).
  */
 export function isTownLevelPlace(
-  finding: Pick<DetectorFinding, 'text' | 'type'>,
+  finding: Pick<DetectorFinding, 'text' | 'type' | 'typedAddress'>,
   text: string,
 ): boolean {
-  if (finding.type !== 'lugar') return false
+  if (finding.type !== 'lugar' || finding.typedAddress) return false
+  // 🔴 The span as the model gave it: no lead is cut ("de Xiadani", "vivo en
+  // Tepito" hold, as before the town work; audit of 9edaa22).
   const needle = finding.text.normalize('NFC').trim()
   if (needle === '' || /[\d.#°º/]/u.test(needle)) return false
   const words = needle.split(/[\s,]+/u).filter(Boolean)
   if (!hasTownShape(words)) return false
   if (namesAPerson(words)) return false
 
+  // Rule 7 (audit 2026-10-23): ONE piece, and one proper word, unless anchored.
+  // "Insurgentes, Cuernavaca", "Hidalgo, Xochitepec, Morelos": more than one
+  // piece before a closing state is never a town. "Ranchito El Huizache",
+  // "Hacienda San José", "Priv Hidalgo", "Jiutepec Civac": several proper words
+  // need a town word before or a state after, like a weak name (rule 4). A real
+  // many-word town without one is redacted: fail-closed, accepted.
+  const pieces = needle.split(',').map((p) => p.trim()).filter(Boolean)
+  const isState = (piece: string) => STATE.has(piece.split(/\s+/u).map(lower).join(' '))
+  const endsInState = pieces.length >= 2 && isState(pieces[pieces.length - 1]!)
+  const core = endsInState ? pieces.slice(0, -1) : pieces
+  if (core.length > 1) return false
+  // "Hidalgo, Morelos": a state paired with a state is a street, not a town.
+  if (endsInState && isState(core[0]!)) return false
+  const pairedWithState = !endsInState && isState(core[0]!)
+  const coreWords = core[0]!.split(/\s+/u)
+  const proper = coreWords.filter((w) => !CONNECTOR.has(lower(w)) && !TOWN.has(lower(w))).length
+  const first = lower(coreWords[0]!)
+  const weak = ARTICLES.has(first) || SAINTS.has(first)
+  const anchorRequired = weak || proper > 1
+  // A town word starting the span, or the span being a state, anchors it.
+  const anchoredInSpan = TOWN.has(first) || isState(core[0]!)
+
   const haystack = text.normalize('NFC')
-  let from = 0
-  let seen = 0
-  for (;;) {
-    const at = haystack.indexOf(needle, from)
-    if (at === -1) return seen > 0
-    seen += 1
-    from = at + 1
-    if (!placeContext(haystack, at, needle, words)) return false
-  }
+  const occurrences = foldedMatches(haystack, needle)
+  if (occurrences.length === 0) return false
+  return occurrences.every(
+    ([at, end]) =>
+      // Rule 7: "Hidalgo, Estado de Morelos", "Hidalgo (Morelos)", "Hidalgo
+      // Morelos": a state-named place with a state after it is a street.
+      !(pairedWithState && stateInWindow(haystack.slice(end))) &&
+      placeContext(haystack, at, end, words, anchorRequired, anchoredInSpan),
+  )
 }

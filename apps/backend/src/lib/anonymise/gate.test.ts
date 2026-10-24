@@ -532,7 +532,7 @@ describe('runAnonymisationGate — 🔴 a finding never rewrites inside a placeh
   it('leaves earlier placeholders intact when the model echoes part of one', async () => {
     let calls = 0
     const result = await runAnonymisationGate(
-      input({ text: 'Vivo en Tlapa y trabajo con Ana. Tlapa es bonito.' }),
+      input({ text: 'Vivo por Tlapa y trabajo con Ana. Tlapa es bonito.' }),
       {
         detector: {
           name: 'echo',
@@ -554,7 +554,7 @@ describe('runAnonymisationGate — 🔴 a finding never rewrites inside a placeh
     // Now the echo itself: a second content finding that sits inside "[Domicilio A]".
     let n = 0
     const echoed = await runAnonymisationGate(
-      input({ text: 'Vivo en Tlapa y trabajo con Ana.' }),
+      input({ text: 'Vivo por Tlapa y trabajo con Ana.' }),
       {
         detector: {
           name: 'echo2',
@@ -575,13 +575,13 @@ describe('runAnonymisationGate — 🔴 a finding never rewrites inside a placeh
     )
     expect(echoed.status).toBe('ready')
     if (echoed.status !== 'ready') return
-    expect(echoed.redactedText).toBe('Vivo en [Domicilio A] y trabajo con [Persona A].')
+    expect(echoed.redactedText).toBe('Vivo por [Domicilio A] y trabajo con [Persona A].')
   })
 
   it('still replaces a finding that occurs both inside and outside a placeholder', async () => {
     let n = 0
     const result = await runAnonymisationGate(
-      input({ text: 'Vivo en Tlapa. Mi perro se llama Domicilio.' }),
+      input({ text: 'Vivo por Tlapa. Mi perro se llama Domicilio.' }),
       {
         detector: {
           name: 'both',
@@ -599,7 +599,7 @@ describe('runAnonymisationGate — 🔴 a finding never rewrites inside a placeh
     )
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return
-    expect(result.redactedText).toBe('Vivo en [Domicilio A]. Mi perro se llama [Persona A].')
+    expect(result.redactedText).toBe('Vivo por [Domicilio A]. Mi perro se llama [Persona A].')
   })
 })
 
@@ -734,8 +734,10 @@ describe('runAnonymisationGate — common place nouns do not hold a document', (
 
 describe('runAnonymisationGate — 🔴 towns are shown, addresses are not (owner, 2026-10-21, #12)', () => {
   it('the detector prompt says never to mark a town, municipality, city or state', () => {
-    expect(DETECT_SYSTEM_PROMPT).toContain('NUNCA marques estados, municipios, alcaldías, ciudades, pueblos')
-    expect(DETECT_SYSTEM_PROMPT).toContain('En "vivo en Xoxocotla, Morelos" no hay hallazgo.')
+    // One paragraph since 2026-10-23 (owner Q10 A); exact wording in gate.q10.test.ts.
+    expect(DETECT_SYSTEM_PROMPT.replace(/\s+/g, ' ')).toContain(
+      'Los pueblos, municipios, alcaldías, ciudades, comunidades, localidades, ejidos, congregaciones y estados NO son datos personales',
+    )
     // A town rule must not narrow the address list or spare a person's name.
     expect(DETECT_SYSTEM_PROMPT).toContain('Marca todo lo de la lista Domicilios aunque esté en una ciudad o pueblo.')
     expect(DETECT_SYSTEM_PROMPT).not.toContain('Marca solo lo que queda dentro')
@@ -751,7 +753,7 @@ describe('runAnonymisationGate — 🔴 towns are shown, addresses are not (owne
     for (const kept of [
       'Calles, avenidas',
       'Colonias, barrios, fraccionamientos',
-      'Ranchos y parajes',
+      'Ranchos, parajes y haciendas',
       'Códigos postales',
       'la casa de la reja verde',
     ]) {

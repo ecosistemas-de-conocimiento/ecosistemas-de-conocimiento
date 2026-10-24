@@ -220,16 +220,16 @@ describe('runAnonymisationGate — 🔴 placeholders stay consistent across roun
   })
 
   it('a place glued to a place placeholder joins it', async () => {
-    const text = 'Nací en San Juan Mixtepec, Oaxaca.'
+    const text = 'Nací por San Juan Mixtepec, Oaxaca.'
     const { detector } = scripted([[lugar('San Juan Mixtepec')], [lugar('[Domicilio A], Oaxaca')], []])
     const result = await gate(text, detector)
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return
-    expect(result.redactedText).toBe('Nací en [Domicilio A].')
+    expect(result.redactedText).toBe('Nací por [Domicilio A].')
   })
 
   it('🔴 a verify finding that is only a placeholder, or part of one, rewrites nothing', async () => {
-    const text = 'Vivo en Tlapa con Ana.'
+    const text = 'Vivo por Tlapa con Ana.'
     const { detector, prompts } = scripted([
       [lugar('Tlapa'), persona('Ana')],
       [lugar('[Domicilio A]'), lugar('Domicilio A'), persona('Persona'), persona('A]')],
@@ -237,17 +237,17 @@ describe('runAnonymisationGate — 🔴 placeholders stay consistent across roun
     const result = await gate(text, detector)
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return
-    expect(result.redactedText).toBe('Vivo en [Domicilio A] con [Persona A].')
+    expect(result.redactedText).toBe('Vivo por [Domicilio A] con [Persona A].')
     expect(prompts).toHaveLength(2)
   })
 
   it('🔴 a finding that straddles a placeholder redacts only what lies outside it', async () => {
-    const text = 'Vivo en Tlapa, Ana lo sabe.'
+    const text = 'Vivo por Tlapa, Ana lo sabe.'
     const { detector } = scripted([[lugar('Tlapa')], [persona('Domicilio A], Ana')], []])
     const result = await gate(text, detector)
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return
-    expect(result.redactedText).toBe('Vivo en [Domicilio A], [Persona A] lo sabe.')
+    expect(result.redactedText).toBe('Vivo por [Domicilio A], [Persona A] lo sabe.')
     expect(result.redactedText).not.toContain('[[')
   })
 })

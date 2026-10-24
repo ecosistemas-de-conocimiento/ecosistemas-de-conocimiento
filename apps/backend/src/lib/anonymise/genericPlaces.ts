@@ -78,9 +78,12 @@ const DETS = new Set(DETERMINERS)
  * lower case — "la escuela", "La colonia" at the start of a sentence — and so
  * names no place. See the file header for what it deliberately does NOT drop.
  */
-export function isGenericPlace(finding: Pick<DetectorFinding, 'text' | 'type'>): boolean {
+export function isGenericPlace(finding: Pick<DetectorFinding, 'text' | 'type' | 'typedAddress'>): boolean {
   // 🔴 Places only. A person's name can be spelled like a place noun.
   if (finding.type !== 'lugar') return false
+  // 🔴 Never one the model typed `domicilio` (audit 2026-10-23): it called it
+  // a home, and before `domicilio` became `lugar` these were `[Dato omitido]`.
+  if (finding.typedAddress) return false
   const words = finding.text.normalize('NFC').trim().split(/\s+/)
   if (words[0] === '') return false
 

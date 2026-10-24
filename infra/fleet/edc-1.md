@@ -1,7 +1,8 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `8984fec` (Payload `/duplicate` refused; uploads
-follow the selected ecosistema), deployed 2026-10-23 15:34 UTC — see §4zf. Before that, `45c30fd`
+**Status:** live since 2026-10-17. Dev runs `main` @ `47b140c` ("En revisión" labels, testimonio
+excerpts, dense `[n]` numbering), deployed 2026-10-23 18:46 UTC — see §4zg. Before that, `8984fec`
+(Payload `/duplicate` refused; uploads follow the selected ecosistema; 15:34 UTC, §4zf). Before that, `45c30fd`
 (four demo-polish branches; 07:35 UTC, §4ze). Before that, `e3fe6ee` (combined graph "Todos mis
 ecosistemas", 3D "Altura", rerank score restored, persona-privacy fixes; 2026-10-22 07:34 UTC,
 §4zd). Before that, `47ce647` (cite variant E by default; no-`[n]` fallback sources
@@ -1480,6 +1481,36 @@ Spend: `usage_logs` $1.6055 → $1.6108 (**+$0.0053**). Overnight runs: $0.4786 
 **$2.0894**.
 
 **Disk**, `df -h /` free: 58 GB before; 43 GB after the build; 57 GB after the cleanup. Images
+10.3 GB, build cache 0.
+
+### 4zg. ✅ Done 2026-10-23 18:46–19:05 UTC: `47b140c`, dev only
+
+All measured by the deploy agent. Staging was not touched; edcai held off. `47b140c` is web only:
+"En revisión"/"Rechazado" labels in Mis documentos and the admin table (`d794184`, `1f81cc2`),
+sign-in without JS, Biblioteca and chat sources shown as "Testimonio · <tema> — «first line»"
+(`d8763ec`, `9129888`), dense `[n]` renumbering with spaced markers (`47b140c`). No migration
+(`payload_migrations` 3, `edc_ai` 6); no variable change.
+
+Backup `/root/backups/20261023T1846Z/`, time-limited copy, sha256 matched; deploy chained after it.
+Deploy 18:46:47 → 18:52:47 UTC (`zfuxbojxxbahpioyad5b4qct`). The agent's local poll was killed
+(exit 137) during the build; the deploy itself ran to `finished`. 9 containers up, health 200.
+
+| check | result |
+|---|---|
+| 1. investigador, Mis documentos, each ecosistema | held testimonios read **"En revisión"**: Traducción 8, Acompañamiento escolar 12, Prevención del dengue 5, Discapacidad 11 (= the 36 held). 0 "En cola", 0 "Error", 0 "Rechazado" (none rejected) |
+| 2. participant, Biblioteca (Prevención del dengue) | cards read "Voz · <date> · **Testimonio · Prevención del dengue** — <first line>", e.g. "Soy originaria de Papantla, Veracruz. Tengo 39 años…"; placeholders show where the gate redacted ("Mi pueblo es [Domicilio A], Oaxaca"). Screenshot |
+| 3. Discapacidad chat, on screen | "…personas con discapacidad en la escuela?" ×2: both answers had **no `[n]` and no sources** and ended with "Fuera de los documentos: …", so they cannot test numbering. "…lengua de señas y los intérpretes?" ×4: run 1 showed "⚠ No se pudo obtener la respuesta. Revisa tu conexión…" after 33 s, with no matching web or ai-service error in the logs. Runs 2–4 (16.6 / 38.4 / 2.5 s, the last cached): **sources 1–6 on screen, cite buttons 1–6, every marker has a source** |
+| 4. admin (`/admin`) | 12 "En revisión", 0 "En cola", 0 "Error", 0 raw "held" |
+
+No page errors. Test conversations of the participant deleted; 36 held testimonios untouched.
+
+Cleanup after the deploy finished (no deploy queued, no compose build): `docker rmi` of dev's three
+`8984fec` images by name, `docker builder prune -af` (14.74 GB).
+
+Spend: `usage_logs` $1.6108 → $1.6218 (**+$0.0110**). Overnight runs: $0.4786 + $1.6218 =
+**$2.1004**.
+
+**Disk**, `df -h /` free: 57 GB before; 43 GB after the build; 57 GB after the cleanup. Images
 10.3 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs

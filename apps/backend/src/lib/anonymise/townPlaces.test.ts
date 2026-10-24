@@ -30,17 +30,18 @@ describe('🔴 a town, municipality, state or city found by verify does NOT hold
   it.each([
     ['Vivo en Xoxocotla, Morelos.', [{ text: 'Xoxocotla', type: 'lugar' }, { text: 'Morelos', type: 'lugar' }]],
     ['Vivo en Xoxocotla, Morelos.', [{ text: 'Xoxocotla, Morelos', type: 'lugar' }]],
-    ['Nací en San Juan Chamula, Chiapas, y luego viví en Tuxtla.', [{ text: 'San Juan Chamula', type: 'lugar' }, { text: 'Tuxtla', type: 'lugar' }, { text: 'Chiapas', type: 'lugar' }]],
-    ['Trabajo en el municipio de Tlaltizapán.', [{ text: 'municipio de Tlaltizapán', type: 'lugar' }]],
-    ['Trabajo en el municipio de Tlaltizapán.', [{ text: 'Tlaltizapán', type: 'lugar' }]],
-    ['Vivimos en la Ciudad de México desde 1990.', [{ text: 'Ciudad de México', type: 'lugar' }]],
+    ['Nací en el pueblo de San Juan Chamula, Chiapas, y luego viví en Tuxtla.', [{ text: 'San Juan Chamula', type: 'lugar' }, { text: 'Tuxtla', type: 'lugar' }, { text: 'Chiapas', type: 'lugar' }]],
+    ['Vivo en el municipio de Tlaltizapán.', [{ text: 'municipio de Tlaltizapán', type: 'lugar' }]],
+    ['Vivo en el municipio de Tlaltizapán.', [{ text: 'Tlaltizapán', type: 'lugar' }]],
+    ['Vivimos en la Ciudad de México desde hace años.', [{ text: 'Ciudad de México', type: 'lugar' }]],
     ['Somos de Guerrero.', [{ text: 'Guerrero', type: 'lugar' }]],
     ['Yo soy de Cuautla.', [{ text: 'Cuautla', type: 'lugar' }]],
     ['Mi familia es originaria de Tepoztlán, Morelos.', [{ text: 'Tepoztlán', type: 'lugar' }, { text: 'Morelos', type: 'lugar' }]],
-    ['Trabajo en la Alcaldía Iztapalapa.', [{ text: 'Alcaldía Iztapalapa', type: 'lugar' }]],
+    ['Vivo en la Alcaldía Iztapalapa.', [{ text: 'Alcaldía Iztapalapa', type: 'lugar' }]],
     ['Vivo en Cuernavaca.', [{ text: 'Cuernavaca', type: 'lugar' }]],
     ['Nací en Oaxaca.', [{ text: 'Oaxaca', type: 'lugar' }]],
-    ['Vivo en Gómez Farías.', [{ text: 'Gómez Farías', type: 'lugar' }]],
+    // Two proper words need a town word before (rule 7, re-audit 2026-10-23).
+    ['Vivo en el municipio de Gómez Farías, Jalisco.', [{ text: 'Gómez Farías', type: 'lugar' }]],
     ['Vivo en Ciudad Juárez.', [{ text: 'Ciudad Juárez', type: 'lugar' }]],
   ] as Array<[string, DetectorFinding[]]>)('%s → ready, town shown', async (text, late) => {
     const result = await gate(text, late)
@@ -63,6 +64,12 @@ describe('🔴 colonias, streets, numbers, C.P., ranchos, parajes, homes and peo
     ['a barrio with a name', 'Vivo en el barrio de San Juan.', { text: 'barrio de San Juan', type: 'lugar' }],
     ['a workplace that points at someone', 'Trabaja en la Clínica del Valle.', { text: 'Clínica del Valle', type: 'lugar' }],
     ["a person's name", 'Me ayudó Rosa Martínez con los papeles.', { text: 'Rosa Martínez', type: 'persona' }],
+    ['an employer after "trabajo en" (audit 2026-10-23)', 'Trabajo en Coppel.', { text: 'Coppel', type: 'lugar' }],
+    ['a town after "trabajo en" (work is not residence)', 'Trabajo en el municipio de Tlaltizapán.', { text: 'municipio de Tlaltizapán', type: 'lugar' }],
+    ['a two-word town without a state (fail-closed, accepted)', 'Vivo en Gómez Farías.', { text: 'Gómez Farías', type: 'lugar' }],
+    ['a two-word town with only a state (fail-closed, accepted)', 'Vivo en Gómez Farías, Jalisco.', { text: 'Gómez Farías', type: 'lugar' }],
+    ['the same, the state inside the span', 'Vivo en Gómez Farías, Jalisco.', { text: 'Gómez Farías, Jalisco', type: 'lugar' }],
+    ['a year right after a town (rule 6 reads digits; fail-closed, accepted)', 'Vivimos en la Ciudad de México desde 1990.', { text: 'Ciudad de México', type: 'lugar' }],
     ["a person's name the model mislabelled `lugar`", 'Mi tía Soledad me cuidó.', { text: 'Soledad', type: 'lugar' }],
     ['a name at the start of a sentence, mislabelled', 'Dolores me dijo que sí.', { text: 'Dolores', type: 'lugar' }],
   ] as Array<[string, string, DetectorFinding]>)('%s → hold', async (_case, text, finding) => {
@@ -121,7 +128,7 @@ describe('🔴 colonias, streets, numbers, C.P., ranchos, parajes, homes and peo
   })
 
   it('a town beside a held address does not save the address', async () => {
-    const text = 'Vivo en Xoxocotla, Morelos, en la colonia Portales.'
+    const text = 'Vivo en Xoxocotla, Morelos. Mi casa está en la colonia Portales.'
     const result = await gate(text, [
       { text: 'Xoxocotla', type: 'lugar' },
       { text: 'colonia Portales', type: 'lugar' },
@@ -167,5 +174,58 @@ describe('isTownLevelPlace — the two rules', () => {
   })
   it('refuses a finding that does not occur in the text', () => {
     expect(isTownLevelPlace({ text: 'Tlapa', type: 'lugar' }, text)).toBe(false)
+  })
+})
+
+describe('isTownLevelPlace — the span the model returns (2026-10-23)', () => {
+  const text = 'Yo vivo en Xochitepec con mi familia.'
+  it('🔴 reads the span as given: a lead in it is not cut (audit of 9edaa22)', () => {
+    expect(isTownLevelPlace({ text: 'Xochitepec', type: 'lugar' }, text)).toBe(true)
+    expect(isTownLevelPlace({ text: 'Xochitepec', type: 'lugar' }, 'Soy de Xochitepec.')).toBe(true)
+    expect(isTownLevelPlace({ text: 'en Xochitepec', type: 'lugar' }, text)).toBe(false)
+    expect(isTownLevelPlace({ text: 'vivo en Xochitepec', type: 'lugar' }, text)).toBe(false)
+    expect(isTownLevelPlace({ text: 'de Xochitepec', type: 'lugar' }, 'Soy de Xochitepec.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'soy de Xochitepec', type: 'lugar' }, 'Soy de Xochitepec.')).toBe(false)
+  })
+  it('🔴 the lead is not a pass: the town after it still needs its own context', () => {
+    expect(isTownLevelPlace({ text: 'Yo vivo en Xochitepec', type: 'lugar' }, text)).toBe(false)
+    expect(isTownLevelPlace({ text: 'en Xiadani', type: 'lugar' }, 'Pienso en Xiadani.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'de Soledad', type: 'lugar' }, 'Es la hija de Soledad.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'de Xiadani', type: 'lugar' }, 'Es la hija de Xiadani.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'en Santa Úrsula', type: 'lugar' }, 'Vivo en Santa Úrsula.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'en Xochitepec', type: 'otro' }, text)).toBe(false)
+  })
+  it('🔴 streets, colonias, ranchos and parajes, with or without the lead, are not towns', () => {
+    for (const [span, t] of [
+      ['calle Hidalgo 12', 'Vivo en calle Hidalgo 12.'],
+      ['en calle Hidalgo 12', 'Vivo en calle Hidalgo 12.'],
+      ['colonia Las Flores', 'Vivo en la colonia Las Flores.'],
+      ['Las Flores', 'Vivo en la colonia Las Flores.'],
+      ['en la colonia Las Flores', 'Vivo en la colonia Las Flores.'],
+      ['rancho El Mezquite', 'Vivo en el rancho El Mezquite.'],
+      ['El Mezquite', 'Vivo en el rancho El Mezquite.'],
+      ['paraje Tres Cruces', 'Trabajo en el paraje Tres Cruces.'],
+      ['Tres Cruces', 'Trabajo en el paraje Tres Cruces.'],
+      ['en el paraje Tres Cruces', 'Trabajo en el paraje Tres Cruces.'],
+    ] as const) {
+      expect(isTownLevelPlace({ text: span, type: 'lugar' }, t), span).toBe(false)
+    }
+  })
+  it('a town word before a many-word town anchors it', () => {
+    const t = 'Vivo en el municipio de Real de Catorce.'
+    expect(isTownLevelPlace({ text: 'Real de Catorce', type: 'lugar' }, t)).toBe(true)
+    expect(isTownLevelPlace({ text: 'vivo en Real de Catorce', type: 'lugar' }, t)).toBe(false)
+  })
+  it('🔴 work is not residence: "trabajo en" is no town context', () => {
+    expect(isTownLevelPlace({ text: 'Coppel', type: 'lugar' }, 'Trabajo en Coppel.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'trabajo en Coppel', type: 'lugar' }, 'Trabajo en Coppel.')).toBe(false)
+  })
+  it('🔴 a finding typed `domicilio` is never a town', () => {
+    expect(isTownLevelPlace({ text: 'Xochitepec', type: 'lugar', typedAddress: true }, text)).toBe(false)
+  })
+  it('🔴 every spelling counts: a caps or glued occurrence out of a town context is not a town', () => {
+    expect(isTownLevelPlace({ text: 'Xiadani', type: 'lugar' }, 'Vivo en Xiadani. XIADANI me dijo.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'Xiadani', type: 'lugar' }, 'Vivo en Xiadani. Xiadanita me dijo.')).toBe(false)
+    expect(isTownLevelPlace({ text: 'Xochitepec', type: 'lugar' }, 'Vivo en XOCHITEPEC.')).toBe(true)
   })
 })
