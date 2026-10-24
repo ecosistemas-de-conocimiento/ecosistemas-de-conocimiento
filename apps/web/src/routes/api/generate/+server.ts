@@ -26,7 +26,7 @@ import {
 } from '$lib/server/engine';
 import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
-import { withPinnedRefs } from './pinned';
+import { turnAttachments, withPinnedRefs } from './pinned';
 import { fetchPublishedTitles, matchDocumentTitle, titleRetrievalFilter, withTitleRef } from '$lib/server/titleMatch';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
 import { makeGraphProvider } from '$lib/server/graph';
@@ -622,7 +622,23 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
   // empty inside the engine and never breaks the turn.
   const retrievalPolicy = chatTurnRetrievalPolicy(hybrid);
   // A message that names exactly one published document pins it for this turn.
-  const titleMatch = matchDocumentTitle(userMessage, await publishedTitles);
+  const published = await publishedTitles;
+  const titleMatch = matchDocumentTitle(userMessage, published);
+  // `@`-mentions, then the document the message names by title, then every
+  // document pinned ("fijar") in this conversation. See `./pinned.ts`: the
+  // docs panel promises pinned documents are sent.
+  const inlineRefs = withPinnedRefs(withTitleRef(body.contextRefs, titleMatch), sessionDocs);
+  // The same documents as source cards, when the answer uses them (owner
+  // ruling 2026-10-24; `citedBrowserProvenance`). Names come from the server's
+  // own reads, never the browser's ref label.
+  const attachments = turnAttachments({
+    refs: inlineRefs,
+    userRefs: body.contextRefs,
+    titleMatch,
+    userMessage,
+    sessionDocs,
+    published,
+  });
   // …and narrows retrieval to it, so its chunks are the turn's only `[N]`
   // sources (see `$lib/server/titleMatch`). No match: the lengua filter alone.
   const retrievalFilter = titleRetrievalFilter(lengua.retrievalFilter, titleMatch);
@@ -637,10 +653,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     scope,
     history,
     userMessage,
-    // `@`-mentions, then the document the message names by title, then every
-    // document pinned ("fijar") in this conversation. See `./pinned.ts`: the
-    // docs panel promises pinned documents are sent.
-    inlineRefs: withPinnedRefs(withTitleRef(body.contextRefs, titleMatch), sessionDocs),
+    inlineRefs,
     // Omitted entirely when there is no ecosistema to scope a graph read to,
     // so the engine takes exactly the code path it took before GraphRAG.
     // Skipped on a title match: its retrieve and block span the ecosistema.
@@ -702,13 +715,13 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
         // corpus name is the exact signal, and it is only knowable here.
         // Then only the sources the finished answer cites (UX #35), through
         // the browser allowlist (Fable audit #8): what is saved is what every
-        // member's browser later reads back. A document named by title is
-        // always among them, cited or not (`citedBrowserProvenance`).
+        // member's browser later reads back. An attachment the answer uses
+        // (title-named, @-mentioned, pinned) gets a card too (`citedBrowserProvenance`).
         (answer) =>
           citedBrowserProvenance(
             stampDraftProvenance(fenced.restorePassages(prepared.provenance, PASSAGE_TEXT_CAP), draftCorpus),
             answer,
-            titleMatch,
+            attachments,
           ),
         upstream.unit.systemPrompt,
         turnMeta(),
@@ -745,7 +758,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     const provenance = citedBrowserProvenance(
       stampDraftProvenance(fenced.restorePassages(rawProvenance, PASSAGE_TEXT_CAP), draftCorpus),
       generation.text,
-      titleMatch,
+      attachments,
     );
     // Saved meanwhile by another request for this turn: return that one.
     const savedMeanwhile = await findSavedTurn(locals.token, body.sessionId, turnId);

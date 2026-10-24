@@ -256,7 +256,9 @@ describe('citedBrowserProvenance — an answer with no [N] lists the top sources
     it('matched doc outside the top 3: the top 3 plus it, 4 at most', () => {
       const out = citedBrowserProvenance(p as never, 'Sin marcas.', { id: '5', name: 'Doc 5', contentKind: 'documento' } as never);
       expect(ids(out)).toEqual(['s1', 's2', 's3', 's5']);
-      expect(ords(out)).toEqual([1, 2, 3, 5]);
+      // Uncited: renumbered past every prompt chunk (5), so it lists after the
+      // cited ones (owner ruling 2026-10-24, attachment cards).
+      expect(ords(out)).toEqual([1, 2, 3, 6]);
     });
 
     it('matched doc inside the top 3: listed once, no duplicate', () => {
