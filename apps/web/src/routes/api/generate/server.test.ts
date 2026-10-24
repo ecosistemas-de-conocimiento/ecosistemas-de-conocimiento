@@ -27,6 +27,8 @@ import { POST } from './+server';
 import { resetHybridCapabilityCache } from '$lib/server/engine/hybrid';
 import { ANSWER_NOT_SAVED_CODE } from '$lib/aiMessages';
 import { NO_ANSWER_REPLY } from '$lib/server/engine/prompt';
+import { toBrowserMessage } from '$lib/server/citationProvenance';
+import { citationsWithOrdinals, denseCitations } from '$lib/citationOrdinals';
 
 const SESSION = '5';
 /** `SOURCE_KINDS_FILTER` (`chunkFence`): sent on every sources leg when ai-service has `metadataFilterIn`. */
@@ -880,6 +882,9 @@ describe('POST /api/generate — only cited sources are kept', () => {
   it('stream: no citation and nothing retrieved, no sources', async () => {
     world.streamText = 'Respuesta sin citas.';
     world.retrievePool = [];
+    // Unpinned: a pinned document WOULD get a card here (no retrieved source,
+    // so the content came from the attachments; owner ruling 2026-10-24).
+    world.sessionDocs = [{ ...world.sessionDocs[0]!, isPinned: false }];
     const frames = await readSse(await POST(event(turn(), true)));
     expect(frames.find((f) => f.type === 'done')!.provenance).toBeNull();
   });
@@ -1136,6 +1141,7 @@ describe('POST /api/generate — a title match retrieves only that document', ()
   });
 
   it('🔴 the filtered retrieve finds nothing: a document-level source, no passage', async () => {
+    world.sessionDocs = []; // a pinned upload would add its own card (no retrieved source listed)
     world.retrievePool = [chunk('79', 'Otro documento.pdf', 'TEXTO DEL OTRO DOCUMENTO.', 0.95)];
     world.answerText = 'El diagnóstico describe la salud comunitaria.';
     const res = await POST(event(ask(NAMED)));
@@ -1177,6 +1183,7 @@ describe('POST /api/generate — a title match retrieves only that document', ()
     });
 
     it('with no published chunk: "Testimonio", no passage, never the name', async () => {
+      world.sessionDocs = []; // a pinned upload would add its own card (no retrieved source listed)
       world.retrievePool = [testimonioChunk('draft', 'ORIGINAL: me llamo Juana Pérez')];
       const res = await POST(event(ask(TESTIMONIO)));
       const body = (await res.json()) as { provenance: { chunks: Array<Record<string, unknown>> } };
@@ -1550,5 +1557,146 @@ describe('POST /api/generate — a document id is never a citation label', () =>
     const prompt = promptText();
     expect(prompt).toContain('Ver la nota (2) y (3, 4).');
     expect(prompt).toContain('La milpa (7) se siembra en mayo.');
+  });
+});
+
+// ── An attachment the answer uses gets a source card ───────────────────────
+// 🔴 Owner ruling 2026-10-24 (direct): a document attached to a turn gets a
+// source card when the answer uses it without citing. Since 1284a13 an
+// attachment rides the prompt with no number, so the answer cannot cite it.
+// A pinned upload rides EVERY turn, so it counts as used only when the answer
+// names its title (the prompt asks the model to); refusals and all-general-
+// knowledge answers list none. See `usedAttachments` in citationProvenance.
+describe('POST /api/generate — an attachment the answer uses gets a card', () => {
+  const AUDIO_ID = '266';
+  const TRANSCRIPT = 'Transcripción: la milpa se siembra en mayo, cuando llegan las lluvias.';
+  const audioRow = {
+    id: Number(AUDIO_ID),
+    name: 'nota de voz.webm',
+    kind: 'audio',
+    contentKind: 'documento',
+    ingestStatus: 'ready',
+    publicationStatus: 'draft',
+  };
+  const pubChunk = {
+    documentId: 'uuid-31',
+    chunkId: 'c-31',
+    score: 0.9,
+    rerankScore: 0.9,
+    text: 'El diagnóstico cuenta tres brotes.',
+    metadata: { docId: '31', organizationId: ECO, kind: 'documento', publication: 'published', title: 'Diagnóstico.pdf' },
+  };
+  const audioChunk = {
+    documentId: 'uuid-audio',
+    chunkId: 'c-audio',
+    score: 0.8,
+    rerankScore: 0.8,
+    text: TRANSCRIPT,
+    metadata: { docId: AUDIO_ID, organizationId: ECO, kind: 'documento', publication: 'draft', title: 'nota de voz.webm' },
+  };
+  type P = { chunks: Array<{ ordinal?: number; text?: string; metadata?: Record<string, unknown> }> } | null;
+  const rows = (p: P) => (p?.chunks ?? []).map((c) => [c.ordinal, c.metadata?.docId]);
+  const savedProvenance = () => (saves().at(-1)!.body as { provenance: P }).provenance;
+
+  beforeEach(() => {
+    world.sessionDocs = [audioRow];
+    world.docRows = { [AUDIO_ID]: { ...audioRow, extractedText: TRANSCRIPT } };
+    world.publishedDocs = [];
+    world.retrievePool = [];
+  });
+
+  async function ask(answer: string, stream: boolean): Promise<P> {
+    world.model = () => answer;
+    const res = await POST(event(turn({ messages: [{ role: 'user', content: '¿qué dice el audio?' }] }), stream));
+    if (!stream) return ((await res.json()) as { provenance: P }).provenance;
+    return ((await readSse(res)).find((f) => f.type === 'done') as { provenance: P }).provenance;
+  }
+
+  for (const stream of [false, true]) {
+    const path = stream ? 'stream' : 'sync';
+
+    it(`🔴 ${path}: a pinned upload the answer names, uncited, gets a card; saved, and the same on reload`, async () => {
+      const provenance = await ask('Según la nota de voz, la milpa se siembra en mayo.', stream);
+      expect(rows(provenance)).toEqual([[1, AUDIO_ID]]);
+      expect(provenance!.chunks[0]!.metadata).toMatchObject({
+        title: 'nota de voz.webm',
+        publication: 'draft',
+        edcIsDraft: true,
+      });
+      expect(savedProvenance()).toEqual(provenance);
+      // Reload: `GET /api/sessions/[id]/messages` sends each row through `toBrowserMessage`.
+      const reloaded = toBrowserMessage({
+        id: 99,
+        role: 'assistant',
+        provenance: JSON.parse(JSON.stringify(savedProvenance())),
+      });
+      expect(reloaded.provenance).toEqual(provenance);
+    });
+
+    // 🔴 The doc-266 demo shape: an audio upload pinned in the conversation,
+    // nothing retrieved, and an answer with no marker and no title.
+    it(`🔴 ${path}: doc 266 — "El audio cuenta que…", no marker, no title: a card; saved, same on reload`, async () => {
+      const provenance = await ask('El audio cuenta que la milpa se siembra en mayo, cuando llegan las lluvias.', stream);
+      expect(rows(provenance)).toEqual([[1, AUDIO_ID]]);
+      expect(provenance!.chunks[0]!.metadata).toMatchObject({ title: 'nota de voz.webm', edcIsDraft: true });
+      expect(savedProvenance()).toEqual(provenance);
+      const reloaded = toBrowserMessage({
+        id: 99,
+        role: 'assistant',
+        provenance: JSON.parse(JSON.stringify(savedProvenance())),
+      });
+      expect(reloaded.provenance).toEqual(provenance);
+    });
+
+    it(`🔴 ${path}: a refusal or an all-general-knowledge answer gets no card`, async () => {
+      expect(await ask(`${NO_ANSWER_REPLY} La nota de voz no trata eso.`, stream)).toBeNull();
+      expect(await ask('Fuera de los documentos: París es la capital de Francia.', stream)).toBeNull();
+    });
+  }
+
+  it('🔴 cited sources first (dense 1..n), the attachment after; markers keep their source', async () => {
+    world.retrievePool = [pubChunk];
+    const answer = 'Hubo tres brotes [1]. La nota de voz dice que la milpa se siembra en mayo.';
+    const provenance = await ask(answer, false);
+    const r = rows(provenance);
+    expect(r[0]).toEqual([1, '31']);
+    expect(r.at(-1)![1]).toBe(AUDIO_ID);
+    expect(r.at(-1)![0]).toBeGreaterThan(1);
+    const dense = denseCitations(answer, citationsWithOrdinals(provenance as never));
+    expect(dense.content).toContain('brotes [1].');
+    expect(dense.citations.map((c) => c.metadata?.docId)).toEqual(['31', AUDIO_ID]);
+  });
+
+  it('🔴 dedupe: the attachment also cited as a retrieved passage shows once, as the cited source', async () => {
+    world.retrievePool = [audioChunk];
+    const provenance = await ask('Según la nota de voz, en mayo [1].', false);
+    expect(rows(provenance)).toEqual([[1, AUDIO_ID]]);
+    expect(provenance!.chunks[0]!.text).toBe(TRANSCRIPT);
+  });
+
+  it('🔴 every marker matches nothing: no retrieved source, the used attachment still shows', async () => {
+    world.retrievePool = [pubChunk];
+    const provenance = await ask('Hubo brotes [9]. La nota de voz habla de la milpa.', false);
+    expect(rows(provenance).map((r) => r[1])).toEqual([AUDIO_ID]);
+  });
+
+  it('🔴 an answer citing retrieved [1] that does not name the pinned upload: no pinned card', async () => {
+    world.retrievePool = [pubChunk];
+    expect(rows(await ask('Hubo tres brotes [1].', false))).toEqual([[1, '31']]);
+  });
+
+  it("🔴 an @-mentioned document shows even on a refusal; its name is the server's, not the browser label", async () => {
+    world.sessionDocs = [];
+    world.publishedDocs = [
+      { id: 31, name: 'Diagnóstico Comunitario de Salud.pdf', contentKind: 'documento', publicationStatus: 'published' },
+    ];
+    world.model = () => NO_ANSWER_REPLY;
+    const res = await POST(
+      event(turn({ contextRefs: [{ kind: 'document', id: '31', label: 'ETIQUETA DEL NAVEGADOR' }] })),
+    );
+    const { provenance } = (await res.json()) as { provenance: P };
+    expect(rows(provenance).map((r) => r[1])).toEqual(['31']);
+    expect(provenance!.chunks[0]!.metadata?.title).toBe('Diagnóstico Comunitario de Salud.pdf');
+    expect(JSON.stringify(provenance)).not.toContain('ETIQUETA');
   });
 });

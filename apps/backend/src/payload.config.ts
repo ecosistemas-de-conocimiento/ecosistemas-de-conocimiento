@@ -25,6 +25,7 @@ import { graphEndpoints } from './endpoints/graph'
 import { lenguasEndpoint } from './endpoints/lenguas'
 import { jwksEndpoint } from './endpoints/jwks'
 import { meEndpoint } from './endpoints/me'
+import { miembrosEndpoints } from './endpoints/miembros'
 import { resolveEndpoint } from './endpoints/resolve'
 import { tokenEndpoint } from './endpoints/token'
 
@@ -153,6 +154,8 @@ export default buildConfig({
     ...graphEndpoints,
     // `/api/lenguas` — read its header for why `lengua` needs its own route.
     lenguasEndpoint,
+    // `/api/miembros` — an ecosistema's people, for its responsable.
+    ...miembrosEndpoints,
   ],
   editor: lexicalEditor(),
   /**

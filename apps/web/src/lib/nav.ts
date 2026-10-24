@@ -56,6 +56,8 @@ export interface NavItem {
    * `$lib/server/holds.ts`.
    */
   reviewerOnly?: boolean;
+  /** Shown to whoever holds `members:manage` somewhere (layout server load). */
+  managerOnly?: boolean;
 }
 
 /**
@@ -68,6 +70,7 @@ export interface NavItem {
  */
 export interface NavCapabilities {
   canReviewHolds?: boolean;
+  canManageMembers?: boolean;
 }
 
 /**
@@ -132,6 +135,12 @@ export const NAV_ITEMS: readonly NavItem[] = [
     reviewerOnly: true,
   },
   {
+    href: '/miembros',
+    label: 'Miembros',
+    hint: 'Quién está en el ecosistema.',
+    managerOnly: true,
+  },
+  {
     href: '/admin',
     label: 'Administración',
     hint: 'Las cifras del ecosistema y quién ha aportado.',
@@ -151,9 +160,11 @@ export function visibleNavItems(user: unknown, caps: NavCapabilities = {}): NavI
   // 🔴 Literally `true`, nothing else — same rule as `isPlatformAdmin`. A
   // truthy string from a garbled payload must not advertise a section.
   const reviewer = caps.canReviewHolds === true;
+  const manager = caps.canManageMembers === true;
   return NAV_ITEMS.filter((item) => {
     if (item.adminOnly && !admin) return false;
     if (item.reviewerOnly && !reviewer) return false;
+    if (item.managerOnly && !manager) return false;
     return true;
   });
 }

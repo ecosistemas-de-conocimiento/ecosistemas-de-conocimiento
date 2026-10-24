@@ -4,6 +4,7 @@ import {
   readIdentity,
   reviewCapabilityFrom,
 } from '$lib/server/holds';
+import { MEMBERS_MANAGE } from '$lib/server/miembros';
 import { VOCES_UPLOAD } from '$lib/uploadKind';
 import type { LayoutServerLoad } from './$types';
 
@@ -37,12 +38,15 @@ export const load: LayoutServerLoad = async ({ locals }) => {
   const identity = locals.user ? await readIdentity(locals.token) : null;
   const ok = identity !== null;
   const holds = ok ? reviewCapabilityFrom(identity, HOLDS_REVIEW) : null;
+  const members = ok ? reviewCapabilityFrom(identity, MEMBERS_MANAGE) : null;
   const vocesUpload = ok
     ? reviewCapabilityFrom(identity, VOCES_UPLOAD)
     : { isPlatformAdmin: false, slugs: [], ok: false };
   return {
     user: locals.user,
     canReviewHolds: holds ? mayReviewAnywhere(holds) : false,
+    // Same presentation-only status; `routes/miembros` re-asks.
+    canManageMembers: members ? mayReviewAnywhere(members) : false,
     vocesUpload,
   };
 };

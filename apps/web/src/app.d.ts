@@ -31,6 +31,8 @@ declare global {
        * 404. Computed in `routes/+layout.server.ts`.
        */
       canReviewHolds?: boolean;
+      /** ⚠ Presentation only — whether the menu offers `/miembros`. */
+      canManageMembers?: boolean;
     }
     // interface PageState {}
     // interface Platform {}

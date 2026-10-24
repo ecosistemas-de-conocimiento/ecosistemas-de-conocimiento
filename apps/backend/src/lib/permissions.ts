@@ -100,6 +100,11 @@ export function isOrgRole(value: unknown): value is OrgRole {
   return typeof value === 'string' && (ORG_ROLES as readonly string[]).includes(value)
 }
 
+/** `true` when `role` ranks strictly above `than`. The one rank comparison callers outside this file make. */
+export function outranks(role: OrgRole, than: OrgRole): boolean {
+  return ROLE_RANK[role] > ROLE_RANK[than]
+}
+
 /**
  * Every permission this product recognises. The list is SHORT on purpose: each
  * entry has to correspond to something the UI or the API actually gates, or it
@@ -454,6 +459,20 @@ export async function organizationIdsForUserWithMinRole(
   return rows
     .filter((row) => ROLE_RANK[row.role] >= ROLE_RANK[minRole])
     .map((row) => row.organization.id)
+}
+
+/**
+ * The role this user holds in ONE organization, or `null` when they hold none
+ * there (no active membership, or the organization is switched off). Same two
+ * queries as `membershipsForUser`; the highest role wins on a raced duplicate.
+ */
+export async function roleInOrganization(
+  payload: Payload,
+  userId: Id,
+  organizationId: Id,
+): Promise<OrgRole | null> {
+  const rows = await membershipsForUser(payload, userId)
+  return rows.find((row) => keyOf(row.organization.id) === keyOf(organizationId))?.role ?? null
 }
 
 /**

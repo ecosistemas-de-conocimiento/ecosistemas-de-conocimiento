@@ -38,7 +38,10 @@
   // a field on the backend's user record. `canReviewHolds` is an answer the
   // root layout's server load computed for this request — see `$lib/nav.ts`.
   const items = $derived(
-    visibleNavItems($page.data.user, { canReviewHolds: $page.data.canReviewHolds }),
+    visibleNavItems($page.data.user, {
+      canReviewHolds: $page.data.canReviewHolds,
+      canManageMembers: $page.data.canManageMembers,
+    }),
   );
   const pathname = $derived($page.url.pathname);
 
