@@ -132,6 +132,8 @@ export async function regatePlaceOnlyHolds(
         redactedText: null,
         heldText: null,
         anonymisationSurvivors: null,
+        // Made from the `heldText` cleared above.
+        testimonioTitle: null,
         ingestStatus: 'pending',
         ingestError: null,
       },

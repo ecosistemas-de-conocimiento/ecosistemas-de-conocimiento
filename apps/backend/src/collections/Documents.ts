@@ -316,6 +316,27 @@ export const gatedOriginalReadable: FieldAccess = ({ req, doc }) =>
   mayReadGatedOriginal(req.user, doc as Parameters<typeof mayReadGatedOriginal>[1])
 
 /**
+ * 🔴 `testimonioTitle` ON A ROW THE GATE HAS NOT CLEARED IS MADE FROM `heldText`
+ * (owner ruling 2026-10-24: Revisión lists titles), so it follows `heldText`'s
+ * rule there: uploader / platform admin only. Reviewers read it through
+ * `lib/holdReview.ts` (overrideAccess). On a `ready`/`approved` row it is made
+ * from `redactedText` and readable like it.
+ *
+ * ⚠ FAILS CLOSED on a missing status: a `select` that names `testimonioTitle`
+ * must name `anonymisationStatus` too, or the title vanishes for colleagues.
+ */
+export function mayReadTestimonioTitle(
+  user: unknown,
+  doc: { contentKind?: unknown; uploadedBy?: unknown; anonymisationStatus?: unknown } | undefined,
+): boolean {
+  if (doc && (doc.anonymisationStatus === 'ready' || doc.anonymisationStatus === 'approved')) return true
+  return mayReadGatedOriginal(user, doc)
+}
+
+const testimonioTitleReadable: FieldAccess = ({ req, doc }) =>
+  mayReadTestimonioTitle(req.user, doc as Parameters<typeof mayReadTestimonioTitle>[1])
+
+/**
  * The fields in {@link GATED_QUERYABLE_FIELDS} follow {@link mayReadGatedOriginal}
  * on every ROW, but let a `where` or `sort` on them through, because the
  * product queries them:
@@ -1942,6 +1963,20 @@ export async function enqueueIngestForDoc(args: {
 
   const corpusText = gated.text
 
+  // 🔴 The testimonio's title, from the gate's OUTPUT (`gated.text` is the
+  // redaction or the reviewer-approved text, never `extractedText`). Detached:
+  // ingest and publish never wait on it. `lib/testimonioTitle.ts`.
+  if (fresh.contentKind === 'testimonio') {
+    const { scheduleTestimonioTitle } = await import('@/lib/testimonioTitle')
+    scheduleTestimonioTitle({
+      contentKind: fresh.contentKind,
+      docId,
+      organizationId,
+      redactedText: corpusText,
+      payload: payload as never,
+    })
+  }
+
   // From the UI's POV, the wait between enqueue and the ai-service callback
   // *is* the embedding phase (ai-service workers chunk + embed + upsert).
   //
@@ -2810,6 +2845,28 @@ export const Documents: CollectionConfig = {
         readOnly: true,
         description:
           'What the anonymisation gate produced. This — not `extractedText` — is what gets embedded for a testimonio or a conversacion.',
+      },
+    },
+    {
+      /**
+       * 🔴 A TESTIMONIO'S SYSTEM-PROPOSED TITLE (owner ruling 2026-10-24).
+       *
+       * Generated from the gate's REDACTED output only — `redactedText` once
+       * cleared, `heldText` on a hold (`lib/testimonioTitle.ts`). NULL = not generated yet or generation
+       * failed; the UI then shows "Testimonio · <tema>". Never `name`: that is
+       * the uploader's free-text filename and never went through the gate.
+       *
+       * ⚠ Read: like `redactedText` once cleared; like `heldText` on a held row
+       * (`mayReadTestimonioTitle`). Cleared by the gate's claim, so a re-gated
+       * row never shows an old title, and by a rejection.
+       */
+      name: 'testimonioTitle',
+      type: 'text',
+      access: { create: gateWritesOnly, update: gateWritesOnly, read: testimonioTitleReadable },
+      admin: {
+        readOnly: true,
+        description:
+          'Título propuesto por el sistema a partir del texto anonimizado. Sólo en testimonios.',
       },
     },
     {

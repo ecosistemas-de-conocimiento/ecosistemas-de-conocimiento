@@ -300,6 +300,7 @@
         <li class="row" class:loose data-testid={`owned-doc-${d.id}`}>
           <div class="row-head">
             <span class="name" title={d.title}>{d.title}</span>
+            {#if d.subtitle}<span class="subtitle">{d.subtitle}</span>{/if}
             {#if d.kind && d.kind !== 'markdown'}
               <span class="chip kind">{d.kind}</span>
             {/if}
@@ -575,6 +576,11 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 0.4rem;
+  }
+  .subtitle {
+    flex-basis: 100%;
+    font-size: 0.8rem;
+    color: var(--edc-color-ink-soft);
   }
   /* Two lines at most, then "…" (UX backlog #24: phone titles were cut with
      no sign that they were cut). The full title is in the tooltip. */

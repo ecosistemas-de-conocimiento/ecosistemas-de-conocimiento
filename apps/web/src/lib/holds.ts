@@ -25,11 +25,12 @@
  *     them either. There is no "compartido por" line here and there must never
  *     be one.
  *
- *  2. IMPROVE THE TITLE. `title` arrives NEUTRAL — "Testimonio retenido" — and
- *     that is the whole point: a filename like "Testimonio de María López.mp3"
- *     is a handle on whose words these are, so the backend strips it. See
- *     {@link isNeutralTitle}: we render what we are given and reconstruct
- *     nothing from any other field.
+ *  2. IMPROVE THE TITLE. `title` arrives NEUTRAL — "Testimonio retenido" — or,
+ *     for a testimonio, as the system-proposed `generatedTitle` the backend made
+ *     from the gate's redacted output (owner ruling 2026-10-24). A filename like
+ *     "Testimonio de María López.mp3" is a handle on whose words these are, so
+ *     the backend never sends one. See {@link isNeutralTitle}: we render what
+ *     we are given and reconstruct nothing from any other field.
  *
  *  3. DRAW STALE HIGHLIGHTS. `survivors` are OFFSETS into the `heldText` from
  *     the SAME response. The moment the reviewer edits the text, those numbers
@@ -62,8 +63,18 @@ export interface SurvivorSpan {
 /** One row in the queue. ⚠ Carries NO text — the list endpoint does not send any. */
 export interface HeldSummary {
   id: string;
-  /** 🔴 The gate's NEUTRAL title. Never a filename. See the header, rule 2. */
+  /**
+   * 🔴 What the row is called: the system-proposed title when there is one,
+   * else the gate's NEUTRAL title. Never a filename. See the header, rule 2.
+   */
   title: string;
+  /**
+   * The system-proposed title (backend `documents.testimonioTitle`, made from
+   * the gate's REDACTED held output, owner ruling 2026-10-24), or `null`.
+   */
+  generatedTitle: string | null;
+  /** The neutral kind label, shown under a generated title. */
+  label: string;
   contentKind: HoldContentKind;
   /** Which stage refused: `structural | deterministic | content | verify`. */
   stage: string | null;
@@ -158,9 +169,17 @@ export function parseHeldSummary(raw: unknown): HeldSummary | null {
   if (!id) return null;
   const kind = parseKind(row.contentKind);
   const count = typeof row.survivorCount === 'number' ? row.survivorCount : 0;
+  const label = str(row.label) ?? fallbackTitle(kind);
+  // ⚠ Only a testimonio carries one, and never a bracket (a placeholder).
+  const generated = kind === 'testimonio' ? str(row.generatedTitle)?.trim() ?? null : null;
+  const generatedTitle = generated && !/[[\]]/.test(generated) ? generated : null;
+  const rawTitle = str(row.title);
   return {
     id,
-    title: str(row.title) ?? fallbackTitle(kind),
+    // ⚠ A bracketed title (a placeholder) is never shown; the label stands in.
+    title: generatedTitle ?? (rawTitle && !/[[\]]/.test(rawTitle) ? rawTitle : label),
+    generatedTitle,
+    label,
     contentKind: kind,
     stage: str(row.stage),
     reason: str(row.reason),

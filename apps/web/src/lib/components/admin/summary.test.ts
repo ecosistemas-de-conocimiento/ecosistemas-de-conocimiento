@@ -42,6 +42,7 @@ function doc(over: Partial<AdminDocRow> = {}): AdminDocRow {
   return {
     id: 'd1',
     title: 'Doc',
+    subtitle: null,
     kind: 'pdf',
     uploaderId: 'u1',
     createdAt: '2026-08-01T00:00:00.000Z',

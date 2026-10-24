@@ -97,6 +97,7 @@
     <header class="head">
       <!-- 🔴 The gate's NEUTRAL title, as sent. -->
       <h1 data-testid="hold-title">{hold.title}</h1>
+      {#if hold.generatedTitle}<p class="label">{hold.label}</p>{/if}
       <p class="sub">
         {summary?.why}
         {#if formatHoldDate(hold.updatedAt)}
@@ -252,6 +253,11 @@
 </div>
 
 <style>
+  .label {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--edc-color-ink-soft);
+  }
   .page {
     width: min(52rem, 100%);
     margin: 0 auto;

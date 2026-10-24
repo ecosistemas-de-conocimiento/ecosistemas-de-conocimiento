@@ -22,6 +22,7 @@ import {
   gatedOriginalReadable,
   gateResetForTextEdit,
   mayReadGatedOriginal,
+  mayReadTestimonioTitle,
   whereMentions,
 } from './Documents'
 
@@ -39,6 +40,23 @@ const fieldAccess = (
   user: unknown,
   doc: Record<string, unknown> | undefined,
 ) => fn({ req: { user } as unknown as PayloadRequest, doc } as never)
+
+describe('mayReadTestimonioTitle — the generated title follows the text it was made from', () => {
+  it('a colleague reads it on a cleared row (made from redactedText)', () => {
+    expect(mayReadTestimonioTitle(ben, { ...testimonio, anonymisationStatus: 'ready' })).toBe(true)
+    expect(mayReadTestimonioTitle(ben, { ...testimonio, anonymisationStatus: 'approved' })).toBe(true)
+  })
+
+  it('🔴 NOT on a held row (made from heldText): uploader and platform admin only', () => {
+    expect(mayReadTestimonioTitle(ben, { ...testimonio, anonymisationStatus: 'held' })).toBe(false)
+    expect(mayReadTestimonioTitle(ana, { ...testimonio, anonymisationStatus: 'held' })).toBe(true)
+    expect(mayReadTestimonioTitle(admin, { ...testimonio, anonymisationStatus: 'held' })).toBe(true)
+  })
+
+  it('🔴 fails closed when the status is missing from the projected row', () => {
+    expect(mayReadTestimonioTitle(ben, testimonio)).toBe(false)
+  })
+})
 
 describe('mayReadGatedOriginal', () => {
   it('🔴 a colleague cannot read the original of a testimonio', () => {

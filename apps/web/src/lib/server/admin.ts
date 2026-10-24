@@ -124,6 +124,10 @@ export const DOC_FIELDS = [
   'uploadedBy',
   'audioMeta',
   'createdAt',
+  // A testimonio's title: generated (owner ruling 2026-10-24) over its tema.
+  'contentKind',
+  'tema',
+  'testimonioTitle',
 ] as const;
 
 export const RATING_FIELDS = ['stars', 'reason', 'user', 'createdAt'] as const;
