@@ -1,8 +1,10 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `a761fc9` (live mic with partial text,
-3D discs, auto-publish with a "Publicados" list; 🔴 live recordings are refused on upload as
-`video/webm`), deployed 2026-10-25 00:15 UTC — see §4zk. Before that, `23e7098` (system-proposed testimonio titles,
+**Status:** live since 2026-10-17. Dev runs `main` @ `410756a` (live recordings save as
+`audio/webm`, `BODY_SIZE_LIMIT=201M`, better live-text stitching, a send right after "Nueva
+conversación" lands in the new chat), deployed 2026-10-25 01:22 UTC — see §4zl. Before that,
+`a761fc9` (live mic with partial text, 3D discs, auto-publish with a "Publicados" list; live
+recordings refused on upload as `video/webm`), deployed 2026-10-25 00:15 UTC — see §4zk. Before that, `23e7098` (system-proposed testimonio titles,
 migration `20261024_230631_documents_testimonio_title`, titles backfilled; chat source cards wrap),
 deployed 2026-10-24 23:27 UTC — see §4zj. Before that, `f0f3266` (persona public-figure mark with
 migration `20261024_201817_graph_entities_public_figure`, no private persona in the graph,
@@ -1710,6 +1712,60 @@ rmi` of the three `23e7098` images by name; the old audio image was already gone
 
 Spend: `usage_logs` `actual_cost_usd` $1.8595 → $1.8703 (**+$0.0108**, 17 rows: 3 chats plus
 their stored-turn gate calls and the doc 271 pipeline).
+
+**Disk**, `df -h /` free: 58 GB before; 43 GB after the build; 58 GB after the cleanup. Images
+9.6 GB, build cache 0.
+
+### 4zl. ✅ Done 2026-10-25 01:21–01:36 UTC: `410756a`, dev only — live recordings save
+
+All measured by the deploy agent. Staging was not touched (still `97d5316`, 6 containers,
+`docker ps`). edcai was told before the deploy by the coordinator. `410756a` = live recordings
+upload (`0888385`: the backend accepts a MediaRecorder WebM whose tracks are audio only and stores
+it as `audio/webm`; the web image sets `BODY_SIZE_LIMIT=201M`; better stitching of live text), and
+a send right after "Nueva conversación" goes to the new chat (`5884ecc`). No compose or variable
+change; the body limit lives in `apps/web/Dockerfile`, not in Coolify.
+
+**No migration.** No file under `apps/backend/src/migrations/` changed between `a761fc9` and
+`410756a` (`git diff --name-only`). `payload_migrations` stays at 5 (last
+`20261024_230631_documents_testimonio_title`), read before and after the deploy.
+
+Backup `/root/backups/20261025T0121Z/` (`edc_ai` 2.7 MB, `edc_backend` 384 KB; `pg_restore -l`
+137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261025T0121Z/`
+with `timeout 180 scp`; sha256 of both dumps matched before the deploy.
+Deploy `gtvzadn2b2f8dimzdyik63j7` 01:22:01 → 01:28:07 UTC, `finished`, commit `410756a2…`.
+9 containers up; `web`, `backend` and `ai-service` run image tag `410756a251df…`. Health 200 on
+`dev.` and `api.dev.`. The web container's env has `BODY_SIZE_LIMIT=201M` (`printenv`).
+
+**audio-service rebuilt by the deploy** (§4zk): image `edc-audio-service:dev` is now
+`c3e8fb651702`, created 01:24:11 UTC; the old `44d2c260b34d` is gone. All three containers (API,
+worker, callbacks) run `c3e8fb651702`, and each has `def drop_overlap` in `/app/app/live.py`,
+which `0888385` added. The backend image has `src/lib/webmTracks.ts`, also new in `0888385`.
+
+0 error/fatal lines in any of the 9 containers at startup. After the smoke: 2 lines, both one
+race in the cleanup (below).
+
+| check (Playwright, participant, Chrome fake mic, after hydration) | result |
+|---|---|
+| 1. live mic, Traducción en salud (id 1), new conversation 189 | fake device fed SIM_0019 looped to 150 s (48 kHz mono WAV, `ffmpeg -stream_loop -1`). First live text "Nací hace 73 años." **4.14 s** after start. Recorded 130.2 s; 51 slices, all 200, round trip 1.57 / 2.29 / 3.68 s (min / median / max) |
+| 2. Stop → upload | **201** 1.5 s after Stop, no 400 or 413 (0 API responses ≥ 400 in the run). Doc 272: `kind audio`, `content_kind testimonio`, media `audio/webm`, 2.06 MB |
+| 3. pipeline | Whisper large-v3 on the Spark decoded 130.3 s of audio in 15.4 s (worker log); `audio_meta.durationSeconds` 130.26, 45 segments, `es`. `ingest ready`, `anonymisation ready`, **`published`** ≤ 29 s after upload (created 01:31:04, updated 01:31:33); title "Una traductora náhuatl cuida palabras y vidas en salud" |
+| 4. "Nueva conversación" then send at once | send clicked 64 ms after the click, before the `POST /api/sessions` 201 came back. The message `POST` and `/api/generate` (200) both went to the new conversation 190; the DB holds 2 messages in 190 and 0 in 189. §4zk's 1b misroute is fixed |
+
+0 page errors. Screenshots in the deploy agent's scratchpad `shots/4zl-*.png`.
+
+Cleanup of test data: doc 272 deleted as its uploader (`DELETE /api/documents/272`, 200), then
+conversations 189 and 190 (200 each). 0 rows left in `documents`, `sessions`, `messages`, orphan
+`media`, or ai-service `documents`. ⚠ The doc's graph extraction was still running when it was
+deleted: at 01:33:30 its insert into `graph_mentions` failed the `document_id` foreign key
+(backend `[graph] extraction failed for doc 272`, one postgres `ERROR` line). Harmless here; it
+means a delete does not cancel an in-flight graph job.
+
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three
+`a761fc9` images by exact name; `docker builder prune -af` reclaimed 14.76 GB. The one dangling
+image left (`858f009f9709`) is staging's redis, in use.
+
+Spend: `usage_logs` `actual_cost_usd` $1.8703 → $1.8747 (**+$0.0044**, 7 rows: 1 chat, its
+stored-turn gate call, and the doc 272 pipeline).
 
 **Disk**, `df -h /` free: 58 GB before; 43 GB after the build; 58 GB after the cleanup. Images
 9.6 GB, build cache 0.
