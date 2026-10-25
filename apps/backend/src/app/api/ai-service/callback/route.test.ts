@@ -22,6 +22,12 @@ vi.mock('@/lib/aiClient', () => ({
   },
 }))
 
+// Owner rule 2026-10-24: a participant's draft is published by the system once
+// its draft ingest lands. The rule itself is `lib/autoPublish.test.ts`; here,
+// only that the receiver asks at the right moment.
+const autoPublish = vi.fn(async (_args: { documentId: unknown }) => ({ published: false, reason: 'not-participant' }))
+vi.mock('@/lib/autoPublish', () => ({ autoPublishParticipantDocument: autoPublish }))
+
 import { signCallback } from '@/lib/hmac'
 
 const SECRET = 'd'.repeat(64)
@@ -184,6 +190,41 @@ describe('POST /api/ai-service/callback — correct signature', () => {
     expect(res.status).toBe(200)
     await expect(res.json()).resolves.toMatchObject({ deduped: true, dispatched: false })
     expect(updated).toHaveLength(0)
+  })
+})
+
+describe('🔴 auto-publish after the draft ingest', () => {
+  beforeEach(() => autoPublish.mockClear())
+
+  it('asks once the draft ingest completed, after writing `ready`', async () => {
+    const body = envelope()
+    const res = await post(body, headersFor(body))
+    expect(res.status).toBe(200)
+    expect(autoPublish).toHaveBeenCalledTimes(1)
+    expect(autoPublish.mock.calls[0]![0]).toMatchObject({ documentId: 42 })
+    expect(updated[0]).toMatchObject({ data: { ingestStatus: 'ready' } })
+  })
+
+  it('does not ask on ingest.failed', async () => {
+    const body = envelope({ event: 'ingest.failed', error: { message: 'boom' } })
+    await post(body, headersFor(body))
+    expect(autoPublish).not.toHaveBeenCalled()
+  })
+
+  it('does not ask on a superseded ingest', async () => {
+    findByIDImpl = async () => ({ id: 42, ingestId: 'ing_other', publicationStatus: 'draft' })
+    const body = envelope()
+    await post(body, headersFor(body))
+    expect(autoPublish).not.toHaveBeenCalled()
+  })
+
+  it('a failed auto-publish never turns the callback into a 500', async () => {
+    autoPublish.mockImplementationOnce(async () => {
+      throw new Error('boom')
+    })
+    const body = envelope()
+    const res = await post(body, headersFor(body))
+    expect(res.status).toBe(200)
   })
 })
 

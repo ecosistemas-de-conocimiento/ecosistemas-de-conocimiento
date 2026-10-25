@@ -571,9 +571,15 @@ class AppStore {
    *
    * ⚠ Messages and documents load lazily, so the candidate is read first:
    * "no messages in memory" is not "no messages".
+   *
+   * 🔴 Only one THIS tab made (`createdHere`). Another tab of the same account
+   * may have an empty conversation open and about to send; joining it put two
+   * people's turns into one conversation (dev 2026-10-24).
    */
   private async findEmptySession(): Promise<Session | null> {
-    const candidate = this.sessions.find((x) => x.title === UNTITLED_SESSION);
+    const candidate = this.sessions.find(
+      (x) => x.title === UNTITLED_SESSION && this.createdHere.has(x.id),
+    );
     if (!candidate) return null;
     if (candidate.messages.length === 0) await this.loadMessages(candidate.id);
     if (candidate.docs.length === 0) await this.loadDocs(candidate.id);
@@ -599,6 +605,7 @@ class AppStore {
         credentials: 'same-origin',
       });
       const created = sessionFromBackend(data.doc);
+      this.createdHere.add(created.id);
       this.sessions = [created, ...this.sessions];
       this.activeSessionId = created.id;
       return created.id;
@@ -645,6 +652,9 @@ class AppStore {
       return null;
     }
   }
+
+  /** Conversations this tab created since it loaded. See `findEmptySession`. */
+  readonly createdHere = new Set<string>();
 
   /** The create `ensureSession` is waiting on, so a second caller joins it. */
   private ensuring: Promise<string | null> | null = null;

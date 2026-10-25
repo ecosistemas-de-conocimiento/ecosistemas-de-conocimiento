@@ -55,6 +55,21 @@ function view(msg: Msg) {
   return { body, content: shown.content, html };
 }
 
+describe('a failed answer offers "Reintentar"', () => {
+  const failed = { id: 'p1', role: 'assistant', content: '', error: 'Se perdió la conexión.' } as Msg;
+
+  it('shows the button when the turn can be asked again', () => {
+    const { body } = render(Message, { props: { msg: failed, onretry: () => {} } });
+    expect(body).toContain('data-testid="answer-retry"');
+    expect(body).toContain('Reintentar');
+  });
+
+  it('shows no button without a retry', () => {
+    const { body } = render(Message, { props: { msg: failed } });
+    expect(body).not.toContain('answer-retry');
+  });
+});
+
 describe('🔴 source numbering: 8 cited markers, 7 shown sources, no source 7', () => {
   const provenance = citedBrowserProvenance(retrieved as never, ANSWER, null, 'E');
 

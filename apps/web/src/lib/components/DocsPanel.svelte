@@ -264,6 +264,8 @@
     return publishGate({
       publicationStatus: d.publicationStatus,
       ingestStatus: d.ingestStatus,
+      // A participant never publishes by hand (owner rule, 2026-10-24).
+      manual: canUploadVoces,
     });
   }
 

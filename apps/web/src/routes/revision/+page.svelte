@@ -30,7 +30,7 @@
   import { holdSummary } from './holdSummary';
   import type { PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: { message?: string } | null } = $props();
 
   /**
    * What just happened, if we arrived from a decision.
@@ -110,6 +110,29 @@
             {/if}
           </p>
           <p class="why">{summary.why}</p>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+
+  {#if data.published.length > 0}
+    <!-- Owner rule 2026-10-24: participants' testimonios publish on their own;
+         review is after the fact. No text here, like the queue above. -->
+    <h2>Publicados</h2>
+    {#if form?.message}<p class="notice" role="alert">{form.message}</p>{/if}
+    <ul class="list" data-testid="published-list">
+      {#each data.published as item (item.id)}
+        <li class="card row">
+          <a class="card-link" href={`/biblioteca/${encodeURIComponent(item.id)}`}>
+            <span class="title">{item.title}</span>
+          </a>
+          {#if formatHoldDate(item.updatedAt)}
+            <span class="date">{formatHoldDate(item.updatedAt)}</span>
+          {/if}
+          <form method="post" action="?/rechazar">
+            <input type="hidden" name="id" value={item.id} />
+            <button type="submit" class="reject" data-testid={`reject-published-${item.id}`}>Rechazar</button>
+          </form>
         </li>
       {/each}
     </ul>
@@ -224,6 +247,30 @@
     background: var(--edc-color-neutral-soft);
     font-size: 0.8rem;
     font-weight: 700;
+  }
+  h2 {
+    margin: 2rem 0 0;
+    font-family: var(--edc-font-display);
+    font-size: 1.2rem;
+  }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+  }
+  .row .card-link {
+    flex: 1 1 12rem;
+  }
+  .reject {
+    padding: 0.35rem 0.75rem;
+    border: 1px solid var(--edc-color-danger-outline);
+    border-radius: var(--edc-radius-2);
+    background: transparent;
+    color: var(--edc-color-danger);
+    font: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
   }
   .date {
     font-size: 0.8rem;

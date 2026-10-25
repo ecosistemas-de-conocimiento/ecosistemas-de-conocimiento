@@ -87,3 +87,28 @@ describe('ensureSession', () => {
     expect(app.activeSessionId).toBeNull();
   });
 });
+
+describe('newSession: an empty conversation is reused only by the tab that made it', () => {
+  const empty = (id: string) =>
+    ({ id, title: 'Nueva conversación', messages: [], docs: [], createdAt: 0, updatedAt: 0 }) as unknown as (typeof app.sessions)[number];
+
+  it('🔴 dev 2026-10-24: an empty conversation another tab made is not joined', async () => {
+    // Another tab of the same account made session 9 and has not sent yet.
+    // Joining it would put two people's turns into one conversation.
+    app.sessions = [empty('9')];
+
+    const id = await app.newSession();
+
+    expect(id).toBe('40');
+    expect(creates()).toHaveLength(1);
+    expect(app.activeSessionId).toBe('40');
+  });
+
+  it('pressing "Nueva conversación" twice in one tab reuses the empty one it made (UX #25)', async () => {
+    const first = await app.newSession();
+    const second = await app.newSession();
+
+    expect(second).toBe(first);
+    expect(creates()).toHaveLength(1);
+  });
+});
