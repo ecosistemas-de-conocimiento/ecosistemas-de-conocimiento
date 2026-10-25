@@ -35,6 +35,37 @@ const fail = (status: number, error: string): Response =>
 
 type Ctx = { params: Promise<{ sid: string }> }
 
+/**
+ * The body, or null past `max` bytes. ⚠ Counted while reading: Next sets no
+ * body limit on route handlers, so `arrayBuffer()` first would let any signed-in
+ * caller push an arbitrary body into this process's memory.
+ */
+async function readCapped(request: Request, max: number): Promise<Uint8Array<ArrayBuffer> | null> {
+  const declared = Number(request.headers.get('content-length') ?? '0')
+  if (declared > max) return null
+  if (!request.body) return new Uint8Array(0)
+  const reader = request.body.getReader()
+  const parts: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > max) {
+      await reader.cancel()
+      return null
+    }
+    parts.push(value)
+  }
+  const out = new Uint8Array(size)
+  let pos = 0
+  for (const p of parts) {
+    out.set(p, pos)
+    pos += p.byteLength
+  }
+  return out
+}
+
 async function prepare(
   request: Request,
   ctx: Ctx,
@@ -55,8 +86,8 @@ export async function POST(request: Request, ctx: Ctx): Promise<Response> {
   if (target instanceof Response) return target
   const offset = Number.parseInt(new URL(request.url).searchParams.get('offset') ?? '0', 10)
   if (!Number.isFinite(offset) || offset < 0) return fail(400, 'bad_offset')
-  const body = await request.arrayBuffer()
-  if (body.byteLength > MAX_SLICE_BYTES) return fail(413, 'live_slice_too_large')
+  const body = await readCapped(request, MAX_SLICE_BYTES)
+  if (!body) return fail(413, 'live_slice_too_large')
 
   let upstream: Response
   try {

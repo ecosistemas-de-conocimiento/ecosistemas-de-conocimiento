@@ -82,6 +82,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await live_routes.shutdown_live()
         await close_pool(app.state.pool)
         closer = getattr(redis, "aclose", None) or getattr(redis, "close", None)
         if closer is not None:

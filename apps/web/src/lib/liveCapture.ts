@@ -9,12 +9,18 @@
  *   server's append is idempotent on it, so a resend is harmless.
  * - A 409 means the server lost the session (restart, idle expiry). The uplink
  *   starts a fresh session and resends the whole recording from 0.
+ * - One request carries at most `MAX_REQUEST_BYTES`, so a catch-up after a 409
+ *   goes out in pieces, each under SvelteKit adapter-node's default 512K body
+ *   limit.
  * - A 503 means live text is off here. The uplink goes quiet; the recording
  *   itself is unaffected and still uploads on stop.
  *
  * 🔴 The text this returns is raw, pre-gate testimony. Show it to the speaker
  * and drop it. Never store it, log it, or send it anywhere.
  */
+
+/** Per request: ~30 s of 64 kbit/s Opus (inferred from the bitrate). */
+export const MAX_REQUEST_BYTES = 256 * 1024;
 
 export interface LiveText {
   committed: string;
@@ -73,16 +79,18 @@ export class LiveUplink {
   }
 
   private bytesFrom(offset: number): Uint8Array<ArrayBuffer> {
-    const out = new Uint8Array(this.total - offset);
+    const out = new Uint8Array(Math.min(this.total - offset, MAX_REQUEST_BYTES));
     let pos = 0;
     let skip = offset;
     for (const c of this.chunks) {
+      if (pos >= out.byteLength) break;
       if (skip >= c.byteLength) {
         skip -= c.byteLength;
         continue;
       }
-      out.set(c.subarray(skip), pos);
-      pos += c.byteLength - skip;
+      const piece = c.subarray(skip, skip + out.byteLength - pos);
+      out.set(piece, pos);
+      pos += piece.byteLength;
       skip = 0;
     }
     return out;
@@ -105,6 +113,9 @@ export class LiveUplink {
     }
     if (res.ok) {
       this.sent = offset + body.byteLength;
+      // ⚠ Stop may have come while this request was in flight. Its text must
+      // not reappear after the speaker's screen was cleared.
+      if (this.closed) return;
       const data = (await res.json().catch(() => null)) as Partial<LiveText> | null;
       if (data) this.onText({ committed: data.committed ?? '', tentative: data.tentative ?? '' });
       return;

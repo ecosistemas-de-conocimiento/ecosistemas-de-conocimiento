@@ -26,6 +26,7 @@
 
   let recording = $state(false);
   let saving = $state(false);
+  let starting = $state(false);
   let elapsed = $state(0);
 
   let recorder: MediaRecorder | null = null;
@@ -59,17 +60,31 @@
 
   async function start(input: MediaStream): Promise<void> {
     stream = input;
-    chunks = [];
-    uplink = new LiveUplink((t) => ontext(liveLine(t) || '…'));
-    const mimeType = pickMime();
-    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    recorder.ondataavailable = async (e) => {
+    let rec: MediaRecorder;
+    try {
+      const mimeType = pickMime();
+      rec = new MediaRecorder(input, mimeType ? { mimeType } : undefined);
+    } catch (err) {
+      release();
+      throw err;
+    }
+    // Per recording, so a late slice can never land in another recording.
+    const mine: Blob[] = [];
+    const link = new LiveUplink((t) => ontext(liveLine(t) || '…'));
+    chunks = mine;
+    uplink = link;
+    recorder = rec;
+    // ⚠ `arrayBuffer()` resolves asynchronously; chaining keeps the bytes in
+    // slice order, which the server's WebM stream depends on.
+    let fed = Promise.resolve();
+    rec.ondataavailable = (e) => {
       if (!e.data.size) return;
-      chunks.push(e.data);
-      uplink?.push(new Uint8Array(await e.data.arrayBuffer()));
+      const blob = e.data;
+      mine.push(blob);
+      fed = fed.then(async () => link.push(new Uint8Array(await blob.arrayBuffer())));
     };
-    recorder.onstop = () => void finish();
-    recorder.start(SLICE_MS);
+    rec.onstop = () => void finish();
+    rec.start(SLICE_MS);
     recording = true;
     elapsed = 0;
     ontext('…');
@@ -78,15 +93,20 @@
   }
 
   async function begin(): Promise<void> {
-    if (recording || saving) return;
+    // ⚠ `starting` covers the await on the permission prompt: without it a
+    // second click there starts a second recorder on the same chunks.
+    if (recording || saving || starting) return;
     if (simulate) {
       fileInput?.click();
       return;
     }
+    starting = true;
     try {
       await start(await navigator.mediaDevices.getUserMedia({ audio: true }));
     } catch {
       toasts.push({ kind: 'error', message: 'Sin acceso al micrófono.' });
+    } finally {
+      starting = false;
     }
   }
 
@@ -94,7 +114,13 @@
     const input = e.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (file) await start(await fileStream(file));
+    if (!file || recording || saving || starting) return;
+    starting = true;
+    try {
+      await start(await fileStream(file));
+    } finally {
+      starting = false;
+    }
   }
 
   async function stop(): Promise<void> {
@@ -168,7 +194,7 @@
 {:else}
   <IconButton
     label={saving ? 'Guardando grabación' : 'Grabar'}
-    disabled={disabled || saving}
+    disabled={disabled || saving || starting}
     dataTestId="mic-start"
     onClick={begin}
   >

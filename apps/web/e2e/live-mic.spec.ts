@@ -103,6 +103,9 @@ async function stopAndExpectUpload(page: Page): Promise<void> {
   await page.getByTestId('mic-stop').click();
   await expect(page.getByTestId('live-text')).toHaveCount(0);
   const res = await upload;
+  // A request in flight at Stop must not bring the text back.
+  await page.waitForTimeout(3_000);
+  await expect(page.getByTestId('live-text')).toHaveCount(0);
   expect(res.request().postDataBuffer()?.includes(Buffer.from('audio/webm'))).toBe(true);
   if (process.env.LIVE_EXPECT_UPLOAD !== '0') expect(res.ok()).toBe(true);
 }

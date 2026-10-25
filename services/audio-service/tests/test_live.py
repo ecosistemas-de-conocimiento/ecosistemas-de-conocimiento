@@ -16,7 +16,17 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app import live as live_mod  # noqa: E402
 from app.config import Settings, get_settings  # noqa: E402
-from app.live import LiveError, LiveSession, LiveTranscriber, advance, append_slice, decode_pcm  # noqa: E402
+from app.live import (  # noqa: E402
+    MAX_PER_OWNER,
+    LiveError,
+    LiveSession,
+    LiveStore,
+    LiveTranscriber,
+    advance,
+    cap_window,
+    decode_pcm,
+    new_bytes,
+)
 from app.main import create_app  # noqa: E402
 from app.routes import live as live_routes  # noqa: E402
 from app.transcriber import TranscriptPart  # noqa: E402
@@ -36,17 +46,31 @@ def _seg(start: float, end: float, text: str) -> dict:
     return {"id": 0, "start": start, "end": end, "text": text, "noSpeechProb": 0.0}
 
 
-# ── append_slice ────────────────────────────────────────────────────────────
+# ── new_bytes ───────────────────────────────────────────────────────────────
 
-def test_append_is_idempotent_and_refuses_gaps():
+def test_new_bytes_is_idempotent_and_refuses_gaps():
     session = LiveSession()
-    append_slice(session, 0, b"abc")
-    append_slice(session, 0, b"abc")  # resend
-    append_slice(session, 1, b"bcde")  # overlap adds only "de"
-    assert bytes(session.buffer) == b"abcde"
+    assert new_bytes(session, 0, b"abc") == b"abc"
+    session.received = 3
+    assert new_bytes(session, 0, b"abc") == b""  # resend
+    assert new_bytes(session, 1, b"bcde") == b"de"  # overlap adds only the tail
     with pytest.raises(LiveError) as err:
-        append_slice(session, 9, b"x")
+        new_bytes(session, 9, b"x")
     assert err.value.status == 409
+
+
+# ── per-owner cap ───────────────────────────────────────────────────────────
+
+def test_one_owner_cannot_fill_the_store_and_oldest_is_evicted():
+    store = LiveStore()
+    for i in range(MAX_PER_OWNER + 3):
+        store.get_or_create(f"key:u1.s{i}")
+    assert len(store) == MAX_PER_OWNER
+    # The newest survive; another owner is unaffected.
+    store.get_or_create("key:u2.a")
+    assert len(store) == MAX_PER_OWNER + 1
+    assert store.drop(f"key:u1.s{MAX_PER_OWNER + 2}")
+    assert not store.drop("key:u1.s0")
 
 
 # ── commit rule ─────────────────────────────────────────────────────────────
@@ -73,6 +97,25 @@ def test_never_cuts_before_a_mid_word_piece():
     assert session.snapshot()["committed"] == "uno"
     assert session.snapshot()["tentative"] == " porque duelen"
     assert session.committed_samples == 6 * 16000
+
+
+def test_cut_at_start_zero_or_past_window_is_ignored():
+    session = LiveSession()
+    # Missing start (0) on the only word-starting segment: no cut, no double commit.
+    advance(session, [_seg(0, 6, " uno"), _seg(0, 11, " dos")], window_s=13.0, total_samples=208000)
+    assert session.committed == [] and session.committed_samples == 0
+    # A start past the window must not skip unheard audio.
+    advance(session, [_seg(0, 6, " uno"), _seg(40, 41, " dos")], window_s=13.0, total_samples=208000)
+    assert session.committed_samples == 0
+
+
+def test_cap_window_bounds_the_audio_sent_when_whisper_keeps_failing():
+    session = LiveSession(tentative=" algo")
+    cap_window(session, total_samples=100 * 16000)
+    assert session.committed_samples == 75 * 16000
+    assert session.snapshot()["committed"] == "algo" and session.tentative == ""
+    cap_window(session, total_samples=90 * 16000)  # within bounds: untouched
+    assert session.committed_samples == 75 * 16000
 
 
 def test_window_at_cap_commits_whole():
@@ -127,6 +170,7 @@ def live_client(monkeypatch):
         client.fake = fake
         client.live = live
         yield client
+        client.portal.call(live.store.aclose)
 
 
 @pytest.fixture
@@ -197,6 +241,37 @@ def test_whisper_failure_is_502_without_text(monkeypatch):
         return b"\x00\x00" * 16000 * 2
 
     monkeypatch.setattr(live_mod, "decode_pcm", fake_decode)
+
+    async def run():
+        try:
+            await live.push("k", 0, b"x")
+        finally:
+            await live.store.aclose()
+
     with pytest.raises(LiveError) as err:
-        asyncio.run(live.push("k", 0, b"x"))
+        asyncio.run(run())
     assert err.value.status == 502 and SECRET_WORDS not in str(err.value)
+
+
+@requires_ffmpeg
+def test_long_stream_sends_bounded_windows(live_client, tmp_path):
+    """60 s fed in slices: every Whisper call stays within MAX_WINDOW_S, and
+    the session ends up decoding the whole stream (streaming decoder)."""
+    wav = make_tone(str(tmp_path / "long.wav"), seconds=60.0)
+    data = open(transcode(wav, str(tmp_path / "long.webm")), "rb").read()
+    step = len(data) // 24 + 1
+    body = None
+    for i in range(24):
+        r = live_client.post(
+            f"/v1/live/u9.long/chunk?offset={i * step}",
+            content=data[i * step:(i + 1) * step],
+            headers=_auth(KEY_A),
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+    assert body["received"] == len(data)
+    assert body["seconds"] > 55
+    assert max(live_client.fake.calls) <= 25.5
+    session = next(iter(live_client.live.store._sessions.values()))
+    assert session.head is None  # streaming decoder took over
+    assert len(session.decoder.pcm) <= 26 * 32000

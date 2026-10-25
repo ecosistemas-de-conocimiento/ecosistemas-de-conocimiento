@@ -57,6 +57,15 @@ describe('/api/live/:sid', () => {
     expect(await res.json()).toEqual({ committed: 'hola', tentative: 'mundo' })
   })
 
+  it('refuses an oversized slice without forwarding it', async () => {
+    const res = await POST(
+      new Request(`http://x/api/live/${SID}`, { method: 'POST', body: new Uint8Array(4 * 1024 * 1024 + 1) }),
+      ctx(SID),
+    )
+    expect(res.status).toBe(413)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('passes an upstream gap through so the client can resend', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: 'live_gap' }), { status: 409 }))
     const res = await POST(new Request(`http://x/api/live/${SID}?offset=5`, { method: 'POST', body: 'a' }), ctx(SID))

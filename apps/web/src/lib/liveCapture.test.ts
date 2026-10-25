@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { LiveUplink, liveLine, type LiveText } from './liveCapture';
+import { LiveUplink, MAX_REQUEST_BYTES, liveLine, type LiveText } from './liveCapture';
 
 const bytes = (...xs: number[]) => new Uint8Array(xs);
 const ok = (body: object) => new Response(JSON.stringify(body), { status: 200 });
@@ -78,6 +78,26 @@ describe('LiveUplink', () => {
     flaky.uplink.push(bytes(2));
     await tick();
     expect(flaky.calls[1]!.url).toBe('/api/live/sid-1?offset=0');
+  });
+
+  it('drops text that arrives after close (stop while a request is in flight)', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { uplink, texts } = harness([async () => (await gate, ok({ tentative: 'texto crudo' }))]);
+    uplink.push(bytes(1));
+    await tick();
+    const closing = uplink.close();
+    release();
+    await closing;
+    expect(texts).toEqual([]);
+  });
+
+  it('caps each request and catches up in pieces', async () => {
+    const { uplink, calls } = harness([]);
+    uplink.push(new Uint8Array(MAX_REQUEST_BYTES + 10));
+    for (let i = 0; i < 4; i++) await tick();
+    expect(calls.map((c) => c.body!.byteLength)).toEqual([MAX_REQUEST_BYTES, 10]);
+    expect(calls[1]!.url).toBe(`/api/live/sid-1?offset=${MAX_REQUEST_BYTES}`);
   });
 
   it('close drops the server session', async () => {

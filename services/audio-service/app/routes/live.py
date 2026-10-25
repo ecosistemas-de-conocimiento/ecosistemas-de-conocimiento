@@ -28,6 +28,12 @@ def get_live(settings: Settings = Depends(get_settings)) -> LiveTranscriber:
     return _live
 
 
+async def shutdown_live() -> None:
+    """Called from the app lifespan: no ffmpeg outlives the API process."""
+    if _live is not None:
+        await _live.store.aclose()
+
+
 def _key(auth: AuthContext, sid: str) -> str:
     if not SESSION_ID.match(sid):
         raise LiveError(400, "bad_session_id", "Invalid session id")
