@@ -112,3 +112,61 @@ describe('newSession: an empty conversation is reused only by the tab that made 
     expect(creates()).toHaveLength(1);
   });
 });
+
+describe('🔴 dev 2026-10-24: a send right after "Nueva conversación" goes to the new one', () => {
+  const full = (id: string) =>
+    ({
+      id,
+      title: 'Una conversación vieja',
+      messages: [{ id: 'm1', role: 'user', content: 'hola' }],
+      docs: [],
+      createdAt: 0,
+      updatedAt: 0,
+    }) as unknown as (typeof app.sessions)[number];
+
+  it('while the create is on the wire, no conversation is open and a send joins the create', async () => {
+    // Conversation 172 is open. Two quick sends after "Nueva conversación"
+    // used to land in 172, because it stayed open until the create returned.
+    app.sessions = [full('172')];
+    app.activeSessionId = '172';
+
+    const created = app.newSession();
+    // The old conversation is no longer the send target.
+    expect(app.active).toBeNull();
+    // What `Chat.svelte`'s send (and the mic, and an upload) call.
+    const target = await app.ensureSession();
+
+    expect(target).toBe('40');
+    expect(await created).toBe('40');
+    expect(creates()).toHaveLength(1);
+    expect(app.activeSessionId).toBe('40');
+  });
+
+  it('a second "Nueva conversación" while the first is on the wire makes no second one', async () => {
+    const [a, b] = await Promise.all([app.newSession(), app.newSession()]);
+
+    expect(a).toBe('40');
+    expect(b).toBe('40');
+    expect(creates()).toHaveLength(1);
+  });
+
+  it('a failed create reopens the conversation that was open', async () => {
+    app.sessions = [full('172')];
+    app.activeSessionId = '172';
+    vi.stubGlobal('fetch', vi.fn(async () => json({ error: 'boom' }, 500)));
+
+    expect(await app.newSession()).toBeNull();
+    expect(app.activeSessionId).toBe('172');
+  });
+
+  it('a conversation picked while the create is on the wire stays open', async () => {
+    app.sessions = [full('172'), full('9')];
+    app.activeSessionId = '172';
+
+    const created = app.newSession();
+    app.activeSessionId = '9';
+    await created;
+
+    expect(app.activeSessionId).toBe('9');
+  });
+});
