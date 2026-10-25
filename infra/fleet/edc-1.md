@@ -1,6 +1,8 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `23e7098` (system-proposed testimonio titles,
+**Status:** live since 2026-10-17. Dev runs `main` @ `a761fc9` (live mic with partial text,
+3D discs, auto-publish with a "Publicados" list; 🔴 live recordings are refused on upload as
+`video/webm`), deployed 2026-10-25 00:15 UTC — see §4zk. Before that, `23e7098` (system-proposed testimonio titles,
 migration `20261024_230631_documents_testimonio_title`, titles backfilled; chat source cards wrap),
 deployed 2026-10-24 23:27 UTC — see §4zj. Before that, `f0f3266` (persona public-figure mark with
 migration `20261024_201817_graph_entities_public_figure`, no private persona in the graph,
@@ -1650,6 +1652,67 @@ Spend: `usage_logs` `actual_cost_usd` $1.7273 → $1.8555 after the backfill (**
 included) → $1.8595 after the smoke (+$0.0040). This run: **$0.1322**.
 
 **Disk**, `df -h /` free: 56 GB before; 58 GB after the cleanup. Images 9.6 GB, build cache 0.
+
+### 4zk. ⚠ Done 2026-10-25 00:14–00:38 UTC: `a761fc9`, dev only — live mic recordings refused on upload
+
+All measured by the deploy agent. Staging was not touched (still `97d5316`, `docker ps`). edcai was
+told before the deploy by the coordinator. `a761fc9` = live mic with streaming partial text
+(`d14c7b0`, audit fixes `9e73610`), `/grafo` 3D nodes as flat discs (`33d4eda`), participants'
+contributions publish on their own through the gate, with a "Publicados" list in Revisión
+(`0fea574`), Spark-first titles that never send holds to a hosted model (`cec736f`), chat turn
+retry and per-tab new chat (`e576c3b`). No compose or variable change.
+
+**No migration.** No file under `apps/backend/src/migrations/` changed between `23e7098` and
+`a761fc9` (`git diff --name-only`); the `Documents.ts` change is a hook, not a field.
+`payload_migrations` stays at 5 (last `20261024_230631_documents_testimonio_title`).
+
+Backup `/root/backups/20261025T0014Z/` (`edc_ai` 2.7 MB, `edc_backend` 386 KB; `pg_restore -l`
+137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261025T0014Z/`
+with `timeout 180 scp`; sha256 of both dumps matched before the deploy.
+Deploy `zdcjmlnttlhwfbnilzrwipva` 00:15:12 → 00:21:16 UTC, `finished`. 9 containers up; `web`,
+`backend` and `ai-service` run image tag `a761fc9a9e54…`. Health 200 on `dev.` and `api.dev.`.
+
+**audio-service is rebuilt by the deploy itself, not by hand.** The three audio containers run
+`edc-audio-service:${EDC_ENV}` (= `:dev`), a fixed tag with no commit in it, so `docker ps` cannot
+show the commit. Coolify's compose build rebuilds it anyway: image `44d2c260b34d` created
+00:17:22 UTC (the old `1b4c6d8f8de3` from 23:29:36 UTC was gone after the deploy), and all three
+containers (API, worker, callbacks) run `44d2c260b34d`. Proof it holds this commit:
+`/app/app/routes/live.py` and `/app/app/live.py` exist in it; the old image had no `live.py`.
+⚠ To check an audio rebuild, compare the image id and creation time, and look for a file the
+commit added. The tag alone says nothing.
+
+0 error/fatal lines in any of the 9 containers at startup. After the smoke: backend 6 lines, all
+the `Invalid MIME type: video/webm` refusals below; web 1 line, the 5.3 MB upload refusal below.
+
+| check (Playwright, participant unless noted, after hydration) | result |
+|---|---|
+| 1. chat, Prevención del dengue (id 6) | answer 12.8 s, 200. Raw provenance ordinals {1,2,3,4,6,7,8}; the answer also cites `[5]`, which has no source. The page renumbers densely: 7 source cards `[1]`–`[7]` and every `[n]` in the rendered answer is 1–7, so each marker has its card. Screenshot `1-chat.png` |
+| ⚠ 1b. first two chat attempts | sent right after "Nueva conversación" (no wait for its `POST /api/sessions`): both turns were stored in the **previous** conversation (172), while new empty conversations 183 and 184 were created. A third try that waited for the 201 went to its own conversation (185). One of these answers took 59 s |
+| 2. live mic, `/?simvoz=1` with SIM_0015 as a 48 kHz WAV | first live text "Nací hace 76 años en Juchi…" **4.95 s** after start; the first slice leaves at 2.57 s (`SLICE_MS` 2 500) and comes back 2.37 s later. Slice round trips 1.80–2.79 s (n = 7), all 200; `DELETE` 204 on Stop; live text gone after Stop |
+| 2b. live mic, Chrome fake device (`--use-file-for-fake-audio-capture`) | first live text 4.78 s; round trips 1.92–3.42 s (n = 7), all 200 |
+| 🔴 2c. on Stop, the recording upload | **400 both ways**, `media_upload_rejected`: Payload sniffs the MediaRecorder WebM as `video/webm`, which `MEDIA_MIME_TYPES` (`apps/backend/src/collections/Media.ts`) leaves out on purpose. The page shows "El servidor rechazó el archivo". No audio document is created, so a live recording cannot be saved on dev |
+| 2d. auto-publish, checked instead with the m4a through the documents panel | doc 271: `kind audio`, filed as `content_kind testimonio` (participant upload, new rule), `ingest ready`, `anonymisation ready`, **`published`** 12–16 s after upload; title "Una traductora zapoteca habla de la confianza en los servicios de salud" |
+| ⚠ 2e. upload size | a 5.3 MB WAV through the documents panel: **413**, web log `Content-length of 5302844 exceeds limit of 524288 bytes`. `BODY_SIZE_LIMIT` is not set anywhere, so adapter-node's 512 KB default caps every upload through the web |
+| 3. `/grafo` 3D, Prevención del dengue | `data-vista=3d`; nodes are flat filled discs, no sphere shading. Screenshot `3-grafo-3d.png` |
+| 4. Revisión as investigador, `?eco=6` | 5 held cards, all titled ("Testimonio retenido" alone on 1); "Publicados" heading and list with 45 items, each with "Rechazar"; doc 271 at the top; 5 read the fallback "Testimonio" (5 published testimonios in eco 6 have no title). Screenshots `4-revision-6.png`, `4b-publicados-6.png` |
+
+0 page errors. Screenshots in the deploy agent's scratchpad `shots/`.
+
+Cleanup of test data: conversations 183–188 deleted (200 each), and 172 too, because the two
+misrouted turns (messages 216–219) had landed in it; 0 of messages 214–221 and 0 `msg-*` documents
+left. ⚠ Deleting conversation 188 did **not** delete doc 271: its `uploaded_in_session_id` went
+NULL and it stayed `published`. Deleted by hand as its uploader (`DELETE /api/documents/271`,
+200); 0 rows left in `documents` and in ai-service.
+
+Image cleanup only after `GET /api/v1/deployments` was empty and no compose build ran: `docker
+rmi` of the three `23e7098` images by name; the old audio image was already gone;
+`docker builder prune -af` reclaimed 14.76 GB.
+
+Spend: `usage_logs` `actual_cost_usd` $1.8595 → $1.8703 (**+$0.0108**, 17 rows: 3 chats plus
+their stored-turn gate calls and the doc 271 pipeline).
+
+**Disk**, `df -h /` free: 58 GB before; 43 GB after the build; 58 GB after the cleanup. Images
+9.6 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
