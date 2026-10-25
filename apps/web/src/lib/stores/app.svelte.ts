@@ -588,15 +588,40 @@ class AppStore {
     return fresh.messages.length === 0 && fresh.docs.length === 0 ? fresh : null;
   }
 
+  /**
+   * Open a new conversation (or the empty one this tab made) and return its id.
+   *
+   * 🔴 dev 2026-10-24: the old conversation stayed open while the create was
+   * on the wire, so two quick sends after "Nueva conversación" landed in it.
+   * Now nothing is open until the new one exists, and the pending create is
+   * the one `ensureSession` — every send, upload and mic turn — waits on.
+   * A conversation the person picks meanwhile stays open; a failed create
+   * reopens the one that was open.
+   */
   async newSession(opts: { reuseEmpty?: boolean } = {}): Promise<string | null> {
     // Nothing to create a conversation IN. The screen already says so; firing
     // the request anyway would just add a toast on top of an explanation.
     if (this.hasNoEcosystem) return null;
+    // A second click (or a send) while a create is on the wire joins it.
+    if (this.ensuring) return this.ensuring;
+    const previous = this.activeSessionId;
+    this.activeSessionId = null;
+    const pending = this.openNewSession(opts)
+      .then((id) => {
+        if (this.activeSessionId === null) this.activeSessionId = id ?? previous;
+        return id;
+      })
+      .finally(() => {
+        if (this.ensuring === pending) this.ensuring = null;
+      });
+    this.ensuring = pending;
+    return pending;
+  }
+
+  /** `newSession` without the open-conversation bookkeeping. */
+  private async openNewSession(opts: { reuseEmpty?: boolean }): Promise<string | null> {
     const empty = opts.reuseEmpty === false ? null : await this.findEmptySession();
-    if (empty) {
-      await this.selectSession(empty.id);
-      return empty.id;
-    }
+    if (empty) return empty.id;
     try {
       const data = await fetchJson<{ doc: Record<string, unknown> }>('/api/sessions', {
         method: 'POST',
@@ -607,7 +632,6 @@ class AppStore {
       const created = sessionFromBackend(data.doc);
       this.createdHere.add(created.id);
       this.sessions = [created, ...this.sessions];
-      this.activeSessionId = created.id;
       return created.id;
     } catch (err) {
       console.error('newSession failed', err);
@@ -656,7 +680,7 @@ class AppStore {
   /** Conversations this tab created since it loaded. See `findEmptySession`. */
   readonly createdHere = new Set<string>();
 
-  /** The create `ensureSession` is waiting on, so a second caller joins it. */
+  /** The create on the wire (`newSession`), so a second caller joins it. */
   private ensuring: Promise<string | null> | null = null;
 
   /**
@@ -672,10 +696,7 @@ class AppStore {
    */
   async ensureSession(): Promise<string | null> {
     if (this.active) return this.active.id;
-    this.ensuring ??= this.newSession().finally(() => {
-      this.ensuring = null;
-    });
-    return this.ensuring;
+    return this.newSession();
   }
 
   async selectSession(id: string): Promise<void> {
