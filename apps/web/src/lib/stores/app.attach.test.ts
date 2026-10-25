@@ -53,6 +53,8 @@ function installFetch(stale: string, fresh: string) {
 
 beforeEach(() => {
   app.sessions = [session('5')];
+  // This tab made '5', so "Nueva conversación" may reuse it.
+  app.createdHere.add('5');
   app.activeSessionId = '5';
   app.ecosystems = [{ id: '1', name: 'Uno', slug: 'uno' }] as typeof app.ecosystems;
   app.ecosystemId = '1';

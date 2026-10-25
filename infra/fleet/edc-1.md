@@ -1,6 +1,8 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `f0f3266` (persona public-figure mark with
+**Status:** live since 2026-10-17. Dev runs `main` @ `23e7098` (system-proposed testimonio titles,
+migration `20261024_230631_documents_testimonio_title`, titles backfilled; chat source cards wrap),
+deployed 2026-10-24 23:27 UTC — see §4zj. Before that, `f0f3266` (persona public-figure mark with
 migration `20261024_201817_graph_entities_public_figure`, no private persona in the graph,
 `/miembros`, source cards for used and pinned attachments), deployed 2026-10-24 20:34 UTC — see
 §4zi. Before that, `020ebec` (anonymisation town rule, `/grafo`
@@ -1587,6 +1589,67 @@ Spend: `usage_logs` `actual_cost_usd` $1.6368 → $1.6464 (**+$0.0096**, all thi
 
 **Disk**, `df -h /` free: 56 GB before; 41 GB after the build; 56 GB after the cleanup. Images
 11.6 GB, build cache 0.
+
+### 4zj. ✅ Done 2026-10-24 23:27 – 10-25 00:05 UTC: `23e7098`, dev only — one Payload migration, titles backfilled
+
+All measured by the deploy agent. Staging was not touched (still `97d5316`, `docker ps`). edcai was
+told before the deploy by the coordinator. A seeding agent on dev paused first; its last
+`usage_logs` row was 23:25:53 UTC, and the container swap came at 23:33 UTC. `23e7098` = a
+system-proposed title per testimonio, generated from the gate's redacted output (`a444261`), and
+chat source cards that wrap long titles, excerpts and URLs (`5d63cd2`). No compose or variable change.
+
+**Migration.** `payload_migrations` 4 → 5: `20261024_230631_documents_testimonio_title` applied at
+23:33:29 UTC. It adds `documents.testimonio_title varchar`, nullable; NULL shows the old label.
+
+Backup `/root/backups/20261024T2327Z/` (`edc_ai` 2.7 MB, `edc_backend` 373 KB; `pg_restore -l`
+137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261024T2327Z/`
+with `timeout 180 scp`; sha256 of both dumps matched before the deploy. ⚠ In zsh, quote the remote
+glob (`"root@…:/root/backups/<stamp>/*.dump"`), or zsh expands it locally and `scp` never runs.
+Deploy `qkgxzmyp0ijsxpfubz0gbtie` 23:27:24 → 23:33:38 UTC. 9 containers up; `web`, `backend` and
+`ai-service` run image tag `23e7098dc428…` (`docker ps`). Health 200 on `dev.` and `api.dev.`.
+0 error/fatal lines in the web, backend and ai-service logs at startup and after the smoke.
+
+**Title backfill** (`scripts/backfill-testimonio-titles.ts`), in the backend container from
+`/repo/apps/backend` as `env -u SEED_CORPUS_INGEST ANONYMISE_DETECT_MIN_GAP_MS=2700
+[BACKFILL_APPLY=1] node_modules/.bin/payload run scripts/backfill-testimonio-titles.ts`, logged to
+`/tmp/backfill-*.log` in the container. The log prints document ids and outcomes only, never text.
+
+| step | result |
+|---|---|
+| dry run | 251 candidates (35 held), 388 608 redacted characters; eco 1: 71, eco 3: 60, eco 6: 60, eco 7: 60. No model call |
+| probe, `BACKFILL_LIMIT=3` | 3 written, $0.0015 → ≈ $0.0005 a row |
+| apply, `docker exec -d`, 23:34:52 → ≈ 23:57 UTC | 248 candidates (34 held), **239 written, 9 failed, 0 stale** (failed = the model's answers broke a title rule twice; ids 105, 106, 110, 115, 125, 130, 179, 230, 234) |
+
+After, of the 252 testimonios: **242 titled, 10 on the fallback label**: the 9 failed plus 1 held
+row with no `heldText`, which the script skips (eco 1: 1, eco 3: 1, eco 6: 6, eco 7: 2; 3 of the
+10 are held). Titles are distinct inside each ecosistema (0 duplicates; 71 / 59 / 54 / 58
+distinct). 0 titles with `[` or `]`, 0 with `Persona` (capital), 0 with "dato omitido"; 13 use
+the ordinary word "persona(s)" ("Una persona sorda…", "…personas mayores"). Length 44–92
+characters, mean 64. Every call went to `deepseek/deepseek-chat-v3.1` on OpenRouter, booked per
+ecosistema (`edc-eco-1/3/6/7`).
+
+🔴 **Held rows went to a hosted model.** `23e7098` titles held rows with the ecosistema's hosted
+model. `cec736f` (landed on local `main` at 23:39 UTC, after this run started; not deployed) makes
+held rows never reach a hosted model, Spark first. Dev's corpus is synthetic (`sintetico`), so no
+real text left the box. 33 of the 36 held rows carry a title from the hosted model; deploying
+`cec736f` and re-running the backfill re-picks titles its stricter rules refuse.
+
+| check (Playwright, investigador, after hydration) | result |
+|---|---|
+| 1. Revisión, `?eco=` 1, 3, 6, 7 | 8 / 12 / 5 / 11 cards (= the 36 held), every title distinct per ecosistema. Titled holds read the generated title with **"Testimonio retenido"** as the second line (holds.ts `fallbackTitle`), not "Testimonio · <tema>"; 1 / 1 / 1 / 0 untitled holds read "Testimonio retenido" alone |
+| 2. Biblioteca (default ecosistema, Acompañamiento escolar) | 30 cards, 30 distinct titles, all 30 with **"Testimonio · Acompañamiento escolar"** as the second line |
+| 3. chat at 390 × 844, Prevención del dengue question | answer in 14.9 s, 7 source cards with titles of 104–131 characters wrapped onto 3–4 lines, 0 clipped; `scrollWidth` 390 = viewport, no horizontal scroll. ⚠ The phone page showed "No pudimos llegar al servidor; puede faltar alguna conversación." right after sign-in, with no matching log line. Conversation 182 deleted (200) |
+
+0 page errors.
+
+Cleanup: 0 deployments queued, no compose build. No `f0f3266` image was left on the box (already
+removed before this agent's cleanup), and build cache was already 0; `docker builder prune -af`
+reclaimed 0 B.
+
+Spend: `usage_logs` `actual_cost_usd` $1.7273 → $1.8555 after the backfill (**+$0.1282**, probe
+included) → $1.8595 after the smoke (+$0.0040). This run: **$0.1322**.
+
+**Disk**, `df -h /` free: 56 GB before; 58 GB after the cleanup. Images 9.6 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 

@@ -18,8 +18,11 @@
   let {
     msg,
     waiting = 'searching',
+    onretry,
   }: {
     msg: Message;
+    /** Ask a failed answer again (same turn). Absent: no retry button. */
+    onretry?: () => void;
     /**
      * What a still-empty answer is waiting on (UX backlog #9). `searching`
      * until the stream opens — the server only opens it once it has searched
@@ -150,7 +153,17 @@
       {/if}
     {/if}
     {#if msg.error}
-      <div class="mt-1 text-xs">⚠ {msg.error}</div>
+      <div class="mt-1 text-xs">
+        ⚠ {msg.error}
+        {#if onretry}
+          <button
+            type="button"
+            class="ml-1 underline font-medium hover:no-underline"
+            data-testid="answer-retry"
+            onclick={onretry}>Reintentar</button
+          >
+        {/if}
+      </div>
     {/if}
     {#if msg.notice && !msg.error}
       <div class="mt-1 text-xs text-ink-soft" role="status" data-testid="answer-notice">

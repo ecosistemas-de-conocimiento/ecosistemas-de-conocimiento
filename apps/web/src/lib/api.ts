@@ -98,12 +98,14 @@ export function userFacingError(err: unknown): string {
   // (UX backlog #26), so they get one plain sentence and the detail goes to
   // the console.
   console.warn('[chat] turn failed:', (err as Error)?.message ?? err);
-  return TURN_FAILED_MESSAGE;
+  return err instanceof ConnectionLostError ? CONNECTION_LOST_MESSAGE : TURN_FAILED_MESSAGE;
 }
 
-/** What a failed chat turn says, whatever went wrong underneath. */
-export const TURN_FAILED_MESSAGE =
-  'No se pudo obtener la respuesta. Revisa tu conexión e inténtalo de nuevo en un momento.';
+/** What a failed chat turn says when the server declared the failure. */
+export const TURN_FAILED_MESSAGE = 'No se pudo obtener la respuesta. Inténtalo de nuevo en un momento.';
+
+/** What it says when the browser never heard back from our server. */
+export const CONNECTION_LOST_MESSAGE = 'Se perdió la conexión antes de recibir la respuesta.';
 
 export interface GenerateOptions {
   signal?: AbortSignal;
@@ -299,6 +301,7 @@ export interface RunTurnOptions extends StreamGenerateOptions {
  *   3. The sync request lost its connection too: the server may still finish
  *      and save the answer, so look for it in the saved conversation before
  *      reporting a failure.
+ *   4. Still nothing saved: ask on sync once more, with the same `turnId`.
  *
  * Step 3 is the fix for run 1 of the 2026-10-23 dev check (runbook §4zg): the
  * stream request died before its headers, the sync fallback died at ~30 s, and
@@ -333,13 +336,19 @@ export async function runTurn(
     }
     if (received) opts.onRestart?.();
   }
-  try {
-    return await generateSync(input, { signal: opts.signal });
-  } catch (err) {
-    if (isAbort(err) || !(err instanceof ConnectionLostError)) throw err;
-    const saved = await findSavedAnswer(input.sessionId, input.turnId, opts);
-    if (saved) return saved;
-    throw err;
+  // Step 4: the sync request was lost and nothing was saved (dev 2026-10-24,
+  // session 180: it never reached ai-service). Ask once more. The same
+  // `turnId` makes the BFF hand back a saved or in-flight answer rather than
+  // generate a second one.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await generateSync(input, { signal: opts.signal });
+    } catch (err) {
+      if (isAbort(err) || !(err instanceof ConnectionLostError)) throw err;
+      const saved = await findSavedAnswer(input.sessionId, input.turnId, opts);
+      if (saved) return saved;
+      if (attempt >= 1) throw err;
+    }
   }
 }
 

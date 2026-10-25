@@ -3,7 +3,7 @@
   import Message from './Message.svelte';
   import Composer from './Composer.svelte';
   import { app } from '$lib/stores/app.svelte';
-  import { runTurn, userFacingError, type SyncGenerateResult } from '$lib/api';
+  import { runTurn, userFacingError } from '$lib/api';
   import { answerNotice } from '$lib/aiMessages';
   import type { ContextRef, ContextScope } from '$lib/types';
   import {
@@ -104,42 +104,35 @@
       }
     });
 
+    const fresh = app.active;
+    if (!fresh) return;
+    const payload = {
+      sessionId: fresh.id,
+      // One id for the turn, kept by "Reintentar": the server hands back an
+      // answer it already saved (or is still writing) instead of a second one.
+      turnId: crypto.randomUUID(),
+      messages: fresh.messages
+        .filter((m) => m.id !== placeholder.id)
+        .map((m) => ({ role: m.role, content: m.content })),
+      contextRefs: refs,
+      scope: fresh.contextScope ?? scope,
+      ...(lengua ? { lengua } : {}),
+    };
+    await answer(s.id, placeholder.id, payload);
+  }
+
+  /** Failed answers that can be asked again, by placeholder id. */
+  let retries = $state<Record<string, () => void>>({});
+
+  async function answer(sessionId: string, placeholderId: string, payload: Parameters<typeof runTurn>[0]) {
     controller = new AbortController();
     busy = true;
-    waitingId = placeholder.id;
+    waitingId = placeholderId;
     waitingPhase = 'searching';
     // The answer streamed so far. Kept on screen above the error when the
     // server fails part way, as before `runTurn`.
     let acc = '';
     try {
-      const fresh = app.active;
-      if (!fresh) return;
-      const payload = {
-        sessionId: fresh.id,
-        messages: fresh.messages
-          .filter((m) => m.id !== placeholder.id)
-          .map((m) => ({ role: m.role, content: m.content })),
-        contextRefs: refs,
-        scope: fresh.contextScope ?? scope,
-        ...(lengua ? { lengua } : {}),
-      };
-
-      const finalize = (result: SyncGenerateResult) => {
-        app.updateMessage(s.id, placeholder.id, {
-          id: result.messageId ?? placeholder.id,
-          content: result.text,
-          pending: false,
-          notice: answerNotice(result.warnings),
-          provenance: result.provenance ?? null,
-          generationMeta: {
-            traceId: result.traceId,
-            modelUsed: result.modelUsed,
-            provider: result.provider,
-            costUsd: result.costUsd,
-          },
-        });
-      };
-
       // Stream, then sync, then the saved conversation: see `runTurn`.
       const result = await runTurn(payload, {
         signal: controller.signal,
@@ -148,24 +141,42 @@
         },
         onDelta: (delta) => {
           acc += delta;
-          app.updateMessage(s.id, placeholder.id, { content: acc });
+          app.updateMessage(sessionId, placeholderId, { content: acc });
         },
         onRestart: () => {
           acc = '';
           waitingPhase = 'searching';
-          app.updateMessage(s.id, placeholder.id, { content: '' });
+          app.updateMessage(sessionId, placeholderId, { content: '' });
         },
       });
-      finalize(result);
+      app.updateMessage(sessionId, placeholderId, {
+        id: result.messageId ?? placeholderId,
+        content: result.text,
+        pending: false,
+        notice: answerNotice(result.warnings),
+        provenance: result.provenance ?? null,
+        generationMeta: {
+          traceId: result.traceId,
+          modelUsed: result.modelUsed,
+          provider: result.provider,
+          costUsd: result.costUsd,
+        },
+      });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
-        app.deleteMessage(s.id, placeholder.id);
+        app.deleteMessage(sessionId, placeholderId);
       } else {
-        app.updateMessage(s.id, placeholder.id, {
+        app.updateMessage(sessionId, placeholderId, {
           content: acc,
           pending: false,
           error: userFacingError(err),
         });
+        retries[placeholderId] = () => {
+          if (busy) return;
+          delete retries[placeholderId];
+          app.updateMessage(sessionId, placeholderId, { content: '', pending: true, error: undefined });
+          void answer(sessionId, placeholderId, payload);
+        };
       }
     } finally {
       busy = false;
@@ -236,7 +247,11 @@
     <div class="max-w-3xl mx-auto p-4 space-y-3">
       {#if (app.active?.messages.length ?? 0) > 0}
         {#each app.active?.messages ?? [] as m (m.id)}
-          <Message msg={m} waiting={m.id === waitingId ? waitingPhase : 'searching'} />
+          <Message
+            msg={m}
+            waiting={m.id === waitingId ? waitingPhase : 'searching'}
+            onretry={busy ? undefined : retries[m.id]}
+          />
         {/each}
       {:else}
         <div class="text-center text-ink-soft text-sm pt-16">

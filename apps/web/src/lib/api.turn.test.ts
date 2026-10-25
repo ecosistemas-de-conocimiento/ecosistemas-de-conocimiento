@@ -8,7 +8,14 @@
 // respuesta" for an answer that existed.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runTurn, userFacingError, TURN_FAILED_MESSAGE, AIServiceError } from './api';
+import {
+  runTurn,
+  userFacingError,
+  TURN_FAILED_MESSAGE,
+  CONNECTION_LOST_MESSAGE,
+  AIServiceError,
+  ConnectionLostError,
+} from './api';
 
 const input = { sessionId: 's1', turnId: 'turn-2', messages: [{ role: 'user' as const, content: 'hola' }] };
 const fast = { recoverAttempts: 3, recoverIntervalMs: 0 };
@@ -93,10 +100,10 @@ describe('runTurn', () => {
 
     const err = await runTurn(input, fast).catch((e) => e);
 
-    expect(err).toBeInstanceOf(AIServiceError);
-    expect(userFacingError(err)).toBe(TURN_FAILED_MESSAGE);
-    // stream + 1 look + sync + 3 looks at the saved conversation
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(err).toBeInstanceOf(ConnectionLostError);
+    expect(userFacingError(err)).toBe(CONNECTION_LOST_MESSAGE);
+    // stream + 1 look + sync + 3 looks + one more sync + 3 looks
+    expect(fetchMock).toHaveBeenCalledTimes(10);
   });
 
   it('🔴 audit: a late-saved answer of the PREVIOUS turn is never shown as this one', async () => {
@@ -210,5 +217,34 @@ describe('runTurn', () => {
       name: 'AbortError',
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it('🔴 dev 2026-10-24 session 180: stream and sync both drop, nothing saved, one more sync answers', async () => {
+    // Measured on dev f0f3266: ai-service saw the stream's client hang up
+    // 3.2 s after the message, and the sync fallback never reached it. The
+    // server never generated, so there was nothing saved to find.
+    fetchMock
+      .mockRejectedValueOnce(new TypeError('Failed to fetch')) // stream
+      .mockResolvedValueOnce(savedMessages([])) // one look
+      .mockRejectedValueOnce(new TypeError('Failed to fetch')) // sync
+      .mockResolvedValueOnce(savedMessages([]))
+      .mockResolvedValueOnce(savedMessages([]))
+      .mockResolvedValueOnce(savedMessages([])) // 3 looks: nothing
+      .mockResolvedValueOnce(jsonResponse(200, { text: 'por fin', messageId: '8' })); // sync again
+
+    const result = await runTurn(input, fast);
+
+    expect(result.text).toBe('por fin');
+    const generateBodies = fetchMock.mock.calls
+      .filter((c) => String(c[0]).startsWith('/api/generate'))
+      .map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    expect(generateBodies).toHaveLength(3);
+    // Same turn id: the server hands back a saved answer instead of paying twice.
+    expect(new Set(generateBodies.map((b) => b.turnId))).toEqual(new Set(['turn-2']));
+  });
+
+  it('a server-declared failure reads as a failed answer, a lost connection as a lost connection', () => {
+    expect(userFacingError(new AIServiceError('ai-service: boom'))).toBe(TURN_FAILED_MESSAGE);
+    expect(userFacingError(new ConnectionLostError('Network error'))).toBe(CONNECTION_LOST_MESSAGE);
+    expect(CONNECTION_LOST_MESSAGE).not.toBe(TURN_FAILED_MESSAGE);
   });
 });

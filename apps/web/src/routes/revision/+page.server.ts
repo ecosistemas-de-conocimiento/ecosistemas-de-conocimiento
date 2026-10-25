@@ -43,13 +43,18 @@
  * here that could name a person, and none may be added.
  */
 
+import { fail, redirect } from '@sveltejs/kit';
+
 import { denyAccess } from '$lib/server/deny';
+import { listPublished, rejectPublishedDoc } from '$lib/server/published';
 import { listAllEcosystems, readEcosystem } from '$lib/server/admin';
 import { ECOSYSTEM_COOKIE, listEcosystems } from '$lib/server/ecosystem';
 import { listHolds, mayReviewAnywhere, mayReviewSlug, readReviewCapability } from '$lib/server/holds';
 import { ECOSYSTEM_DEPENDENCY, resolveEcosystemSelection } from '$lib/ecosystems';
-import { NOT_A_REVIEWER } from '$lib/holds';
-import type { PageServerLoad } from './$types';
+import { MAX_NOTE_LENGTH, NOT_A_REVIEWER } from '$lib/holds';
+
+const REJECT_FAILED = 'No pudimos guardar tu decisión. Vuelve a intentarlo.';
+import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals, url, cookies, depends }) => {
   // Re-run when the sidebar picker switches. The cookie is not a tracked
@@ -114,11 +119,15 @@ export const load: PageServerLoad = async ({ locals, url, cookies, depends }) =>
       selected: null,
       ecosystems: [],
       holds: [],
+      published: [],
       notFound: Boolean(requested),
     };
   }
 
-  const result = await listHolds(locals.token, selected.id);
+  const [result, published] = await Promise.all([
+    listHolds(locals.token, selected.id),
+    listPublished(locals.token, selected.id),
+  ]);
 
   return {
     // ⚠ `not-found` from the API is folded into `unavailable` for display. The
@@ -128,7 +137,39 @@ export const load: PageServerLoad = async ({ locals, url, cookies, depends }) =>
     selected,
     ecosystems: reviewable,
     holds: result.state === 'ready' ? result.value : [],
+    /** Owner rule 2026-10-24: review is after the fact, so published testimonios are listed too. */
+    published: published.state === 'ready' ? published.value : [],
     /** `true` ⇒ `?eco=` named something they cannot review. Say so plainly. */
     notFound: Boolean(requested) && allowed === null,
   };
+};
+
+/**
+ * Reject a published testimonio (owner rule 2026-10-24: participants'
+ * testimonios publish on their own; review is occasional and after the fact).
+ * The backend checks the reviewer and the ecosistema; this only forwards.
+ */
+export const actions: Actions = {
+  rechazar: async ({ locals, request }) => {
+    const capability = locals.user ? await readReviewCapability(locals.token) : null;
+    if (!capability || !mayReviewAnywhere(capability)) {
+      denyAccess({
+        module: 'holds',
+        reason: 'no-holds-review',
+        message: NOT_A_REVIEWER,
+        cta: { label: 'Volver al chat', href: '/' },
+      });
+    }
+    const form = await request.formData();
+    const id = String(form.get('id') ?? '');
+    if (!id) return fail(400, { message: REJECT_FAILED });
+    const note = String(form.get('note') ?? '').trim().slice(0, MAX_NOTE_LENGTH) || undefined;
+
+    const result = await rejectPublishedDoc(locals.token, id, note);
+    if (result.state === 'not-found') {
+      return fail(404, { message: 'Este testimonio ya no está publicado.' });
+    }
+    if (result.state !== 'ready') return fail(502, { message: REJECT_FAILED });
+    redirect(303, '/revision?hecho=rejected');
+  },
 };

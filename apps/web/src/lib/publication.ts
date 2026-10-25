@@ -124,12 +124,20 @@ export type PublishBlockedReason =
   | 'already-published'
   | 'in-progress'
   | 'not-ingested'
-  | 'ingest-failed';
+  | 'ingest-failed'
+  /** A participant's draft: the system publishes it once the gate clears it. */
+  | 'automatic';
 
 export interface PublishGateInput {
   publicationStatus: PublicationStatus;
   /** The ingest pipeline's state. `n/a` for markdown notes, which need none. */
   ingestStatus: string;
+  /**
+   * `false` for a participant (owner rule, 2026-10-24): they never publish by
+   * hand. The backend publishes what the gate clears (`lib/autoPublish.ts`);
+   * only a FAILED publish keeps its retry. Default `true`.
+   */
+  manual?: boolean;
 }
 
 /**
@@ -155,6 +163,9 @@ export function publishGate(input: PublishGateInput): {
   }
   if (input.ingestStatus === 'failed') {
     return { canPublish: false, reason: 'ingest-failed' };
+  }
+  if (input.manual === false && input.publicationStatus !== 'failed') {
+    return { canPublish: false, reason: 'automatic' };
   }
   // `n/a` is a markdown note (no pipeline); `ready` is an extracted upload.
   if (input.ingestStatus !== 'ready' && input.ingestStatus !== 'n/a') {
@@ -235,6 +246,7 @@ export function publishBlockedCopy(reason: PublishBlockedReason): string {
   switch (reason) {
     case 'already-published':
     case 'in-progress':
+    case 'automatic':
       return '';
     case 'not-ingested':
       return 'Se podrá publicar cuando esté listo.';
