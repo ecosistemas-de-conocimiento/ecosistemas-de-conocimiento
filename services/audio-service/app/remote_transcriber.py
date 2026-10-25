@@ -172,11 +172,14 @@ class RemoteTranscriber:
         language: Optional[str] = None,
         *,
         keep_spacing: bool = False,
+        prompt: Optional[str] = None,
     ) -> TranscriptPart:
         """Same as `transcribe`, for a WAV already in memory (the live route).
 
         `keep_spacing` leaves each segment's leading space on its `text`, so a
         caller re-joining segments can tell a word start from a mid-word split.
+        `prompt` (text already heard) replaces `WHISPER_INITIAL_PROMPT`, so a
+        window that starts mid-sentence is decoded as its continuation.
         """
 
         settings = self.settings
@@ -195,7 +198,9 @@ class RemoteTranscriber:
             # the first 30 s. Only worth it when we actually autodetect.
             "no_language_probabilities": "false" if autodetect else "true",
         }
-        if settings.WHISPER_INITIAL_PROMPT:
+        if prompt:
+            data["prompt"] = prompt
+        elif settings.WHISPER_INITIAL_PROMPT:
             data["prompt"] = settings.WHISPER_INITIAL_PROMPT
         # ⚠ VAD is NOT sent: whisper-server only does VAD when started with
         # `--vad-model`. Enable it server-side if hallucinations over silence

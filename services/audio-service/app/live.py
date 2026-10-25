@@ -78,6 +78,11 @@ MAX_SESSIONS = 6
 MAX_PER_OWNER = 2
 #: A live call that waits longer than this is no longer "live".
 LIVE_TIMEOUT_S = 60.0
+#: Committed text sent to Whisper as the prompt, so a window that starts
+#: mid-sentence is decoded as its continuation (no invented "Luego").
+PROMPT_CHARS = 200
+#: Longest repeat at a commit boundary that `drop_overlap` removes.
+MAX_OVERLAP_WORDS = 8
 #: How long to wait for ffmpeg to emit what a slice decodes to.
 SETTLE_S = 0.5
 
@@ -354,6 +359,46 @@ def advance(session: LiveSession, segments: List[Dict[str, object]], window_s: f
         session.tentative = "".join(texts)
 
 
+_WORD = re.compile(r"\w+", re.UNICODE)
+
+
+def drop_overlap(committed: str, segments: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    """Drop words at the start of a fresh window that repeat the committed tail.
+
+    The window restarts at a segment's timestamp, which Whisper places
+    imprecisely, so the last committed words are sometimes heard again
+    ("a echar agua" twice, dev 2026-10-24). Compares words case- and
+    punctuation-blind, up to `MAX_OVERLAP_WORDS`. A single repeated word only
+    counts when it is 4+ letters, so a real "que que" or "la la" survives.
+    """
+    tail = [w.lower() for w in _WORD.findall(committed)][-MAX_OVERLAP_WORDS:]
+    if not tail or not segments:
+        return segments
+    texts = [str(s.get("text", "")) for s in segments]
+    joined = "".join(texts)
+    spans = [(m.start(), m.end(), m.group().lower()) for m in _WORD.finditer(joined)]
+    head = [w for _s, _e, w in spans[:MAX_OVERLAP_WORDS]]
+    k = next(
+        (k for k in range(min(len(tail), len(head)), 0, -1) if tail[-k:] == head[:k]),
+        0,
+    )
+    if k == 0 or (k == 1 and len(head[0]) < 4):
+        return segments
+    cut = spans[k - 1][1]  # character index just past the k-th word
+    # Skip trailing punctuation of the dropped run, keep the next word's space.
+    while cut < len(joined) and not joined[cut].isspace() and not joined[cut].isalnum():
+        cut += 1
+    out: List[Dict[str, object]] = []
+    pos = 0
+    for seg, text in zip(segments, texts):
+        start, end = pos, pos + len(text)
+        pos = end
+        if end <= cut:
+            continue
+        out.append({**seg, "text": text[max(0, cut - start):]})
+    return out
+
+
 def cap_window(session: LiveSession, total_samples: int) -> None:
     """Never let the window outgrow `MAX_WINDOW_S` (Whisper failing, or slow).
 
@@ -436,14 +481,30 @@ class LiveTranscriber:
             if window_s < MIN_WINDOW_S:
                 return session.snapshot()
             transcriber = await asyncio.to_thread(self._get_transcriber)
+            committed = "".join(session.committed).strip()
+            audio = wav_bytes(window)
             try:
                 part = await asyncio.to_thread(
-                    transcriber.transcribe_bytes, wav_bytes(window), "live.wav", None, keep_spacing=True
+                    transcriber.transcribe_bytes,
+                    audio,
+                    "live.wav",
+                    None,
+                    keep_spacing=True,
+                    # 🔴 Same Whisper server the audio already goes to; nowhere else.
+                    prompt=committed[-PROMPT_CHARS:] or None,
                 )
+                # ⚠ With a prompt, whisper-server was seen once returning a
+                # broken accented character ("tambi�n", 2026-10-24, SIM_0017).
+                # That window is decoded again without the prompt.
+                if committed and any("�" in str(s.get("text", "")) for s in part.segments):
+                    part = await asyncio.to_thread(
+                        transcriber.transcribe_bytes, audio, "live.wav", None, keep_spacing=True
+                    )
             except Exception as exc:  # noqa: BLE001 — classify, never echo text
                 log.warning("live whisper call failed (%s)", getattr(exc, "code", type(exc).__name__))
                 raise LiveError(502, "live_whisper_failed", "Whisper did not answer") from None
-            advance(session, part.segments, window_s, total)
+            segments = drop_overlap(committed, part.segments)
+            advance(session, segments, window_s, total)
             session.touched = time.monotonic()
             return session.snapshot()
 

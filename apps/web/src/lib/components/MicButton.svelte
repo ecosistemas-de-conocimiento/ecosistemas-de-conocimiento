@@ -23,6 +23,7 @@
 
   /** One slice per this many ms. Each POST carries ~2.5 s of new audio. */
   const SLICE_MS = 2500;
+  const FIRST_SLICE_MS = 1500;
 
   let recording = $state(false);
   let saving = $state(false);
@@ -85,6 +86,9 @@
     };
     rec.onstop = () => void finish();
     rec.start(SLICE_MS);
+    // First text sooner: flush a first slice at FIRST_SLICE_MS instead of
+    // waiting a whole SLICE_MS (dev: first text at ~4.8–5.0 s, 2026-10-24).
+    setTimeout(() => rec.state === 'recording' && rec.requestData(), FIRST_SLICE_MS);
     recording = true;
     elapsed = 0;
     ontext('…');

@@ -23,6 +23,7 @@ from app.live import (  # noqa: E402
     LiveStore,
     LiveTranscriber,
     advance,
+    drop_overlap,
     cap_window,
     decode_pcm,
     new_bytes,
@@ -137,15 +138,46 @@ def test_decode_keeps_frames_of_a_stream_cut_mid_way(tmp_path):
     assert 1.0 < seconds < 3.5
 
 
+# ── commit-boundary overlap ─────────────────────────────────────────────────
+
+def _texts(segs):
+    return "".join(s["text"] for s in segs)
+
+
+def test_drop_overlap_removes_repeated_committed_tail():
+    # Dev, 2026-10-24: "a echar agua" came back at the start of the next window.
+    segs = [_seg(0, 2, " a echar agua."), _seg(2, 4, " Y luego se fue")]
+    out = drop_overlap("la vimos ir a echar agua", segs)
+    assert _texts(out) == " Y luego se fue"
+
+
+def test_drop_overlap_spans_segments_and_keeps_the_rest():
+    segs = [_seg(0, 1, " echar"), _seg(1, 3, " agua al río")]
+    assert _texts(drop_overlap("fue a echar agua", segs)) == " al río"
+
+
+def test_drop_overlap_leaves_real_speech_alone():
+    segs = [_seg(0, 2, " que dijo")]
+    # A short single-word repeat ("que") may be real speech: kept.
+    assert _texts(drop_overlap("y dijo que", segs)) == " que dijo"
+    # No overlap at all: untouched.
+    assert _texts(drop_overlap("hola", [_seg(0, 1, " mundo")])) == " mundo"
+    assert drop_overlap("", segs) == segs
+
+
 # ── route ───────────────────────────────────────────────────────────────────
 
 class FakeTranscriber:
     def __init__(self) -> None:
         self.calls: List[float] = []
+        self.prompts: List[object] = []
 
-    def transcribe_bytes(self, audio: bytes, filename: str = "x.wav", language=None, *, keep_spacing=False) -> TranscriptPart:
+    def transcribe_bytes(
+        self, audio: bytes, filename: str = "x.wav", language=None, *, keep_spacing=False, prompt=None
+    ) -> TranscriptPart:
         seconds = (len(audio) - 44) / 2 / 16000
         self.calls.append(seconds)
+        self.prompts.append(prompt)
         return TranscriptPart(
             text=SECRET_WORDS, segments=[_seg(0, seconds, SECRET_WORDS)],
             language="es", language_probability=1.0, duration=seconds,
@@ -230,6 +262,38 @@ def test_unavailable_without_remote_backend():
     assert err.value.code == "live_unavailable"
 
 
+def test_broken_character_with_prompt_is_decoded_again_without(monkeypatch):
+    class Glitchy:
+        def __init__(self):
+            self.prompts = []
+
+        def transcribe_bytes(self, audio, filename="x.wav", language=None, *, keep_spacing=False, prompt=None):
+            self.prompts.append(prompt)
+            text = " tambi�n" if prompt else " también"
+            return TranscriptPart(text=text, segments=[_seg(0, 1, text)], language="es",
+                                  language_probability=1.0, duration=1.0)
+
+    fake = Glitchy()
+    live = LiveTranscriber(Settings(API_KEYS=API_KEYS_JSON), transcriber=fake)
+
+    async def fake_decode(data, **kwargs):
+        return b"\x00\x00" * 16000 * 2
+
+    monkeypatch.setattr(live_mod, "decode_pcm", fake_decode)
+
+    async def run():
+        try:
+            session = live.store.get_or_create("k")
+            session.committed = [" hola"]
+            return await live.push("k", 0, b"x")
+        finally:
+            await live.store.aclose()
+
+    out = asyncio.run(run())
+    assert fake.prompts == ["hola", None]
+    assert out["tentative"] == " también"
+
+
 def test_whisper_failure_is_502_without_text(monkeypatch):
     class Boom:
         def transcribe_bytes(self, *a, **k):
@@ -272,6 +336,9 @@ def test_long_stream_sends_bounded_windows(live_client, tmp_path):
     assert body["received"] == len(data)
     assert body["seconds"] > 55
     assert max(live_client.fake.calls) <= 25.5
+    # Once text is committed, it goes to Whisper as the prompt.
+    assert live_client.fake.prompts[0] is None
+    assert SECRET_WORDS in (live_client.fake.prompts[-1] or "")
     session = next(iter(live_client.live.store._sessions.values()))
     assert session.head is None  # streaming decoder took over
     assert len(session.decoder.pcm) <= 26 * 32000

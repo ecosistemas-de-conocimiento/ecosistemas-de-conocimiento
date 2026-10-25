@@ -38,6 +38,11 @@ WORKDIR /repo/apps/web
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0
+# 🔴 adapter-node's default is 512K and answers 413 BEFORE any route runs, so
+# every recording past ~2 min failed (dev, 2026-10-24). 201M = the 200 MB audio
+# cap (`MAX_AUDIO_UPLOAD_BYTES`, `apps/web/src/lib/config.ts`) + multipart
+# overhead. `src/lib/bodyLimit.test.ts` keeps the two in step.
+ENV BODY_SIZE_LIMIT=201M
 # `build/` is NOT standalone: Vite's SSR build EXTERNALISES every package in
 # `dependencies` instead of inlining it, so the emitted server chunks still
 # contain bare `import '@edc/chat-engine/core'` / `'markdown-it'` /

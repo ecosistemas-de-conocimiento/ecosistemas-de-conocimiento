@@ -8,6 +8,7 @@ import { ValidationError } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
 import { organizationIdsForUser, relationId } from '../lib/permissions'
+import { MATROSKA_HEAD_BYTES, isAudioOnlyMatroska, isMatroska } from '../lib/webmTracks'
 
 /**
  * Media — Payload's built-in upload collection, and the collection that holds
@@ -241,6 +242,49 @@ export const rejectOversizedUpload: CollectionBeforeValidateHook = ({ data, req 
   })
 }
 
+/**
+ * Allow `video/webm` only when it is really audio.
+ *
+ * 🔴 WHY `video/webm` IS IN `MEDIA_MIME_TYPES` AT ALL: the live-mic recorder
+ * produces WebM/Opus, file-type sniffs every WebM as `video/webm`, and Payload
+ * checks that sniffed type before any hook runs. Without it every recording
+ * was refused on Stop (dev, 2026-10-24). This hook is the other half: a WebM
+ * with a video track, or with no audio track, is refused here, and an accepted
+ * one is stored as `audio/webm` so nothing downstream sees a video type.
+ */
+export const audioOnlyWebm: CollectionBeforeValidateHook = async ({ data, req }) => {
+  const file = (req as { file?: { data?: Buffer; tempFilePath?: string } }).file
+  if (!file) return data
+  let head: Uint8Array
+  if (file.data && file.data.length > 0) {
+    head = file.data.subarray(0, MATROSKA_HEAD_BYTES)
+  } else if (file.tempFilePath) {
+    // Imported here: collection configs are also loaded where `node:fs` is not.
+    const { open } = await import('node:fs/promises')
+    const handle = await open(file.tempFilePath, 'r')
+    try {
+      const buf = Buffer.alloc(MATROSKA_HEAD_BYTES)
+      const { bytesRead } = await handle.read(buf, 0, buf.length, 0)
+      head = buf.subarray(0, bytesRead)
+    } finally {
+      await handle.close()
+    }
+  } else {
+    return data
+  }
+  if (!isMatroska(head)) return data
+  if (!isAudioOnlyMatroska(head)) {
+    throw new ValidationError({
+      collection: 'media',
+      errors: [{ path: 'file', message: 'Only audio WebM files are accepted.' }],
+      req,
+    })
+  }
+  const next = { ...(data ?? {}) } as Record<string, unknown>
+  if (next.mimeType === 'video/webm') next.mimeType = 'audio/webm'
+  return next
+}
+
 export const bindMediaToEcosystem: CollectionBeforeValidateHook = async ({
   data,
   operation,
@@ -375,8 +419,9 @@ export function mediaObjectPrefix(
  * ⚠ DELIBERATELY NOT MIRRORED from audio-service: `application/octet-stream`,
  * which browsers and curl send for anything they cannot sniff — accepting it
  * would make this allowlist decorative. Also left out: `audio/amr`,
- * `audio/3gpp`, `audio/x-ms-wma`, `audio/aiff`, `audio/x-aiff`, `video/webm`
- * and `video/x-matroska`. audio-service decodes them, but nothing in this
+ * `audio/3gpp`, `audio/x-ms-wma`, `audio/aiff`, `audio/x-aiff` and
+ * `video/x-matroska`. (`video/webm` IS listed: the live-mic recording sniffs
+ * as it. See `audioOnlyWebm`.) audio-service decodes them, but nothing in this
  * product uploads them today and every entry here is a file type that lands on
  * the backend's local disk. Add them when something actually sends them.
  */
@@ -404,6 +449,9 @@ export const MEDIA_MIME_TYPES = [
   // video stream, so these cost the transcription pipeline nothing.
   'video/mp4',
   'video/quicktime',
+  // ⚠ The live-mic recorder's WebM/Opus sniffs as this. `audioOnlyWebm` refuses
+  // any WebM that really has a video track, and stores the rest as audio/webm.
+  'video/webm',
 ] as const
 
 export const Media: CollectionConfig = {
@@ -507,6 +555,6 @@ export const Media: CollectionConfig = {
     { name: 'alt', type: 'text' },
   ],
   hooks: {
-    beforeValidate: [rejectOversizedUpload, bindMediaToEcosystem],
+    beforeValidate: [rejectOversizedUpload, audioOnlyWebm, bindMediaToEcosystem],
   },
 }
