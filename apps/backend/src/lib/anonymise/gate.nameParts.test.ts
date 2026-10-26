@@ -269,6 +269,37 @@ describe('chunk boundaries and both detector backends', () => {
   })
 })
 
+describe('the material line follows the content kind', () => {
+  async function promptFor(contentKind: 'testimonio' | 'conversacion' | 'documento') {
+    const prompts: string[] = []
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      prompts.push((JSON.parse(String(init.body)) as { unit: { input: { userPrompt: string } } }).unit.input.userPrompt)
+      return new Response(
+        JSON.stringify({ text: '{"hallazgos":[]}', modelUsed: 'fake', provider: 'fake', costUsd: 0, traceId: 't' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }) as unknown as typeof fetch
+    const client = new AIClient({ baseUrl: 'http://ai.test', apiKey: 'k', fetch: fetchImpl })
+    await aiServiceDetector({ client: client as unknown as SyncGenerator }).detect({ text: 'Hola.', contentKind })
+    return prompts[0] ?? ''
+  }
+
+  it('a testimonio keeps its line', async () => {
+    expect(await promptFor('testimonio')).toMatch(/^Es el testimonio de una persona, transcrito\.\n\n/)
+  })
+
+  it('a conversación keeps its line', async () => {
+    expect(await promptFor('conversacion')).toMatch(/^Es una conversación entre integrantes de una comunidad\.\n\n/)
+  })
+
+  it('a documento is described as a written document that may quote several people', async () => {
+    const prompt = await promptFor('documento')
+    expect(prompt).not.toMatch(/testimonio|conversación/)
+    expect(prompt).toMatch(/^Es un documento escrito/)
+    expect(prompt).toMatch(/varias personas/)
+  })
+})
+
 describe('the prompt', () => {
   const flat = DETECT_SYSTEM_PROMPT.replace(/\s+/g, ' ')
 

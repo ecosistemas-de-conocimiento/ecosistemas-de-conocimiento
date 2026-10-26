@@ -344,7 +344,9 @@ export async function anonymiseDocumentText(args: {
         // reading members of a community talking to each other, and an
         // unrecognised kind is not evidence of that. `testimonio` is the arm
         // that assumes nothing and holds no roster.
-        contentKind: contentKind === 'conversacion' ? 'conversacion' : 'testimonio',
+        // A gated `documento` is described as a document, not a testimony.
+        contentKind:
+          contentKind === 'conversacion' || contentKind === 'documento' ? contentKind : 'testimonio',
         text,
         roster: args.roster ?? [],
       },

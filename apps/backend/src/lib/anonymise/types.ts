@@ -170,9 +170,13 @@ export type GateResult = { status: 'ready'; redactedText: string; report: GateRe
  * conversations run under the SAME gate, on the grounds that a testimony is
  * expected to be anonymous anyway. It is carried only so the model prompt can
  * describe the material accurately, and so the report says what was scrubbed.
+ * A `documento` filed with `anonymise` set is described as a written document
+ * (dev, 2026-10-26: staff drafts were described as a transcribed testimony).
  */
+export type GateContentKind = 'testimonio' | 'conversacion' | 'documento'
+
 export interface GateInput {
-  contentKind: 'testimonio' | 'conversacion'
+  contentKind: GateContentKind
   text: string
   /**
    * Known names and emails of the ecosistema's members, for stage 2.
@@ -239,7 +243,7 @@ export interface PersonDetector {
    * means "nothing to redact" and would let unscrubbed text through the gate;
    * a throw becomes a HOLD, which is the safe answer to "we do not know".
    */
-  detect(args: { text: string; contentKind: 'testimonio' | 'conversacion' }): Promise<
+  detect(args: { text: string; contentKind: GateContentKind }): Promise<
     DetectorFinding[]
   >
 }

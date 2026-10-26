@@ -98,6 +98,33 @@ describe('anonymiseDocumentText — gated documento', () => {
     expect(scheduleTitle).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['documento', 'documento'],
+    ['testimonio', 'testimonio'],
+    ['conversacion', 'conversacion'],
+    ['algo-raro', 'testimonio'],
+  ])('the detector is told the content kind: %s → %s', async (kind, told) => {
+    const seen: string[] = []
+    const detector = {
+      name: 'spy',
+      async detect(args: { text: string; contentKind: string }) {
+        seen.push(args.contentKind)
+        return []
+      },
+    }
+    await anonymiseDocumentText({
+      payload: fakePayload().payload as never,
+      docId: 5,
+      organizationId: 1,
+      contentKind: kind,
+      anonymise: true,
+      text: NOTES,
+      detector: detector as never,
+    })
+    expect(seen.length).toBeGreaterThan(0)
+    expect(new Set(seen)).toEqual(new Set([told]))
+  })
+
   it('an ungated staff documento passes through untouched, as before', async () => {
     const fake = fakePayload()
     const out = await gate(fake, false)

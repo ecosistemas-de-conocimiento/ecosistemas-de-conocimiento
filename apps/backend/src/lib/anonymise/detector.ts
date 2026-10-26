@@ -650,10 +650,15 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
         logBackendOnce('ai-service /v1/generate/sync')
       }
 
+      // ⚠ A `documento` is a staff draft, notes, minutes, a session rebuilt from
+      // memory, or a participant's PDF. Described as a transcribed testimony,
+      // the model missed co-authors' names (dev, 2026-10-26).
       const material =
         contentKind === 'testimonio'
           ? 'Es el testimonio de una persona, transcrito.'
-          : 'Es una conversación entre integrantes de una comunidad.'
+          : contentKind === 'documento'
+            ? 'Es un documento escrito: un borrador, notas, un acta, un informe o la reconstrucción de una sesión. Puede tener varios autores y citar o parafrasear a varias personas.'
+            : 'Es una conversación entre integrantes de una comunidad.'
 
       const chunkWords =
         opts.chunkWords ?? positiveIntFromEnv(ANONYMISE_CHUNK_WORDS_VAR, DEFAULT_CHUNK_WORDS)
