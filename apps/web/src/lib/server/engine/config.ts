@@ -15,7 +15,14 @@ import { CHAT_KIND_REGISTRY } from '$lib/engine/registry';
 import { parseExpansionFlag } from './expand';
 import { chatRetrievalPolicy, parseRerankFlag } from './rerank';
 import { hybridRetrievalForTurn, metadataFilterInAvailable } from './hybrid';
-import { chatSystemPrompt, parseCiteVariant, type CiteVariant } from './prompt';
+import {
+  chatSystemPrompt,
+  INTERVIEW_CONTEXT_PREAMBLE,
+  interviewSystemPrompt,
+  parseCiteVariant,
+  type CiteVariant,
+} from './prompt';
+import type { ChatTurnMode } from './turnMode';
 import { parseOrientScope, type OrientScope } from './orientation';
 import type { RetrievalPolicy } from '@edc/chat-engine/core';
 
@@ -74,6 +81,20 @@ export function chatCiteVariant(): CiteVariant {
 }
 
 let lastAnnouncedVariant: CiteVariant | null = null;
+
+/**
+ * The engine config for one turn (`chatTurnMode` in `./turnMode`). `answer` is
+ * {@link CHAT_ENGINE_CONFIG} itself (variant E unchanged); `interview` swaps
+ * only the system prompt and the user-turn preamble (`./prompt`).
+ */
+export function chatEngineConfigFor(mode: ChatTurnMode): EngineConfig {
+  if (mode === 'answer') return CHAT_ENGINE_CONFIG;
+  return {
+    ...CHAT_ENGINE_CONFIG,
+    systemPrompt: interviewSystemPrompt(),
+    userContextPreamble: INTERVIEW_CONTEXT_PREAMBLE,
+  };
+}
 
 /**
  * Query expansion on chat turns (`./expand`): `QUERY_EXPANSION=off` turns it

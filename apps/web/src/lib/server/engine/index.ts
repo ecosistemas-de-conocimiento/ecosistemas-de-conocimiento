@@ -8,6 +8,7 @@
 export {
   CHAT_ENGINE_CONFIG,
   CHAT_KIND_REGISTRY,
+  chatEngineConfigFor,
   chatKindFilterAvailable,
   chatOrientScope,
   chatTurnHybrid,
@@ -15,6 +16,7 @@ export {
   engineOrgId,
   queryExpansionEnabled,
 } from './config';
+export { chatTurnMode, type ChatTurnMode } from './turnMode';
 export { chatRetrievalPolicy, parseRerankFlag } from './rerank';
 export { parseRetrievalMode, type ChatRetrievalMode } from './hybrid';
 export { withQueryExpansion, type ExpansionTrace, type QueryExpansionOptions } from './expand';
