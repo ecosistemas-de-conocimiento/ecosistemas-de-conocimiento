@@ -58,6 +58,14 @@ describe('fetchSessionDocs', () => {
     expect(res.docs.map((d) => d.id)).toEqual([10, '11']);
   });
 
+  it('carries the uploader id as a string when the backend shows it', async () => {
+    mockedBackendFetch.mockResolvedValue(
+      jsonResponse({ docs: [{ id: 10, uploadedBy: 7 }, { id: 11, uploadedBy: { id: '8' } }, { id: 12 }] }),
+    );
+    const res = await fetchSessionDocs('tok', '42');
+    expect(res.docs.map((d) => d.uploadedBy)).toEqual(['7', '8', null]);
+  });
+
   it('reports an EMPTY conversation as a successful read', async () => {
     mockedBackendFetch.mockResolvedValue(jsonResponse({ docs: [] }));
 

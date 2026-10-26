@@ -300,7 +300,8 @@ export function interviewSystemPrompt(): string {
     'orientación: nunca le atribuyas a esta persona algo que no dijo ella, no lo ' +
     'mezcles con su historia y no lo cites mientras solo cuenta. Si la persona ' +
     'pregunta algo directamente, respóndele en pocas frases con lo que dicen los ' +
-    'documentos. ' +
+    'documentos; no inventes detalles, nombres, fechas ni cifras que no estén ' +
+    'en el contexto o en lo que la persona contó. ' +
     CITE_SUPPORT_RULE +
     ' Después vuelve a su historia con una pregunta.\n\n' +
     'Si dice que ya terminó, agradécele en una o dos frases y no preguntes más.\n\n' +
@@ -320,13 +321,22 @@ export function interviewSystemPrompt(): string {
  * The user-turn preamble on an interview turn (overrides the engine's
  * `userContextPreamble`, whose "say plainly what is missing" rule is the
  * inferred source of "los documentos no mencionan…" on stories). Keeps both
- * slots and the language rule.
+ * slots, the language rule, and — 🔴 audit 2026-10-26 — the engine's
+ * no-invention rules (2 and 3 of `DEFAULT_ENGINE_CONFIG.userContextPreamble`,
+ * minus "say so plainly"): an interviewer must not invent facts either.
  */
 export const INTERVIEW_CONTEXT_PREAMBLE =
   '[Background for your reply. The person below is telling their own story. ' +
   'The context is other people\'s material, orientation only: never attribute ' +
   'it to this person, do not report what it lacks, and do not summarise or ' +
-  'cite it unless they ask a direct question. Reply in the same language as ' +
-  'the user message.]' +
+  'cite it unless they ask a direct question.\n' +
+  '\n' +
+  'Rules:\n' +
+  '1. State as fact only what is written below or what the person said. ' +
+  'Never invent, assume, estimate or extrapolate a detail — names, places, ' +
+  'dates, numbers and counts above all.\n' +
+  '2. Give a number only if that number is written below or the person said ' +
+  'it, or you can derive it by arithmetic over those numbers.\n' +
+  '3. Reply in the same language as the user message.]' +
   '\n\n{context}\n\n========\n' +
   '\nUser message (reply in this same language):\n{message}';

@@ -874,6 +874,17 @@ describe('POST /api/generate — a testimonio turn meets the interviewer', () =>
     expect(frames.find((f) => f.type === 'done')!.provenance).toBeNull();
   });
 
+  // 🔴 Audit 2026-10-26: staff attaching a colleague's testimonio met the interviewer.
+  it('🔴 someone else\'s testimonio attached: answer mode; my own: interview', async () => {
+    world.answerText = 'Gracias. ¿Dónde fue?';
+    world.sessionDocs = [{ id: 21, name: 'x', kind: 'audio', contentKind: 'testimonio', publicationStatus: 'draft', uploadedBy: 2 }];
+    await POST(event(turn({ messages: [{ role: 'user', content: 'Hola' }] })));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
+    world.sessionDocs = [{ id: 21, name: 'x', kind: 'audio', contentKind: 'testimonio', publicationStatus: 'draft', uploadedBy: 1 }];
+    await POST(event(turn({ messages: [{ role: 'user', content: 'Hola' }] })));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
+  });
+
   it('🔴 a direct question mid-story keeps variant E and its cited sources', async () => {
     world.answerText = 'Las parteras acompañan los nacimientos [1].';
     const messages = [

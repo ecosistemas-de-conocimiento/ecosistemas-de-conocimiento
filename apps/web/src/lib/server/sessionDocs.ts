@@ -55,6 +55,12 @@ export interface SessionDocRow {
    * default the store and the upload route use.
    */
   isPinned?: boolean;
+  /**
+   * Who uploaded it, as a string id. `null` when the backend hides it — it
+   * does on a colleague's testimonio/conversación (`gatedQueryableReadable`),
+   * so `null` reads as "not the caller's" (`chatTurnMode`).
+   */
+  uploadedBy?: string | null;
 }
 
 export interface SessionDocs {
@@ -85,6 +91,15 @@ export function sessionDocumentsQuery(sessionId: string): string {
     sort: 'createdAt',
   });
   return `/api/documents?${qs.toString()}`;
+}
+
+function uploaderId(raw: unknown): string | null {
+  if (typeof raw === 'string' || typeof raw === 'number') return String(raw);
+  if (raw && typeof raw === 'object' && 'id' in raw) {
+    const id = (raw as { id?: unknown }).id;
+    if (typeof id === 'string' || typeof id === 'number') return String(id);
+  }
+  return null;
 }
 
 /**
@@ -129,6 +144,7 @@ export async function fetchSessionDocs(
         ingestStatus: (r.ingestStatus as string | null | undefined) ?? null,
         publicationStatus: (r.publicationStatus as string | null | undefined) ?? null,
         isPinned: r.isPinned !== false,
+        uploadedBy: uploaderId(r.uploadedBy),
       });
     }
     return { docs, ok: true };

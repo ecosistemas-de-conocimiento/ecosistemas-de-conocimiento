@@ -312,6 +312,20 @@ describe('documentText', () => {
     expect(documentText({ ...row, redactedText: null })).toBe('');
   });
 
+  // 🔴 Audit 2026-10-26: a published gated documento showed an empty body (the
+  // backend hides `extractedText` from colleagues) and never read `redactedText`.
+  it('🔴 reads ONLY redactedText on a documento filed for anonymisation', () => {
+    const row = {
+      contentKind: 'documento',
+      anonymise: true,
+      extractedText: 'Informe de Juan Pérez',
+      bodyMarkdown: 'Juan Pérez',
+      redactedText: 'Informe de [Persona A]',
+    };
+    expect(documentText(row)).toBe('Informe de [Persona A]');
+    expect(documentText({ ...row, redactedText: null })).toBe('');
+  });
+
   it('is empty when there is nothing', () => {
     expect(documentText({})).toBe('');
   });
@@ -454,6 +468,47 @@ describe('readPublished', () => {
     }
   });
 
+  // 🔴 Audit 2026-10-26: the reader showed an empty body for a published gated documento.
+  it('shows the redaction of a published gated documento, never the original', async () => {
+    mockedBackendFetch.mockImplementation(async (_t: unknown, path: string) =>
+      path.startsWith('/api/documents')
+        ? jsonResponse({
+            id: 6,
+            name: 'Informe de campo',
+            kind: 'pdf',
+            contentKind: 'documento',
+            anonymise: true,
+            organization: '7',
+            publicationStatus: 'published',
+            extractedText: 'Informe de Juan Pérez',
+            redactedText: 'Informe de [Persona A]',
+            anonymisationStatus: 'ready',
+            uploadedBy: '10',
+          })
+        : jsonResponse({ docs: [{ id: 10, displayName: 'Ana' }] }),
+    );
+    const out = await readPublished('tok', '7', '6');
+    expect(out.state).toBe('ok');
+    if (out.state === 'ok') {
+      expect(out.doc.text).toBe('Informe de [Persona A]');
+      expect(JSON.stringify(out.doc)).not.toContain('Juan');
+    }
+  });
+
+  it('reads a held gated documento as not-found', async () => {
+    mockedBackendFetch.mockResolvedValue(
+      jsonResponse({
+        id: 6,
+        contentKind: 'documento',
+        anonymise: true,
+        organization: '7',
+        publicationStatus: 'published',
+        anonymisationStatus: 'held',
+      }),
+    );
+    expect((await readPublished('tok', '7', '6')).state).toBe('not-found');
+  });
+
   it('asks the backend for redactedText', async () => {
     mockedBackendFetch.mockResolvedValue(jsonResponse({}, 404));
     await readPublished('tok', '7', '5');
@@ -475,9 +530,15 @@ describe('🔴 the library never shows uncleared or empty gated content', () => 
   it('the list query asks for documentos, or gated rows that are cleared and redacted', () => {
     for (const kind of ['todos', 'testimonio', 'audio'] as const) {
       const qs = new URLSearchParams(libraryListQuery({ ...base, kind }));
-      expect(qs.get('where[or][0][contentKind][equals]')).toBe('documento');
-      expect(qs.get('where[or][1][and][0][anonymisationStatus][in]')).toBe('ready,approved');
-      expect(qs.get('where[or][1][and][1][redactedText][exists]')).toBe('true');
+      // A documento NOT filed for anonymisation (false, or a legacy null)…
+      expect(qs.get('where[or][0][and][0][contentKind][equals]')).toBe('documento');
+      expect(qs.get('where[or][0][and][1][anonymise][equals]')).toBe('false');
+      expect(qs.get('where[or][1][and][0][contentKind][equals]')).toBe('documento');
+      expect(qs.get('where[or][1][and][1][anonymise][exists]')).toBe('false');
+      // …or any gated row (testimonio, conversación, gated documento) the gate cleared.
+      expect(qs.get('where[or][2][and][0][anonymisationStatus][in]')).toBe('ready,approved');
+      expect(qs.get('where[or][2][and][1][redactedText][exists]')).toBe('true');
+      expect(qs.get('where[or][0][contentKind][equals]')).toBeNull();
     }
   });
 
@@ -495,6 +556,12 @@ describe('🔴 the library never shows uncleared or empty gated content', () => 
     ['an approved conversación', { contentKind: 'conversacion', anonymisationStatus: 'approved', redactedText: 'texto' }, true],
     ['a list row (no text selected) that is ready', { contentKind: 'testimonio', anonymisationStatus: 'ready' }, true],
     ['a documento', { contentKind: 'documento', anonymisationStatus: 'n/a' }, true],
+    // 🔴 Audit 2026-10-26: a documento filed for anonymisation is gated like a testimonio.
+    ['a held gated documento', { contentKind: 'documento', anonymise: true, anonymisationStatus: 'held' }, false],
+    ['a gated documento with no status', { contentKind: 'documento', anonymise: true }, false],
+    ['a ready gated documento with an empty redaction', { contentKind: 'documento', anonymise: true, anonymisationStatus: 'ready', redactedText: ' ' }, false],
+    ['a ready gated documento', { contentKind: 'documento', anonymise: true, anonymisationStatus: 'ready', redactedText: 'texto' }, true],
+    ['a documento with anonymise false', { contentKind: 'documento', anonymise: false }, true],
   ])('isClearedForLibrary: %s → %s', (_case, row, expected) => {
     expect(isClearedForLibrary(row as Record<string, unknown>)).toBe(expected);
   });
