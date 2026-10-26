@@ -47,7 +47,8 @@ ts() { date -u +%H:%M:%S; }
 
 remaining_usd() { # org id → remaining USD, or empty when the check is off
   [ -n "${BUDGET_SSH:-}" ] || return 0
-  ssh "$BUDGET_SSH" "docker exec ${BUDGET_PG:?} psql -U edc -d edc_ai -tAc \
+  # -n: without it ssh reads the manifest off the loop's stdin and the run ends early.
+  ssh -n "$BUDGET_SSH" "docker exec ${BUDGET_PG:?} psql -U edc -d edc_ai -tAc \
     \"select remaining_usd from budget_state where org='edc-eco-$1'\""
 }
 
