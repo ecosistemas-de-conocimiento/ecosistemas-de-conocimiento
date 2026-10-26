@@ -1870,13 +1870,10 @@ export async function scheduleGraphExtractionForDoc(args: {
     if (!corpusText.ok) {
       // Not a failure — a document we deliberately do not graph. `skipped` is
       // terminal and truthful; `failed` would invite a retry that cannot help.
-      await updateDocumentColumns(payload as never, {
-        id: docId,
-        data: {
-          graphStatus: 'skipped',
-          graphError: `not_graphable: ${corpusText.reason}`.slice(0, 500),
-        },
-      })
+      // 🔴 `markNotGraphable` also DROPS the rows an earlier run left: a gated
+      // row held or rejected after a `ready` run kept them (graph-retry, 10-26).
+      const { markNotGraphable } = await import('@/lib/graph/schedule')
+      await markNotGraphable(payload as never, docId, organizationId, corpusText.reason)
       return
     }
 

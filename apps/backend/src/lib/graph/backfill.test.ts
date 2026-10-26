@@ -190,6 +190,22 @@ describe('deleteOrphanEntities', () => {
     expect(deletes).toEqual([{ collection: 'graphEntities', id: 2 }])
   })
 
+  it('🔴 spares an entity created or touched inside the grace period', async () => {
+    const recent = new Date(Date.now() - 60_000).toISOString()
+    const old = new Date(Date.now() - 60 * 60_000).toISOString()
+    const { payload, deletes } = fakePayload({
+      graphEntities: [
+        { id: 1, organization: 5, createdAt: recent, updatedAt: recent },
+        // Old, but a concurrent writer just merged its aliases: it is in use.
+        { id: 2, organization: 5, createdAt: old, updatedAt: recent },
+        { id: 3, organization: 5, createdAt: old, updatedAt: old },
+      ],
+    })
+    const removed = await deleteOrphanEntities(payload, 5, silent)
+    expect(removed).toBe(1)
+    expect(deletes).toEqual([{ collection: 'graphEntities', id: 3 }])
+  })
+
   it('🔴 scopes the mention lookup by organization as well as by entity', async () => {
     const { payload, finds } = fakePayload({
       graphEntities: [{ id: 1, organization: 5 }],

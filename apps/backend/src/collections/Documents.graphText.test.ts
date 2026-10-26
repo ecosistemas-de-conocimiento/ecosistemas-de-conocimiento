@@ -31,17 +31,24 @@ vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 import { scheduleGraphExtractionForDoc } from './Documents'
 
 const scheduleGraphExtraction = vi.fn()
-vi.mock('@/lib/graph/schedule', () => ({
+vi.mock('@/lib/graph/schedule', async (importActual) => ({
+  ...(await importActual<typeof import('@/lib/graph/schedule')>()),
   scheduleGraphExtraction: (...args: unknown[]) => scheduleGraphExtraction(...args),
 }))
 
 /** A Payload double that hands back one row and records every update. */
 function fakePayload(row: Record<string, unknown>) {
   const updates: Record<string, unknown>[] = []
+  const deletes: { collection: string; where: unknown }[] = []
   return {
     updates,
+    deletes,
     payload: {
       findByID: async () => row,
+      delete: async (args: { collection: string; where: unknown }) => {
+        deletes.push(args)
+        return { docs: [] }
+      },
       update: async (args: { data: Record<string, unknown> }) => {
         updates.push(args.data)
         return row
@@ -102,6 +109,28 @@ describe('🔴 the graph is built from the text the CORPUS got, never the origin
     expect(scheduleGraphExtraction).not.toHaveBeenCalled()
     expect(updates.at(-1)).toMatchObject({ graphStatus: 'skipped' })
     expect(String(updates.at(-1)?.graphError)).toMatch(/not_graphable/)
+  })
+
+  it('🔴 a skip DROPS the rows an earlier run left (graph-retry on a gated row)', async () => {
+    const { payload, deletes } = fakePayload({
+      contentKind: 'testimonio',
+      extractedText: RAW,
+      redactedText: GATED,
+      anonymisationStatus: 'held',
+    })
+    await scheduleGraphExtractionForDoc({
+      payload,
+      docId: 7,
+      organizationId: 1,
+      fresh: { name: 'Voz', contentKind: 'testimonio' },
+    })
+    expect(scheduleGraphExtraction).not.toHaveBeenCalled()
+    expect(deletes.map((d) => d.collection)).toEqual(['graphMentions', 'graphRelations'])
+    for (const d of deletes) {
+      expect((d.where as { and: unknown[] }).and).toEqual(
+        expect.arrayContaining([{ organization: { equals: 1 } }, { document: { equals: 7 } }]),
+      )
+    }
   })
 
   it('🔴 SKIPS a testimonio whose gate verdict is not `ready` or `approved`', async () => {

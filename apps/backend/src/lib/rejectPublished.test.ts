@@ -4,6 +4,8 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
+
 import { HoldNotVisibleError } from './holdReview'
 import { listPublishedTestimonios, rejectPublished } from './rejectPublished'
 
@@ -50,12 +52,21 @@ function fakePayload(row: Row | null, opts: { reviewerRole?: string } = {}) {
     created.push(args.data)
     return { id: 55 }
   })
-  const update = vi.fn(async (args: { data: Row }) => {
-    calls.push('row')
-    if (store) Object.assign(store, args.data)
-    return { docs: store ? [store] : [] }
+  const update = vi.fn(async (args: { data: Row; where?: unknown }) => {
+    // Honour the "still published" guard, so a lost race is a no-op.
+    const guarded = JSON.stringify(args.where ?? {}).includes('"publicationStatus":{"equals":"published"}')
+    if (!store || (guarded && store.publicationStatus !== 'published')) return { docs: [] }
+    calls.push(args.data.graphStatus !== undefined && args.data.publicationStatus === undefined ? 'graphStatus' : 'row')
+    Object.assign(store, args.data)
+    return { docs: [store] }
   })
-  return { payload: { find, findByID, create, update } as never, store, created, calls }
+  const deleted: Row[] = []
+  const del = vi.fn(async (args: { collection: string; where: unknown }) => {
+    calls.push(`delete:${args.collection}`)
+    deleted.push(args as unknown as Row)
+    return { docs: [] }
+  })
+  return { payload: { find, findByID, create, update, delete: del } as never, store, created, calls, deleted }
 }
 
 function fakeClient(calls: string[] = []) {
@@ -72,7 +83,7 @@ describe('rejectPublished', () => {
     const { client, setDocumentValidity } = fakeClient(calls)
     const out = await rejectPublished({ payload, documentId: '7', user: reviewer, note: 'nombra a alguien', clientFor: () => client })
 
-    expect(calls).toEqual(['audit', 'retire:eco-1', 'row'])
+    expect(calls.slice(0, 3)).toEqual(['audit', 'retire:eco-1', 'row'])
     expect(created[0]).toMatchObject({ document: 7, organization: 1, reviewer: 9, decision: 'rejected', note: 'nombra a alguien' })
     expect(setDocumentValidity.mock.calls[0]![0]).toBe('eco-1')
     expect(store).toMatchObject({
@@ -91,10 +102,37 @@ describe('rejectPublished', () => {
     const { client } = fakeClient(calls)
     const out = await rejectPublished({ payload, documentId: 7, user: reviewer, clientFor: () => client })
 
-    expect(calls).toEqual(['audit', 'retire:eco-1', 'row'])
+    expect(calls.slice(0, 3)).toEqual(['audit', 'retire:eco-1', 'row'])
     expect(created[0]).toMatchObject({ document: 7, organization: 1, reviewer: 9, decision: 'rejected' })
     expect(store).toMatchObject({ publicationStatus: 'draft', anonymisationStatus: 'rejected', redactedText: null })
     expect(out).toMatchObject({ id: '7', decision: 'rejected', anonymisationStatus: 'rejected' })
+  })
+
+  it('🔴 drops the graph rows of the withdrawn row and marks it skipped', async () => {
+    const { payload, store, calls, deleted } = fakePayload(published())
+    const { client } = fakeClient(calls)
+    await rejectPublished({ payload, documentId: 7, user: reviewer, clientFor: () => client })
+
+    expect(calls).toEqual(['audit', 'retire:eco-1', 'row', 'delete:graphMentions', 'delete:graphRelations', 'graphStatus'])
+    for (const d of deleted) {
+      expect((d as { where: { and: unknown[] } }).where.and).toEqual(
+        expect.arrayContaining([{ organization: { equals: 1 } }, { document: { equals: 7 } }]),
+      )
+    }
+    expect(store).toMatchObject({ graphStatus: 'skipped' })
+    expect(String(store?.graphError)).toMatch(/^not_graphable:/)
+  })
+
+  it('leaves the graph alone when a concurrent unpublish won the row', async () => {
+    const { payload, store, calls } = fakePayload(published())
+    const { client } = fakeClient(calls)
+    // Retire succeeds, then another writer moves the row off `published`.
+    ;(client.admin.setDocumentValidity as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      if (store) store.publicationStatus = 'draft'
+      return {}
+    })
+    await rejectPublished({ payload, documentId: 7, user: reviewer, clientFor: () => client })
+    expect(calls.filter((c) => c.startsWith('delete:'))).toEqual([])
   })
 
   it('a failed retire leaves the row published and throws', async () => {

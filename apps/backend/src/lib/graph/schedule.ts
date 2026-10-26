@@ -83,6 +83,41 @@ export async function clearGraphRows(
   await payload.delete({ collection: 'graphRelations', where, overrideAccess: true })
 }
 
+/**
+ * 🔴 A DOCUMENT THAT MAY NOT BE GRAPHED KEEPS NO GRAPH ROWS.
+ *
+ * Every path that marks a row `skipped` because it is not graphable (rejected,
+ * held, gate not cleared) goes through here, so the status and the rows can
+ * never disagree. Rows an earlier run built may carry the very text the row was
+ * refused for.
+ *
+ * Never throws: callers run after their own write has landed. A failed delete
+ * marks the row `failed` (`graph_clear_failed`), which the backfill selects and
+ * clears again (`backfill.ts`, the `corpusTextFor` refusal branch).
+ */
+export async function markNotGraphable(
+  payload: GraphSchedulerPayload,
+  docId: string | number,
+  organizationId: string | number,
+  reason: string,
+): Promise<'skipped' | 'failed'> {
+  try {
+    await clearGraphRows(payload, docId, organizationId)
+  } catch (err) {
+    console.error('[graph] could not clear rows for non-graphable doc', docId, err instanceof Error ? err.name : typeof err)
+    await setGraphStatus(payload, docId, {
+      graphStatus: 'failed',
+      graphError: `graph_clear_failed: ${reason}`.slice(0, 500),
+    }).catch(() => undefined)
+    return 'failed'
+  }
+  await setGraphStatus(payload, docId, {
+    graphStatus: 'skipped',
+    graphError: `not_graphable: ${reason}`.slice(0, 500),
+  }).catch(() => undefined)
+  return 'skipped'
+}
+
 async function setGraphStatus(
   payload: GraphSchedulerPayload,
   docId: string | number,

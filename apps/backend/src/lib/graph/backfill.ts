@@ -357,7 +357,7 @@ export async function deleteOrphanEntities(
     limit: 0,
     depth: 0,
     overrideAccess: true,
-  })) as { docs: { id: number | string; createdAt?: unknown }[] }
+  })) as { docs: { id: number | string; createdAt?: unknown; updatedAt?: unknown }[] }
 
   const cutoff = Date.now() - ORPHAN_GRACE_MS
   let deleted = 0
@@ -365,9 +365,15 @@ export async function deleteOrphanEntities(
   for (const entity of entities?.docs ?? []) {
     // Skip anything a concurrent write may still be finishing. See the grace
     // period's note above.
-    const createdAt =
-      typeof entity.createdAt === 'string' ? Date.parse(entity.createdAt) : Number.NaN
-    if (Number.isFinite(createdAt) && createdAt > cutoff) continue
+    // ⚠ `updatedAt` TOO: the writer reuses an OLD entity and merges aliases
+    // into it before inserting that document's mentions, so an old row can be
+    // in the same window. (A reuse that changes nothing writes nothing; that
+    // case keeps the FK failure → `failed` → backfill retry described above.)
+    const recent = [entity.createdAt, entity.updatedAt].some((at) => {
+      const t = typeof at === 'string' ? Date.parse(at) : Number.NaN
+      return Number.isFinite(t) && t > cutoff
+    })
+    if (recent) continue
 
     const referenced = await isReferenced(payload, organizationId, entity.id)
     if (referenced) continue

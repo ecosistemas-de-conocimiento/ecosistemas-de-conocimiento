@@ -20,6 +20,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Payload } from 'payload'
 
+vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
+
 import {
   HoldNotVisibleError,
   HoldReviewInputError,
@@ -72,6 +74,7 @@ function fakePayload(opts: {
 
   const created: Array<Record<string, unknown>> = []
   const updated: Array<{ id: unknown; data: Record<string, unknown>; context?: unknown }> = []
+  const deleted: Array<{ collection: string; where: unknown }> = []
   /** Write order, so "audit first" is assertable rather than assumed. */
   const order: string[] = []
 
@@ -102,10 +105,15 @@ function fakePayload(opts: {
         return {}
       },
     ),
+    delete: vi.fn(async (args: { collection: string; where: unknown }) => {
+      order.push(`delete:${args.collection}`)
+      deleted.push({ collection: args.collection, where: args.where })
+      return { docs: [] }
+    }),
     logger: { warn: vi.fn() },
   } as unknown as Payload
 
-  return { payload, created, updated, order }
+  return { payload, created, updated, order, deleted }
 }
 
 const user = (over: Record<string, unknown> = {}) => ({
@@ -265,7 +273,7 @@ describe('holds — 🔴 what the reviewer sees, and what never leaves', () => {
   it('🔴 a rejection clears the title made from the discarded held text', async () => {
     const { payload, updated } = fakePayload()
     await decideOnHold({ payload, documentId: DOC, user: user(), decision: 'reject' })
-    expect(updated.at(-1)!.data).toHaveProperty('testimonioTitle', null)
+    expect(updated[0]!.data).toHaveProperty('testimonioTitle', null)
   })
 
   it('⚠ nothing in the response identifies the speaker', async () => {
@@ -446,6 +454,18 @@ describe('holds — 🔴 approving is an audited override, and the only way out'
     // and the publish path reads that column without re-running the gate — so
     // "never ingested" is only true if the column is emptied.
     expect(write.redactedText).toBeNull()
+  })
+
+  it('🔴 a rejection drops the document\'s graph rows and marks it skipped', async () => {
+    const { payload, updated, deleted } = fakePayload()
+    await decideOnHold({ payload, documentId: DOC, user: user(), decision: 'reject' })
+    expect(deleted.map((d) => d.collection)).toEqual(['graphMentions', 'graphRelations'])
+    for (const d of deleted) {
+      expect((d.where as { and: unknown[] }).and).toEqual(
+        expect.arrayContaining([{ organization: { equals: ORG } }, { document: { equals: DOC } }]),
+      )
+    }
+    expect(updated.at(-1)!.data).toMatchObject({ graphStatus: 'skipped' })
   })
 
   it('🔴 a rejection cannot be re-decided through this API', async () => {

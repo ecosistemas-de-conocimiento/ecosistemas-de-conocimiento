@@ -51,6 +51,7 @@ import { isActiveUser, isPlatformAdminUser } from '../access'
 import { organizationIdsForUserWithPermission, PERMISSIONS, relationId } from './permissions'
 import type { GateReport, SurvivorSpan } from './anonymise/types'
 import { contentKindOf, type ContentKind } from './contentKind'
+import { markNotGraphable } from './graph/schedule'
 
 type Id = number | string
 
@@ -511,7 +512,7 @@ export async function decideOnHold(args: {
     })
 
   if (decision === 'reject') {
-    await settle(
+    const settled = (await settle(
       {
         anonymisationStatus: 'rejected',
         // 🔴 CLEARED. A rejected row can still be carrying a `redactedText` from
@@ -532,7 +533,13 @@ export async function decideOnHold(args: {
       // would refuse anyway, but a re-entrant run that does nothing still costs a
       // read and muddies the logs.
       { __skipDocsExtract: true },
-    )
+    )) as { docs?: unknown[] } | null
+
+    // 🔴 THE GRAPH ROWS GO TOO. A row held on a re-gate can still carry rows an
+    // earlier `ready` run built. Only when OUR write landed (see `settle`).
+    if (!Array.isArray(settled?.docs) || settled.docs.length > 0) {
+      await markNotGraphable(payload as never, row.id as Id, organizationId, 'rejected by a reviewer')
+    }
 
     return {
       id: String(documentId),
