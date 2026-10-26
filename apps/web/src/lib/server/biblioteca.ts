@@ -88,6 +88,9 @@ export const LIBRARY_LIST_FIELDS = [
   // 2026-10-24). A PAIR with `anonymisationStatus` above: the backend's read
   // rule (`mayReadTestimonioTitle`) reads the status off the projected row.
   'testimonioTitle',
+  // 🔴 A documento filed for anonymisation is gated too — see `hasGatedText`.
+  // (Backend `forceSelect` returns it anyway; named here so the dependency shows.)
+  'anonymise',
 ] as const;
 
 /**
@@ -141,22 +144,44 @@ export interface LibraryQueryInput {
 export const CLEARED_STATUSES = ['ready', 'approved'] as const;
 
 const CLEARED_WHERE: Array<[string, string]> = [
-  ['where[or][0][contentKind][equals]', 'documento'],
-  ['where[or][1][and][0][anonymisationStatus][in]', CLEARED_STATUSES.join(',')],
-  ['where[or][1][and][1][redactedText][exists]', 'true'],
+  // A documento not filed for anonymisation (`false`, or a legacy null)…
+  ['where[or][0][and][0][contentKind][equals]', 'documento'],
+  ['where[or][0][and][1][anonymise][equals]', 'false'],
+  ['where[or][1][and][0][contentKind][equals]', 'documento'],
+  ['where[or][1][and][1][anonymise][exists]', 'false'],
+  // …or any gated row (testimonio, conversación, gated documento) the gate cleared.
+  ['where[or][2][and][0][anonymisationStatus][in]', CLEARED_STATUSES.join(',')],
+  ['where[or][2][and][1][redactedText][exists]', 'true'],
 ];
 
 /**
- * 🔴 MAY THIS ROW SHOW IN THE LIBRARY AT ALL? A `documento` yes. Gated content
- * (a testimonio, a conversación) only when cleared, and — when the row carries
- * its text — only with a non-empty redaction, so there is never an empty card.
+ * 🔴 IS THIS ROW'S TEXT GATED? A testimonio or conversación (`isGatedContent`),
+ * or a `documento` filed for anonymisation (`anonymise`, backend
+ * `anonymiseRequested`: anything but missing/null/false). The backend hides
+ * `extractedText`/`bodyMarkdown` of either from everyone but the uploader, so
+ * the library shows `redactedText` or nothing. Audit 2026-10-26: a published
+ * gated documento showed an empty body.
+ *
+ * ⚠ Text only. A gated documento keeps its own title and contributor (owner
+ * ruling 2026-10-26, backend `mayReadGatedOriginal` scope `identity`).
+ */
+export function hasGatedText(row: Record<string, unknown>): boolean {
+  if (isGatedContent(row.contentKind)) return true;
+  return row.anonymise !== undefined && row.anonymise !== null && row.anonymise !== false;
+}
+
+/**
+ * 🔴 MAY THIS ROW SHOW IN THE LIBRARY AT ALL? A plain `documento` yes. Gated
+ * text (`hasGatedText`: a testimonio, a conversación, a documento filed for
+ * anonymisation) only when cleared, and — when the row carries its text — only
+ * with a non-empty redaction, so there is never an empty card.
  *
  * ⚠ Separate from {@link isLibraryVisible} on purpose: that one answers "is it
  * shared in this ecosistema", this one "is there something safe to show".
  */
 export function isClearedForLibrary(row: Record<string, unknown> | null | undefined): boolean {
   if (!row) return false;
-  if (!isGatedContent(row.contentKind)) return true;
+  if (!hasGatedText(row)) return true;
   if (!(CLEARED_STATUSES as readonly unknown[]).includes(row.anonymisationStatus)) return false;
   if ('redactedText' in row) {
     return typeof row.redactedText === 'string' && row.redactedText.trim() !== '';
@@ -301,12 +326,12 @@ export function toLibraryItem(
 /**
  * The document's text, from whichever column this kind stores it in.
  *
- * 🔴 GATED CONTENT READS `redactedText` AND NOTHING ELSE. The original is the
+ * 🔴 GATED TEXT (`hasGatedText`) READS `redactedText` AND NOTHING ELSE. The original is the
  * uploader's; the library shows what the anonymisation gate released. No
  * redaction ⇒ no text, never a fallback to the original.
  */
 export function documentText(row: Record<string, unknown>): string {
-  if (isGatedContent(row.contentKind)) {
+  if (hasGatedText(row)) {
     return typeof row.redactedText === 'string' ? row.redactedText : '';
   }
   const extracted = typeof row.extractedText === 'string' ? row.extractedText : '';

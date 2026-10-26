@@ -702,7 +702,12 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   const retrievalFilter = titleRetrievalFilter(lengua.retrievalFilter, titleMatch);
   // A person telling their own story meets an interviewer; a direct question
   // still gets the documents (owner ruling 2026-10-26, `$lib/server/engine/turnMode`).
-  const turnMode = chatTurnMode({ userMessage, history, sessionDocs: sessionDocs.docs });
+  const turnMode = chatTurnMode({
+    userMessage,
+    history,
+    sessionDocs: sessionDocs.docs,
+    callerId: locals.user.id != null ? String(locals.user.id) : null,
+  });
   const turnConfig = chatEngineConfigFor(turnMode);
   // An interview reply with no `[N]` lists no sources: it is a question back,
   // not an answer, and the no-marker fallback would pin documents to it.

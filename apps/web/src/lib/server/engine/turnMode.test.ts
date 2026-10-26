@@ -84,19 +84,73 @@ describe('chatTurnMode', () => {
     expect(chatTurnMode({ userMessage: 'Gracias', history })).toBe('answer');
   });
 
+  const mine = (contentKind: string) => ({ contentKind, uploadedBy: '7' });
+
   it('the participant\'s own testimonio attached to the conversation starts an interview', () => {
-    expect(chatTurnMode({ userMessage: 'Hola', sessionDocs: [{ contentKind: 'testimonio' }] })).toBe('interview');
-    expect(chatTurnMode({ userMessage: 'Hola', sessionDocs: [{ contentKind: 'conversacion' }] })).toBe('interview');
+    expect(chatTurnMode({ userMessage: 'Hola', callerId: '7', sessionDocs: [mine('testimonio')] })).toBe('interview');
+    expect(chatTurnMode({ userMessage: 'Hola', callerId: '7', sessionDocs: [mine('conversacion')] })).toBe('interview');
+  });
+
+  // 🔴 Audit 2026-10-26: staff attaching someone else's testimonio met the interviewer.
+  it('🔴 someone else\'s testimonio attached does not', () => {
+    const theirs = { contentKind: 'testimonio', uploadedBy: '9' };
+    expect(chatTurnMode({ userMessage: 'Hola', callerId: '7', sessionDocs: [theirs] })).toBe('answer');
+  });
+
+  it('🔴 a testimonio whose uploader is hidden (a colleague\'s) or an unknown caller does not', () => {
+    expect(chatTurnMode({ userMessage: 'Hola', callerId: '7', sessionDocs: [{ contentKind: 'testimonio' }] })).toBe('answer');
+    expect(chatTurnMode({ userMessage: 'Hola', sessionDocs: [mine('testimonio')] })).toBe('answer');
   });
 
   it('an attached plain documento does not', () => {
-    expect(chatTurnMode({ userMessage: 'Hola', sessionDocs: [{ contentKind: 'documento' }] })).toBe('answer');
+    expect(chatTurnMode({ userMessage: 'Hola', callerId: '7', sessionDocs: [mine('documento')] })).toBe('answer');
   });
 
   it('🔴 a request about the attached testimonio is still answered', () => {
     expect(
-      chatTurnMode({ userMessage: 'Resume el testimonio', sessionDocs: [{ contentKind: 'testimonio' }] }),
+      chatTurnMode({ userMessage: 'Resume el testimonio', callerId: '7', sessionDocs: [mine('testimonio')] }),
     ).toBe('answer');
+  });
+
+  // 🔴 Audit 2026-10-26: analysis asks were read as stories.
+  it.each([
+    'Analiza los testimonios sobre la escuela',
+    'Identifica los temas principales',
+    'Genera una tabla con los hallazgos',
+    'Necesito un resumen de los documentos',
+    'Me puedes decir los temas del testimonio',
+    'Compara las dos entrevistas',
+    'Resume lo que contamos en el taller',
+    'Explica nuestras conclusiones',
+    'Enumera los problemas que tenemos en la comunidad',
+    'Por favor, analiza lo que dije en mi testimonio',
+    'Del testimonio, identifica lo que me contaron',
+    'Podrías revisar mis notas de campo',
+  ])('🔴 %s → answer, even with my testimonio attached and a story before', (m) => {
+    const history = [user('Yo trabajé diez años en la cooperativa de café'), bot('¿Dónde estaba?')];
+    expect(chatTurnMode({ userMessage: m, history, callerId: '7', sessionDocs: [mine('testimonio')] })).toBe('answer');
+  });
+
+  it('🔴 the interview does not stick once the assistant answered instead of asking', () => {
+    const history = [
+      user('Yo soy investigadora del CIDE y trabajo con cooperativas'),
+      bot('Los documentos describen tres cooperativas [1].'),
+    ];
+    expect(chatTurnMode({ userMessage: 'Ok, gracias', history })).toBe('answer');
+  });
+
+  it('🔴 an analysis request breaks the chain for later short turns', () => {
+    const history = [
+      user('Yo trabajé diez años en la cooperativa de café'),
+      bot('¿Dónde estaba?'),
+      user('Analiza los testimonios de la sierra'),
+      bot('Los testimonios cuentan… [1]. ¿Quieres más detalle?'),
+    ];
+    expect(chatTurnMode({ userMessage: 'Sí', history })).toBe('answer');
+  });
+
+  it('a first-person story is an interview even without an attachment', () => {
+    expect(chatTurnMode({ userMessage: 'Yo crecí en la sierra y mi familia vivía del café', callerId: '7' })).toBe('interview');
   });
 
   it('no message is an answer turn', () => {
@@ -152,6 +206,15 @@ describe('chatEngineConfigFor', () => {
     expect(c.userContextPreamble).toBe(INTERVIEW_CONTEXT_PREAMBLE);
     expect(c.blockHeaders).toEqual(CHAT_ENGINE_CONFIG.blockHeaders);
     expect(c.surface).toBe(CHAT_ENGINE_CONFIG.surface);
+  });
+
+  // 🔴 Audit 2026-10-26: the interview preamble dropped the engine's no-invention rules.
+  it('🔴 interview mode keeps the no-invented-facts rules', () => {
+    for (const text of [INTERVIEW_CONTEXT_PREAMBLE]) {
+      expect(text).toContain('Never invent, assume, estimate or extrapolate');
+      expect(text).toContain('Give a number only if that number is written below');
+    }
+    expect(interviewSystemPrompt()).toContain('no inventes');
   });
 
   it('🔴 the interview preamble keeps both slots the engine fills', () => {
