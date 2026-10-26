@@ -19,6 +19,7 @@
    */
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
+  import TestimonySource from '$lib/components/TestimonySource.svelte';
   import {
     formatLibraryDate,
     isTestimony,
@@ -253,7 +254,7 @@
                 <span class="date">{formatLibraryDate(item.createdAt)}</span>
               </div>
               <h2 class="title" title={item.title}>{item.title}</h2>
-              {#if item.subtitle}<p class="subtitle">{item.subtitle}</p>{/if}
+              {#if item.subtitle != null}<p class="subtitle"><TestimonySource audio={item.fromAudio} day={item.subtitle} /></p>{/if}
               {#if item.excerpt}
                 <!-- Plain text from the redacted Voz, cut server-side. Never {@html}. -->
                 <p class="excerpt">{item.excerpt}</p>

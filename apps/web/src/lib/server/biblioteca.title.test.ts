@@ -1,6 +1,6 @@
 /**
- * Biblioteca card: a testimonio's system-proposed title over "Testimonio ·
- * <tema>" (owner ruling 2026-10-24); the label alone when it has none.
+ * Biblioteca card: a testimonio's system-proposed title over its short day
+ * (owner ruling 2026-10-26); "Testimonio · <tema>" alone when it has none.
  */
 import { describe, expect, it, vi } from 'vitest';
 
@@ -9,7 +9,7 @@ vi.mock('$lib/server/auth', () => ({
   backendFetch: vi.fn(),
 }));
 
-import { chatSourceTitle, generatedTestimonyTitle, testimonyHeading, workingDocHeading } from '$lib/biblioteca';
+import { chatSourceTitle, generatedTestimonyTitle, shortDay, testimonyHeading, workingDocHeading } from '$lib/biblioteca';
 import { LIBRARY_LIST_FIELDS, toLibraryItem } from './biblioteca';
 
 const voz = {
@@ -22,14 +22,25 @@ const voz = {
   anonymisationStatus: 'ready',
   redactedText: 'Una madre cuenta que la escuela no tenía intérprete de señas para su hijo, durante años.',
   tema: 'discapacidad',
+  createdAt: '2026-10-24T18:00:00.000Z',
 };
 
 describe('testimonyHeading', () => {
-  it('generated title first, the label as the secondary line', () => {
-    expect(testimonyHeading('La escuela sin intérprete de señas', 'Discapacidad')).toEqual({
+  it('generated title first, its short day as the secondary line', () => {
+    expect(testimonyHeading('La escuela sin intérprete de señas', 'Discapacidad', '2026-10-24T18:00:00.000Z')).toEqual({
       title: 'La escuela sin intérprete de señas',
-      subtitle: 'Testimonio · Discapacidad',
+      subtitle: '24 oct',
     });
+  });
+
+  it('a generated title with no usable date: empty subtitle, never null', () => {
+    expect(testimonyHeading('La escuela sin intérprete de señas', 'Discapacidad').subtitle).toBe('');
+    expect(testimonyHeading('La escuela sin intérprete de señas', 'Discapacidad', 'nope').subtitle).toBe('');
+  });
+
+  it('shortDay: Mexico City day, short Spanish month', () => {
+    expect(shortDay('2026-10-25T03:00:00Z')).toBe('24 oct');
+    expect(shortDay(null)).toBe('');
   });
 
   it('falls back to the label alone when there is no usable title', () => {
@@ -49,10 +60,10 @@ describe('toLibraryItem with a generated title', () => {
     expect(LIBRARY_LIST_FIELDS).toContain('anonymisationStatus');
   });
 
-  it('a testimonio with a title: title + "Testimonio · <tema>" subtitle, never the filename', () => {
+  it('a testimonio with a title: title + short-day subtitle, never the filename', () => {
     const item = toLibraryItem({ ...voz, testimonioTitle: 'La escuela sin intérprete de señas' }, null);
     expect(item.title).toBe('La escuela sin intérprete de señas');
-    expect(item.subtitle).toBe('Testimonio · Discapacidad');
+    expect(item.subtitle).toBe('24 oct');
     expect(JSON.stringify(item)).not.toContain('Juana');
   });
 
@@ -73,10 +84,17 @@ describe('toLibraryItem with a generated title', () => {
 });
 
 describe('chatSourceTitle with a generated title', () => {
-  it('reads "<title> — Testimonio · <ecosistema>"', () => {
+  it('reads "<title> · <short day>", or the title alone with no day', () => {
+    expect(
+      chatSourceTitle(
+        'Testimonio',
+        { kind: 'testimonio', testimonioTitle: 'La escuela sin intérprete', testimonioDate: '2026-10-24T18:00:00.000Z' },
+        'Discapacidad',
+      ),
+    ).toBe('La escuela sin intérprete · 24 oct');
     expect(
       chatSourceTitle('Testimonio', { kind: 'testimonio', testimonioTitle: 'La escuela sin intérprete' }, 'Discapacidad'),
-    ).toBe('La escuela sin intérprete — Testimonio · Discapacidad');
+    ).toBe('La escuela sin intérprete');
   });
 
   it('🔴 keyed on `kind`, never the title: a documento keeps its own title', () => {
@@ -85,10 +103,15 @@ describe('chatSourceTitle with a generated title', () => {
 });
 
 describe('workingDocHeading (Mis documentos, conversation panel)', () => {
-  it('a titled testimonio: generated title, "Testimonio · <tema>" under it', () => {
+  it('a titled testimonio: generated title, its short day under it', () => {
     expect(
-      workingDocHeading({ name: 'grabacion.webm', contentKind: 'testimonio', tema: 'dengue', testimonioTitle: 'Limpiar los patios' }),
-    ).toEqual({ title: 'Limpiar los patios', subtitle: 'Testimonio · Prevención del dengue' });
+      workingDocHeading({
+        name: 'grabacion.webm',
+        contentKind: 'testimonio',
+        testimonioTitle: 'Limpiar los patios',
+        createdAt: '2026-10-24T18:00:00.000Z',
+      }),
+    ).toEqual({ title: 'Limpiar los patios', subtitle: '24 oct' });
   });
 
   it('no generated title, or a documento: the name, no subtitle', () => {

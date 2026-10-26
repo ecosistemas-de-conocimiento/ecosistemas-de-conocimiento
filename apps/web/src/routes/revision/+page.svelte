@@ -101,7 +101,6 @@
             <!-- 🔴 The gate's NEUTRAL title, rendered as sent. Nothing here
                  reconstructs a better label from another field. -->
             <span class="title">{hold.title}</span>
-            {#if hold.generatedTitle}<span class="label">{hold.label}</span>{/if}
           </a>
           <p class="meta">
             <span class="badge">{survivorCountLabel(hold.survivorCount)}</span>
@@ -228,11 +227,6 @@
     font-family: var(--edc-font-display);
     font-size: 1.1rem;
     font-weight: 700;
-  }
-  .label {
-    display: block;
-    font-size: 0.85rem;
-    color: var(--edc-color-ink-soft);
   }
   .meta {
     display: flex;

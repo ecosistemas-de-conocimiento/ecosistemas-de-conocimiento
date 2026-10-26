@@ -8,15 +8,16 @@ describe('admin DocumentsTable: testimonio titles (owner ruling 2026-10-24)', ()
     expect(DOC_FIELDS).toEqual(expect.arrayContaining(['contentKind', 'tema', 'testimonioTitle']));
   });
 
-  it('a testimonio shows its generated title over "Testimonio · <tema>", not the filename', () => {
+  it('a testimonio shows its generated title over its short day, not the filename', () => {
     const row = parseDocRow({
       id: 3,
       name: 'grabacion-0012.webm',
       contentKind: 'testimonio',
       tema: 'dengue',
       testimonioTitle: 'Limpiar los patios antes de la lluvia',
+      createdAt: '2026-10-24T18:00:00.000Z',
     });
-    expect(row).toMatchObject({ title: 'Limpiar los patios antes de la lluvia', subtitle: 'Testimonio · Prevención del dengue' });
+    expect(row).toMatchObject({ title: 'Limpiar los patios antes de la lluvia', subtitle: '24 oct' });
   });
 
   it('without a generated title: the label, no subtitle', () => {

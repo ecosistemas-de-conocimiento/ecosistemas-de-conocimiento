@@ -163,44 +163,63 @@ export function generatedTestimonyTitle(raw: unknown): string | null {
 }
 
 /**
- * What a testimonio card shows: the generated title with "Testimonio · <topic>"
- * under it, or — no title yet, or generation failed — the label alone.
+ * `2026-10-24T…` → `24 oct`: the short day under a testimonio's generated
+ * title (owner ruling 2026-10-26). Empty string when unparseable. Fixed to
+ * Mexico City so server and browser render the same day.
+ */
+export function shortDay(value: unknown): string {
+  if (typeof value !== 'string' && typeof value !== 'number') return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime()) || d.getTime() <= 0) return '';
+  return new Intl.DateTimeFormat('es-MX', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'America/Mexico_City',
+  }).format(d);
+}
+
+/**
+ * What a testimonio card shows: the generated title with its short day under
+ * it (owner ruling 2026-10-26; `TestimonySource` draws the source icon), or —
+ * no title yet, or generation failed — "Testimonio · <topic>" alone.
+ *
+ * ⚠ `subtitle` is `''`, not `null`, for a generated title with no usable
+ * date: `null` alone means "no generated title".
  */
 export function testimonyHeading(
   generated: unknown,
   topic: string | null | undefined,
+  createdAt: unknown = null,
 ): { title: string; subtitle: string | null } {
-  const label = testimonyLabel(topic);
   const title = generatedTestimonyTitle(generated);
-  return title ? { title, subtitle: label } : { title: label, subtitle: null };
+  return title ? { title, subtitle: shortDay(createdAt) } : { title: testimonyLabel(topic), subtitle: null };
 }
 
 /**
  * A document row as "Mis documentos" and the conversation panel show it.
  *
- * A testimonio with a system-proposed title shows that title, with
- * "Testimonio · <tema>" under it; anything else keeps the name the backend let
- * this caller read (the uploader's own filename), with no subtitle.
+ * A testimonio with a system-proposed title shows that title, with its short
+ * day under it; anything else keeps the name the backend let this caller read
+ * (the uploader's own filename), with no subtitle.
  */
 export function workingDocHeading(row: {
   name?: unknown;
   contentKind?: unknown;
-  tema?: unknown;
   testimonioTitle?: unknown;
+  createdAt?: unknown;
 }): { title: string; subtitle: string | null } {
   const name = typeof row.name === 'string' && row.name ? row.name : 'Documento sin título';
   if (row.contentKind !== 'testimonio') return { title: name, subtitle: null };
   const generated = generatedTestimonyTitle(row.testimonioTitle);
-  return generated
-    ? { title: generated, subtitle: testimonyLabel(testimonyTopic(row.tema, null)) }
-    : { title: name, subtitle: null };
+  return generated ? { title: generated, subtitle: shortDay(row.createdAt) } : { title: name, subtitle: null };
 }
 
 /**
  * A chat source's title. A testimonio (`metadata.kind === 'testimonio'`, kept
- * by `$lib/server/citationProvenance`) reads `<generated title> — Testimonio ·
- * <ecosistema>` when it has one, else `Testimonio · <ecosistema> — «excerpt»`;
- * anything else keeps its own title.
+ * by `$lib/server/citationProvenance`) reads `<generated title> · <24 oct>`
+ * when it has one (both added server-side per read, `withTestimonioTitles`),
+ * else `Testimonio · <ecosistema> — «excerpt»`; anything else keeps its own
+ * title.
  *
  * ⚠ The ecosistema name, not `tema`: chunk metadata carries no `tema`, and
  * each ecosistema is one corpus topic (owner ruling, 4 ecosistemas). The
@@ -213,10 +232,13 @@ export function chatSourceTitle(
 ): string | null | undefined {
   // 🔴 A known kind, never the title: a documento may be titled "Testimonio".
   if (metadata?.kind !== 'testimonio') return title;
-  const label = testimonyLabel(testimonyTopic(null, ecosystemName));
   // The generated title (added server-side per read, `withTestimonioTitles`).
   const generated = generatedTestimonyTitle(metadata?.testimonioTitle);
-  if (generated) return `${generated} — ${label}`;
+  if (generated) {
+    const day = shortDay(metadata?.testimonioDate);
+    return day ? `${generated} · ${day}` : generated;
+  }
+  const label = testimonyLabel(testimonyTopic(null, ecosystemName));
   const excerpt = typeof metadata?.excerpt === 'string' ? metadata.excerpt.trim() : '';
   return excerpt ? `${label} — «${excerpt}»` : label;
 }
@@ -583,7 +605,7 @@ export interface LibraryItem {
   excerpt: string | null;
   /**
    * The line under the title. For a testimonio with a system-proposed title,
-   * "Testimonio · <tema>" (owner ruling 2026-10-24); `null` otherwise.
+   * its short day (`24 oct`, owner ruling 2026-10-26); `null` otherwise.
    */
   subtitle: string | null;
 }

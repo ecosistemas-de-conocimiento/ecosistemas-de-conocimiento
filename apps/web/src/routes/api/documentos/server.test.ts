@@ -251,6 +251,14 @@ describe('GET /api/documentos — the list', () => {
     expect(body.docs[0]!.uploadedBy).toBeUndefined();
     expect(text).not.toContain('u@test');
   });
+
+  it('sends contentKind and testimonioTitle, so Mis documentos shows the generated title', async () => {
+    mockedBackendFetch.mockResolvedValueOnce(
+      listResponse([doc(11, { contentKind: 'testimonio', testimonioTitle: 'Rampas que nadie mantiene' })]),
+    );
+    const body = (await (await GET(makeEvent({}))).json()) as { docs: Record<string, unknown>[] };
+    expect(body.docs[0]).toMatchObject({ contentKind: 'testimonio', testimonioTitle: 'Rampas que nadie mantiene' });
+  });
 });
 
 describe('GET /api/documentos — degradation', () => {

@@ -3,6 +3,7 @@
   import { app } from '$lib/stores/app.svelte';
   import { Button } from '$lib/primitives';
   import Markdown from './Markdown.svelte';
+  import TestimonySource from './TestimonySource.svelte';
   import type { WorkingDoc } from '$lib/types';
   import { publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
   import {
@@ -541,9 +542,9 @@
               <input
                 class="title-input flex-1 min-w-0 bg-transparent text-sm text-ink outline-none rounded px-1"
                 value={d.title}
-                title={d.subtitle ? `${d.title} — ${d.subtitle}` : d.title}
+                title={d.title}
                 aria-label="Título del documento"
-                readonly={Boolean(d.subtitle)}
+                readonly={d.subtitle != null}
                 oninput={(e) => {
                   if (sid) {
                     d.title = e.currentTarget.value;
@@ -551,6 +552,11 @@
                   }
                 }}
               />
+              {#if d.subtitle != null}
+                <span class="shrink-0 text-[10px] text-ink-soft"
+                  ><TestimonySource audio={d.kind === 'audio'} day={d.subtitle} /></span
+                >
+              {/if}
               {#if d.kind && d.kind !== 'markdown'}
                 <span class="chip text-[9px] uppercase tracking-wider">{d.kind}</span>
               {/if}
