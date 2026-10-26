@@ -84,6 +84,19 @@ describe('rejectPublished', () => {
     expect(out).toMatchObject({ id: '7', decision: 'rejected', reviewId: '55', anonymisationStatus: 'rejected' })
   })
 
+  it('🔴 withdraws a published GATED documento the same way (participant PDF)', async () => {
+    const { payload, store, created, calls } = fakePayload(
+      published({ contentKind: 'documento', anonymise: true, name: 'informe.pdf', testimonioTitle: null }),
+    )
+    const { client } = fakeClient(calls)
+    const out = await rejectPublished({ payload, documentId: 7, user: reviewer, clientFor: () => client })
+
+    expect(calls).toEqual(['audit', 'retire:eco-1', 'row'])
+    expect(created[0]).toMatchObject({ document: 7, organization: 1, reviewer: 9, decision: 'rejected' })
+    expect(store).toMatchObject({ publicationStatus: 'draft', anonymisationStatus: 'rejected', redactedText: null })
+    expect(out).toMatchObject({ id: '7', decision: 'rejected', anonymisationStatus: 'rejected' })
+  })
+
   it('a failed retire leaves the row published and throws', async () => {
     const { payload, store } = fakePayload(published())
     const client = {
@@ -98,7 +111,9 @@ describe('rejectPublished', () => {
     ['not a reviewer there', published(), outsider, undefined],
     ['a participant', published(), reviewer, 'member'],
     ['a draft', published({ publicationStatus: 'draft' }), reviewer, undefined],
-    ['a documento', published({ contentKind: 'documento' }), reviewer, undefined],
+    ['an ungated documento', published({ contentKind: 'documento', anonymise: false }), reviewer, undefined],
+    ['a documento with no anonymise value', published({ contentKind: 'documento' }), reviewer, undefined],
+    ['a gated documento that is a draft', published({ contentKind: 'documento', anonymise: true, publicationStatus: 'draft' }), reviewer, undefined],
     ['missing', null, reviewer, undefined],
   ])('refuses %s with the one 404 error', async (_case, row, user, reviewerRole) => {
     const { payload, created } = fakePayload(row, { reviewerRole })
@@ -114,9 +129,25 @@ describe('listPublishedTestimonios', () => {
   it('lists with the generated or neutral title, never `name`', async () => {
     const { payload } = fakePayload(published())
     const out = await listPublishedTestimonios({ payload, organizationId: 1, user: reviewer })
-    expect(out).toEqual([{ id: '7', title: 'La siembra del maíz', updatedAt: '2026-10-24T10:00:00.000Z' }])
+    expect(out).toEqual([
+      { id: '7', title: 'La siembra del maíz', updatedAt: '2026-10-24T10:00:00.000Z', contentKind: 'testimonio' },
+    ])
     const { payload: p2 } = fakePayload(published({ testimonioTitle: null }))
     expect((await listPublishedTestimonios({ payload: p2, organizationId: 1, user: reviewer }))[0]!.title).toBe('Testimonio')
+  })
+
+  it('🔴 queries gated documentos too, titled by their own name', async () => {
+    const { payload } = fakePayload(
+      published({ contentKind: 'documento', anonymise: true, name: 'informe.pdf', testimonioTitle: null }),
+    )
+    const out = await listPublishedTestimonios({ payload, organizationId: 1, user: reviewer })
+    expect(out).toEqual([
+      { id: '7', title: 'informe.pdf', updatedAt: '2026-10-24T10:00:00.000Z', contentKind: 'documento' },
+    ])
+    const where = JSON.stringify((payload as unknown as { find: { mock: { calls: Array<[{ where: unknown }]> } } })
+      .find.mock.calls.find((c) => JSON.stringify(c[0].where).includes('publicationStatus'))![0].where)
+    expect(where).toContain('"anonymise":{"equals":true}')
+    expect(where).toContain('"contentKind":{"equals":"testimonio"}')
   })
 
   it('refuses a non-reviewer', async () => {

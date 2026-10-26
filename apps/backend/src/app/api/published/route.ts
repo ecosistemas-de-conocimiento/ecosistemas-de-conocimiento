@@ -1,5 +1,5 @@
 /**
- * GET /api/published?organization=<id> — the published testimonios a reviewer
+ * GET /api/published?organization=<id> — the published testimonios (and gated documentos) a reviewer
  * may reject after the fact. Logic and access: `lib/rejectPublished.ts`.
  *
  *   200 { items: PublishedSummary[] }   400 no `organization`   401   404 not yours to review

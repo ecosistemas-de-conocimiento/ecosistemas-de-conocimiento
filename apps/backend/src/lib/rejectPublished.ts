@@ -1,5 +1,8 @@
 /**
- * 🔴 REJECTING A TESTIMONIO THAT IS ALREADY PUBLISHED.
+ * 🔴 REJECTING A TESTIMONIO — OR A GATED DOCUMENTO — THAT IS ALREADY PUBLISHED.
+ *
+ * A gated documento (`anonymise = true`: every participant PDF/DOCX) is
+ * auto-published through the same gate, so it gets the same withdrawal.
  *
  * A participant's testimonio is published as soon as the gate clears it
  * (`lib/autoPublish.ts`, owner rule 2026-10-24). Review comes after, now and
@@ -20,7 +23,7 @@
  * draft copy was already retired when it was published (`confirmPublish`).
  *
  * ⚠ REFUSALS ARE `HoldNotVisibleError` (404), like every other review route:
- * unknown id, not your ecosistema, not a reviewer, not a published testimonio.
+ * unknown id, not your ecosistema, not a reviewer, not published gated content.
  */
 
 import type { Payload } from 'payload'
@@ -32,6 +35,13 @@ import { publishedCorpus } from './corpus'
 import { retireFrom, type CorpusMover } from './publishDocument'
 
 type Id = number | string
+
+/**
+ * Testimonio, or a documento filed for anonymisation. `=== true` on the stored
+ * column: an ungated documento is the uploader's to unpublish, not a reviewer's.
+ */
+const isReviewable = (row: Record<string, unknown>): boolean =>
+  row.contentKind === 'testimonio' || (row.contentKind === 'documento' && row.anonymise === true)
 
 /** Same question as `holdReview.ts` asks: where may this caller review? */
 async function mayReviewIn(payload: Payload, user: unknown, organizationId: Id): Promise<boolean> {
@@ -45,12 +55,17 @@ async function mayReviewIn(payload: Payload, user: unknown, organizationId: Id):
 
 export interface PublishedSummary {
   id: string
-  /** 🔴 `testimonioTitle` (made from redacted text) or a neutral label. Never `name`. */
+  /**
+   * 🔴 Testimonio: `testimonioTitle` (made from redacted text) or a neutral
+   * label, never `name`. Gated documento: its own `name` (owner ruling
+   * 2026-10-26: it keeps its title).
+   */
   title: string
   updatedAt: string | null
+  contentKind: 'testimonio' | 'documento'
 }
 
-/** The published testimonios of one ecosistema, newest first. No text. */
+/** The published testimonios and gated documentos of one ecosistema, newest first. No text. */
 export async function listPublishedTestimonios(args: {
   payload: Payload
   organizationId: Id
@@ -65,7 +80,12 @@ export async function listPublishedTestimonios(args: {
       where: {
         and: [
           { organization: { equals: organizationId } },
-          { contentKind: { equals: 'testimonio' } },
+          {
+            or: [
+              { contentKind: { equals: 'testimonio' } },
+              { and: [{ contentKind: { equals: 'documento' } }, { anonymise: { equals: true } }] },
+            ],
+          },
           { publicationStatus: { equals: 'published' } },
         ],
       },
@@ -76,14 +96,16 @@ export async function listPublishedTestimonios(args: {
     })
     .catch(() => null)
   if (!found) throw new HoldNotVisibleError()
-  return (found.docs as unknown as Array<Record<string, unknown>>).map((row) => ({
-    id: String(row.id),
-    title:
-      typeof row.testimonioTitle === 'string' && row.testimonioTitle.trim()
-        ? row.testimonioTitle.trim()
-        : 'Testimonio',
-    updatedAt: typeof row.updatedAt === 'string' ? row.updatedAt : null,
-  }))
+  return (found.docs as unknown as Array<Record<string, unknown>>).filter(isReviewable).map((row) => {
+    const documento = row.contentKind === 'documento'
+    const own = documento ? row.name : row.testimonioTitle
+    return {
+      id: String(row.id),
+      title: typeof own === 'string' && own.trim() ? own.trim() : documento ? 'Documento' : 'Testimonio',
+      updatedAt: typeof row.updatedAt === 'string' ? row.updatedAt : null,
+      contentKind: documento ? 'documento' : 'testimonio',
+    }
+  })
 }
 
 export async function rejectPublished(args: {
@@ -99,7 +121,7 @@ export async function rejectPublished(args: {
   const row = (await payload
     .findByID({ collection: 'documents', id: documentId as never, depth: 0, overrideAccess: true })
     .catch(() => null)) as Record<string, unknown> | null
-  if (!row || row.contentKind !== 'testimonio' || row.publicationStatus !== 'published') {
+  if (!row || !isReviewable(row) || row.publicationStatus !== 'published') {
     throw new HoldNotVisibleError()
   }
   const organizationId = relationId(row.organization)

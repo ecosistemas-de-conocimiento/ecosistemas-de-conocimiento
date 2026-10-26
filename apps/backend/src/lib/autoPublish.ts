@@ -110,7 +110,7 @@ export function fileParticipantAudioAsTestimonio(input: {
 }
 
 /**
- * Should a new PDF/DOCX `documento` be filed with `anonymise` set? A
+ * Should a new `documento` (any declared `kind` but audio) be filed with `anonymise` set? A
  * participant's always. Staff choose at upload.
  */
 export function anonymiseParticipantUpload(input: { role: OrgRole | null; platformAdmin: boolean }): boolean {

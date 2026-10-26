@@ -33,7 +33,7 @@ const ben = { id: BEN, isActive: true }
 const admin = { id: 99, isActive: true, isPlatformAdmin: true }
 
 const testimonio = { contentKind: 'testimonio', uploadedBy: ANA }
-const documento = { contentKind: 'documento', uploadedBy: ANA }
+const documento = { contentKind: 'documento', anonymise: false, uploadedBy: ANA }
 
 const fieldAccess = (
   fn: typeof gatedOriginalReadable,
@@ -116,6 +116,16 @@ describe('field access', () => {
     expect(fieldAccess(gatedOriginalReadable, admin, gated)).toBe(true)
     expect(fieldAccess(gatedQueryableReadable, ben, gated)).toBe(true)
     expect(fieldAccess(gatedOriginalReadable, ben, { ...documento, anonymise: false })).toBe(true)
+  })
+
+  /** 2026-10-26 audit: an exclude-mode select drops `anonymise` despite `forceSelect`. */
+  it('🔴 a documento whose `anonymise` is missing or null hides its original (fails closed)', () => {
+    const { anonymise: _drop, ...projected } = documento
+    expect(mayReadGatedOriginal(ben, projected)).toBe(false)
+    expect(mayReadGatedOriginal(ben, { ...documento, anonymise: null })).toBe(false)
+    expect(mayReadGatedOriginal(ana, projected)).toBe(true)
+    // `identity` (name / uploadedBy / session) stays readable on a documento.
+    expect(mayReadGatedOriginal(ben, projected, 'identity')).toBe(true)
   })
 
   it('🔴 `anonymise` is force-selected, so a projected row still carries it', () => {

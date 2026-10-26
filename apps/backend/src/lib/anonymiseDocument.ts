@@ -119,8 +119,11 @@ export function mustPassAnonymisationGate(rawContentKind: unknown, rawAnonymise?
  * what any corpus gets.
  *
  * ⚠ FAILS CLOSED ON A PRESENT VALUE: anything but `false`/`null`/absent gates.
- * Absent is ungated so rows assembled in code keep today's documento rule; every
- * Payload read carries the column (`forceSelect` in `collections/Documents.ts`).
+ * Absent is ungated so rows assembled in code keep today's documento rule.
+ *
+ * 🔴 NOT FOR READ ACCESS. `forceSelect` does not survive an exclude-mode select
+ * (`payload@3.88.0`), so a projected row can lack the column; read access
+ * (`mayReadGatedOriginal`) requires `anonymise === false` instead.
  */
 export function anonymiseRequested(rawAnonymise: unknown): boolean {
   return rawAnonymise !== undefined && rawAnonymise !== null && rawAnonymise !== false

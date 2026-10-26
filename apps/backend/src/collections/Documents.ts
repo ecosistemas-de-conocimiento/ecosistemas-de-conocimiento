@@ -318,8 +318,13 @@ export function mayReadGatedOriginal(
   if (!user) return false
   if (isPlatformAdminUser(user)) return true
   if (!doc) return false
-  // 🔴 `anonymise` is in `forceSelect`, so a projected row still carries it.
-  if (doc.contentKind === 'documento' && (scope === 'identity' || !anonymiseRequested(doc.anonymise))) {
+  // 🔴 `=== false`, FAILING CLOSED on an absent `anonymise`. `forceSelect` does
+  // NOT cover an exclude-mode select on `payload@3.88.0`: `?select[anonymise]=false`
+  // hands this a row without the column, and `!anonymiseRequested(undefined)`
+  // opened the raw original of a gated documento to every member (2026-10-26
+  // audit; `Documents.selectProjection.pg.test.ts`). NULL is gated too, as in
+  // `mediaVisibleToCaller`.
+  if (doc.contentKind === 'documento' && (scope === 'identity' || doc.anonymise === false)) {
     return true
   }
   const callerId = (user as { id?: unknown }).id
@@ -1040,11 +1045,16 @@ async function enforceVocesUploadRights(args: {
   next.anonymise = next.anonymise === true || next.anonymise === 'true'
 
   /**
-   * 🔴 A PARTICIPANT'S PDF OR DOCX GOES THROUGH THE GATE (owner ruling
+   * 🔴 A PARTICIPANT'S DOCUMENTO GOES THROUGH THE GATE (owner ruling
    * 2026-10-26). It auto-publishes (`lib/autoPublish.ts`), so it is gated like
-   * a testimonio but stays a `documento`. A markdown note has no pipeline.
+   * a testimonio but stays a `documento`.
+   *
+   * 🔴 WHATEVER `kind` IT DECLARES. `kind` is the client's word, not the file's:
+   * keyed on `pdf`/`docx` (until the 2026-10-26 audit), a PDF sent as
+   * `kind: 'markdown'` skipped the gate. Audio is excluded only because the
+   * branch below files it as a `testimonio`, which is gated anyway.
    */
-  if (declared === 'documento' && !next.anonymise && (next.kind === 'pdf' || next.kind === 'docx')) {
+  if (declared === 'documento' && !next.anonymise && next.kind !== 'audio') {
     const organizationId = relationId(next.organization)
     const role =
       organizationId === null ? null : await roleInOrganization(req.payload, user.id, organizationId)
@@ -2879,6 +2889,8 @@ export const Documents: CollectionConfig = {
        * row would publish the raw original.
        *
        * ⚠ IN `forceSelect`: `mayReadGatedOriginal` reads it off projected rows.
+       * That covers include-mode selects only — an exclude-mode select can still
+       * drop it, which is why `mayReadGatedOriginal` requires `=== false`.
        */
       name: 'anonymise',
       type: 'checkbox',

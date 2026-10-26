@@ -412,9 +412,19 @@ describe('🔴 a documento filed for anonymisation', () => {
     expect(next).toMatchObject({ contentKind: 'documento', anonymise: true })
   })
 
-  it('a member’s markdown note is not (it has no pipeline)', async () => {
-    const next = await create({ kind: 'markdown', contentKind: 'documento' }, ANA)
-    expect(next.anonymise).toBe(false)
+  /**
+   * 🔴 2026-10-26 audit: `kind` is what the CLIENT declares. A PDF sent as
+   * `kind: 'markdown'` (or with no kind) skipped the gate. Every member
+   * documento is gated, whatever it claims to be.
+   */
+  it.each([['markdown'], [undefined], ['bogus']])('🔴 a member’s documento declared kind %s is filed with anonymise too', async (kind) => {
+    const next = await create({ ...(kind === undefined ? {} : { kind }), contentKind: 'documento' }, ANA)
+    expect(next).toMatchObject({ contentKind: 'documento', anonymise: true })
+  })
+
+  it('a member’s audio is still filed as a testimonio', async () => {
+    const next = await create({ kind: 'audio', contentKind: 'documento' }, ANA)
+    expect(next.contentKind).toBe('testimonio')
   })
 
   it.each([
