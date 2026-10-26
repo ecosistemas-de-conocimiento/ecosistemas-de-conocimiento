@@ -85,7 +85,7 @@ Proxy must stay OFF: Traefik on the box obtains Let's Encrypt certificates over 
 
 ## 2. Coolify
 
-- Version 4.4.6, installed with the official script (`curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash`).
+- Version 4.5.0 (measured 2026-10-26, `docker ps` image `coollabsio/coolify:4.5.0`; was 4.4.6 at install), installed with the official script (`curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash`).
 - Dashboard: `https://coolify.ecosistemasdeconocimiento.com` — ✅ serves over HTTPS with a Let's
   Encrypt certificate since 2026-10-17 07:52 UTC (measured: issuer `YR2`, expires 2027-01-15; `/`
   → 302 `/login`; API answers 200). Coolify's instance FQDN was already set to that URL. The first
@@ -1787,8 +1787,8 @@ Also ingest scripts (`ingest-folder.sh`, `pptx-to-pdf.sh`). No compose or variab
 columns. `payload_migrations` stays at 5 (last `20261024_230631_documents_testimonio_title`),
 read before and after the deploy; `edc_ai` stays at 6.
 
-⚠ Coolify on the box is now **4.5.0** (`coollabsio/coolify:4.5.0`, `docker ps`), not the 4.4.6 of
-§2. The deploy API answered the same way.
+⚠ Coolify on the box is now **4.5.0** (`coollabsio/coolify:4.5.0`, `docker ps`), not the 4.4.6 §2 recorded before
+10-26 (§2 now corrected). The deploy API answered the same way.
 
 Backup `/root/backups/20261026T2104Z/` (`edc_ai` 6.2 MB, `edc_backend` 614 KB; `pg_restore -l`
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261026T2104Z/`
