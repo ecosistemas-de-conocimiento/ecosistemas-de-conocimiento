@@ -105,6 +105,8 @@ interface DocRow {
   name?: unknown
   organization?: unknown
   contentKind?: unknown
+  anonymise?: unknown
+  publicationStatus?: unknown
   extractedText?: unknown
   redactedText?: unknown
   anonymisationStatus?: unknown
@@ -265,6 +267,8 @@ export async function runGraphBackfill(
       // 🔴 The column, verbatim. No default is applied here: `personaAllowed`
       // fails closed on an unexpected value, which is the safe direction.
       contentKind: typeof doc.contentKind === 'string' ? doc.contentKind : null,
+      anonymise: doc.anonymise,
+      publicationStatus: doc.publicationStatus,
       text: corpusText.text,
       // 🔴 `titleFor`, as the live path. ⚠ The name is withheld for ANY gated
       // raw kind: `contentKindOf` maps an unknown kind to `documento`, whose

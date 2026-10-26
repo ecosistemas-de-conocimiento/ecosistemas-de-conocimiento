@@ -1863,6 +1863,7 @@ export async function scheduleGraphExtractionForDoc(args: {
        * same text as the corpus, so it inherits the same condition.
        */
       anonymisationStatus?: unknown
+      publicationStatus?: unknown
     }
 
     const corpusText = corpusTextFor(row)
@@ -1896,6 +1897,10 @@ export async function scheduleGraphExtractionForDoc(args: {
       // value; defaulting here would turn that safe direction into the unsafe
       // one.
       contentKind: fresh.contentKind ?? null,
+      // 🔴 Fingerprints of the row as queued. The run re-reads the row and
+      // aborts if any of these changed (`lib/graph/schedule.ts`).
+      anonymise: row.anonymise,
+      publicationStatus: row.publicationStatus,
       text: corpusText.text,
       /**
        * 🔴 NEVER `documents.name` FOR GATED CONTENT. It is free text the
