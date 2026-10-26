@@ -1,6 +1,10 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `f85493b` (document texts up to 2,000,000
+**Status:** live since 2026-10-17. Dev runs `main` @ `34296a8` (`documents.anonymise`: participant
+PDF/DOCX documentos and staff "Anonimizar" uploads pass the anonymisation gate; exclude-select
+fails closed; interviewer turns for a participant's own story; source icon and day under testimonio
+titles; migration `20261026_160000_documents_anonymise`), deployed 2026-10-26 22:33 UTC — see §4zn.
+Before that, `f85493b` (document texts up to 2,000,000
 characters, so a PDF over 40,000 characters stores its `extractedText`; a throw in extract+ingest
 marks the row `failed`), deployed 2026-10-26 21:04 UTC — see §4zm. Before that, `410756a` (live recordings save as
 `audio/webm`, `BODY_SIZE_LIMIT=201M`, better live-text stitching, a send right after "Nueva
@@ -1817,6 +1821,73 @@ both in use: `858f009f9709` (staging's redis) and `57e4255cc971` (`coolify-redis
 Spend: this run booked **$0.000169** (one `/v1/ingest` row, 22 chunks, 21:11:50 UTC).
 `usage_logs` total $2.104523 → $2.110039 over the run; the rest is other users' chat on dev
 (`router.route` rows in `edc-eco-6`/`edc-eco-7` from 20:43 to 21:13 UTC, none from this agent).
+
+**Disk**, `df -h /` free: 57 GB before; 43 GB after the build; 57 GB after the cleanup. Images
+9.7 GB, build cache 0.
+
+### 4zn. ⚠ Done 2026-10-26 22:32–22:46 UTC: `34296a8`, dev only — gated documentos, one Payload migration applied by hand
+
+All measured by the deploy agent. Staging was not touched (still `97d5316`, 6 containers,
+`docker ps`). edcai and the ingest lane were told before the deploy by the coordinator. The
+restart dropped the backend's in-memory graph queue, as expected; another lane re-queues it.
+`34296a8` = `documents.anonymise` (owner rulings 2026-10-26: every participant PDF/DOCX documento,
+and staff uploads ticked "Anonimizar", go through the anonymisation gate; other members read only
+the redacted text), exclude-mode `select` fails closed on gated text (`a01a26d`), reviewers
+withdraw gated documentos, the chat interviewer for a participant's own story (`bd20c31`), the
+source icon and short day under testimonio titles (`TestimonySource.svelte`), and the one-off
+`scripts/regate-member-documentos.ts`. No compose or variable change.
+
+**Migration.** `payload_migrations` 5 → 6: `20261026_160000_documents_anonymise`
+(`ALTER TABLE documents ADD COLUMN anonymise boolean DEFAULT false`; existing rows read `false`,
+nothing backfilled; 326 rows after). `edc_ai` unchanged at 6.
+⚠ **The container start did not apply it.** The backend came up at 22:39:29 UTC with
+`payload migrate:status` showing the migration `No`, and its log held no migrate output at all
+(first line "Next.js 15.4.11"), though the image CMD is `payload migrate && exec next start`.
+Applied by hand at 22:40:38 UTC in the backend container (`cd /repo/apps/backend;
+node_modules/.bin/payload migrate`, 8 ms). Cause not found. Between 22:39:29 and 22:40:38 no app
+query hit the missing column (postgres logged only the deploy agent's own query). **After every
+deploy with a migration, read `payload_migrations` — do not trust the start.**
+
+Backup `/root/backups/20261026T2232Z/` (`edc_ai` 55 MB, `edc_backend` 3.1 MB; `pg_restore -l`
+137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261026T2232Z/`
+with `timeout 180 scp`; sha256 of both dumps matched before the deploy.
+Deploy `6y8i4t3fem7fjo8hlnegah4e` 22:33:23 → 22:39:32 UTC, `finished`, commit `34296a88…`.
+9 containers up; `web`, `backend` and `ai-service` run image tag `34296a880953…`. Health 200 on
+`dev.` and `api.dev.`. audio-service rebuilt by the deploy (§4zk): `edc-audio-service:dev` is now
+`8ef9fadc037f`, created 22:35:36 UTC; the old `e3c1b5681b45` is gone.
+
+0 error/fatal lines in web, backend, ai-service and the three audio containers at startup and
+after the smoke. Postgres logged 5 `ERROR` lines, all the deploy agent's own read-only queries.
+
+| check | result |
+|---|---|
+| 1a. leak, participant JWT on `api.dev` REST | `GET /api/documents?select[anonymise]=false&limit=5`: 5 rows, 0 with `extractedText`/`bodyMarkdown`/`heldText`. `?where[anonymise][equals]=true&select[contentKind]=false`: 0 rows (no gated row on dev before the test). `?where[contentKind][equals]=documento&select[anonymise]=false`: 71 rows, raw text only on 268–270, the participant's own drafts (the uploader reads its own original, by design) |
+| 1b. upload as participant | `smoke-gate.pdf` (18 KB, 4 invented names, an address, a phone) via web `POST /api/documentos`, Discapacidad (id 7): doc 350, **`anonymise: true`** without asking; ingest `ready`, gate `ready` and `published` within 6 s |
+| 1c. investigador, REST | `GET /api/documents/350` plain, with `select[anonymise]=false`, with `select[contentKind]=false`, as a list with `select[anonymise]=false`, and with `select[extractedText]=true`: `extractedText`, `bodyMarkdown`, `heldText` absent on every one; `redactedText` 321 characters |
+| 1d. investigador, Biblioteca (Playwright, after hydration) | `/biblioteca/350` shows the redacted text ("Mi nombre es [Persona B] y vivo en la [Domicilio C]…"); none of the 5 invented values on the page |
+| 2. interviewer, participant, Discapacidad, new conversation 195 (Playwright) | "Mi hija tiene discapacidad auditiva y en la escuela no la quisieron inscribir" → one follow-up question, 0 `[n]`, 0 sources (12.6 s). "¿Qué dicen los documentos sobre la inscripción escolar?" → answer with `[1]`, `[3, 4]`, `[6]`, 4 source cards (15.3 s) |
+| 3. icon + day line | Biblioteca (participant and investigador, eco 7): the one Voz card on the first page shows the mic icon and "26 oct"; eco 1: 30 cards with the line. Mis documentos (investigador, eco 7): 58 lines ("Conversación" icon, "21 oct"). The participant's own Mis documentos holds no testimonio, so 0 lines there |
+
+0 page errors. Screenshots in the deploy agent's scratchpad `smoke/shot-*.png`.
+
+Cleanup of test data: doc 350 deleted as its uploader (200), conversation 195 deleted (200). 0 rows
+left in `documents`, `sessions`, `messages`, `media`, `graph_mentions` (document 350) or ai-service
+`documents`. Graph extraction of doc 350 had finished before the delete (4 entities, 2 relations).
+
+**Regate dry run** (`node_modules/.bin/payload run scripts/regate-member-documentos.ts`, no
+`--apply`, in the backend container): `{"examined":68,"matched":0,"regated":0,"ids":[]}`. **0
+member-uploaded published documentos** on dev. SQL agrees: documentos by uploader role are
+`member` 3 drafts (268–270), `owner` 2 drafts and 68 published. `--apply` was not run (an audit
+found it leaves raw-text graph rows).
+
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three `f85493b`
+images by exact name (no `410756a` image was left); `docker builder prune -af` reclaimed 14.76 GB.
+Two dangling images left, both in use: `858f009f9709` (staging's redis) and `57e4255cc971`
+(`coolify-redis`).
+
+Spend: `usage_logs` total $2.599013 → $2.653339 over the run, mostly other lanes' work in
+`edc-eco-7`. This run's rows (inferred by time and size): the 2 chats ≈ $0.0063, their stored-turn
+gate calls ≈ $0.0005, the doc 350 graph call $0.0010, ingest < $0.00001 — ≈ **$0.008**.
 
 **Disk**, `df -h /` free: 57 GB before; 43 GB after the build; 57 GB after the cleanup. Images
 9.7 GB, build cache 0.
