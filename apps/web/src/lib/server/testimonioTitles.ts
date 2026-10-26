@@ -46,15 +46,21 @@ export function testimonioDocIds(provenances: ReadonlyArray<Provenance | null | 
   return [...ids].slice(0, MAX_IDS);
 }
 
-export type TitleFetcher = (ids: readonly string[]) => Promise<Map<string, string>>;
+/** A generated title and the row's `createdAt` (the chat card's short day). */
+export interface TestimonioTitle {
+  title: string;
+  createdAt: string | null;
+}
+
+export type TitleFetcher = (ids: readonly string[]) => Promise<Map<string, TestimonioTitle>>;
 
 /**
- * id → title, read with the caller's token. Only cleared, published
+ * id → title and day, read with the caller's token. Only cleared, published
  * testimonios; anything else, and any failure, is absent from the map.
  */
 export function backendTitleFetcher(token: string | undefined): TitleFetcher {
   return async (ids) => {
-    const out = new Map<string, string>();
+    const out = new Map<string, TestimonioTitle>();
     if (ids.length === 0) return out;
     try {
       const qs = new URLSearchParams({
@@ -67,6 +73,7 @@ export function backendTitleFetcher(token: string | undefined): TitleFetcher {
         // 🔴 A PAIR: the backend's read rule for the title reads the status.
         'select[anonymisationStatus]': 'true',
         'select[contentKind]': 'true',
+        'select[createdAt]': 'true',
       });
       const res = await backendFetch(token, `/api/documents?${qs.toString()}`, { method: 'GET' });
       if (!res.ok) return out;
@@ -76,7 +83,9 @@ export function backendTitleFetcher(token: string | undefined): TitleFetcher {
         if (row.contentKind !== 'testimonio') continue;
         if (row.anonymisationStatus !== 'ready' && row.anonymisationStatus !== 'approved') continue;
         const title = generatedTestimonyTitle(row.testimonioTitle);
-        if (title && row.id != null) out.set(String(row.id), title);
+        if (title && row.id != null) {
+          out.set(String(row.id), { title, createdAt: typeof row.createdAt === 'string' ? row.createdAt : null });
+        }
       }
     } catch {
       /* the fallback label stays */
@@ -85,15 +94,21 @@ export function backendTitleFetcher(token: string | undefined): TitleFetcher {
   };
 }
 
-/** The provenance with `metadata.testimonioTitle` on every chunk the map names. */
-export function applyTestimonioTitles(provenance: Provenance | null, titles: Map<string, string>): Provenance | null {
+/**
+ * The provenance with `metadata.testimonioTitle` (and `testimonioDate`) on
+ * every chunk the map names. Neither is persisted (citationProvenance allowlist).
+ */
+export function applyTestimonioTitles(
+  provenance: Provenance | null,
+  titles: Map<string, TestimonioTitle>,
+): Provenance | null {
   if (!provenance || titles.size === 0) return provenance;
   return {
     ...provenance,
     chunks: provenance.chunks.map((c) => {
       const id = testimonioDocId(c);
-      const title = id ? titles.get(id) : undefined;
-      return title ? { ...c, metadata: { ...c.metadata, testimonioTitle: title } } : c;
+      const t = id ? titles.get(id) : undefined;
+      return t ? { ...c, metadata: { ...c.metadata, testimonioTitle: t.title, testimonioDate: t.createdAt } } : c;
     }),
   };
 }

@@ -17,6 +17,7 @@
    * missing data and sends people looking for the person.
    */
   import { page } from '$app/stores';
+  import TestimonySource from '$lib/components/TestimonySource.svelte';
   import {
     formatLibraryDate,
     isMachineTranscript,
@@ -99,7 +100,7 @@
         <span class="date">{formatLibraryDate(doc.createdAt)}</span>
       </div>
       <h1>{doc.title}</h1>
-      {#if doc.subtitle}<p class="subtitle">{doc.subtitle}</p>{/if}
+      {#if doc.subtitle != null}<p class="subtitle"><TestimonySource audio={doc.fromAudio} day={doc.subtitle} /></p>{/if}
 
       <div class="meta">
         {#if voice}

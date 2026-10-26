@@ -260,10 +260,10 @@ export function toLibraryItem(
   // 🔴 `contentKind`, not `kind`. See `isGatedContent`.
   const gated = isGatedContent(row.contentKind);
   const testimonio = row.contentKind === 'testimonio';
-  // A testimonio: its generated title over "Testimonio · <tema or ecosistema>",
-  // or that label alone when it has none.
+  // A testimonio: its generated title over its short day (source icon in the page),
+  // or "Testimonio · <tema or ecosistema>" alone when it has none.
   const heading = testimonio
-    ? testimonyHeading(row.testimonioTitle, testimonyTopic(row.tema, ecosystemName))
+    ? testimonyHeading(row.testimonioTitle, testimonyTopic(row.tema, ecosystemName), row.createdAt)
     : null;
   return {
     id: String(row.id ?? ''),

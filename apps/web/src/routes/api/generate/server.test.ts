@@ -26,7 +26,7 @@ vi.mock('$env/dynamic/private', () => ({ env: ENV }));
 import { POST } from './+server';
 import { resetHybridCapabilityCache } from '$lib/server/engine/hybrid';
 import { ANSWER_NOT_SAVED_CODE } from '$lib/aiMessages';
-import { NO_ANSWER_REPLY } from '$lib/server/engine/prompt';
+import { NO_ANSWER_REPLY, chatSystemPrompt, interviewSystemPrompt } from '$lib/server/engine/prompt';
 import { toBrowserMessage } from '$lib/server/citationProvenance';
 import { citationsWithOrdinals, denseCitations } from '$lib/citationOrdinals';
 
@@ -852,6 +852,41 @@ describe('POST /api/generate — provenance sent to the browser is an allowlist'
 // ── Cited sources only (UX backlog #35) ──────────────────────────────────────
 // 🔴 The engine puts every retrieved chunk on the provenance. Only the ones the
 // answer marks with [N] may become citations, with N kept.
+describe('POST /api/generate — a testimonio turn meets the interviewer', () => {
+  const STORY = 'Mi hijo tiene discapacidad y en la escuela no lo aceptaban al principio';
+  const systemOf = (c: { body: unknown }) =>
+    String((c.body as { unit?: { systemPrompt?: unknown } }).unit?.systemPrompt ?? '');
+  const chatGenerate = () => generates().filter((c) => !String((c.body as { unit?: { input?: { userPrompt?: unknown } } }).unit?.input?.userPrompt ?? '').includes('Escribe exactamente tres'));
+
+  it('🔴 sync: a first-person story gets the interviewer prompt and no fallback sources', async () => {
+    world.answerText = 'Gracias por contarlo. ¿Dónde estaba la escuela?';
+    const body = (await (await POST(event(turn({ messages: [{ role: 'user', content: STORY }] })))).json()) as {
+      provenance: unknown;
+    };
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
+    expect(body.provenance).toBeNull();
+  });
+
+  it('🔴 stream: the same', async () => {
+    world.streamText = 'Gracias. ¿Quién le ayudó?';
+    const frames = await readSse(await POST(event(turn({ messages: [{ role: 'user', content: STORY }] }), true)));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
+    expect(frames.find((f) => f.type === 'done')!.provenance).toBeNull();
+  });
+
+  it('🔴 a direct question mid-story keeps variant E and its cited sources', async () => {
+    world.answerText = 'Las parteras acompañan los nacimientos [1].';
+    const messages = [
+      { role: 'user', content: STORY },
+      { role: 'assistant', content: '¿Dónde estaba la escuela?' },
+      { role: 'user', content: QUESTION },
+    ];
+    const body = (await (await POST(event(turn({ messages })))).json()) as { provenance: { chunks: unknown[] } };
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
+    expect(body.provenance.chunks.length).toBe(1);
+  });
+});
+
 describe('POST /api/generate — only cited sources are kept', () => {
   type Saved = { provenance?: { chunks: Array<{ ordinal?: number; chunkId: string }> } };
   const ordinalsOf = (p: Saved['provenance'] | null | undefined) => (p?.chunks ?? []).map((c) => c.ordinal);

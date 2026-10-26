@@ -145,8 +145,8 @@ export interface WorkingDoc {
    */
   attachedSessions?: Array<{ id: string; title: string }>;
   /**
-   * The line under the title: "Testimonio · <tema>" when `title` is a
-   * testimonio's system-proposed title (owner ruling 2026-10-24). Its presence
+   * The line under the title: the short day (`24 oct`) when `title` is a
+   * testimonio's system-proposed title (owner ruling 2026-10-26). Non-null
    * also means `title` is not the editable name: the title field is read-only.
    */
   subtitle?: string | null;

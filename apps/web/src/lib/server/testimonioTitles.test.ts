@@ -47,10 +47,11 @@ describe('testimonioDocIds', () => {
 
 describe('withTestimonioTitles', () => {
   it('adds metadata.testimonioTitle from the fetched map', async () => {
-    const fetchTitles = vi.fn(async () => new Map([['1', 'La escuela sin intérprete']]));
+    const fetchTitles = vi.fn(async () => new Map([['1', { title: 'La escuela sin intérprete', createdAt: '2026-10-24T18:00:00.000Z' }]]));
     const out = await withTestimonioTitles(prov([chunk('1'), chunk('9', { kind: 'documento' })]), fetchTitles);
     expect(fetchTitles).toHaveBeenCalledWith(['1']);
     expect(out!.chunks[0]!.metadata!.testimonioTitle).toBe('La escuela sin intérprete');
+    expect(out!.chunks[0]!.metadata!.testimonioDate).toBe('2026-10-24T18:00:00.000Z');
     expect(out!.chunks[1]!.metadata!.testimonioTitle).toBeUndefined();
   });
 
@@ -63,7 +64,7 @@ describe('withTestimonioTitles', () => {
 
 describe('messagesWithTestimonioTitles', () => {
   it('one lookup for a whole history', async () => {
-    const fetchTitles = vi.fn(async () => new Map([['1', 'Uno'], ['2', 'Dos títulos']]));
+    const fetchTitles = vi.fn(async () => new Map([['1', { title: 'Uno', createdAt: null }], ['2', { title: 'Dos títulos', createdAt: null }]]));
     const rows = await messagesWithTestimonioTitles(
       [{ id: 'a', provenance: prov([chunk('1')]) }, { id: 'b', provenance: prov([chunk('2')]) }, { id: 'c' }],
       fetchTitles,
@@ -79,7 +80,7 @@ describe('backendTitleFetcher', () => {
       new Response(
         JSON.stringify({
           docs: [
-            { id: 1, contentKind: 'testimonio', anonymisationStatus: 'ready', testimonioTitle: 'La escuela sin intérprete' },
+            { id: 1, contentKind: 'testimonio', anonymisationStatus: 'ready', testimonioTitle: 'La escuela sin intérprete', createdAt: '2026-10-24T18:00:00.000Z' },
             { id: 2, contentKind: 'testimonio', anonymisationStatus: 'held', testimonioTitle: 'Retenido no' },
             { id: 3, contentKind: 'testimonio', anonymisationStatus: 'ready', testimonioTitle: '[Persona A] habla' },
           ],
@@ -92,7 +93,8 @@ describe('backendTitleFetcher', () => {
     expect(url).toContain('where%5BpublicationStatus%5D%5Bequals%5D=published');
     expect(url).toContain('where%5BcontentKind%5D%5Bequals%5D=testimonio');
     expect(url).toContain('select%5BanonymisationStatus%5D=true');
-    expect([...titles]).toEqual([['1', 'La escuela sin intérprete']]);
+    expect(url).toContain('select%5BcreatedAt%5D=true');
+    expect([...titles]).toEqual([['1', { title: 'La escuela sin intérprete', createdAt: '2026-10-24T18:00:00.000Z' }]]);
   });
 
   it('a failed read is an empty map, never a throw', async () => {

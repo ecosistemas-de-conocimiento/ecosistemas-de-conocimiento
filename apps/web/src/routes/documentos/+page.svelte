@@ -25,6 +25,7 @@
    */
   import { Button } from '$lib/primitives';
   import { app } from '$lib/stores/app.svelte';
+  import TestimonySource from '$lib/components/TestimonySource.svelte';
   import { deleteConfirmCopy } from '$lib/documents';
   import { docStatusBadge } from '$lib/docStatus';
   import { canRetryGraph, GRAPH_RETRY_LABEL, graphBadge } from '$lib/graphStatus';
@@ -316,7 +317,7 @@
         <li class="row" class:loose data-testid={`owned-doc-${d.id}`}>
           <div class="row-head">
             <span class="name" title={d.title}>{d.title}</span>
-            {#if d.subtitle}<span class="subtitle">{d.subtitle}</span>{/if}
+            {#if d.subtitle != null}<span class="subtitle"><TestimonySource audio={d.kind === 'audio'} day={d.subtitle} /></span>{/if}
             {#if d.kind && d.kind !== 'markdown'}
               <span class="chip kind">{d.kind}</span>
             {/if}

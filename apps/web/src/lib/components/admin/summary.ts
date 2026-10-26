@@ -60,7 +60,7 @@ export interface AdminDocRow {
   id: string;
   title: string;
   /**
-   * The line under the title: "Testimonio · <tema>" under a testimonio's
+   * The line under the title: the short day (`24 oct`) under a testimonio's
    * system-proposed title (owner ruling 2026-10-24); `null` otherwise.
    */
   subtitle: string | null;
@@ -153,11 +153,11 @@ export function parseDocRow(raw: unknown): AdminDocRow | null {
   const id = relationId(row.id);
   if (!id) return null;
   const name = typeof row.name === 'string' && row.name.trim() ? row.name.trim() : 'Sin título';
-  // A testimonio: its generated title over "Testimonio · <tema>", or that label
+  // A testimonio: its generated title over its short day, or "Testimonio · <tema>"
   // alone. Never the filename, which nobody chose as a title (participants
   // never type one).
   const heading =
-    row.contentKind === 'testimonio' ? testimonyHeading(row.testimonioTitle, testimonyTopic(row.tema, null)) : null;
+    row.contentKind === 'testimonio' ? testimonyHeading(row.testimonioTitle, testimonyTopic(row.tema, null), row.createdAt) : null;
   return {
     id,
     title: heading ? heading.title : name,

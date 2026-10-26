@@ -13,9 +13,11 @@ import { backendFetch } from '$lib/server/auth';
 import {
   buildChatUnitRequest,
   CHAT_ENGINE_CONFIG,
+  chatEngineConfigFor,
   chatKindFilterAvailable,
   chatOrientScope,
   chatTurnHybrid,
+  chatTurnMode,
   chatTurnRetrievalPolicy,
   engineOrgId,
   makeChatDomainAdapter,
@@ -38,7 +40,7 @@ import { stampDraftProvenance } from '$lib/publication';
 import { citedBrowserProvenance, toBrowserMessage } from '$lib/server/citationProvenance';
 import { backendTitleFetcher, withTestimonioTitles } from '$lib/server/testimonioTitles';
 import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
-import { prepareTurn, respond, type ContextRef, type ContextScope, type Provenance } from '@edc/chat-engine/core';
+import { parseCitedOrdinals, prepareTurn, respond, type ContextRef, type ContextScope, type Provenance } from '@edc/chat-engine/core';
 
 /** Max characters of each chunk's passage persisted on the provenance. */
 const PASSAGE_TEXT_CAP = 1200;
@@ -698,8 +700,18 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // …and narrows retrieval to it, so its chunks are the turn's only `[N]`
   // sources (see `$lib/server/titleMatch`). No match: the lengua filter alone.
   const retrievalFilter = titleRetrievalFilter(lengua.retrievalFilter, titleMatch);
+  // A person telling their own story meets an interviewer; a direct question
+  // still gets the documents (owner ruling 2026-10-26, `$lib/server/engine/turnMode`).
+  const turnMode = chatTurnMode({ userMessage, history, sessionDocs: sessionDocs.docs });
+  const turnConfig = chatEngineConfigFor(turnMode);
+  // An interview reply with no `[N]` lists no sources: it is a question back,
+  // not an answer, and the no-marker fallback would pin documents to it.
+  const turnSources = (provenance: Provenance | null, answer: string): Provenance | null =>
+    turnMode === 'interview' && parseCitedOrdinals(answer).length === 0
+      ? null
+      : citedBrowserProvenance(provenance, answer, attachments);
   const engineTurnArgs = {
-    config: CHAT_ENGINE_CONFIG,
+    config: turnConfig,
     aiClient: turnAI,
     adapter,
     orgId: engineOrgId(),
@@ -742,7 +754,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
       console.warn('[generate] engine prepareTurn failed; bare turn:', (err as Error).message);
       prepared = {
         messages: [
-          { role: 'system' as const, content: CHAT_ENGINE_CONFIG.systemPrompt },
+          { role: 'system' as const, content: turnConfig.systemPrompt },
           ...history,
           { role: 'user' as const, content: userMessage },
         ],
@@ -774,10 +786,9 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
         // member's browser later reads back. An attachment the answer uses
         // (title-named, @-mentioned, pinned) gets a card too (`citedBrowserProvenance`).
         (answer) =>
-          citedBrowserProvenance(
+          turnSources(
             stampDraftProvenance(fenced.restorePassages(prepared.provenance, PASSAGE_TEXT_CAP), draftCorpus),
             answer,
-            attachments,
           ),
         upstream.unit.systemPrompt,
         turnMeta(),
@@ -811,10 +822,9 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
     const { generation, provenance: rawProvenance } = await respond(engineTurnArgs);
     // See the streaming branch: stamp the caller's own drafts before
     // persisting, keep the cited sources only, then the browser allowlist.
-    const provenance = citedBrowserProvenance(
+    const provenance = turnSources(
       stampDraftProvenance(fenced.restorePassages(rawProvenance, PASSAGE_TEXT_CAP), draftCorpus),
       generation.text,
-      attachments,
     );
     // Saved meanwhile by another request for this turn: return that one.
     const savedMeanwhile = await findSavedTurn(locals.token, body.sessionId, turnId);

@@ -12,6 +12,7 @@
    * the same row is a support call, not a wording difference.
    */
   import { Badge } from '$lib/primitives';
+  import TestimonySource from '$lib/components/TestimonySource.svelte';
   import type { Tone } from '$lib/primitives/types';
   import { audioDurationChip } from '$lib/ingest';
   import { docStatusBadge } from '$lib/docStatus';
@@ -142,7 +143,7 @@
           <tr>
             <th scope="row">
               <span class="title">{d.title}</span>
-              {#if d.subtitle}<span class="sub">{d.subtitle}</span>{/if}
+              {#if d.subtitle != null}<span class="sub"><TestimonySource audio={d.kind === 'audio'} day={d.subtitle} /></span>{/if}
               {#if audio}<span class="sub">{audio}</span>{/if}
             </th>
             <td><Badge label={kindLabel(d.kind)} tone="neutral" emphasis="outline" size="sm" /></td>

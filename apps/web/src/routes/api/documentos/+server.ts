@@ -75,6 +75,10 @@ function slimDoc(row: Record<string, unknown>, callerId: string): Record<string,
     id: row.id,
     name: row.name,
     kind: row.kind,
+    // A testimonio's generated title (`workingDocHeading`); the backend's read
+    // rule already withholds it until the gate clears the row.
+    contentKind: row.contentKind,
+    testimonioTitle: row.testimonioTitle,
     ingestStatus: row.ingestStatus,
     ingestError: row.ingestError,
     anonymisationStatus: row.anonymisationStatus,
