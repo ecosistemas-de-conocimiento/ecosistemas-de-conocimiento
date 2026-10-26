@@ -1,6 +1,8 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `410756a` (live recordings save as
+**Status:** live since 2026-10-17. Dev runs `main` @ `f85493b` (document texts up to 2,000,000
+characters, so a PDF over 40,000 characters stores its `extractedText`; a throw in extract+ingest
+marks the row `failed`), deployed 2026-10-26 21:04 UTC — see §4zm. Before that, `410756a` (live recordings save as
 `audio/webm`, `BODY_SIZE_LIMIT=201M`, better live-text stitching, a send right after "Nueva
 conversación" lands in the new chat), deployed 2026-10-25 01:22 UTC — see §4zl. Before that,
 `a761fc9` (live mic with partial text, 3D discs, auto-publish with a "Publicados" list; live
@@ -1769,6 +1771,55 @@ stored-turn gate call, and the doc 272 pipeline).
 
 **Disk**, `df -h /` free: 58 GB before; 43 GB after the build; 58 GB after the cleanup. Images
 9.6 GB, build cache 0.
+
+### 4zm. ✅ Done 2026-10-26 21:04–21:20 UTC: `f85493b`, dev only — long document texts store
+
+All measured by the deploy agent. Staging was not touched (still `97d5316`, 6 containers,
+`docker ps`). edcai was told before the deploy by the coordinator. `f85493b` = per-field
+`maxLength: 2_000_000` on the four whole-document text fields of `Documents` (`extractedText`,
+`redactedText`, `heldText`, `bodyMarkdown`) and `maxLength: 100_000` on
+`aiServiceCallbacks.rawBody`, replacing Payload's 40,000-character default; a throw in the
+background extract+ingest now sets `ingestStatus=failed` with a safe `ingestError` (`c4e252a`).
+Also ingest scripts (`ingest-folder.sh`, `pptx-to-pdf.sh`). No compose or variable change.
+
+**No migration.** No file under `apps/backend/src/migrations/` changed between `410756a` and
+`f85493b` (`git diff --name-only`); the new limits are validation only on unbounded `varchar`
+columns. `payload_migrations` stays at 5 (last `20261024_230631_documents_testimonio_title`),
+read before and after the deploy; `edc_ai` stays at 6.
+
+⚠ Coolify on the box is now **4.5.0** (`coollabsio/coolify:4.5.0`, `docker ps`), not the 4.4.6 of
+§2. The deploy API answered the same way.
+
+Backup `/root/backups/20261026T2104Z/` (`edc_ai` 6.2 MB, `edc_backend` 614 KB; `pg_restore -l`
+137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261026T2104Z/`
+with `timeout 180 scp`; sha256 of both dumps matched before the deploy.
+Deploy `otuvviogusyuiif2n611hvd9` 21:04:34 → 21:10:58 UTC, `finished`, commit `f85493b2…`.
+9 containers up; `web`, `backend` and `ai-service` run image tag `f85493b255db…`. Health 200 on
+`dev.` and `api.dev.`. The backend image's `src/collections/Documents.ts` holds
+`DOCUMENT_TEXT_MAX_LENGTH`, and `AiServiceCallbacks.ts` holds `maxLength: 100_000`.
+audio-service rebuilt by the deploy (§4zk): `edc-audio-service:dev` is now `e3c1b5681b45`,
+created 21:06:50 UTC; the old `c3e8fb651702` is gone.
+
+0 error/fatal lines in web, backend, ai-service and the three audio containers at startup and
+after the smoke. Postgres logged 2 `ERROR` lines, both the deploy agent's own mistyped
+read-only queries (columns that do not exist), not the app.
+
+| check (API, platform admin, `eco_selected=7`) | result |
+|---|---|
+| 1. upload `10-vargas.pdf` (239 KB, `pdftotext` 56,167 bytes) as `documento` to org 7 via `POST /api/documentos` | doc 296 created 21:11:45 UTC; **`ingestStatus=ready` in 6 s**, `ingest_error` empty, no "Extracted Text invalid" 400. `length(extracted_text)` = **54,902** characters, over the old 40,000 cap. ai-service: 1 document, 22 chunks, embeddings `baai/bge-m3` |
+| 2. publish | skipped on purpose (no graph spend); doc stayed `draft` |
+| 3. delete | `DELETE /api/documents/296` 200; 0 rows left in `edc_backend.documents` (id 296), 0 new ai-service `documents`, 0 `media` rows for the file. Another lane ingests this PDF for real |
+
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three `410756a`
+images by exact name; `docker builder prune -af` reclaimed 14.76 GB. Two dangling images left,
+both in use: `858f009f9709` (staging's redis) and `57e4255cc971` (`coolify-redis`).
+
+Spend: this run booked **$0.000169** (one `/v1/ingest` row, 22 chunks, 21:11:50 UTC).
+`usage_logs` total $2.104523 → $2.110039 over the run; the rest is other users' chat on dev
+(`router.route` rows in `edc-eco-6`/`edc-eco-7` from 20:43 to 21:13 UTC, none from this agent).
+
+**Disk**, `df -h /` free: 57 GB before; 43 GB after the build; 57 GB after the cleanup. Images
+9.7 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
