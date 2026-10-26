@@ -30,7 +30,8 @@ that way.** The gate in `payload.config.ts` is opt-IN —
 — so an environment that wants push has to say so out loud. It was opt-out until
 2026-08-14, which meant one forgotten variable in one environment was enough to
 lose the hand-written indexes below, silently. That is the wrong direction to
-fail in. The backend's `start` script is `payload migrate && next start`, so a
+fail in. The backend's `start` script is `sh scripts/migrate.sh && next start` (the script
+requires Payload's `Done.` line; a bare exit 0 is not proof), so a
 deploy applies pending migrations and fails loudly if it cannot.
 
 ✅ **Schema changes go through `payload migrate:create <name>`.** Change the

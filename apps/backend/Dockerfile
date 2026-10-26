@@ -120,4 +120,8 @@ EXPOSE ${PORT}
 # the deploy fails loudly. That is the intended behaviour: booting an app
 # against a schema its migrations could not produce is the failure mode that
 # takes hours to diagnose.
-CMD ["sh", "-c", "node_modules/.bin/payload migrate && exec node_modules/.bin/next start -p ${PORT:-3002}"]
+#
+# 🔴 `scripts/migrate.sh`, not bare `payload migrate`: the CLI can exit 0
+# silently without migrating (34296a8 deploy, 2026-10-26). The script requires
+# Payload's `Done.` line and retries a silent run. See its header.
+CMD ["sh", "-c", "sh scripts/migrate.sh && exec node_modules/.bin/next start -p ${PORT:-3002}"]
