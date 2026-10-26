@@ -176,14 +176,17 @@ describe('Q5 — a one-word name at a sentence start is redacted, whatever `iden
     expect(r.report.pseudonyms).toBe(1)
   })
 
-  it('uses the document allocator: a first name alone is not merged into a full name', async () => {
+  // ⚠ CHANGED 2026-10-26 (`nameParts.ts`): a first name alone that is a part of
+  // ONE redacted full name now takes that name's label. Before, it got its own
+  // label, and stage 3 left it in when the model did not report it.
+  it('uses the document allocator: a first name alone takes its full name\'s label', async () => {
     const r = await gate('Vino Lucrecia Gómez. Lucrecia llegó tarde.', [
       [persona('Lucrecia Gómez')],
       [persona('Lucrecia', false)],
     ])
     expect(r.status).toBe('ready')
     if (r.status !== 'ready') return
-    expect(r.redactedText).toBe('Vino [Persona A]. [Persona B] llegó tarde.')
+    expect(r.redactedText).toBe('Vino [Persona A]. [Persona A] llegó tarde.')
   })
 
   it('a one-word title at a line start is redacted too (accepted by the owner)', async () => {
