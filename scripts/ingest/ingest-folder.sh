@@ -51,15 +51,17 @@ remaining_usd() { # org id → remaining USD, or empty when the check is off
     \"select remaining_usd from budget_state where org='edc-eco-$1'\""
 }
 
-if [ $APPLY = 1 ]; then
-  : "${WEB:?}" "${EDC_EMAIL:?}" "${EDC_PASSWORD:?}"
-  JAR=$(mktemp); trap 'rm -f "$JAR"' EXIT
+# Signs in again before every document: a run takes hours, longer than a session token.
+login() {
+  local jar; jar=$(mktemp)
   jq -n --arg e "$EDC_EMAIL" --arg p "$EDC_PASSWORD" '{email:$e,password:$p}' |
-    curl -sf -c "$JAR" -H 'Content-Type: application/json' -H "Origin: $WEB" \
-      --data-binary @- "$WEB/api/auth/login" >/dev/null || { echo "login failed"; exit 1; }
+    curl -sf -c "$jar" -H 'Content-Type: application/json' -H "Origin: $WEB" \
+      --data-binary @- "$WEB/api/auth/login" >/dev/null || { rm -f "$jar"; echo "login failed"; exit 1; }
   # ⚠ curl's jar writes HttpOnly cookies (the session) as `#HttpOnly_<domain>` lines.
-  SESSION_COOKIES=$(sed 's/^#HttpOnly_//' "$JAR" | awk '!/^#/ && NF>=7 {printf "%s=%s; ", $6, $7}')
-fi
+  SESSION_COOKIES=$(sed 's/^#HttpOnly_//' "$jar" | awk '!/^#/ && NF>=7 {printf "%s=%s; ", $6, $7}')
+  rm -f "$jar"
+}
+[ $APPLY = 1 ] && : "${WEB:?}" "${EDC_EMAIL:?}" "${EDC_PASSWORD:?}"
 
 api() { # org method path [curl args…]
   local org=$1 method=$2 path=$3; shift 3
@@ -101,6 +103,7 @@ grep -v '^#' "$MANIFEST" | while IFS=$'\t' read -r path org kind title; do
   fi
 
   t0=$(date +%s)
+  login
   # ⚠ Quoted: curl -F splits an unquoted `@a,b` into two files (exit 26).
   res=$(api "$org" POST /api/documentos -F "file=@\"$file\";type=$mime" \
     -F "contentKind=$kind" -F "name=$title")
