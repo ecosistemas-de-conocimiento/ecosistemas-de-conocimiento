@@ -90,6 +90,14 @@ export const AiServiceCallbacks: CollectionConfig = {
     {
       name: 'rawBody',
       type: 'textarea',
+      /**
+       * 🔴 MATCHES THE 100,000-CHAR SLICE in `app/api/ai-service/callback/route.ts`.
+       * Without it Payload's 40,000 default refused the dedupe insert of any
+       * `transcribe.completed` carrying a longer transcript, and the route
+       * answered 500 — the callback was never applied. Validation only; the
+       * column is unbounded `varchar`, so no migration.
+       */
+      maxLength: 100_000,
       admin: {
         description:
           'Raw JSON body as received from ai-service. Retained for debugging signature / payload drift.',
