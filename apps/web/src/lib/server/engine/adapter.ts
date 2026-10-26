@@ -236,6 +236,7 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
               extractedText?: string | null;
               redactedText?: string | null;
               anonymisationStatus?: string | null;
+              anonymise?: boolean | null;
             }
           >('documents', ref.id);
           if (!r) return '';
@@ -253,7 +254,8 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
           const title = libraryTitleFor(r.contentKind, r.name);
           const gateCleared = r.anonymisationStatus === 'ready' || r.anonymisationStatus === 'approved';
           const text = (
-            isGatedContent(r.contentKind)
+            // 🔴 A documento filed for anonymisation too (owner ruling 2026-10-26).
+            isGatedContent(r.contentKind) || (r.anonymise != null && r.anonymise !== false)
               ? (gateCleared ? (r.redactedText ?? '') : '')
               : (r.bodyMarkdown ?? r.extractedText ?? '')
           ).trim();

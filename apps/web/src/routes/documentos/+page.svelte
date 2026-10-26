@@ -149,6 +149,8 @@
   // conversation. This posts to `POST /api/documentos` and re-reads the list.
   let fileInput = $state<HTMLInputElement | null>(null);
   let uploading = $state(false);
+  /** "Anonimizar" (staff only; a participant's upload is always gated by the backend). */
+  let anonymise = $state(false);
 
   async function onFileChosen(e: Event) {
     const input = e.currentTarget as HTMLInputElement;
@@ -170,6 +172,7 @@
     try {
       const form = new FormData();
       form.append('file', file, file.name);
+      if (manualPublish && anonymise) form.append('anonymise', 'true');
       const res = await fetch('/api/documentos', { method: 'POST', body: form });
       if (!res.ok) {
         const code = ((await res.json().catch(() => ({}))) as { error?: string }).error;
@@ -246,6 +249,12 @@
         aria-label={uploadButtonTitle()}
         onchange={onFileChosen}
       />
+      {#if manualPublish}
+        <label class="anonymise">
+          <input type="checkbox" bind:checked={anonymise} disabled={uploading} data-testid="owned-anonymise" />
+          <span>Anonimizar</span>
+        </label>
+      {/if}
       <Button
         variant="solid"
         size="sm"
@@ -503,6 +512,13 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 0.5rem;
+  }
+  .anonymise {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+    color: var(--edc-color-ink-soft);
   }
   .back {
     flex: none;

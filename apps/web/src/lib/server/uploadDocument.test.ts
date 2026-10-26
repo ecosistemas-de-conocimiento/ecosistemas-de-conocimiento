@@ -83,7 +83,7 @@ describe('uploadDocument — which ecosistema the create names', () => {
     (backendFetch as unknown as ReturnType<typeof vi.fn>).mockReset();
   });
 
-  async function sentBody(opts: Parameters<typeof uploadDocument>[2]) {
+  async function sentBody(opts: Parameters<typeof uploadDocument>[2], extra: Record<string, string> = {}) {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ doc: { id: 11 } }), { status: 201 }),
     );
@@ -93,6 +93,7 @@ describe('uploadDocument — which ecosistema the create names', () => {
     const form = new FormData();
     form.append('file', new File([PDF], 'informe.pdf', { type: 'application/pdf' }));
     form.append('contentKind', 'documento');
+    for (const [k, v] of Object.entries(extra)) form.append(k, v);
     const res = await uploadDocument('tok', form, opts);
     expect(res.status).toBe(201);
     const call = (backendFetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
@@ -108,5 +109,16 @@ describe('uploadDocument — which ecosistema the create names', () => {
 
   it('names none on a conversation upload: the backend derives it from the session', async () => {
     expect(await sentBody({ session: [7], defaultPinned: true })).not.toHaveProperty('organization');
+  });
+
+  it('🔴 "Anonimizar" asks the backend to gate the documento', async () => {
+    expect(await sentBody({ session: [7], defaultPinned: true }, { anonymise: 'true' })).toMatchObject({
+      contentKind: 'documento',
+      anonymise: true,
+    });
+  });
+
+  it('without it, the create names no anonymise (the backend decides for a participant)', async () => {
+    expect(await sentBody({ session: [7], defaultPinned: true })).not.toHaveProperty('anonymise');
   });
 });

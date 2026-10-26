@@ -1132,6 +1132,8 @@ class AppStore {
     file: File,
     /** `testimonio` routes it through the anonymisation gate. See `$lib/uploadKind.ts`. */
     contentKind: UploadContentKind = 'documento',
+    /** "Anonimizar": a documento whose text passes the gate before anyone else reads it. */
+    anonymise = false,
   ): Promise<WorkingDoc | null> {
     // Client-side gate. Server enforces it too; this saves a round-trip and
     // gives the user a specific reason without a server 413.
@@ -1161,6 +1163,7 @@ class AppStore {
       form.append('name', file.name);
       form.append('isPinned', 'true');
       form.append('contentKind', contentKind);
+      if (anonymise) form.append('anonymise', 'true');
       const res = await fetch(`/api/sessions/${sessionId}/documents`, {
         method: 'POST',
         body: form,

@@ -1917,7 +1917,8 @@ const UNACCENTED = 'aeiouuAEIOUUñ'
 /**
  * 🔴 THE TEXT A DOCUMENT CONTRIBUTES TO SEARCH = THE TEXT IT CONTRIBUTES TO THE
  * CORPUS. The SQL mirror of `corpusTextFor` (`lib/anonymiseDocument.ts`): a
- * `documento` searches its `extracted_text`; anything else searches its
+ * `documento` searches its `extracted_text` (unless filed for anonymisation —
+ * `anonymise = false` fails closed on NULL); anything else searches its
  * `redacted_text`, and only once the gate (or a human) has cleared it.
  *
  * ⚠ NEVER `extracted_text` FOR GATED CONTENT. The raw transcript of a
@@ -1925,7 +1926,7 @@ const UNACCENTED = 'aeiouuAEIOUUñ'
  * turn the search box into an oracle ("does any Voz mention Juana Pérez?").
  */
 const SEARCHABLE_TEXT = sql`coalesce(CASE
-      WHEN sd.content_kind = 'documento' THEN sd.extracted_text
+      WHEN sd.content_kind = 'documento' AND sd.anonymise = false THEN sd.extracted_text
       WHEN sd.anonymisation_status IN ('ready', 'approved') THEN sd.redacted_text
     END, '')`
 

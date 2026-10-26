@@ -107,6 +107,35 @@ describe('field access', () => {
     expect(fieldAccess(gatedQueryableReadable, ana, testimonio)).toBe(true)
     expect(fieldAccess(gatedQueryableReadable, ben, documento)).toBe(true)
   })
+
+  /** Owner rulings 2026-10-26: a gated documento shares its text redacted only. */
+  it('🔴 a documento filed for anonymisation: original hidden from colleagues, title kept', () => {
+    const gated = { ...documento, anonymise: true }
+    expect(fieldAccess(gatedOriginalReadable, ben, gated)).toBe(false)
+    expect(fieldAccess(gatedOriginalReadable, ana, gated)).toBe(true)
+    expect(fieldAccess(gatedOriginalReadable, admin, gated)).toBe(true)
+    expect(fieldAccess(gatedQueryableReadable, ben, gated)).toBe(true)
+    expect(fieldAccess(gatedOriginalReadable, ben, { ...documento, anonymise: false })).toBe(true)
+  })
+
+  it('🔴 `anonymise` is force-selected, so a projected row still carries it', () => {
+    expect(Documents.forceSelect).toMatchObject({ anonymise: true })
+  })
+
+  it('🔴 new text on a gated documento re-runs the gate', () => {
+    const original = {
+      contentKind: 'documento',
+      anonymise: true,
+      extractedText: 'viejo',
+      anonymisationStatus: 'ready',
+      redactedText: 'viejo',
+    }
+    expect(gateResetForTextEdit({ extractedText: 'nuevo' }, original)).toMatchObject({
+      anonymisationStatus: 'n/a',
+      redactedText: null,
+    })
+    expect(gateResetForTextEdit({ extractedText: 'nuevo' }, { ...original, anonymise: false })).toBeNull()
+  })
 })
 
 describe('🔴 constrainGatedQueries — no title oracle', () => {

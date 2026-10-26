@@ -153,6 +153,10 @@ export async function uploadDocument(
       ...(opts.organization ? { organization: opts.organization } : {}),
       kind,
       contentKind,
+      // 🔴 "Anonimizar" (owner ruling 2026-10-26): a documento whose text passes
+      // the gate. Asking is always allowed; the backend also sets it itself on
+      // a participant's PDF/DOCX.
+      ...(form.get('anonymise') === 'true' ? { anonymise: true } : {}),
       mode: 'rag-retrieve',
       name: typeof name === 'string' && name.trim() ? name : file.name,
       mediaFile: mediaId,

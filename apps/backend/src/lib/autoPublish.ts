@@ -23,10 +23,11 @@
  * testimonies and decides when they are ready to share.
  *
  * ⚠ A PARTICIPANT'S AUDIO IS FILED AS A `testimonio`
- * ({@link fileParticipantAudioAsTestimonio}). A `documento` skips the gate by
- * design, and auto-publishing an ungated recording of someone talking would put
- * every name in it in front of the whole ecosistema. A participant's PDF or DOCX
- * stays a `documento` and is published like one.
+ * ({@link fileParticipantAudioAsTestimonio}). Auto-publishing an ungated
+ * recording of someone talking would put every name in it in front of the whole
+ * ecosistema. A participant's PDF or DOCX stays a `documento` but is filed with
+ * `anonymise` set ({@link anonymiseParticipantUpload}, owner ruling 2026-10-26),
+ * so it passes the same gate before it can publish.
  *
  * 🔴 PRIVACY: logs carry ids only.
  */
@@ -106,6 +107,14 @@ export function fileParticipantAudioAsTestimonio(input: {
     input.role === 'member' &&
     !input.platformAdmin
   )
+}
+
+/**
+ * Should a new PDF/DOCX `documento` be filed with `anonymise` set? A
+ * participant's always. Staff choose at upload.
+ */
+export function anonymiseParticipantUpload(input: { role: OrgRole | null; platformAdmin: boolean }): boolean {
+  return input.role === 'member' && !input.platformAdmin
 }
 
 /**

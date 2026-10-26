@@ -77,6 +77,7 @@
    */
   const canUploadVoces = $derived(mayUploadVoces($page.data?.vocesUpload, app.ecosystem?.slug));
   let uploadContentKind = $state<UploadContentKind>('documento');
+  let uploadAnonymise = $state(false);
 
   // ── Traer un documento de otra conversación ─────────────────────────────
   //
@@ -237,6 +238,7 @@
         sessionId,
         file,
         canUploadVoces ? uploadContentKind : 'documento',
+        canUploadVoces && uploadContentKind === 'documento' && uploadAnonymise,
       );
       if (doc) expandedId = doc.id;
     } finally {
@@ -421,6 +423,12 @@
             {/each}
           </select>
         </label>
+        {#if uploadContentKind === 'documento'}
+          <label class="text-[11px] text-ink-soft flex items-center gap-1.5 mt-1">
+            <input type="checkbox" bind:checked={uploadAnonymise} disabled={uploading} />
+            <span>Anonimizar</span>
+          </label>
+        {/if}
       </div>
     {/if}
 

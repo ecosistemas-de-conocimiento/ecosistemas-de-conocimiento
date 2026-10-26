@@ -401,6 +401,43 @@ describe('🔴 a participant’s audio is filed as a testimonio', () => {
   })
 })
 
+/**
+ * 🔴 Owner rulings 2026-10-26: a participant's PDF/DOCX passes the gate before
+ * it auto-publishes; staff may ask for the gate ("Anonimizar"). Both stay
+ * `documento`. `anonymise` is fixed at create.
+ */
+describe('🔴 a documento filed for anonymisation', () => {
+  it.each(['pdf', 'docx'])('a member’s %s is filed with anonymise', async (kind) => {
+    const next = await create({ kind, contentKind: 'documento', name: `a.${kind}` }, ANA)
+    expect(next).toMatchObject({ contentKind: 'documento', anonymise: true })
+  })
+
+  it('a member’s markdown note is not (it has no pipeline)', async () => {
+    const next = await create({ kind: 'markdown', contentKind: 'documento' }, ANA)
+    expect(next.anonymise).toBe(false)
+  })
+
+  it.each([
+    ['investigador', IRIS],
+    ['admin', ADA],
+    ['platform admin', ROOT],
+  ])('an %s’s PDF is ungated unless they ask', async (_role, user) => {
+    expect((await create({ kind: 'pdf', contentKind: 'documento' }, user)).anonymise).toBe(false)
+    expect((await create({ kind: 'pdf', contentKind: 'documento', anonymise: true }, user)).anonymise).toBe(true)
+  })
+
+  it('a staff audio documento ticked "Anonimizar" stays a gated documento', async () => {
+    const next = await create({ kind: 'audio', contentKind: 'documento', anonymise: 'true' }, IRIS)
+    expect(next).toMatchObject({ contentKind: 'documento', anonymise: true })
+  })
+
+  it('🔴 an update can neither clear nor set it', async () => {
+    const base = { contentKind: 'documento', kind: 'pdf', organization: ECO_A, session: [SESSION_OF[ANA]] }
+    expect((await update({ anonymise: false }, { ...base, anonymise: true }, ANA)).anonymise).toBe(true)
+    expect((await update({ anonymise: true }, { ...base, anonymise: false }, ANA)).anonymise).toBe(false)
+  })
+})
+
 describe('🔴 a hold is visible and has exactly one way out', () => {
   it('a held document is retryable, and the retry is what clears the hold', () => {
     // 🔴 THE TWO BUGS THIS PINS.

@@ -51,7 +51,7 @@
 
 import type { Payload } from 'payload'
 
-import { corpusTextFor, mustPassAnonymisationGate } from './anonymiseDocument'
+import { corpusTextFor, rowMustPassGate } from './anonymiseDocument'
 import { draftCorpus, publishedCorpus } from './corpus'
 import { relationId } from './permissions'
 import { retireFrom, type CorpusMover } from './publishDocument'
@@ -63,6 +63,7 @@ interface Row {
   organization?: unknown
   uploadedBy?: unknown
   contentKind?: unknown
+  anonymise?: unknown
   publicationStatus?: unknown
   anonymisationStatus?: unknown
   anonymisationError?: unknown
@@ -94,7 +95,7 @@ export interface RepairHeldPublishedReport {
 /** The selection rule, exported for the test. */
 export function isSharedButNotCleared(row: Row): boolean {
   return (
-    mustPassAnonymisationGate(row.contentKind) &&
+    rowMustPassGate(row) &&
     (SHARED_STATES as readonly unknown[]).includes(row.publicationStatus) &&
     !corpusTextFor(row).ok
   )

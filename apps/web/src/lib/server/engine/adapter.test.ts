@@ -119,4 +119,24 @@ describe('resolveEntity — a mentioned document', () => {
     expect(block).toContain('Documento adjunto: Acta');
     expect(block).toContain('texto');
   });
+
+  // Owner ruling 2026-10-26: "Anonimizar" — still a documento, text gated.
+  it.each([
+    ['ready', true],
+    ['held', false],
+  ])('🔴 a documento filed for anonymisation (%s): its title, never the original', async (status, shows) => {
+    const adapter = adapterFor({
+      id: 6,
+      name: 'Acta visita',
+      contentKind: 'documento',
+      anonymise: true,
+      extractedText: 'Asistió María López',
+      redactedText: 'Asistió [Persona A]',
+      anonymisationStatus: status,
+    });
+    const block = await adapter.resolveEntity({ kind: 'document', id: 6 } as never);
+    expect(block).toContain('Documento adjunto: Acta visita');
+    expect(block).not.toContain('María');
+    expect(block.includes('[Persona A]')).toBe(shows);
+  });
 });

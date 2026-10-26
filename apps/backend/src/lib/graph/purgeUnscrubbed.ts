@@ -14,7 +14,7 @@
  * ⚠ It cannot tell a raw-text row from a clean one, and does not try. A
  * document that fails `corpusTextFor` today must not have a graph either way.
  */
-import { corpusTextFor, mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
+import { corpusTextFor, rowMustPassGate } from '@/lib/anonymiseDocument'
 
 import { deleteOrphanEntities, type GraphBackfillPayload } from './backfill'
 import { clearGraphRows } from './schedule'
@@ -38,6 +38,7 @@ interface Row {
   id: number | string
   organization?: unknown
   contentKind?: unknown
+  anonymise?: unknown
   redactedText?: unknown
   anonymisationStatus?: unknown
 }
@@ -61,11 +62,11 @@ export async function purgeUnscrubbedGraphRows(
     depth: 0,
     overrideAccess: true,
     sort: 'id',
-    select: { organization: true, contentKind: true, redactedText: true, anonymisationStatus: true },
+    select: { organization: true, contentKind: true, anonymise: true, redactedText: true, anonymisationStatus: true },
   })
 
   const unscrubbed = ((found?.docs ?? []) as Row[]).filter(
-    (doc) => mustPassAnonymisationGate(doc.contentKind) && !corpusTextFor(doc).ok,
+    (doc) => rowMustPassGate(doc) && !corpusTextFor(doc).ok,
   )
 
   const report: PurgeReport = {

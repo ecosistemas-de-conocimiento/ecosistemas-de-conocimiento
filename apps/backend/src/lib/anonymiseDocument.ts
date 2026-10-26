@@ -55,6 +55,10 @@ import type { GateReport, PersonDetector } from './anonymise/types'
  * grounds that a testimony is expected to be anonymous anyway. There is no
  * per-kind leniency knob, because one rule means there is no default for a bulk
  * upload to get wrong.
+ *
+ * ⚠ EXCEPT A `documento` WITH `anonymise` SET (owner rulings 2026-10-26): a
+ * participant's upload, or staff material that names people. See
+ * {@link anonymiseRequested}.
  */
 export const UNGATED_CONTENT_KIND: ContentKind = 'documento'
 
@@ -100,8 +104,31 @@ export const GATE_UNAVAILABLE_INGEST_CODE = 'anonymisation_unavailable'
  * point: a missing decision costs a hold a human can clear, never an ingest
  * nobody can undo.
  */
-export function mustPassAnonymisationGate(rawContentKind: unknown): boolean {
-  return rawContentKind !== UNGATED_CONTENT_KIND
+export function mustPassAnonymisationGate(rawContentKind: unknown, rawAnonymise?: unknown): boolean {
+  return rawContentKind !== UNGATED_CONTENT_KIND || anonymiseRequested(rawAnonymise)
+}
+
+/**
+ * 🔴 A `documento` FILED FOR ANONYMISATION (owner rulings 2026-10-26).
+ *
+ * `documents.anonymise` is set on a participant's PDF/DOCX (they auto-publish,
+ * `lib/autoPublish.ts`) and, by choice, on a staff upload of meeting notes or a
+ * visit report that names people. Such a row stays a `documento` — its own
+ * title, its own label, the documento graph rule — but its TEXT goes through the
+ * gate exactly like a testimonio's: held → Revisión, ready → `redactedText` is
+ * what any corpus gets.
+ *
+ * ⚠ FAILS CLOSED ON A PRESENT VALUE: anything but `false`/`null`/absent gates.
+ * Absent is ungated so rows assembled in code keep today's documento rule; every
+ * Payload read carries the column (`forceSelect` in `collections/Documents.ts`).
+ */
+export function anonymiseRequested(rawAnonymise: unknown): boolean {
+  return rawAnonymise !== undefined && rawAnonymise !== null && rawAnonymise !== false
+}
+
+/** {@link mustPassAnonymisationGate} over a row. */
+export function rowMustPassGate(row: { contentKind?: unknown; anonymise?: unknown }): boolean {
+  return mustPassAnonymisationGate(row.contentKind, row.anonymise)
 }
 
 /**
@@ -204,6 +231,8 @@ export async function anonymiseDocumentText(args: {
    * function.
    */
   contentKind: unknown
+  /** 🔴 THE RAW `documents.anonymise`. A `documento` with it set is gated. */
+  anonymise?: unknown
   /** The unredacted text. Never leaves this process except through `detector`. */
   text: string
   detector?: PersonDetector
@@ -242,7 +271,7 @@ export async function anonymiseDocumentText(args: {
   const write = (data: Record<string, unknown>): Promise<unknown> =>
     updateDocumentColumns(payload, { id: docId, data })
 
-  if (!mustPassAnonymisationGate(contentKind)) {
+  if (!mustPassAnonymisationGate(contentKind, args.anonymise)) {
     // Recorded explicitly rather than left null. "This was never gated" and
     // "the gate has not run yet" are different facts, and an operator reading
     // the row should not have to infer which one they are looking at.
@@ -452,6 +481,8 @@ export async function anonymiseDocumentText(args: {
  */
 export function corpusTextFor(doc: {
   contentKind?: unknown
+  /** 🔴 A `documento` with this set is gated content. See {@link anonymiseRequested}. */
+  anonymise?: unknown
   extractedText?: unknown
   redactedText?: unknown
   /** 🔴 Consulted for gated content — see below. */
@@ -462,7 +493,7 @@ export function corpusTextFor(doc: {
   // corpus, and it is routinely handed objects assembled in code rather than
   // rows straight out of Postgres — which is precisely where a `contentKind`
   // goes missing without the database's NOT NULL enum noticing.
-  if (!mustPassAnonymisationGate(doc.contentKind)) {
+  if (!rowMustPassGate(doc)) {
     const raw = typeof doc.extractedText === 'string' ? doc.extractedText.trim() : ''
     return raw ? { ok: true, text: raw } : { ok: false, reason: 'no extracted text' }
   }

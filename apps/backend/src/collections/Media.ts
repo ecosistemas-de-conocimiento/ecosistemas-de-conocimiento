@@ -109,6 +109,9 @@ export const mediaVisibleToCaller: Access = async ({ req }) => {
         // Same rule as `mayReadGatedOriginal` in `Documents.ts`; the uploader
         // still reaches it through `mine` above.
         { contentKind: { equals: 'documento' } },
+        // 🔴 …and not one filed for anonymisation: its file names the people
+        // the gate removes. `equals: false` fails closed on NULL.
+        { anonymise: { equals: false } },
       ],
     },
     depth: 0,

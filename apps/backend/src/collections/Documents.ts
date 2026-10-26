@@ -13,7 +13,11 @@ import type {
 import { Forbidden, ValidationError } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
-import { ANONYMISATION_STATES, GATE_UNAVAILABLE_INGEST_CODE } from '../lib/anonymiseDocument'
+import {
+  ANONYMISATION_STATES,
+  GATE_UNAVAILABLE_INGEST_CODE,
+  anonymiseRequested,
+} from '../lib/anonymiseDocument'
 import {
   CONTENT_KINDS,
   chunkMetadata,
@@ -32,7 +36,7 @@ import {
   relationId,
   roleInOrganization,
 } from '../lib/permissions'
-import { fileParticipantAudioAsTestimonio } from '../lib/autoPublish'
+import { anonymiseParticipantUpload, fileParticipantAudioAsTestimonio } from '../lib/autoPublish'
 import {
   consumeCorpusCleanupSkip,
   planDocumentMediaCleanup,
@@ -303,12 +307,21 @@ export const lenguaReadable: FieldAccess = ({ doc }) =>
  */
 export function mayReadGatedOriginal(
   user: unknown,
-  doc: { contentKind?: unknown; uploadedBy?: unknown } | undefined,
+  doc: { contentKind?: unknown; anonymise?: unknown; uploadedBy?: unknown } | undefined,
+  /**
+   * `identity` is `name` / `uploadedBy` / `session`: on a `documento` filed for
+   * anonymisation they stay readable (it keeps its own title, owner ruling
+   * 2026-10-26). `original` is the TEXT, which such a row shares only redacted.
+   */
+  scope: 'original' | 'identity' = 'original',
 ): boolean {
   if (!user) return false
   if (isPlatformAdminUser(user)) return true
   if (!doc) return false
-  if (doc.contentKind === 'documento') return true
+  // 🔴 `anonymise` is in `forceSelect`, so a projected row still carries it.
+  if (doc.contentKind === 'documento' && (scope === 'identity' || !anonymiseRequested(doc.anonymise))) {
+    return true
+  }
   const callerId = (user as { id?: unknown }).id
   const uploader = relationId(doc.uploadedBy)
   return uploader !== null && callerId != null && String(uploader) === String(callerId)
@@ -367,7 +380,7 @@ export const GATED_QUERYABLE_FIELDS = ['name', 'uploadedBy', 'session', 'uploade
 export const gatedQueryableReadable: FieldAccess = ({ req, doc }) =>
   doc === undefined
     ? Boolean(req.user)
-    : mayReadGatedOriginal(req.user, doc as Parameters<typeof mayReadGatedOriginal>[1])
+    : mayReadGatedOriginal(req.user, doc as Parameters<typeof mayReadGatedOriginal>[1], 'identity')
 
 /**
  * Does a Payload `where` mention this field anywhere, at any depth?
@@ -744,7 +757,8 @@ export function gateResetForTextEdit(
 ): Record<string, unknown> | null {
   // `contentKind` is immutable after create; the stored value is the truth.
   const kind = original.contentKind ?? next.contentKind
-  if (kind === 'documento') return null
+  // `anonymise` is immutable after create too (`enforceVocesUploadRights`).
+  if (kind === 'documento' && !anonymiseRequested(original.anonymise ?? next.anonymise)) return null
   if (!('extractedText' in next)) return null
   const asText = (v: unknown): string => (typeof v === 'string' ? v : '')
   if (asText(next.extractedText) === asText(original.extractedText)) return null
@@ -984,6 +998,10 @@ async function enforceVocesUploadRights(args: {
   }
 
   if (operation !== 'create') {
+    // 🔴 `anonymise` is fixed at upload: un-setting it on a held row would let
+    // the next publish send the raw original.
+    if (typeof original.anonymise === 'boolean') next.anonymise = original.anonymise
+    else delete next.anonymise
     // Pinned to the stored value, not deleted — `contentKind` is `required`, and
     // deleting the key fails validation on every PATCH. Same shape and same
     // reason as `publicationStatus` above.
@@ -1018,6 +1036,20 @@ async function enforceVocesUploadRights(args: {
 
   const declared = isContentKind(next.contentKind) ? next.contentKind : DEFAULT_CONTENT_KIND
   next.contentKind = declared
+  // Anyone may ASK for the gate (the safe direction); only `true` counts.
+  next.anonymise = next.anonymise === true || next.anonymise === 'true'
+
+  /**
+   * 🔴 A PARTICIPANT'S PDF OR DOCX GOES THROUGH THE GATE (owner ruling
+   * 2026-10-26). It auto-publishes (`lib/autoPublish.ts`), so it is gated like
+   * a testimonio but stays a `documento`. A markdown note has no pipeline.
+   */
+  if (declared === 'documento' && !next.anonymise && (next.kind === 'pdf' || next.kind === 'docx')) {
+    const organizationId = relationId(next.organization)
+    const role =
+      organizationId === null ? null : await roleInOrganization(req.payload, user.id, organizationId)
+    if (anonymiseParticipantUpload({ role, platformAdmin: isPlatformAdminUser(user) })) next.anonymise = true
+  }
 
   /**
    * 🔴 A PARTICIPANT'S AUDIO GOES THROUGH THE GATE (owner rule, 2026-10-24).
@@ -1080,6 +1112,8 @@ interface DocumentRow {
    * `plan/adr-corpus-graph.md` §5.3.
    */
   contentKind?: string | null
+  /** 🔴 A `documento` with this set is gated (`anonymiseRequested`). */
+  anonymise?: boolean | null
   /** The gate's output. The ONLY text a gated document is ever embedded from. */
   redactedText?: string | null
   heldText?: string | null
@@ -1721,6 +1755,7 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
     // visible at the call site instead of inferred from a structural match.
     fresh: {
       ...fresh,
+      anonymise: fresh.anonymise ?? null,
       anonymisationStatus: fresh.anonymisationStatus ?? null,
       redactedText: fresh.redactedText ?? null,
     },
@@ -1807,6 +1842,7 @@ export async function scheduleGraphExtractionForDoc(args: {
       overrideAccess: true,
     })) as {
       contentKind?: unknown
+      anonymise?: unknown
       extractedText?: unknown
       redactedText?: unknown
       /**
@@ -1906,6 +1942,8 @@ export async function enqueueIngestForDoc(args: {
    * what makes trusting a value read off the stored row safe here.
    */
   fresh: Pick<DocumentRow, 'name' | 'kind' | 'contentKind'> & {
+    /** 🔴 The raw column (`anonymiseRequested`). Both real callers pass it. */
+    anonymise?: unknown
     anonymisationStatus: string | null | undefined
     redactedText?: string | null
     /** For the retrieval filter. `chunkMetadata` keeps it on a documento only. */
@@ -1980,6 +2018,7 @@ export async function enqueueIngestForDoc(args: {
      * assembled in code, which is exactly where `corpusTextFor` gets used.
      */
     contentKind: fresh.contentKind,
+    anonymise: fresh.anonymise,
     text: extractedText,
     /**
      * 🔴 THE HUMAN OVERRIDE, AND THE ONLY ONE.
@@ -2602,6 +2641,8 @@ async function extractText(
 
 export const Documents: CollectionConfig = {
   slug: 'documents',
+  // 🔴 See the `anonymise` field: field access reads it off projected rows.
+  forceSelect: { anonymise: true },
   admin: {
     useAsTitle: 'name',
     defaultColumns: ['name', 'publicationStatus', 'organization', 'uploadedBy', 'ingestStatus'],
@@ -2824,6 +2865,26 @@ export const Documents: CollectionConfig = {
       // Derived from CONTENT_KINDS so the column and the domain type cannot fall
       // out of step; the labels are the only hand-written part.
       options: CONTENT_KINDS.map((value) => ({ value, label: CONTENT_KIND_LABELS[value] })),
+    },
+    {
+      /**
+       * 🔴 A `documento` THAT MUST PASS THE ANONYMISATION GATE (owner rulings
+       * 2026-10-26): every participant PDF/DOCX (set by
+       * `enforceVocesUploadRights`), and staff material that names people when
+       * the uploader ticks "Anonimizar" (or a script sends `anonymise: true`).
+       *
+       * It stays a `documento` — own title, own label, the documento graph rule
+       * — but its text is gated like a testimonio's (`anonymiseRequested`,
+       * `lib/anonymiseDocument.ts`). Fixed at create: un-setting it on a held
+       * row would publish the raw original.
+       *
+       * ⚠ IN `forceSelect`: `mayReadGatedOriginal` reads it off projected rows.
+       */
+      name: 'anonymise',
+      type: 'checkbox',
+      defaultValue: false,
+      access: { update: gateWritesOnly },
+      admin: { position: 'sidebar' },
     },
     {
       /**

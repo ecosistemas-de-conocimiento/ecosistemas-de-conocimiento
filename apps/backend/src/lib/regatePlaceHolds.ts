@@ -27,7 +27,7 @@ import type { Payload } from 'payload'
 
 import { isTownLevelPlace } from './anonymise/townPlaces'
 import type { DetectorFinding } from './anonymise/types'
-import { mustPassAnonymisationGate } from './anonymiseDocument'
+import { rowMustPassGate } from './anonymiseDocument'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import { relationId } from './permissions'
 
@@ -35,6 +35,7 @@ interface Row {
   id?: number | string
   organization?: unknown
   contentKind?: unknown
+  anonymise?: unknown
   publicationStatus?: unknown
   anonymisationStatus?: unknown
   anonymisationError?: unknown
@@ -43,7 +44,7 @@ interface Row {
 }
 
 export function isPlaceOnlyHold(row: Row): boolean {
-  if (!mustPassAnonymisationGate(row.contentKind)) return false
+  if (!rowMustPassGate(row)) return false
   if (row.anonymisationStatus !== 'held') return false
   if (row.publicationStatus !== 'draft') return false
   if (typeof row.anonymisationError !== 'string' || !row.anonymisationError.startsWith('verify: ')) return false

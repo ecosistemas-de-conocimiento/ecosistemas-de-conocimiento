@@ -55,7 +55,7 @@
 import type { Payload } from 'payload'
 
 import { isRateLimited, withRateLimitRetry, type RetryOptions } from './aiRetry'
-import { corpusTextFor, mustPassAnonymisationGate } from './anonymiseDocument'
+import { corpusTextFor, rowMustPassGate } from './anonymiseDocument'
 import { updateDocumentColumns } from './documentColumns'
 import { chunkMetadata, contentKindOf, knownContentKind, titleFor } from './contentKind'
 import { draftCorpus, publishedCorpus } from './corpus'
@@ -115,6 +115,8 @@ export interface PublishableDocument {
   kind?: string | null
   /** What the material IS. See `lib/contentKind.ts`. */
   contentKind?: string | null
+  /** 🔴 A `documento` with this set is gated content (`anonymiseRequested`). */
+  anonymise?: boolean | null
   extractedText?: string | null
   /** The anonymisation gate's output. What a gated document is embedded from. */
   redactedText?: string | null
@@ -502,7 +504,7 @@ export async function beginPublish(
 
   const corpus = publishedCorpus(organizationId)
 
-  if (mustPassAnonymisationGate(doc.contentKind)) {
+  if (rowMustPassGate(doc)) {
     /**
      * 🔴 FAIL CLOSED ON THE STORED ROW, NOT ON `doc`. `doc` is whatever the
      * caller read, possibly minutes ago; the seed handed over a snapshot taken
@@ -627,7 +629,7 @@ export async function confirmPublish(
    * rows were left in on 2026-10-21 — the shared copy that just landed is
    * retired and the row goes back to a draft. Never flipped to `published`.
    */
-  if (mustPassAnonymisationGate(doc.contentKind) && !corpusTextFor(doc).ok) {
+  if (rowMustPassGate(doc) && !corpusTextFor(doc).ok) {
     await retireFrom(deps.client, publishedCorpus(organizationId), doc.id, now, loggerOf(deps))
     await deps.payload.update({
       collection: 'documents',

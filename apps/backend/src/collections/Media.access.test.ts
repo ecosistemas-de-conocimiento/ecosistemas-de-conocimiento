@@ -203,6 +203,8 @@ describe('🔴 a member of another ecosistema', () => {
         { organization: { in: [ECO_B] } },
         { mediaFile: { exists: true } },
         { contentKind: { equals: 'documento' } },
+        // 🔴 Not a documento filed for anonymisation (owner ruling 2026-10-26).
+        { anonymise: { equals: false } },
       ],
     })
   })

@@ -622,6 +622,7 @@ export interface TranscribedRow {
   name?: unknown
   kind?: unknown
   contentKind?: unknown
+  anonymise?: unknown
   lengua?: unknown
   anonymisationStatus?: unknown
   redactedText?: unknown
@@ -760,6 +761,8 @@ export async function driveTranscribedDocument(
         // 🔴 CARRIED, NOT DEFAULTED: the gate decides on this column, and a
         // Voz is normally a recording.
         contentKind: str(doc.contentKind) as never,
+        // 🔴 Carried raw: a staff recording filed with "Anonimizar" is gated.
+        anonymise: doc.anonymise,
         lengua: str(doc.lengua),
         anonymisationStatus: str(doc.anonymisationStatus),
         redactedText: str(doc.redactedText),

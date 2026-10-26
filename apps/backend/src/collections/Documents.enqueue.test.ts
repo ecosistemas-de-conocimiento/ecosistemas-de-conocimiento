@@ -27,6 +27,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
 import { CALLBACK_BASE_URL_VAR, CALLBACK_SECRET_VAR } from '@/lib/callbackConfig'
+import { staticDetector } from '@/lib/anonymise'
 import { enqueueIngestForDoc } from './Documents'
 
 const SECRET = 'f'.repeat(64)
@@ -327,6 +328,36 @@ describe('🔴 enqueueIngestForDoc refuses a settled row', () => {
     scheduleTitle.mockClear()
     await enqueueIngestForDoc(settled('held'))
     expect(scheduleTitle).not.toHaveBeenCalled()
+  })
+})
+
+/** 🔴 Owner rulings 2026-10-26: a documento filed for anonymisation is gated. */
+describe('🔴 a gated documento reaches the draft corpus redacted', () => {
+  const RAW = 'Acta: asistió María López, del comité.'
+  const gatedRun = (anonymise: unknown) =>
+    enqueueIngestForDoc({
+      payload: fakePayload as unknown as Parameters<typeof enqueueIngestForDoc>[0]['payload'],
+      docId: 42,
+      organizationId: 10,
+      uploadedById: 3,
+      fresh: { name: 'Acta.pdf', kind: 'pdf', contentKind: 'documento', anonymise, anonymisationStatus: null },
+      extractedText: RAW,
+      detector: staticDetector([{ text: 'María López', type: 'persona' }]),
+    })
+
+  it('🔴 anonymise → the gate runs; the wire carries the redaction, its own title', async () => {
+    scheduleTitle.mockClear()
+    await gatedRun(true)
+    const wire = JSON.stringify(wireArgs())
+    expect(wire).not.toContain('María López')
+    expect(wire).toContain('[Persona A]')
+    expect(wire).toContain('Acta.pdf')
+    expect(scheduleTitle).not.toHaveBeenCalled()
+  })
+
+  it('no anonymise → the original, as before', async () => {
+    await gatedRun(false)
+    expect(JSON.stringify(wireArgs())).toContain('María López')
   })
 })
 

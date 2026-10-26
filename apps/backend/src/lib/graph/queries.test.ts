@@ -569,13 +569,13 @@ describe('the view, when the threshold hides everything', () => {
     })
 
     it('🔴 reads the corpus text: extracted for a documento, redacted only once cleared', () => {
-      expect(text).toContain("WHEN sd.content_kind = 'documento' THEN sd.extracted_text")
+      expect(text).toContain("WHEN sd.content_kind = 'documento' AND sd.anonymise = false THEN sd.extracted_text")
       expect(text).toContain(
         "WHEN sd.anonymisation_status IN ('ready', 'approved') THEN sd.redacted_text",
       )
       // No other path to the raw text of gated content.
       expect(text.match(/sd\.extracted_text/g)?.length).toBe(
-        text.match(/WHEN sd\.content_kind = 'documento' THEN sd\.extracted_text/g)?.length,
+        text.match(/WHEN sd\.content_kind = 'documento' AND sd\.anonymise = false THEN sd\.extracted_text/g)?.length,
       )
     })
 
