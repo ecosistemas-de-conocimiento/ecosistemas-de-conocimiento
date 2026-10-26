@@ -1154,6 +1154,73 @@ const CORPUS_LANGUAGE = process.env.CORPUS_LANGUAGE?.trim() || 'spanish'
 /** The kinds whose text arrives through the extract → ingest pipeline. */
 const INGESTABLE_KINDS = new Set(['pdf', 'docx', 'audio'])
 
+/**
+ * 🔴 THE CAP ON EVERY COLUMN THAT HOLDS A WHOLE DOCUMENT: `extractedText`,
+ * `redactedText`, `heldText`, `bodyMarkdown`.
+ *
+ * Without it Payload applies `defaultMaxTextLength` (40,000 chars), and a PDF
+ * past that failed its `extractedText` save with a 400 (measured on dev
+ * 2026-10-26). The real corpus has PDFs of ~750k chars (quoted from the owner).
+ * 2,000,000 leaves room for those and still refuses a runaway value.
+ *
+ * ⚠ Per field, not `defaultMaxTextLength` in `payload.config.ts`: that would
+ * lift the guard on every name, title and comment in every collection too.
+ * Validation only — the columns are unbounded `varchar`, so no migration.
+ */
+export const DOCUMENT_TEXT_MAX_LENGTH = 2_000_000
+
+/**
+ * Why a background extract+ingest threw, SAFE TO STORE ON THE ROW.
+ *
+ * 🔴 NEVER `err.message` AS IS. A drizzle query error quotes its parameters,
+ * which for the `extractedText` write is the document itself, and `ingestError`
+ * is shown to every member on a published row. A Payload ValidationError gives
+ * its field paths; anything else gives only its class name. The full error
+ * stays in the log.
+ */
+export function extractIngestErrorReason(err: unknown): string {
+  const paths = (err as { data?: { errors?: Array<{ path?: unknown }> } } | null)?.data?.errors
+    ?.map((e) => (typeof e?.path === 'string' ? e.path : null))
+    .filter((p): p is string => Boolean(p))
+  const detail =
+    paths && paths.length > 0
+      ? `invalid field ${paths.join(', ')}`
+      : err instanceof Error
+        ? err.name
+        : typeof err
+  return `extract_ingest_failed: ${detail}`.slice(0, 500)
+}
+
+/**
+ * 🔴 THE BACKSTOP FOR A THROW `runExtractAndIngest` DID NOT HANDLE ITSELF.
+ *
+ * It used to only log, so a row left at `extracting` stayed there forever and
+ * publish answered 409 (measured on dev 2026-10-26: the `extractedText` save
+ * failed validation). Now the row goes `failed`, which the UI shows and
+ * `POST /api/documents/:id/retry` re-runs.
+ *
+ * ⚠ GUARDED on `pending`/`extracting`, the only states this path leaves a row
+ * in mid-flight. A row a concurrent run already moved on (`embedding`, `ready`,
+ * an audio row at `transcribing`) is not this failure's to overwrite.
+ */
+async function markExtractIngestFailed(row: DocumentRow, err: unknown): Promise<void> {
+  const docId = resolveId(row.id)
+  if (docId == null) return
+  try {
+    const { getPayload } = await import('payload')
+    const configPromise = (await import('@payload-config')).default
+    const payload = await getPayload({ config: configPromise })
+    const { updateDocumentColumns } = await import('@/lib/documentColumns')
+    await updateDocumentColumns(payload as never, {
+      id: docId,
+      data: { ingestStatus: 'failed', ingestError: extractIngestErrorReason(err) },
+      where: [{ ingestStatus: { in: ['pending', 'extracting'] } }],
+    })
+  } catch (writeErr) {
+    console.error('[documents] could not mark doc', docId, 'failed after extract+ingest threw', writeErr)
+  }
+}
+
 function resolveId(raw: unknown): string | number | null {
   if (typeof raw === 'string' || typeof raw === 'number') return raw
   if (raw && typeof raw === 'object' && 'id' in raw) {
@@ -1216,8 +1283,9 @@ const extractAndIngestHook: CollectionAfterChangeHook = async ({
   // (Payload uses transactions internally for create/update; the row isn't
   // visible to a fresh `findByID` until commit).
   setImmediate(() => {
-    void runExtractAndIngest(row).catch((err) => {
+    void runExtractAndIngest(row).catch(async (err) => {
       console.error('[documents] background extract+ingest failed', row.id, err)
+      await markExtractIngestFailed(row, err)
     })
   })
 
@@ -2857,6 +2925,7 @@ export const Documents: CollectionConfig = {
        */
       name: 'redactedText',
       type: 'textarea',
+      maxLength: DOCUMENT_TEXT_MAX_LENGTH,
       // 🔴 See `gateWritesOnly`. `admin.readOnly` is a panel hint; this is the rule.
       access: { create: gateWritesOnly, update: gateWritesOnly },
       admin: {
@@ -2906,6 +2975,7 @@ export const Documents: CollectionConfig = {
        */
       name: 'heldText',
       type: 'textarea',
+      maxLength: DOCUMENT_TEXT_MAX_LENGTH,
       // 🔴 Read: uploader / platform admin only on gated content. Reviewers read
       // it through `lib/holdReview.ts` (overrideAccess). See `mayReadGatedOriginal`.
       access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
@@ -3010,6 +3080,7 @@ export const Documents: CollectionConfig = {
     {
       name: 'bodyMarkdown',
       type: 'textarea',
+      maxLength: DOCUMENT_TEXT_MAX_LENGTH,
       // 🔴 Raw original text. See `mayReadGatedOriginal`.
       access: { read: gatedOriginalReadable },
       admin: {
@@ -3224,6 +3295,7 @@ export const Documents: CollectionConfig = {
     {
       name: 'extractedText',
       type: 'textarea',
+      maxLength: DOCUMENT_TEXT_MAX_LENGTH,
       // 🔴 THE UNREDACTED ORIGINAL. On a published testimonio, colleagues read
       // `redactedText`; this stays with the uploader. See `mayReadGatedOriginal`.
       access: { read: gatedOriginalReadable },
