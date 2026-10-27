@@ -12,6 +12,7 @@ The chain since then:
 | `20261024_201817_graph_entities_public_figure` | `graph_entities.public_figure boolean DEFAULT false NOT NULL` — the persona public-figure mark; existing rows stay false (hidden) | SQL: none (the header comment is hand-written); no backfill, on purpose |
 | `20261024_230631_documents_testimonio_title` | `documents.testimonio_title varchar` (nullable) — a testimonio's system-proposed title; NULL shows the fallback label | SQL: none (the header comment is hand-written); backfill is `scripts/backfill-testimonio-titles.ts`, not the migration |
 | `20261027_002257_sessions_kind` | `sessions.kind` enum (`generales` \| `resonancias`) `DEFAULT 'generales' NOT NULL` + index — the conversation kind; existing rows become `generales` | SQL: none (the header comment is hand-written); no backfill |
+| `20261027_053603_student_view` | `student_profiles` (two consent flags, default false) and `suggestions` (+ `enum_suggestions_kind`) — the student view | 🔴 SQL: removed the re-emitted `sessions.kind` statements; added UNIQUE `student_profiles_user_organization_unq`; `down` reordered (generated order failed). Up/down/up measured on a throwaway postgres:16 2026-10-26 |
 
 ⚠ A migration file is frozen once committed, comments included. Nothing had ever been deployed
 — no CI, no deploy script, and `edc_backend` on `localhost:45432` was the only

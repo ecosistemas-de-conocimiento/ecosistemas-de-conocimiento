@@ -60,6 +60,10 @@ export interface NavItem {
   managerOnly?: boolean;
   /** Shown to whoever holds `organization:manage` (responsable) somewhere. */
   ownerOnly?: boolean;
+  /** Student view (`studentView` on): shown to an `estudiante` there. */
+  studentOnly?: boolean;
+  /** Student view: shown to an investigador / responsable there. */
+  teacherOnly?: boolean;
 }
 
 /**
@@ -74,6 +78,9 @@ export interface NavCapabilities {
   canReviewHolds?: boolean;
   canManageMembers?: boolean;
   canEditFeatures?: boolean;
+  /** From `/api/estudiante/acceso` for the selected ecosistema (layout load). */
+  isStudent?: boolean;
+  isTeacher?: boolean;
 }
 
 /**
@@ -132,6 +139,18 @@ export const NAV_ITEMS: readonly NavItem[] = [
     hint: 'Cómo se relaciona lo que se ha publicado.',
   },
   {
+    href: '/estudiante',
+    label: 'Mi investigación',
+    hint: 'Tus temas, autores y compañeros.',
+    studentOnly: true,
+  },
+  {
+    href: '/seguimiento',
+    label: 'Estudiantes',
+    hint: 'Actividad y sugerencias.',
+    teacherOnly: true,
+  },
+  {
     href: '/revision',
     label: 'Revisión',
     hint: 'Documentos que la anonimización detuvo.',
@@ -176,6 +195,8 @@ export function visibleNavItems(user: unknown, caps: NavCapabilities = {}): NavI
     if (item.adminOnly && !admin) return false;
     if (item.reviewerOnly && !reviewer) return false;
     if (item.managerOnly && !manager) return false;
+    if (item.studentOnly && caps.isStudent !== true) return false;
+    if (item.teacherOnly && caps.isTeacher !== true) return false;
     return true;
   });
 }

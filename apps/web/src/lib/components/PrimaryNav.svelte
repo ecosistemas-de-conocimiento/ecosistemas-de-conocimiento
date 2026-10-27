@@ -42,6 +42,8 @@
       canReviewHolds: $page.data.canReviewHolds,
       canManageMembers: $page.data.canManageMembers,
       canEditFeatures: $page.data.canEditFeatures,
+      isStudent: $page.data.studentAccess?.student,
+      isTeacher: $page.data.studentAccess?.teacher,
     }),
   );
   const pathname = $derived($page.url.pathname);

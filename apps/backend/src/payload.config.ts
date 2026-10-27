@@ -19,10 +19,13 @@ import { Organizations } from './collections/Organizations'
 import { Teams } from './collections/Teams'
 import { Projects } from './collections/Projects'
 import { Memberships } from './collections/Memberships'
+import { StudentProfiles } from './collections/StudentProfiles'
+import { Suggestions } from './collections/Suggestions'
 import { withoutDuplicate } from './collections/hooks/refuseDuplicate'
 
 import { PlatformSettings } from './globals/PlatformSettings'
 
+import { estudianteEndpoints } from './endpoints/estudiante'
 import { funcionesEndpoints } from './endpoints/funciones'
 import { graphEndpoints } from './endpoints/graph'
 import { lenguasEndpoint } from './endpoints/lenguas'
@@ -129,6 +132,9 @@ export default buildConfig({
     GraphEntities,
     GraphMentions,
     GraphRelations,
+    // Student view (`studentView` switch): consent rows and suggestions.
+    StudentProfiles,
+    Suggestions,
     // Plumbing
     AiServiceCallbacks,
   ].map(withoutDuplicate),
@@ -162,6 +168,8 @@ export default buildConfig({
     ...miembrosEndpoints,
     // `/api/funciones`, `/api/plataforma` — feature switches (`lib/features.ts`).
     ...funcionesEndpoints,
+    // `/api/estudiante/*` — the student view; 404 unless `studentView` is on.
+    ...estudianteEndpoints,
   ],
   // Platform switches, read at runtime by `lib/platformSettings.ts`.
   globals: [PlatformSettings],

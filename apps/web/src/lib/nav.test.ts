@@ -18,6 +18,8 @@ describe('the menu only offers pages that exist', () => {
       '/documentos',
       '/biblioteca',
       '/grafo',
+      '/estudiante',
+      '/seguimiento',
       '/revision',
       '/miembros',
       '/ajustes',
@@ -31,6 +33,8 @@ describe('the menu only offers pages that exist', () => {
       'Mis documentos',
       'Biblioteca',
       'Conexiones',
+      'Mi investigación',
+      'Estudiantes',
       'Revisión',
       'Miembros',
       'Ajustes',
@@ -62,6 +66,16 @@ describe('the menu only offers pages that exist', () => {
     for (const item of NAV_ITEMS) {
       expect(item.hint.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('student view entries', () => {
+  it('only with the layout’s student / teacher answer, literally true', () => {
+    expect(visibleNavItems(member).map((i) => i.href)).not.toContain('/estudiante');
+    expect(visibleNavItems(member, { isStudent: true }).map((i) => i.href)).toContain('/estudiante');
+    expect(visibleNavItems(member, { isStudent: true }).map((i) => i.href)).not.toContain('/seguimiento');
+    expect(visibleNavItems(admin, { isTeacher: true }).map((i) => i.href)).toContain('/seguimiento');
+    expect(visibleNavItems(admin).map((i) => i.href)).not.toContain('/seguimiento');
   });
 });
 

@@ -116,6 +116,10 @@ const DRAFT_OVERFETCH_FACTOR = 4;
  * needs topK + 3 kept AFTER the session filter, which 20 still covers.
  */
 const DRAFT_OVERFETCH_MAX = 20;
+
+/** Student-view scope over-fetch (inferred sizing: a post-filter over the whole corpus). */
+const SCOPE_OVERFETCH_FACTOR = 10;
+const SCOPE_OVERFETCH_MAX = 100;
 /** `RetrieveRequest.topK` is optional; the engine always sends 5 today. */
 const DEFAULT_TOPK = 5;
 
@@ -170,6 +174,15 @@ export interface EngineAIClientOptions {
    * `retrieveMulti` and takes the dense per-corpus path.
    */
   hybrid?: boolean;
+  /**
+   * Student view "alcance" (`Mis trabajos` / `Mis compañeros`): EVERY leg,
+   * the shared corpus included, keeps only chunks whose `docId` is in this set.
+   * `undefined` = no scope (today's behaviour). An empty set retrieves nothing.
+   * 🔴 The BFF passes an empty set when the scope could not be read — never
+   * `undefined` — so a failed read cannot widen to the whole ecosistema.
+   * Under a scope the hybrid `retrieveMulti` is not offered.
+   */
+  scopeDocumentIds?: ReadonlySet<string>;
 }
 
 /** ai-service's cap on the values in one `$in` (`metadata-filter.ts`). */
@@ -196,6 +209,7 @@ export function makeEngineAIClient(
   // `undefined` and `null` mean the same thing here — unknown — and both fail
   // closed. Normalise once so no branch below has to remember that.
   const sessionDocumentIds = opts.sessionDocumentIds ?? null;
+  const scopeIds = opts.scopeDocumentIds;
 
   return {
     async generateSync(req: EngineSyncGenerationRequest): Promise<EngineSyncGenerationResult> {
@@ -279,12 +293,16 @@ export function makeEngineAIClient(
       // creates `eco-<id>-draft-<user>` on the person's first upload, so a
       // person who never uploaded has no draft corpus at all.
       if (isDraftLeg && sessionDocumentIds?.size === 0) return { matches: [] };
+      if (scopeIds && scopeIds.size === 0) return { matches: [] };
 
       const topK = req.topK && req.topK > 0 ? req.topK : DEFAULT_TOPK;
       // Over-fetch only on the draft leg — see `DRAFT_OVERFETCH_FACTOR`.
-      const upstreamReq: EngineRetrieveRequest = isDraftLeg
-        ? { ...req, topK: Math.min(topK * DRAFT_OVERFETCH_FACTOR, DRAFT_OVERFETCH_MAX) }
-        : req;
+      // A student scope post-filters the WHOLE corpus, so it over-fetches wider.
+      const upstreamReq: EngineRetrieveRequest = scopeIds
+        ? { ...req, topK: Math.min(topK * SCOPE_OVERFETCH_FACTOR, SCOPE_OVERFETCH_MAX) }
+        : isDraftLeg
+          ? { ...req, topK: Math.min(topK * DRAFT_OVERFETCH_FACTOR, DRAFT_OVERFETCH_MAX) }
+          : req;
 
       // 🔴 ALL retrieval goes through the raw path now, filtered or not, so
       // that every call carries `asOf`. The typed client's zod schema is
@@ -304,10 +322,11 @@ export function makeEngineAIClient(
       // ai-service's own UUID for its copy; the backend id the session list
       // holds is `metadata.docId`. Matching on the UUID dropped every draft
       // chunk, so attached documents were never cited (measured 2026-10-14).
-      const kept =
-        isDraftLeg && sessionDocumentIds
-          ? chunks.filter((c) => sessionDocumentIds.has(backendDocId(c))).slice(0, topK)
-          : chunks;
+      const kept = (
+        isDraftLeg && sessionDocumentIds ? chunks.filter((c) => sessionDocumentIds.has(backendDocId(c))) : chunks
+      )
+        .filter((c) => !scopeIds || scopeIds.has(backendDocId(c)))
+        .slice(0, isDraftLeg || scopeIds ? topK : undefined);
 
       return {
         matches: kept.map((c) => ({
@@ -327,7 +346,7 @@ export function makeEngineAIClient(
       };
     },
 
-    ...(opts.hybrid === true
+    ...(opts.hybrid === true && !scopeIds
       ? {
           retrieveMulti: (req: EngineRetrieveMultiRequest) =>
             retrieveMultiScoped(req, {

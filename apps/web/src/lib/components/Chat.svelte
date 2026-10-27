@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { page } from '$app/stores';
   import Message from './Message.svelte';
   import Composer from './Composer.svelte';
   import { app } from '$lib/stores/app.svelte';
@@ -48,9 +49,13 @@
    */
   let lengua = $state('');
   let lenguas = $state<LenguaFacet[]>([]);
+  /** Student view only (`studentAccess`, layout load): `''` = the whole ecosistema. */
+  let alcance = $state<'' | 'mios' | 'companeros'>('');
+  const isStudent = $derived($page.data.studentAccess?.student === true);
   $effect(() => {
     void app.active?.id;
     lengua = '';
+    alcance = '';
   });
   // The ecosistema's languages, once. A failed read leaves the control hidden.
   $effect(() => {
@@ -117,6 +122,7 @@
       contextRefs: refs,
       scope: fresh.contextScope ?? scope,
       ...(lengua ? { lengua } : {}),
+      ...(isStudent && alcance ? { alcance } : {}),
     };
     await answer(s.id, placeholder.id, payload);
   }
@@ -216,6 +222,19 @@
     <h2 class="text-sm font-semibold text-ink truncate flex-1 font-display">
       {app.active?.title ?? 'Sin chat seleccionado'}
     </h2>
+    {#if isStudent}
+      <select
+        class="text-xs rounded-lg border border-line bg-surface px-1.5 py-1 max-w-[11rem]"
+        class:border-brand={alcance !== ''}
+        bind:value={alcance}
+        aria-label="Buscar en"
+        data-testid="chat-alcance"
+      >
+        <option value="">Todo el ecosistema</option>
+        <option value="mios">Mis trabajos</option>
+        <option value="companeros">Mis compañeros</option>
+      </select>
+    {/if}
     {#if lenguas.length > 0}
       <label class="flex items-center gap-1 text-xs text-ink-soft" title={LENGUA_CHAT_HINT}>
         <span class="sr-only sm:not-sr-only">{LENGUA_LABEL}</span>

@@ -32,6 +32,7 @@ import { turnAttachments, withPinnedRefs } from './pinned';
 import { fetchPublishedTitles, matchDocumentTitle, titleRetrievalFilter, withTitleRef } from '$lib/server/titleMatch';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
 import { fetchFeatures } from '$lib/server/features';
+import { fetchScopeDocumentIds, parseAlcance } from '$lib/server/estudiante';
 import { makeGraphProvider } from '$lib/server/graph';
 import { withFencedChunks, withFencedRefs } from '$lib/server/engine/chunkFence';
 import { fetchOrientationTurns, orientationBlock, withOrientation } from '$lib/server/engine/orientation';
@@ -103,6 +104,12 @@ interface IncomingBody {
    * `lenguaTurn`; it names a value, never a tenant or a corpus.
    */
   lengua?: unknown;
+  /**
+   * Student view: `mios` | `companeros` narrows every retrieval leg to the
+   * documents the backend's `/api/estudiante/alcance` returns (404 unless
+   * `studentView` is on and the caller is an estudiante). Absent = ecosistema.
+   */
+  alcance?: unknown;
   /**
    * The browser's id for this turn (`runTurn`), stamped on the saved answer
    * as `generationMeta.turnId`. A retry of a turn whose answer is already
@@ -535,6 +542,13 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // The read starts now and overlaps with the engine's condense call; the
   // adapter awaits it only when it builds the summary. Best-effort.
   const lengua = lenguaTurn(body.lengua);
+  // 🔴 A scope that cannot be read is an EMPTY scope, never the whole ecosistema.
+  const alcance = parseAlcance(body.alcance);
+  const scopeDocumentIds = alcance
+    ? organizationId != null && organizationId !== ''
+      ? ((await fetchScopeDocumentIds(locals.token, String(organizationId), alcance)) ?? new Set<string>())
+      : new Set<string>()
+    : undefined;
   const lenguaFacets =
     organizationId != null && organizationId !== ''
       ? fetchLenguaIndex(locals.token, organizationId).then((r) => r.index.lenguas)
@@ -559,7 +573,8 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // CHAT_RETRIEVAL_MODE=hybrid AND ai-service has `metadataFilterIn` → one
   // hybrid `/v1/retrieve/multi` call, drafts filtered server-side. Otherwise
   // the dense per-corpus path. Default dense. See `$lib/server/engine/hybrid`.
-  const hybrid = await chatTurnHybrid();
+  // A student scope post-filters on the dense path; hybrid is not offered.
+  const hybrid = scopeDocumentIds ? false : await chatTurnHybrid();
   const unfencedAI = makeEngineAIClient(chatClient, {
     sessionId: body.sessionId,
     signal: request.signal,
@@ -572,6 +587,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
     publishedCorpus,
     sessionDocumentIds,
     hybrid,
+    ...(scopeDocumentIds ? { scopeDocumentIds } : {}),
   });
   // 🔴 PROMPT-INJECTION FENCE (audit 2026-10-17 §3 item 3), a partial
   // mitigation. Retrieved chunks from every leg that goes through this client
@@ -602,7 +618,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // started now so it overlaps the engine's condense call. This conversation's
   // own turns are excluded. `CHAT_ORIENT_SCOPE` = ecosistema | own | off.
   // See `$lib/server/engine/orientation`.
-  const orientScope = (await featuresP).chatOrientation ? chatOrientScope() : 'off';
+  const orientScope = !scopeDocumentIds && (await featuresP).chatOrientation ? chatOrientScope() : 'off';
   const adapter =
     orientScope === 'off'
       ? baseAdapter
@@ -639,7 +655,8 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // `.catch(() => null)`, so an unreachable or slow graph produces a normal
   // answer with no message to the user (ADR §8.2).
   // ⚠ Skipped under a lengua filter — see `LenguaTurn.graph`.
-  const graphProvider = !lengua.graph ? null : makeGraphProvider({
+  // ⚠ And under a student scope: the graph block spans the whole ecosistema.
+  const graphProvider = !lengua.graph || scopeDocumentIds ? null : makeGraphProvider({
     token: locals.token,
     organizationId,
     aiClient: engineAI,
@@ -686,7 +703,8 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   const retrievalPolicy = chatTurnRetrievalPolicy(hybrid);
   // A message that names exactly one published document pins it for this turn.
   const published = await publishedTitles;
-  const titleMatch = matchDocumentTitle(userMessage, published);
+  // Skipped under a student scope: a title pin could name a document outside it.
+  const titleMatch = scopeDocumentIds ? null : matchDocumentTitle(userMessage, published);
   // `@`-mentions, then the document the message names by title, then every
   // document pinned ("fijar") in this conversation. See `./pinned.ts`: the
   // docs panel promises pinned documents are sent.
