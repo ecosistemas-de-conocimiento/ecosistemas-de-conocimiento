@@ -181,6 +181,25 @@ describe('uploadDocument — spreadsheets and web pages', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['text/csv', new File([enc('a,b\n')], 'datos.csv', { type: 'application/vnd.ms-excel' })],
+    ['text/csv', new File([enc('a,b\n')], 'datos.csv', { type: 'application/octet-stream' })],
+    ['text/csv', new File([enc('a,b\n')], 'datos.csv', { type: '' })],
+    ['text/html', new File([enc('<p>hola</p>')], 'acta.html', { type: 'text/html;charset=utf-8' })],
+    ['text/html', new File([enc('<p>hola</p>')], 'acta.htm', { type: '' })],
+    [XLSX_MIME, new File([ZIP], 'padron.xlsx', { type: 'application/octet-stream' })],
+    ['text/markdown', new File([enc('# Nota\n')], 'nota.md', { type: '' })],
+  ])('🔴 forwards the file to Media as %s whatever the browser called it', async (mime, file) => {
+    const { res } = await upload(file);
+    expect(res.status).toBe(201);
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const sentFile = (fetchMock.mock.calls[0]![1] as RequestInit).body as FormData;
+    const forwarded = sentFile.get('file') as File;
+    expect(forwarded.type).toBe(mime);
+    expect(forwarded.name).toBe(file.name);
+    expect(forwarded.size).toBe(file.size);
+  });
+
   it('refuses the legacy .xls (no extractor for it)', async () => {
     const form = new FormData();
     form.append('file', new File([enc('x')], 'viejo.xls', { type: 'application/vnd.ms-excel' }));

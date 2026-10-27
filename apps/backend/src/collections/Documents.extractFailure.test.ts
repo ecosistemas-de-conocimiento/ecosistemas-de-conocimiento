@@ -24,10 +24,10 @@ vi.mock('@/lib/storage/client', () => ({
   isStorageConfigured: () => true,
   getObjectBytes: async () => ({ bytes: Buffer.from('%PDF-1.4 fake') }),
 }))
-vi.mock('unpdf', () => ({
-  getDocumentProxy: async () => ({}),
-  extractText: async () => ({ text: LONG_TEXT }),
-}))
+// Extraction runs in a worker (`lib/extract/sandbox.ts`), where a `vi.mock` of
+// the parser cannot reach — the sandbox itself is the seam.
+const extractInWorker = vi.hoisted(() => vi.fn<() => Promise<string>>())
+vi.mock('@/lib/extract/sandbox', () => ({ extractInWorker }))
 
 type Row = Record<string, unknown>
 let row: Row
@@ -102,6 +102,8 @@ const base = (over: Row = {}): Row => ({
 
 beforeEach(() => {
   enqueue.mockClear()
+  extractInWorker.mockReset()
+  extractInWorker.mockResolvedValue(LONG_TEXT)
   vi.spyOn(console, 'warn').mockImplementation(() => {})
   vi.spyOn(console, 'log').mockImplementation(() => {})
   vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -136,5 +138,20 @@ describe('the extracted text cannot be saved', () => {
     await vi.waitFor(() => expect(row.ingestStatus).toBe('failed'), { timeout: 5000, interval: 10 })
     expect(String(row.ingestError)).toMatch(/^extract_ingest_failed: /)
     expect(String(row.ingestError)).not.toContain(SECRET)
+  }, 20_000)
+})
+
+describe('the extractor worker dies', () => {
+  it.each([
+    ['extract_too_large: the extractor ran out of memory'],
+    ['extract_timeout: no text after 60000 ms'],
+  ])('🔴 %s leaves the row `failed` with that reason', async (message) => {
+    extractInWorker.mockRejectedValue(new Error(message))
+    throwOnTextWrite = () => new Error('the text must never be written')
+    row = base()
+    await fakePayload.update({ data: { name: 'Informe final.pdf' } })
+    await vi.waitFor(() => expect(row.ingestStatus).toBe('failed'), { timeout: 5000, interval: 10 })
+    expect(row.ingestError).toBe(`extraction_failed: ${message}`)
+    expect(enqueue).not.toHaveBeenCalled()
   }, 20_000)
 })
