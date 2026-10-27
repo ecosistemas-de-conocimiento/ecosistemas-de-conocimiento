@@ -16,12 +16,19 @@ describe('audio upload switch (UX demo backlog #8)', () => {
     expect(AUDIO_UPLOAD_ENABLED).toBe(false);
   });
 
-  it('with audio off, the picker offers only PDF and DOCX', () => {
+  it('with audio off, the picker offers only the document kinds', () => {
     expect(uploadAccept(UPLOAD_ACCEPT, AUDIO_EXTENSIONS, false).split(',')).toEqual([
       'application/pdf',
       '.pdf',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       '.docx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.xlsx',
+      'text/csv',
+      '.csv',
+      'text/html',
+      '.html',
+      '.htm',
     ]);
   });
 

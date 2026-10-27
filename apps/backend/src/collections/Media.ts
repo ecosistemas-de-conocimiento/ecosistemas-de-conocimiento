@@ -8,6 +8,7 @@ import { ValidationError } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
 import { organizationIdsForUser, relationId } from '../lib/permissions'
+import { TEXT_SNIFF_BYTES, looksLikeText } from '../lib/extract/text'
 import { MATROSKA_HEAD_BYTES, isAudioOnlyMatroska, isMatroska } from '../lib/webmTracks'
 
 /**
@@ -255,27 +256,29 @@ export const rejectOversizedUpload: CollectionBeforeValidateHook = ({ data, req 
  * with a video track, or with no audio track, is refused here, and an accepted
  * one is stored as `audio/webm` so nothing downstream sees a video type.
  */
-export const audioOnlyWebm: CollectionBeforeValidateHook = async ({ data, req }) => {
-  const file = (req as { file?: { data?: Buffer; tempFilePath?: string } }).file
-  if (!file) return data
-  let head: Uint8Array
-  if (file.data && file.data.length > 0) {
-    head = file.data.subarray(0, MATROSKA_HEAD_BYTES)
-  } else if (file.tempFilePath) {
-    // Imported here: collection configs are also loaded where `node:fs` is not.
-    const { open } = await import('node:fs/promises')
-    const handle = await open(file.tempFilePath, 'r')
-    try {
-      const buf = Buffer.alloc(MATROSKA_HEAD_BYTES)
-      const { bytesRead } = await handle.read(buf, 0, buf.length, 0)
-      head = buf.subarray(0, bytesRead)
-    } finally {
-      await handle.close()
-    }
-  } else {
-    return data
+type UploadedFile = { name?: string; data?: Buffer; tempFilePath?: string }
+
+/** The first `bytes` of the uploaded file, in memory or on a temp path; `null` if neither. */
+async function readUploadHead(file: UploadedFile, bytes: number): Promise<Uint8Array | null> {
+  if (file.data && file.data.length > 0) return file.data.subarray(0, bytes)
+  if (!file.tempFilePath) return null
+  // Imported here: collection configs are also loaded where `node:fs` is not.
+  const { open } = await import('node:fs/promises')
+  const handle = await open(file.tempFilePath, 'r')
+  try {
+    const buf = Buffer.alloc(bytes)
+    const { bytesRead } = await handle.read(buf, 0, buf.length, 0)
+    return buf.subarray(0, bytesRead)
+  } finally {
+    await handle.close()
   }
-  if (!isMatroska(head)) return data
+}
+
+export const audioOnlyWebm: CollectionBeforeValidateHook = async ({ data, req }) => {
+  const file = (req as { file?: UploadedFile }).file
+  if (!file) return data
+  const head = await readUploadHead(file, MATROSKA_HEAD_BYTES)
+  if (!head || !isMatroska(head)) return data
   if (!isAudioOnlyMatroska(head)) {
     throw new ValidationError({
       collection: 'media',
@@ -286,6 +289,50 @@ export const audioOnlyWebm: CollectionBeforeValidateHook = async ({ data, req })
   const next = { ...(data ?? {}) } as Record<string, unknown>
   if (next.mimeType === 'video/webm') next.mimeType = 'audio/webm'
   return next
+}
+
+/**
+ * csv and html must really be text, and html is stored as `text/plain`.
+ *
+ * 🔴 WHY: neither format has a magic number, so file-type detects nothing and
+ * Payload accepts them on the EXTENSION alone (`getFileTypeFallback`). This
+ * hook is the content check: a binary, an executable or a `#!` script renamed
+ * `.csv` is refused. And an html file served as `text/html` from this origin
+ * would run its scripts in the admin's session, so it is stored as text/plain
+ * (the bucket's Content-Type) and `mediaResponseHeaders` covers the
+ * local-disk path, which derives the type from the extension.
+ */
+export const textUploadsAreText: CollectionBeforeValidateHook = async ({ data, req }) => {
+  const file = (req as { file?: UploadedFile }).file
+  if (!file) return data
+  const mimeType = (data as { mimeType?: unknown } | undefined)?.mimeType
+  const isHtml = mimeType === 'text/html' || /\.html?$/i.test(file.name ?? '')
+  const isCsv = mimeType === 'text/csv' || /\.csv$/i.test(file.name ?? '')
+  if (!isHtml && !isCsv) return data
+  const head = await readUploadHead(file, TEXT_SNIFF_BYTES)
+  if (!head || !looksLikeText(head)) {
+    throw new ValidationError({
+      collection: 'media',
+      errors: [{ path: 'file', message: 'This file is not plain text.' }],
+      req,
+    })
+  }
+  if (!isHtml) return data
+  return { ...(data ?? {}), mimeType: 'text/plain' }
+}
+
+/**
+ * 🔴 NO STORED FILE IS EVER SERVED AS A PAGE. Local disk derives the type from
+ * the extension, so an `.html` would go out as `text/html`; `nosniff` stops a
+ * browser guessing its way back to it.
+ */
+export function mediaResponseHeaders({ headers }: { headers: Headers }): Headers {
+  const type = (headers.get('content-type') ?? '').toLowerCase()
+  if (type.startsWith('text/html') || type.startsWith('application/xhtml')) {
+    headers.set('Content-Type', 'text/plain; charset=utf-8')
+  }
+  headers.set('X-Content-Type-Options', 'nosniff')
+  return headers
 }
 
 export const bindMediaToEcosystem: CollectionBeforeValidateHook = async ({
@@ -431,6 +478,11 @@ export function mediaObjectPrefix(
 export const MEDIA_MIME_TYPES = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  // ⚠ No magic number: accepted on the extension, then `textUploadsAreText`
+  // checks the bytes. html is stored and served as text/plain.
+  'text/csv',
+  'text/html',
   'text/markdown',
   'text/plain',
   // Audio.
@@ -473,6 +525,7 @@ export const Media: CollectionConfig = {
   },
   upload: {
     mimeTypes: [...MEDIA_MIME_TYPES],
+    modifyResponseHeaders: mediaResponseHeaders,
     /**
      * 🔴 SIZE IS ENFORCED IN `beforeValidate` BELOW, not here — this Payload
      * version exposes no typed per-collection size option, only `abortOnLimit`
@@ -558,6 +611,6 @@ export const Media: CollectionConfig = {
     { name: 'alt', type: 'text' },
   ],
   hooks: {
-    beforeValidate: [rejectOversizedUpload, audioOnlyWebm, bindMediaToEcosystem],
+    beforeValidate: [rejectOversizedUpload, audioOnlyWebm, textUploadsAreText, bindMediaToEcosystem],
   },
 }

@@ -58,6 +58,8 @@ export interface NavItem {
   reviewerOnly?: boolean;
   /** Shown to whoever holds `members:manage` somewhere (layout server load). */
   managerOnly?: boolean;
+  /** Shown to whoever holds `organization:manage` (responsable) somewhere. */
+  ownerOnly?: boolean;
 }
 
 /**
@@ -71,6 +73,7 @@ export interface NavItem {
 export interface NavCapabilities {
   canReviewHolds?: boolean;
   canManageMembers?: boolean;
+  canEditFeatures?: boolean;
 }
 
 /**
@@ -141,6 +144,12 @@ export const NAV_ITEMS: readonly NavItem[] = [
     managerOnly: true,
   },
   {
+    href: '/ajustes',
+    label: 'Ajustes',
+    hint: 'Qué funciones tiene el ecosistema.',
+    ownerOnly: true,
+  },
+  {
     href: '/admin',
     label: 'Administración',
     hint: 'Las cifras del ecosistema y quién ha aportado.',
@@ -161,7 +170,9 @@ export function visibleNavItems(user: unknown, caps: NavCapabilities = {}): NavI
   // truthy string from a garbled payload must not advertise a section.
   const reviewer = caps.canReviewHolds === true;
   const manager = caps.canManageMembers === true;
+  const owner = caps.canEditFeatures === true;
   return NAV_ITEMS.filter((item) => {
+    if (item.ownerOnly && !owner && !admin) return false;
     if (item.adminOnly && !admin) return false;
     if (item.reviewerOnly && !reviewer) return false;
     if (item.managerOnly && !manager) return false;

@@ -41,6 +41,7 @@
     visibleNavItems($page.data.user, {
       canReviewHolds: $page.data.canReviewHolds,
       canManageMembers: $page.data.canManageMembers,
+      canEditFeatures: $page.data.canEditFeatures,
     }),
   );
   const pathname = $derived($page.url.pathname);

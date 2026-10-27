@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
+import { ECOSYSTEM_COOKIE } from '$lib/server/ecosystem';
 
 /**
  * POST   /api/live/:sid?offset=N — one recorder slice → live partial text.
@@ -15,14 +16,18 @@ import { backendFetch } from '$lib/server/auth';
 
 const NO_STORE = { 'cache-control': 'no-store' };
 
-export const POST: RequestHandler = async ({ locals, params, url, request }) => {
+export const POST: RequestHandler = async ({ locals, params, url, request, cookies }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401, headers: NO_STORE });
   const offset = url.searchParams.get('offset') ?? '0';
+  // The selected ecosistema, as a hint: the backend checks membership and the
+  // `liveMic` switch (`lib/features.ts`) and 403s otherwise.
+  const organization = cookies.get(ECOSYSTEM_COOKIE) ?? '';
   let res: Response;
   try {
     res = await backendFetch(
       locals.token,
-      `/api/live/${encodeURIComponent(params.sid)}?offset=${encodeURIComponent(offset)}`,
+      `/api/live/${encodeURIComponent(params.sid)}?organization=${encodeURIComponent(organization)}` +
+        `&offset=${encodeURIComponent(offset)}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream' },

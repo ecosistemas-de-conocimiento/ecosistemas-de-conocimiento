@@ -20,6 +20,7 @@ describe('the menu only offers pages that exist', () => {
       '/grafo',
       '/revision',
       '/miembros',
+      '/ajustes',
       '/admin',
     ]);
   });
@@ -32,6 +33,7 @@ describe('the menu only offers pages that exist', () => {
       'Conexiones',
       'Revisión',
       'Miembros',
+      'Ajustes',
       'Administración',
     ]);
   });
@@ -143,6 +145,23 @@ describe('who sees the members entry', () => {
       expect(
         visibleNavItems(member, caps as { canManageMembers?: boolean }).map((i) => i.href),
       ).not.toContain('/miembros');
+    }
+  });
+});
+
+describe('who sees the ajustes entry', () => {
+  // ⚠ Presentation only. `routes/ajustes/+page.server.ts` and the backend's
+  // `/api/funciones` are the control.
+  it('shows it to a responsable and to a platform admin', () => {
+    expect(visibleNavItems(member, { canEditFeatures: true }).map((i) => i.href)).toContain('/ajustes');
+    expect(visibleNavItems(admin).map((i) => i.href)).toContain('/ajustes');
+  });
+
+  it('hides it from a member, and from someone who only manages members', () => {
+    for (const caps of [{}, { canManageMembers: true }, { canEditFeatures: 'true' }]) {
+      expect(
+        visibleNavItems(member, caps as { canEditFeatures?: boolean }).map((i) => i.href),
+      ).not.toContain('/ajustes');
     }
   });
 });

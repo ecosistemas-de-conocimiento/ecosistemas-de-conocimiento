@@ -41,6 +41,9 @@
     { value: null, label: 'Todo' },
     { value: 'pdf', label: 'PDF' },
     { value: 'docx', label: 'Word' },
+    { value: 'xlsx', label: 'Excel' },
+    { value: 'csv', label: 'CSV' },
+    { value: 'html', label: 'HTML' },
     { value: 'audio', label: 'Audio' },
     { value: 'markdown', label: 'Notas' },
   ];

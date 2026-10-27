@@ -142,3 +142,22 @@ describe('autoPublishParticipantDocument', () => {
     expect(out).toEqual({ published: false, reason: 'not-found' })
   })
 })
+
+describe('🔴 autoPublishMembers switched off (lib/features.ts)', () => {
+  it('a participant’s gate-cleared draft stays a draft', async () => {
+    const { invalidateFeatures } = await import('./features')
+    invalidateFeatures()
+    const { payload, store } = fakePayload(draft())
+    const p = payload as unknown as { findByID: (a: { collection: string }) => Promise<unknown> }
+    const inner = p.findByID
+    p.findByID = vi.fn(async (args: { collection: string }) =>
+      args.collection === 'organizations' ? { id: 1, features: { autoPublishMembers: false } } : inner(args),
+    )
+    const { client, enqueue } = fakeClient()
+    const out = await autoPublishParticipantDocument({ payload, documentId: 7, clientFor: () => client })
+    expect(out).toEqual({ published: false, reason: 'disabled' })
+    expect(enqueue).not.toHaveBeenCalled()
+    expect(store?.publicationStatus).toBe('draft')
+    invalidateFeatures()
+  })
+})

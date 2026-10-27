@@ -66,6 +66,7 @@ import { listAllEcosystems, readEcosystem } from '$lib/server/admin';
 import { resolveEcosystem } from '$lib/server/ecosystem';
 import { fetchGraphEntity, fetchGraphView, mergeLenguaIndexes } from '$lib/server/graph';
 import { fetchLenguaIndex } from '$lib/server/lenguas';
+import { fetchFeatures } from '$lib/server/features';
 import { parseLengua, type GrafoLenguaData } from '$lib/lengua';
 import {
   canCombineEcosystems,
@@ -214,6 +215,13 @@ export const load: PageServerLoad = async ({
 
   // One round trip's latency, not three: the view, the focused entity and the
   // neighbour whose shared documents we intersect all go out together.
+  // The ecosistema's switches (`$lib/features`). Combined: the backend leaves
+  // out each ecosistema whose `graph`/`combinedGraph` is off.
+  const features = combined ? null : await fetchFeatures(locals.token, selected.id);
+  if (features && !features.graph) {
+    return { ...base, scope, ecosystem: { id: selected.id, name: selected.name }, graphOff: true };
+  }
+
   const [viewResult, entityResult, edgeResult, lenguaResult] = await Promise.all([
     fetchGraphView(locals.token, { organizationId }),
     entityId ? fetchGraphEntity(locals.token, organizationId, entityId) : null,
@@ -272,5 +280,6 @@ export const load: PageServerLoad = async ({
     searchEnabled: base.searchEnabled,
     combined,
     ecosystemNames,
+    allow3d: features ? features.graph3d : true,
   };
 };

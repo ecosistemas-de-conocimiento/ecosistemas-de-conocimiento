@@ -31,6 +31,7 @@ import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs'
 import { turnAttachments, withPinnedRefs } from './pinned';
 import { fetchPublishedTitles, matchDocumentTitle, titleRetrievalFilter, withTitleRef } from '$lib/server/titleMatch';
 import { sessionEcosystemId } from '$lib/server/ecosystem';
+import { fetchFeatures } from '$lib/server/features';
 import { makeGraphProvider } from '$lib/server/graph';
 import { withFencedChunks, withFencedRefs } from '$lib/server/engine/chunkFence';
 import { fetchOrientationTurns, orientationBlock, withOrientation } from '$lib/server/engine/orientation';
@@ -512,6 +513,10 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // `null` when the list could not be read — NOT an empty set. The draft leg
   // then retrieves nothing at all rather than guessing. See `$lib/server/sessionDocs`.
   const sessionDocumentIds = sessionDocumentIdSet(sessionDocs);
+  // Per-ecosistema switches (backend `lib/features.ts`): `chatOrientation` and
+  // `interviewerMode` are enforced HERE, where the turn is built. Started now
+  // so it overlaps; a failed read is today's behaviour.
+  const featuresP = fetchFeatures(locals.token, organizationId);
 
   // Each ecosistema is its own ai-service org (`X-AI-Org: eco-<id>`): its own
   // budget, usage and corpora. ⚠ Without an ecosistema id the turn falls back
@@ -597,7 +602,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // started now so it overlaps the engine's condense call. This conversation's
   // own turns are excluded. `CHAT_ORIENT_SCOPE` = ecosistema | own | off.
   // See `$lib/server/engine/orientation`.
-  const orientScope = chatOrientScope();
+  const orientScope = (await featuresP).chatOrientation ? chatOrientScope() : 'off';
   const adapter =
     orientScope === 'off'
       ? baseAdapter
@@ -702,12 +707,15 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   const retrievalFilter = titleRetrievalFilter(lengua.retrievalFilter, titleMatch);
   // A person telling their own story meets an interviewer; a direct question
   // still gets the documents (owner ruling 2026-10-26, `$lib/server/engine/turnMode`).
-  const turnMode = chatTurnMode({
-    userMessage,
-    history,
-    sessionDocs: sessionDocs.docs,
-    callerId: locals.user.id != null ? String(locals.user.id) : null,
-  });
+  // `interviewerMode` off: the heuristic is skipped, every turn is an answer.
+  const turnMode: ReturnType<typeof chatTurnMode> = (await featuresP).interviewerMode
+    ? chatTurnMode({
+        userMessage,
+        history,
+        sessionDocs: sessionDocs.docs,
+        callerId: locals.user.id != null ? String(locals.user.id) : null,
+      })
+    : 'answer';
   const turnConfig = chatEngineConfigFor(turnMode);
   // An interview reply with no `[N]` lists no sources: it is a question back,
   // not an answer, and the no-marker fallback would pin documents to it.

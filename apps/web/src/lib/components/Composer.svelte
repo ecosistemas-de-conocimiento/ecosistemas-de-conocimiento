@@ -8,6 +8,7 @@
   import { composerPlaceholder } from '$lib/layout';
   import { AUDIO_UPLOAD_ENABLED } from '$lib/uploadKind';
   import MicButton from './MicButton.svelte';
+  import { app } from '$lib/stores/app.svelte';
 
   let {
     busy = false,
@@ -197,7 +198,7 @@
       data-testid="composer-input"
       disabled={busy}
     ></textarea>
-    {#if AUDIO_UPLOAD_ENABLED}
+    {#if AUDIO_UPLOAD_ENABLED && app.features.liveMic}
       <MicButton disabled={busy} ontext={onLiveText} />
     {/if}
     {#if busy}

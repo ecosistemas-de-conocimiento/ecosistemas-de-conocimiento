@@ -77,6 +77,8 @@ interface World {
   model?: (userPrompt: string) => string;
   /** Extra `GET /api/documents/:id` rows, by id. */
   docRows?: Record<string, Record<string, unknown>>;
+  /** What `GET /api/funciones` answers (backend `lib/features.ts`). Unset: no stored switches. */
+  features?: Record<string, boolean>;
 }
 
 let calls: Call[];
@@ -151,6 +153,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       return json({ docs: world.sessionDocs });
     }
     if (p === '/api/lenguas') return json({ lenguas: [{ lengua: 'mixe', documentos: 1 }] });
+    if (p === '/api/funciones') return json({ features: world.features ?? {} });
     if (p.startsWith('/api/organizations')) {
       return p === '/api/organizations'
         ? json({ docs: [{ id: Number(ECO), name: 'Eco de prueba' }] })
@@ -874,6 +877,14 @@ describe('POST /api/generate — a testimonio turn meets the interviewer', () =>
     expect(frames.find((f) => f.type === 'done')!.provenance).toBeNull();
   });
 
+  it('🔴 the ecosistema switched interviewerMode off: a story gets the answer prompt', async () => {
+    world.features = { interviewerMode: false };
+    world.answerText = 'Respuesta.';
+    await POST(event(turn({ messages: [{ role: 'user', content: STORY }] })));
+    expect(systemOf(chatGenerate().at(-1)!)).not.toContain(interviewSystemPrompt());
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt());
+  });
+
   // 🔴 Audit 2026-10-26: staff attaching a colleague's testimonio met the interviewer.
   it('🔴 someone else\'s testimonio attached: answer mode; my own: interview', async () => {
     world.answerText = 'Gracias. ¿Dónde fue?';
@@ -1358,6 +1369,15 @@ describe('POST /api/generate — earlier conversations orient, never cite', () =
     ];
     await POST(event(turn()));
     expect(promptText()).not.toContain('<conversaciones_anteriores>');
+  });
+
+  it('🔴 the ecosistema switched chatOrientation off: no leg, no block', async () => {
+    world.features = { chatOrientation: false };
+    await POST(event(turn()));
+    expect(orientRetrieves()).toHaveLength(0);
+    expect(promptText()).not.toContain('<conversaciones_anteriores>');
+    const asked = calls.find((c) => c.url.pathname === '/api/funciones');
+    expect(asked?.url.searchParams.get('organization')).toBe(ECO);
   });
 
   it('🔴 CHAT_ORIENT_SCOPE=off removes the leg and the block', async () => {

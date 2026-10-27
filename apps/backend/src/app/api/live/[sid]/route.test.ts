@@ -5,12 +5,18 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-let currentUser: { id: string } | null = { id: 'u42' }
+let currentUser: { id: string; isPlatformAdmin?: boolean } | null = { id: 'u42' }
+let memberOf: string[] = ['7']
+let liveMic = true
 
 vi.mock('payload', () => ({
   getPayload: async () => ({ auth: async () => ({ user: currentUser }) }),
 }))
 vi.mock('@payload-config', () => ({ default: {} }))
+vi.mock('@/lib/permissions', () => ({ organizationIdsForUser: async () => memberOf }))
+vi.mock('@/lib/features', () => ({
+  featureEnabled: async (_p: unknown, _org: unknown, key: string) => (key === 'liveMic' ? liveMic : true),
+}))
 
 const { POST, DELETE } = await import('./route')
 
@@ -22,6 +28,8 @@ describe('/api/live/:sid', () => {
 
   beforeEach(() => {
     currentUser = { id: 'u42' }
+    memberOf = ['7']
+    liveMic = true
     process.env.AUDIO_SERVICE_URL = 'http://audio:8080/'
     process.env.AUDIO_SERVICE_API_KEY = 'k'
     fetchMock.mockReset()
@@ -31,13 +39,13 @@ describe('/api/live/:sid', () => {
 
   it('refuses an anonymous caller before touching audio-service', async () => {
     currentUser = null
-    const res = await POST(new Request('http://x/api/live/' + SID, { method: 'POST', body: 'a' }), ctx(SID))
+    const res = await POST(new Request('http://x/api/live/' + SID + '?organization=7', { method: 'POST', body: 'a' }), ctx(SID))
     expect(res.status).toBe(401)
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('rejects a malformed session id', async () => {
-    const res = await POST(new Request('http://x', { method: 'POST', body: 'a' }), ctx('../x'))
+    const res = await POST(new Request('http://x?organization=7', { method: 'POST', body: 'a' }), ctx('../x'))
     expect(res.status).toBe(400)
   })
 
@@ -46,7 +54,7 @@ describe('/api/live/:sid', () => {
       new Response(JSON.stringify({ committed: 'hola', tentative: 'mundo' }), { status: 200 }),
     )
     const res = await POST(
-      new Request(`http://x/api/live/${SID}?offset=12`, { method: 'POST', body: new Uint8Array([1, 2]) }),
+      new Request(`http://x/api/live/${SID}?organization=7&offset=12`, { method: 'POST', body: new Uint8Array([1, 2]) }),
       ctx(SID),
     )
     const [url, init] = fetchMock.mock.calls[0]
@@ -59,7 +67,7 @@ describe('/api/live/:sid', () => {
 
   it('refuses an oversized slice without forwarding it', async () => {
     const res = await POST(
-      new Request(`http://x/api/live/${SID}`, { method: 'POST', body: new Uint8Array(4 * 1024 * 1024 + 1) }),
+      new Request(`http://x/api/live/${SID}?organization=7`, { method: 'POST', body: new Uint8Array(4 * 1024 * 1024 + 1) }),
       ctx(SID),
     )
     expect(res.status).toBe(413)
@@ -68,7 +76,7 @@ describe('/api/live/:sid', () => {
 
   it('passes an upstream gap through so the client can resend', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: 'live_gap' }), { status: 409 }))
-    const res = await POST(new Request(`http://x/api/live/${SID}?offset=5`, { method: 'POST', body: 'a' }), ctx(SID))
+    const res = await POST(new Request(`http://x/api/live/${SID}?organization=7&offset=5`, { method: 'POST', body: 'a' }), ctx(SID))
     expect(res.status).toBe(409)
   })
 
@@ -77,5 +85,42 @@ describe('/api/live/:sid', () => {
     const res = await DELETE(new Request('http://x', { method: 'DELETE' }), ctx(SID))
     expect(res.status).toBe(204)
     expect(fetchMock.mock.calls[0][0]).toBe(`http://audio:8080/v1/live/u42.${SID}`)
+  })
+
+  const post = (query: string) =>
+    POST(new Request(`http://x/api/live/${SID}${query}`, { method: 'POST', body: 'a' }), ctx(SID))
+
+  it('🔴 403s when the ecosistema switched liveMic off, before touching audio-service', async () => {
+    liveMic = false
+    const res = await post('?organization=7')
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'live_disabled' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('🔴 403s for an ecosistema the caller is not a member of', async () => {
+    const res = await post('?organization=8')
+    expect(res.status).toBe(403)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('400s without an ecosistema', async () => {
+    expect((await post('')).status).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('a platform admin may name any ecosistema; the switch still applies', async () => {
+    currentUser = { id: 'u1', isPlatformAdmin: true }
+    fetchMock.mockResolvedValue(new Response('{}', { status: 200 }))
+    expect((await post('?organization=99')).status).toBe(200)
+    liveMic = false
+    expect((await post('?organization=99')).status).toBe(403)
+  })
+
+  it('DELETE is never gated: stopping always works', async () => {
+    liveMic = false
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+    const res = await DELETE(new Request('http://x', { method: 'DELETE' }), ctx(SID))
+    expect(res.status).toBe(204)
   })
 })
