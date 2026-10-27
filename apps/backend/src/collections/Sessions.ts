@@ -69,6 +69,7 @@ const stampOwnerAndEcosystem: CollectionBeforeValidateHook = async ({
     const original = (originalDoc ?? {}) as Record<string, unknown>
     next.user = original.user
     next.organization = original.organization
+    assertKindUnchanged(next.kind, original.kind, req)
     return next
   }
 
@@ -111,6 +112,28 @@ const stampOwnerAndEcosystem: CollectionBeforeValidateHook = async ({
             : 'You belong to several ecosistemas — say which one this conversation is for.',
       },
     ],
+    req,
+  })
+}
+
+/**
+ * ⚠ `kind` is chosen by the CLIENT on create — unlike `user` and
+ * `organization`, any value the select allows is legitimate for any caller —
+ * and IMMUTABLE afterwards. A conversation's history was produced under one
+ * mode; relabelling it would misfile every turn already in it. Refused, not
+ * silently reverted, so a client bug surfaces instead of looking saved.
+ * Sending the current value back (the admin panel does) is fine.
+ */
+export function assertKindUnchanged(
+  declared: unknown,
+  original: unknown,
+  req: PayloadRequest,
+): void {
+  if (declared === undefined || declared === null) return
+  if (declared === (original ?? 'generales')) return
+  throw new ValidationError({
+    collection: 'sessions',
+    errors: [{ path: 'kind', message: 'A conversation’s kind cannot change after it is created.' }],
     req,
   })
 }
@@ -500,6 +523,23 @@ export const Sessions: CollectionConfig = {
         description:
           'The ecosistema this conversation searches. Auto-filled when you belong to exactly one.',
       },
+    },
+    {
+      /**
+       * Which kind of conversation this is: `generales` (open chat) or
+       * `resonancias` (interview-style). Set by the client on create;
+       * immutable afterwards (`assertKindUnchanged`). Existing rows are
+       * `generales` (`20261027_002257_sessions_kind`).
+       */
+      name: 'kind',
+      type: 'select',
+      options: [
+        { label: 'Generales', value: 'generales' },
+        { label: 'Resonancias', value: 'resonancias' },
+      ],
+      required: true,
+      defaultValue: 'generales',
+      index: true,
     },
     { name: 'title', type: 'text', defaultValue: 'New chat' },
     {
