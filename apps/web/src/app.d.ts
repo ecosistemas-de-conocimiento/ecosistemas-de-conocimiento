@@ -33,6 +33,8 @@ declare global {
       canReviewHolds?: boolean;
       /** ⚠ Presentation only — whether the menu offers `/miembros`. */
       canManageMembers?: boolean;
+      /** ⚠ Presentation only — whether the menu offers `/ajustes`. */
+      canEditFeatures?: boolean;
     }
     // interface PageState {}
     // interface Platform {}

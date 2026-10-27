@@ -359,6 +359,12 @@ export interface GrafoPageData {
   combined: boolean;
   /** Ecosistema id → name, for the combined view's per-node ecosistema chips. */
   ecosystemNames: Record<string, string>;
+  /**
+   * The ecosistema's `graph` / `graph3d` switches (`$lib/features`). Absent:
+   * on. `graphOff` is a state of its own so it never reads as an outage.
+   */
+  graphOff?: boolean;
+  allow3d?: boolean;
 }
 
 // ── Tolerant parsing ───────────────────────────────────────────────────────
@@ -876,6 +882,8 @@ export function emptyGraphCopy(view: GraphView): { title: string; hint: string }
 }
 
 export const GRAPH_NO_RESULTS = 'Nada coincide con lo que buscas.';
+
+export const GRAPH_OFF = 'El grafo está desactivado en este ecosistema.';
 
 export const GRAPH_UNAVAILABLE =
   'No pudimos leer el grafo en este momento. Vuelve a intentarlo en un rato.';

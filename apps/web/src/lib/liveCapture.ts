@@ -125,7 +125,7 @@ export class LiveUplink {
       this.sent = 0;
       return;
     }
-    if (res.status === 503 || res.status === 401 || res.status === 413) {
+    if (res.status === 503 || res.status === 401 || res.status === 403 || res.status === 413) {
       this.disabled = true;
     }
     // 422 (nothing decodable yet), 502/504: keep the offset, retry with the next slice.

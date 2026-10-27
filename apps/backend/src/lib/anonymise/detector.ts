@@ -42,6 +42,7 @@ import {
   openaiCompatFromEnv,
 } from './openaiCompatGenerator'
 import { cooldownMsFromEnv, fallbackModeFromEnv, withHostedFallback } from './fallbackGenerator'
+import { detectorFallbackMode } from '../platformSettings'
 import { PLACEHOLDER_PATTERN, type DetectorFinding, type PersonDetector } from './types'
 
 /** Env var names, so docs and tests never hand-type a string that can drift. */
@@ -622,7 +623,8 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
       if (!client && selfHosted) {
         const resolved = openaiCompatFromEnv()
         if (!resolved) throw new Error(`${ANONYMISE_DETECT_URL_VAR} was unset after start`)
-        const mode = fallbackModeFromEnv()
+        // 🔴 Runtime switch first (`lib/platformSettings.ts`, ≤ 60 s cache), then env.
+        const mode = await detectorFallbackMode()
         client =
           mode === 'hosted'
             ? withHostedFallback(resolved.generator, hostedClient, { cooldownMs: cooldownMsFromEnv() })

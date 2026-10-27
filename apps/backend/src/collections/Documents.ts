@@ -36,6 +36,7 @@ import {
   relationId,
   roleInOrganization,
 } from '../lib/permissions'
+import { refuseDisabledAudioUpload } from './hooks/featureGates'
 import { anonymiseParticipantUpload, fileParticipantAudioAsTestimonio } from '../lib/autoPublish'
 import {
   consumeCorpusCleanupSkip,
@@ -3384,7 +3385,8 @@ export const Documents: CollectionConfig = {
     beforeOperation: [constrainGatedQueries],
     // ⚠ DO NOT FOLD `enforceLenguaDocumentoOnly` INTO `bindDocumentToEcosystem`.
     // Its own doc block says why; the short version is `!req.user`.
-    beforeValidate: [bindDocumentToEcosystem, enforceLenguaDocumentoOnly],
+    // `refuseDisabledAudioUpload`: the per-ecosistema `audioUpload` switch.
+    beforeValidate: [bindDocumentToEcosystem, refuseDisabledAudioUpload, enforceLenguaDocumentoOnly],
     /**
      * ⚠ `invalidateGraphOnContentKindChange` runs on EVERY update, and it is
      * cheap: it returns immediately unless `contentKind` actually changed. It is

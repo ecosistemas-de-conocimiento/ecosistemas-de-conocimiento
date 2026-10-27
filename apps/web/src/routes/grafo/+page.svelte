@@ -40,6 +40,7 @@
     GRAPH_ENTITY_NOT_FOUND,
     GRAPH_ENTITY_UNAVAILABLE,
     GRAPH_KICKER,
+    GRAPH_OFF,
     GRAPH_UNAVAILABLE,
     noEcosystemCopy,
     parseSearchIds,
@@ -182,6 +183,8 @@
          is told the installation has no ecosistema — telling THEM to ask for
          access sends them to themselves. See `noEcosystemCopy`. -->
     <p class="notice">{noEcosystemCopy(scope?.admin === true)}</p>
+  {:else if data.graphOff}
+    <p class="notice" data-testid="grafo-desactivado">{GRAPH_OFF}</p>
   {:else if data.state === 'unavailable' || !data.viewOk}
     <!-- ⚠ An outage is not an empty ecosistema, and must not read like one. -->
     <p class="notice">{GRAPH_UNAVAILABLE}</p>
@@ -201,6 +204,7 @@
     <div class="stage" class:with-panel={data.entity || data.entityState === 'unavailable' || data.entityState === 'not-found'}>
       <OverviewGraph
         combined={data.combined}
+        allow3d={data.allow3d !== false}
         entities={data.view.entities}
         edges={data.view.edges ?? []}
         {selectedId}

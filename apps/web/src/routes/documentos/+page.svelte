@@ -49,6 +49,8 @@
     uploadAccept,
     uploadButtonTitle,
   } from '$lib/uploadKind';
+  /** Audio needs the build flag AND the ecosistema's `audioUpload` (`$lib/features`). */
+  const audioOn = $derived(AUDIO_UPLOAD_ENABLED && app.features.audioUpload);
 
   type Filter = 'all' | 'sueltos';
 
@@ -158,7 +160,7 @@
     const file = input.files?.[0];
     input.value = '';
     if (!file || uploading) return;
-    if (!AUDIO_UPLOAD_ENABLED && isAudioUpload(file)) {
+    if (!audioOn && isAudioUpload(file)) {
       toasts.push({ kind: 'warning', ...AUDIO_UPLOAD_OFF_COPY });
       return;
     }
@@ -245,7 +247,7 @@
       <input
         bind:this={fileInput}
         type="file"
-        accept={uploadAccept(UPLOAD_ACCEPT, AUDIO_EXTENSIONS)}
+        accept={uploadAccept(UPLOAD_ACCEPT, AUDIO_EXTENSIONS, audioOn)}
         hidden
         aria-label={uploadButtonTitle()}
         onchange={onFileChosen}

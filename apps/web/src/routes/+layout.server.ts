@@ -39,6 +39,8 @@ export const load: LayoutServerLoad = async ({ locals }) => {
   const ok = identity !== null;
   const holds = ok ? reviewCapabilityFrom(identity, HOLDS_REVIEW) : null;
   const members = ok ? reviewCapabilityFrom(identity, MEMBERS_MANAGE) : null;
+  // `organization:manage` = responsable (owner). Presentation; `/ajustes` re-asks.
+  const owners = ok ? reviewCapabilityFrom(identity, 'organization:manage') : null;
   const vocesUpload = ok
     ? reviewCapabilityFrom(identity, VOCES_UPLOAD)
     : { isPlatformAdmin: false, slugs: [], ok: false };
@@ -47,6 +49,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
     canReviewHolds: holds ? mayReviewAnywhere(holds) : false,
     // Same presentation-only status; `routes/miembros` re-asks.
     canManageMembers: members ? mayReviewAnywhere(members) : false,
+    canEditFeatures: owners ? mayReviewAnywhere(owners) : false,
     vocesUpload,
   };
 };

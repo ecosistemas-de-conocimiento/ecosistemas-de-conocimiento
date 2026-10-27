@@ -66,6 +66,7 @@
 
 import type { Endpoint, PayloadRequest } from 'payload'
 
+import { featureEnabled, featuresFor } from '../lib/features'
 import { organizationIdsForUser } from '../lib/permissions'
 import { isPlatformAdminUser } from '../access'
 import {
@@ -201,14 +202,39 @@ export async function authoriseCombined(
       sql`SELECT id FROM organizations ORDER BY id`,
     )
     const list = Array.isArray(rows) ? rows : ((rows as { rows?: unknown[] })?.rows ?? [])
-    return { organizationIds: normaliseOrgIds(list.map((r) => (r as { id?: unknown })?.id)) }
+    return {
+      organizationIds: await combinableOnly(req, normaliseOrgIds(list.map((r) => (r as { id?: unknown })?.id))),
+    }
   }
 
   const organizationIds = normaliseOrgIds(await organizationIdsForUser(req.payload, user.id))
   if (organizationIds.length < MIN_COMBINED_MEMBERSHIPS) {
     return errorResponse(403, 'No perteneces a varios ecosistemas.')
   }
-  return { organizationIds }
+  const combinable = await combinableOnly(req, organizationIds)
+  if (combinable.length < MIN_COMBINED_MEMBERSHIPS) return errorResponse(404, COMBINED_OFF)
+  return { organizationIds: combinable }
+}
+
+export const GRAPH_OFF = 'El grafo está desactivado en este ecosistema.'
+export const COMBINED_OFF = 'La vista combinada está desactivada en tus ecosistemas.'
+
+/** `graph` (`lib/features.ts`) for one authorised ecosistema. */
+const graphOn = (req: PayloadRequest, organizationId: number): Promise<boolean> =>
+  featureEnabled(req.payload, organizationId, 'graph')
+
+/**
+ * 🔴 The combined view covers only ecosistemas with BOTH `graph` and
+ * `combinedGraph` on (`lib/features.ts`). The others are left out of the SQL.
+ */
+async function combinableOnly(req: PayloadRequest, ids: number[]): Promise<number[]> {
+  const keep = await Promise.all(
+    ids.map(async (id) => {
+      const f = await featuresFor(req.payload, id)
+      return f.graph && f.combinedGraph
+    }),
+  )
+  return ids.filter((_, i) => keep[i])
 }
 
 /**
@@ -332,6 +358,7 @@ export const graphViewEndpoint: Endpoint = {
 
     const auth = await authoriseOrganization(req, queryParam(req, 'organization'))
     if (!isAuthorised(auth)) return auth
+    if (!(await graphOn(req, auth.organizationId))) return errorResponse(404, GRAPH_OFF)
 
     const limited = await guardGraph(req, auth.organizationId, 'view', rateLimits.graphViewPerUser())
     if (limited) return limited
@@ -407,6 +434,7 @@ export const graphEntityEndpoint: Endpoint = {
 
     const auth = await authoriseOrganization(req, queryParam(req, 'organization'))
     if (!isAuthorised(auth)) return auth
+    if (!(await graphOn(req, auth.organizationId))) return errorResponse(404, GRAPH_OFF)
 
     // Same bucket as the lists: opening a node is part of browsing, and a
     // person clicking through an ego-network does both in one sitting.
@@ -456,6 +484,10 @@ export const graphRetrieveEndpoint: Endpoint = {
 
     const auth = await authoriseOrganization(req, body.organization)
     if (!isAuthorised(auth)) return auth
+    // Off: the silent fallback the pipeline already handles — no graph block.
+    if (!(await graphOn(req, auth.organizationId))) {
+      return ok({ entities: [], edges: [], documents: [], terms: [] })
+    }
 
     const limited = await guardGraph(req, auth.organizationId, 'retrieve', rateLimits.graphRetrievePerUser())
     if (limited) return limited
