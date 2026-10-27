@@ -16,16 +16,24 @@
  * held row), paced
  * by `ANONYMISE_DETECT_MIN_GAP_MS` (shared with the gate detector) plus
  * `delayMs` between rows. Each write is guarded exactly like the live path.
+ *
+ * 🔴 THE SAME SWITCHES AS THE LIVE PATH (re-audit 2026-10-26): a row whose
+ * ecosistema turned `testimonioTitles` off (`lib/features.ts`), or any row while
+ * `TESTIMONIO_TITLES=off`, is skipped — counted in `disabled`, never sent. The
+ * script resolves the stored detector fallback (`lib/platformSettings.ts`, fail
+ * closed) inside `clientFor`.
  */
 
 import type { Payload, Where } from 'payload'
 
+import { featureEnabled } from './features'
 import { relationId } from './permissions'
 import {
   TESTIMONIO_TITLE_INPUT_CHARS,
   cleanTitle,
   payloadTitleStore,
   refreshTestimonioTitle,
+  testimonioTitlesEnabled,
   type TitleGenerator,
   type TitleSource,
   type TitleStore,
@@ -69,6 +77,8 @@ export interface TitleBackfillReport {
   inputChars: number
   /** Of `candidates`, how many are held rows titled from `heldText`. */
   held: number
+  /** Rows skipped because titles are switched off for their ecosistema (or the process). */
+  disabled: number
   written: number
   failed: number
   stale: number
@@ -90,9 +100,12 @@ export function needsTitle(row: Record<string, unknown>, picked: { text: string;
 }
 
 export async function backfillTestimonioTitles(
-  payload: Pick<Payload, 'find'>,
+  payload: Pick<Payload, 'find' | 'findByID'>,
   /** `null` = no allowed backend for this row (`titleClientFromEnv`): no call. */
-  clientFor: (organizationId: number | string, source: TitleSource) => TitleGenerator | null,
+  clientFor: (
+    organizationId: number | string,
+    source: TitleSource,
+  ) => TitleGenerator | null | Promise<TitleGenerator | null>,
   opts: {
     apply?: boolean
     force?: boolean
@@ -136,6 +149,7 @@ export async function backfillTestimonioTitles(
     candidates: 0,
     inputChars: 0,
     held: 0,
+    disabled: 0,
     written: 0,
     failed: 0,
     stale: 0,
@@ -147,6 +161,10 @@ export async function backfillTestimonioTitles(
     const org = relationId(raw.organization as never)
     if (!picked || org === null) continue
     if (!opts.force && !needsTitle(raw, picked)) continue
+    if (!testimonioTitlesEnabled() || !(await featureEnabled(payload, org, 'testimonioTitles'))) {
+      report.disabled += 1
+      continue
+    }
     const { text } = picked
     report.candidates += 1
     if (picked.source === 'held') report.held += 1
@@ -156,7 +174,7 @@ export async function backfillTestimonioTitles(
       opts.log?.(`would title document ${raw.id} (org ${org})`)
       continue
     }
-    const client = clientFor(org, picked.source)
+    const client = await clientFor(org, picked.source)
     if (!client) {
       report.failed += 1
       opts.log?.(`document ${raw.id}: no allowed model (held rows are Spark-only; FALLBACK=none is no hosted)`)

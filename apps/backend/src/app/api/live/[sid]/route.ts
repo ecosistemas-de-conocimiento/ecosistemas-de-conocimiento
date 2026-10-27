@@ -1,5 +1,6 @@
 /**
- * POST   /api/live/:sid?organization=<id>&offset=N   raw audio slice -> { committed, tentative, seconds, received }
+ * POST   /api/live/:sid?organization=<id>[&conversation=<id>]&offset=N
+ *                                                    raw audio slice -> { committed, tentative, seconds, received }
  * DELETE /api/live/:sid                              drop the session (never gated)
  *
  * Live partial text while someone records. A thin pass-through to audio-service
@@ -23,7 +24,7 @@ import { getPayload } from 'payload'
 import { isPlatformAdminUser } from '@/access'
 import { audioServiceApiKey, audioServiceBaseUrl } from '@/lib/audioClient'
 import { featureEnabled } from '@/lib/features'
-import { organizationIdsForUser } from '@/lib/permissions'
+import { organizationIdsForUser, relationId } from '@/lib/permissions'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -83,8 +84,34 @@ async function prepare(
   // by the caller and checked against their memberships, so naming one with
   // the switch on that is not theirs gets the same 403.
   // Stopping (DELETE) is never gated.
+  //
+  // 🔴 WITH A CONVERSATION, ITS ECOSISTEMA DECIDES (re-audit 2026-10-26). The
+  // recording uploads into that conversation, so the switch that counts is its
+  // ecosistema's — not the one selected in the cookie, which can differ. The
+  // conversation is read AS THE CALLER, so one they cannot read is a 403.
+  // Without one (no conversation yet), the named ecosistema is where the
+  // upload will open it.
   if (gate) {
-    const organization = new URL(request.url).searchParams.get('organization') ?? ''
+    const query = new URL(request.url).searchParams
+    let organization = query.get('organization') ?? ''
+    const conversation = query.get('conversation')
+    if (conversation !== null && conversation !== '') {
+      if (!/^\d{1,12}$/.test(conversation)) return fail(400, 'bad_conversation')
+      try {
+        const row = (await payload.findByID({
+          collection: 'sessions',
+          id: conversation,
+          depth: 0,
+          overrideAccess: false,
+          user,
+        })) as { organization?: unknown } | null
+        const id = relationId(row?.organization)
+        if (id === null) return fail(403, 'live_disabled')
+        organization = String(id)
+      } catch {
+        return fail(403, 'live_disabled')
+      }
+    }
     if (!/^\d{1,12}$/.test(organization)) return fail(400, 'bad_organization')
     if (!isPlatformAdminUser(user)) {
       const mine = await organizationIdsForUser(payload, user.id)

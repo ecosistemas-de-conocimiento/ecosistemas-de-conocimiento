@@ -1,10 +1,14 @@
 /**
  * The platform switches (`globals/PlatformSettings.ts`), read at runtime.
  *
- * 🔴 THE ENV IS THE DEFAULT. A stored NULL, an unregistered payload (scripts,
- * unit tests) or a failed read all fall through to the env var, so behaviour is
- * unchanged until an admin saves a value. Cached ≤ 60 s; a save in this process
- * clears it at once.
+ * 🔴 THE ENV IS THE DEFAULT. A stored NULL or an unregistered payload (scripts,
+ * unit tests) fall through to the env var, so behaviour is unchanged until an
+ * admin saves a value. Cached ≤ 60 s; a save in this process clears it at once.
+ *
+ * 🔴 A FAILED READ FAILS CLOSED: `none` (re-audit 2026-10-26). An admin may have
+ * stored `none` precisely so raw text never reaches the hosted model; falling
+ * to an env `hosted` while the database hiccups would undo that. Not cached, so
+ * the next call retries the store.
  */
 
 import type { Payload } from 'payload'
@@ -30,7 +34,7 @@ export function invalidatePlatformSettings(): void {
 
 export const isFallbackMode = (v: unknown): v is FallbackMode => v === 'hosted' || v === 'none'
 
-/** The stored value, or `null` (= use env). */
+/** The stored value, `null` (= use env), or `none` when the read failed. */
 export async function storedDetectorFallback(now: () => number = Date.now): Promise<FallbackMode | null> {
   if (!registered) return null
   if (cached && now() - cached.at < TTL_MS) return cached.detectorFallback
@@ -42,7 +46,7 @@ export async function storedDetectorFallback(now: () => number = Date.now): Prom
     cached = { at: now(), detectorFallback: value }
     return value
   } catch {
-    return null
+    return 'none'
   }
 }
 

@@ -7,11 +7,15 @@
  * It ignores `<dimension>`, so this guard does too and reads the cell and row
  * references themselves — the numbers the grid is actually built from.
  *
- *   1. The zip directory's DECLARED uncompressed size of the sheets plus
- *      `sharedStrings.xml` may not pass `MAX_XML_BYTES`.
+ *   0. The whole archive passes `assertZipWithinLimits` (`./zipGuard.ts`).
+ *   1. The sheets are the ones `xl/_rels/workbook.xml.rels` names — exactly
+ *      how read-excel-file finds them, NOT a path guess (re-audit 2026-10-26:
+ *      a sheet at `xl/hoja.xml` skipped every check). Their DECLARED size plus
+ *      the shared strings' may not pass `MAX_XML_BYTES`.
  *   2. Each sheet is inflated (capped at the same budget, so a lying directory
- *      gains nothing) and its highest row × highest column may not pass
- *      `MAX_CELLS`.
+ *      gains nothing) and the SUM over sheets of highest row × highest column
+ *      may not pass `MAX_CELLS` — one cap per workbook, not per sheet, since
+ *      read-excel-file holds every sheet's grid at once.
  *
  * Anything this cannot read (not a zip, an unknown compression) is left for
  * `read-excel-file` to refuse with its own error. The worker it runs in
@@ -21,48 +25,15 @@
 import { inflateRawSync } from 'node:zlib'
 
 import { ExtractTooLargeError } from './text'
+import { assertZipWithinLimits, zipEntries, type ZipEntry } from './zipGuard'
 
 export const MAX_XML_BYTES = 50_000_000
 export const MAX_CELLS = 2_000_000
 
-type Entry = { name: string; method: number; compressedSize: number; size: number; localOffset: number }
-
-const EOCD = 0x06054b50
-const CENTRAL = 0x02014b50
 const LOCAL = 0x04034b50
 
-/** The central directory, or `null` when the bytes are not a readable zip. */
-function zipEntries(buf: Buffer): Entry[] | null {
-  // The end-of-central-directory record sits in the last 22 + 65,535 bytes.
-  let eocd = -1
-  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 0xffff); i--) {
-    if (buf.readUInt32LE(i) === EOCD) {
-      eocd = i
-      break
-    }
-  }
-  if (eocd < 0) return null
-  const count = buf.readUInt16LE(eocd + 10)
-  let at = buf.readUInt32LE(eocd + 16)
-  const entries: Entry[] = []
-  for (let n = 0; n < count; n++) {
-    if (at + 46 > buf.length || buf.readUInt32LE(at) !== CENTRAL) return null
-    const nameLen = buf.readUInt16LE(at + 28)
-    entries.push({
-      method: buf.readUInt16LE(at + 10),
-      compressedSize: buf.readUInt32LE(at + 20),
-      // 0xFFFFFFFF means "see the zip64 extra field": over 4 GB, refused below.
-      size: buf.readUInt32LE(at + 24),
-      localOffset: buf.readUInt32LE(at + 42),
-      name: buf.toString('utf8', at + 46, at + 46 + nameLen),
-    })
-    at += 46 + nameLen + buf.readUInt16LE(at + 30) + buf.readUInt16LE(at + 32)
-  }
-  return entries
-}
-
 /** An entry's bytes, inflated up to `MAX_XML_BYTES`; `null` if this cannot read it. */
-function entryBytes(buf: Buffer, e: Entry): Buffer | null {
+function entryBytes(buf: Buffer, e: ZipEntry): Buffer | null {
   if (e.localOffset + 30 > buf.length || buf.readUInt32LE(e.localOffset) !== LOCAL) return null
   const start = e.localOffset + 30 + buf.readUInt16LE(e.localOffset + 26) + buf.readUInt16LE(e.localOffset + 28)
   const raw = buf.subarray(start, start + e.compressedSize)
@@ -95,23 +66,56 @@ export function sheetCellSpan(xml: string): number {
   return maxRow * Math.max(maxCol, 1)
 }
 
-const isSheetXml = (name: string) => /^xl\/worksheets\/[^/]+\.xml$/.test(name)
+const REL_TYPES = [
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/',
+  'http://purl.oclc.org/ooxml/officeDocument/relationships/',
+]
+
+/** A rels `Target` as a zip path, resolved the way read-excel-file's `parseFilePaths` does. */
+const relTarget = (target: string) => (target.startsWith('/') ? target.slice(1) : `xl/${target}`)
+
+const attr = (tag: string, name: string) => new RegExp(`\\s${name}="([^"]*)"`).exec(tag)?.[1] ?? null
+
+/** Sheet and shared-string paths from `xl/_rels/workbook.xml.rels`. */
+function workbookParts(buf: Buffer, entries: ZipEntry[]): { sheets: string[]; sharedStrings: string } {
+  const out = { sheets: [] as string[], sharedStrings: 'xl/sharedStrings.xml' }
+  const relsEntry = entries.find((e) => e.name === 'xl/_rels/workbook.xml.rels')
+  const rels = relsEntry ? entryBytes(buf, relsEntry) : null
+  if (!rels) return out
+  for (const [tag] of rels.toString('utf8').matchAll(/<(?:\w+:)?Relationship\b[^>]*>/g)) {
+    const type = attr(tag, 'Type')
+    const target = attr(tag, 'Target')
+    if (!type || !target) continue
+    const kind = REL_TYPES.find((base) => type.startsWith(base)) ? type.slice(type.lastIndexOf('/') + 1) : null
+    if (kind === 'worksheet') out.sheets.push(relTarget(target))
+    else if (kind === 'sharedStrings') out.sharedStrings = relTarget(target)
+  }
+  return out
+}
 
 export function assertXlsxWithinLimits(buf: Buffer): void {
+  assertZipWithinLimits(buf)
   const entries = zipEntries(buf)
   if (!entries) return
-  const xml = entries.filter((e) => isSheetXml(e.name) || e.name === 'xl/sharedStrings.xml')
+  const parts = workbookParts(buf, entries)
+  const sheetNames = new Set(parts.sheets)
+  const sheets = entries.filter((e) => sheetNames.has(e.name))
+  const xml = entries.filter((e) => sheetNames.has(e.name) || e.name === parts.sharedStrings)
   const declared = xml.reduce((sum, e) => sum + e.size, 0)
   if (declared > MAX_XML_BYTES) {
     throw new ExtractTooLargeError(`the sheets declare ${declared} bytes of XML (cap ${MAX_XML_BYTES})`)
   }
-  for (const e of xml) {
-    if (!isSheetXml(e.name)) continue
+  let total = 0
+  for (const e of sheets) {
     const bytes = entryBytes(buf, e)
     if (!bytes) continue
     const span = sheetCellSpan(bytes.toString('latin1'))
     if (span > MAX_CELLS) {
       throw new ExtractTooLargeError(`${e.name} spans ${span} cells (cap ${MAX_CELLS})`)
+    }
+    total += span
+    if (total > MAX_CELLS) {
+      throw new ExtractTooLargeError(`the sheets span ${total} cells together (cap ${MAX_CELLS})`)
     }
   }
 }

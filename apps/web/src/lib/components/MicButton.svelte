@@ -72,6 +72,8 @@
     // Per recording, so a late slice can never land in another recording.
     const mine: Blob[] = [];
     const link = new LiveUplink((t) => ontext(liveLine(t) || '…'));
+    // 🔴 The live switch is checked on the conversation this uploads into.
+    link.conversation = () => app.activeSessionId;
     chunks = mine;
     uplink = link;
     recorder = rec;

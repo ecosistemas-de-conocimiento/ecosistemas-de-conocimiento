@@ -2646,11 +2646,14 @@ async function extractText(
   // uploads on local disk or in the bucket. This function used to resolve
   // `./media/<filename>` itself, which broke the moment object storage was
   // enabled — see the header on `loadMediaBytes`.
-  const { bytes } = await loadMediaBytes(payload, mediaId)
   // 🔴 In a worker with a heap cap and a wall clock, never on this thread: a
   // hostile file kills the worker, not the server. See `lib/extract/sandbox.ts`.
+  // The bytes load only once a worker slot is free (at most
+  // `EXTRACT_MAX_CONCURRENCY` at once), so a queued upload holds no file here.
   const { extractInWorker } = await import('@/lib/extract/sandbox')
-  return extractInWorker(kind, bytes, { maxChars: DOCUMENT_TEXT_MAX_LENGTH })
+  return extractInWorker(kind, async () => (await loadMediaBytes(payload, mediaId)).bytes, {
+    maxChars: DOCUMENT_TEXT_MAX_LENGTH,
+  })
 }
 
 export const Documents: CollectionConfig = {

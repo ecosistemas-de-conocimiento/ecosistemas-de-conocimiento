@@ -12,13 +12,20 @@ export const AUDIO_UPLOAD_OFF = 'La subida de audio está desactivada en este ec
  * whatever route the upload came through. Runs after `bindDocumentToEcosystem`,
  * which has bound `organization` by then.
  *
+ * 🔴 An UPDATE that turns a row into audio is gated the same way (re-audit
+ * 2026-10-26: create-only let a pdf row be PATCHed to `kind: 'audio'`). An edit
+ * of a row that already was audio passes — switching the feature off does not
+ * freeze existing recordings.
+ *
  * System writes (no `req.user`: seeds, scripts) are not uploads and pass.
  */
-export const refuseDisabledAudioUpload: CollectionBeforeValidateHook = async ({ data, operation, req }) => {
-  if (operation !== 'create' || !req.user) return data
+export const refuseDisabledAudioUpload: CollectionBeforeValidateHook = async ({ data, operation, originalDoc, req }) => {
+  if ((operation !== 'create' && operation !== 'update') || !req.user) return data
   const next = (data ?? {}) as Record<string, unknown>
   if (next.kind !== 'audio') return data
-  const organizationId = relationId(next.organization)
+  const before = (originalDoc ?? {}) as Record<string, unknown>
+  if (operation === 'update' && before.kind === 'audio') return data
+  const organizationId = relationId(next.organization ?? before.organization)
   if (!(await featureEnabled(req.payload, organizationId, 'audioUpload'))) {
     throw new APIError(AUDIO_UPLOAD_OFF, 403, undefined, true)
   }

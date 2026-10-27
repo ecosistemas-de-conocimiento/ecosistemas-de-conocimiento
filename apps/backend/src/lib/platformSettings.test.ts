@@ -61,9 +61,21 @@ describe('detectorFallbackMode', () => {
     expect(await detectorFallbackMode({ ANONYMISE_DETECT_FALLBACK: 'none' })).toBe('hosted')
   })
 
-  it('a failed read falls back to env, never throws', async () => {
+  it('🔴 a failed read FAILS CLOSED: none, whatever env says, never throws', async () => {
     registerPlatformSettings({ findGlobal: async () => { throw new Error('db down') } } as never)
     expect(await detectorFallbackMode({ ANONYMISE_DETECT_FALLBACK: 'none' })).toBe('none')
+    expect(await detectorFallbackMode({ ANONYMISE_DETECT_FALLBACK: 'hosted' })).toBe('none')
+    expect(await detectorFallbackMode({})).toBe('none')
+  })
+
+  it('a failed read is not cached: the next read retries the store', async () => {
+    const findGlobal = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('db down'))
+      .mockResolvedValue({ detectorFallback: 'hosted' })
+    registerPlatformSettings({ findGlobal } as never)
+    expect(await detectorFallbackMode({})).toBe('none')
+    expect(await detectorFallbackMode({})).toBe('hosted')
   })
 
   it('a bad env value still throws when nothing is stored (→ HOLD)', async () => {
@@ -119,5 +131,23 @@ describe('🔴 the gate detector honours the stored switch', () => {
       contentKind: 'testimonio',
     })
     expect(hostedSync).toHaveBeenCalled()
+  })
+
+  it('🔴 the gate row names the EFFECTIVE backend: stored `none` drops +fallback (env says hosted)', async () => {
+    vi.stubEnv('ANONYMISE_DETECT_FALLBACK', 'hosted')
+    stored('none')
+    vi.stubGlobal('fetch', sparkDown())
+    const detector = aiServiceDetector({ retry: { attempts: 1, sleep: async () => {} } })
+    await detector.detect({ text: 'Me acompañó Teodulfo.', contentKind: 'testimonio' }).catch(() => {})
+    expect(detector.name).toBe('openai-compat:m')
+  })
+
+  it('🔴 …and stored `hosted` adds it (env says none)', async () => {
+    vi.stubEnv('ANONYMISE_DETECT_FALLBACK', 'none')
+    stored('hosted')
+    vi.stubGlobal('fetch', sparkDown())
+    const detector = aiServiceDetector({ retry: { attempts: 1, sleep: async () => {} } })
+    await detector.detect({ text: 'Me acompañó Teodulfo.', contentKind: 'testimonio' })
+    expect(detector.name).toBe('openai-compat:m+fallback')
   })
 })

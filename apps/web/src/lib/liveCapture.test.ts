@@ -105,4 +105,19 @@ describe('LiveUplink', () => {
     await uplink.close();
     expect(calls.at(-1)).toMatchObject({ url: '/api/live/sid-1', method: 'DELETE' });
   });
+
+  it('🔴 names the active conversation on every slice, read when each slice is sent', async () => {
+    const { uplink, calls } = harness([]);
+    let active: string | null = null;
+    uplink.conversation = () => active;
+    uplink.push(bytes(1));
+    await tick();
+    active = '55';
+    uplink.push(bytes(2));
+    await tick();
+    expect(calls.map((c) => c.url)).toEqual([
+      '/api/live/sid-1?offset=0',
+      '/api/live/sid-1?offset=1&conversation=55',
+    ]);
+  });
 });

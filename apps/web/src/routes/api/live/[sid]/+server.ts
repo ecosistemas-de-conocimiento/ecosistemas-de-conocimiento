@@ -22,11 +22,15 @@ export const POST: RequestHandler = async ({ locals, params, url, request, cooki
   // The selected ecosistema, as a hint: the backend checks membership and the
   // `liveMic` switch (`lib/features.ts`) and 403s otherwise.
   const organization = cookies.get(ECOSYSTEM_COOKIE) ?? '';
+  // 🔴 The conversation the recording uploads into: when named, the backend
+  // checks ITS ecosistema and ignores the cookie's (they can differ).
+  const conversation = url.searchParams.get('conversation');
   let res: Response;
   try {
     res = await backendFetch(
       locals.token,
       `/api/live/${encodeURIComponent(params.sid)}?organization=${encodeURIComponent(organization)}` +
+        (conversation ? `&conversation=${encodeURIComponent(conversation)}` : '') +
         `&offset=${encodeURIComponent(offset)}`,
       {
         method: 'POST',

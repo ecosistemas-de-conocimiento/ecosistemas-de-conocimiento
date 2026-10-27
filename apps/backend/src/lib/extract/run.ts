@@ -23,6 +23,10 @@ export async function extractFileText(kind: ExtractKind, bytes: Buffer, maxChars
   if (kind === 'markdown') return (await import('./markdown')).extractMarkdownText(bytes, { maxChars }).text
   // 🔴 Text only: never rendered back as HTML. See `./html.ts`.
   if (kind === 'html') return (await import('./html')).extractHtmlText(bytes, { maxChars })
+  // 🔴 The zip directory first: mammoth's inflated XML lives outside the heap
+  // cap. See `./zipGuard.ts`. (xlsx runs the same check in `./xlsxGuard.ts`.)
+  const { assertZipWithinLimits } = await import('./zipGuard')
+  assertZipWithinLimits(bytes)
   const mammoth = await import('mammoth')
   const result = await (mammoth.default ?? mammoth).extractRawText({ buffer: bytes })
   return result.value

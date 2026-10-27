@@ -8,14 +8,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 let currentUser: { id: string; isPlatformAdmin?: boolean } | null = { id: 'u42' }
 let memberOf: string[] = ['7']
 let liveMic = true
+/** Conversations the caller may read, by id → their ecosistema. */
+let conversations: Record<string, string> = { '55': '7' }
+const featureOrgs: string[] = []
 
 vi.mock('payload', () => ({
-  getPayload: async () => ({ auth: async () => ({ user: currentUser }) }),
+  getPayload: async () => ({
+    auth: async () => ({ user: currentUser }),
+    findByID: async ({ collection, id, overrideAccess }: { collection: string; id: string; overrideAccess?: boolean }) => {
+      if (collection !== 'sessions' || overrideAccess !== false) throw new Error('unexpected read')
+      const organization = conversations[String(id)]
+      if (!organization) throw Object.assign(new Error('Not Found'), { status: 404 })
+      return { id, organization: Number(organization) }
+    },
+  }),
 }))
 vi.mock('@payload-config', () => ({ default: {} }))
-vi.mock('@/lib/permissions', () => ({ organizationIdsForUser: async () => memberOf }))
+vi.mock('@/lib/permissions', async (orig) => ({ ...(await orig<object>()), organizationIdsForUser: async () => memberOf }))
 vi.mock('@/lib/features', () => ({
-  featureEnabled: async (_p: unknown, _org: unknown, key: string) => (key === 'liveMic' ? liveMic : true),
+  featureEnabled: async (_p: unknown, org: unknown, key: string) => {
+    featureOrgs.push(String(org))
+    return key === 'liveMic' ? liveMic : true
+  },
 }))
 
 const { POST, DELETE } = await import('./route')
@@ -30,6 +44,8 @@ describe('/api/live/:sid', () => {
     currentUser = { id: 'u42' }
     memberOf = ['7']
     liveMic = true
+    conversations = { '55': '7' }
+    featureOrgs.length = 0
     process.env.AUDIO_SERVICE_URL = 'http://audio:8080/'
     process.env.AUDIO_SERVICE_API_KEY = 'k'
     fetchMock.mockReset()
@@ -122,5 +138,22 @@ describe('/api/live/:sid', () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
     const res = await DELETE(new Request('http://x', { method: 'DELETE' }), ctx(SID))
     expect(res.status).toBe(204)
+  })
+
+  it('🔴 with a conversation, its ecosistema is the one checked — not the one the caller named', async () => {
+    memberOf = ['7', '8']
+    fetchMock.mockResolvedValue(new Response('{}', { status: 200 }))
+    expect((await post('?organization=8&conversation=55')).status).toBe(200)
+    expect(featureOrgs).toEqual(['7'])
+  })
+
+  it('🔴 a conversation the caller cannot read is a 403, whatever ecosistema is named', async () => {
+    const res = await post('?organization=7&conversation=56')
+    expect(res.status).toBe(403)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('400s a malformed conversation id', async () => {
+    expect((await post('?organization=7&conversation=../x')).status).toBe(400)
   })
 })
