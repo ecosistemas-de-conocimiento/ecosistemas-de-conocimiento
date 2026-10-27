@@ -1,6 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `db2d201` (profiles `estudiante` and
+**Status:** live since 2026-10-17. Dev runs `main` @ `9907e9e` (peer queries in the student view read
+documentos only, never testimonios; student-view FKs cascade; migration
+`20261027_061014_student_view_fk_cascade` applied on start), deployed 2026-10-27 06:27 UTC — see
+§4zr. Before that, `db2d201` (profiles `estudiante` and
 `investigador`, the student view `/estudiante` and the teacher side `/seguimiento` behind
 `studentView`, scoped `/admin` for investigadores; two migrations applied on start), deployed
 2026-10-27 06:13 UTC, with four seeded demo accounts — see §4zq. Before that, `98bf4ae` (XLSX, CSV, HTML and Markdown
@@ -2061,6 +2064,66 @@ Spend: this run's rows are `edc-eco-7` 06:16:44–06:17:00 UTC, the one chat $0.
 $0.000123 router call and two ingests of the stored turns (< $0.00001) — ≈ **$0.0023**. Rows
 from 06:07 to 06:13 UTC in `edc-eco-7` and `edc-eco-8` ($0.026) are other lanes' work on the old
 containers (inferred by time). Total $3.928697 before, $3.957493 after.
+
+**Disk**, `df -h /` free: 57 GB before; 42 GB after the build; 57 GB after the cleanup. Images
+9.67 GB, build cache 0.
+
+### 4zr. ✅ Done 2026-10-27 06:20–06:32 UTC: `9907e9e`, dev only — one Payload migration on start; peers never see testimonios
+
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
+`97d5316`, `docker ps`). edcai was holding the box from §4zq; this run reported to the
+coordinator only. `9907e9e` = every peer query in `lib/student/queries.ts` ("Mis compañeros"
+RAG ids, peer topics, matching, authors) reads `documento`s only, so a student's own audio
+testimonio never reaches a peer; the student-view foreign keys stop blocking a user or ecosistema
+delete; `seed:demo-users` writes the credentials file before it creates any account. No compose
+or variable change; no ai-service migration.
+
+**Pre-check.** `payload_migrations` 11 rows, newest `20261027_053800_student_view`; no row named
+`20261027_061014_student_view_fk_cascade`.
+
+**Migration.** `payload_migrations` 11 → 12, applied by the container start. The backend log at
+06:27:58 UTC reads "Reading migration files…", `Migrating`/`Migrated:
+20261027_061014_student_view_fk_cascade (42ms)`, `Done.`, then "Next.js 15.4.11" and "Ready in
+803ms". Row batch 7. `pg_constraint.confdeltype` after: `student_profiles_user_id_users_id_fk`,
+`student_profiles_organization_id_organizations_id_fk` and
+`suggestions_organization_id_organizations_id_fk` read `c` (cascade);
+`suggestions_author_id_users_id_fk` reads `n` (set null) and `suggestions.author_id` is nullable.
+`edc_ai` `public.__drizzle_migrations` unchanged at 6.
+
+Backup `/root/backups/20261027T0620Z/` (`edc_ai` 88 MB, `edc_backend` 5.1 MB; `pg_restore -l`
+137 / 438 non-comment lines, `SHA256SUMS` beside them), off-box copy in the owner's
+`cide/backups/edc-1/20261027T0620Z/` with `timeout 180 scp`; `sha256sum -c` of both dumps passed
+before the deploy. Deploy `ske0kaoobhbqwdzpmmklci8o` 06:21:22 → 06:27:54 UTC, `finished`, commit
+`9907e9e7…`. 9 containers up; `web`, `backend` and `ai-service` run image tag `9907e9e7ccc8…`,
+healthy. The deploy rebuilt `edc-audio-service:dev` again (now `34eaa1a34994`). Health 200 on
+`dev.` and `api.dev.`. 0 `error`/`fatal` lines in 8 of 9 dev containers at startup and after the
+smoke; postgres holds 2 `ERROR: syntax error` lines (06:28:22 UTC), both the deploy agent's own
+mis-quoted check queries.
+
+**Smoke** (no paid call). Before the deploy, on `db2d201`, estudiante1's peer scope was empty:
+no `student_profiles` row existed, and org 8 holds no testimonio at all (440 published
+documentos, all uploaded by user 1). So the check needs a fixture, set up and reverted by hand
+(dev data is disposable):
+
+1. estudiante2 (user 6) turned `shareWithPeers` on through `PATCH /api/estudiante/perfil`
+   (org 8) at 06:29:03 UTC.
+2. SQL: documento 371 → `uploaded_by_id = 6`; documento 384 → `uploaded_by_id = 6`,
+   `content_kind = 'testimonio'`.
+3. Reverted at 06:29:34 UTC: both rows back to `uploaded_by_id = 1`, 384 back to `documento`,
+   user 6's `student_profiles` row deleted (0 rows left, as before).
+
+| check | result |
+|---|---|
+| 1. estudiante1, peer scope `GET /api/estudiante/alcance?organization=8&alcance=companeros` | `{"documentIds":[371]}` — the peer's documento only; testimonio 384 absent |
+| 2. estudiante1, `GET /api/estudiante?organization=8` | 200; `companeros` `[]` (estudiante1 has 0 temas: its only doc 823 is a draft), 1 own documento |
+| 3. estudiante1, `/estudiante` (Playwright, after hydration) | 200; "Mis temas", "Generar preguntas", "Compañeros", "Mis autores", "Sugerir" render; no "Sin acceso"; 0 page errors. "Generar preguntas" not clicked (paid) |
+
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three `db2d201`
+web/backend/ai-service images by exact name; `docker builder prune -af` reclaimed 14.78 GB. Two
+dangling images left, both in use: `858f009f9709` (staging's redis) and `57e4255cc971`
+(`coolify-redis`).
+
+Spend: 0 `usage_logs` rows since 06:20 UTC; total $3.957493 before and after.
 
 **Disk**, `df -h /` free: 57 GB before; 42 GB after the build; 57 GB after the cleanup. Images
 9.67 GB, build cache 0.
