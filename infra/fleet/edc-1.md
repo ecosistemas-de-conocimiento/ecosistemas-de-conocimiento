@@ -1,6 +1,9 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `98bf4ae` (XLSX, CSV, HTML and Markdown
+**Status:** live since 2026-10-17. Dev runs `main` @ `db2d201` (profiles `estudiante` and
+`investigador`, the student view `/estudiante` and the teacher side `/seguimiento` behind
+`studentView`, scoped `/admin` for investigadores; two migrations applied on start), deployed
+2026-10-27 06:13 UTC, with four seeded demo accounts — see §4zq. Before that, `98bf4ae` (XLSX, CSV, HTML and Markdown
 documentos; `sessions.kind`; per-ecosistema feature switches and `/ajustes`; three migrations
 applied on start by `scripts/migrate.sh`), deployed 2026-10-27 03:06 UTC, with a fifth ecosistema,
 id 8 "Semiosis práctica" — see §4zp. Before that, `dd9a5c5` (the live mic's last line fills
@@ -1990,6 +1993,78 @@ uploads) — ≈ **$0.011**. Total $3.212421 after the run.
 **Disk**, `df -h /` free: 55 GB before; 41 GB after the build; 57 GB after the cleanup. Images
 9.7 GB, build cache 0.
 
+### 4zq. ✅ Done 2026-10-27 06:05–06:25 UTC: `db2d201`, dev only — two Payload migrations on start; four demo accounts for the new profiles
+
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
+`97d5316`, `docker ps`). edcai and the -7e lane were told before the deploy by the coordinator.
+`db2d201` = profiles `estudiante` and `investigador` with dev demo users (`eef6f4e`); the student
+view `/estudiante` and the teacher side `/seguimiento` behind the `studentView` switch
+(`a2ab9bb`); `/admin` scoped to an investigador's own ecosistemas (`db2d201`). No compose or
+variable change; no ai-service migration.
+
+**Pre-check.** `payload_migrations` held **no** row named `20261027_053603_student_view` (0 rows
+`LIKE '%student_view%'`, 9 rows total, newest `20261027_020102_feature_switches`). That name
+belonged to a renamed migration that was never deployed.
+
+**Migrations.** `payload_migrations` 9 → 11, applied by the container start. The backend log at
+06:13:14 UTC reads "Reading migration files…", Migrating/Migrated for each, then `Done.`, then
+"Next.js 15.4.11" and "Ready in 880ms":
+
+| migration | ms |
+|---|---|
+| `20261027_053737_memberships_role_estudiante` | 6 |
+| `20261027_053800_student_view` | 83 |
+
+`edc_ai` `public.__drizzle_migrations` unchanged at 6.
+
+Backup `/root/backups/20261027T0606Z/` (`edc_ai` 91 MB, `edc_backend` 5.3 MB; `pg_restore -l`
+137 / 406 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261027T0606Z/`
+with `timeout 180 scp`; `sha256sum -c` of both dumps passed before the deploy.
+Deploy `nz9q4xibgc6o9ehdrrokgz1p` 06:07:07 → 06:13:11 UTC, `finished`, commit `db2d2019…`.
+9 containers up; `web`, `backend` and `ai-service` run image tag `db2d20198bc4…`, healthy. The
+deploy rebuilt `edc-audio-service:dev` again (now `d2362e21e954`, created 06:09:25 UTC). Health 200
+on `dev.` and `api.dev.`. 0 `error`/`fatal` lines in all 9 dev containers at startup. After the
+smoke, backend holds 3 `ERROR: Not Found` lines (06:16:30, 06:16:32, 06:17:28 UTC), matched by
+time to the smoke's own refused probes (inferred); the other 8 containers 0.
+
+**Demo accounts.** `seed:demo-users` (`src/seed/demoUsers.cli.ts`) run inside the backend
+container: `cd /repo/apps/backend; DEMO_USERS_FILE=/tmp/edc-demo-users.env
+node_modules/.bin/payload run src/seed/demoUsers.cli.ts`. The script's default credentials path
+is the owner's laptop path, which does not exist in the container (it refuses when the directory
+is missing), hence `DEMO_USERS_FILE`. All four `created`. The file was `docker cp`'d to the box,
+`scp`'d to the owner's `cide/.env.demo-users` (mode 0600, 4 password keys), then deleted from the
+container and `shred -u` from the box. Passwords were never printed. ⚠ `payload run` boots a full
+Payload instance, so it arms the janitors in a second process for the seconds it runs.
+
+| user id | account | memberships |
+|---|---|---|
+| 5 | `estudiante1@ecosistemas.test` | 8 `estudiante`; private draft note doc 823 |
+| 6 | `estudiante2@ecosistemas.test` | 8 `estudiante`; private draft note doc 824 |
+| 7 | `investigador-semiosis@ecosistemas.test` | 8 `investigador` |
+| 8 | `investigador-dengue@ecosistemas.test` | 6 and 7 `investigador` |
+
+| check | result |
+|---|---|
+| 1. estudiante1, Semiosis (8), `/estudiante` (Playwright, after hydration) | "Mis temas" renders: "Generar preguntas", Compañeros, Mis autores, Sugerir; 0 error notes. "Generar preguntas" not clicked (paid) |
+| 2. estudiante1 refused | `__data.json` (the web runs `ssr = false`, so the HTML shell is always 200): `/revision` **403** ("Sin acceso"), `/seguimiento` **404**, `/seguimiento?estudiante=6` **404**, `/admin` **403**. Backend with its JWT: `/api/estudiante/reportes` 403, `/api/estudiante/reporte?user=6` 403, `/api/sugerencias` 403, `/api/holds?organization=8` 404 |
+| 3. investigador-dengue | `/revision?eco=6`: "Documentos retenidos", chips Discapacidad and Prevención del dengue, one held document listed. `/admin?eco=8`: data 200, the note "El ecosistema que pediste no existe" shown, 0 mentions of "Semiosis". `/revision?eco=8`: falls back to its own queue, 0 mentions of "Semiosis" |
+| 4. Resonancias tab, participant, Discapacidad (7) | tab "Resonancias" → "Nueva conversación" → "Mi hijo usa silla de ruedas y la escuela de mi colonia no tiene rampas." → 200, 16.6 s, 307 characters, **one** follow-up question ("¿Cómo ha sido la experiencia de su hijo al moverse en los espacios escolares?"), with `[1, 2, 8]` from the corpus. Session 201, `kind = resonancias` |
+
+0 page errors. Session 201 deleted as its owner (200); 0 `sessions`/`messages` rows left.
+
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three `98bf4ae`
+web/backend/ai-service images by exact name; `docker builder prune -af` reclaimed 14.78 GB. Two
+dangling images left, both in use: `858f009f9709` (staging's redis) and `57e4255cc971`
+(`coolify-redis`).
+
+Spend: this run's rows are `edc-eco-7` 06:16:44–06:17:00 UTC, the one chat $0.002166 plus a
+$0.000123 router call and two ingests of the stored turns (< $0.00001) — ≈ **$0.0023**. Rows
+from 06:07 to 06:13 UTC in `edc-eco-7` and `edc-eco-8` ($0.026) are other lanes' work on the old
+containers (inferred by time). Total $3.928697 before, $3.957493 after.
+
+**Disk**, `df -h /` free: 57 GB before; 42 GB after the build; 57 GB after the cleanup. Images
+9.67 GB, build cache 0.
+
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
 Backups taken before the deploy (both DBs, both envs, each checked with `pg_restore -l`, sha256
@@ -2094,6 +2169,9 @@ Names in the local secrets file:
 - Staging test user: `EDC_STAGE_SMOKE_USER_EMAIL`, `EDC_STAGE_SMOKE_USER_PASSWORD`.
 - Dev demo users (§4w): `EDC_DEV_PARTICIPANT_EMAIL`, `EDC_DEV_PARTICIPANT_PASSWORD` (role
   `member`); `EDC_DEV_INVESTIGADOR_EMAIL`, `EDC_DEV_INVESTIGADOR_PASSWORD` (role `investigador`).
+- Dev demo users for the new profiles (§4zq), in a separate file `cide/.env.demo-users` (mode
+  0600, written by `seed:demo-users`): `DEMO_<KEY>_EMAIL`, `DEMO_<KEY>_PASSWORD` for `ESTUDIANTE1`,
+  `ESTUDIANTE2`, `INVESTIGADOR_SEMIOSIS`, `INVESTIGADOR_DENGUE`.
 
 The admin login on both environments is `admin@ejemplo.invalid` with that environment's
 `SEED_ADMIN_PASSWORD`. Every secret was generated fresh per environment (`openssl rand -hex 32`;
