@@ -19,7 +19,12 @@ export const Suggestions: CollectionConfig = {
   access: { read: serverOnly, create: serverOnly, update: serverOnly, delete: serverOnly },
   fields: [
     { name: 'organization', type: 'relationship', relationTo: 'organizations', required: true, index: true },
-    { name: 'author', type: 'relationship', relationTo: 'users', required: true, index: true },
+    /**
+     * ⚠ NOT `required`, on purpose: deleting the author keeps the suggestion,
+     * anonymous (`author_id` → NULL, `20261027_061014_student_view_fk_cascade`).
+     * The endpoint still always stamps it from the session.
+     */
+    { name: 'author', type: 'relationship', relationTo: 'users', index: true },
     {
       name: 'kind',
       type: 'select',

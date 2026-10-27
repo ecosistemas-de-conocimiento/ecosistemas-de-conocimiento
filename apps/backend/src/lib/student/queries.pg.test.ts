@@ -5,7 +5,9 @@
  *
  * Pinned: tenant isolation; peers' topics from PUBLISHED documents only;
  * private personas and noise labels never surface; consent rows need an
- * active `estudiante` membership.
+ * active `estudiante` membership; 🔴 a peer's TESTIMONIO never feeds any
+ * peer lookup (audit 2026-10-27: doc 52 below, a student's own audio, came back
+ * in "Mis compañeros" and so named its anonymous voice).
  *
  * ⚠ The `estudiante` enum value is added here by hand, standing in for the
  * roles lane's migration. No docker → SKIPS.
@@ -43,7 +45,8 @@ describe.skipIf(!dockerOk)('student queries (real Postgres)', () => {
         (22, 8, 2, 'Beto borrador', 'draft', 'documento', null),
         (31, 8, 3, 'Autores/Charles S. Peirce', 'published', 'documento', null),
         (41, 9, 4, 'Otra eco', 'published', 'documento', null),
-        (51, 8, 3, 'Voz', 'published', 'testimonio', null);
+        (51, 8, 3, 'Voz', 'published', 'testimonio', null),
+        (52, 8, 2, 'Voz de Beto', 'published', 'testimonio', null);
       INSERT INTO graph_entities (id, organization_id, type, label, canonical_key, public_figure) VALUES
         (100, 8, 'tema', 'semiosis', 'semiosis', false),
         (101, 8, 'tema', 'signo', 'signo', false),
@@ -58,6 +61,7 @@ describe.skipIf(!dockerOk)('student queries (real Postgres)', () => {
         (8, 21, 100), (8, 22, 102),
         (8, 31, 100), (8, 31, 103),
         (8, 51, 104),
+        (8, 52, 101), (8, 52, 103),
         (9, 41, 200);
     `),
     )
@@ -115,5 +119,18 @@ describe.skipIf(!dockerOk)('student queries (real Postgres)', () => {
     expect((await Q.documentsOf(p, 8, 1)).map((d) => d.name)).toEqual(['Mi ensayo'])
     expect((await Q.publishedDocumentoNames(p, 8)).map((d) => d.id)).toEqual([21, 31])
     expect(await Q.sessionTitlesOf(p, 8, 1)).toEqual([])
+  })
+  it('🔴 a published TESTIMONIO by a consenting peer never feeds a peer lookup', async () => {
+    // Doc 52: Beto's own audio, filed as a testimonio, mentions 'signo' and Peirce.
+    expect(await Q.publishedDocumentIdsOf(p, 8, [2])).toEqual([21])
+    expect((await Q.topicsByUser(p, 8, [2], { publishedOnly: true })).get(2)!.map((t) => t.label)).toEqual([
+      'semiosis',
+    ])
+    expect((await Q.topicsByUser(p, 8, [2], { publishedOnly: false })).get(2)!.map((t) => t.label).sort()).toEqual([
+      'secreto',
+      'semiosis',
+    ])
+    expect(await Q.authorsNearTopics(p, 8, [101])).toEqual([])
+    expect(await Q.authorsOfUser(p, 8, 2)).toEqual([])
   })
 })

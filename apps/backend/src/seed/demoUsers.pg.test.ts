@@ -6,7 +6,7 @@
  * ⚠ No docker → the suite SKIPS.
  */
 
-import { mkdtempSync, readFileSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -110,6 +110,36 @@ describe.skipIf(!dockerOk)('seed/demoUsers (real Postgres)', () => {
     await pg.db.execute(sql.raw(`UPDATE memberships SET role = 'member' WHERE role = 'investigador'`))
     await seedDemoUsers(payload)
     expect((await rowsOf(pg.db, sql.raw(`SELECT count(*)::int AS n FROM memberships WHERE role = 'investigador'`)))[0]!.n).toBe(3)
+  }, 60_000)
+
+  it('🔴 the credentials file is written BEFORE any account; a failed write creates none', async () => {
+    const late = { key: 'LATE', email: 'late@ecosistemas.test', displayName: 'Late', memberships: [{ organization: 8, role: 'estudiante' as const }] }
+    const exists = async (): Promise<number> =>
+      Number((await rowsOf(pg.db, sql.raw(`SELECT count(*)::int AS n FROM users WHERE email = '${late.email}'`)))[0]!.n)
+    // The file cannot be written → no account, so no password is lost.
+    await expect(
+      seedDemoUsers(payload, { users: [late], beforeWrite: () => { throw new Error('disk full') } }),
+    ).rejects.toThrow('disk full')
+    expect(await exists()).toBe(0)
+
+    const dir = mkdtempSync(path.join(tmpdir(), 'demo-users-'))
+    const file = path.join(dir, '.env.demo-users')
+    let accountsWhenWritten = -1
+    await seedDemoUsers(payload, {
+      users: [late],
+      beforeWrite: async (planned) => {
+        accountsWhenWritten = await exists()
+        writeCredentials(file, planned)
+      },
+    })
+    expect(accountsWhenWritten).toBe(0)
+    expect(await exists()).toBe(1)
+    const pw = /DEMO_LATE_PASSWORD=(\S+)/.exec(readFileSync(file, 'utf8'))?.[1]
+    const login = await payload.login({ collection: 'users', data: { email: late.email, password: pw! } })
+    expect(login.token).toBeTruthy()
+    // Temp + rename: only the final file is left, 0600.
+    expect(readdirSync(dir)).toEqual(['.env.demo-users'])
+    expect(statSync(file).mode & 0o777).toBe(0o600)
   }, 60_000)
 
   it('renderCredentials keeps unrelated lines and overwrites only this run', () => {

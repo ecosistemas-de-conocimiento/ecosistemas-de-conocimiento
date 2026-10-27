@@ -27,14 +27,16 @@
  *  · outside local/dev/demo-0 (`seed/env-gate.ts`, the manual tier);
  *  · when ecosistema 6, 7 or 8 does not exist;
  *  · when the credentials file's directory does not exist — a password that
- *    cannot be written down is a locked account.
+ *    cannot be written down is a locked account;
+ *  · when the credentials file cannot be written: it is written (temp +
+ *    rename) after planning and BEFORE the first account write.
  *
  * Sample work is an in-app note (`kind: 'markdown'`, `ingestStatus: 'n/a'`):
  * no pipeline, no corpus, no AI call. It stays a private draft.
  */
 
 import { randomBytes } from 'node:crypto'
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import type { Payload } from 'payload'
@@ -130,36 +132,54 @@ export async function missingOrganizations(payload: Payload, users: readonly Dem
   return ids.filter((id) => !have.has(String(id)))
 }
 
-/** Create or converge the accounts. Returns what happened; never logs a password. */
+/**
+ * Create or converge the accounts. Returns what happened; never logs a password.
+ *
+ * 🔴 TWO PHASES. Every account's fate and password is decided first, with no
+ * write; then `beforeWrite` gets that plan (the CLI writes the credentials
+ * file there); only then is anything written. A file that cannot be written
+ * throws before any account exists, so no password is ever set that nobody
+ * holds. A DB failure after the file is written leaves a password line the
+ * DB does not hold yet (a new account, or a reset); re-running with the same
+ * flags issues a new one over it and converges.
+ */
 export async function seedDemoUsers(
   payload: Payload,
-  opts: { reset?: boolean; password?: () => string; users?: readonly DemoUser[] } = {},
+  opts: {
+    reset?: boolean
+    password?: () => string
+    users?: readonly DemoUser[]
+    beforeWrite?: (planned: readonly DemoUserResult[]) => void | Promise<void>
+  } = {},
 ): Promise<DemoUserResult[]> {
   const issue = opts.password ?? generatePassword
-  const results: DemoUserResult[] = []
+  const plan: Array<{ spec: DemoUser; found: ({ id: Id } & Record<string, unknown>) | null; result: DemoUserResult }> = []
 
   for (const spec of opts.users ?? DEMO_USERS) {
-    let user = await findOne(payload, 'users', { email: { equals: spec.email } })
-    let result: DemoUserResult
+    const found = await findOne(payload, 'users', { email: { equals: spec.email } })
+    const status: DemoUserStatus = !found ? 'created' : opts.reset ? 'reset' : 'existing'
+    const result: DemoUserResult = { key: spec.key, email: spec.email, status }
+    if (status !== 'existing') result.password = issue()
+    plan.push({ spec, found, result })
+  }
+  const results = plan.map((p) => p.result)
+  await opts.beforeWrite?.(results)
+
+  for (const { spec, found, result } of plan) {
+    let user = found
     if (!user) {
-      const password = issue()
       user = (await payload.create({
         collection: 'users',
-        data: { email: spec.email, password, displayName: spec.displayName, isActive: true } as never,
+        data: { email: spec.email, password: result.password, displayName: spec.displayName, isActive: true } as never,
         overrideAccess: true,
       })) as unknown as { id: Id } & Record<string, unknown>
-      result = { key: spec.key, email: spec.email, status: 'created', password }
-    } else if (opts.reset) {
-      const password = issue()
+    } else if (result.status === 'reset') {
       await payload.update({
         collection: 'users',
         id: user.id,
-        data: { password, isActive: true } as never,
+        data: { password: result.password, isActive: true } as never,
         overrideAccess: true,
       })
-      result = { key: spec.key, email: spec.email, status: 'reset', password }
-    } else {
-      result = { key: spec.key, email: spec.email, status: 'existing' }
     }
 
     for (const { organization, role } of spec.memberships) {
@@ -206,8 +226,6 @@ export async function seedDemoUsers(
         })
       }
     }
-
-    results.push(result)
   }
   return results
 }
@@ -231,10 +249,17 @@ export function renderCredentials(existing: string, results: readonly DemoUserRe
   return `# EDC dev demo users — written by seed/demoUsers.ts, ${now.toISOString()}. Never commit.\n${body}\n`
 }
 
+/** Temp file (0600, created exclusively) + rename: the file is whole or untouched. */
 export function writeCredentials(file: string, results: readonly DemoUserResult[]): void {
   const existing = existsSync(file) ? readFileSync(file, 'utf8') : ''
-  writeFileSync(file, renderCredentials(existing, results), { mode: 0o600 })
-  chmodSync(file, 0o600)
+  const tmp = `${file}.tmp-${process.pid}`
+  try {
+    writeFileSync(tmp, renderCredentials(existing, results), { mode: 0o600, flag: 'wx' })
+    renameSync(tmp, file)
+  } catch (err) {
+    rmSync(tmp, { force: true })
+    throw err
+  }
 }
 
 /** Why the CLI must not run, or null. Checked before anything is written. */
@@ -261,8 +286,8 @@ export async function runDemoUsersCli(): Promise<void> {
     process.exit(1)
   }
   const reset = process.env.DEMO_USERS_RESET_PASSWORDS === '1'
-  const results = await seedDemoUsers(payload, { reset })
-  writeCredentials(file, results)
+  // 🔴 The file is written before the first account (see `seedDemoUsers`).
+  const results = await seedDemoUsers(payload, { reset, beforeWrite: (planned) => writeCredentials(file, planned) })
   // 🔴 Emails and statuses only. The passwords are in `file`.
   for (const r of results) payload.logger.info(`[seed-demo-users] ${r.email}: ${r.status}`)
   payload.logger.info(`[seed-demo-users] credentials for new/reset accounts written to ${file} (0600).`)

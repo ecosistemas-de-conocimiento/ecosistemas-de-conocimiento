@@ -9,6 +9,13 @@
  * 🔴 What may leave for someone who is NOT the uploader is entity LABELS from
  * PUBLISHED documents (the graph's own published-only gate) and names of
  * published `documento`s. Never a peer's text, never a draft.
+ * 🔴 NEVER A TESTIMONIO OR A CONVERSATION. A student's own audio is filed as a
+ * `testimonio` (`lib/ingest/autoPublish.ts`), which the biblioteca shows
+ * WITHOUT its uploader (`collections/Documents.ts`, `GATED_QUERYABLE_FIELDS`).
+ * Any per-person read here that let one through would name that voice
+ * (audit 2026-10-27: "Mis compañeros" scope returned a peer's testimonio).
+ * So every read that joins `documents` carries {@link DOCUMENTO}, except
+ * `documentsOf` (the caller's own list) and `corpusTopTopics` (no person).
  * The graph's noise gate and no-private-persona gate (`lib/graph/queries.ts`)
  * apply to every mention read here.
  */
@@ -43,11 +50,15 @@ const labelled = (r: Record<string, unknown>): Labelled => ({
   docs: toCount(r.docs),
 })
 
+/** 🔴 Peer-facing reads: `documento` only (see the header). */
+const DOCUMENTO: GraphSql = sql` AND d.content_kind = 'documento'`
+
 const published = (on: boolean): GraphSql => (on ? sql` AND d.publication_status = 'published'` : sql``)
 
 /**
  * `tema` entities per uploader. `publishedOnly` is false ONLY when the one
  * uploader asked is the caller (their own drafts count for their own topics).
+ * `documento` only, for every caller: the teacher report reads it too.
  */
 export async function topicsByUser(
   p: StudentDb,
@@ -63,7 +74,7 @@ export async function topicsByUser(
     SELECT d.uploaded_by_id AS user_id, e.id AS entity_id, e.label AS label,
            COUNT(DISTINCT d.id)::int AS docs
       FROM graph_mentions m
-      JOIN documents d ON d.id = m.document_id AND d.organization_id = ${organizationId}${published(opts.publishedOnly)}
+      JOIN documents d ON d.id = m.document_id AND d.organization_id = ${organizationId}${published(opts.publishedOnly)}${DOCUMENTO}
       JOIN graph_entities e ON e.id = m.entity_id AND e.organization_id = ${organizationId}
      WHERE m.organization_id = ${organizationId}
        AND d.uploaded_by_id = ANY(${intArray(userIds)})
@@ -88,7 +99,7 @@ export async function authorsOfUser(p: StudentDb, organizationId: number, userId
     sql`
     SELECT e.id AS entity_id, e.label AS label, COUNT(DISTINCT d.id)::int AS docs
       FROM graph_mentions m
-      JOIN documents d ON d.id = m.document_id AND d.organization_id = ${organizationId}
+      JOIN documents d ON d.id = m.document_id AND d.organization_id = ${organizationId}${DOCUMENTO}
       JOIN graph_entities e ON e.id = m.entity_id AND e.organization_id = ${organizationId}
      WHERE m.organization_id = ${organizationId}
        AND d.uploaded_by_id = ${userId}
@@ -101,7 +112,7 @@ export async function authorsOfUser(p: StudentDb, organizationId: number, userId
 }
 
 /**
- * Public-figure `persona` entities in PUBLISHED documents that also mention
+ * Public-figure `persona` entities in PUBLISHED documentos that also mention
  * one of `topicIds` — "authors near my topics". `docs` = shared documents.
  */
 export async function authorsNearTopics(
@@ -116,7 +127,7 @@ export async function authorsNearTopics(
     sql`
     SELECT e.id AS entity_id, e.label AS label, COUNT(DISTINCT d.id)::int AS docs
       FROM graph_mentions m
-      JOIN documents d ON d.id = m.document_id AND d.organization_id = ${organizationId} AND d.publication_status = 'published'
+      JOIN documents d ON d.id = m.document_id AND d.organization_id = ${organizationId} AND d.publication_status = 'published'${DOCUMENTO}
       JOIN graph_entities e ON e.id = m.entity_id AND e.organization_id = ${organizationId}
      WHERE m.organization_id = ${organizationId}
        AND e.type = 'persona'${notNoise('e')}${publicPersonaOnly('e')}
@@ -242,7 +253,7 @@ export async function ownTexts(p: StudentDb, organizationId: number, userId: num
   return rows.map((r) => toText(r.text)).filter(Boolean)
 }
 
-/** Published document ids of these uploaders — the RAG scope. */
+/** Published documento ids of these uploaders — the "Mis compañeros" RAG scope. */
 export async function publishedDocumentIdsOf(
   p: StudentDb,
   organizationId: number,
@@ -255,7 +266,7 @@ export async function publishedDocumentIdsOf(
     SELECT d.id AS id FROM documents d
      WHERE d.organization_id = ${organizationId}
        AND d.publication_status = 'published'
-       AND d.uploaded_by_id = ANY(${intArray(userIds)})
+       AND d.uploaded_by_id = ANY(${intArray(userIds)})${DOCUMENTO}
      ORDER BY d.id
      LIMIT 500`,
   )
