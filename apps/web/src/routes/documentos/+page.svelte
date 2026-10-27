@@ -28,6 +28,7 @@
   import TestimonySource from '$lib/components/TestimonySource.svelte';
   import { deleteConfirmCopy } from '$lib/documents';
   import { docStatusBadge } from '$lib/docStatus';
+  import { isNote } from '$lib/ingest';
   import { canRetryGraph, GRAPH_RETRY_LABEL, graphBadge } from '$lib/graphStatus';
   import { publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
   import { mayUploadVoces } from '$lib/uploadKind';
@@ -320,7 +321,7 @@
           <div class="row-head">
             <span class="name" title={d.title}>{d.title}</span>
             {#if d.subtitle != null}<span class="subtitle"><TestimonySource audio={d.kind === 'audio'} day={d.subtitle} /></span>{/if}
-            {#if d.kind && d.kind !== 'markdown'}
+            {#if d.kind && !isNote(d)}
               <span class="chip kind">{d.kind}</span>
             {/if}
             {#if ing}

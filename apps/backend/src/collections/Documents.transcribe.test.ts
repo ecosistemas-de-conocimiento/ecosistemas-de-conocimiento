@@ -316,8 +316,9 @@ describe('planIngestRetry — 🔴 what a retry actually costs', () => {
     },
   )
 
-  it('refuses a markdown note, which never had a pipeline', () => {
-    expect(planIngestRetry({ kind: 'markdown', ingestStatus: 'failed' })).toBeNull()
+  it('refuses a markdown note, which never had a pipeline; retries an uploaded .md', () => {
+    expect(planIngestRetry({ kind: 'markdown', ingestStatus: 'n/a' })).toBeNull()
+    expect(planIngestRetry({ kind: 'markdown', ingestStatus: 'failed' })).not.toBeNull()
   })
 
   it('works for pdf and docx too — the retry path is not audio-specific', () => {

@@ -292,7 +292,7 @@ export const audioOnlyWebm: CollectionBeforeValidateHook = async ({ data, req })
 }
 
 /**
- * csv and html must really be text, and html is stored as `text/plain`.
+ * csv, html and markdown must really be text, and html is stored as `text/plain`.
  *
  * 🔴 WHY: neither format has a magic number, so file-type detects nothing and
  * Payload accepts them on the EXTENSION alone (`getFileTypeFallback`). This
@@ -308,7 +308,8 @@ export const textUploadsAreText: CollectionBeforeValidateHook = async ({ data, r
   const mimeType = (data as { mimeType?: unknown } | undefined)?.mimeType
   const isHtml = mimeType === 'text/html' || /\.html?$/i.test(file.name ?? '')
   const isCsv = mimeType === 'text/csv' || /\.csv$/i.test(file.name ?? '')
-  if (!isHtml && !isCsv) return data
+  const isMarkdown = mimeType === 'text/markdown' || /\.(md|markdown)$/i.test(file.name ?? '')
+  if (!isHtml && !isCsv && !isMarkdown) return data
   const head = await readUploadHead(file, TEXT_SNIFF_BYTES)
   if (!head || !looksLikeText(head)) {
     throw new ValidationError({

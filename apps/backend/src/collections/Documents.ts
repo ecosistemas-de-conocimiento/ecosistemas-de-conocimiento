@@ -60,7 +60,7 @@ import {
  * and `mode` defaults to `full-text` (the chat-FE BFF inlines it as prompt
  * context when `isPinned` is true).
  *
- * For PDF/DOCX/XLSX/CSV/HTML (`FILE_TEXT_KINDS`), the `afterChange` hook below:
+ * For PDF/DOCX/XLSX/CSV/HTML/Markdown (`FILE_TEXT_KINDS`), the `afterChange` hook below:
  *   1. extracts text via `unpdf` / `mammoth` / `lib/extract/*` (inline);
  *   2. persists the result to `extractedText`;
  *   3. enqueues an ingest with ai-service via @edc/ai-client, passing
@@ -1150,6 +1150,7 @@ interface DocumentRow {
   publicationStatus?: string | null
   mediaFile?: number | string | { id: number | string } | null
   extractedText?: string | null
+  bodyMarkdown?: string | null
   ingestId?: string | null
   ingestStatus?: string | null
   ingestError?: string | null
@@ -1198,10 +1199,19 @@ export interface AudioMeta {
 const CORPUS_LANGUAGE = process.env.CORPUS_LANGUAGE?.trim() || 'spanish'
 
 /** The kinds whose text arrives through the extract → ingest pipeline. */
-const INGESTABLE_KINDS = new Set(['pdf', 'docx', 'xlsx', 'csv', 'html', 'audio'])
+const INGESTABLE_KINDS = new Set(['pdf', 'docx', 'xlsx', 'csv', 'html', 'audio', 'markdown'])
+
+/**
+ * 🔴 AN IN-APP NOTE HAS NO PIPELINE. `markdown` is both the in-app note (created
+ * at `ingestStatus: n/a`) and an uploaded / scripted `.md` (created `pending`).
+ * Only the second is extracted and ingested; a note stays out of every corpus.
+ */
+const isIngestable = (row: { kind?: unknown; ingestStatus?: unknown }): boolean =>
+  INGESTABLE_KINDS.has(String(row.kind)) &&
+  !(row.kind === 'markdown' && (row.ingestStatus ?? 'n/a') === 'n/a')
 
 /** The kinds whose text is EXTRACTED from the stored file (audio is transcribed). */
-export const FILE_TEXT_KINDS = ['pdf', 'docx', 'xlsx', 'csv', 'html'] as const
+export const FILE_TEXT_KINDS = ['pdf', 'docx', 'xlsx', 'csv', 'html', 'markdown'] as const
 export type FileTextKind = (typeof FILE_TEXT_KINDS)[number]
 const asFileTextKind = (kind: unknown): FileTextKind =>
   (FILE_TEXT_KINDS as readonly unknown[]).includes(kind) ? (kind as FileTextKind) : 'pdf'
@@ -1328,7 +1338,7 @@ const extractAndIngestHook: CollectionAfterChangeHook = async ({
 
   const row = doc as DocumentRow
   if (operation !== 'create' && operation !== 'update') return doc
-  if (!INGESTABLE_KINDS.has(String(row.kind))) return doc
+  if (!isIngestable(row)) return doc
 
   // Run async to avoid blocking the Payload response, AND defer one tick
   // so the create transaction is fully committed before we re-read the row
@@ -1594,7 +1604,7 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
     )
     return
   }
-  if (!INGESTABLE_KINDS.has(String(fresh.kind))) return
+  if (!isIngestable(fresh)) return
 
   /**
    * 🔴 A HELD ROW IS NOT RE-GATED BY AN ORDINARY SAVE.
@@ -1663,7 +1673,9 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
   let extractedText = fresh.extractedText ?? ''
   if (!extractedText || !extractedText.trim()) {
     const mediaId = resolveId(fresh.mediaFile)
-    if (mediaId == null) {
+    // A markdown document with no file carries its source in `bodyMarkdown`.
+    const markdownBody = fresh.kind === 'markdown' && mediaId == null ? fresh.bodyMarkdown?.trim() : undefined
+    if (mediaId == null && !markdownBody) {
       console.warn('[documents] no mediaFile on', fresh.kind, 'doc', docId, '— cannot extract')
       return
     }
@@ -1691,7 +1703,11 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
     })
 
     try {
-      extractedText = await extractText(payload, mediaId, asFileTextKind(fresh.kind))
+      extractedText = markdownBody
+        ? (await import('@/lib/extract/markdown')).extractMarkdownText(markdownBody, {
+            maxChars: DOCUMENT_TEXT_MAX_LENGTH,
+          }).text
+        : await extractText(payload, mediaId!, asFileTextKind(fresh.kind))
       // 🔴 The column cap. Past it the `extractedText` save is a ValidationError;
       // a short, stable reason here is the better failure.
       if (extractedText.length > DOCUMENT_TEXT_MAX_LENGTH) {
@@ -2662,6 +2678,11 @@ async function extractText(
   if (kind === 'csv') {
     const { extractCsvText } = await import('@/lib/extract/spreadsheet')
     return extractCsvText(buffer, { maxChars })
+  }
+  if (kind === 'markdown') {
+    // Front matter, wikilinks, embeds and comments handled in `lib/extract/markdown.ts`.
+    const { extractMarkdownText } = await import('@/lib/extract/markdown')
+    return extractMarkdownText(buffer, { maxChars }).text
   }
   if (kind === 'html') {
     // 🔴 Text only: never rendered back as HTML. See `lib/extract/html.ts`.

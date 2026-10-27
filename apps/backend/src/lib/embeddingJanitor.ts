@@ -500,7 +500,7 @@ export const NEVER_STARTED_CODE = 'ingest_never_started'
  * the collection; a test pins it to `planIngestRetry`'s answer so they cannot
  * drift apart silently.
  */
-export const PENDING_SWEEP_KINDS = ['pdf', 'docx', 'xlsx', 'csv', 'html', 'audio'] as const
+export const PENDING_SWEEP_KINDS = ['pdf', 'docx', 'xlsx', 'csv', 'html', 'audio', 'markdown'] as const
 
 /**
  * The gate states a stale `pending` row may be in and still be swept. See the

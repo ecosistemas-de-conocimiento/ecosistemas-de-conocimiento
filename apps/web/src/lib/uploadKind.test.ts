@@ -29,6 +29,9 @@ describe('audio upload switch (UX demo backlog #8)', () => {
       'text/html',
       '.html',
       '.htm',
+      'text/markdown',
+      '.md',
+      '.markdown',
     ]);
   });
 

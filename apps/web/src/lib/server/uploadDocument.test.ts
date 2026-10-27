@@ -154,6 +154,10 @@ describe('uploadDocument — spreadsheets and web pages', () => {
     ['csv', new File([enc('a,b\n')], 'datos.csv', { type: 'application/vnd.ms-excel' })],
     ['html', new File([enc('<!doctype html><p>hola</p>')], 'acta.html', { type: 'text/html' })],
     ['html', new File([enc('<p>hola</p>')], 'acta.htm', { type: '' })],
+    ['markdown', new File([enc('# Freire\n[[Obra]]')], 'Freire.md', { type: 'text/markdown' })],
+    // Most browsers send a .md as text/plain or with no type at all.
+    ['markdown', new File([enc('# Caso 3')], 'Caso 3.md', { type: 'text/plain' })],
+    ['markdown', new File([enc('# Caso 3')], 'caso.markdown', { type: '' })],
   ])('accepts a %s and files it with that kind', async (kind, file) => {
     const { res, sent } = await upload(file);
     expect(res.status).toBe(201);
@@ -165,6 +169,7 @@ describe('uploadDocument — spreadsheets and web pages', () => {
     ['a PDF renamed acta.html', new File([PDF], 'acta.html', { type: 'text/html' })],
     ['a CSV renamed padron.xlsx', new File([enc('a,b\n')], 'padron.xlsx', { type: XLSX_MIME })],
     ['a binary renamed p.htm', new File([new Uint8Array([0, 1, 2])], 'p.htm', { type: '' })],
+    ['a PDF renamed nota.md', new File([PDF], 'nota.md', { type: 'text/markdown' })],
   ])('🔴 refuses %s before anything goes up', async (_label, file) => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const form = new FormData();

@@ -44,6 +44,7 @@
     TRANSCRIPT_UNAVAILABLE,
     transcriptionEtaCopy,
     uploadInFlightCopy,
+    isNote,
   } from '$lib/ingest';
   /** Audio needs the build flag AND the ecosistema's `audioUpload` (`$lib/features`). */
   const audioOn = $derived(AUDIO_UPLOAD_ENABLED && app.features.audioUpload);
@@ -567,7 +568,7 @@
                   ><TestimonySource audio={d.kind === 'audio'} day={d.subtitle} /></span
                 >
               {/if}
-              {#if d.kind && d.kind !== 'markdown'}
+              {#if d.kind && !isNote(d)}
                 <span class="chip text-[9px] uppercase tracking-wider">{d.kind}</span>
               {/if}
               {#if statusBadge(d)}
@@ -803,7 +804,7 @@
 
             {#if isOpen}
               <div class="border-t border-elevated">
-                {#if d.kind !== 'markdown'}
+                {#if !isNote(d)}
                   <!-- 🔴 READING THE TRANSCRIPT. Automatic transcription gets
                        words wrong, and this text is about to be quoted as fact
                        to everyone in the ecosistema. Until now it was stored,

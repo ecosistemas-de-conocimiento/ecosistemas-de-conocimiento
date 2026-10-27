@@ -55,14 +55,14 @@ function looksLikeAudio(b: Uint8Array): boolean {
   return false;
 }
 
-export type UploadFileKind = 'pdf' | 'docx' | 'xlsx' | 'csv' | 'html' | 'audio';
+export type UploadFileKind = 'pdf' | 'docx' | 'xlsx' | 'csv' | 'html' | 'markdown' | 'audio';
 
 /** Do the file's first bytes agree with the kind its name and MIME settled on? */
 export function bytesMatchKind(head: Uint8Array, kind: UploadFileKind): boolean {
   if (kind === 'pdf') return looksLikePdf(head);
   // DOCX and XLSX are both ZIPs; the backend's file-type sniff tells them apart.
   if (kind === 'docx' || kind === 'xlsx') return looksLikeDocx(head);
-  if (kind === 'csv' || kind === 'html') return looksLikeText(head);
+  if (kind === 'csv' || kind === 'html' || kind === 'markdown') return looksLikeText(head);
   return looksLikeAudio(head);
 }
 
@@ -81,6 +81,8 @@ export function uploadFileKind(file: { name: string; type: string }): UploadFile
     return 'xlsx';
   if (type === 'text/csv' || /\.csv$/i.test(name)) return 'csv';
   if (type === 'text/html' || /\.html?$/i.test(name)) return 'html';
+  // ⚠ By extension too: browsers send a .md as text/plain or with no type.
+  if (type === 'text/markdown' || /\.(md|markdown)$/i.test(name)) return 'markdown';
   if (AUDIO_UPLOAD_ENABLED && isAudioUpload(file)) return 'audio';
   return null;
 }
@@ -94,7 +96,7 @@ export function uploadFileKind(file: { name: string; type: string }): UploadFile
  *
  * Order matters, and every refusal happens BEFORE the bytes go up:
  *   1. `contentKind` (documento | testimonio), and the Voz pre-check.
- *   2. File kind, PDF → DOCX → XLSX → CSV → HTML → audio. ⚠ Documents first:
+ *   2. File kind, PDF → DOCX → XLSX → CSV → HTML → Markdown → audio. ⚠ Documents first:
  *      `isAudioUpload` accepts `.mp4`/`.mov` and a generous extension list, so
  *      running it first would send an odd-MIME document to the transcriber.
  *   3. A client-supplied `kind` is a HINT: honoured only when it agrees.

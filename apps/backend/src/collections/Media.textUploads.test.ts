@@ -43,8 +43,16 @@ describe('textUploadsAreText', () => {
     ['an executable named .csv', 'datos.csv', 'text/csv', Buffer.from('MZ\x90\x00', 'latin1')],
     ['a binary named .html', 'p.html', 'text/html', Buffer.from([0x00, 0x01, 0x02])],
     ['a script named .htm', 'p.htm', 'text/html', Buffer.from('#!/bin/sh\n')],
+    ['a binary named .md', 'nota.md', 'text/markdown', Buffer.from([0x00, 0x01, 0x02])],
+    ['a ZIP named .md sent as text/plain', 'nota.md', 'text/plain', Buffer.from('PK\x03\x04', 'latin1')],
+    ['an executable named .markdown', 'n.markdown', 'application/octet-stream', Buffer.from('MZ\x90', 'latin1')],
   ])('🔴 refuses %s', async (_label, name, mimeType, bytes) => {
     await expect(run({ name, data: bytes }, { mimeType })).rejects.toThrow()
+  })
+
+  it('passes a markdown note through unchanged', async () => {
+    const data = { mimeType: 'text/markdown' }
+    expect(await run({ name: 'Freire.md', data: Buffer.from('# Freire\n[[Obra]]') }, data)).toEqual(data)
   })
 
   it('leaves other uploads and metadata-only updates alone', async () => {

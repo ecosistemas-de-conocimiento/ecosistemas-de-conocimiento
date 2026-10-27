@@ -599,7 +599,7 @@ describe('sweepStalledPending — the lost background extract', () => {
       strandedPending({ id: 11, publicationStatus: 'published' }),
       strandedPending({ id: 12, publicationStatus: 'publishing' }),
       // `planIngestRetry` refuses a kind with no pipeline.
-      strandedPending({ id: 13, kind: 'markdown' }),
+      strandedPending({ id: 13, kind: 'chat' }),
       // Not `pending` at all.
       strandedPending({ id: 14, ingestStatus: 'embedding', updatedAt: minutesAgo(10) }),
       strandedPending({ id: 15, ingestStatus: 'ready' }),

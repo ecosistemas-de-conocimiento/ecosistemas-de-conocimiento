@@ -20,6 +20,7 @@ import {
   audioLanguageLabel,
   audioMetaChips,
   canRetryIngest,
+  isNote,
   formatLanguageProbability,
   formatDuration,
   ingestBadge,
@@ -298,11 +299,18 @@ describe('ingestFailureCopy', () => {
 });
 
 describe('canRetryIngest', () => {
-  // Markdown never had a pipeline, so there is nothing to re-run.
-  it('never offers a retry for a markdown note', () => {
+  // An in-app note never had a pipeline; an uploaded .md does.
+  it('never offers a retry for a markdown note, but does for an uploaded .md', () => {
+    expect(canRetryIngest({ kind: 'markdown', ingestStatus: 'n/a', ingestError: null })).toBe(false);
     expect(
       canRetryIngest({ kind: 'markdown', ingestStatus: 'failed', ingestError: 'abandoned' }),
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it('isNote: only a markdown row with no pipeline is an in-app note', () => {
+    expect(isNote({ kind: 'markdown', ingestStatus: 'n/a' })).toBe(true);
+    expect(isNote({ kind: 'markdown', ingestStatus: 'ready' })).toBe(false);
+    expect(isNote({ kind: 'pdf', ingestStatus: 'n/a' })).toBe(false);
   });
 
   it('only offers a retry from `failed` — not mid-flight, not when it worked', () => {

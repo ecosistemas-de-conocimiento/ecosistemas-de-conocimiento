@@ -325,7 +325,7 @@ describe('sweepLostGateRuns', () => {
         lostGate({ id: 3, anonymisationStatus: 'n/a' }),
         lostGate({ id: 4, updatedAt: minutesAgo(5) }),
         lostGate({ id: 5, publicationStatus: 'published' }),
-        lostGate({ id: 6, kind: 'markdown' }),
+        lostGate({ id: 6, kind: 'chat' }),
       ],
     })
     const result = await sweepLostGateRuns(db.payload, { now: NOW, deadlineMs: 60 * 60_000 })
