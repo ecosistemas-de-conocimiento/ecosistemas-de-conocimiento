@@ -50,6 +50,16 @@ describe('extractXlsxText', () => {
   it('rejects bytes that are not a workbook', async () => {
     await expect(extractXlsxText(enc('not a zip'))).rejects.toThrow()
   })
+
+  // 🔴 Regression: a 1.5 KB file with one cell at XFD1048576 made
+  // read-excel-file build the whole 17-billion-cell grid — Node heap OOM.
+  it('refuses a sheet whose cell references span more than the cell cap, before parsing', async () => {
+    await expect(extractXlsxText(fixture('celda-lejana.xlsx'))).rejects.toThrow(/extract_too_large/)
+  })
+
+  it('refuses a workbook whose zip directory declares too much sheet XML', async () => {
+    await expect(extractXlsxText(fixture('tamano-declarado.xlsx'))).rejects.toThrow(/extract_too_large/)
+  })
 })
 
 describe('extractCsvText', () => {
@@ -107,6 +117,21 @@ describe('extractHtmlText', () => {
   it('refuses text past the cap', () => {
     expect(() => extractHtmlText(enc(`<p>${'a'.repeat(100)}</p>`), { maxChars: 50 })).toThrow(/text_too_long/)
   })
+
+  it('reads an unclosed list and table the way a browser closes them', () => {
+    const html = '<ul><li>uno<li>dos</ul><table><tr><td>a<td>b<tr><td>c</table><p>fin'
+    expect(extractHtmlText(enc(html))).toBe('- uno\n- dos\na | b\nc\nfin')
+  })
+
+  // 🔴 Regression: the parse5 tree build was quadratic on deep nesting (390 KB
+  // took 40 s) and the recursive walk overflowed the stack near 20k levels.
+  it('reads 200,000 nested elements in linear time, without recursion', () => {
+    const depth = 200_000
+    const html = '<div>'.repeat(depth) + 'hondo' + '</div>'.repeat(depth)
+    const t0 = performance.now()
+    expect(extractHtmlText(enc(html))).toBe('hondo')
+    expect(performance.now() - t0).toBeLessThan(2000)
+  })
 })
 
 describe('looksLikeText', () => {
@@ -115,6 +140,7 @@ describe('looksLikeText', () => {
     ['csv', enc('a,b\r\n1,2\r\n')],
     ['windows-1252', Buffer.from([0x61, 0xf1, 0x0a])],
     ['utf-16 with BOM', Buffer.from([0xff, 0xfe, 0x61, 0x00])],
+    ['utf-16 text with newlines', Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('a,ñ\r\n1,2\n', 'utf16le')])],
   ])('accepts %s', (_name, bytes) => {
     expect(looksLikeText(bytes)).toBe(true)
   })
@@ -127,6 +153,12 @@ describe('looksLikeText', () => {
     ['a PDF', enc('%PDF-1.7')],
     ['NUL bytes', Buffer.from([0x61, 0x00, 0x62])],
     ['control bytes', Buffer.from([0x61, 0x01, 0x62])],
+    // 🔴 Regression: a UTF-16 BOM used to pass anything after it.
+    ['a UTF-16 BOM over binary', Buffer.from([0xff, 0xfe, 0x00, 0x00, 0x01, 0x00, 0x7f, 0x45])],
+    ['a big-endian UTF-16 BOM over binary', Buffer.from([0xfe, 0xff, 0x00, 0x02, 0x00, 0x00])],
+    ['an odd-length UTF-16 body', Buffer.from([0xff, 0xfe, 0x61, 0x00, 0x62])],
+    // 🔴 Regression: only the first 8 KB used to be read.
+    ['a binary tail after 8 KB of text', Buffer.concat([enc('a,b\n'.repeat(4096)), Buffer.from([0x00, 0x01, 0x02])])],
   ])('refuses %s', (_name, bytes) => {
     expect(looksLikeText(bytes)).toBe(false)
   })

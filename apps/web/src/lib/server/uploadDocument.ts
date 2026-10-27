@@ -85,6 +85,26 @@ export function uploadFileKind(file: { name: string; type: string }): UploadFile
   return null;
 }
 
+/** The one MIME Payload's Media collection allows for each document kind. */
+const MEDIA_MIME: Partial<Record<UploadFileKind, string>> = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  csv: 'text/csv',
+  html: 'text/html',
+};
+
+/**
+ * 🔴 The file as Media must see it: the settled kind's MIME, not the browser's.
+ * Windows sends a `.csv` as `application/vnd.ms-excel` (or octet-stream, or
+ * nothing), and Media's mimeTypeValidator 400s anything but `text/csv`.
+ * Audio keeps its own type: Media allows a list there.
+ */
+function forMedia(file: File, kind: UploadFileKind): File {
+  const mime = MEDIA_MIME[kind];
+  return mime && file.type !== mime ? new File([file], file.name, { type: mime }) : file;
+}
+
 /**
  * Upload one file and create its `documents` row — THE one upload flow.
  *
@@ -152,7 +172,7 @@ export async function uploadDocument(
   // Payload's `POST /api/media` wants multipart with a `file` field. No
   // content-type header: fetch generates the boundary.
   const mediaForm = new FormData();
-  mediaForm.append('file', file, file.name);
+  mediaForm.append('file', forMedia(file, kind), file.name);
   const headers = new Headers();
   if (token) headers.set('Authorization', `JWT ${token}`);
   let mediaRes: Response;

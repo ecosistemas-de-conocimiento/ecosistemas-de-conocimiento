@@ -61,7 +61,8 @@ import {
  * context when `isPinned` is true).
  *
  * For PDF/DOCX/XLSX/CSV/HTML (`FILE_TEXT_KINDS`), the `afterChange` hook below:
- *   1. extracts text via `unpdf` / `mammoth` / `lib/extract/*` (inline);
+ *   1. extracts text via `unpdf` / `mammoth` / `lib/extract/*`, in a worker
+ *      thread (`lib/extract/sandbox.ts`);
  *   2. persists the result to `extractedText`;
  *   3. enqueues an ingest with ai-service via @edc/ai-client, passing
  *      a `callbackUrl` so the receiver at /api/ai-service/callback (M5)
@@ -2626,52 +2627,11 @@ async function extractText(
   // uploads on local disk or in the bucket. This function used to resolve
   // `./media/<filename>` itself, which broke the moment object storage was
   // enabled — see the header on `loadMediaBytes`.
-  const { bytes: buffer } = await loadMediaBytes(payload, mediaId)
-
-  if (kind === 'pdf') {
-    // Workaround for a known dev-only issue: `drizzle-kit` (transitive via
-    // Payload's postgres adapter) defines `Array.prototype.random`, which
-    // pdfjs's defensive `for...in` checks reject with "unexpected enumerable
-    // property." We temporarily mark the property non-enumerable for the
-    // duration of the extract, then restore it. No-op in production builds
-    // where drizzle-kit isn't loaded into the runtime.
-    const arrProto = Array.prototype as unknown as Record<string, unknown>
-    const hadRandom = Object.prototype.hasOwnProperty.call(arrProto, 'random')
-    let restore: (() => void) | null = null
-    if (hadRandom) {
-      const desc = Object.getOwnPropertyDescriptor(arrProto, 'random')
-      if (desc?.enumerable) {
-        Object.defineProperty(arrProto, 'random', { ...desc, enumerable: false })
-        restore = () => Object.defineProperty(arrProto, 'random', desc)
-      }
-    }
-    try {
-      const { extractText: extractPdfText, getDocumentProxy } = await import('unpdf')
-      const pdf = await getDocumentProxy(new Uint8Array(buffer))
-      const { text } = await extractPdfText(pdf, { mergePages: true })
-      return Array.isArray(text) ? text.join('\n\n') : text
-    } finally {
-      restore?.()
-    }
-  }
-  const maxChars = DOCUMENT_TEXT_MAX_LENGTH
-  if (kind === 'xlsx') {
-    const { extractXlsxText } = await import('@/lib/extract/spreadsheet')
-    return extractXlsxText(buffer, { maxChars })
-  }
-  if (kind === 'csv') {
-    const { extractCsvText } = await import('@/lib/extract/spreadsheet')
-    return extractCsvText(buffer, { maxChars })
-  }
-  if (kind === 'html') {
-    // 🔴 Text only: never rendered back as HTML. See `lib/extract/html.ts`.
-    const { extractHtmlText } = await import('@/lib/extract/html')
-    return extractHtmlText(buffer, { maxChars })
-  }
-  // docx
-  const mammoth = (await import('mammoth')).default ?? (await import('mammoth'))
-  const result = await mammoth.extractRawText({ buffer })
-  return result.value
+  const { bytes } = await loadMediaBytes(payload, mediaId)
+  // 🔴 In a worker with a heap cap and a wall clock, never on this thread: a
+  // hostile file kills the worker, not the server. See `lib/extract/sandbox.ts`.
+  const { extractInWorker } = await import('@/lib/extract/sandbox')
+  return extractInWorker(kind, bytes, { maxChars: DOCUMENT_TEXT_MAX_LENGTH })
 }
 
 export const Documents: CollectionConfig = {

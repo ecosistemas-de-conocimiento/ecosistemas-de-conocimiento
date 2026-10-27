@@ -8,7 +8,7 @@ import { ValidationError } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
 import { organizationIdsForUser, relationId } from '../lib/permissions'
-import { TEXT_SNIFF_BYTES, looksLikeText } from '../lib/extract/text'
+import { looksLikeText } from '../lib/extract/text'
 import { MATROSKA_HEAD_BYTES, isAudioOnlyMatroska, isMatroska } from '../lib/webmTracks'
 
 /**
@@ -274,6 +274,14 @@ async function readUploadHead(file: UploadedFile, bytes: number): Promise<Uint8A
   }
 }
 
+/** The whole uploaded file, in memory or on a temp path; `null` if neither. */
+async function readUploadBytes(file: UploadedFile): Promise<Uint8Array | null> {
+  if (file.data && file.data.length > 0) return file.data
+  if (!file.tempFilePath) return null
+  const { readFile } = await import('node:fs/promises')
+  return readFile(file.tempFilePath)
+}
+
 export const audioOnlyWebm: CollectionBeforeValidateHook = async ({ data, req }) => {
   const file = (req as { file?: UploadedFile }).file
   if (!file) return data
@@ -305,20 +313,24 @@ export const audioOnlyWebm: CollectionBeforeValidateHook = async ({ data, req })
 export const textUploadsAreText: CollectionBeforeValidateHook = async ({ data, req }) => {
   const file = (req as { file?: UploadedFile }).file
   if (!file) return data
-  const mimeType = (data as { mimeType?: unknown } | undefined)?.mimeType
+  // `text/html; charset=utf-8` is still html: compare the bare type.
+  const rawType = (data as { mimeType?: unknown } | undefined)?.mimeType
+  const mimeType = typeof rawType === 'string' ? rawType.split(';')[0].trim().toLowerCase() : ''
   const isHtml = mimeType === 'text/html' || /\.html?$/i.test(file.name ?? '')
   const isCsv = mimeType === 'text/csv' || /\.csv$/i.test(file.name ?? '')
   if (!isHtml && !isCsv) return data
-  const head = await readUploadHead(file, TEXT_SNIFF_BYTES)
-  if (!head || !looksLikeText(head)) {
+  // The WHOLE file: a text head over a binary tail passed an 8 KB sniff.
+  const bytes = await readUploadBytes(file)
+  if (!bytes || !looksLikeText(bytes)) {
     throw new ValidationError({
       collection: 'media',
       errors: [{ path: 'file', message: 'This file is not plain text.' }],
       req,
     })
   }
-  if (!isHtml) return data
-  return { ...(data ?? {}), mimeType: 'text/plain' }
+  // 🔴 Windows browsers send a `.csv` as `application/vnd.ms-excel`, which the
+  // `mimeTypes` allow-list refuses. The bytes are text, so store it as csv.
+  return { ...(data ?? {}), mimeType: isHtml ? 'text/plain' : 'text/csv' }
 }
 
 /**

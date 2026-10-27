@@ -12,8 +12,15 @@ export class TextTooLongError extends Error {
   }
 }
 
-/** How much of the head `looksLikeText` reads. */
-export const TEXT_SNIFF_BYTES = 8192
+/**
+ * The file would cost more memory or time than an extraction may spend.
+ * Also what a worker killed for running out of heap reports (`./sandbox.ts`).
+ */
+export class ExtractTooLargeError extends Error {
+  constructor(detail: string) {
+    super(`extract_too_large: ${detail}`)
+  }
+}
 
 const startsWith = (b: Uint8Array, magic: number[]) => magic.every((byte, i) => b[i] === byte)
 
@@ -27,19 +34,34 @@ const BINARY_MAGICS: number[][] = [
   [0x25, 0x50, 0x44, 0x46], // %PDF
 ]
 
-const isUtf16Bom = (b: Uint8Array) =>
-  (b[0] === 0xff && b[1] === 0xfe) || (b[0] === 0xfe && b[1] === 0xff)
+/** Tab, LF, FF, CR are text; every other C0 control (NUL included) is not. */
+const isControl = (c: number) => c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0c && c !== 0x0d
 
-/** Is this head plain text (UTF-8, Windows-1252 or BOM-marked UTF-16)? */
-export function looksLikeText(head: Uint8Array): boolean {
-  if (head.length === 0) return false
-  if (isUtf16Bom(head)) return true
-  if (BINARY_MAGICS.some((m) => startsWith(head, m))) return false
-  for (let i = 0; i < Math.min(head.length, TEXT_SNIFF_BYTES); i++) {
-    const b = head[i]
-    // Tab, LF, FF, CR are text; every other C0 control (NUL included) is not.
-    if (b < 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0c && b !== 0x0d) return false
+/**
+ * Is this WHOLE file plain text (UTF-8, Windows-1252 or BOM-marked UTF-16)?
+ *
+ * 🔴 Every byte is read, not a head sample: a text head over a binary tail
+ * passed the old 8 KB sniff. Uploads are size-capped, so this is one linear
+ * pass. A UTF-16 file is judged on its DECODED text — a BOM alone used to wave
+ * any bytes after it through.
+ */
+export function looksLikeText(bytes: Uint8Array): boolean {
+  if (bytes.length === 0) return false
+  const utf16 =
+    bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf-16le' : bytes[0] === 0xfe && bytes[1] === 0xff ? 'utf-16be' : null
+  if (utf16) {
+    if (bytes.length % 2 !== 0) return false
+    let text: string
+    try {
+      text = new TextDecoder(utf16, { fatal: true }).decode(bytes.subarray(2))
+    } catch {
+      return false
+    }
+    for (let i = 0; i < text.length; i++) if (isControl(text.charCodeAt(i))) return false
+    return true
   }
+  if (BINARY_MAGICS.some((m) => startsWith(bytes, m))) return false
+  for (let i = 0; i < bytes.length; i++) if (isControl(bytes[i])) return false
   return true
 }
 

@@ -13,6 +13,7 @@ import {
   LineSink,
   type ExtractOptions,
 } from './text'
+import { assertXlsxWithinLimits } from './xlsxGuard'
 
 export const MAX_COLUMNS = 100
 /** A single cell longer than this is cut; a pasted essay still reads, a blob does not flood. */
@@ -40,8 +41,13 @@ function rowLine(row: readonly Cell[]): string | null {
   return [...cells.slice(0, MAX_COLUMNS), `(+${dropped} columnas)`].join(' | ')
 }
 
-/** ⚠ Pass bytes, never a string: `read-excel-file/node` reads a string as a PATH. */
+/**
+ * ⚠ Pass bytes, never a string: `read-excel-file/node` reads a string as a PATH.
+ * 🔴 `assertXlsxWithinLimits` FIRST — see `./xlsxGuard.ts` for the 1.5 KB file
+ * that took the whole backend down.
+ */
 export async function extractXlsxText(bytes: Buffer, opts: ExtractOptions = {}): Promise<string> {
+  assertXlsxWithinLimits(bytes)
   const { default: readXlsxFile } = await import('read-excel-file/node')
   const sheets = await readXlsxFile(bytes)
   const sink = new LineSink(opts.maxChars ?? DEFAULT_MAX_CHARS)

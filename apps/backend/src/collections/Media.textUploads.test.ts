@@ -34,9 +34,42 @@ describe('textUploadsAreText', () => {
     expect(out.mimeType).toBe('text/plain')
   })
 
-  it('passes a csv through unchanged', async () => {
+  it('passes a csv through as text/csv', async () => {
     const data = { mimeType: 'text/csv' }
     expect(await run({ name: 'a.csv', data: Buffer.from('a,b\n') }, data)).toEqual(data)
+  })
+
+  // 🔴 Regression: Windows browsers label a .csv `application/vnd.ms-excel`,
+  // which the allow-list refused with a 400.
+  it.each(['application/vnd.ms-excel', 'application/octet-stream'])(
+    'stores a text .csv sent as %s as text/csv',
+    async (mimeType) => {
+      const out = (await run({ name: 'Datos.CSV', data: Buffer.from('a;b\r\n') }, { mimeType })) as {
+        mimeType: string
+      }
+      expect(out.mimeType).toBe('text/csv')
+    },
+  )
+
+  // 🔴 Regression: the exact-match check let `text/html;charset=…` skip it.
+  it('checks html sent with a charset parameter, whatever its name', async () => {
+    await expect(
+      run({ name: 'pagina', data: Buffer.from([0x00, 0x01]) }, { mimeType: 'text/html; charset=utf-8' }),
+    ).rejects.toThrow()
+    const out = (await run({ name: 'pagina', data: Buffer.from('<p>hola</p>') }, { mimeType: 'TEXT/HTML;charset=utf-8' })) as {
+      mimeType: string
+    }
+    expect(out.mimeType).toBe('text/plain')
+  })
+
+  it('reads the whole file from a temp path, not only its head', async () => {
+    const { mkdtemp, writeFile } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const path = await import('node:path')
+    const dir = await mkdtemp(path.join(tmpdir(), 'media-text-'))
+    const tempFilePath = path.join(dir, 'upload')
+    await writeFile(tempFilePath, Buffer.concat([Buffer.from('a,b\n'.repeat(4096)), Buffer.from([0x00])]))
+    await expect(run({ name: 'a.csv', tempFilePath }, { mimeType: 'text/csv' })).rejects.toThrow()
   })
 
   it.each([
