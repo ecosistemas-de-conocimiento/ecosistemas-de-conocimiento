@@ -217,6 +217,9 @@ const PUBLICATION_LABELS: Record<PublicationState, string> = {
  */
 const gateWritesOnly: FieldAccess = () => false
 
+/** A field only a platform admin may write (`keepPublicFigures`). */
+const platformAdminOnly: FieldAccess = ({ req }) => isPlatformAdminUser(req.user)
+
 /**
  * 🔴 `lengua` IS READABLE ONLY ON A `documento`. The read-side half of the same
  * rule the write hook enforces — see `enforceLenguaDocumentoOnly`.
@@ -1127,6 +1130,8 @@ interface DocumentRow {
   contentKind?: string | null
   /** 🔴 A `documento` with this set is gated (`anonymiseRequested`). */
   anonymise?: boolean | null
+  /** Per-document override of the ecosistema's `keepPublicFigures`; null = inherit. */
+  keepPublicFigures?: boolean | null
   /** The gate's output. The ONLY text a gated document is ever embedded from. */
   redactedText?: string | null
   heldText?: string | null
@@ -1985,6 +1990,8 @@ export async function enqueueIngestForDoc(args: {
   fresh: Pick<DocumentRow, 'name' | 'kind' | 'contentKind'> & {
     /** 🔴 The raw column (`anonymiseRequested`). Both real callers pass it. */
     anonymise?: unknown
+    /** Per-document `keepPublicFigures` override; absent = the ecosistema's. */
+    keepPublicFigures?: unknown
     anonymisationStatus: string | null | undefined
     redactedText?: string | null
     /** For the retrieval filter. `chunkMetadata` keeps it on a documento only. */
@@ -2039,7 +2046,18 @@ export async function enqueueIngestForDoc(args: {
    * permanent. The row keeps its `extractedText` and its reason; nothing is
    * lost, it is simply not embedded.
    */
-  const { anonymiseDocumentText } = await import('@/lib/anonymiseDocument')
+  const { anonymiseDocumentText, rowMustPassGate } = await import('@/lib/anonymiseDocument')
+  /**
+   * 🔴 A GATED `documento` gets the org roster (owner Q13 A, 2026-10-27) and
+   * its `keepPublicFigures` (the row's override, else the ecosistema's). A
+   * testimonio or a conversation gets neither: `documentoGateOptions` returns
+   * `{ keepPublicFigures: false, roster: [] }` for any other kind.
+   */
+  const { documentoGateOptions } = await import('@/lib/publicFigures')
+  const documentoOptions =
+    fresh.contentKind === 'documento' && rowMustPassGate(fresh) && fresh.anonymisationStatus !== 'approved'
+      ? await documentoGateOptions(payload as never, organizationId, fresh)
+      : { keepPublicFigures: false, roster: [] as string[] }
   const gated = await anonymiseDocumentText({
     // The live handle carries `db.drizzle`; the narrow type above does not say so.
     payload: payload as never,
@@ -2080,7 +2098,9 @@ export async function enqueueIngestForDoc(args: {
     // ⚠ Empty on purpose for a testimony. The people a Voz names — the speaker,
     // their family, an official — are not users of this system, so no roster we
     // hold contains them. Testimony redaction rests on the content scrub.
-    roster: [],
+    // A gated documento (staff notes, drafts) gets the roster: see above.
+    roster: documentoOptions.roster,
+    keepPublicFigures: documentoOptions.keepPublicFigures,
   })
 
   if (!gated.ok && gated.busy) {
@@ -2911,6 +2931,26 @@ export const Documents: CollectionConfig = {
     },
     {
       /**
+       * 🔴 PER-DOCUMENT OVERRIDE of the ecosistema's `keepPublicFigures`
+       * (owner rulings 2026-10-27). NULL = use the ecosistema's setting. Read
+       * for a gated `documento` only (`lib/publicFigures.ts`); a testimonio or
+       * a conversation never keeps a name, whatever this says.
+       *
+       * ⚠ NO DEFAULT, on purpose: a default would store `false` and silently
+       * override the ecosistema. Writable by a platform admin only — it decides
+       * which names reach the corpus.
+       */
+      name: 'keepPublicFigures',
+      type: 'checkbox',
+      access: { create: platformAdminOnly, update: platformAdminOnly },
+      admin: {
+        position: 'sidebar',
+        description:
+          'Conservar los nombres de figuras públicas en este documento. Vacío: lo que diga el ecosistema.',
+      },
+    },
+    {
+      /**
        * The programme this document belongs to — `traduccion`, `dengue`,
        * `escuela`, `discapacidad` in the seeded corpus. The corpus's own
        * ground truth, which the product had nowhere to put until now.
@@ -3088,6 +3128,24 @@ export const Documents: CollectionConfig = {
       admin: {
         readOnly: true,
         description: 'Posiciones (no texto) de lo que la verificación encontró todavía presente.',
+      },
+    },
+    {
+      /**
+       * 🔴 THE REVIEWERS' LOG OF KEPT PUBLIC FIGURES: `[{ name, motivo, model,
+       * at }]`, one per name the gate LEFT IN as public (owner rulings
+       * 2026-10-27). Written by the gate only (`lib/anonymiseDocument.ts`),
+       * cleared on every run that keeps nothing.
+       *
+       * ⚠ Not a re-identification map: nothing in it was removed; every name is
+       * in the gate's output already. Same read rule as `heldText`.
+       */
+      name: 'publicFiguresKept',
+      type: 'json',
+      access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
+      admin: {
+        readOnly: true,
+        description: 'Nombres conservados como figuras públicas: nombre, motivo, modelo y fecha.',
       },
     },
     {

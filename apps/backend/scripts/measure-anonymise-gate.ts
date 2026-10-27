@@ -35,6 +35,10 @@
  *   GATE_DRY=1        build and print transcript stats only.
  *   GATE_KIND         content kind the detector is told: testimonio (default),
  *                     conversacion or documento.
+ *   GATE_KEEP_PUBLIC=1  run with `keepPublicFigures` on (honoured for
+ *                     GATE_KIND=documento only). Each row carries `keptPublic`.
+ *   GATE_ROSTER       csv of roster entries (names or emails) for stage 2 and
+ *                     the roster name-part rule. Synthetic names only.
  *   GATE_TEXT_FILE    measure this one text instead of the corpus transcripts
  *                     (GATE_CORPUS_DIR and GATE_WORDS are then ignored). The
  *                     planted-name columns mean nothing for it, so each row
@@ -84,6 +88,8 @@ const vary = process.env.GATE_VARY === '1'
 const dry = process.env.GATE_DRY === '1'
 const gateKind = (['conversacion', 'documento'] as const).find((k) => k === process.env.GATE_KIND) ?? 'testimonio'
 const org = process.env.GATE_ORG || '1'
+const keepPublic = process.env.GATE_KEEP_PUBLIC === '1'
+const roster = (process.env.GATE_ROSTER ?? '').split(',').map((s) => s.trim()).filter(Boolean)
 const outFile = process.env.GATE_OUT || join(tmpdir(), `anonymise-gate-${Date.now()}.jsonl`)
 
 const { paragraphs, files } = textFile ? { paragraphs: [], files: 0 } : loadParagraphs(corpusDir as string)
@@ -159,7 +165,7 @@ async function one(nominal: number, text: string, run: number) {
   const load = loadavg().map((n) => n.toFixed(2)).join(' ')
   const t0 = Date.now()
   const result = await runAnonymisationGate(
-    { contentKind: gateKind, text, roster: [] },
+    { contentKind: gateKind, text, roster, ...(keepPublic ? { keepPublicFigures: true } : {}) },
     { detector: aiServiceDetector({ client, organizationId: org }) },
   )
   const totalMs = Date.now() - t0
@@ -203,6 +209,7 @@ async function one(nominal: number, text: string, run: number) {
     survivorTexts: [...new Set(survivors.map((s) => out.slice(s.start, s.end)))],
     survivorContext: survivors.slice(0, 15).map((s) => out.slice(Math.max(0, s.start - 50), s.end + 30)),
     ...(textFile ? { redactedText: out } : {}),
+    keptPublic: result.keptPublic ?? null,
     costUsd: calls.reduce((a, c) => a + (c.costUsd ?? 0), 0),
     nCalls: calls.length,
     nCached: calls.filter((c) => c.cached).length,

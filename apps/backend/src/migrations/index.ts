@@ -10,6 +10,7 @@ import * as migration_20261027_020102_feature_switches from './20261027_020102_f
 import * as migration_20261027_053737_memberships_role_estudiante from './20261027_053737_memberships_role_estudiante';
 import * as migration_20261027_053800_student_view from './20261027_053800_student_view';
 import * as migration_20261027_061014_student_view_fk_cascade from './20261027_061014_student_view_fk_cascade';
+import * as migration_20261027_225429_documents_public_figures from './20261027_225429_documents_public_figures';
 
 export const migrations = [
   {
@@ -70,6 +71,11 @@ export const migrations = [
   {
     up: migration_20261027_061014_student_view_fk_cascade.up,
     down: migration_20261027_061014_student_view_fk_cascade.down,
-    name: '20261027_061014_student_view_fk_cascade'
+    name: '20261027_061014_student_view_fk_cascade',
+  },
+  {
+    up: migration_20261027_225429_documents_public_figures.up,
+    down: migration_20261027_225429_documents_public_figures.down,
+    name: '20261027_225429_documents_public_figures'
   },
 ];

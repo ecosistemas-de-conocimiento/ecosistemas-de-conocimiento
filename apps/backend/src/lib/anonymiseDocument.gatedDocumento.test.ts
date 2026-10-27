@@ -185,3 +185,50 @@ describe('auto-publish — a participant PDF', () => {
     expect(anonymiseParticipantUpload({ role, platformAdmin })).toBe(expected)
   })
 })
+
+describe('anonymiseDocumentText — keep public figures (owner rulings 2026-10-27)', () => {
+  const CASE = 'El senador Ramiro Saldaña habló. Tadeo Villaseñor, vecino, lo escuchó.'
+  const detector = () =>
+    staticDetector([
+      { text: 'Ramiro Saldaña', type: 'persona', public: { motivo: 'senador' } },
+      { text: 'Tadeo Villaseñor', type: 'persona' },
+    ])
+  const run = (fake: ReturnType<typeof fakePayload>, contentKind: string, keepPublicFigures?: boolean) =>
+    anonymiseDocumentText({
+      payload: fake.payload as never,
+      docId: 9,
+      organizationId: 1,
+      contentKind,
+      anonymise: true,
+      text: CASE,
+      detector: detector(),
+      ...(keepPublicFigures === undefined ? {} : { keepPublicFigures }),
+    })
+
+  it('documento, option on: the politician is kept and logged with model and time', async () => {
+    const fake = fakePayload()
+    const out = await run(fake, 'documento', true)
+    expect(out.ok).toBe(true)
+    if (!out.ok) return
+    expect(out.text).toContain('Ramiro Saldaña')
+    expect(out.text).not.toContain('Villaseñor')
+    const log = fake.last('publicFiguresKept') as Array<Record<string, unknown>>
+    expect(log).toHaveLength(1)
+    expect(log[0]).toMatchObject({ name: 'Ramiro Saldaña', motivo: 'senador', model: 'static' })
+    expect(typeof log[0]?.at).toBe('string')
+  })
+
+  it('documento, option off: redacted, log cleared', async () => {
+    const fake = fakePayload()
+    const out = await run(fake, 'documento', false)
+    expect(out.ok && out.text).not.toContain('Saldaña')
+    expect(fake.last('publicFiguresKept')).toBeNull()
+  })
+
+  it('🔴 testimonio with the option on: redacted, nothing logged', async () => {
+    const fake = fakePayload()
+    const out = await run(fake, 'testimonio', true)
+    expect(out.ok && out.text).not.toContain('Saldaña')
+    expect(fake.last('publicFiguresKept')).toBeNull()
+  })
+})

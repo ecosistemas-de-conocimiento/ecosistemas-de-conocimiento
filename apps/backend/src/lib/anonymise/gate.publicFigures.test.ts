@@ -1,0 +1,288 @@
+/**
+ * KEEP PUBLIC FIGURES (owner rulings 2026-10-27, "Semiosis práctica" case files).
+ *
+ * With `keepPublicFigures` on, a `documento` keeps the names of people named in
+ * public discourse in a public role — politicians, officials, public
+ * commentators, the author of a cited work, a speaker quoted at a public event
+ * — and still redacts everyone else. Staff are private unless the model ties
+ * them to a cited work or a public event. Unsure → redacted. Testimonios and
+ * conversations never keep anyone.
+ *
+ * Q13 A: a staff documento gets the org roster; every roster name part is
+ * redacted, unless the option is on and the model called THAT mention public.
+ *
+ * ⚠ All names and text are synthetic. Every model answer goes through the REAL
+ * `parseFindings`.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { parseFindings } from './detector'
+import { ANONYMISE_VERIFY_ROUNDS_VAR, runAnonymisationGate } from './gate'
+import type { GateContentKind, PersonDetector } from './types'
+
+type H = { texto: string; tipo: string; ambito?: unknown; motivo?: unknown; identifica?: unknown }
+
+/** Call 1 = stage 3, call 2.. = verify. Records whether classification was asked. */
+function scripted(perCall: H[][]): PersonDetector & { asked: boolean[] } {
+  let n = 0
+  const asked: boolean[] = []
+  return {
+    name: 'scripted',
+    asked,
+    async detect({ text, classifyPublic }) {
+      asked.push(classifyPublic === true)
+      return parseFindings(JSON.stringify({ hallazgos: perCall[n++] ?? [] }), text)
+    },
+  }
+}
+
+const privada = (texto: string): H => ({ texto, tipo: 'persona', ambito: 'privada' })
+const publica = (texto: string, motivo: unknown = 'senador'): H => ({ texto, tipo: 'persona', ambito: 'publica', motivo })
+
+function gate(
+  text: string,
+  perCall: H[][],
+  opts: { keep?: boolean; kind?: GateContentKind; roster?: string[]; rounds?: number } = {},
+) {
+  const detector = scripted(perCall)
+  return {
+    detector,
+    result: runAnonymisationGate(
+      {
+        contentKind: opts.kind ?? 'documento',
+        text,
+        roster: opts.roster ?? [],
+        ...(opts.keep === undefined ? {} : { keepPublicFigures: opts.keep }),
+      },
+      { detector, ...(opts.rounds ? { verifyRounds: opts.rounds } : {}) },
+    ),
+  }
+}
+
+/** A far-right case file. Synthetic. */
+const CASE = [
+  'Expediente 7. Informe de seguimiento.',
+  'El senador Ramiro Saldaña declaró en un mitin que "la patria está en peligro".',
+  'Un vecino, Tadeo Villaseñor, contó que recibió amenazas. Tadeo pidió reserva.',
+].join('\n')
+
+beforeEach(() => {
+  vi.stubEnv(ANONYMISE_VERIFY_ROUNDS_VAR, '')
+})
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
+
+describe('option off: behaviour identical to before', () => {
+  it('the politician is redacted, nothing is logged, and classification is never asked', async () => {
+    const calls = [[privada('Ramiro Saldaña'), privada('Tadeo Villaseñor')], []]
+    const off = gate(CASE, calls, { keep: false })
+    const absent = gate(CASE, calls)
+    const [a, b] = [await off.result, await absent.result]
+    expect(a).toEqual(b)
+    expect(a.status).toBe('ready')
+    if (a.status !== 'ready') return
+    expect(a.redactedText).not.toMatch(/Saldaña|Tadeo|Villaseñor/)
+    expect(a.keptPublic).toBeUndefined()
+    expect(off.detector.asked).toEqual([false, false])
+  })
+
+  it('🔴 a model that volunteers "publica" anyway is ignored when the option is off', async () => {
+    const { result } = gate(CASE, [[publica('Ramiro Saldaña'), privada('Tadeo Villaseñor')], []], { keep: false })
+    const out = await result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toContain('Saldaña')
+  })
+})
+
+describe('option on', () => {
+  it('keeps and logs the politician, redacts the private citizen everywhere', async () => {
+    const { result, detector } = gate(
+      CASE,
+      [[publica('El senador Ramiro Saldaña', 'senador en funciones'), privada('Tadeo Villaseñor')], [publica('El senador Ramiro Saldaña')]],
+      { keep: true },
+    )
+    const out = await result
+    expect(detector.asked).toEqual([true, true])
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).toContain('El senador Ramiro Saldaña declaró')
+    expect(out.redactedText).not.toMatch(/Tadeo|Villaseñor/)
+    expect(out.keptPublic).toEqual([{ name: 'El senador Ramiro Saldaña', motivo: 'senador en funciones' }])
+  })
+
+  it.each([
+    ['ambito missing', { texto: 'Ramiro Saldaña', tipo: 'persona', motivo: 'senador' }],
+    ['ambito invalid', { texto: 'Ramiro Saldaña', tipo: 'persona', ambito: 'quizá', motivo: 'senador' }],
+    ['motivo missing', { texto: 'Ramiro Saldaña', tipo: 'persona', ambito: 'publica' }],
+    ['motivo blank', { texto: 'Ramiro Saldaña', tipo: 'persona', ambito: 'publica', motivo: '  ' }],
+    ['motivo not a string', { texto: 'Ramiro Saldaña', tipo: 'persona', ambito: 'publica', motivo: 7 }],
+    ['ambito unsure', { texto: 'Ramiro Saldaña', tipo: 'persona', ambito: 'no sé', motivo: 'quizá político' }],
+  ])('🔴 %s → redacted', async (_label, finding) => {
+    const { result } = gate(CASE, [[finding as H, privada('Tadeo Villaseñor')], []], { keep: true })
+    const out = await result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toContain('Saldaña')
+    expect(out.keptPublic ?? []).toEqual([])
+  })
+
+  it('🔴 the same name called publica in one finding and privada in another → redacted', async () => {
+    const { result } = gate(CASE, [[publica('Ramiro Saldaña'), privada('Ramiro Saldaña'), privada('Tadeo Villaseñor')], []], {
+      keep: true,
+    })
+    const out = await result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toContain('Saldaña')
+  })
+
+  it('a public figure\'s bare surname stays; a private person sharing it is redacted in their own mentions', async () => {
+    const text = [
+      'La alcaldesa Brenda Iturbe habló en el foro.',
+      'Mario Iturbe, un comerciante, la escuchó. Mario se fue temprano.',
+    ].join('\n')
+    const { result } = gate(text, [[publica('La alcaldesa Brenda Iturbe', 'alcaldesa'), privada('Mario Iturbe')], [publica('La alcaldesa Brenda Iturbe')]], {
+      keep: true,
+    })
+    const out = await result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).toContain('La alcaldesa Brenda Iturbe habló')
+    expect(out.redactedText).not.toMatch(/Mario/)
+    expect(out.redactedText).toMatch(/\[Persona A\], un comerciante/)
+  })
+
+  it('🔴 a one-word "publica" that is also a private person\'s part → redacted', async () => {
+    const text = 'Iturbe votó a favor. Mario Iturbe no estuvo de acuerdo.'
+    const { result } = gate(text, [[publica('Iturbe', 'diputado'), privada('Mario Iturbe')], []], { keep: true })
+    const out = await result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toMatch(/Iturbe|Mario/)
+  })
+})
+
+describe('verify with the option on', () => {
+  it('🔴 verify calling the kept name privada → hold', async () => {
+    const { result } = gate(CASE, [[publica('Ramiro Saldaña'), privada('Tadeo Villaseñor')], [privada('Ramiro Saldaña')]], {
+      keep: true,
+    })
+    const out = await result
+    expect(out.status).toBe('hold')
+    if (out.status !== 'hold') return
+    expect(out.stage).toBe('verify')
+    expect(out.keptPublic).toEqual([{ name: 'Ramiro Saldaña', motivo: 'senador' }])
+  })
+
+  it('🔴 verify finding a different name still standing → hold, even if it says publica', async () => {
+    const text = `${CASE}\nTambién habló Octavio Ruelas.`
+    const { result } = gate(text, [[publica('Ramiro Saldaña'), privada('Tadeo Villaseñor')], [publica('Ramiro Saldaña'), publica('Octavio Ruelas')]], {
+      keep: true,
+    })
+    expect((await result).status).toBe('hold')
+  })
+
+  it('🔴 a bare part of a public name that also stands alone, called privada by verify → hold', async () => {
+    const text = 'El senador Ramiro Saldaña habló. Después Ramiro se fue.'
+    const { result } = gate(text, [[publica('Ramiro Saldaña')], [publica('Ramiro Saldaña'), privada('Ramiro')]], { keep: true })
+    expect((await result).status).toBe('hold')
+  })
+})
+
+describe('staff and the roster (Q13 A)', () => {
+  const ROSTER = ['Itzel Barragán', 'itzel.b@example.org']
+
+  it('🔴 a staff member alone is redacted, bare first name included, option on or off', async () => {
+    const text = 'Notas de campo. Itzel Barragán acompañó la entrevista. Itzel tomó notas.'
+    for (const keep of [true, false]) {
+      const { result } = gate(text, [[], []], { keep, roster: ROSTER })
+      const out = await result
+      expect(out.status).toBe('ready')
+      if (out.status !== 'ready') return
+      expect(out.redactedText).not.toMatch(/Itzel|Barragán/)
+      expect(out.redactedText).toMatch(/^Notas de campo\. (\[Persona [A-Z]\]) acompañó la entrevista\. \1 tomó notas\.$/)
+    }
+  })
+
+  it('🔴 the roster bare first name is redacted even when only it appears', async () => {
+    const text = 'En la reunión, Itzel propuso revisar el caso.'
+    const { result } = gate(text, [[], []], { keep: true, roster: ROSTER })
+    const out = await result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).toMatch(/^En la reunión, \[Persona [A-Z]\] propuso revisar el caso\.$/)
+  })
+
+  it('🔴 a staff member the model calls privada is redacted', async () => {
+    const text = 'Itzel Barragán coordinó la visita.'
+    const { result } = gate(text, [[privada('Itzel Barragán')], []], { keep: true, roster: ROSTER })
+    const out = await result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).toMatch(/^\[Persona [A-Z]\] coordinó la visita\.$/)
+  })
+
+  it('a staff member as the author of a cited work is kept and logged; their bare first name is not', async () => {
+    const text = [
+      'Como muestra Itzel Barragán en «Redes del odio» (2021), el discurso escala.',
+      'Itzel revisó este borrador.',
+    ].join('\n')
+    const { result } = gate(
+      text,
+      [[publica('Itzel Barragán', 'autora de «Redes del odio» (2021)')], [publica('Itzel Barragán')]],
+      { keep: true, roster: ROSTER },
+    )
+    const out = await result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).toContain('Como muestra Itzel Barragán en «Redes del odio»')
+    expect(out.redactedText).toMatch(/\n\[Persona [A-Z]\] revisó este borrador\.$/)
+    expect(out.keptPublic).toEqual([{ name: 'Itzel Barragán', motivo: 'autora de «Redes del odio» (2021)' }])
+  })
+
+  it('a staff member quoted as a speaker at a public event is kept and logged', async () => {
+    const text = 'En el foro público de marzo, Itzel Barragán dijo: "hay que documentar cada amenaza".'
+    const { result } = gate(text, [[publica('Itzel Barragán', 'ponente en el foro público de marzo')], [publica('Itzel Barragán')]], {
+      keep: true,
+      roster: ROSTER,
+    })
+    const out = await result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).toBe(text)
+    expect(out.keptPublic).toEqual([{ name: 'Itzel Barragán', motivo: 'ponente en el foro público de marzo' }])
+  })
+
+  it('🔴 option off: the cited staff author is redacted anyway', async () => {
+    const text = 'Como muestra Itzel Barragán en «Redes del odio» (2021), el discurso escala.'
+    const { result } = gate(text, [[publica('Itzel Barragán', 'autora')], []], { keep: false, roster: ROSTER })
+    const out = await result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toMatch(/Itzel|Barragán/)
+  })
+
+  it('🔴 the roster email is redacted with the member label, option on', async () => {
+    const text = 'Escribir a itzel.b@example.org para dudas.'
+    const { result } = gate(text, [[], []], { keep: true, roster: ROSTER })
+    const out = await result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toContain('itzel')
+  })
+})
+
+describe('🔴 never for testimonios or conversations', () => {
+  it.each(['testimonio', 'conversacion'] as const)('%s with the option on: the politician is redacted', async (kind) => {
+    const { result, detector } = gate(CASE, [[publica('Ramiro Saldaña'), privada('Tadeo Villaseñor')], []], { keep: true, kind })
+    const out = await result
+    expect(detector.asked).toEqual([false, false])
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toContain('Saldaña')
+    expect(out.keptPublic).toBeUndefined()
+  })
+})

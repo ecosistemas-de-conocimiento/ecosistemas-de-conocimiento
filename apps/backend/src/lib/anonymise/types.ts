@@ -159,9 +159,29 @@ export interface GateHold {
   redactedText?: string
   /** Where verify found something still standing. Only ever set on a verify hold. */
   survivors?: SurvivorSpan[]
+  /** Public figures left in `redactedText`. Only with `keepPublicFigures` on a documento. */
+  keptPublic?: KeptPublicFigure[]
 }
 
-export type GateResult = { status: 'ready'; redactedText: string; report: GateReport } | GateHold
+/**
+ * A PUBLIC FIGURE THE GATE LEFT IN THE TEXT, for the reviewers' log (owner
+ * rulings 2026-10-27, `keepPublicFigures`).
+ *
+ * ⚠ NOT A HOLE IN THE COUNTS-ONLY RULE. That rule stops the gate storing what
+ * it REMOVED. A kept name was not removed: it is in `redactedText` for every
+ * reader. The log only says why it is there. Never put it in
+ * {@link GateReport}, which stays counts-only.
+ */
+export interface KeptPublicFigure {
+  /** The span as the text spells it. */
+  name: string
+  /** The model's short reason: the role, the cited work or the public event. */
+  motivo: string
+}
+
+export type GateResult =
+  | { status: 'ready'; redactedText: string; report: GateReport; keptPublic?: KeptPublicFigure[] }
+  | GateHold
 
 /**
  * What the gate is being asked to anonymise.
@@ -183,8 +203,18 @@ export interface GateInput {
    *
    * ⚠ Useful for a CONVERSATION, close to useless for a TESTIMONY — see the
    * header. Passing an empty array for a testimony is correct, not a shortcut.
+   *
+   * 🔴 FOR A `documento` EACH MEMBER'S NAME PARTS ARE REDACTED TOO (owner Q13 A,
+   * 2026-10-27): "Itzel" alone, for a member "Itzel Barragán".
    */
   roster?: readonly string[]
+  /**
+   * 🔴 KEEP PUBLIC FIGURES (owner rulings 2026-10-27). Honoured for a
+   * `documento` ONLY; ignored for a testimonio or a conversation. The model
+   * classifies each person `publica` or `privada`; only a `publica` with a
+   * `motivo` is kept. Anything unsure is redacted.
+   */
+  keepPublicFigures?: boolean
 }
 
 /** One finding from the detector: a literal string that identifies someone. */
@@ -216,6 +246,13 @@ export interface DetectorFinding {
    * but 🔴 NEVER exempted as a town (`townPlaces.ts`). Audit 2026-10-23.
    */
   typedAddress?: true
+  /**
+   * Set only when the model classified a `persona` as `publica` AND gave a
+   * non-empty `motivo` (`parseFindings`). Absent means PRIVATE: a missing,
+   * invalid or unsure classification is private. The gate reads it only when
+   * `keepPublicFigures` is on for a `documento`.
+   */
+  public?: { motivo: string }
 }
 
 /**
@@ -243,7 +280,12 @@ export interface PersonDetector {
    * means "nothing to redact" and would let unscrubbed text through the gate;
    * a throw becomes a HOLD, which is the safe answer to "we do not know".
    */
-  detect(args: { text: string; contentKind: GateContentKind }): Promise<
+  detect(args: {
+    text: string
+    contentKind: GateContentKind
+    /** Ask the model to classify each person `publica` or `privada`. */
+    classifyPublic?: boolean
+  }): Promise<
     DetectorFinding[]
   >
 }

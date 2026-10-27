@@ -91,6 +91,15 @@ export interface HeldDetail extends HeldSummary {
   survivors: SurvivorSpan[];
   /** Per-stage counts and rule names. ⚠ No removed text, ever. */
   report: GateReport | null;
+  /** Names the gate KEPT as public figures, and why. Nothing here was removed. */
+  publicFiguresKept: PublicFigureKept[];
+}
+
+export interface PublicFigureKept {
+  name: string;
+  motivo: string;
+  model: string | null;
+  at: string | null;
 }
 
 export interface GateStageReport {
@@ -202,7 +211,20 @@ export function parseHeldDetail(raw: unknown): HeldDetail | null {
     heldText: str(row.heldText),
     survivors: parseSurvivors(row.survivors ?? row.anonymisationSurvivors),
     report: (row.report as GateReport | null) ?? null,
+    publicFiguresKept: parsePublicFigures(row.publicFiguresKept),
   };
+}
+
+function parsePublicFigures(raw: unknown): PublicFigureKept[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PublicFigureKept[] = [];
+  for (const e of raw) {
+    if (!e || typeof e !== 'object') continue;
+    const { name, motivo, model, at } = e as Record<string, unknown>;
+    if (typeof name !== 'string' || typeof motivo !== 'string') continue;
+    out.push({ name, motivo, model: typeof model === 'string' ? model : null, at: typeof at === 'string' ? at : null });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -510,6 +532,9 @@ export const STALE_HIGHLIGHTS_NOTICE =
 
 export const SURVIVORS_TITLE = 'Datos que la revisión encontró';
 export const SURVIVORS_HINT = 'Está resaltado en el texto de abajo.';
+/** Owner rulings 2026-10-27: names the gate left in as public figures. */
+export const PUBLIC_FIGURES_TITLE = 'Nombres conservados como figuras públicas';
+
 export const NO_SURVIVORS =
   'La revisión no señaló posiciones concretas en este documento.';
 

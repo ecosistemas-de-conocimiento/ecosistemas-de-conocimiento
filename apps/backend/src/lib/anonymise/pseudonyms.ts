@@ -107,6 +107,8 @@ export function normaliseAddress(address: string): string {
 export interface PseudonymAllocator {
   /** The label for this name in THIS document. Stable within it, only within it. */
   labelFor(name: string): string
+  /** The label this name ALREADY has, if any. Allocates nothing. */
+  peekLabel(name: string): string | undefined
   /**
    * The label for this ADDRESS in THIS document. Same contract as
    * {@link labelFor}, separate sequence — `[Domicilio A]` and `[Persona A]` are
@@ -160,7 +162,11 @@ export function createPseudonymAllocator(): PseudonymAllocator {
       into.set(key, label)
       return label
     }
-    return { labelFor, size: () => labels.size }
+    const peek = (raw: string): string | undefined => {
+      const key = fold(raw)
+      return into.get(key) ?? sameAs(key)
+    }
+    return { labelFor, peek, size: () => labels.size }
   }
 
   /**
@@ -225,6 +231,7 @@ export function createPseudonymAllocator(): PseudonymAllocator {
 
   return {
     labelFor: people.labelFor,
+    peekLabel: people.peek,
     addressLabelFor: places.labelFor,
     get count(): number {
       return people.size()

@@ -52,6 +52,7 @@ import { organizationIdsForUserWithPermission, PERMISSIONS, relationId } from '.
 import type { GateReport, SurvivorSpan } from './anonymise/types'
 import { contentKindOf, type ContentKind } from './contentKind'
 import { markNotGraphable } from './graph/schedule'
+import type { PublicFigureLogEntry } from './publicFigures'
 
 type Id = number | string
 
@@ -118,6 +119,12 @@ export interface HeldDetail extends HeldSummary {
   survivors: SurvivorSpan[]
   /** Per-stage counts and rule names. ⚠ No removed text. */
   report: GateReport | null
+  /**
+   * Names the gate KEPT as public figures (owner rulings 2026-10-27), with
+   * the model's reason, the model and the time. ⚠ Nothing here was removed:
+   * each name is in `heldText` already. `[]` when none.
+   */
+  publicFiguresKept: PublicFigureLogEntry[]
 }
 
 /**
@@ -191,6 +198,7 @@ type DocumentRow = {
   anonymisationReport?: unknown
   anonymisationSurvivors?: unknown
   heldText?: unknown
+  publicFiguresKept?: unknown
   testimonioTitle?: unknown
   redactedText?: unknown
   extractedText?: unknown
@@ -211,6 +219,17 @@ function splitError(raw: unknown): { stage: string | null; reason: string | null
   const at = value.indexOf(': ')
   if (at === -1) return { stage: null, reason: value }
   return { stage: value.slice(0, at), reason: value.slice(at + 2) }
+}
+
+function publicFiguresOf(raw: unknown): PublicFigureLogEntry[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter(
+    (e): e is PublicFigureLogEntry =>
+      Boolean(e) &&
+      typeof e === 'object' &&
+      typeof (e as PublicFigureLogEntry).name === 'string' &&
+      typeof (e as PublicFigureLogEntry).motivo === 'string',
+  )
 }
 
 function survivorsOf(raw: unknown): SurvivorSpan[] {
@@ -314,6 +333,7 @@ export async function heldDocument(args: {
     heldText: text(row.heldText),
     survivors: survivorsOf(row.anonymisationSurvivors),
     report: (row.anonymisationReport as GateReport | null) ?? null,
+    publicFiguresKept: publicFiguresOf(row.publicFiguresKept),
   }
 }
 

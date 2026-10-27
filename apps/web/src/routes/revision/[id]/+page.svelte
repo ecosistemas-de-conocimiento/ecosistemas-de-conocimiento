@@ -34,6 +34,7 @@
     NO_SURVIVORS,
     NO_TEXT_NOTICE,
     NOTE_LABEL,
+    PUBLIC_FIGURES_TITLE,
     NOTE_PLACEHOLDER,
     REJECT_CONFIRM,
     REJECT_CONSEQUENCE,
@@ -121,6 +122,17 @@
         </ul>
       {/if}
     </section>
+
+    {#if hold.publicFiguresKept.length > 0}
+      <section class="block" aria-labelledby="public-figures-title">
+        <h2 id="public-figures-title">{PUBLIC_FIGURES_TITLE}</h2>
+        <ul data-testid="hold-public-figures">
+          {#each hold.publicFiguresKept as kept, i (i)}
+            <li><strong>{kept.name}</strong> — {kept.motivo}{#if kept.model}<span class="hint"> · {kept.model}</span>{/if}{#if formatHoldDate(kept.at)}<span class="hint"> · {formatHoldDate(kept.at)}</span>{/if}</li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
 
     <!-- ── The text ───────────────────────────────────────────────────── -->
     {#if original === null}

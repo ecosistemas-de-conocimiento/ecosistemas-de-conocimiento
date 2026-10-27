@@ -17,7 +17,7 @@ import {
 beforeEach(() => invalidateFeatures())
 
 describe('defaults', () => {
-  it('every switch is on except studentView (not built yet)', () => {
+  it('every switch is on except studentView (not built yet) and keepPublicFigures (opt-in)', () => {
     expect(FEATURE_DEFAULTS).toEqual({
       audioUpload: true,
       liveMic: true,
@@ -29,8 +29,9 @@ describe('defaults', () => {
       testimonioTitles: true,
       autoPublishMembers: true,
       studentView: false,
+      keepPublicFigures: false,
     })
-    expect(FEATURE_KEYS).toHaveLength(10)
+    expect(FEATURE_KEYS).toHaveLength(11)
   })
 
   it('NULL, junk and non-booleans read as the defaults', () => {

@@ -58,7 +58,7 @@ import { PLACEHOLDER_PATTERN } from './types'
  * and stage 3 still redacts the whole span it reported. A title missing here
  * is over-redacted where it stands capitalised; never under-redacted.
  */
-const NOT_A_PART = new Set(
+export const NOT_A_PART: ReadonlySet<string> = new Set(
   [
     // function words
     'de', 'del', 'la', 'las', 'el', 'los', 'lo', 'y', 'e', 'o', 'u', 'a', 'en', 'con',
@@ -74,7 +74,11 @@ const NOT_A_PART = new Set(
 const WORD = /[\p{L}\p{M}]+/gu
 
 /** The name parts of one person span, as written. */
-export function namePartsOf(span: string): string[] {
+export function namePartsOf(raw: string): string[] {
+  // 🔴 Trailing punctuation off first (audit 2026-10-27): "Fausto Arellano."
+  // read "Arellano" as an abbreviation and never spread it. An abbreviation
+  // INSIDE the span ("Pbro. Juan Soto") is still skipped.
+  const span = raw.replace(/[\s\p{P}]+$/u, '')
   const inPlaceholder = [...span.matchAll(PLACEHOLDER_PATTERN)].map((m) => [m.index, m.index + m[0].length])
   const parts: string[] = []
   for (const m of span.matchAll(WORD)) {
@@ -139,6 +143,8 @@ export interface NamePartRegistry {
    * its single owner, or null when it has none or several.
    */
   ownerOf(name: string, labelOf: (span: string) => string): string | null
+  /** The folded name parts of every registered span that carries `label`. */
+  partsWithLabel(label: string, labelOf: (span: string) => string | undefined): Array<ReadonlySet<string>>
 }
 
 export function createNamePartRegistry(): NamePartRegistry {
@@ -167,6 +173,12 @@ export function createNamePartRegistry(): NamePartRegistry {
       return [...spelling.entries()]
         .sort((a, b) => b[1].length - a[1].length)
         .map(([key, part]) => ({ part, siblings: siblings.get(key) ?? new Set() }))
+    },
+    partsWithLabel(label, labelOf) {
+      const spans = new Set([...owners.values()].flatMap((set) => [...set]))
+      return [...spans]
+        .filter((span) => labelOf(span) === label)
+        .map((span) => new Set(namePartsOf(span).map(normaliseName)))
     },
     ownerOf(name, labelOf) {
       const set = owners.get(normaliseName(name))

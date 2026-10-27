@@ -227,6 +227,15 @@ describe('holds — 🔴 what the reviewer sees, and what never leaves', () => {
     expect(detail.report?.addresses).toBe(1)
   })
 
+  it('shows the names kept as public figures, with motivo, model and time; none → []', async () => {
+    const kept = [{ name: 'Ramiro Saldaña', motivo: 'senador', model: 'm1', at: '2026-10-27T12:00:00.000Z' }]
+    const withLog = fakePayload({ rows: [{ ...HELD_ROW, publicFiguresKept: [...kept, { name: 7 }, null] }] })
+    const detail = await heldDocument({ payload: withLog.payload, documentId: DOC, user: user() })
+    expect(detail.publicFiguresKept).toEqual(kept)
+    const { payload } = fakePayload()
+    expect((await heldDocument({ payload, documentId: DOC, user: user() })).publicFiguresKept).toEqual([])
+  })
+
   it('🔴 never returns `extractedText` — the raw original', async () => {
     // The job is to judge the REDACTION. Handing over the original would make
     // every review a second full disclosure of the material the gate protects.

@@ -278,6 +278,30 @@ export const DETECT_SYSTEM_PROMPT = [
 ].join('\n')
 
 /**
+ * 🔴 KEEP PUBLIC FIGURES (owner rulings 2026-10-27). Appended to
+ * {@link DETECT_SYSTEM_PROMPT} only when a `documento` runs with
+ * `keepPublicFigures` on, so every other call sends the prompt unchanged.
+ *
+ * The model still REPORTS every person: the classification only decides what
+ * the gate keeps. `parseFindings` treats a missing or odd `ambito`, or a
+ * `publica` with no `motivo`, as private: unsure means redacted.
+ */
+export const DETECT_PUBLIC_ADDENDUM = [
+  '',
+  'Clasificación de personas (obligatoria en cada hallazgo "tipo": "persona"):',
+  'Agrega "ambito": "publica" o "privada", y "motivo": una frase corta.',
+  '{"texto":"...","tipo":"persona","identifica":true,"ambito":"publica","motivo":"senador"}',
+  '- "publica" solo si el texto la nombra en el discurso público por un papel público:',
+  '  político o política, funcionario o funcionaria, comentarista público, autor o autora',
+  '  de una obra publicada que el texto cita, o ponente en un evento público con una cita',
+  '  o atribución. En "motivo" pon el cargo, la obra citada o el evento.',
+  '- "privada" para todos los demás: vecinos, víctimas, familiares, entrevistados,',
+  '  interlocutores, y también integrantes del equipo del proyecto, salvo que aparezcan',
+  '  como autores de una obra citada o como ponentes en un evento público.',
+  '- Si dudas, pon "privada".',
+].join('\n')
+
+/**
  * ai-service still renders exactly one user message from a Handlebars template.
  *
  * 🔴 TRIPLE STACHE. `{{userPrompt}}` HTML-escapes its value, so an apostrophe in
@@ -312,13 +336,23 @@ function foldChar(ch: string): string {
 }
 
 /**
- * Every `[start, end)` range of `source` that equals `needle` once both are
- * folded (lower case, accents dropped), in order. Overlapping matches included.
+ * The folded text and its offset map, for the LAST source seen.
  *
- * ⚠ Folding is per character with an offset map, so a character that folds to
- * two (or none) never shifts the ranges returned.
+ * ⚠ PERFORMANCE (audit 2026-10-27, 300 people × 3 parts × 100k words): the
+ * gate spreads every name part over the same text one after another, and most
+ * parts match nothing, so the text rarely changes between calls. Folding it
+ * once per distinct text instead of once per part is the easy win. One entry:
+ * nothing is kept past the next different text.
  */
-export function foldedMatches(source: string, needle: string): Array<[number, number]> {
+let lastFold: { source: string; folded: string; startOf: number[] } | null = null
+
+/** Drop the cached text. The gate calls it on exit, so no document text outlives its run. */
+export function clearFoldCache(): void {
+  lastFold = null
+}
+
+function foldSource(source: string): { folded: string; startOf: number[] } {
+  if (lastFold !== null && lastFold.source === source) return lastFold
   let folded = ''
   const startOf: number[] = []
   for (let i = 0; i < source.length; ) {
@@ -330,6 +364,19 @@ export function foldedMatches(source: string, needle: string): Array<[number, nu
     }
     i += ch.length
   }
+  lastFold = { source, folded, startOf }
+  return lastFold
+}
+
+/**
+ * Every `[start, end)` range of `source` that equals `needle` once both are
+ * folded (lower case, accents dropped), in order. Overlapping matches included.
+ *
+ * ⚠ Folding is per character with an offset map, so a character that folds to
+ * two (or none) never shifts the ranges returned.
+ */
+export function foldedMatches(source: string, needle: string): Array<[number, number]> {
+  const { folded, startOf } = foldSource(source)
   const want = [...needle].map(foldChar).join('')
   const out: Array<[number, number]> = []
   if (want.length === 0) return out
@@ -498,9 +545,24 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
       ...(tipo === 'domicilio' ? { typedAddress: true as const } : {}),
       // 🔴 Only a literal `false` counts; a missing or odd value is identifying.
       ...((item as { identifica?: unknown }).identifica === false ? { identifying: false } : {}),
+      // 🔴 PUBLIC ONLY ON AN EXPLICIT "publica" WITH A REASON. Missing, invalid
+      // or unsure is private: redacted (owner, 2026-10-27, fail closed).
+      ...publicOf(item, tipo),
     })
   }
   return out
+}
+
+/** Longest `motivo` kept for the log. A reason, not a paragraph. */
+const MAX_MOTIVO = 200
+
+/** `{ public: { motivo } }` for a person the model called public with a reason, else nothing. */
+function publicOf(item: object, tipo: unknown): { public?: { motivo: string } } {
+  if (tipo !== 'persona') return {}
+  const { ambito, motivo } = item as { ambito?: unknown; motivo?: unknown }
+  if (typeof ambito !== 'string' || [...ambito.trim()].map(foldChar).join('') !== 'publica') return {}
+  if (typeof motivo !== 'string' || motivo.trim() === '') return {}
+  return { public: { motivo: motivo.trim().slice(0, MAX_MOTIVO) } }
 }
 
 /** The slice of `@edc/ai-client` this detector uses. Injected so tests need no network. */
@@ -638,7 +700,7 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
           : 'ai-service:anonymise-detect')
       )
     },
-    async detect({ text, contentKind }) {
+    async detect({ text, contentKind, classifyPublic }) {
       let client = opts.client
       if (!client && selfHosted) {
         const resolved = openaiCompatFromEnv()
@@ -731,7 +793,9 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
                     unitKey: nextKey(),
                     unitType: 'anonymise-detect',
                     input: { userPrompt: `${material}\n\n${chunk.text}` },
-                    systemPrompt: DETECT_SYSTEM_PROMPT,
+                    systemPrompt: classifyPublic
+                      ? `${DETECT_SYSTEM_PROMPT}\n${DETECT_PUBLIC_ADDENDUM}`
+                      : DETECT_SYSTEM_PROMPT,
                     specOverride: { promptTemplate: PROMPT_TEMPLATE_USER_PROMPT },
                   },
                   effortLevel: 'quick',
@@ -771,7 +835,10 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
       for (const f of perChunk.flat()) {
         const key = `${f.type}\u0000${f.text}`
         const prior = byKey.get(key)
-        const kept = prior === undefined || prior.identifying === false ? f : prior
+        const chosen = prior === undefined || prior.identifying === false ? f : prior
+        // 🔴 Public only if EVERY chunk said public: one "privada" wins.
+        const { public: _private, ...rest } = chosen
+        const kept: DetectorFinding = prior === undefined || (prior.public && f.public) ? chosen : rest
         // 🔴 If any chunk typed it `domicilio`, it is never a town: fail-closed.
         byKey.set(key, prior?.typedAddress || f.typedAddress ? { ...kept, typedAddress: true } : kept)
       }

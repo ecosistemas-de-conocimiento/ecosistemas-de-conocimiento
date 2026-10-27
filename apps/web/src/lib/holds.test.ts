@@ -275,6 +275,7 @@ describe('parsing a detail response', () => {
       'heldText',
       'id',
       'label',
+      'publicFiguresKept',
       'reason',
       'report',
       'stage',
@@ -283,6 +284,13 @@ describe('parsing a detail response', () => {
       'title',
       'updatedAt',
     ]);
+  });
+
+  it('keeps the names kept as public figures (with motivo, model, time), drops junk', () => {
+    const kept = { name: 'Ramiro Saldaña', motivo: 'senador', model: 'm1', at: '2026-10-27T12:00:00Z' };
+    const detail = parseHeldDetail({ id: '4', title: 'Documento retenido', publicFiguresKept: [kept, { name: 1 }, null] });
+    expect(detail?.publicFiguresKept).toEqual([kept]);
+    expect(parseHeldDetail({ id: '5', title: 'x' })?.publicFiguresKept).toEqual([]);
   });
 
   it('treats a structural hold as having no text, not as an empty string', () => {

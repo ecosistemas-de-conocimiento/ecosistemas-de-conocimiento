@@ -55,11 +55,11 @@
  * MANY findings survived and nothing else.
  */
 
-import { foldedMatches, positiveIntFromEnv } from './detector'
+import { clearFoldCache, foldedMatches, positiveIntFromEnv } from './detector'
 import { deterministicPass } from './deterministic'
 import { isGenericPlace } from './genericPlaces'
-import { createNamePartRegistry, gluedToAnotherName, type NamePartRegistry, sentenceStart } from './nameParts'
-import { createPseudonymAllocator } from './pseudonyms'
+import { createNamePartRegistry, gluedToAnotherName, namePartsOf, type NamePartRegistry, sentenceStart } from './nameParts'
+import { createPseudonymAllocator, normaliseName } from './pseudonyms'
 import { structuralPass } from './structural'
 import { isTownLevelPlace } from './townPlaces'
 import type {
@@ -69,6 +69,7 @@ import type {
   GateResult,
   GateStage,
   GateStageReport,
+  KeptPublicFigure,
   PersonDetector,
   RedactionCount,
   SurvivorSpan,
@@ -149,13 +150,90 @@ function countsByLabel(entries: Iterable<string>): RedactionCount[] {
   return [...tally].map(([label, count]) => ({ label, count }))
 }
 
-/** Character ranges in `text` occupied by placeholders we inserted. */
+/**
+ * A kept public name, swapped out while redaction runs (see {@link shield}).
+ * Private-use characters: never in real text, never a word character.
+ */
+const SHIELD = /(\d+)/g
+
+/** Character ranges in `text` occupied by placeholders we inserted, or by a shield. */
 function placeholderSpans(text: string): Array<[number, number]> {
   const spans: Array<[number, number]> = []
   for (const m of text.matchAll(PLACEHOLDER)) {
     spans.push([m.index, m.index + m[0].length])
   }
+  for (const m of text.matchAll(SHIELD)) {
+    spans.push([m.index, m.index + m[0].length])
+  }
   return spans
+}
+
+/** Every whole-word, case- and accent-blind occurrence of `name` in `text`. */
+function wholeWordMatches(text: string, name: string): Array<[number, number]> {
+  return foldedMatches(text, name).filter(([s, e]) => wholeWord(text, s, e))
+}
+
+/**
+ * 🔴 KEEP PUBLIC FIGURES: swap every whole-word occurrence of each kept name
+ * for an opaque token, so no redaction rule can touch it (owner rulings
+ * 2026-10-27). Every replacer here already skips our placeholders, and
+ * `placeholderSpans` counts a shield as one. `restore` puts the names back
+ * and says which ones were actually in the text.
+ *
+ * ⚠ ONLY THE KEPT SPAN IS SHIELDED. "López" alone, outside "Ana López", is
+ * still redacted when a private person owns that part.
+ */
+function shield(text: string, names: readonly string[]): { text: string; restore: (t: string) => { text: string; present: Set<string> } } {
+  const originals: Array<{ name: string; spelling: string }> = []
+  let out = text
+  for (const name of [...names].sort((a, b) => b.length - a.length)) {
+    const spans = placeholderSpans(out)
+    let result = ''
+    let copied = 0
+    for (const [at, end] of wholeWordMatches(out, name)) {
+      if (at < copied || spans.some(([s, e]) => at < e && end > s)) continue
+      result += `${out.slice(copied, at)}${originals.length}`
+      originals.push({ name, spelling: out.slice(at, end) })
+      copied = end
+    }
+    if (copied > 0) out = result + out.slice(copied)
+  }
+  return {
+    text: out,
+    restore: (t) => {
+      const present = new Set<string>()
+      const restored = t.replace(SHIELD, (_m, i: string) => {
+        const o = originals[Number(i)] as { name: string; spelling: string }
+        present.add(o.name)
+        return o.spelling
+      })
+      return { text: restored, present }
+    },
+  }
+}
+
+/**
+ * 🔴 WHICH `publica` FINDINGS ARE KEPT. Fail closed on every ambiguity:
+ *
+ *   · the same span is also reported private → private;
+ *   · a ONE-WORD public span that is a name part of a private person or of a
+ *     roster member → private: "Iturbe" alone could be either Iturbe.
+ */
+function keptPublicFindings(found: readonly DetectorFinding[], rosterNames: readonly string[]): DetectorFinding[] {
+  const people = found.filter((f) => f.type === 'persona')
+  const privateSpans = people.filter((f) => !f.public)
+  const privateFolded = new Set(privateSpans.map((f) => normaliseName(f.text)))
+  const privateParts = new Set(
+    [...privateSpans.map((f) => f.text), ...rosterNames].flatMap((s) => namePartsOf(s).map(normaliseName)),
+  )
+  return people.filter((f) => {
+    if (!f.public) return false
+    const folded = normaliseName(f.text)
+    if (privateFolded.has(folded)) return false
+    const words = f.text.match(/[\p{L}\p{M}]+/gu) ?? []
+    if (words.length === 1 && privateParts.has(folded)) return false
+    return true
+  })
 }
 
 /**
@@ -205,7 +283,7 @@ function coveredByPlaceholder(
 function replaceOutsidePlaceholders(
   text: string,
   needle: string,
-  replacement: () => string,
+  replacement: (at: number, end: number) => string,
   folded = false,
 ): string | null {
   const spans = placeholderSpans(text)
@@ -215,7 +293,6 @@ function replaceOutsidePlaceholders(
   }
   if (folded) ranges.push(...foldedMatches(text, needle).filter(([s, e]) => wholeWord(text, s, e)))
   ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1])
-  let label: string | undefined
   let result = ''
   let copied = 0
   for (const [at, end] of ranges) {
@@ -223,8 +300,7 @@ function replaceOutsidePlaceholders(
     if (at < copied) continue
     const cuts = spans.some(([s, e]) => at < e && end > s && !(at <= s && end >= e))
     if (cuts) continue
-    label ??= replacement()
-    result += text.slice(copied, at) + label
+    result += text.slice(copied, at) + replacement(at, end)
     copied = end
   }
   // `copied` only moves on a replacement, and a needle is never empty.
@@ -271,9 +347,18 @@ function applyFindings(
      */
     // ⚠ LAZY: a finding that replaces nothing must not use up a label, or the
     // report counts a person who is not in the text and the letters skip.
-    const replacement = () =>
+    // 🔴 A ONE-WORD person finding that belongs to a redacted name takes that
+    // name's label, EXCEPT where it is glued to another capitalised name: the
+    // same rule `spreadPart` applies (audit 2026-10-27: both "Fausto" and
+    // "Fausto Arellano" reported gave "Fausto Martínez" Arellano's label).
+    const source = out
+    const owner = finding.type === 'persona' ? names.ownerOf(finding.text, allocate) : null
+    const ownParts = owner === null ? null : new Set(namePartsOf(owner).map(normaliseName))
+    const replacement = (at: number, end: number) =>
       finding.type === 'persona'
-        ? personLabel(finding.text)
+        ? ownParts !== null && gluedToAnotherName(source, at, end, ownParts)
+          ? allocate(finding.text)
+          : personLabel(finding.text)
         : finding.type === 'lugar'
           ? allocateAddress(finding.text)
           : OMITTED_PLACEHOLDER
@@ -459,6 +544,23 @@ function bareTitleShape(f: DetectorFinding, text: string): boolean {
 }
 
 /**
+ * True when `leftover` adds a name word to `placeholder` that no registered
+ * multi-word owner of that label has: "Pérez, [Persona A]" for "María López".
+ */
+function conflictsWithOwner(
+  leftover: string,
+  placeholder: string,
+  names: NamePartRegistry,
+  peek: (name: string) => string | undefined,
+): boolean {
+  if (!/^\[Persona /.test(placeholder)) return false
+  const extra = namePartsOf(leftover.replace(PLACEHOLDER, ' ')).map(normaliseName)
+  if (extra.length === 0) return false
+  const owners = names.partsWithLabel(placeholder, peek)
+  return owners.length > 0 && owners.every((parts) => extra.some((w) => !parts.has(w)))
+}
+
+/**
  * Redact one round's leftovers with the document's allocator, so a name caught
  * late gets the label it already had.
  *
@@ -474,6 +576,7 @@ function redactLeftovers(
   allocate: (name: string) => string,
   allocateAddress: (address: string) => string,
   names: NamePartRegistry,
+  peek: (name: string) => string | undefined,
 ): { text: string; labels: string[] } | null {
   const labels: string[] = []
   const plain: DetectorFinding[] = []
@@ -486,7 +589,14 @@ function redactLeftovers(
       plain.push(...resolved.findings)
       continue
     }
-    const next = replaceOutsidePlaceholders(out, f.text, () => resolved.absorbInto, true)
+    // 🔴 TWO PEOPLE, TWO LABELS (audit 2026-10-27). "[Persona A] López" is
+    // more of A; "Pérez, [Persona A]" is NOT when A is "María López": Pérez is
+    // a name A never had, so the span is someone else sharing a part, and it
+    // gets a label of its own. A title or a one-word owner still absorbs.
+    const label = conflictsWithOwner(f.text, resolved.absorbInto, names, peek)
+      ? allocate(f.text)
+      : resolved.absorbInto
+    const next = replaceOutsidePlaceholders(out, f.text, () => label, true)
     if (next === null) continue
     labels.push(f.type)
     out = next
@@ -538,12 +648,47 @@ export async function runAnonymisationGate(
   input: GateInput,
   deps: GateDeps,
 ): Promise<GateResult> {
+  try {
+    return await runGate(input, deps)
+  } finally {
+    clearFoldCache()
+  }
+}
+
+async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // 🔴 ONE allocator for the whole document, created here and dropped when this
   // function returns. See `pseudonyms.ts`: its lifetime IS the safety property.
   const allocator = createPseudonymAllocator()
   // Same lifetime, same reason: name parts → people, for this document only.
   const names = createNamePartRegistry()
   const stages: GateStageReport[] = []
+
+  // 🔴 KEEP PUBLIC FIGURES: a `documento` only, never a testimonio or a
+  // conversation, whatever the caller passed (owner rulings 2026-10-27).
+  const keep = input.keepPublicFigures === true && input.contentKind === 'documento'
+  const classify = keep ? { classifyPublic: true as const } : {}
+  // Roster member names (not emails), the ones with name parts.
+  const rosterNames = (input.roster ?? []).filter((e) => !e.includes('@') && namePartsOf(e).length > 0)
+  /** Kept public names → their motivo. Filled by stage 3. */
+  const keptMotivo = new Map<string, string>()
+  /** The kept figures still in `text`, for the log. Undefined when the option is off. */
+  const keptIn = (text: string | undefined): KeptPublicFigure[] | undefined =>
+    keep
+      ? [...keptMotivo]
+          .filter(([name]) => text !== undefined && wholeWordMatches(text, name).length > 0)
+          .map(([name, motivo]) => ({ name, motivo }))
+      : undefined
+  const keptField = (text: string | undefined) => {
+    const kept = keptIn(text)
+    return kept === undefined ? {} : { keptPublic: kept }
+  }
+  /** Run a redaction with every kept public name shielded. */
+  const shielded = <T extends { text: string }>(text: string, run: (t: string) => T | null): T | null => {
+    if (!keep || keptMotivo.size === 0) return run(text)
+    const s = shield(text, [...keptMotivo.keys()])
+    const out = run(s.text)
+    return out === null ? null : { ...out, text: s.restore(out.text).text }
+  }
 
   const report = (): GateReport => ({
     stages,
@@ -567,6 +712,13 @@ export async function runAnonymisationGate(
     reason,
     report: report(),
     ...(extra ?? {}),
+    ...(extra?.redactedText !== undefined ? keptField(extra.redactedText) : {}),
+  })
+  const ready = (redactedText: string): GateResult => ({
+    status: 'ready',
+    redactedText,
+    report: report(),
+    ...keptField(redactedText),
   })
 
   // ── 1. STRUCTURAL ─────────────────────────────────────────────────────────
@@ -589,7 +741,10 @@ export async function runAnonymisationGate(
   // ── 2. DETERMINISTIC ──────────────────────────────────────────────────────
   const deterministic = deterministicPass({
     text: structural.text,
-    roster: input.roster,
+    // 🔴 With the option on, member NAMES wait for stage 3, so the model can
+    // see a staff author and call that mention public. They are redacted
+    // there, after the model, unless it did. Emails are redacted here as ever.
+    roster: keep ? (input.roster ?? []).filter((e) => e.includes('@')) : input.roster,
     allocate: (name) => allocator.labelFor(name),
     // 🔴 THE SAME ALLOCATOR STAGE 3 WILL USE. See the header — one allocator per
     // document is the invariant, and addresses obey it exactly like people do.
@@ -604,6 +759,7 @@ export async function runAnonymisationGate(
       await deps.detector.detect({
         text: deterministic.text,
         contentKind: input.contentKind,
+        ...classify,
       }),
     )
   } catch (err) {
@@ -634,14 +790,38 @@ export async function runAnonymisationGate(
   // they are not personal data (`DETECT_SYSTEM_PROMPT`), not because code
   // second-guesses a model that reported one. The town rule (`townPlaces.ts`)
   // only decides verify's hold, below, and the place-hold re-run.
-  const applied = applyFindings(
-    deterministic.text,
-    found,
+  //
+  // 🔴 ROSTER NAME PARTS are spread like a finding's. In a `documento`, every
+  // member's (owner Q13 A, 2026-10-27: "Itzel" alone for "Itzel Barragán").
+  // Elsewhere, the members stage 2 actually caught (audit 2026-10-27): a
+  // conversation does not spread the first names of members it never named.
+  for (const member of rosterNames) {
+    if (input.contentKind === 'documento' || deterministic.text.includes(allocator.labelFor(member))) {
+      names.add(member)
+    }
+  }
+  // 🔴 KEEP PUBLIC FIGURES: the kept spans are shielded while everything else
+  // is redacted; every other finding is redacted as before, `public` or not.
+  const publics = keep ? keptPublicFindings(found, rosterNames) : []
+  const toRedact: DetectorFinding[] = [
+    ...found.filter((f) => !publics.includes(f)),
+    // Deferred roster names (option on): redacted here, unless shielded.
+    ...(keep ? rosterNames.map((text): DetectorFinding => ({ text, type: 'persona' })) : []),
+  ]
+  const shieldedText = shield(deterministic.text, publics.map((f) => f.text))
+  const redacted = applyFindings(
+    shieldedText.text,
+    toRedact,
     (name) => allocator.labelFor(name),
     (address) => allocator.addressLabelFor(address),
     names,
     true,
   )
+  const restored = shieldedText.restore(redacted.text)
+  for (const f of publics) {
+    if (restored.present.has(f.text) && f.public) keptMotivo.set(f.text, f.public.motivo)
+  }
+  const applied = { text: restored.text, labels: redacted.labels }
   stages.push({ stage: 'content', removed: countsByLabel(applied.labels) })
 
   // ── 4. VERIFY, IN ROUNDS ──────────────────────────────────────────────────
@@ -665,7 +845,7 @@ export async function runAnonymisationGate(
     let survivors: DetectorFinding[]
     try {
       survivors = withoutGenericPlaces(
-        await deps.detector.detect({ text: current, contentKind: input.contentKind }),
+        await deps.detector.detect({ text: current, contentKind: input.contentKind, ...classify }),
       )
     } catch (err) {
       return hold(
@@ -679,6 +859,12 @@ export async function runAnonymisationGate(
     }
 
     const spans = placeholderSpans(current)
+    // 🔴 KEEP PUBLIC FIGURES: a finding is covered by a kept name only when
+    // verify ALSO calls it public. Verify calling a kept name private is a
+    // disagreement, and a disagreement holds (owner, 2026-10-27, fail closed).
+    const keptSpans: Array<[number, number]> = keep
+      ? [...keptMotivo.keys()].flatMap((name) => wholeWordMatches(current, name))
+      : []
     // ⚠ `onlyPlaceholders`: a finding made of our placeholders and punctuation
     // ("[Domicilio AP], [Domicilio AQ]") names nobody.
     // 🔴 `identifica: false` COUNTS ONLY ON A BARE TITLE (`bareTitle`, owner's
@@ -690,7 +876,7 @@ export async function runAnonymisationGate(
     // ranchos, parajes and house references still hold. See `townPlaces.ts`.
     const standing = survivors.filter(
       (f) =>
-        !coveredByPlaceholder(current, spans, f.text) &&
+        !coveredByPlaceholder(current, f.public && keep ? [...spans, ...keptSpans] : spans, f.text) &&
         !onlyPlaceholders(f.text) &&
         !isTownLevelPlace(f, current),
     )
@@ -699,12 +885,15 @@ export async function runAnonymisationGate(
     const forced = standing.filter((f) => titleVerdict(f, current) === 'redact')
 
     if (real.length === 0 && forced.length > 0) {
-      const done = redactLeftovers(
-        current,
-        forced,
-        (name) => allocator.labelFor(name),
-        (address) => allocator.addressLabelFor(address),
-        names,
+      const done = shielded(current, (t) =>
+        redactLeftovers(
+          t,
+          forced,
+          (name) => allocator.labelFor(name),
+          (address) => allocator.addressLabelFor(address),
+          names,
+          (name) => allocator.peekLabel(name),
+        ),
       )
       // 🔴 A redaction that changed nothing (null, or the same text) is not a
       // redaction: fall through and HOLD (final audit 2026-10-21, B1).
@@ -715,7 +904,7 @@ export async function runAnonymisationGate(
           removed: countsByLabel(done.labels),
           note: `Ronda ${round}: se tacharon ${forced.length} nombre(s) de una palabra al inicio de una oración.`,
         })
-        return { status: 'ready', redactedText: done.text, report: report() }
+        return ready(done.text)
       }
     }
 
@@ -726,17 +915,20 @@ export async function runAnonymisationGate(
         removed: [],
         note: `Ronda ${round}: la segunda revisión no encontró datos personales en el texto ya tachado.`,
       })
-      return { status: 'ready', redactedText: current, report: report() }
+      return ready(current)
     }
 
     const redacted =
       round < rounds
-        ? redactLeftovers(
-            current,
-            [...real, ...forced],
-            (name) => allocator.labelFor(name),
-            (address) => allocator.addressLabelFor(address),
-            names,
+        ? shielded(current, (t) =>
+            redactLeftovers(
+              t,
+              [...real, ...forced],
+              (name) => allocator.labelFor(name),
+              (address) => allocator.addressLabelFor(address),
+              names,
+              (name) => allocator.peekLabel(name),
+            ),
           )
         : null
 

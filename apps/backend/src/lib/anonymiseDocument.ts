@@ -41,6 +41,7 @@ import { randomUUID } from 'node:crypto'
 import type { ContentKind } from './contentKind'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import type { GateReport, PersonDetector } from './anonymise/types'
+import { publicFiguresLog } from './publicFigures'
 
 /**
  * 🔴 THE ONE CONTENT KIND THAT IS NEVER GATED.
@@ -261,6 +262,12 @@ export async function anonymiseDocumentText(args: {
    * empty for a `testimonio`, whose people are not users of this system at all.
    */
   roster?: readonly string[]
+  /**
+   * 🔴 KEEP PUBLIC FIGURES (`lib/publicFigures.ts`). Passed to the gate for a
+   * `documento` ONLY; a testimonio or a conversation never keeps a name. What
+   * was kept is logged on the row (`publicFiguresKept`) for reviewers.
+   */
+  keepPublicFigures?: boolean
 }): Promise<AnonymiseOutcome> {
   const { payload, docId, contentKind, text } = args
 
@@ -349,6 +356,7 @@ export async function anonymiseDocumentText(args: {
           contentKind === 'conversacion' || contentKind === 'documento' ? contentKind : 'testimonio',
         text,
         roster: args.roster ?? [],
+        ...(contentKind === 'documento' && args.keepPublicFigures === true ? { keepPublicFigures: true } : {}),
       },
       { detector },
     )
@@ -369,6 +377,7 @@ export async function anonymiseDocumentText(args: {
       // is worse than showing them nothing.
       heldText: null,
       anonymisationSurvivors: null,
+      publicFiguresKept: null,
     }))) return superseded()
     return { ok: false, stage: 'content', reason, report: null }
   }
@@ -388,6 +397,7 @@ export async function anonymiseDocumentText(args: {
       redactedText: null,
       heldText: null,
       anonymisationSurvivors: null,
+      publicFiguresKept: null,
     }))) return superseded()
     return {
       ok: false,
@@ -428,6 +438,8 @@ export async function anonymiseDocumentText(args: {
        */
       heldText: result.redactedText ?? null,
       anonymisationSurvivors: result.survivors ?? null,
+      // The public figures left in `heldText`, so the reviewer sees why.
+      publicFiguresKept: publicFiguresLog(result.keptPublic, result.report.model),
     }))) return superseded()
     /**
      * A held testimonio gets a title too (owner ruling 2026-10-24: Revisión
@@ -468,6 +480,8 @@ export async function anonymiseDocumentText(args: {
     // earlier attempt off a row that has since passed.
     heldText: null,
     anonymisationSurvivors: null,
+    // 🔴 THE REVIEWERS' LOG: every name kept as public, why, which model, when.
+    publicFiguresKept: publicFiguresLog(result.keptPublic, result.report.model),
   }))) return superseded()
 
   return { ok: true, text: result.redactedText, report: result.report }

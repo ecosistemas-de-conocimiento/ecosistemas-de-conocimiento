@@ -5,8 +5,9 @@
  * 🔴 DEFAULTS ARE TODAY'S BEHAVIOUR. A NULL column, a missing key or a value
  * that is not a boolean reads as the default, so an ecosistema nobody has
  * touched behaves exactly as before this file existed. `studentView` is the one
- * default that is `false`: the student view is not built yet, and only
- * "Semiosis práctica" will get it.
+ * defaults that are `false`: the student view is not built yet, and only
+ * "Semiosis práctica" will get it; `keepPublicFigures` keeps names in the
+ * corpus, so it is opt-in per ecosistema (owner rulings 2026-10-27).
  *
  * Each flag is enforced where the work happens, not only hidden in the UI:
  *   audioUpload        Documents `refuseDisabledFeatures` (kind=audio create → 403)
@@ -19,6 +20,8 @@
  *   testimonioTitles   `lib/testimonioTitle.ts` (no title run)
  *   autoPublishMembers `lib/autoPublish.ts` (participant drafts stay drafts)
  *   studentView        nothing yet; read by the future student view
+ *   keepPublicFigures  `lib/publicFigures.ts` → the gate (a gated `documento` only;
+ *                      never a testimonio or a conversation). Default OFF.
  */
 
 import type { Payload } from 'payload'
@@ -34,6 +37,7 @@ export const FEATURE_DEFAULTS = {
   testimonioTitles: true,
   autoPublishMembers: true,
   studentView: false,
+  keepPublicFigures: false,
 } as const satisfies Record<string, boolean>
 
 export type FeatureKey = keyof typeof FEATURE_DEFAULTS

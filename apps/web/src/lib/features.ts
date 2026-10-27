@@ -15,6 +15,7 @@ export const FEATURE_DEFAULTS = {
   testimonioTitles: true,
   autoPublishMembers: true,
   studentView: false,
+  keepPublicFigures: false,
 } as const satisfies Record<string, boolean>;
 
 export type FeatureKey = keyof typeof FEATURE_DEFAULTS;
@@ -34,6 +35,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   testimonioTitles: 'Títulos de testimonios',
   autoPublishMembers: 'Publicar solo lo de participantes',
   studentView: 'Vista de estudiante',
+  keepPublicFigures: 'Conservar nombres de figuras públicas en documentos',
 };
 
 /** Whatever came over the wire, made whole. Junk reads as the defaults. */

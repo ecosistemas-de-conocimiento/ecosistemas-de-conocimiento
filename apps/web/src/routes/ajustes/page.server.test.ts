@@ -4,7 +4,7 @@ vi.mock('$lib/server/auth', () => ({ backendUrl: () => 'http://backend.test', ba
 
 import { actions, load } from './+page.server';
 import { backendFetch } from '$lib/server/auth';
-import { FEATURE_KEYS } from '$lib/features';
+import { FEATURE_DEFAULTS, FEATURE_KEYS, FEATURE_LABELS } from '$lib/features';
 
 const mocked = backendFetch as unknown as ReturnType<typeof vi.fn>;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
@@ -62,6 +62,15 @@ describe('/ajustes actions', () => {
     expect(Object.keys(body.features).sort()).toEqual([...FEATURE_KEYS].sort());
     expect(body.features.liveMic).toBe(true);
     expect(body.features.graph).toBe(false);
+  });
+
+  it('keepPublicFigures: off by default, labelled in Spanish, sent when ticked', async () => {
+    expect(FEATURE_DEFAULTS.keepPublicFigures).toBe(false);
+    expect(FEATURE_LABELS.keepPublicFigures).toMatch(/figuras públicas/);
+    mocked.mockResolvedValue(json({ features: {} }));
+    await actions.funciones!(event('/ajustes', { organization: '1', keepPublicFigures: 'on' }));
+    const body = JSON.parse(String((mocked.mock.calls[0]![2] as RequestInit).body)) as { features: Record<string, boolean> };
+    expect(body.features.keepPublicFigures).toBe(true);
   });
 
   it('passes the backend refusal through', async () => {
