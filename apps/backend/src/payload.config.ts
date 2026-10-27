@@ -21,6 +21,9 @@ import { Projects } from './collections/Projects'
 import { Memberships } from './collections/Memberships'
 import { withoutDuplicate } from './collections/hooks/refuseDuplicate'
 
+import { PlatformSettings } from './globals/PlatformSettings'
+
+import { funcionesEndpoints } from './endpoints/funciones'
 import { graphEndpoints } from './endpoints/graph'
 import { lenguasEndpoint } from './endpoints/lenguas'
 import { jwksEndpoint } from './endpoints/jwks'
@@ -35,6 +38,7 @@ import { checkAudioServiceConfig } from './lib/audioClient'
 import { startEmbeddingJanitor } from './lib/embeddingJanitor'
 import { startIngestRecoveryJanitor } from './lib/ingestRecovery'
 import { ensureEcosystemBudgets } from './lib/provisionEcosystem'
+import { registerPlatformSettings } from './lib/platformSettings'
 import { startPublishJanitor } from './lib/publishJanitor'
 import { startSessionJanitor } from './lib/sessionJanitorScheduler'
 import { startTranscriptionJanitor } from './lib/transcriptionJanitor'
@@ -156,7 +160,11 @@ export default buildConfig({
     lenguasEndpoint,
     // `/api/miembros` — an ecosistema's people, for its responsable.
     ...miembrosEndpoints,
+    // `/api/funciones`, `/api/plataforma` — feature switches (`lib/features.ts`).
+    ...funcionesEndpoints,
   ],
+  // Platform switches, read at runtime by `lib/platformSettings.ts`.
+  globals: [PlatformSettings],
   editor: lexicalEditor(),
   /**
    * ⚠ THIS HOOK IS THE BOOT TIER. Everything here fires AUTOMATICALLY on every
@@ -183,6 +191,9 @@ export default buildConfig({
     //    must be answerable from the boot log alone. A PARTIAL S3 config logs at
     //    ERROR here: it silently falls back to a container filesystem the next
     //    redeploy throws away, which is the one failure nobody notices.
+    // Runtime switches (`lib/platformSettings.ts`); before anything reads one.
+    registerPlatformSettings(payload)
+
     const storageMode = resolveStorageMode()
     const storageLog = describeStorageMode(storageMode)
     payload.logger[storageLog.level](storageLog.message)

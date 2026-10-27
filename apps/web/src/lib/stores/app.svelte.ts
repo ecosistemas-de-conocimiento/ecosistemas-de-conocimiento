@@ -8,7 +8,8 @@ import type {
   PanelState,
   ContextScope,
 } from '../types';
-import type { AudioMeta } from '../types';
+import { FILE_DOC_KINDS, type AudioMeta } from '../types';
+import { FEATURE_DEFAULTS, resolveFeatures, type Features } from '../features';
 import { toasts } from './toasts.svelte';
 import { uploadErrorToast } from '../uploadErrors';
 import { autoTitle, cleanTitle } from '../sessionTitle';
@@ -147,7 +148,9 @@ function messageFromBackend(row: Record<string, unknown>): Message {
 function docFromBackend(row: Record<string, unknown>): WorkingDoc {
   const kindRaw = row.kind as string | undefined;
   const kind: DocKind =
-    kindRaw === 'pdf' || kindRaw === 'docx' || kindRaw === 'audio' ? kindRaw : 'markdown';
+    kindRaw === 'audio' || (FILE_DOC_KINDS as readonly string[]).includes(kindRaw ?? '')
+      ? (kindRaw as DocKind)
+      : 'markdown';
   const statusRaw = row.ingestStatus as string | undefined;
   const ingestStatus: IngestStatus = isIngestStatus(statusRaw) ? statusRaw : 'n/a';
   const heading = workingDocHeading(row);
@@ -284,6 +287,11 @@ class AppStore {
   /** Set when the ecosistema list itself could not be read (backend down). */
   ecosystemsUnavailable = $state(false);
   /**
+   * The selected ecosistema's switches (`$lib/features`), to hide what is off.
+   * ⚠ Presentation only: the backend refuses a switched-off feature anyway.
+   */
+  features = $state<Features>({ ...FEATURE_DEFAULTS });
+  /**
    * 🔴 Bumped on every ecosistema switch. Reads capture it when they start and
    * discard their result if it moved — otherwise a `/api/sessions` response for
    * the OLD ecosistema, still in flight when the user switched, lands afterwards
@@ -380,6 +388,17 @@ class AppStore {
     }
   }
 
+  /** The selected ecosistema's switches. A failed read keeps the defaults. */
+  private async loadFeatures(epoch: number): Promise<void> {
+    if (!this.ecosystemId) return;
+    try {
+      const data = await fetchJson<{ features?: unknown }>('/api/funciones', { credentials: 'same-origin' });
+      if (!this.stale(epoch)) this.features = resolveFeatures(data?.features);
+    } catch {
+      if (!this.stale(epoch)) this.features = resolveFeatures(null);
+    }
+  }
+
   // ── hydration ──────────────────────────────────────────────────────────
   /**
    * Blank everything this signed-in visit put in memory.
@@ -403,6 +422,7 @@ class AppStore {
     this.ecosystemId = null;
     this.ecosystemsReady = false;
     this.ecosystemsUnavailable = false;
+    this.features = resolveFeatures(null);
     this.switchingEcosystem = false;
     // Orphan any in-flight read: `stale()` makes each one drop its result
     // instead of repainting the store we just blanked.
@@ -416,6 +436,8 @@ class AppStore {
       // The ecosistema first: everything below is scoped to it, and the
       // sessions read on the server needs the selection to filter by.
       await this.loadEcosystems(epoch);
+      if (this.stale(epoch)) return;
+      await this.loadFeatures(epoch);
       if (this.stale(epoch)) return;
       if (this.ecosystemsUnavailable) this.degraded = { reason: 'unavailable' };
       // Nothing to load, and nothing to auto-create. `+page.svelte` renders the
@@ -1212,12 +1234,16 @@ class AppStore {
     // is roughly twenty minutes of speech and the recordings people want to
     // upload are longer than that.
     //
-    // The SETTLED kind, the way the server settles it (PDF, then DOCX, then
+    // The SETTLED kind, the way the server settles it (documents, then
     // audio): a PDF the browser labels `audio/mp4` still gets the 20 MB cap.
     const isDocument =
-      /\.(pdf|docx)$/i.test(file.name) ||
+      /\.(pdf|docx|xlsx|csv|html?|md|markdown)$/i.test(file.name) ||
       file.type === 'application/pdf' ||
-      file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      file.type === 'text/csv' ||
+      file.type === 'text/html' ||
+      file.type === 'text/markdown';
     const cap = !isDocument && isAudioUpload(file) ? MAX_AUDIO_UPLOAD_BYTES : MAX_UPLOAD_BYTES;
     if (file.size > cap) {
       toasts.push({

@@ -4,6 +4,10 @@ vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$lib/server/ecosystem', () => ({ resolveEcosystem: vi.fn() }));
 vi.mock('$lib/server/admin', () => ({ readEcosystem: vi.fn(), listAllEcosystems: vi.fn() }));
 vi.mock('$lib/server/lenguas', () => ({ fetchLenguaIndex: vi.fn() }));
+vi.mock('$lib/server/features', async () => {
+  const { resolveFeatures } = await import('$lib/features');
+  return { fetchFeatures: vi.fn(async () => resolveFeatures(null)) };
+});
 vi.mock('$lib/server/graph', async () => {
   const actual = await vi.importActual<typeof import('$lib/server/graph')>('$lib/server/graph');
   return { ...actual, fetchGraphView: vi.fn(), fetchGraphEntity: vi.fn() };
@@ -15,6 +19,8 @@ import { listAllEcosystems, readEcosystem } from '$lib/server/admin';
 import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { fetchGraphView } from '$lib/server/graph';
 import { GRAPH_COMBINED_ORGANIZATION } from '$lib/graph';
+import { fetchFeatures } from '$lib/server/features';
+import { resolveFeatures } from '$lib/features';
 
 const mockedResolve = resolveEcosystem as unknown as ReturnType<typeof vi.fn>;
 const mockedDirectory = listAllEcosystems as unknown as ReturnType<typeof vi.fn>;
@@ -49,8 +55,11 @@ function viewedOrganization(): unknown {
   return (mockedView.mock.calls.at(-1)?.[1] as { organizationId?: unknown } | undefined)?.organizationId;
 }
 
+const mockedFeatures = fetchFeatures as unknown as ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockedFeatures.mockResolvedValue(resolveFeatures(null));
   mockedDirectory.mockResolvedValue({ rows: [C], totalDocs: 1, truncated: false, ok: true, search: '' });
   mockedRead.mockResolvedValue(null);
   mockedLengua.mockResolvedValue({ index: { lenguas: [], byDocument: {} } });
@@ -108,5 +117,27 @@ describe('/grafo load — member pick and the combined graph', () => {
     expect(data.ecosystem?.id).toBe('3');
     expect(viewedOrganization()).toBe('3');
     expect(data.combined).toBe(false);
+  });
+});
+
+describe('/grafo load — the ecosistema switches (`$lib/features`)', () => {
+  it('graph off: the page says so and never asks for the graph', async () => {
+    mockedFeatures.mockResolvedValue(resolveFeatures({ graph: false }));
+    const data = (await run('/grafo')) as Data & { graphOff?: boolean };
+    expect(data.graphOff).toBe(true);
+    expect(mockedView).not.toHaveBeenCalled();
+    expect(mockedFeatures.mock.calls[0]?.[1]).toBe('1');
+  });
+
+  it('graph3d off: 2D only', async () => {
+    mockedFeatures.mockResolvedValue(resolveFeatures({ graph3d: false }));
+    const data = (await run('/grafo')) as Data & { allow3d?: boolean };
+    expect(data.allow3d).toBe(false);
+  });
+
+  it('defaults: graph and 3D on', async () => {
+    const data = (await run('/grafo')) as Data & { allow3d?: boolean; graphOff?: boolean };
+    expect(data.allow3d).toBe(true);
+    expect(data.graphOff).toBeUndefined();
   });
 });

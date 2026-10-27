@@ -37,6 +37,7 @@ import type { Payload } from 'payload'
 import { isPlatformAdminUser } from '../access'
 import { corpusTextFor } from './anonymiseDocument'
 import { isContentKind } from './contentKind'
+import { featureEnabled } from './features'
 import { relationId, roleInOrganization, type OrgRole } from './permissions'
 import { beginPublish, type CorpusMover } from './publishDocument'
 
@@ -52,6 +53,8 @@ export type AutoPublishSkip =
   | 'gate-not-cleared'
   | 'no-organization'
   | 'not-participant'
+  /** The ecosistema switched `autoPublishMembers` off (`lib/features.ts`). */
+  | 'disabled'
   | 'failed'
 
 export type AutoPublishOutcome = { published: true } | { published: false; reason: AutoPublishSkip }
@@ -146,6 +149,8 @@ export async function autoPublishParticipantDocument(args: {
     const uploaderId = relationId(row.uploadedBy)
     if (organizationId === null || uploaderId === null) return skip('no-organization')
     if (!(await isParticipantUpload(payload, uploaderId, organizationId))) return skip('not-participant')
+    // Off: the participant's draft stays a draft, for staff to publish.
+    if (!(await featureEnabled(payload, organizationId, 'autoPublishMembers'))) return skip('disabled')
 
     await beginPublish(row as never, {
       payload,

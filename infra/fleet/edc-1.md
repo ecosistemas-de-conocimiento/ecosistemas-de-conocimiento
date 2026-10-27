@@ -1,6 +1,10 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `34296a8` (`documents.anonymise`: participant
+**Status:** live since 2026-10-17. Dev runs `main` @ `98bf4ae` (XLSX, CSV, HTML and Markdown
+documentos; `sessions.kind`; per-ecosistema feature switches and `/ajustes`; three migrations
+applied on start by `scripts/migrate.sh`), deployed 2026-10-27 03:06 UTC, with a fifth ecosistema,
+id 8 "Semiosis práctica" — see §4zp. Before that, `dd9a5c5` (the live mic's last line fills
+the chat input on stop), deployed 2026-10-27 00:25 UTC — see §4zo. Before that, `34296a8` (`documents.anonymise`: participant
 PDF/DOCX documentos and staff "Anonimizar" uploads pass the anonymisation gate; exclude-select
 fails closed; interviewer turns for a participant's own story; source icon and day under testimonio
 titles; migration `20261026_160000_documents_anonymise`), deployed 2026-10-26 22:33 UTC — see §4zn.
@@ -1890,6 +1894,100 @@ Spend: `usage_logs` total $2.599013 → $2.653339 over the run, mostly other lan
 gate calls ≈ $0.0005, the doc 350 graph call $0.0010, ingest < $0.00001 — ≈ **$0.008**.
 
 **Disk**, `df -h /` free: 57 GB before; 43 GB after the build; 57 GB after the cleanup. Images
+9.7 GB, build cache 0.
+
+### 4zo. ✅ Done 2026-10-27 00:19–00:25 UTC: `dd9a5c5`, dev only — live mic text fills the chat input
+
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
+`97d5316`). `dd9a5c5` = `Composer.svelte`: when the live mic stops, its last line of text lands in
+the chat input (appended after any typed text), plus one assertion in `e2e/live-mic.spec.ts`. Web
+only; no compose, variable or migration change, so no backup. Before landing, in the worktree:
+vitest 113 files / 2287 tests passed, svelte-check 0 errors.
+
+Push `e80476a..dd9a5c5` (fast-forward). Deploy `ujfxnpo931epgkiaveagnaoq` queued 00:19:21 →
+`finished` 00:25:24 UTC (≈ 6 min), commit `dd9a5c59…`. `web`, `backend` and `ai-service` run image
+tag `dd9a5c59395d…`, healthy; the 3 audio containers stay on `edc-audio-service:dev` (§4zk). 9 dev
+containers. Health 200 on `dev.` and `api.dev.`. The served bundle carries the new code: chunk
+`/repo/apps/web/build/client/_app/immutable/chunks/Cu4oZiLI.js` holds the `onLiveText` append
+(`` `${…trimEnd()} ${C}` `` then `queueMicrotask`). 0 `error`/`fatal` lines in web, backend and
+ai-service since start.
+
+`docker builder prune -f` reclaimed 14.09 GB. **Disk**, `df -h /` free: 43 GB before the prune,
+55 GB after. The `34296a8` images were not removed.
+
+### 4zp. ⚠ Done 2026-10-27 02:59–03:20 UTC: `98bf4ae`, dev only — three Payload migrations on start; new ecosistema 8 "Semiosis práctica"
+
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
+`97d5316`, `docker ps`). edcai and the -7e lane were told before the deploy by the coordinator.
+`98bf4ae` = XLSX, CSV and HTML documentos (`bb22cb2`); every extractor in a capped worker, xlsx
+guard, streamed html (`ec3e287`); Markdown documentos (`d11228e`); `sessions.kind` —
+`generales | resonancias`, immutable after create (`8b75142`, `b647d18`); per-ecosistema feature
+switches, `/ajustes`, and the runtime detector-fallback switch (`cab3dcc`); `scripts/migrate.sh`
+in the backend CMD (`ac347fe`, which requires Payload's `Done.` line before `next start`). No
+compose or variable change; no ai-service migration.
+
+**Migrations.** `payload_migrations` 6 → 9, **applied by the container start** this time. The
+backend log at 03:06:14 UTC reads "Reading migration files…", then Migrating/Migrated for each,
+then `Done.`, then "Next.js 15.4.11" and "Ready in 798ms":
+
+| migration | what | ms |
+|---|---|---|
+| `20261026_200000_documents_kind_tabular_html` | `enum_documents_kind` gains `xlsx`, `csv`, `html` | 11 |
+| `20261027_002257_sessions_kind` | `enum_sessions_kind` (`generales`, `resonancias`); `sessions.kind` NOT NULL DEFAULT `generales`; index | 24 |
+| `20261027_020102_feature_switches` | `platform_settings` table (`detector_fallback` enum `hosted`/`none`); `organizations.features` jsonb | 14 |
+
+`edc_ai` `__drizzle_migrations` unchanged at 6.
+
+Backup `/root/backups/20261027T0259Z/` (`edc_ai` 57 MB, `edc_backend` 3.3 MB; `pg_restore -l`
+137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261027T0259Z/`
+with `timeout 180 scp`; `sha256sum -c` of both dumps passed before the deploy.
+Deploy `lj5ljnjml6t9pvtvrzg173hs` 03:00:11 → 03:06:10 UTC, `finished`, commit `98bf4ae0…`.
+9 containers up; `web`, `backend` and `ai-service` run image tag `98bf4ae0c092…`, healthy. The
+deploy rebuilt `edc-audio-service:dev` again (now `d970e50b32bf`; was `4bf65519445c`). Health 200
+on `dev.` and `api.dev.`. 0 `error`/`fatal` lines in all 9 dev containers at startup, and 0 in
+web, backend and ai-service after the smoke.
+
+| check | result |
+|---|---|
+| 1. uploads, platform admin, Discapacidad (id 7), `contentKind=documento`, no "Anonimizar" | web `POST /api/documentos`: `smoke-tabla.xlsx` (5.8 KB, the `dos-hojas.xlsx` fixture) → doc 367 `kind: xlsx`; `smoke-tabla.csv` → 368 `csv`; `smoke-pagina.html` → 369 `html`; `smoke-nota.md` → 370 `markdown`. All `anonymise: false`, all ingest `ready` in 2.7–3.2 s, `extractedText` 106–140 characters. All four deleted (200); 0 rows left in `documents`, `media`, `graph_mentions` or ai-service `documents` |
+| 2. `/ajustes`, platform admin (Playwright, after hydration) | 200; chips for the four ecosistemas; each shows 10 switches, **0 off their default** (`studentView` off, the rest on); "Respaldo del detector" reads `env`. Nothing saved |
+| 3. chat, participant, Prevención del dengue (id 6) | "¿Qué hacen las familias para eliminar los criaderos del mosquito?" → 200, 11.5 s, 978 characters with grouped `[n]` markers (`[2, 4, 5, 7, 8]`), "Fuentes consultadas (5)". Conversation 200 (`kind = generales`) deleted (200); 0 `sessions`/`messages` rows left |
+| 4. ⚠ Generales / Resonancias tabs | **absent.** 0 tab/button/link text matching either word on the chat page. Cause, read in git: the web tabs (`d98e8e8`, `65851cd`) live only on branch `worktree-agent-ae257cc3fb18b6e52` and are not in `98bf4ae`; `apps/web/src` at `98bf4ae` has no "resonancia" string. The backend half (`sessions.kind`) is deployed |
+
+0 page errors.
+
+**New ecosistema 8, "Semiosis práctica"** (slug `semiosis-practica`), created after the smoke:
+
+1. `POST /api/organizations` on `api.dev` as the platform admin → 201, id **8**. The create hook
+   provisioned ai-service org `edc-eco-8` (backend log 03:10:05 UTC, "[ecosistema] ai-service org
+   provisioned.") with the default $5.
+2. Budget: inside the ai-service container, `PUT /v1/budget/edc-eco-8` with `X-AI-Org: eco-8`,
+   `{"limitUsd":15}` → limit 15 but `remainingUsd` stayed 5 (a PUT keeps `remaining` unless
+   `refill`). Then `{"limitUsd":15,"refill":true}` → **limit 15, remaining 15**, spent 0.
+3. Features: `PATCH /api/funciones` `{organization: 8, features: {studentView: true}}` → 200.
+   Stored `organizations.features = {"studentView": true}`; the rest read their defaults
+   (`GET /api/funciones?organization=8` as participant and as investigador: `studentView`
+   true, the other 9 true).
+4. Members: investigador (user 2) `investigador`, membership 34, and participant (user 3)
+   `member`, membership 35, through `POST /api/memberships` as the admin. The admin itself
+   (user 1) as `investigador`, membership 36, by SQL `INSERT INTO memberships` (the same path
+   `scripts/demo-ecosistemas-4.sh` uses): the REST route refuses a self-assigned membership by
+   design (`Memberships.ts`). ⚠ The admin is `owner` of 1, 3, 6, 7 but `investigador` of 8, as
+   asked.
+
+No corpus exists for org 8 yet; ai-service makes one on its first ingest (inferred from the four
+earlier ecosistemas, not checked here).
+
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the six
+`34296a8` and `dd9a5c5` web/backend/ai-service images by exact name; `docker builder prune -af`
+reclaimed 14.78 GB. Two dangling images left, both in use: `858f009f9709` (staging's redis) and
+`57e4255cc971` (`coolify-redis`).
+
+Spend: `usage_logs` rows since 03:00 UTC: `edc-eco-6` 4 rows $0.004275 (the chat and its
+router/gate calls), `edc-eco-7` 6 rows $0.006576 (inferred: graph and gate calls on the four
+uploads) — ≈ **$0.011**. Total $3.212421 after the run.
+
+**Disk**, `df -h /` free: 55 GB before; 41 GB after the build; 57 GB after the cleanup. Images
 9.7 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs

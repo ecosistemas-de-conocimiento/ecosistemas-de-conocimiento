@@ -1,4 +1,6 @@
-import type { CollectionConfig } from 'payload'
+import { ValidationError, type CollectionConfig } from 'payload'
+
+import { invalidateFeatures, parseFeaturesPatch } from '../lib/features'
 
 import { isPlatformAdmin, withinMyOrganizations, withinMyOrganizationsWithRole } from '../access'
 
@@ -43,10 +45,23 @@ export const Organizations: CollectionConfig = {
         const next = { ...(data ?? {}) } as Record<string, unknown>
         const slug = normalizedSlug(next.slug)
         if (slug) next.slug = slug
+        // `features` holds known boolean keys only (`lib/features.ts`).
+        if (next.features !== undefined && next.features !== null) {
+          const parsed = parseFeaturesPatch(next.features)
+          if (typeof parsed === 'string') {
+            throw new ValidationError({ errors: [{ path: 'features', message: parsed }] })
+          }
+          next.features = parsed
+        }
         return next
       },
     ],
     afterChange: [
+      ({ doc }) => {
+        const id = (doc as { id?: number | string }).id
+        if (id != null) invalidateFeatures(id)
+        return doc
+      },
       // Each ecosistema is its own ai-service org; give it a budget on create
       // (`lib/provisionEcosystem.ts`). Not awaited: the create already
       // succeeded, and a slow ai-service must not hold the admin request.
@@ -89,6 +104,13 @@ export const Organizations: CollectionConfig = {
       index: true,
       label: 'Organization active',
       admin: { position: 'sidebar' },
+    },
+    {
+      // Per-ecosistema switches (owner ruling 2026-10-27). NULL / missing key =
+      // the default in `lib/features.ts`, which is today's behaviour. Written by
+      // the responsable (owner) or a platform admin, via `/api/funciones`.
+      name: 'features',
+      type: 'json',
     },
   ],
 }

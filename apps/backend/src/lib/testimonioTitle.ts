@@ -444,11 +444,13 @@ export function titleClientFromEnv(args: {
   env?: Record<string, string | undefined>
   /** Test seam for the self-hosted box. */
   fetch?: typeof fetch
+  /** The runtime switch (`lib/platformSettings.ts`), already resolved. Wins over env. */
+  fallbackMode?: 'hosted' | 'none'
 }): TitleGenerator | null {
   const env = args.env ?? process.env
   let mode: 'hosted' | 'none'
   try {
-    mode = fallbackModeFromEnv(env)
+    mode = args.fallbackMode ?? fallbackModeFromEnv(env)
   } catch {
     mode = 'none'
   }
@@ -505,7 +507,23 @@ export function scheduleTestimonioTitle(args: {
     args.run ??
     (async () => {
       if (!args.payload) throw new Error('scheduleTestimonioTitle: no payload')
-      const client = titleClientFromEnv({ organizationId: args.organizationId, source: args.source ?? 'redacted' })
+      // 🔴 Per-ecosistema switch (`lib/features.ts`). Off: no call, no write.
+      const { featureEnabled } = await import('./features')
+      if (!(await featureEnabled(args.payload as never, args.organizationId, 'testimonioTitles'))) {
+        return { status: 'failed', title: null } as const
+      }
+      let fallbackMode: 'hosted' | 'none' | undefined
+      try {
+        const { detectorFallbackMode } = await import('./platformSettings')
+        fallbackMode = await detectorFallbackMode()
+      } catch {
+        fallbackMode = 'none'
+      }
+      const client = titleClientFromEnv({
+        organizationId: args.organizationId,
+        source: args.source ?? 'redacted',
+        fallbackMode,
+      })
       // No allowed backend: no call, no write. The column is already NULL
       // (cleared by the gate's claim or the decision), so the fallback label.
       if (!client) return { status: 'failed', title: null } as const

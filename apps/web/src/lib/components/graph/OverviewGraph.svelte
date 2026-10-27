@@ -81,6 +81,8 @@
     onSettled?: (ms: number) => void;
     /** The cross-ecosistema view: offers "Ecosistemas compartidos" as the height, and starts on it. */
     combined?: boolean;
+    /** The ecosistema's `graph3d` switch (`$lib/features`). Off: 2D only. */
+    allow3d?: boolean;
   };
   let {
     entities,
@@ -92,6 +94,7 @@
     onDeselect,
     onSettled,
     combined = false,
+    allow3d = true,
   }: Props = $props();
 
   const legend = $derived(overviewLegend(new Set(entities.map((e) => e.type))));
@@ -187,7 +190,7 @@
       ready2d = true;
     });
 
-    if (requested === '3d') setMode('3d', false);
+    if (requested === '3d' && allow3d) setMode('3d', false);
 
     return () => {
       alive = false;
@@ -279,7 +282,9 @@
 
     <div class="modes" role="group" aria-label="Vista">
       <button type="button" aria-pressed={mode === '2d'} onclick={() => setMode('2d')}>2D</button>
-      <button type="button" aria-pressed={mode === '3d'} onclick={() => setMode('3d')} data-testid="grafo-3d">3D</button>
+      {#if allow3d}
+        <button type="button" aria-pressed={mode === '3d'} onclick={() => setMode('3d')} data-testid="grafo-3d">3D</button>
+      {/if}
     </div>
 
     {#if mode === '3d'}

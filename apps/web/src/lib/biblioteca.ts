@@ -50,6 +50,9 @@ export const LIBRARY_KINDS = [
   'audio',
   'pdf',
   'docx',
+  'xlsx',
+  'csv',
+  'html',
   'markdown',
   'otro',
 ] as const;
@@ -447,6 +450,12 @@ export function kindLabel(kind: LibraryKind, opts: { fromAudio?: boolean } = {})
       return { label: 'PDF', description: 'Documento en PDF.', tone: 'document' };
     case 'docx':
       return { label: 'DOCX', description: 'Documento de Word.', tone: 'document' };
+    case 'xlsx':
+      return { label: 'Excel', description: 'Hoja de cálculo de Excel.', tone: 'document' };
+    case 'csv':
+      return { label: 'CSV', description: 'Tabla en CSV.', tone: 'document' };
+    case 'html':
+      return { label: 'HTML', description: 'Página web.', tone: 'document' };
     case 'markdown':
       return {
         label: 'Nota',
@@ -499,6 +508,8 @@ export const KIND_FILTERS = [
   'audio',
   'pdf',
   'docx',
+  'hojas',
+  'html',
   'markdown',
 ] as const;
 
@@ -522,6 +533,10 @@ export function kindFilterLabel(filter: KindFilter): string {
       return 'PDF';
     case 'docx':
       return 'Word';
+    case 'hojas':
+      return 'Hojas de cálculo';
+    case 'html':
+      return 'Páginas web';
     case 'markdown':
       return 'Notas';
   }
@@ -535,7 +550,8 @@ export function kindFilterLabel(filter: KindFilter): string {
  * backend adds a sixth kind, "Todo" would silently stop showing it.
  */
 export function kindFilterValues(filter: KindFilter): string[] | null {
-  return filter === 'todos' ? null : [filter];
+  if (filter === 'todos') return null;
+  return filter === 'hojas' ? ['xlsx', 'csv'] : [filter];
 }
 
 /**
@@ -548,8 +564,9 @@ export function kindFilterValues(filter: KindFilter): string[] | null {
 export function kindFilterWhere(filter: KindFilter): Array<[string, string]> {
   if (filter === 'todos') return [];
   if (filter === 'testimonio') return [['where[contentKind][equals]', 'testimonio']];
+  // Payload's `in` takes a comma-separated list.
   return [
-    ['where[kind][in]', filter],
+    ['where[kind][in]', (kindFilterValues(filter) ?? []).join(',')],
     ['where[contentKind][equals]', 'documento'],
   ];
 }

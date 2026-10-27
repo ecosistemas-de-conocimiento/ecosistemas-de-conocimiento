@@ -270,9 +270,10 @@ export const CHAT_SYSTEM_PROMPT = chatSystemPrompt('A');
  * prompt, and a Generales one never does. `chatEngineConfigFor` in `./config`
  * picks it from the kind, not from the message.
  *
- * History: the first interviewer (efd52c5, bd20c31) was switched on per turn
- * by a word-list guess (`chatTurnMode`, removed) and was told NOT to cite the
- * documents while the person told a story. Measured on dev before that (seed
+ * History: the first interviewer (efd52c5, bd20c31; {@link interviewSystemPrompt})
+ * is switched on per turn by a word-list guess (`chatTurnMode`) and is told NOT
+ * to cite the documents while the person tells a story. It survives on
+ * Generales only, behind the ecosistema's `interviewerMode` switch. Measured on dev before that (seed
  * agent, 2026-10-26): the answer prompt met stories with "los documentos no
  * mencionan…" and rarely asked a follow-up.
  *
@@ -366,6 +367,90 @@ export const RESONANCIAS_CONTEXT_PREAMBLE =
   'asks a direct question, answer it briefly from the context with [N], then ' +
   'return to their story with one question. Never attribute the context to ' +
   'this person, and do not report what it lacks.\n' +
+  '\n' +
+  'Rules:\n' +
+  '1. State as fact only what is written below or what the person said. ' +
+  'Never invent, assume, estimate or extrapolate a detail — names, places, ' +
+  'dates, numbers and counts above all.\n' +
+  '2. Give a number only if that number is written below or the person said ' +
+  'it, or you can derive it by arithmetic over those numbers.\n' +
+  '3. Reply in the same language as the user message.]' +
+  '\n\n{context}\n\n========\n' +
+  '\nUser message (reply in this same language):\n{message}';
+
+// ── Generales heuristic interviewer ─────────────────────────────────────────
+// Kept beside Resonancias (owner ruling 2026-10-27): a Generales turn uses it
+// only when the ecosistema's `interviewerMode` switch is on AND `chatTurnMode`
+// (`./turnMode`) reads the message as the caller's own story. Resonancias
+// never uses it.
+
+/**
+ * The interviewer (owner ruling 2026-10-26). A participant telling their own
+ * story — first-person narrative, or their own testimonio attached — meets an
+ * interviewer instead of answers from the documents. `chatTurnMode` in
+ * `./turnMode` picks it; a direct question stays on {@link chatSystemPrompt}.
+ *
+ * Measured on dev before this (seed agent, 2026-10-26): the answer prompt met
+ * stories with "los documentos no mencionan…" and rarely asked a follow-up.
+ *
+ * 🔴 It never asks for names, exact addresses or other identifying data, and
+ * it says nothing about privacy (minimal copy, owner rule): the
+ * anonymisation gate handles what the person volunteers.
+ *
+ * It keeps {@link CHUNK_DATA_RULE}, {@link ORIENTATION_RULE},
+ * {@link PLAIN_LANGUAGE_RULE} and the citation sentences, for a question
+ * folded into a story that `chatTurnMode` did not catch.
+ */
+export function interviewSystemPrompt(): string {
+  return (
+    'Eres una persona que entrevista con calidez a alguien que está contando su ' +
+    'propia experiencia para el ecosistema de conocimiento. Tu trabajo es ' +
+    'escuchar y ayudar a que cuente su historia, no responder con los documentos.\n\n' +
+    'En cada respuesta: reconoce en una frase breve lo que acaba de contar, con ' +
+    'sus propias palabras, y después haz una sola pregunta abierta. Nunca hagas ' +
+    'dos preguntas a la vez. Pregunta por lo que todavía falta de su historia, ' +
+    'de una cosa en una: qué pasó, dónde (el tipo de lugar o la región), cuándo, ' +
+    'quién le ayudó o le acompañó (por su papel: una vecina, la maestra, el ' +
+    'centro de salud), cómo se sintió y qué cambiaría. Si ya lo contó, no lo ' +
+    'vuelvas a preguntar.\n\n' +
+    'Nunca pidas nombres de personas, direcciones exactas, teléfonos, documentos ' +
+    'de identidad ni otros datos que identifiquen a alguien. No hables de ' +
+    'privacidad ni de datos personales.\n\n' +
+    'No resumas los documentos y nunca digas lo que los documentos no mencionan. ' +
+    'El contexto que acompaña el mensaje son documentos de otras personas, solo ' +
+    'orientación: nunca le atribuyas a esta persona algo que no dijo ella, no lo ' +
+    'mezcles con su historia y no lo cites mientras solo cuenta. Si la persona ' +
+    'pregunta algo directamente, respóndele en pocas frases con lo que dicen los ' +
+    'documentos; no inventes detalles, nombres, fechas ni cifras que no estén ' +
+    'en el contexto o en lo que la persona contó. ' +
+    CITE_SUPPORT_RULE +
+    ' Después vuelve a su historia con una pregunta.\n\n' +
+    'Si dice que ya terminó, agradécele en una o dos frases y no preguntes más.\n\n' +
+    CHUNK_DATA_RULE +
+    '\n\n' +
+    ORIENTATION_RULE +
+    '\n\n' +
+    PLAIN_LANGUAGE_RULE +
+    '\n\n' +
+    'Responde en español, breve (dos o tres frases), sin encabezados ni listas. ' +
+    'Trata a la persona de tú o usted, igual que ella te trate a ti; si no se ' +
+    'nota, usa usted.'
+  );
+}
+
+/**
+ * The user-turn preamble on an interview turn (overrides the engine's
+ * `userContextPreamble`, whose "say plainly what is missing" rule is the
+ * inferred source of "los documentos no mencionan…" on stories). Keeps both
+ * slots, the language rule, and — 🔴 audit 2026-10-26 — the engine's
+ * no-invention rules (2 and 3 of `DEFAULT_ENGINE_CONFIG.userContextPreamble`,
+ * minus "say so plainly"): an interviewer must not invent facts either.
+ */
+export const INTERVIEW_CONTEXT_PREAMBLE =
+  '[Background for your reply. The person below is telling their own story. ' +
+  'The context is other people\'s material, orientation only: never attribute ' +
+  'it to this person, do not report what it lacks, and do not summarise or ' +
+  'cite it unless they ask a direct question.\n' +
   '\n' +
   'Rules:\n' +
   '1. State as fact only what is written below or what the person said. ' +
