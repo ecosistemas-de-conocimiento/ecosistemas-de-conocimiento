@@ -3293,10 +3293,11 @@ export const Documents: CollectionConfig = {
       name: 'graphError',
       type: 'textarea',
       /**
-       * 🔴 GATED LIKE THE ORIGINAL. On a schema miss it carries up to 400
-       * characters of the model's raw reply (`lib/graph/extract.ts`), which
-       * quotes the text it was given. The uploader and a platform admin can
-       * read it; a colleague on a published testimonio cannot.
+       * 🔴 GATED LIKE THE ORIGINAL. Since 2026-10-26 a reply miss records
+       * shape info only (`lib/graph/reply.ts`), but rows written earlier
+       * carry up to 400 characters of the model's raw reply, which quotes the
+       * text it was given. The uploader and a platform admin can read it; a
+       * colleague on a published testimonio cannot.
        */
       access: { read: gatedOriginalReadable },
       admin: {

@@ -1053,56 +1053,128 @@ describe('extractGraph', () => {
     ])
   })
 
-  it('carries the window failure reason into the thrown error, so `graphError` diagnoses itself', async () => {
-    // 🔴 The 11 documents that failed the first corpus run all recorded the
-    // same useless `graphError`: "every extraction window failed (1 of 1)". The
-    // per-window message already carried the raw response, but only to
-    // `console.warn`. `schedule.ts` persists THIS throw, so the evidence has to
-    // ride on it — `generate.sync` writes no `generation_jobs` row, so there is
-    // no other way to see the response without paying for the call again.
+  it('carries the miss SHAPE into the thrown error, never the reply text', async () => {
+    // 🔴 `schedule.ts` persists this throw as `graphError`, and logs go to the
+    // box. Both used to carry a head and tail of the reply — which quotes the
+    // document. A miss now says only length, kind and known keys.
     const client: GraphGenerateClient = {
       generate: {
         async sync() {
-          return { parsed: undefined, text: '{"entidades":[{"tipo":"tema","etiq' }
+          return { parsed: undefined, text: '{"respuesta":"El texto habla de Laclau"}' }
         },
       },
     }
-    await expect(
-      extractGraph({
-        docId: 22,
-        contentKind: 'documento',
-        text,
-        client,
-        windowChars: 5000,
-        onWindowError: () => undefined,
-      }),
-    ).rejects.toThrow(/every extraction window failed \(1 of 1\).*response text was: \{"entidades"/s)
+    const spies = (['log', 'warn', 'error', 'info', 'debug'] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(() => undefined),
+    )
+    let message = ''
+    try {
+      await extractGraph({ docId: 22, contentKind: 'documento', text, client, windowChars: 5000 }).catch(
+        (err: Error) => {
+          message = err.message
+        },
+      )
+      const logged = spies.flatMap((s) => s.mock.calls).map((c) => c.map(String).join(' ')).join('\n')
+      expect(message).toMatch(/every extraction window failed \(1 of 1\).*response length 40.*JSON object/s)
+      expect(message).not.toContain('Laclau')
+      expect(logged).not.toContain('Laclau')
+      expect(message.length).toBeLessThan(500)
+    } finally {
+      spies.forEach((s) => s.mockRestore())
+    }
   })
 
-  it('shows the TAIL of a long response too — a cut-off array is diagnosed by its end', async () => {
-    const body = `{"entidades":[${'{"tipo":"tema","etiqueta":"x"},'.repeat(40)}{"tipo":"tema","etiq`
+  it('salvages a schema-miss reply from `text` (measured on dev: an `id` per entity)', async () => {
+    const reply = JSON.stringify({
+      entidades: [
+        { id: 'e1', tipo: 'tema', etiqueta: 'significante vacío', menciones: 2 },
+        { id: 'e2', tipo: 'tema', etiqueta: 'cadena equivalencial' },
+      ],
+      relaciones: [{ desde: 'e1', hacia: 'e2', tipo: 'relacionado_con' }],
+    })
+    const calls: unknown[] = []
     const client: GraphGenerateClient = {
       generate: {
-        async sync() {
-          return { parsed: undefined, text: body }
+        async sync(req) {
+          calls.push(req)
+          return { parsed: undefined, text: '```json\n' + reply + '\n```' }
         },
       },
     }
-    let message = ''
-    await extractGraph({
-      docId: 23,
-      contentKind: 'documento',
-      text,
-      client,
-      windowChars: 5000,
-      onWindowError: () => undefined,
-    }).catch((err: Error) => {
-      message = err.message
-    })
-    expect(message).toContain('chars…')
-    expect(message).toContain('"etiq')
-    // Capped, so `recordFailure`'s 500-character slice does not eat the tail.
-    expect(message.length).toBeLessThan(500)
+    const result = await extractGraph({ docId: 23, contentKind: 'documento', text, client, windowChars: 5000 })
+    expect(calls).toHaveLength(1)
+    expect(result.entities.map((e) => e.label)).toEqual(['significante vacío', 'cadena equivalencial'])
+    expect(result.relations).toHaveLength(1)
+    expect(result.windowsFailed).toBe(0)
+  })
+
+  it('retries a miss ONCE with a stricter nudge, and uses the second reply', async () => {
+    const units: Record<string, unknown>[] = []
+    const client: GraphGenerateClient = {
+      generate: {
+        async sync(req) {
+          units.push(req.unit)
+          return units.length === 1
+            ? { parsed: undefined, text: 'Lo siento, no puedo.' }
+            : { parsed: { entidades: [{ tipo: 'tema', etiqueta: 'populismo' }], relaciones: [] } }
+        },
+      },
+    }
+    const spies = (['warn'] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => undefined))
+    try {
+      const result = await extractGraph({ docId: 24, contentKind: 'documento', text, client, windowChars: 5000 })
+      expect(units).toHaveLength(2)
+      const first = units[0].input as Record<string, string>
+      const second = units[1].input as Record<string, string>
+      expect(first.nota).toBe('')
+      expect(second.nota).toMatch(/entidades.*relaciones/s)
+      expect(units[1].unitKey).toBe(units[0].unitKey)
+      expect(result.entities.map((e) => e.label)).toEqual(['populismo'])
+      const logged = spies[0].mock.calls.map((c) => c.map(String).join(' ')).join('\n')
+      expect(logged).toContain('retrying')
+      expect(logged).not.toContain('Lo siento')
+    } finally {
+      spies.forEach((s) => s.mockRestore())
+    }
+  })
+
+  it('fails after the one nudge retry misses too — never a third call', async () => {
+    const { client, calls } = fakeClient(() => undefined)
+    await expect(
+      extractGraph({ docId: 25, contentKind: 'documento', text, client, windowChars: 5000, onWindowError: () => undefined }),
+    ).rejects.toThrow(/every extraction window failed.*after 1 retry/s)
+    expect(calls).toHaveLength(2)
+  })
+
+  it('🔴 a genuinely empty reply is a valid extraction with 0 entities, not a failure', async () => {
+    const client: GraphGenerateClient = {
+      generate: {
+        async sync() {
+          return { parsed: undefined, text: '{"entidades": [], "relaciones": []}' }
+        },
+      },
+    }
+    const result = await extractGraph({ docId: 26, contentKind: 'documento', text, client, windowChars: 5000 })
+    expect(result.entities).toEqual([])
+    expect(result.windowsFailed).toBe(0)
+  })
+
+  it('🔴 a persona salvaged from `text` on a testimonio is still dropped', async () => {
+    const client: GraphGenerateClient = {
+      generate: {
+        async sync() {
+          return {
+            parsed: undefined,
+            text: JSON.stringify([
+              { id: 'p1', tipo: 'persona', etiqueta: 'Juana Pérez', figura_publica: true },
+              { id: 't1', tipo: 'tema', etiqueta: 'dengue' },
+            ]),
+          }
+        },
+      },
+    }
+    const result = await extractGraph({ docId: 27, contentKind: 'testimonio', text, client, windowChars: 5000 })
+    expect(result.entities.map((e) => e.label)).toEqual(['dengue'])
   })
 
   it('🔴 a failing extraction on a testimonio never logs or throws the reply content', async () => {
