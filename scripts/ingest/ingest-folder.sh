@@ -8,7 +8,7 @@
 #   WEB=https://dev.ecosistemasdeconocimiento.com \
 #   EDC_EMAIL=… EDC_PASSWORD=… \
 #   SRC="/path/to/source folder" \
-#   scripts/ingest/ingest-folder.sh scripts/ingest/discapacidad-2026-10.tsv [--apply]
+#   scripts/ingest/ingest-folder.sh <manifest.tsv> [--apply]
 #
 #   Dry run is the default: it checks every manifest row (file exists, type,
 #   size under the app's 20 MiB cap) and uploads nothing.
@@ -25,9 +25,10 @@
 # THE MANIFEST
 #
 #   TSV, `#` lines are comments: path (relative to SRC), organization id,
-#   contentKind (documento | testimonio), title. A `testimonio` row goes through
-#   the anonymisation gate and is only published once the gate clears it; this
-#   script publishes it anyway only if the backend accepts the publish.
+#   contentKind (documento | testimonio), title, and an optional fifth column
+#   `anonymise`: a documento that must pass the anonymisation gate (the staff
+#   "Anonimizar" field). A gated row waits for the gate; a `held` one goes to
+#   Revisión for a human and is logged as held, not published.
 #
 # PACING
 #
@@ -41,7 +42,7 @@ APPLY=0; [ "${2:-}" = --apply ] && APPLY=1
 : "${SRC:?SRC (source folder) is required}"
 LOG=${LOG:-$MANIFEST.log}
 GRAPH_WAIT_S=${GRAPH_WAIT_S:-900}
-MAX_BYTES=$((20 * 1024 * 1024)) # apps/web/src/lib/config.ts MAX_UPLOAD_BYTES
+MAX_BYTES=$((20 * 1024 * 1024)) # apps/web/src/lib/config.ts MAX_UPLOAD_BYTES (all document kinds)
 
 ts() { date -u +%H:%M:%S; }
 
@@ -81,7 +82,7 @@ wait_field() { # org id field timeout_s done_regex → final value
 }
 
 n=0
-grep -v '^#' "$MANIFEST" | while IFS=$'\t' read -r path org kind title; do
+grep -v '^#' "$MANIFEST" | while IFS=$'\t' read -r path org kind title anon; do
   [ -n "$path" ] || continue
   n=$((n + 1))
   file="$SRC/$path"
@@ -91,9 +92,14 @@ grep -v '^#' "$MANIFEST" | while IFS=$'\t' read -r path org kind title; do
   case "$path" in
     *.pdf) mime=application/pdf ;;
     *.docx) mime=application/vnd.openxmlformats-officedocument.wordprocessingml.document ;;
+    *.xlsx) mime=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet ;;
+    *.csv) mime=text/csv ;;
+    *.html|*.htm) mime=text/html ;;
+    *.md|*.markdown) mime=text/markdown ;;
     *) echo "[$n] UNSUPPORTED $path"; continue ;;
   esac
-  if [ $APPLY = 0 ]; then echo "[$n] ok org=$org $kind $size B · $title"; continue; fi
+  extra=(); [ "${anon:-}" = anonymise ] && extra=(-F anonymise=true)
+  if [ $APPLY = 0 ]; then echo "[$n] ok org=$org $kind${anon:+ +$anon} $size B · $title"; continue; fi
   if [ -f "$LOG" ] && awk -F'\t' -v p="$path" '$2==p && $5=="published"' "$LOG" | grep -q .; then
     echo "[$n] skip (published) $path"; continue
   fi
@@ -106,13 +112,26 @@ grep -v '^#' "$MANIFEST" | while IFS=$'\t' read -r path org kind title; do
   t0=$(date +%s)
   login
   # ⚠ Quoted: curl -F splits an unquoted `@a,b` into two files (exit 26).
-  res=$(api "$org" POST /api/documentos -F "file=@\"$file\";type=$mime" \
-    -F "contentKind=$kind" -F "name=$title")
+  # A gated row's file goes up under a neutral name: the gate reads the text,
+  # never the filename, and source filenames here carry people's names.
+  fname=${file##*/}; [ ${#extra[@]} -gt 0 ] && fname="documento-$n.${file##*.}"
+  res=$(api "$org" POST /api/documentos -F "file=@\"$file\";type=$mime;filename=\"$fname\"" \
+    -F "contentKind=$kind" -F "name=$title" "${extra[@]}")
   id=$(jq -r '.doc.id // .id // empty' <<<"$res" 2>/dev/null || true)
   if [ -z "$id" ]; then
     echo "$(ts) [$n] UPLOAD FAILED $path: $(head -c 300 <<<"$res")"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(ts)" "$path" "$org" "" upload-failed "" "" >>"$LOG"
     continue
+  fi
+  gate=n/a
+  if [ ${#extra[@]} -gt 0 ]; then
+    # The gate runs before ingest; a held row never ingests (it waits in Revisión).
+    gate=$(wait_field "$org" "$id" anonymisationStatus 3600 '^(ready|held|rejected)$')
+    if [ "$gate" != ready ]; then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(ts)" "$path" "$org" "$id" "gate-$gate" "" \
+        "$(($(date +%s) - t0))s" >>"$LOG"
+      echo "$(ts) [$n] doc $id gate=$gate — not published · $title"; continue
+    fi
   fi
   ingest=$(wait_field "$org" "$id" ingestStatus 1800 '^(ready|failed)$')
   pub=draft
@@ -129,5 +148,5 @@ grep -v '^#' "$MANIFEST" | while IFS=$'\t' read -r path org kind title; do
   graph=$(wait_field "$org" "$id" graphStatus "$GRAPH_WAIT_S" '^(ready|failed|skipped|n/a)$')
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(ts)" "$path" "$org" "$id" "$pub" "$ingest/$graph" \
     "$(($(date +%s) - t0))s" >>"$LOG"
-  echo "$(ts) [$n] doc $id ingest=$ingest publish=$pub graph=$graph $(($(date +%s) - t0))s · $title"
+  echo "$(ts) [$n] doc $id gate=$gate ingest=$ingest publish=$pub graph=$graph $(($(date +%s) - t0))s · $title"
 done
