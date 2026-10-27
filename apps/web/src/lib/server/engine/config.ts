@@ -20,8 +20,11 @@ import {
   INTERVIEW_CONTEXT_PREAMBLE,
   interviewSystemPrompt,
   parseCiteVariant,
+  RESONANCIAS_CONTEXT_PREAMBLE,
+  resonanciasSystemPrompt,
   type CiteVariant,
 } from './prompt';
+import type { SessionKind } from '$lib/sessionKind';
 import type { ChatTurnMode } from './turnMode';
 import { parseOrientScope, type OrientScope } from './orientation';
 import type { RetrievalPolicy } from '@edc/chat-engine/core';
@@ -83,11 +86,29 @@ export function chatCiteVariant(): CiteVariant {
 let lastAnnouncedVariant: CiteVariant | null = null;
 
 /**
- * The engine config for one turn (`chatTurnMode` in `./turnMode`). `answer` is
- * {@link CHAT_ENGINE_CONFIG} itself (variant E unchanged); `interview` swaps
- * only the system prompt and the user-turn preamble (`./prompt`).
+ * The engine config for one turn, from the conversation's kind (`sessions.kind`,
+ * `$lib/sessionKind`; owner ruling 2026-10-26) and, on Generales only, the
+ * heuristic turn mode (`chatTurnMode` in `./turnMode`; owner ruling 2026-10-27).
+ *
+ * - `resonancias`: ALWAYS the corpus-informed interviewer
+ *   ({@link resonanciasSystemPrompt}); `mode` is ignored.
+ * - `generales` + `answer` (the default): {@link CHAT_ENGINE_CONFIG} itself
+ *   (variant E unchanged).
+ * - `generales` + `interview`: the heuristic interviewer
+ *   ({@link interviewSystemPrompt}). The caller passes `interview` only when the
+ *   ecosistema's `interviewerMode` switch is on and `chatTurnMode` says so.
+ *
+ * Each non-answer config swaps only the system prompt and the user-turn
+ * preamble (`./prompt`).
  */
-export function chatEngineConfigFor(mode: ChatTurnMode): EngineConfig {
+export function chatEngineConfigFor(kind: SessionKind, mode: ChatTurnMode = 'answer'): EngineConfig {
+  if (kind === 'resonancias') {
+    return {
+      ...CHAT_ENGINE_CONFIG,
+      systemPrompt: resonanciasSystemPrompt(),
+      userContextPreamble: RESONANCIAS_CONTEXT_PREAMBLE,
+    };
+  }
   if (mode === 'answer') return CHAT_ENGINE_CONFIG;
   return {
     ...CHAT_ENGINE_CONFIG,

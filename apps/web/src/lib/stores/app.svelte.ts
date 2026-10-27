@@ -50,6 +50,16 @@ import {
   normalizeEcosystems,
   type Ecosystem,
 } from '../ecosystems';
+import {
+  parseSessionKind,
+  readSessionKindTab,
+  sessionsOfKind,
+  writeSessionKindTab,
+  type SessionKind,
+} from '../sessionKind';
+
+/** The browser's storage, or null where there is none (node, SSR). */
+const browserStorage = () => (typeof localStorage === 'undefined' ? null : localStorage);
 
 
 /**
@@ -116,6 +126,7 @@ function sessionFromBackend(row: Record<string, unknown>): Session {
     docs: [],
     panelState: (row.panelState as PanelState | null | undefined) ?? null,
     contextScope: (row.contextScope as ContextScope | null | undefined) ?? null,
+    kind: parseSessionKind(row.kind),
   };
 }
 
@@ -218,6 +229,12 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
 class AppStore {
   sessions = $state<Session[]>([]);
   activeSessionId = $state<string | null>(null);
+  /**
+   * The sidebar tab: Generales or Resonancias (`$lib/sessionKind`). "Nueva
+   * conversación" creates one of this kind. Remembered per viewer in
+   * `localStorage`, like the map's 2D/3D switch; not per conversation.
+   */
+  sessionKindTab = $state<SessionKind>(readSessionKindTab(browserStorage));
   docsPanelOpen = $state(true);
   sidebarCollapsed = $state(false);
   /** Set once we've finished the initial fetch from the backend. */
@@ -303,6 +320,26 @@ class AppStore {
   get active(): Session | null {
     if (!this.activeSessionId) return null;
     return this.sessions.find((s) => s.id === this.activeSessionId) ?? null;
+  }
+
+  /** The conversations in the active sidebar tab, most recent first. */
+  get tabSessions(): Session[] {
+    return sessionsOfKind(this.sessions, this.sessionKindTab);
+  }
+
+  /**
+   * Switch the sidebar tab. The open conversation stays open when it is of
+   * that kind; otherwise the tab's most recent one opens, or none — and the
+   * first send then creates one of this kind (`ensureSession`).
+   */
+  setSessionKindTab(kind: SessionKind): void {
+    if (kind === this.sessionKindTab) return;
+    this.sessionKindTab = kind;
+    writeSessionKindTab(browserStorage, kind);
+    if (this.active && parseSessionKind(this.active.kind) === kind) return;
+    const next = this.tabSessions[0]?.id ?? null;
+    if (next) void this.selectSession(next);
+    else this.activeSessionId = null;
   }
 
   /** The selected ecosistema, for display. */
@@ -419,7 +456,8 @@ class AppStore {
       this.degraded = data?.degraded ? { reason: data.reason ?? 'unavailable' } : null;
       const list = (data?.docs ?? []).map(sessionFromBackend);
       this.sessions = list;
-      const firstId = list[0]?.id ?? null;
+      // The most recent conversation IN THE ACTIVE TAB, not across both.
+      const firstId = this.tabSessions[0]?.id ?? null;
       this.activeSessionId = firstId;
       if (firstId) {
         const s = this.sessions.find((x) => x.id === firstId);
@@ -598,8 +636,9 @@ class AppStore {
    * may have an empty conversation open and about to send; joining it put two
    * people's turns into one conversation (dev 2026-10-24).
    */
-  private async findEmptySession(): Promise<Session | null> {
-    const candidate = this.sessions.find(
+  private async findEmptySession(kind: SessionKind): Promise<Session | null> {
+    // Same kind only: an empty Generales one must not open in Resonancias.
+    const candidate = sessionsOfKind(this.sessions, kind).find(
       (x) => x.title === UNTITLED_SESSION && this.createdHere.has(x.id),
     );
     if (!candidate) return null;
@@ -619,36 +658,59 @@ class AppStore {
    * the one `ensureSession` — every send, upload and mic turn — waits on.
    * A conversation the person picks meanwhile stays open; a failed create
    * reopens the one that was open.
+   *
+   * 🔴 The kind is the tab at CALL time (audit 2026-10-26). If the tab changes
+   * while the create is on the wire, the new conversation joins the list but
+   * does not open: it would open a conversation the sidebar is not showing.
+   * A call that finds a create of the OTHER kind on the wire waits for it,
+   * then creates its own — joining it would put a Resonancias turn into a
+   * Generales conversation (or the reverse).
    */
   async newSession(opts: { reuseEmpty?: boolean } = {}): Promise<string | null> {
     // Nothing to create a conversation IN. The screen already says so; firing
     // the request anyway would just add a toast on top of an explanation.
     if (this.hasNoEcosystem) return null;
-    // A second click (or a send) while a create is on the wire joins it.
-    if (this.ensuring) return this.ensuring;
+    return this.createOfKind(this.sessionKindTab, opts);
+  }
+
+  /** `newSession` with the kind fixed at call time. */
+  private async createOfKind(kind: SessionKind, opts: { reuseEmpty?: boolean }): Promise<string | null> {
+    // A second click (or a send) while a create of this kind is on the wire joins it.
+    if (this.ensuring) {
+      if (this.ensuringKind === kind) return this.ensuring;
+      await this.ensuring;
+      return this.createOfKind(kind, opts);
+    }
     const previous = this.activeSessionId;
     this.activeSessionId = null;
-    const pending = this.openNewSession(opts)
+    const pending = this.openNewSession(kind, opts)
       .then((id) => {
-        if (this.activeSessionId === null) this.activeSessionId = id ?? previous;
+        if (this.activeSessionId === null && this.sessionKindTab === kind) {
+          this.activeSessionId = id ?? previous;
+        }
         return id;
       })
       .finally(() => {
-        if (this.ensuring === pending) this.ensuring = null;
+        if (this.ensuring === pending) {
+          this.ensuring = null;
+          this.ensuringKind = null;
+        }
       });
     this.ensuring = pending;
+    this.ensuringKind = kind;
     return pending;
   }
 
   /** `newSession` without the open-conversation bookkeeping. */
-  private async openNewSession(opts: { reuseEmpty?: boolean }): Promise<string | null> {
-    const empty = opts.reuseEmpty === false ? null : await this.findEmptySession();
+  private async openNewSession(kind: SessionKind, opts: { reuseEmpty?: boolean }): Promise<string | null> {
+    const empty = opts.reuseEmpty === false ? null : await this.findEmptySession(kind);
     if (empty) return empty.id;
     try {
       const data = await fetchJson<{ doc: Record<string, unknown> }>('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: UNTITLED_SESSION }),
+        // The tab's kind when the create was asked for; fixed for the conversation's life.
+        body: JSON.stringify({ title: UNTITLED_SESSION, kind }),
         credentials: 'same-origin',
       });
       const created = sessionFromBackend(data.doc);
@@ -704,6 +766,8 @@ class AppStore {
 
   /** The create on the wire (`newSession`), so a second caller joins it. */
   private ensuring: Promise<string | null> | null = null;
+  /** The kind `ensuring` is creating. */
+  private ensuringKind: SessionKind | null = null;
 
   /**
    * The open conversation's id, creating one first when none is open.
@@ -725,6 +789,12 @@ class AppStore {
     this.activeSessionId = id;
     const s = this.sessions.find((x) => x.id === id);
     if (!s) return;
+    // Opened from elsewhere (a document's conversation list): show its tab.
+    const kind = parseSessionKind(s.kind);
+    if (kind !== this.sessionKindTab) {
+      this.sessionKindTab = kind;
+      writeSessionKindTab(browserStorage, kind);
+    }
     if (s.panelState) {
       this.docsPanelOpen = s.panelState.docsPanelOpen ?? this.docsPanelOpen;
       this.sidebarCollapsed = s.panelState.sidebarCollapsed ?? this.sidebarCollapsed;
@@ -738,7 +808,7 @@ class AppStore {
     const prev = this.sessions;
     this.sessions = this.sessions.filter((s) => s.id !== id);
     if (this.activeSessionId === id) {
-      const next = this.sessions[0]?.id ?? null;
+      const next = this.tabSessions[0]?.id ?? null;
       this.activeSessionId = next;
       // Messages load lazily: without this the next conversation would show
       // "Inicia una conversación" over a thread that has messages.
@@ -1753,7 +1823,8 @@ class AppStore {
   private forgetSession(sessionId: string): void {
     this.sessions = this.sessions.filter((s) => s.id !== sessionId);
     if (this.activeSessionId === sessionId) {
-      this.activeSessionId = this.sessions[0]?.id ?? null;
+      // The active tab's next one, never a conversation the sidebar is hiding.
+      this.activeSessionId = this.tabSessions[0]?.id ?? null;
     }
   }
 

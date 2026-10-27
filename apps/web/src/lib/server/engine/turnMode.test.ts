@@ -196,12 +196,12 @@ describe('interviewSystemPrompt', () => {
 describe('chatEngineConfigFor', () => {
   it('answer is the shared config, variant E prompt unchanged', () => {
     delete process.env.CHAT_CITE_VARIANT;
-    expect(chatEngineConfigFor('answer')).toBe(CHAT_ENGINE_CONFIG);
-    expect(chatEngineConfigFor('answer').systemPrompt).toBe(chatSystemPrompt('E'));
+    expect(chatEngineConfigFor('generales', 'answer')).toBe(CHAT_ENGINE_CONFIG);
+    expect(chatEngineConfigFor('generales', 'answer').systemPrompt).toBe(chatSystemPrompt('E'));
   });
 
   it('interview swaps the system prompt and the context preamble only', () => {
-    const c = chatEngineConfigFor('interview');
+    const c = chatEngineConfigFor('generales', 'interview');
     expect(c.systemPrompt).toBe(interviewSystemPrompt());
     expect(c.userContextPreamble).toBe(INTERVIEW_CONTEXT_PREAMBLE);
     expect(c.blockHeaders).toEqual(CHAT_ENGINE_CONFIG.blockHeaders);

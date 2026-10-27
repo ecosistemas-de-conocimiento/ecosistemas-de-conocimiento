@@ -5,6 +5,7 @@ import { degradeListResponse } from '$lib/server/degrade';
 import { relationshipsToRefs } from '$lib/server/contextRefs';
 import { toBackendId } from '$lib/ecosystems';
 import { resolveEcosystem } from '$lib/server/ecosystem';
+import { parseSessionKind } from '$lib/sessionKind';
 
 // GET /api/sessions → the current user's sessions IN THE SELECTED ECOSISTEMA,
 // most-recent first.
@@ -23,6 +24,10 @@ import { resolveEcosystem } from '$lib/server/ecosystem';
 // `depth=1` so the polymorphic `contextScope` relationship is populated; we map
 // each session's `[{relationTo,value}]` back to the store's `{refs:[{kind,id,
 // label}]}` shape (CANONICAL ref-field contract).
+//
+// Each row's `kind` (`$lib/sessionKind`) is normalised: a row made before the
+// Generales/Resonancias split has none and reads as `generales`. ONE read for
+// both tabs; the sidebar splits the list.
 export const GET: RequestHandler = async ({ locals, cookies }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
 
@@ -51,6 +56,7 @@ export const GET: RequestHandler = async ({ locals, cookies }) => {
   if (Array.isArray(body.docs)) {
     for (const doc of body.docs) {
       doc.contextScope = { refs: relationshipsToRefs(doc.contextScope) };
+      doc.kind = parseSessionKind(doc.kind);
     }
   }
   const out = degradeListResponse(res, body, 'sessions');
@@ -58,10 +64,11 @@ export const GET: RequestHandler = async ({ locals, cookies }) => {
 };
 
 // POST /api/sessions → create a new session for the current user, in the
-// ecosistema they have selected.
+// ecosistema they have selected, of the kind the client asks for (the active
+// sidebar tab). The kind is immutable after this: the PATCH route drops it.
 export const POST: RequestHandler = async ({ locals, cookies, request }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
-  let incoming: { title?: string; panelState?: unknown } = {};
+  let incoming: { title?: string; panelState?: unknown; kind?: unknown } = {};
   try {
     incoming = (await request.json()) as typeof incoming;
   } catch {
@@ -94,6 +101,8 @@ export const POST: RequestHandler = async ({ locals, cookies, request }) => {
     // Omitting it only works for people with exactly one membership.
     organization: toBackendId(selected.id),
     panelState: incoming.panelState ?? null,
+    // Anything but `resonancias` is `generales` — never a raw client string.
+    kind: parseSessionKind(incoming.kind),
     lastUsedAt: now,
   };
   const res = await backendFetch(locals.token, '/api/sessions', {
