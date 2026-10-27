@@ -1,6 +1,6 @@
 {
   "id": "7abcb516-cd05-4ff3-8f99-9a35b4e5b574",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "prevId": "539b54e3-8606-42f9-aa6f-e5ef47fb2dbc",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4916,6 +4916,9 @@
         "markdown",
         "pdf",
         "docx",
+        "xlsx",
+        "csv",
+        "html",
         "audio"
       ]
     },
