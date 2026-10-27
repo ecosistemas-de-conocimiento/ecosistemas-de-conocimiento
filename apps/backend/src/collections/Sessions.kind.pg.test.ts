@@ -162,6 +162,15 @@ describe.skipIf(!dockerOk)('sessions.kind, on a real Postgres', () => {
     expect(after.kind).toBe('resonancias')
   }, 30_000)
 
+  it('🔴 a local-API update with no user cannot change kind either', async () => {
+    const s = await createAs({ kind: 'resonancias' })
+    await expect(
+      payload.update({ collection: 'sessions', id: s.id, data: { kind: 'generales' }, overrideAccess: true }),
+    ).rejects.toMatchObject({ status: 400 })
+    const after = await payload.findByID({ collection: 'sessions', id: s.id, overrideAccess: true })
+    expect(after.kind).toBe('resonancias')
+  }, 30_000)
+
   it('an update that leaves kind alone, or resends it unchanged, still works', async () => {
     const s = await createAs({ kind: 'resonancias' })
     const user = await owner()

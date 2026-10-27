@@ -61,6 +61,10 @@ const stampOwnerAndEcosystem: CollectionBeforeValidateHook = async ({
 }) => {
   const next = { ...(data ?? {}) } as Record<string, unknown>
   const user = req.user
+  // `kind` is locked even for local-API writes with no user (scripts, jobs).
+  if (operation !== 'create') {
+    assertKindUnchanged(next.kind, (originalDoc as Record<string, unknown> | undefined)?.kind, req)
+  }
   if (!user) return next
 
   if (operation !== 'create') {
@@ -69,7 +73,6 @@ const stampOwnerAndEcosystem: CollectionBeforeValidateHook = async ({
     const original = (originalDoc ?? {}) as Record<string, unknown>
     next.user = original.user
     next.organization = original.organization
-    assertKindUnchanged(next.kind, original.kind, req)
     return next
   }
 
