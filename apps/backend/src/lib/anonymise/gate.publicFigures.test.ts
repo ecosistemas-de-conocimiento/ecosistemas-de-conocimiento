@@ -286,3 +286,109 @@ describe('🔴 never for testimonios or conversations', () => {
     expect(out.keptPublic).toBeUndefined()
   })
 })
+
+describe('🔴 audit 2026-10-27: a public span never hides a private name', () => {
+  const ready = async (r: ReturnType<typeof gate>['result']) => {
+    const out = await r
+    expect(out.status).toBe('ready')
+    return out.status === 'ready' ? out : null
+  }
+
+  it('A: "Ramiro Saldaña" publica inside "Ramiro Saldaña Pérez" privada → the son is redacted', async () => {
+    const text = 'El senador Ramiro Saldaña habló. Su hijo, Ramiro Saldaña Pérez, no quiso declarar.'
+    const out = await ready(
+      gate(
+        text,
+        [[publica('senador Ramiro Saldaña'), publica('Ramiro Saldaña'), privada('Ramiro Saldaña Pérez')], [publica('senador Ramiro Saldaña')]],
+        { keep: true },
+      ).result,
+    )
+    expect(out?.redactedText).toContain('El senador Ramiro Saldaña habló.')
+    expect(out?.redactedText).not.toMatch(/Pérez/)
+    expect(out?.redactedText).toMatch(/Su hijo, \[Persona [A-Z]\], no quiso/)
+    expect(out?.keptPublic?.map((k) => k.name)).toEqual(['senador Ramiro Saldaña'])
+  })
+
+  it('A variant: the private name differs only in case and accents → still redacted', async () => {
+    const text = 'El senador Ramiro Saldaña habló. Su hijo, RAMIRO SALDANA PEREZ, no quiso declarar.'
+    const out = await ready(gate(text, [[publica('Ramiro Saldaña'), privada('RAMIRO SALDANA PEREZ')], []], { keep: true }).result)
+    expect(out?.redactedText).not.toMatch(/PEREZ|RAMIRO/)
+  })
+
+  it('B: a two-person span "X y Y" is never public; the private one is redacted', async () => {
+    const text = 'Se reunieron Ramiro Saldaña y Tadeo Villaseñor en la plaza.'
+    const out = await ready(
+      gate(text, [[publica('Ramiro Saldaña y Tadeo Villaseñor', 'senador y vecino'), privada('Tadeo Villaseñor')], []], { keep: true }).result,
+    )
+    expect(out?.redactedText).not.toMatch(/Tadeo|Villaseñor/)
+    expect(out?.keptPublic ?? []).toEqual([])
+  })
+
+  it('B variant: "X y Y" publica with NO private finding → still not kept as a whole', async () => {
+    const text = 'Se reunieron Ramiro Saldaña y Tadeo Villaseñor en la plaza.'
+    const out = await ready(gate(text, [[publica('Ramiro Saldaña y Tadeo Villaseñor', 'políticos')], []], { keep: true }).result)
+    expect(out?.redactedText).not.toMatch(/Tadeo|Villaseñor|Saldaña/)
+  })
+
+  it('B variant: a public span that contains a private finding → demoted', async () => {
+    const text = 'Habló el senador Ramiro Saldaña, primo de Tadeo, en la plaza.'
+    const out = await ready(
+      gate(text, [[publica('el senador Ramiro Saldaña, primo de Tadeo', 'senador'), privada('Tadeo')], []], { keep: true }).result,
+    )
+    expect(out?.redactedText).not.toMatch(/Tadeo/)
+  })
+
+  it('C: roster "Itzel Barragán Ruiz" + "Itzel Barragán" publica → the staff member stays redacted', async () => {
+    const text = 'Como muestra Itzel Barragán (2021), el discurso escala. Itzel Barragán Ruiz revisó el borrador.'
+    const out = await ready(
+      gate(text, [[publica('Itzel Barragán', 'autora citada')], []], { keep: true, roster: ['Itzel Barragán Ruiz'] }).result,
+    )
+    expect(out?.redactedText).not.toMatch(/Itzel|Barragán|Ruiz/)
+    expect(out?.keptPublic ?? []).toEqual([])
+  })
+
+  it('C variant: a public span CONTAINING a roster name (but not equal) → demoted', async () => {
+    const text = 'La investigadora Itzel Barragán habló en el foro.'
+    const out = await ready(
+      gate(text, [[publica('La investigadora Itzel Barragán', 'ponente')], []], { keep: true, roster: ['Itzel Barragán'] }).result,
+    )
+    expect(out?.redactedText).not.toMatch(/Itzel|Barragán/)
+  })
+
+  it('a public name inside an ADDRESS finding does not shield the address', async () => {
+    const text = 'El senador Ramiro Saldaña habló frente a la tortillería de Ramiro Saldaña en la calle Hidalgo 12.'
+    const out = await ready(
+      gate(text, [[publica('Ramiro Saldaña'), { texto: 'tortillería de Ramiro Saldaña en la calle Hidalgo 12', tipo: 'lugar' }], []], {
+        keep: true,
+      }).result,
+    )
+    expect(out?.redactedText).not.toMatch(/Hidalgo|tortillería/)
+  })
+})
+
+describe('🔴 audit 2026-10-27: same text typed persona publica and something else', () => {
+  it.each(['otro', 'lugar', 'identificador'])('also typed %s → redacted', async (tipo) => {
+    const { result } = gate(CASE, [[publica('Ramiro Saldaña'), { texto: 'Ramiro Saldaña', tipo }, privada('Tadeo Villaseñor')], []], {
+      keep: true,
+    })
+    const out = await result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toContain('Saldaña')
+    expect(out.keptPublic ?? []).toEqual([])
+  })
+})
+
+describe('🔴 audit 2026-10-27: the shield markers cannot collide with the input', () => {
+  it('a typed private-use marker in the text neither crashes nor leaks', async () => {
+    const text = 'Marca 7 suelta. El senador Ramiro Saldaña habló con Tadeo Villaseñor.'
+    for (const keep of [true, false]) {
+      const { result } = gate(text, [[publica('Ramiro Saldaña'), privada('Tadeo Villaseñor')], [publica('Ramiro Saldaña')]], { keep })
+      const out = await result
+      expect(out.status).toBe('ready')
+      if (out.status !== 'ready') return
+      expect(out.redactedText).not.toMatch(/[]/)
+      expect(out.redactedText).not.toContain('Tadeo')
+    }
+  })
+})

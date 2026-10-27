@@ -9,6 +9,7 @@
  *   vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
  */
 
+import { isDocumentColumnField } from './documentColumnFields'
 import type { UpdateDocumentColumnsArgs } from './documentColumns'
 
 type FakePayload = { update(args: Record<string, unknown>): Promise<unknown> }
@@ -18,6 +19,10 @@ export async function updateDocumentColumns(
   args: UpdateDocumentColumnsArgs,
 ): Promise<number> {
   const p = payload as FakePayload
+  // 🔴 Same allowlist as the real writer: a field it would refuse throws here too.
+  for (const field of Object.keys(args.data)) {
+    if (!isDocumentColumnField(field)) throw new Error(`updateDocumentColumns: no column for field "${field}"`)
+  }
   const common = { collection: 'documents', data: args.data, overrideAccess: true, context: { __skipDocsExtract: true } }
   if (!args.where?.length) {
     const res = await p.update({ ...common, id: args.id })

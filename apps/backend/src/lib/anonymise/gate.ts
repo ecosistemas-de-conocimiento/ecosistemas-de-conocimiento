@@ -202,8 +202,10 @@ function shield(text: string, names: readonly string[]): { text: string; restore
     text: out,
     restore: (t) => {
       const present = new Set<string>()
-      const restored = t.replace(SHIELD, (_m, i: string) => {
-        const o = originals[Number(i)] as { name: string; spelling: string }
+      const restored = t.replace(SHIELD, (m, i: string) => {
+        const o = originals[Number(i)]
+        // Never ours (input markers are neutralised at stage 1): leave it.
+        if (o === undefined) return m
         present.add(o.name)
         return o.spelling
       })
@@ -213,26 +215,38 @@ function shield(text: string, names: readonly string[]): { text: string; restore
 }
 
 /**
- * 🔴 WHICH `publica` FINDINGS ARE KEPT. Fail closed on every ambiguity:
+ * A span that names more than one person: "X y Y", "X, Y", "X / Y". Never
+ * public as a whole (audit 2026-10-27): one of them may be private.
+ */
+const MULTI_PERSON = /[,;/&]|\s(?:y|e|o|u|ni)\s/iu
+
+/**
+ * 🔴 WHICH `publica` FINDINGS ARE KEPT. Fail closed on every ambiguity (audit
+ * 2026-10-27: a shielded public span hid "Ramiro Saldaña Pérez", "Tadeo
+ * Villaseñor" in "X y Tadeo Villaseñor" and a roster member's full name).
+ * A public span is demoted to private when:
  *
- *   · the same span is also reported private → private;
- *   · a ONE-WORD public span that is a name part of a private person or of a
- *     roster member → private: "Iturbe" alone could be either Iturbe.
+ *   · the same text is also reported private, or as anything but a person;
+ *   · it reads as more than one person (`MULTI_PERSON`);
+ *   · it occurs, as whole words, INSIDE any other finding (any type) or any
+ *     roster name, or CONTAINS one: "Ramiro Saldaña" in "Ramiro Saldaña
+ *     Pérez", "Itzel Barragán" in roster "Itzel Barragán Ruiz", "Ramiro
+ *     Saldaña" in "la tortillería de Ramiro Saldaña";
+ *   · ⚠ EXCEPT a span that IS a roster name, exactly: the staff author of a
+ *     cited work or a public-event speaker (owner rulings 2026-10-27).
  */
 function keptPublicFindings(found: readonly DetectorFinding[], rosterNames: readonly string[]): DetectorFinding[] {
-  const people = found.filter((f) => f.type === 'persona')
-  const privateSpans = people.filter((f) => !f.public)
-  const privateFolded = new Set(privateSpans.map((f) => normaliseName(f.text)))
-  const privateParts = new Set(
-    [...privateSpans.map((f) => f.text), ...rosterNames].flatMap((s) => namePartsOf(s).map(normaliseName)),
-  )
-  return people.filter((f) => {
-    if (!f.public) return false
+  const candidates = found.filter((f) => f.type === 'persona' && f.public)
+  const others = found.filter((f) => !candidates.includes(f))
+  const othersFolded = new Set(others.map((f) => normaliseName(f.text)))
+  const inside = (needle: string, container: string) => wholeWordMatches(container, needle).length > 0
+  const overlaps = (a: string, b: string) => inside(a, b) || inside(b, a)
+  return candidates.filter((f) => {
     const folded = normaliseName(f.text)
-    if (privateFolded.has(folded)) return false
-    const words = f.text.match(/[\p{L}\p{M}]+/gu) ?? []
-    if (words.length === 1 && privateParts.has(folded)) return false
-    return true
+    if (othersFolded.has(folded)) return false
+    if (MULTI_PERSON.test(f.text)) return false
+    if (others.some((o) => overlaps(f.text, o.text))) return false
+    return rosterNames.every((r) => normaliseName(r) === folded || !overlaps(f.text, r))
   })
 }
 
@@ -724,7 +738,10 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // ── 1. STRUCTURAL ─────────────────────────────────────────────────────────
   // 🔴 NFC FIRST, so the roster pass, the model and every matcher see one
   // spelling of "é" (final audit 2026-10-21: decomposed "José" was missed).
-  const structural = structuralPass(input.text.normalize('NFC'))
+  // 🔴 The shield's private-use markers can never come from the input (audit
+  // 2026-10-27: a typed U+E000 "7" U+E001 crashed the restore). Each becomes
+  // U+FFFD, a non-word character, so word breaks stay where they were.
+  const structural = structuralPass(input.text.normalize('NFC').replace(/[\uE000\uE001]/gu, '\uFFFD'))
   stages.push({ stage: 'structural', removed: structural.removed })
 
   if (structural.text.trim().length === 0) {

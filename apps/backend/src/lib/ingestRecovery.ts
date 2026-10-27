@@ -623,6 +623,8 @@ export interface TranscribedRow {
   kind?: unknown
   contentKind?: unknown
   anonymise?: unknown
+  /** The row's `keepPublicFigures` override (NULL = the ecosistema's). */
+  keepPublicFigures?: unknown
   lengua?: unknown
   anonymisationStatus?: unknown
   redactedText?: unknown
@@ -763,6 +765,9 @@ export async function driveTranscribedDocument(
         contentKind: str(doc.contentKind) as never,
         // 🔴 Carried raw: a staff recording filed with "Anonimizar" is gated.
         anonymise: doc.anonymise,
+        // 🔴 Carried raw (audit 2026-10-27): dropped, an override of `false`
+        // would fall back to an ecosistema that says `true`.
+        keepPublicFigures: doc.keepPublicFigures,
         lengua: str(doc.lengua),
         anonymisationStatus: str(doc.anonymisationStatus),
         redactedText: str(doc.redactedText),

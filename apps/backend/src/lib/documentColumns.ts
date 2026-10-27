@@ -30,6 +30,8 @@
 import { sql } from '@payloadcms/db-postgres'
 import type { Where } from 'payload'
 
+import { DOCUMENT_COLUMNS, isDocumentColumnField } from './documentColumnFields'
+
 /** A drizzle SQL fragment. `@payloadcms/db-postgres` re-exports `sql` but not its type. */
 type Sql = ReturnType<typeof sql>
 
@@ -40,31 +42,12 @@ export interface DocumentColumnsPayload {
 
 /**
  * The `documents` fields a background writer may set or guard on, and their
- * columns. An allowlist on purpose: a name outside it is a bug in the caller,
- * and the column name is spliced into SQL as an identifier.
+ * columns (`documentColumnFields.ts`). An allowlist on purpose: a name outside
+ * it is a bug in the caller, and the column name is spliced into SQL as an
+ * identifier.
  */
-const COLUMNS = {
-  id: 'id',
-  kind: 'kind',
-  contentKind: 'content_kind',
-  publicationStatus: 'publication_status',
-  publicationError: 'publication_error',
-  ingestStatus: 'ingest_status',
-  ingestError: 'ingest_error',
-  ingestId: 'ingest_id',
-  graphStatus: 'graph_status',
-  graphError: 'graph_error',
-  graphPromptVersion: 'graph_prompt_version',
-  graphExtractedAt: 'graph_extracted_at',
-  anonymisationStatus: 'anonymisation_status',
-  anonymisationError: 'anonymisation_error',
-  anonymisationReport: 'anonymisation_report',
-  anonymisationSurvivors: 'anonymisation_survivors',
-  redactedText: 'redacted_text',
-  heldText: 'held_text',
-  testimonioTitle: 'testimonio_title',
-  updatedAt: 'updated_at',
-} as const
+const COLUMNS = DOCUMENT_COLUMNS
+export { isDocumentColumnField }
 
 export type DocumentColumnField = keyof typeof COLUMNS
 

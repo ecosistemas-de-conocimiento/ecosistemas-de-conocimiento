@@ -356,7 +356,9 @@ export async function anonymiseDocumentText(args: {
           contentKind === 'conversacion' || contentKind === 'documento' ? contentKind : 'testimonio',
         text,
         roster: args.roster ?? [],
-        ...(contentKind === 'documento' && args.keepPublicFigures === true ? { keepPublicFigures: true } : {}),
+        // 🔴 The gate itself ignores it for anything but a documento
+        // (`gate.ts`, one check, tested there).
+        keepPublicFigures: args.keepPublicFigures === true,
       },
       { detector },
     )
