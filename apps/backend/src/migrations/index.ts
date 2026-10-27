@@ -7,6 +7,7 @@ import * as migration_20261026_160000_documents_anonymise from './20261026_16000
 import * as migration_20261026_200000_documents_kind_tabular_html from './20261026_200000_documents_kind_tabular_html';
 import * as migration_20261027_002257_sessions_kind from './20261027_002257_sessions_kind';
 import * as migration_20261027_020102_feature_switches from './20261027_020102_feature_switches';
+import * as migration_20261027_053737_memberships_role_estudiante from './20261027_053737_memberships_role_estudiante';
 
 export const migrations = [
   {
@@ -52,6 +53,11 @@ export const migrations = [
   {
     up: migration_20261027_020102_feature_switches.up,
     down: migration_20261027_020102_feature_switches.down,
-    name: '20261027_020102_feature_switches'
+    name: '20261027_020102_feature_switches',
+  },
+  {
+    up: migration_20261027_053737_memberships_role_estudiante.up,
+    down: migration_20261027_053737_memberships_role_estudiante.down,
+    name: '20261027_053737_memberships_role_estudiante'
   },
 ];

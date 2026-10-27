@@ -27,6 +27,7 @@
  */
 
 import { isPlatformAdmin } from '$lib/components/admin/summary';
+import { adminOrgIds, type RoleUser } from '$lib/roles';
 
 export interface NavItem {
   /** Where it goes. Also the section prefix — see `isCurrentSection`. */
@@ -43,7 +44,7 @@ export interface NavItem {
    * not tell a first-time visitor whether it holds their files or everyone's.
    */
   hint: string;
-  /** `true` ⇒ only platform admins see it. See the header. */
+  /** `true` ⇒ only platform admins, and investigadores/owners (scoped), see it. See the header. */
   adminOnly?: boolean;
   /**
    * `true` ⇒ only people who may review held documents see it.
@@ -166,6 +167,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
  */
 export function visibleNavItems(user: unknown, caps: NavCapabilities = {}): NavItem[] {
   const admin = isPlatformAdmin(user);
+  // `/admin` also opens, scoped, to an investigador or owner of some ecosistema
+  // (owner ruling 2026-10-27; `routes/admin/+page.server.ts` is the control).
+  const scopedAdmin = adminOrgIds(user as RoleUser | null).length > 0;
   // 🔴 Literally `true`, nothing else — same rule as `isPlatformAdmin`. A
   // truthy string from a garbled payload must not advertise a section.
   const reviewer = caps.canReviewHolds === true;
@@ -173,7 +177,7 @@ export function visibleNavItems(user: unknown, caps: NavCapabilities = {}): NavI
   const owner = caps.canEditFeatures === true;
   return NAV_ITEMS.filter((item) => {
     if (item.ownerOnly && !owner && !admin) return false;
-    if (item.adminOnly && !admin) return false;
+    if (item.adminOnly && !admin && !scopedAdmin) return false;
     if (item.reviewerOnly && !reviewer) return false;
     if (item.managerOnly && !manager) return false;
     return true;
