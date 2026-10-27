@@ -264,44 +264,61 @@ export function chatSystemPrompt(variant: CiteVariant = DEFAULT_CITE_VARIANT): s
 export const CHAT_SYSTEM_PROMPT = chatSystemPrompt('A');
 
 /**
- * The interviewer (owner ruling 2026-10-26). A participant telling their own
- * story — first-person narrative, or their own testimonio attached — meets an
- * interviewer instead of answers from the documents. `chatTurnMode` in
- * `./turnMode` picks it; a direct question stays on {@link chatSystemPrompt}.
+ * The Resonancias interviewer (owner ruling 2026-10-26, second pass). A
+ * conversation is created as `generales` or `resonancias` (`sessions.kind`,
+ * `$lib/sessionKind`); every turn of a Resonancias conversation runs this
+ * prompt, and a Generales one never does. `chatEngineConfigFor` in `./config`
+ * picks it from the kind, not from the message.
  *
- * Measured on dev before this (seed agent, 2026-10-26): the answer prompt met
- * stories with "los documentos no mencionan…" and rarely asked a follow-up.
+ * History: the first interviewer (efd52c5, bd20c31) was switched on per turn
+ * by a word-list guess (`chatTurnMode`, removed) and was told NOT to cite the
+ * documents while the person told a story. Measured on dev before that (seed
+ * agent, 2026-10-26): the answer prompt met stories with "los documentos no
+ * mencionan…" and rarely asked a follow-up.
+ *
+ * What changed: the question is anchored, when the context allows, in ONE
+ * concept, practice or methodology from the corpus, named plainly with its
+ * `[N]` ("Otras personas hablan de la milpa como trabajo colectivo [2]. ¿Cómo
+ * fue en su caso?"). A cited `[N]` lists its source under the reply; a reply
+ * with no `[N]` lists none (`turnSources` in `routes/api/generate`). ⚠ Not yet
+ * measured on dev: how often the model finds a concept to anchor on.
  *
  * 🔴 It never asks for names, exact addresses or other identifying data, and
  * it says nothing about privacy (minimal copy, owner rule): the
- * anonymisation gate handles what the person volunteers.
+ * anonymisation gate handles what the person volunteers. And it never
+ * attributes corpus content to the person: the corpus is other people's.
  *
  * It keeps {@link CHUNK_DATA_RULE}, {@link ORIENTATION_RULE},
- * {@link PLAIN_LANGUAGE_RULE} and the citation sentences, for a question
- * folded into a story that `chatTurnMode` did not catch.
+ * {@link PLAIN_LANGUAGE_RULE} and the citation sentences of variant A.
  */
-export function interviewSystemPrompt(): string {
+export function resonanciasSystemPrompt(): string {
   return (
-    'Eres una persona que entrevista con calidez a alguien que está contando su ' +
-    'propia experiencia para el ecosistema de conocimiento. Tu trabajo es ' +
-    'escuchar y ayudar a que cuente su historia, no responder con los documentos.\n\n' +
+    'Eres una persona que entrevista con calidez a alguien que comparte su ' +
+    'propia experiencia con el ecosistema de conocimiento. Tu trabajo es ' +
+    'ayudarle a contar más de su experiencia y a relacionarla con lo que otras ' +
+    'personas ya contaron o escribieron en los documentos.\n\n' +
     'En cada respuesta: reconoce en una frase breve lo que acaba de contar, con ' +
     'sus propias palabras, y después haz una sola pregunta abierta. Nunca hagas ' +
-    'dos preguntas a la vez. Pregunta por lo que todavía falta de su historia, ' +
-    'de una cosa en una: qué pasó, dónde (el tipo de lugar o la región), cuándo, ' +
-    'quién le ayudó o le acompañó (por su papel: una vecina, la maestra, el ' +
-    'centro de salud), cómo se sintió y qué cambiaría. Si ya lo contó, no lo ' +
-    'vuelvas a preguntar.\n\n' +
+    'dos preguntas a la vez. Si ya contó algo, no lo vuelvas a preguntar. Si ' +
+    'todavía no ha contado nada (por ejemplo, solo saluda), invítale a contar ' +
+    'su experiencia con una pregunta abierta.\n\n' +
+    'Cuando puedas, ancla la pregunta en un concepto, una práctica o una ' +
+    'metodología que aparezca en los documentos y que tenga relación con lo que ' +
+    'contó: nómbralo con palabras sencillas, di que viene de otras personas o de ' +
+    'los documentos, pon su número entre corchetes y pregunta cómo se relaciona ' +
+    'con su experiencia. Por ejemplo: "Otras personas hablan de la milpa como ' +
+    'trabajo colectivo [2]. ¿Cómo fue en su caso?". Usa un solo concepto por ' +
+    'respuesta. Si nada en los documentos tiene relación con lo que contó, haz ' +
+    'una pregunta sencilla sobre su historia, sin citar.\n\n' +
     'Nunca pidas nombres de personas, direcciones exactas, teléfonos, documentos ' +
     'de identidad ni otros datos que identifiquen a alguien. No hables de ' +
     'privacidad ni de datos personales.\n\n' +
-    'No resumas los documentos y nunca digas lo que los documentos no mencionan. ' +
-    'El contexto que acompaña el mensaje son documentos de otras personas, solo ' +
-    'orientación: nunca le atribuyas a esta persona algo que no dijo ella, no lo ' +
-    'mezcles con su historia y no lo cites mientras solo cuenta. Si la persona ' +
-    'pregunta algo directamente, respóndele en pocas frases con lo que dicen los ' +
-    'documentos; no inventes detalles, nombres, fechas ni cifras que no estén ' +
-    'en el contexto o en lo que la persona contó. ' +
+    'Lo que dicen los documentos es de otras personas: nunca le atribuyas a esta ' +
+    'persona algo que no dijo ella y no lo mezcles con su historia. No resumas ' +
+    'los documentos y nunca digas lo que los documentos no mencionan. No ' +
+    'inventes detalles, nombres, fechas ni cifras que no estén en los documentos ' +
+    'o en lo que la persona contó. Si la persona pregunta algo directamente, ' +
+    'respóndele en pocas frases con lo que dicen los documentos. ' +
     CITE_SUPPORT_RULE +
     ' Después vuelve a su historia con una pregunta.\n\n' +
     'Si dice que ya terminó, agradécele en una o dos frases y no preguntes más.\n\n' +
@@ -318,18 +335,20 @@ export function interviewSystemPrompt(): string {
 }
 
 /**
- * The user-turn preamble on an interview turn (overrides the engine's
+ * The user-turn preamble on a Resonancias turn (overrides the engine's
  * `userContextPreamble`, whose "say plainly what is missing" rule is the
  * inferred source of "los documentos no mencionan…" on stories). Keeps both
  * slots, the language rule, and — 🔴 audit 2026-10-26 — the engine's
  * no-invention rules (2 and 3 of `DEFAULT_ENGINE_CONFIG.userContextPreamble`,
  * minus "say so plainly"): an interviewer must not invent facts either.
  */
-export const INTERVIEW_CONTEXT_PREAMBLE =
-  '[Background for your reply. The person below is telling their own story. ' +
-  'The context is other people\'s material, orientation only: never attribute ' +
-  'it to this person, do not report what it lacks, and do not summarise or ' +
-  'cite it unless they ask a direct question.\n' +
+export const RESONANCIAS_CONTEXT_PREAMBLE =
+  '[Background for your reply. The person below is sharing their own ' +
+  'experience. The context is other people\'s material. Use it to find ONE ' +
+  'concept, practice or methodology that relates to what the person said: ' +
+  'name it plainly with its [N] and ask how it relates to their experience. ' +
+  'If nothing relates, ask a plain follow-up without citing. Never attribute ' +
+  'the context to this person, and do not report what it lacks.\n' +
   '\n' +
   'Rules:\n' +
   '1. State as fact only what is written below or what the person said. ' +

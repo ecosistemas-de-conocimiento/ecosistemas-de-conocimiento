@@ -17,7 +17,6 @@ import {
   chatKindFilterAvailable,
   chatOrientScope,
   chatTurnHybrid,
-  chatTurnMode,
   chatTurnRetrievalPolicy,
   engineOrgId,
   makeChatDomainAdapter,
@@ -30,7 +29,7 @@ import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
 import { turnAttachments, withPinnedRefs } from './pinned';
 import { fetchPublishedTitles, matchDocumentTitle, titleRetrievalFilter, withTitleRef } from '$lib/server/titleMatch';
-import { sessionEcosystemId } from '$lib/server/ecosystem';
+import { sessionMeta } from '$lib/server/ecosystem';
 import { makeGraphProvider } from '$lib/server/graph';
 import { withFencedChunks, withFencedRefs } from '$lib/server/engine/chunkFence';
 import { fetchOrientationTurns, orientationBlock, withOrientation } from '$lib/server/engine/orientation';
@@ -497,10 +496,12 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // keeps those two honest with each other: the summary used to list this
   // conversation's documents while retrieval reached every draft the caller had
   // ever uploaded anywhere, and the model could not tell them apart.
-  const [{ corpora, asOf, draftCorpus, publishedCorpus }, organizationId, sessionDocs] =
+  // The session read also carries the conversation's kind (`$lib/sessionKind`),
+  // which picks the engine config below.
+  const [{ corpora, asOf, draftCorpus, publishedCorpus }, { organizationId, kind }, sessionDocs] =
     await Promise.all([
       fetchSessionCorpora(locals.token, body.sessionId),
-      sessionEcosystemId(locals.token, body.sessionId),
+      sessionMeta(locals.token, body.sessionId),
       fetchSessionDocs(locals.token, body.sessionId),
     ]);
   if (!asOf) {
@@ -700,19 +701,14 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // …and narrows retrieval to it, so its chunks are the turn's only `[N]`
   // sources (see `$lib/server/titleMatch`). No match: the lengua filter alone.
   const retrievalFilter = titleRetrievalFilter(lengua.retrievalFilter, titleMatch);
-  // A person telling their own story meets an interviewer; a direct question
-  // still gets the documents (owner ruling 2026-10-26, `$lib/server/engine/turnMode`).
-  const turnMode = chatTurnMode({
-    userMessage,
-    history,
-    sessionDocs: sessionDocs.docs,
-    callerId: locals.user.id != null ? String(locals.user.id) : null,
-  });
-  const turnConfig = chatEngineConfigFor(turnMode);
-  // An interview reply with no `[N]` lists no sources: it is a question back,
-  // not an answer, and the no-marker fallback would pin documents to it.
+  // The conversation's kind picks the config, never the message (owner ruling
+  // 2026-10-26): Generales always answers, Resonancias always interviews.
+  const turnConfig = chatEngineConfigFor(kind);
+  // A Resonancias reply with no `[N]` lists no sources: it is a question back,
+  // not an answer, and the no-marker fallback would pin documents to it. A
+  // cited `[N]` (the corpus concept it names) lists that source as usual.
   const turnSources = (provenance: Provenance | null, answer: string): Provenance | null =>
-    turnMode === 'interview' && parseCitedOrdinals(answer).length === 0
+    kind === 'resonancias' && parseCitedOrdinals(answer).length === 0
       ? null
       : citedBrowserProvenance(provenance, answer, attachments);
   const engineTurnArgs = {

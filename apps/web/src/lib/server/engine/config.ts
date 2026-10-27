@@ -17,12 +17,12 @@ import { chatRetrievalPolicy, parseRerankFlag } from './rerank';
 import { hybridRetrievalForTurn, metadataFilterInAvailable } from './hybrid';
 import {
   chatSystemPrompt,
-  INTERVIEW_CONTEXT_PREAMBLE,
-  interviewSystemPrompt,
   parseCiteVariant,
+  RESONANCIAS_CONTEXT_PREAMBLE,
+  resonanciasSystemPrompt,
   type CiteVariant,
 } from './prompt';
-import type { ChatTurnMode } from './turnMode';
+import type { SessionKind } from '$lib/sessionKind';
 import { parseOrientScope, type OrientScope } from './orientation';
 import type { RetrievalPolicy } from '@edc/chat-engine/core';
 
@@ -83,16 +83,20 @@ export function chatCiteVariant(): CiteVariant {
 let lastAnnouncedVariant: CiteVariant | null = null;
 
 /**
- * The engine config for one turn (`chatTurnMode` in `./turnMode`). `answer` is
- * {@link CHAT_ENGINE_CONFIG} itself (variant E unchanged); `interview` swaps
+ * The engine config for one turn, from the conversation's kind (`sessions.kind`,
+ * `$lib/sessionKind`; owner ruling 2026-10-26). `generales` is
+ * {@link CHAT_ENGINE_CONFIG} itself (variant E unchanged); `resonancias` swaps
  * only the system prompt and the user-turn preamble (`./prompt`).
+ *
+ * ⚠ The kind, never the message: the per-message guess that used to switch a
+ * Generales turn to the interviewer (`chatTurnMode`) is gone.
  */
-export function chatEngineConfigFor(mode: ChatTurnMode): EngineConfig {
-  if (mode === 'answer') return CHAT_ENGINE_CONFIG;
+export function chatEngineConfigFor(kind: SessionKind): EngineConfig {
+  if (kind !== 'resonancias') return CHAT_ENGINE_CONFIG;
   return {
     ...CHAT_ENGINE_CONFIG,
-    systemPrompt: interviewSystemPrompt(),
-    userContextPreamble: INTERVIEW_CONTEXT_PREAMBLE,
+    systemPrompt: resonanciasSystemPrompt(),
+    userContextPreamble: RESONANCIAS_CONTEXT_PREAMBLE,
   };
 }
 

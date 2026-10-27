@@ -49,6 +49,16 @@ import {
   normalizeEcosystems,
   type Ecosystem,
 } from '../ecosystems';
+import {
+  parseSessionKind,
+  readSessionKindTab,
+  sessionsOfKind,
+  writeSessionKindTab,
+  type SessionKind,
+} from '../sessionKind';
+
+/** The browser's storage, or null where there is none (node, SSR). */
+const browserStorage = () => (typeof localStorage === 'undefined' ? null : localStorage);
 
 
 /**
@@ -115,6 +125,7 @@ function sessionFromBackend(row: Record<string, unknown>): Session {
     docs: [],
     panelState: (row.panelState as PanelState | null | undefined) ?? null,
     contextScope: (row.contextScope as ContextScope | null | undefined) ?? null,
+    kind: parseSessionKind(row.kind),
   };
 }
 
@@ -215,6 +226,12 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
 class AppStore {
   sessions = $state<Session[]>([]);
   activeSessionId = $state<string | null>(null);
+  /**
+   * The sidebar tab: Generales or Resonancias (`$lib/sessionKind`). "Nueva
+   * conversación" creates one of this kind. Remembered per viewer in
+   * `localStorage`, like the map's 2D/3D switch; not per conversation.
+   */
+  sessionKindTab = $state<SessionKind>(readSessionKindTab(browserStorage));
   docsPanelOpen = $state(true);
   sidebarCollapsed = $state(false);
   /** Set once we've finished the initial fetch from the backend. */
@@ -295,6 +312,26 @@ class AppStore {
   get active(): Session | null {
     if (!this.activeSessionId) return null;
     return this.sessions.find((s) => s.id === this.activeSessionId) ?? null;
+  }
+
+  /** The conversations in the active sidebar tab, most recent first. */
+  get tabSessions(): Session[] {
+    return sessionsOfKind(this.sessions, this.sessionKindTab);
+  }
+
+  /**
+   * Switch the sidebar tab. The open conversation stays open when it is of
+   * that kind; otherwise the tab's most recent one opens, or none — and the
+   * first send then creates one of this kind (`ensureSession`).
+   */
+  setSessionKindTab(kind: SessionKind): void {
+    if (kind === this.sessionKindTab) return;
+    this.sessionKindTab = kind;
+    writeSessionKindTab(browserStorage, kind);
+    if (this.active && parseSessionKind(this.active.kind) === kind) return;
+    const next = this.tabSessions[0]?.id ?? null;
+    if (next) void this.selectSession(next);
+    else this.activeSessionId = null;
   }
 
   /** The selected ecosistema, for display. */
@@ -397,7 +434,8 @@ class AppStore {
       this.degraded = data?.degraded ? { reason: data.reason ?? 'unavailable' } : null;
       const list = (data?.docs ?? []).map(sessionFromBackend);
       this.sessions = list;
-      const firstId = list[0]?.id ?? null;
+      // The most recent conversation IN THE ACTIVE TAB, not across both.
+      const firstId = this.tabSessions[0]?.id ?? null;
       this.activeSessionId = firstId;
       if (firstId) {
         const s = this.sessions.find((x) => x.id === firstId);
@@ -577,7 +615,8 @@ class AppStore {
    * people's turns into one conversation (dev 2026-10-24).
    */
   private async findEmptySession(): Promise<Session | null> {
-    const candidate = this.sessions.find(
+    // Same kind only: an empty Generales one must not open in Resonancias.
+    const candidate = this.tabSessions.find(
       (x) => x.title === UNTITLED_SESSION && this.createdHere.has(x.id),
     );
     if (!candidate) return null;
@@ -626,7 +665,8 @@ class AppStore {
       const data = await fetchJson<{ doc: Record<string, unknown> }>('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: UNTITLED_SESSION }),
+        // The active tab's kind; fixed for the conversation's life.
+        body: JSON.stringify({ title: UNTITLED_SESSION, kind: this.sessionKindTab }),
         credentials: 'same-origin',
       });
       const created = sessionFromBackend(data.doc);
@@ -703,6 +743,12 @@ class AppStore {
     this.activeSessionId = id;
     const s = this.sessions.find((x) => x.id === id);
     if (!s) return;
+    // Opened from elsewhere (a document's conversation list): show its tab.
+    const kind = parseSessionKind(s.kind);
+    if (kind !== this.sessionKindTab) {
+      this.sessionKindTab = kind;
+      writeSessionKindTab(browserStorage, kind);
+    }
     if (s.panelState) {
       this.docsPanelOpen = s.panelState.docsPanelOpen ?? this.docsPanelOpen;
       this.sidebarCollapsed = s.panelState.sidebarCollapsed ?? this.sidebarCollapsed;
@@ -716,7 +762,7 @@ class AppStore {
     const prev = this.sessions;
     this.sessions = this.sessions.filter((s) => s.id !== id);
     if (this.activeSessionId === id) {
-      const next = this.sessions[0]?.id ?? null;
+      const next = this.tabSessions[0]?.id ?? null;
       this.activeSessionId = next;
       // Messages load lazily: without this the next conversation would show
       // "Inicia una conversación" over a thread that has messages.

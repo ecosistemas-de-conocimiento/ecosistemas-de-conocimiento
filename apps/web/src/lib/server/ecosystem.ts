@@ -38,6 +38,7 @@ import {
   type EcosystemSelection,
 } from '$lib/ecosystems';
 import { backendFetch } from '$lib/server/auth';
+import { parseSessionKind, type SessionKind } from '$lib/sessionKind';
 
 /** Name of the selection cookie. Distinct from `chat_auth`; carries no authority. */
 export const ECOSYSTEM_COOKIE = 'eco_selected';
@@ -217,24 +218,48 @@ export async function sessionEcosystemId(
   token: string | undefined,
   sessionId: string,
 ): Promise<string | null> {
-  if (!sessionId) return null;
+  return (await sessionMeta(token, sessionId)).organizationId;
+}
+
+/** What one read of the session row tells a chat turn. */
+export interface SessionMeta {
+  /** {@link sessionEcosystemId}'s answer. */
+  organizationId: string | null;
+  /**
+   * `sessions.kind` (`$lib/sessionKind`): which engine config the turn runs.
+   * Immutable after create. Missing, unknown or unreadable is `generales`.
+   */
+  kind: SessionKind;
+}
+
+/**
+ * The session row read once for a chat turn: its ecosistema (same rules as
+ * {@link sessionEcosystemId}) and its kind. One round trip, so `/api/generate`
+ * did not grow a second read for the kind.
+ */
+export async function sessionMeta(token: string | undefined, sessionId: string): Promise<SessionMeta> {
+  const none: SessionMeta = { organizationId: null, kind: 'generales' };
+  if (!sessionId) return none;
   try {
     const res = await backendFetch(
       token,
       `/api/sessions/${encodeURIComponent(sessionId)}?depth=0`,
       { method: 'GET' },
     );
-    if (!res.ok) return null;
-    const body = (await res.json().catch(() => ({}))) as { organization?: unknown };
-    const org = body.organization;
-    if (typeof org === 'string' || typeof org === 'number') return String(org);
-    // depth>0 (or a config change) would populate it as an object.
-    if (org && typeof org === 'object' && 'id' in org) {
-      const id = (org as { id?: unknown }).id;
-      if (typeof id === 'string' || typeof id === 'number') return String(id);
-    }
-    return null;
+    if (!res.ok) return none;
+    const body = (await res.json().catch(() => ({}))) as { organization?: unknown; kind?: unknown };
+    return { organizationId: organizationIdOf(body.organization), kind: parseSessionKind(body.kind) };
   } catch {
-    return null;
+    return none;
   }
+}
+
+function organizationIdOf(org: unknown): string | null {
+  if (typeof org === 'string' || typeof org === 'number') return String(org);
+  // depth>0 (or a config change) would populate it as an object.
+  if (org && typeof org === 'object' && 'id' in org) {
+    const id = (org as { id?: unknown }).id;
+    if (typeof id === 'string' || typeof id === 'number') return String(id);
+  }
+  return null;
 }

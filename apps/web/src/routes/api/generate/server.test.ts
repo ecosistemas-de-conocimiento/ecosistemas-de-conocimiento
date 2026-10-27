@@ -26,7 +26,7 @@ vi.mock('$env/dynamic/private', () => ({ env: ENV }));
 import { POST } from './+server';
 import { resetHybridCapabilityCache } from '$lib/server/engine/hybrid';
 import { ANSWER_NOT_SAVED_CODE } from '$lib/aiMessages';
-import { NO_ANSWER_REPLY, chatSystemPrompt, interviewSystemPrompt } from '$lib/server/engine/prompt';
+import { NO_ANSWER_REPLY, chatSystemPrompt, resonanciasSystemPrompt } from '$lib/server/engine/prompt';
 import { toBrowserMessage } from '$lib/server/citationProvenance';
 import { citationsWithOrdinals, denseCitations } from '$lib/citationOrdinals';
 
@@ -45,6 +45,8 @@ interface Call {
 
 interface World {
   organization: string | null;
+  /** `sessions.kind` on the session row. Unset: the row carries no kind (pre-split). */
+  kind?: string;
   saveStatus: number;
   graphCalls: number;
   sessionDocs: Array<Record<string, unknown>>;
@@ -109,7 +111,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       });
     }
     if (p === `/api/sessions/${SESSION}` && method === 'GET') {
-      return json({ id: Number(SESSION), organization: world.organization });
+      return json({ id: Number(SESSION), organization: world.organization, ...(world.kind ? { kind: world.kind } : {}) });
     }
     if (p === `/api/sessions/${SESSION}` && method === 'PATCH') return json({});
     if (p === '/api/documents/11') {
@@ -849,55 +851,63 @@ describe('POST /api/generate — provenance sent to the browser is an allowlist'
   });
 });
 
-// ── Cited sources only (UX backlog #35) ──────────────────────────────────────
-// 🔴 The engine puts every retrieved chunk on the provenance. Only the ones the
-// answer marks with [N] may become citations, with N kept.
-describe('POST /api/generate — a testimonio turn meets the interviewer', () => {
+// ── Generales / Resonancias (owner ruling 2026-10-26) ───────────────────────
+// `sessions.kind` picks the engine config; the message never does.
+describe('POST /api/generate — the conversation kind picks the config', () => {
   const STORY = 'Mi hijo tiene discapacidad y en la escuela no lo aceptaban al principio';
   const systemOf = (c: { body: unknown }) =>
     String((c.body as { unit?: { systemPrompt?: unknown } }).unit?.systemPrompt ?? '');
-  const chatGenerate = () => generates().filter((c) => !String((c.body as { unit?: { input?: { userPrompt?: unknown } } }).unit?.input?.userPrompt ?? '').includes('Escribe exactamente tres'));
+  const userPromptOf = (c: { body: unknown }) =>
+    String((c.body as { unit?: { input?: { userPrompt?: unknown } } }).unit?.input?.userPrompt ?? '');
+  const chatGenerate = () => generates().filter((c) => !userPromptOf(c).includes('Escribe exactamente tres'));
 
-  it('🔴 sync: a first-person story gets the interviewer prompt and no fallback sources', async () => {
+  it('🔴 Generales: a first-person story still gets the answer prompt (no per-message guess)', async () => {
+    world.kind = 'generales';
+    world.answerText = 'Las parteras acompañan los nacimientos [1].';
+    await POST(event(turn({ messages: [{ role: 'user', content: STORY }] })));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
+    expect(systemOf(chatGenerate().at(-1)!)).not.toContain(resonanciasSystemPrompt());
+  });
+
+  it('a row with no kind (made before the split) is Generales', async () => {
+    world.answerText = 'Gracias. ¿Dónde fue?';
+    await POST(event(turn({ messages: [{ role: 'user', content: STORY }] })));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
+  });
+
+  it('🔴 Resonancias sync: interviewer prompt and preamble; no [N] lists no sources', async () => {
+    world.kind = 'resonancias';
     world.answerText = 'Gracias por contarlo. ¿Dónde estaba la escuela?';
     const body = (await (await POST(event(turn({ messages: [{ role: 'user', content: STORY }] })))).json()) as {
       provenance: unknown;
     };
-    expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(resonanciasSystemPrompt());
+    expect(userPromptOf(chatGenerate().at(-1)!)).toContain('concept, practice or methodology');
     expect(body.provenance).toBeNull();
   });
 
-  it('🔴 stream: the same', async () => {
+  it('🔴 Resonancias stream: the same', async () => {
+    world.kind = 'resonancias';
     world.streamText = 'Gracias. ¿Quién le ayudó?';
     const frames = await readSse(await POST(event(turn({ messages: [{ role: 'user', content: STORY }] }), true)));
-    expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(resonanciasSystemPrompt());
     expect(frames.find((f) => f.type === 'done')!.provenance).toBeNull();
   });
 
-  // 🔴 Audit 2026-10-26: staff attaching a colleague's testimonio met the interviewer.
-  it('🔴 someone else\'s testimonio attached: answer mode; my own: interview', async () => {
-    world.answerText = 'Gracias. ¿Dónde fue?';
-    world.sessionDocs = [{ id: 21, name: 'x', kind: 'audio', contentKind: 'testimonio', publicationStatus: 'draft', uploadedBy: 2 }];
-    await POST(event(turn({ messages: [{ role: 'user', content: 'Hola' }] })));
-    expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
-    world.sessionDocs = [{ id: 21, name: 'x', kind: 'audio', contentKind: 'testimonio', publicationStatus: 'draft', uploadedBy: 1 }];
-    await POST(event(turn({ messages: [{ role: 'user', content: 'Hola' }] })));
-    expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
-  });
-
-  it('🔴 a direct question mid-story keeps variant E and its cited sources', async () => {
-    world.answerText = 'Las parteras acompañan los nacimientos [1].';
-    const messages = [
-      { role: 'user', content: STORY },
-      { role: 'assistant', content: '¿Dónde estaba la escuela?' },
-      { role: 'user', content: QUESTION },
-    ];
-    const body = (await (await POST(event(turn({ messages })))).json()) as { provenance: { chunks: unknown[] } };
-    expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
-    expect(body.provenance.chunks.length).toBe(1);
+  it('🔴 Resonancias: a direct question stays with the interviewer; a cited [N] lists its source', async () => {
+    world.kind = 'resonancias';
+    world.answerText = 'Otras personas hablan de la partería como acompañamiento [1]. ¿Cómo fue en su caso?';
+    const body = (await (await POST(event(turn({ messages: [{ role: 'user', content: QUESTION }] })))).json()) as {
+      provenance: { chunks: Array<{ ordinal?: number }> };
+    };
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(resonanciasSystemPrompt());
+    expect(body.provenance.chunks.map((c) => c.ordinal)).toEqual([1]);
   });
 });
 
+// ── Cited sources only (UX backlog #35) ──────────────────────────────────────
+// 🔴 The engine puts every retrieved chunk on the provenance. Only the ones the
+// answer marks with [N] may become citations, with N kept.
 describe('POST /api/generate — only cited sources are kept', () => {
   type Saved = { provenance?: { chunks: Array<{ ordinal?: number; chunkId: string }> } };
   const ordinalsOf = (p: Saved['provenance'] | null | undefined) => (p?.chunks ?? []).map((c) => c.ordinal);
