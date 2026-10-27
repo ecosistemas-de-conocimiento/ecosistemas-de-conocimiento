@@ -30,10 +30,16 @@
  *   plus the backend's usual DATABASE_URI, AI_SERVICE_URL, AI_SERVICE_API_KEY,
  *   and ANONYMISE_DETECT_URL / _MODEL / _FALLBACK as the gate reads them.
  *
+ * 🔴 Skips rows whose ecosistema switched `testimonioTitles` off (and all rows
+ * under TESTIMONIO_TITLES=off). The hosted fallback follows the STORED switch
+ * (Plataforma → detectorFallback) first, then ANONYMISE_DETECT_FALLBACK; a
+ * failed read is `none`.
+ *
  * Exit 0 = ran (per-row failures are counted, not fatal). Exit 1 = could not run.
  */
 
 import { backfillTestimonioTitles } from '../src/lib/backfillTestimonioTitles'
+import { detectorFallbackMode } from '../src/lib/platformSettings'
 import { titleClientFromEnv } from '../src/lib/testimonioTitle'
 
 const nonNegativeInt = (raw: string | undefined, fallback: number): number => {
@@ -62,7 +68,15 @@ async function main(): Promise<void> {
 
   const report = await backfillTestimonioTitles(
     payload,
-    (o, source) => titleClientFromEnv({ organizationId: o, source }),
+    async (o, source) => {
+      let fallbackMode: 'hosted' | 'none'
+      try {
+        fallbackMode = await detectorFallbackMode()
+      } catch {
+        fallbackMode = 'none'
+      }
+      return titleClientFromEnv({ organizationId: o, source, fallbackMode })
+    },
     {
       apply,
       force,
@@ -78,7 +92,7 @@ async function main(): Promise<void> {
   if (!apply && report.candidates > 0) {
     console.log(
       `${tag} dry run — ${report.candidates} testimonio(s) (${report.held} held), ` +
-        `${report.inputChars} redacted characters would be sent (1–2 calls each). ` +
+        `${report.disabled} skipped (titles off), ${report.inputChars} redacted characters would be sent (1–2 calls each). ` +
         'Re-run with --apply or BACKFILL_APPLY=1.',
     )
   }

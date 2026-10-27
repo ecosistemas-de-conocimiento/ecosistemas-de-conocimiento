@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TITLE_BACKFILL_WHERE, backfillTestimonioTitles, titleSourceOf } from './backfillTestimonioTitles'
+import { invalidateFeatures } from './features'
 import type { TitleGenerator, TitleStore } from './testimonioTitle'
 
 const READY = {
@@ -21,9 +22,19 @@ const HELD = {
 }
 const STRUCTURAL = { ...HELD, id: 13, heldText: null }
 
-function fakePayload(docs: Array<Record<string, unknown>>) {
-  return { find: vi.fn(async (_args: unknown) => ({ docs })) }
+/** `titlesOff`: organization ids whose `testimonioTitles` switch is off. */
+function fakePayload(docs: Array<Record<string, unknown>>, titlesOff: number[] = []) {
+  return {
+    find: vi.fn(async (_args: unknown) => ({ docs })),
+    findByID: vi.fn(async ({ id }: { id: number }) => ({
+      id,
+      features: { testimonioTitles: !titlesOff.includes(Number(id)) },
+    })),
+  }
 }
+
+beforeEach(() => invalidateFeatures())
+afterEach(() => vi.unstubAllEnvs())
 
 function fakes(answers: string[]) {
   const sync = vi.fn(async () => ({ text: answers.shift() ?? '' }))
@@ -110,5 +121,39 @@ describe('backfillTestimonioTitles', () => {
       [11, 'La escuela sin intérprete de señas', READY.redactedText, 'redacted'],
       [12, 'Ir al centro de salud por el dengue', HELD.heldText, 'held'],
     ])
+  })
+
+  it('🔴 an ecosistema with testimonioTitles OFF is skipped: not a candidate, no call, no write', async () => {
+    const { client, sync, store, writes } = fakes(['La escuela sin intérprete de señas'])
+    const OTHER = { ...READY, id: 31, organization: 2 }
+    const p = fakePayload([READY, OTHER], [1])
+    const dry = await backfillTestimonioTitles(p as never, () => client, { store })
+    expect(dry).toMatchObject({ candidates: 1, disabled: 1, lastId: '31' })
+    const report = await backfillTestimonioTitles(p as never, () => client, { apply: true, store, sleep: async () => {} })
+    expect(report).toMatchObject({ candidates: 1, disabled: 1, written: 1 })
+    expect(sync).toHaveBeenCalledTimes(1)
+    expect(writes.map((w) => w[0])).toEqual([31])
+  })
+
+  it('🔴 TESTIMONIO_TITLES=off (the process switch) skips every row', async () => {
+    vi.stubEnv('TESTIMONIO_TITLES', 'off')
+    const { client, sync, store } = fakes(['Un título'])
+    const report = await backfillTestimonioTitles(fakePayload([READY]) as never, () => client, {
+      apply: true,
+      store,
+      sleep: async () => {},
+    })
+    expect(report).toMatchObject({ candidates: 0, disabled: 1, written: 0 })
+    expect(sync).not.toHaveBeenCalled()
+  })
+
+  it('awaits an async clientFor (the script resolves the stored detector fallback per row)', async () => {
+    const { client, store } = fakes(['La escuela sin intérprete de señas'])
+    const report = await backfillTestimonioTitles(fakePayload([READY]) as never, async () => client, {
+      apply: true,
+      store,
+      sleep: async () => {},
+    })
+    expect(report).toMatchObject({ written: 1 })
   })
 })

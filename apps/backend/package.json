@@ -18,6 +18,7 @@
     "migrate:create": "payload migrate:create",
     "keygen": "payload run src/lib/jwt/keygen.ts",
     "seed:demo": "payload run src/seed/demo.cli.ts",
+    "seed:demo-users": "payload run src/seed/demoUsers.cli.ts",
     "provision:storage": "payload run scripts/provision-storage.ts",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
@@ -39,9 +40,12 @@
     "jose": "^5.9.6",
     "mammoth": "^1.12.0",
     "next": "15.4.11",
+    "parse5": "^8.0.1",
     "payload": "^3.84.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "read-excel-file": "^9.3.12",
+    "tsx": "4.22.4",
     "unpdf": "^1.6.2"
   },
   "devDependencies": {

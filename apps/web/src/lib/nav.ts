@@ -27,6 +27,7 @@
  */
 
 import { isPlatformAdmin } from '$lib/components/admin/summary';
+import { adminOrgIds, type RoleUser } from '$lib/roles';
 
 export interface NavItem {
   /** Where it goes. Also the section prefix — see `isCurrentSection`. */
@@ -43,7 +44,7 @@ export interface NavItem {
    * not tell a first-time visitor whether it holds their files or everyone's.
    */
   hint: string;
-  /** `true` ⇒ only platform admins see it. See the header. */
+  /** `true` ⇒ only platform admins, and investigadores/owners (scoped), see it. See the header. */
   adminOnly?: boolean;
   /**
    * `true` ⇒ only people who may review held documents see it.
@@ -58,6 +59,12 @@ export interface NavItem {
   reviewerOnly?: boolean;
   /** Shown to whoever holds `members:manage` somewhere (layout server load). */
   managerOnly?: boolean;
+  /** Shown to whoever holds `organization:manage` (responsable) somewhere. */
+  ownerOnly?: boolean;
+  /** Student view (`studentView` on): shown to an `estudiante` there. */
+  studentOnly?: boolean;
+  /** Student view: shown to an investigador / responsable there. */
+  teacherOnly?: boolean;
 }
 
 /**
@@ -71,6 +78,10 @@ export interface NavItem {
 export interface NavCapabilities {
   canReviewHolds?: boolean;
   canManageMembers?: boolean;
+  canEditFeatures?: boolean;
+  /** From `/api/estudiante/acceso` for the selected ecosistema (layout load). */
+  isStudent?: boolean;
+  isTeacher?: boolean;
 }
 
 /**
@@ -129,6 +140,18 @@ export const NAV_ITEMS: readonly NavItem[] = [
     hint: 'Cómo se relaciona lo que se ha publicado.',
   },
   {
+    href: '/estudiante',
+    label: 'Mi investigación',
+    hint: 'Tus temas, autores y compañeros.',
+    studentOnly: true,
+  },
+  {
+    href: '/seguimiento',
+    label: 'Estudiantes',
+    hint: 'Actividad y sugerencias.',
+    teacherOnly: true,
+  },
+  {
     href: '/revision',
     label: 'Revisión',
     hint: 'Documentos que la anonimización detuvo.',
@@ -139,6 +162,12 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: 'Miembros',
     hint: 'Quién está en el ecosistema.',
     managerOnly: true,
+  },
+  {
+    href: '/ajustes',
+    label: 'Ajustes',
+    hint: 'Qué funciones tiene el ecosistema.',
+    ownerOnly: true,
   },
   {
     href: '/admin',
@@ -157,14 +186,21 @@ export const NAV_ITEMS: readonly NavItem[] = [
  */
 export function visibleNavItems(user: unknown, caps: NavCapabilities = {}): NavItem[] {
   const admin = isPlatformAdmin(user);
+  // `/admin` also opens, scoped, to an investigador or owner of some ecosistema
+  // (owner ruling 2026-10-27; `routes/admin/+page.server.ts` is the control).
+  const scopedAdmin = adminOrgIds(user as RoleUser | null).length > 0;
   // 🔴 Literally `true`, nothing else — same rule as `isPlatformAdmin`. A
   // truthy string from a garbled payload must not advertise a section.
   const reviewer = caps.canReviewHolds === true;
   const manager = caps.canManageMembers === true;
+  const owner = caps.canEditFeatures === true;
   return NAV_ITEMS.filter((item) => {
-    if (item.adminOnly && !admin) return false;
+    if (item.ownerOnly && !owner && !admin) return false;
+    if (item.adminOnly && !admin && !scopedAdmin) return false;
     if (item.reviewerOnly && !reviewer) return false;
     if (item.managerOnly && !manager) return false;
+    if (item.studentOnly && caps.isStudent !== true) return false;
+    if (item.teacherOnly && caps.isTeacher !== true) return false;
     return true;
   });
 }

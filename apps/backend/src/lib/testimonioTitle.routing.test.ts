@@ -115,3 +115,30 @@ describe('scheduleTestimonioTitle — production wiring', () => {
     expect(payload.db.drizzle.execute).not.toHaveBeenCalled()
   })
 })
+
+describe('🔴 testimonioTitles switched off (lib/features.ts)', () => {
+  it('no model call and no write', async () => {
+    const { invalidateFeatures } = await import('./features')
+    invalidateFeatures()
+    const payload = {
+      find: vi.fn(async () => ({ docs: [] })),
+      findByID: vi.fn(async () => ({ id: 7, features: { testimonioTitles: false } })),
+      db: { drizzle: { execute: vi.fn() } },
+    }
+    expect(
+      scheduleTestimonioTitle({
+        contentKind: 'testimonio',
+        docId: 1,
+        organizationId: 7,
+        redactedText: 'Fui con [Persona A] al centro de salud.',
+        payload,
+      }),
+    ).toBe(true)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(payload.findByID).toHaveBeenCalled()
+    expect(getAppAIClient).not.toHaveBeenCalled()
+    expect(payload.find).not.toHaveBeenCalled()
+    expect(payload.db.drizzle.execute).not.toHaveBeenCalled()
+    invalidateFeatures()
+  })
+})

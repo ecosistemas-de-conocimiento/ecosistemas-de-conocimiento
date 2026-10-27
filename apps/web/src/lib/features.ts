@@ -1,0 +1,48 @@
+/**
+ * Per-ecosistema switches — mirror of the backend's `lib/features.ts`, which
+ * owns them and enforces each one server-side. Here: the defaults (today's
+ * behaviour), so a failed read never hides anything, and the admin labels.
+ */
+
+export const FEATURE_DEFAULTS = {
+  audioUpload: true,
+  liveMic: true,
+  interviewerMode: true,
+  graph: true,
+  graph3d: true,
+  combinedGraph: true,
+  chatOrientation: true,
+  testimonioTitles: true,
+  autoPublishMembers: true,
+  studentView: false,
+} as const satisfies Record<string, boolean>;
+
+export type FeatureKey = keyof typeof FEATURE_DEFAULTS;
+export type Features = Record<FeatureKey, boolean>;
+
+export const FEATURE_KEYS = Object.keys(FEATURE_DEFAULTS) as FeatureKey[];
+
+/** Admin-page labels. Exhaustive by type. */
+export const FEATURE_LABELS: Record<FeatureKey, string> = {
+  audioUpload: 'Subir audio',
+  liveMic: 'Micrófono en vivo',
+  interviewerMode: 'Modo entrevista',
+  graph: 'Grafo',
+  graph3d: 'Grafo 3D',
+  combinedGraph: 'Grafo combinado',
+  chatOrientation: 'Conversaciones anteriores como contexto',
+  testimonioTitles: 'Títulos de testimonios',
+  autoPublishMembers: 'Publicar solo lo de participantes',
+  studentView: 'Vista de estudiante',
+};
+
+/** Whatever came over the wire, made whole. Junk reads as the defaults. */
+export function resolveFeatures(raw: unknown): Features {
+  const out: Features = { ...FEATURE_DEFAULTS };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const k of FEATURE_KEYS) {
+    const v = (raw as Record<string, unknown>)[k];
+    if (typeof v === 'boolean') out[k] = v;
+  }
+  return out;
+}

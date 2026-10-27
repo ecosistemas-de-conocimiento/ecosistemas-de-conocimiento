@@ -147,6 +147,14 @@ describe('GET /api/sessions', () => {
     const body = await (await GET(makeEvent({}))).json();
     expect(body.docs[0].contextScope.refs[0].kind).toBe('org');
   });
+
+  it('exposes each conversation\'s kind; a row made before the split is generales', async () => {
+    backendWith(() =>
+      jsonResponse({ docs: [{ id: 5, kind: 'resonancias' }, { id: 6 }, { id: 7, kind: 'otra' }] }),
+    );
+    const body = await (await GET(makeEvent({}))).json();
+    expect(body.docs.map((d: { kind: string }) => d.kind)).toEqual(['resonancias', 'generales', 'generales']);
+  });
 });
 
 describe('POST /api/sessions', () => {
@@ -181,6 +189,23 @@ describe('POST /api/sessions', () => {
     await POST(makeEvent({ cookies: makeCookies({ eco_selected: '999' }) }));
     const createIdx = calledPaths().findIndex((p) => p === '/api/sessions');
     expect(calledBody(createIdx).organization).toBe(1);
+  });
+
+  it('creates a Resonancias conversation when the body asks for one', async () => {
+    backendWith(() => jsonResponse({ doc: { id: 9 } }, 201));
+    await POST(makeEvent({ body: { title: 'x', kind: 'resonancias' } }));
+    const createIdx = calledPaths().findIndex((p) => p === '/api/sessions');
+    expect(calledBody(createIdx).kind).toBe('resonancias');
+  });
+
+  it('no kind, or an unknown one, creates a Generales conversation', async () => {
+    backendWith(() => jsonResponse({ doc: { id: 9 } }, 201));
+    await POST(makeEvent({ body: { title: 'x' } }));
+    await POST(makeEvent({ body: { title: 'x', kind: 'admin' } }));
+    const bodies = calledPaths()
+      .map((p, i) => (p === '/api/sessions' ? calledBody(i).kind : undefined))
+      .filter((k) => k !== undefined);
+    expect(bodies).toEqual(['generales', 'generales']);
   });
 
   it('409s `no_ecosystem` with no memberships, and creates nothing', async () => {

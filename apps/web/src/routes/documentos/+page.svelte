@@ -28,11 +28,12 @@
   import TestimonySource from '$lib/components/TestimonySource.svelte';
   import { deleteConfirmCopy } from '$lib/documents';
   import { docStatusBadge } from '$lib/docStatus';
+  import { isNote } from '$lib/ingest';
   import { canRetryGraph, GRAPH_RETRY_LABEL, graphBadge } from '$lib/graphStatus';
   import { publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
   import { mayUploadVoces } from '$lib/uploadKind';
   import { page } from '$app/stores';
-  import type { WorkingDoc } from '$lib/types';
+  import { FILE_DOC_KINDS, type WorkingDoc } from '$lib/types';
   import { toasts } from '$lib/stores/toasts.svelte';
   import { goto } from '$app/navigation';
   import {
@@ -49,6 +50,8 @@
     uploadAccept,
     uploadButtonTitle,
   } from '$lib/uploadKind';
+  /** Audio needs the build flag AND the ecosistema's `audioUpload` (`$lib/features`). */
+  const audioOn = $derived(AUDIO_UPLOAD_ENABLED && app.features.audioUpload);
 
   type Filter = 'all' | 'sueltos';
 
@@ -158,7 +161,7 @@
     const file = input.files?.[0];
     input.value = '';
     if (!file || uploading) return;
-    if (!AUDIO_UPLOAD_ENABLED && isAudioUpload(file)) {
+    if (!audioOn && isAudioUpload(file)) {
       toasts.push({ kind: 'warning', ...AUDIO_UPLOAD_OFF_COPY });
       return;
     }
@@ -200,7 +203,7 @@
   let downloadingId = $state<string | null>(null);
 
   function hasOriginal(d: WorkingDoc): boolean {
-    return d.kind === 'pdf' || d.kind === 'docx' || d.kind === 'audio';
+    return d.kind === 'audio' || (FILE_DOC_KINDS as readonly string[]).includes(d.kind);
   }
 
   async function downloadOriginal(d: WorkingDoc) {
@@ -215,7 +218,7 @@
       a.href = url;
       // The title may have been renamed without its extension; put it back.
       const title = d.title || 'documento';
-      const ext = d.kind === 'pdf' || d.kind === 'docx' ? `.${d.kind}` : '';
+      const ext = (FILE_DOC_KINDS as readonly string[]).includes(d.kind) ? `.${d.kind}` : '';
       a.download = ext && !title.toLowerCase().endsWith(ext) ? `${title}${ext}` : title;
       document.body.appendChild(a);
       a.click();
@@ -245,7 +248,7 @@
       <input
         bind:this={fileInput}
         type="file"
-        accept={uploadAccept(UPLOAD_ACCEPT, AUDIO_EXTENSIONS)}
+        accept={uploadAccept(UPLOAD_ACCEPT, AUDIO_EXTENSIONS, audioOn)}
         hidden
         aria-label={uploadButtonTitle()}
         onchange={onFileChosen}
@@ -318,7 +321,7 @@
           <div class="row-head">
             <span class="name" title={d.title}>{d.title}</span>
             {#if d.subtitle != null}<span class="subtitle"><TestimonySource audio={d.kind === 'audio'} day={d.subtitle} /></span>{/if}
-            {#if d.kind && d.kind !== 'markdown'}
+            {#if d.kind && !isNote(d)}
               <span class="chip kind">{d.kind}</span>
             {/if}
             {#if ing}

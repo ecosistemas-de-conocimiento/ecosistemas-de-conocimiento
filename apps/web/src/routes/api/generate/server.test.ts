@@ -26,7 +26,7 @@ vi.mock('$env/dynamic/private', () => ({ env: ENV }));
 import { POST } from './+server';
 import { resetHybridCapabilityCache } from '$lib/server/engine/hybrid';
 import { ANSWER_NOT_SAVED_CODE } from '$lib/aiMessages';
-import { NO_ANSWER_REPLY, chatSystemPrompt, interviewSystemPrompt } from '$lib/server/engine/prompt';
+import { NO_ANSWER_REPLY, chatSystemPrompt, interviewSystemPrompt, resonanciasSystemPrompt } from '$lib/server/engine/prompt';
 import { toBrowserMessage } from '$lib/server/citationProvenance';
 import { citationsWithOrdinals, denseCitations } from '$lib/citationOrdinals';
 
@@ -45,6 +45,10 @@ interface Call {
 
 interface World {
   organization: string | null;
+  /** `sessions.kind` on the session row. Unset: the row carries no kind (pre-split). */
+  kind?: string;
+  /** Make `GET /api/sessions/:id` fail: an HTTP status, or a network throw. */
+  sessionRead?: number | 'throw';
   saveStatus: number;
   graphCalls: number;
   sessionDocs: Array<Record<string, unknown>>;
@@ -77,6 +81,8 @@ interface World {
   model?: (userPrompt: string) => string;
   /** Extra `GET /api/documents/:id` rows, by id. */
   docRows?: Record<string, Record<string, unknown>>;
+  /** What `GET /api/funciones` answers (backend `lib/features.ts`). Unset: no stored switches. */
+  features?: Record<string, boolean>;
 }
 
 let calls: Call[];
@@ -109,7 +115,9 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       });
     }
     if (p === `/api/sessions/${SESSION}` && method === 'GET') {
-      return json({ id: Number(SESSION), organization: world.organization });
+      if (world.sessionRead === 'throw') throw new TypeError('fetch failed');
+      if (typeof world.sessionRead === 'number') return json({ errors: [] }, world.sessionRead);
+      return json({ id: Number(SESSION), organization: world.organization, ...(world.kind ? { kind: world.kind } : {}) });
     }
     if (p === `/api/sessions/${SESSION}` && method === 'PATCH') return json({});
     if (p === '/api/documents/11') {
@@ -151,6 +159,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       return json({ docs: world.sessionDocs });
     }
     if (p === '/api/lenguas') return json({ lenguas: [{ lengua: 'mixe', documentos: 1 }] });
+    if (p === '/api/funciones') return json({ features: world.features ?? {} });
     if (p.startsWith('/api/organizations')) {
       return p === '/api/organizations'
         ? json({ docs: [{ id: Number(ECO), name: 'Eco de prueba' }] })
@@ -849,33 +858,103 @@ describe('POST /api/generate — provenance sent to the browser is an allowlist'
   });
 });
 
-// ── Cited sources only (UX backlog #35) ──────────────────────────────────────
-// 🔴 The engine puts every retrieved chunk on the provenance. Only the ones the
-// answer marks with [N] may become citations, with N kept.
-describe('POST /api/generate — a testimonio turn meets the interviewer', () => {
+// ── Generales / Resonancias (owner ruling 2026-10-26) ───────────────────────
+// `sessions.kind` picks the engine config; the message never does.
+describe('POST /api/generate — the conversation kind picks the config', () => {
   const STORY = 'Mi hijo tiene discapacidad y en la escuela no lo aceptaban al principio';
   const systemOf = (c: { body: unknown }) =>
     String((c.body as { unit?: { systemPrompt?: unknown } }).unit?.systemPrompt ?? '');
-  const chatGenerate = () => generates().filter((c) => !String((c.body as { unit?: { input?: { userPrompt?: unknown } } }).unit?.input?.userPrompt ?? '').includes('Escribe exactamente tres'));
+  const userPromptOf = (c: { body: unknown }) =>
+    String((c.body as { unit?: { input?: { userPrompt?: unknown } } }).unit?.input?.userPrompt ?? '');
+  const chatGenerate = () => generates().filter((c) => !userPromptOf(c).includes('Escribe exactamente tres'));
 
-  it('🔴 sync: a first-person story gets the interviewer prompt and no fallback sources', async () => {
+  it('🔴 Generales, interviewerMode off: a first-person story gets the answer prompt (no per-message guess)', async () => {
+    world.kind = 'generales';
+    world.features = { interviewerMode: false };
+    world.answerText = 'Las parteras acompañan los nacimientos [1].';
+    await POST(event(turn({ messages: [{ role: 'user', content: STORY }] })));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
+    expect(systemOf(chatGenerate().at(-1)!)).not.toContain(resonanciasSystemPrompt());
+  });
+
+  it('a row with no kind (made before the split) is Generales', async () => {
+    world.answerText = 'Gracias. ¿Dónde fue?';
+    await POST(event(turn({ messages: [{ role: 'user', content: QUESTION }] })));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
+    await POST(event(turn({ messages: [{ role: 'user', content: STORY }] })));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
+    expect(systemOf(chatGenerate().at(-1)!)).not.toContain(resonanciasSystemPrompt());
+  });
+
+  it('🔴 Resonancias sync: interviewer prompt and preamble; no [N] lists no sources', async () => {
+    world.kind = 'resonancias';
+    world.answerText = 'Gracias por contarlo. ¿Dónde estaba la escuela?';
+    const body = (await (await POST(event(turn({ messages: [{ role: 'user', content: STORY }] })))).json()) as {
+      provenance: unknown;
+    };
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(resonanciasSystemPrompt());
+    expect(userPromptOf(chatGenerate().at(-1)!)).toContain('concept, practice or methodology');
+    expect(body.provenance).toBeNull();
+  });
+
+  it('🔴 Resonancias stream: the same', async () => {
+    world.kind = 'resonancias';
+    world.streamText = 'Gracias. ¿Quién le ayudó?';
+    const frames = await readSse(await POST(event(turn({ messages: [{ role: 'user', content: STORY }] }), true)));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(resonanciasSystemPrompt());
+    expect(frames.find((f) => f.type === 'done')!.provenance).toBeNull();
+  });
+
+  it('🔴 Resonancias: a direct question stays with the interviewer; a cited [N] lists its source', async () => {
+    world.kind = 'resonancias';
+    world.answerText = 'Otras personas hablan de la partería como acompañamiento [1]. ¿Cómo fue en su caso?';
+    const body = (await (await POST(event(turn({ messages: [{ role: 'user', content: QUESTION }] })))).json()) as {
+      provenance: { chunks: Array<{ ordinal?: number }> };
+    };
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(resonanciasSystemPrompt());
+    expect(body.provenance.chunks.map((c) => c.ordinal)).toEqual([1]);
+  });
+
+  // ── Generales + the ecosistema's `interviewerMode` switch (owner ruling 2026-10-27)
+  it('🔴 Generales, interviewerMode on (the default): a first-person story meets the heuristic interviewer', async () => {
+    world.kind = 'generales';
     world.answerText = 'Gracias por contarlo. ¿Dónde estaba la escuela?';
     const body = (await (await POST(event(turn({ messages: [{ role: 'user', content: STORY }] })))).json()) as {
       provenance: unknown;
     };
     expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
+    expect(systemOf(chatGenerate().at(-1)!)).not.toContain(resonanciasSystemPrompt());
     expect(body.provenance).toBeNull();
   });
 
-  it('🔴 stream: the same', async () => {
-    world.streamText = 'Gracias. ¿Quién le ayudó?';
-    const frames = await readSse(await POST(event(turn({ messages: [{ role: 'user', content: STORY }] }), true)));
-    expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
-    expect(frames.find((f) => f.type === 'done')!.provenance).toBeNull();
+  it('🔴 Generales, interviewerMode on: a direct question keeps variant E', async () => {
+    world.kind = 'generales';
+    world.answerText = 'Las parteras acompañan los nacimientos [1].';
+    await POST(event(turn({ messages: [{ role: 'user', content: QUESTION }] })));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
+  });
+
+  it('🔴 the ecosistema switched interviewerMode off: a Generales story gets the answer prompt', async () => {
+    world.kind = 'generales';
+    world.features = { interviewerMode: false };
+    world.answerText = 'Respuesta.';
+    await POST(event(turn({ messages: [{ role: 'user', content: STORY }] })));
+    expect(systemOf(chatGenerate().at(-1)!)).not.toContain(interviewSystemPrompt());
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt());
+  });
+
+  it('🔴 Resonancias ignores interviewerMode: off still interviews from the corpus', async () => {
+    world.kind = 'resonancias';
+    world.features = { interviewerMode: false };
+    world.answerText = 'Gracias. ¿Dónde fue?';
+    await POST(event(turn({ messages: [{ role: 'user', content: STORY }] })));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(resonanciasSystemPrompt());
+    expect(systemOf(chatGenerate().at(-1)!)).not.toContain(interviewSystemPrompt());
   });
 
   // 🔴 Audit 2026-10-26: staff attaching a colleague's testimonio met the interviewer.
-  it('🔴 someone else\'s testimonio attached: answer mode; my own: interview', async () => {
+  it('🔴 Generales: someone else\'s testimonio attached: answer mode; my own: interview', async () => {
+    world.kind = 'generales';
     world.answerText = 'Gracias. ¿Dónde fue?';
     world.sessionDocs = [{ id: 21, name: 'x', kind: 'audio', contentKind: 'testimonio', publicationStatus: 'draft', uploadedBy: 2 }];
     await POST(event(turn({ messages: [{ role: 'user', content: 'Hola' }] })));
@@ -885,19 +964,30 @@ describe('POST /api/generate — a testimonio turn meets the interviewer', () =>
     expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
   });
 
-  it('🔴 a direct question mid-story keeps variant E and its cited sources', async () => {
-    world.answerText = 'Las parteras acompañan los nacimientos [1].';
-    const messages = [
-      { role: 'user', content: STORY },
-      { role: 'assistant', content: '¿Dónde estaba la escuela?' },
-      { role: 'user', content: QUESTION },
-    ];
-    const body = (await (await POST(event(turn({ messages })))).json()) as { provenance: { chunks: unknown[] } };
-    expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
-    expect(body.provenance.chunks.length).toBe(1);
-  });
+  // 🔴 Audit 2026-10-26: a failed session read ran the Generales config.
+  it.each([500, 404, 'throw'] as const)(
+    '🔴 the session read fails (%s): no kind is guessed, the turn is refused, nothing generated',
+    async (failure) => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      world.kind = 'resonancias';
+      world.sessionRead = failure;
+      for (const stream of [false, true]) {
+        const err = await Promise.resolve(POST(event(turn(), stream))).then(
+          () => null,
+          (e: unknown) => e as { status?: number; body?: { code?: string } },
+        );
+        expect(err?.status).toBe(502);
+        expect(err?.body?.code).toBe('session_unavailable');
+      }
+      expect(generates()).toHaveLength(0);
+      expect(saves()).toHaveLength(0);
+    },
+  );
 });
 
+// ── Cited sources only (UX backlog #35) ──────────────────────────────────────
+// 🔴 The engine puts every retrieved chunk on the provenance. Only the ones the
+// answer marks with [N] may become citations, with N kept.
 describe('POST /api/generate — only cited sources are kept', () => {
   type Saved = { provenance?: { chunks: Array<{ ordinal?: number; chunkId: string }> } };
   const ordinalsOf = (p: Saved['provenance'] | null | undefined) => (p?.chunks ?? []).map((c) => c.ordinal);
@@ -1358,6 +1448,15 @@ describe('POST /api/generate — earlier conversations orient, never cite', () =
     ];
     await POST(event(turn()));
     expect(promptText()).not.toContain('<conversaciones_anteriores>');
+  });
+
+  it('🔴 the ecosistema switched chatOrientation off: no leg, no block', async () => {
+    world.features = { chatOrientation: false };
+    await POST(event(turn()));
+    expect(orientRetrieves()).toHaveLength(0);
+    expect(promptText()).not.toContain('<conversaciones_anteriores>');
+    const asked = calls.find((c) => c.url.pathname === '/api/funciones');
+    expect(asked?.url.searchParams.get('organization')).toBe(ECO);
   });
 
   it('🔴 CHAT_ORIENT_SCOPE=off removes the leg and the block', async () => {

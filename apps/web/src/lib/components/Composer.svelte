@@ -8,6 +8,7 @@
   import { composerPlaceholder } from '$lib/layout';
   import { AUDIO_UPLOAD_ENABLED } from '$lib/uploadKind';
   import MicButton from './MicButton.svelte';
+  import { app } from '$lib/stores/app.svelte';
 
   let {
     busy = false,
@@ -150,6 +151,19 @@
   function onInput() {
     void refreshMention();
   }
+
+  /**
+   * On stop (`null`), the last live line lands in the input so the speaker can
+   * edit it and send it as a chat message. ⚠ Sending stores it ungated, like
+   * any typed message; only the uploaded recording goes through the gate.
+   */
+  function onLiveText(line: string | null): void {
+    const last = liveText;
+    liveText = line;
+    if (line !== null || !last || last === '…') return;
+    text = text.trim() ? `${text.trimEnd()} ${last}` : last;
+    queueMicrotask(() => textarea?.focus());
+  }
 </script>
 
 <div class="border-t border-line bg-surface backdrop-blur p-3">
@@ -184,8 +198,8 @@
       data-testid="composer-input"
       disabled={busy}
     ></textarea>
-    {#if AUDIO_UPLOAD_ENABLED}
-      <MicButton disabled={busy} ontext={(line) => (liveText = line)} />
+    {#if AUDIO_UPLOAD_ENABLED && app.features.liveMic}
+      <MicButton disabled={busy} ontext={onLiveText} />
     {/if}
     {#if busy}
       <Button

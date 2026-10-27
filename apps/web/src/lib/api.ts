@@ -20,6 +20,8 @@ export interface SyncGenerateInput {
   scope?: ContextScope;
   /** Retrieve only documentos about speakers of this language. See `$lib/lengua.ts`. */
   lengua?: string;
+  /** Student view: retrieve only from my works or opted-in peers' works. */
+  alcance?: 'mios' | 'companeros';
   /**
    * This turn's id, made by `runTurn`. The server stamps it on the saved
    * answer (`generationMeta.turnId`), so a retry or a recovery finds THIS

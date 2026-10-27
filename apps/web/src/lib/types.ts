@@ -2,6 +2,7 @@ import type { Provenance } from '@edc/chat-engine/core';
 import type { PublicationStatus } from './publication';
 import type { GraphStatus } from './graphStatus';
 import type { AnonymisationStatus } from './docStatus';
+import type { SessionKind } from './sessionKind';
 
 export type { PublicationStatus };
 
@@ -64,7 +65,10 @@ export interface Message {
   ratingPending?: boolean;
 }
 
-export type DocKind = 'markdown' | 'pdf' | 'docx' | 'audio';
+export type DocKind = 'markdown' | 'pdf' | 'docx' | 'xlsx' | 'csv' | 'html' | 'audio';
+
+/** The kinds whose text the backend extracts from an uploaded file. */
+export const FILE_DOC_KINDS = ['pdf', 'docx', 'xlsx', 'csv', 'html'] as const;
 
 /**
  * The backend's `documents.ingestStatus`, mirrored exactly.
@@ -217,6 +221,8 @@ export interface Session {
   panelState?: PanelState | null;
   /** Per-session context scope. One tenancy level, so this is org-wide. */
   contextScope?: ContextScope | null;
+  /** Generales or Resonancias (`$lib/sessionKind`), fixed at create. Missing reads as `generales`. */
+  kind?: SessionKind;
 }
 
 /** The per-thread context scope: a set of refs (org-only/empty = tenant-wide). */

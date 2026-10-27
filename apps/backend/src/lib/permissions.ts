@@ -59,39 +59,54 @@ import type { CollectionSlug, Payload, Where } from 'payload'
 // ---------------------------------------------------------------------------
 
 /**
- * The four ways to stand in an organization. Ordered least → most privileged;
+ * The five ways to stand in an organization. Ordered least → most privileged;
  * `ROLE_RANK` below depends on that order.
  *
- * ⚠ These strings are on the wire (`roles` in a token, `roles` in a grant) and
- * in the database (`memberships.role`). Renaming one is a migration AND a
- * client change.
+ * ⚠ These strings are on the wire (`roles` in a token, `roles` in a grant, and
+ * `memberships[].role` on `/api/users/me`) and in the database
+ * (`memberships.role`). Renaming one is a migration AND a client change.
  *
- * ── WHY `investigador` SITS BETWEEN `member` AND `admin` ─────────────────────
+ * ── THE LADDER (owner ruling 2026-10-27) ─────────────────────────────────────
  *
- * An Investigador collects material from people who are NOT users of this
- * system — they upload documents and Voces (testimonies) on somebody else's
- * behalf, and they read the free-text behind low ratings to understand what the
- * corpus is missing. That is MORE than a participant does.
+ *   estudiante < member < admin < investigador < owner
  *
- * It is emphatically LESS than an admin: an Investigador manages nobody, deletes
- * nothing, and is scoped to ONE ecosistema like any other membership. Ranking it
- * below `admin` is what keeps `withinMyOrganizationsWithRole('admin')` — the
- * gate on member management — meaning exactly what it meant before.
+ *  · `estudiante` — a participant with a member's grants, plus the student view
+ *    where the ecosistema has `studentView` on (`lib/features.ts`). No
+ *    Revisión, no rating comments, nobody else's drafts. It ranks BELOW member
+ *    so a student can never grant `member`.
+ *  · `investigador` — "like admin, but only inside the ecosistemas they're
+ *    assigned to": every grant of `admin` plus `organization:manage` (that
+ *    ecosistema's /ajustes). It ranks ABOVE admin and BELOW owner, so the role
+ *    ceiling lets an investigador add, re-role and remove everyone except the
+ *    responsable. Never the platform: `isPlatformAdmin` is a user flag no
+ *    membership sets, and `PATCH /api/plataforma` asks for that flag alone.
+ *  · `owner` ("responsable") — the same grants as investigador. The rank above
+ *    it lets an owner manage investigadores, and only an owner changes the
+ *    ecosistema's slug or switches it off (`collections/Organizations.ts`).
+ *
+ * Until 2026-10-27 `investigador` sat between member and admin and managed
+ * nobody. The owner widened it: every rank-gated surface
+ * (`withinMyOrganizationsWithRole('admin')` on memberships, teams, projects;
+ * the usage and metrics reads) now admits it, on purpose.
  *
  * ⚠ THE RANK IS NOT COSMETIC. `organizationIdsForUserWithMinRole` compares by
  * rank, so inserting a role in the wrong slot silently hands it (or denies it)
  * every rank-gated surface at once.
+ *
+ * ⚠ The Postgres enum's value order is NOT this order (`estudiante` was added
+ * by `ALTER TYPE … ADD VALUE`). Nothing sorts by the enum; rank lives here.
  */
-export const ORG_ROLES = ['member', 'investigador', 'admin', 'owner'] as const
+export const ORG_ROLES = ['estudiante', 'member', 'admin', 'investigador', 'owner'] as const
 
 export type OrgRole = (typeof ORG_ROLES)[number]
 
 /** Highest wins when someone somehow holds two memberships in one org. */
 const ROLE_RANK: Record<OrgRole, number> = {
-  member: 0,
-  investigador: 1,
+  estudiante: 0,
+  member: 1,
   admin: 2,
-  owner: 3,
+  investigador: 3,
+  owner: 4,
 }
 
 export const DEFAULT_ORG_ROLE: OrgRole = 'member'
@@ -178,9 +193,8 @@ export const PERMISSIONS = {
    *     LEAST context, and the predictable outcome is holds sitting unreviewed
    *     until somebody clicks approve without reading. An unread approval is
    *     worse than no review, because it launders the decision.
-   *   · Admin and owner hold it too, because `ADMIN_PERMISSIONS` builds on
-   *     `INVESTIGADOR_PERMISSIONS` — a rank that does not come with the lower
-   *     role's grants is a lie.
+   *   · Admin and owner hold it too. Since 2026-10-27 admin ranks below
+   *     investigador and holds it directly; estudiante and member never do.
    *
    * ⚠ IT IS A SEPARATE PERMISSION, NOT A FREE CONSEQUENCE OF `voces:upload`, for
    * exactly the reason `voces:upload` is separate from `documents:write`:
@@ -204,33 +218,38 @@ const MEMBER_PERMISSIONS: readonly Permission[] = [
 ]
 
 /**
- * ⚠ A SUPERSET OF `member`, NOT A SIDEWAYS ROLE. An Investigador participates in
- * their ecosistema exactly like anybody else — same chat, same published
- * documents, same drafts — and additionally files other people's material and
- * reads rating comments. Nothing is taken away, and the read surface is
- * membership-scoped, so they see the ecosistema's published corpus like a member
- * does and no more.
+ * ⚠ EXACTLY A MEMBER'S GRANTS. What a student adds is a VIEW, switched per
+ * ecosistema by `studentView`, not a permission: the token carries nothing
+ * extra, and the role itself (`roles: ['estudiante']`) is what the view reads.
  */
-const INVESTIGADOR_PERMISSIONS: readonly Permission[] = [
+const ESTUDIANTE_PERMISSIONS: readonly Permission[] = [...MEMBER_PERMISSIONS]
+
+/**
+ * ⚠ Built by SPREAD up the ladder: a rank that does not come with the lower
+ * role's grants is a lie that shows up as someone refused what a colleague one
+ * rank below them can do.
+ */
+const ADMIN_PERMISSIONS: readonly Permission[] = [
   ...MEMBER_PERMISSIONS,
   PERMISSIONS.vocesUpload,
   PERMISSIONS.ratingsReadComments,
   PERMISSIONS.holdsReview,
-]
-
-const ADMIN_PERMISSIONS: readonly Permission[] = [
-  // ⚠ Built on INVESTIGADOR, not on MEMBER. `ROLE_RANK` says admin outranks
-  // investigador, and a rank that does not come with the lower role's grants is
-  // a lie that shows up as an admin being refused something a colleague can do.
-  ...INVESTIGADOR_PERMISSIONS,
   PERMISSIONS.documentsDelete,
   PERMISSIONS.membersManage,
 ]
 
-const OWNER_PERMISSIONS: readonly Permission[] = [
+/**
+ * Admin plus `organization:manage` — the ecosistema's /ajustes. Scoped like
+ * every membership to the ecosistemas the person is assigned to. See the
+ * ladder in the `ORG_ROLES` header.
+ */
+const INVESTIGADOR_PERMISSIONS: readonly Permission[] = [
   ...ADMIN_PERMISSIONS,
   PERMISSIONS.organizationManage,
 ]
+
+/** Same grants as investigador; the rank above it is the difference. */
+const OWNER_PERMISSIONS: readonly Permission[] = [...INVESTIGADOR_PERMISSIONS]
 
 /**
  * Role → effective permissions. THE map; nothing else expands a role.
@@ -240,6 +259,7 @@ const OWNER_PERMISSIONS: readonly Permission[] = [
  * independently they drift, and the drift is silent.
  */
 export const ROLE_PERMISSIONS: Record<OrgRole, readonly Permission[]> = {
+  estudiante: ESTUDIANTE_PERMISSIONS,
   member: MEMBER_PERMISSIONS,
   investigador: INVESTIGADOR_PERMISSIONS,
   admin: ADMIN_PERMISSIONS,

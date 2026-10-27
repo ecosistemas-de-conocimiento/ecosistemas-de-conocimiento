@@ -4,6 +4,12 @@ import * as migration_20261020_193707_ratings_fk_cascade from './20261020_193707
 import * as migration_20261024_201817_graph_entities_public_figure from './20261024_201817_graph_entities_public_figure';
 import * as migration_20261024_230631_documents_testimonio_title from './20261024_230631_documents_testimonio_title';
 import * as migration_20261026_160000_documents_anonymise from './20261026_160000_documents_anonymise';
+import * as migration_20261026_200000_documents_kind_tabular_html from './20261026_200000_documents_kind_tabular_html';
+import * as migration_20261027_002257_sessions_kind from './20261027_002257_sessions_kind';
+import * as migration_20261027_020102_feature_switches from './20261027_020102_feature_switches';
+import * as migration_20261027_053737_memberships_role_estudiante from './20261027_053737_memberships_role_estudiante';
+import * as migration_20261027_053800_student_view from './20261027_053800_student_view';
+import * as migration_20261027_061014_student_view_fk_cascade from './20261027_061014_student_view_fk_cascade';
 
 export const migrations = [
   {
@@ -34,6 +40,36 @@ export const migrations = [
   {
     up: migration_20261026_160000_documents_anonymise.up,
     down: migration_20261026_160000_documents_anonymise.down,
-    name: '20261026_160000_documents_anonymise'
+    name: '20261026_160000_documents_anonymise',
+  },
+  {
+    up: migration_20261026_200000_documents_kind_tabular_html.up,
+    down: migration_20261026_200000_documents_kind_tabular_html.down,
+    name: '20261026_200000_documents_kind_tabular_html',
+  },
+  {
+    up: migration_20261027_002257_sessions_kind.up,
+    down: migration_20261027_002257_sessions_kind.down,
+    name: '20261027_002257_sessions_kind',
+  },
+  {
+    up: migration_20261027_020102_feature_switches.up,
+    down: migration_20261027_020102_feature_switches.down,
+    name: '20261027_020102_feature_switches',
+  },
+  {
+    up: migration_20261027_053737_memberships_role_estudiante.up,
+    down: migration_20261027_053737_memberships_role_estudiante.down,
+    name: '20261027_053737_memberships_role_estudiante',
+  },
+  {
+    up: migration_20261027_053800_student_view.up,
+    down: migration_20261027_053800_student_view.down,
+    name: '20261027_053800_student_view',
+  },
+  {
+    up: migration_20261027_061014_student_view_fk_cascade.up,
+    down: migration_20261027_061014_student_view_fk_cascade.down,
+    name: '20261027_061014_student_view_fk_cascade'
   },
 ];

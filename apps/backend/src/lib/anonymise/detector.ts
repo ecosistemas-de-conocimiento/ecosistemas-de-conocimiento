@@ -42,6 +42,7 @@ import {
   openaiCompatFromEnv,
 } from './openaiCompatGenerator'
 import { cooldownMsFromEnv, fallbackModeFromEnv, withHostedFallback } from './fallbackGenerator'
+import { detectorFallbackMode } from '../platformSettings'
 import { PLACEHOLDER_PATTERN, type DetectorFinding, type PersonDetector } from './types'
 
 /** Env var names, so docs and tests never hand-type a string that can drift. */
@@ -604,15 +605,19 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
   // to ai-service (hosted model) unless `ANONYMISE_DETECT_FALLBACK=none`, which
   // fails closed. See `fallbackGenerator.ts` for what counts as "unavailable".
   const selfHosted = !opts.client && (process.env[ANONYMISE_DETECT_URL_VAR] ?? '').trim() !== ''
-  // ⚠ Read at construction for the NAME only; `detect` re-reads it so a bad
-  // value throws there (→ HOLD) instead of here.
+  // ⚠ The env value names the detector until the first `detect`; from then on
+  // the name follows the mode `detect` resolved (stored switch first), so the
+  // gate row names the backend that could see the text (re-audit 2026-10-26:
+  // a stored `none` still read `+fallback`). A bad env value throws in
+  // `detect` (→ HOLD), not here.
   let fallbackForName = true
   try {
     fallbackForName = fallbackModeFromEnv() === 'hosted'
   } catch {
     /* reported by detect() */
   }
-  const backend = !selfHosted ? 'ai-service' : fallbackForName ? 'openai-compat+ai-service' : 'openai-compat'
+  const backendName = () =>
+    !selfHosted ? 'ai-service' : fallbackForName ? 'openai-compat+ai-service' : 'openai-compat'
 
   const hostedClient = async (): Promise<SyncGenerator> => {
     const { getAppAIClient } = await import('@/lib/aiClient')
@@ -625,17 +630,22 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
     // not answer". Which one answered each call is in the WARN log lines; the
     // detector instance is shared across documents in the seed, so a per-call
     // record on the row would need a per-document channel this interface lacks.
-    name:
-      opts.name ??
-      (selfHosted
-        ? `openai-compat:${(process.env[ANONYMISE_DETECT_MODEL_VAR] ?? '').trim() || 'unset'}${fallbackForName ? '+fallback' : ''}`
-        : 'ai-service:anonymise-detect'),
+    get name() {
+      return (
+        opts.name ??
+        (selfHosted
+          ? `openai-compat:${(process.env[ANONYMISE_DETECT_MODEL_VAR] ?? '').trim() || 'unset'}${fallbackForName ? '+fallback' : ''}`
+          : 'ai-service:anonymise-detect')
+      )
+    },
     async detect({ text, contentKind }) {
       let client = opts.client
       if (!client && selfHosted) {
         const resolved = openaiCompatFromEnv()
         if (!resolved) throw new Error(`${ANONYMISE_DETECT_URL_VAR} was unset after start`)
-        const mode = fallbackModeFromEnv()
+        // 🔴 Runtime switch first (`lib/platformSettings.ts`, ≤ 60 s cache), then env.
+        const mode = await detectorFallbackMode()
+        fallbackForName = mode === 'hosted'
         client =
           mode === 'hosted'
             ? withHostedFallback(resolved.generator, hostedClient, { cooldownMs: cooldownMsFromEnv() })
@@ -746,7 +756,7 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
             timedOut ? 'tiempo-agotado' : 'transporte',
             timedOut
               ? `The anonymisation detector timed out after ${timeoutMs} ms.`
-              : `The anonymisation detector could not reach ${backend}: ${name}`,
+              : `The anonymisation detector could not reach ${backendName()}: ${name}`,
             // Every throw out of the CALL (as opposed to the parse below) means
             // the model never answered: rate limit, 5xx, budget, auth, network.
             true,

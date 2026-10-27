@@ -85,6 +85,18 @@ describe('UPLOAD_ACCEPT', () => {
     expect(UPLOAD_ACCEPT).toContain('application/pdf');
     expect(UPLOAD_ACCEPT).toContain('.docx');
   });
+
+  it('offers markdown notes', () => {
+    for (const entry of ['.md', '.markdown', 'text/markdown']) {
+      expect(UPLOAD_ACCEPT.split(',')).toContain(entry);
+    }
+  });
+
+  it('offers spreadsheets and web pages', () => {
+    for (const entry of ['.xlsx', '.csv', '.html', '.htm', 'text/csv', 'text/html']) {
+      expect(UPLOAD_ACCEPT.split(',')).toContain(entry);
+    }
+  });
 });
 
 describe('formatBytes', () => {

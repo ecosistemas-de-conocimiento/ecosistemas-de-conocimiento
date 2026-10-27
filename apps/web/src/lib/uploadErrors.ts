@@ -25,8 +25,8 @@ export function uploadErrorToast(
         title: 'Tipo de archivo no admitido',
         // Follows the audio switch (backlog #8): never offer what is turned off.
         message: AUDIO_UPLOAD_ENABLED
-          ? 'Aceptamos PDF, DOCX y audio en MP3, M4A, WAV, OGG u OPUS.'
-          : 'Aceptamos PDF y DOCX.',
+          ? 'Aceptamos PDF, DOCX, XLSX, CSV, HTML, Markdown y audio en MP3, M4A, WAV, OGG u OPUS.'
+          : 'Aceptamos PDF, DOCX, XLSX, CSV, HTML y Markdown.',
       };
     case 'unauthorized':
       return {

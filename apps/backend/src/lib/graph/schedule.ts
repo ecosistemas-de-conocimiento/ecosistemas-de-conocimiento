@@ -20,7 +20,7 @@
  * is a missing feature; an upload that fails because of it is a broken product.
  */
 
-import { mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
+import { anonymiseRequested, corpusTextFor, mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
 import { updateDocumentColumns, type DocumentColumnsPayload } from '@/lib/documentColumns'
 
 import { extractGraph, type GraphGenerateClient } from './extract'
@@ -37,6 +37,18 @@ export interface RunGraphExtractionArgs {
   organizationId: string | number
   /** 🔴 Read from `documents.contentKind`. The person rule keys off it. */
   contentKind: string | null | undefined
+  /** `documents.anonymise` when the job was queued. A change aborts the run. */
+  anonymise?: unknown
+  /**
+   * `documents.publicationStatus` when the job was queued. A row that was
+   * `published` then and is not now was withdrawn: the run aborts.
+   */
+  publicationStatus?: unknown
+  /**
+   * 🔴 THE CORPUS TEXT WHEN THE JOB WAS QUEUED — A FINGERPRINT, NOT THE INPUT.
+   * The run re-derives its text from the row (`corpusTextFor`) and aborts if it
+   * no longer equals this. See {@link abortIfStale}.
+   */
   text: string
   title?: string | null
   /** Test seam. Production resolves `getGraphAIClient(organizationId)`. */
@@ -71,6 +83,41 @@ export async function clearGraphRows(
   await payload.delete({ collection: 'graphRelations', where, overrideAccess: true })
 }
 
+/**
+ * 🔴 A DOCUMENT THAT MAY NOT BE GRAPHED KEEPS NO GRAPH ROWS.
+ *
+ * Every path that marks a row `skipped` because it is not graphable (rejected,
+ * held, gate not cleared) goes through here, so the status and the rows can
+ * never disagree. Rows an earlier run built may carry the very text the row was
+ * refused for.
+ *
+ * Never throws: callers run after their own write has landed. A failed delete
+ * marks the row `failed` (`graph_clear_failed`), which the backfill selects and
+ * clears again (`backfill.ts`, the `corpusTextFor` refusal branch).
+ */
+export async function markNotGraphable(
+  payload: GraphSchedulerPayload,
+  docId: string | number,
+  organizationId: string | number,
+  reason: string,
+): Promise<'skipped' | 'failed'> {
+  try {
+    await clearGraphRows(payload, docId, organizationId)
+  } catch (err) {
+    console.error('[graph] could not clear rows for non-graphable doc', docId, err instanceof Error ? err.name : typeof err)
+    await setGraphStatus(payload, docId, {
+      graphStatus: 'failed',
+      graphError: `graph_clear_failed: ${reason}`.slice(0, 500),
+    }).catch(() => undefined)
+    return 'failed'
+  }
+  await setGraphStatus(payload, docId, {
+    graphStatus: 'skipped',
+    graphError: `not_graphable: ${reason}`.slice(0, 500),
+  }).catch(() => undefined)
+  return 'skipped'
+}
+
 async function setGraphStatus(
   payload: GraphSchedulerPayload,
   docId: string | number,
@@ -94,8 +141,28 @@ async function setGraphStatus(
  * the request that caused it.
  */
 export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<GraphStatus> {
-  const { payload, docId, organizationId, contentKind } = args
-  const text = typeof args.text === 'string' ? args.text : ''
+  const { payload, docId, organizationId } = args
+
+  // 🔴 RE-READ AT JOB START. The queue may have held this job for minutes.
+  let start: GraphableRow
+  try {
+    start = await readGraphableRow(payload, docId, organizationId)
+  } catch (err) {
+    await recordFailure(args, 'graph_reread_failed', err)
+    return 'failed'
+  }
+  const queued: GraphableRow = {
+    ok: true,
+    text: typeof args.text === 'string' ? args.text.trim() : '',
+    contentKind: typeof args.contentKind === 'string' ? args.contentKind : null,
+    anonymise: anonymiseRequested(args.anonymise),
+    publicationStatus: args.publicationStatus,
+  }
+  const startAbort = await abortIfStale(payload, docId, organizationId, queued, start)
+  if (startAbort || !start.ok) return startAbort ?? 'skipped'
+  // From here on, the ROW's values, never the queued ones.
+  const { text, contentKind } = start
+  const ctx = { payload, docId, organizationId, contentKind, anonymise: start.anonymise }
 
   if (text.trim().length < MIN_TEXT_CHARS) {
     // ⚠ CLEAR WHAT A PREVIOUS RUN LEFT BEHIND. A document can lose its text —
@@ -127,7 +194,7 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
       // A deployment with no `AI_SERVICE_API_KEY` is a normal state for a local
       // run. `failed` rather than `skipped` on purpose: an operator can fix it
       // and the backfill will then pick the row up.
-      await recordFailure(args, 'ai_client_unavailable', err)
+      await recordFailure(ctx, 'ai_client_unavailable', err)
       return 'failed'
     }
   }
@@ -146,6 +213,12 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
       title: args.title ?? null,
       client,
     })
+
+    // 🔴 RE-READ RIGHT BEFORE WRITING. The deep calls above take minutes; a
+    // reviewer can hold, reject, withdraw or re-gate the row in that window.
+    const beforeWrite = await readGraphableRow(payload, docId, organizationId)
+    const writeAbort = await abortIfStale(payload, docId, organizationId, start, beforeWrite)
+    if (writeAbort) return writeAbort
 
     await writeGraphForDocument({
       payload,
@@ -178,7 +251,7 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     )
     return 'ready'
   } catch (err) {
-    await recordFailure(args, 'graph_extract_failed', err)
+    await recordFailure(ctx, 'graph_extract_failed', err)
     return 'failed'
   }
 }
@@ -203,12 +276,14 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
  * ⚠ `mustPassAnonymisationGate` reads the RAW kind, so an unknown kind is gated.
  */
 async function recordFailure(
-  args: Pick<RunGraphExtractionArgs, 'payload' | 'docId' | 'organizationId' | 'contentKind'>,
+  args: Pick<RunGraphExtractionArgs, 'payload' | 'docId' | 'organizationId' | 'contentKind' | 'anonymise'>,
   code: string,
   err: unknown,
 ): Promise<void> {
   const { payload, docId, organizationId, contentKind } = args
-  if (mustPassAnonymisationGate(contentKind)) {
+  // 🔴 `anonymise` TOO: a documento filed for anonymisation is gated content.
+  const gated = mustPassAnonymisationGate(contentKind, args.anonymise)
+  if (gated) {
     await clearGraphRows(payload, docId, organizationId).catch((clearErr) => {
       console.error('[graph] could not clear rows for failed gated doc', docId, clearErr)
     })
@@ -216,7 +291,7 @@ async function recordFailure(
   const message = err instanceof Error ? err.message : String(err)
   // 🔴 PRIVACY. A gated kind logs safe metadata only: a downstream error (a
   // Postgres unique violation, a client error) can quote a label or the reply.
-  if (mustPassAnonymisationGate(contentKind)) {
+  if (gated) {
     console.error('[graph] extraction failed for doc', docId, String(contentKind), code,
       err instanceof Error ? err.name : typeof err, `message length ${message.length}`)
   } else {
@@ -231,6 +306,109 @@ async function recordFailure(
   }).catch((updateErr) => {
     console.error('[graph] could not record the failure on doc', docId, updateErr)
   })
+}
+
+// ---------------------------------------------------------------------------
+// 🔴 The re-read: a queued job never trusts the text it was queued with
+// ---------------------------------------------------------------------------
+
+/**
+ * What a run may graph, read from the row NOW.
+ *
+ * `ok: false` means there is nothing graphable: the row is gone, or
+ * `corpusTextFor` refuses it (held, rejected, gated and not yet cleared, no
+ * text). Same helper, same fail-closed rule as publish and the backfill.
+ */
+type GraphableRow =
+  | { ok: true; text: string; contentKind: string | null; anonymise: boolean; publicationStatus: unknown }
+  | { ok: false; reason: string }
+
+async function readGraphableRow(
+  payload: GraphSchedulerPayload,
+  docId: string | number,
+  organizationId: string | number,
+): Promise<GraphableRow> {
+  // 🔴 Tenancy named explicitly, as in every other graph query.
+  const found = await payload.find({
+    collection: 'documents',
+    where: { and: [{ id: { equals: docId } }, { organization: { equals: organizationId } }] },
+    limit: 1,
+    depth: 0,
+    overrideAccess: true,
+  })
+  const row = found?.docs?.[0] as Record<string, unknown> | undefined
+  if (!row) return { ok: false, reason: 'document not found' }
+  const corpus = corpusTextFor(row)
+  if (!corpus.ok) return corpus
+  return {
+    ok: true,
+    text: corpus.text,
+    contentKind: typeof row.contentKind === 'string' ? row.contentKind : null,
+    anonymise: anonymiseRequested(row.anonymise),
+    publicationStatus: row.publicationStatus,
+  }
+}
+
+type Graphable = Extract<GraphableRow, { ok: true }>
+
+/** Why `now` no longer matches `then`, or null when the run may go on. */
+function staleReason(then: Graphable, now: Graphable): string | null {
+  if (now.text !== then.text) return 'the corpus text changed'
+  if (now.contentKind !== then.contentKind) return 'the content kind changed'
+  if (now.anonymise !== then.anonymise) return 'the anonymise flag changed'
+  // ⚠ ONLY published → not published. A draft published while queued is the
+  // normal auto-publish path (`lib/autoPublish.ts`) and must not abort.
+  if (then.publicationStatus === 'published' && now.publicationStatus !== 'published') {
+    return 'the document was unpublished'
+  }
+  return null
+}
+
+/**
+ * Abort the run when the row is no longer graphable or changed under it.
+ * Returns the final status, or null to go on.
+ *
+ * 🔴 BOTH ABORTS CLEAR THE DOCUMENT'S ROWS. Rows an earlier run built may carry
+ * the very text the row was withdrawn for.
+ *
+ *   · not graphable → `skipped`, the same terminal value
+ *     `scheduleGraphExtractionForDoc` writes for a row it refuses.
+ *   · changed       → `failed` with `graph_stale_job`, so the backfill rebuilds
+ *     it from the current text. ⚠ If a newer job for the same row already wrote,
+ *     this clears its rows too; the `failed` stamp is what gets them rebuilt.
+ */
+async function abortIfStale(
+  payload: GraphSchedulerPayload,
+  docId: string | number,
+  organizationId: string | number,
+  then: GraphableRow,
+  now: GraphableRow,
+): Promise<GraphStatus | null> {
+  if (now.ok) {
+    const reason = then.ok ? staleReason(then, now) : 'the row was not graphable when queued'
+    if (reason == null) return null
+    await clearGraphRows(payload, docId, organizationId).catch((err) => {
+      console.error('[graph] could not clear rows for aborted doc', docId, err)
+    })
+    // Safe metadata only: the reasons are fixed strings, never row text.
+    console.warn('[graph] doc', docId, 'changed since its job was queued — run aborted:', reason)
+    await setGraphStatus(payload, docId, {
+      graphStatus: 'failed',
+      graphError: `graph_stale_job: ${reason}`.slice(0, 500),
+      graphPromptVersion: GRAPH_PROMPT_VERSION,
+    }).catch(() => undefined)
+    return 'failed'
+  }
+
+  await clearGraphRows(payload, docId, organizationId).catch((err) => {
+    console.error('[graph] could not clear rows for aborted doc', docId, err)
+  })
+  console.warn('[graph] doc', docId, 'no longer graphable — run aborted')
+  await setGraphStatus(payload, docId, {
+    graphStatus: 'skipped',
+    graphError: `not_graphable: ${now.reason}`.slice(0, 500),
+  }).catch(() => undefined)
+  return 'skipped'
 }
 
 // ---------------------------------------------------------------------------

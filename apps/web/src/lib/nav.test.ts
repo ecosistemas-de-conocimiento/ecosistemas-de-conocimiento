@@ -18,8 +18,11 @@ describe('the menu only offers pages that exist', () => {
       '/documentos',
       '/biblioteca',
       '/grafo',
+      '/estudiante',
+      '/seguimiento',
       '/revision',
       '/miembros',
+      '/ajustes',
       '/admin',
     ]);
   });
@@ -30,8 +33,11 @@ describe('the menu only offers pages that exist', () => {
       'Mis documentos',
       'Biblioteca',
       'Conexiones',
+      'Mi investigación',
+      'Estudiantes',
       'Revisión',
       'Miembros',
+      'Ajustes',
       'Administración',
     ]);
   });
@@ -63,6 +69,16 @@ describe('the menu only offers pages that exist', () => {
   });
 });
 
+describe('student view entries', () => {
+  it('only with the layout’s student / teacher answer, literally true', () => {
+    expect(visibleNavItems(member).map((i) => i.href)).not.toContain('/estudiante');
+    expect(visibleNavItems(member, { isStudent: true }).map((i) => i.href)).toContain('/estudiante');
+    expect(visibleNavItems(member, { isStudent: true }).map((i) => i.href)).not.toContain('/seguimiento');
+    expect(visibleNavItems(admin, { isTeacher: true }).map((i) => i.href)).toContain('/seguimiento');
+    expect(visibleNavItems(admin).map((i) => i.href)).not.toContain('/seguimiento');
+  });
+});
+
 describe('who sees the admin entry', () => {
   it('shows it to a platform admin', () => {
     expect(visibleNavItems(admin).map((i) => i.href)).toContain('/admin');
@@ -87,6 +103,16 @@ describe('who sees the admin entry', () => {
   it('hides it when the flag is missing, garbled or merely truthy', () => {
     for (const user of [null, undefined, {}, { isPlatformAdmin: 'true' }, { isPlatformAdmin: 1 }]) {
       expect(visibleNavItems(user).map((i) => i.href)).not.toContain('/admin');
+    }
+  });
+
+  it('shows it to an investigador or owner of some ecosistema; never to admin, member or estudiante', () => {
+    const withRole = (role: string) => ({ id: 3, memberships: [{ organization: '8', slug: 's', role }] });
+    for (const role of ['investigador', 'owner']) {
+      expect(visibleNavItems(withRole(role)).map((i) => i.href)).toContain('/admin');
+    }
+    for (const role of ['admin', 'member', 'estudiante']) {
+      expect(visibleNavItems(withRole(role)).map((i) => i.href)).not.toContain('/admin');
     }
   });
 });
@@ -143,6 +169,23 @@ describe('who sees the members entry', () => {
       expect(
         visibleNavItems(member, caps as { canManageMembers?: boolean }).map((i) => i.href),
       ).not.toContain('/miembros');
+    }
+  });
+});
+
+describe('who sees the ajustes entry', () => {
+  // ⚠ Presentation only. `routes/ajustes/+page.server.ts` and the backend's
+  // `/api/funciones` are the control.
+  it('shows it to a responsable and to a platform admin', () => {
+    expect(visibleNavItems(member, { canEditFeatures: true }).map((i) => i.href)).toContain('/ajustes');
+    expect(visibleNavItems(admin).map((i) => i.href)).toContain('/ajustes');
+  });
+
+  it('hides it from a member, and from someone who only manages members', () => {
+    for (const caps of [{}, { canManageMembers: true }, { canEditFeatures: 'true' }]) {
+      expect(
+        visibleNavItems(member, caps as { canEditFeatures?: boolean }).map((i) => i.href),
+      ).not.toContain('/ajustes');
     }
   });
 });

@@ -41,6 +41,11 @@ export class LiveUplink {
   private closed = false;
   /** A failed send waits for the next slice instead of retrying in a loop. */
   private stalled = false;
+  /**
+   * 🔴 The conversation the recording will upload into, read per slice. The
+   * backend checks `liveMic` on ITS ecosistema, not the selected one.
+   */
+  conversation: () => string | null = () => null;
 
   constructor(
     private readonly onText: (text: LiveText) => void,
@@ -101,7 +106,9 @@ export class LiveUplink {
     const body = this.bytesFrom(offset);
     let res: Response;
     try {
-      res = await this.fetchImpl(`/api/live/${this.sid}?offset=${offset}`, {
+      const conversation = this.conversation();
+      const tail = conversation ? `&conversation=${encodeURIComponent(conversation)}` : '';
+      res = await this.fetchImpl(`/api/live/${this.sid}?offset=${offset}${tail}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream' },
         body,
@@ -125,7 +132,7 @@ export class LiveUplink {
       this.sent = 0;
       return;
     }
-    if (res.status === 503 || res.status === 401 || res.status === 413) {
+    if (res.status === 503 || res.status === 401 || res.status === 403 || res.status === 413) {
       this.disabled = true;
     }
     // 422 (nothing decodable yet), 502/504: keep the offset, retry with the next slice.

@@ -5,6 +5,8 @@ import {
   reviewCapabilityFrom,
 } from '$lib/server/holds';
 import { MEMBERS_MANAGE } from '$lib/server/miembros';
+import { ECOSYSTEM_COOKIE } from '$lib/server/ecosystem';
+import { fetchStudentAccess, NO_ACCESS } from '$lib/server/estudiante';
 import { VOCES_UPLOAD } from '$lib/uploadKind';
 import type { LayoutServerLoad } from './$types';
 
@@ -34,19 +36,27 @@ import type { LayoutServerLoad } from './$types';
 // ecosistema). Same presentation-only status: `DocsPanel` shows the
 // "Voz / testimonio" choice from it, and the backend's
 // `enforceVocesUploadRights` is the control. One identity read serves both.
-export const load: LayoutServerLoad = async ({ locals }) => {
+export const load: LayoutServerLoad = async ({ locals, cookies }) => {
   const identity = locals.user ? await readIdentity(locals.token) : null;
   const ok = identity !== null;
   const holds = ok ? reviewCapabilityFrom(identity, HOLDS_REVIEW) : null;
   const members = ok ? reviewCapabilityFrom(identity, MEMBERS_MANAGE) : null;
+  // `organization:manage` = responsable (owner). Presentation; `/ajustes` re-asks.
+  const owners = ok ? reviewCapabilityFrom(identity, 'organization:manage') : null;
   const vocesUpload = ok
     ? reviewCapabilityFrom(identity, VOCES_UPLOAD)
     : { isPlatformAdmin: false, slugs: [], ok: false };
+  // Student view: presentation only; every `/api/estudiante` route re-checks.
+  const studentAccess = locals.user
+    ? await fetchStudentAccess(locals.token, cookies.get(ECOSYSTEM_COOKIE) ?? null)
+    : NO_ACCESS;
   return {
     user: locals.user,
+    studentAccess,
     canReviewHolds: holds ? mayReviewAnywhere(holds) : false,
     // Same presentation-only status; `routes/miembros` re-asks.
     canManageMembers: members ? mayReviewAnywhere(members) : false,
+    canEditFeatures: owners ? mayReviewAnywhere(owners) : false,
     vocesUpload,
   };
 };

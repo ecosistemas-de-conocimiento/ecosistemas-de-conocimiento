@@ -599,7 +599,7 @@ describe('sweepStalledPending — the lost background extract', () => {
       strandedPending({ id: 11, publicationStatus: 'published' }),
       strandedPending({ id: 12, publicationStatus: 'publishing' }),
       // `planIngestRetry` refuses a kind with no pipeline.
-      strandedPending({ id: 13, kind: 'markdown' }),
+      strandedPending({ id: 13, kind: 'chat' }),
       // Not `pending` at all.
       strandedPending({ id: 14, ingestStatus: 'embedding', updatedAt: minutesAgo(10) }),
       strandedPending({ id: 15, ingestStatus: 'ready' }),
@@ -675,7 +675,7 @@ describe('sweepStalledPending — the lost background extract', () => {
   })
 
   it('sweeps exactly the kinds `planIngestRetry` will retry — the two lists cannot drift', () => {
-    for (const kind of ['pdf', 'docx', 'audio', 'markdown', 'chat', 'unknown']) {
+    for (const kind of ['pdf', 'docx', 'xlsx', 'csv', 'html', 'audio', 'markdown', 'chat', 'unknown']) {
       const retryable =
         planIngestRetry({ kind, ingestStatus: 'failed', extractedText: 't', anonymisationStatus: 'n/a' }) !== null
       expect((PENDING_SWEEP_KINDS as readonly string[]).includes(kind), kind).toBe(retryable)

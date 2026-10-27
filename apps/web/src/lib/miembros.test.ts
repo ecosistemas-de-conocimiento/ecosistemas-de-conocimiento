@@ -1,19 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
-import { assignableRoles, parseMembers, roleLabel } from './miembros';
+import { assignableRoles, outranks, parseMembers, roleLabel } from './miembros';
 
 describe('roles on the Miembros screen', () => {
-  it('names the three roles in the owner’s words', () => {
+  it('names the roles in the owner’s words', () => {
+    expect(roleLabel('estudiante')).toBe('estudiante');
     expect(roleLabel('member')).toBe('participante');
     expect(roleLabel('investigador')).toBe('investigador');
     expect(roleLabel('owner')).toBe('responsable');
   });
 
-  it('offers a responsable all three, and an admin nothing above their own', () => {
-    expect(assignableRoles('owner').map((r) => r.value)).toEqual(['member', 'investigador', 'owner']);
-    expect(assignableRoles('admin').map((r) => r.value)).toEqual(['member', 'investigador']);
+  it('offers each manager the roles up to their own (estudiante < member < admin < investigador < owner)', () => {
+    expect(assignableRoles('owner').map((r) => r.value)).toEqual(['estudiante', 'member', 'investigador', 'owner']);
+    expect(assignableRoles('investigador').map((r) => r.value)).toEqual(['estudiante', 'member', 'investigador']);
+    expect(assignableRoles('admin').map((r) => r.value)).toEqual(['estudiante', 'member']);
     expect(assignableRoles('member')).toEqual([]);
+    expect(assignableRoles('estudiante')).toEqual([]);
     expect(assignableRoles('garbage')).toEqual([]);
+  });
+
+  it('an investigador outranks an admin, never an owner', () => {
+    expect(outranks('investigador', 'admin')).toBe(true);
+    expect(outranks('owner', 'investigador')).toBe(true);
+    expect(outranks('member', 'estudiante')).toBe(true);
   });
 
   it('parses the backend list defensively', () => {

@@ -16,7 +16,26 @@ import { describe, expect, it, vi } from 'vitest'
 import { NO_DRIZZLE } from '@/lib/documentColumns.testFake'
 vi.mock('@/lib/documentColumns', () => import('@/lib/documentColumns.testFake'))
 
-import { runGraphExtraction, type GraphSchedulerPayload } from './schedule'
+import { runGraphExtraction as realRun, type GraphSchedulerPayload } from './schedule'
+
+/**
+ * The run re-reads its row (`schedule.stale.test.ts`). These cases are about
+ * what happens AFTER that check, so each one gets a row that matches its args.
+ */
+const ROWS = new WeakMap<object, Record<string, unknown>>()
+const runGraphExtraction: typeof realRun = (args) => {
+  if (!ROWS.has(args.payload)) {
+    ROWS.set(args.payload, {
+      id: args.docId,
+      organization: args.organizationId,
+      contentKind: args.contentKind,
+      extractedText: args.text,
+      redactedText: args.text,
+      anonymisationStatus: 'ready',
+    })
+  }
+  return realRun(args)
+}
 import type { GraphGenerateClient } from './extract'
 import { GRAPH_FRAGMENT_MAX_CHARS, GRAPH_PROMPT_VERSION } from './prompt'
 
@@ -29,7 +48,8 @@ function harness(parsed: unknown | Error) {
 
   const payload: GraphSchedulerPayload = {
     async find(args) {
-      return args.collection === 'graphEntities' ? { docs: [] } : { docs: [] }
+      const row = args.collection === 'documents' ? ROWS.get(payload) : undefined
+      return { docs: row ? [row] : [] }
     },
     async create(args) {
       created.push({

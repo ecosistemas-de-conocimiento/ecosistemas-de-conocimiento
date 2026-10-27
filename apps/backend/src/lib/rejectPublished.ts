@@ -18,6 +18,7 @@
  *   3. The row: a `rejected` draft, its redaction cleared, exactly what a
  *      rejected hold looks like. `autoPublishBlocker` and `beginPublish` refuse
  *      a `rejected` row, so nothing publishes it again.
+ *   4. Its graph rows (`markNotGraphable`): built from the refused text.
  *
  * ⚠ NO DRAFT RE-INGEST. A rejected testimonio is never embedded anywhere; the
  * draft copy was already retired when it was published (`confirmPublish`).
@@ -32,6 +33,7 @@ import { isActiveUser, isPlatformAdminUser } from '../access'
 import { HoldNotVisibleError } from './holdReview'
 import { organizationIdsForUserWithPermission, PERMISSIONS, relationId } from './permissions'
 import { publishedCorpus } from './corpus'
+import { markNotGraphable } from './graph/schedule'
 import { retireFrom, type CorpusMover } from './publishDocument'
 
 type Id = number | string
@@ -148,7 +150,7 @@ export async function rejectPublished(args: {
 
   await retireFrom(args.clientFor(organizationId), publishedCorpus(organizationId), row.id as Id, args.now ?? new Date())
 
-  await payload.update({
+  const settled = (await payload.update({
     collection: 'documents',
     // ⚠ Still published: a concurrent unpublish or a second reviewer makes this a no-op.
     where: { and: [{ id: { equals: row.id } }, { publicationStatus: { equals: 'published' } }] },
@@ -165,7 +167,14 @@ export async function rejectPublished(args: {
     } as never,
     overrideAccess: true,
     context: { __skipDocsExtract: true },
-  })
+  })) as { docs?: unknown[] } | null
+
+  // 4. 🔴 The graph rows. Retiring the corpus copy does not touch them, and the
+  // reviewer refused the very text they were built from. Only when OUR write
+  // landed: a concurrent unpublish owns the row otherwise.
+  if (!Array.isArray(settled?.docs) || settled.docs.length > 0) {
+    await markNotGraphable(payload as never, row.id as Id, organizationId, 'rejected after publication')
+  }
 
   return { id: String(row.id), decision: 'rejected', reviewId: String(review.id), anonymisationStatus: 'rejected' }
 }

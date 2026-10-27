@@ -252,8 +252,8 @@ export function ingestFailureCopy(ingestError: string | null | undefined): Inges
       return {
         title: 'Formato no admitido',
         message: AUDIO_UPLOAD_ENABLED
-          ? 'Aceptamos PDF, DOCX y audio en MP3, M4A, WAV, OGG u OPUS.'
-          : 'Aceptamos PDF y DOCX.',
+          ? 'Aceptamos PDF, DOCX, XLSX, CSV, HTML, Markdown y audio en MP3, M4A, WAV, OGG u OPUS.'
+          : 'Aceptamos PDF, DOCX, XLSX, CSV, HTML y Markdown.',
         needsDifferentFile: true,
       };
     case 'payload_too_large':
@@ -336,6 +336,15 @@ export function ingestFailureCopy(ingestError: string | null | undefined): Inges
 }
 
 /**
+ * An in-app note: `markdown` with no pipeline. An uploaded `.md` is also
+ * `markdown`, but it has an ingest status and an original file, like a PDF.
+ * Mirrors `isIngestable` in the backend's `collections/Documents.ts`.
+ */
+export function isNote(d: { kind?: DocKind | null; ingestStatus?: IngestStatus | null }): boolean {
+  return d.kind === 'markdown' && (d.ingestStatus ?? 'n/a') === 'n/a';
+}
+
+/**
  * Should the retry button be offered?
  *
  * Only for a terminal failure on a document that HAS a pipeline, and only when
@@ -347,7 +356,7 @@ export function canRetryIngest(input: {
   ingestStatus: IngestStatus;
   ingestError?: string | null;
 }): boolean {
-  if (input.kind === 'markdown') return false;
+  if (isNote(input)) return false;
   if (input.ingestStatus !== 'failed') return false;
   return !ingestFailureCopy(input.ingestError).needsDifferentFile;
 }

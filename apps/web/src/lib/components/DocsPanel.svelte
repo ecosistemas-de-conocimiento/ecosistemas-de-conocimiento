@@ -44,7 +44,10 @@
     TRANSCRIPT_UNAVAILABLE,
     transcriptionEtaCopy,
     uploadInFlightCopy,
+    isNote,
   } from '$lib/ingest';
+  /** Audio needs the build flag AND the ecosistema's `audioUpload` (`$lib/features`). */
+  const audioOn = $derived(AUDIO_UPLOAD_ENABLED && app.features.audioUpload);
 
   /**
    * ⚠ NARROW-SCREEN CASE, not a preference. Inside a drawer
@@ -221,7 +224,7 @@
     if (!file) return;
     // 🔴 Audio is switched off (`AUDIO_UPLOAD_ENABLED`). The picker already
     // hides audio, but "Todos los archivos" in the OS dialog still lets one through.
-    if (!AUDIO_UPLOAD_ENABLED && isAudioUpload(file)) {
+    if (!audioOn && isAudioUpload(file)) {
       toasts.push({ kind: 'warning', ...AUDIO_UPLOAD_OFF_COPY });
       input.value = '';
       return;
@@ -330,7 +333,7 @@
         <input
           bind:this={fileInput}
           type="file"
-          accept={uploadAccept(UPLOAD_ACCEPT, AUDIO_EXTENSIONS)}
+          accept={uploadAccept(UPLOAD_ACCEPT, AUDIO_EXTENSIONS, audioOn)}
           class="hidden"
           onchange={onFileChosen}
         />
@@ -339,7 +342,7 @@
           onclick={() => fileInput?.click()}
           disabled={uploading}
           title={uploadButtonTitle()}
-          aria-label={AUDIO_UPLOAD_ENABLED ? 'Subir documento o audio' : 'Subir documento'}
+          aria-label={audioOn ? 'Subir documento o audio' : 'Subir documento'}
         >
           {#if uploading}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin">
@@ -565,7 +568,7 @@
                   ><TestimonySource audio={d.kind === 'audio'} day={d.subtitle} /></span
                 >
               {/if}
-              {#if d.kind && d.kind !== 'markdown'}
+              {#if d.kind && !isNote(d)}
                 <span class="chip text-[9px] uppercase tracking-wider">{d.kind}</span>
               {/if}
               {#if statusBadge(d)}
@@ -801,7 +804,7 @@
 
             {#if isOpen}
               <div class="border-t border-elevated">
-                {#if d.kind !== 'markdown'}
+                {#if !isNote(d)}
                   <!-- 🔴 READING THE TRANSCRIPT. Automatic transcription gets
                        words wrong, and this text is about to be quoted as fact
                        to everyone in the ecosistema. Until now it was stored,

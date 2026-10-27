@@ -16,8 +16,8 @@ import {
   chatEngineConfigFor,
   chatKindFilterAvailable,
   chatOrientScope,
-  chatTurnHybrid,
   chatTurnMode,
+  chatTurnHybrid,
   chatTurnRetrievalPolicy,
   engineOrgId,
   makeChatDomainAdapter,
@@ -25,12 +25,15 @@ import {
   queryExpansionEnabled,
   useRegistryPrompt,
   withQueryExpansion,
+  type ChatTurnMode,
 } from '$lib/server/engine';
 import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
 import { turnAttachments, withPinnedRefs } from './pinned';
 import { fetchPublishedTitles, matchDocumentTitle, titleRetrievalFilter, withTitleRef } from '$lib/server/titleMatch';
-import { sessionEcosystemId } from '$lib/server/ecosystem';
+import { sessionMeta } from '$lib/server/ecosystem';
+import { fetchFeatures } from '$lib/server/features';
+import { fetchScopeDocumentIds, parseAlcance } from '$lib/server/estudiante';
 import { makeGraphProvider } from '$lib/server/graph';
 import { withFencedChunks, withFencedRefs } from '$lib/server/engine/chunkFence';
 import { fetchOrientationTurns, orientationBlock, withOrientation } from '$lib/server/engine/orientation';
@@ -41,6 +44,9 @@ import { citedBrowserProvenance, toBrowserMessage } from '$lib/server/citationPr
 import { backendTitleFetcher, withTestimonioTitles } from '$lib/server/testimonioTitles';
 import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
 import { parseCitedOrdinals, prepareTurn, respond, type ContextRef, type ContextScope, type Provenance } from '@edc/chat-engine/core';
+
+/** The turn was refused because the session row could not be read (no kind). */
+const SESSION_UNAVAILABLE_CODE = 'session_unavailable';
 
 /** Max characters of each chunk's passage persisted on the provenance. */
 const PASSAGE_TEXT_CAP = 1200;
@@ -102,6 +108,12 @@ interface IncomingBody {
    * `lenguaTurn`; it names a value, never a tenant or a corpus.
    */
   lengua?: unknown;
+  /**
+   * Student view: `mios` | `companeros` narrows every retrieval leg to the
+   * documents the backend's `/api/estudiante/alcance` returns (404 unless
+   * `studentView` is on and the caller is an estudiante). Absent = ecosistema.
+   */
+  alcance?: unknown;
   /**
    * The browser's id for this turn (`runTurn`), stamped on the saved answer
    * as `generationMeta.turnId`. A retry of a turn whose answer is already
@@ -497,12 +509,25 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // keeps those two honest with each other: the summary used to list this
   // conversation's documents while retrieval reached every draft the caller had
   // ever uploaded anywhere, and the model could not tell them apart.
-  const [{ corpora, asOf, draftCorpus, publishedCorpus }, organizationId, sessionDocs] =
+  // The session read also carries the conversation's kind (`$lib/sessionKind`),
+  // which picks the engine config below.
+  const [{ corpora, asOf, draftCorpus, publishedCorpus }, meta, sessionDocs] =
     await Promise.all([
       fetchSessionCorpora(locals.token, body.sessionId),
-      sessionEcosystemId(locals.token, body.sessionId),
+      sessionMeta(locals.token, body.sessionId),
       fetchSessionDocs(locals.token, body.sessionId),
     ]);
+  // 🔴 Fail closed: without the session row there is no kind, and guessing one
+  // would run a Resonancias conversation on the Generales config (or the
+  // reverse). Refuse the turn; nothing has been generated or spent yet.
+  if (!meta.ok) {
+    console.error(`[generate] could not read session ${body.sessionId}; refusing the turn (no kind).`);
+    throw error(502, {
+      code: SESSION_UNAVAILABLE_CODE,
+      message: 'No se pudo leer la conversación. Inténtalo de nuevo.',
+    });
+  }
+  const { organizationId, kind } = meta;
   if (!asOf) {
     console.error(
       `[generate] no asOf for session ${body.sessionId}; answering WITHOUT retrieval ` +
@@ -512,6 +537,10 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // `null` when the list could not be read — NOT an empty set. The draft leg
   // then retrieves nothing at all rather than guessing. See `$lib/server/sessionDocs`.
   const sessionDocumentIds = sessionDocumentIdSet(sessionDocs);
+  // Per-ecosistema switches (backend `lib/features.ts`): `chatOrientation` and
+  // `interviewerMode` are enforced HERE, where the turn is built. Started now
+  // so it overlaps; a failed read is today's behaviour.
+  const featuresP = fetchFeatures(locals.token, organizationId);
 
   // Each ecosistema is its own ai-service org (`X-AI-Org: eco-<id>`): its own
   // budget, usage and corpora. ⚠ Without an ecosistema id the turn falls back
@@ -530,6 +559,13 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // The read starts now and overlaps with the engine's condense call; the
   // adapter awaits it only when it builds the summary. Best-effort.
   const lengua = lenguaTurn(body.lengua);
+  // 🔴 A scope that cannot be read is an EMPTY scope, never the whole ecosistema.
+  const alcance = parseAlcance(body.alcance);
+  const scopeDocumentIds = alcance
+    ? organizationId != null && organizationId !== ''
+      ? ((await fetchScopeDocumentIds(locals.token, String(organizationId), alcance)) ?? new Set<string>())
+      : new Set<string>()
+    : undefined;
   const lenguaFacets =
     organizationId != null && organizationId !== ''
       ? fetchLenguaIndex(locals.token, organizationId).then((r) => r.index.lenguas)
@@ -554,7 +590,8 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // CHAT_RETRIEVAL_MODE=hybrid AND ai-service has `metadataFilterIn` → one
   // hybrid `/v1/retrieve/multi` call, drafts filtered server-side. Otherwise
   // the dense per-corpus path. Default dense. See `$lib/server/engine/hybrid`.
-  const hybrid = await chatTurnHybrid();
+  // A student scope post-filters on the dense path; hybrid is not offered.
+  const hybrid = scopeDocumentIds ? false : await chatTurnHybrid();
   const unfencedAI = makeEngineAIClient(chatClient, {
     sessionId: body.sessionId,
     signal: request.signal,
@@ -567,6 +604,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
     publishedCorpus,
     sessionDocumentIds,
     hybrid,
+    ...(scopeDocumentIds ? { scopeDocumentIds } : {}),
   });
   // 🔴 PROMPT-INJECTION FENCE (audit 2026-10-17 §3 item 3), a partial
   // mitigation. Retrieved chunks from every leg that goes through this client
@@ -597,7 +635,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // started now so it overlaps the engine's condense call. This conversation's
   // own turns are excluded. `CHAT_ORIENT_SCOPE` = ecosistema | own | off.
   // See `$lib/server/engine/orientation`.
-  const orientScope = chatOrientScope();
+  const orientScope = !scopeDocumentIds && (await featuresP).chatOrientation ? chatOrientScope() : 'off';
   const adapter =
     orientScope === 'off'
       ? baseAdapter
@@ -634,7 +672,8 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // `.catch(() => null)`, so an unreachable or slow graph produces a normal
   // answer with no message to the user (ADR §8.2).
   // ⚠ Skipped under a lengua filter — see `LenguaTurn.graph`.
-  const graphProvider = !lengua.graph ? null : makeGraphProvider({
+  // ⚠ And under a student scope: the graph block spans the whole ecosistema.
+  const graphProvider = !lengua.graph || scopeDocumentIds ? null : makeGraphProvider({
     token: locals.token,
     organizationId,
     aiClient: engineAI,
@@ -681,7 +720,8 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   const retrievalPolicy = chatTurnRetrievalPolicy(hybrid);
   // A message that names exactly one published document pins it for this turn.
   const published = await publishedTitles;
-  const titleMatch = matchDocumentTitle(userMessage, published);
+  // Skipped under a student scope: a title pin could name a document outside it.
+  const titleMatch = scopeDocumentIds ? null : matchDocumentTitle(userMessage, published);
   // `@`-mentions, then the document the message names by title, then every
   // document pinned ("fijar") in this conversation. See `./pinned.ts`: the
   // docs panel promises pinned documents are sent.
@@ -700,19 +740,27 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // …and narrows retrieval to it, so its chunks are the turn's only `[N]`
   // sources (see `$lib/server/titleMatch`). No match: the lengua filter alone.
   const retrievalFilter = titleRetrievalFilter(lengua.retrievalFilter, titleMatch);
-  // A person telling their own story meets an interviewer; a direct question
-  // still gets the documents (owner ruling 2026-10-26, `$lib/server/engine/turnMode`).
-  const turnMode = chatTurnMode({
-    userMessage,
-    history,
-    sessionDocs: sessionDocs.docs,
-    callerId: locals.user.id != null ? String(locals.user.id) : null,
-  });
-  const turnConfig = chatEngineConfigFor(turnMode);
-  // An interview reply with no `[N]` lists no sources: it is a question back,
-  // not an answer, and the no-marker fallback would pin documents to it.
+  // Which config runs this turn (owner rulings 2026-10-26 and 2026-10-27):
+  // - Resonancias: ALWAYS the corpus-informed interviewer, whatever the message
+  //   says and whatever `interviewerMode` says.
+  // - Generales: answers; the heuristic interviewer (`$lib/server/engine/turnMode`:
+  //   the caller's own story, or their own testimonio attached) runs only when
+  //   the ecosistema's `interviewerMode` switch is on. Off → every turn answers.
+  const turnMode: ChatTurnMode =
+    kind === 'generales' && (await featuresP).interviewerMode
+      ? chatTurnMode({
+          userMessage,
+          history,
+          sessionDocs: sessionDocs.docs,
+          callerId: locals.user.id != null ? String(locals.user.id) : null,
+        })
+      : 'answer';
+  const turnConfig = chatEngineConfigFor(kind, turnMode);
+  // An interviewer reply (either kind) with no `[N]` lists no sources: it is a
+  // question back, not an answer, and the no-marker fallback would pin
+  // documents to it. A cited `[N]` lists that source as usual.
   const turnSources = (provenance: Provenance | null, answer: string): Provenance | null =>
-    turnMode === 'interview' && parseCitedOrdinals(answer).length === 0
+    (kind === 'resonancias' || turnMode === 'interview') && parseCitedOrdinals(answer).length === 0
       ? null
       : citedBrowserProvenance(provenance, answer, attachments);
   const engineTurnArgs = {

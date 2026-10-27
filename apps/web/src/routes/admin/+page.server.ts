@@ -57,6 +57,7 @@
 
 import { denyAccess } from '$lib/server/deny';
 import { isPlatformAdmin } from '$lib/components/admin/summary';
+import { adminOrgIds } from '$lib/roles';
 import { listAllEcosystems, loadAdminOverview, readEcosystem } from '$lib/server/admin';
 import { listEcosystems } from '$lib/server/ecosystem';
 import { fetchEcosystemBudget } from '$lib/server/budget';
@@ -73,37 +74,53 @@ import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ locals, url }) => {
   // `hooks.server.ts` already bounced anonymous callers to /sign-in; this is
   // the belt to that braces, and it is what makes the check readable here.
-  if (!locals.user || !isPlatformAdmin(locals.user)) {
+  // 🔴 SCOPED ADMINS (owner ruling 2026-10-27): an `investigador` or `owner`
+  // gets this page for THEIR ecosistemas only (`adminOrgIds`, from the session's
+  // memberships). The backend still scopes every read to what they may see —
+  // their reads are membership-constrained, unlike a platform admin's — so this
+  // filter decides what is offered, and the backend decides what comes back.
+  const platform = Boolean(locals.user) && isPlatformAdmin(locals.user);
+  const scoped = new Set(platform ? [] : adminOrgIds(locals.user));
+  if (!locals.user || (!platform && scoped.size === 0)) {
     denyAccess({
       module: 'admin',
       reason: 'not-platform-admin',
-      message: 'Esta sección es solo para administradores de la plataforma.',
+      message: 'Esta sección es solo para administradores.',
       cta: { label: 'Volver al chat', href: '/' },
     });
   }
+  const inScope = (id: string): boolean => platform || scoped.has(id);
 
   const search = (url.searchParams.get('q') ?? '').slice(0, 120);
   const requested = url.searchParams.get('eco') ?? '';
 
   // ⚠ Two lists, two different questions, and they must not be confused.
   //  · `directory` — every ecosistema on the installation. The oversight list.
+  //                  For a scoped admin, only the ones they administer.
   //  · `mine`      — the ones the caller is a MEMBER of. Only used to label
   //                  rows and to pick a sensible default, never to restrict
   //                  what an admin may review.
-  const [directory, mine] = await Promise.all([
+  const [fullDirectory, mine] = await Promise.all([
     listAllEcosystems(locals.token, search),
     listEcosystems(locals.token),
   ]);
+  const directory = platform
+    ? fullDirectory
+    : (() => {
+        const rows = fullDirectory.rows.filter((e) => inScope(e.id));
+        return { ...fullDirectory, rows, totalDocs: rows.length, truncated: false };
+      })();
 
   // Resolved by a direct read, so a search term in the box cannot make the
-  // ecosistema being reviewed "disappear".
-  const requestedEco = requested ? await readEcosystem(locals.token, requested) : null;
+  // ecosistema being reviewed "disappear". Out of scope reads as not found.
+  const readEco = requested ? await readEcosystem(locals.token, requested) : null;
+  const requestedEco = readEco && inScope(readEco.id) ? readEco : null;
   const selected =
     requestedEco ??
     // Default: where this person actually works, if anywhere. Falling back to
     // "the first tenant on the installation" as the FIRST choice would open an
     // admin's own page on a stranger's ecosistema every morning.
-    mine.list[0] ??
+    mine.list.find((e) => inScope(e.id)) ??
     directory.rows[0] ??
     null;
 

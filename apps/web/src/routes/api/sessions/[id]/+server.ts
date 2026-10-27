@@ -5,6 +5,7 @@ import { refsToRelationships, relationshipsToRefs } from '$lib/server/contextRef
 import type { ContextRef } from '$lib/types';
 
 // PATCH /api/sessions/[id] → update title, panelState, lastUsedAt, contextScope.
+// `kind` (Generales/Resonancias) is fixed at create and dropped here.
 export const PATCH: RequestHandler = async ({ locals, params, request }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
   let body: Record<string, unknown> = {};
@@ -13,6 +14,7 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
   } catch {
     /* allow empty */
   }
+  delete body.kind;
 
   // CANONICAL ref-field contract: `contextScope` is a polymorphic relationship
   // on the backend now. The FE store sends `{ refs: [{kind,id,label}] }`; map
