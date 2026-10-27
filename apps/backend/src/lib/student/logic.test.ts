@@ -1,22 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { canAdminOrg, isInvestigador, isStudent } from '../roles'
 import { authorPage, buildReport, citedSurnames, matchPeers, mergeAuthors } from './logic'
 
 const T = (id: number, label: string) => ({ id, label, docs: 1 })
-
-describe('roles stub', () => {
-  const u = { memberships: [{ organization: 8, role: 'estudiante' }, { organization: { id: 9 }, role: 'owner' }, { organization: 10, role: 'investigador', isActive: false }] }
-  it('reads the raw role per ecosistema', () => {
-    expect(isStudent(u, 8)).toBe(true)
-    expect(isStudent(u, '9')).toBe(false)
-    expect(canAdminOrg(u, 9)).toBe(true)
-    expect(canAdminOrg(u, 8)).toBe(false)
-    expect(isInvestigador(u, 10)).toBe(false)
-    expect(canAdminOrg({ isPlatformAdmin: true }, 1)).toBe(true)
-    expect(isStudent(null, 8)).toBe(false)
-  })
-})
 
 describe('matchPeers', () => {
   it('ranks by Jaccard, drops zero overlap, shows shared labels only', () => {

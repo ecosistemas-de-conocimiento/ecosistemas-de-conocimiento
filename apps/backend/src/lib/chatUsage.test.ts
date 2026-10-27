@@ -177,8 +177,12 @@ describe('who may ask for an ecosistema’s chat usage', () => {
     await expect(run(world(), member).result).rejects.toBeInstanceOf(EcosystemNotVisibleError)
   })
 
-  it('🔴 an investigador of that ecosistema may NOT', async () => {
-    await expect(run(world(), investigador).result).rejects.toBeInstanceOf(EcosystemNotVisibleError)
+  it('an investigador of that ecosistema may (ranks above admin since 2026-10-27)', async () => {
+    await expect(run(world(), investigador).result).resolves.toBeTruthy()
+  })
+
+  it('🔴 an investigador of ANOTHER ecosistema may NOT', async () => {
+    await expect(run(world(), investigador, 9).result).rejects.toBeInstanceOf(EcosystemNotVisibleError)
   })
 
   it('🔴 an admin of ANOTHER ecosistema may NOT', async () => {

@@ -28,6 +28,12 @@ export interface BackendUser {
   id: number | string;
   email: string;
   displayName?: string | null;
+  /**
+   * Active memberships of active ecosistemas, `[{ organization, slug, role }]`
+   * — added by the backend's `users.afterMe` hook. Read it through `$lib/roles`
+   * (`isStudent`, `isInvestigador`, `canAdminOrg`). Presentation only.
+   */
+  memberships?: import('$lib/roles').SessionMembership[];
 }
 
 /**

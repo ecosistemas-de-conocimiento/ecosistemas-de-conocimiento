@@ -4,20 +4,23 @@
  * `collections/Memberships.ts`) is the control; this only decides what to show.
  */
 
-/** Backend role ranks, least → most. Mirrors `ORG_ROLES` in `apps/backend/src/lib/permissions.ts`. */
-const RANK: Record<string, number | undefined> = { member: 0, investigador: 1, admin: 2, owner: 3 };
+import { ROLE_RANK } from './roles';
+
+/** Backend role ranks, least → most (`$lib/roles` mirrors the backend ladder). */
+const RANK: Record<string, number | undefined> = ROLE_RANK;
 
 /** `admin` and up hold `members:manage`. */
-const MANAGER_RANK = 2;
+const MANAGER_RANK = ROLE_RANK.admin;
 
-/** The three roles the screen offers, in the owner's words. */
+/** The roles the screen offers, in the owner's words, least → most. */
 export const ROLE_OPTIONS = [
+  { value: 'estudiante', label: 'estudiante' },
   { value: 'member', label: 'participante' },
   { value: 'investigador', label: 'investigador' },
   { value: 'owner', label: 'responsable' },
 ] as const;
 
-export type MemberRole = 'member' | 'investigador' | 'admin' | 'owner';
+export type MemberRole = 'estudiante' | 'member' | 'investigador' | 'admin' | 'owner';
 
 export function roleLabel(role: string): string {
   if (role === 'admin') return 'administra';

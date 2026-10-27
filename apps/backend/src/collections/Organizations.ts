@@ -1,10 +1,31 @@
-import { ValidationError, type CollectionConfig } from 'payload'
+import { ValidationError, type CollectionConfig, type FieldAccess } from 'payload'
 
 import { invalidateFeatures, parseFeaturesPatch } from '../lib/features'
+import { roleInOrganization } from '../lib/permissions'
 
-import { isPlatformAdmin, withinMyOrganizations, withinMyOrganizationsWithRole } from '../access'
+import {
+  isPlatformAdmin,
+  isPlatformAdminUser,
+  withinMyOrganizations,
+  withinMyOrganizationsWithRole,
+} from '../access'
 
 import { normalizedSlug } from './hooks/compoundUnique'
+
+/**
+ * 🔴 THE SLUG AND THE ON/OFF SWITCH ARE THE OWNER'S. An investigador may update
+ * the row (its settings, its name — /ajustes, owner ruling 2026-10-27), but a
+ * new slug breaks every token in flight and switching the ecosistema off locks
+ * out everyone in it. Owner or platform admin only. Payload strips a refused
+ * field from the write, so an attempt is ignored rather than rejected — the
+ * same contract as `platformAdminFieldAccess`.
+ */
+export const ownerOnlyField: FieldAccess = async ({ req, id }) => {
+  if (isPlatformAdminUser(req.user)) return true
+  const userId = (req.user as { id?: number | string } | null | undefined)?.id
+  if (userId === undefined || userId === null || id === undefined || id === null) return false
+  return (await roleInOrganization(req.payload, userId, id)) === 'owner'
+}
 
 /**
  * ⚠ THE TENANT. Everything in this product hangs off an organization: its
@@ -34,8 +55,9 @@ export const Organizations: CollectionConfig = {
     read: withinMyOrganizations('id'),
     // Creating a tenant is an installation-level act, not a self-service one.
     create: isPlatformAdmin,
-    // An owner may rename/reconfigure their own organization; nobody else can.
-    update: withinMyOrganizationsWithRole('owner', 'id'),
+    // An owner or investigador may rename/reconfigure their own ecosistema;
+    // nobody else can. The slug and `isActive` stay the owner's (`ownerOnlyField`).
+    update: withinMyOrganizationsWithRole('investigador', 'id'),
     // Deleting a tenant takes its people, documents and history with it.
     delete: isPlatformAdmin,
   },
@@ -84,6 +106,7 @@ export const Organizations: CollectionConfig = {
       required: true,
       unique: true,
       index: true,
+      access: { update: ownerOnlyField },
       admin: {
         description:
           'Stable URL-safe key, lowercased. Used as the token audience — changing it breaks every issued token.',
@@ -102,6 +125,7 @@ export const Organizations: CollectionConfig = {
       type: 'checkbox',
       defaultValue: true,
       index: true,
+      access: { update: ownerOnlyField },
       label: 'Organization active',
       admin: { position: 'sidebar' },
     },

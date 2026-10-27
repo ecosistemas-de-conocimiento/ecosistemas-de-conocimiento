@@ -1,5 +1,5 @@
 {
-  "id": "525fa37e-b67f-49a3-90d0-cd712cece869",
+  "id": "4dcf9f29-55f1-491c-b3ff-63f836c27575",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -3677,299 +3677,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.student_profiles": {
-      "name": "student_profiles",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "share_with_peers": {
-          "name": "share_with_peers",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "share_activity": {
-          "name": "share_activity",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "student_profiles_user_idx": {
-          "name": "student_profiles_user_idx",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "student_profiles_organization_idx": {
-          "name": "student_profiles_organization_idx",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "student_profiles_updated_at_idx": {
-          "name": "student_profiles_updated_at_idx",
-          "columns": [
-            {
-              "expression": "updated_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "student_profiles_created_at_idx": {
-          "name": "student_profiles_created_at_idx",
-          "columns": [
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "student_profiles_user_id_users_id_fk": {
-          "name": "student_profiles_user_id_users_id_fk",
-          "tableFrom": "student_profiles",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "student_profiles_organization_id_organizations_id_fk": {
-          "name": "student_profiles_organization_id_organizations_id_fk",
-          "tableFrom": "student_profiles",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.suggestions": {
-      "name": "suggestions",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "author_id": {
-          "name": "author_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "enum_suggestions_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "text": {
-          "name": "text",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "suggestions_organization_idx": {
-          "name": "suggestions_organization_idx",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "suggestions_author_idx": {
-          "name": "suggestions_author_idx",
-          "columns": [
-            {
-              "expression": "author_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "suggestions_updated_at_idx": {
-          "name": "suggestions_updated_at_idx",
-          "columns": [
-            {
-              "expression": "updated_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "suggestions_created_at_idx": {
-          "name": "suggestions_created_at_idx",
-          "columns": [
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "suggestions_organization_id_organizations_id_fk": {
-          "name": "suggestions_organization_id_organizations_id_fk",
-          "tableFrom": "suggestions",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "suggestions_author_id_users_id_fk": {
-          "name": "suggestions_author_id_users_id_fk",
-          "tableFrom": "suggestions",
-          "tableTo": "users",
-          "columnsFrom": [
-            "author_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.ai_service_callbacks": {
       "name": "ai_service_callbacks",
       "schema": "",
@@ -4354,18 +4061,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "student_profiles_id": {
-          "name": "student_profiles_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "suggestions_id": {
-          "name": "suggestions_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
         "ai_service_callbacks_id": {
           "name": "ai_service_callbacks_id",
           "type": "integer",
@@ -4629,36 +4324,6 @@
           "method": "btree",
           "with": {}
         },
-        "payload_locked_documents_rels_student_profiles_id_idx": {
-          "name": "payload_locked_documents_rels_student_profiles_id_idx",
-          "columns": [
-            {
-              "expression": "student_profiles_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "payload_locked_documents_rels_suggestions_id_idx": {
-          "name": "payload_locked_documents_rels_suggestions_id_idx",
-          "columns": [
-            {
-              "expression": "suggestions_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "payload_locked_documents_rels_ai_service_callbacks_id_idx": {
           "name": "payload_locked_documents_rels_ai_service_callbacks_id_idx",
           "columns": [
@@ -4864,32 +4529,6 @@
           "tableTo": "graph_relations",
           "columnsFrom": [
             "graph_relations_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "payload_locked_documents_rels_student_profiles_fk": {
-          "name": "payload_locked_documents_rels_student_profiles_fk",
-          "tableFrom": "payload_locked_documents_rels",
-          "tableTo": "student_profiles",
-          "columnsFrom": [
-            "student_profiles_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "payload_locked_documents_rels_suggestions_fk": {
-          "name": "payload_locked_documents_rels_suggestions_fk",
-          "tableFrom": "payload_locked_documents_rels",
-          "tableTo": "suggestions",
-          "columnsFrom": [
-            "suggestions_id"
           ],
           "columnsTo": [
             "id"
@@ -5267,9 +4906,10 @@
       "name": "enum_memberships_role",
       "schema": "public",
       "values": [
+        "estudiante",
         "member",
-        "investigador",
         "admin",
+        "investigador",
         "owner"
       ]
     },
@@ -5436,15 +5076,6 @@
         "parte_de",
         "afecta_a",
         "relacionado_con"
-      ]
-    },
-    "public.enum_suggestions_kind": {
-      "name": "enum_suggestions_kind",
-      "schema": "public",
-      "values": [
-        "contenido",
-        "arquitectura",
-        "interaccion"
       ]
     },
     "public.enum_platform_settings_detector_fallback": {

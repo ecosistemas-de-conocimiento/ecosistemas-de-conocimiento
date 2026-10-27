@@ -10,6 +10,9 @@ import { MigrateUpArgs, MigrateDownArgs, sql } from '@payloadcms/db-postgres'
  * `feature_switches` snapshot was cut from a branch without it. Those
  * statements were removed; this file's `.json` snapshot includes `kind`.
  * 🔴 Also hand-written: the UNIQUE index `student_profiles_user_organization_unq`.
+ * ⚠ Renamed from `20261027_053603_student_view` at integration so it runs after
+ * `20261027_053737_memberships_role_estudiante`; the `.json` prevId and
+ * `enum_memberships_role` (with `estudiante`) were hand-fixed to chain after it.
  */
 
 export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {

@@ -38,6 +38,7 @@ import {
   type EcosystemSelection,
 } from '$lib/ecosystems';
 import { backendFetch } from '$lib/server/auth';
+import { parseSessionKind, type SessionKind } from '$lib/sessionKind';
 
 /** Name of the selection cookie. Distinct from `chat_auth`; carries no authority. */
 export const ECOSYSTEM_COOKIE = 'eco_selected';
@@ -217,24 +218,60 @@ export async function sessionEcosystemId(
   token: string | undefined,
   sessionId: string,
 ): Promise<string | null> {
-  if (!sessionId) return null;
+  const meta = await sessionMeta(token, sessionId);
+  return meta.ok ? meta.organizationId : null;
+}
+
+/**
+ * What one read of the session row tells a chat turn, or `ok: false` when the
+ * row could not be read (non-2xx, a throw, an unreadable body).
+ *
+ * 🔴 A failed read carries NO kind. The kind picks the engine config, and a
+ * guess would run a Resonancias conversation as Generales (or the reverse)
+ * without anyone noticing; `/api/generate` refuses the turn instead.
+ */
+export type SessionMeta =
+  | {
+      ok: true;
+      /** {@link sessionEcosystemId}'s answer. */
+      organizationId: string | null;
+      /**
+       * `sessions.kind` (`$lib/sessionKind`): which engine config the turn
+       * runs. Immutable after create. A row with no kind (made before the
+       * split) is `generales`.
+       */
+      kind: SessionKind;
+    }
+  | { ok: false };
+
+/**
+ * The session row read once for a chat turn: its ecosistema (same rules as
+ * {@link sessionEcosystemId}) and its kind. One round trip, so `/api/generate`
+ * did not grow a second read for the kind.
+ */
+export async function sessionMeta(token: string | undefined, sessionId: string): Promise<SessionMeta> {
+  if (!sessionId) return { ok: false };
   try {
     const res = await backendFetch(
       token,
       `/api/sessions/${encodeURIComponent(sessionId)}?depth=0`,
       { method: 'GET' },
     );
-    if (!res.ok) return null;
-    const body = (await res.json().catch(() => ({}))) as { organization?: unknown };
-    const org = body.organization;
-    if (typeof org === 'string' || typeof org === 'number') return String(org);
-    // depth>0 (or a config change) would populate it as an object.
-    if (org && typeof org === 'object' && 'id' in org) {
-      const id = (org as { id?: unknown }).id;
-      if (typeof id === 'string' || typeof id === 'number') return String(id);
-    }
-    return null;
+    if (!res.ok) return { ok: false };
+    const body = (await res.json()) as { organization?: unknown; kind?: unknown } | null;
+    if (!body || typeof body !== 'object') return { ok: false };
+    return { ok: true, organizationId: organizationIdOf(body.organization), kind: parseSessionKind(body.kind) };
   } catch {
-    return null;
+    return { ok: false };
   }
+}
+
+function organizationIdOf(org: unknown): string | null {
+  if (typeof org === 'string' || typeof org === 'number') return String(org);
+  // depth>0 (or a config change) would populate it as an object.
+  if (org && typeof org === 'object' && 'id' in org) {
+    const id = (org as { id?: unknown }).id;
+    if (typeof id === 'string' || typeof id === 'number') return String(id);
+  }
+  return null;
 }

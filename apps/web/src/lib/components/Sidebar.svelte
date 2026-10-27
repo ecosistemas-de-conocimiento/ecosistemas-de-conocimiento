@@ -2,6 +2,7 @@
   import { app } from '$lib/stores/app.svelte';
   import EcosystemPicker from './EcosystemPicker.svelte';
   import { TITLE_MAX } from '$lib/sessionTitle';
+  import { SESSION_KIND_LABELS, SESSION_KINDS } from '$lib/sessionKind';
 
   /**
    * ⚠ THE `/admin` ENTRY THAT USED TO LIVE HERE MOVED TO THE PRIMARY NAV.
@@ -153,8 +154,27 @@
          conversations and the primary section menu in the root layout. An
          unnamed one leaves a screen-reader user with two identical
          "navigation" landmarks and no way to tell them apart. -->
+    <!-- Generales / Resonancias (`$lib/sessionKind`). Labels only, no hint
+         copy (owner rule). "Nueva conversación" creates one in the active tab. -->
+    <div class="flex gap-1 px-2 pt-2" role="tablist" aria-label="Tipo de conversación">
+      {#each SESSION_KINDS as kind (kind)}
+        {@const selected = app.sessionKindTab === kind}
+        <button
+          class="flex-1 text-xs py-1 rounded-md border transition-colors {selected
+            ? 'bg-surface-accent text-ink border-brand font-semibold'
+            : 'text-ink-soft border-line hover:bg-surface-soft hover:text-ink'}"
+          role="tab"
+          aria-selected={selected}
+          onclick={() => app.setSessionKindTab(kind)}
+          data-testid={`session-tab-${kind}`}
+        >
+          {SESSION_KIND_LABELS[kind]}
+        </button>
+      {/each}
+    </div>
+
     <nav class="flex-1 overflow-y-auto p-2 space-y-0.5" aria-label="Conversaciones">
-      {#each app.sessions as s (s.id)}
+      {#each app.tabSessions as s (s.id)}
         {@const isActive = s.id === app.activeSessionId}
         <!-- 🔴 THE OPEN CONVERSATION IS MARKED THREE WAYS, NOT ONE. The tint
              alone was the whole signal, and a tint is exactly what a

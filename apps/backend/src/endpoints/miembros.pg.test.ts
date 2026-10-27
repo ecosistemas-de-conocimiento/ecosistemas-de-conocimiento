@@ -238,8 +238,10 @@ describe.skipIf(!dockerOk)('/api/miembros on a real Postgres', () => {
     expect(await roleOf(OLGA, ECO_A)).toEqual(['owner'])
 
     // Within reach still works.
-    expect((await call('patch', ADAN, { id: 3, body: { role: 'investigador' } })).status).toBe(200)
-    expect(await roleOf(MEMO, ECO_A)).toEqual(['investigador'])
+    expect((await call('patch', ADAN, { id: 3, body: { role: 'investigador' } })).status).toBe(400)
+    expect((await call('patch', ADAN, { id: 3, body: { role: 'estudiante' } })).status).toBe(200)
+    expect(await roleOf(MEMO, ECO_A)).toEqual(['estudiante'])
+    expect((await call('patch', ADAN, { id: 3, body: { role: 'member' } })).status).toBe(200)
   }, 30_000)
 
   it('🔴 the same ceiling holds on the plain collection API (the old finding)', async () => {

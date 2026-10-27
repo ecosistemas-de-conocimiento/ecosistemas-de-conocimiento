@@ -58,7 +58,7 @@ export interface SessionDocRow {
   /**
    * Who uploaded it, as a string id. `null` when the backend hides it — it
    * does on a colleague's testimonio/conversación (`gatedQueryableReadable`),
-   * so `null` reads as "not the caller's" (`chatTurnMode`).
+   * so `null` reads as "not the caller's".
    */
   uploadedBy?: string | null;
 }

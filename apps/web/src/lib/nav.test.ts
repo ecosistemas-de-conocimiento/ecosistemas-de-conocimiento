@@ -105,6 +105,16 @@ describe('who sees the admin entry', () => {
       expect(visibleNavItems(user).map((i) => i.href)).not.toContain('/admin');
     }
   });
+
+  it('shows it to an investigador or owner of some ecosistema; never to admin, member or estudiante', () => {
+    const withRole = (role: string) => ({ id: 3, memberships: [{ organization: '8', slug: 's', role }] });
+    for (const role of ['investigador', 'owner']) {
+      expect(visibleNavItems(withRole(role)).map((i) => i.href)).toContain('/admin');
+    }
+    for (const role of ['admin', 'member', 'estudiante']) {
+      expect(visibleNavItems(withRole(role)).map((i) => i.href)).not.toContain('/admin');
+    }
+  });
 });
 
 describe('who sees the review queue', () => {

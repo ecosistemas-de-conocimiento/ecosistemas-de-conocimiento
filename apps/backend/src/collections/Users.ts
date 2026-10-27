@@ -1,7 +1,8 @@
-import type { CollectionConfig } from 'payload'
+import type { CollectionAfterMeHook, CollectionConfig } from 'payload'
 import { ValidationError } from 'payload'
 
 import { canAccessAdminPanel, isPlatformAdmin, isSelfOrPlatformAdmin, platformAdminFieldAccess } from '../access'
+import { sessionMemberships } from '../lib/roles'
 
 /**
  * A person. ONE account for the whole installation; which organizations they
@@ -61,6 +62,15 @@ import { canAccessAdminPanel, isPlatformAdmin, isSelfOrPlatformAdmin, platformAd
  */
 const isProductionAuth = process.env.NODE_ENV === 'production'
 
+/** See `hooks.afterMe` below. A failed read leaves the list empty: no grant. */
+export const attachMemberships: CollectionAfterMeHook = async ({ req, response }) => {
+  const body = response as { user?: { id?: number | string } | null } | null | undefined
+  const user = body?.user
+  if (!body || !user || user.id === undefined || user.id === null) return response
+  const memberships = await sessionMemberships(req.payload, user.id).catch(() => [])
+  return { ...body, user: { ...user, memberships } } as typeof response
+}
+
 export const Users: CollectionConfig = {
   slug: 'users',
   auth: {
@@ -86,6 +96,15 @@ export const Users: CollectionConfig = {
     admin: canAccessAdminPanel,
   },
   hooks: {
+    /**
+     * `/api/users/me` carries `user.memberships` — `[{ organization, slug,
+     * role }]`, active memberships of active ecosistemas only — so the web can
+     * ask `isStudent` / `isInvestigador` / `canAdminOrg` (`lib/roles.ts`)
+     * without a second round trip. It is the caller's OWN list, from the same
+     * resolver access control uses. Presentation for the web; every server
+     * gate re-asks.
+     */
+    afterMe: [attachMemberships],
     beforeValidate: [
       ({ data, operation, req }) => {
         const next = { ...(data ?? {}) } as Record<string, unknown>

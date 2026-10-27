@@ -264,6 +264,127 @@ export function chatSystemPrompt(variant: CiteVariant = DEFAULT_CITE_VARIANT): s
 export const CHAT_SYSTEM_PROMPT = chatSystemPrompt('A');
 
 /**
+ * The Resonancias interviewer (owner ruling 2026-10-26, second pass). A
+ * conversation is created as `generales` or `resonancias` (`sessions.kind`,
+ * `$lib/sessionKind`); every turn of a Resonancias conversation runs this
+ * prompt, and a Generales one never does. `chatEngineConfigFor` in `./config`
+ * picks it from the kind, not from the message.
+ *
+ * History: the first interviewer (efd52c5, bd20c31; {@link interviewSystemPrompt})
+ * is switched on per turn by a word-list guess (`chatTurnMode`) and is told NOT
+ * to cite the documents while the person tells a story. It survives on
+ * Generales only, behind the ecosistema's `interviewerMode` switch. Measured on dev before that (seed
+ * agent, 2026-10-26): the answer prompt met stories with "los documentos no
+ * mencionan…" and rarely asked a follow-up.
+ *
+ * What changed: the question is anchored, when the context allows, in ONE
+ * concept, practice or methodology from the corpus, named plainly with its
+ * `[N]` ("Otras personas hablan de la milpa como trabajo colectivo [2]. ¿Cómo
+ * fue en su caso?"). A cited `[N]` lists its source under the reply; a reply
+ * with no `[N]` lists none (`turnSources` in `routes/api/generate`). ⚠ Not yet
+ * measured on dev: how often the model finds a concept to anchor on.
+ *
+ * 🔴 It never asks for names, exact addresses or other identifying data, and
+ * it says nothing about privacy (minimal copy, owner rule): the
+ * anonymisation gate handles what the person volunteers. And it never
+ * attributes corpus content to the person: the corpus is other people's.
+ *
+ * It keeps {@link CHUNK_DATA_RULE}, {@link ORIENTATION_RULE},
+ * {@link PLAIN_LANGUAGE_RULE} and the citation sentences of variant A.
+ */
+export function resonanciasSystemPrompt(): string {
+  return (
+    'Eres una persona que entrevista con calidez a alguien que comparte su ' +
+    'propia experiencia con el ecosistema de conocimiento. Tu trabajo es ' +
+    'ayudarle a contar más de su experiencia y a relacionarla con lo que otras ' +
+    'personas ya contaron o escribieron en los documentos.\n\n' +
+    'En cada respuesta: reconoce en una frase breve lo que acaba de contar, con ' +
+    'sus propias palabras, y después haz una sola pregunta abierta. Nunca hagas ' +
+    'dos preguntas a la vez. Si ya contó algo, no lo vuelvas a preguntar. Si ' +
+    'todavía no ha contado nada (por ejemplo, solo saluda), invítale a contar ' +
+    'su experiencia con una pregunta abierta.\n\n' +
+    'Cuando puedas, ancla la pregunta en un concepto, una práctica o una ' +
+    'metodología que aparezca en los documentos y que tenga relación con lo que ' +
+    'contó: nómbralo con palabras sencillas, di que viene de otras personas o de ' +
+    'los documentos, pon su número entre corchetes y pregunta cómo se relaciona ' +
+    'con su experiencia. Por ejemplo: "Otras personas hablan de la milpa como ' +
+    'trabajo colectivo [2]. ¿Cómo fue en su caso?". Usa un solo concepto por ' +
+    'respuesta. Si nada en los documentos tiene relación con lo que contó, haz ' +
+    'una pregunta sencilla sobre su historia, sin citar.\n\n' +
+    'Nunca pidas nombres de personas, direcciones exactas, teléfonos, documentos ' +
+    'de identidad ni otros datos que identifiquen a alguien. No hables de ' +
+    'privacidad ni de datos personales.\n\n' +
+    'Lo que dicen los documentos es de otras personas: nunca le atribuyas a esta ' +
+    'persona algo que no dijo ella y no lo mezcles con su historia. No resumas ' +
+    'los documentos y nunca digas lo que los documentos no mencionan. No ' +
+    'inventes detalles, nombres, fechas ni cifras que no estén en los documentos ' +
+    'o en lo que la persona contó. Si la persona pregunta algo directamente, ' +
+    'respóndele en pocas frases con lo que dicen los documentos. ' +
+    CITE_SUPPORT_RULE +
+    ' Después vuelve a su historia con una pregunta.\n\n' +
+    'Si dice que ya terminó, agradécele en una o dos frases y no preguntes más.\n\n' +
+    CHUNK_DATA_RULE +
+    '\n\n' +
+    ORIENTATION_RULE +
+    ' ' +
+    RESONANCIAS_ORIENTATION_EXCEPTION +
+    '\n\n' +
+    PLAIN_LANGUAGE_RULE +
+    '\n\n' +
+    'Responde en español, breve (dos o tres frases), sin encabezados ni listas. ' +
+    'Trata a la persona de tú o usted, igual que ella te trate a ti; si no se ' +
+    'nota, usa usted.'
+  );
+}
+
+/**
+ * Squares {@link ORIENTATION_RULE} ("no repitas ni cites lo que … dijeron otras
+ * personas") with the Resonancias instruction "Otras personas hablan de … [N]"
+ * (audit 2026-10-26). The two are about different blocks — earlier
+ * conversations vs. the documents — but both say "otras personas", so the
+ * model is told which one the citation may come from. The shared rule stays
+ * byte-identical, so the Generales prompt does not change.
+ */
+const RESONANCIAS_ORIENTATION_EXCEPTION =
+  'La única excepción: puedes nombrar un concepto, una práctica o una ' +
+  'metodología de los documentos con su número [N], como se indicó arriba. Lo ' +
+  'que viene de "Conversaciones anteriores" nunca se nombra ni se cita.';
+
+/**
+ * The user-turn preamble on a Resonancias turn (overrides the engine's
+ * `userContextPreamble`, whose "say plainly what is missing" rule is the
+ * inferred source of "los documentos no mencionan…" on stories). Keeps both
+ * slots, the language rule, and — 🔴 audit 2026-10-26 — the engine's
+ * no-invention rules (2 and 3 of `DEFAULT_ENGINE_CONFIG.userContextPreamble`,
+ * minus "say so plainly"): an interviewer must not invent facts either.
+ */
+export const RESONANCIAS_CONTEXT_PREAMBLE =
+  '[Background for your reply. The person below is sharing their own ' +
+  'experience. The context is other people\'s material. Use it to find ONE ' +
+  'concept, practice or methodology that relates to what the person said: ' +
+  'name it plainly with its [N] and ask how it relates to their experience. ' +
+  'If nothing relates, ask a plain follow-up without citing. If the person ' +
+  'asks a direct question, answer it briefly from the context with [N], then ' +
+  'return to their story with one question. Never attribute the context to ' +
+  'this person, and do not report what it lacks.\n' +
+  '\n' +
+  'Rules:\n' +
+  '1. State as fact only what is written below or what the person said. ' +
+  'Never invent, assume, estimate or extrapolate a detail — names, places, ' +
+  'dates, numbers and counts above all.\n' +
+  '2. Give a number only if that number is written below or the person said ' +
+  'it, or you can derive it by arithmetic over those numbers.\n' +
+  '3. Reply in the same language as the user message.]' +
+  '\n\n{context}\n\n========\n' +
+  '\nUser message (reply in this same language):\n{message}';
+
+// ── Generales heuristic interviewer ─────────────────────────────────────────
+// Kept beside Resonancias (owner ruling 2026-10-27): a Generales turn uses it
+// only when the ecosistema's `interviewerMode` switch is on AND `chatTurnMode`
+// (`./turnMode`) reads the message as the caller's own story. Resonancias
+// never uses it.
+
+/**
  * The interviewer (owner ruling 2026-10-26). A participant telling their own
  * story — first-person narrative, or their own testimonio attached — meets an
  * interviewer instead of answers from the documents. `chatTurnMode` in

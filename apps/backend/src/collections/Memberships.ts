@@ -243,17 +243,13 @@ export const refuseDeleteAboveOwn = makeRefuseDeleteAboveOwn()
 
 /** Admin-panel labels. Exhaustive by type, so adding a role forces a label. */
 const ROLE_LABELS: Record<OrgRole, string> = {
+  estudiante: 'Estudiante — a member, plus the student view where it is switched on',
   member: 'Member — read, upload, chat, rate answers',
-  /**
-   * ⚠ "On behalf of other people" is the whole role, and it is worth spelling
-   * out in the label an admin reads while granting it: the Investigador becomes
-   * `uploadedBy` for material whose words belong to someone the system will
-   * never know the name of. See `PERMISSIONS.vocesUpload`.
-   */
+  admin:
+    'Admin — the above, plus Voces on behalf of others, rating comments, Revisión, manage people, delete documents',
   investigador:
-    'Investigador — the above, plus upload documents and Voces on behalf of other people, and read rating comments',
-  admin: 'Admin — the above, plus manage people and delete documents',
-  owner: 'Owner — the above, plus manage the organization itself',
+    'Investigador — the above, plus this ecosistema’s settings (/ajustes); manages everyone but the owner',
+  owner: 'Owner — the above, plus the ecosistema’s slug and on/off switch',
 }
 
 /**

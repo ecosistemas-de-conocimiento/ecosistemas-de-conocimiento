@@ -1,7 +1,7 @@
 /**
  * 🔴 A PARTICIPANT NEVER PUBLISHES BY HAND (owner rule, 2026-10-24).
  *
- * A participant (`member` role) uploads files and audio and chats. What they
+ * A participant (`member` or `estudiante` role) uploads files and audio and chats. What they
  * contribute is published by the system, subject to review after the fact.
  * There is no moderation team; interns review now and then.
  *
@@ -76,8 +76,17 @@ export function autoPublishBlocker(row: Record<string, unknown>): AutoPublishSki
 }
 
 /**
+ * A participant role: `member`, or `estudiante` (owner ruling 2026-10-27 —
+ * a student is a member with a different view). Their uploads go through the
+ * gate and are published by the system; they never publish by hand.
+ */
+export function isParticipantRole(role: OrgRole | null): boolean {
+  return role === 'member' || role === 'estudiante'
+}
+
+/**
  * Is this upload a participant's? Their role in the document's ecosistema is
- * exactly `member`, and they are not a platform admin.
+ * `member` or `estudiante` ({@link isParticipantRole}), and they are not a platform admin.
  *
  * ⚠ Unknown resolves to "no": a missing user or membership leaves the draft
  * with its uploader, which is the private direction.
@@ -91,7 +100,7 @@ export async function isParticipantUpload(
     .findByID({ collection: 'users', id: uploaderId as never, depth: 0, overrideAccess: true })
     .catch(() => null)
   if (!user || isPlatformAdminUser(user)) return false
-  return (await roleInOrganization(payload, uploaderId, organizationId)) === 'member'
+  return isParticipantRole(await roleInOrganization(payload, uploaderId, organizationId))
 }
 
 /**
@@ -107,7 +116,7 @@ export function fileParticipantAudioAsTestimonio(input: {
   return (
     input.declared === 'documento' &&
     input.kind === 'audio' &&
-    input.role === 'member' &&
+    isParticipantRole(input.role) &&
     !input.platformAdmin
   )
 }
@@ -117,7 +126,7 @@ export function fileParticipantAudioAsTestimonio(input: {
  * participant's always. Staff choose at upload.
  */
 export function anonymiseParticipantUpload(input: { role: OrgRole | null; platformAdmin: boolean }): boolean {
-  return input.role === 'member' && !input.platformAdmin
+  return isParticipantRole(input.role) && !input.platformAdmin
 }
 
 /**

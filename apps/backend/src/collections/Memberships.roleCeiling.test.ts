@@ -24,10 +24,17 @@ const PLATFORM_ADMIN = 1
 const ADMIN_OF_A = 2
 const OWNER_OF_A = 3
 const ANA = 4
+const INVESTIGADOR_OF_A = 5
+const ESTUDIANTE_OF_A = 6
 
 const ECO_A = 10
 
-const ROLES: Record<number, OrgRole> = { [ADMIN_OF_A]: 'admin', [OWNER_OF_A]: 'owner' }
+const ROLES: Record<number, OrgRole> = {
+  [ADMIN_OF_A]: 'admin',
+  [OWNER_OF_A]: 'owner',
+  [INVESTIGADOR_OF_A]: 'investigador',
+  [ESTUDIANTE_OF_A]: 'estudiante',
+}
 const roleIn = async (_payload: unknown, userId: number | string, orgId: number | string) =>
   String(orgId) === String(ECO_A) ? (ROLES[Number(userId)] ?? null) : null
 
@@ -112,10 +119,32 @@ describe('refuseRoleAboveOwn', () => {
   })
 
   it('lets an admin grant up to their own rank', async () => {
-    for (const role of ['member', 'investigador', 'admin']) {
+    for (const role of ['estudiante', 'member', 'admin']) {
       const data = { user: ANA, organization: ECO_A, role }
       await expect(run({ data, req: reqAs(ADMIN_OF_A) })).resolves.toBe(data)
     }
+  })
+
+  it('🔴 refuses an admin granting investigador (it ranks above admin)', async () => {
+    await expectCeiling(
+      run({ data: { user: ANA, organization: ECO_A, role: 'investigador' }, req: reqAs(ADMIN_OF_A) }),
+    )
+  })
+
+  it('lets an investigador grant everything up to investigador, never owner', async () => {
+    for (const role of ['estudiante', 'member', 'admin', 'investigador']) {
+      const data = { user: ANA, organization: ECO_A, role }
+      await expect(run({ data, req: reqAs(INVESTIGADOR_OF_A) })).resolves.toBe(data)
+    }
+    await expectCeiling(
+      run({ data: { user: ANA, organization: ECO_A, role: 'owner' }, req: reqAs(INVESTIGADOR_OF_A) }),
+    )
+  })
+
+  it('🔴 refuses an estudiante granting anything above estudiante', async () => {
+    await expectCeiling(
+      run({ data: { user: ANA, organization: ECO_A, role: 'member' }, req: reqAs(ESTUDIANTE_OF_A) }),
+    )
   })
 
   it('a create without a role is the default (member), within reach', async () => {

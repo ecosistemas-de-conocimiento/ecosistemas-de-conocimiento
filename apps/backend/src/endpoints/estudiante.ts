@@ -55,7 +55,7 @@ type Row = Record<string, unknown>
 const idOf = (v: unknown): string | null =>
   v == null ? null : typeof v === 'object' ? String((v as { id?: unknown }).id ?? '') : String(v)
 
-/** The caller, with raw membership roles (see `lib/roles.ts` for why raw). */
+/** The caller's active memberships in active ecosistemas, for `lib/roles.ts`. */
 async function loadRoleUser(req: PayloadRequest, userId: number | string): Promise<RoleUser> {
   const ms = await req.payload.find({
     collection: 'memberships',

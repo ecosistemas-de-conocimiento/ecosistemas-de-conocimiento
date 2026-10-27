@@ -4,13 +4,14 @@
  *
  *   GET   /api/funciones?organization=<id>   { features }        member · platform admin
  *   GET   /api/funciones/editables           { ecosistemas, plataforma }
- *   PATCH /api/funciones                     { organization, features }   responsable · platform admin
+ *   PATCH /api/funciones                     { organization, features }   responsable · investigador · platform admin
  *   PATCH /api/plataforma                    { detectorFallback }         platform admin
  *
  * 🔴 WHO MAY FLIP WHAT:
  *   · platform admin — every ecosistema, and the platform switches;
- *   · responsable (`owner` in that ecosistema) — that ecosistema only, never
- *     the platform;
+ *   · whoever holds `organization:manage` in that ecosistema — responsable
+ *     (`owner`) or `investigador` (owner ruling 2026-10-27) — that ecosistema
+ *     only, never the platform;
  *   · anyone else — nothing. Reading is for members, so the UI (and the future
  *     student view, `studentView`) can ask.
  * Unknown ecosistema and "not yours" get the same 403.
@@ -24,7 +25,7 @@ import type { Endpoint, PayloadRequest } from 'payload'
 import { isPlatformAdminUser } from '../access'
 import { fallbackModeFromEnv } from '../lib/anonymise/fallbackGenerator'
 import { featuresFor, invalidateFeatures, parseFeaturesPatch, resolveFeatures } from '../lib/features'
-import { organizationIdsForUser, organizationIdsForUserWithMinRole, roleInOrganization } from '../lib/permissions'
+import { organizationIdsForUser, organizationIdsForUserWithPermission, PERMISSIONS } from '../lib/permissions'
 import { invalidatePlatformSettings, isFallbackMode, storedDetectorFallback } from '../lib/platformSettings'
 
 import { errorResponse, getAuthenticatedUser, jsonResponse, queryParam, readJsonBody } from './http'
@@ -48,8 +49,12 @@ async function mayEdit(req: PayloadRequest, organizationId: number): Promise<boo
   if (isPlatformAdminUser(req.user)) return true
   const user = getAuthenticatedUser(req)
   if (!user) return false
-  return (await roleInOrganization(req.payload, user.id, organizationId)) === 'owner'
+  return sameId(await editableIds(req, user.id), organizationId)
 }
+
+/** Ecosistemas whose switches this person may flip: `organization:manage` there. */
+const editableIds = (req: PayloadRequest, userId: number | string) =>
+  organizationIdsForUserWithPermission(req.payload, userId, PERMISSIONS.organizationManage)
 
 function envFallback(): 'hosted' | 'none' | 'invalid' {
   try {
@@ -87,7 +92,7 @@ const editablesEndpoint: Endpoint = {
     const user = getAuthenticatedUser(req)
     if (!user) return errorResponse(401, 'Necesitas iniciar sesión.')
     const admin = isPlatformAdminUser(req.user)
-    const ids = admin ? null : await organizationIdsForUserWithMinRole(req.payload, user.id, 'owner')
+    const ids = admin ? null : await editableIds(req, user.id)
     if (ids !== null && ids.length === 0) return errorResponse(403, NOT_YOURS)
     const orgs = await req.payload.find({
       collection: 'organizations',
