@@ -150,6 +150,19 @@
   function onInput() {
     void refreshMention();
   }
+
+  /**
+   * On stop (`null`), the last live line lands in the input so the speaker can
+   * edit it and send it as a chat message. ⚠ Sending stores it ungated, like
+   * any typed message; only the uploaded recording goes through the gate.
+   */
+  function onLiveText(line: string | null): void {
+    const last = liveText;
+    liveText = line;
+    if (line !== null || !last || last === '…') return;
+    text = text.trim() ? `${text.trimEnd()} ${last}` : last;
+    queueMicrotask(() => textarea?.focus());
+  }
 </script>
 
 <div class="border-t border-line bg-surface backdrop-blur p-3">
@@ -185,7 +198,7 @@
       disabled={busy}
     ></textarea>
     {#if AUDIO_UPLOAD_ENABLED}
-      <MicButton disabled={busy} ontext={(line) => (liveText = line)} />
+      <MicButton disabled={busy} ontext={onLiveText} />
     {/if}
     {#if busy}
       <Button
