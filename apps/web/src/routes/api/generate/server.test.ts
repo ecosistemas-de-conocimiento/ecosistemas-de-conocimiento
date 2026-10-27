@@ -47,6 +47,8 @@ interface World {
   organization: string | null;
   /** `sessions.kind` on the session row. Unset: the row carries no kind (pre-split). */
   kind?: string;
+  /** Make `GET /api/sessions/:id` fail: an HTTP status, or a network throw. */
+  sessionRead?: number | 'throw';
   saveStatus: number;
   graphCalls: number;
   sessionDocs: Array<Record<string, unknown>>;
@@ -111,6 +113,8 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       });
     }
     if (p === `/api/sessions/${SESSION}` && method === 'GET') {
+      if (world.sessionRead === 'throw') throw new TypeError('fetch failed');
+      if (typeof world.sessionRead === 'number') return json({ errors: [] }, world.sessionRead);
       return json({ id: Number(SESSION), organization: world.organization, ...(world.kind ? { kind: world.kind } : {}) });
     }
     if (p === `/api/sessions/${SESSION}` && method === 'PATCH') return json({});
@@ -903,6 +907,26 @@ describe('POST /api/generate — the conversation kind picks the config', () => 
     expect(systemOf(chatGenerate().at(-1)!)).toContain(resonanciasSystemPrompt());
     expect(body.provenance.chunks.map((c) => c.ordinal)).toEqual([1]);
   });
+
+  // 🔴 Audit 2026-10-26: a failed session read ran the Generales config.
+  it.each([500, 404, 'throw'] as const)(
+    '🔴 the session read fails (%s): no kind is guessed, the turn is refused, nothing generated',
+    async (failure) => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      world.kind = 'resonancias';
+      world.sessionRead = failure;
+      for (const stream of [false, true]) {
+        const err = await Promise.resolve(POST(event(turn(), stream))).then(
+          () => null,
+          (e: unknown) => e as { status?: number; body?: { code?: string } },
+        );
+        expect(err?.status).toBe(502);
+        expect(err?.body?.code).toBe('session_unavailable');
+      }
+      expect(generates()).toHaveLength(0);
+      expect(saves()).toHaveLength(0);
+    },
+  );
 });
 
 // ── Cited sources only (UX backlog #35) ──────────────────────────────────────

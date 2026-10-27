@@ -59,6 +59,20 @@ describe('resonanciasSystemPrompt', () => {
     expect(p).toContain(PLAIN_LANGUAGE_RULE);
   });
 
+  // 🔴 Audit 2026-10-26: ORIENTATION_RULE says "no cites lo que dijeron otras
+  // personas", and the anchor sentence is "Otras personas hablan de … [N]".
+  it('🔴 squares the orientation rule with the cited concept: documents yes, earlier conversations never', () => {
+    const at = p.indexOf(ORIENTATION_RULE);
+    const exception = p.slice(at + ORIENTATION_RULE.length);
+    expect(exception).toMatch(/^ La única excepción: puedes nombrar un concepto.*de los documentos con su número \[N\]/);
+    expect(exception).toContain('"Conversaciones anteriores" nunca se nombra ni se cita');
+  });
+
+  it('the Generales prompt does not carry the Resonancias exception', () => {
+    expect(chatSystemPrompt('E')).not.toContain('La única excepción');
+    expect(chatSystemPrompt('A')).not.toContain('La única excepción');
+  });
+
   it('short, no headers or lists, tú/usted mirrored, Spanish', () => {
     expect(p).toContain('sin encabezados ni listas');
     expect(p).toContain('tú o usted');
@@ -90,6 +104,12 @@ describe('chatEngineConfigFor', () => {
     expect(RESONANCIAS_CONTEXT_PREAMBLE).toContain('Never invent, assume, estimate or extrapolate');
     expect(RESONANCIAS_CONTEXT_PREAMBLE).toContain('Give a number only if that number is written below');
     expect(RESONANCIAS_CONTEXT_PREAMBLE).toContain('Never attribute');
+  });
+
+  it('the Resonancias preamble answers a direct question briefly with [N], then back to the story', () => {
+    expect(RESONANCIAS_CONTEXT_PREAMBLE).toContain(
+      'If the person asks a direct question, answer it briefly from the context with [N], then return to their story with one question.',
+    );
   });
 
   it('🔴 the Resonancias preamble keeps both slots the engine fills', () => {

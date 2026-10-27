@@ -41,6 +41,9 @@ import { backendTitleFetcher, withTestimonioTitles } from '$lib/server/testimoni
 import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
 import { parseCitedOrdinals, prepareTurn, respond, type ContextRef, type ContextScope, type Provenance } from '@edc/chat-engine/core';
 
+/** The turn was refused because the session row could not be read (no kind). */
+const SESSION_UNAVAILABLE_CODE = 'session_unavailable';
+
 /** Max characters of each chunk's passage persisted on the provenance. */
 const PASSAGE_TEXT_CAP = 1200;
 
@@ -498,12 +501,23 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // ever uploaded anywhere, and the model could not tell them apart.
   // The session read also carries the conversation's kind (`$lib/sessionKind`),
   // which picks the engine config below.
-  const [{ corpora, asOf, draftCorpus, publishedCorpus }, { organizationId, kind }, sessionDocs] =
+  const [{ corpora, asOf, draftCorpus, publishedCorpus }, meta, sessionDocs] =
     await Promise.all([
       fetchSessionCorpora(locals.token, body.sessionId),
       sessionMeta(locals.token, body.sessionId),
       fetchSessionDocs(locals.token, body.sessionId),
     ]);
+  // 🔴 Fail closed: without the session row there is no kind, and guessing one
+  // would run a Resonancias conversation on the Generales config (or the
+  // reverse). Refuse the turn; nothing has been generated or spent yet.
+  if (!meta.ok) {
+    console.error(`[generate] could not read session ${body.sessionId}; refusing the turn (no kind).`);
+    throw error(502, {
+      code: SESSION_UNAVAILABLE_CODE,
+      message: 'No se pudo leer la conversación. Inténtalo de nuevo.',
+    });
+  }
+  const { organizationId, kind } = meta;
   if (!asOf) {
     console.error(
       `[generate] no asOf for session ${body.sessionId}; answering WITHOUT retrieval ` +

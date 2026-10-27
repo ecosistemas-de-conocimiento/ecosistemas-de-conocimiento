@@ -325,6 +325,8 @@ export function resonanciasSystemPrompt(): string {
     CHUNK_DATA_RULE +
     '\n\n' +
     ORIENTATION_RULE +
+    ' ' +
+    RESONANCIAS_ORIENTATION_EXCEPTION +
     '\n\n' +
     PLAIN_LANGUAGE_RULE +
     '\n\n' +
@@ -333,6 +335,19 @@ export function resonanciasSystemPrompt(): string {
     'nota, usa usted.'
   );
 }
+
+/**
+ * Squares {@link ORIENTATION_RULE} ("no repitas ni cites lo que … dijeron otras
+ * personas") with the Resonancias instruction "Otras personas hablan de … [N]"
+ * (audit 2026-10-26). The two are about different blocks — earlier
+ * conversations vs. the documents — but both say "otras personas", so the
+ * model is told which one the citation may come from. The shared rule stays
+ * byte-identical, so the Generales prompt does not change.
+ */
+const RESONANCIAS_ORIENTATION_EXCEPTION =
+  'La única excepción: puedes nombrar un concepto, una práctica o una ' +
+  'metodología de los documentos con su número [N], como se indicó arriba. Lo ' +
+  'que viene de "Conversaciones anteriores" nunca se nombra ni se cita.';
 
 /**
  * The user-turn preamble on a Resonancias turn (overrides the engine's
@@ -347,8 +362,10 @@ export const RESONANCIAS_CONTEXT_PREAMBLE =
   'experience. The context is other people\'s material. Use it to find ONE ' +
   'concept, practice or methodology that relates to what the person said: ' +
   'name it plainly with its [N] and ask how it relates to their experience. ' +
-  'If nothing relates, ask a plain follow-up without citing. Never attribute ' +
-  'the context to this person, and do not report what it lacks.\n' +
+  'If nothing relates, ask a plain follow-up without citing. If the person ' +
+  'asks a direct question, answer it briefly from the context with [N], then ' +
+  'return to their story with one question. Never attribute the context to ' +
+  'this person, and do not report what it lacks.\n' +
   '\n' +
   'Rules:\n' +
   '1. State as fact only what is written below or what the person said. ' +

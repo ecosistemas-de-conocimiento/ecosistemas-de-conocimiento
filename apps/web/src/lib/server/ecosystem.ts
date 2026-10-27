@@ -218,19 +218,31 @@ export async function sessionEcosystemId(
   token: string | undefined,
   sessionId: string,
 ): Promise<string | null> {
-  return (await sessionMeta(token, sessionId)).organizationId;
+  const meta = await sessionMeta(token, sessionId);
+  return meta.ok ? meta.organizationId : null;
 }
 
-/** What one read of the session row tells a chat turn. */
-export interface SessionMeta {
-  /** {@link sessionEcosystemId}'s answer. */
-  organizationId: string | null;
-  /**
-   * `sessions.kind` (`$lib/sessionKind`): which engine config the turn runs.
-   * Immutable after create. Missing, unknown or unreadable is `generales`.
-   */
-  kind: SessionKind;
-}
+/**
+ * What one read of the session row tells a chat turn, or `ok: false` when the
+ * row could not be read (non-2xx, a throw, an unreadable body).
+ *
+ * 🔴 A failed read carries NO kind. The kind picks the engine config, and a
+ * guess would run a Resonancias conversation as Generales (or the reverse)
+ * without anyone noticing; `/api/generate` refuses the turn instead.
+ */
+export type SessionMeta =
+  | {
+      ok: true;
+      /** {@link sessionEcosystemId}'s answer. */
+      organizationId: string | null;
+      /**
+       * `sessions.kind` (`$lib/sessionKind`): which engine config the turn
+       * runs. Immutable after create. A row with no kind (made before the
+       * split) is `generales`.
+       */
+      kind: SessionKind;
+    }
+  | { ok: false };
 
 /**
  * The session row read once for a chat turn: its ecosistema (same rules as
@@ -238,19 +250,19 @@ export interface SessionMeta {
  * did not grow a second read for the kind.
  */
 export async function sessionMeta(token: string | undefined, sessionId: string): Promise<SessionMeta> {
-  const none: SessionMeta = { organizationId: null, kind: 'generales' };
-  if (!sessionId) return none;
+  if (!sessionId) return { ok: false };
   try {
     const res = await backendFetch(
       token,
       `/api/sessions/${encodeURIComponent(sessionId)}?depth=0`,
       { method: 'GET' },
     );
-    if (!res.ok) return none;
-    const body = (await res.json().catch(() => ({}))) as { organization?: unknown; kind?: unknown };
-    return { organizationId: organizationIdOf(body.organization), kind: parseSessionKind(body.kind) };
+    if (!res.ok) return { ok: false };
+    const body = (await res.json()) as { organization?: unknown; kind?: unknown } | null;
+    if (!body || typeof body !== 'object') return { ok: false };
+    return { ok: true, organizationId: organizationIdOf(body.organization), kind: parseSessionKind(body.kind) };
   } catch {
-    return none;
+    return { ok: false };
   }
 }
 
