@@ -1,6 +1,8 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `9907e9e` (peer queries in the student view read
+**Status:** live since 2026-10-17. Dev runs `main` @ `19525be` (the anonymisation gate redacts a
+bare first name or surname of a detected person; no migration), deployed 2026-10-27 22:58 UTC — see
+§4zs. Before that, `9907e9e` (peer queries in the student view read
 documentos only, never testimonios; student-view FKs cascade; migration
 `20261027_061014_student_view_fk_cascade` applied on start), deployed 2026-10-27 06:27 UTC — see
 §4zr. Before that, `db2d201` (profiles `estudiante` and
@@ -2126,6 +2128,67 @@ dangling images left, both in use: `858f009f9709` (staging's redis) and `57e4255
 Spend: 0 `usage_logs` rows since 06:20 UTC; total $3.957493 before and after.
 
 **Disk**, `df -h /` free: 57 GB before; 42 GB after the build; 57 GB after the cleanup. Images
+9.67 GB, build cache 0.
+
+### 4zs. ✅ Done 2026-10-27 22:51–23:08 UTC: `19525be`, dev only — the gate redacts a bare first name
+
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
+`97d5316`, `docker ps`). edcai was told by the coordinator; this run reported to the coordinator
+only. No graph backfill was running. `19525be` = `e730e02` (the anonymisation gate redacts each
+part of a detected person's name wherever it stands alone, `lib/anonymise/nameParts.ts`) and
+`0f95fd7` (the detector prompt calls a gated documento a document, not a testimony), plus
+`scripts/ingest/ingest-folder.sh` and the §4zq/§4zr docs. Backend code only; no compose,
+variable or migration change.
+
+**Migrations.** `payload_migrations` 12 before and after, newest
+`20261027_061014_student_view_fk_cascade`; the backend log reads "Reading migration files…",
+`Done.` with nothing to migrate. `edc_ai` `public.__drizzle_migrations` unchanged at 6.
+
+Backup `/root/backups/20261027T2252Z/` (`edc_ai` 88 MB, `edc_backend` 5.4 MB; `pg_restore -l`
+137 / 438 non-comment lines, `SHA256SUMS` beside them), off-box copy in the owner's
+`cide/backups/edc-1/20261027T2252Z/` with `timeout 180 scp`; `sha256sum -c` of both dumps passed
+before the deploy. Deploy `q00lhthv4nae5zbozn5cjmuq` 22:52:35 → 22:58:41 UTC, `finished`, commit
+`19525bed…`. 9 containers up; `web`, `backend` and `ai-service` run image tag `19525bed6a7c…`,
+healthy. The deploy rebuilt `edc-audio-service:dev` again (now `ab794b81e5ba`). Health 200 on
+`dev.` and `api.dev.`. 0 `error`/`fatal` lines in 8 of 9 dev containers at startup and after the
+check; postgres holds 34 `ERROR` lines, all the deploy agent's own queries (30 from one wait loop
+that named a nonexistent enum value `failed`, 4 wrong column names).
+
+**Real-model gate check** (synthetic text only, no paid chat). The backend log at start reads
+"gate detector backend: openai-compat at <Spark>:8178, model qwen3-30b-a3b-instruct-2507, falls
+back to ai-service when unavailable". As admin, through web `POST /api/documentos` with
+`anonymise=true` and cookie `eco_selected=8`: three Markdown documentos 825, 826, 827
+(`nota-campo-{a,b,c}.md`, 450–500 characters each). Each names the invented person "Mariana
+Robledo Quintero" once, then the bare "Mariana" 4 times, and carries an invented co-author line
+(three different invented full names). Gate `ready` within ≈ 60 s for all three; 6 detector
+calls, all served by the Spark (`openai-compat … 590–2019 ms`), no fallback.
+
+Counts by SQL, case-insensitive `regexp_count`, no text printed:
+
+| where | Mariana | Robledo | Quintero | co-author name parts |
+|---|---|---|---|---|
+| `documents.redacted_text`, each of 825/826/827 | 0 | 0 | 0 | 0 |
+| `documents.extracted_text` (raw, control), each | 5 | — | — | — |
+| ai-service `documents.text` and `chunks.text` (1 chunk each) | 0 (all three names) | | | |
+| `graph_mentions.snippet`, linked `graph_entities` label/key/aliases (12 mentions) | 0 (all three names) | | | |
+
+`redacted_text` holds 6, 6 and 7 `[…]` placeholders. The check was not run on `9907e9e`, so it
+shows the fix holds on the real detector, not that the old build leaked.
+
+Cleanup: the three documentos deleted as admin through web `DELETE /api/documents/<id>` (200
+each) at 23:03:58 UTC. 0 rows left in `documents`, `graph_mentions`, `graph_relations`, `media`
+or ai-service `documents` for them.
+
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three `9907e9e`
+web/backend/ai-service images by exact name; `docker builder prune -af` reclaimed 14.78 GB. Two
+dangling images left, both in use: `858f009f9709` (staging's redis) and `57e4255cc971`
+(`coolify-redis`).
+
+Spend: `usage_logs` since 22:50 UTC: 3 graph-extraction calls `router.route`
+`deepseek/deepseek-chat-v3.1` $0.005407 (the three test documentos' graph pass, paid) and 3
+ingest embeddings $0.000003. Total $7.661300 after (other lanes' work since §4zr's $3.957493).
+
+**Disk**, `df -h /` free: 57 GB before; 42 GB after the build; 56 GB after the cleanup. Images
 9.67 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
