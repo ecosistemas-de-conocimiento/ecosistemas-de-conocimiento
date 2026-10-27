@@ -53,9 +53,10 @@
  * unstamped and invisible to anyone measuring the graph. This one is stamped
  * `GRAPH_PROMPT_VERSION` and takes effect only when a document is re-extracted.
  *
- * ⚠ INFERENCE COSTS MONEY. Nothing in this module retries a window, and nothing
- * loops over generation. One call per window, capped at
- * `GRAPH_EXTRACT_MAX_WINDOWS`. A failed window is counted and skipped.
+ * ⚠ INFERENCE COSTS MONEY. Nothing loops over generation. One call per window,
+ * capped at `GRAPH_EXTRACT_MAX_WINDOWS`; at most ONE extra call for a
+ * transient fault and ONE for an unreadable reply (see `extractGraph`). A
+ * failed window is counted and skipped.
  */
 
 import { mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
@@ -64,10 +65,14 @@ import { canonicalKey, displayLabel } from './normalise'
 import {
   GRAPH_EXTRACT_UNIT_TYPE,
   GRAPH_FRAGMENT_MAX_CHARS,
+  GRAPH_MAX_ENTITIES,
+  GRAPH_MAX_RELATIONS,
   GRAPH_PROMPT_VERSION,
+  GRAPH_RETRY_NUDGE,
   graphBuiltInSpec,
   graphUnitKey,
 } from './prompt'
+import { coerceReplyShape, describeReply, salvageJson } from './reply'
 import {
   isGraphEntityType,
   isGraphRelationType,
@@ -197,13 +202,17 @@ export interface ParsedWindow {
 }
 
 /**
- * Read one `parsed` payload defensively.
+ * Read one `{entidades, relaciones}` payload defensively.
  *
- * ⚠ `parsed` IS `unknown`, AND WE NEVER PARSE `text` BY HAND. ai-service
- * surfaces `parsed` only if the response validated against the full JSON Schema
- * (`router.ts:120-135`), so its absence means the model produced something the
- * contract does not describe. Re-deriving it from the raw text would throw that
- * guarantee away for the sake of salvaging a bad window (ADR §5.2).
+ * ⚠ `parsed` IS `unknown`, and since 2026-10-26 it may also come from the raw
+ * `text` ({@link readWindowReply}). ai-service withholds `parsed` on ANY schema
+ * miss, and on dev ~20 % of replies missed by a detail (an `id` per entity, a
+ * list past `maxItems`) — see `reply.ts`. Everything the schema promised is
+ * re-checked HERE instead: enum types, label shape, the `fragmento` slice, the
+ * list caps, and — later, unconditionally — the person rule.
+ *
+ * Unknown keys are ignored. A relation endpoint that names an entity's `id`
+ * rather than its label is resolved to the label.
  *
  * Returns `null` when the payload is not usable at all; the caller counts that
  * as a failed window.
@@ -214,13 +223,17 @@ export function parseWindowResponse(parsed: unknown): ParsedWindow | null {
   if (!Array.isArray(body.entidades)) return null
 
   const entities: RawEntity[] = []
+  /** The model's own `id` → label, so `desde: "entidad_1"` still resolves. */
+  const labelById = new Map<string, string>()
   for (const item of body.entidades) {
+    if (entities.length >= GRAPH_MAX_ENTITIES) break
     if (!item || typeof item !== 'object') continue
     const row = item as Record<string, unknown>
     if (!isGraphEntityType(row.tipo)) continue
     const etiqueta = displayLabel(typeof row.etiqueta === 'string' ? row.etiqueta : '')
     // An entity with no usable label has no identity, so it is not an entity.
     if (!etiqueta || !canonicalKey(etiqueta)) continue
+    if (typeof row.id === 'string' || typeof row.id === 'number') labelById.set(String(row.id), etiqueta)
     const menciones = Number(row.menciones)
     // 🔴 THE SLICE IS THE CAP THAT ACTUALLY HOLDS. `maxLength` in the JSON
     // Schema is a request; ai-service withholds `parsed` when a response misses
@@ -243,18 +256,53 @@ export function parseWindowResponse(parsed: unknown): ParsedWindow | null {
 
   const relations: RawRelation[] = []
   if (Array.isArray(body.relaciones)) {
+    const endpoint = (v: unknown): string => {
+      if (typeof v !== 'string' && typeof v !== 'number') return ''
+      return displayLabel(labelById.get(String(v)) ?? (typeof v === 'string' ? v : ''))
+    }
     for (const item of body.relaciones) {
+      if (relations.length >= GRAPH_MAX_RELATIONS) break
       if (!item || typeof item !== 'object') continue
       const row = item as Record<string, unknown>
       if (!isGraphRelationType(row.tipo)) continue
-      const desde = displayLabel(typeof row.desde === 'string' ? row.desde : '')
-      const hacia = displayLabel(typeof row.hacia === 'string' ? row.hacia : '')
+      const desde = endpoint(row.desde)
+      const hacia = endpoint(row.hacia)
       if (!desde || !hacia) continue
       relations.push({ desde, hacia, tipo: row.tipo })
     }
   }
 
   return { entities, relations }
+}
+
+export type WindowReply =
+  | { window: ParsedWindow; source: 'parsed' | 'text' }
+  | { miss: string }
+
+/**
+ * One reply → a window, or a SHAPE-ONLY miss description.
+ *
+ * `parsed` first (ai-service vouched for it). Otherwise the raw `text`, read
+ * tolerantly (`reply.ts`). 🔴 An empty but well-formed reply — `{}`, `[]`,
+ * `{"entidades": []}` — is a valid window with 0 entities: the model looked
+ * and found nothing, and the document is `ready`, not `failed`. A reply cut
+ * off before its first complete entity is NOT that: it is a miss.
+ */
+export function readWindowReply(result: { parsed?: unknown; text?: string }): WindowReply {
+  const fromParsed = parseWindowResponse(result.parsed)
+  if (fromParsed) return { window: fromParsed, source: 'parsed' }
+
+  const text = typeof result.text === 'string' ? result.text.trim() : ''
+  if (!text) return { miss: describeReply(text) }
+  const salvaged = salvageJson(text)
+  if ('error' in salvaged) return { miss: describeReply(text, salvaged) }
+  const shaped = coerceReplyShape(salvaged.value)
+  const window = shaped ? parseWindowResponse(shaped) : null
+  if (!window) return { miss: describeReply(text, salvaged) }
+  if (salvaged.truncated && window.entities.length === 0) {
+    return { miss: `response length ${text.length}, cut off before the first complete entity` }
+  }
+  return { window, source: 'text' }
 }
 
 /**
@@ -991,15 +1039,17 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
       texto: windows[i],
       ventana: String(i + 1),
       ventanas: String(windows.length),
+      // ⚠ ALWAYS SENT: ai-service compiles templates in Handlebars strict mode,
+      // so a missing `nota` would throw. Empty on the first call.
+      nota: '',
     }
 
-    let result: { parsed?: unknown; text?: string }
-    try {
-      result = await callWindowWithRetry(
-        () => callWindow({ client, docId, windowIndex: i, input, spec }),
+    const call = (nota: string) =>
+      callWindowWithRetry(
+        () => callWindow({ client, docId, windowIndex: i, input: { ...input, nota }, spec }),
         args.retryDelayMs ?? TRANSIENT_RETRY_DELAY_MS,
       )
-    } catch (err) {
+    const callFailed = (err: unknown) => {
       windowsFailed++
       // 🔴 A thrown client error may echo the response; a gated kind keeps only its class.
       const safe = mustPassAnonymisationGate(contentKind)
@@ -1007,24 +1057,41 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
         : err
       failureReasons.push(safe instanceof Error ? safe.message.slice(0, 400) : String(safe).slice(0, 400))
       ;(args.onWindowError ?? defaultWindowError)(i, safe)
+    }
+
+    let reply: WindowReply
+    try {
+      reply = readWindowReply(await call(''))
+    } catch (err) {
+      callFailed(err)
       continue
     }
 
-    const shaped = parseWindowResponse(result.parsed)
-    if (!shaped) {
-      windowsFailed++
-      // 🔴 CARRY THE RAW TEXT INTO THE ERROR. `parsed` is withheld whenever the
-      // response misses the JSON Schema, and without the text the failure is
-      // indistinguishable from "the model returned nothing" — which is exactly
-      // the dead end the first real run hit. `generate.sync` persists no
-      // `generation_jobs` row, so `GET /v1/generate/units/:key/latest` cannot
-      // replay it either: if this message does not carry the evidence, the only
-      // way to see it is to pay for the call again.
-      const reason = `no usable \`parsed\` payload (schema miss or empty completion)${responsePreview(result.text, contentKind)}`
-      failureReasons.push(reason)
-      ;(args.onWindowError ?? defaultWindowError)(i, new Error(reason))
-      continue
+    // ONE retry with a stricter nudge on an unreadable reply. Measured on dev:
+    // the same prompt over the same note passed on a re-run, so the miss is
+    // the model's variance and a second draw usually lands.
+    if ('miss' in reply) {
+      // 🔴 SHAPE ONLY (`reply.ts`): the reply can quote the document.
+      console.warn('[graph] extraction window', i, 'unreadable reply, retrying once:', reply.miss)
+      const firstMiss = reply.miss
+      try {
+        reply = readWindowReply(await call(GRAPH_RETRY_NUDGE))
+      } catch (err) {
+        callFailed(err)
+        continue
+      }
+      if ('miss' in reply) {
+        windowsFailed++
+        // `schedule.ts` persists the first reason as `graphError` — so it is
+        // shape info too, never text. `generate.sync` writes no
+        // `generation_jobs` row, so this is the only evidence a run leaves.
+        const reason = `no usable reply after 1 retry — first: ${firstMiss}; retry: ${reply.miss}`
+        failureReasons.push(reason)
+        ;(args.onWindowError ?? defaultWindowError)(i, new Error(reason))
+        continue
+      }
     }
+    const shaped = reply.window
 
     // 🔴 UNCONDITIONAL, and before the merge. Privacy first: the person rule
     // runs whatever the model returned, and only then does the quality rule.
@@ -1059,45 +1126,6 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
     windowsFailed,
     truncated,
     promptVersion: GRAPH_PROMPT_VERSION,
-  }
-}
-
-/**
- * The raw response, as evidence, HEAD AND TAIL.
- *
- * 🔴 THE TAIL IS THE DIAGNOSIS. The failure this exists for is a completion cut
- * off mid-array — the model runs out of output budget rather than closing the
- * JSON — and the only thing that tells a cut-off array apart from a malformed
- * one is what the LAST characters look like. A head-only preview, which is what
- * this was, shows a perfectly well-formed opening every time and says nothing.
- */
-function responsePreview(text: string | undefined, contentKind: string | null | undefined): string {
-  const body = typeof text === 'string' ? text.trim() : ''
-  if (!body) return ' — the response carried no text either'
-  // 🔴 PRIVACY. Logs and `graphError` are not a place for corpus text. A gated
-  // kind (testimonio, conversación, unknown) gets metadata only: the length and
-  // where JSON.parse gave up — enough to tell a cut-off array from a malformed one.
-  if (mustPassAnonymisationGate(contentKind)) {
-    return ` — response length ${body.length}, ${parseErrorPosition(body)}`
-  }
-  // A documento: a short, capped head and tail. Still no corpus dump.
-  const keep = 60
-  if (body.length <= keep * 2) return ` — response text was: ${body}`
-  const omitted = body.length - keep * 2
-  return ` — response length ${body.length}, ${parseErrorPosition(body)}; response text was: ${body.slice(0, keep)} […${omitted} chars…] ${body.slice(-keep)}`
-}
-
-/** Where JSON.parse stopped, without echoing the text (V8 messages can quote it). */
-function parseErrorPosition(body: string): string {
-  try {
-    JSON.parse(body)
-    return 'valid JSON (schema miss)'
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : ''
-    const pos = /position (\d+)/.exec(msg)?.[1]
-    if (pos) return `parse error at position ${pos}`
-    if (/end of JSON input|Unterminated/i.test(msg)) return `parse error at end of input (position ${body.length})`
-    return 'parse error (position unknown)'
   }
 }
 

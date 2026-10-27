@@ -152,6 +152,27 @@ export function graphUnitKey(docId: string | number, windowIndex: number): strin
  */
 export const GRAPH_FRAGMENT_MAX_CHARS = 120
 
+/**
+ * The list caps. The schema's `maxItems` is a request the model misses (and a
+ * miss withholds `parsed`); `extract.ts` slices to the same numbers when it
+ * reads a reply from raw `text`.
+ */
+export const GRAPH_MAX_ENTITIES = 15
+export const GRAPH_MAX_RELATIONS = 20
+
+/**
+ * Sent as `nota` on the ONE retry after an unreadable reply (`extract.ts`).
+ * It names the exact misses measured on dev (2026-10-26): an `id` per entity,
+ * a top-level array, lists past the caps.
+ */
+export const GRAPH_RETRY_NUDGE = [
+  'ATENCIÓN: tu respuesta anterior no se pudo leer. Responde SOLO con UN objeto',
+  'JSON con exactamente dos claves, "entidades" y "relaciones" (dos listas, que',
+  'pueden estar vacías). No envuelvas el objeto en una lista. No agregues "id"',
+  'ni otras claves: `desde` y `hacia` son etiquetas de `entidades`. Máximo',
+  `${GRAPH_MAX_ENTITIES} entidades y ${GRAPH_MAX_RELATIONS} relaciones. Sin markdown ni texto alrededor.`,
+].join('\n')
+
 /** The JSON Schema handed to ai-service as `responseSchema`. ADR §5.4. */
 export function graphResponseSchema(allowPersona: boolean): Record<string, unknown> {
   const entityTypes = allowPersona
@@ -165,7 +186,7 @@ export function graphResponseSchema(allowPersona: boolean): Record<string, unkno
     properties: {
       entidades: {
         type: 'array',
-        maxItems: 15,
+        maxItems: GRAPH_MAX_ENTITIES,
         items: {
           type: 'object',
           additionalProperties: false,
@@ -203,7 +224,7 @@ export function graphResponseSchema(allowPersona: boolean): Record<string, unkno
       },
       relaciones: {
         type: 'array',
-        maxItems: 20,
+        maxItems: GRAPH_MAX_RELATIONS,
         items: {
           type: 'object',
           additionalProperties: false,
@@ -366,6 +387,8 @@ export function graphPromptTemplate(allowPersona: boolean): string {
     '---',
     '{{{texto}}}',
     '---',
+    // Empty on a first call; GRAPH_RETRY_NUDGE on the one retry.
+    '{{{nota}}}',
   ].join('\n')
 }
 
