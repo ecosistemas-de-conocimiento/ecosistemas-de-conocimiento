@@ -207,9 +207,10 @@ describe('gates', () => {
       teacher: false,
       admin: false,
     })
+    // `lib/roles.ts` (roles lane): `canAdminOrg` is owner OR investigador.
     expect((await call('get', '/estudiante/acceso', { as: user(5), qs: `organization=${ORG}` })).body).toMatchObject({
       teacher: true,
-      admin: false,
+      admin: true,
     })
   })
 })
@@ -304,7 +305,14 @@ describe('activity report', () => {
     expect(Q.calls.filter((c) => c.startsWith('docs:'))).toEqual([])
   })
 
-  it.each([1, 5, 6])('user %i (not canAdminOrg) → 403', async (uid) => {
+  it('an investigador (canAdminOrg per lib/roles.ts) may read a consented report', async () => {
+    const { w, call } = setup()
+    w.profiles.push({ id: 1, user: 1, organization: ORG, shareWithPeers: false, shareActivity: true })
+    expect((await call('get', '/estudiante/reporte', { as: user(5), qs: `organization=${ORG}&user=1` })).status).toBe(200)
+    expect((await call('get', '/estudiante/reportes', { as: user(5), qs: `organization=${ORG}` })).status).toBe(200)
+  })
+
+  it.each([1, 6])('user %i (not canAdminOrg) → 403', async (uid) => {
     const { w, call } = setup()
     w.profiles.push({ id: 1, user: 1, organization: ORG, shareWithPeers: false, shareActivity: true })
     expect((await call('get', '/estudiante/reporte', { as: user(uid), qs: `organization=${ORG}&user=1` })).status).toBe(403)
