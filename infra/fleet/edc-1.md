@@ -1,6 +1,7 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `34296a8` (`documents.anonymise`: participant
+**Status:** live since 2026-10-17. Dev runs `main` @ `dd9a5c5` (the live mic's last line fills
+the chat input on stop), deployed 2026-10-27 00:25 UTC — see §4zo. Before that, `34296a8` (`documents.anonymise`: participant
 PDF/DOCX documentos and staff "Anonimizar" uploads pass the anonymisation gate; exclude-select
 fails closed; interviewer turns for a participant's own story; source icon and day under testimonio
 titles; migration `20261026_160000_documents_anonymise`), deployed 2026-10-26 22:33 UTC — see §4zn.
@@ -1891,6 +1892,25 @@ gate calls ≈ $0.0005, the doc 350 graph call $0.0010, ingest < $0.00001 — �
 
 **Disk**, `df -h /` free: 57 GB before; 43 GB after the build; 57 GB after the cleanup. Images
 9.7 GB, build cache 0.
+
+### 4zo. ✅ Done 2026-10-27 00:19–00:25 UTC: `dd9a5c5`, dev only — live mic text fills the chat input
+
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
+`97d5316`). `dd9a5c5` = `Composer.svelte`: when the live mic stops, its last line of text lands in
+the chat input (appended after any typed text), plus one assertion in `e2e/live-mic.spec.ts`. Web
+only; no compose, variable or migration change, so no backup. Before landing, in the worktree:
+vitest 113 files / 2287 tests passed, svelte-check 0 errors.
+
+Push `e80476a..dd9a5c5` (fast-forward). Deploy `ujfxnpo931epgkiaveagnaoq` queued 00:19:21 →
+`finished` 00:25:24 UTC (≈ 6 min), commit `dd9a5c59…`. `web`, `backend` and `ai-service` run image
+tag `dd9a5c59395d…`, healthy; the 3 audio containers stay on `edc-audio-service:dev` (§4zk). 9 dev
+containers. Health 200 on `dev.` and `api.dev.`. The served bundle carries the new code: chunk
+`/repo/apps/web/build/client/_app/immutable/chunks/Cu4oZiLI.js` holds the `onLiveText` append
+(`` `${…trimEnd()} ${C}` `` then `queueMicrotask`). 0 `error`/`fatal` lines in web, backend and
+ai-service since start.
+
+`docker builder prune -f` reclaimed 14.09 GB. **Disk**, `df -h /` free: 43 GB before the prune,
+55 GB after. The `34296a8` images were not removed.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
