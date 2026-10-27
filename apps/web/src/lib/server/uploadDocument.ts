@@ -27,6 +27,23 @@ function looksLikeDocx(b: Uint8Array): boolean {
   return b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04;
 }
 
+const BINARY_MAGICS = ['%PDF-', 'PK\x03\x04', 'MZ', '\x7fELF', '#!'];
+
+/**
+ * csv and html have no magic number: the check is that the head is TEXT —
+ * UTF-8, Windows-1252 or BOM-marked UTF-16 — and not a known binary or script.
+ * The backend's Media hook (`textUploadsAreText`) runs the same check.
+ */
+function looksLikeText(b: Uint8Array): boolean {
+  if (b.length === 0) return false;
+  if ((b[0] === 0xff && b[1] === 0xfe) || (b[0] === 0xfe && b[1] === 0xff)) return true;
+  if (BINARY_MAGICS.some((m) => ascii(b, 0, m))) return false;
+  for (const byte of b) {
+    if (byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0c && byte !== 0x0d) return false;
+  }
+  return true;
+}
+
 /** MP3 (ID3 or frame sync), AAC/ADTS, WAV, OGG/Opus, FLAC, M4A/MP4/MOV, WebM, AMR. */
 function looksLikeAudio(b: Uint8Array): boolean {
   if (ascii(b, 0, 'ID3')) return true;
@@ -38,11 +55,34 @@ function looksLikeAudio(b: Uint8Array): boolean {
   return false;
 }
 
+export type UploadFileKind = 'pdf' | 'docx' | 'xlsx' | 'csv' | 'html' | 'audio';
+
 /** Do the file's first bytes agree with the kind its name and MIME settled on? */
-export function bytesMatchKind(head: Uint8Array, kind: 'pdf' | 'docx' | 'audio'): boolean {
+export function bytesMatchKind(head: Uint8Array, kind: UploadFileKind): boolean {
   if (kind === 'pdf') return looksLikePdf(head);
-  if (kind === 'docx') return looksLikeDocx(head);
+  // DOCX and XLSX are both ZIPs; the backend's file-type sniff tells them apart.
+  if (kind === 'docx' || kind === 'xlsx') return looksLikeDocx(head);
+  if (kind === 'csv' || kind === 'html') return looksLikeText(head);
   return looksLikeAudio(head);
+}
+
+/**
+ * The file kind from its MIME and name, or `null` if we take no such file.
+ * ⚠ Documents before audio — see the order note on `uploadDocument`. ⚠ A
+ * `.csv` goes by its extension: Windows labels it `application/vnd.ms-excel`,
+ * the same MIME as the legacy `.xls`, which has no extractor and is refused.
+ */
+export function uploadFileKind(file: { name: string; type: string }): UploadFileKind | null {
+  const { name, type } = file;
+  if (type === 'application/pdf' || /\.pdf$/i.test(name)) return 'pdf';
+  if (type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || /\.docx$/i.test(name))
+    return 'docx';
+  if (type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || /\.xlsx$/i.test(name))
+    return 'xlsx';
+  if (type === 'text/csv' || /\.csv$/i.test(name)) return 'csv';
+  if (type === 'text/html' || /\.html?$/i.test(name)) return 'html';
+  if (AUDIO_UPLOAD_ENABLED && isAudioUpload(file)) return 'audio';
+  return null;
 }
 
 /**
@@ -54,7 +94,7 @@ export function bytesMatchKind(head: Uint8Array, kind: 'pdf' | 'docx' | 'audio')
  *
  * Order matters, and every refusal happens BEFORE the bytes go up:
  *   1. `contentKind` (documento | testimonio), and the Voz pre-check.
- *   2. File kind, sniffed PDF → DOCX → audio. ⚠ PDF and DOCX first:
+ *   2. File kind, PDF → DOCX → XLSX → CSV → HTML → audio. ⚠ Documents first:
  *      `isAudioUpload` accepts `.mp4`/`.mov` and a generous extension list, so
  *      running it first would send an odd-MIME document to the transcriber.
  *   3. A client-supplied `kind` is a HINT: honoured only when it agrees.
@@ -85,14 +125,7 @@ export async function uploadDocument(
     }
   }
 
-  let kind: 'pdf' | 'docx' | 'audio' | null = null;
-  if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) kind = 'pdf';
-  else if (
-    file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    /\.docx$/i.test(file.name)
-  )
-    kind = 'docx';
-  else if (AUDIO_UPLOAD_ENABLED && isAudioUpload(file)) kind = 'audio';
+  const kind = uploadFileKind(file);
   if (!kind) return { status: 400, body: { error: 'unsupported_kind' } };
 
   const kindHint = form.get('kind');

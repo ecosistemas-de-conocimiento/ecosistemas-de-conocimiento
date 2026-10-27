@@ -29,6 +29,7 @@ import {
   type ContentKind,
 } from '../lib/contentKind'
 import { assertSessionOwnedBy, SessionNotOwnedError } from '../lib/corpus'
+import { TextTooLongError } from '../lib/extract/text'
 import {
   organizationIdsForUser,
   organizationIdsForUserWithPermission,
@@ -58,8 +59,8 @@ import {
  * and `mode` defaults to `full-text` (the chat-FE BFF inlines it as prompt
  * context when `isPinned` is true).
  *
- * For PDF/DOCX (`kind: 'pdf' | 'docx'`), the `afterChange` hook below:
- *   1. extracts text via `unpdf` / `mammoth` (inline; v1 size limit ~10MB);
+ * For PDF/DOCX/XLSX/CSV/HTML (`FILE_TEXT_KINDS`), the `afterChange` hook below:
+ *   1. extracts text via `unpdf` / `mammoth` / `lib/extract/*` (inline);
  *   2. persists the result to `extractedText`;
  *   3. enqueues an ingest with ai-service via @edc/ai-client, passing
  *      a `callbackUrl` so the receiver at /api/ai-service/callback (M5)
@@ -1196,7 +1197,13 @@ export interface AudioMeta {
 const CORPUS_LANGUAGE = process.env.CORPUS_LANGUAGE?.trim() || 'spanish'
 
 /** The kinds whose text arrives through the extract → ingest pipeline. */
-const INGESTABLE_KINDS = new Set(['pdf', 'docx', 'audio'])
+const INGESTABLE_KINDS = new Set(['pdf', 'docx', 'xlsx', 'csv', 'html', 'audio'])
+
+/** The kinds whose text is EXTRACTED from the stored file (audio is transcribed). */
+export const FILE_TEXT_KINDS = ['pdf', 'docx', 'xlsx', 'csv', 'html'] as const
+export type FileTextKind = (typeof FILE_TEXT_KINDS)[number]
+const asFileTextKind = (kind: unknown): FileTextKind =>
+  (FILE_TEXT_KINDS as readonly unknown[]).includes(kind) ? (kind as FileTextKind) : 'pdf'
 
 /**
  * 🔴 THE CAP ON EVERY COLUMN THAT HOLDS A WHOLE DOCUMENT: `extractedText`,
@@ -1683,11 +1690,12 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
     })
 
     try {
-      extractedText = await extractText(
-        payload,
-        mediaId,
-        fresh.kind === 'docx' ? 'docx' : 'pdf',
-      )
+      extractedText = await extractText(payload, mediaId, asFileTextKind(fresh.kind))
+      // 🔴 The column cap. Past it the `extractedText` save is a ValidationError;
+      // a short, stable reason here is the better failure.
+      if (extractedText.length > DOCUMENT_TEXT_MAX_LENGTH) {
+        throw new TextTooLongError(DOCUMENT_TEXT_MAX_LENGTH)
+      }
     } catch (err) {
       console.error('[documents] extraction failed for doc', docId, err)
       await payload.update({
@@ -2611,7 +2619,7 @@ export async function openMediaStream(
 async function extractText(
   payload: Awaited<ReturnType<typeof import('payload').getPayload>>,
   mediaId: string | number,
-  kind: 'pdf' | 'docx',
+  kind: FileTextKind,
 ): Promise<string> {
   // ⚠ Goes through `loadMediaBytes`, which knows whether this deployment keeps
   // uploads on local disk or in the bucket. This function used to resolve
@@ -2644,6 +2652,20 @@ async function extractText(
     } finally {
       restore?.()
     }
+  }
+  const maxChars = DOCUMENT_TEXT_MAX_LENGTH
+  if (kind === 'xlsx') {
+    const { extractXlsxText } = await import('@/lib/extract/spreadsheet')
+    return extractXlsxText(buffer, { maxChars })
+  }
+  if (kind === 'csv') {
+    const { extractCsvText } = await import('@/lib/extract/spreadsheet')
+    return extractCsvText(buffer, { maxChars })
+  }
+  if (kind === 'html') {
+    // 🔴 Text only: never rendered back as HTML. See `lib/extract/html.ts`.
+    const { extractHtmlText } = await import('@/lib/extract/html')
+    return extractHtmlText(buffer, { maxChars })
   }
   // docx
   const mammoth = (await import('mammoth')).default ?? (await import('mammoth'))
@@ -2830,6 +2852,10 @@ export const Documents: CollectionConfig = {
         { label: 'Markdown', value: 'markdown' },
         { label: 'PDF', value: 'pdf' },
         { label: 'DOCX', value: 'docx' },
+        { label: 'XLSX', value: 'xlsx' },
+        { label: 'CSV', value: 'csv' },
+        /** ⚠ Stored and served as text; its markup is never rendered. */
+        { label: 'HTML', value: 'html' },
         /**
          * ⚠ An audio document's TEXT is a machine transcription. It is a
          * first-class document — citable, publishable — and it can contain ASR
@@ -3168,7 +3194,7 @@ export const Documents: CollectionConfig = {
       relationTo: 'media',
       admin: {
         description:
-          'Used for kind=pdf, docx or audio. For audio it is also the PROVENANCE: a member who distrusts a quoted line can play the source recording.',
+          'Used for kind=pdf, docx, xlsx, csv, html or audio. For audio it is also the PROVENANCE: a member who distrusts a quoted line can play the source recording.',
       },
     },
     { name: 'isPinned', type: 'checkbox', defaultValue: true },

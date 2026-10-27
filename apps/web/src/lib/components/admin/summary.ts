@@ -119,7 +119,7 @@ export function relationId(raw: unknown): string {
   return '';
 }
 
-const DOC_KINDS: readonly DocKind[] = ['markdown', 'pdf', 'docx', 'audio'];
+const DOC_KINDS: readonly DocKind[] = ['markdown', 'pdf', 'docx', 'xlsx', 'csv', 'html', 'audio'];
 
 function parseKind(raw: unknown): DocKind {
   return typeof raw === 'string' && (DOC_KINDS as readonly string[]).includes(raw)
@@ -202,6 +202,12 @@ export function kindLabel(kind: DocKind): string {
       return 'PDF';
     case 'docx':
       return 'Word';
+    case 'xlsx':
+      return 'Excel';
+    case 'csv':
+      return 'CSV';
+    case 'html':
+      return 'HTML';
     case 'audio':
       return 'Audio';
     case 'markdown':
@@ -283,7 +289,7 @@ export function summarizeDocuments(docs: readonly AdminDocRow[]): DocumentSummar
     total: docs.length,
     published: 0,
     drafts: 0,
-    byKind: { markdown: 0, pdf: 0, docx: 0, audio: 0 },
+    byKind: { markdown: 0, pdf: 0, docx: 0, xlsx: 0, csv: 0, html: 0, audio: 0 },
     inProgress: 0,
     failed: 0,
   };

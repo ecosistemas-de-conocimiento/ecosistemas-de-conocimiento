@@ -8,7 +8,7 @@ import type {
   PanelState,
   ContextScope,
 } from '../types';
-import type { AudioMeta } from '../types';
+import { FILE_DOC_KINDS, type AudioMeta } from '../types';
 import { toasts } from './toasts.svelte';
 import { uploadErrorToast } from '../uploadErrors';
 import { autoTitle, cleanTitle } from '../sessionTitle';
@@ -136,7 +136,9 @@ function messageFromBackend(row: Record<string, unknown>): Message {
 function docFromBackend(row: Record<string, unknown>): WorkingDoc {
   const kindRaw = row.kind as string | undefined;
   const kind: DocKind =
-    kindRaw === 'pdf' || kindRaw === 'docx' || kindRaw === 'audio' ? kindRaw : 'markdown';
+    kindRaw === 'audio' || (FILE_DOC_KINDS as readonly string[]).includes(kindRaw ?? '')
+      ? (kindRaw as DocKind)
+      : 'markdown';
   const statusRaw = row.ingestStatus as string | undefined;
   const ingestStatus: IngestStatus = isIngestStatus(statusRaw) ? statusRaw : 'n/a';
   const heading = workingDocHeading(row);
@@ -1142,12 +1144,15 @@ class AppStore {
     // is roughly twenty minutes of speech and the recordings people want to
     // upload are longer than that.
     //
-    // The SETTLED kind, the way the server settles it (PDF, then DOCX, then
+    // The SETTLED kind, the way the server settles it (documents, then
     // audio): a PDF the browser labels `audio/mp4` still gets the 20 MB cap.
     const isDocument =
-      /\.(pdf|docx)$/i.test(file.name) ||
+      /\.(pdf|docx|xlsx|csv|html?)$/i.test(file.name) ||
       file.type === 'application/pdf' ||
-      file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      file.type === 'text/csv' ||
+      file.type === 'text/html';
     const cap = !isDocument && isAudioUpload(file) ? MAX_AUDIO_UPLOAD_BYTES : MAX_UPLOAD_BYTES;
     if (file.size > cap) {
       toasts.push({

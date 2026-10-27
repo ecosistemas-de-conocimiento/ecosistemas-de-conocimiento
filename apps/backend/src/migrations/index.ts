@@ -4,6 +4,7 @@ import * as migration_20261020_193707_ratings_fk_cascade from './20261020_193707
 import * as migration_20261024_201817_graph_entities_public_figure from './20261024_201817_graph_entities_public_figure';
 import * as migration_20261024_230631_documents_testimonio_title from './20261024_230631_documents_testimonio_title';
 import * as migration_20261026_160000_documents_anonymise from './20261026_160000_documents_anonymise';
+import * as migration_20261026_200000_documents_kind_tabular_html from './20261026_200000_documents_kind_tabular_html';
 
 export const migrations = [
   {
@@ -35,5 +36,10 @@ export const migrations = [
     up: migration_20261026_160000_documents_anonymise.up,
     down: migration_20261026_160000_documents_anonymise.down,
     name: '20261026_160000_documents_anonymise'
+  },
+  {
+    up: migration_20261026_200000_documents_kind_tabular_html.up,
+    down: migration_20261026_200000_documents_kind_tabular_html.down,
+    name: '20261026_200000_documents_kind_tabular_html',
   },
 ];
