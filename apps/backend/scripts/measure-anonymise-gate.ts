@@ -33,6 +33,8 @@
  *   GATE_OUT          JSONL file to append rows to. Default: a file in the OS
  *                     temp dir, printed at the end.
  *   GATE_DRY=1        build and print transcript stats only.
+ *   GATE_KIND         content kind the detector is told: testimonio (default),
+ *                     conversacion or documento.
  *   GATE_TEXT_FILE    measure this one text instead of the corpus transcripts
  *                     (GATE_CORPUS_DIR and GATE_WORDS are then ignored). The
  *                     planted-name columns mean nothing for it, so each row
@@ -80,6 +82,7 @@ if (sizes.some((n) => !Number.isFinite(n) || n < 1)) {
 const runs = Math.max(1, Math.floor(Number(process.env.GATE_RUNS || '1')) || 1)
 const vary = process.env.GATE_VARY === '1'
 const dry = process.env.GATE_DRY === '1'
+const gateKind = (['conversacion', 'documento'] as const).find((k) => k === process.env.GATE_KIND) ?? 'testimonio'
 const org = process.env.GATE_ORG || '1'
 const outFile = process.env.GATE_OUT || join(tmpdir(), `anonymise-gate-${Date.now()}.jsonl`)
 
@@ -156,7 +159,7 @@ async function one(nominal: number, text: string, run: number) {
   const load = loadavg().map((n) => n.toFixed(2)).join(' ')
   const t0 = Date.now()
   const result = await runAnonymisationGate(
-    { contentKind: 'testimonio', text, roster: [] },
+    { contentKind: gateKind, text, roster: [] },
     { detector: aiServiceDetector({ client, organizationId: org }) },
   )
   const totalMs = Date.now() - t0

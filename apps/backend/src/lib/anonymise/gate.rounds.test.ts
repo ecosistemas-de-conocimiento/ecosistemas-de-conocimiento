@@ -180,12 +180,14 @@ describe('runAnonymisationGate — verify rounds (opt-in: 3)', () => {
 
 describe('runAnonymisationGate — 🔴 placeholders stay consistent across rounds', () => {
   it('a variant spelling caught in a later round gets the SAME label', async () => {
-    // ⚠ A double space: stage 3's case- and accent-blind match (owner, Q2)
-    // already takes "lucia mendez", so the variant here is one it cannot reach.
-    const text = 'Lucía Méndez llegó. Luego vino Teodulfo. Al final Lucia  Mendez se fue.'
+    // ⚠ Lower case AND a double space: stage 3's case- and accent-blind match
+    // (owner, Q2) already takes "lucia mendez", and its name parts
+    // (`nameParts.ts`) take capitalised "Lucia  Mendez", so the variant here is
+    // one stage 3 cannot reach.
+    const text = 'Lucía Méndez llegó. Luego vino Teodulfo. Al final lucia  mendez se fue.'
     const { detector } = scripted([
       [persona('Lucía Méndez')],
-      [persona('Lucia  Mendez')],
+      [persona('lucia  mendez')],
       [persona('Teodulfo')],
       [],
     ])
@@ -291,12 +293,26 @@ describe('runAnonymisationGate — 🔴 the model owns span boundaries (no word 
     expect(result.report.pseudonyms).toBe(1)
   })
 
-  it('⚠ two people who share only a first name are NOT merged', async () => {
+  // ⚠ CHANGED 2026-10-26 (`nameParts.ts`): a bare first name that is a part of
+  // ONE redacted full name takes that name's label. Two full names sharing the
+  // first name still give the bare one a label of its own
+  // (`gate.nameParts.test.ts`).
+  it('a bare first name beside its one full name shares the label', async () => {
     const { detector } = scripted([[persona('Ana López'), persona('Ana')], []])
     const result = await gate('Ana López habló. Luego Ana se fue.', detector)
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return
-    expect(result.report.pseudonyms).toBe(2)
+    expect(result.redactedText).toBe('[Persona A] habló. Luego [Persona A] se fue.')
+    expect(result.report.pseudonyms).toBe(1)
+  })
+
+  it('⚠ two people who share only a first name are NOT merged', async () => {
+    const { detector } = scripted([[persona('Ana López'), persona('Ana Ruiz'), persona('Ana')], []])
+    const result = await gate('Ana López habló con Ana Ruiz. Luego Ana se fue.', detector)
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toBe('[Persona A] habló con [Persona B]. Luego [Persona C] se fue.')
+    expect(result.report.pseudonyms).toBe(3)
   })
 
   it('🔴 a span in the wrong case or without accents still redacts the text’s own spelling', async () => {

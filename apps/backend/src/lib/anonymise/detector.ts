@@ -154,6 +154,19 @@ export const DETECT_SYSTEM_PROMPT = [
   '',
   'Debes incluir:',
   '- Nombres de personas, apellidos, apodos y diminutivos.',
+  // 🔴 DEV, 2026-10-26: two staff documentos went `ready` with a co-author's
+  // bare first name left in 7 and 12 times; the model reported the full name
+  // and the surname only. The gate now spreads name parts itself
+  // (`nameParts.ts`); these lines ask the model not to rely on that.
+  // ⚠ "Una vez": asked for "cada vez que aparece", the model listed each
+  // occurrence (measured 2026-10-26, local stack, 4 runs), which spends the
+  // 400-token reply cap (`chunk.ts`). The gate redacts every occurrence anyway.
+  '- Un nombre de pila solo o un apellido solo también es un hallazgo, aunque la persona',
+  '  ya se haya nombrado completa: si dice "Fausto Arellano" y luego "Fausto propuso",',
+  '  reporta también "Fausto". Repórtalo una sola vez.',
+  '- Los nombres de autores, coautores, integrantes del equipo, entrevistadores y',
+  '  participantes también se reportan. Un texto académico, una relatoría o un borrador',
+  '  no cambian esta regla.',
   '- Referencias de parentesco que nombran a alguien: en "mi hermana Lucía" el hallazgo es "Lucía".',
   // ⚠ Measured 2026-10-21 (local stack, 6 runs, old and new prompt): without the
   // next line the model returned "Mi hermana Lucía" whole in 5/6, so a later bare
@@ -647,10 +660,15 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
         logBackendOnce('ai-service /v1/generate/sync')
       }
 
+      // ⚠ A `documento` is a staff draft, notes, minutes, a session rebuilt from
+      // memory, or a participant's PDF. Described as a transcribed testimony,
+      // the model missed co-authors' names (dev, 2026-10-26).
       const material =
         contentKind === 'testimonio'
           ? 'Es el testimonio de una persona, transcrito.'
-          : 'Es una conversación entre integrantes de una comunidad.'
+          : contentKind === 'documento'
+            ? 'Es un documento escrito: un borrador, notas, un acta, un informe o la reconstrucción de una sesión. Puede tener varios autores y citar o parafrasear a varias personas.'
+            : 'Es una conversación entre integrantes de una comunidad.'
 
       const chunkWords =
         opts.chunkWords ?? positiveIntFromEnv(ANONYMISE_CHUNK_WORDS_VAR, DEFAULT_CHUNK_WORDS)

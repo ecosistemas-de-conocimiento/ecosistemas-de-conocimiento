@@ -58,6 +58,7 @@
 import { foldedMatches, positiveIntFromEnv } from './detector'
 import { deterministicPass } from './deterministic'
 import { isGenericPlace } from './genericPlaces'
+import { createNamePartRegistry, gluedToAnotherName, type NamePartRegistry, sentenceStart } from './nameParts'
 import { createPseudonymAllocator } from './pseudonyms'
 import { structuralPass } from './structural'
 import { isTownLevelPlace } from './townPlaces'
@@ -245,11 +246,15 @@ function applyFindings(
   findings: readonly DetectorFinding[],
   allocate: (name: string) => string,
   allocateAddress: (address: string) => string,
+  names: NamePartRegistry,
   folded = false,
 ): { text: string; labels: string[] } {
   const ordered = [...findings].sort((a, b) => b.text.length - a.text.length)
   const labels: string[] = []
   let out = text
+  // 🔴 A one-word person finding that is a part of ONE redacted name takes that
+  // name's label: "Fausto" beside "Fausto Arellano" is the same person.
+  const personLabel = (span: string) => allocate(names.ownerOf(span, allocate) ?? span)
 
   for (const finding of ordered) {
     /**
@@ -268,7 +273,7 @@ function applyFindings(
     // report counts a person who is not in the text and the letters skip.
     const replacement = () =>
       finding.type === 'persona'
-        ? allocate(finding.text)
+        ? personLabel(finding.text)
         : finding.type === 'lugar'
           ? allocateAddress(finding.text)
           : OMITTED_PLACEHOLDER
@@ -276,12 +281,55 @@ function applyFindings(
     if (next === null) continue
     labels.push(finding.type)
     out = next
+    if (finding.type === 'persona') names.add(finding.text)
+  }
+
+  // 🔴 THEN EVERY NAME PART, ALONE (dev, 2026-10-26; owner's Q5). See
+  // `nameParts.ts`: "Fausto Arellano" reported once also takes every bare
+  // "Fausto" and "Arellano", capitalised, with the same label.
+  for (const { part, siblings } of names.parts()) {
+    const spread = spreadPart(out, part, siblings, allocate, personLabel)
+    if (spread === null) continue
+    labels.push('persona')
+    out = spread
   }
 
   // ⚠ No title clean-up here: the model owns span boundaries and includes a
   // leading title in the name (detector prompt). If it does not, "la maestra
   // [Persona F]" is published as it stands (owner, 2026-10-21, Q1).
   return { text: out, labels }
+}
+
+/**
+ * Replace every capitalised whole-word occurrence of `part`, accent-blind,
+ * that does not touch a placeholder. Null when nothing was replaced.
+ *
+ * ⚠ The label is chosen PER OCCURRENCE: one glued to another capitalised name
+ * ("Fausto Martínez") takes the part's own label, never the owner's. See
+ * `nameParts.ts`.
+ */
+function spreadPart(
+  text: string,
+  part: string,
+  siblings: ReadonlySet<string>,
+  allocate: (name: string) => string,
+  personLabel: (span: string) => string,
+): string | null {
+  const spans = placeholderSpans(text)
+  let result = ''
+  let copied = 0
+  for (const [at, end] of foldedMatches(text, part)) {
+    if (at < copied) continue
+    if (!wholeWord(text, at, end) || !/\p{Lu}/u.test(text.charAt(at))) continue
+    if (spans.some(([s, e]) => at < e && end > s)) continue
+    const label = gluedToAnotherName(text, at, end, siblings) ? allocate(part) : personLabel(part)
+    result += text.slice(copied, at) + label
+    copied = end
+  }
+  if (copied === 0) return null
+  // A spelling the full span missed ("Lucia  Mendez", two spaces) comes out as
+  // one placeholder per part: "[Persona A]  [Persona A]" is one mention.
+  return (result + text.slice(copied)).replace(/(\[Persona [A-Z]+\])(?:[ \t]+\1)+/g, '$1')
 }
 
 /**
@@ -361,16 +409,6 @@ function resolveLeftover(
   return { findings: pieces.map((text) => ({ text, type: f.type })) }
 }
 
-/** Opening marks a sentence may start with: `¿El doctor?`, `«La maestra…`. */
-const OPENERS = /[\s"'“‘«¿¡(—–-]/u
-
-/** True when `at` starts a sentence: text start, or after `.`, `!`, `?`, `…` or a line break. */
-function sentenceStart(text: string, at: number): boolean {
-  let i = at - 1
-  while (i >= 0 && text[i] !== '\n' && OPENERS.test(text[i] as string)) i--
-  return i < 0 || /[\n.!?…]/u.test(text[i] as string)
-}
-
 /**
  * A BARE TITLE, by shape: verify marked it `identifica: false`, it has no digit,
  * and no capitalised word except one that starts a sentence. "El doctor",
@@ -435,6 +473,7 @@ function redactLeftovers(
   leftovers: readonly DetectorFinding[],
   allocate: (name: string) => string,
   allocateAddress: (address: string) => string,
+  names: NamePartRegistry,
 ): { text: string; labels: string[] } | null {
   const labels: string[] = []
   const plain: DetectorFinding[] = []
@@ -452,7 +491,7 @@ function redactLeftovers(
     labels.push(f.type)
     out = next
   }
-  const applied = applyFindings(out, plain, allocate, allocateAddress, true)
+  const applied = applyFindings(out, plain, allocate, allocateAddress, names, true)
   return { text: applied.text, labels: [...labels, ...applied.labels] }
 }
 
@@ -502,6 +541,8 @@ export async function runAnonymisationGate(
   // 🔴 ONE allocator for the whole document, created here and dropped when this
   // function returns. See `pseudonyms.ts`: its lifetime IS the safety property.
   const allocator = createPseudonymAllocator()
+  // Same lifetime, same reason: name parts → people, for this document only.
+  const names = createNamePartRegistry()
   const stages: GateStageReport[] = []
 
   const report = (): GateReport => ({
@@ -598,6 +639,7 @@ export async function runAnonymisationGate(
     found,
     (name) => allocator.labelFor(name),
     (address) => allocator.addressLabelFor(address),
+    names,
     true,
   )
   stages.push({ stage: 'content', removed: countsByLabel(applied.labels) })
@@ -662,6 +704,7 @@ export async function runAnonymisationGate(
         forced,
         (name) => allocator.labelFor(name),
         (address) => allocator.addressLabelFor(address),
+        names,
       )
       // 🔴 A redaction that changed nothing (null, or the same text) is not a
       // redaction: fall through and HOLD (final audit 2026-10-21, B1).
@@ -693,6 +736,7 @@ export async function runAnonymisationGate(
             [...real, ...forced],
             (name) => allocator.labelFor(name),
             (address) => allocator.addressLabelFor(address),
+            names,
           )
         : null
 
