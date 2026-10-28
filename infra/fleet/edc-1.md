@@ -1,6 +1,8 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `a39af86` (the `studentTestimonios` switch:
+**Status:** live since 2026-10-17. Dev runs `main` @ `1c80a84` (web phone fixes and the
+`seed:semiosis-demo` script; no migration; org 8 `keepPublicFigures` on), deployed 2026-10-28 08:12
+UTC — see §4zu. Before that, `a39af86` (the `studentTestimonios` switch:
 teachers see students' published testimonios, anonymised, with the student's own consent; migration
 `20261028_054402_student_testimonio_consent` applied on start), deployed 2026-10-28 06:10 UTC — see
 §4zt. Before that, `326a66e` (keep public figures in documentos, `keepPublicFigures` settable by
@@ -2265,6 +2267,50 @@ build (inferred by time). Total $8.975563 after.
 **Orgs retired after it**, 2026-10-28, owner ruling, dev only: orgs 1 "Traducción en salud" and
 3 "Acompañamiento escolar" set `isActive=false` via API `PATCH` (soft, reversible). Nobody stranded:
 their 3 members (users 1–3) stay active in orgs 6, 7, 8. Fresh `GET` reads `isActive=false` (measured).
+
+### 4zu. ✅ Done 2026-10-28 08:05–08:16 UTC: `1c80a84`, dev only — no migration; org 8 keeps public figures
+
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
+`97d5316`, `docker ps` before and after). Range `a39af86..1c80a84`: web phone fixes (44px tap floor
+on phones only, compact "Mis documentos" rows, scroll reset that keeps the router, the phone
+drawer closes only on a pick; `0bf8421`, `f646ab9`, `6e406fb`) and the backend seed script
+`seed:semiosis-demo` (`4c67a89`, `1c80a84`). No file under `apps/backend/src/migrations` changed;
+no compose, variable or ai-service change.
+
+**Migrations.** None. `payload_migrations` 14 rows before and after, newest
+`20261028_054402_student_testimonio_consent`; backend log 08:12:57 "Reading migration files…",
+`Done.`, "Ready in 833ms". `edc_ai` `__drizzle_migrations` 6 before and after.
+
+Backup `/root/backups/20261028T0805Z/` (`edc_ai` 129 MB, `edc_backend` 9.5 MB); `pg_restore -l`
+137 / 438 non-comment lines, `SHA256SUMS` beside them. Off-box copy in the owner's
+`cide/backups/edc-1/20261028T0805Z/` with `timeout 180 scp`; `sha256sum -c` passed before the deploy.
+
+| deploy | uuid | queued → finished (UTC) | commit |
+|---|---|---|---|
+| `1c80a84` | `psmqc01hajshahc8hyszsdi2` | 08:06:30 → 08:12:54 | `1c80a84ab13b…` |
+
+After: 9 containers up; `web`, `backend` and `ai-service` run image tag
+`1c80a84ab13b8d2aaf73e0c5ca63b3bf5ddf4fdf`, healthy. 0 `error`/`fatal` lines in all 9 dev
+containers at startup. The backend container's `package.json` line 22 has
+`"seed:semiosis-demo": "payload run src/seed/semiosisDemo.cli.ts"` (not run by this deploy).
+
+**Smoke** (no paid call):
+
+| check | result |
+|---|---|
+| 1. web `/` | 303 → `/sign-in`, 200 |
+| 2. health | `dev.` `/api/health` 200, `api.dev.` `/api/health` 200 |
+| 3. login, estudiante1 (`cide/.env.demo-users`), web `POST /api/auth/login` with `Origin` | 200; then `/__data.json` 200 (names `estudiante`), `/estudiante/__data.json` 200 |
+
+**Org 8 "Semiosis práctica" keeps public figures**, owner request, dev only. As the platform admin
+(the backend container's `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`, read over ssh into a 0600
+scratch file, deleted after): `PATCH /api/funciones` `{ organization: 8, features:
+{ keepPublicFigures: true } }` → 200. The endpoint merges into the stored switches. Stored
+`features` before `{"studentView": true}`, after `{"studentView": true, "keepPublicFigures": true}`
+(fresh `GET /api/organizations/8`); `GET /api/funciones?organization=8` reads both `true`, every
+other switch at its default (`studentTestimonios` false).
+
+No image cleanup this time. **Disk**, `df -h /` free: 56 GB before, 42 GB after the build.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
