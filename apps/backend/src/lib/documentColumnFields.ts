@@ -29,6 +29,10 @@ export const DOCUMENT_COLUMNS = {
   heldText: 'held_text',
   publicFiguresKept: 'public_figures_kept',
   testimonioTitle: 'testimonio_title',
+  // The note editor's autosave (`PATCH /api/documents/:id/note`, `lib/studentNotes.ts`).
+  name: 'name',
+  bodyMarkdown: 'body_markdown',
+  isPinned: 'is_pinned',
   updatedAt: 'updated_at',
 } as const
 

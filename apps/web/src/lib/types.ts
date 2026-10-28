@@ -116,6 +116,8 @@ export interface WorkingDoc {
   publishRequestPending?: boolean;
   /** Markdown source. Empty for pdf/docx (their text lives in the backend's `extractedText`). */
   body: string;
+  /** Written in the app: `markdown` with no stored file (an uploaded `.md` has one). */
+  isNote?: boolean;
   /** Mirrors the backend `documents.isPinned`. */
   includeInContext: boolean;
   /**

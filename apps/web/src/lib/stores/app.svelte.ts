@@ -159,6 +159,7 @@ function docFromBackend(row: Record<string, unknown>): WorkingDoc {
     title: heading.title,
     subtitle: heading.subtitle,
     body: typeof row.bodyMarkdown === 'string' ? row.bodyMarkdown : '',
+    isNote: kind === 'markdown' && row.mediaFile == null && row.hasFile !== true,
     includeInContext: row.isPinned !== false,
     // The conversations this row is attached to. Empty means "the backend did
     // not tell us", which the UI reads as "assume it lives only here".
@@ -1222,7 +1223,10 @@ class AppStore {
     if (patch.includeInContext !== undefined) payload.isPinned = patch.includeInContext;
     if (Object.keys(payload).length === 0) return;
     try {
-      await fetchJson(`/api/documents/${docId}`, {
+      // 🔴 A note's autosave is a narrow write (`/note`): the whole-row PATCH
+      // could put stale publication / pipeline columns back while "Publicar"
+      // runs (backend `lib/studentNotes.ts`).
+      await fetchJson(d.kind === 'markdown' ? `/api/documents/${docId}/note` : `/api/documents/${docId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1554,7 +1558,12 @@ class AppStore {
    *   3. poll until the server says `published` or `failed`.
    * A failed request changes no status at all, so there is nothing to roll back.
    */
-  async publishDoc(sessionId: string | null, docId: string): Promise<void> {
+  async publishDoc(
+    sessionId: string | null,
+    docId: string,
+    /** A student's note: "Publicar" runs gate → corpus → graph first (`publishGate`). */
+    opts: { note?: boolean } = {},
+  ): Promise<void> {
     // ⚠ EVERY copy of this row, not one. The same document can be open in the
     // conversation panel AND in "Mis documentos" at the same time — they are
     // two views of one backend row, and a publish that repainted only the one
@@ -1567,7 +1576,7 @@ class AppStore {
     if (!doc || doc.publishRequestPending) return;
     // Same gate the button uses. Re-checked here because the store is the
     // thing that actually spends the tokens.
-    if (!publishGate(doc).canPublish) return;
+    if (!publishGate({ ...doc, note: opts.note }).canPublish) return;
 
     // Remembered so an unreadable answer cannot silently downgrade a `failed`
     // document to `draft` — see the anomaly branch below.
@@ -1577,6 +1586,8 @@ class AppStore {
       const body = await fetchJson<{
         publicationStatus?: unknown;
         publicationError?: unknown;
+        processing?: unknown;
+        ingestStatus?: unknown;
       }>(`/api/documents/${docId}/publish`, {
         method: 'POST',
         credentials: 'same-origin',
@@ -1584,6 +1595,14 @@ class AppStore {
       });
       const current = rows();
       if (current.length === 0) return;
+      // A student's note: the backend is gating and indexing it first; it is
+      // published when that lands. Still a draft meanwhile, and honestly so.
+      if (body?.processing === true) {
+        const ingest = isIngestStatus(body.ingestStatus) ? body.ingestStatus : 'pending';
+        for (const r of current) r.ingestStatus = ingest;
+        void this.pollPublication(sessionId, docId, { throughProcessing: true });
+        return;
+      }
       // Adopt the server's word, never an assumed `publishing`.
       const reported = parsePublicationStatus(body?.publicationStatus);
 
@@ -1645,13 +1664,19 @@ class AppStore {
    * rather than inventing `failed`: we genuinely do not know, and the next
    * session load re-reads the real state from the backend.
    */
-  private async pollPublication(sessionId: string | null, docId: string): Promise<void> {
+  private async pollPublication(
+    sessionId: string | null,
+    docId: string,
+    /** Keep polling a `draft` while its note is gated and indexed (see `publishDoc`). */
+    opts: { throughProcessing?: boolean } = {},
+  ): Promise<void> {
     const key = `pub:${docId}`;
     if (this.pollingDocs.has(key)) return;
     this.pollingDocs.add(key);
     const schedule = [3000, 5000, 10_000];
     const deadline = Date.now() + 60 * 60_000;
     let i = 0;
+    let graceAfterReady = 3;
     try {
       while (Date.now() < deadline) {
         const wait = schedule[i] ?? 15_000;
@@ -1676,6 +1701,17 @@ class AppStore {
           for (const d of rows) {
             d.publicationStatus = status;
             d.publicationError = error;
+          }
+          if (opts.throughProcessing && status === 'draft') {
+            const ingest = isIngestStatus(body.ingestStatus) ? body.ingestStatus : 'n/a';
+            for (const d of rows) {
+              d.ingestStatus = ingest;
+              d.ingestError = typeof body.ingestError === 'string' ? body.ingestError : null;
+              d.anonymisationStatus = parseAnonymisationStatus(body.anonymisationStatus);
+            }
+            // Indexing still running, or just landed and the publish is starting.
+            if (ingest !== 'failed' && (ingest !== 'ready' || (graceAfterReady -= 1) > 0)) continue;
+            return;
           }
           if (isTerminalPublication(status)) {
             if (status === 'published') {

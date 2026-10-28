@@ -138,6 +138,13 @@ export interface PublishGateInput {
    * only a FAILED publish keeps its retry. Default `true`.
    */
   manual?: boolean;
+  /**
+   * A student's own in-app note in a `studentView` ecosistema. "Publicar" runs
+   * the backend's gate → corpus → graph → publish (`lib/studentNotes.ts`), so
+   * it is offered whatever the last run left (a hold included: the student may
+   * have fixed the text), except while a run is going.
+   */
+  note?: boolean;
 }
 
 /**
@@ -160,6 +167,10 @@ export function publishGate(input: PublishGateInput): {
   // against the same row, and whichever callback lands last decides the state.
   if (input.publicationStatus === 'publishing' || input.publicationStatus === 'unpublishing') {
     return { canPublish: false, reason: 'in-progress' };
+  }
+  if (input.note) {
+    const running = ['pending', 'extracting', 'embedding', 'transcribing', 'transcribed'].includes(input.ingestStatus);
+    return running ? { canPublish: false, reason: 'not-ingested' } : { canPublish: true, reason: null };
   }
   if (input.ingestStatus === 'failed') {
     return { canPublish: false, reason: 'ingest-failed' };

@@ -13,7 +13,12 @@ vi.mock('$app/forms', () => ({ enhance: () => ({ destroy() {} }) }));
 
 const { default: Estudiante } = await import('./+page.svelte');
 
-const page = (testimoniosEnReporte: boolean | undefined, shareTestimonios = false, form: unknown = null) =>
+const page = (
+  testimoniosEnReporte: boolean | undefined,
+  shareTestimonios = false,
+  form: unknown = null,
+  documentos: Array<{ id: number; name: string; status: string }> = [],
+) =>
   render(Estudiante, {
     props: {
       form,
@@ -22,7 +27,7 @@ const page = (testimoniosEnReporte: boolean | undefined, shareTestimonios = fals
         overview: {
           perfil: { shareWithPeers: false, shareActivity: false, shareTestimonios },
           temas: [],
-          documentos: [],
+          documentos,
           companeros: [],
           autores: [],
           autoresParaLeer: [],
@@ -70,5 +75,17 @@ describe('/estudiante — the consent version travels with the page', () => {
   it('a 409 from a stale page shows the reload message', () => {
     const body = page(true, false, { message: 'El texto del consentimiento cambió. Recarga la página y léelo de nuevo.' });
     expect(body).toMatch(/data-testid="estudiante-error"[^>]*>El texto del consentimiento cambió\. Recarga la página/);
+  });
+});
+
+describe('/estudiante — no topics yet', () => {
+  it('nothing written: asks for a trabajo', () => {
+    expect(page(false)).toContain('Sube un trabajo.');
+  });
+
+  it('🔴 a note or upload not processed yet: not told to upload', () => {
+    const body = page(false, false, null, [{ id: 1, name: 'Mi nota', status: 'draft' }]);
+    expect(body).not.toContain('Sube un trabajo');
+    expect(body).toContain('Sin temas todavía.');
   });
 });

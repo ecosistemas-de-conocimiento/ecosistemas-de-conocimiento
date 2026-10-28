@@ -266,12 +266,19 @@
   }
 
   /** The publish action's availability for one document, with its reason. */
+  /** Student view: a student's own note is published by hand (owner ruling 2026-10-28). */
+  const isStudent = $derived($page.data?.studentAccess?.student === true);
+  const studentNote = (d: WorkingDoc) => isStudent && d.isNote === true;
+
   function gateOf(d: WorkingDoc) {
     return publishGate({
       publicationStatus: d.publicationStatus,
       ingestStatus: d.ingestStatus,
-      // A participant never publishes by hand (owner rule, 2026-10-24).
+      // A participant never publishes by hand (owner rule, 2026-10-24) — except
+      // a student's note, whose "Publicar" runs the gate first (backend
+      // `lib/studentNotes.ts`).
       manual: canUploadVoces,
+      note: studentNote(d),
     });
   }
 
@@ -287,7 +294,10 @@
     // it as fact to people who never heard the recording. The extra click is
     // the agreed price of accepting transcripts as first-class documents.
     if (!confirm(publishConfirmCopy(d.kind, d.title))) return;
-    await app.publishDoc(sessionId, d.id);
+    // Save what was typed in the last 400 ms first: "Publicar" processes the
+    // stored text.
+    await flushUpdates(d.id);
+    await app.publishDoc(sessionId, d.id, { note: studentNote(d) });
   }
 
   async function retry(sessionId: string | undefined, d: WorkingDoc) {
@@ -298,6 +308,17 @@
   // Per-doc debounce so typing into title/body doesn't fire a backend PATCH on
   // every keystroke. 400ms is comfortable for human typing speed.
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const queued = new Map<string, () => Promise<void>>();
+  async function flushUpdates(docId: string) {
+    for (const key of [`${docId}:t`, `${docId}:b`]) {
+      const run = queued.get(key);
+      if (!run) continue;
+      clearTimeout(timers.get(key));
+      timers.delete(key);
+      queued.delete(key);
+      await run();
+    }
+  }
   function queueUpdate(
     sessionId: string,
     docId: string,
@@ -306,11 +327,14 @@
     const key = `${docId}:${'title' in patch ? 't' : 'b'}`;
     const existing = timers.get(key);
     if (existing) clearTimeout(existing);
+    const run = () => app.updateDoc(sessionId, docId, patch);
+    queued.set(key, run);
     timers.set(
       key,
       setTimeout(() => {
         timers.delete(key);
-        void app.updateDoc(sessionId, docId, patch);
+        queued.delete(key);
+        void run();
       }, 400),
     );
   }

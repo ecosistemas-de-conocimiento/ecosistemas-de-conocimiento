@@ -92,6 +92,8 @@ function slimDoc(row: Record<string, unknown>, callerId: string): Record<string,
     uploadedByCaller: relationIds(row.uploadedBy)[0] === callerId,
     isPinned: row.isPinned,
     bodyMarkdown: row.bodyMarkdown,
+    // An uploaded `.md` is not an in-app note (`WorkingDoc.isNote`).
+    hasFile: row.mediaFile != null,
     session: relationSessions(row.session),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

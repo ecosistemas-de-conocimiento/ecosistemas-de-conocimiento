@@ -19,7 +19,7 @@
  *   chatOrientation    web `api/generate` (orientation leg off)
  *   testimonioTitles   `lib/testimonioTitle.ts` (no title run)
  *   autoPublishMembers `lib/autoPublish.ts` (participant drafts stay drafts)
- *   studentView        nothing yet; read by the future student view
+ *   studentView        `endpoints/estudiante.ts`; student notes feed it (`lib/studentNotes.ts`)
  *   keepPublicFigures  `lib/publicFigures.ts` → the gate (a gated `documento` only;
  *                      never a testimonio or a conversation). Default OFF.
  *   studentTestimonios `endpoints/estudiante.ts` (the activity report). Default

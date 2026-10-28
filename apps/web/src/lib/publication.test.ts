@@ -391,3 +391,19 @@ describe('isStampedDraftCitation', () => {
     expect(isStampedDraftCitation({})).toBe(false);
   });
 });
+
+describe('publishGate — a student\'s note (owner ruling 2026-10-28)', () => {
+  const note = (publicationStatus: 'draft' | 'published' | 'publishing', ingestStatus: string) =>
+    publishGate({ publicationStatus, ingestStatus, manual: false, note: true });
+  it('🔴 Publicar is offered on a draft, whatever the last run left', () => {
+    for (const s of ['n/a', 'ready', 'failed']) expect(note('draft', s).canPublish).toBe(true);
+  });
+  it('not while a run is going, nor once published', () => {
+    for (const s of ['pending', 'extracting', 'embedding']) expect(note('draft', s)).toEqual({ canPublish: false, reason: 'not-ingested' });
+    expect(note('published', 'ready').reason).toBe('already-published');
+    expect(note('publishing', 'ready').reason).toBe('in-progress');
+  });
+  it('a participant\'s other documents stay automatic', () => {
+    expect(publishGate({ publicationStatus: 'draft', ingestStatus: 'ready', manual: false }).reason).toBe('automatic');
+  });
+});

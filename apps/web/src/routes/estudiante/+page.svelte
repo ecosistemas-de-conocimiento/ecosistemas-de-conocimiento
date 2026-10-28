@@ -34,8 +34,11 @@
       <ul class="chips" data-testid="mis-temas">
         {#each o.temas as t (t)}<li class="chip">{t}</li>{/each}
       </ul>
+    {:else if o.documentos.length}
+      <!-- A note or upload not processed yet (`lib/studentNotes.ts` in the backend). -->
+      <p class="muted" data-testid="temas-pendientes">Sin temas todavía.</p>
     {:else}
-      <p class="muted">Sube un trabajo.</p>
+      <p class="muted" data-testid="temas-vacio">Sube un trabajo.</p>
     {/if}
 
     <section aria-labelledby="preguntas">

@@ -49,6 +49,8 @@ export const POST: RequestHandler = async ({ locals, params }) => {
   const body = (await res.json().catch(() => ({}))) as {
     doc?: Record<string, unknown>;
     publicationStatus?: unknown;
+    processing?: unknown;
+    ingestStatus?: unknown;
   };
 
   if (!res.ok) {
@@ -73,6 +75,10 @@ export const POST: RequestHandler = async ({ locals, params }) => {
       publicationStatus: parsePublicationStatus(doc.publicationStatus),
       publicationError:
         typeof doc.publicationError === 'string' ? doc.publicationError : null,
+      // A student's note: gated and indexed first (backend `lib/studentNotes.ts`).
+      ...(body.processing === true
+        ? { processing: true, ingestStatus: typeof body.ingestStatus === 'string' ? body.ingestStatus : 'pending' }
+        : {}),
     },
     { status: res.status },
   );

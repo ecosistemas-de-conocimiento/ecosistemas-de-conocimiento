@@ -39,6 +39,7 @@ import {
 } from '../lib/permissions'
 import { refuseDisabledAudioUpload } from './hooks/featureGates'
 import { anonymiseParticipantUpload, fileParticipantAudioAsTestimonio } from '../lib/autoPublish'
+import { isAppNote, isStudentNote, parseNoteEdit, publishStudentNote } from '../lib/studentNotes'
 import {
   consumeCorpusCleanupSkip,
   planDocumentMediaCleanup,
@@ -1208,9 +1209,11 @@ const CORPUS_LANGUAGE = process.env.CORPUS_LANGUAGE?.trim() || 'spanish'
 const INGESTABLE_KINDS = new Set(['pdf', 'docx', 'xlsx', 'csv', 'html', 'audio', 'markdown'])
 
 /**
- * 🔴 AN IN-APP NOTE HAS NO PIPELINE. `markdown` is both the in-app note (created
- * at `ingestStatus: n/a`) and an uploaded / scripted `.md` (created `pending`).
- * Only the second is extracted and ingested; a note stays out of every corpus.
+ * 🔴 AN IN-APP NOTE HAS NO PIPELINE UNTIL IT SETTLES. `markdown` is both the
+ * in-app note (created at `ingestStatus: n/a`) and an uploaded / scripted `.md`
+ * (created `pending`). Only the second is extracted and ingested on write. A
+ * STUDENT's note in a `studentView` ecosistema leaves `n/a` when its author
+ * presses "Publicar" (`lib/studentNotes.ts`); every other note stays out.
  */
 const isIngestable = (row: { kind?: unknown; ingestStatus?: unknown }): boolean =>
   INGESTABLE_KINDS.has(String(row.kind)) &&
@@ -1344,6 +1347,23 @@ const extractAndIngestHook: CollectionAfterChangeHook = async ({
 
   const row = doc as DocumentRow
   if (operation !== 'create' && operation !== 'update') return doc
+
+  /**
+   * 🔴 A USER'S EDIT OF AN IN-APP NOTE NEVER DRIVES THE PIPELINE.
+   *
+   * Owner ruling 2026-10-28: a note is processed only on "Publicar"
+   * (`lib/studentNotes.ts`), whose server-side write (no user) is what reaches
+   * `runExtractAndIngest`. The editor's autosave goes through
+   * `PATCH /api/documents/:id/note`, which fires no hook at all; this guard
+   * covers a direct REST PATCH. Without it, every edit of a note that already
+   * went through would re-read the row, and one whose gate could not run would
+   * be re-gated on each save.
+   *
+   * ⚠ A user's CREATE still falls through: an app note is created at `n/a`
+   * (not ingestable), and a scripted note created `pending` keeps today's path.
+   */
+  if (req.user && operation === 'update' && isAppNote(row)) return doc
+
   if (!isIngestable(row)) return doc
 
   // Run async to avoid blocking the Payload response, AND defer one tick
@@ -3532,6 +3552,7 @@ export const Documents: CollectionConfig = {
   endpoints: [
     publishEndpoint(),
     unpublishEndpoint(),
+    noteEditEndpoint(),
     retryIngestEndpoint(),
     retryGraphEndpoint(),
   ],
@@ -3633,6 +3654,30 @@ function documentActionEndpoint(
         callbackUrl: ingestCallbackUrl() ?? undefined,
       }
 
+      /**
+       * 🔴 A STUDENT'S DRAFT NOTE: "Publicar" STARTS THE UPLOAD PATH (gate →
+       * ingest → graph), and the ingest callback publishes it under
+       * `autoPublishMembers`. `beginPublish` here would share text no gate saw.
+       * `lib/studentNotes.ts`.
+       */
+      if (action === 'publish' && state === 'draft' && (await isStudentNote(req.payload, doc as never))) {
+        try {
+          const out = await publishStudentNote({
+            payload: req.payload,
+            row: doc as never,
+            clientFor: () => client as never,
+            ...(deps.callbackUrl ? { callbackUrl: deps.callbackUrl } : {}),
+          })
+          if (out.status === 409) return fail(409, `This note cannot be published (${out.reason}).`)
+          return out.processing
+            ? json({ ok: true, publicationStatus: 'draft', processing: true, ingestStatus: out.ingestStatus }, 202)
+            : json({ ok: true, publicationStatus: 'publishing', processing: false }, 202)
+        } catch (err) {
+          req.payload.logger.error({ err, docId: id }, '[documents] note publish failed')
+          return fail(500, 'Could not publish this note.')
+        }
+      }
+
       try {
         const result =
           action === 'publish'
@@ -3652,6 +3697,60 @@ function documentActionEndpoint(
         req.payload.logger.error({ err, docId: id, action }, `[documents] ${action} failed`)
         return fail(500, `Could not ${action} this document.`)
       }
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /api/documents/:id/note — the note editor's autosave
+// ---------------------------------------------------------------------------
+
+/**
+ * Name, body and pin of the caller's own document, as ONE narrow `UPDATE`.
+ * `lib/studentNotes.ts` (`parseNoteEdit`) says why it is not a `payload.update`.
+ *
+ * ⚠ `bodyMarkdown` only on an in-app note (no file). Never a pipeline,
+ * gate or publication column: those are not in `parseNoteEdit`'s list.
+ */
+function noteEditEndpoint(): Endpoint {
+  return {
+    path: '/:id/note',
+    method: 'patch',
+    handler: async (req) => {
+      const json = (body: unknown, status: number): Response =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+        })
+      const fail = (status: number, message: string): Response => json({ errors: [{ message }] }, status)
+
+      const user = req.user
+      if (!user) return fail(401, 'Authentication required.')
+      const id = (req.routeParams as { id?: string } | undefined)?.id
+      if (!id) return fail(400, 'Missing document id.')
+
+      const doc = (await req.payload
+        .findByID({ collection: 'documents', id: id as never, depth: 0, overrideAccess: false, user, req })
+        .catch(() => null)) as Record<string, unknown> | null
+      if (!doc) return fail(404, 'No such document.')
+      if (String(relationId(doc.uploadedBy) ?? '') !== String(user.id)) {
+        return fail(403, 'Only the person who uploaded a document can edit it.')
+      }
+
+      let body: Record<string, unknown> = {}
+      try {
+        body = ((await req.json?.()) ?? {}) as Record<string, unknown>
+      } catch {
+        return fail(400, 'Invalid JSON.')
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(400, 'Invalid body.')
+      const parsed = parseNoteEdit(body, DOCUMENT_TEXT_MAX_LENGTH)
+      if (!parsed.ok) return fail(400, parsed.message)
+      if ('bodyMarkdown' in parsed.data && !isAppNote(doc)) return fail(409, 'Only a note has an editable body.')
+
+      const { updateDocumentColumns } = await import('@/lib/documentColumns')
+      await updateDocumentColumns(req.payload as never, { id: doc.id as never, data: parsed.data })
+      return json({ ok: true, doc: { id: doc.id, ...parsed.data } }, 200)
     },
   }
 }
