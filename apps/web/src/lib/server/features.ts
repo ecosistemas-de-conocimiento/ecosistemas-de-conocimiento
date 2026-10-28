@@ -4,7 +4,7 @@
  */
 
 import { backendFetch } from '$lib/server/auth';
-import { resolveFeatures, type Features } from '$lib/features';
+import { isFeatureKey, PLATFORM_ADMIN_ONLY_FEATURES, resolveFeatures, type FeatureKey, type Features } from '$lib/features';
 
 /**
  * One ecosistema's switches. ⚠ Any failure is the DEFAULTS (today's
@@ -45,7 +45,13 @@ export interface PlatformSwitches {
 }
 
 export type EditablesResult =
-  | { state: 'ready'; ecosistemas: EditableEcosystem[]; plataforma: PlatformSwitches | null }
+  | {
+      state: 'ready';
+      ecosistemas: EditableEcosystem[];
+      plataforma: PlatformSwitches | null;
+      /** Switches this caller sees read-only. Missing from the body = the admin-only ones. */
+      lockedFeatures: FeatureKey[];
+    }
   | { state: 'forbidden' }
   | { state: 'unavailable' };
 
@@ -54,7 +60,7 @@ export async function fetchEditables(token: string | undefined): Promise<Editabl
     const res = await backendFetch(token, '/api/funciones/editables', { method: 'GET' });
     if (res.status === 401 || res.status === 403) return { state: 'forbidden' };
     if (!res.ok) return { state: 'unavailable' };
-    const body = (await res.json()) as { ecosistemas?: unknown; plataforma?: unknown };
+    const body = (await res.json()) as { ecosistemas?: unknown; plataforma?: unknown; lockedFeatures?: unknown };
     const list = Array.isArray(body.ecosistemas) ? (body.ecosistemas as Array<Record<string, unknown>>) : [];
     return {
       state: 'ready',
@@ -65,6 +71,9 @@ export async function fetchEditables(token: string | undefined): Promise<Editabl
         features: resolveFeatures(e.features),
       })),
       plataforma: (body.plataforma as PlatformSwitches | null) ?? null,
+      lockedFeatures: Array.isArray(body.lockedFeatures)
+        ? body.lockedFeatures.filter(isFeatureKey)
+        : [...PLATFORM_ADMIN_ONLY_FEATURES],
     };
   } catch {
     return { state: 'unavailable' };

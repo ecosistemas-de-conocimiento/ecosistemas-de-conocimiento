@@ -27,11 +27,17 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const result = await fetchEditables(locals.token);
   if (result.state === 'forbidden') deny();
   if (result.state !== 'ready') {
-    return { state: 'unavailable' as const, ecosistemas: [], selected: null, plataforma: null };
+    return { state: 'unavailable' as const, ecosistemas: [], selected: null, plataforma: null, lockedFeatures: [] };
   }
   const requested = url.searchParams.get('eco') ?? '';
   const selected = result.ecosistemas.find((e) => e.id === requested) ?? result.ecosistemas[0] ?? null;
-  return { state: 'ready' as const, ecosistemas: result.ecosistemas, selected, plataforma: result.plataforma };
+  return {
+    state: 'ready' as const,
+    ecosistemas: result.ecosistemas,
+    selected,
+    plataforma: result.plataforma,
+    lockedFeatures: result.lockedFeatures,
+  };
 };
 
 export const actions: Actions = {
@@ -39,8 +45,13 @@ export const actions: Actions = {
     if (!locals.user) return fail(401, { message: 'Necesitas iniciar sesión.' });
     const form = await request.formData();
     const organization = String(form.get('organization') ?? '');
-    // A checkbox sends only when ticked: every key is written, unticked = off.
-    const features = Object.fromEntries(FEATURE_KEYS.map((k) => [k, form.get(k) === 'on'])) as Features;
+    // A checkbox sends only when ticked: every key is written, unticked = off —
+    // except a read-only one (`locked`), which a disabled box never sends and so
+    // would read as "off". The backend refuses a tampered `locked` anyway.
+    const locked = new Set(form.getAll('locked').map(String));
+    const features = Object.fromEntries(
+      FEATURE_KEYS.filter((k) => !locked.has(k)).map((k) => [k, form.get(k) === 'on']),
+    ) as Partial<Features>;
     const result = await saveFeatures(locals.token, organization, features);
     if (!result.ok) return fail(result.status, { message: result.message });
     return { saved: true };

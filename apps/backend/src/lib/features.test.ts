@@ -10,7 +10,9 @@ import {
   featureEnabled,
   featuresFor,
   invalidateFeatures,
+  lockedFeatureChange,
   parseFeaturesPatch,
+  PLATFORM_ADMIN_ONLY_FEATURES,
   resolveFeatures,
 } from './features'
 
@@ -83,5 +85,25 @@ describe('featuresFor', () => {
   it('no ecosistema: the default', async () => {
     expect(await featureEnabled({ findByID: vi.fn() } as never, null, 'graph')).toBe(true)
     expect(await featureEnabled({ findByID: vi.fn() } as never, null, 'studentView')).toBe(false)
+  })
+})
+
+describe('lockedFeatureChange — keepPublicFigures is the platform admin\'s (owner ruling Q16 A)', () => {
+  it('names keepPublicFigures as the only admin-only switch', () => {
+    expect([...PLATFORM_ADMIN_ONLY_FEATURES]).toEqual(['keepPublicFigures'])
+  })
+
+  it('reports a change of the resolved value, in either direction', () => {
+    expect(lockedFeatureChange({}, { keepPublicFigures: true })).toBe('keepPublicFigures')
+    expect(lockedFeatureChange({ keepPublicFigures: true }, { keepPublicFigures: false })).toBe('keepPublicFigures')
+    // Dropping the key resolves to the default (off): that is a change too.
+    expect(lockedFeatureChange({ keepPublicFigures: true }, { graph: false })).toBe('keepPublicFigures')
+    expect(lockedFeatureChange({ keepPublicFigures: true }, null)).toBe('keepPublicFigures')
+  })
+
+  it('is silent when the value stays the same or only other keys move', () => {
+    expect(lockedFeatureChange(null, { graph: false })).toBeNull()
+    expect(lockedFeatureChange({}, { keepPublicFigures: false })).toBeNull()
+    expect(lockedFeatureChange({ keepPublicFigures: true }, { keepPublicFigures: true, liveMic: false })).toBeNull()
   })
 })

@@ -53,11 +53,16 @@
         <input type="hidden" name="organization" value={data.selected.id} />
         <ul class="list">
           {#each FEATURE_KEYS as key (key)}
+            {@const locked = data.lockedFeatures.includes(key)}
             <li class="row">
-              <label>
-                <input type="checkbox" name={key} checked={data.selected.features[key]} />
+              <label class:locked>
+                <input type="checkbox" name={key} checked={data.selected.features[key]} disabled={locked} />
                 <span>{FEATURE_LABELS[key]}</span>
               </label>
+              {#if locked}
+                <input type="hidden" name="locked" value={key} />
+                <p class="note">Solo administración de la plataforma puede cambiarlo</p>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -149,6 +154,15 @@
     gap: 0.6rem;
     align-items: center;
     cursor: pointer;
+  }
+  .row label.locked {
+    cursor: default;
+    color: var(--edc-color-ink-soft);
+  }
+  .note {
+    margin: 0.2rem 0 0 1.6rem;
+    font-size: 0.8rem;
+    color: var(--edc-color-ink-soft);
   }
   .field {
     display: flex;

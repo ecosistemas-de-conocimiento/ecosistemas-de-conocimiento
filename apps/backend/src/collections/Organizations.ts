@@ -1,6 +1,6 @@
-import { ValidationError, type CollectionConfig, type FieldAccess } from 'payload'
+import { APIError, ValidationError, type CollectionBeforeChangeHook, type CollectionConfig, type FieldAccess } from 'payload'
 
-import { invalidateFeatures, parseFeaturesPatch } from '../lib/features'
+import { invalidateFeatures, LOCKED_FEATURE_MESSAGE, lockedFeatureChange, parseFeaturesPatch } from '../lib/features'
 import { roleInOrganization } from '../lib/permissions'
 
 import {
@@ -25,6 +25,27 @@ export const ownerOnlyField: FieldAccess = async ({ req, id }) => {
   const userId = (req.user as { id?: number | string } | null | undefined)?.id
   if (userId === undefined || userId === null || id === undefined || id === null) return false
   return (await roleInOrganization(req.payload, userId, id)) === 'owner'
+}
+
+/**
+ * 🔴 `keepPublicFigures` IS THE PLATFORM ADMIN'S (owner ruling Q16 A). Every
+ * write to an organization — REST, GraphQL, the Payload panel, bulk updates,
+ * `/api/funciones`, server code — passes through this hook, so this is the one
+ * place the rule lives. Other switches in the same write stay the owner's.
+ *
+ * ⚠ NOT A FIELD-ACCESS RULE: `features` is a single json field, and field
+ * access can only strip the whole field, which would block every other switch.
+ * ⚠ REJECTED, NOT STRIPPED: a silently ignored change would read as "saved".
+ * ⚠ FAILS CLOSED: no user (even with access overridden) = not an admin. A
+ * server-side job that must flip it has to run as a platform admin.
+ */
+export const refuseLockedFeatureChange: CollectionBeforeChangeHook = ({ data, originalDoc, operation, req }) => {
+  if (!data || data.features === undefined) return data
+  const before = operation === 'update' ? (originalDoc as { features?: unknown } | undefined)?.features : undefined
+  if (lockedFeatureChange(before, data.features) && !isPlatformAdminUser(req?.user)) {
+    throw new APIError(LOCKED_FEATURE_MESSAGE, 403, undefined, true)
+  }
+  return data
 }
 
 /**
@@ -78,6 +99,7 @@ export const Organizations: CollectionConfig = {
         return next
       },
     ],
+    beforeChange: [refuseLockedFeatureChange],
     afterChange: [
       ({ doc }) => {
         const id = (doc as { id?: number | string }).id
@@ -132,7 +154,9 @@ export const Organizations: CollectionConfig = {
     {
       // Per-ecosistema switches (owner ruling 2026-10-27). NULL / missing key =
       // the default in `lib/features.ts`, which is today's behaviour. Written by
-      // the responsable (owner) or a platform admin, via `/api/funciones`.
+      // the responsable (owner), an investigador or a platform admin, via
+      // `/api/funciones`; `keepPublicFigures` by a platform admin only
+      // (`refuseLockedFeatureChange`).
       name: 'features',
       type: 'json',
     },

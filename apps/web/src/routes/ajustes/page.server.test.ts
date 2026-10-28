@@ -49,6 +49,15 @@ describe('/ajustes load', () => {
     expect(data.selected.features.graph).toBe(true);
     expect(data.plataforma).toBeNull();
   });
+
+  it('🔴 passes the backend\'s locked switches through; a backend that does not say locks the admin-only ones', async () => {
+    mocked.mockResolvedValue(
+      json({ ecosistemas: [{ id: '1', name: 'A', slug: 'a', features: null }], plataforma: null, lockedFeatures: [] }),
+    );
+    expect(((await load(event())) as { lockedFeatures: string[] }).lockedFeatures).toEqual([]);
+    mocked.mockResolvedValue(json({ ecosistemas: [{ id: '1', name: 'A', slug: 'a', features: null }], plataforma: null }));
+    expect(((await load(event())) as { lockedFeatures: string[] }).lockedFeatures).toEqual(['keepPublicFigures']);
+  });
 });
 
 describe('/ajustes actions', () => {
@@ -71,6 +80,15 @@ describe('/ajustes actions', () => {
     await actions.funciones!(event('/ajustes', { organization: '1', keepPublicFigures: 'on' }));
     const body = JSON.parse(String((mocked.mock.calls[0]![2] as RequestInit).body)) as { features: Record<string, boolean> };
     expect(body.features.keepPublicFigures).toBe(true);
+  });
+
+  it('🔴 a locked switch is left out of the save, so a read-only toggle never reads as "off"', async () => {
+    mocked.mockResolvedValue(json({ features: {} }));
+    await actions.funciones!(event('/ajustes', { organization: '1', liveMic: 'on', locked: 'keepPublicFigures' }));
+    const body = JSON.parse(String((mocked.mock.calls[0]![2] as RequestInit).body)) as { features: Record<string, boolean> };
+    expect('keepPublicFigures' in body.features).toBe(false);
+    expect(body.features.liveMic).toBe(true);
+    expect(body.features.graph).toBe(false);
   });
 
   it('passes the backend refusal through', async () => {

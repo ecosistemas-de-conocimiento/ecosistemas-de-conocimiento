@@ -71,12 +71,13 @@ async function waitForQueries(candidate: Db): Promise<void> {
 }
 
 // 1 root (platform admin) · 2 olga, owner of A · 3 adan, admin of A ·
-// 4 memo, member of A · 5 bea, owner of B.
+// 4 memo, member of A · 5 bea, owner of B · 6 ines, investigador of A.
 const ROOT = 1
 const OLGA = 2
 const ADAN = 3
 const MEMO = 4
 const BEA = 5
+const INES = 6
 const ECO_A = 1
 const ECO_B = 2
 
@@ -145,13 +146,15 @@ describe.skipIf(!dockerOk)('/api/funciones and /api/plataforma on a real Postgre
         (2, 'olga@example.invalid', 'Olga', false),
         (3, 'adan@example.invalid', 'Adán', false),
         (4, 'memo@example.invalid', 'Memo', false),
-        (5, 'bea@example.invalid', 'Bea', false);
-      SELECT setval('users_id_seq', 5);
+        (5, 'bea@example.invalid', 'Bea', false),
+        (6, 'ines@example.invalid', 'Inés', false);
+      SELECT setval('users_id_seq', 6);
       INSERT INTO organizations (id, name, slug) VALUES (1, 'Eco A', 'eco-a'), (2, 'Eco B', 'eco-b');
       SELECT setval('organizations_id_seq', 2);
       INSERT INTO memberships (id, user_id, organization_id, role) VALUES
-        (1, 2, 1, 'owner'), (2, 3, 1, 'admin'), (3, 4, 1, 'member'), (4, 5, 2, 'owner');
-      SELECT setval('memberships_id_seq', 4);
+        (1, 2, 1, 'owner'), (2, 3, 1, 'admin'), (3, 4, 1, 'member'), (4, 5, 2, 'owner'),
+        (5, 6, 1, 'investigador');
+      SELECT setval('memberships_id_seq', 5);
     `))
   })
 
@@ -255,5 +258,132 @@ describe.skipIf(!dockerOk)('/api/funciones and /api/plataforma on a real Postgre
     await call('patch', '/plataforma', ROOT, { body: { detectorFallback: null } })
     expect(await detectorFallbackMode()).toBe('hosted')
     expect((await call('patch', '/plataforma', ROOT, { body: { detectorFallback: 'maybe' } })).status).toBe(400)
+  })
+  describe('🔴 keepPublicFigures is the platform admin\'s alone (owner ruling Q16 A)', () => {
+    const LOCKED = 'Solo administración de la plataforma puede cambiar «Conservar nombres de figuras públicas».'
+    const setStored = (orgId: number, features: Record<string, boolean>) =>
+      db.execute(sql.raw(`UPDATE organizations SET features = '${JSON.stringify(features)}'::jsonb WHERE id = ${orgId}`))
+    const status = async (p: Promise<unknown>): Promise<number | 'ok'> => {
+      try {
+        await p
+        return 'ok'
+      } catch (err) {
+        return ((err as { status?: number }).status ?? -1) as number
+      }
+    }
+    const localUpdate = async (as: number | null, features: Record<string, unknown>) =>
+      payload.update({
+        collection: 'organizations',
+        id: ECO_A,
+        data: { features } as never,
+        overrideAccess: as === null,
+        ...(as === null ? {} : { user: await userDoc(as) }),
+      })
+
+    it('/api/funciones: the responsable and the investigador get 403, and nothing moves', async () => {
+      for (const as of [OLGA, INES]) {
+        const res = await flip(as, ECO_A, { keepPublicFigures: true })
+        expect([as, res.status]).toEqual([as, 403])
+        expect((res.body.errors as Array<{ message: string }>)[0]?.message).toBe(LOCKED)
+      }
+      expect(await storedFeatures(ECO_A)).toBeNull()
+
+      await setStored(ECO_A, { keepPublicFigures: true })
+      invalidateFeatures()
+      expect((await flip(OLGA, ECO_A, { keepPublicFigures: false, graph: false })).status).toBe(403)
+      expect(await storedFeatures(ECO_A)).toEqual({ keepPublicFigures: true })
+    })
+
+    it('/api/funciones: the responsable still flips every other switch, even sending the locked one unchanged', async () => {
+      await setStored(ECO_A, { keepPublicFigures: true })
+      invalidateFeatures()
+      // The web page sends every key; an unchanged locked key is not a change.
+      expect((await flip(OLGA, ECO_A, { keepPublicFigures: true, graph: false })).status).toBe(200)
+      expect((await flip(INES, ECO_A, { liveMic: false })).status).toBe(200)
+      expect(await storedFeatures(ECO_A)).toEqual({ keepPublicFigures: true, graph: false, liveMic: false })
+    })
+
+    it('/api/funciones: a platform admin flips it', async () => {
+      expect((await flip(ROOT, ECO_A, { keepPublicFigures: true })).status).toBe(200)
+      expect(await featureEnabled(payload, ECO_A, 'keepPublicFigures')).toBe(true)
+      expect((await flip(ROOT, ECO_A, { keepPublicFigures: false })).status).toBe(200)
+      expect(await storedFeatures(ECO_A)).toEqual({ keepPublicFigures: false })
+    })
+
+    it('collection API (REST/GraphQL go through it): owner and investigador refused with 403, other keys pass', async () => {
+      for (const as of [OLGA, INES]) {
+        expect([as, await status(localUpdate(as, { keepPublicFigures: true }))]).toEqual([as, 403])
+      }
+      expect(await storedFeatures(ECO_A)).toBeNull()
+      expect(await status(localUpdate(OLGA, { graph: false }))).toBe('ok')
+      expect(await storedFeatures(ECO_A)).toEqual({ graph: false })
+
+      // A whole-object write that drops the key turns it off: that is a change too.
+      await setStored(ECO_A, { keepPublicFigures: true })
+      expect(await status(localUpdate(OLGA, { graph: true }))).toBe(403)
+      expect(await storedFeatures(ECO_A)).toEqual({ keepPublicFigures: true })
+    })
+
+    it('collection API: a bulk update by the owner is refused for the row', async () => {
+      const out = await payload.update({
+        collection: 'organizations',
+        where: { id: { equals: ECO_A } },
+        data: { features: { keepPublicFigures: true } } as never,
+        overrideAccess: false,
+        user: await userDoc(OLGA),
+      })
+      expect(out.docs).toHaveLength(0)
+      expect(out.errors).toHaveLength(1)
+      expect(await storedFeatures(ECO_A)).toBeNull()
+    })
+
+    it('collection API: fails closed when the caller is unknown, even with access overridden', async () => {
+      expect(await status(localUpdate(null, { keepPublicFigures: true }))).toBe(403)
+      expect(await storedFeatures(ECO_A)).toBeNull()
+      // Other keys still go through on a trusted server-side write.
+      expect(await status(localUpdate(null, { graph: false }))).toBe('ok')
+    })
+
+    it('collection API: a platform admin changes it', async () => {
+      expect(await status(localUpdate(ROOT, { keepPublicFigures: true }))).toBe('ok')
+      expect(await storedFeatures(ECO_A)).toEqual({ keepPublicFigures: true })
+    })
+
+    it('REST PATCH /api/organizations/:id (the real route handler): owner 403, other keys OK, admin OK', async () => {
+      const { REST_PATCH } = await import('@payloadcms/next/routes')
+      const { default: config } = await import('@payload-config')
+      const patch = REST_PATCH(config)
+      const tokenFor = async (id: number, email: string) => {
+        await payload.update({ collection: 'users', id, data: { password: 'Rest-test-1234' } as never, overrideAccess: true })
+        const out = await payload.login({ collection: 'users', data: { email, password: 'Rest-test-1234' } })
+        return out.token as string
+      }
+      const rest = async (token: string, features: Record<string, boolean>) => {
+        const res = await patch(
+          new Request(`http://localhost:3000/api/organizations/${ECO_A}`, {
+            method: 'PATCH',
+            headers: { Authorization: `JWT ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ features }),
+          }),
+          { params: Promise.resolve({ slug: ['organizations', String(ECO_A)] }) },
+        )
+        return { status: res.status, body: (await res.json()) as { errors?: Array<{ message: string }> } }
+      }
+      const olga = await tokenFor(OLGA, 'olga@example.invalid')
+      const refused = await rest(olga, { keepPublicFigures: true })
+      expect(refused.status).toBe(403)
+      expect(refused.body.errors?.[0]?.message).toBe(LOCKED)
+      expect(await storedFeatures(ECO_A)).toBeNull()
+      expect((await rest(olga, { graph: false })).status).toBe(200)
+      expect(await storedFeatures(ECO_A)).toEqual({ graph: false })
+      const root = await tokenFor(ROOT, 'root@example.invalid')
+      expect((await rest(root, { keepPublicFigures: true })).status).toBe(200)
+      expect(await storedFeatures(ECO_A)).toEqual({ keepPublicFigures: true })
+    }, 30_000)
+
+    it('editables tells the page which switches this caller cannot change', async () => {
+      expect((await call('get', '/funciones/editables', OLGA)).body.lockedFeatures).toEqual(['keepPublicFigures'])
+      expect((await call('get', '/funciones/editables', ROOT)).body.lockedFeatures).toEqual([])
+    })
   })
 })

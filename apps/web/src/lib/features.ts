@@ -23,6 +23,16 @@ export type Features = Record<FeatureKey, boolean>;
 
 export const FEATURE_KEYS = Object.keys(FEATURE_DEFAULTS) as FeatureKey[];
 
+/**
+ * Switches only a platform admin may change (owner ruling Q16 A). The backend
+ * says which are locked for the caller (`lockedFeatures`); this is the
+ * fail-closed fallback when it does not.
+ */
+export const PLATFORM_ADMIN_ONLY_FEATURES: readonly FeatureKey[] = ['keepPublicFigures'];
+
+export const isFeatureKey = (k: unknown): k is FeatureKey =>
+  typeof k === 'string' && Object.prototype.hasOwnProperty.call(FEATURE_DEFAULTS, k);
+
 /** Admin-page labels. Exhaustive by type. */
 export const FEATURE_LABELS: Record<FeatureKey, string> = {
   audioUpload: 'Subir audio',

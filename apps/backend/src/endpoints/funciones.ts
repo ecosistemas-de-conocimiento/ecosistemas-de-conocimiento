@@ -12,6 +12,9 @@
  *   · whoever holds `organization:manage` in that ecosistema — responsable
  *     (`owner`) or `investigador` (owner ruling 2026-10-27) — that ecosistema
  *     only, never the platform;
+ *   · `keepPublicFigures` — platform admin only (owner ruling Q16 A); the
+ *     others see it read-only (`lockedFeatures` in editables) and get a 403
+ *     if they change it. Sending it unchanged is fine (the page sends every key);
  *   · anyone else — nothing. Reading is for members, so the UI (and the future
  *     student view, `studentView`) can ask.
  * Unknown ecosistema and "not yours" get the same 403.
@@ -24,7 +27,15 @@ import type { Endpoint, PayloadRequest } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
 import { fallbackModeFromEnv } from '../lib/anonymise/fallbackGenerator'
-import { featuresFor, invalidateFeatures, parseFeaturesPatch, resolveFeatures } from '../lib/features'
+import {
+  featuresFor,
+  invalidateFeatures,
+  LOCKED_FEATURE_MESSAGE,
+  lockedFeatureChange,
+  parseFeaturesPatch,
+  PLATFORM_ADMIN_ONLY_FEATURES,
+  resolveFeatures,
+} from '../lib/features'
 import { organizationIdsForUser, organizationIdsForUserWithPermission, PERMISSIONS } from '../lib/permissions'
 import { invalidatePlatformSettings, isFallbackMode, storedDetectorFallback } from '../lib/platformSettings'
 
@@ -110,7 +121,11 @@ const editablesEndpoint: Endpoint = {
       slug: typeof o.slug === 'string' ? o.slug : '',
       features: resolveFeatures(o.features),
     }))
-    return ok({ ecosistemas, plataforma: admin ? await platformView() : null })
+    return ok({
+      ecosistemas,
+      plataforma: admin ? await platformView() : null,
+      lockedFeatures: admin ? [] : [...PLATFORM_ADMIN_ONLY_FEATURES],
+    })
   },
 }
 
@@ -141,11 +156,16 @@ const writeEndpoint: Endpoint = {
       current.features && typeof current.features === 'object' && !Array.isArray(current.features)
         ? (current.features as Record<string, unknown>)
         : {}
+    const next = { ...parseOrEmpty(stored), ...patch }
+    // Checked here for a clear 403; the collection hook holds the line again.
+    if (lockedFeatureChange(stored, next) && !isPlatformAdminUser(req.user)) {
+      return errorResponse(403, LOCKED_FEATURE_MESSAGE)
+    }
     try {
       await req.payload.update({
         collection: 'organizations',
         id: organizationId,
-        data: { features: { ...parseOrEmpty(stored), ...patch } } as never,
+        data: { features: next } as never,
         depth: 0,
         overrideAccess: false,
         user: req.user,
@@ -153,7 +173,10 @@ const writeEndpoint: Endpoint = {
       })
     } catch (err) {
       const status = (err as { status?: unknown }).status
-      if (status === 403) return errorResponse(403, NOT_YOURS)
+      if (status === 403) {
+        const locked = (err as { message?: unknown }).message === LOCKED_FEATURE_MESSAGE
+        return errorResponse(403, locked ? LOCKED_FEATURE_MESSAGE : NOT_YOURS)
+      }
       req.payload.logger.error({ err }, '[funciones] write failed')
       return errorResponse(500, 'No se pudo guardar.')
     }

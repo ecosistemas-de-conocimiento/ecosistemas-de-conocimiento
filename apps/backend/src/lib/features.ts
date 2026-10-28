@@ -60,6 +60,29 @@ export function resolveFeatures(raw: unknown): Features {
 }
 
 /**
+ * 🔴 SWITCHES ONLY A PLATFORM ADMIN MAY CHANGE (owner ruling Q16 A). Keeping
+ * public figures' names in the corpus is a privacy call for the installation,
+ * not for the ecosistema: its responsable and investigadores see it read-only.
+ * Enforced in `Organizations` (beforeChange, every write path) and checked
+ * first in `/api/funciones` for a clear error.
+ */
+export const PLATFORM_ADMIN_ONLY_FEATURES = ['keepPublicFigures'] as const satisfies readonly FeatureKey[]
+
+export const LOCKED_FEATURE_MESSAGE =
+  'Solo administración de la plataforma puede cambiar «Conservar nombres de figuras públicas».'
+
+/**
+ * The first admin-only switch whose RESOLVED value differs between the stored
+ * features and the new ones, or `null`. Resolved, so a missing key reads as the
+ * default: a whole-object write that drops a stored `true` is a change.
+ */
+export function lockedFeatureChange(before: unknown, after: unknown): FeatureKey | null {
+  const a = resolveFeatures(before)
+  const b = resolveFeatures(after)
+  return PLATFORM_ADMIN_ONLY_FEATURES.find((k) => a[k] !== b[k]) ?? null
+}
+
+/**
  * A client's patch → the known boolean keys, or a Spanish error.
  * ⚠ Unknown keys and non-booleans are REFUSED, not dropped: a typo that
  * silently did nothing would read as "saved".
