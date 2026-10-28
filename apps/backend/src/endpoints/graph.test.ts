@@ -219,8 +219,8 @@ describe('GET /api/graph/view', () => {
       memberOf: [7],
       rows: [
         [
-          { id: 5, type: 'tema', label: 'Consulta previa', support: 4, hidden: 9 },
-          { id: 6, type: 'lugar', label: 'Oaxaca', support: 3, hidden: 9 },
+          { id: 5, type: 'tema', label: 'Consulta previa', support: 4, hidden: 9, total: 2 },
+          { id: 6, type: 'lugar', label: 'Oaxaca', support: 3, hidden: 9, total: 2 },
         ],
         [{ n: 14 }],
         [{ from_id: 5, to_id: 6, kind: 'relation', support: 3, co_mentions: 4, relation_type: 'ocurre_en', direction: 'out' }],
@@ -234,6 +234,7 @@ describe('GET /api/graph/view', () => {
         { id: 6, type: 'lugar', label: 'Oaxaca', support: 3 },
       ],
       hidden: 9,
+      total: 2,
       minSupport: 1,
       minEdgeSupport: 1,
       publishedDocuments: 14,
@@ -254,6 +255,7 @@ describe('GET /api/graph/view', () => {
     expect(await body(await graphViewEndpoint.handler(young.req))).toEqual({
       entities: [],
       hidden: 0,
+      total: 0,
       minSupport: 1,
       minEdgeSupport: 1,
       publishedDocuments: 2,
@@ -264,11 +266,12 @@ describe('GET /api/graph/view', () => {
     // "aún no hay suficientes documentos publicados para mostrar conexiones".
     const thresholded = fakeRequest('/?organization=7', {
       memberOf: [7],
-      rows: [[{ id: null, type: null, label: null, support: null, hidden: 31 }], [{ n: 2 }]],
+      rows: [[{ id: null, type: null, label: null, support: null, hidden: 31, total: 0 }], [{ n: 2 }]],
     })
     expect(await body(await graphViewEndpoint.handler(thresholded.req))).toEqual({
       entities: [],
       hidden: 31,
+      total: 0,
       minSupport: 1,
       minEdgeSupport: 1,
       publishedDocuments: 2,

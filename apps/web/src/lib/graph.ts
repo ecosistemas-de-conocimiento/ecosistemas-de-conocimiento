@@ -233,6 +233,11 @@ export interface GraphView {
    * view, still typechecks — absent reads as "no edges".
    */
   edges?: GraphViewEdge[];
+  /**
+   * Entities above the threshold BEFORE the backend's cap (1,500). Larger than
+   * `entities.length` ⇒ the view is capped. Absent on an older backend.
+   */
+  total?: number;
 }
 
 /**
@@ -475,6 +480,7 @@ export function parseGraphView(raw: unknown): GraphView {
     minSupport: minSupport > 0 ? minSupport : null,
     publishedDocuments: published,
     edges: parseViewEdges(body.edges, entities),
+    ...(body.total === undefined || body.total === null ? {} : { total: count(body.total) }),
   };
 }
 
@@ -1013,13 +1019,23 @@ export const GRAPH_CLEAR_EDGE_LABEL = 'Quitar la selección';
 // the per-list hints, the document-list hints, the testimony note and the map
 // hint are gone. Labels, buttons, short empty states and errors stay.
 
-/** Human count of what a filtered list is currently showing. */
+/**
+ * Human count of what a filtered list is currently showing.
+ *
+ * `available` is the backend's above-threshold total (`GraphView.total`). When
+ * the list is capped below it, the unfiltered count reads "1,500 de N
+ * entidades" so the page never implies it holds everything.
+ */
 export function resultsSummary(input: {
   total: number;
   shown: number;
   filtered: boolean;
+  available?: number;
 }): string {
   if (input.total === 0) return input.filtered ? GRAPH_NO_RESULTS : GRAPH_EMPTY_THRESHOLD;
+  if (!input.filtered && input.available !== undefined && input.available > input.total) {
+    return `${input.total.toLocaleString('es-MX')} de ${input.available.toLocaleString('es-MX')} entidades`;
+  }
   // ⚠ The noun agrees with the TOTAL, which is the number it follows:
   // "1 de 12 entidades", never "1 de 12 entidad". Same rule as
   // `$lib/biblioteca.resultsSummary`.

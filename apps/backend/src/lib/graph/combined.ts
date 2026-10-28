@@ -93,6 +93,8 @@ export interface CombinedEntity extends GraphViewEntity {
 export interface CombinedView {
   entities: CombinedEntity[]
   hidden: number
+  /** Merged nodes above the threshold before the cap; see `GraphEntityView.total`. */
+  total: number
   minSupport: number
   minEdgeSupport: number
   publishedDocuments: number
@@ -270,10 +272,15 @@ export function combinedEntityViewQuery(args: CombinedViewArgs): GraphSql {
         GROUP BY a.type, a.canonical_key
         HAVING MAX(a.support) < ${minSupport}${hiddenFilter}
       ) below
+    ),
+    total AS (
+      SELECT COUNT(*)::int AS n FROM merged mg ${visibleFilter}
     )
     SELECT v.id AS id, v.type AS type, v.label AS label, v.support AS support,
-           v.ecosystems AS ecosystems, v.ecosystem_support AS ecosystem_support, h.n AS hidden
+           v.ecosystems AS ecosystems, v.ecosystem_support AS ecosystem_support, h.n AS hidden,
+           t.n AS total
     FROM hidden h
+    CROSS JOIN total t
     LEFT JOIN visible v ON TRUE
     ORDER BY v.support DESC NULLS LAST, v.label ASC`
 }
@@ -508,8 +515,10 @@ export async function readCombinedView(
 
   const entities: CombinedEntity[] = []
   let hidden = 0
+  let total = 0
   for (const row of rowsOf(viewResult)) {
     hidden = toCount(row.hidden)
+    total = toCount(row.total)
     if (row.id == null) continue
     entities.push(combinedEntityOf(row))
   }
@@ -534,6 +543,7 @@ export async function readCombinedView(
   return {
     entities,
     hidden,
+    total,
     minSupport,
     minEdgeSupport,
     publishedDocuments: toCount(rowsOf(countResult)[0]?.n),

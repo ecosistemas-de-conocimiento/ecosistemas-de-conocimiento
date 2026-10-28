@@ -165,8 +165,12 @@ export function graphMinSupport(): number {
 export const MAX_VIEW_ENTITIES = 1500
 /**
  * Edges in the whole-graph view, relation edges first, then co-mentions by
- * weight. Co-mentions are already capped per node by `GRAPH_COMENTION_TOP_K`,
- * so this only bites on a corpus far past the demo's size.
+ * weight. The per-node co-mention cap (`GRAPH_COMENTION_TOP_K`, default 8)
+ * does NOT keep the total small: a pair is kept when either end nominates it,
+ * so 1500 entities can carry up to ~12k co-mention edges plus every relation
+ * pair. Dev org 6 (542 entities) already returned 4074 edge rows (measured
+ * 2026-10-28, d04a112), so this can bite on a real corpus. The response has no
+ * edge total; `GraphEntityView.total` counts entities only.
  */
 export const MAX_VIEW_EDGES = 6000
 export const MAX_NEIGHBOURS = 20 // ADR §7.2: the ego-network is ≤ 20 neighbours.
@@ -217,6 +221,12 @@ export interface GraphEntityView {
    * blank canvas (ADR §7.3.3).
    */
   hidden: number
+  /**
+   * Entities ABOVE the threshold, before {@link MAX_VIEW_ENTITIES} cuts the
+   * list. `total > entities.length` ⇒ the view is capped, and the UI says
+   * "1,500 de N entidades" instead of implying it holds everything.
+   */
+  total: number
   /** The ENTITY threshold in force, so the copy can name it without guessing. */
   minSupport: number
   /** The relation-edge threshold in force (`GRAPH_MIN_EDGE_DOCS`). */
@@ -570,6 +580,11 @@ export interface EntityViewArgs {
  * level out, onto the aggregate column, and applies to both branches from one
  * place. `queries.test.ts` audits for either form.
  *
+ * `total` counts the `visible` side BEFORE its `LIMIT`, from the same
+ * `supported` CTE, so a capped view can say how much it left out. It is one
+ * more COUNT over rows Postgres already holds (a CTE read three times is
+ * materialised once), not another pass over `graph_mentions`.
+ *
  * The `LEFT JOIN … ON TRUE` against a single-row `hidden` is what makes the
  * statement return one row carrying `hidden` even when nothing is visible —
  * otherwise an empty graph would carry no count and the UI could not explain
@@ -606,9 +621,14 @@ export function entityViewQuery(args: EntityViewArgs): GraphSql {
     ),
     hidden AS (
       SELECT COUNT(*)::int AS n FROM supported WHERE support < ${minSupport}
+    ),
+    total AS (
+      SELECT COUNT(*)::int AS n FROM supported WHERE support >= ${minSupport}
     )
-    SELECT v.id AS id, v.type AS type, v.label AS label, v.support AS support, h.n AS hidden
+    SELECT v.id AS id, v.type AS type, v.label AS label, v.support AS support, h.n AS hidden,
+           t.n AS total
     FROM hidden h
+    CROSS JOIN total t
     LEFT JOIN visible v ON TRUE
     ORDER BY v.support DESC NULLS LAST, v.label ASC`
 }
@@ -642,9 +662,11 @@ export async function readEntityView(
   const rows = rowsOf(viewResult)
   const entities: GraphViewEntity[] = []
   let hidden = 0
+  let total = 0
 
   for (const row of rows) {
     hidden = toCount(row.hidden)
+    total = toCount(row.total)
     // `id` is NULL on the single row a graph with nothing visible returns.
     if (row.id == null) continue
     entities.push({
@@ -701,6 +723,7 @@ export async function readEntityView(
   return {
     entities,
     hidden,
+    total,
     minSupport,
     minEdgeSupport,
     publishedDocuments: toCount(rowsOf(countResult)[0]?.n),

@@ -257,6 +257,7 @@
             total: data.view.entities.length,
             shown: visible.length,
             filtered,
+            available: data.view.total,
           })}
         </p>
 

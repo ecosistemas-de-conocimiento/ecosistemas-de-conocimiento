@@ -247,7 +247,9 @@ describe('🔴 the three gates, on every statement that reads graph rows', () =>
       const { text } = renderSql(entityViewQuery({ organizationId: ORG }))
       expect(text).toContain('WHERE support >= $')
       expect(text).toContain('WHERE support < $')
-      expect(text.match(/FROM supported/g)).toHaveLength(2)
+      // Three reads of one CTE: visible, hidden and the pre-cap `total`.
+      expect(text.match(/FROM supported/g)).toHaveLength(3)
+      expect(text.match(/WHERE support >= \$/g)).toHaveLength(2)
     })
 
     it('counts DISTINCT DOCUMENTS, never occurrences', () => {
@@ -516,11 +518,11 @@ describe('the view, when the threshold hides everything', () => {
     // `hidden` — otherwise an empty graph could not explain itself and the UI
     // would render a blank canvas that reads as broken (ADR §7.3.3).
     const payload = fakePayload([
-      [{ id: null, type: null, label: null, support: null, hidden: 12 }],
+      [{ id: null, type: null, label: null, support: null, hidden: 12, total: 0 }],
       [{ n: 2 }],
     ])
     const view = await readEntityView(payload, { organizationId: ORG })
-    expect(view).toEqual({ entities: [], hidden: 12, minSupport: 1, minEdgeSupport: 1, publishedDocuments: 2, edges: [] })
+    expect(view).toEqual({ entities: [], hidden: 12, total: 0, minSupport: 1, minEdgeSupport: 1, publishedDocuments: 2, edges: [] })
   })
 
   it('reports an ecosistema with nothing published as empty in BOTH senses', async () => {
@@ -530,7 +532,7 @@ describe('the view, when the threshold hides everything', () => {
     // carry both numbers.
     const payload = fakePayload([[], [{ n: 0 }]])
     const view = await readEntityView(payload, { organizationId: ORG })
-    expect(view).toEqual({ entities: [], hidden: 0, minSupport: 1, minEdgeSupport: 1, publishedDocuments: 0, edges: [] })
+    expect(view).toEqual({ entities: [], hidden: 0, total: 0, minSupport: 1, minEdgeSupport: 1, publishedDocuments: 0, edges: [] })
   })
 
   it('caps what a caller can ask for', () => {

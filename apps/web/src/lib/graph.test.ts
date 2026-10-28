@@ -214,6 +214,11 @@ describe('🔴 persona is shown like any other type — and why that is safe', (
     expect(view.hidden).toBe(4);
     expect(view.minSupport).toBe(3);
   });
+
+  it('reads the above-threshold total when the backend sends one', () => {
+    expect(parseGraphView({ entities: [PERSONA_ROW], total: 2345 }).total).toBe(2345);
+    expect(parseGraphView({ entities: [PERSONA_ROW] }).total).toBeUndefined();
+  });
 });
 
 describe('isViewableEntityType', () => {
@@ -896,6 +901,20 @@ describe('resultsSummary', () => {
 
   it('says how many of how many when a filter is on', () => {
     expect(resultsSummary({ total: 12, shown: 3, filtered: true })).toBe('3 de 12 entidades');
+  });
+
+  // Owner 2026-10-28: a capped view must not imply it holds everything.
+  it('says "1,500 de N" when the backend capped the list', () => {
+    expect(resultsSummary({ total: 1500, shown: 1500, filtered: false, available: 2345 })).toBe(
+      '1,500 de 2,345 entidades',
+    );
+  });
+
+  it('shows the plain number when the list is not capped', () => {
+    expect(resultsSummary({ total: 1200, shown: 1200, filtered: false, available: 1200 })).toBe(
+      '1,200 entidades',
+    );
+    expect(resultsSummary({ total: 12, shown: 12, filtered: false })).toBe('12 entidades');
   });
 
   it('drops the "de N" when the filter matched everything', () => {
