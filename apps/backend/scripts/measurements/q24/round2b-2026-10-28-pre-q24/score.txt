@@ -1,0 +1,13 @@
+q24-public   30fc152 public names         keep   0/2 of 10                      CIDE, Centro de Investigación y Docencia Económicas, DIF, Ecosistemas de conocimiento y aprendizaje situado, Foro de Saberes Comunitarios, INDISCAPACIDAD CDMX, Lengua de Señas Mexicana, PILARES, SECIHTI, UNAM
+q24-public   30fc152 team                 keep   1/1 of 1                       
+q24-public   30fc152 persons              redact 0/0 of 6                       
+q24-public   30fc152 addresses            redact 0/0 of 2                       
+q24-public   30fc152 contact              redact 0/0 of 1                       
+q24-public   30fc152 workplace->1 person  redact 0/0 of 1                       
+q24-public   30fc152 RUN                         result ['ready', 'ready'] secs [21.4, 15.6] calls [2, 2] maxCallMs [20326, 14901] [Dato omitido] [4, 1] fallbackErrors [0, 0] 
+q24-workplace 30fc152 workplace+person     redact 1/1 of 1                       clínica dental Sonrisa Clara
+q24-workplace 30fc152 school+person, small town redact 1/1 of 1                       telesecundaria Emiliano Zapata
+q24-workplace 30fc152 cargo+institution    redact 1/1 of 1                       DIF municipal de Ocuituco
+q24-workplace 30fc152 bare institutions    keep   3/3 of 3                       
+q24-workplace 30fc152 towns                keep   3/3 of 3                       
+q24-workplace 30fc152 RUN                         result ['ready', 'ready'] secs [5.8, 6.4] calls [2, 2] maxCallMs [3110, 3713] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
