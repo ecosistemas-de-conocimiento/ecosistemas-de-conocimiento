@@ -248,6 +248,14 @@ class AppStore {
   degraded = $state<null | { reason: 'forbidden' | 'unavailable' }>(null);
   /** Doc IDs currently being polled — avoids racing hydration vs upload. */
   private pollingDocs = new Set<string>();
+  /**
+   * Documents deleted in this tab. 🔴 A list read already on the wire when
+   * "Eliminar" was pressed lands AFTER the optimistic removal and would write
+   * the row straight back (dev, 2026-10-28: 200, row still there until a
+   * reload). Every list read drops these ids. An id is never reused, so the
+   * set only grows; a refused delete takes its id back out.
+   */
+  private deletedDocIds = new Set<string>();
 
   // ── Mis documentos ─────────────────────────────────────────────────────
   //
@@ -599,7 +607,7 @@ class AppStore {
         `/api/sessions/${sessionId}/documents`,
         { credentials: 'same-origin' },
       );
-      s.docs = (data?.docs ?? []).map(docFromBackend);
+      s.docs = (data?.docs ?? []).map(docFromBackend).filter((d) => !this.deletedDocIds.has(d.id));
       // Resume polling for anything still in flight (page-refresh case): a
       // publish started before the reload must keep being watched, or the row
       // would sit on "Publicando…" forever with nothing driving it.
@@ -1725,6 +1733,7 @@ class AppStore {
     const ownedBefore = this.ownedDocs;
     for (const s of this.sessions) s.docs = s.docs.filter((d) => d.id !== docId);
     this.ownedDocs = this.ownedDocs.filter((d) => d.id !== docId);
+    this.deletedDocIds.add(docId);
     try {
       await fetchJson(`/api/documents/${docId}`, {
         method: 'DELETE',
@@ -1733,6 +1742,7 @@ class AppStore {
       return true;
     } catch (err) {
       console.error('deleteDoc failed', err);
+      this.deletedDocIds.delete(docId);
       for (const { session, docs } of before) session.docs = docs;
       this.ownedDocs = ownedBefore;
       toasts.push({
@@ -1939,7 +1949,9 @@ class AppStore {
         degraded?: boolean;
         reason?: unknown;
       }>(`/api/documentos${qs}`, { credentials: 'same-origin' });
-      this.ownedDocs = (data?.docs ?? []).map(ownedDocFromBackend);
+      this.ownedDocs = (data?.docs ?? [])
+        .map(ownedDocFromBackend)
+        .filter((d) => !this.deletedDocIds.has(d.id));
       // Watch anything still in flight, so its badge moves without a reload.
       for (const d of this.ownedDocs) {
         if (!isTerminalIngest(d.ingestStatus)) void this.pollDocStatus(null, d.id);
