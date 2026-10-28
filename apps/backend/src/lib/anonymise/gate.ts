@@ -62,6 +62,7 @@ import { createNamePartRegistry, gluedToAnotherName, namePartsOf, type NamePartR
 import { createPseudonymAllocator, normaliseName } from './pseudonyms'
 import { structuralPass } from './structural'
 import { restorePublicFigures } from './publicFigureRestore'
+import { restoreAuthors } from './authorRestore'
 import { isTownLevelPlace } from './townPlaces'
 import type {
   DetectorFinding,
@@ -603,6 +604,8 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // Same lifetime, same reason: name parts → people, for this document only.
   const names = createNamePartRegistry()
   const stages: GateStageReport[] = []
+  /** R60: the authors of this document's clean bylines, kept visible after the gate. */
+  const authors: string[] = []
 
   // 🔴 KEEP PUBLIC FIGURES (third audit 2026-10-27): the gate runs EXACTLY as
   // with the option off. The model is also asked to classify people, and only
@@ -648,9 +651,13 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
     ...(extra ?? {}),
   })
   const ready = (redactedText: string): GateResult => {
-    if (!keep) return { status: 'ready', redactedText, report: report() }
+    // 🔴 R60: the document's own byline authors come back LAST, on whatever
+    // the public-figure restore left (`authorRestore.ts`).
+    const withAuthors = (text: string) =>
+      authors.length === 0 ? text : restoreAuthors(structural.text, text, authors, { ...evidence, roster: rosterNames }, structural.bylines).text
+    if (!keep) return { status: 'ready', redactedText: withAuthors(redactedText), report: report() }
     const restored = restorePublicFigures(structural.text, redactedText, { ...evidence, roster: rosterNames })
-    return { status: 'ready', redactedText: restored.text, report: report(), keptPublic: restored.kept }
+    return { status: 'ready', redactedText: withAuthors(restored.text), report: report(), keptPublic: restored.kept }
   }
 
   // ── 1. STRUCTURAL ─────────────────────────────────────────────────────────
@@ -659,11 +666,26 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // A byline's author takes a label from the SAME allocator, and its name parts
   // are registered, so "Autor: Juan Pérez" and a bare "Pérez" in the body come
   // out as one `[Persona X]` even when the model never reports the name.
+  //
+  // 🔴 R60 (owner, 2026-10-28): in a `documento`, the authors of a CLEAN
+  // byline at a field start are NOT redacted here. The byline stays in the
+  // text, stages 2–4 redact it like any name (roster included), and `ready`
+  // restores those authors' placeholders from this stage's text. Their name
+  // parts are registered so bare mentions share their label. A byline that
+  // does not parse cleanly is redacted here, as before.
   const structural = structuralPass(input.text.normalize('NFC'), {
     person: (name) => {
       names.add(name)
       return allocator.labelFor(name)
     },
+    ...(input.contentKind === 'documento'
+      ? {
+          keepAuthor: (name: string) => {
+            names.add(name)
+            authors.push(name)
+          },
+        }
+      : {}),
   })
   stages.push({ stage: 'structural', removed: structural.removed })
 
