@@ -356,6 +356,41 @@ function pairsAsSurnameGiven(surname: string, given: string, surnameFirstList: b
   return nameWords(given).length <= (surnameFirstList ? 2 : 1)
 }
 
+/** A lower-case segment that opens with one of these is a sentence, not a name. */
+const PROSE_OPENERS: ReadonlySet<string> = new Set([
+  'que', 'el', 'la', 'los', 'las', 'lo', 'un', 'una', 'de', 'del', 'en', 'y', 'e', 'o', 'u', 'a',
+  'por', 'para', 'con', 'sin', 'segun', 'sobre', 'entre', 'hasta', 'desde', 'como', 'cuando',
+  'donde', 'pero', 'si', 'se', 'su', 'sus', 'este', 'esta', 'ese', 'esa', 'al', 'no', 'ya',
+])
+
+/**
+ * Words a name never holds, anywhere in the segment: verbs and function words
+ * that are not name particles ("de", "la", "y" are, as in "de la cruz").
+ * ⚠ A LIST, NOT A SUFFIX RULE: "-ar"/"-ado" would catch Aguilar and Delgado.
+ */
+const PROSE_WORDS: ReadonlySet<string> = new Set([
+  ...PROSE_OPENERS,
+  'ver', 'vease', 'vea', 'consultar', 'consulte', 'es', 'son', 'fue', 'fueron', 'era', 'esta',
+  'estan', 'ha', 'han', 'hay', 'sera', 'revisado', 'revisada', 'publicado', 'publicada', 'anexo',
+].filter((w) => !['de', 'la', 'las', 'los', 'y', 'e'].includes(w)))
+
+/**
+ * 🔴 FAIL-CLOSED (byline audit 2): a lower-case segment after ";" or "|" is a
+ * NAME — redacted, though never handed to `person`, since a lower-case word
+ * cannot spread safely — unless it is plainly prose: five words or more, a
+ * digit, a function-word opener, or a verb or function word inside.
+ * "luis gómez" is a name; "ver anexo 3" and "según la convocatoria de este
+ * año" are prose.
+ */
+function isProse(segment: string): boolean {
+  if (/\p{Lu}/u.test(segment)) return false
+  if (/\d/u.test(segment)) return true
+  const words = (segment.match(/[\p{L}\p{M}]+/gu) ?? []).map(fold)
+  if (words.length === 0) return false
+  if (words.length >= 5 || PROSE_OPENERS.has(words[0] as string)) return true
+  return words.some((w) => PROSE_WORDS.has(w))
+}
+
 /** Count a rule only when it actually fired — a zero row is noise in the report. */
 function pushCount(into: RedactionCount[], label: string, count: number): void {
   if (count === 0) return
@@ -430,9 +465,6 @@ export function structuralPass(
   }
   const byline = (_m: string, key: string, value: string) => {
     const surnameFirst = /[;|]/.test(value)
-    // ⚠ Only when the value has a capital somewhere: an all-lower-case byline
-    // ("autores: ana ruiz; luis gómez") is still redacted whole (fail-closed).
-    const proseCanFollow = /\p{Lu}/u.test(value)
     let out = key
     let prose = false
     const hard: Array<{ sep: string; text: string; pair?: true }> = []
@@ -444,9 +476,10 @@ export function structuralPass(
       } else hard.push(s)
     }
     for (const h of hard) {
-      // Lower-case prose after ";" or "|" is not an author, nor anything after it:
-      // "Autor: Ana Ruiz; el texto fue revisado".
-      if (prose || (proseCanFollow && /[;|]/.test(h.sep) && !/\p{Lu}/u.test(h.text))) {
+      // Lower-case PROSE after ";" or "|" is not an author, nor anything after
+      // it: "Autor: Ana Ruiz; el texto fue revisado". A short lower-case
+      // segment is still a name ("Ana Ruiz; luis gómez"), see {@link isProse}.
+      if (prose || (/[;|]/.test(h.sep) && isProse(h.text))) {
         prose = true
         out += h.sep + h.text
         continue

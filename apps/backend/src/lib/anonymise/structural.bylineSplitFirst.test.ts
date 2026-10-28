@@ -148,8 +148,27 @@ describe('byline audit 2 — lower-case prose after ";" (6)', () => {
     )
   })
 
+  it.each(['Autor: Ana Ruiz; ver anexo 3', 'Autor: Ana Ruiz; según la convocatoria de este año'])(
+    'keeps the prose in "%s"',
+    (line) => {
+      const out = structuralPass(line).text
+      expect(out).toBe(line.replace('Ana Ruiz', '[Dato omitido]'))
+    },
+  )
+
   it('⚠ an all-lower-case byline is still redacted whole (fail-closed)', () => {
     expect(structuralPass('Autores: ana ruiz; luis gómez').text).toBe('Autores: [Dato omitido]; [Dato omitido]')
+  })
+
+  it.each(['; ', ' | '])('🔴 a short lower-case name after "%s" is redacted, not registered', (sep) => {
+    const { seen, person } = spy()
+    const out = structuralPass(`Autores: Ana Ruiz${sep}luis gómez`, { person })
+    expect(out.text).toBe(`Autores: [Persona A]${sep}[Dato omitido]`)
+    expect(seen).toEqual(['Ana Ruiz'])
+  })
+
+  it('🔴 a lower-case particle name is still a name', () => {
+    expect(structuralPass('Autores: Ana Ruiz; juan de la cruz').text).toBe('Autores: [Dato omitido]; [Dato omitido]')
   })
 })
 
