@@ -318,7 +318,11 @@ export function toLibraryItem(
     // `BIBLIOTECA_EXCERPT_SKIP_INTRO` (default off): `true` skips origin/language/age lines.
     excerpt:
       testimonio && isClearedForLibrary(row)
-        ? excerptFrom(row.redactedText, { skipIntro: parseSkipIntro(env.BIBLIOTECA_EXCERPT_SKIP_INTRO) })
+        ? excerptFrom(row.redactedText, {
+            skipIntro: parseSkipIntro(env.BIBLIOTECA_EXCERPT_SKIP_INTRO),
+            // Owner ruling 2026-10-28: no `[Persona A]` on a card, like the chat title.
+            placeholderFree: true,
+          })
         : null,
   };
 }

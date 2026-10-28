@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 
 const RAW = 'Me llamo Juana Pérez y vivo en la colonia Las Flores, en Cuautla, desde hace mucho tiempo.';
-const REDACTED = 'Me llamo [Persona A] y vivo en la colonia [Lugar B], en Cuautla, desde hace mucho tiempo.';
+const REDACTED = 'Me llamo así y vivo en una colonia de Cuautla, desde hace mucho tiempo, con mi familia.';
 
 const voz = {
   id: 5,
@@ -48,6 +48,12 @@ describe('toLibraryItem — testimonio label and excerpt', () => {
     expect(item.excerpt).toBe(REDACTED);
     const json = JSON.stringify(item);
     for (const leak of ['Juana', 'Pérez', 'Las Flores', 'Ana']) expect(json).not.toContain(leak);
+  });
+
+  it('🔴 a line with a placeholder is skipped for the next clean one; none clean, no excerpt (10-28)', () => {
+    const leaky = 'Me llamo [Persona A] y vivo en la colonia [Domicilio B], en Cuautla, desde hace mucho tiempo.';
+    expect(toLibraryItem({ ...voz, redactedText: `${leaky}\n${REDACTED}` }, null).excerpt).toBe(REDACTED);
+    expect(toLibraryItem({ ...voz, redactedText: leaky }, null).excerpt).toBeNull();
   });
 
   it('🔴 shows the first line, origin and age included, with BIBLIOTECA_EXCERPT_SKIP_INTRO unset (owner ruling 2026-10-23, option A)', () => {

@@ -183,7 +183,7 @@ describe('🔴 placeholders never reach a testimonio title (owner ruling 2026-10
     const clean = 'En la escuela hablamos del dengue cada semana con los muchachos del grupo.';
     expect(excerptFrom(`${leaky}\n${clean}`, { placeholderFree: true })).toBe(clean);
     expect(excerptFrom(leaky, { placeholderFree: true })).toBeNull();
-    // Off by default: the Biblioteca card's excerpt is not a title.
+    // Off by default; every caller that shows an excerpt turns it on.
     expect(excerptFrom(leaky)).toContain('[Domicilio A]');
   });
 });
