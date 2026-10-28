@@ -780,26 +780,42 @@ export function viewEdgesQuery(
 ): GraphSql {
   const t = thresholdsOf(thresholds)
   const ids = entityIds.map((id) => Math.trunc(Number(id))).filter((id) => Number.isFinite(id))
+  // 🔴 SHAPED FOR THE PLANNER, measured (2026-10-28, dev org 6: 83 published
+  // documents, 542 listed entities). Every aggregated CTE is estimated at ~1
+  // row, so a JOIN between two of them becomes a nested loop over both. The
+  // previous shape joined `rel_pairs`↔`rel_types`↔`co_all`, anti-joined
+  // `co_all`↔`rel_pairs`, self-joined `ment`, and re-joined the edges to
+  // `ent_support` twice: over ten minutes on dev, and `/grafo` never loaded.
+  // Same cure `combinedViewEdgesQuery` records: each gated base read is a
+  // MATERIALIZED CTE joined only to `listed`; co-mentions come from one array
+  // per document; relation and co-mention pairs are folded by UNION ALL +
+  // GROUP BY, never by JOIN. The final re-join to `ent_support` is gone
+  // because both ends already come out of `listed`, which IS `ent_support`.
   return sql`
-    WITH ent_support AS (${entitySupportCte(organizationId, t.entity)}),
-    listed AS (
+    WITH ent_support AS MATERIALIZED (${entitySupportCte(organizationId, t.entity)}),
+    listed AS MATERIALIZED (
       SELECT s.entity_id AS entity_id
       FROM ent_support s
       WHERE s.entity_id = ANY(${intArray(ids)})
     ),
-    rel AS (
-      SELECT LEAST(r.from_entity_id, r.to_entity_id) AS a,
-             GREATEST(r.from_entity_id, r.to_entity_id) AS b,
-             r.from_entity_id AS from_id,
-             r.type AS relation_type,
-             r.document_id AS document_id
+    rel_raw AS MATERIALIZED (
+      SELECT r.from_entity_id AS from_entity, r.to_entity_id AS to_entity,
+             r.type AS relation_type, r.document_id AS document_id
       FROM graph_relations r
       ${joinPublishedDocuments('r', organizationId)}
       ${relationEndsPublicPersonaOnly()}
-      JOIN listed lf ON lf.entity_id = r.from_entity_id
-      JOIN listed lt ON lt.entity_id = r.to_entity_id
       WHERE r.organization_id = ${organizationId}
         AND r.from_entity_id <> r.to_entity_id
+    ),
+    rel AS MATERIALIZED (
+      SELECT LEAST(rr.from_entity, rr.to_entity) AS a,
+             GREATEST(rr.from_entity, rr.to_entity) AS b,
+             rr.from_entity AS from_id,
+             rr.relation_type AS relation_type,
+             rr.document_id AS document_id
+      FROM rel_raw rr
+      JOIN listed lf ON lf.entity_id = rr.from_entity
+      JOIN listed lt ON lt.entity_id = rr.to_entity
     ),
     rel_pairs AS (
       SELECT rel.a AS a, rel.b AS b, COUNT(DISTINCT rel.document_id)::int AS support
@@ -821,27 +837,54 @@ export function viewEdgesQuery(
       FROM rel
       GROUP BY rel.a, rel.b, rel.relation_type
     ),
-    ment AS (
+    ment_raw AS MATERIALIZED (
       SELECT DISTINCT m.document_id AS document_id, m.entity_id AS entity_id
       FROM graph_mentions m
       ${joinPublishedDocuments('m', organizationId)}
-      JOIN listed l ON l.entity_id = m.entity_id
       JOIN graph_entities ce
         ON ce.id = m.entity_id
        AND ce.organization_id = ${organizationId}
       WHERE m.organization_id = ${organizationId}${publicPersonaOnly('ce')}
     ),
+    doc_nodes AS MATERIALIZED (
+      SELECT mr.document_id AS document_id,
+             ARRAY_AGG(DISTINCT l.entity_id ORDER BY l.entity_id) AS nodes
+      FROM ment_raw mr
+      JOIN listed l ON l.entity_id = mr.entity_id
+      GROUP BY mr.document_id
+    ),
     co_all AS (
-      SELECT x.entity_id AS a, y.entity_id AS b, COUNT(DISTINCT x.document_id)::int AS weight
-      FROM ment x
-      JOIN ment y ON y.document_id = x.document_id AND y.entity_id > x.entity_id
-      GROUP BY x.entity_id, y.entity_id
+      SELECT x.node AS a, y.node AS b, COUNT(*)::int AS weight
+      FROM doc_nodes dn
+      CROSS JOIN LATERAL UNNEST(dn.nodes) WITH ORDINALITY AS x(node, i)
+      CROSS JOIN LATERAL UNNEST(dn.nodes) WITH ORDINALITY AS y(node, j)
+      WHERE y.j > x.i
+      GROUP BY x.node, y.node
+    ),
+    pairs AS (
+      SELECT u.a AS a, u.b AS b,
+             SUM(u.rel_support)::int AS rel_support,
+             SUM(u.co_weight)::int AS co_weight,
+             MAX(u.relation_type) AS relation_type,
+             MAX(u.direction) AS direction
+      FROM (
+        SELECT rp.a AS a, rp.b AS b, rp.support AS rel_support, 0 AS co_weight,
+               NULL::text AS relation_type, NULL::text AS direction
+        FROM rel_pairs rp
+        UNION ALL
+        SELECT rt.a, rt.b, 0, 0, rt.relation_type::text, rt.direction
+        FROM rel_types rt
+        WHERE rt.rn = 1
+        UNION ALL
+        SELECT co.a, co.b, 0, co.weight, NULL, NULL
+        FROM co_all co
+      ) u
+      GROUP BY u.a, u.b
     ),
     co_only AS (
-      SELECT c.a AS a, c.b AS b, c.weight AS weight
-      FROM co_all c
-      LEFT JOIN rel_pairs rp ON rp.a = c.a AND rp.b = c.b
-      WHERE rp.a IS NULL AND c.weight >= ${t.coMention}
+      SELECT p.a AS a, p.b AS b, p.co_weight AS weight
+      FROM pairs p
+      WHERE p.rel_support = 0 AND p.co_weight >= ${t.coMention}
     ),
     co_ends AS (
       SELECT co_only.a AS node, co_only.b AS other, co_only.a AS a, co_only.b AS b,
@@ -866,12 +909,11 @@ export function viewEdgesQuery(
       GROUP BY co_ranked.a, co_ranked.b
     ),
     out_edges AS (
-      SELECT rp.a AS from_id, rp.b AS to_id, 'relation' AS kind, 0 AS kind_rank,
-             rp.support AS support, COALESCE(c.weight, 0)::int AS co_mentions,
-             rt.relation_type AS relation_type, rt.direction AS direction
-      FROM rel_pairs rp
-      JOIN rel_types rt ON rt.a = rp.a AND rt.b = rp.b AND rt.rn = 1
-      LEFT JOIN co_all c ON c.a = rp.a AND c.b = rp.b
+      SELECT p.a AS from_id, p.b AS to_id, 'relation' AS kind, 0 AS kind_rank,
+             p.rel_support AS support, p.co_weight AS co_mentions,
+             p.relation_type AS relation_type, p.direction AS direction
+      FROM pairs p
+      WHERE p.rel_support > 0
       UNION ALL
       SELECT k.a, k.b, 'co-mention', 1, k.weight, k.weight, NULL, NULL
       FROM co_kept k
@@ -880,8 +922,6 @@ export function viewEdgesQuery(
            e.co_mentions AS co_mentions, e.relation_type AS relation_type,
            e.direction AS direction
     FROM out_edges e
-    JOIN ent_support fs ON fs.entity_id = e.from_id
-    JOIN ent_support ts ON ts.entity_id = e.to_id
     ORDER BY e.kind_rank ASC, e.support DESC, e.from_id ASC, e.to_id ASC
     LIMIT ${clampLimit(limit, MAX_VIEW_EDGES, MAX_VIEW_EDGES)}`
 }

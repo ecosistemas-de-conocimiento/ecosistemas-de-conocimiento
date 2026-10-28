@@ -787,4 +787,73 @@ describe.skipIf(!dockerOk)('graph queries on a real Postgres (drizzle node-postg
     )
     expect(rels.map((r) => [r.f, r.t])).toEqual([[33, 35], [33, 35]])
   })
+  /**
+   * 🔴 THE PLANNER, ON A CORPUS THE SIZE OF A REAL ECOSISTEMA (dev org 6,
+   * measured 2026-10-28: 83 published documents, 542 listed entities, 927
+   * mentions, 630 relation rows). Aggregated CTEs are estimated at ~1 row, so a
+   * JOIN between two of them is planned as a nested loop over every row of
+   * both. `viewEdgesQuery` used to join three such pairs and then re-join the
+   * whole edge set to `ent_support` twice: on dev it ran for over ten minutes,
+   * `/grafo` never loaded, and every reload left another query running.
+   * The tables are ANALYZEd first, as autovacuum would have done on dev.
+   */
+  describe('org 9 — an ecosistema the size of dev org 6', () => {
+    const BIG_ORG = 9
+    beforeAll(async () => {
+      await db.execute(sql`
+        INSERT INTO organizations (id, name, slug) VALUES (9, 'Org nueve', 'nueve');
+        INSERT INTO documents (id, organization_id, uploaded_by_id, name, publication_status, content_kind)
+          SELECT 9000 + d, 9, 1, 'doc-' || d || '.pdf', 'published', 'documento'
+          FROM generate_series(1, 80) AS d;
+        -- The rest of the installation: documents this ecosistema does not own.
+        -- They are what makes the planner guess ~1 row for org 9's support.
+        INSERT INTO organizations (id, name, slug) VALUES (10, 'Org diez', 'diez');
+        INSERT INTO documents (id, organization_id, uploaded_by_id, name, publication_status, content_kind)
+          SELECT 10000 + d, 10, 1, 'otro-' || d || '.pdf', 'published', 'documento'
+          FROM generate_series(1, 1200) AS d;
+        INSERT INTO graph_entities (id, organization_id, type, label, canonical_key)
+          SELECT 100000 + e, 10, 'tema', 'Otra ' || e, 'otra ' || e FROM generate_series(1, 8000) AS e;
+        INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences)
+          SELECT DISTINCT 10, 10000 + 1 + (e * 31 + k) % 1200, 100000 + e, 1
+          FROM generate_series(1, 8000) AS e, generate_series(0, 1) AS k;
+        INSERT INTO graph_entities (id, organization_id, type, label, canonical_key)
+          SELECT 90000 + e, 9, (ARRAY['tema', 'lugar', 'evento'])[1 + e % 3]::enum_graph_entities_type,
+                 'Entidad ' || e, 'entidad ' || e
+          FROM generate_series(0, 549) AS e;
+        -- Twelve entities per document, plus one hub every document mentions.
+        INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences)
+          SELECT DISTINCT 9, 9000 + d, 90000 + CASE WHEN k = 0 THEN 0 ELSE (d * 7 + k * 13) % 550 END, 1
+          FROM generate_series(1, 80) AS d, generate_series(0, 11) AS k;
+        -- Eight relations per document, between entities it mentions.
+        INSERT INTO graph_relations (organization_id, document_id, from_entity_id, to_entity_id, type)
+          SELECT 9, 9000 + d, 90000 + (d * 7 + k * 13) % 550, 90000 + (d * 7 + (k + 1) * 13) % 550, 'relacionado_con'
+          FROM generate_series(1, 80) AS d, generate_series(1, 8) AS k;
+        ANALYZE documents; ANALYZE graph_entities; ANALYZE graph_mentions; ANALYZE graph_relations;
+      `)
+    }, 30_000)
+    afterAll(async () => {
+      await db.execute(sql`
+        DELETE FROM graph_relations WHERE organization_id = 9;
+        DELETE FROM graph_mentions WHERE organization_id IN (9, 10);
+        DELETE FROM graph_entities WHERE organization_id IN (9, 10);
+        DELETE FROM documents WHERE organization_id IN (9, 10);
+        DELETE FROM organizations WHERE id IN (9, 10);
+      `)
+    })
+
+    it('draws the whole graph in seconds, not minutes', async () => {
+      // A runaway statement is cancelled by Postgres instead of outliving the test.
+      const view = await db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL statement_timeout = '8s'`)
+        return readEntityView({ db: { drizzle: tx } } as unknown as GraphQueryPayload, {
+          organizationId: BIG_ORG,
+          minSupport: 1,
+          minEdgeSupport: 1,
+        })
+      })
+      expect(view.entities.length).toBeGreaterThan(500)
+      expect(view.edges.some((e) => e.kind === 'relation')).toBe(true)
+      expect(view.edges.some((e) => e.kind === 'co-mention')).toBe(true)
+    }, 30_000)
+  })
 })

@@ -489,9 +489,9 @@ describe('graph thresholds from the environment', () => {
     vi.stubEnv('GRAPH_MIN_COMENTION_DOCS', '7')
     vi.stubEnv('GRAPH_COMENTION_TOP_K', '11')
     const { text, params } = renderSql(viewEdgesQuery(ORG, [1, 2], { entity: 2, edge: 3 }))
-    expect(text).toMatch(/c\.weight >= \$(\d+)/)
+    expect(text).toMatch(/p\.co_weight >= \$(\d+)/)
     const at = (re: RegExp) => params[Number(text.match(re)![1]) - 1]
-    expect(at(/c\.weight >= \$(\d+)/)).toBe(7)
+    expect(at(/p\.co_weight >= \$(\d+)/)).toBe(7)
     expect(at(/co_ranked\.rn <= \$(\d+)/)).toBe(11)
     expect(at(/HAVING COUNT\(DISTINCT rel\.document_id\) >= \$(\d+)/)).toBe(3)
     expect(at(/HAVING COUNT\(DISTINCT m\.document_id\) >= \$(\d+)/)).toBe(2)
@@ -1292,7 +1292,7 @@ describe('the whole-graph view edges', () => {
 
   it('folds every type and both directions onto the pair BEFORE the edge threshold', () => {
     const { text } = renderSql(viewEdgesQuery(ORG, [1, 2], MIN))
-    const fold = text.indexOf('LEAST(r.from_entity_id, r.to_entity_id)')
+    const fold = text.indexOf('LEAST(rr.from_entity, rr.to_entity)')
     const having = text.indexOf('HAVING COUNT(DISTINCT rel.document_id)')
     expect(fold).toBeGreaterThan(-1)
     expect(having).toBeGreaterThan(fold)
@@ -1310,11 +1310,30 @@ describe('the whole-graph view edges', () => {
   it('computes co-mentions from mentions in SQL, gated like everything else', () => {
     const { text } = renderSql(viewEdgesQuery(ORG, [1, 2], MIN))
     expect(text).toContain('FROM graph_mentions m')
-    expect(text).toContain('JOIN ment y ON y.document_id = x.document_id AND y.entity_id > x.entity_id')
+    // Pairs come from one array of listed entities per document, each pair once.
+    expect(text).toContain('ARRAY_AGG(DISTINCT l.entity_id ORDER BY l.entity_id) AS nodes')
+    expect(text).toContain('WHERE y.j > x.i')
     // Both ends must be listed AND above the entity threshold (ent_support).
-    expect(text).toContain('JOIN listed l ON l.entity_id = m.entity_id')
+    expect(text).toContain('JOIN listed l ON l.entity_id = mr.entity_id')
     // No persona listed at all (owner, 2026-10-24: no private individuals).
     expect(text).toMatch(MENTION_GATE)
+  })
+
+  /**
+   * 🔴 THE PLANNER GUESSES ~1 ROW FOR EVERY AGGREGATED CTE, so a JOIN between
+   * two of them is a nested loop over both. On dev org 6 (2026-10-28, 542
+   * entities) the old shape ran past ten minutes and `/grafo` never loaded.
+   * A JOIN may reach a base table or `listed`, nothing else. The real-Postgres
+   * proof is `queries.pg.test.ts`, "org 9".
+   */
+  it('joins only base tables and `listed`, never two aggregated CTEs', () => {
+    const { text } = renderSql(viewEdgesQuery(ORG, [1, 2], MIN))
+    const joined = [...text.matchAll(/\bJOIN\s+(?!LATERAL\b)(\w+)/g)].map((m) => m[1])
+    expect(joined.length).toBeGreaterThan(0)
+    const allowed = new Set(['documents', 'graph_entities', 'listed'])
+    expect(joined.filter((name) => !allowed.has(name))).toEqual([])
+    // Both ends of every edge already come out of `listed` (= `ent_support`).
+    expect(text).not.toMatch(/JOIN ent_support/)
   })
 
   it('caps co-mentions at the top K per node and never spends a slot on a relation pair', () => {
@@ -1322,7 +1341,7 @@ describe('the whole-graph view edges', () => {
       viewEdgesQuery(ORG, [1, 2], { entity: 1, edge: 1, coMention: 1, topK: 3 }),
     )
     expect(text).toContain('PARTITION BY co_ends.node')
-    expect(text).toContain('WHERE rp.a IS NULL')
+    expect(text).toContain('WHERE p.rel_support = 0 AND p.co_weight >= ')
     expect(params).toContain(3)
     // A huge K is clamped.
     const big = renderSql(viewEdgesQuery(ORG, [1, 2], { entity: 1, edge: 1, topK: 10_000 }))
