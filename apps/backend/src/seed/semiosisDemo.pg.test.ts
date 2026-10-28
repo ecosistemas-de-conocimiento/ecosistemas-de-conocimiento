@@ -29,7 +29,7 @@ vi.mock('@/lib/aiClient', () => {
 import { bootPayload, dockerOk, rowsOf, shutdown, startRealPostgres, type RealPostgres } from '../lib/testing/realPostgres'
 import { DEMO_USERS, seedDemoUsers } from './demoUsers'
 import { SEMIOSIS_STUDENTS } from './fixtures/semiosisTrabajos'
-import { seedSemiosisDemo, semiosisDemoReadiness, type SemiosisChecks } from './semiosisDemo'
+import { removeSemiosisDemoTrabajos, seedSemiosisDemo, semiosisDemoReadiness, type SemiosisChecks } from './semiosisDemo'
 
 let pg: RealPostgres
 let payload: Payload
@@ -135,5 +135,64 @@ describe.skipIf(!dockerOk)('seed/semiosisDemo (real Postgres)', () => {
     await pg.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = false`))
     const third = await seedSemiosisDemo(payload, { docContext: SKIP, trabajos: false })
     expect(third.profiles.updated).toBe(9)
+  }, 120_000)
+
+  it('🔴 removal deletes the seed\'s essays and their graph rows — nothing else', async () => {
+    // State left by the test above: 22 essays + estudiante1's sample note.
+    const ids = (await rowsOf(pg.db, sql.raw(`SELECT id FROM documents WHERE organization_id = 8 AND ingest_status <> 'n/a' ORDER BY id`))).map((r) => Number(r.id))
+    expect(ids).toHaveLength(22)
+    // A graph mention on one essay, and an essay-named document by someone who
+    // is NOT a demo account: neither the name alone nor the uploader alone matches.
+    const entity = (await payload.create({
+      collection: 'graphEntities' as never,
+      data: { organization: 8, type: 'tema', label: 'índice', canonicalKey: 'indice', publicFigure: false } as never,
+      overrideAccess: true,
+    })) as unknown as { id: number }
+    await payload.create({
+      collection: 'graphMentions' as never,
+      data: { organization: 8, document: ids[0], entity: entity.id, occurrences: 1 } as never,
+      overrideAccess: true,
+    })
+    const other = (await payload.create({
+      collection: 'users',
+      data: { email: 'otra@ecosistemas.test', password: 'x-Unused-9f3k', displayName: 'Otra', isActive: true } as never,
+      overrideAccess: true,
+    })) as unknown as { id: number }
+    await payload.create({
+      collection: 'documents',
+      data: {
+        name: SEMIOSIS_STUDENTS[0]!.trabajos[0]!.name,
+        organization: 8,
+        uploadedBy: other.id,
+        kind: 'markdown',
+        contentKind: 'documento',
+        bodyMarkdown: 'x',
+        ingestStatus: 'n/a',
+      } as never,
+      overrideAccess: true,
+      context: SKIP,
+    })
+    const before = {
+      users: await count(`SELECT count(*)::int AS n FROM users`),
+      suggestions: await count(`SELECT count(*)::int AS n FROM suggestions`),
+      sessions: await count(`SELECT count(*)::int AS n FROM sessions`),
+      profiles: await count(`SELECT count(*)::int AS n FROM student_profiles`),
+    }
+
+    const r = await removeSemiosisDemoTrabajos(payload)
+    expect(r).toEqual({ found: 22, deleted: 22, failed: 0 })
+    expect(await count(`SELECT count(*)::int AS n FROM documents WHERE id = ANY('{${ids.join(',')}}'::int[])`)).toBe(0)
+    expect(await count(`SELECT count(*)::int AS n FROM graph_mentions`)).toBe(0)
+    // Left alone: the sample note, the stranger's same-named document, accounts, consent, suggestions, conversations.
+    expect(await count(`SELECT count(*)::int AS n FROM documents WHERE organization_id = 8`)).toBe(2)
+    expect({
+      users: await count(`SELECT count(*)::int AS n FROM users`),
+      suggestions: await count(`SELECT count(*)::int AS n FROM suggestions`),
+      sessions: await count(`SELECT count(*)::int AS n FROM sessions`),
+      profiles: await count(`SELECT count(*)::int AS n FROM student_profiles`),
+    }).toEqual(before)
+
+    // Idempotent: a second removal finds nothing.
+    expect(await removeSemiosisDemoTrabajos(payload)).toEqual({ found: 0, deleted: 0, failed: 0 })
   }, 120_000)
 })

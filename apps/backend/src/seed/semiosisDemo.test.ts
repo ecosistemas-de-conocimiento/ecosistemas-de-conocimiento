@@ -4,12 +4,25 @@
  * decisions, as pure checks.
  */
 
+import { existsSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
+import { planGraphRetry, planIngestRetry } from '../collections/Documents'
+import { autoPublishBlocker } from '../lib/autoPublish'
 import { citedSurnames, fold } from '../lib/student/logic'
 import { DEMO_USERS } from './demoUsers'
+import { corpusVocabulary, foldWord, SEMIOTICA_CORPUS_DIR, spanishDictionary } from './fixtures/corpusVocabulary'
 import { SEMIOSIS_STUDENTS, TEMAS, UNCITED_AUTHORS } from './fixtures/semiosisTrabajos'
-import { planTrabajo, STALLED_DRAFT_MS, type TrabajoPlanDeps } from './semiosisDemo'
+import {
+  planTrabajo,
+  rerunWouldAct,
+  retryAllowed,
+  STALLED_DRAFT_MS,
+  type TrabajoAction,
+  type TrabajoPlanDeps,
+  type TrabajoTally,
+} from './semiosisDemo'
 
 const all = SEMIOSIS_STUDENTS.flatMap((s) => s.trabajos.map((t) => ({ student: s, t })))
 const words = (s: string) => s.split(/\s+/).filter(Boolean).length
@@ -107,7 +120,9 @@ describe('planTrabajo — what a (re-)run does with one row', () => {
   const NOW = Date.parse('2026-10-28T12:00:00Z')
   const deps = (over: Partial<TrabajoPlanDeps> = {}): TrabajoPlanDeps => ({
     now: () => NOW,
-    planIngestRetry: (row) => (row.ingestStatus === 'failed' && row.anonymisationStatus !== 'held' ? { ingestStatus: 'pending' } : null),
+    // Like the real one: refuses only `rejected`; a HELD row it would clear.
+    planIngestRetry: (row) =>
+      row.ingestStatus === 'failed' && row.anonymisationStatus !== 'rejected' ? { ingestStatus: 'pending' } : null,
     planGraphRetry: (row) =>
       (row.graphStatus === 'pending' || row.graphStatus === 'extracting') && row.updatedAt === recent
         ? { reason: 'in flight' }
@@ -155,4 +170,82 @@ describe('planTrabajo — what a (re-)run does with one row', () => {
     ).toBe('wait')
     expect(planTrabajo({ publicationStatus: 'draft', ingestStatus: 'embedding' }, deps())).toBe('wait')
   })
+
+  it('🔴 a held row is never retried — with the REAL planIngestRetry, which would clear the hold', () => {
+    const real: TrabajoPlanDeps = {
+      planIngestRetry: (row) => planIngestRetry(row as never),
+      planGraphRetry: (row) => planGraphRetry(row as never),
+      autoPublishBlocker: (row) => autoPublishBlocker(row),
+    }
+    const held = { kind: 'markdown', publicationStatus: 'draft', ingestStatus: 'failed', anonymisationStatus: 'held', extractedText: 'x' }
+    // The precondition that makes the guard matter: retry WOULD act on it.
+    expect(planIngestRetry(held as never)).not.toBeNull()
+    expect(planTrabajo(held, real)).toBe('held')
+    expect(planTrabajo({ ...held, anonymisationStatus: 'rejected' }, real)).toBe('held')
+    // And a technical failure on an ungated-yet row is a retry.
+    expect(planTrabajo({ ...held, anonymisationStatus: 'n/a' }, real)).toBe('retry-ingest')
+  })
+})
+
+describe('the tally asks the same question as the plan', () => {
+  const tally = (by: Partial<Record<TrabajoAction, number>>): TrabajoTally => ({
+    total: 22,
+    published: 0,
+    graphReady: 0,
+    byAction: { create: 0, resave: 0, 'retry-ingest': 0, publish: 0, graph: 0, wait: 0, held: 0, done: 0, ...by },
+  })
+
+  it('done and held (incl. a skipped graph, a failure that cannot be retried) never ask for a re-run', () => {
+    expect(rerunWouldAct(tally({ done: 20, held: 2 }), true)).toBe(false)
+  })
+
+  it('in-flight or actionable rows do', () => {
+    for (const a of ['create', 'resave', 'publish', 'graph', 'wait'] as const) {
+      expect(rerunWouldAct(tally({ done: 21, [a]: 1 }), false), a).toBe(true)
+    }
+  })
+
+  it('🔴 a failed ingest asks for a re-run only when retries are allowed (each re-runs the gate)', () => {
+    expect(rerunWouldAct(tally({ done: 21, 'retry-ingest': 1 }), false)).toBe(false)
+    expect(rerunWouldAct(tally({ done: 21, 'retry-ingest': 1 }), true)).toBe(true)
+    expect(retryAllowed({})).toBe(false)
+    expect(retryAllowed({ SEMIOSIS_DEMO_RETRY: '1' })).toBe(true)
+  })
+})
+
+/**
+ * 🔴 AUDIT OF e2eeb61, FINDING 1. Every name part joins org 8's roster, and the
+ * gate redacts a roster part wherever it stands capitalised in a documento —
+ * so no part may occur ANYWHERE in the Semiótica corpus, nor be a Spanish word.
+ */
+describe('🔴 the demo names collide with nothing', () => {
+  const parts = [...new Set(SEMIOSIS_STUDENTS.flatMap((s) => s.displayName.split(/\s+/)))]
+
+  it('27 distinct name parts, three per student', () => {
+    expect(parts).toHaveLength(27)
+    for (const s of SEMIOSIS_STUDENTS) expect(s.displayName.split(/\s+/)).toHaveLength(3)
+  })
+
+  it('no part is a Spanish dictionary word (/usr/share/dict/spanish)', (ctx) => {
+    const dict = spanishDictionary()
+    if (!dict) {
+      console.warn('[semiosis names] /usr/share/dict/spanish absent — dictionary check SKIPPED')
+      return ctx.skip()
+    }
+    expect(parts.filter((p) => dict.has(foldWord(p)))).toEqual([])
+  })
+
+  it('no part occurs in the local Semiótica corpus (whole word, accent- and case-blind)', async (ctx) => {
+    if (!existsSync(SEMIOTICA_CORPUS_DIR)) {
+      console.warn(`[semiosis names] ${SEMIOTICA_CORPUS_DIR} absent — corpus name check SKIPPED`)
+      return ctx.skip()
+    }
+    const vocab = (await corpusVocabulary())!
+    expect(vocab.words.size).toBeGreaterThan(100_000) // the PDFs were read, not just the .md
+    // Sanity: the check sees the names the audit found.
+    for (const known of ['Santiago', 'Joaquín', 'Diego', 'Echeverría', 'Tapia', 'Ibarra']) {
+      expect(vocab.words.has(foldWord(known)), known).toBe(true)
+    }
+    expect(parts.filter((p) => vocab.words.has(foldWord(p)))).toEqual([])
+  }, 300_000)
 })

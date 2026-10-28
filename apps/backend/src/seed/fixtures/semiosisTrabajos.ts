@@ -16,6 +16,12 @@
  *    capitalised (`lib/anonymise/gate.ts`, `rosterNames`): "Investigador
  *    Semiosis" makes a capitalised "Semiosis" a person. So "semiosis" is always
  *    lower case, and no text names a student.
+ *  · 🔴 Every part of every student's name occurs NOWHERE in the Semiótica
+ *    corpus and is no Spanish dictionary word (audit of e2eeb61). Those parts
+ *    join the roster, so the gate would redact them everywhere in org 8's
+ *    documentos, and a public figure sharing one would never be restored —
+ *    "Santiago" was Santiago Abascal in the far-right case files.
+ *    `fixtures/corpusVocabulary.ts` builds the word list the test checks.
  *  · No private person, town or institution: the gate would redact it or hold
  *    the document. Family members and teachers appear as roles only.
  *  · Some authors of the corpus are cited by NOBODY (Lotman, Greimas, Angenot,
@@ -88,7 +94,7 @@ export const SEMIOSIS_STUDENTS: readonly SemiosisStudent[] = [
   {
     key: 'ESTUDIANTE1',
     email: 'estudiante1@ecosistemas.test',
-    displayName: 'Itzel Montaño Quiroz',
+    displayName: 'Itzel Quiroz Arredondo',
     sugerencias: [
       {
         kind: 'contenido',
@@ -166,7 +172,7 @@ Como cierre, considero que el agua embotellada es un buen caso para entender que
   {
     key: 'ESTUDIANTE2',
     email: 'estudiante2@ecosistemas.test',
-    displayName: 'Joaquín Arredondo Becerril',
+    displayName: 'Emiliano Villaseñor Bocanegra',
     sugerencias: [
       { kind: 'arquitectura', text: 'Agrupar los textos de la biblioteca por género discursivo, además de por autor.' },
     ],
@@ -217,7 +223,7 @@ Concluyo que leer el discurso político desde la polifonía obliga a dejar de bu
   {
     key: 'ESTUDIANTE3',
     email: 'estudiante3@ecosistemas.test',
-    displayName: 'Ximena Zúñiga Ocampo',
+    displayName: 'Ximena Zúñiga Ruelas',
     sugerencias: [
       { kind: 'contenido', text: 'Faltan lecturas introductorias sobre el valor saussureano antes de los textos más técnicos.' },
       { kind: 'interaccion', text: 'Que el asistente sugiera una lectura siguiente al terminar de responder.' },
@@ -289,7 +295,7 @@ Concluyo que los nombres de colores muestran a escala pequeña dos ideas central
   {
     key: 'ESTUDIANTE4',
     email: 'estudiante4@ecosistemas.test',
-    displayName: 'Emiliano Tapia Garduño',
+    displayName: 'Citlali Quintanar Esquivel',
     sugerencias: [
       { kind: 'contenido', text: 'Incluir más análisis de prensa y televisión en el corpus, no solo de publicidad.' },
     ],
@@ -340,7 +346,7 @@ Concluyo que el noticiero es un dispositivo enunciativo muy preciso, que reparte
   {
     key: 'ESTUDIANTE5',
     email: 'estudiante5@ecosistemas.test',
-    displayName: 'Renata Villaseñor Ibarra',
+    displayName: 'Yaretzi Huitrón Tepox',
     sugerencias: [
       { kind: 'interaccion', text: 'Poder guardar citas de los textos en una lista personal para usarlas después en mis trabajos.' },
       { kind: 'arquitectura', text: 'Una sección de análisis de anuncios con las imágenes junto al texto.' },
@@ -412,7 +418,7 @@ Concluyo que leer eslóganes desde la polifonía permite ver la publicidad como 
   {
     key: 'ESTUDIANTE6',
     email: 'estudiante6@ecosistemas.test',
-    displayName: 'Santiago Bocanegra Ruelas',
+    displayName: 'Tenoch Cuapio Olguín',
     sugerencias: [
       { kind: 'contenido', text: 'Agregar ejemplos de discurso referido en conversaciones reales, no solo en literatura.' },
     ],
@@ -463,7 +469,7 @@ Concluyo que la reseña de usuario es un género discursivo en consolidación, c
   {
     key: 'ESTUDIANTE7',
     email: 'estudiante7@ecosistemas.test',
-    displayName: 'Mariana Echeverría Solís',
+    displayName: 'Nayeli Pantoja Arzate',
     sugerencias: [
       { kind: 'interaccion', text: 'Mostrar en cada respuesta del asistente de qué texto viene cada idea.' },
       { kind: 'contenido', text: 'Un glosario breve con los tipos de interpretante y ejemplos.' },
@@ -535,7 +541,7 @@ Concluyo que los mensajes de voz son un caso interesante para la teoría de la e
   {
     key: 'ESTUDIANTE8',
     email: 'estudiante8@ecosistemas.test',
-    displayName: 'Diego Altamirano Nava',
+    displayName: 'Tadeo Ahuactzin Nolasco',
     sugerencias: [
       { kind: 'arquitectura', text: 'Separar en la biblioteca los textos teóricos de los análisis de casos.' },
     ],
@@ -586,7 +592,7 @@ Concluyo que estudiar la mediatización de una protesta exige comparar dispositi
   {
     key: 'ESTUDIANTE9',
     email: 'estudiante9@ecosistemas.test',
-    displayName: 'Valeria Quintanar Esquivel',
+    displayName: 'Zyanya Coyotzi Popoca',
     sugerencias: [
       { kind: 'interaccion', text: 'Que se puedan comparar dos textos lado a lado dentro del ecosistema.' },
       { kind: 'arquitectura', text: 'Un mapa de conceptos que conecte a cada autor con sus nociones principales.' },
