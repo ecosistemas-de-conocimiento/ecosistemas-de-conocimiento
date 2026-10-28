@@ -36,6 +36,7 @@ import {
 } from '$lib/server/holds';
 import { DECISION_FAILED, MAX_NOTE_LENGTH, NOT_A_REVIEWER } from '$lib/holds';
 import type { Actions, PageServerLoad } from './$types';
+import { CONVERSACIONES_HREF } from '$lib/inicio';
 
 async function requireReviewer(locals: App.Locals) {
   const capability = locals.user ? await readReviewCapability(locals.token) : null;
@@ -44,7 +45,7 @@ async function requireReviewer(locals: App.Locals) {
       module: 'holds',
       reason: 'no-holds-review',
       message: NOT_A_REVIEWER,
-      cta: { label: 'Volver al chat', href: '/' },
+      cta: { label: 'Volver al chat', href: CONVERSACIONES_HREF },
     });
   }
 }

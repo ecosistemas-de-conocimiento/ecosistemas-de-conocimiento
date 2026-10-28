@@ -20,6 +20,7 @@ import { mayReviewAnywhere, mayReviewSlug, readReviewCapability } from '$lib/ser
 import { addMember, changeRole, listMembers, MEMBERS_MANAGE, removeMember } from '$lib/server/miembros';
 import { ECOSYSTEM_DEPENDENCY, resolveEcosystemSelection } from '$lib/ecosystems';
 import type { Actions, PageServerLoad } from './$types';
+import { CONVERSACIONES_HREF } from '$lib/inicio';
 
 const NOT_A_MANAGER = 'Esta sección es para quien es responsable de un ecosistema.';
 
@@ -28,7 +29,7 @@ const deny = (): never =>
     module: 'miembros',
     reason: 'no-members-manage',
     message: NOT_A_MANAGER,
-    cta: { label: 'Volver al chat', href: '/' },
+    cta: { label: 'Volver al chat', href: CONVERSACIONES_HREF },
   });
 
 export const load: PageServerLoad = async ({ locals, url, cookies, depends }) => {

@@ -115,11 +115,21 @@ interface IncomingBody {
    */
   alcance?: unknown;
   /**
+   * Generales only: the person's per-conversation "Hazme preguntas" switch
+   * (`$lib/entrevista`). Only literal `true` turns it on; anything else is off.
+   */
+  entrevista?: unknown;
+  /**
    * The browser's id for this turn (`runTurn`), stamped on the saved answer
    * as `generationMeta.turnId`. A retry of a turn whose answer is already
    * saved gets that answer back: no second paid answer, no second saved row.
    */
   turnId?: unknown;
+}
+
+/** The "Hazme preguntas" switch: on only for literal `true` (default off). */
+function entrevistaOf(raw: unknown): boolean {
+  return raw === true;
 }
 
 /** A usable `turnId`, or `undefined`. It names a turn, nothing else. */
@@ -745,9 +755,11 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   //   says and whatever `interviewerMode` says.
   // - Generales: answers; the heuristic interviewer (`$lib/server/engine/turnMode`:
   //   the caller's own story, or their own testimonio attached) runs only when
-  //   the ecosistema's `interviewerMode` switch is on. Off → every turn answers.
+  //   the ecosistema's `interviewerMode` switch is on AND the person switched
+  //   "Hazme preguntas" on in this conversation (owner ruling 2026-10-27,
+  //   `entrevista`, default off). Either off → every turn answers.
   const turnMode: ChatTurnMode =
-    kind === 'generales' && (await featuresP).interviewerMode
+    kind === 'generales' && entrevistaOf(body.entrevista) && (await featuresP).interviewerMode
       ? chatTurnMode({
           userMessage,
           history,

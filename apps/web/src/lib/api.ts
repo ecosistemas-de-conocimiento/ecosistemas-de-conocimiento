@@ -23,6 +23,12 @@ export interface SyncGenerateInput {
   /** Student view: retrieve only from my works or opted-in peers' works. */
   alcance?: 'mios' | 'companeros';
   /**
+   * Generales only: the person switched "Hazme preguntas" on (`$lib/entrevista`).
+   * The interviewer still needs the ecosistema's `interviewerMode` switch on
+   * and the message read as the person's own story.
+   */
+  entrevista?: boolean;
+  /**
    * This turn's id, made by `runTurn`. The server stamps it on the saved
    * answer (`generationMeta.turnId`), so a retry or a recovery finds THIS
    * turn's answer and never another's, and never saves a second one.

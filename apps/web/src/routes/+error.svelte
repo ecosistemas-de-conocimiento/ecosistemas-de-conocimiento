@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/stores';
+  import { CONVERSACIONES_HREF } from '$lib/inicio';
 
   // Top-level error boundary. Renders for:
   //   - structured fatal throws from `$lib/server/deny.ts` (denyAccess / notFound)
@@ -73,7 +74,7 @@
 
   // Escape hatch: honour an explicit CTA from the thrown body, else send the
   // user somewhere safe (the chat home).
-  const cta = $derived(err?.cta ?? { label: 'Volver al chat', href: '/' });
+  const cta = $derived(err?.cta ?? { label: 'Volver al chat', href: CONVERSACIONES_HREF });
 </script>
 
 <div class="boundary text-ink">

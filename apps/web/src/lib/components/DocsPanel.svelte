@@ -337,8 +337,10 @@
           class="hidden"
           onchange={onFileChosen}
         />
+        <!-- Icon AND a word: an arrow alone was a guess for the people this is
+             for. The aria-label keeps the full name; the word is the short one. -->
         <button
-          class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft disabled:opacity-40"
+          class="flex items-center gap-1 px-2 py-1.5 rounded-lg hover:bg-surface-soft text-ink-body text-xs font-semibold disabled:opacity-40"
           onclick={() => fileInput?.click()}
           disabled={uploading}
           title={uploadButtonTitle()}
@@ -362,9 +364,10 @@
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
             </svg>
           {/if}
+          <span>Subir</span>
         </button>
         <button
-          class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft"
+          class="flex items-center gap-1 px-2 py-1.5 rounded-lg hover:bg-surface-soft text-ink-body text-xs font-semibold"
           onclick={async () => {
             const sessionId = await app.ensureSession();
             if (!sessionId) return;
@@ -386,6 +389,7 @@
           >
             <path d="M12 5v14M5 12h14" />
           </svg>
+          <span>Nota</span>
         </button>
         {#if !forceExpanded}
           <button
@@ -436,7 +440,7 @@
       </div>
     {/if}
 
-    <!-- Traer un documento que ya existe. Deliberately small and folded away:
+    <!-- Traer un documento que ya existe. Folded away and secondary:
          the everyday path is uploading a file here. This is for the person who
          already subió el archivo en otra conversación y no quiere subirlo dos
          veces. Nothing is copied ni movido — el mismo documento queda en las
@@ -1019,17 +1023,18 @@
     accent-color: var(--edc-color-brand);
   }
 
-  /* "Usar un documento de otra conversación" — a quiet, full-width disclosure.
-     Small on purpose: it is the exception, not the everyday path. */
+  /* "Usar un documento de otra conversación" — a full-width disclosure. Body
+     size and ink so it can be read; no weight or border, so it still sits
+     below "Subir" as the exception rather than the everyday path. */
   .attach-toggle {
     display: flex;
     align-items: center;
     gap: 0.35rem;
     width: 100%;
-    padding: 0.375rem 0.75rem;
-    font-size: 0.625rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
     text-align: left;
-    color: var(--edc-color-ink-soft);
+    color: var(--edc-color-ink-body);
   }
   .attach-toggle:hover:not(:disabled) {
     color: var(--edc-color-ink);

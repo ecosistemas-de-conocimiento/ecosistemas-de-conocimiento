@@ -263,8 +263,10 @@ const CHROMELESS_PATHS = new Set(['/sign-in']);
  * `hooks.server.ts` has already bounced anonymous page requests, so in practice
  * this only matters for the moment before that redirect lands.
  */
-export function shouldShowNav(pathname: string, user: unknown): boolean {
+export function shouldShowNav(pathname: string, user: unknown, opts: { startScreen?: unknown } = {}): boolean {
   if (!user) return false;
+  // The participante/estudiante start screen (`$lib/inicio`) has no menu.
+  if (opts.startScreen === true) return false;
   return !CHROMELESS_PATHS.has(normalizePath(pathname));
 }
 

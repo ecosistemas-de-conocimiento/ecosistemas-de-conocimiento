@@ -24,7 +24,9 @@
    * from the verified session — and never off the chat's app store, which is
    * about conversations and knows nothing about roles.
    */
-  const showNav = $derived(shouldShowNav($page.url.pathname, $page.data.user));
+  const showNav = $derived(
+    shouldShowNav($page.url.pathname, $page.data.user, { startScreen: $page.data.startScreen }),
+  );
 
   /**
    * 🔴 NOT `onMount`, AND NOT `$state`. Both matter — see `$lib/hydration.ts`
