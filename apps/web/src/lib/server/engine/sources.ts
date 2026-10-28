@@ -17,6 +17,8 @@
  *   · moves the graph block into the numbered list, last, as
  *     {@link MAP_SOURCE_TITLE}, plus any extra summary source (the
  *     corpus-overview list, `./overview`);
+ *   · opens each numbered source with `Título: <card title>` ({@link sourceTitle},
+ *     owner request 2026-10-28), so the model can match a claim to its `[N]`;
  *   · rebuilds the provenance to match, one entry per `[N]`;
  *   · appends {@link SUMMARY_SOURCE_RULE} to the system message when a
  *     summary source is present.
@@ -27,13 +29,13 @@
  * with a warning: chunk-level sources, never a broken prompt.
  * `sources.test.ts` pins the result against a real `buildChatTurn`.
  *
- * A turn with no repeated document and no summary source is returned as the
- * same object: byte-identical to before.
+ * A turn with no passage and no summary source is returned as the same object.
  */
 
 import { DEFAULT_ENGINE_CONFIG, type EngineConfig, type Provenance, type RetrievedChunk, type SyncChatMessage } from '@edc/chat-engine/core';
-import { fenceChunkText } from './chunkFence';
-import { LIST_SOURCE_TITLE, MAP_SOURCE_TITLE, SUMMARY_SOURCE_RULE, withTurnRules } from './prompt';
+import { fenceChunkText, neutraliseFenceTags } from './chunkFence';
+import { LIST_SOURCE_TITLE, MAP_SOURCE_TITLE, SOURCE_TITLE_LEAD, SUMMARY_SOURCE_RULE, withTurnRules } from './prompt';
+import type { TestimonioTitle } from '$lib/server/testimonioTitles';
 
 /** A source that is not a document: a summary of the whole published corpus. */
 export interface SummarySource {
@@ -101,14 +103,43 @@ function unfence(text: string): string {
 }
 
 /**
+ * 🔴 THE TITLE THE MODEL READS IS THE TITLE THE PERSON SEES ON THE CARD.
+ * The card (`Message.svelte`) shows `metadata.title` after the browser
+ * allowlist (`browserMetadata` in `$lib/server/citationProvenance`), and for a
+ * testimonio only its system title: the generated `testimonioTitle` of a
+ * `published`, gate-cleared row (`$lib/server/testimonioTitles`), else
+ * "Testimonio". Never an uploader's file name for a testimonio. A chunk with
+ * no title gets no title line (the card would fall back to the corpus name,
+ * which names nothing).
+ */
+export function sourceTitle(
+  metadata: Record<string, unknown> | null | undefined,
+  testimonioTitles: ReadonlyMap<string, TestimonioTitle> = new Map(),
+): string | null {
+  if (!metadata) return null;
+  if (metadata.kind === 'testimonio' || metadata.title === 'Testimonio') {
+    const raw = typeof metadata.docId === 'number' ? String(metadata.docId) : metadata.docId;
+    const id = typeof raw === 'string' ? raw.trim() : '';
+    const generated = metadata.publication === 'published' && /^\d+$/.test(id) ? testimonioTitles.get(id) : undefined;
+    return generated?.title ?? 'Testimonio';
+  }
+  const title = typeof metadata.title === 'string' ? metadata.title.replace(/\s+/g, ' ').trim() : '';
+  return title || null;
+}
+
+function titleLine(title: string | null): string {
+  return title ? `${SOURCE_TITLE_LEAD} ${neutraliseFenceTags(title)}\n\n` : '';
+}
+
+/**
  * Several passages of one document under one fence, in rank order. A passage
  * that repeats an earlier one (the same chunk from two corpora, or from the
  * graph leg too) is kept once.
  */
-function mergedText(texts: readonly string[]): string {
+function mergedText(texts: readonly string[], title: string | null): string {
   const passages = [...new Set(texts.map(unfence))];
-  if (texts.length === 1 || passages.length === 1) return texts[0]!;
-  return `${FENCE_OPEN}${passages.join('\n\n…\n\n')}${FENCE_CLOSE}`;
+  if (!title && (texts.length === 1 || passages.length === 1)) return texts[0]!;
+  return `${FENCE_OPEN}${titleLine(title)}${passages.join('\n\n…\n\n')}${FENCE_CLOSE}`;
 }
 
 /**
@@ -127,7 +158,7 @@ function representative(
 
 /** A summary source as the model reads it: its title on the first line, fenced. */
 export function summarySourceText(s: SummarySource): string {
-  return fenceChunkText({ text: `${TITLES[s.id]}\n\n${s.text}` });
+  return fenceChunkText({ text: `${SOURCE_TITLE_LEAD} ${TITLES[s.id]}\n\n${s.text}` });
 }
 
 const BLOCK_SEP = '\n\n---\n\n';
@@ -158,6 +189,8 @@ export interface RegroupOptions {
   extra?: readonly SummarySource[];
   /** Characters of a summary source's text kept on the provenance. */
   passageCap?: number;
+  /** Generated testimonio titles by backend doc id ({@link sourceTitle}). */
+  testimonioTitles?: ReadonlyMap<string, TestimonioTitle>;
 }
 
 /** See the module header. */
@@ -170,14 +203,19 @@ export function regroupTurn<T extends RegroupableTurn>(prepared: T, opts: Regrou
     ...(graphContext ? [{ id: 'mapa' as const, text: graphContext }] : []),
     ...(opts.extra ?? []).filter((s) => s.text.trim()),
   ];
-  if (groups.length === matches.length && summaries.length === 0) return prepared;
+  if (matches.length === 0 && summaries.length === 0) return prepared;
 
   const last = prepared.messages.length - 1;
   const user = prepared.messages[last];
   if (!user || user.role !== 'user') return unchanged(prepared, 'no user turn');
 
   const texts = [
-    ...groups.map((g) => mergedText(g.map((i) => matches[i]!.text))),
+    ...groups.map((g) =>
+      mergedText(
+        g.map((i) => matches[i]!.text),
+        sourceTitle(representativeMatch(matches, g)?.metadata, opts.testimonioTitles),
+      ),
+    ),
     ...summaries.map(summarySourceText),
   ];
   const next = retrievedBlock(config, texts);
@@ -219,6 +257,12 @@ export function regroupTurn<T extends RegroupableTurn>(prepared: T, opts: Regrou
     return m;
   });
   return { ...prepared, messages, provenance, graphContext: '' };
+}
+
+/** The match the card stands for ({@link representative}'s rule), so the title line is the card's. */
+function representativeMatch(matches: readonly RetrievedChunk[], group: readonly number[]): RetrievedChunk | undefined {
+  const own = group.map((i) => matches[i]).filter((m): m is RetrievedChunk => !!m);
+  return own.find((m) => m.metadata?.publication === 'published') ?? own[0];
 }
 
 function summaryChunk(s: SummarySource, cap: number | undefined): Provenance['chunks'][number] {

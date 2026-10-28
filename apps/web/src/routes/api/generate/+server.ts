@@ -49,7 +49,7 @@ import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { lenguaTurn } from '$lib/lengua';
 import { stampDraftProvenance } from '$lib/publication';
 import { citedBrowserProvenance, toBrowserMessage } from '$lib/server/citationProvenance';
-import { backendTitleFetcher, withTestimonioTitles } from '$lib/server/testimonioTitles';
+import { backendTitleFetcher, testimonioDocIds, withTestimonioTitles } from '$lib/server/testimonioTitles';
 import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
 import { parseCitedOrdinals, prepareTurn, type ContextRef, type ContextScope, type Provenance } from '@edc/chat-engine/core';
 
@@ -784,7 +784,9 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   const overview =
     kind === 'generales' &&
     turnMode === 'answer' &&
-    !titleMatch &&
+    // An attached document (@-mention, pinned, or the title match, which
+    // rides as one) makes the turn about it, not the whole corpus.
+    attachments.length === 0 &&
     graphProvider !== null &&
     isCorpusOverview(userMessage);
   const summarySources: SummarySource[] = overview
@@ -805,8 +807,14 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
       : baseConfig;
   // One `[N]` per document; the graph summary (and the overview list) as
   // numbered sources. Before generation, so no answer text is renumbered.
-  const regroup = <P extends Parameters<typeof regroupTurn>[0]>(p: P): P =>
-    regroupTurn(p, { config: turnConfig, extra: summarySources, passageCap: PASSAGE_TEXT_CAP });
+  // Each source opens with its card title; a testimonio's is its generated
+  // title, read here once (one backend read, only when testimonios came back).
+  const titleFetcher = backendTitleFetcher(locals.token);
+  const regroup = async <P extends Parameters<typeof regroupTurn>[0]>(p: P): Promise<P> => {
+    const ids = testimonioDocIds([p.provenance]);
+    const testimonioTitles = ids.length > 0 ? await titleFetcher(ids) : new Map();
+    return regroupTurn(p, { config: turnConfig, extra: summarySources, passageCap: PASSAGE_TEXT_CAP, testimonioTitles });
+  };
   const answerAI = overview ? withoutRetrieval(engineAI) : turnAI;
   // An interviewer reply (either kind) with no `[N]` lists no sources: it is a
   // question back, not an answer, and the no-marker fallback would pin
@@ -852,7 +860,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   if (stream) {
     let prepared;
     try {
-      prepared = regroup(await prepareTurn(engineTurnArgs));
+      prepared = await regroup(await prepareTurn(engineTurnArgs));
     } catch (err) {
       // A failure assembling context must not 500 the turn: fall back to a
       // bare user turn (no summary/retrieval) and still stream an answer.
@@ -924,7 +932,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // (`generateSync` → `buildChatUnitRequest` → chat's BFF). The AbortSignal
   // rides through the `engineAI` closure (captured at construction above).
   try {
-    const prepared = regroup(await prepareTurn(engineTurnArgs));
+    const prepared = await regroup(await prepareTurn(engineTurnArgs));
     const generation = await answerAI.generateSync({
       surface: turnConfig.surface,
       orgId: engineTurnArgs.orgId,

@@ -657,7 +657,8 @@ describe('POST /api/generate — prompt fence', () => {
   it('🔴 sync: every retrieved chunk reaches the model fenced; the saved passage is the original', async () => {
     await POST(event(turn()));
     const prompt = answerPrompt();
-    expect(prompt).toContain(`[1] <fuente>\\n${CHUNK_TEXT}\\n</fuente>`);
+    // The fence opens with the card title (`$lib/server/engine/sources`).
+    expect(prompt).toContain(`[1] <fuente>\\nTítulo: informe.pdf\\n\\n${CHUNK_TEXT}\\n</fuente>`);
     expect(prompt).not.toMatch(/\] Las parteras/);
     expect(savedChunks().length).toBeGreaterThan(0);
     for (const c of savedChunks()) {
@@ -1954,10 +1955,10 @@ describe('POST /api/generate — 2026-10-28 answer fixes (sources per document, 
         ? ((await readSse(res)).find((f) => f.type === 'done') as { provenance: Provenance }).provenance
         : ((await res.json()) as { provenance: Provenance }).provenance;
       const prompt = lastPrompt();
-      expect(prompt).toContain('[1] <fuente>\nSeña: CASA.\n\n…\n\nSeña: ESCUELA.\n</fuente>');
-      expect(prompt).toContain('[2] <fuente>\nLey de inclusión.\n</fuente>');
+      expect(prompt).toContain('[1] <fuente>\nTítulo: Doc 50.pdf\n\nSeña: CASA.\n\n…\n\nSeña: ESCUELA.\n</fuente>');
+      expect(prompt).toContain('[2] <fuente>\nTítulo: Doc 51.pdf\n\nLey de inclusión.\n</fuente>');
       // [3] is the graph map (the fake graph always answers).
-      expect(prompt).toContain('[3] <fuente>\nMapa de conexiones del ecosistema');
+      expect(prompt).toContain('[3] <fuente>\nTítulo: Mapa de conexiones del ecosistema');
       expect(prompt).not.toContain('Contexto del grafo de conocimiento:');
       expect(provenance.chunks.map((c) => [(c as { ordinal?: number }).ordinal, c.metadata?.docId])).toEqual([
         [1, '50'],
@@ -1966,10 +1967,30 @@ describe('POST /api/generate — 2026-10-28 answer fixes (sources per document, 
     });
   }
 
+  it('🔴 a testimonio opens with its system title only, never its file name', async () => {
+    world.publishedDocs = world.publishedDocs.map((d) => (d.id === 41 ? { ...d, testimonioTitle: 'Traducir en la sala de partos' } : d));
+    world.retrievePool = [
+      {
+        ...pool('41', 't', 'Me tocó traducir en un parto.'),
+        metadata: { docId: '41', organizationId: ECO, kind: 'testimonio', publication: 'published', title: 'Carta de presentación — traducción en salud (41)' },
+      },
+      {
+        ...pool('42', 'u', 'Otro relato.'),
+        metadata: { docId: '42', organizationId: ECO, kind: 'testimonio', publication: 'published', title: 'Carta de presentación — traducción en salud (42)' },
+      },
+    ];
+    await POST(event(turn()));
+    const prompt = lastPrompt();
+    expect(prompt).toContain('[1] <fuente>\nTítulo: Traducir en la sala de partos\n');
+    // 42 is held: no generated title reaches the model, only the neutral label.
+    expect(prompt).toContain('[2] <fuente>\nTítulo: Testimonio\n');
+    expect(prompt).not.toContain('Título: Carta de presentación');
+  });
+
   it('🔴 the graph map is a numbered, citable source with its own card', async () => {
     world.model = () => 'El tema que más se repite es la partería [2].';
     const body = (await (await POST(event(turn()))).json()) as { provenance: Provenance };
-    expect(lastPrompt()).toContain('[2] <fuente>\nMapa de conexiones del ecosistema');
+    expect(lastPrompt()).toContain('[2] <fuente>\nTítulo: Mapa de conexiones del ecosistema');
     expect(lastSystem()).toContain('Nunca escribas otras etiquetas entre corchetes, como [Resumen del grafo].');
     expect(body.provenance.chunks).toHaveLength(1);
     expect(body.provenance.chunks[0]!.metadata).toEqual({ title: 'Mapa de conexiones del ecosistema', edcSource: 'mapa' });
@@ -2001,6 +2022,7 @@ describe('POST /api/generate — 2026-10-28 answer fixes (sources per document, 
   });
 
   it('🔴 corpus overview: no passage retrieval; the graph view and the published list as numbered sources', async () => {
+    world.sessionDocs = [];
     world.retrievePool = [pool('60', 'cc', 'El ex convento de Corpus Christi.')];
     world.graphView = {
       entities: [
@@ -2018,10 +2040,10 @@ describe('POST /api/generate — 2026-10-28 answer fixes (sources per document, 
     expect(calls.some((c) => c.url.pathname === '/api/graph/retrieve')).toBe(false);
     const prompt = lastPrompt();
     expect(prompt).not.toContain('Corpus Christi');
-    expect(prompt).toContain('[1] <fuente>\nMapa de conexiones del ecosistema');
+    expect(prompt).toContain('[1] <fuente>\nTítulo: Mapa de conexiones del ecosistema');
     expect(prompt).toContain('educación especial (tema)');
     expect(prompt).toContain('Se conecta con: lengua de señas');
-    expect(prompt).toContain('[2] <fuente>\nDocumentos publicados del ecosistema');
+    expect(prompt).toContain('[2] <fuente>\nTítulo: Documentos publicados del ecosistema');
     expect(prompt).toContain('- Diagnóstico Comunitario de Salud.pdf');
     // Testimonios are counted, never named.
     expect(prompt).not.toContain('Carta de presentación');
@@ -2032,14 +2054,23 @@ describe('POST /api/generate — 2026-10-28 answer fixes (sources per document, 
   const OVERVIEW_Q = { messages: [{ role: 'user', content: 'dame un resumen del corpus' }] };
   const graphViewRead = () => calls.some((c) => c.url.pathname === '/api/graph/view');
 
-  it('guard: a title match is never an overview (the named document is the turn)', async () => {
+  it('guard: a title match (it rides as an attachment) is never an overview', async () => {
+    world.sessionDocs = [];
     world.publishedDocs = [...world.publishedDocs, { id: 33, name: 'Resumen del corpus', contentKind: 'documento', publicationStatus: 'published' }];
     await POST(event(turn(OVERVIEW_Q)));
     expect(graphViewRead()).toBe(false);
     expect(retrieves().length).toBeGreaterThan(0);
   });
 
+  it('guard: a turn with an attached document is never an overview', async () => {
+    // The default session pins informe.pdf: it rides the turn as an attachment.
+    await POST(event(turn(OVERVIEW_Q)));
+    expect(graphViewRead()).toBe(false);
+    expect(retrieves().length).toBeGreaterThan(0);
+  });
+
   it('guard: a Resonancias conversation is never an overview', async () => {
+    world.sessionDocs = [];
     world.kind = 'resonancias';
     await POST(event(turn(OVERVIEW_Q)));
     expect(graphViewRead()).toBe(false);
@@ -2047,12 +2078,14 @@ describe('POST /api/generate — 2026-10-28 answer fixes (sources per document, 
   });
 
   it('🔴 guard (privacy): under a lengua filter the ecosistema-wide overview never runs', async () => {
+    world.sessionDocs = [];
     await POST(event(turn({ ...OVERVIEW_Q, lengua: 'mixe' })));
     expect(graphViewRead()).toBe(false);
     expect(lastPrompt()).not.toContain('Documentos publicados del ecosistema');
   });
 
   it('🔴 the list names only what the library shows, and "al menos" follows the raw row count', async () => {
+    world.sessionDocs = [];
     world.publishedDocs = [
       { id: 70, name: 'Informe visible.pdf', contentKind: 'documento', publicationStatus: 'published' },
       { id: 71, name: 'Informe por anonimizar.pdf', contentKind: 'documento', publicationStatus: 'published', anonymise: true, anonymisationStatus: 'held' },

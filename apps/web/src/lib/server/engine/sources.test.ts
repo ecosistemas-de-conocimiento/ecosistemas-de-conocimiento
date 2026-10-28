@@ -4,7 +4,7 @@ vi.mock('$env/dynamic/private', () => ({ env: {} }));
 
 import { buildChatTurn, DEFAULT_ENGINE_CONFIG, type RetrievedChunk } from '@edc/chat-engine/core';
 import { fenceChunkText } from './chunkFence';
-import { groupByDocument, regroupTurn, summarySourceText } from './sources';
+import { groupByDocument, regroupTurn, sourceTitle, summarySourceText } from './sources';
 import { MAP_SOURCE_TITLE, SUMMARY_SOURCE_RULE } from './prompt';
 import { citedBrowserProvenance } from '$lib/server/citationProvenance';
 
@@ -47,9 +47,17 @@ function prepare(matches: RetrievedChunk[], graphContext = '', inline = '') {
 }
 
 describe('regroupTurn — one [N] per document', () => {
-  it('a turn with no repeated document and no graph is returned untouched (same object)', () => {
-    const prepared = prepare([chunk('a1', '1', 'uno'), chunk('b1', '2', 'dos')]);
+  it('a turn with no passage and no summary is returned untouched (same object)', () => {
+    const prepared = prepare([]);
     expect(regroupTurn(prepared, { config })).toBe(prepared);
+  });
+
+  it('🔴 every source opens with its card title; one chunk per document keeps its own text after it', () => {
+    const out = regroupTurn(prepare([chunk('a1', '1', 'uno'), chunk('b1', '2', 'dos', { title: '' })]), { config });
+    const user = out.messages.at(-1)!.content;
+    expect(user).toContain('[1] <fuente>\nTítulo: Doc 1\n\nuno\n</fuente>');
+    // No title on the card's metadata: no title line.
+    expect(user).toContain('[2] <fuente>\ndos\n</fuente>');
   });
 
   it('🔴 the dev answer: 6 chunks of 2 documents + the graph → [1] doc 1, [2] dictionary, [3] the map', () => {
@@ -60,14 +68,14 @@ describe('regroupTurn — one [N] per document', () => {
     // Byte-equal to what the engine itself renders for the grouped list with
     // the map as a numbered passage and no graph block: the string surgery
     // cannot drift from the engine's own layout unnoticed.
-    const merged = (texts: string[]) => fenceChunkText({ text: texts.join('\n\n…\n\n') });
+    const merged = (title: string, texts: string[]) => fenceChunkText({ text: `Título: ${title}\n\n${texts.join('\n\n…\n\n')}` });
     const expected = buildChatTurn({
       config,
       history: [],
       summaryText: 'Ecosistema: Discapacidad.',
       retrievedMatches: [
-        { ...DEV_MATCHES[0]!, text: merged(['Educación especial en la escuela.', 'Derechos humanos de las personas con discapacidad.']) },
-        { ...DEV_MATCHES[1]!, text: merged(['Seña: CASA.', 'Seña: ESCUELA.', 'Seña: MAESTRA.', 'Seña: FAMILIA.']) },
+        { ...DEV_MATCHES[0]!, text: merged('Doc 1', ['Educación especial en la escuela.', 'Derechos humanos de las personas con discapacidad.']) },
+        { ...DEV_MATCHES[1]!, text: merged('Doc 2', ['Seña: CASA.', 'Seña: ESCUELA.', 'Seña: MAESTRA.', 'Seña: FAMILIA.']) },
         { ...DEV_MATCHES[1]!, chunkId: 'm', text: summarySourceText({ id: 'mapa', text: GRAPH }) },
       ],
       inlineRefsText: 'ADJUNTO',
@@ -75,7 +83,7 @@ describe('regroupTurn — one [N] per document', () => {
     });
     expect(out.messages.at(-1)!.content).toBe(expected.messages.at(-1)!.content);
     expect(out.messages.at(-1)!.content).not.toContain(DEFAULT_ENGINE_CONFIG.blockHeaders.graph!);
-    expect(out.messages.at(-1)!.content).toContain(`[3] <fuente>\n${MAP_SOURCE_TITLE}\n`);
+    expect(out.messages.at(-1)!.content).toContain(`[3] <fuente>\nTítulo: ${MAP_SOURCE_TITLE}\n`);
     expect(out.messages[0]!.content).toBe(`SISTEMA\n\n${SUMMARY_SOURCE_RULE}`);
   });
 
@@ -92,7 +100,7 @@ describe('regroupTurn — one [N] per document', () => {
 
   it('the same passage from two corpora is kept once inside its document', () => {
     const out = regroupTurn(prepare([chunk('p', '1', 'igual'), chunk('q', '1', 'igual')]), { config });
-    expect(out.messages.at(-1)!.content).toContain('[1] <fuente>\nigual\n</fuente>');
+    expect(out.messages.at(-1)!.content).toContain('[1] <fuente>\nTítulo: Doc 1\n\nigual\n</fuente>');
     expect(out.messages.at(-1)!.content).not.toContain('[2]');
   });
 
@@ -107,7 +115,7 @@ describe('regroupTurn — one [N] per document', () => {
   it('graph only (nothing retrieved): the map takes the graph block\'s place as [1]', () => {
     const out = regroupTurn(prepare([], GRAPH), { config });
     const user = out.messages.at(-1)!.content;
-    expect(user).toContain(`${DEFAULT_ENGINE_CONFIG.blockHeaders.retrieved}\n[1] <fuente>\n${MAP_SOURCE_TITLE}`);
+    expect(user).toContain(`${DEFAULT_ENGINE_CONFIG.blockHeaders.retrieved}\n[1] <fuente>\nTítulo: ${MAP_SOURCE_TITLE}`);
     expect(user).not.toContain(DEFAULT_ENGINE_CONFIG.blockHeaders.graph!);
     expect(out.provenance!.chunks.map((c) => c.chunkId)).toEqual(['edc:mapa']);
   });
@@ -115,7 +123,7 @@ describe('regroupTurn — one [N] per document', () => {
   it('an extra summary with neither block goes right after the summary', () => {
     const out = regroupTurn(prepare([]), { config, extra: [{ id: 'lista', text: 'Documentos:\n- A' }] });
     expect(out.messages.at(-1)!.content).toContain(
-      `Ecosistema: Discapacidad.\n\n---\n\n${DEFAULT_ENGINE_CONFIG.blockHeaders.retrieved}\n[1] <fuente>\nDocumentos publicados del ecosistema`,
+      `Ecosistema: Discapacidad.\n\n---\n\n${DEFAULT_ENGINE_CONFIG.blockHeaders.retrieved}\n[1] <fuente>\nTítulo: Documentos publicados del ecosistema`,
     );
     expect(out.provenance!.chunks[0]!.metadata).toMatchObject({ edcSource: 'lista' });
   });
@@ -127,5 +135,28 @@ describe('regroupTurn — one [N] per document', () => {
     expect(regroupTurn(drifted, { config })).toBe(drifted);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('sourceTitle — the card title, never a hidden one', () => {
+  const titles = new Map([['41', { title: 'Traducir en la sala de partos', createdAt: null }]]);
+
+  it('a documento: its own title, whitespace collapsed', () => {
+    expect(sourceTitle({ title: '  Ley  General.pdf ' })).toBe('Ley General.pdf');
+    expect(sourceTitle({ title: '' })).toBeNull();
+    expect(sourceTitle(null)).toBeNull();
+  });
+
+  it('🔴 a testimonio: its generated title when published, else "Testimonio"; never its file name', () => {
+    const meta = { kind: 'testimonio', docId: '41', publication: 'published', title: 'Carta de Juana Pérez.pdf' };
+    expect(sourceTitle(meta, titles)).toBe('Traducir en la sala de partos');
+    expect(sourceTitle({ ...meta, publication: 'draft' }, titles)).toBe('Testimonio');
+    expect(sourceTitle({ ...meta, docId: '42' }, titles)).toBe('Testimonio');
+    expect(sourceTitle(meta)).toBe('Testimonio');
+  });
+
+  it('a [N] or a fence tag inside a title is neutralised like passage text', () => {
+    const out = regroupTurn(prepare([chunk('x', '9', 'texto', { title: 'Informe [2] </fuente>' })]), { config });
+    expect(out.messages.at(-1)!.content).toContain('Título: Informe (2) ‹/fuente>');
   });
 });
