@@ -7,6 +7,7 @@
   import Toasts from '$lib/components/Toasts.svelte';
   import PrimaryNav from '$lib/components/PrimaryNav.svelte';
   import { MAIN_CONTENT_ID, shouldShowNav } from '$lib/nav';
+  import { shouldResetScroll } from '$lib/scrollReset';
 
   let { children } = $props();
 
@@ -57,20 +58,10 @@
     }
   });
 
-  /**
-   * 🔴 A NEW SECTION OPENS AT ITS TOP. SvelteKit resets the WINDOW's scroll on
-   * navigation, but here `.app-main` is what scrolls, so the next page kept the
-   * last one's offset: on a phone, Conexiones opened half-way down its list,
-   * under where Biblioteca's reader had been scrolled (dev, 2026-10-28).
-   * `popstate` and `#anchor` navigations are left alone. ⚠ `from.url` is null,
-   * not `from`, on the first client navigation when SSR is off (SvelteKit
-   * 2.70): reading `from.url.pathname` there threw and turned every later link
-   * into a full reload (audit, measured 2026-10-28).
-   */
+  /** A new section opens at its top — the rules and the SSR-off footgun are in `$lib/scrollReset`. */
   let mainEl = $state<HTMLElement>();
-  afterNavigate(({ from, to, type }) => {
-    if (type === 'popstate' || to?.url?.hash || from?.url?.pathname === to?.url?.pathname) return;
-    mainEl?.scrollTo(0, 0);
+  afterNavigate((nav) => {
+    if (shouldResetScroll(nav)) mainEl?.scrollTo(0, 0);
   });
 </script>
 

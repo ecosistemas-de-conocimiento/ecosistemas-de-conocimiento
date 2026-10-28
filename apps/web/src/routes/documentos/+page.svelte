@@ -340,17 +340,6 @@
                 data-testid={`graph-status-${d.id}`}>{graph.label}</span
               >
             {/if}
-            <!-- 🔴 The destructive verb, and the only one on this screen that
-                 destroys anything. Toned as danger and worded as "Eliminar",
-                 so it never reads like the panel's "Quitar". -->
-            <button
-              class="danger-link"
-              disabled={busyId === d.id}
-              onclick={() => remove(d)}
-              data-testid={`delete-${d.id}`}
-            >
-              Eliminar
-            </button>
           </div>
 
           {#if loose}
@@ -428,6 +417,19 @@
                 onClick={() => app.retryGraph(d.id)}
               />
             {/if}
+            <!-- 🔴 The destructive verb, and the only one on this screen that
+                 destroys anything. Toned as danger and worded as "Eliminar",
+                 so it never reads like the panel's "Quitar". Last in the
+                 actions row: in the title row it wrapped onto a line of its
+                 own on a phone (390px, 2026-10-28). -->
+            <button
+              class="danger-link"
+              disabled={busyId === d.id}
+              onclick={() => remove(d)}
+              data-testid={`delete-${d.id}`}
+            >
+              Eliminar
+            </button>
           </div>
 
           {#if pickerFor === d.id}
@@ -721,6 +723,22 @@
     outline: none;
     box-shadow: 0 0 0 3px var(--edc-focus-ring);
     border-radius: var(--edc-radius-1);
+  }
+
+  /* Phone: a tighter card. Measured at 390px (2026-10-28) a row was ~260px
+     tall; the 44px tap floor (app.css) already makes each action big enough,
+     so the padding and gaps around them can shrink. */
+  @media (max-width: 40rem) {
+    .page {
+      padding: var(--edc-space-4) var(--edc-space-4) var(--edc-space-6);
+    }
+    .row {
+      gap: 0.35rem;
+      padding: 0.6rem 0.7rem;
+    }
+    .actions {
+      gap: 0.25rem 0.4rem;
+    }
   }
 
   .picker {

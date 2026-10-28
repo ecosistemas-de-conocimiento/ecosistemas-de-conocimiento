@@ -26,15 +26,19 @@ body {
   border-radius: 4px;
 }
 
-/* 🔴 A FINGER NEEDS 44PX. Measured at 390px (2026-10-28): the composer's
-   "Enviar", the documents panel's "Subir" / "Nota", the Mis documentos row
-   actions and the chat's lengua picker were 23–38px tall, under the 44px
-   touch minimum (WCAG 2.5.5, Apple HIG). One floor here instead of a fix per
-   component. ⚠ `!important` because scoped component CSS (Button's `size-sm`
-   / `size-md`, the chat's "Hazme preguntas" switch, Biblioteca's chips) sets
-   smaller minimums with a stronger selector; on a touch screen none of them
-   may go under. Same query as the graph's touch rules (`OverviewGraph.svelte`). */
-@media (pointer: coarse), (max-width: 40rem) {
+/* 🔴 A FINGER NEEDS 44PX — ON A PHONE. Measured at 390px (2026-10-28): the
+   composer's "Enviar", the documents panel's "Subir" / "Nota", the Mis
+   documentos row actions and the chat's lengua picker were 23–38px tall, under
+   the 44px touch minimum (WCAG 2.5.5, Apple HIG). One floor here instead of a
+   fix per component. ⚠ `!important` because scoped component CSS (Button's
+   `size-sm` / `size-md`, the chat's "Hazme preguntas" switch, Biblioteca's
+   chips) sets smaller minimums with a stronger selector.
+   ⚠ Width only, no `(pointer: coarse)`: a touchscreen at desktop width keeps
+   the desktop density (owner ruling 2026-10-28; an audit at 1366px with a
+   coarse pointer measured /documentos 22% taller and 12 conversations
+   visible instead of 20). 40rem is `--edc-breakpoint-sm` in
+   `design/tokens.css`, the same phone width as `PrimaryNav.svelte`. */
+@media (max-width: 40rem) {
   button,
   select,
   input:not([type='checkbox'], [type='radio'], [type='range'], [type='file']),
