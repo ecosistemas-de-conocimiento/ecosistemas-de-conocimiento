@@ -532,7 +532,10 @@
           {@const pub = publicationBadge(d.publicationStatus)}
           {@const gate = gateOf(d)}
           <div class="rounded-lg border border-elevated bg-surface-strong shadow-1">
-            <div class="flex items-center gap-1 px-2 py-1.5">
+            <!-- In the phone drawer the title gets the first line and the chips,
+                 "fijar" and delete wrap below it: on one line they cut the title
+                 to "evid-1···" at 390px (dev, 2026-10-28). -->
+            <div class="flex max-lg:flex-wrap items-center gap-1 px-2 py-1.5">
               <button
                 class="text-ink-soft hover:text-ink p-0.5"
                 onclick={() => toggle(d.id)}
@@ -555,7 +558,7 @@
                 </svg>
               </button>
               <input
-                class="title-input flex-1 min-w-0 bg-transparent text-sm text-ink outline-none rounded px-1"
+                class="title-input flex-1 max-lg:basis-[calc(100%-1.75rem)] min-w-0 bg-transparent text-sm text-ink outline-none rounded px-1"
                 value={d.title}
                 title={d.title}
                 aria-label="Título del documento"

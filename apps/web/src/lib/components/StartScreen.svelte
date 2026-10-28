@@ -132,6 +132,10 @@
     gap: var(--edc-space-2);
   }
   .secundaria {
+    /* 44px touch floor (app.css); the link would otherwise sit at ~40px. */
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
     padding: 0.5rem 0.75rem;
     border: 0;
     background: none;

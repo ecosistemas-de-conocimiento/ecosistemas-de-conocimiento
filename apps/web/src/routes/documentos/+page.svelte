@@ -527,6 +527,10 @@
   }
   .back {
     flex: none;
+    /* A link that looks like a button gets a button's 44px touch floor (app.css). */
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
     padding: 0.4rem 0.85rem;
     border-radius: var(--edc-radius-2);
     border: 1px solid var(--edc-color-neutral-outline);

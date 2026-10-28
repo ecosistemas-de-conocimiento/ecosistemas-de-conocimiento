@@ -26,6 +26,7 @@
   import Sidebar from './Sidebar.svelte';
   import Chat from './Chat.svelte';
   import DocsPanel from './DocsPanel.svelte';
+  import { app } from '$lib/stores/app.svelte';
   import {
     CLOSE_PANEL_LABEL,
     MOBILE_PANEL_BAR_LABEL,
@@ -58,6 +59,19 @@
     sync();
     mq.addEventListener('change', sync);
     return () => mq.removeEventListener('change', sync);
+  });
+
+  /**
+   * 🔴 Picking or creating a conversation in the drawer closes it. On a phone
+   * the drawer covers the chat, so a tap on a conversation would change
+   * nothing the reader can see until they find "Cerrar". Keyed on the id only: a
+   * rename or a new message must not shut a drawer the reader is using.
+   */
+  let lastSessionId: string | null | undefined;
+  $effect(() => {
+    const id = app.activeSessionId;
+    if (lastSessionId !== undefined && id !== lastSessionId && open === 'conversations') open = 'none';
+    lastSessionId = id;
   });
 
   /** Where focus goes back to when a drawer closes. */
@@ -230,8 +244,8 @@
       display: inline-flex;
       align-items: center;
       gap: 0.35rem;
-      /* A comfortable phone target, same bar as the primary nav. */
-      min-height: 2.6rem;
+      /* A comfortable phone target, same bar as the primary nav (44px). */
+      min-height: 2.75rem;
       padding: 0.4rem 0.8rem;
       border: 1px solid var(--edc-color-line);
       border-radius: var(--edc-radius-2);
@@ -317,7 +331,7 @@
     }
     /* ⚠ The word "Cerrar", not a “×”. */
     .drawer-close {
-      min-height: 2.4rem;
+      min-height: 2.75rem;
       padding: 0.35rem 0.8rem;
       border: 1px solid var(--edc-color-line);
       border-radius: var(--edc-radius-2);

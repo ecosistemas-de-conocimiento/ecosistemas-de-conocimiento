@@ -115,9 +115,12 @@
   );
 </script>
 
+<!-- On a phone an answer takes the full width: at 80% a 390px screen left a
+     ~75px empty strip beside every answer (dev screenshot, 2026-10-28). The
+     reader's own messages keep their inset, so who said what stays visible. -->
 <div class="flex {isUser ? 'justify-end' : 'justify-start'}">
   <div
-    class="max-w-[80%] min-w-0 [overflow-wrap:anywhere] rounded-lg px-3 py-2 text-sm leading-relaxed shadow-1 {isUser
+    class="max-w-[80%] {isUser ? 'max-sm:max-w-[88%]' : 'max-sm:max-w-full'} min-w-0 [overflow-wrap:anywhere] rounded-lg px-3 py-2 text-sm leading-relaxed shadow-1 {isUser
       ? 'bg-brand text-on-brand whitespace-pre-wrap'
       : msg.error
         ? 'bg-surface-strong border border-danger text-danger whitespace-pre-wrap'

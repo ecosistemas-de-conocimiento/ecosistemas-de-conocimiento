@@ -103,7 +103,7 @@
       <h1 class="text-sm font-bold tracking-wide text-ink font-display">Conversaciones</h1>
       <div class="flex items-center gap-1">
         <button
-          class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft"
+          class="p-1.5 max-lg:p-[14px] rounded-lg hover:bg-surface-soft text-ink-soft"
           onclick={() => app.newSession()}
           title="Nueva conversación"
           aria-label="Nueva conversación"
@@ -155,7 +155,7 @@
       {#each SESSION_KINDS as kind (kind)}
         {@const selected = app.sessionKindTab === kind}
         <button
-          class="flex-1 text-xs py-1 rounded-md border transition-colors {selected
+          class="flex-1 text-xs py-1 max-lg:py-3 max-lg:text-sm rounded-md border transition-colors {selected
             ? 'bg-surface-accent text-ink border-brand font-semibold'
             : 'text-ink-soft border-line hover:bg-surface-soft hover:text-ink'}"
           role="tab"
@@ -204,7 +204,7 @@
               <span class="text-xs text-ink font-normal">¿Borrar esta conversación?</span>
               <div class="flex gap-1">
                 <button
-                  class="text-xs px-2 py-1 rounded border border-danger text-danger font-semibold hover:bg-surface-soft"
+                  class="text-xs px-2 py-1 max-lg:px-3 max-lg:py-3 rounded border border-danger text-danger font-semibold hover:bg-surface-soft"
                   onclick={() => {
                     confirmingDeleteId = null;
                     void app.deleteSession(s.id);
@@ -214,7 +214,7 @@
                   Sí, borrar
                 </button>
                 <button
-                  class="text-xs px-2 py-1 rounded border border-line text-ink hover:bg-surface-soft"
+                  class="text-xs px-2 py-1 max-lg:px-3 max-lg:py-3 rounded border border-line text-ink hover:bg-surface-soft"
                   onclick={() => (confirmingDeleteId = null)}
                 >
                   Cancelar
@@ -229,7 +229,7 @@
                  plus `aria-current` so a screen reader is told outright rather
                  than being expected to see it. -->
             <button
-              class="flex-1 min-w-0 text-left truncate text-sm py-0.5"
+              class="flex-1 min-w-0 text-left truncate text-sm py-0.5 max-lg:py-3 max-lg:text-base"
               onclick={() => app.selectSession(s.id)}
               aria-current={isActive ? 'true' : undefined}
               title={s.title}
@@ -238,9 +238,10 @@
             </button>
             <!-- ⚠ Always visible, not hover-only (UX backlog #19): a phone has
                  no hover, so a hover-only button does not exist there. Soft
-                 until the row is hovered or focused. -->
+                 until the row is hovered or focused. Below `lg` (the drawer
+                 breakpoint) every control here is padded to a 44px finger target. -->
             <button
-              class="shrink-0 p-1 rounded text-ink-soft opacity-60 group-hover:opacity-100 focus:opacity-100 hover:text-brand"
+              class="shrink-0 p-1 max-lg:p-[15px] rounded text-ink-soft opacity-60 group-hover:opacity-100 focus:opacity-100 hover:text-brand"
               onclick={() => startRename(s.id, s.title)}
               title="Cambiar nombre"
               aria-label={`Cambiar el nombre de "${s.title}"`}
@@ -261,7 +262,7 @@
               </svg>
             </button>
             <button
-              class="shrink-0 p-1 rounded text-ink-soft opacity-60 group-hover:opacity-100 focus:opacity-100 hover:text-danger"
+              class="shrink-0 p-1 max-lg:p-[15px] rounded text-ink-soft opacity-60 group-hover:opacity-100 focus:opacity-100 hover:text-danger"
               onclick={() => {
                 renamingId = null;
                 confirmingDeleteId = s.id;

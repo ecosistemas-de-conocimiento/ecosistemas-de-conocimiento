@@ -1,6 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import { page } from '$app/stores';
+  import { afterNavigate } from '$app/navigation';
   import { app } from '$lib/stores/app.svelte';
   import { hydrationAction } from '$lib/hydration';
   import Toasts from '$lib/components/Toasts.svelte';
@@ -55,6 +56,19 @@
       app.reset();
     }
   });
+
+  /**
+   * 🔴 A NEW SECTION OPENS AT ITS TOP. SvelteKit resets the WINDOW's scroll on
+   * navigation, but here `.app-main` is what scrolls, so the next page kept the
+   * last one's offset: on a phone, Conexiones opened half-way down its list,
+   * under where Biblioteca's reader had been scrolled (dev, 2026-10-28).
+   * Back/forward (`popstate`) and `#anchor` links keep their position.
+   */
+  let mainEl = $state<HTMLElement>();
+  afterNavigate(({ from, to, type }) => {
+    if (type === 'popstate' || to?.url.hash || from?.url.pathname === to?.url.pathname) return;
+    mainEl?.scrollTo(0, 0);
+  });
 </script>
 
 {#if showNav}
@@ -65,7 +79,7 @@
        than the visible window, which hides the composer under it. -->
   <div class="app-shell">
     <PrimaryNav />
-    <main id={MAIN_CONTENT_ID} class="app-main">
+    <main id={MAIN_CONTENT_ID} class="app-main" bind:this={mainEl}>
       {@render children?.()}
     </main>
   </div>

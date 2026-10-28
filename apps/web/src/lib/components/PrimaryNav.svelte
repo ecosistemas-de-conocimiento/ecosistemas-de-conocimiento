@@ -210,7 +210,8 @@
   @media (max-width: 40rem) {
     .item {
       padding: 0.55rem 0.65rem;
-      min-height: 2.6rem;
+      /* 44px, the touch floor in app.css. */
+      min-height: 2.75rem;
       display: flex;
       align-items: center;
     }

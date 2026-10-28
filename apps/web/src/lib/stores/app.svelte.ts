@@ -1185,7 +1185,7 @@ class AppStore {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            name: seed?.title ?? 'Untitled document',
+            name: seed?.title ?? 'Nota sin título',
             bodyMarkdown: seed?.body ?? '',
             isPinned: seed?.includeInContext ?? true,
             kind: 'markdown',

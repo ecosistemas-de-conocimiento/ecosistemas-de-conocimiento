@@ -86,7 +86,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
       session: [sessionId],
       kind: body.kind ?? 'markdown',
       mode: body.mode ?? 'full-text',
-      name: body.name ?? 'Untitled document',
+      name: body.name ?? 'Nota sin título',
       bodyMarkdown: body.bodyMarkdown ?? '',
       isPinned: body.isPinned ?? true,
       ingestStatus: 'n/a',

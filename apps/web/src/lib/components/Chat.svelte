@@ -225,7 +225,10 @@
 </script>
 
 <section class="flex-1 min-w-0 flex flex-col">
-  <header class="border-b border-line px-4 py-2 flex items-center gap-2 bg-surface backdrop-blur">
+  <!-- On a phone the title takes its own line and the controls wrap under it:
+       side by side, the lengua picker and the switch squeezed the title to one
+       letter at 390px (measured 2026-10-28). -->
+  <header class="border-b border-line px-4 py-2 flex flex-wrap items-center gap-2 bg-surface backdrop-blur">
     {#if app.sidebarCollapsed && !hidePanelButtons}
       <button
         class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft"
@@ -247,7 +250,7 @@
         </svg>
       </button>
     {/if}
-    <h2 class="text-sm font-semibold text-ink truncate flex-1 font-display">
+    <h2 class="text-sm font-semibold text-ink truncate flex-1 max-sm:basis-full font-display">
       {app.active?.title ?? 'Sin chat seleccionado'}
     </h2>
     {#if isStudent}
