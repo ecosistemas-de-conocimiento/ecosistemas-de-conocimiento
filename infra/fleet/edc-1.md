@@ -2262,6 +2262,10 @@ build (inferred by time). Total $8.975563 after.
 **Disk**, `df -h /` free: 56 GB before; 37 GB after both builds; 56 GB after the cleanup. Images
 9.67 GB, build cache 0.
 
+**Orgs retired after it**, 2026-10-28, owner ruling, dev only: orgs 1 "Traducción en salud" and
+3 "Acompañamiento escolar" set `isActive=false` via API `PATCH` (soft, reversible). Nobody stranded:
+their 3 members (users 1–3) stay active in orgs 6, 7, 8. Fresh `GET` reads `isActive=false` (measured).
+
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
 Backups taken before the deploy (both DBs, both envs, each checked with `pg_restore -l`, sha256
