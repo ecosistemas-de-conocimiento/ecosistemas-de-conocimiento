@@ -645,9 +645,12 @@ export async function listAllEcosystems(
         depth: '0',
         sort: 'name',
         ...selectParams(['name', 'slug']),
-        // Switched-off ecosistemas leave the directory. `not_equals: false`,
-        // not `equals: true`: a row with no value predates the flag and is active.
-        'where[isActive][not_equals]': 'false',
+        // Switched-off ecosistemas leave the directory. `equals: true`, the
+        // backend's own predicate: `ecosystemMetrics` and `membershipsForUser`
+        // treat a NULL flag as inactive, so listing such a row offers a page
+        // that then refuses it. (`not_equals: false` kept NULL rows: Payload's
+        // drizzle adapter compiles it to `IS NULL OR <> false`.)
+        'where[isActive][equals]': 'true',
         ...ecosystemSearchParams(term),
       }).toString(),
     (raw) => normalizeEcosystems([raw])[0] ?? null,

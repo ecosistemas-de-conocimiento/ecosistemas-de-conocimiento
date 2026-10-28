@@ -152,10 +152,12 @@ export async function listEcosystems(token: string | undefined): Promise<Ecosyst
           // ⚠ Mirror the backend's `membershipsForUser`: it ignores inactive
           // memberships and switched-off organizations, so `POST /api/sessions`
           // answers 400 for them. Offering one here is offering a dead end.
-          // A missing `isActive` means active (rows that predate the flag).
-          .filter((m) => (m as { isActive?: unknown } | null)?.isActive !== false)
+          // 🔴 `=== true`, NOT `!== false`: the backend asks for `isActive =
+          // true` on both rows (`lib/permissions.ts`), so a NULL or missing
+          // flag is INACTIVE there and must be inactive here. Fail closed.
+          .filter((m) => (m as { isActive?: unknown } | null)?.isActive === true)
           .map((m) => (m as { organization?: unknown } | null)?.organization)
-          .filter((o) => o != null && (o as { isActive?: unknown }).isActive !== false)
+          .filter((o) => o != null && (o as { isActive?: unknown }).isActive === true)
       : [];
     const list = normalizeEcosystems(orgs);
     list.sort((a, b) => a.name.localeCompare(b.name, 'es'));

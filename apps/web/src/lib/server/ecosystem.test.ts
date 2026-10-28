@@ -33,24 +33,41 @@ beforeEach(() => {
 describe('listEcosystems — switched-off organizations', () => {
   it('drops an organization with isActive === false', async () => {
     withMemberships([
-      { organization: { id: 1, name: 'Activa', isActive: true } },
-      { organization: { id: 2, name: 'Apagada', isActive: false } },
+      { isActive: true, organization: { id: 1, name: 'Activa', isActive: true } },
+      { isActive: true, organization: { id: 2, name: 'Apagada', isActive: false } },
     ]);
     const { list, ok: readOk } = await listEcosystems('tok');
     expect(readOk).toBe(true);
     expect(list.map((e) => e.id)).toEqual(['1']);
   });
 
-  it('treats a missing isActive as active', async () => {
-    withMemberships([{ organization: { id: 3, name: 'Sin bandera' } }]);
+  // 🔴 The backend's `membershipsForUser` asks for `isActive = true` on BOTH
+  // rows, so a NULL or missing flag is INACTIVE there. Offering it here is
+  // offering an ecosistema `POST /api/sessions` will refuse.
+  it('treats a missing or null organization isActive as inactive, as the backend does', async () => {
+    withMemberships([
+      { isActive: true, organization: { id: 3, name: 'Sin bandera' } },
+      { isActive: true, organization: { id: 7, name: 'Nula', isActive: null } },
+      { isActive: true, organization: { id: 8, name: 'Activa', isActive: true } },
+    ]);
     const { list } = await listEcosystems('tok');
-    expect(list.map((e) => e.id)).toEqual(['3']);
+    expect(list.map((e) => e.id)).toEqual(['8']);
+  });
+
+  it('treats a missing or null membership isActive as inactive, as the backend does', async () => {
+    withMemberships([
+      { organization: { id: 9, name: 'Sin bandera', isActive: true } },
+      { isActive: null, organization: { id: 10, name: 'Nula', isActive: true } },
+      { isActive: true, organization: { id: 11, name: 'Activa', isActive: true } },
+    ]);
+    const { list } = await listEcosystems('tok');
+    expect(list.map((e) => e.id)).toEqual(['11']);
   });
 
   it('drops an inactive membership, as the backend does', async () => {
     withMemberships([
       { isActive: false, organization: { id: 4, name: 'Ex miembro', isActive: true } },
-      { organization: { id: 6, name: 'Miembro' } },
+      { isActive: true, organization: { id: 6, name: 'Miembro', isActive: true } },
     ]);
     const { list } = await listEcosystems('tok');
     expect(list.map((e) => e.id)).toEqual(['6']);

@@ -408,20 +408,21 @@ describe('listAllEcosystems', () => {
     });
   });
 
-  it('hides switched-off ecosistemas, keeping rows with no isActive', async () => {
-    // `not_equals: false` rather than `equals: true`: a row created before the
-    // flag existed has no value, and it is active.
+  it('hides switched-off ecosistemas, and rows with a NULL isActive, as the backend does', async () => {
+    // `equals: true`, the backend's own predicate: `ecosystemMetrics` refuses an
+    // organization whose flag is NULL, so listing it offers a dead row.
     backendFetch.mockImplementation(router({ organizations: reply([]) }));
     await listAllEcosystems('tok');
     const [url = ''] = urls();
-    expect(url).toContain(`${encodeURIComponent('where[isActive][not_equals]')}=false`);
+    expect(url).toContain(`${encodeURIComponent('where[isActive][equals]')}=true`);
+    expect(url).not.toContain('not_equals');
   });
 
   it('keeps the isActive filter alongside a search term', async () => {
     backendFetch.mockImplementation(router({ organizations: reply([]) }));
     await listAllEcosystems('tok', 'demo');
     const [url = ''] = urls();
-    expect(url).toContain(`${encodeURIComponent('where[isActive][not_equals]')}=false`);
+    expect(url).toContain(`${encodeURIComponent('where[isActive][equals]')}=true`);
     expect(url).toContain(encodeURIComponent('where[or][0][name][like]'));
   });
 

@@ -140,4 +140,50 @@ describe('/grafo load — the ecosistema switches (`$lib/features`)', () => {
     expect(data.allow3d).toBe(true);
     expect(data.graphOff).toBeUndefined();
   });
+
+  // ── `?eco=<orgId>` as a LINK (a chat answer links to an ecosistema's graph).
+  // The person following it may belong to just one ecosistema, or none of the
+  // linked one. It opens when they may see it and falls back otherwise, and the
+  // fallback never says anything about the ecosistema the link named.
+
+  it('a member of ONE ecosistema following a link to it opens it', async () => {
+    const data = await run('/grafo?eco=1', { list: [A] });
+    expect(data.ecosystem?.id).toBe('1');
+    expect(viewedOrganization()).toBe('1');
+  });
+
+  it('🔴 a link to a foreign ecosistema falls back to the current one and leaks nothing', async () => {
+    const data = (await run('/grafo?eco=3', { list: [A] })) as Data & {
+      ecosystemNames: Record<string, string>;
+    };
+    expect(data.ecosystem?.id).toBe('1');
+    expect(viewedOrganization()).toBe('1');
+    expect(mockedView.mock.calls.every((c) => (c[1] as { organizationId: unknown }).organizationId === '1')).toBe(true);
+    // Not even its name: a member never triggers the direct read or the directory.
+    expect(mockedRead).not.toHaveBeenCalled();
+    expect(mockedDirectory).not.toHaveBeenCalled();
+    expect(Object.keys(data.ecosystemNames)).toEqual(['1']);
+  });
+
+  it('🔴 following a link never re-points the ecosistema cookie', async () => {
+    const set = vi.fn();
+    mockedResolve.mockResolvedValue({ list: [A, B], ok: true, selected: A, source: 'requested' });
+    const event = {
+      locals: { user: { id: 9 }, token: 'tok' },
+      cookies: { get: vi.fn(), set, delete: vi.fn() },
+      url: new URL('/grafo?eco=2', 'http://web.test'),
+    } as unknown as Parameters<typeof load>[0];
+    const data = (await load(event)) as unknown as Data;
+    expect(data.ecosystem?.id).toBe('2');
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it('a platform admin`s link to an id that does not exist falls back, flagged not found', async () => {
+    mockedRead.mockResolvedValue(null);
+    const data = await run('/grafo?eco=99', { admin: true });
+    expect(data.ecosystem?.id).toBe('1');
+    expect(viewedOrganization()).toBe('1');
+    expect(data.scope?.notFound).toBe(true);
+  });
 });
+

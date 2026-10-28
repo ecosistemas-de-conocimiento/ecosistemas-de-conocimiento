@@ -76,8 +76,8 @@ function twoOrgs(path?: string): Response {
   }
   return jsonResponse({
     docs: [
-      { id: 11, organization: { id: 1, name: 'Ecosistema Norte', slug: 'norte' } },
-      { id: 12, organization: { id: 2, name: 'Ecosistema Sur', slug: 'sur' } },
+      { id: 11, isActive: true, organization: { id: 1, name: 'Ecosistema Norte', slug: 'norte', isActive: true } },
+      { id: 12, isActive: true, organization: { id: 2, name: 'Ecosistema Sur', slug: 'sur', isActive: true } },
     ],
   });
 }
