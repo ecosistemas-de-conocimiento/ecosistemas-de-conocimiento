@@ -40,6 +40,8 @@ El audio (B3.1, C1.3, C1.4) se graba solo en el video del participante.
 | B1.6 | Borrar una conversación. | ● | ● | ● | ● | ● | ▶ acción |
 | B1.7 | Buscar solo en mis trabajos o en los de mis compañeros. |  | ● |  |  |  | ▶ acción |
 | B1.8 | Pedir que me haga preguntas. | ● | ● | ● | ● | ● | ▶ acción |
+| B1.9 | Pedir un panorama del corpus. | ● | ● | ● | ● | ● | ▶ acción |
+| B1.10 | Preguntar por los datos de una hoja de cálculo. | ● | ● | ● | ● | ● | ▶ acción |
 
 ### B2. Valorar respuestas
 
@@ -55,6 +57,13 @@ El audio (B3.1, C1.3, C1.4) se graba solo en el video del participante.
 |---|---|:-:|:-:|:-:|:-:|:-:|---|
 | B3.1 | Dictar con el micrófono. | ● | ● | ● | ● | ● | ▶ acción |
 
+### B4. Estilo del ecosistema
+
+| # | Historia | Part. | Est. | Inv. | Resp. | Admin | Video |
+|---|---|:-:|:-:|:-:|:-:|:-:|---|
+| B4.1 | Preguntar en Generales con el estilo del ecosistema. | ● | ● | ● | ● | ● | ▶ acción |
+| B4.2 | Contar una experiencia en Resonancias con el estilo del ecosistema. | ● | ● | ● | ● | ● | ▶ acción |
+
 ## C. Aportar lo que sé
 
 ### C1. Subir y escribir
@@ -67,6 +76,7 @@ El audio (B3.1, C1.3, C1.4) se graba solo en el video del participante.
 | C1.4 | Corregir una transcripción. | ● | ● | ● | ● | ● | ◻ pantalla |
 | C1.5 | Elegir qué tipo de aporte es. |  |  | ● | ● | ● | ◻ pantalla |
 | C1.6 | Anonimizar un testimonio. |  |  | ● | ● | ● | ◻ pantalla |
+| C1.7 | Subir una hoja de cálculo. | ● | ● | ● | ● | ● | ▶ acción |
 
 ### C2. Organizar mis documentos
 
@@ -84,6 +94,8 @@ El audio (B3.1, C1.3, C1.4) se graba solo en el video del participante.
 | # | Historia | Part. | Est. | Inv. | Resp. | Admin | Video |
 |---|---|:-:|:-:|:-:|:-:|:-:|---|
 | C3.1 | Publicar un documento en el ecosistema. |  |  | ● | ● | ● | ◻ pantalla |
+| C3.2 | Publicar mi nota. |  | ● |  |  |  | ▶ acción |
+| C3.3 | Publicar los cambios de mi nota. |  | ● |  |  |  | ▶ acción |
 
 ## D. Explorar lo publicado
 
@@ -103,6 +115,9 @@ El audio (B3.1, C1.3, C1.4) se graba solo en el video del participante.
 | D2.2 | Cambiar a vista 3D. | ● | ● | ● | ● | ● | ▶ acción |
 | D2.3 | Buscar un tema, lugar u organización. | ● | ● | ● | ● | ● | ▶ acción |
 | D2.4 | Explorar lo que se relaciona con un tema. | ● | ● | ● | ● | ● | ▶ acción |
+| D2.5 | Ver cuántas entidades muestra el mapa. | ● | ● | ● | ● | ● | ▶ acción |
+| D2.6 | Abrir un tema. | ● | ● | ● | ● | ● | ▶ acción |
+| D2.7 | Ver qué notas enlazan dos temas. | ● | ● | ● | ● | ● | ▶ acción |
 
 ## E. Aprender e investigar
 

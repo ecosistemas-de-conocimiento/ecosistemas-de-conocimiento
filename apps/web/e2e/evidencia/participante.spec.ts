@@ -1,6 +1,10 @@
 import { test } from '@playwright/test';
 import { audio, biblioteca, conexiones, conversar, elegirEcosistema, limpiar, misDocumentos } from './comun';
 import { cerrarSesion, iniciarSesion, instalarSubtitulos } from './escena';
+import { nuncaEnV3 } from './v3';
+
+// V1/V2 walk-through; `EVID_VIDEO=v3` records `participante.v3.spec.ts` instead.
+nuncaEnV3();
 
 /** Participante (`member`): conversa, aporta y explora. Ve cuatro secciones. */
 test('participante', async ({ page }) => {

@@ -1,6 +1,10 @@
 import { test } from '@playwright/test';
 import { ECOSISTEMA, biblioteca, conexiones, conversar, cuidar, elegirEcosistema, limpiar, misDocumentos } from './comun';
 import { cerrarSesion, iniciarSesion, instalarSubtitulos } from './escena';
+import { nuncaEnV3 } from './v3';
+
+// V1/V2 walk-through; `EVID_VIDEO=v3` records `admin.v3.spec.ts` instead.
+nuncaEnV3();
 
 
 /** Administrador de la plataforma, responsable de varios ecosistemas: todo, más cambiar de ecosistema en Administración. */

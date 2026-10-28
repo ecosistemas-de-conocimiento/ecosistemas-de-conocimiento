@@ -4,6 +4,8 @@
 #
 #   apps/web/e2e/evidencia/correr.sh v1               # every role
 #   apps/web/e2e/evidencia/correr.sh v1 participante  # one role
+#   EVID_VIDEO=v3 apps/web/e2e/evidencia/correr.sh v3 investigador
+#                                     # V3: only `*.v3.spec.ts` run (v3.ts soloV3)
 #
 # ⚠ Why a container: on the dev box, other sessions' test suites create and
 # destroy throwaway Postgres containers every few seconds. Each one adds a
@@ -41,13 +43,22 @@ if [[ ! -f "$wav" ]]; then
     -t 25 -ac 1 -ar 48000 "$wav"
 fi
 
+# V3's participante uploads a spreadsheet (C1.7). Built fresh every run, on
+# the host (openpyxl; the image has none): its bytes then differ run to run.
+hoja="$web/e2e/evidencia/.videos/_hoja/casos-dengue.xlsx"
+if [[ "$video" == v3 ]]; then
+  mkdir -p "$(dirname "$hoja")"
+  python3 "$web/e2e/evidencia/hoja.py" "$hoja"
+fi
+
 status=0
 docker run --rm --init --ipc=host \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v "$root:$root" \
   -e EVID_ENV_FILE="$env_file" -e EVID_DEMO_USERS_FILE="$demo_file" \
-  -e EVID_FIXTURES_DIR="$main_repo/apps/web/e2e/fixtures" -e EVID_DICTADO_WAV="$wav" \
+  -e EVID_FIXTURES_DIR="$main_repo/apps/web/e2e/fixtures" -e EVID_DICTADO_WAV="$wav" -e EVID_HOJA_XLSX="$hoja" \
   -e EVID_VIDEO="$video" -e EVID_ADMIN_EMAIL -e EVID_HOLD_MS -e EVID_ECOSISTEMA -e EVID_WEB_URL -e EVID_LIMPIAR \
+  -e EVID_V3_TEMA -e EVID_V3_VECINO \
   -w "$web" mcr.microsoft.com/playwright:v1.62.1-noble \
   node node_modules/@playwright/test/cli.js test -c e2e/evidencia "$@" || status=$?
 
@@ -55,7 +66,9 @@ docker run --rm --init --ipc=host \
 out="$web/e2e/evidencia/.videos/$video"
 for dir in "$out"/.corrida/*-chromium "$out"/.corrida/*-movil; do
   [[ -f "$dir/video.webm" ]] || continue
-  rol="$(basename "$dir")"; rol="${rol%%-*}"
+  # `investigador-investigador-chromium` → investigador; a V3 spec's folder
+  # starts `investigador.v3-…` → investigador too (it lands under .videos/v3/).
+  rol="$(basename "$dir")"; rol="${rol%%-*}"; rol="${rol%.v3}"
   [[ "$rol" == limpieza ]] && continue
   # A failed run keeps its video beside, never over, a good one.
   if [[ -f "$dir/test-failed-1.png" ]]; then cp "$dir/video.webm" "$out/$rol.fallido.webm"

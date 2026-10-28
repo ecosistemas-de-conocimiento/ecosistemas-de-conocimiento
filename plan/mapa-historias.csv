@@ -1,14 +1,16 @@
-user type,participante,,,,,,,,,estudiante,,investigador,,,,,,,admin plataforma
-theme,entrar y orientarse,,conversar con el conocimiento,,,aportar lo que sé,,explorar lo publicado,,conversar con el conocimiento,aprender e investigar,aportar lo que sé,,aprender e investigar,cuidar el ecosistema,,,,cuidar el ecosistema
-epic,sesión,ecosistema,conversaciones,valorar respuestas,hablar en lugar de escribir,subir y escribir,organizar mis documentos,biblioteca,conexiones,buscar en mi grupo,mi investigación,aportar testimonios,publicar,acompañar estudiantes,revisión,miembros,ajustes,administración,administrar la plataforma
-user story grid:,,,,,,,,,,,,,,,,,,,
-sprint 0,,,,,,,,,,,,,,,,,,,
-,iniciar sesión,elegir un ecosistema,empezar con Iniciar,valorar una respuesta,dictar con el micrófono,subir un documento,ver mis documentos,buscar en la biblioteca,ver el mapa de conexiones,buscar solo en mis trabajos o en los de mis compañeros,ver mis temas,elegir qué tipo de aporte es,publicar un documento en el ecosistema,ver la actividad de un estudiante,ver los documentos detenidos,ver los miembros,activar o desactivar funciones,ver el resumen del ecosistema,elegir el respaldo del detector
-,cerrar sesión,moverse entre secciones,crear una conversación,decir por qué sirvió o no,,escribir una nota,ver los documentos sin conversación,filtrar por tipo,cambiar a vista 3D,,generar preguntas de investigación,anonimizar un testimonio,,leer las sugerencias,revisar un documento detenido,agregar un miembro,,ver quién ha aportado,cambiar de ecosistema
-,,,hacer una pregunta,quitar una valoración,,subir un audio,usar un documento en una conversación,leer un documento publicado,"buscar un tema, lugar u organización",,ver a mis compañeros,,,,aprobar o rechazar un documento detenido,cambiar el rol de un miembro,,filtrar todos los documentos,
-,,,leer las fuentes citadas,,,corregir una transcripción,fijar un documento como contexto,,explorar lo que se relaciona con un tema,,ver mis autores,,,,retirar un documento publicado,,,,
-,,,contar una experiencia en Resonancias,,,,descargar el original,,,,enviar una sugerencia,,,,,,,,
-,,,renombrar una conversación,,,,eliminar un documento,,,,compartir mi actividad,,,,,,,,
-,,,borrar una conversación,,,,,,,,,,,,,,,,
-,,,pedir que me haga preguntas,,,,,,,,,,,,,,,,
-backlog,,,,,,,,,,,,,,,,,,,
+user type,participante,,,,,,,,,,estudiante,,,investigador,,,,,,,admin plataforma
+theme,entrar y orientarse,,conversar con el conocimiento,,,,aportar lo que sé,,explorar lo publicado,,conversar con el conocimiento,aportar lo que sé,aprender e investigar,aportar lo que sé,,aprender e investigar,cuidar el ecosistema,,,,cuidar el ecosistema
+epic,sesión,ecosistema,conversaciones,valorar respuestas,hablar en lugar de escribir,estilo del ecosistema,subir y escribir,organizar mis documentos,biblioteca,conexiones,buscar en mi grupo,publicar mis notas,mi investigación,aportar testimonios,publicar,acompañar estudiantes,revisión,miembros,ajustes,administración,administrar la plataforma
+user story grid:,,,,,,,,,,,,,,,,,,,,,
+sprint 0,,,,,,,,,,,,,,,,,,,,,
+,iniciar sesión,elegir un ecosistema,empezar con Iniciar,valorar una respuesta,dictar con el micrófono,preguntar en Generales con el estilo del ecosistema,subir un documento,ver mis documentos,buscar en la biblioteca,ver el mapa de conexiones,buscar solo en mis trabajos o en los de mis compañeros,publicar mi nota,ver mis temas,elegir qué tipo de aporte es,publicar un documento en el ecosistema,ver la actividad de un estudiante,ver los documentos detenidos,ver los miembros,activar o desactivar funciones,ver el resumen del ecosistema,elegir el respaldo del detector
+,cerrar sesión,moverse entre secciones,crear una conversación,decir por qué sirvió o no,,contar una experiencia en Resonancias con el estilo del ecosistema,escribir una nota,ver los documentos sin conversación,filtrar por tipo,cambiar a vista 3D,,publicar los cambios de mi nota,generar preguntas de investigación,anonimizar un testimonio,,leer las sugerencias,revisar un documento detenido,agregar un miembro,,ver quién ha aportado,cambiar de ecosistema
+,,,hacer una pregunta,quitar una valoración,,,subir un audio,usar un documento en una conversación,leer un documento publicado,"buscar un tema, lugar u organización",,,ver a mis compañeros,,,,aprobar o rechazar un documento detenido,cambiar el rol de un miembro,,filtrar todos los documentos,
+,,,leer las fuentes citadas,,,,corregir una transcripción,fijar un documento como contexto,,explorar lo que se relaciona con un tema,,,ver mis autores,,,,retirar un documento publicado,,,,
+,,,contar una experiencia en Resonancias,,,,subir una hoja de cálculo,descargar el original,,ver cuántas entidades muestra el mapa,,,enviar una sugerencia,,,,,,,,
+,,,renombrar una conversación,,,,,eliminar un documento,,abrir un tema,,,compartir mi actividad,,,,,,,,
+,,,borrar una conversación,,,,,,,ver qué notas enlazan dos temas,,,,,,,,,,,
+,,,pedir que me haga preguntas,,,,,,,,,,,,,,,,,,
+,,,pedir un panorama del corpus,,,,,,,,,,,,,,,,,,
+,,,preguntar por los datos de una hoja de cálculo,,,,,,,,,,,,,,,,,,
+backlog,,,,,,,,,,,,,,,,,,,,,

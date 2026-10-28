@@ -14,6 +14,9 @@ const DICTADO_WAV = process.env.EVID_DICTADO_WAV ?? resolve(import.meta.dirname,
  *
  *   EVID_VIDEO=v1 pnpm --filter @edc/web exec playwright test -c e2e/evidencia
  *
+ *   EVID_VIDEO=v3 …  records only the `*.v3.spec.ts` files; every other value
+ *                    only the V1/V2 specs (`soloV3` / `nuncaEnV3` in `v3.ts`).
+ *
  * Runs against DEV by default (`EVID_WEB_URL` overrides): that is where the
  * per-role demo accounts live. Videos land in `e2e/evidencia/.videos/<EVID_VIDEO>/<rol>.webm`.
  *
@@ -50,7 +53,7 @@ export default defineConfig({
     {
       name: 'chromium',
       // Every role but participante, on a desk.
-      testIgnore: /participante\.spec\.ts/,
+      testIgnore: /participante(\.v3)?\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1440, height: 900 },
@@ -62,7 +65,8 @@ export default defineConfig({
       // that is the screen participants use. Chromium with Pixel 7's touch and
       // mobile flags, at an iPhone-size 390x844 viewport.
       name: 'movil',
-      testMatch: /participante\.spec\.ts/,
+      // V3's participante video (`participante.v3.spec.ts`) is on the phone too.
+      testMatch: /participante(\.v3)?\.spec\.ts/,
       use: {
         ...devices['Pixel 7'],
         viewport: { width: 390, height: 844 },

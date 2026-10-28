@@ -1,6 +1,10 @@
 import { test } from '@playwright/test';
 import { biblioteca, conexiones, conversar, cuidar, elegirEcosistema, limpiar, misDocumentos, seguimiento } from './comun';
 import { cerrarSesion, iniciarSesion, instalarSubtitulos } from './escena';
+import { nuncaEnV3 } from './v3';
+
+// V1/V2 walk-through; `EVID_VIDEO=v3` records `investigador.v3.spec.ts` instead.
+nuncaEnV3();
 
 const ECO = process.env.EVID_ECOSISTEMA_INVESTIGADOR ?? 'Semiosis práctica';
 

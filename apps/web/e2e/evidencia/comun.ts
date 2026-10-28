@@ -31,16 +31,16 @@ export async function elegirEcosistema(page: Page, nombre = ECOSISTEMA): Promise
   });
 }
 
-const respuestas = (page: Page) => page.getByRole('radiogroup', { name: /Valora esta respuesta/ });
+export const respuestas = (page: Page) => page.getByRole('radiogroup', { name: /Valora esta respuesta/ });
 
-async function preguntar(page: Page, texto: string): Promise<void> {
+export async function preguntar(page: Page, texto: string): Promise<void> {
   const antes = await respuestas(page).count();
   await page.getByTestId('composer-input').fill(texto);
   await page.getByTestId('composer-send').click();
   await expect(respuestas(page)).toHaveCount(antes + 1, { timeout: 180_000 });
 }
 
-async function renombrarActiva(page: Page, nombre: string): Promise<void> {
+export async function renombrarActiva(page: Page, nombre: string): Promise<void> {
   await abrirPanel(page, 'conversations');
   const fila = page.getByTestId('session-row').filter({ has: page.locator('[aria-current], .active, [data-active="true"]') });
   const objetivo = (await fila.count()) ? fila.first() : page.getByTestId('session-row').first();
@@ -51,6 +51,20 @@ async function renombrarActiva(page: Page, nombre: string): Promise<void> {
   await input.press('Enter');
   await expect(page.getByTestId('session-row').filter({ hasText: nombre })).toHaveCount(1);
   await cerrarPanel(page);
+}
+
+/** The last answer's sources, opened, with the pointer on the first one. No-op without sources. */
+export async function leerFuentes(page: Page): Promise<void> {
+  const fuentes = page.getByTestId('citation-sources').last();
+  if (!(await fuentes.count())) return;
+  await fuentes.scrollIntoViewIfNeeded();
+  // The list starts collapsed (chat-engine CitationCard): open it so the
+  // sources' titles are on screen, then point at the first one.
+  const abrir = fuentes.getByTestId('citation-sources-toggle');
+  if ((await abrir.count()) && (await abrir.getAttribute('aria-expanded')) !== 'true') await abrir.click();
+  await fuentes.scrollIntoViewIfNeeded();
+  const enlace = fuentes.getByRole('link').first();
+  if (await enlace.isVisible()) await enlace.hover();
 }
 
 /** Chat, ratings, documents in a conversation, and Resonancias. */
@@ -90,18 +104,7 @@ export async function conversar(page: Page, pregunta: string, experiencia: strin
     });
   }
   await escena(page, 'B1.2', () => preguntar(page, pregunta));
-  await escena(page, 'B1.3', async () => {
-    const fuentes = page.getByTestId('citation-sources').last();
-    if (!(await fuentes.count())) return;
-    await fuentes.scrollIntoViewIfNeeded();
-    // The list starts collapsed (chat-engine CitationCard): open it so the
-    // sources' titles are on screen, then point at the first one.
-    const abrir = fuentes.getByTestId('citation-sources-toggle');
-    if ((await abrir.count()) && (await abrir.getAttribute('aria-expanded')) !== 'true') await abrir.click();
-    await fuentes.scrollIntoViewIfNeeded();
-    const enlace = fuentes.getByRole('link').first();
-    if (await enlace.isVisible()) await enlace.hover();
-  });
+  await escena(page, 'B1.3', () => leerFuentes(page));
   const estrellas = respuestas(page).last();
   await escena(page, 'B2.1', () => estrellas.getByRole('radio').nth(3).click());
   await escena(page, 'B2.2', async () => {
@@ -174,7 +177,7 @@ async function esperarSubida(page: Page, accion: () => Promise<void>): Promise<s
 }
 
 /** One card in the documents drawer, by document id (`detach-<id>` is on every attached card). */
-function tarjeta(page: Page, id: string): Locator {
+export function tarjeta(page: Page, id: string): Locator {
   return page
     .getByTestId('panel-documents')
     .locator('div.bg-surface-strong.shadow-1')
@@ -185,7 +188,7 @@ function tarjeta(page: Page, id: string): Locator {
  * Wait until the card's ingest chip says `done`, logging every state it passes
  * through with the elapsed time (the run's own measure of the pipeline).
  */
-async function seguirChip(card: Locator, done: RegExp, etiqueta: string, timeoutMs = 8 * 60_000): Promise<string> {
+export async function seguirChip(card: Locator, done: RegExp, etiqueta: string, timeoutMs = 8 * 60_000): Promise<string> {
   const chip = card.locator('.chip.ingest-pending, .chip.ingest-ready, .chip.ingest-failed');
   const t0 = Date.now();
   let ultimo = '';
@@ -325,9 +328,9 @@ export async function biblioteca(page: Page, busqueda: string): Promise<void> {
   });
 }
 
-export async function conexiones(page: Page, busqueda: string): Promise<void> {
-  const mapa = page.getByTestId('grafo-mapa');
-  const listo = mapa.or(page.getByTestId('grafo-vacio')).or(page.getByTestId('grafo-desactivado')).first();
+/** D2.1: Conexiones from the menu, until the map (or its empty state) is on screen. */
+export async function abrirConexiones(page: Page): Promise<void> {
+  const listo = page.getByTestId('grafo-mapa').or(page.getByTestId('grafo-vacio')).or(page.getByTestId('grafo-desactivado')).first();
   await escena(page, 'D2.1', async () => {
     await ir(page, 'grafo');
     // ⚠ Measured on dev 2026-10-27 (org 6, during an ingest run): /grafo
@@ -342,6 +345,11 @@ export async function conexiones(page: Page, busqueda: string): Promise<void> {
     }
     await expect(listo).toBeVisible({ timeout: 45_000 });
   });
+}
+
+export async function conexiones(page: Page, busqueda: string): Promise<void> {
+  const mapa = page.getByTestId('grafo-mapa');
+  await abrirConexiones(page);
   // An ecosistema with no graph yet (or the switch off) shows its empty state; the rest needs a map.
   if (!(await mapa.count())) return;
   if (await page.getByTestId('grafo-3d').count()) {
@@ -371,10 +379,14 @@ export async function conexiones(page: Page, busqueda: string): Promise<void> {
  */
 const SOBRAS = /evid-\d{13}/;
 
-/** The run's own cleanup, recorded as the delete stories. */
-export async function limpiar(page: Page): Promise<void> {
+/**
+ * The run's own cleanup, recorded as the delete stories. `documentos: false`
+ * for a run that uploads nothing (V3 investigador, Discapacidad): no
+ * "Eliminar un documento." caption over an empty list.
+ */
+export async function limpiar(page: Page, opciones: { documentos?: boolean } = {}): Promise<void> {
   page.on('dialog', (d) => void d.accept());
-  await escena(page, 'C2.6', async () => {
+  if (opciones.documentos !== false) await escena(page, 'C2.6', async () => {
     // By address, not the menu: cleanup must work from whatever page a failure left behind.
     await page.goto('/documentos');
     const filas = page.locator('[data-testid^="owned-doc-"]', { hasText: SOBRAS });

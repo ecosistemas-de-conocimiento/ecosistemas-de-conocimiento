@@ -99,6 +99,9 @@ const EPICA_PROPIA: Record<string, string> = {
   'C1.6': 'aportar testimonios',
   'F3.2': 'administrar la plataforma',
   'F4.2': 'administrar la plataforma',
+  // The investigador holds `publicar` (C3.1) in the same theme.
+  'C3.2': 'publicar mis notas',
+  'C3.3': 'publicar mis notas',
 };
 
 const columnas: Columna[] = [];

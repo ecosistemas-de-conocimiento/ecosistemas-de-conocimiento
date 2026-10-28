@@ -89,6 +89,11 @@ export const MAPA: readonly Tematica[] = [
           h('B1.6', 'Borrar una conversación.', TODOS),
           h('B1.7', 'Buscar solo en mis trabajos o en los de mis compañeros.', ['estudiante']),
           h('B1.8', 'Pedir que me haga preguntas.', TODOS),
+          // V3: an overview question skips passage retrieval and cites the graph
+          // and the published list (apps/web `lib/server/engine/overview.ts`).
+          h('B1.9', 'Pedir un panorama del corpus.', TODOS),
+          // V3: the question reads a spreadsheet attached to the conversation (C1.7).
+          h('B1.10', 'Preguntar por los datos de una hoja de cálculo.', TODOS),
         ],
       },
       {
@@ -105,6 +110,16 @@ export const MAPA: readonly Tematica[] = [
         nombre: 'Hablar en lugar de escribir',
         // Recorded in the participante video only (owner decision 2026-10-28).
         historias: [h('B3.1', 'Dictar con el micrófono.', TODOS)],
+      },
+      {
+        id: 'B4',
+        nombre: 'Estilo del ecosistema',
+        // V3: the ecosistema's answer style (backend `lib/answerStyle.ts`), set by
+        // a platform admin; Discapacidad (org 7) has one for both tabs.
+        historias: [
+          h('B4.1', 'Preguntar en Generales con el estilo del ecosistema.', TODOS),
+          h('B4.2', 'Contar una experiencia en Resonancias con el estilo del ecosistema.', TODOS),
+        ],
       },
     ],
   },
@@ -124,6 +139,7 @@ export const MAPA: readonly Tematica[] = [
           h('C1.4', 'Corregir una transcripción.', TODOS, 'pantalla'),
           h('C1.5', 'Elegir qué tipo de aporte es.', REVISORES, 'pantalla'),
           h('C1.6', 'Anonimizar un testimonio.', REVISORES, 'pantalla'),
+          h('C1.7', 'Subir una hoja de cálculo.', TODOS),
         ],
       },
       {
@@ -141,7 +157,13 @@ export const MAPA: readonly Tematica[] = [
       {
         id: 'C3',
         nombre: 'Publicar',
-        historias: [h('C3.1', 'Publicar un documento en el ecosistema.', REVISORES, 'pantalla')],
+        historias: [
+          h('C3.1', 'Publicar un documento en el ecosistema.', REVISORES, 'pantalla'),
+          // V3, video (2): a student's own note feeds their view on "Publicar".
+          // Stubbed in `estudiante.v3.spec.ts` until the edit lane lands.
+          h('C3.2', 'Publicar mi nota.', ['estudiante']),
+          h('C3.3', 'Publicar los cambios de mi nota.', ['estudiante']),
+        ],
       },
     ],
   },
@@ -166,6 +188,11 @@ export const MAPA: readonly Tematica[] = [
           h('D2.2', 'Cambiar a vista 3D.', TODOS),
           h('D2.3', 'Buscar un tema, lugar u organización.', TODOS),
           h('D2.4', 'Explorar lo que se relaciona con un tema.', TODOS),
+          // V3: the count line says "1,500 de N entidades" when the view is capped (apps/web `lib/graph.ts` resultsSummary).
+          h('D2.5', 'Ver cuántas entidades muestra el mapa.', TODOS),
+          h('D2.6', 'Abrir un tema.', TODOS),
+          // V3: in Semiosis práctica a note's [[enlaces]] add `relacionado_con` edges (backend `lib/graph/wikilinks.ts`).
+          h('D2.7', 'Ver qué notas enlazan dos temas.', TODOS),
         ],
       },
     ],

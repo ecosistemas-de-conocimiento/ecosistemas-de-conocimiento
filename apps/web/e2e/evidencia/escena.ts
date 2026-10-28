@@ -10,7 +10,8 @@ import { historia } from './historias';
  *   EVID_ENV_FILE        default ~/chamba/cide/.env
  *                        (EDC_DEV_PARTICIPANT_*, EDC_DEV_SEED_ADMIN_PASSWORD)
  *   EVID_DEMO_USERS_FILE default ~/chamba/cide/.env.demo-users
- *                        (DEMO_ESTUDIANTE1_*, DEMO_INVESTIGADOR_SEMIOSIS_*;
+ *                        (DEMO_ESTUDIANTE1_*, DEMO_INVESTIGADOR_SEMIOSIS_*,
+ *                        DEMO_INVESTIGADOR_DENGUE_*;
  *                        written by backend `seed/demoUsers.ts`)
  */
 
@@ -20,7 +21,7 @@ export const RUN_ID = `evid-${Date.now()}`;
 const HOLD_BEFORE_MS = Number(process.env.EVID_HOLD_MS ?? 2200);
 const HOLD_AFTER_MS = Math.round(HOLD_BEFORE_MS * 0.6);
 
-export type Cuenta = 'participante' | 'estudiante' | 'investigador' | 'admin';
+export type Cuenta = 'participante' | 'estudiante' | 'investigador' | 'investigador-dengue' | 'admin';
 
 function parseDotenv(path: string): Map<string, string> {
   const out = new Map<string, string>();
@@ -40,6 +41,13 @@ const KEYS: Record<Cuenta, { file: 'env' | 'demo'; email: string; password: stri
     file: 'demo',
     email: 'DEMO_INVESTIGADOR_SEMIOSIS_EMAIL',
     password: 'DEMO_INVESTIGADOR_SEMIOSIS_PASSWORD',
+  },
+  // Investigador of ecosistemas 6 (Prevención del dengue) and 7 (Discapacidad):
+  // backend `seed/demoUsers.ts`. The V3 Discapacidad video (answer style).
+  'investigador-dengue': {
+    file: 'demo',
+    email: 'DEMO_INVESTIGADOR_DENGUE_EMAIL',
+    password: 'DEMO_INVESTIGADOR_DENGUE_PASSWORD',
   },
   // The seeded platform admin; owner (responsable) of ecosistemas 1, 3, 6 and 7 on dev.
   // ⚠ Its address is the dev backend container's SEED_ADMIN_EMAIL, which cide/.env
