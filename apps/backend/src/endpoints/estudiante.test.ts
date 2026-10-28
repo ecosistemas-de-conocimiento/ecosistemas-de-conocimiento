@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { Endpoint, PayloadRequest } from 'payload'
 
 import { invalidateFeatures } from '../lib/features'
+import { TESTIMONIO_CONSENT_VERSION } from '../lib/student/testimonioConsent'
 import type { Labelled, StudentRow } from '../lib/student/queries'
 import { makeEstudianteEndpoints, type StudentQueries } from './estudiante'
 
@@ -23,7 +24,7 @@ type Membership = { user: number; organization: number; role: string }
 interface World {
   features: Record<number, Record<string, boolean>>
   memberships: Membership[]
-  profiles: Array<{ id: number; user: number; organization: number; shareWithPeers: boolean; shareActivity: boolean; shareTestimoniosAt?: string | null }>
+  profiles: Array<{ id: number; user: number; organization: number; shareWithPeers: boolean; shareActivity: boolean; shareTestimoniosAt?: string | null; shareTestimoniosVersion?: number | null }>
   suggestions: Array<Record<string, unknown>>
   writes: Array<{ op: string; collection: string; data: unknown }>
 }
@@ -347,7 +348,7 @@ describe('activity report', () => {
   it('studentTestimonios on: the consenting student\'s testimonios, read for that student only', async () => {
     const { w, call, Q } = setup()
     w.features[ORG] = { studentView: true, studentTestimonios: true }
-    w.profiles.push({ id: 1, user: 1, organization: ORG, shareWithPeers: false, shareActivity: true, shareTestimoniosAt: '2026-10-27T00:00:00.000Z' })
+    w.profiles.push({ id: 1, user: 1, organization: ORG, shareWithPeers: false, shareActivity: true, shareTestimoniosAt: '2026-10-27T00:00:00.000Z', shareTestimoniosVersion: TESTIMONIO_CONSENT_VERSION })
     const res = await call('get', '/estudiante/reporte', { as: user(5), qs: `organization=${ORG}&user=1` })
     expect((res.body.reporte as { testimonios: unknown }).testimonios).toEqual([
       { id: 300, createdAt: '2026-10-02', state: 'visible', title: 'Testimonio', text: 'Habló [Persona A].' },
@@ -357,6 +358,42 @@ describe('activity report', () => {
     const asStudent = await call('get', '/estudiante/reporte', { as: user(2), qs: `organization=${ORG}&user=1` })
     expect(asStudent.status).toBe(403)
     expect(Q.calls.filter((c) => c.startsWith('testimonios:'))).toEqual(['testimonios:1'])
+  })
+
+  it('🔴 a testimonio consent given under an older wording (no version, or an old one) does not count', async () => {
+    for (const version of [undefined, null, TESTIMONIO_CONSENT_VERSION - 1]) {
+      const { w, call, Q } = setup()
+      w.features[ORG] = { studentView: true, studentTestimonios: true }
+      invalidateFeatures()
+      w.profiles.push({ id: 1, user: 1, organization: ORG, shareWithPeers: false, shareActivity: true, shareTestimoniosAt: '2026-10-27T00:00:00.000Z', shareTestimoniosVersion: version })
+      const res = await call('get', '/estudiante/reporte', { as: user(5), qs: `organization=${ORG}&user=1` })
+      expect(res.status).toBe(200)
+      expect('testimonios' in (res.body.reporte as object)).toBe(false)
+      expect(Q.calls.filter((c) => c.startsWith('testimonios:'))).toEqual([])
+      const mine = await call('get', '/estudiante', { as: user(1), qs: `organization=${ORG}` })
+      expect((mine.body.perfil as { shareTestimonios: boolean }).shareTestimonios).toBe(false)
+    }
+  })
+
+  it('🔴 accepting stores the wording version the page showed; any other version is refused', async () => {
+    const { w, call } = setup()
+    w.features[ORG] = { studentView: true, studentTestimonios: true }
+    invalidateFeatures()
+    for (const consentVersion of [undefined, TESTIMONIO_CONSENT_VERSION - 1, TESTIMONIO_CONSENT_VERSION + 1, '2']) {
+      const res = await call('patch', '/estudiante/perfil', { as: user(1), body: { organization: ORG, shareTestimonios: true, consentVersion } })
+      expect(res.status).toBe(409)
+    }
+    expect(w.profiles).toEqual([])
+    const ok = await call('patch', '/estudiante/perfil', {
+      as: user(1),
+      body: { organization: ORG, shareTestimonios: true, consentVersion: TESTIMONIO_CONSENT_VERSION },
+    })
+    expect(ok.status).toBe(200)
+    expect(ok.body.perfil).toEqual({ shareWithPeers: false, shareActivity: true, shareTestimonios: true })
+    expect(w.profiles[0]).toMatchObject({ shareTestimoniosVersion: TESTIMONIO_CONSENT_VERSION })
+    const off = await call('patch', '/estudiante/perfil', { as: user(1), body: { organization: ORG, shareTestimonios: false } })
+    expect(off.body.perfil).toMatchObject({ shareTestimonios: false })
+    expect(w.profiles[0]).toMatchObject({ shareTestimoniosAt: null, shareTestimoniosVersion: null })
   })
 
   it('overview tells the student whether testimonios reach the report (for the consent wording)', async () => {

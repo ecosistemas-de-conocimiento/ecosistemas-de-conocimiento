@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { TESTIMONIO_CONSENT_VERSION } from '$lib/consent';
+
 const savePerfil = vi.fn(async () => ({ ok: true, value: {} }));
 vi.mock('$lib/server/estudiante', () => ({ fetchOverview: vi.fn(), postSuggestion: vi.fn(), savePerfil }));
 vi.mock('$lib/server/ecosystem', () => ({ resolveEcosystem: async () => ({ selected: { id: '1' } }) }));
@@ -21,9 +23,9 @@ const event = (form: Record<string, string>) =>
   }) as never;
 
 describe('/estudiante perfil action', () => {
-  it('passes the testimonio consent through; the backend decides whether it may be given', async () => {
+  it('passes the testimonio consent through with the wording version shown; the backend decides', async () => {
     await actions.perfil!(event({ key: 'shareTestimonios', value: 'true' }));
-    expect(savePerfil).toHaveBeenLastCalledWith('tok', '1', { shareTestimonios: true });
+    expect(savePerfil).toHaveBeenLastCalledWith('tok', '1', { shareTestimonios: true, consentVersion: TESTIMONIO_CONSENT_VERSION });
     await actions.perfil!(event({ key: 'shareTestimonios', value: 'false' }));
     expect(savePerfil).toHaveBeenLastCalledWith('tok', '1', { shareTestimonios: false });
   });

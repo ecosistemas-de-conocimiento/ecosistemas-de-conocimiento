@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
 
-import { CONSENT_ACTIVITY, CONSENT_ACTIVITY_WITH_TESTIMONIOS } from '$lib/consent';
+import { CONSENT_ACTIVITY, CONSENT_ACTIVITY_WITH_TESTIMONIOS, TESTIMONIO_CONSENT_VERSION } from '$lib/consent';
 
 /**
  * 🔴 The "share my activity" consent says what the teacher will see. Switch
@@ -46,10 +46,12 @@ describe('/estudiante — activity consent wording', () => {
     }
   });
 
-  it('🔴 switch on: a separate testimonio consent line, with the approved wording (owner ruling Q19)', () => {
+  it('🔴 switch on: a separate testimonio consent line naming every reader, version 2 (owner 2026-10-28)', () => {
     expect(CONSENT_ACTIVITY_WITH_TESTIMONIOS).toBe(
-      'Compartir mi actividad con el equipo del ecosistema. Mis docentes e investigadores también verán mis testimonios, solo en versión anonimizada.',
+      'Compartir mi actividad con el equipo del ecosistema. El equipo del ecosistema (docentes, investigadores y responsables) y la administración de la plataforma también verán mis testimonios publicados, solo en versión anonimizada.',
     );
+    // Changing the wording without bumping the version fails here and in the backend's testimonioConsent.test.ts.
+    expect(TESTIMONIO_CONSENT_VERSION).toBe(2);
     const body = page(true);
     expect(body).toContain(CONSENT_ACTIVITY);
     expect(body).toContain(CONSENT_ACTIVITY_WITH_TESTIMONIOS);

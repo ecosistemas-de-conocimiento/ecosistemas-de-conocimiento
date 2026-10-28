@@ -12,6 +12,7 @@ import * as migration_20261027_053800_student_view from './20261027_053800_stude
 import * as migration_20261027_061014_student_view_fk_cascade from './20261027_061014_student_view_fk_cascade';
 import * as migration_20261027_225429_documents_public_figures from './20261027_225429_documents_public_figures';
 import * as migration_20261028_054402_student_testimonio_consent from './20261028_054402_student_testimonio_consent';
+import * as migration_20261028_083327_student_testimonio_consent_version from './20261028_083327_student_testimonio_consent_version';
 
 export const migrations = [
   {
@@ -82,6 +83,11 @@ export const migrations = [
   {
     up: migration_20261028_054402_student_testimonio_consent.up,
     down: migration_20261028_054402_student_testimonio_consent.down,
-    name: '20261028_054402_student_testimonio_consent'
+    name: '20261028_054402_student_testimonio_consent',
+  },
+  {
+    up: migration_20261028_083327_student_testimonio_consent_version.up,
+    down: migration_20261028_083327_student_testimonio_consent_version.down,
+    name: '20261028_083327_student_testimonio_consent_version'
   },
 ];

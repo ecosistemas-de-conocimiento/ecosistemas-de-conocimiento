@@ -90,7 +90,11 @@ export async function fetchStudentAccess(token: string | undefined, org: string 
 export const fetchOverview = (token: string | undefined, org: string) =>
   call<StudentOverview>(token, `/api/estudiante?${qs({ organization: org })}`);
 
-export const savePerfil = (token: string | undefined, org: string, patch: Partial<StudentOverview['perfil']>) =>
+export const savePerfil = (
+  token: string | undefined,
+  org: string,
+  patch: Partial<StudentOverview['perfil']> & { consentVersion?: number },
+) =>
   call<{ perfil: StudentOverview['perfil'] }>(token, '/api/estudiante/perfil', {
     method: 'PATCH',
     body: JSON.stringify({ organization: org, ...patch }),

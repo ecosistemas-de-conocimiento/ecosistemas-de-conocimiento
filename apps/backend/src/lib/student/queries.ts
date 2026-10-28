@@ -25,6 +25,7 @@
 
 import { sql } from '@payloadcms/db-postgres'
 
+import { TESTIMONIO_CONSENT_VERSION } from './testimonioConsent'
 import {
   intArray,
   notNoise,
@@ -356,7 +357,8 @@ export interface TestimonioRow {
  * are `mayReadGatedOriginal`'s columns, and this read does not widen them.
  *
  * 🔴 THE CONSENT IS IN THE SAME READ: the join on `student_profiles`
- * (`share_activity` AND `share_testimonios_at`, owner ruling Q20). The caller's
+ * (`share_activity` AND `share_testimonios_at` AND the CURRENT wording's
+ * `share_testimonios_version`, owner ruling Q20, `testimonioConsent.ts`). The caller's
  * earlier consent check decides whether the report has the key; this one
  * closes the race where a withdrawal lands between that check and this read.
  *
@@ -386,6 +388,7 @@ export async function testimoniosOf(
       FROM documents d
       JOIN student_profiles sp ON sp.user_id = d.uploaded_by_id AND sp.organization_id = ${organizationId}
                               AND sp.share_activity = true AND sp.share_testimonios_at IS NOT NULL
+                              AND sp.share_testimonios_version = ${TESTIMONIO_CONSENT_VERSION}
      WHERE d.organization_id = ${organizationId} AND d.uploaded_by_id = ${userId}
        AND d.content_kind = 'testimonio'
        AND d.publication_status = 'published'

@@ -10,7 +10,9 @@ import type { Access, CollectionConfig } from 'payload'
  *     testimonios, anonymised (owner ruling Q20: a consent given while
  *     `studentTestimonios` was off does not cover them). NULL = not given or
  *     withdrawn. Set only while the switch is on, cleared on withdrawal and
- *     whenever `shareActivity` goes off.
+ *     whenever `shareActivity` goes off;
+ *   · `shareTestimoniosVersion` — the consent wording's version at that moment.
+ *     Only the CURRENT version counts (`lib/student/testimonioConsent.ts`).
  *
  * 🔴 Server-only. `endpoints/estudiante.ts` is the one reader and writer; it
  * always keys the row on the CALLER, so nobody can flip someone else's consent.
@@ -27,5 +29,8 @@ export const StudentProfiles: CollectionConfig = {
     { name: 'shareWithPeers', type: 'checkbox', required: true, defaultValue: false },
     { name: 'shareActivity', type: 'checkbox', required: true, defaultValue: false },
     { name: 'shareTestimoniosAt', type: 'date', admin: { date: { pickerAppearance: 'dayAndTime' } } },
+    // Which wording `shareTestimoniosAt` was given under (`lib/student/testimonioConsent.ts`).
+    // NULL = an older wording, or none: it does not count.
+    { name: 'shareTestimoniosVersion', type: 'number' },
   ],
 }

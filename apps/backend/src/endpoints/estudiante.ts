@@ -3,7 +3,7 @@
  *
  *   GET   /api/estudiante/acceso?organization=<id>     { student, teacher }
  *   GET   /api/estudiante?organization=<id>            my topics, peers, authors   estudiante
- *   PATCH /api/estudiante/perfil                       { organization, shareWithPeers?, shareActivity?, shareTestimonios? }  estudiante
+ *   PATCH /api/estudiante/perfil                       { organization, shareWithPeers?, shareActivity?, shareTestimonios?, consentVersion? }  estudiante
  *   GET   /api/estudiante/alcance?organization=&alcance=mios|companeros   { documentIds }  estudiante
  *   POST  /api/sugerencias                             { organization, kind, text }  estudiante
  *   GET   /api/sugerencias?organization=<id>           investigador · responsable
@@ -46,6 +46,7 @@ import * as realQueries from '../lib/student/queries'
 import type { StudentDb } from '../lib/student/queries'
 
 import { errorResponse, getAuthenticatedUser, jsonResponse, queryParam, readJsonBody } from './http'
+import { isCurrentTestimonioConsent, TESTIMONIO_CONSENT_VERSION } from '../lib/student/testimonioConsent'
 
 export const STUDENT_VIEW_OFF = 'No disponible.'
 const STUDENTS_ONLY = 'Solo para estudiantes.'
@@ -127,7 +128,7 @@ const db = (req: PayloadRequest): StudentDb => req.payload as unknown as Student
 interface Profile {
   shareWithPeers: boolean
   shareActivity: boolean
-  /** 🔴 The testimonio consent (owner ruling Q20): `shareTestimoniosAt` is set. */
+  /** 🔴 The testimonio consent (owner ruling Q20): given, on the CURRENT wording (`testimonioConsent.ts`). */
   shareTestimonios: boolean
 }
 
@@ -148,7 +149,7 @@ async function findProfile(
     id: row.id,
     shareWithPeers: row.shareWithPeers === true,
     shareActivity: row.shareActivity === true,
-    shareTestimonios: typeof row.shareTestimoniosAt === 'string' && row.shareTestimoniosAt !== '',
+    shareTestimonios: isCurrentTestimonioConsent(row),
   }
 }
 
@@ -242,7 +243,10 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
         patch.shareActivity = body.shareActivity
         // 🔴 Withdrawing activity withdraws testimonios too; sharing it again
         // does not bring them back without the testimonio consent itself.
-        if (body.shareActivity === false) patch.shareTestimoniosAt = null
+        if (body.shareActivity === false) {
+          patch.shareTestimoniosAt = null
+          patch.shareTestimoniosVersion = null
+        }
       }
       if (body.shareTestimonios === true) {
         // 🔴 Only under the wording that names testimonios, i.e. switch on.
@@ -250,10 +254,18 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
           return errorResponse(400, 'No disponible.')
         }
         if (body.shareActivity === false) return errorResponse(400, 'Valor no válido.')
+        // 🔴 The page names the wording it showed (`apps/web/src/lib/consent.ts`).
+        // A page from before a wording change cannot record a consent to the
+        // new one: refused, and the student reloads and reads it.
+        if (body.consentVersion !== TESTIMONIO_CONSENT_VERSION) {
+          return errorResponse(409, 'El texto del consentimiento cambió. Recarga la página y léelo de nuevo.')
+        }
         patch.shareActivity = true
         patch.shareTestimoniosAt = new Date().toISOString()
+        patch.shareTestimoniosVersion = TESTIMONIO_CONSENT_VERSION
       } else if (body.shareTestimonios === false) {
         patch.shareTestimoniosAt = null
+        patch.shareTestimoniosVersion = null
       }
       if (Object.keys(patch).length === 0) return errorResponse(400, 'Nada que guardar.')
       const current = await findProfile(req, g)

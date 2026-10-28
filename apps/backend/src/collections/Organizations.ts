@@ -82,7 +82,7 @@ export const clearTestimonioConsentWhenOff: CollectionAfterChangeHook = async ({
   await req.payload.update({
     collection: 'studentProfiles' as never,
     where: { organization: { equals: id } },
-    data: { shareTestimoniosAt: null } as never,
+    data: { shareTestimoniosAt: null, shareTestimoniosVersion: null } as never,
     depth: 0,
     overrideAccess: true,
     req,

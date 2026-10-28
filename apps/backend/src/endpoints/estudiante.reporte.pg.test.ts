@@ -22,6 +22,7 @@ import type { Endpoint, Payload, PayloadRequest } from 'payload'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { invalidateFeatures } from '../lib/features'
+import { TESTIMONIO_CONSENT_VERSION as V } from '../lib/student/testimonioConsent'
 import { bootPayload, dockerOk, shutdown, startRealPostgres, type RealPostgres } from '../lib/testing/realPostgres'
 import { estudianteEndpoints } from './estudiante'
 import { funcionesEndpoints } from './funciones'
@@ -118,8 +119,8 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
       INSERT INTO memberships (user_id, organization_id, role) VALUES
         (2, 1, 'investigador'), (3, 1, 'owner'), (4, 1, 'estudiante'), (7, 1, 'estudiante'),
         (5, 2, 'estudiante'), (6, 2, 'investigador');
-      INSERT INTO student_profiles (user_id, organization_id, share_with_peers, share_activity, share_testimonios_at) VALUES
-        (4, 1, false, true, now()), (7, 1, true, true, now()), (5, 2, false, true, now());
+      INSERT INTO student_profiles (user_id, organization_id, share_with_peers, share_activity, share_testimonios_at, share_testimonios_version) VALUES
+        (4, 1, false, true, now(), ${V}), (7, 1, true, true, now(), ${V}), (5, 2, false, true, now(), ${V});
       INSERT INTO documents (id, organization_id, uploaded_by_id, name, publication_status, content_kind,
                              anonymisation_status, extracted_text, body_markdown, redacted_text, held_text,
                              testimonio_title, created_at) VALUES
@@ -250,7 +251,7 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
       invalidateFeatures()
     })
     afterAll(async () => {
-      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = true, share_testimonios_at = now() WHERE user_id = ${ANA}`))
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = true, share_testimonios_at = now(), share_testimonios_version = ${V} WHERE user_id = ${ANA}`))
     })
 
     it('an activity consent given without it (switch was off) shows no testimonios; documentos still show', async () => {
@@ -262,9 +263,33 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
       expect(res.text).not.toMatch(/Habló|El río/)
     })
 
+    it('🔴 a consent given under the earlier wording (version NULL or older) shows no testimonios (owner ruling Q20)', async () => {
+      const Q = await import('../lib/student/queries')
+      for (const version of ['NULL', String(V - 1)]) {
+        await pg!.db.execute(
+          sql.raw(`UPDATE student_profiles SET share_activity = true, share_testimonios_at = now(), share_testimonios_version = ${version} WHERE user_id = ${ANA}`),
+        )
+        expect(await testimonios()).toBeUndefined()
+        expect(await Q.testimoniosOf({ db: { drizzle: pg!.db as never } }, ECO_A, ANA)).toEqual([])
+        const mine = await savePerfil(ANA, { organization: ECO_A, shareWithPeers: false })
+        expect(mine.body.perfil).toMatchObject({ shareActivity: true, shareTestimonios: false })
+      }
+    })
+
+    it('🔴 accepting stores the version (read back through Payload as the same number); a stale page is refused', async () => {
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_testimonios_at = NULL, share_testimonios_version = NULL WHERE user_id = ${ANA}`))
+      expect((await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true })).status).toBe(409)
+      expect((await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true, consentVersion: V - 1 })).status).toBe(409)
+      expect(await consentAt(ANA, ECO_A)).toBeNull()
+      const ok = await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true, consentVersion: V })
+      expect(ok.body.perfil).toMatchObject({ shareTestimonios: true })
+      const row = await pg!.db.execute(sql.raw(`SELECT share_testimonios_version::int AS v FROM student_profiles WHERE user_id = ${ANA} AND organization_id = 1`))
+      expect((row as unknown as { rows: Array<{ v: number }> }).rows[0]?.v).toBe(V)
+    })
+
     it('accepting records the moment and shows them; withdrawing clears it and hides them at once', async () => {
       await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_testimonios_at = NULL WHERE user_id = ${ANA}`))
-      const accepted = await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true })
+      const accepted = await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true, consentVersion: V })
       expect(accepted.status).toBe(200)
       expect(accepted.body.perfil).toMatchObject({ shareActivity: true, shareTestimonios: true })
       expect(await consentAt(ANA, ECO_A)).not.toBeNull()
@@ -277,7 +302,7 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
     })
 
     it('withdrawing the activity consent clears the testimonio consent too', async () => {
-      await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true })
+      await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true, consentVersion: V })
       await savePerfil(ANA, { organization: ECO_A, shareActivity: false })
       expect(await consentAt(ANA, ECO_A)).toBeNull()
       // Sharing activity again does not bring testimonios back by itself.
@@ -288,7 +313,7 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
 
     it('🔴 a conflicting body (withdraw activity, give testimonios) is refused, and nothing moves', async () => {
       await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = true, share_testimonios_at = NULL WHERE user_id = ${ANA}`))
-      expect((await savePerfil(ANA, { organization: ECO_A, shareActivity: false, shareTestimonios: true })).status).toBe(400)
+      expect((await savePerfil(ANA, { organization: ECO_A, shareActivity: false, shareTestimonios: true, consentVersion: V })).status).toBe(400)
       expect(await consentAt(ANA, ECO_A)).toBeNull()
       const row = await pg!.db.execute(sql.raw(`SELECT share_activity FROM student_profiles WHERE user_id = ${ANA} AND organization_id = 1`))
       expect((row as unknown as { rows: Array<{ share_activity: boolean }> }).rows[0]?.share_activity).toBe(true)
@@ -296,7 +321,7 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
 
     it('giving the testimonio consent also turns activity sharing on', async () => {
       await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = false, share_testimonios_at = NULL WHERE user_id = ${ANA}`))
-      const res = await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true })
+      const res = await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true, consentVersion: V })
       expect(res.status).toBe(200)
       expect(res.body.perfil).toMatchObject({ shareActivity: true, shareTestimonios: true })
       expect(((await testimonios()) as Array<{ id: number }>).map((t) => t.id)).toContain(20)
@@ -305,16 +330,16 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
     it('🔴 testimoniosOf itself checks the consent in the same read (no withdraw-then-read race)', async () => {
       const Q = await import('../lib/student/queries')
       const read = () => Q.testimoniosOf({ db: { drizzle: pg!.db as never } }, ECO_A, ANA)
-      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = true, share_testimonios_at = now() WHERE user_id = ${ANA}`))
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = true, share_testimonios_at = now(), share_testimonios_version = ${V} WHERE user_id = ${ANA}`))
       expect((await read()).length).toBeGreaterThan(0)
       await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_testimonios_at = NULL WHERE user_id = ${ANA}`))
       expect(await read()).toEqual([])
-      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = false, share_testimonios_at = now() WHERE user_id = ${ANA}`))
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = false, share_testimonios_at = now(), share_testimonios_version = ${V} WHERE user_id = ${ANA}`))
       expect(await read()).toEqual([])
     })
 
     it('🔴 switching studentTestimonios OFF clears every consent in that ecosistema; off→on needs fresh consent', async () => {
-      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = true, share_testimonios_at = now()`))
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = true, share_testimonios_at = now(), share_testimonios_version = ${V}`))
       expect(((await testimonios()) as unknown[]).length).toBeGreaterThan(0)
       expect(await flipFeatures(1, ECO_A, { studentTestimonios: false })).toBe(200)
       expect(await consentAt(ANA, ECO_A)).toBeNull()
@@ -324,7 +349,7 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
       expect(await flipFeatures(1, ECO_A, { studentTestimonios: true })).toBe(200)
       expect(await testimonios()).toBeUndefined()
       // Fresh consent brings them back.
-      await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true })
+      await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true, consentVersion: V })
       expect(((await testimonios()) as unknown[]).length).toBeGreaterThan(0)
       // An unrelated save with the switch already off clears nothing new and keeps working.
       expect(await flipFeatures(1, ECO_A, { graph: false })).toBe(200)
@@ -335,7 +360,7 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
       await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_testimonios_at = NULL WHERE user_id = ${ANA}`))
       await setFeatures(ECO_A, { studentView: true })
       invalidateFeatures()
-      expect((await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true })).status).toBe(400)
+      expect((await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true, consentVersion: V })).status).toBe(400)
       expect(await consentAt(ANA, ECO_A)).toBeNull()
     })
   })

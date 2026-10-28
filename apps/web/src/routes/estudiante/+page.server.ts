@@ -8,6 +8,7 @@
 
 import { fail } from '@sveltejs/kit';
 
+import { TESTIMONIO_CONSENT_VERSION } from '$lib/consent';
 import { notFound } from '$lib/server/deny';
 import { resolveEcosystem } from '$lib/server/ecosystem';
 import { fetchOverview, postSuggestion, savePerfil } from '$lib/server/estudiante';
@@ -41,7 +42,13 @@ export const actions: Actions = {
     if (key !== 'shareWithPeers' && key !== 'shareActivity' && key !== 'shareTestimonios') {
       return fail(400, { message: 'Valor no válido.' });
     }
-    const r = await savePerfil(locals.token, organization, { [key]: form.get('value') === 'true' });
+    const value = form.get('value') === 'true';
+    // 🔴 Accepting the testimonio consent names the wording version this page shows (owner ruling Q20).
+    const r = await savePerfil(
+      locals.token,
+      organization,
+      key === 'shareTestimonios' && value ? { shareTestimonios: true, consentVersion: TESTIMONIO_CONSENT_VERSION } : { [key]: value },
+    );
     if (!r.ok) return fail(r.status, { message: r.message });
     return { saved: true };
   },
