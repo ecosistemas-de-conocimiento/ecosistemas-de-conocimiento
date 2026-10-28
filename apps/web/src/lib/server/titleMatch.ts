@@ -74,6 +74,7 @@
 
 import type { ContextRef } from '@edc/chat-engine/core';
 import { backendFetch } from '$lib/server/auth';
+import { isClearedForLibrary } from '$lib/server/biblioteca';
 
 export const MIN_TITLE_WORDS = 2;
 export const MIN_TITLE_CHARS = 12;
@@ -174,39 +175,59 @@ export function publishedTitlesQuery(organizationId: string): string {
   qs.set('select[contentKind]', 'true');
   qs.set('select[uploadedBy]', 'true');
   qs.set('select[anonymisationStatus]', 'true');
+  qs.set('select[anonymise]', 'true');
   qs.set('select[publicationStatus]', 'true');
   return qs.toString();
 }
 
+/** {@link fetchPublishedTitles} plus whether the read hit {@link TITLE_SCAN_LIMIT} (raw rows, before filtering). */
+export interface PublishedTitleScan {
+  docs: TitledDoc[];
+  truncated: boolean;
+}
+
 /**
  * The ecosistema's published documentos, and the published, gate-cleared
- * testimonios whose name the backend let this caller read. Best-effort: any
- * failure is `[]`, and the turn runs without a title pin.
+ * testimonios whose name the backend let this caller read. 🔴 Only rows the
+ * library itself would show (`isClearedForLibrary`, audit 2026-10-28): a
+ * documento filed for anonymisation and not cleared is never named, pinned or
+ * listed. Best-effort: any failure is `[]`, and the turn runs without a title pin.
  */
-export async function fetchPublishedTitles(
+export async function fetchPublishedTitleScan(
   token: string | undefined,
   organizationId: string | number | null | undefined,
-): Promise<TitledDoc[]> {
-  if (organizationId == null || organizationId === '') return [];
+): Promise<PublishedTitleScan> {
+  const none = { docs: [], truncated: false };
+  if (organizationId == null || organizationId === '') return none;
   try {
     const res = await backendFetch(token, `/api/documents?${publishedTitlesQuery(String(organizationId))}`, {
       method: 'GET',
     });
-    if (!res.ok) return [];
+    if (!res.ok) return none;
     const body = (await res.json().catch(() => ({}))) as { docs?: unknown };
     const rows = (Array.isArray(body.docs) ? body.docs : []) as Array<Record<string, unknown>>;
-    return rows
+    const docs = rows
       .filter((r) => r.publicationStatus === 'published')
       .filter((r) => r.contentKind === 'documento' || (r.contentKind === 'testimonio' && gateCleared(r.anonymisationStatus)))
+      .filter((r) => isClearedForLibrary(r))
       .filter((r) => typeof r.name === 'string' && r.name.trim())
       .map((r) => ({
         id: String(r.id),
         name: (r.name as string).trim(),
         contentKind: r.contentKind as 'documento' | 'testimonio',
       }));
+    return { docs, truncated: rows.length >= TITLE_SCAN_LIMIT };
   } catch {
-    return [];
+    return none;
   }
+}
+
+/** {@link fetchPublishedTitleScan}'s documents alone. */
+export async function fetchPublishedTitles(
+  token: string | undefined,
+  organizationId: string | number | null | undefined,
+): Promise<TitledDoc[]> {
+  return (await fetchPublishedTitleScan(token, organizationId)).docs;
 }
 
 /**

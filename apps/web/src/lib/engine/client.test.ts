@@ -90,3 +90,11 @@ describe('CHAT_CITATION_LABELS', () => {
     expect(CHAT_CITATION_LABELS.openSource).toBe('Abrir documento');
   });
 });
+
+describe('chatCitationHref — summary sources (`$lib/server/engine/sources`)', () => {
+  it('the graph map opens /grafo, the published list opens /biblioteca', () => {
+    expect(chatCitationHref(citation({ edcSource: 'mapa' }))).toBe('/grafo');
+    expect(chatCitationHref(citation({ edcSource: 'lista' }))).toBe('/biblioteca');
+    expect(chatCitationHref(citation({ edcSource: 'otro' }))).toBeNull();
+  });
+});

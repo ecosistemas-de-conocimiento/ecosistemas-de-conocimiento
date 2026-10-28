@@ -13,10 +13,10 @@ vi.mock('$app/forms', () => ({ enhance: () => ({ destroy() {} }) }));
 
 const { default: Estudiante } = await import('./+page.svelte');
 
-const page = (testimoniosEnReporte: boolean | undefined, shareTestimonios = false) =>
+const page = (testimoniosEnReporte: boolean | undefined, shareTestimonios = false, form: unknown = null) =>
   render(Estudiante, {
     props: {
-      form: null,
+      form,
       data: {
         organization: '1',
         overview: {
@@ -57,5 +57,18 @@ describe('/estudiante — activity consent wording', () => {
     expect(body).toContain(CONSENT_ACTIVITY_WITH_TESTIMONIOS);
     expect(box(body, 'share-testimonios')).not.toMatch(/checked/);
     expect(box(page(true, true), 'share-testimonios')).toMatch(/checked/);
+  });
+});
+
+describe('/estudiante — the consent version travels with the page', () => {
+  it('🔴 the testimonio form carries the version this page was built with', () => {
+    const body = page(true);
+    const f = body.match(/<form[^>]*>(?:(?!<\/form>)[\s\S])*share-testimonios[\s\S]*?<\/form>/)?.[0] ?? '';
+    expect(f).toContain(`name="consentVersion" value="${TESTIMONIO_CONSENT_VERSION}"`);
+  });
+
+  it('a 409 from a stale page shows the reload message', () => {
+    const body = page(true, false, { message: 'El texto del consentimiento cambió. Recarga la página y léelo de nuevo.' });
+    expect(body).toMatch(/data-testid="estudiante-error"[^>]*>El texto del consentimiento cambió\. Recarga la página/);
   });
 });

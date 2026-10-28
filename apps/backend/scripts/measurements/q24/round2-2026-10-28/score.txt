@@ -1,0 +1,66 @@
+q24-public   old public names         keep   10/10 of 10                    
+q24-public   old team                 keep   1/1 of 1                       
+q24-public   old persons              redact 0/0 of 6                       
+q24-public   old addresses            redact 0/0 of 2                       
+q24-public   old contact              redact 0/0 of 1                       
+q24-public   old workplace->1 person  redact 0/0 of 1                       
+q24-public   old RUN                         result ['ready', 'hold:verify'] secs [18.0, 16.1] calls [2, 2] maxCallMs [9779, 10780] [Dato omitido] [1, 1] fallbackErrors [0, 0] 
+q24-public   new public names         keep   10/10 of 10                    
+q24-public   new team                 keep   1/1 of 1                       
+q24-public   new persons              redact 0/0 of 6                       
+q24-public   new addresses            redact 0/0 of 2                       
+q24-public   new contact              redact 0/0 of 1                       
+q24-public   new workplace->1 person  redact 0/1 of 1                       San Gregorio
+q24-public   new RUN                         result ['ready', 'ready'] secs [6.1, 6.5] calls [2, 2] maxCallMs [5439, 5805] [Dato omitido] [1, 1] fallbackErrors [0, 0] 
+q24-classes  old concepts/words       keep   6/6 of 6                       
+q24-classes  old works/quotes         keep   5/5 of 5                       
+q24-classes  old public names/media   keep   3/3 of 3                       
+q24-classes  old course labels        keep   5/5 of 5                       
+q24-classes  old grant codes          keep   2/2 of 2                       
+q24-classes  old persons              redact 0/0 of 3                       
+q24-classes  old personal ids         redact 0/0 of 2                       
+q24-classes  old RUN                         result ['ready', 'ready'] secs [8.6, 6.8] calls [2, 2] maxCallMs [5845, 4100] [Dato omitido] [2, 2] fallbackErrors [0, 0] 
+q24-classes  new concepts/words       keep   6/6 of 6                       
+q24-classes  new works/quotes         keep   5/5 of 5                       
+q24-classes  new public names/media   keep   3/3 of 3                       
+q24-classes  new course labels        keep   5/5 of 5                       
+q24-classes  new grant codes          keep   2/2 of 2                       
+q24-classes  new persons              redact 0/0 of 3                       
+q24-classes  new personal ids         redact 0/0 of 2                       
+q24-classes  new RUN                         result ['ready', 'ready'] secs [3.7, 6.1] calls [2, 2] maxCallMs [2490, 3430] [Dato omitido] [2, 2] fallbackErrors [0, 0] 
+q10          old towns                keep   1/1 of 3                       Jiutepec, Tlapa
+q10          old persons+titles       redact 0/0 of 6                       
+q10          old addresses            redact 1/0 of 5                       Cereso
+q10          old RUN                         result ['hold:verify', 'hold:verify'] secs [30.0, 28.7] calls [2, 2] maxCallMs [16349, 16225] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+q10          new towns                keep   1/1 of 3                       Jiutepec, Tlapa
+q10          new persons+titles       redact 0/0 of 6                       
+q10          new addresses            redact 0/0 of 5                       
+q10          new RUN                         result ['ready', 'ready'] secs [14.5, 9.7] calls [2, 2] maxCallMs [13762, 8327] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+kinship      old towns                keep   0/0 of 1                       Cuautla
+kinship      old persons              redact 0/0 of 3                       
+kinship      old RUN                         result ['ready', 'hold:verify'] secs [12.4, 15.2] calls [2, 2] maxCallMs [6552, 8966] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+kinship      new towns                keep   0/0 of 1                       Cuautla
+kinship      new persons              redact 0/0 of 3                       
+kinship      new RUN                         result ['hold:verify', 'hold:verify'] secs [16.6, 20.5] calls [2, 2] maxCallMs [10178, 11703] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+xochi2       old towns                keep   1/1 of 1                       
+xochi2       old persons              redact 0/0 of 5                       
+xochi2       old RUN                         result ['ready', 'ready'] secs [10.1, 9.1] calls [2, 2] maxCallMs [6288, 4737] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+xochi2       new towns                keep   0/0 of 1                       Xochitepec
+xochi2       new persons              redact 0/0 of 5                       
+xochi2       new RUN                         result ['ready', 'ready'] secs [7.1, 8.4] calls [2, 2] maxCallMs [6180, 7741] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+q24-workplace old workplace+person     redact 1/1 of 1                       clínica dental Sonrisa Clara
+q24-workplace old school+person, small town redact 1/1 of 1                       telesecundaria Emiliano Zapata
+q24-workplace old cargo+institution    redact 1/1 of 1                       DIF municipal de Ocuituco
+q24-workplace old bare institutions    keep   3/3 of 3                       
+q24-workplace old towns                keep   3/3 of 3                       
+q24-workplace old RUN                         result ['ready', 'ready'] secs [5.3, 4.9] calls [2, 2] maxCallMs [2613, 2220] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+q24-workplace new workplace+person     redact 1/1 of 1                       clínica dental Sonrisa Clara
+q24-workplace new school+person, small town redact 1/1 of 1                       telesecundaria Emiliano Zapata
+q24-workplace new cargo+institution    redact 1/1 of 1                       DIF municipal de Ocuituco
+q24-workplace new bare institutions    keep   3/3 of 3                       
+q24-workplace new towns                keep   3/3 of 3                       
+q24-workplace new RUN                         result ['ready', 'ready'] secs [8.1, 5.1] calls [2, 2] maxCallMs [5430, 2433] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+staff-draft  old persons              redact 4/4 of 4                       Diego, Quintanar, Rodolfo, Villanueva
+staff-draft  old RUN                         result ['hold:content', 'hold:content'] secs [18.8, 19.7] calls [1, 1] maxCallMs [18743, 19714] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+staff-draft  new persons              redact 0/4 of 4                       Diego, Quintanar, Rodolfo, Villanueva
+staff-draft  new RUN                         result ['ready', 'hold:content'] secs [8.5, 21.7] calls [2, 1] maxCallMs [7840, 21744] [Dato omitido] [0, 0] fallbackErrors [0, 0] 

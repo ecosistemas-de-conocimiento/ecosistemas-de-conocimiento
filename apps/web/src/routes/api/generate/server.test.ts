@@ -28,6 +28,7 @@ import { resetHybridCapabilityCache } from '$lib/server/engine/hybrid';
 import { ANSWER_NOT_SAVED_CODE } from '$lib/aiMessages';
 import { NO_ANSWER_REPLY, chatSystemPrompt, interviewSystemPrompt, resonanciasSystemPrompt } from '$lib/server/engine/prompt';
 import { toBrowserMessage } from '$lib/server/citationProvenance';
+import type { Provenance } from '@edc/chat-engine/core';
 import { citationsWithOrdinals, denseCitations } from '$lib/citationOrdinals';
 
 const SESSION = '5';
@@ -83,6 +84,8 @@ interface World {
   docRows?: Record<string, Record<string, unknown>>;
   /** What `GET /api/funciones` answers (backend `lib/features.ts`). Unset: no stored switches. */
   features?: Record<string, boolean>;
+  /** What `GET /api/graph/view` answers (the corpus-overview graph path). Unset: an empty graph. */
+  graphView?: Record<string, unknown>;
 }
 
 let calls: Call[];
@@ -153,7 +156,15 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     const extraRow = world.docRows?.[p.replace(/^\/api\/documents\//, '')];
     if (extraRow && p.startsWith('/api/documents/')) return json(extraRow);
     if (p === '/api/documents' && url.searchParams.get('where[publicationStatus][equals]') === 'published') {
-      return json({ docs: world.publishedDocs });
+      // Payload's `select`: only the selected fields (and `id`) come back, so a
+      // field the query forgets to select is missing here too.
+      const selected = [...url.searchParams.keys()]
+        .map((k) => /^select\[(\w+)\]$/.exec(k)?.[1])
+        .filter((k): k is string => !!k);
+      const docs = selected.length
+        ? world.publishedDocs.map((d) => Object.fromEntries(Object.entries(d).filter(([k]) => k === 'id' || selected.includes(k))))
+        : world.publishedDocs;
+      return json({ docs });
     }
     if (p === '/api/documents') {
       return json({ docs: world.sessionDocs });
@@ -165,6 +176,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
         ? json({ docs: [{ id: Number(ECO), name: 'Eco de prueba' }] })
         : json({ id: Number(ECO), name: 'Eco de prueba' });
     }
+    if (p === '/api/graph/view') return json(world.graphView ?? { entities: [] });
     if (p === '/api/graph/retrieve') {
       world.graphCalls += 1;
       return json({
@@ -645,7 +657,8 @@ describe('POST /api/generate — prompt fence', () => {
   it('🔴 sync: every retrieved chunk reaches the model fenced; the saved passage is the original', async () => {
     await POST(event(turn()));
     const prompt = answerPrompt();
-    expect(prompt).toContain(`[1] <fuente>\\n${CHUNK_TEXT}\\n</fuente>`);
+    // The fence opens with the card title (`$lib/server/engine/sources`).
+    expect(prompt).toContain(`[1] <fuente>\\nTítulo: informe.pdf\\n\\n${CHUNK_TEXT}\\n</fuente>`);
     expect(prompt).not.toMatch(/\] Las parteras/);
     expect(savedChunks().length).toBeGreaterThan(0);
     for (const c of savedChunks()) {
@@ -1833,7 +1846,8 @@ describe('POST /api/generate — an attachment the answer uses gets a card', () 
 
     it(`🔴 ${path}: a pinned upload the answer names, uncited, gets a card; saved, and the same on reload`, async () => {
       const provenance = await ask('Según la nota de voz, la milpa se siembra en mayo.', stream);
-      expect(rows(provenance)).toEqual([[1, AUDIO_ID]]);
+      // [1] in the prompt is the graph map (`$lib/server/engine/sources`): the card is numbered past it.
+      expect(rows(provenance)).toEqual([[2, AUDIO_ID]]);
       expect(provenance!.chunks[0]!.metadata).toMatchObject({
         title: 'nota de voz.webm',
         publication: 'draft',
@@ -1853,7 +1867,7 @@ describe('POST /api/generate — an attachment the answer uses gets a card', () 
     // nothing retrieved, and an answer with no marker and no title.
     it(`🔴 ${path}: doc 266 — "El audio cuenta que…", no marker, no title: a card; saved, same on reload`, async () => {
       const provenance = await ask('El audio cuenta que la milpa se siembra en mayo, cuando llegan las lluvias.', stream);
-      expect(rows(provenance)).toEqual([[1, AUDIO_ID]]);
+      expect(rows(provenance)).toEqual([[2, AUDIO_ID]]);
       expect(provenance!.chunks[0]!.metadata).toMatchObject({ title: 'nota de voz.webm', edcIsDraft: true });
       expect(savedProvenance()).toEqual(provenance);
       const reloaded = toBrowserMessage({
@@ -1914,5 +1928,186 @@ describe('POST /api/generate — an attachment the answer uses gets a card', () 
     expect(rows(provenance).map((r) => r[1])).toEqual(['31']);
     expect(provenance!.chunks[0]!.metadata?.title).toBe('Diagnóstico Comunitario de Salud.pdf');
     expect(JSON.stringify(provenance)).not.toContain('ETIQUETA');
+  });
+});
+
+describe('POST /api/generate — 2026-10-28 answer fixes (sources per document, summaries, rules)', () => {
+  const systemOf = (c: Call) => String((c.body as { unit?: { systemPrompt?: unknown } }).unit?.systemPrompt ?? '');
+  const lastPrompt = () => userPromptOf(generates().at(-1)!.body);
+  const lastSystem = () => systemOf(generates().at(-1)!);
+  const pool = (docId: string, id: string, text: string) => ({
+    documentId: `uuid-${docId}`,
+    chunkId: id,
+    score: 0.9,
+    rerankScore: 0.9,
+    text,
+    metadata: { docId, organizationId: ECO, kind: 'documento', publication: 'published', title: `Doc ${docId}.pdf` },
+  });
+
+  for (const stream of [false, true]) {
+    const path = stream ? 'stream' : 'sync';
+
+    it(`🔴 ${path}: four chunks of one document are ONE [N] and one source`, async () => {
+      world.retrievePool = [pool('50', 'a', 'Seña: CASA.'), pool('50', 'b', 'Seña: ESCUELA.'), pool('51', 'c', 'Ley de inclusión.')];
+      world.model = () => 'El diccionario muestra señas [1]. La ley habla de inclusión [2].';
+      const res = await POST(event(turn(), stream));
+      const provenance = stream
+        ? ((await readSse(res)).find((f) => f.type === 'done') as { provenance: Provenance }).provenance
+        : ((await res.json()) as { provenance: Provenance }).provenance;
+      const prompt = lastPrompt();
+      expect(prompt).toContain('[1] <fuente>\nTítulo: Doc 50.pdf\n\nSeña: CASA.\n\n…\n\nSeña: ESCUELA.\n</fuente>');
+      expect(prompt).toContain('[2] <fuente>\nTítulo: Doc 51.pdf\n\nLey de inclusión.\n</fuente>');
+      // [3] is the graph map (the fake graph always answers).
+      expect(prompt).toContain('[3] <fuente>\nTítulo: Mapa de conexiones del ecosistema');
+      expect(prompt).not.toContain('Contexto del grafo de conocimiento:');
+      expect(provenance.chunks.map((c) => [(c as { ordinal?: number }).ordinal, c.metadata?.docId])).toEqual([
+        [1, '50'],
+        [2, '51'],
+      ]);
+    });
+  }
+
+  it('🔴 a testimonio opens with its system title only, never its file name', async () => {
+    world.publishedDocs = world.publishedDocs.map((d) => (d.id === 41 ? { ...d, testimonioTitle: 'Traducir en la sala de partos' } : d));
+    world.retrievePool = [
+      {
+        ...pool('41', 't', 'Me tocó traducir en un parto.'),
+        metadata: { docId: '41', organizationId: ECO, kind: 'testimonio', publication: 'published', title: 'Carta de presentación — traducción en salud (41)' },
+      },
+      {
+        ...pool('42', 'u', 'Otro relato.'),
+        metadata: { docId: '42', organizationId: ECO, kind: 'testimonio', publication: 'published', title: 'Carta de presentación — traducción en salud (42)' },
+      },
+    ];
+    await POST(event(turn()));
+    const prompt = lastPrompt();
+    expect(prompt).toContain('[1] <fuente>\nTítulo: Traducir en la sala de partos\n');
+    // 42 is held: no generated title reaches the model, only the neutral label.
+    expect(prompt).toContain('[2] <fuente>\nTítulo: Testimonio\n');
+    expect(prompt).not.toContain('Título: Carta de presentación');
+  });
+
+  it('🔴 the graph map is a numbered, citable source with its own card', async () => {
+    world.model = () => 'El tema que más se repite es la partería [2].';
+    const body = (await (await POST(event(turn()))).json()) as { provenance: Provenance };
+    expect(lastPrompt()).toContain('[2] <fuente>\nTítulo: Mapa de conexiones del ecosistema');
+    expect(lastSystem()).toContain('Nunca escribas otras etiquetas entre corchetes, como [Resumen del grafo].');
+    expect(body.provenance.chunks).toHaveLength(1);
+    expect(body.provenance.chunks[0]!.metadata).toEqual({ title: 'Mapa de conexiones del ecosistema', edcSource: 'mapa' });
+  });
+
+  it('the attachment rule rides only a turn with an attachment', async () => {
+    await POST(event(turn()));
+    expect(lastSystem()).toContain('Habla de un documento adjunto solo si tiene relación con la pregunta.');
+    world.sessionDocs = [];
+    await POST(event(turn()));
+    expect(lastSystem()).not.toContain('documento adjunto solo si');
+  });
+
+  it('🔴 "Hazme preguntas" on: a normal answer ends with one follow-up question; off: no rule', async () => {
+    await POST(event(turn({ entrevista: true })));
+    expect(lastSystem()).toContain('Termina la respuesta con una sola pregunta breve');
+    await POST(event(turn()));
+    expect(lastSystem()).not.toContain('Termina la respuesta con una sola pregunta');
+    world.features = { interviewerMode: false };
+    await POST(event(turn({ entrevista: true })));
+    expect(lastSystem()).not.toContain('Termina la respuesta con una sola pregunta');
+  });
+
+  it('no trigger at all (no attachment, no graph, one chunk per document): the system prompt is variant E exactly', async () => {
+    world.sessionDocs = [];
+    world.organization = null;
+    await POST(event(turn()));
+    expect(lastSystem()).toBe(chatSystemPrompt('E'));
+  });
+
+  it('🔴 corpus overview: no passage retrieval; the graph view and the published list as numbered sources', async () => {
+    world.sessionDocs = [];
+    world.retrievePool = [pool('60', 'cc', 'El ex convento de Corpus Christi.')];
+    world.graphView = {
+      entities: [
+        { id: 'e1', type: 'tema', label: 'educación especial', support: 9 },
+        { id: 'e2', type: 'tema', label: 'lengua de señas', support: 5 },
+      ],
+      edges: [{ fromId: 'e1', toId: 'e2', support: 3, kind: 'co-mention' }],
+      publishedDocuments: 4,
+    };
+    world.model = () => 'El corpus trata sobre todo de educación especial [1]. Tiene 2 documentos y 2 testimonios [2].';
+    const body = (await (await POST(event(turn({ messages: [{ role: 'user', content: 'dame un resumen del corpus' }] })))).json()) as {
+      provenance: Provenance;
+    };
+    expect(retrieves()).toHaveLength(0);
+    expect(calls.some((c) => c.url.pathname === '/api/graph/retrieve')).toBe(false);
+    const prompt = lastPrompt();
+    expect(prompt).not.toContain('Corpus Christi');
+    expect(prompt).toContain('[1] <fuente>\nTítulo: Mapa de conexiones del ecosistema');
+    expect(prompt).toContain('educación especial (tema)');
+    expect(prompt).toContain('Se conecta con: lengua de señas');
+    expect(prompt).toContain('[2] <fuente>\nTítulo: Documentos publicados del ecosistema');
+    expect(prompt).toContain('- Diagnóstico Comunitario de Salud.pdf');
+    // Testimonios are counted, never named.
+    expect(prompt).not.toContain('Carta de presentación');
+    expect(body.provenance.chunks.map((c) => c.metadata?.edcSource)).toEqual(['mapa', 'lista']);
+  });
+
+  // 🔴 Each guard on `overview` (`+server.ts`) turns one of these red when removed.
+  const OVERVIEW_Q = { messages: [{ role: 'user', content: 'dame un resumen del corpus' }] };
+  const graphViewRead = () => calls.some((c) => c.url.pathname === '/api/graph/view');
+
+  it('guard: a title match (it rides as an attachment) is never an overview', async () => {
+    world.sessionDocs = [];
+    world.publishedDocs = [...world.publishedDocs, { id: 33, name: 'Resumen del corpus', contentKind: 'documento', publicationStatus: 'published' }];
+    await POST(event(turn(OVERVIEW_Q)));
+    expect(graphViewRead()).toBe(false);
+    expect(retrieves().length).toBeGreaterThan(0);
+  });
+
+  it('guard: a turn with an attached document is never an overview', async () => {
+    // The default session pins informe.pdf: it rides the turn as an attachment.
+    await POST(event(turn(OVERVIEW_Q)));
+    expect(graphViewRead()).toBe(false);
+    expect(retrieves().length).toBeGreaterThan(0);
+  });
+
+  it('guard: a Resonancias conversation is never an overview', async () => {
+    world.sessionDocs = [];
+    world.kind = 'resonancias';
+    await POST(event(turn(OVERVIEW_Q)));
+    expect(graphViewRead()).toBe(false);
+    expect(retrieves().length).toBeGreaterThan(0);
+  });
+
+  it('🔴 guard (privacy): under a lengua filter the ecosistema-wide overview never runs', async () => {
+    world.sessionDocs = [];
+    await POST(event(turn({ ...OVERVIEW_Q, lengua: 'mixe' })));
+    expect(graphViewRead()).toBe(false);
+    expect(lastPrompt()).not.toContain('Documentos publicados del ecosistema');
+  });
+
+  it('🔴 the list names only what the library shows, and "al menos" follows the raw row count', async () => {
+    world.sessionDocs = [];
+    world.publishedDocs = [
+      { id: 70, name: 'Informe visible.pdf', contentKind: 'documento', publicationStatus: 'published' },
+      { id: 71, name: 'Informe por anonimizar.pdf', contentKind: 'documento', publicationStatus: 'published', anonymise: true, anonymisationStatus: 'held' },
+      // 98 held testimonios: dropped by the filter, but the read was full.
+      ...Array.from({ length: 98 }, (_, i) => ({
+        id: 100 + i,
+        name: `T${i}`,
+        contentKind: 'testimonio',
+        publicationStatus: 'published',
+        anonymisationStatus: 'held',
+      })),
+    ];
+    await POST(event(turn(OVERVIEW_Q)));
+    const prompt = lastPrompt();
+    expect(prompt).toContain('- Informe visible.pdf');
+    expect(prompt).not.toContain('Informe por anonimizar');
+    expect(prompt).toContain('al menos 1 documento y 0 testimonios');
+  });
+
+  it('a topic question that says "corpus" is a normal turn', async () => {
+    await POST(event(turn({ messages: [{ role: 'user', content: '¿qué dicen sobre el ex convento de Corpus Christi?' }] })));
+    expect(retrieves().length).toBeGreaterThan(0);
+    expect(calls.some((c) => c.url.pathname === '/api/graph/view')).toBe(false);
   });
 });

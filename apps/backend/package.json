@@ -23,7 +23,7 @@
     "provision:storage": "payload run scripts/provision-storage.ts",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
-    "lint": "next lint",
+    "lint": "eslint .",
     "docker:up": "docker compose up -d --wait",
     "docker:down": "docker compose down",
     "docker:reset": "docker compose down -v && docker compose up -d --wait"
@@ -50,12 +50,14 @@
     "unpdf": "^1.6.2"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/node": "^22.14.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "eslint": "^9.24.0",
     "eslint-config-next": "15.4.11",
     "typescript": "^5.8.0",
+    "typescript-eslint": "^8.67.0",
     "vitest": "^2.1.9"
   }
 }

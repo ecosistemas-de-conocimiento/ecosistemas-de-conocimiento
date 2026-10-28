@@ -8,7 +8,7 @@
 
 import { fail } from '@sveltejs/kit';
 
-import { TESTIMONIO_CONSENT_VERSION } from '$lib/consent';
+import { CONSENT_CHANGED } from '$lib/consent';
 import { notFound } from '$lib/server/deny';
 import { resolveEcosystem } from '$lib/server/ecosystem';
 import { fetchOverview, postSuggestion, savePerfil } from '$lib/server/estudiante';
@@ -43,12 +43,19 @@ export const actions: Actions = {
       return fail(400, { message: 'Valor no válido.' });
     }
     const value = form.get('value') === 'true';
-    // 🔴 Accepting the testimonio consent names the wording version this page shows (owner ruling Q20).
+    // 🔴 Accepting the testimonio consent names the wording version THE PAGE
+    // showed (owner ruling Q20), from its hidden `consentVersion` input. Never
+    // the server's own: a page built before a wording change must get the
+    // backend's 409, not a consent to text the student never read. Missing or
+    // not a number → sent as undefined, which the backend refuses too.
+    const shown = Number(form.get('consentVersion'));
+    const consentVersion = form.has('consentVersion') && Number.isInteger(shown) ? shown : undefined;
     const r = await savePerfil(
       locals.token,
       organization,
-      key === 'shareTestimonios' && value ? { shareTestimonios: true, consentVersion: TESTIMONIO_CONSENT_VERSION } : { [key]: value },
+      key === 'shareTestimonios' && value ? { shareTestimonios: true, consentVersion } : { [key]: value },
     );
+    if (!r.ok && r.status === 409 && key === 'shareTestimonios') return fail(409, { message: CONSENT_CHANGED });
     if (!r.ok) return fail(r.status, { message: r.message });
     return { saved: true };
   },

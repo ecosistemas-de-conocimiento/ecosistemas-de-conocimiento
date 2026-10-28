@@ -235,3 +235,30 @@ describe('CHAT_ENGINE_CONFIG.systemPrompt reads CHAT_CITE_VARIANT per request', 
     expect(info.mock.calls).toEqual([['[prompt] cite variant D'], ['[prompt] cite variant A']]);
   });
 });
+
+describe('turn-conditional rules (2026-10-28) leave every base prompt byte for byte', () => {
+  // sha256 prefixes. The turn-conditional rules never change these. Re-pinned
+  // ON PURPOSE 2026-10-28 (owner request): `CHUNK_DATA_RULE` now says a
+  // numbered source opens with "Título: …". The hashes on main 5cf9111 were
+  // A 5c54ff636960d459, E ab007e5ff755481e, R 10f990eac3f38e9f, I 82208a333917eaf7.
+  const sha = async (s: string) => (await import('node:crypto')).createHash('sha256').update(s).digest('hex').slice(0, 16);
+
+  it('variant A, variant E, Resonancias and the interviewer match their pinned hashes', async () => {
+    const { resonanciasSystemPrompt, interviewSystemPrompt } = await import('./prompt');
+    expect(await sha(chatSystemPrompt('A'))).toBe('98dc4e786a679bc1');
+    expect(await sha(chatSystemPrompt('E'))).toBe('95a1caa51aa2585b');
+    expect(await sha(resonanciasSystemPrompt())).toBe('09dabb21d0af9c91');
+    expect(await sha(interviewSystemPrompt())).toBe('f8031c659fb8c9b9');
+  });
+
+  it('withTurnRules appends each rule as its own paragraph, and nothing without rules', async () => {
+    const { withTurnRules, FOLLOW_UP_RULE, ATTACHMENT_RELEVANCE_RULE, SUMMARY_SOURCE_RULE } = await import('./prompt');
+    expect(withTurnRules('BASE', [])).toBe('BASE');
+    expect(withTurnRules('BASE', [ATTACHMENT_RELEVANCE_RULE, FOLLOW_UP_RULE])).toBe(
+      `BASE\n\n${ATTACHMENT_RELEVANCE_RULE}\n\n${FOLLOW_UP_RULE}`,
+    );
+    for (const r of [FOLLOW_UP_RULE, ATTACHMENT_RELEVANCE_RULE, SUMMARY_SOURCE_RULE]) {
+      expect(CHAT_SYSTEM_PROMPT).not.toContain(r);
+    }
+  });
+});

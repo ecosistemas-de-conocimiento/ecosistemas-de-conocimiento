@@ -192,6 +192,17 @@ export const DETECT_SYSTEM_PROMPT = [
   // 🔴 OWNER'S RULING Q24 = A (2026-10-28): "tan precisos que identifican" read
   // as licence to report any named institution; see "No es un hallazgo" below.
   '- Centros de trabajo, escuelas o cargos que, en ese texto, señalan a una persona concreta.',
+  // 🔴 AUDIT 2026-10-28, measured on the Spark (scripts/measurements/q24):
+  // with the rule only under Domicilios, the model reported none of a named
+  // clinic, school or DIF office beside a person or cargo (0 of 3, 2 runs);
+  // the prompt before Q24 missed them too. Spelled out here, with examples
+  // that are not the measured texts, it reports them.
+  '  Un centro de trabajo, escuela, clínica u oficina CON NOMBRE, o junto a un pueblo, al lado',
+  '  de una persona o un cargo (la maestra, el enfermero, la directora, el único velador) señala',
+  '  a esa persona, aunque no se diga su nombre y aunque sea servidora pública. Reporta SOLO la',
+  '  institución, como "lugar", sin el cargo: en "el doctor de la clínica Santa Fe de',
+  '  Tepoztlán" el hallazgo es "la clínica Santa Fe de Tepoztlán"; en "el único velador de la',
+  '  primaria de Amatlán", "la primaria de Amatlán".',
   '- Teléfonos, correos, cuentas, identificadores oficiales y números de expediente.',
   '',
   // ⚠ Owner's rule, 2026-10-17: a bare title is not identifying and must not
@@ -215,8 +226,9 @@ export const DETECT_SYSTEM_PROMPT = [
   '- Nada de lo siguiente es un dato personal. No lo reportes, tampoco como "otro" ni como',
   '  "identificador":',
   '  · Nombres de instituciones, dependencias, programas, proyectos, eventos, medios, partidos',
-  '    y organizaciones, lenguas y siglas: "PILARES", "INDISCAPACIDAD CDMX", "SECIHTI", "el',
-  '    Centro de Investigación y Docencia Económicas", "la UNAM", "el proyecto Ecosistemas de',
+  '    y organizaciones, lenguas y siglas, sin una persona o un cargo junto a ellos: "PILARES",',
+  '    "INDISCAPACIDAD CDMX", "SECIHTI", "el Centro de Investigación y Docencia Económicas",',
+  '    "la UNAM", "el proyecto Ecosistemas de',
   '    conocimiento y aprendizaje situado", "el Foro de Saberes Comunitarios", "la Lengua de',
   '    Señas Mexicana", "el náhuatl", "Radio Nopal", "la red Charla Social". En "trabajo en',
   '    un PILARES de la alcaldía" no se reporta nada.',
@@ -230,10 +242,13 @@ export const DETECT_SYSTEM_PROMPT = [
   '    "Anexo D", "módulo IV", "CLIC 81".',
   '  · Claves públicas de proyectos, convocatorias o financiamientos: "Proyecto SECIHTI',
   '    PX-2024-II-118", "convocatoria 2025-B".',
-  '  Esto vale salvo que, en ese texto, el nombre señale a una persona concreta y privada:',
-  '  el lugar donde está o vive una persona ("estoy en el Cereso") se marca "lugar", como',
-  '  dice la lista Domicilios; un centro de trabajo que identifica a alguien ("la única',
-  '  enfermera de la clínica de San Rafael") se reporta. "identificador" queda para los',
+  // 🔴 AUDIT 2026-10-28: the exception said "persona concreta y privada", and
+  // "privada" is also the `ambito` label below, so a teacher or a nurse could
+  // pass as "not private". It now fires for ANY one person, public or not.
+  '  Esto vale salvo que, en ese texto, el nombre junto con el contexto señale a una sola',
+  '  persona concreta, pública o no: el lugar donde está, vive, trabaja o estudia una',
+  '  persona ("estoy en el Cereso", "la maestra de la secundaria Benito Juárez de San',
+  '  Rafael") se marca "lugar", como dice la lista Domicilios. "identificador" queda para los',
   '  identificadores de UNA persona: su CURP, RFC, clave de elector, número de cuenta o de',
   '  expediente, un folio a su nombre.',
   '- Un equipo o colectivo no es una persona: "El equipo del Ecosistema", "el colectivo de',
@@ -270,10 +285,20 @@ export const DETECT_SYSTEM_PROMPT = [
   // at them, also next to a town.
   // ⚠ Named, or next to a town: an unnamed "el hospital" is dropped as a
   // generic place (`genericPlaces.ts`), so the prompt does not ask for it.
-  '- Una institución CON NOMBRE, o junto a un pueblo, donde está o vive una persona:',
-  '  "el Cereso", "el hospital de Xochitepec", "la escuela Benito Juárez". En "estoy en',
-  '  Atlacholoaya, en el Cereso" el hallazgo es "el Cereso". Un "el hospital" o "la escuela"',
-  '  solo, sin nombre ni pueblo, no se reporta.',
+  // 🔴 AUDIT 2026-10-28: "trabaja o estudia" restored. A named workplace or
+  // school beside a person or a cargo points at that person, public or not
+  // (a teacher, a nurse, a delegado). Without a person beside it, a named
+  // institution is not a finding ("No es un hallazgo" above).
+  '- Una institución CON NOMBRE, o junto a un pueblo, donde está, vive, trabaja o estudia una',
+  '  persona: "el Cereso", "el hospital de Xochitepec", "la escuela Benito Juárez". En "estoy',
+  '  en Atlacholoaya, en el Cereso" el hallazgo es "el Cereso". Un "el hospital" o "la',
+  '  escuela" solo, sin nombre ni pueblo, no se reporta.',
+  '- Un centro de trabajo, escuela, clínica u oficina CON NOMBRE, o junto a un pueblo o',
+  '  alcaldía, junto a una persona o un cargo que la señala, se reporta como "lugar", aunque',
+  '  no se diga su nombre y aunque sea un servidor público: en "la maestra de la secundaria',
+  '  Benito Juárez de San Rafael" el hallazgo es "la secundaria Benito Juárez de San Rafael";',
+  '  en "la enfermera del centro de salud de Tetelcingo", "el centro de salud de Tetelcingo";',
+  '  en "el delegado de la alcaldía Xochimilco", "la alcaldía Xochimilco".',
   '- Códigos postales.',
   '- Referencias sin formato que permiten llegar a una casa: "enfrente de la tienda',
   '  de doña Mari", "subiendo por donde está el tanque", "la casa de la reja verde".',
@@ -300,6 +325,11 @@ export const DETECT_SYSTEM_PROMPT = [
   '  congregaciones y estados NO son datos personales y NO se reportan, aunque sean',
   '  pequeños y aunque digan dónde vive, trabaja o estudia alguien. En "Vivo en',
   '  Xochitepec, Morelos" no hay ningún hallazgo.',
+  // ⚠ Reconciles with the workplace line above (audit 2026-10-28): the office
+  // of an alcaldía beside its delegado points at one person; the town does not.
+  'Pero una oficina, escuela o clínica junto a una persona o un cargo SÍ se marca, aunque lleve',
+  'el nombre del pueblo o la alcaldía: en "el delegado de la alcaldía Xochimilco" el hallazgo',
+  'es "la alcaldía Xochimilco".',
   'Una calle o colonia con nombre de pueblo o estado SÍ se marca: "calle Morelos 12",',
   '"colonia Xochitepec", "Hidalgo 12".',
   'Marca todo lo de la lista Domicilios aunque esté en una ciudad o pueblo.',

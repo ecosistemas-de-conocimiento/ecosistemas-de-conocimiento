@@ -26,3 +26,6 @@ export const CONSENT_ACTIVITY_WITH_TESTIMONIOS =
  * `lib/student/testimonioConsent.ts` (its test compares the two).
  */
 export const TESTIMONIO_CONSENT_VERSION = 2;
+
+/** Shown when the backend refuses a consent given on an older wording (409). */
+export const CONSENT_CHANGED = 'El texto del consentimiento cambió. Recarga la página y léelo de nuevo.';

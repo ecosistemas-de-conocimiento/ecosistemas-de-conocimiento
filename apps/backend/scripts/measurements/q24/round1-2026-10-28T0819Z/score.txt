@@ -1,0 +1,54 @@
+q24-public   old public names         keep   2/0 of 10                      CIDE, Centro de Investigación y Docencia Económicas, DIF, Ecosistemas de conocimiento y aprendizaje situado, Foro de Saberes Comunitarios, INDISCAPACIDAD CDMX, Lengua de Señas Mexicana, PILARES, SECIHTI, UNAM
+q24-public   old team                 keep   1/1 of 1                       
+q24-public   old persons              redact 0/0 of 6                       
+q24-public   old addresses            redact 0/0 of 2                       
+q24-public   old contact              redact 0/0 of 1                       
+q24-public   old workplace->1 person  redact 0/0 of 1                       
+q24-public   old RUN                         result ['ready', 'ready'] secs [6.4, 7.0] calls [2, 2] maxCallMs [5758, 6518] [Dato omitido] [1, 5] fallbackErrors [0, 0] 
+q24-public   new public names         keep   10/10 of 10                    
+q24-public   new team                 keep   1/1 of 1                       
+q24-public   new persons              redact 0/0 of 6                       
+q24-public   new addresses            redact 0/0 of 2                       
+q24-public   new contact              redact 0/0 of 1                       
+q24-public   new workplace->1 person  redact 0/0 of 1                       
+q24-public   new RUN                         result ['ready', 'ready'] secs [5.8, 5.6] calls [2, 2] maxCallMs [3124, 3060] [Dato omitido] [1, 1] fallbackErrors [0, 0] 
+q24-classes  old concepts/words       keep   6/6 of 6                       
+q24-classes  old works/quotes         keep   5/5 of 5                       
+q24-classes  old public names/media   keep   3/3 of 3                       
+q24-classes  old course labels        keep   5/5 of 5                       
+q24-classes  old grant codes          keep   2/2 of 2                       
+q24-classes  old persons              redact 0/0 of 3                       
+q24-classes  old personal ids         redact 0/0 of 2                       
+q24-classes  old RUN                         result ['ready', 'ready'] secs [2.1, 1.9] calls [2, 2] maxCallMs [1700, 1513] [Dato omitido] [2, 2] fallbackErrors [0, 0] 
+q24-classes  new concepts/words       keep   6/6 of 6                       
+q24-classes  new works/quotes         keep   5/5 of 5                       
+q24-classes  new public names/media   keep   3/3 of 3                       
+q24-classes  new course labels        keep   5/5 of 5                       
+q24-classes  new grant codes          keep   2/2 of 2                       
+q24-classes  new persons              redact 0/0 of 3                       
+q24-classes  new personal ids         redact 0/0 of 2                       
+q24-classes  new RUN                         result ['ready', 'ready'] secs [1.4, 2.0] calls [2, 2] maxCallMs [971, 1552] [Dato omitido] [2, 2] fallbackErrors [0, 0] 
+q10          old towns                keep   1/0 of 3                       Jiutepec, Tlapa, Xochitepec
+q10          old persons+titles       redact 0/0 of 6                       
+q10          old addresses            redact 0/0 of 5                       
+q10          old RUN                         result ['ready', 'ready'] secs [5.8, 6.2] calls [2, 2] maxCallMs [5250, 5741] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+q10          new towns                keep   1/0 of 3                       Jiutepec, Tlapa, Xochitepec
+q10          new persons+titles       redact 0/0 of 6                       
+q10          new addresses            redact 0/0 of 5                       
+q10          new RUN                         result ['ready', 'hold:verify'] secs [10.4, 11.6] calls [2, 2] maxCallMs [5640, 5812] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+kinship      old towns                keep   0/0 of 1                       Cuautla
+kinship      old persons              redact 0/0 of 3                       
+kinship      old RUN                         result ['ready', 'ready'] secs [5.7, 5.6] calls [2, 2] maxCallMs [3277, 3139] [Dato omitido] [0, 1] fallbackErrors [0, 0] 
+kinship      new towns                keep   0/0 of 1                       Cuautla
+kinship      new persons              redact 0/0 of 3                       
+kinship      new RUN                         result ['ready', 'ready'] secs [5.8, 5.7] calls [2, 2] maxCallMs [3318, 3198] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+xochi2       old towns                keep   0/1 of 1                       Xochitepec
+xochi2       old persons              redact 0/0 of 5                       
+xochi2       old RUN                         result ['ready', 'ready'] secs [2.6, 2.2] calls [2, 2] maxCallMs [2166, 1754] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+xochi2       new towns                keep   1/1 of 1                       
+xochi2       new persons              redact 0/0 of 5                       
+xochi2       new RUN                         result ['ready', 'ready'] secs [3.7, 3.6] calls [2, 2] maxCallMs [1894, 1815] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+staff-draft  old persons              redact 4/4 of 4                       Diego, Quintanar, Rodolfo, Villanueva
+staff-draft  old RUN                         result ['hold:content', 'hold:content'] secs [7.3, 7.1] calls [1, 1] maxCallMs [7285, 7057] [Dato omitido] [0, 0] fallbackErrors [0, 0] 
+staff-draft  new persons              redact 1/4 of 4                       Diego, Quintanar, Rodolfo, Villanueva
+staff-draft  new RUN                         result ['ready', 'hold:content'] secs [3.3, 7.3] calls [2, 1] maxCallMs [2808, 7306] [Dato omitido] [0, 0] fallbackErrors [0, 0] 

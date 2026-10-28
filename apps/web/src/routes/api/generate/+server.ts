@@ -30,20 +30,28 @@ import {
 import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
 import { turnAttachments, withPinnedRefs } from './pinned';
-import { fetchPublishedTitles, matchDocumentTitle, titleRetrievalFilter, withTitleRef } from '$lib/server/titleMatch';
+import {
+  fetchPublishedTitleScan,
+  matchDocumentTitle,
+  titleRetrievalFilter,
+  withTitleRef,
+} from '$lib/server/titleMatch';
 import { sessionMeta } from '$lib/server/ecosystem';
 import { fetchFeatures } from '$lib/server/features';
 import { fetchScopeDocumentIds, parseAlcance } from '$lib/server/estudiante';
-import { makeGraphProvider } from '$lib/server/graph';
+import { makeGraphProvider, makeOverviewGraphProvider } from '$lib/server/graph';
+import { regroupTurn, type SummarySource } from '$lib/server/engine/sources';
+import { documentListText, isCorpusOverview, withoutRetrieval } from '$lib/server/engine/overview';
+import { ATTACHMENT_RELEVANCE_RULE, FOLLOW_UP_RULE, withTurnRules } from '$lib/server/engine/prompt';
 import { withFencedChunks, withFencedRefs } from '$lib/server/engine/chunkFence';
 import { fetchOrientationTurns, orientationBlock, withOrientation } from '$lib/server/engine/orientation';
 import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { lenguaTurn } from '$lib/lengua';
 import { stampDraftProvenance } from '$lib/publication';
 import { citedBrowserProvenance, toBrowserMessage } from '$lib/server/citationProvenance';
-import { backendTitleFetcher, withTestimonioTitles } from '$lib/server/testimonioTitles';
+import { backendTitleFetcher, testimonioDocIds, withTestimonioTitles } from '$lib/server/testimonioTitles';
 import { ANSWER_NOT_SAVED_CODE, ANSWER_NOT_SAVED_MESSAGE } from '$lib/aiMessages';
-import { parseCitedOrdinals, prepareTurn, respond, type ContextRef, type ContextScope, type Provenance } from '@edc/chat-engine/core';
+import { parseCitedOrdinals, prepareTurn, type ContextRef, type ContextScope, type Provenance } from '@edc/chat-engine/core';
 
 /** The turn was refused because the session row could not be read (no kind). */
 const SESSION_UNAVAILABLE_CODE = 'session_unavailable';
@@ -584,7 +592,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // The ecosistema's published document titles, for "tell me about <title>"
   // (UX #35, `$lib/server/titleMatch`). Starts now, awaited when the inline
   // refs are built. Best-effort: a failed read pins nothing.
-  const publishedTitles = fetchPublishedTitles(locals.token, organizationId);
+  const publishedTitles = fetchPublishedTitleScan(locals.token, organizationId);
 
   // Build the Domain Adapter + the engine's AIClient over this app's BFF client.
   const baseAdapter = withFencedRefs(makeChatDomainAdapter({
@@ -722,14 +730,13 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   });
 
   // The full engine turn spec (condense → summary → scoped retrieve → @-refs →
-  // user-turn injection). Identical shape for both transports: the streaming
-  // branch runs `prepareTurn` (context only) and drives the SSE proxy itself;
-  // the sync branch hands the SAME args to `respond()`, which prepares AND
-  // generates. Best-effort throughout — a failing context step degrades to
+  // user-turn injection). Identical shape for both transports: both run
+  // `prepareTurn` and `regroupTurn`; streaming then drives the SSE proxy, sync
+  // calls `generateSync` as the engine's `respond()` would. Best-effort throughout — a failing context step degrades to
   // empty inside the engine and never breaks the turn.
   const retrievalPolicy = chatTurnRetrievalPolicy(hybrid);
   // A message that names exactly one published document pins it for this turn.
-  const published = await publishedTitles;
+  const { docs: published, truncated: publishedTruncated } = await publishedTitles;
   // Skipped under a student scope: a title pin could name a document outside it.
   const titleMatch = scopeDocumentIds ? null : matchDocumentTitle(userMessage, published);
   // `@`-mentions, then the document the message names by title, then every
@@ -758,8 +765,10 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   //   the ecosistema's `interviewerMode` switch is on AND the person switched
   //   "Hazme preguntas" on in this conversation (owner ruling 2026-10-27,
   //   `entrevista`, default off). Either off → every turn answers.
+  // "Hazme preguntas" in effect: the same gate as the switch itself (`showsEntrevista`).
+  const askBack = kind === 'generales' && entrevistaOf(body.entrevista) && (await featuresP).interviewerMode;
   const turnMode: ChatTurnMode =
-    kind === 'generales' && entrevistaOf(body.entrevista) && (await featuresP).interviewerMode
+    askBack
       ? chatTurnMode({
           userMessage,
           history,
@@ -767,7 +776,46 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
           callerId: locals.user.id != null ? String(locals.user.id) : null,
         })
       : 'answer';
-  const turnConfig = chatEngineConfigFor(kind, turnMode);
+  // 🔴 CORPUS OVERVIEW (`$lib/server/engine/overview`): "resumen del corpus"
+  // gets no passage retrieval (it matched "Corpus Christi" on dev) but the
+  // graph view's top entities and the published-documents list, each a
+  // numbered source. Only where the normal graph path would run, on an
+  // answering Generales turn, with no title match.
+  const overview =
+    kind === 'generales' &&
+    turnMode === 'answer' &&
+    // An attached document (@-mention, pinned, or the title match, which
+    // rides as one) makes the turn about it, not the whole corpus.
+    attachments.length === 0 &&
+    graphProvider !== null &&
+    isCorpusOverview(userMessage);
+  const summarySources: SummarySource[] = overview
+    ? [{ id: 'lista', text: documentListText(published, publishedTruncated) }]
+    : [];
+  const turnGraph = overview ? makeOverviewGraphProvider({ token: locals.token, organizationId }) : graphProvider;
+  // Turn-conditional rules (`./prompt`, "Turn-conditional rules"): none on a
+  // turn without their trigger, so that turn's prompt is unchanged.
+  const baseConfig = chatEngineConfigFor(kind, turnMode);
+  const turnRules = [
+    ...(attachments.length > 0 ? [ATTACHMENT_RELEVANCE_RULE] : []),
+    // A story turn already ends on a question (the interviewer prompt).
+    ...(askBack && turnMode === 'answer' ? [FOLLOW_UP_RULE] : []),
+  ];
+  const turnConfig =
+    turnRules.length > 0
+      ? { ...baseConfig, systemPrompt: withTurnRules(baseConfig.systemPrompt, turnRules) }
+      : baseConfig;
+  // One `[N]` per document; the graph summary (and the overview list) as
+  // numbered sources. Before generation, so no answer text is renumbered.
+  // Each source opens with its card title; a testimonio's is its generated
+  // title, read here once (one backend read, only when testimonios came back).
+  const titleFetcher = backendTitleFetcher(locals.token);
+  const regroup = async <P extends Parameters<typeof regroupTurn>[0]>(p: P): Promise<P> => {
+    const ids = testimonioDocIds([p.provenance]);
+    const testimonioTitles = ids.length > 0 ? await titleFetcher(ids) : new Map();
+    return regroupTurn(p, { config: turnConfig, extra: summarySources, passageCap: PASSAGE_TEXT_CAP, testimonioTitles });
+  };
+  const answerAI = overview ? withoutRetrieval(engineAI) : turnAI;
   // An interviewer reply (either kind) with no `[N]` lists no sources: it is a
   // question back, not an answer, and the no-marker fallback would pin
   // documents to it. A cited `[N]` lists that source as usual.
@@ -777,7 +825,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
       : citedBrowserProvenance(provenance, answer, attachments);
   const engineTurnArgs = {
     config: turnConfig,
-    aiClient: turnAI,
+    aiClient: answerAI,
     adapter,
     orgId: engineOrgId(),
     userId,
@@ -790,7 +838,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
     // Omitted entirely when there is no ecosistema to scope a graph read to,
     // so the engine takes exactly the code path it took before GraphRAG.
     // Skipped on a title match: its retrieve and block span the ecosistema.
-    ...(graphProvider && !titleMatch ? { graphProvider } : {}),
+    ...(turnGraph && !titleMatch ? { graphProvider: turnGraph } : {}),
     // ai-service metadata filter, forwarded by the engine to every corpus leg.
     // Chunks embedded before `lengua` reached chunk metadata do not carry it
     // and are excluded until republished.
@@ -807,12 +855,12 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   };
 
   // ── STREAMING ────────────────────────────────────────────────────────────
-  // `respond()` only generates synchronously, so streaming keeps its own path:
-  // assemble the turn with `prepareTurn`, then drive the existing SSE proxy.
+  // Assemble the turn with `prepareTurn` (+ `regroupTurn`), then drive the
+  // existing SSE proxy.
   if (stream) {
     let prepared;
     try {
-      prepared = await prepareTurn(engineTurnArgs);
+      prepared = await regroup(await prepareTurn(engineTurnArgs));
     } catch (err) {
       // A failure assembling context must not 500 the turn: fall back to a
       // bare user turn (no summary/retrieval) and still stream an answer.
@@ -827,6 +875,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
         matches: [],
         retrievalQuery: userMessage,
         summaryText: '',
+        graphContext: '',
       };
     }
     const upstream = buildChatUnitRequest({
@@ -877,14 +926,23 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   }
 
   // ── SYNC ─────────────────────────────────────────────────────────────────
-  // Collapse the whole prepare→generate→shape pipeline onto the engine's
-  // `respond()` orchestrator. It runs `prepareTurn` internally, then generates
-  // via the same engine `AIClient` seam (`engineAI.generateSync` →
-  // `buildChatUnitRequest` → chat's BFF), so this branch no longer hand-rolls
-  // the unit request or the generate call. The AbortSignal rides through the
-  // `engineAI` closure (captured at construction above).
+  // The engine's `respond()`, unrolled so the prepared turn is regrouped
+  // (`regroupTurn`) before it generates: `prepareTurn`, then the same
+  // `generateSync` call `respond()` makes, on the same engine `AIClient` seam
+  // (`generateSync` → `buildChatUnitRequest` → chat's BFF). The AbortSignal
+  // rides through the `engineAI` closure (captured at construction above).
   try {
-    const { generation, provenance: rawProvenance } = await respond(engineTurnArgs);
+    const prepared = await regroup(await prepareTurn(engineTurnArgs));
+    const generation = await answerAI.generateSync({
+      surface: turnConfig.surface,
+      orgId: engineTurnArgs.orgId,
+      scopeId: engineTurnArgs.scopeId,
+      userId: engineTurnArgs.userId,
+      messages: prepared.messages,
+      effort: turnConfig.chatEffort,
+      maxTokens: turnConfig.chatMaxTokens,
+    });
+    const rawProvenance = prepared.provenance;
     // See the streaming branch: stamp the caller's own drafts before
     // persisting, keep the cited sources only, then the browser allowlist.
     const provenance = turnSources(
