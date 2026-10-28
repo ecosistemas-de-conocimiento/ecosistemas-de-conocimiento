@@ -124,8 +124,11 @@ const VALUE_END = String.raw`(?![\p{L}\p{M}\p{N}_])`
  */
 const FIELD_START = String.raw`(?<=(?:^|[|;\t])[ \t>*_#\-]*)`
 
-/** Titles whose abbreviation dot does NOT end a byline: "Autor: Dr. Juan Pérez". */
-const TITLE_ABBREVIATIONS = ['dr', 'dra', 'sr', 'sra', 'srta', 'lic', 'ing', 'mtro', 'mtra', 'prof', 'profa', 'arq', 'mr', 'mrs', 'ms', 'jr']
+/**
+ * Titles whose abbreviation dot does NOT end a byline: "Autor: Dr. Juan Pérez".
+ * "Ma." is María ("Ma. Elena Ruiz"); "Pbro." is presbítero.
+ */
+const TITLE_ABBREVIATIONS = ['dr', 'dra', 'sr', 'sra', 'srta', 'lic', 'ing', 'mtro', 'mtra', 'prof', 'profa', 'arq', 'mr', 'mrs', 'ms', 'jr', 'ma', 'pbro']
   .map(anyCase)
   .join('|')
 
@@ -146,7 +149,7 @@ const FIELD_VALUE =
  * carry no `i` flag: under `iu`, `\p{Lu}` also matches lower case, and "el
  * autor: según" would lose "según".
  */
-const NAME_WORD = String.raw`(?:\p{Lu}\.|\p{Lu}[\p{L}\p{M}'’\-]*)`
+const NAME_WORD = String.raw`(?:(?=\p{Lu})(?:${TITLE_ABBREVIATIONS})\.|\p{Lu}\.|\p{Lu}[\p{L}\p{M}'’\-]*)`
 
 /** The small words inside a Spanish name, or between two names. */
 const NAME_JOINER = '(?:de|del|la|las|los|y|e|van|von|da|di|do|dos)'
@@ -215,20 +218,88 @@ const BYLINE_KEY = ['autor', 'autora', 'autores', 'autoras', 'author', 'authors'
 /** `[*_]*` takes markdown bold around the key or the colon: `**Autor:**`. */
 const BYLINE_SEP = String.raw`[*_]*[ \t]*[:=][ \t]*[*_]*[ \t]*`
 
-/** A byline at a field start: the whole field is the value, whatever its case. */
+/**
+ * A byline at a field start: the whole field is the value, whatever its case.
+ *
+ * 🔴 A `;` or `|` does NOT end a byline unless what follows is another field
+ * ("| Lugar: el salón"). "Autores: Ana Ruiz; Luis Gómez" kept "Luis Gómez"
+ * (audit 2026-10-28): the second author read as a new, key-less field.
+ */
 const BYLINE_FIELD = new RegExp(
-  String.raw`${FIELD_START}${KEY_START}((?:${BYLINE_KEY})${BYLINE_SEP})(${FIELD_VALUE})`,
+  String.raw`${FIELD_START}${KEY_START}((?:${BYLINE_KEY})${BYLINE_SEP})` +
+    String.raw`(${FIELD_VALUE}(?:[ \t]*[;|][ \t]*(?![^\n\r|;]*[:=])${FIELD_VALUE})*)`,
   'gmu',
 )
 
 /**
- * A byline mid-line ("Notas de clase. Autor: Juan Pérez, 2026."): only a
- * CAPITALISED name run, so "el autor: según él" — a sentence — is left alone.
+ * A byline mid-line ("Notas de clase. Autor: Juan Pérez, 2026."): only
+ * CAPITALISED name runs, so "el autor: según él" — a sentence — is left alone.
+ *
+ * 🔴 A LIST OF RUNS, NOT ONE (audit 2026-10-28): "Autores: Ana Ruiz, Luis Gómez
+ * y Eva Paz" kept everyone after the first comma. Each further run still has to
+ * start with a capital, so ", 2026" and ", en Puebla" stay; and the list only
+ * ever starts after a byline key, so plain prose with commas is never touched.
  */
-const BYLINE_INLINE = new RegExp(String.raw`${KEY_START}((?:${BYLINE_KEY})${BYLINE_SEP})(${NAME_RUN})`, 'gmu')
+const BYLINE_INLINE = new RegExp(
+  String.raw`${KEY_START}((?:${BYLINE_KEY})${BYLINE_SEP})(${NAME_RUN}(?:[ \t]*[,;|/&][ \t]*${NAME_RUN})*)`,
+  'gmu',
+)
 
-/** Where one author ends and the next begins: `,` `;` `/` `&`, or " y " / " e " / " and ". */
-const AUTHOR_SPLIT = /(\s*[,;/&]\s*|\s+(?:y|e|and)\s+)/u
+/**
+ * Where one author ends and the next begins, in two tiers: hard separators,
+ * then " y " / " e " / " and " inside each hard piece.
+ *
+ * ⚠ A COMMA IS A HARD SEPARATOR ONLY WHEN THERE IS NO `;` OR `|`. With one, the
+ * list is surname-first ("Ruiz, Ana; Gómez, Luis") and the comma sits INSIDE a
+ * person: splitting on it would hand out two labels for one author.
+ */
+const HARD_SPLIT_ALL = /(\s*[,;|/&]\s*)/u
+const HARD_SPLIT_NO_COMMA = /(\s*[;|/&]\s*)/u
+const SOFT_SPLIT = /(\s+(?:y|e|and)\s+)/u
+
+/**
+ * 🔴 AN INSTITUTION IS NOT A PERSON (audit 2026-10-28). Every word handed to
+ * `person` is spread by the gate as a name part, so "Autor: Universidad
+ * Nacional Autónoma de México" turned every later "México" into "[Persona A]".
+ * An institution is still redacted in the byline (fail-closed) but never
+ * reaches `person`.
+ *
+ * Told apart without a long list, by any one of:
+ *   · its first capitalised word is an organisation head ({@link ORG_HEADS});
+ *   · it is a single acronym ("CIDE", "UNAM");
+ *   · it has more than four capitalised words — "María Fernanda López García"
+ *     has four; longer than that is an organisation's name, and a five-word
+ *     person loses only the spreading, never the redaction.
+ *
+ * ⚠ "Ciudad" and "Estado" are here because a byline often ends in a place
+ * ("Autor: Juan Pérez, Ciudad de México"), not because they are institutions.
+ */
+const ORG_HEADS: ReadonlySet<string> = new Set([
+  'universidad', 'instituto', 'centro', 'secretaria', 'comite', 'colectivo', 'asociacion',
+  'fundacion', 'consejo', 'comision', 'coordinacion', 'direccion', 'departamento', 'facultad',
+  'escuela', 'colegio', 'red', 'grupo', 'equipo', 'organizacion', 'sindicato', 'cooperativa',
+  'gobierno', 'ayuntamiento', 'municipio', 'ministerio', 'programa', 'proyecto', 'observatorio',
+  'laboratorio', 'ciudad', 'estado',
+])
+
+const fold = (w: string) => w.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+
+export function isInstitution(piece: string): boolean {
+  const words = piece.match(/[\p{L}\p{M}]+/gu) ?? []
+  const capitalised = words.filter((w) => /^\p{Lu}/u.test(w) && w.length >= 2)
+  if (capitalised.length === 0) return false
+  if (ORG_HEADS.has(fold(capitalised[0] as string))) return true
+  if (words.length === 1 && /^\p{Lu}{2,}$/u.test(words[0] as string)) return true
+  return capitalised.length > 4
+}
+
+/**
+ * The part of a byline piece handed to `person`: its first name run, plus a
+ * second one after a comma for a surname-first piece ("Ruiz, Ana"). "Juan
+ * Pérez coordinador del Proyecto Agua" hands over "Juan Pérez" — the label
+ * still covers the whole piece, but "Proyecto" and "Agua" are not spread.
+ */
+const PERSON_CORE = new RegExp(String.raw`${NAME_RUN}(?:[ \t]*,[ \t]*${NAME_RUN})?`, 'u')
 
 /** Count a rule only when it actually fired — a zero row is noise in the report. */
 function pushCount(into: RedactionCount[], label: string, count: number): void {
@@ -290,17 +361,24 @@ export function structuralPass(
   })
 
   // Each author on its own: "Ana Ruiz y Luis Gómez" is two people, two labels.
-  // A piece with no capital letter ("anónimo") gets no person label.
+  // A piece with no name run ("anónimo") or an institution gets no person label.
+  const author = (piece: string): string => {
+    authors += 1
+    if (!options.person || isInstitution(piece)) return OMITTED_PLACEHOLDER
+    const core = PERSON_CORE.exec(piece)
+    return core ? options.person(core[0]) : OMITTED_PLACEHOLDER
+  }
+  const eachPiece = (value: string, split: RegExp, onPiece: (piece: string) => string) =>
+    value
+      .split(split)
+      .map((piece, i) => (i % 2 === 1 || piece.trim() === '' ? piece : onPiece(piece)))
+      .join('')
   const byline = (_m: string, key: string, value: string) =>
     key +
-    value
-      .split(AUTHOR_SPLIT)
-      .map((piece, i) => {
-        if (i % 2 === 1 || piece.trim() === '') return piece
-        authors += 1
-        return options.person && /\p{Lu}/u.test(piece) ? options.person(piece) : OMITTED_PLACEHOLDER
-      })
-      .join('')
+    eachPiece(value, /[;|]/.test(value) ? HARD_SPLIT_NO_COMMA : HARD_SPLIT_ALL, (hard) =>
+      // "Secretaría de Educación y Cultura" is ONE institution, not two authors.
+      isInstitution(hard) ? author(hard) : eachPiece(hard, SOFT_SPLIT, author),
+    )
   // Field form first. What it leaves starts with "[", not a capital, so the
   // inline form cannot take the same byline twice.
   out = out.replace(BYLINE_FIELD, byline)

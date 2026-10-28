@@ -44,3 +44,31 @@ describe('runAnonymisationGate — author bylines', () => {
     expect(result.redactedText).toBe('Autores: [Persona A] y [Persona B]\n\n[Persona B] revisó el texto.')
   })
 })
+
+/** Byline audit 2026-10-28: only a PERSON's words spread as name parts. */
+describe('runAnonymisationGate — byline audit', () => {
+  const run = async (text: string) => {
+    const result = await runAnonymisationGate(
+      { contentKind: 'documento', text },
+      { detector: staticDetector([]) },
+    )
+    expect(result.status).toBe('ready')
+    return result.status === 'ready' ? result.redactedText : ''
+  }
+
+  it('redacts an institutional author but never spreads its words', async () => {
+    const out = await run('Autor: Universidad Nacional Autónoma de México\n\nEl trabajo se hizo en México.')
+    expect(out).toBe('Autor: [Dato omitido]\n\nEl trabajo se hizo en México.')
+  })
+
+  it('spreads every author after ";" and in a surname-first list', async () => {
+    const out = await run('Autores: Ruiz, Ana; Gómez, Luis\n\nAna y Gómez revisaron el texto.')
+    for (const w of ['Ana', 'Ruiz', 'Luis', 'Gómez']) expect(out).not.toContain(w)
+  })
+
+  it('spreads the name after "Ma.", not the title', async () => {
+    const out = await run('Autora: Ma. Elena Ruiz\n\nElena habló.')
+    expect(out).not.toContain('Elena')
+    expect(out).not.toContain('Ruiz')
+  })
+})
