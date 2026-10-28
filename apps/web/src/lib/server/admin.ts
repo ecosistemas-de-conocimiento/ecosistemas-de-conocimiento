@@ -645,6 +645,9 @@ export async function listAllEcosystems(
         depth: '0',
         sort: 'name',
         ...selectParams(['name', 'slug']),
+        // Switched-off ecosistemas leave the directory. `not_equals: false`,
+        // not `equals: true`: a row with no value predates the flag and is active.
+        'where[isActive][not_equals]': 'false',
         ...ecosystemSearchParams(term),
       }).toString(),
     (raw) => normalizeEcosystems([raw])[0] ?? null,

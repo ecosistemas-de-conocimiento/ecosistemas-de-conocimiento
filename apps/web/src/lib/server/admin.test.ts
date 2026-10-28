@@ -408,6 +408,23 @@ describe('listAllEcosystems', () => {
     });
   });
 
+  it('hides switched-off ecosistemas, keeping rows with no isActive', async () => {
+    // `not_equals: false` rather than `equals: true`: a row created before the
+    // flag existed has no value, and it is active.
+    backendFetch.mockImplementation(router({ organizations: reply([]) }));
+    await listAllEcosystems('tok');
+    const [url = ''] = urls();
+    expect(url).toContain(`${encodeURIComponent('where[isActive][not_equals]')}=false`);
+  });
+
+  it('keeps the isActive filter alongside a search term', async () => {
+    backendFetch.mockImplementation(router({ organizations: reply([]) }));
+    await listAllEcosystems('tok', 'demo');
+    const [url = ''] = urls();
+    expect(url).toContain(`${encodeURIComponent('where[isActive][not_equals]')}=false`);
+    expect(url).toContain(encodeURIComponent('where[or][0][name][like]'));
+  });
+
   it('reads names and slugs only — no content crosses this wire', async () => {
     backendFetch.mockImplementation(router({ organizations: reply([]) }));
     await listAllEcosystems('tok');
