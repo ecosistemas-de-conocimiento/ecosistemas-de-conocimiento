@@ -70,8 +70,14 @@ const captions = new WeakMap<Page, string>();
 
 export async function instalarSubtitulos(page: Page, rol: string): Promise<void> {
   await page.exposeFunction('__evidCaptionText', () => captions.get(page) ?? '');
-  await page.addInitScript(({ rolLabel, BAR_PX }: { rolLabel: string; BAR_PX: number }) => {
+  await page.addInitScript(({ rolLabel }: { rolLabel: string }) => {
     const w = window as unknown as { __evidPaint: (t: string) => void; __evidCaptionText: () => Promise<string> };
+    // A phone gets a stacked bar: the role above, the story below in at most two
+    // lines. 76px holds both (11px label + 2 × 16px × 1.25 + padding).
+    // ⚠ `screen.width`, not `innerWidth`: with `isMobile` the init script runs
+    // before the page's viewport meta applies, when innerWidth is still 980.
+    const phone = screen.width < 640;
+    const BAR_PX = phone ? 76 : 64;
     w.__evidPaint = (text: string) => {
       let bar = document.getElementById('evid-caption');
       if (!bar) {
@@ -80,28 +86,37 @@ export async function instalarSubtitulos(page: Page, rol: string): Promise<void>
         bar.setAttribute('aria-hidden', 'true');
         bar.style.cssText =
           'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;pointer-events:none;' +
-          `height:${BAR_PX}px;box-sizing:border-box;gap:16px;align-items:center;justify-content:center;padding:0 24px;` +
-          'background:rgba(17,17,27,.86);color:#fff;font:600 26px/1.25 system-ui,sans-serif;';
+          `height:${BAR_PX}px;box-sizing:border-box;align-items:center;justify-content:center;` +
+          'background:rgba(17,17,27,.86);color:#fff;' +
+          (phone
+            ? 'flex-direction:column;gap:2px;padding:6px 14px;text-align:center;font:600 16px/1.25 system-ui,sans-serif;'
+            : 'gap:16px;padding:0 24px;font:600 26px/1.25 system-ui,sans-serif;');
         document.documentElement.appendChild(bar);
         // Reserve the bar's strip so it never covers the composer: the app
-        // shell is `height: 100dvh` (routes/+layout.svelte).
+        // shell is `height: 100dvh` (routes/+layout.svelte), and so is the
+        // start screen (StartScreen.svelte).
         const style = document.createElement('style');
-        style.textContent = `.app-shell{height:calc(100dvh - ${BAR_PX}px)!important}body{padding-bottom:${BAR_PX}px}`;
+        style.textContent =
+          `.app-shell{height:calc(100dvh - ${BAR_PX}px)!important}body{padding-bottom:${BAR_PX}px}` +
+          `.start{min-height:calc(100dvh - ${BAR_PX}px)!important}`;
         document.documentElement.appendChild(style);
       }
       bar.style.display = text ? 'flex' : 'none';
       bar.replaceChildren();
       const who = document.createElement('span');
       who.textContent = rolLabel;
-      who.style.cssText = 'font-size:16px;font-weight:500;opacity:.7;text-transform:uppercase;letter-spacing:.08em';
+      who.style.cssText =
+        `font-size:${phone ? 11 : 16}px;font-weight:500;opacity:.7;text-transform:uppercase;letter-spacing:.08em`;
       const what = document.createElement('span');
       what.textContent = text;
+      // Two lines at most; a longer story is cut with an ellipsis, never pushed off the bar.
+      if (phone) what.style.cssText = 'display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden';
       bar.append(who, what);
     };
     const paint = () => void w.__evidCaptionText().then(w.__evidPaint);
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', paint);
     else paint();
-  }, { rolLabel: rol, BAR_PX: 64 });
+  }, { rolLabel: rol });
 }
 
 async function subtitular(page: Page, texto: string): Promise<void> {
@@ -157,6 +172,36 @@ export async function ir(page: Page, seccion: string): Promise<void> {
   // Some sections load slowly on dev (the graph): wait for the address, not just the click.
   await page.waitForURL((u) => u.pathname === destino, { timeout: 90_000 });
   await page.waitForLoadState('networkidle');
+}
+
+/**
+ * The chat's side panels. On a wide screen they are always there; below the
+ * app's 64rem breakpoint (`$lib/layout.ts`) they are drawers behind the
+ * `panel-toggle-*` buttons. Open one before using what is inside, close it to
+ * show the chat again. Both are no-ops on a desk.
+ */
+export type Panel = 'conversations' | 'documents';
+
+async function enCajon(page: Page): Promise<boolean> {
+  return page.getByTestId('panel-toggle-conversations').isVisible();
+}
+
+export async function abrirPanel(page: Page, panel: Panel): Promise<void> {
+  if (!(await enCajon(page))) return;
+  const boton = page.getByTestId(`panel-toggle-${panel}`);
+  if ((await boton.getAttribute('aria-expanded')) !== 'true') await boton.click();
+  await expect(page.getByTestId(`panel-${panel}`)).toBeInViewport();
+}
+
+export async function cerrarPanel(page: Page): Promise<void> {
+  if (!(await enCajon(page))) return;
+  for (const panel of ['conversations', 'documents'] as const) {
+    const boton = page.getByTestId(`panel-toggle-${panel}`);
+    if ((await boton.getAttribute('aria-expanded')) === 'true') {
+      await page.getByTestId(`panel-${panel}`).getByRole('button', { name: 'Cerrar', exact: true }).click();
+      await expect(boton).toHaveAttribute('aria-expanded', 'false');
+    }
+  }
 }
 
 /** A small text file to upload, named with the run id so cleanup can find it. */

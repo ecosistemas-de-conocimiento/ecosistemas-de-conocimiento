@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { RUN_ID, archivoDePrueba, escena, ir } from './escena';
+import { RUN_ID, abrirPanel, archivoDePrueba, cerrarPanel, escena, ir } from './escena';
 
 /**
  * Stories every role shares, recorded the same way in every video. Each role's
@@ -17,12 +17,15 @@ export async function elegirEcosistema(page: Page, nombre = ECOSISTEMA): Promise
   await page.goto('/?conversaciones');
   await page.waitForLoadState('networkidle');
   // Someone in ONE ecosistema gets a plain label, not a picker: nothing to choose, no story to show.
+  // On a phone the picker lives in the conversations drawer.
   const picker = page.locator('button[aria-haspopup="listbox"]').first();
-  if (!(await picker.isVisible())) return;
+  if (!(await picker.count())) return;
   await escena(page, 'A2.1', async () => {
+    await abrirPanel(page, 'conversations');
     await picker.click();
     await page.getByRole('listbox', { name: 'Elige un ecosistema' }).getByRole('option', { name: nombre }).click();
     await page.waitForLoadState('networkidle');
+    await cerrarPanel(page);
   });
 }
 
@@ -36,6 +39,7 @@ async function preguntar(page: Page, texto: string): Promise<void> {
 }
 
 async function renombrarActiva(page: Page, nombre: string): Promise<void> {
+  await abrirPanel(page, 'conversations');
   const fila = page.getByTestId('session-row').filter({ has: page.locator('[aria-current], .active, [data-active="true"]') });
   const objetivo = (await fila.count()) ? fila.first() : page.getByTestId('session-row').first();
   await objetivo.hover();
@@ -44,6 +48,7 @@ async function renombrarActiva(page: Page, nombre: string): Promise<void> {
   await input.fill(nombre);
   await input.press('Enter');
   await expect(page.getByTestId('session-row').filter({ hasText: nombre })).toHaveCount(1);
+  await cerrarPanel(page);
 }
 
 /** Chat, ratings, documents in a conversation, and Resonancias. */
@@ -67,8 +72,10 @@ export async function conversar(page: Page, pregunta: string, experiencia: strin
   }
 
   await escena(page, 'B1.1', async () => {
+    await abrirPanel(page, 'conversations');
     await page.getByTestId('session-tab-generales').click();
     await page.getByRole('button', { name: 'Nueva conversación' }).first().click();
+    await cerrarPanel(page);
   });
   const entrevista = page.getByTestId('chat-entrevista');
   if (await entrevista.isVisible()) {
@@ -98,6 +105,7 @@ export async function conversar(page: Page, pregunta: string, experiencia: strin
   await escena(page, 'B1.5', () => renombrarActiva(page, `${RUN_ID} generales`));
 
   await escena(page, 'C1.1', async () => {
+    await abrirPanel(page, 'documents');
     const chooser = page.waitForEvent('filechooser');
     await page.getByRole('button', { name: /^Subir documento/ }).first().click();
     await (await chooser).setFiles(archivoDePrueba('documento'));
@@ -115,11 +123,14 @@ export async function conversar(page: Page, pregunta: string, experiencia: strin
     await titulo.fill(`${RUN_ID}-nota`);
     await titulo.press('Enter');
   });
+  await cerrarPanel(page);
 
   if (!resonanciaHecha) {
     await escena(page, 'B1.4', async () => {
+      await abrirPanel(page, 'conversations');
       await page.getByTestId('session-tab-resonancias').click();
       await page.getByRole('button', { name: 'Nueva conversación' }).first().click();
+      await cerrarPanel(page);
       await preguntar(page, experiencia);
     });
     await renombrarActiva(page, `${RUN_ID} resonancias`);
@@ -238,6 +249,7 @@ export async function limpiar(page: Page): Promise<void> {
   await escena(page, 'B1.6', async () => {
     await page.goto('/?conversaciones');
     await page.waitForLoadState('networkidle');
+    await abrirPanel(page, 'conversations');
     for (const tab of ['generales', 'resonancias']) {
       await page.getByTestId(`session-tab-${tab}`).click();
       // The list fills in after the tab switch; counting before it does reads 0.

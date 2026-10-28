@@ -42,7 +42,7 @@ docker run --rm --init --ipc=host \
 
 # Keep each role's video past the next run (see outputDir in the config).
 out="$web/e2e/evidencia/.videos/$video"
-for dir in "$out"/.corrida/*-chromium; do
+for dir in "$out"/.corrida/*-chromium "$out"/.corrida/*-movil; do
   [[ -f "$dir/video.webm" ]] || continue
   rol="$(basename "$dir")"; rol="${rol%%-*}"
   [[ "$rol" == limpieza ]] && continue

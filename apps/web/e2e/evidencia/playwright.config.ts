@@ -29,7 +29,6 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL: process.env.EVID_WEB_URL ?? 'https://dev.ecosistemasdeconocimiento.com',
-    video: { mode: 'on', size: { width: 1440, height: 900 } },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     actionTimeout: 30_000,
@@ -42,7 +41,29 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } },
+      // Every role but participante, on a desk.
+      testIgnore: /participante\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1440, height: 900 },
+        video: { mode: 'on', size: { width: 1440, height: 900 } },
+      },
+    },
+    {
+      // The participante video is recorded on a phone (owner request 2026-10-28):
+      // that is the screen participants use. Chromium with Pixel 7's touch and
+      // mobile flags, at an iPhone-size 390x844 viewport.
+      name: 'movil',
+      testMatch: /participante\.spec\.ts/,
+      use: {
+        ...devices['Pixel 7'],
+        viewport: { width: 390, height: 844 },
+        // ⚠ The video is twice the viewport, same shape: at 1x the frames are
+        // 390px wide and the text is a blur. Chromium hands the screencast over
+        // at device pixels, so DPR 2 is what makes the 2x video sharp.
+        deviceScaleFactor: 2,
+        video: { mode: 'on', size: { width: 780, height: 1688 } },
+      },
     },
   ],
 });
