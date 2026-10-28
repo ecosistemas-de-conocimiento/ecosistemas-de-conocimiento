@@ -164,6 +164,7 @@ El audio (B3.1, C1.3, C1.4) se graba solo en el video del participante.
 |---|---|:-:|:-:|:-:|:-:|:-:|---|
 | F3.1 | Activar o desactivar funciones. |  |  | ● | ● | ● | ◻ pantalla |
 | F3.2 | Elegir el respaldo del detector. |  |  |  |  | ● | ◻ pantalla |
+| F3.3 | Ajustar el estilo de respuesta. |  |  |  |  | ● | ◻ pantalla |
 
 ### F4. Administración
 

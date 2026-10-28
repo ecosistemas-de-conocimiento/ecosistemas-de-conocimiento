@@ -252,6 +252,7 @@ export const MAPA: readonly Tematica[] = [
         historias: [
           h('F3.1', 'Activar o desactivar funciones.', ['investigador', 'responsable', 'admin'], 'pantalla'),
           h('F3.2', 'Elegir el respaldo del detector.', ['admin'], 'pantalla'),
+          h('F3.3', 'Ajustar el estilo de respuesta.', ['admin'], 'pantalla'),
         ],
       },
       {
