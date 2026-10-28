@@ -151,24 +151,25 @@ describe.skipIf(!dockerOk)('the gate writes its row through the REAL column writ
     ])
   })
 
-  it('🔴 documento held at verify: held, held text and log written', async () => {
+  it('🔴 documento held at verify: held, the option-off held text, no log', async () => {
     await seed('documento')
     let n = 0
     const detector = {
       name: 'static',
       async detect({ text }: { text: string }) {
-        // Stage 3 finds both; verify reports the kept name as private → hold.
+        // Stage 3 finds both; verify reports something still standing → hold.
         return n++ === 0
           ? FINDINGS.filter((f) => text.includes(f.text))
-          : [{ text: 'Ramiro Saldaña', type: 'persona' as const }]
+          : [{ text: 'vecino', type: 'otro' as const }]
       },
     }
     const out = await gate('documento', { keep: true, detector: detector as never })
     expect(out.ok).toBe(false)
     const r = await row()
     expect(r.anonymisation_status).toBe('held')
-    expect(r.held_text).toContain('Ramiro Saldaña')
-    expect(r.public_figures_kept).toEqual([expect.objectContaining({ name: 'Ramiro Saldaña' })])
+    // 🔴 A hold is the option-off hold: nothing is restored in it.
+    expect(r.held_text).not.toContain('Saldaña')
+    expect(r.public_figures_kept).toBeNull()
   })
 
   it('🔴 a detector that could not run: n/a, retryable, log NULL', async () => {

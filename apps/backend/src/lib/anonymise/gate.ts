@@ -58,9 +58,10 @@
 import { clearFoldCache, foldedMatches, positiveIntFromEnv } from './detector'
 import { deterministicPass } from './deterministic'
 import { isGenericPlace } from './genericPlaces'
-import { createNamePartRegistry, gluedToAnotherName, namePartsOf, NOT_A_PART, type NamePartRegistry, sentenceStart } from './nameParts'
+import { createNamePartRegistry, gluedToAnotherName, namePartsOf, type NamePartRegistry, sentenceStart } from './nameParts'
 import { createPseudonymAllocator, normaliseName } from './pseudonyms'
 import { structuralPass } from './structural'
+import { restorePublicFigures } from './publicFigureRestore'
 import { isTownLevelPlace } from './townPlaces'
 import type {
   DetectorFinding,
@@ -69,7 +70,6 @@ import type {
   GateResult,
   GateStage,
   GateStageReport,
-  KeptPublicFigure,
   PersonDetector,
   RedactionCount,
   SurvivorSpan,
@@ -150,150 +150,16 @@ function countsByLabel(entries: Iterable<string>): RedactionCount[] {
   return [...tally].map(([label, count]) => ({ label, count }))
 }
 
-/**
- * A kept public name, swapped out while redaction runs (see {@link shield}).
- * Private-use characters: never in real text, never a word character.
- */
-const SHIELD = /(\d+)/g
-
-/** Character ranges in `text` occupied by placeholders we inserted, or by a shield. */
+/** Character ranges in `text` occupied by placeholders we inserted. */
 function placeholderSpans(text: string): Array<[number, number]> {
   const spans: Array<[number, number]> = []
   for (const m of text.matchAll(PLACEHOLDER)) {
     spans.push([m.index, m.index + m[0].length])
   }
-  for (const m of text.matchAll(SHIELD)) {
-    spans.push([m.index, m.index + m[0].length])
-  }
   return spans
 }
 
-/** Every whole-word, case- and accent-blind occurrence of `name` in `text`. */
-function wholeWordMatches(text: string, name: string): Array<[number, number]> {
-  return foldedMatches(text, name).filter(([s, e]) => wholeWord(text, s, e))
-}
-
-/**
- * 🔴 KEEP PUBLIC FIGURES: swap every whole-word occurrence of each kept name
- * for an opaque token, so no redaction rule can touch it (owner rulings
- * 2026-10-27). Every replacer here already skips our placeholders, and
- * `placeholderSpans` counts a shield as one. `restore` puts the names back
- * and says which ones were actually in the text.
- *
- * ⚠ ONLY THE KEPT SPAN IS SHIELDED. "López" alone, outside "Ana López", is
- * still redacted when a private person owns that part.
- */
-function shield(text: string, names: readonly string[]): { text: string; restore: (t: string) => { text: string; present: Set<string> } } {
-  const originals: Array<{ name: string; spelling: string }> = []
-  let out = text
-  for (const name of [...names].sort((a, b) => b.length - a.length)) {
-    const spans = placeholderSpans(out)
-    let result = ''
-    let copied = 0
-    for (const [at, end] of wholeWordMatches(out, name)) {
-      if (at < copied || spans.some(([s, e]) => at < e && end > s)) continue
-      result += `${out.slice(copied, at)}${originals.length}`
-      originals.push({ name, spelling: out.slice(at, end) })
-      copied = end
-    }
-    if (copied > 0) out = result + out.slice(copied)
-  }
-  return {
-    text: out,
-    restore: (t) => {
-      const present = new Set<string>()
-      const restored = t.replace(SHIELD, (m, i: string) => {
-        const o = originals[Number(i)]
-        // Never ours (input markers are neutralised at stage 1): leave it.
-        if (o === undefined) return m
-        present.add(o.name)
-        return o.spelling
-      })
-      return { text: restored, present }
-    },
-  }
-}
-
-/**
- * Words that may sit INSIDE one person's name without splitting it:
- * "Fernando de la Cruz", "Ludwig van Beethoven". A conjunction ("y", "e",
- * "o", "u", "ni") is not one of them: it joins two people.
- */
-const NAME_JOINERS = new Set(['de', 'del', 'la', 'las', 'los', 'el', 'da', 'das', 'do', 'dos', 'di', 'van', 'von', 'der'])
-
-/**
- * How many separate NAME GROUPS a span holds: maximal runs of capitalised
- * name words, joined only by spaces and `NAME_JOINERS`. Anything else —
- * punctuation of any kind, a line break, a lower-case word ("y", "con",
- * "and") — closes the group (re-audit 2026-10-27: listing separators missed
- * "–", "(", "+", "·", "con", "and" and a newline). A title word that is not a
- * name part ("Don", "Dr", "El") neither opens nor closes a group.
- */
-export function nameGroups(span: string): number {
-  let groups = 0
-  let open = false
-  let last = 0
-  for (const m of span.matchAll(/[\p{L}\p{M}]+/gu)) {
-    const gap = span.slice(last, m.index)
-    last = m.index + m[0].length
-    if (/[^ \t]/u.test(gap)) open = false
-    const word = m[0]
-    const folded = normaliseName(word)
-    if (/^\p{Lu}/u.test(word) && !NOT_A_PART.has(folded)) {
-      if (!open) groups += 1
-      open = true
-    } else if (!(NOT_A_PART.has(folded) && (NAME_JOINERS.has(folded) || /^\p{Lu}/u.test(word)))) {
-      open = false
-    }
-  }
-  return groups
-}
-
-/** A span's words for the shared-part test: folded, any case, function words and titles out. */
-function comparableParts(span: string): Set<string> {
-  return new Set(
-    (span.replace(PLACEHOLDER, ' ').match(/[\p{L}\p{M}]+/gu) ?? [])
-      .map(normaliseName)
-      .filter((w) => [...w].length >= 2 && !NOT_A_PART.has(w)),
-  )
-}
-
-/**
- * 🔴 WHICH `publica` FINDINGS ARE KEPT. Fail closed on every ambiguity
- * (audits 2026-10-27). A public span is demoted to private when:
- *
- *   · it does not hold exactly ONE name group (`nameGroups`): "X y Y",
- *     "X, Y", "X (Y)" and a lower-case span are never public;
- *   · it shares ANY name part, case- and accent-folded, with a private
- *     finding, with a finding of any other type, with a roster name, or with
- *     another span already demoted. String containment was not enough: the
- *     re-audit shipped "Ramiro Saldaña Pérez" past a public "Saldaña Pérez"
- *     and a private "Ramiro Saldaña". Over-redaction accepted: a senator who
- *     shares a surname with a private person is redacted;
- *   · ⚠ THE ONE EXCEPTION: a span that EXACTLY equals a roster name (the staff
- *     author of a cited work or a public-event speaker, owner rulings
- *     2026-10-27) may share parts with that roster entry itself, and nothing
- *     else.
- */
-function keptPublicFindings(found: readonly DetectorFinding[], rosterNames: readonly string[]): DetectorFinding[] {
-  const candidates = found.filter((f) => f.type === 'persona' && f.public)
-  const privateSources: string[] = found.filter((f) => !candidates.includes(f)).map((f) => f.text)
-  let kept = candidates.filter((f) => nameGroups(f.text) === 1)
-  privateSources.push(...candidates.filter((f) => !kept.includes(f)).map((f) => f.text))
-  // Until nothing changes: a demoted span is a private source for the rest.
-  for (;;) {
-    const privateParts = new Set(privateSources.flatMap((t) => [...comparableParts(t)]))
-    const next = kept.filter((f) => {
-      const folded = normaliseName(f.text)
-      const own = rosterNames.filter((r) => normaliseName(r) !== folded)
-      const rosterParts = new Set(own.flatMap((r) => [...comparableParts(r)]))
-      return [...comparableParts(f.text)].every((w) => !privateParts.has(w) && !rosterParts.has(w))
-    })
-    if (next.length === kept.length) return next
-    privateSources.push(...kept.filter((f) => !next.includes(f)).map((f) => f.text))
-    kept = next
-  }
-}
+export { nameGroups } from './publicFigureRestore'
 
 /**
  * True when every occurrence of `needle` sits inside a placeholder — or there is
@@ -722,31 +588,24 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   const names = createNamePartRegistry()
   const stages: GateStageReport[] = []
 
-  // 🔴 KEEP PUBLIC FIGURES: a `documento` only, never a testimonio or a
-  // conversation, whatever the caller passed (owner rulings 2026-10-27).
+  // 🔴 KEEP PUBLIC FIGURES (third audit 2026-10-27): the gate runs EXACTLY as
+  // with the option off. The model is also asked to classify people, and only
+  // a READY result may have public figures restored, after the fact
+  // (`publicFigureRestore.ts`). A hold is the option-off hold, unchanged.
+  // A `documento` only, never a testimonio or a conversation.
   const keep = input.keepPublicFigures === true && input.contentKind === 'documento'
   const classify = keep ? { classifyPublic: true as const } : {}
-  // Roster member names (not emails), the ones with name parts.
-  const rosterNames = (input.roster ?? []).filter((e) => !e.includes('@') && namePartsOf(e).length > 0)
-  /** Kept public names → their motivo. Filled by stage 3. */
-  const keptMotivo = new Map<string, string>()
-  /** The kept figures still in `text`, for the log. Undefined when the option is off. */
-  const keptIn = (text: string | undefined): KeptPublicFigure[] | undefined =>
-    keep
-      ? [...keptMotivo]
-          .filter(([name]) => text !== undefined && wholeWordMatches(text, name).length > 0)
-          .map(([name, motivo]) => ({ name, motivo }))
-      : undefined
-  const keptField = (text: string | undefined) => {
-    const kept = keptIn(text)
-    return kept === undefined ? {} : { keptPublic: kept }
-  }
-  /** Run a redaction with every kept public name shielded. */
-  const shielded = <T extends { text: string }>(text: string, run: (t: string) => T | null): T | null => {
-    if (!keep || keptMotivo.size === 0) return run(text)
-    const s = shield(text, [...keptMotivo.keys()])
-    const out = run(s.text)
-    return out === null ? null : { ...out, text: s.restore(out.text).text }
+  // 🔴 A roster entry in ANY case is a roster entry (third audit): name parts
+  // are read from its capitalised form.
+  const rosterNames = (input.roster ?? [])
+    .filter((e) => !e.includes('@'))
+    .map((e) => e.replace(/(^|[\s-])(\p{Ll})/gu, (_m, before: string, ch: string) => before + ch.toUpperCase()))
+    .filter((e) => namePartsOf(e).length > 0)
+  /** Everything the detector said, for the restore's evidence. */
+  const evidence = { stage3: [] as DetectorFinding[], verify: [] as DetectorFinding[], unlocated: [] as DetectorFinding[] }
+  const unlocatedOf = (found: unknown): DetectorFinding[] => {
+    const u = (found as { unlocated?: unknown } | null)?.unlocated
+    return Array.isArray(u) ? u.filter((f): f is DetectorFinding => typeof (f as DetectorFinding)?.text === 'string') : []
   }
 
   const report = (): GateReport => ({
@@ -771,22 +630,17 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
     reason,
     report: report(),
     ...(extra ?? {}),
-    ...(extra?.redactedText !== undefined ? keptField(extra.redactedText) : {}),
   })
-  const ready = (redactedText: string): GateResult => ({
-    status: 'ready',
-    redactedText,
-    report: report(),
-    ...keptField(redactedText),
-  })
+  const ready = (redactedText: string): GateResult => {
+    if (!keep) return { status: 'ready', redactedText, report: report() }
+    const restored = restorePublicFigures(structural.text, redactedText, { ...evidence, roster: rosterNames })
+    return { status: 'ready', redactedText: restored.text, report: report(), keptPublic: restored.kept }
+  }
 
   // ── 1. STRUCTURAL ─────────────────────────────────────────────────────────
   // 🔴 NFC FIRST, so the roster pass, the model and every matcher see one
   // spelling of "é" (final audit 2026-10-21: decomposed "José" was missed).
-  // 🔴 The shield's private-use markers can never come from the input (audit
-  // 2026-10-27: a typed U+E000 "7" U+E001 crashed the restore). Each becomes
-  // U+FFFD, a non-word character, so word breaks stay where they were.
-  const structural = structuralPass(input.text.normalize('NFC').replace(/[\uE000\uE001]/gu, '\uFFFD'))
+  const structural = structuralPass(input.text.normalize('NFC'))
   stages.push({ stage: 'structural', removed: structural.removed })
 
   if (structural.text.trim().length === 0) {
@@ -803,10 +657,7 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // ── 2. DETERMINISTIC ──────────────────────────────────────────────────────
   const deterministic = deterministicPass({
     text: structural.text,
-    // 🔴 With the option on, member NAMES wait for stage 3, so the model can
-    // see a staff author and call that mention public. They are redacted
-    // there, after the model, unless it did. Emails are redacted here as ever.
-    roster: keep ? (input.roster ?? []).filter((e) => e.includes('@')) : input.roster,
+    roster: input.roster,
     allocate: (name) => allocator.labelFor(name),
     // 🔴 THE SAME ALLOCATOR STAGE 3 WILL USE. See the header — one allocator per
     // document is the invariant, and addresses obey it exactly like people do.
@@ -817,13 +668,14 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // ── 3. CONTENT ────────────────────────────────────────────────────────────
   let found: DetectorFinding[]
   try {
-    found = withoutGenericPlaces(
-      await deps.detector.detect({
-        text: deterministic.text,
-        contentKind: input.contentKind,
-        ...classify,
-      }),
-    )
+    const raw = await deps.detector.detect({
+      text: deterministic.text,
+      contentKind: input.contentKind,
+      ...classify,
+    })
+    evidence.stage3.push(...raw)
+    evidence.unlocated.push(...unlocatedOf(raw))
+    found = withoutGenericPlaces(raw)
   } catch (err) {
     // 🔴 A detector that could not run is NOT "nothing to redact". See
     // `detector.ts`: the whole reason it throws instead of returning `[]` is to
@@ -862,28 +714,14 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
       names.add(member)
     }
   }
-  // 🔴 KEEP PUBLIC FIGURES: the kept spans are shielded while everything else
-  // is redacted; every other finding is redacted as before, `public` or not.
-  const publics = keep ? keptPublicFindings(found, rosterNames) : []
-  const toRedact: DetectorFinding[] = [
-    ...found.filter((f) => !publics.includes(f)),
-    // Deferred roster names (option on): redacted here, unless shielded.
-    ...(keep ? rosterNames.map((text): DetectorFinding => ({ text, type: 'persona' })) : []),
-  ]
-  const shieldedText = shield(deterministic.text, publics.map((f) => f.text))
-  const redacted = applyFindings(
-    shieldedText.text,
-    toRedact,
+  const applied = applyFindings(
+    deterministic.text,
+    found,
     (name) => allocator.labelFor(name),
     (address) => allocator.addressLabelFor(address),
     names,
     true,
   )
-  const restored = shieldedText.restore(redacted.text)
-  for (const f of publics) {
-    if (restored.present.has(f.text) && f.public) keptMotivo.set(f.text, f.public.motivo)
-  }
-  const applied = { text: restored.text, labels: redacted.labels }
   stages.push({ stage: 'content', removed: countsByLabel(applied.labels) })
 
   // ── 4. VERIFY, IN ROUNDS ──────────────────────────────────────────────────
@@ -906,9 +744,10 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   for (let round = 1; ; round++) {
     let survivors: DetectorFinding[]
     try {
-      survivors = withoutGenericPlaces(
-        await deps.detector.detect({ text: current, contentKind: input.contentKind, ...classify }),
-      )
+      const raw = await deps.detector.detect({ text: current, contentKind: input.contentKind, ...classify })
+      evidence.verify.push(...raw)
+      evidence.unlocated.push(...unlocatedOf(raw))
+      survivors = withoutGenericPlaces(raw)
     } catch (err) {
       return hold(
         'verify',
@@ -921,12 +760,6 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
     }
 
     const spans = placeholderSpans(current)
-    // 🔴 KEEP PUBLIC FIGURES: a finding is covered by a kept name only when
-    // verify ALSO calls it public. Verify calling a kept name private is a
-    // disagreement, and a disagreement holds (owner, 2026-10-27, fail closed).
-    const keptSpans: Array<[number, number]> = keep
-      ? [...keptMotivo.keys()].flatMap((name) => wholeWordMatches(current, name))
-      : []
     // ⚠ `onlyPlaceholders`: a finding made of our placeholders and punctuation
     // ("[Domicilio AP], [Domicilio AQ]") names nobody.
     // 🔴 `identifica: false` COUNTS ONLY ON A BARE TITLE (`bareTitle`, owner's
@@ -938,7 +771,7 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
     // ranchos, parajes and house references still hold. See `townPlaces.ts`.
     const standing = survivors.filter(
       (f) =>
-        !coveredByPlaceholder(current, f.public && keep ? [...spans, ...keptSpans] : spans, f.text) &&
+        !coveredByPlaceholder(current, spans, f.text) &&
         !onlyPlaceholders(f.text) &&
         !isTownLevelPlace(f, current),
     )
@@ -947,15 +780,13 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
     const forced = standing.filter((f) => titleVerdict(f, current) === 'redact')
 
     if (real.length === 0 && forced.length > 0) {
-      const done = shielded(current, (t) =>
-        redactLeftovers(
-          t,
-          forced,
-          (name) => allocator.labelFor(name),
-          (address) => allocator.addressLabelFor(address),
-          names,
-          (name) => allocator.peekLabel(name),
-        ),
+      const done = redactLeftovers(
+        current,
+        forced,
+        (name) => allocator.labelFor(name),
+        (address) => allocator.addressLabelFor(address),
+        names,
+        (name) => allocator.peekLabel(name),
       )
       // 🔴 A redaction that changed nothing (null, or the same text) is not a
       // redaction: fall through and HOLD (final audit 2026-10-21, B1).
@@ -982,15 +813,13 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
 
     const redacted =
       round < rounds
-        ? shielded(current, (t) =>
-            redactLeftovers(
-              t,
-              [...real, ...forced],
-              (name) => allocator.labelFor(name),
-              (address) => allocator.addressLabelFor(address),
-              names,
-              (name) => allocator.peekLabel(name),
-            ),
+        ? redactLeftovers(
+            current,
+            [...real, ...forced],
+            (name) => allocator.labelFor(name),
+            (address) => allocator.addressLabelFor(address),
+            names,
+            (name) => allocator.peekLabel(name),
           )
         : null
 

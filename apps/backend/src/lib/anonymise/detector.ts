@@ -455,7 +455,22 @@ const AI_SERVICE_MASK_TOKENS: readonly string[] = [
  * all is NOT tolerated and throws. The distinction matters: the first is noise,
  * the second is "we have no idea what is in this document".
  */
-export function parseFindings(raw: string, sourceText: string): DetectorFinding[] {
+/**
+ * What `parseFindings` returns: the findings, plus `unlocated`, the spans the
+ * model reported that could not be placed in the text. ⚠ `unlocated` is never
+ * redacted (there is nothing to replace); the keep-public-figures restore
+ * counts it as private evidence (third audit 2026-10-27: a son's name the
+ * filter dropped never demoted his father's public name).
+ */
+export type ParsedFindings = DetectorFinding[] & { unlocated: DetectorFinding[] }
+
+/** Attach `unlocated` NON-enumerably, so a plain list comparison ignores it. */
+export function withUnlocated(list: DetectorFinding[], unlocated: DetectorFinding[]): ParsedFindings {
+  Object.defineProperty(list, 'unlocated', { value: unlocated, enumerable: false })
+  return list as ParsedFindings
+}
+
+export function parseFindings(raw: string, sourceText: string): ParsedFindings {
   const withoutFences = raw.replace(/```[a-z]*\s*/gi, '').replace(/```/g, '')
   const first = withoutFences.indexOf('{')
   const last = withoutFences.lastIndexOf('}')
@@ -485,6 +500,7 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
   }
 
   const out: DetectorFinding[] = []
+  const unlocated: DetectorFinding[] = []
   for (const item of hallazgos) {
     if (!item || typeof item !== 'object') continue
     const texto = (item as { texto?: unknown }).texto
@@ -528,6 +544,9 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
           'El modelo vio un dato enmascarado (una dirección, teléfono, correo, CURP, RFC o nombre) y no se puede ubicar en el texto. Una persona tiene que revisarlo.',
         )
       }
+      // Kept aside, with its classification: `publicFigureRestore.ts` counts
+      // it as evidence. Never redacted: there is nothing in the text to replace.
+      unlocated.push({ text: trimmed, type: tipo === 'persona' ? 'persona' : 'otro', ...publicOf(item, tipo) })
       continue
     }
 
@@ -550,7 +569,7 @@ export function parseFindings(raw: string, sourceText: string): DetectorFinding[
       ...publicOf(item, tipo),
     })
   }
-  return out
+  return withUnlocated(out, unlocated)
 }
 
 /** Longest `motivo` kept for the log. A reason, not a paragraph. */
@@ -842,7 +861,10 @@ export function aiServiceDetector(opts: AIServiceDetectorOptions = {}): PersonDe
         // 🔴 If any chunk typed it `domicilio`, it is never a town: fail-closed.
         byKey.set(key, prior?.typedAddress || f.typedAddress ? { ...kept, typedAddress: true } : kept)
       }
-      return [...byKey.values()]
+      return withUnlocated(
+        [...byKey.values()],
+        perChunk.flatMap((c) => (c as Partial<ParsedFindings>).unlocated ?? []),
+      )
     },
   }
 }
@@ -863,7 +885,8 @@ export function staticDetector(
     name,
     async detect({ text }) {
       const list = typeof findings === 'function' ? findings(text) : findings
-      return list.filter((f) => f.text.trim().length >= 2 && text.includes(f.text))
+      const kept = list.filter((f) => f.text.trim().length >= 2 && text.includes(f.text))
+      return withUnlocated(kept, list.filter((f) => !kept.includes(f)))
     },
   }
 }
