@@ -15,8 +15,23 @@ import { MigrateUpArgs, MigrateDownArgs, sql } from '@payloadcms/db-postgres'
  * note's delete removes its revision first (`deleteRevisionsHook`, which also
  * retires its draft copy); cascade is the backstop, so a revision can never
  * outlive its note as a stray, visible draft. The `.json` still says `set null`.
- * No backfill.
+ * Backfill: {@link BACKFILL_PROCESSED_BODY}.
  */
+
+/**
+ * 🔴 BACKFILL: an in-app note already published (the Semiosis seed trabajos
+ * among them) gets `processed_body = body_markdown`. Its body IS what was
+ * published: an edit made after publishing was never processed before this
+ * feature, so treating today's body as published is the only reading
+ * available, and without a value the editor never offers "Publicar cambios"
+ * (`apps/web/src/lib/publication.ts` `noteEdited` reads null as "not edited").
+ * In-app note = `kind = 'markdown'` with no stored file.
+ */
+export const BACKFILL_PROCESSED_BODY = sql`
+  UPDATE "documents" SET "processed_body" = "body_markdown"
+   WHERE "kind" = 'markdown' AND "media_file_id" IS NULL
+     AND "publication_status" = 'published'
+     AND "processed_body" IS NULL AND "body_markdown" IS NOT NULL;`
 
 export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   await db.execute(sql`
@@ -25,6 +40,7 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   ALTER TABLE "documents" ADD COLUMN "reindex_ingest_id" varchar;
   ALTER TABLE "documents" ADD CONSTRAINT "documents_revision_of_id_documents_id_fk" FOREIGN KEY ("revision_of_id") REFERENCES "public"."documents"("id") ON DELETE cascade ON UPDATE no action;
   CREATE UNIQUE INDEX "documents_revision_of_idx" ON "documents" USING btree ("revision_of_id");`)
+  await db.execute(BACKFILL_PROCESSED_BODY)
 }
 
 export async function down({ db, payload, req }: MigrateDownArgs): Promise<void> {

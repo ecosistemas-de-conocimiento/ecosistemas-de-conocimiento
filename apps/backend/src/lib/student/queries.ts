@@ -229,6 +229,9 @@ export async function documentsOf(p: StudentDb, organizationId: number, userId: 
            d.publication_status AS status, d.content_kind AS kind
       FROM documents d
      WHERE d.organization_id = ${organizationId} AND d.uploaded_by_id = ${userId}
+       -- 🔴 Not a "Publicar cambios" staging row (lib/studentNotes.ts): no
+       -- duplicate draft for the student, no extra one in the teacher report.
+       AND d.revision_of_id IS NULL
      ORDER BY d.created_at DESC
      LIMIT ${limit}`,
   )

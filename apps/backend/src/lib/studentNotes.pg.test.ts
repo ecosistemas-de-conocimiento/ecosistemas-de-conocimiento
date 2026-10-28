@@ -94,7 +94,8 @@ import type { Endpoint, PayloadRequest } from 'payload'
 import { getAdminAIClient } from './aiClient'
 import { autoPublishParticipantDocument } from './autoPublish'
 import { invalidateFeatures } from './features'
-import { topicsByUser } from './student/queries'
+import { BACKFILL_PROCESSED_BODY } from '../migrations/20261028_231948_documents_note_revisions'
+import { documentsOf, topicsByUser } from './student/queries'
 import { bootPayload, dockerOk, eventually, rowsOf, shutdown, startRealPostgres, type RealPostgres } from './testing/realPostgres'
 
 if (!dockerOk) console.warn('[studentNotes.pg.test] docker is not usable — SKIP.')
@@ -356,6 +357,18 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
     expect(paused).toBe(1) // only the control went through `updateOne`
   })
 
+
+  it('🔴 migration backfill: an already-published in-app note gets processed_body, so it can offer "Publicar cambios"', async () => {
+    await insertNote(1000, SEMIOSIS, ANA, 'Publicada antes de la función.')
+    await insertNote(1001, SEMIOSIS, ANA, 'Borrador, nunca publicado.')
+    await insertNote(1002, SEMIOSIS, ANA, 'Ya tiene su texto procesado.')
+    await pg!.db.execute(sql`UPDATE documents SET publication_status = 'published' WHERE id IN (1000, 1002)`)
+    await pg!.db.execute(sql`UPDATE documents SET processed_body = 'otro' WHERE id = 1002`)
+    await pg!.db.execute(BACKFILL_PROCESSED_BODY)
+    const got = await rowsOf(pg!.db, sql`SELECT id, processed_body AS pb FROM documents WHERE id IN (1000, 1001, 1002) ORDER BY id`)
+    expect(got.map((r) => r.pb)).toEqual(['Publicada antes de la función.', null, 'otro'])
+  })
+
   describe('"Publicar cambios" on a published note (owner ruling 2026-10-28)', () => {
     const NOTE = 900
     const NEW_BODY = `# Otra cosa\n\nMi vecino ${NAME} me explicó la Abducción, nada más.${PAD.replace(/signos, interpretantes y objetos/g, 'inferencias')}`
@@ -456,6 +469,10 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
 
     it('🔴 duplicate promotions (two callbacks, or callback + graph end) run once', async () => {
       const rev = await changeAndWait()
+      // 🔴 The staging row is not one of the student's documents (no duplicate, not in the report).
+      const own = (await documentsOf(payload as never, SEMIOSIS, ANA)).map((d) => d.id)
+      expect(own).toContain(NOTE)
+      expect(own).not.toContain(rev)
       await pg!.db.execute(sql`UPDATE documents SET ingest_status = 'ready' WHERE id = ${rev}`)
       aiCalls.length = 0
       const both = await Promise.all([1, 2].map(() =>

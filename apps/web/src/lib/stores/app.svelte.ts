@@ -1584,7 +1584,20 @@ class AppStore {
     // document to `draft` — see the anomaly branch below.
     const previous = doc.publicationStatus;
     for (const r of rows()) r.publishRequestPending = true;
+    // 🔴 A note publishes the text ON SCREEN. Save it first, whatever autosave
+    // still has queued: the backend processes its stored body, and
+    // "Publicar cambios" then waits for exactly this text (`pollNoteChanges`).
+    // A body the backend never got would keep the button disabled.
+    const sent = doc.body;
     try {
+      if (opts.note && doc.isNote) {
+        await fetchJson(`/api/documents/${docId}/note`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bodyMarkdown: sent }),
+          credentials: 'same-origin',
+        });
+      }
       const body = await fetchJson<{
         publicationStatus?: unknown;
         publicationError?: unknown;
@@ -1603,7 +1616,7 @@ class AppStore {
         // "Publicar cambios": the published version stays until the new text
         // clears; then the backend's `processedBody` becomes what was sent.
         for (const r of current) r.changesPending = true;
-        void this.pollNoteChanges(docId, doc.body);
+        void this.pollNoteChanges(docId, sent);
         return;
       }
       if (body?.processing === true) {
