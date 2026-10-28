@@ -121,6 +121,19 @@ describe('Q24 audit: a named workplace or school beside a person is reported', (
     expect(flat).toMatch(/aunque no se diga su nombre/)
   })
 
+  it('🔴 asks for it under "Debes incluir" too, the institution alone, as "lugar"', () => {
+    const include = DETECT_SYSTEM_PROMPT.slice(
+      DETECT_SYSTEM_PROMPT.indexOf('Debes incluir:'),
+      DETECT_SYSTEM_PROMPT.indexOf('No es un hallazgo:'),
+    ).replace(/\s+/g, ' ')
+    expect(include).toContain('Reporta SOLO la institución, como "lugar", sin el cargo')
+    expect(include).toContain('el hallazgo es "la clínica Santa Fe de Tepoztlán"')
+  })
+
+  it('the public-names rule covers institutions only with no person or cargo beside them', () => {
+    expect(notAFinding).toContain('lenguas y siglas, sin una persona o un cargo junto a ellos')
+  })
+
   it('keeps bare institution names out', () => {
     expect(notAFinding).toContain('En "trabajo en un PILARES de la alcaldía" no se reporta nada.')
   })

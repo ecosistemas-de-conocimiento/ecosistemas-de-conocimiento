@@ -210,13 +210,14 @@ function replaceOutsidePlaceholders(
   needle: string,
   replacement: (at: number, end: number) => string,
   folded = false,
+  accept: (at: number) => boolean = () => true,
 ): string | null {
   const spans = placeholderSpans(text)
   const ranges: Array<[number, number]> = []
   for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + 1)) {
-    if (!folded || wholeWord(text, at, at + needle.length)) ranges.push([at, at + needle.length])
+    if ((!folded || wholeWord(text, at, at + needle.length)) && accept(at)) ranges.push([at, at + needle.length])
   }
-  if (folded) ranges.push(...foldedMatches(text, needle).filter(([s, e]) => wholeWord(text, s, e)))
+  if (folded) ranges.push(...foldedMatches(text, needle).filter(([s, e]) => wholeWord(text, s, e) && accept(s)))
   ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1])
   let result = ''
   let copied = 0
@@ -287,7 +288,22 @@ function applyFindings(
         : finding.type === 'lugar'
           ? allocateAddress(finding.text)
           : OMITTED_PLACEHOLDER
-    const next = replaceOutsidePlaceholders(out, finding.text, replacement, folded)
+    let next = replaceOutsidePlaceholders(out, finding.text, replacement, folded)
+    // 🔴 THE CONTRACTION RESCUE (measured 2026-10-28, Spark, 4/4 runs): the
+    // model copies "del centro de salud de San Gregorio" as "el centro de salud
+    // de San Gregorio". "del" and "al" fuse "de"/"a" with "el", so the span is
+    // not a whole word in the text and nothing was replaced: the place shipped
+    // in clear. Each occurrence of the rest right after "del" or "al" is
+    // replaced too, the contraction kept: "del [Domicilio A]".
+    // ⚠ A person's `replacement` reads offsets in `source`, so for a person
+    // the rescue runs only when the literal pass changed nothing.
+    const contracted = /^el\s+/i.exec(finding.text)
+    if (contracted !== null && (next === null || finding.type !== 'persona')) {
+      const rest = finding.text.slice(contracted[0].length)
+      const base = next ?? out
+      const afterContraction = (at: number) => /(?:^|[^\p{L}])(?:del|al)\s+$/iu.test(base.slice(Math.max(0, at - 8), at))
+      if (/\p{L}/u.test(rest)) next = replaceOutsidePlaceholders(base, rest, replacement, folded, afterContraction) ?? next
+    }
     if (next === null) continue
     labels.push(finding.type)
     out = next

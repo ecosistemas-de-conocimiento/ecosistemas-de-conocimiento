@@ -192,6 +192,17 @@ export const DETECT_SYSTEM_PROMPT = [
   // 🔴 OWNER'S RULING Q24 = A (2026-10-28): "tan precisos que identifican" read
   // as licence to report any named institution; see "No es un hallazgo" below.
   '- Centros de trabajo, escuelas o cargos que, en ese texto, señalan a una persona concreta.',
+  // 🔴 AUDIT 2026-10-28, measured on the Spark (scripts/measurements/q24):
+  // with the rule only under Domicilios, the model reported none of a named
+  // clinic, school or DIF office beside a person or cargo (0 of 3, 2 runs);
+  // the prompt before Q24 missed them too. Spelled out here, with examples
+  // that are not the measured texts, it reports them.
+  '  Un centro de trabajo, escuela, clínica u oficina CON NOMBRE, o junto a un pueblo, al lado',
+  '  de una persona o un cargo (la maestra, el enfermero, la directora, el único velador) señala',
+  '  a esa persona, aunque no se diga su nombre y aunque sea servidora pública. Reporta SOLO la',
+  '  institución, como "lugar", sin el cargo: en "el doctor de la clínica Santa Fe de',
+  '  Tepoztlán" el hallazgo es "la clínica Santa Fe de Tepoztlán"; en "el único velador de la',
+  '  primaria de Amatlán", "la primaria de Amatlán".',
   '- Teléfonos, correos, cuentas, identificadores oficiales y números de expediente.',
   '',
   // ⚠ Owner's rule, 2026-10-17: a bare title is not identifying and must not
@@ -215,8 +226,9 @@ export const DETECT_SYSTEM_PROMPT = [
   '- Nada de lo siguiente es un dato personal. No lo reportes, tampoco como "otro" ni como',
   '  "identificador":',
   '  · Nombres de instituciones, dependencias, programas, proyectos, eventos, medios, partidos',
-  '    y organizaciones, lenguas y siglas: "PILARES", "INDISCAPACIDAD CDMX", "SECIHTI", "el',
-  '    Centro de Investigación y Docencia Económicas", "la UNAM", "el proyecto Ecosistemas de',
+  '    y organizaciones, lenguas y siglas, sin una persona o un cargo junto a ellos: "PILARES",',
+  '    "INDISCAPACIDAD CDMX", "SECIHTI", "el Centro de Investigación y Docencia Económicas",',
+  '    "la UNAM", "el proyecto Ecosistemas de',
   '    conocimiento y aprendizaje situado", "el Foro de Saberes Comunitarios", "la Lengua de',
   '    Señas Mexicana", "el náhuatl", "Radio Nopal", "la red Charla Social". En "trabajo en',
   '    un PILARES de la alcaldía" no se reporta nada.',
