@@ -405,28 +405,47 @@ export const refuseDeleteLastResponsable: CollectionBeforeDeleteHook = async ({ 
 
 const USER_QUERY_MESSAGE = 'Consulta no permitida.'
 
-/** True when `where` filters on `user` (or `user.*`) by anything but `equals: <me>`. */
+/** `user`, `user.email`, `USER`, `User.id` … — every letter case, since the check must not be narrower than the database. */
+const isUserPath = (path: string): boolean => {
+  const p = path.trim().toLowerCase()
+  return p === 'user' || p.startsWith('user.')
+}
+
+/**
+ * True when `where` filters on `user` (or `user.*`) by anything but
+ * `user equals <me>`. ⚠ Payload lowercases `and`/`or` before it builds SQL
+ * (`validateQueryPaths.js:17`, drizzle `parseParams`), so `AND`, `Or`, `aNd`
+ * must be walked too (third audit 2026-10-28: `where[AND][0][user]` recovered a
+ * hidden id in 10 requests). Their value is walked whether it is an array or a
+ * keyed object.
+ */
 function queriesOthersByUser(where: unknown, callerId: unknown): boolean {
   if (!where || typeof where !== 'object') return false
   for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
-    if (key === 'and' || key === 'or') {
-      if (Array.isArray(value) && value.some((w) => queriesOthersByUser(w, callerId))) return true
+    const lower = key.trim().toLowerCase()
+    if (lower === 'and' || lower === 'or') {
+      const items = value && typeof value === 'object' ? Object.values(value as Record<string, unknown>) : []
+      if (items.some((w) => queriesOthersByUser(w, callerId))) return true
       continue
     }
-    if (key !== 'user' && !key.startsWith('user.')) continue
+    if (!isUserPath(key)) continue
     const ops = value && typeof value === 'object' ? Object.entries(value as Record<string, unknown>) : []
+    const [op, operand] = ops[0] ?? []
     const ownOnly =
-      key === 'user' && ops.length === 1 && ops[0]![0] === 'equals' && String(ops[0]![1]) === String(callerId)
+      key === 'user' &&
+      ops.length === 1 &&
+      op === 'equals' &&
+      (typeof operand === 'string' || typeof operand === 'number') &&
+      String(operand) === String(callerId)
     if (!ownOnly) return true
   }
   return false
 }
 
 const sortsByUser = (sort: unknown): boolean =>
-  (Array.isArray(sort) ? sort : typeof sort === 'string' ? sort.split(',') : []).some((s) => {
-    const field = String(s).trim().replace(/^-/, '')
-    return field === 'user' || field.startsWith('user.')
-  })
+  (Array.isArray(sort) ? sort : typeof sort === 'string' ? sort.split(',') : []).some((s) =>
+    isUserPath(String(s).trim().replace(/^-/, '')),
+  )
 
 /**
  * 🔴 THE HIDDEN ACCOUNT ID CANNOT BE SEARCHED FOR EITHER.

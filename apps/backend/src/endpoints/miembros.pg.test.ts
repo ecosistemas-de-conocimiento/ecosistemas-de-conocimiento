@@ -489,6 +489,74 @@ describe.skipIf(!dockerOk)('/api/miembros on a real Postgres', () => {
     expect(await find({ sort: ['role', 'user'] })).toBe(400)
   }, 30_000)
 
+  // ── Third audit: logical keys and field paths in any letter case ─────────
+  // Payload lowercases `and`/`or` (validateQueryPaths.js:17, drizzle
+  // parseParams), so `AND` reached the database while the guard skipped it.
+  const PW = 'Probe-Passw0rd!'
+  const rest = async (path: string, as: number) => {
+    await payload.update({ collection: 'users', id: as, data: { password: PW } as never, overrideAccess: true })
+    const email = (await asUser(as)).email
+    const { token } = await payload.login({ collection: 'users', data: { email, password: PW } })
+    const { handleEndpoints } = await import('payload')
+    const { default: config } = await import('@payload-config')
+    const res = await handleEndpoints({
+      config: config as never,
+      request: new Request(`http://localhost:3000/api${path}`, { headers: { Authorization: `JWT ${token}` } }),
+    })
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> }
+  }
+
+  it('🔴 `user` filters hidden under AND / Or / aNd / USER are refused, on find and on /count', async () => {
+    // Row 9 belongs to user 40, a co-member Memo must not be able to number.
+    await db.execute(sql.raw(`
+      INSERT INTO users (id, email, display_name) VALUES (40, 'fresh@example.invalid', 'Fresh');
+      INSERT INTO memberships (id, user_id, organization_id, role) VALUES (9, 40, 1, 'member');
+    `))
+    const memo = await asUser(MEMO)
+    const shapes: Array<Record<string, unknown>> = [
+      { AND: [{ user: { greater_than: 39 } }] },
+      { Or: [{ user: { greater_than: 39 } }] },
+      { aNd: [{ 'user.id': { less_than: 41 } }] },
+      { AND: [{ user: { equals: 40 } }] },
+      { AND: [{ 'user.email': { equals: 'fresh@example.invalid' } }] },
+      { and: [{ OR: [{ id: { equals: 9 } }, { AnD: [{ user: { greater_than: 39 } }] }] }] },
+      { USER: { greater_than: 39 } },
+      { 'USER.email': { like: 'fresh' } },
+      { User: { equals: 40 } },
+      // A logical key whose value is an object (qs past its array limit), not an array.
+      { AND: { 0: { user: { greater_than: 39 } } } },
+      { user: { EQUALS: MEMO } },
+    ]
+    for (const where of shapes) {
+      const label = JSON.stringify(where)
+      expect(await errorStatus(payload.find({ collection: 'memberships', where: where as never, overrideAccess: false, user: memo })), label).toBe(400)
+      expect(await errorStatus(payload.count({ collection: 'memberships', where: where as never, overrideAccess: false, user: memo })), label).toBe(400)
+    }
+    // Own id under a capitalised AND is still fine.
+    expect(
+      await errorStatus(payload.find({ collection: 'memberships', where: { AND: [{ user: { equals: MEMO } }] } as never, overrideAccess: false, user: memo })),
+    ).toBe('ok')
+    // Sort in any case.
+    for (const sort of ['User', '-USER', 'USER.id']) {
+      expect(await errorStatus(payload.find({ collection: 'memberships', sort, overrideAccess: false, user: memo })), sort).toBe(400)
+    }
+
+    // Over REST, the auditor's exact probes: hit and miss answer alike.
+    for (const [hit, miss] of [
+      ['where[id][equals]=9&where[AND][0][user][greater_than]=39', 'where[id][equals]=9&where[AND][0][user][greater_than]=40'],
+      ['where[id][equals]=9&where[Or][0][user][greater_than]=39', 'where[id][equals]=9&where[Or][0][user][greater_than]=40'],
+      ['where[aNd][0][user.id][less_than]=41', 'where[aNd][0][user.id][less_than]=40'],
+      ['where[AND][0][user.email][equals]=fresh@example.invalid', 'where[AND][0][user.email][equals]=nobody@example.invalid'],
+    ]) {
+      for (const base of ['/memberships?', '/memberships/count?']) {
+        const h = await rest(`${base}${hit}`, MEMO)
+        const m = await rest(`${base}${miss}`, MEMO)
+        expect(h.status, `${base}${hit}`).toBe(400)
+        expect(h).toEqual(m)
+      }
+    }
+  }, 60_000)
+
   it('a manager still filters and sorts by `user`, but only over the ecosistemas they manage', async () => {
     const olga = await asUser(OLGA)
     const res = await payload.find({
