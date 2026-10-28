@@ -26,7 +26,7 @@
     starting = true;
     try {
       const id = await app.startConversation('resonancias');
-      // The create failed and the store already said why (a toast).
+      // No conversation came back (a failed create toasts; no ecosistema does not).
       if (!id) return;
       await goto(CONVERSACIONES_HREF);
       await tick();

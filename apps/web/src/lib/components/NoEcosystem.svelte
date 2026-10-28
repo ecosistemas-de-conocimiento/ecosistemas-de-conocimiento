@@ -18,10 +18,8 @@
   // admin adds the wrong address, and people do keep two.
   const email = $derived($page.data.user?.email ?? '');
 
-  async function logout() {
-    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
-    window.location.href = '/sign-in';
-  }
+  // No sign-out button of its own: the primary nav carries the one
+  // "Cerrar sesión" on every page, this one included.
 </script>
 
 <div class="flex-1 flex items-center justify-center p-6">
@@ -58,12 +56,6 @@
         onclick={() => window.location.reload()}
       >
         Volver a intentar
-      </button>
-      <button
-        class="px-3 py-1.5 rounded-lg text-sm text-ink-soft hover:bg-surface-soft hover:text-ink"
-        onclick={logout}
-      >
-        Cerrar sesión
       </button>
     </div>
   </div>

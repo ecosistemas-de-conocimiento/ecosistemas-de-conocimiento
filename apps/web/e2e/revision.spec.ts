@@ -428,8 +428,9 @@ test.describe('revisión — el camino de la decisión', () => {
     await expect(page.getByText(NOT_A_REVIEWER)).toBeVisible();
     await expect(page.getByRole('link', { name: 'Volver al chat' })).toBeVisible();
 
-    // …and the way in was never shown to them.
-    await page.goto('/');
+    // …and the way in was never shown to them. `?conversaciones`: a bare `/`
+    // is the start screen for a member, which has no menu at all.
+    await page.goto('/?conversaciones');
     await expect(page.getByRole('link', { name: 'Revisión' })).toHaveCount(0);
   });
 

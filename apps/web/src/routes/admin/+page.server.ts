@@ -62,6 +62,7 @@ import { listAllEcosystems, loadAdminOverview, readEcosystem } from '$lib/server
 import { listEcosystems } from '$lib/server/ecosystem';
 import { fetchEcosystemBudget } from '$lib/server/budget';
 import type { PageServerLoad } from './$types';
+import { CONVERSACIONES_HREF } from '$lib/inicio';
 
 /**
  * ⚠ The two URL parameters this page reads: `?eco=` (which ecosistema is being
@@ -86,7 +87,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       module: 'admin',
       reason: 'not-platform-admin',
       message: 'Esta sección es solo para administradores.',
-      cta: { label: 'Volver al chat', href: '/' },
+      cta: { label: 'Volver al chat', href: CONVERSACIONES_HREF },
     });
   }
   const inScope = (id: string): boolean => platform || scoped.has(id);

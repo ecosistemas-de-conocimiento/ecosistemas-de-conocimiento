@@ -55,6 +55,7 @@ import { MAX_NOTE_LENGTH, NOT_A_REVIEWER } from '$lib/holds';
 
 const REJECT_FAILED = 'No pudimos guardar tu decisión. Vuelve a intentarlo.';
 import type { Actions, PageServerLoad } from './$types';
+import { CONVERSACIONES_HREF } from '$lib/inicio';
 
 export const load: PageServerLoad = async ({ locals, url, cookies, depends }) => {
   // Re-run when the sidebar picker switches. The cookie is not a tracked
@@ -69,7 +70,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies, depends }) =>
       module: 'holds',
       reason: 'no-holds-review',
       message: NOT_A_REVIEWER,
-      cta: { label: 'Volver al chat', href: '/' },
+      cta: { label: 'Volver al chat', href: CONVERSACIONES_HREF },
     });
   }
 
@@ -157,7 +158,7 @@ export const actions: Actions = {
         module: 'holds',
         reason: 'no-holds-review',
         message: NOT_A_REVIEWER,
-        cta: { label: 'Volver al chat', href: '/' },
+        cta: { label: 'Volver al chat', href: CONVERSACIONES_HREF },
       });
     }
     const form = await request.formData();
