@@ -6,6 +6,9 @@
  * institution and project names as `otro`, and the gate turned each into
  * "[Dato omitido]". The prompt now says such names are not personal data; the
  * rows already gated keep the old redaction until they are gated again.
+ * ⚠ Not used for the staff teaching material that prompted it: the owner
+ * re-uploads that WITHOUT the gate (2026-10-28). Kept, dry run by default, for
+ * gated participant and student documents.
  *
  * Selection is EXPLICIT: the caller names the ids and the ecosistema. Each id
  * is refused, and left untouched, when:
