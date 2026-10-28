@@ -316,6 +316,19 @@ describe('audit 4', () => {
     )
   })
 
+  it('mutant M22: mid-line, prose after ";" is skipped, not the end of the list', () => {
+    expect(structuralPass('Notas. Autores: Ana Ruiz; ver anexo; Luis Gómez.').text).toBe(
+      'Notas. Autores: [Dato omitido]; ver anexo; [Dato omitido].',
+    )
+  })
+
+  it('mutant M32: an author value stops where an id redaction starts', () => {
+    const { seen, person } = spy()
+    const out = structuralPass('Autores: Ana Ruiz; Luis Paz usuario: 42', { person })
+    expect(out.text).toBe('Autores: [Persona A]; [Persona B] [Dato omitido]')
+    expect(seen).toEqual(['Ana Ruiz', 'Luis Paz'])
+  })
+
   it.each([
     'Autores: Ana Ruiz; Luis Gómez (2021)',
     'Autor: Ana Ruiz | Luis Gómez (2021) | Lugar: Oaxaca',
