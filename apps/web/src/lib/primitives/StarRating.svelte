@@ -21,8 +21,8 @@
    *  - The group itself carries `tabindex="-1"`: focusable from script, never
    *    a Tab stop (the roving star stays the only one). Svelte's
    *    `a11y_interactive_supports_focus` asks for it on a `radiogroup`.
-   *  - The stars are `aria-hidden` glyphs; every accessible name comes from
-   *    `optionLabel`, never from the ★ character.
+   *  - The stars are `aria-hidden` SVGs; every accessible name comes from
+   *    `optionLabel`.
    *
    * Presentational only: it renders `value` and reports a pick through
    * `onRate`. Persistence, optimistic state and rollback belong to the caller.
@@ -45,7 +45,8 @@
     disabled?: boolean;
     /** A write is in flight: still navigable, not re-writable. */
     busy?: boolean;
-    size?: 'sm' | 'md';
+    /** `lg` gives each star a 36px touch target — for a pick made on a phone. */
+    size?: 'sm' | 'md' | 'lg';
     dataTestId?: string;
     onRate?: (stars: number) => void;
   };
@@ -146,7 +147,15 @@
         preview = n;
       }}
     >
-      <span aria-hidden="true">{shown >= n ? '★' : '☆'}</span>
+      <!-- An SVG, not the ★/☆ characters: the outline glyph comes out as a
+           hairline in most fonts, so an unrated row read as empty space. -->
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="1em" height="1em">
+        <path
+          d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z"
+          stroke-width="2"
+          stroke-linejoin="round"
+        />
+      </svg>
     </button>
   {/each}
 </div>
@@ -164,20 +173,34 @@
   }
 
   .star {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background: none;
     border: none;
     padding: 0 0.05rem;
     line-height: 1;
     cursor: pointer;
-    color: var(--edc-color-ink-soft);
+    /* ⚠ Body ink, not the soft grey: an empty star is still a control, and it
+       must read as one before anything is picked. */
+    color: var(--edc-color-ink-body);
     border-radius: var(--edc-radius-1);
     transition:
       color var(--edc-motion-fast) var(--edc-ease-standard),
       transform var(--edc-motion-fast) var(--edc-ease-standard);
   }
 
+  .star svg {
+    fill: none;
+    stroke: currentColor;
+  }
+
   .star.is-on {
-    color: var(--edc-color-warning);
+    color: var(--edc-color-brand);
+  }
+
+  .star.is-on svg {
+    fill: currentColor;
   }
 
   .star:not([aria-disabled='true']):hover {
@@ -205,5 +228,12 @@
 
   .size-md .star {
     font-size: 1.25rem;
+  }
+
+  .size-lg .star {
+    width: 2.25rem;
+    height: 2.25rem;
+    padding: 0;
+    font-size: 1.5rem;
   }
 </style>

@@ -48,8 +48,8 @@
   );
   const pathname = $derived($page.url.pathname);
 
-  // Sign-out on every page, not only in the chat sidebar: a demo switches
-  // between roles from Revisión and Administración too.
+  // Sign-out lives here only, on every page including the chat: one place to
+  // find it, rather than a sidebar footer on `/` and the nav everywhere else.
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
     window.location.href = '/sign-in';
@@ -80,7 +80,7 @@
         </a>
       </li>
     {/each}
-    {#if $page.data.user && pathname !== '/'}
+    {#if $page.data.user}
       <li class="end">
         <button type="button" class="item" onclick={logout} data-testid="nav-logout">
           <span class="label">Cerrar sesión</span>

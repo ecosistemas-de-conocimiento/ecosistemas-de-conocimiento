@@ -49,11 +49,6 @@
     renamingId = null;
     await app.renameSession(id, renameDraft);
   }
-
-  async function logout() {
-    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
-    window.location.href = '/sign-in';
-  }
 </script>
 
 {#if app.sidebarCollapsed && !forceExpanded}
@@ -294,11 +289,5 @@
         </div>
       {/each}
     </nav>
-
-    <div class="border-t border-line p-2 flex items-center justify-end text-xs text-ink-soft">
-      <button class="px-1.5 py-0.5 rounded hover:bg-surface-soft hover:text-ink" onclick={logout}>
-        Cerrar sesión
-      </button>
-    </div>
   </aside>
 {/if}

@@ -70,12 +70,15 @@
 </script>
 
 <div class="flex flex-col gap-1.5 text-xs text-ink-soft">
-  <div class="flex items-center gap-2">
-    <span>{rated ? 'Tu valoración' : '¿Te sirvió esta respuesta?'}</span>
+  <div class="flex flex-wrap items-center gap-x-2">
+    <span class="text-sm text-ink-body"
+      >{rated ? 'Tu valoración' : '¿Te sirvió esta respuesta?'}</span
+    >
     <StarRating
       value={msg.rating ?? null}
       label="Valora esta respuesta, de 1 a 5 estrellas"
       busy={saving}
+      size="lg"
       onRate={rate}
       dataTestId={`message-rating-${msg.id}`}
     />
