@@ -659,9 +659,6 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // A byline's author takes a label from the SAME allocator, and its name parts
   // are registered, so "Autor: Juan Pérez" and a bare "Pérez" in the body come
   // out as one `[Persona X]` even when the model never reports the name.
-  // ⚠ Only a PERSON reaches `person`, and only its name run: an institution
-  // ("Autor: Universidad … de México") is redacted in stage 1 but never spread,
-  // or every later "México" would become a person (`isInstitution`).
   const structural = structuralPass(input.text.normalize('NFC'), {
     person: (name) => {
       names.add(name)
