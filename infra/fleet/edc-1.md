@@ -2369,6 +2369,46 @@ and `a39af86` web/backend/ai-service images by exact name; `docker builder prune
 
 **Disk**, `df -h /` free: 42 GB before; 29 GB after the build; 56 GB after the cleanup. Build cache 0.
 
+### 4zw. ✅ Done 2026-10-28 09:41–09:53 UTC: `9597969`, dev only — no migration
+
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
+`97d5316`, `docker ps` before and after). Range `191cad9..9597969`: anonymise fix in the backend
+(`apps/backend/src/lib/anonymise/structural.ts`, `gate.ts`, with tests), plus doc and comment
+edits (q24 README, this runbook, audio-service `.env.example`, README and `config.py` comment: the
+Spark tailnet address replaced with `<spark-url>`). No file under `apps/backend/src/migrations`
+changed; no compose, variable or ai-service change.
+
+**Pre-check.** `payload_migrations` 15 rows, newest
+`20261028_083327_student_testimonio_consent_version`. `edc_ai` `__drizzle_migrations` 6. Org 8
+`features` `{"studentView": true, "keepPublicFigures": true}`.
+
+**Migrations.** None. `payload_migrations` 15 before and after; backend log 09:48:27 "Reading
+migration files…", `Done.`, "Ready in 878ms". `edc_ai` `__drizzle_migrations` 6 before and after.
+
+Backup `/root/backups/20261028T0941Z/` (`edc_ai` 129 MB, `edc_backend` 8.5 MB); `pg_restore -l`
+137 / 438 non-comment lines, `SHA256SUMS` beside them. Off-box copy in the owner's
+`cide/backups/edc-1/20261028T0941Z/` with `timeout 180 scp`; `sha256sum -c` passed before the deploy.
+
+| deploy | uuid | queued → finished (UTC) | commit |
+|---|---|---|---|
+| `9597969` | `mlr4mitb2lnl4gfshfr3j9z9` | 09:42:03 → 09:48:23 | `9597969ca57d…` |
+
+After: 9 containers up; `web`, `backend` and `ai-service` run image tag
+`9597969ca57d1b6de46039bc1ca6f8b37e84e744`, healthy. 0 `error`/`fatal` lines in all 9 dev
+containers at startup (one later postgres `ERROR` is the deploy agent's own query against a
+non-existent `drizzle.__drizzle_migrations`; the table lives in `public`).
+
+**Smoke** (no paid call):
+
+| check | result |
+|---|---|
+| 1. web `/` | 303 → `/sign-in`, 200 |
+| 2. health | `dev.` `/api/health` 200, `api.dev.` `/api/health` 200 |
+| 3. login, estudiante1 (`cide/.env.demo-users`), web `POST /api/auth/login` with `Origin` | 200; then `/__data.json` 200 (names `estudiante`), `/estudiante/__data.json` 200 |
+| 4. org 8 `features` after | `{"studentView": true, "keepPublicFigures": true}`, unchanged |
+
+No image cleanup this time. **Disk**, `df -h /` free: 56 GB before, 41 GB after the build.
+
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
 Backups taken before the deploy (both DBs, both envs, each checked with `pg_restore -l`, sha256
