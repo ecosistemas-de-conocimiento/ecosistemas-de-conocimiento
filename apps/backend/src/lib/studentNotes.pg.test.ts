@@ -27,12 +27,25 @@ const NAME = 'Tadeo Villaseñor'
 const graphRequests: string[] = []
 let detectorCalls = 0
 
+/** Every ai-service call the code made: `path` like `ingest.enqueue`, `admin.setDocumentValidity`. */
+type AiCall = { path: string; args: unknown[] }
+const aiCalls: AiCall[] = ((globalThis as { __aiCalls?: AiCall[] }).__aiCalls ??= [])
+/** Runs inside `ingest.enqueue`, before it answers: a write that lands mid-re-index. */
+;(globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue = undefined
+
 vi.mock('@/lib/aiClient', () => {
-  const anything: unknown = new Proxy(() => {}, {
-    get: (_t, key) => (key === 'then' ? undefined : anything),
-    apply: async () => ({ ok: true, ingestId: 'ing-test' }),
-  })
-  return { getAdminAIClient: () => anything, getAppAIClient: () => anything }
+  const calls = ((globalThis as { __aiCalls?: Array<{ path: string; args: unknown[] }> }).__aiCalls ??= [])
+  const client = (path: string[]): unknown =>
+    new Proxy(() => {}, {
+      get: (_t, key) => (key === 'then' ? undefined : client([...path, String(key)])),
+      apply: async (_t, _this, args: unknown[]) => {
+        calls.push({ path: path.join('.'), args })
+        const hook = (globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue
+        if (path.join('.') === 'ingest.enqueue' && hook) await hook()
+        return { ok: true, ingestId: `ing-${calls.length}` }
+      },
+    })
+  return { getAdminAIClient: () => client([]), getAppAIClient: () => client([]) }
 })
 
 vi.mock('@/lib/anonymise', async (importOriginal) => {
@@ -58,6 +71,8 @@ vi.mock('@/lib/graph/client', () => ({
       async sync(req: unknown) {
         const seen = JSON.stringify(req)
         graphRequests.push(seen)
+        // A test may hold the revision's graph run open (`__graphGate`).
+        if (seen.includes('Abducción')) await (globalThis as { __graphGate?: Promise<void> }).__graphGate
         return {
           parsed: {
             entidades: seen.includes('Abducción')
@@ -76,6 +91,7 @@ vi.mock('@/lib/graph/client', () => ({
 
 import type { Endpoint, PayloadRequest } from 'payload'
 
+import { getAdminAIClient } from './aiClient'
 import { autoPublishParticipantDocument } from './autoPublish'
 import { invalidateFeatures } from './features'
 import { topicsByUser } from './student/queries'
@@ -343,24 +359,41 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
   describe('"Publicar cambios" on a published note (owner ruling 2026-10-28)', () => {
     const NOTE = 900
     const NEW_BODY = `# Otra cosa\n\nMi vecino ${NAME} me explicó la Abducción, nada más.${PAD.replace(/signos, interpretantes y objetos/g, 'inferencias')}`
-    const enqueued: Array<{ corpus: string; id: string; text: string }> = []
-    const mover: unknown = new Proxy(() => {}, {
-      get: (_t, key) => (key === 'then' ? undefined : key === 'enqueue' ? enqueue : mover),
-      apply: async () => ({ ok: true, ingestId: 'pub-test' }),
-    })
-    async function enqueue(req: { corpus: string; documents: Array<{ id: string; text: string }> }) {
-      for (const d of req.documents) enqueued.push({ corpus: req.corpus, id: d.id, text: d.text })
-      return { ingestId: 'pub-test' }
-    }
+    let version = 0
+    /** A fresh edit of the note each time (changed text). */
+    const nextBody = () => `${NEW_BODY}\n\nVersión ${++version} sobre la Abducción.`
     const revisionOf = async (id: number) =>
-      (await rowsOf(pg!.db, sql`SELECT id, ingest_status AS i, anonymisation_status AS a, graph_status AS g FROM documents WHERE revision_of_id = ${id}`))[0]
-    /** What ai-service's callbacks would do: draft ingest landed → auto-publish. */
+      (
+        await rowsOf(
+          pg!.db,
+          sql`SELECT id, ingest_status AS i, anonymisation_status AS a, graph_status AS g, publication_status AS p
+                FROM documents WHERE revision_of_id = ${id}`,
+        )
+      )[0]
+    /** What ai-service's callback does when a draft ingest lands: `ready`, then auto-publish. */
     const landDraftIngest = async (id: number) => {
       await pg!.db.execute(sql`UPDATE documents SET ingest_status = 'ready' WHERE id = ${id}`)
-      return autoPublishParticipantDocument({ payload: payload!, documentId: id, clientFor: () => mover as never })
+      return autoPublishParticipantDocument({ payload: payload!, documentId: id, clientFor: (o) => getAdminAIClient(o) as never })
+    }
+    const noteLabels = async () =>
+      (
+        await rowsOf(pg!.db, sql`SELECT e.label FROM graph_mentions m JOIN graph_entities e ON e.id = m.entity_id WHERE m.document_id = ${NOTE} ORDER BY 1`)
+      ).map((r) => r.label)
+    const sharedEnqueues = () =>
+      aiCalls.filter((c) => c.path === 'ingest.enqueue' && (c.args[0] as { corpus?: string }).corpus === 'eco-8')
+    const retiresOf = (id: number) =>
+      aiCalls.filter((c) => c.path === 'admin.setDocumentValidity' && c.args[0] === 'eco-8' && c.args[1] === String(id))
+    /** Edit → Publicar cambios → the revision's gate and graph done; its draft ingest NOT landed yet. */
+    const changeAndWait = async () => {
+      expect((await autosave(ANA, NOTE, { bodyMarkdown: nextBody() })).status).toBe(200)
+      const res = await publicar(ANA, NOTE)
+      expect([res.status, res.body.processing, res.body.publicationStatus]).toEqual([202, true, 'published'])
+      expect(await eventually(async () => (await revisionOf(NOTE))?.g === 'ready', 20_000)).toBe(true)
+      return Number((await revisionOf(NOTE))!.id)
     }
 
     it('setup: a published note, its topics visible to peers', async () => {
+      ;(globalThis as { __graphGate?: Promise<void> }).__graphGate = Promise.resolve()
       await setFeatures({ studentView: true })
       await insertNote(NOTE, SEMIOSIS, ANA)
       await publicar(ANA, NOTE)
@@ -370,83 +403,206 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
       expect(await topics(ANA, true)).toEqual(expect.arrayContaining(['Semiótica', 'Signo']))
     }, 60_000)
 
-    it('🔴 edit → Publicar cambios → peers keep the old version until it clears, then see the new topics', async () => {
-      expect((await autosave(ANA, NOTE, { bodyMarkdown: NEW_BODY })).status).toBe(200)
+    it('🔴 the draft ingest lands BEFORE the revision\'s graph: no promotion until the graph is final; peers keep the old version', async () => {
+      let release!: () => void
+      ;(globalThis as { __graphGate?: Promise<void> }).__graphGate = new Promise<void>((r) => (release = r))
+      expect((await autosave(ANA, NOTE, { bodyMarkdown: nextBody() })).status).toBe(200)
       const before = await row(NOTE)
+      expect((await publicar(ANA, NOTE)).status).toBe(202)
+      expect(await eventually(async () => (await revisionOf(NOTE))?.g === 'extracting', 20_000)).toBe(true)
+      const rev = Number((await revisionOf(NOTE))!.id)
 
-      const res = await publicar(ANA, NOTE)
-      expect([res.status, res.body.processing, res.body.publicationStatus]).toEqual([202, true, 'published'])
-      expect(await eventually(async () => (await revisionOf(NOTE))?.g === 'ready', 20_000)).toBe(true)
-
-      // Meanwhile: the note is untouched, peers see the old topics only.
-      const during = await row(NOTE)
-      expect([during.p, during.r, during.t]).toEqual(['published', before.r, before.t])
-      expect(await topics(ANA, true)).not.toContain('Abducción')
       // 🔴 The revision is hidden from its own author's reads.
-      const rev = (await revisionOf(NOTE))!
       const user = await payload!.findByID({ collection: 'users', id: ANA, overrideAccess: true })
       const asAna = await payload!.find({
         collection: 'documents',
-        where: { id: { equals: rev.id } },
+        where: { id: { equals: rev } },
         user: { ...user, collection: 'users' } as never,
         overrideAccess: false,
       })
       expect(asAna.docs).toHaveLength(0)
 
-      // The revision's draft ingest lands → promoted onto the note.
-      enqueued.length = 0
-      expect(await landDraftIngest(Number(rev.id))).toEqual({ published: true })
-      expect(await revisionOf(NOTE)).toBeUndefined()
-      expect((await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM documents WHERE id = ${rev.id}`))[0]!.n).toBe(0)
+      expect(await landDraftIngest(rev)).toEqual({ published: false, reason: 'graph-pending' })
+      const during = await row(NOTE)
+      expect([during.p, during.r, during.t]).toEqual(['published', before.r, before.t])
+      expect(await noteLabels()).toEqual(['Semiótica', 'Signo'])
+      expect(await topics(ANA, true)).not.toContain('Abducción')
 
+      // The graph run ends → the promotion runs from there.
+      aiCalls.length = 0
+      release()
+      expect(await eventually(async () => (await revisionOf(NOTE)) === undefined, 20_000)).toBe(true)
       const after = await row(NOTE)
       expect(after.p).toBe('published')
       expect(String(after.r)).toContain('Abducción')
       expect(String(after.r)).not.toContain('Villaseñor')
-      // 🔴 The shared corpus got the NEW redaction, under the note's own id.
-      expect(enqueued).toEqual([{ corpus: 'eco-8', id: String(NOTE), text: after.r }])
+      expect(await noteLabels()).toEqual(['Abducción'])
       expect(await topics(ANA, true)).toContain('Abducción')
+      // 🔴 The shared corpus got the NEW redaction, under the note's own id, with a callback id kept.
+      const sent = sharedEnqueues()
+      expect(sent).toHaveLength(1)
+      expect((sent[0]!.args[0] as { documents: Array<{ id: string; text: string }> }).documents[0]).toMatchObject({ id: String(NOTE), text: after.r })
+      expect((await rowsOf(pg!.db, sql`SELECT reindex_ingest_id AS x FROM documents WHERE id = ${NOTE}`))[0]!.x).toBeTruthy()
+      ;(globalThis as { __graphGate?: Promise<void> }).__graphGate = Promise.resolve()
     }, 60_000)
 
     it('🔴 the old text is never re-exposed: no old graph row, no old text on the row', async () => {
-      const labels = (
-        await rowsOf(pg!.db, sql`SELECT e.label FROM graph_mentions m JOIN graph_entities e ON e.id = m.entity_id WHERE m.document_id = ${NOTE}`)
-      ).map((r) => r.label)
-      expect(labels).toEqual(['Abducción'])
+      expect(await noteLabels()).toEqual(['Abducción'])
       const r = await row(NOTE)
       for (const col of [r.t, r.r]) expect(String(col)).not.toContain('Semiótica')
-      // Nothing to publish again: the same text is now the published one.
-      const again = await publicar(ANA, NOTE)
-      expect(again.status).toBe(409)
+      // The same text is now the published one: nothing to publish.
+      expect((await publicar(ANA, NOTE)).status).toBe(409)
     })
 
+    it('🔴 duplicate promotions (two callbacks, or callback + graph end) run once', async () => {
+      const rev = await changeAndWait()
+      await pg!.db.execute(sql`UPDATE documents SET ingest_status = 'ready' WHERE id = ${rev}`)
+      aiCalls.length = 0
+      const both = await Promise.all([1, 2].map(() =>
+        autoPublishParticipantDocument({ payload: payload!, documentId: rev, clientFor: (o) => getAdminAIClient(o) as never }),
+      ))
+      expect(both.filter((o) => o.published)).toHaveLength(1)
+      expect(sharedEnqueues()).toHaveLength(1)
+      expect(await revisionOf(NOTE)).toBeUndefined()
+      expect(await noteLabels()).toEqual(['Abducción'])
+    }, 60_000)
+
     it('🔴 concurrent Publicar cambios: one revision, one gate run', async () => {
-      const edited = `${NEW_BODY}\n\nY una idea más sobre la Abducción.`
-      expect((await autosave(ANA, NOTE, { bodyMarkdown: edited })).status).toBe(200)
-      const before = detectorCalls
-      const both = await Promise.all([publicar(ANA, NOTE), publicar(ANA, NOTE)])
-      for (const res of both) expect([res.status, res.body.processing]).toEqual([202, true])
-      expect(await eventually(async () => (await revisionOf(NOTE))?.a === 'ready', 20_000)).toBe(true)
-      await new Promise((r) => setTimeout(r, 500))
-      expect(
-        Number((await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM documents WHERE revision_of_id = ${NOTE}`))[0]!.n),
-      ).toBe(1)
-      // One gate run on this text costs what the single run on note 600 cost.
+      expect((await autosave(ANA, NOTE, { bodyMarkdown: nextBody() })).status).toBe(200)
       const perRun = await (async () => {
-        await insertNote(950, SEMIOSIS, ANA, edited)
+        await insertNote(950, SEMIOSIS, ANA, String((await row(NOTE)).b))
         const b = detectorCalls
         await publicar(ANA, 950)
         await eventually(async () => (await row(950)).a === 'ready', 20_000)
         return detectorCalls - b
       })()
-      expect(detectorCalls - before - perRun).toBe(perRun)
+      const before = detectorCalls
+      const both = await Promise.all([publicar(ANA, NOTE), publicar(ANA, NOTE)])
+      for (const res of both) expect([res.status, res.body.processing]).toEqual([202, true])
+      expect(await eventually(async () => (await revisionOf(NOTE))?.g === 'ready', 20_000)).toBe(true)
+      await new Promise((r) => setTimeout(r, 500))
+      expect(Number((await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM documents WHERE revision_of_id = ${NOTE}`))[0]!.n)).toBe(1)
+      expect(detectorCalls - before).toBe(perRun)
+      expect(await landDraftIngest(Number((await revisionOf(NOTE))!.id))).toEqual({ published: true })
     }, 60_000)
 
+    it('🔴 a reviewer\'s rows on the revision move onto the note (no cascade loss)', async () => {
+      const rev = await changeAndWait()
+      await pg!.db.execute(sql`INSERT INTO anonymisation_reviews (document_id, organization_id, reviewer_id, decision, text_edited) VALUES (${rev}, ${SEMIOSIS}, ${BETO}, 'approved', true)`)
+      await pg!.db.execute(sql`UPDATE documents SET anonymisation_status = 'approved' WHERE id = ${rev}`)
+      const count = async (id: number) =>
+        Number((await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM anonymisation_reviews WHERE document_id = ${id}`))[0]!.n)
+      const onNote = await count(NOTE)
+      expect(await landDraftIngest(rev)).toEqual({ published: true })
+      expect(await count(NOTE)).toBe(onNote + 1)
+      expect((await row(NOTE)).a).toBe('approved')
+    }, 60_000)
+
+    it.each(['rejected', 'held'])('🔴 a %s revision does not block a later attempt with changed text', async (verdict) => {
+      const rev = await changeAndWait()
+      await pg!.db.execute(sql`UPDATE documents SET anonymisation_status = ${verdict}, ingest_status = 'failed' WHERE id = ${rev}`)
+      await pg!.db.execute(sql`INSERT INTO anonymisation_reviews (document_id, organization_id, reviewer_id, decision, text_edited) VALUES (${rev}, ${SEMIOSIS}, ${BETO}, 'rejected', false)`)
+      // The same text: the verdict stands.
+      expect((await publicar(ANA, NOTE)).status).toBe(409)
+      const reviews = Number((await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM anonymisation_reviews WHERE document_id = ${NOTE}`))[0]!.n)
+      // Changed text: a fresh revision, gated from scratch; the old review rows kept on the note.
+      const fresh = await changeAndWait()
+      expect(fresh).not.toBe(rev)
+      expect((await revisionOf(NOTE))!.a).toBe('ready')
+      expect(Number((await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM anonymisation_reviews WHERE document_id = ${NOTE}`))[0]!.n)).toBe(reviews + 1)
+      expect(await landDraftIngest(fresh)).toEqual({ published: true })
+    }, 60_000)
+
+    it('🔴 withdrawn BEFORE the promotion: no re-index, the change is discarded', async () => {
+      const rev = await changeAndWait()
+      const before = await row(NOTE)
+      await pg!.db.execute(sql`UPDATE documents SET publication_status = 'draft' WHERE id = ${NOTE}`) // unpublished
+      aiCalls.length = 0
+      expect(await landDraftIngest(rev)).toEqual({ published: false, reason: 'withdrawn' })
+      expect(sharedEnqueues()).toHaveLength(0)
+      expect(await revisionOf(NOTE)).toBeUndefined()
+      expect([(await row(NOTE)).r, (await row(NOTE)).t]).toEqual([before.r, before.t])
+      await pg!.db.execute(sql`UPDATE documents SET publication_status = 'published' WHERE id = ${NOTE}`)
+    }, 60_000)
+
+    it('🔴 withdrawn DURING the re-index: taken back out of the shared corpus, nothing swapped', async () => {
+      const rev = await changeAndWait()
+      const before = await row(NOTE)
+      ;(globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue = async () => {
+        await pg!.db.execute(sql`UPDATE documents SET publication_status = 'unpublishing' WHERE id = ${NOTE}`)
+      }
+      aiCalls.length = 0
+      try {
+        expect(await landDraftIngest(rev)).toEqual({ published: false, reason: 'withdrawn' })
+      } finally {
+        ;(globalThis as { __onEnqueue?: () => Promise<void> }).__onEnqueue = undefined
+      }
+      expect(retiresOf(NOTE)).toHaveLength(1)
+      expect([(await row(NOTE)).r, (await row(NOTE)).t]).toEqual([before.r, before.t])
+      expect(await revisionOf(NOTE)).toBeUndefined()
+      await pg!.db.execute(sql`UPDATE documents SET publication_status = 'published' WHERE id = ${NOTE}`)
+    }, 60_000)
+
+    describe('the re-index callback', () => {
+      const SECRET = 'notes-callback-secret'
+      const post = async (body: Record<string, unknown>) => {
+        const { signCallback } = await import('./hmac')
+        const raw = JSON.stringify(body)
+        const timestamp = Math.floor(Date.now() / 1000)
+        const { POST } = await import('../app/api/ai-service/callback/route')
+        return POST(
+          new Request('http://backend.test/api/ai-service/callback', {
+            method: 'POST',
+            body: raw,
+            headers: {
+              'content-type': 'application/json',
+              'x-aiservice-timestamp': String(timestamp),
+              'x-aiservice-signature': signCallback({ timestamp, body: raw, secret: SECRET }),
+            },
+          }),
+        )
+      }
+      beforeAll(() => {
+        vi.stubEnv('CALLBACK_SECRET', SECRET)
+        vi.stubEnv('PUBLIC_BACKEND_URL', 'https://backend.test')
+      })
+      afterAll(() => vi.unstubAllEnvs())
+
+      it('🔴 withdrawn AFTER the swap, before the re-index landed: the callback retires it again', async () => {
+        const rev = await changeAndWait()
+        expect(await landDraftIngest(rev)).toEqual({ published: true })
+        const reindex = String((await rowsOf(pg!.db, sql`SELECT reindex_ingest_id AS x FROM documents WHERE id = ${NOTE}`))[0]!.x)
+        // An unpublish ran (shared copy retired); ai-service's upsert then put it back.
+        await pg!.db.execute(sql`UPDATE documents SET publication_status = 'draft' WHERE id = ${NOTE}`)
+        aiCalls.length = 0
+        const res = await post({ event: 'ingest.completed', ingestId: reindex, docId: String(NOTE), corpus: 'eco-8' })
+        expect(res.status).toBe(200)
+        expect(retiresOf(NOTE)).toHaveLength(1)
+        expect((await rowsOf(pg!.db, sql`SELECT reindex_ingest_id AS x FROM documents WHERE id = ${NOTE}`))[0]!.x).toBeNull()
+        expect((await row(NOTE)).p).toBe('draft') // untouched otherwise
+      }, 60_000)
+
+      it('still published when it lands: nothing retired', async () => {
+        await pg!.db.execute(sql`UPDATE documents SET publication_status = 'published', reindex_ingest_id = 'ing-x' WHERE id = ${NOTE}`)
+        aiCalls.length = 0
+        expect((await post({ event: 'ingest.completed', ingestId: 'ing-x', docId: String(NOTE), corpus: 'eco-8' })).status).toBe(200)
+        expect(retiresOf(NOTE)).toHaveLength(0)
+        expect((await row(NOTE)).p).toBe('published')
+      })
+
+      it('🔴 the note was deleted: a shared-corpus ingest for a missing row is retired', async () => {
+        aiCalls.length = 0
+        expect((await post({ event: 'ingest.completed', ingestId: 'ing-y', docId: '99999', corpus: 'eco-8' })).status).toBe(200)
+        expect(retiresOf(99999)).toHaveLength(1)
+      })
+    })
+
     it('deleting the note deletes its pending revision', async () => {
+      await changeAndWait()
       await payload!.delete({ collection: 'documents', id: NOTE, overrideAccess: true })
       expect(
         Number((await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM documents WHERE revision_of_id = ${NOTE} OR id = ${NOTE}`))[0]!.n),
       ).toBe(0)
-    })
+    }, 60_000)
   })
 })

@@ -56,6 +56,10 @@ export type AutoPublishSkip =
   /** The ecosistema switched `autoPublishMembers` off (`lib/features.ts`). */
   | 'disabled'
   | 'failed'
+  /** A note revision (`lib/studentNotes.ts` `promoteRevision`). */
+  | 'graph-pending'
+  | 'busy'
+  | 'withdrawn'
 
 export type AutoPublishOutcome = { published: true } | { published: false; reason: AutoPublishSkip }
 
@@ -165,8 +169,13 @@ export async function autoPublishParticipantDocument(args: {
     // note, never published as a second document (`lib/studentNotes.ts`).
     if (relationId(row.revisionOf) !== null) {
       const { promoteRevision } = await import('./studentNotes')
-      await promoteRevision({ payload, revision: row, client: args.clientFor(organizationId) })
-      return { published: true }
+      const skipped = await promoteRevision({
+        payload,
+        revision: row,
+        client: args.clientFor(organizationId),
+        ...(args.callbackUrl ? { callbackUrl: args.callbackUrl } : {}),
+      })
+      return skipped ? skip(skipped === 'not-cleared' ? 'gate-not-cleared' : skipped) : { published: true }
     }
 
     await beginPublish(row as never, {

@@ -1,5 +1,5 @@
 {
-  "id": "0d3d2b0e-26c5-42f6-900b-838fe2c41d58",
+  "id": "18524a45-2d67-4b5c-8c28-c8fffad503f9",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1086,6 +1086,12 @@
         "revision_of_id": {
           "name": "revision_of_id",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reindex_ingest_id": {
+          "name": "reindex_ingest_id",
+          "type": "varchar",
           "primaryKey": false,
           "notNull": false
         },

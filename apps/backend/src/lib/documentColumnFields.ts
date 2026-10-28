@@ -33,6 +33,8 @@ export const DOCUMENT_COLUMNS = {
   name: 'name',
   bodyMarkdown: 'body_markdown',
   isPinned: 'is_pinned',
+  // "Publicar cambios" (`lib/studentNotes.ts`).
+  reindexIngestId: 'reindex_ingest_id',
   updatedAt: 'updated_at',
 } as const
 

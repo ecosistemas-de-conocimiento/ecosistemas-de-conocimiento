@@ -3316,6 +3316,17 @@ export const Documents: CollectionConfig = {
       admin: { readOnly: true, description: 'The published note this pending change belongs to.' },
     },
     {
+      /**
+       * The ingest id of a published note's re-index ("Publicar cambios",
+       * `lib/studentNotes.ts`). Its callback re-checks the note is still
+       * published and retires it again if not (`callback/route.ts`).
+       */
+      name: 'reindexIngestId',
+      type: 'text',
+      access: { create: gateWritesOnly, update: gateWritesOnly },
+      admin: { readOnly: true, hidden: true },
+    },
+    {
       name: 'mediaFile',
       type: 'upload',
       relationTo: 'media',

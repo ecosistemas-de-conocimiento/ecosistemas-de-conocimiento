@@ -532,6 +532,10 @@ function pump(): void {
         // arriving here is a bug in the recording path itself.
         console.error('[graph] background extraction crashed for doc', next.docId, err)
       })
+      .then(() => {
+        // A "Publicar cambios" revision waits for its graph (`lib/studentNotes.ts`).
+        void import('@/lib/studentNotes').then((m) => m.onGraphSettled(next.docId)).catch(() => {})
+      })
       .finally(() => {
         running--
         // ⚠ Defer, so a long synchronous chain of completions cannot starve the

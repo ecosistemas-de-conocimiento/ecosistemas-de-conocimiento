@@ -346,7 +346,16 @@ async function dispatchCallback(
       // or the second half of a publish depends on which ingestId it carries,
       // and those two mean completely different things.
       const doc = await readDocument(payload, docId)
-      if (!doc) return
+      if (!doc) {
+        await retireOrphanFromSharedCorpus(docIdRaw, envelope)
+        return
+      }
+
+      // 🔴 A "Publicar cambios" re-index landing (`lib/studentNotes.ts`).
+      if (typeof doc.reindexIngestId === 'string' && doc.reindexIngestId === envelope.ingestId) {
+        await dispatchNoteReindex(payload, doc, envelope)
+        return
+      }
 
       // 🔴 IS THIS THE PUBLISH MOVE COMPLETING? `publishIngestId` is a separate
       // column from `ingestId` precisely so these cannot be confused. If they
@@ -583,6 +592,8 @@ interface DocumentSnapshot {
   uploadedBy?: unknown
   publicationStatus?: unknown
   publishIngestId?: unknown
+  /** A published note's re-index ("Publicar cambios"). */
+  reindexIngestId?: unknown
   kind?: unknown
   /**
    * What the material IS, as opposed to the file format. `lib/contentKind.ts`.
@@ -801,6 +812,62 @@ async function dispatchTranscribeCompleted(
   // claim in `driveTranscribedDocument` makes a race with it a no-op.
   const { driveTranscribedSoon } = await import('@/lib/driveTranscribedSoon')
   driveTranscribedSoon(payload, docId)
+}
+
+/**
+ * 🔴 A PUBLISHED NOTE'S RE-INDEX LANDED ("Publicar cambios", audit 2026-10-28).
+ *
+ * ai-service's upsert clears a retirement. If the note was withdrawn while
+ * the re-index ran (an unpublish retired the shared copy first), the upsert
+ * just put it back in search. So: still `published` → nothing to do; anything
+ * else → retire it from the shared corpus again. The id is cleared either way.
+ */
+async function dispatchNoteReindex(
+  payload: Awaited<ReturnType<typeof getPayload>>,
+  doc: DocumentSnapshot,
+  envelope: Extract<CallbackEnvelope, { event: 'ingest.completed' | 'ingest.failed' }>,
+): Promise<void> {
+  const { updateDocumentColumns } = await import('@/lib/documentColumns')
+  if (envelope.event === 'ingest.completed' && doc.publicationStatus !== 'published') {
+    const organizationId = relationId(doc.organization)
+    if (organizationId != null) {
+      const { getAdminAIClient } = await import('@/lib/aiClient')
+      const { publishedCorpus } = await import('@/lib/corpus')
+      const { retireFrom } = await import('@/lib/publishDocument')
+      await retireFrom(getAdminAIClient(organizationId) as never, publishedCorpus(organizationId), doc.id, new Date())
+    }
+  }
+  if (envelope.event === 'ingest.failed') {
+    // The shared copy keeps the previous published text, which was gated.
+    console.warn('[callback] note re-index failed for doc', doc.id, envelope.error?.code ?? '')
+  }
+  await updateDocumentColumns(payload as never, {
+    id: doc.id,
+    data: { reindexIngestId: null },
+    where: [{ reindexIngestId: { equals: envelope.ingestId } }],
+  })
+}
+
+/**
+ * 🔴 AN INGEST INTO A SHARED CORPUS LANDED FOR A ROW THAT NO LONGER EXISTS.
+ * A deleted document must not be in any corpus; the delete already removed it,
+ * so this is an upsert that ran after the delete (a "Publicar cambios"
+ * re-index racing a delete) and put it back. Retire it. Draft corpora are left
+ * alone: nobody else reads them, and their owner deleted the row.
+ */
+async function retireOrphanFromSharedCorpus(
+  docIdRaw: string,
+  envelope: Extract<CallbackEnvelope, { event: 'ingest.completed' | 'ingest.failed' }>,
+): Promise<void> {
+  const match = typeof envelope.corpus === 'string' ? /^eco-(\d+)$/.exec(envelope.corpus) : null
+  if (envelope.event !== 'ingest.completed' || !match) return
+  try {
+    const { getAdminAIClient } = await import('@/lib/aiClient')
+    const { retireFrom } = await import('@/lib/publishDocument')
+    await retireFrom(getAdminAIClient(match[1]!) as never, envelope.corpus!, docIdRaw, new Date())
+  } catch (err) {
+    console.error('[callback] could not retire orphan doc', docIdRaw, 'from', envelope.corpus, err)
+  }
 }
 
 /**
