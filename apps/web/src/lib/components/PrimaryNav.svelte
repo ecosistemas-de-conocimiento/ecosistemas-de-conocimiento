@@ -33,6 +33,7 @@
     SKIP_TO_CONTENT_LABEL,
     visibleNavItems,
   } from '$lib/nav';
+  import { navHref } from '$lib/inicio';
 
   // ⚠ Two arguments, two different sources. `user` carries `isPlatformAdmin`,
   // a field on the backend's user record. `canReviewHolds` is an answer the
@@ -68,7 +69,7 @@
         <a
           class="item"
           class:current
-          href={item.href}
+          href={navHref(item.href)}
           title={item.hint}
           aria-current={current ? 'page' : undefined}
           data-interactive

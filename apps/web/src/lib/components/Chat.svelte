@@ -14,6 +14,11 @@
     lenguaFacetCopy,
     type LenguaFacet,
   } from '$lib/lengua';
+  import { ENTREVISTA_LABEL, readEntrevista, showsEntrevista, writeEntrevista } from '$lib/entrevista';
+  import { parseSessionKind } from '$lib/sessionKind';
+
+  /** The browser's storage, or null where there is none. */
+  const storage = () => (typeof localStorage === 'undefined' ? null : localStorage);
 
   /**
    * ⚠ NARROW-SCREEN CASE. Below 64rem the two supporting panes are drawers
@@ -57,6 +62,22 @@
     lengua = '';
     alcance = '';
   });
+
+  /**
+   * "Hazme preguntas" (`$lib/entrevista`): per conversation, off by default,
+   * remembered in this browser. With no conversation open it follows the tab
+   * (the first send creates one of that kind) and is saved once it exists.
+   */
+  const kind = $derived(app.active ? parseSessionKind(app.active.kind) : app.sessionKindTab);
+  const showEntrevista = $derived(showsEntrevista(kind, app.features.interviewerMode));
+  let entrevista = $state(false);
+  $effect(() => {
+    entrevista = readEntrevista(storage, app.active?.id);
+  });
+  function toggleEntrevista() {
+    entrevista = !entrevista;
+    writeEntrevista(storage, app.active?.id, entrevista);
+  }
   // The ecosistema's languages, once. A failed read leaves the control hidden.
   $effect(() => {
     let cancelled = false;
@@ -84,6 +105,8 @@
     // a second Enter while the create is on the wire is ignored by Composer.
     if (busy) return;
     let s = app.active;
+    // Read before the create: opening the new conversation resets the switch.
+    const wantEntrevista = showEntrevista && entrevista;
     if (!s) {
       busy = true;
       try {
@@ -94,6 +117,10 @@
       s = app.active;
       // The create failed and `newSession` already said why.
       if (!s) return;
+      if (wantEntrevista) {
+        writeEntrevista(storage, s.id, true);
+        entrevista = true;
+      }
     }
 
     const userMsg = app.addLocalMessage(s.id, { role: 'user', content: text, contextRefs: refs });
@@ -123,6 +150,7 @@
       scope: fresh.contextScope ?? scope,
       ...(lengua ? { lengua } : {}),
       ...(isStudent && alcance ? { alcance } : {}),
+      ...(wantEntrevista ? { entrevista: true } : {}),
     };
     await answer(s.id, placeholder.id, payload);
   }
@@ -252,6 +280,22 @@
         </select>
       </label>
     {/if}
+    {#if showEntrevista}
+      <!-- 🔴 A switch, not a checkbox: the state is the "on" track AND the
+           knob position AND aria-checked, so it never rests on colour alone. -->
+      <button
+        type="button"
+        role="switch"
+        aria-checked={entrevista}
+        class="entrevista"
+        class:on={entrevista}
+        onclick={toggleEntrevista}
+        data-testid="chat-entrevista"
+      >
+        <span class="track" aria-hidden="true"><span class="knob"></span></span>
+        <span class="whitespace-nowrap">{ENTREVISTA_LABEL}</span>
+      </button>
+    {/if}
     {#if !app.docsPanelOpen && !hidePanelButtons}
       <button
         class="text-xs text-ink-soft hover:text-brand px-2 py-1 rounded-lg border border-line hover:border-brand transition-colors whitespace-nowrap"
@@ -288,3 +332,59 @@
     oncancel={handleCancel}
   />
 </section>
+
+<style>
+  .entrevista {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 2rem;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--edc-color-line);
+    border-radius: var(--edc-radius-pill);
+    background: var(--edc-color-surface);
+    color: var(--edc-color-ink-soft);
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+  .entrevista.on {
+    border-color: var(--edc-color-brand);
+    color: var(--edc-color-brand-strong);
+  }
+  .entrevista:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--edc-focus-ring);
+  }
+  .track {
+    position: relative;
+    width: 1.9rem;
+    height: 1.1rem;
+    flex: none;
+    border-radius: var(--edc-radius-pill);
+    background: var(--edc-color-line-strong);
+    transition: background var(--edc-motion-fast) var(--edc-ease-standard);
+  }
+  .on .track {
+    background: var(--edc-color-brand);
+  }
+  .knob {
+    position: absolute;
+    top: 0.15rem;
+    left: 0.15rem;
+    width: 0.8rem;
+    height: 0.8rem;
+    border-radius: 50%;
+    background: var(--edc-color-surface);
+    box-shadow: var(--edc-shadow-1);
+    transition: transform var(--edc-motion-fast) var(--edc-ease-standard);
+  }
+  .on .knob {
+    transform: translateX(0.8rem);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .track,
+    .knob {
+      transition: none;
+    }
+  }
+</style>

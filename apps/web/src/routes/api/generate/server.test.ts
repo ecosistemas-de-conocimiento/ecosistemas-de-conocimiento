@@ -879,9 +879,9 @@ describe('POST /api/generate — the conversation kind picks the config', () => 
 
   it('a row with no kind (made before the split) is Generales', async () => {
     world.answerText = 'Gracias. ¿Dónde fue?';
-    await POST(event(turn({ messages: [{ role: 'user', content: QUESTION }] })));
+    await POST(event(turn({ messages: [{ role: 'user', content: QUESTION }], entrevista: true })));
     expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
-    await POST(event(turn({ messages: [{ role: 'user', content: STORY }] })));
+    await POST(event(turn({ messages: [{ role: 'user', content: STORY }], entrevista: true })));
     expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
     expect(systemOf(chatGenerate().at(-1)!)).not.toContain(resonanciasSystemPrompt());
   });
@@ -916,10 +916,12 @@ describe('POST /api/generate — the conversation kind picks the config', () => 
   });
 
   // ── Generales + the ecosistema's `interviewerMode` switch (owner ruling 2026-10-27)
-  it('🔴 Generales, interviewerMode on (the default): a first-person story meets the heuristic interviewer', async () => {
+  it('🔴 Generales, interviewerMode on (the default) + "Hazme preguntas" on: a first-person story meets the heuristic interviewer', async () => {
     world.kind = 'generales';
     world.answerText = 'Gracias por contarlo. ¿Dónde estaba la escuela?';
-    const body = (await (await POST(event(turn({ messages: [{ role: 'user', content: STORY }] })))).json()) as {
+    const body = (
+      await (await POST(event(turn({ messages: [{ role: 'user', content: STORY }], entrevista: true })))).json()
+    ) as {
       provenance: unknown;
     };
     expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
@@ -943,6 +945,58 @@ describe('POST /api/generate — the conversation kind picks the config', () => 
     expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt());
   });
 
+  // ── "Hazme preguntas" (owner ruling 2026-10-27): per conversation, default off.
+  it('🔴 Generales, interviewerMode on, "Hazme preguntas" absent (the default): a story gets the answer prompt', async () => {
+    world.kind = 'generales';
+    world.answerText = 'Respuesta.';
+    for (const stream of [false, true]) {
+      if (stream) world.streamText = 'Respuesta.';
+      const res = await POST(event(turn({ messages: [{ role: 'user', content: STORY }] }), stream));
+      if (stream) await readSse(res);
+      expect(systemOf(chatGenerate().at(-1)!)).not.toContain(interviewSystemPrompt());
+      expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
+    }
+  });
+
+  it.each([false, 'true', 1, 'yes', null, {}])(
+    '🔴 "Hazme preguntas" is on only for literal true (%j reads as off)',
+    async (value) => {
+      world.kind = 'generales';
+      world.answerText = 'Respuesta.';
+      await POST(event(turn({ messages: [{ role: 'user', content: STORY }], entrevista: value })));
+      expect(systemOf(chatGenerate().at(-1)!)).not.toContain(interviewSystemPrompt());
+    },
+  );
+
+  it('🔴 "Hazme preguntas" on, stream: a story meets the interviewer', async () => {
+    world.kind = 'generales';
+    world.streamText = 'Gracias. ¿Dónde fue?';
+    await readSse(await POST(event(turn({ messages: [{ role: 'user', content: STORY }], entrevista: true }), true)));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
+  });
+
+  it('🔴 "Hazme preguntas" on but the ecosistema switch off: answer prompt', async () => {
+    world.kind = 'generales';
+    world.features = { interviewerMode: false };
+    world.answerText = 'Respuesta.';
+    await POST(event(turn({ messages: [{ role: 'user', content: STORY }], entrevista: true })));
+    expect(systemOf(chatGenerate().at(-1)!)).not.toContain(interviewSystemPrompt());
+  });
+
+  it('🔴 "Hazme preguntas" on, a direct question: still variant E (chatTurnMode decides)', async () => {
+    world.kind = 'generales';
+    world.answerText = 'Las parteras acompañan los nacimientos [1].';
+    await POST(event(turn({ messages: [{ role: 'user', content: QUESTION }], entrevista: true })));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
+  });
+
+  it('🔴 Resonancias ignores "Hazme preguntas": off still interviews from the corpus', async () => {
+    world.kind = 'resonancias';
+    world.answerText = 'Gracias. ¿Dónde fue?';
+    await POST(event(turn({ messages: [{ role: 'user', content: STORY }], entrevista: false })));
+    expect(systemOf(chatGenerate().at(-1)!)).toContain(resonanciasSystemPrompt());
+  });
+
   it('🔴 Resonancias ignores interviewerMode: off still interviews from the corpus', async () => {
     world.kind = 'resonancias';
     world.features = { interviewerMode: false };
@@ -957,10 +1011,10 @@ describe('POST /api/generate — the conversation kind picks the config', () => 
     world.kind = 'generales';
     world.answerText = 'Gracias. ¿Dónde fue?';
     world.sessionDocs = [{ id: 21, name: 'x', kind: 'audio', contentKind: 'testimonio', publicationStatus: 'draft', uploadedBy: 2 }];
-    await POST(event(turn({ messages: [{ role: 'user', content: 'Hola' }] })));
+    await POST(event(turn({ messages: [{ role: 'user', content: 'Hola' }], entrevista: true })));
     expect(systemOf(chatGenerate().at(-1)!)).toContain(chatSystemPrompt('E'));
     world.sessionDocs = [{ id: 21, name: 'x', kind: 'audio', contentKind: 'testimonio', publicationStatus: 'draft', uploadedBy: 1 }];
-    await POST(event(turn({ messages: [{ role: 'user', content: 'Hola' }] })));
+    await POST(event(turn({ messages: [{ role: 'user', content: 'Hola' }], entrevista: true })));
     expect(systemOf(chatGenerate().at(-1)!)).toContain(interviewSystemPrompt());
   });
 

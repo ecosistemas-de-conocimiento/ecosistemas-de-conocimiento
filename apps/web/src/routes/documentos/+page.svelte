@@ -25,6 +25,7 @@
    */
   import { Button } from '$lib/primitives';
   import { app } from '$lib/stores/app.svelte';
+  import { CONVERSACIONES_HREF } from '$lib/inicio';
   import TestimonySource from '$lib/components/TestimonySource.svelte';
   import { deleteConfirmCopy } from '$lib/documents';
   import { docStatusBadge } from '$lib/docStatus';
@@ -268,7 +269,7 @@
         dataTestId="owned-upload"
         onClick={() => fileInput?.click()}
       />
-      <a class="back" href="/" data-interactive>Volver al chat</a>
+      <a class="back" href={CONVERSACIONES_HREF} data-interactive>Volver al chat</a>
     </div>
   </header>
 
@@ -379,7 +380,7 @@
               disabled={busyId === d.id}
               dataTestId={`new-session-${d.id}`}
               onClick={async () => {
-                if (await app.startSessionWithDoc(d.id, filter)) await goto('/');
+                if (await app.startSessionWithDoc(d.id, filter)) await goto(CONVERSACIONES_HREF);
               }}
             />
             <Button

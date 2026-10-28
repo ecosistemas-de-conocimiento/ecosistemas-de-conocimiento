@@ -785,6 +785,19 @@ class AppStore {
     return this.newSession();
   }
 
+  /**
+   * Open a new conversation of `kind` and show its tab — the start screen's
+   * "Iniciar" (`$lib/inicio`). Same create as "Nueva conversación".
+   */
+  async startConversation(kind: SessionKind): Promise<string | null> {
+    if (this.hasNoEcosystem) return null;
+    if (this.sessionKindTab !== kind) {
+      this.sessionKindTab = kind;
+      writeSessionKindTab(browserStorage, kind);
+    }
+    return this.createOfKind(kind, {});
+  }
+
   async selectSession(id: string): Promise<void> {
     this.activeSessionId = id;
     const s = this.sessions.find((x) => x.id === id);
