@@ -418,3 +418,26 @@ describe('🔴 final audit 2026-10-27: mutation survivors', () => {
     expect(textOf(on)).toContain('el senador Ramiro Gil habló')
   })
 })
+
+describe('🔴 delta audit 2026-10-27: marks, format characters, caseless and titlecase neighbours', () => {
+  it.each([
+    ['fwd gap+mark', 'Su hijo Ramiro Saldaña ́Pérez fue golpeado.'],
+    ['fwd gap+mark+gap', 'Su hijo Ramiro Saldaña ́ Pérez fue golpeado.'],
+    ['fwd gap+VS16', 'Su hijo Ramiro Saldaña ️Pérez fue golpeado.'],
+    ['fwd gap+keycap', 'Su hijo Ramiro Saldaña ⃣Pérez fue golpeado.'],
+    ['back mark+gap', 'Su hijo Tomás ́Ramiro Saldaña fue golpeado.'],
+    ['back gap+mark+gap', 'Su hijo Tomás ́ Ramiro Saldaña fue golpeado.'],
+    ['zwsp after the dot', 'Su hijo Ramiro Saldaña.​Pérez fue golpeado.'],
+    ['zwsp before the dot', 'Su hijo Ramiro Saldaña​.Pérez fue golpeado.'],
+    ['titlecase Lt', 'Su hijo Ramiro Saldaña ǅurić fue golpeado.'],
+    ['caseless Lo', 'Su hijo Ramiro Saldaña 李 fue golpeado.'],
+  ])('%s: the son is never shown', (_l, tail) => same(`El senador Ramiro Saldaña habló. ${tail}`, [[pb('Ramiro Saldaña')], []]))
+
+  it.each([
+    ['fwd', 'dijo Ramiro Saldaña. Pérez votó.'],
+    ['back', 'Pérez. Ramiro Saldaña votó.'],
+  ])('G1: sentence punctuation + NBSP is plain punctuation (%s): restore allowed', async (_l, text) => {
+    const a = text.indexOf('Ramiro Saldaña')
+    expect(gluedToNeighbour(text, a, a + 'Ramiro Saldaña'.length)).toBe(false)
+  })
+})

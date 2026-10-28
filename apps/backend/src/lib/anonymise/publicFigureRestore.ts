@@ -46,7 +46,9 @@ export const MAX_NAME_WORDS = 3
 /** A word that is a name word: capitalised, not a title or function word. */
 function nameWord(word: string): boolean {
   const folded = normaliseName(word)
-  return /^\p{Lu}/u.test(word) && !NOT_A_PART.has(folded) && !CONJUNCTIONS.has(folded)
+  // Titlecase (U+01C5) and caseless letters (CJK, Arabic…) count as capitals:
+  // they may be a name and have no lower-case form to tell (delta audit).
+  return /^[\p{Lu}\p{Lt}\p{Lo}]/u.test(word) && !NOT_A_PART.has(folded) && !CONJUNCTIONS.has(folded)
 }
 
 /**
@@ -222,6 +224,9 @@ const HYPHENS = /[\p{Pd}­'’]/u
 /** Plain sentence punctuation: a run of it followed by whitespace (or the text's end) ends the scan. */
 const SENTENCE_PUNCT = /[.,;:!?…"“”‘«»()[\]¿¡]/u
 const LETTER = /[\p{L}\p{M}]/u
+/** REAL whitespace, for the punctuation exception: never a format character (U+200B). */
+const SPACE = /[\s\p{Zs}]/u
+const MARK = /\p{M}/u
 
 /**
  * One direction of `gluedToNeighbour`. `step` is +1 (forward) or -1.
@@ -257,14 +262,18 @@ function gluedOneWay(source: string, from: number, step: 1 | -1): boolean {
         hyphen = true
         i += step
       } else if (GAP.test(c)) {
-        gap = true
+        if (SPACE.test(c)) gap = true
         i += step
+      } else if (MARK.test(c)) {
+        // 🔴 A word that starts (or, backward, ends) with a combining mark,
+        // after a gap: glue (delta audit: "Saldaña \u0301Pérez").
+        return true
       } else if (SENTENCE_PUNCT.test(c) && !hyphen) {
         // Plain punctuation when whitespace touches the run on either side.
         let k = i
         while (!done(k) && SENTENCE_PUNCT.test(at(k) as string)) k += step
-        return !(gap || done(k) || GAP.test(at(k) as string))
-      } else if (LETTER.test(c)) {
+        return !(gap || done(k) || SPACE.test(at(k) as string))
+      } else if (/\p{L}/u.test(c)) {
         break
       } else {
         return true
