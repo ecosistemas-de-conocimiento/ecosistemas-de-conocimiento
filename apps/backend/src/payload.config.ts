@@ -22,6 +22,7 @@ import { Memberships } from './collections/Memberships'
 import { StudentProfiles } from './collections/StudentProfiles'
 import { Suggestions } from './collections/Suggestions'
 import { withoutDuplicate } from './collections/hooks/refuseDuplicate'
+import { lockDownPayloadInternals } from './access/payloadInternals'
 
 import { PlatformSettings } from './globals/PlatformSettings'
 
@@ -83,6 +84,11 @@ const envOrigins = (process.env.ALLOWED_ORIGINS ?? '')
 
 const allowedOrigins = envOrigins.length > 0 ? envOrigins : LOCAL_DEV_ORIGINS
 
+/**
+ * 🔴 `.then(lockDownPayloadInternals)`: Payload's own lock and preference
+ * collections only exist AFTER sanitize, and ship open to any signed-in user.
+ * See `access/payloadInternals.ts`.
+ */
 export default buildConfig({
   admin: {
     user: Users.slug,
@@ -380,4 +386,4 @@ export default buildConfig({
      */
     push: process.env.NODE_ENV !== 'test' && process.env.PAYLOAD_ALLOW_PUSH === '1',
   }),
-})
+}).then(lockDownPayloadInternals)
