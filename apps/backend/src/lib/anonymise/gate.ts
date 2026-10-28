@@ -58,7 +58,7 @@
 import { clearFoldCache, foldedMatches, positiveIntFromEnv } from './detector'
 import { deterministicPass } from './deterministic'
 import { isGenericPlace } from './genericPlaces'
-import { createNamePartRegistry, gluedToAnotherName, namePartsOf, type NamePartRegistry, sentenceStart } from './nameParts'
+import { createNamePartRegistry, gluedToAnotherName, namePartsOf, NOT_A_PART, type NamePartRegistry, sentenceStart } from './nameParts'
 import { createPseudonymAllocator, normaliseName } from './pseudonyms'
 import { structuralPass } from './structural'
 import { isTownLevelPlace } from './townPlaces'
@@ -215,39 +215,84 @@ function shield(text: string, names: readonly string[]): { text: string; restore
 }
 
 /**
- * A span that names more than one person: "X y Y", "X, Y", "X / Y". Never
- * public as a whole (audit 2026-10-27): one of them may be private.
+ * Words that may sit INSIDE one person's name without splitting it:
+ * "Fernando de la Cruz", "Ludwig van Beethoven". A conjunction ("y", "e",
+ * "o", "u", "ni") is not one of them: it joins two people.
  */
-const MULTI_PERSON = /[,;/&]|\s(?:y|e|o|u|ni)\s/iu
+const NAME_JOINERS = new Set(['de', 'del', 'la', 'las', 'los', 'el', 'da', 'das', 'do', 'dos', 'di', 'van', 'von', 'der'])
 
 /**
- * 🔴 WHICH `publica` FINDINGS ARE KEPT. Fail closed on every ambiguity (audit
- * 2026-10-27: a shielded public span hid "Ramiro Saldaña Pérez", "Tadeo
- * Villaseñor" in "X y Tadeo Villaseñor" and a roster member's full name).
- * A public span is demoted to private when:
+ * How many separate NAME GROUPS a span holds: maximal runs of capitalised
+ * name words, joined only by spaces and `NAME_JOINERS`. Anything else —
+ * punctuation of any kind, a line break, a lower-case word ("y", "con",
+ * "and") — closes the group (re-audit 2026-10-27: listing separators missed
+ * "–", "(", "+", "·", "con", "and" and a newline). A title word that is not a
+ * name part ("Don", "Dr", "El") neither opens nor closes a group.
+ */
+export function nameGroups(span: string): number {
+  let groups = 0
+  let open = false
+  let last = 0
+  for (const m of span.matchAll(/[\p{L}\p{M}]+/gu)) {
+    const gap = span.slice(last, m.index)
+    last = m.index + m[0].length
+    if (/[^ \t]/u.test(gap)) open = false
+    const word = m[0]
+    const folded = normaliseName(word)
+    if (/^\p{Lu}/u.test(word) && !NOT_A_PART.has(folded)) {
+      if (!open) groups += 1
+      open = true
+    } else if (!(NOT_A_PART.has(folded) && (NAME_JOINERS.has(folded) || /^\p{Lu}/u.test(word)))) {
+      open = false
+    }
+  }
+  return groups
+}
+
+/** A span's words for the shared-part test: folded, any case, function words and titles out. */
+function comparableParts(span: string): Set<string> {
+  return new Set(
+    (span.replace(PLACEHOLDER, ' ').match(/[\p{L}\p{M}]+/gu) ?? [])
+      .map(normaliseName)
+      .filter((w) => [...w].length >= 2 && !NOT_A_PART.has(w)),
+  )
+}
+
+/**
+ * 🔴 WHICH `publica` FINDINGS ARE KEPT. Fail closed on every ambiguity
+ * (audits 2026-10-27). A public span is demoted to private when:
  *
- *   · the same text is also reported private, or as anything but a person;
- *   · it reads as more than one person (`MULTI_PERSON`);
- *   · it occurs, as whole words, INSIDE any other finding (any type) or any
- *     roster name, or CONTAINS one: "Ramiro Saldaña" in "Ramiro Saldaña
- *     Pérez", "Itzel Barragán" in roster "Itzel Barragán Ruiz", "Ramiro
- *     Saldaña" in "la tortillería de Ramiro Saldaña";
- *   · ⚠ EXCEPT a span that IS a roster name, exactly: the staff author of a
- *     cited work or a public-event speaker (owner rulings 2026-10-27).
+ *   · it does not hold exactly ONE name group (`nameGroups`): "X y Y",
+ *     "X, Y", "X (Y)" and a lower-case span are never public;
+ *   · it shares ANY name part, case- and accent-folded, with a private
+ *     finding, with a finding of any other type, with a roster name, or with
+ *     another span already demoted. String containment was not enough: the
+ *     re-audit shipped "Ramiro Saldaña Pérez" past a public "Saldaña Pérez"
+ *     and a private "Ramiro Saldaña". Over-redaction accepted: a senator who
+ *     shares a surname with a private person is redacted;
+ *   · ⚠ THE ONE EXCEPTION: a span that EXACTLY equals a roster name (the staff
+ *     author of a cited work or a public-event speaker, owner rulings
+ *     2026-10-27) may share parts with that roster entry itself, and nothing
+ *     else.
  */
 function keptPublicFindings(found: readonly DetectorFinding[], rosterNames: readonly string[]): DetectorFinding[] {
   const candidates = found.filter((f) => f.type === 'persona' && f.public)
-  const others = found.filter((f) => !candidates.includes(f))
-  const othersFolded = new Set(others.map((f) => normaliseName(f.text)))
-  const inside = (needle: string, container: string) => wholeWordMatches(container, needle).length > 0
-  const overlaps = (a: string, b: string) => inside(a, b) || inside(b, a)
-  return candidates.filter((f) => {
-    const folded = normaliseName(f.text)
-    if (othersFolded.has(folded)) return false
-    if (MULTI_PERSON.test(f.text)) return false
-    if (others.some((o) => overlaps(f.text, o.text))) return false
-    return rosterNames.every((r) => normaliseName(r) === folded || !overlaps(f.text, r))
-  })
+  const privateSources: string[] = found.filter((f) => !candidates.includes(f)).map((f) => f.text)
+  let kept = candidates.filter((f) => nameGroups(f.text) === 1)
+  privateSources.push(...candidates.filter((f) => !kept.includes(f)).map((f) => f.text))
+  // Until nothing changes: a demoted span is a private source for the rest.
+  for (;;) {
+    const privateParts = new Set(privateSources.flatMap((t) => [...comparableParts(t)]))
+    const next = kept.filter((f) => {
+      const folded = normaliseName(f.text)
+      const own = rosterNames.filter((r) => normaliseName(r) !== folded)
+      const rosterParts = new Set(own.flatMap((r) => [...comparableParts(r)]))
+      return [...comparableParts(f.text)].every((w) => !privateParts.has(w) && !rosterParts.has(w))
+    })
+    if (next.length === kept.length) return next
+    privateSources.push(...kept.filter((f) => !next.includes(f)).map((f) => f.text))
+    kept = next
+  }
 }
 
 /**

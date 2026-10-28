@@ -139,20 +139,31 @@ describe('option on', () => {
     expect(out.redactedText).not.toContain('Saldaña')
   })
 
-  it('a public figure\'s bare surname stays; a private person sharing it is redacted in their own mentions', async () => {
+  it('🔴 a public figure who shares a surname with a private person is redacted too (re-audit 2026-10-27)', async () => {
     const text = [
       'La alcaldesa Brenda Iturbe habló en el foro.',
       'Mario Iturbe, un comerciante, la escuchó. Mario se fue temprano.',
     ].join('\n')
-    const { result } = gate(text, [[publica('La alcaldesa Brenda Iturbe', 'alcaldesa'), privada('Mario Iturbe')], [publica('La alcaldesa Brenda Iturbe')]], {
+    const { result } = gate(text, [[publica('La alcaldesa Brenda Iturbe', 'alcaldesa'), privada('Mario Iturbe')], []], {
+      keep: true,
+    })
+    const out = await result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toMatch(/Brenda|Iturbe|Mario/)
+    expect(out.keptPublic).toEqual([])
+  })
+
+  it('a public figure sharing no part with anyone private stays', async () => {
+    const text = 'La alcaldesa Brenda Iturbe habló en el foro. Mario Quezada, un comerciante, la escuchó.'
+    const { result } = gate(text, [[publica('La alcaldesa Brenda Iturbe', 'alcaldesa'), privada('Mario Quezada')], [publica('La alcaldesa Brenda Iturbe')]], {
       keep: true,
     })
     const out = await result
     expect(out.status).toBe('ready')
     if (out.status !== 'ready') return
     expect(out.redactedText).toContain('La alcaldesa Brenda Iturbe habló')
-    expect(out.redactedText).not.toMatch(/Mario/)
-    expect(out.redactedText).toMatch(/\[Persona A\], un comerciante/)
+    expect(out.redactedText).not.toMatch(/Mario|Quezada/)
   })
 
   it('🔴 a one-word "publica" that is also a private person\'s part → redacted', async () => {
@@ -303,10 +314,10 @@ describe('🔴 audit 2026-10-27: a public span never hides a private name', () =
         { keep: true },
       ).result,
     )
-    expect(out?.redactedText).toContain('El senador Ramiro Saldaña habló.')
-    expect(out?.redactedText).not.toMatch(/Pérez/)
-    expect(out?.redactedText).toMatch(/Su hijo, \[Persona [A-Z]\], no quiso/)
-    expect(out?.keptPublic?.map((k) => k.name)).toEqual(['senador Ramiro Saldaña'])
+    // Re-audit 2026-10-27: sharing ANY name part with a private person demotes,
+    // so the senator is redacted too. Over-redaction, accepted.
+    expect(out?.redactedText).not.toMatch(/Ramiro|Saldaña|Pérez/)
+    expect(out?.keptPublic).toEqual([])
   })
 
   it('A variant: the private name differs only in case and accents → still redacted', async () => {
@@ -390,5 +401,121 @@ describe('🔴 audit 2026-10-27: the shield markers cannot collide with the inpu
       expect(out.redactedText).not.toMatch(/[]/)
       expect(out.redactedText).not.toContain('Tadeo')
     }
+  })
+})
+
+describe('🔴 re-audit 2026-10-27: demotion by shared name part, not by string containment', () => {
+  const T = 'El senador Saldaña Pérez votó. Ramiro Saldaña Pérez, su hijo, fue golpeado.'
+  const clean = async (r: ReturnType<typeof gate>['result']) => {
+    const out = await r
+    const text = out.status === 'ready' ? out.redactedText : (out.redactedText ?? '')
+    expect(text).not.toMatch(/Ramiro|Saldaña|Pérez/)
+    expect(out.keptPublic ?? []).toEqual([])
+  }
+
+  it.each([
+    ['verify reports the son privada', [privada('Ramiro Saldaña Pérez')]],
+    ['verify reports "Ramiro" privada', [privada('Ramiro')]],
+    ['verify reports the surname publica', [publica('Saldaña Pérez')]],
+  ])('publica "Saldaña Pérez" + privada "Ramiro Saldaña": nothing ships (%s)', async (_l, verify) => {
+    await clean(gate(T, [[publica('Saldaña Pérez'), privada('Ramiro Saldaña')], verify], { keep: true, rounds: 2 }).result)
+  })
+
+  it('the same with the option off', async () => {
+    await clean(gate(T, [[publica('Saldaña Pérez'), privada('Ramiro Saldaña')], []], { keep: false, rounds: 2 }).result)
+  })
+
+  it('privada "Saldaña Pérez" + publica "Ramiro Saldaña Pérez": never "Ramiro Saldaña [Persona A]"', async () => {
+    const text = 'Los Saldaña Pérez viven cerca. Ramiro Saldaña Pérez, senador, habló.'
+    await clean(gate(text, [[privada('Saldaña Pérez'), publica('Ramiro Saldaña Pérez')], []], { keep: true, rounds: 2 }).result)
+  })
+
+  it('roster "Itzel Barragán" + publica "Barragán Ruiz" → never "[Persona A] Barragán Ruiz"', async () => {
+    const text = 'Itzel Barragán Ruiz coordinó. Barragán Ruiz (2020) lo cita.'
+    const out = await gate(text, [[publica('Barragán Ruiz', 'autora citada')], []], { keep: true, roster: ['Itzel Barragán'], rounds: 2 }).result
+    const red = out.status === 'ready' ? out.redactedText : (out.redactedText ?? '')
+    expect(red).not.toMatch(/Itzel|Barragán|Ruiz/)
+  })
+
+  it('a non-persona finding sharing a part demotes too', async () => {
+    const text = 'El senador Ramiro Saldaña habló en la tortillería Saldaña de la calle Hidalgo 12.'
+    const out = await gate(text, [[publica('Ramiro Saldaña'), { texto: 'tortillería Saldaña de la calle Hidalgo 12', tipo: 'lugar' }], []], {
+      keep: true,
+    }).result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toMatch(/Saldaña|Hidalgo/)
+  })
+
+  it('the staff exception: a publica equal to a roster name is kept only if no private finding shares a part', async () => {
+    const text = 'Como muestra Itzel Barragán (2021), el discurso escala. Tomás Barragán, su primo, opinó.'
+    const out = await gate(text, [[publica('Itzel Barragán', 'autora citada'), privada('Tomás Barragán')], []], {
+      keep: true,
+      roster: ['Itzel Barragán'],
+    }).result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toMatch(/Itzel|Barragán|Tomás/)
+  })
+
+  it('…and the exception fails when another ROSTER name shares a part', async () => {
+    const text = 'Como muestra Itzel Barragán (2021), el discurso escala.'
+    const out = await gate(text, [[publica('Itzel Barragán', 'autora citada')], []], {
+      keep: true,
+      roster: ['Itzel Barragán', 'Itzel Montaño'],
+    }).result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toMatch(/Itzel|Barragán/)
+  })
+})
+
+describe('🔴 re-audit 2026-10-27: a span with two name groups is never public', () => {
+  it.each([
+    'Ramiro Saldaña, Tadeo Villaseñor',
+    'Ramiro Saldaña – Tadeo Villaseñor',
+    'Ramiro Saldaña con Tadeo Villaseñor',
+    'Ramiro Saldaña (Tadeo Villaseñor)',
+    'Ramiro Saldaña\nTadeo Villaseñor',
+    'Ramiro Saldaña and Tadeo Villaseñor',
+    'Ramiro Saldaña + Tadeo Villaseñor',
+    'Ramiro Saldaña · Tadeo Villaseñor',
+    'Ramiro Saldaña y Tadeo Villaseñor',
+  ])('%j → redacted', async (span) => {
+    const text = `Hablaron ${span} en la plaza.`
+    const out = await gate(text, [[publica(span, 'políticos')], []], { keep: true }).result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toMatch(/Ramiro|Saldaña|Tadeo|Villaseñor/)
+    expect(out.keptPublic).toEqual([])
+  })
+
+  it.each(['el senador Ramiro Saldaña', 'Don Fernando de la Cruz', 'Dr. Anselmo Rivas', 'RAMIRO SALDAÑA'])(
+    '%j is ONE name group and can be kept',
+    async (span) => {
+      const text = `Habló ${span} en la plaza.`
+      const out = await gate(text, [[publica(span, 'senador')], [publica(span)]], { keep: true }).result
+      expect(out.status).toBe('ready')
+      if (out.status !== 'ready') return
+      expect(out.redactedText).toBe(text)
+    },
+  )
+})
+
+describe('🔴 re-audit 2026-10-27: a lower-case roster name, option on', () => {
+  it('"itzel barragán coordinó." is redacted', async () => {
+    const text = 'itzel barragán coordinó. El senador Ramiro Saldaña habló.'
+    const out = await gate(text, [[publica('Ramiro Saldaña')], [publica('Ramiro Saldaña')]], { keep: true, roster: ['Itzel Barragán'] }).result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toMatch(/itzel|barragán/i)
+    expect(out.redactedText).toContain('El senador Ramiro Saldaña habló.')
+  })
+
+  it('…and with the option off', async () => {
+    const out = await gate('itzel barragán coordinó.', [[], []], { keep: false, roster: ['Itzel Barragán'] }).result
+    expect(out.status).toBe('ready')
+    if (out.status !== 'ready') return
+    expect(out.redactedText).not.toMatch(/itzel|barragán/i)
   })
 })
