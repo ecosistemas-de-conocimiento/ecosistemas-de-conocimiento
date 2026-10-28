@@ -20,6 +20,8 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e',
+  // The evidence videos run against dev with their own config (`e2e/evidencia/`).
+  testIgnore: ['evidencia/**'],
 
   // Predictable, easy to find, and gitignored. `video: 'on'` writes
   // `<outputDir>/<file>-<title>-<project>/video.webm`.
