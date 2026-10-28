@@ -35,7 +35,11 @@ async function main(): Promise<void> {
   process.exit(report.outcome === 'refused' ? 1 : 0)
 }
 
-main().catch((err) => {
+// `payload run` awaits only the import, then exits; a bare `main()` dies at its
+// first await and writes nothing (measured on dev). Top-level await keeps it alive.
+try {
+  await main()
+} catch (err) {
   console.error('[seed-answer-style] failed:', err)
   process.exit(1)
-})
+}
