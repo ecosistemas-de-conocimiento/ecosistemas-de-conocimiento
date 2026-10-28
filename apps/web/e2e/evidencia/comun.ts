@@ -458,21 +458,39 @@ export async function seguimiento(page: Page): Promise<void> {
  * Revisión, Miembros, Ajustes, Administración. 🔴 Shown, never decided: no hold
  * is approved or rejected, no member added or re-roled, no switch saved.
  */
-export async function cuidar(page: Page, opciones: { cambiarEcosistema?: string } = {}): Promise<void> {
+export async function cuidar(
+  page: Page,
+  opciones: { cambiarEcosistema?: string; retenidos?: readonly number[] } = {},
+): Promise<void> {
   await escena(page, 'F1.1', async () => {
     await ir(page, 'revision');
     await mostrar(page, 'hold-queue');
   });
-  const hold = page.locator('a[href^="/revision/"]').first();
-  if (await hold.count()) {
+  /**
+   * Holds to open, by id (EVID_HOLDS, chosen by the coordinator for a video),
+   * else the first one in the queue. `/revision/<id>` resolves the hold's own
+   * ecosistema, so ids from several ecosistemas work. 🔴 Opened and shown;
+   * approve/reject are only hovered — a decision is terminal.
+   */
+  const ids = opciones.retenidos?.length ? opciones.retenidos : null;
+  const primero = page.locator('a[href^="/revision/"]').first();
+  const abrir: (() => Promise<void>)[] = ids
+    ? ids.map((id) => async () => {
+        await page.goto(`/revision/${id}`);
+      })
+    : (await primero.count())
+      ? [() => primero.click()]
+      : [];
+  for (const [i, abre] of abrir.entries()) {
     await escena(page, 'F1.2', async () => {
-      await hold.click();
+      await abre();
       await expect(page.getByTestId('hold-text').or(page.getByTestId('hold-no-text')).first()).toBeVisible();
       await page.mouse.wheel(0, 400);
     });
-    await escena(page, 'F1.3', () => page.getByTestId('hold-approve').hover());
-    await page.goBack();
+    // The decide step once is enough to show; repeating it per hold adds nothing.
+    if (i === 0) await escena(page, 'F1.3', () => page.getByTestId('hold-approve').hover());
   }
+  if (abrir.length) await ir(page, 'revision');
   const retirar = page.locator('[data-testid^="reject-published-"]').first();
   if (await retirar.count()) {
     await escena(page, 'F1.4', async () => {

@@ -2,6 +2,10 @@ import { test } from '@playwright/test';
 import { ECOSISTEMA, biblioteca, conexiones, conversar, cuidar, elegirEcosistema, limpiar, misDocumentos } from './comun';
 import { cerrarSesion, iniciarSesion, instalarSubtitulos } from './escena';
 
+/** Held documents to show in Revisión, e.g. EVID_HOLDS=1031,1039,1129 (never decided). */
+const retenidos = (): number[] =>
+  (process.env.EVID_HOLDS ?? '').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0);
+
 /** Administrador de la plataforma, responsable de varios ecosistemas: todo, más cambiar de ecosistema en Administración. */
 test('admin', async ({ page }) => {
   await instalarSubtitulos(page, 'Administración');
@@ -15,7 +19,7 @@ test('admin', async ({ page }) => {
     );
     await misDocumentos(page);
     await biblioteca(page);
-    await cuidar(page, { cambiarEcosistema: 'dengue' });
+    await cuidar(page, { cambiarEcosistema: 'dengue', retenidos: retenidos() });
     // Last: the graph is the slowest screen on dev while backfills run.
     await conexiones(page);
   } catch (error) {
