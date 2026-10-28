@@ -2,8 +2,9 @@
  * 🔴 OWNER'S RULING Q24 = A (2026-10-28): names of institutions, agencies,
  * programs, projects, events, languages and acronyms are NOT personal data.
  *
- * Measured on dev: the model typed public names as `otro`, and the gate turns
- * every `otro` into "[Dato omitido]", so a staff documento lost a program name
+ * Measured on dev: the model typed public names, concepts, work titles and
+ * course labels as `otro` or `identificador`, and the gate turns both into
+ * "[Dato omitido]", so a staff documento lost a program name
  * 22 times and a sign language 18 times. The fix is the PROMPT only: the gate
  * still redacts whatever the model reports (Q10 A), so these tests read the
  * prompt text. The gate's handling of an `otro` finding is unchanged and stays
@@ -42,6 +43,26 @@ describe('Q24 A: public names are not findings', () => {
     }
   })
 
+  it.each([
+    ['concepts, theories, ordinary words, nationalities', ['Conceptos, teorías', 'gentilicios', '"la ironía"', '"el marxismo"', '"argentino"']],
+    ['titles of published works, journals, media and quotes', ['Títulos de obras publicadas', '"Gramática del relato"', 'la revista Umbral', 'citas']],
+    ['course and document structure labels', ['estructura de un curso o documento', '"sesión 2"', '"Sesión 3 de 8"', '"Anexo D"']],
+    ['public project or grant codes', ['Claves públicas de proyectos', '"Proyecto SECIHTI PX-2024-II-118"']],
+    ['media, parties and organisations', ['medios, partidos y organizaciones', '"la UNAM"', '"Radio Nopal"']],
+  ])('excludes %s', (_class, needles) => {
+    for (const needle of needles) expect(notAFinding).toContain(needle)
+  })
+
+  it('🔴 forbids both "otro" and "identificador" for the excluded classes', () => {
+    expect(notAFinding).toContain('tampoco como "otro" ni como "identificador"')
+    expect(flat).toContain('Nunca uses "otro" ni "identificador" para nada de lo que la sección "No es un hallazgo" excluye.')
+  })
+
+  it('keeps "identificador" for one person\'s identifiers', () => {
+    expect(notAFinding).toMatch(/"identificador" queda para los identificadores de UNA persona: su CURP, RFC/)
+    expect(flat).toContain('"identificador" para folios, CURP, RFC y números de cuenta de una persona')
+  })
+
   it('keeps the exception: a workplace that points at one person in context', () => {
     expect(notAFinding).toMatch(/salvo que/)
     expect(notAFinding).toMatch(/una persona concreta/)
@@ -59,7 +80,7 @@ describe('Q24 A: public names are not findings', () => {
 
   it('no longer invites `otro` for anything that could identify someone', () => {
     expect(flat).not.toContain('"otro" para cualquier otro dato que permita identificar a alguien')
-    expect(flat).toMatch(/"otro" para otro dato que identifique a una persona concreta/)
+    expect(flat).toContain('"otro" para otro dato que identifique a una persona concreta.')
   })
 
   it('workplaces are a finding only when they identify one person', () => {

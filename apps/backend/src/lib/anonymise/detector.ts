@@ -204,22 +204,38 @@ export const DETECT_SYSTEM_PROMPT = [
   '  "la maestra llegó". No identifica a nadie. No lo reportes; si lo reportas, pon',
   '  "identifica": false. Pon "identifica": true en todo lo demás.',
   // 🔴 OWNER'S RULING Q24 = A (2026-10-28). Measured on dev: the model typed
-  // public names as "otro", and the gate turns every "otro" into "[Dato
-  // omitido]" (`gate.ts`), so a staff documento lost a program name 22 times
-  // and another lost a sign language 18 times. The gate still redacts whatever
-  // the model reports (Q10 A), so this line is what keeps them. The exception
+  // public names, concepts, work titles and course labels as "otro" or
+  // "identificador", and the gate turns both into "[Dato omitido]" (`gate.ts`):
+  // a staff documento lost a program name 22 times, another a sign language 18
+  // times, and one ecosistema's 47 documentos held 762 "[Dato omitido]", of
+  // which 2 were personal data. The gate still redacts whatever the model
+  // reports (Q10 A), so these lines are what keep them. The shared exception
   // points at the Domicilios rule ("el Cereso") so the two do not contradict.
-  // Examples are made-up variants of the dev cases.
-  '- Nombres de instituciones, dependencias, programas, proyectos, eventos, lenguas y',
-  '  siglas: no son datos personales. No los reportes, tampoco como "otro". Por ejemplo:',
-  '  "PILARES", "INDISCAPACIDAD CDMX", "SECIHTI", "el Centro de Investigación y Docencia',
-  '  Económicas", "el proyecto Ecosistemas de conocimiento y aprendizaje situado", "el Foro',
-  '  de Saberes Comunitarios", "la Lengua de Señas Mexicana", "el náhuatl". En "trabajo en',
-  '  un PILARES de la alcaldía" no se reporta nada.',
-  '  Esto vale salvo que, en ese texto, el nombre señale a una persona concreta: el lugar',
-  '  donde está o vive una persona ("estoy en el Cereso") se marca "lugar", como dice la',
-  '  lista Domicilios; un centro de trabajo que identifica a alguien ("la única enfermera',
-  '  de la clínica de San Rafael") se reporta.',
+  // Every example is a made-up variant of a dev case.
+  '- Nada de lo siguiente es un dato personal. No lo reportes, tampoco como "otro" ni como',
+  '  "identificador":',
+  '  · Nombres de instituciones, dependencias, programas, proyectos, eventos, medios, partidos',
+  '    y organizaciones, lenguas y siglas: "PILARES", "INDISCAPACIDAD CDMX", "SECIHTI", "el',
+  '    Centro de Investigación y Docencia Económicas", "la UNAM", "el proyecto Ecosistemas de',
+  '    conocimiento y aprendizaje situado", "el Foro de Saberes Comunitarios", "la Lengua de',
+  '    Señas Mexicana", "el náhuatl", "Radio Nopal", "la red Charla Social". En "trabajo en',
+  '    un PILARES de la alcaldía" no se reporta nada.',
+  '  · Conceptos, teorías, corrientes y palabras comunes, también las nacionalidades y los',
+  '    gentilicios: "el mito", "la ironía", "el fetichismo", "la empatía", "yo, aquí, ahora",',
+  '    "el marxismo", "el parentesco", "argentino", "oaxaqueña".',
+  '  · Títulos de obras publicadas, libros, artículos, revistas, medios y sus citas:',
+  '    "Gramática del relato", "La injusticia del oído", "la revista Umbral", "el periódico',
+  '    El Faro del Sur", una frase citada de un autor publicado.',
+  '  · Etiquetas de la estructura de un curso o documento: "sesión 2", "Sesión 3 de 8",',
+  '    "Anexo D", "módulo IV", "CLIC 81".',
+  '  · Claves públicas de proyectos, convocatorias o financiamientos: "Proyecto SECIHTI',
+  '    PX-2024-II-118", "convocatoria 2025-B".',
+  '  Esto vale salvo que, en ese texto, el nombre señale a una persona concreta y privada:',
+  '  el lugar donde está o vive una persona ("estoy en el Cereso") se marca "lugar", como',
+  '  dice la lista Domicilios; un centro de trabajo que identifica a alguien ("la única',
+  '  enfermera de la clínica de San Rafael") se reporta. "identificador" queda para los',
+  '  identificadores de UNA persona: su CURP, RFC, clave de elector, número de cuenta o de',
+  '  expediente, un folio a su nombre.',
   '- Un equipo o colectivo no es una persona: "El equipo del Ecosistema", "el colectivo de',
   '  madres buscadoras", "las compañeras del taller". No lo reportes. El nombre de cada',
   '  integrante sí se reporta.',
@@ -296,8 +312,8 @@ export const DETECT_SYSTEM_PROMPT = [
   '',
   'Tipos: "persona" para nombres de personas; "lugar" para domicilios y lugares identificables;',
   '"contacto" para teléfonos, correos y redes; "identificador" para folios, CURP, RFC y números',
-  'de cuenta; "otro" para otro dato que identifique a una persona concreta. Nunca uses "otro"',
-  'para nombres de instituciones, programas, proyectos, eventos, lenguas o siglas.',
+  'de cuenta de una persona; "otro" para otro dato que identifique a una persona concreta.',
+  'Nunca uses "otro" ni "identificador" para nada de lo que la sección "No es un hallazgo" excluye.',
 ].join('\n')
 
 /**
