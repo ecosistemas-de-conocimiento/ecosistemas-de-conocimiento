@@ -66,11 +66,12 @@ export default defineConfig({
       use: {
         ...devices['Pixel 7'],
         viewport: { width: 390, height: 844 },
-        // ⚠ The video is twice the viewport, same shape: at 1x the frames are
-        // 390px wide and the text is a blur. Chromium hands the screencast over
-        // at device pixels, so DPR 2 is what makes the 2x video sharp.
         deviceScaleFactor: 2,
-        video: { mode: 'on', size: { width: 780, height: 1688 } },
+        // 🔴 Video size = viewport. Playwright's screencast is in CSS pixels and is
+        // NOT scaled up to a larger video size: at 780x1688 the page filled only
+        // the top-left 390x844 and the rest was grey canvas (V2, caught by the
+        // owner 2026-10-28). Measure with the margin check before trusting a video.
+        video: { mode: 'on', size: { width: 390, height: 844 } },
         // The mic stories (B3.1): Chromium's fake capture device plays the WAV
         // into getUserMedia at real-time pace, like a person talking.
         // ⚠ A project's launchOptions REPLACES the top-level one: slowMo again.
