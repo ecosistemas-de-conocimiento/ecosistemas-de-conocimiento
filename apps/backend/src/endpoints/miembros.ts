@@ -222,7 +222,8 @@ const addEndpoint: Endpoint = {
         req,
       })
       existing = (rows.docs[0] as unknown as Record<string, unknown> | undefined) ?? null
-      if (existing && existing.isActive !== false) {
+      // NULL is inactive, as everywhere else (`lib/permissions.ts`).
+      if (existing && existing.isActive === true) {
         return errorResponse(409, 'Ya es miembro de este ecosistema.')
       }
     }

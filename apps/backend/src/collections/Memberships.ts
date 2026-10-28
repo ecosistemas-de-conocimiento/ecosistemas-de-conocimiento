@@ -1,4 +1,11 @@
-import type { CollectionBeforeDeleteHook, CollectionBeforeValidateHook, CollectionConfig } from 'payload'
+import type {
+  CollectionBeforeDeleteHook,
+  CollectionBeforeOperationHook,
+  CollectionBeforeValidateHook,
+  CollectionConfig,
+  FieldAccess,
+} from 'payload'
+import { sql } from '@payloadcms/db-postgres'
 import { APIError, ValidationError } from 'payload'
 
 import { isPlatformAdminUser, withinMyOrganizations, withinMyOrganizationsWithRole } from '../access'
@@ -13,6 +20,8 @@ import {
   roleInOrganization,
   type OrgRole,
 } from '../lib/permissions'
+
+import { transactionHandle } from '../lib/conversationUploads'
 
 import { compoundUnique, toRelationId } from './hooks/compoundUnique'
 
@@ -215,6 +224,14 @@ export const makeRefuseRoleAboveOwn =
     const next = roleOrDefault('role' in patch ? patch.role : isUpdate ? stored.role : undefined)
     if (outranks(next, mine)) throw refuse()
     if (isUpdate && outranks(roleOrDefault(stored.role), mine)) throw refuse()
+
+    // A move takes the row OUT of its source ecosistema: the caller's role
+    // there must also reach the role the row had (audit 2026-10-28).
+    const source = isUpdate ? toRelationId(stored.organization) : null
+    if (source !== null && String(source) !== String(target)) {
+      const mineAtSource = await roleIn(req.payload, callerId as number | string, source as number | string)
+      if (mineAtSource === null || outranks(roleOrDefault(stored.role), mineAtSource)) throw refuse()
+    }
     return data
   }
 
@@ -258,6 +275,18 @@ export const refuseDeleteAboveOwn = makeRefuseDeleteAboveOwn()
  * must remain. Ordinary self-leave (an admin under an owner, an owner with a
  * co-owner) is untouched.
  *
+ * Moving a row to another ecosistema (`organization` changes) counts as
+ * removing it from the source.
+ *
+ * ⚠ CONCURRENCY. Two owners leaving at once would each count the other and
+ * both pass. So the count runs after `pg_advisory_xact_lock` on the
+ * ecosistema, in the write's own transaction: the second waits for the first
+ * to commit, then counts again. No transaction to lock in → refused (fail
+ * closed). Bulk writes run their per-row hooks concurrently in ONE
+ * transaction, where the lock is re-entrant and does not help, so
+ * `refuseBulkResponsableWrite` refuses any bulk delete or grant-changing bulk
+ * update that touches an active manager row.
+ *
  * Platform admins and the seed path (no `req.user`) are unaffected, like the
  * hooks above: they clean up and rebuild tenants, and they can always re-add
  * an owner.
@@ -275,6 +304,9 @@ async function wouldLeaveNoResponsable(req: Req, row: Record<string, unknown>): 
   if (!MANAGER_ROLES.includes(role)) return false
   const organization = toRelationId(row.organization)
   if (organization === null) return false
+  const tx = await transactionHandle(req)
+  if (!tx) return true
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('edc.memberships.responsable'), ${Number(organization)})`)
   const others = async (roles: readonly OrgRole[]) =>
     (
       await req.payload.count({
@@ -312,6 +344,12 @@ export const refuseLeavingWithoutResponsable: CollectionBeforeValidateHook = asy
   const stored = (originalDoc ?? {}) as Record<string, unknown>
   const deactivates = 'isActive' in patch && patch.isActive !== true && stored.isActive === true
   const changesRole = 'role' in patch && patch.role !== stored.role
+  const moves =
+    'organization' in patch && String(toRelationId(patch.organization)) !== String(toRelationId(stored.organization))
+  if (moves) {
+    if (await wouldLeaveNoResponsable(req, stored)) throw lastResponsable()
+    return data
+  }
   if (!deactivates && !changesRole) return data
   // A role change that keeps the row's rank in the rule (owner → owner, or
   // manager → another manager below owner) takes nothing away.
@@ -323,12 +361,61 @@ export const refuseLeavingWithoutResponsable: CollectionBeforeValidateHook = asy
   return data
 }
 
+const GRANT_FIELDS = ['isActive', 'role', 'organization'] as const
+
+export const refuseBulkResponsableWrite: CollectionBeforeOperationHook = async ({ args, operation, req }) => {
+  if (operation !== 'delete' && operation !== 'update') return args
+  const a = args as { id?: unknown; where?: unknown; data?: Record<string, unknown> }
+  // By-id operations have `id`; only bulk ones arrive with a bare `where`.
+  if (a.id !== undefined || !a.where || exemptCaller(req)) return args
+  if (operation === 'update' && !GRANT_FIELDS.some((f) => f in (a.data ?? {}))) return args
+  const hit = await req.payload.count({
+    collection: 'memberships',
+    where: {
+      and: [a.where as never, { isActive: { equals: true } }, { role: { in: MANAGER_ROLES } }],
+    },
+    overrideAccess: true,
+    req,
+  })
+  if (hit.totalDocs > 0) throw lastResponsable()
+  return args
+}
+
 export const refuseDeleteLastResponsable: CollectionBeforeDeleteHook = async ({ id, req }) => {
   if (exemptCaller(req)) return
   const row = (await req.payload
     .findByID({ collection: 'memberships', id, depth: 0, overrideAccess: true, req })
     .catch(() => null)) as Record<string, unknown> | null
   if (row && (await wouldLeaveNoResponsable(req, row))) throw lastResponsable()
+}
+
+/**
+ * 🔴 WHO SEES THE ACCOUNT ID ON A MEMBERSHIP.
+ *
+ * User ids are a sequence, so a fresh id on a new row tells every member that
+ * a brand-new account was just made (an account-existence oracle, audit
+ * 2026-10-28). The id is shown to a platform admin, to the row's own person,
+ * and to whoever holds `members:manage` in the row's ecosistema. Without a doc
+ * (Payload asking whether the field may be QUERIED) it answers yes, so
+ * `where[user][equals]=<me>` keeps working for everyone.
+ */
+export const readMembershipUser: FieldAccess = async ({ req, doc }) => {
+  const callerId = (req?.user as { id?: unknown } | null | undefined)?.id
+  if (callerId === null || callerId === undefined) return false
+  if (isPlatformAdminUser(req.user)) return true
+  if (!doc) return true
+  const row = doc as Record<string, unknown>
+  if (String(toRelationId(row.user)) === String(callerId)) return true
+  const organization = toRelationId(row.organization)
+  if (organization === null) return false
+  const cache = ((req.context as Record<string, unknown>).membershipUserRead ??= new Map()) as Map<
+    string,
+    Promise<OrgRole | null>
+  >
+  const key = String(organization)
+  if (!cache.has(key)) cache.set(key, roleInOrganization(req.payload, callerId as number | string, organization as number | string))
+  const role = await cache.get(key)!
+  return role !== null && ROLE_PERMISSIONS[role].includes(PERMISSIONS.membersManage)
 }
 
 /** Admin-panel labels. Exhaustive by type, so adding a role forces a label. */
@@ -388,6 +475,8 @@ export const Memberships: CollectionConfig = {
     delete: withinMyOrganizationsWithRole('admin'),
   },
   hooks: {
+    // 🔴 Bulk writes cannot take out a responsable — see `refuseLeavingWithoutResponsable`.
+    beforeOperation: [refuseBulkResponsableWrite],
     beforeValidate: [
       // 🔴 First, because a refusal must not depend on whether a twin row
       // happens to exist. See `refuseSelfAssignment` above.
@@ -414,6 +503,7 @@ export const Memberships: CollectionConfig = {
       relationTo: 'users',
       required: true,
       index: true,
+      access: { read: readMembershipUser },
       admin: { description: 'The account this membership grants access to.' },
     },
     {

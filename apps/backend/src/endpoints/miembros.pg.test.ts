@@ -317,6 +317,130 @@ describe.skipIf(!dockerOk)('/api/miembros on a real Postgres', () => {
     expect(await roleOf(ADAN, ECO_A)).toEqual(['admin'])
   }, 30_000)
 
+  // ── Audit follow-up 1: the rule holds under bulk writes and concurrency ──
+  const activeOwners = async (orgId: number) =>
+    ((await db.execute(
+      sql.raw(`SELECT count(*)::int AS n FROM memberships WHERE organization_id = ${orgId} AND role = 'owner' AND is_active = true`),
+    )) as unknown as { rows: Array<{ n: number }> }).rows[0]!.n
+  const asUser = (id: number) => payload.findByID({ collection: 'users', id, overrideAccess: true })
+
+  it('🔴 a bulk delete cannot take out the last owner', async () => {
+    const olga = await asUser(OLGA)
+    await payload
+      .delete({ collection: 'memberships', where: { organization: { equals: ECO_A } }, overrideAccess: false, user: olga })
+      .catch(() => undefined)
+    expect(await activeOwners(ECO_A)).toBe(1)
+  }, 30_000)
+
+  it('🔴 a bulk deactivation of both owners leaves one owner', async () => {
+    await db.execute(sql.raw(`UPDATE memberships SET role = 'owner' WHERE id = 3`))
+    const olga = await asUser(OLGA)
+    await payload
+      .update({
+        collection: 'memberships',
+        where: { id: { in: [1, 3] } },
+        data: { isActive: false } as never,
+        overrideAccess: false,
+        user: olga,
+      })
+      .catch(() => undefined)
+    expect(await activeOwners(ECO_A)).toBeGreaterThanOrEqual(1)
+    await payload
+      .delete({ collection: 'memberships', where: { id: { in: [1, 3] } }, overrideAccess: false, user: olga })
+      .catch(() => undefined)
+    expect(await activeOwners(ECO_A)).toBeGreaterThanOrEqual(1)
+  }, 30_000)
+
+  it('🔴 two owners leaving at the same moment: one goes, one stays', async () => {
+    await db.execute(sql.raw(`UPDATE memberships SET role = 'owner' WHERE id = 3`))
+    const results = await Promise.all([call('delete', OLGA, { id: 1 }), call('delete', MEMO, { id: 3 })])
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409])
+    expect(await activeOwners(ECO_A)).toBe(1)
+  }, 30_000)
+
+  // ── Audit follow-up 2: moving a row to another ecosistema is leaving ─────
+  it('🔴 moving the only manager row out of an ecosistema is refused', async () => {
+    // Eco C has one manager, Adán (admin); Adán also owns B.
+    await db.execute(sql.raw(`
+      INSERT INTO organizations (id, name, slug) VALUES (3, 'Eco C', 'eco-c');
+      INSERT INTO memberships (id, user_id, organization_id, role) VALUES (5, 3, 3, 'admin'), (6, 3, 2, 'owner');
+    `))
+    const adan = await asUser(ADAN)
+    await expect(
+      payload.update({ collection: 'memberships', id: 5, data: { organization: ECO_B } as never, overrideAccess: false, user: adan }),
+    ).rejects.toBeTruthy()
+    expect(await roleOf(ADAN, 3)).toEqual(['admin'])
+
+    // That write also trips the uniqueness hook (Adán is already in B), so pin
+    // the last-responsable hook on its own, in a real transaction.
+    const { createLocalReq, initTransaction, killTransaction } = await import('payload')
+    const { refuseLeavingWithoutResponsable, LAST_RESPONSABLE_MESSAGE } = await import('../collections/Memberships')
+    const req = (await createLocalReq({ user: { ...adan, collection: 'users' } as never }, payload)) as PayloadRequest
+    await initTransaction(req)
+    const originalDoc = await payload.findByID({ collection: 'memberships', id: 5, depth: 0, overrideAccess: true, req })
+    await expect(
+      Promise.resolve(
+        refuseLeavingWithoutResponsable({
+          data: { organization: ECO_B },
+          operation: 'update',
+          originalDoc,
+          req,
+        } as never),
+      ),
+    ).rejects.toThrow(LAST_RESPONSABLE_MESSAGE)
+    await killTransaction(req)
+  }, 30_000)
+
+  it('🔴 an admin cannot move an owner out of the source ecosistema', async () => {
+    // Adán: admin in A, owner in B. Olga's row is the owner of A.
+    await db.execute(sql.raw(`INSERT INTO memberships (id, user_id, organization_id, role) VALUES (5, 3, 2, 'owner')`))
+    // Memo co-owns A, so only the role ceiling (not the last-owner rule) can refuse.
+    await db.execute(sql.raw(`UPDATE memberships SET role = 'owner' WHERE id = 3`))
+    const adan = await asUser(ADAN)
+    await expect(
+      payload.update({ collection: 'memberships', id: 1, data: { organization: ECO_B } as never, overrideAccess: false, user: adan }),
+    ).rejects.toBeTruthy()
+    expect(await roleOf(OLGA, ECO_A)).toEqual(['owner'])
+    expect(await roleOf(OLGA, ECO_B)).toEqual([])
+  }, 30_000)
+
+  // ── Audit follow-up 3: account ids are for managers only ─────────────────
+  it('🔴 a plain member reads memberships without other people\'s account ids', async () => {
+    const memo = await asUser(MEMO)
+    const mine = await payload.find({ collection: 'memberships', overrideAccess: false, user: memo, depth: 0 })
+    expect(mine.docs.length).toBe(3)
+    for (const m of mine.docs) {
+      if (m.id === 3) expect(String(m.user)).toBe(String(MEMO))
+      else expect(m.user).toBeUndefined()
+    }
+    // The web's own query (memberships where user = me) still works.
+    const own = await payload.find({
+      collection: 'memberships',
+      where: { user: { equals: MEMO } },
+      overrideAccess: false,
+      user: memo,
+      depth: 1,
+    })
+    expect(own.docs.map((m) => m.id)).toEqual([3])
+
+    const olga = await asUser(OLGA)
+    const managed = await payload.find({ collection: 'memberships', overrideAccess: false, user: olga, depth: 0 })
+    for (const m of managed.docs) expect(m.user).toBeDefined()
+  }, 30_000)
+
+  // ── Audit follow-up 4: a NULL isActive is inactive ─────────────────────────
+  it('🔴 a membership with isActive NULL is revoked: adding re-activates it, no 409', async () => {
+    await db.execute(sql.raw(`INSERT INTO memberships (id, user_id, organization_id, role, is_active) VALUES (5, 5, 1, 'member', NULL)`))
+    const res = await call('post', OLGA, {
+      body: { organization: ECO_A, email: 'bea@example.invalid', name: 'Bea', role: 'member' },
+    })
+    expect(res.status).toBe(201)
+    const row = (await db.execute(sql.raw(`SELECT is_active FROM memberships WHERE id = 5`))) as unknown as {
+      rows: Array<{ is_active: boolean | null }>
+    }
+    expect(row.rows[0]?.is_active).toBe(true)
+  }, 30_000)
+
   // ── Item 3: adding someone from another ecosistema shows staff nothing new ─
   it('🔴 after adding a person from another ecosistema, staff see only this ecosistema', async () => {
     expect(

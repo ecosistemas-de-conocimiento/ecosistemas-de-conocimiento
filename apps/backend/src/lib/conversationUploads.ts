@@ -374,7 +374,7 @@ type TxHandle = { execute(q: unknown): Promise<unknown> }
  * `transactions/beginTransaction.js`), the only handle on that connection.
  * Null when there is no transaction or the handle is not there.
  */
-async function transactionHandle(req: PayloadRequest | undefined): Promise<TxHandle | null> {
+export async function transactionHandle(req: PayloadRequest | undefined): Promise<TxHandle | null> {
   const raw = req?.transactionID
   const id = raw instanceof Promise ? await raw : raw
   if (!id) return null
