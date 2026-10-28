@@ -282,3 +282,26 @@ function organizationIdOf(org: unknown): string | null {
   }
   return null;
 }
+
+/**
+ * An ecosistema's name, read with the caller's token, or `null` on any
+ * failure. For a testimonio's neutral source title (`$lib/server/engine/sources`).
+ */
+export async function ecosystemName(
+  token: string | undefined,
+  organizationId: string | number | null | undefined,
+): Promise<string | null> {
+  if (organizationId == null || organizationId === '') return null;
+  try {
+    const res = await backendFetch(
+      token,
+      `/api/organizations/${encodeURIComponent(String(organizationId))}?depth=0&select[name]=true`,
+      { method: 'GET' },
+    );
+    if (!res.ok) return null;
+    const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
+    return typeof body?.name === 'string' && body.name.trim() ? body.name.trim() : null;
+  } catch {
+    return null;
+  }
+}

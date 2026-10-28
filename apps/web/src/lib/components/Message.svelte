@@ -68,8 +68,9 @@
   // the quoted-passage cards + the "Fuentes consultadas" list.
   // Each source keeps the `[N]` the answer used for it (`$lib/citationOrdinals`).
   // A testimonio reads "<generated title> · <24 oct>", else "Testimonio ·
-  // <ecosistema> — «excerpt»" (`chatSourceTitle`); the excerpt
-  // was cut server-side from the redacted passage (`$lib/server/citationProvenance`).
+  // <ecosistema> · <24 oct>", plus "— «excerpt»" when one has no placeholder
+  // (`chatSourceTitle`); the excerpt was cut server-side from the redacted
+  // passage (`$lib/server/citationProvenance`).
   const rawCitations = $derived<CitationLike[]>(
     citationsWithOrdinals(msg.provenance ?? null).map((c) => ({
       ...c,

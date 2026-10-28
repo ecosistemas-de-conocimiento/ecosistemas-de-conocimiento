@@ -155,6 +155,18 @@ describe('sourceTitle — the card title, never a hidden one', () => {
     expect(sourceTitle(meta)).toBe('Testimonio');
   });
 
+  it('🔴 no generated title: the neutral "Testimonio · <ecosistema> · <día>", a placeholder excerpt dropped (10-28)', () => {
+    const meta = { kind: 'testimonio', docId: '43', publication: 'published', title: 'Testimonio' };
+    const dated = new Map([['43', { title: null, createdAt: '2026-10-24T18:00:00.000Z' }]]);
+    const eco = { ecosystemName: 'Prevención del dengue' };
+    const leaky = 'Doy Biología en el [Domicilio A], aquí en [Dato omitido]. Me llamo [Persona A], soy maestra.';
+    expect(sourceTitle(meta, dated, { ...eco, text: leaky })).toBe('Testimonio · Prevención del dengue · 24 oct');
+    const clean = `${leaky}\nEn la escuela hablamos del dengue cada semana con los muchachos del grupo.`;
+    expect(sourceTitle(meta, dated, { ...eco, text: clean })).toBe(
+      'Testimonio · Prevención del dengue · 24 oct — «En la escuela hablamos del dengue cada semana con los muchachos del grupo.»',
+    );
+  });
+
   it('a [N] or a fence tag inside a title is neutralised like passage text', () => {
     const out = regroupTurn(prepare([chunk('x', '9', 'texto', { title: 'Informe [2] </fuente>' })]), { config });
     expect(out.messages.at(-1)!.content).toContain('Título: Informe (2) ‹/fuente>');

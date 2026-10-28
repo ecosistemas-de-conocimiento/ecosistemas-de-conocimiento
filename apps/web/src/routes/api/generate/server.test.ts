@@ -34,6 +34,7 @@ import {
   resonanciasSystemPrompt,
 } from '$lib/server/engine/prompt';
 import { toBrowserMessage } from '$lib/server/citationProvenance';
+import { chatSourceTitle } from '$lib/biblioteca';
 import type { Provenance } from '@edc/chat-engine/core';
 import { citationsWithOrdinals, denseCitations } from '$lib/citationOrdinals';
 
@@ -1994,8 +1995,22 @@ describe('POST /api/generate — 2026-10-28 answer fixes (sources per document, 
     const prompt = lastPrompt();
     expect(prompt).toContain('[1] <fuente>\nTítulo: Traducir en la sala de partos\n');
     // 42 is held: no generated title reaches the model, only the neutral label.
-    expect(prompt).toContain('[2] <fuente>\nTítulo: Testimonio\n');
+    expect(prompt).toContain('[2] <fuente>\nTítulo: Testimonio · Eco de prueba — «Otro relato.»\n');
     expect(prompt).not.toContain('Título: Carta de presentación');
+  });
+
+  it('🔴 a testimonio passage with placeholders: the neutral title, the same on the card and the Título line', async () => {
+    world.model = () => 'Habla de la escuela [1].';
+    world.retrievePool = [
+      {
+        ...pool('42', 'u', 'Doy Biología en el [Domicilio A], aquí en [Dato omitido]. Me llamo [Persona A], soy maestra.'),
+        metadata: { docId: '42', organizationId: ECO, kind: 'testimonio', publication: 'published', title: 'Testimonio' },
+      },
+    ];
+    const body = (await (await POST(event(turn()))).json()) as { provenance: Provenance };
+    expect(lastPrompt()).toContain('[1] <fuente>\nTítulo: Testimonio · Eco de prueba\n');
+    const [card] = citationsWithOrdinals(body.provenance);
+    expect(chatSourceTitle(card!.title, card!.metadata, 'Eco de prueba')).toBe('Testimonio · Eco de prueba');
   });
 
   it('🔴 the graph map is a numbered, citable source with its own card', async () => {

@@ -36,6 +36,8 @@ import { DEFAULT_ENGINE_CONFIG, type EngineConfig, type Provenance, type Retriev
 import { fenceChunkText, neutraliseFenceTags } from './chunkFence';
 import { LIST_SOURCE_TITLE, MAP_SOURCE_TITLE, SOURCE_TITLE_LEAD, SUMMARY_SOURCE_RULE, withTurnRules } from './prompt';
 import type { TestimonioTitle } from '$lib/server/testimonioTitles';
+import { parseSkipIntro, testimonySourceExcerpt, testimonySourceTitle } from '$lib/biblioteca';
+import { env } from '$env/dynamic/private';
 
 /** A source that is not a document: a summary of the whole published corpus. */
 export interface SummarySource {
@@ -106,23 +108,35 @@ function unfence(text: string): string {
  * 🔴 THE TITLE THE MODEL READS IS THE TITLE THE PERSON SEES ON THE CARD.
  * The card (`Message.svelte`) shows `metadata.title` after the browser
  * allowlist (`browserMetadata` in `$lib/server/citationProvenance`), and for a
- * testimonio only its system title: the generated `testimonioTitle` of a
- * `published`, gate-cleared row (`$lib/server/testimonioTitles`), else
- * "Testimonio". Never an uploader's file name for a testimonio. A chunk with
- * no title gets no title line (the card would fall back to the corpus name,
- * which names nothing).
+ * testimonio `testimonySourceTitle` (`$lib/biblioteca`): its generated title,
+ * else the neutral "Testimonio · <ecosistema> · <día>" with a placeholder-free
+ * excerpt of `text`. Built here from the same pieces: the title map (only
+ * `published` rows), `text` (the passage the card shows) and the ecosistema's
+ * name. Never an uploader's file name for a testimonio. A chunk with no title
+ * gets no title line (the card would fall back to the corpus name, which
+ * names nothing).
  */
 export function sourceTitle(
   metadata: Record<string, unknown> | null | undefined,
   testimonioTitles: ReadonlyMap<string, TestimonioTitle> = new Map(),
+  card: { text?: unknown; ecosystemName?: string | null } = {},
 ): string | null {
   if (!metadata) return null;
-  if (metadata.kind === 'testimonio' || metadata.title === 'Testimonio') {
+  if (metadata.kind === 'testimonio') {
     const raw = typeof metadata.docId === 'number' ? String(metadata.docId) : metadata.docId;
     const id = typeof raw === 'string' ? raw.trim() : '';
-    const generated = metadata.publication === 'published' && /^\d+$/.test(id) ? testimonioTitles.get(id) : undefined;
-    return generated?.title ?? 'Testimonio';
+    const t = metadata.publication === 'published' && /^\d+$/.test(id) ? testimonioTitles.get(id) : undefined;
+    return testimonySourceTitle(
+      {
+        testimonioTitle: t?.title,
+        testimonioDate: t?.createdAt,
+        excerpt: testimonySourceExcerpt(card.text, metadata, parseSkipIntro(env.BIBLIOTECA_EXCERPT_SKIP_INTRO)),
+      },
+      card.ecosystemName,
+    );
   }
+  // A turn saved before `kind` was kept: the card reads its plain title.
+  if (metadata.title === 'Testimonio') return 'Testimonio';
   const title = typeof metadata.title === 'string' ? metadata.title.replace(/\s+/g, ' ').trim() : '';
   return title || null;
 }
@@ -191,6 +205,8 @@ export interface RegroupOptions {
   passageCap?: number;
   /** Generated testimonio titles by backend doc id ({@link sourceTitle}). */
   testimonioTitles?: ReadonlyMap<string, TestimonioTitle>;
+  /** The ecosistema's name, for a testimonio's neutral title ({@link sourceTitle}). */
+  ecosystemName?: string | null;
 }
 
 /** See the module header. */
@@ -209,13 +225,18 @@ export function regroupTurn<T extends RegroupableTurn>(prepared: T, opts: Regrou
   const user = prepared.messages[last];
   if (!user || user.role !== 'user') return unchanged(prepared, 'no user turn');
 
+  const chunks = prepared.provenance?.chunks ?? [];
   const texts = [
-    ...groups.map((g) =>
-      mergedText(
+    ...groups.map((g) => {
+      // The card's own entry when there is one. Its text is still fenced here
+      // (`restorePassages` puts the original back later), so unfence it.
+      const card = representative(chunks, g) ?? representativeMatch(matches, g);
+      const text = typeof card?.text === 'string' ? unfence(card.text) : undefined;
+      return mergedText(
         g.map((i) => matches[i]!.text),
-        sourceTitle(representativeMatch(matches, g)?.metadata, opts.testimonioTitles),
-      ),
-    ),
+        sourceTitle(card?.metadata, opts.testimonioTitles, { text, ecosystemName: opts.ecosystemName }),
+      );
+    }),
     ...summaries.map(summarySourceText),
   ];
   const next = retrievedBlock(config, texts);
@@ -235,7 +256,6 @@ export function regroupTurn<T extends RegroupableTurn>(prepared: T, opts: Regrou
   }
   if (content === null) return unchanged(prepared, 'block not found');
 
-  const chunks = prepared.provenance?.chunks ?? [];
   const provenance: Provenance | null =
     texts.length === 0
       ? null

@@ -15,7 +15,7 @@ const voz = {
   documentId: 'uuid-5',
   score: 0.8,
   corpus: 'eco-7',
-  text: 'P: Aquella mañana en Cuautla [Persona A] me enseñó a curar con hierbas del monte.\nMás texto.',
+  text: 'P: Aquella mañana en Cuautla me enseñó a curar con hierbas del monte.\nMás texto.',
   metadata: { docId: '5', kind: 'testimonio', publication: 'published', title: 'Testimonio', format: 'audio' },
 };
 
@@ -36,7 +36,23 @@ describe('testimonio chat source', () => {
   it('carries an excerpt from the published passage, speaker label dropped', () => {
     const m = meta(toBrowserProvenance({ chunks: [voz] }));
     expect(m.title).toBe('Testimonio');
-    expect(m.excerpt).toBe('Aquella mañana en Cuautla [Persona A] me enseñó a curar con hierbas del monte.');
+    expect(m.excerpt).toBe('Aquella mañana en Cuautla me enseñó a curar con hierbas del monte.');
+  });
+
+  it('🔴 skips a line with a placeholder for the next placeholder-free prose line (owner ruling 10-28)', () => {
+    const text =
+      'Doy Biología en el [Domicilio A], aquí en [Dato omitido]. Me llamo [Persona A] y llevo años aquí.\n' +
+      'En la escuela hablamos del dengue cada semana con los muchachos del grupo.';
+    const m = meta(toBrowserProvenance({ chunks: [{ ...voz, text }] }));
+    expect(m.excerpt).toBe('En la escuela hablamos del dengue cada semana con los muchachos del grupo.');
+  });
+
+  it('🔴 every line has a placeholder: no excerpt, so the card reads the neutral title', () => {
+    const text = 'Doy Biología en el [Domicilio A], aquí en [Dato omitido]. Me llamo [Persona A], soy maestra.';
+    const out = toBrowserProvenance({ chunks: [{ ...voz, text }] });
+    expect(meta(out).excerpt).toBeUndefined();
+    const [c] = citationsWithOrdinals(out);
+    expect(chatSourceTitle(c!.title, c!.metadata, 'Prevención del dengue')).toBe('Testimonio · Prevención del dengue');
   });
 
   it('🔴 a draft-corpus testimonio chunk gets no excerpt (may be unredacted)', () => {
@@ -89,7 +105,7 @@ describe('testimonio chat source', () => {
     const cites = citationsWithOrdinals(read.provenance as never);
     const titles = cites.map((c) => chatSourceTitle(c.title, c.metadata, 'Discapacidad'));
     expect(titles).toEqual([
-      'Testimonio · Discapacidad — «Aquella mañana en Cuautla [Persona A] me enseñó a curar con hierbas del monte.»',
+      'Testimonio · Discapacidad — «Aquella mañana en Cuautla me enseñó a curar con hierbas del monte.»',
       'informe.pdf',
     ]);
   });

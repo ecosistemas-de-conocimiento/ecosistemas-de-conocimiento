@@ -161,8 +161,23 @@ export function testimonyLabel(topic: string | null | undefined): string {
 export function generatedTestimonyTitle(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const t = raw.replace(/\s+/g, ' ').trim();
-  if (!t || t.length > 120 || /[[\]]/.test(t)) return null;
+  if (!t || t.length > 120 || hasPlaceholder(t)) return null;
   return t;
+}
+
+/**
+ * 🔴 Does `s` carry a redaction placeholder? Backend `anonymise/types.ts`
+ * (`PLACEHOLDER_PATTERN`): `[Persona A]`, `[Domicilio B]`, `[Dato omitido]`.
+ * Any bracket counts (a placeholder cut in half, or one added later), and so
+ * do the words without brackets (backend `PLACEHOLDER_WORDS` in
+ * `lib/testimonioTitle.ts`). "una persona mayor" does not: the letter after
+ * Persona or Domicilio is upper case in every placeholder.
+ */
+export function hasPlaceholder(s: string): boolean {
+  return (
+    /[[\]]/.test(s) ||
+    /(?<!\p{L})(?:[Pp]ersona|[Dd]omicilio)\s+\p{Lu}{1,3}(?!\p{L})|(?<!\p{L})[Dd]atos?\s+[Oo]mitidos?(?!\p{L})/u.test(s)
+  );
 }
 
 /**
@@ -218,11 +233,49 @@ export function workingDocHeading(row: {
 }
 
 /**
- * A chat source's title. A testimonio (`metadata.kind === 'testimonio'`, kept
- * by `$lib/server/citationProvenance`) reads `<generated title> · <24 oct>`
- * when it has one (both added server-side per read, `withTestimonioTitles`),
- * else `Testimonio · <ecosistema> — «excerpt»`; anything else keeps its own
- * title.
+ * A testimonio chat source's title, the one string the card shows AND the
+ * model reads on its `Título:` line (`sourceTitle` in
+ * `$lib/server/engine/sources`).
+ *
+ * `<generated title> · <24 oct>` when the row has a generated title, else
+ * the neutral `Testimonio · <ecosistema> · <24 oct>`, followed by
+ * ` — «excerpt»` only when the excerpt is free of placeholders (owner ruling
+ * 2026-10-28: a title cut from redacted text read "…en el [Domicilio A]…").
+ * `metadata` carries `testimonioTitle` and `testimonioDate` (added per read,
+ * `withTestimonioTitles`) and `excerpt` (`$lib/server/citationProvenance`).
+ */
+export function testimonySourceTitle(
+  metadata: Record<string, unknown> | null | undefined,
+  ecosystemName: string | null | undefined,
+): string {
+  const day = shortDay(metadata?.testimonioDate);
+  const generated = generatedTestimonyTitle(metadata?.testimonioTitle);
+  if (generated) return day ? `${generated} · ${day}` : generated;
+  const label = testimonyLabel(testimonyTopic(null, ecosystemName));
+  const neutral = day ? `${label} · ${day}` : label;
+  const excerpt = typeof metadata?.excerpt === 'string' ? metadata.excerpt.trim() : '';
+  return excerpt && !hasPlaceholder(excerpt) ? `${neutral} — «${excerpt}»` : neutral;
+}
+
+/**
+ * The excerpt in a testimonio source's title: the first placeholder-free prose
+ * line of a `published` testimonio passage ({@link excerptFrom}), else `null`.
+ * One rule for the card (`$lib/server/citationProvenance`) and the model's
+ * `Título:` line (`$lib/server/engine/sources`), so the two read the same.
+ */
+export function testimonySourceExcerpt(
+  text: unknown,
+  metadata: Record<string, unknown> | null | undefined,
+  skipIntro: boolean,
+): string | null {
+  if (metadata?.kind !== 'testimonio' || metadata.publication !== 'published') return null;
+  return excerptFrom(text, { skipIntro, placeholderFree: true });
+}
+
+/**
+ * A chat source's title: a testimonio (`metadata.kind === 'testimonio'`, kept
+ * by `$lib/server/citationProvenance`) reads {@link testimonySourceTitle};
+ * anything else keeps its own title.
  *
  * ⚠ The ecosistema name, not `tema`: chunk metadata carries no `tema`, and
  * each ecosistema is one corpus topic (owner ruling, 4 ecosistemas). The
@@ -235,15 +288,7 @@ export function chatSourceTitle(
 ): string | null | undefined {
   // 🔴 A known kind, never the title: a documento may be titled "Testimonio".
   if (metadata?.kind !== 'testimonio') return title;
-  // The generated title (added server-side per read, `withTestimonioTitles`).
-  const generated = generatedTestimonyTitle(metadata?.testimonioTitle);
-  if (generated) {
-    const day = shortDay(metadata?.testimonioDate);
-    return day ? `${generated} · ${day}` : generated;
-  }
-  const label = testimonyLabel(testimonyTopic(null, ecosystemName));
-  const excerpt = typeof metadata?.excerpt === 'string' ? metadata.excerpt.trim() : '';
-  return excerpt ? `${label} — «${excerpt}»` : label;
+  return testimonySourceTitle(metadata, ecosystemName);
 }
 
 /** The longest excerpt, "…" included. */
@@ -350,6 +395,11 @@ export interface ExcerptOptions {
   max?: number;
   /** Skip self-introduction lines ({@link isIntroLine}). Default false. */
   skipIntro?: boolean;
+  /**
+   * Only a line with no placeholder ({@link hasPlaceholder}), else `null`.
+   * For an excerpt shown as part of a title. Default false.
+   */
+  placeholderFree?: boolean;
 }
 
 /**
@@ -365,7 +415,8 @@ export interface ExcerptOptions {
  * capitals, short lines (fields, salutations), datelines, lines with ` · `
  * (metadata), questions and the interviewer's turns. A leading speaker label
  * is dropped. With `skipIntro`, every self-introduction line is skipped too
- * ({@link isIntroLine}). With no such line, the first non-empty line that is
+ * ({@link isIntroLine}). With `placeholderFree`, every line with a placeholder
+ * too. With no such line, the first non-empty line that is
  * neither a heading nor an intro; with none, null. Whitespace collapsed, then {@link clip}ped.
  *
  * Returns the text as plain text: render it with `{…}`, never `{@html}`.
@@ -382,7 +433,8 @@ export function excerptFrom(text: unknown, opts: ExcerptOptions = {}): string | 
     .filter((l) => !RULE_LINE.test(l))
     .map((l) => ({ heading: /^\s*#/.test(l), text: stripMarkdown(l).replace(/\s+/g, ' ') }))
     .filter((l) => /[\p{L}\p{N}]/u.test(l.text))
-    .filter((l) => !(skipIntro && isIntroLine(l.text)));
+    .filter((l) => !(skipIntro && isIntroLine(l.text)))
+    .filter((l) => !(opts.placeholderFree && hasPlaceholder(l.text)));
   const prose = cleaned.find(({ heading, text: t }) => {
     if (heading || isShoutedHeading(t) || t.includes(' · ') || /[?¿]$/.test(t)) return false;
     if (DATE_LINE.test(t) || INTERVIEWER.test(t)) return false;

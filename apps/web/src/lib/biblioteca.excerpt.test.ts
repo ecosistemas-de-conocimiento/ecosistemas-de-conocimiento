@@ -8,10 +8,13 @@ import {
   chatSourceTitle,
   excerptFrom,
   EXCERPT_MAX,
+  generatedTestimonyTitle,
+  hasPlaceholder,
   isIntroLine,
   libraryTitleFor,
   parseSkipIntro,
   testimonyLabel,
+  testimonySourceTitle,
   testimonyTopic,
 } from './biblioteca';
 
@@ -143,6 +146,45 @@ describe('excerptFrom', () => {
   it('does not treat a placeholder as a speaker label', () => {
     const line = '[Persona A]: yo siempre fui al centro de salud con mi hija los martes';
     expect(excerptFrom(line)).toBe(line);
+  });
+});
+
+describe('🔴 placeholders never reach a testimonio title (owner ruling 2026-10-28)', () => {
+  const leaky = 'Doy Biología… en el [Domicilio A], aquí en [Dato omitido]. Me llamo [Persona A]…';
+
+  it('hasPlaceholder: brackets, or the placeholder words without them; "una persona mayor" is fine', () => {
+    expect(hasPlaceholder(leaky)).toBe(true);
+    expect(hasPlaceholder('Habla Persona B de su hijo')).toBe(true);
+    expect(hasPlaceholder('un dato omitido')).toBe(true);
+    expect(hasPlaceholder('[Teléfono]')).toBe(true);
+    expect(hasPlaceholder('Una persona mayor cuenta lo que vivió')).toBe(false);
+  });
+
+  it('a placeholder excerpt: the neutral "Testimonio · <ecosistema> · <día>"', () => {
+    const meta = { kind: 'testimonio', excerpt: leaky, testimonioDate: '2026-10-24T18:00:00.000Z' };
+    expect(chatSourceTitle('Testimonio', meta, 'Prevención del dengue')).toBe('Testimonio · Prevención del dengue · 24 oct');
+    expect(chatSourceTitle('Testimonio', { kind: 'testimonio', excerpt: leaky }, 'Prevención del dengue')).toBe(
+      'Testimonio · Prevención del dengue',
+    );
+  });
+
+  it('a placeholder-free excerpt stays, after the day', () => {
+    const meta = { kind: 'testimonio', excerpt: 'Doy Biología en la secundaria…', testimonioDate: '2026-10-24T18:00:00.000Z' };
+    expect(chatSourceTitle('Testimonio', meta, 'Dengue')).toBe('Testimonio · Dengue · 24 oct — «Doy Biología en la secundaria…»');
+  });
+
+  it('a generated title with a placeholder is no title', () => {
+    expect(generatedTestimonyTitle('La maestra de [Domicilio A]')).toBeNull();
+    expect(generatedTestimonyTitle('Persona A habla de la escuela')).toBeNull();
+    expect(testimonySourceTitle({ testimonioTitle: 'Persona A habla de la escuela' }, 'Dengue')).toBe('Testimonio · Dengue');
+  });
+
+  it('excerptFrom placeholderFree: the next clean prose line, else null', () => {
+    const clean = 'En la escuela hablamos del dengue cada semana con los muchachos del grupo.';
+    expect(excerptFrom(`${leaky}\n${clean}`, { placeholderFree: true })).toBe(clean);
+    expect(excerptFrom(leaky, { placeholderFree: true })).toBeNull();
+    // Off by default: the Biblioteca card's excerpt is not a title.
+    expect(excerptFrom(leaky)).toContain('[Domicilio A]');
   });
 });
 

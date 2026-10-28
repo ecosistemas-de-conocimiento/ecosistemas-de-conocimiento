@@ -40,7 +40,7 @@ import { citedProvenance, parseCitedOrdinals, type Provenance } from '@edc/chat-
 import { isConversationTurnChunk } from '$lib/turnChunks';
 import { DRAFT_PROVENANCE_FLAG } from '$lib/publication';
 import { namesTitle, type TitledDoc, type TurnAttachment } from '$lib/server/titleMatch';
-import { excerptFrom, parseSkipIntro } from '$lib/biblioteca';
+import { parseSkipIntro, testimonySourceExcerpt } from '$lib/biblioteca';
 import { env } from '$env/dynamic/private';
 import { isSummaryChunk, SUMMARY_SOURCE_KEY } from '$lib/server/engine/sources';
 import {
@@ -99,8 +99,7 @@ type Chunk = Provenance['chunks'][number];
  * title and get no excerpt.
  */
 function testimonioExcerpt(src: Record<string, unknown>, meta: Record<string, unknown> | null): string | null {
-  if (meta?.kind !== 'testimonio' || meta.publication !== 'published') return null;
-  return excerptFrom(src.text, { skipIntro: parseSkipIntro(env.BIBLIOTECA_EXCERPT_SKIP_INTRO) });
+  return testimonySourceExcerpt(src.text, meta, parseSkipIntro(env.BIBLIOTECA_EXCERPT_SKIP_INTRO));
 }
 
 function browserMetadata(raw: unknown): Record<string, unknown> | null {

@@ -55,6 +55,13 @@ describe('withTestimonioTitles', () => {
     expect(out!.chunks[1]!.metadata!.testimonioTitle).toBeUndefined();
   });
 
+  it('a row with no title gets its day only (the neutral title reads it)', async () => {
+    const fetchTitles = vi.fn(async () => new Map([['1', { title: null, createdAt: '2026-10-24T18:00:00.000Z' }]]));
+    const out = await withTestimonioTitles(prov([chunk('1')]), fetchTitles);
+    expect(out!.chunks[0]!.metadata!.testimonioTitle).toBeUndefined();
+    expect(out!.chunks[0]!.metadata!.testimonioDate).toBe('2026-10-24T18:00:00.000Z');
+  });
+
   it('no testimonio, no lookup', async () => {
     const fetchTitles = vi.fn(async () => new Map());
     await withTestimonioTitles(prov([chunk('9', { kind: 'documento' })]), fetchTitles);
@@ -82,7 +89,7 @@ describe('backendTitleFetcher', () => {
           docs: [
             { id: 1, contentKind: 'testimonio', anonymisationStatus: 'ready', testimonioTitle: 'La escuela sin intérprete', createdAt: '2026-10-24T18:00:00.000Z' },
             { id: 2, contentKind: 'testimonio', anonymisationStatus: 'held', testimonioTitle: 'Retenido no' },
-            { id: 3, contentKind: 'testimonio', anonymisationStatus: 'ready', testimonioTitle: '[Persona A] habla' },
+            { id: 3, contentKind: 'testimonio', anonymisationStatus: 'ready', testimonioTitle: '[Persona A] habla', createdAt: '2026-10-20T18:00:00.000Z' },
           ],
         }),
         { status: 200 },
@@ -94,7 +101,11 @@ describe('backendTitleFetcher', () => {
     expect(url).toContain('where%5BcontentKind%5D%5Bequals%5D=testimonio');
     expect(url).toContain('select%5BanonymisationStatus%5D=true');
     expect(url).toContain('select%5BcreatedAt%5D=true');
-    expect([...titles]).toEqual([['1', { title: 'La escuela sin intérprete', createdAt: '2026-10-24T18:00:00.000Z' }]]);
+    // 🔴 A held row is absent; a placeholder title is no title, but keeps its day (neutral title).
+    expect([...titles]).toEqual([
+      ['1', { title: 'La escuela sin intérprete', createdAt: '2026-10-24T18:00:00.000Z' }],
+      ['3', { title: null, createdAt: '2026-10-20T18:00:00.000Z' }],
+    ]);
   });
 
   it('a failed read is an empty map, never a throw', async () => {

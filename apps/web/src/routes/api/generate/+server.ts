@@ -36,7 +36,7 @@ import {
   titleRetrievalFilter,
   withTitleRef,
 } from '$lib/server/titleMatch';
-import { sessionMeta } from '$lib/server/ecosystem';
+import { ecosystemName, sessionMeta } from '$lib/server/ecosystem';
 import { fetchEcosystemSettings } from '$lib/server/features';
 import { fetchScopeDocumentIds, parseAlcance } from '$lib/server/estudiante';
 import { makeGraphProvider, makeOverviewGraphProvider } from '$lib/server/graph';
@@ -815,11 +815,22 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // numbered sources. Before generation, so no answer text is renumbered.
   // Each source opens with its card title; a testimonio's is its generated
   // title, read here once (one backend read, only when testimonios came back).
+  // A testimonio with no generated title reads "Testimonio · <ecosistema> · <día>".
   const titleFetcher = backendTitleFetcher(locals.token);
   const regroup = async <P extends Parameters<typeof regroupTurn>[0]>(p: P): Promise<P> => {
     const ids = testimonioDocIds([p.provenance]);
-    const testimonioTitles = ids.length > 0 ? await titleFetcher(ids) : new Map();
-    return regroupTurn(p, { config: turnConfig, extra: summarySources, passageCap: PASSAGE_TEXT_CAP, testimonioTitles });
+    const anyTestimonio = (p.provenance?.chunks ?? []).some((c) => c.metadata?.kind === 'testimonio');
+    const [testimonioTitles, ecoName] = await Promise.all([
+      ids.length > 0 ? titleFetcher(ids) : new Map(),
+      anyTestimonio ? ecosystemName(locals.token, organizationId) : null,
+    ]);
+    return regroupTurn(p, {
+      config: turnConfig,
+      extra: summarySources,
+      passageCap: PASSAGE_TEXT_CAP,
+      testimonioTitles,
+      ecosystemName: ecoName,
+    });
   };
   const answerAI = overview ? withoutRetrieval(engineAI) : turnAI;
   // An interviewer reply (either kind) with no `[N]` lists no sources: it is a

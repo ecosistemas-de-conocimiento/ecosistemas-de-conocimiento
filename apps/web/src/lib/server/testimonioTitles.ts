@@ -46,9 +46,12 @@ export function testimonioDocIds(provenances: ReadonlyArray<Provenance | null | 
   return [...ids].slice(0, MAX_IDS);
 }
 
-/** A generated title and the row's `createdAt` (the chat card's short day). */
+/**
+ * A generated title (`null`: none yet, the neutral title) and the row's
+ * `createdAt` (the chat card's short day, on both).
+ */
 export interface TestimonioTitle {
-  title: string;
+  title: string | null;
   createdAt: string | null;
 }
 
@@ -56,7 +59,8 @@ export type TitleFetcher = (ids: readonly string[]) => Promise<Map<string, Testi
 
 /**
  * id → title and day, read with the caller's token. Only cleared, published
- * testimonios; anything else, and any failure, is absent from the map.
+ * testimonios; anything else, and any failure, is absent from the map. A row
+ * with no usable title is present with `title: null`, for its day.
  */
 export function backendTitleFetcher(token: string | undefined): TitleFetcher {
   return async (ids) => {
@@ -83,7 +87,7 @@ export function backendTitleFetcher(token: string | undefined): TitleFetcher {
         if (row.contentKind !== 'testimonio') continue;
         if (row.anonymisationStatus !== 'ready' && row.anonymisationStatus !== 'approved') continue;
         const title = generatedTestimonyTitle(row.testimonioTitle);
-        if (title && row.id != null) {
+        if (row.id != null) {
           out.set(String(row.id), { title, createdAt: typeof row.createdAt === 'string' ? row.createdAt : null });
         }
       }
@@ -108,7 +112,9 @@ export function applyTestimonioTitles(
     chunks: provenance.chunks.map((c) => {
       const id = testimonioDocId(c);
       const t = id ? titles.get(id) : undefined;
-      return t ? { ...c, metadata: { ...c.metadata, testimonioTitle: t.title, testimonioDate: t.createdAt } } : c;
+      if (!t) return c;
+      const metadata = { ...c.metadata, testimonioDate: t.createdAt };
+      return { ...c, metadata: t.title ? { ...metadata, testimonioTitle: t.title } : metadata };
     }),
   };
 }
