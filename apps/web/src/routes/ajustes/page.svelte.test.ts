@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
 
-import { FEATURE_DEFAULTS } from '$lib/features';
+import { FEATURE_DEFAULTS, FEATURE_KEYS } from '$lib/features';
 
 /**
  * 🔴 `keepPublicFigures` is the platform admin's (owner ruling Q16 A). The
@@ -37,7 +37,8 @@ describe('/ajustes — the keepPublicFigures switch', () => {
     expect(box).toMatch(/type="checkbox"/);
     expect(box).toMatch(/disabled/);
     expect(box).toMatch(/checked/);
-    expect(body).toContain('Solo administración de la plataforma puede cambiarlo');
+    expect(box).toMatch(/aria-describedby="switch-keepPublicFigures-lock"/);
+    expect(body).toMatch(/id="switch-keepPublicFigures-lock"[^>]*>[\s\S]*?Solo administración de la plataforma/);
     expect(body).toMatch(/<input[^>]*type="hidden"[^>]*name="locked"[^>]*value="keepPublicFigures"|<input[^>]*name="locked"[^>]*type="hidden"[^>]*value="keepPublicFigures"/);
     // Every other switch stays live.
     expect(checkbox(body, 'graph')).not.toMatch(/disabled/);
@@ -46,7 +47,7 @@ describe('/ajustes — the keepPublicFigures switch', () => {
   it('is live for a platform admin, without the note', () => {
     const body = page([]);
     expect(checkbox(body, 'keepPublicFigures')).not.toMatch(/disabled/);
-    expect(body).not.toContain('Solo administración de la plataforma puede cambiarlo');
+    expect(body).not.toContain('Solo administración de la plataforma');
     expect(body).not.toMatch(/name="locked"/);
   });
 });
@@ -116,6 +117,86 @@ describe('/ajustes — the answer style (owner ruling 2026-10-28)', () => {
     for (const kind of ['generales', 'resonancias', 'interviewer']) expect(textarea(body, kind)).toMatch(/readonly/);
     const section = estilo(body);
     expect(section.slice(0, section.indexOf('</form>'))).not.toMatch(/<button/);
-    expect(section).toContain('Solo administración de la plataforma puede cambiarlo');
+    expect(section).toContain('Solo administración de la plataforma');
+  });
+});
+
+describe('/ajustes — tabs and switches (redesign 2026-10-28)', () => {
+  const render0 = (over: Record<string, unknown> = {}, form: unknown = null) =>
+    render(Ajustes, {
+      props: {
+        form,
+        data: {
+          state: 'ready',
+          ecosistemas: [],
+          selected: {
+            id: '1',
+            name: 'Eco A',
+            slug: 'a',
+            features: { ...FEATURE_DEFAULTS, graph: false },
+            answerStyles: { generales: null, resonancias: null, interviewer: null },
+          },
+          plataforma: null,
+          lockedFeatures: ['keepPublicFigures', 'studentTestimonios'],
+          answerStylesEditable: false,
+          ...over,
+        },
+      } as never,
+    }).body;
+  const funciones = (body: string) => {
+    const at = body.indexOf('data-testid="ajustes-funciones"');
+    return body.slice(at, body.indexOf('</form>', at));
+  };
+
+  it('🔴 every switch is in the one switches form, hidden tabs included, so a save never drops one', () => {
+    const form = funciones(render0());
+    for (const key of FEATURE_KEYS) expect(form).toMatch(new RegExp(`<input[^>]*name="${key}"`));
+  });
+
+  it('each switch is a checkbox read as an on/off switch', () => {
+    expect(checkbox(render0(), 'liveMic')).toMatch(/role="switch"/);
+  });
+
+  it('five tabs; the first is selected and its panel is the only one showing', () => {
+    const body = render0();
+    expect(body).toMatch(/role="tablist"/);
+    expect(body.match(/role="tab"/g)).toHaveLength(5);
+    expect(body).toMatch(/<button[^>]*id="tab-conversacion"[^>]*aria-selected="true"/);
+    expect(body).toMatch(/<div[^>]*id="panel-conversacion"[^>]*>/);
+    expect(body.match(/<div[^>]*id="panel-conversacion"[^>]*>/)![0]).not.toMatch(/hidden/);
+    expect(body.match(/<div[^>]*id="panel-grafo"[^>]*>/)![0]).toMatch(/hidden/);
+  });
+
+  it('a switch under one that is off is hidden, but still posts its stored value', () => {
+    const body = render0();
+    const row = body.match(/<div[^>]*class="row[^"]*child[^"]*"[^>]*>(?:(?!<div class="row)[\s\S])*?name="graph3d"/)?.[0] ?? '';
+    expect(row).toMatch(/hidden/);
+    expect(checkbox(body, 'graph3d')).toMatch(/checked/);
+  });
+
+  it('the answer-style tab shows a lock for a non-admin', () => {
+    expect(render0()).toMatch(/id="tab-estilo"[\s\S]*?solo lectura/);
+    expect(render0({ answerStylesEditable: true, lockedFeatures: [] })).not.toMatch(/solo lectura/);
+  });
+
+  it('before the page is live the save button is there, so the form posts without JS', () => {
+    expect(funciones(render0())).toMatch(/<button[^>]*type="submit"/);
+  });
+
+  it('"Guardado" and a refusal show under the form they answer', () => {
+    const saved = render0({}, { saved: true, scope: 'funciones' });
+    expect(funciones(saved)).toContain('data-testid="ajustes-saved"');
+    const refused = render0({ answerStylesEditable: true, lockedFeatures: [] }, { message: 'No se pudo guardar.', scope: 'estilo' });
+    expect(funciones(refused)).not.toContain('ajustes-error');
+    expect(refused.slice(refused.indexOf('data-testid="ajustes-estilo"'))).toMatch(/role="alert" data-testid="ajustes-error">No se pudo guardar\./);
+  });
+
+  it('the platform switch is its own card, for a platform admin only', () => {
+    expect(render0()).not.toContain('ajustes-plataforma');
+    const body = render0({
+      plataforma: { detectorFallback: null, detectorFallbackEnv: 'hosted', detectorFallbackEffective: 'hosted' },
+    });
+    expect(body).toMatch(/data-testid="ajustes-plataforma"[\s\S]*?<select[^>]*name="detectorFallback"/);
+    expect(body).toContain('Según el entorno (modelo alojado)');
   });
 });

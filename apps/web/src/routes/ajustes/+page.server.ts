@@ -52,7 +52,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 export const actions: Actions = {
   funciones: async ({ locals, request }) => {
-    if (!locals.user) return fail(401, { message: 'Necesitas iniciar sesión.' });
+    if (!locals.user) return fail(401, { message: 'Necesitas iniciar sesión.', scope: 'funciones' as const });
     const form = await request.formData();
     const organization = String(form.get('organization') ?? '');
     // A checkbox sends only when ticked: every key is written, unticked = off —
@@ -63,29 +63,29 @@ export const actions: Actions = {
       FEATURE_KEYS.filter((k) => !locked.has(k)).map((k) => [k, form.get(k) === 'on']),
     ) as Partial<Features>;
     const result = await saveFeatures(locals.token, organization, features);
-    if (!result.ok) return fail(result.status, { message: result.message });
-    return { saved: true };
+    if (!result.ok) return fail(result.status, { message: result.message, scope: 'funciones' as const });
+    return { saved: true, scope: 'funciones' as const };
   },
   // The answer style: platform admin only; the backend refuses anyone else.
   // Every textarea is sent; blank clears that style.
   estilo: async ({ locals, request }) => {
-    if (!locals.user) return fail(401, { message: 'Necesitas iniciar sesión.' });
+    if (!locals.user) return fail(401, { message: 'Necesitas iniciar sesión.', scope: 'estilo' as const });
     const form = await request.formData();
     const organization = String(form.get('organization') ?? '');
     const answerStyles = Object.fromEntries(
       ANSWER_STYLE_KINDS.map((k) => [k, String(form.get(`style-${k}`) ?? '')]),
     ) as unknown as AnswerStyles;
     const result = await saveAnswerStyles(locals.token, organization, answerStyles);
-    if (!result.ok) return fail(result.status, { message: result.message });
-    return { saved: true };
+    if (!result.ok) return fail(result.status, { message: result.message, scope: 'estilo' as const });
+    return { saved: true, scope: 'estilo' as const };
   },
   plataforma: async ({ locals, request }) => {
-    if (!locals.user) return fail(401, { message: 'Necesitas iniciar sesión.' });
+    if (!locals.user) return fail(401, { message: 'Necesitas iniciar sesión.', scope: 'plataforma' as const });
     const form = await request.formData();
     const raw = String(form.get('detectorFallback') ?? '');
     const value = raw === 'hosted' || raw === 'none' ? raw : null;
     const result = await savePlatform(locals.token, value);
-    if (!result.ok) return fail(result.status, { message: result.message });
-    return { saved: true };
+    if (!result.ok) return fail(result.status, { message: result.message, scope: 'plataforma' as const });
+    return { saved: true, scope: 'plataforma' as const };
   },
 };

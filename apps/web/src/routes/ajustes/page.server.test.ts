@@ -96,7 +96,7 @@ describe('/ajustes actions', () => {
     const out = await actions.estilo!(
       event('/ajustes', { organization: '7', 'style-generales': 'Tono cálido.', 'style-resonancias': '' }),
     );
-    expect(out).toEqual({ saved: true });
+    expect(out).toEqual({ saved: true, scope: 'estilo' });
     const [, path, init] = mocked.mock.calls[0]!;
     expect(path).toBe('/api/funciones/estilo');
     expect((init as RequestInit).method).toBe('PATCH');
@@ -155,6 +155,15 @@ describe('/ajustes actions', () => {
     expect('keepPublicFigures' in body.features).toBe(false);
     expect(body.features.liveMic).toBe(true);
     expect(body.features.graph).toBe(false);
+  });
+
+  it('says which form it answers, so the page shows the result under that form', async () => {
+    mocked.mockResolvedValue(json({}));
+    expect(await actions.funciones!(event('/ajustes', { organization: '1' }))).toEqual({ saved: true, scope: 'funciones' });
+    expect(await actions.plataforma!(event('/ajustes', { detectorFallback: 'env' }))).toEqual({ saved: true, scope: 'plataforma' });
+    mocked.mockResolvedValue(json({ errors: [{ message: 'No.' }] }, 403));
+    const out = (await actions.funciones!(event('/ajustes', { organization: '1' }))) as { data: { scope: string } };
+    expect(out.data.scope).toBe('funciones');
   });
 
   it('passes the backend refusal through', async () => {
