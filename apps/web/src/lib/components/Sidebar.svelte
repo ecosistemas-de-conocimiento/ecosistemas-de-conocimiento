@@ -29,7 +29,12 @@
    * persisted per conversation and belongs to the desktop layout; a phone
    * visit must not silently re-arrange the desk someone left set up.
    */
-  let { forceExpanded = false }: { forceExpanded?: boolean } = $props();
+  /**
+   * `onPick`: called after the reader picks or creates a conversation. The
+   * phone drawer closes on it (ChatWorkspace) — switching the Generales /
+   * Resonancias tab also changes the active conversation, and must not.
+   */
+  let { forceExpanded = false, onPick }: { forceExpanded?: boolean; onPick?: () => void } = $props();
 
   /** The conversation whose name is being edited, and the text so far. */
   let renamingId = $state<string | null>(null);
@@ -78,7 +83,7 @@
     </button>
     <button
       class="p-1.5 rounded-lg hover:bg-surface-soft text-ink-soft"
-      onclick={() => app.newSession()}
+      onclick={() => { app.newSession(); onPick?.(); }}
       title="Nueva conversación"
       aria-label="Nueva conversación"
     >
@@ -104,7 +109,7 @@
       <div class="flex items-center gap-1">
         <button
           class="p-1.5 max-lg:p-[14px] rounded-lg hover:bg-surface-soft text-ink-soft"
-          onclick={() => app.newSession()}
+          onclick={() => { app.newSession(); onPick?.(); }}
           title="Nueva conversación"
           aria-label="Nueva conversación"
         >
@@ -230,7 +235,7 @@
                  than being expected to see it. -->
             <button
               class="flex-1 min-w-0 text-left truncate text-sm py-0.5 max-lg:py-3 max-lg:text-base"
-              onclick={() => app.selectSession(s.id)}
+              onclick={() => { app.selectSession(s.id); onPick?.(); }}
               aria-current={isActive ? 'true' : undefined}
               title={s.title}
             >

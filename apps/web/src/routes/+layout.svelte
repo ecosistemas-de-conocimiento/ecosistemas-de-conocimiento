@@ -62,11 +62,14 @@
    * navigation, but here `.app-main` is what scrolls, so the next page kept the
    * last one's offset: on a phone, Conexiones opened half-way down its list,
    * under where Biblioteca's reader had been scrolled (dev, 2026-10-28).
-   * Back/forward (`popstate`) and `#anchor` links keep their position.
+   * `popstate` and `#anchor` navigations are left alone. ⚠ `from.url` is null,
+   * not `from`, on the first client navigation when SSR is off (SvelteKit
+   * 2.70): reading `from.url.pathname` there threw and turned every later link
+   * into a full reload (audit, measured 2026-10-28).
    */
   let mainEl = $state<HTMLElement>();
   afterNavigate(({ from, to, type }) => {
-    if (type === 'popstate' || to?.url.hash || from?.url.pathname === to?.url.pathname) return;
+    if (type === 'popstate' || to?.url?.hash || from?.url?.pathname === to?.url?.pathname) return;
     mainEl?.scrollTo(0, 0);
   });
 </script>

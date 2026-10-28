@@ -26,7 +26,6 @@
   import Sidebar from './Sidebar.svelte';
   import Chat from './Chat.svelte';
   import DocsPanel from './DocsPanel.svelte';
-  import { app } from '$lib/stores/app.svelte';
   import {
     CLOSE_PANEL_LABEL,
     MOBILE_PANEL_BAR_LABEL,
@@ -59,19 +58,6 @@
     sync();
     mq.addEventListener('change', sync);
     return () => mq.removeEventListener('change', sync);
-  });
-
-  /**
-   * 🔴 Picking or creating a conversation in the drawer closes it. On a phone
-   * the drawer covers the chat, so a tap on a conversation would change
-   * nothing the reader can see until they find "Cerrar". Keyed on the id only: a
-   * rename or a new message must not shut a drawer the reader is using.
-   */
-  let lastSessionId: string | null | undefined;
-  $effect(() => {
-    const id = app.activeSessionId;
-    if (lastSessionId !== undefined && id !== lastSessionId && open === 'conversations') open = 'none';
-    lastSessionId = id;
   });
 
   /** Where focus goes back to when a drawer closes. */
@@ -169,7 +155,10 @@
         </button>
       </div>
       {#if t.panel === 'conversations'}
-        <Sidebar forceExpanded={narrow} />
+        <!-- 🔴 Picking or creating a conversation closes the drawer: on a phone it
+             covers the chat, so the tap would change nothing the reader can
+             see. `close()` also hands focus back to the toggle. -->
+        <Sidebar forceExpanded={narrow} onPick={narrow ? close : undefined} />
       {:else}
         <DocsPanel forceExpanded={narrow} />
       {/if}
