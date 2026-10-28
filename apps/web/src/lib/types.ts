@@ -118,6 +118,8 @@ export interface WorkingDoc {
   body: string;
   /** Written in the app: `markdown` with no stored file (an uploaded `.md` has one). */
   isNote?: boolean;
+  /** A note's body when the store first saw its run `failed` (`editedSinceFailure`). */
+  failedBody?: string;
   /** Mirrors the backend `documents.isPinned`. */
   includeInContext: boolean;
   /**

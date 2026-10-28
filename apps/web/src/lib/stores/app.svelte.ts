@@ -34,6 +34,7 @@ import {
   type StoredRating,
 } from '../ratings';
 import {
+  editedSinceFailure,
   isPublicationStatus,
   isTerminalPublication,
   parsePublicationStatus,
@@ -160,6 +161,8 @@ function docFromBackend(row: Record<string, unknown>): WorkingDoc {
     subtitle: heading.subtitle,
     body: typeof row.bodyMarkdown === 'string' ? row.bodyMarkdown : '',
     isNote: kind === 'markdown' && row.mediaFile == null && row.hasFile !== true,
+    failedBody:
+      ingestStatus === 'failed' && typeof row.bodyMarkdown === 'string' ? row.bodyMarkdown : undefined,
     includeInContext: row.isPinned !== false,
     // The conversations this row is attached to. Empty means "the backend did
     // not tell us", which the UI reads as "assume it lives only here".
@@ -1576,7 +1579,7 @@ class AppStore {
     if (!doc || doc.publishRequestPending) return;
     // Same gate the button uses. Re-checked here because the store is the
     // thing that actually spends the tokens.
-    if (!publishGate({ ...doc, note: opts.note }).canPublish) return;
+    if (!publishGate({ ...doc, note: opts.note, editedSinceFailure: editedSinceFailure(doc) }).canPublish) return;
 
     // Remembered so an unreadable answer cannot silently downgrade a `failed`
     // document to `draft` — see the anomaly branch below.
@@ -1705,6 +1708,7 @@ class AppStore {
           if (opts.throughProcessing && status === 'draft') {
             const ingest = isIngestStatus(body.ingestStatus) ? body.ingestStatus : 'n/a';
             for (const d of rows) {
+              if (ingest === 'failed' && d.ingestStatus !== 'failed') d.failedBody = d.body;
               d.ingestStatus = ingest;
               d.ingestError = typeof body.ingestError === 'string' ? body.ingestError : null;
               d.anonymisationStatus = parseAnonymisationStatus(body.anonymisationStatus);

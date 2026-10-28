@@ -14,6 +14,7 @@ import {
   publicationBadge,
   publishBlockedCopy,
   publishGate,
+  editedSinceFailure,
   stampDraftProvenance,
   type PublicationStatus,
 } from './publication';
@@ -395,8 +396,19 @@ describe('isStampedDraftCitation', () => {
 describe('publishGate — a student\'s note (owner ruling 2026-10-28)', () => {
   const note = (publicationStatus: 'draft' | 'published' | 'publishing', ingestStatus: string) =>
     publishGate({ publicationStatus, ingestStatus, manual: false, note: true });
-  it('🔴 Publicar is offered on a draft, whatever the last run left', () => {
-    for (const s of ['n/a', 'ready', 'failed']) expect(note('draft', s).canPublish).toBe(true);
+  it('🔴 Publicar is offered on a draft not yet run, or one that went through', () => {
+    for (const s of ['n/a', 'ready']) expect(note('draft', s).canPublish).toBe(true);
+  });
+  it('🔴 a failed run: hidden on the same text (retry is the way), offered once edited', () => {
+    expect(note('draft', 'failed')).toEqual({ canPublish: false, reason: 'ingest-failed' });
+    expect(
+      publishGate({ publicationStatus: 'draft', ingestStatus: 'failed', manual: false, note: true, editedSinceFailure: true }),
+    ).toEqual({ canPublish: true, reason: null });
+  });
+  it('editedSinceFailure compares against the body seen at failure', () => {
+    expect(editedSinceFailure({ body: 'a' })).toBe(false);
+    expect(editedSinceFailure({ body: 'a', failedBody: 'a' })).toBe(false);
+    expect(editedSinceFailure({ body: 'ab', failedBody: 'a' })).toBe(true);
   });
   it('not while a run is going, nor once published', () => {
     for (const s of ['pending', 'extracting', 'embedding']) expect(note('draft', s)).toEqual({ canPublish: false, reason: 'not-ingested' });

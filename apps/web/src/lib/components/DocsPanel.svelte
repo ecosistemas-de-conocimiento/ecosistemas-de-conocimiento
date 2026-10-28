@@ -5,7 +5,7 @@
   import Markdown from './Markdown.svelte';
   import TestimonySource from './TestimonySource.svelte';
   import type { WorkingDoc } from '$lib/types';
-  import { publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
+  import { editedSinceFailure, publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
   import {
     deleteConfirmCopy,
     detachConfirmCopy,
@@ -279,6 +279,7 @@
       // `lib/studentNotes.ts`).
       manual: canUploadVoces,
       note: studentNote(d),
+      editedSinceFailure: editedSinceFailure(d),
     });
   }
 

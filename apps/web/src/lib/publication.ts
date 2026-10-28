@@ -141,10 +141,13 @@ export interface PublishGateInput {
   /**
    * A student's own in-app note in a `studentView` ecosistema. "Publicar" runs
    * the backend's gate → corpus → graph → publish (`lib/studentNotes.ts`), so
-   * it is offered whatever the last run left (a hold included: the student may
-   * have fixed the text), except while a run is going.
+   * it is offered on a draft, except while a run is going and except on a
+   * FAILED run whose text was not edited since (`editedSinceFailure`): the same
+   * text would fail the same way, so the failure box's "Reintentar" is the way.
    */
   note?: boolean;
+  /** Note mode only: the body changed since this browser saw the run fail. */
+  editedSinceFailure?: boolean;
 }
 
 /**
@@ -170,7 +173,11 @@ export function publishGate(input: PublishGateInput): {
   }
   if (input.note) {
     const running = ['pending', 'extracting', 'embedding', 'transcribing', 'transcribed'].includes(input.ingestStatus);
-    return running ? { canPublish: false, reason: 'not-ingested' } : { canPublish: true, reason: null };
+    if (running) return { canPublish: false, reason: 'not-ingested' };
+    if (input.ingestStatus === 'failed' && !input.editedSinceFailure) {
+      return { canPublish: false, reason: 'ingest-failed' };
+    }
+    return { canPublish: true, reason: null };
   }
   if (input.ingestStatus === 'failed') {
     return { canPublish: false, reason: 'ingest-failed' };
@@ -406,4 +413,16 @@ export function draftCitationNotice(draftCount: number): string | null {
     return 'Esta respuesta cita 1 documento en borrador. Solo tú puedes verlo: si compartes la respuesta, nadie más podrá abrir esa fuente.';
   }
   return `Esta respuesta cita ${draftCount} documentos en borrador. Solo tú puedes verlos: si compartes la respuesta, nadie más podrá abrir esas fuentes.`;
+}
+
+/**
+ * Has a note's body changed since its run was seen to fail? `failedBody` is
+ * the body the store held when it first saw `ingestStatus: 'failed'` (load or
+ * poll).
+ *
+ * ⚠ Conservative after a reload: edits made before the reload count as
+ * unchanged until the next keystroke. The failure box's retry stays available.
+ */
+export function editedSinceFailure(d: { body: string; failedBody?: string }): boolean {
+  return d.failedBody !== undefined && d.body !== d.failedBody;
 }

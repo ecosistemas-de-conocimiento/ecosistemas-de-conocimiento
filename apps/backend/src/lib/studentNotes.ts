@@ -176,6 +176,25 @@ export async function publishStudentNote(args: {
     return out.published ? { status: 202, processing: false, publicationStatus: 'publishing' } : { status: 409, reason: out.reason }
   }
 
+  /**
+   * 🔴 CLAIM THE ROW FIRST, IN ONE GUARDED `UPDATE` (audit 2026-10-28). Two
+   * clicks (two tabs, a double tap) both read the row at `n/a`; without the
+   * claim both would write `pending` and the gate would run twice, billed
+   * twice. Only the click whose `WHERE` still matches the state it read moves
+   * the row; the other answers "already running".
+   */
+  const { updateDocumentColumns } = await import('./documentColumns')
+  const claimed = await updateDocumentColumns(payload as never, {
+    id: row.id as Id,
+    data: { ingestStatus: 'pending' },
+    where: [
+      { publicationStatus: { equals: 'draft' } },
+      { ingestStatus: { equals: (row.ingestStatus as string | null | undefined) ?? null } },
+      { anonymisationStatus: { not_in: ['rejected'] } },
+    ],
+  })
+  if (claimed === 0) return { status: 202, processing: true, ingestStatus: 'pending' }
+
   // 🔴 NO `__skipDocsExtract` and NO user: `extractAndIngestHook` takes it from
   // here, exactly as for an upload or a retry.
   await payload.update({

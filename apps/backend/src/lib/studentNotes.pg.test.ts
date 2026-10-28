@@ -241,46 +241,98 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
     expect((await row(400)).b).toBe(BODY)
   })
 
-  /**
-   * 🔴 THE AUDIT'S RACE (2026-10-28). A pipeline write lands while an edit is in
-   * flight. The whole-row `payload.update` writes the `draft` it read back over
-   * `publishing`; the note endpoint's narrow write does not.
-   */
-  it('🔴 an edit racing a pipeline write: payload.update clobbers it, the note endpoint does not', async () => {
-    await insertNote(500, SEMIOSIS, ANA)
-    const midFlight = () => pg!.db.execute(sql`UPDATE documents SET publication_status = 'publishing', ingest_status = 'ready' WHERE id = 500`)
-    const reset = () => pg!.db.execute(sql`UPDATE documents SET publication_status = 'draft', ingest_status = 'n/a' WHERE id = 500`)
+  it('🔴 two Publicar clicks at once: one claim, one gate run', async () => {
+    await insertNote(600, SEMIOSIS, ANA)
+    let before = detectorCalls
+    await publicar(ANA, 600)
+    expect(await eventually(async () => (await row(600)).a === 'ready', 20_000)).toBe(true)
+    const single = detectorCalls - before
 
-    // Old path: the write lands between the update's read and its write.
-    const db = payload!.db as unknown as { updateOne: (...a: unknown[]) => Promise<unknown> }
-    const original = db.updateOne.bind(db)
-    const spy = vi.spyOn(db, 'updateOne').mockImplementationOnce(async (...a: unknown[]) => {
-      await midFlight()
-      return original(...a)
-    })
+    await insertNote(601, SEMIOSIS, ANA)
+    before = detectorCalls
+    const both = await Promise.all([publicar(ANA, 601), publicar(ANA, 601)])
+    for (const res of both) expect([res.status, res.body.processing]).toEqual([202, true])
+    expect(await eventually(async () => (await row(601)).a === 'ready', 20_000)).toBe(true)
+    await new Promise((r) => setTimeout(r, 500))
+    expect(detectorCalls - before).toBe(single)
+  }, 60_000)
+
+  it('🔴 autosave on someone else\'s PUBLISHED note: 403 (they can read it, not write it)', async () => {
+    await insertNote(700, SEMIOSIS, ANA)
+    await pg!.db.execute(sql`UPDATE documents SET publication_status = 'published' WHERE id = 700`)
+    const res = await autosave(BETO, 700, { bodyMarkdown: 'pisado', name: 'otro' })
+    expect(res.status).toBe(403)
+    expect((await row(700)).b).toBe(BODY)
+  })
+
+  it('🔴 a direct PATCH to `pending` on an ungated note never reaches the graph (hook guard)', async () => {
+    await insertNote(800, SEMIOSIS, ANA) // anonymise false, as a pre-ruling note
+    const before = { d: detectorCalls, g: graphRequests.length }
     const user = await payload!.findByID({ collection: 'users', id: ANA, overrideAccess: true })
+    // overrideAccess so the field write sticks: only the hook guard stands in the way.
     await payload!.update({
       collection: 'documents',
-      id: 500,
-      data: { bodyMarkdown: `${BODY} uno` } as never,
+      id: 800,
+      data: { ingestStatus: 'pending', extractedText: BODY } as never,
       user: { ...user, collection: 'users' } as never,
       overrideAccess: true,
     })
-    spy.mockRestore()
-    expect([(await row(500)).p, (await row(500)).i]).toEqual(['draft', 'n/a']) // clobbered
+    await new Promise((r) => setTimeout(r, 1_500))
+    const r = await row(800)
+    expect([r.i, r.anon, r.g]).toEqual(['pending', false, 'n/a'])
+    expect(await mentions(800)).toBe(0)
+    expect([detectorCalls, graphRequests.length]).toEqual([before.d, before.g])
+  })
 
-    // New path: same interleaving, after the endpoint's read.
-    await reset()
-    const findByID = payload!.findByID.bind(payload!)
-    const read = vi.spyOn(payload!, 'findByID').mockImplementation((async (args: Parameters<Payload['findByID']>[0]) => {
-      const out = await findByID(args)
-      if (args.collection === 'documents') await midFlight()
-      return out
-    }) as never)
-    const res = await autosave(ANA, 500, { bodyMarkdown: `${BODY} dos` })
-    read.mockRestore()
-    expect(res.status).toBe(200)
-    const r = await row(500)
+  /**
+   * 🔴 THE AUDIT'S RACE (2026-10-28, probe A8). A pipeline write lands INSIDE
+   * the autosave's write. Any whole-row writer (`payload.update` →
+   * `db.updateOne`) is paused after its read, the pipeline write lands, and the
+   * writer then puts the `draft` / `n/a` it read back. The note endpoint must
+   * not: going back to `payload.update` fails this test.
+   */
+  it('🔴 a pipeline write inside the autosave write is not clobbered', async () => {
+    const midFlight = (id: number) =>
+      pg!.db.execute(sql`UPDATE documents SET publication_status = 'publishing', ingest_status = 'ready' WHERE id = ${id}`)
+    const db = payload!.db as unknown as { updateOne: (...a: unknown[]) => Promise<unknown> }
+    const original = db.updateOne.bind(db)
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    let paused = 0
+    const spy = vi.spyOn(db, 'updateOne').mockImplementation(async (...a: unknown[]) => {
+      const args = a[0] as { id?: unknown; collection?: unknown }
+      if (String(args?.id) === '500' || String(args?.id) === '501') {
+        paused++
+        await held
+      }
+      return original(...a)
+    })
+    try {
+      // Control: the whole-row write IS clobbered under the same interleaving.
+      await insertNote(500, SEMIOSIS, ANA)
+      const user = await payload!.findByID({ collection: 'users', id: ANA, overrideAccess: true })
+      const old = payload!.update({
+        collection: 'documents',
+        id: 500,
+        data: { bodyMarkdown: `${BODY} uno` } as never,
+        user: { ...user, collection: 'users' } as never,
+        overrideAccess: true,
+      })
+      // The note endpoint, same interleaving.
+      await insertNote(501, SEMIOSIS, ANA)
+      const res = autosave(ANA, 501, { bodyMarkdown: `${BODY} dos` })
+      await new Promise((r) => setTimeout(r, 300))
+      await midFlight(500)
+      await midFlight(501)
+      release()
+      await old
+      expect((await res).status).toBe(200)
+    } finally {
+      spy.mockRestore()
+    }
+    expect([(await row(500)).p, (await row(500)).i]).toEqual(['draft', 'n/a']) // clobbered: the bug
+    const r = await row(501)
     expect([r.p, r.i, r.b]).toEqual(['publishing', 'ready', `${BODY} dos`])
+    expect(paused).toBe(1) // only the control went through `updateOne`
   })
 })
