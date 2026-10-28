@@ -149,8 +149,13 @@ export async function listEcosystems(token: string | undefined): Promise<Ecosyst
     const body = (await res.json().catch(() => ({}))) as { docs?: unknown };
     const orgs = Array.isArray(body.docs)
       ? body.docs
+          // ⚠ Mirror the backend's `membershipsForUser`: it ignores inactive
+          // memberships and switched-off organizations, so `POST /api/sessions`
+          // answers 400 for them. Offering one here is offering a dead end.
+          // A missing `isActive` means active (rows that predate the flag).
+          .filter((m) => (m as { isActive?: unknown } | null)?.isActive !== false)
           .map((m) => (m as { organization?: unknown } | null)?.organization)
-          .filter((o) => o != null)
+          .filter((o) => o != null && (o as { isActive?: unknown }).isActive !== false)
       : [];
     const list = normalizeEcosystems(orgs);
     list.sort((a, b) => a.name.localeCompare(b.name, 'es'));
