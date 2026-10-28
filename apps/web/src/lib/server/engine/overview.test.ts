@@ -14,6 +14,12 @@ describe('isCorpusOverview', () => {
     'Quiero una visión general de la colección',
     'Háblame del corpus como conjunto',
     '¿Qué temas hay en el ecosistema?',
+    // Owner request 2026-10-28.
+    '¿Cuáles son los temas principales del corpus?',
+    'Explícame el grafo',
+    'síntesis de los documentos publicados',
+    'resumen general de todo lo que hay aquí',
+    '¿De qué tratan todos los documentos?',
   ])('overview: %s', (q) => expect(isCorpusOverview(q)).toBe(true));
 
   // 🔴 Audit 2026-10-28: the first four are the audit's own examples; the
@@ -39,6 +45,67 @@ describe('isCorpusOverview', () => {
     '',
     `dame un resumen del corpus ${'x'.repeat(300)}`,
   ])('not an overview: %s', (q) => expect(isCorpusOverview(q)).toBe(false));
+
+  // A compound question or a negation is a normal turn.
+  it.each([
+    'Háblame de la partería en Oaxaca y luego dame un resumen del corpus',
+    'No quiero un resumen del corpus',
+    'Compara a Freire con Vygotsky y describe el ecosistema',
+    'Qué opinas de la inclusión. Resume el grafo',
+    'resumen del corpus de este proyecto de salud',
+  ])('compound, not an overview: %s', (q) => expect(isCorpusOverview(q)).toBe(false));
+
+  it.each([
+    '¿Me puedes dar un panorama general del corpus?',
+    'Hazme un resumen de todo el material publicado',
+    '¿Qué contiene esta biblioteca?',
+    'Resume toda la colección',
+    'Cuéntame de qué va el corpus',
+    '¿Qué hay en este ecosistema?',
+    'Hazme un resumen del corpus completo',
+    'Dame un resumen del ecosistema en su conjunto',
+    'resume el grafo por favor',
+    'que hay en el grafo',
+    'Describe el mapa de conexiones',
+  ])('whole-corpus probe: %s', (q) => expect(isCorpusOverview(q)).toBe(true));
+
+  // 🔴 The coordinator's 34 topical probes (2026-10-28): 0 matches.
+  it.each([
+    'Resume el corpus de Chiapas',
+    'Dame un resumen del grafo de actores',
+    '¿De qué trata el corpus de entrevistas?',
+    'Describe el ecosistema de salud mental',
+    '¿Qué temas hay en la biblioteca digital de la UNAM?',
+    'Panorama del corpus jurídico',
+    'Resume la colección Lumholtz',
+    '¿Qué hay en el material publicado por la SEP?',
+    'Dame un resumen del corpus en lengua maya',
+    'Visión general de la biblioteca escolar',
+    'Resume el ecosistema de innovación del Bajío',
+    '¿De qué trata el grafo de citas del artículo?',
+    'Resume el corpus de 2023',
+    'Dame un resumen del corpus del INAH',
+    '¿De qué trata la colección Palafox?',
+    '¿Qué contiene el corpus del español de México?',
+    'Resúmeme la biblioteca Vasconcelos',
+    'Resume el corpus de la Ley General de Educación',
+    '¿Qué temas hay en la colección de testimonios de mujeres sordas?',
+    'Haz un resumen del ecosistema de la Ciudad de México',
+    'Dame un panorama del mapa de conexiones entre escuelas y familias',
+    'Resume el corpus, en particular lo de salud',
+    'Resume el corpus de discapacidad visual',
+    '¿De qué trata el ecosistema Corpus Christi?',
+    'Dame un resumen del grafo de Corpus Christi',
+    'Resume el corpus Christi',
+    '¿Qué temas hay en el corpus Christi?',
+    'Resume el ecosistema actual de la educación inclusiva',
+    'Describe la biblioteca completa de Alejandría',
+    'resumen del corpus entero de Juan Rulfo',
+    '¿Qué contiene el grafo? ¿Y qué dice sobre salud?',
+    'Describe el ecosistema en general de la Amazonia',
+    'Resume los documentos del ecosistema de Oaxaca',
+    'Dame una vista general del corpus de lenguas indígenas',
+  ])('topical probe, not an overview: %s', (q) => expect(isCorpusOverview(q)).toBe(false));
 });
 
 describe('documentListText', () => {

@@ -156,7 +156,15 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     const extraRow = world.docRows?.[p.replace(/^\/api\/documents\//, '')];
     if (extraRow && p.startsWith('/api/documents/')) return json(extraRow);
     if (p === '/api/documents' && url.searchParams.get('where[publicationStatus][equals]') === 'published') {
-      return json({ docs: world.publishedDocs });
+      // Payload's `select`: only the selected fields (and `id`) come back, so a
+      // field the query forgets to select is missing here too.
+      const selected = [...url.searchParams.keys()]
+        .map((k) => /^select\[(\w+)\]$/.exec(k)?.[1])
+        .filter((k): k is string => !!k);
+      const docs = selected.length
+        ? world.publishedDocs.map((d) => Object.fromEntries(Object.entries(d).filter(([k]) => k === 'id' || selected.includes(k))))
+        : world.publishedDocs;
+      return json({ docs });
     }
     if (p === '/api/documents') {
       return json({ docs: world.sessionDocs });

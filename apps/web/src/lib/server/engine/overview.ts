@@ -38,22 +38,30 @@ function fold(s: string): string {
 // "¿Qué temas hay en el corpus legal de la SCJN?"). False negatives are the
 // cheap side: a missed overview is a normal turn, as before.
 const ASK =
-  '(?:resumen|resume|resumeme|resumir|resumelo|panorama|vision general|vista general|describe|describeme|de que trata|de que tratan|de que va|que temas|que hay en|que contiene)';
+  '(?:resumen|resume|resumeme|resumir|resumelo|sintesis|sintetiza|panorama|vision general|vista general|describe|describeme|explica|explicame|de que trata|de que tratan|de que va|que temas|temas principales|que hay en|que contiene)';
 const ARTICLE =
   '(?:el|del|al|este|ese|nuestro|todo el|los|todos los|de los|de todos los|la|esta|toda la|de la|de esta|de toda la)';
 const NOUN =
-  '(?:corpus|grafo|ecosistema|coleccion|biblioteca|mapa de conexiones|material publicado|documentos del ecosistema)';
+  '(?:corpus|grafo|ecosistema|coleccion|biblioteca|mapa de conexiones|material publicado|documentos del ecosistema|documentos publicados|documentos)';
 /** "grafo / corpus", "grafo o corpus": two collection nouns in a row. */
 const NOUNS = `${NOUN}(?: (?:o |y )?${NOUN})?`;
 /** The only words that may follow the noun: no topic, no qualifier. */
 const TAIL =
   '(?: (?:de este proyecto|del proyecto|de este ecosistema|del ecosistema|por favor|completo|completa|entero|entera|en general|en conjunto|como conjunto|como un conjunto|en su conjunto|actual))*';
+/**
+ * At most four words before the request ("me puedes dar un panorama…"): a
+ * longer lead is a compound question ("Háblame de la partería en Oaxaca y
+ * luego dame un resumen del corpus"), a normal turn. A negation never leads.
+ */
+const LEAD = '^(?!no )(?:\\S+ ){0,4}';
 /** ASK, at most three words, the article, the noun(s), the tail, the end. */
-const WHOLE_QUESTION = new RegExp(`(?:^| )${ASK}(?: \\S+){0,3}? ${ARTICLE} ${NOUNS}${TAIL}$`);
+const WHOLE_QUESTION = new RegExp(`${LEAD}${ASK}(?: \\S+){0,3}? ${ARTICLE} ${NOUNS}${TAIL}$`);
 /** "… el corpus como conjunto", at the end. */
 const AS_A_WHOLE = new RegExp(
-  `(?:^| )(?:el|la|los|del|de la|de los) (?:corpus|coleccion|ecosistema|material|documentos)(?: publicados?)? (?:como|en) (?:un |su )?conjunto${TAIL}$`,
+  `${LEAD}(?:el|la|los|del|de la|de los) (?:corpus|coleccion|ecosistema|material|documentos)(?: publicados?)? (?:como|en) (?:un |su )?conjunto${TAIL}$`,
 );
+/** "resumen general de todo lo que hay aquí": the whole, with no noun. */
+const EVERYTHING = new RegExp(`${LEAD}${ASK}(?: \\S+){0,3}? (?:de )?todo lo que hay(?: aqui| aca| en el ecosistema| en el corpus)?$`);
 const HAS_TOPIC = /\b(sobre|acerca de|respecto a|en cuanto a|relacionad[oa]s? con|que hablan)\b/;
 
 /** The longest message read as an overview question. Longer is a real question. */
@@ -65,7 +73,7 @@ export function isCorpusOverview(message: string): boolean {
   if (!text || text.length > OVERVIEW_MAX_CHARS) return false;
   const f = fold(text);
   if (HAS_TOPIC.test(f)) return false;
-  return AS_A_WHOLE.test(f) || WHOLE_QUESTION.test(f);
+  return AS_A_WHOLE.test(f) || WHOLE_QUESTION.test(f) || EVERYTHING.test(f);
 }
 
 /** The most document titles the list names. */

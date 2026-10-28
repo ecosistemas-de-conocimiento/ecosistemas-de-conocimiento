@@ -107,6 +107,9 @@ describe('publishedTitlesQuery', () => {
     expect(qs.get('select[contentKind]')).toBe('true');
     expect(qs.get('select[uploadedBy]')).toBe('true');
     expect(qs.get('select[anonymisationStatus]')).toBe('true');
+    // `isClearedForLibrary` reads it: without it a documento filed for
+    // anonymisation and not cleared would be named in chat.
+    expect(qs.get('select[anonymise]')).toBe('true');
     expect(qs.has('select[extractedText]')).toBe(false);
   });
 });
