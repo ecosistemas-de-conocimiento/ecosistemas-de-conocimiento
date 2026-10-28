@@ -2020,6 +2020,50 @@ describe('POST /api/generate — 2026-10-28 answer fixes (sources per document, 
     expect(body.provenance.chunks.map((c) => c.metadata?.edcSource)).toEqual(['mapa', 'lista']);
   });
 
+  // 🔴 Each guard on `overview` (`+server.ts`) turns one of these red when removed.
+  const OVERVIEW_Q = { messages: [{ role: 'user', content: 'dame un resumen del corpus' }] };
+  const graphViewRead = () => calls.some((c) => c.url.pathname === '/api/graph/view');
+
+  it('guard: a title match is never an overview (the named document is the turn)', async () => {
+    world.publishedDocs = [...world.publishedDocs, { id: 33, name: 'Resumen del corpus', contentKind: 'documento', publicationStatus: 'published' }];
+    await POST(event(turn(OVERVIEW_Q)));
+    expect(graphViewRead()).toBe(false);
+    expect(retrieves().length).toBeGreaterThan(0);
+  });
+
+  it('guard: a Resonancias conversation is never an overview', async () => {
+    world.kind = 'resonancias';
+    await POST(event(turn(OVERVIEW_Q)));
+    expect(graphViewRead()).toBe(false);
+    expect(retrieves().length).toBeGreaterThan(0);
+  });
+
+  it('🔴 guard (privacy): under a lengua filter the ecosistema-wide overview never runs', async () => {
+    await POST(event(turn({ ...OVERVIEW_Q, lengua: 'mixe' })));
+    expect(graphViewRead()).toBe(false);
+    expect(lastPrompt()).not.toContain('Documentos publicados del ecosistema');
+  });
+
+  it('🔴 the list names only what the library shows, and "al menos" follows the raw row count', async () => {
+    world.publishedDocs = [
+      { id: 70, name: 'Informe visible.pdf', contentKind: 'documento', publicationStatus: 'published' },
+      { id: 71, name: 'Informe por anonimizar.pdf', contentKind: 'documento', publicationStatus: 'published', anonymise: true, anonymisationStatus: 'held' },
+      // 98 held testimonios: dropped by the filter, but the read was full.
+      ...Array.from({ length: 98 }, (_, i) => ({
+        id: 100 + i,
+        name: `T${i}`,
+        contentKind: 'testimonio',
+        publicationStatus: 'published',
+        anonymisationStatus: 'held',
+      })),
+    ];
+    await POST(event(turn(OVERVIEW_Q)));
+    const prompt = lastPrompt();
+    expect(prompt).toContain('- Informe visible.pdf');
+    expect(prompt).not.toContain('Informe por anonimizar');
+    expect(prompt).toContain('al menos 1 documento y 0 testimonios');
+  });
+
   it('a topic question that says "corpus" is a normal turn', async () => {
     await POST(event(turn({ messages: [{ role: 'user', content: '¿qué dicen sobre el ex convento de Corpus Christi?' }] })));
     expect(retrieves().length).toBeGreaterThan(0);

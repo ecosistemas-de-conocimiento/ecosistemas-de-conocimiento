@@ -31,9 +31,8 @@ import { fetchSessionCorpora } from '$lib/server/corpora';
 import { fetchSessionDocs, sessionDocumentIdSet } from '$lib/server/sessionDocs';
 import { turnAttachments, withPinnedRefs } from './pinned';
 import {
-  fetchPublishedTitles,
+  fetchPublishedTitleScan,
   matchDocumentTitle,
-  TITLE_SCAN_LIMIT,
   titleRetrievalFilter,
   withTitleRef,
 } from '$lib/server/titleMatch';
@@ -593,7 +592,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // The ecosistema's published document titles, for "tell me about <title>"
   // (UX #35, `$lib/server/titleMatch`). Starts now, awaited when the inline
   // refs are built. Best-effort: a failed read pins nothing.
-  const publishedTitles = fetchPublishedTitles(locals.token, organizationId);
+  const publishedTitles = fetchPublishedTitleScan(locals.token, organizationId);
 
   // Build the Domain Adapter + the engine's AIClient over this app's BFF client.
   const baseAdapter = withFencedRefs(makeChatDomainAdapter({
@@ -737,7 +736,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // empty inside the engine and never breaks the turn.
   const retrievalPolicy = chatTurnRetrievalPolicy(hybrid);
   // A message that names exactly one published document pins it for this turn.
-  const published = await publishedTitles;
+  const { docs: published, truncated: publishedTruncated } = await publishedTitles;
   // Skipped under a student scope: a title pin could name a document outside it.
   const titleMatch = scopeDocumentIds ? null : matchDocumentTitle(userMessage, published);
   // `@`-mentions, then the document the message names by title, then every
@@ -789,7 +788,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
     graphProvider !== null &&
     isCorpusOverview(userMessage);
   const summarySources: SummarySource[] = overview
-    ? [{ id: 'lista', text: documentListText(published, TITLE_SCAN_LIMIT) }]
+    ? [{ id: 'lista', text: documentListText(published, publishedTruncated) }]
     : [];
   const turnGraph = overview ? makeOverviewGraphProvider({ token: locals.token, organizationId }) : graphProvider;
   // Turn-conditional rules (`./prompt`, "Turn-conditional rules"): none on a

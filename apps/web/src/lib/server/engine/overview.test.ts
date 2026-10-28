@@ -6,20 +6,36 @@ describe('isCorpusOverview', () => {
   it.each([
     'dame un resumen del grafo',
     'Dame un resumen del corpus',
+    'dame un resumen del grafo / corpus de este proyecto',
+    'me interesa conocer el corpus como conjunto',
     '¿De qué trata el corpus?',
+    '¿De qué tratan los documentos del ecosistema?',
     'Resume el ecosistema, por favor',
     'Quiero una visión general de la colección',
     'Háblame del corpus como conjunto',
     '¿Qué temas hay en el ecosistema?',
   ])('overview: %s', (q) => expect(isCorpusOverview(q)).toBe(true));
 
+  // 🔴 Audit 2026-10-28: the first four are the audit's own examples; the
+  // unanchored match read 11 of 13 such questions as overviews.
   it.each([
+    'Describe el ecosistema de manglares de la costa',
+    '¿Qué contiene la colección de leyes de 1917?',
+    'Dame un resumen de los documentos del ecosistema que hablan de discapacidad',
+    '¿Qué temas hay en el corpus legal de la SCJN?',
+    'Resume el corpus de testimonios de Oaxaca',
+    'Dame un resumen del grafo de la escuela inclusiva',
+    '¿De qué trata la biblioteca de la comunidad?',
+    'Haz un panorama del ecosistema escolar en Morelos',
+    'Describe la colección del museo de antropología',
+    '¿Qué hay en el corpus lingüístico del náhuatl?',
+    'resumen del ecosistema educativo y sus actores',
+    'Dame una visión general de la colección de fotografías',
+    '¿Qué contiene el corpus 2024?',
     '¿Qué dicen los documentos sobre el ex convento de Corpus Christi?',
     'Dame un resumen del ex convento de Corpus Christi',
     'Dame un resumen del corpus sobre educación especial',
-    'resumen de los testimonios sobre la escuela',
     '¿qué dicen sobre la partería tradicional?',
-    'el corpus christi',
     '',
     `dame un resumen del corpus ${'x'.repeat(300)}`,
   ])('not an overview: %s', (q) => expect(isCorpusOverview(q)).toBe(false));
@@ -33,7 +49,7 @@ describe('documentListText', () => {
         { id: '2', name: 'Testimonio de Juana Pérez', contentKind: 'testimonio' },
         { id: '3', name: 'Ley general.pdf' },
       ],
-      100,
+      false,
     );
     expect(text).toBe(
       'Material publicado en el ecosistema: 2 documentos y 1 testimonio.\n\nDocumentos:\n- Diccionario LSM.pdf\n- Ley general.pdf',
@@ -41,14 +57,14 @@ describe('documentListText', () => {
     expect(text).not.toContain('Juana');
   });
 
-  it('a full scan says "al menos"; titles past the cap are counted', () => {
-    const docs = Array.from({ length: 100 }, (_, i) => ({ id: String(i), name: `D${i}` }));
-    const text = documentListText(docs, 100);
-    expect(text).toContain('al menos 100 documentos');
-    expect(text).toContain(`- … y ${100 - LIST_MAX_TITLES} más.`);
+  it('a truncated read says "al menos"; titles past the cap are counted', () => {
+    const docs = Array.from({ length: 60 }, (_, i) => ({ id: String(i), name: `D${i}` }));
+    expect(documentListText(docs, true)).toContain('al menos 60 documentos');
+    expect(documentListText(docs, false)).toContain(': 60 documentos');
+    expect(documentListText(docs, false)).toContain(`- … y ${60 - LIST_MAX_TITLES} más.`);
   });
 
-  it('nothing published: no source', () => expect(documentListText([], 100)).toBe(''));
+  it('nothing published: no source', () => expect(documentListText([], false)).toBe(''));
 });
 
 describe('withoutRetrieval', () => {

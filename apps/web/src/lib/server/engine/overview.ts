@@ -24,31 +24,48 @@ import type { TitledDoc } from '$lib/server/titleMatch';
 
 /** Lowercase, accents stripped, punctuation to spaces, spaces collapsed. */
 function fold(s: string): string {
-  return ` ${s
+  return s
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim()} `;
+    .trim();
 }
 
+// 🔴 The collection noun must END the question (only the TAIL words may
+// follow it). Audit 2026-10-28: an unanchored match read 11 of 13 topical
+// questions as overviews ("Describe el ecosistema de manglares de la costa",
+// "¿Qué temas hay en el corpus legal de la SCJN?"). False negatives are the
+// cheap side: a missed overview is a normal turn, as before.
 const ASK =
-  /\b(resumen|resume|resumeme|resumir|resumelo|panorama|vision general|vista general|describe|describeme|de que trata|de que tratan|de que va|que temas|que hay en|que contiene)\b/;
-const WHOLE =
-  /\b(el|del|al|este|ese|nuestro|todo el|los|todos los|la|esta|toda la)\s+(corpus(?! christi)|grafo|ecosistema|coleccion|biblioteca|mapa de conexiones|documentos del ecosistema|material publicado)\b/;
-const AS_A_WHOLE = /\b(corpus|coleccion|ecosistema|material|documentos)\s+(como|en)\s+(un |su )?conjunto\b/;
-const HAS_TOPIC = /\b(sobre|acerca de|respecto a|en cuanto a|relacionad[oa]s? con)\b/;
+  '(?:resumen|resume|resumeme|resumir|resumelo|panorama|vision general|vista general|describe|describeme|de que trata|de que tratan|de que va|que temas|que hay en|que contiene)';
+const ARTICLE =
+  '(?:el|del|al|este|ese|nuestro|todo el|los|todos los|de los|de todos los|la|esta|toda la|de la|de esta|de toda la)';
+const NOUN =
+  '(?:corpus|grafo|ecosistema|coleccion|biblioteca|mapa de conexiones|material publicado|documentos del ecosistema)';
+/** "grafo / corpus", "grafo o corpus": two collection nouns in a row. */
+const NOUNS = `${NOUN}(?: (?:o |y )?${NOUN})?`;
+/** The only words that may follow the noun: no topic, no qualifier. */
+const TAIL =
+  '(?: (?:de este proyecto|del proyecto|de este ecosistema|del ecosistema|por favor|completo|completa|entero|entera|en general|en conjunto|como conjunto|como un conjunto|en su conjunto|actual))*';
+/** ASK, at most three words, the article, the noun(s), the tail, the end. */
+const WHOLE_QUESTION = new RegExp(`(?:^| )${ASK}(?: \\S+){0,3}? ${ARTICLE} ${NOUNS}${TAIL}$`);
+/** "… el corpus como conjunto", at the end. */
+const AS_A_WHOLE = new RegExp(
+  `(?:^| )(?:el|la|los|del|de la|de los) (?:corpus|coleccion|ecosistema|material|documentos)(?: publicados?)? (?:como|en) (?:un |su )?conjunto${TAIL}$`,
+);
+const HAS_TOPIC = /\b(sobre|acerca de|respecto a|en cuanto a|relacionad[oa]s? con|que hablan)\b/;
 
 /** The longest message read as an overview question. Longer is a real question. */
 export const OVERVIEW_MAX_CHARS = 200;
 
-/** "Dame un resumen del corpus", "¿de qué trata el grafo?", "el corpus como conjunto". */
+/** "Dame un resumen del corpus", "¿de qué trata el grafo?", "… el corpus como conjunto". */
 export function isCorpusOverview(message: string): boolean {
   const text = (message ?? '').trim();
   if (!text || text.length > OVERVIEW_MAX_CHARS) return false;
   const f = fold(text);
-  if (AS_A_WHOLE.test(f)) return true;
-  return ASK.test(f) && WHOLE.test(f) && !HAS_TOPIC.test(f);
+  if (HAS_TOPIC.test(f)) return false;
+  return AS_A_WHOLE.test(f) || WHOLE_QUESTION.test(f);
 }
 
 /** The most document titles the list names. */
@@ -58,14 +75,15 @@ export const LIST_MAX_TITLES = 40;
  * The published-documents list: counts by kind, then the documento titles.
  * 🔴 Testimonios are counted, never named (their names are not neutral;
  * `chatSourceTitle` and the gate keep them "Testimonio" everywhere else).
- * `fetchPublishedTitles` reads at most its scan limit, so the counts say
- * "al menos" when the read was full. `''` when there is nothing published.
+ * The titles read stops at its scan limit, so the counts say "al menos" when
+ * that read was full (`truncated`: the RAW row count reached the limit, before
+ * any filter; `fetchPublishedTitleScan`). `''` when there is nothing published.
  */
-export function documentListText(published: readonly TitledDoc[], scanLimit: number): string {
+export function documentListText(published: readonly TitledDoc[], truncated: boolean): string {
   const documentos = published.filter((d) => (d.contentKind ?? 'documento') === 'documento');
   const testimonios = published.length - documentos.length;
   if (published.length === 0) return '';
-  const atLeast = published.length >= scanLimit ? 'al menos ' : '';
+  const atLeast = truncated ? 'al menos ' : '';
   const counts =
     `Material publicado en el ecosistema: ${atLeast}${documentos.length} ` +
     `${documentos.length === 1 ? 'documento' : 'documentos'} y ${testimonios} ` +
