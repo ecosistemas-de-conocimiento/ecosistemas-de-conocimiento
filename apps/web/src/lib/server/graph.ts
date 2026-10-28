@@ -81,6 +81,7 @@ import type { LenguaIndex } from '$lib/lengua';
 import {
   expandGraphQuery,
   graphContextParagraph,
+  GRAPH_RELATION_TYPES,
   parseGraphEntityDetail,
   parseGraphRetrieval,
   parseGraphView,
@@ -394,6 +395,41 @@ export function makeGraphProvider(opts: GraphProviderOptions): GraphProvider | n
 
     if (!context && chunks.length === 0) return null;
     return { ...(chunks.length > 0 ? { chunks } : {}), ...(context ? { context } : {}) };
+  };
+}
+
+/**
+ * The corpus-overview graph path (`$lib/server/engine/overview`): the graph
+ * VIEW's top entities over the whole published corpus, not a query-seeded
+ * retrieval. A query-seeded read of "resumen del corpus" would seed on the
+ * word "corpus" (an entity "Corpus Christi"), the same mistake as keyword
+ * retrieval. No widened retrieve, no chunks: an overview turn has no passages.
+ * Best-effort like {@link makeGraphProvider}: a failed or slow read is no block.
+ */
+export function makeOverviewGraphProvider(opts: {
+  token: string | undefined;
+  organizationId: string | null;
+  timeoutMs?: number;
+}): GraphProvider | null {
+  const organizationId = opts.organizationId;
+  if (!organizationId) return null;
+  const timeoutMs = opts.timeoutMs ?? GRAPH_TIMEOUT_MS;
+  return async () => {
+    const { view } = await withDeadline(
+      fetchGraphView(opts.token, { organizationId }),
+      timeoutMs,
+      { view: EMPTY_VIEW, ok: false },
+    );
+    // The view's edges are among its own entities; the paragraph reads only
+    // their endpoints and support, never the relation type.
+    const edges = (view.edges ?? []).map((e) => ({
+      fromId: e.fromId,
+      toId: e.toId,
+      support: e.support,
+      relationType: e.relationType ?? GRAPH_RELATION_TYPES[0],
+    }));
+    const context = graphContextParagraph({ entities: view.entities, edges, documents: [], terms: [] });
+    return context ? { context } : null;
   };
 }
 

@@ -42,6 +42,7 @@ import { DRAFT_PROVENANCE_FLAG } from '$lib/publication';
 import { namesTitle, type TitledDoc, type TurnAttachment } from '$lib/server/titleMatch';
 import { excerptFrom, parseSkipIntro } from '$lib/biblioteca';
 import { env } from '$env/dynamic/private';
+import { isSummaryChunk, SUMMARY_SOURCE_KEY } from '$lib/server/engine/sources';
 import {
   GENERAL_KNOWLEDGE_LEAD,
   NO_ANSWER_REPLY,
@@ -70,7 +71,9 @@ const CHUNK_FIELDS = [
  *   · `edcIsDraft`  — the "borrador, solo tú lo ves" label (`markDraftCitations`);
  *   · `excerpt`     — a testimonio's short line (`chatSourceTitle`), cut HERE
  *     from the chunk's own text ({@link testimonioExcerpt}), never sent in;
- *   · `kind`        — only the value `testimonio`, the excerpt's marker.
+ *   · `kind`        — only the value `testimonio`, the excerpt's marker;
+ *   · `edcSource`   — `mapa` | `lista`, a summary source (`./engine/sources`),
+ *     linked to the graph or the library (`chatCitationHref`).
  * Booleans: kept only when exactly `true`.
  */
 const METADATA_STRING_KEYS = ['title', 'publication'] as const;
@@ -123,6 +126,8 @@ function browserMetadata(raw: unknown): Record<string, unknown> | null {
   for (const k of METADATA_TRUE_KEYS) {
     if (src[k] === true) out[k] = true;
   }
+  const source = src[SUMMARY_SOURCE_KEY];
+  if (source === 'mapa' || source === 'lista') out[SUMMARY_SOURCE_KEY] = source;
   return out;
 }
 
@@ -527,6 +532,8 @@ function rerankTier(c: Chunk): number {
  *     by its retrieval score. Never read as 0, never compared to a rerank score.
  *
  * Skipped before ranking, so they never take a slot: conversation turns, a
+ * summary source (`./engine/sources`: the fallback stands in for forgotten
+ * passage markers, and a summary is not a passage), a
  * chunk the reranker scored below {@link fallbackMinRerank}, and
  * 🔴 a testimonio chunk that is not from the `published` corpus (only that
  * corpus holds the gate's redacted text, see {@link attachmentSource}). A
@@ -535,7 +542,7 @@ function rerankTier(c: Chunk): number {
 function topRetrieved(provenance: Provenance | null | undefined): Array<Chunk & { ordinal: number }> {
   const candidates = (provenance?.chunks ?? [])
     .map((c, i) => ({ c, ordinal: i + 1 }))
-    .filter(({ c }) => c && typeof c === 'object' && !isConversationTurnChunk(c.metadata))
+    .filter(({ c }) => c && typeof c === 'object' && !isConversationTurnChunk(c.metadata) && !isSummaryChunk(c))
     .filter(({ c }) => !isTestimonioChunk(c) || c.metadata?.publication === 'published')
     .sort(
       (a, b) =>

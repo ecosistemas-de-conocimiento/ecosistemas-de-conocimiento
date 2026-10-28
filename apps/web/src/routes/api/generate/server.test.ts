@@ -28,6 +28,7 @@ import { resetHybridCapabilityCache } from '$lib/server/engine/hybrid';
 import { ANSWER_NOT_SAVED_CODE } from '$lib/aiMessages';
 import { NO_ANSWER_REPLY, chatSystemPrompt, interviewSystemPrompt, resonanciasSystemPrompt } from '$lib/server/engine/prompt';
 import { toBrowserMessage } from '$lib/server/citationProvenance';
+import type { Provenance } from '@edc/chat-engine/core';
 import { citationsWithOrdinals, denseCitations } from '$lib/citationOrdinals';
 
 const SESSION = '5';
@@ -83,6 +84,8 @@ interface World {
   docRows?: Record<string, Record<string, unknown>>;
   /** What `GET /api/funciones` answers (backend `lib/features.ts`). Unset: no stored switches. */
   features?: Record<string, boolean>;
+  /** What `GET /api/graph/view` answers (the corpus-overview graph path). Unset: an empty graph. */
+  graphView?: Record<string, unknown>;
 }
 
 let calls: Call[];
@@ -165,6 +168,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
         ? json({ docs: [{ id: Number(ECO), name: 'Eco de prueba' }] })
         : json({ id: Number(ECO), name: 'Eco de prueba' });
     }
+    if (p === '/api/graph/view') return json(world.graphView ?? { entities: [] });
     if (p === '/api/graph/retrieve') {
       world.graphCalls += 1;
       return json({
@@ -1833,7 +1837,8 @@ describe('POST /api/generate — an attachment the answer uses gets a card', () 
 
     it(`🔴 ${path}: a pinned upload the answer names, uncited, gets a card; saved, and the same on reload`, async () => {
       const provenance = await ask('Según la nota de voz, la milpa se siembra en mayo.', stream);
-      expect(rows(provenance)).toEqual([[1, AUDIO_ID]]);
+      // [1] in the prompt is the graph map (`$lib/server/engine/sources`): the card is numbered past it.
+      expect(rows(provenance)).toEqual([[2, AUDIO_ID]]);
       expect(provenance!.chunks[0]!.metadata).toMatchObject({
         title: 'nota de voz.webm',
         publication: 'draft',
@@ -1853,7 +1858,7 @@ describe('POST /api/generate — an attachment the answer uses gets a card', () 
     // nothing retrieved, and an answer with no marker and no title.
     it(`🔴 ${path}: doc 266 — "El audio cuenta que…", no marker, no title: a card; saved, same on reload`, async () => {
       const provenance = await ask('El audio cuenta que la milpa se siembra en mayo, cuando llegan las lluvias.', stream);
-      expect(rows(provenance)).toEqual([[1, AUDIO_ID]]);
+      expect(rows(provenance)).toEqual([[2, AUDIO_ID]]);
       expect(provenance!.chunks[0]!.metadata).toMatchObject({ title: 'nota de voz.webm', edcIsDraft: true });
       expect(savedProvenance()).toEqual(provenance);
       const reloaded = toBrowserMessage({
@@ -1914,5 +1919,110 @@ describe('POST /api/generate — an attachment the answer uses gets a card', () 
     expect(rows(provenance).map((r) => r[1])).toEqual(['31']);
     expect(provenance!.chunks[0]!.metadata?.title).toBe('Diagnóstico Comunitario de Salud.pdf');
     expect(JSON.stringify(provenance)).not.toContain('ETIQUETA');
+  });
+});
+
+describe('POST /api/generate — 2026-10-28 answer fixes (sources per document, summaries, rules)', () => {
+  const systemOf = (c: Call) => String((c.body as { unit?: { systemPrompt?: unknown } }).unit?.systemPrompt ?? '');
+  const lastPrompt = () => userPromptOf(generates().at(-1)!.body);
+  const lastSystem = () => systemOf(generates().at(-1)!);
+  const pool = (docId: string, id: string, text: string) => ({
+    documentId: `uuid-${docId}`,
+    chunkId: id,
+    score: 0.9,
+    rerankScore: 0.9,
+    text,
+    metadata: { docId, organizationId: ECO, kind: 'documento', publication: 'published', title: `Doc ${docId}.pdf` },
+  });
+
+  for (const stream of [false, true]) {
+    const path = stream ? 'stream' : 'sync';
+
+    it(`🔴 ${path}: four chunks of one document are ONE [N] and one source`, async () => {
+      world.retrievePool = [pool('50', 'a', 'Seña: CASA.'), pool('50', 'b', 'Seña: ESCUELA.'), pool('51', 'c', 'Ley de inclusión.')];
+      world.model = () => 'El diccionario muestra señas [1]. La ley habla de inclusión [2].';
+      const res = await POST(event(turn(), stream));
+      const provenance = stream
+        ? ((await readSse(res)).find((f) => f.type === 'done') as { provenance: Provenance }).provenance
+        : ((await res.json()) as { provenance: Provenance }).provenance;
+      const prompt = lastPrompt();
+      expect(prompt).toContain('[1] <fuente>\nSeña: CASA.\n\n…\n\nSeña: ESCUELA.\n</fuente>');
+      expect(prompt).toContain('[2] <fuente>\nLey de inclusión.\n</fuente>');
+      // [3] is the graph map (the fake graph always answers).
+      expect(prompt).toContain('[3] <fuente>\nMapa de conexiones del ecosistema');
+      expect(prompt).not.toContain('Contexto del grafo de conocimiento:');
+      expect(provenance.chunks.map((c) => [(c as { ordinal?: number }).ordinal, c.metadata?.docId])).toEqual([
+        [1, '50'],
+        [2, '51'],
+      ]);
+    });
+  }
+
+  it('🔴 the graph map is a numbered, citable source with its own card', async () => {
+    world.model = () => 'El tema que más se repite es la partería [2].';
+    const body = (await (await POST(event(turn()))).json()) as { provenance: Provenance };
+    expect(lastPrompt()).toContain('[2] <fuente>\nMapa de conexiones del ecosistema');
+    expect(lastSystem()).toContain('Nunca escribas otras etiquetas entre corchetes, como [Resumen del grafo].');
+    expect(body.provenance.chunks).toHaveLength(1);
+    expect(body.provenance.chunks[0]!.metadata).toEqual({ title: 'Mapa de conexiones del ecosistema', edcSource: 'mapa' });
+  });
+
+  it('the attachment rule rides only a turn with an attachment', async () => {
+    await POST(event(turn()));
+    expect(lastSystem()).toContain('Habla de un documento adjunto solo si tiene relación con la pregunta.');
+    world.sessionDocs = [];
+    await POST(event(turn()));
+    expect(lastSystem()).not.toContain('documento adjunto solo si');
+  });
+
+  it('🔴 "Hazme preguntas" on: a normal answer ends with one follow-up question; off: no rule', async () => {
+    await POST(event(turn({ entrevista: true })));
+    expect(lastSystem()).toContain('Termina la respuesta con una sola pregunta breve');
+    await POST(event(turn()));
+    expect(lastSystem()).not.toContain('Termina la respuesta con una sola pregunta');
+    world.features = { interviewerMode: false };
+    await POST(event(turn({ entrevista: true })));
+    expect(lastSystem()).not.toContain('Termina la respuesta con una sola pregunta');
+  });
+
+  it('no trigger at all (no attachment, no graph, one chunk per document): the system prompt is variant E exactly', async () => {
+    world.sessionDocs = [];
+    world.organization = null;
+    await POST(event(turn()));
+    expect(lastSystem()).toBe(chatSystemPrompt('E'));
+  });
+
+  it('🔴 corpus overview: no passage retrieval; the graph view and the published list as numbered sources', async () => {
+    world.retrievePool = [pool('60', 'cc', 'El ex convento de Corpus Christi.')];
+    world.graphView = {
+      entities: [
+        { id: 'e1', type: 'tema', label: 'educación especial', support: 9 },
+        { id: 'e2', type: 'tema', label: 'lengua de señas', support: 5 },
+      ],
+      edges: [{ fromId: 'e1', toId: 'e2', support: 3, kind: 'co-mention' }],
+      publishedDocuments: 4,
+    };
+    world.model = () => 'El corpus trata sobre todo de educación especial [1]. Tiene 2 documentos y 2 testimonios [2].';
+    const body = (await (await POST(event(turn({ messages: [{ role: 'user', content: 'dame un resumen del corpus' }] })))).json()) as {
+      provenance: Provenance;
+    };
+    expect(retrieves()).toHaveLength(0);
+    expect(calls.some((c) => c.url.pathname === '/api/graph/retrieve')).toBe(false);
+    const prompt = lastPrompt();
+    expect(prompt).not.toContain('Corpus Christi');
+    expect(prompt).toContain('[1] <fuente>\nMapa de conexiones del ecosistema');
+    expect(prompt).toContain('educación especial (tema)');
+    expect(prompt).toContain('Se conecta con: lengua de señas');
+    expect(prompt).toContain('[2] <fuente>\nDocumentos publicados del ecosistema');
+    expect(prompt).toContain('- Diagnóstico Comunitario de Salud.pdf');
+    // Testimonios are counted, never named.
+    expect(prompt).not.toContain('Carta de presentación');
+    expect(body.provenance.chunks.map((c) => c.metadata?.edcSource)).toEqual(['mapa', 'lista']);
+  });
+
+  it('a topic question that says "corpus" is a normal turn', async () => {
+    await POST(event(turn({ messages: [{ role: 'user', content: '¿qué dicen sobre el ex convento de Corpus Christi?' }] })));
+    expect(retrieves().length).toBeGreaterThan(0);
+    expect(calls.some((c) => c.url.pathname === '/api/graph/view')).toBe(false);
   });
 });
