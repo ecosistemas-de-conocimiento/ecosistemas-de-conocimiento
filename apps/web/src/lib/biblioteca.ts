@@ -397,7 +397,7 @@ export interface ExcerptOptions {
   skipIntro?: boolean;
   /**
    * Only a line with no placeholder ({@link hasPlaceholder}), else `null`.
-   * For an excerpt shown as part of a title. Default false.
+   * For any excerpt a reader sees (chat title, Biblioteca card). Default false.
    */
   placeholderFree?: boolean;
 }
