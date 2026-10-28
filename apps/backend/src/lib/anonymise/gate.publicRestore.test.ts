@@ -51,12 +51,15 @@ const textOf = (r: GateResult) => (r.status === 'ready' ? r.redactedText : (r.re
 const keptOf = (r: GateResult) => (r.keptPublic ?? []).map((k) => k.name)
 
 /** Nothing restored: ON is exactly OFF. */
-async function same(text: string, calls: H[][], opts: { roster?: string[]; rounds?: number } = {}) {
+async function sameOn(text: string, calls: H[][], opts: { roster?: string[]; rounds?: number } = {}) {
   const { on, off } = await onOff(text, calls, opts)
   expect(on.status).toBe(off.status)
   expect(textOf(on)).toBe(textOf(off))
   expect(keptOf(on)).toEqual([])
   return on
+}
+const same = async (text: string, calls: H[][], opts: { roster?: string[]; rounds?: number } = {}): Promise<void> => {
+  await sameOn(text, calls, opts)
 }
 
 /** The invariant, for any pair. */
@@ -185,12 +188,12 @@ describe('🔴 third audit probes: nothing restored', () => {
     ['Itzel Barragán coordinó el taller.'],
     ['itzel barragán coordinó el taller.'],
   ])('E: a lower-case roster entry still redacts %j', async (text) => {
-    const on = await same(text, [[], []], { roster: ['itzel barragán'] })
+    const on = await sameOn(text, [[], []], { roster: ['itzel barragán'] })
     expect(textOf(on)).not.toMatch(/itzel|barragán/i)
   })
 
   it('E: a lower-case roster entry spreads its parts: "Itzel" alone is redacted', async () => {
-    const on = await same('Itzel Barragán coordinó. Itzel tomó notas.', [[], []], { roster: ['itzel barragán'] })
+    const on = await sameOn('Itzel Barragán coordinó. Itzel tomó notas.', [[], []], { roster: ['itzel barragán'] })
     expect(textOf(on)).not.toMatch(/Itzel/)
   })
 
@@ -258,6 +261,8 @@ describe('the restore pieces', () => {
   })
 
   it.each([
+    ['Ramiro Saldaña y Pérez llegó', 0, 14, true],
+    ['Ramiro Saldaña\u00a0Pérez llegó', 0, 14, true],
     ['Ramiro Saldaña Pérez llegó', 0, 14, true],
     ['Ramiro Saldaña-Pérez llegó', 0, 14, true],
     ['Ramiro Saldaña\nPérez llegó', 0, 14, true],
@@ -265,7 +270,8 @@ describe('the restore pieces', () => {
     ['Tomás Ramiro Saldaña llegó', 6, 20, true],
     ['Ayer. Ramiro Saldaña llegó', 6, 20, false],
     ['Ramiro Saldaña llegó', 0, 14, false],
-    ['Ramiro Saldaña y Tadeo', 0, 14, false],
+    // Final audit: a connector then a capitalised word is glue.
+    ['Ramiro Saldaña y Tadeo', 0, 14, true],
     ['declaró Ramiro Saldaña.', 8, 22, false],
   ] as const)('gluedToNeighbour(%j) → %s', (text, s, e, expected) => {
     expect(gluedToNeighbour(text, s, e)).toBe(expected)
@@ -320,4 +326,95 @@ describe('🔴 property: option ON = option OFF except at restored public spans'
       }
     }
   }, 120_000)
+})
+
+describe('🔴 final audit 2026-10-27: every separator is glue unless it is plain punctuation + space', () => {
+  const SEPS: Record<string, string> = {
+    nbsp: ' ',
+    nnbsp: ' ',
+    thin: ' ',
+    ideo: '　',
+    zwsp: '​',
+    shy: '­',
+    minus: '−',
+    fwhyph: '－',
+    vt: '\v',
+    ff: '\f',
+    ls: ' ',
+    nel: '\u0085',
+    under: '_',
+    slash: '/',
+    middot: '·',
+    hyphen: '-',
+    endash: '–',
+    'dot-nospace': '.',
+    'semicolon-nospace': ';',
+    'colon-nospace': ':',
+  }
+  it.each(Object.entries(SEPS))('forward %s: the son is never shown', (_k, sep) =>
+    same(`El senador Ramiro Saldaña habló. Su hijo Ramiro Saldaña${sep}Pérez fue golpeado.`, [[pb('Ramiro Saldaña')], []]))
+  it.each(Object.entries(SEPS))('backward %s: the son is never shown', (_k, sep) =>
+    same(`El senador Ramiro Saldaña habló. Su hijo Tomás${sep}Ramiro Saldaña fue golpeado.`, [[pb('Ramiro Saldaña')], []]))
+
+  it('nbsp, son reported private too', () =>
+    same('El senador Ramiro Saldaña habló. Su hijo Ramiro Saldaña Pérez fue golpeado.', [[pb('Ramiro Saldaña'), pv('Ramiro Saldaña Pérez')], []]))
+  it('backward silent: "Lucía Ana López" beside "Ana López" publica', () =>
+    same('La diputada Ana López habló. Su sobrina Lucía Ana López fue amenazada.', [[pb('Ana López'), pv('Lucía')], []]))
+
+  it('(2) a connector followed by a capitalised word is glue: "Ramiro Saldaña y Pérez"', () =>
+    same('El senador Ramiro Saldaña habló. Su hijo, Ramiro Saldaña y Pérez, fue golpeado.', [[pb('Ramiro Saldaña')], []]))
+  it('M14: a hyphen before a LOWER-case word is glue, forward and backward', async () => {
+    await same('El senador Ramiro Saldaña habló. Su hijo Ramiro Saldaña-pérez fue golpeado.', [[pb('Ramiro Saldaña')], []])
+    await same('El senador Ramiro Saldaña habló. Su hijo tomás-Ramiro Saldaña fue golpeado.', [[pb('Ramiro Saldaña')], []])
+  })
+
+  it.each([
+    ['(Ramiro Saldaña) firmó.', true],
+    ['«Ramiro Saldaña» firmó.', true],
+    ['¿Ramiro Saldaña? Nadie.', true],
+    ['firmó Ramiro Saldaña, y luego habló.', true],
+    ['firmó Ramiro Saldaña.', true],
+    ['firmó "Ramiro Saldaña".', true],
+    ['firmó Ramiro Saldaña.Pérez llegó.', false],
+  ])('punctuation: %j restored = %s', async (tail, restored) => {
+    const { on } = await onOff(`Ayer ${tail}`, [[pb('Ramiro Saldaña')], [pb('Ramiro Saldaña')]])
+    expect(textOf(on)?.includes('Ramiro Saldaña')).toBe(restored)
+  })
+})
+
+describe('🔴 final audit 2026-10-27: mutation survivors', () => {
+  it('M6: a two-person span of three words or fewer is never restored', () =>
+    same('Ayer hablaron Ana y Lucía en la plaza.', [[pb('Ana y Lucía')], [pb('Ana y Lucía')]]))
+
+  it('M11: a verify finding the parser never saw still counts as private evidence', async () => {
+    let n = 0
+    const detector: PersonDetector = {
+      name: 's',
+      async detect({ text }) {
+        n += 1
+        if (n === 1) return parseFindings(JSON.stringify({ hallazgos: [pb('Ramiro Saldaña')] }), text)
+        // A raw verify list (not through parseFindings): "Ana Saldaña" private.
+        return n === 2 ? [{ text: 'Ana Saldaña', type: 'persona' as const }] : []
+      },
+    }
+    const out = await runAnonymisationGate(
+      { contentKind: 'documento', text: 'Ayer el senador Ramiro Saldaña habló.', roster: [], keepPublicFigures: true },
+      { detector, verifyRounds: 1 },
+    )
+    expect(out.status).toBe('ready')
+    expect(textOf(out)).not.toContain('Saldaña')
+  })
+
+  it.each([
+    ['Ramiro Gil', 'Ana Gil'],
+    ['Ramiro Paz', 'Lucía Paz'],
+    ['Ana Ruiz', 'Ana Ortega'],
+    ['Li Ortega', 'Li Ramos'],
+  ])('M23: a short shared part demotes: %j publica beside %j privada', (pub, priv) =>
+    same(`Ayer el senador ${pub} habló. Luego ${priv} llamó.`, [[pb(pub), pv(priv)], []]))
+
+  it('control: with no shared part the senator IS restored', async () => {
+    const { on } = await onOff('Ayer el senador Ramiro Gil habló. Luego Ana Ortega llamó.', [[pb('Ramiro Gil'), pv('Ana Ortega')], []])
+    expect(textOf(on)).toContain('el senador Ramiro Gil habló')
+  })
 })

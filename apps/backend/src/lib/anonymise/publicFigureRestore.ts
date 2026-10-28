@@ -215,48 +215,83 @@ export function alignPlaceholders(source: string, output: string): AlignedPlaceh
   return out
 }
 
-const GAP = /[ \t\r\n]/u
-const HYPHENS = /[-‐‑‒–—'’]/u
+/** Whitespace of every kind, and invisible format characters (zero-width space…). */
+const GAP = /[\s\p{Z}\p{Cf}]/u
+/** Hyphens and dashes of every kind, the soft hyphen, apostrophes. Checked BEFORE `GAP`. */
+const HYPHENS = /[\p{Pd}­'’]/u
+/** Plain sentence punctuation: a run of it followed by whitespace (or the text's end) ends the scan. */
+const SENTENCE_PUNCT = /[.,;:!?…"“”‘«»()[\]¿¡]/u
+const LETTER = /[\p{L}\p{M}]/u
 
 /**
- * True when `[start, end)` of `source` touches another name on either side:
- * a capitalised name word, a hyphen-glued word, or a name joiner leading to
- * one ("Ramiro Saldaña de la Garza", "Ramiro Saldaña-Pérez", "Ramiro
- * Saldaña\nPérez"). ⚠ Also at a sentence start: "Tomás Ramiro Saldaña" may be
- * one three-word name the model reported in part. Over-redaction accepted.
+ * One direction of `gluedToNeighbour`. `step` is +1 (forward) or -1.
+ *
+ * 🔴 FAIL CLOSED ON EVERY CHARACTER CLASS (final audit 2026-10-27: a no-break
+ * space, a thin space, an underscore or a slash between "Ramiro Saldaña" and
+ * "Pérez" stopped the old scan, and the son's name was restored). Walking
+ * away from the span:
+ *
+ *   · whitespace and format characters (`GAP`) are skipped;
+ *   · a hyphen or dash (`HYPHENS`) followed, after any gap, by a word: glue;
+ *   · a run of plain sentence punctuation with whitespace (or the text's
+ *     edge) on either side: the scan stops, no glue ("(Ramiro Saldaña)
+ *     firmó", "Ayer. Ramiro Saldaña"); glued on both sides
+ *     ("Saldaña.Pérez", "Saldaña;Pérez"): glue;
+ *   · any other non-letter ("_", "/", "·", "−", a digit): glue;
+ *   · a word: a capitalised name word is glue; a joiner ("de la") or a
+ *     conjunction ("y") continues the scan to the next word ("Ramiro Saldaña
+ *     y Pérez" is glue); any other word stops it.
+ */
+function gluedOneWay(source: string, from: number, step: 1 | -1): boolean {
+  const at = (k: number) => (step === 1 ? source[k] : source[k - 1]) as string | undefined
+  const done = (k: number) => (step === 1 ? k >= source.length : k <= 0)
+  let i = from
+  for (;;) {
+    let hyphen = false
+    let gap = false
+    // Gaps, hyphens and punctuation runs.
+    for (;;) {
+      if (done(i)) return false
+      const c = at(i) as string
+      if (HYPHENS.test(c)) {
+        hyphen = true
+        i += step
+      } else if (GAP.test(c)) {
+        gap = true
+        i += step
+      } else if (SENTENCE_PUNCT.test(c) && !hyphen) {
+        // Plain punctuation when whitespace touches the run on either side.
+        let k = i
+        while (!done(k) && SENTENCE_PUNCT.test(at(k) as string)) k += step
+        return !(gap || done(k) || GAP.test(at(k) as string))
+      } else if (LETTER.test(c)) {
+        break
+      } else {
+        return true
+      }
+    }
+    if (hyphen) return true
+    // The word.
+    let k = i
+    while (!done(k) && LETTER.test(at(k) as string)) k += step
+    const word = step === 1 ? source.slice(i, k) : source.slice(k, i)
+    if (nameWord(word)) return true
+    const folded = normaliseName(word)
+    if (!NAME_JOINERS.has(folded) && !CONJUNCTIONS.has(folded)) return false
+    i = k
+  }
+}
+
+/**
+ * True when `[start, end)` of `source` touches another name on either side
+ * ("Ramiro Saldaña Pérez", "Saldaña-Pérez", "Saldaña Pérez", "Saldaña
+ * de la Garza", "Saldaña y Pérez", "Tomás Ramiro Saldaña"). See
+ * {@link gluedOneWay}. ⚠ Also at a sentence start: "Tomás Ramiro Saldaña"
+ * may be one three-word name the model reported in part. Over-redaction
+ * accepted, including a dash aside ("—Ramiro Saldaña— dijo").
  */
 export function gluedToNeighbour(source: string, start: number, end: number): boolean {
-  // Forward.
-  let i = end
-  for (;;) {
-    let hyphen = false
-    while (i < source.length && (GAP.test(source[i] as string) || HYPHENS.test(source[i] as string))) {
-      if (HYPHENS.test(source[i] as string)) hyphen = true
-      i++
-    }
-    const m = /^[\p{L}\p{M}]+/u.exec(source.slice(i))
-    if (!m) break
-    if (hyphen && i > end) return true
-    if (nameWord(m[0])) return true
-    if (!NAME_JOINERS.has(normaliseName(m[0]))) break
-    i += m[0].length
-  }
-  // Backward.
-  let j = start
-  for (;;) {
-    let hyphen = false
-    while (j > 0 && (GAP.test(source[j - 1] as string) || HYPHENS.test(source[j - 1] as string))) {
-      if (HYPHENS.test(source[j - 1] as string)) hyphen = true
-      j--
-    }
-    const m = /[\p{L}\p{M}]+$/u.exec(source.slice(0, j))
-    if (!m) break
-    if (hyphen && j < start) return true
-    if (nameWord(m[0])) return true
-    if (!NAME_JOINERS.has(normaliseName(m[0]))) break
-    j = m.index
-  }
-  return false
+  return gluedOneWay(source, end, 1) || gluedOneWay(source, start, -1)
 }
 
 /**
