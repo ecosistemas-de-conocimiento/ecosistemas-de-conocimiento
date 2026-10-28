@@ -111,7 +111,7 @@ const asUser = async (id: number) =>
   ({ ...(await payload.findByID({ collection: 'users', id, overrideAccess: true })), collection: 'users' }) as never
 
 async function tokenFor(id: number): Promise<string> {
-  const user = (await payload.findByID({ collection: 'users', id, overrideAccess: true })) as { email: string }
+  const user = (await payload.findByID({ collection: 'users', id, overrideAccess: true })) as unknown as { email: string }
   const { token } = await payload.login({ collection: 'users', data: { email: user.email, password: PASSWORD } })
   if (!token) throw new Error('login returned no token')
   return token
