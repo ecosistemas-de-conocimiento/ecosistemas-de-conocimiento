@@ -17,9 +17,10 @@ test('investigador', async ({ page }) => {
     );
     await misDocumentos(page);
     await biblioteca(page, 'signo');
-    await conexiones(page, 'signo');
     await seguimiento(page);
     await cuidar(page);
+    // Last: the graph is the slowest screen on dev while backfills run.
+    await conexiones(page, 'signo');
   } catch (error) {
     // What failed, and what the screen looked like, before cleanup paints over
     // both (an error thrown in `finally` would replace this one in the report).

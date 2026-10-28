@@ -31,10 +31,23 @@ if [[ -z "${EVID_ADMIN_EMAIL:-}" && -r "$root/.env.evidencia" ]]; then
   export EVID_ADMIN_EMAIL
 fi
 
-exec docker run --rm --init --ipc=host \
+status=0
+docker run --rm --init --ipc=host \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v "$root:$root" \
   -e EVID_ENV_FILE="$env_file" -e EVID_DEMO_USERS_FILE="$demo_file" \
   -e EVID_VIDEO="$video" -e EVID_ADMIN_EMAIL -e EVID_HOLD_MS -e EVID_ECOSISTEMA -e EVID_WEB_URL -e EVID_LIMPIAR \
   -w "$web" mcr.microsoft.com/playwright:v1.62.1-noble \
-  node node_modules/@playwright/test/cli.js test -c e2e/evidencia "$@"
+  node node_modules/@playwright/test/cli.js test -c e2e/evidencia "$@" || status=$?
+
+# Keep each role's video past the next run (see outputDir in the config).
+out="$web/e2e/evidencia/.videos/$video"
+for dir in "$out"/.corrida/*-chromium; do
+  [[ -f "$dir/video.webm" ]] || continue
+  rol="$(basename "$dir")"; rol="${rol%%-*}"
+  [[ "$rol" == limpieza ]] && continue
+  # A failed run keeps its video beside, never over, a good one.
+  if [[ -f "$dir/test-failed-1.png" ]]; then cp "$dir/video.webm" "$out/$rol.fallido.webm"
+  else cp "$dir/video.webm" "$out/$rol.webm"; fi
+done
+exit "$status"

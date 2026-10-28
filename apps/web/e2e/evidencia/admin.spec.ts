@@ -15,8 +15,9 @@ test('admin', async ({ page }) => {
     );
     await misDocumentos(page);
     await biblioteca(page);
-    await conexiones(page);
     await cuidar(page, { cambiarEcosistema: 'dengue' });
+    // Last: the graph is the slowest screen on dev while backfills run.
+    await conexiones(page);
   } catch (error) {
     // What failed, and what the screen looked like, before cleanup paints over
     // both (an error thrown in `finally` would replace this one in the report).

@@ -137,7 +137,8 @@ export async function iniciarSesion(page: Page, cuenta: Cuenta): Promise<void> {
     await page.getByLabel('Contraseña').fill(password);
     await page.getByRole('button', { name: 'Entrar' }).click();
     await page.waitForURL((u) => !u.pathname.startsWith('/sign-in'));
-    await expect(page.getByTestId('primary-nav')).toBeVisible();
+    // Participante and estudiante land on the start screen, which has no menu.
+    await expect(page.getByTestId('primary-nav').or(page.getByTestId('inicio-iniciar')).first()).toBeVisible();
   });
 }
 

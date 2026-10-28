@@ -13,10 +13,14 @@ import { RUN_ID, archivoDePrueba, escena, ir } from './escena';
 export const ECOSISTEMA = process.env.EVID_ECOSISTEMA ?? 'Prevención del dengue';
 
 export async function elegirEcosistema(page: Page, nombre = ECOSISTEMA): Promise<void> {
+  // `?conversaciones`: the full UI even for roles that land on the start screen.
+  await page.goto('/?conversaciones');
+  await page.waitForLoadState('networkidle');
+  // Someone in ONE ecosistema gets a plain label, not a picker: nothing to choose, no story to show.
+  const picker = page.locator('button[aria-haspopup="listbox"]').first();
+  if (!(await picker.isVisible())) return;
   await escena(page, 'A2.1', async () => {
-    // `?conversaciones`: the full UI even for roles that land on the start screen.
-    await page.goto('/?conversaciones');
-    await page.locator('button[aria-haspopup="listbox"]').first().click();
+    await picker.click();
     await page.getByRole('listbox', { name: 'Elige un ecosistema' }).getByRole('option', { name: nombre }).click();
     await page.waitForLoadState('networkidle');
   });
