@@ -51,7 +51,6 @@ export interface ActivityReport {
   /** Documentos only; a draft's `name` is null. */
   uploads: Array<{ id: number; name: string | null; createdAt: string; status: string; kind: string }>;
   topics: string[];
-  chatThemes: string[];
   gaps: string[];
   readings: DocRef[];
   /** Only when `studentTestimonios` is on. Anonymised output or a status line. */

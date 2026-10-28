@@ -48,9 +48,6 @@
           <h4>Temas</h4>
           <p>{r.topics.join(', ') || '—'}</p>
 
-          <h4>Conversaciones</h4>
-          <p>{r.chatThemes.join(' · ') || '—'}</p>
-
           <h4>Vacíos</h4>
           <p>{r.gaps.join(', ') || '—'}</p>
 

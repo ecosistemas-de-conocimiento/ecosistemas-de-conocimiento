@@ -150,7 +150,6 @@ export interface ActivityReport {
   /** 🔴 `documento` only; a draft's `name` is null. */
   uploads: Array<{ id: number; name: string | null; createdAt: string; status: string; kind: string }>
   topics: string[]
-  chatThemes: string[]
   /** The ecosistema's most-documented topics this student has not touched. */
   gaps: string[]
   readings: DocRef[]
@@ -184,7 +183,8 @@ export function buildReport(input: {
   student: StudentRow
   docs: readonly OwnDoc[]
   topics: readonly Labelled[]
-  sessionTitles: readonly string[]
+  /** Conversations in this ecosistema. 🔴 A count, never titles (owner ruling Q23). */
+  sessionCount: number
   corpusTop: readonly Labelled[]
   readings: readonly DocRef[]
   /** `studentTestimonios` on: the rows; off: null / absent, and no key in the report. */
@@ -200,11 +200,10 @@ export function buildReport(input: {
       documents: docs.length,
       published: docs.filter((d) => d.status === 'published').length,
       topics: input.topics.length,
-      conversations: input.sessionTitles.length,
+      conversations: input.sessionCount,
     },
     uploads: docs.slice(0, 30).map((d) => ({ ...d, name: d.status === 'published' ? d.name : null })),
     topics: input.topics.slice(0, 15).map((t) => t.label),
-    chatThemes: [...new Set(input.sessionTitles)].slice(0, 15),
     gaps: input.corpusTop.filter((t) => !mine.has(t.id)).slice(0, 6).map((t) => t.label),
     readings: [...input.readings],
   }

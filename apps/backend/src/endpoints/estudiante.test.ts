@@ -88,7 +88,7 @@ function fakeQueries(w: World): StudentQueries & { calls: string[] } {
       calls.push(`published:${ids.join(',')}`)
       return ids.map((id) => 200 + id)
     },
-    sessionTitlesOf: async () => ['Sobre el signo'],
+    sessionCountOf: async () => 4,
     testimoniosOf: async (_p: unknown, _o: number, uid: number) => {
       calls.push(`testimonios:${uid}`)
       return [{ id: 300, createdAt: '2026-10-02', status: 'approved', redactedText: 'Habló [Persona A].', title: null }]
@@ -296,7 +296,9 @@ describe('activity report', () => {
     const r = res.body.reporte as Record<string, unknown>
     expect(r.topics).toEqual(['semiosis', 'signo'])
     expect(r.gaps).toEqual(['abducción'])
-    expect(r.chatThemes).toEqual(['Sobre el signo'])
+    // 🔴 Owner ruling Q23: the count, never a title.
+    expect(r.summary).toMatchObject({ conversations: 4 })
+    expect('chatThemes' in r).toBe(false)
     expect(r.readings).toEqual([{ id: 70, name: 'Lectura' }])
     expect(Q.calls).toContain('readings:exclude=1')
     // 🔴 The teacher sees topics from the student's PUBLISHED documentos only.

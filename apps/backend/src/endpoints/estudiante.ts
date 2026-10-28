@@ -378,12 +378,12 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
       const withTestimonios =
         (await featureEnabled(req.payload, org, 'studentTestimonios')) &&
         (await findProfile(req, { userId: studentId, organizationId: org }))?.shareTestimonios === true
-      const [topicsMap, docs, sessionTitles, corpusTop, testimonios] = await Promise.all([
+      const [topicsMap, docs, sessionCount, corpusTop, testimonios] = await Promise.all([
         // 🔴 Published only: the teacher is not the uploader, so a draft's
         // topic labels stay the student's (`topicsByUser`'s own rule).
         Q.topicsByUser(p, org, [studentId], { publishedOnly: true }),
         Q.documentsOf(p, org, studentId),
-        Q.sessionTitlesOf(p, org, studentId),
+        Q.sessionCountOf(p, org, studentId),
         Q.corpusTopTopics(p, org, 25),
         withTestimonios ? Q.testimoniosOf(p, org, studentId) : null,
       ])
@@ -394,7 +394,7 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
         topics.slice(0, 10).map((t) => t.id),
         studentId,
       )
-      return ok({ reporte: buildReport({ student, docs, topics, sessionTitles, corpusTop, readings, testimonios }) })
+      return ok({ reporte: buildReport({ student, docs, topics, sessionCount, corpusTop, readings, testimonios }) })
     },
   }
 

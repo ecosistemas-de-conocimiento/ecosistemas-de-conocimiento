@@ -56,6 +56,12 @@ describe('/seguimiento — activity report', () => {
     expect(body).toContain('Anonimización en curso');
   });
 
+  it('🔴 shows the conversation count, never a title, even if one is sent (owner ruling Q23)', () => {
+    const body = page(reporte({ summary: { documents: 2, published: 1, topics: 0, conversations: 3 }, chatThemes: ['Pregunta de Rosa'] }));
+    expect(body).toContain('3 conversaciones');
+    expect(body).not.toContain('Rosa');
+  });
+
   it('switch on with none: says so', () => {
     expect(page(reporte({ testimonios: [] }))).toContain('Sin testimonios.');
   });

@@ -276,18 +276,21 @@ export async function publishedDocumentIdsOf(
   return rows.map((r) => toId(r.id))
 }
 
-/** The caller's own conversation titles in this ecosistema, newest first. */
-export async function sessionTitlesOf(p: StudentDb, organizationId: number, userId: number, limit = 20): Promise<string[]> {
+/**
+ * How many conversations this user has in this ecosistema — the COUNT only.
+ * 🔴 Owner ruling Q23: a teacher's report never carries a session title (it is
+ * generated from the first question, free text that can name people).
+ * Untitled ("New chat" / empty) sessions are not counted, as before.
+ */
+export async function sessionCountOf(p: StudentDb, organizationId: number, userId: number): Promise<number> {
   const rows = await run(
     p,
     sql`
-    SELECT s.title AS title FROM sessions s
+    SELECT COUNT(*)::int AS n FROM sessions s
      WHERE s.organization_id = ${organizationId} AND s.user_id = ${userId}
-       AND s.title IS NOT NULL AND s.title <> 'New chat' AND s.title <> ''
-     ORDER BY COALESCE(s.last_used_at, s.created_at) DESC
-     LIMIT ${limit}`,
+       AND s.title IS NOT NULL AND s.title <> 'New chat' AND s.title <> ''`,
   )
-  return rows.map((r) => toText(r.title))
+  return toCount(rows[0]?.n)
 }
 
 export interface StudentRow {
@@ -352,6 +355,11 @@ export interface TestimonioRow {
  * (the original), `held_text` (what the gate refused), or a media row. Those
  * are `mayReadGatedOriginal`'s columns, and this read does not widen them.
  *
+ * 🔴 THE CONSENT IS IN THE SAME READ: the join on `student_profiles`
+ * (`share_activity` AND `share_testimonios_at`, owner ruling Q20). The caller's
+ * earlier consent check decides whether the report has the key; this one
+ * closes the race where a withdrawal lands between that check and this read.
+ *
  * 🔴 PUBLISHED ROWS ONLY. A draft is its uploader's alone (`visibleToCaller`
  * in `collections/Documents.ts`), even one the gate cleared, and unpublishing
  * leaves `redacted_text` in place: without this filter an unpublished
@@ -376,6 +384,8 @@ export async function testimoniosOf(
            CASE WHEN d.anonymisation_status::text IN ('ready', 'approved') THEN d.redacted_text END AS redacted_text,
            CASE WHEN d.anonymisation_status::text IN ('ready', 'approved') THEN d.testimonio_title END AS title
       FROM documents d
+      JOIN student_profiles sp ON sp.user_id = d.uploaded_by_id AND sp.organization_id = ${organizationId}
+                              AND sp.share_activity = true AND sp.share_testimonios_at IS NOT NULL
      WHERE d.organization_id = ${organizationId} AND d.uploaded_by_id = ${userId}
        AND d.content_kind = 'testimonio'
        AND d.publication_status = 'published'

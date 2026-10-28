@@ -65,19 +65,20 @@ describe('buildReport', () => {
       student: { id: 1, name: 'Ana' },
       docs: [{ id: 1, name: 'x', createdAt: '', status: 'published', kind: 'documento' }],
       topics: [T(1, 'a')],
-      sessionTitles: ['s', 's'],
+      sessionCount: 2,
       corpusTop: [T(1, 'a'), T(2, 'b')],
       readings: [],
     })
     expect(r.summary).toEqual({ documents: 1, published: 1, topics: 1, conversations: 2 })
     expect(r.gaps).toEqual(['b'])
-    expect(r.chatThemes).toEqual(['s'])
+    // 🔴 Owner ruling Q23: the count, never the titles.
+    expect('chatThemes' in r).toBe(false)
   })
 
   const base = {
     student: { id: 1, name: 'Ana' },
     topics: [],
-    sessionTitles: [],
+    sessionCount: 0,
     corpusTop: [],
     readings: [],
   }

@@ -24,6 +24,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { invalidateFeatures } from '../lib/features'
 import { bootPayload, dockerOk, shutdown, startRealPostgres, type RealPostgres } from '../lib/testing/realPostgres'
 import { estudianteEndpoints } from './estudiante'
+import { funcionesEndpoints } from './funciones'
 
 if (!dockerOk) console.warn('[estudiante.reporte.pg.test] docker is not usable — SKIP.')
 
@@ -56,6 +57,8 @@ const SECRETS = [
   'beto', // another ecosistema's student
   'cosecha', // a READY testimonio that is still a draft (row 21)
   'BORRADOR', // a topic only a draft documento carries
+  'Rosa', // a chat session title (owner ruling Q23: counts only)
+  'CHAT', // chat session titles
 ]
 
 const reporte = estudianteEndpoints.find((e) => e.method === 'get' && e.path === '/estudiante/reporte') as Endpoint
@@ -68,6 +71,15 @@ async function savePerfil(as: number, body: Record<string, unknown>) {
   Object.assign(req, { searchParams: new URLSearchParams(), routeParams: {}, json: async () => body })
   const res = await perfil.handler(req)
   return { status: res.status, body: (await res.json()) as { perfil?: Record<string, unknown> } }
+}
+
+async function flipFeatures(as: number, organization: number, features: Record<string, boolean>) {
+  const { createLocalReq } = await import('payload')
+  const user = await payload!.findByID({ collection: 'users', id: as, overrideAccess: true })
+  const req = (await createLocalReq({ user: { ...user, collection: 'users' } as never }, payload!)) as PayloadRequest
+  Object.assign(req, { searchParams: new URLSearchParams(), routeParams: {}, json: async () => ({ organization, features }) })
+  const e = funcionesEndpoints.find((x) => x.method === 'patch' && x.path === '/funciones') as Endpoint
+  return (await e.handler(req)).status
 }
 
 const consentAt = async (user: number, org: number) =>
@@ -126,6 +138,9 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
         (25, 2, 4, 'Otra', 'published', 'testimonio', 'approved', null, null, 'OTRA ECO texto', null, null, '2026-10-08'),
         (30, 2, 5, 'beto voz', 'published', 'testimonio', 'approved', null, null, 'Texto de beto', null, null, '2026-10-09'),
         (40, 1, 7, 'Voz de Caro', 'published', 'testimonio', 'approved', null, null, 'Caro habló', null, null, '2026-10-10');
+      INSERT INTO sessions (user_id, organization_id, title) VALUES
+        (4, 1, '¿Qué dijo Rosa Secreta del río?'), (4, 1, 'CHAT privado dos'), (4, 1, 'CHAT tres'),
+        (4, 1, 'New chat'), (4, 1, ''), (4, 2, 'CHAT en otra eco'), (7, 1, 'CHAT de Caro');
       INSERT INTO graph_entities (id, organization_id, type, label, canonical_key, public_figure) VALUES
         (100, 1, 'tema', 'tema publicado', 'tema publicado', false),
         (101, 1, 'tema', 'tema BORRADOR', 'tema borrador', false);
@@ -180,6 +195,19 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
       // Documents keep the OFF rules.
       expect((res.body.reporte!.uploads as unknown[]).length).toBe(2)
       for (const secret of SECRETS) expect([as, secret, res.text.includes(secret)]).toEqual([as, secret, false])
+    }
+  })
+
+  it('🔴 chat sessions: the teacher gets the COUNT, never a title (owner ruling Q23), switch on or off', async () => {
+    for (const features of [{ studentView: true }, { studentView: true, studentTestimonios: true }] as Array<Record<string, boolean>>) {
+      await setFeatures(ECO_A, features)
+      invalidateFeatures()
+      const res = await report(INES, ECO_A, ANA)
+      expect(res.status).toBe(200)
+      // Ana's titled conversations in THIS ecosistema: 3 (not "New chat", not empty, not eco B).
+      expect(res.body.reporte!.summary).toMatchObject({ conversations: 3 })
+      expect('chatThemes' in res.body.reporte!).toBe(false)
+      for (const s of ['Rosa', 'CHAT', 'río?']) expect(res.text).not.toContain(s)
     }
   })
 
@@ -256,6 +284,51 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
       await savePerfil(ANA, { organization: ECO_A, shareActivity: true })
       expect(await consentAt(ANA, ECO_A)).toBeNull()
       expect(await testimonios()).toBeUndefined()
+    })
+
+    it('🔴 a conflicting body (withdraw activity, give testimonios) is refused, and nothing moves', async () => {
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = true, share_testimonios_at = NULL WHERE user_id = ${ANA}`))
+      expect((await savePerfil(ANA, { organization: ECO_A, shareActivity: false, shareTestimonios: true })).status).toBe(400)
+      expect(await consentAt(ANA, ECO_A)).toBeNull()
+      const row = await pg!.db.execute(sql.raw(`SELECT share_activity FROM student_profiles WHERE user_id = ${ANA} AND organization_id = 1`))
+      expect((row as unknown as { rows: Array<{ share_activity: boolean }> }).rows[0]?.share_activity).toBe(true)
+    })
+
+    it('giving the testimonio consent also turns activity sharing on', async () => {
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = false, share_testimonios_at = NULL WHERE user_id = ${ANA}`))
+      const res = await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true })
+      expect(res.status).toBe(200)
+      expect(res.body.perfil).toMatchObject({ shareActivity: true, shareTestimonios: true })
+      expect(((await testimonios()) as Array<{ id: number }>).map((t) => t.id)).toContain(20)
+    })
+
+    it('🔴 testimoniosOf itself checks the consent in the same read (no withdraw-then-read race)', async () => {
+      const Q = await import('../lib/student/queries')
+      const read = () => Q.testimoniosOf({ db: { drizzle: pg!.db as never } }, ECO_A, ANA)
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = true, share_testimonios_at = now() WHERE user_id = ${ANA}`))
+      expect((await read()).length).toBeGreaterThan(0)
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_testimonios_at = NULL WHERE user_id = ${ANA}`))
+      expect(await read()).toEqual([])
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = false, share_testimonios_at = now() WHERE user_id = ${ANA}`))
+      expect(await read()).toEqual([])
+    })
+
+    it('🔴 switching studentTestimonios OFF clears every consent in that ecosistema; off→on needs fresh consent', async () => {
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = true, share_testimonios_at = now()`))
+      expect(((await testimonios()) as unknown[]).length).toBeGreaterThan(0)
+      expect(await flipFeatures(1, ECO_A, { studentTestimonios: false })).toBe(200)
+      expect(await consentAt(ANA, ECO_A)).toBeNull()
+      expect(await consentAt(CARO, ECO_A)).toBeNull()
+      // Another ecosistema's consents stay.
+      expect(await consentAt(BETO, ECO_B)).not.toBeNull()
+      expect(await flipFeatures(1, ECO_A, { studentTestimonios: true })).toBe(200)
+      expect(await testimonios()).toBeUndefined()
+      // Fresh consent brings them back.
+      await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true })
+      expect(((await testimonios()) as unknown[]).length).toBeGreaterThan(0)
+      // An unrelated save with the switch already off clears nothing new and keeps working.
+      expect(await flipFeatures(1, ECO_A, { graph: false })).toBe(200)
+      expect(await consentAt(ANA, ECO_A)).not.toBeNull()
     })
 
     it('🔴 the testimonio consent cannot be given while the switch is off (its wording is not shown)', async () => {

@@ -1,6 +1,13 @@
-import { APIError, ValidationError, type CollectionBeforeChangeHook, type CollectionConfig, type FieldAccess } from 'payload'
+import {
+  APIError,
+  ValidationError,
+  type CollectionAfterChangeHook,
+  type CollectionBeforeChangeHook,
+  type CollectionConfig,
+  type FieldAccess,
+} from 'payload'
 
-import { invalidateFeatures, lockedFeatureChange, lockedFeatureMessage, parseFeaturesPatch } from '../lib/features'
+import { invalidateFeatures, lockedFeatureChange, lockedFeatureMessage, parseFeaturesPatch, resolveFeatures } from '../lib/features'
 import { roleInOrganization } from '../lib/permissions'
 
 import {
@@ -56,6 +63,31 @@ export const refuseLockedFeatureChange: CollectionBeforeChangeHook = ({ data, or
     throw new APIError(lockedFeatureMessage(locked), 403, undefined, true)
   }
   return data
+}
+
+/**
+ * 🔴 `studentTestimonios` GOING OFF WITHDRAWS EVERY TESTIMONIO CONSENT IN THAT
+ * ECOSISTEMA (owner ruling Q20, audit of 633bce2). A consent was given under the
+ * wording shown while the switch was on; after an off→on cycle the student
+ * must give it again. Runs on every write path (it is a collection hook) with
+ * the request's `req`, so it shares the update's transaction: the switch and
+ * the consents move together or not at all. `share_activity` is left alone.
+ */
+export const clearTestimonioConsentWhenOff: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, req }) => {
+  if (operation !== 'update') return doc
+  const was = resolveFeatures((previousDoc as { features?: unknown } | undefined)?.features).studentTestimonios
+  const now = resolveFeatures((doc as { features?: unknown }).features).studentTestimonios
+  const id = (doc as { id?: number | string }).id
+  if (!was || now || id == null) return doc
+  await req.payload.update({
+    collection: 'studentProfiles' as never,
+    where: { organization: { equals: id } },
+    data: { shareTestimoniosAt: null } as never,
+    depth: 0,
+    overrideAccess: true,
+    req,
+  })
+  return doc
 }
 
 /**
@@ -116,6 +148,7 @@ export const Organizations: CollectionConfig = {
         if (id != null) invalidateFeatures(id)
         return doc
       },
+      clearTestimonioConsentWhenOff,
       // Each ecosistema is its own ai-service org; give it a budget on create
       // (`lib/provisionEcosystem.ts`). Not awaited: the create already
       // succeeded, and a slow ai-service must not hold the admin request.

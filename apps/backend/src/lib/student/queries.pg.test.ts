@@ -118,7 +118,7 @@ describe.skipIf(!dockerOk)('student queries (real Postgres)', () => {
     expect(await Q.ownTexts(p, 8, 1)).toEqual(['Según Lotman (1996) y (Eco, 1976)'])
     expect((await Q.documentsOf(p, 8, 1)).map((d) => d.name)).toEqual(['Mi ensayo'])
     expect((await Q.publishedDocumentoNames(p, 8)).map((d) => d.id)).toEqual([21, 31])
-    expect(await Q.sessionTitlesOf(p, 8, 1)).toEqual([])
+    expect(await Q.sessionCountOf(p, 8, 1)).toBe(0)
   })
   it('🔴 a published TESTIMONIO by a consenting peer never feeds a peer lookup', async () => {
     // Doc 52: Beto's own audio, filed as a testimonio, mentions 'signo' and Peirce.
