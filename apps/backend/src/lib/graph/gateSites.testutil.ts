@@ -15,6 +15,9 @@
 
 export type GraphTable = 'graph_mentions' | 'graph_relations'
 
+/** The SQL comment `seedGuard.ts` puts in each of its EXISTS sub-SELECTs. */
+export const SEED_GUARD_MARK = '/* seed-guard */'
+
 /**
  * The no-private-persona filter on a mention read, any aliases (owner,
  * 2026-10-24: no private individuals in the graph). A persona passes only when
@@ -77,6 +80,13 @@ export function readSites(sqlText: string, table: GraphTable): string[] {
   const text = sqlText.replace(/\s+/g, ' ')
   const sites: string[] = []
   const re = new RegExp(`\\b(?:FROM|JOIN) ${table} \\w+`, 'g')
-  for (let m = re.exec(text); m; m = re.exec(text)) sites.push(ownScope(enclosing(text, m.index)))
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    // ⚠ The wikilink seed guard (`seedGuard.ts`) reads `graph_mentions` only
+    // inside EXISTS checks on `seeded`, about the SAME entity the gated outer
+    // read already filtered. It returns no row, so it is not a read site. Its
+    // marker sits right before its own FROM.
+    if (text.slice(Math.max(0, m.index - SEED_GUARD_MARK.length - 1), m.index).trim() === SEED_GUARD_MARK) continue
+    sites.push(ownScope(enclosing(text, m.index)))
+  }
   return sites
 }

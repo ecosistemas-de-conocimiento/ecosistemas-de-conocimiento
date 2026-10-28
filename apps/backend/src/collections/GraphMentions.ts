@@ -130,5 +130,24 @@ export const GraphMentions: CollectionConfig = {
           'Cita breve que justifica la mención. Vacío salvo en documentos: nunca se guarda para testimonios ni conversaciones.',
       },
     },
+    {
+      /**
+       * 🔴 TRUE WHEN ONLY A `[[wikilink]]` SEED PUT THIS MENTION HERE — the
+       * model did not name the node in this document (`lib/graph/wikilinks.ts`).
+       *
+       * A seed attaches only to a node a MODEL-WRITTEN mention elsewhere keeps
+       * alive (`seeded = false`). Without the flag two notes could keep a
+       * once-mislabelled name alive for each other forever (audit 2026-10-28,
+       * AUDIT-C).
+       */
+      name: 'seeded',
+      type: 'checkbox',
+      required: true,
+      defaultValue: false,
+      admin: {
+        readOnly: true,
+        description: 'Mención añadida solo por un [[enlace]] de la nota, no por el modelo.',
+      },
+    },
   ],
 }

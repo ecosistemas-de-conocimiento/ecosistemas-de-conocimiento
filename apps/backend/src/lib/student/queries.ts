@@ -25,6 +25,8 @@
 
 import { sql } from '@payloadcms/db-postgres'
 
+import { liveMention } from '../graph/seedGuard'
+
 import { TESTIMONIO_CONSENT_VERSION } from './testimonioConsent'
 import {
   intArray,
@@ -80,7 +82,7 @@ export async function topicsByUser(
       FROM graph_mentions m
       JOIN documents d ON d.id = m.document_id AND d.organization_id = ${organizationId}${published(opts.publishedOnly)}${DOCUMENTO}
       JOIN graph_entities e ON e.id = m.entity_id AND e.organization_id = ${organizationId}
-     WHERE m.organization_id = ${organizationId}
+     WHERE m.organization_id = ${organizationId}${liveMention('m')}
        AND d.uploaded_by_id = ANY(${intArray(userIds)})
        AND e.type = 'tema'${notNoise('e')}${publicPersonaOnly('e')}
      GROUP BY d.uploaded_by_id, e.id, e.label
@@ -105,7 +107,7 @@ export async function authorsOfUser(p: StudentDb, organizationId: number, userId
       FROM graph_mentions m
       JOIN documents d ON d.id = m.document_id AND d.organization_id = ${organizationId}${DOCUMENTO}
       JOIN graph_entities e ON e.id = m.entity_id AND e.organization_id = ${organizationId}
-     WHERE m.organization_id = ${organizationId}
+     WHERE m.organization_id = ${organizationId}${liveMention('m')}
        AND d.uploaded_by_id = ${userId}
        AND e.type = 'persona'${notNoise('e')}${publicPersonaOnly('e')}
      GROUP BY e.id, e.label
@@ -133,10 +135,10 @@ export async function authorsNearTopics(
       FROM graph_mentions m
       JOIN documents d ON d.id = m.document_id AND d.organization_id = ${organizationId} AND d.publication_status = 'published'${DOCUMENTO}
       JOIN graph_entities e ON e.id = m.entity_id AND e.organization_id = ${organizationId}
-     WHERE m.organization_id = ${organizationId}
+     WHERE m.organization_id = ${organizationId}${liveMention('m')}
        AND e.type = 'persona'${notNoise('e')}${publicPersonaOnly('e')}
        AND m.document_id IN (SELECT tm.document_id FROM graph_mentions tm
-                              WHERE tm.organization_id = ${organizationId}
+                              WHERE tm.organization_id = ${organizationId}${liveMention('tm')}
                                 AND tm.entity_id = ANY(${intArray(topicIds)}))
      GROUP BY e.id, e.label
      ORDER BY docs DESC, e.label ASC
@@ -154,7 +156,7 @@ export async function corpusTopTopics(p: StudentDb, organizationId: number, limi
       FROM graph_mentions m
       JOIN documents d ON d.id = m.document_id AND d.organization_id = ${organizationId} AND d.publication_status = 'published'
       JOIN graph_entities e ON e.id = m.entity_id AND e.organization_id = ${organizationId}
-     WHERE m.organization_id = ${organizationId}
+     WHERE m.organization_id = ${organizationId}${liveMention('m')}
        AND e.type = 'tema'${notNoise('e')}${publicPersonaOnly('e')}
      GROUP BY e.id, e.label
      ORDER BY docs DESC, e.label ASC
@@ -184,7 +186,7 @@ export async function readingsForTopics(
       FROM graph_mentions m
       JOIN documents d ON d.id = m.document_id AND d.organization_id = ${organizationId} AND d.publication_status = 'published'
       JOIN graph_entities e ON e.id = m.entity_id AND e.organization_id = ${organizationId}
-     WHERE m.organization_id = ${organizationId}
+     WHERE m.organization_id = ${organizationId}${liveMention('m')}
        AND d.content_kind = 'documento'
        AND d.uploaded_by_id <> ${excludeUploader}
        AND m.entity_id = ANY(${intArray(topicIds)})${notNoise('e')}${publicPersonaOnly('e')}

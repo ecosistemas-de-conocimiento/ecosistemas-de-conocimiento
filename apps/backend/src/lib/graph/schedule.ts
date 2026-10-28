@@ -20,13 +20,41 @@
  * is a missing feature; an upload that fails because of it is a broken product.
  */
 
-import { anonymiseRequested, corpusTextFor, mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
+import { anonymiseRequested, corpusTextFor, mustPassAnonymisationGate, rowMustPassGate } from '@/lib/anonymiseDocument'
 import { updateDocumentColumns, type DocumentColumnsPayload } from '@/lib/documentColumns'
 
 import { extractGraph, type GraphGenerateClient } from './extract'
 import { GRAPH_PROMPT_VERSION } from './prompt'
 import type { GraphStatus } from './types'
-import { writeGraphForDocument, type GraphWriterPayload } from './writer'
+import { keptPublicFigureNames, mergeWikiSeeds, wikiSeedsForRow, type WikiSeeds } from './wikilinks'
+import { findSeedEntities, pruneDeadSeeds, writeGraphForDocument, type GraphWriterPayload } from './writer'
+
+/**
+ * 🔴 THE ECOSISTEMAS WHOSE NOTES SEED THE GRAPH FROM `[[wikilinks]]` (owner
+ * ruling Q7, 2026-10-28: Semiosis, org 8). An allowlist, not a feature flag:
+ * the seeds are graph rows built from author markup, so each ecosistema is a
+ * deliberate decision. There is no model-less backfill: old notes get their
+ * seeds from a model re-extraction of each note. ⚠ The ordinary backfill does
+ * NOT pick them up (their `graphPromptVersion` is current, and it must not be
+ * bumped — owner ruling); `scripts/reextract-wikilink-notes.ts` queues them by
+ * id, then `lib/graph/backfill.cli.ts` runs them.
+ * See `lib/graph/wikilinks.ts` for what a link must survive.
+ */
+export const WIKILINK_SEED_ORGS: ReadonlySet<string> = new Set(['8'])
+
+export function wikiLinkSeedingEnabled(organizationId: string | number): boolean {
+  return WIKILINK_SEED_ORGS.has(String(organizationId))
+}
+
+/**
+ * `{ wikiLinks: value }` for an allowlisted ecosistema, `{}` otherwise.
+ * ⚠ Other ecosistemas' status writes never name the column, so a graph run
+ * elsewhere cannot fail on it (a database without the migration, a test on the
+ * baseline schema).
+ */
+function wikiLinksColumn(organizationId: string | number, value: unknown): Record<string, unknown> {
+  return wikiLinkSeedingEnabled(organizationId) ? { wikiLinks: value } : {}
+}
 
 /** The Payload surface a run needs. Structural, so tests need no real instance. */
 export type GraphSchedulerPayload = GraphWriterPayload & DocumentColumnsPayload
@@ -81,6 +109,24 @@ export async function clearGraphRows(
   }
   await payload.delete({ collection: 'graphMentions', where, overrideAccess: true })
   await payload.delete({ collection: 'graphRelations', where, overrideAccess: true })
+  // 🔴 This document's model mentions may have been the last ones keeping
+  // another note's seeds alive.
+  await pruneSeedsIfEnabled(payload, organizationId)
+}
+
+/**
+ * {@link pruneDeadSeeds} for a seeding ecosistema. Never throws: the graph
+ * write already landed, and the read path's `seedGuard.ts` hides what a failed
+ * prune leaves.
+ */
+export async function pruneSeedsIfEnabled(
+  payload: Pick<GraphSchedulerPayload, 'db'>,
+  organizationId: string | number,
+): Promise<void> {
+  if (!wikiLinkSeedingEnabled(organizationId)) return
+  await pruneDeadSeeds(payload.db.drizzle, organizationId).catch((err) => {
+    console.error('[graph] could not prune dead wikilink seeds in org', organizationId, err instanceof Error ? err.name : typeof err)
+  })
 }
 
 /**
@@ -114,6 +160,7 @@ export async function markNotGraphable(
   await setGraphStatus(payload, docId, {
     graphStatus: 'skipped',
     graphError: `not_graphable: ${reason}`.slice(0, 500),
+    ...wikiLinksColumn(organizationId, null),
   }).catch(() => undefined)
   return 'skipped'
 }
@@ -175,6 +222,7 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     await setGraphStatus(payload, docId, {
       graphStatus: 'skipped',
       graphError: null,
+      ...wikiLinksColumn(organizationId, null),
       graphPromptVersion: GRAPH_PROMPT_VERSION,
       graphExtractedAt: new Date().toISOString(),
     }).catch(() => undefined)
@@ -219,14 +267,27 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     const beforeWrite = await readGraphableRow(payload, docId, organizationId)
     const writeAbort = await abortIfStale(payload, docId, organizationId, start, beforeWrite)
     if (writeAbort) return writeAbort
+    // 🔴 THE SEEDS COME FROM THE ROW AS RE-READ HERE, merged by `canonicalKey`
+    // BEFORE the writer's replace-all, so a re-run never duplicates them.
+    // 🔴 Attach-only, and never a persona: the ecosistema's stored nodes for
+    // the seed keys say which keys exist and which are people (`writer.ts`
+    // `findSeedEntities`, live = a model-written mention in another note).
+    const seeds = beforeWrite.ok ? beforeWrite.seeds : null
+    const stored = await findSeedEntities(payload.db.drizzle, organizationId, docId, seeds)
+    const merged = mergeWikiSeeds(extraction, seeds, {
+      personaLabels: [...(beforeWrite.ok ? (beforeWrite.personaLabels ?? []) : []), ...stored.personaKeys],
+      known: stored.known,
+    })
+    const seeded = merged.extraction
 
     await writeGraphForDocument({
       payload,
       docId,
       organizationId,
       contentKind,
-      extraction,
+      extraction: seeded,
     })
+    await pruneSeedsIfEnabled(payload, organizationId)
 
     // ⚠ `.catch`, NOT inside the outer try. The rows are already written and
     // committed at this point. A database blip on the STATUS write would
@@ -237,6 +298,9 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     await setGraphStatus(payload, docId, {
       graphStatus: 'ready',
       graphError: null,
+      // FILTERED links only (`safeWikiLinks`); null when this row has none.
+      // `[]` (not null) when the run judged links and none attached.
+      ...wikiLinksColumn(organizationId, seeds ? (merged.links ?? []) : null),
       graphPromptVersion: extraction.promptVersion,
       graphExtractedAt: new Date().toISOString(),
     }).catch((err) => {
@@ -302,6 +366,7 @@ async function recordFailure(
     // Same `code: message` shape as `ingestError`, so the frontend maps the
     // leading code to Spanish copy the same way.
     graphError: `${code}: ${message}`.slice(0, 500),
+    ...(gated ? wikiLinksColumn(args.organizationId, null) : {}),
     graphPromptVersion: GRAPH_PROMPT_VERSION,
   }).catch((updateErr) => {
     console.error('[graph] could not record the failure on doc', docId, updateErr)
@@ -320,7 +385,17 @@ async function recordFailure(
  * text). Same helper, same fail-closed rule as publish and the backfill.
  */
 type GraphableRow =
-  | { ok: true; text: string; contentKind: string | null; anonymise: boolean; publicationStatus: unknown }
+  | {
+      ok: true
+      text: string
+      contentKind: string | null
+      anonymise: boolean
+      publicationStatus: unknown
+      /** Wikilink seeds, filtered against `text`; null when none or not enabled. */
+      seeds?: WikiSeeds | null
+      /** Kept public figures on the row: never a seed `tema`. */
+      personaLabels?: string[]
+    }
   | { ok: false; reason: string }
 
 async function readGraphableRow(
@@ -346,6 +421,8 @@ async function readGraphableRow(
     contentKind: typeof row.contentKind === 'string' ? row.contentKind : null,
     anonymise: anonymiseRequested(row.anonymise),
     publicationStatus: row.publicationStatus,
+    seeds: wikiLinkSeedingEnabled(organizationId) ? wikiSeedsForRow(row, corpus.text, rowMustPassGate(row)) : null,
+    personaLabels: keptPublicFigureNames(row.publicFiguresKept),
   }
 }
 
@@ -395,6 +472,7 @@ async function abortIfStale(
     await setGraphStatus(payload, docId, {
       graphStatus: 'failed',
       graphError: `graph_stale_job: ${reason}`.slice(0, 500),
+      ...wikiLinksColumn(organizationId, null),
       graphPromptVersion: GRAPH_PROMPT_VERSION,
     }).catch(() => undefined)
     return 'failed'
@@ -407,6 +485,7 @@ async function abortIfStale(
   await setGraphStatus(payload, docId, {
     graphStatus: 'skipped',
     graphError: `not_graphable: ${now.reason}`.slice(0, 500),
+    ...wikiLinksColumn(organizationId, null),
   }).catch(() => undefined)
   return 'skipped'
 }

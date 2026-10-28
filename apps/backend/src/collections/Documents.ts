@@ -1425,6 +1425,9 @@ const invalidateGraphOnContentKindChange: CollectionAfterChangeHook = async ({
       }
       await req.payload.delete({ collection: 'graphMentions', where, overrideAccess: true })
       await req.payload.delete({ collection: 'graphRelations', where, overrideAccess: true })
+      // 🔴 Its model mentions may have kept other notes' wikilink seeds alive.
+      const { pruneSeedsIfEnabled } = await import('@/lib/graph/schedule')
+      await pruneSeedsIfEnabled(req.payload as never, organizationId)
       await req.payload.update({
         collection: 'documents',
         id: docId as never,
@@ -1468,6 +1471,29 @@ type DocumentRowWithMedia = DocumentRow & {
  * trying to close, and the leak is already logged with the corpus and id so it
  * can be retried by hand.
  */
+/**
+ * 🔴 A DELETED DOCUMENT'S MENTIONS GO BY FK CASCADE, and they may have been the
+ * last model-written ones keeping other notes' `[[wikilink]]` seeds alive. So
+ * prune the ecosistema's dead seeds (`lib/graph/writer.ts` `pruneDeadSeeds`).
+ *
+ * ⚠ DETACHED, AND TWICE. This hook runs inside the delete's transaction; the
+ * prune uses its own connection and only sees the cascade once that commits.
+ * A `setImmediate` usually lands after the commit; a second pass a few
+ * seconds later covers a slow one. Both are idempotent and only run for a
+ * seeding ecosistema. Whatever a missed prune leaves, the read path's
+ * `seedGuard.ts` hides, and the next graph write in the ecosistema prunes.
+ */
+const pruneWikilinkSeedsAfterDeleteHook: CollectionAfterDeleteHook = async ({ doc, req }) => {
+  const organizationId = relationId((doc as { organization?: unknown })?.organization)
+  if (organizationId == null) return doc
+  const { pruneSeedsIfEnabled, wikiLinkSeedingEnabled } = await import('@/lib/graph/schedule')
+  if (!wikiLinkSeedingEnabled(organizationId)) return doc
+  const prune = () => void pruneSeedsIfEnabled(req.payload as never, organizationId)
+  setImmediate(prune)
+  setTimeout(prune, 5_000).unref?.()
+  return doc
+}
+
 const retireDeletedDocumentHook: CollectionAfterDeleteHook = async ({ context, doc, req }) => {
   const row = doc as { id?: unknown; organization?: unknown; uploadedBy?: unknown }
   if (row?.id == null) return doc
@@ -3383,6 +3409,28 @@ export const Documents: CollectionConfig = {
       },
     },
     {
+      /**
+       * 🔴 THE WIKILINKS THAT SEEDED THIS NOTE'S GRAPH — FILTERED ONLY.
+       *
+       * `lib/graph/wikilinks.ts` (`safeWikiLinks`): a `documento`'s
+       * `[[targets]]` that occur, whole-word, in its corpus text (the REDACTED
+       * text when gated), as `{ label, occurrences }`. Raw targets are never
+       * stored: an alias-hidden or redacted one is exactly what the filter
+       * drops. NULL = never seeded (most rows; owner ruling Q7 enables it per
+       * ecosistema).
+       *
+       * Read like the original, since it is derived from the author's markup.
+       * Written by the graph run only; `[]` when it judged links and none attached.
+       */
+      name: 'wikiLinks',
+      type: 'json',
+      access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
+      admin: {
+        readOnly: true,
+        description: 'Enlaces [[wiki]] de la nota que sembraron el grafo (solo los que pasaron el filtro).',
+      },
+    },
+    {
       name: 'graphExtractedAt',
       type: 'date',
       admin: {
@@ -3479,7 +3527,7 @@ export const Documents: CollectionConfig = {
      * stuck with a row they cannot remove. The failure is logged instead.
      */
     beforeDelete: [scheduleMediaCleanupHook],
-    afterDelete: [retireDeletedDocumentHook],
+    afterDelete: [retireDeletedDocumentHook, pruneWikilinkSeedsAfterDeleteHook],
   },
   endpoints: [
     publishEndpoint(),

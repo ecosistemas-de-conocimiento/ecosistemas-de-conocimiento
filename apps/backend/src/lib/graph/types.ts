@@ -193,6 +193,11 @@ export interface MergedEntity {
    * the writer stores no such persona.
    */
   publicFigure?: boolean
+  /**
+   * True only for a node a `[[wikilink]]` seed attached and the model did not
+   * name (`wikilinks.ts`). Stored as `graph_mentions.seeded`.
+   */
+  seeded?: boolean
 }
 
 /**
@@ -221,4 +226,11 @@ export interface GraphExtraction {
    */
   truncated: boolean
   promptVersion: string
+  /**
+   * 🔴 Canonical keys of every entity the model typed `persona` in this
+   * document, INCLUDING the ones the person rule dropped. Never written to a
+   * table: it only stops a wikilink seed from re-adding a person as a `tema`
+   * (`wikilinks.ts`).
+   */
+  personaKeys?: string[]
 }

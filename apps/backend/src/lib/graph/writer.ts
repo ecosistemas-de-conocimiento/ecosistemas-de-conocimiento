@@ -33,6 +33,8 @@
  * last possible moment, so no path into the table can bypass it.
  */
 
+import type { sql as SqlTag } from '@payloadcms/db-postgres'
+
 import { canonicalKey, mergeAliases } from './normalise'
 import {
   SYMMETRIC_RELATION_TYPES,
@@ -42,6 +44,7 @@ import {
   type GraphExtraction,
   type GraphRelationType,
 } from './types'
+import { seedKeys, splitStoredSeedEntities, type KnownSeedEntity, type WikiSeeds } from './wikilinks'
 
 // ---------------------------------------------------------------------------
 // The Payload surface this module needs
@@ -253,6 +256,8 @@ export async function writeGraphForDocument(args: WriteGraphArgs): Promise<Write
           occurrences: Math.max(1, Math.floor(entity.occurrences || 1)),
           // 🔴 THE LAST GATE ON THE SNIPPET. ADR §7.3.4.
           snippet: snippetAllowed(contentKind) ? (entity.snippet ?? null) : null,
+          // 🔴 A seed-only mention never counts as "live" for another note's seed.
+          seeded: entity.seeded === true,
         },
         overrideAccess: true,
         ...(req ? { req } : {}),
@@ -414,4 +419,114 @@ async function upsertEntity(args: {
     }
     return winner.id
   }
+}
+
+// ---------------------------------------------------------------------------
+// Wikilink seeds: which stored nodes a seed may attach to
+// ---------------------------------------------------------------------------
+
+/** A drizzle SQL fragment. `@payloadcms/db-postgres` re-exports `sql` but not its type. */
+type Sql = ReturnType<typeof SqlTag>
+
+/** Structural: `payload.db.drizzle`, or a bare drizzle in a test. */
+export interface SeedExecutor {
+  execute(query: Sql): Promise<unknown>
+}
+
+const rowsOf = (result: unknown): Record<string, unknown>[] =>
+  Array.isArray(result) ? result : ((result as { rows?: Record<string, unknown>[] })?.rows ?? [])
+
+/**
+ * 🔴 THE INGEST RUN'S LOOKUP — the one copy of the rule. Every stored node in
+ * this ecosistema for the seed keys, with `mentionedElsewhere` = a MODEL-WRITTEN
+ * mention (`seeded = false`) in ANOTHER document exists now, then split by
+ * {@link splitStoredSeedEntities}.
+ *
+ *   · `document_id <> docId`: this note's own old mentions are not evidence.
+ *     The lookup runs before the replace-all, so they are still there.
+ *   · `seeded = false`: another note's SEED is not evidence either — two notes
+ *     must not keep a once-mislabelled name alive for each other (AUDIT-C).
+ *   · Entities are never deleted, so an orphan `tema` has no such mention.
+ *
+ * Tenancy in every WHERE.
+ */
+export async function findSeedEntities(
+  db: SeedExecutor,
+  organizationId: string | number,
+  docId: string | number,
+  seeds: WikiSeeds | null | undefined,
+): Promise<{ personaKeys: string[]; known: KnownSeedEntity[] }> {
+  const keys = seedKeys(seeds)
+  const org = Number(organizationId)
+  const doc = Number(docId)
+  if (keys.length === 0 || !Number.isFinite(org) || !Number.isFinite(doc)) return { personaKeys: [], known: [] }
+  // ⚠ LAZY: the postgres adapter is a heavy module, and most importers of
+  // this file never seed.
+  const { sql } = await import('@payloadcms/db-postgres')
+  const keyList = sql.join(keys.map((k) => sql`${k}`), sql`, `)
+  const rows = rowsOf(
+    await db.execute(sql`
+      SELECT e.type, e.label, e.canonical_key AS "canonicalKey",
+             EXISTS (SELECT 1 FROM graph_mentions o
+                      WHERE o.organization_id = ${org} AND o.entity_id = e.id
+                        AND o.document_id <> ${doc} AND o.seeded = false) AS "mentionedElsewhere"
+        FROM graph_entities e
+       WHERE e.organization_id = ${org} AND e.canonical_key IN (${keyList})
+       ORDER BY (e.type = 'tema') DESC, e.id`),
+  ) as { type: unknown; label: unknown; canonicalKey: unknown; mentionedElsewhere: unknown }[]
+  // 🔴 EVERY stored persona of the ecosistema, with its aliases — not only
+  // the seed keys — so a surname or alias form blocks too ("Chomsky" against
+  // a stored "Noam Chomsky"). Personas are public figures only, so this set
+  // stays small.
+  const personas = rowsOf(
+    await db.execute(sql`
+      SELECT e.canonical_key AS key, e.aliases FROM graph_entities e
+       WHERE e.organization_id = ${org} AND e.type = 'persona'`),
+  )
+  const personaNames: string[] = []
+  for (const p of personas) {
+    if (typeof p.key === 'string') personaNames.push(p.key)
+    if (Array.isArray(p.aliases)) for (const a of p.aliases) if (typeof a === 'string') personaNames.push(a)
+  }
+  const { personaKeys, known } = splitStoredSeedEntities(rows, personaNames)
+  return { personaKeys, known: known.map(({ type, label, canonicalKey: key }) => ({ type, label, canonicalKey: key })) }
+}
+
+/**
+ * 🔴 PRUNE SEEDS NOTHING MODEL-WRITTEN KEEPS ALIVE (audit 2026-10-28, item 1).
+ *
+ * Note A's model stops calling a name a `tema`; notes B and C hold SEEDED
+ * mentions of that node and are not re-run. Without this they would keep it
+ * on the graph forever. So after every graph write or clear in a seeding
+ * ecosistema: delete each `seeded = true` mention whose node has no
+ * `seeded = false` mention left, and the edges that touch that node in the
+ * same document (a seed edge is title → link, so it dies with its seed).
+ *
+ * ONE statement (a data-modifying CTE), so it is atomic on its own. It runs
+ * after the document's own transaction commits: Payload's transaction handle
+ * is not reachable from raw SQL here. The read path's `seedGuard.ts` covers
+ * the window. Tenancy in every WHERE. Returns the mentions deleted.
+ */
+export async function pruneDeadSeeds(db: SeedExecutor, organizationId: string | number): Promise<number> {
+  const org = Number(organizationId)
+  if (!Number.isFinite(org)) return 0
+  const { sql } = await import('@payloadcms/db-postgres')
+  const rows = rowsOf(
+    await db.execute(sql`
+      WITH dead AS (
+        DELETE FROM graph_mentions m
+         WHERE m.organization_id = ${org} AND m.seeded = true
+           AND NOT EXISTS (SELECT 1 FROM graph_mentions o
+                            WHERE o.organization_id = ${org} AND o.entity_id = m.entity_id AND o.seeded = false)
+        RETURNING m.document_id, m.entity_id
+      ), edges AS (
+        DELETE FROM graph_relations r
+         USING dead d
+         WHERE r.organization_id = ${org} AND r.document_id = d.document_id
+           AND (r.from_entity_id = d.entity_id OR r.to_entity_id = d.entity_id)
+        RETURNING r.id
+      )
+      SELECT (SELECT count(*)::int FROM dead) AS mentions, (SELECT count(*)::int FROM edges) AS edges`),
+  )
+  return Number(rows[0]?.mentions ?? 0)
 }

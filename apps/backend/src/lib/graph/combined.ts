@@ -79,6 +79,7 @@ import {
   type GraphViewEntity,
   type Row,
 } from './queries'
+import { liveEdge, liveMention } from './seedGuard'
 import type { GraphEntityType, GraphRelationType } from './types'
 
 /** A merged node: the single-ecosistema shape plus where it comes from. */
@@ -140,7 +141,7 @@ function joinPublishedDocumentsPerRow(alias: 'm' | 'r', ids: GraphSql): GraphSql
       ON d.id = ${table}.document_id
      AND d.organization_id = ${table}.organization_id
      AND d.organization_id = ANY(${ids})
-     AND d.publication_status = 'published'`
+     AND d.publication_status = 'published'${alias === 'm' ? liveMention('m') : liveEdge('r')}`
 }
 
 interface MemberOpts {

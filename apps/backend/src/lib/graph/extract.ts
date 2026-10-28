@@ -1019,6 +1019,12 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
   const parsedWindows: ParsedWindow[] = []
   let windowsFailed = 0
   /**
+   * 🔴 Every label the model typed `persona`, kept or dropped. Handed on so
+   * the wikilink seeds (`wikilinks.ts`) never re-add a person the person rule
+   * just removed as a `tema`. Keys only, never stored.
+   */
+  const personaKeys = new Set<string>()
+  /**
    * 🔴 WHY THE REASONS ARE COLLECTED AND NOT ONLY LOGGED.
    *
    * The 11 documents that failed the first corpus run all carry the same
@@ -1092,6 +1098,9 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
       }
     }
     const shaped = reply.window
+    for (const e of shaped.entities) {
+      if (e.tipo === 'persona') personaKeys.add(canonicalKey(e.etiqueta))
+    }
 
     // 🔴 UNCONDITIONAL, and before the merge. Privacy first: the person rule
     // runs whatever the model returned, and only then does the quality rule.
@@ -1126,6 +1135,7 @@ export async function extractGraph(args: ExtractGraphArgs): Promise<GraphExtract
     windowsFailed,
     truncated,
     promptVersion: GRAPH_PROMPT_VERSION,
+    personaKeys: [...personaKeys].filter(Boolean),
   }
 }
 

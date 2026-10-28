@@ -20,6 +20,7 @@ export const DOCUMENT_COLUMNS = {
   graphError: 'graph_error',
   graphPromptVersion: 'graph_prompt_version',
   graphExtractedAt: 'graph_extracted_at',
+  wikiLinks: 'wiki_links',
   anonymisationStatus: 'anonymisation_status',
   anonymisationError: 'anonymisation_error',
   anonymisationReport: 'anonymisation_report',

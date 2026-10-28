@@ -23,6 +23,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { up as baselineUp } from '../../migrations/20260908_092211_baseline'
 import { up as publicFigureUp } from '../../migrations/20261024_201817_graph_entities_public_figure'
 import { up as anonymiseUp } from '../../migrations/20261026_160000_documents_anonymise'
+import { up as wikiLinksUp } from '../../migrations/20261028_170129_documents_wiki_links'
 import { graphEntityEndpoint, graphViewEndpoint } from '../../endpoints/graph'
 import { readCombinedEntityDetail, readCombinedView, type CombinedView } from './combined'
 import { readEntityView, type GraphEntityView, type GraphQueryPayload } from './queries'
@@ -178,6 +179,8 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
     await baselineUp({ db, payload: {}, req: {} } as unknown as MigrateUpArgs)
     await publicFigureUp({ db, payload: {}, req: {} } as unknown as MigrateUpArgs)
     await anonymiseUp({ db, payload: {}, req: {} } as unknown as MigrateUpArgs)
+    // `graph_mentions.seeded`: the read path's seed guard (`seedGuard.ts`) reads it.
+    await wikiLinksUp({ db, payload: {}, req: {} } as unknown as MigrateUpArgs)
     await seed()
     payload = { db: { drizzle: db } } as GraphQueryPayload
   }, 60_000)

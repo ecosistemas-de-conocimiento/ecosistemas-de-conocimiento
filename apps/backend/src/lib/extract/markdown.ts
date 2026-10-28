@@ -108,3 +108,19 @@ export function extractMarkdownText(
   if (text.length > maxChars) throw new TextTooLongError(maxChars)
   return { text, metadata }
 }
+
+/**
+ * The raw `[[wikilink]]` targets of a note, in order, de-duplicated — the same
+ * list as `extractMarkdownText(...).metadata.links`, under the same rules
+ * (fences, comments and `![[embeds]]` yield none).
+ *
+ * 🔴 RAW, NOT SAFE. A target is whatever the author typed, and `[[T|alias]]`
+ * hides `T` from the visible text. Filter with `lib/graph/wikilinks.ts`
+ * (`safeWikiLinks`) before any of it reaches the graph.
+ *
+ * No length cap: the caller's source is already capped (`bodyMarkdown`'s
+ * `maxLength`), and a cap here would only turn a long note into no links.
+ */
+export function extractMarkdownLinks(source: Uint8Array | string): string[] {
+  return extractMarkdownText(source, { maxChars: Number.POSITIVE_INFINITY }).metadata.links
+}

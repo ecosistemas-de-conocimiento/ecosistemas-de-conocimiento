@@ -87,6 +87,7 @@ import { sql } from '@payloadcms/db-postgres'
 
 import { contentKindOf, titleFor, type ContentKind } from '../contentKind'
 import { GRAPH_NOISE_KEY_PATTERN } from './noise'
+import { liveEdge, liveMention } from './seedGuard'
 import { canonicalKey } from './normalise'
 import { snippetAllowed, type GraphEntityType, type GraphRelationType } from './types'
 
@@ -425,7 +426,7 @@ function joinPublishedDocuments(alias: 'm' | 'r', organizationId: number): Graph
     JOIN documents d
       ON d.id = ${table}.document_id
      AND d.organization_id = ${organizationId}
-     AND d.publication_status = 'published'`
+     AND d.publication_status = 'published'${alias === 'm' ? liveMention('m') : liveEdge('r')}`
 }
 
 /**
