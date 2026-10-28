@@ -79,8 +79,40 @@ describe('combined statements carry every gate, per row', () => {
         expect(text).toContain('rel.from_org = rel.org_id AND rel.to_org = rel.org_id')
         expect(text).toMatch(/CASE WHEN co\.weight >= \$\d+/)
       } else {
-        expect(text).toMatch(/HAVING COUNT\(DISTINCT rel\.document_id\) >= \$\d+/)
+        // Per-ecosistema pair count by window, before the merge.
+        expect(text).toMatch(/roc\.org_pair_docs >= \$\d+/)
+        expect(text).toContain('PARTITION BY rel.org_id, rel.neighbour_id ORDER BY rel.document_id')
       }
+    }
+  })
+
+  /**
+   * ⚠ THE PLANNER GUESSES ~1 ROW FOR EVERY AGGREGATED CTE, so a JOIN between
+   * two derived sets is a nested loop over both. The node panel's old
+   * `merged … IN (SELECT … FROM focal)` re-ran a `member` self-join per node:
+   * 4.7 s for one hub on an ecosistema the size of dev org 6 (audit,
+   * 2026-10-28). A JOIN may reach a base table or `focal` (one row per
+   * ecosistema), nothing else. The real-Postgres proof is
+   * `combinedDetail.pg.test.ts`.
+   */
+  it('node panel statements join only base tables and `focal`, never two derived sets', () => {
+    const allowed = new Set(['graph_mentions', 'documents', 'graph_entities', 'focal'])
+    for (const name of ['detail', 'neighbours', 'edge documents', 'documents']) {
+      const { text } = render(statements[name]!)
+      const joined = [...text.matchAll(/\bJOIN\s+(?!LATERAL\b)(\w+)/g)].map((m) => m[1])
+      expect(joined.filter((table) => !allowed.has(table!)), name).toEqual([])
+      // The node is one scalar lookup, planned once — never a semi-join to a CTE.
+      expect(text, name).not.toMatch(/IN \(SELECT \w+\.node_id FROM/)
+      expect(text, name).toContain('(SELECT fm.node_id FROM member fm WHERE fm.entity_id = $')
+      if (name !== 'detail') expect(text, name).toContain('focal AS MATERIALIZED')
+    }
+    for (const name of ['neighbours', 'edge documents']) {
+      const { text } = render(statements[name]!)
+      // The neighbour gate is a fold over relation rows and visible node rows.
+      expect(text, name).toMatch(/FROM rel_raw rr UNION ALL SELECT .* FROM node_attr na/)
+      expect(text, name).toContain('WHERE rf.is_rel AND rf.neighbour_id IS NOT NULL')
+      // Neighbour label and support come from `node_attr`, not a join back to `merged`.
+      expect(text, name).not.toMatch(/FROM merged|JOIN merged/)
     }
   })
 

@@ -568,22 +568,37 @@ export interface CombinedDetailArgs {
 }
 
 /**
- * The focal node's rows in every included ecosistema. The `focus` CTE resolves
- * the key ONLY from a row that is itself visible (`member`), so an id below the
+ * The focal node's rows in every included ecosistema. The node is resolved
+ * ONLY from a row that is itself visible (`member`), so an id below the
  * threshold, outside the included set, or noise finds nothing — one answer,
  * the same as `entityDetailQuery`.
+ *
+ * `member.node_id` already names the merged node (the lowest id in its
+ * `(type, canonical_key)` partition), so the focal entity's own row carries the
+ * node, and the node's rows are the `member` rows with that `node_id`.
+ */
+function focalNode(entityId: number): GraphSql {
+  return sql`(SELECT fm.node_id FROM member fm WHERE fm.entity_id = ${entityId})`
+}
+
+/**
+ * ⚠ SHAPED FOR THE PLANNER, measured (2026-10-28, local postgres:16, the audit's
+ * org-6-sized fixture). Aggregated CTEs are estimated at ~1 row, so a JOIN
+ * between two of them is planned as a nested loop over both. The old `focus` /
+ * `focal` pair was a self-join of `member`, and the detail statement's
+ * `merged … IN (SELECT … FROM focal)` re-ran it once per merged node: 4.6 s
+ * for one hub entity on 482 nodes. Here the node is one scalar subquery
+ * (planned once), `focal` is MATERIALIZED (it holds one row per ecosistema),
+ * and the neighbour statements below read `node_attr` instead of re-joining
+ * `merged`. `combined.test.ts` pins the shape; `combinedDetail.pg.test.ts`
+ * times it.
  */
 function focalCtes(ids: GraphSql, entityId: number, minSupport: number): GraphSql {
   return sql`${memberCtes(ids, { minSupport })},
-    focus AS (
-      SELECT mb.type AS type, mb.canonical_key AS canonical_key
-      FROM member mb
-      WHERE mb.entity_id = ${entityId}
-    ),
-    focal AS (
+    focal AS MATERIALIZED (
       SELECT mb.org_id AS org_id, mb.entity_id AS entity_id, mb.node_id AS node_id
       FROM member mb
-      JOIN focus f ON f.type = mb.type AND f.canonical_key = mb.canonical_key
+      WHERE mb.node_id = ${focalNode(entityId)}
     )`
 }
 
@@ -591,23 +606,52 @@ export function combinedEntityDetailQuery(args: CombinedDetailArgs): GraphSql {
   const ids = intArray(normaliseOrgIds(args.organizationIds))
   const minSupport = args.minSupport ?? graphMinSupport()
   return sql`
-    WITH ${focalCtes(ids, args.entityId, minSupport)}
+    WITH ${memberCtes(ids, { minSupport })}
     SELECT mg.node_id AS id, mg.type AS type, mg.label AS label, mg.support AS support,
            mg.ecosystems AS ecosystems, mg.ecosystem_support AS ecosystem_support
     FROM merged mg
-    WHERE mg.node_id IN (SELECT focal.node_id FROM focal)`
+    WHERE mg.node_id = ${focalNode(args.entityId)}`
 }
 
 /**
  * The relation rows touching the focal node, per ecosistema, kept only where
- * the PAIR passes the edge threshold in that ecosistema (`pairs_org`). Shared
- * by the neighbour list and the per-edge evidence, so the two agree.
+ * the PAIR passes the edge threshold in that ecosistema (`org_pair_docs`).
+ * Shared by the neighbour list and the per-edge evidence, so the two agree.
+ *
+ * Each row carries its neighbour's MERGED label, support and type from
+ * `node_attr` — the same values `merged` computes (`label` of the
+ * best-supported row, lowest id on a tie; `support` summed), by window over
+ * `member` instead of a GROUP BY that would have to be joined back.
+ *
+ * ⚠ NO JOIN BETWEEN DERIVED SETS except to `focal` (one row per ecosistema,
+ * which is the right driver: an index probe of `graph_relations` per row).
+ * The neighbour gate — the other end must be a visible `member` row of the
+ * relation's own ecosistema — is a FOLD, not a JOIN: relation rows and
+ * `node_attr` rows are stacked by UNION ALL and the node's columns spread over
+ * `(org_id, entity_id)` by window; a relation row without a node row is
+ * dropped. Measured: joining `node_attr` instead let the planner put
+ * `focal × node_attr` (estimated 1 × 67, actually 899 rows) on the outside
+ * and probe `graph_relations` 899 times, 2.0 s for a hub. Distinct document
+ * counts are DENSE_RANK + MAX windows, as in `combinedViewEdgesQuery`.
  */
 function focalRelationCtes(ids: GraphSql, minEdge: number): GraphSql {
   return sql`
-    rel AS (
+    node_attr AS MATERIALIZED (
+      SELECT mb.org_id AS org_id,
+             mb.entity_id AS entity_id,
+             mb.node_id AS node_id,
+             mb.type AS node_type,
+             FIRST_VALUE(mb.label) OVER (
+               PARTITION BY mb.node_id ORDER BY mb.support DESC, mb.entity_id ASC
+             ) AS node_label,
+             (SUM(mb.support) OVER (PARTITION BY mb.node_id))::int AS node_support
+      FROM member mb
+    ),
+    rel_raw AS MATERIALIZED (
       SELECT r.organization_id AS org_id,
-             nb.node_id AS neighbour_id,
+             CASE WHEN r.from_entity_id = f.entity_id THEN r.to_entity_id
+                  ELSE r.from_entity_id END AS other_id,
+             f.node_id AS focal_node,
              r.type AS relation_type,
              r.document_id AS document_id,
              d.name AS name,
@@ -619,37 +663,54 @@ function focalRelationCtes(ids: GraphSql, minEdge: number): GraphSql {
       JOIN focal f
         ON f.org_id = r.organization_id
        AND (r.from_entity_id = f.entity_id OR r.to_entity_id = f.entity_id)
-      JOIN member nb
-        ON nb.org_id = r.organization_id
-       AND nb.entity_id = CASE WHEN r.from_entity_id = f.entity_id THEN r.to_entity_id
-                               ELSE r.from_entity_id END
       WHERE r.organization_id = ANY(${ids})
-        AND nb.node_id <> f.node_id
     ),
-    pairs_org AS (
-      SELECT rel.org_id AS org_id, rel.neighbour_id AS neighbour_id
+    rel_folded AS (
+      SELECT u.*,
+             MAX(u.n_node_id) OVER (PARTITION BY u.org_id, u.entity_id) AS neighbour_id,
+             MAX(u.n_type) OVER (PARTITION BY u.org_id, u.entity_id) AS node_type,
+             MAX(u.n_label) OVER (PARTITION BY u.org_id, u.entity_id) AS node_label,
+             MAX(u.n_support) OVER (PARTITION BY u.org_id, u.entity_id) AS node_support
+      FROM (
+        SELECT rr.org_id AS org_id, rr.other_id AS entity_id, TRUE AS is_rel,
+               rr.focal_node AS focal_node, rr.relation_type AS relation_type,
+               rr.document_id AS document_id, rr.name AS name, rr.content_kind AS content_kind,
+               rr.is_out AS is_out,
+               NULL::int AS n_node_id, NULL AS n_type, NULL::text AS n_label, NULL::int AS n_support
+        FROM rel_raw rr
+        UNION ALL
+        SELECT na.org_id, na.entity_id, FALSE, NULL, NULL, NULL, NULL, NULL, NULL,
+               na.node_id, na.node_type, na.node_label, na.node_support
+        FROM node_attr na
+      ) u
+    ),
+    rel AS MATERIALIZED (
+      SELECT rf.org_id AS org_id, rf.neighbour_id AS neighbour_id, rf.node_type AS node_type,
+             rf.node_label AS node_label, rf.node_support AS node_support,
+             rf.relation_type AS relation_type, rf.document_id AS document_id,
+             rf.name AS name, rf.content_kind AS content_kind, rf.is_out AS is_out
+      FROM rel_folded rf
+      WHERE rf.is_rel
+        AND rf.neighbour_id IS NOT NULL
+        AND rf.neighbour_id <> rf.focal_node
+    ),
+    rel_org_ranked AS (
+      SELECT rel.*,
+             DENSE_RANK() OVER (PARTITION BY rel.org_id, rel.neighbour_id ORDER BY rel.document_id) AS org_doc_rank
       FROM rel
-      GROUP BY rel.org_id, rel.neighbour_id
-      HAVING COUNT(DISTINCT rel.document_id) >= ${minEdge}
     ),
-    rel_kept AS (
-      SELECT rel.* FROM rel
-      JOIN pairs_org po ON po.org_id = rel.org_id AND po.neighbour_id = rel.neighbour_id
+    rel_org_counted AS (
+      SELECT ror.*,
+             MAX(ror.org_doc_rank) OVER (PARTITION BY ror.org_id, ror.neighbour_id) AS org_pair_docs
+      FROM rel_org_ranked ror
     ),
-    pairs AS (
-      SELECT rk.neighbour_id AS neighbour_id, COUNT(DISTINCT rk.document_id)::int AS pair_support
-      FROM rel_kept rk
-      GROUP BY rk.neighbour_id
-    ),
-    edges AS (
-      SELECT rk.neighbour_id AS neighbour_id,
-             rk.relation_type AS relation_type,
-             COUNT(DISTINCT rk.document_id)::int AS support,
-             CASE WHEN BOOL_AND(rk.is_out) THEN 'out'
-                  WHEN BOOL_AND(NOT rk.is_out) THEN 'in'
-                  ELSE 'both' END AS direction
-      FROM rel_kept rk
-      GROUP BY rk.neighbour_id, rk.relation_type
+    rel_kept AS MATERIALIZED (
+      SELECT roc.org_id AS org_id, roc.neighbour_id AS neighbour_id, roc.node_type AS node_type,
+             roc.node_label AS node_label, roc.node_support AS node_support,
+             roc.relation_type AS relation_type, roc.document_id AS document_id,
+             roc.name AS name, roc.content_kind AS content_kind, roc.is_out AS is_out
+      FROM rel_org_counted roc
+      WHERE roc.org_pair_docs >= ${minEdge}
     )`
 }
 
@@ -660,19 +721,41 @@ export function combinedNeighboursQuery(args: CombinedDetailArgs): GraphSql {
   const limit = clampLimit(args.neighbourLimit, MAX_NEIGHBOURS, MAX_NEIGHBOURS)
   return sql`
     WITH ${focalCtes(ids, args.entityId, minSupport)},
-    ${focalRelationCtes(ids, minEdge)}
-    SELECT mg.node_id AS id,
-           mg.type AS type,
-           mg.label AS label,
-           mg.support AS support,
+    ${focalRelationCtes(ids, minEdge)},
+    pair_ranked AS (
+      SELECT rk.*,
+             DENSE_RANK() OVER (PARTITION BY rk.neighbour_id ORDER BY rk.document_id) AS pair_doc_rank
+      FROM rel_kept rk
+    ),
+    pair_counted AS (
+      SELECT pr.*,
+             MAX(pr.pair_doc_rank) OVER (PARTITION BY pr.neighbour_id) AS pair_support
+      FROM pair_ranked pr
+    ),
+    edges AS (
+      SELECT pc.neighbour_id AS neighbour_id,
+             pc.node_type AS node_type,
+             pc.node_label AS node_label,
+             pc.node_support AS node_support,
+             pc.relation_type AS relation_type,
+             COUNT(DISTINCT pc.document_id)::int AS support,
+             MAX(pc.pair_support)::int AS pair_support,
+             CASE WHEN BOOL_AND(pc.is_out) THEN 'out'
+                  WHEN BOOL_AND(NOT pc.is_out) THEN 'in'
+                  ELSE 'both' END AS direction
+      FROM pair_counted pc
+      GROUP BY pc.neighbour_id, pc.node_type, pc.node_label, pc.node_support, pc.relation_type
+    )
+    SELECT edges.neighbour_id AS id,
+           edges.node_type AS type,
+           edges.node_label AS label,
+           edges.node_support AS support,
            edges.relation_type AS relation_type,
            edges.support AS edge_support,
-           pairs.pair_support AS pair_support,
+           edges.pair_support AS pair_support,
            edges.direction AS direction
     FROM edges
-    JOIN pairs ON pairs.neighbour_id = edges.neighbour_id
-    JOIN merged mg ON mg.node_id = edges.neighbour_id
-    ORDER BY pairs.pair_support DESC, edges.support DESC, mg.support DESC, mg.label ASC,
+    ORDER BY edges.pair_support DESC, edges.support DESC, edges.node_support DESC, edges.node_label ASC,
              edges.relation_type ASC
     LIMIT ${limit}`
 }
