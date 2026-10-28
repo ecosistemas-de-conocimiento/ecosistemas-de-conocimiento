@@ -4,6 +4,7 @@ vi.mock('$lib/server/auth', () => ({ backendUrl: () => 'http://backend.test', ba
 
 import { actions, load } from './+page.server';
 import { backendFetch } from '$lib/server/auth';
+import { CONVERSACIONES_HREF } from '$lib/inicio';
 import { FEATURE_DEFAULTS, FEATURE_KEYS, FEATURE_LABELS, PLATFORM_ADMIN_ONLY_FEATURES } from '$lib/features';
 
 const mocked = backendFetch as unknown as ReturnType<typeof vi.fn>;
@@ -28,6 +29,12 @@ describe('/ajustes load', () => {
   it('🔴 a member or an admin-role person (backend 403) is denied', async () => {
     mocked.mockResolvedValue(json({ errors: [{ message: 'No administras este ecosistema.' }] }, 403));
     await expect(load(event())).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('the deny page goes back to the conversations, not to the start screen', async () => {
+    mocked.mockResolvedValue(json({}, 403));
+    const err = await Promise.resolve(load(event())).catch((e: unknown) => e);
+    expect(JSON.stringify(err)).toContain(`"href":"${CONVERSACIONES_HREF}"`);
   });
 
   it('lists only what the backend says is editable, and picks ?eco=', async () => {

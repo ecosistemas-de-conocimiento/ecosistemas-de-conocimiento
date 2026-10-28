@@ -5,7 +5,12 @@ import type { Access, CollectionConfig } from 'payload'
  * 2026-10-27). Both default OFF:
  *   · `shareWithPeers` — other students may see my name and my topics;
  *   · `shareActivity`  — the ecosistema's responsables may read my activity
- *     report.
+ *     report;
+ *   · `shareTestimoniosAt` — WHEN I accepted that the report also shows my
+ *     testimonios, anonymised (owner ruling Q20: a consent given while
+ *     `studentTestimonios` was off does not cover them). NULL = not given or
+ *     withdrawn. Set only while the switch is on, cleared on withdrawal and
+ *     whenever `shareActivity` goes off.
  *
  * 🔴 Server-only. `endpoints/estudiante.ts` is the one reader and writer; it
  * always keys the row on the CALLER, so nobody can flip someone else's consent.
@@ -21,5 +26,6 @@ export const StudentProfiles: CollectionConfig = {
     { name: 'organization', type: 'relationship', relationTo: 'organizations', required: true, index: true },
     { name: 'shareWithPeers', type: 'checkbox', required: true, defaultValue: false },
     { name: 'shareActivity', type: 'checkbox', required: true, defaultValue: false },
+    { name: 'shareTestimoniosAt', type: 'date', admin: { date: { pickerAppearance: 'dayAndTime' } } },
   ],
 }

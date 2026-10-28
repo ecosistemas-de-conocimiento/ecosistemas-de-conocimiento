@@ -26,7 +26,7 @@ export interface Author {
 }
 
 export interface StudentOverview {
-  perfil: { shareWithPeers: boolean; shareActivity: boolean };
+  perfil: { shareWithPeers: boolean; shareActivity: boolean; shareTestimonios?: boolean };
   temas: string[];
   documentos: Array<{ id: number; name: string; status: string }>;
   companeros: Array<{ name: string; topics: string[] }>;

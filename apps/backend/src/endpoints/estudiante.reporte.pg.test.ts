@@ -59,6 +59,21 @@ const SECRETS = [
 ]
 
 const reporte = estudianteEndpoints.find((e) => e.method === 'get' && e.path === '/estudiante/reporte') as Endpoint
+const perfil = estudianteEndpoints.find((e) => e.method === 'patch' && e.path === '/estudiante/perfil') as Endpoint
+
+async function savePerfil(as: number, body: Record<string, unknown>) {
+  const { createLocalReq } = await import('payload')
+  const user = await payload!.findByID({ collection: 'users', id: as, overrideAccess: true })
+  const req = (await createLocalReq({ user: { ...user, collection: 'users' } as never }, payload!)) as PayloadRequest
+  Object.assign(req, { searchParams: new URLSearchParams(), routeParams: {}, json: async () => body })
+  const res = await perfil.handler(req)
+  return { status: res.status, body: (await res.json()) as { perfil?: Record<string, unknown> } }
+}
+
+const consentAt = async (user: number, org: number) =>
+  ((await pg!.db.execute(
+    sql.raw(`SELECT share_testimonios_at AS at FROM student_profiles WHERE user_id = ${user} AND organization_id = ${org}`),
+  )) as unknown as { rows: Array<{ at: unknown }> }).rows[0]?.at ?? null
 
 async function report(as: number, organization: number, student: number) {
   const { createLocalReq } = await import('payload')
@@ -91,8 +106,8 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
       INSERT INTO memberships (user_id, organization_id, role) VALUES
         (2, 1, 'investigador'), (3, 1, 'owner'), (4, 1, 'estudiante'), (7, 1, 'estudiante'),
         (5, 2, 'estudiante'), (6, 2, 'investigador');
-      INSERT INTO student_profiles (user_id, organization_id, share_with_peers, share_activity) VALUES
-        (4, 1, false, true), (7, 1, true, true), (5, 2, false, true);
+      INSERT INTO student_profiles (user_id, organization_id, share_with_peers, share_activity, share_testimonios_at) VALUES
+        (4, 1, false, true, now()), (7, 1, true, true, now()), (5, 2, false, true, now());
       INSERT INTO documents (id, organization_id, uploaded_by_id, name, publication_status, content_kind,
                              anonymisation_status, extracted_text, body_markdown, redacted_text, held_text,
                              testimonio_title, created_at) VALUES
@@ -198,6 +213,58 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
       [22, 'held', null, null],
       [20, 'approved', 'Habló [Persona A] del río.', 'El río y la comunidad'],
     ])
+  })
+
+  describe('🔴 testimonios need their own consent (owner ruling Q20)', () => {
+    const testimonios = async () => (await report(INES, ECO_A, ANA)).body.reporte!.testimonios
+    beforeEach(async () => {
+      await setFeatures(ECO_A, { studentView: true, studentTestimonios: true })
+      invalidateFeatures()
+    })
+    afterAll(async () => {
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_activity = true, share_testimonios_at = now() WHERE user_id = ${ANA}`))
+    })
+
+    it('an activity consent given without it (switch was off) shows no testimonios; documentos still show', async () => {
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_testimonios_at = NULL WHERE user_id = ${ANA}`))
+      const res = await report(INES, ECO_A, ANA)
+      expect(res.status).toBe(200)
+      expect('testimonios' in res.body.reporte!).toBe(false)
+      expect((res.body.reporte!.uploads as unknown[]).length).toBe(2)
+      expect(res.text).not.toMatch(/Habló|El río/)
+    })
+
+    it('accepting records the moment and shows them; withdrawing clears it and hides them at once', async () => {
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_testimonios_at = NULL WHERE user_id = ${ANA}`))
+      const accepted = await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true })
+      expect(accepted.status).toBe(200)
+      expect(accepted.body.perfil).toMatchObject({ shareActivity: true, shareTestimonios: true })
+      expect(await consentAt(ANA, ECO_A)).not.toBeNull()
+      expect(((await testimonios()) as Array<{ id: number }>).map((t) => t.id)).toContain(20)
+
+      const withdrawn = await savePerfil(ANA, { organization: ECO_A, shareTestimonios: false })
+      expect(withdrawn.body.perfil).toMatchObject({ shareActivity: true, shareTestimonios: false })
+      expect(await consentAt(ANA, ECO_A)).toBeNull()
+      expect(await testimonios()).toBeUndefined()
+    })
+
+    it('withdrawing the activity consent clears the testimonio consent too', async () => {
+      await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true })
+      await savePerfil(ANA, { organization: ECO_A, shareActivity: false })
+      expect(await consentAt(ANA, ECO_A)).toBeNull()
+      // Sharing activity again does not bring testimonios back by itself.
+      await savePerfil(ANA, { organization: ECO_A, shareActivity: true })
+      expect(await consentAt(ANA, ECO_A)).toBeNull()
+      expect(await testimonios()).toBeUndefined()
+    })
+
+    it('🔴 the testimonio consent cannot be given while the switch is off (its wording is not shown)', async () => {
+      await pg!.db.execute(sql.raw(`UPDATE student_profiles SET share_testimonios_at = NULL WHERE user_id = ${ANA}`))
+      await setFeatures(ECO_A, { studentView: true })
+      invalidateFeatures()
+      expect((await savePerfil(ANA, { organization: ECO_A, shareTestimonios: true })).status).toBe(400)
+      expect(await consentAt(ANA, ECO_A)).toBeNull()
+    })
   })
 
   it('🔴 another ecosistema\'s student is never reachable, switch on or off', async () => {

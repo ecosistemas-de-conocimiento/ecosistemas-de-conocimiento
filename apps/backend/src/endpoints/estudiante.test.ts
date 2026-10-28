@@ -23,7 +23,7 @@ type Membership = { user: number; organization: number; role: string }
 interface World {
   features: Record<number, Record<string, boolean>>
   memberships: Membership[]
-  profiles: Array<{ id: number; user: number; organization: number; shareWithPeers: boolean; shareActivity: boolean }>
+  profiles: Array<{ id: number; user: number; organization: number; shareWithPeers: boolean; shareActivity: boolean; shareTestimoniosAt?: string | null }>
   suggestions: Array<Record<string, unknown>>
   writes: Array<{ op: string; collection: string; data: unknown }>
 }
@@ -247,7 +247,7 @@ describe('student scoping', () => {
       body: { organization: ORG, shareWithPeers: true, user: 2 },
     })
     expect(res.status).toBe(200)
-    expect(res.body.perfil).toEqual({ shareWithPeers: true, shareActivity: false })
+    expect(res.body.perfil).toEqual({ shareWithPeers: true, shareActivity: false, shareTestimonios: false })
     expect(w.profiles).toEqual([{ id: 1, user: 1, organization: ORG, shareWithPeers: true, shareActivity: false }])
   })
 
@@ -345,7 +345,7 @@ describe('activity report', () => {
   it('studentTestimonios on: the consenting student\'s testimonios, read for that student only', async () => {
     const { w, call, Q } = setup()
     w.features[ORG] = { studentView: true, studentTestimonios: true }
-    w.profiles.push({ id: 1, user: 1, organization: ORG, shareWithPeers: false, shareActivity: true })
+    w.profiles.push({ id: 1, user: 1, organization: ORG, shareWithPeers: false, shareActivity: true, shareTestimoniosAt: '2026-10-27T00:00:00.000Z' })
     const res = await call('get', '/estudiante/reporte', { as: user(5), qs: `organization=${ORG}&user=1` })
     expect((res.body.reporte as { testimonios: unknown }).testimonios).toEqual([
       { id: 300, createdAt: '2026-10-02', state: 'visible', title: 'Testimonio', text: 'Habló [Persona A].' },

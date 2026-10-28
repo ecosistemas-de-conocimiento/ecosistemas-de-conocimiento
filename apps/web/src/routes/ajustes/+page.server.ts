@@ -10,6 +10,7 @@
 import { fail } from '@sveltejs/kit';
 
 import { FEATURE_KEYS, type Features } from '$lib/features';
+import { CONVERSACIONES_HREF } from '$lib/inicio';
 import { denyAccess } from '$lib/server/deny';
 import { fetchEditables, saveFeatures, savePlatform } from '$lib/server/features';
 import type { Actions, PageServerLoad } from './$types';
@@ -19,7 +20,7 @@ const deny = (): never =>
     module: 'ajustes',
     reason: 'no-feature-edit',
     message: 'Esta sección es para quien es responsable de un ecosistema.',
-    cta: { label: 'Volver al chat', href: '/' },
+    cta: { label: 'Volver al chat', href: CONVERSACIONES_HREF },
   });
 
 export const load: PageServerLoad = async ({ locals, url }) => {

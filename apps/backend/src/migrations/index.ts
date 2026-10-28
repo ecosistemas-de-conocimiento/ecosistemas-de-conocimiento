@@ -11,6 +11,7 @@ import * as migration_20261027_053737_memberships_role_estudiante from './202610
 import * as migration_20261027_053800_student_view from './20261027_053800_student_view';
 import * as migration_20261027_061014_student_view_fk_cascade from './20261027_061014_student_view_fk_cascade';
 import * as migration_20261027_225429_documents_public_figures from './20261027_225429_documents_public_figures';
+import * as migration_20261028_054402_student_testimonio_consent from './20261028_054402_student_testimonio_consent';
 
 export const migrations = [
   {
@@ -76,6 +77,11 @@ export const migrations = [
   {
     up: migration_20261027_225429_documents_public_figures.up,
     down: migration_20261027_225429_documents_public_figures.down,
-    name: '20261027_225429_documents_public_figures'
+    name: '20261027_225429_documents_public_figures',
+  },
+  {
+    up: migration_20261028_054402_student_testimonio_consent.up,
+    down: migration_20261028_054402_student_testimonio_consent.down,
+    name: '20261028_054402_student_testimonio_consent'
   },
 ];

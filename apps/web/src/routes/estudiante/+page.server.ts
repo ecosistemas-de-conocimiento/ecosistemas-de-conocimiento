@@ -38,7 +38,9 @@ export const actions: Actions = {
     const form = await request.formData();
     const organization = await org(cookies, locals.token);
     const key = String(form.get('key') ?? '');
-    if (key !== 'shareWithPeers' && key !== 'shareActivity') return fail(400, { message: 'Valor no válido.' });
+    if (key !== 'shareWithPeers' && key !== 'shareActivity' && key !== 'shareTestimonios') {
+      return fail(400, { message: 'Valor no válido.' });
+    }
     const r = await savePerfil(locals.token, organization, { [key]: form.get('value') === 'true' });
     if (!r.ok) return fail(r.status, { message: r.message });
     return { saved: true };

@@ -3,7 +3,7 @@
  *
  *   GET   /api/estudiante/acceso?organization=<id>     { student, teacher }
  *   GET   /api/estudiante?organization=<id>            my topics, peers, authors   estudiante
- *   PATCH /api/estudiante/perfil                       { organization, shareWithPeers?, shareActivity? }  estudiante
+ *   PATCH /api/estudiante/perfil                       { organization, shareWithPeers?, shareActivity?, shareTestimonios? }  estudiante
  *   GET   /api/estudiante/alcance?organization=&alcance=mios|companeros   { documentIds }  estudiante
  *   POST  /api/sugerencias                             { organization, kind, text }  estudiante
  *   GET   /api/sugerencias?organization=<id>           investigador · responsable
@@ -27,7 +27,9 @@
  * report lists documentos only, drafts unnamed (`buildReport`). On (platform
  * admin's switch): it adds the student's testimonios as the gate's output only
  * — `redactedText` and the neutral title when cleared, a status line otherwise
- * (`testimoniosOf`, `reportTestimonios`). "Their students" = the consenting
+ * (`testimoniosOf`, `reportTestimonios`), PUBLISHED testimonios only, and only
+ * for a student who gave the testimonio consent (`shareTestimoniosAt`, owner
+ * ruling Q20; given only while the switch is on, cleared on withdrawal). "Their students" = the consenting
  * `estudiante` members of THIS ecosistema: the model has no teacher–student
  * link finer than the ecosistema. The overview tells the student whether the
  * switch is on (`testimoniosEnReporte`), so the consent wording can say so.
@@ -125,9 +127,14 @@ const db = (req: PayloadRequest): StudentDb => req.payload as unknown as Student
 interface Profile {
   shareWithPeers: boolean
   shareActivity: boolean
+  /** 🔴 The testimonio consent (owner ruling Q20): `shareTestimoniosAt` is set. */
+  shareTestimonios: boolean
 }
 
-async function findProfile(req: PayloadRequest, g: Gate): Promise<(Profile & { id?: unknown }) | null> {
+async function findProfile(
+  req: PayloadRequest,
+  g: { userId: number; organizationId: number },
+): Promise<(Profile & { id?: unknown }) | null> {
   const res = await req.payload.find({
     collection: 'studentProfiles' as never,
     where: { and: [{ user: { equals: g.userId } }, { organization: { equals: g.organizationId } }] },
@@ -137,8 +144,19 @@ async function findProfile(req: PayloadRequest, g: Gate): Promise<(Profile & { i
   })
   const row = (res.docs as Row[])[0]
   if (!row) return null
-  return { id: row.id, shareWithPeers: row.shareWithPeers === true, shareActivity: row.shareActivity === true }
+  return {
+    id: row.id,
+    shareWithPeers: row.shareWithPeers === true,
+    shareActivity: row.shareActivity === true,
+    shareTestimonios: typeof row.shareTestimoniosAt === 'string' && row.shareTestimoniosAt !== '',
+  }
 }
+
+const perfilBody = (p: Profile | null) => ({
+  shareWithPeers: p?.shareWithPeers ?? false,
+  shareActivity: p?.shareActivity ?? false,
+  shareTestimonios: p?.shareTestimonios ?? false,
+})
 
 export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoint[] {
   const acceso: Endpoint = {
@@ -193,7 +211,7 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
       const surname = (n: string) => fold(n).split(' ').pop() ?? ''
       const mineKeys = new Set(autores.map((a) => surname(a.name)))
       return ok({
-        perfil: { shareWithPeers: profile?.shareWithPeers ?? false, shareActivity: profile?.shareActivity ?? false },
+        perfil: perfilBody(profile),
         temas: topics.slice(0, 15).map((t) => t.label),
         documentos: docs.map((d) => ({ id: d.id, name: d.name, status: d.status })),
         companeros: matchPeers(topics, peerTopics, peersOnly).map(({ name, topics: shared }) => ({ name, topics: shared })),
@@ -215,12 +233,27 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
       const body = (await readJsonBody(req)) ?? {}
       const g = await gate(req, body.organization, 'student')
       if (g instanceof Response) return g
-      const patch: Partial<Profile> = {}
-      for (const k of ['shareWithPeers', 'shareActivity'] as const) {
-        if (k in body) {
-          if (typeof body[k] !== 'boolean') return errorResponse(400, 'Valor no válido.')
-          patch[k] = body[k] as boolean
+      const patch: Record<string, unknown> = {}
+      for (const k of ['shareWithPeers', 'shareActivity', 'shareTestimonios'] as const) {
+        if (k in body && typeof body[k] !== 'boolean') return errorResponse(400, 'Valor no válido.')
+      }
+      if (typeof body.shareWithPeers === 'boolean') patch.shareWithPeers = body.shareWithPeers
+      if (typeof body.shareActivity === 'boolean') {
+        patch.shareActivity = body.shareActivity
+        // 🔴 Withdrawing activity withdraws testimonios too; sharing it again
+        // does not bring them back without the testimonio consent itself.
+        if (body.shareActivity === false) patch.shareTestimoniosAt = null
+      }
+      if (body.shareTestimonios === true) {
+        // 🔴 Only under the wording that names testimonios, i.e. switch on.
+        if (!(await featureEnabled(req.payload, g.organizationId, 'studentTestimonios'))) {
+          return errorResponse(400, 'No disponible.')
         }
+        if (body.shareActivity === false) return errorResponse(400, 'Valor no válido.')
+        patch.shareActivity = true
+        patch.shareTestimoniosAt = new Date().toISOString()
+      } else if (body.shareTestimonios === false) {
+        patch.shareTestimoniosAt = null
       }
       if (Object.keys(patch).length === 0) return errorResponse(400, 'Nada que guardar.')
       const current = await findProfile(req, g)
@@ -241,7 +274,7 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
         })
       }
       const next = await findProfile(req, g)
-      return ok({ perfil: { shareWithPeers: next?.shareWithPeers ?? false, shareActivity: next?.shareActivity ?? false } })
+      return ok({ perfil: perfilBody(next) })
     },
   }
 
@@ -341,7 +374,10 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
       // 🔴 Consent: only a student who switched `shareActivity` on is listed.
       const student = (await Q.consentingStudents(p, org, 'share_activity')).find((s) => s.id === studentId)
       if (!student) return errorResponse(404, 'Sin reporte.')
-      const withTestimonios = await featureEnabled(req.payload, org, 'studentTestimonios')
+      // 🔴 Switch on AND the student's own testimonio consent (owner ruling Q20).
+      const withTestimonios =
+        (await featureEnabled(req.payload, org, 'studentTestimonios')) &&
+        (await findProfile(req, { userId: studentId, organizationId: org }))?.shareTestimonios === true
       const [topicsMap, docs, sessionTitles, corpusTop, testimonios] = await Promise.all([
         // 🔴 Published only: the teacher is not the uploader, so a draft's
         // topic labels stay the student's (`topicsByUser`'s own rule).
