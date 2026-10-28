@@ -230,6 +230,128 @@ const BYLINE_INLINE = new RegExp(String.raw`${KEY_START}((?:${BYLINE_KEY})${BYLI
 /** Where one author ends and the next begins: `,` `;` `/` `&`, or " y " / " e " / " and ". */
 const AUTHOR_SPLIT = /(\s*[,;/&]\s*|\s+(?:y|e|and)\s+)/u
 
+/*
+ * ── 🔴 THE ADDITIVE BYLINE PASSES (byline audits 1–3, 2026-10-28) ───────────
+ *
+ * The byline rules above are kept EXACTLY as they were. Two attempts to
+ * replace them with an "is this author an institution?" classifier were
+ * blocked: every version stopped registering names the rules above redacted
+ * (five-word people, "d'Ávila", "Juan Pérez (Lucho) Gómez", "de la Vega",
+ * "Red Gómez"). So what follows only ADDS: it starts where a byline the rules
+ * above took ENDS, and redacts and registers what those rules left behind.
+ * It never undoes a redaction or skips a registration.
+ *
+ * What it adds:
+ *   · the authors after ";" and "|" ("Autores: Ana Ruiz; Luis Gómez"), unless
+ *     the next segment is another field ("| Lugar: …") or plain prose;
+ *   · the authors after a comma, "y", "e", "&" or "/" in a mid-line byline
+ *     ("Notas. Autores: Ana Ruiz, Luis Gómez y Eva Paz.");
+ *   · the name after a title the rules above stop at ("Ma.", "Pbro.", "vda."),
+ *     in a byline or after an id key ("usuario: Ma. Elena Ruiz");
+ *   · the words glued to a mid-line name ("d'Ávila", "van der Berg",
+ *     "(Lucho) Gómez");
+ *   · bylines under a key the rules above never read: "Autor(es):",
+ *     "Autor/a:", "Autora/Autores:".
+ *
+ * ⚠ KNOWN OVER-REDACTION, ACCEPTED (owner, 2026-10-28): an institution in a
+ * byline is registered like a person, so "Autor: Universidad Nacional Autónoma
+ * de México" turns a later "México" into a `[Persona X]`. The same holds for a
+ * place after the author ("Autor: Juan Pérez, Oaxaca"). A leak is worse.
+ */
+
+/** Titles whose dot does not end a name, for the additive passes: the list above plus these. */
+const TITLE_WORDS_EXTRA = ['ma', 'pbro', 'presb', 'vda', 'fr', 'hno', 'hna', 'mons', 'gral', 'sto', 'sta', 'cap', 'tte', 'cnel']
+const TITLE_X = [TITLE_ABBREVIATIONS, ...TITLE_WORDS_EXTRA.map(anyCase)].join('|')
+
+/** A word ending in a title: the dot after it does not end the name. */
+const ENDS_IN_TITLE = new RegExp(String.raw`(?:^|[^\p{L}\p{M}])(?:${TITLE_X})$`, 'u')
+
+/** {@link FIELD_VALUE}, with the longer title list. Sticky: read at one position. */
+const FIELD_VALUE_X = new RegExp(
+  String.raw`(?:[^\n\r|;\t.]|\.(?!\s)|(?<=(?<![\p{L}\p{M}])(?:\p{L}|${TITLE_X}))\.)*[^\s|;.]`,
+  'uy',
+)
+
+/** {@link NAME_WORD}, plus a title with its dot and an elided particle ("d'Ávila"). */
+const NAME_WORD_X = String.raw`(?:(?=\p{Lu})(?:${TITLE_X})\.|\p{Lu}\.|\p{Lu}[\p{L}\p{M}'’\-]*|[dDlL]['’]\p{Lu}[\p{L}\p{M}'’\-]*)`
+
+/** Inside a name, after its first word: also "(Lucho)" and "[entrevistador]". */
+const NAME_PART_X = String.raw`(?:${NAME_WORD_X}|\([^()\n\r\ufdd0]{1,40}\)|\[[^[\]\n\r\ufdd0]{1,40}\])`
+
+/** The small words inside a name, for the additive passes. */
+const JOINER_X = String.raw`(?:de|del|la|las|los|y|e|van|von|der|den|ten|ter|da|di|do|dos|du|le|alias|viuda|vda\.)`
+
+/** Lower-case words a name may START with: "de la Vega", "van der Berg". */
+const LEADER_X = String.raw`(?:de|del|la|las|los|van|von|der|den|da|di|do|dos|du|alias)`
+
+/** A capitalised name run, particles, parentheses and all. Sticky. */
+const RUN_X = new RegExp(
+  String.raw`(?:${LEADER_X}[ \t]+)*${NAME_WORD_X}(?:[ \t]+(?:${JOINER_X}[ \t]+)*${NAME_PART_X})*${VALUE_END}`,
+  'uy',
+)
+
+/** Words glued after a mid-line name the rules above stopped short of. Sticky. */
+const GLUE_X = new RegExp(String.raw`(?: +(?:${JOINER_X} +)*${NAME_PART_X})+${VALUE_END}`, 'uy')
+
+/** A separator between two authors. Sticky. */
+const SEP_X = /(?:[ \t]*[,;|/&][ \t]*|[ \t]+(?:y|e|and)[ \t]+)/uy
+
+/** A title's dot before the rest of the name. Sticky. */
+const TITLE_DOT = /\.[ \t]+/uy
+
+/**
+ * Any byline key, including the forms the rules above never read: "Autor(es)",
+ * "Autor/a", "Autora/Autores". A plain key counts too: its value may be one the
+ * rules above did not take ("Notas. Autor: del Lara, Lía").
+ */
+const KEY_SUFFIX = [...['a', 'as', 'es', 's', 'o', 'os'].map(anyCase), BYLINE_KEY].join('|')
+const BYLINE_X = new RegExp(
+  String.raw`${KEY_START}(?:${BYLINE_KEY})(?:[ \t]*(?:\([ \t]*(?:${KEY_SUFFIX})[ \t]*\)|/[ \t]*(?:${KEY_SUFFIX})))*${BYLINE_SEP}`,
+  'gmu',
+)
+
+/** Just before a key, a field starts: line start or `|` `;` tab, then markdown. */
+const FIELD_PREFIX = /(?:^|[|;\t])[ \t>*_#\-]*$/u
+
+/** A stage-1 replacement not yet resolved. U+FDD0/U+FDD1 are Unicode noncharacters: never in real text. */
+const HOLD_OPEN = String.fromCharCode(0xfdd0)
+const HOLD_CLOSE = String.fromCharCode(0xfdd1)
+const HELD = new RegExp(String.raw`${HOLD_OPEN}(\d+)${HOLD_CLOSE}`, 'gu')
+const HELD_AT = new RegExp(String.raw`^${HOLD_OPEN}(\d+)${HOLD_CLOSE}`, 'u')
+
+/** A line that may hold a byline key at all: the key-reading passes skip the rest. */
+const BYLINE_HINT = /aut(?:or|hor)/iu
+
+/** Accent- and case-blind. */
+const fold = (word: string) => word.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+
+const PROSE_OPENERS: ReadonlySet<string> = new Set([
+  'que', 'el', 'la', 'los', 'las', 'lo', 'un', 'una', 'de', 'del', 'en', 'y', 'e', 'o', 'u', 'a',
+  'por', 'para', 'con', 'sin', 'segun', 'sobre', 'entre', 'hasta', 'desde', 'como', 'cuando',
+  'donde', 'pero', 'si', 'se', 'su', 'sus', 'este', 'esta', 'ese', 'esa', 'al', 'no', 'ya',
+])
+
+/** Words a name never holds. ⚠ A LIST, NOT A SUFFIX RULE: "-ar" would catch Aguilar. */
+const PROSE_WORDS: ReadonlySet<string> = new Set(
+  [
+    ...PROSE_OPENERS,
+    'ver', 'vease', 'vea', 'consultar', 'consulte', 'es', 'son', 'fue', 'fueron', 'era', 'esta',
+    'estan', 'ha', 'han', 'hay', 'sera', 'revisado', 'revisada', 'publicado', 'publicada', 'anexo',
+  ].filter((w) => !['de', 'la', 'las', 'los', 'y', 'e'].includes(w)),
+)
+
+/**
+ * A lower-case segment that is plainly prose, not a name written in lower
+ * case: five words or more, a function-word opener, or a verb or function
+ * word inside. "luis gómez" is a name; "el texto fue revisado" is prose.
+ */
+function isProse(segment: string): boolean {
+  const words = (segment.match(/[\p{L}\p{M}]+/gu) ?? []).map(fold)
+  if (words.length === 0) return true
+  if (words.length >= 5 || PROSE_OPENERS.has(words[0] as string)) return true
+  return words.some((w) => PROSE_WORDS.has(w))
+}
+
 /** Count a rule only when it actually fired — a zero row is noise in the report. */
 function pushCount(into: RedactionCount[], label: string, count: number): void {
   if (count === 0) return
@@ -289,28 +411,201 @@ export function structuralPass(
     return OMITTED_PLACEHOLDER
   })
 
+  // Every replacement from here on is HELD as a noncharacter sentinel and
+  // resolved at the end, so the additive passes know where each byline ended
+  // and what it ended on. Same replacements, same `person` calls, same order.
+  // ⚠ Off (plain replacements, no additive pass) for a text that already
+  // holds a sentinel character, so nothing in the input can forge one.
+  const additive = !out.includes(HOLD_OPEN) && !out.includes(HOLD_CLOSE)
+  const held: string[] = []
+  const hold = (replacement: string): string => {
+    if (!additive) return replacement
+    held.push(replacement)
+    return `${HOLD_OPEN}${held.length - 1}${HOLD_CLOSE}`
+  }
+  /** Where each byline or id value ended: its last sentinel and the text it replaced. */
+  const ends: Array<{ mode: 'field' | 'inline' | 'id'; id: number; source: string }> = []
+
   // Each author on its own: "Ana Ruiz y Luis Gómez" is two people, two labels.
   // A piece with no capital letter ("anónimo") gets no person label.
-  const byline = (_m: string, key: string, value: string) =>
-    key +
-    value
-      .split(AUTHOR_SPLIT)
-      .map((piece, i) => {
-        if (i % 2 === 1 || piece.trim() === '') return piece
-        authors += 1
-        return options.person && /\p{Lu}/u.test(piece) ? options.person(piece) : OMITTED_PLACEHOLDER
-      })
-      .join('')
-  // Field form first. What it leaves starts with "[", not a capital, so the
-  // inline form cannot take the same byline twice.
-  out = out.replace(BYLINE_FIELD, byline)
-  out = out.replace(BYLINE_INLINE, byline)
+  const byline = (mode: 'field' | 'inline') => (_m: string, key: string, value: string) => {
+    let last: { id: number; source: string } | null = null
+    const replaced =
+      key +
+      value
+        .split(AUTHOR_SPLIT)
+        .map((piece, i) => {
+          if (i % 2 === 1 || piece.trim() === '') return piece
+          authors += 1
+          const r = hold(options.person && /\p{Lu}/u.test(piece) ? options.person(piece) : OMITTED_PLACEHOLDER)
+          last = { id: held.length - 1, source: piece }
+          return r
+        })
+        .join('')
+    if (last) ends.push({ mode, ...(last as { id: number; source: string }) })
+    return replaced
+  }
+  // Field form first. What it leaves starts with a sentinel, not a capital, so
+  // the inline form cannot take the same byline twice.
+  out = out.replace(BYLINE_FIELD, byline('field'))
+  out = out.replace(BYLINE_INLINE, byline('inline'))
 
   for (const re of [ID_FIELD, ID_INLINE]) {
-    out = out.replace(re, () => {
+    out = out.replace(re, (m: string) => {
       ids += 1
-      return OMITTED_PLACEHOLDER
+      const r = hold(OMITTED_PLACEHOLDER)
+      ends.push({ mode: 'id', id: held.length - 1, source: m })
+      return r
     })
+  }
+
+  if (additive) {
+    // ── The additive passes (see the header above TITLE_WORDS_EXTRA) ──────
+    /** One author, redacted and registered. `prefix`: the words the rules above already took. */
+    const take = (piece: string, prefix = ''): string => {
+      authors += 1
+      const name = prefix + piece
+      return hold(options.person && /\p{Lu}/u.test(name) ? options.person(name) : OMITTED_PLACEHOLDER)
+    }
+    /**
+     * Each author in `segment`, split like the rules above split a value.
+     * `failClosed` (a field nobody read before) takes every piece, as the rules
+     * above do; otherwise a piece with a digit, or lower-case prose, stays.
+     */
+    const takeAll = (segment: string, failClosed: boolean, prefix = ''): { text: string; took: number } => {
+      let took = 0
+      const text = segment
+        .split(AUTHOR_SPLIT)
+        .map((piece, i) => {
+          if (i % 2 === 1 || piece.trim() === '') return piece
+          const p = i === 0 ? prefix : ''
+          if (!failClosed && (/\d/u.test(piece) || (!/\p{Lu}/u.test(piece) && isProse(piece)))) return piece
+          took += 1
+          return take(piece, p)
+        })
+        .join('')
+      return { text, took }
+    }
+    const at = (re: RegExp, s: string, i: number): string | null => {
+      re.lastIndex = i
+      const m = re.exec(s)
+      return m && m[0] !== '' ? m[0] : null
+    }
+
+    /** Extend the byline whose value ended at `start` (`source`: the last piece it took). */
+    const extend = (text: string, start: number, mode: 'field' | 'inline' | 'id', source: string): string => {
+      const nl = text.slice(start).search(/[\n\r]/u)
+      const end = nl < 0 ? text.length : start + nl
+      const rest = text.slice(start, end)
+      let done = ''
+      let i = 0
+
+      // 1. A title's dot ended the value: "Ma. Elena Ruiz", "Ana Ruiz vda. de Gómez".
+      const dot = ENDS_IN_TITLE.test(source.trimEnd()) ? at(TITLE_DOT, rest, 0) : null
+      if (dot) {
+        const s = dot.length
+        const v = at(mode === 'field' ? FIELD_VALUE_X : RUN_X, rest, s)
+        if (v && !/[:=]/u.test(v) && !v.includes(HOLD_OPEN)) {
+          let text2: string
+          if (mode === 'id') {
+            ids += 1
+            text2 = hold(OMITTED_PLACEHOLDER)
+          } else text2 = takeAll(v, true, `${source.trim()}. `).text
+          done = rest.slice(0, s) + text2
+          i = s + v.length
+        }
+      }
+      if (mode === 'id') return text.slice(0, start) + done + rest.slice(i) + text.slice(end)
+
+      // 2. Words glued to a mid-line name: "Ana d'Ávila", "Juan Pérez (Lucho) Gómez".
+      if (mode === 'inline' && i === 0) {
+        const g = at(GLUE_X, rest, 0)
+        if (g && !/[:=]/u.test(g)) {
+          const lead = /^ +/u.exec(g)?.[0] ?? ''
+          done = lead + take(g.slice(lead.length), `${source.trim()} `)
+          i = g.length
+        }
+      }
+
+      // 3. The authors after it, separator by separator.
+      for (;;) {
+        const sep = at(SEP_X, rest, i)
+        if (!sep) break
+        const s = i + sep.length
+        const hard = /[;|]/u.test(sep)
+        if (mode === 'field' || hard) {
+          const v = at(FIELD_VALUE_X, rest, s)
+          // Another field ("| Lugar: …") or another redaction ends the byline.
+          if (!v || /[:=]/u.test(v) || v.includes(HOLD_OPEN)) break
+          const r = takeAll(v, false)
+          done += rest.slice(i, s) + r.text
+          i = s + v.length
+        } else {
+          const v = at(RUN_X, rest, s)
+          if (!v) break
+          done += rest.slice(i, s) + takeAll(v, false).text
+          i = s + v.length
+        }
+      }
+      return text.slice(0, start) + done + rest.slice(i) + text.slice(end)
+    }
+
+    // Every byline is one line, so the passes run line by line: a document with
+    // thousands of bylines stays linear.
+    const endAt = new Map(ends.map((e, k) => [e.id, k]))
+    const extendLine = (input: string): string => {
+      let line = input
+      const hasKey = BYLINE_HINT.test(line)
+      if (!hasKey && !line.includes(HOLD_OPEN)) return line
+      // A key the rules above never read, at a field start, whose value they
+      // took through an inner key ("Autora/Autores: …"): read it as a field.
+      if (hasKey) {
+        for (const m of line.matchAll(BYLINE_X)) {
+          const v = m.index + m[0].length
+          if (line[v] !== HOLD_OPEN || !FIELD_PREFIX.test(line.slice(0, m.index))) continue
+          const k = endAt.get(Number(HELD_AT.exec(line.slice(v))?.[1]))
+          const e = k === undefined ? undefined : ends[k]
+          if (e?.mode === 'inline') e.mode = 'field'
+        }
+      }
+      // The last sentinel of each byline, in the order the rules above made
+      // them: the additive passes start after it.
+      const mine = [...line.matchAll(HELD)]
+        .map((m) => endAt.get(Number(m[1])))
+        .filter((k): k is number => k !== undefined)
+        .sort((a, b) => a - b)
+      for (const k of mine) {
+        const e = ends[k] as (typeof ends)[number]
+        const mark = `${HOLD_OPEN}${e.id}${HOLD_CLOSE}`
+        const pos = line.indexOf(mark)
+        if (pos >= 0) line = extend(line, pos + mark.length, e.mode, e.source)
+      }
+      // A key whose value nothing above took: "Autor(es): Juan Pérez", or a
+      // mid-line name that starts with a particle ("Notas. Autor: de la Vega").
+      for (let from = 0; hasKey; ) {
+        BYLINE_X.lastIndex = from
+        const m = BYLINE_X.exec(line)
+        if (!m) break
+        const v = m.index + m[0].length
+        from = v
+        if (line[v] === HOLD_OPEN) continue
+        const field = FIELD_PREFIX.test(line.slice(0, m.index))
+        const value = at(field ? FIELD_VALUE_X : RUN_X, line, v)
+        if (!value || value.includes(HOLD_OPEN)) continue
+        const pieces = value.split(AUTHOR_SPLIT)
+        const r = takeAll(value, field)
+        line = line.slice(0, v) + r.text + line.slice(v + value.length)
+        from = v + r.text.length
+        line = extend(line, from, field ? 'field' : 'inline', pieces.at(-1) ?? '')
+      }
+      return line
+    }
+    out = out
+      .split(/(\r\n|\n|\r)/u)
+      .map((part, i) => (i % 2 === 1 ? part : extendLine(part)))
+      .join('')
+
+    out = out.replace(HELD, (_m, i: string) => held[Number(i)] as string)
   }
 
   pushCount(removed, LABEL_FECHA, dates)

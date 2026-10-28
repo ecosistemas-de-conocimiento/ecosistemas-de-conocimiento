@@ -661,7 +661,8 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // out as one `[Persona X]` even when the model never reports the name.
   const structural = structuralPass(input.text.normalize('NFC'), {
     person: (name) => {
-      names.add(name)
+      // `single`: a one-word byline author spreads too ("Autores: … y Ruiz").
+      names.add(name, { single: true })
       return allocator.labelFor(name)
     },
   })

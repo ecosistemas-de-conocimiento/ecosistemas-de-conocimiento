@@ -134,8 +134,13 @@ export function gluedToAnotherName(
  * document, never persisted (a part → label table is a re-identification map).
  */
 export interface NamePartRegistry {
-  /** Record a person span that was redacted with a label. */
-  add(span: string): void
+  /**
+   * Record a person span that was redacted with a label. `single` lets a
+   * one-word span own its part: a byline author written as one word
+   * ("Autores: Colectivo Norte y Ruiz") IS that person, and without it a bare
+   * "Ruiz" in the body was never redacted (byline audit, 2026-10-28).
+   */
+  add(span: string, options?: { single?: boolean }): void
   /** Every registered part, longest first, each with the folded parts of its owners. */
   parts(): Array<{ part: string; siblings: ReadonlySet<string> }>
   /**
@@ -153,11 +158,12 @@ export function createNamePartRegistry(): NamePartRegistry {
   const spelling = new Map<string, string>()
   const siblings = new Map<string, Set<string>>()
   return {
-    add(span) {
+    add(span, options) {
       const parts = namePartsOf(span)
       // A one-word span is not an owner: "Fausto" would make "Fausto" ambiguous
       // with "Fausto Arellano". It takes its owner's label through `ownerOf`.
-      if (parts.length === 0 || (span.match(WORD) ?? []).length < 2) return
+      // ⚠ Except a byline author (`single`): there the one word IS the person.
+      if (parts.length === 0 || (!options?.single && (span.match(WORD) ?? []).length < 2)) return
       const folded = new Set(parts.map(normaliseName))
       for (const part of parts) {
         const key = normaliseName(part)
