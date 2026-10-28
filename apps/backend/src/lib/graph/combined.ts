@@ -714,6 +714,11 @@ function focalRelationCtes(ids: GraphSql, minEdge: number): GraphSql {
     )`
 }
 
+/**
+ * ⚠ `neighbour_id` closes the sort, so two neighbours with the same label and
+ * the same counts always come out in the same order, and the LIMIT always cuts
+ * at the same row.
+ */
 export function combinedNeighboursQuery(args: CombinedDetailArgs): GraphSql {
   const ids = intArray(normaliseOrgIds(args.organizationIds))
   const minSupport = args.minSupport ?? graphMinSupport()
@@ -756,7 +761,7 @@ export function combinedNeighboursQuery(args: CombinedDetailArgs): GraphSql {
            edges.direction AS direction
     FROM edges
     ORDER BY edges.pair_support DESC, edges.support DESC, edges.node_support DESC, edges.node_label ASC,
-             edges.relation_type ASC
+             edges.relation_type ASC, edges.neighbour_id ASC
     LIMIT ${limit}`
 }
 

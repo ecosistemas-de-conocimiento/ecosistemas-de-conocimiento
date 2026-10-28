@@ -13,7 +13,7 @@
  *
  * ⚠ THE BOUND IS RELATIVE TO THE FIXTURE, NOT A WALL-CLOCK NUMBER. The single-
  * ecosistema panel (`readEntityDetail`) reads the same rows through base-table
- * joins and was never affected, so it is the reference: measured on this
+ * joins and was never affected, so it is the reference. Measured on this
  * fixture (2026-10-28, local docker postgres:16, one run each) the combined
  * panel took 5439 ms against 185 ms single (29×) before the fix, and 193 ms
  * against 265 ms (0.7×) after. A ratio is load-neutral where milliseconds
@@ -26,8 +26,12 @@ import { dockerOk, shutdown, startRealPostgres, type RealPostgres } from '../tes
 import { readCombinedEntityDetail } from './combined'
 import { readEntityDetail, type GraphQueryPayload } from './queries'
 
-/** Combined panel ÷ single-ecosistema panel, same hub. Measured before: 29×. After: 0.7×. */
-const MAX_RATIO = 15
+/**
+ * Combined panel ÷ single-ecosistema panel, same hub. Measured before: 29× (this
+ * lane) and 16.8× (the audit's run). After: 0.7×. 4× leaves room for load
+ * noise and still fails the old shape.
+ */
+const MAX_RATIO = 4
 const ORG = 9
 const HUB = 90000
 
