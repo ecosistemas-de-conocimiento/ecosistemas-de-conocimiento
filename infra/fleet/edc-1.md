@@ -1,6 +1,12 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `19525be` (the anonymisation gate redacts a
+**Status:** live since 2026-10-17. Dev runs `main` @ `a39af86` (the `studentTestimonios` switch:
+teachers see students' published testimonios, anonymised, with the student's own consent; migration
+`20261028_054402_student_testimonio_consent` applied on start), deployed 2026-10-28 06:10 UTC — see
+§4zt. Before that, `326a66e` (keep public figures in documentos, `keepPublicFigures` settable by
+platform admins only, start screen for participante/estudiante; migration
+`20261027_225429_documents_public_figures` applied on start), deployed 2026-10-28 06:05 UTC — §4zt.
+Before that, `19525be` (the anonymisation gate redacts a
 bare first name or surname of a detected person; no migration), deployed 2026-10-27 22:58 UTC — see
 §4zs. Before that, `9907e9e` (peer queries in the student view read
 documentos only, never testimonios; student-view FKs cascade; migration
@@ -2189,6 +2195,71 @@ Spend: `usage_logs` since 22:50 UTC: 3 graph-extraction calls `router.route`
 ingest embeddings $0.000003. Total $7.661300 after (other lanes' work since §4zr's $3.957493).
 
 **Disk**, `df -h /` free: 57 GB before; 42 GB after the build; 56 GB after the cleanup. Images
+9.67 GB, build cache 0.
+
+### 4zt. ✅ Done 2026-10-28 05:57–06:15 UTC: `326a66e`, then `a39af86`, dev only — one Payload migration on each start
+
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
+`97d5316`, `docker ps`). The run was asked for `326a66e`; while its build ran, origin/main moved
+to `a39af86`, so `326a66e` was verified live and `a39af86` deployed right after.
+`326a66e` = keep public figures in documentos (`52d5856`, `a050074`, and the anonymise fixes
+`7472bed`, `6b7d535`, `66f4169`, `4f429be`); `keepPublicFigures` settable by platform admins only
+(`842cd67`); participant chrome and a start screen for participante/estudiante, interviewer
+follow-ups opt-in per conversation, "Cerrar sesión" beside "Mis conversaciones" (`4bf4e83`,
+`be7bf34`, `bed0d52`, `326a66e`). `a39af86` = the `studentTestimonios` switch (`ebf1d4f`):
+teachers see students' published testimonios, anonymised; own testimonio consent, published
+teacher topics only (`633bce2`); teachers see chat counts only, consent read atomically, switch
+off clears consents (`9173c9b`). No compose, variable or ai-service change in either range.
+
+**Pre-check.** `payload_migrations` 12 rows, newest `20261027_061014_student_view_fk_cascade`.
+`edc_ai` `public.__drizzle_migrations` 6.
+
+**Migrations**, both applied by the container start (`scripts/migrate.sh` waits for Payload's
+`Done.` before `next start`):
+
+| deploy | backend log | `payload_migrations` |
+|---|---|---|
+| `326a66e` | 06:05:12 "Reading migration files…", `Migrated: 20261027_225429_documents_public_figures (12ms)`, `Done.`, "Ready in 818ms" | 12 → 13 |
+| `a39af86` | 06:10:49 "Reading migration files…", `Migrated: 20261028_054402_student_testimonio_consent (10ms)`, `Done.`, "Ready in 932ms" | 13 → 14, batch 9 |
+
+Columns after, `information_schema.columns`: `documents.keep_public_figures` boolean,
+`documents.public_figures_kept` jsonb, `student_profiles.share_testimonios_at` timestamptz.
+`edc_ai` `__drizzle_migrations` unchanged at 6.
+
+Backups, one before each deploy: `/root/backups/20261028T0557Z/` (`edc_ai` 129 MB, `edc_backend`
+9.6 MB) and `/root/backups/20261028T0605Z/` (`edc_ai` 129 MB, `edc_backend` 9.6 MB); `pg_restore -l`
+137 / 438 non-comment lines each, `SHA256SUMS` beside them. Off-box copies in the owner's
+`cide/backups/edc-1/<same stamp>/` with `timeout 180 scp`; `sha256sum -c` of all four dumps passed
+before each deploy.
+
+| deploy | uuid | queued → finished (UTC) | commit |
+|---|---|---|---|
+| `326a66e` | `kgqliryjwiendh83wfebv9po` | 05:58:33 → 06:05:10 | `326a66ee7e3f…` |
+| `a39af86` | `lips5ibff6eu68fdt1z6hbol` | 06:06:50 → 06:10:45 | `a39af861e2aa…` |
+
+After the second: 9 containers up; `web`, `backend` and `ai-service` run image tag
+`a39af861e2aaf7dd8c0c792505f4f58f9d64befb`, healthy. 0 `error`/`fatal` lines in all 9 dev
+containers at startup.
+
+**Smoke** (no paid call):
+
+| check | result |
+|---|---|
+| 1. web `/` | 303 → `/sign-in`, 200 |
+| 2. health | `dev.` `/api/health` 200, `api.dev.` `/api/health` 200 |
+| 3. login, estudiante1 (`cide/.env.demo-users`), web `POST /api/auth/login` with `Origin` | 200, user id 5; then `/__data.json` 200 (start screen data names `estudiante`), `/estudiante/__data.json` 200 |
+
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the six `19525be`
+and `326a66e` web/backend/ai-service images by exact name; `docker builder prune -af` reclaimed
+18.64 GB. Two dangling images left, both in use: `858f009f9709` (staging's redis) and
+`57e4255cc971` (`coolify-redis`).
+
+Spend: `usage_logs` since 05:55 UTC: 28 rows, $0.070073 — `edc-eco-8` 18 `router.route`
+05:55–06:04 ($0.067199), `edc-eco-6` 4 `router.route` + 6 ingests 05:59–06:00 ($0.002874). None
+from this run, which made no model call; other lanes' work on the old containers during the
+build (inferred by time). Total $8.975563 after.
+
+**Disk**, `df -h /` free: 56 GB before; 37 GB after both builds; 56 GB after the cleanup. Images
 9.67 GB, build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
