@@ -9,6 +9,9 @@
    * "Iniciar" opens a new Resonancias conversation in the full UI with the
    * composer focused — type, or press the mic (`MicButton`) to talk.
    *
+   * "Cerrar sesión" sits beside "Mis conversaciones" (owner ruling 2026-10-27,
+   * Q5): with the menu hidden, it is the only way out from here.
+   *
    * ⚠ `prompt` is the seam for an opening question. Its source is the owner's
    * call (pending); until then nothing passes it and nothing renders.
    */
@@ -35,6 +38,11 @@
       starting = false;
     }
   }
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+    window.location.href = '/sign-in';
+  }
 </script>
 
 <div class="start">
@@ -53,9 +61,14 @@
   >
     Iniciar
   </button>
-  <a class="conversaciones" href={CONVERSACIONES_HREF} data-testid="inicio-conversaciones">
-    Mis conversaciones
-  </a>
+  <div class="secundarias">
+    <a class="secundaria" href={CONVERSACIONES_HREF} data-testid="inicio-conversaciones">
+      Mis conversaciones
+    </a>
+    <button type="button" class="secundaria" onclick={logout} data-testid="inicio-logout">
+      Cerrar sesión
+    </button>
+  </div>
 </div>
 
 <style>
@@ -112,17 +125,27 @@
     opacity: 0.6;
     cursor: progress;
   }
-  .conversaciones {
+  .secundarias {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--edc-space-2);
+  }
+  .secundaria {
     padding: 0.5rem 0.75rem;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    font-family: inherit;
     color: var(--edc-color-ink-soft);
     font-size: var(--edc-text-base);
     text-decoration: underline;
     text-underline-offset: 0.2em;
   }
-  .conversaciones:hover {
+  .secundaria:hover {
     color: var(--edc-color-brand-strong);
   }
-  .conversaciones:focus-visible {
+  .secundaria:focus-visible {
     outline: none;
     border-radius: var(--edc-radius-2);
     box-shadow: 0 0 0 3px var(--edc-focus-ring);
