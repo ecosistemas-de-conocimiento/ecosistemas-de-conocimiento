@@ -363,16 +363,30 @@ export const refuseLeavingWithoutResponsable: CollectionBeforeValidateHook = asy
 
 const GRANT_FIELDS = ['isActive', 'role', 'organization'] as const
 
+/** Who may write memberships: `members:manage`. Shared by the access rule and the bulk guard. */
+const manageAccess = withinMyOrganizationsWithRole('admin')
+
 export const refuseBulkResponsableWrite: CollectionBeforeOperationHook = async ({ args, operation, req }) => {
   if (operation !== 'delete' && operation !== 'update') return args
-  const a = args as { id?: unknown; where?: unknown; data?: Record<string, unknown> }
+  const a = args as { id?: unknown; where?: unknown; data?: Record<string, unknown>; overrideAccess?: boolean }
   // By-id operations have `id`; only bulk ones arrive with a bare `where`.
   if (a.id !== undefined || !a.where || exemptCaller(req)) return args
   if (operation === 'update' && !GRANT_FIELDS.some((f) => f in (a.data ?? {}))) return args
+  // 🔴 beforeOperation runs BEFORE Payload's access check (re-audit
+  // 2026-10-28). Counting over every row would answer 409 vs 403 by whether a
+  // hidden row matched — an oracle on who manages what. So count only rows the
+  // caller could write anyway; with no access at all, let Payload refuse.
+  const access = a.overrideAccess === true ? true : await manageAccess({ req } as never)
+  if (access === false) return args
   const hit = await req.payload.count({
     collection: 'memberships',
     where: {
-      and: [a.where as never, { isActive: { equals: true } }, { role: { in: MANAGER_ROLES } }],
+      and: [
+        a.where as never,
+        { isActive: { equals: true } },
+        { role: { in: MANAGER_ROLES } },
+        ...(access === true ? [] : [access as never]),
+      ],
     },
     overrideAccess: true,
     req,
@@ -389,6 +403,56 @@ export const refuseDeleteLastResponsable: CollectionBeforeDeleteHook = async ({ 
   if (row && (await wouldLeaveNoResponsable(req, row))) throw lastResponsable()
 }
 
+const USER_QUERY_MESSAGE = 'Consulta no permitida.'
+
+/** True when `where` filters on `user` (or `user.*`) by anything but `equals: <me>`. */
+function queriesOthersByUser(where: unknown, callerId: unknown): boolean {
+  if (!where || typeof where !== 'object') return false
+  for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
+    if (key === 'and' || key === 'or') {
+      if (Array.isArray(value) && value.some((w) => queriesOthersByUser(w, callerId))) return true
+      continue
+    }
+    if (key !== 'user' && !key.startsWith('user.')) continue
+    const ops = value && typeof value === 'object' ? Object.entries(value as Record<string, unknown>) : []
+    const ownOnly =
+      key === 'user' && ops.length === 1 && ops[0]![0] === 'equals' && String(ops[0]![1]) === String(callerId)
+    if (!ownOnly) return true
+  }
+  return false
+}
+
+const sortsByUser = (sort: unknown): boolean =>
+  (Array.isArray(sort) ? sort : typeof sort === 'string' ? sort.split(',') : []).some((s) => {
+    const field = String(s).trim().replace(/^-/, '')
+    return field === 'user' || field.startsWith('user.')
+  })
+
+/**
+ * 🔴 THE HIDDEN ACCOUNT ID CANNOT BE SEARCHED FOR EITHER.
+ *
+ * `readMembershipUser` hides the value, but a where-query still could find it:
+ * `where[user][greater_than]` binary-searched a hidden id in 10 requests, and
+ * `sort=user` leaked order (re-audit 2026-10-28). So, for a caller who is not
+ * a platform admin and goes through access, any filter or sort on `user`
+ * other than `user equals <me>`:
+ *  · is refused (400) when the caller manages no ecosistema;
+ *  · is narrowed to the ecosistemas they manage otherwise — where they can
+ *    already read every `user` value.
+ * Trusted local calls (`overrideAccess: true`) are untouched.
+ */
+export const limitQueriesOnUser: CollectionBeforeOperationHook = async ({ args, req }) => {
+  const a = args as { where?: unknown; sort?: unknown; overrideAccess?: boolean }
+  if (a.overrideAccess === true) return args
+  const callerId = (req?.user as { id?: unknown } | null | undefined)?.id
+  if (callerId === null || callerId === undefined || isPlatformAdminUser(req.user)) return args
+  if (!queriesOthersByUser(a.where, callerId) && !sortsByUser(a.sort)) return args
+  const managed = await organizationIdsForUserWithMinRole(req.payload, callerId as number | string, 'admin')
+  if (managed.length === 0) throw new APIError(USER_QUERY_MESSAGE, 400, undefined, true)
+  const scope = { organization: { in: managed } }
+  return { ...args, where: a.where ? { and: [a.where, scope] } : scope } as typeof args
+}
+
 /**
  * 🔴 WHO SEES THE ACCOUNT ID ON A MEMBERSHIP.
  *
@@ -397,7 +461,8 @@ export const refuseDeleteLastResponsable: CollectionBeforeDeleteHook = async ({ 
  * 2026-10-28). The id is shown to a platform admin, to the row's own person,
  * and to whoever holds `members:manage` in the row's ecosistema. Without a doc
  * (Payload asking whether the field may be QUERIED) it answers yes, so
- * `where[user][equals]=<me>` keeps working for everyone.
+ * `where[user][equals]=<me>` keeps working for everyone; `limitQueriesOnUser`
+ * decides which other queries on it are allowed.
  */
 export const readMembershipUser: FieldAccess = async ({ req, doc }) => {
   const callerId = (req?.user as { id?: unknown } | null | undefined)?.id
@@ -470,13 +535,13 @@ export const Memberships: CollectionConfig = {
     read: withinMyOrganizations(),
     // Adding, re-roling and removing people is the `members:manage` permission,
     // which `admin` and `owner` hold.
-    create: withinMyOrganizationsWithRole('admin'),
-    update: withinMyOrganizationsWithRole('admin'),
-    delete: withinMyOrganizationsWithRole('admin'),
+    create: manageAccess,
+    update: manageAccess,
+    delete: manageAccess,
   },
   hooks: {
     // 🔴 Bulk writes cannot take out a responsable — see `refuseLeavingWithoutResponsable`.
-    beforeOperation: [refuseBulkResponsableWrite],
+    beforeOperation: [limitQueriesOnUser, refuseBulkResponsableWrite],
     beforeValidate: [
       // 🔴 First, because a refusal must not depend on whether a twin row
       // happens to exist. See `refuseSelfAssignment` above.

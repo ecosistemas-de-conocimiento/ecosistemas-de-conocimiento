@@ -428,6 +428,91 @@ describe.skipIf(!dockerOk)('/api/miembros on a real Postgres', () => {
     for (const m of managed.docs) expect(m.user).toBeDefined()
   }, 30_000)
 
+  // ── Re-audit 1: the bulk guard is not an oracle for people with no access ──
+  const errorStatus = (p: Promise<unknown>) =>
+    p.then(
+      () => 'ok',
+      (e: { status?: number }) => e?.status ?? 'error',
+    )
+
+  it('🔴 a bulk write by an outsider answers the same for a manager email and a plain one', async () => {
+    await db.execute(sql.raw(`INSERT INTO users (id, email, display_name) VALUES (6, 'nadie@example.invalid', 'Nadie')`))
+    for (const as of [6, BEA]) {
+      const u = await asUser(as)
+      const probe = (where: Record<string, unknown>) =>
+        Promise.all([
+          errorStatus(payload.delete({ collection: 'memberships', where: where as never, overrideAccess: false, user: u })),
+          errorStatus(
+            payload.update({
+              collection: 'memberships',
+              where: where as never,
+              data: { isActive: false } as never,
+              overrideAccess: false,
+              user: u,
+            }),
+          ),
+        ])
+      const manager = await probe({ 'user.email': { like: 'olga' } })
+      const plain = await probe({ 'user.email': { like: 'memo' } })
+      const noOne = await probe({ 'user.email': { like: 'zzz' } })
+      expect(manager).toEqual(plain)
+      expect(manager).toEqual(noOne)
+      expect(manager).not.toContain(409)
+      const org = await probe({ 'organization.name': { equals: 'Eco A' }, role: { equals: 'owner' } })
+      const none = await probe({ 'organization.name': { equals: 'Nada' }, role: { equals: 'owner' } })
+      expect(org).toEqual(none)
+    }
+    expect(await activeOwners(ECO_A)).toBe(1)
+    expect(await roleOf(MEMO, ECO_A)).toEqual(['member'])
+  }, 30_000)
+
+  // ── Re-audit 2: a hidden account id cannot be searched or sorted for ──────
+  it('🔴 a plain member may only filter `user` by their own id, and never sort by it', async () => {
+    const memo = await asUser(MEMO)
+    const find = (q: Record<string, unknown>) =>
+      errorStatus(payload.find({ collection: 'memberships', overrideAccess: false, user: memo, ...q }))
+    expect(await find({ where: { user: { equals: MEMO } } })).toBe('ok')
+    for (const where of [
+      { user: { greater_than: 1 } },
+      { user: { equals: OLGA } },
+      { user: { in: [OLGA, MEMO] } },
+      { user: { not_equals: MEMO } },
+      { 'user.email': { like: 'olga' } },
+      { or: [{ user: { equals: MEMO } }, { user: { less_than: 3 } }] },
+    ]) {
+      expect(await find({ where })).toBe(400)
+      expect(
+        await errorStatus(payload.count({ collection: 'memberships', where: where as never, overrideAccess: false, user: memo })),
+      ).toBe(400)
+    }
+    expect(await find({ sort: '-user' })).toBe(400)
+    expect(await find({ sort: ['role', 'user'] })).toBe(400)
+  }, 30_000)
+
+  it('a manager still filters and sorts by `user`, but only over the ecosistemas they manage', async () => {
+    const olga = await asUser(OLGA)
+    const res = await payload.find({
+      collection: 'memberships',
+      where: { user: { greater_than: 2 } },
+      sort: '-user',
+      overrideAccess: false,
+      user: olga,
+      depth: 0,
+    })
+    expect(res.docs.map((m) => String(m.user))).toEqual([String(MEMO), String(ADAN)])
+    // Bea manages B and is a plain member of A: her `user` query sees only B.
+    await db.execute(sql.raw(`INSERT INTO memberships (id, user_id, organization_id, role) VALUES (5, 5, 1, 'member')`))
+    const bea = await asUser(BEA)
+    const hers = await payload.find({
+      collection: 'memberships',
+      where: { user: { greater_than: 0 } },
+      overrideAccess: false,
+      user: bea,
+      depth: 0,
+    })
+    expect(hers.docs.map((m) => String(m.organization))).toEqual([String(ECO_B)])
+  }, 30_000)
+
   // ── Audit follow-up 4: a NULL isActive is inactive ─────────────────────────
   it('🔴 a membership with isActive NULL is revoked: adding re-activates it, no 409', async () => {
     await db.execute(sql.raw(`INSERT INTO memberships (id, user_id, organization_id, role, is_active) VALUES (5, 5, 1, 'member', NULL)`))
