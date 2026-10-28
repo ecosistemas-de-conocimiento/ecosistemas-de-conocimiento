@@ -34,8 +34,8 @@ const lines = [
   '**Resp.** responsable (`owner`) · **Admin** administrador de la plataforma.',
   '',
   'Video: **▶ acción** se hace en la grabación · **◻ pantalla** se muestra sin dar el último paso',
-  '(es definitivo o cambia datos compartidos en dev) · **— no** no se graba (requiere micrófono o una',
-  'función apagada).',
+  '(es definitivo o cambia datos compartidos en dev) · **— no** no se graba (requiere una función apagada).',
+  'El audio (B3.1, C1.3, C1.4) se graba solo en el video del participante.',
   '',
 ];
 

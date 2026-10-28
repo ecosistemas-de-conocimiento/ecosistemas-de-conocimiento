@@ -6,8 +6,8 @@ Roles: **Part.** participante (`member`) · **Est.** estudiante · **Inv.** inve
 **Resp.** responsable (`owner`) · **Admin** administrador de la plataforma.
 
 Video: **▶ acción** se hace en la grabación · **◻ pantalla** se muestra sin dar el último paso
-(es definitivo o cambia datos compartidos en dev) · **— no** no se graba (requiere micrófono o una
-función apagada).
+(es definitivo o cambia datos compartidos en dev) · **— no** no se graba (requiere una función apagada).
+El audio (B3.1, C1.3, C1.4) se graba solo en el video del participante.
 
 ## A. Entrar y orientarse
 
@@ -53,7 +53,7 @@ función apagada).
 
 | # | Historia | Part. | Est. | Inv. | Resp. | Admin | Video |
 |---|---|:-:|:-:|:-:|:-:|:-:|---|
-| B3.1 | Dictar con el micrófono. | ● | ● | ● | ● | ● | — no |
+| B3.1 | Dictar con el micrófono. | ● | ● | ● | ● | ● | ▶ acción |
 
 ## C. Aportar lo que sé
 
@@ -63,8 +63,8 @@ función apagada).
 |---|---|:-:|:-:|:-:|:-:|:-:|---|
 | C1.1 | Subir un documento. | ● | ● | ● | ● | ● | ▶ acción |
 | C1.2 | Escribir una nota. | ● | ● | ● | ● | ● | ▶ acción |
-| C1.3 | Subir un audio. | ● | ● | ● | ● | ● | — no |
-| C1.4 | Corregir una transcripción. | ● | ● | ● | ● | ● | — no |
+| C1.3 | Subir un audio. | ● | ● | ● | ● | ● | ▶ acción |
+| C1.4 | Corregir una transcripción. | ● | ● | ● | ● | ● | ◻ pantalla |
 | C1.5 | Elegir qué tipo de aporte es. |  |  | ● | ● | ● | ◻ pantalla |
 | C1.6 | Anonimizar un testimonio. |  |  | ● | ● | ● | ◻ pantalla |
 

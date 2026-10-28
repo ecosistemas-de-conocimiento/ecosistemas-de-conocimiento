@@ -1,4 +1,12 @@
+import { resolve } from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
+
+/**
+ * What the participante's fake microphone "says" (B3.1). Built ON THE HOST by
+ * `correr.sh` with ffmpeg (the Playwright image has none, checked 2026-10-28)
+ * from media/voces/SIM_0017: 25 s, mono, 48 kHz.
+ */
+const DICTADO_WAV = process.env.EVID_DICTADO_WAV ?? resolve(import.meta.dirname, '.videos/_audio/SIM_0017.wav');
 
 /**
  * The evidence videos: one spec per role, each a walk through every screen
@@ -63,6 +71,18 @@ export default defineConfig({
         // at device pixels, so DPR 2 is what makes the 2x video sharp.
         deviceScaleFactor: 2,
         video: { mode: 'on', size: { width: 780, height: 1688 } },
+        // The mic stories (B3.1): Chromium's fake capture device plays the WAV
+        // into getUserMedia at real-time pace, like a person talking.
+        // ⚠ A project's launchOptions REPLACES the top-level one: slowMo again.
+        permissions: ['microphone'],
+        launchOptions: {
+          slowMo: 350,
+          args: [
+            '--use-fake-ui-for-media-stream',
+            '--use-fake-device-for-media-stream',
+            `--use-file-for-fake-audio-capture=${DICTADO_WAV}%noloop`,
+          ],
+        },
       },
     },
   ],

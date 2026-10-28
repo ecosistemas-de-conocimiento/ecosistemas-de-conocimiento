@@ -103,7 +103,8 @@ export const MAPA: readonly Tematica[] = [
       {
         id: 'B3',
         nombre: 'Hablar en lugar de escribir',
-        historias: [h('B3.1', 'Dictar con el micrófono.', TODOS, 'no')],
+        // Recorded in the participante video only (owner decision 2026-10-28).
+        historias: [h('B3.1', 'Dictar con el micrófono.', TODOS)],
       },
     ],
   },
@@ -117,8 +118,10 @@ export const MAPA: readonly Tematica[] = [
         historias: [
           h('C1.1', 'Subir un documento.', TODOS),
           h('C1.2', 'Escribir una nota.', TODOS),
-          h('C1.3', 'Subir un audio.', TODOS, 'no'),
-          h('C1.4', 'Corregir una transcripción.', TODOS, 'no'),
+          // Audio: recorded in the participante video only (owner decision 2026-10-28).
+          h('C1.3', 'Subir un audio.', TODOS),
+          // 'pantalla': a participant's audio auto-publishes before a correction can be saved (409, dev 2026-10-28).
+          h('C1.4', 'Corregir una transcripción.', TODOS, 'pantalla'),
           h('C1.5', 'Elegir qué tipo de aporte es.', REVISORES, 'pantalla'),
           h('C1.6', 'Anonimizar un testimonio.', REVISORES, 'pantalla'),
         ],

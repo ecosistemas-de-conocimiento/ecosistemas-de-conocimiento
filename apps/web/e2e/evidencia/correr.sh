@@ -31,11 +31,22 @@ if [[ -z "${EVID_ADMIN_EMAIL:-}" && -r "$root/.env.evidencia" ]]; then
   export EVID_ADMIN_EMAIL
 fi
 
+# The participante's fake microphone (B3.1) plays a WAV. Built here, on the
+# host: the Playwright image has no ffmpeg (checked 2026-10-28). `media/` is
+# untracked, so it is read from the main checkout.
+wav="$web/e2e/evidencia/.videos/_audio/SIM_0017.wav"
+if [[ ! -f "$wav" ]]; then
+  mkdir -p "$(dirname "$wav")"
+  ffmpeg -nostdin -loglevel error -y -i "$main_repo/media/voces/SIM_0017_traduccion_testimonio_media.m4a" \
+    -t 25 -ac 1 -ar 48000 "$wav"
+fi
+
 status=0
 docker run --rm --init --ipc=host \
   --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -v "$root:$root" \
   -e EVID_ENV_FILE="$env_file" -e EVID_DEMO_USERS_FILE="$demo_file" \
+  -e EVID_FIXTURES_DIR="$main_repo/apps/web/e2e/fixtures" -e EVID_DICTADO_WAV="$wav" \
   -e EVID_VIDEO="$video" -e EVID_ADMIN_EMAIL -e EVID_HOLD_MS -e EVID_ECOSISTEMA -e EVID_WEB_URL -e EVID_LIMPIAR \
   -w "$web" mcr.microsoft.com/playwright:v1.62.1-noble \
   node node_modules/@playwright/test/cli.js test -c e2e/evidencia "$@" || status=$?

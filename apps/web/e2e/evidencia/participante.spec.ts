@@ -1,5 +1,5 @@
 import { test } from '@playwright/test';
-import { biblioteca, conexiones, conversar, elegirEcosistema, limpiar, misDocumentos } from './comun';
+import { audio, biblioteca, conexiones, conversar, elegirEcosistema, limpiar, misDocumentos } from './comun';
 import { cerrarSesion, iniciarSesion, instalarSubtitulos } from './escena';
 
 /** Participante (`member`): conversa, aporta y explora. Ve cuatro secciones. */
@@ -13,6 +13,7 @@ test('participante', async ({ page }) => {
       '¿Qué hacen las familias para acompañar las tareas escolares?',
       'En mi colonia hacemos un círculo de lectura los sábados en la biblioteca comunitaria.',
     );
+    await audio(page);
     await misDocumentos(page);
     await biblioteca(page);
     await conexiones(page);

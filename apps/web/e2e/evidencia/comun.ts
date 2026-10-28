@@ -1,4 +1,6 @@
-import { expect, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { extname, join } from 'node:path';
+import { expect, type Locator, type Page, type Response } from '@playwright/test';
 import { RUN_ID, abrirPanel, archivoDePrueba, cerrarPanel, escena, ir } from './escena';
 
 /**
@@ -137,6 +139,140 @@ export async function conversar(page: Page, pregunta: string, experiencia: strin
   }
 }
 
+/**
+ * The corpus recording the journey suite uploads (`apps/web/e2e/fixtures`,
+ * built by `scripts/corpus-fixtures.sh`, gitignored). `correr.sh` passes the
+ * MAIN checkout's folder as EVID_FIXTURES_DIR: a worktree has no copy.
+ */
+function audioDePrueba(): { name: string; mimeType: string; buffer: Buffer } {
+  const dir = process.env.EVID_FIXTURES_DIR ?? join(import.meta.dirname, '../fixtures');
+  const { audio } = JSON.parse(readFileSync(join(dir, 'fixtures.json'), 'utf8')) as {
+    audio: { file: string; mimeType: string };
+  };
+  return { name: `${RUN_ID}-audio${extname(audio.file)}`, mimeType: audio.mimeType, buffer: readFileSync(join(dir, audio.file)) };
+}
+
+/** Audio documents this run uploaded, by id. Cleanup checks they are gone. */
+const audiosDeLaCorrida = new Set<string>();
+
+/** The next upload into a conversation; its id is kept for cleanup the moment it answers. */
+async function esperarSubida(page: Page, accion: () => Promise<void>): Promise<string> {
+  const respuesta = page.waitForResponse(
+    (r: Response) => /\/api\/sessions\/[^/]+\/documents$/.test(r.url()) && r.request().method() === 'POST',
+    { timeout: 120_000 },
+  );
+  await accion();
+  const res = await respuesta;
+  expect(res.ok(), `subida de audio: HTTP ${res.status()}`).toBe(true);
+  const id = String(((await res.json()) as { doc: { id: string | number } }).doc.id);
+  audiosDeLaCorrida.add(id);
+  return id;
+}
+
+/** One card in the documents drawer, by document id (`detach-<id>` is on every attached card). */
+function tarjeta(page: Page, id: string): Locator {
+  return page
+    .getByTestId('panel-documents')
+    .locator('div.bg-surface-strong.shadow-1')
+    .filter({ has: page.getByTestId(`detach-${id}`) });
+}
+
+/**
+ * Wait until the card's ingest chip says `done`, logging every state it passes
+ * through with the elapsed time (the run's own measure of the pipeline).
+ */
+async function seguirChip(card: Locator, done: RegExp, etiqueta: string, timeoutMs = 8 * 60_000): Promise<string> {
+  const chip = card.locator('.chip.ingest-pending, .chip.ingest-ready, .chip.ingest-failed');
+  const t0 = Date.now();
+  let ultimo = '';
+  while (Date.now() - t0 < timeoutMs) {
+    const texto = (await chip.count()) ? ((await chip.first().textContent()) ?? '').trim() : '';
+    if (texto && texto !== ultimo) {
+      console.log(`[${etiqueta}] +${Math.round((Date.now() - t0) / 1000)}s → ${texto}`);
+      ultimo = texto;
+    }
+    if (/^error/i.test(texto)) throw new Error(`${etiqueta}: la ingesta falló (${((await card.textContent()) ?? '').replace(/\s+/g, ' ')})`);
+    if (done.test(texto)) return texto;
+    await card.page().waitForTimeout(500);
+  }
+  throw new Error(`${etiqueta}: el chip no llegó a ${done} en ${timeoutMs / 1000}s (último: ${ultimo || 'ninguno'})`);
+}
+
+/**
+ * Audio, in the conversation `conversar` left open (the renamed `generales`):
+ * upload a recording, show its transcript corrected (not saved), then dictate.
+ *
+ * ⚠ The mic is Chromium's fake capture device playing a WAV (`movil` project
+ * in the config). ⚠ A participant's audio is filed as a `testimonio` and may
+ * auto-publish once the gate clears it (owner decision 2026-10-28); cleanup
+ * deletes it with the rest.
+ */
+export async function audio(page: Page): Promise<void> {
+  let id = '';
+  await escena(page, 'C1.3', async () => {
+    await abrirPanel(page, 'documents');
+    id = await esperarSubida(page, async () => {
+      const chooser = page.waitForEvent('filechooser');
+      // The name says audio upload is on for this ecosistema.
+      await page.getByRole('button', { name: 'Subir documento o audio' }).first().click();
+      await (await chooser).setFiles(audioDePrueba());
+    });
+    const card = tarjeta(page, id);
+    await card.scrollIntoViewIfNeeded();
+    // A transcript exists from `transcrito` on; `en revisión` is a held draft.
+    await seguirChip(card, /^(transcrito|listo|en revisión)/i, 'audio-subido');
+  });
+
+  await escena(page, 'C1.4', async () => {
+    const card = tarjeta(page, id);
+    const abrir = card.getByRole('button', { name: 'Mostrar u ocultar el documento' });
+    if ((await abrir.getAttribute('aria-expanded')) !== 'true') await abrir.click();
+    await card.getByTestId(`transcript-tab-${id}`).click();
+    await expect(card.getByTestId(`transcript-text-${id}`)).toBeVisible();
+    await card.getByTestId(`transcript-text-${id}`).scrollIntoViewIfNeeded();
+    // 🔴 Shown, not saved. A participant's recording auto-publishes the moment
+    // its ingest lands, and only a draft transcript may change: the save
+    // answered 409 `already_published` (dev, 2026-10-28, doc 1017, ~37 s after
+    // upload). The UI still offered the button, its 30 s poll not yet caught up.
+    const corregir = card.getByTestId(`edit-transcript-${id}`);
+    if (!(await corregir.isVisible())) return;
+    await corregir.click();
+    const editor = card.getByTestId(`transcript-editor-${id}`);
+    // One word: the speaker's town, written out in full (SIM_0015 opens in Juchitán).
+    const texto = await editor.inputValue();
+    const m = /juchit[aá]n/i.exec(texto) ?? /\p{L}{5,}/u.exec(texto)!;
+    const nueva = /juchit/i.test(m[0]) ? 'Juchitán de Zaragoza' : m[0].toUpperCase();
+    await editor.evaluate((el, [a, b]) => (el as HTMLTextAreaElement).setSelectionRange(a, b), [m.index, m.index + m[0].length]);
+    await editor.focus();
+    await page.keyboard.type(nueva, { delay: 60 });
+    await card.getByTestId(`save-transcript-${id}`).hover();
+    await page.waitForTimeout(1200);
+    await card.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  });
+  await cerrarPanel(page);
+
+  await escena(page, 'B3.1', async () => {
+    const vivo = page.getByTestId('live-text');
+    const grabacion = await esperarSubida(page, async () => {
+      await page.getByTestId('mic-start').click();
+      await expect(page.getByTestId('mic-clock')).toBeVisible();
+      // A real word, not the '…' placeholder (`MicButton` shows it until the first slice).
+      await expect(vivo).toHaveText(/\p{L}{4,}/u, { timeout: 30_000 });
+      await page.waitForTimeout(10_000);
+      await page.getByTestId('mic-stop').click();
+      await expect(vivo).toHaveCount(0);
+      // The last live line lands in the composer, ready to send (not sent: no model call).
+      await expect(page.getByTestId('composer-input')).toHaveValue(/\p{L}{4,}/u);
+    });
+    await abrirPanel(page, 'documents');
+    const card = tarjeta(page, grabacion);
+    await card.scrollIntoViewIfNeeded();
+    await expect(card).toBeVisible();
+    await seguirChip(card, /./, 'grabacion', 60_000);
+  });
+  await cerrarPanel(page);
+}
+
 /** Mis documentos, from the menu. Returns the uploaded document's row. */
 export async function misDocumentos(page: Page): Promise<void> {
   await escena(page, 'A2.2', () => ir(page, 'documentos'));
@@ -222,7 +358,13 @@ export async function conexiones(page: Page, busqueda = 'escuela'): Promise<void
   }
 }
 
-/** Anything an evidence run made: this run's, and any earlier run's that died before cleanup. */
+/**
+ * Anything an evidence run made: this run's, and any earlier run's that died
+ * before cleanup. On /documentos it also matches a document by the conversation
+ * it is used in ("Se usa en: evid-… generales"): that is how the audio uploads,
+ * whose titles the system writes, are found. Only an evidence run makes those
+ * conversations.
+ */
 const SOBRAS = /evid-\d{13}/;
 
 /** The run's own cleanup, recorded as the delete stories. */
@@ -245,6 +387,9 @@ export async function limpiar(page: Page): Promise<void> {
       await page.waitForLoadState('networkidle');
     }
     await expect(filas).toHaveCount(0);
+    // The audio uploads carry a generated title, not the run id: they matched
+    // above through "Se usa en: evid-… generales" on their row. Check by id.
+    for (const id of audiosDeLaCorrida) await expect(page.getByTestId(`owned-doc-${id}`)).toHaveCount(0);
   });
   await escena(page, 'B1.6', async () => {
     await page.goto('/?conversaciones');
