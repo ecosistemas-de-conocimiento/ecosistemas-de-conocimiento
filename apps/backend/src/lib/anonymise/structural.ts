@@ -96,30 +96,139 @@ const LONG_DATE = new RegExp(
  */
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi
 
-/** The keys an export or a debug dump uses when it writes an author into text. */
-const AUTHOR_KEY = 'user|usuario|usuario_id|userId|uploadedBy|uploaded_by|authorId|author_id|autor'
+/** The rule name for an author named in a byline ("Autor: …"). */
+export const LABEL_AUTOR = 'persona-autor'
+
+/** `autor` → `[aA][uU][tT][oO][rR]`: case-insensitive WITHOUT the `i` flag (see {@link NAME_WORD}). */
+function anyCase(word: string): string {
+  return word.replace(/\p{L}/gu, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`)
+}
 
 /**
- * Author markers left in the BODY: `user:42`, `usuario 8f1c`, `uploadedBy=17`,
- * `authorId: abc123`.
+ * Nothing word-like right before a key. 🔴 NOT `\b`: `\b` holds after a hyphen,
+ * so "función-autor: cuando" lost its "autor" (measured 2026-10-28).
+ */
+const KEY_START = String.raw`(?<![\p{L}\p{M}\p{N}_\-])`
+
+/**
+ * Nothing word-like right after a value. 🔴 NOT `\b`: `\b` is ASCII-only, so it
+ * holds between "Jos" and "é", and "usuario: José" came out "[Dato omitido]é"
+ * (measured 2026-10-28).
+ */
+const VALUE_END = String.raw`(?![\p{L}\p{M}\p{N}_])`
+
+/**
+ * WHERE A HEADER FIELD STARTS: a line start, or after `|`, `;` or a tab, then
+ * any markdown bullet, quote or bold (`- **Autor:** …`). A key here is a label,
+ * not a word in a sentence, and its value runs to the end of the field.
+ */
+const FIELD_START = String.raw`(?<=(?:^|[|;\t])[ \t>*_#\-]*)`
+
+/** Titles whose abbreviation dot does NOT end a byline: "Autor: Dr. Juan Pérez". */
+const TITLE_ABBREVIATIONS = ['dr', 'dra', 'sr', 'sra', 'srta', 'lic', 'ing', 'mtro', 'mtra', 'prof', 'profa', 'arq', 'mr', 'mrs', 'ms', 'jr']
+  .map(anyCase)
+  .join('|')
+
+/**
+ * A field's value: up to the next newline, `|`, `;` or tab, or a SENTENCE END
+ * (". " — "Autora: Ximena Arriaga. Ximena coordinó." keeps its second
+ * sentence), minus trailing space and a final dot.
+ *
+ * ⚠ A dot after an initial ("J. Pérez") or a title ("Dr. Juan Pérez") is NOT a
+ * sentence end: stopping there would leave the rest of the name in the text.
+ */
+const FIELD_VALUE =
+  String.raw`(?:[^\n\r|;\t.]|\.(?!\s)|(?<=(?<![\p{L}\p{M}])(?:\p{L}|${TITLE_ABBREVIATIONS}))\.)*` +
+  String.raw`[^\s|;.]`
+
+/**
+ * One capitalised name word, or an initial ("J."). 🔴 The regexes that use it
+ * carry no `i` flag: under `iu`, `\p{Lu}` also matches lower case, and "el
+ * autor: según" would lose "según".
+ */
+const NAME_WORD = String.raw`(?:\p{Lu}\.|\p{Lu}[\p{L}\p{M}'’\-]*)`
+
+/** The small words inside a Spanish name, or between two names. */
+const NAME_JOINER = '(?:de|del|la|las|los|y|e|van|von|da|di|do|dos)'
+
+/**
+ * Capitalised name words, joined by spaces and particles: "Juan Pérez de la
+ * Cruz", "Ana Ruiz y Luis Gómez". Stops at the first lower-case word that is
+ * not a particle, so "Juan Pérez subió" keeps "subió".
+ */
+const NAME_RUN = String.raw`${NAME_WORD}(?:[ \t]+(?:${NAME_JOINER}[ \t]+)*${NAME_WORD})*${VALUE_END}`
+
+/** The keys an export or a debug dump uses when it writes an author ID into text. */
+const AUTHOR_KEY = ['user', 'usuario', 'usuario_id', 'userId', 'uploadedBy', 'uploaded_by', 'authorId', 'author_id']
+  .map(anyCase)
+  .join('|')
+
+/**
+ * Author-id markers left in the BODY: `user:42`, `usuario 8f1c`,
+ * `uploadedBy=17`, `authorId: abc123`.
  *
  * ⚠ The KEY IS CONSUMED WITH THE VALUE. Leaving `usuario [Dato omitido]` behind
  * would still tell a reader "this passage was written by one identified
  * account", which is the fact being removed.
  *
- * ⚠ TWO ALTERNATIVES, AND THE SECOND ONE IS NARROW ON PURPOSE. With an explicit
- * `:`/`=` the following token is an id by construction. WITHOUT one, `usuario`
- * is just a Spanish noun, and a rule that swallowed the next word would turn
- * "el usuario dijo que…" into "el [Dato omitido] que…" — a redaction that
- * silently corrupts ordinary prose while removing nothing identifying. So the
- * separator-less form additionally requires the token to CONTAIN A DIGIT, which
- * is what an id has and a word does not.
+ * 🔴 THE WHOLE VALUE, NOT ITS FIRST WORD. The value used to be one token, so
+ * "usuario: Juan Pérez" came out "[Dato omitido] Pérez" — a surname left in
+ * the corpus beside a redaction that makes it look safe. Now:
+ *
+ *   · at a FIELD START ({@link ID_FIELD}) a value that starts with a letter
+ *     runs to the end of the field, whatever its case;
+ *   · anywhere else ({@link ID_INLINE}) a capitalised {@link NAME_RUN} wins
+ *     over a single token.
+ *
+ * ⚠ THE SEPARATOR-LESS FORM IS NARROW ON PURPOSE. With an explicit `:`/`=` the
+ * following token is an id by construction. WITHOUT one, `usuario` is just a
+ * Spanish noun, and a rule that swallowed the next word would turn "el usuario
+ * dijo que…" into "el [Dato omitido] que…" — a redaction that silently
+ * corrupts ordinary prose while removing nothing identifying. So the
+ * separator-less form additionally requires the token to CONTAIN A DIGIT,
+ * which is what an id has and a word does not.
  */
-const AUTHOR_MARKER = new RegExp(
-  String.raw`\b(?:${AUTHOR_KEY})(?:\s*[:=]\s*[A-Za-z0-9_-]{1,64}` +
-    String.raw`|\s+[A-Za-z0-9_-]*\d[A-Za-z0-9_-]*)\b`,
-  'gi',
+const ID_FIELD = new RegExp(
+  String.raw`${FIELD_START}${KEY_START}(?:${AUTHOR_KEY})[ \t]*[:=][ \t]*\p{L}${FIELD_VALUE}`,
+  'gmu',
 )
+const ID_INLINE = new RegExp(
+  String.raw`${KEY_START}(?:${AUTHOR_KEY})(?:\s*[:=]\s*(?:${NAME_RUN}|[A-Za-z0-9_\-]{1,64}${VALUE_END})` +
+    String.raw`|\s+[A-Za-z0-9_\-]*\d[A-Za-z0-9_\-]*${VALUE_END})`,
+  'gmu',
+)
+
+/**
+ * A BYLINE KEY: "Autor", "Autora", "Autores", "Autoras", "Author(s)". Its value
+ * is a PERSON, not an account id, which is why it is not in {@link AUTHOR_KEY}.
+ * It used to be, with a one-token value: "Autor: Juan Pérez" came out
+ * "[Dato omitido] Pérez", and "Autora: …" did not match at all (measured
+ * 2026-10-28).
+ *
+ * ⚠ THE KEY STAYS, THE NAME GOES. "Autor: [Persona A]" says only that the text
+ * has an author, which every text has. The name becomes the SAME `[Persona X]`
+ * the rest of the gate gives that person (`person` in {@link structuralPass}),
+ * or `[Dato omitido]` when stage 1 runs alone.
+ */
+const BYLINE_KEY = ['autor', 'autora', 'autores', 'autoras', 'author', 'authors'].map(anyCase).join('|')
+
+/** `[*_]*` takes markdown bold around the key or the colon: `**Autor:**`. */
+const BYLINE_SEP = String.raw`[*_]*[ \t]*[:=][ \t]*[*_]*[ \t]*`
+
+/** A byline at a field start: the whole field is the value, whatever its case. */
+const BYLINE_FIELD = new RegExp(
+  String.raw`${FIELD_START}${KEY_START}((?:${BYLINE_KEY})${BYLINE_SEP})(${FIELD_VALUE})`,
+  'gmu',
+)
+
+/**
+ * A byline mid-line ("Notas de clase. Autor: Juan Pérez, 2026."): only a
+ * CAPITALISED name run, so "el autor: según él" — a sentence — is left alone.
+ */
+const BYLINE_INLINE = new RegExp(String.raw`${KEY_START}((?:${BYLINE_KEY})${BYLINE_SEP})(${NAME_RUN})`, 'gmu')
+
+/** Where one author ends and the next begins: `,` `;` `/` `&`, or " y " / " e " / " and ". */
+const AUTHOR_SPLIT = /(\s*[,;/&]\s*|\s+(?:y|e|and)\s+)/u
 
 /** Count a rule only when it actually fired — a zero row is noise in the report. */
 function pushCount(into: RedactionCount[], label: string, count: number): void {
@@ -136,10 +245,23 @@ function pushCount(into: RedactionCount[], label: string, count: number): void {
  * fail, cannot be slow, and — unlike stages 3 and 4 — never sends the text
  * anywhere. It runs first for exactly that reason.
  */
-export function structuralPass(text: string): { text: string; removed: RedactionCount[] } {
+export interface StructuralOptions {
+  /**
+   * The `[Persona X]` for a name found in a byline. The gate passes its ONE
+   * per-document allocator here, so the author in a byline and the same person
+   * in the body share a label. Absent → `[Dato omitido]`.
+   */
+  person?: (name: string) => string
+}
+
+export function structuralPass(
+  text: string,
+  options: StructuralOptions = {},
+): { text: string; removed: RedactionCount[] } {
   const removed: RedactionCount[] = []
   let dates = 0
   let ids = 0
+  let authors = 0
 
   let out = text
 
@@ -167,13 +289,33 @@ export function structuralPass(text: string): { text: string; removed: Redaction
     return OMITTED_PLACEHOLDER
   })
 
-  out = out.replace(AUTHOR_MARKER, () => {
-    ids += 1
-    return OMITTED_PLACEHOLDER
-  })
+  // Each author on its own: "Ana Ruiz y Luis Gómez" is two people, two labels.
+  // A piece with no capital letter ("anónimo") gets no person label.
+  const byline = (_m: string, key: string, value: string) =>
+    key +
+    value
+      .split(AUTHOR_SPLIT)
+      .map((piece, i) => {
+        if (i % 2 === 1 || piece.trim() === '') return piece
+        authors += 1
+        return options.person && /\p{Lu}/u.test(piece) ? options.person(piece) : OMITTED_PLACEHOLDER
+      })
+      .join('')
+  // Field form first. What it leaves starts with "[", not a capital, so the
+  // inline form cannot take the same byline twice.
+  out = out.replace(BYLINE_FIELD, byline)
+  out = out.replace(BYLINE_INLINE, byline)
+
+  for (const re of [ID_FIELD, ID_INLINE]) {
+    out = out.replace(re, () => {
+      ids += 1
+      return OMITTED_PLACEHOLDER
+    })
+  }
 
   pushCount(removed, LABEL_FECHA, dates)
   pushCount(removed, LABEL_ID, ids)
+  pushCount(removed, LABEL_AUTOR, authors)
 
   return { text: out, removed }
 }

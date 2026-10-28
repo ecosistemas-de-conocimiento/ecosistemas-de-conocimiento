@@ -640,7 +640,15 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // ── 1. STRUCTURAL ─────────────────────────────────────────────────────────
   // 🔴 NFC FIRST, so the roster pass, the model and every matcher see one
   // spelling of "é" (final audit 2026-10-21: decomposed "José" was missed).
-  const structural = structuralPass(input.text.normalize('NFC'))
+  // A byline's author takes a label from the SAME allocator, and its name parts
+  // are registered, so "Autor: Juan Pérez" and a bare "Pérez" in the body come
+  // out as one `[Persona X]` even when the model never reports the name.
+  const structural = structuralPass(input.text.normalize('NFC'), {
+    person: (name) => {
+      names.add(name)
+      return allocator.labelFor(name)
+    },
+  })
   stages.push({ stage: 'structural', removed: structural.removed })
 
   if (structural.text.trim().length === 0) {
