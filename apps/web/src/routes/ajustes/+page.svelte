@@ -13,12 +13,14 @@
    */
   import { onMount } from 'svelte';
   import { enhance } from '$app/forms';
+  import { beforeNavigate } from '$app/navigation';
   import { ANSWER_STYLE_KINDS, ANSWER_STYLE_LABELS, ANSWER_STYLE_MAX_LENGTH, type AnswerStyles } from '$lib/answerStyle';
   import { FEATURE_DEFAULTS, type FeatureKey, type Features } from '$lib/features';
   import Icon from './Icon.svelte';
   import SaveBar from './SaveBar.svelte';
   import SwitchRow from './SwitchRow.svelte';
   import { SECCIONES, seccionDirty, seccionLocked, type SeccionId } from './secciones';
+  import { guardLeave } from './unsaved';
   import type { ActionData, PageData } from './$types';
 
   type Scope = 'funciones' | 'estilo' | 'plataforma';
@@ -55,6 +57,10 @@
 
   const fallbackChoice = $derived(data.plataforma?.detectorFallback ?? 'env');
   let fallback = $derived<string>(fallbackChoice);
+
+  // A save reloads the stored values, so nothing is dirty after it.
+  const anyDirty = $derived(featuresDirty || stylesDirty || fallback !== fallbackChoice);
+  beforeNavigate((nav) => guardLeave(anyDirty, nav, (m) => window.confirm(m)));
 
   const submit = (s: Scope) => () => {
     pending = s;
