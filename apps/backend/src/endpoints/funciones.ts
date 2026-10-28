@@ -12,9 +12,10 @@
  *   · whoever holds `organization:manage` in that ecosistema — responsable
  *     (`owner`) or `investigador` (owner ruling 2026-10-27) — that ecosistema
  *     only, never the platform;
- *   · `keepPublicFigures` — platform admin only (owner ruling Q16 A); the
- *     others see it read-only (`lockedFeatures` in editables) and get a 403
- *     if they change it. Sending it unchanged is fine (the page sends every key);
+ *   · `keepPublicFigures`, `studentTestimonios` — platform admin only (owner
+ *     ruling Q16 A); the others see them read-only (`lockedFeatures` in
+ *     editables) and get a 403 here if they change one. Sending one unchanged
+ *     is fine (the page sends every key);
  *   · anyone else — nothing. Reading is for members, so the UI (and the future
  *     student view, `studentView`) can ask.
  * Unknown ecosistema and "not yours" get the same 403.
@@ -30,8 +31,9 @@ import { fallbackModeFromEnv } from '../lib/anonymise/fallbackGenerator'
 import {
   featuresFor,
   invalidateFeatures,
-  LOCKED_FEATURE_MESSAGE,
+  isLockedFeatureMessage,
   lockedFeatureChange,
+  lockedFeatureMessage,
   parseFeaturesPatch,
   PLATFORM_ADMIN_ONLY_FEATURES,
   resolveFeatures,
@@ -158,8 +160,9 @@ const writeEndpoint: Endpoint = {
         : {}
     const next = { ...parseOrEmpty(stored), ...patch }
     // Checked here for a clear 403; the collection hook holds the line again.
-    if (lockedFeatureChange(stored, next) && !isPlatformAdminUser(req.user)) {
-      return errorResponse(403, LOCKED_FEATURE_MESSAGE)
+    const locked = lockedFeatureChange(stored, next)
+    if (locked && !isPlatformAdminUser(req.user)) {
+      return errorResponse(403, lockedFeatureMessage(locked))
     }
     try {
       await req.payload.update({
@@ -174,8 +177,8 @@ const writeEndpoint: Endpoint = {
     } catch (err) {
       const status = (err as { status?: unknown }).status
       if (status === 403) {
-        const locked = (err as { message?: unknown }).message === LOCKED_FEATURE_MESSAGE
-        return errorResponse(403, locked ? LOCKED_FEATURE_MESSAGE : NOT_YOURS)
+        const message = (err as { message?: unknown }).message
+        return errorResponse(403, isLockedFeatureMessage(message) ? (message as string) : NOT_YOURS)
       }
       req.payload.logger.error({ err }, '[funciones] write failed')
       return errorResponse(500, 'No se pudo guardar.')

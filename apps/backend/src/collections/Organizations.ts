@@ -1,6 +1,6 @@
 import { APIError, ValidationError, type CollectionBeforeChangeHook, type CollectionConfig, type FieldAccess } from 'payload'
 
-import { invalidateFeatures, LOCKED_FEATURE_MESSAGE, lockedFeatureChange, parseFeaturesPatch } from '../lib/features'
+import { invalidateFeatures, lockedFeatureChange, lockedFeatureMessage, parseFeaturesPatch } from '../lib/features'
 import { roleInOrganization } from '../lib/permissions'
 
 import {
@@ -28,10 +28,19 @@ export const ownerOnlyField: FieldAccess = async ({ req, id }) => {
 }
 
 /**
- * 🔴 `keepPublicFigures` IS THE PLATFORM ADMIN'S (owner ruling Q16 A). Every
- * write to an organization — REST, GraphQL, the Payload panel, bulk updates,
+ * 🔴 THE ADMIN-ONLY SWITCHES ARE THE PLATFORM ADMIN'S (owner ruling Q16 A):
+ * `keepPublicFigures`, `studentTestimonios` (`PLATFORM_ADMIN_ONLY_FEATURES`).
+ * Every write to an organization — REST, the Payload panel, bulk updates,
  * `/api/funciones`, server code — passes through this hook, so this is the one
  * place the rule lives. Other switches in the same write stay the owner's.
+ * (No GraphQL route is mounted: `app/(payload)/api` has only `[...slug]`.)
+ *
+ * ⚠ THE STATUS DEPENDS ON THE PATH. A single write (`PATCH /api/organizations/:id`,
+ * the local API by id, `/api/funciones`) answers 403. A REST BULK update
+ * (`PATCH /api/organizations?where=…`) answers 400: Payload's bulk handler
+ * collects each row's error and replies 400 whatever that row's status was.
+ * The row is refused either way, and the message names the switch
+ * (pinned in `endpoints/funciones.pg.test.ts`).
  *
  * ⚠ NOT A FIELD-ACCESS RULE: `features` is a single json field, and field
  * access can only strip the whole field, which would block every other switch.
@@ -42,8 +51,9 @@ export const ownerOnlyField: FieldAccess = async ({ req, id }) => {
 export const refuseLockedFeatureChange: CollectionBeforeChangeHook = ({ data, originalDoc, operation, req }) => {
   if (!data || data.features === undefined) return data
   const before = operation === 'update' ? (originalDoc as { features?: unknown } | undefined)?.features : undefined
-  if (lockedFeatureChange(before, data.features) && !isPlatformAdminUser(req?.user)) {
-    throw new APIError(LOCKED_FEATURE_MESSAGE, 403, undefined, true)
+  const locked = lockedFeatureChange(before, data.features)
+  if (locked && !isPlatformAdminUser(req?.user)) {
+    throw new APIError(lockedFeatureMessage(locked), 403, undefined, true)
   }
   return data
 }
@@ -155,8 +165,8 @@ export const Organizations: CollectionConfig = {
       // Per-ecosistema switches (owner ruling 2026-10-27). NULL / missing key =
       // the default in `lib/features.ts`, which is today's behaviour. Written by
       // the responsable (owner), an investigador or a platform admin, via
-      // `/api/funciones`; `keepPublicFigures` by a platform admin only
-      // (`refuseLockedFeatureChange`).
+      // `/api/funciones`; `keepPublicFigures` and `studentTestimonios` by a
+      // platform admin only (`refuseLockedFeatureChange`).
       name: 'features',
       type: 'json',
     },

@@ -33,6 +33,8 @@ export interface StudentOverview {
   autores: Author[];
   autoresParaLeer: Author[];
   temasDelEcosistema: string[];
+  /** `studentTestimonios` on: the consent wording must say so. */
+  testimoniosEnReporte?: boolean;
 }
 
 export interface Suggestion {
@@ -46,12 +48,19 @@ export interface Suggestion {
 export interface ActivityReport {
   student: { id: number; name: string };
   summary: { documents: number; published: number; topics: number; conversations: number };
-  uploads: Array<{ id: number; name: string; createdAt: string; status: string; kind: string }>;
+  /** Documentos only; a draft's `name` is null. */
+  uploads: Array<{ id: number; name: string | null; createdAt: string; status: string; kind: string }>;
   topics: string[];
   chatThemes: string[];
   gaps: string[];
   readings: DocRef[];
+  /** Only when `studentTestimonios` is on. Anonymised output or a status line. */
+  testimonios?: ReportTestimonio[];
 }
+
+export type ReportTestimonio =
+  | { id: number; createdAt: string; state: 'visible'; title: string; text: string }
+  | { id: number; createdAt: string; state: 'held' | 'rejected' | 'pending' };
 
 export type Result<T> = { ok: true; value: T } | { ok: false; status: number; message: string };
 

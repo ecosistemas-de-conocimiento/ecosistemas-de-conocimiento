@@ -49,3 +49,24 @@ describe('/ajustes — the keepPublicFigures switch', () => {
     expect(body).not.toMatch(/name="locked"/);
   });
 });
+
+describe('/ajustes — the studentTestimonios switch', () => {
+  it('is shown, off by default, and read-only for a responsable or investigador', () => {
+    const body = render(Ajustes, {
+      props: {
+        form: null,
+        data: {
+          state: 'ready',
+          ecosistemas: [{ id: '1', name: 'Eco A', slug: 'a', features: { ...FEATURE_DEFAULTS } }],
+          selected: { id: '1', name: 'Eco A', slug: 'a', features: { ...FEATURE_DEFAULTS } },
+          plataforma: null,
+          lockedFeatures: ['keepPublicFigures', 'studentTestimonios'],
+        },
+      } as never,
+    }).body;
+    const box = checkbox(body, 'studentTestimonios');
+    expect(box).toMatch(/disabled/);
+    expect(box).not.toMatch(/checked/);
+    expect(body).toContain('Testimonios de estudiantes en el reporte (anonimizados)');
+  });
+});

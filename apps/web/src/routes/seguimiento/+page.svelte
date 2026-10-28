@@ -8,6 +8,11 @@
 
   const r = $derived(data.reporte);
   const KIND: Record<string, string> = { contenido: 'Contenido', arquitectura: 'Arquitectura', interaccion: 'Interacción' };
+  const STATE: Record<'held' | 'rejected' | 'pending', string> = {
+    held: 'En revisión de anonimización',
+    rejected: 'No aprobado',
+    pending: 'Anonimización en curso',
+  };
   const date = (s: string) => (s ? new Date(s).toLocaleDateString('es-MX') : '');
 </script>
 
@@ -59,9 +64,27 @@
           <h4>Trabajos</h4>
           <ul class="list">
             {#each r.uploads as u (u.id)}
-              <li class="row">{u.name} <span class="muted">· {date(u.createdAt)} · {u.status === 'published' ? 'publicado' : 'borrador'}</span></li>
+              <li class="row">{u.name ?? 'Borrador sin título'} <span class="muted">· {date(u.createdAt)} · {u.status === 'published' ? 'publicado' : 'borrador'}</span></li>
             {/each}
           </ul>
+
+          {#if r.testimonios}
+            <h4>Testimonios</h4>
+            {#if r.testimonios.length}
+              <ul class="list" data-testid="testimonios">
+                {#each r.testimonios as t (t.id)}
+                  <li class="row">
+                    {#if t.state === 'visible'}
+                      <strong>{t.title}</strong> <span class="muted">· {date(t.createdAt)}</span>
+                      <p class="redacted">{t.text}</p>
+                    {:else}
+                      <span class="muted">{STATE[t.state]} · {date(t.createdAt)}</span>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {:else}<p>Sin testimonios.</p>{/if}
+          {/if}
         </article>
       {:else if data.chosen}
         <p class="muted">Sin reporte.</p>
@@ -164,6 +187,11 @@
     font-size: 0.75rem;
     font-weight: 700;
     margin-right: 0.4rem;
+  }
+  .redacted {
+    white-space: pre-wrap;
+    max-height: 12rem;
+    overflow: auto;
   }
   a {
     color: var(--edc-color-brand);

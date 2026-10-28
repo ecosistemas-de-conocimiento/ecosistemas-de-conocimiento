@@ -15,7 +15,10 @@
  * Any per-person read here that let one through would name that voice
  * (audit 2026-10-27: "Mis compañeros" scope returned a peer's testimonio).
  * So every read that joins `documents` carries {@link DOCUMENTO}, except
- * `documentsOf` (the caller's own list) and `corpusTopTopics` (no person).
+ * `documentsOf` (the caller's own list; the teacher report keeps its
+ * documentos only, `buildReport`), `corpusTopTopics` (no person) and
+ * {@link testimoniosOf} (the teacher report, behind `studentTestimonios`, which
+ * reads the gate's OUTPUT only).
  * The graph's noise gate and no-private-persona gate (`lib/graph/queries.ts`)
  * apply to every mention read here.
  */
@@ -326,4 +329,58 @@ export async function consentingStudents(
     out.push({ id, name: toText(r.name) })
   }
   return out
+}
+
+export interface TestimonioRow {
+  id: number
+  createdAt: string
+  /** `documents.anonymisation_status`. */
+  status: string
+  /** NULL unless the gate cleared the row (`ready` / `approved`). */
+  redactedText: string | null
+  /** `testimonio_title`, NULL unless cleared, as above. */
+  title: string | null
+}
+
+/**
+ * 🔴 ONE STUDENT'S TESTIMONIOS FOR THE TEACHER REPORT (`studentTestimonios`
+ * on; the caller in `endpoints/estudiante.ts` has already checked role,
+ * ecosistema and the student's consent).
+ *
+ * It selects the gate's OUTPUT and nothing else. Never `name` (free text that
+ * never went through the gate, `titleFor`), `extracted_text` / `body_markdown`
+ * (the original), `held_text` (what the gate refused), or a media row. Those
+ * are `mayReadGatedOriginal`'s columns, and this read does not widen them.
+ *
+ * `redacted_text` and `testimonio_title` come back only when the gate cleared
+ * the row — the rule `mayReadTestimonioTitle` applies to the title. On a held,
+ * rejected or pending row they are NULL here, in SQL, so a stale
+ * `redacted_text` left by a later hold never leaves the database.
+ * (`reportTestimonios` in `logic.ts` checks the status again.)
+ */
+export async function testimoniosOf(
+  p: StudentDb,
+  organizationId: number,
+  userId: number,
+  limit = 50,
+): Promise<TestimonioRow[]> {
+  const rows = await run(
+    p,
+    sql`
+    SELECT d.id AS id, d.created_at AS created_at, d.anonymisation_status::text AS status,
+           CASE WHEN d.anonymisation_status::text IN ('ready', 'approved') THEN d.redacted_text END AS redacted_text,
+           CASE WHEN d.anonymisation_status::text IN ('ready', 'approved') THEN d.testimonio_title END AS title
+      FROM documents d
+     WHERE d.organization_id = ${organizationId} AND d.uploaded_by_id = ${userId}
+       AND d.content_kind = 'testimonio'
+     ORDER BY d.created_at DESC, d.id DESC
+     LIMIT ${limit}`,
+  )
+  return rows.map((r) => ({
+    id: toId(r.id),
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : toText(r.created_at),
+    status: toText(r.status),
+    redactedText: typeof r.redacted_text === 'string' ? r.redacted_text : null,
+    title: typeof r.title === 'string' ? r.title : null,
+  }))
 }

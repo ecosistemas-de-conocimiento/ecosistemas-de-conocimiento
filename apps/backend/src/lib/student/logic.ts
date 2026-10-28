@@ -4,7 +4,9 @@
  * report. No I/O; `endpoints/estudiante.ts` feeds it rows from `./queries`.
  */
 
-import type { DocRef, Labelled, OwnDoc, StudentRow } from './queries'
+import { titleFor } from '../contentKind'
+
+import type { DocRef, Labelled, OwnDoc, StudentRow, TestimonioRow } from './queries'
 
 export interface Peer {
   id: number
@@ -137,15 +139,45 @@ export function mergeAuthors(
   return out.slice(0, limit)
 }
 
+/** One testimonio in the teacher report: the gate's output, or a status line. */
+export type ReportTestimonio =
+  | { id: number; createdAt: string; state: 'visible'; title: string; text: string }
+  | { id: number; createdAt: string; state: 'held' | 'rejected' | 'pending' }
+
 export interface ActivityReport {
   student: { id: number; name: string }
   summary: { documents: number; published: number; topics: number; conversations: number }
-  uploads: Array<{ id: number; name: string; createdAt: string; status: string; kind: string }>
+  /** 🔴 `documento` only; a draft's `name` is null. */
+  uploads: Array<{ id: number; name: string | null; createdAt: string; status: string; kind: string }>
   topics: string[]
   chatThemes: string[]
   /** The ecosistema's most-documented topics this student has not touched. */
   gaps: string[]
   readings: DocRef[]
+  /** Only when `studentTestimonios` is on; absent otherwise. */
+  testimonios?: ReportTestimonio[]
+}
+
+const CLEARED = new Set(['ready', 'approved'])
+
+/**
+ * 🔴 WHAT A TEACHER SEES OF A STUDENT'S TESTIMONIO. Cleared by the gate
+ * (`ready` / `approved`) with text: the redacted text and the neutral title
+ * (`testimonioTitle`, else `titleFor('testimonio')`). Anything else — held,
+ * rejected, pending, an unknown status, a cleared row with no text — is a
+ * status line with no text and no title. Fails closed on the status, even
+ * though `testimoniosOf` already nulls the text in SQL.
+ */
+export function reportTestimonios(rows: readonly TestimonioRow[]): ReportTestimonio[] {
+  return rows.map((r) => {
+    const text = typeof r.redactedText === 'string' ? r.redactedText.trim() : ''
+    if (CLEARED.has(r.status) && text !== '') {
+      const own = typeof r.title === 'string' ? r.title.trim() : ''
+      return { id: r.id, createdAt: r.createdAt, state: 'visible', title: own || titleFor('testimonio'), text }
+    }
+    const state = r.status === 'held' || r.status === 'rejected' ? r.status : 'pending'
+    return { id: r.id, createdAt: r.createdAt, state }
+  })
 }
 
 export function buildReport(input: {
@@ -155,20 +187,27 @@ export function buildReport(input: {
   sessionTitles: readonly string[]
   corpusTop: readonly Labelled[]
   readings: readonly DocRef[]
+  /** `studentTestimonios` on: the rows; off: null / absent, and no key in the report. */
+  testimonios?: readonly TestimonioRow[] | null
 }): ActivityReport {
   const mine = new Set(input.topics.map((t) => t.id))
-  return {
+  // 🔴 Documentos only: a testimonio's or a conversation's `name` never went
+  // through the gate. A draft is the student's own: it shows as a draft, unnamed.
+  const docs = input.docs.filter((d) => d.kind === 'documento')
+  const report: ActivityReport = {
     student: { id: input.student.id, name: input.student.name },
     summary: {
-      documents: input.docs.length,
-      published: input.docs.filter((d) => d.status === 'published').length,
+      documents: docs.length,
+      published: docs.filter((d) => d.status === 'published').length,
       topics: input.topics.length,
       conversations: input.sessionTitles.length,
     },
-    uploads: input.docs.slice(0, 30).map((d) => ({ ...d })),
+    uploads: docs.slice(0, 30).map((d) => ({ ...d, name: d.status === 'published' ? d.name : null })),
     topics: input.topics.slice(0, 15).map((t) => t.label),
     chatThemes: [...new Set(input.sessionTitles)].slice(0, 15),
     gaps: input.corpusTop.filter((t) => !mine.has(t.id)).slice(0, 6).map((t) => t.label),
     readings: [...input.readings],
   }
+  if (input.testimonios) report.testimonios = reportTestimonios(input.testimonios)
+  return report
 }

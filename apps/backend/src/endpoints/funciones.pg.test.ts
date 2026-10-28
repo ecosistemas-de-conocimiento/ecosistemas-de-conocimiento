@@ -382,8 +382,122 @@ describe.skipIf(!dockerOk)('/api/funciones and /api/plataforma on a real Postgre
     }, 30_000)
 
     it('editables tells the page which switches this caller cannot change', async () => {
-      expect((await call('get', '/funciones/editables', OLGA)).body.lockedFeatures).toEqual(['keepPublicFigures'])
+      expect((await call('get', '/funciones/editables', OLGA)).body.lockedFeatures).toEqual([
+        'keepPublicFigures',
+        'studentTestimonios',
+      ])
       expect((await call('get', '/funciones/editables', ROOT)).body.lockedFeatures).toEqual([])
+    })
+
+    // ── Q16 audit follow-ups ─────────────────────────────────────────────────
+    const restRoutes = async () => {
+      const { REST_PATCH, REST_POST } = await import('@payloadcms/next/routes')
+      const { default: config } = await import('@payload-config')
+      return { patch: REST_PATCH(config), post: REST_POST(config) }
+    }
+    const tokenFor = async (id: number, email: string) => {
+      await payload.update({ collection: 'users', id, data: { password: 'Rest-test-1234' } as never, overrideAccess: true })
+      const out = await payload.login({ collection: 'users', data: { email, password: 'Rest-test-1234' } })
+      return out.token as string
+    }
+
+    it('REST bulk PATCH /api/organizations?where=… : refused with 400 (Payload\'s bulk status) and the lock message', async () => {
+      const { patch } = await restRoutes()
+      const olga = await tokenFor(OLGA, 'olga@example.invalid')
+      const res = await patch(
+        new Request(`http://localhost:3000/api/organizations?where[id][equals]=${ECO_A}`, {
+          method: 'PATCH',
+          headers: { Authorization: `JWT ${olga}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ features: { keepPublicFigures: true } }),
+        }),
+        { params: Promise.resolve({ slug: ['organizations'] }) },
+      )
+      const body = (await res.json()) as { docs?: unknown[]; errors?: Array<{ message: string }> }
+      // ⚠ 400, not 403: Payload's bulk update answers 400 whenever a row errors,
+      // whatever that row's own status was. The row is still refused.
+      expect(res.status).toBe(400)
+      expect(body.docs).toEqual([])
+      expect(body.errors?.[0]?.message).toBe(LOCKED)
+      expect(await storedFeatures(ECO_A)).toBeNull()
+    }, 30_000)
+
+    it('GraphQL: no route is mounted, so POST /api/graphql cannot write features', async () => {
+      const { readdirSync } = await import('node:fs')
+      const { fileURLToPath } = await import('node:url')
+      const apiDir = fileURLToPath(new URL('../app/(payload)/api/', import.meta.url))
+      expect(readdirSync(apiDir)).toEqual(['[...slug]'])
+      const { post } = await restRoutes()
+      const olga = await tokenFor(OLGA, 'olga@example.invalid')
+      const res = await post(
+        new Request('http://localhost:3000/api/graphql', {
+          method: 'POST',
+          headers: { Authorization: `JWT ${olga}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: `mutation { updateOrganization(id: ${ECO_A}, data: { features: { keepPublicFigures: true } }) { id } }`,
+          }),
+        }),
+        { params: Promise.resolve({ slug: ['graphql'] }) },
+      )
+      expect(res.status).toBe(404)
+      expect(await storedFeatures(ECO_A)).toBeNull()
+    }, 30_000)
+
+    it('features: null is a change when a locked switch is on, and refused; null over nothing is not', async () => {
+      await setStored(ECO_A, { keepPublicFigures: true, studentTestimonios: true })
+      expect(await status(localUpdate(OLGA, null as never))).toBe(403)
+      expect(await storedFeatures(ECO_A)).toEqual({ keepPublicFigures: true, studentTestimonios: true })
+      await db.execute(sql.raw(`UPDATE organizations SET features = NULL WHERE id = ${ECO_A}`))
+      expect(await status(localUpdate(OLGA, null as never))).toBe('ok')
+      // A platform admin may clear it.
+      await setStored(ECO_A, { keepPublicFigures: true })
+      expect(await status(localUpdate(ROOT, null as never))).toBe('ok')
+      expect(await storedFeatures(ECO_A)).toBeNull()
+    })
+
+    it('🔴 an inactive platform admin is refused, on the endpoint and the collection', async () => {
+      await db.execute(sql.raw(`UPDATE users SET is_active = false WHERE id = ${ROOT}`))
+      try {
+        // The endpoint treats an inactive account as signed out (401).
+        expect((await flip(ROOT, ECO_A, { keepPublicFigures: true })).status).toBe(401)
+        expect((await flip(ROOT, ECO_A, { studentTestimonios: true })).status).toBe(401)
+        expect(await status(localUpdate(ROOT, { studentTestimonios: true }))).toBe(403)
+        expect(await storedFeatures(ECO_A)).toBeNull()
+      } finally {
+        await db.execute(sql.raw(`UPDATE users SET is_active = true WHERE id = ${ROOT}`))
+      }
+    })
+  })
+
+  describe('🔴 studentTestimonios (teachers see students\' testimonios, anonymised) is the platform admin\'s alone', () => {
+    const LOCKED_T = 'Solo administración de la plataforma puede cambiar «Testimonios de estudiantes en el reporte».'
+
+    it('off by default', async () => {
+      expect(await featureEnabled(payload, ECO_A, 'studentTestimonios')).toBe(false)
+    })
+
+    it('the responsable and the investigador get 403 with the switch\'s own message; nothing moves', async () => {
+      for (const as of [OLGA, INES]) {
+        const res = await flip(as, ECO_A, { studentTestimonios: true })
+        expect([as, res.status]).toEqual([as, 403])
+        expect((res.body.errors as Array<{ message: string }>)[0]?.message).toBe(LOCKED_T)
+        await expect(
+          payload.update({
+            collection: 'organizations',
+            id: ECO_A,
+            data: { features: { studentTestimonios: true } } as never,
+            overrideAccess: false,
+            user: await userDoc(as),
+          }),
+        ).rejects.toMatchObject({ status: 403, message: LOCKED_T })
+      }
+      expect(await storedFeatures(ECO_A)).toBeNull()
+      // Other switches still move for the responsable.
+      expect((await flip(OLGA, ECO_A, { studentTestimonios: false, graph: false })).status).toBe(200)
+    })
+
+    it('a platform admin flips it, and it takes effect', async () => {
+      expect((await flip(ROOT, ECO_A, { studentTestimonios: true })).status).toBe(200)
+      expect(await featureEnabled(payload, ECO_A, 'studentTestimonios')).toBe(true)
     })
   })
 })

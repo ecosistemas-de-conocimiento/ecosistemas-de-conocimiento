@@ -3,6 +3,7 @@
 <script lang="ts">
   /** `/estudiante` — minimal copy (owner rule); every rule is in the backend. */
   import { enhance } from '$app/forms';
+  import { consentActivityLabel } from '$lib/consent';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -134,7 +135,7 @@
         <input type="hidden" name="value" value={String(!o.perfil.shareActivity)} />
         <label class="toggle">
           <input type="checkbox" checked={o.perfil.shareActivity} onchange={(e) => e.currentTarget.form?.requestSubmit()} data-testid="share-activity" />
-          <span>Compartir mi actividad con investigadores del ecosistema</span>
+          <span>{consentActivityLabel(o.testimoniosEnReporte)}</span>
         </label>
       </form>
     </section>

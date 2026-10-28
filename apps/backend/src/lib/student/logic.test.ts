@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { authorPage, buildReport, citedSurnames, matchPeers, mergeAuthors } from './logic'
+import { authorPage, buildReport, citedSurnames, matchPeers, mergeAuthors, reportTestimonios } from './logic'
 
 const T = (id: number, label: string) => ({ id, label, docs: 1 })
 
@@ -72,5 +72,79 @@ describe('buildReport', () => {
     expect(r.summary).toEqual({ documents: 1, published: 1, topics: 1, conversations: 2 })
     expect(r.gaps).toEqual(['b'])
     expect(r.chatThemes).toEqual(['s'])
+  })
+
+  const base = {
+    student: { id: 1, name: 'Ana' },
+    topics: [],
+    sessionTitles: [],
+    corpusTop: [],
+    readings: [],
+  }
+
+  it('🔴 documents only, and a draft carries no name', () => {
+    const r = buildReport({
+      ...base,
+      docs: [
+        { id: 1, name: 'Mi ensayo', createdAt: 'a', status: 'published', kind: 'documento' },
+        { id: 2, name: 'Borrador secreto', createdAt: 'b', status: 'draft', kind: 'documento' },
+        { id: 3, name: 'Testimonio de María López.mp3', createdAt: 'c', status: 'published', kind: 'testimonio' },
+        { id: 4, name: 'Conversación con Pedro', createdAt: 'd', status: 'published', kind: 'conversacion' },
+      ],
+    })
+    expect(r.uploads).toEqual([
+      { id: 1, name: 'Mi ensayo', createdAt: 'a', status: 'published', kind: 'documento' },
+      { id: 2, name: null, createdAt: 'b', status: 'draft', kind: 'documento' },
+    ])
+    expect(r.summary).toMatchObject({ documents: 2, published: 1 })
+    expect(JSON.stringify(r)).not.toMatch(/secreto|María|Pedro/)
+  })
+
+  it('without testimonios (switch off) the report has no testimonios key', () => {
+    expect('testimonios' in buildReport({ ...base, docs: [] })).toBe(false)
+    expect('testimonios' in buildReport({ ...base, docs: [], testimonios: null })).toBe(false)
+  })
+
+  it('with testimonios (switch on) they are in the report', () => {
+    const r = buildReport({ ...base, docs: [], testimonios: [] })
+    expect(r.testimonios).toEqual([])
+  })
+})
+
+describe('reportTestimonios — what a teacher sees of a student\'s testimonio', () => {
+  const row = (status: string, extra: Partial<{ redactedText: string | null; title: string | null }> = {}) => ({
+    id: 7,
+    createdAt: '2026-10-01',
+    status,
+    redactedText: 'Habló [Persona A] sobre el río.',
+    title: 'El río y la comunidad',
+    ...extra,
+  })
+
+  it('approved or ready: the redacted text and the neutral title', () => {
+    for (const status of ['approved', 'ready']) {
+      expect(reportTestimonios([row(status)])).toEqual([
+        { id: 7, createdAt: '2026-10-01', state: 'visible', title: 'El río y la comunidad', text: 'Habló [Persona A] sobre el río.' },
+      ])
+    }
+  })
+
+  it('no generated title → "Testimonio" (titleFor), never anything else', () => {
+    expect(reportTestimonios([row('approved', { title: null })])[0]).toMatchObject({ title: 'Testimonio' })
+    expect(reportTestimonios([row('approved', { title: '   ' })])[0]).toMatchObject({ title: 'Testimonio' })
+  })
+
+  it('🔴 held, rejected, pending or unknown: a status line, no text, no title', () => {
+    const out = reportTestimonios([row('held'), row('rejected'), row('pending'), row('n/a'), row('weird')])
+    expect(out.map((t) => t.state)).toEqual(['held', 'rejected', 'pending', 'pending', 'pending'])
+    for (const t of out) expect(Object.keys(t).sort()).toEqual(['createdAt', 'id', 'state'])
+  })
+
+  it('🔴 a cleared status with no redacted text is a status line, not an empty card', () => {
+    expect(reportTestimonios([row('approved', { redactedText: null })])[0]).toEqual({
+      id: 7,
+      createdAt: '2026-10-01',
+      state: 'pending',
+    })
   })
 })

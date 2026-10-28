@@ -22,6 +22,15 @@
  * text, never a peer's draft. A report needs `canAdminOrg` AND the student's
  * own `shareActivity`; without consent it is the same 404 as a stranger.
  * The ids every route acts on come from the session, never from the body.
+ *
+ * 🔴 THE REPORT AND TESTIMONIOS. Off by default (`studentTestimonios`): the
+ * report lists documentos only, drafts unnamed (`buildReport`). On (platform
+ * admin's switch): it adds the student's testimonios as the gate's output only
+ * — `redactedText` and the neutral title when cleared, a status line otherwise
+ * (`testimoniosOf`, `reportTestimonios`). "Their students" = the consenting
+ * `estudiante` members of THIS ecosistema: the model has no teacher–student
+ * link finer than the ecosistema. The overview tells the student whether the
+ * switch is on (`testimoniosEnReporte`), so the consent wording can say so.
  */
 
 import type { Endpoint, PayloadRequest } from 'payload'
@@ -154,7 +163,7 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
       if (g instanceof Response) return g
       const p = db(req)
       const org = g.organizationId
-      const [profile, mineMap, graphAuthors, texts, pages, candidates, docs, corpusTop] = await Promise.all([
+      const [profile, mineMap, graphAuthors, texts, pages, candidates, docs, corpusTop, testimoniosEnReporte] = await Promise.all([
         findProfile(req, g),
         Q.topicsByUser(p, org, [g.userId], { publishedOnly: false }),
         Q.authorsOfUser(p, org, g.userId),
@@ -163,6 +172,7 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
         Q.consentingStudents(p, org, 'share_with_peers'),
         Q.documentsOf(p, org, g.userId),
         Q.corpusTopTopics(p, org, 15),
+        featureEnabled(req.payload, org, 'studentTestimonios'),
       ])
       const topics = mineMap.get(g.userId) ?? []
       const peersOnly = candidates.filter((c) => c.id !== g.userId)
@@ -193,6 +203,7 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
           .slice(0, 10)
           .map((a) => ({ name: a.label, docs: a.docs, page: authorPage(a.label, pages) })),
         temasDelEcosistema: corpusTop.map((t) => t.label),
+        testimoniosEnReporte,
       })
     },
   }
@@ -330,11 +341,13 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
       // 🔴 Consent: only a student who switched `shareActivity` on is listed.
       const student = (await Q.consentingStudents(p, org, 'share_activity')).find((s) => s.id === studentId)
       if (!student) return errorResponse(404, 'Sin reporte.')
-      const [topicsMap, docs, sessionTitles, corpusTop] = await Promise.all([
+      const withTestimonios = await featureEnabled(req.payload, org, 'studentTestimonios')
+      const [topicsMap, docs, sessionTitles, corpusTop, testimonios] = await Promise.all([
         Q.topicsByUser(p, org, [studentId], { publishedOnly: false }),
         Q.documentsOf(p, org, studentId),
         Q.sessionTitlesOf(p, org, studentId),
         Q.corpusTopTopics(p, org, 25),
+        withTestimonios ? Q.testimoniosOf(p, org, studentId) : null,
       ])
       const topics = topicsMap.get(studentId) ?? []
       const readings = await Q.readingsForTopics(
@@ -343,7 +356,7 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
         topics.slice(0, 10).map((t) => t.id),
         studentId,
       )
-      return ok({ reporte: buildReport({ student, docs, topics, sessionTitles, corpusTop, readings }) })
+      return ok({ reporte: buildReport({ student, docs, topics, sessionTitles, corpusTop, readings, testimonios }) })
     },
   }
 

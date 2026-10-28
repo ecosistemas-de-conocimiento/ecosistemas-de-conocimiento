@@ -22,6 +22,10 @@
  *   studentView        nothing yet; read by the future student view
  *   keepPublicFigures  `lib/publicFigures.ts` → the gate (a gated `documento` only;
  *                      never a testimonio or a conversation). Default OFF.
+ *   studentTestimonios `endpoints/estudiante.ts` (the activity report). Default
+ *                      OFF. On: the teacher's report lists the student's
+ *                      testimonios, anonymised only (`lib/student/logic.ts`
+ *                      `reportTestimonios`). Platform admin only.
  */
 
 import type { Payload } from 'payload'
@@ -38,6 +42,7 @@ export const FEATURE_DEFAULTS = {
   autoPublishMembers: true,
   studentView: false,
   keepPublicFigures: false,
+  studentTestimonios: false,
 } as const satisfies Record<string, boolean>
 
 export type FeatureKey = keyof typeof FEATURE_DEFAULTS
@@ -60,16 +65,34 @@ export function resolveFeatures(raw: unknown): Features {
 }
 
 /**
- * 🔴 SWITCHES ONLY A PLATFORM ADMIN MAY CHANGE (owner ruling Q16 A). Keeping
- * public figures' names in the corpus is a privacy call for the installation,
- * not for the ecosistema: its responsable and investigadores see it read-only.
+ * 🔴 SWITCHES ONLY A PLATFORM ADMIN MAY CHANGE (owner ruling Q16 A). Each is a
+ * privacy call for the installation, not for the ecosistema: its responsable
+ * and investigadores see it read-only.
+ *   keepPublicFigures   keeps public figures' names in the corpus;
+ *   studentTestimonios  shows teachers their students' testimonios (anonymised)
+ *                       — same pattern, same reason: who may read a voice.
  * Enforced in `Organizations` (beforeChange, every write path) and checked
  * first in `/api/funciones` for a clear error.
  */
-export const PLATFORM_ADMIN_ONLY_FEATURES = ['keepPublicFigures'] as const satisfies readonly FeatureKey[]
+export const PLATFORM_ADMIN_ONLY_FEATURES = ['keepPublicFigures', 'studentTestimonios'] as const satisfies readonly FeatureKey[]
 
-export const LOCKED_FEATURE_MESSAGE =
-  'Solo administración de la plataforma puede cambiar «Conservar nombres de figuras públicas».'
+const LOCKED_LABELS: Record<(typeof PLATFORM_ADMIN_ONLY_FEATURES)[number], string> = {
+  keepPublicFigures: 'Conservar nombres de figuras públicas',
+  studentTestimonios: 'Testimonios de estudiantes en el reporte',
+}
+
+/** The refusal for one admin-only switch. */
+export function lockedFeatureMessage(key: FeatureKey): string {
+  const label = (LOCKED_LABELS as Partial<Record<FeatureKey, string>>)[key] ?? key
+  return `Solo administración de la plataforma puede cambiar «${label}».`
+}
+
+export const LOCKED_FEATURE_MESSAGE = lockedFeatureMessage('keepPublicFigures')
+
+/** Is this one of the refusals above (so a caught error keeps its message)? */
+export function isLockedFeatureMessage(message: unknown): boolean {
+  return PLATFORM_ADMIN_ONLY_FEATURES.some((k) => lockedFeatureMessage(k) === message)
+}
 
 /**
  * The first admin-only switch whose RESOLVED value differs between the stored

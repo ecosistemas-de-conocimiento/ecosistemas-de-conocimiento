@@ -89,6 +89,10 @@ function fakeQueries(w: World): StudentQueries & { calls: string[] } {
       return ids.map((id) => 200 + id)
     },
     sessionTitlesOf: async () => ['Sobre el signo'],
+    testimoniosOf: async (_p: unknown, _o: number, uid: number) => {
+      calls.push(`testimonios:${uid}`)
+      return [{ id: 300, createdAt: '2026-10-02', status: 'approved', redactedText: 'Habló [Persona A].', title: null }]
+    },
     consentingStudents: async (_p: unknown, _o: number, flag: 'share_with_peers' | 'share_activity') => consenting(flag),
   }
   return q as unknown as StudentQueries & { calls: string[] }
@@ -324,5 +328,37 @@ describe('activity report', () => {
     w.profiles.push({ id: 1, user: 1, organization: ORG, shareWithPeers: false, shareActivity: true })
     const res = await call('get', '/estudiante/reporte', { as: user(99, { isPlatformAdmin: true }), qs: `organization=${ORG}&user=1` })
     expect(res.status).toBe(200)
+  })
+
+  it('🔴 studentTestimonios off (default): testimonios are never read, and the report has no such key', async () => {
+    const { w, call, Q } = setup()
+    w.profiles.push({ id: 1, user: 1, organization: ORG, shareWithPeers: false, shareActivity: true })
+    const res = await call('get', '/estudiante/reporte', { as: user(4), qs: `organization=${ORG}&user=1` })
+    expect(res.status).toBe(200)
+    expect('testimonios' in (res.body.reporte as object)).toBe(false)
+    expect(Q.calls.filter((c) => c.startsWith('testimonios:'))).toEqual([])
+  })
+
+  it('studentTestimonios on: the consenting student\'s testimonios, read for that student only', async () => {
+    const { w, call, Q } = setup()
+    w.features[ORG] = { studentView: true, studentTestimonios: true }
+    w.profiles.push({ id: 1, user: 1, organization: ORG, shareWithPeers: false, shareActivity: true })
+    const res = await call('get', '/estudiante/reporte', { as: user(5), qs: `organization=${ORG}&user=1` })
+    expect((res.body.reporte as { testimonios: unknown }).testimonios).toEqual([
+      { id: 300, createdAt: '2026-10-02', state: 'visible', title: 'Testimonio', text: 'Habló [Persona A].' },
+    ])
+    expect(Q.calls.filter((c) => c.startsWith('testimonios:'))).toEqual(['testimonios:1'])
+    // A student, even with the switch on, gets nothing.
+    const asStudent = await call('get', '/estudiante/reporte', { as: user(2), qs: `organization=${ORG}&user=1` })
+    expect(asStudent.status).toBe(403)
+    expect(Q.calls.filter((c) => c.startsWith('testimonios:'))).toEqual(['testimonios:1'])
+  })
+
+  it('overview tells the student whether testimonios reach the report (for the consent wording)', async () => {
+    const { w, call } = setup()
+    expect((await call('get', '/estudiante', { as: user(1), qs: `organization=${ORG}` })).body.testimoniosEnReporte).toBe(false)
+    w.features[ORG] = { studentView: true, studentTestimonios: true }
+    invalidateFeatures()
+    expect((await call('get', '/estudiante', { as: user(1), qs: `organization=${ORG}` })).body.testimoniosEnReporte).toBe(true)
   })
 })

@@ -10,7 +10,10 @@ import {
   featureEnabled,
   featuresFor,
   invalidateFeatures,
+  isLockedFeatureMessage,
+  LOCKED_FEATURE_MESSAGE,
   lockedFeatureChange,
+  lockedFeatureMessage,
   parseFeaturesPatch,
   PLATFORM_ADMIN_ONLY_FEATURES,
   resolveFeatures,
@@ -19,7 +22,7 @@ import {
 beforeEach(() => invalidateFeatures())
 
 describe('defaults', () => {
-  it('every switch is on except studentView (not built yet) and keepPublicFigures (opt-in)', () => {
+  it('every switch is on except studentView, keepPublicFigures and studentTestimonios (opt-in)', () => {
     expect(FEATURE_DEFAULTS).toEqual({
       audioUpload: true,
       liveMic: true,
@@ -32,8 +35,9 @@ describe('defaults', () => {
       autoPublishMembers: true,
       studentView: false,
       keepPublicFigures: false,
+      studentTestimonios: false,
     })
-    expect(FEATURE_KEYS).toHaveLength(11)
+    expect(FEATURE_KEYS).toHaveLength(12)
   })
 
   it('NULL, junk and non-booleans read as the defaults', () => {
@@ -89,8 +93,19 @@ describe('featuresFor', () => {
 })
 
 describe('lockedFeatureChange — keepPublicFigures is the platform admin\'s (owner ruling Q16 A)', () => {
-  it('names keepPublicFigures as the only admin-only switch', () => {
-    expect([...PLATFORM_ADMIN_ONLY_FEATURES]).toEqual(['keepPublicFigures'])
+  it('names keepPublicFigures and studentTestimonios as the admin-only switches', () => {
+    expect([...PLATFORM_ADMIN_ONLY_FEATURES]).toEqual(['keepPublicFigures', 'studentTestimonios'])
+  })
+
+  it('studentTestimonios is locked the same way, and each lock names its own switch', () => {
+    expect(lockedFeatureChange({}, { studentTestimonios: true })).toBe('studentTestimonios')
+    expect(lockedFeatureChange({ studentTestimonios: true }, null)).toBe('studentTestimonios')
+    expect(lockedFeatureMessage('keepPublicFigures')).toBe(LOCKED_FEATURE_MESSAGE)
+    expect(lockedFeatureMessage('studentTestimonios')).toBe(
+      'Solo administración de la plataforma puede cambiar «Testimonios de estudiantes en el reporte».',
+    )
+    expect(isLockedFeatureMessage(lockedFeatureMessage('studentTestimonios'))).toBe(true)
+    expect(isLockedFeatureMessage('No es tuyo.')).toBe(false)
   })
 
   it('reports a change of the resolved value, in either direction', () => {

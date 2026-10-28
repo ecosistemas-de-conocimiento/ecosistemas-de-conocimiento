@@ -4,7 +4,7 @@ vi.mock('$lib/server/auth', () => ({ backendUrl: () => 'http://backend.test', ba
 
 import { actions, load } from './+page.server';
 import { backendFetch } from '$lib/server/auth';
-import { FEATURE_DEFAULTS, FEATURE_KEYS, FEATURE_LABELS } from '$lib/features';
+import { FEATURE_DEFAULTS, FEATURE_KEYS, FEATURE_LABELS, PLATFORM_ADMIN_ONLY_FEATURES } from '$lib/features';
 
 const mocked = backendFetch as unknown as ReturnType<typeof vi.fn>;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
@@ -56,7 +56,10 @@ describe('/ajustes load', () => {
     );
     expect(((await load(event())) as { lockedFeatures: string[] }).lockedFeatures).toEqual([]);
     mocked.mockResolvedValue(json({ ecosistemas: [{ id: '1', name: 'A', slug: 'a', features: null }], plataforma: null }));
-    expect(((await load(event())) as { lockedFeatures: string[] }).lockedFeatures).toEqual(['keepPublicFigures']);
+    expect(((await load(event())) as { lockedFeatures: string[] }).lockedFeatures).toEqual([
+      'keepPublicFigures',
+      'studentTestimonios',
+    ]);
   });
 });
 
@@ -80,6 +83,12 @@ describe('/ajustes actions', () => {
     await actions.funciones!(event('/ajustes', { organization: '1', keepPublicFigures: 'on' }));
     const body = JSON.parse(String((mocked.mock.calls[0]![2] as RequestInit).body)) as { features: Record<string, boolean> };
     expect(body.features.keepPublicFigures).toBe(true);
+  });
+
+  it('studentTestimonios: off by default, labelled in Spanish, admin-only', async () => {
+    expect(FEATURE_DEFAULTS.studentTestimonios).toBe(false);
+    expect(FEATURE_LABELS.studentTestimonios).toBe('Testimonios de estudiantes en el reporte (anonimizados)');
+    expect(PLATFORM_ADMIN_ONLY_FEATURES).toContain('studentTestimonios');
   });
 
   it('🔴 a locked switch is left out of the save, so a read-only toggle never reads as "off"', async () => {

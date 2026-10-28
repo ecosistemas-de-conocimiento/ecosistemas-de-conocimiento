@@ -16,6 +16,7 @@ export const FEATURE_DEFAULTS = {
   autoPublishMembers: true,
   studentView: false,
   keepPublicFigures: false,
+  studentTestimonios: false,
 } as const satisfies Record<string, boolean>;
 
 export type FeatureKey = keyof typeof FEATURE_DEFAULTS;
@@ -28,7 +29,7 @@ export const FEATURE_KEYS = Object.keys(FEATURE_DEFAULTS) as FeatureKey[];
  * says which are locked for the caller (`lockedFeatures`); this is the
  * fail-closed fallback when it does not.
  */
-export const PLATFORM_ADMIN_ONLY_FEATURES: readonly FeatureKey[] = ['keepPublicFigures'];
+export const PLATFORM_ADMIN_ONLY_FEATURES: readonly FeatureKey[] = ['keepPublicFigures', 'studentTestimonios'];
 
 export const isFeatureKey = (k: unknown): k is FeatureKey =>
   typeof k === 'string' && Object.prototype.hasOwnProperty.call(FEATURE_DEFAULTS, k);
@@ -46,6 +47,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   autoPublishMembers: 'Publicar solo lo de participantes',
   studentView: 'Vista de estudiante',
   keepPublicFigures: 'Conservar nombres de figuras públicas en documentos',
+  studentTestimonios: 'Testimonios de estudiantes en el reporte (anonimizados)',
 };
 
 /** Whatever came over the wire, made whole. Junk reads as the defaults. */
