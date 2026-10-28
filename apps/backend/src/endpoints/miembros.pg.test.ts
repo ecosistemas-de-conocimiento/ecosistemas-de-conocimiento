@@ -557,6 +557,76 @@ describe.skipIf(!dockerOk)('/api/miembros on a real Postgres', () => {
     }
   }, 60_000)
 
+  // ── Fourth audit: an allowlist, not a denylist (`user__id` was the third bypass) ─
+  it('🔴 a caller who manages nothing may filter and sort only on the allowlist', async () => {
+    await db.execute(sql.raw(`
+      INSERT INTO users (id, email, display_name) VALUES (40, 'fresh@example.invalid', 'Fresh');
+      INSERT INTO memberships (id, user_id, organization_id, role) VALUES (9, 40, 1, 'member');
+    `))
+    const enc = encodeURIComponent
+    const W9 = 'where[id][equals]=9&'
+    const pairs: Array<[string, string]> = [
+      [`${W9}where[user__id][greater_than]=39`, `${W9}where[user__id][greater_than]=40`],
+      ['where[user__email][equals]=fresh@example.invalid', 'where[user__email][equals]=nobody@example.invalid'],
+      ['where[user__email][like]=bea', 'where[user__email][like]=zzzz'],
+      [`${W9}where[AND][0][user__id][greater_than]=39`, `${W9}where[AND][0][user__id][greater_than]=40`],
+      [`${W9}where[${enc('ＡＮＤ')}][0][user][greater_than]=39`, `${W9}where[${enc('ＡＮＤ')}][0][user][greater_than]=40`],
+      [`${W9}where[${enc('ｕｓｅｒ')}][greater_than]=39`, `${W9}where[${enc('ｕｓｅｒ')}][greater_than]=40`],
+      [`${W9}where[AND][0][${enc('uſer')}][greater_than]=39`, `${W9}where[AND][0][${enc('uſer')}][greater_than]=40`],
+      [`${W9}where[${enc(' and')}][0][user][greater_than]=39`, `${W9}where[${enc(' and')}][0][user][greater_than]=40`],
+      [`${W9}where[${enc('user ')}][greater_than]=39`, `${W9}where[${enc('user ')}][greater_than]=40`],
+      [`${W9}where[${enc('and\t')}][0][user][greater_than]=39`, `${W9}where[${enc('and\t')}][0][user][greater_than]=40`],
+      [`${W9}where[and][0][or][0][and][0][or][0][user][greater_than]=39`, `${W9}where[and][0][or][0][and][0][or][0][user][greater_than]=40`],
+      [`${W9}where[and][0][or][0][and][0][or][0][and][0][user][greater_than]=39`, `${W9}where[and][0][or][0][and][0][or][0][and][0][user][greater_than]=40`],
+      [`${W9}where[0][user][greater_than]=39`, `${W9}where[0][user][greater_than]=40`],
+      [`${W9}where[and][25][user][greater_than]=39`, `${W9}where[and][25][user][greater_than]=40`],
+      [`${W9}where[and][x][user][greater_than]=39`, `${W9}where[and][x][user][greater_than]=40`],
+      [`${W9}where[user][greater_than][]=39`, `${W9}where[user][greater_than][]=40`],
+      ['where[user][equals][]=4&where[user][equals][]=40', 'where[user][equals][]=4&where[user][equals][]=41'],
+      ['where[user][equals]=4&where[user][greater_than]=0', 'where[user][equals]=4&where[user][greater_than]=10'],
+      [
+        `where=${enc(JSON.stringify({ id: { equals: 9 }, AND: [{ user: { greater_than: 39 } }] }))}`,
+        `where=${enc(JSON.stringify({ id: { equals: 9 }, AND: [{ user: { greater_than: 40 } }] }))}`,
+      ],
+      [
+        `where=${enc(JSON.stringify({ id: { equals: 9 }, user__id: { greater_than: 39 } }))}`,
+        `where=${enc(JSON.stringify({ id: { equals: 9 }, user__id: { greater_than: 40 } }))}`,
+      ],
+      [`${W9}where[user._id][greater_than]=39`, `${W9}where[user._id][greater_than]=40`],
+      [`${W9}where[user][greater_than]=39&limit=0`, `${W9}where[user][greater_than]=40&limit=0`],
+      [`${W9}where[user][greater_than]=39&pagination=false`, `${W9}where[user][greater_than]=40&pagination=false`],
+      [`${W9}where[user][greater_than]=39&joins[user][limit]=1`, `${W9}where[user][greater_than]=40&joins[user][limit]=1`],
+      ['where[organization__name][like]=Secreto', 'where[organization__name][like]=Nope'],
+    ]
+    for (const [hit, miss] of pairs) {
+      for (const base of ['/memberships?', '/memberships/count?']) {
+        const h = await rest(`${base}${hit}`, MEMO)
+        const m = await rest(`${base}${miss}`, MEMO)
+        expect(h.status, `${base}${hit}`).toBe(400)
+        expect(h, `${base}${hit}`).toEqual(m)
+      }
+    }
+    for (const sort of ['user__id', '-user__id', 'user__email', 'organization,-user__email', 'USER__ID', 'organization__name']) {
+      expect((await rest(`/memberships?sort=${enc(sort)}&limit=50`, MEMO)).status, sort).toBe(400)
+    }
+    // The binary search the auditor ran now learns nothing.
+    const answers = new Set<string>()
+    for (const n of [0, 20, 39, 40, 500]) {
+      answers.add(JSON.stringify(await rest(`/memberships?where[id][equals]=9&where[user__id][greater_than]=${n}&depth=0`, MEMO)))
+    }
+    expect(answers.size).toBe(1)
+
+    // The allowlist still serves what the web and the admin list ask.
+    for (const ok of [
+      `where[user][equals]=${MEMO}&depth=1&limit=100`,
+      'where[organization][equals]=1&where[isActive][equals]=true&sort=-createdAt',
+      'where[or][0][role][equals]=member&where[or][1][personName][like]=x&sort=personName',
+      'where[organization__id][equals]=1',
+    ]) {
+      expect((await rest(`/memberships?${ok}`, MEMO)).status, ok).toBe(ok.includes('organization__id') ? 400 : 200)
+    }
+  }, 120_000)
+
   it('a manager still filters and sorts by `user`, but only over the ecosistemas they manage', async () => {
     const olga = await asUser(OLGA)
     const res = await payload.find({

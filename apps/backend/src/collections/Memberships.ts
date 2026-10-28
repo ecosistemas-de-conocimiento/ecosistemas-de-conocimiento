@@ -405,47 +405,70 @@ export const refuseDeleteLastResponsable: CollectionBeforeDeleteHook = async ({ 
 
 const USER_QUERY_MESSAGE = 'Consulta no permitida.'
 
-/** `user`, `user.email`, `USER`, `User.id` … — every letter case, since the check must not be narrower than the database. */
-const isUserPath = (path: string): boolean => {
-  const p = path.trim().toLowerCase()
-  return p === 'user' || p.startsWith('user.')
-}
+/**
+ * The fields anyone may filter and sort memberships by. ⚠ AN ALLOWLIST, after
+ * three denylist bypasses in one day (2026-10-28): `user` → `AND[0][user]` →
+ * `user__id` (Payload reads `__` as `.`, `validateSearchParams.js:15`,
+ * `buildOrderBy.js:48`). A key passes only if it IS one of these names
+ * (any letter case, no padding), so `__`, dots, padding and look-alike
+ * letters all fall outside it. No dotted paths: a relation is filtered by its
+ * id, never by the related row's fields.
+ * The web's own query is `user equals <me>` (`apps/web/src/lib/server/ecosystem.ts`);
+ * the rest is what the admin list uses.
+ */
+const SAFE_FIELDS = new Set(
+  ['id', 'organization', 'isActive', 'role', 'team', 'personName', 'title', 'createdAt', 'updatedAt'].map((f) =>
+    f.toLowerCase(),
+  ),
+)
+const OPERATORS = new Set([
+  'equals', 'contains', 'not_equals', 'in', 'all', 'not_in', 'exists', 'greater_than',
+  'greater_than_equal', 'less_than', 'less_than_equal', 'like', 'not_like',
+])
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v)
 
 /**
- * True when `where` filters on `user` (or `user.*`) by anything but
- * `user equals <me>`. ⚠ Payload lowercases `and`/`or` before it builds SQL
- * (`validateQueryPaths.js:17`, drizzle `parseParams`), so `AND`, `Or`, `aNd`
- * must be walked too (third audit 2026-10-28: `where[AND][0][user]` recovered a
- * hidden id in 10 requests). Their value is walked whether it is an array or a
- * keyed object.
+ * True only when every key in `where`, at every nesting, is `and`/`or`, an
+ * allowlisted field with known operators, or exactly `user: { equals: <me> }`.
+ * Anything else — a string `where`, an unknown key, an odd operator — is unsafe.
  */
-function queriesOthersByUser(where: unknown, callerId: unknown): boolean {
-  if (!where || typeof where !== 'object') return false
-  for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
-    const lower = key.trim().toLowerCase()
-    if (lower === 'and' || lower === 'or') {
-      const items = value && typeof value === 'object' ? Object.values(value as Record<string, unknown>) : []
-      if (items.some((w) => queriesOthersByUser(w, callerId))) return true
+function isSafeWhere(where: unknown, callerId: unknown): boolean {
+  if (where === undefined || where === null) return true
+  if (!isPlainObject(where)) return false
+  for (const [key, value] of Object.entries(where)) {
+    // Payload lowercases logical keys (`validateQueryPaths.js:17`) but does not
+    // trim them; any other near-miss spelling is simply not on the list.
+    const logical = key.toLowerCase()
+    if (logical === 'and' || logical === 'or') {
+      if (!Array.isArray(value) || !value.every((w) => isSafeWhere(w, callerId))) return false
       continue
     }
-    if (!isUserPath(key)) continue
-    const ops = value && typeof value === 'object' ? Object.entries(value as Record<string, unknown>) : []
-    const [op, operand] = ops[0] ?? []
-    const ownOnly =
-      key === 'user' &&
-      ops.length === 1 &&
-      op === 'equals' &&
-      (typeof operand === 'string' || typeof operand === 'number') &&
-      String(operand) === String(callerId)
-    if (!ownOnly) return true
+    if (!isPlainObject(value)) return false
+    const ops = Object.entries(value)
+    if (key === 'user') {
+      const [op, operand] = ops[0] ?? []
+      const own =
+        ops.length === 1 &&
+        op === 'equals' &&
+        (typeof operand === 'string' || typeof operand === 'number') &&
+        String(operand) === String(callerId)
+      if (!own) return false
+      continue
+    }
+    if (!SAFE_FIELDS.has(key.toLowerCase()) || key !== key.trim()) return false
+    if (ops.length === 0 || !ops.every(([op, operand]) => OPERATORS.has(op) && !isPlainObject(operand))) return false
   }
-  return false
+  return true
 }
 
-const sortsByUser = (sort: unknown): boolean =>
-  (Array.isArray(sort) ? sort : typeof sort === 'string' ? sort.split(',') : []).some((s) =>
-    isUserPath(String(s).trim().replace(/^-/, '')),
-  )
+function isSafeSort(sort: unknown): boolean {
+  if (sort === undefined || sort === null || sort === '') return true
+  const parts = Array.isArray(sort) ? sort : typeof sort === 'string' ? sort.split(',') : null
+  if (!parts) return false
+  return parts.every((s) => typeof s === 'string' && SAFE_FIELDS.has(s.trim().replace(/^-/, '').toLowerCase()))
+}
 
 /**
  * 🔴 THE HIDDEN ACCOUNT ID CANNOT BE SEARCHED FOR EITHER.
@@ -453,8 +476,8 @@ const sortsByUser = (sort: unknown): boolean =>
  * `readMembershipUser` hides the value, but a where-query still could find it:
  * `where[user][greater_than]` binary-searched a hidden id in 10 requests, and
  * `sort=user` leaked order (re-audit 2026-10-28). So, for a caller who is not
- * a platform admin and goes through access, any filter or sort on `user`
- * other than `user equals <me>`:
+ * a platform admin and goes through access, any filter or sort outside the
+ * allowlist above (`SAFE_FIELDS`, plus `user equals <me>`):
  *  · is refused (400) when the caller manages no ecosistema;
  *  · is narrowed to the ecosistemas they manage otherwise — where they can
  *    already read every `user` value.
@@ -465,7 +488,7 @@ export const limitQueriesOnUser: CollectionBeforeOperationHook = async ({ args, 
   if (a.overrideAccess === true) return args
   const callerId = (req?.user as { id?: unknown } | null | undefined)?.id
   if (callerId === null || callerId === undefined || isPlatformAdminUser(req.user)) return args
-  if (!queriesOthersByUser(a.where, callerId) && !sortsByUser(a.sort)) return args
+  if (isSafeWhere(a.where, callerId) && isSafeSort(a.sort)) return args
   const managed = await organizationIdsForUserWithMinRole(req.payload, callerId as number | string, 'admin')
   if (managed.length === 0) throw new APIError(USER_QUERY_MESSAGE, 400, undefined, true)
   const scope = { organization: { in: managed } }
