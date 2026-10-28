@@ -99,12 +99,15 @@ const full = (form: unknown = null) =>
         ecosystemName: 'Semiosis práctica',
         overview: {
           perfil: { shareWithPeers: true, shareActivity: false },
-          temas: ['semiosis', 'zapoteco'],
+          temas: [
+            { id: 41, label: 'semiosis' },
+            { id: 42, label: 'zapoteco' },
+          ],
           documentos: [
             { id: 1, name: 'Ensayo', status: 'published' },
             { id: 2, name: 'Notas', status: 'draft' },
           ],
-          companeros: [{ name: 'Luis Hernández', topics: ['semiosis'] }],
+          companeros: [{ id: 'Zq3xY_-abcdefghijklmno', name: 'Luis Hernández', topics: [{ id: 41, label: 'semiosis' }] }],
           autores: [
             { name: 'Charles S. Peirce', docs: 4, page: { id: 201, name: 'Peirce' } },
             { name: 'Iuri Lotman', docs: 1, page: null },
@@ -164,9 +167,26 @@ describe('/estudiante — layout', () => {
 
   it('consent switches are native checkboxes with a visible label', () => {
     const body = full();
-    expect(body).toMatch(/<label[^>]*for="share-peers"[^>]*>Mostrar mi nombre y mis temas a otros estudiantes<\/label>/);
+    expect(body).toMatch(/<label[^>]*for="share-peers"[^>]*>Mostrar mi nombre, mis temas y mis trabajos publicados a otros estudiantes<\/label>/);
     expect(box(body, 'share-peers')).toMatch(/type="checkbox"[^>]*role="switch"/);
     expect(box(body, 'share-peers')).toMatch(/checked/);
     expect(box(body, 'share-activity')).not.toMatch(/checked/);
+  });
+});
+
+describe('/estudiante — links (V3)', () => {
+  it('each topic chip opens that topic in the ecosistema graph', () => {
+    const body = full();
+    const links = [...body.matchAll(/<a[^>]*data-testid="tema-link"[^>]*>[^<]*<\/a>/g)].map((m) => m[0]);
+    expect(links).toHaveLength(2);
+    expect(links[0]).toContain('href="/grafo?entidad=41&amp;eco=1"');
+    expect(links[0]).toContain('>semiosis<');
+    expect(links[1]).toContain('href="/grafo?entidad=42&amp;eco=1"');
+  });
+
+  it('a peer card links to their page by the opaque id; shared topics link to the graph', () => {
+    const body = full();
+    expect(body).toMatch(/<a[^>]*href="\/estudiante\/companero\/Zq3xY_-abcdefghijklmno"[^>]*data-testid="companero-link"[^>]*>[\s\S]*?Luis Hernández/);
+    expect(body).toMatch(/<a[^>]*href="\/grafo\?entidad=41&amp;eco=1"[^>]*data-testid="companero-tema-link"[^>]*>semiosis<\/a>/);
   });
 });

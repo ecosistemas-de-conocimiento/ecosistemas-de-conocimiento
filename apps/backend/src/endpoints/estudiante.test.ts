@@ -16,7 +16,10 @@ import type { Endpoint, PayloadRequest } from 'payload'
 import { invalidateFeatures } from '../lib/features'
 import { TESTIMONIO_CONSENT_VERSION } from '../lib/student/testimonioConsent'
 import type { Labelled, StudentRow } from '../lib/student/queries'
+import { peerSlug } from '../lib/student/peerSlug'
 import { makeEstudianteEndpoints, type StudentQueries } from './estudiante'
+
+const SECRET = 'unit-test-secret'
 
 const ORG = 8
 type Membership = { user: number; organization: number; role: string }
@@ -95,6 +98,10 @@ function fakeQueries(w: World): StudentQueries & { calls: string[] } {
       return [{ id: 300, createdAt: '2026-10-02', status: 'approved', redactedText: 'Habló [Persona A].', title: null }]
     },
     consentingStudents: async (_p: unknown, _o: number, flag: 'share_with_peers' | 'share_activity') => consenting(flag),
+    publishedDocumentosOf: async (_p: unknown, _o: number, uid: number) => {
+      calls.push(`publishedDocs:${uid}`)
+      return [{ id: 400 + uid, name: `Publicado ${uid}` }]
+    },
   }
   return q as unknown as StudentQueries & { calls: string[] }
 }
@@ -132,6 +139,7 @@ function fakePayload(w: World) {
       return row
     },
     db: { drizzle: { execute: async () => ({ rows: [] }) } },
+    secret: SECRET,
   }
 }
 
@@ -166,6 +174,7 @@ const ROUTES: Array<[string, string, { qs?: string; body?: unknown }]> = [
   ['get', '/estudiante', { qs: `organization=9` }],
   ['patch', '/estudiante/perfil', { body: { organization: 9, shareWithPeers: true } }],
   ['get', '/estudiante/alcance', { qs: `organization=9&alcance=mios` }],
+  ['get', '/estudiante/companero', { qs: `organization=9&id=${peerSlug(SECRET, 9, 2)}` }],
   ['post', '/sugerencias', { body: { organization: 9, kind: 'contenido', text: 'x' } }],
   ['get', '/sugerencias', { qs: `organization=9` }],
   ['get', '/estudiante/reportes', { qs: `organization=9` }],
@@ -228,7 +237,9 @@ describe('student scoping', () => {
     w.profiles.push({ id: 2, user: 3, organization: ORG, shareWithPeers: false, shareActivity: true })
     const res = await call('get', '/estudiante', { as: user(1), qs: `organization=${ORG}` })
     expect(res.status).toBe(200)
-    expect(res.body.companeros).toEqual([{ name: 'Persona 2', topics: ['semiosis'] }])
+    expect(res.body.companeros).toEqual([{ id: peerSlug(SECRET, ORG, 2), name: 'Persona 2', topics: [{ id: 10, label: 'semiosis' }] }])
+    expect(JSON.stringify(res.body.companeros)).not.toMatch(/"id":2\b/)
+    expect(res.body.temas).toEqual([{ id: 10, label: 'semiosis' }, { id: 11, label: 'signo' }])
     // Peer topics come from PUBLISHED documents only; mine from all of mine.
     expect(Q.calls).toContain('topics:1:false')
     expect(Q.calls).toContain('topics:2:true')
@@ -402,5 +413,49 @@ describe('activity report', () => {
     w.features[ORG] = { studentView: true, studentTestimonios: true }
     invalidateFeatures()
     expect((await call('get', '/estudiante', { as: user(1), qs: `organization=${ORG}` })).body.testimoniosEnReporte).toBe(true)
+  })
+})
+
+describe('companero (a classmate\'s page)', () => {
+  const peerOf = (id: number, org = ORG) => peerSlug(SECRET, org, id)
+  const optIn = (w: World, uid: number, on = true) =>
+    w.profiles.push({ id: w.profiles.length + 1, user: uid, organization: ORG, shareWithPeers: on, shareActivity: false })
+
+  it('opted-in peer: name, shared topics with ids, published works only', async () => {
+    const { w, call, Q } = setup()
+    optIn(w, 2)
+    const res = await call('get', '/estudiante/companero', { as: user(1), qs: `organization=${ORG}&id=${peerOf(2)}` })
+    expect(res.status).toBe(200)
+    expect(res.body.companero).toEqual({
+      id: peerOf(2),
+      name: 'Persona 2',
+      temas: [{ id: 10, label: 'semiosis' }],
+      trabajos: [{ id: 402, name: 'Publicado 2' }],
+    })
+    expect(Q.calls).toContain('topics:2:true')
+    expect(Q.calls).not.toContain('topics:2:false')
+    expect(Q.calls.filter((c) => c.startsWith('docs:') || c.startsWith('texts:') || c.startsWith('testimonios:'))).toEqual([])
+  })
+
+  it('🔴 not opted in, withdrawn, self, raw id, other org slug, junk → the same 404', async () => {
+    const { w, call } = setup()
+    optIn(w, 3, false)
+    const get = (id: string, as = user(1)) => call('get', '/estudiante/companero', { as, qs: `organization=${ORG}&id=${id}` })
+    expect((await get(peerOf(3))).status).toBe(404)
+    optIn(w, 2)
+    expect((await get(peerOf(2))).status).toBe(200)
+    w.profiles.find((p) => p.user === 2)!.shareWithPeers = false
+    expect((await get(peerOf(2))).status).toBe(404)
+    w.profiles.find((p) => p.user === 2)!.shareWithPeers = true
+    expect((await get(peerOf(2, 9))).status).toBe(404)
+    expect((await get('2')).status).toBe(404)
+    expect((await get('')).status).toBe(404)
+    expect((await get(peerOf(2), user(2))).status).toBe(404)
+  })
+
+  it('non-students → 403', async () => {
+    const { w, call } = setup()
+    optIn(w, 2)
+    expect((await call('get', '/estudiante/companero', { as: user(4), qs: `organization=${ORG}&id=${peerOf(2)}` })).status).toBe(403)
   })
 })

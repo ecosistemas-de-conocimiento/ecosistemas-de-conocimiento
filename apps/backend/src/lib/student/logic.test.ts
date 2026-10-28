@@ -16,8 +16,8 @@ describe('matchPeers', () => {
       [{ id: 8, name: 'Ocho' }, { id: 7, name: 'Siete' }, { id: 9, name: 'Nueve' }],
     )
     expect(peers.map((p) => [p.name, p.topics, p.score])).toEqual([
-      ['Siete', ['a', 'b'], 1],
-      ['Ocho', ['a'], 0.25],
+      ['Siete', [{ id: 1, label: 'a' }, { id: 2, label: 'b' }], 1],
+      ['Ocho', [{ id: 1, label: 'a' }], 0.25],
     ])
   })
   it('no topics of mine → nobody', () => {

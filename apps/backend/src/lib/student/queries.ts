@@ -212,6 +212,30 @@ export async function publishedDocumentoNames(p: StudentDb, organizationId: numb
   return rows.map((r) => ({ id: toId(r.id), name: toText(r.name) }))
 }
 
+/**
+ * 🔴 ONE CLASSMATE'S PUBLISHED documentos, for their peer page. Published AND
+ * `documento` only: never a draft, never a testimonio (see the header). The
+ * caller has already checked that this uploader opted in (`shareWithPeers`).
+ */
+export async function publishedDocumentosOf(
+  p: StudentDb,
+  organizationId: number,
+  userId: number,
+  limit = 50,
+): Promise<DocRef[]> {
+  const rows = await run(
+    p,
+    sql`
+    SELECT d.id AS id, d.name AS name FROM documents d
+     WHERE d.organization_id = ${organizationId}
+       AND d.uploaded_by_id = ${userId}
+       AND d.publication_status = 'published'${DOCUMENTO}
+     ORDER BY d.created_at DESC, d.id DESC
+     LIMIT ${limit}`,
+  )
+  return rows.map((r) => ({ id: toId(r.id), name: toText(r.name) }))
+}
+
 export interface OwnDoc {
   id: number
   name: string

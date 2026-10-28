@@ -29,3 +29,16 @@ describe('labels', () => {
     expect(trabajosLabel(3)).toBe('3 trabajos');
   });
 });
+
+describe('links', () => {
+  it('topicHref focuses the entity in that ecosistema graph (`/grafo?entidad=&eco=`)', async () => {
+    const { topicHref } = await import('./estudiante');
+    expect(topicHref('7', 41)).toBe('/grafo?entidad=41&eco=7');
+  });
+
+  it('companeroHref uses the opaque id as is, encoded', async () => {
+    const { companeroHref } = await import('./estudiante');
+    expect(companeroHref('Zq3xY_-abcdefghijklmno')).toBe('/estudiante/companero/Zq3xY_-abcdefghijklmno');
+    expect(companeroHref('a/b')).toBe('/estudiante/companero/a%2Fb');
+  });
+});

@@ -13,10 +13,13 @@
   import ConsentSwitch from '$lib/components/estudiante/ConsentSwitch.svelte';
   import { CONSENT_ACTIVITY, CONSENT_ACTIVITY_WITH_TESTIMONIOS, TESTIMONIO_CONSENT_VERSION } from '$lib/consent';
   import {
+    companeroHref,
     docsLabel,
     ESTUDIANTE_TABS,
     initials,
+    PEERS_CONSENT,
     tabAfterKey,
+    topicHref,
     trabajosLabel,
     type EstudianteTab,
   } from '$lib/estudiante';
@@ -105,7 +108,9 @@
 
       {#if o.temas.length}
         <ul class="chips" data-testid="mis-temas">
-          {#each o.temas as t (t)}<li class="chip chip-mine">{t}</li>{/each}
+          {#each o.temas as t (t.id)}
+            <li><a class="chip chip-mine chip-link" href={topicHref(data.organization, t.id)} data-testid="tema-link">{t.label}</a></li>
+          {/each}
         </ul>
       {:else if o.documentos.length}
         <!-- A note or upload not processed yet (`lib/studentNotes.ts` in the backend). -->
@@ -185,18 +190,22 @@
       <ConsentSwitch
         key="shareWithPeers"
         checked={o.perfil.shareWithPeers}
-        label="Mostrar mi nombre y mis temas a otros estudiantes"
+        label={PEERS_CONSENT}
         testid="share-peers"
       />
       {#if o.companeros.length}
         <ul class="peers" data-testid="companeros">
-          {#each o.companeros as c (c.name)}
+          {#each o.companeros as c (c.id)}
             <li class="peer">
               <span class="avatar" aria-hidden="true">{initials(c.name)}</span>
               <div class="peer-main">
-                <p class="peer-name">{c.name}</p>
+                <a class="peer-name peer-link" href={companeroHref(c.id)} data-testid="companero-link">
+                  {c.name} <span class="chevron" aria-hidden="true">→</span>
+                </a>
                 <ul class="chips chips-sm" aria-label="Temas en común">
-                  {#each c.topics as t (t)}<li class="chip chip-mine">{t}</li>{/each}
+                  {#each c.topics as t (t.id)}
+                    <li><a class="chip chip-mine chip-link" href={topicHref(data.organization, t.id)} data-testid="companero-tema-link">{t.label}</a></li>
+                  {/each}
                 </ul>
               </div>
             </li>
@@ -363,6 +372,19 @@
     border-color: var(--edc-color-brand-outline);
     background: var(--edc-color-brand-soft);
     color: var(--edc-color-brand-strong);
+  }
+  .chip-link {
+    display: inline-block;
+    text-decoration: none;
+  }
+  .chip-link:hover {
+    border-color: var(--edc-color-brand);
+    text-decoration: underline;
+  }
+  .chip-link:focus-visible,
+  .peer-link:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--edc-focus-ring);
   }
   .chips-sm {
     gap: var(--edc-space-1);
@@ -625,6 +647,14 @@
     margin: 0;
     font-weight: 700;
     overflow-wrap: anywhere;
+  }
+  .peer-link {
+    color: var(--edc-color-brand-strong);
+    text-decoration: none;
+    border-radius: var(--edc-radius-1);
+  }
+  .peer-link:hover {
+    text-decoration: underline;
   }
 
   /* ── Sugerir ───────────────────────────────────────────────── */

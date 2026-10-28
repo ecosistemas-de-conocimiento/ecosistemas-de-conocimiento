@@ -5,6 +5,7 @@
  *   GET   /api/estudiante?organization=<id>            my topics, peers, authors   estudiante
  *   PATCH /api/estudiante/perfil                       { organization, shareWithPeers?, shareActivity?, shareTestimonios?, consentVersion? }  estudiante
  *   GET   /api/estudiante/alcance?organization=&alcance=mios|companeros   { documentIds }  estudiante
+ *   GET   /api/estudiante/companero?organization=&id=<slug>   one opted-in classmate   estudiante
  *   POST  /api/sugerencias                             { organization, kind, text }  estudiante
  *   GET   /api/sugerencias?organization=<id>           investigador · responsable
  *   GET   /api/estudiante/reportes?organization=<id>   consenting students     canAdminOrg
@@ -22,6 +23,13 @@
  * text, never a peer's draft. A report needs `canAdminOrg` AND the student's
  * own `shareActivity`; without consent it is the same 404 as a stranger.
  * The ids every route acts on come from the session, never from the body.
+ *
+ * 🔴 A CLASSMATE'S PAGE (`companero`). Addressed by an opaque HMAC slug
+ * (`lib/student/peerSlug.ts`), never a user id. It resolves only against the
+ * students opted in to `shareWithPeers` in THIS ecosistema right now, so a
+ * stranger, another ecosistema's student, or a peer who withdrew is the same
+ * 404. It shows their name, the topics we share, and their PUBLISHED
+ * documentos' titles. Never a draft, a testimonio, or anything else.
  *
  * 🔴 THE REPORT AND TESTIMONIOS. Off by default (`studentTestimonios`): the
  * report lists documentos only, drafts unnamed (`buildReport`). On (platform
@@ -47,6 +55,7 @@ import type { StudentDb } from '../lib/student/queries'
 
 import { errorResponse, getAuthenticatedUser, jsonResponse, queryParam, readJsonBody } from './http'
 import { isCurrentTestimonioConsent, TESTIMONIO_CONSENT_VERSION } from '../lib/student/testimonioConsent'
+import { findBySlug, peerSlug } from '../lib/student/peerSlug'
 
 export const STUDENT_VIEW_OFF = 'No disponible.'
 const STUDENTS_ONLY = 'Solo para estudiantes.'
@@ -124,6 +133,10 @@ async function gate(req: PayloadRequest, rawOrg: unknown, need: Need): Promise<G
 }
 
 const db = (req: PayloadRequest): StudentDb => req.payload as unknown as StudentDb
+
+/** Payload's derived secret; the HMAC key for peer slugs. */
+const slugSecret = (req: PayloadRequest): string => String((req.payload as { secret?: unknown }).secret ?? '')
+const NO_PEER = 'No disponible.'
 
 interface Profile {
   shareWithPeers: boolean
@@ -213,9 +226,14 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
       const mineKeys = new Set(autores.map((a) => surname(a.name)))
       return ok({
         perfil: perfilBody(profile),
-        temas: topics.slice(0, 15).map((t) => t.label),
+        temas: topics.slice(0, 15).map((t) => ({ id: t.id, label: t.label })),
         documentos: docs.map((d) => ({ id: d.id, name: d.name, status: d.status })),
-        companeros: matchPeers(topics, peerTopics, peersOnly).map(({ name, topics: shared }) => ({ name, topics: shared })),
+        // 🔴 `id` is the opaque slug, never the user id.
+        companeros: matchPeers(topics, peerTopics, peersOnly).map(({ id, name, topics: shared }) => ({
+          id: peerSlug(slugSecret(req), org, id),
+          name,
+          topics: shared,
+        })),
         autores,
         autoresParaLeer: near
           .filter((a) => !mineKeys.has(surname(a.label)))
@@ -307,6 +325,36 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
         return ok({ documentIds: await Q.publishedDocumentIdsOf(p, g.organizationId, peers.map((c) => c.id)) })
       }
       return errorResponse(400, 'Alcance no válido.')
+    },
+  }
+
+  const companero: Endpoint = {
+    path: '/estudiante/companero',
+    method: 'get',
+    handler: async (req) => {
+      const g = await gate(req, queryParam(req, 'organization'), 'student')
+      if (g instanceof Response) return g
+      const p = db(req)
+      const org = g.organizationId
+      // 🔴 Resolved against who is opted in NOW: withdrawal is an instant 404.
+      const candidates = (await Q.consentingStudents(p, org, 'share_with_peers')).filter((c) => c.id !== g.userId)
+      const peer = findBySlug(slugSecret(req), org, queryParam(req, 'id'), candidates)
+      if (!peer) return errorResponse(404, NO_PEER)
+      const [mineMap, theirsMap, trabajos] = await Promise.all([
+        Q.topicsByUser(p, org, [g.userId], { publishedOnly: false }),
+        // 🔴 The peer's topics from PUBLISHED documentos only.
+        Q.topicsByUser(p, org, [peer.id], { publishedOnly: true }),
+        Q.publishedDocumentosOf(p, org, peer.id),
+      ])
+      const mine = new Set((mineMap.get(g.userId) ?? []).map((t) => t.id))
+      return ok({
+        companero: {
+          id: peerSlug(slugSecret(req), org, peer.id),
+          name: peer.name,
+          temas: (theirsMap.get(peer.id) ?? []).filter((t) => mine.has(t.id)).slice(0, 15).map((t) => ({ id: t.id, label: t.label })),
+          trabajos: trabajos.map((d) => ({ id: d.id, name: d.name })),
+        },
+      })
     },
   }
 
@@ -410,7 +458,7 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
     },
   }
 
-  return [acceso, overview, perfil, alcance, sugerir, sugerencias, reportes, reporte]
+  return [acceso, overview, perfil, alcance, companero, sugerir, sugerencias, reportes, reporte]
 }
 
 export const estudianteEndpoints: Endpoint[] = makeEstudianteEndpoints()

@@ -23,7 +23,7 @@ const list = (xs: readonly string[], n: number) => (xs.length ? xs.slice(0, n).j
 
 export function questionsUserPrompt(o: StudentOverview): string {
   return [
-    `Mis temas: ${list(o.temas, 12)}`,
+    `Mis temas: ${list(o.temas.map((t) => t.label), 12)}`,
     `Mis trabajos: ${list(o.documentos.map((d) => d.name), 10)}`,
     `Autores que cito: ${list(o.autores.map((a) => a.name), 10)}`,
     `Autores cercanos en el ecosistema: ${list(o.autoresParaLeer.map((a) => a.name), 10)}`,

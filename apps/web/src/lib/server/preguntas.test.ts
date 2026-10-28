@@ -7,9 +7,12 @@ import type { StudentOverview } from './estudiante';
 
 const overview: StudentOverview = {
   perfil: { shareWithPeers: false, shareActivity: false },
-  temas: ['semiosis', 'signo'],
+  temas: [
+    { id: 1, label: 'semiosis' },
+    { id: 2, label: 'signo' },
+  ],
   documentos: [{ id: 1, name: 'Mi ensayo', status: 'draft' }],
-  companeros: [{ name: 'Beto', topics: ['semiosis'] }],
+  companeros: [{ id: 'slug', name: 'Beto', topics: [{ id: 1, label: 'semiosis' }] }],
   autores: [{ name: 'Peirce', docs: 2, page: null }],
   autoresParaLeer: [{ name: 'Umberto Eco', docs: 1, page: null }],
   temasDelEcosistema: ['abducción'],

@@ -11,8 +11,8 @@ import type { DocRef, Labelled, OwnDoc, StudentRow, TestimonioRow } from './quer
 export interface Peer {
   id: number
   name: string
-  /** Topics we share, most-documented first. Labels only. */
-  topics: string[]
+  /** Topics we share, most-documented first. Entity id + label only. */
+  topics: Array<{ id: number; label: string }>
   score: number
 }
 
@@ -37,7 +37,7 @@ export function matchPeers(
     out.push({
       id: c.id,
       name: c.name,
-      topics: shared.slice(0, 3).map((t) => t.label),
+      topics: shared.slice(0, 3).map((t) => ({ id: t.id, label: t.label })),
       score: Math.round((shared.length / union) * 1000) / 1000,
     })
   }

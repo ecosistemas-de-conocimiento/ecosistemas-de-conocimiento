@@ -25,16 +25,31 @@ export interface Author {
   page: DocRef | null;
 }
 
+/** A `tema` graph entity: its id opens it in `/grafo?entidad=`. */
+export interface Topic {
+  id: number;
+  label: string;
+}
+
 export interface StudentOverview {
   perfil: { shareWithPeers: boolean; shareActivity: boolean; shareTestimonios?: boolean };
-  temas: string[];
+  temas: Topic[];
   documentos: Array<{ id: number; name: string; status: string }>;
-  companeros: Array<{ name: string; topics: string[] }>;
+  /** `id` is an opaque slug (`/estudiante/companero/<id>`), never a user id. */
+  companeros: Array<{ id: string; name: string; topics: Topic[] }>;
   autores: Author[];
   autoresParaLeer: Author[];
   temasDelEcosistema: string[];
   /** `studentTestimonios` on: the consent wording must say so. */
   testimoniosEnReporte?: boolean;
+}
+
+/** One opted-in classmate's page. Published documentos only. */
+export interface Companero {
+  id: string;
+  name: string;
+  temas: Topic[];
+  trabajos: DocRef[];
 }
 
 export interface Suggestion {
@@ -89,6 +104,9 @@ export async function fetchStudentAccess(token: string | undefined, org: string 
 
 export const fetchOverview = (token: string | undefined, org: string) =>
   call<StudentOverview>(token, `/api/estudiante?${qs({ organization: org })}`);
+
+export const fetchCompanero = (token: string | undefined, org: string, id: string) =>
+  call<{ companero: Companero }>(token, `/api/estudiante/companero?${qs({ organization: org, id })}`);
 
 export const savePerfil = (
   token: string | undefined,
