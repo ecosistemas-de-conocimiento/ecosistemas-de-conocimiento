@@ -435,6 +435,15 @@ async function mostrar(page: Page, testid: string): Promise<void> {
 
 /** Mi investigación (estudiante). The suggestion is written, not sent: it would reach the teachers' list. */
 export async function miInvestigacion(page: Page): Promise<void> {
+  /**
+   * The redesigned view (design/estudiante) puts Compañeros, Autores, Sugerir
+   * and Privacidad behind tabs and hides the inactive panels. Click the tab
+   * when it exists; the older single-page view has none.
+   */
+  const pestana = async (id: string) => {
+    const tab = page.getByTestId(`tab-${id}`);
+    if (await tab.count()) await tab.click();
+  };
   await escena(page, 'E1.1', async () => {
     await ir(page, 'estudiante');
     await mostrar(page, 'mis-temas');
@@ -444,13 +453,21 @@ export async function miInvestigacion(page: Page): Promise<void> {
     await expect(page.getByTestId('preguntas').or(page.getByTestId('estudiante-error')).first()).toBeVisible({ timeout: 120_000 });
     await mostrar(page, 'preguntas');
   });
-  await escena(page, 'E1.3', () => mostrar(page, 'companeros'));
-  await escena(page, 'E1.4', () => mostrar(page, 'mis-autores'));
+  await escena(page, 'E1.3', async () => {
+    await pestana('companeros');
+    await mostrar(page, 'companeros');
+  });
+  await escena(page, 'E1.4', async () => {
+    await pestana('autores');
+    await mostrar(page, 'mis-autores');
+  });
   await escena(page, 'E1.5', async () => {
+    await pestana('sugerir');
     await mostrar(page, 'sugerir');
     await page.getByLabel('Sugerencia').fill('Me gustaría ver los autores agrupados por tema.');
   });
   await escena(page, 'E1.6', async () => {
+    await pestana('privacidad');
     await mostrar(page, 'share-activity');
     await page.getByTestId('share-activity').hover();
   });
