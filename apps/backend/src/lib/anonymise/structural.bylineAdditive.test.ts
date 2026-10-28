@@ -308,15 +308,106 @@ describe('details of the additive passes', () => {
   })
 })
 
-describe('the sentinels the additive passes use', () => {
-  // ⚠ Pins plain behaviour: with a sentinel character in the input the
-  // additive passes are off for that text, and it reads exactly as on 9597969.
-  it('a sentinel character in the input is never read as one', () => {
-    const { person } = spy()
-    const out = structuralPass('Nota \ufdd00\ufdd1.\nAutor: Ana Ruiz', { person })
-    expect(out.text).toBe('Nota \ufdd00\ufdd1.\nAutor: [Persona A]')
+/** Audit 4 (2026-10-28) on a5167c5. */
+describe('audit 4', () => {
+  it('mutant M22: a lower-case name after ";" mid-line goes', () => {
+    expect(structuralPass('Notas. Autores: Ana Ruiz; luis gómez.').text).toBe(
+      'Notas. Autores: [Dato omitido]; [Dato omitido].',
+    )
   })
 
+  it.each([
+    'Autores: Ana Ruiz; Luis Gómez (2021)',
+    'Autor: Ana Ruiz | Luis Gómez (2021) | Lugar: Oaxaca',
+    'Notas. Autores: Ana Ruiz, Luis Gómez (2021).',
+    'Notas. Autores: Ana Ruiz; Luis Gómez (2021). El texto.',
+    'Autor(es): Ana Ruiz, Luis Gómez (2021)',
+  ])('🔴 a year in parentheses does not keep the author: %j', async (line) => {
+    noneOf(await gate(`${line}\n\nGómez habló.`), ['Luis', 'Gómez'])
+  })
+
+  // fuzz5 (audit 4) leaks that 9597969 had too, fixed here.
+  it.each([
+    ['Notas de campo. Autor: Paz Ruiz, Ximena Carlos | Gómez (2021)', ['Gómez']],
+    ['Fecha: 2021 | Autora/Autores: Ana (Lupita) Ruiz Olvera | María Juan Vega; Sosa, Diego | Lugar: Oaxaca', ['Ruiz', 'Olvera', 'Vega', 'Sosa']],
+    ['Autora/Autores: Equipo 3; Berg, Ximena.', ['Berg', 'Ximena']],
+    ['Notas de campo. Autor/a: lic. sofía rojas; Dr. Sofía (Chepe) Lara | van der Paz Olvera, José. El texto.', ['Lara', 'Paz', 'Olvera']],
+    ['Notas de campo. Autora/Autores: ruiz / Mtra. Ximena José (Lupita) Rojas Ruiz y Diego María Rojas. Lugar: Oaxaca', ['Rojas', 'Ruiz']],
+    ['Notas de campo. **Autores:** sra. elena diego pérez | Ruiz, Juan; treviño (2021)', ['Ruiz', 'Juan']],
+    ["Notas de campo. Autor(es): Mtra. Eva d'Gómez / juan de berg | Ma. Eva d'Olvera vda. de Paz", ['Olvera', 'Paz']],
+  ] as const)('🔴 fuzz5: %j', async (line, words) => {
+    noneOf(await gate(`${line}\n\n${words.map((w) => `Lo dijo ${w}.`).join(' ')}`), [...words])
+  })
+
+  it('⚠ a lower-case sentence after a mid-line key stays', () => {
+    const prose = 'Como dice la autora: la escuela es comunidad, y el autor: según él, todo cambió.'
+    expect(structuralPass(prose).text).toBe(prose)
+  })
+
+  /** One line, no newlines (a PDF extraction), a byline every ~1 KB. */
+  const oneLineDoc = (n: number) => {
+    const para = 'El trabajo comunitario reunió a docentes y madres de familia en la escuela durante varios meses. '.repeat(9)
+    return Array.from({ length: n }, (_, i) => `${para}Autor: Ana Ruiz${i % 2 ? ' y Luis Gómez' : ''}; `).join('')
+  }
+
+  it('🔴 time grows linearly with a one-line document (2 MB)', () => {
+    // A RATIO of two runs on the same box, so load does not decide it: 8x the
+    // text must cost well under 64x (quadratic). Measured 2026-10-28 on a5167c5:
+    // 2 MB took 4.3 s against 9597969's 24 ms.
+    // Best of three each: one cold run of 2 MB pays for JIT and GC, not the code.
+    // Measured 2026-10-28 (local, tsx): 0.25 MB 4.7 ms, 2 MB 38.5 ms.
+    const time = (text: string) => {
+      let best = Infinity
+      for (let r = 0; r < 3; r++) {
+        const t0 = performance.now()
+        structuralPass(text, { person: () => '[Persona A]' })
+        best = Math.min(best, performance.now() - t0)
+      }
+      return best
+    }
+    const small = oneLineDoc(280)
+    const big = oneLineDoc(2240)
+    expect(big.length).toBeGreaterThan(2_000_000)
+    const ratio = time(big) / Math.max(time(small), 1)
+    expect(ratio).toBeLessThan(24)
+  }, 30_000)
+})
+
+/**
+ * Audit 4, item 5: a stray U+FDD0 / U+FDD1 used to switch the additive passes
+ * off. They are replaced (U+FFFD) first, so the passes always run.
+ */
+describe('noncharacters in the input', () => {
+  const O = String.fromCharCode(0xfdd0)
+  const C = String.fromCharCode(0xfdd1)
+  const NONCHAR = new RegExp(`[${O}${C}]`, 'u')
+  const bodies: Array<[string, string[]]> = [
+    ['Autores: Ana Ruiz; Luis Gómez\n\nRuiz y Gómez hablaron.', ['Luis', 'Gómez']],
+    ['Notas. Autores: Ana Ruiz, Luis Gómez y Eva Paz.\n\nPaz habló.', ['Luis', 'Gómez', 'Eva', 'Paz']],
+    ['Autora: Ma. Elena Ruiz\n\nRuiz habló.', ['Elena', 'Ruiz']],
+    ['Autor(es): Juan Pérez\n\nPérez habló.', ['Juan', 'Pérez']],
+    ['usuario: Ma. Elena Ruiz\n\nRuiz.', ['Elena']],
+  ]
+  const marks = [`${O}0${C}`, `${O}1${C}`, `${O}99${C}`, O, C, O.repeat(3), `x${O}0`, `0${C}`]
+  // At the start the mark takes its own line: a digit glued to a key ("0Autores:")
+  // stops the key in 9597969 as well (KEY_START), with or without noncharacters.
+  const cases = bodies.flatMap(([b, words]) =>
+    marks.flatMap((m) => [`${m}\n${b}`, `${b} ${m}`, b.replace('\n\n', ` ${m}\n\n`)].map((t) => [t, words] as const)),
+  )
+
+  it.each(cases)('%j', async (text, words) => {
+    const out = await gate(text)
+    expect(out).not.toMatch(NONCHAR)
+    noneOf(out, [...words])
+  })
+
+  it('a forged sentinel is never resolved to a label', () => {
+    const out = structuralPass(`Nota ${O}0${C}.\nAutor: Ana Ruiz`, { person: () => '[Persona A]' })
+    expect(out.text).toBe(`Nota ${String.fromCharCode(0xfffd)}0${String.fromCharCode(0xfffd)}.\nAutor: [Persona A]`)
+  })
+})
+
+describe('the sentinels the additive passes use', () => {
   it('no sentinel survives in the output', () => {
     const out = structuralPass('Notas. Autores: Ana Ruiz, Luis Gómez; Eva Paz | usuario: 42\nuser 7a')
     expect(out.text).not.toMatch(/[\ufdd0\ufdd1]/u)
