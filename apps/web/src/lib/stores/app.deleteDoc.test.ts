@@ -112,4 +112,32 @@ describe('deleteDoc while a list read is in flight', () => {
     await app.loadOwnedDocs('all');
     expect(app.ownedDocs.map((d) => d.id)).toEqual(['37', '38']);
   });
+
+  it('🔴 two deletes in flight: a refused first one does not bring back the second', async () => {
+    const first = deferred<Response>();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if ((init?.method ?? 'GET') === 'DELETE' && url === '/api/documents/47') return first.promise;
+        if ((init?.method ?? 'GET') === 'DELETE' && url === '/api/documents/48') return json({ id: 48 });
+        if (url.startsWith('/api/documentos')) return json({ docs: [row(47), row(48), row(49)] });
+        return json({});
+      }),
+    );
+    app.sessions = [
+      { id: '6', title: 'c', messages: [], docs: [], createdAt: 0, updatedAt: 0 } as unknown as (typeof app.sessions)[number],
+    ];
+    await app.loadOwnedDocs('all');
+    app.sessions[0]!.docs = [...app.ownedDocs];
+
+    // 47 leaves first and is held on the wire; 48 leaves second and succeeds.
+    const slow = app.deleteDoc(null, '47');
+    expect(await app.deleteDoc(null, '48')).toBe(true);
+    first.resolve(json({ error: 'forbidden' }, 403));
+    expect(await slow).toBe(false);
+
+    // Only the refused row comes back, in its old place; 48 stays gone.
+    expect(app.ownedDocs.map((d) => d.id)).toEqual(['47', '49']);
+    expect(app.sessions[0]?.docs.map((d) => d.id)).toEqual(['47', '49']);
+  });
 });

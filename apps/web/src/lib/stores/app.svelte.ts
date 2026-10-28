@@ -1729,8 +1729,21 @@ class AppStore {
    * every one of them is restored if the backend refuses.
    */
   async deleteDoc(sessionId: string | null, docId: string): Promise<boolean> {
-    const before = this.sessions.map((s) => ({ session: s, docs: s.docs }));
-    const ownedBefore = this.ownedDocs;
+    // ⚠ Remember only THIS row and where it sat, never a whole-list snapshot:
+    // with two deletes in flight, a snapshot taken by the first still holds the
+    // second, and the first one's rollback would resurrect it.
+    const placed = (docs: WorkingDoc[]) => {
+      const index = docs.findIndex((d) => d.id === docId);
+      return index === -1 ? null : { index, doc: docs[index]! };
+    };
+    const putBack = (docs: WorkingDoc[], at: { index: number; doc: WorkingDoc } | null) => {
+      if (!at || docs.some((d) => d.id === docId)) return docs;
+      const next = [...docs];
+      next.splice(Math.min(at.index, next.length), 0, at.doc);
+      return next;
+    };
+    const before = this.sessions.map((s) => ({ session: s, at: placed(s.docs) }));
+    const ownedAt = placed(this.ownedDocs);
     for (const s of this.sessions) s.docs = s.docs.filter((d) => d.id !== docId);
     this.ownedDocs = this.ownedDocs.filter((d) => d.id !== docId);
     this.deletedDocIds.add(docId);
@@ -1743,8 +1756,8 @@ class AppStore {
     } catch (err) {
       console.error('deleteDoc failed', err);
       this.deletedDocIds.delete(docId);
-      for (const { session, docs } of before) session.docs = docs;
-      this.ownedDocs = ownedBefore;
+      for (const { session, at } of before) session.docs = putBack(session.docs, at);
+      this.ownedDocs = putBack(this.ownedDocs, ownedAt);
       toasts.push({
         kind: 'error',
         title: 'No se pudo eliminar el documento',

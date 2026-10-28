@@ -347,11 +347,12 @@ const uniqueIds = (ids: Id[]): Id[] => {
 /**
  * ⚠ WHY `isActive: { equals: true }` AND NOT `{ not_equals: false }`.
  *
- * `not_equals: false` compiles to SQL `!= false`, and in SQL `NULL != false` is
- * NULL, not true — so a row whose column is NULL is dropped anyway, and the
- * looser-looking predicate silently behaves like the strict one. Rather than
- * rely on that, every filter below asks for `= true` explicitly: an
- * authorization gate should fail CLOSED and should read as if it does. Every
+ * They are NOT the same filter. Payload's drizzle adapter (3.88,
+ * `dist/queries/parseParams.js`) compiles
+ * `not_equals: false` to `IS NULL OR <> false`, so a row whose column is NULL
+ * PASSES it — the looser predicate grants access on a missing flag. Every
+ * filter below asks for `= true` instead: an authorization gate should fail
+ * CLOSED and should read as if it does. Every
  * `isActive` field carries `defaultValue: true`, so a row without it is an
  * anomaly, and an anomaly resolving to "no access" is the outcome we want.
  */
