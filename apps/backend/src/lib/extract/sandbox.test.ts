@@ -13,6 +13,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { extractInWorker, extractLoad } from './sandbox'
+import { testXls } from './testXls'
 import { testXlsx, testZip } from './testZip'
 
 const fixture = (name: string) => readFileSync(path.join(__dirname, '__fixtures__', name))
@@ -53,6 +54,14 @@ describe('extractInWorker', () => {
     await expect(extractInWorker('xlsx', fixture('celda-lejana.xlsx'), { maxChars: 2_000_000 })).rejects.toThrow(
       /^extract_too_large/,
     )
+  })
+
+  it('extracts a legacy .xls in the worker, and refuses one past the cell cap', async () => {
+    await expect(extractInWorker('xls', fixture('muestra.xls'), { maxChars: 2_000_000 })).resolves.toMatch(
+      /^# Hoja: Comunidades\n/,
+    )
+    const lejana = testXls([{ name: 'A', cells: [[0, 0, 'a'], [65535, 40, 'b']] }])
+    await expect(extractInWorker('xls', lejana, { maxChars: 2_000_000 })).rejects.toThrow(/^extract_too_large/)
   })
 
   it('keeps the main thread responsive while a worker parses deep HTML', async () => {

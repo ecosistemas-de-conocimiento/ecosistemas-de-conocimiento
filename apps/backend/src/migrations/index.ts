@@ -16,6 +16,7 @@ import * as migration_20261028_083327_student_testimonio_consent_version from '.
 import * as migration_20261028_162050_organizations_answer_style from './20261028_162050_organizations_answer_style';
 import * as migration_20261028_170129_documents_wiki_links from './20261028_170129_documents_wiki_links';
 import * as migration_20261028_231948_documents_note_revisions from './20261028_231948_documents_note_revisions';
+import * as migration_20261028_235647_documents_kind_xls from './20261028_235647_documents_kind_xls';
 
 export const migrations = [
   {
@@ -106,6 +107,11 @@ export const migrations = [
   {
     up: migration_20261028_231948_documents_note_revisions.up,
     down: migration_20261028_231948_documents_note_revisions.down,
-    name: '20261028_231948_documents_note_revisions'
+    name: '20261028_231948_documents_note_revisions',
+  },
+  {
+    up: migration_20261028_235647_documents_kind_xls.up,
+    down: migration_20261028_235647_documents_kind_xls.down,
+    name: '20261028_235647_documents_kind_xls'
   },
 ];

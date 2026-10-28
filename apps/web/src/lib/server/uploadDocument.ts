@@ -22,6 +22,11 @@ function looksLikePdf(b: Uint8Array): boolean {
   return false;
 }
 
+/** Legacy .xls is an OLE2 compound file: D0 CF 11 E0 A1 B1 1A E1. */
+function looksLikeXls(b: Uint8Array): boolean {
+  return [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1].every((byte, i) => b[i] === byte);
+}
+
 /** DOCX is a ZIP: local file header `PK\x03\x04`. */
 function looksLikeDocx(b: Uint8Array): boolean {
   return b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04;
@@ -55,22 +60,24 @@ function looksLikeAudio(b: Uint8Array): boolean {
   return false;
 }
 
-export type UploadFileKind = 'pdf' | 'docx' | 'xlsx' | 'csv' | 'html' | 'markdown' | 'audio';
+export type UploadFileKind = 'pdf' | 'docx' | 'xlsx' | 'xls' | 'csv' | 'html' | 'markdown' | 'audio';
 
 /** Do the file's first bytes agree with the kind its name and MIME settled on? */
 export function bytesMatchKind(head: Uint8Array, kind: UploadFileKind): boolean {
   if (kind === 'pdf') return looksLikePdf(head);
   // DOCX and XLSX are both ZIPs; the backend's file-type sniff tells them apart.
   if (kind === 'docx' || kind === 'xlsx') return looksLikeDocx(head);
+  if (kind === 'xls') return looksLikeXls(head);
   if (kind === 'csv' || kind === 'html' || kind === 'markdown') return looksLikeText(head);
   return looksLikeAudio(head);
 }
 
 /**
  * The file kind from its MIME and name, or `null` if we take no such file.
- * ⚠ Documents before audio — see the order note on `uploadDocument`. ⚠ A
- * `.csv` goes by its extension: Windows labels it `application/vnd.ms-excel`,
- * the same MIME as the legacy `.xls`, which has no extractor and is refused.
+ * ⚠ Documents before audio — see the order note on `uploadDocument`. ⚠ csv
+ * BEFORE xls: Windows labels a `.csv` `application/vnd.ms-excel`, the legacy
+ * `.xls` MIME, so the `.csv` extension has to win. A text file that only
+ * carries the xls MIME then fails the OLE2 byte check.
  */
 export function uploadFileKind(file: { name: string; type: string }): UploadFileKind | null {
   const { name, type } = file;
@@ -80,6 +87,7 @@ export function uploadFileKind(file: { name: string; type: string }): UploadFile
   if (type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || /\.xlsx$/i.test(name))
     return 'xlsx';
   if (type === 'text/csv' || /\.csv$/i.test(name)) return 'csv';
+  if (type === 'application/vnd.ms-excel' || /\.xls$/i.test(name)) return 'xls';
   if (type === 'text/html' || /\.html?$/i.test(name)) return 'html';
   // ⚠ By extension too: browsers send a .md as text/plain or with no type.
   if (type === 'text/markdown' || /\.(md|markdown)$/i.test(name)) return 'markdown';
@@ -92,6 +100,7 @@ const MEDIA_MIME: Partial<Record<UploadFileKind, string>> = {
   pdf: 'application/pdf',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xls: 'application/vnd.ms-excel',
   csv: 'text/csv',
   html: 'text/html',
   markdown: 'text/markdown',
@@ -117,7 +126,7 @@ function forMedia(file: File, kind: UploadFileKind): File {
  *
  * Order matters, and every refusal happens BEFORE the bytes go up:
  *   1. `contentKind` (documento | testimonio), and the Voz pre-check.
- *   2. File kind, PDF → DOCX → XLSX → CSV → HTML → Markdown → audio. ⚠ Documents first:
+ *   2. File kind, PDF → DOCX → XLSX → CSV → XLS → HTML → Markdown → audio. ⚠ Documents first:
  *      `isAudioUpload` accepts `.mp4`/`.mov` and a generous extension list, so
  *      running it first would send an odd-MIME document to the transcriber.
  *   3. A client-supplied `kind` is a HINT: honoured only when it agrees.

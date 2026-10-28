@@ -675,7 +675,7 @@ describe('sweepStalledPending — the lost background extract', () => {
   })
 
   it('sweeps exactly the kinds `planIngestRetry` will retry — the two lists cannot drift', () => {
-    for (const kind of ['pdf', 'docx', 'xlsx', 'csv', 'html', 'audio', 'markdown', 'chat', 'unknown']) {
+    for (const kind of ['pdf', 'docx', 'xlsx', 'xls', 'csv', 'html', 'audio', 'markdown', 'chat', 'unknown']) {
       const retryable =
         planIngestRetry({ kind, ingestStatus: 'failed', extractedText: 't', anonymisationStatus: 'n/a' }) !== null
       expect((PENDING_SWEEP_KINDS as readonly string[]).includes(kind), kind).toBe(retryable)

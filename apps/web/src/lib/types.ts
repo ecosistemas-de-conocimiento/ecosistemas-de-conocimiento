@@ -65,10 +65,10 @@ export interface Message {
   ratingPending?: boolean;
 }
 
-export type DocKind = 'markdown' | 'pdf' | 'docx' | 'xlsx' | 'csv' | 'html' | 'audio';
+export type DocKind = 'markdown' | 'pdf' | 'docx' | 'xlsx' | 'xls' | 'csv' | 'html' | 'audio';
 
 /** The kinds whose text the backend extracts from an uploaded file. */
-export const FILE_DOC_KINDS = ['pdf', 'docx', 'xlsx', 'csv', 'html'] as const;
+export const FILE_DOC_KINDS = ['pdf', 'docx', 'xlsx', 'xls', 'csv', 'html'] as const;
 
 /**
  * The backend's `documents.ingestStatus`, mirrored exactly.

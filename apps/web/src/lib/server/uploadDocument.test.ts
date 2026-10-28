@@ -125,6 +125,8 @@ describe('uploadDocument — which ecosistema the create names', () => {
 
 describe('uploadDocument — spreadsheets and web pages', () => {
   const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const XLS_MIME = 'application/vnd.ms-excel';
+  const OLE2 = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]);
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -149,6 +151,9 @@ describe('uploadDocument — spreadsheets and web pages', () => {
   it.each([
     ['xlsx', new File([ZIP], 'padron.xlsx', { type: XLSX_MIME })],
     ['xlsx', new File([ZIP], 'padron.XLSX', { type: '' })],
+    ['xls', new File([OLE2], 'padron.xls', { type: XLS_MIME })],
+    ['xls', new File([OLE2], 'PADRON 2003.XLS', { type: '' })],
+    ['xls', new File([OLE2], 'padron.xls', { type: 'application/octet-stream' })],
     ['csv', new File([enc('a;b\n1;2\n')], 'datos.csv', { type: 'text/csv' })],
     // Windows labels a .csv as an Excel file.
     ['csv', new File([enc('a,b\n')], 'datos.csv', { type: 'application/vnd.ms-excel' })],
@@ -168,6 +173,9 @@ describe('uploadDocument — spreadsheets and web pages', () => {
     ['an executable renamed datos.csv', new File([enc('MZ\x90\x00')], 'datos.csv', { type: 'text/csv' })],
     ['a PDF renamed acta.html', new File([PDF], 'acta.html', { type: 'text/html' })],
     ['a CSV renamed padron.xlsx', new File([enc('a,b\n')], 'padron.xlsx', { type: XLSX_MIME })],
+    ['a CSV renamed padron.xls', new File([enc('a,b\n')], 'padron.xls', { type: XLS_MIME })],
+    ['an xlsx renamed padron.xls', new File([ZIP], 'padron.xls', { type: XLS_MIME })],
+    ['text with only the xls MIME', new File([enc('a,b\n')], 'datos', { type: XLS_MIME })],
     ['a binary renamed p.htm', new File([new Uint8Array([0, 1, 2])], 'p.htm', { type: '' })],
     ['a PDF renamed nota.md', new File([PDF], 'nota.md', { type: 'text/markdown' })],
   ])('🔴 refuses %s before anything goes up', async (_label, file) => {
@@ -188,6 +196,7 @@ describe('uploadDocument — spreadsheets and web pages', () => {
     ['text/html', new File([enc('<p>hola</p>')], 'acta.html', { type: 'text/html;charset=utf-8' })],
     ['text/html', new File([enc('<p>hola</p>')], 'acta.htm', { type: '' })],
     [XLSX_MIME, new File([ZIP], 'padron.xlsx', { type: 'application/octet-stream' })],
+    [XLS_MIME, new File([OLE2], 'padron.xls', { type: '' })],
     ['text/markdown', new File([enc('# Nota\n')], 'nota.md', { type: '' })],
   ])('🔴 forwards the file to Media as %s whatever the browser called it', async (mime, file) => {
     const { res } = await upload(file);
@@ -198,13 +207,5 @@ describe('uploadDocument — spreadsheets and web pages', () => {
     expect(forwarded.type).toBe(mime);
     expect(forwarded.name).toBe(file.name);
     expect(forwarded.size).toBe(file.size);
-  });
-
-  it('refuses the legacy .xls (no extractor for it)', async () => {
-    const form = new FormData();
-    form.append('file', new File([enc('x')], 'viejo.xls', { type: 'application/vnd.ms-excel' }));
-    form.append('contentKind', 'documento');
-    const res = await uploadDocument('tok', form, { session: [], defaultPinned: false });
-    expect(res.body).toEqual({ error: 'unsupported_kind' });
   });
 });

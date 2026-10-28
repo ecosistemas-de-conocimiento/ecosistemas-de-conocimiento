@@ -8,7 +8,7 @@ import { ValidationError } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
 import { organizationIdsForUser, relationId } from '../lib/permissions'
-import { looksLikeText } from '../lib/extract/text'
+import { isCfb, looksLikeText } from '../lib/extract/text'
 import { MATROSKA_HEAD_BYTES, isAudioOnlyMatroska, isMatroska } from '../lib/webmTracks'
 
 /**
@@ -337,6 +337,44 @@ export const textUploadsAreText: CollectionBeforeValidateHook = async ({ data, r
 }
 
 /**
+ * A legacy Excel upload (`.xls`) must be an OLE2 file named `.xls`, and is
+ * stored as `application/vnd.ms-excel`.
+ *
+ * 🔴 WHY: file-type sniffs EVERY OLE2 file (.doc, .ppt, .msg, .xls) as
+ * `application/x-cfb`, and Payload checks that sniffed type before any hook
+ * runs, so `MEDIA_MIME_TYPES` has to list it. This hook is the other half: an
+ * OLE2 file not named `.xls` is refused, and so is anything named `.xls` (or
+ * labelled `application/vnd.ms-excel…`) that is not OLE2. ⚠ The allow-list
+ * matches by PREFIX, so `application/vnd.ms-excel` would also admit the
+ * macro-enabled `…ms-excel.sheet.macroEnabled.12`; that label is refused here.
+ * Whether the OLE2 file holds a workbook is the extractor's call
+ * (`lib/extract/xls.ts`, in the worker): it fails the document, not the upload.
+ * A `.csv` is `textUploadsAreText`'s, whatever Windows labels it.
+ */
+export const legacyExcelUploads: CollectionBeforeValidateHook = async ({ data, req }) => {
+  const file = (req as { file?: UploadedFile }).file
+  if (!file) return data
+  const name = file.name ?? ''
+  if (/\.csv$/i.test(name)) return data
+  const rawType = (data as { mimeType?: unknown } | undefined)?.mimeType
+  const mimeType = typeof rawType === 'string' ? rawType.split(';')[0].trim().toLowerCase() : ''
+  const head = await readUploadHead(file, 8)
+  const ole2 = head !== null && isCfb(head)
+  const namedXls = /\.xls$/i.test(name)
+  if (!ole2 && !namedXls && !mimeType.startsWith('application/vnd.ms-excel') && mimeType !== 'application/x-cfb') {
+    return data
+  }
+  if (!ole2 || !namedXls) {
+    throw new ValidationError({
+      collection: 'media',
+      errors: [{ path: 'file', message: 'Only Excel 97–2003 workbooks (.xls) are accepted in this format.' }],
+      req,
+    })
+  }
+  return { ...(data ?? {}), mimeType: 'application/vnd.ms-excel' }
+}
+
+/**
  * 🔴 NO STORED FILE IS EVER SERVED AS A PAGE. Local disk derives the type from
  * the extension, so an `.html` would go out as `text/html`; `nosniff` stops a
  * browser guessing its way back to it.
@@ -494,6 +532,10 @@ export const MEDIA_MIME_TYPES = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  // Legacy .xls: sniffed as `x-cfb`, stored as `vnd.ms-excel`. ⚠ `legacyExcelUploads`
+  // refuses every other OLE2 file and every non-OLE2 file claiming either type.
+  'application/vnd.ms-excel',
+  'application/x-cfb',
   // ⚠ No magic number: accepted on the extension, then `textUploadsAreText`
   // checks the bytes. html is stored and served as text/plain.
   'text/csv',
@@ -626,6 +668,6 @@ export const Media: CollectionConfig = {
     { name: 'alt', type: 'text' },
   ],
   hooks: {
-    beforeValidate: [rejectOversizedUpload, audioOnlyWebm, textUploadsAreText, bindMediaToEcosystem],
+    beforeValidate: [rejectOversizedUpload, audioOnlyWebm, textUploadsAreText, legacyExcelUploads, bindMediaToEcosystem],
   },
 }

@@ -1,4 +1,4 @@
-// Upload cap for documents (PDF, DOCX, XLSX, CSV, HTML, MD), in bytes. Mirrors the server-side cap, which is
+// Upload cap for documents (PDF, DOCX, XLSX, XLS, CSV, HTML, MD), in bytes. Mirrors the server-side cap, which is
 // enforced in two places — the backend's Payload media collection and the
 // reverse proxy in front of it. If you raise this, raise both.
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -34,6 +34,8 @@ export const UPLOAD_ACCEPT = [
   '.docx',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.xlsx',
+  'application/vnd.ms-excel',
+  '.xls',
   'text/csv',
   '.csv',
   'text/html',

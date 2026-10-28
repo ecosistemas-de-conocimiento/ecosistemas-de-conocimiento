@@ -1,5 +1,5 @@
 /**
- * xlsx, csv and html uploads take the same extract → ingest path as pdf/docx.
+ * xlsx, xls, csv and html uploads take the same extract → ingest path as pdf/docx.
  * Same stateful fake as `Documents.extractFailure.test.ts`, with the text write
  * allowed through.
  */
@@ -100,6 +100,7 @@ afterEach(() => {
 describe('spreadsheet and web-page documents', () => {
   it.each([
     ['xlsx', fixture('dos-hojas.xlsx'), '# Hoja: Participantes\nNombre | Municipio | Edad'],
+    ['xls', fixture('muestra.xls'), '# Hoja: Comunidades\nComunidad | Municipio | Participantes'],
     ['csv', Buffer.from('a;b\n1;2\n'), 'a | b\n1 | 2'],
     ['html', Buffer.from('<script>x()</script><h2>Acta</h2><p>Texto</p>'), '## Acta\nTexto'],
   ])('a %s is extracted to text and sent to ingest', async (kind, bytes, expected) => {
@@ -108,6 +109,9 @@ describe('spreadsheet and web-page documents', () => {
     await fakePayload.update({ data: { name: `g.${kind}` } })
     await vi.waitFor(() => expect(enqueue).toHaveBeenCalled(), { timeout: 5000, interval: 10 })
     expect(String(row.extractedText)).toContain(expected)
+    // What the corpus embeds and retrieves: the table text itself.
+    const [sent] = enqueue.mock.calls[0] as unknown as [{ documents: Array<{ text: string }> }]
+    expect(sent.documents[0].text).toContain(expected)
     expect(row.ingestStatus).not.toBe('failed')
   }, 20_000)
 

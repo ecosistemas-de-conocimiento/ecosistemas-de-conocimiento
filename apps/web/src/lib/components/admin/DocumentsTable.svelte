@@ -42,6 +42,7 @@
     { value: 'pdf', label: 'PDF' },
     { value: 'docx', label: 'Word' },
     { value: 'xlsx', label: 'Excel' },
+    { value: 'xls', label: 'Excel 97–2003' },
     { value: 'csv', label: 'CSV' },
     { value: 'html', label: 'HTML' },
     { value: 'audio', label: 'Audio' },

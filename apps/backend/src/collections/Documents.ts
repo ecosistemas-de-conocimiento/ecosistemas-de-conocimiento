@@ -61,7 +61,7 @@ import {
  * and `mode` defaults to `full-text` (the chat-FE BFF inlines it as prompt
  * context when `isPinned` is true).
  *
- * For PDF/DOCX/XLSX/CSV/HTML/Markdown (`FILE_TEXT_KINDS`), the `afterChange` hook below:
+ * For PDF/DOCX/XLSX/XLS/CSV/HTML/Markdown (`FILE_TEXT_KINDS`), the `afterChange` hook below:
  *   1. extracts text via `unpdf` / `mammoth` / `lib/extract/*`, in a worker
  *      thread (`lib/extract/sandbox.ts`);
  *   2. persists the result to `extractedText`;
@@ -1220,7 +1220,7 @@ export interface AudioMeta {
 const CORPUS_LANGUAGE = process.env.CORPUS_LANGUAGE?.trim() || 'spanish'
 
 /** The kinds whose text arrives through the extract → ingest pipeline. */
-const INGESTABLE_KINDS = new Set(['pdf', 'docx', 'xlsx', 'csv', 'html', 'audio', 'markdown'])
+const INGESTABLE_KINDS = new Set(['pdf', 'docx', 'xlsx', 'xls', 'csv', 'html', 'audio', 'markdown'])
 
 /**
  * 🔴 AN IN-APP NOTE HAS NO PIPELINE UNTIL IT SETTLES. `markdown` is both the
@@ -1234,7 +1234,7 @@ const isIngestable = (row: { kind?: unknown; ingestStatus?: unknown }): boolean 
   !(row.kind === 'markdown' && (row.ingestStatus ?? 'n/a') === 'n/a')
 
 /** The kinds whose text is EXTRACTED from the stored file (audio is transcribed). */
-export const FILE_TEXT_KINDS = ['pdf', 'docx', 'xlsx', 'csv', 'html', 'markdown'] as const
+export const FILE_TEXT_KINDS = ['pdf', 'docx', 'xlsx', 'xls', 'csv', 'html', 'markdown'] as const
 export type FileTextKind = (typeof FILE_TEXT_KINDS)[number]
 const asFileTextKind = (kind: unknown): FileTextKind =>
   (FILE_TEXT_KINDS as readonly unknown[]).includes(kind) ? (kind as FileTextKind) : 'pdf'
@@ -2916,6 +2916,8 @@ export const Documents: CollectionConfig = {
         { label: 'PDF', value: 'pdf' },
         { label: 'DOCX', value: 'docx' },
         { label: 'XLSX', value: 'xlsx' },
+        /** Legacy Excel 97–2003 (BIFF8). Extracted by `lib/extract/xls.ts`. */
+        { label: 'XLS', value: 'xls' },
         { label: 'CSV', value: 'csv' },
         /** ⚠ Stored and served as text; its markup is never rendered. */
         { label: 'HTML', value: 'html' },
@@ -3332,7 +3334,7 @@ export const Documents: CollectionConfig = {
       relationTo: 'media',
       admin: {
         description:
-          'Used for kind=pdf, docx, xlsx, csv, html or audio. For audio it is also the PROVENANCE: a member who distrusts a quoted line can play the source recording.',
+          'Used for kind=pdf, docx, xlsx, xls, csv, html or audio. For audio it is also the PROVENANCE: a member who distrusts a quoted line can play the source recording.',
       },
     },
     { name: 'isPinned', type: 'checkbox', defaultValue: true },

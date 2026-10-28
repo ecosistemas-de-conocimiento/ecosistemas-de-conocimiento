@@ -93,7 +93,7 @@ describe('UPLOAD_ACCEPT', () => {
   });
 
   it('offers spreadsheets and web pages', () => {
-    for (const entry of ['.xlsx', '.csv', '.html', '.htm', 'text/csv', 'text/html']) {
+    for (const entry of ['.xlsx', '.xls', 'application/vnd.ms-excel', '.csv', '.html', '.htm', 'text/csv', 'text/html']) {
       expect(UPLOAD_ACCEPT.split(',')).toContain(entry);
     }
   });

@@ -112,8 +112,8 @@ export function uploadAccept(
 /** The upload button's tooltip. */
 export function uploadButtonTitle(audioEnabled: boolean = AUDIO_UPLOAD_ENABLED): string {
   return audioEnabled
-    ? 'Subir documento o audio (PDF, DOCX, XLSX, CSV, HTML, MD, MP3, M4A, WAV, OGG, OPUS)'
-    : 'Subir documento (PDF, DOCX, XLSX, CSV, HTML o MD)';
+    ? 'Subir documento o audio (PDF, DOCX, XLSX, XLS, CSV, HTML, MD, MP3, M4A, WAV, OGG, OPUS)'
+    : 'Subir documento (PDF, DOCX, XLSX, XLS, CSV, HTML o MD)';
 }
 
 /**
@@ -131,8 +131,8 @@ export function looseUploadErrorCopy(
       return {
         title: 'Tipo de archivo no admitido',
         message: AUDIO_UPLOAD_ENABLED
-          ? 'Aceptamos PDF, DOCX, XLSX, CSV, HTML, Markdown y audio en MP3, M4A, WAV, OGG u OPUS.'
-          : 'Aceptamos PDF, DOCX, XLSX, CSV, HTML y Markdown.',
+          ? 'Aceptamos PDF, DOCX, XLSX, XLS, CSV, HTML, Markdown y audio en MP3, M4A, WAV, OGG u OPUS.'
+          : 'Aceptamos PDF, DOCX, XLSX, XLS, CSV, HTML y Markdown.',
       };
     case 'file_too_large':
       return { title: 'El archivo es muy grande', message: `El máximo es ${maxBytesLabel}.` };

@@ -18,6 +18,8 @@ export async function extractFileText(kind: ExtractKind, bytes: Buffer, maxChars
     return Array.isArray(text) ? text.join('\n\n') : text
   }
   if (kind === 'xlsx') return (await import('./spreadsheet')).extractXlsxText(bytes, { maxChars })
+  // Legacy BIFF8: same text layout as xlsx. See `./xls.ts`.
+  if (kind === 'xls') return (await import('./spreadsheet')).extractXlsText(bytes, { maxChars })
   if (kind === 'csv') return (await import('./spreadsheet')).extractCsvText(bytes, { maxChars })
   // Front matter, wikilinks, embeds and comments: see `./markdown.ts`.
   if (kind === 'markdown') return (await import('./markdown')).extractMarkdownText(bytes, { maxChars }).text

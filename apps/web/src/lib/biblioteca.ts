@@ -51,6 +51,7 @@ export const LIBRARY_KINDS = [
   'pdf',
   'docx',
   'xlsx',
+  'xls',
   'csv',
   'html',
   'markdown',
@@ -504,6 +505,8 @@ export function kindLabel(kind: LibraryKind, opts: { fromAudio?: boolean } = {})
       return { label: 'DOCX', description: 'Documento de Word.', tone: 'document' };
     case 'xlsx':
       return { label: 'Excel', description: 'Hoja de cálculo de Excel.', tone: 'document' };
+    case 'xls':
+      return { label: 'Excel', description: 'Hoja de cálculo de Excel 97–2003.', tone: 'document' };
     case 'csv':
       return { label: 'CSV', description: 'Tabla en CSV.', tone: 'document' };
     case 'html':
@@ -603,7 +606,7 @@ export function kindFilterLabel(filter: KindFilter): string {
  */
 export function kindFilterValues(filter: KindFilter): string[] | null {
   if (filter === 'todos') return null;
-  return filter === 'hojas' ? ['xlsx', 'csv'] : [filter];
+  return filter === 'hojas' ? ['xlsx', 'xls', 'csv'] : [filter];
 }
 
 /**

@@ -1,7 +1,7 @@
 /**
- * Spreadsheets (xlsx, csv) as plain text for the ingest path.
+ * Spreadsheets (xlsx, xls, csv) as plain text for the ingest path.
  *
- * Shape: one `# Hoja: <name>` line per non-empty sheet (xlsx only), then one
+ * Shape: one `# Hoja: <name>` line per non-empty sheet (xlsx and xls), then one
  * line per non-empty row, cells joined with ` | `. A sheet wider than
  * `MAX_COLUMNS` keeps its first columns and says how many it dropped — a
  * 16,000-column row is noise to retrieval, not content.
@@ -49,10 +49,25 @@ function rowLine(row: readonly Cell[]): string | null {
 export async function extractXlsxText(bytes: Buffer, opts: ExtractOptions = {}): Promise<string> {
   assertXlsxWithinLimits(bytes)
   const { default: readXlsxFile } = await import('read-excel-file/node')
-  const sheets = await readXlsxFile(bytes)
+  return sheetsText(await readXlsxFile(bytes), opts)
+}
+
+/**
+ * Legacy `.xls` (BIFF8): the SAME text an xlsx of the same workbook gives, so
+ * retrieval treats both alike. The reader and its caps: `./xls.ts`.
+ */
+export async function extractXlsText(bytes: Buffer, opts: ExtractOptions = {}): Promise<string> {
+  const { readXls } = await import('./xls')
+  return sheetsText(readXls(bytes), opts)
+}
+
+function sheetsText(
+  sheets: ReadonlyArray<{ sheet: Cell; data: ReadonlyArray<ReadonlyArray<Cell>> }>,
+  opts: ExtractOptions,
+): string {
   const sink = new LineSink(opts.maxChars ?? DEFAULT_MAX_CHARS)
   for (const { sheet, data } of sheets) {
-    const lines = data.map((row) => rowLine(row as Cell[])).filter((l): l is string => l !== null)
+    const lines = data.map((row) => rowLine(row)).filter((l): l is string => l !== null)
     if (lines.length === 0) continue
     if (sink.lines.length > 0) sink.push('')
     sink.push(`# Hoja: ${cellText(sheet)}`)

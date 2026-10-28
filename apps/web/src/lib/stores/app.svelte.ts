@@ -1264,10 +1264,11 @@ class AppStore {
     // The SETTLED kind, the way the server settles it (documents, then
     // audio): a PDF the browser labels `audio/mp4` still gets the 20 MB cap.
     const isDocument =
-      /\.(pdf|docx|xlsx|csv|html?|md|markdown)$/i.test(file.name) ||
+      /\.(pdf|docx|xlsx|xls|csv|html?|md|markdown)$/i.test(file.name) ||
       file.type === 'application/pdf' ||
       file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
       file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      file.type === 'application/vnd.ms-excel' ||
       file.type === 'text/csv' ||
       file.type === 'text/html' ||
       file.type === 'text/markdown';

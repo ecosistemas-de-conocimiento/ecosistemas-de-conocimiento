@@ -24,6 +24,8 @@ describe('audio upload switch (UX demo backlog #8)', () => {
       '.docx',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       '.xlsx',
+      'application/vnd.ms-excel',
+      '.xls',
       'text/csv',
       '.csv',
       'text/html',

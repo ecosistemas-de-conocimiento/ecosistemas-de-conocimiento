@@ -252,8 +252,8 @@ export function ingestFailureCopy(ingestError: string | null | undefined): Inges
       return {
         title: 'Formato no admitido',
         message: AUDIO_UPLOAD_ENABLED
-          ? 'Aceptamos PDF, DOCX, XLSX, CSV, HTML, Markdown y audio en MP3, M4A, WAV, OGG u OPUS.'
-          : 'Aceptamos PDF, DOCX, XLSX, CSV, HTML y Markdown.',
+          ? 'Aceptamos PDF, DOCX, XLSX, XLS, CSV, HTML, Markdown y audio en MP3, M4A, WAV, OGG u OPUS.'
+          : 'Aceptamos PDF, DOCX, XLSX, XLS, CSV, HTML y Markdown.',
         needsDifferentFile: true,
       };
     case 'payload_too_large':

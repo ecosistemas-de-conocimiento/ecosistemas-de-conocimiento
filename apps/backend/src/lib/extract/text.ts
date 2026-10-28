@@ -24,6 +24,10 @@ export class ExtractTooLargeError extends Error {
 
 const startsWith = (b: Uint8Array, magic: number[]) => magic.every((byte, i) => b[i] === byte)
 
+/** D0 CF 11 E0 A1 B1 1A E1 — every OLE2 compound file: .xls, and also .doc, .ppt, .msg. */
+export const CFB_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]
+export const isCfb = (b: Uint8Array): boolean => b.length >= 8 && startsWith(b, CFB_MAGIC)
+
 const BINARY_MAGICS: number[][] = [
   [0x4d, 0x5a], // MZ — Windows executable
   [0x7f, 0x45, 0x4c, 0x46], // ELF

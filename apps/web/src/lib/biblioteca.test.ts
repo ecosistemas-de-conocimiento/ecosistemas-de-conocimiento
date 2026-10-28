@@ -233,24 +233,25 @@ describe('contentKind, not kind', () => {
 });
 
 describe('spreadsheets and web pages in the library', () => {
-  it.each(['xlsx', 'csv', 'html'])('keeps the %s kind instead of degrading it to otro', (kind) => {
+  it.each(['xlsx', 'xls', 'csv', 'html'])('keeps the %s kind instead of degrading it to otro', (kind) => {
     expect(parseLibraryKind(kind)).toBe(kind);
   });
 
   it.each([
     ['xlsx', 'Excel'],
+    ['xls', 'Excel'],
     ['csv', 'CSV'],
     ['html', 'HTML'],
   ] as const)('labels a %s chip %s', (kind, label) => {
     expect(kindLabel(kind).label).toBe(label);
   });
 
-  it('one "Hojas de cálculo" filter selects xlsx and csv documentos', () => {
+  it('one "Hojas de cálculo" filter selects xlsx, xls and csv documentos', () => {
     expect(parseKindFilter('hojas')).toBe('hojas');
     expect(kindFilterLabel('hojas')).toBe('Hojas de cálculo');
-    expect(kindFilterValues('hojas')).toEqual(['xlsx', 'csv']);
+    expect(kindFilterValues('hojas')).toEqual(['xlsx', 'xls', 'csv']);
     expect(kindFilterWhere('hojas')).toEqual([
-      ['where[kind][in]', 'xlsx,csv'],
+      ['where[kind][in]', 'xlsx,xls,csv'],
       ['where[contentKind][equals]', 'documento'],
     ]);
   });

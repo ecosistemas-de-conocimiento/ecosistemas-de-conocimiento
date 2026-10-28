@@ -235,7 +235,7 @@ describe('summarizeDocuments', () => {
 
   it('counts by kind', () => {
     const s = summarizeDocuments([doc({ id: '1', kind: 'audio' }), doc({ id: '2', kind: 'pdf' })]);
-    expect(s.byKind).toEqual({ audio: 1, pdf: 1, docx: 0, xlsx: 0, csv: 0, html: 0, markdown: 0 });
+    expect(s.byKind).toEqual({ audio: 1, pdf: 1, docx: 0, xlsx: 0, xls: 0, csv: 0, html: 0, markdown: 0 });
   });
 });
 

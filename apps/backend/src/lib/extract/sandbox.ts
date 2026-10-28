@@ -41,7 +41,7 @@ import { Worker } from 'node:worker_threads'
 
 import { ExtractTooLargeError } from './text'
 
-export type ExtractKind = 'pdf' | 'docx' | 'xlsx' | 'csv' | 'html' | 'markdown'
+export type ExtractKind = 'pdf' | 'docx' | 'xlsx' | 'xls' | 'csv' | 'html' | 'markdown'
 
 export const EXTRACT_TIMEOUT_MS = 60_000
 export const EXTRACT_MAX_HEAP_MB = 512
