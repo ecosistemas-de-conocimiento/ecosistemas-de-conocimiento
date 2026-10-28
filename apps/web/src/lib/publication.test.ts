@@ -14,7 +14,7 @@ import {
   publicationBadge,
   publishBlockedCopy,
   publishGate,
-  editedSinceFailure,
+  noteEdited,
   stampDraftProvenance,
   type PublicationStatus,
 } from './publication';
@@ -402,13 +402,23 @@ describe('publishGate — a student\'s note (owner ruling 2026-10-28)', () => {
   it('🔴 a failed run: hidden on the same text (retry is the way), offered once edited', () => {
     expect(note('draft', 'failed')).toEqual({ canPublish: false, reason: 'ingest-failed' });
     expect(
-      publishGate({ publicationStatus: 'draft', ingestStatus: 'failed', manual: false, note: true, editedSinceFailure: true }),
+      publishGate({ publicationStatus: 'draft', ingestStatus: 'failed', manual: false, note: true, edited: true }),
     ).toEqual({ canPublish: true, reason: null });
   });
-  it('editedSinceFailure compares against the body seen at failure', () => {
-    expect(editedSinceFailure({ body: 'a' })).toBe(false);
-    expect(editedSinceFailure({ body: 'a', failedBody: 'a' })).toBe(false);
-    expect(editedSinceFailure({ body: 'ab', failedBody: 'a' })).toBe(true);
+  it('noteEdited compares against the body last sent', () => {
+    expect(noteEdited({ body: 'a' })).toBe(false);
+    expect(noteEdited({ body: 'a', processedBody: null })).toBe(false);
+    expect(noteEdited({ body: 'a', processedBody: 'a' })).toBe(false);
+    expect(noteEdited({ body: 'ab', processedBody: 'a' })).toBe(true);
+  });
+  it('🔴 a published note: "Publicar cambios" once edited, not while it runs', () => {
+    const pub = (edited: boolean, changesPending = false) =>
+      publishGate({ publicationStatus: 'published', ingestStatus: 'ready', manual: false, note: true, edited, changesPending });
+    expect(pub(false)).toEqual({ canPublish: false, reason: 'already-published' });
+    expect(pub(true)).toEqual({ canPublish: true, reason: null });
+    expect(pub(true, true)).toEqual({ canPublish: false, reason: 'in-progress' });
+    // Not a note: unchanged rule.
+    expect(publishGate({ publicationStatus: 'published', ingestStatus: 'ready', edited: true }).reason).toBe('already-published');
   });
   it('not while a run is going, nor once published', () => {
     for (const s of ['pending', 'extracting', 'embedding']) expect(note('draft', s)).toEqual({ canPublish: false, reason: 'not-ingested' });

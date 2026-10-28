@@ -56,13 +56,16 @@ vi.mock('@/lib/graph/client', () => ({
   getGraphAIClient: async () => ({
     generate: {
       async sync(req: unknown) {
-        graphRequests.push(JSON.stringify(req))
+        const seen = JSON.stringify(req)
+        graphRequests.push(seen)
         return {
           parsed: {
-            entidades: [
-              { tipo: 'tema', etiqueta: 'Semiótica', menciones: 2 },
-              { tipo: 'tema', etiqueta: 'Signo', menciones: 1 },
-            ],
+            entidades: seen.includes('Abducción')
+              ? [{ tipo: 'tema', etiqueta: 'Abducción', menciones: 2 }]
+              : [
+                  { tipo: 'tema', etiqueta: 'Semiótica', menciones: 2 },
+                  { tipo: 'tema', etiqueta: 'Signo', menciones: 1 },
+                ],
             relaciones: [],
           },
         }
@@ -73,6 +76,7 @@ vi.mock('@/lib/graph/client', () => ({
 
 import type { Endpoint, PayloadRequest } from 'payload'
 
+import { autoPublishParticipantDocument } from './autoPublish'
 import { invalidateFeatures } from './features'
 import { topicsByUser } from './student/queries'
 import { bootPayload, dockerOk, eventually, rowsOf, shutdown, startRealPostgres, type RealPostgres } from './testing/realPostgres'
@@ -334,5 +338,115 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
     const r = await row(501)
     expect([r.p, r.i, r.b]).toEqual(['publishing', 'ready', `${BODY} dos`])
     expect(paused).toBe(1) // only the control went through `updateOne`
+  })
+
+  describe('"Publicar cambios" on a published note (owner ruling 2026-10-28)', () => {
+    const NOTE = 900
+    const NEW_BODY = `# Otra cosa\n\nMi vecino ${NAME} me explicó la Abducción, nada más.${PAD.replace(/signos, interpretantes y objetos/g, 'inferencias')}`
+    const enqueued: Array<{ corpus: string; id: string; text: string }> = []
+    const mover: unknown = new Proxy(() => {}, {
+      get: (_t, key) => (key === 'then' ? undefined : key === 'enqueue' ? enqueue : mover),
+      apply: async () => ({ ok: true, ingestId: 'pub-test' }),
+    })
+    async function enqueue(req: { corpus: string; documents: Array<{ id: string; text: string }> }) {
+      for (const d of req.documents) enqueued.push({ corpus: req.corpus, id: d.id, text: d.text })
+      return { ingestId: 'pub-test' }
+    }
+    const revisionOf = async (id: number) =>
+      (await rowsOf(pg!.db, sql`SELECT id, ingest_status AS i, anonymisation_status AS a, graph_status AS g FROM documents WHERE revision_of_id = ${id}`))[0]
+    /** What ai-service's callbacks would do: draft ingest landed → auto-publish. */
+    const landDraftIngest = async (id: number) => {
+      await pg!.db.execute(sql`UPDATE documents SET ingest_status = 'ready' WHERE id = ${id}`)
+      return autoPublishParticipantDocument({ payload: payload!, documentId: id, clientFor: () => mover as never })
+    }
+
+    it('setup: a published note, its topics visible to peers', async () => {
+      await setFeatures({ studentView: true })
+      await insertNote(NOTE, SEMIOSIS, ANA)
+      await publicar(ANA, NOTE)
+      expect(await eventually(async () => (await row(NOTE)).g === 'ready', 20_000)).toBe(true)
+      expect(await landDraftIngest(NOTE)).toEqual({ published: true })
+      await pg!.db.execute(sql`UPDATE documents SET publication_status = 'published' WHERE id = ${NOTE}`) // confirmPublish
+      expect(await topics(ANA, true)).toEqual(expect.arrayContaining(['Semiótica', 'Signo']))
+    }, 60_000)
+
+    it('🔴 edit → Publicar cambios → peers keep the old version until it clears, then see the new topics', async () => {
+      expect((await autosave(ANA, NOTE, { bodyMarkdown: NEW_BODY })).status).toBe(200)
+      const before = await row(NOTE)
+
+      const res = await publicar(ANA, NOTE)
+      expect([res.status, res.body.processing, res.body.publicationStatus]).toEqual([202, true, 'published'])
+      expect(await eventually(async () => (await revisionOf(NOTE))?.g === 'ready', 20_000)).toBe(true)
+
+      // Meanwhile: the note is untouched, peers see the old topics only.
+      const during = await row(NOTE)
+      expect([during.p, during.r, during.t]).toEqual(['published', before.r, before.t])
+      expect(await topics(ANA, true)).not.toContain('Abducción')
+      // 🔴 The revision is hidden from its own author's reads.
+      const rev = (await revisionOf(NOTE))!
+      const user = await payload!.findByID({ collection: 'users', id: ANA, overrideAccess: true })
+      const asAna = await payload!.find({
+        collection: 'documents',
+        where: { id: { equals: rev.id } },
+        user: { ...user, collection: 'users' } as never,
+        overrideAccess: false,
+      })
+      expect(asAna.docs).toHaveLength(0)
+
+      // The revision's draft ingest lands → promoted onto the note.
+      enqueued.length = 0
+      expect(await landDraftIngest(Number(rev.id))).toEqual({ published: true })
+      expect(await revisionOf(NOTE)).toBeUndefined()
+      expect((await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM documents WHERE id = ${rev.id}`))[0]!.n).toBe(0)
+
+      const after = await row(NOTE)
+      expect(after.p).toBe('published')
+      expect(String(after.r)).toContain('Abducción')
+      expect(String(after.r)).not.toContain('Villaseñor')
+      // 🔴 The shared corpus got the NEW redaction, under the note's own id.
+      expect(enqueued).toEqual([{ corpus: 'eco-8', id: String(NOTE), text: after.r }])
+      expect(await topics(ANA, true)).toContain('Abducción')
+    }, 60_000)
+
+    it('🔴 the old text is never re-exposed: no old graph row, no old text on the row', async () => {
+      const labels = (
+        await rowsOf(pg!.db, sql`SELECT e.label FROM graph_mentions m JOIN graph_entities e ON e.id = m.entity_id WHERE m.document_id = ${NOTE}`)
+      ).map((r) => r.label)
+      expect(labels).toEqual(['Abducción'])
+      const r = await row(NOTE)
+      for (const col of [r.t, r.r]) expect(String(col)).not.toContain('Semiótica')
+      // Nothing to publish again: the same text is now the published one.
+      const again = await publicar(ANA, NOTE)
+      expect(again.status).toBe(409)
+    })
+
+    it('🔴 concurrent Publicar cambios: one revision, one gate run', async () => {
+      const edited = `${NEW_BODY}\n\nY una idea más sobre la Abducción.`
+      expect((await autosave(ANA, NOTE, { bodyMarkdown: edited })).status).toBe(200)
+      const before = detectorCalls
+      const both = await Promise.all([publicar(ANA, NOTE), publicar(ANA, NOTE)])
+      for (const res of both) expect([res.status, res.body.processing]).toEqual([202, true])
+      expect(await eventually(async () => (await revisionOf(NOTE))?.a === 'ready', 20_000)).toBe(true)
+      await new Promise((r) => setTimeout(r, 500))
+      expect(
+        Number((await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM documents WHERE revision_of_id = ${NOTE}`))[0]!.n),
+      ).toBe(1)
+      // One gate run on this text costs what the single run on note 600 cost.
+      const perRun = await (async () => {
+        await insertNote(950, SEMIOSIS, ANA, edited)
+        const b = detectorCalls
+        await publicar(ANA, 950)
+        await eventually(async () => (await row(950)).a === 'ready', 20_000)
+        return detectorCalls - b
+      })()
+      expect(detectorCalls - before - perRun).toBe(perRun)
+    }, 60_000)
+
+    it('deleting the note deletes its pending revision', async () => {
+      await payload!.delete({ collection: 'documents', id: NOTE, overrideAccess: true })
+      expect(
+        Number((await rowsOf(pg!.db, sql`SELECT count(*)::int AS n FROM documents WHERE revision_of_id = ${NOTE} OR id = ${NOTE}`))[0]!.n),
+      ).toBe(0)
+    })
   })
 })

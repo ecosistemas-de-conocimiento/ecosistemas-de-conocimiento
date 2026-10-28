@@ -5,7 +5,7 @@
   import Markdown from './Markdown.svelte';
   import TestimonySource from './TestimonySource.svelte';
   import type { WorkingDoc } from '$lib/types';
-  import { editedSinceFailure, publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
+  import { noteEdited, publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
   import {
     deleteConfirmCopy,
     detachConfirmCopy,
@@ -279,7 +279,8 @@
       // `lib/studentNotes.ts`).
       manual: canUploadVoces,
       note: studentNote(d),
-      editedSinceFailure: editedSinceFailure(d),
+      edited: noteEdited(d),
+      changesPending: d.changesPending === true,
     });
   }
 
@@ -718,7 +719,9 @@
                   size="sm"
                   label={d.publicationStatus === 'failed'
                     ? 'Reintentar publicación'
-                    : 'Publicar en mi ecosistema'}
+                    : d.publicationStatus === 'published'
+                      ? 'Publicar cambios'
+                      : 'Publicar en mi ecosistema'}
                   loading={d.publishRequestPending === true}
                   disabled={d.publishRequestPending === true}
                   dataTestId={`publish-${d.id}`}

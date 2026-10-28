@@ -39,7 +39,7 @@ import {
 } from '../lib/permissions'
 import { refuseDisabledAudioUpload } from './hooks/featureGates'
 import { anonymiseParticipantUpload, fileParticipantAudioAsTestimonio } from '../lib/autoPublish'
-import { isAppNote, isStudentNote, parseNoteEdit, publishStudentNote } from '../lib/studentNotes'
+import { isAppNote, isStudentNote, parseNoteEdit, publishStudentNote, publishStudentNoteChanges } from '../lib/studentNotes'
 import {
   consumeCorpusCleanupSkip,
   planDocumentMediaCleanup,
@@ -509,6 +509,20 @@ export function constrainGatedQueriesAt(prefix: string): CollectionBeforeOperati
 
 export const constrainGatedQueries: CollectionBeforeOperationHook =
   constrainGatedQueriesAt('')
+
+/**
+ * 🔴 A "Publicar cambios" revision row (`revisionOf` set) is server-only
+ * staging: no user lists, reads, edits or deletes it — not even its author,
+ * who keeps working on the note itself. `lib/studentNotes.ts`.
+ */
+export function hideRevisions(inner: Access): Access {
+  return async (args) => {
+    const base = await inner(args)
+    if (base === false) return false
+    const noRevision: Where = { revisionOf: { exists: false } }
+    return base === true ? noRevision : { and: [base as Where, noRevision] }
+  }
+}
 
 const uploaderOnly: Access = ({ req: { user } }) => {
   if (!user) return false
@@ -2731,9 +2745,9 @@ export const Documents: CollectionConfig = {
     defaultColumns: ['name', 'publicationStatus', 'organization', 'uploadedBy', 'ingestStatus'],
   },
   access: {
-    read: visibleToCaller,
-    update: uploaderOnly,
-    delete: uploaderOnly,
+    read: hideRevisions(visibleToCaller),
+    update: hideRevisions(uploaderOnly),
+    delete: hideRevisions(uploaderOnly),
     create: ({ req: { user } }) => Boolean(user),
   },
   fields: [
@@ -3276,6 +3290,32 @@ export const Documents: CollectionConfig = {
       },
     },
     {
+      /**
+       * A note's body as last sent through "Publicar" (`lib/studentNotes.ts`).
+       * The editor compares it with `bodyMarkdown` to offer "Publicar cambios".
+       */
+      name: 'processedBody',
+      type: 'textarea',
+      maxLength: DOCUMENT_TEXT_MAX_LENGTH,
+      access: { read: gatedOriginalReadable, create: gateWritesOnly, update: gateWritesOnly },
+      admin: { readOnly: true, description: 'Note body as last published.' },
+    },
+    {
+      /**
+       * 🔴 A HIDDEN STAGING ROW for "Publicar cambios" on a published note: the
+       * new text is gated and graphed here, then promoted onto the note
+       * (`lib/studentNotes.ts`). Never readable by a user (`hideRevisions`).
+       * Unique: one per note.
+       */
+      name: 'revisionOf',
+      type: 'relationship',
+      relationTo: 'documents',
+      unique: true,
+      index: true,
+      access: { create: gateWritesOnly, update: gateWritesOnly },
+      admin: { readOnly: true, description: 'The published note this pending change belongs to.' },
+    },
+    {
       name: 'mediaFile',
       type: 'upload',
       relationTo: 'media',
@@ -3546,7 +3586,7 @@ export const Documents: CollectionConfig = {
      * refusing because a downstream service is unreachable would leave them
      * stuck with a row they cannot remove. The failure is logged instead.
      */
-    beforeDelete: [scheduleMediaCleanupHook],
+    beforeDelete: [scheduleMediaCleanupHook, deleteRevisionsHook],
     afterDelete: [retireDeletedDocumentHook, pruneWikilinkSeedsAfterDeleteHook],
   },
   endpoints: [
@@ -3620,7 +3660,11 @@ function documentActionEndpoint(
       }
 
       const state = doc.publicationStatus
-      if (action === 'publish' && state === 'published') {
+      // 🔴 "Publicar cambios": a student's PUBLISHED note whose body changed
+      // (owner ruling 2026-10-28). Handled below, once the client is built.
+      const noteChanges =
+        action === 'publish' && state === 'published' && (await isStudentNote(req.payload, doc as never))
+      if (action === 'publish' && state === 'published' && !noteChanges) {
         return json({ ok: true, publicationStatus: 'published', alreadyDone: true }, 200)
       }
       if (action === 'unpublish' && state === 'draft') {
@@ -3660,9 +3704,9 @@ function documentActionEndpoint(
        * `autoPublishMembers`. `beginPublish` here would share text no gate saw.
        * `lib/studentNotes.ts`.
        */
-      if (action === 'publish' && state === 'draft' && (await isStudentNote(req.payload, doc as never))) {
+      if (noteChanges || (action === 'publish' && state === 'draft' && (await isStudentNote(req.payload, doc as never)))) {
         try {
-          const out = await publishStudentNote({
+          const out = await (noteChanges ? publishStudentNoteChanges : publishStudentNote)({
             payload: req.payload,
             row: doc as never,
             clientFor: () => client as never,
@@ -3670,7 +3714,11 @@ function documentActionEndpoint(
           })
           if (out.status === 409) return fail(409, `This note cannot be published (${out.reason}).`)
           return out.processing
-            ? json({ ok: true, publicationStatus: 'draft', processing: true, ingestStatus: out.ingestStatus }, 202)
+            ? json(
+                // A change to a published note: it stays published meanwhile.
+                { ok: true, publicationStatus: noteChanges ? 'published' : 'draft', processing: true, ingestStatus: out.ingestStatus },
+                202,
+              )
             : json({ ok: true, publicationStatus: 'publishing', processing: false }, 202)
         } catch (err) {
           req.payload.logger.error({ err, docId: id }, '[documents] note publish failed')
@@ -3698,6 +3746,25 @@ function documentActionEndpoint(
         return fail(500, `Could not ${action} this document.`)
       }
     },
+  }
+}
+
+/**
+ * A note's pending "Publicar cambios" revision goes with it. ⚠ BEFORE the
+ * delete: the FK is `set null`, so afterwards the revision could no longer be
+ * found and would surface as a stray draft. Its own delete hooks retire its
+ * draft-corpus copy.
+ */
+async function deleteRevisionsHook({ id, req }: Parameters<CollectionBeforeDeleteHook>[0]): Promise<void> {
+  try {
+    await req.payload.delete({
+      collection: 'documents',
+      where: { revisionOf: { equals: id } },
+      overrideAccess: true,
+      req,
+    })
+  } catch (err) {
+    console.error('[documents] could not delete the revision of note', id, err)
   }
 }
 

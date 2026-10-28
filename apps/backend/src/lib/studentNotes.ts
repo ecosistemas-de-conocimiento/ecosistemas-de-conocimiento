@@ -176,13 +176,23 @@ export async function publishStudentNote(args: {
     return out.published ? { status: 202, processing: false, publicationStatus: 'publishing' } : { status: 409, reason: out.reason }
   }
 
-  /**
-   * 🔴 CLAIM THE ROW FIRST, IN ONE GUARDED `UPDATE` (audit 2026-10-28). Two
-   * clicks (two tabs, a double tap) both read the row at `n/a`; without the
-   * claim both would write `pending` and the gate would run twice, billed
-   * twice. Only the click whose `WHERE` still matches the state it read moves
-   * the row; the other answers "already running".
-   */
+  return startProcessing(payload, row, { ...plan.data, processedBody: row.bodyMarkdown })
+}
+
+/**
+ * Claim the row and hand it to the pipeline.
+ *
+ * 🔴 CLAIM FIRST, IN ONE GUARDED `UPDATE` (audit 2026-10-28). Two clicks (two
+ * tabs, a double tap) both read the row in the same state; without the claim
+ * both would write `pending` and the gate would run twice, billed twice. Only
+ * the click whose `WHERE` still matches the state it read moves the row; the
+ * other answers "already running".
+ */
+async function startProcessing(
+  payload: Payload,
+  row: Record<string, unknown>,
+  data: Record<string, unknown>,
+): Promise<StudentNotePublish> {
   const { updateDocumentColumns } = await import('./documentColumns')
   const claimed = await updateDocumentColumns(payload as never, {
     id: row.id as Id,
@@ -200,10 +210,221 @@ export async function publishStudentNote(args: {
   await payload.update({
     collection: 'documents',
     id: row.id as never,
-    data: plan.data as never,
+    data: data as never,
     overrideAccess: true,
   })
   return { status: 202, processing: true, ingestStatus: 'pending' }
+}
+
+// ---------------------------------------------------------------------------
+// "Publicar cambios": a PUBLISHED note whose body changed (owner ruling 2026-10-28)
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 THE NEW TEXT GOES THROUGH A HIDDEN REVISION ROW; THE PUBLISHED ROW IS NOT
+ * TOUCHED UNTIL IT CLEARS.
+ *
+ * The gate never runs on a shared row (`GATE_CLAIM_GUARD`: "Unpublish first"),
+ * and the owner rule is that peers keep the last published version until the
+ * change is through. So the change is a second `documents` row, `revisionOf`
+ * the note, a private draft of the same author:
+ *
+ *   Publicar cambios → revision row (`pending`, the new body)
+ *     → gate from scratch → draft ingest → graph (draft: own view only)
+ *     → ingest callback → `autoPublishParticipantDocument` → {@link promoteRevision}
+ *       → the shared corpus re-embedded with the revision's gated text
+ *         (ai-service upserts on (corpus, id): the old chunks are replaced)
+ *       → the gate columns and the graph rows move onto the note
+ *       → the revision row is deleted
+ *
+ * ⚠ A HELD or REJECTED revision changes nothing for peers: the note keeps its
+ * published text. Pressing again re-gates only CHANGED text.
+ * ⚠ HIDDEN FROM EVERY USER READ (`hideRevisions` in `collections/Documents.ts`),
+ * so it never shows as a second document. One per note (`revisionOf` is unique):
+ * a concurrent second click loses the insert and answers "already running".
+ */
+export async function publishStudentNoteChanges(args: {
+  payload: Payload
+  row: Record<string, unknown>
+  clientFor: (organizationId: Id) => CorpusMover
+  callbackUrl?: string
+  extract?: (body: string) => Promise<string>
+}): Promise<StudentNotePublish> {
+  const { payload, row } = args
+  if (!isAppNote(row) || row.contentKind !== 'documento') return { status: 409, reason: 'not-a-note' }
+  if (row.publicationStatus !== 'published') return { status: 409, reason: 'not-draft' }
+  const body = typeof row.bodyMarkdown === 'string' ? row.bodyMarkdown : ''
+  if (body === row.processedBody) return { status: 409, reason: 'unchanged' }
+  const text = body.trim() ? await (args.extract ?? defaultExtract)(body.trim()) : ''
+  if (text.trim().length < MIN_NOTE_CHARS) return { status: 409, reason: 'too-short' }
+
+  const found = await payload.find({
+    collection: 'documents',
+    where: { revisionOf: { equals: row.id } },
+    depth: 0,
+    limit: 1,
+    overrideAccess: true,
+  })
+  const revision = found.docs[0] as unknown as Record<string, unknown> | undefined
+
+  if (!revision) {
+    try {
+      // 🔴 Server-side create, no user: `extractAndIngestHook` runs it now.
+      await payload.create({
+        collection: 'documents',
+        data: {
+          organization: relationId(row.organization),
+          uploadedBy: relationId(row.uploadedBy),
+          name: row.name,
+          kind: 'markdown',
+          mode: row.mode ?? 'full-text',
+          contentKind: 'documento',
+          anonymise: true,
+          bodyMarkdown: body,
+          processedBody: body,
+          extractedText: text,
+          isPinned: false,
+          publicationStatus: 'draft',
+          ingestStatus: 'pending',
+          revisionOf: row.id,
+        } as never,
+        overrideAccess: true,
+      })
+    } catch (err) {
+      // The unique `revisionOf`: another click created it first.
+      if (isUniqueViolation(err)) return { status: 202, processing: true, ingestStatus: 'pending' }
+      throw err
+    }
+    return { status: 202, processing: true, ingestStatus: 'pending' }
+  }
+
+  const plan = planNoteProcessing(revision, text)
+  if ('skip' in plan) {
+    if (plan.skip === 'in-flight') return { status: 202, processing: true, ingestStatus: String(revision.ingestStatus) }
+    if (plan.skip !== 'unchanged') return { status: 409, reason: plan.skip }
+    // Same text, already cleared (e.g. `autoPublishMembers` was off): promote now.
+    const out = await autoPublishParticipantDocument({
+      payload,
+      documentId: revision.id as Id,
+      clientFor: args.clientFor,
+      ...(args.callbackUrl ? { callbackUrl: args.callbackUrl } : {}),
+    })
+    return out.published ? { status: 202, processing: false, publicationStatus: 'publishing' } : { status: 409, reason: out.reason }
+  }
+  return startProcessing(payload, revision, { ...plan.data, bodyMarkdown: body, processedBody: body })
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  const seen = new Set<unknown>()
+  let e: unknown = err
+  while (e && typeof e === 'object' && !seen.has(e)) {
+    seen.add(e)
+    const o = e as { code?: unknown; cause?: unknown; message?: unknown; data?: { errors?: Array<{ message?: unknown }> } }
+    if (o.code === '23505') return true
+    if (typeof o.message === 'string' && /unique|duplicate key|already exists/i.test(o.message)) return true
+    if (o.data?.errors?.some((x) => typeof x.message === 'string' && /unique|already exists/i.test(x.message))) return true
+    e = o.cause
+  }
+  return false
+}
+
+/**
+ * The revision cleared the gate and its draft ingest landed: make it the
+ * note's published text. Called by `autoPublishParticipantDocument` in place
+ * of `beginPublish`, after every one of its checks (gate, participant,
+ * `autoPublishMembers`).
+ *
+ * 🔴 ORDER. The shared-corpus re-embed is enqueued FIRST: if ai-service refuses
+ * it, nothing moved and the next "Publicar cambios" retries. Only then do the
+ * gate columns and graph rows move, in one transaction, and the revision go.
+ * The note stays `published` throughout: peers never see it vanish, and the
+ * old chunks stay until ai-service swaps them.
+ * ⚠ The old text is not kept anywhere peers read: its graph rows are deleted,
+ * its redaction overwritten, its chunks replaced.
+ */
+export async function promoteRevision(args: {
+  payload: Payload
+  revision: Record<string, unknown>
+  client: CorpusMover
+}): Promise<void> {
+  const { payload, revision, client } = args
+  const noteId = relationId(revision.revisionOf)
+  if (noteId === null) return
+  const note = (await payload
+    .findByID({ collection: 'documents', id: noteId as never, depth: 0, overrideAccess: true })
+    .catch(() => null)) as Record<string, unknown> | null
+  const removeRevision = () =>
+    payload.delete({ collection: 'documents', id: revision.id as never, overrideAccess: true })
+  if (!note) {
+    await removeRevision()
+    return
+  }
+  const organizationId = relationId(note.organization)!
+  const { corpusTextFor } = await import('./anonymiseDocument')
+  const cleared = corpusTextFor(revision)
+  if (!cleared.ok) return
+
+  const published = note.publicationStatus === 'published'
+  if (published) {
+    const { chunkMetadata, contentKindOf, knownContentKind, titleFor } = await import('./contentKind')
+    const { publishedCorpus } = await import('./corpus')
+    const { withRateLimitRetry } = await import('./aiRetry')
+    await withRateLimitRetry(
+      () =>
+        client.ingest.enqueue({
+          corpus: publishedCorpus(organizationId),
+          documents: [
+            {
+              id: String(note.id),
+              text: cleared.text,
+              title: titleFor(knownContentKind(note as never), note.name as string),
+              metadata: chunkMetadata({
+                docId: String(note.id),
+                organizationId,
+                contentKind: contentKindOf(note as never),
+                format: note.kind as string,
+                publication: 'published',
+                title: note.name as string,
+                lengua: (note.lengua as string | null | undefined) ?? null,
+              }),
+            },
+          ],
+          language: process.env.CORPUS_LANGUAGE?.trim() || 'spanish',
+        }),
+      { label: `republish note ${String(note.id)}` },
+    )
+  }
+
+  const { sql } = await import('@payloadcms/db-postgres')
+  const db = (payload.db as unknown as { drizzle: { transaction<T>(f: (tx: { execute(q: unknown): Promise<unknown> }) => Promise<T>): Promise<T> } }).drizzle
+  const r = revision
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`
+      UPDATE documents SET
+        extracted_text = ${r.extractedText as string},
+        redacted_text = ${r.redactedText as string},
+        anonymisation_status = ${r.anonymisationStatus as string},
+        anonymisation_report = ${r.anonymisationReport == null ? null : JSON.stringify(r.anonymisationReport)}::jsonb,
+        anonymisation_error = NULL,
+        anonymisation_survivors = NULL,
+        held_text = NULL,
+        public_figures_kept = ${r.publicFiguresKept == null ? null : JSON.stringify(r.publicFiguresKept)}::jsonb,
+        processed_body = ${r.processedBody as string},
+        anonymise = true,
+        wiki_links = ${r.wikiLinks == null ? null : JSON.stringify(r.wikiLinks)}::jsonb,
+        graph_status = ${(r.graphStatus as string | null) ?? 'n/a'},
+        graph_error = ${(r.graphError as string | null) ?? null},
+        graph_prompt_version = ${(r.graphPromptVersion as string | null) ?? null},
+        updated_at = ${new Date().toISOString()}
+      WHERE id = ${note.id as number}`)
+    await tx.execute(sql`DELETE FROM graph_mentions WHERE document_id = ${note.id as number} AND organization_id = ${organizationId as number}`)
+    await tx.execute(sql`DELETE FROM graph_relations WHERE document_id = ${note.id as number} AND organization_id = ${organizationId as number}`)
+    await tx.execute(sql`UPDATE graph_mentions SET document_id = ${note.id as number} WHERE document_id = ${r.id as number} AND organization_id = ${organizationId as number}`)
+    await tx.execute(sql`UPDATE graph_relations SET document_id = ${note.id as number} WHERE document_id = ${r.id as number} AND organization_id = ${organizationId as number}`)
+  })
+  await removeRevision()
+  const { pruneSeedsIfEnabled } = await import('./graph/schedule')
+  await pruneSeedsIfEnabled(payload as never, organizationId)
 }
 
 async function defaultExtract(body: string): Promise<string> {

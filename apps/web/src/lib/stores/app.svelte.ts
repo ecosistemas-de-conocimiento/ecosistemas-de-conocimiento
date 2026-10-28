@@ -34,7 +34,7 @@ import {
   type StoredRating,
 } from '../ratings';
 import {
-  editedSinceFailure,
+  noteEdited,
   isPublicationStatus,
   isTerminalPublication,
   parsePublicationStatus,
@@ -161,8 +161,7 @@ function docFromBackend(row: Record<string, unknown>): WorkingDoc {
     subtitle: heading.subtitle,
     body: typeof row.bodyMarkdown === 'string' ? row.bodyMarkdown : '',
     isNote: kind === 'markdown' && row.mediaFile == null && row.hasFile !== true,
-    failedBody:
-      ingestStatus === 'failed' && typeof row.bodyMarkdown === 'string' ? row.bodyMarkdown : undefined,
+    processedBody: typeof row.processedBody === 'string' ? row.processedBody : null,
     includeInContext: row.isPinned !== false,
     // The conversations this row is attached to. Empty means "the backend did
     // not tell us", which the UI reads as "assume it lives only here".
@@ -1579,7 +1578,7 @@ class AppStore {
     if (!doc || doc.publishRequestPending) return;
     // Same gate the button uses. Re-checked here because the store is the
     // thing that actually spends the tokens.
-    if (!publishGate({ ...doc, note: opts.note, editedSinceFailure: editedSinceFailure(doc) }).canPublish) return;
+    if (!publishGate({ ...doc, note: opts.note, edited: noteEdited(doc) }).canPublish) return;
 
     // Remembered so an unreadable answer cannot silently downgrade a `failed`
     // document to `draft` — see the anomaly branch below.
@@ -1600,6 +1599,13 @@ class AppStore {
       if (current.length === 0) return;
       // A student's note: the backend is gating and indexing it first; it is
       // published when that lands. Still a draft meanwhile, and honestly so.
+      if (body?.processing === true && previous === 'published') {
+        // "Publicar cambios": the published version stays until the new text
+        // clears; then the backend's `processedBody` becomes what was sent.
+        for (const r of current) r.changesPending = true;
+        void this.pollNoteChanges(docId, doc.body);
+        return;
+      }
       if (body?.processing === true) {
         const ingest = isIngestStatus(body.ingestStatus) ? body.ingestStatus : 'pending';
         for (const r of current) r.ingestStatus = ingest;
@@ -1667,6 +1673,36 @@ class AppStore {
    * rather than inventing `failed`: we genuinely do not know, and the next
    * session load re-reads the real state from the backend.
    */
+  /** Poll a published note until its change is through ("Publicar cambios"). */
+  private async pollNoteChanges(docId: string, sent: string): Promise<void> {
+    const key = `changes:${docId}`;
+    if (this.pollingDocs.has(key)) return;
+    this.pollingDocs.add(key);
+    const deadline = Date.now() + 60 * 60_000;
+    let wait = 3000;
+    try {
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, wait));
+        wait = Math.min(wait * 2, 15_000);
+        try {
+          const res = await fetch(`/api/documents/${docId}`, { credentials: 'same-origin' });
+          if (res.status === 401 || res.status === 404) return;
+          if (!res.ok) continue;
+          const row = (await res.json()) as Record<string, unknown>;
+          if (row.processedBody !== sent) continue;
+          for (const d of this.docsWithId(docId)) d.processedBody = sent;
+          toasts.push({ kind: 'success', title: 'Cambios publicados', message: 'Ya son visibles para tu ecosistema.' });
+          return;
+        } catch {
+          /* keep polling */
+        }
+      }
+    } finally {
+      for (const d of this.docsWithId(docId)) d.changesPending = false;
+      this.pollingDocs.delete(key);
+    }
+  }
+
   private async pollPublication(
     sessionId: string | null,
     docId: string,
@@ -1708,7 +1744,7 @@ class AppStore {
           if (opts.throughProcessing && status === 'draft') {
             const ingest = isIngestStatus(body.ingestStatus) ? body.ingestStatus : 'n/a';
             for (const d of rows) {
-              if (ingest === 'failed' && d.ingestStatus !== 'failed') d.failedBody = d.body;
+              if (typeof body.processedBody === 'string') d.processedBody = body.processedBody;
               d.ingestStatus = ingest;
               d.ingestError = typeof body.ingestError === 'string' ? body.ingestError : null;
               d.anonymisationStatus = parseAnonymisationStatus(body.anonymisationStatus);

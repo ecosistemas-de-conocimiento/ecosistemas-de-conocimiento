@@ -161,6 +161,14 @@ export async function autoPublishParticipantDocument(args: {
     // Off: the participant's draft stays a draft, for staff to publish.
     if (!(await featureEnabled(payload, organizationId, 'autoPublishMembers'))) return skip('disabled')
 
+    // 🔴 A note's "Publicar cambios" revision is promoted onto the published
+    // note, never published as a second document (`lib/studentNotes.ts`).
+    if (relationId(row.revisionOf) !== null) {
+      const { promoteRevision } = await import('./studentNotes')
+      await promoteRevision({ payload, revision: row, client: args.clientFor(organizationId) })
+      return { published: true }
+    }
+
     await beginPublish(row as never, {
       payload,
       client: args.clientFor(organizationId),

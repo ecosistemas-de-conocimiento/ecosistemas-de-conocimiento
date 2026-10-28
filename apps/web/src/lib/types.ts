@@ -118,8 +118,10 @@ export interface WorkingDoc {
   body: string;
   /** Written in the app: `markdown` with no stored file (an uploaded `.md` has one). */
   isNote?: boolean;
-  /** A note's body when the store first saw its run `failed` (`editedSinceFailure`). */
-  failedBody?: string;
+  /** A note's body as last sent through "Publicar" (backend `processedBody`, `noteEdited`). */
+  processedBody?: string | null;
+  /** UI-only: "Publicar cambios" was accepted and is running. */
+  changesPending?: boolean;
   /** Mirrors the backend `documents.isPinned`. */
   includeInContext: boolean;
   /**

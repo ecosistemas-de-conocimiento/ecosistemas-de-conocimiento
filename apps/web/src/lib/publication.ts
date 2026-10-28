@@ -142,12 +142,15 @@ export interface PublishGateInput {
    * A student's own in-app note in a `studentView` ecosistema. "Publicar" runs
    * the backend's gate → corpus → graph → publish (`lib/studentNotes.ts`), so
    * it is offered on a draft, except while a run is going and except on a
-   * FAILED run whose text was not edited since (`editedSinceFailure`): the same
-   * text would fail the same way, so the failure box's "Reintentar" is the way.
+   * FAILED run whose text was not edited since (`noteEdited`): the same text
+   * would fail the same way, so the failure box's "Reintentar" is the way. On a
+   * PUBLISHED note it is "Publicar cambios", offered once the body was edited.
    */
   note?: boolean;
-  /** Note mode only: the body changed since this browser saw the run fail. */
-  editedSinceFailure?: boolean;
+  /** Note mode only: the body differs from the one last sent (`noteEdited`). */
+  edited?: boolean;
+  /** Note mode only: "Publicar cambios" is already running. */
+  changesPending?: boolean;
 }
 
 /**
@@ -162,6 +165,10 @@ export function publishGate(input: PublishGateInput): {
   canPublish: boolean;
   reason: PublishBlockedReason | null;
 } {
+  if (input.note && input.publicationStatus === 'published') {
+    if (input.changesPending) return { canPublish: false, reason: 'in-progress' };
+    if (input.edited) return { canPublish: true, reason: null };
+  }
   if (input.publicationStatus === 'published') {
     return { canPublish: false, reason: 'already-published' };
   }
@@ -174,7 +181,7 @@ export function publishGate(input: PublishGateInput): {
   if (input.note) {
     const running = ['pending', 'extracting', 'embedding', 'transcribing', 'transcribed'].includes(input.ingestStatus);
     if (running) return { canPublish: false, reason: 'not-ingested' };
-    if (input.ingestStatus === 'failed' && !input.editedSinceFailure) {
+    if (input.ingestStatus === 'failed' && !input.edited) {
       return { canPublish: false, reason: 'ingest-failed' };
     }
     return { canPublish: true, reason: null };
@@ -416,13 +423,10 @@ export function draftCitationNotice(draftCount: number): string | null {
 }
 
 /**
- * Has a note's body changed since its run was seen to fail? `failedBody` is
- * the body the store held when it first saw `ingestStatus: 'failed'` (load or
- * poll).
- *
- * ⚠ Conservative after a reload: edits made before the reload count as
- * unchanged until the next keystroke. The failure box's retry stays available.
+ * Has a note's body changed since it was last sent through "Publicar"?
+ * `processedBody` is the backend's copy of the body at that moment. No copy
+ * (never sent) reads as "not edited": nothing to compare with.
  */
-export function editedSinceFailure(d: { body: string; failedBody?: string }): boolean {
-  return d.failedBody !== undefined && d.body !== d.failedBody;
+export function noteEdited(d: { body: string; processedBody?: string | null }): boolean {
+  return typeof d.processedBody === 'string' && d.body !== d.processedBody;
 }
