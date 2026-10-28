@@ -1,6 +1,8 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `1c80a84` (web phone fixes and the
+**Status:** live since 2026-10-17. Dev runs `main` @ `191cad9` (versioned testimonio consent;
+migration `20261028_083327_student_testimonio_consent_version` applied on start; anonymise and chat
+source fixes), deployed 2026-10-28 09:36 UTC — see §4zv. Before that, `1c80a84` (web phone fixes and the
 `seed:semiosis-demo` script; no migration; org 8 `keepPublicFigures` on), deployed 2026-10-28 08:12
 UTC — see §4zu. Before that, `a39af86` (the `studentTestimonios` switch:
 teachers see students' published testimonios, anonymised, with the student's own consent; migration
@@ -2311,6 +2313,61 @@ scratch file, deleted after): `PATCH /api/funciones` `{ organization: 8, feature
 other switch at its default (`studentTestimonios` false).
 
 No image cleanup this time. **Disk**, `df -h /` free: 56 GB before, 42 GB after the build.
+
+### 4zv. ✅ Done 2026-10-28 09:29–09:45 UTC: `191cad9`, dev only — one Payload migration on start
+
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
+`97d5316`, `docker ps` before and after). The run was asked for `b583555`; origin/main had moved
+to `191cad9` (= `b583555` plus `a87757e`, measurement docs only), and the coordinator ruled to
+deploy what Coolify builds from origin/main. Range `1c80a84..191cad9`: testimonio consent names
+every reader and is versioned, fail-closed (`7ae4bb9`), the page sends the version it showed so a
+stale page gets the 409 (`b8c63a6`); anonymise fixes — public names are not personal data
+(`f08a168`, `cf44f51`), a named workplace or school beside a person is reported (`8c82aea`,
+`fe8c098`); chat sources one per document with card titles, graph summary and corpus overview as
+numbered sources (`a824ac0`, `2770316`, `ac57485`, `b583555`); audit follow-ups (`30fc152`);
+backend ESLint config (`c9ce30c`). No compose, variable or ai-service change.
+
+**Pre-check.** `payload_migrations` 14 rows, newest `20261028_054402_student_testimonio_consent`.
+`edc_ai` `__drizzle_migrations` 6. Org 8 `features` `{"studentView": true, "keepPublicFigures": true}`.
+
+**Migrations.** One, applied by the container start (`scripts/migrate.sh` waits for Payload's
+`Done.` before `next start`): backend log 09:36:43 "Reading migration files…",
+`Migrated: 20261028_083327_student_testimonio_consent_version (12ms)`, `Done.`, "Ready in 904ms".
+`payload_migrations` 14 → 15, batch 10. New column `student_profiles.share_testimonios_version`
+numeric (`information_schema.columns`). `edc_ai` `__drizzle_migrations` unchanged at 6.
+
+Backup `/root/backups/20261028T0930Z/` (`edc_ai` 129 MB, `edc_backend` 8.5 MB); `pg_restore -l`
+137 / 438 non-comment lines, `SHA256SUMS` beside them. Off-box copy in the owner's
+`cide/backups/edc-1/20261028T0930Z/` with `timeout 180 scp`; `sha256sum -c` passed before the deploy.
+
+| deploy | uuid | queued → finished (UTC) | commit |
+|---|---|---|---|
+| `191cad9` | `tgg1t8wsmti9eck4tyge7fkz` | 09:31:07 → 09:36:40 | `191cad962c19…` |
+
+After: 9 containers up; `web`, `backend` and `ai-service` run image tag
+`191cad962c19561e3b877bb651cd29808cbe80a8`, healthy. 0 `error`/`fatal` lines in all 9 dev
+containers at startup (one later postgres `ERROR` at 09:36:58 is the deploy agent's own mistyped
+`psql` query, not the app).
+
+**Smoke** (no paid call):
+
+| check | result |
+|---|---|
+| 1. web `/` | 303 → `/sign-in`, 200 |
+| 2. health | `dev.` `/api/health` 200, `api.dev.` `/api/health` 200 |
+| 3. login, estudiante1 (`cide/.env.demo-users`), web `POST /api/auth/login` with `Origin` | 200; then `/__data.json` 200 (names `estudiante`), `/estudiante/__data.json` 200 |
+| 4. org 8 `features` after | `{"studentView": true, "keepPublicFigures": true}`, unchanged |
+
+Spend: `usage_logs` since 09:29 UTC: 13 rows, $0.048437, all `edc-eco-8` `router.route`
+09:29–09:36. None from this run, which made no model call; another lane's chat on the old
+containers during the build (inferred by time). Total $9.788590 after.
+
+Image cleanup after `GET /api/v1/deployments` was empty: `docker rmi` of the six unused `1c80a84`
+and `a39af86` web/backend/ai-service images by exact name; `docker builder prune -af` reclaimed
+26.51 GB. Two dangling images left, both in use: `858f009f9709` (staging's redis) and
+`57e4255cc971` (`coolify-redis`).
+
+**Disk**, `df -h /` free: 42 GB before; 29 GB after the build; 56 GB after the cleanup. Build cache 0.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
