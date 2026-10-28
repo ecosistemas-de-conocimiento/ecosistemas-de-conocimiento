@@ -189,7 +189,9 @@ export const DETECT_SYSTEM_PROMPT = [
   '  Vázquez" el hallazgo es "Don Fernando Vázquez"; en "la maestra Nicasia Olvera" es',
   '  "la maestra Nicasia Olvera"; en "la maestra Lucrecia" es "la maestra Lucrecia"; en',
   '  "el delegado Abundio Cázares" es "el delegado Abundio Cázares".',
-  '- Centros de trabajo, escuelas o cargos tan precisos que identifican a una persona.',
+  // 🔴 OWNER'S RULING Q24 = A (2026-10-28): "tan precisos que identifican" read
+  // as licence to report any named institution; see "No es un hallazgo" below.
+  '- Centros de trabajo, escuelas o cargos que, en ese texto, señalan a una persona concreta.',
   '- Teléfonos, correos, cuentas, identificadores oficiales y números de expediente.',
   '',
   // ⚠ Owner's rule, 2026-10-17: a bare title is not identifying and must not
@@ -201,6 +203,26 @@ export const DETECT_SYSTEM_PROMPT = [
   '- Un tratamiento o cargo SOLO, sin nombre ni apodo junto a él: "el doctor dijo",',
   '  "la maestra llegó". No identifica a nadie. No lo reportes; si lo reportas, pon',
   '  "identifica": false. Pon "identifica": true en todo lo demás.',
+  // 🔴 OWNER'S RULING Q24 = A (2026-10-28). Measured on dev: the model typed
+  // public names as "otro", and the gate turns every "otro" into "[Dato
+  // omitido]" (`gate.ts`), so a staff documento lost a program name 22 times
+  // and another lost a sign language 18 times. The gate still redacts whatever
+  // the model reports (Q10 A), so this line is what keeps them. The exception
+  // points at the Domicilios rule ("el Cereso") so the two do not contradict.
+  // Examples are made-up variants of the dev cases.
+  '- Nombres de instituciones, dependencias, programas, proyectos, eventos, lenguas y',
+  '  siglas: no son datos personales. No los reportes, tampoco como "otro". Por ejemplo:',
+  '  "PILARES", "INDISCAPACIDAD CDMX", "SECIHTI", "el Centro de Investigación y Docencia',
+  '  Económicas", "el proyecto Ecosistemas de conocimiento y aprendizaje situado", "el Foro',
+  '  de Saberes Comunitarios", "la Lengua de Señas Mexicana", "el náhuatl". En "trabajo en',
+  '  un PILARES de la alcaldía" no se reporta nada.',
+  '  Esto vale salvo que, en ese texto, el nombre señale a una persona concreta: el lugar',
+  '  donde está o vive una persona ("estoy en el Cereso") se marca "lugar", como dice la',
+  '  lista Domicilios; un centro de trabajo que identifica a alguien ("la única enfermera',
+  '  de la clínica de San Rafael") se reporta.',
+  '- Un equipo o colectivo no es una persona: "El equipo del Ecosistema", "el colectivo de',
+  '  madres buscadoras", "las compañeras del taller". No lo reportes. El nombre de cada',
+  '  integrante sí se reporta.',
   // ⚠ ONE PROMPT FOR DETECT AND VERIFY, measured 2026-10-17 on the chunk holding
   // "el Chacho Melgarejo": a separate verify addendum ("this text is already
   // redacted…") caught it 0/6 and 3/6; the shared prompt 10/12.
@@ -274,7 +296,8 @@ export const DETECT_SYSTEM_PROMPT = [
   '',
   'Tipos: "persona" para nombres de personas; "lugar" para domicilios y lugares identificables;',
   '"contacto" para teléfonos, correos y redes; "identificador" para folios, CURP, RFC y números',
-  'de cuenta; "otro" para cualquier otro dato que permita identificar a alguien.',
+  'de cuenta; "otro" para otro dato que identifique a una persona concreta. Nunca uses "otro"',
+  'para nombres de instituciones, programas, proyectos, eventos, lenguas o siglas.',
 ].join('\n')
 
 /**

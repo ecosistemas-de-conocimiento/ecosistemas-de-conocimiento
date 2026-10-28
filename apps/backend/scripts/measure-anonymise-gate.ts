@@ -45,6 +45,13 @@
  *                     carries `redactedText`, and each call the model's `raw`
  *                     answer, to read instead. ⚠ Only for a synthetic text:
  *                     the row lands in a file in plain text.
+ *   GATE_BACKEND=spark  send every detector call to the self-hosted endpoint
+ *                     (ANONYMISE_DETECT_URL, _MODEL, _API_KEY) and NEVER to
+ *                     ai-service: no hosted fallback, a failure is a failure.
+ *                     Default: ai-service (`getAppAIClient`), as before.
+ *   GATE_SYSTEM_PROMPT_FILE  replace the detector's system prompt with this
+ *                     file's text, to measure an older prompt against the
+ *                     current one on the same text.
  *   plus the backend's usual env: AI_SERVICE_URL, AI_SERVICE_API_KEY (DATABASE_URI
  *   is not used: the gate needs no database). Nothing here embeds a secret.
  *
@@ -91,6 +98,10 @@ const org = process.env.GATE_ORG || '1'
 const keepPublic = process.env.GATE_KEEP_PUBLIC === '1'
 const roster = (process.env.GATE_ROSTER ?? '').split(',').map((s) => s.trim()).filter(Boolean)
 const outFile = process.env.GATE_OUT || join(tmpdir(), `anonymise-gate-${Date.now()}.jsonl`)
+const backend = process.env.GATE_BACKEND === 'spark' ? 'spark' : 'ai-service'
+const systemPromptOverride = process.env.GATE_SYSTEM_PROMPT_FILE
+  ? readFileSync(process.env.GATE_SYSTEM_PROMPT_FILE, 'utf8')
+  : null
 
 const { paragraphs, files } = textFile ? { paragraphs: [], files: 0 } : loadParagraphs(corpusDir as string)
 const transcripts = textFile
@@ -116,10 +127,30 @@ if (dry) {
   process.exit(0)
 }
 
-const { aiServiceDetector, parseFindings } = await import('../src/lib/anonymise/detector')
+const { aiServiceDetector, DETECT_SYSTEM_PROMPT, parseFindings } = await import('../src/lib/anonymise/detector')
 type SyncGenerator = import('../src/lib/anonymise/detector').SyncGenerator
 const { runAnonymisationGate } = await import('../src/lib/anonymise/gate')
-const { getAppAIClient } = await import('../src/lib/aiClient')
+const { openaiCompatFromEnv } = await import('../src/lib/anonymise/openaiCompatGenerator')
+
+/**
+ * 🔴 GATE_BACKEND=spark: the self-hosted generator ALONE, no `withHostedFallback`,
+ * so the text never reaches a hosted model. Unconfigured → exit, never ai-service.
+ */
+async function realClient(): Promise<SyncGenerator> {
+  if (backend === 'spark') {
+    const spark = openaiCompatFromEnv()
+    if (!spark) {
+      console.error('GATE_BACKEND=spark needs ANONYMISE_DETECT_URL and ANONYMISE_DETECT_MODEL.')
+      process.exit(1)
+    }
+    console.log(`backend: openai-compat at ${spark.host}, model ${spark.model}, no fallback`)
+    return spark.generator
+  }
+  const { getAppAIClient } = await import('../src/lib/aiClient')
+  return getAppAIClient(org) as unknown as SyncGenerator
+}
+const real = await realClient()
+if (systemPromptOverride !== null) console.log(`system prompt: ${process.env.GATE_SYSTEM_PROMPT_FILE}`)
 
 type CallRec = Record<string, unknown> & { ms: number; costUsd?: number; cached?: boolean; json?: string; error?: string }
 type Req = Parameters<SyncGenerator['generate']['sync']>[0]
@@ -132,12 +163,15 @@ const count = (hay: string, w: string) =>
 async function one(nominal: number, text: string, run: number) {
   const nonce = vary ? `${nominal}-r${run}-${Date.now()}` : ''
   const calls: CallRec[] = []
-  const real = getAppAIClient(org) as unknown as SyncGenerator
   const client: SyncGenerator = {
     generate: {
       async sync(req: Req, opts?: Opts) {
         const t0 = Date.now()
         if (nonce) req.unit.input.userPrompt += `\n\nENTREVISTADORA: toma ${nonce}.`
+        // Swaps the base prompt only; a `keepPublicFigures` addendum stays.
+        if (systemPromptOverride !== null && req.unit.systemPrompt) {
+          req.unit.systemPrompt = systemPromptOverride + req.unit.systemPrompt.slice(DETECT_SYSTEM_PROMPT.length)
+        }
         const inputChars = req.unit.input.userPrompt.length
         try {
           const res = await real.generate.sync(req, opts)
