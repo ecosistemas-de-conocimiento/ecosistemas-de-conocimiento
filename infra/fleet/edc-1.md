@@ -2409,6 +2409,88 @@ non-existent `drizzle.__drizzle_migrations`; the table lives in `public`).
 
 No image cleanup this time. **Disk**, `df -h /` free: 56 GB before, 41 GB after the build.
 
+### 4zx. ✅ Done 2026-10-28 17:17–17:33 UTC: `d04a112`, dev only — one Payload migration on start; org 7 answer style seeded
+
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
+`97d5316`, `docker ps` before and after). Range `9597969..d04a112`: per-ecosistema answer style,
+platform admin only (`7e9a100`: three nullable `organizations.answer_style_*` columns, the
+`/ajustes` editor, the chat prompt reads it); graph view edges no longer join aggregated CTEs, the
+`/grafo` hang on org 6 (`d04a112`); the anonymise byline follow-ups and their revert (`6326e82`,
+`dd975f0`, `02424bd`, `2efa812`, net zero); runbook §4zv/§4zw. No compose, variable or ai-service
+change.
+
+**Pre-check.** `payload_migrations` 15 rows, newest
+`20261028_083327_student_testimonio_consent_version`. `edc_ai` `__drizzle_migrations` 6. Long
+graph queries: none to cancel. `pg_stat_activity` at 17:17 UTC held 3 idle client backends and one
+active one, the check itself; nothing went to `pg_cancel_backend`.
+
+**Migrations.** One, applied by the container start (`scripts/migrate.sh` waits for Payload's
+`Done.` before `next start`): backend log 17:23:27 "Reading migration files…",
+`Migrated: 20261028_162050_organizations_answer_style (8ms)`, `Done.`, "Ready in 861ms".
+`payload_migrations` 15 → 16, batch 11. New columns `organizations.answer_style_generales`,
+`answer_style_resonancias`, `answer_style_interviewer`, all `character varying`
+(`information_schema.columns`). `edc_ai` `__drizzle_migrations` unchanged at 6.
+
+Backup `/root/backups/20261028T1717Z/` (`edc_ai` 255 MB, `edc_backend` 17 MB, about double the
+09:41 sizes); `pg_restore -l` 137 / 438 non-comment lines, `SHA256SUMS` beside them. Off-box copy
+in the owner's `cide/backups/edc-1/20261028T1717Z/` with `timeout 180 scp`; `sha256sum -c` passed
+before the deploy. ⚠ The host has no `pg_restore`; run `pg_restore -l` inside the postgres
+container (`docker exec -i "$C" pg_restore -l < file.dump`).
+
+| deploy | uuid | queued → finished (UTC) | commit |
+|---|---|---|---|
+| `d04a112` | `esqf5olw4rqgmi1misheshin` | 17:19:18 → 17:23:23 | `d04a11216397…` |
+
+After: 9 containers up; `web`, `backend` and `ai-service` run image tag
+`d04a11216397b86c619eb4880c5eb18b4e08c25c`, healthy. 0 `error`/`fatal` lines in 8 of 9 dev
+containers; the one postgres `ERROR` (17:29:44) is the deploy agent's own `psql` query, where the
+shell expanded `$$` to a process id. Not the app.
+
+**Smoke** (no paid call):
+
+| check | result |
+|---|---|
+| 1. web `/` | 303 → `/sign-in`, 200 |
+| 2. health | `dev.` `/api/health` 200, `api.dev.` `/api/health` 200 |
+| 3. login, estudiante1 (`cide/.env.demo-users`), web `POST /api/auth/login` with `Origin` | 200; then `/__data.json` 200 (names `estudiante`), `/estudiante/__data.json` 200 |
+| 4. org 8 `features` after | `{"studentView": true, "keepPublicFigures": true}`, unchanged |
+
+**Graph view timings**, `GET api.dev./api/graph/view?organization=<n>` as the platform admin
+(the backend container's `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`, read over ssh without echo,
+`POST /api/users/login`, `Authorization: JWT`). Two runs each, from the owner's laptop over the
+internet, curl `time_total`:
+
+| org | status | bytes | seconds (run 1 / run 2) | entities | edges | published documents |
+|---|---|---|---|---|---|---|
+| 6 | 200 | 350 456 | 1.52 / 1.29 | 542 | 4 074 | 81 |
+| 7 | 200 | 615 007 | 1.68 / 1.69 | 1 500 | 6 000 | 124 |
+| 8 | 200 | 701 249 | 2.02 / 2.02 | 1 500 | 6 000 | 732 |
+
+Org 6 had hung before `d04a112`. Orgs 7 and 8 return exactly 1 500 entities and 6 000 edges. The
+round numbers suggest a cap in the view (inferred, not checked in the code).
+
+**Answer style for org 7, Discapacidad** (`scripts/seed-answer-style.ts`, in the backend
+container from `/repo/apps/backend`, `env -u SEED_CORPUS_INGEST node_modules/.bin/payload run …`).
+⚠ The shipped script printed nothing and exited 0, in dry run and to a log file alike. It calls
+`main().catch(…)` without `await`, and `payload run` exits before `main` finishes (inferred from
+`backfill-testimonio-titles.ts`, which uses top-level `await` and works). Fix it in the repo. This
+run used a temporary copy of the same logic with top-level `await`
+(`scripts/zz-seed-answer-style-tla.ts`, container only, deleted after; `ls` count 0).
+
+| step | result |
+|---|---|
+| dry run | `{"mode":"dry-run","organizationId":7,"name":"Discapacidad","outcome":"would-write"}` |
+| apply, `SEED_APPLY=1` | `{"mode":"apply","organizationId":7,"name":"Discapacidad","outcome":"written"}` |
+| dry run again | `outcome: "unchanged"` |
+| `GET /api/funciones?organization=7` | 200; `answerStyles.generales` and `.resonancias` both 1 045 characters, equal, start "Este ecosistema trata sobre discapacidad."; `interviewer` null |
+| orgs 6 and 8 | all three styles null |
+
+Spend: `usage_logs` since 17:17 UTC: 20 rows, $0.061694, all `edc-eco-8` (`router.route`,
+`/v1/ingest`) 17:17–17:23. None from this run, which made no model call. Another lane's traffic
+(inferred by time). Total $11.462672 after.
+
+No image cleanup this time. **Disk**, `df -h /` free: 40 GB before, 36 GB after the build.
+
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
 Backups taken before the deploy (both DBs, both envs, each checked with `pg_restore -l`, sha256
