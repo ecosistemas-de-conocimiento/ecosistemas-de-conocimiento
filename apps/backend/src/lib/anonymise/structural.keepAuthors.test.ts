@@ -1,124 +1,108 @@
 /**
- * R60 (owner, 2026-10-28) at stage 1: which bylines are CLEAN, which authors
- * they name, and that the pass stays linear. The gate-level behaviour is in
+ * R60 (owner, 2026-10-28) below the gate: stage 1's `keepAuthors` (which
+ * byline pieces it leaves as written) and `restoreAuthors` (which
+ * placeholders come back), plus linear time. The gate-level behaviour is in
  * `gate.authorByline.test.ts`. Synthetic names only.
  */
 
 import { describe, expect, it } from 'vitest'
 
 import { restoreAuthors } from './authorRestore'
-import { BYLINE_KEEP_MAX, parseByline, splitAuthors, structuralPass } from './structural'
+import { splitAuthors, structuralPass } from './structural'
 
-const noEvidence = { stage3: [], verify: [], unlocated: [], roster: [] }
+const noEvidence = { stage3: [], verify: [], unlocated: [], roster: [], structural: [] }
 
-function keep(text: string): { text: string; authors: string[]; labels: string[] } {
-  const authors: string[] = []
-  const labels: string[] = []
+function pass(text: string, keepAuthors: string[]): { text: string; labelled: string[]; bylines: string[] } {
+  const labelled: string[] = []
   const out = structuralPass(text, {
     person: (n) => {
-      labels.push(n)
+      labelled.push(n)
       return '[Persona A]'
     },
-    keepAuthor: (n) => authors.push(n),
+    keepAuthors,
   })
-  return { text: out.text, authors, labels }
+  return { text: out.text, labelled, bylines: out.bylines.map(([s, e]) => out.text.slice(s, e)) }
 }
 
-describe('parseByline — clean bylines name their authors', () => {
-  it.each([
-    ['Ana Ruiz', ['Ana Ruiz']],
-    ['Ana Ruiz, Luis Gómez y Eva Paz', ['Ana Ruiz', 'Luis Gómez', 'Eva Paz']],
-    ['Ana Ruiz; Luis Gómez', ['Ana Ruiz', 'Luis Gómez']],
-    ['Ana Ruiz | Luis Gómez'.split(' | ')[0] as string, ['Ana Ruiz']],
-    ['Ana Ruiz & Luis Gómez', ['Ana Ruiz', 'Luis Gómez']],
-    ['Ana Ruiz / Luis Gómez', ['Ana Ruiz', 'Luis Gómez']],
-    ['Ruiz, Ana', ['Ana Ruiz']],
-    ['Ruiz, Ana María', ['Ana María Ruiz']],
-    ['Ruiz Pérez, A.', ['A. Ruiz Pérez']],
-    ['Ruiz, Ana; Gómez, Luis', ['Ana Ruiz', 'Luis Gómez']],
-    ['Ruiz, A., Gómez, L. y Paz, E.', ['A. Ruiz', 'L. Gómez', 'E. Paz']],
-    ['Dr. Ana Ruiz', ['Dr. Ana Ruiz']],
-    ['Ma. Elena Ruiz y Pbro. Luis Gómez', ['Ma. Elena Ruiz', 'Pbro. Luis Gómez']],
-    ['Ana de la Cruz', ['Ana de la Cruz']],
-    ['Hans van der Berg', ['Hans van der Berg']],
-    ['Lía d’Ávila', ['Lía d’Ávila']],
-    ['Ana Ruiz (2021)', ['Ana Ruiz']],
-    ['Ana Ruiz, 2026.', ['Ana Ruiz']],
-    ['Ana Ruiz-Pérez y Sean O’Brien', ['Ana Ruiz-Pérez', 'Sean O’Brien']],
-  ])('%s', (value, authors) => {
-    expect(parseByline(value)).toEqual(authors)
+describe('structuralPass — keepAuthors', () => {
+  it('leaves a byline piece naming a trusted author as written; redacts the rest', () => {
+    const r = pass('Autores: Ana Ruiz y Luis Gómez\n\nTexto.', ['Ana Ruiz'])
+    expect(r.text).toBe('Autores: Ana Ruiz y [Persona A]\n\nTexto.')
+    expect(r.labelled).toEqual(['Luis Gómez'])
+    expect(r.bylines).toEqual(['Ana Ruiz'])
   })
 
-  it.each([
-    'Ana Ruiz, estudiante de tercer año', // prose
-    'el equipo de trabajo', // prose
-    'Colectivo Norte', // institution
-    'Ana Ruiz y Universidad Nacional', // one institution spoils the byline
-    'ANA RUIZ', // all caps: may be an acronym
-    'CIDE',
-    'Ana Ruiz (Lupita)', // a parenthesis that is not a year
-    'Ana Ruiz 2', // a digit
-    'Ana Ruiz, Fecha: 2026', // another field
-    'Ana Ruiz,', // an empty piece
-    'Ana Uno Dos Tres Cuatro Cinco Seis', // seven name words
-    `Ana ${'Ruiz '.repeat(BYLINE_KEEP_MAX)}`, // too long
-    '',
-  ])('fails closed on %j', (value) => {
-    expect(parseByline(value)).toBeNull()
+  it('matches by name parts: titles, order and case of the account name do not matter', () => {
+    expect(pass('Autora: Dra. Ana Ruiz', ['Ana Ruiz']).bylines).toEqual(['Dra. Ana Ruiz'])
+    expect(pass('Autores: Ruiz, Ana y Gómez, Luis', ['Ana Ruiz']).text).toBe('Autores: Ruiz, Ana y [Persona A], [Persona A]')
+    expect(pass('Autores: Ruiz, Ana y Gómez, Luis', ['Ana Ruiz']).bylines).toEqual(['Ruiz', 'Ana'])
+  })
+
+  it('🔴 a part of the author is not the author', () => {
+    expect(pass('Autora: Ana', ['Ana Ruiz']).text).toBe('Autora: [Persona A]')
+    expect(pass('Autora: Ana Ruiz Pérez', ['Ana Ruiz']).text).toBe('Autora: [Persona A]')
+  })
+
+  it('🔴 a one-word trusted name keeps nothing', () => {
+    expect(pass('Autora: Ruiz', ['Ruiz']).text).toBe('Autora: [Persona A]')
+  })
+
+  it('without keepAuthors nothing changes, and the input is not touched', () => {
+    expect(pass('Autora: Ana Ruiz', []).text).toBe('Autora: [Persona A]')
+    expect(structuralPass('﷐ x').text).toBe('﷐ x')
+  })
+
+  it('a noncharacter in the input never becomes a kept piece', () => {
+    const r = pass('﷐\nAutora: Ana Ruiz', ['Ana Ruiz'])
+    expect(r.text).toBe('�\nAutora: Ana Ruiz')
+    expect(r.bylines).toEqual(['Ana Ruiz'])
+  })
+
+  it('both passes agree everywhere but the kept pieces', () => {
+    const text = 'id 8f1c2b3a-1111-2222-3333-444455556666\nAutores: Ana Ruiz y Luis Gómez\nNotas. Autor: Eva Paz.\n15/08/2026'
+    const a = structuralPass(text, { person: () => '[Persona A]' }).text
+    const b = structuralPass(text, { person: () => '[Persona A]', keepAuthors: ['Ana Ruiz'] }).text
+    expect(b.replace('Ana Ruiz', '[Persona A]')).toBe(a)
   })
 })
 
-describe('structuralPass — keepAuthor', () => {
-  it('leaves a clean byline in the text and reports its authors', () => {
-    const r = keep('Autores: Ana Ruiz y Luis Gómez\n\nTexto.')
-    expect(r.text).toBe('Autores: Ana Ruiz y Luis Gómez\n\nTexto.')
-    expect(r.authors).toEqual(['Ana Ruiz', 'Luis Gómez'])
-    expect(r.labels).toEqual([])
+describe('restoreAuthors — guards', () => {
+  it('🔴 whole word: a placeholder that ended mid-word is not restored', () => {
+    const source = 'Autora: x\n\nAna Ruizito llegó.'
+    const output = 'Autora: x\n\n[Persona A]ito llegó.'
+    expect(restoreAuthors(source, output, ['Ana Ruiz'], noEvidence).text).toBe(output)
+    // The same text on a word boundary comes back.
+    expect(restoreAuthors('Ana Ruiz llegó.', '[Persona A] llegó.', ['Ana Ruiz'], noEvidence).text).toBe('Ana Ruiz llegó.')
   })
 
-  it('reads a byline at a field start only: after "|", ";", a tab or markdown', () => {
-    expect(keep('Título | Autora: Ana Ruiz | Lugar: Oaxaca').authors).toEqual(['Ana Ruiz'])
-    expect(keep('> **Autora:** Ana Ruiz').authors).toEqual(['Ana Ruiz'])
-    expect(keep('Por: Ana Ruiz').authors).toEqual(['Ana Ruiz'])
+  it.each([
+    ['Ana Ruiz Pérez llegó.', '[Persona A] [Persona B] llegó.'],
+    ['Ana Ruiz y Pérez llegó.', '[Persona A] y [Persona B] llegó.'],
+    ['Ana Ruiz-Pérez llegó.', '[Persona A]-[Persona B] llegó.'],
+    ['Ana Ruiz de la Vega llegó.', '[Persona A] de la [Persona B] llegó.'],
+    ['Ana Ruiz Pérez llegó.', '[Persona A] [Persona B] llegó.'],
+  ])('🔴 glue: %j stays redacted', (source, output) => {
+    expect(restoreAuthors(source, output, ['Ana Ruiz'], noEvidence).text).toBe(output)
   })
 
-  it('stops a byline at a sentence end, not at an initial or a title', () => {
-    const r = keep('Autora: Dra. Ana M. Ruiz. El texto sigue.')
-    expect(r.authors).toEqual(['Dra. Ana M. Ruiz'])
-    expect(r.text).toBe('Autora: Dra. Ana M. Ruiz. El texto sigue.')
+  it('🔴 byline: a kept piece comes back even glued; the same text outside one does not', () => {
+    const source = 'Autores: Ana Ruiz y Pedro Gómez'
+    const output = 'Autores: [Persona A] y [Persona B]'
+    const at = source.indexOf('Ana Ruiz')
+    expect(restoreAuthors(source, output, ['Ana Ruiz'], noEvidence, [[at, at + 8]]).text).toBe('Autores: Ana Ruiz y [Persona B]')
+    expect(restoreAuthors(source, output, ['Ana Ruiz'], noEvidence).text).toBe(output)
   })
 
-  it('🔴 a mid-line key is redacted as before, never kept', () => {
-    const r = keep('Notas de clase. Autor: Juan Pérez, 2026.')
-    expect(r.authors).toEqual([])
-    expect(r.text).toBe('Notas de clase. Autor: [Persona A], 2026.')
+  it('🔴 lower case is never restored outside a byline', () => {
+    expect(restoreAuthors('la otra es ana ruiz.', 'la otra es [Persona A].', ['Ana Ruiz'], noEvidence).text).toBe(
+      'la otra es [Persona A].',
+    )
   })
 
-  it('🔴 an ambiguous byline is redacted as before', () => {
-    const r = keep('Autora: Ana Ruiz, estudiante\nPor: la presente se informa')
-    expect(r.authors).toEqual([])
-    expect(r.text).toBe('Autora: [Persona A], [Dato omitido]\nPor: la presente se informa')
-  })
-
-  it('without keepAuthor nothing changes', () => {
-    expect(structuralPass('Autora: Ana Ruiz', { person: () => '[Persona A]' }).text).toBe('Autora: [Persona A]')
-  })
-
-  it('returns where each kept byline is', () => {
-    const text = 'id 8f1c2b3a-1111-2222-3333-444455556666\nAutora: Ana Ruiz\nAutor: Luis Gómez'
-    const r = structuralPass(text, { keepAuthor: () => {} })
-    expect(r.bylines.map(([s, e]) => r.text.slice(s, e))).toEqual(['Autora: Ana Ruiz', 'Autor: Luis Gómez'])
-  })
-
-  it('a noncharacter in the input never becomes a byline', () => {
-    const r = keep('\uFDD0\nAutora: Ana Ruiz')
-    expect(r.text).toBe('\uFFFD\nAutora: Ana Ruiz')
-    expect(r.text).not.toContain('\uFDD0')
-  })
-
-  it('is idempotent', () => {
-    const once = keep('Autores: Ruiz, Ana; Gómez, Luis\nPor: Dra. Eva Paz\n15/08/2026').text
-    expect(keep(once).text).toBe(once)
+  it('🔴 shared: a stage-1 name sharing the part keeps the bare part redacted', () => {
+    const r = restoreAuthors('Ruiz habló.', '[Persona A] habló.', ['Ana Ruiz'], { ...noEvidence, structural: ['Pedro Ruiz'] })
+    expect(r.text).toBe('[Persona A] habló.')
+    expect(restoreAuthors('Ruiz habló.', '[Persona A] habló.', ['Ana Ruiz'], noEvidence).text).toBe('Ruiz habló.')
   })
 })
 
@@ -138,32 +122,38 @@ describe('linear time', () => {
     return Array.from({ length: n }, (_, i) => `${para}| Autora: Ana Ruiz${i % 2 ? ' y Luis Gómez' : ''} | `).join('')
   }
 
-  it('🔴 structuralPass with keepAuthor grows linearly on a one-line 2 MB document', () => {
+  it('🔴 structuralPass with keepAuthors grows linearly on a one-line 2 MB document', () => {
     // A RATIO of two runs on the same box, so load does not decide it: 8x the
     // text must cost well under 64x (quadratic).
     const small = oneLineDoc(280)
     const big = oneLineDoc(2240)
     expect(big.length).toBeGreaterThan(2_000_000)
-    const run = (t: string) => () => structuralPass(t, { person: () => '[Persona A]', keepAuthor: () => {} })
+    const run = (t: string) => () => structuralPass(t, { person: () => '[Persona A]', keepAuthors: ['Ana Ruiz'] })
+    run(small)() // warm-up
     expect(best(run(big)) / Math.max(best(run(small)), 1)).toBeLessThan(24)
   }, 60_000)
 
-  it('🔴 a key followed by a long run of spaces stays linear', () => {
-    const run = (n: number) => () => structuralPass(`Autora:${' '.repeat(n)}Ana Ruiz | Autor: ${' '.repeat(n)}x`, { keepAuthor: () => {} })
+  it('🔴 a byline key followed by a long run of spaces stays linear', () => {
+    // Measured 2026-10-28 (local tsx): "Autor:" + 20k spaces + "x" took 0.5 s
+    // before BYLINE_SEP lost its ambiguous spaces, 0.3 ms after.
+    const run = (n: number) => () => structuralPass(`Autora:${' '.repeat(n)}Ana Ruiz | Autor: ${' '.repeat(n)}x`, { keepAuthors: ['Ana Ruiz'] })
+    run(1000)()
     expect(best(run(200_000)) / Math.max(best(run(25_000)), 1)).toBeLessThan(24)
   }, 60_000)
 
   it('🔴 restoreAuthors grows linearly on a one-line 2 MB output', () => {
     const doc = (n: number) => {
-      const source = oneLineDoc(n)
+      // ", con": a comma ends the glue scan (" y Luis" would glue them).
+      const source = oneLineDoc(n).replaceAll(' y Luis', ', con Luis')
       return { source, output: source.replaceAll('Ana Ruiz', '[Persona A]').replaceAll('Luis Gómez', '[Persona B]') }
     }
     const small = doc(280)
     const big = doc(2240)
     const run = (d: { source: string; output: string }) => () => {
-      const r = restoreAuthors(d.source, d.output, ['Ana Ruiz', 'Luis Gómez'], noEvidence)
-      expect(r.text === d.source).toBe(true) // never diff 2 MB strings
+      const r = restoreAuthors(d.source, d.output, ['Ana Ruiz'], noEvidence)
+      expect(r.text === d.output.replaceAll('[Persona A]', 'Ana Ruiz')).toBe(true) // never diff 2 MB strings
     }
+    run(small)()
     expect(best(run(big)) / Math.max(best(run(small)), 1)).toBeLessThan(24)
   }, 60_000)
 

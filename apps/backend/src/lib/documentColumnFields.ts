@@ -28,6 +28,7 @@ export const DOCUMENT_COLUMNS = {
   redactedText: 'redacted_text',
   heldText: 'held_text',
   publicFiguresKept: 'public_figures_kept',
+  authorsKept: 'authors_kept',
   testimonioTitle: 'testimonio_title',
   updatedAt: 'updated_at',
 } as const

@@ -65,6 +65,7 @@ import { restorePublicFigures } from './publicFigureRestore'
 import { restoreAuthors } from './authorRestore'
 import { isTownLevelPlace } from './townPlaces'
 import type {
+  KeptPublicFigure,
   DetectorFinding,
   GateInput,
   GateReport,
@@ -77,6 +78,9 @@ import type {
 } from './types'
 import { OMITTED_PLACEHOLDER, PLACEHOLDER_PATTERN } from './types'
 import { wholeWord } from './wordBreaks'
+
+/** A `[Persona X]` label, for the pseudonym count after a restore. */
+const PERSON_LABEL = /\[Persona [A-Z]+\]/g
 
 export interface GateDeps {
   detector: PersonDetector
@@ -604,8 +608,15 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // Same lifetime, same reason: name parts → people, for this document only.
   const names = createNamePartRegistry()
   const stages: GateStageReport[] = []
-  /** R60: the authors of this document's clean bylines, kept visible after the gate. */
-  const authors: string[] = []
+  // 🔴 R60: the document's actual author (its uploader), documento only.
+  // Never read from the text. Capitalised like the roster below.
+  const authors =
+    input.contentKind === 'documento'
+      ? (input.authors ?? [])
+          .filter((e) => !e.includes('@'))
+          .map((e) => e.replace(/(^|[\s-])(\p{Ll})/gu, (_m, before: string, ch: string) => before + ch.toUpperCase()))
+          .filter((e) => namePartsOf(e).length >= 2)
+      : []
 
   // 🔴 KEEP PUBLIC FIGURES (third audit 2026-10-27): the gate runs EXACTLY as
   // with the option off. The model is also asked to classify people, and only
@@ -651,13 +662,34 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
     ...(extra ?? {}),
   })
   const ready = (redactedText: string): GateResult => {
-    // 🔴 R60: the document's own byline authors come back LAST, on whatever
-    // the public-figure restore left (`authorRestore.ts`).
-    const withAuthors = (text: string) =>
-      authors.length === 0 ? text : restoreAuthors(structural.text, text, authors, { ...evidence, roster: rosterNames }, structural.bylines).text
-    if (!keep) return { status: 'ready', redactedText: withAuthors(redactedText), report: report() }
-    const restored = restorePublicFigures(structural.text, redactedText, { ...evidence, roster: rosterNames })
-    return { status: 'ready', redactedText: withAuthors(restored.text), report: report(), keptPublic: restored.kept }
+    let text = redactedText
+    const extra: { keptPublic?: KeptPublicFigure[]; keptAuthors?: string[] } = {}
+    if (keep) {
+      // The author source when there is one: a byline stage 1 redacted put a
+      // placeholder in `structural.text`, and the public restore refuses any.
+      const restored = restorePublicFigures(authorSource?.text ?? structural.text, text, { ...evidence, roster: rosterNames })
+      text = restored.text
+      extra.keptPublic = restored.kept
+    }
+    // 🔴 R60: the document's actual author comes back LAST, on whatever the
+    // public-figure restore left, from stage 1 re-run with `keepAuthors`.
+    if (authorSource !== null) {
+      const restored = restoreAuthors(
+        authorSource.text,
+        text,
+        authors,
+        { ...evidence, roster: rosterNames, structural: structuralNames },
+        authorSource.bylines,
+      )
+      text = restored.text
+      if (restored.kept.length > 0) extra.keptAuthors = restored.kept
+    }
+    // 🔴 THE COUNT MATCHES THE TEXT: a person whose every placeholder was
+    // restored is no longer a pseudonym in this document.
+    const before = new Set(redactedText.match(PERSON_LABEL) ?? [])
+    const after = new Set(text.match(PERSON_LABEL) ?? [])
+    const gone = [...before].filter((l) => !after.has(l)).length
+    return { status: 'ready', redactedText: text, report: { ...report(), pseudonyms: allocator.count - gone }, ...extra }
   }
 
   // ── 1. STRUCTURAL ─────────────────────────────────────────────────────────
@@ -666,27 +698,23 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // A byline's author takes a label from the SAME allocator, and its name parts
   // are registered, so "Autor: Juan Pérez" and a bare "Pérez" in the body come
   // out as one `[Persona X]` even when the model never reports the name.
-  //
-  // 🔴 R60 (owner, 2026-10-28): in a `documento`, the authors of a CLEAN
-  // byline at a field start are NOT redacted here. The byline stays in the
-  // text, stages 2–4 redact it like any name (roster included), and `ready`
-  // restores those authors' placeholders from this stage's text. Their name
-  // parts are registered so bare mentions share their label. A byline that
-  // does not parse cleanly is redacted here, as before.
-  const structural = structuralPass(input.text.normalize('NFC'), {
+  const structuralNames: string[] = []
+  const nfc = input.text.normalize('NFC')
+  const structural = structuralPass(nfc, {
     person: (name) => {
       names.add(name)
+      structuralNames.push(name)
       return allocator.labelFor(name)
     },
-    ...(input.contentKind === 'documento'
-      ? {
-          keepAuthor: (name: string) => {
-            names.add(name)
-            authors.push(name)
-          },
-        }
-      : {}),
   })
+  // 🔴 R60: the text the author restore aligns to — stage 1 again, identical
+  // except that a byline piece naming the actual author is left as written.
+  // The pipeline itself runs on `structural`, so the model and every hold see
+  // the author redacted. Same names in the same order: no new label.
+  const authorSource =
+    authors.length > 0
+      ? structuralPass(nfc, { person: (name) => allocator.labelFor(name), keepAuthors: authors })
+      : null
   stages.push({ stage: 'structural', removed: structural.removed })
 
   if (structural.text.trim().length === 0) {

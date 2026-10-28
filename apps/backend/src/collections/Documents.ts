@@ -2083,7 +2083,7 @@ export async function enqueueIngestForDoc(args: {
   const documentoOptions =
     fresh.contentKind === 'documento' && rowMustPassGate(fresh) && fresh.anonymisationStatus !== 'approved'
       ? await documentoGateOptions(payload as never, organizationId, fresh)
-      : { keepPublicFigures: false, roster: [] as string[] }
+      : { keepPublicFigures: false, roster: [] as string[], authors: [] as string[] }
   const gated = await anonymiseDocumentText({
     // The live handle carries `db.drizzle`; the narrow type above does not say so.
     payload: payload as never,
@@ -2127,6 +2127,8 @@ export async function enqueueIngestForDoc(args: {
     // A gated documento (staff notes, drafts) gets the roster: see above.
     roster: documentoOptions.roster,
     keepPublicFigures: documentoOptions.keepPublicFigures,
+    // 🔴 R60: the uploader's names; the gate keeps them visible (documento only).
+    authors: documentoOptions.authors,
   })
 
   if (!gated.ok && gated.busy) {
@@ -3172,6 +3174,22 @@ export const Documents: CollectionConfig = {
       admin: {
         readOnly: true,
         description: 'Nombres conservados como figuras públicas: nombre, motivo, modelo y fecha.',
+      },
+    },
+    {
+      /**
+       * 🔴 R60 (owner, 2026-10-28): the document's ACTUAL author (its
+       * uploader) as the gate left them in `redactedText`: name, model, date.
+       * For reviewers, like `publicFiguresKept`. Null on a hold: a hold shows
+       * the author redacted. Not a re-identification map: every name in it is
+       * in the gate's output already.
+       */
+      name: 'authorsKept',
+      type: 'json',
+      access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
+      admin: {
+        readOnly: true,
+        description: 'Autoría conservada (quien subió el documento): nombre, modelo y fecha.',
       },
     },
     {

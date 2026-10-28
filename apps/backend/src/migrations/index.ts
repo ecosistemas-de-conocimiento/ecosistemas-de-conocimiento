@@ -15,6 +15,7 @@ import * as migration_20261028_054402_student_testimonio_consent from './2026102
 import * as migration_20261028_083327_student_testimonio_consent_version from './20261028_083327_student_testimonio_consent_version';
 import * as migration_20261028_162050_organizations_answer_style from './20261028_162050_organizations_answer_style';
 import * as migration_20261028_170129_documents_wiki_links from './20261028_170129_documents_wiki_links';
+import * as migration_20261028_225918_documents_authors_kept from './20261028_225918_documents_authors_kept';
 
 export const migrations = [
   {
@@ -100,6 +101,11 @@ export const migrations = [
   {
     up: migration_20261028_170129_documents_wiki_links.up,
     down: migration_20261028_170129_documents_wiki_links.down,
-    name: '20261028_170129_documents_wiki_links'
+    name: '20261028_170129_documents_wiki_links',
+  },
+  {
+    up: migration_20261028_225918_documents_authors_kept.up,
+    down: migration_20261028_225918_documents_authors_kept.down,
+    name: '20261028_225918_documents_authors_kept'
   },
 ];

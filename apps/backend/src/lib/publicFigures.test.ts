@@ -9,7 +9,7 @@ const roster = vi.fn()
 vi.mock('./conversationIngest', () => ({ rosterForOrganization: roster }))
 
 import { invalidateFeatures } from './features'
-import { documentoGateOptions, publicFiguresLog } from './publicFigures'
+import { authorsLog, documentoGateOptions, publicFiguresLog } from './publicFigures'
 
 const payloadWith = (features: unknown) => ({ findByID: vi.fn(async () => ({ features })) }) as never
 
@@ -41,7 +41,7 @@ describe('documentoGateOptions', () => {
       contentKind: kind,
       keepPublicFigures: true,
     })
-    expect(out).toEqual({ keepPublicFigures: false, roster: [] })
+    expect(out).toEqual({ keepPublicFigures: false, roster: [], authors: [] })
     expect(roster).not.toHaveBeenCalled()
   })
 
@@ -49,7 +49,63 @@ describe('documentoGateOptions', () => {
     roster.mockRejectedValue(new Error('db down'))
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const out = await documentoGateOptions(payloadWith({ keepPublicFigures: true }), 1, { contentKind: 'documento' })
-    expect(out).toEqual({ keepPublicFigures: false, roster: [] })
+    expect(out).toEqual({ keepPublicFigures: false, roster: [], authors: [] })
+  })
+})
+
+describe('documentoGateOptions — R60 authors (the uploader)', () => {
+  const payloadFor = (user: unknown, memberships: unknown[] | Error) =>
+    ({
+      findByID: vi.fn(async ({ collection }: { collection: string }) =>
+        collection === 'users' ? user : { features: { keepPublicFigures: false } },
+      ),
+      find: vi.fn(async () => {
+        if (memberships instanceof Error) throw memberships
+        return { docs: memberships }
+      }),
+    }) as never
+
+  it('takes the uploader\'s display name and their roster entry here', async () => {
+    const payload = payloadFor({ displayName: 'Ana Ruiz' }, [{ personName: 'Ana María Ruiz' }])
+    const out = await documentoGateOptions(payload, 1, { contentKind: 'documento', uploadedBy: 7 })
+    expect(out.authors).toEqual(['Ana Ruiz', 'Ana María Ruiz'])
+    const find = (payload as unknown as { find: ReturnType<typeof vi.fn> }).find
+    expect(find.mock.calls[0]?.[0]).toMatchObject({
+      collection: 'memberships',
+      where: { and: [{ user: { equals: 7 } }, { organization: { equals: 1 } }] },
+    })
+  })
+
+  it('reads a populated uploadedBy too', async () => {
+    const out = await documentoGateOptions(payloadFor({ displayName: 'Ana Ruiz' }, []), 1, {
+      contentKind: 'documento',
+      uploadedBy: { id: 7 },
+    })
+    expect(out.authors).toEqual(['Ana Ruiz'])
+  })
+
+  it('🔴 an unreadable uploader keeps no author, and nothing else changes', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const out = await documentoGateOptions(payloadFor({ displayName: 'Ana Ruiz' }, new Error('db down')), 1, {
+      contentKind: 'documento',
+      uploadedBy: 7,
+    })
+    expect(out.authors).toEqual([])
+    expect(out.roster).toEqual(['Itzel Barragán'])
+  })
+
+  it('no uploader, no author', async () => {
+    const out = await documentoGateOptions(payloadFor(null, []), 1, { contentKind: 'documento' })
+    expect(out.authors).toEqual([])
+  })
+})
+
+describe('authorsLog', () => {
+  it('stamps each kept author with the model and the time; null when none', () => {
+    const at = new Date('2026-10-28T12:00:00Z')
+    expect(authorsLog(['Ana Ruiz'], 'm1', at)).toEqual([{ name: 'Ana Ruiz', model: 'm1', at: '2026-10-28T12:00:00.000Z' }])
+    expect(authorsLog([], 'm1')).toBeNull()
+    expect(authorsLog(undefined, 'm1')).toBeNull()
   })
 })
 
