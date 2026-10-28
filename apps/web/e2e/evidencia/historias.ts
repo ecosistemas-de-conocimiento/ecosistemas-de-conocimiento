@@ -211,6 +211,8 @@ export const MAPA: readonly Tematica[] = [
           h('E1.4', 'Ver mis autores.', ['estudiante']),
           h('E1.5', 'Enviar una sugerencia.', ['estudiante'], 'pantalla'),
           h('E1.6', 'Compartir mi actividad.', ['estudiante'], 'pantalla'),
+          h('E1.7', 'Abrir uno de mis temas en el mapa.', ['estudiante']),
+          h('E1.8', 'Ver el trabajo publicado de un compañero.', ['estudiante']),
         ],
       },
       {

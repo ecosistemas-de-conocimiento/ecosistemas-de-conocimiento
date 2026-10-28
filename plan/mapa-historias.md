@@ -131,6 +131,8 @@ El audio (B3.1, C1.3, C1.4) se graba solo en el video del participante.
 | E1.4 | Ver mis autores. |  | ● |  |  |  | ▶ acción |
 | E1.5 | Enviar una sugerencia. |  | ● |  |  |  | ◻ pantalla |
 | E1.6 | Compartir mi actividad. |  | ● |  |  |  | ◻ pantalla |
+| E1.7 | Abrir uno de mis temas en el mapa. |  | ● |  |  |  | ▶ acción |
+| E1.8 | Ver el trabajo publicado de un compañero. |  | ● |  |  |  | ▶ acción |
 
 ### E2. Acompañar estudiantes
 
