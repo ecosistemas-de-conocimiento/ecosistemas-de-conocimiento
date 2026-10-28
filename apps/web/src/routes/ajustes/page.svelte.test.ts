@@ -23,6 +23,7 @@ const page = (lockedFeatures: string[]) =>
         selected: { id: '1', name: 'Eco A', slug: 'a', features: { ...FEATURE_DEFAULTS, keepPublicFigures: true } },
         plataforma: null,
         lockedFeatures,
+        answerStylesEditable: lockedFeatures.length === 0,
       },
     } as never,
   }).body;
@@ -68,5 +69,53 @@ describe('/ajustes — the studentTestimonios switch', () => {
     expect(box).toMatch(/disabled/);
     expect(box).not.toMatch(/checked/);
     expect(body).toContain('Testimonios de estudiantes en el reporte (anonimizados)');
+  });
+});
+
+describe('/ajustes — the answer style (owner ruling 2026-10-28)', () => {
+  const styled = (answerStylesEditable: boolean) =>
+    render(Ajustes, {
+      props: {
+        form: null,
+        data: {
+          state: 'ready',
+          ecosistemas: [],
+          selected: {
+            id: '7',
+            name: 'Discapacidad',
+            slug: 'discapacidad',
+            features: { ...FEATURE_DEFAULTS },
+            answerStyles: { generales: 'Tono "cálido" & <claro>.', resonancias: null, interviewer: null },
+          },
+          plataforma: null,
+          lockedFeatures: answerStylesEditable ? [] : ['keepPublicFigures', 'studentTestimonios'],
+          answerStylesEditable,
+        },
+      } as never,
+    }).body;
+  const textarea = (body: string, kind: string) =>
+    body.match(new RegExp(`<textarea[^>]*name="style-${kind}"[^>]*>[\\s\\S]*?</textarea>`))?.[0] ?? '';
+  const estilo = (body: string) => body.slice(body.indexOf('data-testid="ajustes-estilo"'));
+
+  it('three textareas — Generales, Resonancias, Entrevista — with the stored text, escaped', () => {
+    const body = styled(true);
+    for (const kind of ['generales', 'resonancias', 'interviewer']) expect(textarea(body, kind)).not.toBe('');
+    for (const label of ['Generales', 'Resonancias', 'Entrevista']) expect(estilo(body)).toContain(label);
+    expect(textarea(body, 'generales')).toContain('Tono "cálido" &amp; &lt;claro>.');
+    expect(textarea(body, 'generales')).toMatch(/maxlength="1500"/);
+  });
+
+  it('editable for the platform admin, with a save button', () => {
+    const body = styled(true);
+    expect(textarea(body, 'generales')).not.toMatch(/readonly/);
+    expect(estilo(body)).toMatch(/<button[^>]*type="submit"/);
+  });
+
+  it('🔴 read-only for a responsable or investigador: no save button, the reason shown', () => {
+    const body = styled(false);
+    for (const kind of ['generales', 'resonancias', 'interviewer']) expect(textarea(body, kind)).toMatch(/readonly/);
+    const section = estilo(body);
+    expect(section.slice(0, section.indexOf('</form>'))).not.toMatch(/<button/);
+    expect(section).toContain('Solo administración de la plataforma puede cambiarlo');
   });
 });

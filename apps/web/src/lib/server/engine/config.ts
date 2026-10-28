@@ -22,8 +22,10 @@ import {
   parseCiteVariant,
   RESONANCIAS_CONTEXT_PREAMBLE,
   resonanciasSystemPrompt,
+  withEcosystemStyle,
   type CiteVariant,
 } from './prompt';
+import type { AnswerStyles } from '$lib/answerStyle';
 import type { SessionKind } from '$lib/sessionKind';
 import type { ChatTurnMode } from './turnMode';
 import { parseOrientScope, type OrientScope } from './orientation';
@@ -100,8 +102,47 @@ let lastAnnouncedVariant: CiteVariant | null = null;
  *
  * Each non-answer config swaps only the system prompt and the user-turn
  * preamble (`./prompt`).
+ *
+ * `styles`: the ecosistema's answer style (owner ruling 2026-10-28), appended
+ * LAST by {@link withAnswerStyle}. No style for this prompt → the very same
+ * object as without it, so the pinned prompt hashes hold.
  */
-export function chatEngineConfigFor(kind: SessionKind, mode: ChatTurnMode = 'answer'): EngineConfig {
+export function chatEngineConfigFor(
+  kind: SessionKind,
+  mode: ChatTurnMode = 'answer',
+  styles?: AnswerStyles | null,
+): EngineConfig {
+  return withAnswerStyle(baseConfigFor(kind, mode), kind, mode, styles);
+}
+
+/** Which of the three styles a turn uses: Resonancias, the interviewer, or Generales. */
+export function answerStyleFor(
+  kind: SessionKind,
+  mode: ChatTurnMode,
+  styles: AnswerStyles | null | undefined,
+): string | null {
+  if (!styles) return null;
+  if (kind === 'resonancias') return styles.resonancias;
+  return mode === 'interview' ? styles.interviewer : styles.generales;
+}
+
+/**
+ * `config` with the turn's answer style appended to its system prompt. Rules
+ * added later (`withTurnRules`) go before it, so it stays last. No style:
+ * `config` itself, untouched.
+ */
+export function withAnswerStyle(
+  config: EngineConfig,
+  kind: SessionKind,
+  mode: ChatTurnMode,
+  styles: AnswerStyles | null | undefined,
+): EngineConfig {
+  const style = answerStyleFor(kind, mode, styles);
+  if (!style?.trim()) return config;
+  return { ...config, systemPrompt: withEcosystemStyle(config.systemPrompt, style) };
+}
+
+function baseConfigFor(kind: SessionKind, mode: ChatTurnMode): EngineConfig {
   if (kind === 'resonancias') {
     return {
       ...CHAT_ENGINE_CONFIG,

@@ -9,10 +9,11 @@
 
 import { fail } from '@sveltejs/kit';
 
+import { ANSWER_STYLE_KINDS, type AnswerStyles } from '$lib/answerStyle';
 import { FEATURE_KEYS, type Features } from '$lib/features';
 import { CONVERSACIONES_HREF } from '$lib/inicio';
 import { denyAccess } from '$lib/server/deny';
-import { fetchEditables, saveFeatures, savePlatform } from '$lib/server/features';
+import { fetchEditables, saveAnswerStyles, saveFeatures, savePlatform } from '$lib/server/features';
 import type { Actions, PageServerLoad } from './$types';
 
 const deny = (): never =>
@@ -28,7 +29,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const result = await fetchEditables(locals.token);
   if (result.state === 'forbidden') deny();
   if (result.state !== 'ready') {
-    return { state: 'unavailable' as const, ecosistemas: [], selected: null, plataforma: null, lockedFeatures: [] };
+    return {
+      state: 'unavailable' as const,
+      ecosistemas: [],
+      selected: null,
+      plataforma: null,
+      lockedFeatures: [],
+      answerStylesEditable: false,
+    };
   }
   const requested = url.searchParams.get('eco') ?? '';
   const selected = result.ecosistemas.find((e) => e.id === requested) ?? result.ecosistemas[0] ?? null;
@@ -38,6 +46,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     selected,
     plataforma: result.plataforma,
     lockedFeatures: result.lockedFeatures,
+    answerStylesEditable: result.answerStylesEditable,
   };
 };
 
@@ -54,6 +63,19 @@ export const actions: Actions = {
       FEATURE_KEYS.filter((k) => !locked.has(k)).map((k) => [k, form.get(k) === 'on']),
     ) as Partial<Features>;
     const result = await saveFeatures(locals.token, organization, features);
+    if (!result.ok) return fail(result.status, { message: result.message });
+    return { saved: true };
+  },
+  // The answer style: platform admin only; the backend refuses anyone else.
+  // Every textarea is sent; blank clears that style.
+  estilo: async ({ locals, request }) => {
+    if (!locals.user) return fail(401, { message: 'Necesitas iniciar sesión.' });
+    const form = await request.formData();
+    const organization = String(form.get('organization') ?? '');
+    const answerStyles = Object.fromEntries(
+      ANSWER_STYLE_KINDS.map((k) => [k, String(form.get(`style-${k}`) ?? '')]),
+    ) as unknown as AnswerStyles;
+    const result = await saveAnswerStyles(locals.token, organization, answerStyles);
     if (!result.ok) return fail(result.status, { message: result.message });
     return { saved: true };
   },

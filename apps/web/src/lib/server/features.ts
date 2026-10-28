@@ -4,30 +4,47 @@
  */
 
 import { backendFetch } from '$lib/server/auth';
+import { resolveAnswerStyles, type AnswerStyles } from '$lib/answerStyle';
 import { isFeatureKey, PLATFORM_ADMIN_ONLY_FEATURES, resolveFeatures, type FeatureKey, type Features } from '$lib/features';
 
+export interface EcosystemSettings {
+  features: Features;
+  /** The answer style (owner ruling 2026-10-28). Any failure: no style. */
+  answerStyles: AnswerStyles;
+}
+
 /**
- * One ecosistema's switches. ⚠ Any failure is the DEFAULTS (today's
- * behaviour): the backend enforces every switch again, so a blip here only
- * risks showing a control the backend then refuses — never hiding one.
+ * One ecosistema's switches and answer style, in one read. ⚠ Any failure is
+ * the DEFAULTS (today's behaviour): the backend enforces every switch again,
+ * so a blip here only risks showing a control the backend then refuses —
+ * never hiding one. A failed read sends no style: the base prompt.
  */
-export async function fetchFeatures(
+export async function fetchEcosystemSettings(
   token: string | undefined,
   organizationId: string | number | null | undefined,
-): Promise<Features> {
-  if (organizationId == null || organizationId === '') return resolveFeatures(null);
+): Promise<EcosystemSettings> {
+  const none = (): EcosystemSettings => ({ features: resolveFeatures(null), answerStyles: resolveAnswerStyles(null) });
+  if (organizationId == null || organizationId === '') return none();
   try {
     const res = await backendFetch(
       token,
       `/api/funciones?organization=${encodeURIComponent(String(organizationId))}`,
       { method: 'GET' },
     );
-    if (!res.ok) return resolveFeatures(null);
-    const body = (await res.json().catch(() => ({}))) as { features?: unknown };
-    return resolveFeatures(body.features);
+    if (!res.ok) return none();
+    const body = (await res.json().catch(() => ({}))) as { features?: unknown; answerStyles?: unknown };
+    return { features: resolveFeatures(body.features), answerStyles: resolveAnswerStyles(body.answerStyles) };
   } catch {
-    return resolveFeatures(null);
+    return none();
   }
+}
+
+/** One ecosistema's switches ({@link fetchEcosystemSettings}). */
+export async function fetchFeatures(
+  token: string | undefined,
+  organizationId: string | number | null | undefined,
+): Promise<Features> {
+  return (await fetchEcosystemSettings(token, organizationId)).features;
 }
 
 export interface EditableEcosystem {
@@ -35,6 +52,7 @@ export interface EditableEcosystem {
   name: string;
   slug: string;
   features: Features;
+  answerStyles: AnswerStyles;
 }
 
 export interface PlatformSwitches {
@@ -51,6 +69,8 @@ export type EditablesResult =
       plataforma: PlatformSwitches | null;
       /** Switches this caller sees read-only. Missing from the body = the admin-only ones. */
       lockedFeatures: FeatureKey[];
+      /** Only a platform admin edits the answer style. Missing = false. */
+      answerStylesEditable: boolean;
     }
   | { state: 'forbidden' }
   | { state: 'unavailable' };
@@ -60,7 +80,12 @@ export async function fetchEditables(token: string | undefined): Promise<Editabl
     const res = await backendFetch(token, '/api/funciones/editables', { method: 'GET' });
     if (res.status === 401 || res.status === 403) return { state: 'forbidden' };
     if (!res.ok) return { state: 'unavailable' };
-    const body = (await res.json()) as { ecosistemas?: unknown; plataforma?: unknown; lockedFeatures?: unknown };
+    const body = (await res.json()) as {
+      ecosistemas?: unknown;
+      plataforma?: unknown;
+      lockedFeatures?: unknown;
+      answerStylesEditable?: unknown;
+    };
     const list = Array.isArray(body.ecosistemas) ? (body.ecosistemas as Array<Record<string, unknown>>) : [];
     return {
       state: 'ready',
@@ -69,11 +94,13 @@ export async function fetchEditables(token: string | undefined): Promise<Editabl
         name: typeof e.name === 'string' ? e.name : '',
         slug: typeof e.slug === 'string' ? e.slug : '',
         features: resolveFeatures(e.features),
+        answerStyles: resolveAnswerStyles(e.answerStyles),
       })),
       plataforma: (body.plataforma as PlatformSwitches | null) ?? null,
       lockedFeatures: Array.isArray(body.lockedFeatures)
         ? body.lockedFeatures.filter(isFeatureKey)
         : [...PLATFORM_ADMIN_ONLY_FEATURES],
+      answerStylesEditable: body.answerStylesEditable === true,
     };
   } catch {
     return { state: 'unavailable' };
@@ -99,3 +126,6 @@ export const saveFeatures = (token: string | undefined, organization: string, fe
 
 export const savePlatform = (token: string | undefined, detectorFallback: 'hosted' | 'none' | null) =>
   send(token, '/api/plataforma', { detectorFallback });
+
+export const saveAnswerStyles = (token: string | undefined, organization: string, answerStyles: AnswerStyles) =>
+  send(token, '/api/funciones/estilo', { organization, answerStyles });

@@ -7,6 +7,12 @@ import {
   type FieldAccess,
 } from 'payload'
 
+import {
+  ANSWER_STYLE_FIELD_NAMES,
+  ANSWER_STYLE_LOCKED_MESSAGE,
+  ANSWER_STYLE_MAX_LENGTH,
+  normalizeAnswerStyle,
+} from '../lib/answerStyle'
 import { invalidateFeatures, lockedFeatureChange, lockedFeatureMessage, parseFeaturesPatch, resolveFeatures } from '../lib/features'
 import { roleInOrganization } from '../lib/permissions'
 
@@ -61,6 +67,29 @@ export const refuseLockedFeatureChange: CollectionBeforeChangeHook = ({ data, or
   const locked = lockedFeatureChange(before, data.features)
   if (locked && !isPlatformAdminUser(req?.user)) {
     throw new APIError(lockedFeatureMessage(locked), 403, undefined, true)
+  }
+  return data
+}
+
+/**
+ * 🔴 THE ANSWER STYLE IS THE PLATFORM ADMIN'S (owner ruling 2026-10-28):
+ * `answerStyleGenerales`, `answerStyleResonancias`, `answerStyleInterviewer`.
+ * The text lands in the chat's system prompt, so the responsable and the
+ * investigador see it read-only. Same contract as `refuseLockedFeatureChange`:
+ * every write path, a 403 on a single write (400 on a REST bulk update),
+ * rejected rather than stripped, and FAILS CLOSED with no user. Sending the
+ * stored value unchanged is not a change (`beforeValidate` has normalised it).
+ */
+export const refuseAnswerStyleChange: CollectionBeforeChangeHook = ({ data, originalDoc, operation, req }) => {
+  if (!data || isPlatformAdminUser(req?.user)) return data
+  const before = (operation === 'update' ? originalDoc : undefined) as Record<string, unknown> | undefined
+  for (const field of ANSWER_STYLE_FIELD_NAMES) {
+    if (data[field] === undefined) continue
+    const next = normalizeAnswerStyle(data[field])
+    const prev = normalizeAnswerStyle(before?.[field])
+    const nextValue = next.ok ? next.value : data[field]
+    const prevValue = prev.ok ? prev.value : before?.[field]
+    if (nextValue !== prevValue) throw new APIError(ANSWER_STYLE_LOCKED_MESSAGE, 403, undefined, true)
   }
   return data
 }
@@ -138,10 +167,18 @@ export const Organizations: CollectionConfig = {
           }
           next.features = parsed
         }
+        // The answer style (`lib/answerStyle.ts`): cleaned, blank → null,
+        // refused (400) when it would talk to the prompt's rules.
+        for (const field of ANSWER_STYLE_FIELD_NAMES) {
+          if (next[field] === undefined) continue
+          const style = normalizeAnswerStyle(next[field])
+          if (!style.ok) throw new ValidationError({ errors: [{ path: field, message: style.message }] })
+          next[field] = style.value
+        }
         return next
       },
     ],
-    beforeChange: [refuseLockedFeatureChange],
+    beforeChange: [refuseLockedFeatureChange, refuseAnswerStyleChange],
     afterChange: [
       ({ doc }) => {
         const id = (doc as { id?: number | string }).id
@@ -203,5 +240,13 @@ export const Organizations: CollectionConfig = {
       name: 'features',
       type: 'json',
     },
+    // The answer style, one text per prompt (owner ruling 2026-10-28;
+    // `lib/answerStyle.ts`). NULL = no style: the prompt is unchanged.
+    // Platform admin only (`refuseAnswerStyleChange`).
+    ...ANSWER_STYLE_FIELD_NAMES.map((name) => ({
+      name,
+      type: 'textarea' as const,
+      maxLength: ANSWER_STYLE_MAX_LENGTH,
+    })),
   ],
 }

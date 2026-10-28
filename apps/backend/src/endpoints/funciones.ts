@@ -2,9 +2,10 @@
  * Feature switches, per ecosistema and for the platform (owner ruling
  * 2026-10-27; backlog #39).
  *
- *   GET   /api/funciones?organization=<id>   { features }        member · platform admin
- *   GET   /api/funciones/editables           { ecosistemas, plataforma }
+ *   GET   /api/funciones?organization=<id>   { features, answerStyles }   member · platform admin
+ *   GET   /api/funciones/editables           { ecosistemas, plataforma, answerStylesEditable }
  *   PATCH /api/funciones                     { organization, features }   responsable · investigador · platform admin
+ *   PATCH /api/funciones/estilo              { organization, answerStyles }   platform admin
  *   PATCH /api/plataforma                    { detectorFallback }         platform admin
  *
  * 🔴 WHO MAY FLIP WHAT:
@@ -18,6 +19,8 @@
  *     is fine (the page sends every key);
  *   · anyone else — nothing. Reading is for members, so the UI (and the future
  *     student view, `studentView`) can ask.
+ *   · the answer style (`lib/answerStyle.ts`, owner ruling 2026-10-28) —
+ *     platform admin only; the others read it (`answerStyles` in editables).
  * Unknown ecosistema and "not yours" get the same 403.
  *
  * Writes go through Payload with the caller's `req` and `overrideAccess: false`,
@@ -27,6 +30,15 @@
 import type { Endpoint, PayloadRequest } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
+import {
+  ANSWER_STYLE_FIELDS,
+  ANSWER_STYLE_FIELD_NAMES,
+  ANSWER_STYLE_KINDS,
+  ANSWER_STYLE_LOCKED_MESSAGE,
+  answerStylesOf,
+  normalizeAnswerStyle,
+  type AnswerStyles,
+} from '../lib/answerStyle'
 import { fallbackModeFromEnv } from '../lib/anonymise/fallbackGenerator'
 import {
   featuresFor,
@@ -83,6 +95,16 @@ async function platformView() {
   return { detectorFallback: stored, detectorFallbackEnv: env, detectorFallbackEffective: stored ?? env }
 }
 
+const STYLE_SELECT = Object.fromEntries(ANSWER_STYLE_FIELD_NAMES.map((f) => [f, true]))
+
+/** The three answer styles of one ecosistema; a failed read is "no style". */
+async function answerStylesFor(req: PayloadRequest, organizationId: number): Promise<AnswerStyles> {
+  const row = await req.payload
+    .findByID({ collection: 'organizations', id: organizationId, depth: 0, overrideAccess: true, select: STYLE_SELECT as never })
+    .catch(() => null)
+  return answerStylesOf(row)
+}
+
 const readEndpoint: Endpoint = {
   path: '/funciones',
   method: 'get',
@@ -94,7 +116,11 @@ const readEndpoint: Endpoint = {
     if (!isPlatformAdminUser(req.user) && !sameId(await organizationIdsForUser(req.payload, user.id), organizationId)) {
       return errorResponse(403, 'No perteneces a este ecosistema.')
     }
-    return ok({ features: await featuresFor(req.payload, organizationId) })
+    const [features, answerStyles] = await Promise.all([
+      featuresFor(req.payload, organizationId),
+      answerStylesFor(req, organizationId),
+    ])
+    return ok({ features, answerStyles })
   },
 }
 
@@ -110,7 +136,7 @@ const editablesEndpoint: Endpoint = {
     const orgs = await req.payload.find({
       collection: 'organizations',
       ...(ids ? { where: { id: { in: ids } } } : {}),
-      select: { name: true, slug: true, features: true } as never,
+      select: { name: true, slug: true, features: true, ...STYLE_SELECT } as never,
       sort: 'name',
       depth: 0,
       limit: 1000,
@@ -122,10 +148,12 @@ const editablesEndpoint: Endpoint = {
       name: typeof o.name === 'string' ? o.name : '',
       slug: typeof o.slug === 'string' ? o.slug : '',
       features: resolveFeatures(o.features),
+      answerStyles: answerStylesOf(o),
     }))
     return ok({
       ecosistemas,
       plataforma: admin ? await platformView() : null,
+      answerStylesEditable: admin,
       lockedFeatures: admin ? [] : [...PLATFORM_ADMIN_ONLY_FEATURES],
     })
   },
@@ -188,6 +216,49 @@ const writeEndpoint: Endpoint = {
   },
 }
 
+/**
+ * The answer style: platform admin only. A missing kind is left as stored;
+ * `null` or blank clears it. Every text is checked before anything is written.
+ */
+const styleEndpoint: Endpoint = {
+  path: '/funciones/estilo',
+  method: 'patch',
+  handler: async (req) => {
+    if (!getAuthenticatedUser(req)) return errorResponse(401, 'Necesitas iniciar sesión.')
+    if (!isPlatformAdminUser(req.user)) return errorResponse(403, ANSWER_STYLE_LOCKED_MESSAGE)
+    const body = (await readJsonBody(req)) ?? {}
+    const organizationId = positiveInt(body.organization)
+    if (organizationId === null) return errorResponse(400, 'Falta el ecosistema.')
+    const raw = body.answerStyles
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return errorResponse(400, 'Falta el estilo de respuesta.')
+    const data: Record<string, string | null> = {}
+    for (const kind of ANSWER_STYLE_KINDS) {
+      if (!(kind in raw)) continue
+      const style = normalizeAnswerStyle((raw as Record<string, unknown>)[kind])
+      if (!style.ok) return errorResponse(400, style.message)
+      data[ANSWER_STYLE_FIELDS[kind]] = style.value
+    }
+    try {
+      await req.payload.update({
+        collection: 'organizations',
+        id: organizationId,
+        data: data as never,
+        depth: 0,
+        overrideAccess: false,
+        user: req.user,
+        req,
+      })
+    } catch (err) {
+      const status = (err as { status?: unknown }).status
+      if (status === 403) return errorResponse(403, ANSWER_STYLE_LOCKED_MESSAGE)
+      if (status === 404) return errorResponse(403, NOT_YOURS)
+      req.payload.logger.error({ err }, '[funciones] answer style write failed')
+      return errorResponse(500, 'No se pudo guardar.')
+    }
+    return ok({ answerStyles: await answerStylesFor(req, organizationId) })
+  },
+}
+
 /** A stored object with junk in it (hand-edited) must not block a save. */
 function parseOrEmpty(stored: Record<string, unknown>): Record<string, boolean> {
   const out: Record<string, boolean> = {}
@@ -228,4 +299,10 @@ const platformEndpoint: Endpoint = {
   },
 }
 
-export const funcionesEndpoints: Endpoint[] = [readEndpoint, editablesEndpoint, writeEndpoint, platformEndpoint]
+export const funcionesEndpoints: Endpoint[] = [
+  readEndpoint,
+  editablesEndpoint,
+  writeEndpoint,
+  styleEndpoint,
+  platformEndpoint,
+]

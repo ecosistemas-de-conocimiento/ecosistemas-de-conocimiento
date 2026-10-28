@@ -6,6 +6,7 @@
    * copy (owner rule).
    */
   import { enhance } from '$app/forms';
+  import { ANSWER_STYLE_KINDS, ANSWER_STYLE_LABELS, ANSWER_STYLE_MAX_LENGTH } from '$lib/answerStyle';
   import { FEATURE_KEYS, FEATURE_LABELS } from '$lib/features';
   import type { ActionData, PageData } from './$types';
 
@@ -68,6 +69,31 @@
         </ul>
         <button type="submit" class="primary">Guardar</button>
       </form>
+
+      <section aria-labelledby="estilo">
+        <h2 id="estilo">Estilo de respuesta</h2>
+        <form method="POST" action="?/estilo" use:enhance={() => ({ update }) => update({ reset: false })} data-testid="ajustes-estilo">
+          <input type="hidden" name="organization" value={data.selected.id} />
+          {#each ANSWER_STYLE_KINDS as kind (kind)}
+            <label class="field">
+              <span>{ANSWER_STYLE_LABELS[kind]}</span>
+              <textarea
+                name={`style-${kind}`}
+                rows="5"
+                maxlength={ANSWER_STYLE_MAX_LENGTH}
+                readonly={!data.answerStylesEditable}
+                data-testid={`ajustes-estilo-${kind}`}
+                value={data.selected.answerStyles?.[kind] ?? ''}
+              ></textarea>
+            </label>
+          {/each}
+          {#if data.answerStylesEditable}
+            <button type="submit" class="primary">Guardar</button>
+          {:else}
+            <p class="note">Solo administración de la plataforma puede cambiarlo</p>
+          {/if}
+        </form>
+      </section>
     {/key}
   {/if}
 
@@ -172,6 +198,7 @@
     font-size: 0.85rem;
   }
   select,
+  textarea,
   button {
     font: inherit;
     padding: 0.4rem 0.6rem;
@@ -179,6 +206,12 @@
     border-radius: var(--edc-radius-2);
     background: transparent;
     color: inherit;
+  }
+  textarea {
+    resize: vertical;
+  }
+  textarea[readonly] {
+    color: var(--edc-color-ink-soft);
   }
   button {
     cursor: pointer;

@@ -37,7 +37,7 @@ import {
   withTitleRef,
 } from '$lib/server/titleMatch';
 import { sessionMeta } from '$lib/server/ecosystem';
-import { fetchFeatures } from '$lib/server/features';
+import { fetchEcosystemSettings } from '$lib/server/features';
 import { fetchScopeDocumentIds, parseAlcance } from '$lib/server/estudiante';
 import { makeGraphProvider, makeOverviewGraphProvider } from '$lib/server/graph';
 import { regroupTurn, type SummarySource } from '$lib/server/engine/sources';
@@ -557,8 +557,11 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   const sessionDocumentIds = sessionDocumentIdSet(sessionDocs);
   // Per-ecosistema switches (backend `lib/features.ts`): `chatOrientation` and
   // `interviewerMode` are enforced HERE, where the turn is built. Started now
-  // so it overlaps; a failed read is today's behaviour.
-  const featuresP = fetchFeatures(locals.token, organizationId);
+  // so it overlaps; a failed read is today's behaviour. The same read carries
+  // the ecosistema's answer style (owner ruling 2026-10-28); a failed read is
+  // no style.
+  const settingsP = fetchEcosystemSettings(locals.token, organizationId);
+  const featuresP = settingsP.then((s) => s.features);
 
   // Each ecosistema is its own ai-service org (`X-AI-Org: eco-<id>`): its own
   // budget, usage and corpora. ⚠ Without an ecosistema id the turn falls back
@@ -795,7 +798,10 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   const turnGraph = overview ? makeOverviewGraphProvider({ token: locals.token, organizationId }) : graphProvider;
   // Turn-conditional rules (`./prompt`, "Turn-conditional rules"): none on a
   // turn without their trigger, so that turn's prompt is unchanged.
-  const baseConfig = chatEngineConfigFor(kind, turnMode);
+  // The ecosistema's answer style (owner ruling 2026-10-28) is appended LAST;
+  // `withTurnRules` (here and in `regroupTurn`) puts every rule before it.
+  // No style: the same config as without one.
+  const baseConfig = chatEngineConfigFor(kind, turnMode, (await settingsP).answerStyles);
   const turnRules = [
     ...(attachments.length > 0 ? [ATTACHMENT_RELEVANCE_RULE] : []),
     // A story turn already ends on a question (the interviewer prompt).

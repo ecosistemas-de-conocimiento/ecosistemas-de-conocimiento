@@ -26,7 +26,13 @@ vi.mock('$env/dynamic/private', () => ({ env: ENV }));
 import { POST } from './+server';
 import { resetHybridCapabilityCache } from '$lib/server/engine/hybrid';
 import { ANSWER_NOT_SAVED_CODE } from '$lib/aiMessages';
-import { NO_ANSWER_REPLY, chatSystemPrompt, interviewSystemPrompt, resonanciasSystemPrompt } from '$lib/server/engine/prompt';
+import {
+  ECOSYSTEM_STYLE_HEADER,
+  NO_ANSWER_REPLY,
+  chatSystemPrompt,
+  interviewSystemPrompt,
+  resonanciasSystemPrompt,
+} from '$lib/server/engine/prompt';
 import { toBrowserMessage } from '$lib/server/citationProvenance';
 import type { Provenance } from '@edc/chat-engine/core';
 import { citationsWithOrdinals, denseCitations } from '$lib/citationOrdinals';
@@ -84,6 +90,8 @@ interface World {
   docRows?: Record<string, Record<string, unknown>>;
   /** What `GET /api/funciones` answers (backend `lib/features.ts`). Unset: no stored switches. */
   features?: Record<string, boolean>;
+  /** The answer styles `GET /api/funciones` returns, by the `organization` it was asked for. */
+  answerStylesByOrg?: Record<string, Record<string, string | null>>;
   /** What `GET /api/graph/view` answers (the corpus-overview graph path). Unset: an empty graph. */
   graphView?: Record<string, unknown>;
 }
@@ -170,7 +178,10 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       return json({ docs: world.sessionDocs });
     }
     if (p === '/api/lenguas') return json({ lenguas: [{ lengua: 'mixe', documentos: 1 }] });
-    if (p === '/api/funciones') return json({ features: world.features ?? {} });
+    if (p === '/api/funciones') {
+      const styles = world.answerStylesByOrg?.[url.searchParams.get('organization') ?? ''];
+      return json({ features: world.features ?? {}, ...(styles ? { answerStyles: styles } : {}) });
+    }
     if (p.startsWith('/api/organizations')) {
       return p === '/api/organizations'
         ? json({ docs: [{ id: Number(ECO), name: 'Eco de prueba' }] })
@@ -2109,5 +2120,66 @@ describe('POST /api/generate — 2026-10-28 answer fixes (sources per document, 
     await POST(event(turn({ messages: [{ role: 'user', content: '¿qué dicen sobre el ex convento de Corpus Christi?' }] })));
     expect(retrieves().length).toBeGreaterThan(0);
     expect(calls.some((c) => c.url.pathname === '/api/graph/view')).toBe(false);
+  });
+});
+
+// ── The ecosistema answer style (owner ruling 2026-10-28) ───────────────────
+describe('POST /api/generate — the ecosistema answer style reaches unit.systemPrompt', () => {
+  const STYLE_G = 'ESTILO DISCAPACIDAD: modelo social.';
+  const STYLE_R = 'ESTILO RESONANCIAS: tono cálido.';
+  const systemOf = (c: { body: unknown }) =>
+    String((c.body as { unit?: { systemPrompt?: unknown } }).unit?.systemPrompt ?? '');
+  const userPromptOf = (c: { body: unknown }) =>
+    String((c.body as { unit?: { input?: { userPrompt?: unknown } } }).unit?.input?.userPrompt ?? '');
+  const chatGenerate = () => generates().filter((c) => !userPromptOf(c).includes('Escribe exactamente tres'));
+
+  beforeEach(() => {
+    // Only org 7 has a style; org 3 has none.
+    world.answerStylesByOrg = { '7': { generales: STYLE_G, resonancias: STYLE_R, interviewer: null } };
+  });
+
+  it('org 7, Generales (sync): the base prompt, then the style, last', async () => {
+    world.kind = 'generales';
+    world.answerText = 'Las parteras acompañan los nacimientos [1].';
+    await POST(event(turn({ messages: [{ role: 'user', content: QUESTION }] })));
+    const system = systemOf(chatGenerate().at(-1)!);
+    expect(system.startsWith(chatSystemPrompt('E'))).toBe(true);
+    expect(system.endsWith(`${ECOSYSTEM_STYLE_HEADER}\n\n${STYLE_G}`)).toBe(true);
+    // The turn rules (here: the summary-source rule regroupTurn adds) sit before it.
+    expect(system.indexOf('Una fuente titulada')).toBeGreaterThan(0);
+    expect(system.indexOf('Una fuente titulada')).toBeLessThan(system.indexOf(ECOSYSTEM_STYLE_HEADER));
+    expect(system).not.toContain(STYLE_R);
+  });
+
+  it('org 7, Resonancias (stream): its own style, last', async () => {
+    world.kind = 'resonancias';
+    world.streamText = 'Gracias. ¿Quién le ayudó?';
+    await readSse(await POST(event(turn({ messages: [{ role: 'user', content: QUESTION }] }), true)));
+    const system = systemOf(chatGenerate().at(-1)!);
+    expect(system.startsWith(resonanciasSystemPrompt())).toBe(true);
+    expect(system.endsWith(STYLE_R)).toBe(true);
+    expect(system).not.toContain(STYLE_G);
+  });
+
+  it('org 7, interviewer turn with no interviewer style: the interviewer prompt unchanged', async () => {
+    world.kind = 'generales';
+    world.answerText = 'Gracias. ¿Dónde fue?';
+    await POST(event(turn({ messages: [{ role: 'user', content: 'Mi hijo tiene discapacidad y en la escuela no lo aceptaban al principio' }], entrevista: true })));
+    const system = systemOf(chatGenerate().at(-1)!);
+    expect(system.startsWith(interviewSystemPrompt())).toBe(true);
+    expect(system).not.toContain(ECOSYSTEM_STYLE_HEADER);
+  });
+
+  it('🔴 another ecosistema (org 3): no style, the prompt is the base prompt exactly', async () => {
+    world.organization = '3';
+    world.kind = 'generales';
+    world.answerText = 'Las parteras acompañan los nacimientos [1].';
+    await POST(event(turn({ messages: [{ role: 'user', content: QUESTION }] })));
+    const asked = calls.filter((c) => c.url.pathname === '/api/funciones').map((c) => c.url.searchParams.get('organization'));
+    expect(asked).toContain('3');
+    const system = systemOf(chatGenerate().at(-1)!);
+    expect(system.startsWith(chatSystemPrompt('E'))).toBe(true);
+    expect(system).not.toContain(ECOSYSTEM_STYLE_HEADER);
+    expect(system).not.toContain(STYLE_G);
   });
 });

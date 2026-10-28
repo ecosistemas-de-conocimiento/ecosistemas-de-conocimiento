@@ -70,7 +70,57 @@ describe('/ajustes load', () => {
   });
 });
 
+describe('/ajustes load — the answer style', () => {
+  it('passes each ecosistema\'s styles and whether this caller may edit them; missing = read-only', async () => {
+    mocked.mockResolvedValue(
+      json({
+        ecosistemas: [{ id: '7', name: 'D', slug: 'd', features: null, answerStyles: { generales: 'G', resonancias: '  ' } }],
+        plataforma: null,
+        answerStylesEditable: true,
+      }),
+    );
+    const data = (await load(event())) as {
+      selected: { answerStyles: Record<string, string | null> };
+      answerStylesEditable: boolean;
+    };
+    expect(data.selected.answerStyles).toEqual({ generales: 'G', resonancias: null, interviewer: null });
+    expect(data.answerStylesEditable).toBe(true);
+    mocked.mockResolvedValue(json({ ecosistemas: [{ id: '7', name: 'D', slug: 'd', features: null }], plataforma: null }));
+    expect(((await load(event())) as { answerStylesEditable: boolean }).answerStylesEditable).toBe(false);
+  });
+});
+
 describe('/ajustes actions', () => {
+  it('estilo: sends all three texts to /api/funciones/estilo; blank is sent as blank', async () => {
+    mocked.mockResolvedValue(json({ answerStyles: {} }));
+    const out = await actions.estilo!(
+      event('/ajustes', { organization: '7', 'style-generales': 'Tono cálido.', 'style-resonancias': '' }),
+    );
+    expect(out).toEqual({ saved: true });
+    const [, path, init] = mocked.mock.calls[0]!;
+    expect(path).toBe('/api/funciones/estilo');
+    expect((init as RequestInit).method).toBe('PATCH');
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      organization: '7',
+      answerStyles: { generales: 'Tono cálido.', resonancias: '', interviewer: '' },
+    });
+  });
+
+  it('estilo: passes the backend refusal through (403 not admin, 400 refused text)', async () => {
+    mocked.mockResolvedValue(
+      json({ errors: [{ message: 'Solo administración de la plataforma puede cambiar el estilo de respuesta.' }] }, 403),
+    );
+    const refused = (await actions.estilo!(event('/ajustes', { organization: '7' }))) as {
+      status: number;
+      data: { message: string };
+    };
+    expect(refused.status).toBe(403);
+    expect(refused.data.message).toMatch(/estilo de respuesta/);
+    mocked.mockResolvedValue(json({ errors: [{ message: 'El estilo de respuesta no puede incluir etiquetas <fuente>.' }] }, 400));
+    const bad = (await actions.estilo!(event('/ajustes', { organization: '7' }))) as { status: number };
+    expect(bad.status).toBe(400);
+  });
+
   it('sends every switch: ticked = on, unticked = off', async () => {
     mocked.mockResolvedValue(json({ features: {} }));
     await actions.funciones!(event('/ajustes', { organization: '1', liveMic: 'on' }));
