@@ -42,6 +42,8 @@ const KEYS: Record<Cuenta, { file: 'env' | 'demo'; email: string; password: stri
     password: 'DEMO_INVESTIGADOR_SEMIOSIS_PASSWORD',
   },
   // The seeded platform admin; owner (responsable) of ecosistemas 1, 3, 6 and 7 on dev.
+  // ⚠ Its address is the dev backend container's SEED_ADMIN_EMAIL, which cide/.env
+  // does not carry: `correr.sh` passes it in as EVID_ADMIN_EMAIL.
   admin: { file: 'env', email: 'EVID_ADMIN_EMAIL', password: 'EDC_DEV_SEED_ADMIN_PASSWORD' },
 };
 
@@ -52,8 +54,7 @@ export function credenciales(cuenta: Cuenta): { email: string; password: string 
       ? (process.env.EVID_ENV_FILE ?? '~/chamba/cide/.env')
       : (process.env.EVID_DEMO_USERS_FILE ?? '~/chamba/cide/.env.demo-users');
   const vars = parseDotenv(file);
-  // `admin@ecosistemas.test` is the backend's default seed address (`seed/admin.ts`), not a secret.
-  const email = process.env[k.email] ?? vars.get(k.email) ?? (cuenta === 'admin' ? 'admin@ecosistemas.test' : undefined);
+  const email = process.env[k.email] ?? vars.get(k.email);
   const password = process.env[k.password] ?? vars.get(k.password);
   // Names the keys, never the values.
   if (!email || !password) throw new Error(`${file} no tiene ${k.email} / ${k.password}`);
