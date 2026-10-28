@@ -58,7 +58,7 @@
 import { clearFoldCache, foldedMatches, positiveIntFromEnv } from './detector'
 import { deterministicPass } from './deterministic'
 import { isGenericPlace } from './genericPlaces'
-import { createNamePartRegistry, gluedToAnotherName, namePartsOf, type NamePartRegistry, sentenceStart } from './nameParts'
+import { createNamePartRegistry, gluedToAnotherName, namePartsOf, type NamePartRegistry, sentenceStart, trimEdges } from './nameParts'
 import { createPseudonymAllocator, normaliseName } from './pseudonyms'
 import { structuralPass } from './structural'
 import { restorePublicFigures } from './publicFigureRestore'
@@ -376,9 +376,6 @@ const FAMILY: Partial<Record<DetectorFinding['type'], RegExp>> = {
   lugar: /^\[Domicilio [A-Z]+\]$/,
 }
 
-/** Edge punctuation and spaces, trimmed from what is left around a placeholder. */
-const EDGE = /^[\s\p{P}]+|[\s\p{P}]+$/gu
-
 /**
  * A fragment cut out from between placeholders is redacted GLOBALLY, as a
  * literal string, so it must look like a name: at least 3 characters and a
@@ -426,7 +423,8 @@ function resolveLeftover(
       // start, "[Persona" at the end.
       if (i === 0) p = p.replace(/^[^[\]]*\]/, '')
       if (i === parts.length - 1) p = p.replace(/\[[^[\]]*$/, '')
-      return p.replace(EDGE, '')
+      // Edge punctuation and spaces off; linear, see `trimEdges` (audit 5).
+      return trimEdges(p)
     })
     .filter((p) => /[\p{L}\p{N}]/u.test(p))
   // 🔴 One weak fragment and the whole leftover holds: redacting the strong

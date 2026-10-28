@@ -20,7 +20,8 @@ import { describe, expect, it } from 'vitest'
 
 import { staticDetector } from './detector'
 import { runAnonymisationGate } from './gate'
-import { structuralPass } from './structural'
+import { trimEdgeEnd, trimEdges } from './nameParts'
+import { splitAuthors, structuralPass } from './structural'
 
 /** A `person` spy: records each name and hands out A, B, C… */
 function spy() {
@@ -384,6 +385,79 @@ describe('audit 4', () => {
     const ratio = time(big) / Math.max(time(small), 1)
     expect(ratio).toBeLessThan(24)
   }, 30_000)
+})
+
+/** Audit 5 (2026-10-28) on 53a47a7. */
+describe('audit 5', () => {
+  it('🔴 a long run of spaces stays linear (200k spaces)', () => {
+    // A RATIO of two runs on the same box. Measured 2026-10-28 on 53a47a7:
+    // 60k spaces took 23.9 s (9597969: 11.4 s, its own author split).
+    const time = (n: number) => {
+      const text = `Autor: Ana Ruiz | Lugar${' '.repeat(n)}Oaxaca`
+      let best = Infinity
+      for (let r = 0; r < 3; r++) {
+        const t0 = performance.now()
+        structuralPass(text, { person: () => '[Persona A]' })
+        best = Math.min(best, performance.now() - t0)
+      }
+      return best
+    }
+    const small = time(25_000)
+    const big = time(200_000)
+    expect(big / Math.max(small, 1)).toBeLessThan(24)
+  }, 60_000)
+
+  it('the linear author split returns exactly what String.split returns', () => {
+    let seed = 7
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648
+    const atoms = [' ', '  ', '\t', '\n', ' ', ',', ';', '/', '&', 'y', 'e', 'and', 'Ana', 'x', '.', '|']
+    const split = /(\s*[,;/&]\s*|\s+(?:y|e|and)\s+)/u
+    for (let k = 0; k < 20_000; k++) {
+      const s = Array.from({ length: 1 + Math.floor(rnd() * 10) }, () => atoms[Math.floor(rnd() * atoms.length)]).join('')
+      expect(splitAuthors(s), JSON.stringify(s)).toEqual(s.split(split))
+    }
+  })
+
+  it('the linear edge trims return exactly what their regexes return', () => {
+    let seed = 11
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648
+    const atoms = [' ', '\t', '\n', '.', ',', '¿', '—', '"', 'a', 'Ana', 'é', '😀', '·', '(', ')']
+    for (let k = 0; k < 20_000; k++) {
+      const s = Array.from({ length: Math.floor(rnd() * 9) }, () => atoms[Math.floor(rnd() * atoms.length)]).join('')
+      expect(trimEdgeEnd(s), JSON.stringify(s)).toBe(s.replace(/[\s\p{P}]+$/u, ''))
+      expect(trimEdges(s), JSON.stringify(s)).toBe(s.replace(/^[\s\p{P}]+|[\s\p{P}]+$/gu, ''))
+    }
+  })
+
+  it('🔴 the gate stays linear on a byline name with a long run of spaces', async () => {
+    // Measured 2026-10-28: "Autor: Ana" + 60k spaces + "Oaxaca" took 11.3 s in the
+    // gate on 9597969 (author split, name-part trim, fragment trim), 3.1 s here
+    // before the linear trims.
+    const time = async (n: number) => {
+      const text = `Autor: Ana${' '.repeat(n)}Oaxaca\n\nTexto.`
+      const t0 = performance.now()
+      await gate(text)
+      return performance.now() - t0
+    }
+    await time(5_000) // warm-up
+    const small = await time(25_000)
+    const big = await time(200_000)
+    expect(big / Math.max(small, 1)).toBeLessThan(24)
+  }, 60_000)
+
+  // Leaks found by surviving mutants (audit 5): each test fails with its mutant.
+  it.each([
+    ['N8', 'Autora/Autores: CIDE e ma. ana ávila mora', ['ana', 'ávila', 'mora']],
+    ['N11b', '\tAutor (a): Ma. José Ochoa Vega / lic. Juan Ruiz. ; Authors = Óscar Ávila', ['Juan', 'Ruiz']],
+    ['N15', 'Notas. Autor/a: dr. óscar ávila y vda. de Juan Sosa (2021)', ['Juan', 'Sosa']],
+    [
+      'N22',
+      `Autor/a: Lic. ${String.fromCharCode(0xfdd0)}0${String.fromCharCode(0xfdd1)} Lía Sosa,Ma. María Ochoa y Lic. \t José Ávila`,
+      ['José', 'Ávila'],
+    ],
+  ] as const)('mutant %s: %j', (_m, line, words) => {
+    noneOf(structuralPass(line, { person: () => '[Persona A]' }).text, [...words])
+  })
 })
 
 /**

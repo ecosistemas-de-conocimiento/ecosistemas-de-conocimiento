@@ -227,8 +227,50 @@ const BYLINE_FIELD = new RegExp(
  */
 const BYLINE_INLINE = new RegExp(String.raw`${KEY_START}((?:${BYLINE_KEY})${BYLINE_SEP})(${NAME_RUN})`, 'gmu')
 
-/** Where one author ends and the next begins: `,` `;` `/` `&`, or " y " / " e " / " and ". */
-const AUTHOR_SPLIT = /(\s*[,;/&]\s*|\s+(?:y|e|and)\s+)/u
+/**
+ * Where one author ends and the next begins: `,` `;` `/` `&`, or " y " / " e "
+ * / " and ". The pattern is `/(\s*[,;/&]\s*|\s+(?:y|e|and)\s+)/u`; see
+ * {@link splitAuthors} for why it is not used with `String.split`.
+ */
+const AUTHOR_SEPARATOR_CHARS = ',;/&'
+const AUTHOR_WORDS = ['y', 'e', 'and']
+const isSpace = (c: string | undefined) => c !== undefined && /\s/u.test(c)
+
+/**
+ * `value.split(/(\s*[,;/&]\s*|\s+(?:y|e|and)\s+)/u)`, EXACTLY (a test checks
+ * it on 20,000 random strings), in linear time.
+ *
+ * 🔴 WHY NOT `split` (audit 5, 2026-10-28): the regex is tried at every
+ * position, and inside a run of N spaces each try reads to the end of the run
+ * before failing: N² ("Autor: Ana Ruiz | Lugar" + 60k spaces took 11.4 s on
+ * 9597969, 23.9 s with the additive passes). A try inside a whitespace run
+ * succeeds or fails exactly as a try at the run's start does (both depend only
+ * on what follows the run), so after a failed try the scan skips the run.
+ */
+export function splitAuthors(value: string): string[] {
+  const out: string[] = []
+  let start = 0
+  let i = 0
+  while (i < value.length) {
+    let b = i
+    while (isSpace(value[b])) b++
+    let end = -1
+    if (b < value.length && AUTHOR_SEPARATOR_CHARS.includes(value[b] as string)) end = b + 1
+    else if (b > i) {
+      const word = AUTHOR_WORDS.find((w) => value.startsWith(w, b) && isSpace(value[b + w.length]))
+      if (word !== undefined) end = b + word.length
+    }
+    if (end < 0) {
+      i = b + 1 // no separator starts anywhere in this run, nor at the character after it
+      continue
+    }
+    while (isSpace(value[end])) end++
+    out.push(value.slice(start, i), value.slice(i, end))
+    start = i = end
+  }
+  out.push(value.slice(start))
+  return out
+}
 
 /*
  * ── 🔴 THE ADDITIVE BYLINE PASSES (byline audits 1–3, 2026-10-28) ───────────
@@ -470,8 +512,7 @@ export function structuralPass(
     let source: string | null = null
     const replaced =
       key +
-      value
-        .split(AUTHOR_SPLIT)
+      splitAuthors(value)
         .map((piece, i) => {
           if (i % 2 === 1 || piece.trim() === '') return piece
           authors += 1
@@ -513,8 +554,7 @@ export function structuralPass(
    * (2021)" and "Luis Gómez 2" are authors.
    */
   const takeAll = (segment: string, failClosed: boolean, prefix = ''): string =>
-    segment
-      .split(AUTHOR_SPLIT)
+    splitAuthors(segment)
       .map((piece, i) => {
         if (i % 2 === 1 || piece.trim() === '') return piece
         const bare = piece.replace(/\([^()]*\)/gu, '') // "(2021)", "(Lupita)": never a label's number
@@ -635,7 +675,7 @@ export function structuralPass(
       const value = field ? at(FIELD_VALUE_X, line, after) : nameAt(line, after)
       if (!value) continue
       parts.push(line.slice(c, after), takeAll(value, field))
-      const last = value.split(AUTHOR_SPLIT).at(-1) ?? ''
+      const last = splitAuthors(value).at(-1) ?? ''
       c = extend(line, after + value.length, field ? 'field' : 'inline', last, parts)
     }
     parts.push(line.slice(c))

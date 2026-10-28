@@ -73,12 +73,43 @@ export const NOT_A_PART: ReadonlySet<string> = new Set(
 
 const WORD = /[\p{L}\p{M}]+/gu
 
+const EDGE_CHAR = /^[\s\p{P}]$/u
+
+/**
+ * `s.replace(/[\s\p{P}]+$/u, '')`, exactly, in linear time.
+ *
+ * 🔴 WHY NOT THE REGEX (audit 5, 2026-10-28): an end-anchored `+$` is tried
+ * at every position, and inside a long run of spaces that is NOT at the end
+ * each try reads the whole run before failing: N². A byline name with 60k
+ * spaces inside took seconds in the gate.
+ */
+export function trimEdgeEnd(s: string): string {
+  let end = s.length
+  while (end > 0) {
+    const low = s.charCodeAt(end - 1)
+    const width = end >= 2 && low >= 0xdc00 && low <= 0xdfff ? 2 : 1 // one code point
+    if (!EDGE_CHAR.test(s.slice(end - width, end))) break
+    end -= width
+  }
+  return s.slice(0, end)
+}
+
+/** `s.replace(/^[\s\p{P}]+|[\s\p{P}]+$/gu, '')`, exactly, in linear time ({@link trimEdgeEnd}). */
+export function trimEdges(s: string): string {
+  let start = 0
+  for (const c of s) {
+    if (!EDGE_CHAR.test(c)) break
+    start += c.length
+  }
+  return trimEdgeEnd(s.slice(start))
+}
+
 /** The name parts of one person span, as written. */
 export function namePartsOf(raw: string): string[] {
   // 🔴 Trailing punctuation off first (audit 2026-10-27): "Fausto Arellano."
   // read "Arellano" as an abbreviation and never spread it. An abbreviation
   // INSIDE the span ("Pbro. Juan Soto") is still skipped.
-  const span = raw.replace(/[\s\p{P}]+$/u, '')
+  const span = trimEdgeEnd(raw)
   const inPlaceholder = [...span.matchAll(PLACEHOLDER_PATTERN)].map((m) => [m.index, m.index + m[0].length])
   const parts: string[] = []
   for (const m of span.matchAll(WORD)) {
