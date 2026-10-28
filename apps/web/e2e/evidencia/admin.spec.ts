@@ -2,9 +2,6 @@ import { test } from '@playwright/test';
 import { ECOSISTEMA, biblioteca, conversar, cuidar, elegirEcosistema, limpiar, misDocumentos } from './comun';
 import { cerrarSesion, iniciarSesion, instalarSubtitulos } from './escena';
 
-/** Held documents to show in Revisión, e.g. EVID_HOLDS=1031,1039,1129 (never decided). */
-const retenidos = (): number[] =>
-  (process.env.EVID_HOLDS ?? '').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0);
 
 /** Administrador de la plataforma, responsable de varios ecosistemas: todo, más cambiar de ecosistema en Administración. */
 test('admin', async ({ page }) => {
@@ -19,7 +16,7 @@ test('admin', async ({ page }) => {
     );
     await misDocumentos(page);
     await biblioteca(page);
-    await cuidar(page, { cambiarEcosistema: 'dengue', retenidos: retenidos() });
+    await cuidar(page, { cambiarEcosistema: 'dengue', colasDeRevision: ['Discapacidad'] });
     // ⚠ No Conexiones here: on dev 9597969, /grafo renders a blank page for the
     // platform admin in org 6 even after three reloads (measured 2026-10-28),
     // while it loads for the participant and the student. Shown in their videos.

@@ -206,7 +206,7 @@ export const MAPA: readonly Tematica[] = [
         historias: [
           h('F1.1', 'Ver los documentos detenidos.', REVISORES),
           h('F1.2', 'Revisar un documento detenido.', REVISORES, 'pantalla'),
-          h('F1.3', 'Aprobar o rechazar un documento detenido.', REVISORES, 'pantalla'),
+          h('F1.3', 'Aprobar o rechazar un documento detenido.', REVISORES, 'no'),
           h('F1.4', 'Retirar un documento publicado.', REVISORES, 'pantalla'),
         ],
       },

@@ -132,7 +132,7 @@ El audio (B3.1, C1.3, C1.4) se graba solo en el video del participante.
 |---|---|:-:|:-:|:-:|:-:|:-:|---|
 | F1.1 | Ver los documentos detenidos. |  |  | ● | ● | ● | ▶ acción |
 | F1.2 | Revisar un documento detenido. |  |  | ● | ● | ● | ◻ pantalla |
-| F1.3 | Aprobar o rechazar un documento detenido. |  |  | ● | ● | ● | ◻ pantalla |
+| F1.3 | Aprobar o rechazar un documento detenido. |  |  | ● | ● | ● | — no |
 | F1.4 | Retirar un documento publicado. |  |  | ● | ● | ● | ◻ pantalla |
 
 ### F2. Miembros

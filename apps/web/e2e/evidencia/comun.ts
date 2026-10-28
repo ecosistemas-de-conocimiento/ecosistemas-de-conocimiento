@@ -460,37 +460,37 @@ export async function seguimiento(page: Page): Promise<void> {
  */
 export async function cuidar(
   page: Page,
-  opciones: { cambiarEcosistema?: string; retenidos?: readonly number[] } = {},
+  opciones: { cambiarEcosistema?: string; colasDeRevision?: readonly string[] } = {},
 ): Promise<void> {
   await escena(page, 'F1.1', async () => {
     await ir(page, 'revision');
     await mostrar(page, 'hold-queue');
   });
   /**
-   * Holds to open, by id (EVID_HOLDS, chosen by the coordinator for a video),
-   * else the first one in the queue. `/revision/<id>` resolves the hold's own
-   * ecosistema, so ids from several ecosistemas work. 🔴 Opened and shown;
-   * approve/reject are only hovered — a decision is terminal.
+   * 🔴 The queue only, never a held document's text. Each card already says
+   * why the gate stopped it ("quedaron N datos que podrían identificar a
+   * alguien"); opening it would put the very data it flagged on screen
+   * (coordinator ruling 2026-10-28). Cards are hovered, never clicked, so no
+   * decision is ever one tap away. `colasDeRevision`: other ecosistemas'
+   * queues to show, by the name on the switcher.
    */
-  const ids = opciones.retenidos?.length ? opciones.retenidos : null;
-  const primero = page.locator('a[href^="/revision/"]').first();
-  const abrir: (() => Promise<void>)[] = ids
-    ? ids.map((id) => async () => {
-        await page.goto(`/revision/${id}`);
-      })
-    : (await primero.count())
-      ? [() => primero.click()]
-      : [];
-  for (const [i, abre] of abrir.entries()) {
-    await escena(page, 'F1.2', async () => {
-      await abre();
-      await expect(page.getByTestId('hold-text').or(page.getByTestId('hold-no-text')).first()).toBeVisible();
-      await page.mouse.wheel(0, 400);
-    });
-    // The decide step once is enough to show; repeating it per hold adds nothing.
-    if (i === 0) await escena(page, 'F1.3', () => page.getByTestId('hold-approve').hover());
+  const tarjetas = async () => {
+    const cards = page.getByTestId('hold-queue').locator('a[href^="/revision/"]');
+    for (let i = 0; i < Math.min(await cards.count(), 3); i++) await cards.nth(i).hover();
+  };
+  if (await page.getByTestId('hold-queue').locator('a[href^="/revision/"]').count()) {
+    await escena(page, 'F1.2', tarjetas);
   }
-  if (abrir.length) await ir(page, 'revision');
+  for (const nombre of opciones.colasDeRevision ?? []) {
+    const chip = page.getByRole('navigation', { name: 'Elegir ecosistema' }).getByRole('link', { name: nombre });
+    if (!(await chip.count())) continue;
+    await escena(page, 'F1.2', async () => {
+      await chip.click();
+      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      await mostrar(page, 'hold-queue');
+      await tarjetas();
+    });
+  }
   const retirar = page.locator('[data-testid^="reject-published-"]').first();
   if (await retirar.count()) {
     await escena(page, 'F1.4', async () => {
