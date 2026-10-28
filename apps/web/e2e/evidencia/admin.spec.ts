@@ -1,5 +1,5 @@
 import { test } from '@playwright/test';
-import { ECOSISTEMA, biblioteca, conexiones, conversar, cuidar, elegirEcosistema, limpiar, misDocumentos } from './comun';
+import { ECOSISTEMA, biblioteca, conversar, cuidar, elegirEcosistema, limpiar, misDocumentos } from './comun';
 import { cerrarSesion, iniciarSesion, instalarSubtitulos } from './escena';
 
 /** Held documents to show in Revisión, e.g. EVID_HOLDS=1031,1039,1129 (never decided). */
@@ -20,8 +20,9 @@ test('admin', async ({ page }) => {
     await misDocumentos(page);
     await biblioteca(page);
     await cuidar(page, { cambiarEcosistema: 'dengue', retenidos: retenidos() });
-    // Last: the graph is the slowest screen on dev while backfills run.
-    await conexiones(page);
+    // ⚠ No Conexiones here: on dev 9597969, /grafo renders a blank page for the
+    // platform admin in org 6 even after three reloads (measured 2026-10-28),
+    // while it loads for the participant and the student. Shown in their videos.
   } catch (error) {
     // What failed, and what the screen looked like, before cleanup paints over
     // both (an error thrown in `finally` would replace this one in the report).

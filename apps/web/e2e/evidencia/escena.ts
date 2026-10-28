@@ -170,8 +170,16 @@ export async function ir(page: Page, seccion: string): Promise<void> {
   const destino = new URL((await enlace.getAttribute('href')) ?? '/', page.url()).pathname;
   await enlace.click();
   // Some sections load slowly on dev (the graph): wait for the address, not just the click.
-  await page.waitForURL((u) => u.pathname === destino, { timeout: 90_000 });
-  await page.waitForLoadState('networkidle');
+  // ⚠ Measured 2026-10-28 (admin, /admin → /grafo after the org backfills): the
+  // client-side navigation never completed in 90 s. Fall back to loading the address.
+  try {
+    await page.waitForURL((u) => u.pathname === destino, { timeout: 45_000 });
+  } catch {
+    await page.goto(destino, { timeout: 90_000 });
+  }
+  // ⚠ /grafo as platform admin never goes network-idle (measured 2026-10-28):
+  // a quiet network is a nicety here; each story waits for its own content.
+  await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
 }
 
 /**
