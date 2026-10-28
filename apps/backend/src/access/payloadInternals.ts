@@ -23,14 +23,18 @@
  *     a member's read is a WHERE on their own rows, never `false`.
  *   · Leaving a document, the client DELETEs the lock it holds over REST. A
  *     member may delete their own rows; nobody else's.
- *   · The client's "take over" PATCH moves another person's lock: admins only.
+ *   · The client's REST "take over" PATCH moves another person's lock: admins
+ *     only. The panel's own take-over path goes through `payload.db.*` and
+ *     skips that rule (see ⚠ below).
  *   · Preferences are written by the panel through the local API (access
  *     skipped) or the `/:key` endpoints (owner-scoped `payload.db` calls), so
  *     owner-only `update` costs it nothing.
  *
  * ⚠ A member who opens a row an admin is editing does not see the admin's lock
- * (they cannot read it) and the panel writes them a lock of their own. That is
- * the price of not telling members who is editing what; saves are unaffected.
+ * (they cannot read it), so the panel silently takes it over: no "being edited"
+ * notice, and the member's save then deletes the admin's lock. Two people can
+ * edit the same row; the last save wins. Owner accepted this (2026-10-28) as
+ * the price of not telling members who is editing what.
  */
 
 import type { Access, SanitizedConfig, Where } from 'payload'
