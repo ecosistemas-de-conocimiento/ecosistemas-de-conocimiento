@@ -5,7 +5,7 @@ import { docsLabel, ESTUDIANTE_TABS, initials, tabAfterKey, trabajosLabel } from
 describe('tabAfterKey (WAI-ARIA tabs keyboard)', () => {
   it('arrows move and wrap; Home and End jump; other keys do nothing', () => {
     const first = ESTUDIANTE_TABS[0].id;
-    const last = ESTUDIANTE_TABS[ESTUDIANTE_TABS.length - 1].id;
+    const last = ESTUDIANTE_TABS[ESTUDIANTE_TABS.length - 1]!.id;
     expect(tabAfterKey(first, 'ArrowRight')).toBe(ESTUDIANTE_TABS[1].id);
     expect(tabAfterKey(first, 'ArrowLeft')).toBe(last);
     expect(tabAfterKey(last, 'ArrowRight')).toBe(first);
