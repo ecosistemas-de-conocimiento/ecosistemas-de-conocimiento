@@ -68,8 +68,8 @@ const ACTORES: readonly [Rol, string][] = [
   ['admin', 'admin plataforma'],
 ];
 
-/** Sprint 0 = getting in (theme A); sprint 1 = everything else the platform does today. */
-const banda = (temaId: string): number => (temaId === 'A' ? 0 : 1);
+/** Everything is sprint 0: it is what the platform does today (owner ruling 2026-10-28). */
+const banda = (_temaId: string): number => 0;
 
 const titulo = (texto: string): string => (texto.charAt(0).toLowerCase() + texto.slice(1)).replace(/\.$/, '');
 
@@ -131,7 +131,7 @@ const csv = [
   fila('epic', columnas.map((c) => c.epica)),
   fila('user story grid:', vacia()),
 ];
-for (const [b, etiqueta] of [[0, 'sprint 0'], [1, 'sprint 1']] as const) {
+for (const [b, etiqueta] of [[0, 'sprint 0']] as const) {
   csv.push(fila(etiqueta, vacia()));
   const alto = Math.max(...columnas.map((c) => c.porBanda[b].length));
   for (let r = 0; r < alto; r++) csv.push(fila('', columnas.map((c) => c.porBanda[b][r] ?? '')));
