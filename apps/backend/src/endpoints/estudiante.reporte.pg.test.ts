@@ -4,7 +4,9 @@
  *
  * Pinned:
  *   · `studentTestimonios` OFF (the default): documentos only, a draft has no
- *     name, and no `testimonios` key at all — the report as before;
+ *     name, topics from published documentos only, and no `testimonios` key;
+ *   · only PUBLISHED testimonios are listed: a draft — even one the gate
+ *     cleared — or an unpublished one never reaches the teacher;
  *   · ON: the teacher (owner / investigador of THAT ecosistema) sees each of the
  *     student's testimonios as its `redactedText` and neutral title only when
  *     the gate cleared it (`ready` / `approved`); held, rejected and pending are
@@ -52,6 +54,8 @@ const SECRETS = [
   'Borrador íntimo', // a draft documento's name
   'OTRA ECO', // another ecosistema
   'beto', // another ecosistema's student
+  'cosecha', // a READY testimonio that is still a draft (row 21)
+  'BORRADOR', // a topic only a draft documento carries
 ]
 
 const reporte = estudianteEndpoints.find((e) => e.method === 'get' && e.path === '/estudiante/reporte') as Endpoint
@@ -98,15 +102,19 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
             'María López ORIGINAL', 'María CUERPO', 'Habló [Persona A] del río.', null, 'El río y la comunidad', '2026-10-03'),
         (21, 1, 4, 'María 2.mp3', 'draft', 'testimonio', 'ready',
             'María ORIGINAL dos', null, 'Contó [Persona B] la cosecha.', null, null, '2026-10-04'),
-        (22, 1, 4, 'María 3.mp3', 'draft', 'testimonio', 'held',
+        (22, 1, 4, 'María 3.mp3', 'published', 'testimonio', 'held',
             'María ORIGINAL tres', null, 'RETENIDO viejo', 'Juan Pérez quedó', 'Título RETENIDO', '2026-10-05'),
-        (23, 1, 4, 'María 4.mp3', 'draft', 'testimonio', 'rejected',
+        (23, 1, 4, 'María 4.mp3', 'published', 'testimonio', 'rejected',
             'María ORIGINAL cuatro', null, 'RECHAZADO viejo', null, null, '2026-10-06'),
-        (24, 1, 4, 'María 5.mp3', 'draft', 'testimonio', 'pending',
+        (24, 1, 4, 'María 5.mp3', 'published', 'testimonio', 'pending',
             'María ORIGINAL cinco', null, 'PENDIENTE viejo', null, null, '2026-10-07'),
         (25, 2, 4, 'Otra', 'published', 'testimonio', 'approved', null, null, 'OTRA ECO texto', null, null, '2026-10-08'),
         (30, 2, 5, 'beto voz', 'published', 'testimonio', 'approved', null, null, 'Texto de beto', null, null, '2026-10-09'),
         (40, 1, 7, 'Voz de Caro', 'published', 'testimonio', 'approved', null, null, 'Caro habló', null, null, '2026-10-10');
+      INSERT INTO graph_entities (id, organization_id, type, label, canonical_key, public_figure) VALUES
+        (100, 1, 'tema', 'tema publicado', 'tema publicado', false),
+        (101, 1, 'tema', 'tema BORRADOR', 'tema borrador', false);
+      INSERT INTO graph_mentions (organization_id, document_id, entity_id) VALUES (1, 10, 100), (1, 11, 101);
     `),
     )
   }, 120_000)
@@ -146,7 +154,6 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
         { id: 24, createdAt: expect.any(String), state: 'pending' },
         { id: 23, createdAt: expect.any(String), state: 'rejected' },
         { id: 22, createdAt: expect.any(String), state: 'held' },
-        { id: 21, createdAt: expect.any(String), state: 'visible', title: 'Testimonio', text: 'Contó [Persona B] la cosecha.' },
         {
           id: 20,
           createdAt: expect.any(String),
@@ -159,6 +166,38 @@ describe.skipIf(!dockerOk)('activity report × testimonios (real Payload + Postg
       expect((res.body.reporte!.uploads as unknown[]).length).toBe(2)
       for (const secret of SECRETS) expect([as, secret, res.text.includes(secret)]).toEqual([as, secret, false])
     }
+  })
+
+  it('🔴 the teacher\'s report takes topics from PUBLISHED documentos only, never a draft\'s', async () => {
+    const res = await report(INES, ECO_A, ANA)
+    expect(res.body.reporte!.topics).toEqual(['tema publicado'])
+    expect(res.text).not.toContain('BORRADOR')
+  })
+
+  it('🔴 a testimonio the student unpublishes leaves the teacher\'s report at once', async () => {
+    await setFeatures(ECO_A, { studentView: true, studentTestimonios: true })
+    invalidateFeatures()
+    const ids = async () => ((await report(INES, ECO_A, ANA)).body.reporte!.testimonios as Array<{ id: number }>).map((t) => t.id)
+    expect(await ids()).toContain(20)
+    // Unpublishing leaves redacted_text and testimonio_title in place.
+    await pg!.db.execute(sql.raw(`UPDATE documents SET publication_status = 'draft' WHERE id = 20`))
+    try {
+      expect(await ids()).not.toContain(20)
+      expect((await report(INES, ECO_A, ANA)).text).not.toMatch(/Habló|El río/)
+    } finally {
+      await pg!.db.execute(sql.raw(`UPDATE documents SET publication_status = 'published' WHERE id = 20`))
+    }
+  })
+
+  it('🔴 testimoniosOf itself nulls text and title on uncleared rows, and lists published rows only', async () => {
+    const Q = await import('../lib/student/queries')
+    const rows = await Q.testimoniosOf({ db: { drizzle: pg!.db as never } }, ECO_A, ANA)
+    expect(rows.map((r) => [r.id, r.status, r.redactedText, r.title])).toEqual([
+      [24, 'pending', null, null],
+      [23, 'rejected', null, null],
+      [22, 'held', null, null],
+      [20, 'approved', 'Habló [Persona A] del río.', 'El río y la comunidad'],
+    ])
   })
 
   it('🔴 another ecosistema\'s student is never reachable, switch on or off', async () => {

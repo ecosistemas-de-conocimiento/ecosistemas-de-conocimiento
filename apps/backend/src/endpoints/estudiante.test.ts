@@ -299,6 +299,9 @@ describe('activity report', () => {
     expect(r.chatThemes).toEqual(['Sobre el signo'])
     expect(r.readings).toEqual([{ id: 70, name: 'Lectura' }])
     expect(Q.calls).toContain('readings:exclude=1')
+    // 🔴 The teacher sees topics from the student's PUBLISHED documentos only.
+    expect(Q.calls).toContain('topics:1:true')
+    expect(Q.calls).not.toContain('topics:1:false')
   })
 
   it('no consent → 404, same as no such student', async () => {

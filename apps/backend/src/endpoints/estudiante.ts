@@ -343,7 +343,9 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
       if (!student) return errorResponse(404, 'Sin reporte.')
       const withTestimonios = await featureEnabled(req.payload, org, 'studentTestimonios')
       const [topicsMap, docs, sessionTitles, corpusTop, testimonios] = await Promise.all([
-        Q.topicsByUser(p, org, [studentId], { publishedOnly: false }),
+        // 🔴 Published only: the teacher is not the uploader, so a draft's
+        // topic labels stay the student's (`topicsByUser`'s own rule).
+        Q.topicsByUser(p, org, [studentId], { publishedOnly: true }),
         Q.documentsOf(p, org, studentId),
         Q.sessionTitlesOf(p, org, studentId),
         Q.corpusTopTopics(p, org, 25),

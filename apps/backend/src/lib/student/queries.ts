@@ -352,6 +352,11 @@ export interface TestimonioRow {
  * (the original), `held_text` (what the gate refused), or a media row. Those
  * are `mayReadGatedOriginal`'s columns, and this read does not widen them.
  *
+ * 🔴 PUBLISHED ROWS ONLY. A draft is its uploader's alone (`visibleToCaller`
+ * in `collections/Documents.ts`), even one the gate cleared, and unpublishing
+ * leaves `redacted_text` in place: without this filter an unpublished
+ * testimonio would stay in the teacher's report (audit of ebf1d4f).
+ *
  * `redacted_text` and `testimonio_title` come back only when the gate cleared
  * the row — the rule `mayReadTestimonioTitle` applies to the title. On a held,
  * rejected or pending row they are NULL here, in SQL, so a stale
@@ -373,6 +378,7 @@ export async function testimoniosOf(
       FROM documents d
      WHERE d.organization_id = ${organizationId} AND d.uploaded_by_id = ${userId}
        AND d.content_kind = 'testimonio'
+       AND d.publication_status = 'published'
      ORDER BY d.created_at DESC, d.id DESC
      LIMIT ${limit}`,
   )
