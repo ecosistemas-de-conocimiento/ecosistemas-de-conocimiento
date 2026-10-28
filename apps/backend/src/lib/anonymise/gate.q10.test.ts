@@ -106,7 +106,7 @@ describe('the prompt: towns are not personal data; addresses and institutions ar
     expect(flat).toContain('- Colonias, barrios, fraccionamientos, unidades habitacionales, manzana y lote.')
     expect(flat).toContain('- Ranchos, parajes y haciendas con nombre')
     expect(flat).toContain(
-      '- Una institución CON NOMBRE, o junto a un pueblo, donde está o vive una persona: "el Cereso", "el hospital de Xochitepec", "la escuela Benito Juárez".',
+      '- Una institución CON NOMBRE, o junto a un pueblo, donde está, vive, trabaja o estudia una persona: "el Cereso", "el hospital de Xochitepec", "la escuela Benito Juárez".',
     )
     expect(flat).toContain('En "estoy en Atlacholoaya, en el Cereso" el hallazgo es "el Cereso".')
     // Reconciled with `genericPlaces.ts`, which drops an unnamed one.

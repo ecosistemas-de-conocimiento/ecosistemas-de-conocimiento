@@ -65,7 +65,7 @@ describe('Q24 A: public names are not findings', () => {
 
   it('keeps the exception: a workplace that points at one person in context', () => {
     expect(notAFinding).toMatch(/salvo que/)
-    expect(notAFinding).toMatch(/una persona concreta/)
+    expect(notAFinding).toMatch(/una sola persona concreta/)
   })
 
   it('says a team or collective is not a person', () => {
@@ -75,7 +75,7 @@ describe('Q24 A: public names are not findings', () => {
 
   it('keeps the institution-next-to-a-person rule under Domicilios, pointing at the exception', () => {
     expect(flat).toContain('"el Cereso", "el hospital de Xochitepec"')
-    expect(flat).toContain('Una institución CON NOMBRE, o junto a un pueblo, donde está o vive una persona')
+    expect(flat).toContain('Una institución CON NOMBRE, o junto a un pueblo, donde está, vive, trabaja o estudia una persona')
   })
 
   it('no longer invites `otro` for anything that could identify someone', () => {
@@ -86,5 +86,42 @@ describe('Q24 A: public names are not findings', () => {
   it('workplaces are a finding only when they identify one person', () => {
     expect(flat).not.toContain('- Centros de trabajo, escuelas o cargos tan precisos que identifican a una persona.')
     expect(flat).toMatch(/Centros de trabajo, escuelas o cargos que, en ese texto, señalan a una persona concreta/)
+  })
+})
+
+/**
+ * 🔴 AUDIT OF THE Q24 PROMPT, 2026-10-28 (privacy first). The exception read
+ * "una persona concreta y privada": "privada" is also the public/private
+ * person label the same prompt asks for (`ambito`), so "la maestra de la
+ * secundaria de San Rafael" could pass as "not private". And the Domicilios
+ * line said "donde está o vive", dropping work and school. Both are restored.
+ */
+describe('Q24 audit: a named workplace or school beside a person is reported', () => {
+  const exception = notAFinding.slice(notAFinding.indexOf('Esto vale salvo que'))
+
+  it('🔴 the exception does not hinge on the person being private', () => {
+    expect(notAFinding).not.toMatch(/persona concreta y privada/)
+    expect(exception).toMatch(/una sola persona concreta, pública o no/)
+  })
+
+  it('🔴 the Domicilios line covers where a person works or studies', () => {
+    expect(flat).toContain('donde está, vive, trabaja o estudia una persona')
+    expect(flat).not.toContain('donde está o vive una persona:')
+  })
+
+  it.each([
+    'la maestra de la secundaria Benito Juárez de San Rafael',
+    'la enfermera del centro de salud de Tetelcingo',
+    'el delegado de la alcaldía Xochimilco',
+  ])('gives the example "%s"', (example) => {
+    expect(flat).toContain(example)
+  })
+
+  it('says a cargo makes the institution beside it a finding even when no name is given', () => {
+    expect(flat).toMatch(/aunque no se diga su nombre/)
+  })
+
+  it('keeps bare institution names out', () => {
+    expect(notAFinding).toContain('En "trabajo en un PILARES de la alcaldía" no se reporta nada.')
   })
 })
