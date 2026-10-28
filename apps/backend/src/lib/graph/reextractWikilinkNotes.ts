@@ -34,6 +34,23 @@ export function estimateWindows(chars: number, windowChars = graphWindowChars(),
   return Math.min(maxWindows, Math.ceil(chars / Math.max(1, windowChars)))
 }
 
+/**
+ * `REEXTRACT_IDS` → ids, or `undefined` when UNSET (every note).
+ *
+ * 🔴 A SET value must be exactly `^\d+(,\d+)*$`: set-but-empty, `1e2`,
+ * `0x10`, spaces or a stray comma throw. `Number()` alone accepts all of
+ * those, and a typo must never drop or bend the id filter.
+ */
+export function parseReextractIds(raw: string | undefined): number[] | undefined {
+  if (raw === undefined) return undefined
+  if (!/^\d+(,\d+)*$/.test(raw)) {
+    throw new Error(`REEXTRACT_IDS is set but is not a comma-separated list of ids: "${raw}"`)
+  }
+  const ids = raw.split(',').map(Number)
+  if (ids.some((n) => !Number.isSafeInteger(n) || n <= 0)) throw new Error(`REEXTRACT_IDS has an id out of range: "${raw}"`)
+  return ids
+}
+
 export interface CostLine {
   ids: number[]
   windows: number

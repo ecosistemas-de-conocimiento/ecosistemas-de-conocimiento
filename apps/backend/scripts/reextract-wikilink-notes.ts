@@ -18,21 +18,13 @@
  * Exit 0 = ran. Exit 1 = could not run.
  */
 
-import { planWikilinkReextraction } from '../src/lib/graph/reextractWikilinkNotes'
+import { parseReextractIds, planWikilinkReextraction } from '../src/lib/graph/reextractWikilinkNotes'
 
 async function main(): Promise<void> {
   const organizationId = Number(process.env.REEXTRACT_ORG ?? '')
   if (!Number.isInteger(organizationId) || organizationId <= 0) throw new Error('REEXTRACT_ORG=<id> is required')
-  // 🔴 A set-but-unparseable REEXTRACT_IDS must not silently mean "all notes".
-  const rawIds = (process.env.REEXTRACT_IDS ?? '').trim()
-  let ids: number[] | undefined
-  if (rawIds) {
-    const tokens = rawIds.split(',').map((t) => t.trim()).filter(Boolean)
-    ids = tokens.map(Number)
-    if (ids.length === 0 || ids.some((n) => !Number.isInteger(n) || n <= 0)) {
-      throw new Error(`REEXTRACT_IDS is set but not a list of positive integer ids: "${rawIds}"`)
-    }
-  }
+  // 🔴 Strict: set-but-empty, `1e2`, `0x10` all refuse (see `parseReextractIds`).
+  const ids = parseReextractIds(process.env.REEXTRACT_IDS)
   const apply = process.env.REEXTRACT_APPLY === '1'
   const usd = Number(process.env.REEXTRACT_USD_PER_WINDOW ?? '')
 

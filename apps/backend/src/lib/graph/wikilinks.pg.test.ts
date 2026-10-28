@@ -30,6 +30,7 @@ vi.mock('@/lib/aiClient', () => {
 import { bootPayload, dockerOk, eventually, rowsOf, shutdown, startRealPostgres, type RealPostgres } from '../testing/realPostgres'
 import type { GraphGenerateClient } from './extract'
 import { staleDocumentsWhere } from './backfill'
+import { GRAPH_PROMPT_VERSION } from './prompt'
 import { readEntityView, type GraphQueryPayload } from './queries'
 import { planWikilinkReextraction } from './reextractWikilinkNotes'
 import { runGraphExtraction, type GraphSchedulerPayload } from './schedule'
@@ -485,6 +486,11 @@ describe.skipIf(!dockerOk)('wikilink seeds (real Postgres)', () => {
   }, 60_000)
 
   it('the re-extraction queue: dry run writes nothing; apply clears graph_prompt_version for those ids only', async () => {
+    // One row stale ONLY as `failed` (current stamp), one ONLY as stuck `extracting`.
+    await pg!.db.execute(sql`UPDATE documents SET graph_status = 'failed', graph_prompt_version = ${GRAPH_PROMPT_VERSION}
+                              WHERE id = ${ROSA}`)
+    await pg!.db.execute(sql`UPDATE documents SET graph_status = 'extracting', graph_prompt_version = ${GRAPH_PROMPT_VERSION},
+                                    updated_at = now() - interval '2 hours' WHERE id = ${SPLIT}`)
     const dry = await planWikilinkReextraction(pg!.db, { organizationId: SEMIOSIS, ids: [NOTE, SILENT], apply: false })
     expect(dry.ids).toEqual([NOTE, SILENT])
     expect(dry.windows).toBe(2)
@@ -500,6 +506,8 @@ describe.skipIf(!dockerOk)('wikilink seeds (real Postgres)', () => {
     })) as { docs: { id: number }[] }
     const expected = stale.docs.map((d) => Number(d.id)).filter((id) => id !== NOTE && id !== SILENT).sort((a, b) => a - b)
     expect(expected.length).toBeGreaterThan(0)
+    expect(expected).toContain(ROSA)
+    expect(expected).toContain(SPLIT)
     expect(dry.alreadyStale.ids).toEqual(expected)
     expect(dry.backfillTotal.windows).toBe(dry.windows + dry.alreadyStale.windows)
     const v = async (id: number) => (await q(sql`SELECT graph_prompt_version AS v FROM documents WHERE id = ${id}`))[0]!.v

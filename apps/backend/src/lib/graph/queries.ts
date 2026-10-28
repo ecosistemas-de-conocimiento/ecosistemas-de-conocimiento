@@ -426,7 +426,7 @@ function joinPublishedDocuments(alias: 'm' | 'r', organizationId: number): Graph
     JOIN documents d
       ON d.id = ${table}.document_id
      AND d.organization_id = ${organizationId}
-     AND d.publication_status = 'published'${alias === 'm' ? liveMention('m') : liveEdge('r')}`
+     AND d.publication_status = 'published'${alias === 'm' ? liveMention('m', organizationId) : liveEdge('r', organizationId)}`
 }
 
 /**

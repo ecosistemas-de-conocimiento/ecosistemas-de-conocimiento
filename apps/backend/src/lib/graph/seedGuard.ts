@@ -30,25 +30,43 @@ function aliasOf(alias: string): GraphSql {
 }
 
 /**
- * The dead seeds, as `(document_id, entity_id)` pairs: a `seeded` mention whose
- * node has no model-written mention left. UNCORRELATED on purpose, so Postgres
- * computes it once per statement and probes it as a hashed SubPlan (`NOT IN`
- * over NOT NULL columns), instead of re-running a correlated EXISTS per row.
- * Only seeding ecosistemas have `seeded` rows, so the set stays small.
+ * Which ecosistema(s) a statement reads: one id, or an `ANY(...)` array
+ * fragment (the combined view). 🔴 The dead-seed set is scoped to it, so an
+ * ecosistema with no seeds pays only for scanning its own (empty) seeded rows,
+ * never for another ecosistema's (measured by the audit, D=2000 fixture:
+ * combinedDetail 4.67 → 7.56 s when the set spanned every ecosistema).
  */
-function deadSeeds(): GraphSql {
+export type SeedScope = number | { anyOf: GraphSql }
+
+function orgIn(scope: SeedScope): GraphSql {
+  if (typeof scope === 'number') {
+    if (!Number.isInteger(scope)) throw new Error(`seedGuard: bad organization id "${String(scope)}"`)
+    return sql`= ${scope}`
+  }
+  return sql`= ANY(${scope.anyOf})`
+}
+
+/**
+ * The dead seeds of the scoped ecosistema(s), as `(document_id, entity_id)`
+ * pairs: a `seeded` mention whose node has no model-written mention left.
+ * UNCORRELATED on purpose: Postgres plans each copy of this sub-SELECT once
+ * (one per `NOT IN`, so twice for an edge) and probes it as a hashed SubPlan
+ * (`NOT IN` over NOT NULL columns), instead of re-running a correlated EXISTS
+ * per outer row.
+ */
+function deadSeeds(scope: SeedScope): GraphSql {
   return sql`SELECT dm.document_id, dm.entity_id /* seed-guard */ FROM graph_mentions dm
-        WHERE dm.seeded = true
+        WHERE dm.organization_id ${orgIn(scope)} AND dm.seeded = true
           AND NOT EXISTS (
             SELECT 1 /* seed-guard */ FROM graph_mentions lm
              WHERE lm.organization_id = dm.organization_id AND lm.entity_id = dm.entity_id AND lm.seeded = false)`
 }
 
 /** ` AND <alias> is a live mention` — append to an ON or WHERE clause. */
-export function liveMention(alias: string): GraphSql {
+export function liveMention(alias: string, scope: SeedScope): GraphSql {
   const m = aliasOf(alias)
   return sql`
-     AND (${m}.document_id, ${m}.entity_id) NOT IN (${deadSeeds()})`
+     AND (${m}.document_id, ${m}.entity_id) NOT IN (${deadSeeds(scope)})`
 }
 
 /**
@@ -59,12 +77,12 @@ export function liveMention(alias: string): GraphSql {
  * measured by the audit (2026-10-28, throwaway postgres:16, 4.7k dead seeds) at
  * 0.47 s → 7.3 s for `/view`; splitting it into two correlated NOT EXISTS was
  * 2.0 s on this branch's perf fixture (`seedGuard.perf.pg.test.ts`). Two
- * `NOT IN` probes of one uncorrelated set is the shape kept. `seedGuard.test.ts`
+ * `NOT IN` probes of an uncorrelated set is the shape kept. `seedGuard.test.ts`
  * pins it.
  */
-export function liveEdge(alias: string): GraphSql {
+export function liveEdge(alias: string, scope: SeedScope): GraphSql {
   const r = aliasOf(alias)
   return sql`
-     AND (${r}.document_id, ${r}.from_entity_id) NOT IN (${deadSeeds()})
-     AND (${r}.document_id, ${r}.to_entity_id) NOT IN (${deadSeeds()})`
+     AND (${r}.document_id, ${r}.from_entity_id) NOT IN (${deadSeeds(scope)})
+     AND (${r}.document_id, ${r}.to_entity_id) NOT IN (${deadSeeds(scope)})`
 }

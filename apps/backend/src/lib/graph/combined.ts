@@ -141,7 +141,7 @@ function joinPublishedDocumentsPerRow(alias: 'm' | 'r', ids: GraphSql): GraphSql
       ON d.id = ${table}.document_id
      AND d.organization_id = ${table}.organization_id
      AND d.organization_id = ANY(${ids})
-     AND d.publication_status = 'published'${alias === 'm' ? liveMention('m') : liveEdge('r')}`
+     AND d.publication_status = 'published'${alias === 'm' ? liveMention('m', { anyOf: ids }) : liveEdge('r', { anyOf: ids })}`
 }
 
 interface MemberOpts {
