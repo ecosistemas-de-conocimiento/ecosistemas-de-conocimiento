@@ -220,8 +220,8 @@ export function archivoDePrueba(nombre: string): { name: string; mimeType: strin
     // The run id goes in the BODY too: the backend refuses a byte-identical
     // re-upload (`refuseDuplicate`), and every run would otherwise send the same bytes.
     buffer: Buffer.from(
-      `# ${RUN_ID}\n\nNota de prueba para el video de evidencia. En la colonia organizamos un círculo ` +
-        'de lectura los sábados en la biblioteca comunitaria.\n',
+      `# ${RUN_ID}\n\nNota de prueba para el video de evidencia. En la colonia organizamos una faena ` +
+        'para revisar patios y tapar los recipientes donde se cría el mosquito.\n',
     ),
   };
 }

@@ -11,15 +11,15 @@ test('admin', async ({ page }) => {
     await elegirEcosistema(page, process.env.EVID_ECOSISTEMA_ADMIN ?? ECOSISTEMA);
     await conversar(
       page,
-      '¿Qué iniciativas comunitarias aparecen en los testimonios?',
-      'Coordino un grupo de madres que revisa las tareas por WhatsApp.',
+      '¿Cómo se organizó el comité contra el dengue?',
+      'Coordino un grupo de vecinas que avisa por WhatsApp cuándo pasa la fumigación.',
     );
     await misDocumentos(page);
-    await biblioteca(page);
+    await biblioteca(page, 'dengue');
     await cuidar(page, { cambiarEcosistema: 'dengue', colasDeRevision: ['Discapacidad'] });
     // Last: the graph is the slowest screen on dev. (On 9597969 it rendered
     // blank for everyone in org 6 — a hung edges query, fixed in d04a112.)
-    await conexiones(page);
+    await conexiones(page, 'mosquito');
   } catch (error) {
     // What failed, and what the screen looked like, before cleanup paints over
     // both (an error thrown in `finally` would replace this one in the report).

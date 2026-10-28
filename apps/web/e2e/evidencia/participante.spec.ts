@@ -10,13 +10,13 @@ test('participante', async ({ page }) => {
     await elegirEcosistema(page);
     await conversar(
       page,
-      '¿Qué hacen las familias para acompañar las tareas escolares?',
-      'En mi colonia hacemos un círculo de lectura los sábados en la biblioteca comunitaria.',
+      '¿Qué hacen los vecinos para eliminar criaderos de mosquitos?',
+      'En mi colonia los sábados revisamos los patios y tapamos los tambos de agua.',
     );
     await audio(page);
     await misDocumentos(page);
-    await biblioteca(page);
-    await conexiones(page);
+    await biblioteca(page, 'dengue');
+    await conexiones(page, 'mosquito');
   } catch (error) {
     // What failed, and what the screen looked like, before cleanup paints over
     // both (an error thrown in `finally` would replace this one in the report).

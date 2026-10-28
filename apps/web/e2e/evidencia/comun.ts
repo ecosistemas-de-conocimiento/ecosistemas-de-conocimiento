@@ -94,8 +94,12 @@ export async function conversar(page: Page, pregunta: string, experiencia: strin
     const fuentes = page.getByTestId('citation-sources').last();
     if (!(await fuentes.count())) return;
     await fuentes.scrollIntoViewIfNeeded();
+    // The list starts collapsed (chat-engine CitationCard): open it so the
+    // sources' titles are on screen, then point at the first one.
+    const abrir = fuentes.getByTestId('citation-sources-toggle');
+    if ((await abrir.count()) && (await abrir.getAttribute('aria-expanded')) !== 'true') await abrir.click();
+    await fuentes.scrollIntoViewIfNeeded();
     const enlace = fuentes.getByRole('link').first();
-    if (!(await enlace.isVisible())) await page.getByText(/Fuentes consultadas/).last().click();
     if (await enlace.isVisible()) await enlace.hover();
   });
   const estrellas = respuestas(page).last();
@@ -120,7 +124,7 @@ export async function conversar(page: Page, pregunta: string, experiencia: strin
   });
   await escena(page, 'C1.2', async () => {
     await page.getByRole('button', { name: 'Nueva nota' }).first().click();
-    await page.getByLabel('Contenido del documento').fill('Ideas para el círculo de lectura:\n\n- Leer en voz alta\n- Invitar a las abuelas');
+    await page.getByLabel('Contenido del documento').fill('Ideas para la faena de limpieza:\n\n- Revisar patios y azoteas\n- Tapar tambos y cubetas');
     const titulo = page.getByLabel('Título del documento').last();
     await titulo.fill(`${RUN_ID}-nota`);
     await titulo.press('Enter');
@@ -301,7 +305,7 @@ export async function misDocumentos(page: Page): Promise<void> {
   });
 }
 
-export async function biblioteca(page: Page, busqueda = 'escuela'): Promise<void> {
+export async function biblioteca(page: Page, busqueda: string): Promise<void> {
   await ir(page, 'biblioteca');
   await escena(page, 'D1.1', async () => {
     await page.getByTestId('library-search').fill(busqueda);
@@ -321,7 +325,7 @@ export async function biblioteca(page: Page, busqueda = 'escuela'): Promise<void
   });
 }
 
-export async function conexiones(page: Page, busqueda = 'escuela'): Promise<void> {
+export async function conexiones(page: Page, busqueda: string): Promise<void> {
   const mapa = page.getByTestId('grafo-mapa');
   const listo = mapa.or(page.getByTestId('grafo-vacio')).or(page.getByTestId('grafo-desactivado')).first();
   await escena(page, 'D2.1', async () => {
