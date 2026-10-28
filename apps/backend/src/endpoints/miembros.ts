@@ -19,6 +19,14 @@
  *     about anyone;
  *   · adding an EXISTING email links that account and says nothing about the
  *     person's other ecosistemas, nor touches their name or password;
+ *   · 🔴 adding by email is NOT an "is this person on the platform?" oracle.
+ *     Known and unknown emails get the same status, the same body shape (a
+ *     member row plus a `temporaryPassword`) and the same cost (one pbkdf2
+ *     hash). For a known account that password is a decoy that opens nothing;
+ *     the shown name is always the one typed here (`personName`), never the
+ *     account's own `displayName`. Name is required for both.
+ *     ⚠ Residual: whoever holds the password can try it at sign-in, and only
+ *     a new account's works. No mail provider means no way around that.
  *   · every membership write goes through the collection with
  *     `overrideAccess: false` and the caller's `req`, so the access rule and
  *     every hook in `collections/Memberships.ts` (self-assignment, foreign
@@ -30,7 +38,8 @@
  * never stored in clear and never logged; the responsable hands it over.
  */
 
-import { randomBytes } from 'node:crypto'
+import { pbkdf2, randomBytes } from 'node:crypto'
+import { promisify } from 'node:util'
 
 import type { Endpoint, PayloadRequest } from 'payload'
 
@@ -60,6 +69,16 @@ const NOT_FOUND = 'No encontramos a esa persona en tus ecosistemas.'
 /** 18 random bytes → 24 url-safe characters. Shown once, never stored in clear. */
 export function temporaryPassword(): string {
   return randomBytes(18).toString('base64url')
+}
+
+/**
+ * The same work Payload does to store a new password (pbkdf2-sha256, 25 000
+ * rounds, 512 bytes — `payload/dist/auth/strategies/local/generatePasswordSaltHash.js`,
+ * read 2026-10-28), spent on the known-email path so both paths cost alike.
+ */
+const pbkdf2Async = promisify(pbkdf2)
+async function hashLikeANewAccount(password: string): Promise<void> {
+  await pbkdf2Async(password, randomBytes(32).toString('hex'), 25000, 512, 'sha256')
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -177,6 +196,8 @@ const addEndpoint: Endpoint = {
     const role = body.role
     if (!EMAIL.test(email)) return errorResponse(400, 'Correo no válido.')
     if (!isOrgRole(role)) return errorResponse(400, 'Rol no válido.')
+    // Before the lookup, so a missing name says nothing about the account.
+    if (!name) return errorResponse(400, 'Falta el nombre.')
 
     const found = await req.payload.find({
       collection: 'users',
@@ -206,10 +227,11 @@ const addEndpoint: Endpoint = {
       }
     }
 
-    let password: string | null = null
-    if (userId === null) {
-      if (!name) return errorResponse(400, 'Falta el nombre.')
-      password = temporaryPassword()
+    // Every answer carries a password; only a new account's is real.
+    const password = temporaryPassword()
+    const isNew = userId === null
+    if (!isNew) await hashLikeANewAccount(password)
+    if (isNew) {
       try {
         const created = await req.payload.create({
           collection: 'users',
@@ -228,26 +250,24 @@ const addEndpoint: Endpoint = {
         ? await req.payload.update({
             collection: 'memberships',
             id: existing.id as Id,
-            data: { isActive: true, role } as never,
+            data: { isActive: true, role, personName: name } as never,
             overrideAccess: false,
             req,
           })
         : await req.payload.create({
             collection: 'memberships',
-            data: { user: userId, organization: organizationId, role, isActive: true } as never,
+            data: { user: userId, organization: organizationId, role, isActive: true, personName: name } as never,
             overrideAccess: false,
             req,
           })
       const [member] = await memberRows(req, [membership as unknown as Record<string, unknown>])
       return jsonResponse(
-        password === null
-          ? { created: false, member }
-          : { created: true, member, temporaryPassword: password },
+        { member, temporaryPassword: password },
         { status: 201, headers: { 'Cache-Control': 'no-store' } },
       )
     } catch (err) {
       // A refused grant must not leave a fresh account nobody can reach.
-      if (password !== null && userId !== null) {
+      if (isNew && userId !== null) {
         await req.payload
           .delete({ collection: 'users', id: userId, overrideAccess: true, req })
           .catch(() => undefined)

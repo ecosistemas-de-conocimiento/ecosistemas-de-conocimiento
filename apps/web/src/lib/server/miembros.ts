@@ -63,7 +63,10 @@ async function write<T>(
 
 export interface Added {
   email: string;
-  /** Only for a person who had no account. Shown once, never stored here. */
+  /**
+   * Always present: the backend answers known and unknown emails alike, so
+   * this works only if the person had no account. Shown once, never stored.
+   */
   temporaryPassword: string | null;
 }
 

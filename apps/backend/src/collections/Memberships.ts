@@ -8,6 +8,8 @@ import {
   ORG_ROLES,
   organizationIdsForUserWithMinRole,
   outranks,
+  PERMISSIONS,
+  ROLE_PERMISSIONS,
   roleInOrganization,
   type OrgRole,
 } from '../lib/permissions'
@@ -241,6 +243,94 @@ export const makeRefuseDeleteAboveOwn =
 
 export const refuseDeleteAboveOwn = makeRefuseDeleteAboveOwn()
 
+/**
+ * 🔴 NOBODY LEAVES AN ECOSISTEMA WITHOUT A RESPONSABLE.
+ *
+ * The role ceiling above means only an `owner` (or a platform admin) can make
+ * another `owner`. So if the last active owner removes, deactivates or demotes
+ * their own row, nobody inside the ecosistema can ever restore one. The same
+ * holds one step down for an ecosistema that has no owner: the last person
+ * holding `members:manage` would lock everyone out of /miembros.
+ *
+ * The rule, on delete and on any update that takes a row's grant away
+ * (`isActive: false`, or a role change): if the row is an active owner, another
+ * active owner must remain; if it is an active manager, another active manager
+ * must remain. Ordinary self-leave (an admin under an owner, an owner with a
+ * co-owner) is untouched.
+ *
+ * Platform admins and the seed path (no `req.user`) are unaffected, like the
+ * hooks above: they clean up and rebuild tenants, and they can always re-add
+ * an owner.
+ */
+export const LAST_RESPONSABLE_MESSAGE = 'El ecosistema se quedaría sin responsable.'
+
+const MANAGER_ROLES = ORG_ROLES.filter((r) => ROLE_PERMISSIONS[r].includes(PERMISSIONS.membersManage))
+
+type Req = Parameters<CollectionBeforeValidateHook>[0]['req']
+
+/** True when taking `row`'s grant away leaves its ecosistema with nobody to run it. */
+async function wouldLeaveNoResponsable(req: Req, row: Record<string, unknown>): Promise<boolean> {
+  if (row.isActive !== true) return false
+  const role = roleOrDefault(row.role)
+  if (!MANAGER_ROLES.includes(role)) return false
+  const organization = toRelationId(row.organization)
+  if (organization === null) return false
+  const others = async (roles: readonly OrgRole[]) =>
+    (
+      await req.payload.count({
+        collection: 'memberships',
+        where: {
+          and: [
+            { organization: { equals: organization } },
+            { isActive: { equals: true } },
+            { role: { in: roles } },
+            { id: { not_equals: row.id } },
+          ],
+        },
+        overrideAccess: true,
+        req,
+      })
+    ).totalDocs
+  return (await others(role === 'owner' ? ['owner'] : MANAGER_ROLES)) === 0
+}
+
+const exemptCaller = (req: Req): boolean => {
+  const callerId = (req?.user as { id?: unknown } | null | undefined)?.id
+  return callerId === null || callerId === undefined || isPlatformAdminUser(req.user)
+}
+
+const lastResponsable = () => new APIError(LAST_RESPONSABLE_MESSAGE, 409, undefined, true)
+
+export const refuseLeavingWithoutResponsable: CollectionBeforeValidateHook = async ({
+  data,
+  operation,
+  originalDoc,
+  req,
+}) => {
+  if (operation !== 'update' || exemptCaller(req)) return data
+  const patch = (data ?? {}) as Record<string, unknown>
+  const stored = (originalDoc ?? {}) as Record<string, unknown>
+  const deactivates = 'isActive' in patch && patch.isActive !== true && stored.isActive === true
+  const changesRole = 'role' in patch && patch.role !== stored.role
+  if (!deactivates && !changesRole) return data
+  // A role change that keeps the row's rank in the rule (owner → owner, or
+  // manager → another manager below owner) takes nothing away.
+  const next = roleOrDefault(patch.role)
+  const keepsGrant =
+    !deactivates && MANAGER_ROLES.includes(next) && (stored.role !== 'owner' || next === 'owner')
+  if (keepsGrant) return data
+  if (await wouldLeaveNoResponsable(req, stored)) throw lastResponsable()
+  return data
+}
+
+export const refuseDeleteLastResponsable: CollectionBeforeDeleteHook = async ({ id, req }) => {
+  if (exemptCaller(req)) return
+  const row = (await req.payload
+    .findByID({ collection: 'memberships', id, depth: 0, overrideAccess: true, req })
+    .catch(() => null)) as Record<string, unknown> | null
+  if (row && (await wouldLeaveNoResponsable(req, row))) throw lastResponsable()
+}
+
 /** Admin-panel labels. Exhaustive by type, so adding a role forces a label. */
 const ROLE_LABELS: Record<OrgRole, string> = {
   estudiante: 'Estudiante — a member, plus the student view where it is switched on',
@@ -306,6 +396,8 @@ export const Memberships: CollectionConfig = {
       refuseForeignOrganization,
       // 🔴 And the role ceiling — see `refuseRoleAboveOwn`.
       refuseRoleAboveOwn,
+      // 🔴 And no ecosistema left without a responsable — see its header.
+      refuseLeavingWithoutResponsable,
       compoundUnique({
         collection: 'memberships',
         fields: ['user', 'organization'],
@@ -313,7 +405,7 @@ export const Memberships: CollectionConfig = {
         message: 'This person already has a membership in this organization.',
       }),
     ],
-    beforeDelete: [refuseDeleteAboveOwn],
+    beforeDelete: [refuseDeleteAboveOwn, refuseDeleteLastResponsable],
   },
   fields: [
     {

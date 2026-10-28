@@ -54,7 +54,7 @@
       <p>Agregado: <strong>{added.email}</strong></p>
       {#if added.temporaryPassword}
         <p>
-          Contraseña temporal (solo se muestra una vez):
+          Contraseña temporal, si es cuenta nueva (solo se muestra una vez):
           <code data-testid="miembros-password">{added.temporaryPassword}</code>
         </p>
       {/if}

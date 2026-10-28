@@ -16,6 +16,9 @@ import {
   makeRefuseDeleteAboveOwn,
   makeRefuseRoleAboveOwn,
   Memberships,
+  refuseDeleteAboveOwn,
+  refuseDeleteLastResponsable,
+  refuseLeavingWithoutResponsable,
   ROLE_CEILING_MESSAGE,
 } from './Memberships'
 import type { OrgRole } from '../lib/permissions'
@@ -189,7 +192,8 @@ describe('refuseDeleteAboveOwn', () => {
 
 describe('Memberships wiring', () => {
   it('runs the ceiling on every write and every delete', () => {
-    expect(Memberships.hooks?.beforeValidate?.length).toBeGreaterThanOrEqual(4)
-    expect(Memberships.hooks?.beforeDelete?.length).toBe(1)
+    expect(Memberships.hooks?.beforeValidate?.length).toBeGreaterThanOrEqual(5)
+    expect(Memberships.hooks?.beforeValidate).toContain(refuseLeavingWithoutResponsable)
+    expect(Memberships.hooks?.beforeDelete).toEqual([refuseDeleteAboveOwn, refuseDeleteLastResponsable])
   })
 })

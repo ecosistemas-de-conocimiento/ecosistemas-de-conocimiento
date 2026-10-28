@@ -191,7 +191,6 @@ describe.skipIf(!dockerOk)('/api/miembros on a real Postgres', () => {
       body: { organization: ECO_A, email: ' Nueva@Example.invalid ', name: 'Nueva', role: 'investigador' },
     })
     expect(res.status).toBe(201)
-    expect(res.body.created).toBe(true)
     const password = res.body.temporaryPassword as string
     expect(password.length).toBeGreaterThanOrEqual(12)
     expect(res.body.member).toMatchObject({ email: 'nueva@example.invalid', name: 'Nueva', role: 'investigador' })
@@ -205,8 +204,6 @@ describe.skipIf(!dockerOk)('/api/miembros on a real Postgres', () => {
       body: { organization: ECO_A, email: 'bea@example.invalid', name: 'Otro nombre', role: 'member' },
     })
     expect(res.status).toBe(201)
-    expect(res.body.created).toBe(false)
-    expect(res.body.temporaryPassword).toBeUndefined()
     const said = JSON.stringify(res.body)
     expect(said).not.toContain('Secreto')
     expect(said).not.toContain('secreto')
@@ -220,6 +217,129 @@ describe.skipIf(!dockerOk)('/api/miembros on a real Postgres', () => {
       body: { organization: ECO_A, email: 'bea@example.invalid', name: 'Bea', role: 'member' },
     })
     expect(again.status).toBe(409)
+  }, 30_000)
+
+  // ── Item 1: adding by email is not an "does this account exist?" oracle ──
+  const shape = (body: Record<string, unknown>) => ({
+    keys: Object.keys(body).sort(),
+    memberKeys: Object.keys((body.member ?? {}) as object).sort(),
+    passwordType: typeof body.temporaryPassword,
+    passwordLength: String(body.temporaryPassword ?? '').length,
+  })
+
+  it('🔴 a known and an unknown email get the same answer', async () => {
+    const known = await call('post', OLGA, {
+      body: { organization: ECO_A, email: 'bea@example.invalid', name: 'Tecleado A', role: 'member' },
+    })
+    const unknown = await call('post', OLGA, {
+      body: { organization: ECO_A, email: 'nadie@example.invalid', name: 'Tecleado B', role: 'member' },
+    })
+    expect(known.status).toBe(unknown.status)
+    expect(shape(known.body)).toEqual(shape(unknown.body))
+    // The name shown is the one the responsable typed — never the account's own.
+    expect((known.body.member as { name?: unknown }).name).toBe('Tecleado A')
+    expect((unknown.body.member as { name?: unknown }).name).toBe('Tecleado B')
+    // The decoy password opens nothing: an existing account keeps its own.
+    await expect(
+      payload.login({
+        collection: 'users',
+        data: { email: 'bea@example.invalid', password: known.body.temporaryPassword as string },
+      }),
+    ).rejects.toBeTruthy()
+    const raw = (await db.execute(sql.raw(`SELECT hash, salt FROM users WHERE id = ${BEA}`))) as unknown as {
+      rows: Array<{ hash: string | null; salt: string | null }>
+    }
+    expect(raw.rows[0]).toEqual({ hash: null, salt: null })
+  }, 30_000)
+
+  it('🔴 a missing name is refused for a known email too, not only an unknown one', async () => {
+    const base = { organization: ECO_A, name: '  ', role: 'member' }
+    const known = await call('post', OLGA, { body: { ...base, email: 'bea@example.invalid' } })
+    const unknown = await call('post', OLGA, { body: { ...base, email: 'nadie@example.invalid' } })
+    expect(known.status).toBe(400)
+    expect(known.body).toEqual(unknown.body)
+    expect(await roleOf(BEA, ECO_A)).toEqual([])
+  }, 30_000)
+
+  it('🔴 a known and an unknown email take the same time class (both hash a password)', async () => {
+    const time = async (email: string, name: string) => {
+      const t0 = performance.now()
+      const res = await call('post', OLGA, { body: { organization: ECO_A, email, name, role: 'member' } })
+      expect(res.status).toBe(201)
+      return performance.now() - t0
+    }
+    const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!
+    const knownMs: number[] = []
+    const unknownMs: number[] = []
+    for (let i = 0; i < 5; i++) {
+      unknownMs.push(await time(`nuevo${i}@example.invalid`, `N${i}`))
+      knownMs.push(await time('bea@example.invalid', 'Bea'))
+      await db.execute(sql.raw(`DELETE FROM memberships WHERE user_id = ${BEA} AND organization_id = ${ECO_A}`))
+    }
+    // Without the matching hash the known path is several times faster
+    // (one pbkdf2 of 25 000 rounds is most of the unknown path's cost).
+    expect(median(knownMs) / median(unknownMs)).toBeGreaterThan(0.5)
+  }, 60_000)
+
+  // ── Item 2: nobody leaves an ecosistema without a responsable ─────────────
+  it('🔴 the only owner cannot remove themselves', async () => {
+    const res = await call('delete', OLGA, { id: 1 })
+    expect(res.status).toBe(409)
+    expect(await roleOf(OLGA, ECO_A)).toEqual(['owner'])
+    // Nor deactivate or demote their row over the plain collection API.
+    const olga = await payload.findByID({ collection: 'users', id: OLGA, overrideAccess: true })
+    await expect(
+      payload.update({ collection: 'memberships', id: 1, data: { isActive: false } as never, overrideAccess: false, user: olga }),
+    ).rejects.toBeTruthy()
+    await expect(
+      payload.delete({ collection: 'memberships', id: 1, overrideAccess: false, user: olga }),
+    ).rejects.toBeTruthy()
+    const row = (await db.execute(sql.raw(`SELECT is_active FROM memberships WHERE id = 1`))) as unknown as {
+      rows: Array<{ is_active: boolean }>
+    }
+    expect(row.rows[0]?.is_active).toBe(true)
+  }, 30_000)
+
+  it('an owner with a co-owner, and an admin under an owner, may leave', async () => {
+    expect((await call('delete', ADAN, { id: 2 })).status).toBe(200)
+    expect(await roleOf(ADAN, ECO_A)).toEqual([])
+
+    await db.execute(sql.raw(`UPDATE memberships SET role = 'owner' WHERE id = 3`))
+    expect((await call('delete', OLGA, { id: 1 })).status).toBe(200)
+    expect(await roleOf(OLGA, ECO_A)).toEqual([])
+    // Now memo is the last owner, and the same rule holds for him.
+    expect((await call('delete', MEMO, { id: 3 })).status).toBe(409)
+  }, 30_000)
+
+  it('🔴 the last person who manages members cannot leave an ecosistema with no owner', async () => {
+    await db.execute(sql.raw(`DELETE FROM memberships WHERE id = 1`))
+    expect((await call('delete', ADAN, { id: 2 })).status).toBe(409)
+    expect(await roleOf(ADAN, ECO_A)).toEqual(['admin'])
+  }, 30_000)
+
+  // ── Item 3: adding someone from another ecosistema shows staff nothing new ─
+  it('🔴 after adding a person from another ecosistema, staff see only this ecosistema', async () => {
+    expect(
+      (await call('post', OLGA, {
+        body: { organization: ECO_A, email: 'bea@example.invalid', name: 'Visitante', role: 'member' },
+      })).status,
+    ).toBe(201)
+    const olga = await payload.findByID({ collection: 'users', id: OLGA, overrideAccess: true })
+
+    const rows = await payload.find({ collection: 'memberships', overrideAccess: false, user: olga, depth: 2, limit: 100 })
+    const seen = JSON.stringify(rows.docs)
+    expect(seen).not.toContain('Secreto')
+    for (const m of rows.docs) expect(String((m.organization as { id?: unknown })?.id ?? m.organization)).toBe(String(ECO_A))
+
+    const orgs = await payload.find({ collection: 'organizations', overrideAccess: false, user: olga })
+    expect(orgs.docs.map((o) => o.id)).toEqual([ECO_A])
+    const users = await payload.find({ collection: 'users', where: { id: { equals: BEA } }, overrideAccess: false, user: olga })
+    expect(users.totalDocs).toBe(0)
+
+    const list = await call('get', OLGA, { query: { organization: String(ECO_A) } })
+    const bea = (list.body.members as Array<Record<string, unknown>>).find((m) => m.email === 'bea@example.invalid')
+    expect(bea).toEqual({ id: expect.any(String), email: 'bea@example.invalid', name: 'Visitante', role: 'member' })
+    expect(await roleOf(BEA, ECO_B)).toEqual(['owner'])
   }, 30_000)
 
   it('🔴 an admin cannot grant, change or remove a role above their own', async () => {
