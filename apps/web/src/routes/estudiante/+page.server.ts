@@ -17,21 +17,27 @@ import type { Actions, PageServerLoad } from './$types';
 
 const KINDS = ['contenido', 'arquitectura', 'interaccion'] as const;
 
-async function org(cookies: Parameters<PageServerLoad>[0]['cookies'], token: string | undefined): Promise<string> {
+async function selected(cookies: Parameters<PageServerLoad>[0]['cookies'], token: string | undefined) {
   const eco = await resolveEcosystem(cookies, token);
   if (!eco.selected) notFound({ entity: 'page' });
-  return eco.selected!.id;
+  return eco.selected!;
 }
+
+const org = async (cookies: Parameters<PageServerLoad>[0]['cookies'], token: string | undefined): Promise<string> =>
+  (await selected(cookies, token)).id;
 
 export const load: PageServerLoad = async ({ locals, cookies }) => {
   if (!locals.user) notFound({ entity: 'page' });
-  const organization = await org(cookies, locals.token);
+  const eco = await selected(cookies, locals.token);
+  const organization = eco.id;
+  // The page's kicker; display only.
+  const ecosystemName = eco.name ?? null;
   const r = await fetchOverview(locals.token, organization);
   if (!r.ok) {
     if (r.status === 403 || r.status === 404) notFound({ entity: 'page' });
-    return { organization, overview: null };
+    return { organization, ecosystemName, overview: null };
   }
-  return { organization, overview: r.value };
+  return { organization, ecosystemName, overview: r.value };
 };
 
 export const actions: Actions = {

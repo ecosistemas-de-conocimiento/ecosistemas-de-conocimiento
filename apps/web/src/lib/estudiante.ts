@@ -1,0 +1,48 @@
+/**
+ * Presentation helpers for `/estudiante`. Display only: every rule about who
+ * sees what lives in the backend (`endpoints/estudiante.ts`).
+ */
+
+/** The page's tabs, in order. The id is also the `tab-<id>` test id. */
+export const ESTUDIANTE_TABS = [
+  { id: 'autores', label: 'Autores' },
+  { id: 'companeros', label: 'Compañeros' },
+  { id: 'privacidad', label: 'Privacidad' },
+  { id: 'sugerir', label: 'Sugerir' },
+] as const;
+
+export type EstudianteTab = (typeof ESTUDIANTE_TABS)[number]['id'];
+
+/**
+ * The tab a key press moves to (WAI-ARIA tabs pattern: arrows wrap, Home and
+ * End jump). `null` for any other key, so the caller leaves it alone.
+ */
+export function tabAfterKey(current: EstudianteTab, key: string): EstudianteTab | null {
+  const ids: EstudianteTab[] = ESTUDIANTE_TABS.map((t) => t.id);
+  const i = ids.indexOf(current);
+  const at = (n: number) => ids[(n + ids.length) % ids.length] ?? null;
+  if (key === 'ArrowRight') return at(i + 1);
+  if (key === 'ArrowLeft') return at(i - 1);
+  if (key === 'Home') return at(0);
+  if (key === 'End') return at(-1);
+  return null;
+}
+
+/** First and last initial: "María Fernanda Ortega" → "MO". Decorative only. */
+export function initials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '·';
+  const first = words[0]?.[0] ?? '';
+  const last = words.length > 1 ? (words[words.length - 1]?.[0] ?? '') : '';
+  return (first + last).toUpperCase();
+}
+
+/** "1 documento" / "6 documentos". */
+export function docsLabel(n: number): string {
+  return `${n} ${n === 1 ? 'documento' : 'documentos'}`;
+}
+
+/** "1 trabajo" / "3 trabajos". */
+export function trabajosLabel(n: number): string {
+  return `${n} ${n === 1 ? 'trabajo' : 'trabajos'}`;
+}

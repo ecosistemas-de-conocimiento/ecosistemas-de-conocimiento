@@ -89,3 +89,84 @@ describe('/estudiante — no topics yet', () => {
     expect(body).toContain('Sin temas todavía.');
   });
 });
+
+const full = (form: unknown = null) =>
+  render(Estudiante, {
+    props: {
+      form,
+      data: {
+        organization: '1',
+        ecosystemName: 'Semiosis práctica',
+        overview: {
+          perfil: { shareWithPeers: true, shareActivity: false },
+          temas: ['semiosis', 'zapoteco'],
+          documentos: [
+            { id: 1, name: 'Ensayo', status: 'published' },
+            { id: 2, name: 'Notas', status: 'draft' },
+          ],
+          companeros: [{ name: 'Luis Hernández', topics: ['semiosis'] }],
+          autores: [
+            { name: 'Charles S. Peirce', docs: 4, page: { id: 201, name: 'Peirce' } },
+            { name: 'Iuri Lotman', docs: 1, page: null },
+          ],
+          autoresParaLeer: [{ name: 'Thomas A. Sebeok', docs: 6, page: { id: 301, name: 'Sebeok' } }],
+          temasDelEcosistema: [],
+        },
+      },
+    } as never,
+  }).body;
+
+describe('/estudiante — layout', () => {
+  it('🔴 keeps every test id the evidencia videos use (e2e/evidencia/comun.ts miInvestigacion)', () => {
+    const body = full();
+    for (const id of ['mis-temas', 'preguntas-generar', 'companeros', 'mis-autores', 'autores-leer', 'sugerir', 'share-activity', 'share-peers']) {
+      expect(body, id).toContain(`data-testid="${id}"`);
+    }
+    expect(body).toMatch(/<textarea[^>]*aria-label="Sugerencia"/);
+  });
+
+  it('tabs: one selected, each controls a panel, the others are hidden', () => {
+    const body = full();
+    const tabs = [...body.matchAll(/<button[^>]*role="tab"[^>]*>/g)].map((m) => m[0]);
+    expect(tabs).toHaveLength(4);
+    expect(tabs.filter((t) => t.includes('aria-selected="true"'))).toHaveLength(1);
+    expect(tabs[0]).toContain('aria-selected="true"');
+    for (const id of ['autores', 'companeros', 'privacidad', 'sugerir']) {
+      const panel = body.match(new RegExp(`<div[^>]*role="tabpanel"[^>]*id="panel-${id}"[^>]*>`))?.[0] ?? '';
+      expect(panel, id).toContain(`aria-labelledby="tab-${id}"`);
+      expect(/\shidden/.test(panel), id).toBe(id !== 'autores');
+    }
+  });
+
+  it('tab counts say what is inside; an empty list gets no count', () => {
+    const body = full();
+    expect(body).toMatch(/data-testid="tab-autores"[^>]*>[\s\S]*?<span class="count[^"]*">3<\/span>/);
+    expect(body).toMatch(/data-testid="tab-companeros"[^>]*>[\s\S]*?<span class="count[^"]*">1<\/span>/);
+    expect(page(false)).not.toMatch(/class="count/);
+  });
+
+  it('an author with a Biblioteca page is a link to it; one without is plain text', () => {
+    const body = full();
+    expect(body).toMatch(/href="\/biblioteca\/201"[\s\S]*?Charles S\. Peirce/);
+    expect(body).toMatch(/href="\/biblioteca\/301"[\s\S]*?Thomas A\. Sebeok[\s\S]*?6 documentos/);
+    expect(body).not.toMatch(/<a[^>]*>(?:(?!<\/a>)[\s\S])*Iuri Lotman/);
+  });
+
+  it('the topics card links to the trabajos they come from; the kicker names the ecosistema', () => {
+    const body = full();
+    expect(body).toMatch(/<a[^>]*href="\/documentos"[^>]*>2 trabajos/);
+    expect(body).toContain('Semiosis práctica');
+  });
+
+  it('nothing written: "Sube un trabajo." is the link to upload one', () => {
+    expect(page(false)).toMatch(/<a[^>]*href="\/documentos"[^>]*data-testid="temas-vacio"[\s\S]*?Sube un trabajo\./);
+  });
+
+  it('consent switches are native checkboxes with a visible label', () => {
+    const body = full();
+    expect(body).toMatch(/<label[^>]*for="share-peers"[^>]*>Mostrar mi nombre y mis temas a otros estudiantes<\/label>/);
+    expect(box(body, 'share-peers')).toMatch(/type="checkbox"[^>]*role="switch"/);
+    expect(box(body, 'share-peers')).toMatch(/checked/);
+    expect(box(body, 'share-activity')).not.toMatch(/checked/);
+  });
+});
