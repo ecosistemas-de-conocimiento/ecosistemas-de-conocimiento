@@ -53,6 +53,10 @@ export const CHAT_CITATION_LABELS = {
 export function chatCitationHref(citation: CitationLike): string | null {
   const metadata = citation.metadata;
   if (!metadata) return null;
+  // A summary source (`$lib/server/engine/sources`): the graph map, or the
+  // published-documents list of a corpus-overview turn.
+  if (metadata.edcSource === 'mapa') return '/grafo';
+  if (metadata.edcSource === 'lista') return '/biblioteca';
   if (metadata.publication !== 'published') return null;
 
   const raw = metadata.docId;

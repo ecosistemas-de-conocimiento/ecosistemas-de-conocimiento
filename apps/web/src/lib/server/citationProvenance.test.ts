@@ -652,3 +652,16 @@ describe('citedBrowserProvenance — the no-[N] fallback needs a rerank score ab
     expect(info).not.toHaveBeenCalled();
   });
 });
+
+describe('toBrowserProvenance — summary sources (`./engine/sources`)', () => {
+  it('🔴 keeps `edcSource` only as mapa | lista', () => {
+    const out = toBrowserProvenance({
+      chunks: [
+        { chunkId: 'edc:mapa', metadata: { title: 'Mapa de conexiones del ecosistema', edcSource: 'mapa' } },
+        { chunkId: 'edc:lista', metadata: { title: 'Documentos publicados del ecosistema', edcSource: 'lista' } },
+        { chunkId: 'x', metadata: { title: 'X', edcSource: 'otro' } },
+      ],
+    })!;
+    expect(out.chunks.map((c) => c.metadata?.edcSource)).toEqual(['mapa', 'lista', undefined]);
+  });
+});

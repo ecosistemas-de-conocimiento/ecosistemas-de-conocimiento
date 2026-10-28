@@ -1,0 +1,43 @@
+import js from '@eslint/js';
+import tseslint from 'typescript-eslint';
+
+// Shape mirrors services/ai-service/eslint.config.js (same base, same two
+// rule options). Added 2026-10-28 on a tree that other lanes were editing, so
+// the rules the existing code breaks are `warn`, not `error`, and no source
+// file was touched. Counts below are measured: `pnpm exec eslint .` in
+// apps/backend at 30fc152. Raise each to `error` once its count reaches 0.
+export default tseslint.config(
+  { ignores: ['.next/', 'node_modules/', 'media/', 'src/payload-types.ts', 'next-env.d.ts'] },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  {
+    rules: {
+      // 55 at 30fc152.
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      // 14 at 30fc152. Option matches ai-service: inline `typeof import()` stays allowed.
+      '@typescript-eslint/consistent-type-imports': ['warn', { disallowTypeAnnotations: false }],
+      // 4 at 30fc152, all in e2e/support/api.ts.
+      '@typescript-eslint/no-explicit-any': 'warn',
+      // 1 each at 30fc152.
+      'no-irregular-whitespace': 'warn',
+      'prefer-const': 'warn',
+      '@typescript-eslint/no-unused-expressions': 'warn',
+    },
+  },
+  // Plain-Node `.mjs` files have no @types/node declaration, so `no-undef`
+  // needs the Node globals they use spelled out.
+  {
+    files: ['**/*.mjs', '*.config.js'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        URL: 'readonly',
+        Buffer: 'readonly',
+        fetch: 'readonly',
+        FormData: 'readonly',
+        Blob: 'readonly',
+      },
+    },
+  },
+);
