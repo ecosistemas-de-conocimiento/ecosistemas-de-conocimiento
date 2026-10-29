@@ -58,7 +58,7 @@ docker run --rm --init --ipc=host \
   -e EVID_ENV_FILE="$env_file" -e EVID_DEMO_USERS_FILE="$demo_file" \
   -e EVID_FIXTURES_DIR="$main_repo/apps/web/e2e/fixtures" -e EVID_DICTADO_WAV="$wav" -e EVID_HOJA_XLSX="$hoja" \
   -e EVID_VIDEO="$video" -e EVID_ADMIN_EMAIL -e EVID_HOLD_MS -e EVID_ECOSISTEMA -e EVID_WEB_URL -e EVID_LIMPIAR \
-  -e EVID_V3_TEMA -e EVID_V3_VECINO -e EVID_V3_NOTA_TITULO -e EVID_CONSERVAR_NOTA \
+  -e EVID_V3_TEMA -e EVID_V3_TEMA_ID -e EVID_V3_ECO_ID -e EVID_V3_VECINO -e EVID_V3_NOTA_TITULO -e EVID_CONSERVAR_NOTA \
   -w "$web" mcr.microsoft.com/playwright:v1.62.1-noble \
   node node_modules/@playwright/test/cli.js test -c e2e/evidencia "$@" || status=$?
 

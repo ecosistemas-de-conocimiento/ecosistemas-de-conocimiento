@@ -268,6 +268,9 @@ test('estudiante nota', async ({ page }) => {
       await abrirPanel(page, 'documents');
       const card = await abrirNota(page, id);
       const cuerpo = card.getByLabel('Contenido del documento');
+      // A published note reopens on "Vista previa" (DocsPanel's isPreview):
+      // the textarea exists only on the "Editar" side. Measured on dev 3f275c5.
+      if (!(await cuerpo.isVisible())) await card.getByRole('button', { name: 'Editar', exact: true }).click();
       await expect(cuerpo).toHaveValue(TEXTO);
       // One `fill`, not typed: `slowMo` (350 ms an action) would spend ~30 s on the sentence.
       await cuerpo.fill(editado);

@@ -64,6 +64,7 @@ export async function leerRespuesta(page: Page, pregunta: string): Promise<void>
  * So the pair is PINNED when the coordinator has one from dev:
  *   EVID_V3_TEMA    label of the topic to open (the note's title)
  *   EVID_V3_VECINO  label of the neighbour (the link target)
+ *   EVID_V3_TEMA_ID optional: the topic's entity id, opened by URL (beyond the 1,500 cap)
  * Without them: the first topic, and its first "se relaciona con" neighbour.
  */
 export async function conexionesV3(page: Page): Promise<void> {
@@ -102,9 +103,19 @@ export async function conexionesV3(page: Page): Promise<void> {
       const mas = page.locator('section[aria-labelledby="grafo-lista-tema"]').getByRole('button', { name: /^Mostrar \d+ más$/ });
       if (await mas.count()) await mas.click();
     }
-    await expect(tema).toBeVisible();
-    etiqueta = ((await tema.locator('.row-label').textContent()) ?? '').trim();
-    await tema.click();
+    // ⚠ A new entity (the student note's title) can sit outside the view's 1,500
+    // cap; /grafo?eco=&entidad= loads it directly (grafo/+page.server.ts,
+    // fetchGraphEntity). EVID_V3_TEMA_ID: its id, read by the coordinator.
+    const temaId = process.env.EVID_V3_TEMA_ID?.trim();
+    if (temaId && temaFijo) {
+      const eco = new URL(page.url()).searchParams.get('eco') ?? process.env.EVID_V3_ECO_ID ?? '8';
+      await page.goto(`/grafo?eco=${eco}&entidad=${temaId}`);
+      etiqueta = temaFijo;
+    } else {
+      await expect(tema).toBeVisible();
+      etiqueta = ((await tema.locator('.row-label').textContent()) ?? '').trim();
+      await tema.click();
+    }
     // The panel opens beside the map with the topic's name as its heading (EntityPanel.svelte).
     await expect(page.getByRole('heading', { level: 2, name: etiqueta, exact: true })).toBeVisible();
     await page.locator('.col-panel').evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'smooth' }));
