@@ -227,7 +227,8 @@ export function makeEstudianteEndpoints(Q: StudentQueries = realQueries): Endpoi
       return ok({
         perfil: perfilBody(profile),
         temas: topics.slice(0, 15).map((t) => ({ id: t.id, label: t.label })),
-        documentos: docs.map((d) => ({ id: d.id, name: d.name, status: d.status })),
+        // `kind` lets the web keep testimonio names out of hosted prompts.
+        documentos: docs.map((d) => ({ id: d.id, name: d.name, status: d.status, kind: d.kind })),
         // 🔴 `id` is the opaque slug, never the user id.
         companeros: matchPeers(topics, peerTopics, peersOnly).map(({ id, name, topics: shared }) => ({
           id: peerSlug(slugSecret(req), org, id),

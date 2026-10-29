@@ -34,7 +34,8 @@ export interface Topic {
 export interface StudentOverview {
   perfil: { shareWithPeers: boolean; shareActivity: boolean; shareTestimonios?: boolean };
   temas: Topic[];
-  documentos: Array<{ id: number; name: string; status: string }>;
+  /** `kind` is `content_kind` (`documento`, `testimonio`, …); absent from an older backend. */
+  documentos: Array<{ id: number; name: string; status: string; kind?: string }>;
   /** `id` is an opaque slug (`/estudiante/companero/<id>`), never a user id. */
   companeros: Array<{ id: string; name: string; topics: Topic[] }>;
   autores: Author[];

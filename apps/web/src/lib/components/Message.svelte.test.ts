@@ -6,8 +6,13 @@ import { render } from 'svelte/server';
 import Message from './Message.svelte';
 import { citedBrowserProvenance, toBrowserMessage, MAX_SOURCES } from '$lib/server/citationProvenance';
 import { citationsWithOrdinals, denseCitations } from '$lib/citationOrdinals';
-import { linkCitations } from '$lib/citationLinks';
+import { linkCitations as link } from '$lib/citationLinks';
+import { Window } from 'happy-dom';
 import type { Message as Msg } from '$lib/types';
+
+// The suite runs under node; `linkCitations` rewrites on a real DOM.
+const doc = new Window().document as unknown as Document;
+const linkCitations = (html: string, ordinals: Iterable<number>) => link(html, ordinals, doc);
 
 /**
  * 🔴 The Discapacidad case measured on dev at 8984fec (runbook edc-1 §4zf,
