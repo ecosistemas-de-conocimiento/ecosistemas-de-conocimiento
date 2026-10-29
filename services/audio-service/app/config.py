@@ -209,6 +209,14 @@ class Settings(BaseSettings):
     # Minimum gap between `transcribe.progress` emissions on a chunked job.
     CALLBACK_PROGRESS_MIN_INTERVAL_SECONDS: float = 30.0
     CALLBACK_TTL_SECONDS: int = 7 * 24 * 60 * 60
+    # 🔴 PRIVACY (audit 2026-10-28, retention cluster). A delivery row stores the
+    # signed body verbatim, and a `transcribe.completed` body carries the raw,
+    # pre-anonymisation transcript. Once the receiver has answered 2xx it has
+    # persisted the text, so the row and `audio:transcript:{id}` drop to this TTL
+    # (never lengthened: `EXPIRE ... LT`). One hour leaves room for an operator
+    # to read the row or replay it; undelivered rows keep `CALLBACK_TTL_SECONDS`
+    # because replay needs the stored bytes.
+    CALLBACK_DELIVERED_TTL_SECONDS: int = 60 * 60
 
     @field_validator("LOG_LEVEL")
     @classmethod

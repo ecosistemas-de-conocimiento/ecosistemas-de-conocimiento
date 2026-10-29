@@ -50,6 +50,8 @@
  * async context and silently drop the scheduled work. The actual find + update is well under 200ms in practice.
  */
 
+import { createHash } from 'node:crypto'
+
 import { NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 import configPromise from '@payload-config'
@@ -181,6 +183,36 @@ function naturalKeyFor(envelope: CallbackEnvelope): NaturalKey | null {
   }
 }
 
+/**
+ * 🔴 WHAT THE LEDGER KEEPS OF A BODY: never a transcript (audit 2026-10-28,
+ * retention cluster). `aiServiceCallbacks` rows are never deleted, and a
+ * `transcribe.completed` body carries the raw, pre-anonymisation text. Keeping
+ * it here outlived the document, its redaction and its deletion. The text is
+ * replaced by its length and SHA-256: enough to tell two deliveries apart while
+ * debugging, nothing to read. Every other field is kept as received.
+ *
+ * ⚠ The HMAC was verified on the RAW bytes before this runs; the stored body is
+ * a re-serialisation and can no longer be re-verified. Nothing replays from it.
+ */
+function ledgerBody(rawBody: string, envelope: CallbackEnvelope): string {
+  const text = envelope.event === 'transcribe.completed' ? envelope.transcript?.text : undefined
+  const kept =
+    typeof text === 'string'
+      ? JSON.stringify({
+          ...envelope,
+          transcript: {
+            ...(envelope as Extract<CallbackEnvelope, { event: 'transcribe.completed' }>).transcript,
+            text: null,
+            textOmitted: {
+              characters: text.length,
+              sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
+            },
+          },
+        })
+      : rawBody
+  return kept.length > 100_000 ? kept.slice(0, 100_000) : kept
+}
+
 export async function POST(req: Request): Promise<NextResponse> {
   // 1. Raw body first — anything that parses must read the bytes once.
   let rawBody: string
@@ -247,7 +279,7 @@ export async function POST(req: Request): Promise<NextResponse> {
         eventKey: key.eventKey,
         event: envelope.event,
         receivedAt: new Date().toISOString(),
-        rawBody: rawBody.length > 100_000 ? rawBody.slice(0, 100_000) : rawBody,
+        rawBody: ledgerBody(rawBody, envelope),
       },
       overrideAccess: true,
     })
@@ -347,7 +379,7 @@ async function dispatchCallback(
       // and those two mean completely different things.
       const doc = await readDocument(payload, docId)
       if (!doc) {
-        await retireOrphanFromSharedCorpus(docIdRaw, envelope)
+        await eraseOrphanDocument(docIdRaw, envelope)
         return
       }
 
@@ -849,25 +881,29 @@ async function dispatchNoteReindex(
 }
 
 /**
- * 🔴 AN INGEST INTO A SHARED CORPUS LANDED FOR A ROW THAT NO LONGER EXISTS.
- * A deleted document must not be in any corpus; the delete already removed it,
- * so this is an upsert that ran after the delete (a "Publicar cambios"
- * re-index racing a delete) and put it back. Retire it. Draft corpora are left
- * alone: nobody else reads them, and their owner deleted the row.
+ * 🔴 AN INGEST LANDED FOR A ROW THAT NO LONGER EXISTS: ERASE IT.
+ *
+ * A deleted document must not be in any corpus. The delete erased what existed
+ * then; this ingest ran after it — still queued when the row went, or a
+ * "Publicar cambios" re-index racing the delete — and created it again, live.
+ * Shared AND draft corpora (audit 2026-10-28, retention cluster): a draft
+ * nobody else reads still stores the uploader's raw text. Both events: a
+ * partial landing is still a landing. A failure throws, so this answers 500
+ * and ai-service retries. `lib/documentLateErasure.ts`.
  */
-async function retireOrphanFromSharedCorpus(
+async function eraseOrphanDocument(
   docIdRaw: string,
   envelope: Extract<CallbackEnvelope, { event: 'ingest.completed' | 'ingest.failed' }>,
 ): Promise<void> {
-  const match = typeof envelope.corpus === 'string' ? /^eco-(\d+)$/.exec(envelope.corpus) : null
-  if (envelope.event !== 'ingest.completed' || !match) return
-  try {
-    const { getAdminAIClient } = await import('@/lib/aiClient')
-    const { retireFrom } = await import('@/lib/publishDocument')
-    await retireFrom(getAdminAIClient(match[1]!) as never, envelope.corpus!, docIdRaw, new Date())
-  } catch (err) {
-    console.error('[callback] could not retire orphan doc', docIdRaw, 'from', envelope.corpus, err)
-  }
+  const { eraseLateDocument } = await import('@/lib/documentLateErasure')
+  await eraseLateDocument({
+    documentId: docIdRaw,
+    corpus: envelope.corpus,
+    log: {
+      warn: (obj, msg) => console.warn(msg, obj),
+      info: (obj, msg) => console.info(msg, obj),
+    },
+  })
 }
 
 /**

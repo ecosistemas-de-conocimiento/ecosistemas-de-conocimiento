@@ -363,6 +363,69 @@ describe('🔴 a turn that lands after its conversation was deleted', () => {
   })
 })
 
+describe('🔴 a document that lands after its row was deleted (audit 2026-10-28)', () => {
+  // The row went while its ingest was still queued at ai-service; the delete
+  // hook found nothing to erase, and the ingest then created it, live.
+  beforeEach(() => {
+    deleteDocument.mockReset()
+    deleteDocument.mockImplementation(async () => ({ deleted: true }))
+    clientOrgs.length = 0
+    findByIDImpl = async (args) => {
+      if (args.collection === 'documents') throw Object.assign(new Error('Not Found'), { status: 404 })
+      throw new Error(`unexpected findByID ${String(args.collection)}`)
+    }
+  })
+
+  it('🔴 erases it from a DRAFT corpus, with that ecosistema’s client', async () => {
+    const body = envelope({ docId: '42', corpus: 'eco-3-draft-5' })
+    const res = await post(body, headersFor(body))
+    expect(res.status).toBe(200)
+    expect(deleteDocument.mock.calls).toEqual([['eco-3-draft-5', '42']])
+    expect(clientOrgs).toEqual(['3'])
+    expect(updated).toHaveLength(0)
+  })
+
+  it('erases it from the shared corpus, on ingest.failed too', async () => {
+    const body = envelope({ event: 'ingest.failed', docId: '42', corpus: 'eco-3' })
+    expect((await post(body, headersFor(body))).status).toBe(200)
+    expect(deleteDocument.mock.calls).toEqual([['eco-3', '42']])
+  })
+
+  it('🔴 a failed erase answers 500 and forgets the event, so ai-service retries', async () => {
+    deleteDocument.mockImplementation(async () => {
+      throw Object.assign(new Error('unavailable'), { status: 503 })
+    })
+    const body = envelope({ docId: '42', corpus: 'eco-3' })
+    const res = await post(body, headersFor(body))
+    expect(res.status).toBe(500)
+    expect(dedupeRows).toEqual([])
+  })
+
+  it('never erases outside an EDC corpus name', async () => {
+    for (const corpus of [undefined, 'other', 'eco-3-draft-5/../eco-4']) {
+      const body = envelope({ docId: '42', ...(corpus ? { corpus } : {}) })
+      expect((await post(body, headersFor(body))).status).toBe(200)
+    }
+    expect(deleteDocument).not.toHaveBeenCalled()
+  })
+
+  it('never erases when the row still exists (a superseded ingest is only ignored)', async () => {
+    findByIDImpl = async () => ({ id: 42, ingestId: 'ing_new', publicationStatus: 'draft' })
+    const body = envelope({ docId: '42', corpus: 'eco-3', ingestId: 'ing_old' })
+    expect((await post(body, headersFor(body))).status).toBe(200)
+    expect(deleteDocument).not.toHaveBeenCalled()
+  })
+
+  it('🔴 a database error is not "row gone": 500, nothing erased', async () => {
+    findByIDImpl = async () => {
+      throw new Error('connection refused')
+    }
+    const body = envelope({ docId: '42', corpus: 'eco-3' })
+    expect((await post(body, headersFor(body))).status).toBe(500)
+    expect(deleteDocument).not.toHaveBeenCalled()
+  })
+})
+
 describe('POST /api/ai-service/callback — rejected', () => {
   it('401s a wrong signature and does NOT touch the document', async () => {
     const body = envelope()

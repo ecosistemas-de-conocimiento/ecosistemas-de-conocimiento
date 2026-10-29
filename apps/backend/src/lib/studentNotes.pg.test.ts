@@ -607,10 +607,12 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
         expect((await row(NOTE)).p).toBe('published')
       })
 
-      it('🔴 the note was deleted: a shared-corpus ingest for a missing row is retired', async () => {
+      it('🔴 the note was deleted: a shared-corpus ingest for a missing row is ERASED (audit 2026-10-28)', async () => {
         aiCalls.length = 0
         expect((await post({ event: 'ingest.completed', ingestId: 'ing-y', docId: '99999', corpus: 'eco-8' })).status).toBe(200)
-        expect(retiresOf(99999)).toHaveLength(1)
+        expect(
+          aiCalls.filter((c) => c.path === 'admin.deleteDocument' && c.args[0] === 'eco-8' && c.args[1] === '99999'),
+        ).toHaveLength(1)
       })
     })
 

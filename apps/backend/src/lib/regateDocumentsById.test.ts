@@ -52,7 +52,12 @@ function client(calls: string[], fail?: string) {
     if (corpus === fail) throw Object.assign(new Error('boom'), { status: 500 })
     return {}
   })
-  return { ingest: { enqueue: vi.fn() }, admin: { setDocumentValidity } }
+  const deleteDocument = vi.fn(async (corpus: string) => {
+    calls.push(`erase:${corpus}`)
+    if (corpus === fail) throw Object.assign(new Error('boom'), { status: 500 })
+    return { deleted: true }
+  })
+  return { ingest: { enqueue: vi.fn() }, admin: { setDocumentValidity, deleteDocument } }
 }
 
 describe('countPlaceholders', () => {
@@ -137,7 +142,7 @@ describe('regateDocumentsById', () => {
     expect(report.regated).toEqual(['2'])
   })
 
-  it('🔴 apply: shared corpus retired first, then the draft, then the reset, then the gate', async () => {
+  it('🔴 apply: shared corpus retired first, then the draft, then the reset, then the erase, then the gate', async () => {
     const { payload, store, calls } = fakeDb([doc(354)])
     const gate = vi.fn(async (row: Row) => {
       calls.push(`gate:${String(row.id)}`)
@@ -149,7 +154,15 @@ describe('regateDocumentsById', () => {
       client: client(calls) as never,
       gate,
     })
-    expect(calls).toEqual(['retire:eco-7', 'retire:eco-7-draft-2', 'row', 'gate:354'])
+    expect(calls).toEqual([
+      'retire:eco-7',
+      'retire:eco-7-draft-2',
+      'row',
+      // 🔴 Erased BEFORE the gate re-ingests into the draft corpus (audit 2026-10-28).
+      'erase:eco-7',
+      'erase:eco-7-draft-2',
+      'gate:354',
+    ])
     expect(store[0]).toMatchObject({
       publicationStatus: 'draft',
       anonymisationStatus: 'n/a',

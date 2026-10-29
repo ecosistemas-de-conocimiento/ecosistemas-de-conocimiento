@@ -209,3 +209,51 @@ describe('uploadDocument — spreadsheets and web pages', () => {
     expect(forwarded.size).toBe(file.size);
   });
 });
+
+describe('🔴 uploadDocument — a refused create deletes the stored file (audit 2026-10-28)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    (backendFetch as unknown as ReturnType<typeof vi.fn>).mockReset();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  const pdfForm = () => {
+    const form = new FormData();
+    form.append('file', new File([PDF], 'informe.pdf', { type: 'application/pdf' }));
+    form.append('contentKind', 'documento');
+    return form;
+  };
+  const mockMedia = () =>
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ doc: { id: 11 } }), { status: 201 }));
+  const fetchMock = () => backendFetch as unknown as ReturnType<typeof vi.fn>;
+
+  it('DELETEs /api/media/:id after the create is refused, and still answers document_create_failed', async () => {
+    mockMedia();
+    fetchMock()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ errors: [{ message: 'Forbidden' }] }), { status: 403 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    const res = await uploadDocument('tok', pdfForm(), { session: [], defaultPinned: false, organization: '4' });
+    expect(res).toEqual({ status: 403, body: { error: 'document_create_failed' } });
+    const del = fetchMock().mock.calls[1]!;
+    expect(del[0]).toBe('tok');
+    expect(del[1]).toBe('/api/media/11');
+    expect(del[2]).toMatchObject({ method: 'DELETE' });
+  });
+
+  it('a failed delete does not change the answer', async () => {
+    mockMedia();
+    fetchMock()
+      .mockResolvedValueOnce(new Response('{}', { status: 400 }))
+      .mockRejectedValueOnce(new Error('ECONNRESET'));
+    const res = await uploadDocument('tok', pdfForm(), { session: [], defaultPinned: false, organization: '4' });
+    expect(res).toEqual({ status: 400, body: { error: 'document_create_failed' } });
+  });
+
+  it('never deletes the file of a document that was created', async () => {
+    mockMedia();
+    fetchMock().mockResolvedValueOnce(new Response(JSON.stringify({ doc: { id: 21 } }), { status: 201 }));
+    const res = await uploadDocument('tok', pdfForm(), { session: [], defaultPinned: false, organization: '4' });
+    expect(res.status).toBe(201);
+    expect(fetchMock()).toHaveBeenCalledTimes(1);
+  });
+});

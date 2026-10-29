@@ -871,6 +871,56 @@ export function isDocumentAbsent(err: unknown): boolean {
 }
 
 /**
+ * 🔴 ERASE A WITHDRAWN DOCUMENT'S COPIES (audit 2026-10-28, retention cluster).
+ *
+ * Every withdrawal — a reviewer's reject after publication
+ * (`rejectPublished`), the held-but-shared repair (`repairHeldPublished`), the
+ * re-gates (`regateMemberDocumentos`, `regateDocumentsById`) — closed only the
+ * validity window. The unscrubbed chunks stayed stored at ai-service, and a
+ * retrieve without `asOf` still returned them. This deletes them: text and
+ * vectors, in one call per corpus.
+ *
+ * ⚠ CALLED AFTER THE RETIRE AND AFTER THE CALLER'S OWN GUARDED ROW WRITE
+ * LANDED. The retire is the hide, and it still throws on failure, so a row is
+ * never left reading "withdrawn" while searchable. Erasing only once the write
+ * landed means a concurrent writer (an unpublish re-ingesting the draft copy)
+ * is never undercut.
+ *
+ * ⚠ SAFE FOR A ROW THAT WILL BE INGESTED AGAIN. Nothing un-retires a copy:
+ * approve and re-gate both re-enqueue the text, which recreates the document.
+ *
+ * Never throws: the copy is already retired. A failure is logged with ids
+ * (retired, NOT erased) and returned, so a script can report it.
+ */
+export async function eraseWithdrawnCopies(
+  client: CorpusDeleter,
+  corpora: string[],
+  documentId: number | string,
+  log?: RetireLogger,
+): Promise<{ erased: string[]; failed: string[] }> {
+  const erased: string[] = []
+  const failed: string[] = []
+  const logger: RetireLogger = log ?? { warn: (obj, msg) => console.warn(msg, obj) }
+  for (const corpus of corpora) {
+    try {
+      await client.admin.deleteDocument(corpus, String(documentId))
+      erased.push(corpus)
+    } catch (err) {
+      if (isDocumentAbsent(err)) {
+        erased.push(corpus)
+        continue
+      }
+      failed.push(corpus)
+      logger.warn(
+        { corpus, documentId: String(documentId), err: String(err) },
+        '[withdraw] could not erase a withdrawn document — it is retired but its chunks are still stored.',
+      )
+    }
+  }
+  return { erased, failed }
+}
+
+/**
  * Remove a deleted document from BOTH of its possible corpora.
  *
  * 🔴 THIS CLOSES A REAL LEAK. Deleting a `documents` row used to remove it from
