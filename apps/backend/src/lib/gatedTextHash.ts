@@ -3,13 +3,14 @@ import { createHash } from 'node:crypto'
 /**
  * 🔴 WHAT COUNTS AS "THE SAME WORDS" FOR A GATE HOLD. Owner ruling R78.
  *
- * Unicode NFC, lower case, every whitespace run collapsed to one space, ends
- * trimmed. A transcript edit that only adds a space or changes case is not a
+ * Unicode NFC, invisible format characters dropped (`\p{Cf}`: zero-width
+ * space/joiner, BOM), lower case, every whitespace run collapsed to one space,
+ * ends trimmed. A transcript edit that only adds a space or changes case is not a
  * new source, so it must not clear a hold — otherwise "edit, re-gate until the
  * model says `ready`" is the same re-roll `/retry` refuses.
  */
 export function normaliseGatedText(text: string): string {
-  return text.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim()
+  return text.normalize('NFC').replace(/\p{Cf}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim()
 }
 
 /** True when two texts differ only by whitespace or case (`normaliseGatedText`). */

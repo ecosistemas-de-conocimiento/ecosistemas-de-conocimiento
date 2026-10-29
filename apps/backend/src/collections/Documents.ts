@@ -31,7 +31,7 @@ import {
 } from '../lib/contentKind'
 import { assertSessionOwnedBy, SessionNotOwnedError } from '../lib/corpus'
 import { TextTooLongError } from '../lib/extract/text'
-import { matchesHeldTextHash, sameGatedText } from '../lib/gatedTextHash'
+import { matchesHeldTextHash, normaliseGatedText, sameGatedText } from '../lib/gatedTextHash'
 import {
   organizationIdsForUser,
   organizationIdsForUserWithPermission,
@@ -823,6 +823,39 @@ async function assertOwnMediaFile({
   })
 }
 
+export const TRIVIAL_EDIT_ON_HOLD_MESSAGE = 'El texto no cambió; el documento sigue en revisión.'
+export const EMPTY_EDIT_ON_HOLD_MESSAGE = 'Un documento en revisión no puede quedar sin texto.'
+
+/**
+ * 🔴 A TRIVIAL EDIT DOES NOT RELEASE A HOLD. Owner ruling R78.
+ *
+ * `gateResetForTextEdit` clears a hold on ANY changed text, and the next ingest
+ * re-runs the gate. So `{ extractedText: text + ' ', ingestStatus: 'pending' }`
+ * was a re-roll: repeat until the model says `ready`, and it publishes. The
+ * same hole `/retry` closes with `heldTextHash`, one door over.
+ *
+ * So on a HELD row an edit must change the NORMALISED text
+ * (`normaliseGatedText`); otherwise it is refused with a 409, the same answer
+ * `/retry` gives. A real correction still clears the hold and re-gates.
+ *
+ * ⚠ AN EMPTY TEXT IS REFUSED TOO (empty, whitespace, invisible characters,
+ * null). `runExtractAndIngest` treats a blank `extractedText` as "not extracted
+ * yet" and re-extracts the file (or re-transcribes the audio), so blanking the
+ * text was a re-roll on the same source.
+ *
+ * ⚠ USER WRITES ONLY, like `gateResetForTextEdit` (the enclosing hook returns
+ * early with no `req.user`).
+ */
+export function refuseTrivialEditOnHold(next: Record<string, unknown>, original: Record<string, unknown>): void {
+  if (original.anonymisationStatus !== 'held' || !('extractedText' in next)) return
+  if (next.extractedText === original.extractedText) return
+  const asText = (v: unknown): string => (typeof v === 'string' ? v : '')
+  const incoming = asText(next.extractedText)
+  if (normaliseGatedText(incoming) === '') throw new APIError(EMPTY_EDIT_ON_HOLD_MESSAGE, 409, undefined, true)
+  if (!sameGatedText(incoming, asText(original.extractedText))) return
+  throw new APIError(TRIVIAL_EDIT_ON_HOLD_MESSAGE, 409, undefined, true)
+}
+
 /**
  * 🔴 NEW TEXT ON A GATED ROW RE-RUNS THE GATE. Audit 2026-10-17.
  *
@@ -847,33 +880,6 @@ async function assertOwnMediaFile({
  *
  * Returns the fields to merge into `next`, or null when nothing changes.
  */
-export const TRIVIAL_EDIT_ON_HOLD_MESSAGE =
-  'This document is held for review, and this edit only changes whitespace or case. Only a reviewer can release it.'
-
-/**
- * 🔴 A TRIVIAL EDIT DOES NOT RELEASE A HOLD. Owner ruling R78.
- *
- * `gateResetForTextEdit` clears a hold on ANY changed text, and the next ingest
- * re-runs the gate. So `{ extractedText: text + ' ', ingestStatus: 'pending' }`
- * was a re-roll: repeat until the model says `ready`, and it publishes. The
- * same hole `/retry` closes with `heldTextHash`, one door over.
- *
- * So on a HELD row an edit must change the NORMALISED text
- * (`normaliseGatedText`); otherwise it is refused with a 409, the same answer
- * `/retry` gives. A real correction still clears the hold and re-gates.
- *
- * ⚠ USER WRITES ONLY, like `gateResetForTextEdit` (the enclosing hook returns
- * early with no `req.user`).
- */
-export function refuseTrivialEditOnHold(next: Record<string, unknown>, original: Record<string, unknown>): void {
-  if (original.anonymisationStatus !== 'held' || !('extractedText' in next)) return
-  const asText = (v: unknown): string => (typeof v === 'string' ? v : '')
-  const incoming = asText(next.extractedText)
-  const stored = asText(original.extractedText)
-  if (incoming === stored || !sameGatedText(incoming, stored)) return
-  throw new APIError(TRIVIAL_EDIT_ON_HOLD_MESSAGE, 409, undefined, true)
-}
-
 export function gateResetForTextEdit(
   next: Record<string, unknown>,
   original: Record<string, unknown>,

@@ -264,7 +264,13 @@ describe.skipIf(!dockerOk)('audit 2026-10-28 lane A, on a real Postgres', () => 
     it('🔴 R78: a trivial transcript edit (whitespace/case) on a held row keeps the hold — 409', async () => {
       const id = await heldTestimonio()
       const before = await row(id)
-      for (const trivial of [HELD_TEXT + ' ', `  ${HELD_TEXT.replace(' ', '\n\t ')}`, HELD_TEXT.toUpperCase()]) {
+      for (const trivial of [
+        HELD_TEXT + ' ',
+        `  ${HELD_TEXT.replace(' ', '\n\t ')}`,
+        HELD_TEXT.toUpperCase(),
+        HELD_TEXT.replace(' ', ' \u200B'),
+        `\u200D${HELD_TEXT}\uFEFF`,
+      ]) {
         const err = await updateAs(OWNER, id, editorBody(trivial)).catch((e: unknown) => e)
         expect(err, JSON.stringify(trivial)).toBeInstanceOf(Error)
         expect((err as { status?: number }).status).toBe(409)
@@ -276,6 +282,25 @@ describe.skipIf(!dockerOk)('audit 2026-10-28 lane A, on a real Postgres', () => 
       expect(after.extracted_text).toBe(HELD_TEXT)
       expect(after.ingest_status).toBe('failed')
       expect(await retryAs(OWNER, id)).toBe(409)
+    })
+
+    it('🔴 R78: emptying the text of a held row (empty, whitespace, null) is refused — 409', async () => {
+      const id = await heldTestimonio()
+      for (const empty of ['', '   \n\t', '\u200B', null]) {
+        const err = await updateAs(OWNER, id, editorBody(empty as string)).catch((e: unknown) => e)
+        expect(err, JSON.stringify(empty)).toBeInstanceOf(Error)
+        expect((err as { status?: number }).status).toBe(409)
+      }
+      const after = await row(id)
+      expect(after.anonymisation_status).toBe('held')
+      expect(after.extracted_text).toBe(HELD_TEXT)
+      expect(after.held_text_hash).not.toBeNull()
+    })
+
+    it('R78: the refusal speaks plain Spanish', async () => {
+      const id = await heldTestimonio()
+      const err = await updateAs(OWNER, id, editorBody(HELD_TEXT + ' ')).catch((e: unknown) => e)
+      expect((err as Error).message).toMatch(/revisión/)
     })
 
     it('🔴 R78: /retry refuses a held row whose text changed only trivially below the app', async () => {

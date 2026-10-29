@@ -1538,7 +1538,7 @@ class AppStore {
         credentials: 'same-origin',
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
         toasts.push({
           kind: 'error',
           title: 'No se pudo guardar la corrección',
@@ -1549,7 +1549,9 @@ class AppStore {
                 ? 'El documento todavía se está procesando. Inténtalo cuando diga "listo".'
                 : body.error === 'not_uploader'
                   ? 'Solo quien subió la grabación puede corregir su transcripción.'
-                  : 'Inténtalo de nuevo en un momento.',
+                  : body.error === 'held_for_review'
+                    ? (body.message ?? 'El documento sigue en revisión.')
+                    : 'Inténtalo de nuevo en un momento.',
         });
         return false;
       }

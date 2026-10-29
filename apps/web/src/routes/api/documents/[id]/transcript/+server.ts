@@ -196,6 +196,19 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
   }
 
   const out = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  /**
+   * A 409 on this write is the backend keeping a HELD document's review: the
+   * edit only changed whitespace or case, or emptied the text (owner ruling
+   * R78). Payload puts the reason in `errors[0].message`; the client toast
+   * reads `error` / `message`, so name it here instead of a "try again".
+   */
+  if (res.status === 409) {
+    const message = (out.errors as Array<{ message?: unknown }> | undefined)?.[0]?.message;
+    return json(
+      { error: 'held_for_review', message: typeof message === 'string' ? message : undefined },
+      { status: 409 },
+    );
+  }
   if (!res.ok) return json(out, { status: res.status });
 
   // We report only what the write asked for: the row is queued again. The

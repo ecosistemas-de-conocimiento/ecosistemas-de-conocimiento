@@ -260,4 +260,18 @@ describe('PATCH /api/documents/[id]/transcript', () => {
     );
     expect((await PATCH(makeEvent())).status).toBe(422);
   });
+
+  it('turns the backend 409 on a held document into `held_for_review` with its message', async () => {
+    mockedBackendFetch.mockImplementation(async (_t: unknown, _p: string, init?: RequestInit) =>
+      init?.method === 'PATCH'
+        ? jsonResponse({ errors: [{ message: 'El texto no cambió; el documento sigue en revisión.' }] }, 409)
+        : jsonResponse(EDITABLE),
+    );
+    const res = await PATCH(makeEvent());
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: 'held_for_review',
+      message: 'El texto no cambió; el documento sigue en revisión.',
+    });
+  });
 });
