@@ -10,16 +10,21 @@
    * `aria-controls` always points at something.
    */
   import { enhance } from '$app/forms';
+  import { invalidate } from '$app/navigation';
   import Markdown from '$lib/components/Markdown.svelte';
   import ConsentSwitch from '$lib/components/estudiante/ConsentSwitch.svelte';
   import { CONSENT_ACTIVITY, CONSENT_ACTIVITY_WITH_TESTIMONIOS, TESTIMONIO_CONSENT_VERSION } from '$lib/consent';
   import {
     companeroHref,
     docsLabel,
+    ESTUDIANTE_DEPENDENCY,
     ESTUDIANTE_TABS,
     initials,
     PEERS_CONSENT,
     tabAfterKey,
+    TEMAS_POLL_LIMIT,
+    TEMAS_POLL_MS,
+    temasPending,
     topicHref,
     trabajosLabel,
     type EstudianteTab,
@@ -40,6 +45,21 @@
     o ? { autores: o.autores.length + o.autoresParaLeer.length, companeros: o.companeros.length } : {},
   );
 
+  const refresh = () => {
+    if (!generating && !document.hidden) void invalidate(ESTUDIANTE_DEPENDENCY);
+  };
+  /** "Mis temas" fills in by itself once the backend has read the trabajo. */
+  const pending = $derived(temasPending(o));
+  $effect(() => {
+    if (!pending) return;
+    let ticks = 0;
+    const t = setInterval(() => {
+      if (++ticks > TEMAS_POLL_LIMIT) clearInterval(t);
+      else refresh();
+    }, TEMAS_POLL_MS);
+    return () => clearInterval(t);
+  });
+
   function onTabKey(e: KeyboardEvent) {
     const next = tabAfterKey(tab, e.key);
     if (!next) return;
@@ -54,6 +74,9 @@
     { value: 'interaccion', label: 'Interacción' },
   ] as const;
 </script>
+
+<!-- Back from another tab or window: the topics may have landed meanwhile. -->
+<svelte:document onvisibilitychange={refresh} />
 
 <svelte:head><title>Mi investigación · Ecosistemas de Conocimiento</title></svelte:head>
 

@@ -136,7 +136,7 @@ const editablesEndpoint: Endpoint = {
     const orgs = await req.payload.find({
       collection: 'organizations',
       ...(ids ? { where: { id: { in: ids } } } : {}),
-      select: { name: true, slug: true, features: true, ...STYLE_SELECT } as never,
+      select: { name: true, slug: true, isActive: true, features: true, ...STYLE_SELECT } as never,
       sort: 'name',
       depth: 0,
       limit: 1000,
@@ -147,6 +147,8 @@ const editablesEndpoint: Endpoint = {
       id: String(o.id),
       name: typeof o.name === 'string' ? o.name : '',
       slug: typeof o.slug === 'string' ? o.slug : '',
+      // The page defaults to an active one; a retired one stays reachable by URL.
+      isActive: o.isActive === true,
       features: resolveFeatures(o.features),
       answerStyles: answerStylesOf(o),
     }))

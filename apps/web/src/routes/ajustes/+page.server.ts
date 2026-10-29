@@ -38,11 +38,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       answerStylesEditable: false,
     };
   }
+  // A retired ecosistema is never the default nor a chip; `?eco=` still opens
+  // it, so an admin keeps access to its switches (ruling R54).
+  const active = result.ecosistemas.filter((e) => e.isActive);
   const requested = url.searchParams.get('eco') ?? '';
-  const selected = result.ecosistemas.find((e) => e.id === requested) ?? result.ecosistemas[0] ?? null;
+  const selected = result.ecosistemas.find((e) => e.id === requested) ?? active[0] ?? null;
   return {
     state: 'ready' as const,
-    ecosistemas: result.ecosistemas,
+    ecosistemas: active,
     selected,
     plataforma: result.plataforma,
     lockedFeatures: result.lockedFeatures,
