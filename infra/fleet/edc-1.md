@@ -1,6 +1,11 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `191cad9` (versioned testimonio consent;
+**Status:** live since 2026-10-17. Dev runs `main` @ `3f275c5` (`[[wikilink]]` graph seeds, student
+notes on "Publicar" and "Publicar cambios", `.xls` uploads; migrations `20261028_170129`,
+`20261028_231948` with the `processed_body` backfill and `20261028_235647` applied on start), deployed
+2026-10-29 00:24 UTC — see §4zy. Before that, `d04a112` (per-ecosistema answer style, `/grafo` org 6
+hang fixed; one migration on start), deployed 2026-10-28 17:23 UTC — see §4zx. Before that, `9597969`
+(no migration) — see §4zw. Before that, `191cad9` (versioned testimonio consent;
 migration `20261028_083327_student_testimonio_consent_version` applied on start; anonymise and chat
 source fixes), deployed 2026-10-28 09:36 UTC — see §4zv. Before that, `1c80a84` (web phone fixes and the
 `seed:semiosis-demo` script; no migration; org 8 `keepPublicFigures` on), deployed 2026-10-28 08:12
@@ -2490,6 +2495,84 @@ Spend: `usage_logs` since 17:17 UTC: 20 rows, $0.061694, all `edc-eco-8` (`route
 (inferred by time). Total $11.462672 after.
 
 No image cleanup this time. **Disk**, `df -h /` free: 40 GB before, 36 GB after the build.
+
+### 4zy. ✅ Done 2026-10-29 00:15–00:30 UTC: `3f275c5`, dev only — three Payload migrations on start; in-app notes backfilled
+
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
+`97d5316`, "Up 11 days", `docker ps` before and after). Range `d04a112..3f275c5`: `[[wikilinks]]`
+seed the Semiosis graph (`d09af78`, `b3a30ad`); a student's in-app note feeds the student view on
+"Publicar" and "Publicar cambios" re-publishes an edited one (`9dc40b2`, `770afc3`, `c8905a9`,
+`f6de8db`, `056f9ee`); the `/estudiante`, `/ajustes` and `/documentos` redesigns; the graph view
+reports the total above the 1 500 cap (`b51db3a`); Payload's lock and preference collections locked
+down (`9a8fe30`); `/miembros` privacy fixes; legacy `.xls` uploads (`3f275c5`); `seed-answer-style`
+awaits `main()` (`9e7355b`, the §4zx footgun); evidence e2e specs. No compose, variable or
+ai-service change (`git diff --stat d04a112..3f275c5 -- infra` touches `edc-1.md` only).
+
+**Pre-check.** `payload_migrations` 16 rows, newest `20261028_162050_organizations_answer_style`,
+batch 11. `edc_ai` `__drizzle_migrations` 6. `pg_stat_activity`: 4 idle client backends, one active
+(the check itself); no query over 30 s, nothing to cancel. Published in-app notes (`kind =
+'markdown'`, no media file, `body_markdown` set): 22, all in org 8.
+
+Backup `/root/backups/20261029T0016Z/` (`edc_ai` 312 MB, `edc_backend` 19 MB); `pg_restore -l`
+inside the postgres container 137 / 438 non-comment lines, `SHA256SUMS` beside them. Off-box copy in
+the owner's `cide/backups/edc-1/20261029T0016Z/` with `timeout 300 scp`; `sha256sum -c` passed
+before the deploy.
+
+**Migrations.** Three, the full list in `apps/backend/src/migrations/index.ts` after
+`20261028_162050`, applied by the container start (`scripts/migrate.sh` waits for Payload's `Done.`
+before `next start`). Backend log 00:24:09 "Reading migration files…", then:
+
+| migration | log | what it adds |
+|---|---|---|
+| `20261028_170129_documents_wiki_links` | `Migrated` (18ms) | `documents.wiki_links` jsonb, nullable; `graph_mentions.seeded` boolean NOT NULL DEFAULT false |
+| `20261028_231948_documents_note_revisions` | `Migrated` (70ms) | `documents.processed_body` varchar, `revision_of_id` integer (UNIQUE index, FK `ON DELETE cascade`, `confdeltype = c`), `reindex_ingest_id` varchar; the `processed_body` backfill |
+| `20261028_235647_documents_kind_xls` | `Migrated` (3ms) | `enum_documents_kind` = `{markdown,pdf,docx,xlsx,xls,csv,html,audio}` |
+
+Then `Done.` and "✓ Ready in 847ms". `payload_migrations` 16 → 19, all three batch 12. Columns
+checked in `information_schema.columns`. `edc_ai` `__drizzle_migrations` unchanged at 6.
+
+**Backfill** (read-only count after): of the 22 published in-app notes, 22 have `processed_body`
+set and 22 have `processed_body = body_markdown`. 22 rows in all of `documents` hold a
+`processed_body`, so the backfill touched nothing else.
+
+| deploy | uuid | queued → finished (UTC) | commit |
+|---|---|---|---|
+| `3f275c5` | `jhmkdpv8te6lrmrf3vo0jbwe` | 00:17:47 → 00:24:06 | `3f275c500a86…` |
+
+After: 9 dev containers up; `web`, `backend` and `ai-service` run image tag
+`3f275c500a8683a5b318994ad53c06080734112c`, healthy. 0 `error`/`fatal` lines in 8 of 9 dev
+containers (00:25 UTC). The postgres container holds the deploy agent's own two bad queries
+(00:24:29 `drizzle.__drizzle_migrations`, which lives in `public`; then a wrong `usage_logs`
+column). Not the app.
+
+**Smoke** (no paid call, from the owner's laptop):
+
+| check | result |
+|---|---|
+| 1. web `/` | 303 → `/sign-in`, 200 |
+| 2. health | `dev.` `/api/health` 200, `api.dev.` `/api/health` 200 |
+| 3. login, estudiante1 (`cide/.env.demo-users`), web `POST /api/auth/login` with `Origin` | 200; `/__data.json` 200 (names `estudiante`) |
+| 4. `/estudiante`, `/documentos` | 200 / 200 (1 098 / 1 184 bytes); `/estudiante/__data.json` 200 (4 147 bytes), `/documentos/__data.json` 200 (795 bytes, no server data node: the page loads client-side) |
+| 5. org 8 `features` after | `{"studentView": true, "keepPublicFigures": true}`, unchanged |
+
+**Graph view timings**, `GET api.dev./api/graph/view?organization=<n>` as the platform admin (the
+backend container's `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`, read over ssh into a file that was
+deleted after, never echoed; `POST /api/users/login`, `Authorization: JWT`). Two runs each, curl
+`time_total`:
+
+| org | status | bytes | seconds (run 1 / run 2) | entities | `total` | edges | published documents |
+|---|---|---|---|---|---|---|---|
+| 6 | 200 | 350 468 | 1.43 / 1.42 | 542 | 542 | 4 074 | 81 |
+| 7 | 200 | 615 020 | 1.73 / 1.69 | 1 500 | 2 604 | 6 000 | 124 |
+| 8 | 200 | 715 720 | 2.32 / 2.17 | 1 500 | 7 620 | 6 000 | 747 |
+
+The new `total` field (`b51db3a`) confirms the §4zx guess: 1 500 is the view's cap. Timings within
+0.15 s of §4zx. Org 8 published documents 732 → 747 since §4zx; another lane's work (inferred).
+
+Spend: `usage_logs` since 00:16 UTC: 6 rows, $0.018153, all `edc-eco-8` `router.route`. None from
+this run, which made no model call; another lane's traffic (inferred). Total $13.394029 after.
+
+No image cleanup. **Disk**, `df -h /` free: 55 GB before, 40 GB after the build.
 
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
