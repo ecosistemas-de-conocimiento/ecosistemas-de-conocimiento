@@ -469,17 +469,12 @@ class AppStore {
       this.degraded = data?.degraded ? { reason: data.reason ?? 'unavailable' } : null;
       const list = (data?.docs ?? []).map(sessionFromBackend);
       this.sessions = list;
-      // The most recent conversation IN THE ACTIVE TAB, not across both.
-      const firstId = this.tabSessions[0]?.id ?? null;
-      this.activeSessionId = firstId;
-      if (firstId) {
-        const s = this.sessions.find((x) => x.id === firstId);
-        if (s) {
-          this.docsPanelOpen = s.panelState?.docsPanelOpen ?? true;
-          this.sidebarCollapsed = s.panelState?.sidebarCollapsed ?? false;
-        }
-        await Promise.all([this.loadMessages(firstId), this.loadDocs(firstId)]);
-      }
+      // 🔴 Opens NOTHING (owner ruling 2026-10-28): the app starts on an empty
+      // composer and the person writes first; the first send creates the
+      // conversation (`ensureSession`). Earlier conversations stay one click
+      // away in the sidebar. Opening the most recent one put yesterday's
+      // thread in front of every sign-in. ⚠ A reload also lands here.
+      this.activeSessionId = null;
     } catch (err) {
       // The `/api/sessions` route degrades 403/5xx into an empty 200, so a
       // throw here means a genuine network failure (or unexpected shape).

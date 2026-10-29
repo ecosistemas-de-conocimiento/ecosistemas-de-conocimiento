@@ -57,6 +57,25 @@ describe('/ajustes load', () => {
     expect(data.plataforma).toBeNull();
   });
 
+  it('a retired ecosistema is neither the default nor a chip, but ?eco= still opens it (R54)', async () => {
+    // A Response body reads once: a fresh one per load.
+    mocked.mockImplementation(async () =>
+      json({
+        ecosistemas: [
+          { id: '3', name: 'A retirado', slug: 'a', isActive: false, features: null },
+          { id: '4', name: 'B', slug: 'b', isActive: true, features: null },
+          { id: '5', name: 'C', slug: 'c', features: null },
+        ],
+        plataforma: null,
+      }),
+    );
+    const plain = (await load(event())) as { selected: { id: string }; ecosistemas: Array<{ id: string }> };
+    expect(plain.selected.id).toBe('4');
+    expect(plain.ecosistemas.map((e) => e.id)).toEqual(['4', '5']);
+    const byUrl = (await load(event('/ajustes?eco=3'))) as { selected: { id: string } };
+    expect(byUrl.selected.id).toBe('3');
+  });
+
   it('🔴 passes the backend\'s locked switches through; a backend that does not say locks the admin-only ones', async () => {
     mocked.mockResolvedValue(
       json({ ecosistemas: [{ id: '1', name: 'A', slug: 'a', features: null }], plataforma: null, lockedFeatures: [] }),

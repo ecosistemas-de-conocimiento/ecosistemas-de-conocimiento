@@ -2690,6 +2690,16 @@ The order, per environment (the one used above):
 After the move, §6's budget command targets `edc-eco-<id>`, not `demo`. New ecosistemas get
 their row from the backend (`provisionEcosystem.ts`). Old spend stays booked to `demo`.
 
+### 4zzz. Done 2026-10-29 05:37-05:43 UTC: `59d4da6`, dev only - one Payload migration on start
+
+Measured by the deploy agent. Staging untouched (still `97d5316`, "Up 11 days"). Previous dev image
+was `bf15ad2`. Pre-check: no documents in `graph_status` extracting or `anonymisation_status`
+pending, no active backend query, last `documents.updated_at` 03:53 UTC, backend log silent for 3 min.
+No backup taken by this run. Deploy `7aezwgxxjesa1fgqiednouul`, 05:37:19 -> 05:43:12 UTC.
+Migration `20261029_042255_documents_held_text_hash` logged `Migrated (10ms)`, then `Done.`,
+`Ready in 864ms`; `payload_migrations` 19 -> 20, batch 13. After: `web`, `backend`, `ai-service` run
+image tag `59d4da631a749f45b9d42a29e17d6e3267a56604`, healthy; 0 error lines in all 9 dev containers.
+
 ---
 
 ## 5. Where secrets live (names only)

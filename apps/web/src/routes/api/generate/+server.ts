@@ -43,6 +43,7 @@ import { regroupTurn, type SummarySource } from '$lib/server/engine/sources';
 import { documentListText, isCorpusOverview, withoutRetrieval } from '$lib/server/engine/overview';
 import { ATTACHMENT_RELEVANCE_RULE, FOLLOW_UP_RULE, withTurnRules } from '$lib/server/engine/prompt';
 import { withFencedChunks, withFencedRefs } from '$lib/server/engine/chunkFence';
+import { withCondenseDeadline } from '$lib/server/engine/condenseDeadline';
 import { fetchOrientationTurns, orientationBlock, withOrientation } from '$lib/server/engine/orientation';
 import { fetchLenguaIndex } from '$lib/server/lenguas';
 import { lenguaTurn } from '$lib/lengua';
@@ -363,6 +364,13 @@ function streamGenerate(
                 continue;
               }
               const provenance = provenanceFor(evt.text ?? '');
+              // Titles on the browser copy only; the saved one never carries
+              // them. Read alongside the save, not after it.
+              const titledP = withTestimonioTitles(
+                (provenance as Provenance | null) ?? null,
+                backendTitleFetcher(token),
+              );
+              titledP.catch(() => {});
               const messageId = await persistAssistantMessage(
                 token,
                 sessionId,
@@ -385,11 +393,7 @@ function streamGenerate(
               emit({
                 ...evt,
                 messageId,
-                // Titles on the browser copy only; the saved one never carries them.
-                provenance: await withTestimonioTitles(
-                  (provenance as Provenance | null) ?? null,
-                  backendTitleFetcher(token),
-                ),
+                provenance: await titledP,
                 ...(warnings ? { warnings } : {}),
               });
             } else if (evt.type === 'error') {
@@ -496,8 +500,19 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   }
 
   // A retry of a turn whose answer is already saved: hand that answer back.
+  // ⚠ Started now, awaited after the session reads below: one backend round
+  // trip off every turn's wait. A saved turn wastes those three reads.
   const turnId = turnIdOf(body.turnId);
-  const already = await findSavedTurn(locals.token, body.sessionId, turnId);
+  const startedAt = Date.now();
+  const alreadyP = findSavedTurn(locals.token, body.sessionId, turnId);
+  const sessionReadsP = Promise.all([
+    fetchSessionCorpora(locals.token, body.sessionId),
+    sessionMeta(locals.token, body.sessionId),
+    fetchSessionDocs(locals.token, body.sessionId),
+  ]);
+  // Neither may reject unobserved while the other is awaited.
+  sessionReadsP.catch(() => {});
+  const already = await alreadyP;
   if (already) {
     const result = savedTurnResult(already);
     if (!stream) return json(result);
@@ -547,12 +562,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // ever uploaded anywhere, and the model could not tell them apart.
   // The session read also carries the conversation's kind (`$lib/sessionKind`),
   // which picks the engine config below.
-  const [{ corpora, asOf, draftCorpus, publishedCorpus }, meta, sessionDocs] =
-    await Promise.all([
-      fetchSessionCorpora(locals.token, body.sessionId),
-      sessionMeta(locals.token, body.sessionId),
-      fetchSessionDocs(locals.token, body.sessionId),
-    ]);
+  const [{ corpora, asOf, draftCorpus, publishedCorpus }, meta, sessionDocs] = await sessionReadsP;
   // 🔴 Fail closed: without the session row there is no kind, and guessing one
   // would run a Resonancias conversation on the Generales config (or the
   // reverse). Refuse the turn; nothing has been generated or spent yet.
@@ -860,7 +870,9 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
       : citedBrowserProvenance(provenance, answer, attachments);
   const engineTurnArgs = {
     config: turnConfig,
-    aiClient: answerAI,
+    // Condense is the only model call `prepareTurn` makes; it gets a deadline
+    // (`./condenseDeadline`). The sync answer below calls `answerAI` itself.
+    aiClient: withCondenseDeadline(answerAI),
     adapter,
     orgId: engineOrgId(),
     userId,
@@ -892,6 +904,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // ── STREAMING ────────────────────────────────────────────────────────────
   // Assemble the turn with `prepareTurn` (+ `regroupTurn`), then drive the
   // existing SSE proxy.
+  const readyAt = Date.now();
   if (stream) {
     let prepared;
     try {
@@ -922,7 +935,13 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
       useRegistryPrompt: useRegistryPrompt(),
     });
     try {
+      const preparedAt = Date.now();
       const upstreamRes = await chatClient.openGenerateStream(upstream, { signal: request.signal });
+      // One line per turn: where the wait before the first words goes.
+      console.info(
+        `[generate] timing reads=${readyAt - startedAt}ms prepare=${preparedAt - readyAt}ms ` +
+          `open=${Date.now() - preparedAt}ms`,
+      );
       return streamGenerate(
         upstreamRes,
         locals.token,

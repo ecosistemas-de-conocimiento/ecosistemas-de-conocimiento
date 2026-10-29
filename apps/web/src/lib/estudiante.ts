@@ -11,6 +11,21 @@ import { graphEntityHref } from '$lib/graph';
  */
 export const PEERS_CONSENT = 'Mostrar mi nombre, mis temas y mis trabajos publicados a otros estudiantes';
 
+/** `/estudiante`'s load; `invalidate` it to re-read the overview. */
+export const ESTUDIANTE_DEPENDENCY = 'app:estudiante';
+
+/**
+ * Re-read every 10 s for 5 min while "Mis temas" waits on a trabajo: topics
+ * land only after the backend processes it, and nothing else reloads the page.
+ */
+export const TEMAS_POLL_MS = 10_000;
+export const TEMAS_POLL_LIMIT = 30;
+
+/** True while a trabajo exists but none of its topics have landed yet. */
+export function temasPending(o: { temas: unknown[]; documentos: unknown[] } | null): boolean {
+  return o != null && o.documentos.length > 0 && o.temas.length === 0;
+}
+
 /** A topic chip's link: the topic focused in the ecosistema's graph. */
 export function topicHref(organization: string, topicId: number): string {
   return graphEntityHref(String(topicId), null, { eco: organization });

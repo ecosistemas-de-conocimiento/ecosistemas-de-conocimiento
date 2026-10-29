@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { docsLabel, ESTUDIANTE_TABS, initials, tabAfterKey, trabajosLabel } from './estudiante';
+import { docsLabel, ESTUDIANTE_TABS, initials, tabAfterKey, temasPending, trabajosLabel } from './estudiante';
 
 describe('tabAfterKey (WAI-ARIA tabs keyboard)', () => {
   it('arrows move and wrap; Home and End jump; other keys do nothing', () => {
@@ -40,5 +40,14 @@ describe('links', () => {
     const { companeroHref } = await import('./estudiante');
     expect(companeroHref('Zq3xY_-abcdefghijklmno')).toBe('/estudiante/companero/Zq3xY_-abcdefghijklmno');
     expect(companeroHref('a/b')).toBe('/estudiante/companero/a%2Fb');
+  });
+});
+
+describe('temasPending', () => {
+  it('waits only while a trabajo exists and no topic has landed', () => {
+    expect(temasPending(null)).toBe(false);
+    expect(temasPending({ temas: [], documentos: [] })).toBe(false);
+    expect(temasPending({ temas: [], documentos: [{}] })).toBe(true);
+    expect(temasPending({ temas: [{}], documentos: [{}] })).toBe(false);
   });
 });

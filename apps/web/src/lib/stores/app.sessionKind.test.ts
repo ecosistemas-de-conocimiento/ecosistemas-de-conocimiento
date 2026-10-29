@@ -135,11 +135,14 @@ describe('the next conversation comes from the active tab', () => {
     expect(app.activeSessionId).toBe('3');
   });
 
-  it('🔴 hydrate opens the remembered tab\'s most recent conversation', async () => {
+  it('🔴 hydrate opens no conversation: the person writes first (owner ruling 2026-10-28)', async () => {
     listRows = [{ id: 1, kind: 'resonancias' }, { id: 2 }, { id: 3, kind: 'generales' }];
     app.sessionKindTab = 'generales';
+    app.activeSessionId = '3';
     await app.hydrateFromServer();
-    expect(app.activeSessionId).toBe('2');
+    expect(app.sessions).toHaveLength(3);
+    expect(app.activeSessionId).toBeNull();
+    expect(app.sessionKindTab).toBe('generales');
   });
 
   it('🔴 hydrate opens nothing when the remembered tab is empty', async () => {

@@ -251,7 +251,7 @@
       </button>
     {/if}
     <h2 class="text-sm font-semibold text-ink truncate flex-1 max-sm:basis-full font-display">
-      {app.active?.title ?? 'Sin chat seleccionado'}
+      {app.active?.title ?? 'Nueva conversación'}
     </h2>
     {#if isStudent}
       <select
