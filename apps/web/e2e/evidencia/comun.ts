@@ -380,6 +380,24 @@ export async function conexiones(page: Page, busqueda: string): Promise<void> {
 const SOBRAS = /evid-\d{13}/;
 
 /**
+ * Conversations a run made but never renamed (it failed before B1.5) keep the
+ * spec's first message as their title. Only conversations match this, never
+ * documents, and only in the evidence accounts' own lists: the same question
+ * typed by a real person in another account is out of reach.
+ */
+const CONVERSACIONES_SOBRANTES = new RegExp(
+  [
+    SOBRAS.source,
+    '^¿Qué hacen las familias para acompañar',
+    '^¿Qué hacen los vecinos para eliminar criaderos',
+    '^¿Cómo se organizó el comité contra el dengue',
+    '^¿Qué iniciativas comunitarias aparecen',
+    '^¿Qué colonia tuvo más casos confirmados',
+    '^En mi colonia (hacemos un círculo|los sábados revisamos)',
+  ].join('|'),
+);
+
+/**
  * The run's own cleanup, recorded as the delete stories. `documentos: false`
  * for a run that uploads nothing (V3 investigador, Discapacidad): no
  * "Eliminar un documento." caption over an empty list.
@@ -415,7 +433,7 @@ export async function limpiar(page: Page, opciones: { documentos?: boolean } = {
       await page.getByTestId(`session-tab-${tab}`).click();
       // The list fills in after the tab switch; counting before it does reads 0.
       await expect(page.getByTestId('session-row').first()).toBeVisible().catch(() => {});
-      const filas = page.getByTestId('session-row').filter({ hasText: SOBRAS });
+      const filas = page.getByTestId('session-row').filter({ hasText: CONVERSACIONES_SOBRANTES });
       while (await filas.count()) {
         const antes = await filas.count();
         await filas.first().hover();

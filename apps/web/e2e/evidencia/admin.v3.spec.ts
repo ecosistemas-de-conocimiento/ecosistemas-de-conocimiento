@@ -35,7 +35,8 @@ test('admin', async ({ page }) => {
       if (!(await tab.count())) continue;
       await tab.click();
       await expect(tab).toHaveAttribute('aria-selected', 'true');
-      const switches = page.locator(`#panel-${id} [data-testid^="ajustes-switch-"]`);
+      // Sub-options are hidden while their parent switch is off: only the visible ones.
+      const switches = page.locator(`#panel-${id} [data-testid^="ajustes-switch-"]`).filter({ visible: true });
       for (let i = 0; i < Math.min(await switches.count(), 3); i++) await switches.nth(i).hover();
       await page.waitForTimeout(900);
     }

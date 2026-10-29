@@ -64,7 +64,18 @@ test('estudiante', async ({ page }) => {
 
 // ── (2b) A note, published, then its changes published ─────────────────────
 
-const NOTA = `${RUN_ID}-nota`;
+/**
+ * The note's title becomes a graph entity: its [[enlaces]] seed
+ * "se relaciona con" edges from it to the linked temas (coordinator,
+ * 2026-10-28), and the investigador video then opens it in Conexiones
+ * (EVID_V3_TEMA = this title). So it is a readable title, not evid-…; cleanup
+ * still finds the note through its conversation, `${RUN_ID} nota`, which
+ * /documentos shows on the row ("Se usa en: …").
+ */
+const NOTA = process.env.EVID_V3_NOTA_TITULO ?? 'Los emojis como signos';
+
+/** EVID_CONSERVAR_NOTA=1 keeps the note for the investigador video; sweep it after with `EVID_LIMPIAR=estudiante … limpieza`. */
+const CONSERVAR = process.env.EVID_CONSERVAR_NOTA === '1';
 const CONVERSACION = `${RUN_ID} nota`;
 
 /**
@@ -297,7 +308,8 @@ test('estudiante nota', async ({ page }) => {
     throw error;
   } finally {
     // The note (published or not: /documentos deletes it, and its revision, the normal way) and the conversation.
-    await limpiar(page);
+    if (CONSERVAR) console.log(`Nota "${NOTA}" conservada (EVID_CONSERVAR_NOTA=1): bórrala luego con la limpieza del estudiante.`);
+    else await limpiar(page);
   }
   await cerrarSesion(page);
 });
