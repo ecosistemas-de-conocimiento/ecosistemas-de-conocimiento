@@ -117,7 +117,7 @@ El audio (B3.1, C1.3, C1.4) se graba solo en el video del participante.
 | D2.4 | Explorar lo que se relaciona con un tema. | ● | ● | ● | ● | ● | ▶ acción |
 | D2.5 | Ver cuántas entidades muestra el mapa. | ● | ● | ● | ● | ● | ▶ acción |
 | D2.6 | Abrir un tema. | ● | ● | ● | ● | ● | ▶ acción |
-| D2.7 | Ver qué notas enlazan dos temas. | ● | ● | ● | ● | ● | ▶ acción |
+| D2.7 | Ver qué documentos sustentan una conexión. | ● | ● | ● | ● | ● | ▶ acción |
 
 ## E. Aprender e investigar
 

@@ -191,8 +191,9 @@ export const MAPA: readonly Tematica[] = [
           // V3: the count line says "1,500 de N entidades" when the view is capped (apps/web `lib/graph.ts` resultsSummary).
           h('D2.5', 'Ver cuántas entidades muestra el mapa.', TODOS),
           h('D2.6', 'Abrir un tema.', TODOS),
-          // V3: in Semiosis práctica a note's [[enlaces]] add `relacionado_con` edges (backend `lib/graph/wikilinks.ts`).
-          h('D2.7', 'Ver qué notas enlazan dos temas.', TODOS),
+          // V3: the student note's topic and its connection, with the documents behind it. ⚠ On dev the
+          // edge came from the model, not from [[enlaces]] seeding (coordinator, measured 2026-10-28): no wikilink claim.
+          h('D2.7', 'Ver qué documentos sustentan una conexión.', TODOS),
         ],
       },
     ],
