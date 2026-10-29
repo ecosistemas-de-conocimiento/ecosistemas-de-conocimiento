@@ -27,7 +27,8 @@
  *      DRAFT corpus (`retireFrom`, a 404 is "already absent"). Sharing stops
  *      first. A failure leaves the row as it was.
  *   2. One guarded write: a draft, gate columns reset to the retryable `n/a`,
- *      ingest reset to `extracting` with no `ingestId`.
+ *      ingest reset to `extracting` with no `ingestId`. Once it landed, ERASE
+ *      both copies (`eraseWithdrawnCopies`, audit 2026-10-28; never throws).
  *   3. Gate and ingest it (`gate`; the script passes `enqueueIngestForDoc`).
  *      A cleared row ingests into the draft corpus.
  *
@@ -41,7 +42,7 @@ import type { Payload } from 'payload'
 
 import { draftCorpus, publishedCorpus } from './corpus'
 import { relationId } from './permissions'
-import { retireFrom, type CorpusMover } from './publishDocument'
+import { eraseWithdrawnCopies, retireFrom, type CorpusDeleter } from './publishDocument'
 
 type Id = number | string
 type Row = Record<string, unknown>
@@ -104,8 +105,8 @@ export async function regateDocumentsById(
     organizationId: Id
     apply: boolean
     allowTestimonio?: boolean
-    /** Admin client for the ecosistema: retiring is an admin route. */
-    client: CorpusMover
+    /** Admin client for the ecosistema: retiring and erasing are admin routes. */
+    client: CorpusDeleter
     /** Gate and ingest one reset row. */
     gate: (row: Row) => Promise<unknown>
     now?: Date
@@ -198,6 +199,13 @@ export async function regateDocumentsById(
         log(`doc ${id}: changed since it was read — left alone (already withdrawn from the corpus)`)
         continue
       }
+
+      // 2b. 🔴 Erase both copies BEFORE the gate re-ingests (audit 2026-10-28):
+      // retired is hidden, not gone, and the old redaction is what is being replaced.
+      const corpora = [publishedCorpus(opts.organizationId)]
+      if (uploader != null) corpora.push(draftCorpus(opts.organizationId, uploader))
+      const { failed: notErased } = await eraseWithdrawnCopies(opts.client, corpora, row.id as Id)
+      if (notErased.length > 0) log(`doc ${id}: retired but NOT erased from ${notErased.join(', ')}`)
 
       // 3. Through the gate, then ingest.
       const text = updated.extractedText

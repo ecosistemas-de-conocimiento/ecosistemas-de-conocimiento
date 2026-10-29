@@ -100,7 +100,7 @@ export const AiServiceCallbacks: CollectionConfig = {
       maxLength: 100_000,
       admin: {
         description:
-          'Raw JSON body as received from ai-service. Retained for debugging signature / payload drift.',
+          'JSON body as received, except a transcript: its text is replaced by its length and SHA-256 (audit 2026-10-28). Retained for debugging payload drift.',
       },
     },
   ],

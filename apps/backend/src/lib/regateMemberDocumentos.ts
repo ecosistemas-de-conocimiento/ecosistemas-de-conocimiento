@@ -17,7 +17,9 @@
  *   1. Retire it from the ecosistema's SHARED corpus (`retireFrom`, the
  *      unpublish rule: sharing stops first). A failure leaves the row as it was.
  *   2. One guarded write: `anonymise = true`, a draft, gate columns reset to the
- *      retryable `n/a`, ingest reset to `extracting` with no `ingestId`.
+ *      retryable `n/a`, ingest reset to `extracting` with no `ingestId`. Once
+ *      it landed, ERASE the shared and draft copies (`eraseWithdrawnCopies`,
+ *      audit 2026-10-28; never throws).
  *   3. Gate it (`gate`, the script passes `enqueueIngestForDoc`): the gate runs on
  *      `extractedText`, and a cleared row ingests into the draft corpus. The
  *      ai-service callback then auto-publishes it (`lib/autoPublish.ts`); a hold
@@ -30,9 +32,9 @@
 
 import type { Payload } from 'payload'
 
-import { publishedCorpus } from './corpus'
+import { draftCorpus, publishedCorpus } from './corpus'
 import { relationId } from './permissions'
-import { retireFrom, type CorpusMover } from './publishDocument'
+import { eraseWithdrawnCopies, retireFrom, type CorpusDeleter } from './publishDocument'
 
 type Id = number | string
 type Row = Record<string, unknown>
@@ -60,8 +62,8 @@ export async function regateMemberDocumentos(
     apply: boolean
     /** Is this uploader a participant in that ecosistema? `isParticipantUpload`. */
     isParticipant: (uploaderId: Id, organizationId: Id) => Promise<boolean>
-    /** Admin client for one ecosistema: retiring is an admin route. */
-    clientFor: (organizationId: Id) => CorpusMover
+    /** Admin client for one ecosistema: retiring and erasing are admin routes. */
+    clientFor: (organizationId: Id) => CorpusDeleter
     /** Gate and ingest one reset row. */
     gate: (row: Row) => Promise<unknown>
     limit?: number
@@ -107,7 +109,8 @@ export async function regateMemberDocumentos(
 
     try {
       // 1. Out of the shared corpus FIRST.
-      await retireFrom(opts.clientFor(organizationId), publishedCorpus(organizationId), row.id as Id, opts.now ?? new Date())
+      const client = opts.clientFor(organizationId)
+      await retireFrom(client, publishedCorpus(organizationId), row.id as Id, opts.now ?? new Date())
 
       // 2. Filed gated, as a draft — guarded, so a row that changed meanwhile is left alone.
       const res = (await payload.update({
@@ -143,6 +146,15 @@ export async function regateMemberDocumentos(
         log(`doc ${id}: changed since it was read — left alone`)
         continue
       }
+
+      // 2b. 🔴 Erase the shared copy and any draft copy BEFORE the gate
+      // re-ingests (audit 2026-10-28): the ungated text must not stay stored.
+      const { failed: notErased } = await eraseWithdrawnCopies(
+        client,
+        [publishedCorpus(organizationId), draftCorpus(organizationId, uploader)],
+        row.id as Id,
+      )
+      if (notErased.length > 0) log(`doc ${id}: retired but NOT erased from ${notErased.join(', ')}`)
 
       // 3. Through the gate.
       const text = updated.extractedText

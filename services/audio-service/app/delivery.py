@@ -183,7 +183,13 @@ async def attempt_delivery(
         updatedAt=now_iso(),
     )
 
-    if outcome.status == "pending" and outcome.next_attempt_delay is not None:
+    if outcome.status == "delivered":
+        # 🔴 The receiver has the transcript now; stop keeping our copy for a
+        # week. `config.py:CALLBACK_DELIVERED_TTL_SECONDS` says why one hour.
+        await store.expire_after_delivery(
+            delivery_id, row.get("sourceId", ""), settings.CALLBACK_DELIVERED_TTL_SECONDS
+        )
+    elif outcome.status == "pending" and outcome.next_attempt_delay is not None:
         await enqueue_callback_delivery(
             pool,
             delivery_id,

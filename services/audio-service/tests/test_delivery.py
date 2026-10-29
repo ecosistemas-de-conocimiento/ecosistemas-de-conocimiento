@@ -323,3 +323,66 @@ async def test_a_missing_delivery_row_aborts_quietly(store, settings):
         client=StubClient([_Response(200)]),
     )
     assert status == "missing"
+
+
+# ── Retention after delivery (audit 2026-10-28, retention cluster) ──────────
+
+WEEK = 7 * 24 * 60 * 60
+
+
+@pytest.fixture
+def long_store() -> JobStore:
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    return JobStore(
+        redis, job_ttl=86400, transcript_ttl=86400, idempotency_ttl=86400, callback_ttl=WEEK
+    )
+
+
+async def test_a_delivered_callback_keeps_its_body_and_transcript_one_hour_not_a_week(
+    long_store, settings
+):
+    await long_store.put_transcript("t-1", {"text": "sí"})
+    delivery_id = await _enqueue(long_store, settings)
+    assert await long_store.redis.ttl("audio:callback:" + delivery_id) > 86400
+
+    status = await attempt_delivery(
+        delivery_id, 1, store=long_store, pool=StubPool(), settings=settings,
+        client=StubClient([_Response(200)]),
+    )
+    assert status == "delivered"
+    limit = settings.CALLBACK_DELIVERED_TTL_SECONDS
+    assert limit <= 3600
+    assert 0 < await long_store.redis.ttl("audio:callback:" + delivery_id) <= limit
+    assert 0 < await long_store.redis.ttl("audio:transcript:t-1") <= limit
+
+
+async def test_an_undelivered_callback_keeps_its_week_for_replay(long_store, settings):
+    await long_store.put_transcript("t-1", {"text": "sí"})
+    delivery_id = await _enqueue(long_store, settings)
+    status = await attempt_delivery(
+        delivery_id, 1, store=long_store, pool=StubPool(), settings=settings,
+        client=StubClient([_Response(503)]),
+    )
+    assert status == "pending"
+    assert await long_store.redis.ttl("audio:callback:" + delivery_id) > 86400
+    assert await long_store.redis.ttl("audio:transcript:t-1") > 3600
+
+
+async def test_delivery_never_lengthens_a_shorter_transcript_ttl(long_store, settings):
+    await long_store.put_transcript("t-1", {"text": "sí"})
+    await long_store.redis.expire("audio:transcript:t-1", 60)
+    delivery_id = await _enqueue(long_store, settings)
+    await attempt_delivery(
+        delivery_id, 1, store=long_store, pool=StubPool(), settings=settings,
+        client=StubClient([_Response(200)]),
+    )
+    assert 0 < await long_store.redis.ttl("audio:transcript:t-1") <= 60
+
+
+async def test_delivery_without_a_transcript_does_not_create_one(long_store, settings):
+    delivery_id = await _enqueue(long_store, settings)
+    await attempt_delivery(
+        delivery_id, 1, store=long_store, pool=StubPool(), settings=settings,
+        client=StubClient([_Response(200)]),
+    )
+    assert await long_store.redis.exists("audio:transcript:t-1") == 0

@@ -23,6 +23,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { createHash } from 'node:crypto'
+
 import { signCallback } from '@/lib/hmac'
 
 const SECRET = 'e'.repeat(64)
@@ -205,6 +207,31 @@ describe('signature verification is the SAME code, unchanged', () => {
 })
 
 // ── Dedupe keys ────────────────────────────────────────────────────────────
+
+describe('🔴 the callback ledger never keeps a transcript (audit 2026-10-28)', () => {
+  it('stores the body with the text replaced by its length and SHA-256', async () => {
+    const body = completed()
+    await post(body, headersFor(body))
+    const stored = String((created[0]?.data as Record<string, unknown>).rawBody)
+    expect(stored).not.toContain('La junta empezó')
+    const parsed = JSON.parse(stored)
+    expect(parsed.transcript.text).toBeNull()
+    expect(parsed.transcript.textOmitted).toEqual({
+      characters: 'La junta empezó a las diez'.length,
+      sha256: createHash('sha256').update('La junta empezó a las diez', 'utf8').digest('hex'),
+    })
+    // Everything else is kept for debugging.
+    expect(parsed).toMatchObject({ event: 'transcribe.completed', transcribeId: 'tr_1', externalId: '42' })
+    // The row still gets the real text.
+    expect(written().extractedText).toBe('La junta empezó a las diez')
+  })
+
+  it('keeps a body with no transcript text as received', async () => {
+    const body = JSON.stringify({ event: 'transcribe.progress', transcribeId: 'tr_1', chunksDone: 1 })
+    await post(body, headersFor(body))
+    expect((created[0]?.data as Record<string, unknown>).rawBody).toBe(body)
+  })
+})
 
 describe('dedupe keys', () => {
   it('keys a terminal event on (transcribeId, externalId)', async () => {

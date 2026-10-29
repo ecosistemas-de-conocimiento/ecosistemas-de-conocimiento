@@ -24,6 +24,9 @@
  *      'failed'` with an `anonymisation_held` reason (what an ordinary held
  *      draft carries), publish fields cleared. The gate's columns are not
  *      touched, so the row stays `held` with its `heldText`.
+ *   3. Once that write landed, ERASE both copies (`eraseWithdrawnCopies`,
+ *      audit 2026-10-28): a retired copy is hidden, not gone. An approval
+ *      re-enqueues the redacted text, so nothing needs the old copy.
  *
  * ── 🔴 THE REVISIÓN ROW ──────────────────────────────────────────────────────
  *
@@ -54,7 +57,7 @@ import type { Payload } from 'payload'
 import { corpusTextFor, rowMustPassGate } from './anonymiseDocument'
 import { draftCorpus, publishedCorpus } from './corpus'
 import { relationId } from './permissions'
-import { retireFrom, type CorpusMover } from './publishDocument'
+import { eraseWithdrawnCopies, retireFrom, type CorpusDeleter } from './publishDocument'
 
 const SHARED_STATES = ['published', 'publishing', 'unpublishing'] as const
 
@@ -82,6 +85,8 @@ export interface RepairHeldPublishedReport {
   unreviewable: Array<number | string>
   /** Rows whose retire or write failed; left as they were. */
   failed: Array<number | string>
+  /** Repaired rows whose erase failed in some corpus: retired, chunks still stored. */
+  notErased: Array<number | string>
   /**
    * 🔴 Rows mid-move (`publishing`/`unpublishing` with a `publishIngestId`):
    * skipped. Retiring now and letting the ingest land afterwards would leave
@@ -105,8 +110,8 @@ export async function repairHeldPublished(
   payload: Pick<Payload, 'find' | 'update'>,
   opts: {
     apply: boolean
-    /** Admin client for one ecosistema: retiring is an admin route. */
-    clientFor: (organizationId: number | string) => CorpusMover
+    /** Admin client for one ecosistema: retiring and erasing are admin routes. */
+    clientFor: (organizationId: number | string) => CorpusDeleter
     limit?: number
     now?: Date
     log?: (line: string) => void
@@ -129,6 +134,7 @@ export async function repairHeldPublished(
     ids: [],
     unreviewable: [],
     failed: [],
+    notErased: [],
     inFlight: [],
   }
 
@@ -187,8 +193,19 @@ export async function repairHeldPublished(
         overrideAccess: true,
         context: { __skipDocsExtract: true },
       } as never)) as unknown as { docs?: unknown[] }
-      if ((res?.docs?.length ?? 0) > 0) report.repaired += 1
-      else log(`doc ${row.id}: changed since it was read — left alone`)
+      if ((res?.docs?.length ?? 0) > 0) {
+        report.repaired += 1
+        // 3. 🔴 Erase both copies: the held text was never cleared (audit 2026-10-28).
+        const { failed } = await eraseWithdrawnCopies(
+          client,
+          [publishedCorpus(organizationId), ...(uploader != null ? [draftCorpus(organizationId, uploader)] : [])],
+          row.id,
+        )
+        if (failed.length > 0) {
+          report.notErased.push(row.id)
+          log(`doc ${row.id}: retired but NOT erased from ${failed.join(', ')}`)
+        }
+      } else log(`doc ${row.id}: changed since it was read — left alone`)
     } catch (err) {
       report.failed.push(row.id)
       log(`doc ${row.id}: NOT repaired: ${err instanceof Error ? err.message : String(err)}`)

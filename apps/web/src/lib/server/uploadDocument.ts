@@ -230,9 +230,34 @@ export async function uploadDocument(
     }),
   });
   const body = (await docRes.json().catch(() => ({}))) as Record<string, unknown>;
-  // ⚠ Payload's validation messages are English. Never pass one to the browser.
-  if (!docRes.ok) return { status: docRes.status, body: { error: 'document_create_failed' } };
+  if (!docRes.ok) {
+    await discardUpload(token, mediaId);
+    // ⚠ Payload's validation messages are English. Never pass one to the browser.
+    return { status: docRes.status, body: { error: 'document_create_failed' } };
+  }
   return { status: docRes.status, body };
+}
+
+/**
+ * 🔴 The document create was REFUSED, so nothing references the file we just
+ * stored: delete it (audit 2026-10-28, retention cluster). Without this every
+ * refused create — the Voz pre-check makes some deterministic — left the raw
+ * upload in storage with no row and no way for anyone to find or remove it.
+ *
+ * Best effort: a failed delete must not change the answer the user gets. Only
+ * on a definite non-2xx; a create whose response was lost may have succeeded,
+ * and its document would then point at nothing. The uploader may delete their
+ * own media (`mediaUploaderOnly`).
+ */
+async function discardUpload(token: string | undefined, mediaId: number | string): Promise<void> {
+  try {
+    const res = await backendFetch(token, `/api/media/${encodeURIComponent(String(mediaId))}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) console.warn('[upload] could not delete an orphaned upload', { mediaId, status: res.status });
+  } catch (err) {
+    console.warn('[upload] could not delete an orphaned upload', { mediaId, err: String(err) });
+  }
 }
 
 /**

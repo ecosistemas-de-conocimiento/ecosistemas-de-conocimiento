@@ -48,7 +48,11 @@ function client(calls: string[]) {
     calls.push(`retire:${corpus}`)
     return {}
   })
-  return { ingest: { enqueue: vi.fn() }, admin: { setDocumentValidity } }
+  const deleteDocument = vi.fn(async (corpus: string) => {
+    calls.push(`erase:${corpus}`)
+    return { deleted: true }
+  })
+  return { ingest: { enqueue: vi.fn() }, admin: { setDocumentValidity, deleteDocument } }
 }
 
 const participant = vi.fn(async (uploader: unknown) => String(uploader) === '2')
@@ -92,7 +96,8 @@ describe('regateMemberDocumentos', () => {
       clientFor: () => client(calls) as never,
       gate,
     })
-    expect(calls).toEqual(['retire:eco-1', 'row', 'gate'])
+    // 🔴 Erased from the shared and the draft corpus BEFORE the gate re-ingests (audit 2026-10-28).
+    expect(calls).toEqual(['retire:eco-1', 'row', 'erase:eco-1', 'erase:eco-1-draft-2', 'gate'])
     expect(store[0]).toMatchObject({
       anonymise: true,
       publicationStatus: 'draft',
@@ -119,6 +124,25 @@ describe('regateMemberDocumentos', () => {
     })
     expect(store[0]).toMatchObject({ publicationStatus: 'published', anonymise: false })
     expect(report.failed).toEqual(['1'])
+  })
+
+  it('a failed erase still regates the row', async () => {
+    const { payload, calls } = fakeDb([doc(1)])
+    const c = client(calls)
+    c.admin.deleteDocument.mockImplementation(async () => {
+      throw Object.assign(new Error('unavailable'), { status: 503 })
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const lines: string[] = []
+    const report = await regateMemberDocumentos(payload, {
+      apply: true,
+      isParticipant: participant,
+      clientFor: () => c as never,
+      gate: vi.fn(),
+      log: (l) => lines.push(l),
+    })
+    expect(report).toMatchObject({ regated: 1, failed: [] })
+    expect(lines.some((l) => l.includes('NOT erased'))).toBe(true)
   })
 
   it('a row with no extracted text is withdrawn but not gated', async () => {

@@ -74,7 +74,15 @@ function fakeClient(calls: string[] = []) {
     calls.push(`retire:${corpus}`)
     return {}
   })
-  return { client: { ingest: { enqueue: vi.fn() }, admin: { setDocumentValidity } }, setDocumentValidity }
+  const deleteDocument = vi.fn(async (corpus: string, _id: string): Promise<unknown> => {
+    calls.push(`erase:${corpus}`)
+    return { deleted: true }
+  })
+  return {
+    client: { ingest: { enqueue: vi.fn() }, admin: { setDocumentValidity, deleteDocument } },
+    setDocumentValidity,
+    deleteDocument,
+  }
 }
 
 describe('rejectPublished', () => {
@@ -113,7 +121,16 @@ describe('rejectPublished', () => {
     const { client } = fakeClient(calls)
     await rejectPublished({ payload, documentId: 7, user: reviewer, clientFor: () => client })
 
-    expect(calls).toEqual(['audit', 'retire:eco-1', 'row', 'delete:graphMentions', 'delete:graphRelations', 'graphStatus'])
+    expect(calls).toEqual([
+      'audit',
+      'retire:eco-1',
+      'row',
+      'delete:graphMentions',
+      'delete:graphRelations',
+      'graphStatus',
+      'erase:eco-1',
+      'erase:eco-1-draft-2',
+    ])
     for (const d of deleted) {
       expect((d as { where: { and: unknown[] } }).where.and).toEqual(
         expect.arrayContaining([{ organization: { equals: 1 } }, { document: { equals: 7 } }]),
@@ -121,6 +138,30 @@ describe('rejectPublished', () => {
     }
     expect(store).toMatchObject({ graphStatus: 'skipped' })
     expect(String(store?.graphError)).toMatch(/^not_graphable:/)
+  })
+
+  it('🔴 ERASES the shared and the draft copy once the row is withdrawn (audit 2026-10-28)', async () => {
+    const { payload, calls } = fakePayload(published())
+    const { client, deleteDocument } = fakeClient(calls)
+    await rejectPublished({ payload, documentId: 7, user: reviewer, clientFor: () => client })
+    expect(deleteDocument.mock.calls).toEqual([
+      ['eco-1', '7'],
+      ['eco-1-draft-2', '7'],
+    ])
+    // Retired first: the erase is never the only thing hiding it.
+    expect(calls.indexOf('retire:eco-1')).toBeLessThan(calls.indexOf('erase:eco-1'))
+  })
+
+  it('a failed erase does not fail the reject: the copy is already retired', async () => {
+    const { payload, store, calls } = fakePayload(published())
+    const { client, deleteDocument } = fakeClient(calls)
+    deleteDocument.mockImplementation(async () => {
+      throw Object.assign(new Error('unavailable'), { status: 503 })
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const out = await rejectPublished({ payload, documentId: 7, user: reviewer, clientFor: () => client })
+    expect(out.decision).toBe('rejected')
+    expect(store?.publicationStatus).toBe('draft')
   })
 
   it('leaves the graph alone when a concurrent unpublish won the row', async () => {
@@ -133,13 +174,18 @@ describe('rejectPublished', () => {
     })
     await rejectPublished({ payload, documentId: 7, user: reviewer, clientFor: () => client })
     expect(calls.filter((c) => c.startsWith('delete:'))).toEqual([])
+    // Nor erases: the unpublish owns the row and may be re-ingesting the draft.
+    expect(calls.filter((c) => c.startsWith('erase:'))).toEqual([])
   })
 
   it('a failed retire leaves the row published and throws', async () => {
     const { payload, store } = fakePayload(published())
     const client = {
       ingest: { enqueue: vi.fn() },
-      admin: { setDocumentValidity: vi.fn(async () => { throw Object.assign(new Error('x'), { status: 500 }) }) },
+      admin: {
+        setDocumentValidity: vi.fn(async () => { throw Object.assign(new Error('x'), { status: 500 }) }),
+        deleteDocument: vi.fn(),
+      },
     }
     await expect(rejectPublished({ payload, documentId: 7, user: reviewer, clientFor: () => client })).rejects.toThrow()
     expect(store?.publicationStatus).toBe('published')

@@ -42,7 +42,12 @@ const held = (id: number, over: Row = {}): Row => ({
 
 function client() {
   const setDocumentValidity = vi.fn(async (_corpus: string, _externalId: string, _bounds: unknown) => ({}))
-  return { mover: { ingest: { enqueue: vi.fn() }, admin: { setDocumentValidity } }, setDocumentValidity }
+  const deleteDocument = vi.fn(async (_corpus: string, _externalId: string): Promise<unknown> => ({ deleted: true }))
+  return {
+    mover: { ingest: { enqueue: vi.fn() }, admin: { setDocumentValidity, deleteDocument } },
+    setDocumentValidity,
+    deleteDocument,
+  }
 }
 
 describe('isSharedButNotCleared', () => {
@@ -96,6 +101,45 @@ describe('repairHeldPublished', () => {
     expect(String(repaired.ingestError)).toMatch(/^anonymisation_held: verify: /)
     // The cleared row and the ordinary held draft are not touched.
     expect(db.store.find((r) => r.id === 5)!.publicationStatus).toBe('published')
+  })
+
+  it('🔴 apply ERASES both copies of each repaired row, after retiring them (audit 2026-10-28)', async () => {
+    const db = fakeDb(rows())
+    const ai = client()
+    const report = await repairHeldPublished(db.payload, { apply: true, clientFor: () => ai.mover })
+    expect(ai.deleteDocument.mock.calls.map((c) => `${c[0]}/${c[1]}`)).toEqual([
+      'eco-1/227',
+      'eco-1-draft-2/227',
+      'eco-3/28',
+      'eco-3-draft-2/28',
+    ])
+    expect(report.notErased).toEqual([])
+    expect(ai.setDocumentValidity.mock.invocationCallOrder[0]!).toBeLessThan(
+      ai.deleteDocument.mock.invocationCallOrder[0]!,
+    )
+  })
+
+  it('a failed erase still repairs the row and lists it as not erased', async () => {
+    const db = fakeDb([held(227)])
+    const ai = client()
+    ai.deleteDocument.mockImplementation(async () => {
+      throw Object.assign(new Error('unavailable'), { status: 503 })
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const report = await repairHeldPublished(db.payload, { apply: true, clientFor: () => ai.mover })
+    expect(report).toMatchObject({ repaired: 1, failed: [], notErased: [227] })
+    expect(db.store[0]!.publicationStatus).toBe('draft')
+  })
+
+  it('never erases a row that changed since it was read', async () => {
+    const db = fakeDb([held(227)])
+    const ai = client()
+    ai.setDocumentValidity.mockImplementationOnce(async () => {
+      db.store[0]!.anonymisationStatus = 'approved'
+      return {}
+    })
+    await repairHeldPublished(db.payload, { apply: true, clientFor: () => ai.mover })
+    expect(ai.deleteDocument).not.toHaveBeenCalled()
   })
 
   it('is idempotent: a second apply matches nothing', async () => {

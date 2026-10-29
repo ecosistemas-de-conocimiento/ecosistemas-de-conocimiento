@@ -244,3 +244,37 @@ describe('failPublish — a failure with no words in it is still a failure', () 
     },
   )
 })
+
+describe('🔴 eraseWithdrawnCopies (audit 2026-10-28, retention cluster)', () => {
+  const mover = (deleteImpl: (corpus: string) => Promise<unknown>) => ({
+    ingest: { enqueue: vi.fn() },
+    admin: { setDocumentValidity: vi.fn(), deleteDocument: vi.fn(async (corpus: string) => deleteImpl(corpus)) },
+  })
+
+  it('erases each corpus; ai-service’s own not-found counts as erased', async () => {
+    const { eraseWithdrawnCopies } = await import('./publishDocument')
+    const client = mover(async (corpus) => {
+      if (corpus === 'eco-1-draft-2') throw Object.assign(new Error('nf'), { status: 404, code: 'DOCUMENT_NOT_FOUND' })
+      return { deleted: true }
+    })
+    const out = await eraseWithdrawnCopies(client, ['eco-1', 'eco-1-draft-2'], 7)
+    expect(out).toEqual({ erased: ['eco-1', 'eco-1-draft-2'], failed: [] })
+    expect(client.admin.deleteDocument.mock.calls).toEqual([
+      ['eco-1', '7'],
+      ['eco-1-draft-2', '7'],
+    ])
+  })
+
+  it('never throws: a failure is logged with ids and returned, and the next corpus is still tried', async () => {
+    const { eraseWithdrawnCopies } = await import('./publishDocument')
+    const warn = vi.fn()
+    const client = mover(async (corpus) => {
+      if (corpus === 'eco-1') throw Object.assign(new Error('route'), { status: 404 })
+      return {}
+    })
+    const out = await eraseWithdrawnCopies(client, ['eco-1', 'eco-1-draft-2'], 7, { warn })
+    // ⚠ A bare 404 (no ai-service code) is an ai-service without the route, not absence.
+    expect(out).toEqual({ erased: ['eco-1-draft-2'], failed: ['eco-1'] })
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ corpus: 'eco-1', documentId: '7' }), expect.any(String))
+  })
+})

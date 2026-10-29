@@ -355,6 +355,19 @@ class JobStore:
         pipe.expire(key, self.callback_ttl)
         await pipe.execute()
 
+    async def expire_after_delivery(self, delivery_id: str, source_id: str, ttl: int) -> None:
+        """Shorten a delivered callback's row and its job's transcript to `ttl`.
+
+        `lt=True`: only ever SHORTENS. A key already closer to expiry keeps its
+        TTL, and a missing key (no transcript yet, e.g. a progress event) is a
+        no-op rather than a key created with no value.
+        """
+        pipe = self.redis.pipeline()
+        pipe.expire(CALLBACK_PREFIX + delivery_id, ttl, lt=True)
+        if source_id:
+            pipe.expire(TRANSCRIPT_PREFIX + source_id, ttl, lt=True)
+        await pipe.execute()
+
     # ── Worker heartbeat ────────────────────────────────────────────────────
     async def set_worker_heartbeat(self, ttl_seconds: int, payload: Mapping[str, Any]) -> None:
         await self.redis.set(
