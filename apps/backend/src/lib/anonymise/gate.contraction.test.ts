@@ -54,6 +54,10 @@ describe('a span copied as "el …" where the text says "del …"', () => {
   it('takes the rest only right after "del" or "al", never on its own', async () => {
     const text = 'Hay un centro de salud de San Gregorio y otro en Tlaltizapán.'
     const r = await run(text, [[{ texto: 'el centro de salud de San Gregorio', tipo: 'lugar' }], []])
-    expect(r.status === 'ready' && r.redactedText).toBe(text)
+    // 🔴 Audit 2026-10-28, item 3: a span that cannot be located HOLDS (it was
+    // dropped, and the text went out `ready`). Still nothing is rewritten.
+    expect(r.status).toBe('hold')
+    expect(r.status === 'hold' && r.stage).toBe('content')
+    expect(r.status === 'hold' && r.redactedText).toBe(text)
   })
 })

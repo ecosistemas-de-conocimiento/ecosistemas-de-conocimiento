@@ -34,7 +34,12 @@ describe('autoPublishBlocker — which drafts the system may publish', () => {
   it.each([
     ['gate ready', draft(), null],
     ['approved by a reviewer', draft({ anonymisationStatus: 'approved' }), null],
-    ['an ungated documento', draft({ contentKind: 'documento', anonymisationStatus: 'n/a', redactedText: null }), null],
+    // 🔴 Audit 2026-10-28, item 8: an UNGATED documento (a legacy row, or an
+    // uploader later demoted to member) is never shared by the system.
+    ['an ungated documento', draft({ contentKind: 'documento', anonymisationStatus: 'n/a', redactedText: null }), 'not-gated'],
+    ['an ungated documento, anonymise false', draft({ contentKind: 'documento', anonymise: false, anonymisationStatus: 'n/a', redactedText: null }), 'not-gated'],
+    ['a gated documento, gate ready', draft({ contentKind: 'documento', anonymise: true }), null],
+    ['a gated documento, gate not run', draft({ contentKind: 'documento', anonymise: true, anonymisationStatus: 'n/a', redactedText: null }), 'gate-not-cleared'],
     ['held by the gate', draft({ anonymisationStatus: 'held', redactedText: null }), 'gate-not-cleared'],
     ['gate still running', draft({ anonymisationStatus: 'pending' }), 'gate-not-cleared'],
     ['ready but no redaction', draft({ redactedText: '' }), 'gate-not-cleared'],
@@ -107,6 +112,17 @@ describe('autoPublishParticipantDocument', () => {
     const { client, enqueue } = fakeClient()
     const out = await autoPublishParticipantDocument({ payload, documentId: 7, clientFor: () => client })
     expect(out).toEqual({ published: false, reason: 'gate-not-cleared' })
+    expect(enqueue).not.toHaveBeenCalled()
+    expect(store?.publicationStatus).toBe('draft')
+  })
+
+  it('🔴 never publishes an ungated documento, even a current member’s (audit 2026-10-28, item 8)', async () => {
+    const { payload, store } = fakePayload(
+      draft({ kind: 'pdf', contentKind: 'documento', anonymisationStatus: 'n/a', redactedText: null }),
+    )
+    const { client, enqueue } = fakeClient()
+    const out = await autoPublishParticipantDocument({ payload, documentId: 7, clientFor: () => client })
+    expect(out).toEqual({ published: false, reason: 'not-gated' })
     expect(enqueue).not.toHaveBeenCalled()
     expect(store?.publicationStatus).toBe('draft')
   })

@@ -35,7 +35,7 @@
 import type { Payload } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
-import { corpusTextFor } from './anonymiseDocument'
+import { corpusTextFor, rowMustPassGate } from './anonymiseDocument'
 import { isContentKind } from './contentKind'
 import { featureEnabled } from './features'
 import { relationId, roleInOrganization, type OrgRole } from './permissions'
@@ -51,6 +51,8 @@ export type AutoPublishSkip =
   | 'not-ingested'
   | 'rejected'
   | 'gate-not-cleared'
+  /** An ungated `documento` (no `anonymise`): never shared by the system. */
+  | 'not-gated'
   | 'no-organization'
   | 'not-participant'
   /** The ecosistema switched `autoPublishMembers` off (`lib/features.ts`). */
@@ -69,12 +71,19 @@ export type AutoPublishOutcome = { published: true } | { published: false; reaso
  *
  * ⚠ `rejected` is checked for every kind. A reviewer's "no" on a published
  * `documento` (`lib/rejectPublished.ts`) must not be undone by a re-ingest.
+ *
+ * 🔴 AN UNGATED ROW NEVER AUTO-PUBLISHES (audit 2026-10-28, item 8). A
+ * `documento` without `anonymise` never passed the gate: a legacy upload from
+ * before the 10-26 ruling, or a staff upload whose uploader was later demoted
+ * to `member`. `corpusTextFor` returns its raw text as `ok`, so without this
+ * check the system shared every name in it. It stays a draft for staff.
  */
 export function autoPublishBlocker(row: Record<string, unknown>): AutoPublishSkip | null {
   if (!isContentKind(row.contentKind) || row.contentKind === 'conversacion') return 'not-a-contribution'
   if (row.publicationStatus !== 'draft') return 'not-draft'
   if (row.anonymisationStatus === 'rejected') return 'rejected'
   if (row.ingestStatus !== 'ready') return 'not-ingested'
+  if (!rowMustPassGate(row)) return 'not-gated'
   if (!corpusTextFor(row).ok) return 'gate-not-cleared'
   return null
 }

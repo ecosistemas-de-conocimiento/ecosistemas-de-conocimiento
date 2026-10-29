@@ -418,6 +418,7 @@ let lastFold: { source: string; folded: string; startOf: number[] } | null = nul
 /** Drop the cached text. The gate calls it on exit, so no document text outlives its run. */
 export function clearFoldCache(): void {
   lastFold = null
+  lastLoose = null
 }
 
 function foldSource(source: string): { folded: string; startOf: number[] } {
@@ -462,6 +463,79 @@ export function foldedMatches(source: string, needle: string): Array<[number, nu
   return out
 }
 
+const SPACE = /\s/u
+/** Every hyphen and dash spelling: `-`, `‐`, `‑`, `‒`, `–`, `—`, `−`, `﹣`, `－`. */
+const HYPHEN = /[-‐-—−﹣－]/u
+/** Every apostrophe spelling: `'`, `‘`, `’`, `ʼ`, `´`, `` ` ``, `＇`. */
+const APOSTROPHE = /['‘’ʼ´`＇]/u
+const SOFT_HYPHEN = '­'
+
+/**
+ * The LOOSE fold: the per-character fold, plus every whitespace run as one
+ * space, every hyphen as `-` with no space around it, every apostrophe as `'`,
+ * and soft hyphens (and the line break after one) dropped. With the offset map.
+ *
+ * 🔴 AUDIT 2026-10-28 ITEM 3: a PDF line break or a double space inside a name
+ * ("Nicéfora\nTlapalcoyotl") made the model's "Nicéfora Tlapalcoyotl"
+ * unlocatable, and the gate returned `ready` with the name in the text.
+ *
+ * ⚠ ONE PASS, NO REGEX OVER THE TEXT: linear on a 2M-character single line.
+ */
+function looseFold(source: string): { folded: string; startOf: number[] } {
+  const parts: string[] = []
+  const startOf: number[] = []
+  // One `startOf` entry per UTF-16 unit of the folded text: `indexOf` counts units.
+  const push = (f: string, i: number) => {
+    parts.push(f)
+    for (let k = 0; k < f.length; k++) startOf.push(i)
+  }
+  let glue = false // after a hyphen or soft hyphen: swallow the whitespace that follows
+  for (let i = 0; i < source.length; ) {
+    const ch = String.fromCodePoint(source.codePointAt(i) as number)
+    if (ch === SOFT_HYPHEN) {
+      glue = true
+    } else if (SPACE.test(ch)) {
+      if (!glue && parts.length > 0 && parts[parts.length - 1] !== ' ') push(' ', i)
+    } else if (HYPHEN.test(ch)) {
+      if (parts[parts.length - 1] === ' ') {
+        parts.pop()
+        startOf.pop()
+      }
+      push('-', i)
+      glue = true
+    } else {
+      glue = false
+      for (const f of APOSTROPHE.test(ch) ? "'" : foldChar(ch)) push(f, i)
+    }
+    i += ch.length
+  }
+  return { folded: parts.join(''), startOf }
+}
+
+/** The loose fold of the LAST source seen. Same lifetime and reason as `lastFold`. */
+let lastLoose: { source: string; folded: string; startOf: number[] } | null = null
+
+/**
+ * Every `[start, end)` range of `source` that equals `needle` once both are
+ * LOOSE-folded (see `looseFold`): case, accents, whitespace runs, hyphen and
+ * apostrophe spellings all ignored. A superset of `foldedMatches`.
+ */
+export function looseMatches(source: string, needle: string): Array<[number, number]> {
+  if (lastLoose === null || lastLoose.source !== source) lastLoose = { source, ...looseFold(source) }
+  const { folded, startOf } = lastLoose
+  const want = looseFold(needle.trim()).folded.trim()
+  const out: Array<[number, number]> = []
+  if (want.length === 0) return out
+  for (let at = folded.indexOf(want); at !== -1; at = folded.indexOf(want, at + 1)) {
+    const begin = startOf[at] as number
+    const lastStart = startOf[at + want.length - 1] as number
+    let end = lastStart + String.fromCodePoint(source.codePointAt(lastStart) as number).length
+    while (end < source.length && /\p{M}/u.test(source.charAt(end))) end++
+    out.push([begin, end])
+  }
+  return out
+}
+
 /**
  * `needle` as the text spells it: exactly, else case- and accent-blind, giving
  * back the substring of `source` it matched. Null when it is not there at all.
@@ -492,6 +566,10 @@ export function locateSpan(source: string, needle: string): string | null {
     if (clear(at, at + needle.length)) return needle
   }
   for (const [begin, end] of foldedMatches(source, needle)) {
+    if (clear(begin, end)) return source.slice(begin, end)
+  }
+  // 🔴 Then whitespace-, hyphen- and apostrophe-blind (audit 2026-10-28, item 3).
+  for (const [begin, end] of looseMatches(source, needle)) {
     if (clear(begin, end)) return source.slice(begin, end)
   }
   return null
@@ -587,9 +665,11 @@ export function parseFindings(raw: string, sourceText: string): ParsedFindings {
     // 🔴 HALLUCINATION FILTER. A `texto` that does not occur in the input cannot
     // be replaced — `String.replace` would find nothing — so keeping it would
     // inflate the report's counts with redactions that never happened, and make
-    // stage 4 look like it verified something it did not. Dropping it is not
-    // permissive: the text it claims to describe is still in the document and
-    // stage 4 still runs over the result.
+    // stage 4 look like it verified something it did not. It goes to
+    // `unlocated`, and 🔴 THE GATE HOLDS ON IT (audit 2026-10-28, item 3, fail
+    // closed): a span we cannot place may be a name we cannot see.
+    // ⚠ Located case-, accent-, whitespace-, hyphen- and apostrophe-blind
+    // (`locateSpan`): a line break inside a name is no reason to hold.
     //
     // ⚠ ONE RESCUE: a span in the wrong case or without its accents. Measured
     // 2026-10-17, 9,454 words: the model returned "la maestra Nicasia Olvera"

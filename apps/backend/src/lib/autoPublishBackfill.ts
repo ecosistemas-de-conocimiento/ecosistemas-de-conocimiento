@@ -10,6 +10,8 @@
  *     back through the gate. The ordinary `afterChange` hook gates and ingests it;
  *     the draft callback then publishes it, or the gate holds it for Revisión.
  *   · `held`                                    → left in Revisión
+ *   · an UNGATED `documento` (no `anonymise`)    → skipped `not-gated`, never
+ *     published raw (audit 2026-10-28, item 8)
  *   · anything else (in flight, no text, …)     → listed, not touched
  *
  * 🔴 DRY RUN BY DEFAULT: no write, no ai-service call, no model call.
