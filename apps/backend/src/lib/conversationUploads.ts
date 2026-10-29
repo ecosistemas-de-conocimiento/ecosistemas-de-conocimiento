@@ -332,8 +332,11 @@ async function isReferencedElsewhere(
   return false
 }
 
-/** Is this media row the given person's? A missing row is nobody's. */
-async function isOwnersMedia(
+/**
+ * Is this media row the given person's? A missing row is nobody's.
+ * Also the `documents.mediaFile` write guard (`bindDocumentToEcosystem`).
+ */
+export async function isOwnersMedia(
   mediaId: Id,
   ownerId: unknown,
   { payload, req }: Pick<ConversationUploadDeps, 'payload' | 'req'>,
