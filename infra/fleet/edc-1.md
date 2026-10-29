@@ -109,7 +109,7 @@ dashboard without it.
 
 ### DNS (Cloudflare, DNS only — proxy OFF)
 
-`A` records to `<edc-1-ip>`: apex, `dev`, `*.dev`, `montaje`, `*.montaje`, `coolify`.
+`A` records to `<edc-1-ip>`: apex (redirects to dev, §9), `dev`, `*.dev`, `montaje`, `*.montaje`, `coolify`.
 Proxy must stay OFF: Traefik on the box obtains Let's Encrypt certificates over HTTP-01.
 
 ---
@@ -2809,3 +2809,31 @@ pruned, 12 GB used, 61 GB free; images 7.0 GB in all, build cache 0.
 
 ⚠ The build cache grows with every deploy — 7–16 GB per environment deploy here. Coolify's scheduled Docker cleanup prunes it; if disk
 climbs, run `docker builder prune -f` on the box.
+
+---
+
+## 9. Apex redirect (done 2026-10-28)
+
+`https://ecosistemasdeconocimiento.com` answers 308 to `https://dev.ecosistemasdeconocimiento.com/`,
+keeping path and query. `http://` on the apex redirects straight there too.
+
+- How: one hand-written Traefik file, `/data/coolify/proxy/dynamic/edc-apex-redirect.yaml`.
+  Coolify's proxy watches that directory (`--providers.file.watch=true`); no restart needed.
+  It holds a `redirectRegex` middleware, `http` and `https` routers on the apex host,
+  `certResolver: letsencrypt`, and an empty service.
+- Why not a domain on the dev app: the app would serve under two hosts and split cookies and CORS.
+- Coolify does not generate or overwrite this file. Keep it out of `coolify.yaml` and
+  `default_redirect_503.yaml`, which Coolify regenerates.
+- `www` has no DNS record, so it is not handled. Add `www` to the `Host()` rule with
+  `||` and to the regex once a record exists.
+- Undo: delete the file. The apex returns to the 503 catch-all within seconds.
+
+Verified 2026-10-28 (measured, from the owner's laptop, curl without `-k`):
+
+| check | result |
+|---|---|
+| `curl -sI https://ecosistemasdeconocimiento.com` | `308`, `location: https://dev.ecosistemasdeconocimiento.com/` |
+| `curl -sI 'https://ecosistemasdeconocimiento.com/foo?x=1'` | `308`, location keeps `/foo?x=1` |
+| `curl -sI http://ecosistemasdeconocimiento.com` | `308` to the dev https URL |
+| apex certificate | Let's Encrypt `YR2`, `CN=ecosistemasdeconocimiento.com`, expires 2027-01-27 |
+| dev, montaje, coolify | `401`, `401`, `302` — same as before the change |
