@@ -53,6 +53,7 @@ describe('statusPills', () => {
     expect(statusPills({ ...base, publicationStatus: 'published' })[0]).toMatchObject({ label: 'Publicado', tone: 'shared' });
     expect(statusPills({ ...base, publicationStatus: 'failed' })[0]?.tone).toBe('error');
     expect(statusPills({ ...base, publicationStatus: 'publishing' })[0]?.busy).toBe(true);
+    expect(statusPills({ ...base, publicationStatus: 'published', changesPending: true })[0]).toMatchObject({ label: 'Publicado', busy: true });
   });
 
   it('Conexiones shows only while preparing or unfinished, with its e2e testid', () => {

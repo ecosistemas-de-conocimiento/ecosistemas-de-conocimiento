@@ -37,7 +37,7 @@
   import { deleteConfirmCopy } from '$lib/documents';
   import { canRetryIngest, publishConfirmCopy } from '$lib/ingest';
   import { canRetryGraph, GRAPH_RETRY_LABEL } from '$lib/graphStatus';
-  import { publishGate } from '$lib/publication';
+  import { noteEdited, publishGate } from '$lib/publication';
   import { isInFlight, kindTile, publishLabel, statusPills } from '$lib/misDocumentos';
   import { AUDIO_UPLOAD_ENABLED, mayUploadVoces } from '$lib/uploadKind';
   import { page } from '$app/stores';
@@ -107,6 +107,9 @@
       ingestStatus: d.ingestStatus,
       manual: manualPublish,
       note: studentNote(d),
+      // "Publicar cambios" on a published note whose text changed since it was sent.
+      edited: noteEdited(d),
+      changesPending: d.changesPending === true,
     });
   }
 

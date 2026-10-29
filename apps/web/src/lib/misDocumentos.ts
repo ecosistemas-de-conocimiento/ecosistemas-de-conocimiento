@@ -37,7 +37,7 @@ type DocLike = Pick<
   | 'publicationStatus'
   | 'graphStatus'
   | 'subtitle'
->;
+> & { changesPending?: boolean };
 
 /** The square tile on the left of a card: what kind of thing this is. */
 export function kindTile(d: Pick<DocLike, 'kind' | 'isNote' | 'subtitle'>): { label: string; tone: 'note' | 'audio' | 'voz' | 'file' } {
@@ -91,7 +91,8 @@ export function statusPills(d: DocLike): Pill[] {
     label: pub.label,
     tone: PUBLICATION_TONE[pub.tone] ?? 'neutral',
     title: pub.description,
-    busy: d.publicationStatus === 'publishing' || d.publicationStatus === 'unpublishing',
+    // `changesPending`: "Publicar cambios" is running on a published note.
+    busy: d.publicationStatus === 'publishing' || d.publicationStatus === 'unpublishing' || d.changesPending === true,
   });
 
   const graph = graphBadge(d.graphStatus);
@@ -120,11 +121,12 @@ const RUNNING_INGEST = new Set(['pending', 'extracting', 'transcribing', 'transc
  * Is anything on this row still moving? The list re-reads itself while one is,
  * so a pill never sits on "En cola" after the work finished.
  */
-export function isInFlight(d: Pick<DocLike, 'ingestStatus' | 'publicationStatus' | 'graphStatus'>): boolean {
+export function isInFlight(d: Pick<DocLike, 'ingestStatus' | 'publicationStatus' | 'graphStatus' | 'changesPending'>): boolean {
   return (
     RUNNING_INGEST.has(d.ingestStatus) ||
     d.publicationStatus === 'publishing' ||
     d.publicationStatus === 'unpublishing' ||
+    d.changesPending === true ||
     d.graphStatus === 'pending' ||
     d.graphStatus === 'extracting'
   );
