@@ -51,6 +51,8 @@ export interface EditableEcosystem {
   id: string;
   name: string;
   slug: string;
+  /** Switched off (`organizations.isActive`). Missing = active: only the default pick reads it. */
+  isActive: boolean;
   features: Features;
   answerStyles: AnswerStyles;
 }
@@ -93,6 +95,7 @@ export async function fetchEditables(token: string | undefined): Promise<Editabl
         id: String(e.id ?? ''),
         name: typeof e.name === 'string' ? e.name : '',
         slug: typeof e.slug === 'string' ? e.slug : '',
+        isActive: e.isActive !== false,
         features: resolveFeatures(e.features),
         answerStyles: resolveAnswerStyles(e.answerStyles),
       })),
