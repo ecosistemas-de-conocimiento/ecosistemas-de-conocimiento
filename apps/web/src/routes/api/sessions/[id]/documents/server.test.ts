@@ -605,3 +605,18 @@ describe('POST /api/sessions/[id]/documents — contentKind', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('GET /api/sessions/[id]/documents — uploadedByCaller', () => {
+  it('marks the caller’s own rows, so the panel offers the note editor on them only', async () => {
+    const { GET } = await import('./+server');
+    vi.mocked(backendFetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ docs: [{ id: 5, uploadedBy: 1 }, { id: 6, uploadedBy: { id: 2 } }] }), { status: 200 }),
+    );
+    const res = await GET(makeEvent({ request: new Request('http://chat.test/api/sessions/42/documents') }) as never);
+    const body = (await res.json()) as { docs: Array<{ id: number; uploadedByCaller: boolean }> };
+    expect(body.docs.map((d) => [d.id, d.uploadedByCaller])).toEqual([
+      [5, true],
+      [6, false],
+    ]);
+  });
+});

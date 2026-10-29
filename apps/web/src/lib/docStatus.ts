@@ -81,3 +81,38 @@ export function docStatusBadge(input: DocStatusInput): IngestBadge | null {
       return ingestBadge(input.ingestStatus, input.kind, input.audioMeta);
   }
 }
+
+/**
+ * May the caller edit this note's text in the app (Editar / Vista previa)?
+ *
+ * 🔴 PUBLISHED NOTES TOO (bug measured on dev 3f275c5, 2026-10-28). The editor
+ * used to render only for a note with no pipeline (`ingestStatus: 'n/a'`), and
+ * a published note is `ready`, so "Publicar cambios" could never be reached:
+ * nothing could change the body. Editing a published note is safe: autosave
+ * (`PATCH /api/documents/:id/note`) writes only the body, and peers keep the
+ * published text until "Publicar cambios" clears the gate (backend
+ * `lib/studentNotes.ts`).
+ *
+ * ⚠ OWN NOTES ONLY. `uploadedByCaller` must say so. A row that did not say
+ * (`undefined`) is trusted only as a private draft with no pipeline: nobody
+ * else's draft can reach the caller's lists. The backend refuses the others.
+ *
+ * Never an uploaded file (`isNote` false), never a row a reviewer holds, never
+ * mid-pipeline.
+ */
+export function canEditNote(d: {
+  kind?: DocKind;
+  isNote?: boolean;
+  uploadedByCaller?: boolean;
+  publicationStatus?: string;
+  ingestStatus: IngestStatus | undefined;
+  anonymisationStatus?: AnonymisationStatus;
+  ingestError?: string | null;
+}): boolean {
+  if (d.kind !== 'markdown' || d.isNote !== true) return false;
+  if (gateState(d) === 'review') return false;
+  const ingest = d.ingestStatus ?? 'n/a';
+  if (ingest !== 'n/a' && ingest !== 'ready' && ingest !== 'failed') return false;
+  if (d.uploadedByCaller === true) return true;
+  return d.uploadedByCaller === undefined && ingest === 'n/a' && (d.publicationStatus ?? 'draft') === 'draft';
+}

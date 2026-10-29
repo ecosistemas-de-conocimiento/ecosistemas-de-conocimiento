@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { app } from '$lib/stores/app.svelte';
   import { Button } from '$lib/primitives';
@@ -24,7 +25,7 @@
     UPLOAD_KIND_LABELS,
     type UploadContentKind,
   } from '$lib/uploadKind';
-  import { docStatusBadge, gateState, isIngestFailure } from '$lib/docStatus';
+  import { canEditNote, docStatusBadge, gateState, isIngestFailure } from '$lib/docStatus';
   import {
     audioMetaChips,
     canRetryIngest,
@@ -58,9 +59,16 @@
    * It does NOT write `app.docsPanelOpen`: that value is persisted per
    * conversation and belongs to the desktop layout.
    */
-  let { forceExpanded = false }: { forceExpanded?: boolean } = $props();
+  let {
+    forceExpanded = false,
+    openId = null,
+  }: {
+    forceExpanded?: boolean;
+    /** A document to show expanded on arrival (tests render with it). */
+    openId?: string | null;
+  } = $props();
 
-  let expandedId = $state<string | null>(null);
+  let expandedId = $state<string | null>(untrack(() => openId));
   const previewIds = new SvelteSet<string>();
   let fileInput = $state<HTMLInputElement | null>(null);
   let uploading = $state(false);
@@ -268,7 +276,7 @@
   /** The publish action's availability for one document, with its reason. */
   /** Student view: a student's own note is published by hand (owner ruling 2026-10-28). */
   const isStudent = $derived($page.data?.studentAccess?.student === true);
-  const studentNote = (d: WorkingDoc) => isStudent && d.isNote === true;
+  const studentNote = (d: WorkingDoc) => isStudent && d.isNote === true && d.uploadedByCaller !== false;
 
   function gateOf(d: WorkingDoc) {
     return publishGate({
@@ -568,6 +576,7 @@
                 title={isOpen ? 'Contraer' : 'Expandir'}
                 aria-label="Mostrar u ocultar el documento"
                 aria-expanded={isOpen}
+                data-testid={`doc-toggle-${d.id}`}
               >
                 <svg
                   width="14"
@@ -601,7 +610,7 @@
                   ><TestimonySource audio={d.kind === 'audio'} day={d.subtitle} /></span
                 >
               {/if}
-              {#if d.kind && !isNote(d)}
+              {#if d.kind && !isNote(d) && d.isNote !== true}
                 <span class="chip text-[9px] uppercase tracking-wider">{d.kind}</span>
               {/if}
               {#if statusBadge(d)}
@@ -707,7 +716,11 @@
                 {pub.label}
               </span>
 
-              {#if gate.canPublish && sid}
+              {#if (gate.canPublish || (studentNote(d) && d.changesPending === true)) && sid}
+                <!-- While "Publicar cambios" runs (`changesPending`) the button
+                     stays, spinning and disabled: the badge still reads
+                     "Publicado", so it is the only sign that the change is on
+                     its way. -->
                 <!-- `outline`, not `soft`: Button has no `.tone-*.variant-soft`
                      rules, so a soft button ignores `tone` entirely and the
                      retry would look identical to a first publish. `outline`
@@ -722,8 +735,8 @@
                     : d.publicationStatus === 'published'
                       ? 'Publicar cambios'
                       : 'Publicar en mi ecosistema'}
-                  loading={d.publishRequestPending === true}
-                  disabled={d.publishRequestPending === true}
+                  loading={d.publishRequestPending === true || d.changesPending === true}
+                  disabled={d.publishRequestPending === true || d.changesPending === true}
                   dataTestId={`publish-${d.id}`}
                   onClick={() => publish(sid, d)}
                 />
@@ -839,7 +852,10 @@
 
             {#if isOpen}
               <div class="border-t border-elevated">
-                {#if !isNote(d)}
+                <!-- 🔴 `canEditNote`, not `isNote`: a PUBLISHED own note
+                     (`ingestStatus: 'ready'`) gets the editor too, or "Publicar
+                     cambios" can never be reached (dev 3f275c5, 2026-10-28). -->
+                {#if !canEditNote(d)}
                   <!-- 🔴 READING THE TRANSCRIPT. Automatic transcription gets
                        words wrong, and this text is about to be quoted as fact
                        to everyone in the ecosistema. Until now it was stored,
@@ -1018,6 +1034,7 @@
                     value={d.body}
                     aria-label="Contenido del documento"
                     placeholder="Contenido en Markdown…"
+                    data-testid={`note-edit-${d.id}`}
                     oninput={(e) => {
                       if (sid) {
                         d.body = e.currentTarget.value;

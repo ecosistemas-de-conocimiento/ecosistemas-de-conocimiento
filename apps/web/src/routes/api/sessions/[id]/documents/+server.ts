@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
 import { degradeListResponse } from '$lib/server/degrade';
 import { uploadDocument } from '$lib/server/uploadDocument';
+import { relationIds } from '$lib/documents';
 
 // GET /api/sessions/[id]/documents → all docs attached to this session.
 //
@@ -27,6 +28,17 @@ export const GET: RequestHandler = async ({ locals, params }) => {
   });
   const body = await res.json().catch(() => ({}));
   const out = degradeListResponse(res, body, 'documents');
+  // `uploadedByCaller`: the panel's note editor is offered on the caller's own
+  // notes only (`canEditNote`), published ones included.
+  const callerId = String(locals.user.id);
+  const docs = (out.body as { docs?: unknown }).docs;
+  if (Array.isArray(docs)) {
+    (out.body as { docs: unknown[] }).docs = docs.map((row) =>
+      row && typeof row === 'object'
+        ? { ...(row as Record<string, unknown>), uploadedByCaller: relationIds((row as Record<string, unknown>).uploadedBy)[0] === callerId }
+        : row,
+    );
+  }
   return json(out.body, { status: out.status });
 };
 

@@ -162,6 +162,8 @@ function docFromBackend(row: Record<string, unknown>): WorkingDoc {
     body: typeof row.bodyMarkdown === 'string' ? row.bodyMarkdown : '',
     isNote: kind === 'markdown' && row.mediaFile == null && row.hasFile !== true,
     processedBody: typeof row.processedBody === 'string' ? row.processedBody : null,
+    // Unknown (`undefined`) when the route did not say; `canEditNote` reads that strictly.
+    uploadedByCaller: typeof row.uploadedByCaller === 'boolean' ? row.uploadedByCaller : undefined,
     includeInContext: row.isPinned !== false,
     // The conversations this row is attached to. Empty means "the backend did
     // not tell us", which the UI reads as "assume it lives only here".
@@ -1197,13 +1199,44 @@ class AppStore {
           credentials: 'same-origin',
         },
       );
-      const created = docFromBackend(data.doc);
+      // The caller just wrote it: theirs, whatever the response carried.
+      const created = { ...docFromBackend(data.doc), uploadedByCaller: true };
       const s = this.sessions.find((x) => x.id === sessionId);
       if (s) s.docs.push(created);
       return created;
     } catch (err) {
       console.error('newDoc failed', err);
       return null;
+    }
+  }
+
+  /**
+   * A note's autosave from a list with no conversation (Mis documentos): the
+   * title and body on every copy of the row, then the narrow `PATCH …/note`.
+   * Caller should debounce. Returns false when the write failed.
+   */
+  async editNote(docId: string, patch: { title?: string; body?: string }): Promise<boolean> {
+    for (const d of this.docsWithId(docId)) {
+      if (patch.title !== undefined) d.title = patch.title;
+      if (patch.body !== undefined) d.body = patch.body;
+      d.updatedAt = Date.now();
+    }
+    const payload: Record<string, unknown> = {};
+    if (patch.title !== undefined) payload.name = patch.title;
+    if (patch.body !== undefined) payload.bodyMarkdown = patch.body;
+    if (Object.keys(payload).length === 0) return true;
+    try {
+      await fetchJson(`/api/documents/${docId}/note`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'same-origin',
+      });
+      return true;
+    } catch (err) {
+      console.error('editNote failed', err);
+      toasts.push({ kind: 'error', title: 'No se guardó la nota', message: 'Inténtalo de nuevo en un momento.' });
+      return false;
     }
   }
 

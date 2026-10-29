@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canEditNote,
   docStatusBadge,
   gateState,
   isIngestFailure,
@@ -74,5 +75,33 @@ describe('parseAnonymisationStatus', () => {
     [null, 'n/a'],
   ])('%s → %s', (raw, expected) => {
     expect(parseAnonymisationStatus(raw)).toBe(expected);
+  });
+});
+
+describe('canEditNote', () => {
+  const note = {
+    kind: 'markdown' as const,
+    isNote: true,
+    uploadedByCaller: true,
+    publicationStatus: 'published',
+    ingestStatus: 'ready' as const,
+  };
+  it('a PUBLISHED own note is editable (dev 3f275c5: it was not, so "Publicar cambios" was unreachable)', () => {
+    expect(canEditNote(note)).toBe(true);
+  });
+  it('an own draft note is editable, also from a list that did not say who uploaded it', () => {
+    expect(canEditNote({ ...note, publicationStatus: 'draft', ingestStatus: 'n/a' })).toBe(true);
+    expect(canEditNote({ ...note, uploadedByCaller: undefined, publicationStatus: 'draft', ingestStatus: 'n/a' })).toBe(true);
+  });
+  it('never someone else’s note, nor a published one of unknown owner', () => {
+    expect(canEditNote({ ...note, uploadedByCaller: false })).toBe(false);
+    expect(canEditNote({ ...note, uploadedByCaller: false, publicationStatus: 'draft', ingestStatus: 'n/a' })).toBe(false);
+    expect(canEditNote({ ...note, uploadedByCaller: undefined })).toBe(false);
+  });
+  it('never an uploaded file, a row a reviewer holds, or one mid-pipeline', () => {
+    expect(canEditNote({ ...note, isNote: false })).toBe(false);
+    expect(canEditNote({ ...note, kind: 'pdf' })).toBe(false);
+    expect(canEditNote({ ...note, anonymisationStatus: 'held' })).toBe(false);
+    expect(canEditNote({ ...note, ingestStatus: 'embedding' })).toBe(false);
   });
 });

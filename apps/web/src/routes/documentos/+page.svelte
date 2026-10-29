@@ -24,7 +24,8 @@
    *
    * ⚠ The e2e evidence specs drive this page by testid: `owned-doc-<id>`,
    * `filter-all`, `filter-sueltos`, `use-<id>`, `picker-<id>`, `attach-<id>`,
-   * `download-<id>`, `delete-<id>` (native confirm), and the empty-state text
+   * `download-<id>`, `delete-<id>` (native confirm), `edit-note-<id>` (opens
+   * the note editor: `note-edit-<id>`, `note-sheet-publish`), and the empty-state text
    * "Todavía no has subido". Keep them, and keep the conversation titles in
    * the card's text: cleanup finds audio uploads by "Se usa en: evid-…".
    */
@@ -36,6 +37,7 @@
   import UploadSheet from '$lib/components/documentos/UploadSheet.svelte';
   import { deleteConfirmCopy } from '$lib/documents';
   import { canRetryIngest, publishConfirmCopy } from '$lib/ingest';
+  import { canEditNote } from '$lib/docStatus';
   import { canRetryGraph, GRAPH_RETRY_LABEL } from '$lib/graphStatus';
   import { noteEdited, publishGate } from '$lib/publication';
   import { isInFlight, kindTile, publishLabel, statusPills } from '$lib/misDocumentos';
@@ -58,6 +60,9 @@
   let busyId = $state<string | null>(null);
   let uploadOpen = $state(false);
   let noteOpen = $state(false);
+  /** The own note open in the editor sheet ("Editar"), draft or published. */
+  let editOpen = $state(false);
+  let editingId = $state<string | null>(null);
 
   /** Read on arrival and whenever the filter changes — `filter` is the only dependency. */
   $effect(() => {
@@ -66,6 +71,7 @@
   });
 
   const docs = $derived(app.ownedDocs);
+  const editingDoc = $derived(editingId ? (docs.find((d) => d.id === editingId) ?? null) : null);
   /** "Todos (n)": remembered from the last unfiltered read. */
   let allCount = $state<number | null>(null);
   $effect(() => {
@@ -88,7 +94,9 @@
     if (!moving) return;
     const current = filter;
     const t = setInterval(() => {
-      if (busyId || document.hidden || docs.some((d) => d.publishRequestPending)) return;
+      // ⚠ Not while the editor is open: a re-read would put the stored body
+      // back over what was typed in the last 400 ms.
+      if (busyId || editOpen || document.hidden || docs.some((d) => d.publishRequestPending)) return;
       void app.loadOwnedDocs(current);
     }, 10_000);
     return () => clearInterval(t);
@@ -99,7 +107,7 @@
   // own note is the exception (owner ruling 2026-10-28, `publishGate`).
   const manualPublish = $derived(mayUploadVoces($page.data?.vocesUpload, app.ecosystem?.slug));
   const isStudent = $derived($page.data?.studentAccess?.student === true);
-  const studentNote = (d: WorkingDoc) => isStudent && d.isNote === true;
+  const studentNote = (d: WorkingDoc) => isStudent && d.isNote === true && d.uploadedByCaller !== false;
 
   function gateOf(d: WorkingDoc) {
     return publishGate({
@@ -112,6 +120,56 @@
       changesPending: d.changesPending === true,
     });
   }
+
+  /** The publish button shows, spinning, while "Publicar cambios" runs. */
+  const showPublish = (d: WorkingDoc, gate: { canPublish: boolean }) =>
+    gate.canPublish || (studentNote(d) && d.changesPending === true);
+
+  // ── Editar nota ───────────────────────────────────────────────────────────
+  // The text goes on the row at once (so "Publicar cambios" appears as soon as
+  // it differs), the write (`app.editNote` → `PATCH …/note`) 400 ms later.
+  let editTimer: ReturnType<typeof setTimeout> | null = null;
+  let editQueued: { id: string; patch: { title?: string; body?: string } } | null = null;
+
+  async function flushEdit() {
+    if (editTimer) clearTimeout(editTimer);
+    editTimer = null;
+    const q = editQueued;
+    editQueued = null;
+    if (q) await app.editNote(q.id, q.patch);
+  }
+
+  function openEditor(d: WorkingDoc) {
+    editingId = d.id;
+    editOpen = true;
+  }
+
+  function onEdit(patch: { title?: string; body?: string }) {
+    const d = editingDoc;
+    if (!d) return;
+    if (patch.title !== undefined) d.title = patch.title;
+    if (patch.body !== undefined) d.body = patch.body;
+    editQueued = { id: d.id, patch: { ...(editQueued?.id === d.id ? editQueued.patch : {}), ...patch } };
+    if (editTimer) clearTimeout(editTimer);
+    editTimer = setTimeout(() => void flushEdit(), 400);
+  }
+
+  $effect(() => {
+    if (!editOpen) void flushEdit();
+  });
+
+  const editPublish = $derived.by(() => {
+    const d = editingDoc;
+    if (!d || !showPublish(d, gateOf(d))) return null;
+    return {
+      label: publishLabel(d.publicationStatus),
+      pending: d.publishRequestPending === true || d.changesPending === true,
+      onClick: async () => {
+        await flushEdit();
+        await publish(d);
+      },
+    };
+  });
 
   function hasOriginal(d: WorkingDoc): boolean {
     return d.kind === 'audio' || (FILE_DOC_KINDS as readonly string[]).includes(d.kind);
@@ -404,14 +462,24 @@
                 dataTestId={`use-${d.id}`}
                 onClick={() => openPicker(d)}
               />
-              {#if gate.canPublish}
+              {#if canEditNote(d)}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  label="Editar"
+                  disabled={busy}
+                  dataTestId={`edit-note-${d.id}`}
+                  onClick={() => openEditor(d)}
+                />
+              {/if}
+              {#if showPublish(d, gate)}
                 <Button
                   tone={d.publicationStatus === 'failed' ? 'warning' : 'brand'}
                   variant="outline"
                   size="sm"
                   label={publishLabel(d.publicationStatus)}
-                  loading={d.publishRequestPending === true}
-                  disabled={busy || d.publishRequestPending === true}
+                  loading={d.publishRequestPending === true || d.changesPending === true}
+                  disabled={busy || d.publishRequestPending === true || d.changesPending === true}
                   dataTestId={`publish-${d.id}`}
                   onClick={() => publish(d)}
                 />
@@ -478,6 +546,9 @@
 
 <UploadSheet bind:open={uploadOpen} hasOptions={manualPublish} {audioOn} onUploaded={() => app.loadOwnedDocs(filter)} />
 <NoteSheet bind:open={noteOpen} onSave={saveNote} />
+{#key editingId}
+  <NoteSheet bind:open={editOpen} editing={editingDoc} {onEdit} publish={editPublish} onSave={async () => true} />
+{/key}
 
 <style>
   .page {

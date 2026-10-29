@@ -74,6 +74,11 @@ function slimDoc(row: Record<string, unknown>): Record<string, unknown> {
     publicationError: row.publicationError,
     isPinned: row.isPinned,
     bodyMarkdown: row.bodyMarkdown,
+    // Every row here is the caller's (`where[uploadedBy]` below). An uploaded
+    // `.md` is not an in-app note (`WorkingDoc.isNote`).
+    uploadedByCaller: true,
+    hasFile: row.mediaFile != null,
+    processedBody: row.processedBody,
     session: row.session,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

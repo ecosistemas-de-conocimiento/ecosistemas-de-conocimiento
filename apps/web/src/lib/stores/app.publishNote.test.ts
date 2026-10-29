@@ -54,3 +54,37 @@ describe('publishDoc on a note', () => {
     expect(writes[0]!.body).toEqual({ bodyMarkdown: 'texto nuevo, aún sin autoguardar' });
   });
 });
+
+describe('editNote (Mis documentos "Editar")', () => {
+  it('puts the text on the row and PATCHes the narrow note route, published note included', async () => {
+    const calls: Array<{ url: string; method: string; body?: unknown }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        return json({ ok: true });
+      }),
+    );
+    app.ownedDocs = [
+      {
+        id: '5',
+        title: 'Mi nota',
+        body: 'texto viejo',
+        processedBody: 'texto viejo',
+        isNote: true,
+        uploadedByCaller: true,
+        kind: 'markdown',
+        ingestStatus: 'ready',
+        publicationStatus: 'published',
+        includeInContext: true,
+        sessionIds: [],
+        updatedAt: 0,
+      } as never,
+    ];
+
+    expect(await app.editNote('5', { body: 'texto nuevo' })).toBe(true);
+
+    expect(app.ownedDocs[0]!.body).toBe('texto nuevo');
+    expect(calls).toEqual([{ url: '/api/documents/5/note', method: 'PATCH', body: { bodyMarkdown: 'texto nuevo' } }]);
+  });
+});
