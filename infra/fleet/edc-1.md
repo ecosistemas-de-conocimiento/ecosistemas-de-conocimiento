@@ -2574,6 +2574,41 @@ this run, which made no model call; another lane's traffic (inferred). Total $13
 
 No image cleanup. **Disk**, `df -h /` free: 55 GB before, 40 GB after the build.
 
+### 4zz. ✅ Done 2026-10-29 00:53–01:03 UTC: `7be2820`, dev only — no migration
+
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
+`97d5316`, "Up 11 days", `docker ps` after). Range `3f275c5..7be2820`: a student's published note is
+editable, so "Publicar cambios" can be reached (`7be2820`; `DocsPanel`, `NoteSheet`, `docStatus`,
+the documents API, `/documentos`); the §4zy runbook entry (`548a7f7`). No migration, compose or
+ai-service change (`git diff --stat 3f275c5 7be2820` touches no `migrations/` path and only
+`edc-1.md` under `infra`).
+
+**Pre-check.** `payload_migrations` 19 rows, newest `20261028_235647_documents_kind_xls`.
+
+Backup `/root/backups/20261029T0053Z/` (`edc_ai` 298 MB, `edc_backend` 18 MB); `pg_restore -l`
+inside the postgres container 137 / 440 non-comment lines, `SHA256SUMS` beside them. Off-box copy in
+the owner's `cide/backups/edc-1/20261029T0053Z/` with `timeout 300 scp`; `sha256sum -c` passed
+before the deploy.
+
+| deploy | uuid | queued → finished (UTC) | commit |
+|---|---|---|---|
+| `7be2820` | `s2fqskjbxgcurvqcyvjp0yev` | 00:55:38 → 00:59:48 | `7be2820c18e4…` |
+
+After: 9 dev containers up; `web`, `backend` and `ai-service` run image tag
+`7be2820c18e46eedacde020b224daaae64ec6fa5`, healthy. `payload_migrations` still 19, newest batch 12.
+0 `error`/`fatal` lines in all 9 dev containers (`docker logs --since 10m`, 01:02 UTC).
+
+**Smoke** (no paid call, from the owner's laptop):
+
+| check | result |
+|---|---|
+| 1. web `/` | 303 → `/sign-in`, 200 |
+| 2. health | `dev.` `/api/health` 200, `api.dev.` `/api/health` 200 |
+| 3. login, estudiante1 (`cide/.env.demo-users`), web `POST /api/auth/login` with `Origin` | 200; `/__data.json` names `estudiante` |
+| 4. `/documentos`, `/estudiante` | 200 / 200 (1 262 / 1 097 bytes); `/estudiante/__data.json` 200 (4 824 bytes), `/documentos/__data.json` 200 (1 475 bytes) |
+
+No image cleanup. **Disk**, `df -h /` free: 40 GB before, 35 GB after the build.
+
 ### 4b. ✅ Done 2026-10-17: migrations 0002–0004 applied, both envs
 
 Backups taken before the deploy (both DBs, both envs, each checked with `pg_restore -l`, sha256
