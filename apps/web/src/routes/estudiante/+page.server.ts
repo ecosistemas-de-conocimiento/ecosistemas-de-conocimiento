@@ -9,6 +9,8 @@
 import { fail } from '@sveltejs/kit';
 
 import { CONSENT_CHANGED } from '$lib/consent';
+import { ECOSYSTEM_DEPENDENCY } from '$lib/ecosystems';
+import { ESTUDIANTE_DEPENDENCY } from '$lib/estudiante';
 import { notFound } from '$lib/server/deny';
 import { resolveEcosystem } from '$lib/server/ecosystem';
 import { fetchOverview, postSuggestion, savePerfil } from '$lib/server/estudiante';
@@ -26,7 +28,9 @@ async function selected(cookies: Parameters<PageServerLoad>[0]['cookies'], token
 const org = async (cookies: Parameters<PageServerLoad>[0]['cookies'], token: string | undefined): Promise<string> =>
   (await selected(cookies, token)).id;
 
-export const load: PageServerLoad = async ({ locals, cookies }) => {
+export const load: PageServerLoad = async ({ locals, cookies, depends }) => {
+  // Topics land after a trabajo is processed; the page re-runs this to show them.
+  depends(ESTUDIANTE_DEPENDENCY, ECOSYSTEM_DEPENDENCY);
   if (!locals.user) notFound({ entity: 'page' });
   const eco = await selected(cookies, locals.token);
   const organization = eco.id;
