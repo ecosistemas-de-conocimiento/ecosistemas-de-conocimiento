@@ -6,99 +6,112 @@
    * the documents nobody can currently see at all.
    *
    * 🔴 THE HOLE THIS FILLS. Every other document list in the app is
-   * per-conversation: the panel shows one conversation's files, and retrieval
-   * reads the drafts attached to the conversation you are in. So a document
-   * attached to NO conversation is retrievable by nothing and listed nowhere.
-   * It is still owned, still stored, still embedded — and invisible. Nothing
-   * exotic produces that state: deleting a conversation does it, and so does
-   * taking a document out of its last one.
+   * per-conversation, so a document attached to NO conversation is listed
+   * nowhere else. Deleting a conversation, or taking a document out of its last
+   * one, produces that state. The "Sin conversación" filter is that list.
    *
-   * ⚠ NOT `/biblioteca`, and the copy has to keep them apart. The biblioteca is
-   * what the ecosistema has PUBLISHED — shared, everyone's, read-only. This is
-   * what YOU have, drafts and loose files included, with the actions that
-   * change them. Someone holding both screens must never have to wonder which
-   * one to open, so each names whose documents it is showing in its heading.
+   * ⚠ NOT `/biblioteca`: that is what the ecosistema PUBLISHED. This is what
+   * YOU have, drafts included, with the actions that change them.
    *
-   * ⚠ NOTHING HERE NAMES A TENANT. The ecosistema is resolved server-side from
-   * the validated selection cookie by `GET /api/documentos`; this file sends a
-   * filter word and nothing else.
+   * ⚠ NOTHING HERE NAMES A TENANT. `GET /api/documentos` resolves the
+   * ecosistema server-side from the validated cookie; this file sends a filter
+   * word and nothing else.
+   *
+   * Shape (redesign 2026-10-28, same language as /estudiante and /ajustes):
+   * header with the two ways in (Subir, Nueva nota — each a short dialog),
+   * filter tabs, then one card per document. Minimal copy (owner rule): the
+   * longer sentences are `title=` tooltips. Pure rules: `$lib/misDocumentos`.
+   *
+   * ⚠ The e2e evidence specs drive this page by testid: `owned-doc-<id>`,
+   * `filter-all`, `filter-sueltos`, `use-<id>`, `picker-<id>`, `attach-<id>`,
+   * `download-<id>`, `delete-<id>` (native confirm), and the empty-state text
+   * "Todavía no has subido". Keep them, and keep the conversation titles in
+   * the card's text: cleanup finds audio uploads by "Se usa en: evid-…".
    */
   import { Button } from '$lib/primitives';
   import { app } from '$lib/stores/app.svelte';
   import { CONVERSACIONES_HREF } from '$lib/inicio';
   import TestimonySource from '$lib/components/TestimonySource.svelte';
+  import NoteSheet from '$lib/components/documentos/NoteSheet.svelte';
+  import UploadSheet from '$lib/components/documentos/UploadSheet.svelte';
   import { deleteConfirmCopy } from '$lib/documents';
-  import { docStatusBadge } from '$lib/docStatus';
-  import { isNote } from '$lib/ingest';
-  import { canRetryGraph, GRAPH_RETRY_LABEL, graphBadge } from '$lib/graphStatus';
-  import { publicationBadge, publishBlockedCopy, publishGate } from '$lib/publication';
-  import { mayUploadVoces } from '$lib/uploadKind';
+  import { canRetryIngest, publishConfirmCopy } from '$lib/ingest';
+  import { canRetryGraph, GRAPH_RETRY_LABEL } from '$lib/graphStatus';
+  import { publishGate } from '$lib/publication';
+  import { isInFlight, kindTile, publishLabel, statusPills } from '$lib/misDocumentos';
+  import { AUDIO_UPLOAD_ENABLED, mayUploadVoces } from '$lib/uploadKind';
   import { page } from '$app/stores';
   import { FILE_DOC_KINDS, type WorkingDoc } from '$lib/types';
   import { toasts } from '$lib/stores/toasts.svelte';
   import { goto } from '$app/navigation';
-  import {
-    AUDIO_EXTENSIONS,
-    formatBytes,
-    isAudioUpload,
-    MAX_UPLOAD_BYTES,
-    UPLOAD_ACCEPT,
-  } from '$lib/config';
-  import {
-    AUDIO_UPLOAD_ENABLED,
-    AUDIO_UPLOAD_OFF_COPY,
-    looseUploadErrorCopy,
-    uploadAccept,
-    uploadButtonTitle,
-  } from '$lib/uploadKind';
+
   /** Audio needs the build flag AND the ecosistema's `audioUpload` (`$lib/features`). */
   const audioOn = $derived(AUDIO_UPLOAD_ENABLED && app.features.audioUpload);
 
   type Filter = 'all' | 'sueltos';
 
   let filter = $state<Filter>('all');
-  /** Which row has its conversation picker open. One at a time — flat UX. */
+  /** Which card has its conversation picker open. One at a time. */
   let pickerFor = $state<string | null>(null);
-  /** The conversation chosen in the open picker. */
   let pickedSession = $state('');
   /** A document with a write in flight; its buttons are disabled meanwhile. */
   let busyId = $state<string | null>(null);
+  let uploadOpen = $state(false);
+  let noteOpen = $state(false);
 
-  /**
-   * Read the list on arrival and whenever the filter changes.
-   *
-   * `filter` is the only dependency: a re-render for any other reason must not
-   * re-fetch. The store owns the rows, the loading flag and the degraded flag,
-   * so this file holds no copy of the data.
-   */
+  /** Read on arrival and whenever the filter changes — `filter` is the only dependency. */
   $effect(() => {
     const current = filter;
     void app.loadOwnedDocs(current);
   });
 
   const docs = $derived(app.ownedDocs);
-  /**
-   * ⚠ Counted off `sessionIds`, which is the relationship itself — never off
-   * `attachedSessions`, which is absent when nobody asked for titles.
-   */
+  /** "Todos (n)": remembered from the last unfiltered read. */
+  let allCount = $state<number | null>(null);
+  $effect(() => {
+    if (filter === 'all' && app.ownedDocsReady && !app.ownedDocsDegraded) allCount = docs.length;
+  });
+
+  /** Counted off `sessionIds` (the relationship), never `attachedSessions`. */
   function attachedCount(d: WorkingDoc): number {
     return d.sessionIds?.length ?? 0;
   }
-  function isLoose(d: WorkingDoc): boolean {
-    return attachedCount(d) === 0;
-  }
+  const isLoose = (d: WorkingDoc) => attachedCount(d) === 0;
   const looseCount = $derived(docs.filter(isLoose).length);
 
+  /**
+   * While anything is moving (en cola, publicando, conexiones…), re-read every
+   * 10 s so the pills settle without a reload. Paused during a write.
+   */
+  const moving = $derived(docs.some(isInFlight));
+  $effect(() => {
+    if (!moving) return;
+    const current = filter;
+    const t = setInterval(() => {
+      if (busyId || document.hidden || docs.some((d) => d.publishRequestPending)) return;
+      void app.loadOwnedDocs(current);
+    }, 10_000);
+    return () => clearInterval(t);
+  });
+
   // A participant never publishes by hand (owner rule, 2026-10-24); Voz rights
-  // are the investigador-and-up signal the layout already loads.
+  // are the investigador-and-up signal the layout already loads. A student's
+  // own note is the exception (owner ruling 2026-10-28, `publishGate`).
   const manualPublish = $derived(mayUploadVoces($page.data?.vocesUpload, app.ecosystem?.slug));
+  const isStudent = $derived($page.data?.studentAccess?.student === true);
+  const studentNote = (d: WorkingDoc) => isStudent && d.isNote === true;
 
   function gateOf(d: WorkingDoc) {
     return publishGate({
       publicationStatus: d.publicationStatus,
       ingestStatus: d.ingestStatus,
       manual: manualPublish,
+      note: studentNote(d),
     });
+  }
+
+  function hasOriginal(d: WorkingDoc): boolean {
+    return d.kind === 'audio' || (FILE_DOC_KINDS as readonly string[]).includes(d.kind);
   }
 
   function openPicker(d: WorkingDoc) {
@@ -110,8 +123,7 @@
     if (!pickedSession || busyId) return;
     busyId = d.id;
     try {
-      const ok = await app.attachOwnedDoc(pickedSession, d.id, filter);
-      if (ok) {
+      if (await app.attachOwnedDoc(pickedSession, d.id, filter)) {
         pickerFor = null;
         pickedSession = '';
       }
@@ -120,22 +132,54 @@
     }
   }
 
-  async function publish(d: WorkingDoc) {
+  async function startConversation(d: WorkingDoc) {
     if (busyId) return;
     busyId = d.id;
     try {
-      // ⚠ No conversation to publish "from" — this screen is outside all of
-      // them. The store takes `null` and updates every list holding the row.
-      await app.publishDoc(null, d.id);
+      if (await app.startSessionWithDoc(d.id, filter)) await goto(CONVERSACIONES_HREF);
+    } finally {
+      busyId = null;
+    }
+  }
+
+  async function publish(d: WorkingDoc) {
+    if (busyId) return;
+    // Same confirmation as the documents panel: publishing shares it with
+    // everyone, and a transcript is machine-made text.
+    if (!confirm(publishConfirmCopy(d.kind, d.title))) return;
+    busyId = d.id;
+    try {
+      // No conversation to publish "from"; the store updates every list holding the row.
+      await app.publishDoc(null, d.id, { note: studentNote(d) });
+    } finally {
+      busyId = null;
+    }
+  }
+
+  /** "Reintentar" after a failed processing run. Page-local: the store's retry is per conversation. */
+  async function retryIngest(d: WorkingDoc) {
+    if (busyId) return;
+    busyId = d.id;
+    try {
+      const res = await fetch(`/api/documents/${encodeURIComponent(d.id)}/retry`, { method: 'POST' });
+      if (!res.ok) {
+        toasts.push({
+          kind: 'error',
+          title: 'No se pudo reintentar',
+          message: res.status === 409 ? 'Este documento ya no está en error.' : 'Inténtalo de nuevo en un momento.',
+        });
+      }
+      await app.loadOwnedDocs(filter);
+    } catch {
+      toasts.push({ kind: 'error', title: 'No se pudo conectar', message: 'Revisa tu conexión e inténtalo de nuevo.' });
     } finally {
       busyId = null;
     }
   }
 
   /**
-   * 🔴 THE DESTRUCTIVE ONE. `deleteConfirmCopy` says, in words, that this is
-   * the action that actually borra — the opposite promise from "Quitar de esta
-   * conversación" in the documents panel.
+   * 🔴 THE DESTRUCTIVE ONE. `deleteConfirmCopy` says in words that this borra
+   * everywhere — the opposite of the panel's "Quitar de esta conversación".
    */
   async function remove(d: WorkingDoc) {
     if (busyId) return;
@@ -148,64 +192,31 @@
     }
   }
 
-  // ── Subir sin conversación (backlog #15) ──────────────────────────────────
-  //
-  // ⚠ Page-local, not in the store: the store's `uploadDoc` is per
-  // conversation. This posts to `POST /api/documentos` and re-reads the list.
-  let fileInput = $state<HTMLInputElement | null>(null);
-  let uploading = $state(false);
-  /** "Anonimizar" (staff only; a participant's upload is always gated by the backend). */
-  let anonymise = $state(false);
-
-  async function onFileChosen(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = '';
-    if (!file || uploading) return;
-    if (!audioOn && isAudioUpload(file)) {
-      toasts.push({ kind: 'warning', ...AUDIO_UPLOAD_OFF_COPY });
-      return;
+  /**
+   * "Nueva nota". The only create route for a note is per conversation, so:
+   * open one (the empty one waiting is reused), write the note there, take it
+   * out again. The note lands here "Sin conversación", like a loose upload.
+   */
+  async function saveNote(note: { title: string; body: string }): Promise<boolean> {
+    const sessionId = await app.newSession();
+    if (!sessionId) {
+      toasts.push({ kind: 'error', title: 'No se pudo crear la nota', message: 'Inténtalo de nuevo en un momento.' });
+      return false;
     }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      toasts.push({
-        kind: 'error',
-        ...looseUploadErrorCopy('file_too_large', formatBytes(MAX_UPLOAD_BYTES)),
-      });
-      return;
+    const created = await app.newDoc(sessionId, { title: note.title, body: note.body, includeInContext: false });
+    if (!created) {
+      toasts.push({ kind: 'error', title: 'No se pudo crear la nota', message: 'Inténtalo de nuevo en un momento.' });
+      return false;
     }
-    uploading = true;
-    try {
-      const form = new FormData();
-      form.append('file', file, file.name);
-      if (manualPublish && anonymise) form.append('anonymise', 'true');
-      const res = await fetch('/api/documentos', { method: 'POST', body: form });
-      if (!res.ok) {
-        const code = ((await res.json().catch(() => ({}))) as { error?: string }).error;
-        toasts.push({ kind: 'error', ...looseUploadErrorCopy(code, formatBytes(MAX_UPLOAD_BYTES)) });
-        return;
-      }
-      toasts.push({
-        kind: 'success',
-        title: 'Archivo subido',
-        message: 'Está en tu lista como borrador: solo tú lo ves.',
-      });
-      await app.loadOwnedDocs(filter);
-    } catch {
-      toasts.push({ kind: 'error', ...looseUploadErrorCopy(null, '') });
-    } finally {
-      uploading = false;
-    }
+    await app.detachDoc(sessionId, created.id);
+    await app.loadOwnedDocs(filter);
+    return true;
   }
 
-  // ── Descargar original (backlog #15) ──────────────────────────────────────
-  //
+  // ── Descargar original ────────────────────────────────────────────────────
   // ⚠ fetch + blob rather than a plain link: a failed download would otherwise
   // save a JSON error file under the document's name.
   let downloadingId = $state<string | null>(null);
-
-  function hasOriginal(d: WorkingDoc): boolean {
-    return d.kind === 'audio' || (FILE_DOC_KINDS as readonly string[]).includes(d.kind);
-  }
 
   async function downloadOriginal(d: WorkingDoc) {
     if (downloadingId) return;
@@ -226,249 +237,233 @@
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
     } catch {
-      toasts.push({
-        kind: 'error',
-        title: 'No se pudo descargar el original',
-        message: 'Inténtalo de nuevo en un momento.',
-      });
+      toasts.push({ kind: 'error', title: 'No se pudo descargar el original', message: 'Inténtalo de nuevo en un momento.' });
     } finally {
       downloadingId = null;
     }
   }
+
+  const FILTERS: { id: Filter; label: string }[] = [
+    { id: 'all', label: 'Todos' },
+    { id: 'sueltos', label: 'Sin conversación' },
+  ];
+  const filterCount = (id: Filter) => (id === 'all' ? allCount : looseCount);
 </script>
 
 <svelte:head><title>Mis documentos · Ecosistemas de Conocimiento</title></svelte:head>
 
 <div class="page text-ink">
   <header class="head">
-    <div>
-      <p class="kicker">Tus documentos</p>
+    <div class="title">
+      {#if app.ecosystem?.name}<p class="kicker">{app.ecosystem.name}</p>{/if}
       <h1>Mis documentos</h1>
     </div>
     <div class="head-actions">
-      <input
-        bind:this={fileInput}
-        type="file"
-        accept={uploadAccept(UPLOAD_ACCEPT, AUDIO_EXTENSIONS, audioOn)}
-        hidden
-        aria-label={uploadButtonTitle()}
-        onchange={onFileChosen}
-      />
-      {#if manualPublish}
-        <label class="anonymise">
-          <input type="checkbox" bind:checked={anonymise} disabled={uploading} data-testid="owned-anonymise" />
-          <span>Anonimizar</span>
-        </label>
-      {/if}
-      <Button
-        variant="solid"
-        size="sm"
-        label={uploading ? 'Subiendo…' : 'Subir documento'}
-        loading={uploading}
-        disabled={uploading}
-        dataTestId="owned-upload"
-        onClick={() => fileInput?.click()}
-      />
-      <a class="back" href={CONVERSACIONES_HREF} data-interactive>Volver al chat</a>
+      <Button variant="outline" label="Nueva nota" dataTestId="owned-new-note" onClick={() => (noteOpen = true)}>
+        {#snippet leading()}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
+        {/snippet}
+      </Button>
+      <Button label="Subir" dataTestId="owned-upload" onClick={() => (uploadOpen = true)}>
+        {#snippet leading()}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M6 10l6-6 6 6M4 20h16" /></svg>
+        {/snippet}
+      </Button>
     </div>
   </header>
 
-  <!-- The filter. Two options, always both visible: hiding "sueltos" behind a
-       menu would hide the very thing this screen was built to surface. -->
-  <div class="filters" role="group" aria-label="Filtrar documentos">
-    <button
-      class="filter"
-      class:on={filter === 'all'}
-      aria-pressed={filter === 'all'}
-      onclick={() => (filter = 'all')}
-      data-testid="filter-all"
-    >
-      Todos
-    </button>
-    <button
-      class="filter"
-      class:on={filter === 'sueltos'}
-      aria-pressed={filter === 'sueltos'}
-      onclick={() => (filter = 'sueltos')}
-      data-testid="filter-sueltos"
-    >
-      Sin conversación{#if looseCount > 0}{' '}({looseCount}){/if}
-    </button>
+  <!-- Both options always visible: hiding "Sin conversación" behind a menu
+       would hide the very thing this screen was built to surface. -->
+  <div class="tabs" role="group" aria-label="Filtrar documentos">
+    {#each FILTERS as f (f.id)}
+      {@const n = filterCount(f.id)}
+      <button
+        type="button"
+        class="tab"
+        aria-pressed={filter === f.id}
+        onclick={() => (filter = f.id)}
+        data-testid={`filter-${f.id}`}
+      >
+        {f.label}
+        {#if n}<span class="count">{n}</span>{/if}
+      </button>
+    {/each}
   </div>
 
   {#if app.ownedDocsDegraded}
-    <!-- ⚠ "No pudimos leer", never "no tienes". A failed read shown as an empty
-         list tells someone their documents are gone. -->
-    <p class="notice">No pudimos leer tus documentos. Inténtalo más tarde.</p>
+    <!-- ⚠ "No pudimos leer", never "no tienes": an empty list on a failed read
+         tells someone their documents are gone. -->
+    <p class="notice error" role="alert">No pudimos leer tus documentos. Inténtalo más tarde.</p>
   {:else if app.ownedDocsLoading && !app.ownedDocsReady}
-    <p class="notice">Cargando tus documentos…</p>
+    <ul class="cards" aria-busy="true" aria-label="Cargando tus documentos">
+      {#each [0, 1, 2] as i (i)}<li class="card skeleton"></li>{/each}
+    </ul>
   {:else if docs.length === 0}
-    <p class="notice">
-      {#if filter === 'sueltos'}
-        No hay documentos sin conversación.
-      {:else}
-        Todavía no has subido ningún documento.
-      {/if}
-    </p>
+    <div class="empty">
+      <span class="empty-icon" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6" /></svg>
+      </span>
+      <p>
+        {#if filter === 'sueltos'}
+          No hay documentos sin conversación.
+        {:else}
+          Todavía no has subido ningún documento.
+        {/if}
+      </p>
+    </div>
   {:else}
-    <ul class="rows">
+    <ul class="cards">
       {#each docs as d (d.id)}
-        {@const pub = publicationBadge(d.publicationStatus)}
         {@const gate = gateOf(d)}
-        {@const ing = docStatusBadge(d)}
+        {@const tile = kindTile(d)}
         {@const loose = isLoose(d)}
-        {@const graph = graphBadge(d.graphStatus)}
-        <li class="row" class:loose data-testid={`owned-doc-${d.id}`}>
-          <div class="row-head">
-            <span class="name" title={d.title}>{d.title}</span>
-            {#if d.subtitle != null}<span class="subtitle"><TestimonySource audio={d.kind === 'audio'} day={d.subtitle} /></span>{/if}
-            {#if d.kind && !isNote(d)}
-              <span class="chip kind">{d.kind}</span>
-            {/if}
-            {#if ing}
-              <span class="chip" title={ing.title}
-                >{ing.label.charAt(0).toUpperCase() + ing.label.slice(1)}</span
+        {@const busy = busyId === d.id}
+        <li class="card" data-testid={`owned-doc-${d.id}`}>
+          <div class="card-main">
+            <span class="tile tile-{tile.tone}" aria-hidden="true">{tile.label}</span>
+            <div class="head-text">
+              <h2 class="name" title={d.title}>{d.title}</h2>
+              {#if d.subtitle != null}
+                <span class="subtitle"><TestimonySource audio={d.kind === 'audio'} day={d.subtitle} /></span>
+              {/if}
+            </div>
+            <div class="tools">
+              {#if hasOriginal(d)}
+                <button
+                  type="button"
+                  class="icon-btn"
+                  aria-label="Descargar original"
+                  title="Descargar original"
+                  aria-busy={downloadingId === d.id || undefined}
+                  disabled={downloadingId !== null}
+                  onclick={() => downloadOriginal(d)}
+                  data-testid={`download-${d.id}`}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v12M6 10l6 6 6-6M4 20h16" /></svg>
+                </button>
+              {/if}
+              <!-- 🔴 The only verb on this screen that destroys anything: danger tone, "Eliminar". -->
+              <button
+                type="button"
+                class="icon-btn danger"
+                aria-label="Eliminar"
+                title="Eliminar"
+                disabled={busy}
+                onclick={() => remove(d)}
+                data-testid={`delete-${d.id}`}
               >
-            {/if}
-            <span class="pub-badge pub-{pub.tone}" title={pub.description}>{pub.label}</span>
-            <!-- Demo pass, chosen (review): "listas" and "sin conexiones" are
-                 not news on this screen; only in-progress and failed show. -->
-            {#if graph && d.graphStatus !== 'ready' && d.graphStatus !== 'skipped'}
-              <span
-                class="chip graph graph-{graph.tone}"
-                title={graph.title}
-                data-testid={`graph-status-${d.id}`}>{graph.label}</span
-              >
-            {/if}
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 13a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-13M9 7V4h6v3" /></svg>
+              </button>
+            </div>
+            <div class="meta">
+              <ul class="pills" aria-label="Estado">
+                {#each statusPills(d) as p (p.label)}
+                  <li class="pill pill-{p.tone}" title={p.title} data-testid={p.testid}>
+                    {#if p.busy}<span class="pill-spin" aria-hidden="true"></span>{/if}{p.label}
+                  </li>
+                {/each}
+              </ul>
+              {#if loose}
+                <p class="where" data-testid={`loose-note-${d.id}`}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.8 7L4 20l1.1-4.6A8 8 0 1 1 21 12z" /></svg>
+                  Sin conversación
+                </p>
+              {:else}
+                <p class="where">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.8 7L4 20l1.1-4.6A8 8 0 1 1 21 12z" /></svg>
+                  <span>
+                    Se usa en:
+                    {#each d.attachedSessions ?? [] as s, i (s.id)}<span class="convo">{s.title || 'Conversación sin título'}</span
+                      >{#if i < (d.attachedSessions?.length ?? 0) - 1}<span aria-hidden="true">{', '}</span>{/if}{/each}
+                    {#if (d.attachedSessions?.length ?? 0) === 0}
+                      <span class="convo">{attachedCount(d)} {attachedCount(d) === 1 ? 'conversación' : 'conversaciones'}</span>
+                    {/if}
+                  </span>
+                </p>
+              {/if}
+            </div>
           </div>
-
-          {#if loose}
-            <p class="loose-note" data-testid={`loose-note-${d.id}`}>Sin conversación</p>
-          {:else}
-            <p class="where">
-              Se usa en:
-              <span class="convos">
-                {#each d.attachedSessions ?? [] as s, i (s.id)}<span class="convo"
-                    >{s.title || 'Conversación sin título'}</span
-                  >{#if i < (d.attachedSessions?.length ?? 0) - 1}<span aria-hidden="true">, </span
-                  >{/if}{/each}
-                {#if (d.attachedSessions?.length ?? 0) === 0}
-                  <span class="convo">{attachedCount(d)} conversación</span>
-                {/if}
-              </span>
-            </p>
-          {/if}
 
           <div class="actions">
-            <!-- Backlog #2, owner ruling 2026-10-21: the primary action. The new
-                 conversation pins the document (`startSessionWithDoc`). -->
-            <Button
-              variant="solid"
-              size="sm"
-              label="Nueva conversación con este documento"
-              disabled={busyId === d.id}
-              dataTestId={`new-session-${d.id}`}
-              onClick={async () => {
-                if (await app.startSessionWithDoc(d.id, filter)) await goto(CONVERSACIONES_HREF);
-              }}
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              label="Usar en una conversación"
-              disabled={busyId === d.id}
-              dataTestId={`use-${d.id}`}
-              onClick={() => openPicker(d)}
-            />
-            {#if gate.canPublish}
+              <!-- Backlog #2: the primary action. The new conversation pins the document. -->
               <Button
-                tone={d.publicationStatus === 'failed' ? 'warning' : 'brand'}
+                size="sm"
+                label="Nueva conversación"
+                disabled={busy}
+                dataTestId={`new-session-${d.id}`}
+                onClick={() => startConversation(d)}
+              />
+              <Button
                 variant="outline"
                 size="sm"
-                label={d.publicationStatus === 'failed' ? 'Reintentar publicación' : 'Publicar'}
-                loading={d.publishRequestPending === true}
-                disabled={busyId === d.id || d.publishRequestPending === true}
-                dataTestId={`publish-${d.id}`}
-                onClick={() => publish(d)}
+                label="Usar en…"
+                disabled={busy}
+                dataTestId={`use-${d.id}`}
+                onClick={() => openPicker(d)}
               />
-            {:else if gate.reason}
-              <span class="blocked">{publishBlockedCopy(gate.reason)}</span>
-            {/if}
-            {#if hasOriginal(d)}
-              <Button
-                variant="ghost"
-                size="sm"
-                label="Descargar original"
-                loading={downloadingId === d.id}
-                disabled={downloadingId !== null}
-                dataTestId={`download-${d.id}`}
-                onClick={() => downloadOriginal(d)}
-              />
-            {/if}
-            {#if canRetryGraph(d)}
-              <Button
-                tone="warning"
-                variant="outline"
-                size="sm"
-                label={GRAPH_RETRY_LABEL}
-                loading={d.graphRetryPending === true}
-                disabled={busyId === d.id || d.graphRetryPending === true}
-                dataTestId={`graph-retry-${d.id}`}
-                onClick={() => app.retryGraph(d.id)}
-              />
-            {/if}
-            <!-- 🔴 The destructive verb, and the only one on this screen that
-                 destroys anything. Toned as danger and worded as "Eliminar",
-                 so it never reads like the panel's "Quitar". Last in the
-                 actions row: in the title row it wrapped onto a line of its
-                 own on a phone (390px, 2026-10-28). -->
-            <button
-              class="danger-link"
-              disabled={busyId === d.id}
-              onclick={() => remove(d)}
-              data-testid={`delete-${d.id}`}
-            >
-              Eliminar
-            </button>
-          </div>
+              {#if gate.canPublish}
+                <Button
+                  tone={d.publicationStatus === 'failed' ? 'warning' : 'brand'}
+                  variant="outline"
+                  size="sm"
+                  label={publishLabel(d.publicationStatus)}
+                  loading={d.publishRequestPending === true}
+                  disabled={busy || d.publishRequestPending === true}
+                  dataTestId={`publish-${d.id}`}
+                  onClick={() => publish(d)}
+                />
+              {/if}
+              {#if canRetryIngest(d)}
+                <Button
+                  tone="warning"
+                  variant="outline"
+                  size="sm"
+                  label="Reintentar"
+                  loading={busy}
+                  disabled={busy}
+                  dataTestId={`retry-ingest-${d.id}`}
+                  onClick={() => retryIngest(d)}
+                />
+              {/if}
+              {#if canRetryGraph(d)}
+                <Button
+                  tone="warning"
+                  variant="outline"
+                  size="sm"
+                  label={GRAPH_RETRY_LABEL}
+                  loading={d.graphRetryPending === true}
+                  disabled={busy || d.graphRetryPending === true}
+                  dataTestId={`graph-retry-${d.id}`}
+                  onClick={() => app.retryGraph(d.id)}
+                />
+              {/if}
+            </div>
 
           {#if pickerFor === d.id}
             <div class="picker">
               {#if !app.ready}
-                <!-- ⚠ "No tienes conversaciones" is only true once the list has
-                     actually been read. Said while hydration is still running,
-                     it sends someone to create a conversation they already have. -->
+                <!-- ⚠ "No tienes conversaciones" only once the list has been read. -->
                 <p class="picker-empty">Cargando tus conversaciones…</p>
               {:else if app.sessions.length === 0}
                 <p class="picker-empty">Todavía no tienes conversaciones.</p>
               {:else}
-                <label class="picker-label" for={`convo-${d.id}`}>
-                  ¿En cuál conversación quieres usarlo?
-                </label>
-                <div class="picker-row">
-                  <select
-                    id={`convo-${d.id}`}
-                    class="picker-select"
-                    bind:value={pickedSession}
-                    data-testid={`picker-${d.id}`}
-                  >
-                    <option value="">Elige una conversación…</option>
-                    {#each app.sessions as s (s.id)}
-                      <option value={s.id} disabled={d.sessionIds?.includes(s.id)}>
-                        {s.title}{d.sessionIds?.includes(s.id) ? ' (ya está aquí)' : ''}
-                      </option>
-                    {/each}
-                  </select>
-                  <Button
-                    variant="solid"
-                    size="sm"
-                    label="Agregar"
-                    disabled={!pickedSession || busyId === d.id}
-                    loading={busyId === d.id}
-                    dataTestId={`attach-${d.id}`}
-                    onClick={() => attach(d)}
-                  />
-                </div>
+                <label class="sr-only" for={`convo-${d.id}`}>Conversación</label>
+                <select id={`convo-${d.id}`} class="picker-select" bind:value={pickedSession} data-testid={`picker-${d.id}`}>
+                  <option value="">Elige una conversación…</option>
+                  {#each app.sessions as s (s.id)}
+                    <option value={s.id} disabled={d.sessionIds?.includes(s.id)}>
+                      {s.title}{d.sessionIds?.includes(s.id) ? ' (ya está aquí)' : ''}
+                    </option>
+                  {/each}
+                </select>
+                <Button
+                  size="sm"
+                  label="Agregar"
+                  disabled={!pickedSession || busy}
+                  loading={busy}
+                  dataTestId={`attach-${d.id}`}
+                  onClick={() => attach(d)}
+                />
               {/if}
             </div>
           {/if}
@@ -478,25 +473,39 @@
   {/if}
 </div>
 
+<UploadSheet bind:open={uploadOpen} hasOptions={manualPublish} {audioOn} onUploaded={() => app.loadOwnedDocs(filter)} />
+<NoteSheet bind:open={noteOpen} onSave={saveNote} />
+
 <style>
   .page {
-    min-height: 100vh;
+    /* Status text on a soft tint: the raw tokens measured 3.9-4.0:1 in dark
+       mode (axe, 2026-10-28); pulled toward ink they pass in both themes. */
+    --warning-text: color-mix(in srgb, var(--edc-color-warning) 72%, var(--edc-color-ink));
+    --danger-text: color-mix(in srgb, var(--edc-color-danger) 72%, var(--edc-color-ink));
+    --success-text: color-mix(in srgb, var(--edc-color-success) 72%, var(--edc-color-ink));
     /* Flex item of the layout's `.app-main`: without this a long unbroken
        title sets the page's min-content width (same fix as /biblioteca). */
     min-width: 0;
+    width: 100%;
     max-width: 60rem;
     margin: 0 auto;
-    padding: var(--edc-space-6) var(--edc-space-5) var(--edc-space-8);
+    padding: var(--edc-space-6) var(--edc-space-4) var(--edc-space-12);
     display: grid;
-    gap: var(--edc-space-4);
+    gap: var(--edc-space-5);
     align-content: start;
   }
+  @media (min-width: 40rem) {
+    .page {
+      padding-inline: var(--edc-space-6);
+    }
+  }
+
   .head {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-start;
+    align-items: flex-end;
     justify-content: space-between;
-    gap: 1rem;
+    gap: var(--edc-space-4);
   }
   .kicker {
     margin: 0;
@@ -507,7 +516,7 @@
     color: var(--edc-color-ink-soft);
   }
   h1 {
-    margin: 0.15rem 0 0.2rem;
+    margin: 0.15rem 0 0;
     font-family: var(--edc-font-display);
     font-size: 1.7rem;
     font-weight: 800;
@@ -516,63 +525,70 @@
   }
   .head-actions {
     display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
+    gap: var(--edc-space-2);
   }
-  .anonymise {
+  /* Phone: the two ways in share the row under the title. */
+  @media (max-width: 40rem) {
+    .head-actions {
+      flex: 1 1 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+    .head-actions :global(.button) {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+
+  /* ── Filter tabs (same bar as /estudiante) ─────────────────── */
+  .tabs {
+    display: flex;
+    gap: var(--edc-space-4);
+    border-bottom: 1px solid var(--edc-color-elevated-border);
+  }
+  .tab {
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    font-size: 0.78rem;
-    color: var(--edc-color-ink-soft);
-  }
-  .back {
-    flex: none;
-    /* A link that looks like a button gets a button's 44px touch floor (app.css). */
-    display: inline-flex;
-    align-items: center;
     min-height: 2.75rem;
-    padding: 0.4rem 0.85rem;
-    border-radius: var(--edc-radius-2);
-    border: 1px solid var(--edc-color-neutral-outline);
-    font-size: 0.78rem;
-    font-weight: 700;
-    text-decoration: none;
-    color: var(--edc-color-ink-soft);
-  }
-  .back:hover {
-    color: var(--edc-color-ink);
-    background: var(--edc-color-neutral-soft);
-  }
-
-  .filters {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-  .filter {
-    padding: 0.35rem 0.8rem;
-    border-radius: var(--edc-radius-pill);
-    border: 1px solid var(--edc-color-neutral-outline);
+    padding: 0 var(--edc-space-1);
+    border: 0;
+    /* The current filter: a 3px bar plus weight and aria-pressed — never colour alone. */
+    border-bottom: 3px solid transparent;
     background: transparent;
-    font-size: 0.8rem;
-    font-weight: 700;
     color: var(--edc-color-ink-soft);
+    font-size: var(--edc-text-md);
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
   }
-  .filter:hover {
-    color: var(--edc-color-ink);
-    background: var(--edc-color-neutral-soft);
-  }
-  .filter.on {
-    background: var(--edc-color-surface-accent);
-    border-color: var(--edc-color-elevated-border);
+  .tab:hover {
     color: var(--edc-color-ink);
   }
-  .filter:focus-visible {
+  .tab[aria-pressed='true'] {
+    border-bottom-color: var(--edc-color-brand);
+    color: var(--edc-color-brand-strong);
+    font-weight: 700;
+  }
+  .tab:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px var(--edc-focus-ring);
+    border-radius: var(--edc-radius-1);
+  }
+  .count {
+    min-width: 1.25rem;
+    padding: 0 0.3rem;
+    border-radius: var(--edc-radius-pill);
+    background: var(--edc-color-neutral-soft);
+    color: var(--edc-color-ink-soft);
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1.25rem;
+    text-align: center;
+  }
+  .tab[aria-pressed='true'] .count {
+    background: var(--edc-color-brand-soft);
+    color: var(--edc-color-brand-strong);
   }
 
   .notice {
@@ -581,46 +597,138 @@
     border-radius: var(--edc-radius-2);
     border: 1px solid var(--edc-color-elevated-border);
     background: var(--edc-color-surface-soft);
-    font-size: 0.85rem;
-    line-height: 1.5;
+    font-size: var(--edc-text-sm);
     color: var(--edc-color-ink-body);
   }
-
-  .rows {
-    list-style: none;
-    margin: 0;
-    padding: 0;
+  .notice.error {
+    border-color: var(--edc-color-danger-outline);
+    background: var(--edc-color-danger-soft);
+    color: var(--danger-text);
+  }
+  .empty {
     display: grid;
-    gap: 0.6rem;
-  }
-  .row {
-    display: grid;
-    gap: 0.5rem;
-    padding: 0.75rem 0.85rem;
-    border-radius: var(--edc-radius-2);
-    border: 1px solid var(--edc-color-elevated-border);
-    background: var(--edc-color-surface);
-  }
-  /* A loose document is marked on the row itself, not only by its sentence:
-     the whole point of this screen is that these are findable at a glance. */
-  /* Demo pass: no tint. Most rows are loose, so a tinted row read as a
-     warning on every document; the "Sin conversación" line marks it. */
-  .row-head {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-  }
-  .subtitle {
-    flex-basis: 100%;
-    font-size: 0.8rem;
+    justify-items: center;
+    gap: var(--edc-space-3);
+    padding: var(--edc-space-10) var(--edc-space-4);
+    border: 1px dashed var(--edc-color-neutral-outline);
+    border-radius: var(--edc-radius-3);
+    text-align: center;
     color: var(--edc-color-ink-soft);
   }
-  /* Two lines at most, then "…" (UX backlog #24: phone titles were cut with
-     no sign that they were cut). The full title is in the tooltip. */
+  .empty p {
+    margin: 0;
+    font-size: var(--edc-text-md);
+  }
+  .empty-icon {
+    display: grid;
+    place-items: center;
+    width: 3rem;
+    height: 3rem;
+    border-radius: 50%;
+    background: var(--edc-color-surface-accent);
+    color: var(--edc-color-brand-strong);
+  }
+
+  /* ── Cards ─────────────────────────────────────────────────── */
+  .cards {
+    display: grid;
+    gap: var(--edc-space-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--edc-space-3);
+    padding: var(--edc-space-4);
+    border: 1px solid var(--edc-color-elevated-border);
+    border-radius: var(--edc-radius-3);
+    background: var(--edc-color-surface-strong);
+    box-shadow: var(--edc-shadow-1);
+    min-width: 0;
+  }
+  .skeleton {
+    height: 8.5rem;
+    background: linear-gradient(90deg, var(--edc-color-surface-soft), var(--edc-color-surface-strong), var(--edc-color-surface-soft));
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    to {
+      background-position: -200% 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton {
+      animation: none;
+    }
+  }
+  /* tile · title · tools on top; pills and "Se usa en" under the title
+     (desktop) or across the whole card (phone). */
+  .card-main {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'tile head tools'
+      'tile meta meta';
+    gap: var(--edc-space-2) var(--edc-space-3);
+    align-items: start;
+    min-width: 0;
+  }
+  @media (max-width: 40rem) {
+    .card-main {
+      grid-template-areas:
+        'tile head tools'
+        'meta meta meta';
+    }
+  }
+  .tile {
+    grid-area: tile;
+    display: grid;
+    place-items: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: var(--edc-radius-2);
+    font-size: 0.66rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    background: var(--edc-color-surface-accent);
+    color: var(--edc-color-brand-strong);
+  }
+  .tile-note {
+    background: var(--edc-color-accent-soft);
+    color: var(--edc-color-accent-strong);
+  }
+  .tile-audio,
+  .tile-voz {
+    background: var(--edc-color-warning-soft);
+    color: var(--warning-text);
+  }
+  .head-text {
+    grid-area: head;
+    display: grid;
+    gap: var(--edc-space-1);
+    min-width: 0;
+    align-self: center;
+  }
+  .tools {
+    grid-area: tools;
+    display: flex;
+    margin: -0.35rem -0.5rem 0 0;
+  }
+  .meta {
+    grid-area: meta;
+    display: grid;
+    gap: var(--edc-space-2);
+    min-width: 0;
+  }
+  /* Two lines at most, then "…" (UX backlog #24). The full title is in the tooltip. */
   .name {
-    font-size: 0.95rem;
+    margin: 0;
+    font-size: var(--edc-text-md);
     font-weight: 700;
+    line-height: var(--edc-leading-snug);
     color: var(--edc-color-ink);
     overflow-wrap: anywhere;
     display: -webkit-box;
@@ -628,146 +736,147 @@
     -webkit-line-clamp: 2;
     line-clamp: 2;
     overflow: hidden;
-    min-width: 0;
   }
-  .chip {
-    padding: 0.1rem 0.4rem;
-    border-radius: var(--edc-radius-pill);
-    border: 1px solid var(--edc-color-neutral-outline);
-    background: var(--edc-color-neutral-soft);
-    font-size: 0.62rem;
+  .subtitle {
+    margin-top: -0.25rem;
+    font-size: var(--edc-text-xs);
     color: var(--edc-color-ink-soft);
   }
-  .chip.kind {
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+
+  .pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--edc-space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
   }
-  .chip.graph-ready {
-    border-color: var(--edc-color-success-outline);
-    color: var(--edc-color-success);
-  }
-  /* Publication badge, same look as in the documents panel. Scoped styles do
-     not cross components, so without these it rendered as plain large text. */
-  .pub-badge {
-    padding: 0.1rem 0.45rem;
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.12rem 0.55rem;
     border-radius: var(--edc-radius-pill);
     border: 1px solid transparent;
-    font-size: 0.62rem;
+    font-size: var(--edc-text-xs);
     font-weight: 700;
     white-space: nowrap;
   }
-  .pub-private {
+  .pill-neutral {
     border-color: var(--edc-color-neutral-outline);
     background: var(--edc-color-neutral-soft);
     color: var(--edc-color-ink);
   }
-  .pub-progress {
+  .pill-progress,
+  .pill-held {
     border-color: var(--edc-color-warning-outline);
     background: var(--edc-color-warning-soft);
-    color: var(--edc-color-warning);
+    color: var(--warning-text);
   }
-  .pub-shared {
+  .pill-shared {
     border-color: var(--edc-color-success-outline);
     background: var(--edc-color-success-soft);
-    color: var(--edc-color-success);
+    color: var(--success-text);
   }
-  .pub-error {
+  .pill-error {
     border-color: var(--edc-color-danger-outline);
     background: var(--edc-color-danger-soft);
-    color: var(--edc-color-danger);
+    color: var(--danger-text);
+    white-space: normal;
   }
-  .loose-note {
-    margin: 0;
-    font-size: 0.84rem;
-    line-height: 1.55;
-    color: var(--edc-color-ink-body);
+  .pill-spin {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    animation: spin 0.9s linear infinite;
   }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pill-spin {
+      animation-duration: 2.7s;
+    }
+  }
+
   .where {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.35rem;
     margin: 0;
-    font-size: 0.8rem;
+    font-size: var(--edc-text-sm);
     color: var(--edc-color-ink-soft);
+    overflow-wrap: anywhere;
+  }
+  .where svg {
+    flex: none;
+    margin-top: 0.15rem;
   }
   .convo {
     font-weight: 700;
-    color: var(--edc-color-ink);
+    color: var(--edc-color-ink-body);
   }
 
   .actions {
     display: flex;
-    align-items: center;
     flex-wrap: wrap;
-    gap: 0.5rem;
+    gap: var(--edc-space-2);
+    padding-top: var(--edc-space-3);
+    border-top: 1px solid var(--edc-color-elevated-border);
   }
-  .blocked {
-    font-size: 0.75rem;
-    color: var(--edc-color-ink-soft);
-  }
-  .danger-link {
-    margin-left: auto;
-    padding: 0.25rem 0.5rem;
-    border: none;
+  .icon-btn {
+    display: grid;
+    place-items: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border: 0;
+    border-radius: var(--edc-radius-2);
     background: transparent;
-    font-size: 0.78rem;
-    font-weight: 700;
+    color: var(--edc-color-ink-soft);
+    cursor: pointer;
+  }
+  .icon-btn:hover:not(:disabled) {
+    background: var(--edc-color-neutral-soft);
+    color: var(--edc-color-ink);
+  }
+  .icon-btn.danger {
     color: var(--edc-color-danger);
-    text-decoration: underline;
   }
-  .danger-link:hover:not(:disabled) {
+  .icon-btn.danger:hover:not(:disabled) {
     background: var(--edc-color-danger-soft);
-    border-radius: var(--edc-radius-1);
+    color: var(--edc-color-danger);
   }
-  .danger-link:disabled {
+  .icon-btn:disabled {
     opacity: 0.5;
+    cursor: default;
   }
-  .danger-link:focus-visible {
+  .icon-btn:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px var(--edc-focus-ring);
-    border-radius: var(--edc-radius-1);
-  }
-
-  /* Phone: a tighter card. Measured at 390px (2026-10-28) a row was ~260px
-     tall; the 44px tap floor (app.css) already makes each action big enough,
-     so the padding and gaps around them can shrink. */
-  @media (max-width: 40rem) {
-    .page {
-      padding: var(--edc-space-4) var(--edc-space-4) var(--edc-space-6);
-    }
-    .row {
-      gap: 0.35rem;
-      padding: 0.6rem 0.7rem;
-    }
-    .actions {
-      gap: 0.25rem 0.4rem;
-    }
   }
 
   .picker {
     display: grid;
-    gap: 0.4rem;
-    padding: 0.6rem 0.7rem;
-    border-radius: var(--edc-radius-2);
-    border: 1px solid var(--edc-color-elevated-border);
-    background: var(--edc-color-surface-soft);
-  }
-  .picker-label {
-    font-size: 0.8rem;
-    font-weight: 700;
-    color: var(--edc-color-ink);
-  }
-  .picker-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
+    gap: var(--edc-space-2);
+    padding: var(--edc-space-3);
+    border-radius: var(--edc-radius-2);
+    background: var(--edc-color-surface-accent);
   }
   .picker-select {
-    flex: 1 1 14rem;
     min-width: 0;
-    padding: 0.35rem 0.5rem;
+    min-height: 2.75rem;
+    padding: 0 var(--edc-space-3);
     border-radius: var(--edc-radius-2);
-    border: 1px solid var(--edc-color-neutral-outline);
+    border: 1px solid var(--edc-color-line-strong);
     background: var(--edc-color-surface);
-    font-size: 0.82rem;
+    font: inherit;
+    font-size: var(--edc-text-sm);
     color: var(--edc-color-ink);
   }
   .picker-select:focus-visible {
@@ -775,8 +884,36 @@
     box-shadow: 0 0 0 3px var(--edc-focus-ring);
   }
   .picker-empty {
+    grid-column: 1 / -1;
     margin: 0;
-    font-size: 0.75rem;
+    font-size: var(--edc-text-sm);
     color: var(--edc-color-ink-soft);
+  }
+
+  /* Phone: the two conversation actions share the row evenly. */
+  @media (max-width: 40rem) {
+    .card {
+      padding: var(--edc-space-3);
+    }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+    .actions :global(.button) {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>
