@@ -1,6 +1,26 @@
 import type { CollectionConfig } from 'payload'
 
 import { withinMyOrganizations, withinMyOrganizationsWithRole } from '../access'
+import { relationId } from '../lib/permissions'
+import { makeRefuseForeignOrganization } from './Memberships'
+
+/**
+ * 🔴 Same hole as teams, one hop out: the access rule pins the project row to
+ * my orgs, not the `team` it is created under or moved to. The team's own
+ * organization decides, read with `overrideAccess` because this IS the access
+ * decision (code audit 2026-10-28, auth MEDIUM).
+ */
+export const refuseForeignProjectTeam = makeRefuseForeignOrganization(undefined, {
+  collection: 'projects',
+  field: 'team',
+  message: 'You can only put a project under a team of an ecosistema you administer.',
+  organizationOf: async (payload, team) => {
+    const row = (await payload
+      .findByID({ collection: 'teams', id: team as never, depth: 0, overrideAccess: true })
+      .catch(() => null)) as { organization?: unknown } | null
+    return relationId(row?.organization)
+  },
+})
 
 /**
  * A project owned by a team. Mentionable (`@proyecto`) and scopable; `summary`
@@ -35,6 +55,7 @@ export const Projects: CollectionConfig = {
     update: withinMyOrganizationsWithRole('admin', 'team.organization'),
     delete: withinMyOrganizationsWithRole('admin', 'team.organization'),
   },
+  hooks: { beforeValidate: [refuseForeignProjectTeam] },
   fields: [
     { name: 'name', type: 'text', required: true },
     {

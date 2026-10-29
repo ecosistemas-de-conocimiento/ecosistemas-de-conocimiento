@@ -1,6 +1,19 @@
 import type { CollectionConfig } from 'payload'
 
 import { withinMyOrganizations, withinMyOrganizationsWithRole } from '../access'
+import { makeRefuseForeignOrganization } from './Memberships'
+
+/**
+ * 🔴 The `admin`-in-my-orgs access rule scopes WHICH team is written, never
+ * WHERE it is written to: Payload ignores a WHERE on create, and an update can
+ * patch `organization`. See `makeRefuseForeignOrganization` (code audit
+ * 2026-10-28, auth MEDIUM).
+ */
+export const refuseForeignTeamOrganization = makeRefuseForeignOrganization(undefined, {
+  collection: 'teams',
+  field: 'organization',
+  message: 'You can only put a team in an ecosistema you administer.',
+})
 
 /**
  * A team inside an organization. Teams own projects and gather memberships.
@@ -27,6 +40,7 @@ export const Teams: CollectionConfig = {
     update: withinMyOrganizationsWithRole('admin'),
     delete: withinMyOrganizationsWithRole('admin'),
   },
+  hooks: { beforeValidate: [refuseForeignTeamOrganization] },
   fields: [
     { name: 'name', type: 'text', required: true },
     {

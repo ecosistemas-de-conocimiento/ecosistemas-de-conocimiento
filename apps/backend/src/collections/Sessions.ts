@@ -10,6 +10,7 @@ import type {
 } from 'payload'
 import { Forbidden, ValidationError } from 'payload'
 
+import { isActiveUser } from '../access'
 import { CONTEXT_REF_RELATION_TO } from '../lib/contextRefs'
 import { scheduleTurnErasure, type TurnErasurePlan } from '../lib/conversationTurnErasure'
 import {
@@ -40,7 +41,10 @@ import type { CorpusMover } from '../lib/publishDocument'
  */
 
 const ownOnly: Access = ({ req: { user } }) => {
-  if (!user) return false
+  // A deactivated account keeps a valid token until it expires; `isActive` is
+  // the revoke switch, and Payload's own auth does not know it (code audit
+  // 2026-10-28, item 4).
+  if (!user || !isActiveUser(user)) return false
   return { user: { equals: user.id } } satisfies Where
 }
 
@@ -487,7 +491,7 @@ export const Sessions: CollectionConfig = {
     read: ownOnly,
     update: ownOnly,
     delete: ownOnly,
-    create: ({ req: { user } }) => Boolean(user),
+    create: ({ req: { user } }) => isActiveUser(user),
   },
   fields: [
     {

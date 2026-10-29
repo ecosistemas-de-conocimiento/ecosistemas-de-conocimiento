@@ -479,6 +479,9 @@ describe.skipIf(!dockerOk)('deleting a conversation on a real Postgres', () => {
   }, 30_000)
 
   it('a chat upload records its conversation, and an update cannot re-point it', async () => {
+    // Attaching to a conversation needs an active membership in its ecosistema
+    // (`assertSessionOwnedBy`, code audit 2026-10-28 item 4).
+    await db.execute(sql.raw(`INSERT INTO memberships (user_id, organization_id) VALUES (1, 1);`))
     const owner = await payload.findByID({ collection: 'users', id: 1, overrideAccess: true })
     const created = await payload.create({
       collection: 'documents',

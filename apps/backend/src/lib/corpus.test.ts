@@ -37,6 +37,23 @@ const BEN_SESSION = 101
 const CARLA_SESSION = 200
 const ORPHAN_SESSION = 300 // no ecosistema
 
+/**
+ * `assertSessionOwnedBy` also asks for an active account, an active membership
+ * and an active ecosistema (code audit 2026-10-28, item 4). This answers those
+ * three reads from a membership map, the way Payload would.
+ */
+function activeMembershipFinder(memberOf: Record<number, number[]>) {
+  return vi.fn(async ({ collection, where }: { collection: string; where: { and: Array<Record<string, { equals?: unknown; in?: unknown[] }>> } }) => {
+    const first = where.and[0] ?? {}
+    if (collection === 'users') return { docs: [{ id: first.id?.equals, isActive: true }] }
+    if (collection === 'memberships') {
+      const user = Number(first.user?.equals)
+      return { docs: (memberOf[user] ?? []).map((organization, i) => ({ id: i + 1, user, organization, role: 'member', isActive: true })) }
+    }
+    return { docs: (first.id?.in ?? []).map((id) => ({ id, slug: `eco-${String(id)}`, isActive: true })) }
+  })
+}
+
 function fakePayload(): Payload {
   const sessions: Record<string, { user: number; organization: number | null }> = {
     [ANA_SESSION]: { user: ANA, organization: ECO_A },
@@ -50,6 +67,7 @@ function fakePayload(): Payload {
       if (!row) throw new Error('NotFound')
       return { id, ...row }
     }),
+    find: activeMembershipFinder({ [ANA]: [ECO_A], [BEN]: [ECO_A], [CARLA]: [ECO_B] }),
   } as unknown as Payload
 }
 
