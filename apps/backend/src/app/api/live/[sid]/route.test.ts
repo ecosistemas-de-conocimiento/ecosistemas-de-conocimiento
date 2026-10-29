@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-let currentUser: { id: string; isPlatformAdmin?: boolean } | null = { id: 'u42' }
+let currentUser: { id: string; isPlatformAdmin?: boolean; isActive?: boolean } | null = { id: 'u42' }
 let memberOf: string[] = ['7']
 let liveMic = true
 /** Conversations the caller may read, by id → their ecosistema. */
@@ -55,6 +55,13 @@ describe('/api/live/:sid', () => {
 
   it('refuses an anonymous caller before touching audio-service', async () => {
     currentUser = null
+    const res = await POST(new Request('http://x/api/live/' + SID + '?organization=7', { method: 'POST', body: 'a' }), ctx(SID))
+    expect(res.status).toBe(401)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('🔴 refuses a deactivated account whose token is still valid, before touching audio-service', async () => {
+    currentUser = { id: 'u42', isActive: false }
     const res = await POST(new Request('http://x/api/live/' + SID + '?organization=7', { method: 'POST', body: 'a' }), ctx(SID))
     expect(res.status).toBe(401)
     expect(fetchMock).not.toHaveBeenCalled()

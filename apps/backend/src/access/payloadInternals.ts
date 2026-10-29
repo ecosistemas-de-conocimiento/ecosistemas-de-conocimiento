@@ -70,6 +70,14 @@ export function lockDownPayloadInternals(config: SanitizedConfig): SanitizedConf
     update: isPlatformAdmin,
     delete: adminOrOwnRows,
   })
+  // 🔴 Not a `payload-*` collection, but the same class of hole: Payload
+  // defaults `access.unlock` to `Boolean(user)`. `Users.ts` sets it; this makes
+  // losing it (a refactor, a spread that drops the key) a boot failure rather
+  // than a silently reopened door (code audit 2026-10-28, item 5).
+  if (find('users').access.unlock !== isPlatformAdmin) {
+    throw new Error('lockDownPayloadInternals: users.access.unlock must be isPlatformAdmin')
+  }
+
   Object.assign(find(PREFERENCES).access, {
     read: ownRowsOnly,
     // The `user` field's own hook stamps the caller on every write; a WHERE

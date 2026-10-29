@@ -91,6 +91,12 @@ export const Users: CollectionConfig = {
     read: isSelfOrPlatformAdmin,
     update: isSelfOrPlatformAdmin,
     delete: isPlatformAdmin,
+    // 🔴 Payload's stock rule is `Boolean(user)`: any signed-in account could
+    // reset anyone's login lockout via `POST /api/users/unlock`, and 200 vs 403
+    // told it which emails exist (code audit 2026-10-28, item 5). A `false`
+    // here is a 403 before the email is looked up, so no oracle either.
+    // `lockDownPayloadInternals` refuses to boot without this rule.
+    unlock: isPlatformAdmin,
     // The panel is where a person edits their own profile, so any active
     // account may open it. What they can SEE there is decided by `read`.
     admin: canAccessAdminPanel,

@@ -3,6 +3,7 @@ import type {
   CollectionBeforeOperationHook,
   CollectionBeforeValidateHook,
   CollectionConfig,
+  CollectionSlug,
   FieldAccess,
 } from 'payload'
 import { sql } from '@payloadcms/db-postgres'
@@ -138,10 +139,33 @@ type AdminOrgResolver = (
   userId: number | string,
 ) => Promise<(number | string)[]>
 
+/**
+ * Where a collection keeps its organization. Memberships and teams name it
+ * directly; projects reach it one hop out, through `team` (code audit
+ * 2026-10-28, auth MEDIUM: the same create/update hole on teams and projects).
+ */
+export type ForeignOrganizationTarget = {
+  collection: CollectionSlug
+  field: string
+  message: string
+  /** Turns the field's value into an organization id. Default: the value itself. */
+  organizationOf?: (
+    payload: Parameters<typeof organizationIdsForUserWithMinRole>[0],
+    value: number | string,
+  ) => Promise<number | string | null>
+}
+
+const MEMBERSHIP_TARGET: ForeignOrganizationTarget = {
+  collection: 'memberships',
+  field: 'organization',
+  message: FOREIGN_ORGANIZATION_MESSAGE,
+}
+
 export const makeRefuseForeignOrganization =
   (
     adminOrgIds: AdminOrgResolver = (payload, userId) =>
       organizationIdsForUserWithMinRole(payload, userId, 'admin'),
+    target: ForeignOrganizationTarget = MEMBERSHIP_TARGET,
   ): CollectionBeforeValidateHook =>
   async ({ data, operation, originalDoc, req }) => {
     const caller = req?.user
@@ -149,22 +173,29 @@ export const makeRefuseForeignOrganization =
     if (callerId === null || callerId === undefined) return data
     if (isPlatformAdminUser(caller)) return data
 
+    const { field } = target
     const patch = (data ?? {}) as Record<string, unknown>
-    // On update, only a write that names an organization can move the row; the
+    // On update, only a write that names the field can move the row; the
     // access rule already pinned the row itself to one of the caller's orgs.
-    if (operation === 'update' && !('organization' in patch)) return data
+    if (operation === 'update' && !(field in patch)) return data
 
     const stored = (originalDoc ?? {}) as Record<string, unknown>
-    const target = toRelationId('organization' in patch ? patch.organization : stored.organization)
-    // A missing organization is the `required` validator's job, not ours.
-    if (target === null) return data
+    const value = toRelationId(field in patch ? patch[field] : stored[field])
+    // A missing value is the `required` validator's job, not ours.
+    if (value === null) return data
+    const organization = target.organizationOf
+      ? await target.organizationOf(req.payload, value)
+      : value
 
-    const allowed = await adminOrgIds(req.payload, callerId as number | string)
-    if (allowed.some((id) => String(id) === String(target))) return data
+    // An unknown team resolves to no organization: refused, never waved through.
+    if (organization !== null) {
+      const allowed = await adminOrgIds(req.payload, callerId as number | string)
+      if (allowed.some((id) => String(id) === String(organization))) return data
+    }
 
     throw new ValidationError({
-      collection: 'memberships',
-      errors: [{ path: 'organization', message: FOREIGN_ORGANIZATION_MESSAGE }],
+      collection: target.collection,
+      errors: [{ path: field, message: target.message }],
       req,
     })
   }

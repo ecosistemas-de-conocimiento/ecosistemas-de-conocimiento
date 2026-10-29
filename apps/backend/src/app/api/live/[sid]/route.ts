@@ -21,7 +21,7 @@ import configPromise from '@payload-config'
 import { NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 
-import { isPlatformAdminUser } from '@/access'
+import { isActiveUser, isPlatformAdminUser } from '@/access'
 import { audioServiceApiKey, audioServiceBaseUrl } from '@/lib/audioClient'
 import { featureEnabled } from '@/lib/features'
 import { organizationIdsForUser, relationId } from '@/lib/permissions'
@@ -77,7 +77,10 @@ async function prepare(
 ): Promise<{ url: string; key: string } | Response> {
   const payload = await getPayload({ config: configPromise })
   const { user } = await payload.auth({ headers: request.headers })
-  if (!user) return fail(401, 'unauthorized')
+  // 🔴 `isActive` is the revoke switch and Payload's auth ignores it: a
+  // deactivated account's token stays valid until it expires (code audit
+  // 2026-10-28, item 4).
+  if (!user || !isActiveUser(user)) return fail(401, 'unauthorized')
   const { sid } = await ctx.params
   if (!SID.test(sid)) return fail(400, 'bad_session_id')
   // 🔴 `liveMic` (`lib/features.ts`), per ecosistema. The ecosistema is named

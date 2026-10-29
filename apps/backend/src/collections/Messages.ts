@@ -7,6 +7,7 @@ import type {
 } from 'payload'
 import { ValidationError } from 'payload'
 
+import { isActiveUser } from '../access'
 import { MESSAGE_CORPUS_STATES } from '../lib/conversationIngest'
 import { CONTEXT_REF_RELATION_TO } from '../lib/contextRefs'
 import { assertSessionOwnedBy, SessionNotOwnedError } from '../lib/corpus'
@@ -25,7 +26,8 @@ import { relationId } from '../lib/permissions'
  */
 
 const ownViaSession: Access = ({ req: { user } }) => {
-  if (!user) return false
+  // See `ownOnly` in Sessions.ts: a deactivated account reads nothing.
+  if (!user || !isActiveUser(user)) return false
   return { 'session.user': { equals: user.id } } satisfies Where
 }
 
@@ -281,7 +283,9 @@ export const Messages: CollectionConfig = {
     read: ownViaSession,
     update: ownViaSession,
     delete: ownViaSession,
-    create: ({ req: { user } }) => Boolean(user),
+    // Membership and ecosistema switches are checked per session in the
+    // write gate (`assertSessionOwnedBy`); the account's own switch here.
+    create: ({ req: { user } }) => isActiveUser(user),
   },
   fields: [
     {

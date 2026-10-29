@@ -57,7 +57,7 @@
 
 import type { Payload } from 'payload'
 
-import { relationId } from './permissions'
+import { organizationIdsForUser, relationId } from './permissions'
 
 /**
  * ⚠ Ids go into a corpus NAME, which is a path segment on the wire. Anything
@@ -185,5 +185,39 @@ export async function assertSessionOwnedBy(
     throw new SessionNotOwnedError('No such conversation.')
   }
 
-  return { organizationId: relationId(session.organization) }
+  /**
+   * 🔴 OWNERSHIP IS NOT ENOUGH: THE REVOKE SWITCHES COUNT HERE TOO (code audit
+   * 2026-10-28, item 4). A conversation outlives the access that opened it. A
+   * deactivated account, a removed or switched-off membership, or a
+   * switched-off ecosistema must stop searching that ecosistema's corpus and
+   * stop writing turns into it, even through a conversation opened before the
+   * revoke. `organizationIdsForUser` is the one resolver that applies the
+   * membership and ecosistema switches (`lib/permissions.ts`); the account's
+   * own switch is read here, because the resolver takes an id, not a row.
+   * `isActive: { equals: true }`, never `not_equals: false`: see the note in
+   * `lib/permissions.ts` — a NULL flag must fail closed.
+   *
+   * Same answer as "not yours", for the same reason.
+   */
+  const active = await payload.find({
+    collection: 'users',
+    where: { and: [{ id: { equals: userId } }, { isActive: { equals: true } }] },
+    depth: 0,
+    limit: 1,
+    pagination: false,
+    overrideAccess: true,
+  })
+  if (active.docs.length === 0) {
+    throw new SessionNotOwnedError('No such conversation.')
+  }
+
+  const organizationId = relationId(session.organization)
+  if (organizationId !== null) {
+    const mine = await organizationIdsForUser(payload, userId)
+    if (!mine.some((id) => String(id) === String(organizationId))) {
+      throw new SessionNotOwnedError('No such conversation.')
+    }
+  }
+
+  return { organizationId }
 }
