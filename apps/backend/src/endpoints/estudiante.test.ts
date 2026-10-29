@@ -245,6 +245,8 @@ describe('student scoping', () => {
     expect(Q.calls).toContain('topics:2:true')
     expect(Q.calls.filter((c) => c.startsWith('texts:'))).toEqual(['texts:1'])
     expect(Q.calls.filter((c) => c.startsWith('docs:'))).toEqual(['docs:1'])
+    // The kind travels, so the web can keep testimonio names out of hosted prompts (audit 2026-10-28 item 9).
+    expect(res.body.documentos).toEqual([{ id: 101, name: 'Trabajo 1', status: 'draft', kind: 'documento' }])
     expect(res.body.autores).toEqual([
       { name: 'Charles S. Peirce', docs: 2, page: null },
       { name: 'Lotman', docs: 1, page: null },

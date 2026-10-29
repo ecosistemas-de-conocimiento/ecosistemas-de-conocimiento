@@ -1,6 +1,5 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import type { Role } from '$lib/types';
 import {
   getAIClient,
   httpStatusFor,
@@ -103,7 +102,8 @@ const PASSAGE_TEXT_CAP = 1200;
 
 interface IncomingBody {
   sessionId: string;
-  messages: { role: Role; content: string }[];
+  /** Untrusted: read only through `conversationRows`. */
+  messages?: unknown;
   /** `@`-mention refs attached to the latest user turn. */
   contextRefs?: ContextRef[];
   /** Per-thread context scope. One tenancy level, so this is org-wide. */
@@ -438,6 +438,24 @@ const inflightTurns = new Map<string, Promise<Response | null>>();
  * see an answer that is not saved yet. One web process on dev and staging, so
  * an in-memory map covers it.
  */
+/**
+ * 🔴 The browser's `messages[]`, validated at runtime (audit 2026-10-28 item
+ * 10). The body is typed, never checked, and the engine appends history rows
+ * after the real system prompt: a `system` row from the browser would read as
+ * an instruction. Only `user`/`assistant` rows with string content are kept;
+ * anything else (other roles, non-objects, non-string content, a non-array) is
+ * dropped.
+ */
+function conversationRows(raw: unknown): { role: 'user' | 'assistant'; content: string }[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((m: unknown) => {
+    if (!m || typeof m !== 'object') return [];
+    const { role, content } = m as { role?: unknown; content?: unknown };
+    if ((role !== 'user' && role !== 'assistant') || typeof content !== 'string') return [];
+    return [{ role, content }];
+  });
+}
+
 export const POST: RequestHandler = async (event) => {
   let key: string | null = null;
   if (event.url.searchParams.get('stream') !== '1') {
@@ -500,7 +518,7 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // Split the latest user turn off the history; the engine assembles the user
   // turn with injected context, so we pass `history` (everything before) + the
   // raw `userMessage` separately.
-  const allMessages = body.messages ?? [];
+  const allMessages = conversationRows(body.messages);
   const lastUserIdx = [...allMessages].map((m) => m.role).lastIndexOf('user');
   const userMessage = lastUserIdx >= 0 ? allMessages[lastUserIdx]!.content : '';
   const history = (lastUserIdx >= 0 ? allMessages.slice(0, lastUserIdx) : allMessages).map((m) => ({

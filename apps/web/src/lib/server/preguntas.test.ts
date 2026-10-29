@@ -11,7 +11,7 @@ const overview: StudentOverview = {
     { id: 1, label: 'semiosis' },
     { id: 2, label: 'signo' },
   ],
-  documentos: [{ id: 1, name: 'Mi ensayo', status: 'draft' }],
+  documentos: [{ id: 1, name: 'Mi ensayo', status: 'draft', kind: 'documento' }],
   companeros: [{ id: 'slug', name: 'Beto', topics: [{ id: 1, label: 'semiosis' }] }],
   autores: [{ name: 'Peirce', docs: 2, page: null }],
   autoresParaLeer: [{ name: 'Umberto Eco', docs: 1, page: null }],
@@ -44,6 +44,31 @@ describe('generateQuestions', () => {
     expect(body.unit.input.userPrompt).toBe(questionsUserPrompt(overview));
     expect(body.unit.input.userPrompt).not.toContain('Beto');
     expect(body.unit.systemPrompt).toContain('preguntas abiertas');
+  });
+});
+
+describe('🔴 questionsUserPrompt sends documentos only (audit 2026-10-28 item 9)', () => {
+  const withTestimonios: StudentOverview = {
+    ...overview,
+    documentos: [
+      { id: 1, name: 'Mi ensayo', status: 'draft', kind: 'documento' },
+      // A testimonio's file name often carries the speaker's name.
+      { id: 2, name: 'Entrevista Juana Pérez.m4a', status: 'draft', kind: 'testimonio' },
+      // No kind (an older backend): fail closed, never sent.
+      { id: 3, name: 'Grabación Doña Rosa', status: 'draft' },
+    ],
+  };
+
+  it('a testimonio name never reaches the hosted model', () => {
+    const prompt = questionsUserPrompt(withTestimonios);
+    expect(prompt).toContain('Mis trabajos: Mi ensayo');
+    expect(prompt).not.toContain('Juana');
+    expect(prompt).not.toContain('Rosa');
+  });
+
+  it('only testimonios: the line says there are none', () => {
+    const prompt = questionsUserPrompt({ ...withTestimonios, documentos: withTestimonios.documentos.slice(1) });
+    expect(prompt).toContain('Mis trabajos: —');
   });
 });
 

@@ -21,10 +21,18 @@ export const QUESTIONS_SYSTEM_PROMPT =
 
 const list = (xs: readonly string[], n: number) => (xs.length ? xs.slice(0, n).join('; ') : '—');
 
+/**
+ * 🔴 Documentos only (audit 2026-10-28 item 9). A testimonio's file name often
+ * carries the speaker's name, and this prompt goes to a hosted model. A row
+ * with no `kind` is left out too: fail closed.
+ */
+const documentoNames = (o: StudentOverview) =>
+  o.documentos.filter((d) => d.kind === 'documento').map((d) => d.name);
+
 export function questionsUserPrompt(o: StudentOverview): string {
   return [
     `Mis temas: ${list(o.temas.map((t) => t.label), 12)}`,
-    `Mis trabajos: ${list(o.documentos.map((d) => d.name), 10)}`,
+    `Mis trabajos: ${list(documentoNames(o), 10)}`,
     `Autores que cito: ${list(o.autores.map((a) => a.name), 10)}`,
     `Autores cercanos en el ecosistema: ${list(o.autoresParaLeer.map((a) => a.name), 10)}`,
     `Temas del ecosistema: ${list(o.temasDelEcosistema, 15)}`,

@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Provenance } from '@edc/chat-engine/core';
 import { citationsWithOrdinals, denseCitations } from './citationOrdinals';
-import { linkCitations } from './citationLinks';
+import { linkCitations as link } from './citationLinks';
+import { Window } from 'happy-dom';
+
+// The suite runs under node; `linkCitations` rewrites on a real DOM.
+const doc = new Window().document as unknown as Document;
+const linkCitations = (html: string, ordinals: Iterable<number>) => link(html, ordinals, doc);
 
 /** UX backlog #35: cited-only sources keep the `[N]` the answer used. */
 
