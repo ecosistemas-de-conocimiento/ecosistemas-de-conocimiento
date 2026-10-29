@@ -125,9 +125,12 @@ export function makeEvalStore(token: string | undefined): EvalStore {
     async deleteSession(id) {
       // Never throws (a `finally` and the reaper call it), but never silent: a
       // conversation left behind keeps the run's turns searchable by members.
+      // ⚠ A 404 is logged too: `sessions` access is owner-only, so another
+      // admin's token (the reaper runs as whoever opens the page) gets 404 for
+      // a conversation that still exists.
       try {
         const res = await call(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
-        if (!res.ok && res.status !== 404) console.warn(`[evals] deleting eval conversation ${id}: backend ${res.status}`);
+        if (!res.ok) console.warn(`[evals] deleting eval conversation ${id}: backend ${res.status}`);
       } catch (err) {
         console.warn(`[evals] deleting eval conversation ${id}: ${err instanceof Error ? err.name : 'error'}`);
       }

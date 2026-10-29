@@ -26,10 +26,10 @@ describe('deleteSession', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('TypeError'));
   });
 
-  it('a 404 is already gone: no log', async () => {
+  it('🔴 a 404 is logged too: `sessions` access is owner-only, so it may be a refusal, not "gone"', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     backendFetch.mockResolvedValueOnce(new Response(null, { status: 404 }));
     await makeEvalStore('t').deleteSession('s1');
-    expect(warn).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('404'));
   });
 });

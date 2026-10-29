@@ -93,7 +93,7 @@ describe.skipIf(!dockerOk)('evals on a real Postgres', () => {
 
   beforeEach(async () => {
     await db.execute(sql.raw(`
-      TRUNCATE sessions, eval_items, eval_runs, organizations, users RESTART IDENTITY CASCADE;
+      TRUNCATE documents, memberships, sessions, eval_items, eval_runs, organizations, users RESTART IDENTITY CASCADE;
       INSERT INTO users (id, email, is_platform_admin, is_active) VALUES (1, 'admin@example.invalid', true, true), (2, 'owner@example.invalid', false, true);
       INSERT INTO organizations (id, name, slug) VALUES (7, 'Discapacidad', 'discapacidad');
     `))
@@ -149,6 +149,43 @@ describe.skipIf(!dockerOk)('evals on a real Postgres', () => {
     }
     const n = (await db.execute(sql.raw('SELECT count(*) AS n FROM sessions'))) as unknown as { rows: Array<{ n: string }> }
     expect(Number(n.rows[0]!.n)).toBe(0)
+  }, 30_000)
+
+  it('🔴 R77: an eval conversation never carries a document', async () => {
+    const admin = await payload.findByID({ collection: 'users', id: 1, overrideAccess: true })
+    await db.execute(sql.raw(`INSERT INTO eval_runs (id, organization_id, status, triggered_by_id) VALUES (43, 7, 'running', 1)`))
+    const req = { user: admin, payload, json: async () => ({ run: 43 }) } as unknown as PayloadRequest
+    const { id } = (await ((await sessionRoute!.handler(req)) as Response).json()) as { id: number }
+    const reason = await payload
+      .create({
+        collection: 'documents',
+        overrideAccess: false,
+        user: admin,
+        data: { kind: 'markdown', name: 'nota', bodyMarkdown: 'hola', session: [id] } as never,
+      })
+      .then(
+        () => 'created',
+        (err: { data?: { errors?: Array<{ message?: string }> }; message?: string }) => err.data?.errors?.[0]?.message ?? err.message ?? '',
+      )
+    expect(reason).toMatch(/evaluación/)
+    const n = (await db.execute(sql.raw('SELECT count(*) AS n FROM documents'))) as unknown as { rows: Array<{ n: string }> }
+    expect(Number(n.rows[0]!.n)).toBe(0)
+  }, 30_000)
+
+  it('🔴 R77: a REST create cannot forge evalRun (an ordinary conversation stays ordinary)', async () => {
+    await db.execute(sql.raw(`
+      INSERT INTO memberships (user_id, organization_id, role) VALUES (2, 7, 'owner');
+      INSERT INTO eval_runs (id, organization_id, status, triggered_by_id) VALUES (44, 7, 'running', 1);
+    `))
+    const owner = await payload.findByID({ collection: 'users', id: 2, overrideAccess: true })
+    const created = (await payload.create({
+      collection: 'sessions',
+      data: { organization: 7, kind: 'generales', evalRun: 44 } as never,
+      overrideAccess: false,
+      user: owner,
+    })) as { id: number }
+    const row = (await db.execute(sql.raw(`SELECT eval_run FROM sessions WHERE id = ${Number(created.id)}`))) as unknown as { rows: Array<{ eval_run: string | null }> }
+    expect(row.rows[0]!.eval_run).toBeNull()
   }, 30_000)
 
   it('🔴 eval rows: a platform admin reads and writes them, an owner sees nothing and cannot create', async () => {

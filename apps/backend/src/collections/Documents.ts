@@ -659,8 +659,9 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
 
     for (const sessionId of sessionIds) {
       let resolved: string | number | null
+      let evalRun: number | null
       try {
-        ;({ organizationId: resolved } = await assertSessionOwnedBy(
+        ;({ organizationId: resolved, evalRun } = await assertSessionOwnedBy(
           req.payload,
           sessionId,
           user.id,
@@ -668,6 +669,13 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
       } catch (err) {
         if (err instanceof SessionNotOwnedError) throw sessionError(err.message)
         throw err
+      }
+      // 🔴 R77: an eval run's conversation never carries a document. It skips
+      // the membership check (a platform admin is never a member), so a
+      // document attached there would file an admin's upload into the
+      // ecosistema's corpus with no membership behind it.
+      if (evalRun !== null) {
+        throw sessionError('Una conversación de evaluación no lleva documentos.')
       }
 
       // 🔴 ONE DOCUMENT, ONE ECOSISTEMA. `organization` is half of every corpus
