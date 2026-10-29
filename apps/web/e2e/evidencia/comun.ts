@@ -127,6 +127,9 @@ export async function conversar(page: Page, pregunta: string, experiencia: strin
   });
   await escena(page, 'C1.2', async () => {
     await page.getByRole('button', { name: 'Nueva nota' }).first().click();
+    // fix/markdown-rendering: a note may open on its preview; open the editor first.
+    const editar = page.locator('[data-testid^="note-edit-open-"]').last();
+    if (await editar.isVisible().catch(() => false)) await editar.click();
     await page.getByLabel('Contenido del documento').fill('Ideas para la faena de limpieza:\n\n- Revisar patios y azoteas\n- Tapar tambos y cubetas');
     const titulo = page.getByLabel('Título del documento').last();
     await titulo.fill(`${RUN_ID}-nota`);

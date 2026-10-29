@@ -144,6 +144,10 @@ async function abrirNota(page: Page, id: string): Promise<Locator> {
   await card.scrollIntoViewIfNeeded();
   const abrir = card.getByRole('button', { name: 'Mostrar u ocultar el documento' });
   if ((await abrir.getAttribute('aria-expanded')) !== 'true') await abrir.click();
+  // fix/markdown-rendering: a note opens on its rendered preview; the editor is
+  // one click away (`note-edit-open-<id>`). Older builds open straight on it.
+  const editar = page.getByTestId(`note-edit-open-${id}`);
+  if (await editar.isVisible().catch(() => false)) await editar.click();
   return card;
 }
 
