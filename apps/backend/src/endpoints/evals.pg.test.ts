@@ -117,18 +117,38 @@ describe.skipIf(!dockerOk)('evals on a real Postgres', () => {
       payload.create({ collection: 'sessions', data: { organization: 7, kind: 'generales' } as never, overrideAccess: false, user: admin }),
     ).rejects.toThrow()
 
-    const req = { user: admin, payload, json: async () => ({ organization: 7 }) } as unknown as PayloadRequest
+    await db.execute(sql.raw(`INSERT INTO eval_runs (id, organization_id, status, triggered_by_id) VALUES (40, 7, 'running', 1)`))
+    const req = { user: admin, payload, json: async () => ({ run: 40 }) } as unknown as PayloadRequest
     const res = (await sessionRoute!.handler(req)) as Response
     expect(res.status).toBe(201)
     const { id } = (await res.json()) as { id: number }
-    const row = (await db.execute(sql.raw(`SELECT user_id, organization_id, kind FROM sessions WHERE id = ${Number(id)}`))) as unknown as {
-      rows: Array<{ user_id: number; organization_id: number; kind: string }>
+    const row = (await db.execute(sql.raw(`SELECT user_id, organization_id, kind, eval_run FROM sessions WHERE id = ${Number(id)}`))) as unknown as {
+      rows: Array<{ user_id: number; organization_id: number; kind: string; eval_run: string }>
     }
-    expect(row.rows[0]).toEqual({ user_id: 1, organization_id: 7, kind: 'generales' })
+    expect(row.rows[0]).toEqual({ user_id: 1, organization_id: 7, kind: 'generales', eval_run: '40' })
+    const bound = (await db.execute(sql.raw('SELECT session_id FROM eval_runs WHERE id = 40'))) as unknown as { rows: Array<{ session_id: string }> }
+    expect(bound.rows[0]!.session_id).toBe(String(id))
+
+    // 🔴 R77: the admin cannot unbind it through REST to chat there freely.
+    await payload.update({ collection: 'sessions', id, data: { evalRun: null } as never, overrideAccess: false, user: admin })
+    const still = (await db.execute(sql.raw(`SELECT eval_run FROM sessions WHERE id = ${Number(id)}`))) as unknown as { rows: Array<{ eval_run: string }> }
+    expect(still.rows[0]!.eval_run).toBe('40')
 
     const { corporaForSession } = await import('../lib/corpus')
     const corpora = await corporaForSession(payload, id, 1)
     expect(corpora.organizationId).toBe(7)
+  }, 30_000)
+
+  it('🔴 R77: a direct call without a running run gets no conversation', async () => {
+    const admin = await payload.findByID({ collection: 'users', id: 1, overrideAccess: true })
+    await db.execute(sql.raw(`INSERT INTO eval_runs (id, organization_id, status, triggered_by_id) VALUES (41, 7, 'done', 1), (42, 7, 'queued', 1)`))
+    for (const body of [{ organization: 7 }, { run: 41 }, { run: 42 }, { run: 999 }]) {
+      const req = { user: admin, payload, json: async () => body } as unknown as PayloadRequest
+      const res = (await sessionRoute!.handler(req)) as Response
+      expect(res.status, JSON.stringify(body)).toBeGreaterThanOrEqual(400)
+    }
+    const n = (await db.execute(sql.raw('SELECT count(*) AS n FROM sessions'))) as unknown as { rows: Array<{ n: string }> }
+    expect(Number(n.rows[0]!.n)).toBe(0)
   }, 30_000)
 
   it('🔴 eval rows: a platform admin reads and writes them, an owner sees nothing and cannot create', async () => {

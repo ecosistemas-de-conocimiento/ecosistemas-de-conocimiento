@@ -18,7 +18,7 @@ import * as migration_20261028_170129_documents_wiki_links from './20261028_1701
 import * as migration_20261028_231948_documents_note_revisions from './20261028_231948_documents_note_revisions';
 import * as migration_20261028_235647_documents_kind_xls from './20261028_235647_documents_kind_xls';
 import * as migration_20261029_042255_documents_held_text_hash from './20261029_042255_documents_held_text_hash';
-import * as migration_20261029_050857_evals from './20261029_050857_evals';
+import * as migration_20261029_060304_evals from './20261029_060304_evals';
 
 export const migrations = [
   {
@@ -122,8 +122,8 @@ export const migrations = [
     name: '20261029_042255_documents_held_text_hash',
   },
   {
-    up: migration_20261029_050857_evals.up,
-    down: migration_20261029_050857_evals.down,
-    name: '20261029_050857_evals'
+    up: migration_20261029_060304_evals.up,
+    down: migration_20261029_060304_evals.down,
+    name: '20261029_060304_evals'
   },
 ];

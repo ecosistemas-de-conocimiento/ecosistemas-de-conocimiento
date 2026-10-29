@@ -116,6 +116,8 @@ export interface EvalRun {
   progress: { done: number; total: number } | null;
   models: { chat: string[]; judge: string[]; gate: string[] } | null;
   commitSha: string | null;
+  /** The run's eval conversation while it exists; the reaper deletes it. */
+  sessionId: string | null;
   metrics: EvalMetrics | null;
   results: ItemResult[];
   error: string | null;

@@ -23,6 +23,8 @@ interface World {
   created: Array<{ collection: string; data: Record<string, unknown> }>
   docs: Array<{ id: number; name: string; organization: number }>
   orgs: Array<{ id: number; slug: string }>
+  runs: Array<Record<string, unknown>>
+  updated: Array<{ collection: string; id: number; data: Record<string, unknown> }>
 }
 
 function fakePayload(w: World) {
@@ -30,7 +32,12 @@ function fakePayload(w: World) {
     findByID: async ({ collection, id }: { collection: string; id: number }) => {
       if (collection === 'organizations') return w.orgs.find((o) => o.id === id) ?? null
       if (collection === 'eval-items') return w.items.find((i) => i.id === id) ?? null
+      if (collection === 'eval-runs') return w.runs.find((r) => r.id === id) ?? null
       return null
+    },
+    update: async ({ collection, id, data }: { collection: string; id: number; data: Record<string, unknown> }) => {
+      w.updated.push({ collection, id, data })
+      return { id, ...data }
     },
     count: async ({ where }: { where: { organization: { equals: number } } }) => ({
       totalDocs: w.items.filter((i) => i.organization === where.organization.equals).length,
@@ -62,6 +69,14 @@ function world(): World {
     created: [],
     docs: [{ id: 391, name: 'Bertrand Russell', organization: 8 }, { id: 392, name: 'Bertrand Russell', organization: 8 }],
     orgs: [{ id: 7, slug: 'discapacidad' }, { id: 8, slug: 'semiosis-practica' }, { id: 9, slug: 'sin-set' }],
+    runs: [
+      { id: 50, organization: 7, status: 'running', triggeredBy: 1 },
+      { id: 51, organization: 7, status: 'done', triggeredBy: 1 },
+      { id: 52, organization: 7, status: 'queued', triggeredBy: 1 },
+      { id: 53, organization: 7, status: 'running', triggeredBy: 99 },
+      { id: 54, organization: 7, status: 'running', triggeredBy: 1, sessionId: '777' },
+    ],
+    updated: [],
   }
 }
 
@@ -95,9 +110,9 @@ describe('access: platform admin only, fail closed', () => {
   for (const path of ['/evals/session', '/evals/gate', '/evals/seed']) {
     it(`${path}: 401 anonymous, 403 for an owner, an inactive admin and a non-boolean flag`, async () => {
       const w = world()
-      expect((await call(endpoints, path, { as: null, w, body: { organization: 7, item: 10 } })).status).toBe(401)
+      expect((await call(endpoints, path, { as: null, w, body: { organization: 7, item: 10, run: 50 } })).status).toBe(401)
       for (const as of [OWNER, INACTIVE_ADMIN, STRINGY]) {
-        const res = await call(endpoints, path, { as, w, body: { organization: 7, item: 10 } })
+        const res = await call(endpoints, path, { as, w, body: { organization: 7, item: 10, run: 50 } })
         expect([401, 403]).toContain(res.status)
         if (as !== INACTIVE_ADMIN) expect(res.status).toBe(403)
       }
@@ -160,14 +175,24 @@ describe('POST /api/evals/gate', () => {
 })
 
 describe('POST /api/evals/session', () => {
-  it('creates a generales conversation owned by the admin in that ecosistema', async () => {
+  it('creates a generales conversation for a RUNNING run the admin started, bound to that run', async () => {
     const w = world()
-    const res = await call(endpoints, '/evals/session', { as: ADMIN, w, body: { organization: 7 } })
+    const res = await call(endpoints, '/evals/session', { as: ADMIN, w, body: { run: 50 } })
     expect(res.status).toBe(201)
     expect(w.created).toEqual([
-      { collection: 'sessions', data: { user: 1, organization: 7, kind: 'generales', title: 'Evaluación' } },
+      { collection: 'sessions', data: { user: 1, organization: 7, kind: 'generales', title: 'Evaluación', evalRun: 50 } },
     ])
-    expect((await call(endpoints, '/evals/session', { as: ADMIN, w, body: { organization: 404 } })).status).toBe(400)
+    expect(w.updated).toEqual([{ collection: 'eval-runs', id: 50, data: { sessionId: '901' } }])
+  })
+
+  it('🔴 R77: no running run of the caller, no conversation (an admin cannot use it to chat freely)', async () => {
+    const w = world()
+    for (const body of [{}, { organization: 7 }, { run: 404 }, { run: 51 }, { run: 52 }, { run: 53 }, { run: 54 }]) {
+      const res = await call(endpoints, '/evals/session', { as: ADMIN, w, body })
+      expect([400, 403, 404, 409], JSON.stringify(body)).toContain(res.status)
+    }
+    expect(w.created).toEqual([])
+    expect(w.updated).toEqual([])
   })
 })
 

@@ -46,6 +46,7 @@ export function toRun(row: Record<string, unknown>): EvalRun {
     progress: (row.progress as EvalRun['progress']) ?? null,
     models: (row.models as EvalRun['models']) ?? null,
     commitSha: str(row.commitSha),
+    sessionId: row.sessionId == null || row.sessionId === '' ? null : String(row.sessionId),
     metrics: (row.metrics as EvalRun['metrics']) ?? null,
     results: Array.isArray(row.results) ? (row.results as EvalRun['results']) : [],
     error: str(row.error),
@@ -60,7 +61,8 @@ export interface EvalStore {
   listRuns(orgId: string, limit?: number): Promise<EvalRun[] | null>;
   createRun(orgId: string, data: Record<string, unknown>): Promise<string | null>;
   updateRun(id: string, data: Record<string, unknown>): Promise<boolean>;
-  createSession(orgId: string): Promise<string>;
+  /** The conversation for a RUNNING run's turns, bound to it by the backend (R77). */
+  createSession(runId: string): Promise<string>;
   deleteSession(id: string): Promise<void>;
   gate(itemId: string): Promise<{ status: 'ready' | 'hold'; stage?: string; detector: string; model: string | null; terms: GateTermVerdict[] }>;
   expansionCost(messageId: string): Promise<number>;
@@ -115,13 +117,20 @@ export function makeEvalStore(token: string | undefined): EvalStore {
       }).catch(() => null);
       return Boolean(res?.ok);
     },
-    async createSession(orgId) {
-      const res = await call('/api/evals/session', { method: 'POST', headers: json, body: JSON.stringify({ organization: Number(orgId) }) });
+    async createSession(runId) {
+      const res = await call('/api/evals/session', { method: 'POST', headers: json, body: JSON.stringify({ run: Number(runId) }) });
       if (!res.ok) throw new Error(`no session: ${await errorText(res)}`);
       return String(((await res.json()) as { id: unknown }).id);
     },
     async deleteSession(id) {
-      await call(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => null);
+      // Never throws (a `finally` and the reaper call it), but never silent: a
+      // conversation left behind keeps the run's turns searchable by members.
+      try {
+        const res = await call(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (!res.ok && res.status !== 404) console.warn(`[evals] deleting eval conversation ${id}: backend ${res.status}`);
+      } catch (err) {
+        console.warn(`[evals] deleting eval conversation ${id}: ${err instanceof Error ? err.name : 'error'}`);
+      }
     },
     async gate(itemId) {
       const res = await call('/api/evals/gate', { method: 'POST', headers: json, body: JSON.stringify({ item: Number(itemId) }) });

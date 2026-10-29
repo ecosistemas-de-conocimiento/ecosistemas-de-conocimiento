@@ -248,6 +248,12 @@ export type SessionMeta =
        * split) is `generales`.
        */
       kind: SessionKind;
+      /**
+       * 🔴 R77: `sessions.evalRun` — set only on a conversation an eval run
+       * opened (`/api/evals/session`); `/api/generate` then refuses any turn
+       * not driven by the runner.
+       */
+      evalRun: string | null;
     }
   | { ok: false };
 
@@ -265,9 +271,10 @@ export async function sessionMeta(token: string | undefined, sessionId: string):
       { method: 'GET' },
     );
     if (!res.ok) return { ok: false };
-    const body = (await res.json()) as { organization?: unknown; kind?: unknown } | null;
+    const body = (await res.json()) as { organization?: unknown; kind?: unknown; evalRun?: unknown } | null;
     if (!body || typeof body !== 'object') return { ok: false };
-    return { ok: true, organizationId: organizationIdOf(body.organization), kind: parseSessionKind(body.kind) };
+    const evalRun = typeof body.evalRun === 'number' || (typeof body.evalRun === 'string' && body.evalRun !== '') ? String(body.evalRun) : null;
+    return { ok: true, organizationId: organizationIdOf(body.organization), kind: parseSessionKind(body.kind), evalRun };
   } catch {
     return { ok: false };
   }

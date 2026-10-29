@@ -5,8 +5,13 @@
  * 403 for anyone whose account is not active with `isPlatformAdmin === true`.
  * No membership role opens any of them.
  *
- *   · `POST /api/evals/session` `{ organization }` — a conversation in that
- *     ecosistema owned by the caller, for the run's chat turns. A platform
+ *   · `POST /api/evals/session` `{ run }` — a conversation for ONE eval run's
+ *     chat turns, in the run's ecosistema, owned by the caller. 🔴 R77: only
+ *     for a run that is `running`, was started by the caller and has no
+ *     conversation yet; the session is bound to it (`sessions.evalRun`,
+ *     server-owned) and the run to it (`eval-runs.sessionId`), and
+ *     `Messages` refuses a turn on it once the run is not running — so an
+ *     admin cannot use this route to chat freely. A platform
  *     admin is never a member (owner ruling: "admin es admin… no deberá
  *     poderse asignar"), so `Sessions.beforeValidate` would refuse the REST
  *     create; this route creates it through the local API instead, and only
@@ -94,19 +99,39 @@ export function makeEvalEndpoints(deps: EvalEndpointDeps = { runGate: production
       const denied = refuse(req)
       if (denied) return denied
       const body = (await readJsonBody(req)) ?? {}
-      const organizationId = positiveInt(body.organization)
+      const runId = positiveInt(body.run)
+      if (runId === null) return errorResponse(400, 'Falta la ejecución.')
+      const user = getAuthenticatedUser(req)!
+      const run = (await req.payload
+        .findByID({ collection: 'eval-runs', id: runId, depth: 0, overrideAccess: true })
+        .catch(() => null)) as Record<string, unknown> | null
+      if (!run) return errorResponse(404, 'No existe esa ejecución.')
+      const ref = (v: unknown) => positiveInt(typeof v === 'object' && v ? (v as { id?: unknown }).id : v)
+      if (run.status !== 'running' || ref(run.triggeredBy) !== positiveInt(user.id)) {
+        return errorResponse(403, 'Solo para una ejecución en curso que tú iniciaste.')
+      }
+      if (typeof run.sessionId === 'string' && run.sessionId !== '') {
+        return errorResponse(409, 'Esa ejecución ya tiene su conversación.')
+      }
+      const organizationId = ref(run.organization)
       if (organizationId === null || !(await organizationExists(req, organizationId))) {
         return errorResponse(400, 'Falta el ecosistema.')
       }
-      const user = getAuthenticatedUser(req)!
       // No `req`: the local API runs with no user, so `stampOwnerAndEcosystem`
-      // keeps the owner and ecosistema given here (both checked above).
+      // keeps the owner, ecosistema and `evalRun` given here (all checked above).
       const doc = (await req.payload.create({
         collection: 'sessions',
-        data: { user: user.id, organization: organizationId, kind: 'generales', title: 'Evaluación' } as never,
+        data: { user: user.id, organization: organizationId, kind: 'generales', title: 'Evaluación', evalRun: runId } as never,
         overrideAccess: true,
         depth: 0,
       })) as { id: number | string }
+      await req.payload.update({
+        collection: 'eval-runs',
+        id: runId,
+        data: { sessionId: String(doc.id) } as never,
+        overrideAccess: true,
+        depth: 0,
+      })
       return jsonResponse({ id: doc.id }, { status: 201 })
     },
   }

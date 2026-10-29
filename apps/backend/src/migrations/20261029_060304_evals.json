@@ -1,5 +1,5 @@
 {
-  "id": "964ee595-4641-4ffb-85ac-9267cf438134",
+  "id": "0deaf86c-1088-47dc-a756-476b75612d4e",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1024,6 +1024,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "held_text_hash": {
+          "name": "held_text_hash",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
         "anonymisation_survivors": {
           "name": "anonymisation_survivors",
           "type": "jsonb",
@@ -1881,6 +1887,12 @@
           "primaryKey": false,
           "notNull": false,
           "default": "'New chat'"
+        },
+        "eval_run": {
+          "name": "eval_run",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
         },
         "last_used_at": {
           "name": "last_used_at",
@@ -4296,6 +4308,12 @@
         },
         "commit_sha": {
           "name": "commit_sha",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "session_id": {
+          "name": "session_id",
           "type": "varchar",
           "primaryKey": false,
           "notNull": false

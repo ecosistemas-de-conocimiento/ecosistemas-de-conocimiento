@@ -12,11 +12,17 @@ const store = {
   deleteItem: vi.fn(async () => true),
   seed: vi.fn(async () => ({ ok: true })),
   createRun: vi.fn(async () => 'r9'),
+  deleteSession: vi.fn(async () => undefined),
 };
+// The real claim semantics (one start per ecosistema at a time), so the
+// double-submit test exercises the page's ordering, not a stub's.
+const claimed = new Set<string>();
 vi.mock('$lib/server/evals/store', () => ({ makeEvalStore: () => store }));
 vi.mock('$lib/server/evals/runner', () => ({
   activeRunIds: vi.fn(() => new Set<string>()),
   enqueueRun: vi.fn(),
+  claimRun: vi.fn((org: string) => (claimed.has(org) ? false : (claimed.add(org), true))),
+  releaseRun: vi.fn((org: string) => void claimed.delete(org)),
   productionTurn: vi.fn(() => async () => ({})),
 }));
 vi.mock('$lib/server/admin', () => ({
@@ -41,6 +47,7 @@ const event = (user: unknown, url = '/admin/evals', body?: Record<string, string
 
 beforeEach(() => {
   vi.clearAllMocks();
+  claimed.clear();
   store.listItems.mockResolvedValue([q]);
   store.listRuns.mockResolvedValue([]);
 });
@@ -80,6 +87,16 @@ describe('load', () => {
     expect(store.updateRun).toHaveBeenCalledWith('r1', { status: 'failed', error: 'interrumpida' });
     expect(data.running).toBeNull();
   });
+
+  it('🔴 a lost run also deletes its eval conversation, so its turns stop being searchable', async () => {
+    store.listRuns.mockResolvedValue([
+      { id: 'r1', status: 'running', sessionId: 's7', results: [], createdAt: '' },
+      { id: 'r0', status: 'done', sessionId: 's6', results: [], createdAt: '' },
+    ]);
+    await load(event(ADMIN));
+    expect(store.deleteSession).toHaveBeenCalledTimes(1);
+    expect(store.deleteSession).toHaveBeenCalledWith('s7');
+  });
 });
 
 describe('ejecutar', () => {
@@ -93,5 +110,21 @@ describe('ejecutar', () => {
     await actions.ejecutar!(event(ADMIN, '/admin/evals', { organization: '6', confirm: 'si' }));
     expect(store.createRun).toHaveBeenCalledWith('6', expect.objectContaining({ status: 'queued', triggeredBy: 1 }));
     expect(enqueueRun).toHaveBeenCalledWith(expect.objectContaining({ runId: 'r9', orgId: '6', style: 'Modelo social.' }));
+  });
+
+  it('🔴 two quick posts queue ONE run: the second is refused', async () => {
+    const post = () => actions.ejecutar!(event(ADMIN, '/admin/evals', { organization: '6', confirm: 'si' }));
+    const [a, b] = (await Promise.all([post(), post()])) as [{ status?: number; started?: boolean }, { status?: number; started?: boolean }];
+    expect([a, b].filter((r) => r.started)).toHaveLength(1);
+    expect([a, b].filter((r) => r.status === 409)).toHaveLength(1);
+    expect(store.createRun).toHaveBeenCalledTimes(1);
+    expect(enqueueRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('a start that fails before queueing frees the ecosistema for the next try', async () => {
+    store.createRun.mockResolvedValueOnce(null as never);
+    const post = () => actions.ejecutar!(event(ADMIN, '/admin/evals', { organization: '6', confirm: 'si' }));
+    expect(((await post()) as { status: number }).status).toBe(502);
+    expect(((await post()) as { started?: boolean }).started).toBe(true);
   });
 });

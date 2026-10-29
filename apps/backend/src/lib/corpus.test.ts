@@ -164,6 +164,7 @@ describe('assertSessionOwnedBy', () => {
   it('accepts the owner and reports their ecosistema', async () => {
     await expect(assertSessionOwnedBy(fakePayload(), ANA_SESSION, ANA)).resolves.toEqual({
       organizationId: ECO_A,
+      evalRun: null,
     })
   })
 
@@ -172,6 +173,7 @@ describe('assertSessionOwnedBy', () => {
     // would refuse every legitimate request from whichever side stringified.
     await expect(assertSessionOwnedBy(fakePayload(), String(ANA_SESSION), '1')).resolves.toEqual({
       organizationId: ECO_A,
+      evalRun: null,
     })
   })
 

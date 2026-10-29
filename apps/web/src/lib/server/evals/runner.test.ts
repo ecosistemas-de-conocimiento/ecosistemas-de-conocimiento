@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('$lib/server/aiService', () => ({ getAIClient: vi.fn(() => { throw new Error('no real model calls in tests'); }) }));
 
-import { executeRun, type TurnFn } from './runner';
+import { claimRun, executeRun, releaseRun, type TurnFn } from './runner';
 import type { JudgeFn } from './judge';
 import type { EvalStore } from './store';
 import type { EvalItem } from './types';
@@ -17,9 +17,11 @@ const item = (o: Partial<EvalItem>): EvalItem => ({
   notes: '', text: '', privateNames: [], publicNames: [], gateKind: 'documento', ...o,
 });
 
+let sessionsFor: string[] = [];
 function fakeStore(overrides: Partial<EvalStore> = {}) {
   const updates: Array<Record<string, unknown>> = [];
   const deleted: string[] = [];
+  sessionsFor = [];
   const store: EvalStore = {
     listItems: async () => [],
     saveItem: async () => ({ ok: true }),
@@ -28,7 +30,7 @@ function fakeStore(overrides: Partial<EvalStore> = {}) {
     listRuns: async () => [],
     createRun: async () => 'r1',
     updateRun: async (_id, data) => (updates.push(data), true),
-    createSession: async () => 's1',
+    createSession: async (runId) => (sessionsFor.push(runId), 's1'),
     deleteSession: async (id) => void deleted.push(id),
     gate: async () => ({
       status: 'ready', detector: 'openai-compat:qwen', model: 'qwen', terms: [
@@ -91,6 +93,8 @@ describe('executeRun', () => {
     // The privacy result holds verdicts, never the text.
     expect(JSON.stringify(done.results)).not.toContain('sintético');
     expect(deleted).toEqual(['s1']);
+    // R77: the conversation is asked for THIS run, after it is marked running.
+    expect(sessionsFor).toEqual(['r1']);
   });
 
   it('an item error is recorded and the run goes on', async () => {
@@ -118,5 +122,17 @@ describe('executeRun', () => {
     expect(calls.at(-1)![1]).toMatchObject({ status: 'failed', error: 'backend down' });
     expect(deleted).toEqual(['s1']);
     void updates;
+  });
+});
+
+describe('claimRun', () => {
+  it('🔴 one start per ecosistema: a second claim is refused until released', () => {
+    expect(claimRun('6')).toBe(true);
+    expect(claimRun('6')).toBe(false);
+    expect(claimRun('7')).toBe(true);
+    releaseRun('6');
+    expect(claimRun('6')).toBe(true);
+    releaseRun('6');
+    releaseRun('7');
   });
 });

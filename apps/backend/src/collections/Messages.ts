@@ -5,7 +5,7 @@ import type {
   CollectionConfig,
   Where,
 } from 'payload'
-import { ValidationError } from 'payload'
+import { APIError, ValidationError } from 'payload'
 
 import { isActiveUser } from '../access'
 import { MESSAGE_CORPUS_STATES } from '../lib/conversationIngest'
@@ -161,8 +161,9 @@ export const protectMessageCorpusState: CollectionBeforeValidateHook = async ({
     })
   }
 
+  let evalRun: number | null
   try {
-    await assertSessionOwnedBy(req.payload, sessionId, user.id)
+    ;({ evalRun } = await assertSessionOwnedBy(req.payload, sessionId, user.id))
   } catch (err) {
     if (err instanceof SessionNotOwnedError) {
       // Same message for "not yours" and "does not exist" — see `lib/corpus.ts`.
@@ -173,6 +174,16 @@ export const protectMessageCorpusState: CollectionBeforeValidateHook = async ({
       })
     }
     throw err
+  }
+  // 🔴 R77: an eval conversation takes turns only while its run is running, so
+  // a platform admin cannot keep chatting in it (`endpoints/evals.ts`).
+  if (evalRun !== null) {
+    const run = (await req.payload
+      .findByID({ collection: 'eval-runs', id: evalRun, depth: 0, overrideAccess: true })
+      .catch(() => null)) as { status?: unknown } | null
+    if (run?.status !== 'running') {
+      throw new APIError('Esta conversación es de una evaluación que ya no está en curso.', 403, undefined, true)
+    }
   }
   next.session = sessionId
 

@@ -6,16 +6,21 @@
  *     transport): the same corpora read, condense, expansion, retrieval,
  *     rerank, graph, regroup, prompt and `generateSync` as a person's turn,
  *     in a `generales` conversation the backend opens for the run
- *     (`/api/evals/session`). `locals.evalTap` is the one addition: it hands
+ *     (`/api/evals/session`, only while the run is `running`; R77). `locals.evalTap` is the one addition: it hands
  *     back the numbered sources the model saw, for hit@k and the judge;
  *   · each privacy item goes through the production gate in the backend
  *     (`/api/evals/gate`), which returns term verdicts, never the text;
  *   · the judge calls go through the ecosistema's own client (`./judge`).
  * Every call is booked to the ecosistema's ai-service org: its budget.
  *
- * ⚠ Runs one at a time per web process (a promise chain). A restart loses a
- * running run; the page marks it failed (`reapLostRuns`). The conversation is
- * deleted when the run ends, which retires its turns from the corpus.
+ * ⚠ Runs one at a time per web process (a promise chain), and one start per
+ * ecosistema at a time (`claimRun`). A restart loses a running run; the page
+ * marks it failed and deletes its conversation (`reapLostRuns`, from the row's
+ * `sessionId`). The conversation is deleted when the run ends, which retires
+ * its turns from the corpus.
+ *
+ * ⚠ `costUsd` is NOT every cost the run causes. See `EvalRuns.costUsd` for
+ * exactly what it counts.
  *
  * ⚠ ai-service caches identical prompts for a few minutes: a second run soon
  * after the first can return the same answers at no cost.
@@ -143,7 +148,9 @@ export async function executeRun(ctx: RunContext): Promise<void> {
   let sessionId: string | null = null;
   await ctx.store.updateRun(ctx.runId, { status: 'running', startedAt: now().toISOString(), progress: { done: 0, total } });
   try {
-    if (questions.length) sessionId = await ctx.store.createSession(ctx.orgId);
+    // The backend binds the conversation to this (running) run and writes its
+    // id on the row before the first turn, so a restart's reaper can delete it.
+    if (questions.length) sessionId = await ctx.store.createSession(ctx.runId);
     for (const item of questions) {
       results.push(await runQuestion(ctx, sessionId!, item, models, judges));
       await ctx.store.updateRun(ctx.runId, { progress: { done: results.length, total } });
@@ -152,6 +159,7 @@ export async function executeRun(ctx: RunContext): Promise<void> {
       results.push(await runPrivacy(ctx, item, gates));
       await ctx.store.updateRun(ctx.runId, { progress: { done: results.length, total } });
     }
+    // Answers + expansion + judge calls only (see `EvalRuns.costUsd`).
     const costUsd = results.reduce((s, r) => s + (r.kind === 'pregunta' ? r.costUsd : 0), 0);
     await ctx.store.updateRun(ctx.runId, {
       status: 'done',
@@ -207,15 +215,34 @@ export function productionTurn(user: BackendUser, token: string | undefined): Tu
 
 let chain: Promise<void> = Promise.resolve();
 const active = new Set<string>();
+/** Ecosistemas with a run being started, queued or running in THIS process. */
+const busy = new Set<string>();
+
+/**
+ * 🔴 Check-and-set in ONE synchronous step: true reserves `orgId` for a new run,
+ * false means one is already starting or running. Call it before any `await`
+ * so two quick "Ejecutar" posts cannot both pass. `enqueueRun` takes the
+ * reservation over; a start that fails before queueing calls `releaseRun`.
+ */
+export function claimRun(orgId: string): boolean {
+  if (busy.has(orgId)) return false;
+  busy.add(orgId);
+  return true;
+}
+
+export function releaseRun(orgId: string): void {
+  busy.delete(orgId);
+}
 
 /** Run ids queued or running in THIS process. */
 export function activeRunIds(): ReadonlySet<string> {
   return active;
 }
 
-/** Queue a run behind any other in this process; returns at once. */
+/** Queue a run behind any other in this process; returns at once. Frees the ecosistema's claim when it ends. */
 export function enqueueRun(ctx: Omit<RunContext, 'judge' | 'commitSha'> & { judge?: JudgeFn }): void {
   active.add(ctx.runId);
+  busy.add(ctx.orgId);
   const full: RunContext = {
     ...ctx,
     judge: ctx.judge ?? makeJudge(ctx.orgId, `eval-${ctx.runId}`),
@@ -224,5 +251,8 @@ export function enqueueRun(ctx: Omit<RunContext, 'judge' | 'commitSha'> & { judg
   chain = chain
     .then(() => executeRun(full))
     .catch(() => undefined)
-    .finally(() => active.delete(ctx.runId));
+    .finally(() => {
+      active.delete(ctx.runId);
+      busy.delete(ctx.orgId);
+    });
 }

@@ -47,6 +47,7 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   	"progress" jsonb,
   	"models" jsonb,
   	"commit_sha" varchar,
+  	"session_id" varchar,
   	"metrics" jsonb,
   	"results" jsonb,
   	"error" varchar,
@@ -56,6 +57,7 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   
   ALTER TABLE "payload_locked_documents_rels" ADD COLUMN "eval_items_id" integer;
   ALTER TABLE "payload_locked_documents_rels" ADD COLUMN "eval_runs_id" integer;
+  ALTER TABLE "sessions" ADD COLUMN "eval_run" numeric;
   ALTER TABLE "eval_items" ADD CONSTRAINT "eval_items_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;
   ALTER TABLE "eval_runs" ADD CONSTRAINT "eval_runs_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;
   ALTER TABLE "eval_runs" ADD CONSTRAINT "eval_runs_triggered_by_id_users_id_fk" FOREIGN KEY ("triggered_by_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
@@ -81,6 +83,7 @@ export async function down({ db, payload, req }: MigrateDownArgs): Promise<void>
   DROP INDEX "payload_locked_documents_rels_eval_runs_id_idx";
   ALTER TABLE "payload_locked_documents_rels" DROP COLUMN "eval_items_id";
   ALTER TABLE "payload_locked_documents_rels" DROP COLUMN "eval_runs_id";
+  ALTER TABLE "sessions" DROP COLUMN "eval_run";
   DROP TABLE "eval_items" CASCADE;
   DROP TABLE "eval_runs" CASCADE;
   DROP TYPE "public"."enum_eval_items_kind";

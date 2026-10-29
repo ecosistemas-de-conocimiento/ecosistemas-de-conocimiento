@@ -55,6 +55,8 @@ interface World {
   organization: string | null;
   /** `sessions.kind` on the session row. Unset: the row carries no kind (pre-split). */
   kind?: string;
+  /** `sessions.evalRun`: the conversation an eval run opened (R77). */
+  evalRun?: number;
   /** Make `GET /api/sessions/:id` fail: an HTTP status, or a network throw. */
   sessionRead?: number | 'throw';
   saveStatus: number;
@@ -129,7 +131,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     if (p === `/api/sessions/${SESSION}` && method === 'GET') {
       if (world.sessionRead === 'throw') throw new TypeError('fetch failed');
       if (typeof world.sessionRead === 'number') return json({ errors: [] }, world.sessionRead);
-      return json({ id: Number(SESSION), organization: world.organization, ...(world.kind ? { kind: world.kind } : {}) });
+      return json({ id: Number(SESSION), organization: world.organization, ...(world.kind ? { kind: world.kind } : {}), ...(world.evalRun ? { evalRun: world.evalRun } : {}) });
     }
     if (p === `/api/sessions/${SESSION}` && method === 'PATCH') return json({});
     if (p === '/api/documents/11') {
@@ -1118,6 +1120,28 @@ describe('POST /api/generate — the conversation kind picks the config', () => 
       expect(saves()).toHaveLength(0);
     },
   );
+
+  // 🔴 R77: an eval run's conversation takes turns from the runner only.
+  it('🔴 an eval conversation refuses a browser turn (no evalTap): 403, nothing generated', async () => {
+    world.evalRun = 50;
+    for (const stream of [false, true]) {
+      const err = await Promise.resolve(POST(event(turn(), stream))).then(
+        () => null,
+        (e: unknown) => e as { status?: number },
+      );
+      expect(err?.status).toBe(403);
+    }
+    expect(generates()).toHaveLength(0);
+    expect(saves()).toHaveLength(0);
+  });
+
+  it('an eval conversation answers the runner (evalTap set)', async () => {
+    world.evalRun = 50;
+    const ev = event(turn()) as unknown as { locals: Record<string, unknown> };
+    ev.locals.evalTap = () => undefined;
+    const res = await POST(ev as never);
+    expect(res.status).toBe(200);
+  });
 });
 
 // ── Cited sources only (UX backlog #35) ──────────────────────────────────────

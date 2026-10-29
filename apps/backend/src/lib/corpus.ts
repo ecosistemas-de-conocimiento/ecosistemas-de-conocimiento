@@ -168,10 +168,10 @@ export async function assertSessionOwnedBy(
   payload: Payload,
   sessionId: number | string,
   userId: number | string,
-): Promise<{ organizationId: number | string | null }> {
+): Promise<{ organizationId: number | string | null; evalRun: number | null }> {
   const session = (await payload
     .findByID({ collection: 'sessions', id: sessionId as never, depth: 0, overrideAccess: true })
-    .catch(() => null)) as unknown as { user?: unknown; organization?: unknown } | null
+    .catch(() => null)) as unknown as { user?: unknown; organization?: unknown; evalRun?: unknown } | null
 
   if (!session) {
     throw new SessionNotOwnedError('No such conversation.')
@@ -212,12 +212,21 @@ export async function assertSessionOwnedBy(
   }
 
   const organizationId = relationId(session.organization)
-  if (organizationId !== null) {
+  const evalRunNum = Number(session.evalRun)
+  const evalRun = session.evalRun != null && Number.isSafeInteger(evalRunNum) && evalRunNum > 0 ? evalRunNum : null
+  if (evalRun !== null) {
+    // 🔴 R77: an eval run's conversation (`/api/evals/session`) belongs to a
+    // platform admin, who is never a member. It skips the membership check
+    // ONLY while the account is still an active platform admin; `Messages`
+    // also refuses its turns unless the run is running.
+    const row = active.docs[0] as { isActive?: unknown; isPlatformAdmin?: unknown } | undefined
+    if (row?.isPlatformAdmin !== true) throw new SessionNotOwnedError('No such conversation.')
+  } else if (organizationId !== null) {
     const mine = await organizationIdsForUser(payload, userId)
     if (!mine.some((id) => String(id) === String(organizationId))) {
       throw new SessionNotOwnedError('No such conversation.')
     }
   }
 
-  return { organizationId }
+  return { organizationId, evalRun }
 }

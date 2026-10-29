@@ -573,6 +573,12 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
       message: 'No se pudo leer la conversación. Inténtalo de nuevo.',
     });
   }
+  // 🔴 R77: an eval run's conversation answers the in-process runner only (the
+  // one caller that sets `locals.evalTap`; no browser request can). The
+  // backend also refuses its turns once the run is not running (`Messages`).
+  if (meta.evalRun !== null && !locals.evalTap) {
+    throw error(403, { message: 'Esta conversación es de una evaluación.' });
+  }
   const { organizationId, kind } = meta;
   if (!asOf) {
     console.error(

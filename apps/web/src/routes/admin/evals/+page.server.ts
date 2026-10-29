@@ -14,7 +14,7 @@ import { CONVERSACIONES_HREF } from '$lib/inicio';
 import { listAllEcosystems } from '$lib/server/admin';
 import { denyAccess } from '$lib/server/deny';
 import { estimateRun } from '$lib/server/evals/estimate';
-import { activeRunIds, enqueueRun, productionTurn } from '$lib/server/evals/runner';
+import { activeRunIds, claimRun, enqueueRun, productionTurn, releaseRun } from '$lib/server/evals/runner';
 import { makeEvalStore, type EvalStore } from '$lib/server/evals/store';
 import type { EvalRun } from '$lib/server/evals/types';
 import { fetchEcosystemSettings } from '$lib/server/features';
@@ -31,12 +31,17 @@ function guard(locals: App.Locals): void {
   }
 }
 
-/** A queued/running row this process is not running was lost to a restart. */
+/**
+ * A queued/running row this process is not running was lost to a restart:
+ * mark it failed and delete its eval conversation, whose turns members could
+ * otherwise still find in search.
+ */
 async function reapLostRuns(store: EvalStore, runs: EvalRun[]): Promise<EvalRun[]> {
   const active = activeRunIds();
   return Promise.all(
     runs.map(async (r) => {
       if ((r.status !== 'queued' && r.status !== 'running') || active.has(r.id)) return r;
+      if (r.sessionId) await store.deleteSession(r.sessionId);
       await store.updateRun(r.id, { status: 'failed', error: 'interrumpida' });
       return { ...r, status: 'failed' as const, error: 'interrumpida' };
     }),
@@ -129,25 +134,28 @@ export const actions: Actions = {
     const form = await request.formData();
     const organization = text(form, 'organization');
     if (form.get('confirm') !== 'si') return fail(400, { scope: 'run' as const, message: 'Falta confirmar.' });
+    // 🔴 Claim BEFORE the first await below: two quick posts both reading "no
+    // run yet" would queue two runs. `enqueueRun` takes the claim over.
+    if (!claimRun(organization)) return fail(409, { scope: 'run' as const, message: 'Ya hay una ejecución en curso.' });
+    const refuse = (status: number, message: string) => (releaseRun(organization), fail(status, { scope: 'run' as const, message }));
     const store = makeEvalStore(locals.token);
     const [items, runs, settings] = await Promise.all([
       store.listItems(organization),
       store.listRuns(organization),
       fetchEcosystemSettings(locals.token, organization),
-    ]);
-    if (!items || !runs) return fail(502, { scope: 'run' as const, message: 'No se pudo leer el set.' });
-    if (items.length === 0) return fail(400, { scope: 'run' as const, message: 'No hay preguntas.' });
-    if (runs.some((r) => activeRunIds().has(r.id))) {
-      return fail(409, { scope: 'run' as const, message: 'Ya hay una ejecución en curso.' });
-    }
+    ]).catch(() => [null, null, null] as const);
+    if (!items || !runs || !settings) return refuse(502, 'No se pudo leer el set.');
+    if (items.length === 0) return refuse(400, 'No hay preguntas.');
     const estimate = estimateRun(items, runs);
-    const runId = await store.createRun(organization, {
-      status: 'queued',
-      estimateUsd: estimate.usd,
-      triggeredBy: locals.user!.id,
-      progress: { done: 0, total: items.length },
-    });
-    if (!runId) return fail(502, { scope: 'run' as const, message: 'No se pudo crear la ejecución.' });
+    const runId = await store
+      .createRun(organization, {
+        status: 'queued',
+        estimateUsd: estimate.usd,
+        triggeredBy: locals.user!.id,
+        progress: { done: 0, total: items.length },
+      })
+      .catch(() => null);
+    if (!runId) return refuse(502, 'No se pudo crear la ejecución.');
     // The run outlives this request: its own store, same token.
     enqueueRun({
       runId,

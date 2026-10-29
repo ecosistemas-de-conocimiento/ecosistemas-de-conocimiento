@@ -39,13 +39,26 @@ export const EvalRuns: CollectionConfig = {
     { name: 'finishedAt', type: 'date' },
     /** The estimate shown before the confirm, in USD. Inferred, never measured. */
     { name: 'estimateUsd', type: 'number' },
-    /** Measured: the sum of `costUsd` ai-service reported for this run's calls. */
+    /**
+     * Measured, but NOT every cost the run causes. It is the sum, over the
+     * run's questions, of what ai-service reported for:
+     *   · each answer (`POST /api/generate`'s `costUsd`);
+     *   · its query expansion (`generationMeta.expansionCostUsd`; one that
+     *     outlives its 5 s deadline is missed);
+     *   · each citation and style judge call.
+     * NOT counted (no cost reaches the runner): the privacy items' gate
+     * (detector) calls, $0 on the Spark but billed on a hosted fallback; each
+     * turn's condense call, embeddings and rerank. A turn ai-service answers
+     * from its prompt cache reports $0.
+     */
     { name: 'costUsd', type: 'number' },
     /** `{ done, total }` while running. */
     { name: 'progress', type: 'json' },
     /** `{ chat: string[], judge: string[], gate: string[] }` as the calls reported them. */
     { name: 'models', type: 'json' },
     { name: 'commitSha', type: 'text' },
+    /** The run's eval conversation (`/api/evals/session`), so a run lost to a restart can still have it deleted. */
+    { name: 'sessionId', type: 'text' },
     { name: 'metrics', type: 'json' },
     { name: 'results', type: 'json' },
     { name: 'error', type: 'text' },

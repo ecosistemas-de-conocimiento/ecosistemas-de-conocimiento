@@ -77,10 +77,14 @@ const stampOwnerAndEcosystem: CollectionBeforeValidateHook = async ({
     const original = (originalDoc ?? {}) as Record<string, unknown>
     next.user = original.user
     next.organization = original.organization
+    // 🔴 R77: server-owned. Clearing it would free an eval conversation for chat.
+    next.evalRun = original.evalRun ?? null
     return next
   }
 
   next.user = user.id
+  // 🔴 Only `/api/evals/session` (local API, no user) sets it.
+  next.evalRun = null
 
   const organizationIds = await organizationIdsForUser(req.payload, user.id)
   const declared = next.organization
@@ -549,6 +553,17 @@ export const Sessions: CollectionConfig = {
       index: true,
     },
     { name: 'title', type: 'text', defaultValue: 'New chat' },
+    {
+      /**
+       * 🔴 R77: the eval run (`eval-runs` id) this conversation was opened for
+       * by `/api/evals/session`; null for every ordinary conversation.
+       * SERVER-OWNED (`stampOwnerAndEcosystem` pins it on every REST write).
+       * `Messages` refuses a turn here unless that run is `running`.
+       */
+      name: 'evalRun',
+      type: 'number',
+      admin: { readOnly: true },
+    },
     {
       name: 'lastUsedAt',
       type: 'date',

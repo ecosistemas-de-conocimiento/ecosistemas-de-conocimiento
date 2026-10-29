@@ -3,8 +3,15 @@
  *
  * Basis, in order:
  *   1. `medido` — the mean measured cost per question of this ecosistema's
- *      last finished run (sum of `costUsd` over its questions / questions).
- *   2. `supuesto` — the defaults below.
+ *      last finished run (sum of `costUsd` over its answered questions /
+ *      answered questions; errored ones cost nothing and say nothing).
+ *   2. `supuesto` — the defaults below, also when that run says nothing about
+ *      price: ai-service's prompt cache answers a repeat within minutes at $0,
+ *      so a run with half or more of its answers at $0 (or a $0 mean) would
+ *      drive the next estimate to ~$0.
+ *
+ * ⚠ The measured basis inherits `costUsd`'s gaps (no gate, condense,
+ * embedding or rerank calls; see `EvalRuns.costUsd`), so it reads low.
  *
  * Defaults, inferred 2026-10-29 from dev (`edc_backend.messages`, last 4 days:
  * mean answer `costUsd` $0.0021–0.0025 + expansion $0.00004–0.00008 per turn,
@@ -31,14 +38,14 @@ export function estimateRun(items: readonly EvalItem[], runs: readonly EvalRun[]
   const questions = items.filter((i) => i.kind === 'pregunta').length;
   const privacy = items.length - questions;
   const last = runs.find((r) => r.status === 'done' && r.results.some((x) => x.kind === 'pregunta'));
-  const measured = last?.results.filter((x) => x.kind === 'pregunta') ?? [];
-  const perQuestion = measured.length
-    ? measured.reduce((s, x) => s + (x.kind === 'pregunta' ? x.costUsd : 0), 0) / measured.length
-    : DEFAULT_QUESTION_USD;
+  const costs = (last?.results ?? []).flatMap((x) => (x.kind === 'pregunta' && !x.error ? [x.costUsd] : []));
+  const mean = costs.length ? costs.reduce((s, c) => s + c, 0) / costs.length : 0;
+  const priced = costs.length > 0 && mean > 0 && costs.filter((c) => c <= 0).length * 2 < costs.length;
+  const perQuestion = priced ? mean : DEFAULT_QUESTION_USD;
   return {
     usd: questions * perQuestion + privacy * DEFAULT_PRIVACY_USD,
     questions,
     privacy,
-    basis: measured.length ? 'medido' : 'supuesto',
+    basis: priced ? 'medido' : 'supuesto',
   };
 }
