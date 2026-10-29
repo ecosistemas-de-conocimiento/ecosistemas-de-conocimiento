@@ -36,14 +36,20 @@
   // does not look like a hang. 12 s is inferred from the 8–39 s first-word
   // times in the UX backlog (#9), not measured here.
   const SLOW_WAIT_MS = 12_000;
-  let slow = $state(false);
+  // Seconds waited, shown beside the label from `SHOW_SECONDS_AFTER` on: a
+  // number that keeps moving says the turn is alive (demo review 2026-10-28:
+  // 30–60 s of a still label read as a hang).
+  const SHOW_SECONDS_AFTER = 3;
+  let waited = $state(0);
+  const slow = $derived(waited * 1000 >= SLOW_WAIT_MS);
   $effect(() => {
     if (!(msg.pending && !msg.content)) {
-      slow = false;
+      waited = 0;
       return;
     }
-    const t = setTimeout(() => (slow = true), SLOW_WAIT_MS);
-    return () => clearTimeout(t);
+    const started = Date.now();
+    const t = setInterval(() => (waited = Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(t);
   });
 
   // The source list, so a click on `[N]` in the answer can open source N.
@@ -142,6 +148,9 @@
             ></span>
           </span>
           {waiting === 'writing' ? 'Escribiendo la respuesta…' : 'Buscando en los documentos…'}
+          {#if waited >= SHOW_SECONDS_AFTER}
+            <span class="tabular-nums text-xs" aria-hidden="true" data-testid="answer-waited">{waited} s</span>
+          {/if}
         </span>
         {#if slow}
           <p class="mt-1 text-xs">Puede tardar hasta un minuto.</p>
@@ -183,17 +192,23 @@
     {#if hasCitations}
       <!-- No top border here: the card's sources list draws its own. -->
       <div class="mt-2 sources">
-        <!-- Sources start OPEN (UX backlog #10): the list is how a reader
-             checks the answer, and a closed toggle hid it. -->
-        <CitationCard
-          bind:this={citationCard}
-          sourcesOpenByDefault
-          {citations}
-          labels={CHAT_CITATION_LABELS}
-          linkResolver={chatCitationHref}
-          collapsibleSources
-          idSeed={msg.id}
-        />
+        <!-- Sources start OPEN (UX backlog #10), and so does every source's
+             card with its quoted passage (demo review 2026-10-28): the
+             passages are how a reader checks the answer. ⚠ The card reads
+             `initiallyExpanded` once at mount; the key remounts it when the
+             final frame renumbers the ordinals. -->
+        {#key ordinals.join(',')}
+          <CitationCard
+            bind:this={citationCard}
+            sourcesOpenByDefault
+            initiallyExpanded={ordinals}
+            {citations}
+            labels={CHAT_CITATION_LABELS}
+            linkResolver={chatCitationHref}
+            collapsibleSources
+            idSeed={msg.id}
+          />
+        {/key}
       </div>
     {/if}
 
