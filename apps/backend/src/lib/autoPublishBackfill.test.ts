@@ -45,13 +45,14 @@ const deps = (over: Partial<Parameters<typeof autoPublishParticipantDrafts>[1]> 
 
 describe('autoPublishParticipantDrafts', () => {
   const rows = [
-    row(1), // participant pdf, ready → publish
+    row(1), // 🔴 participant pdf, UNGATED (pre-10-26) → never published raw (audit 2026-10-28, item 8)
     row(2, { kind: 'audio' }), // participant audio documento → re-gate as testimonio
     row(3, { contentKind: 'testimonio', anonymisationStatus: 'ready', redactedText: 'x' }), // cleared → publish
     row(4, { contentKind: 'testimonio', anonymisationStatus: 'held' }), // held → stays
     row(5, { uploadedBy: 9 }), // investigador → untouched
     row(6, { ingestStatus: 'embedding' }), // in flight → skipped
     row(7, { kind: 'audio', extractedText: null, ingestStatus: 'failed' }), // no transcript → skipped
+    row(8, { anonymise: true, anonymisationStatus: 'ready', redactedText: 'x' }), // gated pdf, cleared → publish
   ]
 
   it('🔴 dry run writes nothing and publishes nothing, but reports the plan', async () => {
@@ -62,13 +63,14 @@ describe('autoPublishParticipantDrafts', () => {
     expect(d.publish).not.toHaveBeenCalled()
     expect(report).toMatchObject({
       apply: false,
-      scanned: 7,
-      published: ['1', '3'],
+      scanned: 8,
+      published: ['3', '8'],
       regated: ['2'],
       held: ['4'],
       notParticipant: 1,
     })
     expect(report.skipped).toEqual([
+      { id: '1', reason: 'not-gated' },
       { id: '6', reason: 'not-ingested' },
       { id: '7', reason: 'no-text' },
     ])
@@ -79,7 +81,7 @@ describe('autoPublishParticipantDrafts', () => {
     const d = deps({ apply: true })
     const report = await autoPublishParticipantDrafts(payload, d)
     expect(d.publish).toHaveBeenCalledTimes(2)
-    expect((d.publish as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]))).toEqual(['1', '3'])
+    expect((d.publish as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]))).toEqual(['3', '8'])
     expect(update).toHaveBeenCalledTimes(1)
     // ⚠ No `__skipDocsExtract`: the ordinary hook runs the gate on the new kind.
     expect(update.mock.calls[0]![0].context).toBeUndefined()
@@ -95,7 +97,7 @@ describe('autoPublishParticipantDrafts', () => {
   })
 
   it('a publish the system refused is reported, not hidden', async () => {
-    const { payload } = fakeDb([row(1)])
+    const { payload } = fakeDb([row(1, { anonymise: true, anonymisationStatus: 'ready', redactedText: 'x' })])
     const d = deps({ apply: true, publish: vi.fn(async () => ({ published: false, reason: 'failed' }) as const) })
     const report = await autoPublishParticipantDrafts(payload, d)
     expect(report.published).toEqual([])

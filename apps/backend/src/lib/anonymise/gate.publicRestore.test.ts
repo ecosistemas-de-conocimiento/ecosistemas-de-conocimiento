@@ -401,7 +401,9 @@ describe('🔴 final audit 2026-10-27: mutation survivors', () => {
       { contentKind: 'documento', text: 'Ayer el senador Ramiro Saldaña habló.', roster: [], keepPublicFigures: true },
       { detector, verifyRounds: 1 },
     )
-    expect(out.status).toBe('ready')
+    // 🔴 Audit 2026-10-28, item 3: a verify span that is nowhere in the text now
+    // HOLDS (fail closed) — stricter than counting it as evidence. Still redacted.
+    expect(out.status).toBe('hold')
     expect(textOf(out)).not.toContain('Saldaña')
   })
 

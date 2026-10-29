@@ -55,7 +55,7 @@
  * MANY findings survived and nothing else.
  */
 
-import { clearFoldCache, foldedMatches, positiveIntFromEnv } from './detector'
+import { clearFoldCache, foldedMatches, looseMatches, positiveIntFromEnv } from './detector'
 import { deterministicPass } from './deterministic'
 import { isGenericPlace } from './genericPlaces'
 import { createNamePartRegistry, gluedToAnotherName, namePartsOf, type NamePartRegistry, sentenceStart } from './nameParts'
@@ -162,28 +162,56 @@ function placeholderSpans(text: string): Array<[number, number]> {
 export { nameGroups } from './publicFigureRestore'
 
 /**
- * True when every occurrence of `needle` sits inside a placeholder — or there is
- * no occurrence at all.
+ * True when every occurrence of `needle` sits inside a placeholder.
  *
- * ⚠ "No occurrence at all" counts as covered on purpose: a finding whose text is
- * not in the redacted document cannot be a leak from that document, so holding
- * on it would mean a hallucinating model could block ingestion forever with no
- * way for a human to act on the report.
+ * 🔴 OCCURRENCES IN ANY SPELLING (audit 2026-10-28, item 3): case, accents,
+ * whitespace, hyphens and apostrophes ignored (`looseMatches`). An exact
+ * `indexOf` called "nicefora tlapalcoyotl" covered when the text said
+ * "Nicéfora\nTlapalcoyotl", and verify returned `ready`.
+ *
+ * ⚠ NO OCCURRENCE AT ALL COUNTS AS COVERED only because the gate has already
+ * held on every span it cannot place (`unlocatable`, fail closed). What is left
+ * with no occurrence is an echo of a span our own redaction removed.
  */
 function coveredByPlaceholder(
   text: string,
   spans: ReadonlyArray<readonly [number, number]>,
   needle: string,
 ): boolean {
-  let from = 0
-  for (;;) {
-    const at = text.indexOf(needle, from)
-    if (at === -1) return true
-    const end = at + needle.length
-    const inside = spans.some(([s, e]) => at >= s && end <= e)
-    if (!inside) return false
-    from = at + 1
-  }
+  return looseMatches(text, needle).every(([at, end]) => spans.some(([s, e]) => at >= s && end <= e))
+}
+
+/**
+ * 🔴 THE SPANS THE DETECTOR REPORTED THAT ARE IN NONE OF `texts`, in any
+ * spelling, not even inside a placeholder (audit 2026-10-28, item 3: FAIL
+ * CLOSED). Both the findings and the detector's own `unlocated` list count.
+ * A span we cannot place is personal data we cannot see: a human decides.
+ *
+ * `texts` is the text the detector read, then the texts a span may legitimately
+ * come from instead: our redacted output (a word of our own placeholders) and
+ * the original document (an echo of a span our redaction already removed —
+ * every occurrence of it was rewritten, so it is not a leak).
+ *
+ * ⚠ Not counted: spans under two characters (the detector discards those) and
+ * spans made only of our placeholders (`onlyPlaceholders`, they name nobody).
+ *
+ * ⚠ ONE TEXT AT A TIME, the later ones only for the misses: the loose fold
+ * caches one text, so alternating would re-fold a long document per span.
+ */
+function unlocatable(
+  texts: readonly string[],
+  found: readonly DetectorFinding[],
+  unlocated: readonly DetectorFinding[],
+): number {
+  let missing = [...found, ...unlocated].filter((f) => f.text.trim().length >= 2 && !onlyPlaceholders(f.text))
+  for (const text of texts) missing = missing.filter((f) => looseMatches(text, f.text).length === 0)
+  return missing.length
+}
+
+function unlocatableSentence(count: number): string {
+  return count === 1
+    ? 'La revisión automática señaló un dato que no se pudo ubicar en el texto. Una persona tiene que revisarlo.'
+    : `La revisión automática señaló ${count} datos que no se pudieron ubicar en el texto. Una persona tiene que revisarlo.`
 }
 
 /**
@@ -659,7 +687,8 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // A byline's author takes a label from the SAME allocator, and its name parts
   // are registered, so "Autor: Juan Pérez" and a bare "Pérez" in the body come
   // out as one `[Persona X]` even when the model never reports the name.
-  const structural = structuralPass(input.text.normalize('NFC'), {
+  const original = input.text.normalize('NFC')
+  const structural = structuralPass(original, {
     person: (name) => {
       names.add(name)
       return allocator.labelFor(name)
@@ -691,6 +720,7 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
 
   // ── 3. CONTENT ────────────────────────────────────────────────────────────
   let found: DetectorFinding[]
+  let stage3Raw: DetectorFinding[]
   try {
     const raw = await deps.detector.detect({
       text: deterministic.text,
@@ -699,6 +729,7 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
     })
     evidence.stage3.push(...raw)
     evidence.unlocated.push(...unlocatedOf(raw))
+    stage3Raw = raw
     found = withoutGenericPlaces(raw)
   } catch (err) {
     // 🔴 A detector that could not run is NOT "nothing to redact". See
@@ -747,6 +778,12 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
     true,
   )
   stages.push({ stage: 'content', removed: countsByLabel(applied.labels) })
+  // 🔴 FAIL CLOSED (audit 2026-10-28, item 3): a span the model reported that is
+  // nowhere in the text is held, never dropped as a hallucination. The COUNT,
+  // never the strings: the reason is stored on the row. Not retryable: the
+  // same text gets the same answer.
+  const lost = unlocatable([deterministic.text, applied.text, original], stage3Raw, unlocatedOf(stage3Raw))
+  if (lost > 0) return hold('content', `${unlocatableSentence(lost)} ${NOT_ADDED}`, { redactedText: applied.text })
 
   // ── 4. VERIFY, IN ROUNDS ──────────────────────────────────────────────────
   //
@@ -767,10 +804,12 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
 
   for (let round = 1; ; round++) {
     let survivors: DetectorFinding[]
+    let lostNow: number
     try {
       const raw = await deps.detector.detect({ text: current, contentKind: input.contentKind, ...classify })
       evidence.verify.push(...raw)
       evidence.unlocated.push(...unlocatedOf(raw))
+      lostNow = unlocatable([current, original], raw, unlocatedOf(raw))
       survivors = withoutGenericPlaces(raw)
     } catch (err) {
       return hold(
@@ -781,6 +820,12 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
           ...(isInfrastructureFailure(err) ? { retryable: true as const } : {}),
         },
       )
+    }
+
+    // 🔴 FAIL CLOSED, every round (audit 2026-10-28, item 3): see stage 3.
+    if (lostNow > 0) {
+      stages.push({ stage: 'verify', round, removed: [], note: `Ronda ${round}: ${unlocatableSentence(lostNow)}` })
+      return hold('verify', `${unlocatableSentence(lostNow)} ${NOT_ADDED}`, { redactedText: current })
     }
 
     const spans = placeholderSpans(current)
