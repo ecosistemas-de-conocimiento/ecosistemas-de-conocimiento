@@ -167,14 +167,24 @@
     font-size: 0.9rem;
     color: var(--edc-color-ink-soft);
   }
+  /* 🔴 A flex item of `.app-main` with `margin: auto` is as wide as its
+     content: short text drew a narrow column, a long line or a wide table a
+     page wider than the phone, scrolling sideways. `width` fixes the first,
+     `min-width: 0` and the `minmax(0, 1fr)` column the second. */
   .page {
     min-height: 100%;
+    width: 100%;
+    min-width: 0;
     max-width: 46rem;
     margin: 0 auto;
     padding: var(--edc-space-6) var(--edc-space-5) var(--edc-space-8);
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--edc-space-4);
     align-content: start;
+  }
+  article {
+    min-width: 0;
   }
   .head {
     display: flex;
@@ -265,6 +275,11 @@
   }
   .body :global(.md-body p) {
     margin: 0 0 0.9em;
+  }
+  /* A wide table scrolls on its own, not the page. */
+  .body :global(.md-body table) {
+    display: block;
+    overflow-x: auto;
   }
   .notice {
     margin: 0;
