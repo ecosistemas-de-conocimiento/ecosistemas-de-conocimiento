@@ -24,8 +24,8 @@
    *
    * ⚠ The e2e evidence specs drive this page by testid: `owned-doc-<id>`,
    * `filter-all`, `filter-sueltos`, `use-<id>`, `picker-<id>`, `attach-<id>`,
-   * `download-<id>`, `delete-<id>` (native confirm), `edit-note-<id>` (opens
-   * the note editor: `note-edit-<id>`, `note-sheet-publish`), and the empty-state text
+   * `download-<id>`, `delete-<id>` (native confirm), `edit-note-<id>` ("Abrir":
+   * the note's reading view; `note-sheet-edit` → `note-edit-<id>`, `note-sheet-publish`), and the empty-state text
    * "Todavía no has subido". Keep them, and keep the conversation titles in
    * the card's text: cleanup finds audio uploads by "Se usa en: evid-…".
    */
@@ -462,11 +462,13 @@
                 dataTestId={`use-${d.id}`}
                 onClick={() => openPicker(d)}
               />
-              {#if canEditNote(d)}
+              <!-- Opens the note's reading view; "Editar" is inside it (owner,
+                   2026-10-28). The testid predates that and is kept for the specs. -->
+              {#if d.isNote === true}
                 <Button
                   variant="outline"
                   size="sm"
-                  label="Editar"
+                  label="Abrir"
                   disabled={busy}
                   dataTestId={`edit-note-${d.id}`}
                   onClick={() => openEditor(d)}
@@ -547,7 +549,14 @@
 <UploadSheet bind:open={uploadOpen} hasOptions={manualPublish} {audioOn} onUploaded={() => app.loadOwnedDocs(filter)} />
 <NoteSheet bind:open={noteOpen} onSave={saveNote} />
 {#key editingId}
-  <NoteSheet bind:open={editOpen} editing={editingDoc} {onEdit} publish={editPublish} onSave={async () => true} />
+  <NoteSheet
+    bind:open={editOpen}
+    editing={editingDoc}
+    canEdit={editingDoc ? canEditNote(editingDoc) : false}
+    {onEdit}
+    publish={editPublish}
+    onSave={async () => true}
+  />
 {/key}
 
 <style>

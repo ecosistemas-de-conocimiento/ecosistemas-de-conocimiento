@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Message } from '$lib/types';
   import Markdown from './Markdown.svelte';
+  import { markdownToPlainText } from '$lib/markdown';
   import MessageRating from './MessageRating.svelte';
   import { isRatableMessageId } from '$lib/ratings';
   import { app } from '$lib/stores/app.svelte';
@@ -75,6 +76,9 @@
     citationsWithOrdinals(msg.provenance ?? null).map((c) => ({
       ...c,
       title: chatSourceTitle(c.title, c.metadata, app.ecosystem?.name),
+      // The card quotes the passage as text: without this a note's `**` and
+      // `#` showed raw in the quote (owner, 2026-10-28).
+      passageText: c.passageText ? markdownToPlainText(c.passageText) : c.passageText,
     })),
   );
 

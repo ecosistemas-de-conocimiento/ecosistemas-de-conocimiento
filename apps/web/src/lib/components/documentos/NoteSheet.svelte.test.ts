@@ -19,7 +19,9 @@ const published = {
 } as WorkingDoc;
 
 describe('NoteSheet — editing an existing note (/documentos "Editar")', () => {
-  it('shows the editor with the note’s text and the page’s "Publicar cambios"', () => {
+  // Opens as a reading view (owner, 2026-10-28); "Editar" → `note-edit-9` is
+  // clicked through in `documentViews.dom.test.ts`.
+  it('opens on the note’s text with "Editar" and the page’s "Publicar cambios"', () => {
     const html = render(NoteSheet, {
       props: {
         onSave: async () => true,
@@ -27,8 +29,10 @@ describe('NoteSheet — editing an existing note (/documentos "Editar")', () => 
         publish: { label: 'Publicar cambios', pending: false, onClick: () => {} },
       },
     }).body;
-    expect(html).toContain('Editar nota');
-    expect(html).toContain('data-testid="note-edit-9"');
+    expect(html).toContain('data-testid="note-sheet-title"');
+    expect(html).toContain('data-testid="note-preview-9"');
+    expect(html).toContain('data-testid="note-sheet-edit"');
+    expect(html).not.toContain('data-testid="note-edit-9"');
     expect(html).toContain('texto con un cambio');
     expect(html).toContain('data-testid="note-sheet-publish"');
     expect(html).toContain('Publicar cambios');

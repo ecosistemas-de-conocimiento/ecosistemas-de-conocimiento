@@ -2,6 +2,7 @@
 
 <script lang="ts">
   /** `/seguimiento` — minimal copy (owner rule); every rule is in the backend. */
+  import Markdown from '$lib/components/Markdown.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -73,7 +74,7 @@
                   <li class="row">
                     {#if t.state === 'visible'}
                       <strong>{t.title}</strong> <span class="muted">· {date(t.createdAt)}</span>
-                      <p class="redacted">{t.text}</p>
+                      <div class="redacted"><Markdown document source={t.text} testid={`testimonio-text-${t.id}`} /></div>
                     {:else}
                       <span class="muted">{STATE[t.state]} · {date(t.createdAt)}</span>
                     {/if}
@@ -186,7 +187,9 @@
     margin-right: 0.4rem;
   }
   .redacted {
-    white-space: pre-wrap;
+    margin: 0.3rem 0 0;
+    max-width: 70ch;
+    line-height: 1.6;
     max-height: 12rem;
     overflow: auto;
   }

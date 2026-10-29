@@ -1,20 +1,38 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { renderMarkdown } from '$lib/markdown';
+  import { markdownToPlainText, renderHighlightedMarkdown, renderMarkdown, type HighlightSegment } from '$lib/markdown';
   import 'highlight.js/styles/github.css';
 
   let {
-    source,
+    source = '',
     inline = false,
+    document = false,
+    highlights,
+    markTitle = () => '',
     citations,
     oncite,
+    testid,
+    class: className = '',
   }: {
-    source: string;
+    source?: string;
     inline?: boolean;
+    /**
+     * Document text (note, transcript, published document, testimonio), not a
+     * chat answer: `[[wikilinks]]` read as plain text, `[N]` stays text.
+     */
+    document?: boolean;
+    /** Held text with highlighted stretches (`/revision/[id]`); replaces `source`. */
+    highlights?: readonly HighlightSegment[];
+    /** The `title` of a highlight of this type. */
+    markTitle?: (type: string) => string;
     /** Ordinals with a source: their `[N]` markers become buttons. */
     citations?: number[];
     /** Called with N when the reader clicks `[N]`. */
     oncite?: (ordinal: number) => void;
+    /** `data-testid` on the wrapper. */
+    testid?: string;
+    /** Extra classes on the wrapper. */
+    class?: string;
   } = $props();
 
   // DOMPurify requires `window`; defer rendering until the client mounts so
@@ -24,7 +42,13 @@
     mounted = true;
   });
 
-  const html = $derived(mounted ? renderMarkdown(source, { inline, citations }) : '');
+  const html = $derived(
+    !mounted
+      ? ''
+      : highlights
+        ? renderHighlightedMarkdown(highlights, markTitle)
+        : renderMarkdown(source, { inline, citations, document }),
+  );
 
   // One delegated listener: the buttons are inside `{@html}`.
   function onclick(e: MouseEvent): void {
@@ -37,9 +61,16 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 {#if inline}
-  <span class="md-body" {onclick}>{@html html}</span>
+  <!-- Before mount (and on the server) a one-line text reads as plain text, not as nothing. -->
+  <span class="md-body {className}" data-testid={testid} {onclick}
+    >{#if mounted}{@html html}{:else}{markdownToPlainText(source)}{/if}</span
+  >
 {:else}
-  <div class="md-body" {onclick}>{@html html}</div>
+  <!-- Before mount (and on the server) document text reads as plain text, not
+       as nothing; a chat answer keeps its empty first paint. -->
+  <div class="md-body {className}" class:md-document={document || !!highlights} data-testid={testid} {onclick}>
+    {#if mounted}{@html html}{:else if highlights}{markdownToPlainText(highlights.map((h) => h.text).join(''))}{:else if document}{markdownToPlainText(source)}{/if}
+  </div>
 {/if}
 
 <style>
@@ -169,9 +200,9 @@
     border-top: 1px solid var(--edc-color-elevated-border);
     margin: 1em 0;
   }
-  .md-body :global(img) {
-    max-width: 100%;
-    border-radius: 0.25em;
+  /* No img rule: images never render (`$lib/markdown`, FORBID_TAGS). */
+  .md-document {
+    overflow-wrap: anywhere;
   }
   .md-body :global(strong) {
     font-weight: 700;

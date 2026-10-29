@@ -17,6 +17,7 @@
    * missing data and sends people looking for the person.
    */
   import { page } from '$app/stores';
+  import Markdown from '$lib/components/Markdown.svelte';
   import TestimonySource from '$lib/components/TestimonySource.svelte';
   import {
     formatLibraryDate,
@@ -146,9 +147,13 @@
       {/if}
 
       {#if doc.text.trim()}
-        <!-- Plain text, not Markdown: a transcript has no markup, and rendering
-             it as Markdown would let a stray `#` or `*` reshape what was said. -->
-        <p class="body" data-testid="library-document-text">{doc.text}</p>
+        <!-- Rendered Markdown (owner, 2026-10-28: notes and documents showed
+             raw `**` and `#`). `document`: `[[enlaces]]` read as text, no
+             images, `[N]` stays text. A transcript has no markup, so it reads
+             as it did. -->
+        <div class="body">
+          <Markdown document source={doc.text} testid="library-document-text" />
+        </div>
       {:else}
         <p class="notice">Esta publicación no tiene texto para mostrar.</p>
       {/if}
@@ -249,13 +254,17 @@
     font-size: 0.78rem;
     line-height: 1.5;
   }
+  /* A reading column: ~70 characters a line. */
   .body {
-    margin: 1rem 0 0;
-    white-space: pre-wrap;
-    word-break: break-word;
+    margin: 1.25rem 0 0;
+    max-width: 70ch;
+    overflow-wrap: anywhere;
     line-height: 1.7;
-    font-size: 0.92rem;
+    font-size: 1rem;
     color: var(--edc-color-ink-body);
+  }
+  .body :global(.md-body p) {
+    margin: 0 0 0.9em;
   }
   .notice {
     margin: 0;

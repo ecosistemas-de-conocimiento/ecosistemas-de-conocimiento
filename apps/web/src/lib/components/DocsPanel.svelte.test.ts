@@ -43,17 +43,20 @@ function panel(d: WorkingDoc): string {
 }
 
 describe('DocsPanel — a published note', () => {
-  it('own: shows the editor (Editar / Vista previa), no button while the text is unchanged', () => {
+  // Opens on the rendered text, "Editar" second (owner, 2026-10-28); the click
+  // through to `note-edit-7` is in `documentViews.dom.test.ts`.
+  it('own: opens on the preview with "Editar", no button while the text is unchanged', () => {
     const html = panel(note());
-    expect(html).toContain('data-testid="note-edit-7"');
-    expect(html).toContain('Vista previa');
+    expect(html).toContain('data-testid="note-preview-7"');
+    expect(html).toContain('data-testid="note-edit-open-7"');
+    expect(html).not.toContain('data-testid="note-edit-7"');
     expect(html).not.toContain('Listo para el chat');
     expect(html).not.toContain('data-testid="publish-7"');
   });
 
   it('own, edited: "Publicar cambios" appears', () => {
     const html = panel(note({ body: 'texto con un cambio' }));
-    expect(html).toContain('data-testid="note-edit-7"');
+    expect(html).toContain('data-testid="note-edit-open-7"');
     expect(html).toContain('data-testid="publish-7"');
     expect(html).toContain('Publicar cambios');
   });

@@ -70,6 +70,14 @@
 
   let expandedId = $state<string | null>(untrack(() => openId));
   const previewIds = new SvelteSet<string>();
+  /**
+   * Notes the reader switched to the editor. A note opens on its RENDERED text
+   * (owner, 2026-10-28); "Editar" is the second step. An empty note has
+   * nothing to show, so it opens on the editor, and typing in it keeps it
+   * there (`noteEditing.add` before the body changes).
+   */
+  const noteEditing = new SvelteSet<string>();
+  const editingNote = (d: WorkingDoc) => noteEditing.has(d.id) || !d.body.trim();
   let fileInput = $state<HTMLInputElement | null>(null);
   let uploading = $state(false);
   /**
@@ -862,11 +870,9 @@
                        embedded and retrieved — and the one person who knows
                        what was actually said could not read it.
 
-                       ⚠ Same tab pattern as the markdown note below, on
-                       purpose, and the same `previewIds` set drives both: the
-                       panel already taught "Vista previa" as the way to see a
-                       document's text. A second, different affordance for the
-                       same idea would be one pattern too many. -->
+                       ⚠ `previewIds` drives these tabs. Notes no longer use
+                       tabs: they open on their rendered text, with "Editar"
+                       (`noteEditing`, owner 2026-10-28). -->
                   {#if isTranscript(d.kind)}
                     <div class="flex items-center gap-0 px-2 pt-1.5 text-[10px]">
                       <button
@@ -942,13 +948,12 @@
                           </button>
                         </div>
                       {:else if text}
-                        <!-- Plain text, not Markdown: an ASR transcript has no
-                             markup, and rendering it as Markdown would let a
-                             stray `#` or `*` silently reshape what was said. -->
-                        <p
-                          class="transcript-text mt-2 text-xs text-ink"
-                          data-testid={`transcript-text-${d.id}`}
-                        >{text}</p>
+                        <!-- Rendered as document Markdown, like every other
+                             document text (owner, 2026-10-28). An ASR
+                             transcript has no markup, so it reads as before. -->
+                        <div class="transcript-text mt-2 text-xs text-ink">
+                          <Markdown document source={text} testid={`transcript-text-${d.id}`} />
+                        </div>
                         {#if editGate.canEdit && sid}
                           <button
                             class="transcript-cta-link mt-2 text-[10px] block"
@@ -963,6 +968,16 @@
                       {/if}
                     </div>
                   {:else}
+                  {#if d.kind === 'markdown' && (d.body ?? '').trim()}
+                    <!-- A note this reader cannot edit (someone else's, or one in
+                         review) still opens on its rendered text. -->
+                    <div
+                      class="note-read bg-surface-soft text-ink text-xs p-3 border-t border-elevated"
+                      data-testid={`note-preview-${d.id}`}
+                    >
+                      <Markdown document source={d.body} />
+                    </div>
+                  {/if}
                   <div class="px-3 py-3 text-xs text-ink-soft bg-surface-soft border-t border-elevated space-y-1">
                     <div>
                       <span class="font-medium text-ink">{d.kind.toUpperCase()}</span>
@@ -996,52 +1011,50 @@
                   </div>
                   {/if}
                 {:else}
-                <div class="flex items-center gap-0 px-2 pt-1.5 text-[10px]">
-                  <button
-                    class="px-2 py-0.5 rounded-t border-x border-t {!isPreview
-                      ? 'border-elevated bg-surface-soft text-ink'
-                      : 'border-transparent text-ink-soft hover:text-ink'}"
-                    onclick={() => {
-                      if (isPreview) togglePreview(d.id);
-                    }}
-                  >
-                    Editar
-                  </button>
-                  <button
-                    class="px-2 py-0.5 rounded-t border-x border-t {isPreview
-                      ? 'border-elevated bg-surface-soft text-ink'
-                      : 'border-transparent text-ink-soft hover:text-ink'}"
-                    onclick={() => {
-                      if (!isPreview) togglePreview(d.id);
-                    }}
-                  >
-                    Vista previa
-                  </button>
-                </div>
-                {#if isPreview}
+                {@const isEditingNote = editingNote(d)}
+                {#if !isEditingNote}
+                  <!-- Preview first; "Editar" is the secondary action. -->
                   <div
-                    class="bg-surface-soft text-ink text-xs p-3 min-h-[200px] border-t border-elevated"
+                    class="note-read relative bg-surface-soft text-ink text-xs p-3 pr-16 min-h-[200px] border-t border-elevated"
+                    data-testid={`note-preview-${d.id}`}
                   >
-                    {#if d.body.trim()}
-                      <Markdown source={d.body} />
-                    {:else}
-                      <span class="text-ink-soft italic">Todavía no hay nada que mostrar.</span>
-                    {/if}
+                    <button
+                      type="button"
+                      class="note-mode-btn"
+                      onclick={() => noteEditing.add(d.id)}
+                      data-testid={`note-edit-open-${d.id}`}
+                    >
+                      Editar
+                    </button>
+                    <Markdown document source={d.body} />
                   </div>
                 {:else}
-                  <textarea
-                    class="docs-body w-full text-xs font-mono p-2 outline-none border-t border-elevated min-h-[200px] resize-y"
-                    value={d.body}
-                    aria-label="Contenido del documento"
-                    placeholder="Contenido en Markdown…"
-                    data-testid={`note-edit-${d.id}`}
-                    oninput={(e) => {
-                      if (sid) {
-                        d.body = e.currentTarget.value;
-                        queueUpdate(sid, d.id, { body: e.currentTarget.value });
-                      }
-                    }}
-                  ></textarea>
+                  <div class="relative">
+                    {#if d.body.trim()}
+                      <button
+                        type="button"
+                        class="note-mode-btn"
+                        onclick={() => noteEditing.delete(d.id)}
+                        data-testid={`note-preview-open-${d.id}`}
+                      >
+                        Vista previa
+                      </button>
+                    {/if}
+                    <textarea
+                      class="docs-body w-full text-xs font-mono p-2 outline-none border-t border-elevated min-h-[200px] resize-y"
+                      value={d.body}
+                      aria-label="Contenido del documento"
+                      placeholder="Contenido en Markdown…"
+                      data-testid={`note-edit-${d.id}`}
+                      oninput={(e) => {
+                        noteEditing.add(d.id);
+                        if (sid) {
+                          d.body = e.currentTarget.value;
+                          queueUpdate(sid, d.id, { body: e.currentTarget.value });
+                        }
+                      }}
+                    ></textarea>
+                  </div>
                 {/if}
                 {/if}
               </div>
@@ -1060,6 +1073,27 @@
 {/if}
 
 <style>
+  /* "Editar" / "Vista previa": top right of the note, out of the text's way. */
+  .note-mode-btn {
+    position: absolute;
+    top: 0.4rem;
+    right: 0.5rem;
+    z-index: 1;
+    padding: 0.15rem 0.55rem;
+    border-radius: var(--edc-radius-2);
+    border: 1px solid var(--edc-color-elevated-border);
+    background: var(--edc-color-surface-strong);
+    color: var(--edc-color-ink-soft);
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .note-mode-btn:hover {
+    color: var(--edc-color-ink);
+  }
+  .note-read {
+    overflow-wrap: anywhere;
+    line-height: 1.6;
+  }
   .docs-body {
     background: var(--edc-color-surface-soft);
     color: var(--edc-color-ink);
@@ -1200,11 +1234,11 @@
     color: var(--edc-color-brand-strong);
   }
 
-  /* The transcript itself. `pre-wrap` keeps the ASR's own line breaks; the
-     scroll cap stops a two-hour recording from burying the rest of the panel. */
+  /* The transcript itself. The Markdown render keeps the ASR's own line breaks
+     (`breaks: true`); the scroll cap stops a two-hour recording from burying
+     the rest of the panel. */
   .transcript-text {
-    white-space: pre-wrap;
-    word-break: break-word;
+    overflow-wrap: anywhere;
     line-height: 1.55;
     max-height: 22rem;
     overflow-y: auto;

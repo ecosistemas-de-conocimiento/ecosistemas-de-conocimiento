@@ -26,9 +26,30 @@ export default defineConfig({
     },
   },
   test: {
-    // BFF route handlers and pure helpers run under node — no DOM needed.
-    environment: 'node',
-    include: ['src/**/*.{test,spec}.ts'],
-    exclude: ['node_modules/**', 'build/**', '.svelte-kit/**'],
+    projects: [
+      {
+        extends: true,
+        test: {
+          // BFF route handlers and pure helpers run under node — no DOM needed.
+          name: 'node',
+          environment: 'node',
+          include: ['src/**/*.{test,spec}.ts'],
+          exclude: ['node_modules/**', 'build/**', '.svelte-kit/**', 'src/**/*.dom.test.ts'],
+        },
+      },
+      {
+        extends: true,
+        // `*.dom.test.ts`: components MOUNTED in a DOM (jsdom), for what
+        // only renders on the client — `Markdown.svelte` renders '' on the
+        // server because DOMPurify needs `window`. The browser condition makes
+        // `svelte` resolve to its client build, so `mount` exists.
+        resolve: { conditions: ['browser'] },
+        test: {
+          name: 'dom',
+          environment: 'jsdom',
+          include: ['src/**/*.dom.test.ts'],
+        },
+      },
+    ],
   },
 });

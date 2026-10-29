@@ -10,6 +10,7 @@
    * `aria-controls` always points at something.
    */
   import { enhance } from '$app/forms';
+  import Markdown from '$lib/components/Markdown.svelte';
   import ConsentSwitch from '$lib/components/estudiante/ConsentSwitch.svelte';
   import { CONSENT_ACTIVITY, CONSENT_ACTIVITY_WITH_TESTIMONIOS, TESTIMONIO_CONSENT_VERSION } from '$lib/consent';
   import {
@@ -145,7 +146,7 @@
         {#if preguntas.length}
           <ol class="questions" data-testid="preguntas" aria-label="Preguntas para investigar">
             {#each preguntas as q, i (q)}
-              <li><span class="q-no" aria-hidden="true">{i + 1}</span><span>{q}</span></li>
+              <li><span class="q-no" aria-hidden="true">{i + 1}</span><Markdown inline document source={q} /></li>
             {/each}
           </ol>
         {/if}

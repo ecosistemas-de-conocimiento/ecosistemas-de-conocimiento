@@ -28,6 +28,7 @@
     "@types/node": "^22.10.5",
     "@types/three": "~0.186.0",
     "autoprefixer": "^10.4.20",
+    "jsdom": "27.4.0",
     "postcss": "^8.4.49",
     "svelte": "^5.16.0",
     "svelte-check": "^4.1.1",

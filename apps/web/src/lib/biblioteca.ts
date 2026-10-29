@@ -308,6 +308,8 @@ function stripMarkdown(line: string): string {
     .replace(/^\s*(>\s*)+/, '')
     .replace(/^\s*(?:[-*+•]|\d+[.)])\s+/, '')
     .replace(/(\*\*|__)/g, '')
+    // `[[enlace]]` / `[[destino|texto]]` read as their text, like the reader shows them.
+    .replace(/\[\[([^\[\]|]+)(?:\|([^\[\]]+))?\]\]/g, (_m, a: string, b?: string) => (b ?? a).trim())
     .trim();
 }
 

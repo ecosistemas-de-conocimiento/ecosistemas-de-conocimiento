@@ -44,7 +44,9 @@
     survivorBreakdown,
     SURVIVORS_TITLE,
     survivorLabel,
+    type SurvivorType,
   } from '$lib/holds';
+  import Markdown from '$lib/components/Markdown.svelte';
   import { holdSummary } from '../holdSummary';
   import type { ActionData, PageData } from './$types';
 
@@ -164,9 +166,9 @@
         {:else}
           <!-- ⚠ Highlights only exist here, where the text is exactly what the
                server sent. -->
-          <pre class="reader" data-testid="hold-text">{#each segments as seg, i (i)}{#if seg.type}<mark
-                  class="hit"
-                  title={survivorLabel(seg.type)}>{seg.text}</mark>{:else}{seg.text}{/if}{/each}</pre>
+          <div class="reader">
+            <Markdown highlights={segments} markTitle={(t) => survivorLabel(t as SurvivorType)} testid="hold-text" />
+          </div>
           <button class="secondary" type="button" onclick={() => (editing = true)}>
             Corregir el texto
           </button>
@@ -341,6 +343,8 @@
 
   .reader,
   .editor {
+    display: block;
+    box-sizing: border-box;
     width: 100%;
     margin: 0.75rem 0 0;
     padding: 0.9rem;
@@ -349,8 +353,10 @@
     background: var(--edc-color-surface);
     font: inherit;
     line-height: 1.6;
-    white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+  .editor {
+    white-space: pre-wrap;
   }
   .reader {
     max-height: 32rem;
@@ -359,7 +365,7 @@
   /* 🔴 Marked twice — background AND underline. A survivor a reviewer does not
      notice is the whole failure this screen exists to prevent, and colour alone
      is exactly what a colour-blind reader misses. */
-  .hit {
+  .reader :global(mark.hit) {
     background: var(--edc-color-brand-soft);
     color: var(--edc-color-brand-strong);
     border-bottom: 2px solid var(--edc-color-brand);
