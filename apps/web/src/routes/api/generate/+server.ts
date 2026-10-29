@@ -987,6 +987,9 @@ const answerTurn: RequestHandler = async ({ request, locals, url }) => {
   // rides through the `engineAI` closure (captured at construction above).
   try {
     const prepared = await regroup(await prepareTurn(engineTurnArgs));
+    // The evals runner only (`$lib/server/evals`): the numbered sources the
+    // model is about to see. No browser request sets `locals.evalTap`.
+    locals.evalTap?.({ matches: prepared.matches, provenance: prepared.provenance });
     const generation = await answerAI.generateSync({
       surface: turnConfig.surface,
       orgId: engineTurnArgs.orgId,

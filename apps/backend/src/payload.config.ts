@@ -21,12 +21,15 @@ import { Projects } from './collections/Projects'
 import { Memberships } from './collections/Memberships'
 import { StudentProfiles } from './collections/StudentProfiles'
 import { Suggestions } from './collections/Suggestions'
+import { EvalItems } from './collections/EvalItems'
+import { EvalRuns } from './collections/EvalRuns'
 import { withoutDuplicate } from './collections/hooks/refuseDuplicate'
 import { lockDownPayloadInternals } from './access/payloadInternals'
 
 import { PlatformSettings } from './globals/PlatformSettings'
 
 import { estudianteEndpoints } from './endpoints/estudiante'
+import { evalEndpoints } from './endpoints/evals'
 import { funcionesEndpoints } from './endpoints/funciones'
 import { graphEndpoints } from './endpoints/graph'
 import { lenguasEndpoint } from './endpoints/lenguas'
@@ -141,6 +144,9 @@ export default buildConfig({
     // Student view (`studentView` switch): consent rows and suggestions.
     StudentProfiles,
     Suggestions,
+    // `/admin/evals` (platform admin only): question sets and their runs.
+    EvalItems,
+    EvalRuns,
     // Plumbing
     AiServiceCallbacks,
   ].map(withoutDuplicate),
@@ -176,6 +182,8 @@ export default buildConfig({
     ...funcionesEndpoints,
     // `/api/estudiante/*` — the student view; 404 unless `studentView` is on.
     ...estudianteEndpoints,
+    // `/api/evals/*` — the evals dashboard; platform admin only.
+    ...evalEndpoints,
   ],
   // Platform switches, read at runtime by `lib/platformSettings.ts`.
   globals: [PlatformSettings],
