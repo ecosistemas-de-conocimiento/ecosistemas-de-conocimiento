@@ -68,7 +68,11 @@ for dir in "$out"/.corrida/*-chromium "$out"/.corrida/*-movil; do
   [[ -f "$dir/video.webm" ]] || continue
   # `investigador-investigador-chromium` → investigador; a V3 spec's folder
   # starts `investigador.v3-…` → investigador too (it lands under .videos/v3/).
-  rol="$(basename "$dir")"; rol="${rol%%-*}"; rol="${rol%.v3}"
+  base="$(basename "$dir")"; base="${base%-chromium}"; base="${base%-movil}"
+  rol="${base%%-*}"; rol="${rol%.v3}"
+  # A second test in one spec gets its own file: V3 `estudiante nota` →
+  # `estudiante-nota.webm`, beside (not over) `estudiante.webm`.
+  titulo="${base#*-}"; [[ "$titulo" == "$rol"-* ]] && rol="$titulo"
   [[ "$rol" == limpieza ]] && continue
   # A failed run keeps its video beside, never over, a good one.
   if [[ -f "$dir/test-failed-1.png" ]]; then cp "$dir/video.webm" "$out/$rol.fallido.webm"
