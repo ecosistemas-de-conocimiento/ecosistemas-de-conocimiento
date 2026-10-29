@@ -11,7 +11,7 @@ import type {
   PayloadRequest,
   Where,
 } from 'payload'
-import { Forbidden, ValidationError } from 'payload'
+import { APIError, Forbidden, ValidationError } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
 import {
@@ -31,7 +31,7 @@ import {
 } from '../lib/contentKind'
 import { assertSessionOwnedBy, SessionNotOwnedError } from '../lib/corpus'
 import { TextTooLongError } from '../lib/extract/text'
-import { gatedTextHash } from '../lib/gatedTextHash'
+import { matchesHeldTextHash, sameGatedText } from '../lib/gatedTextHash'
 import {
   organizationIdsForUser,
   organizationIdsForUserWithPermission,
@@ -771,7 +771,10 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
   // Needs neither the ecosistema nor the contentKind — only the STORED
   // publication status — so it runs before the two that do.
   enforceDraftOnlyTextEdits({ next, original, operation, req })
-  if (operation !== 'create') Object.assign(next, gateResetForTextEdit(next, original) ?? {})
+  if (operation !== 'create') {
+    refuseTrivialEditOnHold(next, original)
+    Object.assign(next, gateResetForTextEdit(next, original) ?? {})
+  }
 
   // ⚠ LAST, because it needs the ecosistema this hook just derived. A permission
   // is held IN an organization, so the check is meaningless before we know which
@@ -844,6 +847,33 @@ async function assertOwnMediaFile({
  *
  * Returns the fields to merge into `next`, or null when nothing changes.
  */
+export const TRIVIAL_EDIT_ON_HOLD_MESSAGE =
+  'This document is held for review, and this edit only changes whitespace or case. Only a reviewer can release it.'
+
+/**
+ * 🔴 A TRIVIAL EDIT DOES NOT RELEASE A HOLD. Owner ruling R78.
+ *
+ * `gateResetForTextEdit` clears a hold on ANY changed text, and the next ingest
+ * re-runs the gate. So `{ extractedText: text + ' ', ingestStatus: 'pending' }`
+ * was a re-roll: repeat until the model says `ready`, and it publishes. The
+ * same hole `/retry` closes with `heldTextHash`, one door over.
+ *
+ * So on a HELD row an edit must change the NORMALISED text
+ * (`normaliseGatedText`); otherwise it is refused with a 409, the same answer
+ * `/retry` gives. A real correction still clears the hold and re-gates.
+ *
+ * ⚠ USER WRITES ONLY, like `gateResetForTextEdit` (the enclosing hook returns
+ * early with no `req.user`).
+ */
+export function refuseTrivialEditOnHold(next: Record<string, unknown>, original: Record<string, unknown>): void {
+  if (original.anonymisationStatus !== 'held' || !('extractedText' in next)) return
+  const asText = (v: unknown): string => (typeof v === 'string' ? v : '')
+  const incoming = asText(next.extractedText)
+  const stored = asText(original.extractedText)
+  if (incoming === stored || !sameGatedText(incoming, stored)) return
+  throw new APIError(TRIVIAL_EDIT_ON_HOLD_MESSAGE, 409, undefined, true)
+}
+
 export function gateResetForTextEdit(
   next: Record<string, unknown>,
   original: Record<string, unknown>,
@@ -4012,7 +4042,7 @@ export function planIngestRetry(doc: RetryableDocument): Record<string, unknown>
    */
   if (doc.anonymisationStatus === 'held') {
     const text = typeof doc.extractedText === 'string' ? doc.extractedText : ''
-    if (typeof doc.heldTextHash !== 'string' || doc.heldTextHash === gatedTextHash(text)) return null
+    if (typeof doc.heldTextHash !== 'string' || matchesHeldTextHash(doc.heldTextHash, text)) return null
   }
 
   /**

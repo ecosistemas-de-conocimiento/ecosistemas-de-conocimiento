@@ -252,6 +252,50 @@ describe.skipIf(!dockerOk)('audit 2026-10-28 lane A, on a real Postgres', () => 
       expect(await retryAs(OWNER, id)).toBe(409)
     })
 
+    // R78: the transcript editor's body on a held row. Whitespace and case are
+    // not a new source, so they must not clear the hold for a re-roll.
+    const editorBody = (extractedText: string) => ({
+      extractedText,
+      ingestId: null,
+      ingestStatus: 'pending',
+      ingestError: null,
+    })
+
+    it('🔴 R78: a trivial transcript edit (whitespace/case) on a held row keeps the hold — 409', async () => {
+      const id = await heldTestimonio()
+      const before = await row(id)
+      for (const trivial of [HELD_TEXT + ' ', `  ${HELD_TEXT.replace(' ', '\n\t ')}`, HELD_TEXT.toUpperCase()]) {
+        const err = await updateAs(OWNER, id, editorBody(trivial)).catch((e: unknown) => e)
+        expect(err, JSON.stringify(trivial)).toBeInstanceOf(Error)
+        expect((err as { status?: number }).status).toBe(409)
+      }
+      const after = await row(id)
+      expect(after.anonymisation_status).toBe('held')
+      expect(after.held_text).toBe(before.held_text)
+      expect(after.held_text_hash).toBe(before.held_text_hash)
+      expect(after.extracted_text).toBe(HELD_TEXT)
+      expect(after.ingest_status).toBe('failed')
+      expect(await retryAs(OWNER, id)).toBe(409)
+    })
+
+    it('🔴 R78: /retry refuses a held row whose text changed only trivially below the app', async () => {
+      const id = await heldTestimonio()
+      await pg.db.execute(sql`UPDATE documents SET extracted_text = ${HELD_TEXT.toLowerCase() + '  '} WHERE id = ${id}`)
+      expect(await retryAs(OWNER, id)).toBe(409)
+      expect((await row(id)).anonymisation_status).toBe('held')
+    })
+
+    it('R78: a real transcript edit on a held row still clears the hold and re-gates', async () => {
+      const id = await heldTestimonio()
+      await updateAs(OWNER, id, editorBody('Texto corregido sin nombres.'))
+      const after = await row(id)
+      expect(after.extracted_text).toBe('Texto corregido sin nombres.')
+      expect(after.anonymisation_status).toBe('n/a')
+      expect(after.held_text).toBeNull()
+      expect(after.held_text_hash).toBeNull()
+      expect(after.ingest_status).toBe('pending')
+    })
+
     it('an ordinary technical failure is still retryable', async () => {
       const doc = await payload.create({
         collection: 'documents',
