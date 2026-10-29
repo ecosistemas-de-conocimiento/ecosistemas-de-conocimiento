@@ -8,6 +8,7 @@ import type {
   CollectionConfig,
   Endpoint,
   FieldAccess,
+  PayloadRequest,
   Where,
 } from 'payload'
 import { Forbidden, ValidationError } from 'payload'
@@ -30,6 +31,7 @@ import {
 } from '../lib/contentKind'
 import { assertSessionOwnedBy, SessionNotOwnedError } from '../lib/corpus'
 import { TextTooLongError } from '../lib/extract/text'
+import { gatedTextHash } from '../lib/gatedTextHash'
 import {
   organizationIdsForUser,
   organizationIdsForUserWithPermission,
@@ -42,6 +44,7 @@ import { anonymiseParticipantUpload, fileParticipantAudioAsTestimonio } from '..
 import { isAppNote, isStudentNote, parseNoteEdit, publishStudentNote, publishStudentNoteChanges } from '../lib/studentNotes'
 import {
   consumeCorpusCleanupSkip,
+  isOwnersMedia,
   planDocumentMediaCleanup,
   scheduleUploadCleanup,
 } from '../lib/conversationUploads'
@@ -217,6 +220,29 @@ const PUBLICATION_LABELS: Record<PublicationState, string> = {
  * a theme; `lengua` stays shut.
  */
 const gateWritesOnly: FieldAccess = () => false
+
+/**
+ * 🔴 PIPELINE-CONTROL COLUMNS: SET ON CREATE, MOVED BY THE SERVER AFTER.
+ * Audit 2026-10-28 (LOW): `transcribeAttempt`, `transcribeId`,
+ * `publishIngestId`, `graphStatus` and `kind` were writable by the uploader
+ * over REST, and each `transcribeAttempt` bump queued another GPU job. Field
+ * access strips them from a user's update; server writes (`overrideAccess`)
+ * are not affected.
+ */
+const serverMovesAfterCreate = { update: gateWritesOnly }
+
+/**
+ * `ingestStatus` / `ingestId` move with a TEXT EDIT and never alone: the web
+ * transcript editor (`apps/web/.../documents/[id]/transcript/+server.ts`)
+ * writes `{ extractedText, ingestId: null, ingestStatus: 'pending' }` to
+ * re-queue the corrected text. A body without a changed `extractedText` cannot
+ * touch either column.
+ */
+const ingestMovesWithTextEdit: FieldAccess = ({ data, doc }) => {
+  const asText = (v: unknown): string => (typeof v === 'string' ? v : '')
+  const incoming = (data as Record<string, unknown> | undefined)?.extractedText
+  return incoming !== undefined && asText(incoming) !== asText((doc as Record<string, unknown> | undefined)?.extractedText)
+}
 
 /** A field only a platform admin may write (`keepPublicFigures`). */
 const platformAdminOnly: FieldAccess = ({ req }) => isPlatformAdminUser(req.user)
@@ -740,6 +766,8 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
     next.organization = original.organization
   }
 
+  await assertOwnMediaFile({ next, original, operation, req })
+
   // Needs neither the ecosistema nor the contentKind — only the STORED
   // publication status — so it runs before the two that do.
   enforceDraftOnlyTextEdits({ next, original, operation, req })
@@ -751,6 +779,45 @@ export const bindDocumentToEcosystem: CollectionBeforeValidateHook = async ({
   await enforceVocesUploadRights({ next, original, operation, req })
 
   return next
+}
+
+/**
+ * 🔴 A DOCUMENT'S FILE IS ITS UPLOADER'S OWN. Audit 2026-10-28 item 1.
+ *
+ * `mediaFile` is client-supplied, and Payload checks only that the id exists.
+ * A draft PATCH `{ mediaFile: <someone else's media id>, extractedText: '' }`
+ * made `afterChange` extract (or transcribe) the victim's file with
+ * `overrideAccess` into the caller's own row. Media ids are sequential.
+ *
+ * So a NEW or CHANGED `mediaFile` must be a media row whose `uploadedBy` is the
+ * document's `uploadedBy` (already pinned above: the caller on create, the
+ * stored owner on update). An unchanged value on update is not re-checked.
+ *
+ * ⚠ A platform admin is not narrowed: they may attach a file for someone, as
+ * before. Server writes (no user) never reach this hook's checks.
+ */
+async function assertOwnMediaFile({
+  next,
+  original,
+  operation,
+  req,
+}: {
+  next: Record<string, unknown>
+  original: Record<string, unknown>
+  operation: string
+  req: PayloadRequest
+}): Promise<void> {
+  if (!('mediaFile' in next)) return
+  const mediaId = resolveId(next.mediaFile)
+  if (mediaId == null) return
+  if (operation !== 'create' && String(mediaId) === String(resolveId(original.mediaFile) ?? '')) return
+  if (isPlatformAdminUser(req.user)) return
+  if (await isOwnersMedia(mediaId, next.uploadedBy, { payload: req.payload, req })) return
+  throw new ValidationError({
+    collection: 'documents',
+    errors: [{ path: 'mediaFile', message: 'That file is not yours, so it cannot be attached to this document.' }],
+    req,
+  })
 }
 
 /**
@@ -796,6 +863,7 @@ export function gateResetForTextEdit(
     anonymisationReport: null,
     redactedText: null,
     heldText: null,
+    heldTextHash: null,
     anonymisationSurvivors: null,
   }
 }
@@ -1681,12 +1749,11 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
    * gate: two more model calls, billed, and — because the detector IS a model —
    * a chance of a DIFFERENT verdict. Rename it enough times and one of those
    * runs comes back `ready`. That is an "ingest anyway" button nobody meant to
-   * build, and it made the header's promise ("re-running it will say no again")
-   * a claim the code did not keep.
+   * build.
    *
-   * ⚠ The way out is `POST /api/documents/:id/retry`, which clears
-   * `anonymisationStatus` deliberately. One explicit path, not a side effect of
-   * editing a field.
+   * ⚠ `POST /api/documents/:id/retry` clears the hold deliberately, and only
+   * once the text differs from what was held (`heldTextHash`, audit 2026-10-28
+   * item 2): the same words get a different verdict often enough to matter.
    */
   if (fresh.anonymisationStatus === 'held') {
     console.warn(
@@ -2832,6 +2899,7 @@ export const Documents: CollectionConfig = {
       name: 'publishIngestId',
       type: 'text',
       index: true,
+      access: serverMovesAfterCreate,
       admin: { readOnly: true, description: 'ai-service ingestId of the in-flight publish move.' },
     },
     {
@@ -2911,6 +2979,7 @@ export const Documents: CollectionConfig = {
       type: 'select',
       required: true,
       defaultValue: 'markdown',
+      access: serverMovesAfterCreate,
       options: [
         { label: 'Markdown', value: 'markdown' },
         { label: 'PDF', value: 'pdf' },
@@ -3173,6 +3242,20 @@ export const Documents: CollectionConfig = {
     },
     {
       /**
+       * 🔴 SHA-256 OF THE TEXT A HOLD IS ABOUT (`lib/gatedTextHash.ts`).
+       * Written with the hold by `lib/anonymiseDocument.ts`; `planIngestRetry`
+       * refuses `/retry` on a held row while `extractedText` still matches it.
+       * Audit 2026-10-28 item 2: the detector is a model, and re-running it on
+       * the same words until it answered `ready` was an "ingest anyway" button.
+       * Cleared with the hold.
+       */
+      name: 'heldTextHash',
+      type: 'text',
+      access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
+      admin: { readOnly: true, hidden: true },
+    },
+    {
+      /**
        * Where the verify stage found something still standing, as OFFSETS into
        * `heldText`.
        *
@@ -3220,9 +3303,11 @@ export const Documents: CollectionConfig = {
        *   ready    cleared; `redactedText` is populated
        *
        * `failed` deliberately does not appear. A failure invites a retry button;
-       * a hold means the gate looked at this and said no, and re-running it on
-       * the same bytes will say no again. ai-service has no per-document delete,
-       * so "ingest anyway" is not a state this product can offer.
+       * a hold means the gate looked at this and said no. Re-running it on the
+       * same bytes CAN say yes — the detector is a model — so `/retry` refuses a
+       * held row until its text changes (`heldTextHash`). ai-service has no
+       * per-document delete, so "ingest anyway" is not a state this product can
+       * offer.
        */
       name: 'anonymisationStatus',
       type: 'select',
@@ -3332,6 +3417,17 @@ export const Documents: CollectionConfig = {
       name: 'mediaFile',
       type: 'upload',
       relationTo: 'media',
+      /**
+       * 🔴 Belt and braces for `assertOwnMediaFile` in `bindDocumentToEcosystem`
+       * (audit 2026-10-28 item 1): Payload validates the id against this, and
+       * the admin picker lists only the uploader's files. A server write (no
+       * user) and a platform admin are not narrowed.
+       */
+      filterOptions: ({ data, user }) => {
+        if (!user || isPlatformAdminUser(user)) return true
+        const owner = relationId((data as Record<string, unknown> | undefined)?.uploadedBy) ?? user.id
+        return { uploadedBy: { equals: owner } }
+      },
       admin: {
         description:
           'Used for kind=pdf, docx, xlsx, xls, csv, html or audio. For audio it is also the PROVENANCE: a member who distrusts a quoted line can play the source recording.',
@@ -3369,6 +3465,7 @@ export const Documents: CollectionConfig = {
       type: 'select',
       required: true,
       defaultValue: 'n/a',
+      access: { update: ingestMovesWithTextEdit },
       options: [
         { label: 'N/A (markdown)', value: 'n/a' },
         { label: 'Pending (queued)', value: 'pending' },
@@ -3399,6 +3496,7 @@ export const Documents: CollectionConfig = {
     {
       name: 'ingestId',
       type: 'text',
+      access: { update: ingestMovesWithTextEdit },
       admin: {
         description: 'ai-service ingestId join-back key.',
       },
@@ -3432,6 +3530,7 @@ export const Documents: CollectionConfig = {
       required: true,
       defaultValue: 'n/a',
       index: true,
+      access: serverMovesAfterCreate,
       options: [
         { label: 'N/A (sin grafo)', value: 'n/a' },
         { label: 'En cola', value: 'pending' },
@@ -3524,6 +3623,7 @@ export const Documents: CollectionConfig = {
       name: 'transcribeId',
       type: 'text',
       index: true,
+      access: serverMovesAfterCreate,
       admin: { readOnly: true, description: 'audio-service transcribeId join-back key.' },
     },
     {
@@ -3537,6 +3637,7 @@ export const Documents: CollectionConfig = {
       name: 'transcribeAttempt',
       type: 'number',
       defaultValue: 0,
+      access: serverMovesAfterCreate,
       admin: { readOnly: true, position: 'sidebar' },
     },
     {
@@ -3854,6 +3955,8 @@ export interface RetryableDocument {
   transcribeAttempt?: number | null
   anonymisationStatus?: string | null
   redactedText?: string | null
+  /** The hash of the text a hold is about (`heldTextHash`). */
+  heldTextHash?: string | null
 }
 
 /**
@@ -3894,6 +3997,23 @@ export function planIngestRetry(doc: RetryableDocument): Record<string, unknown>
    * for "I fixed the source"; a reviewed document has no source problem.
    */
   if (doc.anonymisationStatus === 'rejected') return null
+
+  /**
+   * 🔴 A HOLD IS NOT RE-ROLLED ON THE SAME WORDS. Audit 2026-10-28 item 2.
+   *
+   * The detector is a model (temperature 0.3), so the identical text CAN come
+   * back `ready` on another run. Retrying until it did — and auto-publish then
+   * sharing it with no review and no audit row — was an "ingest anyway" button.
+   * Retry is for "the source changed": the hold stored `heldTextHash`, and a
+   * held row is retried only when `extractedText` no longer matches it. Same
+   * words → only a reviewer (`lib/holdReview.ts`) can release it.
+   *
+   * ⚠ FAILS CLOSED on a hold with no hash (written before this rule): refused.
+   */
+  if (doc.anonymisationStatus === 'held') {
+    const text = typeof doc.extractedText === 'string' ? doc.extractedText : ''
+    if (typeof doc.heldTextHash !== 'string' || doc.heldTextHash === gatedTextHash(text)) return null
+  }
 
   /**
    * 🔴 AN APPROVED ROW RE-SENDS ITS APPROVED TEXT, AND KEEPS THE APPROVAL.
@@ -3941,6 +4061,7 @@ export function planIngestRetry(doc: RetryableDocument): Record<string, unknown>
     // leaving them would show a reviewer last time's survivors over this time's
     // text — offsets into a string that no longer exists. See `SurvivorSpan`.
     heldText: null,
+    heldTextHash: null,
     anonymisationSurvivors: null,
   }
 
@@ -4013,6 +4134,9 @@ function retryIngestEndpoint(): Endpoint {
 
       const data = planIngestRetry(doc)
       if (!data) {
+        if (doc.anonymisationStatus === 'held') {
+          return fail(409, 'This document is held for review with the same text. Only a reviewer can release it.')
+        }
         return fail(409, 'This document has nothing to retry.')
       }
 

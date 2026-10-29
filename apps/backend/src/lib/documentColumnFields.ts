@@ -27,6 +27,7 @@ export const DOCUMENT_COLUMNS = {
   anonymisationSurvivors: 'anonymisation_survivors',
   redactedText: 'redacted_text',
   heldText: 'held_text',
+  heldTextHash: 'held_text_hash',
   publicFiguresKept: 'public_figures_kept',
   testimonioTitle: 'testimonio_title',
   // The note editor's autosave (`PATCH /api/documents/:id/note`, `lib/studentNotes.ts`).

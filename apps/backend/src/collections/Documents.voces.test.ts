@@ -33,6 +33,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { PayloadRequest } from 'payload'
 
 import { bindDocumentToEcosystem, planIngestRetry } from './Documents'
+import { gatedTextHash } from '../lib/gatedTextHash'
 
 const ECO_A = 10
 const ECO_B = 20
@@ -449,7 +450,7 @@ describe('🔴 a documento filed for anonymisation', () => {
 })
 
 describe('🔴 a hold is visible and has exactly one way out', () => {
-  it('a held document is retryable, and the retry is what clears the hold', () => {
+  it('a held document is retryable once its text changed, and the retry is what clears the hold', () => {
     // 🔴 THE TWO BUGS THIS PINS.
     //
     // (1) A hold used to leave `ingestStatus` at `extracting` / `transcribing` —
@@ -464,20 +465,39 @@ describe('🔴 a hold is visible and has exactly one way out', () => {
     //     a different verdict. Rename it enough times and one run comes back
     //     `ready`: an "ingest anyway" button nobody meant to build.
     //
-    // So the ONLY way out is this explicit retry, and it must clear the hold or
-    // it would answer 202 and then do nothing at all.
+    // So the uploader's way out is this explicit retry — once the text differs
+    // from what was held (`heldTextHash`) — and it must clear the hold or it
+    // would answer 202 and then do nothing at all.
     expect(
       planIngestRetry({
         kind: 'audio',
         ingestStatus: 'failed',
         extractedText: 'el testimonio completo',
         anonymisationStatus: 'held',
+        heldTextHash: gatedTextHash('el testimonio anterior'),
       }),
     ).toMatchObject({
       ingestStatus: 'pending',
       anonymisationStatus: 'n/a',
       anonymisationError: null,
+      heldTextHash: null,
     })
+  })
+
+  it('🔴 retry REFUSES a held document whose text is the one that was held (audit 2026-10-28 item 2)', () => {
+    // (3) The detector is a model (temperature 0.3): the SAME words can come
+    //     back `ready` on another run. Retrying until they did was the rename
+    //     loop again, through the button that was meant to be the way out. Same
+    //     text → only a reviewer releases it.
+    const held = {
+      kind: 'audio',
+      ingestStatus: 'failed',
+      extractedText: 'el testimonio completo',
+      anonymisationStatus: 'held',
+    }
+    expect(planIngestRetry({ ...held, heldTextHash: gatedTextHash('el testimonio completo') })).toBeNull()
+    // A hold written before the hash existed fails closed.
+    expect(planIngestRetry(held)).toBeNull()
   })
 
   it('a row that is not terminally failed has nothing to retry', () => {
@@ -548,13 +568,14 @@ describe('🔴 a reviewer’s decision is the only override, and retry cannot un
   it('a still-HELD document stays retryable — "I fixed the source" is a real case', () => {
     // The distinction is the point: a hold has had no human decision, so
     // re-running the gate on corrected source is legitimate. A REVIEWED row has
-    // no source problem.
+    // no source problem. "Fixed" is checked: the held text's hash must differ.
     expect(
       planIngestRetry({
         kind: 'audio',
         ingestStatus: 'failed',
         extractedText: 'el testimonio corregido',
         anonymisationStatus: 'held',
+        heldTextHash: gatedTextHash('el testimonio original'),
       }),
     ).not.toBeNull()
   })
@@ -569,7 +590,8 @@ describe('🔴 a reviewer’s decision is the only override, and retry cannot un
         ingestStatus: 'failed',
         extractedText: 'el testimonio corregido',
         anonymisationStatus: 'held',
+        heldTextHash: gatedTextHash('el testimonio original'),
       }),
-    ).toMatchObject({ heldText: null, anonymisationSurvivors: null })
+    ).toMatchObject({ heldText: null, heldTextHash: null, anonymisationSurvivors: null })
   })
 })

@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 
 import { planGraphRetry, planIngestRetry } from '../collections/Documents'
 import { autoPublishBlocker } from '../lib/autoPublish'
+import { gatedTextHash } from '../lib/gatedTextHash'
 import { citedSurnames, fold } from '../lib/student/logic'
 import { DEMO_USERS } from './demoUsers'
 import { corpusVocabulary, foldWord, SEMIOTICA_CORPUS_DIR, spanishDictionary } from './fixtures/corpusVocabulary'
@@ -177,7 +178,12 @@ describe('planTrabajo — what a (re-)run does with one row', () => {
       planGraphRetry: (row) => planGraphRetry(row as never),
       autoPublishBlocker: (row) => autoPublishBlocker(row),
     }
-    const held = { kind: 'markdown', publicationStatus: 'draft', ingestStatus: 'failed', anonymisationStatus: 'held', extractedText: 'x' }
+    // A hold whose text changed since (`heldTextHash` of other words): the one
+    // case `planIngestRetry` still accepts on a held row.
+    const held = {
+      kind: 'markdown', publicationStatus: 'draft', ingestStatus: 'failed', anonymisationStatus: 'held',
+      extractedText: 'x', heldTextHash: gatedTextHash('y'),
+    }
     // The precondition that makes the guard matter: retry WOULD act on it.
     expect(planIngestRetry(held as never)).not.toBeNull()
     expect(planTrabajo(held, real)).toBe('held')

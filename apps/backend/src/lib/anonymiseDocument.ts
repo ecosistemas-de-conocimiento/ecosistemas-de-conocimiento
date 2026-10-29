@@ -26,7 +26,10 @@
  *
  * ⚠ A HELD DOCUMENT IS NOT A FAILED ONE, and the two statuses are separate for
  * that reason. `failed` invites a retry button. `held` means the gate looked at
- * this and said no; retrying the identical text will say no again.
+ * this and said no. The detector is a model, so the identical text CAN get a
+ * different answer next time — which is why a hold stores `heldTextHash` and
+ * `planIngestRetry` refuses a retry until the text has changed (audit
+ * 2026-10-28 item 2). Only a reviewer releases a hold on the same words.
  *
  * 🔴 AND A GATE THAT COULD NOT RUN IS NOT A HOLD. A 429, a 5xx, a 402 budget
  * refusal or a timeout means the model never answered — nobody "said no". Those
@@ -40,6 +43,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { ContentKind } from './contentKind'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
+import { gatedTextHash } from './gatedTextHash'
 import type { GateReport, PersonDetector } from './anonymise/types'
 import { publicFiguresLog } from './publicFigures'
 
@@ -380,6 +384,8 @@ export async function anonymiseDocumentText(args: {
       heldText: null,
       anonymisationSurvivors: null,
       publicFiguresKept: null,
+      // 🔴 The text this hold is about: `/retry` refuses it unchanged.
+      heldTextHash: gatedTextHash(text),
     }))) return superseded()
     return { ok: false, stage: 'content', reason, report: null }
   }
@@ -442,6 +448,12 @@ export async function anonymiseDocumentText(args: {
       anonymisationSurvivors: result.survivors ?? null,
       // The public figures left in `heldText`, so the reviewer sees why.
       publicFiguresKept: publicFiguresLog(result.keptPublic, result.report.model),
+      /**
+       * 🔴 THE HELD TEXT'S HASH. Audit 2026-10-28 item 2: the detector is a
+       * model, so re-running it on the same words can answer `ready`.
+       * `planIngestRetry` refuses `/retry` on a held row until the text differs.
+       */
+      heldTextHash: gatedTextHash(text),
     }))) return superseded()
     /**
      * A held testimonio gets a title too (owner ruling 2026-10-24: Revisión

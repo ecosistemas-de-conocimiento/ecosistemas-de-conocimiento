@@ -54,6 +54,7 @@ import {
   corpusTextFor,
   mustPassAnonymisationGate,
 } from './anonymiseDocument'
+import { gatedTextHash } from './gatedTextHash'
 
 const DOC_ID = 99
 
@@ -374,11 +375,18 @@ describe('🔴 anonymiseDocumentText — a hold means nothing was ingested', () 
 
   it('holds — it does not FAIL — so no retry button is implied', async () => {
     // ⚠ `failed` invites a retry. `held` means the gate looked at this and said
-    // no; retrying the identical text will say no again.
+    // no — and the identical text CAN get a different answer (the detector is a
+    // model), so the hold stores `heldTextHash` and `/retry` refuses it.
     const fake = fakePayload()
     await run(fake, { contentKind: 'testimonio', text: HELD_TEXT, detector: missesThenFinds() })
     expect(fake.last('anonymisationStatus')).not.toBe('failed')
     expect(fake.last('anonymisationStatus')).toBe('held')
+  })
+
+  it('🔴 stores the hash of the held text, so /retry can refuse the same words (audit 2026-10-28 item 2)', async () => {
+    const fake = fakePayload()
+    await run(fake, { contentKind: 'testimonio', text: HELD_TEXT, detector: missesThenFinds() })
+    expect(fake.last('heldTextHash')).toBe(gatedTextHash(HELD_TEXT))
   })
 })
 

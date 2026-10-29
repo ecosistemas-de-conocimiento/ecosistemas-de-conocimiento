@@ -17,6 +17,7 @@ import * as migration_20261028_162050_organizations_answer_style from './2026102
 import * as migration_20261028_170129_documents_wiki_links from './20261028_170129_documents_wiki_links';
 import * as migration_20261028_231948_documents_note_revisions from './20261028_231948_documents_note_revisions';
 import * as migration_20261028_235647_documents_kind_xls from './20261028_235647_documents_kind_xls';
+import * as migration_20261029_042255_documents_held_text_hash from './20261029_042255_documents_held_text_hash';
 
 export const migrations = [
   {
@@ -112,6 +113,11 @@ export const migrations = [
   {
     up: migration_20261028_235647_documents_kind_xls.up,
     down: migration_20261028_235647_documents_kind_xls.down,
-    name: '20261028_235647_documents_kind_xls'
+    name: '20261028_235647_documents_kind_xls',
+  },
+  {
+    up: migration_20261029_042255_documents_held_text_hash.up,
+    down: migration_20261029_042255_documents_held_text_hash.down,
+    name: '20261029_042255_documents_held_text_hash'
   },
 ];
