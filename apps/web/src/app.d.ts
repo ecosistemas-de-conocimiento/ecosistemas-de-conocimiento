@@ -22,6 +22,12 @@ declare global {
     interface Locals {
       user: import('$lib/server/auth').BackendUser | null;
       token: string | undefined;
+      /**
+       * Server-only: set by the evals runner (`$lib/server/evals/runner`) on
+       * the event it hands to `POST /api/generate`. A browser request never
+       * carries it — `locals` is built by `hooks.server.ts`, never from input.
+       */
+      evalTap?: (turn: import('$lib/server/evals/types').EvalTurnTap) => void;
     }
     interface PageData {
       user: import('$lib/server/auth').BackendUser | null;

@@ -29,7 +29,7 @@
   import RatingsPanel from '$lib/components/admin/RatingsPanel.svelte';
   import StatTile from '$lib/components/admin/StatTile.svelte';
   import UsagePanel from '$lib/components/admin/UsagePanel.svelte';
-  import { formatCostUsd, plural, share } from '$lib/components/admin/summary';
+  import { formatCostUsd, isPlatformAdmin, plural, share } from '$lib/components/admin/summary';
   import { displayAverage } from '$lib/components/admin/metrics';
   import type { PageData } from './$types';
 
@@ -68,6 +68,9 @@
       <p class="kicker">Administración</p>
       <h1>Contribuciones</h1>
     </div>
+    {#if isPlatformAdmin(data.user)}
+      <a class="evals-link" href="/admin/evals" data-testid="admin-evals-link">Evaluaciones</a>
+    {/if}
   </header>
 
   {#if data.state !== 'unavailable'}
@@ -230,6 +233,18 @@
     display: grid;
     gap: var(--edc-space-5);
     align-content: start;
+  }
+  .evals-link {
+    padding: 0.35rem 0.8rem;
+    border: 1px solid var(--edc-color-neutral-outline);
+    border-radius: var(--edc-radius-pill);
+    color: var(--edc-color-ink-soft);
+    font-size: var(--edc-text-sm);
+    font-weight: var(--edc-weight-semibold);
+    text-decoration: none;
+  }
+  .evals-link:hover {
+    color: var(--edc-color-ink);
   }
   .head {
     display: flex;
