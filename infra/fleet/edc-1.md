@@ -2700,6 +2700,20 @@ Migration `20261029_042255_documents_held_text_hash` logged `Migrated (10ms)`, t
 `Ready in 864ms`; `payload_migrations` 19 -> 20, batch 13. After: `web`, `backend`, `ai-service` run
 image tag `59d4da631a749f45b9d42a29e17d6e3267a56604`, healthy; 0 error lines in all 9 dev containers.
 
+### 4zzzz. Done 2026-10-29 06:45-06:50 UTC: `b88735b`, dev only - one Payload migration on start
+
+Measured by the deploy agent. Staging untouched (still `97d5316`, "Up 11 days"). Previous dev image
+was `59d4da6`. Pre-check: no active query in `edc_backend` or `edc_ai`; no document in `graph_status`
+extracting or `anonymisation_status` pending; last `documents.updated_at` 03:53 UTC.
+Backup `/root/backups/20261029T0643Z/` (`edc_ai` 312 MB, `edc_backend` 18.7 MB, `pg_restore -l` ok,
+sha256 matched off-box in the owner's `cide/backups/edc-1/20261029T0643Z/`). Backup command used:
+`docker exec <postgres> pg_dump -U edc -Fc <db>` per database, then `sha256sum` into `SHA256SUMS`.
+Deploy `kyk7m37pk7dngypqqr3g7e7r`, 06:45:52 -> ~06:50:13 UTC.
+Migration `20261029_060304_evals` logged `Migrated (72ms)`, then `Done.`, `Ready in 832ms`;
+`payload_migrations` 20 -> 21, batch 14. After: `web`, `backend`, `ai-service` run image tag
+`b88735b5fbb9c15c3203798abb7ec08de5fb1df6`, healthy; 0 error lines in all 9 dev containers.
+Smoke: `/` and `/admin/evals` 303 -> `/sign-in`; `/api/health` 200.
+
 ---
 
 ## 5. Where secrets live (names only)
