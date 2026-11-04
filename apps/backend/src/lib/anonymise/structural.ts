@@ -457,17 +457,19 @@ function isProse(segment: string): boolean {
  * Ruiz | Lugar y fecha" used to come out "[Persona B] y [Dato omitido]", and
  * the one-word owner then redacted every later "Lugar". A CLOSED LIST on
  * purpose: a piece with any other word ("Lugar Oaxaca", "Lugar de Ana Ruiz")
- * is still redacted.
+ * or any digit of any script ("Fecha ٥٥١٢٣٤٥٦٧٨") is still redacted.
+ * 🔴 "Estado" is not on it: it is a surname here (`Autores: Luis Gómez; Estado`),
+ * and a label left in the text would show it.
  */
 const FIELD_LABELS: ReadonlySet<string> = new Set([
-  'lugar', 'fecha', 'hora', 'sede', 'ciudad', 'municipio', 'estado', 'pais', 'region', 'comunidad',
+  'lugar', 'fecha', 'hora', 'sede', 'ciudad', 'municipio', 'pais', 'region', 'comunidad',
   'localidad', 'entrevista', 'tema', 'titulo', 'proyecto', 'sesion', 'duracion',
 ])
 const LABEL_JOINERS: ReadonlySet<string> = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'en'])
 
 export function isFieldLabel(piece: string): boolean {
   const words = (piece.match(/[\p{L}\p{M}]+/gu) ?? []).map(fold)
-  if (/\d/u.test(piece) || !words.some((w) => FIELD_LABELS.has(w))) return false
+  if (/\p{Nd}/u.test(piece) || !words.some((w) => FIELD_LABELS.has(w))) return false
   return words.every((w) => FIELD_LABELS.has(w) || LABEL_JOINERS.has(w))
 }
 
@@ -641,7 +643,8 @@ export function structuralPass(
    * number ("Entrevista 3", "Fecha 2026").
    * 🔴 A NUMBER BESIDE A NAME DOES NOT SAVE IT (audit 4): a digit keeps a piece
    * only when the piece has fewer than two capitalised words. "Luis Gómez
-   * (2021)" and "Luis Gómez 2" are authors.
+   * (2021)" and "Luis Gómez 2" are authors. ASCII digits only on purpose: stage
+   * 2 reads those, so a phone there is still caught; other scripts are redacted.
    */
   const takeAll = (segment: string, failClosed: boolean, prefix = ''): string => {
     const split = splitAuthors(segment)

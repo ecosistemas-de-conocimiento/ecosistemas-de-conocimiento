@@ -21,7 +21,7 @@ import { describe, expect, it } from 'vitest'
 import { staticDetector } from './detector'
 import { runAnonymisationGate } from './gate'
 import { trimEdgeEnd, trimEdges } from './nameParts'
-import { splitAuthors, structuralPass } from './structural'
+import { isFieldLabel, splitAuthors, structuralPass } from './structural'
 
 /** A `person` spy: records each name and hands out A, B, C… */
 function spy() {
@@ -515,6 +515,42 @@ describe('field labels are not authors (over-redaction fix)', () => {
     for (const text of ['Autor: Ana Ruiz | Lugar Oaxaca', 'Autor: Ana Ruiz | Lugar de Luis Gómez', 'Autor: Ana Ruiz | Fecha Paz']) {
       expect(structuralPass(text).text).toBe('Autor: [Dato omitido] | [Dato omitido]')
     }
+  })
+
+  it('🔴 a digit of any script: the piece is not a label, so it is redacted', () => {
+    for (const piece of ['Fecha ٥٥١٢٣٤٥٦٧٨', 'Fecha ５５５１２３４５６７', 'Región ٣', 'Lugar ५५५']) {
+      expect(isFieldLabel(piece), piece).toBe(false)
+      expect(structuralPass(`Autores: Luis Gómez; ${piece}`).text).toBe('Autores: [Dato omitido]; [Dato omitido]')
+    }
+  })
+
+  it('🔴 an ASCII number beside a label stays out of the label too: stage 2 redacts the phone', async () => {
+    expect(isFieldLabel('Fecha 2026')).toBe(false)
+    expect(isFieldLabel('Entrevista 3')).toBe(false)
+    expect(await gate('Autores: Luis Gómez; Fecha 5551234567')).toBe('Autores: [Persona A]; Fecha [Dato omitido]')
+    // Not a label, so its one word registers and spreads: only a real label is spared.
+    expect(await gate('Autores: Luis Gómez, Fecha 2026\nLa Fecha importa.')).not.toContain('La Fecha')
+  })
+
+  it('isFieldLabel: every word on the closed list, with at least one real label', () => {
+    expect(isFieldLabel('Lugar')).toBe(true)
+    expect(isFieldLabel('Lugar de la entrevista')).toBe(true)
+    expect(isFieldLabel('Fecha')).toBe(true)
+    // 🔴 Only joiners: "De la" names no field.
+    expect(isFieldLabel('De la')).toBe(false)
+    expect(isFieldLabel('Lugar Oaxaca')).toBe(false)
+    expect(isFieldLabel('Lugar de Paz')).toBe(false)
+    expect(isFieldLabel('')).toBe(false)
+  })
+
+  it.each([
+    ['Autores: Luis Gómez; Estado'],
+    ['Autores: Luis Gómez | Estado'],
+    ['Notas. Autor: Luis Gómez, Estado.'],
+    ['Autores: Luis Gómez; Estado de México'],
+  ])('🔴 "Estado" is a surname, never a label: %s', (text) => {
+    expect(isFieldLabel('Estado')).toBe(false)
+    expect(structuralPass(text).text).not.toContain('Estado')
   })
 
   it('a later "Lugar" in the body survives, even when the old rules labelled it in the byline', async () => {
