@@ -7,10 +7,10 @@
  * unchanged and the new passes only redact and register MORE. So this file
  * holds three kinds of case:
  *
- *   · LEAK FIXES — red on 9597969, green now (";" / "|" authors, mid-line
+ *   · LEAK FIXES — red on the old rules, green now (";" / "|" authors, mid-line
  *     lists, "Ma." / "Pbro.", one-word authors, unread key forms);
  *   · KEPT — every case the audits used to block the classifier: still
- *     redacted, as 9597969 redacts them;
+ *     redacted, as the old rules redact them;
  *   · ACCEPTED OVER-REDACTION — pinned, so changing it is a decision.
  *
  * Synthetic names only. staticDetector only — no inference, no spend.
@@ -50,7 +50,7 @@ describe('leak fix — every author after ";" and "|" (audit 1, finding 1)', () 
     )
   })
 
-  it('registers each author, in order, after the ones 9597969 registered', () => {
+  it('registers each author, in order, after the ones the old rules registered', () => {
     const { seen, person } = spy()
     const out = structuralPass('Autores: Ana Ruiz; Luis Gómez; Eva Paz', { person })
     expect(out.text).toBe('Autores: [Persona A]; [Persona B]; [Persona C]')
@@ -180,10 +180,10 @@ describe('leak fix — a one-word author spreads (audit 2, items 3 and 4)', () =
 })
 
 /**
- * Every case the audits used to block the classifier. 9597969 redacts each
+ * Every case the audits used to block the classifier. The old rules redact each
  * name below; so must every later version.
  */
-describe('kept — what 9597969 already redacted (audits 2 and 3)', () => {
+describe('kept — what the old rules already redacted (audits 2 and 3)', () => {
   it.each([
     // audit 2, (1) two three-word people are two people
     ['Autores: Ana Ruiz García y Luis Gómez Paz\n\nRuiz y Gómez revisaron. Paz firmó.', ['Ruiz', 'Gómez', 'Paz']],
@@ -260,7 +260,7 @@ describe('accepted over-redaction — an institution author spreads', () => {
     )
   })
 
-  // New with the one-word owners: 9597969 registered "Oaxaca" but never spread it.
+  // New with the one-word owners: the old rules registered "Oaxaca" but never spread it.
   it('a place after the author', async () => {
     expect(await gate('Autor: Juan Pérez, Oaxaca\n\nEn Oaxaca llovió.')).toBe(
       'Autor: [Persona A], [Persona B]\n\nEn [Persona B] llovió.',
@@ -298,7 +298,7 @@ describe('details of the additive passes', () => {
     )
   })
 
-  it('a field under an unread key is redacted whole, as 9597969 does under "Autor:"', () => {
+  it('a field under an unread key is redacted whole, as the old rules do under "Autor:"', () => {
     expect(structuralPass('Autor(es): el equipo').text).toBe('Autor(es): [Dato omitido]')
   })
 
@@ -309,7 +309,7 @@ describe('details of the additive passes', () => {
   })
 })
 
-/** Audit 4 (2026-10-28) on a5167c5. */
+/** Audit 4 (2026-10-28). */
 describe('audit 4', () => {
   it('mutant M22: a lower-case name after ";" mid-line goes', () => {
     expect(structuralPass('Notas. Autores: Ana Ruiz; luis gómez.').text).toBe(
@@ -340,7 +340,7 @@ describe('audit 4', () => {
     noneOf(await gate(`${line}\n\nGómez habló.`), ['Luis', 'Gómez'])
   })
 
-  // fuzz5 (audit 4) leaks that 9597969 had too, fixed here.
+  // fuzz5 (audit 4) leaks the old rules had too, fixed here.
   it.each([
     ['Notas de campo. Autor: Paz Ruiz, Ximena Carlos | Gómez (2021)', ['Gómez']],
     ['Fecha: 2021 | Autora/Autores: Ana (Lupita) Ruiz Olvera | María Juan Vega; Sosa, Diego | Lugar: Oaxaca', ['Ruiz', 'Olvera', 'Vega', 'Sosa']],
@@ -366,8 +366,8 @@ describe('audit 4', () => {
 
   it('🔴 time grows linearly with a one-line document (2 MB)', () => {
     // A RATIO of two runs on the same box, so load does not decide it: 8x the
-    // text must cost well under 64x (quadratic). Measured 2026-10-28 on a5167c5:
-    // 2 MB took 4.3 s against 9597969's 24 ms.
+    // text must cost well under 64x (quadratic). Measured 2026-10-28:
+    // 2 MB took 4.3 s against 24 ms with the old rules.
     // Best of three each: one cold run of 2 MB pays for JIT and GC, not the code.
     // Measured 2026-10-28 (local, tsx): 0.25 MB 4.7 ms, 2 MB 38.5 ms.
     const time = (text: string) => {
@@ -387,11 +387,11 @@ describe('audit 4', () => {
   }, 30_000)
 })
 
-/** Audit 5 (2026-10-28) on 53a47a7. */
+/** Audit 5 (2026-10-28). */
 describe('audit 5', () => {
   it('🔴 a long run of spaces stays linear (200k spaces)', () => {
-    // A RATIO of two runs on the same box. Measured 2026-10-28 on 53a47a7:
-    // 60k spaces took 23.9 s (9597969: 11.4 s, its own author split).
+    // A RATIO of two runs on the same box. Measured 2026-10-28:
+    // 60k spaces took 23.9 s (old rules: 11.4 s, its own author split).
     const time = (n: number) => {
       const text = `Autor: Ana Ruiz | Lugar${' '.repeat(n)}Oaxaca`
       let best = Infinity
@@ -431,7 +431,7 @@ describe('audit 5', () => {
 
   it('🔴 the gate stays linear on a byline name with a long run of spaces', async () => {
     // Measured 2026-10-28: "Autor: Ana" + 60k spaces + "Oaxaca" took 11.3 s in the
-    // gate on 9597969 (author split, name-part trim, fragment trim), 3.1 s here
+    // gate on the old rules (author split, name-part trim, fragment trim), 3.1 s here
     // before the linear trims.
     const time = async (n: number) => {
       const text = `Autor: Ana${' '.repeat(n)}Oaxaca\n\nTexto.`
@@ -477,7 +477,7 @@ describe('noncharacters in the input', () => {
   ]
   const marks = [`${O}0${C}`, `${O}1${C}`, `${O}99${C}`, O, C, O.repeat(3), `x${O}0`, `0${C}`]
   // At the start the mark takes its own line: a digit glued to a key ("0Autores:")
-  // stops the key in 9597969 as well (KEY_START), with or without noncharacters.
+  // stops the key in the old rules as well (KEY_START), with or without noncharacters.
   const cases = bodies.flatMap(([b, words]) =>
     marks.flatMap((m) => [`${m}\n${b}`, `${b} ${m}`, b.replace('\n\n', ` ${m}\n\n`)].map((t) => [t, words] as const)),
   )
@@ -498,5 +498,27 @@ describe('the sentinels the additive passes use', () => {
   it('no sentinel survives in the output', () => {
     const out = structuralPass('Notas. Autores: Ana Ruiz, Luis Gómez; Eva Paz | usuario: 42\nuser 7a')
     expect(out.text).not.toMatch(/[\ufdd0\ufdd1]/u)
+  })
+})
+
+describe('field labels are not authors (over-redaction fix)', () => {
+  it.each([
+    ['Autor: Ana Ruiz | Lugar', 'Autor: [Dato omitido] | Lugar'],
+    ['Autores: Ana Ruiz y Luis Gómez | Lugar y fecha', 'Autores: [Dato omitido] y [Dato omitido] | Lugar y fecha'],
+    ['Autor: Ana Ruiz | Lugar de la entrevista | Luis Gómez', 'Autor: [Dato omitido] | Lugar de la entrevista | [Dato omitido]'],
+    ['Autor: Ana Ruiz; Fecha', 'Autor: [Dato omitido]; Fecha'],
+  ])('%s', (text, expected) => {
+    expect(structuralPass(text).text).toBe(expected)
+  })
+
+  it('🔴 a piece with any other word is still redacted', () => {
+    for (const text of ['Autor: Ana Ruiz | Lugar Oaxaca', 'Autor: Ana Ruiz | Lugar de Luis Gómez', 'Autor: Ana Ruiz | Fecha Paz']) {
+      expect(structuralPass(text).text).toBe('Autor: [Dato omitido] | [Dato omitido]')
+    }
+  })
+
+  it('a later "Lugar" in the body survives, even when the old rules labelled it in the byline', async () => {
+    expect(await gate('Autor: Ana Ruiz | Lugar\nEl Lugar importa.')).toBe('Autor: [Persona A] | Lugar\nEl Lugar importa.')
+    expect(await gate('Autores: Ana Ruiz, Lugar\nEl Lugar importa.')).toBe('Autores: [Persona A], [Persona B]\nEl Lugar importa.')
   })
 })

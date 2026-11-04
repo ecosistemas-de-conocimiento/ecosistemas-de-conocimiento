@@ -60,7 +60,7 @@ import { deterministicPass } from './deterministic'
 import { isGenericPlace } from './genericPlaces'
 import { createNamePartRegistry, gluedToAnotherName, namePartsOf, type NamePartRegistry, sentenceStart, trimEdges } from './nameParts'
 import { createPseudonymAllocator, normaliseName } from './pseudonyms'
-import { structuralPass } from './structural'
+import { isFieldLabel, structuralPass } from './structural'
 import { restorePublicFigures } from './publicFigureRestore'
 import { restoreAuthors } from './authorRestore'
 import { isTownLevelPlace } from './townPlaces'
@@ -728,8 +728,9 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   const original = input.text.normalize('NFC')
   const structural = structuralPass(original, {
     person: (name) => {
-      // `single`: a one-word byline author spreads too ("Autores: … y Ruiz").
-      names.add(name, { single: true })
+      // `single`: a one-word byline author spreads too ("Autores: … y Ruiz"),
+      // but a field label the old rules took ("Autor: Ana Ruiz, Lugar") must not.
+      names.add(name, { single: !isFieldLabel(name) })
       structuralNames.push(name)
       return allocator.labelFor(name)
     },

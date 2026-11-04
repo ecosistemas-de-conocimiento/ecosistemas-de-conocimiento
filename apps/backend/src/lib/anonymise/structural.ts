@@ -457,6 +457,25 @@ export function namePartsKey(name: string): string {
     .join(' ')
 }
 
+/**
+ * Field labels the additive passes must not take for an author: "Autor: Ana
+ * Ruiz | Lugar y fecha" used to come out "[Persona B] y [Dato omitido]", and
+ * the one-word owner then redacted every later "Lugar". A CLOSED LIST on
+ * purpose: a piece with any other word ("Lugar Oaxaca", "Lugar de Ana Ruiz")
+ * is still redacted.
+ */
+const FIELD_LABELS: ReadonlySet<string> = new Set([
+  'lugar', 'fecha', 'hora', 'sede', 'ciudad', 'municipio', 'estado', 'pais', 'region', 'comunidad',
+  'localidad', 'entrevista', 'tema', 'titulo', 'proyecto', 'sesion', 'duracion',
+])
+const LABEL_JOINERS: ReadonlySet<string> = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'en'])
+
+export function isFieldLabel(piece: string): boolean {
+  const words = (piece.match(/[\p{L}\p{M}]+/gu) ?? []).map(fold)
+  if (/\d/u.test(piece) || !words.some((w) => FIELD_LABELS.has(w))) return false
+  return words.every((w) => FIELD_LABELS.has(w) || LABEL_JOINERS.has(w))
+}
+
 /** Count a rule only when it actually fired — a zero row is noise in the report. */
 function pushCount(into: RedactionCount[], label: string, count: number): void {
   if (count === 0) return
@@ -653,7 +672,7 @@ export function structuralPass(
         if (keep.has(i)) return holdKept(piece)
         const bare = piece.replace(/\([^()]*\)/gu, '') // "(2021)", "(Lupita)": never a label's number
         const label = /\d/u.test(bare) && (bare.match(/\p{Lu}[\p{L}\p{M}]/gu) ?? []).length < 2
-        if (!failClosed && (label || (!/\p{Lu}/u.test(piece) && isProse(piece)))) return piece
+        if (!failClosed && (label || isFieldLabel(piece) || (!/\p{Lu}/u.test(piece) && isProse(piece)))) return piece
         return take(piece, i === 0 ? prefix : '')
       })
       .join('')
