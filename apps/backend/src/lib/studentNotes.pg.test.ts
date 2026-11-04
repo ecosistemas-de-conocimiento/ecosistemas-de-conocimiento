@@ -24,6 +24,8 @@ import type { Payload } from 'payload'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 const NAME = 'Tadeo Villaseñor'
+/** Ana's `personName`, set only by the test that needs it. */
+const AUTHOR = 'Ana Lucía Rentería'
 const graphRequests: string[] = []
 let detectorCalls = 0
 
@@ -54,11 +56,13 @@ vi.mock('@/lib/anonymise', async (importOriginal) => {
     ...real,
     aiServiceDetector: () => {
       const inner = real.staticDetector([{ text: NAME, type: 'persona' }])
+      // A span the gate cannot place in the text is a hold: report the author only where they are.
+      const withAuthor = real.staticDetector([{ text: NAME, type: 'persona' }, { text: AUTHOR, type: 'persona' }])
       return {
         ...inner,
         detect: async (input: Parameters<typeof inner.detect>[0]) => {
           detectorCalls++
-          return inner.detect(input)
+          return (input.text.includes(AUTHOR) ? withAuthor : inner).detect(input)
         },
       }
     },
@@ -502,6 +506,39 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
       expect(detectorCalls - before).toBe(perRun)
       expect(await landDraftIngest(Number((await revisionOf(NOTE))!.id))).toEqual({ published: true })
     }, 60_000)
+
+    describe('🔴 authors_kept follows the promoted text', () => {
+      const keptOnNote = async () =>
+        (await rowsOf(pg!.db, sql`SELECT authors_kept AS k FROM documents WHERE id = ${NOTE}`))[0]!.k as Array<{ name: string }> | null
+      const setPersonName = (name: string | null) =>
+        pg!.db.execute(sql`UPDATE memberships SET person_name = ${name} WHERE user_id = ${ANA} AND organization_id = ${SEMIOSIS}`)
+      const promote = async (body: string) => {
+        expect((await autosave(ANA, NOTE, { bodyMarkdown: body })).status).toBe(200)
+        expect((await publicar(ANA, NOTE)).status).toBe(202)
+        expect(await eventually(async () => (await revisionOf(NOTE))?.g === 'ready', 20_000)).toBe(true)
+        expect(await landDraftIngest(Number((await revisionOf(NOTE))!.id))).toEqual({ published: true })
+        expect(await revisionOf(NOTE)).toBeUndefined()
+      }
+
+      beforeAll(() => setPersonName(AUTHOR))
+      afterAll(() => setPersonName(null))
+
+      it('a revision naming the uploader: the note\'s text shows the name and its log says so', async () => {
+        await pg!.db.execute(sql`UPDATE documents SET authors_kept = NULL WHERE id = ${NOTE}`)
+        await promote(`${nextBody()}\n\nAutora: ${AUTHOR}\n\nLa Abducción según ${AUTHOR} es otra cosa.`)
+        expect(String((await row(NOTE)).r)).toContain(AUTHOR)
+        expect(await keptOnNote()).toEqual([expect.objectContaining({ name: AUTHOR })])
+      }, 60_000)
+
+      it('a revision without the name clears the note\'s earlier log', async () => {
+        await pg!.db.execute(
+          sql`UPDATE documents SET authors_kept = ${JSON.stringify([{ name: AUTHOR, model: null, at: 'x' }])}::jsonb WHERE id = ${NOTE}`,
+        )
+        await promote(nextBody())
+        expect(String((await row(NOTE)).r)).not.toContain(AUTHOR)
+        expect(await keptOnNote()).toBeNull()
+      }, 60_000)
+    })
 
     it('🔴 a reviewer\'s rows on the revision move onto the note (no cascade loss)', async () => {
       const rev = await changeAndWait()
