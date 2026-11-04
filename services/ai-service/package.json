@@ -1,5 +1,6 @@
 {
   "name": "@edc/ai-service",
+  "license": "Apache-2.0",
   "version": "0.1.0",
   "private": true,
   "description": "Domain-agnostic AI + RAG service (ingest, embed, retrieve, generate) consumed over HTTP.",

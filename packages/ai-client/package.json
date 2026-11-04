@@ -3,7 +3,7 @@
   "version": "0.34.0",
   "description": "Typed TypeScript client for the AI/RAG service (`ai-service`).",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
