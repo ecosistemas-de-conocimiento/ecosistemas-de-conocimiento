@@ -2,7 +2,7 @@
  * THE callback HMAC verifier — ai-service → consumer webhook contract.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * THIS FILE IS THE ONLY COPY. There used to be three.
+ * THIS FILE IS THE ONLY COPY.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * Hand-copied verifiers drift: on missing-secret status, malformed-timestamp
@@ -72,10 +72,9 @@ export const CALLBACK_EVENT_HEADER = 'x-aiservice-event' as const;
  * therefore arrives stamped t+10min — seconds old, not ten minutes old.
  *
  * 🔴 THE COUPLING, STATED AT THE FAILURE SITE. 300 is correct ONLY WHILE
- * ai-service re-stamps per delivery attempt. If ai-service is rolled back past
- * `6ca6886`, or anyone hoists the stamping back to enqueue time, late retries
- * arrive bearing a 600-second-old timestamp and EVERY receiver in the fleet
- * silently refuses them as stale replays — leaving work stuck mid-ingest with
+ * ai-service re-stamps per delivery attempt. If anyone hoists the stamping back to
+ * enqueue time, late retries arrive bearing a 600-second-old timestamp and EVERY
+ * receiver silently refuses them as stale replays — leaving work stuck mid-ingest with
  * NOTHING IN ANY LOG NAMING THE CAUSE. The failure is invisible by
  * construction: a correct receiver rejecting a correctly-signed-but-stale
  * request looks exactly like an attack being repelled.

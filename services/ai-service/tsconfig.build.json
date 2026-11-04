@@ -8,7 +8,7 @@
   "include": ["src/**/*"],
   // Test-only code stays out of dist. `src/eval/**`, `src/telemetry/fixtures/**`
   // and `src/workers/__fixtures__/**` are imported only by tests and
-  // `scripts/` (checked 2026-10-02 with `git grep`). The fake model provider
+  // `scripts/` (checked with `git grep`). The fake model provider
   // lives outside `src/` (`test-support/`), so it is never in dist either.
   "exclude": [
     "src/**/*.test.ts",

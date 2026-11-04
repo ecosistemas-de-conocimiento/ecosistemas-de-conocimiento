@@ -267,7 +267,7 @@ Detalle completo en `infra/fleet/topology.md`.
 
 **Por qué `data` no se fusiona con `prod`:** todo lo que guarda estado vive en una caja que no corre
 código. Así puedes reconstruir, cambiar de tamaño o reemplazar `prod` sin tocar un byte de datos. Es la
-única pieza de su topología que no recortaría.
+única pieza de esta topología que no recortaría.
 
 **Variante de 3 cajas (~$48/mes):** quitas `nonprod` y usas el demo local como ambiente de desarrollo.
 🟡 Defendible antes del lanzamiento. Lo que pierdes es un lugar donde equivocarte barato. El demo local
@@ -306,9 +306,9 @@ Ese requisito no es nuestro hasta que alguien lo escriba.
 ⚠ **Por qué en `dev` sí y ahora, si en producción digo que esperes.** Son dos argumentos distintos y
 vale la pena no confundirlos. Posponerlo en producción es sobre **riesgo con datos que no se pueden
 perder**. Correrlo en `dev` es sobre **ejercitar el código de S3 todos los días** en vez de el día de
-la migración. La falla más cara que tuvieron ellos con esto no fue del almacén: fueron **dos pedazos
-de código que seguían leyendo del disco** después de prender S3 — uno daba error 502 y el otro
-**borraba imágenes de las exportaciones sin avisar**. Eso se encuentra usándolo a diario, y de
+la migración. La falla más cara aquí no es del almacén: son **pedazos
+de código que siguen leyendo del disco** después de prender S3 — dan error 502 o
+**borran imágenes de las exportaciones sin avisar**. Eso se encuentra usándolo a diario, y de
 ninguna otra forma.
 
 ⚠ **Costo real de dejar la decisión #9 abierta:** hoy `stage` **no ensaya** el almacén que usará
@@ -519,5 +519,5 @@ con varias subidas al mismo tiempo, ni el problema #2573 de memoria creciente, n
   `infra/fleet/runbook.md` §4. **Escríbelo en un lugar que alcances desde el celular.** No es algo que
   quieras descubrir durante un incidente.
 - 🔴 **El campo de "comando previo al despliegue" de Coolify nunca corre** cuando usas caja de
-  construcción. Lo midieron en tres despliegues seguidos de producción, y falla en silencio con un
+  construcción, y falla en silencio con un
   mensaje que parece éxito. Por eso las migraciones van dentro del `CMD` de la imagen.

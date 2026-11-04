@@ -1,6 +1,6 @@
 // GATE: the internal-route decision is the SAME on both sides, in BOTH modes.
 //
-// ── The defect this pins (measured on 07f63a3) ────────────────────────────
+// ── The defect this pins ────────────────────────────
 // `server.ts` refuses to mount `/v1/internal/*` when `NODE_ENV=production`.
 // The route table declared `GET /v1/internal/latest-trace` unconditionally. So
 // the document a production deployment serves advertised a path that same
@@ -113,7 +113,7 @@ describe('`/v1/internal/*` is declared exactly when it is mounted', () => {
     // The real invariant `routes-vs-document.test.ts` asserts, re-run in the
     // mode config has never let it see. BOTH directions matter and they catch
     // different mistakes: a route mounted with no row is an undocumented
-    // surface, a row with nothing mounted is the 07f63a3 defect itself.
+    // surface, a row with nothing mounted is the defect itself.
     const { UNDOCUMENTED_ROUTES } = await import('./route-table.js');
     const documented = await documentedRoutes('production');
     const mounted = (await mountedRoutes('production')).filter(

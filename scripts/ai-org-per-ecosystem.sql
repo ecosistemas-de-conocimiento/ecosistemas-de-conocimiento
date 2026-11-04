@@ -121,7 +121,7 @@ WITH ins AS (
   RETURNING org
 ) SELECT count(*) AS created FROM ins;
 
-\echo '== left behind in the old org (expected 0 for eco-* names)'
+\echo '== left behind in :from_org (expected 0 for eco-* names)'
 SELECT count(*) AS eco_corpora_still_in_from_org
 FROM corpora WHERE org = :'from_org' AND name ~ '^eco-[0-9]+(-draft-[A-Za-z0-9_]+)?$';
 

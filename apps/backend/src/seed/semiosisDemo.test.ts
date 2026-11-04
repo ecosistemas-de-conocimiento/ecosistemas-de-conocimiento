@@ -220,7 +220,7 @@ describe('the tally asks the same question as the plan', () => {
 })
 
 /**
- * 🔴 AUDIT OF e2eeb61, FINDING 1. Every name part joins org 8's roster, and the
+ * 🔴 Every name part joins org 8's roster, and the
  * gate redacts a roster part wherever it stands capitalised in a documento —
  * so no part may occur ANYWHERE in the Semiótica corpus, nor be a Spanish word.
  */

@@ -360,8 +360,8 @@ describe('a worker that dies mid-job (integration)', () => {
       // reap is still running, and every single read after it races a write
       // that has not happened yet.
       //
-      // MEASURED: CI run 34334619291 (first time this file ran on a GitHub
-      // 2-core runner) failed on `expect(parent.status).toBe('failed')` with
+      // MEASURED: the first run of this file on a GitHub
+      // 2-core runner failed on `expect(parent.status).toBe('failed')` with
       // 'queued' — the value the parent was INSERTed with, because
       // `updateParentCounters` had not committed. Not a threshold to widen:
       // the poll was simply watching the wrong row. It is green locally

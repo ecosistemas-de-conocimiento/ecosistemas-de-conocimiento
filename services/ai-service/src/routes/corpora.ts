@@ -46,7 +46,7 @@ const corporaRoutes: FastifyPluginAsync = async (app) => {
     // it. `EmbeddingDimensionMismatchError` used to be caught here and
     // re-sent via `reply.badRequest`, which replaced the discriminator with
     // fastify-sensible's generic `error: 'Bad Request'` — same 400, but no
-    // `error`/`code` for a consumer to branch on. See the `changed vs 970baae`
+    // `error`/`code` for a consumer to branch on. See the `changed`
     // block in `src/errors/wire-golden.test.ts`.
     const corpus = await service.createCorpus(
       parsed.data,

@@ -90,7 +90,7 @@ describe('the prompt: towns are not personal data; addresses and institutions ar
       'Los pueblos, municipios, alcaldías, ciudades, comunidades, localidades, ejidos, congregaciones y estados NO son datos personales y NO se reportan',
     )
     expect(flat).toContain('En "Vivo en Xochitepec, Morelos" no hay ningún hallazgo.')
-    // One town paragraph, not two (audit of 9edaa22).
+    // One town paragraph, not two.
     expect(flat).not.toContain('NUNCA marques estados')
     expect(flat.match(/no hay (ningún )?hallazgo/g)).toHaveLength(1)
   })

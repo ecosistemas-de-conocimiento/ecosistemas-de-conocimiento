@@ -6,7 +6,7 @@ accumulated learning of the session that built this, and each item in it cost
 real time to discover.
 
 **Repo:** `~/chamba/cide/ecosistemas-de-conocimiento`
-**Branch:** `main` at `7961d9d`
+**Branch:** `main`
 **Baselines:** backend 1250 tests · web 1213 · chat-engine 48 · ai-client 68. All green, typecheck clean.
 
 ---
@@ -21,7 +21,7 @@ real time to discover.
 | 04 | `04-junk-hub-nodes.md` | nothing to start; 05 to finish | yes | prompt + full re-extract (~3h) |
 | 05 | `05-failed-extractions.md` | nothing | yes | 11 LLM calls |
 | 06 | `06-held-testimonios.md` | 🟡 **owner/researcher: human review** | n/a | human time |
-| 07 | `07-orphaned-edits.md` | ✅ closed — landed as `7961d9d` | — | none |
+| 07 | `07-orphaned-edits.md` | ✅ closed — landed | — | none |
 | 08 | `08-embedding-janitor.md` | nothing | yes | small |
 | 09 | `09-nav-label.md` | ✅ closed — **no change** | — | none |
 
@@ -92,8 +92,7 @@ committed and nothing was pushed. Baselines moved: backend suite is **1380** (wa
 | corpus columns | `collections/Documents.ts`, `migrations/20260905_060357_*`, `seed/**` | ✅ done, migration verified on scratch DB |
 
 ⚠ `seed/corpus.ts` and `seed/corpusSource.ts` are modified by the **corpus-columns** work, not
-by the dead seed session. `infra/docker-compose.yml` is **not** modified — task 07 closed at
-`7961d9d` and left nothing behind.
+by the dead seed session. `infra/docker-compose.yml` is **not** modified — task 07 closed and left nothing behind.
 
 ## 🔴 Open decisions — nobody is waiting on an agent, all of these are the owner's
 
@@ -118,14 +117,14 @@ by the dead seed session. `infra/docker-compose.yml` is **not** modified — tas
    plain object, so `Object.prototype` members read truthy: `Authorization: Bearer toString`
    passes `requireAuth` with `org`/`project` undefined. Mechanism confirmed in code; an agent
    reports a live `200` on `GET /v1/`. Fix is one line — `Object.hasOwn(env.API_KEYS, token)`
-   or `Object.create(null)`. ⚠ ai-service is shared; other products run against it.
+   or `Object.create(null)`.
 7. **180 documents stranded at `ingestStatus: 'pending'`** in `edc_backend`, no error, oldest
    untouched since 2026-08-29. Same non-terminal-state class as task 08, different column, and
    larger — `embedding`, the state 08 fixes, currently holds **zero** rows. `transcribed` is
    the same class. Both are refused by `POST /api/documents/:id/retry`. Deserves its own task.
 8. **Two consumer-visible changes ship with 03.** A consumer running N replicas on one key
    drops from N×100 to 100/min; `x-ratelimit-*` headers on authenticated responses now describe
-   the per-key bucket and can over-report `remaining`. Worth telling other product owners.
+   the per-key bucket and can over-report `remaining`.
 9. **`trustProxy: true`** at `services/ai-service/src/server.ts:37` trusts every hop, so a
    direct caller can choose its own per-IP bucket via `x-forwarded-for`. Not changed.
 

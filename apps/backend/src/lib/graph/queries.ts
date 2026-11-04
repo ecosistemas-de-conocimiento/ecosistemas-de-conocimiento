@@ -169,7 +169,7 @@ export const MAX_VIEW_ENTITIES = 1500
  * does NOT keep the total small: a pair is kept when either end nominates it,
  * so 1500 entities can carry up to ~12k co-mention edges plus every relation
  * pair. Dev org 6 (542 entities) already returned 4074 edge rows (measured
- * 2026-10-28, d04a112), so this can bite on a real corpus. The response has no
+ * 2026-10-28), so this can bite on a real corpus. The response has no
  * edge total; `GraphEntityView.total` counts entities only.
  */
 export const MAX_VIEW_EDGES = 6000

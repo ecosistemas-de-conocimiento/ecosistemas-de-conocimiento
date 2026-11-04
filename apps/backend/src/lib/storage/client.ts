@@ -21,7 +21,7 @@ import { Readable } from 'node:stream'
 
 import { nodeToWeb } from '../nodeToWeb'
 
-/** Every variable this module reads. Named to match the sibling app it came from, deliberately. */
+/** Every variable this module reads. */
 export const S3_ENV_VARS = [
   'S3_ENDPOINT',
   'S3_ACCESS_KEY_ID',

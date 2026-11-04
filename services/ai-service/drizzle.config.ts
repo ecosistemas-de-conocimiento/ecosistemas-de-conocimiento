@@ -20,7 +20,7 @@ export default defineConfig({
   dialect: 'postgresql',
   dbCredentials: { url: databaseUrl },
   // Migration ledger in `public`, NOT drizzle-kit's `drizzle` default, so
-  // "drop schema public" means the same thing here as in the fleet's
+  // "drop schema public" means the same thing here as in
   // Payload-based products (which keep `payload_migrations` in `public`).
   //
   // ⚠ These two literals are duplicated from `src/db/migrations-config.ts`,

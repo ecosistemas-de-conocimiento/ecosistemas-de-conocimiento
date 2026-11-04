@@ -161,7 +161,7 @@ describe('assertSafeCallbackUrl — CALLBACK_ALLOW_PRIVATE=1 relaxes ONLY the lo
   it('STILL rejects link-local, the cloud metadata endpoint, and the unspecified address', async () => {
     setAllowPrivate(true);
     // No container ever lives here, and 169.254.169.254 is the single highest
-    // value SSRF target in the fleet (instance credentials). The switch is a
+    // value SSRF target (instance credentials). The switch is a
     // local-network escape hatch, never a blanket disable.
     await rejects('http://169.254.169.254/latest/meta-data/');
     await rejects('http://169.254.0.1/hook');

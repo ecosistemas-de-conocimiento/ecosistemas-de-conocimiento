@@ -1,6 +1,6 @@
 // RAG-layer types — shared shapes for ingest + retrieve workflows.
 //
-// These describe the public surface the wave-B routes (`/v1/ingest`,
+// These describe the public surface the routes (`/v1/ingest`,
 // `/v1/retrieve`) will validate against and what the worker functions
 // produce/consume internally. Kept in a single file so the M4 wiring agent
 // can import from one place and the contract stays grep-able.

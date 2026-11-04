@@ -133,9 +133,3 @@ Cadence: phase 1 → 2 within one minor release. 2 → 3 once internal consumers
 ## §7. Estimated cost to land
 
 Worker: ~30 lines. Registry-write Zod: ~5 lines. Consumer-contract amendment: ~1 page. Tests: 1 unit (hash matches), 1 integration (verify pseudocode runs green). Total: < 1 day. The expensive part is the contract amendment and the rotation-shape evolution — not the code.
-
----
-
-## Update log
-
-- 2026-05-15 — drafted alongside the M3 build.

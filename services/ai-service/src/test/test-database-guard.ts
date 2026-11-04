@@ -5,7 +5,7 @@
 // `npm run test:integration` once truncated a live local database. The integration suite calls `truncateAll()` in
 // `beforeEach`, and `src/test/integration-setup.ts` carried a hardcoded
 // fallback pointing at `localhost:55432/ai_service` — the same host, port AND
-// database name the live local-ecosystem stack used at the time. The
+// database name the live local stack used at the time. The
 // connection string therefore carried NO signal distinguishing "throwaway test
 // DB" from "live DB", so nothing in the code could have caught it.
 //

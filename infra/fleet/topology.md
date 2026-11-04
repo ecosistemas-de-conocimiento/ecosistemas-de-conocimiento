@@ -7,7 +7,7 @@ sized for a small product. Every number is an estimate and is marked as one.
 
 ---
 
-## 1. Recommendation: start with FOUR boxes, not six
+## 1. Recommendation: start with FOUR boxes
 
 | box | role | type | RAM | est. $/mo |
 |---|---|---|---|---|
@@ -17,20 +17,19 @@ sized for a small product. Every number is an estimate and is marked as one.
 | `data` | Postgres (all envs) + Redis (all envs) + **RustFS (`dev` bucket only)**. **Nothing stateless.** | cx33 | 8 GB | ~12 |
 
 **≈ $55/month at catalogue prices**, plus ~$3/mo for backups and alerting (§ `backups.md`).
-Their complete 6-box prod fleet was ~$143/mo, so this is roughly a third of it.
 
-⚠ **That figure is doubly soft.** Only one line is a real quoted price: **cx43 = $18.49/mo**
-(read from their docs). cx33 is inferred at ~$12 and is the number to check. And their measured
-finding was that **Hetzner's catalogue and API prices run 2.4×–2.7× ABOVE the actual invoice** — one
+⚠ **That figure is doubly soft.** Only one line is a real quoted price: **cx43 = $18.49/mo**.
+cx33 is inferred at ~$12 and is the number to check. And **Hetzner's catalogue and API prices can
+run 2.4×–2.7× ABOVE the actual invoice** — one
 box showed catalogue $22.99 against $9.49 invoiced. The Cloud API has no billing endpoint, so
 invoices are console-only. Treat $55 as a *relative* comparison between options, and verify against
 the first real invoice.
 
-✅ **8 GB is not tight, and this is measured — theirs, not mine.** Steady-state footprints on their
-fleet: a Payload backend **~210 MiB**, a SvelteKit frontend **~30 MiB**, Postgres **~59 MiB**, its
-proxy ~7 MiB. Their fleet-planning average was **~0.14 GB/container**. Our four app containers per
-environment are well inside a cx33. 🔴 **Set a memory limit on every container anyway** — they
-suggest ~768m for a Payload backend, roughly 3.6× measured steady state. The cap is not there to
+✅ **8 GB is not tight.** Steady-state footprints on this stack, not measured on this fleet:
+a Payload backend **~210 MiB**, a SvelteKit frontend **~30 MiB**, Postgres **~59 MiB**, its
+proxy ~7 MiB. The planning average is **~0.14 GB/container**. Our four app containers per
+environment are well inside a cx33. 🔴 **Set a memory limit on every container anyway** — use
+~768m for a Payload backend, roughly 3.6× steady state. The cap is not there to
 protect that app; it is there to guarantee it can never starve its neighbours on the box. The one
 genuine exception is the audio transcription worker (~1.5 GB idle, ~2.8 GB peak — §4).
 
@@ -42,7 +41,7 @@ consumed. Set **1 GB on `data`** and treat an OOM-kill as the known symptom rath
 
 ### 🔴 `data` box budget, revisited with RustFS on it
 
-⚠ Estimates except where marked. Postgres **~59 MiB** measured (theirs) for a small database, but six
+⚠ Estimates except where marked. Postgres **~59 MiB** for a small database, but six
 databases plus shared buffers on a real workload is the number that grows.
 
 | on `data` (cx33, 8 GB) | limit | expected |
@@ -67,25 +66,24 @@ box in the fleet by another gigabyte of ceiling for no benefit.
 this document; the arithmetic and the reasoning are in §4. Audio's three containers fit an 8 GB box
 on memory. They do not fit its four shared vCPU without making the web tier feel it.
 
-### Why four and not six
+### Why four
 
 We have **four
 deployables in one product with no users yet**. A larger fleet would buy operational surface we
 cannot staff. Specifically:
 
-- **No second prod box, and no load balancer.** Their `prod` was 2× cx33 behind an `lb11`. We cannot
-  use that shape yet even if we wanted it — see §3, the upload-storage constraint. Dropping it saves
-  a box plus the LB, and removes the whole class of "works on one replica" bugs (their in-process
-  event bus and per-process rate limiter both broke on the second replica and had to be moved to a
+- **No second prod box, and no load balancer.** We cannot
+  use 2× cx33 behind an `lb11` yet even if we wanted it — see §3, the upload-storage constraint. Dropping it saves
+  a box plus the LB, and removes the whole class of "works on one replica" bugs (an in-process
+  event bus and a per-process rate limiter both break on the second replica and have to move to a
   shared Redis).
-- **No second data box.** Their second was a Postgres HA standby. HA is worth having *after* backups,
-  alerting and a first real user — and their own ADR reversed itself on that ordering once, which is
-  a signal that it is not obvious. Two facts from that argument survive and are not preferences:
+- **No second data box.** A second one would be a Postgres HA standby. HA is worth having *after*
+  backups, alerting and a first real user. Two facts are not preferences:
   **replication is not backup** (a standby faithfully replicates `DROP TABLE`), and **an unobserved
   failover is a trap** (you end up on a single unprotected node and the *second* failure is
   unsurvivable). Both say: alerting and backups first.
-- **No dedicated builder box.** They ran a 16 GB `builder` because ML image builds spike and a failed
-  build blocks every deploy. We inherit that risk — `bge-m3-service` and `rerank-service` each need
+- **No dedicated builder box.** ML image builds spike and a failed
+  build blocks every deploy. We carry that risk — `bge-m3-service` and `rerank-service` each need
   **~3 GB RAM during the image build** to construct the model. But at our volume, `control` at 8 GB
   can absorb it. 🟡 **This is the first box to split off** when builds start contending with the
   control plane. It is a $12/mo problem, not an architectural one.
@@ -116,8 +114,8 @@ touching a byte of data. It is the one piece of this topology I would not compro
 
 ### Growth path, in order
 
-1. Memory/swap alert exists (see `backups.md` §5) — **before** any of the below. Their `dev` box
-   swapped 1.2 GB for six days unnoticed.
+1. Memory/swap alert exists (see `backups.md` §5) — **before** any of the below. A `dev` box
+   can swap 1.2 GB for six days unnoticed.
 2. Split `builder` off `control` when build contention shows up.
 3. Object storage **for stage and prod** (§3) — **this is the gate on everything below it.**
    ✅ Partly done: `dev` already has it (RustFS on `data`), so the *code path* is no longer the
@@ -125,23 +123,22 @@ touching a byte of data. It is the one piece of this topology I would not compro
    `dev` does not discharge this item** — do not let a green `dev` bucket read as "storage: done".
 4. Second `prod` box + `lb11` (~$6/mo), active/active. **Only possible after (3).**
    🔴 **Before adding any second replica, grep for in-process state** — an event bus, a rate
-   limiter, a session cache. Theirs had two (a `mitt` event bus and a per-process `Map` rate
-   limiter) and both had to move to a shared Redis. Their sentence is the one to remember: *"a
+   limiter, a session cache. A `mitt` event bus and a per-process `Map` rate
+   limiter both have to move to a shared Redis. The sentence to remember: *"a
    replica added early is worse than no replica: it converts a loud outage into quiet wrong
    answers."*
    ⚠ Also: **LB idle timeout must exceed the SSE heartbeat interval**, or long-lived chat streams
    are cut and clients reconnect-storm. And **no sticky sessions** — stickiness masks a missing bus.
-   ⚠ Their LB health check must be **HTTP on the app's health path, not TCP on :443**. They got this
-   wrong once: with the app stopped on node 2, 30 requests returned 15× 200 and 15× 503, because
+   ⚠ The LB health check must be **HTTP on the app's health path, not TCP on :443**. With TCP and
+   the app stopped on node 2, 30 requests return 15× 200 and 15× 503, because
    TCP-on-443 only proves the reverse proxy is alive.
-5. Second `data` box, Postgres active/standby (~$18/mo). ⚠ Note their finding: **nobody had decided
-   how the apps find the new primary.** Failover promotes a standby the app boxes are not talking
+5. Second `data` box, Postgres active/standby (~$18/mo). ⚠ **Decide how the apps find the new
+   primary.** Failover promotes a standby the app boxes are not talking
    to. The answer is a Hetzner floating IP moved by the failover tool, so the app's address never
    changes. Without it, automatic failover buys nothing.
 
-   🟡 **On HA tooling, do what they DID, not what they PLANNED.** They researched and recommended
-   **Patroni**; what they actually shipped was **async physical streaming replication with MANUAL
-   failover** — no Patroni, no etcd, no witness, no VIP. Measured across 6 pairs: `state=streaming`,
+   🟡 **On HA tooling, skip Patroni and use async physical streaming replication with MANUAL
+   failover** — no Patroni, no etcd, no witness, no VIP. Expect `state=streaming`,
    0 bytes behind, replay lag 1.7–2.3 ms. For a team of one, that is the right answer, and three
    findings say so:
    - 🔴 **Patroni's etcd tax is real.** etcd wants dedicated machines; co-locate it and fsync
@@ -160,7 +157,7 @@ touching a byte of data. It is the one piece of this topology I would not compro
 
 ⚠ Rescaling is cheap and reversible on Hetzner (`change_type`, ~4 minutes) **provided the target
 disk is equal or bigger** — it refuses disk shrinks. That constraint, not preference, should pick
-every target type. Their `builder` had to be *replaced* rather than rescaled for exactly this.
+every target type.
 
 ---
 
@@ -296,7 +293,7 @@ engine.
   that has never held a bucket. The harder version also occurs — 200 with
   `"ready":true` while **every** S3 call returns 503. 🔴 **A monitor pointed at `/health` proves the
   process is up and nothing else.** Probe `HeadBucket` against the real bucket instead
-  (`runbook.md` §6 rule 5). This is the 20-hour outage in a new place, and worse, because the
+  (`runbook.md` §6 rule 5). This is how a 200 hides a 20-hour outage, and worse, because the
   endpoint has a reassuring name.
 - 🔴 **The IAM store is volume-resident and nothing seeds it from the environment.** Only the single
   **root** key pair (`RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY`) comes from env; users and policies
@@ -316,7 +313,7 @@ engine.
 - 🔴 **Single node. Never two.** Covered in the universal rules below, and it applies to RustFS on
   `dev` as much as to anything else.
 
-### 🔧 For stage and prod: take MANAGED S3. Do not repeat their evaluation.
+### 🔧 For stage and prod: take MANAGED S3.
 
 🟡 **This is my strongest recommendation in this document.** Stop self-hosting object storage in
 prod, move to managed S3, leaning Cloudflare R2. Only a definition of *sovereignty* as **own
@@ -327,8 +324,6 @@ with an unresolved Coolify config-file problem.
 - **Cloudflare R2** — 10 GB free, then $0.015/GB, **zero egress**. ~$0–1/mo at our volume.
 - **Hetzner Object Storage** — €6.49/mo flat (1 TB storage + 1 TB egress). ⚠ **No SLA whatsoever**;
   Hetzner's 99.9% covers Cloud servers only. ⚠ The widely-cited €4.99 figure is stale.
-- For scale calibration: their **entire** object volume was **12 objects / 176 KB**, and their whole
-  fleet database was ~1.5 GB. At that size the decision is dominated by ops burden, not capacity.
 
 **If an own-hardware requirement does turn out to exist**, the engine answer is **Garage**
 (`dxflrs/garage:v2.3.0`), single-node, on `data` — not RustFS and not MinIO:
@@ -337,8 +332,7 @@ with an unresolved Coolify config-file problem.
   tests and failed on everything else: **25 CVEs in 8 months, 7 at CVSS ≥ 9.0**, including a
   hardcoded RPC secret shipped twice five months apart; every one of its 100+ releases flagged
   `prerelease`; open issues for silent data loss on single-drive, which is exactly this topology.
-  ⚠ An older ADR of theirs still names RustFS as the decision — **that ADR is stale**; the evaluation
-  superseded it. ✅ **We run it on `local` and `dev` anyway, deliberately** — see the boxed wording
+  ✅ **We run it on `local` and `dev` anyway, deliberately** — see the boxed wording
   above. The rejection is about what an engine is trusted to *hold*, and `dev` holds nothing that
   cannot be recreated. Do not read this bullet as "RustFS is banned"; read it as "RustFS never gets
   a customer's only copy."
@@ -347,7 +341,7 @@ with an unresolved Coolify config-file problem.
 - ✅ Garage self-bootstraps: `garage server --single-node --default-bucket`, seeded from
   `GARAGE_DEFAULT_ACCESS_KEY` / `_SECRET_KEY` / `_BUCKET`. No init container, no manual `docker exec`.
 - 🔴 **Two Coolify-specific footguns if you go this way:** Garage wants a `garage.toml`, and Coolify
-  compose is API-managed with no repo to hold one (their words: "the single largest unknown"). And
+  compose is API-managed with no repo to hold one (the single largest unknown). And
   the Garage image is `FROM scratch` — **no shell, no curl** — so a `CMD-SHELL` healthcheck cannot
   run at all; use exec form `["/garage","status"]`.
 
@@ -365,7 +359,7 @@ with an unresolved Coolify config-file problem.
 - 🔴 **`forcePathStyle: true` is mandatory and universal** for self-hosted engines.
 - ⚠ **A storage service's own `/health` is not evidence it works.** Measured: RustFS returned 200
   from `/health` reporting `"storage":{"ready":true}` while **every S3 call returned 503**. Probe
-  with `HeadBucket` against the real bucket. (Their measurement: p50 **1.03 ms**, caught every
+  with `HeadBucket` against the real bucket. (p50 **1.03 ms**, catches every
   induced failure.)
 - ⚠ **`HeadBucket` 403 has no response body**, so the SDK reports `err.name === 'Unknown'`. Branch on
   `err.$metadata.httpStatusCode`, never on the name.
@@ -373,13 +367,13 @@ with an unresolved Coolify config-file problem.
   apparent scoping came only from one-bucket-per-instance. Write a custom policy, and include **both**
   ARNs (`…:::<bucket>` for bucket actions AND `…:::<bucket>/*` for object actions) — omit either and
   you silently lose half the surface.
-- ⚠ **No browser needs to reach the store.** The app proxies bytes. Their old setup exposed storage
-  via Traefik + Let's Encrypt for a presigned-URL use case that **did not exist in their code**.
+- ⚠ **No browser needs to reach the store.** The app proxies bytes. Do not expose storage
+  via Traefik + Let's Encrypt for a presigned-URL use case the code does not have.
   Check ours before exposing anything; not exposing it shrinks the credential blast radius to zero.
 
 🔴 **And the trap on the day you flip it on.** Payload's S3 plugin sets `disableLocalStorage: true`
-when enabled. In their codebase **two code paths still did `fs.readFile(path.resolve(process.cwd(),
-'media', …))`** and were never migrated — one returned HTTP 502, the other **silently dropped images
+when enabled. **A code path that still does `fs.readFile(path.resolve(process.cwd(),
+'media', …))`** fails — with HTTP 502, or by **silently dropping images
 from exports**. "S3 is optional with a local-disk fallback" only holds if *every* byte-reading path
 goes through the storage abstraction. **Grep for `fs.readFile` and `process.cwd(), 'media'` in
 `apps/backend` before believing it.**
@@ -486,7 +480,7 @@ sharing it would sit behind a running decode. Full detail in `env-manifests.md` 
 
 Do not size work against hardware that does not exist.
 
-✅ **The service we actually built reverses that assumption in code, not just in a document.** It is
+✅ **The service assumes no GPU, in code and not just in a document.** It is
 CPU-first by construction: no torch, no CUDA in the image, CTranslate2's CPU backend running the same
 weights. And it is not a dead end — if a GPU ever appears, it is **two environment variables on the
 worker container** (`WHISPER_DEVICE=cuda`, `WHISPER_COMPUTE_TYPE=float16`) plus a base-image swap in a
@@ -593,7 +587,7 @@ budget question if transcription volume ever gets serious.**
 | 1 | **Domain name(s)** | Every URL, TLS cert, CORS origin and OAuth callback derives from it. Nothing can be provisioned without it. Need: apex + per-env scheme (e.g. `app.` / `stage.` / `dev.`). |
 | 2 | **TLS** | Coolify + Traefik does Let's Encrypt automatically per app. Needs DNS pointed at the box first. Wildcard vs per-host affects DNS setup. |
 | 3 | **3 boxes or 4** | §1. $12/mo against a rehearsal surface. |
-| 4 | **Region** | The previous fleet was Helsinki. ⚠ If this org's data must be resident in Mexico under the 2025 privacy reform, that is a bigger question than box sizing and it should be asked NOW, not after provisioning. Hetzner has no Mexican region. |
+| 4 | **Region** | ⚠ If this org's data must be resident in Mexico under the 2025 privacy reform, that is a bigger question than box sizing and it should be asked NOW, not after provisioning. Hetzner has no Mexican region. |
 | 5 | **Budget ceiling** | $48 / $60 / $95 buy visibly different amounts of resilience. |
 | 6 | **Uptime commitment** | 99% is 7.2 h/month of downtime; 99.9% is 43 minutes. ⚠ At a team size of one, a night-time failure can go unnoticed for 12+ hours — which caps what any amount of hardware can deliver. Do not promise 99.9% before there is an on-call answer. |
 | 7 | **Managed vs self-hosted transcription** | §4. Cost vs. data custody. |

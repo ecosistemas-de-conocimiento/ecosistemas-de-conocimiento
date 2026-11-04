@@ -122,6 +122,6 @@ EXPOSE ${PORT}
 # takes hours to diagnose.
 #
 # 🔴 `scripts/migrate.sh`, not bare `payload migrate`: the CLI can exit 0
-# silently without migrating (34296a8 deploy, 2026-10-26). The script requires
+# silently without migrating (deploy, 2026-10-26). The script requires
 # Payload's `Done.` line and retries a silent run. See its header.
 CMD ["sh", "-c", "sh scripts/migrate.sh && exec node_modules/.bin/next start -p ${PORT:-3002}"]

@@ -862,7 +862,7 @@
               <div class="border-t border-elevated">
                 <!-- 🔴 `canEditNote`, not `isNote`: a PUBLISHED own note
                      (`ingestStatus: 'ready'`) gets the editor too, or "Publicar
-                     cambios" can never be reached (dev 3f275c5, 2026-10-28). -->
+                     cambios" can never be reached (dev, 2026-10-28). -->
                 {#if !canEditNote(d)}
                   <!-- 🔴 READING THE TRANSCRIPT. Automatic transcription gets
                        words wrong, and this text is about to be quoted as fact

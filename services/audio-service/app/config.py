@@ -5,8 +5,8 @@ whole surface is validated at boot, and an invalid value aborts the process
 BEFORE the HTTP listener binds (or before the worker claims a job). Defaults
 shown here are the code's own defaults; `.env.example` documents each one.
 
-The two knobs that matter most for the "same image on CPU locally, GPU on the
-fleet" promise are `WHISPER_DEVICE` and `WHISPER_COMPUTE_TYPE`. Nothing else in
+The two knobs that matter most for the "same image on CPU locally, GPU when
+deployed" promise are `WHISPER_DEVICE` and `WHISPER_COMPUTE_TYPE`. Nothing else in
 this service reads `device`; the transcriber passes both straight through to
 CTranslate2. Flipping them is the ENTIRE GPU migration.
 """

@@ -274,7 +274,7 @@ describe('citedBrowserProvenance — an answer with no [N] lists the top sources
   });
 });
 
-// 🔴 Measured on dev after 9285305: an off-topic question (3/3 runs) said the
+// 🔴 Measured on dev: an off-topic question (3/3 runs) said the
 // documents do not cover it, then cited [1, 2, 3, 4, 5], so 5 sources showed.
 describe('citedBrowserProvenance — a no-answer reply shows no sources, cited or not', () => {
   const doc = (i: number) => ({ ...docChunk, chunkId: `d${i}`, metadata: { docId: String(i), title: `Doc ${i}` } });
@@ -330,13 +330,13 @@ describe('citedBrowserProvenance — no [N] and a refusal cue anywhere: no fallb
   const doc = (i: number) => ({ ...docChunk, chunkId: `d${i}`, metadata: { docId: String(i), title: `Doc ${i}` } });
   const five = { chunks: [doc(1), doc(2), doc(3), doc(4), doc(5)] };
 
-  it('🔴 a reworded refusal with no [N] lists no fallback sources (dev 5fe43ff, Francia #1)', () => {
+  it('🔴 a reworded refusal with no [N] lists no fallback sources (Francia #1)', () => {
     const answer = 'Los documentos de la Red Comunitaria de Salud no hablan de la capital de Francia.';
     expect(isNoAnswer(answer)).toBe(false); // the first-sentence net missed it
     expect(citedBrowserProvenance(five as never, answer)).toBeNull();
   });
 
-  it('🔴 a hedge with no [N] lists no fallback sources (dev 5fe43ff, Educación Q1 #1)', () => {
+  it('🔴 a hedge with no [N] lists no fallback sources (Educación Q1 #1)', () => {
     const answer =
       'Hay relatos de docentes y conserjes sobre la escuela. Los documentos disponibles no contienen ' +
       'testimonios directos de familias.';
@@ -543,7 +543,7 @@ describe('citedBrowserProvenance — variant E: a hedging first sentence keeps i
   });
 });
 
-// Measured on dev at 7b2e27e (variant E, twice): "¿Cuál es la capital de
+// Measured on dev (variant E, twice): "¿Cuál es la capital de
 // Francia?" → "París es la capital de Francia." with no [N] and no lead; the
 // fallback listed 3 chunks the reranker scored ~1e-4.
 describe('citedBrowserProvenance — the no-[N] fallback needs a rerank score above the floor', () => {

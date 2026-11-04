@@ -394,7 +394,7 @@ export interface TestimonioRow {
  * 🔴 PUBLISHED ROWS ONLY. A draft is its uploader's alone (`visibleToCaller`
  * in `collections/Documents.ts`), even one the gate cleared, and unpublishing
  * leaves `redacted_text` in place: without this filter an unpublished
- * testimonio would stay in the teacher's report (audit of ebf1d4f).
+ * testimonio would stay in the teacher's report.
  *
  * `redacted_text` and `testimonio_title` come back only when the gate cleared
  * the row — the rule `mayReadTestimonioTitle` applies to the title. On a held,

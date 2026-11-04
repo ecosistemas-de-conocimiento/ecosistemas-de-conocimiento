@@ -182,7 +182,7 @@ async function publicar(page: Page, card: Locator, id: string, etiqueta: RegExp)
  * account was the alternative: estudiante2's classmate page lists estudiante1
  * only when they share a topic (none today), so it would not stay simple.
  *
- * Cost (quoted, 9dc40b2 / v3.ts: ~$0.002 a document through gate + ingest +
+ * Cost (quoted, v3.ts: ~$0.002 a document through gate + ingest +
  * graph + publish): two "Publicar" runs on new text, ~$0.004 (inferred).
  * Timeouts: 10 min for each publish, 8 min for the topics (owner plan via
  * coordinator, 2026-10-28: gate + ingest + auto-publish and the graph
@@ -271,8 +271,8 @@ test('estudiante nota', async ({ page }) => {
     await escena(page, 'C3.3', async () => {
       await abrirPanel(page, 'documents');
       const card = await abrirNota(page, id);
-      // The editor of the student's own PUBLISHED note (7be2820, `note-edit-<id>`):
-      // before it, a published note's card had no editor at all (dev 3f275c5).
+      // The editor of the student's own PUBLISHED note (`note-edit-<id>`):
+      // before it, a published note's card had no editor at all (dev, 2026-10-28).
       const cuerpo = page.getByTestId(`note-edit-${id}`);
       await expect(cuerpo).toHaveValue(TEXTO);
       // One `fill`, not typed: `slowMo` (350 ms an action) would spend ~30 s on the sentence.

@@ -21,7 +21,7 @@ bounded by how long it takes a human to notice, not by any of this** — which i
 
 It is possible, on this exact stack, to reach prod-launch scope with:
 
-- `backup_window: null` on **all six boxes**
+- `backup_window: null` on **every box**
 - **0** snapshots, **0** Coolify scheduled backups
 - **restore never tested, once**
 
@@ -29,7 +29,7 @@ That is not carelessness — it is what happens when "backups" is a checkbox on 
 thing with a number attached. **This document exists so that "backups configured" is never the
 answer to "how much data can we lose?"**
 
-Their measured detection times, before any monitoring existed, are the other half of the story:
+Detection times without any monitoring are the other half of the story:
 
 | incident | how long until anyone noticed |
 |---|---|
@@ -224,8 +224,8 @@ it."* Our four boxes × three environments is comfortably inside UptimeRobot's 5
 ### Configuration that is not optional
 
 - 🔴 **Assert on body content, not status code.** Per monitor, require the keyword `"status":"ok"`.
-  They have **three measured cases where a 200 was a lie**, including a `/api/health` that returned
-  200 through a **20-hour total outage** because the route checked the database and never touched
+  A 200 can lie: a `/api/health` can return
+  200 through a **20-hour total outage** when the route checks the database and never touches
   the AI dependency.
 - 🔴 **Monitor the READINESS route** (`/api/health/ready`), never the liveness route. See
   `runbook.md` §6 for the contract.
@@ -240,8 +240,7 @@ it."* Our four boxes × three environments is comfortably inside UptimeRobot's 5
 
 ### The memory/swap alert — a precondition, not an option
 
-Their `dev` box swapped **1,182 MB for six days** unnoticed. It surfaced only during an unrelated
-rescale. `topology.md` sizes boxes down rather than over-provisioning, **explicitly on the condition
+A `dev` box can swap **1,182 MB for six days** unnoticed. `topology.md` sizes boxes down rather than over-provisioning, **explicitly on the condition
 that this alert exists.** The fix for a blind spot is the signal, not the hardware.
 
 | signal | threshold |

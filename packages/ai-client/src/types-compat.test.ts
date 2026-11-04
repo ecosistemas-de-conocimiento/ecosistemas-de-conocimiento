@@ -9,7 +9,7 @@
 // (needs the old type to accept a new value). So both directions are checked.
 //
 // The baseline is a FROZEN copy of the 0.17.0 declarations,
-// `./types-0.17.0.snapshot.ts`, taken from `git show b903699:…/types.ts`.
+// `./types-0.17.0.snapshot.ts`.
 //
 // ── Where the gate actually runs ──────────────────────────────────────────
 // The compatibility check is TYPE-level, so `npm run typecheck` at the REPO

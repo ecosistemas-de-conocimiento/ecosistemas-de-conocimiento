@@ -31,7 +31,7 @@ function servedDocument(): string {
   return `${JSON.stringify(getOpenApiDocument(), null, 2)}\n`;
 }
 
-// ── CORRECTED vs 970baae ───────────────────────────────────────────────────
+// ── CORRECTED, first re-record ───────────────────────────────────────────────────
 //
 // The golden was re-recorded once, deliberately, and this block is the reason.
 // Until this lane the served bytes were kept identical on purpose — the Zod
@@ -44,7 +44,7 @@ function servedDocument(): string {
 // golden is legible from the test file rather than from a 4 000-line JSON diff.
 // They are real assertions, not comments: a regression puts the old lie back
 // and one of them goes red.
-describe('corrected vs 970baae', () => {
+describe('corrected vs the earlier contract', () => {
   const doc = () => {
     __resetOpenApiCacheForTests();
     return getOpenApiDocument() as unknown as {
@@ -177,19 +177,18 @@ describe('corrected vs 970baae', () => {
   });
 });
 
-// ── CORRECTED vs 07f63a3 ───────────────────────────────────────────────────
+// ── CORRECTED, second re-record ───────────────────────────────────────────────────
 //
 // The second re-record, and the same rule: one assertion per correction, so
 // the 929 changed leaves in the golden are legible from here.
 //
-// What moved, and why, measured on the merge of `phase2/route-errors`
-// (4a46981) into this lane. That branch removed nine route-layer catches that
+// What moved, and why: the original fix removed nine route-layer catches that
 // re-flattened a typed error, so twelve rows in `route-table.ts` were
 // describing bodies the routes had stopped sending. Two more corrections are
 // independent of it: 41 response headers were publishing raw Zod internals,
 // and `GenerationJob.output` was declared optional while `serializeJob` writes
 // it unconditionally.
-describe('corrected vs 07f63a3', () => {
+describe('corrected vs the earlier spec', () => {
   const doc = () => {
     __resetOpenApiCacheForTests();
     return getOpenApiDocument() as unknown as {

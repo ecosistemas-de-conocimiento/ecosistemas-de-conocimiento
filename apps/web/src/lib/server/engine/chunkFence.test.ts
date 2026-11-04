@@ -100,7 +100,7 @@ describe('neutraliseFenceTags', () => {
 });
 
 /**
- * The auditor's probe set (audit of ee9d852). Each must come out with no
+ * The auditor's probe set. Each must come out with no
  * fence-tag spelling left that the fold reads as `<fuente` / `</fuente`.
  */
 const PROBES: Record<string, string> = {
@@ -160,7 +160,7 @@ describe('neutraliseFenceTags — probe set', () => {
 });
 
 describe('fenceChunkText', () => {
-  // 🔴 Dev 020ebec: a fence id holding a number ("document:266") became the
+  // 🔴 Dev: a fence id holding a number ("document:266") became the
   // answer's "[266]". The fence carries no id; `[N]` before it is the label.
   it('wraps the text in a bare begin marker and an end marker: no id, no number', () => {
     expect(fenceChunkText(m(UUID_A, 'hola'))).toBe('<fuente>\nhola\n</fuente>');

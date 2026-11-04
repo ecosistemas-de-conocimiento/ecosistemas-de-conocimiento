@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SCHEMA GATE — the deployed-boot half of the fleet's schema stamp.
+// SCHEMA GATE — the deployed-boot half of the schema stamp.
 //
 //   node scripts/schema-gate.mjs precheck   # BEFORE the migrate step
 //   node scripts/schema-gate.mjs stamp      # AFTER the migrate step succeeds
@@ -28,7 +28,7 @@
 // A dev-phase policy that regenerates the ONE baseline IN PLACE makes that the
 // normal case, not a corner case.
 //
-// 🔴 NOT A NAME RULE. Rodrigo removed two of those. This compares CONTENT: a
+// 🔴 NOT A NAME RULE. This compares CONTENT: a
 // hash of the migration files, and a hash of the live schema read out of the
 // database itself.
 //
@@ -98,8 +98,7 @@
 //
 // 🔴 THERE IS NO ESCAPE HATCH. No `FORCE=1`, no `SKIP_SCHEMA_GATE`. A guard an
 // environment variable can switch off is a guard that gets switched off by
-// whoever first hits it at 3am, in the exact situation it was built for. Two
-// guards in this fleet died that way. If the gate refuses, the remedy is the
+// whoever first hits it at 3am, in the exact situation it was built for. If the gate refuses, the remedy is the
 // remedy: wipe, migrate, reseed.
 //
 // ⚠ `adopt-append` IS NOT AN EXCEPTION TO THAT, and the difference is worth
@@ -150,7 +149,7 @@ import postgres from 'postgres';
 // dotenv file and Coolify supplies real env vars, so this is a no-op there —
 // but without it the gate would silently do nothing on a developer's machine
 // while doing its job in production, which is exactly the per-environment
-// divergence this fleet treats as a defect.
+// divergence to avoid.
 loadDotenv();
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -184,7 +183,7 @@ const EMPTY_SCHEMA_FINGERPRINT = 'empty-schema';
 
 /**
  * ⚠ `.sql` ONLY, plus the journal — and that is COMPLETE for drizzle, not a
- * gap. The fleet spec's `.js`/`.mjs`/`.cjs` widening is a PAYLOAD fix: Payload
+ * gap. A `.js`/`.mjs`/`.cjs` widening would fit Payload: Payload
  * executes `migrations/*.ts` and `*.js`. Drizzle executes neither. MEASURED in
  * `node_modules/drizzle-orm/migrator.js`: `readMigrationFiles` reads
  * `meta/_journal.json` and, for each entry, exactly `<tag>.sql`. Widening the
@@ -1053,7 +1052,7 @@ const stamp = async () => {
  *          journal re-serialised with the trailing entries dropped
  *          (`JSON.stringify(…, null, 2)`, which is byte-exact for a
  *          drizzle-kit-written journal — VERIFIED against this repo's own
- *          journal at commit fc0619c: 340 bytes, identical).
+ *          journal: 340 bytes, identical).
  *      Recompute `migrationsFingerprint()` over exactly that, and require it to
  *      EQUAL the stamped `migrations`.
  *

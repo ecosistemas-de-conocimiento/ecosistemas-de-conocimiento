@@ -1,9 +1,8 @@
-// Crawler policy for the HTTP surface — fleet-wide `noindex` shape.
+// Crawler policy for the HTTP surface — `noindex` shape.
 //
 // This module is the single place in this repo that decides whether a request
 // is indexable. It is deliberately pure and dependency-free so the decision can
-// be unit-tested without booting Fastify, and so it reads the same here as it
-// does in every other EDC repo (SvelteKit, Next/Payload, Astro, Vite SPA).
+// be unit-tested without booting Fastify.
 //
 // The route + header wiring lives in `src/routes/robots.ts`.
 
@@ -11,9 +10,8 @@
  * Flip to `true` only when a person has decided the production host should be
  * crawlable. It stays `false` here and is NOT a real switch for ai-service:
  * see `shouldNoindex` — this host is an authenticated machine API, so prod is
- * disallowed regardless. The constant is kept (and named identically to the
- * rest of the fleet) so the shape of this file matches its siblings and so a
- * reader does not have to wonder whether this repo forgot it.
+ * disallowed regardless. The constant is kept so a reader does not have to
+ * wonder whether this repo forgot it.
  */
 // Runbook for flipping this ON: plan/tecnología/prod-readiness/search-indexing-runbook.md
 export const PROD_INDEXABLE = false;
@@ -21,7 +19,7 @@ export const PROD_INDEXABLE = false;
 /**
  * True when this hostname is a non-production EDC environment.
  *
- * The fleet's FQDN naming is exact and exceptionless: non-prod hosts end in
+ * The FQDN naming is exact and exceptionless: non-prod hosts end in
  * `.dev.example.org` or `.stage.example.org`. Every demo-0 host lives under
  * `.dev.example.org` (e.g. chat-demo-0.dev.example.org), so the suffix rule
  * already covers it — do NOT add a separate `demo` case.
@@ -58,7 +56,6 @@ export function isNonProdHost(hostname: string): boolean {
  * indexed URL from this host would be, at best, a 401 in someone's search
  * results and, at worst, a map of the API surface handed to a scraper. So the
  * policy is unconditional `Disallow: /` and `PROD_INDEXABLE` does not reach it
- * — same posture the fleet's Payload/Next `*-api.*` backends take for `/admin`.
  */
 export function shouldNoindex(_hostname: string): boolean {
   // 🔴 UNCONDITIONAL, and deliberately NOT a function of the host or of
@@ -69,15 +66,13 @@ export function shouldNoindex(_hostname: string): boolean {
   // ⚠ This used to end in `return !PROD_INDEXABLE`, which made the constant a
   // LIVE switch — flipping it would have served `Allow: /` on ai.example.org
   // and dropped the header — while the comment above it claimed the constant
-  // did not reach this decision. The other never-flip services in the fleet
-  // (identity, every Payload `/admin` backend) clamp for real; this one only
-  // said it did. Clamped now. `PROD_INDEXABLE` stays exported, and inert, so a
-  // fleet-wide grep for the flip-point still finds this file — see
+  // did not reach this decision. Clamped now. `PROD_INDEXABLE` stays exported, and
+  // inert, so a grep for the flip-point still finds this file — see
   // plan/tecnologia/prod-readiness/search-indexing-runbook.md §2.
   return true;
 }
 
-/** Body served when the noindex case applies. Byte-exact across the fleet. */
+/** Body served when the noindex case applies. */
 export const ROBOTS_TXT_DISALLOW_ALL = 'User-agent: *\nDisallow: /\n';
 
 /** Body served when a host is indexable. Unreachable here; kept for parity. */

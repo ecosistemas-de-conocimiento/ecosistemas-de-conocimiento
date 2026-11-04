@@ -249,7 +249,7 @@ describe('refreshSession', () => {
 
     expect(err.reason).toBe('project_access_denied');
     // ⚠ The regression this test exists for: clearing the cookie here signs a
-    // person out of the whole fleet because ONE assignment was missing.
+    // person out of every product because ONE assignment was missing.
     expect(err.refreshTokenIsDead).toBe(false);
     expect(err.refreshTokenSurvived).toBe(true);
     expect(err.mustReauthenticate).toBe(false);

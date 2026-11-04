@@ -1,4 +1,4 @@
-"""Health and readiness — the fleet's convention, copied from ai-service.
+"""Health and readiness — the same convention as ai-service.
 
     GET /health        liveness. Process is up. Touches nothing.
     GET /health/ready  readiness. Dependencies reachable. 200 or 503.
@@ -11,7 +11,7 @@ requires a live worker heartbeat, which is only published once that worker has
 the Whisper model in RAM. Without that check the API would report ready while
 every job it accepts sits in the queue forever — the exact failure a readiness
 probe exists to prevent. `/ready/aliases`-style extras are not needed; the two
-paths below are what the fleet's compose healthchecks call.
+paths below are what the compose healthchecks call.
 """
 
 from __future__ import annotations

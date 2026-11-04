@@ -101,8 +101,8 @@ export class AIServiceError extends Error {
  * one was `err.status === 400`. It still catches everything ai-service answers
  * with fastify-sensible's generic `{statusCode, error: 'Bad Request', message}`
  * — Zod rejections, a missing corpus name, a body that failed validation. Six
- * TAXONOMY classes used to land here too; as of the server's `phase2/route-errors`
- * they send their own discriminator and `code` and resolve to their own class.
+ * TAXONOMY classes used to land here too; they now
+ * send their own discriminator and `code` and resolve to their own class.
  *
  * Widening only: nothing was an instance of this before it existed, and a
  * consumer matching `instanceof AIServiceError` or `err.status === 400` is
@@ -659,8 +659,8 @@ type ThinErrorCtor = new (message: string, body?: ErrorBody, meta?: ErrorMeta) =
  *                 the class is NOT branchable — only the status family
  *                 (`BadRequestError` / `NotFoundError`) and the message survive.
  *
- *                 ✅ NO ENTRY USES THIS ANY MORE. Six did until ai-service's
- *                 `phase2/route-errors` removed the seven route sites that
+ *                 ✅ NO ENTRY USES THIS ANY MORE. Six did until ai-service
+ *                 removed the seven route sites that
  *                 flattened them; the value is KEPT so the next route that
  *                 reintroduces the pattern has an honest word for it rather
  *                 than being recorded as 'typed'.
@@ -741,7 +741,7 @@ export const WIRE_ERRORS: Readonly<Record<string, WireErrorEntry>> = {
   // These six extend the server's `CodedEnvelopeError`, so their body is
   // `{error: '<ClassName>', code: 'ERR_*', message}` and BOTH resolution passes
   // in `errorFromResponse` find them. Pinned server-side in
-  // `src/errors/wire-golden.test.ts` (`changed vs 970baae`).
+  // `src/errors/wire-golden.test.ts`.
   //
   // ⚠ `RegistryConflictError` answers 400, NOT the 409 its name suggests. That
   // was true while it was flattened and is still true: the class declares 400,

@@ -111,14 +111,3 @@ audio-service.
    biblioteca se ve llena y el asistente no recupera nada hasta que la prendes.
 2. **La voz de Piper suena robótica.** Aceptada por ahora. Una grabación real sigue
    siendo el fixture que falta, y `TESTING.md` lo dice.
-
-## ⚠ Nota de git, histórica
-
-Una sesión concurrente de Claude commiteaba a main en el mismo árbol de trabajo y
-se llevó este trabajo dentro de commits suyos con mensajes que no corresponden:
-`74bcf2c` "GraphRAG is in scope…" trae los scripts, `TESTING.md`, los lectores de
-manifiesto, el borrado de fixtures y `.gitignore`; `6b0117f` "Shorter wording for
-the rating-comment notice" trae los cuatro archivos de test e2e.
-
-No se perdió nada y la historia **no** se reescribió. Está registrado aquí para que
-nadie busque este trabajo por el mensaje del commit.

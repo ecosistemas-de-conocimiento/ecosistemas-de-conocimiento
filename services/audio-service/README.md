@@ -86,7 +86,7 @@ the emitting service. Keeping them means `apps/backend`'s existing verifier
 branch on the emitter.
 
 Retry schedule, dead-letter behaviour and the 401/4xx/5xx branch table are
-ported from `ai-service` unchanged: t+0, +5s, +30s, +2m, +10m, then dead-letter.
+the same as `ai-service`: t+0, +5s, +30s, +2m, +10m, then dead-letter.
 Every attempt re-signs the **stored bytes** with a fresh timestamp, because the
 receiver enforces a ±300s replay window and the schedule outlives it.
 
@@ -117,7 +117,7 @@ explicitly reversing.
 **Why not whisper.cpp.** Genuinely the lightest option, and it loses narrowly.
 Switching it to GPU means rebuilding the binary against a CUDA backend — a
 different image, not a different env var — which breaks the "same image, CPU
-locally, GPU on the fleet" promise this service is built around. Its Python
+locally, GPU when deployed" promise this service is built around. Its Python
 bindings are also noticeably less maintained.
 
 **Why not Parakeet / Canary.** NVIDIA's newer models are competitive and in some
@@ -246,7 +246,7 @@ content-word recall, not a WER number, because the fixture is synthetic speech.
 
 ---
 
-## Running on a GPU on the fleet
+## Running on a GPU
 
 Two environment variables on the **worker** container:
 

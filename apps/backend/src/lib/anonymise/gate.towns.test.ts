@@ -50,7 +50,7 @@ afterEach(() => {
 })
 
 // Only the town itself. A span with a lead ("en Xochitepec", "vivo en
-// Xochitepec") HOLDS at verify, as before the town work (audit of 9edaa22):
+// Xochitepec") HOLDS at verify, as before the town work:
 // see `gate.q10b.test.ts`.
 const TOWN_ANSWERS: H[] = [
   { texto: 'Xochitepec', tipo: 'lugar', identifica: true },

@@ -96,7 +96,7 @@ export const refuseAnswerStyleChange: CollectionBeforeChangeHook = ({ data, orig
 
 /**
  * 🔴 `studentTestimonios` GOING OFF WITHDRAWS EVERY TESTIMONIO CONSENT IN THAT
- * ECOSISTEMA (owner ruling Q20, audit of 633bce2). A consent was given under the
+ * ECOSISTEMA (owner ruling Q20). A consent was given under the
  * wording shown while the switch was on; after an off→on cycle the student
  * must give it again. Runs on every write path (it is a collection hook) with
  * the request's `req`, so it shares the update's transaction: the switch and

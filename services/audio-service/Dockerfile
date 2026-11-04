@@ -17,8 +17,7 @@
 #       context: ./services/audio-service
 #
 # CPU-ONLY BY DEFAULT AND ON PURPOSE. There is no CUDA in this image and none is
-# needed: CTranslate2's CPU backend runs the same weights. To use a GPU on the
-# fleet, switch the base image to `nvidia/cuda:12.*-cudnn-runtime-ubuntu22.04`,
+# needed: CTranslate2's CPU backend runs the same weights. To use a GPU, switch the base image to `nvidia/cuda:12.*-cudnn-runtime-ubuntu22.04`,
 # install the same requirements, and set WHISPER_DEVICE=cuda +
 # WHISPER_COMPUTE_TYPE=float16. NO APPLICATION CODE CHANGES — see README
 # §"Running on a GPU".

@@ -26,7 +26,7 @@ import type { Config } from '../config/config.js';
 //   EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending
 // which vitest reports as an unhandled error and exits 1 with EVERY TEST GREEN.
 // CI gates on the runner's exit code, and `deploy-dev` needs `build`, so a
-// fully green suite blocked the deploy. Measured on this tree at f91e078:
+// fully green suite blocked the deploy. Measured on this tree:
 // 2 failures in 40 local runs, 8 in 30 under a 4-core pin.
 //
 // Lazy is safe in production because nothing needs a connection at construction

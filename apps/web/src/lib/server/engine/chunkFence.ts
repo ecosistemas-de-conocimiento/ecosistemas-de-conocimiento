@@ -167,7 +167,7 @@ export function neutraliseFenceTags(text: string): string {
 }
 
 /**
- * 🔴 THE FENCE CARRIES NO ID AND NO NUMBER. Measured on dev 020ebec
+ * 🔴 THE FENCE CARRIES NO ID AND NO NUMBER. Measured on dev
  * (2026-10-24): an audio document attached to the conversation (backend doc
  * 266) rode the turn fenced as `<fuente id="document:266">`. The system rule
  * says "cite only with [N]", and 266 was the only number on that fence, so

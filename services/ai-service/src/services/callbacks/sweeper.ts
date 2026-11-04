@@ -43,7 +43,7 @@
 //
 //     ⚠ Deliberately NOT a `pg_advisory_lock` held across the work. An
 //     advisory lock held while doing I/O has previously deadlocked a pool and
-//     wedged an entire backend in this fleet. `SKIP LOCKED` on a short
+//     wedged an entire backend. `SKIP LOCKED` on a short
 //     transaction has no such failure mode: the lock lifetime is bounded by
 //     the UPDATE itself.
 //

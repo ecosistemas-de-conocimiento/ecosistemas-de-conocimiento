@@ -17,7 +17,7 @@ metadata, one corpus per call, alias-aware. No BM25, no reranker, no query
 rewriting, no fusion, no temporal awareness. `RetrieveService.retrieve` was ~40
 lines of orchestration over a single SQL statement.
 
-**Two recon findings corrected the assumptions the work was planned on:**
+**Two findings shaped the work:**
 
 1. **Chunking is NOT consumer-side.** A consumer POSTs whole documents and
    ai-service does 100% of the chunking. This settles the structural-chunker
@@ -119,7 +119,7 @@ MACHINERY that belongs here, not the patterns):
 the preset removal found that `corpora.chunk_config` had **no HTTP surface at
 all**: no `POST /v1/corpus`, and `IngestService.ensureCorpus()` hard-codes
 `'recursive-char'`. Deleting the preset without adding a seam would have removed
-structural chunking from the fleet entirely. So `POST /v1/ingest` now accepts
+structural chunking entirely. So `POST /v1/ingest` now accepts
 `chunkConfig`:
 
 - **batch level** — `body.chunkConfig`, applies to every document in the request;
@@ -355,19 +355,3 @@ Neither number was load-bearing for the decision to ship rungs 0–1.
   now typed, and `ChunkConfig` /
   `ChunkSectionPattern` are exported for the ingest-side seam (§2).
 
-
-1. Send `validFrom` / `validTo` on ingest, from `document_versions`.
-2. Call `admin.setDocumentValidity(corpus, docId, { validTo })` from
-   `flipSupersede()` — today the flip is invisible to ai-service, which is why
-   superseded chunks stay retrievable.
-3. Pass `asOf: new Date().toISOString()` on the retrieve calls in
-   `askThread.ts`, `indicatorAssess.ts`, `suggestInitiatives.ts`.
-4. Send its OWN `chunkConfig` on ingest — `{ sections, subSections }` with the
-   patterns for its documents — at the document level for the documents that
-   have a numbered structure, leaving the rest to the default splitter. There
-   is no preset to name; ai-service ships none (§2). Then re-ingest.
-5. Pass `mode: 'hybrid'` on the retrieve calls.
-6. Seed `document-sources` rows — the auto-fetch infrastructure exists but there
-   are no `diputados.gob.mx` URLs anywhere, so `a consumer app-global` is empty today.
-
-Items 1–2 are the ones that matter: without them `asOf` has nothing to filter.

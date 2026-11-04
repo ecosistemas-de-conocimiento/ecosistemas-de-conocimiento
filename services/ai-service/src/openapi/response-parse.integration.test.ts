@@ -2,7 +2,7 @@
 //
 // The golden pins the document's BYTES and `routes-vs-document.test.ts` pins
 // its PATH SET. Neither can tell whether the shapes are true — a document can
-// be byte-stable, complete, and wrong, which is exactly what 970baae was:
+// be byte-stable, complete, and wrong, which is exactly what it was before the fix:
 // `GET /health` declared `{ok:true}` and had been answering `{status,service}`
 // the whole time.
 //
@@ -539,7 +539,7 @@ const CASES: readonly Case[] = [
   },
 
   // ── The CODED flat envelope, `{error, code, message}` ────────────────────
-  // Until `phase2/route-errors` every one of these was caught by its route and
+  // Until the original fix every one of these was caught by its route and
   // re-sent through fastify-sensible, so the shape below has never been on the
   // wire before and no case here had ever parsed it.
   {

@@ -174,7 +174,7 @@ export type ChecksumMode = 'prefer' | 'require';
  *
  * §9.4 option A, the recommended one: SCRUBBED ONLY, unrecoverable, no
  * reversible map anywhere. Option B (a per-org reversible map) was rejected
- * because it turns `traces` into a PII store with a key, in a fleet whose DB
+ * because it turns `traces` into a PII store with a key, in deployments whose DB
  * roles are already Postgres superusers.
  *
  * Spanish tokens on purpose — a scrubbed trace has to still read as prose to

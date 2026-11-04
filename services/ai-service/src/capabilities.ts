@@ -175,7 +175,7 @@ export const SERVICE_CAPABILITIES = Object.freeze({
    *
    * 🔴 THIS FILE DESCRIBES THE CODE, NOT ANY RUNNING SERVICE, and for the rerank
    * seam those differ RIGHT NOW. A deployment serves whatever image it was built
-   * from, so a service running a build older than `ee844cd` answers
+   * from, so a service running a build older than the rerank seam answers
    * `piiMinimisation: true` from code where the rerank pool is UNSCRUBBED.
    * MEASURED: `ai.dev.example.org/v1/capabilities` returned `true`
    * while dev ran an image that predated the rerank seam; stage and prod were

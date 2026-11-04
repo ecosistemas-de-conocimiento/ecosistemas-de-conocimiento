@@ -27,14 +27,8 @@ export const refuseForeignProjectTeam = makeRefuseForeignOrganization(undefined,
  * and `status` are clean-text fields the chat context renders directly (never
  * `JSON.stringify`'d).
  *
- * ⚠ THIS IS THE DOMAIN `projects`, AND IT IS THE ONLY ONE. The standalone
- * identity provider that was merged into this backend also had a `projects`
- * collection, meaning something completely different: the catalogue of PRODUCTS
- * in a fleet, whose slug was a token audience. Both cannot live here under one
- * name, and only one of them describes something this product has.
- *
- * The IdP's version was deleted. Its job — being the scope a token is minted
- * for — moved to `organizations`, which is this product's real tenancy axis.
+ * ⚠ THIS IS THE DOMAIN `projects`, AND IT IS THE ONLY ONE. The scope a
+ * token is minted for is `organizations`, this product's real tenancy axis.
  * See the header of `lib/permissions.ts`. If you are looking for the thing that
  * `aud` names, it is an organization slug, not one of these.
  *

@@ -40,8 +40,8 @@ describe('CHAT_SYSTEM_PROMPT', () => {
     );
   });
 
-  it('🔴 partly relevant passages get an answer, not the no-answer reply (Educación, 8b525fa)', () => {
-    // 8b525fa's "Si los documentos no responden la pregunta, contesta
+  it('🔴 partly relevant passages get an answer, not the no-answer reply (Educación)', () => {
+    // An earlier rule's "Si los documentos no responden la pregunta, contesta
     // exactamente …" refused 3/3 on-topic Educación questions on dev.
     expect(CITE_RULE).not.toContain('Si los documentos no responden la pregunta');
     expect(CITE_RULE).toContain('aunque solo cubran una parte de ella');
@@ -65,7 +65,7 @@ describe('CHAT_SYSTEM_PROMPT', () => {
 });
 
 describe('CHAT_CITE_VARIANT — the dev prompt A/B', () => {
-  it('A is the 8a1df66 rule and prompt, unchanged', () => {
+  it('A is the original rule and prompt, unchanged', () => {
     expect(CITE_RULE_VARIANTS.A).toBe(CITE_RULE);
     expect(chatSystemPrompt('A')).toBe(CHAT_SYSTEM_PROMPT);
   });
@@ -166,7 +166,7 @@ describe('variant E — documents first, then general knowledge, marked', () => 
     expect(E).toContain(`que empiece exactamente con "${GENERAL_KNOWLEDGE_LEAD}"`);
     expect(E).toContain('Ese párrafo no lleva números entre corchetes');
     expect(E).toContain('Si ningún pasaje tiene relación con la pregunta, responde solo con ese párrafo');
-    // Measured on dev at 7b2e27e: "París es la capital de Francia." came back
+    // Measured on dev: "París es la capital de Francia." came back
     // with no lead, so the source rule could not tell it was general knowledge.
     expect(E).toContain(`y empieza también con "${GENERAL_KNOWLEDGE_LEAD}" aunque la respuesta sea una sola frase`);
   });
@@ -239,7 +239,7 @@ describe('CHAT_ENGINE_CONFIG.systemPrompt reads CHAT_CITE_VARIANT per request', 
 describe('turn-conditional rules (2026-10-28) leave every base prompt byte for byte', () => {
   // sha256 prefixes. The turn-conditional rules never change these. Re-pinned
   // ON PURPOSE 2026-10-28 (owner request): `CHUNK_DATA_RULE` now says a
-  // numbered source opens with "Título: …". The hashes on main 5cf9111 were
+  // numbered source opens with "Título: …". The hashes before that were
   // A 5c54ff636960d459, E ab007e5ff755481e, R 10f990eac3f38e9f, I 82208a333917eaf7.
   const sha = async (s: string) => (await import('node:crypto')).createHash('sha256').update(s).digest('hex').slice(0, 16);
 

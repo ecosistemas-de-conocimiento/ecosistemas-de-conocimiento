@@ -163,7 +163,7 @@ defect.
 
 ### 🔴 And deleting has to reach the corpus
 
-The Voces work merged the same day (`c0fea63`) ingests chat turns into
+The Voces work merged the same day ingests chat turns into
 **`eco-{orgId}` — the ecosistema's SHARED corpus**, one turn per message, keyed
 `msg-<id>`. `collections/Messages.ts` has no delete hook.
 

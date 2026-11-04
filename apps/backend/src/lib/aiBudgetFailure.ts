@@ -168,9 +168,8 @@ export function classifyAIBudgetFailure(err: unknown): AIBudgetFailure | null {
  * present and equal. An unknown requester (`null`) is NEVER an owner — absence
  * of information is not permission.
  *
- * ⚠ THE FLIP POINT HAS ARRIVED BUT IS NOT WIRED. This predicate used to be
- * documented as permanently false, because the backend it came from was
- * single-org. THIS product is multitenant: `memberships` gives every request a
+ * ⚠ THE FLIP POINT HAS ARRIVED BUT IS NOT WIRED. This product is multitenant:
+ * `memberships` gives every request a
  * real organization, so a caller CAN now be compared against the org named in a
  * budget failure.
  *

@@ -66,7 +66,7 @@ export interface CatalogueDrift {
    * permission the IdP does have and `ungranted` is meaningless. `extraInIdp`
    * stays trustworthy either way — a key cannot be handed out without existing.
    *
-   * ⚠ Platform admin is a FLEET-WIDE flag, so in most deployments an export
+   * ⚠ Platform admin is a GLOBAL flag, so in most deployments an export
    * contains one and this is simply true. Do not read it as a quality signal;
    * read it as "was a catalogue available".
    */

@@ -22,11 +22,9 @@ import { currentAppEnv } from './env-gate'
  *     compromise, not a local inconvenience. An unset `SEED_ADMIN_PASSWORD`
  *     means "skip, loudly", never "invent one".
  *
- *     ⚠ THE MERGE CHANGED THIS. The product backend it came from shipped a
- *     literal default password and used it whenever `NODE_ENV !== 'production'`.
- *     That was survivable for a chat app whose worst case was a stranger reading
- *     demo conversations. It is not survivable for an identity provider, and
- *     "deployed dev runs NODE_ENV=production" is exactly the kind of assumption
+ *     ⚠ NO DEFAULT KEYED ON `NODE_ENV !== 'production'` EITHER. It is not
+ *     survivable for an identity provider, and "deployed dev runs
+ *     NODE_ENV=production" is exactly the kind of assumption
  *     that turns "local only" into "on the internet". Set the variable — see
  *     `.env.example`.
  *

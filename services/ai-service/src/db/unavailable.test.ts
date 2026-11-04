@@ -55,7 +55,7 @@ describe('isDatabaseUnavailableError', () => {
     ['an 08xxx code on a non-Postgres error', Object.assign(new Error('x'), { code: '08P01' })],
     ['a plain Error', new Error('boom')],
     // Not the database: an upstream HTTP call (OpenRouter) failing on the
-    // network. The audit of 0a91b46 found these were labelled a DB outage.
+    // network. An audit found these were labelled a DB outage.
     ['a fetch DNS failure (ENOTFOUND in cause)', fetchError('ENOTFOUND')],
     ['a fetch reset (ECONNRESET in cause)', fetchError('ECONNRESET')],
     ['a bare ETIMEDOUT not raised by the driver', Object.assign(new Error('t'), { code: 'ETIMEDOUT' })],

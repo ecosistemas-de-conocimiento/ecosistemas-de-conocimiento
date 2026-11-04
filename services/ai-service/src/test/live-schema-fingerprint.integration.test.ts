@@ -312,7 +312,7 @@ describe('🔴 the live-schema fingerprint does not depend on who is asking', ()
       //
       // Read immediately and it is deterministic in both directions. A retry
       // loop around a leak check turns the leak into a pass — the exact species
-      // of masking this wave exists to remove.
+      // of masking this test exists to remove.
       const leftOver = Number(
         (
           await pool<{ n: string }[]>`
@@ -335,8 +335,8 @@ describe('🔴 the live-schema fingerprint does not depend on who is asking', ()
     // 🔴 THE CONSEQUENCE CONTROL. Postgres does not nest transactions: a blind
     // `BEGIN … COMMIT` issued on a connection that is ALREADY inside one only
     // warns on the BEGIN, then COMMITS THE CALLER'S transaction — after which
-    // their `ROLLBACK` is a no-op and their changes are permanent. Reproduced
-    // elsewhere in this fleet: a dropped column survived its own ROLLBACK.
+    // their `ROLLBACK` is a no-op and their changes are permanent. Reproduced:
+    // a dropped column survived its own ROLLBACK.
     //
     // Reading `SHOW search_path` cannot see any of that. This asserts the
     // consequence: open a transaction, change the schema in it, fingerprint,

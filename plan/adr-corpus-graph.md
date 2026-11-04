@@ -2,18 +2,18 @@
 
 ## 0. 🔴 AMENDMENT (2026-08-28, after the first build pass) — read this before §1
 
-This ADR was written against `main` at `6b0117f`. **While it was being implemented, another session
+This ADR was written against `main`. **While it was being implemented, another session
 advanced `main` by eight commits and shipped two of the things this ADR planned.** The body below is
 left as written, because the reasoning still holds and the graph design is unaffected; this section
 records exactly what is now wrong in it.
 
 ### What already exists on `main`, and supersedes parts of this document
 
-| Commit | What it shipped | Which section it overrides |
-| --- | --- | --- |
-| `fd52489` | **Voces, the Investigador role, and the anonymisation gate** — including `documents.contentKind` and `apps/backend/src/lib/contentKind.ts` | § 3 in full, § 1.2.6 |
-| `239ba31` | **`/biblioteca`** — the ecosystem library, list plus a `/biblioteca/[id]` detail page | § 9 step 2 |
-| `b3fbcce` | `documents.session` goes `hasMany` | § 12.1 |
+| What it shipped | Which section it overrides |
+| --- | --- |
+| **Voces, the Investigador role, and the anonymisation gate** — including `documents.contentKind` and `apps/backend/src/lib/contentKind.ts` | § 3 in full, § 1.2.6 |
+| **`/biblioteca`** — the ecosystem library, list plus a `/biblioteca/[id]` detail page | § 9 step 2 |
+| `documents.session` goes `hasMany` | § 12.1 |
 
 ### § 3 — `contentKind` is no longer ours to add
 
@@ -33,7 +33,7 @@ or its semantics silently weakens the rule that a testimonio never produces `per
 This ADR recorded: *"the default consent level is `anónimo`"*, following
 `plan/anonimizacion-y-voces.md` §3.4's rule that the default must be the most protective option.
 
-`fd52489` decided something better and the ADR defers to it:
+The Voces work decided something better and the ADR defers to it:
 
 > **There is no `subject` field and no consent level. At all.** Not a name, not a code, not a hidden
 > column. The reasoning: *a stored subject IS a re-identification map* — the same argument

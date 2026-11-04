@@ -1,85 +1,81 @@
 # edc-1 — the dev + staging box
 
-**Status:** live since 2026-10-17. Dev runs `main` @ `3f275c5` (`[[wikilink]]` graph seeds, student
+**Status:** live since 2026-10-17. Dev runs `main` (`[[wikilink]]` graph seeds, student
 notes on "Publicar" and "Publicar cambios", `.xls` uploads; migrations `20261028_170129`,
 `20261028_231948` with the `processed_body` backfill and `20261028_235647` applied on start), deployed
-2026-10-29 00:24 UTC — see §4zy. Before that, `d04a112` (per-ecosistema answer style, `/grafo` org 6
-hang fixed; one migration on start), deployed 2026-10-28 17:23 UTC — see §4zx. Before that, `9597969`
-(no migration) — see §4zw. Before that, `191cad9` (versioned testimonio consent;
+2026-10-29 00:24 UTC — see §4zy. Before that (per-ecosistema answer style, `/grafo` org 6
+hang fixed; one migration on start), deployed 2026-10-28 17:23 UTC — see §4zx. Before that
+(no migration) — see §4zw. Before that (versioned testimonio consent;
 migration `20261028_083327_student_testimonio_consent_version` applied on start; anonymise and chat
-source fixes), deployed 2026-10-28 09:36 UTC — see §4zv. Before that, `1c80a84` (web phone fixes and the
+source fixes), deployed 2026-10-28 09:36 UTC — see §4zv. Before that (web phone fixes and the
 `seed:semiosis-demo` script; no migration; org 8 `keepPublicFigures` on), deployed 2026-10-28 08:12
-UTC — see §4zu. Before that, `a39af86` (the `studentTestimonios` switch:
+UTC — see §4zu. Before that (the `studentTestimonios` switch:
 teachers see students' published testimonios, anonymised, with the student's own consent; migration
 `20261028_054402_student_testimonio_consent` applied on start), deployed 2026-10-28 06:10 UTC — see
-§4zt. Before that, `326a66e` (keep public figures in documentos, `keepPublicFigures` settable by
+§4zt. Before that (keep public figures in documentos, `keepPublicFigures` settable by
 platform admins only, start screen for participante/estudiante; migration
 `20261027_225429_documents_public_figures` applied on start), deployed 2026-10-28 06:05 UTC — §4zt.
-Before that, `19525be` (the anonymisation gate redacts a
+Before that (the anonymisation gate redacts a
 bare first name or surname of a detected person; no migration), deployed 2026-10-27 22:58 UTC — see
-§4zs. Before that, `9907e9e` (peer queries in the student view read
+§4zs. Before that (peer queries in the student view read
 documentos only, never testimonios; student-view FKs cascade; migration
 `20261027_061014_student_view_fk_cascade` applied on start), deployed 2026-10-27 06:27 UTC — see
-§4zr. Before that, `db2d201` (profiles `estudiante` and
+§4zr. Before that (profiles `estudiante` and
 `investigador`, the student view `/estudiante` and the teacher side `/seguimiento` behind
 `studentView`, scoped `/admin` for investigadores; two migrations applied on start), deployed
-2026-10-27 06:13 UTC, with four seeded demo accounts — see §4zq. Before that, `98bf4ae` (XLSX, CSV, HTML and Markdown
+2026-10-27 06:13 UTC, with four seeded demo accounts — see §4zq. Before that (XLSX, CSV, HTML and Markdown
 documentos; `sessions.kind`; per-ecosistema feature switches and `/ajustes`; three migrations
 applied on start by `scripts/migrate.sh`), deployed 2026-10-27 03:06 UTC, with a fifth ecosistema,
-id 8 "Semiosis práctica" — see §4zp. Before that, `dd9a5c5` (the live mic's last line fills
-the chat input on stop), deployed 2026-10-27 00:25 UTC — see §4zo. Before that, `34296a8` (`documents.anonymise`: participant
+id 8 "Semiosis práctica" — see §4zp. Before that (the live mic's last line fills
+the chat input on stop), deployed 2026-10-27 00:25 UTC — see §4zo. Before that (`documents.anonymise`: participant
 PDF/DOCX documentos and staff "Anonimizar" uploads pass the anonymisation gate; exclude-select
 fails closed; interviewer turns for a participant's own story; source icon and day under testimonio
 titles; migration `20261026_160000_documents_anonymise`), deployed 2026-10-26 22:33 UTC — see §4zn.
-Before that, `f85493b` (document texts up to 2,000,000
+Before that (document texts up to 2,000,000
 characters, so a PDF over 40,000 characters stores its `extractedText`; a throw in extract+ingest
-marks the row `failed`), deployed 2026-10-26 21:04 UTC — see §4zm. Before that, `410756a` (live recordings save as
+marks the row `failed`), deployed 2026-10-26 21:04 UTC — see §4zm. Before that (live recordings save as
 `audio/webm`, `BODY_SIZE_LIMIT=201M`, better live-text stitching, a send right after "Nueva
-conversación" lands in the new chat), deployed 2026-10-25 01:22 UTC — see §4zl. Before that,
-`a761fc9` (live mic with partial text, 3D discs, auto-publish with a "Publicados" list; live
-recordings refused on upload as `video/webm`), deployed 2026-10-25 00:15 UTC — see §4zk. Before that, `23e7098` (system-proposed testimonio titles,
+conversación" lands in the new chat), deployed 2026-10-25 01:22 UTC — see §4zl. Before that (live mic with partial text, 3D discs, auto-publish with a "Publicados" list; live
+recordings refused on upload as `video/webm`), deployed 2026-10-25 00:15 UTC — see §4zk. Before that (system-proposed testimonio titles,
 migration `20261024_230631_documents_testimonio_title`, titles backfilled; chat source cards wrap),
-deployed 2026-10-24 23:27 UTC — see §4zj. Before that, `f0f3266` (persona public-figure mark with
+deployed 2026-10-24 23:27 UTC — see §4zj. Before that (persona public-figure mark with
 migration `20261024_201817_graph_entities_public_figure`, no private persona in the graph,
 `/miembros`, source cards for used and pinned attachments), deployed 2026-10-24 20:34 UTC — see
-§4zi. Before that, `020ebec` (anonymisation town rule, `/grafo`
+§4zi. Before that (anonymisation town rule, `/grafo`
 hides lone towns but never a state, chat turn recovery by turn id), deployed 2026-10-24 19:31 UTC —
-see §4zh. Before that, `47b140c` ("En revisión" labels, testimonio
-excerpts, dense `[n]` numbering), deployed 2026-10-23 18:46 UTC — see §4zg. Before that, `8984fec`
-(Payload `/duplicate` refused; uploads follow the selected ecosistema; 15:34 UTC, §4zf). Before that, `45c30fd`
-(four demo-polish branches; 07:35 UTC, §4ze). Before that, `e3fe6ee` (combined graph "Todos mis
+see §4zh. Before that ("En revisión" labels, testimonio
+excerpts, dense `[n]` numbering), deployed 2026-10-23 18:46 UTC — see §4zg. Before that
+(Payload `/duplicate` refused; uploads follow the selected ecosistema; 15:34 UTC, §4zf). Before that
+(four demo-polish branches; 07:35 UTC, §4ze). Before that (combined graph "Todos mis
 ecosistemas", 3D "Altura", rerank score restored, persona-privacy fixes; 2026-10-22 07:34 UTC,
-§4zd). Before that, `47ce647` (cite variant E by default; no-`[n]` fallback sources
-need a rerank score; 02:50 UTC, §4zc). Before that,
-`7b2e27e` (deployed by edcai), and before that `7e51205` (`/grafo` phone CSS, 3D labels by
+§4zd). Before that (cite variant E by default; no-`[n]` fallback sources
+need a rerank score; 02:50 UTC, §4zc). Before that (deployed by edcai), and before that (`/grafo` phone CSS, 3D labels by
 screen overlap), deployed 2026-10-22 00:42 UTC, with embeddings on the Spark and a hosted fallback
 (§4za) — see §4zb. Before that (`[n]` stripped from stored turns, 3D label
 declutter, ai-stack update; 00:13 UTC) — see §4z. Before that
 (audio-service under compose profile `audio`), redeployed 2026-10-21 23:18 UTC after a failed deploy
 — see §4x. Dev now has four ecosistemas
-(ids 1, 3, 6, 7), a 2D/3D graph (`6fb558e`) and turns stored through the gate (`66790b5`). Before that,
-`08b32da` (graph: no language or placeholder nodes; 20:07 UTC) — see §4w, which also lists the dev
-demo accounts. Before that, `1a148aa` (cite A/B switch) and `8a1df66` (cite-rule fix
-round 2; 16:47 UTC, §4v; ⚠ Educación answers still hedge). Before that, `5fe43ff` (answer from
-partly relevant passages; 16:33 UTC, §4u). Before that, `8b525fa` (tighter cite rule, no sources on a no-answer reply, at most 7 sources;
-16:16 UTC, §4t). Before that, `9285305` (sources fallback, cite rule in the prompt, no draft
-search without attachments; 16:00 UTC, §4s). Before that, `0e92026` (title match always shown as a source, Revisión
-follows the picker; 15:41 UTC, §4r). Before that,
-`6d213a9` (held-publish fix, town rule, title-only retrieval; 14:58 UTC), with the 13
-held-but-published testimonios repaired — see §4q. Before that, `a4643cb` (privacy gate, Voz-only seed, chat searches documents
-only; 11:52 UTC) on freshly wiped and reseeded databases with two ecosistemas — see §4p. Before that, dev ran `2f60202` (UX batches 6–8; 09:17 UTC, §4o).
-Before that, dev ran `d12f0b4` (UX batches 1–5:
-pinned docs, documents page, closed sign-up, whole graph, Revisión wording; 08:51 UTC, §4n). Before that, dev ran `39823b3` (conversation delete erases its
+(ids 1, 3, 6, 7), a 2D/3D graph and turns stored through the gate. Before that (graph: no language or placeholder nodes; 20:07 UTC) — see §4w, which also lists the dev
+demo accounts. Before that (cite A/B switch) and (cite-rule fix
+round 2; 16:47 UTC, §4v; ⚠ Educación answers still hedge). Before that (answer from
+partly relevant passages; 16:33 UTC, §4u). Before that (tighter cite rule, no sources on a no-answer reply, at most 7 sources;
+16:16 UTC, §4t). Before that (sources fallback, cite rule in the prompt, no draft
+search without attachments; 16:00 UTC, §4s). Before that (title match always shown as a source, Revisión
+follows the picker; 15:41 UTC, §4r). Before that (held-publish fix, town rule, title-only retrieval; 14:58 UTC), with the 13
+held-but-published testimonios repaired — see §4q. Before that (privacy gate, Voz-only seed, chat searches documents
+only; 11:52 UTC) on freshly wiped and reseeded databases with two ecosistemas — see §4p. Before that, dev ran a build (UX batches 6–8; 09:17 UTC, §4o).
+Before that, dev ran a build (UX batches 1–5:
+pinned docs, documents page, closed sign-up, whole graph, Revisión wording; 08:51 UTC, §4n). Before that, dev ran a build (conversation delete erases its
 turns from ai-service; ratings FKs cascade; 2026-10-20 20:10 UTC, §4m). Before that,
-dev ran `8b6a60b` (prompt-injection fence in the chat prompt; 19:54 UTC, §4l). Before that, dev ran `29f61b3` (backend migration
+dev ran a build (prompt-injection fence in the chat prompt; 19:54 UTC, §4l). Before that, dev ran a build (backend migration
 `documents.uploaded_in_session_id`, testimonio drafts cascade, files deleted with their document),
-deployed 2026-10-18 00:27 UTC — see §4k. Staging runs `97d5316`, deployed 2026-10-17 23:03 UTC —
-see §4j. Before that, dev ran `5c157bb` (a conversation delete also deletes its own uploads; 22:31 UTC, §4i). Before that, `e3eb1f3` on both
-(migration `0005_pg_trgm`, session-delete owner guard; 22:01 / 22:14 UTC, §4h). Before that, `643ff4e` on both (12:28 / 12:36 UTC, §4e), and `fcd5247` on
-dev only (§4g). Before that, `7dbe85c` (05:07 / 05:49 UTC) with the org move of §4c. Verified end to end on both (measured by the deploy agent): login, PDF
+deployed 2026-10-18 00:27 UTC — see §4k. Staging runs its earlier build, deployed 2026-10-17 23:03 UTC —
+see §4j. Before that, dev ran a build (a conversation delete also deletes its own uploads; 22:31 UTC, §4i). Before that on both
+(migration `0005_pg_trgm`, session-delete owner guard; 22:01 / 22:14 UTC, §4h). Before that on both (12:28 / 12:36 UTC, §4e), and on
+dev only (§4g). Before that (05:07 / 05:49 UTC) with the org move of §4c. Verified end to end on both (measured by the deploy agent): login, PDF
 upload → `ready` via the public https callback, real OpenRouter chat answer whose
 `provenance.chunks[]` cites the upload, conversation delete, admin usage panel, lengua filter pages
-, usage logs booked to `edc-eco-1`. Before that: `fcd1325`, then `f89047e` (first deploy). Companion docs: `env-manifests.md` (what each variable means),
+, usage logs booked to `edc-eco-1`. Before that: the first deploy. Companion docs: `env-manifests.md` (what each variable means),
 `runbook.md`, `backups.md`.
 
 🔴 **No secret value appears in this file.** Secrets are named; their values live in the two places
@@ -213,7 +209,7 @@ Footguns met on this box:
 
 ### 4a. ✅ Done 2026-10-17: edits for the ai-service update
 
-Applied on both apps before their `fcd1325` deploy (measured). What differed from the plan:
+Applied on both apps before their deploy (measured). What differed from the plan:
 
 - `RERANK_ENABLED` already existed on both apps (value `false`, auto-created from the OLD compose
   default). It reaches ai-service through `env_file`, so it would have silently killed rerank once
@@ -227,7 +223,7 @@ Applied on both apps before their `fcd1325` deploy (measured). What differed fro
   (measured, both apps).
 - `GET /api/v1/deploy?uuid=…` now answers "This endpoint has changed to a POST request" — use POST.
 
-The original plan, kept for reference — the compose file now requires `PUBLIC_BACKEND_URL` (rendering fails without it), and the synced
+The original plan, kept for reference — the compose file now requires `PUBLIC_BACKEND_URL` (rendering fails without it), and the updated
 ai-service refuses the old internal callback origin. Per application:
 
 | change | dev (`edc-dev`) | staging (`edc-staging`) |
@@ -266,18 +262,18 @@ ai-service refuses the old internal callback origin. Per application:
   container answers `legs: ["dense","lexical","rerank"]` with `rerankScore` on chunks, and logs
   `rerank ok` with `provider: deepinfra`. Dev, 3 paired calls on `eco-1`: 0.42–0.63 s without
   rerank, 1.32–3.18 s with it (pool 20; dev was mid-ingest). The log line carries no duration.
-- ✅ **Chat now asks for rerank** (code since `7e137e2`, read 2026-10-17). ai-service reranks
+- ✅ **Chat now asks for rerank** (code since the earlier fix, read 2026-10-17). ai-service reranks
   only when a request sends `rerank: true`. `apps/web` now passes a `retrievalPolicy` with
   `rerank: true` on each corpus retrieve, behind `CHAT_RERANK` (default on; `off` disables it,
   `apps/web/src/lib/server/engine/rerank.ts`). ⚠ Not yet measured on edc-1: the smoke chats above
-  ran before `7e137e2` and returned `rerankScore: null`. Re-check after the next deploy.
+  ran before that fix and returned `rerankScore: null`. Re-check after the next deploy.
 - A `/v1/retrieve` without `mode: 'hybrid'` runs only the dense leg (plus rerank), so chat's
   default path logs `legs: ["dense","rerank"]` by design. The lexical leg runs only with
   `mode: 'hybrid'`, and drops out of `legs` when no stem matches (read in code 2026-10-17:
   `services/ai-service/src/services/rag/retrieve.ts`, `req.mode === 'hybrid'`; chat sends
   `hybrid` only when `CHAT_RETRIEVAL_MODE` asks for it, `apps/web/src/lib/server/engine/config.ts`).
 
-### 4e. ✅ Done 2026-10-17 12:28–12:43 UTC: `643ff4e`, both envs
+### 4e. ✅ Done 2026-10-17 12:28–12:43 UTC: both envs
 
 All measured by the deploy agent. Before each deploy, through the API:
 
@@ -316,8 +312,8 @@ Found along the way:
 - Dev carried 2 documents at `ingest_status=pending` and 2 at `graph_status=extracting` before
   the deploy, plus 48 `graph failed` (the 120 s timeout this deploy raises). Not touched here.
 - Disk, `df -h /` free: 40 GB before; 27 GB after dev's build; 51 GB after `docker builder prune
-  -af` and removing dev's `7dbe85c` images; 38 GB after staging's build; 61 GB after the same
-  cleanup on staging. Build cache per slim build ≈ 13 GB. The `7dbe85c` images are gone, so
+  -af` and removing dev's previous images; 38 GB after staging's build; 61 GB after the same
+  cleanup on staging. Build cache per slim build ≈ 13 GB. the previous images are gone, so
   rollback means rebuilding an older commit.
 
 ### 4f. ✅ Done 2026-10-17: reranker on an EDC-owned DeepInfra key, both envs
@@ -336,9 +332,9 @@ Found along the way:
   and still carry the shared key in their environment from the 12:28/12:37 deploys. They do not
   use it. The next Coolify deploy of each env replaces them.
 
-### 4g. ✅ Done 2026-10-17 21:05–21:11 UTC: `fcd5247`, dev only
+### 4g. ✅ Done 2026-10-17 21:05–21:11 UTC: dev only
 
-All measured by the deploy agent. Staging (`edc-staging`) was not touched; it stays on `643ff4e`.
+All measured by the deploy agent. Staging (`edc-staging`) was not touched; it stays on its earlier build.
 The dev app was resolved by its domain through the API (`edc-dev` = `pehgnxpqvnonhihabzvnwnil`).
 
 - Before the deploy, through the API: `AI_SERVICE_ADMIN_API_KEY` is 64 chars and its sha256 matches
@@ -346,7 +342,7 @@ The dev app was resolved by its domain through the API (`edc-dev` = `pehgnxpqvno
   preview copies) with sha256 prefix `4dbc5b378dde`, the same as the local file.
   `LLM_REQUEST_TIMEOUT_MS=600000`. None of the new optional variables (`CHAT_RETRIEVAL_MODE`,
   `GRAPH_EXTRACT`, `ANONYMISE_*`, `TRUSTED_PROXY_HOPS`) was set; they run on code defaults.
-- No compose or migration file changed between `643ff4e` and `fcd5247` (read: `git diff --name-only`).
+- No compose or migration file changed between the two builds (read: `git diff --name-only`).
   After the reload, no non-preview variable holds `:?` error text. The same 5 preview copies as in
   §4e still do.
 - Backup (`pg_restore -l` ok, sha256 matched off-box): `/root/backups/20261017T2105Z/`, `edc_ai`
@@ -372,13 +368,13 @@ The dev app was resolved by its domain through the API (`edc-dev` = `pehgnxpqvno
   Counts after, by SQL: 258 backend documents (249 `ready`), 253 ai-service documents. Dev doc 258
   (a leftover from §4e) is still there.
 - Disk, `df -h /` free: 61 GB before; 48 GB after the build (build cache 12.96 GB); 61 GB after
-  `docker builder prune -af` and removing dev's three `643ff4e` images. Images 7.0 GB, build cache 0.
+  `docker builder prune -af` and removing dev's three previous images. Images 7.0 GB, build cache 0.
   The postgres image is now tagged per environment (`edc-postgres:pg16-dev` / `pg16-stage`).
 
-### 4h. ✅ Done 2026-10-17 22:01–22:20 UTC: `e3eb1f3`, both envs
+### 4h. ✅ Done 2026-10-17 22:01–22:20 UTC: both envs
 
-All measured by the deploy agent. `e3eb1f3` adds ai-service migration `0005_pg_trgm`
-(`CREATE EXTENSION IF NOT EXISTS pg_trgm`) and the session-delete owner guard (`7c2f1a5`). No
+All measured by the deploy agent. The build adds ai-service migration `0005_pg_trgm`
+(`CREATE EXTENSION IF NOT EXISTS pg_trgm`) and the session-delete owner guard. No
 compose file changed. Each app was resolved by its domain through the API before deploying.
 `HYBRID_LEXICAL_LEG` and `TRIGRAM_THRESHOLD` stay unset on both (API list, and unset inside
 ai-service). Dev first; staging only after dev's cleanup showed 61 GB free.
@@ -420,15 +416,15 @@ ai-service too. By SQL, no `zarzamora.pdf` remains in either store on either env
 dev 257 backend documents (248 `ready`), 253 ai-service; staging 4 / 4 / 6.
 
 **Disk**, `df -h /` free: 61 GB before dev; 48 GB after dev's build; 61 GB after
-`docker builder prune -af` (12.96 GB) and removing dev's `fcd5247` images; 48 GB after staging's
-build; 61 GB after the same cleanup and removing staging's `643ff4e` images. Images 7.0 GB, build
-cache 0. Only `e3eb1f3` images remain, so a rollback means rebuilding an older commit.
+`docker builder prune -af` (12.96 GB) and removing dev's previous images; 48 GB after staging's
+build; 61 GB after the same cleanup and removing staging's previous images. Images 7.0 GB, build
+cache 0. Only images remain, so a rollback means rebuilding an older commit.
 
-### 4i. ✅ Done 2026-10-17 22:31–22:40 UTC: `5c157bb`, dev only
+### 4i. ✅ Done 2026-10-17 22:31–22:40 UTC: dev only
 
-All measured by the deploy agent. Staging was not touched; it stays on `e3eb1f3`. Dev was resolved
-by its domain through the API. `5c157bb` makes a conversation delete also delete the uploads that
-belong only to it (`31cd595`, `fb08716`; the rule is in `apps/backend/src/lib/conversationUploads.ts`).
+All measured by the deploy agent. Staging was not touched; it stays on its earlier build. Dev was resolved
+by its domain through the API. The build makes a conversation delete also delete the uploads that
+belong only to it (the rule is in `apps/backend/src/lib/conversationUploads.ts`).
 
 - Backup (`pg_restore -l` ok, sha256 matched off-box): `/root/backups/20261017T2231Z/`, `edc_ai`
   2.3 MB, `edc_backend` 314 KB. Pre-check by hash as in §4h: admin key, `RERANK_API_KEY`
@@ -464,12 +460,11 @@ Found along the way:
   ✅ Cleaned on dev at 22:56 UTC (§4j).
 
 **Disk**, `df -h /` free: 61 GB before; 48 GB after the build; 61 GB after `docker builder prune
--af` (12.96 GB) and removing dev's `e3eb1f3` images. Images 7.0 GB, build cache 0.
+-af` (12.96 GB) and removing dev's previous images. Images 7.0 GB, build cache 0.
 
-### 4j. ✅ Done 2026-10-17 22:56–23:05 UTC: `97d5316` on staging; dev leftovers removed
+### 4j. ✅ Done 2026-10-17 22:56–23:05 UTC: staging; dev leftovers removed
 
-All measured by the deploy agent. Dev was not redeployed; it stays on `5c157bb`. From `5c157bb` to
-`97d5316` only a doc and an e2e test changed (`git diff --name-only`), so dev runs the same code.
+All measured by the deploy agent. Dev was not redeployed; it stays on its earlier build. Between the two builds only a doc and an e2e test changed (`git diff --name-only`), so dev runs the same code.
 
 **Dev leftover files.** The 5 orphan `media` rows of §4i (ids 6–10, `zarzamora*.pdf`, uploader
 user 1) were deleted as admin through the backend (`DELETE /api/media/<id>`, 200 each). Their
@@ -498,12 +493,12 @@ Document counts unchanged: 257 backend (248 `ready`), 253 ai-service.
   cleanup was approved.
 
 **Disk**, `df -h /` free: 61 GB before; 48 GB after staging's build; 61 GB after `docker builder
-prune -af` (12.96 GB) and removing staging's `e3eb1f3` images. Images 7.0 GB, build cache 0.
+prune -af` (12.96 GB) and removing staging's previous images. Images 7.0 GB, build cache 0.
 
-### 4k. ✅ Done 2026-10-18 00:26–00:36 UTC: `29f61b3`, dev only
+### 4k. ✅ Done 2026-10-18 00:26–00:36 UTC: dev only
 
-All measured by the deploy agent. Staging was not touched; it stays on `97d5316`. Dev was resolved
-by its domain through the API. `29f61b3` (`22ed9e0`, `29f61b3`) records each upload's conversation
+All measured by the deploy agent. Staging was not touched; it stays on its earlier build. Dev was resolved
+by its domain through the API. The build records each upload's conversation
 in a new column, cascades testimonio drafts with their conversation, and deletes a document's file
 when the document is deleted.
 
@@ -540,15 +535,15 @@ conversations 20–33. Those are not from this deploy's runs, and all of them ar
 Retiring keeps the row (§4h), so this is expected.
 
 **Disk**, `df -h /` free: 61 GB before; 48 GB after the build; 61 GB after `docker builder prune
--af` (12.96 GB) and removing dev's `5c157bb` images. Images 7.0 GB, build cache 0.
+-af` (12.96 GB) and removing dev's previous images. Images 7.0 GB, build cache 0.
 
-### 4l. ✅ Done 2026-10-20 19:54–20:02 UTC: `8b6a60b`, dev only
+### 4l. ✅ Done 2026-10-20 19:54–20:02 UTC: dev only
 
-All measured by the deploy agent. Staging was not touched; it stays on `97d5316`. Dev was resolved
-by its domain through the API. `8b6a60b` (`ee9d852`, `8b6a60b`) is a web-only prompt-injection
+All measured by the deploy agent. Staging was not touched; it stays on its earlier build. Dev was resolved
+by its domain through the API. The build is a web-only prompt-injection
 fence: retrieved chunks and @-mentioned documents go into the chat prompt inside a fence, and
 earlier assistant answers are labelled. No compose, migration or variable change
-(`git diff --name-only 29f61b3 8b6a60b`; the backend files touched are under `src/eval`, which is
+(`git diff --name-only`; the backend files touched are under `src/eval`, which is
 not in the backend build).
 
 - Backup (`pg_restore -l` ok, sha256 matched off-box): `/root/backups/20261020T1954Z/`, `edc_ai`
@@ -573,12 +568,12 @@ ai-service — all the same as before the deploy (SQL, `find`). Rerank since the
 `rerank ok`, 0 `rerank degraded` (ai-service log).
 
 **Disk**, `df -h /` free: 61 GB before; 48 GB after the build; 61 GB after `docker builder prune
--af` (12.96 GB) and removing dev's `29f61b3` images. Images 7.0 GB, build cache 0.
+-af` (12.96 GB) and removing dev's previous images. Images 7.0 GB, build cache 0.
 
-### 4m. ✅ Done 2026-10-20 20:09–20:20 UTC: `39823b3`, dev only
+### 4m. ✅ Done 2026-10-20 20:09–20:20 UTC: dev only
 
-All measured by the deploy agent. Staging got only a read-only API check; it stays on `97d5316`.
-Dev was resolved by its domain through the API. `39823b3` (`a2950a8`, `0bad4c5`): deleting a
+All measured by the deploy agent. Staging got only a read-only API check; it stays on its earlier build.
+Dev was resolved by its domain through the API. The build: deleting a
 conversation now **erases** its turns from ai-service after commit (document and chunks), not just
 retires them. Turns that land after their conversation is gone are erased too. The 4 `ratings`
 foreign keys become `ON DELETE CASCADE`. Adds `scripts/check-turn-corpus.ts`.
@@ -630,28 +625,28 @@ After: no orphan chunks; 257 backend documents (248 `ready`), 266 ai-service; 5 
 the deploy. Rerank since the deploy: 4 `rerank ok`, 0 `rerank degraded` (ai-service log).
 
 **Disk**, `df -h /` free: 61 GB before; 48 GB after the build; 61 GB after `docker builder prune
--af` (12.96 GB) and removing dev's `8b6a60b` images. Images 7.0 GB, build cache 0.
+-af` (12.96 GB) and removing dev's previous images. Images 7.0 GB, build cache 0.
 
-### 4n. ✅ Done 2026-10-21 08:30–09:12 UTC: `51b3d06`, `941ae13`, then `d12f0b4`, dev only
+### 4n. ✅ Done 2026-10-21 08:30–09:12 UTC: dev only
 
-All measured by the deploy agent. Staging was not touched; it stays on `97d5316`. Dev was resolved
+All measured by the deploy agent. Staging was not touched; it stays on its earlier build. Dev was resolved
 by its domain through the API before each deploy. Three builds:
 
 | build | contents | deploy (API poll every 20 s) | backup, sha256 matched off-box |
 |---|---|---|---|
-| `51b3d06` | UX batch 1 (pinned docs reach the model, progress text, clickable `[n]`, rename) + backend stops ingesting assistant turns | 08:30:57 → 08:36:42 | `/root/backups/20261021T0830Z/` |
-| `941ae13` | UX batch 2 (Mis documentos upload, download original, audio hidden) | 08:45:27 → 08:50:51 | `20261021T0845Z` |
-| `d12f0b4` | batch 3 `710660f` (closed sign-up, no-ecosystem screen, nav fit), batch 4 `b1a2d47` (graph), batch 5 (Revisión wording) | 08:51:44 → 08:57:07 | `20261021T0851Z` |
+| first | UX batch 1 (pinned docs reach the model, progress text, clickable `[n]`, rename) + backend stops ingesting assistant turns | 08:30:57 → 08:36:42 | `/root/backups/20261021T0830Z/` |
+| second | UX batch 2 (Mis documentos upload, download original, audio hidden) | 08:45:27 → 08:50:51 | `20261021T0845Z` |
+| third | batch 3 (closed sign-up, no-ecosystem screen, nav fit), batch 4 (graph), batch 5 (Revisión wording) | 08:51:44 → 08:57:07 | `20261021T0851Z` |
 
-`941ae13` was deployed but not smoked: the later batches arrived while it built, so every batch's
-checks ran once on `d12f0b4`. Coolify built `main`'s head at queue time, which was already
-`d12f0b4` (not `b1a2d47` as requested). No migration in any build: `payload_migrations` stays at
+Batch 2 was deployed but not smoked: the later batches arrived while it built, so every batch's
+checks ran once on that build. Coolify built `main`'s head at queue time, which was already
+head (not the commit requested). No migration in any build: `payload_migrations` stays at
 3, `edc_ai` current at 6 (schema gate log). `PROMPT_SOURCE` (and the old `CHAT_PROMPT_SOURCE`) is
 unset on dev and staging, in Coolify and in both running web containers. After each deploy: 6
 containers `healthy`, health 200, `RERANK_API_KEY` `4dbc5b378dde` in every container, no
 non-preview variable holds `:?` text.
 
-**Batch 1 on `51b3d06`** (as admin; streaming `POST /api/generate?stream=1`, time from request):
+**Batch 1** (as admin; streaming `POST /api/generate?stream=1`, time from request):
 
 | question | first token | full answer |
 |---|---|---|
@@ -671,10 +666,10 @@ non-preview variable holds `:?` text.
 - Rename: `PATCH /api/sessions/<id>` `{title}` → 200, title stored and shown in the sidebar.
 - No assistant turn ingested: the 4 assistant messages read `corpus_status = skipped`, and
   ai-service held 0 `msg-*` documents after the chats.
-- Rerank on `51b3d06`: 15 `rerank ok`, 1 `rerank degraded` (`timeout`, corpus `eco-1-draft-1`,
+- Rerank on that build: 15 `rerank ok`, 1 `rerank degraded` (`timeout`, corpus `eco-1-draft-1`,
   pool 36, **topK 32**, 8000 ms). topK was 20 in §4g; pinned docs seem to widen it (inferred).
 
-**Batch 2 on `d12f0b4`:**
+**Batch 2 on that build:**
 
 - Mis documentos → "Subir documento" (Playwright, file input): the document reached `ready` in the
   database, and "Descargar original" downloaded the same bytes (sha256 `7af69e469d3d…` both).
@@ -689,7 +684,7 @@ non-preview variable holds `:?` text.
 - "Nueva conversación con este documento" → a new conversation opens with the document in its
   panel (LISTO). The document is attached unpinned (`fijar` off).
 
-**Batch 3 on `d12f0b4`:**
+**Batch 3 on that build:**
 
 - `/sign-up` → 303 to `/sign-in?registro=cerrado`, which shows "Ya no se pueden crear cuentas desde
   esta página…". `POST /api/auth/register` → 403. Anonymous `POST /api/users` on the backend → 403.
@@ -703,7 +698,7 @@ non-preview variable holds `:?` text.
 - Top nav at 1366 px: `scrollWidth` = `clientWidth` = 1366, no horizontal scroll (screenshot).
 - The test user and its membership were deleted afterwards.
 
-**Batch 4 on `d12f0b4` (graph):**
+**Batch 4 on that build (graph):**
 
 - Backfill CLI, dry run (`GRAPH_BACKFILL_DRY_RUN=1 payload run src/lib/graph/backfill.cli.ts`):
   9 candidates at current prompt `v4`, all 9 skipped "sin texto anonimizado aprobado" (the 9 held
@@ -721,7 +716,7 @@ non-preview variable holds `:?` text.
   the first topic ("traducción en salud") opened its panel. No page errors. No near-duplicate
   labels among the 124 points shown. Some labels overlap on the map (screenshots).
 
-**Batch 5 on `d12f0b4`:** `/revision` lists 9 held testimonios. Each badge count matches its
+**Batch 5 on that build:** `/revision` lists 9 held testimonios. Each badge count matches its
 sentence ("1 dato señalado" / "quedó 1 dato…", "7 datos" / "quedaron 7 datos…"). Sentences are
 whole, ending "Todavía no se agregó a la búsqueda." No intro paragraph: title, "En Organización
 Demo.", then the list. `scripts/demo-ecosistemas.sh` was not run.
@@ -733,7 +728,7 @@ After cleanup (SQL, `find`): 0 sessions; 257 backend documents (248 `ready`), 24
 **Disk**, `df -h /` free: 61 GB before; 47 GB after each build; 60 GB after each `docker builder
 prune -af` (12.96 GB) and removing the previous dev images. Images 7.5 GB, build cache 0.
 
-### 4o. ✅ Done 2026-10-21 09:08–09:35 UTC: `b7df3d1`, then `2f60202`, dev only
+### 4o. ✅ Done 2026-10-21 09:08–09:35 UTC: dev only
 
 All measured by the deploy agent. Staging was not touched. Dev was resolved by its domain through
 the API before each deploy. Web-only changes (`git diff --name-only`: `apps/web` only); no
@@ -741,14 +736,14 @@ migration (`payload_migrations` 3, `edc_ai` current at 6). Desktop checks only (
 
 | build | contents | deploy (API poll every 20 s) | backup, sha256 matched off-box |
 |---|---|---|---|
-| `b7df3d1` | UX batch 6: explainer paragraphs removed, phone layout, upload cap by kind | 09:08:53 → 09:14:38 | `/root/backups/20261021T0908Z/` |
-| `2f60202` | batch 7 `02a826b` (grouped citations clickable, draft retrieve capped at 20, graph labels) + batch 8 `a68466f` (attach fix, pinned new conversation, polling badges, uploads checked by first bytes) | 09:17:38 → 09:23:01 | `20261021T0916Z` |
+| first | UX batch 6: explainer paragraphs removed, phone layout, upload cap by kind | 09:08:53 → 09:14:38 | `/root/backups/20261021T0908Z/` |
+| second | batch 7 (grouped citations clickable, draft retrieve capped at 20, graph labels) + batch 8 (attach fix, pinned new conversation, polling badges, uploads checked by first bytes) | 09:17:38 → 09:23:01 | `20261021T0916Z` |
 
-Coolify built `main`'s head at queue time, `2f60202`, so batch 7 was never built on its own. After
+Coolify built `main`'s head at queue time, so batch 7 was never built on its own. After
 each deploy: 6 containers `healthy`, health 200, `RERANK_API_KEY` `4dbc5b378dde` everywhere, no
 non-preview variable holds `:?` text.
 
-**Batch 6 on `b7df3d1`** (Playwright, admin, 1366 px; screenshots of sign-in, chat, Mis
+**Batch 6** (Playwright, admin, 1366 px; screenshots of sign-in, chat, Mis
 documentos, Biblioteca, Conexiones, Revisión, Administración). No horizontal scroll on any screen
 (`scrollWidth` 1366 = viewport). No page errors. Sign-in, chat, Mis documentos, Biblioteca and
 Revisión show no explainer paragraph. Text that still explains or instructs, quoted per screen:
@@ -767,10 +762,10 @@ Revisión show no explainer paragraph. Text that still explains or instructs, qu
   de documentos." · "Las estrellas y, sobre todo, los motivos." · "El corpus completo del ecosistema.
   Solo el registro: quién lo subió, cuándo y en qué estado — nunca el contenido de un borrador."
 
-Chat smoke on `b7df3d1`: upload → `ready` in 2.2 s; two answers from it, first token 6.8 s / 6.4 s,
+Chat smoke on that build: upload → `ready` in 2.2 s; two answers from it, first token 6.8 s / 6.4 s,
 full 8.5 s / 6.7 s; the conversation delete removed the upload from all 5 places of §4i.
 
-**Batches 7 and 8 on `2f60202`:**
+**Batches 7 and 8 on that build:**
 
 | check | result |
 |---|---|
@@ -790,7 +785,7 @@ document; users 1 and 2.
 **Disk**, `df -h /` free: 60 GB before; 47 GB after each build; 60 GB after each `docker builder
 prune -af` (12.96 GB) and removing the previous dev images. Images 7.5 GB, build cache 0.
 
-### 4p. ✅ Done 2026-10-21 09:43–12:14 UTC: wipe and reseed, dev only (`a4643cb`)
+### 4p. ✅ Done 2026-10-21 09:43–12:14 UTC: wipe and reseed, dev only
 
 All measured by the deploy agent. Staging was not touched. Dev data is disposable (owner's ruling);
 both databases were wiped twice. Model spend is read from ai-service `usage_logs`. A wipe empties
@@ -830,15 +825,15 @@ only (252 rows, 252 distinct names). The seed ends with in-process graph extract
 ⚠ Held rows keep `ingest_status = pending` for good, so "nothing pending" never comes. Wait for
 the seed process to exit and for no row at `anonymisation_status` pending or `n/a`.
 
-**Run 1** (09:50–10:31 UTC, `b2801b4`, no detector pacing): 252 rows. 214 passed the gate, 38
+**Run 1** (09:50–10:31 UTC, no detector pacing): 252 rows. 214 passed the gate, 38
 held (37 `verify`, 1 `structural`), 3 ingest `failed` among the held. 158 published. ai-service
 logged 75 responses with status 429 on `/v1/generate/sync` between 09:59 and 10:27. None became
 a hold: no stage note mentions an error. Spend $0.4786. This run was wiped by run 2.
 
 **Run 2, the final one.** Added on dev only, through the API: `ANONYMISE_DETECT_MIN_GAP_MS=2700`,
 `ANONYMISE_DETECT_CONCURRENCY=1` (literal, preview copies made by Coolify; the backend reads them
-through `env_file`; `printenv` shows both). Deployed `dd4e7cc` (10:32:52 → 10:38:15), wiped, and
-seeded 10:39:34 → 11:51:35 (≈ 72 min; the 2.7 s gap paces the detector). Then deployed `a4643cb`
+through `env_file`; `printenv` shows both). Deployed (10:32:52 → 10:38:15), wiped, and
+seeded 10:39:34 → 11:51:35 (≈ 72 min; the 2.7 s gap paces the detector). Then deployed the build
 (11:52:31 → 11:56:28, web + backend, no wipe) before the smoke. `INGEST_ASSISTANT_TURNS` and
 `CHAT_RETRIEVE_ASSISTANT_CHUNKS` are unset. Backups: `/root/backups/20261021T0943Z/` (before run 1)
 and `20261021T1032Z` (before run 2), both checked with `pg_restore -l`, sha256 matched off-box.
@@ -886,7 +881,7 @@ at 12:14 UTC. Ready rows went 52 → 66 in 16 minutes: one extraction per ≈ 60
 pace the rest takes 3–4 hours (inferred). Spend during the backfill so far $0.0462; the whole
 backfill is ≈ $0.2 (inferred). It runs inside the backend container; a redeploy kills it.
 
-**Smoke on `a4643cb`** (as admin):
+**Smoke** (as admin):
 
 | check | result |
 |---|---|
@@ -906,10 +901,9 @@ backfill is ≈ $0.2 (inferred). It runs inside the backend container; a redeplo
 RustFS still holds the files of the wiped rows (no `media` rows point at them). Not cleaned.
 
 **Disk**, `df -h /` free: 60 GB before; 42 GB before the final prune (two builds); 60 GB after
-`docker builder prune -af` (16.53 GB) and removing dev's `2f60202`, `b2801b4` and `dd4e7cc`
-images. Images 7.5 GB, build cache 0.
+`docker builder prune -af` (16.53 GB) and removing dev's previous images. Images 7.5 GB, build cache 0.
 
-### 4q. ✅ Done 2026-10-21 14:57–15:35 UTC: `6d213a9` and the privacy repairs, dev only
+### 4q. ✅ Done 2026-10-21 14:57–15:35 UTC: the privacy repairs, dev only
 
 All measured by the deploy agent. Staging was not touched. No wipe.
 
@@ -917,7 +911,7 @@ All measured by the deploy agent. Staging was not touched. No wipe.
 "no usable `parsed` payload"), 38 skipped (held), 13 orphan nodes removed. Graph status then: ready
 200, failed 14, skipped 38. Cost $0.4452 (`usage_logs` 1.2998 − 0.8546).
 
-**Deploy** `6d213a9` (held-publish fix, town rule, title-only retrieval). Backup
+**Deploy** (held-publish fix, town rule, title-only retrieval). Backup
 `/root/backups/20261021T1458Z/` (sha256 matched off-box). 14:58:35 → 15:04:14 UTC. 6 containers
 `healthy`, health 200, `edc_ai` 6 migrations, `payload_migrations` 3. `apps/backend/scripts/`
 is in the image (`repair-held-published.ts`, `purge-unscrubbed-graph-rows.ts`,
@@ -955,12 +949,12 @@ After: 159 published, 57 ready drafts, 36 held; 0 sessions. **Spend tonight**: �
 (wiped) + `usage_logs` now $1.3670 = **$1.8456** of the $10 overnight cap.
 
 **Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
--af` (12.97 GB) and removing dev's `a4643cb` images. Images 7.8 GB, build cache 0.
+-af` (12.97 GB) and removing dev's previous images. Images 7.8 GB, build cache 0.
 
-### 4r. ✅ Done 2026-10-21 15:40–16:05 UTC: `0e92026`, dev only
+### 4r. ✅ Done 2026-10-21 15:40–16:05 UTC: dev only
 
-All measured by the deploy agent. Staging was not touched. Web only (`b147846` a document named by
-title always shows as a source; `e8964e3` Revisión follows the ecosistema picker); no migration,
+All measured by the deploy agent. Staging was not touched. Web only (a document named by
+title always shows as a source; Revisión follows the ecosistema picker); no migration,
 no variable change. Backup `/root/backups/20261021T1540Z/` (`pg_restore -l` ok, sha256 matched
 off-box). Deploy 15:41:08 → 15:46:22 UTC; 6 containers `healthy`, health 200, no non-preview
 variable holds `:?` text.
@@ -971,7 +965,7 @@ variable holds `:?` text.
 | Did the filtered retrieve come back empty? | No, inferred. ai-service does not log a returned-chunk count. Its one `rerank ok` for that turn reads `corpus eco-1, poolSize 1, scored 1`, and doc 71 has exactly 1 live chunk in ai-service. So the `docId`-filtered retrieve returned that chunk |
 | Revisión follows the picker | Picked "Red de Educación Comunitaria" in the chat sidebar picker, then opened `/revision` with no `?eco=`: current chip Educación, **23** holds. Picked Salud: **13**. Both match the database (`held` per org: 1→13, 3→23). The in-page chips still use `?eco=` links and work |
 | Normal chat smoke | "criaderos de mosquitos y agua estancada" → 200, 10.0 s, markers `[1, 2, 3, 4, 5]`, 5 sources |
-| ⚠ Same dengue question as §4q | 3 runs, 3 long Markdown answers (2,093–2,285 chars, 0 manifest names) with **no `[n]` markers**, so **0 sources** (sources are cited-only since `a4643cb`). On `6d213a9` it returned grouped markers and 7 sources once. The prompt did not change in this deploy (`git diff 6d213a9 0e92026`). The model sometimes drops citations on a broad question, and the UI then shows no source |
+| ⚠ Same dengue question as §4q | 3 runs, 3 long Markdown answers (2,093–2,285 chars, 0 manifest names) with **no `[n]` markers**, so **0 sources** (sources are cited-only since the earlier fix). Before the fix it returned grouped markers and 7 sources once. The prompt did not change in this deploy (`git diff` of the range). The model sometimes drops citations on a broad question, and the UI then shows no source |
 | ⚠ web log | `[retrieve] rerank request failed (404); retrying without rerank`, 5 times since the deploy (the retry answers) |
 | Turns | 0 `msg-*` in ai-service; 0 sessions left |
 
@@ -979,12 +973,12 @@ Spend: `usage_logs` $1.3670 → $1.3802 (**+$0.0132**, 6 chats). Tonight: $0.478
 **$1.8588**.
 
 **Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
--af` (12.97 GB) and removing dev's `6d213a9` images. Images 7.8 GB, build cache 0.
+-af` (12.97 GB) and removing dev's previous images. Images 7.8 GB, build cache 0.
 
-### 4s. ⚠ Done with one failed check, 2026-10-21 15:59–16:15 UTC: `9285305`, dev only
+### 4s. ⚠ Done with one failed check, 2026-10-21 15:59–16:15 UTC: dev only
 
-All measured by the deploy agent. Staging was not touched. Web only (`c2d6ed7` skip the draft
-search when nothing is attached; `8ae68a3` an answer with no `[n]` lists its top 3 sources, and the
+All measured by the deploy agent. Staging was not touched. Web only (skip the draft
+search when nothing is attached; an answer with no `[n]` lists its top 3 sources, and the
 prompt asks to cite with `[n]`). No migration. Backup `/root/backups/20261021T1559Z/` (`pg_restore
 -l` ok, sha256 matched off-box). Deploy 16:00:12 → 16:05:47 UTC; 6 containers `healthy`, health
 200, no non-preview variable holds `:?` text.
@@ -1004,11 +998,11 @@ Spend: `usage_logs` $1.3802 → $1.3921 (**+$0.0119**, 9 chats). Tonight: $0.478
 **$1.8707**.
 
 **Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
--af` (12.97 GB) and removing dev's `0e92026` images. Images 7.8 GB, build cache 0.
+-af` (12.97 GB) and removing dev's previous images. Images 7.8 GB, build cache 0.
 
-### 4t. ⚠ Done with one failed check, 2026-10-21 16:16–16:30 UTC: `8b525fa`, dev only
+### 4t. ⚠ Done with one failed check, 2026-10-21 16:16–16:30 UTC: dev only
 
-All measured by the deploy agent. Staging was not touched. Web only (`9dfb87c`: tighter cite rule,
+All measured by the deploy agent. Staging was not touched. Web only (tighter cite rule,
 no sources on a no-answer reply, at most 7 sources). No migration. Backup
 `/root/backups/20261021T1616Z/` (`pg_restore -l` ok, sha256 matched off-box). Deploy 16:16:36 →
 16:22:07 UTC; 6 containers `healthy`, health 200, no non-preview variable holds `:?` text.
@@ -1040,13 +1034,13 @@ Spend: `usage_logs` $1.3921 → $1.4082 (**+$0.0161**, 11 chats). Tonight: $0.47
 **$1.8868**.
 
 **Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
--af` (12.97 GB) and removing dev's `9285305` images. Images 7.8 GB, build cache 0.
+-af` (12.97 GB) and removing dev's previous images. Images 7.8 GB, build cache 0.
 
-### 4u. ⚠ Done, Educación still refuses, 2026-10-21 16:27–16:45 UTC: `5fe43ff`, dev only
+### 4u. ⚠ Done, Educación still refuses, 2026-10-21 16:27–16:45 UTC: dev only
 
 All measured by the deploy agent. Staging was not touched.
 
-**Probe on `8b525fa` first** (read-only, 4 chats + direct retrieves; raw results in the deploy
+**Probe first** (read-only, 4 chats + direct retrieves; raw results in the deploy
 agent's scratchpad `educacion-probe.md`, chunk text redacted). Both Educación questions searched
 `eco-3` under org `edc-eco-3` (corpora `eco-3` + `eco-3-draft-1`, `asOf` set). ai-service logged
 `rerank ok`, pool 32, 8 scored. The same retrieve, replayed from the web container with its key,
@@ -1054,9 +1048,9 @@ returned 8 chunks, every one an org-3 published testimonio with tema `escuela` (
 `discapacidad` (Q2), `rerankScore` 0.66–0.987. The model still answered "Los documentos no hablan
 de esto." So retrieval is right and the refusal happens after it. The Salud control got the same
 refusal, but its chunks were off-topic (`traduccion`, rerank 0.88 → 0.002). The draft corpora
-answer 404 when called directly: none exist, and the web skips them since `c2d6ed7`.
+answer 404 when called directly: none exist, and the web skips them since the earlier fix.
 
-**Deploy** `5fe43ff` (web only: "answer from partly relevant passages; no-answer reply only when no
+**Deploy** (web only: "answer from partly relevant passages; no-answer reply only when no
 passage is on topic"). Backup `/root/backups/20261021T1632Z/` (sha256 matched off-box). 16:33:05 →
 16:38:32 UTC; 6 containers `healthy`, health 200.
 
@@ -1080,11 +1074,11 @@ Spend: `usage_logs` $1.4082 → $1.4358 (**+$0.0276**: probe 4 chats + 4 retriev
 Tonight: $0.4786 + $1.4358 = **$1.9144**.
 
 **Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
--af` (12.97 GB) and removing dev's `8b525fa` images. Images 7.8 GB, build cache 0.
+-af` (12.97 GB) and removing dev's previous images. Images 7.8 GB, build cache 0.
 
-### 4v. ⚠ Done, Educación still hedges, 2026-10-21 16:46–17:00 UTC: `8a1df66`, dev only
+### 4v. ⚠ Done, Educación still hedges, 2026-10-21 16:46–17:00 UTC: dev only
 
-All measured by the deploy agent. Staging was not touched. Web only (`8a1df66`: no-answer only when
+All measured by the deploy agent. Staging was not touched. Web only (no-answer only when
 no passage relates; firmer one-group citation rule; refusal cues skip the source fallback). Backup
 `/root/backups/20261021T1646Z/` (sha256 matched off-box). Deploy 16:47:07 → 16:52:31 UTC;
 6 containers `healthy`, health 200.
@@ -1114,13 +1108,13 @@ Spend: `usage_logs` $1.4358 → $1.4598 (**+$0.0240**, 12 chats). Tonight: $0.47
 **$1.9384**.
 
 **Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after `docker builder prune
--af` (12.97 GB) and removing dev's `5fe43ff` images. Images 7.8 GB, build cache 0.
+-af` (12.97 GB) and removing dev's previous images. Images 7.8 GB, build cache 0.
 
-### 4w. ✅ Done 2026-10-21 17:05–20:20 UTC: cite A/B, demo accounts, graph noise purge (`08b32da`), dev only
+### 4w. ✅ Done 2026-10-21 17:05–20:20 UTC: cite A/B, demo accounts, graph noise purge, dev only
 
 All measured by the deploy agent. Staging was not touched.
 
-**Cite-rule A/B** (`1a148aa`, 17:02 UTC). `CHAT_CITE_VARIANT` A–D was set only in the generated
+**Cite-rule A/B** (17:02 UTC). `CHAT_CITE_VARIANT` A–D was set only in the generated
 `/data/coolify/applications/<dev>/.env`, then `docker compose … up -d --no-deps --no-build web`.
 `printenv` and the web log line `[prompt] cite variant X` confirmed each run. The variable was
 removed and web re-created at the end. 20 streamed runs (raw table in the deploy agent's
@@ -1142,7 +1136,7 @@ unset, a random password printed once to the boot log. It was unset on dev, and 
 with the container, so the password was reset as above. The lowest role is `member` (`ORG_ROLES`
 in `apps/backend/src/lib/permissions.ts`: member < investigador < admin < owner).
 
-**Graph noise purge, `08b32da`** (languages and placeholders filtered; the overview hides isolated
+**Graph noise purge** (languages and placeholders filtered; the overview hides isolated
 nodes). Backup `/root/backups/20261021T2006Z/` (sha256 matched off-box). Deploy 20:07:03 →
 20:12:27 UTC; 6 containers `healthy`, health 200. `scripts/purge-graph-noise.ts`, from
 `/repo/apps/backend` with `env -u SEED_CORPUS_INGEST … node_modules/.bin/payload run`:
@@ -1175,11 +1169,11 @@ chats). Tonight: $0.4786 + $1.5059 = **$1.9845** of the $10 cap.
 `docker builder prune -af` (12.97 GB) and removing the previous dev images. Images 7.8 GB, build
 cache 0.
 
-### 4x. ⚠ Done 2026-10-21 22:50–23:30 UTC: four ecosistemas, 2D/3D graph (`6fb558e`), stored turns (`66790b5`), dev only — with a self-caused outage
+### 4x. ⚠ Done 2026-10-21 22:50–23:30 UTC: four ecosistemas, 2D/3D graph, stored turns, dev only — with a self-caused outage
 
 All measured by the deploy agent. Staging was not touched.
 
-**`6fb558e`** (force-graph 2D, lazy 3D, one-doc thresholds read at query time). `GRAPH_MIN_SUPPORT`
+**Deploy** (force-graph 2D, lazy 3D, one-doc thresholds read at query time). `GRAPH_MIN_SUPPORT`
 was not set; no new `GRAPH_*` variable added; no variable holds `:?` text. Backup
 `/root/backups/20261021T2253Z/` (sha256 matched off-box). Deploy 22:53:34 → 22:59:19 UTC; 6
 containers `healthy`. No corpus folder in the backend container and `CORPUS_DIR` unset, so a boot
@@ -1198,7 +1192,7 @@ documents and 111 chunks moved into 4 corpora, 2 budgets created. Every cross-ch
 | 7 | Discapacidad | `discapacidad` (new) | 60 (31) | `edc-eco-7`, $5, PUT → 200 |
 
 Members (3 each) were copied into all four. `purge-graph-noise.ts`: 1 entity, 1 mention ("mercado
-de Domicilio C", now caught by `488ee4d`). Graph entities after: 1 → 107, 3 → 74, 6 → 75, 7 → 96.
+de Domicilio C", now caught by a later fix). Graph entities after: 1 → 107, 3 → 74, 6 → 75, 7 → 96.
 
 Verify as the participant (Playwright 1366 px; SwiftShader WebGL; screenshots):
 
@@ -1215,7 +1209,7 @@ Verify as the participant (Playwright 1366 px; SwiftShader WebGL; screenshots):
 The switcher lists the 4 (Acompañamiento escolar, Discapacidad, Prevención del dengue, Traducción
 en salud). Biblioteca totals match the published counts above. No page errors.
 
-**`66790b5`** (#4 v2: chat turns stored through the anonymisation gate and used only to orient chat,
+**Deploy** (#4 v2: chat turns stored through the anonymisation gate and used only to orient chat,
 never cited). Backup `/root/backups/20261021T2304Z/`. Deploy 23:04:39 → 23:10:03 UTC. Smoke as the
 participant in Prevención del dengue, 3 fresh conversations:
 
@@ -1228,34 +1222,34 @@ participant in Prevención del dengue, 3 fresh conversations:
 - Detector calls: **2** `/v1/generate/sync` per exchange (the brief expected 4–6). Only the
   assistant turn becomes a message row.
 - The stored turn text (`msg-81`, `kind conversacion`) has 0 manifest names and 0 `[Persona X]`.
-  ⚠ It still holds **7 `[n]` citation groups**, although `68fd202` says brackets are stripped from
+  ⚠ It still holds **7 `[n]` citation groups**, although says brackets are stripped from
   turns.
 - Deleting the 3 conversations removed the 3 `msg-*` documents (0 left).
 
 **🔴 Incident, 23:10–23:25 UTC: dev down ≈ 8 minutes, caused by this agent.** While I pruned after
-`66790b5`, a deploy of `ac47612` queued by someone else at 23:06:36 (deployment
+the deploy, another deploy queued by someone else at 23:06:36 (deployment
 `k3iirrwz0bsperpwxqgg43vz`) was building. My cleanup loop removed every dev image not tagged
-`66790b5`, so it deleted its freshly built `web` and `ai-service` images (`ac47612`) and pruned
+with the current build, so it deleted its freshly built `web` and `ai-service` images and pruned
 20.47 GB of build cache. At start, Coolify tried to pull those images ("pull access denied for
 pehgnxpqvnonhihabzvnwnil_web…"); the deploy **failed** at 23:17:48, left all containers `Created`,
 and both health URLs answered 503. Volumes were untouched. Fixed by redeploying the same commit
 through the API (23:18:39 → 23:24:59, `finished`). 9 containers up, including the audio services
-`ac47612` turns on; health 200. Data checked: 252 backend documents, 4 organisations, 228 ai-service
+the build turns on; health 200. Data checked: 252 backend documents, 4 organisations, 228 ai-service
 documents (= 66 + 51 + 55 + 56, the split script's corpus totals).
 **Rule from this: before any `docker rmi` or `docker builder prune` on the box, check
 `GET /api/v1/deployments` is empty and no `docker compose … build` runs; remove only images of known
 older commits by name.**
 
-Spend: `usage_logs` $1.5059 → $1.5237 (**+$0.0178**: 6fb558e checks and chats $0.0072, 66790b5 smoke
+Spend: `usage_logs` $1.5059 → $1.5237 (**+$0.0178**: graph checks and chats $0.0072, stored-turns smoke
 $0.0106). Tonight: $0.4786 + $1.5237 = **$2.0023** of the $10 cap.
 
-**Disk**, `df -h /` free: 60 GB before; 47 GB after the `6fb558e` build; 60 GB after its prune
-(13.21 GB); 35 GB with `66790b5` and the concurrent `ac47612` build; 54 GB after the (harmful) prune
-above; 33 GB after the `ac47612` redeploy; 58 GB after `docker builder prune -af` (26.47 GB, no
-deploy running) and removing dev's `66790b5` images. Images 9.4 GB (audio images added), build
+**Disk**, `df -h /` free: 60 GB before; 47 GB after the build; 60 GB after its prune
+(13.21 GB); 35 GB with that build and the concurrent build; 54 GB after the (harmful) prune
+above; 33 GB after the redeploy; 58 GB after `docker builder prune -af` (26.47 GB, no
+deploy running) and removing dev's previous images. Images 9.4 GB (audio images added), build
 cache 0.
 
-### 4y. ✅ Done 2026-10-21 23:06–23:36 UTC: dev on the DGX Spark — audio, gate detector, rerank (`ac47612`)
+### 4y. ✅ Done 2026-10-21 23:06–23:36 UTC: dev on the DGX Spark — audio, gate detector, rerank
 
 All measured by the deploy agent unless marked. Staging was not touched: it has no `COMPOSE_PROFILES`,
 no `PUBLIC_AUDIO_UPLOAD_ENABLED` and keeps DeepInfra rerank.
@@ -1319,7 +1313,7 @@ rerank-only revert without a build can use the §4d method: edit the generated `
 `up -d`: "audio-service-worker: failed to mkdir …/pehgnxpqvnonhihabzvnwnil_audio-work/_data/uploads:
 file exists". Two containers copied the image's directory into the fresh volume at the same moment.
 Dev came back at 23:18 with `docker compose -p <uuid> -f docker-compose.yaml --env-file .env up -d
---no-build` on the box (9 containers healthy, health 200). The infra lane then redeployed `ac47612`
+--no-build` on the box (9 containers healthy, health 200). The infra lane then redeployed the build
 through Coolify (§4x). The volume now exists, so later deploys do not race. The compose fix (the
 worker waits for `audio-service` to start) is held for the next infra deploy.
 
@@ -1342,7 +1336,8 @@ as `unit.unitKey`, which answers 400, and web turns that into a 500. The first s
 polled `/api/documents/None`. That caused the backend log's `invalid input syntax for type integer:
 "NaN"` errors between 23:25 and 23:29. The UI does neither. Cleanup: the 4 smoke conversations were
 deleted (200), and docs 253–255 are gone from the backend and ai-service (SQL: 0 / 0).
-### 4z. ✅ Done 2026-10-22 00:13–00:35 UTC: `0d21852`, dev only
+
+### 4z. ✅ Done 2026-10-22 00:13–00:35 UTC: dev only
 
 All measured by the deploy agent. Staging was not touched. The edcai session held off the box until
 this was done. Its Spark and audio variables (`WHISPER_*`, `AUDIO_*`, `ANONYMISE_DETECT_*`,
@@ -1361,7 +1356,7 @@ Smoke as the participant in Prevención del dengue (id 6):
 |---|---|
 | chat | 200, 19.1 s, 12 `[n]` groups in the answer, 7 sources |
 | stored turn after the gate | turn 86 `ingested` with `redacted_text`; ai-service `msg-86` 2,600 chars with **0 `[n]` groups** (the backend `redacted_text` has 0 too). §4x had 7 |
-| 2D unchanged | canvas `toDataURL` sha256 `0289eaab2fde`, the same as on `6fb558e` |
+| 2D unchanged | canvas `toDataURL` sha256 `0289eaab2fde`, the same as on that build |
 | 3D labels | 17 visible labels, all 11 px. From the screenshot: about 7 on topics (top), 4 on events, 6 on places, so slightly over "≈ 5 per level" on topics. 4 overlapping label pairs remain in the topic layer (e.g. "prevención" over "dengue"). Readable; not fully decluttered |
 | audio upload (Spark) | a 5 s 440 Hz tone (`prueba-4z.mp3`, 20 KB, no speech): upload 201; the transcription job (`transcribe_id` set) answered in ≈ 4 s; the document ended `failed` with `empty_transcript: Transcription produced no text…`. That is the correct outcome for silence: the pipeline and callback work end to end. No spoken test clip was available on the agent's machine |
 
@@ -1369,7 +1364,7 @@ Test conversations deleted (0 participant sessions, 0 `msg-*` left; the audio do
 conversation).
 
 Cleanup only after the deploy was `finished`: `GET /api/v1/deployments` empty and no compose build
-running, then `docker rmi` of the three `ac47612` images by name and `docker builder prune -af`
+running, then `docker rmi` of the three previous images by name and `docker builder prune -af`
 (14.73 GB).
 
 Spend: `usage_logs` $1.5317 → $1.5362 (**+$0.0045**). The total also holds edcai's own use since
@@ -1378,7 +1373,7 @@ Spend: `usage_logs` $1.5317 → $1.5362 (**+$0.0045**). The total also holds edc
 **Disk**, `df -h /` free: 57 GB before; 43 GB after the build; 57 GB after the cleanup. Images
 10.4 GB, build cache 0.
 
-### 4za. ✅ Done 2026-10-22 00:24–00:40 UTC: embeddings on the Spark with a hosted fallback (`65d3317`), dev only
+### 4za. ✅ Done 2026-10-22 00:24–00:40 UTC: embeddings on the Spark with a hosted fallback, dev only
 
 All measured by the deploy agent. Staging was not touched. Spark proxy log times are CST (UTC−6).
 
@@ -1396,7 +1391,7 @@ Variables added to `edc-dev` through the API, literal (Coolify also made the pre
 73 chars). No variable holds `:?` text. **Revert:** delete the five `EMBEDDINGS_*` variables (both
 the normal and the preview copies) and redeploy; ai-service then embeds on OpenRouter as before.
 
-Deploy `pfsw0ethnqcddkxa9znljlyn`, `65d3317` (origin/main): 00:26:05 → 00:32:21 UTC; 9
+Deploy `pfsw0ethnqcddkxa9znljlyn`: 00:26:05 → 00:32:21 UTC; 9
 containers up, both health URLs 200. No migration. The container sees all five values. ai-service
 runs ingest and query in one Node process, so the cooldown covers both.
 
@@ -1415,12 +1410,12 @@ Test conversations deleted: 3 sessions, documents 257–259, 0 `msg-*` left in a
 Spend: `usage_logs` $1.5362 → $1.5525 (**+$0.0163**). Disk `df -h /` free: 57 GB before, 43 GB
 after the build; no image prune was run.
 
-### 4zb. ✅ Done 2026-10-22 00:42–01:15 UTC: `7e51205` and the cite variant E A/B, dev only
+### 4zb. ✅ Done 2026-10-22 00:42–01:15 UTC: the cite variant E A/B, dev only
 
 All measured by the deploy agent. Staging was not touched. `GRAPH_SEARCH_ENABLED` and
 `CHAT_CITE_VARIANT` are unset in Coolify (search on by default); no variable holds `:?` text; the
-Spark variables of §4za were left as they were. `7e51205` is web only since `65d3317`: `/grafo`
-phone CSS (`60ba6da`) and 3D labels decluttered by screen overlap, re-run on camera moves (`c8335ae`).
+Spark variables of §4za were left as they were. The build is web only since the earlier fix: `/grafo`
+phone CSS and 3D labels decluttered by screen overlap, re-run on camera moves.
 
 Backup `/root/backups/20261022T0042Z/` (sha256 matched off-box). Deploy 00:42:12 → 00:46:31 UTC;
 9 containers up, health 200.
@@ -1453,8 +1448,7 @@ E answers the Educación question that A refuses, and keeps off-topic at 0 sourc
 slow under both (16–91 s). ⚠ The A dengue run 2 answer contains "Antonio", found in neither the
 shown sources' capped text nor the question; check it by hand.
 
-Cleanup once nothing was deploying or building: `docker rmi` of dev's `65d3317` and `0d21852`
-images by name, then `docker builder prune -af` (18.55 GB). Test conversations deleted (0 left).
+Cleanup once nothing was deploying or building: `docker rmi` of dev's previous images by name, then `docker builder prune -af` (18.55 GB). Test conversations deleted (0 left).
 
 Spend: `usage_logs` $1.5525 → $1.5783 (**+$0.0258**; graph search, 3D and 20 chats). Tonight:
 $0.4786 + $1.5783 = **$2.0569** of the $10 cap.
@@ -1462,10 +1456,10 @@ $0.4786 + $1.5783 = **$2.0569** of the $10 cap.
 **Disk**, `df -h /` free: 43 GB before; 38 GB after the build; 57 GB after the cleanup. Images
 10.4 GB, build cache 0.
 
-### 4zc. ✅ Done 2026-10-22 02:50–03:05 UTC: `47ce647`, dev only
+### 4zc. ✅ Done 2026-10-22 02:50–03:05 UTC: dev only
 
-All measured by the deploy agent. Staging was not touched. Dev ran `7b2e27e` (deployed by edcai).
-`47ce647` is web only: an answer with no `[n]` falls back to sources only when their
+All measured by the deploy agent. Staging was not touched. Dev ran a build deployed by edcai.
+The build is web only: an answer with no `[n]` falls back to sources only when their
 `rerankScore` ≥ `CHAT_FALLBACK_MIN_RERANK` (default 0.1, **not set**), and the E prompt requires the
 "Fuera de los documentos" label. E is now the default (`DEFAULT_CITE_VARIANT`;
 `CHAT_CITE_VARIANT` unset); every run below logged `[prompt] cite variant E`.
@@ -1489,7 +1483,7 @@ no-`[n]` fallback path: both on-topic answers carried `[n]`, and France had none
 the reranker. The fallback floor does not apply to cited sources. Dengue at 83.7 s is still slow.
 
 Cleanup only after the deploy finished (`GET /api/v1/deployments` empty, no compose build):
-`docker rmi` by name of dev's `7b2e27e`, `45248be` and `7e51205` images (none in use), then
+`docker rmi` by name of dev's previous images (none in use), then
 `docker builder prune -af` (22.38 GB). Test conversations deleted (0 left).
 
 Spend: `usage_logs` $1.5847 → $1.5915 (**+$0.0068**). (Since §4zb, edcai's deploys and checks used
@@ -1498,18 +1492,18 @@ $0.0064.) Tonight: $0.4786 + $1.5915 = **$2.0701** of the $10 cap.
 **Disk**, `df -h /` free: 38 GB before; 34 GB after the build; 57 GB after the cleanup. Images
 10.4 GB, build cache 0.
 
-### 4zd. ✅ Done 2026-10-22 05:00 – 2026-10-23 UTC: `e3fe6ee`, dev only
+### 4zd. ✅ Done 2026-10-22 05:00 – 2026-10-23 UTC: dev only
 
-All measured by the deploy agent. Staging was not touched; edcai held off. `e3fe6ee` = c4 (roster
-word breaks `bd33e58`, unnamed relatives `6a3dac6`) + -0a (rerank score restored `814f2fd`, 3D
-"Altura" selector `3c023b1`, combined graph "Todos mis ecosistemas" `22a2158`, persona-privacy
-fixes `398eb5f`, `e3fe6ee`). No migration: `payload_migrations` 3, `edc_ai` 6. No variable holds
+All measured by the deploy agent. Staging was not touched; edcai held off. The build = c4 (roster
+word breaks, unnamed relatives) + -0a (rerank score restored, 3D
+"Altura" selector, combined graph "Todos mis ecosistemas", persona-privacy
+fixes). No migration: `payload_migrations` 3, `edc_ai` 6. No variable holds
 `:?` text.
 
 Backup `/root/backups/20261022T0500Z/`. ⚠ The off-box `scp` stalled for ≈ 18 min at 1.5 of
 2.2 MB, a network stall. Re-copied with `timeout 120 scp -o ServerAliveInterval=10`; sha256 of
 both dumps matched. Because the deploy came after a `;`, the stalled command still went on to
-deploy once the copy ended: `e3fe6ee` finished at 07:39:57 UTC on 2026-10-22. 9 containers up,
+deploy once the copy ended: the build finished at 07:39:57 UTC on 2026-10-22. 9 containers up,
 health 200. The smoke below ran the next day. **Lesson: chain the deploy with `&&` after the
 copy, and give `scp` a timeout.**
 
@@ -1535,7 +1529,7 @@ Redacted output of check 6 (placeholders only):
 town in "vivo en Xochitepec" became `[Domicilio A]`: a residence phrase is treated as an address
 even though towns are meant to show. The test document went with its conversation.
 
-Cleanup: nothing was deploying or building; only `e3fe6ee` images were left (pruned before), build
+Cleanup: nothing was deploying or building; only images were left (pruned before), build
 cache 0. Test conversations of the participant and investigador deleted.
 
 Spend: `usage_logs` $1.5915 → $1.5985 (**+$0.0070**). Tonight's runs: $0.4786 + $1.5985 =
@@ -1543,11 +1537,10 @@ Spend: `usage_logs` $1.5915 → $1.5985 (**+$0.0070**). Tonight's runs: $0.4786 
 
 **Disk**, `df -h /` free: 57 GB before; 58 GB at the end. Images 9.6 GB, build cache 0.
 
-### 4ze. ✅ Done 2026-10-23 07:30–07:50 UTC: `45c30fd`, dev only
+### 4ze. ✅ Done 2026-10-23 07:30–07:50 UTC: dev only
 
-All measured by the deploy agent. Staging was not touched; edcai held off. `45c30fd` = four
-demo-polish branches (chat, graph, documents/biblioteca, shell/revisión/admin) plus `1e92ac4` and
-`e6d650a`. No migration: `payload_migrations` 3, `edc_ai` 6. No variable holds `:?` text.
+All measured by the deploy agent. Staging was not touched; edcai held off. The build = four
+demo-polish branches (chat, graph, documents/biblioteca, shell/revisión/admin) plus. No migration: `payload_migrations` 3, `edc_ai` 6. No variable holds `:?` text.
 
 Backup `/root/backups/20261023T0735Z/`. The off-box copy now runs with `timeout 180 scp -o
 ServerAliveInterval=10`, and the deploy only starts after both dumps' sha256 match (`&&` chain,
@@ -1576,7 +1569,7 @@ Smoke: health 200 on `dev.` and `api.dev.`; chat in Prevención del dengue as th
 deleted. The full screen check is the auditor's.
 
 Cleanup after the deploy finished (no deploy queued, no compose build): `docker rmi` of dev's three
-`e3fe6ee` images by name, `docker builder prune -af` (14.74 GB).
+previous images by name, `docker builder prune -af` (14.74 GB).
 
 Spend: `usage_logs` $1.6034 → $1.6055 (**+$0.0021**). Since §4zd, others used $0.0049. Overnight
 runs: $0.4786 + $1.6055 = **$2.0841**.
@@ -1584,15 +1577,15 @@ runs: $0.4786 + $1.6055 = **$2.0841**.
 **Disk**, `df -h /` free: 58 GB before; 44 GB after the build; 58 GB after the cleanup. Images
 9.6 GB, build cache 0.
 
-### 4zf. ✅ Done 2026-10-23 15:34–16:05 UTC: `8984fec`, dev only — Payload `/duplicate` leak closed
+### 4zf. ✅ Done 2026-10-23 15:34–16:05 UTC: dev only — Payload `/duplicate` leak closed
 
 All measured by the deploy agent. Staging was not touched. The 36 held testimonios were kept (owner's
-option A); nothing of theirs was changed. `8984fec` = `69cc397` (refuse Payload's
+option A); nothing of theirs was changed. The build holds (refuse Payload's
 `POST /api/<slug>/:id/duplicate` on every collection: it filled omitted fields from the source row
 with field read access skipped, so a member could duplicate a published testimonio and read its
-unredacted text), `8984fec` (a standalone upload lands in the selected ecosistema), chat source
+unredacted text), (a standalone upload lands in the selected ecosistema), chat source
 renumbering, sign-in without JS, no blank chat on login. No migration (`payload_migrations` 3,
-`edc_ai` 6). `d794184` (held rows read "En revisión"; sign-in posts before hydration) landed on `main`
+`edc_ai` 6). A later commit (held rows read "En revisión"; sign-in posts before hydration) landed on `main`
 after this deploy and is **not** deployed.
 
 Backup `/root/backups/20261023T1534Z/`, copy time-limited, deploy chained on matching sha256.
@@ -1606,7 +1599,7 @@ Deploy 15:34:11 → 15:40:43 UTC; 9 containers up, health 200.
 | 4. sources numbered 1..n | Prevención del dengue: `[n]` uses 1–6, 6 sources with ordinals {1–6}: match (the provenance array arrives in the order 1, 4, 5, 6, 3, 2). ⚠ **Discapacidad: the answer uses [1]–[8], but 7 sources come back with ordinals {1, 2, 3, 4, 5, 6, 8}: `[7]` has no source.** Not fixed here |
 
 Cleanup after the deploy finished (no deploy queued, no compose build): `docker rmi` of dev's three
-`45c30fd` images by name, `docker builder prune -af` (14.74 GB). Test conversations deleted.
+previous images by name, `docker builder prune -af` (14.74 GB). Test conversations deleted.
 
 Spend: `usage_logs` $1.6055 → $1.6108 (**+$0.0053**). Overnight runs: $0.4786 + $1.6108 =
 **$2.0894**.
@@ -1614,12 +1607,11 @@ Spend: `usage_logs` $1.6055 → $1.6108 (**+$0.0053**). Overnight runs: $0.4786 
 **Disk**, `df -h /` free: 58 GB before; 43 GB after the build; 57 GB after the cleanup. Images
 10.3 GB, build cache 0.
 
-### 4zg. ✅ Done 2026-10-23 18:46–19:05 UTC: `47b140c`, dev only
+### 4zg. ✅ Done 2026-10-23 18:46–19:05 UTC: dev only
 
-All measured by the deploy agent. Staging was not touched; edcai held off. `47b140c` is web only:
-"En revisión"/"Rechazado" labels in Mis documentos and the admin table (`d794184`, `1f81cc2`),
-sign-in without JS, Biblioteca and chat sources shown as "Testimonio · <tema> — «first line»"
-(`d8763ec`, `9129888`), dense `[n]` renumbering with spaced markers (`47b140c`). No migration
+All measured by the deploy agent. Staging was not touched; edcai held off. The build is web only:
+"En revisión"/"Rechazado" labels in Mis documentos and the admin table,
+sign-in without JS, Biblioteca and chat sources shown as "Testimonio · <tema> — «first line»", dense `[n]` renumbering with spaced markers. No migration
 (`payload_migrations` 3, `edc_ai` 6); no variable change.
 
 Backup `/root/backups/20261023T1846Z/`, time-limited copy, sha256 matched; deploy chained after it.
@@ -1636,7 +1628,7 @@ Deploy 18:46:47 → 18:52:47 UTC (`zfuxbojxxbahpioyad5b4qct`). The agent's local
 No page errors. Test conversations of the participant deleted; 36 held testimonios untouched.
 
 Cleanup after the deploy finished (no deploy queued, no compose build): `docker rmi` of dev's three
-`8984fec` images by name, `docker builder prune -af` (14.74 GB).
+previous images by name, `docker builder prune -af` (14.74 GB).
 
 Spend: `usage_logs` $1.6108 → $1.6218 (**+$0.0110**). Overnight runs: $0.4786 + $1.6218 =
 **$2.1004**.
@@ -1644,20 +1636,19 @@ Spend: `usage_logs` $1.6108 → $1.6218 (**+$0.0110**). Overnight runs: $0.4786 
 **Disk**, `df -h /` free: 57 GB before; 43 GB after the build; 57 GB after the cleanup. Images
 10.3 GB, build cache 0.
 
-### 4zh. ✅ Done 2026-10-24 19:31–19:45 UTC: `020ebec`, dev only
+### 4zh. ✅ Done 2026-10-24 19:31–19:45 UTC: dev only
 
-All measured by the deploy agent. Staging was not touched (still `97d5316`). edcai was told before
-and after (relayed by the coordinator). `020ebec` = anonymisation town rule and verify fixes
-(`af63740` … `8bdbb77`, backend), `/grafo` hides a town whose only relation is its state
-(`e0d3914`, `0dcaf0d`) but never a state on a `both` pair (`179db01`), and a chat turn whose
-connection drops shows the saved answer, recovered by its own turn id (`3d93409`, `020ebec`).
-No migration (`payload_migrations` 3; no migration file in `47b140c..020ebec`); no compose or
+All measured by the deploy agent. Staging was not touched (still its earlier build). edcai was told before
+and after (relayed by the coordinator). The build = anonymisation town rule and verify fixes
+(backend), `/grafo` hides a town whose only relation is its state but never a state on a `both` pair, and a chat turn whose
+connection drops shows the saved answer, recovered by its own turn id.
+No migration (`payload_migrations` 3; no migration file in the range); no compose or
 variable change.
 
 Backup `/root/backups/20261024T1931Z/` (`edc_ai` 2.4 MB, `edc_backend` 316 KB; `pg_restore -l`
 152 / 411 entries), off-box copy with `timeout 180 scp`, sha256 of both dumps matched. Deploy
 `kgnchqsqzgicgtobfzh350jh` 19:31:48 → 19:38:03 UTC. 9 containers up; `web`, `backend` and
-`ai-service` run image tag `020ebec5c791…` (`docker inspect`). Health 200 on `dev.` and `api.dev.`.
+`ai-service` run the same image tag (`docker inspect`). Health 200 on `dev.` and `api.dev.`.
 0 error/fatal lines in any dev container's log at startup and after the smoke.
 
 | check | result |
@@ -1668,8 +1659,7 @@ Backup `/root/backups/20261024T1931Z/` (`edc_ai` 2.4 MB, `edc_backend` 316 KB; `
 
 Both test conversations deleted (sessions 162, 163 → 200; the participant has 0 sessions after).
 
-Cleanup after the deploy finished (0 deployments queued, no compose build): `docker rmi` of dev's
-three `47b140c` images by name, `docker builder prune -af` (14.74 GB).
+Cleanup after the deploy finished (0 deployments queued, no compose build): `docker rmi` of dev's three previous images by name, `docker builder prune -af` (14.74 GB).
 
 Spend: `usage_logs` $1.6240 → $1.6318 (**+$0.0078**, all this run: 2 chats ≈ $0.0039 each,
 measured — about twice the $0.002 estimate).
@@ -1677,14 +1667,12 @@ measured — about twice the $0.002 estimate).
 **Disk**, `df -h /` free: 56 GB before; 42 GB after the build; 56 GB after the cleanup. Images
 11.6 GB, build cache 0.
 
-### 4zi. ✅ Done 2026-10-24 20:34–20:50 UTC: `f0f3266`, dev only — one Payload migration
+### 4zi. ✅ Done 2026-10-24 20:34–20:50 UTC: dev only — one Payload migration
 
-All measured by the deploy agent. Staging was not touched (still `97d5316`, `docker ps`). edcai was
-told before the deploy by the coordinator. `f0f3266` = no private persona in the graph, every read
-fail-closed (`efd9a25`); the public-figure mark on `persona` at extraction, prompt `v5`
-(`d61af6e`); the model never sees a citable document id (`1284a13`); a source card for an
-attachment the answer uses (`2ffb414`) and for a pinned upload when no retrieved source is listed
-(`88cee20`); `/miembros` for an ecosistema's responsable (`f88dec0`). No compose or variable change.
+All measured by the deploy agent. Staging was not touched (still its earlier build, `docker ps`). edcai was
+told before the deploy by the coordinator. The build = no private persona in the graph, every read
+fail-closed; the public-figure mark on `persona` at extraction, prompt `v5`; the model never sees a citable document id; a source card for an
+attachment the answer uses and for a pinned upload when no retrieved source is listed; `/miembros` for an ecosistema's responsable. No compose or variable change.
 
 **Migration.** `payload_migrations` 3 → 4: `20261024_201817_graph_entities_public_figure` applied
 at 20:41:02 UTC. It adds `graph_entities.public_figure boolean NOT NULL DEFAULT false`, with no
@@ -1695,18 +1683,17 @@ Backup `/root/backups/20261024T2034Z/` (`edc_ai` 2.4 MB, `edc_backend` 316 KB; `
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261024T2034Z/`
 with `timeout 180 scp`; sha256 of both dumps matched before the deploy. Deploy
 `27ziugdmodpi3e1kbqfuiomw` 20:34:50 → 20:41:07 UTC. 9 containers up; `web`, `backend` and
-`ai-service` run image tag `f0f3266ef00e…` (`docker ps`). Health 200 on `dev.` and `api.dev.`.
+`ai-service` run the same image tag (`docker ps`). Health 200 on `dev.` and `api.dev.`.
 0 error/fatal lines in the web, backend and ai-service logs at startup and after the smoke.
 
 | check | result |
 |---|---|
 | 1. chat, participant, Prevención del dengue | "¿Qué hacen las familias para eliminar los criaderos del mosquito?" → 200, 10.4 s; cite buttons [1]–[6], "Fuentes consultadas (6)", every marker has a source, 0 bare `[n]` in the text |
-| 2. pinned upload, participant, Dengue | a one-page fictitious PDF ("Brigada Tinaco Azul", lavado los jueves) uploaded in the chat → `ready` in 2.7 s, `fijar` checked by default. Question about it → 200, 9.9 s; answer correct ("Brigada Tinaco Azul", jueves), no `[n]` in it, 0 bare `[n]`; "Fuentes consultadas (1)": "acta-tinaco-azul.pdf · borrador, solo tú lo ves" (the `88cee20` card). Conversations 165 and 166 deleted (200); document 267 gone from `edc_backend`, 0 rows in `edc_ai` |
+| 2. pinned upload, participant, Dengue | a one-page fictitious PDF ("Brigada Tinaco Azul", lavado los jueves) uploaded in the chat → `ready` in 2.7 s, `fijar` checked by default. Question about it → 200, 9.9 s; answer correct ("Brigada Tinaco Azul", jueves), no `[n]` in it, 0 bare `[n]`; "Fuentes consultadas (1)": "acta-tinaco-azul.pdf · borrador, solo tú lo ves" (the card). Conversations 165 and 166 deleted (200); document 267 gone from `edc_backend`, 0 rows in `edc_ai` |
 | 3. `/grafo` 2D, participant | `?eco=7` and `?eco=todos`: `data-vista="2d"`, one canvas, 84 / 245 entities, 0 page errors. 0 `persona`-type entries in `/grafo/__data.json`; the persona's label is absent. `POST /grafo/buscar` with the persona's label → 200, `ids: []`; the search box shows "0 de 84" / "0 de 245". Control: "escuela" in `todos` → 161 ids |
 | 4. `/miembros`, owner (seed admin, `owner` of all four) | loads; ecosistema tabs for the four; "Miembros (3)": Admin (responsable), Investigadora (investigador), Participante (participante). Nothing added, changed or removed |
 
-Cleanup after the deploy finished (0 deployments queued, no compose build): `docker rmi` of dev's
-three `020ebec` images by name, `docker builder prune -af` (14.74 GB).
+Cleanup after the deploy finished (0 deployments queued, no compose build): `docker rmi` of dev's three previous images by name, `docker builder prune -af` (14.74 GB).
 
 Spend: `usage_logs` `actual_cost_usd` $1.6368 → $1.6464 (**+$0.0096**, all this run: 2 chats in
 `edc-eco-6`, ≈ $0.0037 and ≈ $0.0059 including their router calls).
@@ -1714,13 +1701,13 @@ Spend: `usage_logs` `actual_cost_usd` $1.6368 → $1.6464 (**+$0.0096**, all thi
 **Disk**, `df -h /` free: 56 GB before; 41 GB after the build; 56 GB after the cleanup. Images
 11.6 GB, build cache 0.
 
-### 4zj. ✅ Done 2026-10-24 23:27 – 10-25 00:05 UTC: `23e7098`, dev only — one Payload migration, titles backfilled
+### 4zj. ✅ Done 2026-10-24 23:27 – 10-25 00:05 UTC: dev only — one Payload migration, titles backfilled
 
-All measured by the deploy agent. Staging was not touched (still `97d5316`, `docker ps`). edcai was
+All measured by the deploy agent. Staging was not touched (still its earlier build, `docker ps`). edcai was
 told before the deploy by the coordinator. A seeding agent on dev paused first; its last
-`usage_logs` row was 23:25:53 UTC, and the container swap came at 23:33 UTC. `23e7098` = a
-system-proposed title per testimonio, generated from the gate's redacted output (`a444261`), and
-chat source cards that wrap long titles, excerpts and URLs (`5d63cd2`). No compose or variable change.
+`usage_logs` row was 23:25:53 UTC, and the container swap came at 23:33 UTC. The build = a
+system-proposed title per testimonio, generated from the gate's redacted output, and
+chat source cards that wrap long titles, excerpts and URLs. No compose or variable change.
 
 **Migration.** `payload_migrations` 4 → 5: `20261024_230631_documents_testimonio_title` applied at
 23:33:29 UTC. It adds `documents.testimonio_title varchar`, nullable; NULL shows the old label.
@@ -1730,7 +1717,7 @@ Backup `/root/backups/20261024T2327Z/` (`edc_ai` 2.7 MB, `edc_backend` 373 KB; `
 with `timeout 180 scp`; sha256 of both dumps matched before the deploy. ⚠ In zsh, quote the remote
 glob (`"root@…:/root/backups/<stamp>/*.dump"`), or zsh expands it locally and `scp` never runs.
 Deploy `qkgxzmyp0ijsxpfubz0gbtie` 23:27:24 → 23:33:38 UTC. 9 containers up; `web`, `backend` and
-`ai-service` run image tag `23e7098dc428…` (`docker ps`). Health 200 on `dev.` and `api.dev.`.
+`ai-service` run the same image tag (`docker ps`). Health 200 on `dev.` and `api.dev.`.
 0 error/fatal lines in the web, backend and ai-service logs at startup and after the smoke.
 
 **Title backfill** (`scripts/backfill-testimonio-titles.ts`), in the backend container from
@@ -1752,11 +1739,11 @@ the ordinary word "persona(s)" ("Una persona sorda…", "…personas mayores"). 
 characters, mean 64. Every call went to `deepseek/deepseek-chat-v3.1` on OpenRouter, booked per
 ecosistema (`edc-eco-1/3/6/7`).
 
-🔴 **Held rows went to a hosted model.** `23e7098` titles held rows with the ecosistema's hosted
-model. `cec736f` (landed on local `main` at 23:39 UTC, after this run started; not deployed) makes
+🔴 **Held rows went to a hosted model.** The build titles held rows with the ecosistema's hosted
+model. A later commit (landed on local `main` at 23:39 UTC, after this run started; not deployed) makes
 held rows never reach a hosted model, Spark first. Dev's corpus is synthetic (`sintetico`), so no
 real text left the box. 33 of the 36 held rows carry a title from the hosted model; deploying
-`cec736f` and re-running the backfill re-picks titles its stricter rules refuse.
+that commit and re-running the backfill re-picks titles its stricter rules refuse.
 
 | check (Playwright, investigador, after hydration) | result |
 |---|---|
@@ -1766,7 +1753,7 @@ real text left the box. 33 of the 36 held rows carry a title from the hosted mod
 
 0 page errors.
 
-Cleanup: 0 deployments queued, no compose build. No `f0f3266` image was left on the box (already
+Cleanup: 0 deployments queued, no compose build. No image was left on the box (already
 removed before this agent's cleanup), and build cache was already 0; `docker builder prune -af`
 reclaimed 0 B.
 
@@ -1775,24 +1762,22 @@ included) → $1.8595 after the smoke (+$0.0040). This run: **$0.1322**.
 
 **Disk**, `df -h /` free: 56 GB before; 58 GB after the cleanup. Images 9.6 GB, build cache 0.
 
-### 4zk. ⚠ Done 2026-10-25 00:14–00:38 UTC: `a761fc9`, dev only — live mic recordings refused on upload
+### 4zk. ⚠ Done 2026-10-25 00:14–00:38 UTC: dev only — live mic recordings refused on upload
 
-All measured by the deploy agent. Staging was not touched (still `97d5316`, `docker ps`). edcai was
-told before the deploy by the coordinator. `a761fc9` = live mic with streaming partial text
-(`d14c7b0`, audit fixes `9e73610`), `/grafo` 3D nodes as flat discs (`33d4eda`), participants'
-contributions publish on their own through the gate, with a "Publicados" list in Revisión
-(`0fea574`), Spark-first titles that never send holds to a hosted model (`cec736f`), chat turn
-retry and per-tab new chat (`e576c3b`). No compose or variable change.
+All measured by the deploy agent. Staging was not touched (still its earlier build, `docker ps`). edcai was
+told before the deploy by the coordinator. The build = live mic with streaming partial text
+(audit fixes), `/grafo` 3D nodes as flat discs, participants'
+contributions publish on their own through the gate, with a "Publicados" list in Revisión, Spark-first titles that never send holds to a hosted model, chat turn
+retry and per-tab new chat. No compose or variable change.
 
-**No migration.** No file under `apps/backend/src/migrations/` changed between `23e7098` and
-`a761fc9` (`git diff --name-only`); the `Documents.ts` change is a hook, not a field.
+**No migration.** No file under `apps/backend/src/migrations/` changed between the two builds (`git diff --name-only`); the `Documents.ts` change is a hook, not a field.
 `payload_migrations` stays at 5 (last `20261024_230631_documents_testimonio_title`).
 
 Backup `/root/backups/20261025T0014Z/` (`edc_ai` 2.7 MB, `edc_backend` 386 KB; `pg_restore -l`
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261025T0014Z/`
 with `timeout 180 scp`; sha256 of both dumps matched before the deploy.
 Deploy `zdcjmlnttlhwfbnilzrwipva` 00:15:12 → 00:21:16 UTC, `finished`. 9 containers up; `web`,
-`backend` and `ai-service` run image tag `a761fc9a9e54…`. Health 200 on `dev.` and `api.dev.`.
+`backend` and `ai-service` run the same image tag. Health 200 on `dev.` and `api.dev.`.
 
 **audio-service is rebuilt by the deploy itself, not by hand.** The three audio containers run
 `edc-audio-service:${EDC_ENV}` (= `:dev`), a fixed tag with no commit in it, so `docker ps` cannot
@@ -1827,7 +1812,7 @@ NULL and it stayed `published`. Deleted by hand as its uploader (`DELETE /api/do
 200); 0 rows left in `documents` and in ai-service.
 
 Image cleanup only after `GET /api/v1/deployments` was empty and no compose build ran: `docker
-rmi` of the three `23e7098` images by name; the old audio image was already gone;
+rmi` of the three previous images by name; the old audio image was already gone;
 `docker builder prune -af` reclaimed 14.76 GB.
 
 Spend: `usage_logs` `actual_cost_usd` $1.8595 → $1.8703 (**+$0.0108**, 17 rows: 3 chats plus
@@ -1836,30 +1821,29 @@ their stored-turn gate calls and the doc 271 pipeline).
 **Disk**, `df -h /` free: 58 GB before; 43 GB after the build; 58 GB after the cleanup. Images
 9.6 GB, build cache 0.
 
-### 4zl. ✅ Done 2026-10-25 01:21–01:36 UTC: `410756a`, dev only — live recordings save
+### 4zl. ✅ Done 2026-10-25 01:21–01:36 UTC: dev only — live recordings save
 
-All measured by the deploy agent. Staging was not touched (still `97d5316`, 6 containers,
-`docker ps`). edcai was told before the deploy by the coordinator. `410756a` = live recordings
-upload (`0888385`: the backend accepts a MediaRecorder WebM whose tracks are audio only and stores
+All measured by the deploy agent. Staging was not touched (still its earlier build, 6 containers,
+`docker ps`). edcai was told before the deploy by the coordinator. The build = live recordings
+upload (the backend accepts a MediaRecorder WebM whose tracks are audio only and stores
 it as `audio/webm`; the web image sets `BODY_SIZE_LIMIT=201M`; better stitching of live text), and
-a send right after "Nueva conversación" goes to the new chat (`5884ecc`). No compose or variable
+a send right after "Nueva conversación" goes to the new chat. No compose or variable
 change; the body limit lives in `apps/web/Dockerfile`, not in Coolify.
 
-**No migration.** No file under `apps/backend/src/migrations/` changed between `a761fc9` and
-`410756a` (`git diff --name-only`). `payload_migrations` stays at 5 (last
+**No migration.** No file under `apps/backend/src/migrations/` changed between the two builds (`git diff --name-only`). `payload_migrations` stays at 5 (last
 `20261024_230631_documents_testimonio_title`), read before and after the deploy.
 
 Backup `/root/backups/20261025T0121Z/` (`edc_ai` 2.7 MB, `edc_backend` 384 KB; `pg_restore -l`
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261025T0121Z/`
 with `timeout 180 scp`; sha256 of both dumps matched before the deploy.
-Deploy `gtvzadn2b2f8dimzdyik63j7` 01:22:01 → 01:28:07 UTC, `finished`, commit `410756a2…`.
-9 containers up; `web`, `backend` and `ai-service` run image tag `410756a251df…`. Health 200 on
+Deploy `gtvzadn2b2f8dimzdyik63j7` 01:22:01 → 01:28:07 UTC, `finished`.
+9 containers up; `web`, `backend` and `ai-service` run the same image tag. Health 200 on
 `dev.` and `api.dev.`. The web container's env has `BODY_SIZE_LIMIT=201M` (`printenv`).
 
 **audio-service rebuilt by the deploy** (§4zk): image `edc-audio-service:dev` is now
 `c3e8fb651702`, created 01:24:11 UTC; the old `44d2c260b34d` is gone. All three containers (API,
 worker, callbacks) run `c3e8fb651702`, and each has `def drop_overlap` in `/app/app/live.py`,
-which `0888385` added. The backend image has `src/lib/webmTracks.ts`, also new in `0888385`.
+which that build added. The backend image has `src/lib/webmTracks.ts`, also new in that build.
 
 0 error/fatal lines in any of the 9 containers at startup. After the smoke: 2 lines, both one
 race in the cleanup (below).
@@ -1881,7 +1865,7 @@ deleted: at 01:33:30 its insert into `graph_mentions` failed the `document_id` f
 means a delete does not cancel an in-flight graph job.
 
 Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three
-`a761fc9` images by exact name; `docker builder prune -af` reclaimed 14.76 GB. The one dangling
+previous images by exact name; `docker builder prune -af` reclaimed 14.76 GB. The one dangling
 image left (`858f009f9709`) is staging's redis, in use.
 
 Spend: `usage_logs` `actual_cost_usd` $1.8703 → $1.8747 (**+$0.0044**, 7 rows: 1 chat, its
@@ -1890,18 +1874,17 @@ stored-turn gate call, and the doc 272 pipeline).
 **Disk**, `df -h /` free: 58 GB before; 43 GB after the build; 58 GB after the cleanup. Images
 9.6 GB, build cache 0.
 
-### 4zm. ✅ Done 2026-10-26 21:04–21:20 UTC: `f85493b`, dev only — long document texts store
+### 4zm. ✅ Done 2026-10-26 21:04–21:20 UTC: dev only — long document texts store
 
-All measured by the deploy agent. Staging was not touched (still `97d5316`, 6 containers,
-`docker ps`). edcai was told before the deploy by the coordinator. `f85493b` = per-field
+All measured by the deploy agent. Staging was not touched (still its earlier build, 6 containers,
+`docker ps`). edcai was told before the deploy by the coordinator. The build = per-field
 `maxLength: 2_000_000` on the four whole-document text fields of `Documents` (`extractedText`,
 `redactedText`, `heldText`, `bodyMarkdown`) and `maxLength: 100_000` on
 `aiServiceCallbacks.rawBody`, replacing Payload's 40,000-character default; a throw in the
-background extract+ingest now sets `ingestStatus=failed` with a safe `ingestError` (`c4e252a`).
+background extract+ingest now sets `ingestStatus=failed` with a safe `ingestError`.
 Also ingest scripts (`ingest-folder.sh`, `pptx-to-pdf.sh`). No compose or variable change.
 
-**No migration.** No file under `apps/backend/src/migrations/` changed between `410756a` and
-`f85493b` (`git diff --name-only`); the new limits are validation only on unbounded `varchar`
+**No migration.** No file under `apps/backend/src/migrations/` changed between the two builds (`git diff --name-only`); the new limits are validation only on unbounded `varchar`
 columns. `payload_migrations` stays at 5 (last `20261024_230631_documents_testimonio_title`),
 read before and after the deploy; `edc_ai` stays at 6.
 
@@ -1911,8 +1894,8 @@ read before and after the deploy; `edc_ai` stays at 6.
 Backup `/root/backups/20261026T2104Z/` (`edc_ai` 6.2 MB, `edc_backend` 614 KB; `pg_restore -l`
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261026T2104Z/`
 with `timeout 180 scp`; sha256 of both dumps matched before the deploy.
-Deploy `otuvviogusyuiif2n611hvd9` 21:04:34 → 21:10:58 UTC, `finished`, commit `f85493b2…`.
-9 containers up; `web`, `backend` and `ai-service` run image tag `f85493b255db…`. Health 200 on
+Deploy `otuvviogusyuiif2n611hvd9` 21:04:34 → 21:10:58 UTC, `finished`.
+9 containers up; `web`, `backend` and `ai-service` run the same image tag. Health 200 on
 `dev.` and `api.dev.`. The backend image's `src/collections/Documents.ts` holds
 `DOCUMENT_TEXT_MAX_LENGTH`, and `AiServiceCallbacks.ts` holds `maxLength: 100_000`.
 audio-service rebuilt by the deploy (§4zk): `edc-audio-service:dev` is now `e3c1b5681b45`,
@@ -1928,8 +1911,7 @@ read-only queries (columns that do not exist), not the app.
 | 2. publish | skipped on purpose (no graph spend); doc stayed `draft` |
 | 3. delete | `DELETE /api/documents/296` 200; 0 rows left in `edc_backend.documents` (id 296), 0 new ai-service `documents`, 0 `media` rows for the file. Another lane ingests this PDF for real |
 
-Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three `410756a`
-images by exact name; `docker builder prune -af` reclaimed 14.76 GB. Two dangling images left,
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three previous images by exact name; `docker builder prune -af` reclaimed 14.76 GB. Two dangling images left,
 both in use: `858f009f9709` (staging's redis) and `57e4255cc971` (`coolify-redis`).
 
 Spend: this run booked **$0.000169** (one `/v1/ingest` row, 22 chunks, 21:11:50 UTC).
@@ -1939,15 +1921,15 @@ Spend: this run booked **$0.000169** (one `/v1/ingest` row, 22 chunks, 21:11:50 
 **Disk**, `df -h /` free: 57 GB before; 43 GB after the build; 57 GB after the cleanup. Images
 9.7 GB, build cache 0.
 
-### 4zn. ⚠ Done 2026-10-26 22:32–22:46 UTC: `34296a8`, dev only — gated documentos, one Payload migration applied by hand
+### 4zn. ⚠ Done 2026-10-26 22:32–22:46 UTC: dev only — gated documentos, one Payload migration applied by hand
 
-All measured by the deploy agent. Staging was not touched (still `97d5316`, 6 containers,
+All measured by the deploy agent. Staging was not touched (still its earlier build, 6 containers,
 `docker ps`). edcai and the ingest lane were told before the deploy by the coordinator. The
 restart dropped the backend's in-memory graph queue, as expected; another lane re-queues it.
-`34296a8` = `documents.anonymise` (owner rulings 2026-10-26: every participant PDF/DOCX documento,
+The build = `documents.anonymise` (owner rulings 2026-10-26: every participant PDF/DOCX documento,
 and staff uploads ticked "Anonimizar", go through the anonymisation gate; other members read only
-the redacted text), exclude-mode `select` fails closed on gated text (`a01a26d`), reviewers
-withdraw gated documentos, the chat interviewer for a participant's own story (`bd20c31`), the
+the redacted text), exclude-mode `select` fails closed on gated text, reviewers
+withdraw gated documentos, the chat interviewer for a participant's own story, the
 source icon and short day under testimonio titles (`TestimonySource.svelte`), and the one-off
 `scripts/regate-member-documentos.ts`. No compose or variable change.
 
@@ -1965,8 +1947,8 @@ deploy with a migration, read `payload_migrations` — do not trust the start.**
 Backup `/root/backups/20261026T2232Z/` (`edc_ai` 55 MB, `edc_backend` 3.1 MB; `pg_restore -l`
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261026T2232Z/`
 with `timeout 180 scp`; sha256 of both dumps matched before the deploy.
-Deploy `6y8i4t3fem7fjo8hlnegah4e` 22:33:23 → 22:39:32 UTC, `finished`, commit `34296a88…`.
-9 containers up; `web`, `backend` and `ai-service` run image tag `34296a880953…`. Health 200 on
+Deploy `6y8i4t3fem7fjo8hlnegah4e` 22:33:23 → 22:39:32 UTC, `finished`.
+9 containers up; `web`, `backend` and `ai-service` run the same image tag. Health 200 on
 `dev.` and `api.dev.`. audio-service rebuilt by the deploy (§4zk): `edc-audio-service:dev` is now
 `8ef9fadc037f`, created 22:35:36 UTC; the old `e3c1b5681b45` is gone.
 
@@ -1994,8 +1976,7 @@ member-uploaded published documentos** on dev. SQL agrees: documentos by uploade
 `member` 3 drafts (268–270), `owner` 2 drafts and 68 published. `--apply` was not run (an audit
 found it leaves raw-text graph rows).
 
-Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three `f85493b`
-images by exact name (no `410756a` image was left); `docker builder prune -af` reclaimed 14.76 GB.
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three previous images by exact name (no earlier image was left); `docker builder prune -af` reclaimed 14.76 GB.
 Two dangling images left, both in use: `858f009f9709` (staging's redis) and `57e4255cc971`
 (`coolify-redis`).
 
@@ -2006,34 +1987,32 @@ gate calls ≈ $0.0005, the doc 350 graph call $0.0010, ingest < $0.00001 — �
 **Disk**, `df -h /` free: 57 GB before; 43 GB after the build; 57 GB after the cleanup. Images
 9.7 GB, build cache 0.
 
-### 4zo. ✅ Done 2026-10-27 00:19–00:25 UTC: `dd9a5c5`, dev only — live mic text fills the chat input
+### 4zo. ✅ Done 2026-10-27 00:19–00:25 UTC: dev only — live mic text fills the chat input
 
-All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
-`97d5316`). `dd9a5c5` = `Composer.svelte`: when the live mic stops, its last line of text lands in
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on the earlier build). The build = `Composer.svelte`: when the live mic stops, its last line of text lands in
 the chat input (appended after any typed text), plus one assertion in `e2e/live-mic.spec.ts`. Web
 only; no compose, variable or migration change, so no backup. Before landing, in the worktree:
 vitest 113 files / 2287 tests passed, svelte-check 0 errors.
 
-Push `e80476a..dd9a5c5` (fast-forward). Deploy `ujfxnpo931epgkiaveagnaoq` queued 00:19:21 →
-`finished` 00:25:24 UTC (≈ 6 min), commit `dd9a5c59…`. `web`, `backend` and `ai-service` run image
-tag `dd9a5c59395d…`, healthy; the 3 audio containers stay on `edc-audio-service:dev` (§4zk). 9 dev
+Push (fast-forward). Deploy `ujfxnpo931epgkiaveagnaoq` queued 00:19:21 →
+`finished` 00:25:24 UTC (≈ 6 min). `web`, `backend` and `ai-service` run image
+the same image tag, healthy; the 3 audio containers stay on `edc-audio-service:dev` (§4zk). 9 dev
 containers. Health 200 on `dev.` and `api.dev.`. The served bundle carries the new code: chunk
 `/repo/apps/web/build/client/_app/immutable/chunks/Cu4oZiLI.js` holds the `onLiveText` append
 (`` `${…trimEnd()} ${C}` `` then `queueMicrotask`). 0 `error`/`fatal` lines in web, backend and
 ai-service since start.
 
 `docker builder prune -f` reclaimed 14.09 GB. **Disk**, `df -h /` free: 43 GB before the prune,
-55 GB after. The `34296a8` images were not removed.
+55 GB after. the previous images were not removed.
 
-### 4zp. ⚠ Done 2026-10-27 02:59–03:20 UTC: `98bf4ae`, dev only — three Payload migrations on start; new ecosistema 8 "Semiosis práctica"
+### 4zp. ⚠ Done 2026-10-27 02:59–03:20 UTC: dev only — three Payload migrations on start; new ecosistema 8 "Semiosis práctica"
 
-All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
-`97d5316`, `docker ps`). edcai and the -7e lane were told before the deploy by the coordinator.
-`98bf4ae` = XLSX, CSV and HTML documentos (`bb22cb2`); every extractor in a capped worker, xlsx
-guard, streamed html (`ec3e287`); Markdown documentos (`d11228e`); `sessions.kind` —
-`generales | resonancias`, immutable after create (`8b75142`, `b647d18`); per-ecosistema feature
-switches, `/ajustes`, and the runtime detector-fallback switch (`cab3dcc`); `scripts/migrate.sh`
-in the backend CMD (`ac347fe`, which requires Payload's `Done.` line before `next start`). No
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on the earlier build, `docker ps`). edcai and the -7e lane were told before the deploy by the coordinator.
+The build = XLSX, CSV and HTML documentos; every extractor in a capped worker, xlsx
+guard, streamed html; Markdown documentos; `sessions.kind` —
+`generales | resonancias`, immutable after create; per-ecosistema feature
+switches, `/ajustes`, and the runtime detector-fallback switch; `scripts/migrate.sh`
+in the backend CMD (which requires Payload's `Done.` line before `next start`). No
 compose or variable change; no ai-service migration.
 
 **Migrations.** `payload_migrations` 6 → 9, **applied by the container start** this time. The
@@ -2051,8 +2030,8 @@ then `Done.`, then "Next.js 15.4.11" and "Ready in 798ms":
 Backup `/root/backups/20261027T0259Z/` (`edc_ai` 57 MB, `edc_backend` 3.3 MB; `pg_restore -l`
 137 / 396 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261027T0259Z/`
 with `timeout 180 scp`; `sha256sum -c` of both dumps passed before the deploy.
-Deploy `lj5ljnjml6t9pvtvrzg173hs` 03:00:11 → 03:06:10 UTC, `finished`, commit `98bf4ae0…`.
-9 containers up; `web`, `backend` and `ai-service` run image tag `98bf4ae0c092…`, healthy. The
+Deploy `lj5ljnjml6t9pvtvrzg173hs` 03:00:11 → 03:06:10 UTC, `finished`.
+9 containers up; `web`, `backend` and `ai-service` run the same image tag, healthy. The
 deploy rebuilt `edc-audio-service:dev` again (now `d970e50b32bf`; was `4bf65519445c`). Health 200
 on `dev.` and `api.dev.`. 0 `error`/`fatal` lines in all 9 dev containers at startup, and 0 in
 web, backend and ai-service after the smoke.
@@ -2062,7 +2041,7 @@ web, backend and ai-service after the smoke.
 | 1. uploads, platform admin, Discapacidad (id 7), `contentKind=documento`, no "Anonimizar" | web `POST /api/documentos`: `smoke-tabla.xlsx` (5.8 KB, the `dos-hojas.xlsx` fixture) → doc 367 `kind: xlsx`; `smoke-tabla.csv` → 368 `csv`; `smoke-pagina.html` → 369 `html`; `smoke-nota.md` → 370 `markdown`. All `anonymise: false`, all ingest `ready` in 2.7–3.2 s, `extractedText` 106–140 characters. All four deleted (200); 0 rows left in `documents`, `media`, `graph_mentions` or ai-service `documents` |
 | 2. `/ajustes`, platform admin (Playwright, after hydration) | 200; chips for the four ecosistemas; each shows 10 switches, **0 off their default** (`studentView` off, the rest on); "Respaldo del detector" reads `env`. Nothing saved |
 | 3. chat, participant, Prevención del dengue (id 6) | "¿Qué hacen las familias para eliminar los criaderos del mosquito?" → 200, 11.5 s, 978 characters with grouped `[n]` markers (`[2, 4, 5, 7, 8]`), "Fuentes consultadas (5)". Conversation 200 (`kind = generales`) deleted (200); 0 `sessions`/`messages` rows left |
-| 4. ⚠ Generales / Resonancias tabs | **absent.** 0 tab/button/link text matching either word on the chat page. Cause, read in git: the web tabs (`d98e8e8`, `65851cd`) live only on branch `worktree-agent-ae257cc3fb18b6e52` and are not in `98bf4ae`; `apps/web/src` at `98bf4ae` has no "resonancia" string. The backend half (`sessions.kind`) is deployed |
+| 4. ⚠ Generales / Resonancias tabs | **absent.** 0 tab/button/link text matching either word on the chat page. Cause, read in git: the web tabs live only on branch `worktree-agent-ae257cc3fb18b6e52` and are not in that build; `apps/web/src` at that build has no "resonancia" string. The backend half (`sessions.kind`) is deployed |
 
 0 page errors.
 
@@ -2089,7 +2068,7 @@ No corpus exists for org 8 yet; ai-service makes one on its first ingest (inferr
 earlier ecosistemas, not checked here).
 
 Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the six
-`34296a8` and `dd9a5c5` web/backend/ai-service images by exact name; `docker builder prune -af`
+previous web/backend/ai-service images by exact name; `docker builder prune -af`
 reclaimed 14.78 GB. Two dangling images left, both in use: `858f009f9709` (staging's redis) and
 `57e4255cc971` (`coolify-redis`).
 
@@ -2100,13 +2079,11 @@ uploads) — ≈ **$0.011**. Total $3.212421 after the run.
 **Disk**, `df -h /` free: 55 GB before; 41 GB after the build; 57 GB after the cleanup. Images
 9.7 GB, build cache 0.
 
-### 4zq. ✅ Done 2026-10-27 06:05–06:25 UTC: `db2d201`, dev only — two Payload migrations on start; four demo accounts for the new profiles
+### 4zq. ✅ Done 2026-10-27 06:05–06:25 UTC: dev only — two Payload migrations on start; four demo accounts for the new profiles
 
-All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
-`97d5316`, `docker ps`). edcai and the -7e lane were told before the deploy by the coordinator.
-`db2d201` = profiles `estudiante` and `investigador` with dev demo users (`eef6f4e`); the student
-view `/estudiante` and the teacher side `/seguimiento` behind the `studentView` switch
-(`a2ab9bb`); `/admin` scoped to an investigador's own ecosistemas (`db2d201`). No compose or
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on the earlier build, `docker ps`). edcai and the -7e lane were told before the deploy by the coordinator.
+The build = profiles `estudiante` and `investigador` with dev demo users; the student
+view `/estudiante` and the teacher side `/seguimiento` behind the `studentView` switch; `/admin` scoped to an investigador's own ecosistemas. No compose or
 variable change; no ai-service migration.
 
 **Pre-check.** `payload_migrations` held **no** row named `20261027_053603_student_view` (0 rows
@@ -2127,8 +2104,8 @@ belonged to a renamed migration that was never deployed.
 Backup `/root/backups/20261027T0606Z/` (`edc_ai` 91 MB, `edc_backend` 5.3 MB; `pg_restore -l`
 137 / 406 non-comment lines), off-box copy in the owner's `cide/backups/edc-1/20261027T0606Z/`
 with `timeout 180 scp`; `sha256sum -c` of both dumps passed before the deploy.
-Deploy `nz9q4xibgc6o9ehdrrokgz1p` 06:07:07 → 06:13:11 UTC, `finished`, commit `db2d2019…`.
-9 containers up; `web`, `backend` and `ai-service` run image tag `db2d20198bc4…`, healthy. The
+Deploy `nz9q4xibgc6o9ehdrrokgz1p` 06:07:07 → 06:13:11 UTC, `finished`.
+9 containers up; `web`, `backend` and `ai-service` run the same image tag, healthy. The
 deploy rebuilt `edc-audio-service:dev` again (now `d2362e21e954`, created 06:09:25 UTC). Health 200
 on `dev.` and `api.dev.`. 0 `error`/`fatal` lines in all 9 dev containers at startup. After the
 smoke, backend holds 3 `ERROR: Not Found` lines (06:16:30, 06:16:32, 06:17:28 UTC), matched by
@@ -2159,8 +2136,7 @@ Payload instance, so it arms the janitors in a second process for the seconds it
 
 0 page errors. Session 201 deleted as its owner (200); 0 `sessions`/`messages` rows left.
 
-Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three `98bf4ae`
-web/backend/ai-service images by exact name; `docker builder prune -af` reclaimed 14.78 GB. Two
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three previous images by exact name; `docker builder prune -af` reclaimed 14.78 GB. Two
 dangling images left, both in use: `858f009f9709` (staging's redis) and `57e4255cc971`
 (`coolify-redis`).
 
@@ -2172,11 +2148,10 @@ containers (inferred by time). Total $3.928697 before, $3.957493 after.
 **Disk**, `df -h /` free: 57 GB before; 42 GB after the build; 57 GB after the cleanup. Images
 9.67 GB, build cache 0.
 
-### 4zr. ✅ Done 2026-10-27 06:20–06:32 UTC: `9907e9e`, dev only — one Payload migration on start; peers never see testimonios
+### 4zr. ✅ Done 2026-10-27 06:20–06:32 UTC: dev only — one Payload migration on start; peers never see testimonios
 
-All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
-`97d5316`, `docker ps`). edcai was holding the box from §4zq; this run reported to the
-coordinator only. `9907e9e` = every peer query in `lib/student/queries.ts` ("Mis compañeros"
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on the earlier build, `docker ps`). edcai was holding the box from §4zq; this run reported to the
+coordinator only. The build = every peer query in `lib/student/queries.ts` ("Mis compañeros"
 RAG ids, peer topics, matching, authors) reads `documento`s only, so a student's own audio
 testimonio never reaches a peer; the student-view foreign keys stop blocking a user or ecosistema
 delete; `seed:demo-users` writes the credentials file before it creates any account. No compose
@@ -2197,14 +2172,13 @@ or variable change; no ai-service migration.
 Backup `/root/backups/20261027T0620Z/` (`edc_ai` 88 MB, `edc_backend` 5.1 MB; `pg_restore -l`
 137 / 438 non-comment lines, `SHA256SUMS` beside them), off-box copy in the owner's
 `cide/backups/edc-1/20261027T0620Z/` with `timeout 180 scp`; `sha256sum -c` of both dumps passed
-before the deploy. Deploy `ske0kaoobhbqwdzpmmklci8o` 06:21:22 → 06:27:54 UTC, `finished`, commit
-`9907e9e7…`. 9 containers up; `web`, `backend` and `ai-service` run image tag `9907e9e7ccc8…`,
+before the deploy. Deploy `ske0kaoobhbqwdzpmmklci8o` 06:21:22 → 06:27:54 UTC, `finished`, 9 containers up; `web`, `backend` and `ai-service` run the same image tag,
 healthy. The deploy rebuilt `edc-audio-service:dev` again (now `34eaa1a34994`). Health 200 on
 `dev.` and `api.dev.`. 0 `error`/`fatal` lines in 8 of 9 dev containers at startup and after the
 smoke; postgres holds 2 `ERROR: syntax error` lines (06:28:22 UTC), both the deploy agent's own
 mis-quoted check queries.
 
-**Smoke** (no paid call). Before the deploy, on `db2d201`, estudiante1's peer scope was empty:
+**Smoke** (no paid call). Before the deploy, on that build, estudiante1's peer scope was empty:
 no `student_profiles` row existed, and org 8 holds no testimonio at all (440 published
 documentos, all uploaded by user 1). So the check needs a fixture, set up and reverted by hand
 (dev data is disposable):
@@ -2222,8 +2196,7 @@ documentos, all uploaded by user 1). So the check needs a fixture, set up and re
 | 2. estudiante1, `GET /api/estudiante?organization=8` | 200; `companeros` `[]` (estudiante1 has 0 temas: its only doc 823 is a draft), 1 own documento |
 | 3. estudiante1, `/estudiante` (Playwright, after hydration) | 200; "Mis temas", "Generar preguntas", "Compañeros", "Mis autores", "Sugerir" render; no "Sin acceso"; 0 page errors. "Generar preguntas" not clicked (paid) |
 
-Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three `db2d201`
-web/backend/ai-service images by exact name; `docker builder prune -af` reclaimed 14.78 GB. Two
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three previous images by exact name; `docker builder prune -af` reclaimed 14.78 GB. Two
 dangling images left, both in use: `858f009f9709` (staging's redis) and `57e4255cc971`
 (`coolify-redis`).
 
@@ -2232,13 +2205,12 @@ Spend: 0 `usage_logs` rows since 06:20 UTC; total $3.957493 before and after.
 **Disk**, `df -h /` free: 57 GB before; 42 GB after the build; 57 GB after the cleanup. Images
 9.67 GB, build cache 0.
 
-### 4zs. ✅ Done 2026-10-27 22:51–23:08 UTC: `19525be`, dev only — the gate redacts a bare first name
+### 4zs. ✅ Done 2026-10-27 22:51–23:08 UTC: dev only — the gate redacts a bare first name
 
-All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
-`97d5316`, `docker ps`). edcai was told by the coordinator; this run reported to the coordinator
-only. No graph backfill was running. `19525be` = `e730e02` (the anonymisation gate redacts each
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on the earlier build, `docker ps`). edcai was told by the coordinator; this run reported to the coordinator
+only. No graph backfill was running. The build holds (the anonymisation gate redacts each
 part of a detected person's name wherever it stands alone, `lib/anonymise/nameParts.ts`) and
-`0f95fd7` (the detector prompt calls a gated documento a document, not a testimony), plus
+(the detector prompt calls a gated documento a document, not a testimony), plus
 `scripts/ingest/ingest-folder.sh` and the §4zq/§4zr docs. Backend code only; no compose,
 variable or migration change.
 
@@ -2249,8 +2221,7 @@ variable or migration change.
 Backup `/root/backups/20261027T2252Z/` (`edc_ai` 88 MB, `edc_backend` 5.4 MB; `pg_restore -l`
 137 / 438 non-comment lines, `SHA256SUMS` beside them), off-box copy in the owner's
 `cide/backups/edc-1/20261027T2252Z/` with `timeout 180 scp`; `sha256sum -c` of both dumps passed
-before the deploy. Deploy `q00lhthv4nae5zbozn5cjmuq` 22:52:35 → 22:58:41 UTC, `finished`, commit
-`19525bed…`. 9 containers up; `web`, `backend` and `ai-service` run image tag `19525bed6a7c…`,
+before the deploy. Deploy `q00lhthv4nae5zbozn5cjmuq` 22:52:35 → 22:58:41 UTC, `finished`, 9 containers up; `web`, `backend` and `ai-service` run the same image tag,
 healthy. The deploy rebuilt `edc-audio-service:dev` again (now `ab794b81e5ba`). Health 200 on
 `dev.` and `api.dev.`. 0 `error`/`fatal` lines in 8 of 9 dev containers at startup and after the
 check; postgres holds 34 `ERROR` lines, all the deploy agent's own queries (30 from one wait loop
@@ -2274,15 +2245,14 @@ Counts by SQL, case-insensitive `regexp_count`, no text printed:
 | ai-service `documents.text` and `chunks.text` (1 chunk each) | 0 (all three names) | | | |
 | `graph_mentions.snippet`, linked `graph_entities` label/key/aliases (12 mentions) | 0 (all three names) | | | |
 
-`redacted_text` holds 6, 6 and 7 `[…]` placeholders. The check was not run on `9907e9e`, so it
+`redacted_text` holds 6, 6 and 7 `[…]` placeholders. The check was not run on that build, so it
 shows the fix holds on the real detector, not that the old build leaked.
 
 Cleanup: the three documentos deleted as admin through web `DELETE /api/documents/<id>` (200
 each) at 23:03:58 UTC. 0 rows left in `documents`, `graph_mentions`, `graph_relations`, `media`
 or ai-service `documents` for them.
 
-Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three `9907e9e`
-web/backend/ai-service images by exact name; `docker builder prune -af` reclaimed 14.78 GB. Two
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the three previous images by exact name; `docker builder prune -af` reclaimed 14.78 GB. Two
 dangling images left, both in use: `858f009f9709` (staging's redis) and `57e4255cc971`
 (`coolify-redis`).
 
@@ -2293,19 +2263,15 @@ ingest embeddings $0.000003. Total $7.661300 after (other lanes' work since §4z
 **Disk**, `df -h /` free: 57 GB before; 42 GB after the build; 56 GB after the cleanup. Images
 9.67 GB, build cache 0.
 
-### 4zt. ✅ Done 2026-10-28 05:57–06:15 UTC: `326a66e`, then `a39af86`, dev only — one Payload migration on each start
+### 4zt. ✅ Done 2026-10-28 05:57–06:15 UTC: dev only — one Payload migration on each start
 
-All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
-`97d5316`, `docker ps`). The run was asked for `326a66e`; while its build ran, origin/main moved
-to `a39af86`, so `326a66e` was verified live and `a39af86` deployed right after.
-`326a66e` = keep public figures in documentos (`52d5856`, `a050074`, and the anonymise fixes
-`7472bed`, `6b7d535`, `66f4169`, `4f429be`); `keepPublicFigures` settable by platform admins only
-(`842cd67`); participant chrome and a start screen for participante/estudiante, interviewer
-follow-ups opt-in per conversation, "Cerrar sesión" beside "Mis conversaciones" (`4bf4e83`,
-`be7bf34`, `bed0d52`, `326a66e`). `a39af86` = the `studentTestimonios` switch (`ebf1d4f`):
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on the earlier build, `docker ps`). The run was asked for one build; while its build ran, origin/main moved
+to a later build, so the first was verified live and the later one deployed right after.
+The build = keep public figures in documentos (and the anonymise fixes); `keepPublicFigures` settable by platform admins only; participant chrome and a start screen for participante/estudiante, interviewer
+follow-ups opt-in per conversation, "Cerrar sesión" beside "Mis conversaciones". The build = the `studentTestimonios` switch:
 teachers see students' published testimonios, anonymised; own testimonio consent, published
-teacher topics only (`633bce2`); teachers see chat counts only, consent read atomically, switch
-off clears consents (`9173c9b`). No compose, variable or ai-service change in either range.
+teacher topics only; teachers see chat counts only, consent read atomically, switch
+off clears consents. No compose, variable or ai-service change in either range.
 
 **Pre-check.** `payload_migrations` 12 rows, newest `20261027_061014_student_view_fk_cascade`.
 `edc_ai` `public.__drizzle_migrations` 6.
@@ -2315,8 +2281,8 @@ off clears consents (`9173c9b`). No compose, variable or ai-service change in ei
 
 | deploy | backend log | `payload_migrations` |
 |---|---|---|
-| `326a66e` | 06:05:12 "Reading migration files…", `Migrated: 20261027_225429_documents_public_figures (12ms)`, `Done.`, "Ready in 818ms" | 12 → 13 |
-| `a39af86` | 06:10:49 "Reading migration files…", `Migrated: 20261028_054402_student_testimonio_consent (10ms)`, `Done.`, "Ready in 932ms" | 13 → 14, batch 9 |
+| first | 06:05:12 "Reading migration files…", `Migrated: 20261027_225429_documents_public_figures (12ms)`, `Done.`, "Ready in 818ms" | 12 → 13 |
+| second | 06:10:49 "Reading migration files…", `Migrated: 20261028_054402_student_testimonio_consent (10ms)`, `Done.`, "Ready in 932ms" | 13 → 14, batch 9 |
 
 Columns after, `information_schema.columns`: `documents.keep_public_figures` boolean,
 `documents.public_figures_kept` jsonb, `student_profiles.share_testimonios_at` timestamptz.
@@ -2328,13 +2294,12 @@ Backups, one before each deploy: `/root/backups/20261028T0557Z/` (`edc_ai` 129 M
 `cide/backups/edc-1/<same stamp>/` with `timeout 180 scp`; `sha256sum -c` of all four dumps passed
 before each deploy.
 
-| deploy | uuid | queued → finished (UTC) | commit |
-|---|---|---|---|
-| `326a66e` | `kgqliryjwiendh83wfebv9po` | 05:58:33 → 06:05:10 | `326a66ee7e3f…` |
-| `a39af86` | `lips5ibff6eu68fdt1z6hbol` | 06:06:50 → 06:10:45 | `a39af861e2aa…` |
+| deploy | uuid | queued → finished (UTC) |
+|---|---|---|
+| first | `kgqliryjwiendh83wfebv9po` | 05:58:33 → 06:05:10 |
+| second | `lips5ibff6eu68fdt1z6hbol` | 06:06:50 → 06:10:45 |
 
-After the second: 9 containers up; `web`, `backend` and `ai-service` run image tag
-`a39af861e2aaf7dd8c0c792505f4f58f9d64befb`, healthy. 0 `error`/`fatal` lines in all 9 dev
+After the second: 9 containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. 0 `error`/`fatal` lines in all 9 dev
 containers at startup.
 
 **Smoke** (no paid call):
@@ -2345,8 +2310,7 @@ containers at startup.
 | 2. health | `dev.` `/api/health` 200, `api.dev.` `/api/health` 200 |
 | 3. login, estudiante1 (`cide/.env.demo-users`), web `POST /api/auth/login` with `Origin` | 200, user id 5; then `/__data.json` 200 (start screen data names `estudiante`), `/estudiante/__data.json` 200 |
 
-Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the six `19525be`
-and `326a66e` web/backend/ai-service images by exact name; `docker builder prune -af` reclaimed
+Image cleanup only after `GET /api/v1/deployments` was empty: `docker rmi` of the six previous images by exact name; `docker builder prune -af` reclaimed
 18.64 GB. Two dangling images left, both in use: `858f009f9709` (staging's redis) and
 `57e4255cc971` (`coolify-redis`).
 
@@ -2362,13 +2326,12 @@ build (inferred by time). Total $8.975563 after.
 3 "Acompañamiento escolar" set `isActive=false` via API `PATCH` (soft, reversible). Nobody stranded:
 their 3 members (users 1–3) stay active in orgs 6, 7, 8. Fresh `GET` reads `isActive=false` (measured).
 
-### 4zu. ✅ Done 2026-10-28 08:05–08:16 UTC: `1c80a84`, dev only — no migration; org 8 keeps public figures
+### 4zu. ✅ Done 2026-10-28 08:05–08:16 UTC: dev only — no migration; org 8 keeps public figures
 
-All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
-`97d5316`, `docker ps` before and after). Range `a39af86..1c80a84`: web phone fixes (44px tap floor
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on the earlier build, `docker ps` before and after). Range: web phone fixes (44px tap floor
 on phones only, compact "Mis documentos" rows, scroll reset that keeps the router, the phone
-drawer closes only on a pick; `0bf8421`, `f646ab9`, `6e406fb`) and the backend seed script
-`seed:semiosis-demo` (`4c67a89`, `1c80a84`). No file under `apps/backend/src/migrations` changed;
+drawer closes only on a pick) and the backend seed script
+`seed:semiosis-demo`. No file under `apps/backend/src/migrations` changed;
 no compose, variable or ai-service change.
 
 **Migrations.** None. `payload_migrations` 14 rows before and after, newest
@@ -2379,12 +2342,11 @@ Backup `/root/backups/20261028T0805Z/` (`edc_ai` 129 MB, `edc_backend` 9.5 MB); 
 137 / 438 non-comment lines, `SHA256SUMS` beside them. Off-box copy in the owner's
 `cide/backups/edc-1/20261028T0805Z/` with `timeout 180 scp`; `sha256sum -c` passed before the deploy.
 
-| deploy | uuid | queued → finished (UTC) | commit |
-|---|---|---|---|
-| `1c80a84` | `psmqc01hajshahc8hyszsdi2` | 08:06:30 → 08:12:54 | `1c80a84ab13b…` |
+| deploy | uuid | queued → finished (UTC) |
+|---|---|---|
+| first | `psmqc01hajshahc8hyszsdi2` | 08:06:30 → 08:12:54 |
 
-After: 9 containers up; `web`, `backend` and `ai-service` run image tag
-`1c80a84ab13b8d2aaf73e0c5ca63b3bf5ddf4fdf`, healthy. 0 `error`/`fatal` lines in all 9 dev
+After: 9 containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. 0 `error`/`fatal` lines in all 9 dev
 containers at startup. The backend container's `package.json` line 22 has
 `"seed:semiosis-demo": "payload run src/seed/semiosisDemo.cli.ts"` (not run by this deploy).
 
@@ -2406,18 +2368,15 @@ other switch at its default (`studentTestimonios` false).
 
 No image cleanup this time. **Disk**, `df -h /` free: 56 GB before, 42 GB after the build.
 
-### 4zv. ✅ Done 2026-10-28 09:29–09:45 UTC: `191cad9`, dev only — one Payload migration on start
+### 4zv. ✅ Done 2026-10-28 09:29–09:45 UTC: dev only — one Payload migration on start
 
-All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
-`97d5316`, `docker ps` before and after). The run was asked for `b583555`; origin/main had moved
-to `191cad9` (= `b583555` plus `a87757e`, measurement docs only), and the coordinator ruled to
-deploy what Coolify builds from origin/main. Range `1c80a84..191cad9`: testimonio consent names
-every reader and is versioned, fail-closed (`7ae4bb9`), the page sends the version it showed so a
-stale page gets the 409 (`b8c63a6`); anonymise fixes — public names are not personal data
-(`f08a168`, `cf44f51`), a named workplace or school beside a person is reported (`8c82aea`,
-`fe8c098`); chat sources one per document with card titles, graph summary and corpus overview as
-numbered sources (`a824ac0`, `2770316`, `ac57485`, `b583555`); audit follow-ups (`30fc152`);
-backend ESLint config (`c9ce30c`). No compose, variable or ai-service change.
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on the earlier build, `docker ps` before and after). The run was asked for one build; origin/main had moved
+to a later build (= the first plus, measurement docs only), and the coordinator ruled to
+deploy what Coolify builds from origin/main. Range: testimonio consent names
+every reader and is versioned, fail-closed, the page sends the version it showed so a
+stale page gets the 409; anonymise fixes — public names are not personal data, a named workplace or school beside a person is reported; chat sources one per document with card titles, graph summary and corpus overview as
+numbered sources; audit follow-ups;
+backend ESLint config. No compose, variable or ai-service change.
 
 **Pre-check.** `payload_migrations` 14 rows, newest `20261028_054402_student_testimonio_consent`.
 `edc_ai` `__drizzle_migrations` 6. Org 8 `features` `{"studentView": true, "keepPublicFigures": true}`.
@@ -2432,12 +2391,11 @@ Backup `/root/backups/20261028T0930Z/` (`edc_ai` 129 MB, `edc_backend` 8.5 MB); 
 137 / 438 non-comment lines, `SHA256SUMS` beside them. Off-box copy in the owner's
 `cide/backups/edc-1/20261028T0930Z/` with `timeout 180 scp`; `sha256sum -c` passed before the deploy.
 
-| deploy | uuid | queued → finished (UTC) | commit |
-|---|---|---|---|
-| `191cad9` | `tgg1t8wsmti9eck4tyge7fkz` | 09:31:07 → 09:36:40 | `191cad962c19…` |
+| deploy | uuid | queued → finished (UTC) |
+|---|---|---|
+| first | `tgg1t8wsmti9eck4tyge7fkz` | 09:31:07 → 09:36:40 |
 
-After: 9 containers up; `web`, `backend` and `ai-service` run image tag
-`191cad962c19561e3b877bb651cd29808cbe80a8`, healthy. 0 `error`/`fatal` lines in all 9 dev
+After: 9 containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. 0 `error`/`fatal` lines in all 9 dev
 containers at startup (one later postgres `ERROR` at 09:36:58 is the deploy agent's own mistyped
 `psql` query, not the app).
 
@@ -2454,17 +2412,15 @@ Spend: `usage_logs` since 09:29 UTC: 13 rows, $0.048437, all `edc-eco-8` `router
 09:29–09:36. None from this run, which made no model call; another lane's chat on the old
 containers during the build (inferred by time). Total $9.788590 after.
 
-Image cleanup after `GET /api/v1/deployments` was empty: `docker rmi` of the six unused `1c80a84`
-and `a39af86` web/backend/ai-service images by exact name; `docker builder prune -af` reclaimed
+Image cleanup after `GET /api/v1/deployments` was empty: `docker rmi` of the six unused previous images by exact name; `docker builder prune -af` reclaimed
 26.51 GB. Two dangling images left, both in use: `858f009f9709` (staging's redis) and
 `57e4255cc971` (`coolify-redis`).
 
 **Disk**, `df -h /` free: 42 GB before; 29 GB after the build; 56 GB after the cleanup. Build cache 0.
 
-### 4zw. ✅ Done 2026-10-28 09:41–09:53 UTC: `9597969`, dev only — no migration
+### 4zw. ✅ Done 2026-10-28 09:41–09:53 UTC: dev only — no migration
 
-All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
-`97d5316`, `docker ps` before and after). Range `191cad9..9597969`: anonymise fix in the backend
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on the earlier build, `docker ps` before and after). Range: anonymise fix in the backend
 (`apps/backend/src/lib/anonymise/structural.ts`, `gate.ts`, with tests), plus doc and comment
 edits (q24 README, this runbook, audio-service `.env.example`, README and `config.py` comment: the
 Spark tailnet address replaced with `<spark-url>`). No file under `apps/backend/src/migrations`
@@ -2481,12 +2437,11 @@ Backup `/root/backups/20261028T0941Z/` (`edc_ai` 129 MB, `edc_backend` 8.5 MB); 
 137 / 438 non-comment lines, `SHA256SUMS` beside them. Off-box copy in the owner's
 `cide/backups/edc-1/20261028T0941Z/` with `timeout 180 scp`; `sha256sum -c` passed before the deploy.
 
-| deploy | uuid | queued → finished (UTC) | commit |
-|---|---|---|---|
-| `9597969` | `mlr4mitb2lnl4gfshfr3j9z9` | 09:42:03 → 09:48:23 | `9597969ca57d…` |
+| deploy | uuid | queued → finished (UTC) |
+|---|---|---|
+| first | `mlr4mitb2lnl4gfshfr3j9z9` | 09:42:03 → 09:48:23 |
 
-After: 9 containers up; `web`, `backend` and `ai-service` run image tag
-`9597969ca57d1b6de46039bc1ca6f8b37e84e744`, healthy. 0 `error`/`fatal` lines in all 9 dev
+After: 9 containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. 0 `error`/`fatal` lines in all 9 dev
 containers at startup (one later postgres `ERROR` is the deploy agent's own query against a
 non-existent `drizzle.__drizzle_migrations`; the table lives in `public`).
 
@@ -2501,14 +2456,12 @@ non-existent `drizzle.__drizzle_migrations`; the table lives in `public`).
 
 No image cleanup this time. **Disk**, `df -h /` free: 56 GB before, 41 GB after the build.
 
-### 4zx. ✅ Done 2026-10-28 17:17–17:33 UTC: `d04a112`, dev only — one Payload migration on start; org 7 answer style seeded
+### 4zx. ✅ Done 2026-10-28 17:17–17:33 UTC: dev only — one Payload migration on start; org 7 answer style seeded
 
-All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
-`97d5316`, `docker ps` before and after). Range `9597969..d04a112`: per-ecosistema answer style,
-platform admin only (`7e9a100`: three nullable `organizations.answer_style_*` columns, the
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on the earlier build, `docker ps` before and after). Range: per-ecosistema answer style,
+platform admin only (three nullable `organizations.answer_style_*` columns, the
 `/ajustes` editor, the chat prompt reads it); graph view edges no longer join aggregated CTEs, the
-`/grafo` hang on org 6 (`d04a112`); the anonymise byline follow-ups and their revert (`6326e82`,
-`dd975f0`, `02424bd`, `2efa812`, net zero); runbook §4zv/§4zw. No compose, variable or ai-service
+`/grafo` hang on org 6; the anonymise byline follow-ups and their revert (net zero); runbook §4zv/§4zw. No compose, variable or ai-service
 change.
 
 **Pre-check.** `payload_migrations` 15 rows, newest
@@ -2529,12 +2482,11 @@ in the owner's `cide/backups/edc-1/20261028T1717Z/` with `timeout 180 scp`; `sha
 before the deploy. ⚠ The host has no `pg_restore`; run `pg_restore -l` inside the postgres
 container (`docker exec -i "$C" pg_restore -l < file.dump`).
 
-| deploy | uuid | queued → finished (UTC) | commit |
-|---|---|---|---|
-| `d04a112` | `esqf5olw4rqgmi1misheshin` | 17:19:18 → 17:23:23 | `d04a11216397…` |
+| deploy | uuid | queued → finished (UTC) |
+|---|---|---|
+| first | `esqf5olw4rqgmi1misheshin` | 17:19:18 → 17:23:23 |
 
-After: 9 containers up; `web`, `backend` and `ai-service` run image tag
-`d04a11216397b86c619eb4880c5eb18b4e08c25c`, healthy. 0 `error`/`fatal` lines in 8 of 9 dev
+After: 9 containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. 0 `error`/`fatal` lines in 8 of 9 dev
 containers; the one postgres `ERROR` (17:29:44) is the deploy agent's own `psql` query, where the
 shell expanded `$$` to a process id. Not the app.
 
@@ -2558,7 +2510,7 @@ internet, curl `time_total`:
 | 7 | 200 | 615 007 | 1.68 / 1.69 | 1 500 | 6 000 | 124 |
 | 8 | 200 | 701 249 | 2.02 / 2.02 | 1 500 | 6 000 | 732 |
 
-Org 6 had hung before `d04a112`. Orgs 7 and 8 return exactly 1 500 entities and 6 000 edges. The
+Org 6 had hung before that fix. Orgs 7 and 8 return exactly 1 500 entities and 6 000 edges. The
 round numbers suggest a cap in the view (inferred, not checked in the code).
 
 **Answer style for org 7, Discapacidad** (`scripts/seed-answer-style.ts`, in the backend
@@ -2583,17 +2535,15 @@ Spend: `usage_logs` since 17:17 UTC: 20 rows, $0.061694, all `edc-eco-8` (`route
 
 No image cleanup this time. **Disk**, `df -h /` free: 40 GB before, 36 GB after the build.
 
-### 4zy. ✅ Done 2026-10-29 00:15–00:30 UTC: `3f275c5`, dev only — three Payload migrations on start; in-app notes backfilled
+### 4zy. ✅ Done 2026-10-29 00:15–00:30 UTC: dev only — three Payload migrations on start; in-app notes backfilled
 
-All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
-`97d5316`, "Up 11 days", `docker ps` before and after). Range `d04a112..3f275c5`: `[[wikilinks]]`
-seed the Semiosis graph (`d09af78`, `b3a30ad`); a student's in-app note feeds the student view on
-"Publicar" and "Publicar cambios" re-publishes an edited one (`9dc40b2`, `770afc3`, `c8905a9`,
-`f6de8db`, `056f9ee`); the `/estudiante`, `/ajustes` and `/documentos` redesigns; the graph view
-reports the total above the 1 500 cap (`b51db3a`); Payload's lock and preference collections locked
-down (`9a8fe30`); `/miembros` privacy fixes; legacy `.xls` uploads (`3f275c5`); `seed-answer-style`
-awaits `main()` (`9e7355b`, the §4zx footgun); evidence e2e specs. No compose, variable or
-ai-service change (`git diff --stat d04a112..3f275c5 -- infra` touches `edc-1.md` only).
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on the earlier build, "Up 11 days", `docker ps` before and after). Range: `[[wikilinks]]`
+seed the Semiosis graph; a student's in-app note feeds the student view on
+"Publicar" and "Publicar cambios" re-publishes an edited one; the `/estudiante`, `/ajustes` and `/documentos` redesigns; the graph view
+reports the total above the 1 500 cap; Payload's lock and preference collections locked
+down; `/miembros` privacy fixes; legacy `.xls` uploads; `seed-answer-style`
+awaits `main()` (the §4zx footgun); evidence e2e specs. No compose, variable or
+ai-service change (`git diff --stat -- infra` touches `edc-1.md` only).
 
 **Pre-check.** `payload_migrations` 16 rows, newest `20261028_162050_organizations_answer_style`,
 batch 11. `edc_ai` `__drizzle_migrations` 6. `pg_stat_activity`: 4 idle client backends, one active
@@ -2622,12 +2572,11 @@ checked in `information_schema.columns`. `edc_ai` `__drizzle_migrations` unchang
 set and 22 have `processed_body = body_markdown`. 22 rows in all of `documents` hold a
 `processed_body`, so the backfill touched nothing else.
 
-| deploy | uuid | queued → finished (UTC) | commit |
-|---|---|---|---|
-| `3f275c5` | `jhmkdpv8te6lrmrf3vo0jbwe` | 00:17:47 → 00:24:06 | `3f275c500a86…` |
+| deploy | uuid | queued → finished (UTC) |
+|---|---|---|
+| first | `jhmkdpv8te6lrmrf3vo0jbwe` | 00:17:47 → 00:24:06 |
 
-After: 9 dev containers up; `web`, `backend` and `ai-service` run image tag
-`3f275c500a8683a5b318994ad53c06080734112c`, healthy. 0 `error`/`fatal` lines in 8 of 9 dev
+After: 9 dev containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. 0 `error`/`fatal` lines in 8 of 9 dev
 containers (00:25 UTC). The postgres container holds the deploy agent's own two bad queries
 (00:24:29 `drizzle.__drizzle_migrations`, which lives in `public`; then a wrong `usage_logs`
 column). Not the app.
@@ -2653,7 +2602,7 @@ deleted after, never echoed; `POST /api/users/login`, `Authorization: JWT`). Two
 | 7 | 200 | 615 020 | 1.73 / 1.69 | 1 500 | 2 604 | 6 000 | 124 |
 | 8 | 200 | 715 720 | 2.32 / 2.17 | 1 500 | 7 620 | 6 000 | 747 |
 
-The new `total` field (`b51db3a`) confirms the §4zx guess: 1 500 is the view's cap. Timings within
+The new `total` field confirms the §4zx guess: 1 500 is the view's cap. Timings within
 0.15 s of §4zx. Org 8 published documents 732 → 747 since §4zx; another lane's work (inferred).
 
 Spend: `usage_logs` since 00:16 UTC: 6 rows, $0.018153, all `edc-eco-8` `router.route`. None from
@@ -2661,13 +2610,12 @@ this run, which made no model call; another lane's traffic (inferred). Total $13
 
 No image cleanup. **Disk**, `df -h /` free: 55 GB before, 40 GB after the build.
 
-### 4zz. ✅ Done 2026-10-29 00:53–01:03 UTC: `7be2820`, dev only — no migration
+### 4zz. ✅ Done 2026-10-29 00:53–01:03 UTC: dev only — no migration
 
-All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on
-`97d5316`, "Up 11 days", `docker ps` after). Range `3f275c5..7be2820`: a student's published note is
-editable, so "Publicar cambios" can be reached (`7be2820`; `DocsPanel`, `NoteSheet`, `docStatus`,
-the documents API, `/documentos`); the §4zy runbook entry (`548a7f7`). No migration, compose or
-ai-service change (`git diff --stat 3f275c5 7be2820` touches no `migrations/` path and only
+All measured by the deploy agent. Staging was not touched (web, backend, ai-service still on the earlier build, "Up 11 days", `docker ps` after). Range: a student's published note is
+editable, so "Publicar cambios" can be reached (`DocsPanel`, `NoteSheet`, `docStatus`,
+the documents API, `/documentos`); the §4zy runbook entry. No migration, compose or
+ai-service change (`git diff --stat` touches no `migrations/` path and only
 `edc-1.md` under `infra`).
 
 **Pre-check.** `payload_migrations` 19 rows, newest `20261028_235647_documents_kind_xls`.
@@ -2677,12 +2625,11 @@ inside the postgres container 137 / 440 non-comment lines, `SHA256SUMS` beside t
 the owner's `cide/backups/edc-1/20261029T0053Z/` with `timeout 300 scp`; `sha256sum -c` passed
 before the deploy.
 
-| deploy | uuid | queued → finished (UTC) | commit |
-|---|---|---|---|
-| `7be2820` | `s2fqskjbxgcurvqcyvjp0yev` | 00:55:38 → 00:59:48 | `7be2820c18e4…` |
+| deploy | uuid | queued → finished (UTC) |
+|---|---|---|
+| first | `s2fqskjbxgcurvqcyvjp0yev` | 00:55:38 → 00:59:48 |
 
-After: 9 dev containers up; `web`, `backend` and `ai-service` run image tag
-`7be2820c18e46eedacde020b224daaae64ec6fa5`, healthy. `payload_migrations` still 19, newest batch 12.
+After: 9 dev containers up; `web`, `backend` and `ai-service` run the build's image tag, healthy. `payload_migrations` still 19, newest batch 12.
 0 `error`/`fatal` lines in all 9 dev containers (`docker logs --since 10m`, 01:02 UTC).
 
 **Smoke** (no paid call, from the owner's laptop):
@@ -2726,7 +2673,7 @@ Restore, if a migration goes wrong: stop that env's ai-service, then
 the previous commit. ⚠ Copy the dumps off the box if you keep them; Hetzner's daily image also
 holds the disk, but restoring it rolls back both environments at once.
 
-### 4c. ✅ Done 2026-10-17: one ai-service org per ecosistema (`7dbe85c`)
+### 4c. ✅ Done 2026-10-17: one ai-service org per ecosistema
 
 Applied on dev (05:16 UTC) and staging (05:50 UTC), measured:
 
@@ -2749,11 +2696,11 @@ What differed from the plan:
   between the two deploys. `coolify-db` hit "No space left on device", restarted 8 times, then
   recovered on its own, and the staging deployment hung for 15 min in "exporting to image".
   Dev's redis also failed AOF writes for that minute, and recovered (`aof_last_write_status:ok`).
-  Fix used: `docker builder prune -f`, remove the `f89047e` images, cancel the hung deploy
+  Fix used: `docker builder prune -f`, remove the previous images, cancel the hung deploy
   (`POST /api/v1/deployments/<uuid>/cancel`), deploy again. **Prune the build cache between
   the two environments**, not only at the end.
-- The first try at `3099526` failed at build (`@edc/chat-engine/core` not found from
-  `apps/backend/src/eval`); `7dbe85c` took the eval out of the backend build.
+- The first try at that build failed at build (`@edc/chat-engine/core` not found from
+  `apps/backend/src/eval`); a later commit took the eval out of the backend build.
 - In both answers, chat cited the PDF by file name in prose; no inline `[n]` markers appeared.
 
 The order, per environment (the one used above):
@@ -2777,28 +2724,27 @@ The order, per environment (the one used above):
 After the move, §6's budget command targets `edc-eco-<id>`, not `demo`. New ecosistemas get
 their row from the backend (`provisionEcosystem.ts`). Old spend stays booked to `demo`.
 
-### 4zzz. Done 2026-10-29 05:37-05:43 UTC: `59d4da6`, dev only - one Payload migration on start
+### 4zzz. Done 2026-10-29 05:37-05:43 UTC: dev only - one Payload migration on start
 
-Measured by the deploy agent. Staging untouched (still `97d5316`, "Up 11 days"). Previous dev image
-was `bf15ad2`. Pre-check: no documents in `graph_status` extracting or `anonymisation_status`
+Measured by the deploy agent. Staging untouched (still its earlier build, "Up 11 days"). Previous dev image
+was the earlier build. Pre-check: no documents in `graph_status` extracting or `anonymisation_status`
 pending, no active backend query, last `documents.updated_at` 03:53 UTC, backend log silent for 3 min.
 No backup taken by this run. Deploy `7aezwgxxjesa1fgqiednouul`, 05:37:19 -> 05:43:12 UTC.
 Migration `20261029_042255_documents_held_text_hash` logged `Migrated (10ms)`, then `Done.`,
 `Ready in 864ms`; `payload_migrations` 19 -> 20, batch 13. After: `web`, `backend`, `ai-service` run
-image tag `59d4da631a749f45b9d42a29e17d6e3267a56604`, healthy; 0 error lines in all 9 dev containers.
+the build's image tag, healthy; 0 error lines in all 9 dev containers.
 
-### 4zzzz. Done 2026-10-29 06:45-06:50 UTC: `b88735b`, dev only - one Payload migration on start
+### 4zzzz. Done 2026-10-29 06:45-06:50 UTC: dev only - one Payload migration on start
 
-Measured by the deploy agent. Staging untouched (still `97d5316`, "Up 11 days"). Previous dev image
-was `59d4da6`. Pre-check: no active query in `edc_backend` or `edc_ai`; no document in `graph_status`
+Measured by the deploy agent. Staging untouched (still its earlier build, "Up 11 days"). Previous dev image
+was the earlier build. Pre-check: no active query in `edc_backend` or `edc_ai`; no document in `graph_status`
 extracting or `anonymisation_status` pending; last `documents.updated_at` 03:53 UTC.
 Backup `/root/backups/20261029T0643Z/` (`edc_ai` 312 MB, `edc_backend` 18.7 MB, `pg_restore -l` ok,
 sha256 matched off-box in the owner's `cide/backups/edc-1/20261029T0643Z/`). Backup command used:
 `docker exec <postgres> pg_dump -U edc -Fc <db>` per database, then `sha256sum` into `SHA256SUMS`.
 Deploy `kyk7m37pk7dngypqqr3g7e7r`, 06:45:52 -> ~06:50:13 UTC.
 Migration `20261029_060304_evals` logged `Migrated (72ms)`, then `Done.`, `Ready in 832ms`;
-`payload_migrations` 20 -> 21, batch 14. After: `web`, `backend`, `ai-service` run image tag
-`b88735b5fbb9c15c3203798abb7ec08de5fb1df6`, healthy; 0 error lines in all 9 dev containers.
+`payload_migrations` 20 -> 21, batch 14. After: `web`, `backend`, `ai-service` run the build's image tag, healthy; 0 error lines in all 9 dev containers.
 Smoke: `/` and `/admin/evals` 303 -> `/sign-in`; `/api/health` 200.
 
 ---
@@ -2878,7 +2824,7 @@ only because pre-§4c spend is booked to it; nothing spends from `demo` any more
    `POST /api/v1/deploy?uuid=<app uuid>` with the bearer token.
 3. Watch it: `GET /api/v1/deployments/<deployment uuid>` until `status` is `finished`.
    A cold build of the whole stack took about 5 minutes (measured 2026-10-17, dev, idle box).
-   The `fcd1325` deploys took ≈ 11 minutes each (measured 2026-10-17, from deploy queue to
+   The deploys took ≈ 11 minutes each (measured 2026-10-17, from deploy queue to
    containers up).
 4. Check: `https://<web host>/api/health` and `https://<backend host>/api/health` answer 200.
 5. Check the variables (§4 footgun 1) whenever the compose file changed.
@@ -2909,16 +2855,15 @@ with the file name → `DELETE /api/sessions/<id>`.
 | Biggest containers | backend ≈ 200 MB each, ai-service 70–120 MB each, Coolify ≈ 140 MB |
 | Disk | 30 GB of 75 GB used; images 11 GB, Docker build cache 17.5 GB (16 GB reclaimable) |
 
-2026-10-17 `fcd1325` deploys (measured, `df -h /`): 42 GB free before, 15 GB free after both
+2026-10-17 deploys (measured, `df -h /`): 42 GB free before, 15 GB free after both
 deploys (build cache 22 GB), 33 GB free after `docker builder prune -f`. Old images (≈ 8 GB
 reclaimable) were kept for rollback.
 
-2026-10-17 `7dbe85c` deploys (measured, `df -h /`): 33 GB free before; dev's deploy took
+2026-10-17 deploys (measured, `df -h /`): 33 GB free before; dev's deploy took
 16 GB of build cache. Staging's build then filled the disk (§4c). After cleanup: 17 GB free.
-The images are large — web ≈ 6.1 GB, ai-service ≈ 5.0 GB, backend ≈ 2.5 GB per tag — and the
-`fcd1325` images (≈ 13.5 GB per environment) are still kept for rollback.
+The images are large — web ≈ 6.1 GB, ai-service ≈ 5.0 GB, backend ≈ 2.5 GB per tag — and the previous images (≈ 13.5 GB per environment) are still kept for rollback.
 
-2026-10-17 `643ff4e` deploys (measured, `df -h /`): see §4e. With slim images and both caches
+2026-10-17 deploys (measured, `df -h /`): see §4e. With slim images and both caches
 pruned, 12 GB used, 61 GB free; images 7.0 GB in all, build cache 0.
 
 ⚠ The build cache grows with every deploy — 7–16 GB per environment deploy here. Coolify's scheduled Docker cleanup prunes it; if disk

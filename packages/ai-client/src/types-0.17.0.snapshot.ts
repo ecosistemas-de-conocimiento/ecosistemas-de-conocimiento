@@ -1,7 +1,6 @@
 // FROZEN SNAPSHOT — the public wire types as `@edc/ai-client@0.17.0`
-// shipped them, taken verbatim from `git show b903699:packages/ai-client/src/types.ts`
-// plus the two provisioning request interfaces that lived in `tenant.ts` at the
-// same commit.
+// shipped them, plus the two provisioning request interfaces that lived in
+// `tenant.ts` at that version.
 //
 // DO NOT EDIT and DO NOT "keep up to date". Its whole job is to stop moving:
 // `types-compat.test.ts` proves every name 0.18.0 still publishes is MUTUALLY

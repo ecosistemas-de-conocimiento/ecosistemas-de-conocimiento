@@ -210,7 +210,7 @@ describe('🔴 the emitter coupling — 300s holds ONLY while ai-service re-stam
   it('…and the SAME retry is rejected if stamping regresses to enqueue time', () => {
     // 🔴 If this test ever fails, DO NOT widen CALLBACK_SKEW_WINDOW_SECONDS.
     // It means somebody hoisted the stamping back to enqueue time (an
-    // ai-service rollback past 6ca6886), and every receiver in the fleet is
+    // ai-service rollback), and every receiver is
     // now silently 401-ing late retries with nothing in any log naming the
     // cause. Fix the EMITTER.
     const sentAt = NOW + FINAL_RETRY_OFFSET_S;
@@ -273,9 +273,7 @@ describe('the cross-service conformance suite', () => {
   });
 
   it('catches THE ACTUAL pre-unification backend / chat-backend verifier', () => {
-    // Verbatim behaviour of `backend/src/lib/hmac.ts` @ 359de324 and
-    // `chat-backend/src/lib/hmac.ts` @ da2bb1f, re-expressed here. It was
-    // considered correct and shipped in two services. The suite must reject it.
+    // A verifier that was considered correct and shipped. The suite must reject it.
     const preUnification = (opts: Parameters<typeof verifyCallbackSignature>[0]) => {
       const { rawBody, timestamp, signature, secret } = opts;
       // ← divergence 1: 401, not 503. ai-service gives up permanently.

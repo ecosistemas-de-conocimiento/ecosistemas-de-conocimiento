@@ -44,8 +44,8 @@ describe('GET /v1/capabilities', () => {
 describe('the document carries names and nothing else', () => {
   it('has no version / build / commit field, however the env is set', async () => {
     // Pins the ADR-0004 decision: compatibility is decided on NAMES. A build
-    // identifier here would decide nothing, would read `unknown` on this
-    // fleet's pipeline, and would invite someone to hand-maintain it.
+    // identifier here would decide nothing, would read `unknown` on the
+    // pipeline, and would invite someone to hand-maintain it.
     process.env['SERVICE_VERSION'] = 'v1.2.3';
     process.env['SOURCE_COMMIT'] = 'abc1234';
     try {

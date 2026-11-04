@@ -7,12 +7,8 @@
  *
  * ── WHY THE ROLE MODEL IS CODE ───────────────────────────────────────────────
  *
- * The IdP this was lifted from resolved a FLEET-WIDE RBAC catalogue: four
- * collections (`projects`, `permissions`, `roles`, `assignments`) letting each
- * of four separate products define its own permission vocabulary, with
- * per-assignment `extraPermissions` as an escape hatch.
- *
- * That machinery answers a question this product does not have. There is ONE
+ * An editable RBAC catalogue (`projects`, `permissions`, `roles`, `assignments`
+ * collections) answers a question this product does not have. There is ONE
  * product here. Its tenancy axis is the ORGANIZATION, and a person's standing
  * in an organization is one of three things: they own it, they administer it,
  * or they are a member of it. Modelling that as an editable catalogue of
@@ -22,10 +18,9 @@
  * sets of access rules and an N+1-shaped resolver to keep correct.
  *
  * So: **the role lives on the membership, and the role→permission map is
- * CODE** (`ROLE_PERMISSIONS` below). Deleted: `projects` (the fleet catalogue),
- * `permissions`, `roles`, `assignments`.
+ * CODE** (`ROLE_PERMISSIONS` below).
  *
- * ⚠ THE WIRE SHAPE IS UNCHANGED and must stay that way. `@edc/identity-client`
+ * ⚠ THE WIRE SHAPE MUST STAY AS IT IS. `@edc/identity-client`
  * consumes `ResolvedPrincipal` with a `projects` map and `ProjectGrant`
  * `{ roles, permissions }`, and its `canInProject(principal, slug, perm)` is
  * the check a consumer writes. In THIS product that map is keyed by

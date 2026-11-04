@@ -1,8 +1,8 @@
 // What routes does the BUILT SERVER actually have?
 //
 // The OpenAPI document is written by hand-ish (a table in `route-table.ts`),
-// and a table can silently fall behind the server it claims to describe: on
-// 970baae the document was missing `POST /v1/generate/stream`, both
+// and a table can silently fall behind the server it claims to describe: before
+// the fix the document was missing `POST /v1/generate/stream`, both
 // `/v1/admin/callbacks` routes, `/v1/internal/latest-trace` and the
 // authenticated `GET /v1/` ping — four surfaces a consumer could call and
 // never find documented. `routes-vs-document.test.ts` closes that by

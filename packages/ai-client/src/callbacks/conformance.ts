@@ -5,10 +5,8 @@
  * THIS IS THE THING WHOSE ABSENCE CAUSED THE DIVERGENCE.
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * Three receivers each hand-rolled a verifier, each carried a comment claiming
- * to be a copy of the others, and NOTHING EVER CHECKED. They drifted on four
- * behaviours and one security constant, and it was found by a human diffing
- * files. A comment is not a control. A written contract is not a control. This
+ * Hand-rolled verifiers drift, and a comment claiming to be a copy checks
+ * nothing. A comment is not a control. A written contract is not a control. This
  * is a control: it runs, and it goes red.
  *
  * ── How each receiver uses it ────────────────────────────────────────────────
@@ -45,7 +43,7 @@
  * Every behaviour that ONE receiver used to do differently from the others has
  * a case here, named after the divergence. If a new question comes up — "should
  * a whitespace-padded signature verify?" — the answer belongs here, not in a
- * per-repo test, or the fleet will answer it three ways again.
+ * per-repo test.
  *
  * The cases are pure data with a fixed clock and a fixed secret, so they carry
  * no test-framework dependency and can be driven by vitest, node:test, or a
@@ -268,7 +266,7 @@ export const CALLBACK_VERIFIER_CONFORMANCE_CASES: readonly CallbackVerifierConfo
       // ai-service RETRY_SCHEDULE_MS = [0, 5s, 30s, 2m, 10m], cumulative t+12m35s.
       const finalAttemptAt = CONFORMANCE_NOW + 755;
       return base({
-        // Re-stamped at send time, per `attemptDelivery` since 6ca6886.
+        // Re-stamped at send time, per `attemptDelivery`.
         timestamp: String(finalAttemptAt),
         signature: at(finalAttemptAt),
         now: () => finalAttemptAt,
@@ -282,7 +280,7 @@ export const CALLBACK_VERIFIER_CONFORMANCE_CASES: readonly CallbackVerifierConfo
       // Identical delivery, except the emitter regressed to minting the
       // timestamp once at enqueue and replaying it. This case is the alarm: if
       // it ever starts passing, the window was widened to paper over an emitter
-      // rollback past 6ca6886. Fix the EMITTER, never this number.
+      // rollback. Fix the EMITTER, never this number.
       const finalAttemptAt = CONFORMANCE_NOW + 755;
       return base({
         timestamp: String(CONFORMANCE_NOW),
@@ -323,7 +321,7 @@ export function runCallbackVerifierConformance(
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // `runCallbackVerifierConformance` above checks the verifier a repo IMPORTS.
-// It is blind to the failure that actually created three copies: someone adds
+// It is blind to this failure: someone adds
 // a second callback endpoint with its own hand-rolled `createHmac`, in a brand
 // new file, importing nothing. No behaviour or identity assertion looks at a
 // file nobody imports.

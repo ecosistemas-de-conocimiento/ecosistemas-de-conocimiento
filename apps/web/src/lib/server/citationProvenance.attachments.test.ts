@@ -16,7 +16,7 @@ import { chatCitationHref } from '$lib/engine/client';
 /**
  * Owner ruling 2026-10-24 (direct): a document attached to a turn gets a
  * source card when the answer uses it without citing. Attached = it rode the
- * prompt fenced `<fuente tipo="adjunto">`, with no number (1284a13): an
+ * prompt fenced `<fuente tipo="adjunto">`, with no number: an
  * `@`-mention, the title-named document, a pinned upload.
  *
  * "Uses it" (`usedAttachments`):

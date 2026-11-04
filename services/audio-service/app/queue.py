@@ -14,8 +14,8 @@ implemented explicitly in `worker.py`: on the final failed attempt the job is
 pushed onto a bounded Redis list (`audio:dlq:transcribe` /
 `audio:dlq:callback`) with its error, and the job row moves to `dead_letter`.
 `GET /v1/admin/dead-letters` reads them back. The retry policy itself
-(`RETRY_SCHEDULE_SECONDS`, and the 4xx/5xx/network branch table) is ported from
-ai-service unchanged, so the two services fail identically from a consumer's
+(`RETRY_SCHEDULE_SECONDS`, and the 4xx/5xx/network branch table) is the same as
+ai-service, so the two services fail identically from a consumer's
 point of view.
 
 Job ids are deterministic — `transcribe:{transcribeId}` — which gives us BullMQ's

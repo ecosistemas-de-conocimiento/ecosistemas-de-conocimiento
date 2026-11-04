@@ -69,7 +69,7 @@ export async function leerFuentes(page: Page): Promise<void> {
 
 /** Chat, ratings, documents in a conversation, and Resonancias. */
 export async function conversar(page: Page, pregunta: string, experiencia: string): Promise<void> {
-  // Participante and estudiante land on a start screen (from 5ef35b1); other roles, and older builds, do not.
+  // Participante and estudiante land on a start screen; other roles, and older builds, do not.
   await page.goto('/');
   await page.waitForLoadState('networkidle');
   const iniciar = page.getByTestId('inicio-iniciar');

@@ -8,8 +8,7 @@
  * 29 979 ms and was billed for the partial generation.
  *
  * The DEFAULT (no `timeoutMs` anywhere) keeps the clamp: a caller that sets
- * nothing still waits at most 30 s in total — chat-backend sizes its boot
- * deadline on that. The last block below pins it.
+ * nothing still waits at most 30 s in total. The last block below pins it.
  *
  * Fake timers drive every case: the server "answers at 45 s" on the fake clock,
  * so each test runs in milliseconds and asserts the decision, not a duration.

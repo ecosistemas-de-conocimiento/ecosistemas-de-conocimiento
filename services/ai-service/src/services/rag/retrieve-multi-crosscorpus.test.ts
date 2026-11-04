@@ -6,7 +6,7 @@
 // dropped onto the UNFIXED tree and run, and the defect cases go red on
 // assertions rather than on a missing import. That is how the red was proved.
 //
-// RED PROVED — this file copied verbatim onto `origin/main` (1429a50):
+// RED PROVED — this file against the code before the fix:
 //   ✗ shuts the deeper corpus out of every slot   (got o1..o8, thread got none)
 //   ✗ reports which corpus contributed            (`contributed` undefined)
 //   ✗ resolves a tie the same way whatever order  (order followed the request)

@@ -3,7 +3,7 @@
 // ai-service POSTs HMAC-signed callbacks to consumer-supplied `callbackUrl`s
 // (`POST /v1/generate`, `POST /v1/ingest`) and to `project_configs.callback_url`.
 // Without validation, any tenant key turns the service into an SSRF pivot from
-// inside the fleet network: cloud metadata (169.254.169.254), Postgres/Redis,
+// inside the private network: cloud metadata (169.254.169.254), Postgres/Redis,
 // sibling services, internal port-scanning via `last_error`/`response_status`.
 //
 // The guard is enforced twice, deliberately:

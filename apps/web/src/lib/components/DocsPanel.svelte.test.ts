@@ -1,5 +1,5 @@
 /**
- * 🔴 "Publicar cambios" was unreachable (dev 3f275c5, 2026-10-28): a student's
+ * 🔴 "Publicar cambios" was unreachable (dev, 2026-10-28): a student's
  * PUBLISHED note (`ingestStatus: 'ready'`) opened in the conversation's panel
  * showed "MARKDOWN · Listo para el chat" and no editor, so its body could never
  * differ from the published one. SSR render, panel open on that note.

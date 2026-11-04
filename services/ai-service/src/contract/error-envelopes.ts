@@ -43,7 +43,7 @@
 //      route table attaches it to all of them rather than to a chosen few.
 //
 // ── ONE CLASS, ONE ENVELOPE — and why a STATUS still carries two ──────────
-// `phase2/route-errors` (4a46981) removed the nine route-layer catches that
+// The original fix removed the nine route-layer catches that
 // re-flattened a typed error, so a CLASS now has exactly one wire shape:
 // `CorpusNotFoundError` is nested on `POST /v1/retrieve` as well as on
 // `/v1/corpora`, and `routes/registry.ts` no longer re-sends its own two flat

@@ -190,7 +190,7 @@ export function toBrowserProvenance(provenance: unknown): Provenance | null {
  * {@link FALLBACK_SOURCES} + 1 entries.
  *
  * 🔴 A NO-ANSWER REPLY LISTS NO RETRIEVED SOURCE, CITED OR NOT (owner's
- * overnight rule, 2026-10-21). Measured on dev after 9285305: an off-topic
+ * overnight rule, 2026-10-21). Measured on dev: an off-topic
  * question (3/3 runs) said the documents do not cover it, then cited
  * [1, 2, 3, 4, 5]. An answer containing {@link NO_ANSWER_REPLY} or one of
  * {@link NO_ANSWER_VARIANTS} ({@link isNoAnswer}, accent- and case-folded)
@@ -200,20 +200,20 @@ export function toBrowserProvenance(provenance: unknown): Provenance | null {
  * the question and later says "los documentos no mencionan X" keeps its
  * cited sources.
  * WITHOUT `[N]`, a refusal cue ANYWHERE ({@link hasRefusalCue}) skips the
- * fallback. Measured on dev after 5fe43ff: "Los documentos de la Red
+ * fallback. Measured on dev: "Los documentos de la Red
  * Comunitaria de Salud no hablan de la capital …" (no `[N]`) slipped past the
  * first-sentence net and listed 3 fallback sources; an Educación hedge "… no
  * contienen testimonios directos de familias" (no `[N]`) did too. The cost:
  * an uncited partial answer that names one gap shows no sources. An answer
  * that wants its sources cites them.
  *
- * 🔴 AT MOST {@link MAX_SOURCES} SOURCES. Measured on dev after 9285305: dengue
+ * 🔴 AT MOST {@link MAX_SOURCES} SOURCES. Measured on dev: dengue
  * answers cited 29–31 times. Cited sources keep citation order (first `[N]`
  * first) and the first ones win. A title-matched document not among them
  * takes the last slot, so the total never passes {@link MAX_SOURCES}.
  *
  * 🔴 THE NO-`[N]` FALLBACK SKIPS A PASSAGE THE RERANKER CALLED IRRELEVANT
- * ({@link fallbackMinRerank}). Measured on dev at 7b2e27e (variant E):
+ * ({@link fallbackMinRerank}). Measured on dev (variant E):
  * "¿Cuál es la capital de Francia?" got "París es la capital de Francia." with
  * no `[N]` and no general-knowledge lead, so the fallback listed 3 chunks with
  * rerank scores near 1e-4.
@@ -226,8 +226,8 @@ export function toBrowserProvenance(provenance: unknown): Provenance | null {
  *
  * 🔴 A DOCUMENT ATTACHED TO THE TURN GETS A CARD WHEN THE ANSWER USES IT
  * (owner ruling 2026-10-24). Attachments (`@`-mentions, the title match,
- * pinned documents; {@link TurnAttachment}) ride the prompt with no number
- * since 1284a13, so the answer cannot cite them. {@link usedAttachments}
+ * pinned documents; {@link TurnAttachment}) ride the prompt with no number,
+ * so the answer cannot cite them. {@link usedAttachments}
  * decides "uses"; the title match above is one case of it. Then:
  *   · cited retrieved sources first, each keeping its prompt ordinal (the
  *     `[N]` mapping is unchanged), the attachment cards after them, numbered

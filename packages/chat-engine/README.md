@@ -109,7 +109,7 @@ Packages before assuming a consumer has it.
 No code moved. `prepublishOnly` runs the same list `verify.yml` runs, in the same order —
 typecheck → the unit suite under `suite-census` → `--verify-all` → build — so `npm publish`
 or `pnpm publish` from a laptop cannot skip the checks a merge cannot skip. That path
-reaches no workflow file, and under the fleet's no-pinning rule every consumer resolves
+reaches no workflow file, and consumers without a pin resolve
 `latest`: a publish from a red tree lands on all of them at their next install without
 anyone choosing to take it.
 

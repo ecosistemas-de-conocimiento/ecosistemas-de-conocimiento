@@ -286,7 +286,7 @@ services:
     # BullMQ queues (ai-service ingest + audio jobs) and the SSE fan-out bus.
     # 🔴 The fan-out bus is NOT optional the moment there is
     #    more than one replica: an in-process emitter silently produces stale
-    #    notifications instead of an error (ADR-0001 D4).
+    #    notifications instead of an error.
     image: redis:7-alpine
     <<: [*restart, *logging]
     # appendonly so a `docker compose restart` does not drop queued jobs. This
@@ -432,9 +432,8 @@ services:
   backend:
     # Next.js + Payload CMS. Domain data AND the identity provider in one app.
     #
-    # ✅ `apps/backend/Dockerfile` was rewritten for this monorepo while this
-    #    file was being written, and is now correct: repo-root context, pnpm,
-    #    no `REGISTRY_PAT`, no private registry scope, `ENV PORT=3002`.
+    # ✅ `apps/backend/Dockerfile` is correct: repo-root context, pnpm,
+    #    no private registry scope, `ENV PORT=3002`.
     #    ⚠ One residual difference from `services/ai-service/Dockerfile`: it
     #      copies only FOUR workspace manifests (backend + the three packages),
     #      not all six. pnpm validates `--frozen-lockfile` against EVERY
@@ -1073,9 +1072,8 @@ volumes:
 #                                          no registry token. No change needed.
 #  ✅ `services/ai-service/Dockerfile{,.dev}`  correct. Copies all SIX workspace
 #                                          manifests — the reference to copy.
-#  ✅ `apps/backend/Dockerfile{,.dev}`      REWRITTEN mid-flight by another
-#                                          agent; now repo-root context, pnpm,
-#                                          `ENV PORT=3002`, no `REGISTRY_PAT`.
+#  ✅ `apps/backend/Dockerfile{,.dev}`      repo-root context, pnpm,
+#                                          `ENV PORT=3002`.
 #                                          One residual risk noted on the
 #                                          `backend` service above: it copies
 #                                          only four of six manifests.

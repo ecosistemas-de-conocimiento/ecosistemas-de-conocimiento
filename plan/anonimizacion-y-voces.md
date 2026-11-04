@@ -2,7 +2,7 @@
 
 **Status:** Implemented in large part — merged on 2026-08-28. See §7 for what landed and what is still open. Sections 1–6 are the original proposal, kept as the record of the reasoning.
 **Decided so far (owner):** conversations are ingested into the corpus; questions AND assistant answers; a conversation that cited unpublished drafts enters when those drafts are published; ingestion is automatic and silent.
-**Decided later, in code (`c0fea63`):** testimonies are **always anonymous** — no `subject` field, no consent level (see `apps/backend/src/collections/Documents.ts`, the comment on `contentKind`). This settles §3.4 in a different direction from the three-level proposal.
+**Decided later, in code:** testimonies are **always anonymous** — no `subject` field, no consent level (see `apps/backend/src/collections/Documents.ts`, the comment on `contentKind`). This settles §3.4 in a different direction from the three-level proposal.
 **Open:** the legal / ethical frame for testimonies, retention, and moving stage 4 off the hosted model (§7).
 
 ---
@@ -178,7 +178,7 @@ In `apps/backend`, as domain logic. `ai-service` is deliberately content-agnosti
 
 ## 7. Implementation status (reviewed 2026-10-16 against the git history)
 
-**Implemented** — merged in `c0fea63`; main work in `fd52489`, review fixes in `cae927f`, `fcb3b65`.
+**Implemented**
 
 - ✅ **The gate with a hold state** (§3.1) — `apps/backend/src/lib/anonymise/`. `gate.ts` returns `ready | hold` only; a detector failure, an empty result or a verify disagreement ends in `hold`. Stages: `structural.ts` (drop ids, coarsen dates), `deterministic.ts` (regexes + roster), `detector.ts` (open scrub, LLM), then verify by re-running the detector over the redacted text.
 - ✅ **Per-document pseudonyms** (§3.2) — `lib/anonymise/pseudonyms.ts`: `[Persona A]`, `[Domicilio A]`, `[Dato omitido]`. No re-identification map is stored.
@@ -187,7 +187,7 @@ In `apps/backend`, as domain logic. `ai-service` is deliberately content-agnosti
 - ✅ **Conversation ingestion, incremental, with assistant turns marked** (§3.0, §4, step 5) — `lib/conversationIngest.ts` appends turns (never re-ingests the thread) and sets `authoredBy: 'assistant' | 'user'`; hooks in `collections/Messages.ts`; ai-service callback at `app/api/ai-service/callback/route.ts`.
 - ✅ **Investigador role, scoped to one ecosistema** (§3.4, step 4) — `lib/permissions.ts` (`ORG_ROLES`, rank between `member` and `admin`, `voces:upload`), `collections/Memberships.ts`; migration `migrations/20260828_081504_voces_and_anonymisation.ts`.
 - ✅ **Document anonymisation for Voces** — `lib/anonymiseDocument.ts`, wired into `collections/Documents.ts`.
-- ✅ **Follow-ups after the merge:** review screen for held documents (`7204d17`); anonymisation policy in one place plus street-address redaction (`f9f1cd9`, `1dd93ee`); six findings from the adversarial review of the gate (`161ede9`); the corpus graph reads the anonymised text and makes no person nodes from a `testimonio` (`eed2c59`, `2f6d191`).
+- ✅ **Follow-ups after the merge:** review screen for held documents; anonymisation policy in one place plus street-address redaction; six findings from the adversarial review of the gate; the corpus graph reads the anonymised text and makes no person nodes from a `testimonio`.
 
 **Decided differently from the proposal**
 

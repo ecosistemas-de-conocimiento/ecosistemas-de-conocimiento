@@ -86,7 +86,7 @@ describe('canEditNote', () => {
     publicationStatus: 'published',
     ingestStatus: 'ready' as const,
   };
-  it('a PUBLISHED own note is editable (dev 3f275c5: it was not, so "Publicar cambios" was unreachable)', () => {
+  it('a PUBLISHED own note is editable (it was not, so "Publicar cambios" was unreachable)', () => {
     expect(canEditNote(note)).toBe(true);
   });
   it('an own draft note is editable, also from a list that did not say who uploaded it', () => {

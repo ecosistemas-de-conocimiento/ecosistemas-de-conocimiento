@@ -2,11 +2,11 @@
 // port and tell the caller which port it landed on.
 //
 // Sibling of `docker-pg.ts`, and it exists for the same reason. The integration
-// suite used to default to `redis://localhost:56379`, which on this workstation
-// is the LIVE fleet Redis (`edc-local-ai-redis-1`). Nothing in the suite
+// suite used to default to `redis://localhost:56379`, which could
+// be a LIVE Redis. Nothing in the suite
 // issues FLUSHDB, so the blast radius was smaller than the Postgres case — but
 // BullMQ still enqueues jobs into whatever Redis it is handed, so a test run
-// could push work into the live fleet's queue namespace and be consumed by a
+// could push work into a live queue namespace and be consumed by a
 // real worker. "Smaller blast radius" is not "safe".
 //
 // Same mechanism as the Postgres helper: `-p 127.0.0.1::6379` asks the Docker

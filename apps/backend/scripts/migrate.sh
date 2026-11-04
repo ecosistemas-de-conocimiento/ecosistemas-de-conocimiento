@@ -2,9 +2,9 @@
 # Run `payload migrate` and REQUIRE proof that it ran.
 #
 # 🔴 `payload migrate` can exit 0 having printed nothing and run nothing.
-# measured: dev box edc-1 (4 vCPU), 2026-10-26, image 34296a8 — 2 of 12
+# measured: dev box edc-1 (4 vCPU), 2026-10-26 — 2 of 12
 # parallel cold `payload migrate:status` runs exited 0 with zero output;
-# 0 of 5 serial runs did. The 34296a8 deploy hit it at boot: no migrate
+# 0 of 5 serial runs did. That day's deploy hit it at boot: no migrate
 # output, `next start` ran, `20261026_160000_documents_anonymise` stayed
 # pending until applied by hand. inferred: Payload's bin.js runs its CLI as
 # `void start()` through tsx's off-thread loader, and under load Node can

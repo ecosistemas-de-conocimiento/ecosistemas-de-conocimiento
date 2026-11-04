@@ -606,7 +606,7 @@ export interface RetrieveResult {
    * service is reachable and positively lacks it, and logs loudly instead in
    * `warn` mode or when the service cannot be reached at all. Prefer
    * `createCapabilityCheck` (`./capability-check.js`) if you want the
-   * once-per-process wrapper the fleet's consumers share. For a plain boolean
+   * once-per-process wrapper consumers share. For a plain boolean
    * at some other moment, read the document:
    * `(await client.capabilities.get()).capabilities.retrievalLegs === true`.
    *

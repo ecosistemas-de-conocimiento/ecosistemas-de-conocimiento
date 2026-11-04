@@ -7,7 +7,7 @@
 // behind them grows to minutes. One bulk operation
 // made 71 and 100 single-document calls (measured with local Postgres,
 // AI stubbed -> a lower bound; a live model writes more rows), i.e. minutes of
-// queue at 40/min. With this batcher the same promotions made 3 calls each. This batcher collapses those into
+// queue at 40/min. With this batcher the same operations made 3 calls each. This batcher collapses those into
 // `ceil(distinct docs / maxBatch)` calls.
 //
 // ── WHAT IT DOES ────────────────────────────────────────────────────────────

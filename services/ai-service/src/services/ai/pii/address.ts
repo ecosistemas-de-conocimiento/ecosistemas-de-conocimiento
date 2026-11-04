@@ -27,8 +27,7 @@
 //   2. A street with no number (`Vivo en Insurgentes Sur`) is not found. The
 //      number is the only thing separating an address from a place name.
 //   3. Rural and indigenous-community addresses, which frequently have no
-//      street type and no number at all, are not found. This is a REAL gap for
-//      the fleet's users, and it is exactly the gap `§9.4`'s "rules first,
+//      street type and no number at all, are not found. This is a REAL gap, and it is exactly the gap `§9.4`'s "rules first,
 //      model later" expects the NER adapter to close — an address is a `LOC`
 //      span to a model and an unparseable string to a regex.
 //

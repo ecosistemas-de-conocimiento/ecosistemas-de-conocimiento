@@ -455,7 +455,7 @@ function makeDb(state: StubState): Db {
             // `await db.update(generationJobs).set({…})` with the `.where()`
             // DELETED resolved against a plain object with no `then`: `await`
             // of a non-thenable settles immediately, the worker ignores the
-            // result, and nothing reached the recorder. Measured at e99c438:
+            // result, and nothing reached the recorder. Measured:
             // deleting `.where(eq(generationJobs.id, row.id))` from
             // `generation.worker.ts:324` — a whole-table write in real drizzle
             // — left the suite green at 1328/1328. Settling through the guard
@@ -1100,7 +1100,7 @@ describe('processGenerationJob', () => {
   });
 
   it('🔴 the count is scoped to THIS request and to the cancelled status, BY VALUE', async () => {
-    // Without the request-id filter the number is the whole fleet's
+    // Without the request-id filter the number is every tenant's
     // cancellations; without the status filter it is every job on the request.
     // Asserted on the bound VALUES — a predicate naming `status` and binding
     // 'failed' passes a column-name check and answers a different question.
@@ -1127,8 +1127,8 @@ describe('processGenerationJob', () => {
     // The row filter is the WHERE (this request); the status filter is the
     // aggregate's own `filter (where …)`. Both are asserted, by VALUE — a
     // filter compiled against 'failed' names the same column and answers a
-    // different question, and a WHERE without the request id counts the whole
-    // fleet's cancellations.
+    // different question, and a WHERE without the request id counts every
+    // tenant's cancellations.
     expect(state.countFilters, 'the worker issued no count aggregate at all').not.toHaveLength(0);
     expect(state.countFilters).toContainEqual({
       filter: { column: 'status', value: 'cancelled' },

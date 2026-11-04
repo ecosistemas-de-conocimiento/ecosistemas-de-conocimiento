@@ -287,7 +287,7 @@ const generateRoutes: FastifyPluginAsync = async (app) => {
       //     nothing actually lands on the wire.
       //   - process shutdown (`runtime.shutdownSignal`), client still
       //     connected → the legacy hand-rolled 504 below. The partial IS billed
-      //     on this path (a3a6a52): a shutdown is not a provider timeout.
+      //     on this path: a shutdown is not a provider timeout.
       if ((err as Error)?.name === 'AbortError' || abortCtrl.signal.aborted) {
         if (abortCtrl.signal.aborted) {
           // One structured line per disconnect. Without it, an aborted call

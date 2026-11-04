@@ -15,7 +15,7 @@
 // primary draft went out as a success.
 //
 // ⚠ A provider timeout is NOT a shutdown and NOT a client disconnect. Those two
-// keep billing the partial (a3a6a52 fixed the shutdown case); the last tests
+// keep billing the partial; the last tests
 // here pin that the two paths stay distinct.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -264,7 +264,7 @@ describe('Router — provider timeout is a failure, unbilled', () => {
 });
 
 describe('Router — shutdown and disconnect aborts stay BILLED (not provider timeouts)', () => {
-  it('a shutdown abort bills the partial and rethrows the abort (a3a6a52 kept)', async () => {
+  it('a shutdown abort bills the partial and rethrows the abort', async () => {
     const deps = makeDeps();
     const shutdown = new AbortController();
     adapterMock.mockImplementationOnce((opts: { signal?: AbortSignal }) => {

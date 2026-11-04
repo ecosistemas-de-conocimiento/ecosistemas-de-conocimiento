@@ -1,6 +1,6 @@
 /**
  * The phone fixes of 2026-10-28, at 390 × 844, pinned so they cannot regress
- * silently (commits 6169993 and 49dd7e3).
+ * silently.
  *
  *   1. Picking a conversation in the conversations drawer closes the drawer and
  *      hands focus back to the "Conversaciones" toggle.

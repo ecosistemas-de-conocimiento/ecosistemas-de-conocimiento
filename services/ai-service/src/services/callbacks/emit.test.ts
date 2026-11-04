@@ -633,7 +633,7 @@ describe('attemptDelivery — per-attempt re-signing', () => {
     expect(finalA.atMs - START.getTime()).toBeGreaterThan(RECEIVER_SKEW_WINDOW_S * 1000);
     // It carries the ENQUEUE timestamp, 9755s stale by the time it is sent.
     expect(finalA.ts).toBe(Math.floor(START.getTime() / 1000));
-    // 🔴 A strict 300s receiver rejects it. This is the fleet-wide bug.
+    // 🔴 A strict 300s receiver rejects it. This is the bug.
     expect(receiverAccepts(finalA, SECRET_V1, finalA.atMs)).toBe(false);
     // ...and it is the WINDOW that rejects it, not a bad signature: the same
     // request sails through a window wider than the schedule. Consumers once

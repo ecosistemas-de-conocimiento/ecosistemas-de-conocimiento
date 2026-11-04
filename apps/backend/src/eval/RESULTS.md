@@ -279,7 +279,7 @@ Same script, same labels, same topK 5 as the third measurement, now on a stack w
 cross-encoder runs. Paid: the DeepInfra reranker plus query embeddings.
 
 **Provenance (measured).** 2026-10-17, 20:56 to 21:11 UTC (wall 876 s), on the dev
-workstation. ai-service built from this tree's `services/ai-service` at `aaec3f4`, run as
+workstation. ai-service built from this tree's `services/ai-service`, run as
 a throwaway container with `RERANK_ENABLED=true`, `RERANK_PROVIDER=deepinfra`,
 `RERANK_MODEL=Qwen/Qwen3-Reranker-0.6B`, an EDC-owned DeepInfra key, real OpenRouter query
 embeddings. Its database was a `pg_dump` **copy** of the local `edc` stack's `edc_ai`,

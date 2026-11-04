@@ -67,7 +67,7 @@ describe('toLibraryItem with a generated title', () => {
     expect(JSON.stringify(item)).not.toContain('Juana');
   });
 
-  it('a testimonio without one keeps the d8763ec label and no subtitle', () => {
+  it('a testimonio without one keeps the plain label and no subtitle', () => {
     const item = toLibraryItem(voz, null);
     expect(item.title).toBe('Testimonio · Discapacidad');
     expect(item.subtitle).toBeNull();

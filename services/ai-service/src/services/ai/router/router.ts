@@ -5,9 +5,8 @@
 //     `unitType` for trace-row stamping. `effortLevel` + `effortProfile` are
 //     pre-resolved by the orchestrator and passed in (the router doesn't
 //     re-resolve).
-//   - persistence: Drizzle-backed `TraceWriter` + `BudgetEnforcer` instead of
-//     Payload Local API.
-//   - validators: real `runValidators` (M3.2) instead of a stub.
+//   - persistence: Drizzle-backed `TraceWriter` + `BudgetEnforcer`.
+//   - validators: real `runValidators` (M3.2).
 //
 // Pipeline per call (see plan §A.2):
 //   1. Cross-org parent-trace check (hard reject on mismatch).
@@ -1350,10 +1349,8 @@ export { priceForUsage };
 
 // The C4 cost ceilings are DEFINED in `registry/caller-limits.ts` (both
 // `resolveSpec` and the router need them, and the router already depends on
-// the registry for `EffortProfile`). Re-exported here because the security
-// branches' version of this fix — commits `4ca0838` / `936a427`, which never
-// reached `main` — declared `MAX_OUTPUT_TOKENS` on this module, and anything
-// written against that import path should keep resolving.
+// the registry for `EffortProfile`). Re-exported here so anything written against
+// this import path keeps resolving.
 export { MAX_MULTI_SAMPLE, MAX_OUTPUT_TOKENS };
 
 // Re-exported so a consumer reading the router's surface finds the 503 it can

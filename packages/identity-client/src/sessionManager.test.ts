@@ -205,7 +205,7 @@ describe('401 vs 403 branching', () => {
 
   it('403 on refresh is `survived` and TOUCHES NOTHING', async () => {
     // 🔴 The regression this test exists for: clearing here signs a person out
-    // of every product in the fleet because one project assignment was missing.
+    // of every product because one project assignment was missing.
     const fetchImpl = vi.fn(async () => idpError(403, 'No access to that project.'));
     const { session, values, calls } = manager(fetchImpl as unknown as typeof fetch);
     values.set('ticket', TICKET);
@@ -556,7 +556,7 @@ describe('spent-ticket memo', () => {
   });
 
   it('🔴 two managers with DIFFERENT projects never share a flight or a memo', async () => {
-    // One refresh ticket is fleet-wide; the `audience` on the call is not. A key
+    // One refresh ticket covers every product; the `audience` on the call is not. A key
     // without the project hands a chat-scoped access token to the manager whose
     // store writes another product's cookies.
     const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {

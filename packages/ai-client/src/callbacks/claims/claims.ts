@@ -75,10 +75,8 @@
  * fencing predicate — never a second copy of the SQL.
  *
  * NO DEGRADED MODE. A missing pool THROWS `CallbackClaimsPoolError` from every
- * method; nothing ever processes a delivery without dedupe. The source copies
- * returned a `degraded` claim and dispatched anyway; that path is gone, per the
- * fleet rule that a hard dependency fails loudly (health-check contract Rule
- * 1/1a). A receiver whose database is unreachable answers 5xx, and
+ * method; nothing ever processes a delivery without dedupe: a hard dependency fails
+ * loudly. A receiver whose database is unreachable answers 5xx, and
  * ai-service's retry schedule re-delivers once it is back.
  */
 
@@ -170,7 +168,7 @@ type ClaimRow = { id: number; claimed_at: Date | null; attempts: number | null }
  * @example `outcome` as the state column
  *   createCallbackClaims({ table: 'callback_dedupe', stateColumn: 'outcome',
  *     sourceEnumType: 'enum_callback_dedupe_source' })
- * @example `outcome` as the state column
+ * @example `claim_state` as the state column
  *   createCallbackClaims({ table: 'ai_service_callbacks', stateColumn: 'claim_state',
  *     sourceEnumType: 'enum_ai_service_callbacks_source',
  *     finishExtras: {

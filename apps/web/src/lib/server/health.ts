@@ -20,8 +20,8 @@
 //
 // 🔴 REDACTION IS THE SHARPEST RULE HERE. These routes are UNAUTHENTICATED.
 // Nothing derived from an exception message or from the backend's response
-// body may reach our response body. This is not hypothetical: a sibling app
-// once shipped `err.message` into its readiness body, and Postgres emits
+// body may reach our response body. `err.message` in a readiness body would
+// expose what Postgres emits:
 // `password authentication failed for user "<name>"` — a credential-shaped
 // string on a public endpoint. Every value we emit comes from the closed
 // vocabulary below. Full detail goes to `console.error`, server-side only.

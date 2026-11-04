@@ -94,7 +94,7 @@ export interface RetryPolicy {
    * With NO explicit `timeoutMs`, the default 30 s attempt IS still clamped to
    * the budget remaining, so a caller that sets nothing still waits at most
    * `maxElapsedMs` (30 s) in total, however many attempts it makes. Consumers
-   * size boot deadlines on that (chat-backend `bootDeadline.ts`). `Infinity`
+   * size boot deadlines on that. `Infinity`
    * lifts the budget.
    */
   maxElapsedMs: number;

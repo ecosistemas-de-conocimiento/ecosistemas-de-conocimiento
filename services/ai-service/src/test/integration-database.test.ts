@@ -246,7 +246,7 @@ describe('the throwaway guard refuses, rather than merely existing', () => {
     expect(() => assertThrowaway(spec, withDatabase(base, 'precious_data'), base)).toThrow(
       /REFUSING TO TOUCH "precious_data"/,
     );
-    // ⚠ A bare `_test` suffix is not enough — every product on this fleet can
+    // ⚠ A bare `_test` suffix is not enough — any product can
     // satisfy it, and `assertTestDatabase` is the check that only asks for that.
     expect(() => assertThrowaway(spec, withDatabase(base, 'edc_test'), base)).toThrow(
       /REFUSING TO TOUCH "edc_test"/,
@@ -314,7 +314,7 @@ describe('the throwaway name allowlist', () => {
       'edc_prod',
       'edc_test',
       'chat_access_test',
-      'frontend_code_session_race_test',
+      'client_session_race_test',
       'postgres',
       'precious_data',
       '',
@@ -434,7 +434,7 @@ describe('the migrations fingerprint', () => {
     // MEASURED in node_modules/drizzle-orm/pg-core/dialect.js: the migrator
     // reads ONE ledger row and compares journal `when` values. It stores a
     // sha256 of each migration and never reads it back. So editing a migration
-    // in place — which is exactly what this fleet's ONE-BASELINE policy does —
+    // in place — which is exactly what a ONE-BASELINE policy does —
     // leaves drizzle reporting "nothing pending" about somebody else's schema.
     const journal = journalOf('0000_baseline');
     expect(fingerprintOf({ [A]: 'create table a();', 'meta/_journal.json': journal })).not.toBe(
@@ -524,11 +524,11 @@ describe('🔴 the fingerprint filter matches what drizzle actually applies', ()
   //     Postgres. It printed "Migrations complete.", left the database at 249
   //     columns, and `lanec_js_probe` did not exist.
   //
-  // That widening is a PAYLOAD fix — Payload executes `migrations/*.ts` and
+  // That widening fits Payload — it executes `migrations/*.ts` and
   // `*.js`. Here it would fold bytes drizzle never runs into a hash that
   // `scripts/schema-gate.mjs` uses to REFUSE A DEPLOY. A no-op file would take
   // an environment down. So the filter stays `.sql` + the journal, and these
-  // two tests are what stops a well-meaning fleet-wide sweep from "fixing" it.
+  // two tests are what stops a well-meaning sweep from "fixing" it.
 
   const journal = JSON.stringify({
     version: '7',
@@ -1081,7 +1081,7 @@ describe('🔴 the boot gate knows where the migration LEDGER lives', () => {
     const theirs = await gate();
     expect(theirs.MIGRATIONS_SCHEMA).toBe(MIGRATIONS_SCHEMA);
     expect(theirs.MIGRATIONS_TABLE).toBe(MIGRATIONS_TABLE);
-    // …and the pair is the one the fleet invariant requires, so a drift that
+    // …and the pair is the required one, so a drift that
     // moved BOTH copies together still fails here.
     expect(theirs.MIGRATIONS_SCHEMA).toBe('public');
     expect(theirs.MIGRATIONS_SCHEMA).not.toBe('drizzle');

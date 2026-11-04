@@ -376,7 +376,7 @@ boot: `attempts` (default 5), `retryDelayMs` (default 1000, doubling) and
 ### The boot check itself — `createCapabilityCheck`
 
 `negotiate()` is the question. `createCapabilityCheck` is the wrapper around it
-that all four consumers had hand-rolled: run once per process (Payload's
+that every consumer needs: run once per process (Payload's
 `onInit` re-fires on every `next dev` reload), fail the boot when ai-service is
 not configured, and expose a reset seam for tests.
 
@@ -429,8 +429,7 @@ const detail = mayDiscloseBudgetAmounts(failure, requesterOrgKey)
 `classifyBudgetFailure` walks the `cause` chain **and** falls back to
 `error.name` at each level — the first because products wrap ai-client errors in
 their own, the second because two hoisted copies of this package produce classes
-that are not `instanceof` each other while being the same error. Only one fork
-did each. For code still on a bespoke `fetch`, `budgetFailureFromWire(status,
+that are not `instanceof` each other while being the same error. For code still on a bespoke `fetch`, `budgetFailureFromWire(status,
 bodyText)` and `budgetFailureFromFrame(sseFrame)` classify the raw wire instead.
 
 **No copy and no framework here on purpose.** The Spanish sentence a funcionario
@@ -623,20 +622,18 @@ import {
   CALLBACK_VERIFIER_CONFORMANCE_CASES,
 } from '@edc/ai-client/callbacks'
 
-// 1. BEHAVIOUR — the verifier this repo imports matches the fleet.
+// 1. BEHAVIOUR — the verifier this repo imports matches the shared cases.
 //    Catches a stale package pin or a lookalike wrapper, which an identity
 //    check cannot see: a stale build is still "the shared module" by identity.
 expect(runCallbackVerifierConformance(verifyCallbackSignature)).toEqual([])
 expect(CALLBACK_VERIFIER_CONFORMANCE_CASES.length).toBeGreaterThan(0)
 
-// 2. SOURCE — nobody has grown a fourth verifier in a file nothing imports.
-//    The failure mode the behaviour check is blind to, and exactly how the
-//    fleet got three copies in the first place.
+// 2. SOURCE — nobody has grown a local verifier in a file nothing imports.
+//    The failure mode the behaviour check is blind to.
 expect(findLocalVerifierReimplementations(SRC_DIR, { exclude: [thisFile] })).toEqual([])
 ```
 
-Two consumer repos had each grown their own ~60-line directory walker for (2) —
-a third copy of a guard against copies. It lives here now; each repo keeps only
+Each repo keeps only
 the assertion that names its own `src/`. `node_modules`, `.next`, `dist`,
 `build` and `coverage` are never walked, and the forbidden needles are assembled
 at runtime so the module never reports itself.

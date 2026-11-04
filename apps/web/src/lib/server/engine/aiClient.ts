@@ -17,8 +17,7 @@
  *     wants `{matches}` with `{documentId, chunkId, score, text, metadata}`.
  *     We map it. The engine's `filter` is forwarded to ai-service `/v1/retrieve`
  *     as an extra field even though `@edc/ai-client@0.2.0` (and chat's
- *     local schema) don't type it — a sibling client already does this; the
- *     ai-service `filter` shipped in `d312d10`. chat's local zod schema is
+ *     local schema) don't type it. chat's local zod schema is
  *     `.strict()`, so we bypass it for the filtered path (raw fetch) and fall
  *     back to the typed client when no filter is present.
  *

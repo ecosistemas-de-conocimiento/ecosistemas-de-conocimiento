@@ -21,8 +21,7 @@
 //   3. Wire the PER-TEST wipe (`truncateAll`) into `beforeEach`, so every test
 //      starts on a clean core.
 //
-// 🔴 THE PER-TEST WIPE IS AI-SERVICE'S OWN AND IS STRONGER THAN THE FLEET
-// REFERENCE'S ONCE-PER-RUN WIPE. It is kept. What changed is only WHERE the
+// 🔴 THE PER-TEST WIPE IS STRONGER THAN A ONCE-PER-RUN WIPE. It is kept. What changed is only WHERE the
 // table list is written: it now lives in the registry in
 // `integration-database.ts`, beside the database this suite owns, so a reviewer
 // sees "which tables does this suite start empty" in one screen instead of

@@ -1,7 +1,7 @@
 /**
  * 🔴 RE-AUDIT OF THE TOWN EXEMPTION (2026-10-23, second pass), ONE ROW PER LEAK.
  *
- * Each row shipped in clear on eab137c. Every row runs TWICE: once with the
+ * Each row shipped in clear before the fix. Every row runs TWICE: once with the
  * same answer at stage 3 and verify ("both": must be redacted), once with
  * stage 3 silent and verify alone finding it ("verify only": must HOLD), so
  * the two stages cannot drift apart. Faked at the fetch boundary, under the

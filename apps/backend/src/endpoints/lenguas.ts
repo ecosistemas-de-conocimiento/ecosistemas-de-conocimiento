@@ -35,7 +35,7 @@ import { jsonResponse, queryParam } from './http'
 
 /**
  * Upper bound on rows read per call. The seeded corpus has 191 documentos with
- * a lengua (quoted: `seed/backfillCorpusLabels.cli.ts` commit c7009ab). Past
+ * a lengua (quoted: `seed/backfillCorpusLabels.cli.ts`). Past
  * the cap the response says `truncated: true` rather than undercounting quietly.
  */
 export const MAX_LENGUA_ROWS = 5000

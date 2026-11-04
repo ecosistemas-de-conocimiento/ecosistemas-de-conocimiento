@@ -5,7 +5,7 @@ Run with::
     arq app.worker.WorkerSettings
 
 This process, not the API process, is the one that holds the model in RAM. That
-split is what lets the fleet scale the two independently — API replicas are a
+split is what lets a deployment scale the two independently — API replicas are a
 few hundred MB, worker replicas are the ones that want the GPU.
 
 Retry policy is managed explicitly rather than delegated to arq's own counter,

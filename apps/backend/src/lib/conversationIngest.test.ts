@@ -187,7 +187,7 @@ describe('the external id that joins a corpus chunk back to a turn', () => {
   })
 
   it('round-trips a string message id, without coercing it to a number', () => {
-    // Mongo-style ids exist in other deployments; `Number('abc')` would be NaN
+    // A string id stays a string; `Number('abc')` would be NaN
     // and the join back to the row would silently target nothing.
     expect(messageIdFromExternalId(turnExternalId('abc123'))).toBe('abc123')
   })
@@ -1032,7 +1032,7 @@ describe('🔴 every turn goes in — "store, never cite in chat"', () => {
     expect(db.documents).toHaveLength(0)
   })
 
-  it('🔴 a gate that could not RUN is retryable, not a hold (b5d025d semantics)', async () => {
+  it('🔴 a gate that could not RUN is retryable, not a hold', async () => {
     const { DetectorFailure } = await import('./anonymise')
     let down = true
     const detector: PersonDetector = {

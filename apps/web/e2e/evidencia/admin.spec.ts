@@ -21,8 +21,8 @@ test('admin', async ({ page }) => {
     await misDocumentos(page);
     await biblioteca(page, 'dengue');
     await cuidar(page, { cambiarEcosistema: 'dengue', colasDeRevision: ['Discapacidad'] });
-    // Last: the graph is the slowest screen on dev. (On 9597969 it rendered
-    // blank for everyone in org 6 — a hung edges query, fixed in d04a112.)
+    // Last: the graph is the slowest screen on dev. (It once rendered
+    // blank for everyone in org 6 — a hung edges query, since fixed.)
     await conexiones(page, 'mosquito');
   } catch (error) {
     // What failed, and what the screen looked like, before cleanup paints over

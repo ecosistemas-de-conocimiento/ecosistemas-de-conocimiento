@@ -33,7 +33,7 @@ The per-row `status` columns below record the lane assignments at audit time. Th
   - Not run: `retrieval.spec.ts` and the hard cite step in `journey.spec.ts`. The fake provider's embeddings are random, so they need a real-model stack.
   - Failing, assumed pre-existing: audio, identity, ratings e2e.
 - **Owned by another session:** /grafo lists testimonios under language `tema` entities (not covered by this audit).
-- **Still open (NEEDS-RODRIGO):** G-2, G-3, G-11, C-3 (apply), C-4, C-8, I-11, I-13, I-14, T-6, T-16.
+- **Still open (NEEDS-RODRIGO):** G-2, G-3, G-11, C-3 (apply), C-4, C-8, I-11, I-13, I-14, T-6.
   - Also open: whether `uploadedBy`/`session` should stay readable on a published testimonio, and whether audio uploaded before I-2 needs re-gating.
   - Also open: I-10 (deferred while another session owns Documents.ts) and T-13.
 - **Handed to another EDC session:** flaky hold approval (holds.e2e 1/3), and a model reply logged with a person name on graph-extraction failure.
@@ -54,7 +54,7 @@ The per-row `status` columns below record the lane assignments at audit time. Th
 - I-11 CONFIRMED and worse than assumed (measured, 12 real calls, $0.03): ai-service caps `quick` replies at 400 tokens, so the findings list is cut off after 15–23 items, and every multi-paragraph testimonio (≥1,191 words) is held. One 4,862-word call hit the 30 s client timeout. Fix lane: chunked detection plus an explicit timeout.
 - I-10 streaming, audio/identity/ratings e2e: approved, lanes running.
 
-## Wave 3 results (2026-10-17, local main aaec3f4, nothing pushed)
+## Wave 3 results (2026-10-17, local main, nothing pushed)
 
 - I-11 fixed: chunked detection (~250 words, concurrency 3, 90 s timeout, fail-closed). Re-measured with the real model: no truncated replies; 19–20 of 20 planted names caught; a 4,862-word text reached ready in 75 s ($0.022). Open: the verify stage still holds "Don [Persona F]"-style titles, and results vary run to run.
 - uploadedBy/session hidden on gated rows, including where/sort/count and `document.*` paths; e2e plus a wiring test go red without it.
@@ -70,7 +70,7 @@ The per-row `status` columns below record the lane assignments at audit time. Th
 |---|---|---|---|---|
 | G-1 | `/api/graph/retrieve` returns 500 for any query that matches an entity → GraphRAG silently gives nothing in chat | measured: "dengue"/"Morelos" → 500; PG `cannot cast type record to integer[]`. read: drizzle array expansion at `apps/backend/src/lib/graph/queries.ts:1242,1292`; tests miss it (`queries.test.ts:72-84` custom renderer; `endpoints/graph.test.ts` canned). Eval works around it (`eval/graph.ts`), so ADR §19.3's recall gain measures the design, not what ships | EDC: bind as one param; real-PG test; warn on non-2xx in `apps/web/src/lib/server/graph.ts:251`; drop eval workaround | lane: graph-fix |
 | I-1 | A published testimonio shows its unredacted `extractedText` and raw filename to every member | read: no field `read` access on `Documents.ts:2597-2604`; Biblioteca renders it (`apps/web/src/lib/server/biblioteca.ts:71,196,214-219,376`). measured: 3 published approved testimonios where extracted ≠ redacted | EDC: field access + Biblioteca uses `redactedText`/`titleFor` | lane: privacy |
-| G-2 | Graph rows from unscrubbed testimonio text still at rest: 648 mentions, 386 relations | measured (`edc_backend`). `apps/backend/scripts/purge-unscrubbed-graph-rows.ts` exists, never run (`b2be52f`) | EDC, NEEDS-RODRIGO: dry run → `PURGE_APPLY=1` in every env that extracted before `b2be52f` | open |
+| G-2 | Graph rows from unscrubbed testimonio text still at rest: 648 mentions, 386 relations | measured (`edc_backend`). `apps/backend/scripts/purge-unscrubbed-graph-rows.ts` exists, never run | EDC, NEEDS-RODRIGO: dry run → `PURGE_APPLY=1` in every env that extracted before the scrubbing fix | open |
 
 ## Ingest and anonymisation (lane I)
 
@@ -81,9 +81,9 @@ The per-row `status` columns below record the lane assignments at audit time. Th
 | I-4 | warn | A transcription callback that throws is answered 200 after dedupe, so it is lost; the gate and enqueue run inside the 20 s callback window | read: `app/api/ai-service/callback/route.ts`; `services/audio-service/app/config.py:182`. assumed: Next keeps running after hang-up | EDC: callback only persists + `transcribed`; sweep runs gate; error → delete dedupe, 500 | lane: pipeline |
 | I-5 | warn | Ecosistema budget provisioned once, fire-and-forget → 402 forever on failure | read: `Organizations.ts:50-61`, `provisionEcosystem.ts` | EDC: idempotent provision at boot / on 402 | lane: pipeline |
 | I-6 | gap | Gate never runs in e2e; holds e2e asserts what it seeded | read: `documents.e2e.ts:87-91`, `audio.e2e.ts:103-107` no contentKind; `holds.e2e.ts:96-121,197,222,347` | EDC: fake-provider fail-closed e2e; approval fixture as pdf → poll ready; paid opt-in run NEEDS-RODRIGO | lane: e2e |
-| I-7 | warn | `Documents.callbackRace.test.ts:96` fixed 150 ms wait — flaky under load | measured: 1/3 full runs failed; it does go red without fix `7bf0622` | EDC: `vi.waitFor` | lane: infra |
+| I-7 | warn | `Documents.callbackRace.test.ts:96` fixed 150 ms wait — flaky under load | measured: 1/3 full runs failed; it does go red without the fix | EDC: `vi.waitFor` | lane: infra |
 | I-8 | gap | Deleting a document only hides it; chunks stay. `ai-client` now has `deleteDocument` | read: `packages/ai-client/src/admin.ts:96`; `publishDocument.ts:245` | EDC: delete from both corpora | lane: privacy |
-| I-9 | minor | Late document callback from an older ingest can overwrite status (no `ingestId` compare) | read: `callback/route.ts` | EDC: compare ids, keep `7bf0622` race case | lane: pipeline |
+| I-9 | minor | Late document callback from an older ingest can overwrite status (no `ingestId` compare) | read: `callback/route.ts` | EDC: compare ids, keep the race case | lane: pipeline |
 | I-10 | minor | Audio upload buffered whole ×3 (~600 MB at 200 MB cap, inferred) | read: `Documents.ts:1909-1949` | EDC: stream | open |
 | I-11 | warn (assumed) | Gate sends a whole transcript in one `quick` call; long JSON answers may truncate → always held | read: `gate.ts`, `detector.ts:239-249` | EDC: measure on a 60-min transcript first | open, needs a paid measurement |
 | I-12 | minor | Editing an approved testimonio's transcript re-ingests the old redacted text | read: `routes/api/documents/[id]/transcript/+server.ts:165-176`; `Documents.ts:1515` | EDC: reset gate on edit | lane: privacy |
@@ -125,7 +125,7 @@ The per-row `status` columns below record the lane assignments at audit time. Th
 |---|---|---|---|---|---|
 | T-3 | gap | No test checks per-ecosistema isolation inside ai-service; `tenancy.e2e.ts:208-261` asserts corpus-name strings only | read | EDC: B's `X-AI-Org` retrieve returns 0 of A's chunks | lane: e2e |
 | T-4 | gap | No recorded e2e run since 2026-08-29 (before MOCK_* removal 10-02 and per-eco orgs 10-17). `TESTING.md` is stale | quoted: `TESTING.md` | EDC: run with `COMPOSE_PROFILES=fake`, refresh doc | lane: e2e (after lands) |
-| T-6 | NEEDS-RODRIGO | Rerank runs on the temporary borrowed (non-EDC) DeepInfra key; since `7e137e2` `CHAT_RERANK` defaults on, so every turn uses it. Whether edc-1 runs `7e137e2` is unverified | read: `infra/fleet/edc-1.md:179-181,293-294`, `rerank.ts:54` | create EDC DeepInfra account; until then `CHAT_RERANK=off`? | open |
+| T-6 | NEEDS-RODRIGO | Rerank runs on the temporary borrowed (non-EDC) DeepInfra key; `CHAT_RERANK` defaults on, so every turn uses it. Whether edc-1 runs that default is unverified | read: `infra/fleet/edc-1.md:179-181,293-294`, `rerank.ts:54` | create EDC DeepInfra account; until then `CHAT_RERANK=off`? | open |
 | T-7 | warn | `API_KEYS` falls back to the public `dev-key-admin` when `AI_SERVICE_ADMIN_API_KEY` is unset | read: `infra/docker-compose.yml` | EDC: `:?` | lane: infra |
 | T-9 | minor | Env vars read but undeclared: `AI_ECOSYSTEM_BUDGET_USD`, 12 `GRAPH_*`, `SEED_CORPUS_SKIP_ABOVE`; manifest lacks `CHAT_RERANK`, `QUERY_EXPANSION`, `PROMPT_SOURCE` | read | EDC: manifest rows | lane: infra |
 | T-10 | minor | `.env.example:362` ships `RERANK_ENABLED=false` uncommented → copied `.env` ignores the key | read | EDC: comment out | lane: infra |

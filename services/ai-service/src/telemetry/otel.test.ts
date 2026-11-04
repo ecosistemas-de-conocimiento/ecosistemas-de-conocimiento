@@ -2,7 +2,7 @@
 //
 // The risk this pins is not a wrong span. It is a service that, with no
 // telemetry configured, quietly loads the Node SDK, patches `ioredis`, and
-// opens a socket to some default endpoint. On this fleet that is two separate
+// opens a socket to some default endpoint. That is two separate
 // problems: the CI `test`/`build` jobs have no Redis service (a tracing hook
 // that dials one turns a green suite red at teardown), and an exporter with a
 // vendor default would ship tenant traffic shapes off the sovereign infra.

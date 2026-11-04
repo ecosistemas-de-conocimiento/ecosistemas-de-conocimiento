@@ -1233,7 +1233,7 @@ describe('POST /api/generate — an answer with no [N] lists the top 3 sources',
     for (const save of saves()) expect(save.body).not.toHaveProperty('provenance');
   });
 
-  // 🔴 Measured on dev after 9285305: off-topic (3/3 runs) said the documents
+  // 🔴 Measured on dev: off-topic (3/3 runs) said the documents
   // do not cover it, then cited [1, 2, 3, 4, 5].
   it('🔴 a no-answer phrase followed by [1..5] lists no sources, sync and stream', async () => {
     world.answerText = 'Los documentos no hablan de la capital de Francia [1, 2, 3, 4, 5].';
@@ -1753,7 +1753,7 @@ describe('🔴 audit 2026-10-24: one saved answer per turn (`turnId`)', () => {
 });
 
 // ── A document's id never reaches the model as a citable label ──────────────
-// 🔴 Measured on dev 020ebec (2026-10-24): a question about an AUDIO document
+// 🔴 Measured on dev (2026-10-24): a question about an AUDIO document
 // uploaded in the conversation (backend doc 266, a 30 s transcript) got an
 // answer citing "[266]" and an EMPTY source list, sync and stream. The
 // document rode the turn as a pinned inline ref fenced as
@@ -1883,7 +1883,7 @@ describe('POST /api/generate — a document id is never a citation label', () =>
 
 // ── An attachment the answer uses gets a source card ───────────────────────
 // 🔴 Owner ruling 2026-10-24 (direct): a document attached to a turn gets a
-// source card when the answer uses it without citing. Since 1284a13 an
+// source card when the answer uses it without citing. An
 // attachment rides the prompt with no number, so the answer cannot cite it.
 // A pinned upload rides EVERY turn, so it counts as used only when the answer
 // names its title (the prompt asks the model to); refusals and all-general-

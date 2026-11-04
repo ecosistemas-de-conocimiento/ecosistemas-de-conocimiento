@@ -11,7 +11,7 @@
 // Never collapse them. "The IdP is down", "this token is forged" and "this user
 // has no access to that one product" must not take the same code path — the
 // third one especially, because handling it like the second signs a person out
-// of the whole fleet over a missing project assignment.
+// of every product over a missing project assignment.
 
 export class IdentityError extends Error {
   constructor(message: string) {
@@ -110,7 +110,7 @@ export type IdentitySessionOperation = 'login' | 'refresh' | 'revoke';
  * others, and they mean opposite things to a consumer: the first says the
  * ticket is dead and the human must sign in again; the others say the ticket is
  * perfectly alive and the human simply holds nothing on that one product. A BFF
- * that treats them alike logs people out of the entire fleet the moment one
+ * that treats them alike logs people out of every product the moment one
  * project assignment is missing. Branch on {@link IdentitySessionError.refreshTokenIsDead}
  * and {@link IdentitySessionError.refreshTokenSurvived}, never on `status >= 400`.
  *
@@ -174,7 +174,7 @@ export type IdentitySessionFailureReason =
  * an error string is redacted before it reaches `message`. That is enforced by
  * a test, because an error object is the single most likely thing a consumer
  * pipes straight into a log aggregator — and a refresh ticket in a log line is
- * a 14-day fleet-wide session sitting in someone's search index.
+ * a 14-day cross-product session sitting in someone's search index.
  */
 export class IdentitySessionError extends IdentityError {
   readonly reason: IdentitySessionFailureReason;

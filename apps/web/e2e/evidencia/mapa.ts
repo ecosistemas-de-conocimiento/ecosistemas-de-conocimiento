@@ -6,7 +6,7 @@
  * The CSV is a user-story-map grid: rows `user type`,
  * `theme`, `epic`, `user story grid:`, then bands `sprint N` / `backlog`
  * whose cells are story titles under that column's epic. Titles there are
- * lowercase with no period (`iniciar sesión`), as in those grids.
+ * lowercase with no period (`iniciar sesión`).
  *
  *   node --experimental-strip-types apps/web/e2e/evidencia/mapa.ts
  */

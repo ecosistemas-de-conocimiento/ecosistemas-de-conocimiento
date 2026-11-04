@@ -47,9 +47,11 @@ import { compoundUnique, toRelationId } from './hooks/compoundUnique'
  * ⚠ WHAT IS **NOT** BLOCKED, on purpose:
  *  · Assigning OTHER people. That is legitimate administration and the reason
  *    `admin`/`owner` hold `members:manage` at all.
- *  · Editing your own membership's cosmetics — `personName`, `title`, `team`.
- *    Those grant nothing, and a person renaming themselves in an ecosistema
- *    they already belong to is not an escalation.
+ *  · Editing your own membership's `title` and `team`, and, for whoever holds
+ *    `members:manage`, its `personName`. ⚠ `personName` is not only cosmetic: the
+ *    anonymisation gate keeps the uploader's `personName` visible in their own
+ *    documents (`lib/publicFigures.ts`). They grant no access, and a manager
+ *    renaming themselves in an ecosistema they already manage is not an escalation.
  *  · Seeding. The bootstrap runs with `overrideAccess: true` and no `req.user`,
  *    so there is nobody to self-assign; the very first owner membership is
  *    created there and only there.
@@ -577,12 +579,9 @@ const ROLE_LABELS: Record<OrgRole, string> = {
  * (`ROLE_PERMISSIONS` in `lib/permissions.ts`). That header explains the choice
  * in full.
  *
- * ── WHAT THIS COLLECTION USED TO BE ──────────────────────────────────────────
- * In the product backend this was a directory entry: a denormalized
- * `personName`/`personEmail` pair hanging off a team, deliberately NOT requiring
- * a real account, so a PoC could seed colleagues who had never logged in. It
- * now carries access, so `user` and `organization` are REQUIRED — a row that
- * grants nothing to nobody is not a membership. `personName` survives as an
+ * ── REQUIRED FIELDS ───────────────────────────────────────────────────────────
+ * A membership carries access, so `user` and `organization` are REQUIRED — a row
+ * that grants nothing to nobody is not a membership. `personName` is an
  * optional display override for the `@`-mention surface, which resolves
  * memberships as domain entities (see `lib/contextRefs.ts`).
  *

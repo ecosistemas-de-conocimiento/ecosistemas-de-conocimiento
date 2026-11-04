@@ -1,7 +1,7 @@
 /**
  * 🔴 A TOWN IS SHOWN, SO A TOWN NEVER HOLDS A DOCUMENT — BUT ONLY A TOWN.
  *
- * The owner's ruling (2026-10-21, backlog #12, commits 891afdd and 7c7ff83):
+ * The owner's ruling (2026-10-21, backlog #12):
  * estados, municipios, alcaldías, ciudades, pueblos, comunidades, localidades,
  * ejidos and congregaciones are SHOWN. The detector prompt says so
  * (`DETECT_SYSTEM_PROMPT`, "NUNCA marques estados, municipios…"), and stage 4
@@ -536,7 +536,7 @@ export function isTownLevelPlace(
 ): boolean {
   if (finding.type !== 'lugar' || finding.typedAddress) return false
   // 🔴 The span as the model gave it: no lead is cut ("de Xiadani", "vivo en
-  // Tepito" hold, as before the town work; audit of 9edaa22).
+  // Tepito" hold, as before the town work).
   const needle = finding.text.normalize('NFC').trim()
   if (needle === '' || /[\d.#°º/]/u.test(needle)) return false
   const words = needle.split(/[\s,]+/u).filter(Boolean)

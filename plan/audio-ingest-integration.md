@@ -182,8 +182,8 @@ Reasons, in order of weight:
    `lib/publishDocument.ts`.
 3. **The audio is the provenance, and it survives.** `mediaFile` keeps the
    recording, so a member who distrusts a quoted line can play the source. Note
-   the deliberate asymmetry: `audio-service` does not persist audio (ADR-0002
-   §A), but the *product* does, in Media. Different concerns.
+   the deliberate asymmetry: `audio-service` does not persist audio,
+   but the *product* does, in Media. Different concerns.
 4. **Everything else is free**: `visibleToCaller`, `uploaderOnly`, corpus
    lifecycle, pinning, `contextRefs`, the docs panel, deletion.
 
@@ -290,7 +290,6 @@ reach `enqueueIngestForDoc` on this pass. It gets there from the callback.
 put audio-service calls in it. Either add `packages/audio-client` or a single
 `apps/backend/src/lib/audioClient.ts`. **Prefer the latter for now** — one
 consumer, no versioning overhead; promote it when a second consumer appears.
-Same reasoning ADR-0002 §B used to keep its extraction function in-consumer.
 
 ### 3.4 The callback route
 
@@ -611,7 +610,7 @@ and add `'transcribing'` to the `IngestStatus` union.
 
 ## 9. Out of scope — do not build these
 
-- **Live/streaming transcription** (ADR-0002 §A's `WS /v1/transcribe/stream`).
+- **Live/streaming transcription** (`WS /v1/transcribe/stream`).
   Not this product, and not feasible on CPU.
 - **Diarization / speaker labels.** Requires WhisperX + pyannote and a ~6 GB
   image. Nothing in the chat reads speaker turns.

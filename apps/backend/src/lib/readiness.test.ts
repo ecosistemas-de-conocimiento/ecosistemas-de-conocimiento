@@ -12,8 +12,7 @@
  *   3. CACHING (Rule 4c) — the result is reused for 5s so a 5s container probe
  *      and a 5min monitor cannot multiply load on a shared dependency.
  *   4. 🔴 REDACTION — the route is UNAUTHENTICATED, so a probe error carrying a
- *      Postgres auth message or a DSN must not reach the body. A sibling product shipped
- *      `err.message` and Postgres emits
+ *      Postgres auth message or a DSN must not reach the body. Postgres emits
  *      `password authentication failed for user "…"` straight to the wire.
  *
  * All probes are injected, so nothing here touches Postgres, ai-service or the

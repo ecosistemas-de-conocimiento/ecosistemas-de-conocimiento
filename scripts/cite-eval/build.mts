@@ -4,12 +4,12 @@
  * hosted rewrite recorded on 2026-10-26 is REPLAYED, never called (no paid call).
  *
  * Usage (repo root; dev ai-service tunnelled, see plan/spark-chat-eval-2026-10-26.md):
- *   git show 30fc152:apps/web/src/lib/server/engine/prompt.ts > /tmp/x/prompt-main.ts
+ *   (save the earlier apps/web/src/lib/server/engine/prompt.ts as /tmp/x/prompt-main.ts)
  *   EVAL_AI_URL=http://localhost:45591 EVAL_OLD_DIR=<10-26 run dir> EVAL_MAIN_PROMPT=/tmp/x/prompt-main.ts \
  *   EVAL_OUT=prompts.json apps/backend/node_modules/.bin/tsx scripts/cite-eval/build.mts
  *   SPARK_URL=<Spark proxy URL, required> SPARK_TOKEN_FILE=<file> python3 -I scripts/cite-eval/cite_eval.py prompts.json results.jsonl 3
  *   python3 -I scripts/cite-eval/agg.py results.jsonl
- * before = main 30fc152 (chunk per [N], no titles); after = fix/chat-answers
+ * before = the earlier prompt (chunk per [N], no titles); after = this tree
  * (regroupTurn: one [N] per document, "Título:" line, new CHUNK_DATA_RULE).
  */
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -31,7 +31,7 @@ const need = (k: string) => {
 };
 /** The 2026-10-26 run's dir: ai_key, messages.json, orgs.json, prompts.json (recorded condense). */
 const OLD = need('EVAL_OLD_DIR');
-/** main's `prompt.ts` (git show 30fc152:…), the "before" system prompt. */
+/** The earlier `prompt.ts`, the "before" system prompt. */
 const { chatSystemPrompt: mainSystemPrompt } = (await import(need('EVAL_MAIN_PROMPT'))) as { chatSystemPrompt: (v: string) => string };
 const aiUrl = need('EVAL_AI_URL');
 const aiKey = readFileSync(`${OLD}/ai_key`, 'utf8').trim();

@@ -355,8 +355,8 @@ a crash-loop, and a crash-loop can run for **27 hours** before anyone notices.
   row matching a re-cut baseline file, so **the baseline is treated as pending and runs** — 90+
   near-unguarded `CREATE TABLE` statements against a populated database. Boot fails.
   Drizzle reaches the same outcome by comparing journal timestamps against the newest ledger row.
-- 🔴 **"Collapse to one baseline" has a one-day half-life.** One of their projects re-cut its
-  baseline correctly and added three more migrations the next day. If you ever collapse, add a **CI
+- 🔴 **"Collapse to one baseline" has a one-day half-life.** A project can re-cut its
+  baseline correctly and add three more migrations the next day. If you ever collapse, add a **CI
   guard**, not a note.
 - 🔴 **Stamping is not rebuilding.** Marking a baseline "already applied" leaves the database on the
   *legacy* schema while the image expects the *baseline* schema. The divergence is invisible until a
@@ -365,13 +365,13 @@ a crash-loop, and a crash-loop can run for **27 hours** before anyone notices.
   close the moment a real user exists.**
 - 🔴 **Re-cutting a baseline invalidates your dev database's ledger. The collapse and the dev
   rebuild are ONE operation, not two.**
-- ⚠ **An unlanded branch can undo a collapse.** One of their branches carried 31 pre-baseline
-  migrations; merging it naively would have reinstated the whole chain.
-- ⚠ **A from-empty baseline needs a WIDER health-check window.** Their fleet default
-  (`start_period=120, retries=10, interval=5`) was too tight; a from-empty baseline needs
+- ⚠ **An unlanded branch can undo a collapse.** A branch carrying pre-baseline
+  migrations, merged naively, reinstates the whole chain.
+- ⚠ **A from-empty baseline needs a WIDER health-check window.** The default
+  (`start_period=120, retries=10, interval=5`) is too tight; a from-empty baseline needs
   **`start_period=300, retries=20, interval=10`** or the very first deploy times out and rolls
   itself back — which looks like a migration failure and is not one.
-- 🔴 **`push` defaulting ON was the root cause of their repeat failures.** ✅ Ours no longer does:
+- 🔴 **`push` defaulting ON causes repeat failures.** ✅ Ours no longer does:
   `payload.config.ts` reads `PAYLOAD_ALLOW_PUSH === '1'`, so push is off unless an environment opts
   in, and no environment does. It was `PAYLOAD_DISABLE_PUSH !== '1'` until 2026-08-14, which meant
   one forgotten variable in one environment silently reverted that environment to push. ⚠ The reason
@@ -386,7 +386,7 @@ a crash-loop, and a crash-loop can run for **27 hours** before anyone notices.
 which on a build-server setup is the **builder** box, finds none, and logs *"No running containers
 found. Skipping."* — as a success, not an error.
 
-Their migrations survived only because they were **also** in the image `CMD`. ✅ Ours already are, for
+Migrations survive only when they are **also** in the image `CMD`. ✅ Ours already are, for
 `ai-service`. 🔴 **Do not design any part of this deploy around the release-command field.** The
 pattern that works is the entrypoint one:
 
@@ -448,7 +448,7 @@ is *before* you need it at 3am.
 
 ## 5. Build and runtime gotchas
 
-These cost real production incidents there. Marked by whether they apply to us.
+Marked by whether they apply to us.
 
 - ✅ **APPLIES — monorepo build context.** §0. Base Directory `/`.
 - ✅ **APPLIES — the `COPY <pkg>/package.json` list must track `pnpm-workspace.yaml`.** pnpm
@@ -461,22 +461,22 @@ These cost real production incidents there. Marked by whether they apply to us.
 - ✅ **APPLIES — build-time vs runtime env inlining.** Ours is currently correct (SvelteKit
   `$env/dynamic/private`), which is *why* one image can serve all three environments. `PUBLIC_*` is
   the boundary; crossing it publishes a secret. `env-manifests.md` §2.
-- ❌ **DOES NOT APPLY — `payload generate:types` misbehaving under Bun.** Their fix was to run the
-  build stage on `node:NN-slim` while deps and runtime stayed on Bun. **We are on Node 22 throughout,
+- ❌ **DOES NOT APPLY — `payload generate:types` misbehaving under Bun.** The fix is to run the
+  build stage on `node:NN-slim` while deps and runtime stay on Bun. **We are on Node 22 throughout,
   so the trap does not exist for us.** 🔴 Do not "modernise" any Dockerfile here to Bun to save image
   size — that is the change that would reintroduce it, plus the next item.
 - ❌ **DOES NOT APPLY (today) — the Bun + Next.js request-body hang.** On self-hosted Bun,
   `await req.text()` never resolves for `PATCH`/`PUT`/`DELETE` when anything upstream touched the
   request first (a root `middleware.ts` doing CORS; Payload's own
   `addDataAndFileToRequest` after `Object.assign(request, …)`). `POST` on the same code path is
-  fine, and it works on Vercel — so it only appears in production. It cost them two separate
-  root-cause investigations. **We run Node, so we are not exposed.** 🔴 The reason to keep this
+  fine, and it works on Vercel — so it only appears in production.
+  **We run Node, so we are not exposed.** 🔴 The reason to keep this
   written down is that it is the strongest single argument against switching this repo's runtime to
   Bun. If someone proposes it, this is the cost.
 - ✅ **APPLIES — secrets must not be Docker build args.** A build arg lands in image history. Our
   images need none (there is no private registry and no install-time token). 🔴 Keep it that way: if a Dockerfile ever grows an `ARG` for a
   credential, that is a regression.
-- ✅ **APPLIES — image size.** Their Payload backend image was ~1.7 GB with full deps. Ours prunes to
+- ✅ **APPLIES — image size.** A Payload backend image is ~1.7 GB with full deps. Ours prunes to
   production deps (ai-service already does; backend should). The `bge-m3`/`rerank` sidecars are
   multi-GB by construction because the weights are baked in, and each needs **~3 GB RAM during the
   build** — that is the constraint that eventually forces a dedicated builder box.
@@ -512,13 +512,13 @@ multi-week thread.
    strict readiness to a load balancer without deciding it separately — under rule 1, a shared
    dependency outage would pull every replica at once, turning a partial outage total.
 3. ⚠ **Assert on `"status":"ok"`, never on a specific check name.** The same condition surfaced as
-   `checks.backend` on one env and `checks.aiService` on another in their fleet.
+   `checks.backend` on one env and `checks.aiService` on another.
 4. 🔴 **The `checks` list must be DERIVED from registered dependencies, not hand-maintained.**
    Without this rule the others decay straight back into the original bug.
 5. **Probe a dependency by DOING the thing you need, not by asking how it feels.** `select 1` for
    Postgres · `PING` for Redis · `HeadBucket` for storage · a JWKS fetch asserting a non-empty `keys`
-   array for the IdP. ⚠ A service's own `/health` is not evidence: they measured a storage engine
-   returning 200 with `"ready":true` while **every** S3 call returned 503.
+   array for the IdP. ⚠ A service's own `/health` is not evidence: a storage engine can
+   return 200 with `"ready":true` while **every** S3 call returns 503.
 6. **Three different retries, and conflating them is a bug.** Boot: bounded exponential backoff,
    ~6 attempts / ≤60 s, then **fail loudly — never retry forever.** Readiness: `down` only after **2
    consecutive** failures, cache 5 s. Liveness: no dependency check, ever.
@@ -545,14 +545,13 @@ Operational rather than architectural, but each one costs time.
 - ⚠ **`change_type` auto-powers the server back on.** A separate power-on call is a no-op — do not
   budget a step for it, and do not assume the box stays off.
 - 🔧 **Check free disk BEFORE pulling new images**, rather than pruning reactively. Pruning images on
-  a box that is serving traffic is a deploy-adjacent action, and they declined to do it at 45–52%
-  used for exactly that reason.
+  a box that is serving traffic is a deploy-adjacent action.
 
 ### Network boundary
 
-⚠ **Containers bind `0.0.0.0`, and that is not the security boundary — the cloud firewall is.** Their
-firewall allowlists only 22/80/443, so internal services were reachable only over the private
-network. **Verified live, not assumed.** 🔴 Write this down in the provisioning checklist: on a
+⚠ **Containers bind `0.0.0.0`, and that is not the security boundary — the cloud firewall is.** A
+firewall that allowlists only 22/80/443 leaves internal services reachable only over the private
+network. **Verify it live, do not assume it.** 🔴 Write this down in the provisioning checklist: on a
 provider with different firewall defaults, the assumption silently inverts and every internal service
 becomes public.
 
@@ -583,8 +582,8 @@ so `0.0.0.0/0` on that setting is recoverable, not reckless.
   🔧 **Any provisioning automation must PATCH-or-POST, always.**
 - ⚠ **Never copy `custom_labels` between applications.** They are uuid-keyed and Coolify regenerates
   them. Everything else in the env table copies cleanly.
-- 🟡 **When you retire a feature flag from the code, delete its env rows too.** After one of their
-  enable-flags was removed, the real behaviour became "on whenever a secret and a base URL are both
+- 🟡 **When you retire a feature flag from the code, delete its env rows too.** After an
+  enable-flag is removed, the real behaviour can become "on whenever a secret and a base URL are both
   present" — so *setting those two variables* is the flip and *deleting either* is the off switch.
   The stale flag left behind in the control plane is an ignored no-op that **implies a control which
   no longer exists**, and an operator will later "turn it off" and change nothing.
@@ -715,8 +714,8 @@ Not mine to fix; listed so they are not lost.
 - 🔴 **No identity signing keypair anywhere.** `AUTH_PRIVATE_KEY` / `AUTH_PUBLIC_KEY` /
   `AUTH_KEY_ID` / `AUTH_ISSUER` have no defaults and nothing generates them.
   `pnpm --filter @edc/backend keygen` prints a set. **One per environment.**
-- ✅ **`apps/backend/Dockerfile` and `Dockerfile.dev` were rewritten** for this monorepo mid-flight:
-  repo-root context, pnpm, `ENV PORT=3002`, no `REGISTRY_PAT`, no private registry. ⚠ One residual:
+- ✅ **`apps/backend/Dockerfile` and `Dockerfile.dev` fit this monorepo**:
+  repo-root context, pnpm, `ENV PORT=3002`, no private registry. ⚠ One residual:
   the prod one copies **four** workspace manifests, not six — pnpm validates `--frozen-lockfile`
   against all of them, so this may fail with a misleading "lockfile is not up to date".
 - ⚠ **`apps/backend/docker-compose.yml`** stands up a second Postgres on host 5433 — still plain `postgres:16-alpine` with **no pgvector**, and still a
@@ -725,7 +724,7 @@ Not mine to fix; listed so they are not lost.
 - ⚠ **`apps/backend/.dockerignore` and `apps/web/.dockerignore` are dead** under a repo-root build
   context. Their entries — notably `src/payload-types.ts` and `media` — must live in the root one.
 - ⚠ **`services/ai-service/.github/workflows/{ci,test}.yml` sit at a path GitHub will never run.**
-  Workflows are only read from the **repository root** `.github/workflows/`. They were rewritten for
+  Workflows are only read from the **repository root** `.github/workflows/`. They use
   pnpm but are currently dead files. Move them to the root and scope them with `paths:` filters, or
   CI is silently not running.
 - 📝 **`packages/*` are built locally and never published.** Nothing in the deploy path should
@@ -738,26 +737,3 @@ Not mine to fix; listed so they are not lost.
 - 🔴 **The deployment registry is not defined anywhere in the repo.** The only image tag that exists
   is `edc-ai-service:ci`, unprefixed, `push: false`. Decide the registry before configuring a build
   server, because `docker_registry_image_name` must be set **at application creation** (§0).
-
-### Previous-organization references still to purge
-
-None of these break a deploy. They mislead the next reader, which is its own cost.
-
-- 🔴 **`.staging-identity/` — delete the whole directory.** It is a staging copy of the standalone
-  identity app that has already been merged into `apps/backend`. It is **not** a workspace member,
-  it is excluded by the root `.dockerignore`, and it uses npm and Next 16 on port 3005 — none of
-  which match this repo. It carries **~300 previous-org references across 30 files**, plus the only
-  `REGISTRY_PAT` and private-registry references left in the tree. Deleting the folder purges all of
-  it in one move. ⚠ Check first that nothing still needed was left behind: the Redis-backed rate
-  limiter, `lib/jwt/verify.ts`, and the Roles/Permissions/Assignments collections exist there and
-  **not** in `apps/backend`.
-- ⚠ **Stale comments naming the prototypes** in `apps/backend/README.md` (lines 44, 148),
-  `src/lib/aiClient.ts` (7, 11, 20 — line 20 references a vendored tarball that no longer exists),
-  `src/lib/aiBudgetFailure.ts:159`, and ~21 test fixtures in `aiBudgetFailure.test.ts`.
-  ⚠ `README.md:44` is also factually wrong now — it says there is no `organizations` collection, and
-  there is.
-- ✅ **Keep** `services/ai-service/scripts/check-domain-vocabulary.mjs` — the prototypes' name
-  appears there because that file is the lint guard that *bans* it.
-- 📝 `https://ecosistemas-de-conocimiento.local` is a placeholder OpenRouter attribution origin in
-  three files. Harmless; replace via `OPENROUTER_APP_URL` per environment.
-- ✅ **No registry hostnames, no `ghcr.io`, no foreign domains anywhere outside `.staging-identity`.**

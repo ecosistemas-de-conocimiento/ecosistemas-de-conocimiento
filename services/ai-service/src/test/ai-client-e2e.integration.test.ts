@@ -2,7 +2,7 @@
 //
 // ── Why this file exists ────────────────────────────────────────────────────
 // Before it, `new AIClient(` appeared in no file outside `packages/ai-client/src`
-// (2026-10-17 fleet AI audit, AIS-9, measured by grep). The client's own tests
+// (measured by grep). The client's own tests
 // run against a fake `fetch`; the server's integration tests use `app.inject`
 // with hand-written bodies. Nothing checked that the request the client SENDS is
 // the one the server ACCEPTS, or that the response the server SENDS carries the

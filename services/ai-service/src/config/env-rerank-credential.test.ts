@@ -125,7 +125,7 @@ describe('validateRerankCredential', () => {
   });
 
   it('is SILENT for `cohere` with no key — that value covers the local sibling', async () => {
-    // The default posture across the fleet today. If this ever warns, every
+    // The default posture. If this ever warns, every
     // local boot grows a line nobody can act on, and the warning stops working.
     liveRung();
     vi.stubEnv('RERANK_URL', 'http://localhost:58000/rerank');

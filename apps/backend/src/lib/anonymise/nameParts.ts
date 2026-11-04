@@ -2,7 +2,7 @@
  * NAME PARTS — a person finding's given names and surnames, redacted wherever
  * they stand alone.
  *
- * 🔴 MEASURED ON DEV, 2026-10-26 (deployed 34296a8, self-hosted detector, 0
+ * 🔴 MEASURED ON DEV, 2026-10-26 (self-hosted detector, 0
  * fallbacks): two staff documentos went `ready` with a collaborator's bare
  * first name left in, 7 and 12 times. The surname was redacted everywhere.
  * Stage 3 redacts only the spellings of what the model REPORTED, so a full name

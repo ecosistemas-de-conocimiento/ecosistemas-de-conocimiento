@@ -61,11 +61,7 @@
  * ## Where that template LIVES (inline vs registry)
  *
  * Assembling in TypeScript and staying UNREGISTERED are two different
- * decisions, and only the first was ever made deliberately. chat's first commit
- * shipped a README line — "when the chat path graduates to a registered
- * unitType, drop `specOverride`" — that was deleted in a mechanical
- * SolidStart→SvelteKit port without anyone deciding. Every other product on
- * ai-service registers its prompts.
+ * decisions, and only the first was ever made deliberately.
  *
  * So the passthrough stays; the SLOT it travels in moves. the backend seeds a
  * `chat` unit-type whose `promptTemplate` is these same bytes, and

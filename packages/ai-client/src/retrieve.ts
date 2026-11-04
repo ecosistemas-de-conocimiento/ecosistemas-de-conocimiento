@@ -54,7 +54,7 @@ export class RetrieveAPI {
   }
 
   /**
-   * `retrieve` with the fleet's outcome rule (`./retrieval-outcome.ts`):
+   * `retrieve` with the shared outcome rule (`./retrieval-outcome.ts`):
    * `hits`, or `empty` (`corpus_not_found` / `document_not_found` /
    * `no_match`), or a thrown `RetrievalUnavailableError` for every other
    * failure. A caller cancel rethrows `RequestAbortedError` unchanged.

@@ -85,7 +85,7 @@ export function docStatusBadge(input: DocStatusInput): IngestBadge | null {
 /**
  * May the caller edit this note's text in the app (Editar / Vista previa)?
  *
- * 🔴 PUBLISHED NOTES TOO (bug measured on dev 3f275c5, 2026-10-28). The editor
+ * 🔴 PUBLISHED NOTES TOO (bug measured on dev, 2026-10-28). The editor
  * used to render only for a note with no pipeline (`ingestStatus: 'n/a'`), and
  * a published note is `ready`, so "Publicar cambios" could never be reached:
  * nothing could change the body. Editing a published note is safe: autosave

@@ -15,7 +15,7 @@ const doc = new Window().document as unknown as Document;
 const linkCitations = (html: string, ordinals: Iterable<number>) => link(html, ordinals, doc);
 
 /**
- * 🔴 The Discapacidad case measured on dev at 8984fec (runbook edc-1 §4zf,
+ * 🔴 The Discapacidad case measured on dev (runbook edc-1 §4zf,
  * check 4): the answer cites [1]–[8], the 7-source cap (`MAX_SOURCES`) keeps
  * prompt ordinals {1–6, 8}, so the raw payload has no source 7. What the
  * reader sees must still be sources 1..7 with no gap, every marker on its
@@ -137,7 +137,7 @@ describe('🔴 source numbering: 8 cited markers, 7 shown sources, no source 7',
   });
 });
 
-// 🔴 Dev 020ebec (2026-10-24): an answer cited "[266]", a backend document id,
+// 🔴 Dev (2026-10-24): an answer cited "[266]", a backend document id,
 // and its provenance was empty. The server now never shows the model a number
 // but `[1]…[k]` (`$lib/server/engine/chunkFence`); this pins the display net
 // underneath: a marker no source answers never reaches the reader.

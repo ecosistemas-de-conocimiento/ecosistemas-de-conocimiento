@@ -48,7 +48,7 @@ interface Chunk {
  *
  * 🔴 These fixtures used to put the backend id in `documentId`, which made the
  * draft-leg filter look correct while it dropped every real chunk — the same
- * wrong shape `fdb5bd5` fixed in the backend's conversation ingest.
+ * wrong shape once fixed in the backend's conversation ingest.
  */
 function chunk(backendDocId: string, n = 1): Chunk {
   return {

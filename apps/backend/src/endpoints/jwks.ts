@@ -26,7 +26,7 @@
  *      exactly the thing the IdP exists to provide.
  *   2. PER-IP BUCKETING IS ACTIVELY WRONG HERE. Consumers are our own services,
  *      and on one host they share an egress IP. One service's restart
- *      would rate-limit every other product's verifier. The natural bucket key
+ *      would rate-limit every other service's verifier. The natural bucket key
  *      does not exist: there is no session, no service token, no identity of
  *      any kind on this route — by design, because a verifier must be able to
  *      fetch it before it can trust anything.

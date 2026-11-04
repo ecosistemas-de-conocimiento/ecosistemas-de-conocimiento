@@ -84,7 +84,7 @@ describe('addressDetector — the documented recall gaps', () => {
   });
 
   it('does NOT find a rural address with no street type and no number', () => {
-    // Gap 3, and the one that matters most for the fleet's users. This is the
+    // Gap 3, and the one that matters most for rural users. This is the
     // NER adapter's job, not the rules layer's.
     expect(find('Vive en la comunidad de Santa María, cerca del río.')).toEqual([]);
   });

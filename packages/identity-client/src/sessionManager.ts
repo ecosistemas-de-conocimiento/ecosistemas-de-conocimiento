@@ -12,7 +12,7 @@
 //      caller can forget, early-return past it, or reorder it.
 //   2. A THREE-WAY VERDICT — `dead` / `survived` / `unavailable` — over the
 //      IdP's status codes. 401 ends the session; 403 does NOT. Getting that
-//      backwards signs a person out of every product in the fleet because one
+//      backwards signs a person out of every product because one
 //      project assignment was missing.
 //   3. SINGLE-FLIGHT PER TICKET, plus a spent-ticket memo. The IdP treats two
 //      concurrent rotations of one ticket as theft and revokes the whole chain
@@ -30,7 +30,7 @@
 // `resetIdentitySessionState()` is the test seam.
 //
 // ⚠ `project` IS PART OF THE KEY, and leaving it out is a real bug rather than
-// a tidiness point. One refresh ticket is fleet-wide; the `audience` on the
+// a tidiness point. One refresh ticket covers every product; the `audience` on the
 // /refresh call is not. Two managers on one IdP with different projects would
 // otherwise share a flight, and the memo would hand a `chat`-scoped access
 // token to the manager whose store writes another product's cookies.
@@ -112,7 +112,7 @@ export interface IdentitySessionStore {
    * Drop everything. Called on a `dead` verdict and on `end()`, and NEVER on
    * `survived`, `unavailable` or `misconfigured`: clearing the session because
    * one project said "no", because the IdP hiccuped, or because THIS
-   * deployment is misconfigured, is the fleet-wide-logout bug this whole module
+   * deployment is misconfigured, is the global-logout bug this whole module
    * exists to prevent.
    */
   clear(): void | Promise<void>;
@@ -209,7 +209,7 @@ interface AudienceOption {
 interface ProjectOption {
   /**
    * @deprecated Use `audience`. Same meaning: the slug tokens are scoped to.
-   * Still accepted during the fleet-wide rename (D1a, 2026-10-21).
+   * Still accepted during the rename.
    */
   project: string;
   /** The audience slug. A blank string counts as unset. */
@@ -268,8 +268,7 @@ interface IdentitySessionBaseOptions {
    */
   forwardedFor?: string;
 
-  // ── Cookie policy. Options, not constants, because the two forks disagreed
-  //    about nothing here but a future consumer may. ─────────────────────────
+  // ── Cookie policy. Options, not constants, because a consumer may differ. ─────────────────────────
 
   /** Refresh-ticket TTL ceiling, seconds. Default 14 days (ADR-0001 Amendment 2 §1). */
   ticketTtlSeconds?: number;
@@ -557,7 +556,7 @@ export function createIdentitySession(
     // 🔴 `dead` ONLY. `survived` means the ticket is fine and the answer was
     // about a project; `unavailable` means the outcome is unknown;
     // `misconfigured` means this deployment is wrong and the user is fine.
-    // Clearing on any of them is the fleet-wide logout.
+    // Clearing on any of them is the global logout.
     if (result.kind === 'dead') await store.clear();
   }
 

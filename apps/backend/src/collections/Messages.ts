@@ -220,8 +220,8 @@ export const protectMessageCorpusState: CollectionBeforeValidateHook = async ({
  * Owner ruling 2026-10-21 (#4, choice A, "store, never cite in chat"): every
  * turn, question and answer, goes into the ecosistema's corpus through the
  * anonymisation gate, for orientation only. Chat never cites one (web
- * `lib/turnChunks.ts`, `lib/server/engine/orientation.ts`). This reverses the
- * removal in a4643cb.
+ * `lib/turnChunks.ts`, `lib/server/engine/orientation.ts`). This reverses an
+ * earlier removal.
  *
  * ⚠ `create` ONLY, AND GUARDED. Conversation ingest writes back to `messages`
  * (status, `redactedText`), and those writes re-fire this hook. Without both the

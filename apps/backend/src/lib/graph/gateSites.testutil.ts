@@ -4,7 +4,7 @@
  * A whole-statement regex is not enough: `entitySupportCte` carries the persona
  * filter, every statement embeds it, so a regex over the full SQL passed even
  * when the statement's OWN mention read had no filter (entityDocumentsQuery
- * before 398eb5f, retrieveDocumentsQuery after it). This splits the SQL into
+ * before the fix, retrieveDocumentsQuery after it). This splits the SQL into
  * the SELECT blocks that read `graph_mentions` / `graph_relations`, drops every
  * nested sub-SELECT from each block (CTE bodies, IN-subqueries), and lets the
  * caller look for the gate in what is left — the read's own FROM/JOIN/WHERE.

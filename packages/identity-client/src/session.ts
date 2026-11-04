@@ -1,7 +1,7 @@
 // Browser-user SESSIONS for @edc/identity-client.
 //
 // Three calls, mirroring the three endpoints a consumer's BFF needs to run one
-// human's session against the fleet identity provider:
+// human's session against the identity provider:
 //
 //   loginWithPassword → POST /v1/identity/login   password in, refresh ticket out
 //   refreshSession    → POST /v1/identity/refresh ticket in, NEW ticket out,
@@ -19,10 +19,10 @@
 // ⚠ NO SERVICE TOKEN, AND THAT IS THE POINT. The credential is the user's
 //   password (login) or their refresh ticket (refresh / revoke), carried in the
 //   JSON body. This module never touches `X-Service-Token`, so a BFF route wired
-//   to it cannot leak the fleet-wide service credential even by accident.
+//   to it cannot leak the shared service credential even by accident.
 //
 // ⚠ SERVER-SIDE ALL THE SAME. A refresh ticket is a long-lived credential for a
-//   user's whole fleet session — 14 days by default. It belongs in an httpOnly,
+//   user's whole session across products — 14 days by default. It belongs in an httpOnly,
 //   Secure, SameSite cookie the browser's own JavaScript cannot read. If it
 //   reaches the page, one XSS is a fortnight of impersonation across every
 //   product.
@@ -39,7 +39,7 @@ import { responseMessage, sendRequest, type HttpCallOptions } from './serviceReq
  * The injectable knobs for a session call.
  *
  * ⚠ THERE IS NO `serviceToken` HERE, AND THERE MUST NEVER BE. These endpoints
- * are reached on behalf of a browser user; adding a fleet-wide service
+ * are reached on behalf of a browser user; adding a shared service
  * credential to the shape would invite a consumer to put one in the same config
  * object it hands to a login form handler.
  *
@@ -178,7 +178,7 @@ export type RefreshedSession = RotatedSession | RotatedSessionWithToken;
  *
  * ⚠ EVERY AUTHENTICATION FAILURE COMES BACK AS ONE `invalid_credentials`. Wrong
  * password, unknown account and locked-out account are deliberately
- * indistinguishable — telling them apart would make this endpoint a fleet-wide
+ * indistinguishable — telling them apart would make this endpoint an
  * account-enumeration oracle. Show the user one message. Do not "helpfully"
  * offer a password reset only for known addresses; that leaks the same bit.
  *
@@ -199,7 +199,7 @@ export async function loginWithPassword(
     ['credentials.password', credentials?.password],
   ]);
 
-  // Email is the fleet user key and is normalized on write, so it is normalized
+  // Email is the user key and is normalized on write, so it is normalized
   // on read too — otherwise "Ana@example.org" cannot sign in. The IdP does this
   // itself; doing it here as well keeps the two in agreement and stops a stray
   // space in a form field from becoming a support ticket.
@@ -263,8 +263,8 @@ export async function loginWithPassword(
  * the user out, and the next attempt with the old value looks like a stolen
  * credential, which revokes the whole chain.
  *
- * ⚠ 401 AND 403 MEAN OPPOSITE THINGS HERE, and this is the mistake that costs a
- * fleet its sessions:
+ * ⚠ 401 AND 403 MEAN OPPOSITE THINGS HERE, and this is the mistake that signs
+ * people out of every product:
  *
  * ```ts
  * catch (err) {
@@ -606,7 +606,7 @@ function retryAfter(body: unknown, headers: Headers): number | undefined {
  *
  * ⚠ THE WHOLE POINT OF THIS FILE'S ERROR HANDLING. An error object is the thing
  * a consumer pipes straight into a log aggregator, and a refresh ticket in a log
- * line is a fortnight of fleet-wide impersonation sitting in a search index.
+ * line is a fortnight of cross-product impersonation sitting in a search index.
  *
  * Values shorter than 8 characters are skipped: a 4-character password is
  * already lost, and blanking every occurrence of a short string would mangle

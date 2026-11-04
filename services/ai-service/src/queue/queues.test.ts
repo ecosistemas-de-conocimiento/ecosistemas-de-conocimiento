@@ -140,7 +140,7 @@ describe('orgPriorityBucket', () => {
 // test, and a call still in flight at worker teardown kills the run with
 //   EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending
 // — exit 1 with every test green, which fails CI's exit-code gate and blocks
-// `deploy-dev`. Measured on f91e078: 5 such runs in 150; 0 in 150 with
+// `deploy-dev`. Measured: 5 such runs in 150; 0 in 150 with
 // the option, and 37 Redis TCP dials per suite run became 0.
 //
 // This test asserts the OBSERVABLE consequence, not the option: importing the

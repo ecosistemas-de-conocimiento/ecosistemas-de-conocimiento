@@ -142,7 +142,7 @@ def test_serialisation_is_deterministic():
 
 
 # ---------------------------------------------------------------------------
-# Retry / dead-letter policy — ported from ai-service's branch table
+# Retry / dead-letter policy — same branch table as ai-service
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(

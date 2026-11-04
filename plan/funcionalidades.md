@@ -1,7 +1,7 @@
 # Funcionalidades de Ecosistemas de Conocimiento
 
 Inventario por pantalla y por rol, leído en el código de `apps/web` y `apps/backend` el 2026-10-27
-(rama `evidencia-video`, desde `4f429be`). Las historias de usuario que salen de aquí están en
+(rama `evidencia-video`). Las historias de usuario que salen de aquí están en
 `plan/mapa-historias.md`.
 
 Roles por ecosistema (`apps/web/src/lib/roles.ts`): **estudiante**, **participante** (`member`),

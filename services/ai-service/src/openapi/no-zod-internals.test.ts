@@ -1,6 +1,6 @@
 // GATE: the SERVED document contains no Zod internals.
 //
-// ── The defect this pins (measured on 07f63a3) ────────────────────────────
+// ── The defect this pins ────────────────────────────
 // `route-table.ts` declared response HEADERS with Zod schemas
 // (`schema: z.number().int().positive()`) exactly the way it declares bodies.
 // Bodies work: `registry.registerPath` hands them to
@@ -8,8 +8,8 @@
 // generator walks `content`, never `headers`, and `registry.ts` copied the
 // header object into the response VERBATIM (`out['headers'] = row.headers`).
 //
-// So `GET /v1/openapi.json` published the Zod 4 instance itself. MEASURED on
-// 07f63a3: 41 `retry-after` headers, each serialising the same `ZodNumber`, for
+// So `GET /v1/openapi.json` published the Zod 4 instance itself. MEASURED before
+// the fix: 41 `retry-after` headers, each serialising the same `ZodNumber`, for
 // 82 raw internal keys in the served bytes. Every code generator run against
 // that document saw a header schema that was an opaque blob with `def` and a
 // nested `checks` array instead of `{type:'integer'}`.

@@ -7,8 +7,7 @@
 // delete, budget fail-closed, worker retry bookkeeping. A run that cannot reach
 // a database must therefore FAIL. There is no skip, no opt-out variable and no
 // "warn and continue": a skipped integration test is indistinguishable from a
-// passing one, and this fleet has a recorded case of 29 silently-skipped tests
-// leaving a suite green.
+// passing one.
 //
 // ── WHAT THIS FILE IS, AND WHAT IT IS NOT ──────────────────────────────────
 //
@@ -39,12 +38,11 @@
 //          was (`assertClusterIsOurs`).
 //   2. `docker-pg.ts` / `docker-redis.ts` — this suite STARTS ITS OWN
 //      throwaway containers on Docker-allocated ephemeral ports, and a server
-//      we started cannot be somebody else's. The reference provisions a
-//      database on a cluster named by `DATABASE_URI`. Docker stays the
+//      we started cannot be somebody else's. Docker stays the
 //      DEFAULT here; the cluster-derived path below is the fallback, not the
 //      other way round.
 //
-// ⚠ DELIBERATELY NOT PORTED, because it is Payload machinery with no analogue:
+// ⚠ DELIBERATELY ABSENT, because it is Payload machinery with no analogue:
 //
 //   · `bootPayloadForSuite` / per-suite `getPayload` cache keys — those exist
 //     because `getPayload` memoises on `options.key` and `payload.config`
@@ -140,7 +138,7 @@ export type IntegrationDbSpec = {
   /**
    * Tables emptied before EVERY TEST, not once per run.
    *
-   * ⚠ THIS IS AI-SERVICE'S OWN, AND IT IS STRONGER THAN THE REFERENCE'S
+   * ⚠ THIS IS STRONGER THAN A
    * once-per-run wipe — every test starts from a known-empty core rather than
    * from whatever the previous test left. It is affordable because the tables
    * are small and the lane is serial. Kept deliberately; the once-per-run
@@ -205,8 +203,8 @@ const TEMPLATES: Record<string, IntegrationDbTemplate> = {
  * 🔴 THE NAMES THIS HARNESS IS ALLOWED TO DESTROY. A POSITIVE ALLOWLIST.
  *
  * ⚠ This is TIGHTER than `assertTestDatabase`'s `_test` suffix, deliberately.
- * That check answers "does this name end in _test", which every product on this
- * fleet can satisfy; this one answers "is this OUR test database". Both run —
+ * That check answers "does this name end in _test", which any product can
+ * satisfy; this one answers "is this OUR test database". Both run —
  * the suffix check first, because it is the one `integration-setup.ts` repeats
  * inside each worker.
  *
@@ -268,7 +266,7 @@ const dotenvValue = (file: string, key: string): string => {
     if (!line || line.startsWith('#')) continue;
     const eq = line.indexOf('=');
     if (eq === -1 || line.slice(0, eq).trim() !== key) continue;
-    // ⚠ Values in this fleet's dotenv files are sometimes QUOTED. An unstripped
+    // ⚠ Values in dotenv files are sometimes QUOTED. An unstripped
     // quote produces a connection string that fails in a way that looks like a
     // wrong password.
     return line
@@ -298,8 +296,7 @@ export const envValue = (name: string): string => {
  * `integration-setup.ts` assigns `process.env.DATABASE_URL = TEST_DATABASE_URL`
  * at module scope in every worker, so inside a worker this function would
  * return the TEST url and `assertThrowaway` would compare a value with itself —
- * refusing every run, and then being deleted by whoever hit it. chat-backend
- * has that exact trap on record and works around it by reading dotenv only.
+ * refusing every run, and then being deleted by whoever hit it.
  * Here `globalSetup` runs in the main process BEFORE any worker forks and
  * before any rebind, so `process.env` is still the developer's own.
  */
@@ -461,7 +458,7 @@ export const journalPath = (): string => path.join(MIGRATIONS_DIR, 'meta', '_jou
  *
  *   · edit `0000_baseline.sql` and leave its `when` alone → drizzle applies
  *     nothing and reports success;
- *   · the fleet's ONE-BASELINE policy regenerates baselines IN PLACE, which is
+ *   · a ONE-BASELINE policy regenerates baselines IN PLACE, which is
  *     exactly that case;
  *   · a database at `when` N ignores every migration numbered below N, so a
  *     migration inserted out of order is silently skipped forever.
@@ -812,7 +809,7 @@ export const fingerprintRows = (rows: readonly LiveSchemaRow[]): string => {
 };
 
 /**
- * 🔴 THE HALF THAT LOOKS AT THE DATABASE. Fleet-shared shape — see the wave spec.
+ * 🔴 THE HALF THAT LOOKS AT THE DATABASE.
  *
  * `migrationsFingerprint()` hashes FILE BYTES. It answers "did the migrations
  * change under a stamped database". It cannot answer the other direction: "did
@@ -821,7 +818,7 @@ export const fingerprintRows = (rows: readonly LiveSchemaRow[]): string => {
  * `registry_audit` and five columns from `traces` took it to 234 / 15, and
  * `requireIntegrationDb` still returned `{ created: false, rebuilt: false }` —
  * "reused, schema stamp matches" — and left the suite pointed at a database
- * missing a whole table. That is the fleet's defect 3, reproduced in this repo.
+ * missing a whole table.
  *
  * 🔴 IT READS `pg_catalog`, NOT `information_schema`, AND THAT IS THE WHOLE
  * POINT. `information_schema` is PRIVILEGE-FILTERED: it shows a role only what
@@ -863,8 +860,7 @@ export const fingerprintRows = (rows: readonly LiveSchemaRow[]): string => {
  * anywhere (`grep pg_stat_activity src scripts drizzle` → 0 hits), and
  * `dropDatabase` uses `WITH (FORCE)`, so a lingering session could not block a
  * rebuild either. If such a guard is ever added, it must run AFTER this call
- * returns — a sibling repo turned a legitimate rebuild into a false refusal
- * exactly that way.
+ * returns, or a legitimate rebuild turns into a false refusal.
  *
  * Accepts a URL (opens and closes its own connection) or a live client, so the
  * deployed boot gate can reuse the connection it already has.
@@ -880,8 +876,7 @@ export const liveSchemaFingerprint = async (url: string): Promise<string> => {
   //   · a blind `BEGIN … COMMIT` COMMITS a transaction the caller already
   //     opened — Postgres does not nest, so the inner BEGIN only warns and the
   //     COMMIT commits the OUTER transaction. The caller's later ROLLBACK is
-  //     then a no-op and its changes are permanent. Reproduced elsewhere in
-  //     this fleet: a dropped column survived its own ROLLBACK.
+  //     then a no-op and its changes are permanent. Reproduced: a dropped column survived its own ROLLBACK.
   //   · a bare `SET LOCAL` inside someone else's transaction persists until
   //     THEIR transaction ends, breaking their later queries.
   //   · a bare `SET` on a POOLED connection goes back into the pool still set.

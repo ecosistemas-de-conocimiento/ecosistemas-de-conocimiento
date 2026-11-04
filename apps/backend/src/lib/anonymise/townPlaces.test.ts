@@ -179,7 +179,7 @@ describe('isTownLevelPlace — the two rules', () => {
 
 describe('isTownLevelPlace — the span the model returns (2026-10-23)', () => {
   const text = 'Yo vivo en Xochitepec con mi familia.'
-  it('🔴 reads the span as given: a lead in it is not cut (audit of 9edaa22)', () => {
+  it('🔴 reads the span as given: a lead in it is not cut', () => {
     expect(isTownLevelPlace({ text: 'Xochitepec', type: 'lugar' }, text)).toBe(true)
     expect(isTownLevelPlace({ text: 'Xochitepec', type: 'lugar' }, 'Soy de Xochitepec.')).toBe(true)
     expect(isTownLevelPlace({ text: 'en Xochitepec', type: 'lugar' }, text)).toBe(false)

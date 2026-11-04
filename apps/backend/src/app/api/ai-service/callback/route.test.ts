@@ -168,7 +168,7 @@ describe('POST /api/ai-service/callback — correct signature', () => {
   })
 
   it('finds the row by docId, so a callback that beats the ingestId write still lands', async () => {
-    // The race from commit 7bf0622: the row is `embedding` and has no id yet.
+    // The callback-before-ingestId race: the row is `embedding` and has no id yet.
     findByIDImpl = async () => ({
       id: 42,
       ingestId: null,

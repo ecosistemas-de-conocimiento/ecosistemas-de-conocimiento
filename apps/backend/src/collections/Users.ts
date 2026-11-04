@@ -8,20 +8,12 @@ import { sessionMemberships } from '../lib/roles'
  * A person. ONE account for the whole installation; which organizations they
  * can reach is decided by `memberships`, never by a field here.
  *
- * ── THE MERGE ────────────────────────────────────────────────────────────────
- * This collection is the reconciliation of two `Users.ts` files: the product
- * backend's (Payload auth + `displayName`, public sign-up, self-scoped access)
- * and the standalone identity provider's (`isPlatformAdmin`, `isActive`, email
- * normalization, admin-only creation, field-level self-escalation gate).
- *
- * What was taken from each, and why:
- *
- *   · `displayName` — KEPT from the product side, and it is the ONLY name
- *     field. The IdP carried `firstName`/`lastName`; the frontend already
- *     reads `displayName` and its register call sends it. Two competing name
+ * ── THE FIELDS AND THE RULES ─────────────────────────────────────────────────
+ *   · `displayName` is the ONLY name field. The frontend reads `displayName`
+ *     and its register call sends it. Two competing name
  *     representations is exactly the kind of thing that ends with a UI showing
  *     a blank name because it read the wrong one. `lib/permissions.ts` and
- *     `endpoints/http.ts` were adapted to read `displayName`.
+ *     `endpoints/http.ts` read `displayName` too.
  *
  *   · SIGN-UP IS CLOSED (UX demo backlog #6, decided 2026-10-21). It used to
  *     be public (`create: () => true`, proxied by the SvelteKit app's
@@ -43,11 +35,11 @@ import { sessionMemberships } from '../lib/roles'
  *     `IDENTITY_ALLOWED_EMAIL_DOMAIN` still fences which addresses may be
  *     created, if a deployment wants that.
  *
- *   · `isPlatformAdmin` / `isActive` — KEPT from the IdP side. `isActive` is
+ *   · `isPlatformAdmin` / `isActive` — `isActive` is
  *     the revoke switch the resolver checks (`lib/permissions.ts`); Payload's
  *     own auth knows nothing about it, so it is enforced in `access/`.
  *
- *   · EMAIL NORMALIZATION — KEPT from the IdP side. Email is the join key
+ *   · EMAIL NORMALIZATION — Email is the join key
  *     between this backend and anything that verifies its tokens, so
  *     `Ana@Example.org ` and `ana@example.org` must never become two accounts
  *     with two different sets of access.

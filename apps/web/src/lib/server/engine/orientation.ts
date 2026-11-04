@@ -20,8 +20,8 @@
  *     (`ORIENTATION_RULE`, `./prompt`).
  *
  * 🔴 THE CURRENT CONVERSATION IS EXCLUDED (metadata `sessionId`), so the
- * user's own question can never echo back. That echo was the bug a4643cb
- * fixed: chat cited the user's own question as source [1] "Conversación".
+ * user's own question can never echo back. That echo was an earlier
+ * bug: chat cited the user's own question as source [1] "Conversación".
  *
  * ⚠ CROSS-USER SCOPE, one switch: `CHAT_ORIENT_SCOPE`
  *   · `ecosistema` (default) — turns from every member's conversations in this
@@ -29,7 +29,7 @@
  *     and they are anonymised; still, a member's orientation block can carry
  *     another member's redacted words.
  *   · `own` — only this user's other conversations (metadata `userId`).
- *   · `off` — no orientation leg at all; the turn is the a4643cb turn.
+ *   · `off` — no orientation leg at all.
  * Anything else is `off` (fail closed) and logged.
  *
  * Best-effort: a failing or slow retrieve yields no block, never a failed turn.

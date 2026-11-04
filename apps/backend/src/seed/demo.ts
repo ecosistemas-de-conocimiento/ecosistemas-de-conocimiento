@@ -15,16 +15,9 @@
  * assistant answers FROM these rows, so a demo organization on a real
  * deployment means the product confidently describing teams that do not exist.
  *
- * ── WHAT THIS REPLACED ───────────────────────────────────────────────────────
- * The seed this came from invented three teams, four projects and four
- * fictional PEOPLE with addresses at a real company, written into `memberships`
- * as directory entries with no accounts behind them. That shape is gone for two
- * reasons: `memberships` now carries ACCESS (it needs a real `user`), and a
- * dropped `seedFleet`/`catalog` pair that registered an app fleet has no
- * meaning in a single-product repo.
- *
- * The one membership created here is the real admin, as `owner`, so the seeded
- * organization is reachable by the account the installation already has.
+ * `memberships` carries ACCESS (it needs a real `user`), so no fictional people
+ * go in it. The one membership created here is the real admin, as `owner`, so
+ * the seeded organization is reachable by the account the installation already has.
  *
  * Idempotent by slug: re-running updates the existing rows in place. Safe to
  * run on every boot.

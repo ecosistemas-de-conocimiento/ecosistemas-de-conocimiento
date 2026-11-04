@@ -139,7 +139,7 @@ describe('corpus language PATCH re-indexes chunks (integration)', () => {
     );
   }
 
-  // ── The state the fleet is actually in ──────────────────────────────────
+  // ── The state deployments are actually in ──────────────────────────────────
   it("baseline 'simple': the exact surface form matches, the singular does not", async () => {
     const h = await seed('simple');
 

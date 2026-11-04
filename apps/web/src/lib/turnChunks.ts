@@ -4,7 +4,7 @@
  * 🔴 Owner ruling 2026-10-21 (#4, choice A): "store, never cite in chat".
  * Every turn, question and answer, is ingested (anonymised) into the
  * ecosistema's corpus (`apps/backend/src/lib/conversationIngest.ts`), but a
- * turn is NEVER a source. Before a4643cb the chat cited the user's own
+ * turn is NEVER a source. Before the fix the chat cited the user's own
  * question as source [1] "Conversación".
  *
  * So every turn chunk is dropped from the sources, regardless of any flag:

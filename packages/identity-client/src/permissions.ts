@@ -59,7 +59,7 @@ export function normalizeGrant(value: unknown): ProjectGrant {
 /**
  * The platform-admin flag, read STRICTLY.
  *
- * `isPlatformAdmin` is the widest grant in the fleet — it means "holds every
+ * `isPlatformAdmin` is the widest grant there is — it means "holds every
  * permission in every project" — so it is the last flag that may be read as
  * truthy. `'yes'`, `1` and `'false'` are all malformed, and a malformed claim
  * grants NOTHING.

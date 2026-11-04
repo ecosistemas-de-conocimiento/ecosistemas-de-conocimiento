@@ -1,4 +1,4 @@
-// `assertSystemPromptApplied` — the fail-loud guard three consumers hand-rolled.
+// `assertSystemPromptApplied` — the fail-loud guard.
 
 import { describe, expect, it, vi } from 'vitest';
 

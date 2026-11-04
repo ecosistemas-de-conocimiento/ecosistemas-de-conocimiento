@@ -49,7 +49,7 @@
 // no `then`, `await` of a non-thenable resolves to the object itself, and the
 // worker ignores the result — so nothing throws, nothing is recorded, and
 // `expectNoUnfilteredQuery()` inspects a list the missing query never entered.
-// Measured on this repo at e99c438: deleting that one `.where()` from
+// Measured on this repo: deleting that one `.where()` from
 // `generation.worker.ts` left the full unit suite green at 1328/1328.
 //
 // A recorder can only see what a stub hands it, so the fix is a rule the STUBS

@@ -169,7 +169,7 @@ describe('WhereRecorder.expectNoUnfilteredQuery', () => {
 
 // ── 🔴 THE MUTATION THE RECORDER USED TO MISS ENTIRELY ─────────────────────
 // Every case above deletes the CONTENTS of a `where()`. This block deletes the
-// CALL. Traced on this repo at e99c438: removing `.where(eq(generationJobs.id,
+// CALL. Traced on this repo: removing `.where(eq(generationJobs.id,
 // row.id))` from `generation.worker.ts` — a statement that in real drizzle
 // rewrites every tenant's job rows — left the full unit suite green at
 // 1328/1328, because the stub's `set()` result had no `then`, `await` of a

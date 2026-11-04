@@ -1,7 +1,6 @@
 /**
- * Every case here is a DRIFT one of the three product forks actually shipped.
- * If a case goes green after being red, a fork's bug is fixed for all of them;
- * if one goes red, the shared helper has re-acquired that fork's bug.
+ * Every case here pins a way a classifier can go wrong. If one goes red, the
+ * shared helper has re-acquired that bug.
  */
 
 import { describe, expect, it } from 'vitest';

@@ -17,8 +17,8 @@
 //
 // The last three blocks pin the ROUTE layer as well, through `app.inject`, and
 // they are not decoration: a class can declare the right body and a route can
-// still throw it away. That is precisely what seven route sites did until
-// `phase2/route-errors` — see the `changed vs 970baae` table at the bottom.
+// still throw it away. That is precisely what seven route sites did before the
+// fix — see the table at the bottom.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -419,7 +419,7 @@ describe('changed vs main: /v1/embed answers BudgetMisconfigured 402, not 500', 
 });
 
 // ---------------------------------------------------------------------------
-// CHANGED vs 970baae — the route layer stopped flattening
+// CHANGED — the route layer stopped flattening
 // ---------------------------------------------------------------------------
 //
 // Seven route sites caught a typed `AiServiceError` and re-sent it through
@@ -440,7 +440,7 @@ describe('changed vs main: /v1/embed answers BudgetMisconfigured 402, not 500', 
 // matching case goes red on the body (and, for RegistryNotFound, on nothing
 // else — the status was already right, which is exactly why nobody noticed).
 //
-//   route                                 before (970baae)                              after
+//   route                                 before (the fix)                              after
 //   POST   /v1/corpora                     400 {statusCode,error:'Bad Request',message}  400 {error:'EmbeddingDimensionMismatchError',code:'ERR_EMBEDDING_DIMENSION_MISMATCH',message}
 //   PATCH  /v1/corpora/:name               400 {statusCode,error:'Bad Request',message}  400 {error:'InvalidTextSearchConfigError',code:'ERR_INVALID_TEXT_SEARCH_CONFIG',message}
 //                                                    ″                                   400 {error:'EmbeddingDimensionMismatchError',code:'ERR_EMBEDDING_DIMENSION_MISMATCH',message}
@@ -468,7 +468,7 @@ describe('changed vs main: /v1/embed answers BudgetMisconfigured 402, not 500', 
 // two routes send byte-identical bodies while the route stops re-deciding.
 // Pinned below so the message cannot silently regrow the caller's scope.
 
-describe('changed vs 970baae: the six flattened classes now send their own envelope', () => {
+describe('changed vs the earlier contract: the six flattened classes now send their own envelope', () => {
   it.each([
     [
       'EmbeddingDimensionMismatchError',
@@ -520,7 +520,7 @@ describe('changed vs 970baae: the six flattened classes now send their own envel
   });
 });
 
-describe('changed vs 970baae: CorpusNotFoundError has ONE envelope again', () => {
+describe('changed vs the earlier contract: CorpusNotFoundError has ONE envelope again', () => {
   // Was: nested from /v1/corpora + /v1/corpus, flat fastify-sensible from
   // /v1/retrieve. The nested one wins — it is what every consumer of the corpus
   // control plane parses, and `@edc/ai-client` resolves it to the class
@@ -537,7 +537,7 @@ describe('changed vs 970baae: CorpusNotFoundError has ONE envelope again', () =>
   });
 });
 
-describe('unchanged vs 970baae: the alias 404/409 messages stay scope-free', () => {
+describe('unchanged vs the earlier contract: the alias 404/409 messages stay scope-free', () => {
   // The route used to shorten these by hand. The CLASS does it now, so the
   // wire is identical — but a future edit that puts `(org=…, project=…)` back
   // into either message would start echoing the caller's scope into a body
@@ -570,7 +570,7 @@ describe('unchanged vs 970baae: the alias 404/409 messages stay scope-free', () 
 // ---------------------------------------------------------------------------
 //
 // The block above proves each CLASS declares the right body. This block proves
-// each ROUTE actually sends it — the property that was false at 970baae, where
+// each ROUTE actually sends it — the property that was false before the fix, where
 // every one of these classes was correct and seven routes discarded it anyway.
 //
 // SABOTAGE CHECK, one per site. Restore the arm in the named route and the
@@ -624,7 +624,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('changed vs 970baae: the routes send the class body, not a flattened one', () => {
+describe('changed vs the earlier contract: the routes send the class body, not a flattened one', () => {
   it.each([
     [
       'POST /v1/corpora',
@@ -832,9 +832,9 @@ function captureLogs(app: { log: unknown }): { lines: Record<string, unknown>[];
   return { lines, stop: () => void (stream.write = original) };
 }
 
-describe('changed vs 970baae: an UNKNOWN error is redacted, not published', () => {
+describe('changed vs the earlier contract: an UNKNOWN error is redacted, not published', () => {
   // ── what changed ────────────────────────────────────────────────────────
-  // At 970baae (and on `main`) the /v1 error handler's last arm `throw error`,
+  // Before the fix the /v1 error handler's last arm `throw error`,
   // handing anything that is not an `AiServiceError` to Fastify's default
   // handler. `fastify/lib/error-handler.js` → `fallbackErrorHandler` puts
   // `error.message` — and `error.code` — verbatim on the 500 body. So a

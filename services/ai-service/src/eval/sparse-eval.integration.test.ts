@@ -52,7 +52,7 @@ const ORG = 'eval-sparse-org';
 const PROJECT = 'eval-sparse-project';
 const TOP_K = 8;
 
-// 🔴 NO ABSOLUTE FLOORS HERE, ON PURPOSE (fleet ruling: no stored-number gates,
+// 🔴 NO ABSOLUTE FLOORS HERE, ON PURPOSE (no stored-number gates,
 // floors included). This file used to hold passRate 0.85 / MRR 0.80 /
 // exact-identifier 0.80. The baseline that matters is the run with the sparse
 // leg disabled — DENSE ONLY over the same corpus — because a sparse leg that

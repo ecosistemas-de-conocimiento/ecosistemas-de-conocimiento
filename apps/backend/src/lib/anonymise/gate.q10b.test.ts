@@ -1,5 +1,5 @@
 /**
- * AUDIT OF 9edaa22 (2026-10-23): VERIFY HOLDS AT LEAST WHAT MAIN HOLDS.
+ * AUDIT OF 2026-10-23: VERIFY HOLDS AT LEAST WHAT MAIN HOLDS.
  *
  *   · A finding the model typed `domicilio` is never dropped as a generic
  *     place ("el hospital", "la escuela"): main redacted those.

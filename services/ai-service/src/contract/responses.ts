@@ -2,7 +2,7 @@
 //
 // `src/contract/*` modelled every REQUEST body in Zod and nothing else, so
 // `GET /v1/openapi.json` described its responses from shapes restated by hand
-// inside `src/openapi/registry.ts`. Restated shapes drift, and on 970baae
+// inside `src/openapi/registry.ts`. Restated shapes drift, and before the fix
 // eleven of them had: `GET /health` declared `{ok:true}` and returns
 // `{status,service}`; `POST /v1/generate/sync` omitted `systemPromptApplied`,
 // the field `capabilities.ts` names as the system-prompt migration handle;
@@ -156,7 +156,7 @@ export const healthLiveResponseSchema = z.object({
 /**
  * `GET /health/ready`, BOTH statuses. 200 carries `status: 'ok'`, 503 carries
  * `status: 'degraded'` — the 503 is NOT an error envelope, which is what the
- * document claimed on 970baae.
+ * document claimed before the fix.
  *
  * `checks` carries booleans ONLY. The raw dependency error strings name
  * connection targets and driver internals, and this endpoint is

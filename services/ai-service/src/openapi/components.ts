@@ -64,7 +64,7 @@ export const CorpusUpdateRequest = reg('CorpusUpdateRequest', corpusUpdateSchema
 export const RouteRequest = reg('RouteRequest', routeRequestSchema);
 
 // ── Error envelopes ────────────────────────────────────────────────────────
-// FIVE of them, not one. `ErrorBody` keeps its 970baae name (consumers
+// FIVE of them, not one. `ErrorBody` keeps its original name (consumers
 // generate off it) and is now explicitly the FLAT taxonomy envelope; the other
 // four were on the wire the whole time and were declared nowhere.
 //

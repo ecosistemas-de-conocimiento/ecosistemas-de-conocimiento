@@ -1,6 +1,5 @@
 /**
- * Turning an ai-service budget rejection into something a product can act on —
- * once, instead of three times.
+ * Turning an ai-service budget rejection into something a product can act on.
  *
  * It classifies a 402 from ai-service into "no budget row" / "cap ran out" /
  * "profile mispriced", decides whether the caller is allowed to see the amounts,
@@ -84,8 +83,7 @@ export interface BudgetFailure {
 
 /**
  * The operator-facing log line per kind. Constants, not interpolated strings,
- * so they are greppable across every product's logs as ONE phrase — which two
- * of the three forks already were, and the third (`misconfigured`) was not.
+ * so they are greppable across every product's logs as ONE phrase.
  */
 export const BUDGET_FAILURE_LOG_MESSAGE: Record<BudgetFailureKind, string> = {
   not_configured:
@@ -275,9 +273,8 @@ export function mayDiscloseBudgetAmounts(
 /**
  * The flat field bag to log alongside `BUDGET_FAILURE_LOG_MESSAGE[kind]`.
  *
- * One set of field NAMES fleet-wide. The three forks used three
- * (`estimatedCostUsd`/`requestedUsd`/nothing) for the same three numbers,
- * which makes a cross-product log query impossible to write.
+ * One set of field NAMES across products. Different names for the same three
+ * numbers make a cross-product log query impossible to write.
  */
 export function budgetFailureLogFields(
   failure: BudgetFailure,

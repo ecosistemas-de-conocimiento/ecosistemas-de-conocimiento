@@ -3,7 +3,7 @@
 // It used to be 1256 lines: every path registered by hand, and every response
 // body restated as a fresh inline `z.object({...})` next to it. That made the
 // document a SECOND source of truth about what the service sends, and it
-// drifted from the first one. Measured on 970baae, before this lane:
+// drifted from the first one. Measured before the fix:
 //
 //   1. `GET /health` declared `{ok:true}`; it returns `{status, service}`.
 //   2. `GET /health/ready` declared `{ready, checks}`; it returns

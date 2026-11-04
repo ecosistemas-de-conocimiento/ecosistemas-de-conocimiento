@@ -2,7 +2,6 @@
 
 **Blocked on:** nothing.
 **Owns:** `services/ai-service/src/server.ts`, `server-limits.ts`, their tests.
-⚠ ai-service is a **shared service**. Other products run against it.
 
 ## The defect
 

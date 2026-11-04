@@ -1,6 +1,6 @@
 /**
  * EVERY WORD OF THE LOCAL SEMIÓTICA CORPUS COPY — for the name check in
- * `semiosisDemo.test.ts` (audit of e2eeb61, finding 1).
+ * `semiosisDemo.test.ts`.
  *
  * 🔴 WHY. Every active member's name parts go into ecosistema 8's roster, and
  * the gate redacts each part wherever it stands capitalised in a documento

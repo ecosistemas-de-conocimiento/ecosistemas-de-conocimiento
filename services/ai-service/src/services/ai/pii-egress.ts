@@ -107,7 +107,7 @@ export async function minimiseEgressReport<T>(payload: T, signal?: AbortSignal):
  * §9.4 option A for the `traces` table: store the SCRUBBED payload only, with
  * placeholder tokens so the trace still reads as prose. No reversible map
  * anywhere — option B was rejected because it turns `traces` into a PII store
- * with a key, in a fleet whose DB roles are already Postgres superusers.
+ * with a key, in deployments whose DB roles are already Postgres superusers.
  *
  * ⚠ THE ONE DELIBERATE DIFFERENCE FROM `minimiseEgress`, and it is not a
  * loosening. At an egress seam, "I could not minimise" must abort the call,

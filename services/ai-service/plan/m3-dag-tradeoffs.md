@@ -51,7 +51,7 @@ The DAG lives within one request — no cross-request `dependsOn` in v1.
 
 ## §3. Why FlowProducer
 
-Matches the M3 port plan's "Redesigned" recommendation. BullMQ already exposes the primitive; we don't write coordinator code; cycles fail loudly; the worker stays a straight pipeline. The cons (Redis statefulness, cancel-walks-DAG) are real but bounded — Redis is already a hard dependency, and the cancel path is small.
+BullMQ already exposes the primitive; we don't write coordinator code; cycles fail loudly; the worker stays a straight pipeline. The cons (Redis statefulness, cancel-walks-DAG) are real but bounded — Redis is already a hard dependency, and the cancel path is small.
 
 The deciding factor: every other approach forces *us* to own coordinator semantics that BullMQ already implements. Carrying that code in our worker is debt that compounds.
 
@@ -84,9 +84,3 @@ Switch to manual re-queue if any of:
 - The cancel-walks-DAG complexity grows beyond a single small file once another feature lands on top of it.
 
 Switch to topological waves only if workers split out of the API and the watcher-state problem becomes someone else's job (a dedicated coordinator service). Unlikely.
-
----
-
-## Update log
-
-- 2026-05-15 — drafted alongside the M3 build.

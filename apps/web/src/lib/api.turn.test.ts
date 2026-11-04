@@ -2,7 +2,7 @@
 // fall back to sync, and recover an answer the server saved after the
 // browser lost the connection.
 //
-// The first case replays run 1 of the dev check on 2026-10-23 (47b140c): the
+// The first case replays run 1 of the dev check on 2026-10-23: the
 // stream request died before its headers, the sync fallback died too, and the
 // server had still saved the answer. The user saw "No se pudo obtener la
 // respuesta" for an answer that existed.
@@ -219,7 +219,7 @@ describe('runTurn', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it('🔴 dev 2026-10-24 session 180: stream and sync both drop, nothing saved, one more sync answers', async () => {
-    // Measured on dev f0f3266: ai-service saw the stream's client hang up
+    // Measured on dev: ai-service saw the stream's client hang up
     // 3.2 s after the message, and the sync fallback never reached it. The
     // server never generated, so there was nothing saved to find.
     fetchMock

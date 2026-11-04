@@ -29,8 +29,8 @@ racked; that assumption is the one we are explicitly reversing.
 **whisper.cpp is rejected, narrowly.** It is genuinely the lightest option and
 would produce the smallest image. It loses on criterion 4: switching it to GPU
 means rebuilding the binary against a CUDA backend, i.e. a different image, not
-a different env var — which breaks the "same image, CPU locally, GPU on the
-fleet" promise this service is built around. Its Python bindings are also
+a different env var — which breaks the "same image, CPU locally, GPU when
+deployed" promise this service is built around. Its Python bindings are also
 noticeably less maintained than faster-whisper's first-party API.
 
 **On newer models.** NVIDIA's Canary/Parakeet family is genuinely competitive
@@ -52,7 +52,7 @@ transcribes roughly at or a little faster than real time on ~4 modern cores. A
 for an async queue and a demo; it is not fine for anything interactive, which is
 one more reason the streaming half of ADR-0002 stays out of scope. Set
 `WHISPER_MODEL=small` for a snappier demo at a real accuracy cost, or flip
-`WHISPER_DEVICE=cuda` / `WHISPER_COMPUTE_TYPE=float16` on the fleet for a ~10x
+`WHISPER_DEVICE=cuda` / `WHISPER_COMPUTE_TYPE=float16` on a GPU host for a ~10x
 speedup with no other change.
 """
 

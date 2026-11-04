@@ -3,7 +3,7 @@
 //
 // Before this, `registry.ts` was 1256 lines of `registerPath` calls, each one
 // RESTATING its response shape as a fresh inline `z.object({...})`. A restated
-// shape is a second source of truth, and it drifted: measured on 970baae,
+// shape is a second source of truth, and it drifted: measured before the fix,
 // eleven declarations did not match what the handler sends, and five routes
 // were not in the document at all.
 //

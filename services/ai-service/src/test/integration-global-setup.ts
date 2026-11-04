@@ -20,8 +20,7 @@
 // 🔴 THAT ORDERING IS ALSO WHY THE GUARDS LIVE HERE. `baseDatabaseUrl()` must be
 // read BEFORE `integration-setup.ts` rebinds `process.env.DATABASE_URL` to the
 // test URL inside each worker. After that rebind the throwaway guard would be
-// comparing a value with itself, refusing every run — chat-backend has that
-// exact trap on record. Here nothing has rebound anything yet.
+// comparing a value with itself, refusing every run. Here nothing has rebound anything yet.
 //
 // What it does NOT do: override anything the caller supplied. If
 // TEST_DATABASE_URL / TEST_REDIS_URL are already set, they win and no container
@@ -92,8 +91,8 @@ export async function setup(): Promise<void> {
   // ── Redis ────────────────────────────────────────────────────────────────
   // ⚠ Redis has NO derived fallback. There is no `REDIS_URL`-derived
   // equivalent of "a second database on the same cluster": a Redis logical
-  // database is a number, not a namespace, and picking one on the live fleet
-  // Redis (56379) would share keyspace with running services. So: a container,
+  // database is a number, not a namespace, and picking one on a live
+  // Redis would share keyspace with running services. So: a container,
   // an explicit URL, or a failure.
   if (needsRedis) {
     if (!docker) {

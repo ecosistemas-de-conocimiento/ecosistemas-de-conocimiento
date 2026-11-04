@@ -162,7 +162,7 @@ export const withinMyOrganizationsWithRole =
  * A team member may update their own `users` row — that is how they change
  * their name, avatar and locale. Without a FIELD-level gate that same update
  * could carry `isPlatformAdmin: true`, and anyone with an account would own the
- * entire fleet.
+ * entire installation.
  *
  * Applied to `create` and `update` (Payload strips the field from incoming data
  * when this returns false, so an attempt is ignored rather than rejected) and to

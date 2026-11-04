@@ -134,8 +134,7 @@ missing fixture.
 ## The e2e suites
 
 Last recorded run: **2026-10-17, on an isolated fake-provider stack** (method below).
-Results quoted from `plan/auditoria-ia-2026-10-17.md` (an untracked findings doc in the
-main checkout), where they are marked measured.
+Results quoted from `plan/auditoria-ia-2026-10-17.md`, where they are marked measured.
 
 | Suite | Result on the fake stack |
 | --- | --- |
@@ -160,7 +159,7 @@ ai-service image of the local demo, 163 published seeded documents):
   header. SvelteKit answers 403 "Cross-site POST form submissions are forbidden" to a
   multipart POST without one, and Playwright's API request context sends none.
 - **Re-run, 2026-10-17 21:40 UTC (measured).** Isolated project `edc-e2e-jrn`, backend,
-  web and ai-service built from `aaec3f4`, `docker-compose.audio.yml` on,
+  web and ai-service built, `docker-compose.audio.yml` on,
   `SEED_CORPUS_INGEST=1` (250 seeded, 163 published; 191 ingests completed on the fake
   provider). ⚠ Without that flag the seed embeds nothing, and the cite step would pass
   against an empty corpus: it would test nothing. Every step
@@ -313,7 +312,7 @@ is no `webServer` block, so Playwright drives whatever is answering on
 `EDC_WEB_URL` (default `http://localhost:45400`, the container). A container built
 before your commit serves the old UI, and the failure looks like a wrong assertion.
 This cost a session: the running container predated
-`654db7d fix(web): traducir el frente de la casa`, so `/sign-in` still rendered
+the commit that translated the UI to Spanish, so `/sign-in` still rendered
 English and the Spanish assertions "failed". To test a working tree instead:
 
 ```bash

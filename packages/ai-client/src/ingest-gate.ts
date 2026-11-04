@@ -22,7 +22,7 @@
 //
 // Who shares the bucket: the limiter keys on `req.auth.apiKeyId`, which
 // resolves from `sha256(rawKey)` in `plugins/auth.ts`. So the bucket is PER API
-// KEY, not fleet-wide — one product's seed does not consume another's
+// KEY, not global — one product's seed does not consume another's
 // allowance. It IS one bucket for everything one key does. (Products still
 // share ai-service's COMPUTE — one queue, one embedding worker, one database.
 // That is a real reason not to fire everything at once; it is just not the
@@ -55,8 +55,7 @@
 //      is keyed on one API key, so one 429 means every other in-flight call
 //      would 429 too. Parking everyone on one clock beats each worker
 //      discovering it alone. A retry ladder that gives up before the server's
-//      stated wait elapses is a retry that is GUARANTEED to fail; both ported
-//      implementations had shipped one.
+//      stated wait elapses is a retry that is GUARANTEED to fail.
 //   4. ATTEMPTS *and* WALL CLOCK — a retry that never gives up is as bad as no
 //      retry. Both are bounded; on exhaustion we throw
 //      `IngestRateLimitExhaustedError`, which NAMES the corpus and every
@@ -167,8 +166,7 @@ export interface IngestGateConfig {
   /**
    * QUEUE budget, per lane: wall clock a call may wait for its FIRST slot.
    *
-   * 🔴 Kept SEPARATE from `deadlineMs` on purpose, and both ported
-   * implementations hit this the hard way. A seed enqueues hundreds of calls at
+   * 🔴 Kept SEPARATE from `deadlineMs` on purpose. A seed enqueues hundreds of calls at
    * once, so the LAST one legitimately waits (queue depth / rate) before its
    * first attempt — ten minutes or more for a few hundred documents. Under one
    * shared budget that call fails with `reason: 'deadline'` having NEVER been
@@ -200,8 +198,7 @@ export interface IngestGateConfig {
 /**
  * The shipped budget. Every number is justified against the limits read at the
  * top of this file, and deliberately leaves headroom rather than consuming the
- * whole allowance. Both ported implementations converged on these numbers
- * independently, which is the strongest evidence available that they are right.
+ * whole allowance.
  */
 export const DEFAULT_INGEST_GATE_CONFIG: IngestGateConfig = {
   // 4 — ingest is an ENQUEUE (ai-service replies 202 after writing rows and
@@ -232,7 +229,7 @@ export const DEFAULT_INGEST_GATE_CONFIG: IngestGateConfig = {
   // filled the window for minutes, and every user upload in that span failed after its 15 s
   // queue budget. 10/min of interactive headroom is far above one person's
   // upload rate, and the 25% it costs a seed is recovered many times over by
-  // `IngestBatcher`, which turned those promotions into 3 calls each (same
+  // `IngestBatcher`, which turned those operations into 3 calls each (same
   // measurement).
   interactiveReserveShare: 0.25,
 
@@ -390,9 +387,7 @@ class Aborted extends Error {
  * honouring the body honours the header, with the rounding error removed.
  *
  * The header is now also reachable — `HttpClient.json()` used to throw
- * `errorFromResponse(status, body)` and DISCARD the `Response`, which is why
- * both ported implementations documented the header as unreachable and read the
- * body only. That is fixed in this package: `errorFromResponse` receives the
+ * `errorFromResponse(status, body)` and DISCARD the `Response`. That is fixed in this package: `errorFromResponse` receives the
  * headers and `RateLimitError.retryAfterMs` is populated from either source.
  *
  * FIVE shapes are read, most precise first, so an error that has been re-thrown
@@ -749,8 +744,7 @@ export class IngestGate {
 
     this.clearWake();
     this.wakeAt = at;
-    // 🔴 NOT `unref()`ed — a deliberate divergence from both ported
-    // implementations, and a real bug found by running the built package in a
+    // 🔴 NOT `unref()`ed — a real bug found by running the built package in a
     // plain Node process.
     //
     // The timer is armed ONLY when `this.waiting.length > 0` (see above), so an
@@ -806,8 +800,8 @@ function mergeConfig(base: IngestGateConfig, cfg: Partial<IngestGateConfig>): In
   return {
     ...base,
     ...cfg,
-    // Both records are merged FIELD-WISE. One ported implementation spread only
-    // `deadlineMs` and let `...cfg` clobber `queueDeadlineMs` wholesale, so
+    // Both records are merged FIELD-WISE. Spreading only
+    // `deadlineMs` let `...cfg` clobber `queueDeadlineMs` wholesale, so
     // `{ queueDeadlineMs: { interactive: 50 } }` left `bulk` undefined and every
     // bulk call expired instantly.
     deadlineMs: { ...base.deadlineMs, ...(cfg.deadlineMs ?? {}) },
@@ -828,7 +822,7 @@ function mergeConfig(base: IngestGateConfig, cfg: Partial<IngestGateConfig>): In
  * against a 100/min limit shared with everything else, which is precisely the
  * "throttles that do not compose" bug this module exists to fix. A `Symbol.for`
  * key is registered per realm, so it survives module duplication inside one
- * process. Both ported implementations found this the hard way; keep it.
+ * process. Keep it.
  *
  * `apiVersion` guards the other half of the problem: two DIFFERENT VERSIONS of
  * this package in one process share the symbol but not the class. Sharing a gate

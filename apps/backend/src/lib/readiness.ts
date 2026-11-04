@@ -1,15 +1,15 @@
 /**
  * Readiness probes for this backend.
  *
- * These rules exist because a sibling product's `/api/health` returned 200 for
- * 20 hours through a total chat + generation outage. It was not lying: it
- * queried Postgres and Postgres was fine. It was INCOMPLETE — it only ever
- * checked what somebody remembered to add. Every rule below follows from that.
+ * These rules exist because a `/api/health` can return 200 through a total chat
+ * + generation outage. It is not lying: it queries Postgres and Postgres is
+ * fine. It is INCOMPLETE — it only checks what somebody remembered to add.
+ * Every rule below follows from that.
  *
  *   Rule 1  — any declared dependency unreachable ⇒ `down` ⇒ HTTP 503.
  *             There is no `degraded`. Two states, and that is the whole point:
- *             a state that reports 200 while a core capability is dead is the
- *             20-hour outage in a softer form.
+ *             a state that reports 200 while a core capability is dead is that
+ *             outage in a softer form.
  *   Rule 1a — `ai-service` is REQUIRED for every consuming product. Chat is a
  *             consuming product, so it is declared unconditionally here.
  *   Rule 2  — liveness (`/api/health`) must NEVER check dependencies; readiness
@@ -33,7 +33,7 @@
  *
  * 🔴 REDACTION. This route is unauthenticated. The body carries a FIXED
  *    vocabulary only (see `ErrorCode`); the full error goes to `console.error`
- *    and nowhere else. A sibling product shipped `err.message` here, and Postgres
+ *    and nowhere else. `err.message` must not go here: Postgres
  *    emits `password authentication failed for user "…"`.
  *
  * 📝 Keeping the machinery here and the route thin means extracting it into a
@@ -216,8 +216,8 @@ async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
  *
  * ⚠ NOT `payload.find({ collection: 'users', limit: 0 })`. Payload's drizzle
  *   adapter treats `limit: 0` as NO LIMIT, so that SELECTs every row at depth 2
- *   on the probe interval, forever. That exact bug has shipped in this lineage
- *   before. `payload.count()` is the acceptable fallback; the raw pool is cheaper
+ *   on the probe interval, forever. `payload.count()` is the acceptable
+ *   fallback; the raw pool is cheaper
  *   and is what actually proves the connection works.
  */
 export async function probeDatabase(): Promise<void> {
@@ -270,8 +270,7 @@ export async function probeAiService(baseUrl = process.env.AI_SERVICE_URL): Prom
  * Measured by the user against `rustfs/rustfs:1.0.0-rc.1`: both endpoints
  * answer 200 — `/health/ready` reporting `"storage":{"ready":true}` — WHILE
  * EVERY S3 CALL AGAINST THE SAME PROCESS RETURNS 503. That is Rule 4b's whole
- * point, and the user's own notes call it "the other product's 20-hour outage in a new
- * place, and worse because the endpoint has a reassuring name". So this probe
+ * point, and it is worse because the endpoint has a reassuring name. So this probe
  * does the thing: one `HeadBucket` on the real bucket with the real app
  * credential. Rule 5 — bounded, cheap (~1ms), no data transferred, no
  * rate-limit budget spent.
@@ -383,7 +382,7 @@ async function runOne(dep: Dependency): Promise<CheckResult> {
 }
 
 /**
- * Run every declared dependency and fold the results into the one fleet shape.
+ * Run every declared dependency and fold the results into the one report shape.
  *
  * Probes run in parallel: readiness latency is the slowest dependency, not their
  * sum, so a single slow dependency cannot push the route past a probe deadline.

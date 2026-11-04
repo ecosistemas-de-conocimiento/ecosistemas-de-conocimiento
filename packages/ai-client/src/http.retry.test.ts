@@ -214,7 +214,7 @@ describe('the wall clock (`maxElapsedMs`)', () => {
   it('defaults to 30 s — the ceiling callers had BEFORE retry existed', () => {
     // 🔴 The behaviour-neutrality guarantee for callers that set no
     // `timeoutMs`. If this number rises, every consumer written against a 30 s
-    // worst case (chat-backend sizes its boot deadline on it) silently gets a
+    // worst case silently gets a
     // longer one. An EXPLICIT `timeoutMs` is not bound by it (0.26.0).
     expect(DEFAULT_RETRY_POLICY.maxElapsedMs).toBe(30_000);
   });

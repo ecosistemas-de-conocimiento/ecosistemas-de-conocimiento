@@ -29,7 +29,7 @@
 // property: a discriminator can be spelled identically on both sides and still
 // be unbranchable, because a route re-sends the class through fastify-sensible
 // and the discriminator is gone before serialisation. Six entries were in that
-// state until ai-service's `phase2/route-errors` removed the flattening; the
+// state until ai-service removed the flattening; the
 // count is 0 now. So the script also reads the `reachable` column and prints
 // the tally, and REFUSES an entry that omits it — otherwise "25 codes agree"
 // reads as "25 codes work", which is the exact misreading this file should

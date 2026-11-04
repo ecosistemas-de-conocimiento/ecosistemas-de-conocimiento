@@ -269,8 +269,8 @@ should know that before wiring it. A Traefik with no `forwardedHeaders.trustedIP
 **overwrites** an incoming `X-Forwarded-For` with the connecting address instead
 of appending to it. In that setup the value you send is
 replaced by your BFF's egress IP before the IdP ever sees it, and the IdP buckets
-your whole user base together regardless. That is a real, separately-tracked
-finding on the IdP side (audit A29), not something this client can fix, and it is
+your whole user base together regardless. That is a finding on the
+IdP side, not something this client can fix, and it is
 **not** a reason to raise the hop count. Sending `forwardedFor` remains harmless
 and correct — it is what will start working the moment the IdP side is fixed —
 but do not treat it as a live control until someone re-measures the header the
@@ -309,7 +309,7 @@ export async function withProjectToken(req: Request) {
 
 ### ⚠ `401` and `403` mean opposite things here
 
-This is the mistake that costs a fleet its sessions.
+This is the mistake that signs people out of every product.
 
 | The IdP says | `reason` | What it means | What you do |
 |---|---|---|---|
@@ -320,7 +320,7 @@ This is the mistake that costs a fleet its sessions.
 
 The IdP mints the access token **before** it rotates the ticket precisely so the
 403 can be given without ending the session. A consumer that clears the cookie on
-any `4xx` signs a person out of every product in the fleet because one project
+any `4xx` signs a person out of every product because one project
 assignment was missing.
 
 Branch on the getters, never on `status >= 400`:
@@ -360,7 +360,7 @@ It still throws on `malformed_request` (400), `rate_limited` (429) and
 ### Where a refresh ticket may live
 
 - **httpOnly, `Secure`, `SameSite` cookie. Nowhere else.** A ticket is a
-  long-lived credential for the user's whole fleet session — 14 days by default,
+  long-lived credential for the user's whole session across products — 14 days by default,
   and the IdP's `expiresAt` is the only value to size the cookie from. If it
   reaches page JavaScript, one XSS is a fortnight of impersonation across every
   product.
@@ -519,7 +519,7 @@ if (drift.catalogueKnown && (!drift.ok || drift.ungranted.length > 0)) {
 ⚠ **Gate on `catalogueKnown`.** With no platform admin in the export there is no
 catalogue in the answer at all: `exists` falls back to `granted`, so
 `missingFromIdp` can name a permission that does exist and `ungranted` is
-meaningless. Platform admin is a fleet-wide flag, so in most deployments this is
+meaningless. Platform admin is a global flag, so in most deployments this is
 simply true — read it as "was a catalogue available", not as a quality signal.
 `extraInIdp` is trustworthy either way.
 

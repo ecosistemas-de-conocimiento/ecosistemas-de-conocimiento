@@ -104,9 +104,3 @@ But: if retries went off entirely, what protects spend?
 - **Tier 3 stays a known option but unbuilt** until the case appears.
 
 Each tier is additive over the previous; adopting tier 2 doesn't undo tier 1. Precedence is the only place complexity grows.
-
----
-
-## Update log
-
-- 2026-05-15 — drafted alongside the M3 build.

@@ -658,8 +658,8 @@ interface DocumentSnapshot {
  * row whose current ingest has not landed.
  *
  * Accepted when the ids match, OR when the row has no `ingestId` yet and is
- * `embedding`. The second case is the callback-before-ingestId race (commit
- * 7bf0622, `Documents.callbackRace.test.ts`): ai-service can call back before
+ * `embedding`. The second case is the callback-before-ingestId race
+ * (`Documents.callbackRace.test.ts`): ai-service can call back before
  * the enqueue's response lets us store the id.
  *
  * ⚠ The second case cannot tell the current run from a superseded one inside

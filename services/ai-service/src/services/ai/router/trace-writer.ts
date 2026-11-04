@@ -5,8 +5,8 @@
 //   1. `traces.label` is an opaque free-form tag; the consumer's taxonomy lives
 //      there.
 //   2. Cross-org check on `parentTraceId` is comparison on the opaque `org`
-//      text (no numeric Payload id), throwing a plain Error so route handlers
-//      can map it to 403 if needed.
+//      text, throwing a plain Error so route handlers can map it to 403 if
+//      needed.
 //   3. Router-internal status enum maps `'started' → 'running'`, everything
 //      else identity, into the `trace_status` pg enum.
 
@@ -131,7 +131,7 @@ export class TraceWriter {
       // columns that hold free prose, so they are scrubbed before the insert and
       // stored SCRUBBED ONLY — placeholder tokens, no reversible map. Option B
       // (a per-org reversible map) was rejected: it makes `traces` a PII store
-      // with a key, in a fleet whose DB roles are already Postgres superusers.
+      // with a key, in deployments whose DB roles are already Postgres superusers.
       //
       // ⚠ NOT SCRUBBED, and deliberately so: `metadata`, `label`,
       // `tokenUsage`, `costBreakdown`, `effortProfileUsed`. §9.4 names these two

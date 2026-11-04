@@ -93,9 +93,7 @@ describe('noindex policy', () => {
 });
 
 /**
- * THE SIX FLEET-CANONICAL CASES. This block is asserted verbatim in every repo
- * that ships `isNonProdHost`, so the one predicate is PROVED identical
- * everywhere instead of merely looking identical in review.
+ * THE SIX CANONICAL CASES for `isNonProdHost`.
  */
 describe('the six fleet-canonical cases', () => {
   it('1. a dev host is non-prod', () => {

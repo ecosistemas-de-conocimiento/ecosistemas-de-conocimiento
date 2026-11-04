@@ -17,7 +17,7 @@
  *    Semiosis" makes a capitalised "Semiosis" a person. So "semiosis" is always
  *    lower case, and no text names a student.
  *  · 🔴 Every part of every student's name occurs NOWHERE in the Semiótica
- *    corpus and is no Spanish dictionary word (audit of e2eeb61). Those parts
+ *    corpus and is no Spanish dictionary word. Those parts
  *    join the roster, so the gate would redact them everywhere in org 8's
  *    documentos, and a public figure sharing one would never be restored —
  *    "Santiago" was Santiago Abascal in the far-right case files.

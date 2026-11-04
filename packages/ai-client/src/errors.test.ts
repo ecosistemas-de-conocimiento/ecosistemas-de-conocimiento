@@ -137,7 +137,7 @@ describe('reachability — spelling parity is not the same as working', () => {
   it('NOTHING is flattened any more — the six that were are now typed', () => {
     // Was six: CallbackUrlBlocked, EmbeddingDimensionMismatch,
     // InvalidTextSearchConfig, InvalidValidityInterval, RegistryConflict,
-    // RegistryNotFound. ai-service's `phase2/route-errors` removed the seven
+    // RegistryNotFound. ai-service removed the seven
     // route sites that re-sent them through fastify-sensible, and the six
     // classes now put `error` AND `code` on the body. Pinned server-side in
     // `src/errors/wire-golden.test.ts`.

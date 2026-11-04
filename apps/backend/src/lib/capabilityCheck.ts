@@ -8,9 +8,8 @@
  * This asks the question once, at boot, and refuses to come up when the answer
  * is positively wrong.
  *
- * ⚠ KEPT DURING THE MERGE, deliberately. It looks like fleet machinery — it is
- * named "capability negotiation" and it came from a four-product setup — but
- * what it actually protects is this product's single most silent failure: the
+ * ⚠ KEPT DELIBERATELY. It is named "capability negotiation", but what it
+ * actually protects is this product's single most silent failure: the
  * ingest callback. Removing it would remove the only thing that notices.
  *
  * The negotiation itself lives in `@edc/ai-client`. Since 0.32.0 the client

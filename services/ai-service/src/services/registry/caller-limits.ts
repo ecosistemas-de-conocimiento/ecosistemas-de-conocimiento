@@ -67,8 +67,7 @@ import type { EffortProfile } from './resolve.js';
  * Ceiling on `max_tokens` for a single provider call.
  *
  * 8000 comfortably clears the largest built-in profile (`maximum` = 6000), so
- * no legitimate configuration is affected. Matches the constant introduced on
- * the security branches (`4ca0838` / `936a427`), which never reached `main`.
+ * no legitimate configuration is affected.
  */
 export const MAX_OUTPUT_TOKENS = 8000;
 

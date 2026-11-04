@@ -68,9 +68,8 @@ const SKIP_DIR = new Set(['node_modules', 'dist', '.git']);
  *      engine stops being reusable and the app's schema starts leaking into
  *      migrations.
  *
- *   2. Vocabulary from the repository this service was ported out of. Nothing
- *      here is load-bearing any more; the ban exists so a copy-paste from the
- *      old tree gets caught at `pnpm test` instead of at review.
+ *   2. Other domain vocabulary this service must not use. The ban exists so a
+ *      stray term gets caught at `pnpm test` instead of at review.
  *
  * Accent-tolerant: text is compared with combining marks stripped, so
  * `artículo` and `articulo` are the same needle and the patterns need no
@@ -97,23 +96,23 @@ const DENY = [
     re: /\bstar[- _]?ratings?\b/i,
     why: 'an application entity — answer feedback is stored and interpreted by apps/backend',
   },
-  // --- 2. vocabulary from the prototypes ---
-  { re: /\barticulos?\b/i, why: 'a document-structure convention from the prototypes' },
-  { re: /\bfraccion(es)?\b/i, why: 'a document-structure convention from the prototypes' },
+  // --- 2. other domain vocabulary ---
+  { re: /\barticulos?\b/i, why: 'a document-structure convention outside this service' },
+  { re: /\bfraccion(es)?\b/i, why: 'a document-structure convention outside this service' },
   {
     re: /\bvigencia\b/i,
     why: 'another name for temporal validity — the service already generalised it to validFrom/validTo',
   },
-  { re: /\bmunicipi[oa]s?\b/i, why: 'upstream subject matter' },
-  { re: /\bindicador(es)?\b/i, why: 'upstream subject matter' },
-  { re: /\bcriterios?\b/i, why: 'upstream subject matter' },
+  { re: /\bmunicipi[oa]s?\b/i, why: 'subject matter outside this service' },
+  { re: /\bindicador(es)?\b/i, why: 'subject matter outside this service' },
+  { re: /\bcriterios?\b/i, why: 'subject matter outside this service' },
 ];
 
 /**
  * NARROW exemptions. Each entry says what it permits and why that is not a
  * domain leak. Keep this list short: every entry is a hole in the guard.
  *
- * The organising distinction, and the reason there are only three entries:
+ * The organising distinction, and the reason there is only one entry:
  *
  *   A DOMAIN NOUN is the coupling. `knowledge base`, `chat session`,
  *   `vigencia`, `indicador` — these appear because the code is doing something
@@ -123,35 +122,11 @@ const DENY = [
  */
 const ALLOWLIST = [
   {
-    name: 'prototype name in a comment',
-    // Comment lines only, and ONLY when every match is a prototype
-    // name. A domain noun in a comment is never exempt: no amount of
-    // surrounding prose makes `chat session` belong in this service.
-    test: (line, terms) => isCommentLine(line) && terms.every(isProductName),
-  },
-  {
-    name: 'org/project identifier in a test',
-    // Bearer-token fixtures and `(org, project)` scope strings. These are
-    // opaque tenant keys the service never interprets; any string would do.
-    // Test files only, prototype names only, and only inside a quoted
-    // literal.
-    test: (line, terms, file) =>
-      /\.test\.ts$/.test(file) && terms.every(isProductName) && /['"`]/.test(line),
-  },
-  {
     name: 'the rule itself',
     // This file necessarily quotes the words it forbids.
     test: (_line, _terms, file) => file.endsWith('scripts/check-domain-vocabulary.mjs'),
   },
 ];
-
-/** Prototype names — exempt in comments. */
-const PRODUCT_NAMES = /^(tenant-a|tenant-b|frontend-code)$/;
-const isProductName = (t) => PRODUCT_NAMES.test(t);
-
-function isCommentLine(line) {
-  return /^\s*(\/\/|\*|\/\*|--|#)/.test(line);
-}
 
 /** Strip combining marks so `artículo` matches `/articulo/`. */
 function foldAccents(s) {

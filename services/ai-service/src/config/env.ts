@@ -1,8 +1,4 @@
-// ⚠ ON THIS FLEET, `dev` ALSO RUNS `NODE_ENV=production`.
-//
-// Measured read-only via the Coolify API: all five deployed ai-service apps —
-// dev, stage and prod alike — boot with `NODE_ENV=production`, and none of them
-// currently sets any of `PRODUCTION_FORBIDDEN_FLAGS`, so today nothing breaks.
+// ⚠ A DEPLOYED `dev` CAN ALSO RUN `NODE_ENV=production`.
 //
 // The consequence to know before you debug on a deployed box: setting
 // `CALLBACK_ALLOW_PRIVATE` on the DEV deployment hard-fails boot, exactly as it
@@ -516,7 +512,7 @@ const envSchema = z.object({
    * (`POST /v1/generate`, `POST /v1/ingest`) or to `project_configs.callback_url`.
    * `assertSafeCallbackUrl` (services/callbacks/url-guard.ts) refuses any target
    * that resolves into loopback / RFC1918 / link-local / IPv6-ULA space, so a
-   * tenant key cannot turn the service into an SSRF pivot inside the fleet
+   * tenant key cannot turn the service into an SSRF pivot inside the private
    * network.
    *
    * That default is correct everywhere the service is DEPLOYED, and wrong on a

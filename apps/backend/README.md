@@ -8,8 +8,7 @@ be rated 1-5 stars.
 Payload 3 + Next.js 15, on Postgres.
 
 **It is also the identity provider.** One app signs the tokens, publishes the
-JWK Set peers verify them against, and owns the domain data. That is a merge of
-two apps, and the reasoning behind what survived it is in
+JWK Set peers verify them against, and owns the domain data. The reasoning is in
 [`src/lib/permissions.ts`](src/lib/permissions.ts).
 
 ---

@@ -2,7 +2,7 @@
 //
 // A hand-maintained route table falls behind the server it describes, and it
 // does it silently — nothing type-checks a missing row and no other test
-// notices. Measured on 970baae, five reachable endpoints were absent from
+// notices. Measured before the fix, five reachable endpoints were absent from
 // `GET /v1/openapi.json`: `POST /v1/generate/stream`, both
 // `/v1/admin/callbacks` routes, `/v1/internal/latest-trace`, and the
 // authenticated `GET /v1/` ping. A consumer reading the published contract

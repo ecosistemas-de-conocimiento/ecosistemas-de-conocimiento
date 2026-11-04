@@ -1,8 +1,8 @@
 /**
  * SELF-HOSTED FIRST, HOSTED WHEN THE SELF-HOSTED BOX IS DOWN.
  *
- * 🔴 OWNER DECISION, 2026-10-21 (reverses the fail-closed rule landed in
- * d1c50b0): while the corpus holds no real testimony, a dead DGX Spark must not
+ * 🔴 OWNER DECISION, 2026-10-21 (reverses the earlier fail-closed
+ * rule): while the corpus holds no real testimony, a dead DGX Spark must not
  * stall the gate. A call the Spark cannot answer goes to ai-service → OpenRouter,
  * the path every document took before `ANONYMISE_DETECT_URL` existed. That path
  * sends the raw text to a hosted model. Set `ANONYMISE_DETECT_FALLBACK=none` to

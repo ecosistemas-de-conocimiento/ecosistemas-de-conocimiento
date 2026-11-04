@@ -154,9 +154,8 @@ describe('the credential rules', () => {
     expect(created).toHaveLength(0)
   })
 
-  // 🔴 THE REGRESSION THIS FILE EXISTS FOR. The product backend this merged
-  // from fell back to a committed password below production. It must not come
-  // back — not for `local`, not for an unset NODE_ENV, not for anything.
+  // 🔴 THE REGRESSION THIS FILE EXISTS FOR. No fallback to a committed password
+  // below production — not for `local`, not for an unset NODE_ENV, not for anything.
   it.each(['local', 'dev', 'demo-0', undefined])(
     'REFUSES to invent a password when SEED_ADMIN_PASSWORD is unset (EDC_ENV=%s)',
     async (envLabel) => {

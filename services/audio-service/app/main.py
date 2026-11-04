@@ -7,7 +7,7 @@ split is deliberate:
   - the API container stays small and starts in a second, so it can be scaled
     for concurrency and restarted freely;
   - the worker container is the heavy one, and it is the only thing that has to
-    move to a GPU host on the fleet.
+    move to a GPU host.
 
 Both come from the SAME image — only the command differs. See the README.
 

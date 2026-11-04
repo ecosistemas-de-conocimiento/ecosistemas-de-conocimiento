@@ -22,7 +22,7 @@
 //
 // HOW THE TIMEOUT IS PROVED, AND WHY IT IS NOT A RACE
 // ---------------------------------------------------
-// Fleet rule: a timing-dependent SETUP is acceptable only if the test proves the
+// Rule: a timing-dependent SETUP is acceptable only if the test proves the
 // setup actually happened; a timing-dependent ASSERTION never is. Force the
 // condition, never widen a window.
 //

@@ -215,7 +215,7 @@ export {
 } from './capabilities.js';
 // The boot-time capability check WRAPPER around `capabilities.negotiate` —
 // the once-per-process latch, the fail-boot-when-unconfigured rule and the test
-// reset seam that all four consumers hand-rolled.
+// reset seam.
 export {
   createCapabilityCheck,
   type CapabilityCheck,
@@ -240,7 +240,7 @@ export {
   type BudgetFailure,
   type BudgetFailureKind,
 } from './budget-failure.js';
-// Response guards every consumer hand-rolled: fail loud when the system prompt
+// Response guards: fail loud when the system prompt
 // was not applied, and log the advisory `warnings[]` (budget soft cap) once.
 export {
   assertSystemPromptApplied,
@@ -323,7 +323,7 @@ export { RegistryAPI } from './registry.js';
 export { RetrieveAPI, type RetrieveCallOptions } from './retrieve.js';
 // Retrieval outcome rule (audit P2): a typed 404 or a 200 with no
 // chunks is `empty`; every other failure throws `RetrievalUnavailableError`.
-// Plus the `grounding` provenance helper, the fleet's Spanish sentences, and
+// Plus the `grounding` provenance helper, the shared Spanish sentences, and
 // conformance cases a consumer runs against its own wrapper.
 export {
   RetrievalUnavailableError,

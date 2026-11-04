@@ -688,7 +688,7 @@ describe('POST /v1/route', () => {
 // BODY, not the connection: it fires once Fastify has consumed the body, which
 // can land after the handler registered its listener and while the provider
 // call is still in flight. `generate.ts` was moved to `reply.raw` for the same
-// family of bug (d5f6df9); this block pins `route.ts` to the same rule.
+// family of bug; this block pins `route.ts` to the same rule.
 //
 // ⚠ `app.inject()` cannot cover this: it has no TCP connection, so neither the
 // false early `'close'` nor a real hang-up exists in it. Every test above passed

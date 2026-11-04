@@ -546,7 +546,7 @@ export async function ingestConversationTurns(args: {
 
   for (const message of claimed) {
     // 🔴 Citation markers out BEFORE the gate and the embedding (bug: dev
-    // turn msg-* still carried 7 `[n]` groups after 68fd202, which stripped
+    // turn msg-* still carried 7 `[n]` groups after the first fix, which stripped
     // only at read time in the web's orientation block).
     const original = stripCitationMarkers(String(message.content))
 
