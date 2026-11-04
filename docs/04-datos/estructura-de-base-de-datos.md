@@ -3,7 +3,7 @@
 - **Versión:** 1.1
 - **Fecha:** 2026-11-03
 - **Estado:** vigente
-- **Fuentes:** `apps/backend/src/migrations/` (21 migraciones, `index.ts`, `README.md`, snapshot `20261029_060304_evals.json`), `apps/backend/scripts/migrate.sh`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/lib/storage/plugin.ts`, `apps/backend/src/lib/storage/client.ts`, `apps/web/src/lib/config.ts`, `services/ai-service/src/db/schema/index.ts`, `services/ai-service/drizzle/*.sql`, `services/ai-service/src/queue/`, `services/audio-service/app/config.py`, `services/audio-service/app/store.py`, `services/audio-service/app/worker.py`, `scripts/ai-org-per-ecosystem.sql`, `infra/docker-compose.yml`, `infra/postgres/Dockerfile`. Lectura del código en `main` del 2026-10-29.
+- **Fuentes:** `apps/backend/src/migrations/` (22 migraciones, `index.ts`, `README.md`, snapshot `20261104_075139_documents_authors_kept.json`), `apps/backend/scripts/migrate.sh`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/lib/storage/plugin.ts`, `apps/backend/src/lib/storage/client.ts`, `apps/web/src/lib/config.ts`, `services/ai-service/src/db/schema/index.ts`, `services/ai-service/drizzle/*.sql`, `services/ai-service/src/queue/`, `services/audio-service/app/config.py`, `services/audio-service/app/store.py`, `services/audio-service/app/worker.py`, `scripts/ai-org-per-ecosystem.sql`, `infra/docker-compose.yml`, `infra/postgres/Dockerfile`. Lectura del código en `main` del 2026-10-29.
 
 ## Para quién es y qué responde
 
@@ -167,7 +167,7 @@ Las tablas `*_rels` traen `cascade` desde la generación de Payload.
 
 ### 2.7 Migraciones
 
-Hay 21 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído el 2026-10-30). La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
+Hay 22 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído el 2026-10-30; la 22, el 2026-11-04). La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
 
 | # | Migración | Fecha | Propósito |
 |---|---|---|---|
@@ -192,6 +192,7 @@ Hay 21 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído
 | 19 | `20261028_235647_documents_kind_xls` | 2026-10-28 | Agrega `xls` al enum `kind` (con `down` a mano) |
 | 20 | `20261029_042255_documents_held_text_hash` | 2026-10-29 | Agrega `documents.held_text_hash` |
 | 21 | `20261029_060304_evals` | 2026-10-29 | Crea `eval_items` y `eval_runs` (llave a ecosistema en `cascade`) y agrega `sessions.eval_run` |
+| 22 | `20261104_075139_documents_authors_kept` | 2026-11-04 | Agrega `documents.authors_kept` |
 
 La tabla de la cadena en `apps/backend/src/migrations/README.md` omite cuatro migraciones (6, 7, 9 y 10). Cada una tiene su propio comentario de cabecera que explica lo que hace.
 

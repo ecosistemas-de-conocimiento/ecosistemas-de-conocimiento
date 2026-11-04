@@ -17,6 +17,7 @@ Definiciones. **Implementado:** funciona hoy, con evidencia en código. **Planea
 |---|---|---|
 | Compuerta de anonimización con dos salidas, `ready` o `hold` | **Implementado** | `apps/backend/src/lib/anonymise/gate.ts`; `apps/backend/src/lib/anonymiseDocument.ts` |
 | Seudónimos por documento, sin tabla de correspondencias | **Implementado** | `apps/backend/src/lib/anonymise/pseudonyms.ts` |
+| Se conserva el nombre completo de quien subió un `documento`, nunca una parte; un administrador de ecosistema puede definir ese nombre (sección 3.5) | **Implementado** | `apps/backend/src/lib/anonymise/authorRestore.ts`; `apps/backend/src/lib/publicFigures.ts` |
 | Verificación de una sola ronda que retiene ante cualquier resto | **Implementado** | `DEFAULT_VERIFY_ROUNDS = 1` en `gate.ts` |
 | Huella contra reintentos sobre el mismo texto y edición trivial que no libera | **Implementado** | `apps/backend/src/lib/gatedTextHash.ts`; `gateResetForTextEdit` en `Documents.ts` |
 | Columnas de la compuerta no escribibles por API | **Implementado** | `gateWritesOnly` en `Documents.ts` |
@@ -116,12 +117,13 @@ flowchart TD
   C --> D[Etapa 3: detector<br/>modelo de lenguaje en ventanas de ~250 palabras]
   D -->|el modelo no responde, JSON ilegible o tramo que no se puede ubicar| H[hold: retenido]
   D --> P[Seudónimos por documento<br/>Persona A, Domicilio A, Dato omitido]
-  P --> F{¿Es documento y está activa<br/>la excepción de figuras públicas?}
-  F -->|sí| FR[Restituir nombres de figuras públicas<br/>y registrar cuáles]
-  F -->|no| V
-  FR --> V[Etapa 4: verificación<br/>el mismo detector relee el texto ya redactado]
+  P --> V[Etapa 4: verificación<br/>el mismo detector relee el texto ya redactado]
   V -->|queda algún dato| H
-  V -->|nada| R[ready: se agrega a la búsqueda del ecosistema]
+  V -->|nada| F{¿Es de tipo documento?}
+  F -->|no: testimonio o conversación| R[ready: se agrega a la búsqueda del ecosistema]
+  F -->|sí| FR[Si está activa la excepción de figuras públicas:<br/>restituir esos nombres y registrar cuáles]
+  FR --> AU[Restituir solo el nombre completo de quien subió,<br/>tomado de memberships.personName, y registrarlo]
+  AU --> R
   H --> RV[Revisión humana en /revision<br/>la persona revisora ve heldText, nunca el original]
   RV -->|aprobar| R
   RV -->|rechazar| X[No se publica; se borra del servicio de IA]
@@ -132,7 +134,7 @@ flowchart TD
 
 ### 3.1 Etapa 1: estructural
 
-Generaliza las fechas (por ejemplo, un día exacto pasa a mes y año), quita identificadores técnicos (uuid) y marcas de autoría que el formato del archivo pudiera traer. Vive en `apps/backend/src/lib/anonymise/structural.ts`.
+Generaliza las fechas (por ejemplo, un día exacto pasa a mes y año), quita identificadores técnicos (uuid) y sustituye los nombres de las marcas de autoría que el formato del archivo pudiera traer. El nombre de quien subió un `documento` se restituye al final (sección 3.5). Vive en `apps/backend/src/lib/anonymise/structural.ts`.
 
 ### 3.2 Etapa 2: determinista
 
@@ -150,9 +152,15 @@ En dónde corre el detector y qué pasa si falla se explica en la sección 10.
 
 Cada persona o lugar detectado se sustituye por un seudónimo estable dentro del mismo documento: `[Persona A]`, `[Persona B]`, `[Domicilio A]`, o `[Dato omitido]` cuando no aplica una etiqueta. La etapa 2 y la etapa 3 comparten el mismo asignador de seudónimos, para que la misma persona reciba la misma letra aunque la encuentren reglas distintas. El mapa entre seudónimo y nombre vive solo en memoria mientras se procesa ese documento y se descarta al terminar (`pseudonyms.ts`). No existe una tabla de correspondencias.
 
-### 3.5 Figuras públicas
+### 3.5 Nombres que se conservan
 
-Por defecto, todo nombre se sustituye. Un administrador de plataforma puede activar `keepPublicFigures` en un ecosistema para que los nombres de figuras públicas (por ejemplo, una funcionaria citada en una nota de prensa) se conserven. La excepción solo aplica a material de tipo `documento` que pasa por la compuerta, nunca a testimonios ni a conversaciones (`apps/backend/src/lib/features.ts`). Cada nombre conservado queda registrado en `documents.public_figures_kept`.
+Por defecto se conserva un solo nombre: el de quien subió un `documento`. Cualquier otro nombre se sustituye, salvo el de una figura pública si esa excepción está activa. Ninguna excepción aplica a testimonios ni a conversaciones. Las dos se aplican al final, sobre un resultado `ready`: un texto retenido muestra todos los nombres con seudónimo.
+
+**Quien subió el documento (Implementado).** El nombre sale de `memberships.personName`, de la membresía activa de quien subió en ese ecosistema (`lib/publicFigures.ts`). Se conserva solo como nombre completo, tal como está escrito en `personName` (`lib/anonymise/authorRestore.ts`). Con "Ana María López", un "María" o un "López" sueltos se sustituyen, igual que "López, Ana María", "Dra. Ana María López" o "ANA MARÍA LÓPEZ". Sin membresía activa, con `personName` vacío o si la lectura falla, no se conserva nada. Tampoco se conserva si `personName` tiene menos de dos partes, un dígito o una `@`. Una línea "Autora: …" escrita en el archivo no hace visible a nadie, y `users.displayName` no cuenta. Cada nombre conservado queda registrado en `documents.authors_kept`.
+
+**Límite.** Un administrador de ecosistema (quien tiene `members:manage`) puede definir el `personName` de una membresía, incluida la suya (`Memberships.ts`). Así puede hacer visible en los documentos de esa persona un nombre que no sea el suyo. Nada lo verifica, y esos cambios no quedan en bitácora (sección 12).
+
+**Figuras públicas.** Un administrador de plataforma puede activar `keepPublicFigures` en un ecosistema para que los nombres de figuras públicas (por ejemplo, una funcionaria citada en una nota de prensa) se conserven. La excepción solo aplica a material de tipo `documento` que pasa por la compuerta, nunca a testimonios ni a conversaciones (`apps/backend/src/lib/features.ts`). Cada nombre conservado queda registrado en `documents.public_figures_kept`.
 
 ### 3.6 Etapa 4: verificación
 
@@ -336,6 +344,7 @@ Estos registros permiten responder "quién decidió que este texto era seguro". 
 | Aprobación o rechazo de una retención, con nota y copia del reporte de la compuerta | `anonymisation-reviews`, de solo anexar desde la API | `holds:review` del ecosistema y la administración de plataforma | **Implementado** |
 | Conservación de ese registro tras borrar el documento | No existe: la llave foránea es `ON DELETE cascade` (`AnonymisationReviews.ts`) y el registro se pierde | No aplica | **Pendiente**, sin plan técnico |
 | Nombres de figuras públicas conservados | `documents.public_figures_kept` | Administración de plataforma | **Implementado** |
+| Nombre conservado de quien subió un documento, con modelo y fecha | `documents.authors_kept`; no se escribe por API y se limpia en cada retención | Quien subió y la administración de plataforma | **Implementado** |
 | Avisos de servicio recibidos (callbacks firmados) | `aiServiceCallbacks`, solo con huella del texto | Administración de plataforma | **Implementado** |
 | Consentimientos de testimonios del estudiante, con fecha y versión | `student_profiles` | El estudiante; el sistema | **Implementado** |
 | Lecturas del texto original de un testimonio por la administración de plataforma | No existe | No aplica | **Pendiente**, sin plan técnico |

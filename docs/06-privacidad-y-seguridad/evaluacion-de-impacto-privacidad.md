@@ -18,6 +18,7 @@ Definiciones. **Implementado:** funciona hoy, con evidencia en código. **Planea
 | Compuerta de anonimización, cerrada ante la falla del modelo | **Implementado** | `apps/backend/src/lib/anonymise/gate.ts` |
 | Huella contra reintentos y edición trivial que no libera | **Implementado** | `lib/gatedTextHash.ts`; `gateResetForTextEdit` en `Documents.ts` |
 | Lectura del original limitada a quien subió y a la administración de plataforma | **Implementado** | `mayReadGatedOriginal` en `Documents.ts` |
+| Se conserva el nombre completo de quien subió un `documento`, nunca una parte; un administrador de ecosistema puede definir ese nombre (riesgo R19) | **Implementado** | `apps/backend/src/lib/anonymise/authorRestore.ts`; `apps/backend/src/lib/publicFigures.ts` |
 | Grabación de testimonio no compartida; dictado en vivo sin almacenamiento | **Implementado** | `collections/Media.ts`; `services/audio-service/app/live.py` |
 | Borrado de documentos y conversaciones, incluidas las copias del servicio de IA | **Implementado** | `Documents.ts`; `lib/conversationTurnErasure.ts` |
 | Grafo solo con texto anonimizado y sin personas de testimonio | **Implementado** | `lib/graph/types.ts`; `lib/graph/queries.ts` |
@@ -56,7 +57,7 @@ Ecosistemas de Conocimiento (EDC) es la plataforma del proyecto SECIHTI IH-2025-
 
 1. **Captura.** Una persona usuaria con cuenta sube un documento o un testimonio (texto o audio), o conversa con el asistente. Una persona facilitadora puede subir el testimonio de alguien que no tiene cuenta.
 2. **Transcripción.** El audio se transcribe a texto con Whisper large-v3 en un servidor con GPU.
-3. **Anonimización.** Testimonios, turnos de conversación y documentos marcados se someten a la compuerta de anonimización: reglas fijas, un modelo de lenguaje que detecta nombres y una verificación. Lo dudoso queda retenido para revisión humana. Los documentos sin marca entran sin anonimizar.
+3. **Anonimización.** Testimonios, turnos de conversación y documentos marcados se someten a la compuerta de anonimización: reglas fijas, un modelo de lenguaje que detecta nombres y una verificación. Lo dudoso queda retenido para revisión humana. En un documento marcado se conserva el nombre completo de quien lo subió. Los documentos sin marca entran sin anonimizar.
 4. **Acervo.** La versión anonimizada se divide en fragmentos, se convierte en vectores de búsqueda y se agrega al acervo del ecosistema.
 5. **Uso.** Miembros del ecosistema consultan al asistente, que responde con fragmentos del acervo. Las conversaciones anonimizadas de otros orientan las respuestas sin citarse. El grafo muestra temas y relaciones.
 6. **Retiro.** Quien sube un contenido puede borrarlo; el borrado alcanza las copias en el servicio de IA y también elimina el registro de revisiones de ese documento.
@@ -105,6 +106,7 @@ El sistema recibe, por diseño, datos personales sensibles. La tabla indica dón
 | **Personas que dan un testimonio** | Pueden no tener cuenta; su relato lo sube una facilitadora | Su relato, su voz si es audio | Comprobante ético con folio: **Pendiente**. Plantilla de consentimiento: **Planeado** |
 | **Terceros nombrados** en un testimonio o documento (familiares, personal de salud, vecinos) | No tienen relación con el sistema | Su nombre y detalles dentro del relato | No se les puede informar individualmente; su protección es la anonimización, que sustituye su nombre por un seudónimo. En documentos sin marca de anonimización esa protección no aplica |
 | **Estudiantes** | Tienen cuenta con rol `estudiante` | Lo de una persona usuaria, más su reporte de actividad | Tres consentimientos específicos en su vista (**Implementado**). Aviso integral: **Planeado** |
+| **Personas que suben un documento marcado** | Tienen cuenta y membresía | El nombre completo de su membresía (`personName`), visible en ese documento y en el acervo | Lo dirá el aviso integral (**Planeado**). No conserva partes del nombre, ni aplica a testimonios o conversaciones. No hay forma de negarse dentro de la plataforma |
 | **Figuras públicas** citadas en documentos | Ninguna | Nombre en contexto público | Solo se conservan en documentos de referencia si un administrador de plataforma lo activa; nunca en testimonios |
 
 ## 6. Flujos y encargados
@@ -157,6 +159,7 @@ Escala: **Probabilidad** baja, media, alta. **Gravedad** limitada, significativa
 | R16 | **Menores de edad** entre participantes | Menores | Baja | Grave | **Pendiente:** política, consentimiento de madre, padre o tutor y asentimiento. El sistema no registra edad | Alto si se aceptan contribuciones de menores |
 | R17 | **Un revisor aprueba su propio texto** | Persona que da testimonio | Baja | Significativa | **Pendiente.** El código lo permite (`decideOnHold` en `lib/holdReview.ts`); decisión abierta del responsable técnico | Medio |
 | R18 | **Grafo que revela personas** por relaciones con poco soporte | Terceros | Baja | Significativa | **Implementado:** sin personas de testimonio ni conversación (tres capas); solo texto anonimizado y publicado; umbral de soporte configurable por entorno | Bajo |
+| R19 | **Nombre visible de quien sube un documento.** Por defecto queda visible en el acervo, y un administrador de ecosistema puede definir ese `personName`, incluso con el nombre de otra persona | Quien sube documentos; la persona cuyo nombre se asigne | Baja | Significativa | **Implementado:** solo el nombre completo tal como está en `personName`, nunca una parte; solo `documento`; solo tras `ready`; sin membresía activa, vacío o lectura fallida no se conserva nada; registro en `documents.authors_kept`. **Planeado:** declararlo en el aviso integral publicado. **Pendiente:** bitácora de cambios de membresía; forma de negarse | Bajo a medio |
 
 ```mermaid
 quadrantChart

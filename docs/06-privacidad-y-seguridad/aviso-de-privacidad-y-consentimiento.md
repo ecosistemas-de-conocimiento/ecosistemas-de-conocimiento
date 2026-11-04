@@ -15,6 +15,7 @@ Definiciones. **Implementado:** funciona hoy, con evidencia en código. **Planea
 
 | Control o procedimiento | Estado | Evidencia o nota |
 |---|---|---|
+| El aviso declara a quien sube documentos que su nombre completo queda visible (cláusulas 2 y 4; la conservación está **Implementada**, el aviso sigue sin publicarse) | **Planeado** | `apps/backend/src/lib/anonymise/authorRestore.ts`; `apps/backend/src/lib/publicFigures.ts` |
 | Tres consentimientos del estudiante, apagados por defecto | **Implementado** | `apps/web/src/lib/estudiante.ts`; `apps/web/src/lib/consent.ts` |
 | Fecha y versión del consentimiento de testimonios; rechazo de una versión distinta | **Implementado** | `lib/student/testimonioConsent.ts`; `StudentProfiles.ts` |
 | Retiro automático del consentimiento 3 al apagar `studentTestimonios` | **Implementado** | `clearTestimonioConsentWhenOff` en `Organizations.ts` |
@@ -78,7 +79,7 @@ Versión 1 · Fecha de última actualización: `[fecha de publicación]`
 
 **2. Qué datos personales recabamos.**
 
-- De las personas usuarias con cuenta: correo electrónico, nombre que eliges mostrar, imagen de perfil si la subes, idioma de la interfaz, contraseña (guardada solo como hash, es decir, una huella que no permite recuperarla), los ecosistemas a los que perteneces y tu rol en cada uno.
+- De las personas usuarias con cuenta: correo electrónico, nombre que eliges mostrar, imagen de perfil si la subes, idioma de la interfaz, contraseña (guardada solo como hash, es decir, una huella que no permite recuperarla), los ecosistemas a los que perteneces, tu rol en cada uno y el nombre con el que figuras en cada uno, que define quien administra los miembros de ese ecosistema.
 - Lo que aportas: documentos, testimonios en texto o audio, notas, valoraciones de las respuestas con comentario opcional y tus conversaciones con el asistente.
 - De estudiantes, además: tus elecciones de privacidad, con fecha y versión del texto que aceptaste, y el reporte de tu actividad (documentos, temas, número de conversaciones).
 - De las personas que dan un testimonio sin cuenta: su relato o su voz. No recabamos su nombre en la plataforma. Su consentimiento queda en el comprobante ético con un folio que no está ligado al texto. *Antes de publicar: el comprobante es Pendiente.*
@@ -89,7 +90,7 @@ Versión 1 · Fecha de última actualización: `[fecha de publicación]`
 
 1. Crear y administrar tu cuenta y tu pertenencia a ecosistemas.
 2. Recibir, transcribir y guardar tus documentos y testimonios.
-3. Anonimizar los testimonios y las conversaciones antes de compartirlos dentro del ecosistema: sustituimos nombres de personas, domicilios y otros datos que identifican por seudónimos como "[Persona A]".
+3. Anonimizar los testimonios y las conversaciones antes de compartirlos dentro del ecosistema: sustituimos nombres de personas, domicilios y otros datos que identifican por seudónimos como "[Persona A]". **Si subes un documento que se anonimiza, tu nombre completo no se sustituye.** Conservamos visible, en ese documento y en el acervo del ecosistema, el nombre completo con el que figuras en ese ecosistema, tal como está registrado. Quien administra los miembros del ecosistema puede definir ese nombre. Nunca conservamos una parte suelta de tu nombre, y nunca conservamos tu nombre en testimonios ni en conversaciones. Si no tienes una membresía activa o no hay un nombre registrado, no conservamos ninguno.
 4. Responder tus preguntas con el asistente, citando el acervo del ecosistema.
 5. **Agregar tus conversaciones, ya anonimizadas, al acervo del ecosistema.** Sirven para orientar las respuestas a otras personas del mismo ecosistema. Nunca se citan y nunca se muestran con tu nombre.
 6. Mostrar el grafo de temas del ecosistema, construido solo con texto anonimizado y publicado.
@@ -150,6 +151,8 @@ Texto para mostrar al crear una cuenta, en el pie de la aplicación y al abrir l
 > Tus conversaciones, sin tu nombre y sin datos que te identifiquen, ayudan a orientar las respuestas a otras personas de este ecosistema. Nunca se citan.
 >
 > Los testimonios se anonimizan antes de compartirse. Una persona revisa los casos dudosos.
+>
+> Si subes un documento que se anonimiza, tu nombre completo, como figura en este ecosistema, queda visible en él.
 >
 > Usamos servidores en Alemania, un servidor de cómputo de otra organización y servicios de IA en Estados Unidos. A Estados Unidos van tus preguntas y documentos de referencia. Si falla el servidor de cómputo, también puede ir texto con nombres. Las condiciones de esos servicios deciden cuánto guardan esos datos.
 >

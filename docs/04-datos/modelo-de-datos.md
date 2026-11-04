@@ -442,6 +442,7 @@ Convenciones. "Servidor" significa que solo lo escribe código del backend con p
 | `heldTextHash` | texto (SHA-256) | Servidor | Servidor |
 | `anonymisationSurvivors` | JSON | Servidor | Autor y admin. de plataforma (posiciones de lo que todavía identifica) |
 | `publicFiguresKept` | JSON | Servidor | Igual que la fila |
+| `authorsKept` (columna `authors_kept`) | JSON: nombre completo de quien subió, modelo y fecha; nulo en una retención | Servidor | Solo autor y admin. de plataforma |
 | `anonymisationError` | texto | Servidor | Igual que la fila |
 | `anonymisationReport` | JSON | Servidor | Igual que la fila; solo conteos por etapa, sin texto |
 | `testimonioTitle` | texto | Servidor (título propuesto por el sistema) | Como `heldText` mientras no esté `ready` o `approved`; después, igual que la fila |

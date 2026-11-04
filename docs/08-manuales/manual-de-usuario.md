@@ -227,6 +227,7 @@ El tipo se elige al crear la conversación y no cambia después.
   2. Si es Documento y contiene datos personales, marca **Anonimizar**.
   3. Sube el archivo.
 - **Resultado:** un testimonio, o un documento marcado para anonimizar, pasa por la revisión automática de datos personales antes de poder publicarse.
+- **Notas:** en un documento marcado, tu nombre completo, como figura en tu ecosistema, queda visible. Las partes sueltas de tu nombre y cualquier otro nombre se sustituyen. En un testimonio se sustituyen todos.
 
 ### 2.16 Fijar un documento como contexto
 
