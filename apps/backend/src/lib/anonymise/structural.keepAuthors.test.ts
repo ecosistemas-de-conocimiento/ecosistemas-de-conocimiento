@@ -141,6 +141,12 @@ describe('restoreAuthors — guards', () => {
     expect(restoreAuthors(source, '[Persona A] llegó.', ['Ana Ruiz']).kept).toEqual(['Ana Ruiz'])
   })
 
+  it.each(['Ana ② Ruiz', 'Ana Ⅷ Ruiz', 'Ana ٣ Ruiz', 'Ana 3 Ruiz'])('🔴 a name holding any number is not restored: %s', (name) => {
+    const output = '[Persona A] llegó.'
+    expect(restoreAuthors(`${name} llegó.`, output, [name]).text).toBe(output)
+    expect(restoreAuthors(`${name} llegó.`, output, [name]).kept).toEqual([])
+  })
+
   it('🔴 lower case is never restored outside a byline', () => {
     expect(restoreAuthors('la otra es ana ruiz.', 'la otra es [Persona A].', ['Ana Ruiz']).text).toBe(
       'la otra es [Persona A].',

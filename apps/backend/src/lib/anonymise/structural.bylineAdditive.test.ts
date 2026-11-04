@@ -524,6 +524,52 @@ describe('field labels are not authors (over-redaction fix)', () => {
     }
   })
 
+  it('🔴 a number that is not a decimal digit: the piece is not a label, and the gate shows none of it', async () => {
+    for (const piece of ['Fecha ①②③④⑤⑥⑦⑧⑨⑩', 'Fecha 🔟', 'Lugar ²³', 'Sede Ⅷ', 'Fecha 一〇', 'Fecha 5️⃣', 'Tema ⓪']) {
+      expect(isFieldLabel(piece), piece).toBe(false)
+      const out = await gate(`Autores: Luis Gómez; ${piece}\nTexto.`)
+      expect(out, piece).toBe('Autores: [Persona A]; [Persona B]\nTexto.')
+    }
+  })
+
+  it('🔴 no \\p{N} character in all of Unicode makes a label', () => {
+    const numbers: string[] = []
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue
+      const c = String.fromCodePoint(cp)
+      if (/\p{N}/u.test(c)) numbers.push(c)
+    }
+    expect(numbers.length).toBeGreaterThan(1000)
+    expect(numbers.filter((c) => isFieldLabel(`Fecha ${c}`))).toEqual([])
+  })
+
+  it('🔴 symbols and format characters are not label text either', () => {
+    for (const piece of ['Fecha ☎', 'Fecha $', 'Fecha + Lugar', 'Lugar/Fecha', 'Fecha\u200b', 'Fecha @', 'Fecha #']) {
+      expect(isFieldLabel(piece), piece).toBe(false)
+    }
+  })
+
+  it('a label keeps its basic punctuation and other white space', () => {
+    for (const piece of ['Fecha.', 'Fecha:', 'Lugar, Fecha', 'Lugar; fecha', 'Lugar de la entrevista-sesión', 'Lugar\u00a0de\tfecha']) {
+      expect(isFieldLabel(piece), piece).toBe(true)
+    }
+  })
+
+  it.each([
+    ['an ASCII number beside it', 'Fecha 3 ①②③④⑤⑥⑦⑧⑨⑩'],
+    ['an ASCII number beside another script', 'Fecha 3 ٥٥١٢٣٤٥٦٧٨'],
+    ['no word at all', '①②③④⑤⑥⑦⑧⑨⑩'],
+    ['no word at all, another script', '٥٥١٢٣٤٥٦٧٨'],
+    ['keycaps', '5️⃣5️⃣1️⃣2️⃣3️⃣4️⃣5️⃣6️⃣7️⃣8️⃣'],
+    ['a symbol alone', '🔟'],
+  ])('🔴 a piece stage 2 cannot read stays out of the text: %s', async (_why, piece) => {
+    expect(await gate(`Autores: Luis Gómez; ${piece}\nTexto.`)).toMatch(/^Autores: \[Persona A\]; \[(Persona B|Dato omitido)\]\nTexto\.$/u)
+  })
+
+  it('a year on its own stays: stage 2 reads ASCII digits', async () => {
+    expect(await gate('Autores: Luis Gómez; 2026\nTexto.')).toBe('Autores: [Persona A]; 2026\nTexto.')
+  })
+
   it('🔴 an ASCII number beside a label stays out of the label too: stage 2 redacts the phone', async () => {
     expect(isFieldLabel('Fecha 2026')).toBe(false)
     expect(isFieldLabel('Entrevista 3')).toBe(false)

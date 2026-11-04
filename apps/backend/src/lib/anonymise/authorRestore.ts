@@ -22,7 +22,7 @@
  *     "Ana López", "López, Ana María", "ANA MARÍA LÓPEZ" and "Dra. Ana María
  *     López" never do, in a byline or anywhere else. A part of a name is
  *     anyone's: "María" may be the person the document is about.
- *   · It holds no digit, line break or bracket.
+ *   · It holds no number of any kind (`\p{N}`: "٣", "②"), line break or bracket.
  *   · Outside a byline piece, it is not glued to another name ("Ana Ruiz
  *     Pérez", "Ana Ruiz y Pérez").
  *
@@ -108,7 +108,7 @@ export function restoreAuthors(
   const inByline = (start: number, end: number) => bylines.some(([s, e]) => start >= s && end <= e)
   const restorable = (start: number, end: number): boolean => {
     const original = source.slice(start, end)
-    if (!names.has(original.trim()) || /[\p{Nd}\n\r[\]]/u.test(original)) return false
+    if (!names.has(original.trim()) || /[\p{N}\n\r[\]]/u.test(original)) return false
     // A kept byline piece stands beside its co-authors ("Ana Ruiz y Pedro Gómez").
     return inByline(start, end) || (wholeWord(source, start, end) && !glued(source, start, end))
   }

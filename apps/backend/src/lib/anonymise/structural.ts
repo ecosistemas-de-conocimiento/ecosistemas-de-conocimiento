@@ -457,7 +457,9 @@ function isProse(segment: string): boolean {
  * Ruiz | Lugar y fecha" used to come out "[Persona B] y [Dato omitido]", and
  * the one-word owner then redacted every later "Lugar". A CLOSED LIST on
  * purpose: a piece with any other word ("Lugar Oaxaca", "Lugar de Ana Ruiz")
- * or any digit of any script ("Fecha ٥٥١٢٣٤٥٦٧٨") is still redacted.
+ * or anything but letters, marks, spaces and basic punctuation is still
+ * redacted: a number of any kind ("Fecha ٥٥١٢٣٤٥٦٧٨", "Fecha ①②③", "Fecha 🔟"),
+ * a symbol, a format character.
  * 🔴 "Estado" is not on it: it is a surname here (`Autores: Luis Gómez; Estado`),
  * and a label left in the text would show it.
  */
@@ -466,10 +468,12 @@ const FIELD_LABELS: ReadonlySet<string> = new Set([
   'localidad', 'entrevista', 'tema', 'titulo', 'proyecto', 'sesion', 'duracion',
 ])
 const LABEL_JOINERS: ReadonlySet<string> = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'en'])
+/** What a field label may hold besides its words. */
+const NOT_LABEL_TEXT = /[^\p{L}\p{M}\s.,;:'’-]/u
 
 export function isFieldLabel(piece: string): boolean {
   const words = (piece.match(/[\p{L}\p{M}]+/gu) ?? []).map(fold)
-  if (/\p{Nd}/u.test(piece) || !words.some((w) => FIELD_LABELS.has(w))) return false
+  if (NOT_LABEL_TEXT.test(piece) || !words.some((w) => FIELD_LABELS.has(w))) return false
   return words.every((w) => FIELD_LABELS.has(w) || LABEL_JOINERS.has(w))
 }
 
@@ -504,6 +508,13 @@ export interface StructuralOptions {
    */
   keepAuthors?: readonly string[]
 }
+
+/**
+ * A byline piece holding what stage 2 cannot read, so nothing later would catch
+ * a phone in it: a number that is not ASCII ("٥٥٥", "①②③"), a symbol ("🔟") or
+ * a keycap ("5️⃣", an ASCII digit and an enclosing mark).
+ */
+const UNREADABLE_PIECE = /[^\p{L}\p{M}\s\p{P}0-9]|\p{Me}/u
 
 /** R60: what a kept byline piece may hold. Anything else (a phone, an address) stays redacted. */
 const KEEPABLE_PIECE = /^[\p{L}\p{M}\s.'’-]+$/u
@@ -644,7 +655,8 @@ export function structuralPass(
    * 🔴 A NUMBER BESIDE A NAME DOES NOT SAVE IT (audit 4): a digit keeps a piece
    * only when the piece has fewer than two capitalised words. "Luis Gómez
    * (2021)" and "Luis Gómez 2" are authors. ASCII digits only on purpose: stage
-   * 2 reads those, so a phone there is still caught; other scripts are redacted.
+   * 2 reads those, so a phone there is still caught. 🔴 A piece stage 2 cannot
+   * read ({@link UNREADABLE_PIECE}) is taken whatever else it looks like.
    */
   const takeAll = (segment: string, failClosed: boolean, prefix = ''): string => {
     const split = splitAuthors(segment)
@@ -656,7 +668,7 @@ export function structuralPass(
         if (keep.has(i)) return holdKept(piece)
         const bare = piece.replace(/\([^()]*\)/gu, '') // "(2021)", "(Lupita)": never a label's number
         const label = /\d/u.test(bare) && (bare.match(/\p{Lu}[\p{L}\p{M}]/gu) ?? []).length < 2
-        if (!failClosed && (label || isFieldLabel(piece) || (!/\p{Lu}/u.test(piece) && isProse(piece)))) return piece
+        if (!failClosed && !UNREADABLE_PIECE.test(piece) && (label || isFieldLabel(piece) || (!/\p{Lu}/u.test(piece) && isProse(piece)))) return piece
         return take(piece, i === 0 ? prefix : '')
       })
       .join('')
