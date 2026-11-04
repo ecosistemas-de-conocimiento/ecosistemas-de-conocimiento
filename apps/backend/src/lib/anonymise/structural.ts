@@ -596,13 +596,23 @@ export function structuralPass(
     authors += 1
     held[id] = options.person && /\p{Lu}/u.test(source) ? options.person(source) : OMITTED_PLACEHOLDER
   }
+  /**
+   * One capitalised word across a comma may be the rest of the name
+   * ("Autores: Hernández, María Guadalupe"): not the author as written. A
+   * co-author of two words or a field label beside it does not count.
+   */
+  const loneWordBeside = (split: string[], i: number): boolean => {
+    const lone = (separator: string | undefined, piece: string | undefined) =>
+      separator?.includes(',') === true && piece !== undefined && /^\p{Lu}[\p{L}\p{M}'’-]*$/u.test(piece.trim()) && !isFieldLabel(piece)
+    return lone(split[i - 1], split[i - 2]) || lone(split[i + 1], split[i + 2])
+  }
   /** The indexes of `splitAuthors` output that name a trusted author. Letters only: a phone in the piece keeps nothing. */
   const keptPieces = (split: string[]): Set<number> => {
     const keep = new Set<number>()
     if (trusted.size === 0) return keep
     for (let i = 0; i < split.length; i += 2) {
       const piece = split[i] as string
-      if (KEEPABLE_PIECE.test(piece) && trusted.has(piece.trim())) keep.add(i)
+      if (KEEPABLE_PIECE.test(piece) && trusted.has(piece.trim()) && !loneWordBeside(split, i)) keep.add(i)
     }
     return keep
   }

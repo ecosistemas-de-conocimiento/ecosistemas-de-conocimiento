@@ -255,6 +255,85 @@ describe('R60 — the guards (each test fails with its guard removed)', () => {
     absent(out.slice('Autora: Ana Ruiz'.length), ['Ana', 'Pedro', 'Ruiz'])
   })
 
+  describe('🔴 glue across a line break or a comma', () => {
+    const LOPEZ = { authors: ['Ana María López'] }
+    const GUADALUPE = { authors: ['María Guadalupe'] }
+
+    it.each([
+      ['\\n after', 'Ana María López\nRuiz vino.', ['Ruiz', 'Ana María López']],
+      ['\\r\\n after', 'Ana María López\r\nRuiz vino.', ['Ruiz', 'Ana María López']],
+      ['\\n before', 'Ruiz\nAna María López vino.', ['Ruiz', 'Ana María López']],
+      ['\\r\\n before', 'Ruiz\r\nAna María López vino.', ['Ruiz', 'Ana María López']],
+      ['\\n and spaces', 'Ana María López  \n  Ruiz vino.', ['Ruiz', 'Ana María López']],
+      ['a comma after', 'Vi a Ana María López, Ruiz también.', ['Ruiz', 'Ana María López']],
+      ['a comma before', 'Vi a Ruiz, Ana María López también.', ['Ruiz', 'Ana María López']],
+      ['a semicolon', 'Vi a Ruiz; Ana María López también.', ['Ruiz', 'Ana María López']],
+      ['a comma and \\n', 'Vi a Ruiz,\nAna María López también.', ['Ruiz', 'Ana María López']],
+    ])('the name is not shown beside another: %s', async (_how, text, persons) => {
+      absent(await gate(text, persons, LOPEZ), ['Ana', 'María', 'López', 'Ruiz'])
+    })
+
+    it('surname first: "Hernández, María Guadalupe" shows neither', async () => {
+      absent(await gate('Hernández, María Guadalupe vino.', ['Hernández', 'María Guadalupe'], GUADALUPE), ['Hernández', 'María', 'Guadalupe'])
+    })
+
+    it('🔴 a stage 1 placeholder beside the name counts as a name', async () => {
+      const id = '8f1c2b3a-1111-2222-3333-444455556666'
+      for (const text of [`${id}, Ana María López vino.`, `${id}\nAna María López vino.`, `Ana María López, ${id}.`]) {
+        absent(await gate(text, ['Ana María López'], LOPEZ), ['Ana', 'María', 'López'])
+      }
+    })
+
+    it.each([
+      ['a blank line after', 'Ana María López\n\nRuiz vino.', 'Ana María López\n\n[Persona B] vino.'],
+      ['a blank line with \\r\\n', 'Ana María López\r\n\r\nRuiz vino.', 'Ana María López\r\n\r\n[Persona B] vino.'],
+      ['a blank line before', 'Ruiz vino.\n\nAna María López firmó.', '[Persona B] vino.\n\nAna María López firmó.'],
+    ])('the name stays past a real break: %s', async (_how, text, expected) => {
+      expect(await gate(text, ['Ruiz', 'Ana María López'], LOPEZ)).toBe(expected)
+    })
+
+    it.each([
+      ['a line that opens with a function word', 'Vi a Ana María López\nEl taller terminó.'],
+      ['a line in lower case', 'Vi a Ana María López\ny el taller terminó.'],
+      ['a sign-off above', 'Atentamente,\nAna María López'],
+      ['a sign-off above, no comma', 'Saludos\nAna María López'],
+      ['a comma and lower case', 'Ana María López, que vino, habló.'],
+      ['a comma and a year', 'Ana María López, 2024.'],
+      ['a comma and "con"', 'Ana María López, con gusto.'],
+      ['a sentence before', 'Vino ayer.\nAna María López habló.'],
+    ])('the name stays: %s', async (_how, text) => {
+      expect(await gate(text, ['Ana María López'], LOPEZ)).toBe(text)
+    })
+
+    it('", con" starts another person: the author stays, the other one does not', async () => {
+      expect(await gate('Vi a Ana María López, con Ruiz.', ['Ruiz', 'Ana María López'], LOPEZ)).toBe('Vi a Ana María López, con [Persona B].')
+    })
+
+    it('over-redaction accepted: a capitalised word before a comma hides the author', async () => {
+      expect(await gate('Además, Ana María López habló.', ['Ana María López'], LOPEZ)).toBe('Además, [Persona A] habló.')
+    })
+
+    it('a byline piece stays when the next line is a title or a name', async () => {
+      expect(await gate('Autora: Ana María López\nResumen\n\nTexto.', [], LOPEZ)).toBe('Autora: Ana María López\nResumen\n\nTexto.')
+      expect(await gate('Autora: Ana María López\nRuiz\n\nTexto.', ['Ruiz'], LOPEZ)).toBe('Autora: Ana María López\n[Persona B]\n\nTexto.')
+    })
+
+    it('🔴 a byline: one word across a comma may be the surname, so nothing is kept', async () => {
+      absent(await gate('Autores: Hernández, María Guadalupe\n\nTexto.', [], GUADALUPE), ['Hernández', 'María', 'Guadalupe'])
+      absent(await gate('Autores: María Guadalupe, Hernández\n\nTexto.', [], GUADALUPE), ['Hernández', 'María', 'Guadalupe'])
+    })
+
+    it('a byline: a two-word co-author or a field label across a comma does not stop it', async () => {
+      expect(await gate('Autores: Luis Gómez, María Guadalupe\n\nTexto.', [], GUADALUPE)).toBe('Autores: [Persona A], María Guadalupe\n\nTexto.')
+      expect(await gate('Autores: María Guadalupe, Lugar\n\nTexto.', [], GUADALUPE)).toContain('Autores: María Guadalupe, ')
+    })
+
+    it('🔴 a homonym is shown too: the gate compares text, not people (documented limit)', async () => {
+      const text = 'Autora: Ana María López\n\nEntrevisté a otra Ana María López, vecina de la colonia.'
+      expect(await gate(text, ['Ana María López'], LOPEZ)).toBe(text)
+    })
+  })
+
   it('🔴 byline: a kept byline piece comes back even when glued or shared', async () => {
     // "Ana Ruiz y Pedro Gómez" is glued in the body sense, and "Ruiz" is shared with Pedro Ruiz.
     const a = await gate('Autores: Ana Ruiz y Pedro Gómez\n\nPedro Gómez habló.', ['Ana Ruiz', 'Pedro Gómez'])
