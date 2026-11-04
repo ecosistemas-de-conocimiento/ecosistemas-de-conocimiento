@@ -145,6 +145,15 @@ describe('R60 — the uploader stays visible', () => {
     absent(await gate('Autora: Ana Ruiz\n\nAna Ruiz habló.', ['Ana Ruiz'], { contentKind: 'testimonio' }), ['Ana', 'Ruiz'])
   })
 
+  it('🔴 a personName holding an @ keeps nobody', async () => {
+    // A bare "@": stage 2 takes emails and handles, so only the filter on `authors` stops this one.
+    const result = await run('Ana @ Ruiz firmó.', ['Ana @ Ruiz'], { authors: ['Ana @ Ruiz'] })
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toMatch(/^\[Persona [A-Z]+\] firmó\.$/u)
+    expect(result.keptAuthors).toBeUndefined()
+  })
+
   it('a one-word account name keeps nobody', async () => {
     absent(await gate('Autora: Ruiz\n\nRuiz habló.', ['Ruiz'], { authors: ['Ruiz'] }), ['Ruiz'])
   })

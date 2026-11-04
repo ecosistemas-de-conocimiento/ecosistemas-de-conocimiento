@@ -232,3 +232,89 @@ describe('anonymiseDocumentText — keep public figures (owner rulings 2026-10-2
     expect(fake.last('publicFiguresKept')).toBeNull()
   })
 })
+
+describe('anonymiseDocumentText — authorsKept (R60)', () => {
+  const AUTHOR = 'Ana María López'
+  const TEXT = `Autora: ${AUTHOR}\n\n${AUTHOR} entrevistó a Pedro Gómez.`
+  const ok = () => staticDetector([{ text: AUTHOR, type: 'persona' }, { text: 'Pedro Gómez', type: 'persona' }])
+  const run = (fake: ReturnType<typeof fakePayload>, detector: Parameters<typeof anonymiseDocumentText>[0]['detector'], text: unknown = TEXT, contentKind = 'documento') =>
+    anonymiseDocumentText({
+      payload: fake.payload as never,
+      docId: 7,
+      organizationId: 1,
+      contentKind,
+      anonymise: true,
+      text: text as string,
+      detector,
+      authors: [AUTHOR],
+    })
+
+  it('ready: logs the whole name, the model and the time', async () => {
+    const fake = fakePayload()
+    const out = await run(fake, ok())
+    expect(out.ok && out.text).toContain(AUTHOR)
+    const log = fake.last('authorsKept') as Array<Record<string, unknown>>
+    expect(log).toEqual([{ name: AUTHOR, model: 'static', at: expect.any(String) }])
+  })
+
+  it('ready with nothing kept: the log is cleared', async () => {
+    const fake = fakePayload()
+    expect((await run(fake, staticDetector([{ text: 'Pedro Gómez', type: 'persona' }]), 'Pedro Gómez habló.')).ok).toBe(true)
+    expect(fake.last('authorsKept')).toBeNull()
+  })
+
+  it('🔴 a testimonio keeps nobody and logs nobody', async () => {
+    const fake = fakePayload()
+    const out = await run(fake, ok(), TEXT, 'testimonio')
+    expect(out.ok && out.text).not.toContain('López')
+    expect(fake.last('authorsKept')).toBeNull()
+  })
+
+  /** Verify still finds a name: a real, reviewable hold. */
+  const survives = () => {
+    let call = 0
+    return {
+      name: 'survivor',
+      async detect({ text }: { text: string }) {
+        const found = call++ === 0 ? [AUTHOR] : text.includes('entrevistó') ? ['entrevistó'] : []
+        return found.map((t) => ({ text: t, type: 'persona' as const }))
+      },
+    }
+  }
+
+  it('🔴 a hold clears the log: an earlier run may have written it', async () => {
+    const fake = fakePayload()
+    const out = await run(fake, survives())
+    expect(out.ok).toBe(false)
+    expect(fake.last('anonymisationStatus')).toBe('held')
+    expect(fake.last('authorsKept')).toBeNull()
+  })
+
+  it('🔴 a model that never answered clears the log too', async () => {
+    const fake = fakePayload()
+    const down = {
+      name: 'down',
+      async detect() {
+        throw Object.assign(new Error('down'), { infrastructure: true })
+      },
+    }
+    expect((await run(fake, down)).ok).toBe(false)
+    expect(fake.last('anonymisationStatus')).toBe('n/a')
+    expect(fake.last('authorsKept')).toBeNull()
+  })
+
+  it('🔴 a crash in the gate clears the log too', async () => {
+    const fake = fakePayload()
+    const crashing = {
+      get name(): string {
+        throw new Error('crash')
+      },
+      async detect() {
+        return []
+      },
+    }
+    expect((await run(fake, crashing)).ok).toBe(false)
+    expect(fake.last('anonymisationStatus')).toBe('held')
+    expect(fake.last('authorsKept')).toBeNull()
+  })
+})

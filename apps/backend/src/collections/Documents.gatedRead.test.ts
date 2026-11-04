@@ -367,12 +367,25 @@ describe('🔴 the collection config actually wires the gate', () => {
     'audioMeta',
     // L5: the model's raw reply can ride in here.
     'graphError',
+    // R60: the uploader's name, read like the original.
+    'authorsKept',
   ])('%s reads through gatedOriginalReadable', (name) => {
     expect(field(name)?.access?.read).toBe(gatedOriginalReadable)
   })
 
   it.each(['name', 'uploadedBy', 'session'])('%s reads through gatedQueryableReadable', (name) => {
     expect(field(name)?.access?.read).toBe(gatedQueryableReadable)
+  })
+
+  it('🔴 authorsKept: no caller writes it through the API, not even an admin', () => {
+    const access = (Documents.fields as Array<{ name?: string; access?: { create?: unknown; update?: unknown } }>).find(
+      (f) => f.name === 'authorsKept',
+    )?.access
+    for (const op of [access?.create, access?.update] as Array<((a: { req: { user: unknown } }) => boolean) | undefined>) {
+      expect(op).toBeTypeOf('function')
+      expect(op?.({ req: { user: admin } })).toBe(false)
+      expect(op?.({ req: { user: ana } })).toBe(false)
+    }
   })
 
   it('constrainGatedQueries runs before every operation', () => {

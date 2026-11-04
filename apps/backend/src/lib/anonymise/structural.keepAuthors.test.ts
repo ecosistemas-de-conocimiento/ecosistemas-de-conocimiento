@@ -45,6 +45,13 @@ describe('structuralPass — keepAuthors', () => {
     expect(pass('Autora: Ana Ruiz Pérez', ['Ana Ruiz']).text).toBe('Autora: [Persona A]')
   })
 
+  it('🔴 a name the rules above took part of is no kept piece (the prefix)', () => {
+    // "Ma." ends the field value on its dot, and the rest arrives with a prefix.
+    const r = pass('Autora: Ma. Ana Ruiz', ['Ana Ruiz'])
+    expect(r.bylines).toEqual([])
+    expect(r.text).not.toContain('Ana Ruiz')
+  })
+
   it('🔴 a one-word trusted name keeps nothing', () => {
     expect(pass('Autora: Ruiz', ['Ruiz']).text).toBe('Autora: [Persona A]')
   })
@@ -117,6 +124,21 @@ describe('restoreAuthors — guards', () => {
     const at = source.indexOf('Ana Ruiz')
     expect(restoreAuthors(source, output, ['Ana Ruiz'], [[at, at + 8]]).text).toBe('Autores: Ana Ruiz y [Persona B]')
     expect(restoreAuthors(source, output, ['Ana Ruiz']).text).toBe(output)
+  })
+
+  it.each([['Ana Ruiz 2'], ['Ana 5551234567 Ruiz'], ['Ana ٣ Ruiz']])('🔴 a digit in the name keeps nothing: %s', (name) => {
+    const source = `${name} llegó.`
+    expect(restoreAuthors(source, '[Persona A] llegó.', [name])).toEqual({ text: '[Persona A] llegó.', kept: [] })
+    // Not even inside a range stage 1 reports as a byline.
+    const r = restoreAuthors(source, '[Persona A] llegó.', [name], [[0, name.length]])
+    expect(r.text).toBe('[Persona A] llegó.')
+  })
+
+  it.each([['[Dato omitido]'], ['[Lugar A]'], ['[Domicilio A]']])('🔴 only a [Persona X] comes back: %s stays', (label) => {
+    const source = 'Ana Ruiz llegó.'
+    const output = `${label} llegó.`
+    expect(restoreAuthors(source, output, ['Ana Ruiz'])).toEqual({ text: output, kept: [] })
+    expect(restoreAuthors(source, '[Persona A] llegó.', ['Ana Ruiz']).kept).toEqual(['Ana Ruiz'])
   })
 
   it('🔴 lower case is never restored outside a byline', () => {
