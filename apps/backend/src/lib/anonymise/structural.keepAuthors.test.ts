@@ -251,3 +251,18 @@ describe('linear time', () => {
     }
   })
 })
+
+describe('R60: what a kept byline piece may hold', () => {
+  it('🔴 a trusted name with a digit is not kept at the structural pass, on its own', () => {
+    const trusted = 'Ana Ruiz 2'
+    const out = structuralPass(`Autor: ${trusted}`, { keepAuthors: [trusted] })
+    expect(out.bylines).toEqual([])
+    expect(out.text).not.toContain(trusted)
+  })
+
+  it('a trusted name with only letters is kept: the guard above is not a blanket refusal', () => {
+    const out = structuralPass('Autor: Ana Ruiz', { keepAuthors: ['Ana Ruiz'] })
+    expect(out.bylines.length).toBe(1)
+    expect(out.text).toContain('Ana Ruiz')
+  })
+})
