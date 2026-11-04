@@ -12,6 +12,8 @@
  *   · A run that judged links with none attached writes `[]` (AUDIT-A).
  *   · 🔴 Privacy: a held or rejected row gets no seeds; a non-allowlisted
  *     ecosistema gets none.
+ *   · 🔴 The author kept visible (`authors_kept`) is no node: no seed, and
+ *     nothing the model calls them.
  *
  * Harness: `lib/testing/realPostgres.ts`. No docker → SKIP. The model is a stub.
  */
@@ -98,13 +100,13 @@ const entityTypes = async (key: string) =>
     (r) => String(r.type),
   )
 
-const run = (docId: number, org = SEMIOSIS, text = TEXT) =>
+const run = (docId: number, org = SEMIOSIS, text = TEXT, anonymise = false) =>
   runGraphExtraction({
     payload: payload as unknown as GraphSchedulerPayload,
     docId,
     organizationId: org,
     contentKind: 'documento',
-    anonymise: false,
+    anonymise,
     text,
     title: 'Semiosis',
     client,
@@ -520,4 +522,79 @@ describe.skipIf(!dockerOk)('wikilink seeds (real Postgres)', () => {
     await expect(planWikilinkReextraction(pg!.db, { organizationId: SEMIOSIS, ids: [], apply: true })).rejects.toThrow(/empty/)
     await expect(planWikilinkReextraction(pg!.db, { organizationId: OTHER, apply: false })).rejects.toThrow(/WIKILINK_SEED_ORGS/)
   }, 30_000)
+
+  describe('🔴 the kept author (authors_kept) is no node', () => {
+    const AUTHOR = 'Ana María Rentería'
+    const KEY = 'ana maria renteria'
+    let nextId = 5000
+    /** A gated note whose redaction shows the uploader, linking to them. */
+    const note = async (authorsKept: unknown, name = 'Charla') => {
+      const id = nextId++
+      const text = `Soy ${AUTHOR}. Escribo sobre Semiótica.${PAD}`
+      await insert(id, SEMIOSIS, 'pending', { anonymise: true, status: 'ready', redacted: text }, {
+        body: `Soy [[${AUTHOR}]]. Escribo sobre [[Semiótica]].${PAD}`,
+        text,
+        name,
+      })
+      await pg!.db.execute(sql`UPDATE documents SET authors_kept = ${JSON.stringify(authorsKept)}::jsonb WHERE id = ${id}`)
+      return { id, text }
+    }
+    const kept = [{ name: AUTHOR, model: null, at: '2026-11-04T00:00:00.000Z' }]
+    const wikiLinks = async (id: number) =>
+      ((await q(sql`SELECT wiki_links AS w FROM documents WHERE id = ${id}`))[0]!.w as { label: string }[] | null)?.map((l) => l.label)
+
+    beforeAll(async () => {
+      // A model-written tema with the author's name, live in ANOTHER document: what a seed attaches to.
+      await pg!.db.execute(sql`INSERT INTO graph_entities (organization_id, type, label, canonical_key, aliases, public_figure)
+                               VALUES (${SEMIOSIS}, 'tema', ${AUTHOR}, ${KEY}, '[]'::jsonb, false)`)
+      await pg!.db.execute(sql`
+        INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences)
+        SELECT ${SEMIOSIS}, ${PEIRCE_SOURCE}, id, 1 FROM graph_entities
+         WHERE organization_id = ${SEMIOSIS} AND canonical_key = ${KEY} AND type = 'tema'`)
+    })
+
+    const SEMIOTICA = { tipo: 'tema', etiqueta: 'Semiótica', menciones: 1 }
+
+    it('silent model + [[author]] + a live tema elsewhere: no seed', async () => {
+      const { id, text } = await note(kept)
+      reply = [SEMIOTICA]
+      expect(await run(id, SEMIOSIS, text, true)).toBe('ready')
+      expect(await keysFor(id)).toEqual(['tema:semiotica'])
+      expect(await wikiLinks(id)).toEqual(['Semiótica'])
+    }, 30_000)
+
+    it('the same note without the log: the same link does attach, so the log is what stops it', async () => {
+      const { id, text } = await note(null)
+      reply = [SEMIOTICA]
+      expect(await run(id, SEMIOSIS, text, true)).toBe('ready')
+      expect(await keysFor(id)).toEqual([`tema:${KEY}`, 'tema:semiotica'])
+    }, 30_000)
+
+    it.each([
+      ['a tema', { tipo: 'tema', etiqueta: AUTHOR, menciones: 2 }],
+      ['an organizacion', { tipo: 'organizacion', etiqueta: AUTHOR, menciones: 2 }],
+      ['a public persona', { tipo: 'persona', etiqueta: AUTHOR, menciones: 2, figura_publica: true }],
+      ['a variant with the surname', { tipo: 'tema', etiqueta: 'Ana Rentería', menciones: 2 }],
+    ])('the model calling the author %s stores nothing for them, and no edge', async (_what, entidad) => {
+      const { id, text } = await note(kept)
+      reply = [SEMIOTICA, entidad]
+      expect(await run(id, SEMIOSIS, text, true)).toBe('ready')
+      expect(await keysFor(id)).toEqual(['tema:semiotica'])
+    }, 30_000)
+
+    it('a note titled with the author\'s name gets no title node', async () => {
+      const { id, text } = await note(kept, AUTHOR)
+      reply = [SEMIOTICA]
+      expect(await run(id, SEMIOSIS, text, true)).toBe('ready')
+      expect(await keysFor(id)).toEqual(['tema:semiotica'])
+      expect((await q(sql`SELECT count(*)::int AS n FROM graph_relations WHERE document_id = ${id}`))[0]!.n).toBe(0)
+    }, 30_000)
+
+    it('another name beside the author is untouched', async () => {
+      const { id, text } = await note(kept)
+      reply = [SEMIOTICA, { tipo: 'persona', etiqueta: 'Umberto Eco', menciones: 1, figura_publica: true }]
+      expect(await run(id, SEMIOSIS, text, true)).toBe('ready')
+      expect(await keysFor(id)).toEqual(['tema:semiotica', 'persona:umberto eco'])
+    }, 30_000)
+  })
 })

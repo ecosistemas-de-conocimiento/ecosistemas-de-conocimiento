@@ -26,7 +26,7 @@ import { updateDocumentColumns, type DocumentColumnsPayload } from '@/lib/docume
 import { extractGraph, type GraphGenerateClient } from './extract'
 import { GRAPH_PROMPT_VERSION } from './prompt'
 import type { GraphStatus } from './types'
-import { keptPublicFigureNames, mergeWikiSeeds, wikiSeedsForRow, type WikiSeeds } from './wikilinks'
+import { dropKeptAuthors, keptLogNames, mergeWikiSeeds, wikiSeedsForRow, type WikiSeeds } from './wikilinks'
 import { findSeedEntities, pruneDeadSeeds, writeGraphForDocument, type GraphWriterPayload } from './writer'
 
 /**
@@ -274,8 +274,9 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     // `findSeedEntities`, live = a model-written mention in another note).
     const seeds = beforeWrite.ok ? beforeWrite.seeds : null
     const stored = await findSeedEntities(payload.db.drizzle, organizationId, docId, seeds)
-    const merged = mergeWikiSeeds(extraction, seeds, {
-      personaLabels: [...(beforeWrite.ok ? (beforeWrite.personaLabels ?? []) : []), ...stored.personaKeys],
+    const authorNames = beforeWrite.ok ? (beforeWrite.authorNames ?? []) : []
+    const merged = mergeWikiSeeds(dropKeptAuthors(extraction, authorNames), seeds, {
+      personaLabels: [...(beforeWrite.ok ? (beforeWrite.personaLabels ?? []) : []), ...authorNames, ...stored.personaKeys],
       known: stored.known,
     })
     const seeded = merged.extraction
@@ -395,6 +396,8 @@ type GraphableRow =
       seeds?: WikiSeeds | null
       /** Kept public figures on the row: never a seed `tema`. */
       personaLabels?: string[]
+      /** The author left visible on the row: never a node (`dropKeptAuthors`). */
+      authorNames?: string[]
     }
   | { ok: false; reason: string }
 
@@ -422,7 +425,8 @@ async function readGraphableRow(
     anonymise: anonymiseRequested(row.anonymise),
     publicationStatus: row.publicationStatus,
     seeds: wikiLinkSeedingEnabled(organizationId) ? wikiSeedsForRow(row, corpus.text, rowMustPassGate(row)) : null,
-    personaLabels: keptPublicFigureNames(row.publicFiguresKept),
+    personaLabels: keptLogNames(row.publicFiguresKept),
+    authorNames: keptLogNames(row.authorsKept),
   }
 }
 

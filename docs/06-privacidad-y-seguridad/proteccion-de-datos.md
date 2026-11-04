@@ -220,12 +220,13 @@ Reglas de uso:
 
 ## 6. Grafo del corpus
 
-El grafo muestra temas, lugares, eventos, organizaciones y personas mencionados en el acervo, y sus relaciones. Se extrae con un modelo de lenguaje y se guarda en tablas `graph_*` de `edc_backend`. Tiene cuatro controles de privacidad:
+El grafo muestra temas, lugares, eventos, organizaciones y personas mencionados en el acervo, y sus relaciones. Se extrae con un modelo de lenguaje y se guarda en tablas `graph_*` de `edc_backend`. Tiene cinco controles de privacidad:
 
 1. **Solo texto anonimizado.** La extracción usa `corpusTextFor`, que entrega el texto redactado de todo contenido con compuerta, y exige que el documento esté en `ready` o `approved` (`lib/graph/backfill.ts`). Nunca lee `extractedText`.
 2. **Sin personas de testimonio ni de conversación.** El tipo `persona` solo se admite si viene de un `documento` y se trata de una figura pública (`personaAllowed` en `lib/graph/types.ts`). La regla se aplica en tres capas: el esquema de la extracción, la función de filtro y un filtro SQL en cada consulta de lectura, con pruebas (`gateSites.testutil.ts`).
 3. **Solo publicado y del mismo ecosistema.** Las consultas del grafo filtran por documentos publicados y por organización.
-4. **Soporte mínimo.** Una entidad o relación aparece solo si la sostienen al menos N documentos. El valor por defecto es 1 (`GRAPH_MIN_ENTITY_DOCS_DEFAULT` en `lib/graph/queries.ts`), por decisión del responsable del 2026-10-21: los nombres llegan ya anonimizados, así que el umbral es una medida general de privacidad y no el control principal. El valor se puede subir por entorno con `GRAPH_MIN_ENTITY_DOCS`, `GRAPH_MIN_EDGE_DOCS` y `GRAPH_MIN_COMENTION_DOCS`.
+4. **El nombre conservado de quien subió no es un nodo.** Aunque ese nombre esté visible en el texto, lo que el modelo extraiga con él, de cualquier tipo, y los enlaces `[[…]]` que lo nombren se descartan (`documents.authors_kept`, `lib/graph/schedule.ts`). También se descarta lo que termina en su apellido.
+5. **Soporte mínimo.** Una entidad o relación aparece solo si la sostienen al menos N documentos. El valor por defecto es 1 (`GRAPH_MIN_ENTITY_DOCS_DEFAULT` en `lib/graph/queries.ts`), por decisión del responsable del 2026-10-21: los nombres llegan ya anonimizados, así que el umbral es una medida general de privacidad y no el control principal. El valor se puede subir por entorno con `GRAPH_MIN_ENTITY_DOCS`, `GRAPH_MIN_EDGE_DOCS` y `GRAPH_MIN_COMENTION_DOCS`.
 
 ## 7. Consentimientos del estudiante
 

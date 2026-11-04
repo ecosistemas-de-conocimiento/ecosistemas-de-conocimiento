@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import { extractMarkdownLinks } from '../extract/markdown'
 import type { GraphExtraction } from './types'
+import { canonicalKey } from './normalise'
 import {
+  dropKeptAuthors,
   emptyExtraction,
   mergeWikiSeeds,
   nameForms,
@@ -187,5 +189,33 @@ describe('personaBlocker (alias-aware, audit 2026-10-28 item 3)', () => {
     ]
     expect(splitStoredSeedEntities(rows).known).toEqual([])
     expect(splitStoredSeedEntities(rows.slice(1), ['El lingüista']).known).toEqual([])
+  })
+})
+
+describe('dropKeptAuthors', () => {
+  const entity = (label: string, aliases: string[] = []) =>
+    ({ type: 'tema', label, canonicalKey: canonicalKey(label), occurrences: 1, aliases, snippet: null }) as GraphExtraction['entities'][number]
+  const extraction = (): GraphExtraction => ({
+    ...emptyExtraction('v'),
+    entities: [entity('Ana María Rentería'), entity('Semiótica'), entity('La autora', ['Ana María Rentería']), entity('Signo')],
+    relations: [
+      { fromKey: 'semiotica', toKey: 'ana maria renteria', type: 'relacionado_con' },
+      { fromKey: 'la autora', toKey: 'signo', type: 'relacionado_con' },
+      { fromKey: 'semiotica', toKey: 'signo', type: 'relacionado_con' },
+    ],
+  })
+
+  it('drops the name, an alias of it and their edges; the input is not touched', () => {
+    const input = extraction()
+    const out = dropKeptAuthors(input, ['Ana María Rentería'])
+    expect(out.entities.map((e) => e.label)).toEqual(['Semiótica', 'Signo'])
+    expect(out.relations).toEqual([{ fromKey: 'semiotica', toKey: 'signo', type: 'relacionado_con' }])
+    expect(input.entities).toHaveLength(4)
+  })
+
+  it('without an author, or with another one, nothing goes', () => {
+    const input = extraction()
+    expect(dropKeptAuthors(input, [])).toBe(input)
+    expect(dropKeptAuthors(input, ['Luis Gómez'])).toBe(input)
   })
 })

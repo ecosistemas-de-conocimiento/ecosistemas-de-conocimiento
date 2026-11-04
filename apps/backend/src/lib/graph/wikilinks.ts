@@ -38,7 +38,8 @@
  *   5. 🔴 NEVER A PERSONA. Dropped when the model typed the key `persona` in
  *      this run (kept or dropped by the person rule), when ANY stored node in
  *      the ecosistema with that key is a `persona`, or when it is a kept public
- *      figure. The ingest run looks the stored personas up (`writer.ts`
+ *      figure or the author kept visible ({@link dropKeptAuthors}). The ingest
+ *      run looks the stored personas up (`writer.ts`
  *      `findSeedEntities`, split by {@link splitStoredSeedEntities}).
  *      There is no model-less path: every seed is judged in a model run of
  *      its own note.
@@ -242,6 +243,29 @@ export function mergeWikiSeeds(
   return { extraction: { ...extraction, entities, relations }, links: links.length > 0 ? links : null }
 }
 
+/**
+ * 🔴 THE AUTHOR KEPT VISIBLE IS NO NODE (`documents.authorsKept`). The gate left
+ * their whole name in the text, so the model can read it and call it anything:
+ * a `tema`, an `organizacion`, a public `persona`. Being shown as the author of
+ * this document does not make them a topic of the ecosistema. Every entity
+ * with that name, an alias of it or its surname goes, and so do its edges.
+ * Same forms as {@link personaBlocker}: "Ana Rentería" goes for "Ana María
+ * Rentería"; fails closed, so a "Colonia Rentería" goes too, in this document.
+ * The input is not mutated.
+ */
+export function dropKeptAuthors(extraction: GraphExtraction, authorNames: readonly string[]): GraphExtraction {
+  if (authorNames.length === 0) return extraction
+  const blocked = personaBlocker(authorNames)
+  const gone = new Set<string>()
+  const entities = extraction.entities.filter((e) => {
+    if (![e.label, e.canonicalKey, ...(e.aliases ?? [])].some((l) => blocked(canonicalKey(l)))) return true
+    gone.add(e.canonicalKey || canonicalKey(e.label))
+    return false
+  })
+  if (gone.size === 0) return extraction
+  return { ...extraction, entities, relations: extraction.relations.filter((r) => !gone.has(r.fromKey) && !gone.has(r.toKey)) }
+}
+
 /** 🔴 The keys a seed may never take: the model's personas plus `personaLabels`. */
 export function personaKeysOf(extraction: GraphExtraction, personaLabels: readonly string[] = []): Set<string> {
   const keys = new Set<string>(personaLabels.map((l) => canonicalKey(l)).filter(Boolean))
@@ -370,8 +394,8 @@ export function wikiSeedsForRow(
   return { title, links }
 }
 
-/** The names on `documents.publicFiguresKept`: never a seed `tema`. */
-export function keptPublicFigureNames(raw: unknown): string[] {
+/** The names on a keep log, `documents.publicFiguresKept` or `documents.authorsKept`. */
+export function keptLogNames(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
   return raw
     .map((e) => (e && typeof e === 'object' ? (e as { name?: unknown }).name : null))
