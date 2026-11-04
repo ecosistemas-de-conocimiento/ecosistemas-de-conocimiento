@@ -1260,8 +1260,8 @@ cache 0.
 All measured by the deploy agent unless marked. Staging was not touched: it has no `COMPOSE_PROFILES`,
 no `PUBLIC_AUDIO_UPLOAD_ENABLED` and keeps DeepInfra rerank.
 
-**The Spark is not our box.** It is the owner's DGX Spark, reached over Tailscale only: edc-1 is
-`<edc-1-tailnet-ip>` on the tailnet, the Spark gateway is `<spark-url>`. That is plain HTTP
+**The Spark is not our box.** It is the owner's DGX Spark, reached over Tailscale only: edc-1 is on
+the tailnet, the Spark gateway is `<spark-url>`. That is plain HTTP
 inside WireGuard, a bearer-token proxy (`~/edc-whisper/proxy.py`). Routes: `POST /inference`
 (whisper.cpp large-v3), `POST /v1/chat/completions` (`qwen3-30b-a3b-instruct-2507`),
 `POST /v1/embeddings`, `POST /v1/rerank` (`qwen3-reranker-0.6b`), `GET /health`. The proxy needs
