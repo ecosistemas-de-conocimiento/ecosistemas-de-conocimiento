@@ -23,34 +23,40 @@ export interface DocumentoGateOptions {
   roster: string[]
   /**
    * 🔴 R60: the document's ACTUAL author, kept visible (`anonymise/authorRestore.ts`):
-   * the uploader's account display name and their roster entry in this
-   * ecosistema. `documents` has no staff-recorded authors field, so this is
-   * the only source. A read that fails gives none (today's behaviour).
+   * the uploader's membership `personName` in this ecosistema. `documents` has no
+   * staff-recorded authors field, so this is the only source. A read that fails
+   * gives none (today's behaviour).
    */
   authors: string[]
 }
 
-/** The uploader's names: their account display name and their membership's `personName` here. */
+/**
+ * The uploader's active membership's `personName` in this ecosistema.
+ *
+ * 🔴 NEVER `users.displayName`: every account edits its own, so an account
+ * named "Carla Méndez" could publish "Autora: Carla Méndez". `personName` only
+ * changes through whoever manages members (`manageAccess` in `Memberships.ts`).
+ * 🔴 FAILS CLOSED: no active membership, no `personName`, or a failed read all
+ * keep no name.
+ */
 async function uploaderNames(
-  payload: Pick<Payload, 'findByID' | 'find'>,
+  payload: Pick<Payload, 'find'>,
   organizationId: number | string,
   uploadedBy: unknown,
 ): Promise<string[]> {
   const id = uploadedBy && typeof uploadedBy === 'object' ? (uploadedBy as { id?: unknown }).id : uploadedBy
   if (typeof id !== 'number' && typeof id !== 'string') return []
   try {
-    const names = new Set<string>()
-    const user = (await payload.findByID({ collection: 'users', id, depth: 0, overrideAccess: true })) as {
-      displayName?: unknown
-    } | null
-    if (typeof user?.displayName === 'string' && user.displayName.trim()) names.add(user.displayName.trim())
     const memberships = await payload.find({
       collection: 'memberships',
-      where: { and: [{ user: { equals: id } }, { organization: { equals: organizationId } }] },
+      where: {
+        and: [{ user: { equals: id } }, { organization: { equals: organizationId } }, { isActive: { equals: true } }],
+      },
       depth: 0,
       pagination: false,
       overrideAccess: true,
     })
+    const names = new Set<string>()
     for (const m of memberships.docs as unknown as Array<{ personName?: unknown }>) {
       if (typeof m.personName === 'string' && m.personName.trim()) names.add(m.personName.trim())
     }

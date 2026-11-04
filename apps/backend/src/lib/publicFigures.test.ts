@@ -8,6 +8,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const roster = vi.fn()
 vi.mock('./conversationIngest', () => ({ rosterForOrganization: roster }))
 
+import { staticDetector } from './anonymise/detector'
+import { runAnonymisationGate } from './anonymise/gate'
 import { invalidateFeatures } from './features'
 import { authorsLog, documentoGateOptions, publicFiguresLog } from './publicFigures'
 
@@ -54,10 +56,11 @@ describe('documentoGateOptions', () => {
 })
 
 describe('documentoGateOptions — R60 authors (the uploader)', () => {
-  const payloadFor = (user: unknown, memberships: unknown[] | Error) =>
+  /** An account whose own `displayName` is `displayName`, with these memberships. */
+  const payloadFor = (displayName: string, memberships: unknown[] | Error) =>
     ({
       findByID: vi.fn(async ({ collection }: { collection: string }) =>
-        collection === 'users' ? user : { features: { keepPublicFigures: false } },
+        collection === 'users' ? { displayName } : { features: { keepPublicFigures: false } },
       ),
       find: vi.fn(async () => {
         if (memberships instanceof Error) throw memberships
@@ -65,28 +68,67 @@ describe('documentoGateOptions — R60 authors (the uploader)', () => {
       }),
     }) as never
 
-  it('takes the uploader\'s display name and their roster entry here', async () => {
-    const payload = payloadFor({ displayName: 'Ana Ruiz' }, [{ personName: 'Ana María Ruiz' }])
+  const gated = async (text: string, authors: readonly string[]) => {
+    const result = await runAnonymisationGate({ contentKind: 'documento', text, authors }, { detector: staticDetector([]) })
+    expect(result.status).toBe('ready')
+    return result.status === 'ready' ? result.redactedText : ''
+  }
+
+  it('takes the active membership\'s personName here, scoped to this ecosistema', async () => {
+    const payload = payloadFor('Otro Nombre', [{ personName: 'Ana María Ruiz' }])
     const out = await documentoGateOptions(payload, 1, { contentKind: 'documento', uploadedBy: 7 })
-    expect(out.authors).toEqual(['Ana Ruiz', 'Ana María Ruiz'])
+    expect(out.authors).toEqual(['Ana María Ruiz'])
     const find = (payload as unknown as { find: ReturnType<typeof vi.fn> }).find
     expect(find.mock.calls[0]?.[0]).toMatchObject({
       collection: 'memberships',
-      where: { and: [{ user: { equals: 7 } }, { organization: { equals: 1 } }] },
+      where: { and: [{ user: { equals: 7 } }, { organization: { equals: 1 } }, { isActive: { equals: true } }] },
     })
   })
 
   it('reads a populated uploadedBy too', async () => {
-    const out = await documentoGateOptions(payloadFor({ displayName: 'Ana Ruiz' }, []), 1, {
+    const out = await documentoGateOptions(payloadFor('x', [{ personName: 'Ana Ruiz' }]), 1, {
       contentKind: 'documento',
       uploadedBy: { id: 7 },
     })
     expect(out.authors).toEqual(['Ana Ruiz'])
   })
 
+  it('positive: an uploader whose personName is Ana Ruiz keeps "Autora: Ana Ruiz"', async () => {
+    const { authors } = await documentoGateOptions(payloadFor('Ana Ruiz', [{ personName: 'Ana Ruiz' }]), 1, {
+      contentKind: 'documento',
+      uploadedBy: 7,
+    })
+    expect(await gated('Autora: Ana Ruiz\n\nAna Ruiz firmó.', authors)).toBe('Autora: Ana Ruiz\n\nAna Ruiz firmó.')
+  })
+
+  it('🔴 impersonation: displayName = "Carla Méndez" with no personName keeps nobody', async () => {
+    const payload = payloadFor('Carla Méndez', [{ personName: '  ' }])
+    const { authors } = await documentoGateOptions(payload, 1, { contentKind: 'documento', uploadedBy: 7 })
+    expect(authors).toEqual([])
+    const out = await gated('Autora: Carla Méndez\n\nCarla Méndez reprobó.', authors)
+    expect(out).not.toContain('Carla')
+    expect(out).not.toContain('Méndez')
+  })
+
+  it('🔴 impersonation: displayName = "Carla Méndez" with another personName keeps only that one', async () => {
+    const payload = payloadFor('Carla Méndez', [{ personName: 'Ana Ruiz' }])
+    const { authors } = await documentoGateOptions(payload, 1, { contentKind: 'documento', uploadedBy: 7 })
+    expect(authors).toEqual(['Ana Ruiz'])
+    const out = await gated('Autora: Carla Méndez\n\nCarla Méndez reprobó.', authors)
+    expect(out).not.toContain('Carla')
+    expect(out).not.toContain('Méndez')
+    const reads = (payload as unknown as { findByID: ReturnType<typeof vi.fn> }).findByID.mock.calls
+    expect(reads.some(([arg]) => (arg as { collection: string }).collection === 'users')).toBe(false)
+  })
+
+  it('🔴 no active membership keeps nobody', async () => {
+    const out = await documentoGateOptions(payloadFor('Ana Ruiz', []), 1, { contentKind: 'documento', uploadedBy: 7 })
+    expect(out.authors).toEqual([])
+  })
+
   it('🔴 an unreadable uploader keeps no author, and nothing else changes', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const out = await documentoGateOptions(payloadFor({ displayName: 'Ana Ruiz' }, new Error('db down')), 1, {
+    const out = await documentoGateOptions(payloadFor('Ana Ruiz', new Error('db down')), 1, {
       contentKind: 'documento',
       uploadedBy: 7,
     })
@@ -95,7 +137,7 @@ describe('documentoGateOptions — R60 authors (the uploader)', () => {
   })
 
   it('no uploader, no author', async () => {
-    const out = await documentoGateOptions(payloadFor(null, []), 1, { contentKind: 'documento' })
+    const out = await documentoGateOptions(payloadFor('Ana Ruiz', [{ personName: 'Ana Ruiz' }]), 1, { contentKind: 'documento' })
     expect(out.authors).toEqual([])
   })
 })

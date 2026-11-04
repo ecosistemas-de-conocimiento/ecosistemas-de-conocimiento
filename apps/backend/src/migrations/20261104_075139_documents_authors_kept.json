@@ -1,5 +1,5 @@
 {
-  "id": "b8b7e159-4e83-4e56-9e48-a45d9df4ce40",
+  "id": "7f820e5e-17d6-457a-8305-ee85dc330bbc",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1024,6 +1024,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "held_text_hash": {
+          "name": "held_text_hash",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
         "anonymisation_survivors": {
           "name": "anonymisation_survivors",
           "type": "jsonb",
@@ -1079,6 +1085,24 @@
         },
         "body_markdown": {
           "name": "body_markdown",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "processed_body": {
+          "name": "processed_body",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revision_of_id": {
+          "name": "revision_of_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reindex_ingest_id": {
+          "name": "reindex_ingest_id",
           "type": "varchar",
           "primaryKey": false,
           "notNull": false
@@ -1294,6 +1318,21 @@
           "method": "btree",
           "with": {}
         },
+        "documents_revision_of_idx": {
+          "name": "documents_revision_of_idx",
+          "columns": [
+            {
+              "expression": "revision_of_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "documents_media_file_idx": {
           "name": "documents_media_file_idx",
           "columns": [
@@ -1418,6 +1457,19 @@
           "tableTo": "sessions",
           "columnsFrom": [
             "uploaded_in_session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "documents_revision_of_id_documents_id_fk": {
+          "name": "documents_revision_of_id_documents_id_fk",
+          "tableFrom": "documents",
+          "tableTo": "documents",
+          "columnsFrom": [
+            "revision_of_id"
           ],
           "columnsTo": [
             "id"
@@ -1841,6 +1893,12 @@
           "primaryKey": false,
           "notNull": false,
           "default": "'New chat'"
+        },
+        "eval_run": {
+          "name": "eval_run",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
         },
         "last_used_at": {
           "name": "last_used_at",
@@ -4031,6 +4089,385 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.eval_items": {
+      "name": "eval_items",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "enum_eval_items_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "question": {
+          "name": "question",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expected_doc_ids": {
+          "name": "expected_doc_ids",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "should_refuse": {
+          "name": "should_refuse",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "text": {
+          "name": "text",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "private_names": {
+          "name": "private_names",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "public_names": {
+          "name": "public_names",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "gate_kind": {
+          "name": "gate_kind",
+          "type": "enum_eval_items_gate_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'documento'"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "eval_items_organization_idx": {
+          "name": "eval_items_organization_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "eval_items_updated_at_idx": {
+          "name": "eval_items_updated_at_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "eval_items_created_at_idx": {
+          "name": "eval_items_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "eval_items_organization_id_organizations_id_fk": {
+          "name": "eval_items_organization_id_organizations_id_fk",
+          "tableFrom": "eval_items",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.eval_runs": {
+      "name": "eval_runs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "enum_eval_runs_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'queued'"
+        },
+        "triggered_by_id": {
+          "name": "triggered_by_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "estimate_usd": {
+          "name": "estimate_usd",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cost_usd": {
+          "name": "cost_usd",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "progress": {
+          "name": "progress",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "models": {
+          "name": "models",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "commit_sha": {
+          "name": "commit_sha",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "metrics": {
+          "name": "metrics",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "results": {
+          "name": "results",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "eval_runs_organization_idx": {
+          "name": "eval_runs_organization_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "eval_runs_status_idx": {
+          "name": "eval_runs_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "eval_runs_triggered_by_idx": {
+          "name": "eval_runs_triggered_by_idx",
+          "columns": [
+            {
+              "expression": "triggered_by_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "eval_runs_updated_at_idx": {
+          "name": "eval_runs_updated_at_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "eval_runs_created_at_idx": {
+          "name": "eval_runs_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "eval_runs_organization_id_organizations_id_fk": {
+          "name": "eval_runs_organization_id_organizations_id_fk",
+          "tableFrom": "eval_runs",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "eval_runs_triggered_by_id_users_id_fk": {
+          "name": "eval_runs_triggered_by_id_users_id_fk",
+          "tableFrom": "eval_runs",
+          "tableTo": "users",
+          "columnsFrom": [
+            "triggered_by_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.ai_service_callbacks": {
       "name": "ai_service_callbacks",
       "schema": "",
@@ -4427,6 +4864,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "eval_items_id": {
+          "name": "eval_items_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "eval_runs_id": {
+          "name": "eval_runs_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "ai_service_callbacks_id": {
           "name": "ai_service_callbacks_id",
           "type": "integer",
@@ -4720,6 +5169,36 @@
           "method": "btree",
           "with": {}
         },
+        "payload_locked_documents_rels_eval_items_id_idx": {
+          "name": "payload_locked_documents_rels_eval_items_id_idx",
+          "columns": [
+            {
+              "expression": "eval_items_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payload_locked_documents_rels_eval_runs_id_idx": {
+          "name": "payload_locked_documents_rels_eval_runs_id_idx",
+          "columns": [
+            {
+              "expression": "eval_runs_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "payload_locked_documents_rels_ai_service_callbacks_id_idx": {
           "name": "payload_locked_documents_rels_ai_service_callbacks_id_idx",
           "columns": [
@@ -4951,6 +5430,32 @@
           "tableTo": "suggestions",
           "columnsFrom": [
             "suggestions_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "payload_locked_documents_rels_eval_items_fk": {
+          "name": "payload_locked_documents_rels_eval_items_fk",
+          "tableFrom": "payload_locked_documents_rels",
+          "tableTo": "eval_items",
+          "columnsFrom": [
+            "eval_items_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "payload_locked_documents_rels_eval_runs_fk": {
+          "name": "payload_locked_documents_rels_eval_runs_fk",
+          "tableFrom": "payload_locked_documents_rels",
+          "tableTo": "eval_runs",
+          "columnsFrom": [
+            "eval_runs_id"
           ],
           "columnsTo": [
             "id"
@@ -5363,6 +5868,7 @@
         "pdf",
         "docx",
         "xlsx",
+        "xls",
         "csv",
         "html",
         "audio"
@@ -5507,6 +6013,32 @@
         "contenido",
         "arquitectura",
         "interaccion"
+      ]
+    },
+    "public.enum_eval_items_kind": {
+      "name": "enum_eval_items_kind",
+      "schema": "public",
+      "values": [
+        "pregunta",
+        "privacidad"
+      ]
+    },
+    "public.enum_eval_items_gate_kind": {
+      "name": "enum_eval_items_gate_kind",
+      "schema": "public",
+      "values": [
+        "documento",
+        "testimonio"
+      ]
+    },
+    "public.enum_eval_runs_status": {
+      "name": "enum_eval_runs_status",
+      "schema": "public",
+      "values": [
+        "queued",
+        "running",
+        "done",
+        "failed"
       ]
     },
     "public.enum_platform_settings_detector_fallback": {

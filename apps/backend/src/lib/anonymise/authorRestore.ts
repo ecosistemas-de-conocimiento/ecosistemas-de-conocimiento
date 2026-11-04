@@ -2,9 +2,9 @@
  * KEEP A DOCUMENT'S ACTUAL AUTHOR — RESTORE AFTER THE FACT (owner ruling R60,
  * 2026-10-28, as clarified the same day).
  *
- * 🔴 WHO IS AN AUTHOR: the document's uploader, by their account display name
- * or their roster entry (`lib/publicFigures.ts` → `documentoGateOptions`).
- * NEVER a name read from the text: a byline is something anyone can type, so
+ * 🔴 WHO IS AN AUTHOR: the document's uploader, by their membership's
+ * `personName` (`lib/publicFigures.ts` → `documentoGateOptions`), never their
+ * self-edited `displayName`. NEVER a name read from the text: a byline is something anyone can type, so
  * a forged "Autora: Carla Méndez" line unhides nobody. `documents` has no
  * staff-recorded authors field, so the uploader is the only source.
  *

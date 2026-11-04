@@ -15,11 +15,11 @@ import * as migration_20261028_054402_student_testimonio_consent from './2026102
 import * as migration_20261028_083327_student_testimonio_consent_version from './20261028_083327_student_testimonio_consent_version';
 import * as migration_20261028_162050_organizations_answer_style from './20261028_162050_organizations_answer_style';
 import * as migration_20261028_170129_documents_wiki_links from './20261028_170129_documents_wiki_links';
-import * as migration_20261028_225918_documents_authors_kept from './20261028_225918_documents_authors_kept';
 import * as migration_20261028_231948_documents_note_revisions from './20261028_231948_documents_note_revisions';
 import * as migration_20261028_235647_documents_kind_xls from './20261028_235647_documents_kind_xls';
 import * as migration_20261029_042255_documents_held_text_hash from './20261029_042255_documents_held_text_hash';
 import * as migration_20261029_060304_evals from './20261029_060304_evals';
+import * as migration_20261104_075139_documents_authors_kept from './20261104_075139_documents_authors_kept';
 
 export const migrations = [
   {
@@ -108,11 +108,6 @@ export const migrations = [
     name: '20261028_170129_documents_wiki_links',
   },
   {
-    up: migration_20261028_225918_documents_authors_kept.up,
-    down: migration_20261028_225918_documents_authors_kept.down,
-    name: '20261028_225918_documents_authors_kept'
-  },
-  {
     up: migration_20261028_231948_documents_note_revisions.up,
     down: migration_20261028_231948_documents_note_revisions.down,
     name: '20261028_231948_documents_note_revisions',
@@ -130,6 +125,11 @@ export const migrations = [
   {
     up: migration_20261029_060304_evals.up,
     down: migration_20261029_060304_evals.down,
-    name: '20261029_060304_evals'
+    name: '20261029_060304_evals',
+  },
+  {
+    up: migration_20261104_075139_documents_authors_kept.up,
+    down: migration_20261104_075139_documents_authors_kept.down,
+    name: '20261104_075139_documents_authors_kept'
   },
 ];

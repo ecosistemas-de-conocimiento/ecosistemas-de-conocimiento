@@ -437,11 +437,15 @@ function isProse(segment: string): boolean {
  * ── 🔴 KEEPING A DOCUMENT'S ACTUAL AUTHORS (owner ruling R60, 2026-10-28) ───
  *
  * "Don't redact authors", clarified by the owner the same day: ONLY the
- * document's actual author — its uploader, by their account name or roster
- * entry. A byline that names anyone else is redacted wherever it sits, so a
+ * document's actual author — its uploader, by their membership's `personName`.
+ * A byline that names anyone else is redacted wherever it sits, so a
  * forged "Autora: …" line (a quote, a list item, a heading, a reference, an
  * interview's "Por:") cannot unhide anybody: the names come from the
- * account, never from the text.
+ * membership, never from the text.
+ *
+ * 🔴 NEVER `users.displayName`: every account edits its own, so an account
+ * named "Carla Méndez" could publish "Autora: Carla Méndez". `personName` only
+ * changes through whoever manages members (`Memberships.ts`, `manageAccess`).
  *
  * Stage 1 itself still redacts every byline. The gate runs it a SECOND time
  * with `keepAuthors` to get the text it restores from (`authorRestore.ts`):
