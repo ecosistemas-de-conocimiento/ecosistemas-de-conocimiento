@@ -163,8 +163,15 @@ export interface AlignedPlaceholder {
  * agree the placement is the only one. When they do not, or the source itself
  * holds placeholder-shaped text, nothing is restored.
  */
-export function alignPlaceholders(source: string, output: string): AlignedPlaceholder[] | null {
-  if (new RegExp(PLACEHOLDER_PATTERN.source).test(source)) return null
+export function alignPlaceholders(
+  source: string,
+  output: string,
+  options: { sourcePlaceholders?: boolean } = {},
+): AlignedPlaceholder[] | null {
+  // ⚠ `sourcePlaceholders` (author restore only): a placeholder already in the
+  // source (stage 1's "[Dato omitido]") is a stretch like any other, and maps
+  // to itself when the placement is unique. Public figures keep the old refusal.
+  if (!options.sourcePlaceholders && new RegExp(PLACEHOLDER_PATTERN.source).test(source)) return null
   const labels: string[] = []
   const literals: string[] = []
   let last = 0
