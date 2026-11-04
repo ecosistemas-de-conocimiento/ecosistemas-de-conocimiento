@@ -44,7 +44,6 @@
  */
 
 import { namePartsOf } from './nameParts'
-import { normaliseName } from './pseudonyms'
 import type { RedactionCount } from './types'
 import { OMITTED_PLACEHOLDER } from './types'
 
@@ -453,14 +452,6 @@ function isProse(segment: string): boolean {
  * written.
  */
 
-/** Folded name parts, as a sorted key: "Ruiz, Ana" and "Ana Ruiz" agree. */
-export function namePartsKey(name: string): string {
-  return namePartsOf(name)
-    .map(normaliseName)
-    .sort()
-    .join(' ')
-}
-
 /**
  * Field labels the additive passes must not take for an author: "Autor: Ana
  * Ruiz | Lugar y fecha" used to come out "[Persona B] y [Dato omitido]", and
@@ -504,10 +495,10 @@ export interface StructuralOptions {
   person?: (name: string) => string
   /**
    * R60: the document's TRUSTED authors (from its uploader's account, never
-   * from the text), each with at least two name parts. A byline piece whose
-   * name parts equal one of them ("Ana Ruiz", "Dra. Ana Ruiz", or the pair
-   * "Ruiz, Ana") is LEFT AS WRITTEN and its range returned in `bylines`.
-   * Every other piece is redacted as without it.
+   * from the text), each with at least two name parts. A byline piece that IS
+   * one of them, exactly as written there, is LEFT AS WRITTEN and its range
+   * returned in `bylines`. Every other piece ("Dra. Ana Ruiz", the pair "Ruiz,
+   * Ana", "ANA RUIZ", "Ana") is redacted as without it.
    */
   keepAuthors?: readonly string[]
 }
@@ -530,7 +521,7 @@ export function structuralPass(
   let authors = 0
 
   // 🔴 Noncharacters out first: the sentinels below must be the only ones (audit 4).
-  const trusted = new Set((options.keepAuthors ?? []).map(namePartsKey).filter((k) => k.includes(' ')))
+  const trusted = new Set((options.keepAuthors ?? []).filter((name) => namePartsOf(name).length >= 2))
   let out = text.replace(NONCHARACTERS, REPLACEMENT_CHARACTER)
 
   out = out.replace(ISO_DATE, (_m, year: string, month: string) => {
@@ -579,8 +570,7 @@ export function structuralPass(
 
   // Each author on its own: "Ana Ruiz y Luis Gómez" is two people, two labels.
   // A piece with no capital letter ("anónimo") gets no person label.
-  // R60: a piece naming a trusted author, alone or as the pair "Ruiz, Ana",
-  // is held as written instead.
+  // R60: a piece that is a trusted author's whole name is held as written instead.
   const keptIds = new Set<number>()
   const holdKept = (piece: string): string => {
     const r = hold(piece)
@@ -597,22 +587,9 @@ export function structuralPass(
   const keptPieces = (split: string[]): Set<number> => {
     const keep = new Set<number>()
     if (trusted.size === 0) return keep
-    const clean = (piece: string) => KEEPABLE_PIECE.test(piece)
     for (let i = 0; i < split.length; i += 2) {
       const piece = split[i] as string
-      const next = split[i + 2]
-      if (clean(piece) && trusted.has(namePartsKey(piece))) keep.add(i)
-      else if (
-        next !== undefined &&
-        (split[i + 1] as string).trim() === ',' &&
-        clean(piece) &&
-        clean(next) &&
-        trusted.has(namePartsKey(`${next} ${piece}`))
-      ) {
-        keep.add(i)
-        keep.add(i + 2)
-        i += 2
-      }
+      if (KEEPABLE_PIECE.test(piece) && trusted.has(piece.trim())) keep.add(i)
     }
     return keep
   }

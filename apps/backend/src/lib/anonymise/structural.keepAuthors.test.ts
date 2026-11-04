@@ -10,8 +10,6 @@ import { describe, expect, it } from 'vitest'
 import { restoreAuthors } from './authorRestore'
 import { splitAuthors, structuralPass } from './structural'
 
-const noEvidence = { stage3: [], verify: [], unlocated: [], roster: [], structural: [] }
-
 function pass(text: string, keepAuthors: string[]): { text: string; labelled: string[]; bylines: string[] } {
   const labelled: string[] = []
   const out = structuralPass(text, {
@@ -32,10 +30,14 @@ describe('structuralPass — keepAuthors', () => {
     expect(r.bylines).toEqual(['Ana Ruiz'])
   })
 
-  it('matches by name parts: titles, order and case of the account name do not matter', () => {
-    expect(pass('Autora: Dra. Ana Ruiz', ['Ana Ruiz']).bylines).toEqual(['Dra. Ana Ruiz'])
-    expect(pass('Autores: Ruiz, Ana y Gómez, Luis', ['Ana Ruiz']).text).toBe('Autores: Ruiz, Ana y [Persona A], [Persona A]')
-    expect(pass('Autores: Ruiz, Ana y Gómez, Luis', ['Ana Ruiz']).bylines).toEqual(['Ruiz', 'Ana'])
+  it('🔴 keeps only the whole name as written: no title, reordering or other case', () => {
+    expect(pass('Autora: Ana Ruiz', ['Ana Ruiz']).bylines).toEqual(['Ana Ruiz'])
+    expect(pass('Autora: Dra. Ana Ruiz', ['Ana Ruiz']).bylines).toEqual([])
+    expect(pass('Autores: Ruiz, Ana y Gómez, Luis', ['Ana Ruiz']).text).toBe('Autores: [Persona A], [Persona A] y [Persona A], [Persona A]')
+    expect(pass('Autores: Ruiz, Ana', ['Ana Ruiz']).bylines).toEqual([])
+    expect(pass('Autora: ANA RUIZ', ['Ana Ruiz']).bylines).toEqual([])
+    expect(pass('Autora: ana ruiz', ['Ana Ruiz']).bylines).toEqual([])
+    expect(pass('Autora: Ana Ruiz', ['ana ruiz']).bylines).toEqual([])
   })
 
   it('🔴 a part of the author is not the author', () => {
@@ -94,9 +96,9 @@ describe('restoreAuthors — guards', () => {
   it('🔴 whole word: a placeholder that ended mid-word is not restored', () => {
     const source = 'Autora: x\n\nAna Ruizito llegó.'
     const output = 'Autora: x\n\n[Persona A]ito llegó.'
-    expect(restoreAuthors(source, output, ['Ana Ruiz'], noEvidence).text).toBe(output)
+    expect(restoreAuthors(source, output, ['Ana Ruiz']).text).toBe(output)
     // The same text on a word boundary comes back.
-    expect(restoreAuthors('Ana Ruiz llegó.', '[Persona A] llegó.', ['Ana Ruiz'], noEvidence).text).toBe('Ana Ruiz llegó.')
+    expect(restoreAuthors('Ana Ruiz llegó.', '[Persona A] llegó.', ['Ana Ruiz']).text).toBe('Ana Ruiz llegó.')
   })
 
   it.each([
@@ -106,27 +108,62 @@ describe('restoreAuthors — guards', () => {
     ['Ana Ruiz de la Vega llegó.', '[Persona A] de la [Persona B] llegó.'],
     ['Ana Ruiz Pérez llegó.', '[Persona A] [Persona B] llegó.'],
   ])('🔴 glue: %j stays redacted', (source, output) => {
-    expect(restoreAuthors(source, output, ['Ana Ruiz'], noEvidence).text).toBe(output)
+    expect(restoreAuthors(source, output, ['Ana Ruiz']).text).toBe(output)
   })
 
   it('🔴 byline: a kept piece comes back even glued; the same text outside one does not', () => {
     const source = 'Autores: Ana Ruiz y Pedro Gómez'
     const output = 'Autores: [Persona A] y [Persona B]'
     const at = source.indexOf('Ana Ruiz')
-    expect(restoreAuthors(source, output, ['Ana Ruiz'], noEvidence, [[at, at + 8]]).text).toBe('Autores: Ana Ruiz y [Persona B]')
-    expect(restoreAuthors(source, output, ['Ana Ruiz'], noEvidence).text).toBe(output)
+    expect(restoreAuthors(source, output, ['Ana Ruiz'], [[at, at + 8]]).text).toBe('Autores: Ana Ruiz y [Persona B]')
+    expect(restoreAuthors(source, output, ['Ana Ruiz']).text).toBe(output)
   })
 
   it('🔴 lower case is never restored outside a byline', () => {
-    expect(restoreAuthors('la otra es ana ruiz.', 'la otra es [Persona A].', ['Ana Ruiz'], noEvidence).text).toBe(
+    expect(restoreAuthors('la otra es ana ruiz.', 'la otra es [Persona A].', ['Ana Ruiz']).text).toBe(
       'la otra es [Persona A].',
     )
   })
 
-  it('🔴 shared: a stage-1 name sharing the part keeps the bare part redacted', () => {
-    const r = restoreAuthors('Ruiz habló.', '[Persona A] habló.', ['Ana Ruiz'], { ...noEvidence, structural: ['Pedro Ruiz'] })
-    expect(r.text).toBe('[Persona A] habló.')
-    expect(restoreAuthors('Ruiz habló.', '[Persona A] habló.', ['Ana Ruiz'], noEvidence).text).toBe('Ruiz habló.')
+  it.each([
+    ['María me contó su caso.', '[Persona A] me contó su caso.', 'Ana María López'],
+    ['Ana me contó su caso.', '[Persona A] me contó su caso.', 'Ana María López'],
+    ['López me contó su caso.', '[Persona A] me contó su caso.', 'Ana María López'],
+    ['Ana López me contó su caso.', '[Persona A] me contó su caso.', 'Ana María López'],
+    ['María López me contó su caso.', '[Persona A] me contó su caso.', 'Ana María López'],
+    ['Carlos me contó su caso.', '[Persona A] me contó su caso.', 'Juan Carlos Pérez'],
+    ['Juan Carlos me contó su caso.', '[Persona A] me contó su caso.', 'Juan Carlos Pérez'],
+    ['Pérez me contó su caso.', '[Persona A] me contó su caso.', 'Juan Carlos Pérez'],
+    ['Guadalupe me contó su caso.', '[Persona A] me contó su caso.', 'María Guadalupe'],
+    ['María me contó su caso.', '[Persona A] me contó su caso.', 'María Guadalupe'],
+    ['Ruiz habló.', '[Persona A] habló.', 'Ana Ruiz'],
+    ['Ruiz, Ana habló.', '[Persona A] habló.', 'Ana Ruiz'],
+    ['Dra. Ana Ruiz habló.', '[Persona A] habló.', 'Ana Ruiz'],
+    ['ANA RUIZ habló.', '[Persona A] habló.', 'Ana Ruiz'],
+    ['Ana Ruiz habló.', '[Persona A] habló.', 'ana ruiz'],
+    ['Ana Ruíz habló.', '[Persona A] habló.', 'Ana Ruiz'],
+    ['Ana  Ruiz habló.', '[Persona A] habló.', 'Ana Ruiz'],
+  ])('🔴 part or variant: %j stays redacted when the author is %j', (source, output, author) => {
+    expect(restoreAuthors(source, output, [author])).toEqual({ text: output, kept: [] })
+  })
+
+  it('🔴 a part stays redacted even inside a range stage 1 reports as a byline', () => {
+    const source = 'Autora: María'
+    const output = 'Autora: [Persona A]'
+    const at = source.indexOf('María')
+    expect(restoreAuthors(source, output, ['Ana María López'], [[at, at + 5]])).toEqual({ text: output, kept: [] })
+  })
+
+  it.each([['Ana María López'], ['Juan Carlos Pérez'], ['María Guadalupe'], ['Ana de la Cruz']])(
+    'the whole name %j comes back',
+    (author) => {
+      expect(restoreAuthors(`${author} llegó.`, '[Persona A] llegó.', [author])).toEqual({ text: `${author} llegó.`, kept: [author] })
+    },
+  )
+
+  it('🔴 a one-part name keeps nothing, even when it matches', () => {
+    expect(restoreAuthors('Ruiz habló.', '[Persona A] habló.', ['Ruiz']).text).toBe('[Persona A] habló.')
+    expect(restoreAuthors('Ana Ana habló.', '[Persona A] habló.', ['Ana Ana']).text).toBe('[Persona A] habló.')
   })
 })
 
@@ -174,7 +211,7 @@ describe('linear time', () => {
     const small = doc(280)
     const big = doc(2240)
     const run = (d: { source: string; output: string }) => () => {
-      const r = restoreAuthors(d.source, d.output, ['Ana Ruiz'], noEvidence)
+      const r = restoreAuthors(d.source, d.output, ['Ana Ruiz'])
       expect(r.text === d.output.replaceAll('[Persona A]', 'Ana Ruiz')).toBe(true) // never diff 2 MB strings
     }
     run(small)()

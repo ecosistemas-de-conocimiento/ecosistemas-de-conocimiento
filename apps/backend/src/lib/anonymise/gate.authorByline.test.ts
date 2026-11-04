@@ -69,15 +69,20 @@ describe('no author given — the byline is redacted, with the body\'s label', (
 })
 
 describe('R60 — the uploader stays visible', () => {
-  it('keeps the author in the byline and in every body mention', async () => {
-    const text = 'Autora: Ana Ruiz\n\nAna Ruiz coordinó el taller. Ruiz escribió el informe.'
-    const result = await run(text, ['Ana Ruiz'])
+  it('keeps the whole name in the byline and in the body; a bare surname stays redacted', async () => {
+    const result = await run('Autora: Ana Ruiz\n\nAna Ruiz coordinó el taller. Ruiz escribió el informe.', ['Ana Ruiz'])
     expect(result.status).toBe('ready')
     if (result.status !== 'ready') return
-    expect(result.redactedText).toBe(text)
-    expect(result.keptAuthors).toEqual(['Ana Ruiz', 'Ruiz'])
-    // 🔴 The count matches the text: the restored author is no pseudonym.
-    expect(result.report.pseudonyms).toBe(0)
+    expect(result.redactedText).toBe('Autora: Ana Ruiz\n\nAna Ruiz coordinó el taller. [Persona A] escribió el informe.')
+    expect(result.keptAuthors).toEqual(['Ana Ruiz'])
+    expect(result.report.pseudonyms).toBe(1)
+  })
+
+  it('🔴 the count matches the text: an author restored everywhere is no pseudonym', async () => {
+    const text = 'Autora: Ana Ruiz\n\nAna Ruiz coordinó el taller.'
+    const result = await run(text, ['Ana Ruiz'])
+    expect(result.status === 'ready' && result.redactedText).toBe(text)
+    expect(result.status === 'ready' && result.report.pseudonyms).toBe(0)
   })
 
   it('without authors the same document is redacted as before', async () => {
@@ -109,17 +114,26 @@ describe('R60 — the uploader stays visible', () => {
     absent(out, ['Luis', 'Gómez', 'Eva', 'Paz'])
   })
 
-  it('keeps a surname-first byline and the natural-order name in the body', async () => {
-    const text = 'Autores: Ruiz, Ana y Gómez, Luis\n\nAna Ruiz escribió esto.'
-    const out = await gate(text, ['Ana Ruiz'])
-    expect(out.startsWith('Autores: Ruiz, Ana y ')).toBe(true)
+  it('🔴 a surname-first byline is no longer the name as written: redacted; the name in the body stays', async () => {
+    const out = await gate('Autores: Ruiz, Ana y Gómez, Luis\n\nAna Ruiz escribió esto.', ['Ana Ruiz'])
     expect(out.endsWith('\n\nAna Ruiz escribió esto.')).toBe(true)
-    absent(out, ['Luis', 'Gómez'])
+    absent(out.slice(0, out.indexOf('\n\n')), ['Ana', 'Ruiz', 'Luis', 'Gómez'])
   })
 
-  it('keeps the author under "Por:", a title and a lower-case account name', async () => {
-    const text = '- **Por:** Dra. Ana Ruiz\n\nLa doctora Ana Ruiz presenta el caso.'
-    expect(await gate(text, ['Ana Ruiz'], { authors: ['ana ruiz'] })).toBe(text)
+  it('keeps the whole name under "Por:" and after a title outside the span', async () => {
+    const text = 'Por: Ana Ruiz\n\nLa doctora Ana Ruiz presenta el caso.'
+    expect(await gate(text, ['Ana Ruiz'])).toBe(text)
+  })
+
+  it('🔴 a title inside the span, or another spelling, is not the name as written', async () => {
+    absent(await gate('Autora: Dra. Ana Ruiz\n\nTexto.', ['Dra. Ana Ruiz']), ['Ana', 'Ruiz'])
+    absent(await gate('Autora: Ana Ruiz\n\nAna Ruiz firmó.', ['Ana Ruiz'], { authors: ['ana ruiz'] }), ['Ana', 'Ruiz'])
+    absent(await gate('Autora: ANA RUIZ\n\nANA RUIZ firmó.', ['ANA RUIZ']), ['ANA', 'RUIZ'])
+  })
+
+  it('a personName in decomposed Unicode still matches: both sides are NFC', async () => {
+    const text = 'Autora: Ana Gómez\n\nAna Gómez firmó.'
+    expect(await gate(text, ['Ana Gómez'], { authors: ['Ana Gómez'.normalize('NFD')] })).toBe(text)
   })
 
   it('keeps the author when stage 1 put a placeholder elsewhere in the source', async () => {
@@ -149,6 +163,51 @@ describe('R60 — the uploader stays visible', () => {
     const m = /^Autora: Ana Ruiz\n\n(\[Persona [A-Z]+\]) y (\[Persona [A-Z]+\]) hablaron con Ana Ruiz\. \1 y \2 volvieron\.$/u.exec(out)
     expect(m, out).not.toBeNull()
     expect(m?.[1]).not.toBe(m?.[2])
+  })
+})
+
+describe('R60 — 🔴 no part of the name, ever (audit B2)', () => {
+  /** Stage 3 reports the name and the part; the restore must keep only the name. */
+  it.each([
+    ['Ana María López', 'María', 'María me contó su caso.'],
+    ['Ana María López', 'Ana', 'Ana me contó su caso.'],
+    ['Ana María López', 'López', 'López me contó su caso.'],
+    ['Juan Carlos Pérez', 'Carlos', 'Carlos me contó su caso.'],
+    ['Juan Carlos Pérez', 'Pérez', 'Pérez me contó su caso.'],
+    ['María Guadalupe', 'Guadalupe', 'Guadalupe me contó su caso.'],
+    ['María Guadalupe', 'María', 'María me contó su caso.'],
+  ])('with the author %s, a finding "%s" stays redacted', async (author, part, sentence) => {
+    const result = await run(sentence, [part], { authors: [author] })
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    absent(result.redactedText, [part])
+    expect(result.redactedText).toMatch(/^\[Persona [A-Z]+\] me contó su caso\.$/u)
+    expect(result.keptAuthors).toBeUndefined()
+  })
+
+  it.each([['Ana María López'], ['Juan Carlos Pérez'], ['María Guadalupe']])('the whole name %s stays visible', async (author) => {
+    const text = `Autora: ${author}\n\n${author} me contó su caso.`
+    const result = await run(text, [author], { authors: [author] })
+    expect(result.status === 'ready' && result.redactedText).toBe(text)
+    expect(result.status === 'ready' && result.keptAuthors).toEqual([author])
+  })
+
+  it('🔴 the whole name and a part in one document: only the whole name stays', async () => {
+    const result = await run('Autora: Ana María López\n\nAna María López entrevistó a María. María lloró.', ['Ana María López', 'María'], {
+      authors: ['Ana María López'],
+    })
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+    expect(result.redactedText).toMatch(
+      /^Autora: Ana María López\n\nAna María López entrevistó a (\[Persona [A-Z]+\])\. \1 lloró\.$/u,
+    )
+    expect(result.keptAuthors).toEqual(['Ana María López'])
+  })
+
+  it('🔴 a byline with part of the name stays redacted', async () => {
+    for (const byline of ['María', 'Ana María', 'López, Ana María', 'María López']) {
+      absent(await gate(`Autora: ${byline}\n\nTexto.`, [], { authors: ['Ana María López'] }), ['Ana', 'María', 'López'])
+    }
   })
 })
 
@@ -191,18 +250,18 @@ describe('R60 — the guards (each test fails with its guard removed)', () => {
     // "Ana Ruiz y Pedro Gómez" is glued in the body sense, and "Ruiz" is shared with Pedro Ruiz.
     const a = await gate('Autores: Ana Ruiz y Pedro Gómez\n\nPedro Gómez habló.', ['Ana Ruiz', 'Pedro Gómez'])
     expect(a.startsWith('Autores: Ana Ruiz y [Persona ')).toBe(true)
-    const b = await gate('Autores: Ruiz, Ana\n\nPedro Ruiz habló.', ['Pedro Ruiz'])
-    expect(b.startsWith('Autores: Ruiz, Ana\n\n[Persona ')).toBe(true)
-    absent(b.slice('Autores: Ruiz, Ana'.length), ['Pedro', 'Ruiz'])
+    const b = await gate('Autores: Ana Ruiz\n\nPedro Ruiz habló.', ['Pedro Ruiz'])
+    expect(b.startsWith('Autores: Ana Ruiz\n\n[Persona ')).toBe(true)
+    absent(b.slice('Autores: Ana Ruiz'.length), ['Pedro', 'Ruiz'])
   })
 
-  it('🔴 shared: a bare surname another person carries stays redacted; the full name is kept', async () => {
+  it('a bare surname another person carries stays redacted; the full name is kept', async () => {
     const out = await gate('Autora: Ana Ruiz\n\nAna Ruiz habló con Pedro Ruiz. Ruiz se fue.', ['Ana Ruiz', 'Pedro Ruiz'])
     expect(out.startsWith('Autora: Ana Ruiz\n\nAna Ruiz habló con [Persona ')).toBe(true)
     absent(out.slice('Autora: Ana Ruiz\n\nAna Ruiz'.length), ['Pedro', 'Ruiz'])
   })
 
-  it('🔴 shared: a name only stage 1 redacted (an unclean co-byline) counts', async () => {
+  it('a name only stage 1 redacted (an unclean co-byline) stays redacted, and so does the bare surname', async () => {
     const out = await gate('Autora: Ana Ruiz\n\nAutor: Pedro Ruiz, coordinador\n\nRuiz propuso cerrar el comedor.', ['Ruiz'])
     expect(out.startsWith('Autora: Ana Ruiz\n\nAutor: [Persona ')).toBe(true)
     absent(out.slice('Autora: Ana Ruiz'.length), ['Pedro', 'Ruiz'])

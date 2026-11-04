@@ -186,8 +186,8 @@ export type GateResult =
       report: GateReport
       keptPublic?: KeptPublicFigure[]
       /**
-       * R60: the document's author as left in `redactedText`, each distinct
-       * spelling once. Not a removal record (see {@link KeptPublicFigure}).
+       * R60: the document's author as left in `redactedText`: the whole name,
+       * each once. Not a removal record (see {@link KeptPublicFigure}).
        */
       keptAuthors?: string[]
     }
@@ -229,8 +229,9 @@ export interface GateInput {
    * 🔴 R60 (owner, 2026-10-28): the document's ACTUAL author — its uploader's
    * membership `personName`, never the self-edited `displayName`. Honoured for a `documento` ONLY.
    * Never taken from the text: a byline anyone can type unhides nobody.
-   * Their mentions are redacted like any name and restored on a READY result
-   * (`authorRestore.ts`); a hold shows them redacted.
+   * Their mentions are redacted like any name and, on a READY result, only the
+   * whole name exactly as written here comes back (`authorRestore.ts`); a part
+   * never does, and a hold shows them redacted.
    */
   authors?: readonly string[]
 }

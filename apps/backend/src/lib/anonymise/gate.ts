@@ -635,12 +635,13 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   const names = createNamePartRegistry()
   const stages: GateStageReport[] = []
   // 🔴 R60: the document's actual author (its uploader), documento only.
-  // Never read from the text. Capitalised like the roster below.
+  // Never read from the text, and kept only whole, exactly as written there
+  // (`authorRestore.ts`): NFC like the text below, and nothing else changes.
   const authors =
     input.contentKind === 'documento'
       ? (input.authors ?? [])
           .filter((e) => !e.includes('@'))
-          .map((e) => e.replace(/(^|[\s-])(\p{Ll})/gu, (_m, before: string, ch: string) => before + ch.toUpperCase()))
+          .map((e) => e.normalize('NFC'))
           .filter((e) => namePartsOf(e).length >= 2)
       : []
 
@@ -700,13 +701,7 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
     // 🔴 R60: the document's actual author comes back LAST, on whatever the
     // public-figure restore left, from stage 1 re-run with `keepAuthors`.
     if (authorSource !== null) {
-      const restored = restoreAuthors(
-        authorSource.text,
-        text,
-        authors,
-        { ...evidence, roster: rosterNames, structural: structuralNames },
-        authorSource.bylines,
-      )
+      const restored = restoreAuthors(authorSource.text, text, authors, authorSource.bylines)
       text = restored.text
       if (restored.kept.length > 0) extra.keptAuthors = restored.kept
     }
@@ -724,14 +719,12 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // A byline's author takes a label from the SAME allocator, and its name parts
   // are registered, so "Autor: Juan Pérez" and a bare "Pérez" in the body come
   // out as one `[Persona X]` even when the model never reports the name.
-  const structuralNames: string[] = []
   const original = input.text.normalize('NFC')
   const structural = structuralPass(original, {
     person: (name) => {
       // `single`: a one-word byline author spreads too ("Autores: … y Ruiz"),
       // but a field label the old rules took ("Autor: Ana Ruiz, Lugar") must not.
       names.add(name, { single: !isFieldLabel(name) })
-      structuralNames.push(name)
       return allocator.labelFor(name)
     },
   })

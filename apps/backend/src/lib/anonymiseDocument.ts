@@ -274,7 +274,7 @@ export async function anonymiseDocumentText(args: {
   keepPublicFigures?: boolean
   /**
    * 🔴 R60: the uploader's names (`documentoGateOptions`). The gate keeps
-   * them visible in a `documento` only; logged on the row (`authorsKept`).
+   * each one visible, whole, in a `documento` only; logged on the row (`authorsKept`).
    */
   authors?: readonly string[]
 }): Promise<AnonymiseOutcome> {

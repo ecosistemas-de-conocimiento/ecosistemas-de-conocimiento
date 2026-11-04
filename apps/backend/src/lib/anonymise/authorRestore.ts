@@ -17,24 +17,23 @@
  *   · The output aligns to the source in exactly ONE way (`alignPlaceholders`).
  *     The source is stage 1 re-run with `keepAuthors`, so a byline piece
  *     naming the author is in it as written.
- *   · Inside such a byline piece: always.
- *   · Elsewhere, every word of the replaced text is one author's name part, a
- *     title, a particle or one of that author's initials, with each name part
- *     capitalised; it names the author WHOLE ("Ana Ruiz", "Ruiz, Ana"), or by
- *     ONE part that is not their first (given) name ("Ruiz", never "Ana")
- *     and that no other person in the evidence carries — a
- *     finding, a verify span, a roster member, or a name stage 1 redacted —
- *     and it is not glued to another name ("Ana Ruiz Pérez", "Ana Ruiz y
- *     Pérez").
+ *   · 🔴 THE REPLACED TEXT IS THE WHOLE `personName`, AS WRITTEN THERE. With
+ *     "Ana María López": "Ana María López" comes back; "María", "López",
+ *     "Ana López", "López, Ana María", "ANA MARÍA LÓPEZ" and "Dra. Ana María
+ *     López" never do, in a byline or anywhere else. A part of a name is
+ *     anyone's: "María" may be the person the document is about.
+ *   · It holds no digit, line break or bracket.
+ *   · Outside a byline piece, it is not glued to another name ("Ana Ruiz
+ *     Pérez", "Ana Ruiz y Pérez").
  *
- * Per placeholder, not per label: one ambiguous "Ruiz" stays `[Persona A]`
- * while "Ana Ruiz" beside it is shown. The label then reads as the author's,
- * which is the gate's own attribution and names no one else.
+ * Per placeholder, not per label: a bare "Ruiz" stays `[Persona A]` while
+ * "Ana Ruiz" beside it is shown. The label then reads as the author's, which
+ * is the gate's own attribution and names no one else.
  */
 
 import { NOT_A_PART, namePartsOf } from './nameParts'
 import { normaliseName } from './pseudonyms'
-import { alignPlaceholders, type RestoreEvidence } from './publicFigureRestore'
+import { alignPlaceholders } from './publicFigureRestore'
 import { PLACEHOLDER_PATTERN } from './types'
 import { wholeWord } from './wordBreaks'
 
@@ -44,56 +43,9 @@ const PARTICLES = new Set(['de', 'del', 'la', 'las', 'los', 'da', 'das', 'do', '
 /** Words that join two people; like `publicFigureRestore.ts`, they CONTINUE a name for the glue check. */
 const CONJUNCTIONS = new Set(['y', 'e', 'o', 'u', 'ni', 'con', 'and'])
 
-interface Author {
-  /** Folded name parts. */
-  parts: ReadonlySet<string>
-  /** The folded first part: a given name, never restored on its own. */
-  first: string
-  /** Folded one-letter initials of the name ("M." in "Ana M. Ruiz"). */
-  initials: ReadonlySet<string>
-}
-
-const WORDS = /[\p{L}\p{M}]+/gu
-const words = (s: string) => s.match(WORDS) ?? []
-const partsOf = (s: string) => new Set(namePartsOf(s.replace(PLACEHOLDER_PATTERN, ' ')).map(normaliseName))
-
-function authorOf(name: string): Author | null {
-  const parts = partsOf(name)
-  // 🔴 Two name parts at least: a one-word account name is anyone's word.
-  if (parts.size < 2) return null
-  const initials = new Set(words(name).filter((w) => [...w].length === 1).map(normaliseName))
-  return { parts, first: [...parts][0] as string, initials }
-}
-
-/**
- * The author `text` names, and whether it names them whole. NULL unless
- * every word is that author's (each name part capitalised when `cased`).
- */
-function namedBy(
-  text: string,
-  authors: readonly Author[],
-  cased: boolean,
-): { whole: boolean; part?: string; given?: true } | null {
-  const ws = words(text)
-  for (const author of authors) {
-    const present = new Set<string>()
-    const ok = ws.every((raw) => {
-      const w = normaliseName(raw)
-      if (author.parts.has(w)) {
-        present.add(w)
-        return !cased || /^\p{Lu}/u.test(raw)
-      }
-      return NOT_A_PART.has(w) || PARTICLES.has(w) || author.initials.has(w)
-    })
-    if (!ok || present.size === 0) continue
-    if (present.size === author.parts.size) return { whole: true }
-    if (present.size === 1) {
-      const part = [...present][0] as string
-      return { whole: false, part, ...(part === author.first ? { given: true } : {}) }
-    }
-  }
-  return null
-}
+/** 🔴 Two distinct name parts at least: a one-word account name is anyone's word. */
+const isFullName = (name: string) =>
+  new Set(namePartsOf(name.replace(PLACEHOLDER_PATTERN, ' ')).map(normaliseName)).size >= 2
 
 /** A capitalised word that may be a name: not a title, particle or conjunction. */
 function nameWord(word: string): boolean {
@@ -136,11 +88,6 @@ function glued(source: string, start: number, end: number): boolean {
   return oneWay(end, 1) || oneWay(start, -1)
 }
 
-export interface AuthorRestoreEvidence extends RestoreEvidence {
-  /** Every name stage 1 redacted (its `person` calls): a co-author, a forged byline. */
-  structural: readonly string[]
-}
-
 /**
  * Restore a document's actual authors in a READY output. Returns the output
  * unchanged whenever any rule says no. `kept` is each distinct restored text.
@@ -149,36 +96,21 @@ export function restoreAuthors(
   source: string,
   output: string,
   authorNames: readonly string[],
-  evidence: AuthorRestoreEvidence,
   /** `[start, end)` of each byline piece stage 1 kept, in `source`. */
   bylines: ReadonlyArray<readonly [number, number]> = [],
 ): { text: string; kept: string[] } {
   const none = { text: output, kept: [] }
-  const authors = authorNames.map(authorOf).filter((a): a is Author => a !== null)
-  if (authors.length === 0) return none
+  const names = new Set(authorNames.filter(isFullName))
+  if (names.size === 0) return none
   const aligned = alignPlaceholders(source, output, { sourcePlaceholders: true })
   if (aligned === null || aligned.length === 0) return none
 
-  // Parts some OTHER person may carry. A finding naming an author whole or by
-  // one part is the author; a roster member or a stage-1 name must name them
-  // whole (one word there is a different, unnamed person).
-  const shared = new Set<string>()
-  const findings = [...evidence.stage3, ...evidence.verify, ...evidence.unlocated].map((f) => f.text)
-  for (const t of findings) if (namedBy(t, authors, false) === null) for (const p of partsOf(t)) shared.add(p)
-  for (const t of [...evidence.roster, ...evidence.structural]) {
-    if (namedBy(t, authors, false)?.whole !== true) for (const p of partsOf(t)) shared.add(p)
-  }
-
   const inByline = (start: number, end: number) => bylines.some(([s, e]) => start >= s && end <= e)
   const restorable = (start: number, end: number): boolean => {
-    if (inByline(start, end)) return true
     const original = source.slice(start, end)
-    if (/[\d\n\r[\]]/u.test(original) || !wholeWord(source, start, end) || glued(source, start, end)) return false
-    const named = namedBy(original, authors, true)
-    if (named === null) return false
-    // 🔴 A bare GIVEN name is never restored (audit P1): "Ana" alone is as
-    // likely a neighbour as the author. A bare surname is, unless shared.
-    return named.whole || (named.given !== true && !shared.has(named.part as string))
+    if (!names.has(original.trim()) || /[\p{Nd}\n\r[\]]/u.test(original)) return false
+    // A kept byline piece stands beside its co-authors ("Ana Ruiz y Pedro Gómez").
+    return inByline(start, end) || (wholeWord(source, start, end) && !glued(source, start, end))
   }
 
   let text = ''
@@ -193,7 +125,7 @@ export function restoreAuthors(
     if (p.label.startsWith('[Persona ') && restorable(p.start, p.end)) {
       const original = source.slice(p.start, p.end)
       text += original
-      kept.add(original)
+      kept.add(original.trim())
     } else {
       text += m[0]
     }
