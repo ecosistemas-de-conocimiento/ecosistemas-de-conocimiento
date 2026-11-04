@@ -248,7 +248,9 @@ release flagged `prerelease`, open single-drive data-loss issues — so the volu
 
 ---
 
-## 4. `audio-service` — NOT deployed yet
+## 4. `audio-service` — dev on edc-1 only (profile `audio`, since 2026-10-21)
+
+> ✅ 2026-10-21: the three containers moved into `infra/docker-compose.yml` under profile `audio`. Dev on edc-1 runs them with `COMPOSE_PROFILES=audio`, `WHISPER_BACKEND=remote` and `WHISPER_BAKE=0`, so transcription runs on the DGX Spark. The variables and the revert are in `edc-1.md` §4y. Below this note, the text predates that move. Where it says "the audio file", read "profile `audio`"; locally, `docker-compose.audio.yml` is now only the host port plus the required key.
 
 Lives in `infra/docker-compose.audio.yml`. Coolify does not load it. When audio is turned on, that
 file sets `AUDIO_SERVICE_URL` and **requires** `AUDIO_SERVICE_API_KEY` — rendering fails without it,

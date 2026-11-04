@@ -501,7 +501,7 @@ services:
       #      runs ai-service with NODE_ENV=development + CALLBACK_ALLOW_PRIVATE=1.
       PUBLIC_BACKEND_URL: ${PUBLIC_BACKEND_URL:?PUBLIC_BACKEND_URL is required (backend public https origin; local http://backend:3002)}
       # ── audio-service — OFF unless the `audio` profile runs ──
-      # Empty by default on purpose; dev on edc-1 sets both (§4x). The backend treats an empty URL or key as
+      # Empty by default on purpose; dev on edc-1 sets both (edc-1.md §4y). The backend treats an empty URL or key as
       # "audio not configured" and says so: it logs it at boot
       # (`checkAudioServiceConfig`, apps/backend/src/lib/audioClient.ts) and
       # fails each audio upload with a visible error. PDF/DOCX are unaffected.
@@ -807,7 +807,7 @@ services:
   # nothing here runs there. Locally: `--profile audio` plus
   # docker-compose.audio.yml (host port + the backend's required key).
   # On edc-1 dev runs WHISPER_BACKEND=remote + WHISPER_BAKE=0: transcription
-  # happens on the DGX Spark (infra/fleet/edc-1.md §4x).
+  # happens on the DGX Spark (infra/fleet/edc-1.md §4y).
   # ═══════════════════════════════════════════════════════════════════════════
   # AUDIO TRANSCRIPTION — 🔴 THREE CONTAINERS FROM ONE IMAGE. NOT ONE. NOT TWO.
   # ═══════════════════════════════════════════════════════════════════════════
@@ -963,6 +963,12 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      # 🔴 Start AFTER the API. Both mount a fresh `audio_work`, and Docker
+      #    copies the image's /var/lib/audio-service into an empty volume on
+      #    first mount. Two containers doing that at once failed the first
+      #    edc-1 deploy: "mkdir …/_data/uploads: file exists" (2026-10-21).
+      audio-service:
+        condition: service_started
     healthcheck:
       # 🔴 NOT AN OVERSIGHT. No HTTP listener here; the image's inherited curl
       #    healthcheck would fail forever and hang `up --wait`. See note 2.

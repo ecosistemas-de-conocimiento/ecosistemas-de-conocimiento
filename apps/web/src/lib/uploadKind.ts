@@ -80,7 +80,7 @@ export const UPLOAD_KIND_LABELS: Record<UploadContentKind, string> = {
  * with "Falta configurar el servicio de audio" and an English env-var detail.
  * So it is ON only where `PUBLIC_AUDIO_UPLOAD_ENABLED=1` is set at runtime —
  * today dev on edc-1, next to the compose profile `audio`
- * (infra/fleet/edc-1.md §4x). It is the ONLY switch: the file picker, the
+ * (infra/fleet/edc-1.md §4y). It is the ONLY switch: the file picker, the
  * button tooltip, the panel's refusal and the upload route read it.
  *
  * ⚠ Presentation only. The upload route still accepts audio from a direct POST.
