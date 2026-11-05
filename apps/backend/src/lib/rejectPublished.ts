@@ -165,6 +165,8 @@ export async function rejectPublished(args: {
       redactedText: null,
       heldText: null,
       anonymisationSurvivors: null,
+      authorsKept: null,
+      publicFiguresKept: null,
       testimonioTitle: null,
       ingestError: 'anonymisation_rejected: a reviewer refused this document.',
     } as never,

@@ -116,6 +116,21 @@ describe('rejectPublished', () => {
     expect(out).toMatchObject({ id: '7', decision: 'rejected', anonymisationStatus: 'rejected' })
   })
 
+  it('🔴 clears the keep logs: a rejected row names neither its author nor its public figures', async () => {
+    const { payload, store, calls } = fakePayload(
+      published({
+        contentKind: 'documento',
+        anonymise: true,
+        authorsKept: [{ name: 'Ana María López' }],
+        publicFiguresKept: [{ name: 'Noam Chomsky' }],
+      }),
+    )
+    const { client } = fakeClient(calls)
+    await rejectPublished({ payload, documentId: 7, user: reviewer, clientFor: () => client })
+
+    expect(store).toMatchObject({ authorsKept: null, publicFiguresKept: null })
+  })
+
   it('🔴 drops the graph rows of the withdrawn row and marks it skipped', async () => {
     const { payload, store, calls, deleted } = fakePayload(published())
     const { client } = fakeClient(calls)

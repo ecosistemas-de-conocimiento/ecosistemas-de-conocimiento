@@ -276,7 +276,8 @@ export async function runGraphExtraction(args: RunGraphExtractionArgs): Promise<
     const stored = await findSeedEntities(payload.db.drizzle, organizationId, docId, seeds)
     const authorNames = beforeWrite.ok ? (beforeWrite.authorNames ?? []) : []
     const merged = mergeWikiSeeds(dropKeptAuthors(extraction, authorNames), seeds, {
-      personaLabels: [...(beforeWrite.ok ? (beforeWrite.personaLabels ?? []) : []), ...authorNames, ...stored.personaKeys],
+      personaLabels: [...(beforeWrite.ok ? (beforeWrite.personaLabels ?? []) : []), ...stored.personaKeys],
+      authorNames,
       known: stored.known,
     })
     const seeded = merged.extraction

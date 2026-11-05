@@ -528,11 +528,11 @@ describe.skipIf(!dockerOk)('wikilink seeds (real Postgres)', () => {
     const KEY = 'ana maria renteria'
     let nextId = 5000
     /** A gated note whose redaction shows the uploader, linking to them. */
-    const note = async (authorsKept: unknown, name = 'Charla') => {
+    const note = async (authorsKept: unknown, name = 'Charla', moreLinks = '') => {
       const id = nextId++
       const text = `Soy ${AUTHOR}. Escribo sobre Semiótica.${PAD}`
       await insert(id, SEMIOSIS, 'pending', { anonymise: true, status: 'ready', redacted: text }, {
-        body: `Soy [[${AUTHOR}]]. Escribo sobre [[Semiótica]].${PAD}`,
+        body: `Soy [[${AUTHOR}]]. Escribo sobre [[Semiótica]]. ${moreLinks}${PAD}`,
         text,
         name,
       })
@@ -545,12 +545,14 @@ describe.skipIf(!dockerOk)('wikilink seeds (real Postgres)', () => {
 
     beforeAll(async () => {
       // A model-written tema with the author's name, live in ANOTHER document: what a seed attaches to.
-      await pg!.db.execute(sql`INSERT INTO graph_entities (organization_id, type, label, canonical_key, aliases, public_figure)
-                               VALUES (${SEMIOSIS}, 'tema', ${AUTHOR}, ${KEY}, '[]'::jsonb, false)`)
-      await pg!.db.execute(sql`
-        INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences)
-        SELECT ${SEMIOSIS}, ${PEIRCE_SOURCE}, id, 1 FROM graph_entities
-         WHERE organization_id = ${SEMIOSIS} AND canonical_key = ${KEY} AND type = 'tema'`)
+      for (const [label, key] of [[AUTHOR, KEY], ['Ana María', 'ana maria']] as const) {
+        await pg!.db.execute(sql`INSERT INTO graph_entities (organization_id, type, label, canonical_key, aliases, public_figure)
+                                 VALUES (${SEMIOSIS}, 'tema', ${label}, ${key}, '[]'::jsonb, false)`)
+        await pg!.db.execute(sql`
+          INSERT INTO graph_mentions (organization_id, document_id, entity_id, occurrences)
+          SELECT ${SEMIOSIS}, ${PEIRCE_SOURCE}, id, 1 FROM graph_entities
+           WHERE organization_id = ${SEMIOSIS} AND canonical_key = ${key} AND type = 'tema'`)
+      }
     })
 
     const SEMIOTICA = { tipo: 'tema', etiqueta: 'Semiótica', menciones: 1 }
@@ -575,6 +577,10 @@ describe.skipIf(!dockerOk)('wikilink seeds (real Postgres)', () => {
       ['an organizacion', { tipo: 'organizacion', etiqueta: AUTHOR, menciones: 2 }],
       ['a public persona', { tipo: 'persona', etiqueta: AUTHOR, menciones: 2, figura_publica: true }],
       ['a variant with the surname', { tipo: 'tema', etiqueta: 'Ana Rentería', menciones: 2 }],
+      ['the name without the surname', { tipo: 'tema', etiqueta: 'Ana María', menciones: 2 }],
+      ['surname first', { tipo: 'persona', etiqueta: 'Rentería, Ana María', menciones: 2, figura_publica: true }],
+      ['an event holding the name', { tipo: 'evento', etiqueta: `Seminario ${AUTHOR} sobre semiosis`, menciones: 2 }],
+      ['an organizacion holding the name', { tipo: 'organizacion', etiqueta: `Archivo ${AUTHOR} de Oaxaca`, menciones: 1 }],
     ])('the model calling the author %s stores nothing for them, and no edge', async (_what, entidad) => {
       const { id, text } = await note(kept)
       reply = [SEMIOTICA, entidad]
@@ -588,6 +594,18 @@ describe.skipIf(!dockerOk)('wikilink seeds (real Postgres)', () => {
       expect(await run(id, SEMIOSIS, text, true)).toBe('ready')
       expect(await keysFor(id)).toEqual(['tema:semiotica'])
       expect((await q(sql`SELECT count(*)::int AS n FROM graph_relations WHERE document_id = ${id}`))[0]!.n).toBe(0)
+    }, 30_000)
+
+    it('🔴 [[Ana María]], part of the name, attaches only without the log', async () => {
+      const shown = await note(kept, 'Charla', '[[Ana María]]')
+      reply = [SEMIOTICA]
+      expect(await run(shown.id, SEMIOSIS, shown.text, true)).toBe('ready')
+      expect(await keysFor(shown.id)).toEqual(['tema:semiotica'])
+
+      const control = await note(null, 'Charla', '[[Ana María]]')
+      reply = [SEMIOTICA]
+      expect(await run(control.id, SEMIOSIS, control.text, true)).toBe('ready')
+      expect(await keysFor(control.id)).toEqual(['tema:ana maria', `tema:${KEY}`, 'tema:semiotica'])
     }, 30_000)
 
     it('another name beside the author is untouched', async () => {

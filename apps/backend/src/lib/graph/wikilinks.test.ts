@@ -4,6 +4,7 @@ import { extractMarkdownLinks } from '../extract/markdown'
 import type { GraphExtraction } from './types'
 import { canonicalKey } from './normalise'
 import {
+  authorBlocker,
   dropKeptAuthors,
   emptyExtraction,
   mergeWikiSeeds,
@@ -217,5 +218,157 @@ describe('dropKeptAuthors', () => {
     const input = extraction()
     expect(dropKeptAuthors(input, [])).toBe(input)
     expect(dropKeptAuthors(input, ['Luis Gómez'])).toBe(input)
+  })
+
+  describe.each([
+    {
+      author: 'Ana María López Ruiz',
+      dropped: [
+        'Ana María López Ruiz',
+        'ANA MARÍA LÓPEZ RUIZ',
+        'Ana María López',
+        'Ana López',
+        'López',
+        'López Ruiz',
+        'Ruiz',
+        'Ana María',
+        'Ana Ruiz',
+        'López, Ana María',
+        'Ruiz; López',
+        'Seminario Ana María López Ruiz sobre semiosis',
+        'Archivo Ana María López Ruiz de Oaxaca',
+        'Colonia Ruiz',
+      ],
+      kept: ['Semiosis', 'Oaxaca', 'López Mateos', 'Derechos de la infancia', 'Mariana', '2021'],
+    },
+    {
+      author: 'Ana María López',
+      dropped: [
+        'Ana María López (autora)',
+        'Ana María López 2021',
+        'Metodología de Ana María López sobre semiosis',
+        'Dra. Ana María López',
+        'Ana María López Ruiz',
+        'López, Ana María',
+        'Ana-María López',
+        'Colonia López',
+      ],
+      kept: ['Semiosis', 'Oaxaca', 'López Mateos', 'Ana Gómez', 'Metodología sobre semiosis'],
+    },
+    {
+      author: 'María de la Vega',
+      dropped: ['María de la Vega', 'Vega', 'de la Vega', 'María Vega', 'Vega, María de la'],
+      kept: ['Derechos de la infancia', 'Casa de la Cultura', 'Vega Alta'],
+    },
+    {
+      author: 'María Guadalupe',
+      dropped: ['María Guadalupe', 'Guadalupe', 'María', 'Virgen de Guadalupe'],
+      kept: ['Oaxaca', 'María Gómez'],
+    },
+    {
+      // A surname under three letters ends too many phrases to fail closed on.
+      author: 'Ana Li',
+      dropped: ['Ana Li', 'Li, Ana', 'Li', 'Seminario Ana Li'],
+      kept: ['Colonia Li'],
+    },
+  ])('$author', ({ author, dropped, kept }) => {
+    it.each(dropped)('🔴 drops "%s", and an alias of it', (label) => {
+      expect(dropKeptAuthors({ ...emptyExtraction('v'), entities: [entity(label)] }, [author]).entities).toEqual([])
+      expect(dropKeptAuthors({ ...emptyExtraction('v'), entities: [entity('La autora', [label])] }, [author]).entities).toEqual([])
+    })
+
+    it.each(kept)('keeps "%s"', (label) => {
+      const input = { ...emptyExtraction('v'), entities: [entity(label)] }
+      expect(dropKeptAuthors(input, [author])).toBe(input)
+    })
+  })
+
+  it('drops an edge whose end names the author, with or without a node', () => {
+    const input: GraphExtraction = {
+      ...emptyExtraction('v'),
+      entities: [entity('Semiosis'), entity('Oaxaca'), entity('Ana María López')],
+      relations: [
+        { fromKey: 'ana maria lopez', toKey: 'semiosis', type: 'relacionado_con' },
+        { fromKey: 'semiosis', toKey: 'lopez, ana maria', type: 'relacionado_con' },
+        { fromKey: 'semiosis', toKey: 'oaxaca', type: 'relacionado_con' },
+      ],
+    }
+    expect(dropKeptAuthors(input, ['Ana María López Ruiz']).relations).toEqual([
+      { fromKey: 'semiosis', toKey: 'oaxaca', type: 'relacionado_con' },
+    ])
+  })
+
+  it('🔴 clears a kept node\'s snippet that holds the whole name, and no other', () => {
+    const withSnippet = (label: string, snippet: string | null) => ({ ...entity(label), snippet })
+    const input: GraphExtraction = {
+      ...emptyExtraction('v'),
+      entities: [
+        withSnippet('Semiosis', 'Ana María López escribió sobre semiosis'),
+        withSnippet('Oaxaca', 'ANA MARIA\nLÓPEZ vive en Oaxaca'),
+        withSnippet('Signo', 'el signo y su objeto'),
+        withSnippet('Índice', 'López estudió el índice'),
+        withSnippet('Objeto', null),
+      ],
+    }
+    const out = dropKeptAuthors(input, ['Ana María López'])
+    expect(out.entities.map((e) => [e.label, e.snippet])).toEqual([
+      ['Semiosis', null],
+      ['Oaxaca', null],
+      ['Signo', 'el signo y su objeto'],
+      ['Índice', 'López estudió el índice'],
+      ['Objeto', null],
+    ])
+    expect(input.entities[0]?.snippet).toBe('Ana María López escribió sobre semiosis')
+  })
+
+  it('a name with no letters, or a blank one, blocks nothing', () => {
+    const input = { ...emptyExtraction('v'), entities: [entity('Semiosis'), entity('2021')] }
+    expect(dropKeptAuthors(input, ['', '  ', '123'])).toBe(input)
+    expect(authorBlocker(['Ana López'])('')).toBe(false)
+  })
+
+  it('⚠ does not catch part of the name inside a longer phrase (declared in the privacy docs)', () => {
+    const blocked = authorBlocker(['Ana María López'])
+    expect(blocked('Seminario Ana López sobre semiosis')).toBe(false)
+    expect(blocked('Metodología de López sobre semiosis')).toBe(false)
+    expect(blocked('López (autora)')).toBe(false)
+  })
+})
+
+describe('mergeWikiSeeds with the author kept visible', () => {
+  const key = (label: string) => canonicalKey(label)
+  const seedLabels = ['Ana María', 'Ana María López', 'López', 'Ana López Ruiz', 'Ruiz', 'López, Ana María', 'Seminario Ana María López Ruiz']
+  const links = [...seedLabels, 'Semiosis', 'Oaxaca'].map((label) => ({ label, occurrences: 1 }))
+  const known = [...seedLabels, 'Semiosis', 'Oaxaca'].map((label) => ({ type: 'tema' as const, label, canonicalKey: key(label) }))
+
+  it('🔴 attaches no link that names the author, and keeps the rest', () => {
+    const merged = mergeWikiSeeds(emptyExtraction('v'), { title: 'Notas', links }, { known, authorNames: ['Ana María López Ruiz'] })
+    expect(merged.extraction.entities.map((e) => e.label)).toEqual(['Semiosis', 'Oaxaca'])
+    expect(merged.links?.map((l) => l.label)).toEqual(['Semiosis', 'Oaxaca'])
+  })
+
+  it('🔴 a title naming the author is no node and draws no edge', () => {
+    const title = 'Notas de Ana María López Ruiz'
+    const merged = mergeWikiSeeds(
+      emptyExtraction('v'),
+      { title, links },
+      { known: [...known, { type: 'tema', label: title, canonicalKey: key(title) }], authorNames: ['Ana María López Ruiz'] },
+    )
+    expect(merged.extraction.entities.map((e) => e.label)).toEqual(['Semiosis', 'Oaxaca'])
+    expect(merged.extraction.relations).toEqual([])
+  })
+
+  it('without an author every known link attaches', () => {
+    const merged = mergeWikiSeeds(emptyExtraction('v'), { title: null, links }, { known })
+    expect(merged.links).toHaveLength(links.length)
+  })
+
+  it('edges drop with the link: title to a surviving link only', () => {
+    const merged = mergeWikiSeeds(
+      emptyExtraction('v'),
+      { title: 'Oaxaca', links },
+      { known, authorNames: ['Ana María López Ruiz'] },
+    )
+    expect(merged.extraction.relations).toEqual([{ fromKey: 'oaxaca', toKey: 'semiosis', type: 'relacionado_con' }])
   })
 })

@@ -37,8 +37,8 @@
  *   4. It is not graph noise (a language name, a redaction placeholder).
  *   5. 🔴 NEVER A PERSONA. Dropped when the model typed the key `persona` in
  *      this run (kept or dropped by the person rule), when ANY stored node in
- *      the ecosistema with that key is a `persona`, or when it is a kept public
- *      figure or the author kept visible ({@link dropKeptAuthors}). The ingest
+ *      the ecosistema with that key is a `persona`, when it is a kept public
+ *      figure, or when {@link authorBlocker} matches the author kept visible. The ingest
  *      run looks the stored personas up (`writer.ts`
  *      `findSeedEntities`, split by {@link splitStoredSeedEntities}).
  *      There is no model-less path: every seed is judged in a model run of
@@ -165,6 +165,8 @@ export interface MergeWikiSeedsOptions {
   personaLabels?: readonly string[]
   /** Stored NON-persona nodes for the seed keys (see {@link splitStoredSeedEntities}). */
   known?: readonly KnownSeedEntity[]
+  /** 🔴 The author kept visible: never a seed, by {@link authorBlocker}. */
+  authorNames?: readonly string[]
 }
 
 export interface MergedWikiSeeds {
@@ -199,7 +201,9 @@ export function mergeWikiSeeds(
   opts: MergeWikiSeedsOptions = {},
 ): MergedWikiSeeds {
   if (!seeds || (seeds.links.length === 0 && !seeds.title)) return { extraction, links: null }
-  const blocked = personaBlocker(personaKeysOf(extraction, opts.personaLabels))
+  const isPersona = personaBlocker(personaKeysOf(extraction, opts.personaLabels))
+  const isAuthor = authorBlocker(opts.authorNames ?? [])
+  const blocked = (key: string) => isPersona(key) || isAuthor(key)
   const present = new Set<string>()
   for (const e of extraction.entities) {
     if (e.type !== 'persona') present.add(e.canonicalKey || canonicalKey(e.label))
@@ -243,27 +247,79 @@ export function mergeWikiSeeds(
   return { extraction: { ...extraction, entities, relations }, links: links.length > 0 ? links : null }
 }
 
+/** A name's words, compared without case or accents. Anything but a letter splits. */
+function nameWords(label: string): string[] {
+  return canonicalKey(label).split(/\P{L}+/u).filter(Boolean)
+}
+
+/** True when `run` occurs in `words` as consecutive words. */
+function containsWordRun(words: readonly string[], run: readonly string[]): boolean {
+  for (let i = 0; i + run.length <= words.length; i++) {
+    if (run.every((w, j) => words[i + j] === w)) return true
+  }
+  return false
+}
+
+/**
+ * 🔴 WHAT COUNTS AS THE AUTHOR KEPT VISIBLE. The model reshapes the name, so a
+ * label is the author when, for any of the names:
+ *
+ *   · it holds the whole name as consecutive words: "Seminario Ana María López
+ *     Ruiz sobre semiosis", "Ana María López (autora)";
+ *   · all its words come from the name: "Ana López", "López, Ana María", "Ruiz";
+ *   · it ends in the surname: "Colonia Rentería". Fails closed, in this document.
+ *
+ * ⚠ NOT CAUGHT: part of the name inside a longer phrase that does not end in the
+ * surname, "Seminario Ana López sobre semiosis". Those words alone cannot tell
+ * it from "Seminario Ana sobre semiosis" or "López Mateos".
+ */
+export function authorBlocker(authorNames: readonly string[]): (label: string) => boolean {
+  const authors = authorNames.map(nameWords).filter((a) => a.length > 0)
+  return (label) => {
+    const words = nameWords(label)
+    if (words.length === 0) return false
+    return authors.some((author) => {
+      const surname = author[author.length - 1] ?? ''
+      return (
+        containsWordRun(words, author) ||
+        words.every((w) => author.includes(w)) ||
+        (surname.length >= WIKILINK_MIN_CHARS && words[words.length - 1] === surname)
+      )
+    })
+  }
+}
+
 /**
  * 🔴 THE AUTHOR KEPT VISIBLE IS NO NODE (`documents.authorsKept`). The gate left
  * their whole name in the text, so the model can read it and call it anything:
  * a `tema`, an `organizacion`, a public `persona`. Being shown as the author of
- * this document does not make them a topic of the ecosistema. Every entity
- * with that name, an alias of it or its surname goes, and so do its edges.
- * Same forms as {@link personaBlocker}: "Ana Rentería" goes for "Ana María
- * Rentería"; fails closed, so a "Colonia Rentería" goes too, in this document.
+ * this document does not make them a topic of the ecosistema. Every entity whose
+ * label, key or alias {@link authorBlocker} matches goes, and so does every edge
+ * with such an end. A node that stays loses a snippet holding the whole name.
  * The input is not mutated.
  */
 export function dropKeptAuthors(extraction: GraphExtraction, authorNames: readonly string[]): GraphExtraction {
-  if (authorNames.length === 0) return extraction
-  const blocked = personaBlocker(authorNames)
+  const authors = authorNames.map(nameWords).filter((a) => a.length > 0)
+  const blocked = authorBlocker(authorNames)
   const gone = new Set<string>()
-  const entities = extraction.entities.filter((e) => {
-    if (![e.label, e.canonicalKey, ...(e.aliases ?? [])].some((l) => blocked(canonicalKey(l)))) return true
-    gone.add(e.canonicalKey || canonicalKey(e.label))
-    return false
-  })
-  if (gone.size === 0) return extraction
-  return { ...extraction, entities, relations: extraction.relations.filter((r) => !gone.has(r.fromKey) && !gone.has(r.toKey)) }
+  let changed = false
+  const entities: MergedEntity[] = []
+  for (const e of extraction.entities) {
+    if ([e.label, e.canonicalKey, ...(e.aliases ?? [])].some((l) => blocked(l))) {
+      gone.add(e.canonicalKey || canonicalKey(e.label))
+      changed = true
+    } else if (e.snippet && authors.some((a) => containsWordRun(nameWords(e.snippet ?? ''), a))) {
+      entities.push({ ...e, snippet: null })
+      changed = true
+    } else {
+      entities.push(e)
+    }
+  }
+  const relations = extraction.relations.filter(
+    (r) => !gone.has(r.fromKey) && !gone.has(r.toKey) && !blocked(r.fromKey) && !blocked(r.toKey),
+  )
+  if (!changed && relations.length === extraction.relations.length) return extraction
+  return { ...extraction, entities, relations }
 }
 
 /** 🔴 The keys a seed may never take: the model's personas plus `personaLabels`. */
