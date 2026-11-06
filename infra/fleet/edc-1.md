@@ -2747,6 +2747,25 @@ Migration `20261029_060304_evals` logged `Migrated (72ms)`, then `Done.`, `Ready
 `payload_migrations` 20 -> 21, batch 14. After: `web`, `backend`, `ai-service` run the build's image tag, healthy; 0 error lines in all 9 dev containers.
 Smoke: `/` and `/admin/evals` 303 -> `/sign-in`; `/api/health` 200.
 
+### 4zzzzz. Done 2026-11-04 ≈09:03 UTC: 76 Semiosis workshop cases back to draft, dev only, no deploy
+
+Owner decision: workshop materials wait for their authors' consent. Nothing deleted. Every org 8 row in
+ids 1178-1254 (manifest `semiosis-2026-10-casos`, 76 rows; 73 ungated, 3 gated) went through
+`POST /api/documents/:id/unpublish` as the uploader, one at a time, pilot first.
+
+Measured after, on dev (Postgres, ai-service logs, a student's token):
+
+| check | result |
+|---|---|
+| the 76 rows | 76 `draft`, 0 `publication_error` |
+| ai-service `eco-8` / `eco-8-draft-1` | 76 validity closed / 76 open. Chunks stay stored |
+| embedding fallback log lines, last 30 min | 0: the re-embed went to the Spark, not to OpenRouter |
+| estudiante1, `GET /api/documents/1178` and `/1254` | 404 |
+| org 8 published, Postgres and the student's count | 672 (was 748) |
+
+⚠ NOT DONE: `semiosis-2026-10-held` is not held on dev. 103 published rows match its titles (68 gated,
+35 ungated), 2 more are rejected drafts, and org 8 has no `held` row. Awaiting the owner's decision.
+
 ---
 
 ## 5. Where secrets live (names only)
