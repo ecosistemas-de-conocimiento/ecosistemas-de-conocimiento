@@ -145,26 +145,26 @@ Los ecosistemas 1 y 3 se retiraron por decisión del responsable técnico (citad
 
 ### 4.2 Manifiestos
 
-Conteos medidos el 2026-10-30 contando las filas de cada archivo, sin imprimir su contenido.
+Este documento no cita cuántas filas tiene cada manifiesto. Para saberlo, hay que contarlas en el archivo.
 
-| Manifiesto | Filas | Ecosistema | Tipo de contenido | Filtro de anonimización |
-|---|---|---|---|---|
-| `dengue-2026-10` | 11 | 6 | `documento` (8 DOCX y 3 PDF, citado de la bitácora del proyecto) | 5 con `anonymise` |
-| `dengue-v2` | 70 | 6 | 55 `testimonio`, 15 `documento` | Los 15 documentos con `anonymise`; los testimonios siempre pasan el filtro |
-| `discapacidad-2026-10` | 68 | 67 en el 7, 1 en el 6 | `documento` | Ninguno marcado |
-| `discapacidad-2026-10-c` | 6 | 7 | `documento` PDF ("lista C") | Ninguno marcado |
-| `discapacidad-2026-10-e` | 11 | 7 | `documento` DOCX | 11 con `anonymise` |
-| `discapacidad-v2` | 40 | 7 | `testimonio` | Siempre pasan el filtro |
-| `reupload-after-gate-fix` | 6 | 3 en el 6, 2 en el 7, 1 en el 8 | `documento` | 6 con `anonymise` |
-| `semiosis-2026-10` | 441 | 8 | `documento` (409 en Markdown, citado de la bitácora del proyecto) | 1 con `anonymise` |
-| `semiosis-2026-10-casos` | 76 | 8 | `documento` (casos de estudio) | 76 con `anonymise` |
-| `semiosis-2026-10-held` | 115 | 8 | `documento` (registros de clase, ensayos, emergentes) | 115 con `anonymise`; retenidos hasta corregir el manejo de nombres de pila |
-| `semiosis-v3-lecturas` | 101 | 8 | `documento` PDF (lecturas) | Ninguno marcado |
-| `semiosis-v3-skipped-scans.txt` | 72 | ninguno | PDF escaneados sin capa de texto | Omitidos; pendientes de OCR (decisión pendiente: si se aplica OCR) |
+| Manifiesto | Ecosistema | Tipo de contenido | Filtro de anonimización |
+|---|---|---|---|
+| `dengue-2026-10` | 6 | `documento` (DOCX y PDF) | Parcial, con `anonymise` |
+| `dengue-v2` | 6 | `testimonio` y `documento` | Los documentos con `anonymise`; los testimonios siempre pasan el filtro |
+| `discapacidad-2026-10` | 7, salvo uno en el 6 | `documento` | Ninguno marcado |
+| `discapacidad-2026-10-c` | 7 | `documento` PDF ("lista C") | Ninguno marcado |
+| `discapacidad-2026-10-e` | 7 | `documento` DOCX | Todos con `anonymise` |
+| `discapacidad-v2` | 7 | `testimonio` | Siempre pasan el filtro |
+| `reupload-after-gate-fix` | 6, 7 y 8 | `documento` | Todos con `anonymise` |
+| `semiosis-2026-10` | 8 | `documento` | Casi ninguno marcado |
+| `semiosis-2026-10-casos` | 8 | `documento` (casos de estudio del taller) | El manifiesto los marca con `anonymise`, pero en dev casi todos se cargaron sin filtro. En borrador hasta tener el consentimiento de sus autores |
+| `semiosis-2026-10-held` | 8 | `documento` (registros de clase, ensayos, emergentes) | Parte con filtro y parte sin él. El nombre del manifiesto no indica su estado. En borrador hasta tener el consentimiento de sus autores |
+| `semiosis-v3-lecturas` | 8 | `documento` PDF (lecturas) | Ninguno marcado |
+| `semiosis-v3-skipped-scans.txt` | ninguno | PDF escaneados sin capa de texto | Omitidos; pendientes de OCR (decisión pendiente: si se aplica OCR) |
 
 Recordatorio de la regla del filtro: todo `testimonio` pasa por el filtro de anonimización. Un `documento` solo pasa si lleva `anonymise`. Ver [modelo-de-datos.md](modelo-de-datos.md), sección 5.2.
 
-Las 101 lecturas incluidas más los 72 escaneos omitidos suman 173, el mismo número de lecturas que el inventario de exclusiones marca como "assumed: no open-access licence" (inferido por aritmética; la conciliación archivo por archivo no se hizo).
+Las lecturas incluidas más los escaneos omitidos suman el mismo número de lecturas que el inventario de exclusiones marca como "assumed: no open-access licence" (inferido por aritmética; la conciliación archivo por archivo no se hizo).
 
 ### 4.3 Exclusiones de Semiosis práctica
 
@@ -179,31 +179,19 @@ La carpeta de origen de Semiosis práctica (una bóveda de Obsidian con lecturas
 | `admin` | 37 | Material administrativo |
 | `personal-data` | 2 | Datos personales que no deben entrar al acervo |
 
-### 4.4 Estado medido en dev
+### 4.4 Estado en dev
 
-Las cifras siguientes vienen de la medición del 2026-10-29: la de la ingesta a las 04:38 UTC y la del despliegue de ese mismo día. Este documento las cita; no se volvieron a medir en esta versión.
+Este documento no cita conteos de dev porque cambian. El estado actual se consulta en el Postgres de dev: `documents`, por `organization_id`, `publication_status` y `anonymisation_status`. El presupuesto se consulta en `budget_state` de ai-service.
 
-| Ecosistema | Estado (citado) |
+| Ecosistema | Contenido |
 |---|---|
-| 6, Prevención del dengue | 10 documentos reales más el corpus v2. Los documentos 1031 y 1039 se retienen a propósito para el video de demostración V2 |
-| 7, Discapacidad | 67 documentos reales, 6 de la lista C y el corpus v2 (26 publicados). El documento 1129 se retiene a propósito para el video V2 |
-| 8, Semiosis práctica | 747 publicados (1 omitido) y 115 archivos de participantes retenidos por el filtro. Pasó la revisión de nombres sobrevivientes |
-
-| Estado de anonimización en dev al desplegar el 2026-10-29 | Documentos (citado, conteo en Postgres) |
-|---|---|
-| `held` | 22 |
-| `ready` | 286 |
-| `approved` | 50 |
-
-| Presupuesto de ai-service consumido | USD (citado, medido el 2026-10-28 y 2026-10-29) |
-|---|---|
-| `edc-eco-6` | unos 4.25 |
-| `edc-eco-7` | unos 14.78 (se recargó a 15 el 2026-10-28) |
-| `edc-eco-8` | unos 6.66 |
+| 6, Prevención del dengue | Documentos reales y corpus v2. Algunos se retienen a propósito para el video de demostración V2 |
+| 7, Discapacidad | Documentos reales, lista C y corpus v2. Alguno se retiene a propósito para el video V2 |
+| 8, Semiosis práctica | Materiales de consulta publicados. Los materiales del taller (casos, registros de clase, ensayos, emergentes) están en borrador hasta tener el consentimiento de sus autores (decisión del 2026-11-04) |
 
 Advertencia: el despliegue de las 06:45 UTC del 2026-10-29 vació la cola del grafo, que corre dentro del proceso del backend. El estado del grafo de los tres ecosistemas hay que volver a medir (pendiente). Ver [Roadmap](../01-proyecto/roadmap.md).
 
-Los presupuestos de 5 USD por ecosistema son el valor por defecto de `AI_ECOSYSTEM_BUDGET_USD`; es una decisión del responsable, no una necesidad medida (citado de `infra/fleet/env-manifests.md`). El consumo del ecosistema 7 rebasa ese valor, así que su tope se elevó a mano (inferido de las cifras citadas; la causa probable es la ingesta masiva, no verificada).
+El presupuesto por defecto de cada ecosistema es `AI_ECOSYSTEM_BUDGET_USD`; es una decisión del responsable, no una necesidad medida (citado de `infra/fleet/env-manifests.md`).
 
 ### 4.5 Fuentes en disco
 

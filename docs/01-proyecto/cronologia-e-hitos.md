@@ -172,7 +172,7 @@ Los videos de evidencia son grabaciones por rol contra dev, hechas con especific
 | Versión | Hora de grabación (2026-10-28) | Contenido | Videos y duración (medido con ffprobe) |
 |---|---|---|---|
 | V1 | 00:38 | Datos de ese momento | Admin 288 s; participante 221 s; estudiante 201 s; investigador 204 s |
-| V2 | 10:28 a 17:22 | Tras los 76 casos de Semiosis, el corpus v2, los ajustes de Discapacidad y la recarga de la org 7 | Admin 235 s; participante 268 s; investigador 209 s; estudiante 201 s |
+| V2 | 10:28 a 17:22 | Tras los casos de Semiosis, el corpus v2, los ajustes de Discapacidad y la recarga de la org 7 | Admin 235 s; participante 268 s; investigador 209 s; estudiante 201 s |
 | V3 | 18:35 a 19:15 | Tras las lecturas de Semiosis | Admin 37 s; estudiante 33 s; participante 92 s; Discapacidad 83 s; estudiante con nota 120 s; investigador 110 s |
 
 - Un chequeo por reconocimiento de texto sobre los fotogramas confirmó que ningún nombre real aparece en ningún segundo de video (citado de la bitácora del proyecto, 2026-10-28).

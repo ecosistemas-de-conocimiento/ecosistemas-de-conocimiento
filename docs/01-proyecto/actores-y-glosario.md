@@ -110,9 +110,9 @@ Existe además una **línea jurídica** ligada al protocolo CEI-0003-2026 y al t
 
 | Id | Nombre | Contenido | Fuente |
 |---|---|---|---|
-| 6 | Prevención del dengue | 10 documentos reales y el corpus sintético v2 de dengue (70 piezas); los documentos 1031, 1039 y 1129 se retienen a propósito para la demostración de Revisión | Citado de la bitácora del proyecto (2026-10-28; conteo medido en la ingesta el 2026-10-29 a las 04:38 UTC) |
-| 7 | Discapacidad | 67 documentos reales, 6 de la «lista C» y el corpus sintético v2 de discapacidad (40 testimonios) | Ídem |
-| 8 | Semiosis práctica | 747 documentos publicados y 115 retenidos por el gate | Ídem |
+| 6 | Prevención del dengue | Documentos reales y corpus sintético v2 de dengue; algunos se retienen a propósito para la demostración de Revisión | Citado de la bitácora del proyecto (2026-10-28; conteo medido en la ingesta el 2026-10-29 a las 04:38 UTC) |
+| 7 | Discapacidad | Documentos reales, «lista C» y corpus sintético v2 de discapacidad | Ídem |
+| 8 | Semiosis práctica | Materiales de consulta publicados; los del taller, en borrador hasta tener el consentimiento de sus autores | Decisión del 2026-11-04 |
 | 1 | Traducción en salud | Retirado el 2026-10-27 | Bitácora del proyecto (2026-10-27) |
 | 3 | Acompañamiento escolar | Retirado el 2026-10-27 | Bitácora del proyecto (2026-10-27) |
 

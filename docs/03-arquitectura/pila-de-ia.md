@@ -50,13 +50,13 @@ flowchart LR
 
 | Tarea | Modelo | Host en dev | Host en staging | Variables | Fallback | Estado |
 |---|---|---|---|---|---|---|
-| Embeddings de ingesta y consulta | `baai/bge-m3`, 1024 dimensiones | Spark | OpenRouter | `EMBEDDINGS_URL`, `EMBEDDINGS_API_KEY`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `EMBEDDINGS_FALLBACK_URL`, `EMBEDDINGS_FALLBACK_COOLDOWN_S`, `EMBEDDINGS_PRIMARY_TIMEOUT_MS` | OpenRouter con el mismo modelo, ante error de red, timeout, 5xx o 429; enfriamiento de 60 s; timeout primario de 5 s en dev (citado de `infra/fleet/edc-1.md`:1294-1324) | En uso en dev desde el 2026-10-22 |
+| Embeddings de ingesta y consulta | `baai/bge-m3`, 1024 dimensiones | Spark | OpenRouter (pendiente de pasar a DeepInfra) | `EMBEDDINGS_URL`, `EMBEDDINGS_API_KEY`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `EMBEDDINGS_FALLBACK_URL`, `EMBEDDINGS_FALLBACK_API_KEY`, `EMBEDDINGS_FALLBACK_COOLDOWN_S`, `EMBEDDINGS_PRIMARY_TIMEOUT_MS` | En dev, DeepInfra con el mismo modelo desde el 2026-11-06, ante error de red, timeout, 5xx o 429; enfriamiento de 60 s; timeout primario de 5 s en dev (citado de `infra/fleet/edc-1.md`:1294-1324) | En uso en dev desde el 2026-10-22 |
 | Embeddings dispersos | `bge-m3` sparse, `sparsevec(250002)` | — | — | `SPARSE_ENABLED` (falso por defecto), `SPARSE_EMBED_URL` | Cae a `tsvector` | Apagado |
 | Rerank | `Qwen/Qwen3-Reranker-0.6B` | **No verificado** (Spark o DeepInfra) | DeepInfra, con llave propia de EDC | `RERANK_API_KEY` (si existe, el compose exporta `RERANK_ENABLED=true`), `RERANK_PROVIDER`, `RERANK_URL`, `RERANK_MODEL`, `RERANK_TIMEOUT_MS` = 8000; en web `CHAT_RERANK` | Falla abierto: devuelve el orden fusionado; la web reintenta una vez sin rerank | En uso en ambos entornos |
 | Respuesta de chat | `deepseek/deepseek-chat-v3.1`, tier `standard` | OpenRouter | OpenRouter | `CHAT_COMPLETIONS_URL`, `OPENROUTER_API_KEY`; modelo fijo en `EFFORT_PROFILES` | Ninguno entre proveedores; solo reintenta | En uso |
 | Condense (reescritura de seguimiento) | DeepSeek V3.1, tier `quick` | OpenRouter | OpenRouter | `CONDENSE_TIMEOUT_MS` (web) | Usa la pregunta cruda | En uso; en el Spark es viable pero no está desplegado |
 | Expansión de consulta | DeepSeek V3.1, tier `quick`; hasta 3 variantes y una respuesta hipotética; timeout de 5 s | OpenRouter | OpenRouter | `QUERY_EXPANSION` (web) | Se omite | En uso |
-| Detector de datos personales (etapas 3 y 4 del gate) | `qwen3-30b-a3b-instruct-2507` (Q8, llama.cpp) | Spark | DeepSeek V3.1 `quick` vía ai-service | `ANONYMISE_DETECT_URL`, `_API_KEY`, `_MODEL`, `_FALLBACK` (`hosted` o `none`), `_FALLBACK_COOLDOWN_S`, `_CONCURRENCY`, `_TIMEOUT_MS`, `_MIN_GAP_MS`, `ANONYMISE_CHUNK_WORDS`, `ANONYMISE_VERIFY_ROUNDS`; el global `platform-settings.detectorFallback` le gana a la variable | `hosted` por defecto: si el Spark falla, el texto va a OpenRouter. `none` retiene | En uso en dev: las 6 llamadas registradas las sirvió el Spark (citado de `infra/fleet/edc-1.md`:2173-2179) |
+| Detector de datos personales (etapas 3 y 4 del gate) | `qwen3-30b-a3b-instruct-2507` (Q8, llama.cpp) | Spark | DeepSeek V3.1 `quick` vía ai-service | `ANONYMISE_DETECT_URL`, `_API_KEY`, `_MODEL`, `_FALLBACK` (`hosted` o `none`), `_FALLBACK_COOLDOWN_S`, `_CONCURRENCY`, `_TIMEOUT_MS`, `_MIN_GAP_MS`, `ANONYMISE_CHUNK_WORDS`, `ANONYMISE_VERIFY_ROUNDS`; el global `platform-settings.detectorFallback` le gana a la variable | `hosted` por defecto: si el Spark falla, el texto va a OpenRouter. `none` retiene; dev usa `none` desde el 2026-11-06 | En uso en dev: las 6 llamadas registradas las sirvió el Spark (citado de `infra/fleet/edc-1.md`:2173-2179) |
 | Títulos de testimonios | El mismo backend que el detector, tier `quick` | Spark primero | Hospedado | `titleClientFromEnv` en `apps/backend/src/lib/testimonioTitle.ts` | Un registro retenido nunca va al hospedado: solo Spark o queda sin título | En uso |
 | Extracción del grafo | DeepSeek V3.1, tier `deep`, prompt `v5` | OpenRouter | OpenRouter | `GRAPH_EXTRACT`, `GRAPH_EXTRACT_EFFORT`, `GRAPH_EXTRACT_WINDOW_CHARS` (12000), `GRAPH_EXTRACT_MAX_WINDOWS` (8), `GRAPH_EXTRACT_MAX_CONCURRENCY` (2), `GRAPH_EXTRACT_TIMEOUT_MS` (660000) | Ninguno: `graphStatus: failed` | En uso |
 | Transcripción de archivos | Whisper large-v3 (whisper.cpp) | Spark (`WHISPER_BACKEND=remote`) | No desplegado: perfil `audio` apagado | `WHISPER_BACKEND`, `WHISPER_REMOTE_URL`, `WHISPER_REMOTE_TOKEN`, `WHISPER_REMOTE_TIMEOUT_S` (1800), `WHISPER_REMOTE_MODEL`, `WHISPER_LANGUAGE=es` | Reintentos y luego cola de mensajes muertos | En uso en dev desde 2026-10-22 |
@@ -92,10 +92,10 @@ El Spark tiene 4 ranuras de 16 384 tokens de contexto compartidas entre el detec
 
 ### 3.3 Qué va a proveedores hospedados
 
-- **OpenRouter:** toda la generación con DeepSeek V3.1 (respuestas, condense, expansión, grafo, preguntas para el estudiante, juez de evals); embeddings en staging y como respaldo en dev; el detector en staging y como respaldo en dev.
+- **OpenRouter:** toda la generación con DeepSeek V3.1 (respuestas, condense, expansión, grafo, preguntas para el estudiante, juez de evals); embeddings y detector en staging. La decisión es pasar todo a DeepInfra; la generación y staging siguen pendientes.
 - **DeepInfra:** el rerank en staging (y en dev si el host no es el Spark).
 
-Sin el Spark, dev pierde la transcripción y el micrófono en vivo; el detector y los embeddings caen a OpenRouter.
+Sin el Spark, dev pierde la transcripción y el micrófono en vivo; los embeddings caen a DeepInfra y el detector retiene los documentos.
 
 ## 4. Qué texto sale a cada tercero
 
@@ -106,8 +106,8 @@ Esta sección enumera el texto concreto que sale de `edc-1` hacia fuera, en qué
 | 1 | Gate, etapa 3 (detectar) | Texto después de las etapas 1 y 2: sin correos, teléfonos, CURP, RFC, códigos postales, URLs ni nombres de miembros conocidos, pero **con nombres de terceros, lugares y detalles**; en trozos de unas 250 palabras. Aplica a testimonios, documentos marcados "Anonimizar" y cada turno de conversación (pregunta y respuesta) | Spark directo | OpenRouter vía ai-service | Solo en el camino por ai-service |
 | 2 | Gate, etapa 4 (verificar) | El texto ya redactado | Spark directo | OpenRouter | Igual que 1 |
 | 3 | Títulos de testimonio | Solo el texto redactado (`redactedText`) o retenido (`heldText`); un registro retenido nunca va al hospedado | Spark | OpenRouter (solo no retenidos) | Sí, en el hospedado |
-| 4 | Embeddings de ingesta | `corpusTextFor(row)`: el texto anonimizado si pasó por el gate; el texto crudo de un `documento` normal | Spark (respaldo OpenRouter) | OpenRouter | Sí, en OpenRouter |
-| 5 | Embeddings de consulta | La pregunta cruda del usuario | Spark (respaldo OpenRouter) | OpenRouter | Sí, en OpenRouter |
+| 4 | Embeddings de ingesta | `corpusTextFor(row)`: el texto anonimizado si pasó por el gate; el texto crudo de un `documento` normal | Spark (respaldo DeepInfra) | OpenRouter | Sí, en OpenRouter o DeepInfra |
+| 5 | Embeddings de consulta | La pregunta cruda del usuario | Spark (respaldo DeepInfra) | OpenRouter | Sí, en OpenRouter o DeepInfra |
 | 6 | Rerank | La pregunta y los pasajes candidatos (unos 40 como máximo) | No verificado | DeepInfra | Sí |
 | 7 | Condense y expansión | La pregunta del usuario y el historial reciente | OpenRouter | OpenRouter | Sí |
 | 8 | Respuesta de chat | Prompt del sistema y estilo del ecosistema; historial con las preguntas crudas; fragmentos recuperados (anonimizados si pasaron por el gate, crudos si son `documento`); documentos adjuntos o fijados completos; bloque de orientación con turnos anonimizados de otras personas; contexto del grafo | OpenRouter | OpenRouter | Sí |
@@ -212,7 +212,7 @@ El plan está en `plan/spark-ai-adopcion.md` (2026-10-17) y en ADR-0012. Su conc
 |---|---|---|
 | 0 | Medir costos y latencias | Hecha (tabla 7.3) |
 | 1 | Detector del gate y rerank | Detector en uso en dev desde el 2026-10-21, con respaldo hospedado encendido. Rerank en dev no verificado. Staging sigue hospedado en ambos |
-| 2 | Embeddings | En uso en dev desde el 2026-10-22, con respaldo a OpenRouter (citado de `infra/fleet/edc-1.md` §4za). Coseno de 0.99997 o más frente a OpenRouter: no verificado en esta versión |
+| 2 | Embeddings | En uso en dev desde el 2026-10-22, con respaldo a DeepInfra desde el 2026-11-06. Coseno de 0.99998 o más frente a DeepInfra (medido el 2026-11-06 con dos textos de prueba) |
 | 3 | Transcripción | En uso en dev desde 2026-10-22, y micrófono en vivo desde 2026-10-25 |
 | 4 | Generación pequeña (condense, expansión, grafo) | No desplegada. Condense en el Spark es viable según la evaluación del 2026-10-26 |
 | — | Respuesta de chat | Se queda hospedada (ADR-0013): Qwen3-30B quedó peor que el hospedado en 9 de 22 turnos, contra 2 en sentido contrario (citado de `plan/spark-chat-eval-2026-10-26.md`). Siguiente candidato: gpt-oss-120b |
@@ -259,8 +259,8 @@ La lista completa de variables, sin valores secretos, está en [Infraestructura 
 
 ## 11. Riesgos y límites
 
-1. **El respaldo del detector manda texto sin anonimizar a OpenRouter.** Es el comportamiento por defecto (`ANONYMISE_DETECT_FALLBACK=hosted`, `apps/backend/src/lib/anonymise/fallbackGenerator.ts`). En staging no hay Spark, así que el detector siempre es hospedado (inferido de `infra/fleet/edc-1.md`:1259-1262, que no lista variables `ANONYMISE_DETECT_*` en staging). Hay que poner `none` en `platform-settings` antes del primer testimonio real.
-2. **El Spark es prestado y no tiene supervisión.** Un reinicio deja caídos audio, micrófono en vivo y modelos locales; el detector y los embeddings caen a OpenRouter.
+1. **El respaldo del detector manda texto sin anonimizar a OpenRouter.** Es el comportamiento por defecto (`ANONYMISE_DETECT_FALLBACK=hosted`, `apps/backend/src/lib/anonymise/fallbackGenerator.ts`). En staging no hay Spark, así que el detector siempre es hospedado (inferido de `infra/fleet/edc-1.md`:1259-1262, que no lista variables `ANONYMISE_DETECT_*` en staging). Dev ya tiene `ANONYMISE_DETECT_FALLBACK=none` desde el 2026-11-06. Staging sigue pendiente.
+2. **El Spark es prestado y no tiene supervisión.** Un reinicio deja caídos audio, micrófono en vivo y modelos locales; los embeddings caen a DeepInfra y el detector retiene los documentos.
 3. **Siguen saliendo textos crudos a proveedores hospedados:** la pregunta del miembro en condense, expansión, embeddings de consulta y respuesta; el texto de un `documento` sin gate. Si la regla de privacidad del proyecto cubre estos casos es una pregunta abierta (citado de `plan/spark-ai-adopcion.md`, pregunta P6).
 4. **Un solo contador de tasa para todo EDC.** Backend y web usan una sola llave de ai-service, y el límite agrupa por llave: 30 generaciones por minuto compartidas entre chat, detector hospedado, títulos, grafo y evaluaciones (inferido de `infra/docker-compose.yml`:699 y `services/ai-service/src/server.ts`:94-104). El detector se autolimita; el grafo no.
 5. **Latencia.** DeepSeek por OpenRouter bajó a 8 o 9 tokens por segundo en noches malas (citado de `plan/spark-chat-eval-2026-10-26.md`). Una llamada `deep` del grafo tiene p50 de 72 s y máximo de 190 s (citado de `plan/spark-ai-adopcion.md`:79, medición local hasta 2026-10-17).

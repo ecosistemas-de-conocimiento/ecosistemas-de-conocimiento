@@ -2763,8 +2763,26 @@ Measured after, on dev (Postgres, ai-service logs, a student's token):
 | estudiante1, `GET /api/documents/1178` and `/1254` | 404 |
 | org 8 published, Postgres and the student's count | 672 (was 748) |
 
-⚠ NOT DONE: `semiosis-2026-10-held` is not held on dev. 103 published rows match its titles (68 gated,
-35 ungated), 2 more are rejected drafts, and org 8 has no `held` row. Awaiting the owner's decision.
+### 4zzzzzz. Done 2026-11-06 23:51-23:56 UTC and after: the rest of the workshop to draft; embeddings fallback to DeepInfra, dev only
+
+`semiosis-2026-10-held` was never held on dev, despite its name. Its 103 published rows (68 gated, 35
+ungated) went to draft by the same route, then ids 788, 796 and 799. Measured after: org 8 has 187 drafts
+and 566 published; 0 `publication_error`; estudiante1 gets 404 on 835 and 1073.
+
+⚠ During the 103 the Spark timed out twice and ai-service used the old fallback, OpenRouter, with a 60 s
+cooldown each time. Up to 30 of those rows, 28 ungated, reached OpenRouter (inferred from row update times
+inside those windows; the log names no document).
+
+Owner decision: nothing goes to OpenRouter, everything to DeepInfra. Done so far, on dev only:
+`EMBEDDINGS_FALLBACK_URL` is DeepInfra, with `EMBEDDINGS_FALLBACK_API_KEY`, and
+`ANONYMISE_DETECT_FALLBACK=none`. Set in Coolify and the generated `.env` (backup in
+`/root/edc-pehg.env.bak-deepinfra-*`), then ai-service and backend recreated. Spark and DeepInfra vectors:
+cosine 0.99998+ on two test strings (measured).
+
+⚠ NOT DONE: chat, graph and the other generation still use OpenRouter on both environments. They need code,
+because the model ids are OpenRouter's. Staging embeddings still use OpenRouter too: its 2026-10-17 image has
+no `EMBEDDINGS_API_KEY` and would send the OpenRouter key to DeepInfra, so that change was reverted within
+minutes. It needs a staging deploy first.
 
 ---
 

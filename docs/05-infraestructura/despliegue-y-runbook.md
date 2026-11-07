@@ -385,7 +385,7 @@ Los servicios del Spark corren en `tmux` y no arrancan solos (procedimiento de o
 
 ### 6.18 Revertir del Spark a servicios hospedados
 
-Para embeddings (citado, `edc-1.md` §4za): borrar en `edc-dev` las cinco variables `EMBEDDINGS_*` (copias normal y preview) y redesplegar. ai-service vuelve a calcular embeddings en OpenRouter. Para el detector: con `ANONYMISE_DETECT_FALLBACK=hosted` ya cae solo a hospedado; con `none` los documentos se retienen hasta que vuelva el Spark. Hay un interruptor en tiempo de ejecución en la configuración de plataforma que tiene prioridad sobre la variable (citado, `platformSettings.ts:58-61`). Transcripción: no hay respaldo hospedado; el audio espera o se pierde (ver [Respaldos y recuperación](respaldos-y-recuperacion.md) §6.3).
+Para embeddings (citado, `edc-1.md` §4za): borrar en `edc-dev` las variables `EMBEDDINGS_*` (copias normal y preview) y redesplegar. ai-service vuelve a calcular embeddings en OpenRouter, así que antes hay que apuntar `EMBEDDINGS_URL` a DeepInfra. Para el detector: con `ANONYMISE_DETECT_FALLBACK=hosted` ya cae solo a hospedado; con `none` los documentos se retienen hasta que vuelva el Spark. Hay un interruptor en tiempo de ejecución en la configuración de plataforma que tiene prioridad sobre la variable (citado, `platformSettings.ts:58-61`). Transcripción: no hay respaldo hospedado; el audio espera o se pierde (ver [Respaldos y recuperación](respaldos-y-recuperacion.md) §6.3).
 
 ### 6.19 Redirección del apex
 
