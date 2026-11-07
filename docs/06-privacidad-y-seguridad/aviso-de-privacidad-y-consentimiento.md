@@ -7,7 +7,7 @@
 
 > **Aviso.** El sistema aún no recibe testimonios reales de participantes en producción: no existe entorno de producción, y en desarrollo (dev) sí hay documentos reales del proyecto, con nombres reales en sus textos originales, incluidos materiales de participantes del taller de Semiosis, en borrador hasta tener el consentimiento de sus autores (ver [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md)).
 
-**Para quién es y qué responde.** Este documento reúne los textos que Ecosistemas de Conocimiento (EDC) propone presentar a las personas titulares de datos. Salvo los consentimientos del estudiante, hoy no se presenta ninguno. Incluye el aviso de privacidad integral, el aviso simplificado de la interfaz, el consentimiento de quien aporta un testimonio, los consentimientos del estudiante y el procedimiento para ejercer derechos y retirar una contribución. Abre con una nota de marco legal para el área jurídica. Es para la unidad de transparencia y el área jurídica del CIDE, para el Comité de Ética en Investigación, para las personas facilitadoras que levantan testimonios y para quien mantenga la interfaz. Los textos entre corchetes, como `[domicilio]`, los llena el área jurídica. Las notas que empiezan con "Antes de publicar" son para quien prepare la versión final y no forman parte del texto para el público.
+**Para quién es y qué responde.** Este documento reúne los textos que Ecosistemas de Conocimiento (EDC) propone presentar a las personas titulares de datos. Salvo los consentimientos del estudiante, hoy no se presenta ninguno. Incluye el aviso de privacidad integral, el aviso simplificado de la interfaz, el consentimiento de quien aporta un testimonio, los consentimientos del estudiante y el procedimiento para ejercer derechos y retirar una contribución. Abre con una nota de marco legal para el área jurídica. Es para la unidad de transparencia y el área jurídica del CIDE, para las personas facilitadoras que levantan testimonios y para quien mantenga la interfaz. Los textos entre corchetes, como `[domicilio]`, los llena el área jurídica. Las notas que empiezan con "Antes de publicar" son para quien prepare la versión final y no forman parte del texto para el público.
 
 ## Estado de los controles
 
@@ -40,7 +40,7 @@ Definiciones. **Implementado:** funciona hoy, con evidencia en código. **Planea
 | Política de retención y destrucción de originales al cierre | **Pendiente** | Sin aprobar; sin plan de destino final |
 | Política sobre menores: tutor y asentimiento | **Pendiente** | No existe; el sistema no registra edad |
 | Bitácora del proyecto para acciones ARCO | **Pendiente** | No existe |
-| Validación jurídica de estos textos y cobertura del CEI | **Pendiente** | Sin validar. No consta que el protocolo CEI-0003-2026 cubra estos testimonios |
+| Validación jurídica de estos textos | **Pendiente** | Sin validar |
 
 ## a. Nota de marco legal
 
@@ -62,7 +62,6 @@ Definiciones. **Implementado:** funciona hoy, con evidencia en código. **Planea
 
 **Ética en investigación.**
 
-- El Comité de Ética en Investigación (CEI) del CIDE aprobó el protocolo CEI-0003-2026 el 2026-04-17, vigente hasta abril de 2028 (citado de los textos del proyecto). Corresponde a la línea de razonamiento judicial. No consta que cubra los testimonios de EDC, y estos textos no se han presentado al CEI.
 - El proyecto adopta los diez **Principios de Chapultepec**, presentados por SECIHTI y la ATDT el 2026-01-29, con una matriz de correspondencia en el registro del proyecto del 2026-10-21.
 - La investigación con personas exige consentimiento informado, resguardo de los datos, destino final al cerrar el proyecto y protocolos reforzados para poblaciones en situación de vulnerabilidad: personas con discapacidad y menores de edad.
 - Por la Ley General para la Inclusión de las Personas con Discapacidad, el aviso y el consentimiento se ofrecen en formatos accesibles.
@@ -202,7 +201,7 @@ El folio y la firma se guardarían fuera de la plataforma, en un archivo de cons
 >
 > **¿Cuánto tiempo lo guardamos?** `[plazo y destino final: pendientes de decidir]`.
 >
-> **¿A quién preguntar?** Al equipo del proyecto en `[correo del proyecto]` o al Comité de Ética en Investigación del CIDE en `[correo del CEI]`.
+> **¿A quién preguntar?** Al equipo del proyecto en `[correo del proyecto]`.
 >
 > Marca lo que aceptas:
 >
@@ -322,7 +321,7 @@ Sin fechas: ninguna está acordada. Primero lo Planeado, después lo Pendiente.
 4. **Planeado.** Activar el conserje de sesiones, tras aprobar el plazo, y reflejarlo en la cláusula 7.
 5. **Planeado.** Activar retención cero donde esté disponible y migrar a inferencia albergada de forma independiente.
 6. **Pendiente.** Llenar los corchetes: domicilio, correos, autoridad garante, plazos, país y organización del servidor de cómputo.
-7. **Pendiente.** Validar la ley aplicable y el responsable con el área jurídica, y presentar los textos al CEI.
+7. **Pendiente.** Validar la ley aplicable y el responsable con el área jurídica.
 8. **Pendiente.** Crear el comprobante ético con folio, su versión en PDF y el archivo de consentimientos.
 9. **Pendiente.** Preparar los formatos accesibles.
 10. **Pendiente.** Abrir el correo institucional y el canal ARCO, con su bitácora.

@@ -48,7 +48,7 @@ El razonamiento, escrito en `apps/backend/src/collections/Documents.ts`:
 
 - Un testimonio no puede atribuirse a su autora o autor aunque esa persona lo quiera. Si el proyecto necesita voces con nombre, será una decisión nueva con su propio diseño.
 - El campo `contentKind` sostiene la regla: un testimonio subido como `documento` no pasa por el gate ([ADR-0002](ADR-0002-contentkind-separado-de-kind.md)).
-- **Abierto:** el marco legal y ético de los testimonios (artefacto de consentimiento y si debe registrarse fuera del sistema) y la retención (`plan/anonimizacion-y-voces.md` §7). El proyecto tiene un protocolo aprobado por el comité de ética del CIDE (CEI-0003-2026) y un formato de consentimiento informado, ambos fuera del sistema (citado del informe 07 de investigación, §1).
+- **Abierto:** el marco legal y ético de los testimonios (artefacto de consentimiento y si debe registrarse fuera del sistema) y la retención (`plan/anonimizacion-y-voces.md` §7). El proyecto tiene un formato de consentimiento informado fuera del sistema (citado del informe 07 de investigación, §1).
 - **No confundir** con el consentimiento de estudiantes del 2026-10-28: es el permiso para que su docente vea sus testimonios ya anonimizados, con versión del texto aceptado (migraciones `20261028_054402` y `20261028_083327`). No atribuye ningún testimonio.
 
 ## Decisiones relacionadas

@@ -24,7 +24,6 @@ gantt
 
     section Diseño
     Brief v0                                  :milestone, 2026-04-10, 0d
-    CEI aprueba CEI-0003-2026                 :milestone, 2026-04-17, 0d
     Reunión fundacional del Repositorio       :milestone, 2026-04-18, 0d
     Kickoff y brief v1                        :milestone, 2026-05-11, 0d
     Reunión técnica                           :milestone, 2026-06-18, 0d
@@ -70,7 +69,6 @@ gantt
 | Fecha | Hito | Detalle | Fuente |
 |---|---|---|---|
 | 2026-04-10 | Brief v0 | Plataforma de IA con stack sugerido Next.js/React o FastAPI, PostgreSQL y pgvector | `cide/plan/briefs/v0-brief-proyecto-plataforma-ia.md` (fecha de archivo) |
-| 2026-04-17 | Aprobación ética | El CEI aprueba el protocolo CEI-0003-2026, válido hasta abril de 2028 | «Estado del Proyecto» |
 | 2026-04-18 | Reunión fundacional | Nace el «Repositorio de Voces y Resonancias v1.0»: ciclo, usos A, B y C, glosario. El texto dice «2025», pero la carpeta (`260418`) y el contenido corresponden a 2026 (inferido: errata) | `cide/plan/reus/260418/` |
 | 2026-04-30 | Briefing de Saptiva | [programador A] y [coautor del briefing] evalúan Saptiva como modelo mexicano | `briefing-saptiva-repositorio.docx` |
 | 2026-05-06 | Ministración | Llegan $150,000 MXN; empiezan los cinco meses de ejecución | «Estado del Proyecto» |

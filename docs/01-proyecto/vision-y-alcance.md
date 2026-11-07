@@ -3,7 +3,7 @@
 - **Versión:** 1.1
 - **Fecha:** 2026-11-03
 - **Estado:** vigente
-- **Fuentes:** en el repositorio: `plan/anonimizacion-y-voces.md`, `plan/funcionalidades.md`, `plan/spark-ai-adopcion.md`, `plan/spark-chat-eval-2026-10-26.md`, `plan/servidor-desarrollo-build.csv`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md` y el código en `main` del 2026-10-29. En la carpeta del proyecto, fuera del repositorio (`cide/plan/`): `briefs/v1-brief-repositorio-voces-resonancias.md` (brief v1, 2026-05-11), `briefs/v0-brief-proyecto-plataforma-ia.md`, `docs/Textos del proyecto/Desarrollo (metodología)/Informe de reunión con desarrollo — 21 de octubre de 2026.docx` (informe del 21 de octubre), `docs/Textos del proyecto/Proyecto/` (carta SECIHTI, «Estado del Proyecto IH-2025-I-445», oficio del CEI) y la bitácora del proyecto (registros del 2026-10-21, 2026-10-27 y 2026-10-28).
+- **Fuentes:** en el repositorio: `plan/anonimizacion-y-voces.md`, `plan/funcionalidades.md`, `plan/spark-ai-adopcion.md`, `plan/spark-chat-eval-2026-10-26.md`, `plan/servidor-desarrollo-build.csv`, `infra/fleet/edc-1.md`, `infra/fleet/env-manifests.md` y el código en `main` del 2026-10-29. En la carpeta del proyecto, fuera del repositorio (`cide/plan/`): `briefs/v1-brief-repositorio-voces-resonancias.md` (brief v1, 2026-05-11), `briefs/v0-brief-proyecto-plataforma-ia.md`, `docs/Textos del proyecto/Desarrollo (metodología)/Informe de reunión con desarrollo — 21 de octubre de 2026.docx` (informe del 21 de octubre), `docs/Textos del proyecto/Proyecto/` (carta SECIHTI, «Estado del Proyecto IH-2025-I-445») y la bitácora del proyecto (registros del 2026-10-21, 2026-10-27 y 2026-10-28).
 
 ## Para quién es y qué responde
 
@@ -61,7 +61,6 @@ El horizonte declarado en el brief v1 §2 es la **justicia epistémica**: el der
 | Fase preoperativa | De agosto de 2025 al 2026-05-06 | Citado de «Estado del Proyecto» |
 | Cierre de la Etapa 1 | 2026-10-28. Después de esa fecha no hay gasto | Citado del informe del 21 de octubre §VII |
 | Captura del informe de Etapa 1 | Del 2026-10-28 al 2026-11-18, fecha por confirmar | Citado del informe del 21 de octubre §VIII |
-| Aprobación ética | El Comité de Ética en Investigación aprobó el 2026-04-17 el protocolo CEI-0003-2026 (línea de razonamiento judicial), válido hasta abril de 2028 | Citado de «Estado del Proyecto» y del oficio del CEI |
 | Marco ético adoptado | Los diez Principios de Chapultepec (SECIHTI y ATDT, 2026-01-29), con matriz de correspondencia | Citado del informe del 21 de octubre §IV |
 | Servidor de desarrollo propio | Presupuesto de $53,000 MXN con IVA; la lista de piezas cotizada suma $49,544 MXN con IVA (precios del 2026-09-28 al 2026-10-01). No consta la compra | Citado de la bitácora del proyecto (2026-10-28) y de `plan/servidor-desarrollo-build.csv` |
 | Costo de la caja de hospedaje | Unos €9.99 al mes más unos €2.00 al mes de respaldos (Hetzner, cx33) | Citado de `infra/fleet/edc-1.md` (lista de precios de la API de Hetzner, 2026-10-17) |
@@ -250,7 +249,7 @@ Fuentes fuera del repositorio de código, en la carpeta del proyecto `cide/plan/
 - `cide/plan/briefs/v1-brief-repositorio-voces-resonancias.md` y `v0-brief-proyecto-plataforma-ia.md`
 - `cide/plan/reus/260418/` (reunión del 18 de abril de 2026) y `cide/plan/reus/260511-kickoff/`
 - `cide/plan/docs/Textos del proyecto/Desarrollo (metodología)/Informe de reunión con desarrollo — 21 de octubre de 2026.docx`
-- `cide/plan/docs/Textos del proyecto/Proyecto/` (carta SECIHTI, «Estado del Proyecto IH-2025-I-445», oficio del CEI)
+- `cide/plan/docs/Textos del proyecto/Proyecto/` (carta SECIHTI, «Estado del Proyecto IH-2025-I-445»)
 - Bitácora del proyecto, registros del 2026-10-21, 2026-10-27 y 2026-10-28
 
 Documentos relacionados en `docs/`:

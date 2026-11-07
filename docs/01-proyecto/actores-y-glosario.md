@@ -46,7 +46,6 @@ Constan en nombres de archivo y textos del proyecto. No consta un convenio forma
 | Maya / MaIA | Empresa mexicana que ofrece nodos de inferencia y renta de DGX Spark. La colaboración no se concretó (`plan/justificacion.md`) | Infraestructura |
 | Saptiva | Modelo de lenguaje mexicano. Era la referencia de modelo en el brief v1 §7d. No se adoptó: EDC usa modelos vía OpenRouter y en el Spark | Infraestructura |
 | Dueño del DGX Spark | Otra organización presta el equipo donde corren la transcripción y el detector de dev. No consta contrato | Infraestructura |
-| Comité de Ética en Investigación | Aprobó el protocolo CEI-0003-2026 el 2026-04-17 | Línea jurídica |
 
 En algunas transcripciones automáticas, «Saptiva» aparece como «Activa» o «Sativa»; son errores de transcripción (inferido del nombre del briefing).
 
@@ -104,7 +103,7 @@ El informe del 21 de octubre §VIII pide nombrar estos cinco en el informe de Et
 | Medio ambiente y economías solidarias o alternativas | No consta detalle | No creado |
 | Semiosis práctica | Estudiantes de semionomía; taller de semiótica de los viernes desde el 2026-08-21 | Org 8 «Semiosis práctica» en dev, con lecturas, casos y registros de clase reales; única con vista de estudiante |
 
-Existe además una **línea jurídica** ligada al protocolo CEI-0003-2026 y al trabajo de [colaborador externo] sobre sentencias. No tiene ecosistema en la plataforma.
+Existe además una **línea jurídica** ligada al trabajo de [colaborador externo] sobre sentencias. No tiene ecosistema en la plataforma.
 
 ### 4.2 Ecosistemas en dev al 2026-10-29
 

@@ -2,12 +2,12 @@
 
 - **Versión:** 1.1
 - **Fecha:** 2026-11-03
-- **Estado:** borrador. No presentada al Comité de Ética en Investigación (CEI). Sin validación jurídica
+- **Estado:** borrador. Sin validación jurídica
 - **Fuentes:** `apps/backend/src/lib/anonymise/`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/collections/AnonymisationReviews.ts`, `apps/backend/src/lib/graph/queries.ts`, `services/ai-service/src/services/ai/pii-egress.ts`, `plan/anonimizacion-y-voces.md`, `plan/auditoria-ia-2026-10-17.md`, `infra/fleet/edc-1.md`, `infra/fleet/backups.md`, [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md), auditoría de código del 2026-10-28, plan de adopción del Spark, propuesta de servidor de desarrollo, brief v1 del proyecto («Repositorio de Voces y Resonancias», documento externo al repo)
 
 > **Aviso.** El sistema aún no recibe testimonios reales de participantes en producción: no existe entorno de producción, y en desarrollo (dev) sí hay documentos reales del proyecto, con nombres reales en sus textos originales, incluidos materiales de participantes del taller de Semiosis, en borrador hasta tener el consentimiento de sus autores (ver [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md)).
 
-**Para quién es y qué responde.** Este documento es para el área jurídica y la unidad de transparencia del CIDE, para el Comité de Ética en Investigación (CEI) y para el equipo del proyecto. Sigue la forma de una evaluación de impacto en la protección de datos personales (EIPD, en inglés PIA): describe el tratamiento, justifica su necesidad, identifica la base de licitud, los datos sensibles, los titulares y los encargados, evalúa los riesgos para las personas con probabilidad y gravedad, y termina con los siguientes pasos que deben cumplirse antes de recibir el primer testimonio real. Es un borrador: no se ha presentado al CEI y no afirma que el protocolo CEI-0003-2026 cubra estos testimonios. El marco legal es conocimiento general, a validar por el área jurídica. El detalle técnico de cada control está en [protección de datos](proteccion-de-datos.md) y en [seguridad](seguridad.md).
+**Para quién es y qué responde.** Este documento es para el área jurídica y la unidad de transparencia del CIDE y para el equipo del proyecto. Sigue la forma de una evaluación de impacto en la protección de datos personales (EIPD, en inglés PIA): describe el tratamiento, justifica su necesidad, identifica la base de licitud, los datos sensibles, los titulares y los encargados, evalúa los riesgos para las personas con probabilidad y gravedad, y termina con los siguientes pasos que deben cumplirse antes de recibir el primer testimonio real. Es un borrador. El marco legal es conocimiento general, a validar por el área jurídica. El detalle técnico de cada control está en [protección de datos](proteccion-de-datos.md) y en [seguridad](seguridad.md).
 
 ## Estado de los controles
 
@@ -44,7 +44,6 @@ Definiciones. **Implementado:** funciona hoy, con evidencia en código. **Planea
 | Política de retención aprobada y destino final de los originales | **Pendiente** | Decisión abierta; sin plan de destino final |
 | Política sobre menores: consentimiento de tutor y asentimiento | **Pendiente** | No existe; el sistema no registra edad |
 | Impedir que una persona revisora apruebe su propia subida | **Pendiente** | `decideOnHold` en `lib/holdReview.ts` lo permite; decisión abierta |
-| Presentación de esta evaluación y del consentimiento al CEI | **Pendiente** | No consta |
 | Revisión del aviso y del consentimiento por aliados de campo | **Pendiente** | No consta |
 
 ## 1. Descripción del tratamiento
@@ -82,7 +81,7 @@ Dev sí tiene datos reales. Desde el 2026-10-27 contiene documentos reales del p
 ## 3. Base de licitud
 
 - **Consentimiento informado.** Es la base prevista para todos los titulares, con plantillas en borrador (**Planeado**). Para datos sensibles, el consentimiento debe ser expreso y por escrito, con firma autógrafa o electrónica. El comprobante ético con folio y el aviso en la interfaz no existen: **Pendiente** y **Planeado**. Hoy solo funcionan los tres consentimientos del estudiante, y solo el de testimonios guarda fecha y versión.
-- **Investigación humanística.** El tratamiento se hace dentro de un proyecto de investigación financiado por SECIHTI. El protocolo CEI-0003-2026 corresponde a la línea de razonamiento judicial; no consta que cubra los testimonios de EDC, y esta evaluación no lo afirma. Los Principios de Chapultepec (presentados por SECIHTI y la ATDT el 2026-01-29, con matriz de correspondencia en el registro del proyecto del 2026-10-21) son el marco ético adoptado.
+- **Investigación humanística.** El tratamiento se hace dentro de un proyecto de investigación financiado por SECIHTI. Los Principios de Chapultepec (presentados por SECIHTI y la ATDT el 2026-01-29, con matriz de correspondencia en el registro del proyecto del 2026-10-21) son el marco ético adoptado.
 - **Marco legal.** El CIDE es un centro público de investigación y, como tal, probablemente es sujeto obligado de la Ley General de Protección de Datos Personales en Posesión de Sujetos Obligados (LGPDPPSO). La nota de marco legal está en [aviso de privacidad y consentimiento](aviso-de-privacidad-y-consentimiento.md#a-nota-de-marco-legal). Esa nota es conocimiento general y debe validarla el área jurídica.
 
 ## 4. Datos sensibles
@@ -186,14 +185,13 @@ Las posiciones del cuadrante son una lectura cualitativa del equipo, no una medi
 
 ## 8. Consulta a interesados
 
-- **Comité de Ética en Investigación del CIDE: Pendiente.** Esta evaluación, el aviso y el consentimiento no se han presentado al CEI. El CEI aprobó el 2026-04-17 el protocolo CEI-0003-2026, de la línea de razonamiento judicial, vigente hasta abril de 2028 (citado de `Proyecto/Estado del Proyecto IH-2025-i-445`, carpeta de textos del proyecto). No consta que ese protocolo cubra los ecosistemas de dengue, discapacidad o traducción, ni estos testimonios.
 - **Equipo del proyecto.** El responsable técnico del proyecto, [Responsable Técnico], y el coordinador de desarrollo, [responsable de desarrollo], decidieron las reglas de anonimización registradas en el código (por ejemplo, el versionado del consentimiento de testimonios, decidido el 2026-10-28, y que una edición trivial no libere un texto retenido).
 - **Comunidades y aliados de campo: Pendiente.** Se propone que los aliados (instituciones de discapacidad de la Ciudad de México, PILARES, INSP para el taller de dengue, una escuela primaria de Cuernavaca) revisen el aviso simplificado y el consentimiento en lenguaje claro antes de cada taller. No consta que haya ocurrido.
 - **Área jurídica y unidad de transparencia del CIDE: Pendiente.** Deben validar la ley aplicable, la figura de responsable, los encargados y las transferencias.
 
 ## 9. Conclusión y plan de acción
 
-**Conclusión del borrador.** El tratamiento es necesario para el fin de investigación. El diseño reduce riesgos principales: la compuerta es cerrada ante la falla del modelo y está medida, el original está restringido, la grabación no se comparte y el borrado alcanza al servicio de IA. Hoy el tratamiento **no** es aceptable para iniciar la captura de testimonios reales: faltan consentimiento, aviso, canal ARCO, acuerdo con los encargados, validación jurídica y revisión del CEI, y el texto con nombres aún puede ir a un proveedor en Estados Unidos. Los riesgos residuales más altos hoy son R4, R5 y R12, además de la reidentificación por contexto (R1). Los documentos reales ya cargados en dev requieren una decisión aparte.
+**Conclusión del borrador.** El tratamiento es necesario para el fin de investigación. El diseño reduce riesgos principales: la compuerta es cerrada ante la falla del modelo y está medida, el original está restringido, la grabación no se comparte y el borrado alcanza al servicio de IA. Hoy el tratamiento **no** es aceptable para iniciar la captura de testimonios reales: faltan consentimiento, aviso, canal ARCO, acuerdo con los encargados y validación jurídica, y el texto con nombres aún puede ir a un proveedor en Estados Unidos. Los riesgos residuales más altos hoy son R4, R5 y R12, además de la reidentificación por contexto (R1). Los documentos reales ya cargados en dev requieren una decisión aparte.
 
 Las acciones están en [Siguientes pasos](#siguientes-pasos). No llevan fecha porque ninguna está acordada.
 
@@ -221,20 +219,19 @@ Sin fechas: ninguna está acordada. Deben cumplirse antes del primer testimonio 
 
 1. **Pendiente.** Decidir el tratamiento de los documentos reales ya cargados en dev. Atiende R2 y R4. Responsable técnico.
 2. **Pendiente.** Validar la ley aplicable, la figura de responsable y el texto del aviso integral. Atiende R10 y R12. Área jurídica del CIDE.
-3. **Pendiente.** Presentar al CEI esta evaluación, el aviso y el consentimiento, y aclarar qué protocolo los cubre. Atiende R1 y R16. Responsable técnico.
-4. **Planeado.** Fijar el respaldo del detector en `none` en todo entorno que reciba datos reales y verificarlo; resolver que staging no tiene detector propio. Atiende R4. Coordinación de desarrollo.
-5. **Pendiente.** Formalizar el acuerdo de uso del Spark, confirmar su ubicación y qué conserva. Atiende R5. Responsable técnico.
-6. **Planeado.** Mover el detector a un servidor propio, según la propuesta de servidor de desarrollo. Atiende R5. Responsable técnico.
-7. **Pendiente.** Documentar contratos y condiciones de retención de cada encargado. Atiende R4 y R5. Responsable técnico y área jurídica.
-8. **Planeado.** Activar retención cero donde esté disponible y migrar a inferencia albergada de forma independiente. Atiende R4. Coordinación de desarrollo.
-9. **Planeado.** Publicar el aviso simplificado en la interfaz, incluida la frase de que las conversaciones alimentan el acervo. Atiende R10. Coordinación de desarrollo.
-10. **Pendiente.** Crear el comprobante ético con folio para cada testimonio. Atiende R1 y R12. Coordinación de desarrollo y facilitación.
-11. **Pendiente.** Abrir el correo institucional de datos personales, publicar el procedimiento ARCO y crear exportación y cancelación de cuenta. Atiende R12. Unidad de transparencia y coordinación de desarrollo.
-12. **Planeado.** Activar el conserje de sesiones. Atiende R11. Coordinación de desarrollo.
-13. **Pendiente.** Aprobar la política de retención con destino final, y crear la depuración de trazas. Atiende R7 y R11. Responsable técnico y coordinación de desarrollo.
-14. **Planeado.** Programar respaldos cifrados con copia fuera del servidor y hacer una prueba de restauración. Atiende R14. Coordinación de desarrollo.
-15. **Pendiente.** Definir la política de acceso al original y su bitácora, y conservar el registro de revisiones al borrar un documento. Atiende R8 y R9. Responsable técnico.
-16. **Pendiente.** Definir la política sobre menores. Atiende R16. Responsable técnico y CEI.
-17. **Pendiente.** Decidir si una persona revisora puede aprobar su propia subida y aplicarlo. Atiende R17. Responsable técnico.
-18. **Pendiente.** Obtener la revisión de aliados de campo. Atiende R1 y R10. Facilitación.
-19. **Pendiente.** Revisar esta evaluación al cambiar un encargado, al abrir un entorno de producción o a los 12 meses. Todos los riesgos. Responsable técnico.
+3. **Planeado.** Fijar el respaldo del detector en `none` en todo entorno que reciba datos reales y verificarlo; resolver que staging no tiene detector propio. Atiende R4. Coordinación de desarrollo.
+4. **Pendiente.** Formalizar el acuerdo de uso del Spark, confirmar su ubicación y qué conserva. Atiende R5. Responsable técnico.
+5. **Planeado.** Mover el detector a un servidor propio, según la propuesta de servidor de desarrollo. Atiende R5. Responsable técnico.
+6. **Pendiente.** Documentar contratos y condiciones de retención de cada encargado. Atiende R4 y R5. Responsable técnico y área jurídica.
+7. **Planeado.** Activar retención cero donde esté disponible y migrar a inferencia albergada de forma independiente. Atiende R4. Coordinación de desarrollo.
+8. **Planeado.** Publicar el aviso simplificado en la interfaz, incluida la frase de que las conversaciones alimentan el acervo. Atiende R10. Coordinación de desarrollo.
+9. **Pendiente.** Crear el comprobante ético con folio para cada testimonio. Atiende R1 y R12. Coordinación de desarrollo y facilitación.
+10. **Pendiente.** Abrir el correo institucional de datos personales, publicar el procedimiento ARCO y crear exportación y cancelación de cuenta. Atiende R12. Unidad de transparencia y coordinación de desarrollo.
+11. **Planeado.** Activar el conserje de sesiones. Atiende R11. Coordinación de desarrollo.
+12. **Pendiente.** Aprobar la política de retención con destino final, y crear la depuración de trazas. Atiende R7 y R11. Responsable técnico y coordinación de desarrollo.
+13. **Planeado.** Programar respaldos cifrados con copia fuera del servidor y hacer una prueba de restauración. Atiende R14. Coordinación de desarrollo.
+14. **Pendiente.** Definir la política de acceso al original y su bitácora, y conservar el registro de revisiones al borrar un documento. Atiende R8 y R9. Responsable técnico.
+15. **Pendiente.** Definir la política sobre menores. Atiende R16. Responsable técnico.
+16. **Pendiente.** Decidir si una persona revisora puede aprobar su propia subida y aplicarlo. Atiende R17. Responsable técnico.
+17. **Pendiente.** Obtener la revisión de aliados de campo. Atiende R1 y R10. Facilitación.
+18. **Pendiente.** Revisar esta evaluación al cambiar un encargado, al abrir un entorno de producción o a los 12 meses. Todos los riesgos. Responsable técnico.

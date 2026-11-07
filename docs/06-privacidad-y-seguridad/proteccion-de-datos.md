@@ -7,7 +7,7 @@
 
 > **Aviso.** El sistema aún no recibe testimonios reales de participantes en producción: no existe entorno de producción, y en desarrollo (dev) sí hay documentos reales del proyecto, con nombres reales en sus textos originales, incluidos materiales de participantes del taller de Semiosis, en borrador hasta tener el consentimiento de sus autores (ver [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md)).
 
-**Para quién es y qué responde.** Este documento es para el equipo del proyecto, para quien revise el tratamiento de datos desde el CIDE o desde un comité de ética, y para quien mantenga el código. Responde qué datos personales recibe Ecosistemas de Conocimiento (EDC), dónde quedan, quién los lee, cuánto tiempo se guardan, qué texto sale a proveedores externos y en qué paso, y cómo funciona la compuerta de anonimización que decide qué entra al acervo compartido. Los riesgos y su evaluación están en [la evaluación de impacto](evaluacion-de-impacto-privacidad.md); los textos para las personas titulares están en [el aviso de privacidad y los consentimientos](aviso-de-privacidad-y-consentimiento.md); los controles técnicos de seguridad están en [seguridad](seguridad.md).
+**Para quién es y qué responde.** Este documento es para el equipo del proyecto, para quien revise el tratamiento de datos desde el CIDE, y para quien mantenga el código. Responde qué datos personales recibe Ecosistemas de Conocimiento (EDC), dónde quedan, quién los lee, cuánto tiempo se guardan, qué texto sale a proveedores externos y en qué paso, y cómo funciona la compuerta de anonimización que decide qué entra al acervo compartido. Los riesgos y su evaluación están en [la evaluación de impacto](evaluacion-de-impacto-privacidad.md); los textos para las personas titulares están en [el aviso de privacidad y los consentimientos](aviso-de-privacidad-y-consentimiento.md); los controles técnicos de seguridad están en [seguridad](seguridad.md).
 
 ## Estado de los controles
 
@@ -330,7 +330,7 @@ Los títulos de testimonio usan el mismo backend que el detector, pero con una r
 | Dato | Plazo hoy | Mecanismo | Estado |
 |---|---|---|---|
 | Cuenta y membresías | Mientras exista la cuenta | Cancelación sin ruta | **Pendiente** |
-| Testimonio original | Mientras exista el documento. Sin plazo ni plan de destino final; no consta ante el Comité de Ética en Investigación | Borrado por documento (**Implementado**); destrucción al cierre sin plan | **Pendiente** |
+| Testimonio original | Mientras exista el documento. Sin plazo ni plan de destino final | Borrado por documento (**Implementado**); destrucción al cierre sin plan | **Pendiente** |
 | Versión anonimizada | Mientras exista el documento | Acervo del ecosistema | **Pendiente** (sin plazo final) |
 | Audio | Mientras exista el documento | Limpieza del archivo al borrar el documento | **Implementado** |
 | Conversaciones | Hasta que la persona las borre | Conserje de sesiones (`lib/sessionJanitor.ts`, `SESSION_TTL_DAYS`, valor por defecto 90), apagado | **Planeado** |
