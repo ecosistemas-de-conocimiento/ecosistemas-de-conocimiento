@@ -169,7 +169,7 @@ Las tablas `*_rels` traen `cascade` desde la generación de Payload.
 
 ### 2.7 Migraciones
 
-Hay 22 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído el 2026-10-30; la 22, el 2026-11-04). La rama `feat/anonymise-controls` agrega la 23 (leída el 2026-11-07 en el árbol de trabajo, sin commit). La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
+Hay 22 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído el 2026-10-30; la 22, el 2026-11-04). La rama `feat/anonymise-controls` agrega la 23 (leída el 2026-11-07 en el commit `98619590`). La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
 
 | # | Migración | Fecha | Propósito |
 |---|---|---|---|

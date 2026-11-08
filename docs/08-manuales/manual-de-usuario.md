@@ -287,7 +287,7 @@ El tipo se elige al crear la conversación y no cambia después.
   - **Conservar autores citados** deja visibles nombres de citas, como "López (2020)", y de la lista de referencias, solo si la revisión automática los reconoce como públicos. Un apellido compuesto, como "García Márquez", se sigue quitando.
   - En un testimonio, quien sube casi nunca es quien habla. El nombre de quien habla se sigue quitando. La pantalla te avisa mientras un interruptor está encendido.
   - Si el documento estaba listo, en revisión o aprobado, vuelve a revisarse y queda como borrador. Si queda en revisión, no se publica. Si no eres participante, publícalo de nuevo a mano.
-  - Cambiar un interruptor en **Ajustes** no vuelve a revisar los documentos que ya estaban listos.
+  - Si apagas un interruptor en **Ajustes**, los documentos que lo heredan vuelven a revisarse solos. Encenderlo no cambia los documentos ya revisados.
   - Si apagas un interruptor, los nombres que se habían conservado salen de la Biblioteca y de las respuestas.
   - La pantalla nunca muestra qué nombres se quitaron.
 
@@ -508,7 +508,7 @@ Cuando la revisión automática no está segura de haber quitado todos los datos
 - **Resultado:** el cambio aplica a todo el ecosistema.
 - **Notas:**
   - Si apagas una función, sus opciones dependientes se ocultan pero no se borran.
-  - **Conservar al autor del documento** y **Conservar autores citados** son el valor de partida de cada documento. Cada documento puede cambiarlo (tarea 3.6). Cambiarlos aquí no vuelve a revisar los documentos que ya estaban listos. Sin desplegar.
+  - **Conservar al autor del documento** y **Conservar autores citados** son el valor de partida de cada documento. Cada documento puede cambiarlo (tarea 3.6). Al apagar uno, los documentos que lo heredan vuelven a revisarse solos; al encenderlo, los ya revisados no cambian. Sin desplegar.
   - Dos interruptores solo los cambia el administrador de la plataforma: **Conservar nombres de figuras públicas en documentos** y **Testimonios de estudiantes en el reporte**. Para los demás aparecen bloqueados.
 
 | Pestaña | Interruptor | Encendido al crear el ecosistema |

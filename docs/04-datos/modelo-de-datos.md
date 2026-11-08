@@ -319,7 +319,7 @@ stateDiagram-v2
 | `held` a `approved` o `rejected` | Una persona con `holds:review` (`admin`, `investigador`, `owner` o administrador de plataforma) desde la pantalla de revisión; código en `apps/backend/src/lib/holdReview.ts` |
 | `held` a `pending` | Quien subió el documento con `POST /:id/retry`. Se rechaza mientras el texto no cambie, comparando contra `heldTextHash` |
 | `ready` o `approved` a `rejected` | Una persona con `holds:review`, retirando un testimonio ya publicado (`apps/backend/src/lib/rejectPublished.ts`) |
-| `ready`, `held` o `approved` a `pending` | Quien puede cambiar los interruptores de anonimización del documento, con `PATCH /:id/anonimizacion`, si los interruptores guardados en `anonymisationReport.settings` difieren de los nuevos. Se escribe la auditoría, se retira el documento (compartido y borrador), vuelve a borrador con las columnas de la compuerta y los tres registros de nombres limpios, se borran sus copias en ai-service y la compuerta corre en segundo plano. `rejected`, sin compuerta o `n/a` solo guardan el ajuste; `pending`, `publishing` y `unpublishing` responden 409; una conversación, 400; una falla de ai-service, 502 sin cambios. Aprobar una retención con interruptores distintos a los de hoy responde 409 (`lib/holdReview.ts`). Sin desplegar (`lib/anonymisationControls.ts`) |
+| `ready`, `held` o `approved` a `pending` | Quien puede cambiar los interruptores de anonimización del documento, con `PATCH /:id/anonimizacion`, si los interruptores guardados en `anonymisationReport.settings` difieren de los nuevos. Se escribe la auditoría, se retira el documento (compartido y borrador), se borran sus copias en ai-service, vuelve a borrador con las columnas de la compuerta y los tres registros de nombres limpios, y la compuerta corre en segundo plano. `rejected`, sin compuerta o `n/a` solo guardan el ajuste; `pending`, `publishing` y `unpublishing` responden 409; una conversación, 400; una falla de ai-service, 502 sin reiniciar ni guardar nada (el mismo `PATCH` reintenta). El borrado en ai-service va antes del reinicio. Un valor del ecosistema que pasa de encendido a apagado vuelve a pasar de la misma forma lo que lo hereda (`regateInheritors`); un fallo deja `pendingRegate`. Aprobar una retención con interruptores distintos a los de hoy responde 409 (`lib/holdReview.ts`). Sin desplegar (`lib/anonymisationControls.ts`) |
 
 Mientras un documento está `held`, `ingestStatus` queda en `failed` con el código `anonymisation_held` y nada se ingiere. `rejected` es terminal: ese texto nunca entra al corpus. Cada decisión humana escribe primero una fila en `anonymisation-reviews`.
 
@@ -412,7 +412,7 @@ Los ids del diagrama son ilustrativos.
 
 ## 7. Revisiones de nota
 
-Una nota publicada se edita sin despublicarla. "Publicar cambios" crea una fila oculta de preparación con `revisionOf` apuntando a la nota original. Esa fila nunca sale en la API. Cuando la re-ingesta termina, el contenido pasa a la nota original y la fila de preparación desaparece (comportamiento afirmado por `apps/backend/src/lib/studentNotes.pg.test.ts`). La relación es uno a uno (índice único) y se borra en cascada con la nota. `processedBody` guarda el cuerpo tal como se publicó por última vez y `reindexIngestId` sigue la re-ingesta.
+Una nota publicada se edita sin despublicarla. "Publicar cambios" crea una fila oculta de preparación con `revisionOf` apuntando a la nota original. Esa fila nunca sale en la API. La fila de preparación copia los tres valores propios de anonimización de la nota (`keepPublicFigures`, `keepDocumentAuthor`, `keepCitedAuthors`; sin desplegar). Cuando la re-ingesta termina, el contenido pasa a la nota original y la fila de preparación desaparece (comportamiento afirmado por `apps/backend/src/lib/studentNotes.pg.test.ts`). La relación es uno a uno (índice único) y se borra en cascada con la nota. `processedBody` guarda el cuerpo tal como se publicó por última vez y `reindexIngestId` sigue la re-ingesta.
 
 ## 8. Diccionario de datos de `documents`
 
@@ -522,7 +522,7 @@ Convenciones. "Servidor" significa que solo lo escribe código del backend con p
 | `/api/documents/:id/note` | Autor | Edición de notas y "Publicar cambios" |
 | `POST /api/documents/:id/retry` | Autor | Reintenta ingesta o filtro |
 | `POST /api/documents/:id/graph-retry` | Autor | Reintenta el grafo |
-| `PATCH /api/documents/:id/anonimizacion` | Autor, `holds:review` del ecosistema y admin. de plataforma | `GET` lee el estado y los nombres conservados (solo los que siguen en `redactedText`, en `ready` o `approved`); `PATCH` cambia los dos interruptores y puede volver a pasar el documento por la compuerta (sección 5.2). Cada cambio escribe una fila en `anonymisation-setting-changes`. Sin desplegar |
+| `PATCH /api/documents/:id/anonimizacion` | Autor o `holds:review`, con membresía activa en el ecosistema; admin. de plataforma con cuenta activa. Otro ecosistema o cuenta inactiva: 404; sin permiso en el mismo ecosistema: 403 | `GET` lee el estado y los nombres conservados (solo los que siguen en `redactedText`, en `ready` o `approved`); `PATCH` cambia los dos interruptores y puede volver a pasar el documento por la compuerta (sección 5.2). Cada cambio escribe una fila en `anonymisation-setting-changes`. Sin desplegar |
 
 ### 8.11 Al borrar un documento
 
