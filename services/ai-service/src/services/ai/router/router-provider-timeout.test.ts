@@ -30,6 +30,7 @@ vi.mock('./adapters/openrouter.js', () => ({
   callOpenRouter: (...args: unknown[]) => adapterMock(...args),
   streamingCallOpenRouter: (...args: unknown[]) => adapterMock(...args),
   OpenRouterHttpError: class OpenRouterHttpError extends Error {},
+  OpenRouterNoZdrEndpointError: class OpenRouterNoZdrEndpointError extends Error {},
   OpenRouterAbortError: class OpenRouterAbortError extends Error {
     public readonly partial: unknown;
     constructor(partial: unknown, cause?: unknown) {

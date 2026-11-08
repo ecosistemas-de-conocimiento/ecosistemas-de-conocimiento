@@ -95,6 +95,8 @@ El Spark tiene 4 ranuras de 16 384 tokens de contexto compartidas entre el detec
 - **OpenRouter:** toda la generación con DeepSeek V3.1 (respuestas, condense, expansión, grafo, preguntas para el estudiante, juez de evals); embeddings y detector en staging. La decisión es pasar todo a DeepInfra; la generación y staging siguen pendientes.
 - **DeepInfra:** el rerank en staging (y en dev si el host no es el Spark).
 
+Toda llamada de ai-service a OpenRouter (generación y embeddings) pide retención cero de datos con `provider.zdr: true`, junto con `require_parameters` en modo estricto. Si ningún endpoint con retención cero sirve el modelo, la llamada falla con `OpenRouterNoZdrEndpointError` (embeddings: `OpenRouterEmbeddingNoZdrEndpointError`): no se reintenta, no va a otro proveedor y nunca se reenvía sin `zdr`. No hay interruptor para apagarlo. En el código desde el 2026-11-07; sin desplegar a esa fecha (`services/ai-service/src/services/ai/router/adapters/openrouter.ts`, `services/ai-service/src/services/ai/embeddings/openrouter.ts`).
+
 Sin el Spark, dev pierde la transcripción y el micrófono en vivo; los embeddings caen a DeepInfra y el detector retiene los documentos.
 
 ## 4. Qué texto sale a cada tercero

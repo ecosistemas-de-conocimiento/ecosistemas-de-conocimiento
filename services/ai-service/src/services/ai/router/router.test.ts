@@ -25,6 +25,7 @@ vi.mock('./adapters/openrouter.js', () => ({
   // it the same mock so any code path that picks up the default still works.
   streamingCallOpenRouter: (...args: unknown[]) => adapterMock(...args),
   OpenRouterHttpError: class OpenRouterHttpError extends Error {},
+  OpenRouterNoZdrEndpointError: class OpenRouterNoZdrEndpointError extends Error {},
   OpenRouterAbortError: class OpenRouterAbortError extends Error {
     public readonly partial: unknown;
     constructor(partial: unknown) {

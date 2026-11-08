@@ -21,7 +21,7 @@ vi.mock('../../../config/env.js', () => ({
   },
 }));
 
-const { callOpenRouterEmbedding, OpenRouterEmbeddingHttpError } = await import(
+const { callOpenRouterEmbedding, OpenRouterEmbeddingHttpError, OpenRouterEmbeddingNoZdrEndpointError } = await import(
   './openrouter.js'
 );
 
@@ -532,5 +532,65 @@ describe('callOpenRouterEmbedding — EMBEDDINGS_FALLBACK_URL', () => {
     // The caller's own signal (none here), not a timeout-wrapped one.
     expect((fetchMock.mock.calls[0]![1] as RequestInit).signal).toBeUndefined();
     expect(warnMock).not.toHaveBeenCalled();
+  });
+});
+
+// Zero Data Retention: always requested from OpenRouter, fail-closed when no
+// ZDR endpoint serves the model.
+describe('callOpenRouterEmbedding — Zero Data Retention', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const okBody = { data: [{ index: 0, embedding: [0.5] }], usage: { prompt_tokens: 1 } };
+  const sentBody = (i = 0): Record<string, unknown> =>
+    JSON.parse((fetchMock.mock.calls[i]![1] as RequestInit).body as string) as Record<string, unknown>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    priceForEmbeddingMock.mockReset();
+    priceForEmbeddingMock.mockReturnValue(0);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sends provider.zdr = true to OpenRouter', async () => {
+    fetchMock.mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
+    await callOpenRouterEmbedding({ model: 'baai/bge-m3', input: 'x', apiKey: 'k' });
+    expect(sentBody().provider).toEqual({ zdr: true });
+  });
+
+  it('no ZDR endpoint → typed error, exactly one request, never re-sent without zdr', async () => {
+    fetchMock.mockResolvedValue(
+      makeResponse({
+        ok: false,
+        status: 404,
+        body: { error: { message: 'No endpoints found matching your data policy', code: 404 } },
+      }),
+    );
+    const err = await callOpenRouterEmbedding({ model: 'baai/bge-m3', input: 'x', apiKey: 'k' }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(OpenRouterEmbeddingNoZdrEndpointError);
+    expect(err).toBeInstanceOf(OpenRouterEmbeddingHttpError);
+    expect((err as Error).message).toMatch(/No Zero Data Retention endpoint/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sentBody().provider).toEqual({ zdr: true });
+  });
+
+  it('sends no provider block to a non-OpenRouter EMBEDDINGS_URL', async () => {
+    vi.resetModules();
+    vi.doMock('../router/task-profiles.js', () => ({ priceForEmbedding: () => 0 }));
+    vi.doMock('../../../config/env.js', () => ({
+      env: { EMBEDDINGS_URL: 'https://gpu-box.vpn.test/v1/embeddings', EMBEDDING_MODEL: 'baai/bge-m3' },
+    }));
+    try {
+      const mod = await import('./openrouter.js');
+      fetchMock.mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
+      await mod.callOpenRouterEmbedding({ model: 'baai/bge-m3', input: 'x', apiKey: 'k' });
+      expect(sentBody().provider).toBeUndefined();
+    } finally {
+      vi.doUnmock('../router/task-profiles.js');
+      vi.doUnmock('../../../config/env.js');
+    }
   });
 });

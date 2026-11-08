@@ -125,7 +125,11 @@ import {
 } from 'cockatiel';
 
 import { AiServiceError } from '../../../errors/base.js';
-import { OpenRouterAbortError, OpenRouterHttpError } from './adapters/openrouter.js';
+import {
+  OpenRouterAbortError,
+  OpenRouterHttpError,
+  OpenRouterNoZdrEndpointError,
+} from './adapters/openrouter.js';
 
 /** Total attempts = 1 + this. Matches the task spec (`maxAttempts: 2`). */
 export const DEFAULT_MAX_RETRY_ATTEMPTS = 2;
@@ -234,6 +238,9 @@ export function isTransientProviderError(
   // burns the ladder before the half-open probe is due.
   if (err instanceof ProviderUnavailable) return false;
   if (isBrokenCircuit(err)) return false;
+  // No Zero Data Retention endpoint: asking again cannot help, and the call is
+  // never re-sent without `provider.zdr` (fail-closed).
+  if (err instanceof OpenRouterNoZdrEndpointError) return false;
 
   if (err instanceof OpenRouterHttpError) {
     const after = retryAfterMsFromError(err);
