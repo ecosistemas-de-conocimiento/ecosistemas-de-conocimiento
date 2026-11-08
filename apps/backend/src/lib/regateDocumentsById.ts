@@ -117,10 +117,10 @@ export async function regateDocumentsById(
      */
     resetData?: Row
     /**
-     * 🔴 Do not gate again unless BOTH old copies were erased (audit
-     * 2026-11-07, E3): a retired copy is hidden, not gone, and holds the names
-     * the change is meant to remove. The row is left a reset private draft,
-     * outcome `erase-failed`.
+     * 🔴 Erase BOTH old copies before the reset, and stop if either fails
+     * (audit 2026-11-07, E3/X10): a retired copy is hidden, not gone, and holds
+     * the names the change is meant to remove. The row is left as it was read,
+     * outcome `erase-failed`, so the same request retries.
      */
     requireErase?: boolean
     now?: Date
@@ -178,6 +178,24 @@ export async function regateDocumentsById(
       const now = opts.now ?? new Date()
       await retireFrom(opts.client, publishedCorpus(opts.organizationId), row.id as Id, now)
       if (uploader != null) await retireFrom(opts.client, draftCorpus(opts.organizationId, uploader), row.id as Id, now)
+      const corpora = [publishedCorpus(opts.organizationId)]
+      if (uploader != null) corpora.push(draftCorpus(opts.organizationId, uploader))
+
+      // 1b. 🔴 `requireErase`: erase BEFORE the reset (audit 2026-11-07, X10).
+      // A failure leaves the row as it was read (its copies retired, hidden
+      // from every retrieve), so the same request again retries the erase. A
+      // reset row would instead be re-driven by the ingest sweeps
+      // (`recoverAbandonedClaims` re-drives an audio row) next to a copy that
+      // still holds the names.
+      if (opts.requireErase) {
+        const { failed: notErased } = await eraseWithdrawnCopies(opts.client, corpora, row.id as Id)
+        if (notErased.length > 0) {
+          log(`doc ${id}: retired but NOT erased from ${notErased.join(', ')} — not reset, retry`)
+          line.outcome = 'erase-failed'
+          report.failed.push(id)
+          continue
+        }
+      }
 
       // 2. Reset, guarded on the state we read.
       const res = (await payload.update({
@@ -221,14 +239,9 @@ export async function regateDocumentsById(
 
       // 2b. 🔴 Erase both copies BEFORE the gate re-ingests (audit 2026-10-28):
       // retired is hidden, not gone, and the old redaction is what is being replaced.
-      const corpora = [publishedCorpus(opts.organizationId)]
-      if (uploader != null) corpora.push(draftCorpus(opts.organizationId, uploader))
-      const { failed: notErased } = await eraseWithdrawnCopies(opts.client, corpora, row.id as Id)
-      if (notErased.length > 0) log(`doc ${id}: retired but NOT erased from ${notErased.join(', ')}`)
-      if (notErased.length > 0 && opts.requireErase) {
-        line.outcome = 'erase-failed'
-        report.failed.push(id)
-        continue
+      if (!opts.requireErase) {
+        const { failed: notErased } = await eraseWithdrawnCopies(opts.client, corpora, row.id as Id)
+        if (notErased.length > 0) log(`doc ${id}: retired but NOT erased from ${notErased.join(', ')}`)
       }
 
       // 3. Through the gate, then ingest.

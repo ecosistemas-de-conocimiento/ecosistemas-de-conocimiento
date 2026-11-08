@@ -51,6 +51,26 @@ export interface EffectiveSwitch {
   origin: 'ecosistema' | 'documento'
 }
 
+/**
+ * The switches a row's CURRENT verdict was made under: its report's `settings`
+ * (`lib/anonymiseDocument.ts`). 🔴 A report without them (gated before they
+ * existed) counts a switch ON when its keep log is non-empty: such a row kept
+ * the uploader's name by the old default (audit 2026-11-07, X8), so turning
+ * the switch off must re-gate it.
+ */
+export function verdictSettings(row: {
+  anonymisationReport?: unknown
+  authorsKept?: unknown
+  citedAuthorsKept?: unknown
+}): Record<AnonymiseSwitch, boolean> {
+  const s = (row.anonymisationReport as { settings?: Partial<Record<AnonymiseSwitch, unknown>> } | null | undefined)?.settings
+  if (s && typeof s === 'object') {
+    return { keepDocumentAuthor: s.keepDocumentAuthor === true, keepCitedAuthors: s.keepCitedAuthors === true }
+  }
+  const logged = (v: unknown) => Array.isArray(v) && v.length > 0
+  return { keepDocumentAuthor: logged(row.authorsKept), keepCitedAuthors: logged(row.citedAuthorsKept) }
+}
+
 /** May this content kind keep its author or cited names at all? */
 export function switchesApply(contentKind: unknown): boolean {
   return contentKind === 'documento' || contentKind === 'testimonio'

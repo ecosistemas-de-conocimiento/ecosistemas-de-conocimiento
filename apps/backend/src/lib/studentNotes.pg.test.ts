@@ -537,6 +537,17 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
         expect(await keptOnNote()).toEqual([expect.objectContaining({ name: AUTHOR })])
       }, 60_000)
 
+      it('🔴 the revision runs under the NOTE\'s own switch: an override of false hides the name', async () => {
+        await pg!.db.execute(sql`UPDATE documents SET keep_document_author = false WHERE id = ${NOTE}`)
+        try {
+          await promote(`${nextBody()}\n\nAutora: ${AUTHOR}\n\nLa Abducción según ${AUTHOR} es otra cosa.`)
+          expect(String((await row(NOTE)).r)).not.toContain(AUTHOR)
+          expect(await keptOnNote()).toBeNull()
+        } finally {
+          await pg!.db.execute(sql`UPDATE documents SET keep_document_author = NULL WHERE id = ${NOTE}`)
+        }
+      }, 60_000)
+
       it('a revision without the name clears the note\'s earlier log', async () => {
         await pg!.db.execute(
           sql`UPDATE documents SET authors_kept = ${JSON.stringify([{ name: AUTHOR, model: null, at: 'x' }])}::jsonb WHERE id = ${NOTE}`,

@@ -11,7 +11,7 @@ vi.mock('./conversationIngest', () => ({ rosterForOrganization: roster }))
 import { staticDetector } from './anonymise/detector'
 import { runAnonymisationGate } from './anonymise/gate'
 import { invalidateFeatures } from './features'
-import { authorsLog, documentoGateOptions, effectiveSwitches, publicFiguresLog } from './publicFigures'
+import { authorsLog, documentoGateOptions, effectiveSwitches, publicFiguresLog, verdictSettings } from './publicFigures'
 
 const payloadWith = (features: unknown) => ({ findByID: vi.fn(async () => ({ features })) }) as never
 
@@ -212,6 +212,23 @@ describe('documentoGateOptions — the two switches (owner decision 2026-11-07)'
       keepDocumentAuthor: { value: true, origin: 'ecosistema' },
       keepCitedAuthors: { value: false, origin: 'documento' },
     })
+  })
+})
+
+describe('verdictSettings — the switches a verdict was made under', () => {
+  it('reads the report', () => {
+    expect(verdictSettings({ anonymisationReport: { settings: { keepDocumentAuthor: true, keepCitedAuthors: false } } })).toEqual({
+      keepDocumentAuthor: true,
+      keepCitedAuthors: false,
+    })
+  })
+
+  it('🔴 a report without settings that logged a kept author counts as author ON (gated under the old default)', () => {
+    expect(verdictSettings({ anonymisationReport: { stages: [] }, authorsKept: [{ name: 'Ana Ruiz' }] })).toEqual({
+      keepDocumentAuthor: true,
+      keepCitedAuthors: false,
+    })
+    expect(verdictSettings({ anonymisationReport: null, authorsKept: null })).toEqual({ keepDocumentAuthor: false, keepCitedAuthors: false })
   })
 })
 

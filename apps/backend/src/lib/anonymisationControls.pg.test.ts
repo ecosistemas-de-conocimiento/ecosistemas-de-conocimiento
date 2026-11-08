@@ -19,7 +19,7 @@ import type { Endpoint, Payload, PayloadRequest } from 'payload'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { migrations } from '../migrations'
-import { anonimizacionEndpoints, type ControlDeps } from './anonymisationControls'
+import { anonimizacionEndpoints, ecosystemRegate, type ControlDeps } from './anonymisationControls'
 import { draftCorpus, publishedCorpus } from './corpus'
 import { invalidateFeatures } from './features'
 import { HoldSettingsChangedError, decideOnHold, holdSettingsChanged } from './holdReview'
@@ -180,6 +180,7 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
     invalidateFeatures()
     fake = fakeAiService()
     startGate.mockReset()
+    ecosystemRegate.deps = null
     await db.execute(sql.raw(`
       TRUNCATE anonymisation_setting_changes, anonymisation_reviews, documents, memberships, organizations, users RESTART IDENTITY CASCADE;
       INSERT INTO users (id, email, display_name, is_platform_admin) VALUES
@@ -228,6 +229,7 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
           keepDocumentAuthor: { value: false, origin: 'ecosistema' },
           keepCitedAuthors: { value: false, origin: 'ecosistema' },
         },
+        pendingRegate: false,
       })
       for (const leak of ['redactedText', 'heldText', 'extractedText', 'Pedro', 'Gómez', 'Ruiz', '[Persona']) {
         expect(res.raw).not.toContain(leak)
@@ -236,11 +238,38 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
 
     it.each([
       ['🔴 a colleague member', MEMO, 403],
-      ['🔴 another ecosistema\'s owner', BEA, 403],
+      ['🔴 another ecosistema\'s owner: as if it did not exist', BEA, 404],
       ['🔴 nobody', null, 401],
     ])('%s → %s', async (_who, as, status) => {
       await seedDoc()
       expect((await call('get', as)).status).toBe(status)
+    })
+
+    it.each([
+      ['🔴 the uploader, membership inactive', `UPDATE memberships SET is_active = false WHERE user_id = ${ANA}`, ANA],
+      ['🔴 the uploader, account inactive', `UPDATE users SET is_active = false WHERE id = ${ANA}`, ANA],
+      ['🔴 a reviewer, membership inactive', `UPDATE memberships SET is_active = false WHERE user_id = ${INES}`, INES],
+      ['🔴 a platform admin, account inactive', `UPDATE users SET is_active = false WHERE id = ${ROOT}`, ROOT],
+    ])('%s → 404 on GET and PATCH, nothing saved or erased', async (_who, deactivate, as) => {
+      await seedDoc()
+      await db.execute(sql.raw(deactivate))
+      expect((await call('get', as)).status).toBe(404)
+      expect((await call('patch', as, { body: { keepDocumentAuthor: true } })).status).toBe(404)
+      expect((await row())?.keep_document_author).toBeNull()
+      expect(await audits()).toEqual([])
+      expect(fake.calls).toEqual([])
+    })
+
+    it('🔴 a testimonio\'s file name: shown to its uploader, the neutral title to a reviewer', async () => {
+      await seedDoc({ contentKind: 'testimonio' })
+      await db.execute(sql.raw(`UPDATE documents SET name = 'Entrevista con Rosa Ulloa.m4a' WHERE id = ${DOC}`))
+      const reviewer = await call('get', INES)
+      expect(reviewer.status).toBe(200)
+      expect(reviewer.body.name).toBe('Testimonio')
+      expect(reviewer.raw).not.toContain('Ulloa')
+      expect((await call('get', ANA)).body.name).toBe('Entrevista con Rosa Ulloa.m4a')
+      const patched = await call('patch', INES, { body: { keepCitedAuthors: false } })
+      expect(patched.body.name).toBe('Testimonio')
     })
 
     it('a missing document → 404', async () => {
@@ -251,7 +280,7 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
   describe('PATCH: who may change it', () => {
     it.each([
       ['🔴 a colleague member', MEMO, 403],
-      ['🔴 another ecosistema\'s owner', BEA, 403],
+      ['🔴 another ecosistema\'s owner', BEA, 404],
       ['🔴 nobody', null, 401],
     ])('%s → %s, nothing saved, nothing audited', async (_who, as, status) => {
       await seedDoc()
@@ -325,13 +354,33 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
       ])
     })
 
-    it('🔴 an old copy that cannot be erased stops the re-gate (502)', async () => {
+    it('🔴 an old copy that cannot be erased stops the re-gate BEFORE the reset; the same PATCH retries', async () => {
       fake = fakeAiService({ failDelete: true })
-      await seedDoc()
+      await seedDoc({ publication: 'published' })
       const res = await call('patch', ANA, { body: { keepCitedAuthors: true } })
       expect(res.status).toBe(502)
       expect(startGate).not.toHaveBeenCalled()
-      expect((await row())?.anonymisation_status).toBe('n/a')
+      // Nothing reset, nothing saved: no sweep can re-drive it next to the old copy.
+      expect(await row()).toMatchObject({ anonymisation_status: 'ready', publication_status: 'published', keep_cited_authors: null })
+
+      fake = fakeAiService()
+      const pub = `${publishedCorpus(ECO_A)}/${DOC}`
+      fake.store.set(pub, { text: 'Como mostró López (2020).', retired: true })
+      const again = await call('patch', ANA, { body: { keepCitedAuthors: true } })
+      expect(again.status).toBe(200)
+      expect(again.body.regate).toBe('started')
+      expect(fake.store.has(pub)).toBe(false)
+      expect(startGate).toHaveBeenCalledTimes(1)
+      expect(await row()).toMatchObject({ anonymisation_status: 'n/a', keep_cited_authors: true })
+    })
+
+    it('🔴 a row gated before the switches existed that kept its author counts as author ON (X8)', async () => {
+      await seedDoc({ redacted: 'Autora: Ana Ruiz. [Persona B] habló.' })
+      await db.execute(sql.raw(`UPDATE documents SET anonymisation_report = anonymisation_report - 'settings' WHERE id = ${DOC}`))
+      expect((await call('get', ANA)).body.pendingRegate).toBe(true)
+      const res = await call('patch', ANA, { body: { keepDocumentAuthor: false } })
+      expect(res.body.regate).toBe('started')
+      expect((await row())?.redacted_text).toBeNull()
     })
 
     it('ready, the effective value unchanged → saved, not re-gated', async () => {
@@ -372,6 +421,116 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
       expect(res.body.regate).toBe('saved-only')
       expect(await row()).toMatchObject({ anonymisation_status: 'rejected', keep_cited_authors: true })
       expect(startGate).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('🔴 an ecosistema default turned OFF re-gates what inherits it (X7)', () => {
+    const withAuthor = 'Autora: Ana Ruiz. Como mostró López (2020), [Persona B] habló.'
+    const madeWithAuthor = async (id: number) =>
+      db.execute(
+        sql.raw(
+          `UPDATE documents SET anonymisation_report = jsonb_set(anonymisation_report, '{settings}', '{"keepDocumentAuthor":true,"keepCitedAuthors":false}') WHERE id = ${id}`,
+        ),
+      )
+
+    it('ON→OFF: an inheriting ready row is withdrawn, erased and re-gated; an override is left alone', async () => {
+      ecosystemRegate.deps = deps()
+      await db.execute(sql.raw(`UPDATE organizations SET features = '{"keepDocumentAuthor": true}'::jsonb WHERE id = ${ECO_A}`))
+      invalidateFeatures()
+      await seedDoc({ publication: 'published', redacted: withAuthor })
+      await madeWithAuthor(DOC)
+      const pub = `${publishedCorpus(ECO_A)}/${DOC}`
+      fake.store.set(pub, { text: 'Autora: Ana Ruiz.', retired: false })
+      // A second document keeps its own ON: not touched.
+      await db.execute(sql.raw(`
+        INSERT INTO documents (id, organization_id, uploaded_by_id, name, kind, content_kind, anonymise, ingest_status,
+          anonymisation_status, publication_status, extracted_text, redacted_text, anonymisation_report, keep_document_author)
+        SELECT 11, organization_id, uploaded_by_id, 'otro.pdf', kind, content_kind, anonymise, ingest_status, anonymisation_status,
+          'draft', extracted_text, redacted_text, anonymisation_report, true FROM documents WHERE id = ${DOC}`))
+      // A third inherits too, but its verdict was made with the switch OFF: it kept no name.
+      await db.execute(sql.raw(`
+        INSERT INTO documents (id, organization_id, uploaded_by_id, name, kind, content_kind, anonymise, ingest_status,
+          anonymisation_status, publication_status, extracted_text, redacted_text, anonymisation_report)
+        SELECT 12, organization_id, uploaded_by_id, 'tercero.pdf', kind, content_kind, anonymise, ingest_status, anonymisation_status,
+          'draft', extracted_text, 'Autora: [Persona A].', '${REPORT_OFF}'::jsonb FROM documents WHERE id = ${DOC}`))
+
+      await payload.update({
+        collection: 'organizations',
+        id: ECO_A,
+        data: { features: { keepDocumentAuthor: false } } as never,
+        overrideAccess: true,
+        user: await userDoc(INES),
+      })
+      invalidateFeatures()
+      await ecosystemRegate.last
+      expect(fake.store.has(pub)).toBe(false)
+      expect(startGate).toHaveBeenCalledTimes(1)
+      expect(await row()).toMatchObject({ anonymisation_status: 'n/a', publication_status: 'draft', redacted_text: null })
+      const other = (await db.execute(sql.raw('SELECT anonymisation_status FROM documents WHERE id = 11'))) as unknown as {
+        rows: Array<{ anonymisation_status: string }>
+      }
+      expect(other.rows[0]?.anonymisation_status).toBe('ready')
+      const third = (await db.execute(sql.raw('SELECT anonymisation_status FROM documents WHERE id = 12'))) as unknown as {
+        rows: Array<{ anonymisation_status: string }>
+      }
+      expect(third.rows[0]?.anonymisation_status).toBe('ready')
+      expect(await audits()).toMatchObject([{ scope: 'ecosistema', key: 'keepDocumentAuthor', before: true, after: false }])
+    })
+
+    it('while the job has not reset a row, its view says pendingRegate', async () => {
+      await seedDoc({ redacted: withAuthor })
+      await madeWithAuthor(DOC)
+      // The default is OFF (never set) and the verdict was made with it ON.
+      const view = await call('get', ANA)
+      expect(view.body.pendingRegate).toBe(true)
+      expect(view.body.kept).toMatchObject({ authors: ['Ana Ruiz'] })
+    })
+
+    it('OFF→ON reprocesses nothing', async () => {
+      ecosystemRegate.deps = deps()
+      await seedDoc()
+      await payload.update({
+        collection: 'organizations',
+        id: ECO_A,
+        data: { features: { keepDocumentAuthor: true } } as never,
+        overrideAccess: true,
+        user: await userDoc(INES),
+      })
+      await ecosystemRegate.last
+      expect(fake.calls).toEqual([])
+      expect(startGate).not.toHaveBeenCalled()
+      expect((await row())?.anonymisation_status).toBe('ready')
+    })
+  })
+
+  describe('🔴 the audit log is append-only, even for a platform admin', () => {
+    it('no API create, update or delete; a colleague member reads nothing', async () => {
+      await seedDoc()
+      await call('patch', ANA, { body: { keepCitedAuthors: true } })
+      const [first] = await audits()
+      expect(first).toBeDefined()
+      const ids = (await db.execute(sql.raw('SELECT id FROM anonymisation_setting_changes'))) as unknown as { rows: Array<{ id: number }> }
+      const id = ids.rows[0]!.id
+      const root = await userDoc(ROOT)
+      const refused = (p: Promise<unknown>) => p.then(() => 'done', () => 'refused')
+      expect(
+        await refused(
+          payload.create({
+            collection: 'anonymisation-setting-changes',
+            data: { organization: ECO_A, scope: 'documento', key: 'keepCitedAuthors', before: true, after: false } as never,
+            overrideAccess: false,
+            user: root,
+          }),
+        ),
+      ).toBe('refused')
+      expect(
+        await refused(payload.update({ collection: 'anonymisation-setting-changes', id, data: { after: false } as never, overrideAccess: false, user: root })),
+      ).toBe('refused')
+      expect(await refused(payload.delete({ collection: 'anonymisation-setting-changes', id, overrideAccess: false, user: root }))).toBe('refused')
+      expect(await audits()).toEqual([first])
+      expect(
+        await refused(payload.find({ collection: 'anonymisation-setting-changes', overrideAccess: false, user: await userDoc(MEMO) })),
+      ).toBe('refused')
     })
   })
 

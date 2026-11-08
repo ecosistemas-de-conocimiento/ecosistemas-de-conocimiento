@@ -235,6 +235,14 @@ describe('citationSlots / restoreCitedAuthors on their own', () => {
     expect(restoreCitedAuthors('Lo dijo López (2020).', 'Lo dijo [Persona A] (2020).', evidence).kept).toEqual([])
   })
 
+  it('🔴 no verdict at all (nothing public, nothing private): it stays', () => {
+    const evidence = { stage3: [], verify: [], unlocated: [], roster: [] }
+    expect(restoreCitedAuthors('Lo dijo López (2020).', 'Lo dijo [Persona A] (2020).', evidence)).toEqual({
+      text: 'Lo dijo [Persona A] (2020).',
+      kept: [],
+    })
+  })
+
   it('🔴 a private verify finding sharing the surname keeps it redacted', () => {
     const evidence = { ...publicLopez, verify: [{ text: 'Marta López', type: 'persona' as const }] }
     expect(restoreCitedAuthors('Lo dijo López (2020).', 'Lo dijo [Persona A] (2020).', evidence).kept).toEqual([])

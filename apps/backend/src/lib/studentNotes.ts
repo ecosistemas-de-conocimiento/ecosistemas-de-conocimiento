@@ -309,6 +309,10 @@ export async function publishStudentNoteChanges(args: {
         mode: row.mode ?? 'full-text',
         contentKind: 'documento',
         anonymise: true,
+        // 🔴 The note's own switches: the revision is gated under them (X9).
+        keepPublicFigures: row.keepPublicFigures ?? null,
+        keepDocumentAuthor: row.keepDocumentAuthor ?? null,
+        keepCitedAuthors: row.keepCitedAuthors ?? null,
         bodyMarkdown: body,
         processedBody: body,
         extractedText: text,

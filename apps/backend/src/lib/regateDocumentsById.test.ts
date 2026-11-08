@@ -131,6 +131,35 @@ describe('regateDocumentsById', () => {
     expect(store[1]).toMatchObject({ publicationStatus: 'published', anonymisationStatus: 'ready' })
   })
 
+  it('🔴 requireErase: both erased BEFORE the reset; a failed erase resets nothing and gates nothing', async () => {
+    const ok = fakeDb([doc(354)])
+    await regateDocumentsById(ok.payload, {
+      ids: ['354'],
+      organizationId: 7,
+      apply: true,
+      requireErase: true,
+      client: client(ok.calls) as never,
+      gate: async () => {
+        ok.calls.push('gate')
+      },
+    })
+    expect(ok.calls).toEqual(['retire:eco-7', 'retire:eco-7-draft-2', 'erase:eco-7', 'erase:eco-7-draft-2', 'row', 'gate'])
+
+    const bad = fakeDb([doc(354)])
+    const c = client(bad.calls)
+    c.admin.deleteDocument.mockImplementation(async (corpus: string) => {
+      bad.calls.push(`erase:${corpus}`)
+      throw Object.assign(new Error('down'), { status: 503 })
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const gate = vi.fn()
+    const report = await regateDocumentsById(bad.payload, { ids: ['354'], organizationId: 7, apply: true, requireErase: true, client: c as never, gate })
+    expect(report.lines[0]?.outcome).toBe('erase-failed')
+    expect(bad.calls).not.toContain('row')
+    expect(gate).not.toHaveBeenCalled()
+    expect(bad.store[0]).toMatchObject({ publicationStatus: 'published', anonymisationStatus: 'ready' })
+  })
+
   it('a testimonio goes through with allowTestimonio', async () => {
     const { payload, calls } = fakeDb([doc(2, { contentKind: 'testimonio' })])
     const gate = vi.fn(async () => undefined)

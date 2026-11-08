@@ -147,6 +147,15 @@ export const auditAnonymisationSwitches: CollectionAfterChangeHook = async ({ do
   if (changes.length === 0) return doc
   const { recordSettingChanges } = await import('./AnonymisationSettingChanges')
   await recordSettingChanges(req.payload as never, changes, req)
+  // 🔴 ON→OFF re-gates every document that inherits the default (coordinator
+  // decision 2026-11-07); OFF→ON reprocesses nothing. Detached, after commit.
+  const resolvedBefore = resolveFeatures(before)
+  const resolvedAfter = resolveFeatures(after)
+  const turnedOff = ANONYMISE_SWITCHES.filter((k) => resolvedBefore[k] && !resolvedAfter[k])
+  if (turnedOff.length > 0) {
+    const { startEcosystemRegate } = await import('@/lib/anonymisationControls')
+    startEcosystemRegate(req.payload, id, turnedOff)
+  }
   return doc
 }
 

@@ -5,9 +5,11 @@
  *   PATCH /api/documents/:id/anonimizacion   { keepDocumentAuthor?, keepCitedAuthors? }
  *                                            (boolean, or null = the ecosistema's)
  *
- * 🔴 WHO: the document's uploader, anyone holding `holds:review` in the
- * document's ecosistema, and a platform admin. Everyone else gets 403, on GET
- * and PATCH. Checked here, in server code; the two switch columns refuse every
+ * 🔴 WHO (audit 2026-11-07, X1-X4): an ACTIVE account, and then the
+ * document's uploader or a `holds:review` holder, each with an ACTIVE
+ * membership in the document's ecosistema, or an active platform admin. A
+ * colleague of the same ecosistema gets 403; anyone without an active
+ * membership there gets 404, like a document that does not exist. Checked here, in server code; the two switch columns refuse every
  * API write (`gateWritesOnly` in `collections/Documents.ts`), so this is their
  * only writer.
  *
@@ -15,6 +17,12 @@
  * gate LEFT IN (`authorsKept`, `publicFiguresKept`, `citedAuthorsKept`) that the
  * output text still shows, plus counts. Never a removed name, never a name ↔
  * pseudonym pair, never `redactedText`, `heldText` or `extractedText`.
+ * 🔴 `name` is the uploaded file name only for a caller who may read it
+ * (`mayReadGatedOriginal(…, 'identity')`); anyone else gets the neutral title
+ * (`titleFor`): a testimonio's file name may name the speaker (X5).
+ * `pendingRegate` is true while the text still keeps a name the current
+ * settings would remove (an ecosistema default just turned off, or a re-gate
+ * that could not erase): the screen must not say it is gone yet.
  *
  * ── WHAT A CHANGE DOES ───────────────────────────────────────────────────────
  *
@@ -42,19 +50,25 @@
  * participant's upload is published again by the ingest callback
  * (`lib/autoPublish.ts`) when the new verdict is `ready`. A `held` verdict
  * never publishes.
- * ⚠ An old copy that could not be erased stops the re-gate: the row stays a
- * private, reset draft (502), and nothing re-ingests next to it.
+ * ⚠ An old copy that could not be erased stops the re-gate BEFORE the reset
+ * (502): the row stays as it was, its copies retired (hidden), and the same
+ * PATCH again retries the erase.
+ * ⚠ An ecosistema default turned OFF re-gates every inheriting verdict made
+ * with it ON ({@link regateInheritors}); until each one is reset its view says
+ * `pendingRegate: true`.
  */
 
 import type { Endpoint, Payload, PayloadRequest } from 'payload'
 
-import { isPlatformAdminUser } from '../access'
+import { isActiveUser, isPlatformAdminUser } from '../access'
 import { rowMustPassGate } from './anonymiseDocument'
-import { organizationIdsForUserWithPermission, PERMISSIONS, relationId } from './permissions'
+import { knownContentKind, titleFor } from './contentKind'
+import { organizationIdsForUser, organizationIdsForUserWithPermission, PERMISSIONS, relationId } from './permissions'
 import {
   ANONYMISE_SWITCHES,
   effectiveSwitches,
   switchesApply,
+  verdictSettings,
   type AnonymiseSwitch,
   type EffectiveSwitch,
 } from './publicFigures'
@@ -82,6 +96,8 @@ export interface AnonimizacionView {
     addresses: number | null
   } | null
   switches: Record<AnonymiseSwitch, EffectiveSwitch>
+  /** True while the stored verdict keeps a name the current switches would remove. */
+  pendingRegate: boolean
 }
 
 export type RegateOutcome = 'started' | 'not-needed' | 'saved-only'
@@ -102,20 +118,25 @@ export function parseSwitchPatch(raw: unknown): SwitchPatch | string {
 }
 
 /**
- * 🔴 May this user see and change this document's switches? The uploader, a
- * `holds:review` holder IN THE DOCUMENT'S ECOSISTEMA, or a platform admin.
+ * 🔴 May this user see and change this document's switches?
+ *   `ok`         an active platform admin, or an active account with an
+ *                active membership in the document's ecosistema that is its
+ *                uploader or holds `holds:review` there;
+ *   `forbidden`  a colleague with an active membership there (403);
+ *   `not-found`  anyone else (404: another ecosistema learns nothing).
  */
-export async function mayControlAnonymisation(payload: Payload, user: unknown, row: Row): Promise<boolean> {
-  if (!user) return false
-  if (isPlatformAdminUser(user)) return true
+export async function controlAccess(payload: Payload, user: unknown, row: Row): Promise<'ok' | 'forbidden' | 'not-found'> {
+  if (!user || !isActiveUser(user)) return 'not-found'
+  if (isPlatformAdminUser(user)) return 'ok'
   const userId = (user as { id?: unknown }).id
-  if (typeof userId !== 'number' && typeof userId !== 'string') return false
-  const uploader = relationId(row.uploadedBy)
-  if (uploader !== null && String(uploader) === String(userId)) return true
+  if (typeof userId !== 'number' && typeof userId !== 'string') return 'not-found'
   const org = relationId(row.organization)
-  if (org === null) return false
-  const ids = await organizationIdsForUserWithPermission(payload, userId, PERMISSIONS.holdsReview)
-  return ids.some((id) => String(id) === String(org))
+  if (org === null) return 'not-found'
+  const same = (ids: Id[]) => ids.some((id) => String(id) === String(org))
+  if (!same(await organizationIdsForUser(payload, userId))) return 'not-found'
+  const uploader = relationId(row.uploadedBy)
+  if (uploader !== null && String(uploader) === String(userId)) return 'ok'
+  return same(await organizationIdsForUserWithPermission(payload, userId, PERMISSIONS.holdsReview)) ? 'ok' : 'forbidden'
 }
 
 /** The names on a keep log that the visible output text still shows. */
@@ -150,14 +171,27 @@ function statusOf(row: Row): GateStatusView {
   return typeof s === 'string' && (STATUSES as readonly string[]).includes(s) ? (s as GateStatusView) : 'n/a'
 }
 
-export function viewOf(row: Row, switches: Record<AnonymiseSwitch, EffectiveSwitch>): AnonimizacionView {
+/** The stored verdict keeps a name some current switch would remove. */
+export function pendingRegateOf(row: Row, switches: Record<AnonymiseSwitch, EffectiveSwitch>): boolean {
+  const verdict = row.anonymisationStatus
+  if (!rowMustPassGate(row) || !(verdict === 'ready' || verdict === 'held' || verdict === 'approved')) return false
+  const made = verdictSettings(row)
+  return ANONYMISE_SWITCHES.some((k) => made[k] && !switches[k].value)
+}
+
+export function viewOf(
+  row: Row,
+  switches: Record<AnonymiseSwitch, EffectiveSwitch>,
+  /** `mayReadGatedOriginal(user, row, 'identity')`: false → the neutral title. */
+  mayReadName: boolean,
+): AnonimizacionView {
   const status = statusOf(row)
   // 🔴 Only text every reader of the published document may see: a cleared result.
   const visible = (status === 'ready' || status === 'approved') && typeof row.redactedText === 'string' ? row.redactedText : ''
   const str = (v: unknown) => (typeof v === 'string' ? v : null)
   return {
     id: row.id as Id,
-    name: str(row.name),
+    name: mayReadName ? str(row.name) : titleFor(knownContentKind(row), null),
     contentKind: str(row.contentKind),
     gated: rowMustPassGate(row),
     publicationStatus: str(row.publicationStatus),
@@ -169,6 +203,7 @@ export function viewOf(row: Row, switches: Record<AnonymiseSwitch, EffectiveSwit
     },
     counts: countsOf(row.anonymisationReport),
     switches,
+    pendingRegate: pendingRegateOf(row, switches),
   }
 }
 
@@ -182,6 +217,14 @@ export interface ControlDeps {
 export type ControlResult =
   | { status: 200; body: AnonimizacionView | (AnonimizacionView & { regate: RegateOutcome }) }
   | { status: 400 | 401 | 403 | 404 | 409 | 502; message: string }
+
+/** Lazy: `collections/Documents.ts` mounts this module's endpoints at load. */
+async function mayReadName(user: unknown, row: Row): Promise<boolean> {
+  const { mayReadGatedOriginal } = await import('@/collections/Documents')
+  return mayReadGatedOriginal(user, row as never, 'identity')
+}
+
+const NOT_FOUND: ControlResult = { status: 404, message: 'No existe ese documento.' }
 
 async function readRow(payload: Payload, id: string): Promise<Row | null> {
   return ((await payload
@@ -212,11 +255,11 @@ export async function getAnonimizacion(payload: Payload, user: unknown, id: stri
   if (!id) return { status: 404, message: 'No existe ese documento.' }
   const row = await readRow(payload, id)
   if (!row) return { status: 404, message: 'No existe ese documento.' }
-  if (!(await mayControlAnonymisation(payload, user, row))) {
-    return { status: 403, message: 'No puedes ver la anonimización de este documento.' }
-  }
+  const access = await controlAccess(payload, user, row)
+  if (access === 'not-found') return NOT_FOUND
+  if (access === 'forbidden') return { status: 403, message: 'No puedes ver la anonimización de este documento.' }
   const org = relationId(row.organization) as Id
-  return { status: 200, body: viewOf(row, await effectiveSwitches(payload, org, row)) }
+  return { status: 200, body: viewOf(row, await effectiveSwitches(payload, org, row), await mayReadName(user, row)) }
 }
 
 export async function patchAnonimizacion(
@@ -230,9 +273,9 @@ export async function patchAnonimizacion(
   if (!id) return { status: 404, message: 'No existe ese documento.' }
   const row = await readRow(payload, id)
   if (!row) return { status: 404, message: 'No existe ese documento.' }
-  if (!(await mayControlAnonymisation(payload, user, row))) {
-    return { status: 403, message: 'No puedes cambiar la anonimización de este documento.' }
-  }
+  const access = await controlAccess(payload, user, row)
+  if (access === 'not-found') return NOT_FOUND
+  if (access === 'forbidden') return { status: 403, message: 'No puedes cambiar la anonimización de este documento.' }
   const patch = parseSwitchPatch(rawBody)
   if (typeof patch === 'string') return { status: 400, message: patch }
   if (!switchesApply(row.contentKind)) {
@@ -255,7 +298,7 @@ export async function patchAnonimizacion(
   for (const k of ANONYMISE_SWITCHES) if (k in patch) data[k] = patch[k]
   const respond = async (regate: RegateOutcome): Promise<ControlResult> => {
     const fresh = (await readRow(payload, id)) ?? next
-    return { status: 200, body: { ...viewOf(fresh, after), regate } }
+    return { status: 200, body: { ...viewOf(fresh, after, await mayReadName(user, fresh)), regate } }
   }
   const conflict: ControlResult = { status: 409, message: 'El documento cambió mientras se guardaba. Vuelve a intentarlo.' }
 
@@ -284,18 +327,47 @@ export async function patchAnonimizacion(
    * human "no" and stays (saved only), as does a row with no verdict yet (the
    * next gate run reads the new values).
    */
-  const verdict = row.anonymisationStatus
-  const regatable = rowMustPassGate(row) && (verdict === 'ready' || verdict === 'held' || verdict === 'approved')
-  const made = madeUnder(row)
-  const stale = ANONYMISE_SWITCHES.some((k) => after[k].value !== made[k])
-  if (!regatable || !stale) {
+  if (!isStale(row, after)) {
     if (!(await guarded(payload, row, data))) return conflict
     const changed = ANONYMISE_SWITCHES.some((k) => before[k].value !== after[k].value)
-    return respond(!regatable && changed ? 'saved-only' : 'not-needed')
+    return respond(!regatable(row) && changed ? 'saved-only' : 'not-needed')
   }
+  const outcome = await regateRow(payload, row, data, deps)
+  if (outcome === 'conflict') return conflict
+  if (outcome === 'started') return respond('started')
+  if (outcome === 'erase-failed') {
+    return {
+      status: 502,
+      message: 'No se pudieron borrar las copias anteriores del documento. No se guardó nada; inténtalo de nuevo.',
+    }
+  }
+  return { status: 502, message: 'No se pudo volver a anonimizar el documento. No se guardó nada.' }
+}
 
-  // Withdraw, ERASE both old copies, reset with the new switches in the same
-  // guarded write, then gate again, detached (`regateDocumentsById`).
+/** A gated row with a verdict the switches acted on. */
+function regatable(row: Row): boolean {
+  const verdict = row.anonymisationStatus
+  return rowMustPassGate(row) && (verdict === 'ready' || verdict === 'held' || verdict === 'approved')
+}
+
+/** Its verdict was made under switches that differ from `after`. */
+function isStale(row: Row, after: Record<AnonymiseSwitch, EffectiveSwitch>): boolean {
+  const made = verdictSettings(row)
+  return regatable(row) && ANONYMISE_SWITCHES.some((k) => after[k].value !== made[k])
+}
+
+/**
+ * Withdraw, ERASE both old copies (`requireErase`: before the reset), reset
+ * with `data` in the same guarded write, then gate again, detached
+ * (`regateDocumentsById`). Shared by the PATCH and the ecosistema job.
+ */
+async function regateRow(
+  payload: Payload,
+  row: Row,
+  data: Row,
+  deps: ControlDeps,
+): Promise<'started' | 'conflict' | 'erase-failed' | 'failed'> {
+  const org = relationId(row.organization) as Id
   const report = await regateDocumentsById(payload, {
     ids: [row.id as Id],
     organizationId: org,
@@ -307,21 +379,92 @@ export async function patchAnonimizacion(
     gate: async (reset) => deps.startGate(payload, reset, org),
   })
   const outcome = report.lines[0]?.outcome
-  if (report.lines[0]?.refused === 'in-flight' || outcome === 'changed-meanwhile') return conflict
-  if (outcome === 'regated' || outcome === 'withdrawn-only') return respond('started')
-  if (outcome === 'erase-failed') {
-    return {
-      status: 502,
-      message: 'Se retiró el documento, pero no se pudieron borrar sus copias anteriores. No se volvió a anonimizar.',
-    }
-  }
-  return { status: 502, message: 'No se pudo volver a anonimizar el documento. No se guardó nada.' }
+  if (report.lines[0]?.refused === 'in-flight' || outcome === 'changed-meanwhile') return 'conflict'
+  if (outcome === 'regated' || outcome === 'withdrawn-only') return 'started'
+  if (outcome === 'erase-failed') return 'erase-failed'
+  return 'failed'
 }
 
-/** The switches the row's current verdict was made under; absent = both off (`lib/holdReview.ts`). */
-function madeUnder(row: Row): Record<AnonymiseSwitch, boolean> {
-  const s = (row.anonymisationReport as { settings?: Partial<Record<AnonymiseSwitch, unknown>> } | null)?.settings
-  return { keepDocumentAuthor: s?.keepDocumentAuthor === true, keepCitedAuthors: s?.keepCitedAuthors === true }
+/**
+ * 🔴 AN ECOSISTEMA DEFAULT TURNED OFF RE-GATES WHAT INHERITS IT (coordinator
+ * decision 2026-11-07, X7). Every gated `documento`/`testimonio` of the
+ * ecosistema with NULL for that switch and a `ready`/`held`/`approved` verdict
+ * made with it ON goes through {@link regateRow}, one at a time. OFF→ON
+ * reprocesses nothing. Started from the `Organizations` afterChange hook,
+ * detached; the change itself is audited there. A row that fails stays
+ * `pendingRegate` in its view, and any PATCH on it retries.
+ *
+ * ⚠ Waits until the new value is readable (the hook runs before the commit),
+ * so the gate never re-runs under the old default.
+ */
+export async function regateInheritors(
+  payload: Payload,
+  organizationId: Id,
+  keys: readonly AnonymiseSwitch[],
+  deps: ControlDeps,
+): Promise<{ regated: Id[]; failed: Id[] }> {
+  const out = { regated: [] as Id[], failed: [] as Id[] }
+  if (keys.length === 0) return out
+  const { invalidateFeatures, resolveFeatures } = await import('./features')
+  for (let attempt = 0; ; attempt++) {
+    const org = (await payload
+      .findByID({ collection: 'organizations', id: organizationId as never, depth: 0, overrideAccess: true })
+      .catch(() => null)) as { features?: unknown } | null
+    if (org && keys.every((k) => resolveFeatures(org.features)[k] === false)) break
+    if (attempt >= 20) {
+      console.error(`[anonimizacion] ecosistema ${String(organizationId)}: the new default never became readable; nothing re-gated`)
+      return out
+    }
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  invalidateFeatures(organizationId)
+  const found = (await payload.find({
+    collection: 'documents',
+    where: {
+      and: [
+        { organization: { equals: organizationId } },
+        { contentKind: { in: ['documento', 'testimonio'] } },
+        { anonymisationStatus: { in: ['ready', 'held', 'approved'] } },
+        { or: keys.map((k) => ({ [k]: { exists: false } })) },
+      ],
+    },
+    depth: 0,
+    pagination: false,
+    overrideAccess: true,
+  } as never)) as unknown as { docs?: Row[] }
+  for (const row of found.docs ?? []) {
+    const made = verdictSettings(row)
+    if (!regatable(row) || !keys.some((k) => row[k] == null && made[k])) continue
+    try {
+      const outcome = await regateRow(payload, row, {}, deps)
+      ;(outcome === 'started' ? out.regated : out.failed).push(row.id as Id)
+    } catch (err) {
+      out.failed.push(row.id as Id)
+      console.error(`[anonimizacion] doc ${String(row.id)}: re-gate after a default change failed:`, err instanceof Error ? err.name : 'error')
+    }
+  }
+  return out
+}
+
+/**
+ * Test seam for the hook: the deps the ecosistema job runs with, and its last
+ * run so a test can await it. Production leaves `deps` null (the live client).
+ */
+export const ecosystemRegate: { deps: ControlDeps | null; last: Promise<unknown> } = { deps: null, last: Promise.resolve() }
+
+/** Called by the `Organizations` afterChange hook: detached, never throws. */
+export function startEcosystemRegate(payload: Payload, organizationId: Id, keys: readonly AnonymiseSwitch[]): void {
+  if (keys.length === 0) return
+  ecosystemRegate.last = new Promise<void>((resolve) => {
+    setImmediate(() => {
+      void (async () => regateInheritors(payload, organizationId, keys, ecosystemRegate.deps ?? (await liveDeps())))()
+        .then((r) => {
+          if (r.failed.length > 0) console.error(`[anonimizacion] ecosistema ${String(organizationId)}: ${r.failed.length} documents not re-gated`)
+        })
+        .catch((err) => console.error('[anonimizacion] ecosistema re-gate failed:', err instanceof Error ? err.name : 'error'))
+        .finally(resolve)
+    })
+  })
 }
 
 /** The production seam: the ecosistema's admin client, and the ingest pipeline. */

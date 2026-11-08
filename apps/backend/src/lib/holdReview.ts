@@ -166,17 +166,13 @@ export class HoldSettingsChangedError extends HoldReviewInputError {
  * absent = both off) differ from what the row would run with now.
  */
 export async function holdSettingsChanged(payload: Payload, row: Record<string, unknown>): Promise<boolean> {
-  const { effectiveSwitches, switchesApply } = await import('./publicFigures')
+  const { effectiveSwitches, switchesApply, verdictSettings } = await import('./publicFigures')
   if (!switchesApply(row.contentKind)) return false
   const org = relationId(row.organization)
   if (org === null) return true
-  const report = row.anonymisationReport as { settings?: { keepDocumentAuthor?: unknown; keepCitedAuthors?: unknown } } | null
-  const made = report?.settings
+  const made = verdictSettings(row)
   const now = await effectiveSwitches(payload, org, row)
-  return (
-    now.keepDocumentAuthor.value !== (made?.keepDocumentAuthor === true) ||
-    now.keepCitedAuthors.value !== (made?.keepCitedAuthors === true)
-  )
+  return now.keepDocumentAuthor.value !== made.keepDocumentAuthor || now.keepCitedAuthors.value !== made.keepCitedAuthors
 }
 
 // ---------------------------------------------------------------------------
