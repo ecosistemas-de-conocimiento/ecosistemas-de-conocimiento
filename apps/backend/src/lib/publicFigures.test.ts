@@ -11,7 +11,7 @@ vi.mock('./conversationIngest', () => ({ rosterForOrganization: roster }))
 import { staticDetector } from './anonymise/detector'
 import { runAnonymisationGate } from './anonymise/gate'
 import { invalidateFeatures } from './features'
-import { authorsLog, documentoGateOptions, publicFiguresLog } from './publicFigures'
+import { authorsLog, documentoGateOptions, effectiveSwitches, publicFiguresLog } from './publicFigures'
 
 const payloadWith = (features: unknown) => ({ findByID: vi.fn(async () => ({ features })) }) as never
 
@@ -43,7 +43,7 @@ describe('documentoGateOptions', () => {
       contentKind: kind,
       keepPublicFigures: true,
     })
-    expect(out).toEqual({ keepPublicFigures: false, roster: [], authors: [] })
+    expect(out).toEqual({ keepPublicFigures: false, roster: [], authors: [], keepDocumentAuthor: false, keepCitedAuthors: false })
     expect(roster).not.toHaveBeenCalled()
   })
 
@@ -51,16 +51,16 @@ describe('documentoGateOptions', () => {
     roster.mockRejectedValue(new Error('db down'))
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const out = await documentoGateOptions(payloadWith({ keepPublicFigures: true }), 1, { contentKind: 'documento' })
-    expect(out).toEqual({ keepPublicFigures: false, roster: [], authors: [] })
+    expect(out).toEqual({ keepPublicFigures: false, roster: [], authors: [], keepDocumentAuthor: false, keepCitedAuthors: false })
   })
 })
 
-describe('documentoGateOptions — R60 authors (the uploader)', () => {
+describe('documentoGateOptions — the uploader, with keepDocumentAuthor on for the ecosistema', () => {
   /** An account whose own `displayName` is `displayName`, with these memberships. */
   const payloadFor = (displayName: string, memberships: unknown[] | Error) =>
     ({
       findByID: vi.fn(async ({ collection }: { collection: string }) =>
-        collection === 'users' ? { displayName } : { features: { keepPublicFigures: false } },
+        collection === 'users' ? { displayName } : { features: { keepPublicFigures: false, keepDocumentAuthor: true } },
       ),
       find: vi.fn(async () => {
         if (memberships instanceof Error) throw memberships
@@ -139,6 +139,79 @@ describe('documentoGateOptions — R60 authors (the uploader)', () => {
   it('no uploader, no author', async () => {
     const out = await documentoGateOptions(payloadFor('Ana Ruiz', [{ personName: 'Ana Ruiz' }]), 1, { contentKind: 'documento' })
     expect(out.authors).toEqual([])
+  })
+})
+
+describe('documentoGateOptions — the two switches (owner decision 2026-11-07)', () => {
+  const payloadFor = (features: unknown, memberships: unknown[] = [{ personName: 'Ana Ruiz' }]) => {
+    const find = vi.fn(async () => ({ docs: memberships }))
+    return { payload: { findByID: vi.fn(async () => ({ features })), find } as never, find }
+  }
+
+  it('🔴 default: no author, no cited names, and the uploader is never read', async () => {
+    const { payload, find } = payloadFor(null)
+    const out = await documentoGateOptions(payload, 1, { contentKind: 'documento', uploadedBy: 7 })
+    expect(out.authors).toEqual([])
+    expect(out.keepCitedAuthors).toBe(false)
+    expect(find).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    // [ecosistema, document, expected]
+    [true, null, true],
+    [false, null, false],
+    [true, false, false],
+    [false, true, true],
+    [undefined, undefined, false],
+  ])('keepDocumentAuthor: ecosistema %s, document %s → %s', async (eco, doc, expected) => {
+    const { payload } = payloadFor(eco === undefined ? null : { keepDocumentAuthor: eco })
+    const out = await documentoGateOptions(payload, 1, { contentKind: 'documento', uploadedBy: 7, keepDocumentAuthor: doc })
+    expect(out.authors).toEqual(expected ? ['Ana Ruiz'] : [])
+  })
+
+  it.each([
+    [true, null, true],
+    [false, null, false],
+    [true, false, false],
+    [false, true, true],
+  ])('keepCitedAuthors: ecosistema %s, document %s → %s', async (eco, doc, expected) => {
+    const { payload } = payloadFor({ keepCitedAuthors: eco })
+    const out = await documentoGateOptions(payload, 1, { contentKind: 'documento', keepCitedAuthors: doc })
+    expect(out.keepCitedAuthors).toBe(expected)
+  })
+
+  it('a testimonio gets both switches, never the roster or public figures', async () => {
+    const { payload } = payloadFor({ keepDocumentAuthor: true, keepCitedAuthors: true, keepPublicFigures: true })
+    const out = await documentoGateOptions(payload, 1, { contentKind: 'testimonio', uploadedBy: 7, keepPublicFigures: true })
+    expect(out).toEqual({ keepPublicFigures: false, roster: [], authors: ['Ana Ruiz'], keepDocumentAuthor: true, keepCitedAuthors: true })
+    expect(roster).not.toHaveBeenCalled()
+  })
+
+  it('🔴 a conversation gets neither, whatever the row says', async () => {
+    const { payload, find } = payloadFor({ keepDocumentAuthor: true, keepCitedAuthors: true })
+    const out = await documentoGateOptions(payload, 1, {
+      contentKind: 'conversacion',
+      uploadedBy: 7,
+      keepDocumentAuthor: true,
+      keepCitedAuthors: true,
+    })
+    expect(out).toEqual({ keepPublicFigures: false, roster: [], authors: [], keepDocumentAuthor: false, keepCitedAuthors: false })
+    expect(find).not.toHaveBeenCalled()
+  })
+
+  it('🔴 an unreadable setting is off (fails closed)', async () => {
+    const payload = { findByID: vi.fn(async () => { throw new Error('db down') }), find: vi.fn(async () => ({ docs: [{ personName: 'Ana Ruiz' }] })) } as never
+    const out = await documentoGateOptions(payload, 1, { contentKind: 'testimonio', uploadedBy: 7 })
+    expect(out.authors).toEqual([])
+    expect(out.keepCitedAuthors).toBe(false)
+  })
+
+  it('effectiveSwitches says where each value came from', async () => {
+    const { payload } = payloadFor({ keepDocumentAuthor: true })
+    expect(await effectiveSwitches(payload, 1, { keepCitedAuthors: false })).toEqual({
+      keepDocumentAuthor: { value: true, origin: 'ecosistema' },
+      keepCitedAuthors: { value: false, origin: 'documento' },
+    })
   })
 })
 

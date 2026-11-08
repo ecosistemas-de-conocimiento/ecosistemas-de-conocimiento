@@ -520,8 +520,15 @@ describe.skipIf(!dockerOk)('student in-app notes: Publicar → gate → graph (r
         expect(await revisionOf(NOTE)).toBeUndefined()
       }
 
-      beforeAll(() => setPersonName(AUTHOR))
-      afterAll(() => setPersonName(null))
+      // The author is kept only with `keepDocumentAuthor` on (owner decision 2026-11-07).
+      beforeAll(async () => {
+        await setPersonName(AUTHOR)
+        await setFeatures({ studentView: true, keepDocumentAuthor: true })
+      })
+      afterAll(async () => {
+        await setPersonName(null)
+        await setFeatures({ studentView: true })
+      })
 
       it('a revision naming the uploader: the note\'s text shows the name and its log says so', async () => {
         await pg!.db.execute(sql`UPDATE documents SET authors_kept = NULL WHERE id = ${NOTE}`)

@@ -63,6 +63,7 @@ import { createPseudonymAllocator, normaliseName } from './pseudonyms'
 import { isFieldLabel, structuralPass } from './structural'
 import { restorePublicFigures } from './publicFigureRestore'
 import { restoreAuthors } from './authorRestore'
+import { restoreCitedAuthors } from './citedAuthorRestore'
 import { isTownLevelPlace } from './townPlaces'
 import type {
   KeptPublicFigure,
@@ -634,11 +635,13 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // Same lifetime, same reason: name parts → people, for this document only.
   const names = createNamePartRegistry()
   const stages: GateStageReport[] = []
-  // 🔴 R60: the document's actual author (its uploader), documento only.
-  // Never read from the text, and kept only whole, exactly as written there
-  // (`authorRestore.ts`): NFC like the text below, and nothing else changes.
+  // 🔴 `keepDocumentAuthor`: the document's actual author (its uploader), in a
+  // documento or a testimonio, never a conversation. The caller passes names
+  // only when the switch is on. Never read from the text, and kept only whole,
+  // exactly as written there (`authorRestore.ts`): NFC like the text below.
+  const restoresAllowed = input.contentKind === 'documento' || input.contentKind === 'testimonio'
   const authors =
-    input.contentKind === 'documento'
+    restoresAllowed
       ? (input.authors ?? [])
           .filter((e) => !e.includes('@'))
           .map((e) => e.normalize('NFC'))
@@ -651,7 +654,12 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // (`publicFigureRestore.ts`). A hold is the option-off hold, unchanged.
   // A `documento` only, never a testimonio or a conversation.
   const keep = input.keepPublicFigures === true && input.contentKind === 'documento'
-  const classify = keep ? { classifyPublic: true as const } : {}
+  // 🔴 `keepCitedAuthors` (owner decision 2026-11-07): documento or testimonio only.
+  const keepCited = input.keepCitedAuthors === true && restoresAllowed
+  // 🔴 The model decides a citation too (audit 2026-11-07, D5): with
+  // `keepCitedAuthors` it classifies people, and a citation comes back only
+  // when it called that name public. A deterministic rule only ever removes.
+  const classify = keep || keepCited ? { classifyPublic: true as const } : {}
   // 🔴 A roster entry in ANY case is a roster entry (third audit): name parts
   // are read from its capitalised form.
   const rosterNames = (input.roster ?? [])
@@ -690,7 +698,7 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   })
   const ready = (redactedText: string): GateResult => {
     let text = redactedText
-    const extra: { keptPublic?: KeptPublicFigure[]; keptAuthors?: string[] } = {}
+    const extra: { keptPublic?: KeptPublicFigure[]; keptAuthors?: string[]; keptCited?: string[] } = {}
     if (keep) {
       // The author source when there is one: a byline stage 1 redacted put a
       // placeholder in `structural.text`, and the public restore refuses any.
@@ -698,8 +706,15 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
       text = restored.text
       extra.keptPublic = restored.kept
     }
-    // 🔴 R60: the document's actual author comes back LAST, on whatever the
-    // public-figure restore left, from stage 1 re-run with `keepAuthors`.
+    // Cited authors second: a citation slot is found in the same source, and
+    // stage 1's own placeholders in it map to themselves.
+    if (keepCited) {
+      const restored = restoreCitedAuthors(authorSource?.text ?? structural.text, text, { ...evidence, roster: rosterNames })
+      text = restored.text
+      if (restored.kept.length > 0) extra.keptCited = restored.kept
+    }
+    // 🔴 The document's actual author comes back LAST, on whatever the
+    // earlier restores left, from stage 1 re-run with `keepAuthors`.
     if (authorSource !== null) {
       const restored = restoreAuthors(authorSource.text, text, authors, authorSource.bylines)
       text = restored.text

@@ -625,6 +625,9 @@ export interface TranscribedRow {
   anonymise?: unknown
   /** The row's `keepPublicFigures` override (NULL = the ecosistema's). */
   keepPublicFigures?: unknown
+  /** The row's `keepDocumentAuthor` / `keepCitedAuthors` overrides (NULL = the ecosistema's). */
+  keepDocumentAuthor?: unknown
+  keepCitedAuthors?: unknown
   lengua?: unknown
   anonymisationStatus?: unknown
   redactedText?: unknown
@@ -768,6 +771,9 @@ export async function driveTranscribedDocument(
         // 🔴 Carried raw (audit 2026-10-27): dropped, an override of `false`
         // would fall back to an ecosistema that says `true`.
         keepPublicFigures: doc.keepPublicFigures,
+        // 🔴 Carried raw for the same reason (owner decision 2026-11-07).
+        keepDocumentAuthor: doc.keepDocumentAuthor,
+        keepCitedAuthors: doc.keepCitedAuthors,
         lengua: str(doc.lengua),
         anonymisationStatus: str(doc.anonymisationStatus),
         redactedText: str(doc.redactedText),

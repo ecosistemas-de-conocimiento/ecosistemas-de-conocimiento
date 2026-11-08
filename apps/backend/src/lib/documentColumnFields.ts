@@ -30,6 +30,7 @@ export const DOCUMENT_COLUMNS = {
   heldTextHash: 'held_text_hash',
   publicFiguresKept: 'public_figures_kept',
   authorsKept: 'authors_kept',
+  citedAuthorsKept: 'cited_authors_kept',
   testimonioTitle: 'testimonio_title',
   // The note editor's autosave (`PATCH /api/documents/:id/note`, `lib/studentNotes.ts`).
   name: 'name',

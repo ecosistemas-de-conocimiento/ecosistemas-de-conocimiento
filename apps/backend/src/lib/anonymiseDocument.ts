@@ -273,10 +273,23 @@ export async function anonymiseDocumentText(args: {
    */
   keepPublicFigures?: boolean
   /**
-   * 🔴 R60: the uploader's names (`documentoGateOptions`). The gate keeps
-   * each one visible, whole, in a `documento` only; logged on the row (`authorsKept`).
+   * 🔴 The uploader's names (`documentoGateOptions`), only when the effective
+   * `keepDocumentAuthor` is on. The gate keeps each one visible, whole, in a
+   * `documento` or a `testimonio`; logged on the row (`authorsKept`).
    */
   authors?: readonly string[]
+  /**
+   * 🔴 The effective `keepCitedAuthors` (`documentoGateOptions`). The gate
+   * honours it for a `documento` or a `testimonio`; logged on the row
+   * (`citedAuthorsKept`).
+   */
+  keepCitedAuthors?: boolean
+  /**
+   * The effective switches this run is made under, stored in the report as
+   * `settings` (`lib/holdReview.ts` refuses approving a hold made under others).
+   * Absent = both off.
+   */
+  settings?: { keepDocumentAuthor: boolean; keepCitedAuthors: boolean }
 }): Promise<AnonymiseOutcome> {
   const { payload, docId, contentKind, text } = args
 
@@ -369,6 +382,7 @@ export async function anonymiseDocumentText(args: {
         // (`gate.ts`, one check, tested there).
         keepPublicFigures: args.keepPublicFigures === true,
         authors: args.authors ?? [],
+        keepCitedAuthors: args.keepCitedAuthors === true,
       },
       { detector },
     )
@@ -393,8 +407,14 @@ export async function anonymiseDocumentText(args: {
       // 🔴 The text this hold is about: `/retry` refuses it unchanged.
       heldTextHash: gatedTextHash(text),
       authorsKept: null,
+      citedAuthorsKept: null,
     }))) return superseded()
     return { ok: false, stage: 'content', reason, report: null }
+  }
+
+  const settings = {
+    keepDocumentAuthor: args.settings?.keepDocumentAuthor === true,
+    keepCitedAuthors: args.settings?.keepCitedAuthors === true,
   }
 
   if (result.status === 'hold' && result.retryable) {
@@ -408,12 +428,13 @@ export async function anonymiseDocumentText(args: {
     if (!(await finish({
       anonymisationStatus: 'n/a',
       anonymisationError: `${GATE_UNAVAILABLE_CODE}: ${result.stage}: ${result.reason}`.slice(0, 500),
-      anonymisationReport: result.report,
+      anonymisationReport: { ...result.report, settings },
       redactedText: null,
       heldText: null,
       anonymisationSurvivors: null,
       publicFiguresKept: null,
       authorsKept: null,
+      citedAuthorsKept: null,
     }))) return superseded()
     return {
       ok: false,
@@ -431,7 +452,7 @@ export async function anonymiseDocumentText(args: {
       // text that triggered it. An error column that quoted the name it found
       // would be a re-identification map with a different name on the door.
       anonymisationError: `${result.stage}: ${result.reason}`.slice(0, 500),
-      anonymisationReport: result.report,
+      anonymisationReport: { ...result.report, settings },
       /**
        * 🔴 CLEARED, AND THIS IS A REAL REACHABLE BUG, NOT TIDINESS.
        *
@@ -463,6 +484,7 @@ export async function anonymiseDocumentText(args: {
        */
       heldTextHash: gatedTextHash(text),
       authorsKept: null,
+      citedAuthorsKept: null,
     }))) return superseded()
     /**
      * A held testimonio gets a title too (owner ruling 2026-10-24: Revisión
@@ -498,15 +520,17 @@ export async function anonymiseDocumentText(args: {
     redactedText: result.redactedText,
     anonymisationStatus: 'ready',
     anonymisationError: null,
-    anonymisationReport: result.report,
+    anonymisationReport: { ...result.report, settings },
     // A clean run has nothing held. Clearing keeps a stale review from an
     // earlier attempt off a row that has since passed.
     heldText: null,
     anonymisationSurvivors: null,
     // 🔴 THE REVIEWERS' LOG: every name kept as public, why, which model, when.
     publicFiguresKept: publicFiguresLog(result.keptPublic, result.report.model),
-    // 🔴 R60: the document's author as left in the text.
+    // 🔴 The document's author as left in the text (`keepDocumentAuthor`).
     authorsKept: authorsLog(result.keptAuthors, result.report.model),
+    // 🔴 The cited authors as left in the text (`keepCitedAuthors`), same shape.
+    citedAuthorsKept: authorsLog(result.keptCited, result.report.model),
   }))) return superseded()
 
   return { ok: true, text: result.redactedText, report: result.report }

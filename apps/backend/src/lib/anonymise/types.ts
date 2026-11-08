@@ -101,6 +101,13 @@ export interface GateReport {
   addresses?: number
   /** Which model did the content scrub, for provenance. Null when stubbed. */
   model?: string | null
+  /**
+   * The per-document switches this run used (owner decision 2026-11-07),
+   * stored by `lib/anonymiseDocument.ts`. Two booleans, no text. A hold
+   * approved after they changed would release a verdict made under other
+   * settings, so `lib/holdReview.ts` refuses it. Absent on older reports.
+   */
+  settings?: { keepDocumentAuthor: boolean; keepCitedAuthors: boolean }
 }
 
 /**
@@ -190,6 +197,11 @@ export type GateResult =
        * each once. Not a removal record (see {@link KeptPublicFigure}).
        */
       keptAuthors?: string[]
+      /**
+       * `keepCitedAuthors`: the cited names as left in `redactedText`
+       * (`citedAuthorRestore.ts`), each once. Not a removal record either.
+       */
+      keptCited?: string[]
     }
   | GateHold
 
@@ -227,13 +239,23 @@ export interface GateInput {
   keepPublicFigures?: boolean
   /**
    * 🔴 R60 (owner, 2026-10-28): the document's ACTUAL author — its uploader's
-   * membership `personName`, never the self-edited `displayName`. Honoured for a `documento` ONLY.
+   * membership `personName`, never the self-edited `displayName`. Honoured for
+   * a `documento` or a `testimonio`, never a `conversacion`; passed only when
+   * the effective `keepDocumentAuthor` is on (owner decision 2026-11-07: the
+   * default anonymises everything, `lib/publicFigures.ts`).
    * Never taken from the text: a byline anyone can type unhides nobody.
    * Their mentions are redacted like any name and, on a READY result, only the
    * whole name exactly as written here comes back (`authorRestore.ts`); a part
    * never does, and a hold shows them redacted.
    */
   authors?: readonly string[]
+  /**
+   * 🔴 KEEP CITED AUTHORS (owner decision 2026-11-07). Honoured for a
+   * `documento` or a `testimonio`, never a `conversacion`. On a READY result a
+   * surname in a bibliographic citation slot comes back (`citedAuthorRestore.ts`);
+   * a hold shows it redacted.
+   */
+  keepCitedAuthors?: boolean
 }
 
 /** One finding from the detector: a literal string that identifies someone. */

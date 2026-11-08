@@ -5,6 +5,7 @@ import type { GraphExtraction } from './types'
 import { canonicalKey } from './normalise'
 import {
   authorBlocker,
+  blockedAuthorNames,
   dropKeptAuthors,
   emptyExtraction,
   mergeWikiSeeds,
@@ -190,6 +191,30 @@ describe('personaBlocker (alias-aware, audit 2026-10-28 item 3)', () => {
     ]
     expect(splitStoredSeedEntities(rows).known).toEqual([])
     expect(splitStoredSeedEntities(rows.slice(1), ['El lingüista']).known).toEqual([])
+  })
+})
+
+describe('blockedAuthorNames — the cited authors are no node either (owner decision 2026-11-07)', () => {
+  const log = (...names: string[]) => names.map((name) => ({ name, model: 'm', at: '2026-11-07T00:00:00.000Z' }))
+
+  it('joins the document author and the cited names, each once', () => {
+    expect(blockedAuthorNames({ authorsKept: log('Ana Ruiz'), citedAuthorsKept: log('Ulloa', 'Quiroga, T.', 'Ulloa') })).toEqual([
+      'Ana Ruiz',
+      'Ulloa',
+      'Quiroga',
+    ])
+    expect(blockedAuthorNames({})).toEqual([])
+  })
+
+  it('🔴 a cited surname kept in the text never becomes a node or a seed', () => {
+    const names = blockedAuthorNames({ citedAuthorsKept: log('Ulloa', 'Quiroga, T.') })
+    const blocked = authorBlocker(names)
+    for (const label of ['Ulloa', 'ULLOA', 'Quiroga', 'Teresa Quiroga', 'Quiroga, T.']) expect(blocked(label), label).toBe(true)
+    for (const label of ['Semiótica', 'Mercado central']) expect(blocked(label), label).toBe(false)
+    const tema = (label: string) =>
+      ({ type: 'tema', label, canonicalKey: canonicalKey(label), occurrences: 1, aliases: [], snippet: null }) as GraphExtraction['entities'][number]
+    const out = dropKeptAuthors({ ...emptyExtraction('v'), entities: [tema('Ulloa'), tema('Semiótica')], relations: [] }, names)
+    expect(out.entities.map((e) => e.label)).toEqual(['Semiótica'])
   })
 })
 

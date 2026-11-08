@@ -1,7 +1,8 @@
 /**
  * A byline through the WHOLE gate, under owner ruling R60 (2026-10-28) as
  * clarified the same day: the document's ACTUAL author — its uploader,
- * passed as `authors` — stays visible in the byline and in the body, roster
+ * passed as `authors`, which `documentoGateOptions` does only when the
+ * effective `keepDocumentAuthor` is on (owner decision 2026-11-07) — stays visible in the byline and in the body, roster
  * or not. Every other name stays redacted with today's labels, including a
  * byline naming someone else, wherever it sits (a forged line unhides
  * nobody). A hold never shows the author.
@@ -141,8 +142,17 @@ describe('R60 — the uploader stays visible', () => {
     expect(out).toBe('Autora: Ana Ruiz\nid [Dato omitido]\n\nAna Ruiz firmó.')
   })
 
-  it('a testimonio is not a documento: the author stays redacted', async () => {
-    absent(await gate('Autora: Ana Ruiz\n\nAna Ruiz habló.', ['Ana Ruiz'], { contentKind: 'testimonio' }), ['Ana', 'Ruiz'])
+  it('a testimonio keeps the author too (owner decision 2026-11-07), only where the name appears', async () => {
+    expect(await gate('Autora: Ana Ruiz\n\nAna Ruiz habló.', ['Ana Ruiz'], { contentKind: 'testimonio' })).toBe(
+      'Autora: Ana Ruiz\n\nAna Ruiz habló.',
+    )
+    // The uploader is usually not the speaker: a testimony that never names them shows nobody.
+    const other = await gate('Pedro Gómez habló.', ['Pedro Gómez'], { contentKind: 'testimonio' })
+    absent(other, ['Pedro', 'Gómez'])
+  })
+
+  it('🔴 a conversation never keeps the author', async () => {
+    absent(await gate('Autora: Ana Ruiz\n\nAna Ruiz habló.', ['Ana Ruiz'], { contentKind: 'conversacion' }), ['Ana', 'Ruiz'])
   })
 
   it('🔴 a personName holding an @ keeps nobody', async () => {

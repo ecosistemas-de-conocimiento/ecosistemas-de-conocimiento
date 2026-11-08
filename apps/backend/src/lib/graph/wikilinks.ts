@@ -457,3 +457,16 @@ export function keptLogNames(raw: unknown): string[] {
     .map((e) => (e && typeof e === 'object' ? (e as { name?: unknown }).name : null))
     .filter((n): n is string => typeof n === 'string' && n.trim() !== '')
 }
+
+/**
+ * 🔴 EVERY NAME THE GATE LEFT VISIBLE AS AN AUTHOR: the document's own
+ * (`authorsKept`) and the cited ones (`citedAuthorsKept`, owner decision
+ * 2026-11-07). Each is fed to {@link authorBlocker}: being cited in a document
+ * does not make someone a node of the ecosistema.
+ */
+export function blockedAuthorNames(row: { authorsKept?: unknown; citedAuthorsKept?: unknown }): string[] {
+  // A cited entry may carry initials ("Quiroga, T."): the surname is what the
+  // blocker must match, so "Teresa Quiroga" goes too (fails closed).
+  const cited = keptLogNames(row.citedAuthorsKept).map((n) => n.replace(/,.*$/su, '').trim()).filter(Boolean)
+  return [...new Set([...keptLogNames(row.authorsKept), ...cited])]
+}

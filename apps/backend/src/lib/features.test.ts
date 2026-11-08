@@ -22,7 +22,7 @@ import {
 beforeEach(() => invalidateFeatures())
 
 describe('defaults', () => {
-  it('every switch is on except studentView, keepPublicFigures and studentTestimonios (opt-in)', () => {
+  it('every switch is on except studentView, keepPublicFigures, studentTestimonios, keepDocumentAuthor and keepCitedAuthors (opt-in)', () => {
     expect(FEATURE_DEFAULTS).toEqual({
       audioUpload: true,
       liveMic: true,
@@ -36,8 +36,10 @@ describe('defaults', () => {
       studentView: false,
       keepPublicFigures: false,
       studentTestimonios: false,
+      keepDocumentAuthor: false,
+      keepCitedAuthors: false,
     })
-    expect(FEATURE_KEYS).toHaveLength(12)
+    expect(FEATURE_KEYS).toHaveLength(14)
   })
 
   it('NULL, junk and non-booleans read as the defaults', () => {
@@ -114,6 +116,15 @@ describe('lockedFeatureChange — keepPublicFigures is the platform admin\'s (ow
     // Dropping the key resolves to the default (off): that is a change too.
     expect(lockedFeatureChange({ keepPublicFigures: true }, { graph: false })).toBe('keepPublicFigures')
     expect(lockedFeatureChange({ keepPublicFigures: true }, null)).toBe('keepPublicFigures')
+  })
+
+  it('keepDocumentAuthor and keepCitedAuthors are NOT admin-only: the ecosistema decides', () => {
+    expect(lockedFeatureChange({}, { keepDocumentAuthor: true, keepCitedAuthors: true })).toBeNull()
+    expect(parseFeaturesPatch({ keepDocumentAuthor: true, keepCitedAuthors: false })).toEqual({
+      keepDocumentAuthor: true,
+      keepCitedAuthors: false,
+    })
+    expect(parseFeaturesPatch({ keepCitedAuthors: 'sí' })).toBe('Valor no válido para keepCitedAuthors.')
   })
 
   it('is silent when the value stays the same or only other keys move', () => {

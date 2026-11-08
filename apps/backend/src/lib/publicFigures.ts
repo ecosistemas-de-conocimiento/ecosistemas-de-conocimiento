@@ -1,16 +1,23 @@
 /**
- * KEEP PUBLIC FIGURES — what a gated document runs with (owner rulings
- * 2026-10-27, "Semiosis práctica" far-right case files).
+ * WHAT A GATED DOCUMENT RUNS WITH: public figures, the roster, the document's
+ * author and cited authors.
  *
- *   · `documento` only. A testimonio or a conversation never keeps a name and
- *     never gets the roster here (`conversationIngest.ts` builds its own).
- *   · `documents.keepPublicFigures` (nullable) wins; null means the
- *     ecosistema's `keepPublicFigures` feature (`lib/features.ts`).
- *   · The roster (owner Q13 A): every member's name parts are redacted, unless
+ *   · KEEP PUBLIC FIGURES and the roster (owner rulings 2026-10-27,
+ *     "Semiosis práctica" far-right case files): `documento` only. A testimonio
+ *     or a conversation never gets them here (`conversationIngest.ts` builds
+ *     its own roster). `documents.keepPublicFigures` (nullable) wins; null
+ *     means the ecosistema's `keepPublicFigures` feature (`lib/features.ts`).
+ *     The roster (owner Q13 A): every member's name parts are redacted, unless
  *     the option is on and the model called that mention public.
+ *   · 🔴 THE DEFAULT ANONYMISES EVERYTHING (owner decision 2026-11-07). Two
+ *     switches, each a nullable per-document override of an ecosistema
+ *     feature, read for a `documento` or a `testimonio`, never a conversation:
+ *       keepDocumentAuthor  the uploader's whole `personName` (`authorRestore.ts`);
+ *       keepCitedAuthors    surnames in bibliographic citations (`citedAuthorRestore.ts`).
  *
- * 🔴 FAILS TO TODAY'S BEHAVIOUR: a roster read that fails gives option off and
- * no roster, which is exactly what every documento ran with before this file.
+ * 🔴 FAILS CLOSED: a failed read of a switch is off, and a failed roster read
+ * gives option off and no roster, which is what every documento ran with
+ * before the roster existed.
  */
 
 import type { Payload } from 'payload'
@@ -22,12 +29,52 @@ export interface DocumentoGateOptions {
   keepPublicFigures: boolean
   roster: string[]
   /**
-   * 🔴 R60: the document's ACTUAL author, kept visible (`anonymise/authorRestore.ts`):
-   * the uploader's membership `personName` in this ecosistema. `documents` has no
-   * staff-recorded authors field, so this is the only source. A read that fails
-   * gives none (today's behaviour).
+   * 🔴 The document's ACTUAL author, kept visible (`anonymise/authorRestore.ts`):
+   * the uploader's membership `personName` in this ecosistema, and only when the
+   * effective `keepDocumentAuthor` is on. `documents` has no staff-recorded
+   * authors field, so this is the only source. A read that fails gives none.
    */
   authors: string[]
+  /** The effective `keepDocumentAuthor` (true even when no `personName` gave a name). */
+  keepDocumentAuthor: boolean
+  /** The effective `keepCitedAuthors`. */
+  keepCitedAuthors: boolean
+}
+
+/** The two per-document anonymisation switches. */
+export const ANONYMISE_SWITCHES = ['keepDocumentAuthor', 'keepCitedAuthors'] as const
+export type AnonymiseSwitch = (typeof ANONYMISE_SWITCHES)[number]
+
+/** One switch as a document runs with it, and where the value came from. */
+export interface EffectiveSwitch {
+  value: boolean
+  origin: 'ecosistema' | 'documento'
+}
+
+/** May this content kind keep its author or cited names at all? */
+export function switchesApply(contentKind: unknown): boolean {
+  return contentKind === 'documento' || contentKind === 'testimonio'
+}
+
+/**
+ * The effective value of each switch for one row: the row's boolean override,
+ * else the ecosistema's feature. 🔴 Fails closed: a read that throws is off.
+ */
+export async function effectiveSwitches(
+  payload: Pick<Payload, 'findByID'>,
+  organizationId: number | string,
+  row: Partial<Record<AnonymiseSwitch, unknown>>,
+): Promise<Record<AnonymiseSwitch, EffectiveSwitch>> {
+  const one = async (key: AnonymiseSwitch): Promise<EffectiveSwitch> => {
+    const own = row[key]
+    if (typeof own === 'boolean') return { value: own, origin: 'documento' }
+    try {
+      return { value: (await featureEnabled(payload, organizationId, key)) === true, origin: 'ecosistema' }
+    } catch {
+      return { value: false, origin: 'ecosistema' }
+    }
+  }
+  return { keepDocumentAuthor: await one('keepDocumentAuthor'), keepCitedAuthors: await one('keepCitedAuthors') }
 }
 
 /**
@@ -72,10 +119,27 @@ async function uploaderNames(
 export async function documentoGateOptions(
   payload: Pick<Payload, 'findByID' | 'find'>,
   organizationId: number | string,
-  row: { contentKind?: unknown; keepPublicFigures?: unknown; uploadedBy?: unknown },
+  row: {
+    contentKind?: unknown
+    keepPublicFigures?: unknown
+    uploadedBy?: unknown
+    keepDocumentAuthor?: unknown
+    keepCitedAuthors?: unknown
+  },
 ): Promise<DocumentoGateOptions> {
-  if (row.contentKind !== 'documento') return { keepPublicFigures: false, roster: [], authors: [] }
-  const authors = await uploaderNames(payload, organizationId, row.uploadedBy)
+  const off: DocumentoGateOptions = {
+    keepPublicFigures: false,
+    roster: [],
+    authors: [],
+    keepDocumentAuthor: false,
+    keepCitedAuthors: false,
+  }
+  if (!switchesApply(row.contentKind)) return off
+  const switches = await effectiveSwitches(payload, organizationId, row)
+  const authors = switches.keepDocumentAuthor.value ? await uploaderNames(payload, organizationId, row.uploadedBy) : []
+  const keepCitedAuthors = switches.keepCitedAuthors.value
+  const keepDocumentAuthor = switches.keepDocumentAuthor.value
+  if (row.contentKind !== 'documento') return { ...off, authors, keepDocumentAuthor, keepCitedAuthors }
   try {
     const { rosterForOrganization } = await import('./conversationIngest')
     const roster = await rosterForOrganization(payload as Payload, organizationId)
@@ -83,12 +147,12 @@ export async function documentoGateOptions(
       typeof row.keepPublicFigures === 'boolean'
         ? row.keepPublicFigures
         : await featureEnabled(payload, organizationId, 'keepPublicFigures')
-    return { keepPublicFigures, roster, authors }
+    return { keepPublicFigures, roster, authors, keepDocumentAuthor, keepCitedAuthors }
   } catch (err) {
     console.warn(
       `[public-figures] roster or setting unreadable for ecosistema ${organizationId}; gating as before (option off, no roster): ${err instanceof Error ? err.name : 'error'}`,
     )
-    return { keepPublicFigures: false, roster: [], authors }
+    return { ...off, authors, keepDocumentAuthor, keepCitedAuthors }
   }
 }
 

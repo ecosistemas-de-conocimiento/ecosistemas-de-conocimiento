@@ -263,9 +263,16 @@ describe('anonymiseDocumentText — authorsKept (R60)', () => {
     expect(fake.last('authorsKept')).toBeNull()
   })
 
-  it('🔴 a testimonio keeps nobody and logs nobody', async () => {
+  it('a testimonio keeps the author too when the switch passed names (owner decision 2026-11-07)', async () => {
     const fake = fakePayload()
     const out = await run(fake, ok(), TEXT, 'testimonio')
+    expect(out.ok && out.text).toContain(AUTHOR)
+    expect(fake.last('authorsKept')).toEqual([{ name: AUTHOR, model: 'static', at: expect.any(String) }])
+  })
+
+  it('🔴 a conversation keeps nobody and logs nobody', async () => {
+    const fake = fakePayload()
+    const out = await run(fake, ok(), TEXT, 'conversacion')
     expect(out.ok && out.text).not.toContain('López')
     expect(fake.last('authorsKept')).toBeNull()
   })
@@ -288,6 +295,7 @@ describe('anonymiseDocumentText — authorsKept (R60)', () => {
     expect(out.ok).toBe(false)
     expect(fake.last('anonymisationStatus')).toBe('held')
     expect(fake.last('authorsKept')).toBeNull()
+    expect(fake.last('citedAuthorsKept')).toBeNull()
   })
 
   it('🔴 a model that never answered clears the log too', async () => {
@@ -301,6 +309,7 @@ describe('anonymiseDocumentText — authorsKept (R60)', () => {
     expect((await run(fake, down)).ok).toBe(false)
     expect(fake.last('anonymisationStatus')).toBe('n/a')
     expect(fake.last('authorsKept')).toBeNull()
+    expect(fake.last('citedAuthorsKept')).toBeNull()
   })
 
   it('🔴 a crash in the gate clears the log too', async () => {
@@ -316,5 +325,45 @@ describe('anonymiseDocumentText — authorsKept (R60)', () => {
     expect((await run(fake, crashing)).ok).toBe(false)
     expect(fake.last('anonymisationStatus')).toBe('held')
     expect(fake.last('authorsKept')).toBeNull()
+    expect(fake.last('citedAuthorsKept')).toBeNull()
+  })
+})
+
+describe('anonymiseDocumentText — citedAuthorsKept and the settings snapshot', () => {
+  const TEXT = 'Como mostró López (2020), Pedro Gómez habló.'
+  const detector = () =>
+    staticDetector([
+      { text: 'López', type: 'persona', public: { motivo: 'autor citado' } },
+      { text: 'Pedro Gómez', type: 'persona' },
+    ])
+  const run = (fake: ReturnType<typeof fakePayload>, keepCitedAuthors: boolean) =>
+    anonymiseDocumentText({
+      payload: fake.payload as never,
+      docId: 7,
+      organizationId: 1,
+      contentKind: 'documento',
+      anonymise: true,
+      text: TEXT,
+      detector: detector(),
+      keepCitedAuthors,
+      settings: { keepDocumentAuthor: false, keepCitedAuthors },
+    })
+
+  it('ready with the switch: logs the cited name and the settings it ran under', async () => {
+    const fake = fakePayload()
+    const out = await run(fake, true)
+    expect(out.ok && out.text).toContain('López (2020)')
+    expect(fake.last('citedAuthorsKept')).toEqual([{ name: 'López', model: 'static', at: expect.any(String) }])
+    expect((fake.last('anonymisationReport') as { settings?: unknown }).settings).toEqual({
+      keepDocumentAuthor: false,
+      keepCitedAuthors: true,
+    })
+  })
+
+  it('🔴 without the switch: nothing kept, the log is cleared', async () => {
+    const fake = fakePayload()
+    const out = await run(fake, false)
+    expect(out.ok && out.text).not.toContain('López')
+    expect(fake.last('citedAuthorsKept')).toBeNull()
   })
 })

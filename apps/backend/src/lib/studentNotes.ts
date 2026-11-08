@@ -484,6 +484,7 @@ export async function promoteRevision(args: {
           held_text = NULL,
           public_figures_kept = ${json(r.publicFiguresKept)}::jsonb,
           authors_kept = ${json(r.authorsKept)}::jsonb,
+          cited_authors_kept = ${json(r.citedAuthorsKept)}::jsonb,
           processed_body = ${r.processedBody as string},
           anonymise = true,
           wiki_links = ${json(r.wikiLinks)}::jsonb,

@@ -123,12 +123,13 @@ describe('rejectPublished', () => {
         anonymise: true,
         authorsKept: [{ name: 'Ana María López' }],
         publicFiguresKept: [{ name: 'Noam Chomsky' }],
+        citedAuthorsKept: [{ name: 'Ulloa' }],
       }),
     )
     const { client } = fakeClient(calls)
     await rejectPublished({ payload, documentId: 7, user: reviewer, clientFor: () => client })
 
-    expect(store).toMatchObject({ authorsKept: null, publicFiguresKept: null })
+    expect(store).toMatchObject({ authorsKept: null, publicFiguresKept: null, citedAuthorsKept: null })
   })
 
   it('🔴 drops the graph rows of the withdrawn row and marks it skipped', async () => {

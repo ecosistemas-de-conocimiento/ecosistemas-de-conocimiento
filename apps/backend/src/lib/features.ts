@@ -4,10 +4,12 @@
  *
  * 🔴 DEFAULTS ARE TODAY'S BEHAVIOUR. A NULL column, a missing key or a value
  * that is not a boolean reads as the default, so an ecosistema nobody has
- * touched behaves exactly as before this file existed. `studentView` is the one
- * defaults that are `false`: the student view is not built yet, and only
+ * touched behaves exactly as before this file existed. The defaults that are
+ * `false`: `studentView`, because the student view is not built yet and only
  * "Semiosis práctica" will get it; `keepPublicFigures` keeps names in the
- * corpus, so it is opt-in per ecosistema (owner rulings 2026-10-27).
+ * corpus, so it is opt-in per ecosistema (owner rulings 2026-10-27), and so are
+ * `keepDocumentAuthor` and `keepCitedAuthors` (owner decision 2026-11-07:
+ * until then a gated documento kept its uploader's name by default).
  *
  * Each flag is enforced where the work happens, not only hidden in the UI:
  *   audioUpload        Documents `refuseDisabledFeatures` (kind=audio create → 403)
@@ -26,6 +28,13 @@
  *                      OFF. On: the teacher's report lists the student's
  *                      testimonios, anonymised only (`lib/student/logic.ts`
  *                      `reportTestimonios`). Platform admin only.
+ *   keepDocumentAuthor `lib/publicFigures.ts` → the gate (a gated `documento` or
+ *                      `testimonio`; never a conversation). Default OFF: the
+ *                      uploader's name is anonymised like any other (owner
+ *                      decision 2026-11-07). A document may override it
+ *                      (`/api/documents/:id/anonimizacion`).
+ *   keepCitedAuthors   same path and scope; surnames in bibliographic
+ *                      citations (`anonymise/citedAuthorRestore.ts`). Default OFF.
  */
 
 import type { Payload } from 'payload'
@@ -43,6 +52,8 @@ export const FEATURE_DEFAULTS = {
   studentView: false,
   keepPublicFigures: false,
   studentTestimonios: false,
+  keepDocumentAuthor: false,
+  keepCitedAuthors: false,
 } as const satisfies Record<string, boolean>
 
 export type FeatureKey = keyof typeof FEATURE_DEFAULTS

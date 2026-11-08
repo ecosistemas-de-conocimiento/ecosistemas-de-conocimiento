@@ -26,7 +26,7 @@ import { updateDocumentColumns, type DocumentColumnsPayload } from '@/lib/docume
 import { extractGraph, type GraphGenerateClient } from './extract'
 import { GRAPH_PROMPT_VERSION } from './prompt'
 import type { GraphStatus } from './types'
-import { dropKeptAuthors, keptLogNames, mergeWikiSeeds, wikiSeedsForRow, type WikiSeeds } from './wikilinks'
+import { blockedAuthorNames, dropKeptAuthors, keptLogNames, mergeWikiSeeds, wikiSeedsForRow, type WikiSeeds } from './wikilinks'
 import { findSeedEntities, pruneDeadSeeds, writeGraphForDocument, type GraphWriterPayload } from './writer'
 
 /**
@@ -397,7 +397,7 @@ type GraphableRow =
       seeds?: WikiSeeds | null
       /** Kept public figures on the row: never a seed `tema`. */
       personaLabels?: string[]
-      /** The author left visible on the row: never a node (`dropKeptAuthors`). */
+      /** The document author and cited authors left visible on the row: never a node (`dropKeptAuthors`). */
       authorNames?: string[]
     }
   | { ok: false; reason: string }
@@ -427,7 +427,7 @@ async function readGraphableRow(
     publicationStatus: row.publicationStatus,
     seeds: wikiLinkSeedingEnabled(organizationId) ? wikiSeedsForRow(row, corpus.text, rowMustPassGate(row)) : null,
     personaLabels: keptLogNames(row.publicFiguresKept),
-    authorNames: keptLogNames(row.authorsKept),
+    authorNames: blockedAuthorNames(row),
   }
 }
 
