@@ -28,6 +28,7 @@
     BACK_LABEL,
     showTestimonyWarning,
     TESTIMONY_WARNING,
+    PENDING_REGATE,
   } from '$lib/anonimizacion';
   import type { ActionData, PageData } from './$types';
 
@@ -57,11 +58,16 @@
   {:else}
     <header class="head">
       <p class="kicker">{PAGE_TITLE}</p>
+      <!-- ⚠ `name` may be a neutral word ("Testimonio") for a caller who may not read the file name. -->
       <h1 data-testid="anon-title">{view.name}</h1>
       <span class="status status-{view.status === 'n/a' ? 'na' : view.status}" data-testid="anon-status">
         {statusLabel(view.status)}
       </span>
     </header>
+
+    {#if view.pendingRegate}
+      <p class="warn callout" role="status" data-testid="anon-pending-regate">{PENDING_REGATE}</p>
+    {/if}
 
     {#if keptLists(view).length > 0}
       <section class="card" aria-labelledby="anon-kept">
@@ -127,7 +133,7 @@
           </div>
         {/each}
         {#if showTestimonyWarning(view)}
-          <p class="warn testimony" role="alert" data-testid="anon-testimony-warning">{TESTIMONY_WARNING}</p>
+          <p class="warn callout" role="alert" data-testid="anon-testimony-warning">{TESTIMONY_WARNING}</p>
         {/if}
         <div class="foot">
           {#if failed}<p class="warn" role="alert" data-testid="anon-error">{failed}</p>{/if}
@@ -326,7 +332,7 @@
   .warn {
     color: var(--edc-color-danger);
   }
-  .testimony {
+  .callout {
     padding: var(--edc-space-2) var(--edc-space-3);
     border: 1px solid var(--edc-color-danger-outline);
     border-radius: var(--edc-radius-2);

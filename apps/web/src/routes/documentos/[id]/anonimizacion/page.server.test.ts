@@ -60,6 +60,18 @@ describe('/documentos/[id]/anonimizacion load', () => {
     await expect(load(event())).rejects.toMatchObject({ status: 403, body: { kind: 'access-denied' } });
   });
 
+  it('pendingRegate passes through; a backend that does not send it reads false', async () => {
+    mocked.mockResolvedValue(json({ ...view, pendingRegate: true }));
+    expect(((await load(event())) as { view: { pendingRegate: boolean } }).view.pendingRegate).toBe(true);
+    mocked.mockResolvedValue(json(view));
+    expect(((await load(event())) as { view: { pendingRegate: boolean } }).view.pendingRegate).toBe(false);
+  });
+
+  it('another ecosistema or an inactive account (backend 404) is the normal not-found page', async () => {
+    mocked.mockResolvedValue(json({ errors: [{ message: 'Not Found' }] }, 404));
+    await expect(load(event())).rejects.toMatchObject({ status: 404, body: { kind: 'not-found', module: 'anonimizacion' } });
+  });
+
   it('a backend 404 is the not-found page', async () => {
     mocked.mockResolvedValue(json({}, 404));
     await expect(load(event())).rejects.toMatchObject({ status: 404, body: { kind: 'not-found' } });
@@ -122,6 +134,7 @@ describe('/documentos/[id]/anonimizacion guardar', () => {
     [403, 'No puedes cambiar esto.'],
     [404, 'No encontramos este documento.'],
     [400, 'No se pudo guardar.'],
+    [502, 'No se pudo guardar.'],
   ])('%i is refused with a plain message', async (status, message) => {
     mocked.mockResolvedValue(json({}, status));
     const out = (await actions.guardar!(event({ 'was-keepDocumentAuthor': 'off', keepDocumentAuthor: 'on' }))) as {

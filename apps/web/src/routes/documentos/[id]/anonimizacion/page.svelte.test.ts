@@ -73,4 +73,16 @@ describe('/documentos/[id]/anonimizacion page', () => {
       'anon-testimony-warning',
     );
   });
+
+  it('pendingRegate: one line, and the kept names stay on screen; absent otherwise', () => {
+    const pending = body(null, { ...view, pendingRegate: true });
+    expect(pending).toMatch(/data-testid="anon-pending-regate"[^>]*>Pendiente: los nombres conservados siguen visibles/);
+    expect(pending).toMatch(/anon-kept-authors[\s\S]*Ana Pérez/);
+    expect(body(null, { ...view, pendingRegate: false })).not.toContain('anon-pending-regate');
+    expect(body()).not.toContain('anon-pending-regate');
+  });
+
+  it('a neutral name ("Testimonio") is shown as sent, nothing more', () => {
+    expect(body(null, { ...view, name: 'Testimonio' })).toMatch(/anon-title"[^>]*>Testimonio<\/h1>/);
+  });
 });

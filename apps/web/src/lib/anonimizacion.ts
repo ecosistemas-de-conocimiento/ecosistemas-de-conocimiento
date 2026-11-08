@@ -38,6 +38,8 @@ export interface AnonView {
   gated: boolean;
   publicationStatus: string | null;
   status: AnonStatus;
+  /** A switch now off would remove a kept name, but the document was not re-checked yet. */
+  pendingRegate: boolean;
   kept: { authors: string[]; publicFigures: string[]; citedAuthors: string[] };
   counts: { stages: AnonStageCount[]; pseudonyms: number | null; addresses: number | null } | null;
   switches: Record<SwitchKey, SwitchState>;
@@ -96,6 +98,9 @@ export const UNAVAILABLE = 'No pudimos abrir esto. Inténtalo más tarde.';
 /** Testimonio with a keep-names switch on (owner ruling: allowed, off by default). */
 export const TESTIMONY_WARNING = 'En un testimonio, esto puede dejar visible a quien habla.';
 
+/** `pendingRegate`: the kept names are STILL in the text. Never say they were removed. */
+export const PENDING_REGATE = 'Pendiente: los nombres conservados siguen visibles hasta la próxima revisión.';
+
 export const SAVED = 'Guardado.';
 export const SAVED_REGATE = 'Guardado. Se está revisando de nuevo.';
 export const UNCHANGED = 'Sin cambios.';
@@ -149,6 +154,7 @@ export function parseView(raw: unknown): AnonView | null {
     gated: r.gated === true,
     publicationStatus: typeof r.publicationStatus === 'string' ? r.publicationStatus : null,
     status: STATUSES.includes(r.status as AnonStatus) ? (r.status as AnonStatus) : 'n/a',
+    pendingRegate: r.pendingRegate === true,
     kept: { authors: names(kept.authors), publicFigures: names(kept.publicFigures), citedAuthors: names(kept.citedAuthors) },
     counts: c
       ? {

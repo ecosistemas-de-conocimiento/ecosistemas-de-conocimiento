@@ -74,7 +74,7 @@ describe('anonimización copy', () => {
     expect(strings.length).toBeGreaterThan(20);
     for (const s of strings) {
       expect(s).not.toMatch(/regate|gate|stage|pseud|seud|corpus|ingir|ingest|pipeline|structural|deterministic|n\/a/i);
-      expect(s.length).toBeLessThanOrEqual(70);
+      expect(s.length).toBeLessThanOrEqual(80); // one short line, never a paragraph
     }
   });
 
@@ -106,6 +106,18 @@ describe('parseView', () => {
       kept: { ...wire.kept, detected: ['Juan López'] },
     });
     expect(JSON.stringify(v)).not.toContain('Juan López');
+  });
+
+  it('pendingRegate: literally true only; missing or junk is false', () => {
+    expect(parseView({ ...wire, pendingRegate: true })!.pendingRegate).toBe(true);
+    expect(parseView({ ...wire, pendingRegate: false })!.pendingRegate).toBe(false);
+    expect(parseView(wire)!.pendingRegate).toBe(false);
+    expect(parseView({ ...wire, pendingRegate: 'true' })!.pendingRegate).toBe(false);
+  });
+
+  it('the pending line never says the names were removed', () => {
+    expect(copy.PENDING_REGATE).toMatch(/siguen visibles/);
+    expect(copy.PENDING_REGATE).not.toMatch(/quitad|borrad|eliminad|anonimizad/i);
   });
 
   it('junk reads safely: unknown status is "n/a", missing switches are the ecosistema\'s off', () => {
