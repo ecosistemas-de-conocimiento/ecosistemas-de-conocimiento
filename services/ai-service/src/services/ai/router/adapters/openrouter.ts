@@ -77,7 +77,14 @@ export type OpenRouterResponseFormat =
     };
 
 /**
- * Set `response_format` (and, for strict mode, the routing guard) on a body.
+ * Set the `provider` routing block (always) and `response_format` (when asked)
+ * on a body. Both request bodies — `callOpenRouter` and `callOpenRouterStream`
+ * — go through here.
+ *
+ * 🔴 `provider.zdr: true` IS ALWAYS SENT. OpenRouter then routes only to Zero
+ * Data Retention endpoints, and errors when the model has none; that error is
+ * `OpenRouterNoZdrEndpointError`, never retried and never re-sent without the
+ * flag. There is no switch to turn it off.
  *
  * 🔴 `provider.require_parameters: true` IS LOAD-BEARING FOR STRICT MODE.
  * OpenRouter decides structured-output support per ENDPOINT (upstream host),
@@ -85,15 +92,27 @@ export type OpenRouterResponseFormat =
  * and DROPS the parameter — strict mode would silently become free text. With
  * the flag, OpenRouter routes only to endpoints that honour `response_format`,
  * and errors when there are none. (OpenRouter docs, Structured Outputs.)
- * JSON mode keeps its old wire: no `provider` block.
  */
-function applyResponseFormat(
+function applyProviderAndFormat(
   body: Record<string, unknown>,
   responseFormat: OpenRouterResponseFormat | undefined,
 ): void {
-  if (!responseFormat) return;
-  body.response_format = responseFormat;
-  if (responseFormat.type === 'json_schema') body.provider = { require_parameters: true };
+  body.provider = {
+    zdr: true,
+    ...(responseFormat?.type === 'json_schema' ? { require_parameters: true } : {}),
+  };
+  if (responseFormat) body.response_format = responseFormat;
+}
+
+/**
+ * OpenRouter's answer when no endpoint meets the request's data policy, e.g.
+ * 404 "No endpoints found matching your data policy". The wording is not
+ * documented by OpenRouter, so the match is on the phrases, not the full text.
+ */
+const NO_ZDR_ENDPOINT_RE = /data policy|zero data retention|\bzdr\b/i;
+
+function isNoZdrEndpoint(status: number, message: string): boolean {
+  return status >= 400 && status < 500 && NO_ZDR_ENDPOINT_RE.test(message);
 }
 
 export interface OpenRouterCompletion {
@@ -197,6 +216,25 @@ export class OpenRouterHttpError extends Error {
 }
 
 /**
+ * No Zero Data Retention endpoint can serve this model. Fail-closed: the call
+ * is never retried and never re-sent without `provider.zdr`. Carries no
+ * `retryAfterMs`, and `isTransientProviderError` refuses it by identity.
+ */
+export class OpenRouterNoZdrEndpointError extends OpenRouterHttpError {
+  constructor(opts: { status: number; code?: string | number; model: string; upstreamMessage: string; bodySnippet?: string }) {
+    super({
+      status: opts.status,
+      code: opts.code,
+      message:
+        `No Zero Data Retention endpoint available for model "${opts.model}"; ` +
+        `the call was not sent to any other provider. OpenRouter said: ${opts.upstreamMessage}`,
+      bodySnippet: opts.bodySnippet,
+    });
+    this.name = 'OpenRouterNoZdrEndpointError';
+  }
+}
+
+/**
  * `Retry-After` off a `Response`, in ms. HTTP allows delta-seconds OR an
  * HTTP-date and both are seen behind proxies, so both are read. A date in the
  * past yields `undefined`, never a negative wait.
@@ -278,7 +316,7 @@ export async function callOpenRouter(
     temperature: opts.temperature,
   };
   if (opts.models && opts.models.length > 0) body.models = opts.models;
-  applyResponseFormat(body, opts.responseFormat);
+  applyProviderAndFormat(body, opts.responseFormat);
   if (opts.includeUsage !== false) {
     // OpenRouter spec: include cost when caller asks. Default-on for traces.
     body.usage = { include: true };
@@ -307,6 +345,15 @@ export async function callOpenRouter(
   if (!res.ok || parsed.error) {
     const msg = parsed?.error?.message ?? `HTTP ${res.status}`;
     const code = parsed?.error?.code;
+    if (isNoZdrEndpoint(res.status, msg)) {
+      throw new OpenRouterNoZdrEndpointError({
+        status: res.status,
+        code,
+        model: opts.model,
+        upstreamMessage: msg,
+        bodySnippet: text.slice(0, 200),
+      });
+    }
     throw new OpenRouterHttpError({
       status: res.status,
       code,
@@ -385,7 +432,7 @@ export async function* callOpenRouterStream(
     usage: { include: true },
   };
   if (opts.models && opts.models.length > 0) body.models = opts.models;
-  applyResponseFormat(body, opts.responseFormat);
+  applyProviderAndFormat(body, opts.responseFormat);
 
   // Inactivity backstop: chain an internal controller onto the caller's signal
   // so a per-read stall timer can abort the fetch independently of (and on top
@@ -576,6 +623,13 @@ export async function streamingCallOpenRouter(
         // Same MESSAGE as before — only the class is upgraded, so anything
         // asserting on the text keeps matching. A stream fault with no status
         // (malformed frame, truncated body) stays a plain `Error`.
+        if (evt.status !== undefined && isNoZdrEndpoint(evt.status, evt.message)) {
+          throw new OpenRouterNoZdrEndpointError({
+            status: evt.status,
+            model: opts.model,
+            upstreamMessage: evt.message,
+          });
+        }
         throw evt.status === undefined
           ? new Error(evt.message)
           : new OpenRouterHttpError({

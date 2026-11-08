@@ -260,6 +260,42 @@ export async function callOpenRouterEmbedding(opts: EmbedOptions): Promise<Embed
   return callFallback();
 }
 
+/**
+ * Thrown when OpenRouter has no Zero Data Retention endpoint for the model
+ * (e.g. 404 "No endpoints found matching your data policy"). Fail-closed: a 4xx
+ * never reaches the hosted fallback, and the call is never re-sent without
+ * `provider.zdr`.
+ */
+export class OpenRouterEmbeddingNoZdrEndpointError extends OpenRouterEmbeddingHttpError {
+  constructor(opts: { status: number; code?: string | number; model: string; upstreamMessage: string; bodySnippet?: string }) {
+    super({
+      status: opts.status,
+      code: opts.code,
+      message:
+        `No Zero Data Retention endpoint available for embedding model "${opts.model}"; ` +
+        `the call was not sent to any other provider. OpenRouter said: ${opts.upstreamMessage}`,
+      bodySnippet: opts.bodySnippet,
+    });
+    this.name = 'OpenRouterEmbeddingNoZdrEndpointError';
+  }
+}
+
+const NO_ZDR_ENDPOINT_RE = /data policy|zero data retention|\bzdr\b/i;
+
+/**
+ * `provider.zdr` is OpenRouter's routing field, so it goes only to OpenRouter.
+ * Other `/embeddings` hosts (self-hosted, DeepInfra) do not route and may
+ * reject an unknown field.
+ */
+function isOpenRouterUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === 'openrouter.ai' || host.endsWith('.openrouter.ai');
+  } catch {
+    return false;
+  }
+}
+
 /** One POST to one OpenAI-compatible `/embeddings` endpoint, parsed. */
 async function postEmbeddings(
   url: string,
@@ -276,6 +312,8 @@ async function postEmbeddings(
     // now use, e.g. bge-m3) can return base64-packed floats otherwise, which
     // this adapter deliberately rejects rather than decodes (see below).
     encoding_format: 'float',
+    // Zero Data Retention, always on for OpenRouter (see `isOpenRouterUrl`).
+    ...(isOpenRouterUrl(url) ? { provider: { zdr: true } } : {}),
   };
 
   const res = await fetch(url, {
@@ -300,6 +338,15 @@ async function postEmbeddings(
   if (!res.ok || parsed.error) {
     const msg = parsed?.error?.message ?? `HTTP ${res.status}`;
     const code = parsed?.error?.code;
+    if (res.status >= 400 && res.status < 500 && isOpenRouterUrl(url) && NO_ZDR_ENDPOINT_RE.test(msg)) {
+      throw new OpenRouterEmbeddingNoZdrEndpointError({
+        status: res.status,
+        code,
+        model: opts.model,
+        upstreamMessage: msg,
+        bodySnippet: text.slice(0, 200),
+      });
+    }
     throw new OpenRouterEmbeddingHttpError({
       status: res.status,
       code,

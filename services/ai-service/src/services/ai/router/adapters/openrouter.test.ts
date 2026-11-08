@@ -24,7 +24,13 @@ vi.mock('../../../../config/env.js', () => ({
 }));
 
 // Import after mocks are set so the adapter binds to them.
-const { callOpenRouter, OpenRouterAbortError, OpenRouterHttpError, streamingCallOpenRouter } = await import('./openrouter.js');
+const {
+  callOpenRouter,
+  OpenRouterAbortError,
+  OpenRouterHttpError,
+  OpenRouterNoZdrEndpointError,
+  streamingCallOpenRouter,
+} = await import('./openrouter.js');
 
 function makeResponse(opts: { ok: boolean; status: number; body: unknown }): Response {
   const text = typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body);
@@ -776,7 +782,7 @@ describe('strict json_schema mode', () => {
     });
     const body = sentBody();
     expect(body.response_format).toEqual(strictFormat);
-    expect(body.provider).toEqual({ require_parameters: true });
+    expect(body.provider).toEqual({ zdr: true, require_parameters: true });
   });
 
   it('does the same on the streaming path', async () => {
@@ -791,7 +797,7 @@ describe('strict json_schema mode', () => {
     });
     const body = sentBody();
     expect(body.response_format).toEqual(strictFormat);
-    expect(body.provider).toEqual({ require_parameters: true });
+    expect(body.provider).toEqual({ zdr: true, require_parameters: true });
   });
 
   it('adds no JSON hint line: the schema constrains decoding, and the word rule is json_object-only', async () => {
@@ -807,7 +813,7 @@ describe('strict json_schema mode', () => {
     expect(sentBody().messages).toEqual(baseMessages);
   });
 
-  it('JSON mode sends no provider block (unchanged wire)', async () => {
+  it('JSON mode sends only provider.zdr (no require_parameters)', async () => {
     fetchMock.mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
     await callOpenRouter({
       model: 'm',
@@ -817,6 +823,89 @@ describe('strict json_schema mode', () => {
       apiKey: 'k',
       responseFormat: { type: 'json_object' },
     });
-    expect(sentBody().provider).toBeUndefined();
+    expect(sentBody().provider).toEqual({ zdr: true });
+  });
+});
+
+// Zero Data Retention: both request bodies always carry `provider.zdr`, and a
+// model with no ZDR endpoint fails closed — one request, a typed error, never
+// a second request without the flag.
+describe('Zero Data Retention', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const okBody = {
+    model: 'm',
+    choices: [{ message: { content: 'x' }, finish_reason: 'stop' }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0.001 },
+  };
+  const okStream = [
+    'data: {"model":"m","choices":[{"delta":{"content":"x"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"cost":0.001}}\n\n',
+    'data: [DONE]\n\n',
+  ];
+  const noZdrBody = {
+    error: { message: 'No endpoints found matching your data policy (Zero data retention)', code: 404 },
+  };
+  const opts = { model: 'm', messages: baseMessages, maxTokens: 10, temperature: 0, apiKey: 'k' };
+  const sentBodies = (): Array<Record<string, unknown>> =>
+    fetchMock.mock.calls.map((c) => JSON.parse(c[1].body as string) as Record<string, unknown>);
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    priceForUsageMock.mockReset();
+    priceForUsageMock.mockReturnValue(0.001);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('non-streaming body carries provider.zdr without a response format', async () => {
+    fetchMock.mockResolvedValueOnce(makeResponse({ ok: true, status: 200, body: okBody }));
+    await callOpenRouter(opts);
+    expect(sentBodies()[0]!.provider).toEqual({ zdr: true });
+  });
+
+  it('streaming body carries provider.zdr without a response format', async () => {
+    fetchMock.mockResolvedValueOnce(makeStreamResponse(okStream));
+    await streamingCallOpenRouter(opts);
+    expect(sentBodies()[0]!.provider).toEqual({ zdr: true });
+  });
+
+  it('non-streaming: no ZDR endpoint → OpenRouterNoZdrEndpointError, one request only', async () => {
+    fetchMock.mockResolvedValue(makeResponse({ ok: false, status: 404, body: noZdrBody }));
+    const err = await callOpenRouter(opts).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OpenRouterNoZdrEndpointError);
+    expect(err).toBeInstanceOf(OpenRouterHttpError);
+    expect((err as InstanceType<typeof OpenRouterHttpError>).status).toBe(404);
+    expect((err as Error).message).toMatch(/No Zero Data Retention endpoint available for model "m"/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sentBodies().every((b) => (b.provider as { zdr?: unknown }).zdr === true)).toBe(true);
+  });
+
+  it('streaming: no ZDR endpoint → OpenRouterNoZdrEndpointError, one request only', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      body: {},
+      text: () => Promise.resolve(JSON.stringify(noZdrBody)),
+      headers: { get: () => null },
+    } as unknown as Response);
+    const err = await streamingCallOpenRouter(opts).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OpenRouterNoZdrEndpointError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('is never transient, so the retry ladder does not ask again', async () => {
+    const { isTransientProviderError } = await import('../resilience.js');
+    const err = new OpenRouterNoZdrEndpointError({ status: 503, model: 'm', upstreamMessage: 'data policy' });
+    expect(isTransientProviderError(err)).toBe(false);
+  });
+
+  it('a plain 404 (unknown model) stays a plain OpenRouterHttpError', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeResponse({ ok: false, status: 404, body: { error: { message: 'Model not found', code: 404 } } }),
+    );
+    const err = await callOpenRouter(opts).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OpenRouterHttpError);
+    expect(err).not.toBeInstanceOf(OpenRouterNoZdrEndpointError);
   });
 });
