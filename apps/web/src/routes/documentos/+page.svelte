@@ -46,6 +46,7 @@
   import { FILE_DOC_KINDS, type WorkingDoc } from '$lib/types';
   import { toasts } from '$lib/stores/toasts.svelte';
   import { goto } from '$app/navigation';
+  import { anonimizacionHref, LINK_LABEL as ANON_LINK_LABEL } from '$lib/anonimizacion';
 
   /** Audio needs the build flag AND the ecosistema's `audioUpload` (`$lib/features`). */
   const audioOn = $derived(AUDIO_UPLOAD_ENABLED && app.features.audioUpload);
@@ -486,6 +487,14 @@
                   onClick={() => publish(d)}
                 />
               {/if}
+              <!-- Every row is the caller's own: the uploader may always open it. -->
+              <Button
+                variant="outline"
+                size="sm"
+                label={ANON_LINK_LABEL}
+                href={anonimizacionHref(d.id, '/documentos')}
+                dataTestId={`anon-link-${d.id}`}
+              />
               {#if canRetryIngest(d)}
                 <Button
                   tone="warning"

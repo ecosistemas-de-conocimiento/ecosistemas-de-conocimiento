@@ -42,7 +42,13 @@ export const SECCIONES: readonly Seccion[] = [
   {
     id: 'publicacion',
     label: 'Publicación',
-    switches: [solo('autoPublishMembers'), solo('testimonioTitles'), solo('keepPublicFigures')],
+    switches: [
+      solo('autoPublishMembers'),
+      solo('testimonioTitles'),
+      solo('keepPublicFigures'),
+      solo('keepDocumentAuthor'),
+      solo('keepCitedAuthors'),
+    ],
   },
   { id: 'estudiantes', label: 'Estudiantes', switches: [{ key: 'studentView', children: ['studentTestimonios'] }] },
   { id: 'estilo', label: 'Estilo de respuesta', switches: [] },

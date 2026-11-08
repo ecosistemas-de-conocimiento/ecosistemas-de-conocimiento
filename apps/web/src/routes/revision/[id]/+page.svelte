@@ -48,6 +48,7 @@
   } from '$lib/holds';
   import Markdown from '$lib/components/Markdown.svelte';
   import { holdSummary } from '../holdSummary';
+  import { anonimizacionHref, LINK_LABEL as ANON_LINK_LABEL } from '$lib/anonimizacion';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -92,7 +93,16 @@
 <svelte:head><title>Documento retenido · Ecosistemas de Conocimiento</title></svelte:head>
 
 <div class="page text-ink">
-  <p class="back"><a href="/revision">← Volver a la lista</a></p>
+  <p class="back">
+    <a href="/revision">← Volver a la lista</a>
+    {#if hold}
+      <a
+        class="anon-link"
+        href={anonimizacionHref(hold.id, `/revision/${encodeURIComponent(hold.id)}`)}
+        data-testid="anon-link">{ANON_LINK_LABEL}</a
+      >
+    {/if}
+  </p>
 
   {#if data.state === 'unavailable' || !hold}
     <p class="notice">{DETAIL_UNAVAILABLE}</p>
@@ -274,6 +284,10 @@
   .back {
     margin: 0 0 1rem;
     font-size: 0.9rem;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
   }
   h1 {
     margin: 0;

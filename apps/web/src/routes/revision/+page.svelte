@@ -28,6 +28,7 @@
     survivorCountLabel,
   } from '$lib/holds';
   import { holdSummary } from './holdSummary';
+  import { anonimizacionHref, LINK_LABEL as ANON_LINK_LABEL } from '$lib/anonimizacion';
   import type { PageData } from './$types';
 
   let { data, form }: { data: PageData; form: { message?: string } | null } = $props();
@@ -109,6 +110,9 @@
             {/if}
           </p>
           <p class="why">{summary.why}</p>
+          <a class="anon-link" href={anonimizacionHref(hold.id, '/revision')} data-testid={`anon-link-${hold.id}`}
+            >{ANON_LINK_LABEL}</a
+          >
         </li>
       {/each}
     </ul>
@@ -128,6 +132,9 @@
           {#if formatHoldDate(item.updatedAt)}
             <span class="date">{formatHoldDate(item.updatedAt)}</span>
           {/if}
+          <a class="anon-link" href={anonimizacionHref(item.id, '/revision')} data-testid={`anon-link-${item.id}`}
+            >{ANON_LINK_LABEL}</a
+          >
           <form method="post" action="?/rechazar">
             <input type="hidden" name="id" value={item.id} />
             <button type="submit" class="reject" data-testid={`reject-published-${item.id}`}>Rechazar</button>
@@ -215,6 +222,9 @@
     background: var(--edc-color-surface);
   }
   /* ⚠ The whole title is the link, and it is a word, not an icon. */
+  .anon-link {
+    font-size: 0.9rem;
+  }
   .card-link {
     color: inherit;
     text-decoration: none;

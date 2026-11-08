@@ -161,6 +161,19 @@ describe('/ajustes actions', () => {
     expect(body.features.keepPublicFigures).toBe(true);
   });
 
+  it.each([
+    ['keepDocumentAuthor', 'Conservar al autor del documento'],
+    ['keepCitedAuthors', 'Conservar autores citados'],
+  ] as const)('%s: off by default, labelled in Spanish, not admin-only, sent when ticked', async (key, label) => {
+    expect(FEATURE_DEFAULTS[key]).toBe(false);
+    expect(FEATURE_LABELS[key]).toBe(label);
+    expect(PLATFORM_ADMIN_ONLY_FEATURES).not.toContain(key);
+    mocked.mockResolvedValue(json({ features: {} }));
+    await actions.funciones!(event('/ajustes', { organization: '1', [key]: 'on' }));
+    const body = JSON.parse(String((mocked.mock.calls[0]![2] as RequestInit).body)) as { features: Record<string, boolean> };
+    expect(body.features[key]).toBe(true);
+  });
+
   it('studentTestimonios: off by default, labelled in Spanish, admin-only', async () => {
     expect(FEATURE_DEFAULTS.studentTestimonios).toBe(false);
     expect(FEATURE_LABELS.studentTestimonios).toBe('Testimonios de estudiantes en el reporte (anonimizados)');

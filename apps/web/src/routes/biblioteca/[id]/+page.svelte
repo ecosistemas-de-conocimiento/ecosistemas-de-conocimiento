@@ -32,6 +32,8 @@
   import { audioMetaChips } from '$lib/ingest';
   import { LENGUA_LABEL } from '$lib/lengua';
   import type { AudioMeta } from '$lib/types';
+  import { app } from '$lib/stores/app.svelte';
+  import { anonimizacionHref, LINK_LABEL as ANON_LINK_LABEL, mayOpenAnonimizacion } from '$lib/anonimizacion';
 
   let doc = $state<LibraryDocument | null>(null);
   let ecosystemName = $state<string | null>(null);
@@ -74,6 +76,10 @@
   const voice = $derived(doc ? isTestimony(doc.kind) : false);
   /** Machine-written only when the FILE was audio — a PDF Voz is not (backlog #12). */
   const machineWritten = $derived(doc ? isMachineTranscript(doc) : false);
+  /** A courtesy: the backend refuses anyone else on that page. */
+  const anonLink = $derived(
+    mayOpenAnonimizacion({ holdsReview: $page.data?.holdsReview, slug: app.ecosystem?.slug }),
+  );
 </script>
 
 <svelte:head><title>{doc?.title ?? 'Biblioteca'} · Ecosistemas de Conocimiento</title></svelte:head>
@@ -81,6 +87,14 @@
 <div class="page text-ink">
   <header class="head">
     <a class="back" href="/biblioteca" data-interactive>← Biblioteca</a>
+    {#if anonLink && doc}
+      <a
+        class="back"
+        href={anonimizacionHref(doc.id, `/biblioteca/${encodeURIComponent(doc.id)}`)}
+        data-interactive
+        data-testid="anon-link">{ANON_LINK_LABEL}</a
+      >
+    {/if}
   </header>
 
   {#if viewState === 'loading'}
@@ -188,7 +202,8 @@
   }
   .head {
     display: flex;
-    justify-content: flex-start;
+    justify-content: space-between;
+    gap: 0.5rem;
   }
   .back {
     padding: 0.4rem 0.85rem;

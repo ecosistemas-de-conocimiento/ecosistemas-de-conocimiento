@@ -58,5 +58,7 @@ export const load: LayoutServerLoad = async ({ locals, cookies }) => {
     canManageMembers: members ? mayReviewAnywhere(members) : false,
     canEditFeatures: owners ? mayReviewAnywhere(owners) : false,
     vocesUpload,
+    /** Per-ecosistema `holds:review`: who sees a document card's "Anonimización" link. */
+    holdsReview: holds ?? { isPlatformAdmin: false, slugs: [], ok: false },
   };
 };

@@ -16,6 +16,8 @@ export const FEATURE_DEFAULTS = {
   autoPublishMembers: true,
   studentView: false,
   keepPublicFigures: false,
+  keepDocumentAuthor: false,
+  keepCitedAuthors: false,
   studentTestimonios: false,
 } as const satisfies Record<string, boolean>;
 
@@ -47,6 +49,9 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   autoPublishMembers: 'Publicar automáticamente lo de participantes',
   studentView: 'Vista de estudiante',
   keepPublicFigures: 'Conservar nombres de figuras públicas en documentos',
+  // A document may override these two (`/documentos/[id]/anonimizacion`).
+  keepDocumentAuthor: 'Conservar al autor del documento',
+  keepCitedAuthors: 'Conservar autores citados',
   studentTestimonios: 'Testimonios de estudiantes en el reporte (anonimizados)',
 };
 

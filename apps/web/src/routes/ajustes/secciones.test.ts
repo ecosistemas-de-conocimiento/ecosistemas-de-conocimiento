@@ -21,6 +21,16 @@ describe('/ajustes tabs', () => {
     expect(seccion('estudiantes').switches).toEqual([{ key: 'studentView', children: ['studentTestimonios'] }]);
   });
 
+  it('the two keep-names switches sit in Publicación, next to public figures', () => {
+    expect(keysOf(seccion('publicacion'))).toEqual([
+      'autoPublishMembers',
+      'testimonioTitles',
+      'keepPublicFigures',
+      'keepDocumentAuthor',
+      'keepCitedAuthors',
+    ]);
+  });
+
   it('a tab is dirty when an editable switch in it changed; a locked one never counts', () => {
     const saved = { ...FEATURE_DEFAULTS };
     expect(seccionDirty(seccion('grafo'), { ...saved, graph3d: false }, saved, [])).toBe(true);
