@@ -1,7 +1,7 @@
 # Referencia de API
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-07
 - **Estado:** vigente
 - **Fuentes:** `apps/web/src/routes/api/**`, `apps/web/src/hooks.server.ts`, `apps/web/src/lib/server/auth.ts`, `apps/web/Dockerfile`, `apps/web/src/lib/config.ts`, `apps/backend/src/app/api/**`, `apps/backend/src/endpoints/*.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/lib/hmac.ts`, `apps/backend/src/lib/jwt/*`, `packages/ai-client/src/callbacks/verify.ts`, `services/ai-service/src/server.ts`, `services/ai-service/src/server-limits.ts`, `services/ai-service/src/plugins/auth.ts`, `services/audio-service/app/main.py`, `services/audio-service/app/routes/*.py`, `services/audio-service/app/live.py`. Rutas verificadas en `main` del 2026-10-29.
 
@@ -117,6 +117,7 @@ Definidos en `apps/backend/src/collections/Documents.ts`.
 | PATCH | `/api/documents/:id/note` | Edita el cuerpo de una nota | |
 | POST | `/api/documents/:id/retry` | Reintenta la ingesta | |
 | POST | `/api/documents/:id/graph-retry` | Reprograma la extracción del grafo | Solo quien subió |
+| GET, PATCH | `/api/documents/:id/anonimizacion` | Lee el estado de anonimización y los nombres conservados / cambia los interruptores `keepDocumentAuthor` y `keepCitedAuthors` | Quien subió, `holds:review` del ecosistema y administración de plataforma. Vuelve a pasar por la compuerta un documento `ready`, `held` o `approved` cuyos interruptores guardados difieren. `pending`, `publishing` o `unpublishing`: 409; conversación: 400; falla de ai-service: 502 sin cambios. Cada cambio escribe una fila en `anonymisation-setting-changes`. Sin desplegar ([ADR-0020](adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)) |
 
 Publicar no es escribir un campo: re-embebe el documento en otro corpus, cuesta tokens y puede fallar a medias. Por eso es un endpoint y no un `PATCH` sobre `publicationStatus`.
 

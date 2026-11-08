@@ -1,9 +1,9 @@
 # Estructura de base de datos y almacenamiento
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-07
 - **Estado:** vigente
-- **Fuentes:** `apps/backend/src/migrations/` (22 migraciones, `index.ts`, `README.md`, snapshot `20261104_075139_documents_authors_kept.json`), `apps/backend/scripts/migrate.sh`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/lib/storage/plugin.ts`, `apps/backend/src/lib/storage/client.ts`, `apps/web/src/lib/config.ts`, `services/ai-service/src/db/schema/index.ts`, `services/ai-service/drizzle/*.sql`, `services/ai-service/src/queue/`, `services/audio-service/app/config.py`, `services/audio-service/app/store.py`, `services/audio-service/app/worker.py`, `scripts/ai-org-per-ecosystem.sql`, `infra/docker-compose.yml`, `infra/postgres/Dockerfile`. Lectura del código en `main` del 2026-10-29.
+- **Fuentes:** `apps/backend/src/migrations/` (22 migraciones en `main` y la 23 en la rama `feat/anonymise-controls`, `index.ts`, `README.md`, snapshot `20261104_075139_documents_authors_kept.json`), `apps/backend/scripts/migrate.sh`, `apps/backend/src/payload.config.ts`, `apps/backend/src/collections/Media.ts`, `apps/backend/src/lib/storage/plugin.ts`, `apps/backend/src/lib/storage/client.ts`, `apps/web/src/lib/config.ts`, `services/ai-service/src/db/schema/index.ts`, `services/ai-service/drizzle/*.sql`, `services/ai-service/src/queue/`, `services/audio-service/app/config.py`, `services/audio-service/app/store.py`, `services/audio-service/app/worker.py`, `scripts/ai-org-per-ecosystem.sql`, `infra/docker-compose.yml`, `infra/postgres/Dockerfile`. Lectura del código en `main` del 2026-10-29.
 
 ## Para quién es y qué responde
 
@@ -55,6 +55,7 @@ Payload genera el esquema a partir de la configuración de las colecciones. Los 
 | `messages` | `messages` | Turnos de conversación |
 | `ratings` | `ratings` | Valoraciones de respuestas |
 | `anonymisation_reviews` | `anonymisation-reviews` | Bitácora de decisiones humanas sobre textos retenidos |
+| `anonymisation_setting_changes` | `anonymisation-setting-changes` | Bitácora de cambios de los interruptores de anonimización (sin desplegar) |
 | `graph_entities` | `graphEntities` | Entidades del grafo |
 | `graph_mentions` | `graphMentions` | Menciones de entidades en documentos |
 | `graph_relations` | `graphRelations` | Aristas del grafo |
@@ -148,6 +149,7 @@ Payload genera toda llave foránea con `ON DELETE set null`. Varias se reescribi
 | `suggestions` | `organization_id` | `20261027_061014_student_view_fk_cascade` |
 | `documents` | `revision_of_id` | `20261028_231948_documents_note_revisions` |
 | `eval_items`, `eval_runs` | `organization_id` | `20261029_060304_evals` |
+| `anonymisation_setting_changes` | `organization_id` (`document_id` y `actor_id` quedan en `set null`) | `20261108_001902_documents_anonymise_switches` (sin desplegar) |
 
 Las tablas `*_rels` traen `cascade` desde la generación de Payload.
 
@@ -167,7 +169,7 @@ Las tablas `*_rels` traen `cascade` desde la generación de Payload.
 
 ### 2.7 Migraciones
 
-Hay 22 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído el 2026-10-30; la 22, el 2026-11-04). La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
+Hay 22 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído el 2026-10-30; la 22, el 2026-11-04). La rama `feat/anonymise-controls` agrega la 23 (leída el 2026-11-07 en el árbol de trabajo, sin commit). La fecha sale del nombre del archivo. La línea base del 2026-09-08 reemplazó una cadena anterior de ocho migraciones.
 
 | # | Migración | Fecha | Propósito |
 |---|---|---|---|
@@ -193,6 +195,9 @@ Hay 22 migraciones registradas en `apps/backend/src/migrations/index.ts` (leído
 | 20 | `20261029_042255_documents_held_text_hash` | 2026-10-29 | Agrega `documents.held_text_hash` |
 | 21 | `20261029_060304_evals` | 2026-10-29 | Crea `eval_items` y `eval_runs` (llave a ecosistema en `cascade`) y agrega `sessions.eval_run` |
 | 22 | `20261104_075139_documents_authors_kept` | 2026-11-04 | Agrega `documents.authors_kept` |
+| 23 | `20261108_001902_documents_anonymise_switches` | 2026-11-08 | Agrega `documents.keep_document_author`, `keep_cited_authors` (boolean, admite nulo) y `cited_authors_kept` (jsonb), y crea `anonymisation_setting_changes` (llave a ecosistema en `cascade`, a mano). Solo en la rama `feat/anonymise-controls`, sin desplegar |
+
+**Sin desplegar.** La migración 23 solo existe en la rama `feat/anonymise-controls` ([ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)). Se aplicó arriba, abajo y arriba en un Postgres 16 desechable (citado del reporte de la lane de backend, 2026-11-07). En `cited_authors_kept` cada entrada es `{name, model, at}`; un valor nulo en `keep_document_author` o `keep_cited_authors` hereda el del ecosistema. Las claves nuevas `keepDocumentAuthor` y `keepCitedAuthors`, apagadas por defecto, viven dentro de `organizations.features`, que es JSON, así que no cambian el esquema (inferido de que `features` resuelve las claves que faltan con su valor por defecto, `lib/features.ts`).
 
 La tabla de la cadena en `apps/backend/src/migrations/README.md` omite cuatro migraciones (6, 7, 9 y 10). Cada una tiene su propio comentario de cabecera que explica lo que hace.
 

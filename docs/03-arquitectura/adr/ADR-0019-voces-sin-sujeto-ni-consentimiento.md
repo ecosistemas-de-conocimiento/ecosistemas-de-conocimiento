@@ -1,11 +1,12 @@
 # ADR-0019. Voces sin sujeto ni nivel de consentimiento: los testimonios son siempre anónimos
 
-- **Versión:** 1.1
-- **Fecha del documento:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha del documento:** 2026-11-07
 - **Estado del documento:** vigente
-- **Estado de la decisión:** aceptada e implementada
+- **Estado de la decisión:** aceptada con enmienda
 - **Fecha de la decisión:** 2026-08-28. Reglas del gate ampliadas del 2026-10-21 al 2026-10-23
 - **Quién decidió:** responsable de desarrollo, durante la construcción de Voces y el gate
+- **Enmendado por:** [ADR-0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) (2026-11-07): un testimonio puede conservar, por documento, el nombre de quien lo subió y los autores citados
 - **Reemplaza:** la propuesta de tres niveles de consentimiento (`plan/anonimizacion-y-voces.md` §3.4) y la decisión "consentimiento por omisión `anónimo`" del ADR del grafo (§1.2.6), retirada en su §0
 - **Fuentes:** `plan/anonimizacion-y-voces.md` (cabecera, §3.2, §3.4 y §7); `plan/adr-corpus-graph.md` §0; `apps/backend/src/collections/Documents.ts`; registro del proyecto del 2026-10-21
 
@@ -62,8 +63,12 @@ El razonamiento, escrito en `apps/backend/src/collections/Documents.ts`:
 - Sin listas fijas de palabras, salvo listas pequeñas y cerradas, como los 32 estados. Se descartó un catálogo nacional de pueblos: imposible de mantener y choca con nombres como Guadalupe o Dolores.
 - El modelo decide qué tachar; ante la duda el gate retiene el documento (falla cerrada) y audita cada cambio (`apps/backend/src/lib/anonymise/gate.ts`). El respaldo alojado del detector en dev es otra cuestión ([ADR-0012](ADR-0012-adopcion-del-dgx-spark-por-fases.md)).
 
+## Enmienda del 2026-11-07
+
+[ADR-0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) enmienda la frase "un testimonio es anónimo, siempre". Por omisión un testimonio sigue con todos sus nombres sustituidos. Quien puede cambiar los interruptores de un documento puede encender dos excepciones en un testimonio: conservar el nombre completo de quien lo subió y conservar los autores de citas bibliográficas. Lo demás de este ADR sigue vigente: no hay campo `subject`, ni nivel de consentimiento, ni mapa entre seudónimos y nombres, y los nombres citados de un testimonio nunca son nodos `persona` del grafo.
+
 ## Referencias
 
-- [ADR-0003](ADR-0003-regla-de-persona-por-columna.md), [ADR-0012](ADR-0012-adopcion-del-dgx-spark-por-fases.md).
+- [ADR-0003](ADR-0003-regla-de-persona-por-columna.md), [ADR-0012](ADR-0012-adopcion-del-dgx-spark-por-fases.md), [ADR-0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md).
 - [Protección de datos](../../06-privacidad-y-seguridad/proteccion-de-datos.md).
 - [Aviso de privacidad y consentimiento](../../06-privacidad-y-seguridad/aviso-de-privacidad-y-consentimiento.md).

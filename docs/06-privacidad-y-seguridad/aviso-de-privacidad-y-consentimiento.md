@@ -1,7 +1,7 @@
 # Aviso de privacidad y consentimiento
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-07
 - **Estado:** plantillas en borrador, sin validación jurídica y aún no publicadas en la interfaz
 - **Fuentes:** `apps/web/src/lib/consent.ts`, `apps/web/src/lib/estudiante.ts`, `apps/backend/src/lib/student/testimonioConsent.ts`, `apps/backend/src/collections/Documents.ts`, `apps/backend/src/lib/conversationIngest.ts`, `apps/backend/src/lib/conversationTurnErasure.ts`, brief v1 del proyecto («Repositorio de Voces y Resonancias», documento externo al repo), `plan/anonimizacion-y-voces.md`, `infra/fleet/edc-1.md`, [corpus y datos de prueba](../04-datos/corpus-y-datos-de-prueba.md)
 
@@ -11,11 +11,12 @@
 
 ## Estado de los controles
 
-Definiciones. **Implementado:** funciona hoy, con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído el 2026-11-03.
+Definiciones. **Implementado:** funciona hoy, con evidencia en código. **Planeado:** existe un diseño o un mecanismo sin activar. **Pendiente:** no existe todavía, y puede no tener plan. Código leído el 2026-11-03. **Sin desplegar** marca lo construido en la rama `feat/anonymise-controls` (decisión del 2026-11-07, [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)) que todavía no corre en dev ni en staging.
 
 | Control o procedimiento | Estado | Evidencia o nota |
 |---|---|---|
-| El aviso declara a quien sube documentos que su nombre completo queda visible (cláusulas 2 y 4; la conservación está **Implementada**, el aviso sigue sin publicarse) | **Planeado** | `apps/backend/src/lib/anonymise/authorRestore.ts`; `apps/backend/src/lib/publicFigures.ts` |
+| El aviso declara a quien sube documentos o testimonios que por omisión se quitan todos los nombres, qué nombres puede elegir conservar y quién más puede elegirlo (cláusulas 2 y 4; los interruptores están **Implementados**, sin desplegar; el aviso sigue sin publicarse) | **Planeado** | `apps/backend/src/lib/anonymise/authorRestore.ts`; `apps/backend/src/lib/publicFigures.ts`; rama `feat/anonymise-controls` |
+| Quien sube un documento o un testimonio ve y cambia qué nombres se conservan en él, en la pantalla de anonimización del documento | **Implementado**, sin desplegar | `PATCH /api/documents/:id/anonimizacion`; rama `feat/anonymise-controls` |
 | Tres consentimientos del estudiante, apagados por defecto | **Implementado** | `apps/web/src/lib/estudiante.ts`; `apps/web/src/lib/consent.ts` |
 | Fecha y versión del consentimiento de testimonios; rechazo de una versión distinta | **Implementado** | `lib/student/testimonioConsent.ts`; `StudentProfiles.ts` |
 | Retiro automático del consentimiento 3 al apagar `studentTestimonios` | **Implementado** | `clearTestimonioConsentWhenOff` en `Organizations.ts` |
@@ -89,7 +90,7 @@ Versión 1 · Fecha de última actualización: `[fecha de publicación]`
 
 1. Crear y administrar tu cuenta y tu pertenencia a ecosistemas.
 2. Recibir, transcribir y guardar tus documentos y testimonios.
-3. Anonimizar los testimonios y las conversaciones antes de compartirlos dentro del ecosistema: sustituimos nombres de personas, domicilios y otros datos que identifican por seudónimos como "[Persona A]". **Si subes un documento que se anonimiza, tu nombre completo no se sustituye.** Conservamos visible, en ese documento y en el acervo del ecosistema, el nombre completo con el que figuras en ese ecosistema, tal como está registrado. Quien administra los miembros del ecosistema puede definir ese nombre. Nunca conservamos una parte suelta de tu nombre, y nunca conservamos tu nombre en testimonios ni en conversaciones. Si no tienes una membresía activa o no hay un nombre registrado, no conservamos ninguno. La comparación es de texto: si tu documento menciona a otra persona que se llama exactamente igual que tú, su nombre también queda visible.
+3. Anonimizar los documentos que lo piden, los testimonios y las conversaciones antes de compartirlos dentro del ecosistema: sustituimos nombres de personas, domicilios y otros datos que identifican por seudónimos como "[Persona A]". **Por omisión quitamos todos los nombres, también el tuyo.** En un documento o un testimonio que subas se pueden encender dos excepciones. Con la primera conservamos visible, en ese texto y en el acervo del ecosistema, tu nombre completo tal como figuras en ese ecosistema; quien administra los miembros del ecosistema puede definir ese nombre. Nunca conservamos una parte suelta de tu nombre, y si no tienes una membresía activa o no hay un nombre registrado, no conservamos ninguno. Con la segunda conservamos los nombres de autores citados como en un libro o artículo, por ejemplo "López (2020)", y los de una lista de referencias, solo si el programa que quita nombres los reconoce como públicos. Las elige el ecosistema por omisión, y en cada documento las puedes cambiar tú, el equipo de revisión del ecosistema y la administración de la plataforma. Ves lo que se conservó en la pantalla de anonimización de tu documento. En un testimonio, esa pantalla te avisa mientras una excepción está encendida. Si apagas una excepción en tu documento, este vuelve a revisarse y los nombres que se habían conservado salen del acervo. Cada cambio queda registrado con quién lo hizo y cuándo. *Antes de publicar: un cambio en las opciones del ecosistema todavía no vuelve a revisar los documentos ya procesados (Pendiente).* Nunca conservamos nombres en conversaciones. La comparación es de texto: si tu documento menciona a otra persona que se llama exactamente igual que tú, o a alguien escrito con forma de cita, su nombre también queda visible.
 4. Responder tus preguntas con el asistente, citando el acervo del ecosistema.
 5. **Agregar tus conversaciones, ya anonimizadas, al acervo del ecosistema.** Sirven para orientar las respuestas a otras personas del mismo ecosistema. Nunca se citan y nunca se muestran con tu nombre.
 6. Mostrar el grafo de temas del ecosistema, construido solo con texto anonimizado y publicado.
@@ -151,7 +152,7 @@ Texto para mostrar al crear una cuenta, en el pie de la aplicación y al abrir l
 >
 > Los testimonios se anonimizan antes de compartirse. Una persona revisa los casos dudosos.
 >
-> Si subes un documento que se anonimiza, tu nombre completo, como figura en este ecosistema, queda visible en él.
+> Si subes un documento que se anonimiza o un testimonio, quitamos todos los nombres, también el tuyo. Puedes elegir conservar tu nombre o los autores que citas. El equipo de revisión del ecosistema también puede elegirlo.
 >
 > Usamos servidores en Alemania, un servidor de cómputo de otra organización y servicios de IA en Estados Unidos. A Estados Unidos van tus preguntas y documentos de referencia. Si falla el servidor de cómputo, también puede ir texto con nombres. Las condiciones de esos servicios deciden cuánto guardan esos datos.
 >
@@ -189,7 +190,7 @@ El folio y la firma se guardarían fuera de la plataforma, en un archivo de cons
 >
 > **¿Para qué?** Para entender, junto con otras personas, cómo se vive este tema. Tu relato se suma a un acervo que consultan las personas del ecosistema y el equipo de investigación.
 >
-> **¿Qué hacemos con tu nombre?** Lo quitamos. Antes de compartir tu relato, un programa cambia los nombres de personas y lugares por marcas como "[Persona A]". Si el programa tiene dudas, una persona del equipo revisa el texto. La plataforma no tiene un campo para tu nombre. Si dijiste nombres en tu relato, siguen en el relato original, que se guarda aparte.
+> **¿Qué hacemos con tu nombre?** Lo quitamos. Antes de compartir tu relato, un programa cambia los nombres de personas y lugares por marcas como "[Persona A]". Si el programa tiene dudas, una persona del equipo revisa el texto. La plataforma no tiene un campo para tu nombre. Si en tu relato citas a autores de libros o artículos, por ejemplo "López (2020)", el equipo puede dejar visibles esos nombres. También puede dejar visible el nombre de la persona que sube tu relato, si aparece en él. Si dijiste nombres en tu relato, siguen en el relato original, que se guarda aparte.
 >
 > **¿Quién lee tu relato original?** Solo quien lo subió y la administración de la plataforma, para corregirlo si hace falta. Las demás personas solo leen la versión sin nombres. Tu grabación nunca se comparte.
 >

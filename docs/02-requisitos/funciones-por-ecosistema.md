@@ -1,6 +1,6 @@
 # Funciones por ecosistema
 
-**Versión:** 1.1 · **Fecha:** 2026-11-03 · **Estado:** vigente
+**Versión:** 1.2 · **Fecha:** 2026-11-07 · **Estado:** vigente
 
 **Fuentes:**
 - `apps/backend/src/lib/features.ts` (defaults, dónde se aplica cada función, interruptores bloqueados, lectura con caché)
@@ -41,7 +41,7 @@ flowchart LR
   O -->|GET /api/funciones| W2[apps/web: oculta controles y aplica en /api/generate]
 ```
 
-## Las 12 funciones
+## Las 14 funciones
 
 | Clave | Etiqueta en Ajustes | Pestaña | Qué habilita | Default | Dónde se aplica en el servidor |
 |---|---|---|---|:-:|---|
@@ -55,21 +55,24 @@ flowchart LR
 | `autoPublishMembers` | Publicar automáticamente lo de participantes | Publicación | Lo que sube un participante se publica solo cuando pasa la compuerta de anonimización | encendida | `lib/autoPublish.ts`: apagada, los borradores de participantes se quedan en borrador |
 | `testimonioTitles` | Títulos automáticos para testimonios | Publicación | Un modelo genera un título genérico para cada testimonio | encendida | `lib/testimonioTitle.ts`: apagada, no corre |
 | `keepPublicFigures` | Conservar nombres de figuras públicas en documentos | Publicación | La compuerta conserva nombres de figuras públicas, solo en documentos de tipo `documento` que pasan por ella; nunca en testimonios ni conversaciones | apagada | `lib/publicFigures.ts`, dentro de la compuerta |
+| `keepDocumentAuthor` | Conservar al autor del documento | Publicación | Valor de partida de cada documento con compuerta y de cada testimonio: conserva el nombre completo de quien subió. Cada documento puede cambiarlo. Sin desplegar ([ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)) | apagada | La compuerta, sobre un resultado `ready` |
+| `keepCitedAuthors` | Conservar autores citados | Publicación | Valor de partida de cada documento con compuerta y de cada testimonio: conserva los nombres de citas bibliográficas y de la lista de referencias. Cada documento puede cambiarlo. Sin desplegar | apagada | La compuerta, sobre un resultado `ready` |
 | `studentView` | Vista de estudiante | Estudiantes | Mi investigación (`/estudiante`), Estudiantes (`/seguimiento`), alcance del chat del estudiante y notas publicables | apagada | `endpoints/estudiante.ts`; `lib/studentNotes.ts` |
 | `studentTestimonios` | Testimonios de estudiantes en el reporte (anonimizados) | Estudiantes (hija de `studentView`) | El reporte docente lista los testimonios del estudiante, solo en su versión anonimizada | apagada | `endpoints/estudiante.ts`; `lib/student/logic.ts` (`reportTestimonios`) |
 
 Los defaults se leen en `FEATURE_DEFAULTS`, idéntico en `apps/backend/src/lib/features.ts` y `apps/web/src/lib/features.ts`. Las etiquetas salen de `FEATURE_LABELS` en el archivo de la web. Las pestañas salen de `SECCIONES` en `apps/web/src/routes/ajustes/secciones.ts`.
 
-Tres funciones arrancan apagadas, cada una por una razón registrada en el código:
+Cinco funciones arrancan apagadas, cada una por una razón registrada:
 - `studentView`: solo el ecosistema Semiosis práctica la iba a usar (comentario del 2026-10-27 en `features.ts`).
 - `keepPublicFigures`: conserva nombres en el corpus, así que es una elección explícita por ecosistema.
 - `studentTestimonios`: decide quién puede leer una voz; mismo criterio que la anterior.
+- `keepDocumentAuthor` y `keepCitedAuthors`: por omisión se anonimiza todo (decisión del 2026-11-07, [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)).
 
 ## Quién puede cambiar cada función
 
 | Funciones | Quién las cambia | Quién las ve solo de lectura |
 |---|---|---|
-| `audioUpload`, `liveMic`, `interviewerMode`, `chatOrientation`, `graph`, `graph3d`, `combinedGraph`, `autoPublishMembers`, `testimonioTitles`, `studentView` | Quien tiene `organization:manage` en ese ecosistema (investigador y responsable) y el administrador de plataforma | nadie más entra a Ajustes |
+| `audioUpload`, `liveMic`, `interviewerMode`, `chatOrientation`, `graph`, `graph3d`, `combinedGraph`, `autoPublishMembers`, `testimonioTitles`, `studentView`, `keepDocumentAuthor`, `keepCitedAuthors` | Quien tiene `organization:manage` en ese ecosistema (investigador y responsable) y el administrador de plataforma | nadie más entra a Ajustes |
 | `keepPublicFigures`, `studentTestimonios` | Solo el administrador de plataforma (`PLATFORM_ADMIN_ONLY_FEATURES`) | Investigador y responsable las ven bloqueadas |
 
 El bloqueo de las dos funciones de plataforma se aplica en tres lugares:

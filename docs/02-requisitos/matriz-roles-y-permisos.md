@@ -1,6 +1,6 @@
 # Matriz de roles y permisos
 
-**Versión:** 1.1 · **Fecha:** 2026-11-03 · **Estado:** vigente
+**Versión:** 1.2 · **Fecha:** 2026-11-07 · **Estado:** vigente
 
 **Fuentes:**
 - `apps/backend/src/lib/permissions.ts` (roles, escalera de rango, conjuntos de permisos)
@@ -93,6 +93,7 @@ Varias capacidades no salen de la tabla anterior. Dependen del rol directamente,
 | Vista docente, sugerencias | Investigador o responsable | mismo archivo |
 | Cambiar la clave (`slug`) o apagar el ecosistema | Solo `owner` | `apps/backend/src/collections/Organizations.ts` |
 | Asignar roles | Quien tiene `members:manage`, solo roles de rango igual o menor al propio | `outranks` en `permissions.ts`; `assignableRoles` en `apps/web/src/lib/miembros.ts`; tope en `collections/Memberships.ts` |
+| Interruptores de anonimización de un documento (`PATCH /api/documents/:id/anonimizacion`) | Quien subió el documento, quien tiene `holds:review` en ese ecosistema (admin, investigador, owner) y el administrador de plataforma. Sin desplegar | Comprobado en el servidor; [ADR-0020](../03-arquitectura/adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) |
 | Interruptores solo de plataforma (`keepPublicFigures`, `studentTestimonios`) | Administrador de plataforma. El responsable y los investigadores los ven bloqueados. | `PLATFORM_ADMIN_ONLY_FEATURES` en `apps/backend/src/lib/features.ts`, aplicado en `Organizations` |
 | Respaldo del detector de datos personales (`PATCH /api/plataforma`) | Solo la marca `isPlatformAdmin`; ninguna membresía | `apps/backend/src/globals/PlatformSettings.ts` |
 | Estilos de respuesta por ecosistema | Administrador de plataforma (`answerStylesEditable`) | `apps/web/src/lib/answerStyle.ts`; `apps/backend/src/lib/answerStyle.ts` |

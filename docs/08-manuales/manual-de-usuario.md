@@ -1,7 +1,7 @@
 # Manual de usuario
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-07
 - **Estado:** vigente
 - **Fuentes:** `plan/funcionalidades.md` (inventario por pantalla, 2026-10-27), `plan/mapa-historias.md`, `apps/web/src/lib/nav.ts`, `apps/web/src/lib/miembros.ts`, `apps/web/src/lib/features.ts`, `apps/backend/src/collections/Media.ts`, `apps/web/e2e/evidencia/`, `plan/ux-demo-backlog.md`, `TESTING.md`.
 
@@ -227,7 +227,7 @@ El tipo se elige al crear la conversación y no cambia después.
   2. Si es Documento y contiene datos personales, marca **Anonimizar**.
   3. Sube el archivo.
 - **Resultado:** un testimonio, o un documento marcado para anonimizar, pasa por la revisión automática de datos personales antes de poder publicarse.
-- **Notas:** en un documento marcado, tu nombre completo, como figura en tu ecosistema, queda visible. Las partes sueltas de tu nombre y cualquier otro nombre se sustituyen, salvo el de otra persona que se llame exactamente igual. En un testimonio se sustituyen todos.
+- **Notas:** se sustituyen todos los nombres, también el tuyo. Para conservar tu nombre o los autores que citas, ve a la tarea 3.6.
 
 ### 2.16 Fijar un documento como contexto
 
@@ -272,6 +272,24 @@ El tipo se elige al crear la conversación y no cambia después.
 - **Quién:** quien subió el documento.
 - **Pasos:** si la tarjeta muestra un error, pulsa **Reintentar** (lectura) o **Reconstruir grafo** (conexiones).
 - **Resultado:** el proceso vuelve a empezar.
+
+### 3.6 Elegir qué nombres se conservan
+
+*Sin desplegar: aún no está en dev ni en staging.*
+
+- **Quién:** quien subió el documento o el testimonio, investigador, responsable, el rol "administra" y el administrador de la plataforma.
+- **Pasos:**
+  1. Pulsa **Anonimización** en **Mis documentos**, en la página del documento en la Biblioteca o en **Revisión**.
+  2. Enciende o apaga **Conservar al autor del documento** o **Conservar autores citados**.
+- **Resultado:** ves el estado, los nombres que quedaron visibles y cuántos datos se quitaron en cada paso. Cada interruptor dice si su valor viene del ecosistema o del documento.
+- **Notas:**
+  - **Conservar al autor del documento** deja visible solo el nombre completo de quien subió, tal como figura en el ecosistema.
+  - **Conservar autores citados** deja visibles nombres de citas, como "López (2020)", y de la lista de referencias, solo si la revisión automática los reconoce como públicos. Un apellido compuesto, como "García Márquez", se sigue quitando.
+  - En un testimonio, quien sube casi nunca es quien habla. El nombre de quien habla se sigue quitando. La pantalla te avisa mientras un interruptor está encendido.
+  - Si el documento estaba listo, en revisión o aprobado, vuelve a revisarse y queda como borrador. Si queda en revisión, no se publica. Si no eres participante, publícalo de nuevo a mano.
+  - Cambiar un interruptor en **Ajustes** no vuelve a revisar los documentos que ya estaban listos.
+  - Si apagas un interruptor, los nombres que se habían conservado salen de la Biblioteca y de las respuestas.
+  - La pantalla nunca muestra qué nombres se quitaron.
 
 ## 4. Biblioteca
 
@@ -490,6 +508,7 @@ Cuando la revisión automática no está segura de haber quitado todos los datos
 - **Resultado:** el cambio aplica a todo el ecosistema.
 - **Notas:**
   - Si apagas una función, sus opciones dependientes se ocultan pero no se borran.
+  - **Conservar al autor del documento** y **Conservar autores citados** son el valor de partida de cada documento. Cada documento puede cambiarlo (tarea 3.6). Cambiarlos aquí no vuelve a revisar los documentos que ya estaban listos. Sin desplegar.
   - Dos interruptores solo los cambia el administrador de la plataforma: **Conservar nombres de figuras públicas en documentos** y **Testimonios de estudiantes en el reporte**. Para los demás aparecen bloqueados.
 
 | Pestaña | Interruptor | Encendido al crear el ecosistema |
@@ -504,6 +523,8 @@ Cuando la revisión automática no está segura de haber quitado todos los datos
 | Publicación | Publicar automáticamente lo de participantes | sí |
 | Publicación | Títulos automáticos para testimonios | sí |
 | Publicación | Conservar nombres de figuras públicas en documentos | no |
+| Publicación | Conservar al autor del documento | no |
+| Publicación | Conservar autores citados | no |
 | Estudiantes | Vista de estudiante | no |
 | Estudiantes | Testimonios de estudiantes en el reporte (anonimizados) | no |
 
@@ -581,7 +602,7 @@ flowchart TD
 En corto:
 
 1. **Todo empieza como borrador privado.** Nadie más lo ve. Solo se usa en la conversación donde lo subiste.
-2. **Los testimonios pasan por la revisión de datos personales.** También los documentos marcados **Anonimizar**. Si la revisión duda, el documento queda **En revisión** hasta que una persona lo apruebe o lo rechace.
+2. **Los testimonios pasan por la revisión de datos personales.** También los documentos marcados **Anonimizar**. Se quitan todos los nombres, salvo los que elijas conservar (tarea 3.6). Si la revisión duda, el documento queda **En revisión** hasta que una persona lo apruebe o lo rechace.
 3. **Publicar lo comparte con todo el ecosistema.** Aparece en la Biblioteca, en Conexiones y como fuente en las respuestas de todos.
 4. **Lo de participantes se publica solo** cuando pasa la revisión, si el ecosistema tiene encendida la publicación automática.
 5. **Las conversaciones también alimentan el acervo.** Cada pregunta y respuesta pasa por la revisión de datos personales y se usa para orientar respuestas futuras del ecosistema, si está encendido **Conversaciones anteriores como contexto**.
@@ -594,6 +615,9 @@ No. Un borrador es solo tuyo hasta que se publica.
 
 **¿Por qué mi documento dice "En revisión"?**
 La revisión automática encontró datos personales que no pudo quitar con seguridad. Una persona con acceso a Revisión debe aprobarlo o rechazarlo.
+
+**¿Por qué mi nombre aparece como [Persona A]?**
+La revisión automática quita todos los nombres. Para conservar el tuyo, enciende **Conservar al autor del documento** (tarea 3.6).
 
 **¿Por qué no veo una sección del menú?**
 Tu rol no la tiene, o el ecosistema la apagó en Ajustes.

@@ -1,11 +1,11 @@
 # Registro de decisiones de arquitectura (ADR)
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-07
 - **Estado:** vigente
-- **Fuentes:** `plan/adr-corpus-graph.md`; `plan/anonimizacion-y-voces.md`; `plan/borradores-por-conversacion.md`; `plan/audio-ingest-integration.md`; `plan/spark-ai-adopcion.md`; `plan/spark-chat-eval-2026-10-26.md`; `plan/auditoria-codigo-2026-10-28.md`; `apps/backend/src/migrations/README.md`; notas de contexto del equipo; lista de pendientes del proyecto; registro del proyecto del 2026-10-17 al 2026-10-28
+- **Fuentes:** `plan/adr-corpus-graph.md`; `plan/anonimizacion-y-voces.md`; `plan/borradores-por-conversacion.md`; `plan/audio-ingest-integration.md`; `plan/spark-ai-adopcion.md`; `plan/spark-chat-eval-2026-10-26.md`; `plan/auditoria-codigo-2026-10-28.md`; `apps/backend/src/migrations/README.md`; notas de contexto del equipo; lista de pendientes del proyecto; registro del proyecto del 2026-10-17 al 2026-10-28 y del 2026-11-07
 
-**Para quién es y qué responde.** Para el equipo del proyecto, revisores institucionales y quien desarrolle Ecosistemas de Conocimiento (EDC) en la Etapa 2. Responde qué decisiones de arquitectura se tomaron en la Etapa 1 (cerrada el 2026-10-28), cuándo, quién las tomó, qué se descartó y dónde está la evidencia.
+**Para quién es y qué responde.** Para el equipo del proyecto, revisores institucionales y quien desarrolle Ecosistemas de Conocimiento (EDC) en la Etapa 2. Responde qué decisiones de arquitectura se tomaron en la Etapa 1 (cerrada el 2026-10-28) y después, cuándo, quién las tomó, qué se descartó y dónde está la evidencia.
 
 ## Qué es un ADR
 
@@ -41,7 +41,7 @@ Estos ADR usan una versión simplificada de MADR (*Markdown Architectural Decisi
 
 ## Índice
 
-Diecinueve ADR, numerados en el orden en que se tomaron las decisiones.
+Veinte ADR, numerados en el orden en que se tomaron las decisiones.
 
 | ADR | Decisión | Estado | Fecha |
 |---|---|---|---|
@@ -63,7 +63,8 @@ Diecinueve ADR, numerados en el orden en que se tomaron las decisiones.
 | [0016](ADR-0016-infraestructura-propia-caja-unica.md) | Infraestructura propia: caja única Hetzner, dev y staging, RustFS | Aceptada | 2026-10-15 a 2026-10-17 |
 | [0017](ADR-0017-plataforma-de-ia-agnostica-del-dominio.md) | Plataforma de IA agnóstica del dominio | Aceptada | 2026-08-14 |
 | [0018](ADR-0018-lenguaje-llano-en-la-ui.md) | Lenguaje llano en la interfaz | Aceptada | 2026-08-29; 2026-10-21 |
-| [0019](ADR-0019-voces-sin-sujeto-ni-consentimiento.md) | Voces sin sujeto ni nivel de consentimiento | Aceptada | 2026-08-28 |
+| [0019](ADR-0019-voces-sin-sujeto-ni-consentimiento.md) | Voces sin sujeto ni nivel de consentimiento | Aceptada con enmienda (ADR-0020) | 2026-08-28; 2026-11-07 |
+| [0020](ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md) | Anonimizar todo por omisión y conservar nombres por documento; enmienda ADR-0019 | Aceptada; sin desplegar | 2026-11-07 |
 
 ## Decisiones relacionadas, por ADR anfitrión
 
