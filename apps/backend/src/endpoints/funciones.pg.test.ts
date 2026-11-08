@@ -188,6 +188,15 @@ describe.skipIf(!dockerOk)('/api/funciones and /api/plataforma on a real Postgre
     expect(await storedFeatures(ECO_A)).toEqual({ liveMic: false, studentView: true, graph: false })
   })
 
+  it('keepDocumentAuthor and keepCitedAuthors: organization:manage flips them, a member cannot', async () => {
+    expect((await flip(MEMO, ECO_A, { keepDocumentAuthor: true })).status).toBe(403)
+    expect(await storedFeatures(ECO_A)).toBeNull()
+    const res = await flip(INES, ECO_A, { keepDocumentAuthor: true, keepCitedAuthors: true })
+    expect(res.status).toBe(200)
+    expect(await storedFeatures(ECO_A)).toEqual({ keepDocumentAuthor: true, keepCitedAuthors: true })
+    expect(await featureEnabled(payload, ECO_A, 'keepCitedAuthors')).toBe(true)
+  })
+
   it('🔴 a responsable cannot flip another ecosistema', async () => {
     expect((await flip(BEA, ECO_A, { graph: false })).status).toBe(403)
     expect(await storedFeatures(ECO_A)).toBeNull()

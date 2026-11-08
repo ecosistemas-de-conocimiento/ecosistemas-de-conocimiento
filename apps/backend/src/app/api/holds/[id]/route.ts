@@ -42,7 +42,13 @@ import configPromise from '@payload-config'
 import { NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 
-import { HoldNotVisibleError, HoldReviewInputError, decideOnHold, heldDocument } from '@/lib/holdReview'
+import {
+  HoldNotVisibleError,
+  HoldReviewInputError,
+  HoldSettingsChangedError,
+  decideOnHold,
+  heldDocument,
+} from '@/lib/holdReview'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -62,6 +68,7 @@ type Ctx = { params: Promise<{ id: string }> }
  */
 function toResponse(err: unknown, what: string): Response {
   if (err instanceof HoldNotVisibleError) return fail(404, err.message)
+  if (err instanceof HoldSettingsChangedError) return fail(409, err.message)
   if (err instanceof HoldReviewInputError) return fail(400, err.message)
   console.error(`[holds] ${what} failed`, err)
   return fail(500, `Could not ${what}.`)

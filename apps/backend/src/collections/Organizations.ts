@@ -120,6 +120,37 @@ export const clearTestimonioConsentWhenOff: CollectionAfterChangeHook = async ({
 }
 
 /**
+ * 🔴 AN ANONYMISATION SWITCH CHANGE IS AUDITED (audit 2026-11-07, item B):
+ * one `anonymisation-setting-changes` row per changed key, in the update's
+ * transaction (`req`), on every write path. Raw stored values: `null` = never
+ * set (off by default). A failed audit write fails the update.
+ */
+export const auditAnonymisationSwitches: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, req }) => {
+  if (operation !== 'update') return doc
+  const id = (doc as { id?: number | string }).id
+  if (id == null) return doc
+  const raw = (f: unknown, k: string): boolean | null => {
+    const v = f && typeof f === 'object' && !Array.isArray(f) ? (f as Record<string, unknown>)[k] : undefined
+    return typeof v === 'boolean' ? v : null
+  }
+  const before = (previousDoc as { features?: unknown } | undefined)?.features
+  const after = (doc as { features?: unknown }).features
+  const { ANONYMISE_SWITCHES } = await import('@/lib/publicFigures')
+  const changes = ANONYMISE_SWITCHES.filter((k) => raw(before, k) !== raw(after, k)).map((key) => ({
+    organization: id,
+    actor: (req.user as { id?: number | string } | null | undefined)?.id ?? null,
+    scope: 'ecosistema' as const,
+    key,
+    before: raw(before, key),
+    after: raw(after, key),
+  }))
+  if (changes.length === 0) return doc
+  const { recordSettingChanges } = await import('./AnonymisationSettingChanges')
+  await recordSettingChanges(req.payload as never, changes, req)
+  return doc
+}
+
+/**
  * ⚠ THE TENANT. Everything in this product hangs off an organization: its
  * people (`memberships`), its structure (`teams` → `projects`), and — through
  * the session that produced them — its documents, messages and ratings.
@@ -186,6 +217,7 @@ export const Organizations: CollectionConfig = {
         return doc
       },
       clearTestimonioConsentWhenOff,
+      auditAnonymisationSwitches,
       // Each ecosistema is its own ai-service org; give it a budget on create
       // (`lib/provisionEcosystem.ts`). Not awaited: the create already
       // succeeded, and a slow ai-service must not hold the admin request.

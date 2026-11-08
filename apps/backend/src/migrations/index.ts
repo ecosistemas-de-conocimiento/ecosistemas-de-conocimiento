@@ -20,6 +20,7 @@ import * as migration_20261028_235647_documents_kind_xls from './20261028_235647
 import * as migration_20261029_042255_documents_held_text_hash from './20261029_042255_documents_held_text_hash';
 import * as migration_20261029_060304_evals from './20261029_060304_evals';
 import * as migration_20261104_075139_documents_authors_kept from './20261104_075139_documents_authors_kept';
+import * as migration_20261108_001902_documents_anonymise_switches from './20261108_001902_documents_anonymise_switches';
 
 export const migrations = [
   {
@@ -130,6 +131,11 @@ export const migrations = [
   {
     up: migration_20261104_075139_documents_authors_kept.up,
     down: migration_20261104_075139_documents_authors_kept.down,
-    name: '20261104_075139_documents_authors_kept'
+    name: '20261104_075139_documents_authors_kept',
+  },
+  {
+    up: migration_20261108_001902_documents_anonymise_switches.up,
+    down: migration_20261108_001902_documents_anonymise_switches.down,
+    name: '20261108_001902_documents_anonymise_switches'
   },
 ];

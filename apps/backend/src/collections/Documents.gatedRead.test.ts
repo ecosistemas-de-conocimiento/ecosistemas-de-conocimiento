@@ -369,6 +369,8 @@ describe('🔴 the collection config actually wires the gate', () => {
     'graphError',
     // R60: the uploader's name, read like the original.
     'authorsKept',
+    // The cited names kept (owner decision 2026-11-07), same rule.
+    'citedAuthorsKept',
   ])('%s reads through gatedOriginalReadable', (name) => {
     expect(field(name)?.access?.read).toBe(gatedOriginalReadable)
   })
@@ -377,9 +379,9 @@ describe('🔴 the collection config actually wires the gate', () => {
     expect(field(name)?.access?.read).toBe(gatedQueryableReadable)
   })
 
-  it('🔴 authorsKept: no caller writes it through the API, not even an admin', () => {
+  it.each(['authorsKept', 'citedAuthorsKept', 'keepDocumentAuthor', 'keepCitedAuthors'])('🔴 %s: no caller writes it through the API, not even an admin', (name) => {
     const access = (Documents.fields as Array<{ name?: string; access?: { create?: unknown; update?: unknown } }>).find(
-      (f) => f.name === 'authorsKept',
+      (f) => f.name === name,
     )?.access
     for (const op of [access?.create, access?.update] as Array<((a: { req: { user: unknown } }) => boolean) | undefined>) {
       expect(op).toBeTypeOf('function')

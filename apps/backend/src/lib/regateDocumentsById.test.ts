@@ -74,6 +74,9 @@ describe('refusalFor', () => {
     ['relation object in the org', doc(1, { organization: { id: 7 } }), false, null],
     ['a testimonio', doc(1, { contentKind: 'testimonio' }), false, 'testimonio'],
     ['a testimonio with the flag', doc(1, { contentKind: 'testimonio' }), true, null],
+    // A testimonio is gated whatever `anonymise` says.
+    ['a testimonio without anonymise, with the flag', doc(1, { contentKind: 'testimonio', anonymise: false }), true, null],
+    ['a documento without anonymise', doc(1, { contentKind: 'documento', anonymise: false }), true, 'not-gated'],
     ['never gated', doc(1, { anonymise: false }), false, 'not-gated'],
     ['publishing', doc(1, { publicationStatus: 'publishing' }), false, 'in-flight'],
     ['gate running', doc(1, { anonymisationStatus: 'pending' }), false, 'in-flight'],

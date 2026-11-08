@@ -42,6 +42,7 @@ import {
 import { refuseDisabledAudioUpload } from './hooks/featureGates'
 import { anonymiseParticipantUpload, fileParticipantAudioAsTestimonio } from '../lib/autoPublish'
 import { isAppNote, isStudentNote, parseNoteEdit, publishStudentNote, publishStudentNoteChanges } from '../lib/studentNotes'
+import { anonimizacionEndpoints } from '../lib/anonymisationControls'
 import {
   consumeCorpusCleanupSkip,
   isOwnersMedia,
@@ -1259,6 +1260,9 @@ interface DocumentRow {
   anonymise?: boolean | null
   /** Per-document override of the ecosistema's `keepPublicFigures`; null = inherit. */
   keepPublicFigures?: boolean | null
+  /** Per-document overrides of the ecosistema's `keepDocumentAuthor` / `keepCitedAuthors`; null = inherit. */
+  keepDocumentAuthor?: boolean | null
+  keepCitedAuthors?: boolean | null
   /** The gate's output. The ONLY text a gated document is ever embedded from. */
   redactedText?: string | null
   heldText?: string | null
@@ -2163,6 +2167,9 @@ export async function enqueueIngestForDoc(args: {
     anonymise?: unknown
     /** Per-document `keepPublicFigures` override; absent = the ecosistema's. */
     keepPublicFigures?: unknown
+    /** Per-document `keepDocumentAuthor` / `keepCitedAuthors` overrides; absent = the ecosistema's. */
+    keepDocumentAuthor?: unknown
+    keepCitedAuthors?: unknown
     anonymisationStatus: string | null | undefined
     redactedText?: string | null
     /** For the retrieval filter. `chunkMetadata` keeps it on a documento only. */
@@ -2221,14 +2228,23 @@ export async function enqueueIngestForDoc(args: {
   /**
    * 🔴 A GATED `documento` gets the org roster (owner Q13 A, 2026-10-27) and
    * its `keepPublicFigures` (the row's override, else the ecosistema's). A
-   * testimonio or a conversation gets neither: `documentoGateOptions` returns
-   * `{ keepPublicFigures: false, roster: [] }` for any other kind.
+   * gated `documento` or `testimonio` gets its `keepDocumentAuthor` and
+   * `keepCitedAuthors` (owner decision 2026-11-07; both off by default). A
+   * conversation gets none of them (`documentoGateOptions`).
+   * The uploader is the id this function was handed: the audio path builds
+   * `fresh` by hand, without `uploadedBy`.
    */
-  const { documentoGateOptions } = await import('@/lib/publicFigures')
+  const { documentoGateOptions, switchesApply } = await import('@/lib/publicFigures')
   const documentoOptions =
-    fresh.contentKind === 'documento' && rowMustPassGate(fresh) && fresh.anonymisationStatus !== 'approved'
-      ? await documentoGateOptions(payload as never, organizationId, fresh)
-      : { keepPublicFigures: false, roster: [] as string[], authors: [] as string[] }
+    switchesApply(fresh.contentKind) && rowMustPassGate(fresh) && fresh.anonymisationStatus !== 'approved'
+      ? await documentoGateOptions(payload as never, organizationId, { ...fresh, uploadedBy: uploadedById })
+      : {
+          keepPublicFigures: false,
+          roster: [] as string[],
+          authors: [] as string[],
+          keepDocumentAuthor: false,
+          keepCitedAuthors: false,
+        }
   const gated = await anonymiseDocumentText({
     // The live handle carries `db.drizzle`; the narrow type above does not say so.
     payload: payload as never,
@@ -2272,8 +2288,14 @@ export async function enqueueIngestForDoc(args: {
     // A gated documento (staff notes, drafts) gets the roster: see above.
     roster: documentoOptions.roster,
     keepPublicFigures: documentoOptions.keepPublicFigures,
-    // 🔴 R60: the uploader's names; the gate keeps them visible (documento only).
+    // 🔴 `keepDocumentAuthor`: the uploader's names, only when the switch is on.
     authors: documentoOptions.authors,
+    keepCitedAuthors: documentoOptions.keepCitedAuthors,
+    // The switches this verdict is made under (`lib/holdReview.ts` checks them).
+    settings: {
+      keepDocumentAuthor: documentoOptions.keepDocumentAuthor,
+      keepCitedAuthors: documentoOptions.keepCitedAuthors,
+    },
   })
 
   if (!gated.ok && gated.busy) {
@@ -3128,6 +3150,31 @@ export const Documents: CollectionConfig = {
     },
     {
       /**
+       * 🔴 PER-DOCUMENT OVERRIDES of the ecosistema's `keepDocumentAuthor` and
+       * `keepCitedAuthors` (owner decision 2026-11-07). NULL = use the
+       * ecosistema's setting. Read for a gated `documento` or `testimonio`
+       * (`lib/publicFigures.ts`); a conversation never keeps a name.
+       *
+       * ⚠ NO DEFAULT, on purpose, like `keepPublicFigures`.
+       * 🔴 NO CALLER WRITES THEM THROUGH THE API, not even a platform admin:
+       * changing one sends the document back through the gate, so the only
+       * writer is `PATCH /api/documents/:id/anonimizacion`
+       * (`lib/anonymisationControls.ts`), which checks who may and when.
+       */
+      name: 'keepDocumentAuthor',
+      type: 'checkbox',
+      access: { create: gateWritesOnly, update: gateWritesOnly },
+      admin: { position: 'sidebar', readOnly: true },
+    },
+    {
+      /** See `keepDocumentAuthor`. */
+      name: 'keepCitedAuthors',
+      type: 'checkbox',
+      access: { create: gateWritesOnly, update: gateWritesOnly },
+      admin: { position: 'sidebar', readOnly: true },
+    },
+    {
+      /**
        * The programme this document belongs to — `traduccion`, `dengue`,
        * `escuela`, `discapacidad` in the seeded corpus. The corpus's own
        * ground truth, which the product had nowhere to put until now.
@@ -3353,6 +3400,21 @@ export const Documents: CollectionConfig = {
       admin: {
         readOnly: true,
         description: 'Autoría conservada (quien subió el documento): nombre, modelo y fecha.',
+      },
+    },
+    {
+      /**
+       * 🔴 THE CITED AUTHORS the gate left in `redactedText` with
+       * `keepCitedAuthors` (owner decision 2026-11-07): name, model, date, the
+       * `authorsKept` shape. Null on a hold. Not a re-identification map: every
+       * name in it is in the gate's output already.
+       */
+      name: 'citedAuthorsKept',
+      type: 'json',
+      access: { create: gateWritesOnly, update: gateWritesOnly, read: gatedOriginalReadable },
+      admin: {
+        readOnly: true,
+        description: 'Autores citados conservados: nombre, modelo y fecha.',
       },
     },
     {
@@ -3771,6 +3833,8 @@ export const Documents: CollectionConfig = {
     noteEditEndpoint(),
     retryIngestEndpoint(),
     retryGraphEndpoint(),
+    // GET / PATCH /api/documents/:id/anonimizacion (`lib/anonymisationControls.ts`).
+    ...anonimizacionEndpoints(),
   ],
 }
 

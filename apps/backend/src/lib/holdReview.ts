@@ -147,6 +147,38 @@ export class HoldReviewInputError extends Error {
   }
 }
 
+/**
+ * 🔴 THE HOLD WAS MADE UNDER OTHER SWITCHES (audit 2026-11-07, E2). Its text
+ * keeps or hides names by settings that no longer apply; approving it would
+ * ingest a verdict nobody would get today. The way out is
+ * `PATCH /api/documents/:id/anonimizacion`, which re-gates it. Only raised
+ * for a reviewer who may already see the row.
+ */
+export class HoldSettingsChangedError extends HoldReviewInputError {
+  constructor() {
+    super('Las opciones de anonimización de este documento cambiaron después de la retención. Vuelve a anonimizarlo antes de aprobarlo.')
+    this.name = 'HoldSettingsChangedError'
+  }
+}
+
+/**
+ * True when the switches the hold was made under (its report's `settings`;
+ * absent = both off) differ from what the row would run with now.
+ */
+export async function holdSettingsChanged(payload: Payload, row: Record<string, unknown>): Promise<boolean> {
+  const { effectiveSwitches, switchesApply } = await import('./publicFigures')
+  if (!switchesApply(row.contentKind)) return false
+  const org = relationId(row.organization)
+  if (org === null) return true
+  const report = row.anonymisationReport as { settings?: { keepDocumentAuthor?: unknown; keepCitedAuthors?: unknown } } | null
+  const made = report?.settings
+  const now = await effectiveSwitches(payload, org, row)
+  return (
+    now.keepDocumentAuthor.value !== (made?.keepDocumentAuthor === true) ||
+    now.keepCitedAuthors.value !== (made?.keepCitedAuthors === true)
+  )
+}
+
 // ---------------------------------------------------------------------------
 // The gate
 // ---------------------------------------------------------------------------
@@ -446,6 +478,7 @@ export async function decideOnHold(args: {
   let textEdited = false
 
   if (decision === 'approve') {
+    if (await holdSettingsChanged(payload, row as unknown as Record<string, unknown>)) throw new HoldSettingsChangedError()
     const supplied = typeof args.text === 'string' ? args.text : null
     // The gate's own refused output is the default, so "approve as-is" needs no
     // client round trip of a string the server already has — and cannot be

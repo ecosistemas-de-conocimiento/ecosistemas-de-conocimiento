@@ -15,8 +15,8 @@
  *
  *   · it does not exist, or belongs to another ecosistema;
  *   · it is a `testimonio`, unless `allowTestimonio` is set;
- *   · it was never gated (`anonymise` not `true`): `regateMemberDocumentos` is
- *     the path for those;
+ *   · it was never gated (`anonymise` not `true`, on anything but a
+ *     testimonio): `regateMemberDocumentos` is the path for those;
  *   · it is mid-transition (`publishing`, `unpublishing`) or the gate is
  *     running on it (`pending`): another writer owns it right now.
  *
@@ -65,7 +65,7 @@ export interface RegateByIdLine {
   placeholders: PlaceholderCounts
   refused?: RegateRefusal
   /** What happened on apply; absent on a dry run or a refusal. */
-  outcome?: 'regated' | 'withdrawn-only' | 'changed-meanwhile' | 'failed'
+  outcome?: 'regated' | 'withdrawn-only' | 'changed-meanwhile' | 'failed' | 'erase-failed'
 }
 
 export interface RegateByIdReport {
@@ -92,7 +92,8 @@ export function refusalFor(row: Row | undefined, organizationId: Id, allowTestim
   if (!row) return 'not-found'
   if (String(relationId(row.organization)) !== String(organizationId)) return 'other-ecosistema'
   if (row.contentKind === 'testimonio' && !allowTestimonio) return 'testimonio'
-  if (row.anonymise !== true) return 'not-gated'
+  // A testimonio is gated whatever `anonymise` says (`mustPassAnonymisationGate`).
+  if (row.contentKind !== 'testimonio' && row.anonymise !== true) return 'not-gated'
   if (row.publicationStatus === 'publishing' || row.publicationStatus === 'unpublishing') return 'in-flight'
   if (row.anonymisationStatus === 'pending') return 'in-flight'
   return null
@@ -109,6 +110,19 @@ export async function regateDocumentsById(
     client: CorpusDeleter
     /** Gate and ingest one reset row. */
     gate: (row: Row) => Promise<unknown>
+    /**
+     * More columns for the reset write, in the same guarded UPDATE: the
+     * per-document switches `lib/anonymisationControls.ts` saves, so a
+     * refusal or a failed withdrawal saves nothing.
+     */
+    resetData?: Row
+    /**
+     * 🔴 Do not gate again unless BOTH old copies were erased (audit
+     * 2026-11-07, E3): a retired copy is hidden, not gone, and holds the names
+     * the change is meant to remove. The row is left a reset private draft,
+     * outcome `erase-failed`.
+     */
+    requireErase?: boolean
     now?: Date
     log?: (line: string) => void
   },
@@ -184,10 +198,15 @@ export async function regateDocumentsById(
           redactedText: null,
           heldText: null,
           anonymisationSurvivors: null,
+          // The keep logs describe the text being replaced.
+          publicFiguresKept: null,
+          authorsKept: null,
+          citedAuthorsKept: null,
           testimonioTitle: null,
           ingestId: null,
           ingestStatus: 'extracting',
           ingestError: null,
+          ...(opts.resetData ?? {}),
         },
         depth: 0,
         overrideAccess: true,
@@ -206,6 +225,11 @@ export async function regateDocumentsById(
       if (uploader != null) corpora.push(draftCorpus(opts.organizationId, uploader))
       const { failed: notErased } = await eraseWithdrawnCopies(opts.client, corpora, row.id as Id)
       if (notErased.length > 0) log(`doc ${id}: retired but NOT erased from ${notErased.join(', ')}`)
+      if (notErased.length > 0 && opts.requireErase) {
+        line.outcome = 'erase-failed'
+        report.failed.push(id)
+        continue
+      }
 
       // 3. Through the gate, then ingest.
       const text = updated.extractedText

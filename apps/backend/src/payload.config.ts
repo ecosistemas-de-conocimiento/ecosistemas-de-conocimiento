@@ -15,6 +15,7 @@ import { GraphRelations } from './collections/GraphRelations'
 import { Media } from './collections/Media'
 import { AiServiceCallbacks } from './collections/AiServiceCallbacks'
 import { AnonymisationReviews } from './collections/AnonymisationReviews'
+import { AnonymisationSettingChanges } from './collections/AnonymisationSettingChanges'
 import { Organizations } from './collections/Organizations'
 import { Teams } from './collections/Teams'
 import { Projects } from './collections/Projects'
@@ -127,6 +128,7 @@ export default buildConfig({
     // 🔴 The audit trail for every human override of the anonymisation gate.
     // Append-only; see the collection.
     AnonymisationReviews,
+    AnonymisationSettingChanges,
     /**
      * The corpus graph. Written ONLY by the extraction pipeline
      * (`lib/graph/writer.ts`); every create/update/delete access rule is
