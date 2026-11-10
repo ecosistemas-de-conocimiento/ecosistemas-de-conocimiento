@@ -1,5 +1,6 @@
 import type { Message, WorkingDoc, ContextRef, ContextScope, Provenance } from './types';
 import { AI_UNAVAILABLE_MESSAGE, AI_UNAVAILABLE_CODE } from './aiMessages';
+import { EMPTY_ANSWER_CODE, isEmptyGeneration } from '@edc/chat-engine/core';
 
 /**
  * Client-side wrapper around the BFF endpoint at /api/generate.
@@ -101,6 +102,7 @@ export function userFacingError(err: unknown): string {
   if (err instanceof AIServiceError && err.code === AI_UNAVAILABLE_CODE) {
     return AI_UNAVAILABLE_MESSAGE;
   }
+  if (err instanceof AIServiceError && err.code === EMPTY_ANSWER_CODE) return EMPTY_ANSWER_MESSAGE;
   // Every other failure text is written for developers ("Network error: …",
   // "ai-service: …", "HTTP 502"). The people using this are not technical
   // (UX backlog #26), so they get one plain sentence and the detail goes to
@@ -114,6 +116,14 @@ export const TURN_FAILED_MESSAGE = 'No se pudo obtener la respuesta. Inténtalo 
 
 /** What it says when the browser never heard back from our server. */
 export const CONNECTION_LOST_MESSAGE = 'Se perdió la conexión antes de recibir la respuesta.';
+
+/** What it says when the model answered with no text (`EMPTY_ANSWER_CODE`). */
+export const EMPTY_ANSWER_MESSAGE = 'La respuesta llegó vacía.';
+
+/** An answer with no visible text is a failed turn, whichever transport brought it. */
+function emptyAnswerError(): AIServiceError {
+  return new AIServiceError('The answer came back empty.', EMPTY_ANSWER_CODE);
+}
 
 export interface GenerateOptions {
   signal?: AbortSignal;
@@ -211,6 +221,7 @@ export async function generateStream(
       if (evt.type === 'delta') {
         if (typeof evt.text === 'string') opts.onDelta?.(evt.text);
       } else if (evt.type === 'done') {
+        if (isEmptyGeneration(typeof evt.text === 'string' ? evt.text : '')) throw emptyAnswerError();
         result = {
           text: typeof evt.text === 'string' ? evt.text : '',
           modelUsed: evt.modelUsed as string | undefined,
@@ -282,6 +293,7 @@ export async function generateSync(
   if (!data || typeof data.text !== 'string') {
     throw new AIServiceError('Server returned unexpected payload.');
   }
+  if (isEmptyGeneration(data.text)) throw emptyAnswerError();
   return data as SyncGenerateResult;
 }
 
@@ -303,7 +315,9 @@ export interface RunTurnOptions extends StreamGenerateOptions {
  *   1. Stream (`generateStream`).
  *   2. The stream failed with nothing shown, or the CONNECTION dropped part
  *      way: ask again on sync (`generateSync`), the whole turn from scratch.
- *      A server-declared error after part of the answer is final. After a
+ *      A server-declared error after part of the answer is final, and so is
+ *      an empty answer (`EMPTY_ANSWER_CODE`): no second wait on its own, the
+ *      person asks again with "Reintentar". After a
  *      lost connection, look once in the saved conversation first: the
  *      server may have saved the answer, and asking again would pay twice.
  *   3. The sync request lost its connection too: the server may still finish
@@ -338,6 +352,7 @@ export async function runTurn(
   } catch (err) {
     if (isAbort(err)) throw err;
     if (received && !(err instanceof ConnectionLostError)) throw err;
+    if (err instanceof AIServiceError && err.code === EMPTY_ANSWER_CODE) throw err;
     if (err instanceof ConnectionLostError) {
       const saved = await findSavedAnswer(input.sessionId, input.turnId, { ...opts, recoverAttempts: 1 });
       if (saved) return saved;

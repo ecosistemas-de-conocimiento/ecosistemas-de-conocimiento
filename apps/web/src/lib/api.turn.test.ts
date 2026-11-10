@@ -13,6 +13,7 @@ import {
   userFacingError,
   TURN_FAILED_MESSAGE,
   CONNECTION_LOST_MESSAGE,
+  EMPTY_ANSWER_MESSAGE,
   AIServiceError,
   ConnectionLostError,
 } from './api';
@@ -246,5 +247,44 @@ describe('runTurn', () => {
     expect(userFacingError(new AIServiceError('ai-service: boom'))).toBe(TURN_FAILED_MESSAGE);
     expect(userFacingError(new ConnectionLostError('Network error'))).toBe(CONNECTION_LOST_MESSAGE);
     expect(CONNECTION_LOST_MESSAGE).not.toBe(TURN_FAILED_MESSAGE);
+  });
+
+  // 🔴 dev 2026-11-10: 3 of 6 answers came back empty, and the person got an
+  // empty bubble plus "No pudimos guardar esta respuesta".
+  describe('an empty answer', () => {
+    it('stream empty_answer frame: fails at once, no sync second wait', async () => {
+      fetchMock.mockResolvedValueOnce(sse([`data: {"type":"error","code":"empty_answer","message":"x"}\n\n`]));
+      const err = await runTurn(input, fast).catch((e) => e);
+      expect(err).toBeInstanceOf(AIServiceError);
+      expect(userFacingError(err)).toBe(EMPTY_ANSWER_MESSAGE);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('stream `done` with whitespace only: the same failure', async () => {
+      fetchMock.mockResolvedValueOnce(sse([`data: {"type":"done","text":"  \\n ","messageId":null}\n\n`]));
+      const err = await runTurn(input, fast).catch((e) => e);
+      expect(userFacingError(err)).toBe(EMPTY_ANSWER_MESSAGE);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('sync answer with no text (the stream failed first): the same failure', async () => {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse(500, { message: 'boom' }))
+        .mockResolvedValueOnce(jsonResponse(200, { text: '', messageId: null }));
+      const err = await runTurn(input, fast).catch((e) => e);
+      expect(userFacingError(err)).toBe(EMPTY_ANSWER_MESSAGE);
+    });
+
+    it('sync 502 empty_answer from the BFF: the same failure', async () => {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse(500, { message: 'boom' }))
+        .mockResolvedValueOnce(jsonResponse(502, { code: 'empty_answer', message: 'x' }));
+      const err = await runTurn(input, fast).catch((e) => e);
+      expect(userFacingError(err)).toBe(EMPTY_ANSWER_MESSAGE);
+    });
+
+    it('an unknown error code reads as an ordinary failed answer', () => {
+      expect(userFacingError(new AIServiceError('x', 'SOMETHING_NEW'))).toBe(TURN_FAILED_MESSAGE);
+    });
   });
 });

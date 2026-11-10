@@ -93,7 +93,16 @@ export {
 } from './relevance.js';
 
 // Empty-generation predicates (a 200 with no visible text)
-export { isEmptyGeneration, shouldRetryEmpty } from './generation.js';
+export type { StreamOutcome } from './generation.js';
+export {
+  isEmptyGeneration,
+  shouldRetryEmpty,
+  EMPTY_ANSWER_CODE,
+  EmptyAnswerError,
+  isEmptyAnswerCode,
+  assertAnswer,
+  streamOutcome,
+} from './generation.js';
 
 // Turn assembly (the load-bearing invariant)
 export type { BuildTurnArgs, BuiltTurn } from './turn.js';
