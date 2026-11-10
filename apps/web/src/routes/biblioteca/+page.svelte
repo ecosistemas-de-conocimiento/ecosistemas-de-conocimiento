@@ -18,7 +18,10 @@
    * what it is given and names nothing: no user, no organization, no corpus.
    */
   import { goto } from '$app/navigation';
+  import type { Snapshot } from '@sveltejs/kit';
   import { page } from '$app/stores';
+  import { tick } from 'svelte';
+  import { MAIN_CONTENT_ID } from '$lib/nav';
   import TestimonySource from '$lib/components/TestimonySource.svelte';
   import {
     formatLibraryDate,
@@ -81,6 +84,20 @@
 
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /**
+   * Back from a document opens the list where the reader left it. `.app-main`
+   * scrolls, not the window, so SvelteKit's own restore does not reach it; the
+   * offset waits for the list to load before it applies.
+   */
+  const scroller = () => document.getElementById(MAIN_CONTENT_ID);
+  let restoreTo: number | null = null;
+  export const snapshot: Snapshot<number> = {
+    capture: () => scroller()?.scrollTop ?? 0,
+    restore: (y) => {
+      restoreTo = y;
+    },
+  };
+
   function pushQuery(next: { q?: string; kind?: KindFilter; lengua?: string; page?: number }) {
     const params = new URLSearchParams();
     const q = next.q ?? query.q;
@@ -139,8 +156,15 @@
       .catch(() => {
         if (!cancelled) failed = true;
       })
-      .finally(() => {
-        if (!cancelled) loading = false;
+      .finally(async () => {
+        if (cancelled) return;
+        loading = false;
+        if (restoreTo !== null) {
+          const y = restoreTo;
+          restoreTo = null;
+          await tick();
+          scroller()?.scrollTo(0, y);
+        }
       });
     return () => {
       cancelled = true;
@@ -319,6 +343,9 @@
        up as a page scrollbar because `.app-main` scrolls, so it silently
        pushed the search box and half the filters off the right edge. */
     min-width: 0;
+    /* 🔴 And `width`: with `margin: auto` a flex item is only as wide as its
+       content, so a search with short titles shrank every card. */
+    width: 100%;
     max-width: 60rem;
     margin: 0 auto;
     padding: var(--edc-space-6) var(--edc-space-5) var(--edc-space-8);

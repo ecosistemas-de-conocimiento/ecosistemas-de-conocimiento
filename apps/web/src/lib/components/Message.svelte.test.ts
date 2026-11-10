@@ -121,6 +121,14 @@ describe('🔴 source numbering: 8 cited markers, 7 shown sources, no source 7',
     });
   }
 
+  it('🔴 every source card starts open, its passage quoted (demo review 2026-10-28)', () => {
+    const { body } = render(Message, { props: { msg: live } });
+    const cards = [...body.matchAll(/citation-card-ord[^>]*>\[(\d+)\]/g)].map((m) => Number(m[1]));
+    expect(cards).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(body).toContain('Pasaje 8.');
+    expect(body).not.toContain('aria-expanded="false"');
+  });
+
   it('a still-streaming answer lists no sources yet', () => {
     const { body } = render(Message, {
       props: { msg: { ...live, pending: true, provenance: null, content: 'Uno [1]' } },
@@ -143,4 +151,15 @@ describe('a marker with no source is dropped, even when no source is listed at a
       expect(listedOrdinals(v.body)).toEqual(provenance ? [1] : []);
     });
   }
+});
+
+describe('the wait before the first words', () => {
+  it('shows the searching label at once, the seconds counter only later', () => {
+    const { body } = render(Message, {
+      props: { msg: { id: 'p2', role: 'assistant', content: '', createdAt: 0, pending: true } as Msg },
+    });
+    expect(body).toContain('data-testid="answer-waiting"');
+    expect(body).toContain('Buscando en los documentos…');
+    expect(body).not.toContain('answer-waited');
+  });
 });

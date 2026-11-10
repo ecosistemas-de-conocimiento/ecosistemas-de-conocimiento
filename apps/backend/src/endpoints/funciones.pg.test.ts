@@ -227,6 +227,8 @@ describe.skipIf(!dockerOk)('/api/funciones and /api/plataforma on a real Postgre
   it('editables: admin sees every ecosistema and the platform; a responsable only theirs; others 403', async () => {
     const root = await call('get', '/funciones/editables', ROOT)
     expect((root.body.ecosistemas as Array<{ id: string }>).map((e) => e.id)).toEqual(['1', '2'])
+    // The page defaults to an active one (R54); both seeded ecosistemas are.
+    expect((root.body.ecosistemas as Array<{ isActive: unknown }>).map((e) => e.isActive)).toEqual([true, true])
     expect(root.body.plataforma).toMatchObject({ detectorFallback: null, detectorFallbackEffective: 'hosted' })
     const olga = await call('get', '/funciones/editables', OLGA)
     expect((olga.body.ecosistemas as Array<{ id: string }>).map((e) => e.id)).toEqual(['1'])
