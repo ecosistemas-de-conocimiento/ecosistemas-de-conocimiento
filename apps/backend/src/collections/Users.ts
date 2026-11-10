@@ -12,6 +12,7 @@ import {
 import { transactionHandle } from '../lib/conversationUploads'
 import { loginRateLimitHooks } from '../lib/loginRateLimit'
 import { sessionMemberships } from '../lib/roles'
+import { markIntendedIsActive } from '../lib/staleUserRow'
 
 /**
  * A person. ONE account for the whole installation; which organizations they
@@ -48,7 +49,8 @@ import { sessionMemberships } from '../lib/roles'
  *     the revoke switch the resolver checks (`lib/permissions.ts`); Payload's
  *     own auth knows nothing about it, so it is enforced in `access/`, at
  *     login (`refuseInactiveLogin`), on the open sessions (`dropSessionsOnDeactivate`)
- *     and against stale writes (`pinIsActiveForOthers`).
+ *     and against stale writes (`pinIsActiveForOthers`, and below every Payload
+ *     auth path in `lib/staleUserRow.ts`).
  *
  *   · `email` — only a platform admin changes it. See the field.
  *
@@ -202,7 +204,8 @@ export const Users: CollectionConfig = {
     afterMe: [attachMemberships],
     ...loginRateLimitHooks,
     beforeLogin: [refuseInactiveLogin],
-    beforeChange: [pinIsActiveForOthers, dropSessionsOnDeactivate],
+    // `markIntendedIsActive` last: it reads the `data` that will be written.
+    beforeChange: [pinIsActiveForOthers, dropSessionsOnDeactivate, markIntendedIsActive],
     beforeValidate: [
       ({ data, operation, req }) => {
         const next = { ...(data ?? {}) } as Record<string, unknown>

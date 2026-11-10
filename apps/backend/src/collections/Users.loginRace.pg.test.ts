@@ -4,8 +4,9 @@
  *
  * Audit 2026-11-10: a login racing a deactivation wrote the row it had read
  * before the password check back over the deactivation (`isActive: true`), and
- * signed in. A self-PATCH that read the row first did the same. Each race is
- * forced here at the exact point it happens, so neither depends on timing.
+ * signed in. A self-PATCH that read the row first did the same, and so did a
+ * logout and the wrong-password lockout (`lib/staleUserRow.ts`). Each race is
+ * forced here at the exact point it happens, so none depends on timing.
  *
  * Harness: `lib/testing/realPostgres`, Payload's REST router (`handleEndpoints`).
  */
@@ -140,5 +141,79 @@ describe.skipIf(!dockerOk)('a stale write racing a deactivation', () => {
     const { token } = await login('member@example.invalid')
     expect((await rest('PATCH', '/api/users/1', token, { displayName: 'Ana', isActive: false })).status).toBe(200)
     expect(await row()).toEqual({ is_active: true, sessions: 1 })
+  })
+
+  it('a logout that read the row before a deactivation committed: stays off, no session comes back', async () => {
+    const first = await login('member@example.invalid')
+    await login('member@example.invalid')
+    const original = payload.db.updateOne.bind(payload.db)
+    let armed = true
+    vi.spyOn(payload.db, 'updateOne').mockImplementation(async (args) => {
+      // `logoutOperation`: the row it read, minus its own session.
+      if (armed && args.collection === 'users' && (args.data as { updatedAt?: unknown }).updatedAt === null) {
+        armed = false
+        await deactivate()
+      }
+      return original(args)
+    })
+    expect((await rest('POST', '/api/users/logout', first.token)).status).toBe(200)
+    expect(armed).toBe(false)
+    expect(await row()).toEqual({ is_active: false, sessions: 0 })
+  })
+
+  it('a wrong-password lockout that writes its stale row after a deactivation: stays off, no session', async () => {
+    // A session older than the lockout's 20 s window, so the lockout keeps it
+    // and writes the row (`incrementLoginAttempts.js`).
+    await pg.db.execute(sql.raw(`
+      INSERT INTO users_sessions (_order, _parent_id, id, created_at, expires_at)
+      VALUES (1, 1, 'old-session', now() - interval '1 minute', now() + interval '1 hour');
+    `))
+    const original = payload.db.updateOne.bind(payload.db)
+    let armed = true
+    vi.spyOn(payload.db, 'updateOne').mockImplementation(async (args) => {
+      const data = args.data as { loginAttempts?: unknown; sessions?: unknown }
+      // Parallel failures already pushed the counter past the limit, so this
+      // attempt takes the path that rewrites the whole row it read.
+      if (args.collection === 'users' && typeof data.loginAttempts === 'object' && data.loginAttempts) {
+        await pg.db.execute(sql`UPDATE users SET login_attempts = 10 WHERE id = 1`)
+      }
+      if (armed && args.collection === 'users' && Array.isArray(data.sessions)) {
+        armed = false
+        await deactivate()
+      }
+      return original(args)
+    })
+    const res = await rest('POST', '/api/users/login', undefined, { email: 'member@example.invalid', password: 'wrong' })
+    expect(res.status).toBe(401)
+    expect(armed).toBe(false)
+    expect(await row()).toEqual({ is_active: false, sessions: 0 })
+  })
+
+  it('control: a platform admin deactivates and reactivates', async () => {
+    await pg.db.execute(sql.raw(`INSERT INTO users (id, email, is_platform_admin) VALUES (2, 'admin@example.invalid', true)`))
+    await payload.update({ collection: 'users', id: 2, overrideAccess: true, data: { password: PASSWORD } as never })
+    const { token } = await login('admin@example.invalid')
+    await login('member@example.invalid')
+    expect((await rest('PATCH', '/api/users/1', token, { isActive: false })).status).toBe(200)
+    expect(await row()).toEqual({ is_active: false, sessions: 0 })
+    expect((await rest('PATCH', '/api/users/1', token, { isActive: true })).status).toBe(200)
+    expect(await row()).toEqual({ is_active: true, sessions: 0 })
+    expect((await login('member@example.invalid')).status).toBe(200)
+  })
+
+  it('control: a server-side update with overrideAccess reactivates', async () => {
+    await deactivate()
+    await payload.update({ collection: 'users', id: 1, overrideAccess: true, data: { isActive: true } as never })
+    expect(await row()).toEqual({ is_active: true, sessions: 0 })
+  })
+
+  it('control: an active account logs in and out', async () => {
+    const a = await login('member@example.invalid')
+    const b = await login('member@example.invalid')
+    expect([a.status, b.status]).toEqual([200, 200])
+    expect(await row()).toEqual({ is_active: true, sessions: 2 })
+    expect((await rest('POST', '/api/users/logout', a.token)).status).toBe(200)
+    expect(await row()).toEqual({ is_active: true, sessions: 1 })
+    expect((await (await rest('GET', '/api/users/me', b.token)).json()).user?.id).toBe(1)
   })
 })

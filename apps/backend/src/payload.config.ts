@@ -26,6 +26,7 @@ import { EvalItems } from './collections/EvalItems'
 import { EvalRuns } from './collections/EvalRuns'
 import { withoutDuplicate } from './collections/hooks/refuseDuplicate'
 import { lockDownPayloadInternals } from './access/payloadInternals'
+import { guardStaleUserRows } from './lib/staleUserRow'
 
 import { PlatformSettings } from './globals/PlatformSettings'
 
@@ -407,7 +408,8 @@ export default buildConfig({
   typescript: {
     outputFile: path.resolve(dirname, 'payload-types.ts'),
   },
-  db: postgresAdapter({
+  // A stale user row cannot switch a deactivated account back on: `lib/staleUserRow.ts`.
+  db: guardStaleUserRows(postgresAdapter({
     pool: {
       connectionString: process.env.DATABASE_URI || '',
     },
@@ -440,5 +442,5 @@ export default buildConfig({
      * a new migration rather than leaving the database in that state.
      */
     push: process.env.NODE_ENV !== 'test' && process.env.PAYLOAD_ALLOW_PUSH === '1',
-  }),
+  })),
 }).then(lockDownPayloadInternals)
