@@ -197,7 +197,7 @@ describe.skipIf(!dockerOk)('evals on a real Postgres', () => {
       overrideAccess: false,
       user: admin,
     })
-    expect((created as { privateNames: unknown }).privateNames).toEqual(['Ana', 'Luis'])
+    expect((created as unknown as { privateNames: unknown }).privateNames).toEqual(['Ana', 'Luis'])
     await expect(
       payload.find({ collection: 'eval-items', overrideAccess: false, user: owner }),
     ).rejects.toMatchObject({ status: 403 })
