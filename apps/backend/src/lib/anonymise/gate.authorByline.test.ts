@@ -403,6 +403,16 @@ describe('R60 — the guards (each test fails with its guard removed)', () => {
   })
 
   it('🔴 a content-stage hold shows the byline author redacted', async () => {
+    // A finding the text does not contain: the one `content` hold that keeps
+    // a text (a detector that throws keeps none, P-01; see gate.test.ts).
+    const result = await run('Autora: Ana Ruiz\n\nEl taller terminó.', ['Zacarías Ubaldo'])
+    expect(result.status).toBe('hold')
+    if (result.status !== 'hold') return
+    expect(result.stage).toBe('content')
+    expect(result.redactedText).toBe('Autora: [Persona A]\n\nEl taller terminó.')
+  })
+
+  it('🔴 a detector that throws leaves no text on the hold at all (P-01)', async () => {
     const result = await run('Autora: Ana Ruiz\n\nEl taller terminó.', [], {
       detector: {
         name: 'down',
@@ -411,9 +421,8 @@ describe('R60 — the guards (each test fails with its guard removed)', () => {
         },
       },
     })
-    expect(result.status).toBe('hold')
-    if (result.status !== 'hold') return
+    if (result.status !== 'hold') throw new Error('expected hold')
     expect(result.stage).toBe('content')
-    expect(result.redactedText).toBe('Autora: [Persona A]\n\nEl taller terminó.')
+    expect(result.redactedText).toBeUndefined()
   })
 })

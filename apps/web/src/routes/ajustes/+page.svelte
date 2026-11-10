@@ -6,10 +6,10 @@
    * platform switch under them. Every rule is in the backend; no explainer
    * copy (owner rule).
    *
-   * 🔴 THE SWITCH TABS ARE ONE FORM (`ajustes-funciones`). The action writes
-   * every key it is not told is locked, so every switch must post with every
-   * save: a tab that is not showing is `hidden`, never unrendered. See
-   * `secciones.ts`. The answer style is its own form and endpoint.
+   * 🔴 THE SWITCH TABS ARE ONE FORM (`ajustes-funciones`). Every switch posts
+   * with every save, with the value it loaded (`was-<key>`): the action writes
+   * only what moved. A tab that is not showing is `hidden`, never unrendered.
+   * See `secciones.ts`. The answer style is its own form and endpoint.
    */
   import { onMount } from 'svelte';
   import { enhance } from '$app/forms';
@@ -21,9 +21,10 @@
   import SwitchRow from './SwitchRow.svelte';
   import { SECCIONES, seccionDirty, seccionLocked, type SeccionId } from './secciones';
   import { guardLeave } from './unsaved';
+  import { canRetryRegate, regateLine, unpublishedLine } from './anonimizacion';
   import type { ActionData, PageData } from './$types';
 
-  type Scope = 'funciones' | 'estilo' | 'plataforma';
+  type Scope = 'funciones' | 'estilo' | 'plataforma' | 'reintentar';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -54,6 +55,10 @@
   const tabDirty = (id: SeccionId) => (id === 'estilo' ? stylesDirty : dirtyTabs.has(id));
   const tabLocked = (id: SeccionId) =>
     id === 'estilo' ? !data.answerStylesEditable : seccionLocked(SECCIONES.find((s) => s.id === id)!, locked);
+
+  // The re-anonymisation backlog: never a bare "Guardado" while it waits.
+  const anonLine = $derived(regateLine(data.anon, savedFor('funciones') && !featuresDirty));
+  const anonUnpublished = $derived(unpublishedLine(data.anon));
 
   const fallbackChoice = $derived(data.plataforma?.detectorFallback ?? 'env');
   let fallback = $derived<string>(fallbackChoice);
@@ -165,6 +170,7 @@
                   <SwitchRow
                     key={g.key}
                     checked={features[g.key]}
+                    was={stored[g.key]}
                     locked={locked.includes(g.key)}
                     onchange={(v) => (features = { ...features, [g.key]: v })}
                   />
@@ -174,6 +180,7 @@
                       child
                       hidden={!features[g.key]}
                       checked={features[c]}
+                      was={stored[c]}
                       locked={locked.includes(c)}
                       onchange={(v) => (features = { ...features, [c]: v })}
                     />
@@ -184,12 +191,38 @@
             <SaveBar
               dirty={featuresDirty}
               pending={pending === 'funciones'}
-              saved={savedFor('funciones')}
+              saved={savedFor('funciones') && !anonLine}
               error={failureFor('funciones')}
               {hydrated}
               sticky
             />
           </form>
+
+          {#if anonLine || anonUnpublished || failureFor('reintentar')}
+            <div class="anon" hidden={active === 'estilo'} data-testid="ajustes-anon">
+              {#if anonLine}
+                <p class="anon-line" role="status" data-testid="ajustes-anon-pending">{anonLine}</p>
+              {/if}
+              {#if anonUnpublished}
+                <p class="anon-line" data-testid="ajustes-anon-unpublished">{anonUnpublished}</p>
+              {/if}
+              {#if failureFor('reintentar')}
+                <p class="anon-line anon-error" role="alert" data-testid="ajustes-anon-error">{failureFor('reintentar')}</p>
+              {/if}
+              {#if canRetryRegate(data.anon)}
+                <form method="POST" action="?/reintentar" use:enhance={submit('reintentar')} data-testid="ajustes-anon-retry-form">
+                  <input type="hidden" name="organization" value={data.selected.id} />
+                  <button
+                    type="submit"
+                    class="anon-retry"
+                    disabled={pending === 'reintentar'}
+                    aria-busy={pending === 'reintentar' || undefined}
+                    data-testid="ajustes-anon-retry">Reintentar</button
+                  >
+                </form>
+              {/if}
+            </div>
+          {/if}
 
           <div
             class="panel"
@@ -427,8 +460,44 @@
     box-shadow: var(--edc-shadow-1);
   }
   form[hidden],
-  .panel[hidden] {
+  .panel[hidden],
+  .anon[hidden] {
     display: none;
+  }
+
+  .anon {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--edc-space-2) var(--edc-space-3);
+    padding: var(--edc-space-3) var(--edc-space-4);
+    border-top: 1px solid var(--edc-color-elevated-border);
+  }
+  .anon-line {
+    margin: 0;
+    font-size: var(--edc-text-sm);
+    font-weight: var(--edc-weight-semibold);
+  }
+  .anon-error {
+    color: var(--edc-color-danger);
+  }
+  .anon form {
+    margin-left: auto;
+  }
+  .anon-retry {
+    padding: 0.3rem 0.8rem;
+    border: 1px solid var(--edc-color-elevated-border);
+    border-radius: var(--edc-radius-2);
+    background: var(--edc-color-surface-soft);
+    color: inherit;
+    font: inherit;
+    font-size: var(--edc-text-sm);
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .anon-retry:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 
   .readonly-note {

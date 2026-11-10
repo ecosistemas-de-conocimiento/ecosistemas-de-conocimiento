@@ -30,6 +30,7 @@ import type { Endpoint, PayloadRequest } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
 import { docIdList, nameList } from '../collections/EvalItems'
+import { documentGateInput } from '../lib/anonymise/gateInput'
 import type { GateContentKind, GateResult } from '../lib/anonymise/types'
 import { scoreGateTerms, type GateTermVerdict } from '../lib/evals/gateScore'
 import { STARTER_SETS } from '../lib/evals/starter'
@@ -51,16 +52,18 @@ export interface EvalEndpointDeps {
   runGate: (req: PayloadRequest, args: GateRunArgs) => Promise<GateRunOutcome>
 }
 
-/** Exactly the calls `anonymiseDocumentText` makes, without its row writes. */
-async function productionGate(req: PayloadRequest, args: GateRunArgs): Promise<GateRunOutcome> {
+/**
+ * The calls `anonymiseDocumentText` makes, without its row writes. 🔴 The input
+ * comes from `documentGateInput`, the builder production uses too (I-06), with
+ * the ecosistema's effective switches. ⚠ An eval item has no uploader, so
+ * `keepDocumentAuthor` finds no author name to keep here.
+ */
+export async function productionGate(req: PayloadRequest, args: GateRunArgs): Promise<GateRunOutcome> {
   const { documentoGateOptions } = await import('../lib/publicFigures')
   const { runAnonymisationGate, aiServiceDetector } = await import('../lib/anonymise')
   const options = await documentoGateOptions(req.payload, args.organizationId, { contentKind: args.contentKind })
   const detector = aiServiceDetector({ organizationId: args.organizationId })
-  const result = await runAnonymisationGate(
-    { contentKind: args.contentKind, text: args.text, roster: options.roster, keepPublicFigures: options.keepPublicFigures },
-    { detector },
-  )
+  const result = await runAnonymisationGate(documentGateInput(args.contentKind, args.text, options), { detector })
   return { result, detector: detector.name }
 }
 

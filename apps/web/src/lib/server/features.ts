@@ -132,3 +132,50 @@ export const savePlatform = (token: string | undefined, detectorFallback: 'hoste
 
 export const saveAnswerStyles = (token: string | undefined, organization: string, answerStyles: AnswerStyles) =>
   send(token, '/api/funciones/estilo', { organization, answerStyles });
+
+/** `GET /api/organizations/:id/anonimizacion`: the ecosistema's re-check backlog (I-01, I-02). */
+export interface AnonRegateStatus {
+  /** Documents whose check is stale against the current switches. */
+  pendingRegate: number;
+  /** A re-check of this ecosistema is running now. */
+  regating: boolean;
+  /** Documents a re-check put back to draft that still are. */
+  unpublishedByRegate: number;
+}
+
+const anonPath = (organizationId: string) => `/api/organizations/${encodeURIComponent(organizationId)}/anonimizacion`;
+const tally = (v: unknown): number => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : 0);
+
+/** Null on any failure or refusal: the page then just says nothing about it. */
+export async function fetchAnonRegateStatus(
+  token: string | undefined,
+  organizationId: string,
+): Promise<AnonRegateStatus | null> {
+  if (!organizationId) return null;
+  try {
+    const res = await backendFetch(token, anonPath(organizationId), { method: 'GET' });
+    if (!res.ok) return null;
+    const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!body || typeof body !== 'object') return null;
+    return {
+      pendingRegate: tally(body.pendingRegate),
+      regating: body.regating === true,
+      unpublishedByRegate: tally(body.unpublishedByRegate),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** `POST /api/organizations/:id/anonimizacion/reintentar` (202 `{ started, pendingRegate }`). */
+export async function retryEcosystemRegate(token: string | undefined, organizationId: string): Promise<SaveResult> {
+  try {
+    const res = await backendFetch(token, `${anonPath(organizationId)}/reintentar`, { method: 'POST' });
+    if (res.ok) return { ok: true };
+    const parsed = (await res.json().catch(() => ({}))) as { errors?: Array<{ message?: unknown }> };
+    const message = parsed.errors?.[0]?.message;
+    return { ok: false, status: res.status, message: typeof message === 'string' ? message : 'No se pudo reintentar.' };
+  } catch {
+    return { ok: false, status: 502, message: 'No se pudo reintentar.' };
+  }
+}

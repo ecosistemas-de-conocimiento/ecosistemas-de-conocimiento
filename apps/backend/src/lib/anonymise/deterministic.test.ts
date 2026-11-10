@@ -531,10 +531,25 @@ describe('deterministicPass — follow-ups to the audit of the one-pass rewrite'
   })
 
   it('a label this document emits, already in the text, is still skipped', () => {
-    // Re-running on pipeline output: "Persona A" is the entry, `[Persona A]` its label.
-    expect(run('Ya [Persona A] y Persona A.', ['Persona A']).text).toBe(
-      'Ya [Persona A] y [Persona A].',
-    )
+    // Re-running on pipeline output: "Persona A" is the entry, `[Persona A]` its
+    // label, emitted before this pass (as stage 1 does for a byline).
+    const allocator = createPseudonymAllocator()
+    allocator.labelFor('Persona A')
+    const out = deterministicPass({
+      text: 'Ya [Persona A] y Persona A.',
+      roster: ['Persona A'],
+      allocate: (n) => allocator.labelFor(n),
+      ownLabel: (p) => allocator.emitted(p),
+    })
+    expect(out.text).toBe('Ya [Persona A] y [Persona A].')
+  })
+
+  // 🔴 navegador 2026-11-10, D1: a label only for an entry that is in the text,
+  // in text order.
+  it('an entry not in the text takes no label; the others are lettered in text order', () => {
+    const out = run('Llegó Zoila Paz y luego Ana Ruiz.', ['Ana Ruiz', 'Berta Solís', 'Zoila Paz'])
+    expect(out.text).toBe('Llegó [Persona A] y luego [Persona B].')
+    expect(out.allocator.count).toBe(2)
   })
 
   it('a shorter entry inside a name that joined an address joins it too', () => {

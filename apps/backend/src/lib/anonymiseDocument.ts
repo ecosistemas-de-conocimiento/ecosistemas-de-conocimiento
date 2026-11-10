@@ -45,6 +45,7 @@ import type { ContentKind } from './contentKind'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import { gatedTextHash } from './gatedTextHash'
 import type { GateReport, PersonDetector } from './anonymise/types'
+import { documentGateInput } from './anonymise/gateInput'
 import { authorsLog, publicFiguresLog } from './publicFigures'
 
 /**
@@ -363,27 +364,14 @@ export async function anonymiseDocumentText(args: {
     args.detector ??
     aiServiceDetector(args.organizationId !== undefined ? { organizationId: args.organizationId } : {})
 
+  // 🔴 The one builder, shared with `/admin/evals` (I-06): `testimonio` is the
+  // default kind, and the gate itself ignores `keepPublicFigures` for anything
+  // but a documento (`gate.ts`, one check, tested there).
+  const input = documentGateInput(contentKind, text, args)
   let result: Awaited<ReturnType<typeof runAnonymisationGate>>
   try {
     result = await runAnonymisationGate(
-      {
-        // ⚠ `testimonio` IS THE DEFAULT ARM, and the direction matters. This only
-        // picks which sentence describes the material to the model; the rules
-        // are identical. But the `conversacion` prompt tells the model it is
-        // reading members of a community talking to each other, and an
-        // unrecognised kind is not evidence of that. `testimonio` is the arm
-        // that assumes nothing and holds no roster.
-        // A gated `documento` is described as a document, not a testimony.
-        contentKind:
-          contentKind === 'conversacion' || contentKind === 'documento' ? contentKind : 'testimonio',
-        text,
-        roster: args.roster ?? [],
-        // 🔴 The gate itself ignores it for anything but a documento
-        // (`gate.ts`, one check, tested there).
-        keepPublicFigures: args.keepPublicFigures === true,
-        authors: args.authors ?? [],
-        keepCitedAuthors: args.keepCitedAuthors === true,
-      },
+      input,
       { detector },
     )
   } catch (err) {
@@ -415,6 +403,10 @@ export async function anonymiseDocumentText(args: {
   const settings = {
     keepDocumentAuthor: args.settings?.keepDocumentAuthor === true,
     keepCitedAuthors: args.settings?.keepCitedAuthors === true,
+    // 🔴 What the gate APPLIED this run (`gate.ts` keeps public figures in a
+    // documento only), so `verdictSettings` reads it instead of guessing it
+    // from `publicFiguresKept` (P-04/I-13).
+    keepPublicFigures: input.keepPublicFigures && input.contentKind === 'documento',
   }
 
   if (result.status === 'hold' && result.retryable) {

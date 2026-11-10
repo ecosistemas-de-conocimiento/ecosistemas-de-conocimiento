@@ -160,6 +160,44 @@ describe('regateDocumentsById', () => {
     expect(bad.store[0]).toMatchObject({ publicationStatus: 'published', anonymisationStatus: 'ready' })
   })
 
+  it('🔴 P-02: the graph is purged after the erase and BEFORE the reset', async () => {
+    const ok = fakeDb([doc(354)])
+    await regateDocumentsById(ok.payload, {
+      ids: ['354'],
+      organizationId: 7,
+      apply: true,
+      requireErase: true,
+      client: client(ok.calls) as never,
+      purgeGraph: async (id) => {
+        ok.calls.push(`purge:${String(id)}`)
+      },
+      gate: async () => {
+        ok.calls.push('gate')
+      },
+    })
+    expect(ok.calls).toEqual(['retire:eco-7', 'retire:eco-7-draft-2', 'erase:eco-7', 'erase:eco-7-draft-2', 'purge:354', 'row', 'gate'])
+  })
+
+  it('🔴 P-02: a purge that throws is erase-failed: nothing reset, nothing gated', async () => {
+    const bad = fakeDb([doc(354)])
+    const gate = vi.fn()
+    const report = await regateDocumentsById(bad.payload, {
+      ids: ['354'],
+      organizationId: 7,
+      apply: true,
+      requireErase: true,
+      client: client(bad.calls) as never,
+      purgeGraph: async () => {
+        throw new Error('Failed query: delete from graph_mentions params: López')
+      },
+      gate,
+    })
+    expect(report.lines[0]?.outcome).toBe('erase-failed')
+    expect(bad.calls).not.toContain('row')
+    expect(gate).not.toHaveBeenCalled()
+    expect(bad.store[0]).toMatchObject({ publicationStatus: 'published', anonymisationStatus: 'ready' })
+  })
+
   it('a testimonio goes through with allowTestimonio', async () => {
     const { payload, calls } = fakeDb([doc(2, { contentKind: 'testimonio' })])
     const gate = vi.fn(async () => undefined)

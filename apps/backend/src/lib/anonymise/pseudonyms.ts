@@ -120,6 +120,8 @@ export interface PseudonymAllocator {
    * reads as "how many people are in this testimony" — silently wrong.
    */
   addressLabelFor(address: string): string
+  /** True when THIS allocator already emitted `placeholder` (a person or an address label). */
+  emitted(placeholder: string): boolean
   /** How many distinct people have been labelled so far. Goes in the report. */
   readonly count: number
   /** How many distinct addresses have been labelled so far. Goes in the report. */
@@ -166,7 +168,7 @@ export function createPseudonymAllocator(): PseudonymAllocator {
       const key = fold(raw)
       return into.get(key) ?? sameAs(key)
     }
-    return { labelFor, peek, size: () => labels.size }
+    return { labelFor, peek, size: () => labels.size, has: (label: string) => labels.has(label) }
   }
 
   /**
@@ -233,6 +235,7 @@ export function createPseudonymAllocator(): PseudonymAllocator {
     labelFor: people.labelFor,
     peekLabel: people.peek,
     addressLabelFor: places.labelFor,
+    emitted: (placeholder) => people.has(placeholder) || places.has(placeholder),
     get count(): number {
       return people.size()
     },

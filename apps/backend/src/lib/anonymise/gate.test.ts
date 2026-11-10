@@ -106,8 +106,10 @@ describe('runAnonymisationGate — the happy path', () => {
   it('gives the same person one label across stage 2 and stage 3', async () => {
     // One allocator threads the whole pipeline. Two would restart at A and merge
     // two different people into one pseudonym.
+    // ⚠ Ana López IS in the text (navegador 2026-11-10, D1): this used to pass
+    // with her absent, because stage 2 labelled every roster entry up front.
     const result = await runAnonymisationGate(
-      input({ contentKind: 'conversacion', roster: ['Ana López'] }),
+      input({ contentKind: 'conversacion', roster: ['Ana López'], text: `${TESTIMONY}\nLuego llegó Ana López.` }),
       {
         detector: staticDetector((text) =>
           text.includes('Ana López') ? [{ text: 'Ana López', type: 'persona' }] : [],
@@ -116,6 +118,7 @@ describe('runAnonymisationGate — the happy path', () => {
     )
     if (result.status !== 'ready') throw new Error('expected ready')
     expect(result.report.pseudonyms).toBe(1)
+    expect(result.redactedText).toContain('Luego llegó [Persona A].')
   })
 })
 
@@ -128,6 +131,23 @@ describe('runAnonymisationGate — 🔴 every uncertain outcome is a hold', () =
     expect(result.reason).toContain('transporte')
     // ⚠ The reason names the failure class only.
     expect(result.reason).not.toContain('Lucía')
+  })
+
+  it('🔴 P-01: a stage-3 failure carries NO text — stages 1-2 leave every third party named', async () => {
+    // A cut-off JSON, the masked-token reply, and a transport failure alike.
+    for (const err of [
+      Object.assign(new Error('x'), { failureClass: 'lectura' }),
+      Object.assign(new Error('x'), { failureClass: 'dato-enmascarado' }),
+      Object.assign(new Error('x'), { failureClass: 'transporte', infrastructure: true }),
+    ]) {
+      const result = await runAnonymisationGate(input(), {
+        detector: { name: 'broken', detect: async () => { throw err } },
+      })
+      if (result.status !== 'hold') throw new Error('expected hold')
+      expect(result.stage).toBe('content')
+      expect(result.redactedText).toBeUndefined()
+      expect(JSON.stringify(result)).not.toContain('Ricardo Peña')
+    }
   })
 
   it('holds at `verify` when the detector throws in stage 4', async () => {

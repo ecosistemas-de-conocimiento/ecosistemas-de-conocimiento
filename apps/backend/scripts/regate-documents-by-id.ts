@@ -51,6 +51,7 @@ async function main(): Promise<void> {
   const { getAdminAIClient } = await import('../src/lib/aiClient')
   const { enqueueIngestForDoc } = await import('../src/collections/Documents')
   const { relationId } = await import('../src/lib/permissions')
+  const { purgeDocumentGraph } = await import('../src/lib/graph/documentGraph')
 
   console.log(
     `[regate-documents-by-id] mode=${apply ? 'APPLY' : 'dry-run'} eco-${organizationId} ids=${ids.join(',')}` +
@@ -62,6 +63,9 @@ async function main(): Promise<void> {
     apply,
     allowTestimonio,
     client: getAdminAIClient(organizationId) as never,
+    // 🔴 The old verdict's graph rows go with its corpus copies (P-02), as in
+    // the switch re-gate (`lib/anonymisationControls.ts`).
+    purgeGraph: (id) => purgeDocumentGraph(payload, id),
     gate: async (row) => {
       const uploadedById = relationId(row.uploadedBy)
       if (uploadedById == null) throw new Error('no uploader on the row')

@@ -24,6 +24,8 @@
 
 import type { Payload } from 'payload'
 
+import { safeErrMessage } from './errorSummary'
+
 /**
  * Read an `*_JANITOR_ENABLED` var. ON when unset — these sweeps turn an
  * invisible non-terminal state into a visible one. The session janitor, which
@@ -98,7 +100,7 @@ export function startJanitor(payload: Payload, schedule: JanitorSchedule): boole
         await schedule.sweep(payload)
       } catch (err) {
         payload.logger.error(
-          { err: err instanceof Error ? err.message : String(err) },
+          { err: safeErrMessage(err) },
           `[${schedule.prefix}] sweep threw (will retry next interval)`,
         )
       }

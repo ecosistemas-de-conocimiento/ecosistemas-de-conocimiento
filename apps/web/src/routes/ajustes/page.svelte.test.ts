@@ -191,6 +191,53 @@ describe('/ajustes — tabs and switches (redesign 2026-10-28)', () => {
     expect(refused.slice(refused.indexOf('data-testid="ajustes-estilo"'))).toMatch(/role="alert" data-testid="ajustes-error">No se pudo guardar\./);
   });
 
+  it('🔴 I-12: each live switch posts the value the page loaded; a locked one does not', () => {
+    const form = funciones(render0());
+    expect(form).toMatch(/<input[^>]*name="was-graph"[^>]*value="off"|<input[^>]*value="off"[^>]*name="was-graph"/);
+    expect(form).toMatch(/<input[^>]*name="was-liveMic"[^>]*value="on"|<input[^>]*value="on"[^>]*name="was-liveMic"/);
+    expect(form).not.toContain('name="was-keepPublicFigures"');
+  });
+
+  it('🔴 I-01: after a save with documents still waiting, never a bare "Guardado": the count and "Reintentar"', () => {
+    const body = render0({ anon: { pendingRegate: 3, regating: false, unpublishedByRegate: 0 } }, { saved: true, scope: 'funciones' });
+    expect(body).not.toContain('data-testid="ajustes-saved"');
+    expect(body).toMatch(/data-testid="ajustes-anon-pending">Guardado\. Quedan 3 documentos por volver a anonimizar\./);
+    expect(body).toMatch(/action="\?\/reintentar"/);
+    expect(body).toMatch(/data-testid="ajustes-anon-retry"[^>]*>Reintentar/);
+  });
+
+  it('I-01: while it runs, the count but no "Reintentar"; nothing waiting, a plain "Guardado"', () => {
+    const running = render0({ anon: { pendingRegate: 1, regating: true, unpublishedByRegate: 0 } }, { saved: true, scope: 'funciones' });
+    expect(running).toMatch(/ajustes-anon-pending">Guardado\. Volviendo a anonimizar: queda 1 documento\./);
+    expect(running).not.toContain('ajustes-anon-retry');
+    const clear = render0({ anon: { pendingRegate: 0, regating: false, unpublishedByRegate: 0 } }, { saved: true, scope: 'funciones' });
+    expect(clear).toContain('data-testid="ajustes-saved"');
+    expect(clear).not.toContain('ajustes-anon');
+  });
+
+  it('I-01: on a plain visit the backlog shows too, without "Guardado"', () => {
+    const body = render0({ anon: { pendingRegate: 2, regating: false, unpublishedByRegate: 0 } });
+    expect(body).toMatch(/ajustes-anon-pending">Quedan 2 documentos por volver a anonimizar\./);
+    expect(body).toContain('ajustes-anon-retry');
+  });
+
+  it('I-02: documents a re-check put back to draft, in one line', () => {
+    expect(render0({ anon: { pendingRegate: 0, regating: false, unpublishedByRegate: 4 } })).toMatch(
+      /data-testid="ajustes-anon-unpublished">4 documentos volvieron a borrador\./,
+    );
+    expect(render0({ anon: { pendingRegate: 0, regating: false, unpublishedByRegate: 1 } })).toMatch(
+      /ajustes-anon-unpublished">1 documento volvió a borrador\./,
+    );
+  });
+
+  it('a refused retry shows the backend\'s message', () => {
+    const body = render0(
+      { anon: { pendingRegate: 2, regating: false, unpublishedByRegate: 0 } },
+      { message: 'No administras este ecosistema.', scope: 'reintentar' },
+    );
+    expect(body).toMatch(/data-testid="ajustes-anon-error">No administras este ecosistema\./);
+  });
+
   it('the platform switch is its own card, for a platform admin only', () => {
     expect(render0()).not.toContain('ajustes-plataforma');
     const body = render0({

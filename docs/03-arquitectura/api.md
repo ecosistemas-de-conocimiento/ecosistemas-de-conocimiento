@@ -117,7 +117,7 @@ Definidos en `apps/backend/src/collections/Documents.ts`.
 | PATCH | `/api/documents/:id/note` | Edita el cuerpo de una nota | |
 | POST | `/api/documents/:id/retry` | Reintenta la ingesta | |
 | POST | `/api/documents/:id/graph-retry` | Reprograma la extracción del grafo | Solo quien subió |
-| GET, PATCH | `/api/documents/:id/anonimizacion` | Lee el estado de anonimización y los nombres conservados / cambia los interruptores `keepDocumentAuthor` y `keepCitedAuthors` | Quien subió, `holds:review` del ecosistema y administración de plataforma. Vuelve a pasar por la compuerta un documento `ready`, `held` o `approved` cuyos interruptores guardados difieren. `pending`, `publishing` o `unpublishing`: 409; conversación: 400; falla de ai-service: 502 sin reiniciar ni guardar nada, y el mismo `PATCH` reintenta. Otro ecosistema o cuenta inactiva: 404; sin permiso en el mismo ecosistema: 403. Quien no puede leer el nombre del archivo ve el título "Testimonio". Cada cambio escribe una fila en `anonymisation-setting-changes`. Sin desplegar ([ADR-0020](adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)) |
+| GET, PATCH | `/api/documents/:id/anonimizacion` | Lee el estado de anonimización y los nombres conservados / cambia los interruptores `keepDocumentAuthor`, `keepCitedAuthors` y `keepPublicFigures` (este, solo la administración de plataforma) | Quien subió, `holds:review` del ecosistema y administración de plataforma. Vuelve a pasar por la compuerta un documento `ready`, `held` o `approved` si el cambio afecta su resultado. `pending`, `publishing` o `unpublishing`: 409; conversación: 400; falla de ai-service: 502 sin reiniciar, con el ajuste guardado y la falla marcada para reintentar. Otro ecosistema o cuenta inactiva: 404; sin permiso en el mismo ecosistema: 403. Quien no puede leer el nombre del archivo ve el título "Testimonio". Cada cambio escribe una fila en `anonymisation-setting-changes`. Sin desplegar ([ADR-0020](adr/ADR-0020-anonimizar-todo-y-conservar-nombres-por-documento.md)) |
 
 Publicar no es escribir un campo: re-embebe el documento en otro corpus, cuesta tokens y puede fallar a medias. Por eso es un endpoint y no un `PATCH` sobre `publicationStatus`.
 
@@ -126,8 +126,8 @@ Publicar no es escribir un campo: re-embebe el documento en otro corpus, cuesta 
 | Método | Ruta | Propósito | Quién |
 |---|---|---|---|
 | GET | `/api/holds?organization=<id>[&limit=<n>]` | Cola de documentos retenidos por el gate; la lista no lleva texto | `holds:review` |
-| GET | `/api/holds/:id` | `heldText` (la salida rechazada del gate), `survivors` como posiciones y el reporte del gate; nunca `extractedText` | `holds:review` |
-| POST | `/api/holds/:id` | Decisión: `{ "decision": "approve" }`, `{ "decision": "approve", "text": "…" }` o `{ "decision": "reject", "note": "…" }` | `holds:review` |
+| GET | `/api/holds/:id` | `heldText` (la salida rechazada del gate; vacío si el modelo nunca corrió), `survivors` como posiciones y el reporte del gate; nunca `extractedText` | `holds:review` |
+| POST | `/api/holds/:id` | Decisión: `{ "decision": "approve" }`, `{ "decision": "approve", "text": "…" }` o `{ "decision": "reject", "note": "…" }`. Una retención de la etapa del modelo exige `text` distinto de `heldText`; una cuyo modelo nunca corrió solo admite `reject` | `holds:review` |
 | GET | `/api/published?organization=<id>` | Testimonios publicados (y `documento` con gate) que se pueden rechazar después de publicados | `holds:review` |
 | POST | `/api/published/:id` | `{ "decision": "reject", "note"?: "…" }`: rechaza un testimonio ya publicado y lo retira | `holds:review` |
 

@@ -11,7 +11,15 @@ vi.mock('./conversationIngest', () => ({ rosterForOrganization: roster }))
 import { staticDetector } from './anonymise/detector'
 import { runAnonymisationGate } from './anonymise/gate'
 import { invalidateFeatures } from './features'
-import { authorsLog, documentoGateOptions, effectiveSwitches, publicFiguresLog, verdictSettings } from './publicFigures'
+import {
+  ANONYMISE_SWITCHES,
+  authorsLog,
+  documentoGateOptions,
+  effectiveSwitches,
+  publicFiguresLog,
+  verdictMismatch,
+  verdictSettings,
+} from './publicFigures'
 
 const payloadWith = (features: unknown) => ({ findByID: vi.fn(async () => ({ features })) }) as never
 
@@ -211,6 +219,20 @@ describe('documentoGateOptions — the two switches (owner decision 2026-11-07)'
     expect(await effectiveSwitches(payload, 1, { keepCitedAuthors: false })).toEqual({
       keepDocumentAuthor: { value: true, origin: 'ecosistema' },
       keepCitedAuthors: { value: false, origin: 'documento' },
+      // No contentKind: not a documento, so off (fails closed).
+      keepPublicFigures: { value: false, origin: 'ecosistema' },
+    })
+  })
+
+  it('🔴 keepPublicFigures is a switch (P-04), on for a documento only', async () => {
+    expect(ANONYMISE_SWITCHES).toContain('keepPublicFigures')
+    const { payload } = payloadFor({ keepPublicFigures: true })
+    expect((await effectiveSwitches(payload, 1, { contentKind: 'documento' })).keepPublicFigures).toEqual({ value: true, origin: 'ecosistema' })
+    expect((await effectiveSwitches(payload, 1, { contentKind: 'testimonio' })).keepPublicFigures).toEqual({ value: false, origin: 'ecosistema' })
+    expect((await effectiveSwitches(payload, 1, { contentKind: 'testimonio', keepPublicFigures: true })).keepPublicFigures.value).toBe(false)
+    expect((await effectiveSwitches(payload, 1, { contentKind: 'documento', keepPublicFigures: false })).keepPublicFigures).toEqual({
+      value: false,
+      origin: 'documento',
     })
   })
 })
@@ -220,15 +242,55 @@ describe('verdictSettings — the switches a verdict was made under', () => {
     expect(verdictSettings({ anonymisationReport: { settings: { keepDocumentAuthor: true, keepCitedAuthors: false } } })).toEqual({
       keepDocumentAuthor: true,
       keepCitedAuthors: false,
+      keepPublicFigures: false,
     })
+    expect(
+      verdictSettings({ anonymisationReport: { settings: { keepDocumentAuthor: false, keepCitedAuthors: false, keepPublicFigures: true } } }),
+    ).toMatchObject({ keepPublicFigures: true })
+  })
+
+  it('🔴 keepPublicFigures not recorded: ON when its log kept somebody', () => {
+    const settings = { keepDocumentAuthor: false, keepCitedAuthors: false }
+    expect(verdictSettings({ anonymisationReport: { settings }, publicFiguresKept: [{ name: 'Rosario Ibarra' }] }).keepPublicFigures).toBe(true)
+    expect(verdictSettings({ anonymisationReport: { settings }, publicFiguresKept: null }).keepPublicFigures).toBe(false)
   })
 
   it('🔴 a report without settings that logged a kept author counts as author ON (gated under the old default)', () => {
     expect(verdictSettings({ anonymisationReport: { stages: [] }, authorsKept: [{ name: 'Ana Ruiz' }] })).toEqual({
       keepDocumentAuthor: true,
       keepCitedAuthors: false,
+      keepPublicFigures: false,
     })
-    expect(verdictSettings({ anonymisationReport: null, authorsKept: null })).toEqual({ keepDocumentAuthor: false, keepCitedAuthors: false })
+    expect(verdictSettings({ anonymisationReport: null, authorsKept: null })).toEqual({
+      keepDocumentAuthor: false,
+      keepCitedAuthors: false,
+      keepPublicFigures: false,
+    })
+  })
+})
+
+describe('verdictMismatch — which switches differ from the verdict', () => {
+  const on = { value: true, origin: 'ecosistema' as const }
+  const off = { value: false, origin: 'ecosistema' as const }
+  const settings = { keepDocumentAuthor: false, keepCitedAuthors: true }
+
+  it('lists every differing switch', () => {
+    const row = { anonymisationReport: { settings: { ...settings, keepPublicFigures: false } } }
+    expect(verdictMismatch(row, { keepDocumentAuthor: on, keepCitedAuthors: off, keepPublicFigures: on })).toEqual([
+      'keepDocumentAuthor',
+      'keepCitedAuthors',
+      'keepPublicFigures',
+    ])
+  })
+
+  it('🔴 an UNRECORDED keepPublicFigures now on, with an empty log, is not stale (it may have run on and kept nobody)', () => {
+    const row = { anonymisationReport: { settings }, publicFiguresKept: null }
+    expect(verdictMismatch(row, { keepDocumentAuthor: off, keepCitedAuthors: on, keepPublicFigures: on })).toEqual([])
+  })
+
+  it('🔴 now off, the log kept somebody: stale', () => {
+    const row = { anonymisationReport: { settings }, publicFiguresKept: [{ name: 'Rosario Ibarra' }] }
+    expect(verdictMismatch(row, { keepDocumentAuthor: off, keepCitedAuthors: on, keepPublicFigures: off })).toEqual(['keepPublicFigures'])
   })
 })
 

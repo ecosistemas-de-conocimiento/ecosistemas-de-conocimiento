@@ -77,10 +77,28 @@ const MONTHS = [
  * `20260815`, which is why the whole date family is handled in this stage, ahead
  * of stage 2, rather than sharing a pass with it.
  */
-const ISO_DATE = /\b(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?\b/g
+// ⚠ `[A-Za-z0-9]` edges: `\b` exactly, except that `_` is NOT a letter. With `\b`
+// the date in `entrevista_2026-03-03.m4a` was never seen (navegador 2026-11-10,
+// D2). ASCII on purpose: a date glued to a decomposed "é" must still match.
+const ISO_DATE =
+  /(?<![A-Za-z0-9])(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?(?![A-Za-z0-9])/g
 
 /** `15/08/2026`, `15-08-2026`, `3/3/26` → `08/2026`. Day-first: this is es-MX. */
-const SLASH_DATE = /\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b/g
+const SLASH_DATE = /(?<![A-Za-z0-9])(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})(?![A-Za-z0-9])/g
+
+/**
+ * True when the date at `[at, end)` is glued into an identifier by `-` or `_`:
+ * `nav-2026-11-10-7`, `entrevista_2026-03-03.m4a`, `2026-03-03_notas`.
+ *
+ * 🔴 IT IS STILL A DATE, so it is still removed: WHOLE, as `[Dato omitido]`
+ * (navegador 2026-11-10, D2). Coarsened in place, `nav-2026-11-10-7` became
+ * `nav-2026-11-7`: a different identifier, with nothing marking the cut.
+ */
+function gluedIntoIdentifier(text: string, at: number, end: number): boolean {
+  const alnum = (c: string | undefined) => c !== undefined && /[\p{L}\p{N}]/u.test(c)
+  const joiner = (c: string | undefined) => c === '-' || c === '_'
+  return (joiner(text[at - 1]) && alnum(text[at - 2])) || (joiner(text[end]) && alnum(text[end + 1]))
+}
 
 /** `15 de agosto de 2026` → `agosto de 2026`. Also `15 de agosto del 2026`. */
 const LONG_DATE = new RegExp(
@@ -537,13 +555,15 @@ export function structuralPass(
   const trusted = new Set((options.keepAuthors ?? []).filter((name) => namePartsOf(name).length >= 2))
   let out = text.replace(NONCHARACTERS, REPLACEMENT_CHARACTER)
 
-  out = out.replace(ISO_DATE, (_m, year: string, month: string) => {
+  out = out.replace(ISO_DATE, (m: string, year: string, month: string, _day: string, at: number, whole: string) => {
     dates += 1
+    if (gluedIntoIdentifier(whole, at, at + m.length)) return OMITTED_PLACEHOLDER
     return `${year}-${month}`
   })
 
-  out = out.replace(SLASH_DATE, (_m, _day: string, month: string, year: string) => {
+  out = out.replace(SLASH_DATE, (m: string, _day: string, month: string, year: string, at: number, whole: string) => {
     dates += 1
+    if (gluedIntoIdentifier(whole, at, at + m.length)) return OMITTED_PLACEHOLDER
     // Two-digit years are read as 20xx. A testimony about 1998 written `3/3/98`
     // would come out `03/2098`, which is wrong but NOT a leak — and inventing a
     // century cutoff here would be a guess dressed as precision.

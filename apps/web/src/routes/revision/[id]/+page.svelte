@@ -28,9 +28,12 @@
     APPROVE_RECORDED,
     CANCEL_LABEL,
     DETAIL_UNAVAILABLE,
+    EDIT_TO_APPROVE,
     formatHoldDate,
     highlightsAreStale,
     MAX_NOTE_LENGTH,
+    mustEditToApprove,
+    NO_CHECKED_TEXT_NOTICE,
     NO_SURVIVORS,
     NO_TEXT_NOTICE,
     NOTE_LABEL,
@@ -82,6 +85,14 @@
 
   /** 🔴 See `highlightsAreStale`: edited text means the offsets point elsewhere. */
   const stale = $derived(highlightsAreStale(original, text));
+  /**
+   * 🔴 A `content` hold is never approved as-is (P-01; the backend refuses it
+   * too): approve appears only once the text differs from what was sent.
+   * Gated on `seeded` so the server render, where effects never run, hides it.
+   */
+  const editRequired = $derived(mustEditToApprove(hold?.stage));
+  const edited = $derived(seeded === (hold?.id ?? '') && original !== null && text !== original);
+  const mayApprove = $derived(original !== null && (!editRequired || edited));
   const segments = $derived(original === null ? [] : segmentHeldText(text, hold?.survivors ?? []));
   const breakdown = $derived(survivorBreakdown(hold?.survivors ?? []));
   /** ⚠ Counted from the same highlights as the chips below, so the numbers agree. */
@@ -150,7 +161,7 @@
     {#if original === null}
       <!-- A `structural` hold produced nothing. Do not draw an empty editor and
            let somebody think they can approve it. -->
-      <p class="notice" data-testid="hold-no-text">{NO_TEXT_NOTICE}</p>
+      <p class="notice" data-testid="hold-no-text">{editRequired ? NO_CHECKED_TEXT_NOTICE : NO_TEXT_NOTICE}</p>
     {:else}
       <section class="block" aria-labelledby="text-title">
         <h2 id="text-title">El texto retenido</h2>
@@ -228,12 +239,14 @@
 
       {#if pending === null}
         <div class="actions">
-          {#if original !== null}
+          {#if mayApprove}
             <button
               class="primary"
               type="button"
               onclick={() => (pending = 'approve')}
               data-testid="hold-approve">{APPROVE_LABEL}</button>
+          {:else if original !== null}
+            <p class="hint" data-testid="hold-edit-to-approve">{EDIT_TO_APPROVE}</p>
           {/if}
           <button
             class="danger"

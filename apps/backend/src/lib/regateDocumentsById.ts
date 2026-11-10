@@ -26,6 +26,8 @@
  *   1. Retire it from the ecosistema's SHARED corpus, then from the uploader's
  *      DRAFT corpus (`retireFrom`, a 404 is "already absent"). Sharing stops
  *      first. A failure leaves the row as it was.
+ *      With `purgeGraph` (the switch re-gate), the document's graph rows go
+ *      too, before the reset; a purge that throws stops there (`erase-failed`).
  *   2. One guarded write: a draft, gate columns reset to the retryable `n/a`,
  *      ingest reset to `extracting` with no `ingestId`. Once it landed, ERASE
  *      both copies (`eraseWithdrawnCopies`, audit 2026-10-28; never throws).
@@ -41,6 +43,7 @@
 import type { Payload } from 'payload'
 
 import { draftCorpus, publishedCorpus } from './corpus'
+import { errSummary } from './errorSummary'
 import { relationId } from './permissions'
 import { eraseWithdrawnCopies, retireFrom, type CorpusDeleter } from './publishDocument'
 
@@ -123,6 +126,13 @@ export async function regateDocumentsById(
      * outcome `erase-failed`, so the same request retries.
      */
     requireErase?: boolean
+    /**
+     * 🔴 Purge the document's graph rows built from the old text (audit
+     * 2026-11-10, P-02; `lib/graph/documentGraph.ts` `purgeDocumentGraph`),
+     * next to the corpus erase and BEFORE the reset. A purge that throws is
+     * `erase-failed`, exactly like an erase: the row is left as it was read.
+     */
+    purgeGraph?: (id: Id) => Promise<unknown>
     now?: Date
     log?: (line: string) => void
   },
@@ -196,6 +206,17 @@ export async function regateDocumentsById(
           continue
         }
       }
+      // 1c. 🔴 The graph rows of the old text go too (P-02), before the reset.
+      if (opts.purgeGraph) {
+        try {
+          await opts.purgeGraph(row.id as Id)
+        } catch (err) {
+          log(`doc ${id}: graph NOT purged (${err instanceof Error ? err.name : 'error'}) — not reset, retry`)
+          line.outcome = 'erase-failed'
+          report.failed.push(id)
+          continue
+        }
+      }
 
       // 2. Reset, guarded on the state we read.
       const res = (await payload.update({
@@ -258,7 +279,8 @@ export async function regateDocumentsById(
     } catch (err) {
       line.outcome = 'failed'
       report.failed.push(id)
-      log(`doc ${id}: NOT processed: ${err instanceof Error ? err.message : String(err)}`)
+      // ⚠ The name only: a database error's message carries the query's params.
+      log(`doc ${id}: NOT processed: ${errSummary(err)}`)
     }
   }
   return report

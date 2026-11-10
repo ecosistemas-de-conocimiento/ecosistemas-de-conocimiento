@@ -64,6 +64,7 @@
 import { corpusTextFor, mustPassAnonymisationGate } from '@/lib/anonymiseDocument'
 import { contentKindOf, titleFor } from '@/lib/contentKind'
 import { updateDocumentColumns } from '@/lib/documentColumns'
+import { errSummary } from '@/lib/errorSummary'
 
 import { clearGraphRows, runGraphExtraction, type GraphSchedulerPayload } from './schedule'
 import { GRAPH_PROMPT_VERSION } from './prompt'
@@ -375,7 +376,7 @@ export async function deleteOrphanEntities(
     })
     if (recent) continue
 
-    const referenced = await isReferenced(payload, organizationId, entity.id)
+    const referenced = await isEntityReferenced(payload, organizationId, entity.id)
     if (referenced) continue
 
     try {
@@ -389,7 +390,7 @@ export async function deleteOrphanEntities(
       // ⚠ One failed delete must not abort the sweep. A row that lost a race
       // and gained a mention a millisecond ago is exactly the case, and it is
       // the right outcome: keep the node, keep going.
-      log(`[graph-backfill] no se pudo borrar el nodo ${entity.id}: ${String(err)}`)
+      log(`[graph-backfill] no se pudo borrar el nodo ${entity.id}: ${errSummary(err)}`)
     }
   }
 
@@ -398,7 +399,7 @@ export async function deleteOrphanEntities(
 }
 
 /** Does any mention or any relation in this ecosistema name this entity? */
-async function isReferenced(
+export async function isEntityReferenced(
   payload: GraphBackfillPayload,
   organizationId: string | number,
   entityId: number | string,

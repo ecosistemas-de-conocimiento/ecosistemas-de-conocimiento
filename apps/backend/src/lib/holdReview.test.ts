@@ -27,6 +27,7 @@ import {
   HoldReviewInputError,
   decideOnHold,
   heldDocument,
+  holdSettingsChanged,
   listHeldDocuments,
 } from './holdReview'
 import { PERMISSIONS } from './permissions'
@@ -443,6 +444,55 @@ describe('holds — 🔴 approving is an audited override, and the only way out'
     ).rejects.toThrow(HoldReviewInputError)
   })
 
+  describe('🔴 a `content` hold is never approved as-is (P-01)', () => {
+    const CONTENT_ROW = {
+      ...HELD_ROW,
+      anonymisationError: 'content: El modelo señaló 1 dato que no aparece en el texto. Todavía no se agregó a la búsqueda.',
+      anonymisationSurvivors: null,
+    }
+
+    it('refuses an approval with no text, in Spanish, and writes nothing', async () => {
+      const { payload, created, updated } = fakePayload({ rows: [CONTENT_ROW] })
+      const err = await decideOnHold({ payload, documentId: DOC, user: user(), decision: 'approve' }).catch((e) => e)
+      expect(err).toBeInstanceOf(HoldReviewInputError)
+      expect((err as Error).message).toContain('aprobar tal cual')
+      expect(created).toHaveLength(0)
+      expect(updated).toHaveLength(0)
+    })
+
+    it('refuses the held text sent back unchanged', async () => {
+      const { payload, created } = fakePayload({ rows: [CONTENT_ROW] })
+      await expect(
+        decideOnHold({ payload, documentId: DOC, user: user(), decision: 'approve', text: HELD_TEXT }),
+      ).rejects.toThrow(/aprobar tal cual/)
+      expect(created).toHaveLength(0)
+    })
+
+    it('accepts an edited text, recorded as edited', async () => {
+      const corrected = 'Vivo en [Domicilio A] con [Persona A].'
+      const { payload, created, updated } = fakePayload({ rows: [CONTENT_ROW] })
+      await decideOnHold({ payload, documentId: DOC, user: user(), decision: 'approve', text: corrected })
+      expect(updated[0]!.data.redactedText).toBe(corrected)
+      expect(created[0]!.textEdited).toBe(true)
+    })
+
+    it('a model that never answered left no text, and rejecting still works', async () => {
+      const row = { ...CONTENT_ROW, heldText: null, anonymisationError: 'content: La revisión automática no pudo terminar (lectura). x' }
+      const { payload } = fakePayload({ rows: [row] })
+      await expect(decideOnHold({ payload, documentId: DOC, user: user(), decision: 'approve' })).rejects.toThrow(
+        HoldReviewInputError,
+      )
+      const outcome = await decideOnHold({ payload, documentId: DOC, user: user(), decision: 'reject' })
+      expect(outcome.decision).toBe('rejected')
+    })
+
+    it('a `verify` hold is still approvable as-is', async () => {
+      const { payload, updated } = fakePayload()
+      await decideOnHold({ payload, documentId: DOC, user: user(), decision: 'approve' })
+      expect(updated[0]!.data.redactedText).toBe(HELD_TEXT)
+    })
+  })
+
   it('rejecting is terminal, audited, and wipes the reviewable text', async () => {
     const { payload, created, updated } = fakePayload()
     const outcome = await decideOnHold({
@@ -506,5 +556,30 @@ describe('holds — 🔴 approving is an audited override, and the only way out'
       }),
     ).rejects.toThrow(HoldReviewInputError)
     expect(created).toHaveLength(0)
+  })
+})
+
+describe('holdSettingsChanged — 🔴 every switch counts, keepPublicFigures included', () => {
+  const payload = { findByID: async () => ({ id: ORG, features: {} }) } as unknown as Payload
+  const row = (recorded: boolean, now: boolean) => ({
+    ...HELD_ROW,
+    contentKind: 'documento',
+    keepDocumentAuthor: false,
+    keepCitedAuthors: false,
+    keepPublicFigures: now,
+    anonymisationReport: { ...HELD_ROW.anonymisationReport, settings: { keepDocumentAuthor: false, keepCitedAuthors: false, keepPublicFigures: recorded } },
+  })
+
+  it('a hold made with keepPublicFigures off, now on, is stale', async () => {
+    expect(await holdSettingsChanged(payload, row(false, true))).toBe(true)
+  })
+
+  it('a hold made with keepPublicFigures on, now off, is stale', async () => {
+    expect(await holdSettingsChanged(payload, row(true, false))).toBe(true)
+  })
+
+  it('unchanged switches: not stale', async () => {
+    expect(await holdSettingsChanged(payload, row(true, true))).toBe(false)
+    expect(await holdSettingsChanged(payload, row(false, false))).toBe(false)
   })
 })

@@ -283,6 +283,7 @@ function applyFindings(
   allocate: (name: string) => string,
   allocateAddress: (address: string) => string,
   names: NamePartRegistry,
+  peek: (name: string) => string | undefined,
   folded = false,
 ): { text: string; labels: string[] } {
   const ordered = [...findings].sort((a, b) => b.text.length - a.text.length)
@@ -290,7 +291,9 @@ function applyFindings(
   let out = text
   // 🔴 A one-word person finding that is a part of ONE redacted name takes that
   // name's label: "Fausto" beside "Fausto Arellano" is the same person.
-  const personLabel = (span: string) => allocate(names.ownerOf(span, allocate) ?? span)
+  // ⚠ `peek` to find the owner, never `allocate` (navegador 2026-11-10, D1):
+  // asking whose part it is must not label every member who shares it.
+  const personLabel = (span: string) => allocate(names.ownerOf(span, peek) ?? span)
 
   for (const finding of ordered) {
     /**
@@ -312,7 +315,7 @@ function applyFindings(
     // same rule `spreadPart` applies (audit 2026-10-27: both "Fausto" and
     // "Fausto Arellano" reported gave "Fausto Martínez" Arellano's label).
     const source = out
-    const owner = finding.type === 'persona' ? names.ownerOf(finding.text, allocate) : null
+    const owner = finding.type === 'persona' ? names.ownerOf(finding.text, peek) : null
     const ownParts = owner === null ? null : new Set(namePartsOf(owner).map(normaliseName))
     const replacement = (at: number, end: number) =>
       finding.type === 'persona'
@@ -574,7 +577,7 @@ function redactLeftovers(
     labels.push(f.type)
     out = next
   }
-  const applied = applyFindings(out, plain, allocate, allocateAddress, names, true)
+  const applied = applyFindings(out, plain, allocate, allocateAddress, names, peek, true)
   return { text: applied.text, labels: [...labels, ...applied.labels] }
 }
 
@@ -772,6 +775,7 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
     // 🔴 THE SAME ALLOCATOR STAGE 3 WILL USE. See the header — one allocator per
     // document is the invariant, and addresses obey it exactly like people do.
     allocateAddress: (address) => allocator.addressLabelFor(address),
+    ownLabel: (placeholder) => allocator.emitted(placeholder),
   })
   stages.push({ stage: 'deterministic', removed: deterministic.removed })
 
@@ -792,15 +796,15 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
     // 🔴 A detector that could not run is NOT "nothing to redact". See
     // `detector.ts`: the whole reason it throws instead of returning `[]` is to
     // land here.
-    // The deterministic output is real work already done and a reviewer can act
-    // on it, so it travels with the refusal even though the model never ran.
+    // 🔴 NO TEXT TRAVELS WITH THIS HOLD (audit 2026-11-10, P-01). The model
+    // never ran, so stages 1-2 are all that touched it: every name that is not
+    // a member's is still there. That is near-raw, and Revisión is read by more
+    // people than may read the original (`mayReadGatedOriginal`). A reviewer
+    // gets the reason and may reject; nothing here can be approved as-is.
     return hold(
       'content',
       `La revisión automática no pudo terminar (${failureClassOf(err)}). ${NOT_ADDED}`,
-      {
-        redactedText: deterministic.text,
-        ...(isInfrastructureFailure(err) ? { retryable: true as const } : {}),
-      },
+      isInfrastructureFailure(err) ? { retryable: true as const } : undefined,
     )
   }
 
@@ -821,8 +825,11 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
   // member's (owner Q13 A, 2026-10-27: "Itzel" alone for "Itzel Barragán").
   // Elsewhere, the members stage 2 actually caught (audit 2026-10-27): a
   // conversation does not spread the first names of members it never named.
+  // ⚠ `peekLabel`, never `labelFor`: asking a member's label must not give one
+  // to a member stage 2 never found (navegador 2026-11-10, D1).
   for (const member of rosterNames) {
-    if (input.contentKind === 'documento' || deterministic.text.includes(allocator.labelFor(member))) {
+    const caught = allocator.peekLabel(member)
+    if (input.contentKind === 'documento' || (caught !== undefined && deterministic.text.includes(caught))) {
       names.add(member)
     }
   }
@@ -832,6 +839,7 @@ async function runGate(input: GateInput, deps: GateDeps): Promise<GateResult> {
     (name) => allocator.labelFor(name),
     (address) => allocator.addressLabelFor(address),
     names,
+    (name) => allocator.peekLabel(name),
     true,
   )
   stages.push({ stage: 'content', removed: countsByLabel(applied.labels) })

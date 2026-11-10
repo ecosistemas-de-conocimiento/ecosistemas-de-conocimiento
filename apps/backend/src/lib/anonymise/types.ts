@@ -161,7 +161,9 @@ export interface GateHold {
    * for ONE purpose: giving a human reviewer something to read and correct. The
    * `documents` row keeps it in its own column (`heldText`) for that reason.
    *
-   * Absent for a `structural` hold, which produced no output at all.
+   * Absent for a `structural` hold, which produced no output at all, and for a
+   * `content` hold where the model never answered: stages 1-2 alone leave every
+   * non-member's name, so that text is near-raw and is not kept (P-01).
    */
   redactedText?: string
   /** Where verify found something still standing. Only ever set on a verify hold. */

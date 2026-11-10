@@ -218,6 +218,7 @@ curl -s -H "Authorization: Bearer <EDC_COOLIFY_API_TOKEN>" \
 Ver [Respaldos y recuperación](respaldos-y-recuperacion.md) §2. Forma mínima, en el servidor:
 
 ```sh
+umask 077  # volcados 600, carpetas 700: contienen texto crudo
 STAMP=$(date -u +%Y%m%dT%H%MZ); mkdir -p /root/backups/$STAMP
 C=$(docker ps --format '{{.Names}}' | grep '^postgres-<app uuid>')
 for DB in edc_backend edc_ai; do
@@ -227,7 +228,7 @@ done
 cd /root/backups/$STAMP && sha256sum *.dump > SHA256SUMS
 ```
 
-Luego, copia fuera del servidor, en equipo del equipo de desarrollo: `scp` de la carpeta y `sha256sum -c SHA256SUMS`.
+Luego, copia fuera del servidor, en equipo del equipo de desarrollo: `umask 077` también en ese equipo, `scp` de la carpeta y `sha256sum -c SHA256SUMS`.
 
 ### 6.4 Restaurar una base
 
