@@ -45,6 +45,7 @@ import { anonymiseParticipantUpload, fileParticipantAudioAsTestimonio } from '..
 import { isAppNote, isStudentNote, parseNoteEdit, publishStudentNote, publishStudentNoteChanges } from '../lib/studentNotes'
 import { anonimizacionEndpoints } from '../lib/anonymisationControls'
 import { CONSENT_HELD_MESSAGE, isConsentHeld, readConsentHeld } from '../lib/consentHold'
+import { verdictSettings } from '../lib/publicFigures'
 import { errSummary, safeErrMessage } from '../lib/errorSummary'
 import {
   consumeCorpusCleanupSkip,
@@ -422,6 +423,20 @@ export const gatedQueryableReadable: FieldAccess = ({ req, doc }) =>
   doc === undefined
     ? Boolean(req.user)
     : mayReadGatedOriginal(req.user, doc as Parameters<typeof mayReadGatedOriginal>[1], 'identity')
+
+/**
+ * `uploadedBy` of a gated `documento` whose verdict ran with
+ * `keepDocumentAuthor` on: the text already names its author, so colleagues
+ * see who contributed it too (ADR-0020's switch; coordinator ruling
+ * 2026-11-10 on R4-01). Read only, from the verdict actually stored
+ * (`verdictSettings`): a stale or off switch keeps it hidden. Queries on it
+ * stay narrowed (`constrainGatedQueries`).
+ */
+export const contributorReadable: FieldAccess = (args) => {
+  if (gatedQueryableReadable(args)) return true
+  const doc = args.doc as ({ contentKind?: unknown } & Parameters<typeof verdictSettings>[0]) | undefined
+  return Boolean(args.req.user) && doc?.contentKind === 'documento' && verdictSettings(doc).keepDocumentAuthor
+}
 
 /**
  * 🔴 THE NEUTRAL TITLE A CALLER GETS IN PLACE OF A GATED ROW'S `name` (R4-01,
@@ -3056,8 +3071,9 @@ export const Documents: CollectionConfig = {
       required: true,
       index: true,
       // 🔴 Who recorded it. Hidden from colleagues on gated content, by row and
-      // by query — see `gatedQueryableReadable` and `constrainGatedQueries`.
-      access: { read: gatedQueryableReadable },
+      // by query — see `gatedQueryableReadable` and `constrainGatedQueries` —
+      // unless the verdict kept the document's author (`contributorReadable`).
+      access: { read: contributorReadable },
       admin: { readOnly: true, description: 'Taken from the session. Immutable.' },
     },
     {
