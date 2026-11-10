@@ -49,6 +49,7 @@
 import type { Payload } from 'payload'
 
 import { rowExists, waitForOutcome, type AfterCommitDeps, type TxOutcome } from './conversationUploads'
+import { safeErrMessage } from './errorSummary'
 import { organizationOfTurnCorpus } from './turnCorpusCheck'
 
 type Id = number | string
@@ -101,7 +102,7 @@ export function scheduleTurnErasure(
   payload.logger.info({ sessionId, xid: plan.xid, ...rest }, '[sessions] scheduled post-commit turn erasure')
   void eraseTurnsAfterCommit(plan, { payload, ...deps }).catch((err) => {
     payload.logger.warn(
-      { ...planIds(plan), err: String(err) },
+      { ...planIds(plan), err: safeErrMessage(err) },
       '[sessions] post-commit turn erasure failed; these turns are retired but NOT erased',
     )
   })
@@ -141,7 +142,7 @@ export async function eraseTurnsAfterCommit(
   try {
     client = await (deps.corpusClient ?? defaultClient)(plan.organizationId)
   } catch (err) {
-    log.warn({ ...allIds, err: String(err) }, '[sessions] no ai-service client; these turns are retired but NOT erased')
+    log.warn({ ...allIds, err: safeErrMessage(err) }, '[sessions] no ai-service client; these turns are retired but NOT erased')
     return outcome
   }
 
@@ -160,7 +161,7 @@ export async function eraseTurnsAfterCommit(
         continue
       }
       log.warn(
-        { ...allIds, turnId, err: String(err) },
+        { ...allIds, turnId, err: safeErrMessage(err) },
         '[sessions] could not erase a deleted conversation’s turn; it is retired but NOT erased',
       )
     }
