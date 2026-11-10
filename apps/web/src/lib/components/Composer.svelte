@@ -154,8 +154,11 @@
 
   /**
    * 🔴 Live text is shown while recording and dropped on stop (`null`). It
-   * never lands in the input, so it can't be sent or stored ungated (C-13,
-   * 2026-11-10); only the uploaded recording goes on, through the gate.
+   * never lands in the input, so it can't be sent from here (C-13,
+   * 2026-11-10); only the uploaded recording goes on. ⚠ That recording passes
+   * the gate only for someone holding `voces:upload` (it goes up as a
+   * testimonio); anyone else's goes up as a `documento` WITHOUT "Anonimizar",
+   * so its transcript is read ungated (`MicButton.svelte`; review R4-15, open).
    */
   function onLiveText(line: string | null): void {
     liveText = line;

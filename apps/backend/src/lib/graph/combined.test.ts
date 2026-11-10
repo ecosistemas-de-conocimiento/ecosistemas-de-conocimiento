@@ -134,6 +134,15 @@ describe('combined statements carry every gate, per row', () => {
     }
   })
 
+  it('🔴 P-13: both document statements return the title gate’s columns, as queries.ts does', () => {
+    const edge = render(statements['edge documents']!).text
+    expect(edge).toContain("d.anonymisation_report->>'redactedTitle' AS redacted_title")
+    expect(edge).toContain('ranked.anonymise AS anonymise, ranked.redacted_title AS redacted_title FROM ranked')
+    const docs = render(statements.documents!).text
+    expect(docs).toContain('d.anonymise AS anonymise')
+    expect(docs).toContain("d.anonymisation_report->>'redactedTitle' AS redacted_title")
+  })
+
   it('binds the ecosistema ids one parameter each, sorted, never inlined', () => {
     const { text, params } = render(statements.view!)
     expect(text).not.toMatch(/ANY\(ARRAY\[\d/)

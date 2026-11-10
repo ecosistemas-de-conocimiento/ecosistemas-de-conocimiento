@@ -25,6 +25,7 @@
 
 import { sql } from '@payloadcms/db-postgres'
 
+import { documentTitleFor } from '../contentKind'
 import { liveMention } from '../graph/seedGuard'
 
 import { TESTIMONIO_CONSENT_VERSION } from './testimonioConsent'
@@ -58,6 +59,23 @@ const labelled = (r: Record<string, unknown>): Labelled => ({
 
 /** 🔴 Peer-facing reads: `documento` only (see the header). */
 const DOCUMENTO: GraphSql = sql` AND d.content_kind = 'documento'`
+
+/**
+ * 🔴 P-13 (review R4-03, 2026-11-10): the title gate's columns. Every student
+ * note is gated (`lib/studentNotes.ts`), so a title shown to anyone but its
+ * uploader, or sent to a hosted model, is {@link gatedTitle}, never `d.name`.
+ */
+const TITLE_GATE: GraphSql = sql`d.content_kind AS content_kind, d.anonymise AS anonymise,
+           d.anonymisation_report->>'redactedTitle' AS redacted_title`
+
+/** A row with {@link TITLE_GATE}'s columns → its redacted title or "Documento". */
+const gatedTitle = (r: Record<string, unknown>): string =>
+  documentTitleFor({
+    contentKind: r.content_kind,
+    name: r.name,
+    anonymise: r.anonymise,
+    anonymisationReport: { redactedTitle: r.redacted_title },
+  })
 
 const published = (on: boolean): GraphSql => (on ? sql` AND d.publication_status = 'published'` : sql``)
 
@@ -167,6 +185,7 @@ export async function corpusTopTopics(p: StudentDb, organizationId: number, limi
 
 export interface DocRef {
   id: number
+  /** 🔴 The gated title ({@link gatedTitle}), never the raw `name` of a gated documento. */
   name: string
 }
 
@@ -182,7 +201,7 @@ export async function readingsForTopics(
   const rows = await run(
     p,
     sql`
-    SELECT d.id AS id, d.name AS name, COUNT(DISTINCT m.entity_id)::int AS hits
+    SELECT d.id AS id, d.name AS name, ${TITLE_GATE}, COUNT(DISTINCT m.entity_id)::int AS hits
       FROM graph_mentions m
       JOIN documents d ON d.id = m.document_id AND d.organization_id = ${organizationId} AND d.publication_status = 'published'
       JOIN graph_entities e ON e.id = m.entity_id AND e.organization_id = ${organizationId}
@@ -190,26 +209,29 @@ export async function readingsForTopics(
        AND d.content_kind = 'documento'
        AND d.uploaded_by_id <> ${excludeUploader}
        AND m.entity_id = ANY(${intArray(topicIds)})${notNoise('e')}${publicPersonaOnly('e')}
-     GROUP BY d.id, d.name
+     GROUP BY d.id, d.name, d.content_kind, d.anonymise, d.anonymisation_report->>'redactedTitle'
      ORDER BY hits DESC, d.id DESC
      LIMIT ${limit}`,
   )
-  return rows.map((r) => ({ id: toId(r.id), name: toText(r.name) }))
+  return rows.map((r) => ({ id: toId(r.id), name: gatedTitle(r) }))
 }
 
-/** Every published documento's name — matched against author names in JS. */
+/**
+ * Every published documento's title — matched against author names in JS. The
+ * gated title, not `name`: the match is returned as the author's page.
+ */
 export async function publishedDocumentoNames(p: StudentDb, organizationId: number): Promise<DocRef[]> {
   const rows = await run(
     p,
     sql`
-    SELECT d.id AS id, d.name AS name FROM documents d
+    SELECT d.id AS id, d.name AS name, ${TITLE_GATE} FROM documents d
      WHERE d.organization_id = ${organizationId}
        AND d.publication_status = 'published'
        AND d.content_kind = 'documento'
      ORDER BY d.id
      LIMIT 5000`,
   )
-  return rows.map((r) => ({ id: toId(r.id), name: toText(r.name) }))
+  return rows.map((r) => ({ id: toId(r.id), name: gatedTitle(r) }))
 }
 
 /**
@@ -226,19 +248,22 @@ export async function publishedDocumentosOf(
   const rows = await run(
     p,
     sql`
-    SELECT d.id AS id, d.name AS name FROM documents d
+    SELECT d.id AS id, d.name AS name, ${TITLE_GATE} FROM documents d
      WHERE d.organization_id = ${organizationId}
        AND d.uploaded_by_id = ${userId}
        AND d.publication_status = 'published'${DOCUMENTO}
      ORDER BY d.created_at DESC, d.id DESC
      LIMIT ${limit}`,
   )
-  return rows.map((r) => ({ id: toId(r.id), name: toText(r.name) }))
+  return rows.map((r) => ({ id: toId(r.id), name: gatedTitle(r) }))
 }
 
 export interface OwnDoc {
   id: number
+  /** The raw name: for the uploader's own eyes only. */
   name: string
+  /** 🔴 The gated title: what the teacher report and a hosted prompt get. */
+  title: string
   createdAt: string
   status: string
   kind: string
@@ -250,7 +275,7 @@ export async function documentsOf(p: StudentDb, organizationId: number, userId: 
     p,
     sql`
     SELECT d.id AS id, d.name AS name, d.created_at AS created_at,
-           d.publication_status AS status, d.content_kind AS kind
+           d.publication_status AS status, d.content_kind AS kind, ${TITLE_GATE}
       FROM documents d
      WHERE d.organization_id = ${organizationId} AND d.uploaded_by_id = ${userId}
        -- 🔴 Not a "Publicar cambios" staging row (lib/studentNotes.ts): no
@@ -262,6 +287,7 @@ export async function documentsOf(p: StudentDb, organizationId: number, userId: 
   return rows.map((r) => ({
     id: toId(r.id),
     name: toText(r.name),
+    title: gatedTitle(r),
     createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : toText(r.created_at),
     status: toText(r.status),
     kind: toText(r.kind),

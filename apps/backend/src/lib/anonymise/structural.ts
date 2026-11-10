@@ -144,20 +144,34 @@ const validDayMonth = (day: string, month: string): boolean =>
  * Runs after {@link LONG_DATE}, which keeps its own output for a 4-digit year.
  *
  * ⚠ A STREET OR A SCHOOL IS NOT A DATE: "Calle 5 de Mayo", "Escuela 16 de
- * Septiembre". A capitalised month after a capitalised word or an
- * abbreviation ("Av.") is left as written (see the replace below).
+ * Septiembre". A capitalised month right after a word from {@link PLACE_WORDS}
+ * ("Calle", "Av.", "Escuela") is left as written, and only with no year after
+ * it (see the replace below). Any other capitalised word does not count:
+ * "Nació Juana Pérez 3 de Mayo del 90" kept the whole date while any
+ * capitalised word was enough (review R4-09, 2026-11-10).
  */
 const DAY_MONTH = new RegExp(
   String.raw`(?<![\p{L}\p{M}\p{N}])${DAY_RANGE}(?:\d{1,2}(?:[º°ª]|o(?=\s))?|primero)\s+(?:de\s+)?(?=(?:${MONTHS.join('|')})(?![\p{L}\p{M}]))`,
   'giu',
 )
-/** The word before a day that makes "5 de Mayo" a name: capitalised, or an abbreviation. */
-const NAME_BEFORE = /(?:^|[^\p{L}\p{M}])(\p{Lu}[\p{L}\p{M}]*\.?|\p{L}+\.)\s*$/u
-/** Capitalised words that still introduce a date ("El 3 De Mayo", "Desde el 5 de Mayo"). */
-const DATE_LEADERS: ReadonlySet<string> = new Set([
-  'el', 'la', 'los', 'del', 'de', 'en', 'desde', 'hasta', 'para', 'por', 'a', 'al', 'y', 'o', 'e', 'que',
-  'dia', 'hoy', 'fue', 'era', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo',
+/** The word right before a day, with its abbreviation dot if it has one. */
+const WORD_BEFORE = /(?:^|[^\p{L}\p{M}])([\p{L}\p{M}]+\.?)\s*$/u
+/**
+ * Words that make "5 de Mayo" the name of a street, a school or a place, folded
+ * (no accents, lower case, no dot). Anything else before the day is not enough.
+ */
+const PLACE_WORDS: ReadonlySet<string> = new Set([
+  'calle', 'c', 'cll', 'av', 'avda', 'avenida', 'calzada', 'calz', 'blvd', 'bulevar', 'boulevard', 'paseo',
+  'circuito', 'cerrada', 'cda', 'privada', 'priv', 'prolongacion', 'prol', 'andador', 'callejon', 'cjon',
+  'carretera', 'eje', 'glorieta', 'colonia', 'col', 'barrio', 'unidad', 'fraccionamiento', 'fracc', 'ejido',
+  'escuela', 'esc', 'primaria', 'prim', 'secundaria', 'sec', 'colegio', 'instituto', 'hospital', 'mercado',
+  'plaza', 'jardin', 'parque', 'puente', 'estacion', 'metro', 'estadio', 'teatro',
 ])
+/** `de|del` + a 2- or 4-digit year right after the month: a date, never a street name. */
+const YEAR_AFTER_MONTH = new RegExp(
+  String.raw`^(?:${MONTHS.join('|')})\s+de[l]?\s+(?:\d{2}|\d{4})(?!\d)`,
+  'iu',
+)
 
 /** The rule name for a CURP removed here (`deterministic.ts` uses the same). */
 export const LABEL_CURP = 'curp'
@@ -667,10 +681,12 @@ export function structuralPass(
   out = out.replace(DAY_MONTH, (m: string, at: number, whole: string) => {
     const day = /^\d+/.exec(m)?.[0]
     if (day !== undefined && (Number(day) < 1 || Number(day) > 31)) return m
-    // "Calle 5 de Mayo": a capitalised month after a name or an abbreviation.
+    // "Calle 5 de Mayo": a capitalised month after a street or place word, with no year.
     const month = whole.charAt(at + m.length)
-    const before = NAME_BEFORE.exec(whole.slice(Math.max(0, at - 40), at))?.[1]
-    if (month === month.toUpperCase() && before !== undefined && !DATE_LEADERS.has(fold(before.replace(/\.$/u, '')))) return m
+    const before = WORD_BEFORE.exec(whole.slice(Math.max(0, at - 40), at))?.[1]
+    const place = before !== undefined && PLACE_WORDS.has(fold(before.replace(/\.$/u, '')))
+    const year = YEAR_AFTER_MONTH.test(whole.slice(at + m.length, at + m.length + 20))
+    if (month === month.toUpperCase() && place && !year) return m
     dates += 1
     return ''
   })

@@ -82,7 +82,7 @@ function fakeQueries(w: World): StudentQueries & { calls: string[] } {
     publishedDocumentoNames: async () => [{ id: 90, name: 'Autores/Umberto Eco' }],
     documentsOf: async (_p: unknown, _o: number, uid: number) => {
       calls.push(`docs:${uid}`)
-      return [{ id: 100 + uid, name: `Trabajo ${uid}`, createdAt: '2026-10-01', status: 'draft', kind: 'documento' }]
+      return [{ id: 100 + uid, name: `Trabajo ${uid}`, title: `Trabajo ${uid}`, createdAt: '2026-10-01', status: 'draft', kind: 'documento' }]
     },
     ownTexts: async (_p: unknown, _o: number, uid: number) => {
       calls.push(`texts:${uid}`)
@@ -246,7 +246,7 @@ describe('student scoping', () => {
     expect(Q.calls.filter((c) => c.startsWith('texts:'))).toEqual(['texts:1'])
     expect(Q.calls.filter((c) => c.startsWith('docs:'))).toEqual(['docs:1'])
     // The kind travels, so the web can keep testimonio names out of hosted prompts (audit 2026-10-28 item 9).
-    expect(res.body.documentos).toEqual([{ id: 101, name: 'Trabajo 1', status: 'draft', kind: 'documento' }])
+    expect(res.body.documentos).toEqual([{ id: 101, name: 'Trabajo 1', title: 'Trabajo 1', status: 'draft', kind: 'documento' }])
     expect(res.body.autores).toEqual([
       { name: 'Charles S. Peirce', docs: 2, page: null },
       { name: 'Lotman', docs: 1, page: null },

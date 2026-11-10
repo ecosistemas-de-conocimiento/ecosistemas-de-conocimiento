@@ -120,6 +120,35 @@ describe.skipIf(!dockerOk)('student queries (real Postgres)', () => {
     expect((await Q.publishedDocumentoNames(p, 8)).map((d) => d.id)).toEqual([21, 31])
     expect(await Q.sessionCountOf(p, 8, 1)).toBe(0)
   })
+  it('🔴 P-13 (R4-03): a gated note shows its redacted title or "Documento" to anyone but its uploader', async () => {
+    await pg!.db.execute(
+      sql.raw(`
+      UPDATE documents SET name = 'Entrevista con doña Rosa Martínez', anonymise = TRUE,
+        anonymisation_report = '{"redactedTitle":"Entrevista con [Persona A]"}'::jsonb WHERE id = 21;
+      UPDATE documents SET name = 'Notas de Juana Pérez', anonymise = TRUE WHERE id = 22;
+    `),
+    )
+    try {
+      const redacted = { id: 21, name: 'Entrevista con [Persona A]' }
+      expect(await Q.readingsForTopics(p, 8, [100], 1)).toEqual([{ id: 31, name: 'Autores/Charles S. Peirce' }, redacted])
+      expect(await Q.publishedDocumentosOf(p, 8, 2)).toEqual([redacted])
+      expect((await Q.publishedDocumentoNames(p, 8)).find((d) => d.id === 21)).toEqual(redacted)
+      const own = await Q.documentsOf(p, 8, 2)
+      expect(own.map((d) => [d.id, d.name, d.title]).sort()).toEqual([
+        [21, 'Entrevista con doña Rosa Martínez', 'Entrevista con [Persona A]'],
+        [22, 'Notas de Juana Pérez', 'Documento'],
+        [52, 'Voz de Beto', 'Testimonio'],
+      ])
+    } finally {
+      await pg!.db.execute(
+        sql.raw(`
+        UPDATE documents SET name = 'Beto publicado', anonymise = FALSE, anonymisation_report = NULL WHERE id = 21;
+        UPDATE documents SET name = 'Beto borrador', anonymise = FALSE WHERE id = 22;
+      `),
+      )
+    }
+  })
+
   it('🔴 a published TESTIMONIO by a consenting peer never feeds a peer lookup', async () => {
     // Doc 52: Beto's own audio, filed as a testimonio, mentions 'signo' and Peirce.
     expect(await Q.publishedDocumentIdsOf(p, 8, [2])).toEqual([21])

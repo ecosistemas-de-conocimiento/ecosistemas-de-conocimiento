@@ -70,6 +70,20 @@ describe('day + month in words', () => {
     expect(structuralPass(text).text).toBe(expected)
   })
 
+  // R4-09 (review, 2026-11-10): any capitalised word before the day kept the whole date.
+  it.each([
+    ['Nació Juana Pérez 3 de Mayo del 90', 'Nació Juana Pérez Mayo del 90'],
+    ['Pérez 3 de Mayo del 90', 'Pérez Mayo del 90'],
+    ['Juana Pérez, 3 de Mayo de 90.', 'Juana Pérez, Mayo de 90.'],
+    ['Nació Juana Pérez 3 de Mayo', 'Nació Juana Pérez Mayo'],
+    ['JUANA PÉREZ 3 DE MAYO DEL 90', 'JUANA PÉREZ MAYO DEL 90'],
+    ['Oaxaca 1º de Mayo del 90', 'Oaxaca Mayo del 90'],
+    ['Calle 5 de Mayo del 90', 'Calle Mayo del 90'],
+  ])('a name before the day does not make it a street: %s', (text, expected) => {
+    expect(structuralPass(text).text).toBe(expected)
+    expect(count(text, LABEL_FECHA)).toBe(1)
+  })
+
   it('a 4-digit year keeps the existing output', () => {
     expect(structuralPass('3 de mayo de 1990').text).toBe('mayo de 1990')
     expect(structuralPass('3 de marzo del 2024').text).toBe('marzo de 2024')
@@ -109,6 +123,15 @@ describe('left as written', () => {
     'Vivo en Calle 5 de Mayo.',
     'la Escuela 16 de Septiembre',
     'Av. 20 de Noviembre',
+    'Escuela 5 de Mayo',
+    'Vivo en Calle 5 de Mayo 23, Col. Centro.',
+    'CALLE 5 DE MAYO',
+    'Avenida 16 de Septiembre',
+    'Calz. 20 de Noviembre',
+    'Esc. Prim. 5 de Mayo',
+    'Colonia 1º de Mayo',
+    'Prolongación 5 de Febrero',
+    'Hospital 20 de Noviembre',
     'son 3 de cada 10',
     '40 de mayo',
     'GOMA900503HDFRRN0',

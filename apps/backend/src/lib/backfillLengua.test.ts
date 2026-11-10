@@ -88,6 +88,30 @@ describe('backfillLengua (C-3)', () => {
     expect(report.skippedIds).toEqual(['20', '21', '22'])
   })
 
+  it('🔴 P-13 (review R4-04): a gated documento re-ingests under its gated title, never its name', async () => {
+    const { calls, clientFor } = fakeClients()
+    const gated = {
+      ...DOC,
+      anonymise: true,
+      anonymisationStatus: 'ready',
+      redactedText: 'Las parteras acompañan los nacimientos.',
+    }
+    await backfillLengua(
+      fakePayload([
+        { ...gated, id: 30, name: 'Entrevista a Juan Pérez.pdf', anonymisationReport: { redactedTitle: 'Entrevista a [Persona A].pdf' } },
+        { ...gated, id: 31, name: 'Notas de Juan Pérez.pdf' },
+      ]) as never,
+      clientFor,
+      { apply: true, delayMs: 0 },
+    )
+    const sent = calls.map((c) => [c.req.documents[0]!.title, (c.req.documents[0]!.metadata as { title?: unknown }).title])
+    expect(sent).toEqual([
+      ['Entrevista a [Persona A].pdf', 'Entrevista a [Persona A].pdf'],
+      ['Documento', 'Documento'],
+    ])
+    expect(JSON.stringify(calls)).not.toContain('Pérez')
+  })
+
   it('an enqueue error is counted and the run goes on', async () => {
     let n = 0
     const clientFor = (): LenguaIngester => ({

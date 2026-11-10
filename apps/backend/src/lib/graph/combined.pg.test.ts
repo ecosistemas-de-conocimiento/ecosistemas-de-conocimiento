@@ -277,6 +277,27 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
     expect(detail?.neighbours[0]?.documents.map((d) => d.id)).toEqual([201, 102, 101])
   })
 
+  it('🔴 P-13: a gated documento is titled with its redacted title or "Documento", never its name', async () => {
+    await db.execute(sql`
+      UPDATE documents SET name = 'Entrevista a Juan Pérez.pdf', anonymise = TRUE,
+        anonymisation_report = '{"redactedTitle":"Entrevista a [Persona A].pdf"}'::jsonb WHERE id = 101;
+      UPDATE documents SET name = 'Notas de Juan Pérez.pdf', anonymise = TRUE WHERE id = 102;
+    `)
+    try {
+      const detail = await readCombinedEntityDetail(payload, { organizationIds: [1, 2], entityId: 21 })
+      const titles = (refs: readonly { id: number; title: string }[] | undefined) =>
+        Object.fromEntries((refs ?? []).filter((d) => d.id === 101 || d.id === 102).map((d) => [d.id, d.title]))
+      const expected = { 101: 'Entrevista a [Persona A].pdf', 102: 'Documento' }
+      expect(titles(detail?.documents)).toEqual(expected)
+      expect(titles(detail?.neighbours[0]?.documents)).toEqual(expected)
+    } finally {
+      await db.execute(sql`
+        UPDATE documents SET name = 'uno-a.pdf', anonymise = FALSE, anonymisation_report = NULL WHERE id = 101;
+        UPDATE documents SET name = 'uno-b.pdf', anonymise = FALSE WHERE id = 102;
+      `)
+    }
+  })
+
   it('reads incoming edges of a merged node the right way round', async () => {
     const detail = await readCombinedEntityDetail(payload, { organizationIds: [1, 2], entityId: 12 })
     expect(detail?.neighbours.map((n) => [n.entity.id, n.relationType, n.direction, n.support])).toEqual([

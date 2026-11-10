@@ -656,6 +656,10 @@ function focalRelationCtes(ids: GraphSql, minEdge: number): GraphSql {
              r.document_id AS document_id,
              d.name AS name,
              d.content_kind AS content_kind,
+             -- 🔴 P-13: the title gate's columns, as in queries.ts; without them
+             -- mapDocumentRow reads a gated documento as ungated and titles it with name.
+             d.anonymise AS anonymise,
+             d.anonymisation_report->>'redactedTitle' AS redacted_title,
              (r.from_entity_id = f.entity_id) AS is_out
       FROM graph_relations r
       ${joinPublishedDocumentsPerRow('r', ids)}
@@ -675,11 +679,12 @@ function focalRelationCtes(ids: GraphSql, minEdge: number): GraphSql {
         SELECT rr.org_id AS org_id, rr.other_id AS entity_id, TRUE AS is_rel,
                rr.focal_node AS focal_node, rr.relation_type AS relation_type,
                rr.document_id AS document_id, rr.name AS name, rr.content_kind AS content_kind,
+               rr.anonymise AS anonymise, rr.redacted_title AS redacted_title,
                rr.is_out AS is_out,
                NULL::int AS n_node_id, NULL AS n_type, NULL::text AS n_label, NULL::int AS n_support
         FROM rel_raw rr
         UNION ALL
-        SELECT na.org_id, na.entity_id, FALSE, NULL, NULL, NULL, NULL, NULL, NULL,
+        SELECT na.org_id, na.entity_id, FALSE, NULL, NULL, NULL, NULL, NULL, NULL::boolean, NULL::text, NULL,
                na.node_id, na.node_type, na.node_label, na.node_support
         FROM node_attr na
       ) u
@@ -688,7 +693,8 @@ function focalRelationCtes(ids: GraphSql, minEdge: number): GraphSql {
       SELECT rf.org_id AS org_id, rf.neighbour_id AS neighbour_id, rf.node_type AS node_type,
              rf.node_label AS node_label, rf.node_support AS node_support,
              rf.relation_type AS relation_type, rf.document_id AS document_id,
-             rf.name AS name, rf.content_kind AS content_kind, rf.is_out AS is_out
+             rf.name AS name, rf.content_kind AS content_kind,
+             rf.anonymise AS anonymise, rf.redacted_title AS redacted_title, rf.is_out AS is_out
       FROM rel_folded rf
       WHERE rf.is_rel
         AND rf.neighbour_id IS NOT NULL
@@ -708,7 +714,8 @@ function focalRelationCtes(ids: GraphSql, minEdge: number): GraphSql {
       SELECT roc.org_id AS org_id, roc.neighbour_id AS neighbour_id, roc.node_type AS node_type,
              roc.node_label AS node_label, roc.node_support AS node_support,
              roc.relation_type AS relation_type, roc.document_id AS document_id,
-             roc.name AS name, roc.content_kind AS content_kind, roc.is_out AS is_out
+             roc.name AS name, roc.content_kind AS content_kind,
+             roc.anonymise AS anonymise, roc.redacted_title AS redacted_title, roc.is_out AS is_out
       FROM rel_org_counted roc
       WHERE roc.org_pair_docs >= ${minEdge}
     )`
@@ -779,9 +786,12 @@ export function combinedEdgeDocumentsQuery(args: CombinedDetailArgs): GraphSql {
              rk.relation_type AS relation_type,
              rk.document_id AS document_id,
              rk.name AS name,
-             rk.content_kind AS content_kind
+             rk.content_kind AS content_kind,
+             rk.anonymise AS anonymise,
+             rk.redacted_title AS redacted_title
       FROM rel_kept rk
-      GROUP BY rk.neighbour_id, rk.relation_type, rk.document_id, rk.name, rk.content_kind
+      GROUP BY rk.neighbour_id, rk.relation_type, rk.document_id, rk.name, rk.content_kind,
+               rk.anonymise, rk.redacted_title
     ),
     ranked AS (
       SELECT ev.*,
@@ -795,7 +805,9 @@ export function combinedEdgeDocumentsQuery(args: CombinedDetailArgs): GraphSql {
            ranked.relation_type AS relation_type,
            ranked.document_id AS id,
            ranked.name AS name,
-           ranked.content_kind AS content_kind
+           ranked.content_kind AS content_kind,
+           ranked.anonymise AS anonymise,
+           ranked.redacted_title AS redacted_title
     FROM ranked
     WHERE ranked.rn <= ${perEdge}
     ORDER BY ranked.neighbour_id ASC, ranked.relation_type ASC, ranked.document_id DESC
@@ -816,6 +828,8 @@ export function combinedEntityDocumentsQuery(args: CombinedDetailArgs): GraphSql
     SELECT d.id AS id,
            d.name AS name,
            d.content_kind AS content_kind,
+           d.anonymise AS anonymise,
+           d.anonymisation_report->>'redactedTitle' AS redacted_title,
            CASE WHEN d.content_kind = 'documento' THEN m.snippet ELSE NULL END AS snippet
     FROM graph_mentions m
     ${joinPublishedDocumentsPerRow('m', ids)}

@@ -38,7 +38,7 @@
 import type { Payload, Where } from 'payload'
 
 import { corpusTextFor } from './anonymiseDocument'
-import { chunkMetadata, contentKindOf, titleFor } from './contentKind'
+import { chunkMetadata, contentKindOf, documentTitleFor } from './contentKind'
 import { publishedCorpus } from './corpus'
 import { relationId } from './permissions'
 
@@ -58,6 +58,9 @@ export interface BackfillCandidate {
   extractedText?: string | null
   redactedText?: string | null
   anonymisationStatus?: string | null
+  /** 🔴 The title gate's columns (P-13): a gated documento re-ingests under its redacted title. */
+  anonymise?: unknown
+  anonymisationReport?: unknown
   lengua?: string | null
   organization?: unknown
 }
@@ -166,7 +169,8 @@ export async function backfillLengua(
           {
             id,
             text: selected.text,
-            title: titleFor(contentKindOf(doc), doc.name),
+            // 🔴 P-13 (review R4-04): the gated title, never `doc.name`, on both copies.
+            title: documentTitleFor(doc),
             metadata: chunkMetadata({
               docId: id,
               organizationId: org,
@@ -174,6 +178,7 @@ export async function backfillLengua(
               format: doc.kind,
               publication: 'published',
               title: doc.name,
+              gate: doc,
               lengua,
             }),
           },

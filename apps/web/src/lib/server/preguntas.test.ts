@@ -11,7 +11,7 @@ const overview: StudentOverview = {
     { id: 1, label: 'semiosis' },
     { id: 2, label: 'signo' },
   ],
-  documentos: [{ id: 1, name: 'Mi ensayo', status: 'draft', kind: 'documento' }],
+  documentos: [{ id: 1, name: 'Mi ensayo', title: 'Mi ensayo', status: 'draft', kind: 'documento' }],
   companeros: [{ id: 'slug', name: 'Beto', topics: [{ id: 1, label: 'semiosis' }] }],
   autores: [{ name: 'Peirce', docs: 2, page: null }],
   autoresParaLeer: [{ name: 'Umberto Eco', docs: 1, page: null }],
@@ -51,7 +51,7 @@ describe('🔴 questionsUserPrompt sends documentos only (audit 2026-10-28 item 
   const withTestimonios: StudentOverview = {
     ...overview,
     documentos: [
-      { id: 1, name: 'Mi ensayo', status: 'draft', kind: 'documento' },
+      { id: 1, name: 'Mi ensayo', title: 'Mi ensayo', status: 'draft', kind: 'documento' },
       // A testimonio's file name often carries the speaker's name.
       { id: 2, name: 'Entrevista Juana Pérez.m4a', status: 'draft', kind: 'testimonio' },
       // No kind (an older backend): fail closed, never sent.
@@ -69,6 +69,22 @@ describe('🔴 questionsUserPrompt sends documentos only (audit 2026-10-28 item 
   it('only testimonios: the line says there are none', () => {
     const prompt = questionsUserPrompt({ ...withTestimonios, documentos: withTestimonios.documentos.slice(1) });
     expect(prompt).toContain('Mis trabajos: —');
+  });
+});
+
+describe('🔴 questionsUserPrompt sends the gated title, never the raw name (P-13, review R4-03)', () => {
+  it('a gated note’s raw name never reaches the hosted model', () => {
+    const prompt = questionsUserPrompt({
+      ...overview,
+      documentos: [
+        { id: 1, name: 'Entrevista con doña Rosa Martínez', title: 'Entrevista con [Persona A]', status: 'published', kind: 'documento' },
+        { id: 2, name: 'Notas de Juana Pérez', title: 'Documento', status: 'draft', kind: 'documento' },
+        // No `title` (an older backend): left out, never its `name`.
+        { id: 3, name: 'Charla con Beto Ruiz', status: 'draft', kind: 'documento' },
+      ],
+    });
+    expect(prompt).toContain('Mis trabajos: Entrevista con [Persona A]; Documento');
+    expect(prompt).not.toMatch(/Rosa|Martínez|Juana|Pérez|Ruiz/);
   });
 });
 

@@ -1,7 +1,9 @@
 <script lang="ts">
   /**
    * Record from the mic with live partial text; on stop the whole recording
-   * uploads as a normal audio document (same route, gate and titles).
+   * uploads as a normal audio document (same route and titles). ⚠ Through the
+   * gate only with `voces:upload` (a testimonio); without it, a `documento`
+   * with no "Anonimizar": the transcript is not gated (review R4-15, open).
    *
    * 🔴 The live text is raw, pre-gate testimony from `LiveUplink`. It lives in
    * the composer's state only, is shown to the speaker while recording, and is

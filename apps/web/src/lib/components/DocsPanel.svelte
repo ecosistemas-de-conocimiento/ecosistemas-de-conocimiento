@@ -97,7 +97,8 @@
    */
   const canUploadVoces = $derived(mayUploadVoces($page.data?.vocesUpload, app.ecosystem?.slug));
   let uploadContentKind = $state<UploadContentKind>('documento');
-  let uploadAnonymise = $state(false);
+  /** 🔴 On by default for a `documento` (ADR-0020: the most protective value), as in `UploadSheet`. */
+  let uploadAnonymise = $state(true);
 
   // ── Traer un documento de otra conversación ─────────────────────────────
   //
@@ -475,7 +476,7 @@
         </label>
         {#if uploadContentKind === 'documento'}
           <label class="text-[11px] text-ink-soft flex items-center gap-1.5 mt-1">
-            <input type="checkbox" bind:checked={uploadAnonymise} disabled={uploading} />
+            <input type="checkbox" bind:checked={uploadAnonymise} disabled={uploading} data-testid="panel-anonymise" />
             <span>Anonimizar</span>
           </label>
         {/if}

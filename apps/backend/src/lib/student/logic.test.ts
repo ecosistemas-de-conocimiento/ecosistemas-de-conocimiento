@@ -63,7 +63,7 @@ describe('buildReport', () => {
   it('gaps are corpus topics the student has not touched', () => {
     const r = buildReport({
       student: { id: 1, name: 'Ana' },
-      docs: [{ id: 1, name: 'x', createdAt: '', status: 'published', kind: 'documento' }],
+      docs: [{ id: 1, name: 'x', title: 'x', createdAt: '', status: 'published', kind: 'documento' }],
       topics: [T(1, 'a')],
       sessionCount: 2,
       corpusTop: [T(1, 'a'), T(2, 'b')],
@@ -87,10 +87,10 @@ describe('buildReport', () => {
     const r = buildReport({
       ...base,
       docs: [
-        { id: 1, name: 'Mi ensayo', createdAt: 'a', status: 'published', kind: 'documento' },
-        { id: 2, name: 'Borrador secreto', createdAt: 'b', status: 'draft', kind: 'documento' },
-        { id: 3, name: 'Testimonio de María López.mp3', createdAt: 'c', status: 'published', kind: 'testimonio' },
-        { id: 4, name: 'Conversación con Pedro', createdAt: 'd', status: 'published', kind: 'conversacion' },
+        { id: 1, name: 'Mi ensayo', title: 'Mi ensayo', createdAt: 'a', status: 'published', kind: 'documento' },
+        { id: 2, name: 'Borrador secreto', title: 'Borrador secreto', createdAt: 'b', status: 'draft', kind: 'documento' },
+        { id: 3, name: 'Testimonio de María López.mp3', title: 'Testimonio', createdAt: 'c', status: 'published', kind: 'testimonio' },
+        { id: 4, name: 'Conversación con Pedro', title: 'Conversación', createdAt: 'd', status: 'published', kind: 'conversacion' },
       ],
     })
     expect(r.uploads).toEqual([
@@ -99,6 +99,18 @@ describe('buildReport', () => {
     ])
     expect(r.summary).toMatchObject({ documents: 2, published: 1 })
     expect(JSON.stringify(r)).not.toMatch(/secreto|María|Pedro/)
+  })
+
+  it('🔴 P-13 (R4-03): a published gated note carries its gated title, never its raw name', () => {
+    const r = buildReport({
+      ...base,
+      docs: [
+        { id: 1, name: 'Entrevista con doña Rosa Martínez', title: 'Entrevista con [Persona A]', createdAt: 'a', status: 'published', kind: 'documento' },
+        { id: 2, name: 'Notas de Juana Pérez', title: 'Documento', createdAt: 'b', status: 'published', kind: 'documento' },
+      ],
+    })
+    expect(r.uploads.map((u) => u.name)).toEqual(['Entrevista con [Persona A]', 'Documento'])
+    expect(JSON.stringify(r)).not.toMatch(/Rosa|Martínez|Juana|Pérez/)
   })
 
   it('without testimonios (switch off) the report has no testimonios key', () => {

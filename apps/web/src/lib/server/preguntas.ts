@@ -24,10 +24,14 @@ const list = (xs: readonly string[], n: number) => (xs.length ? xs.slice(0, n).j
 /**
  * 🔴 Documentos only (audit 2026-10-28 item 9). A testimonio's file name often
  * carries the speaker's name, and this prompt goes to a hosted model. A row
- * with no `kind` is left out too: fail closed.
+ * with no `kind` is left out too: fail closed. And only the GATED `title`,
+ * never `name` (P-13, review R4-03): every student note is gated. A row with
+ * no `title` (an older backend) is left out.
  */
 const documentoNames = (o: StudentOverview) =>
-  o.documentos.filter((d) => d.kind === 'documento').map((d) => d.name);
+  o.documentos
+    .filter((d) => d.kind === 'documento' && typeof d.title === 'string' && d.title !== '')
+    .map((d) => d.title as string);
 
 export function questionsUserPrompt(o: StudentOverview): string {
   return [

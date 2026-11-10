@@ -202,7 +202,8 @@ export function buildReport(input: {
       topics: input.topics.length,
       conversations: input.sessionCount,
     },
-    uploads: docs.slice(0, 30).map((d) => ({ ...d, name: d.status === 'published' ? d.name : null })),
+    // 🔴 The gated title (R4-03): the teacher is not the uploader.
+    uploads: docs.slice(0, 30).map(({ title, ...d }) => ({ ...d, name: d.status === 'published' ? title : null })),
     topics: input.topics.slice(0, 15).map((t) => t.label),
     gaps: input.corpusTop.filter((t) => !mine.has(t.id)).slice(0, 6).map((t) => t.label),
     readings: [...input.readings],
