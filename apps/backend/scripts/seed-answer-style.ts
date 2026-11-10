@@ -21,6 +21,7 @@
  */
 
 import { seedDiscapacidadAnswerStyle } from '../src/seed/answerStyleDiscapacidad'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 async function main(): Promise<void> {
   const apply = process.env.SEED_APPLY === '1' || process.argv.includes('--apply')
@@ -40,6 +41,6 @@ async function main(): Promise<void> {
 try {
   await main()
 } catch (err) {
-  console.error('[seed-answer-style] failed:', err)
+  console.error('[seed-answer-style] failed:', safeErrMessage(err))
   process.exit(1)
 }

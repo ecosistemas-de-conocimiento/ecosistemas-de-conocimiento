@@ -24,6 +24,7 @@
 
 import { getBucketOps, getStorageBucket, httpStatusOf, isStorageConfigured } from './client'
 import type { BucketOps } from './client'
+import { safeErrMessage } from '../errorSummary'
 
 /**
  * `CreateBucket` conflict codes.
@@ -142,7 +143,7 @@ export async function ensureStorageBucketAtBoot(
   if (!isStorageConfigured()) return // `describeStorageMode` already said so.
 
   const bucket = getStorageBucket()
-  let lastError = 'unknown'
+  let lastFailure = 'unknown'
 
   for (let attempt = 1; attempt <= policy.attempts; attempt++) {
     try {
@@ -154,11 +155,11 @@ export async function ensureStorageBucketAtBoot(
       )
       return
     } catch (err) {
-      lastError = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+      lastFailure = err instanceof Error ? `${err.name}: ${safeErrMessage(err)}` : safeErrMessage(err)
       if (attempt === policy.attempts) break
       const delay = policy.delayMs(attempt)
       logger.warn(
-        `[storage] bucket "${bucket}" not ready (attempt ${attempt}/${policy.attempts}): ${lastError} — retrying in ${delay}ms.`,
+        `[storage] bucket "${bucket}" not ready (attempt ${attempt}/${policy.attempts}): ${lastFailure} — retrying in ${delay}ms.`,
       )
       await policy.sleep(delay)
     }
@@ -166,7 +167,7 @@ export async function ensureStorageBucketAtBoot(
 
   logger.error(
     `[storage] OBJECT STORAGE NOT READY: could not ensure bucket "${bucket}" after ` +
-      `${policy.attempts} attempts (${lastError}). Boot CONTINUES — /api/health/ready ` +
+      `${policy.attempts} attempts (${lastFailure}). Boot CONTINUES — /api/health/ready ` +
       'reports down/503 until this clears, and uploads fail meanwhile. Check S3_ENDPOINT, ' +
       `the app credential, and that its policy grants s3:* on arn:aws:s3:::${bucket} AND ` +
       `arn:aws:s3:::${bucket}/*. An InvalidAccessKeyId here means the store lost its IAM ` +

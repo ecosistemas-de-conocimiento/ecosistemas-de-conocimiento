@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
+import { downloadName } from '$lib/server/downloadName';
 
 /**
  * GET /api/documents/[id]/original — the file as it was uploaded.
@@ -76,7 +77,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 
   const headers = new Headers({
     'Content-Type': fileRes.headers.get('content-type') ?? 'application/octet-stream',
-    'Content-Disposition': attachmentHeader(filename),
+    'Content-Disposition': attachmentHeader(downloadName(doc.name, filename)),
     'Cache-Control': 'private, no-store',
   });
   const length = fileRes.headers.get('content-length');

@@ -16,6 +16,8 @@
  *   ecosistema org would need its own `chat` registry row.
  */
 
+import { safeErrMessage } from './errorSummary'
+
 /**
  * Starting monthly cap for a new ecosistema, in USD.
  * Default 5: quoted from `infra/fleet/edc-1.md` §6, the cap set for the shared
@@ -55,7 +57,7 @@ export async function provisionEcosystemOrg(
   } catch (err) {
     // No ai-service configured — a normal state for a bare local run.
     deps.logger.warn(
-      { organizationId: String(organizationId), err: String(err) },
+      { organizationId: String(organizationId), err: safeErrMessage(err) },
       '[ecosistema] ai-service not configured; its org was NOT provisioned.',
     )
     return 'skipped'
@@ -70,7 +72,7 @@ export async function provisionEcosystemOrg(
     return 'provisioned'
   } catch (err) {
     deps.logger.warn(
-      { organizationId: String(organizationId), err: String(err) },
+      { organizationId: String(organizationId), err: safeErrMessage(err) },
       '[ecosistema] could not provision its ai-service org; its chat will get HTTP 402 until it is.',
     )
     return 'failed'
@@ -141,7 +143,7 @@ export async function ensureEcosystemBudgets(
     })) as { docs?: Array<{ id?: number | string }> }
     ids = (page?.docs ?? []).map((d) => d.id).filter((id): id is number | string => id != null)
   } catch (err) {
-    deps.logger.warn({ err: String(err) }, '[ecosistema] could not list ecosistemas to check their budgets')
+    deps.logger.warn({ err: safeErrMessage(err) }, '[ecosistema] could not list ecosistemas to check their budgets')
     return result
   }
 
@@ -165,7 +167,7 @@ export async function ensureEcosystemBudgets(
     } catch (err) {
       result.failed += 1
       deps.logger.warn(
-        { organizationId: String(id), err: String(err) },
+        { organizationId: String(id), err: safeErrMessage(err) },
         '[ecosistema] could not read its ai-service readiness; its budget was not checked.',
       )
       continue

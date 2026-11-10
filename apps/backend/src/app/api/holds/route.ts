@@ -28,6 +28,7 @@ import configPromise from '@payload-config'
 import { NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 
+import { safeErrMessage } from '@/lib/errorSummary'
 import { HoldNotVisibleError, listHeldDocuments } from '@/lib/holdReview'
 
 // Per-caller and per-tenant, and it changes as people review. Never prerender
@@ -73,7 +74,7 @@ export async function GET(request: Request): Promise<Response> {
     // `HoldNotVisibleError` inside the lib, so nothing reaching here is an
     // existence signal — and a database outage reported as "no such ecosistema"
     // would send whoever is on call looking for a deleted tenant.
-    console.error('[holds] listing held documents failed', err)
+    console.error('[holds] listing held documents failed', safeErrMessage(err))
     return fail(500, 'Could not list the held documents.')
   }
 }

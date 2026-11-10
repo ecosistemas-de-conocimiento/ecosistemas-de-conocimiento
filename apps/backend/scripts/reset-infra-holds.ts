@@ -20,6 +20,7 @@
  */
 
 import { resetInfraHolds } from '../src/lib/anonymise/resetInfraHolds'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 async function main(): Promise<void> {
   const apply = process.env.RESET_APPLY === '1'
@@ -46,6 +47,6 @@ try {
   await main()
   process.exit(0)
 } catch (err) {
-  console.error('[reset-infra-holds] failed:', err)
+  console.error('[reset-infra-holds] failed:', safeErrMessage(err))
   process.exit(1)
 }

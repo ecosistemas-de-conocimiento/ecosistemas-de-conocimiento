@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 
 import { HoldNotVisibleError } from '@/lib/holdReview'
+import { safeErrMessage } from '@/lib/errorSummary'
 import { listPublishedTestimonios } from '@/lib/rejectPublished'
 
 export const dynamic = 'force-dynamic'
@@ -33,7 +34,7 @@ export async function GET(request: Request): Promise<Response> {
     return NextResponse.json({ items }, { headers: NO_STORE })
   } catch (err) {
     if (err instanceof HoldNotVisibleError) return fail(404, err.message)
-    console.error('[published] listing failed', err)
+    console.error('[published] listing failed', safeErrMessage(err))
     return fail(500, 'Could not list the published testimonios.')
   }
 }

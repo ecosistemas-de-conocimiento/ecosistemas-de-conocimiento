@@ -23,6 +23,7 @@
  */
 
 import { autoPublishParticipantDrafts } from '../src/lib/autoPublishBackfill'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 const TAG = '[auto-publish-participant-drafts]'
 const WAIT_MS = 10 * 60_000
@@ -87,6 +88,6 @@ try {
   await main()
   process.exit(process.exitCode ?? 0)
 } catch (err) {
-  console.error(`${TAG} failed:`, err)
+  console.error(`${TAG} failed:`, safeErrMessage(err))
   process.exit(1)
 }

@@ -32,7 +32,9 @@
 
 import type { Payload } from 'payload'
 
+import { isConsentHeld } from './consentHold'
 import { draftCorpus, publishedCorpus } from './corpus'
+import { safeErrMessage } from './errorSummary'
 import { relationId } from './permissions'
 import { eraseWithdrawnCopies, retireFrom, type CorpusDeleter } from './publishDocument'
 
@@ -53,6 +55,8 @@ export interface RegateMemberDocumentosReport {
 
 /** The row-only half of the selection. Who uploaded it is asked separately. */
 export function needsRegate(row: Row): boolean {
+  // 🔴 Held for consent: never withdrawn, erased or re-gated (owner decision 2026-11-10).
+  if (isConsentHeld(row)) return false
   return row.contentKind === 'documento' && row.anonymise !== true && row.publicationStatus === 'published'
 }
 
@@ -168,7 +172,7 @@ export async function regateMemberDocumentos(
       log(`doc ${id}: withdrawn and sent through the gate`)
     } catch (err) {
       report.failed.push(id)
-      log(`doc ${id}: NOT processed: ${err instanceof Error ? err.message : String(err)}`)
+      log(`doc ${id}: NOT processed: ${safeErrMessage(err)}`)
     }
   }
   return report

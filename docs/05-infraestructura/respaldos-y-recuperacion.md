@@ -1,7 +1,7 @@
 # Respaldos y recuperación
 
-- **Versión:** 1.1
-- **Fecha:** 2026-11-03
+- **Versión:** 1.2
+- **Fecha:** 2026-11-10
 - **Estado:** vigente
 - **Fuentes:** `infra/fleet/edc-1.md` (§1, §2, §4b, §4c, §4p, §4x, §4zn, §4zs, §4zzz, §4zzzz, §6), `infra/fleet/backups.md` (diseño, no construido), `infra/fleet/runbook.md` (§3, §4, §8), `infra/fleet/env-manifests.md` (§1, §3), `infra/docker-compose.yml`, `plan/spark-ai-adopcion.md` (§5), `plan/auditoria-codigo-2026-10-28.md`, listado local de la carpeta de respaldos fuera de la caja (medido el 2026-10-30).
 
@@ -34,7 +34,7 @@ Contexto que pesa en todas las decisiones de este documento: al 2026-10-30 EDC n
 | Capa | Qué cubre | Cadencia | Dónde queda | Retención | Cifrado | Procedencia |
 |---|---|---|---|---|---|---|
 | Imagen de Hetzner | Disco completo de `edc-1`: ambos entornos, Coolify, volúmenes, archivos subidos | diaria, ventana 06:00 a 10:00 UTC | Hetzner, mismo proveedor | 7 imágenes diarias rotativas | no documentado | citado, `edc-1.md:102` |
-| `pg_dump -Fc` por base | `edc_backend` y `edc_ai` de dev; de staging, solo hasta el 2026-10-17 | manual, antes de un despliegue con migración; sin cron | `/root/backups/<sello>/` en el servidor, más copia fuera del servidor, en equipo del equipo de desarrollo, en una carpeta por sello | sin política; no se borra nada | ninguno | citado, `edc-1.md` §4b y §4zzzz; medido en el listado local |
+| `pg_dump -Fc` por base | `edc_backend` y `edc_ai` de dev; de staging, solo hasta el 2026-10-17 | manual, antes de un despliegue con migración; sin cron | `/root/backups/<sello>/` en el servidor, más copia fuera del servidor, en equipo del equipo de desarrollo, en una carpeta por sello | los 7 más recientes por entorno, en el servidor y en la copia; los anteriores se borran (§2.2, paso 7). Primera poda **Pendiente** | ninguno | citado, `edc-1.md` §4b y §4zzzz; medido en el listado local |
 | Verificación | `pg_restore -l` (el archivo se puede leer) y `sha256sum` comparado fuera de la caja | por respaldo | `SHA256SUMS` en la carpeta (desde el 2026-10-27) | | | citado, `edc-1.md` §4zs y §4zzzz; medido en el listado local |
 
 Advertencia sobre la imagen de Hetzner: la bitácora del proyecto del 2026-10-17 decía que los respaldos de Hetzner "no estaban activados". `edc-1.md`, escrito después, dice que están activados. Lo más probable es que se activaran después de esa entrada (inferido), pero **hay que confirmarlo en el panel de Hetzner**. Si no estuvieran activos, la única copia de los archivos subidos sería el propio servidor.
@@ -49,6 +49,7 @@ Es el que registra `edc-1.md` §4zzzz (2026-10-29). Se corre en el servidor, por
 4. Comprobar cada archivo con `pg_restore -l` (lista el contenido sin restaurar).
 5. `sha256sum *.dump > SHA256SUMS`.
 6. Copiar la carpeta fuera del servidor, a un equipo del equipo de desarrollo, con `scp` (con un tiempo máximo, por ejemplo `timeout 180 scp`, citado de `edc-1.md` §4zn), en una carpeta con el mismo sello y también con `umask 077`, y comprobar con `sha256sum -c SHA256SUMS`.
+7. Retención: dejar los 7 volcados más recientes de cada entorno, en el servidor y en la copia, y borrar los anteriores. Un volcado es un sello y un entorno; una carpeta con los dos entornos cuenta en cada uno.
 
 El comando exacto está en [Despliegue y runbook](despliegue-y-runbook.md) §6.3.
 
@@ -72,7 +73,7 @@ Tamaños, que muestran cómo crece `edc_ai` (la base de vectores):
 | 2026-10-27 | 88 MB | | citado, `edc-1.md` §4zs |
 | 2026-10-29 06:43 | 312 MB | 18.7 MB | medido (312 471 401 y 18 662 917 bytes) y citado, `edc-1.md` §4zzzz |
 
-El salto del 2026-10-26 coincide con el despliegue que permitió guardar textos de hasta 2 000 000 de caracteres (inferido de `edc-1.md` §4zm). A este ritmo, la copia fuera de la caja crece unos 330 MB por cada respaldo nuevo de dev (inferido de la última carpeta) y no tiene política de borrado.
+El salto del 2026-10-26 coincide con el despliegue que permitió guardar textos de hasta 2 000 000 de caracteres (inferido de `edc-1.md` §4zm). A este ritmo, la copia fuera de la caja crece unos 330 MB por cada respaldo nuevo de dev (inferido de la última carpeta). La regla de §2.2, paso 7, la limita a 7 volcados por entorno; al 2026-11-10 dejaría en el servidor 52 de 59 volcados de dev para borrar, 1.2 GB, y ninguno de staging, que tiene 7 (medido con `find` en `/root/backups/`).
 
 ## 3. Lo que NO se respalda
 
@@ -185,7 +186,7 @@ Cada escenario indica cómo se detecta, qué hacer y qué se pierde. Los comando
   1. Confirmar que no hay despliegues en cola. Si uno está colgado, cancelarlo: `POST /api/v1/deployments/<uuid>/cancel`.
   2. `docker builder prune -af` y `docker rmi` por nombre de las imágenes de commits anteriores (ver [Despliegue y runbook](despliegue-y-runbook.md) §6.12).
   3. Revisar que Postgres y Redis siguen sanos (`aof_last_write_status:ok` en Redis) y redesplegar si un despliegue quedó a medias.
-  4. Revisar el tamaño de `/root/backups/` en el servidor: los dumps de dev crecen unos 330 MB por despliegue (inferido de §2.3) y no se borran.
+  4. Revisar el tamaño de `/root/backups/` en el servidor: los dumps de dev crecen unos 330 MB por despliegue (inferido de §2.3). Podar a los 7 más recientes por entorno (§2.2, paso 7).
 - **Pérdida:** normalmente ninguna. Redis se recuperó solo el 2026-10-17.
 
 ### 6.3 Spark caído
@@ -244,7 +245,7 @@ Ordenados para que estén resueltos antes del primer testimonio real.
 4. **Cifrar** los dumps antes de que salgan del servidor, y cifrar la copia fuera del servidor.
 5. **Mover la copia fuera de la caja a otro proveedor** (R2 o B2), con una credencial que no pueda borrar.
 6. **Respaldar el volumen `rustfs_data`** con sincronización de archivos a ese mismo destino, tratando la copia como un almacén de llaves.
-7. **Definir retención** (el diseño propone 7 diarios, 4 semanales y 3 mensuales) y aplicarla también a `/root/backups/` en el servidor y a la copia fuera del servidor, que hoy solo crecen.
+7. **Aplicar la retención** de §2.2, paso 7 (7 por entorno, decisión del 2026-11-10), en `/root/backups/` y en la copia fuera del servidor. La primera poda espera el visto bueno del responsable. El diseño de `backups.md` (7 diarios, 4 semanales, 3 mensuales) la reemplaza cuando se construya.
 8. **Hacer un simulacro de restauración** completo en un entorno aparte: dump más archivos, arranque, inicio de sesión y descarga de un archivo. Registrar los tres números que pide `backups.md` §6 y ajustar este documento con ellos.
 9. **Monitoreo externo y alertas** (disponibilidad sobre la ruta de readiness, disco, swap, reinicios), porque sin detección el RTO no tiene límite.
 10. **Respaldar staging** antes de su siguiente despliegue y volver a desplegarlo para que deje de estar 12 días atrás.

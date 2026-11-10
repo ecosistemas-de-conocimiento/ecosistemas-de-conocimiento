@@ -135,7 +135,7 @@
 import { sql } from '@payloadcms/db-postgres'
 import type { Payload, PayloadRequest, Where } from 'payload'
 
-import { errSummary } from './errorSummary'
+import { errSummary, safeErrMessage } from './errorSummary'
 import { relationId } from './permissions'
 
 /**
@@ -895,7 +895,7 @@ export async function finishUploadCleanupAfterCommit(
       cleanedDocumentIds.push(String(doc.id))
     } catch (err) {
       log.warn(
-        { ...allIds, documentId: String(doc.id), err: String(err) },
+        { ...allIds, documentId: String(doc.id), err: safeErrMessage(err) },
         `${tag} could not delete a deleted upload from ai-service; its chunks may stay retrievable`,
       )
     }

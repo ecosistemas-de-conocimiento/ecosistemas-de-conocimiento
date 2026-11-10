@@ -52,6 +52,7 @@ import {
   resolveManualSeedDecision,
 } from './env-gate'
 import { seedHeldDocuments, seedInvestigador } from './review'
+import { safeErrMessage } from '../lib/errorSummary'
 
 interface SeedTeam {
   slug: string
@@ -329,7 +330,7 @@ export async function seedDemo(
         // server nothing.
         void ingestSeededDocuments(payload, orgId, { awaitDrafts: true }).catch((err) => {
           payload.logger.warn(
-            `[seed-demo] background corpus ingest failed: ${err instanceof Error ? err.message : String(err)}`,
+            `[seed-demo] background corpus ingest failed: ${safeErrMessage(err)}`,
           )
         })
       }

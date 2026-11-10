@@ -42,6 +42,7 @@
 
 import type { Payload } from 'payload'
 
+import { isConsentHeld } from './consentHold'
 import { draftCorpus, publishedCorpus } from './corpus'
 import { errSummary } from './errorSummary'
 import { relationId } from './permissions'
@@ -50,7 +51,7 @@ import { eraseWithdrawnCopies, retireFrom, type CorpusDeleter } from './publishD
 type Id = number | string
 type Row = Record<string, unknown>
 
-export type RegateRefusal = 'not-found' | 'other-ecosistema' | 'testimonio' | 'not-gated' | 'in-flight'
+export type RegateRefusal = 'not-found' | 'other-ecosistema' | 'consent-held' | 'testimonio' | 'not-gated' | 'in-flight'
 
 /** Placeholder counts in the stored gate output. */
 export interface PlaceholderCounts {
@@ -94,6 +95,8 @@ export function countPlaceholders(text: unknown): PlaceholderCounts {
 export function refusalFor(row: Row | undefined, organizationId: Id, allowTestimonio: boolean): RegateRefusal | null {
   if (!row) return 'not-found'
   if (String(relationId(row.organization)) !== String(organizationId)) return 'other-ecosistema'
+  // 🔴 Held for consent: never withdrawn, erased or re-gated (owner decision 2026-11-10).
+  if (isConsentHeld(row)) return 'consent-held'
   if (row.contentKind === 'testimonio' && !allowTestimonio) return 'testimonio'
   // A testimonio is gated whatever `anonymise` says (`mustPassAnonymisationGate`).
   if (row.contentKind !== 'testimonio' && row.anonymise !== true) return 'not-gated'

@@ -43,7 +43,8 @@ import { refuseDisabledAudioUpload } from './hooks/featureGates'
 import { anonymiseParticipantUpload, fileParticipantAudioAsTestimonio } from '../lib/autoPublish'
 import { isAppNote, isStudentNote, parseNoteEdit, publishStudentNote, publishStudentNoteChanges } from '../lib/studentNotes'
 import { anonimizacionEndpoints } from '../lib/anonymisationControls'
-import { errSummary } from '../lib/errorSummary'
+import { CONSENT_HELD_MESSAGE, isConsentHeld, readConsentHeld } from '../lib/consentHold'
+import { errSummary, safeErrMessage } from '../lib/errorSummary'
 import {
   consumeCorpusCleanupSkip,
   isOwnersMedia,
@@ -550,10 +551,23 @@ export function hideRevisions(inner: Access): Access {
   }
 }
 
-const uploaderOnly: Access = ({ req: { user } }) => {
+/**
+ * 🔴 DELETE (owner decision 2026-11-10): the uploader may always delete their
+ * own DRAFT, and anything else (published, or moving) only while they hold a
+ * `documents:write` seat in its ecosistema ({@link uploaderWithWriteSeat}).
+ * Someone removed, switched off, or whose ecosistema was switched off cannot
+ * take back what the ecosistema already shares. Platform admins pass.
+ * `Documents.deleteAccess.pg.test.ts`.
+ */
+const uploaderMayDelete: Access = async ({ req }) => {
+  const { user } = req
   if (!user || !isActiveUser(user)) return false
   if (isPlatformAdminUser(user)) return true
-  return { uploadedBy: { equals: user.id } } satisfies Where
+  const own: Where = { uploadedBy: { equals: user.id } }
+  const draft: Where = { publicationStatus: { equals: 'draft' } }
+  const seats = await organizationIdsForUserWithPermission(req.payload, user.id, PERMISSIONS.documentsWrite)
+  if (seats.length === 0) return { and: [own, draft] }
+  return { and: [own, { or: [draft, { organization: { in: seats } }] }] }
 }
 
 /**
@@ -567,7 +581,7 @@ const uploaderOnly: Access = ({ req: { user } }) => {
  * `Documents.removedMemberPatch.pg.test.ts`.
  *
  * ⚠ Every user update, not only the ones that touch text: a rename is enough,
- * see above. Delete keeps `uploaderOnly` (open owner question).
+ * see above. Delete is {@link uploaderMayDelete}.
  */
 const uploaderWithWriteSeat: Access = async ({ req }) => {
   const { user } = req
@@ -1308,6 +1322,8 @@ interface DocumentRow {
   organization?: number | string | { id: number | string } | null
   uploadedBy?: number | string | { id: number | string } | null
   publicationStatus?: string | null
+  /** 🔴 Retenido por consentimiento (`lib/consentHold.ts`). */
+  consentHeld?: boolean | null
   mediaFile?: number | string | { id: number | string } | null
   extractedText?: string | null
   bodyMarkdown?: string | null
@@ -1518,6 +1534,8 @@ const extractAndIngestHook: CollectionAfterChangeHook = async ({
   if (req.user && operation === 'update' && isAppNote(row)) return doc
 
   if (!isIngestable(row)) return doc
+  // 🔴 Retenido por consentimiento: `runExtractAndIngest` checks the fresh row too.
+  if (isConsentHeld(row)) return doc
 
   // Run async to avoid blocking the Payload response, AND defer one tick
   // so the create transaction is fully committed before we re-read the row
@@ -1619,7 +1637,7 @@ const invalidateGraphOnContentKindChange: CollectionAfterChangeHook = async ({
           `${String(after.contentKind)}: graph rows dropped, marked for re-extraction`,
       )
     })().catch((err) => {
-      console.error('[graph] could not invalidate the graph for reclassified doc', docId, err)
+      console.error('[graph] could not invalidate the graph for reclassified doc', docId, safeErrMessage(err))
     })
   })
 
@@ -1692,7 +1710,7 @@ const retireDeletedDocumentHook: CollectionAfterDeleteHook = async ({ context, d
     // Includes "the AI service is not configured at all", which is a normal
     // state for a local run with no admin key. Never fatal here.
     req.payload.logger.warn(
-      { documentId: String(row.id), err: String(err) },
+      { documentId: String(row.id), err: safeErrMessage(err) },
       '[delete] could not retire the deleted document; its chunks may stay retrievable.',
     )
   }
@@ -1806,11 +1824,16 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
       docId,
       `still not readable after ${RETRY_DELAYS_MS.reduce((a, b) => a + b, 0)}ms —`,
       'giving up on extract+ingest',
-      lastError,
+      safeErrMessage(lastError),
     )
     return
   }
   if (!isIngestable(fresh)) return
+  // 🔴 Retenido por consentimiento: no extraction, no gate, no ingest (`lib/consentHold.ts`).
+  if (isConsentHeld(fresh)) {
+    console.warn('[documents] doc', docId, 'is held for consent — skipping extract+ingest.')
+    return
+  }
 
   /**
    * 🔴 A HELD ROW IS NOT RE-GATED BY AN ORDINARY SAVE.
@@ -1922,7 +1945,7 @@ async function runExtractAndIngest(row: DocumentRow): Promise<void> {
         throw new TextTooLongError(DOCUMENT_TEXT_MAX_LENGTH)
       }
     } catch (err) {
-      console.error('[documents] extraction failed for doc', docId, err)
+      console.error('[documents] extraction failed for doc', docId, safeErrMessage(err))
       await payload.update({
         collection: 'documents',
         id: docId as never,
@@ -2097,7 +2120,11 @@ export async function scheduleGraphExtractionForDoc(args: {
        */
       anonymisationStatus?: unknown
       publicationStatus?: unknown
+      consentHeld?: unknown
     }
+
+    // 🔴 Retenido por consentimiento: no graph run, and nothing written (`lib/consentHold.ts`).
+    if (isConsentHeld(row)) return
 
     const corpusText = corpusTextFor(row)
     if (!corpusText.ok) {
@@ -2142,7 +2169,7 @@ export async function scheduleGraphExtractionForDoc(args: {
       title: titleFor(knownContentKind(fresh), fresh.name),
     })
   } catch (err) {
-    console.error('[graph] could not schedule extraction for doc', docId, err)
+    console.error('[graph] could not schedule extraction for doc', docId, safeErrMessage(err))
   }
 }
 
@@ -2198,6 +2225,8 @@ export async function enqueueIngestForDoc(args: {
     redactedText?: string | null
     /** For the retrieval filter. `chunkMetadata` keeps it on a documento only. */
     lengua?: string | null
+    /** 🔴 Read again from the database anyway: a hand-built slice may lack it. */
+    consentHeld?: unknown
   }
   extractedText: string
   /** Test seam for the anonymisation gate's model call. */
@@ -2231,6 +2260,18 @@ export async function enqueueIngestForDoc(args: {
       docId,
       `is ${fresh.anonymisationStatus.toUpperCase()} — refusing to ingest. Only a review can change that.`,
     )
+    return
+  }
+
+  /**
+   * 🔴 RETENIDO POR CONSENTIMIENTO, AT THE SAME CHOKE POINT (`lib/consentHold.ts`).
+   * Read off the stored row, not only `fresh`: the audio drive
+   * (`lib/ingestRecovery.ts`) and the re-gates build `fresh` by hand. Checked
+   * again before the send, since the gate below takes model time.
+   */
+  const consentHeldNow = async () => isConsentHeld(fresh) || (await readConsentHeld(payload, docId))
+  if (await consentHeldNow()) {
+    console.warn('[documents] doc', docId, 'is held for consent — refusing to gate or ingest.')
     return
   }
 
@@ -2391,6 +2432,10 @@ export async function enqueueIngestForDoc(args: {
   // enough for `lib/ingestRecovery.ts:recoverAbandonedClaims` to hand its row
   // back has lost the claim; its late write changes 0 rows and it sends
   // nothing. `ingestError: null` clears what a previous failed attempt left.
+  if (await readConsentHeld(payload, docId)) {
+    console.warn('[documents] doc', docId, 'was held for consent during the gate — nothing sent.')
+    return
+  }
   const { updateDocumentColumns: writeColumns } = await import('@/lib/documentColumns')
   const stillOurs = await writeColumns(payload as never, {
     id: docId,
@@ -2422,7 +2467,7 @@ export async function enqueueIngestForDoc(args: {
   try {
     client = getAppAIClient(organizationId)
   } catch (err) {
-    console.error('[documents] ai-client unavailable; ingest skipped for doc', docId, err)
+    console.error('[documents] ai-client unavailable; ingest skipped for doc', docId, safeErrMessage(err))
     return
   }
 
@@ -2539,7 +2584,7 @@ export async function enqueueIngestForDoc(args: {
       `[documents] enqueued ingest for doc ${docId} → ingestId=${result.ingestId} corpus=${corpus}`,
     )
   } catch (err) {
-    console.error('[documents] ingest.enqueue failed for doc', docId, err)
+    console.error('[documents] ingest.enqueue failed for doc', docId, safeErrMessage(err))
     // Use the same no-transaction `payload` handle as every other write here.
     // This used to be `req.payload`, whose transaction has already committed by
     // the time this `setImmediate` body runs — so the one write that reports a
@@ -2939,7 +2984,7 @@ export const Documents: CollectionConfig = {
   access: {
     read: hideRevisions(visibleToCaller),
     update: hideRevisions(uploaderWithWriteSeat),
-    delete: hideRevisions(uploaderOnly),
+    delete: hideRevisions(uploaderMayDelete),
     create: ({ req: { user } }) => isActiveUser(user),
   },
   fields: [
@@ -3002,6 +3047,23 @@ export const Documents: CollectionConfig = {
       // cannot fall out of step; the labels are the only hand-written part.
       options: PUBLICATION_STATES.map((value) => ({ value, label: PUBLICATION_LABELS[value] })),
       admin: { position: 'sidebar' },
+    },
+    {
+      /**
+       * 🔴 RETENIDO POR CONSENTIMIENTO (owner decision 2026-11-10): never
+       * re-ingested, re-embedded, re-gated, graphed or published while true.
+       * `lib/consentHold.ts` has the rule, the guards and its only writer.
+       */
+      name: 'consentHeld',
+      type: 'checkbox',
+      required: true,
+      defaultValue: false,
+      access: { create: gateWritesOnly, update: gateWritesOnly },
+      admin: {
+        readOnly: true,
+        position: 'sidebar',
+        description: 'Retenido por consentimiento: no se procesa ni se publica.',
+      },
     },
     {
       name: 'publicationError',
@@ -3885,7 +3947,7 @@ export const Documents: CollectionConfig = {
      * refusing because a downstream service is unreachable would leave them
      * stuck with a row they cannot remove. The failure is logged instead.
      */
-    beforeDelete: [scheduleMediaCleanupHook, deleteRevisionsHook],
+    beforeDelete: [scheduleMediaCleanupHook, deleteRevisionsHook, deleteOwnReviewRowsHook],
     afterDelete: [retireDeletedDocumentHook, pruneWikilinkSeedsAfterDeleteHook],
   },
   endpoints: [
@@ -3911,8 +3973,8 @@ export const Documents: CollectionConfig = {
  * right for reading; without this check it also let someone who was removed
  * (or whose seat was switched off) push their drafts into the shared corpus.
  *
- * ⚠ Unpublish and delete do not ask: whether someone who left may take their
- * own material back is an open owner question.
+ * ⚠ Unpublish does not ask. Delete asks for anything but a draft
+ * (`uploaderMayDelete`, owner decision 2026-11-10).
  */
 async function hasWriteSeatInDocumentEcosystem(
   req: PayloadRequest,
@@ -3962,7 +4024,7 @@ function documentActionEndpoint(
       const id = (req.routeParams as { id?: string } | undefined)?.id
       if (!id) return fail(400, 'Missing document id.')
 
-      // ⚠ Read UNDER ACCESS CONTROL. `uploaderOnly` is what makes "you may only
+      // ⚠ Read UNDER ACCESS CONTROL. The uploader check below is what makes "you may only
       // publish your own document" true; using overrideAccess here would let
       // anyone publish anyone's draft into the shared corpus.
       const doc = (await req.payload
@@ -3972,6 +4034,7 @@ function documentActionEndpoint(
         publicationStatus?: unknown
         uploadedBy?: unknown
         organization?: unknown
+        consentHeld?: unknown
       } | null
 
       if (!doc) return fail(404, 'No such document.')
@@ -3984,6 +4047,8 @@ function documentActionEndpoint(
         return fail(409, 'This document has no ecosistema, so it cannot be published.')
       }
       if (action === 'publish' && !(await hasWriteSeatInDocumentEcosystem(req, doc))) return fail(403, NO_WRITE_SEAT)
+      // 🔴 Before the student-note branch too: it re-runs the gate and the ingest.
+      if (action === 'publish' && isConsentHeld(doc)) return fail(409, CONSENT_HELD_MESSAGE)
 
       const state = doc.publicationStatus
       // 🔴 "Publicar cambios": a student's PUBLISHED note whose body changed
@@ -4057,6 +4122,8 @@ function documentActionEndpoint(
           action === 'publish'
             ? await beginPublish(doc as never, deps)
             : await unpublish(doc as never, deps)
+        // A consent-held row is only retired: it is a draft already, nothing in flight.
+        if ('retiredOnly' in result && result.retiredOnly) return json({ ok: true, publicationStatus: 'draft' }, 200)
         return json(
           {
             ok: true,
@@ -4076,6 +4143,24 @@ function documentActionEndpoint(
 }
 
 /**
+ * 🔴 THE DELETING USER'S OWN `anonymisation-reviews` ROWS GO WITH THE DOCUMENT;
+ * EVERYONE ELSE'S STAY (owner decision 2026-11-10). The FK is `ON DELETE set
+ * null`, so the others are kept by the database with `documentIdSnapshot`
+ * (`collections/AnonymisationReviews.ts`). A delete with no user (a script)
+ * keeps every row. In the delete's transaction (`req`): a failure here fails
+ * the delete rather than leaving it half done.
+ */
+async function deleteOwnReviewRowsHook({ id, req }: Parameters<CollectionBeforeDeleteHook>[0]): Promise<void> {
+  if (!req.user) return
+  await req.payload.delete({
+    collection: 'anonymisation-reviews',
+    where: { and: [{ document: { equals: id } }, { reviewer: { equals: req.user.id } }] },
+    overrideAccess: true,
+    req,
+  })
+}
+
+/**
  * A note's pending "Publicar cambios" revision goes with it. ⚠ BEFORE the
  * delete: the FK is `set null`, so afterwards the revision could no longer be
  * found and would surface as a stray draft. Its own delete hooks retire its
@@ -4090,7 +4175,7 @@ async function deleteRevisionsHook({ id, req }: Parameters<CollectionBeforeDelet
       req,
     })
   } catch (err) {
-    console.error('[documents] could not delete the revision of note', id, err)
+    console.error('[documents] could not delete the revision of note', id, safeErrMessage(err))
   }
 }
 
@@ -4130,6 +4215,7 @@ function noteEditEndpoint(): Endpoint {
         return fail(403, 'Only the person who uploaded a document can edit it.')
       }
       if (!(await hasWriteSeatInDocumentEcosystem(req, doc))) return fail(403, NO_WRITE_SEAT)
+      if (isConsentHeld(doc)) return fail(409, CONSENT_HELD_MESSAGE)
 
       let body: Record<string, unknown> = {}
       try {
@@ -4338,13 +4424,16 @@ function retryIngestEndpoint(): Endpoint {
           user,
           req,
         })
-        .catch(() => null)) as unknown as (RetryableDocument & { uploadedBy?: unknown; organization?: unknown }) | null
+        .catch(() => null)) as unknown as
+        | (RetryableDocument & { uploadedBy?: unknown; organization?: unknown; consentHeld?: unknown })
+        | null
 
       if (!doc) return fail(404, 'No such document.')
       if (String(relationId(doc.uploadedBy) ?? '') !== String(user.id)) {
         return fail(403, 'Only the person who uploaded a document can retry it.')
       }
       if (!(await hasWriteSeatInDocumentEcosystem(req, doc))) return fail(403, NO_WRITE_SEAT)
+      if (isConsentHeld(doc)) return fail(409, CONSENT_HELD_MESSAGE)
 
       const data = planIngestRetry(doc)
       if (!data) {
@@ -4506,12 +4595,13 @@ function retryGraphEndpoint(): Endpoint {
           user,
           req,
         })
-        .catch(() => null)) as unknown as (GraphRetryableDocument & { uploadedBy?: unknown }) | null
+        .catch(() => null)) as unknown as (GraphRetryableDocument & { uploadedBy?: unknown; consentHeld?: unknown }) | null
 
       if (!doc) return fail(404, 'No such document.')
       if (String(relationId(doc.uploadedBy) ?? '') !== String(user.id)) {
         return fail(403, 'Only the person who uploaded a document can rebuild its graph.')
       }
+      if (isConsentHeld(doc)) return fail(409, CONSENT_HELD_MESSAGE)
 
       const refusal = planGraphRetry(doc)
       if (refusal) return fail(409, refusal.reason)

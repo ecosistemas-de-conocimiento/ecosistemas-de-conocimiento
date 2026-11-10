@@ -65,6 +65,8 @@
 
 import type { Payload } from 'payload'
 
+import { safeErrMessage } from '../lib/errorSummary'
+
 import type { DemoUser, DemoUserResult } from './demoUsers'
 import { generatePassword, missingOrganizations, seedDemoUsers, writeCredentials } from './demoUsers'
 import { manualSeedAllowed, manualSeedGateReason } from './env-gate'
@@ -544,7 +546,7 @@ async function runTrabajos(
             break
         }
       } catch (err) {
-        log(`document ${state.id ?? '(new)'} (${state.action}) failed: ${err instanceof Error ? err.message : 'error'}`)
+        log(`document ${state.id ?? '(new)'} (${state.action}) failed: ${safeErrMessage(err)}`)
       }
     },
     {

@@ -36,6 +36,8 @@
  * this catch be the last resort it is.
  */
 
+import { safeErrMessage } from './errorSummary'
+
 /** Every limit in this app uses a one-minute window, except failed logins (below). */
 export const RATE_LIMIT_WINDOW_MS = 60_000
 
@@ -486,7 +488,7 @@ export async function reserveRateLimits(rules: RateLimitRule[]): Promise<RateLim
       try {
         await currentStore().release(rule.key)
       } catch (err) {
-        console.error(`[identity/rateLimit] release failed on scope "${rule.scope}" — the slot stays counted:`, err)
+        console.error(`[identity/rateLimit] release failed on scope "${rule.scope}" — the slot stays counted:`, safeErrMessage(err))
       }
     }
   }
@@ -519,7 +521,7 @@ export async function checkRateLimits(rules: RateLimitRule[]): Promise<RateLimit
     } catch (err) {
       console.error(
         `[identity/rateLimit] store failed on scope "${rule.scope}" — DENYING the request (fail closed):`,
-        err,
+        safeErrMessage(err),
       )
       const resetAt = Date.now() + windowMs
       return {

@@ -138,7 +138,8 @@ export interface LibraryQueryInput {
  * scoped?" a one-line check rather than an audit of every call site — and it is
  * the only reason the two constraints above are testable at all.
  *
- * ⚠ Search is on `name` only, and the UI says so. Matching the full text would
+ * ⚠ Search is on the title the card shows, and the UI says so: `name`, and a
+ * testimonio's `testimonioTitle` (`resolveSearchIds`). Matching the full text would
  * mean a `like` over every transcript in the ecosistema on every keystroke; at
  * a few hundred documents that is a full scan of the largest column in the
  * table. A title search that is honest about being a title search beats a
@@ -201,10 +202,11 @@ export function isClearedForLibrary(row: Record<string, unknown> | null | undefi
   return true;
 }
 
-export function libraryListQuery(input: LibraryQueryInput): string {
+/** The three constraints every read in this file carries. */
+function scopeQuery(organizationId: string): URLSearchParams {
   const qs = new URLSearchParams();
   // 🔴 The two constraints. First, so they are the first thing anyone reads.
-  qs.set('where[organization][equals]', input.organizationId);
+  qs.set('where[organization][equals]', organizationId);
   qs.set('where[publicationStatus][equals]', 'published');
 
   // 🔴 THE THIRD CONSTRAINT: gated content only once the gate (or a reviewer)
@@ -212,6 +214,11 @@ export function libraryListQuery(input: LibraryQueryInput): string {
   // 13 held testimonios were `published` and showed as empty "Testimonio"
   // cards. A `documento` is never gated. Mirrors `isClearedForLibrary`.
   for (const [k, v] of CLEARED_WHERE) qs.set(k, v);
+  return qs;
+}
+
+export function libraryListQuery(input: LibraryQueryInput): string {
+  const qs = scopeQuery(input.organizationId);
 
   for (const [k, v] of kindFilterWhere(input.kind)) qs.set(k, v);
 
@@ -243,6 +250,90 @@ export function libraryDocQuery(): string {
   const qs = new URLSearchParams({ depth: '0' });
   for (const [k, v] of selectParams(LIBRARY_DOC_FIELDS)) qs.set(k, v);
   return qs.toString();
+}
+
+// ── Search ─────────────────────────────────────────────────────────────────
+
+/**
+ * Most ids one search resolves to. Past it {@link resolveSearchIds} gives up and
+ * the list falls back to a title-only search. 1000 ids is about 7 KB of query
+ * string, under Node's 16 KB header limit (inferred: four-digit ids on dev,
+ * 2026-11-10, plus an encoded comma each).
+ */
+export const SEARCH_ID_CEILING = 1000;
+
+/**
+ * Payload's `like`, as the BFF needs it for a title it reads itself: every
+ * space-separated word, as a case-insensitive substring
+ * (`@payloadcms/drizzle@3.88.0`, `queries/parseParams.js`).
+ */
+export function titleMatches(title: unknown, search: string): boolean {
+  if (typeof title !== 'string' || !title) return false;
+  const haystack = title.toLocaleLowerCase('es');
+  const words = search.toLocaleLowerCase('es').split(' ').filter(Boolean);
+  return words.length > 0 && words.every((w) => haystack.includes(w));
+}
+
+async function readIds(
+  token: string | undefined,
+  qs: URLSearchParams,
+  keep: (row: Record<string, unknown>) => boolean,
+): Promise<string[] | null> {
+  qs.set('depth', '0');
+  qs.set('limit', String(SEARCH_ID_CEILING));
+  const res = await backendFetch(token, `/api/documents?${qs.toString()}`, { method: 'GET' });
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => ({}))) as { docs?: unknown; hasNextPage?: unknown };
+  if (body.hasNextPage === true || !Array.isArray(body.docs)) return null;
+  return (body.docs as Record<string, unknown>[])
+    .filter((row) => row && row.id != null && keep(row))
+    .map((row) => String(row.id));
+}
+
+/**
+ * 🔴 A TESTIMONIO IS FOUND BY THE TITLE ITS CARD SHOWS. That title is
+ * `testimonioTitle`; `name` is the uploader's filename, never shown. Searching
+ * `name` alone missed every Voz: measured on dev 2026-11-10, 0 of 6 sampled
+ * testimonios in Prevención del dengue and Discapacidad came back for a word
+ * of their own title.
+ *
+ * ⚠ Two reads, then ids, because one query cannot say it. A member may not
+ * query `testimonioTitle` (backend `testimonioTitleReadable`: 400), and any
+ * `where` naming `name` is narrowed to documentos and the caller's own uploads
+ * (`constrainGatedQueries`), so an `or` of the two would drop the testimonios
+ * again. The titles are read only from cleared rows (`scopeQuery`), which every
+ * member already sees on the cards.
+ *
+ * `null` ⇒ could not tell (a read failed, or past {@link SEARCH_ID_CEILING});
+ * the caller falls back to the title-only search.
+ */
+export async function resolveSearchIds(
+  token: string | undefined,
+  organizationId: string,
+  search: string,
+): Promise<string[] | null> {
+  const byName = scopeQuery(organizationId);
+  byName.set('where[name][like]', search);
+  byName.set('select[contentKind]', 'true');
+
+  const voces = scopeQuery(organizationId);
+  voces.set('where[contentKind][equals]', 'testimonio');
+  // 🔴 A PAIR: the backend reads `anonymisationStatus` off the projected row
+  // to decide whether `testimonioTitle` is readable (`mayReadTestimonioTitle`).
+  voces.set('select[testimonioTitle]', 'true');
+  voces.set('select[anonymisationStatus]', 'true');
+
+  try {
+    const [names, titled] = await Promise.all([
+      readIds(token, byName, () => true),
+      readIds(token, voces, (row) => titleMatches(row.testimonioTitle, search)),
+    ]);
+    if (!names || !titled) return null;
+    return [...new Set([...names, ...titled])];
+  } catch (err) {
+    console.warn('[biblioteca] search id read failed', err);
+    return null;
+  }
 }
 
 // ── Row parsing ────────────────────────────────────────────────────────────
@@ -452,7 +543,19 @@ export async function listPublished(
   input: LibraryQueryInput,
 ): Promise<LibraryPage> {
   try {
-    const res = await backendFetch(token, `/api/documents?${libraryListQuery(input)}`, {
+    // A search becomes ids (`resolveSearchIds`), ANDed with a lengua filter's.
+    let query = input;
+    const search = normalizeSearch(input.search);
+    if (search) {
+      const ids = await resolveSearchIds(token, input.organizationId, search);
+      if (ids) {
+        const scoped = input.documentIds ? ids.filter((id) => input.documentIds!.includes(id)) : ids;
+        // ⚠ Never an empty `in`: nothing matched is an empty page, said so.
+        if (scoped.length === 0) return { items: [], total: 0, page: input.page, hasNextPage: false, ok: true };
+        query = { ...input, search: '', documentIds: scoped };
+      }
+    }
+    const res = await backendFetch(token, `/api/documents?${libraryListQuery(query)}`, {
       method: 'GET',
     });
     if (!res.ok) {

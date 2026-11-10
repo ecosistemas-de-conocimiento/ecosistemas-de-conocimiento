@@ -74,6 +74,7 @@
 
 import { runGraphBackfill, type GraphBackfillPayload } from '../src/lib/graph/backfill'
 import { DEFAULT_USD_PER_WINDOW, estimateWindows } from '../src/lib/graph/reextractWikilinkNotes'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 const positiveInt = (raw: string | undefined): number | undefined => {
   if (!raw || !/^\d+$/.test(raw.trim())) return undefined
@@ -134,6 +135,6 @@ async function main(): Promise<number> {
 try {
   process.exit(await main())
 } catch (err) {
-  console.error('[reextract-published-graph] failed:', err instanceof Error ? err.message : err)
+  console.error('[reextract-published-graph] failed:', safeErrMessage(err))
   process.exit(1)
 }

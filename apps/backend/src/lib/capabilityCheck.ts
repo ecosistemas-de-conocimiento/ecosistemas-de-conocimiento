@@ -20,6 +20,7 @@
 import { CapabilityNegotiationError, ORG_DELEGATION_CAPABILITY } from '@edc/ai-client'
 
 import { getAppAIClient } from './aiClient'
+import { safeErrMessage } from './errorSummary'
 
 /**
  * What this backend cannot run without — deliberately SHORT. Over-declaring
@@ -102,11 +103,11 @@ export async function checkAIServiceCapabilities(logger: CapabilityLogger): Prom
   } catch (err) {
     if (!(err instanceof CapabilityNegotiationError)) throw err
     if (err.status === 'unreachable') {
-      logger.warn(`${err.message} Starting anyway — a restarting ai-service is not a missing capability.`)
+      logger.warn(`${safeErrMessage(err, 1000)} Starting anyway — a restarting ai-service is not a missing capability.`)
       return
     }
     if (capabilityModeFromEnv() === 'warn') {
-      logger.warn(`${err.message} Starting anyway (AI_CAPABILITY_MODE=warn).`)
+      logger.warn(`${safeErrMessage(err, 1000)} Starting anyway (AI_CAPABILITY_MODE=warn).`)
       return
     }
     throw err

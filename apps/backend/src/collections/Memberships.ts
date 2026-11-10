@@ -1,4 +1,5 @@
 import type {
+  Access,
   CollectionBeforeDeleteHook,
   CollectionBeforeOperationHook,
   CollectionBeforeValidateHook,
@@ -7,12 +8,14 @@ import type {
   FieldAccess,
 } from 'payload'
 import { sql } from '@payloadcms/db-postgres'
-import { APIError, ValidationError } from 'payload'
+import { APIError, ValidationError, type Where } from 'payload'
 
-import { isPlatformAdminUser, withinMyOrganizations, withinMyOrganizationsWithRole } from '../access'
+import { isActiveUser, isPlatformAdminUser, principalId, withinMyOrganizationsWithRole } from '../access'
+import { rowsOf } from '../lib/graph/queries'
 import {
   DEFAULT_ORG_ROLE,
   isOrgRole,
+  membershipsForUser,
   ORG_ROLES,
   organizationIdsForUserWithMinRole,
   outranks,
@@ -558,6 +561,60 @@ export const readMembershipUser: FieldAccess = async ({ req, doc }) => {
   return role !== null && ROLE_PERMISSIONS[role].includes(PERMISSIONS.membersManage)
 }
 
+/**
+ * 🔴 WHO SEES WHOM (owner 2026-11-10).
+ *
+ * Everyone in an ecosistema sees its whole roster (`personName`, role), with
+ * one exception: where the caller's role is `estudiante`, they see
+ *  · their own membership;
+ *  · every non-student row (staff), so a teacher can still be named;
+ *  · the classmates who switched `shareWithPeers` on there, while that
+ *    classmate's account and membership are active — the same set the student
+ *    view lists (`consentingStudents` in `lib/student/queries.ts`).
+ * A classmate who never opted in, or withdrew, is not there at all. Each
+ * ecosistema is judged by the caller's role in IT: a student in A who manages
+ * B still sees all of B.
+ */
+export const readMemberships: Access = async ({ req }) => {
+  if (isPlatformAdminUser(req.user)) return true
+  const callerId = principalId(req)
+  if (callerId === null || !isActiveUser(req.user)) return false
+
+  const mine = await membershipsForUser(req.payload, callerId)
+  if (mine.length === 0) return false
+  const full = mine.filter((m) => m.role !== 'estudiante').map((m) => Number(m.organization.id))
+  const studentOrgs = mine.filter((m) => m.role === 'estudiante').map((m) => Number(m.organization.id))
+  if (studentOrgs.length === 0) return { organization: { in: full } } satisfies Where
+
+  // The student rows this caller may see: their own, and the opted-in classmates'.
+  const orgList = sql.join(studentOrgs.map((id) => sql`${id}`), sql`, `)
+  const visible = rowsOf(
+    await (req.payload.db as unknown as { drizzle: { execute(q: unknown): Promise<unknown> } }).drizzle.execute(sql`
+      SELECT mb.id AS id
+        FROM memberships mb
+       WHERE mb.organization_id IN (${orgList}) AND mb.role::text = 'estudiante'
+         AND (mb.user_id = ${Number(callerId)}
+              OR (mb.is_active = true
+                  AND EXISTS (SELECT 1 FROM users u WHERE u.id = mb.user_id AND u.is_active = true)
+                  AND EXISTS (SELECT 1 FROM student_profiles sp
+                               WHERE sp.user_id = mb.user_id AND sp.organization_id = mb.organization_id
+                                 AND sp.share_with_peers = true)))`),
+  ).map((r) => Number(r.id))
+
+  const studentScope: Where = {
+    and: [
+      { organization: { in: studentOrgs } },
+      {
+        or: [
+          { role: { not_equals: 'estudiante' } },
+          ...(visible.length > 0 ? [{ id: { in: visible } }] : []),
+        ],
+      },
+    ],
+  }
+  return full.length > 0 ? { or: [{ organization: { in: full } }, studentScope] } : studentScope
+}
+
 /** Admin-panel labels. Exhaustive by type, so adding a role forces a label. */
 const ROLE_LABELS: Record<OrgRole, string> = {
   estudiante: 'Estudiante — a member, plus the student view where it is switched on',
@@ -602,9 +659,10 @@ export const Memberships: CollectionConfig = {
     group: 'Tenancy',
   },
   access: {
-    // Everyone in an organization can see who else is in it — that is what
-    // makes `@`-mentions and a member list work. Scoped to YOUR organizations.
-    read: withinMyOrganizations(),
+    // Everyone in an organization can see who else is in it, scoped to YOUR
+    // organizations — except a student, who sees staff and the classmates who
+    // opted in. See `readMemberships`.
+    read: readMemberships,
     // Adding, re-roling and removing people is the `members:manage` permission,
     // which `admin` and `owner` hold.
     create: manageAccess,

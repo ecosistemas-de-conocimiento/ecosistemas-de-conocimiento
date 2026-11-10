@@ -81,6 +81,7 @@ export async function bootPayload(url: string, secret: string): Promise<Payload>
     'EMBEDDING_JANITOR_ENABLED',
     'INGEST_RECOVERY_JANITOR_ENABLED',
     'GRAPH_ORPHAN_JANITOR_ENABLED',
+    'CALLBACK_RETENTION_JANITOR_ENABLED',
   ]) {
     process.env[v] = 'false'
   }

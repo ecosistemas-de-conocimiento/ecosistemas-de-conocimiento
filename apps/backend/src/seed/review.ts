@@ -44,6 +44,8 @@ import crypto from 'node:crypto'
 
 import type { Payload } from 'payload'
 
+import { safeErrMessage } from '../lib/errorSummary'
+
 /**
  * Used when `SEED_INVESTIGADOR_EMAIL` is unset. An address, never a credential.
  *
@@ -204,7 +206,7 @@ export async function seedInvestigador(
     } catch (err) {
       payload.logger.warn(
         `[seed-review] could not create the Investigador account (${email}): ` +
-          `${err instanceof Error ? err.message : String(err)}. /revision will only be ` +
+          `${safeErrMessage(err)}. /revision will only be ` +
           'reachable by a platform admin.',
       )
       return null

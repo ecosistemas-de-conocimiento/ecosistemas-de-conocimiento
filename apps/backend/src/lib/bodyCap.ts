@@ -21,6 +21,14 @@
  * check who is asking. So only `isUploadRoute` skips the count, and there
  * busboy's `upload.limits` in `payload.config.ts` bound the file and fields.
  *
+ * 🔴 A SLOW BODY IS BOUNDED IN TIME TOO (re-audit 2026-11-10, C-03). Each
+ * counted read stops after `API_BODY_IDLE_TIMEOUT_MS` with no bytes, or
+ * `API_BODY_TOTAL_TIMEOUT_MS` in all, cancels the stream and answers 408.
+ * Node's own `server.requestTimeout` (300 s by default since Node 18, quoted
+ * from the Node docs; Next 15.4's `start-server.js` leaves it alone, read) is
+ * the outer bound; these are tighter. An upload is busboy's, and keeps
+ * Node's bound only.
+ *
  * ⚠ Edge-safe on purpose: the middleware imports this file. Web APIs only.
  */
 
@@ -78,17 +86,89 @@ export const tooLarge = (max: number): Response =>
   )
 
 /**
+ * 30 s with no bytes. A client that sends nothing for that long has stalled or
+ * gone; a lossy mobile link stalls for seconds, not tens of them (inferred).
+ */
+export const BODY_IDLE_TIMEOUT_MS = 30_000
+
+/**
+ * 120 s for the whole body. The cap, 8 MiB, at 1 Mbit/s takes about 67 s
+ * (inferred: 8 × 8 Mbit / 1 Mbit/s); every body the app sends is far smaller.
+ */
+export const BODY_TOTAL_TIMEOUT_MS = 120_000
+
+export interface BodyTimeouts {
+  idleMs: number
+  totalMs: number
+}
+
+const positive = (raw: string | undefined, fallback: number): number => {
+  const n = Number(raw)
+  return Number.isInteger(n) && n > 0 ? n : fallback
+}
+
+/** `API_BODY_IDLE_TIMEOUT_MS` and `API_BODY_TOTAL_TIMEOUT_MS`, else the defaults. */
+export function bodyTimeouts(env: Record<string, string | undefined> = process.env): BodyTimeouts {
+  return {
+    idleMs: positive(env.API_BODY_IDLE_TIMEOUT_MS, BODY_IDLE_TIMEOUT_MS),
+    totalMs: positive(env.API_BODY_TOTAL_TIMEOUT_MS, BODY_TOTAL_TIMEOUT_MS),
+  }
+}
+
+/** The body stalled or took too long; the stream was cancelled. */
+export class BodyTimeoutError extends Error {
+  constructor() {
+    super('Request body read timed out.')
+    this.name = 'BodyTimeoutError'
+  }
+}
+
+export const bodyTimedOut = (): Response =>
+  Response.json(
+    { errors: [{ message: 'Request body too slow.' }] },
+    { status: 408, headers: { 'cache-control': 'no-store', connection: 'close' } },
+  )
+
+/** One read, or 'timeout' after `ms`. */
+async function readWithin(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  ms: number,
+): Promise<ReadableStreamReadResult<Uint8Array> | 'timeout'> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), ms)
+  })
+  try {
+    return await Promise.race([reader.read(), late])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
  * The body, or null past `max` bytes. Counted while reading, and the stream is
  * cancelled at the cap, so no more than `max` plus one chunk is ever held.
+ * Throws {@link BodyTimeoutError} past `timeouts`, after cancelling the stream.
  */
-export async function readCapped(request: Request, max: number): Promise<Uint8Array<ArrayBuffer> | null> {
+export async function readCapped(
+  request: Request,
+  max: number,
+  timeouts: BodyTimeouts = bodyTimeouts(),
+): Promise<Uint8Array<ArrayBuffer> | null> {
   if (declaresOver(request, max)) return null
   if (!request.body) return new Uint8Array(0)
   const reader = request.body.getReader()
   const parts: Uint8Array[] = []
   let size = 0
+  const deadline = Date.now() + timeouts.totalMs
   for (;;) {
-    const { done, value } = await reader.read()
+    const result = await readWithin(reader, Math.max(0, Math.min(timeouts.idleMs, deadline - Date.now())))
+    if (result === 'timeout') {
+      // Not awaited: a source stuck in `pull` may never settle its cancel.
+      reader.cancel().catch(() => {})
+      throw new BodyTimeoutError()
+    }
+    const { done, value } = result
     if (done) break
     size += value.byteLength
     if (size > max) {
@@ -111,12 +191,17 @@ export async function readCapped(request: Request, max: number): Promise<Uint8Ar
  * no body, a GET/HEAD, or multipart to an upload route (busboy bounds that
  * one) is returned as is. Multipart anywhere else is counted like JSON, and
  * Payload parses the copy: the admin panel sends every form as multipart.
+ * Throws {@link BodyTimeoutError} like {@link readCapped}.
  */
-export async function withCappedBody(request: Request, max: number): Promise<Request | null> {
+export async function withCappedBody(
+  request: Request,
+  max: number,
+  timeouts: BodyTimeouts = bodyTimeouts(),
+): Promise<Request | null> {
   const method = request.method.toUpperCase()
   if (method === 'GET' || method === 'HEAD' || !request.body) return request
   if (isMultipart(request.headers.get('content-type')) && isUploadRoute(request)) return request
-  const bytes = await readCapped(request, max)
+  const bytes = await readCapped(request, max, timeouts)
   // ⚠ Not `new Request(request, …)`: Next hands route handlers its own Request
   // class, and undici's constructor throws on it ("private member #state").
   return bytes

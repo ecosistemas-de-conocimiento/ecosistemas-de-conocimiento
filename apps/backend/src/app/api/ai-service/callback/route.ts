@@ -68,6 +68,7 @@ import {
 } from '@/lib/hmac'
 import { messageIdFromExternalId } from '@/lib/conversationIngest'
 import { relationId } from '@/lib/permissions'
+import { safeErrMessage } from '@/lib/errorSummary'
 
 /**
  * Envelope shape — narrow mirror of `callback-contract.md`. Only the fields
@@ -194,7 +195,8 @@ function naturalKeyFor(envelope: CallbackEnvelope): NaturalKey | null {
  * `transcribe.completed` body carries the raw, pre-anonymisation text. Keeping
  * it here outlived the document, its redaction and its deletion. The text is
  * replaced by its length and SHA-256: enough to tell two deliveries apart while
- * debugging, nothing to read.
+ * debugging, nothing to read. What is left is NULLed after 30 days
+ * (`lib/callbackRetention.ts`); the row itself stays, as the dedupe key.
  *
  * 🔴 Nor a name (audit 2026-11-10, C-11). audio-service echoes the `title` and
  * `audio.filename` it was sent in `transcribe.completed` and `transcribe.failed`,
@@ -249,7 +251,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     // What `req.text()` did: UTF-8, replacement characters, a leading BOM dropped.
     rawBody = new TextDecoder().decode(bytes)
   } catch (err) {
-    console.warn('[callback] failed to read raw body', err)
+    console.warn('[callback] failed to read raw body', safeErrMessage(err))
     return NextResponse.json(
       { error: 'bad_request', reason: 'unreadable_body' },
       { status: 400 },
@@ -274,7 +276,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   try {
     envelope = JSON.parse(rawBody) as CallbackEnvelope
   } catch (err) {
-    console.warn('[callback] signed body is not valid JSON', err)
+    console.warn('[callback] signed body is not valid JSON', safeErrMessage(err))
     return NextResponse.json(
       { error: 'bad_request', reason: 'invalid_json' },
       { status: 400 },
@@ -331,7 +333,7 @@ export async function POST(req: Request): Promise<NextResponse> {
       msg.includes('ai_service_callbacks_natural_key_unq') ||
       payloadValidationUnique
     if (!isUnique) {
-      console.error('[callback] dedupe insert failed', err)
+      console.error('[callback] dedupe insert failed', safeErrMessage(err))
       return NextResponse.json(
         { error: 'internal_error', message: 'dedupe_failed' },
         { status: 500 },
@@ -348,7 +350,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   try {
     await dispatchCallback(payload, envelope)
   } catch (err) {
-    console.error('[callback] dispatch failed; asking the sender to retry:', envelope.event, err)
+    console.error('[callback] dispatch failed; asking the sender to retry:', envelope.event, safeErrMessage(err))
     // 🔴 Forget the event, or the retry this 500 asks for is deduped away.
     if (dedupeRowId != null) {
       try {
@@ -362,7 +364,7 @@ export async function POST(req: Request): Promise<NextResponse> {
           '[callback] could not delete the dedupe row after a failed dispatch — a retry of',
           envelope.event,
           'will be deduped and LOST',
-          delErr,
+          safeErrMessage(delErr),
         )
       }
     }
@@ -504,7 +506,7 @@ async function dispatchCallback(
           ...(callbackUrl ? { callbackUrl } : {}),
         })
       } catch (err) {
-        console.warn('[callback] auto-publish failed for doc', docIdRaw, err)
+        console.warn('[callback] auto-publish failed for doc', docIdRaw, safeErrMessage(err))
       }
       return
     }
@@ -744,7 +746,7 @@ async function readDocument(
     })) as unknown as DocumentSnapshot
   } catch (err) {
     rethrowUnlessNotFound(err)
-    console.error('[callback] no documents row for', docId, err)
+    console.error('[callback] no documents row for', docId, safeErrMessage(err))
     return null
   }
 }
@@ -1029,7 +1031,7 @@ async function dispatchPublishMove(
           ...(ingestCallbackUrl() ? { callbackUrl: ingestCallbackUrl() as string } : {}),
         })
       } catch (err) {
-        console.warn('[callback] conversation release failed for doc', doc.id, err)
+        console.warn('[callback] conversation release failed for doc', doc.id, safeErrMessage(err))
       }
     } else {
       // Unpublish already retired the shared copy before this re-ingest was
@@ -1038,7 +1040,7 @@ async function dispatchPublishMove(
     }
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
-    console.error('[callback] could not finish the publish move for doc', doc.id, err)
+    console.error('[callback] could not finish the publish move for doc', doc.id, safeErrMessage(err))
     await failPublish(doc as never, { payload }, reason)
   }
 }

@@ -64,6 +64,7 @@ describe('needsRegate', () => {
     ['already gated', doc(1, { anonymise: true }), false],
     ['a draft', doc(1, { publicationStatus: 'draft' }), false],
     ['a testimonio', doc(1, { contentKind: 'testimonio' }), false],
+    ['held for consent', doc(1, { consentHeld: true }), false],
   ])('%s → %s', (_c, row, expected) => {
     expect(needsRegate(row)).toBe(expected)
   })

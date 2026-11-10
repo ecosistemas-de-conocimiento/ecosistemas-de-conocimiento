@@ -81,6 +81,7 @@ describe('refusalFor', () => {
     ['publishing', doc(1, { publicationStatus: 'publishing' }), false, 'in-flight'],
     ['gate running', doc(1, { anonymisationStatus: 'pending' }), false, 'in-flight'],
     ['a held draft', doc(1, { publicationStatus: 'draft', anonymisationStatus: 'held' }), false, null],
+    ['held for consent', doc(1, { consentHeld: true }), true, 'consent-held'],
   ])('%s → %s', (_c, row, allow, expected) => {
     expect(refusalFor(row as Row | undefined, 7, allow as boolean)).toBe(expected)
   })

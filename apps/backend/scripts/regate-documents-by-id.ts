@@ -33,6 +33,7 @@
  */
 
 import { regateDocumentsById } from '../src/lib/regateDocumentsById'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 async function main(): Promise<void> {
   const apply = process.env.REGATE_APPLY === '1' || process.argv.includes('--apply')
@@ -97,6 +98,6 @@ try {
   await main()
   process.exit(process.exitCode ?? 0)
 } catch (err) {
-  console.error('[regate-documents-by-id] failed:', err)
+  console.error('[regate-documents-by-id] failed:', safeErrMessage(err))
   process.exit(1)
 }

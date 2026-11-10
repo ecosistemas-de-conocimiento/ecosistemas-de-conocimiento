@@ -44,8 +44,9 @@ import { tokenEndpoint } from './endpoints/token'
 import { checkAIServiceCapabilities } from './lib/capabilityCheck'
 import { checkCallbackConfig } from './lib/callbackConfig'
 import { checkAudioServiceConfig } from './lib/audioClient'
+import { startCallbackRetentionJanitor } from './lib/callbackRetention'
 import { startEmbeddingJanitor } from './lib/embeddingJanitor'
-import { safeErrSerializer } from './lib/errorSummary'
+import { safeErrMessage, safeErrSerializer } from './lib/errorSummary'
 import { startGraphOrphanJanitor } from './lib/graph/orphanJanitor'
 import { startIngestRecoveryJanitor } from './lib/ingestRecovery'
 import { ensureEcosystemBudgets } from './lib/provisionEcosystem'
@@ -335,7 +336,7 @@ export default buildConfig({
         }
       } catch (err) {
         payload.logger.warn(
-          { err: (err as Error).message },
+          { err: safeErrMessage(err) },
           '[seed-demo] failed to bootstrap the demo organization (continuing)',
         )
       }
@@ -404,6 +405,13 @@ export default buildConfig({
     //     a deleted document leaves behind. GRAPH_ORPHAN_JANITOR_ENABLED=false
     //     turns it off.
     startGraphOrphanJanitor(payload)
+
+    // 9c. Callback body purge (lib/callbackRetention.ts). Daily
+    //     (CALLBACK_RETENTION_JANITOR_INTERVAL_MIN, default 1440). NULLs
+    //     ai_service_callbacks.raw_body older than CALLBACK_RETENTION_DAYS
+    //     (default 30); the row stays, it is the dedupe.
+    //     CALLBACK_RETENTION_JANITOR_ENABLED=false turns it off.
+    startCallbackRetentionJanitor(payload)
 
     // 10. Every ecosistema has an ai-service budget row. The create hook in
     //     collections/Organizations.ts provisions once, fire-and-forget; a
