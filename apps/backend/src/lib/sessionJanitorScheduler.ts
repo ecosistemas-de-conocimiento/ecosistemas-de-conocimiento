@@ -25,6 +25,7 @@ import {
   janitorIntervalMs,
   runSessionJanitor,
 } from './sessionJanitor'
+import { safeErrMessage } from './errorSummary'
 
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -76,7 +77,7 @@ async function sweepGuarded(payload: Payload): Promise<void> {
     await runSessionJanitor(payload, janitorConfigFromEnv())
   } catch (err) {
     payload.logger.error(
-      { err: err instanceof Error ? err.message : String(err) },
+      { err: safeErrMessage(err) },
       '[session-janitor] sweep threw (will retry next interval)',
     )
   }

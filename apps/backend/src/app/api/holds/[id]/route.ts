@@ -42,7 +42,8 @@ import configPromise from '@payload-config'
 import { NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 
-import { API_BODY_MAX_BYTES, readCapped, tooLarge } from '@/lib/bodyCap'
+import { API_BODY_MAX_BYTES, BodyTimeoutError, bodyTimedOut, readCapped, tooLarge } from '@/lib/bodyCap'
+import { safeErrMessage } from '@/lib/errorSummary'
 import {
   HoldNotVisibleError,
   HoldReviewInputError,
@@ -71,7 +72,7 @@ function toResponse(err: unknown, what: string): Response {
   if (err instanceof HoldNotVisibleError) return fail(404, err.message)
   if (err instanceof HoldSettingsChangedError) return fail(409, err.message)
   if (err instanceof HoldReviewInputError) return fail(400, err.message)
-  console.error(`[holds] ${what} failed`, err)
+  console.error(`[holds] ${what} failed`, safeErrMessage(err))
   return fail(500, `Could not ${what}.`)
 }
 
@@ -100,7 +101,13 @@ export async function POST(request: Request, ctx: Ctx): Promise<Response> {
   const { id } = await ctx.params
 
   // 🔴 Counted: a multipart label skips the middleware, and `json()` has no cap.
-  const bytes = await readCapped(request, API_BODY_MAX_BYTES)
+  let bytes: Uint8Array | null
+  try {
+    bytes = await readCapped(request, API_BODY_MAX_BYTES)
+  } catch (err) {
+    if (err instanceof BodyTimeoutError) return bodyTimedOut()
+    throw err
+  }
   if (!bytes) return tooLarge(API_BODY_MAX_BYTES)
 
   let body: Record<string, unknown>

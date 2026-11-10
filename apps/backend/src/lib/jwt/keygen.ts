@@ -15,6 +15,8 @@
 
 import { exportPKCS8, exportSPKI, generateKeyPair } from 'jose'
 
+import { safeErrMessage } from '../errorSummary'
+
 const ALG = 'EdDSA'
 const CRV = 'Ed25519'
 
@@ -47,6 +49,6 @@ async function main(): Promise<void> {
 // `process.exit(0)` as soon as this module's import resolves, which killed the
 // un-awaited `main()` before it printed anything. See `keygen.test.ts`.
 await main().catch((err: unknown) => {
-  console.error('[keygen] failed to generate an Ed25519 keypair:', err)
+  console.error('[keygen] failed to generate an Ed25519 keypair:', safeErrMessage(err))
   process.exit(1)
 })

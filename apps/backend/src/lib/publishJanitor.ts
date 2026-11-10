@@ -71,6 +71,7 @@
 import type { Payload, Where } from 'payload'
 
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
+import { safeErrMessage } from './errorSummary'
 
 import {
   janitorEnabledFromEnv,
@@ -322,7 +323,7 @@ export async function sweepStalledPublishes(
       if (res === 0) continue
     } catch (err) {
       opts.log?.warn(
-        { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+        { documentId: String(doc.id), err: safeErrMessage(err) },
         '[publish-janitor] could not stamp a stalled publish — the row stays invisible',
       )
       continue

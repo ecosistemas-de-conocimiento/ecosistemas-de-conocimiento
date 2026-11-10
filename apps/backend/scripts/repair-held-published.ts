@@ -23,6 +23,7 @@
  */
 
 import { repairHeldPublished } from '../src/lib/repairHeldPublished'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 async function main(): Promise<void> {
   const apply = process.env.REPAIR_APPLY === '1'
@@ -52,6 +53,6 @@ try {
   await main()
   process.exit(process.exitCode ?? 0)
 } catch (err) {
-  console.error('[repair-held-published] failed:', err)
+  console.error('[repair-held-published] failed:', safeErrMessage(err))
   process.exit(1)
 }

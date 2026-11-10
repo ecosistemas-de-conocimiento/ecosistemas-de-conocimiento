@@ -24,6 +24,7 @@ import { NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 
 import { chatUsage } from '@/lib/chatUsage'
+import { safeErrMessage } from '@/lib/errorSummary'
 import { EcosystemNotVisibleError } from '@/lib/ecosystemMetrics'
 
 export const dynamic = 'force-dynamic'
@@ -48,7 +49,7 @@ export async function GET(request: Request): Promise<Response> {
   } catch (err) {
     // ⚠ Nothing distinguishing is logged or returned for a refusal.
     if (err instanceof EcosystemNotVisibleError) return fail(404, err.message)
-    console.error('[metrics] chat usage failed', err)
+    console.error('[metrics] chat usage failed', safeErrMessage(err))
     return fail(500, 'Could not compute the chat usage.')
   }
 }

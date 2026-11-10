@@ -86,6 +86,7 @@ import type { Payload, Where } from 'payload'
 import { UNGATED_CONTENT_KIND } from './anonymiseDocument'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
 import { missingCallbackConfig } from './callbackConfig'
+import { safeErrMessage } from './errorSummary'
 import {
   janitorEnabledFromEnv,
   janitorIntervalMsFromEnv,
@@ -342,7 +343,7 @@ export async function sweepStalledEmbeddings(
         job = await opts.readIngestStatus(doc)
       } catch (err) {
         opts.log?.warn(
-          { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+          { documentId: String(doc.id), err: safeErrMessage(err) },
           '[embedding-janitor] could not read the ai-service job status — stamping the stall instead',
         )
       }
@@ -360,7 +361,7 @@ export async function sweepStalledEmbeddings(
           if (res > 0) recovered += 1
         } catch (err) {
           opts.log?.warn(
-            { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+            { documentId: String(doc.id), err: safeErrMessage(err) },
             '[embedding-janitor] could not apply the ai-service job status',
           )
         }
@@ -410,7 +411,7 @@ export async function sweepStalledEmbeddings(
       if (res === 0) continue
     } catch (err) {
       opts.log?.warn(
-        { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+        { documentId: String(doc.id), err: safeErrMessage(err) },
         '[embedding-janitor] could not fail out a stalled embed — the row stays invisible',
       )
       continue
@@ -597,7 +598,7 @@ export async function sweepStalledPending(
         if (res === 0) continue
       } catch (err) {
         opts.log?.warn(
-          { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+          { documentId: String(doc.id), err: safeErrMessage(err) },
           '[embedding-janitor] could not fail out a stale pending row — it stays invisible',
         )
         continue
@@ -675,7 +676,7 @@ export function startEmbeddingJanitor(payload: Payload): boolean {
         }
       } catch (err) {
         p.logger.error(
-          { err: err instanceof Error ? err.message : String(err) },
+          { err: safeErrMessage(err) },
           '[embedding-janitor] the pending sweep threw',
         )
       }

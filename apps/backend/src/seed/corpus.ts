@@ -47,6 +47,7 @@ import type { Payload } from 'payload'
 
 import type { CorpusEntry } from './corpusSource'
 import { readCorpusManifest, readCorpusText, resolveCorpusDir } from './corpusSource'
+import { safeErrMessage } from '../lib/errorSummary'
 
 /**
  * 🔴 WHICH CORPUS DOCUMENTS BECOME A `testimonio`: ALL OF THEM.
@@ -378,7 +379,7 @@ export async function seedCorpusDocuments(
       text = (await readCorpusText(entry)).trim()
     } catch (err) {
       payload.logger.warn(
-        `[seed-corpus] could not read ${entry.archivo}: ${err instanceof Error ? err.message : String(err)}`,
+        `[seed-corpus] could not read ${entry.archivo}: ${safeErrMessage(err)}`,
       )
       continue
     }
@@ -637,7 +638,7 @@ async function runIngestSeededDocuments(
     // library is harder to reason about than an unembedded one.
     payload.logger.error(
       `[seed-corpus] SEED_CORPUS_INGEST is set but the AI service is not configured ` +
-        `(${err instanceof Error ? err.message : String(err)}). Nothing was ingested.`,
+        `(${safeErrMessage(err)}). Nothing was ingested.`,
     )
     return { enqueued: 0, failed: 0, held: 0 }
   }
@@ -808,7 +809,7 @@ async function runIngestSeededDocuments(
       } catch (err) {
         failed += 1
         payload.logger.warn(
-          `[seed-corpus] could not enqueue document ${row.id}: ${err instanceof Error ? err.message : String(err)}`,
+          `[seed-corpus] could not enqueue document ${row.id}: ${safeErrMessage(err)}`,
         )
       }
     },

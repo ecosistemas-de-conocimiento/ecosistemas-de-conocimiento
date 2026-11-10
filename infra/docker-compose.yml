@@ -600,6 +600,23 @@ services:
       retries: 5
     deploy:
       resources:
+        # ⚠ WORST-CASE MEMORY, AND WHY THIS IS STILL 2g (re-audit 2026-11-10, C-03).
+        #   busboy holds an upload in memory while Payload decides on it: about
+        #   2 × the 200 MiB media cap, so ~400 MiB per upload in flight
+        #   (inferred in apps/backend/src/payload.config.ts; one 300 MB POST
+        #   left the parser's process at 494 MB RSS, quoted from there).
+        #   Each account holds at most UPLOAD_MAX_CONCURRENT_PER_USER (2) at
+        #   once, so: baseline + 400 MiB × 2 × accounts uploading.
+        #   Baseline idle RSS: NOT MEASURED (no running backend was reachable
+        #   when this was written). At 2g, two accounts uploading at once (1.6 GiB)
+        #   leave under 0.5 GiB for everything else, so the third upload may be
+        #   the one that gets the process OOM-killed.
+        #   PROPOSED, NOT APPLIED: memory = baseline + 1.6 GiB (two accounts
+        #   at full slots); 3g if the baseline measures ≤ 1.4 GiB. Not applied
+        #   because a new ceiling changes how dev behaves under load and is
+        #   RAM taken from the rest of edc-1; measure first
+        #   (`docker stats --no-stream` on the backend, idle and mid-upload),
+        #   then decide. infra/fleet/env-manifests.md §2d has the same note.
         limits: { cpus: "2.0", memory: 2g }
 
   web:

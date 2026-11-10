@@ -296,6 +296,8 @@ export function logAIWarnings(
     if (!warning || typeof warning.code !== 'string' || !warning.code) continue
     logger.warn('ai-service warning', {
       aiWarningCode: warning.code,
+      // ai-service's own advisory text, not an error's: it never quotes a row.
+      // eslint-disable-next-line edc/no-raw-error-log
       aiWarningMessage: typeof warning.message === 'string' ? warning.message : '',
       surface,
     })

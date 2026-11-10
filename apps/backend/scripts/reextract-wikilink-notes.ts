@@ -19,6 +19,7 @@
  */
 
 import { parseReextractIds, planWikilinkReextraction } from '../src/lib/graph/reextractWikilinkNotes'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 async function main(): Promise<void> {
   const organizationId = Number(process.env.REEXTRACT_ORG ?? '')
@@ -64,6 +65,6 @@ try {
   await main()
   process.exit(0)
 } catch (err) {
-  console.error('[reextract-wikilinks] failed:', err instanceof Error ? err.message : err)
+  console.error('[reextract-wikilinks] failed:', safeErrMessage(err))
   process.exit(1)
 }

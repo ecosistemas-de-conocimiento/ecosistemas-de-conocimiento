@@ -22,6 +22,7 @@
  */
 
 import { regatePlaceOnlyHolds } from '../src/lib/regatePlaceHolds'
+import { safeErrMessage } from '../src/lib/errorSummary'
 
 async function main(): Promise<void> {
   const apply = process.env.REGATE_APPLY === '1'
@@ -51,6 +52,6 @@ try {
   await main()
   process.exit(0)
 } catch (err) {
-  console.error('[regate-place-holds] failed:', err)
+  console.error('[regate-place-holds] failed:', safeErrMessage(err))
   process.exit(1)
 }

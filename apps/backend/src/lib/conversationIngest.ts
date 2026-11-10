@@ -84,6 +84,7 @@ import { publishedCorpus } from './corpus'
 import { relationId } from './permissions'
 import type { PersonDetector } from './anonymise/types'
 import { GATE_UNAVAILABLE_CODE } from './anonymiseDocument'
+import { safeErrMessage } from './errorSummary'
 import { claimTurn, finishTurn, TURN_RUNNING_CODE, type MessageColumnsPayload } from './messageColumns'
 
 /**
@@ -726,7 +727,7 @@ export async function releaseConversationsWaitingOn(args: {
     }
   } catch (err) {
     payload.logger?.warn?.(
-      { documentId: String(documentId), err: String(err) },
+      { documentId: String(documentId), err: safeErrMessage(err) },
       '[conversation] could not release conversations waiting on this document; they stay held.',
     )
   }

@@ -271,13 +271,19 @@ describe('🔴 redaction — the route is unauthenticated', () => {
     }
   })
 
-  it('logs the FULL error to console.error — the only place it is allowed to exist', async () => {
-    const secret = pgAuthError()
-
-    await probeAll([fails('database', secret)])
+  it('logs the cause to console.error — the only place it is allowed to exist', async () => {
+    await probeAll([fails('database', pgAuthError())])
 
     expect(errorSpy).toHaveBeenCalledTimes(1)
-    expect(errorSpy.mock.calls[0]).toContain(secret)
+    // P-07 (re-audit 2026-11-10): a database error's text can quote a row, so
+    // the line names its class and SQLSTATE, not its message.
+    expect(errorSpy.mock.calls[0]).toContain('Error(28P01)')
+  })
+
+  it('an ordinary error keeps its message in the log', async () => {
+    await probeAll([fails('storage', new Error('connect ECONNREFUSED 10.0.0.5:9000'))])
+
+    expect(errorSpy.mock.calls[0]).toContain('connect ECONNREFUSED 10.0.0.5:9000')
   })
 
   it('maps an HTTP failure to http_<code> and nothing else', async () => {
