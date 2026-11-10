@@ -8,6 +8,7 @@ import type {
   CollectionConfig,
   Endpoint,
   FieldAccess,
+  FieldHook,
   PayloadRequest,
   Where,
 } from 'payload'
@@ -323,7 +324,7 @@ export const lenguaReadable: FieldAccess = ({ doc }) =>
  * `GET /api/documents/:id` on a published testimonio and read the raw original.
  *
  * Readable by: a platform admin, the uploader, or anyone when the row is a
- * `documento`.
+ * `documento` with `anonymise === false`.
  *
  * ⚠ `=== 'documento'`, FAILING CLOSED, as `lenguaReadable` is written. An
  * unknown or missing `contentKind` hides the field from everyone but the
@@ -343,11 +344,12 @@ export function mayReadGatedOriginal(
   user: unknown,
   doc: { contentKind?: unknown; anonymise?: unknown; uploadedBy?: unknown } | undefined,
   /**
-   * `identity` is `name` / `uploadedBy` / `session`: on a `documento` filed for
-   * anonymisation they stay readable (it keeps its own title, owner ruling
-   * 2026-10-26). `original` is the TEXT, which such a row shares only redacted.
+   * `identity` is `name` / `uploadedBy` / `session`, `original` the TEXT. Both
+   * follow the same rule since R4-01 (audit 2026-11-10): a `documento` filed
+   * for anonymisation used to keep its title and owner readable to every
+   * member, and its file name is where the person it is about is named.
    */
-  scope: 'original' | 'identity' = 'original',
+  _scope: 'original' | 'identity' = 'original',
 ): boolean {
   if (!user) return false
   if (isPlatformAdminUser(user)) return true
@@ -358,9 +360,7 @@ export function mayReadGatedOriginal(
   // opened the raw original of a gated documento to every member (2026-10-26
   // audit; `Documents.selectProjection.pg.test.ts`). NULL is gated too, as in
   // `mediaVisibleToCaller`.
-  if (doc.contentKind === 'documento' && (scope === 'identity' || doc.anonymise === false)) {
-    return true
-  }
+  if (doc.contentKind === 'documento' && doc.anonymise === false) return true
   const callerId = (user as { id?: unknown }).id
   const uploader = relationId(doc.uploadedBy)
   return uploader !== null && callerId != null && String(uploader) === String(callerId)
@@ -413,6 +413,8 @@ const testimonioTitleReadable: FieldAccess = ({ req, doc }) =>
  * see whether a testimonio row comes back. {@link constrainGatedQueries} closes
  * that by narrowing any query that names one of these fields to rows on which
  * the caller may read it.
+ *
+ * `name` is not stripped like the others but replaced: see {@link gatedNameFor}.
  */
 export const GATED_QUERYABLE_FIELDS = ['name', 'uploadedBy', 'session', 'uploadedInSession'] as const
 
@@ -420,6 +422,32 @@ export const gatedQueryableReadable: FieldAccess = ({ req, doc }) =>
   doc === undefined
     ? Boolean(req.user)
     : mayReadGatedOriginal(req.user, doc as Parameters<typeof mayReadGatedOriginal>[1], 'identity')
+
+/**
+ * 🔴 THE NEUTRAL TITLE A CALLER GETS IN PLACE OF A GATED ROW'S `name` (R4-01,
+ * audit 2026-11-10). The field is kept, so every reader still has a title to
+ * show; it is never the uploader's file name.
+ *
+ * Seam: becomes `documentTitleFor(row)` from `lib/contentKind.ts` once that
+ * lands.
+ */
+export function gatedNameFor(row: { contentKind?: unknown }): string {
+  const kind = knownContentKind(row)
+  return kind === 'documento' ? 'Documento' : titleFor(kind, null)
+}
+
+/**
+ * `name` on read: the row's own value for a caller {@link mayReadGatedOriginal}
+ * (scope `identity`) allows, {@link gatedNameFor} for anyone else. Server reads
+ * (`overrideAccess`) keep the value. Fails closed like the access checks: a
+ * `select` that drops `contentKind`, `uploadedBy` or `anonymise` gets the
+ * neutral title.
+ */
+export const neutralNameForCaller: FieldHook = ({ value, data, req, overrideAccess }) => {
+  if (overrideAccess === true || value === undefined || value === null) return value
+  const row = (data ?? {}) as Parameters<typeof mayReadGatedOriginal>[1] & { contentKind?: unknown }
+  return mayReadGatedOriginal(req.user, row, 'identity') ? value : gatedNameFor(row)
+}
 
 /**
  * Does a Payload `where` mention this field anywhere, at any depth?
@@ -461,23 +489,28 @@ function stripSort(sort: unknown, field: string): unknown {
 
 /**
  * Is `where` already limited to rows whose gated fields the caller may read? True when
- * a top-level clause (through any `and`) pins the uploader to the caller or the
- * kind to `documento`.
+ * the top-level clauses (through any `and`) pin the uploader to the caller, or
+ * pin the kind to `documento` AND `anonymise` to `false` (R4-01: a documento
+ * filed for anonymisation is gated; NULL is gated too).
  */
 function narrowedToReadable(where: unknown, prefix: string, userId: unknown): boolean {
-  if (!where || typeof where !== 'object' || Array.isArray(where)) return false
-  for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
-    if (key.toLowerCase() === 'and' && Array.isArray(value)) {
-      if (value.some((w) => narrowedToReadable(w, prefix, userId))) return true
-      continue
-    }
-    const equals = (value as { equals?: unknown } | null)?.equals
-    if (key === `${prefix}contentKind` && equals === 'documento') return true
-    if (key === `${prefix}uploadedBy` && equals != null && String(equals) === String(userId)) {
-      return true
+  const pinned = { documento: false, notAnonymised: false, mine: false }
+  const walk = (w: unknown): void => {
+    if (!w || typeof w !== 'object' || Array.isArray(w)) return
+    for (const [key, value] of Object.entries(w as Record<string, unknown>)) {
+      if (key.toLowerCase() === 'and' && Array.isArray(value)) {
+        value.forEach(walk)
+        continue
+      }
+      const equals = (value as { equals?: unknown } | null)?.equals
+      if (key === `${prefix}contentKind` && equals === 'documento') pinned.documento = true
+      // REST hands the value over as the string.
+      if (key === `${prefix}anonymise` && (equals === false || equals === 'false')) pinned.notAnonymised = true
+      if (key === `${prefix}uploadedBy` && equals != null && String(equals) === String(userId)) pinned.mine = true
     }
   }
-  return false
+  walk(where)
+  return pinned.mine || (pinned.documento && pinned.notAnonymised)
 }
 
 /**
@@ -516,7 +549,12 @@ export function constrainGatedQueriesAt(prefix: string): CollectionBeforeOperati
     if (!narrowed && fields.some((field) => whereMentions(a.where, field))) {
       const readable: Where = {
         or: [
-          { [`${prefix}contentKind`]: { equals: 'documento' } },
+          {
+            and: [
+              { [`${prefix}contentKind`]: { equals: 'documento' } },
+              { [`${prefix}anonymise`]: { equals: false } },
+            ],
+          },
           { [`${prefix}uploadedBy`]: { equals: user.id } },
         ],
       }
@@ -3609,9 +3647,12 @@ export const Documents: CollectionConfig = {
       type: 'text',
       required: true,
       defaultValue: 'Untitled document',
-      // 🔴 The uploader's filename. Hidden from colleagues on gated content —
-      // see `gatedQueryableReadable` and `constrainGatedQueries`.
-      access: { read: gatedQueryableReadable },
+      // 🔴 The uploader's filename. A neutral title for colleagues on gated
+      // content (a documento with `anonymise` not `false` included) — see
+      // `neutralNameForCaller` and `constrainGatedQueries`. Read access stays
+      // open so the field is replaced, not stripped.
+      access: { read: ({ req }) => Boolean(req.user) },
+      hooks: { afterRead: [neutralNameForCaller] },
     },
     {
       name: 'bodyMarkdown',
