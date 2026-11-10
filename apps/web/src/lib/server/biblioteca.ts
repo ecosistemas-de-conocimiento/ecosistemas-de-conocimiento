@@ -159,11 +159,14 @@ const CLEARED_WHERE: Array<[string, string]> = [
   ['where[or][2][and][1][redactedText][exists]', 'true'],
 ];
 
-/** Not a `documento` filed for anonymisation (`anonymise` false or null), for the name search. */
+/**
+ * Not a `documento` whose title is gated, for the name search: `anonymise` is
+ * `false`. A NULL is gated for the title (`isGatedTitle`, 2026-11-10), so it is
+ * not matched by its raw name either.
+ */
 const NOT_GATED_DOCUMENTO_WHERE: Array<[string, string]> = [
   ['where[and][1][or][0][contentKind][not_equals]', 'documento'],
   ['where[and][1][or][1][anonymise][equals]', 'false'],
-  ['where[and][1][or][2][anonymise][exists]', 'false'],
 ];
 
 /**
@@ -313,7 +316,9 @@ export async function resolveSearchIds(
   search: string,
 ): Promise<string[] | null> {
   const byName = scopeQuery(organizationId);
-  byName.set('where[name][like]', search);
+  byName.set('where[and][0][name][like]', search);
+  // 🔴 P-13, as `libraryListQuery`: never a gated documento by its raw name.
+  for (const [k, v] of NOT_GATED_DOCUMENTO_WHERE) byName.set(k, v);
   byName.set('select[contentKind]', 'true');
 
   const voces = scopeQuery(organizationId);

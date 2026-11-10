@@ -281,7 +281,8 @@ describe.skipIf(!dockerOk)('combined graph on a real Postgres', () => {
     await db.execute(sql`
       UPDATE documents SET name = 'Entrevista a Juan Pérez.pdf', anonymise = TRUE,
         anonymisation_report = '{"redactedTitle":"Entrevista a [Persona A].pdf"}'::jsonb WHERE id = 101;
-      UPDATE documents SET name = 'Notas de Juan Pérez.pdf', anonymise = TRUE WHERE id = 102;
+      -- anonymise NULL is gated for the title too (2026-11-10).
+      UPDATE documents SET name = 'Notas de Juan Pérez.pdf', anonymise = NULL WHERE id = 102;
     `)
     try {
       const detail = await readCombinedEntityDetail(payload, { organizationIds: [1, 2], entityId: 21 })

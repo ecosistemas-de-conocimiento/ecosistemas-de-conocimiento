@@ -86,7 +86,7 @@ import type { Endpoint, Payload, PayloadRequest } from 'payload'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
 import { rowMustPassGate } from './anonymiseDocument'
-import { anonymiseRequested, knownContentKind, titleFor } from './contentKind'
+import { knownContentKind, titleFor, titleIsGated } from './contentKind'
 import { errSummary } from './errorSummary'
 import { organizationIdsForUser, organizationIdsForUserWithPermission, PERMISSIONS, relationId } from './permissions'
 import {
@@ -364,7 +364,7 @@ export function viewOf(
     // 🔴 P-13: a gated documento shows its redacted title (else "Documento") to
     // everyone here, its uploader too: this page never shows a removed name.
     name:
-      mayReadName && !(knownContentKind(row) === 'documento' && anonymiseRequested(row.anonymise))
+      mayReadName && !(knownContentKind(row) === 'documento' && titleIsGated(row.anonymise))
         ? str(row.name)
         : titleFor(knownContentKind(row), null, row),
     contentKind: str(row.contentKind),

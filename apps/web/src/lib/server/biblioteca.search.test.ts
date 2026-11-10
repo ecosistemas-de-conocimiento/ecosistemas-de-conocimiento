@@ -35,8 +35,12 @@ function fakeBackend(path: string): Response {
     return jsonResponse({ errors: [{ message: 'The following path cannot be queried: testimonioTitle' }] }, 400);
   }
   let rows = ROWS.slice();
-  const term = qs.get('where[name][like]');
+  const term = qs.get('where[name][like]') ?? qs.get('where[and][0][name][like]');
   if (term) rows = rows.filter((r) => r.contentKind === 'documento' && like(r.name, term));
+  // The P-13 filter (`anonymise` false) the BFF adds to a name search.
+  if (qs.get('where[and][1][or][1][anonymise][equals]') === 'false') {
+    rows = rows.filter((r) => r.contentKind !== 'documento' || (r as { anonymise?: unknown }).anonymise === false || !('anonymise' in r));
+  }
   const kind = qs.get('where[contentKind][equals]');
   if (kind) rows = rows.filter((r) => r.contentKind === kind);
   const ids = qs.get('where[id][in]');
@@ -118,6 +122,17 @@ describe('listPublished — search finds a testimonio by the title its card show
     for (const q of documentQueries()) expect(q.get('where[id][in]')).not.toBe('');
   });
 
+  // 🔴 P-13 (merge of main into the ola 4 branch, 2026-11-10): the id read by
+  // name carries the same filter as the list, so a gated documento's raw name
+  // never answers a search.
+  it('🔴 the id read by name skips a documento whose title is gated', async () => {
+    await resolveSearchIds('tok', '7', 'vecinos');
+    const byName = documentQueries().find((q) => q.get('where[and][0][name][like]') === 'vecinos');
+    expect(byName?.get('where[and][1][or][0][contentKind][not_equals]')).toBe('documento');
+    expect(byName?.get('where[and][1][or][1][anonymise][equals]')).toBe('false');
+    expect(byName?.get('where[name][like]')).toBeNull();
+  });
+
   it('falls back to the title-only search when an id read fails', async () => {
     mockedBackendFetch.mockImplementation(async (_t: unknown, path: string) => {
       const qs = new URLSearchParams(path.split('?')[1] ?? '');
@@ -129,7 +144,7 @@ describe('listPublished — search finds a testimonio by the title its card show
 
     expect(out.ok).toBe(true);
     expect(out.items.map((i) => i.id)).toEqual(['1']);
-    expect(documentQueries().at(-1)!.get('where[name][like]')).toBe('vecinos');
+    expect(documentQueries().at(-1)!.get('where[and][0][name][like]')).toBe('vecinos');
   });
 });
 

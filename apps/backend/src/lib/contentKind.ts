@@ -119,8 +119,9 @@ export function titleFor(
    * (`anonymisationReport.redactedTitle`, {@link redactedTitleOf}), never
    * `name`. No redacted title yet → the neutral {@link GATED_DOCUMENT_TITLE}.
    *
-   * ⚠ Absent = ungated, like {@link anonymiseRequested}: a caller that does not
-   * pass the row keeps the old rule. Every path that ships a title passes it.
+   * ⚠ Absent = ungated: a caller that does not pass the row keeps the old
+   * rule. Every path that ships a title passes it. A NULL column is gated for
+   * the title ({@link titleIsGated}), unlike the body's {@link anonymiseRequested}.
    */
   gate?: TitleGateColumns | null,
 ): string {
@@ -130,7 +131,7 @@ export function titleFor(
   // does not know yet — a new one added to `CONTENT_KINDS`, or a raw column
   // value nobody validated — gets a neutral title, not the filename.
   if (contentKind !== 'documento') return 'Documento'
-  if (gate && anonymiseRequested(gate.anonymise)) {
+  if (gate && titleIsGated(gate.anonymise)) {
     return redactedTitleOf(gate.anonymisationReport) ?? GATED_DOCUMENT_TITLE
   }
   const trimmed = typeof name === 'string' ? name.trim() : ''
@@ -162,6 +163,22 @@ export interface TitleGateColumns {
  */
 export function anonymiseRequested(rawAnonymise: unknown): boolean {
   return rawAnonymise !== undefined && rawAnonymise !== null && rawAnonymise !== false
+}
+
+/**
+ * 🔴 IS A `documento`'S TITLE GATED? Like {@link anonymiseRequested}, but a
+ * NULL column counts as gated (coordinator ruling 2026-11-10: conservative,
+ * the same as `mayReadGatedOriginal` in `collections/Documents.ts`). Only an
+ * explicit `false` shows `name`; absent (a row assembled in code without the
+ * column) keeps the old rule.
+ *
+ * ⚠ TITLE ONLY. {@link anonymiseRequested} still decides whether the BODY
+ * passes the gate (`rowMustPassGate`, `Documents.ts`, `graph/schedule.ts`):
+ * flipping NULL there would gate, hold or stop auto-publishing rows that today
+ * go through ungated.
+ */
+export function titleIsGated(rawAnonymise: unknown): boolean {
+  return rawAnonymise !== undefined && rawAnonymise !== false
 }
 
 /**

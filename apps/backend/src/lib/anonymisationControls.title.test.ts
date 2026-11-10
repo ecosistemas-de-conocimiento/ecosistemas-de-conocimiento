@@ -37,6 +37,13 @@ describe('viewOf — the title (P-13)', () => {
     expect(viewOf(row({ anonymise: true }), SWITCHES, true).name).toBe('Documento')
   })
 
+  it('🔴 anonymise NULL is gated for the title (2026-11-10): redacted, else "Documento"', () => {
+    expect(viewOf(row({ anonymise: null }), SWITCHES, true).name).toBe('Documento')
+    expect(
+      viewOf(row({ anonymise: null, anonymisationReport: { redactedTitle: 'Entrevista a [Persona A].pdf' } }), SWITCHES, true).name,
+    ).toBe('Entrevista a [Persona A].pdf')
+  })
+
   it('an ungated documento keeps its name', () => {
     expect(viewOf(row({ anonymise: false }), SWITCHES, true).name).toBe('Entrevista a María López.pdf')
   })

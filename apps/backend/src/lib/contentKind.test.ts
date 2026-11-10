@@ -95,9 +95,15 @@ describe('🔴 a gated documento carries its REDACTED title, never its name (P-1
     },
   )
 
-  it.each([[false], [null], [undefined]])('ungated (anonymise=%j) → the name, as before', (anonymise) => {
+  it.each([[false], [undefined]])('ungated (anonymise=%j) → the name, as before', (anonymise) => {
     expect(titleFor('documento', NAME, { anonymise, anonymisationReport: report })).toBe(NAME)
     expect(documentTitleFor({ contentKind: 'documento', name: NAME, anonymise })).toBe(NAME)
+  })
+
+  // Coordinator ruling 2026-11-10: NULL is gated for the TITLE (`titleIsGated`).
+  it('🔴 anonymise=null → the redacted title, else "Documento", never the name', () => {
+    expect(titleFor('documento', NAME, { anonymise: null, anonymisationReport: report })).not.toBe(NAME)
+    expect(documentTitleFor({ contentKind: 'documento', name: NAME, anonymise: null })).toBe('Documento')
   })
 
   it('a testimonio stays "Testimonio", redacted title or not', () => {

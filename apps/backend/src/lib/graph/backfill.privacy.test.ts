@@ -187,6 +187,16 @@ describe('runGraphBackfill — privacy', () => {
     expect(args.title).toBe(title)
   })
 
+  it('🔴 anonymise NULL: raw text as before, but the title is "Documento" (2026-11-10)', async () => {
+    const { payload } = fakePayload([
+      { id: 6, organization: 5, contentKind: 'documento', anonymise: null, name: 'Entrevista a María López.pdf', extractedText: RAW },
+    ])
+    await runGraphBackfill(payload, { log: silent, skipOrphanSweep: true })
+    const args = runGraphExtraction.mock.calls[0]![0]
+    expect(args.text).toBe(RAW.trim())
+    expect(args.title).toBe('Documento')
+  })
+
   it('⚠ an unknown content kind is gated, and its name never becomes the title', async () => {
     const { payload } = fakePayload([
       {

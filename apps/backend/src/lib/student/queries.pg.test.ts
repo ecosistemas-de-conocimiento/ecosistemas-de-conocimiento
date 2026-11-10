@@ -125,7 +125,8 @@ describe.skipIf(!dockerOk)('student queries (real Postgres)', () => {
       sql.raw(`
       UPDATE documents SET name = 'Entrevista con doña Rosa Martínez', anonymise = TRUE,
         anonymisation_report = '{"redactedTitle":"Entrevista con [Persona A]"}'::jsonb WHERE id = 21;
-      UPDATE documents SET name = 'Notas de Juana Pérez', anonymise = TRUE WHERE id = 22;
+      -- anonymise NULL is gated for the title too (2026-11-10).
+      UPDATE documents SET name = 'Notas de Juana Pérez', anonymise = NULL WHERE id = 22;
     `),
     )
     try {

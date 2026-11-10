@@ -90,7 +90,8 @@ describe('libraryListQuery — the two constraints', () => {
     const qs = new URLSearchParams(libraryListQuery({ ...base, search: 'Pérez' }));
     expect(qs.get('where[and][1][or][0][contentKind][not_equals]')).toBe('documento');
     expect(qs.get('where[and][1][or][1][anonymise][equals]')).toBe('false');
-    expect(qs.get('where[and][1][or][2][anonymise][exists]')).toBe('false');
+    // NULL is gated for the title (2026-11-10): not matched by its raw name either.
+    expect(qs.get('where[and][1][or][2][anonymise][exists]')).toBeNull();
     expect(qs.get('where[name][like]')).toBeNull();
   });
 
@@ -274,7 +275,8 @@ describe('toLibraryItem', () => {
   });
 
   it('an ungated documento keeps its own name, a redacted title on its report or not', () => {
-    for (const anonymise of [false, null, undefined]) {
+    // NULL is gated for the title since 2026-11-10 (`isGatedTitle`; titleNullGate.test.ts).
+    for (const anonymise of [false, undefined]) {
       const item = toLibraryItem(
         { id: 1, name: 'Informe de Juan Pérez.pdf', contentKind: 'documento', anonymise, anonymisationReport: { redactedTitle: 'x' } },
         null,

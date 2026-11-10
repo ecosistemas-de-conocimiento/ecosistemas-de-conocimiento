@@ -126,7 +126,7 @@ export function libraryTitleFor(
   if (contentKind === 'testimonio') return testimonyLabel(topic);
   if (contentKind === 'conversacion') return 'Conversación';
   if (isGatedContent(contentKind)) return 'Documento sin título';
-  if (gate && isGatedDocumento(gate.anonymise)) return redactedTitleOf(gate.anonymisationReport) ?? 'Documento';
+  if (gate && isGatedTitle(gate.anonymise)) return redactedTitleOf(gate.anonymisationReport) ?? 'Documento';
   return typeof name === 'string' && name.trim() ? name.trim() : 'Documento sin título';
 }
 
@@ -141,6 +141,15 @@ export function libraryTitleOf(row: Record<string, unknown>, topic: string | nul
  */
 export function isGatedDocumento(anonymise: unknown): boolean {
   return anonymise !== undefined && anonymise !== null && anonymise !== false;
+}
+
+/**
+ * 🔴 Is a `documento`'s TITLE gated? Backend `titleIsGated`: a NULL counts as
+ * gated (conservative, 2026-11-10); only `false` shows `name`; absent keeps the
+ * old rule. Title only: {@link isGatedDocumento} still decides the text.
+ */
+export function isGatedTitle(anonymise: unknown): boolean {
+  return anonymise !== undefined && anonymise !== false;
 }
 
 /** The gate's redacted title on a report (backend `redactedTitleOf`), or null. */
