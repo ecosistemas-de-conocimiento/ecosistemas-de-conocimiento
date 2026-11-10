@@ -221,7 +221,7 @@ describe('corrected vs the earlier spec', () => {
     // schemas under `content`, never under `headers`. 41 `retry-after` headers
     // were serialising a `ZodNumber`: 82 raw `def` keys on the wire.
     // `no-zod-internals.test.ts` is the general gate; this is the one that was
-    // actually broken.
+    // actually broken. 42 since PATCH …/title (2026-11-10): one more /v1 route.
     const schemas: unknown[] = [];
     for (const item of Object.values(doc().paths)) {
       for (const operation of Object.values(item)) {
@@ -231,7 +231,7 @@ describe('corrected vs the earlier spec', () => {
         }
       }
     }
-    expect(schemas.length).toBe(41);
+    expect(schemas.length).toBe(42);
     for (const schema of schemas) expect(schema).toEqual({ type: 'integer', minimum: 1 });
   });
 

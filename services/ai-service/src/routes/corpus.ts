@@ -31,10 +31,15 @@
 import type { FastifyPluginAsync } from 'fastify';
 
 import { db } from '../db/client.js';
-import { corpusAliasRequestSchema, documentValiditySchema } from '../contract/rag.js';
+import {
+  corpusAliasRequestSchema,
+  documentTitlesSchema,
+  documentValiditySchema,
+} from '../contract/rag.js';
 import { CorpusAliasService } from '../services/rag/corpus-alias.js';
 import { CorpusDeleteService } from '../services/rag/corpus-delete.js';
 import { DocumentDeleteService } from '../services/rag/document-delete.js';
+import { DocumentTitleService } from '../services/rag/document-title.js';
 import { DocumentValidityService } from '../services/rag/document-validity.js';
 
 const corpusRoutes: FastifyPluginAsync = async (app) => {
@@ -47,6 +52,7 @@ const corpusRoutes: FastifyPluginAsync = async (app) => {
   const documentService = new DocumentDeleteService({ db });
   const aliasService = new CorpusAliasService({ db });
   const validityService = new DocumentValidityService({ db });
+  const titleService = new DocumentTitleService({ db });
 
   // PATCH /:name/documents/:externalId/validity — retire or un-retire an
   // ingested document WITHOUT re-embedding it. App-role and `(org, project)`
@@ -95,6 +101,47 @@ const corpusRoutes: FastifyPluginAsync = async (app) => {
           validTo: result.validTo,
         },
         'document validity updated',
+      );
+      return reply.send(result);
+    },
+  );
+
+  // PATCH /:name/titles — rename ingested documents WITHOUT re-embedding
+  // them: each row's title and every chunk's `metadata.title` (the copy
+  // retrieve returns). Batched, idempotent, with `dryRun`. Admin only, like the
+  // alias repoint: what a shared corpus shows is a lifecycle decision. Scoped
+  // to the caller's `(org, project)`. See `services/rag/document-title.ts`.
+  app.patch<{ Params: { name: string } }>(
+    '/:name/titles',
+    { preHandler: app.requireAdmin },
+    async (req, reply) => {
+      const { name } = req.params;
+      if (!name || name.length === 0) return reply.badRequest('corpus name is required');
+      const parsed = documentTitlesSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return reply.badRequest(parsed.error.issues.map((i) => i.message).join('; '));
+      }
+      // The corpus 404 is answered by the /v1 error handler, as for validity.
+      const result = await titleService.setTitles(
+        {
+          corpus: name,
+          documents: parsed.data.documents,
+          ...(parsed.data.dryRun !== undefined ? { dryRun: parsed.data.dryRun } : {}),
+        },
+        { org: req.auth.org, project: req.auth.project },
+      );
+      // ⚠ No title is logged: titles are consumer free text. Counts only.
+      req.log.info(
+        {
+          org: req.auth.org,
+          project: req.auth.project,
+          corpus: name,
+          dryRun: result.dryRun,
+          documents: result.documents.length,
+          changed: result.documents.filter((d) => d.changed).length,
+          notFound: result.notFound.length,
+        },
+        'document titles updated',
       );
       return reply.send(result);
     },

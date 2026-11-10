@@ -312,6 +312,22 @@ const CASES: readonly Case[] = [
     headers: APP,
     payload: { validFrom: '2026-01-01T00:00:00.000Z' },
   },
+  {
+    route: 'PATCH /v1/corpus/{name}/titles',
+    status: 404,
+    method: 'PATCH',
+    url: '/v1/corpus/nope/titles',
+    headers: ADMIN,
+    payload: { documents: [{ externalId: 'doc-1', title: 'x' }] },
+  },
+  {
+    route: 'PATCH /v1/corpus/{name}/titles',
+    status: 403,
+    method: 'PATCH',
+    url: '/v1/corpus/nope/titles',
+    headers: APP,
+    payload: { documents: [{ externalId: 'doc-1', title: 'x' }] },
+  },
 
   // ── Ingest / retrieve / embed / route ────────────────────────────────────
   {
