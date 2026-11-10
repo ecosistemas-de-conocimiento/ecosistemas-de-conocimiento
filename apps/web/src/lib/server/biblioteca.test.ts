@@ -183,7 +183,7 @@ describe('isLibraryVisible — the re-check a read-by-id needs', () => {
 describe('toLibraryItem', () => {
   it('maps a document and keeps its contributor', () => {
     const item = toLibraryItem(
-      { id: 3, name: 'Acta', kind: 'pdf', contentKind: 'documento', createdAt: '2026-08-01T00:00:00.000Z' },
+      { id: 3, name: 'Acta', kind: 'pdf', contentKind: 'documento', anonymise: false, createdAt: '2026-08-01T00:00:00.000Z' },
       'Ana',
     );
     expect(item).toMatchObject({ id: '3', title: 'Acta', kind: 'pdf', contributor: 'Ana' });
@@ -275,14 +275,18 @@ describe('toLibraryItem', () => {
   });
 
   it('an ungated documento keeps its own name, a redacted title on its report or not', () => {
-    // NULL is gated for the title since 2026-11-10 (`isGatedTitle`; titleNullGate.test.ts).
-    for (const anonymise of [false, undefined]) {
-      const item = toLibraryItem(
-        { id: 1, name: 'Informe de Juan Pérez.pdf', contentKind: 'documento', anonymise, anonymisationReport: { redactedTitle: 'x' } },
-        null,
-      );
-      expect(item.title).toBe('Informe de Juan Pérez.pdf');
-    }
+    // Only an explicit `false` is ungated for the title: NULL and an absent key
+    // are gated since 2026-11-10 (`isGatedTitle`; titleNullGate.test.ts).
+    const item = toLibraryItem(
+      { id: 1, name: 'Informe de Juan Pérez.pdf', contentKind: 'documento', anonymise: false, anonymisationReport: { redactedTitle: 'x' } },
+      null,
+    );
+    expect(item.title).toBe('Informe de Juan Pérez.pdf');
+  });
+
+  it('🔴 a documento row without `anonymise` (a partial read) never shows its name', () => {
+    const item = toLibraryItem({ id: 1, name: 'Informe de Juan Pérez.pdf', contentKind: 'documento' }, null);
+    expect(item.title).toBe('Documento');
   });
 
   it('falls back to a title rather than showing an empty one', () => {

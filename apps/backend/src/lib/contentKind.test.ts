@@ -95,9 +95,17 @@ describe('🔴 a gated documento carries its REDACTED title, never its name (P-1
     },
   )
 
-  it.each([[false], [undefined]])('ungated (anonymise=%j) → the name, as before', (anonymise) => {
-    expect(titleFor('documento', NAME, { anonymise, anonymisationReport: report })).toBe(NAME)
-    expect(documentTitleFor({ contentKind: 'documento', name: NAME, anonymise })).toBe(NAME)
+  it('ungated (anonymise=false) → the name, as before', () => {
+    expect(titleFor('documento', NAME, { anonymise: false, anonymisationReport: report })).toBe(NAME)
+    expect(documentTitleFor({ contentKind: 'documento', name: NAME, anonymise: false })).toBe(NAME)
+  })
+
+  // 🔴 Fails closed (2026-11-10): a partial row (`?select[anonymise]=false`, a
+  // `select` without the column, a row built in code) never shows its name.
+  it('🔴 anonymise absent → the redacted title, else "Documento", never the name', () => {
+    expect(titleFor('documento', NAME, { anonymisationReport: report })).toBe('Entrevista a [Persona A].pdf')
+    expect(titleFor('documento', NAME, { anonymise: undefined })).toBe('Documento')
+    expect(documentTitleFor({ contentKind: 'documento', name: NAME })).toBe('Documento')
   })
 
   // Coordinator ruling 2026-11-10: NULL is gated for the TITLE (`titleIsGated`).

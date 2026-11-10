@@ -145,11 +145,12 @@ export function isGatedDocumento(anonymise: unknown): boolean {
 
 /**
  * 🔴 Is a `documento`'s TITLE gated? Backend `titleIsGated`: a NULL counts as
- * gated (conservative, 2026-11-10); only `false` shows `name`; absent keeps the
- * old rule. Title only: {@link isGatedDocumento} still decides the text.
+ * gated (conservative, 2026-11-10); only an explicit `false` shows `name`.
+ * 🔴 An absent key is gated too (fails closed: a partial row never shows the
+ * filename). Title only: {@link isGatedDocumento} still decides the text.
  */
 export function isGatedTitle(anonymise: unknown): boolean {
-  return anonymise !== undefined && anonymise !== false;
+  return anonymise !== false;
 }
 
 /** The gate's redacted title on a report (backend `redactedTitleOf`), or null. */

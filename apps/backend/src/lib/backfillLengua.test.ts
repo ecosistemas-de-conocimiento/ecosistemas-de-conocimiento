@@ -24,6 +24,7 @@ const DOC: BackfillCandidate = {
   name: 'Informe de partería',
   kind: 'pdf',
   contentKind: 'documento',
+  anonymise: false,
   extractedText: 'Las parteras acompañan los nacimientos.',
   lengua: ' mixe ',
   organization: 1,

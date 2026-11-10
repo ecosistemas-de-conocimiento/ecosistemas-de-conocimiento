@@ -145,7 +145,7 @@ describe('fetchPublishedTitleScan — a gated documento', () => {
       anonymisationStatus: 'approved',
       publicationStatus: 'published',
     },
-    { id: 3, name: 'Plan de riego 2025.pdf', contentKind: 'documento', publicationStatus: 'published' },
+    { id: 3, name: 'Plan de riego 2025.pdf', contentKind: 'documento', anonymise: false, publicationStatus: 'published' },
   ];
   const scan = async () => {
     (backendFetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(

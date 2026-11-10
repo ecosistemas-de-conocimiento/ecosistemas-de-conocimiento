@@ -23,7 +23,8 @@ describe('titleIsGated', () => {
     [true, true],
     ['true', true],
     [false, false],
-    [undefined, false],
+    // 🔴 Fails closed (2026-11-10): an absent column is gated too.
+    [undefined, true],
   ])('%o → %s', (v, gated) => expect(titleIsGated(v)).toBe(gated))
 
   it('⚠ the body rule is not changed: NULL stays ungated text', () => {
@@ -37,6 +38,9 @@ describe('🔴 anonymise NULL → neutral or redacted title on every surface', (
     expect(titleFor('documento', NAME, { anonymise: null, anonymisationReport: { redactedTitle: REDACTED } })).toBe(REDACTED)
     expect(documentTitleFor({ contentKind: 'documento', name: NAME, anonymise: null })).toBe('Documento')
     expect(documentTitleFor({ contentKind: 'documento', name: NAME, anonymise: false })).toBe(NAME)
+    // 🔴 A partial row (no `anonymise` key) is gated too.
+    expect(documentTitleFor({ contentKind: 'documento', name: NAME })).toBe('Documento')
+    expect(chunkMetadata({ docId: '1', organizationId: 1, contentKind: 'documento', publication: 'published', title: NAME, gate: {} }).title).toBe('Documento')
     expect(chunkMetadata({ docId: '1', organizationId: 1, contentKind: 'documento', publication: 'published', title: NAME, gate: { anonymise: null } }).title).toBe('Documento')
   })
 
@@ -45,6 +49,8 @@ describe('🔴 anonymise NULL → neutral or redacted title on every surface', (
     expect(mapDocumentRow({ ...row, redacted_title: null }, false).title).toBe('Documento')
     expect(mapDocumentRow({ ...row, redacted_title: REDACTED }, false).title).toBe(REDACTED)
     expect(mapDocumentRow({ ...row, anonymise: false, redacted_title: null }, false).title).toBe(NAME)
+    const { anonymise: _drop, ...partial } = row
+    expect(mapDocumentRow({ ...partial, redacted_title: null }, false).title).toBe('Documento')
   })
 
   it('the lengua re-ingest', async () => {

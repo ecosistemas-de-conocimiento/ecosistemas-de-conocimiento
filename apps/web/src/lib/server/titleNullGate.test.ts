@@ -32,8 +32,12 @@ describe('isGatedTitle', () => {
   it('NULL gates the title; the text rule is unchanged', () => {
     expect(isGatedTitle(null)).toBe(true);
     expect(isGatedTitle(false)).toBe(false);
-    expect(isGatedTitle(undefined)).toBe(false);
     expect(isGatedDocumento(null)).toBe(false);
+  });
+
+  it('🔴 an absent key gates the title too (fails closed); the text rule is unchanged', () => {
+    expect(isGatedTitle(undefined)).toBe(true);
+    expect(isGatedDocumento(undefined)).toBe(false);
   });
 });
 
@@ -43,6 +47,13 @@ describe('🔴 anonymise NULL → neutral or redacted title on every web surface
     expect(libraryTitleOf(NULL_ROW)).toBe('Documento');
     expect(libraryTitleOf(NULL_REDACTED)).toBe(REDACTED);
     expect(libraryTitleOf({ ...NULL_ROW, anonymise: false })).toBe(NAME);
+  });
+
+  it('🔴 a row without the `anonymise` key (a partial read) never shows its name', () => {
+    const { anonymise: _drop, ...partial } = NULL_ROW;
+    expect(libraryTitleFor('documento', NAME, null, {})).toBe('Documento');
+    expect(libraryTitleOf(partial)).toBe('Documento');
+    expect(libraryTitleOf({ ...partial, anonymisationReport: { redactedTitle: REDACTED } })).toBe(REDACTED);
   });
 
   it('the library name search does not match a NULL row by its raw name', () => {

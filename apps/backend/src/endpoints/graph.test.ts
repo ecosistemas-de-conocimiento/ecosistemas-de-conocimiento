@@ -342,7 +342,7 @@ describe('GET /api/graph/entity/:id', () => {
             edge_support: 3,
           },
         ],
-        [{ id: 88, name: 'informe.pdf', content_kind: 'documento', snippet: 'la consulta' }],
+        [{ id: 88, name: 'informe.pdf', content_kind: 'documento', anonymise: false, snippet: 'la consulta' }],
         [
           {
             neighbour_id: 6,
@@ -350,6 +350,7 @@ describe('GET /api/graph/entity/:id', () => {
             id: 88,
             name: 'informe.pdf',
             content_kind: 'documento',
+            anonymise: false,
           },
         ],
       ],
@@ -531,7 +532,7 @@ describe('POST /api/graph/retrieve', () => {
             to_support: 4,
           },
         ],
-        [{ id: 88, name: 'informe.pdf', content_kind: 'documento' }],
+        [{ id: 88, name: 'informe.pdf', content_kind: 'documento', anonymise: false }],
       ],
     })
     const res = await graphRetrieveEndpoint.handler(req)
@@ -551,7 +552,7 @@ describe('POST /api/graph/retrieve', () => {
       rows: [
         [{ id: 1, type: 'tema', label: 'Consulta previa', canonical_key: 'consulta previa', support: 5 }],
         [],
-        [{ id: 88, name: 'informe.pdf', content_kind: 'documento', snippet: 'no debería salir' }],
+        [{ id: 88, name: 'informe.pdf', content_kind: 'documento', anonymise: false, snippet: 'no debería salir' }],
       ],
     })
     const raw = await (await graphRetrieveEndpoint.handler(req)).text()

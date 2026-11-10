@@ -65,6 +65,15 @@ interface DocRow {
 /** 🔴 P-13: the title a row shows — a gated documento's redacted title, never `name`. */
 const titleOf = (r: DocRow): string => libraryTitleFor(r.contentKind, r.name, null, r);
 
+/**
+ * A `ctx.documents` row is a `SessionDocRow`: its `name` is ALREADY the title
+ * (`fetchSessionDocs` → `libraryTitleOf`, gate columns read there) and it
+ * carries no `anonymise`. `anonymise: false` tells {@link titleOf} not to gate
+ * it a second time — absent, the title fails closed (`isGatedTitle`) and every
+ * open documento would read "Documento" in the summary and the `@` menu.
+ */
+const preTitled = (d: DocRow): DocRow => ({ ...d, anonymise: false, anonymisationReport: undefined });
+
 export interface ChatAdapterCtx {
   token: string | undefined;
   sessionId: string;
@@ -174,9 +183,8 @@ export function makeChatDomainAdapter(ctx: ChatAdapterCtx): DomainAdapter {
     const q = query.trim().toLowerCase();
     if (ctx.documents === null) return [];
     if (ctx.documents) {
-      const rows = q
-        ? ctx.documents.filter((d) => titleOf(d).toLowerCase().includes(q))
-        : ctx.documents;
+      const titled = ctx.documents.map(preTitled);
+      const rows = q ? titled.filter((d) => titleOf(d).toLowerCase().includes(q)) : titled;
       return rows.slice(0, limit);
     }
     const qs = new URLSearchParams({

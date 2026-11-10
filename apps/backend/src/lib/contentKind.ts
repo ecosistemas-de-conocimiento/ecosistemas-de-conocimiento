@@ -169,8 +169,11 @@ export function anonymiseRequested(rawAnonymise: unknown): boolean {
  * 🔴 IS A `documento`'S TITLE GATED? Like {@link anonymiseRequested}, but a
  * NULL column counts as gated (coordinator ruling 2026-11-10: conservative,
  * the same as `mayReadGatedOriginal` in `collections/Documents.ts`). Only an
- * explicit `false` shows `name`; absent (a row assembled in code without the
- * column) keeps the old rule.
+ * explicit `false` shows `name`. 🔴 FAILS CLOSED on an absent column too: a
+ * partial row (`?select[anonymise]=false`, a `select` that forgot it, a row
+ * built in code) is gated — measured 2026-11-10, a colleague's partial read
+ * returned the raw filename. A caller that wants an open title must read
+ * `anonymise`.
  *
  * ⚠ TITLE ONLY. {@link anonymiseRequested} still decides whether the BODY
  * passes the gate (`rowMustPassGate`, `Documents.ts`, `graph/schedule.ts`):
@@ -178,7 +181,7 @@ export function anonymiseRequested(rawAnonymise: unknown): boolean {
  * go through ungated.
  */
 export function titleIsGated(rawAnonymise: unknown): boolean {
-  return rawAnonymise !== undefined && rawAnonymise !== false
+  return rawAnonymise !== false
 }
 
 /**

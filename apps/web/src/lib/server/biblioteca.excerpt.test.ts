@@ -107,7 +107,7 @@ describe('toLibraryItem — testimonio label and excerpt', () => {
 
   it('a documento keeps its real title and gets no excerpt', () => {
     const item = toLibraryItem(
-      { id: 3, name: 'Acta de asamblea.pdf', kind: 'pdf', contentKind: 'documento', extractedText: 'Texto del acta', tema: 'dengue' },
+      { id: 3, name: 'Acta de asamblea.pdf', kind: 'pdf', contentKind: 'documento', anonymise: false, extractedText: 'Texto del acta', tema: 'dengue' },
       'Ana',
       'Eco',
     );
@@ -134,7 +134,7 @@ describe('the list read', () => {
             docs: [
               voz,
               { ...voz, id: 6, anonymisationStatus: 'held' },
-              { id: 3, name: 'Acta.pdf', kind: 'pdf', contentKind: 'documento', organization: '7', publicationStatus: 'published', uploadedBy: '10' },
+              { id: 3, name: 'Acta.pdf', kind: 'pdf', contentKind: 'documento', anonymise: false, organization: '7', publicationStatus: 'published', uploadedBy: '10' },
             ],
             totalDocs: 3,
           })

@@ -75,7 +75,7 @@ describe('toLibraryItem with a generated title', () => {
 
   it('🔴 a documento never gets the testimonio treatment, even with the field set', () => {
     const item = toLibraryItem(
-      { ...voz, contentKind: 'documento', kind: 'pdf', name: 'Acta.pdf', testimonioTitle: 'x y z w' },
+      { ...voz, contentKind: 'documento', anonymise: false, kind: 'pdf', name: 'Acta.pdf', testimonioTitle: 'x y z w' },
       null,
     );
     expect(item.title).toBe('Acta.pdf');

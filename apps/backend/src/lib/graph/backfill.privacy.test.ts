@@ -155,7 +155,7 @@ describe('runGraphBackfill — privacy', () => {
 
   it('a documento still extracts from its own text under its own name', async () => {
     const { payload } = fakePayload([
-      { id: 2, organization: 5, contentKind: 'documento', name: 'Acta 2024', extractedText: RAW },
+      { id: 2, organization: 5, contentKind: 'documento', anonymise: false, name: 'Acta 2024', extractedText: RAW },
     ])
     await runGraphBackfill(payload, { log: silent, skipOrphanSweep: true })
     const args = runGraphExtraction.mock.calls[0]![0]
@@ -236,8 +236,8 @@ describe('runGraphBackfill — privacy', () => {
     isConsentHeld.mockImplementation((row: unknown) => (row as { id?: unknown }).id === 82)
     try {
       const { payload, deletes, documentUpdates } = fakePayload([
-        { id: 82, organization: 8, contentKind: 'documento', name: 'Taller', extractedText: RAW },
-        { id: 2, organization: 5, contentKind: 'documento', name: 'Acta 2024', extractedText: RAW },
+        { id: 82, organization: 8, contentKind: 'documento', anonymise: false, name: 'Taller', extractedText: RAW },
+        { id: 2, organization: 5, contentKind: 'documento', anonymise: false, name: 'Acta 2024', extractedText: RAW },
       ])
       const result = await runGraphBackfill(payload, { log: silent, skipOrphanSweep: true })
       expect(runGraphExtraction).toHaveBeenCalledTimes(1)

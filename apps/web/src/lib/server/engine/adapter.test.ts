@@ -117,7 +117,7 @@ describe('resolveEntity — a mentioned document', () => {
   );
 
   it('inlines a documento as before', async () => {
-    const adapter = adapterFor({ id: 6, name: 'Acta', contentKind: 'documento', extractedText: 'texto' });
+    const adapter = adapterFor({ id: 6, name: 'Acta', contentKind: 'documento', anonymise: false, extractedText: 'texto' });
     const block = await adapter.resolveEntity({ kind: 'document', id: 6 } as never);
     expect(block).toContain('Documento adjunto: Acta');
     expect(block).toContain('texto');
@@ -236,6 +236,25 @@ describe('summary — the conversation\'s documents (I-08)', () => {
     const text = await adapter.summary(SCOPE);
     expect(text).toContain('Documento sin título');
     expect(text).not.toContain('undefined');
+  });
+
+  // The handed-over list is `SessionDocRow`s: already titled, no `anonymise`.
+  // Titling them again under the fail-closed rule turned every open documento
+  // into "Documento" (2026-11-10).
+  it('🔴 a handed-over row keeps the title sessionDocs gave it, in the summary and the `@` menu', async () => {
+    const adapter = makeChatDomainAdapter({
+      token: 't',
+      sessionId: '1',
+      organizationId: 7,
+      documents: [
+        { id: 5, name: 'Acta de asamblea.pdf', contentKind: 'documento' },
+        { id: 6, name: 'Entrevista a [Persona A].pdf', contentKind: 'documento' },
+      ],
+    });
+    const text = await adapter.summary(SCOPE);
+    expect(text).toContain('Documentos adjuntos a esta conversación: Acta de asamblea.pdf, Entrevista a [Persona A].pdf.');
+    const menu = await adapter.searchEntities('document', 'acta', {} as never);
+    expect(menu.map((r) => r.label)).toEqual(['Acta de asamblea.pdf']);
   });
 });
 

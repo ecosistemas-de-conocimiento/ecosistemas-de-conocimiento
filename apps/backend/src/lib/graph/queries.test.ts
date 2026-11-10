@@ -314,7 +314,7 @@ describe("🔴 graph_mentions.snippet never leaves for anything but a 'documento
           content_kind: 'testimonio',
           snippet: 'me llamo María y vivo en …',
         },
-        { id: 2, name: 'informe.pdf', content_kind: 'documento', snippet: 'la consulta previa' },
+        { id: 2, name: 'informe.pdf', content_kind: 'documento', anonymise: false, snippet: 'la consulta previa' },
       ],
     ])
 
@@ -339,8 +339,8 @@ describe('🔴 no document title reaches a graph surface as raw `documents.name`
       [
         { id: 1, name: 'Testimonio de María López.mp3', content_kind: 'testimonio' },
         { id: 2, name: '¿Qué pasó con el predio de Ana?', content_kind: 'conversacion' },
-        { id: 3, name: 'informe-2019.pdf', content_kind: 'documento' },
-        { id: 4, name: '   ', content_kind: 'documento' },
+        { id: 3, name: 'informe-2019.pdf', content_kind: 'documento', anonymise: false },
+        { id: 4, name: '   ', content_kind: 'documento', anonymise: false },
       ],
     ])
 
@@ -789,9 +789,9 @@ describe("🔴 an edge's supporting documents are the ones that EVIDENCE it", ()
       ],
       [],
       [
-        { neighbour_id: 5, relation_type: 'ocurre_en', id: 1, name: 'acta.pdf', content_kind: 'documento' },
-        { neighbour_id: 5, relation_type: 'afecta_a', id: 2, name: 'boletin.pdf', content_kind: 'documento' },
-        { neighbour_id: 5, relation_type: 'afecta_a', id: 3, name: 'informe.pdf', content_kind: 'documento' },
+        { neighbour_id: 5, relation_type: 'ocurre_en', id: 1, name: 'acta.pdf', content_kind: 'documento', anonymise: false },
+        { neighbour_id: 5, relation_type: 'afecta_a', id: 2, name: 'boletin.pdf', content_kind: 'documento', anonymise: false },
+        { neighbour_id: 5, relation_type: 'afecta_a', id: 3, name: 'informe.pdf', content_kind: 'documento', anonymise: false },
       ],
     ])
 
@@ -1172,7 +1172,7 @@ describe('readGraphRetrieval', () => {
           to_support: '4',
         },
       ],
-      [{ id: 88, name: 'informe.pdf', content_kind: 'documento' }],
+      [{ id: 88, name: 'informe.pdf', content_kind: 'documento', anonymise: false }],
     ])
 
     const result = await readGraphRetrieval(payload, {
