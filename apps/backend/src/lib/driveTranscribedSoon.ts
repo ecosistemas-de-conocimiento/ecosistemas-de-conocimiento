@@ -27,6 +27,7 @@
 
 import type { Payload } from 'payload'
 
+import { errSummary } from './errorSummary'
 import { driveTranscribedDocument, type TranscribedRow } from './ingestRecovery'
 
 type DrivePayload = Pick<Payload, 'findByID' | 'update'>
@@ -60,6 +61,6 @@ async function driveOne(payload: DrivePayload, docId: number | string): Promise<
       console.log('[callback] transcript for doc', docId, 'already claimed or not drivable — left to its owner')
     }
   } catch (err) {
-    console.error('[callback] immediate drive failed for doc', docId, '— the ingest-recovery sweep will pick it up', err)
+    console.error('[callback] immediate drive failed for doc', docId, '— the ingest-recovery sweep will pick it up', errSummary(err))
   }
 }

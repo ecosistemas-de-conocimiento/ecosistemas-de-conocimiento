@@ -74,6 +74,7 @@ import {
 } from './janitorScheduler'
 import { GATE_UNAVAILABLE_CODE, GATE_UNAVAILABLE_INGEST_CODE } from './anonymiseDocument'
 import { updateDocumentColumns, type DocumentColumnsPayload } from './documentColumns'
+import { safeErrMessage } from './errorSummary'
 import { relationId } from './permissions'
 
 export const INGEST_RECOVERY_ENABLED_VAR = 'INGEST_RECOVERY_JANITOR_ENABLED'
@@ -361,7 +362,7 @@ async function failOutDocuments(
       if (res > 0) stalled += 1
     } catch (err) {
       opts.log?.warn(
-        { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+        { documentId: String(doc.id), err: safeErrMessage(err) },
         `[ingest-recovery] could not fail out a ${opts.label} row`,
       )
     }
@@ -457,7 +458,7 @@ export async function sweepUnavailableGateRuns(
       if (changed(res)) redriven += 1
     } catch (err) {
       opts.log?.warn(
-        { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+        { documentId: String(doc.id), err: safeErrMessage(err) },
         '[ingest-recovery] could not re-drive a row whose gate could not run',
       )
     }
@@ -583,7 +584,7 @@ export async function recoverAbandonedClaims(
         }
       } catch (err) {
         opts.log?.warn(
-          { documentId: String(doc.id), err: err instanceof Error ? err.message : String(err) },
+          { documentId: String(doc.id), err: safeErrMessage(err) },
           '[ingest-recovery] could not recover an abandoned drive claim',
         )
       }
@@ -736,7 +737,7 @@ export async function driveTranscribedDocument(
       if (res > 0) return 'failed'
     } catch (err) {
       opts.log?.warn(
-        { documentId: String(docId), err: err instanceof Error ? err.message : String(err) },
+        { documentId: String(docId), err: safeErrMessage(err) },
         '[ingest-recovery] could not fail out a transcript with no corpus',
       )
     }
@@ -782,7 +783,7 @@ export async function driveTranscribedDocument(
     })
   } catch (err) {
     opts.log?.warn(
-      { documentId: String(docId), err: err instanceof Error ? err.message : String(err) },
+      { documentId: String(docId), err: safeErrMessage(err) },
       '[ingest-recovery] driving a transcript into the ingest threw',
     )
     // Hand the claim back so the next sweep re-drives the row. Only while it is
@@ -924,7 +925,7 @@ export async function sweepStalledMessages(
           job = await opts.readIngestStatus(msg)
         } catch (err) {
           opts.log?.warn(
-            { messageId: String(msg.id), err: err instanceof Error ? err.message : String(err) },
+            { messageId: String(msg.id), err: safeErrMessage(err) },
             '[ingest-recovery] could not read a chat turn’s ai-service job status — stamping the stall',
           )
         }
@@ -947,7 +948,7 @@ export async function sweepStalledMessages(
       if (changed(res)) stalled += 1
     } catch (err) {
       opts.log?.warn(
-        { messageId: String(msg.id), err: err instanceof Error ? err.message : String(err) },
+        { messageId: String(msg.id), err: safeErrMessage(err) },
         '[ingest-recovery] could not move a stalled chat turn',
       )
     }
@@ -981,7 +982,7 @@ export async function runIngestRecoveryPass(
       results[name] = await fn()
     } catch (err) {
       log.error(
-        { err: err instanceof Error ? err.message : String(err) },
+        { err: safeErrMessage(err) },
         `[ingest-recovery] the ${name} sweep threw`,
       )
     }

@@ -47,6 +47,7 @@ import type { Payload } from 'payload'
 
 import { isPlatformAdminUser } from '../access'
 import { autoPublishParticipantDocument, type AutoPublishSkip } from './autoPublish'
+import { errSummary } from './errorSummary'
 import { featureEnabled } from './features'
 import { relationId, roleInOrganization } from './permissions'
 import type { CorpusMover } from './publishDocument'
@@ -562,7 +563,7 @@ export async function onGraphSettled(docId: Id): Promise<void> {
       ...(callbackUrl ? { callbackUrl } : {}),
     })
   } catch (err) {
-    console.error('[student-notes] promotion after graph run failed for doc', String(docId), err)
+    console.error('[student-notes] promotion after graph run failed for doc', String(docId), errSummary(err))
   }
 }
 
