@@ -135,6 +135,7 @@
 import { sql } from '@payloadcms/db-postgres'
 import type { Payload, PayloadRequest, Where } from 'payload'
 
+import { errSummary } from './errorSummary'
 import { relationId } from './permissions'
 
 /**
@@ -655,7 +656,7 @@ export function scheduleUploadCleanup(payload: Payload, plan: UploadCleanupPlan)
   )
   void finishUploadCleanupAfterCommit(plan, { payload }).catch((err) => {
     payload.logger.warn(
-      { ...planIds(plan), err: String(err) },
+      { ...planIds(plan), err: errSummary(err) },
       `${tagOf(plan)} post-commit upload cleanup failed; these uploads may be orphans`,
     )
   })
