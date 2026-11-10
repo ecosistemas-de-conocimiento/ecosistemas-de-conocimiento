@@ -163,6 +163,27 @@ describe('POST /api/sessions', () => {
     expect(res.status).toBe(401);
   });
 
+  it('🔴 a backend 429 keeps its Retry-After, and is not cached', async () => {
+    backendWith(
+      () =>
+        new Response(JSON.stringify({ errors: [{ message: 'Too many conversations' }] }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'Retry-After': '42' },
+        }),
+    );
+    const res = await POST(makeEvent({}));
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('42');
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+  });
+
+  it('any other backend failure carries no Retry-After', async () => {
+    backendWith(() => jsonResponse({ errors: [] }, 500));
+    const res = await POST(makeEvent({}));
+    expect(res.status).toBe(500);
+    expect(res.headers.get('Retry-After')).toBeNull();
+  });
+
   it('stamps the SELECTED ecosistema on the new conversation', async () => {
     backendWith(() => jsonResponse({ doc: { id: 9 } }, 201));
     const res = await POST(makeEvent({ cookies: makeCookies({ eco_selected: '2' }) }));

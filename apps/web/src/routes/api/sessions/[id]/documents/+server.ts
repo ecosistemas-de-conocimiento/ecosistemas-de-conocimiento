@@ -4,6 +4,7 @@ import { backendFetch } from '$lib/server/auth';
 import { degradeListResponse } from '$lib/server/degrade';
 import { uploadDocument } from '$lib/server/uploadDocument';
 import { relationIds } from '$lib/documents';
+import { backendJson } from '$lib/server/backendResponse';
 
 // GET /api/sessions/[id]/documents → all docs attached to this session.
 //
@@ -105,5 +106,5 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     }),
   });
   const out = await res.json().catch(() => ({}));
-  return json(out, { status: res.status });
+  return backendJson(out, res);
 };

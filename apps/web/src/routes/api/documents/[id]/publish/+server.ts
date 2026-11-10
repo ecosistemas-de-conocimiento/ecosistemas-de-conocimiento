@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { backendFetch } from '$lib/server/auth';
 import { parsePublicationStatus } from '$lib/publication';
+import { backendJson } from '$lib/server/backendResponse';
 
 /**
  * BFF proxy for publishing a document into the ecosistema's shared corpus.
@@ -56,7 +57,7 @@ export const POST: RequestHandler = async ({ locals, params }) => {
   if (!res.ok) {
     // Pass the status through so the caller can tell "not yours" (403) from
     // "backend is down" (5xx). No status change is implied either way.
-    return json(body, { status: res.status });
+    return backendJson(body, res);
   }
 
   /**
