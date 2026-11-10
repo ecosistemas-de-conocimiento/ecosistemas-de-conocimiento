@@ -333,7 +333,7 @@ flowchart TD
 **Implementado**, salvo restaurar, que nunca se ha probado completo.
 
 - Retirar y borrar un documento de ai-service: `retireDeletedDocumentHook` en `Documents.ts`.
-- Apagar el respaldo hospedado del detector sin desplegar: ajuste `platform-settings.detectorFallback`, que tarda como máximo 30 s en aplicarse (TTL en `lib/platformSettings.ts`). En staging no alcanza: allí el detector siempre usa el modelo hospedado.
+- Apagar el respaldo hospedado del detector sin desplegar: ajuste `platform-settings.detectorFallback`, que tarda como máximo 30 s en aplicarse (TTL en `lib/platformSettings.ts`). En staging, `none` retiene todo texto, porque allí no hay detector propio.
 - Cortar el acceso de una persona: desactivar la cuenta (`isActive`) o revocar su membresía; corta el chat y el micrófono.
 - Restaurar: procedimiento en [respaldos y recuperación](../05-infraestructura/respaldos-y-recuperacion.md).
 
