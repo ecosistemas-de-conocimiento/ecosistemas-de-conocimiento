@@ -2858,6 +2858,57 @@ No image cleanup; the earlier images stay for rollback. **Disk**, `df -h /` free
 
 ---
 
+### 4zzzzzzzz. Done 2026-11-10 18:24-18:45 UTC: dev only - one Payload migration on start; wave 2 privacy, access and upload fixes
+
+Measured by the deploy agent from the owner's laptop and on edc-1. Staging untouched: web and backend "Up 3 weeks",
+ai-service "Up 3 days", tag `97d5316a` (`docker ps` after). Range `3f14306b` (§4zzzzzzz) -> `367c2698`, 28 commits:
+re-gate retry and pending states, deactivated accounts stay out, per-(IP, email) and per-IP login limits, 8 MiB cap
+on JSON bodies and multipart fields, gate count and identifier-date fixes (D1, D2), query parameters kept out of DB
+error logs. `infra/docker-compose.yml` unchanged in the range, so no variable check (§4 footgun 1).
+
+Pre-check: 0 active queries on `edc_backend`; `payload_migrations` 23; 15 users, 1106 documents; last document write
+2026-11-07 00:37; `GET /api/v1/deployments` empty.
+
+Backup `/root/backups/20261110T1825Z/` under `umask 077` (§7 step 6): `edc_ai` 313 MB, `edc_backend` 19 MB, plus
+`documents`, `organizations`, `platform_settings` and `anonymisation_setting_changes` alone, 17 MB; `pg_restore -l`
+152 / 506 / 75 lines; `SHA256SUMS`. Files 600, folder 700 (`stat`). Off-box copy in the owner's
+`cide/backups/edc-1/20261110T1825Z/` under `umask 077`, `sha256sum -c` passed, files 600, folder 700.
+
+| deploy | uuid | queued -> finished (UTC) |
+|---|---|---|
+| first | `jdxkclihhi1idd3jtyyrrp99` | 18:27:05 -> 18:33:12 |
+
+**Migration** at start, 18:33:17: `20261110_070204_anonymisation_setting_changes_keys` (10ms), `Done.`, "Ready in
+927ms". `payload_migrations` 23 -> 24, batch 16. `enum_anonymisation_setting_changes_scope` =
+`{documento,ecosistema,plataforma}`; `enum_anonymisation_setting_changes_key` =
+`{keepDocumentAuthor,keepCitedAuthors,keepPublicFigures,detectorFallback}`; `anonymisation_setting_changes.organization_id`
+nullable (`information_schema`). `edc_ai` `__drizzle_migrations` unchanged at 6. After: 9 dev containers up, web,
+backend and ai-service on tag `367c2698`, 7 with a healthcheck all healthy; 0 `error`/`fatal` lines in the first
+10 minutes of any of the 9.
+
+**Smoke**
+
+| check | result |
+|---|---|
+| health | `dev.` and `api.dev.` `/api/health` 200 (after the deploy and again after cleanup) |
+| login, estudiante1, web `POST /api/auth/login` with `Origin` | 200 |
+| deactivated account: platform admin creates a throwaway user (id 17), backend login 200, `PATCH isActive: false` 200 | backend `/api/users/login` 401 "The email or password provided is incorrect."; web `/api/auth/login` 401 "El correo o la contraseña no coinciden…"; user deleted (200) |
+| oversize body: participant JWT, 20,971,532-byte JSON to `POST api.dev…/api/sessions`, once with `Content-Length`, once chunked | both 413 `Request body over 8 MiB.`; backend `next-server` RSS 250,656 kB before, 250,248 kB after (`docker top`) |
+| chat, participant demo account, org 6, "¿Cómo se previene el dengue en casa?" (`POST /api/generate`) | 200 in 39.2 s; 1457 characters with `[1]`, `[3]`, `[1, 3]` markers, 2 `provenance.chunks`; session deleted (200) |
+| gate on the Spark: same account, org 6, 3-line synthetic Markdown documento with `anonymise=true`, two invented people (full names once, shorter forms once) under the heading `# Nota nav-2026-11-10-7` | `ready` and `published` within 6 s; `GET /api/documents/<id>/anonimizacion` `counts.pseudonyms` = 2 (D1: two real names, count 2), stages structural 1, content 6; text `[Persona A]` / `[Persona B]` only; heading out as `# Nota nav-[Dato omitido]-7` (D2: the date inside the identifier is removed whole and marked, as `structural.identifierDate.test.ts` expects, instead of the earlier `nav-2026-11-7`); report detector `openai-compat:qwen3-30b-a3b-instruct-2507+fallback`, 5 `openai-compat` lines and 0 "falling back" lines in the backend log; settings all three `false` |
+
+The test documento was deleted by the uploader (200); 0 rows left in `documents` or `graph_mentions` for it. After
+cleanup: 15 users, 1106 documents, as before. Org 8 was not used: no row and no switch of it was touched.
+
+Spend: `usage_logs` since 18:20 UTC, all `edc-eco-6` and all from this run: 2 `deepseek/deepseek-chat-v3.1` rows
+$0.005182, 2 `baai/bge-m3` rows $0.000002.
+
+**Cleanup** once nothing was deploying (`GET /api/v1/deployments` empty, no build process): no dev image older than
+`3f14306b` was on the box, so no `docker rmi`; the `3f14306b` images stay for rollback. `docker builder prune -af`
+(14.94 GB). **Disk**, `df -h /` free: 51 GB before, 36 GB after the build, 49 GB after the prune.
+
+---
+
 ## 5. Where secrets live (names only)
 
 | store | holds |
