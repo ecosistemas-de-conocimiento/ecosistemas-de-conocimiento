@@ -15,9 +15,10 @@ import { documentoGateOptions, effectiveSwitches } from './publicFigures'
 
 describe('effectiveSwitches — a throwing read', () => {
   it('reads as off, from the ecosistema', async () => {
-    expect(await effectiveSwitches({ findByID: vi.fn() } as never, 1, {})).toEqual({
+    expect(await effectiveSwitches({ findByID: vi.fn() } as never, 1, { contentKind: 'documento' })).toEqual({
       keepDocumentAuthor: { value: false, origin: 'ecosistema' },
       keepCitedAuthors: { value: false, origin: 'ecosistema' },
+      keepPublicFigures: { value: false, origin: 'ecosistema' },
     })
   })
 

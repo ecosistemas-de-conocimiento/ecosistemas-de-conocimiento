@@ -5,6 +5,7 @@ import {
   type CollectionBeforeChangeHook,
   type CollectionConfig,
   type FieldAccess,
+  type PayloadRequest,
 } from 'payload'
 
 import {
@@ -121,9 +122,11 @@ export const clearTestimonioConsentWhenOff: CollectionAfterChangeHook = async ({
 
 /**
  * 🔴 AN ANONYMISATION SWITCH CHANGE IS AUDITED (audit 2026-11-07, item B):
- * one `anonymisation-setting-changes` row per changed key, in the update's
- * transaction (`req`), on every write path. Raw stored values: `null` = never
- * set (off by default). A failed audit write fails the update.
+ * one `anonymisation-setting-changes` row per changed key of
+ * `ANONYMISE_SWITCHES` (`keepPublicFigures` included since 2026-11-10, audit
+ * P-04/I-13), in the update's transaction (`req`), on every write path. Raw
+ * stored values: `null` = never set (off by default). A failed audit write
+ * fails the update.
  */
 export const auditAnonymisationSwitches: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, req }) => {
   if (operation !== 'update') return doc
@@ -147,8 +150,9 @@ export const auditAnonymisationSwitches: CollectionAfterChangeHook = async ({ do
   if (changes.length === 0) return doc
   const { recordSettingChanges } = await import('./AnonymisationSettingChanges')
   await recordSettingChanges(req.payload as never, changes, req)
-  // 🔴 ON→OFF re-gates every document that inherits the default (coordinator
-  // decision 2026-11-07); OFF→ON reprocesses nothing. Detached, after commit.
+  // 🔴 ON→OFF re-gates what kept a name under the default (coordinator
+  // decisions 2026-11-07 and 2026-11-10, `regateInheritors`); OFF→ON
+  // reprocesses nothing. Detached, after commit.
   const resolvedBefore = resolveFeatures(before)
   const resolvedAfter = resolveFeatures(after)
   const turnedOff = ANONYMISE_SWITCHES.filter((k) => resolvedBefore[k] && !resolvedAfter[k])
@@ -174,8 +178,24 @@ export const auditAnonymisationSwitches: CollectionAfterChangeHook = async ({ do
  * so the audience is the tenant, not a `project`. See the
  * header of `lib/permissions.ts` for the full reasoning.
  */
+/**
+ * `GET /api/organizations/:id/anonimizacion` and `POST …/anonimizacion/reintentar`
+ * (`lib/anonymisationControls.ts`): what the ecosistema re-gate has left to do,
+ * and a retry. Lazy, like the hooks above: that module loads the documents side.
+ */
+const anonimizacionEndpoints: NonNullable<CollectionConfig['endpoints']> = (['get', 'post'] as const).map((method) => ({
+  path: method === 'get' ? '/:id/anonimizacion' : '/:id/anonimizacion/reintentar',
+  method,
+  handler: async (req: PayloadRequest) => {
+    const { organizationAnonimizacionEndpoints } = await import('@/lib/anonymisationControls')
+    const endpoint = organizationAnonimizacionEndpoints().find((e) => e.method === method)
+    return endpoint!.handler(req)
+  },
+}))
+
 export const Organizations: CollectionConfig = {
   slug: 'organizations',
+  endpoints: anonimizacionEndpoints,
   admin: {
     useAsTitle: 'name',
     defaultColumns: ['name', 'slug', 'isActive', 'updatedAt'],

@@ -1,13 +1,19 @@
 /**
  * 🔴 THE AUDIT TRAIL OF EVERY ANONYMISATION SWITCH CHANGE (audit 2026-11-07,
- * item B): `keepDocumentAuthor` and `keepCitedAuthors`, per document
- * (`lib/anonymisationControls.ts`) and per ecosistema (the `Organizations`
- * afterChange hook, so `/api/funciones` and any other write path are covered).
+ * item B): every `ANONYMISE_SWITCHES` key (`keepDocumentAuthor`,
+ * `keepCitedAuthors`, and since 2026-11-10 `keepPublicFigures`, audit P-04),
+ * per document (`lib/anonymisationControls.ts`) and per ecosistema (the
+ * `Organizations` afterChange hook, so `/api/funciones` and any other write
+ * path are covered); and the platform's `detectorFallback`
+ * (`globals/PlatformSettings.ts`, scope `plataforma`, no ecosistema), which
+ * decides whether raw text may reach the hosted detector.
  *
- * One row per key that changed: who, when (`createdAt`), which ecosistema,
- * which document (absent for an ecosistema change), the key, the value before
- * and after. `null` is "the ecosistema's" for a document and "never set" (the
- * default, off) for an ecosistema.
+ * One row per key that changed: who, when (`createdAt`), which ecosistema
+ * (absent for a platform change), which document (absent for an ecosistema or
+ * platform change), the key, the value before and after. `null` is "the
+ * ecosistema's" for a document, "never set" (the default, off) for an
+ * ecosistema, and "the env value" for `detectorFallback`, where `true` is
+ * `hosted` and `false` is `none` ({@link fallbackAsBoolean}).
  *
  * 🔴 NEVER ANY TEXT: no name, no redaction, no note. A switch decides which
  * names reach the corpus; this row only says who flipped it.
@@ -21,6 +27,15 @@ import type { CollectionConfig } from 'payload'
 import { isActiveUser, isPlatformAdminUser } from '../access'
 import { organizationIdsForUserWithPermission, PERMISSIONS } from '../lib/permissions'
 import { ANONYMISE_SWITCHES } from '../lib/publicFigures'
+
+/** Every audited key: the document/ecosistema switches, then the platform's. */
+export const SETTING_KEYS = [...ANONYMISE_SWITCHES, 'detectorFallback'] as const
+export type SettingKey = (typeof SETTING_KEYS)[number]
+
+/** `detectorFallback` as the log stores it: `hosted` → true, `none` → false, unset (the env) → null. */
+export function fallbackAsBoolean(v: unknown): boolean | null {
+  return v === 'hosted' ? true : v === 'none' ? false : null
+}
 
 export const AnonymisationSettingChanges: CollectionConfig = {
   slug: 'anonymisation-setting-changes',
@@ -45,7 +60,15 @@ export const AnonymisationSettingChanges: CollectionConfig = {
     delete: () => false,
   },
   fields: [
-    { name: 'organization', type: 'relationship', relationTo: 'organizations', required: true, index: true },
+    /** Required except for a platform change (`scope: 'plataforma'`). */
+    {
+      name: 'organization',
+      type: 'relationship',
+      relationTo: 'organizations',
+      index: true,
+      validate: (value: unknown, { siblingData }: { siblingData?: { scope?: unknown } }) =>
+        value != null || siblingData?.scope === 'plataforma' ? true : 'Falta el ecosistema.',
+    },
     /** Absent for an ecosistema-wide change. */
     { name: 'document', type: 'relationship', relationTo: 'documents', index: true },
     /** Who changed it. Absent only for a write with no user (a script). */
@@ -57,13 +80,14 @@ export const AnonymisationSettingChanges: CollectionConfig = {
       options: [
         { label: 'Documento', value: 'documento' },
         { label: 'Ecosistema', value: 'ecosistema' },
+        { label: 'Plataforma', value: 'plataforma' },
       ],
     },
     {
       name: 'key',
       type: 'select',
       required: true,
-      options: ANONYMISE_SWITCHES.map((value) => ({ label: value, value })),
+      options: SETTING_KEYS.map((value) => ({ label: value, value })),
     },
     /** Null: "the ecosistema's" (document) or never set (ecosistema). */
     { name: 'before', type: 'checkbox' },
@@ -75,11 +99,12 @@ export const AnonymisationSettingChanges: CollectionConfig = {
 type Id = number | string
 
 export interface SettingChange {
-  organization: Id
+  /** Null only for `scope: 'plataforma'`. */
+  organization: Id | null
   document?: Id | null
   actor?: Id | null
-  scope: 'documento' | 'ecosistema'
-  key: (typeof ANONYMISE_SWITCHES)[number]
+  scope: 'documento' | 'ecosistema' | 'plataforma'
+  key: SettingKey
   before: boolean | null
   after: boolean | null
 }

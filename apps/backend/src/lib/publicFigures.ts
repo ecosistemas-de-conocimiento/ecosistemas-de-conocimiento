@@ -41,14 +41,47 @@ export interface DocumentoGateOptions {
   keepCitedAuthors: boolean
 }
 
-/** The two per-document anonymisation switches. */
-export const ANONYMISE_SWITCHES = ['keepDocumentAuthor', 'keepCitedAuthors'] as const
+/**
+ * The anonymisation switches: each a nullable per-document override of an
+ * ecosistema feature, audited on every change (`anonymisation-setting-changes`)
+ * and re-gated when turned off (`lib/anonymisationControls.ts`).
+ * 🔴 `keepPublicFigures` joined on 2026-11-10 (audit P-04/I-13): it is the
+ * third way a name stays in the text, and changed with no audit row and no
+ * re-gate before. It applies to a `documento` only, and only a platform admin
+ * may change it (`PLATFORM_ADMIN_ONLY_FEATURES`).
+ */
+export const ANONYMISE_SWITCHES = ['keepDocumentAuthor', 'keepCitedAuthors', 'keepPublicFigures'] as const
 export type AnonymiseSwitch = (typeof ANONYMISE_SWITCHES)[number]
+
+/** The log of the names each switch left in the text (`documents.*Kept`). */
+export const KEEP_LOG: Record<AnonymiseSwitch, 'authorsKept' | 'citedAuthorsKept' | 'publicFiguresKept'> = {
+  keepDocumentAuthor: 'authorsKept',
+  keepCitedAuthors: 'citedAuthorsKept',
+  keepPublicFigures: 'publicFiguresKept',
+}
 
 /** One switch as a document runs with it, and where the value came from. */
 export interface EffectiveSwitch {
   value: boolean
   origin: 'ecosistema' | 'documento'
+}
+
+const logged = (v: unknown) => Array.isArray(v) && v.length > 0
+
+/** Did this row's verdict leave any name in under `key` (its keep log is non-empty)? */
+export function keptUnder(row: Record<string, unknown>, key: AnonymiseSwitch): boolean {
+  return logged(row[KEEP_LOG[key]])
+}
+
+type ReportSettings = Partial<Record<AnonymiseSwitch, unknown>>
+const settingsOf = (row: { anonymisationReport?: unknown }): ReportSettings | null => {
+  const s = (row.anonymisationReport as { settings?: unknown } | null | undefined)?.settings
+  return s && typeof s === 'object' && !Array.isArray(s) ? (s as ReportSettings) : null
+}
+
+/** Did the verdict RECORD this switch (a boolean in its report's `settings`)? */
+export function verdictRecorded(row: { anonymisationReport?: unknown }, key: AnonymiseSwitch): boolean {
+  return typeof settingsOf(row)?.[key] === 'boolean'
 }
 
 /**
@@ -57,18 +90,44 @@ export interface EffectiveSwitch {
  * existed) counts a switch ON when its keep log is non-empty: such a row kept
  * the uploader's name by the old default (audit 2026-11-07, X8), so turning
  * the switch off must re-gate it.
+ * ⚠ `keepPublicFigures` is not in `settings` yet (the gate's caller records
+ * only the first two, `collections/Documents.ts`), so it reads its log,
+ * `publicFiguresKept`, unless a boolean is recorded. Off with an empty log is
+ * then a guess for a row gated with it on that kept nobody: see
+ * {@link verdictMismatch}.
  */
 export function verdictSettings(row: {
   anonymisationReport?: unknown
   authorsKept?: unknown
   citedAuthorsKept?: unknown
+  publicFiguresKept?: unknown
 }): Record<AnonymiseSwitch, boolean> {
-  const s = (row.anonymisationReport as { settings?: Partial<Record<AnonymiseSwitch, unknown>> } | null | undefined)?.settings
-  if (s && typeof s === 'object') {
-    return { keepDocumentAuthor: s.keepDocumentAuthor === true, keepCitedAuthors: s.keepCitedAuthors === true }
+  const s = settingsOf(row)
+  const keepPublicFigures =
+    typeof s?.keepPublicFigures === 'boolean' ? s.keepPublicFigures : logged(row.publicFiguresKept)
+  if (s) {
+    return { keepDocumentAuthor: s.keepDocumentAuthor === true, keepCitedAuthors: s.keepCitedAuthors === true, keepPublicFigures }
   }
-  const logged = (v: unknown) => Array.isArray(v) && v.length > 0
-  return { keepDocumentAuthor: logged(row.authorsKept), keepCitedAuthors: logged(row.citedAuthorsKept) }
+  return { keepDocumentAuthor: logged(row.authorsKept), keepCitedAuthors: logged(row.citedAuthorsKept), keepPublicFigures }
+}
+
+/**
+ * The switches whose current value differs from the verdict's. ⚠ An
+ * UNRECORDED `keepPublicFigures` that is on now and "off" by its empty log is
+ * not counted: the verdict may well have run with it on and found nobody
+ * public, and counting it would call every such row stale. Off now and on by
+ * its log always counts (a name is still in the text).
+ */
+export function verdictMismatch(
+  row: Record<string, unknown>,
+  now: Record<AnonymiseSwitch, EffectiveSwitch>,
+): AnonymiseSwitch[] {
+  const made = verdictSettings(row)
+  return ANONYMISE_SWITCHES.filter((k) => {
+    if (now[k].value === made[k]) return false
+    if (k === 'keepPublicFigures' && now[k].value && !verdictRecorded(row, k)) return false
+    return true
+  })
 }
 
 /** May this content kind keep its author or cited names at all? */
@@ -76,25 +135,38 @@ export function switchesApply(contentKind: unknown): boolean {
   return contentKind === 'documento' || contentKind === 'testimonio'
 }
 
+/** May this switch keep a name in this content kind? `keepPublicFigures` is a `documento`'s only. */
+export function switchApplies(key: AnonymiseSwitch, contentKind: unknown): boolean {
+  return key === 'keepPublicFigures' ? contentKind === 'documento' : switchesApply(contentKind)
+}
+
 /**
  * The effective value of each switch for one row: the row's boolean override,
- * else the ecosistema's feature. 🔴 Fails closed: a read that throws is off.
+ * else the ecosistema's feature. 🔴 Fails closed: a read that throws is off,
+ * and `keepPublicFigures` is off for anything but a `documento` (a row with
+ * no `contentKind` included), as `documentoGateOptions` runs it.
  */
 export async function effectiveSwitches(
   payload: Pick<Payload, 'findByID'>,
   organizationId: number | string,
-  row: Partial<Record<AnonymiseSwitch, unknown>>,
+  row: Partial<Record<AnonymiseSwitch, unknown>> & { contentKind?: unknown },
 ): Promise<Record<AnonymiseSwitch, EffectiveSwitch>> {
   const one = async (key: AnonymiseSwitch): Promise<EffectiveSwitch> => {
     const own = row[key]
-    if (typeof own === 'boolean') return { value: own, origin: 'documento' }
+    const applies = key !== 'keepPublicFigures' || row.contentKind === 'documento'
+    if (typeof own === 'boolean') return { value: applies && own, origin: 'documento' }
+    if (!applies) return { value: false, origin: 'ecosistema' }
     try {
       return { value: (await featureEnabled(payload, organizationId, key)) === true, origin: 'ecosistema' }
     } catch {
       return { value: false, origin: 'ecosistema' }
     }
   }
-  return { keepDocumentAuthor: await one('keepDocumentAuthor'), keepCitedAuthors: await one('keepCitedAuthors') }
+  return {
+    keepDocumentAuthor: await one('keepDocumentAuthor'),
+    keepCitedAuthors: await one('keepCitedAuthors'),
+    keepPublicFigures: await one('keepPublicFigures'),
+  }
 }
 
 /**
