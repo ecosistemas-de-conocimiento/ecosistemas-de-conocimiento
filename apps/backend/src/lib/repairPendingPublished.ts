@@ -34,6 +34,7 @@
 import type { Payload, Where } from 'payload'
 
 import { publishedCorpus } from './corpus'
+import { safeErrMessage } from './errorSummary'
 import { relationId } from './permissions'
 
 /** The whole candidate predicate. Guarded writes re-assert it. */
@@ -156,7 +157,7 @@ export async function repairPendingPublished(
     } catch (err) {
       report.errors += 1
       report.errorIds.push(id)
-      log(`error  ${id}  ${err instanceof Error ? err.message : String(err)}`)
+      log(`error  ${id}  ${safeErrMessage(err)}`)
       continue
     }
 

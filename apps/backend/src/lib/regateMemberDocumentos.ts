@@ -33,6 +33,7 @@
 import type { Payload } from 'payload'
 
 import { draftCorpus, publishedCorpus } from './corpus'
+import { safeErrMessage } from './errorSummary'
 import { relationId } from './permissions'
 import { eraseWithdrawnCopies, retireFrom, type CorpusDeleter } from './publishDocument'
 
@@ -168,7 +169,7 @@ export async function regateMemberDocumentos(
       log(`doc ${id}: withdrawn and sent through the gate`)
     } catch (err) {
       report.failed.push(id)
-      log(`doc ${id}: NOT processed: ${err instanceof Error ? err.message : String(err)}`)
+      log(`doc ${id}: NOT processed: ${safeErrMessage(err)}`)
     }
   }
   return report

@@ -56,6 +56,7 @@ import type { Payload } from 'payload'
 
 import { corpusTextFor, rowMustPassGate } from './anonymiseDocument'
 import { draftCorpus, publishedCorpus } from './corpus'
+import { safeErrMessage } from './errorSummary'
 import { relationId } from './permissions'
 import { eraseWithdrawnCopies, retireFrom, type CorpusDeleter } from './publishDocument'
 
@@ -208,7 +209,7 @@ export async function repairHeldPublished(
       } else log(`doc ${row.id}: changed since it was read — left alone`)
     } catch (err) {
       report.failed.push(row.id)
-      log(`doc ${row.id}: NOT repaired: ${err instanceof Error ? err.message : String(err)}`)
+      log(`doc ${row.id}: NOT repaired: ${safeErrMessage(err)}`)
     }
   }
   return report
