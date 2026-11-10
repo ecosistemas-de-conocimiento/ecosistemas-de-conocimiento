@@ -84,6 +84,7 @@ import { updateDocumentColumns } from '@/lib/documentColumns'
 import { errSummary } from '@/lib/errorSummary'
 
 import { isConsentHeld } from './consentHold'
+import { NOT_CONSENT_HELD } from '../consentHold'
 import { clearGraphRows, runGraphExtraction, type GraphSchedulerPayload } from './schedule'
 import { GRAPH_PROMPT_VERSION } from './prompt'
 
@@ -142,6 +143,8 @@ interface DocRow {
   anonymisationStatus?: unknown
   /** 🔴 Carries a gated documento's redacted title (P-13, `titleFor`). */
   anonymisationReport?: unknown
+  /** 🔴 `documents.consent_held` (`isConsentHeld`): read with the row (depth 0, no select). */
+  consentHeld?: unknown
   graphStatus?: unknown
   graphPromptVersion?: unknown
 }
@@ -193,8 +196,8 @@ export function staleDocumentsWhere(
   const hasText = { extractedText: { exists: true } }
 
   return organizationId == null
-    ? { and: [stale, hasText, PUBLISHED] }
-    : { and: [{ organization: { equals: organizationId } }, stale, hasText, PUBLISHED] }
+    ? { and: [stale, hasText, PUBLISHED, NOT_CONSENT_HELD] }
+    : { and: [{ organization: { equals: organizationId } }, stale, hasText, PUBLISHED, NOT_CONSENT_HELD] }
 }
 
 /** 🔴 The backfill never reads a draft (module header). */
@@ -208,8 +211,8 @@ const PUBLISHED = { publicationStatus: { equals: 'published' } } as const
 export function publishedDocumentsWhere(organizationId?: string | number): Record<string, unknown> {
   const hasText = { extractedText: { exists: true } }
   return organizationId == null
-    ? { and: [hasText, PUBLISHED] }
-    : { and: [{ organization: { equals: organizationId } }, hasText, PUBLISHED] }
+    ? { and: [hasText, PUBLISHED, NOT_CONSENT_HELD] }
+    : { and: [{ organization: { equals: organizationId } }, hasText, PUBLISHED, NOT_CONSENT_HELD] }
 }
 
 /**

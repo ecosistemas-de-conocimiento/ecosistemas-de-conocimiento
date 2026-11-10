@@ -99,10 +99,14 @@ export async function planWikilinkReextraction(
   // column the corpus reads (redacted first), for the estimate only.
   const rows = rowsOf(
     await db.execute(sql`
-      SELECT id, publication_status, length(coalesce(nullif(redacted_text, ''), extracted_text, '')) AS chars
+      SELECT id, publication_status, consent_held AS "consentHeld",
+             length(coalesce(nullif(redacted_text, ''), extracted_text, '')) AS chars
         FROM documents
        WHERE organization_id = ${org} AND kind = 'markdown' AND content_kind = 'documento'
          AND publication_status = 'published'
+         -- 🔴 Held for consent: not even counted (lib/consentHold.ts); the column is
+         -- also selected so the per-row isConsentHeld below reads it, not undefined.
+         AND consent_held IS NOT TRUE
          AND body_markdown LIKE '%[[%'${idFilter}
        ORDER BY id`),
   ).filter((r) => r.publication_status === 'published' && !isConsentHeld(r))
@@ -118,6 +122,7 @@ export async function planWikilinkReextraction(
         FROM documents
        WHERE organization_id = ${org} AND extracted_text IS NOT NULL
          AND publication_status = 'published'
+         AND consent_held IS NOT TRUE
          AND (graph_prompt_version IS NULL OR graph_prompt_version <> ${GRAPH_PROMPT_VERSION}
               OR graph_status = 'failed'
               OR (graph_status = 'extracting' AND updated_at < ${cutoff}))

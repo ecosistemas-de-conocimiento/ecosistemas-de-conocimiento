@@ -945,6 +945,127 @@ describe.skipIf(!dockerOk)('/api/documents/:id/anonimizacion on a real Postgres'
     })
   })
 
+  // 🔴 B (coordinator, 2026-11-10): a row HELD FOR CONSENT (`consent_held`,
+  // lib/consentHold.ts) never reaches startGate, clientFor or purgeGraph by any
+  // path of this module: without these guards `regateRow` retired and erased
+  // its copies before the ingest guard refused it. CONTROL is the same row,
+  // not held, and is re-gated on every path (positive control).
+  describe('🔴 a row held for consent is never re-gated, purged or erased (consentHold)', () => {
+    const ECO = 9
+    const HELD = 90
+    const CONTROL = 91
+    const withNames = 'Autora: Ana Ruiz. Como mostró López (2020), [Persona B] habló.'
+    const REPORT_ON = JSON.stringify({
+      ...(JSON.parse(REPORT_OFF) as Record<string, unknown>),
+      settings: { keepDocumentAuthor: true, keepCitedAuthors: true, keepPublicFigures: true },
+    })
+    const ON = { studentView: true, keepPublicFigures: true, keepDocumentAuthor: true, keepCitedAuthors: true }
+    const clientFor = vi.fn<ControlDeps['clientFor']>()
+    const purgeGraph = vi.fn<NonNullable<ControlDeps['purgeGraph']>>()
+    const spied = (): ControlDeps => ({ clientFor, startGate, purgeGraph })
+
+    const seed = async (features: Record<string, boolean>) => {
+      clientFor.mockReset().mockImplementation(() => fake.client as never)
+      purgeGraph.mockReset().mockResolvedValue(undefined)
+      ecosystemRegate.deps = spied()
+      depsOverride = { clientFor, purgeGraph }
+      await db.execute(sql.raw(`
+        INSERT INTO organizations (id, name, slug, features) VALUES (${ECO}, 'Retenido', 'retenido', '${JSON.stringify(features)}'::jsonb);
+        INSERT INTO memberships (id, user_id, organization_id, role, person_name) VALUES (8, ${INES}, ${ECO}, 'investigador', null),
+          (9, ${OLGA}, ${ECO}, 'owner', null);`))
+      invalidateFeatures()
+      const kept = (name: string) => `'${JSON.stringify([{ name, model: 'static', at: '2026-11-04T00:00:00.000Z' }])}'::jsonb`
+      for (const [id, held] of [[HELD, true], [CONTROL, false]] as const) {
+        await db.execute(sql.raw(`
+          INSERT INTO documents (id, organization_id, uploaded_by_id, name, kind, content_kind, anonymise, ingest_status,
+            anonymisation_status, publication_status, extracted_text, redacted_text, anonymisation_report,
+            authors_kept, cited_authors_kept, public_figures_kept, consent_held)
+          VALUES (${id}, ${ECO}, ${ROOT}, 'caso-${id}.pdf', 'pdf', 'documento', true, 'ready', 'ready', 'published',
+            'Autora: Ana Ruiz. Como mostró López (2020), Pedro Gómez habló.', '${withNames}', '${REPORT_ON}'::jsonb,
+            ${kept('Ana Ruiz')}, ${kept('López')}, '[{"name":"López","motivo":"autor citado"}]'::jsonb, ${held})`))
+      }
+    }
+
+    const changeEco = async (features: Record<string, boolean>, as: number) => {
+      await payload.update({ collection: 'organizations', id: ECO, data: { features } as never, overrideAccess: true, user: await userDoc(as) })
+      invalidateFeatures()
+      await ecosystemRegate.last
+    }
+
+    const gatedIds = () => startGate.mock.calls.map((c) => Number((c[1] as { id: unknown }).id)).sort()
+    const purgedIds = () => purgeGraph.mock.calls.map((c) => Number(c[1])).sort()
+    const corpusIds = () =>
+      [...fake.client.admin.setDocumentValidity.mock.calls, ...fake.client.admin.deleteDocument.mock.calls].map((c) => String(c[1]))
+
+    const expectHeldUntouched = async () => {
+      expect(gatedIds()).not.toContain(HELD)
+      expect(purgedIds()).not.toContain(HELD)
+      expect(corpusIds()).not.toContain(String(HELD))
+      expect(
+        await docCol(HELD, `anonymisation_status, publication_status, redacted_text, consent_held, anonymisation_report->'regate' AS mark`),
+      ).toEqual({
+        anonymisation_status: 'ready',
+        publication_status: 'published',
+        redacted_text: withNames,
+        consent_held: true,
+        mark: null,
+      })
+    }
+    const expectControlRegated = () => {
+      // 🔴 One admin client, for the control: none was even built for the held row.
+      expect(clientFor).toHaveBeenCalledTimes(1)
+      expect(gatedIds()).toEqual([CONTROL])
+      expect(purgedIds()).toEqual([CONTROL])
+      expect(corpusIds()).toContain(String(CONTROL))
+    }
+
+    it('PATCH: 409 with the consent message on the held row; the control is re-gated', async () => {
+      await seed(ON)
+      const refused = await call('patch', ROOT, { id: HELD, body: { keepDocumentAuthor: false } })
+      expect(refused.status).toBe(409)
+      expect(errorOf(refused.body) || JSON.stringify(refused.body)).toContain('consentimiento')
+      expect(clientFor).not.toHaveBeenCalled()
+      await expectHeldUntouched()
+      const ok = await call('patch', ROOT, { id: CONTROL, body: { keepDocumentAuthor: false } })
+      expect(ok.status).toBe(200)
+      expectControlRegated()
+    })
+
+    it('the document\'s "Reintentar": 409 on the held row; the control is retried', async () => {
+      await seed({ studentView: true, keepPublicFigures: true })
+      const refused = await call('post', ROOT, { id: HELD })
+      expect(refused.status).toBe(409)
+      expect(clientFor).not.toHaveBeenCalled()
+      await expectHeldUntouched()
+      expect((await call('post', ROOT, { id: CONTROL })).body.regate).toBe('started')
+      expectControlRegated()
+    })
+
+    it('Ajustes: keepDocumentAuthor ON→OFF re-gates the control only', async () => {
+      await seed(ON)
+      await changeEco({ ...ON, keepDocumentAuthor: false }, INES)
+      await expectHeldUntouched()
+      expectControlRegated()
+    })
+
+    it('the platform admin turning keepPublicFigures OFF re-gates the control only', async () => {
+      await seed(ON)
+      await changeEco({ ...ON, keepPublicFigures: false }, ROOT)
+      await expectHeldUntouched()
+      expectControlRegated()
+    })
+
+    it('the ecosistema "Reintentar": the held row is not counted as pending, and not re-gated', async () => {
+      await seed({ studentView: true, keepPublicFigures: true })
+      expect((await call('get', OLGA, { org: true, id: ECO })).body).toEqual({ pendingRegate: 1, regating: false, unpublishedByRegate: 0 })
+      const res = await call('post', OLGA, { org: true, id: ECO })
+      expect(res).toMatchObject({ status: 202, body: { started: true, pendingRegate: 1 } })
+      await ecosystemRegate.last
+      await expectHeldUntouched()
+      expectControlRegated()
+    })
+  })
+
   describe('🔴 a detectorFallback change is audited (P-04)', () => {
     it('one row, scope plataforma, no ecosistema, hosted = true', async () => {
       const root = await userDoc(ROOT)

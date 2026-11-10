@@ -522,6 +522,17 @@ describe.skipIf(!dockerOk)('wikilink seeds (real Postgres)', () => {
     expect(expected).toContain(SPLIT)
     expect(dry.alreadyStale.ids).toEqual(expected)
     expect(dry.backfillTotal.windows).toBe(dry.windows + dry.alreadyStale.windows)
+    // 🔴 B (2026-11-10): a row held for consent is neither queued nor counted as stale.
+    await pg!.db.execute(sql`UPDATE documents SET consent_held = TRUE WHERE id IN (${SILENT}, ${ROSA})`)
+    try {
+      const held = await planWikilinkReextraction(pg!.db, { organizationId: SEMIOSIS, ids: [NOTE, SILENT], apply: false })
+      expect(held.ids).toEqual([NOTE])
+      expect(held.alreadyStale.ids).not.toContain(ROSA)
+      expect(held.alreadyStale.ids).toContain(SPLIT)
+      expect(await planWikilinkReextraction(pg!.db, { organizationId: SEMIOSIS, ids: [SILENT], apply: true })).toMatchObject({ ids: [], queued: 0 })
+    } finally {
+      await pg!.db.execute(sql`UPDATE documents SET consent_held = FALSE WHERE id IN (${SILENT}, ${ROSA})`)
+    }
     const v = async (id: number) => (await q(sql`SELECT graph_prompt_version AS v FROM documents WHERE id = ${id}`))[0]!.v
     expect(await v(NOTE)).not.toBeNull()
     const applied = await planWikilinkReextraction(pg!.db, { organizationId: SEMIOSIS, ids: [NOTE], apply: true })

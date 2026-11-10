@@ -117,12 +117,20 @@ describe('staleDocumentsWhere', () => {
 
 describe('publishedDocumentsWhere (the forced re-extraction)', () => {
   it('🔴 every published row with text, whatever its stamp; the ecosistema first when given', () => {
+    const held = { consentHeld: { not_equals: true } }
     expect(publishedDocumentsWhere()).toEqual({
-      and: [{ extractedText: { exists: true } }, { publicationStatus: { equals: 'published' } }],
+      and: [{ extractedText: { exists: true } }, { publicationStatus: { equals: 'published' } }, held],
     })
     expect(publishedDocumentsWhere(6)).toEqual({
-      and: [{ organization: { equals: 6 } }, { extractedText: { exists: true } }, { publicationStatus: { equals: 'published' } }],
+      and: [{ organization: { equals: 6 } }, { extractedText: { exists: true } }, { publicationStatus: { equals: 'published' } }, held],
     })
+  })
+
+  // 🔴 B (2026-11-10): a row held for consent is not even selected (lib/consentHold.ts).
+  it('🔴 both selections leave out a row held for consent', () => {
+    for (const where of [staleDocumentsWhere(), staleDocumentsWhere(8), publishedDocumentsWhere(), publishedDocumentsWhere(8)]) {
+      expect((where as { and: unknown[] }).and).toContainEqual({ consentHeld: { not_equals: true } })
+    }
   })
 
   it('allPublished queries it, and a dry run lists what it would send and sends nothing', async () => {

@@ -86,6 +86,7 @@ import type { Endpoint, Payload, PayloadRequest } from 'payload'
 
 import { isActiveUser, isPlatformAdminUser } from '../access'
 import { rowMustPassGate } from './anonymiseDocument'
+import { CONSENT_HELD_MESSAGE, isConsentHeld, NOT_CONSENT_HELD } from './consentHold'
 import { knownContentKind, titleFor, titleIsGated } from './contentKind'
 import { errSummary } from './errorSummary'
 import { organizationIdsForUser, organizationIdsForUserWithPermission, PERMISSIONS, relationId } from './permissions'
@@ -524,6 +525,8 @@ export async function patchAnonimizacion(
   }
   // 🔴 Another writer owns the row right now: nothing is saved.
   if (busy(row)) return BUSY
+  // 🔴 Held for consent: no re-gate, purge or ingest starts from here (lib/consentHold.ts).
+  if (isConsentHeld(row)) return { status: 409, message: CONSENT_HELD_MESSAGE }
 
   const before = await effectiveSwitches(payload, org, row)
   const next: Row = { ...row, ...patch }
@@ -603,6 +606,8 @@ export async function retryAnonimizacion(
   if (isResult(loaded)) return loaded
   const { row, org } = loaded
   if (busy(row)) return BUSY
+  // 🔴 Held for consent: no re-gate, purge or ingest starts from here (lib/consentHold.ts).
+  if (isConsentHeld(row)) return { status: 409, message: CONSENT_HELD_MESSAGE }
   const switches = await effectiveSwitches(payload, org, row)
   if (!retryableOf(row, switches)) return { status: 400, message: 'No hay nada pendiente.' }
   const outcome = await regateRow(payload, row, {}, deps)
@@ -761,6 +766,8 @@ async function settleOne(payload: Payload, id: Id, org: Id, deps: ControlDeps, m
     const row = await readRow(payload, String(id))
     if (!row) return 'none'
     if (row.anonymisationStatus === 'pending') return 'pending'
+    // 🔴 Held for consent: never purged, gated or rebuilt by this job.
+    if (isConsentHeld(row)) return 'none'
     // 🔴 Never purged, reset, gated or rebuilt by this job (`draftOutsideRegate`).
     if (draftOutsideRegate(row)) return 'none'
     const switches = await effectiveSwitches(payload, org, row)
@@ -845,6 +852,7 @@ export async function regateInheritors(
         { organization: { equals: organizationId } },
         { contentKind: { in: ['documento', 'testimonio'] } },
         { anonymisationStatus: { in: ['ready', 'held', 'approved', 'pending'] } },
+        NOT_CONSENT_HELD,
       ],
     },
     depth: 0,
@@ -965,7 +973,14 @@ async function organizationAccess(payload: Payload, user: unknown, id: string | 
 export async function organizationCounts(payload: Payload, organizationId: Id): Promise<{ pendingRegate: number; unpublishedByRegate: number }> {
   const found = (await payload.find({
     collection: 'documents',
-    where: { and: [{ organization: { equals: organizationId } }, { contentKind: { in: ['documento', 'testimonio'] } }] },
+    where: {
+      and: [
+        { organization: { equals: organizationId } },
+        { contentKind: { in: ['documento', 'testimonio'] } },
+        // 🔴 A row held for consent is never "pending": "Reintentar" never reaches it.
+        NOT_CONSENT_HELD,
+      ],
+    },
     depth: 0,
     pagination: false,
     overrideAccess: true,
