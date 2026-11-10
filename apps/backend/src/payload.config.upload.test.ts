@@ -115,3 +115,76 @@ describe('the media cap, applied while the body streams', () => {
     expect(Object.keys(req.files ?? {})).toEqual(['file'])
   })
 })
+
+/** Parts in order: a text field (`value`) or a small file (`file`). */
+function form(parts: Array<{ name: string; value?: string; file?: number }>): ReadableStream<Uint8Array> {
+  const enc = new TextEncoder()
+  const pieces = (function* () {
+    for (const [i, p] of parts.entries()) {
+      const head =
+        p.file === undefined
+          ? `Content-Disposition: form-data; name="${p.name}"\r\n\r\n`
+          : `Content-Disposition: form-data; name="${p.name}"; filename="p${i}.txt"\r\nContent-Type: text/plain\r\n\r\n`
+      yield enc.encode(`--${BOUNDARY}\r\n${head}`)
+      yield p.file === undefined ? enc.encode(p.value ?? '') : new Uint8Array(p.file).fill(0x61)
+      yield enc.encode('\r\n')
+    }
+    yield enc.encode(`--${BOUNDARY}--\r\n`)
+  })()
+  return new ReadableStream({
+    pull(controller) {
+      const next = pieces.next()
+      if (next.done) controller.close()
+      else controller.enqueue(next.value)
+    },
+  })
+}
+
+describe('text fields are bounded too (C-03, the review of 2026-11-10)', () => {
+  const unhandled: unknown[] = []
+  const onUnhandled = (reason: unknown) => unhandled.push(reason)
+  beforeAll(() => {
+    process.on('unhandledRejection', onUnhandled)
+    return () => process.off('unhandledRejection', onUnhandled)
+  })
+
+  it('still reads what the admin panel sends: `_payload` and a file', async () => {
+    const req = requestWith(
+      form([
+        { name: '_payload', value: JSON.stringify({ alt: 'x' }) },
+        { name: 'file', file: 16 },
+      ]),
+    )
+    await addDataAndFileToRequest(req)
+    expect(req.data).toEqual({ alt: 'x' })
+    expect(req.file?.size).toBe(16)
+  })
+
+  it('🔴 keeps no more than 8 fields: a ninth, even `_payload`, is dropped unread', async () => {
+    const junk = Array.from({ length: 8 }, (_, i) => ({ name: `f${i}`, value: 'a' }))
+    const req = requestWith(form([...junk, { name: '_payload', value: '{"alt":"x"}' }]))
+    await addDataAndFileToRequest(req)
+    expect(req.data).toBeUndefined()
+  })
+
+  it('🔴 reads no more than 10 parts, files included', async () => {
+    // Ten file parts: one kept, nine drained by `files: 1`, all ten counted.
+    const files = Array.from({ length: 10 }, (_, i) => ({ name: `x${i}`, file: 4 }))
+    const req = requestWith(form([...files, { name: '_payload', value: '{"alt":"x"}' }]))
+    await addDataAndFileToRequest(req)
+    expect(req.data).toBeUndefined()
+  })
+
+  it('cuts a field at 1 MiB, and a cut `_payload` is refused, not half-read', async () => {
+    expect((config.upload as { limits: { fieldSize?: number } }).limits.fieldSize).toBe(MiB)
+    const big = JSON.stringify({ alt: 'a'.repeat(MiB) })
+    const req = requestWith(form([{ name: '_payload', value: big }]))
+    await expect(addDataAndFileToRequest(req)).rejects.toThrow(SyntaxError)
+    expect(req.data).toBeUndefined()
+  })
+
+  it('🔴 hitting a limit raises no unhandled rejection', async () => {
+    await new Promise((r) => setTimeout(r, 50))
+    expect(unhandled).toEqual([])
+  })
+})

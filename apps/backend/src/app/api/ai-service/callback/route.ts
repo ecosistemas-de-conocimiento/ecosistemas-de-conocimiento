@@ -11,9 +11,12 @@
  * on the emitter; we do not need to.
  *
  * Order (matters for security and latency):
- *   1. `await req.text()` — read the RAW body BEFORE any parse. Next.js's
+ *   1. Read the RAW body BEFORE any parse, counted up to
+ *      `CALLBACK_BODY_MAX_BYTES` (`lib/bodyCap.ts`); past it, 413. Next.js's
  *      request body parser is one-shot and any JSON round-trip loses the
- *      byte-fidelity HMAC verification needs.
+ *      byte-fidelity HMAC verification needs. 🔴 This route is public and the
+ *      read comes BEFORE the HMAC check, so `req.text()` here let anyone push
+ *      any body into memory (audit 2026-11-10, C-03).
  *   2. Verify HMAC + replay window (`lib/hmac.ts`) against the raw bytes.
  *   3. INSERT-on-conflict into `aiServiceCallbacks`; if the row already
  *      existed (unique violation), return 200 immediately — ai-service is
@@ -23,6 +26,7 @@
  *
  * Return-code mapping (from the contract):
  *   - 200 — happy path, also retries on already-deduped events.
+ *   - 413 — body over the cap, refused unread and unverified.
  *   - 400 — body unparseable as JSON (signature already verified, so the
  *           emit side is at fault). ai-service treats 4xx-not-401 as a
  *           permanent rejection and doesn't retry.
@@ -56,6 +60,7 @@ import { NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 import configPromise from '@payload-config'
 
+import { CALLBACK_BODY_MAX_BYTES, readCapped } from '@/lib/bodyCap'
 import {
   CALLBACK_SIGNATURE_HEADER,
   CALLBACK_TIMESTAMP_HEADER,
@@ -236,7 +241,13 @@ export async function POST(req: Request): Promise<NextResponse> {
   // 1. Raw body first — anything that parses must read the bytes once.
   let rawBody: string
   try {
-    rawBody = await req.text()
+    const bytes = await readCapped(req, CALLBACK_BODY_MAX_BYTES)
+    if (!bytes) {
+      console.warn('[callback] body over the cap; refused before the signature check')
+      return NextResponse.json({ error: 'payload_too_large' }, { status: 413 })
+    }
+    // What `req.text()` did: UTF-8, replacement characters, a leading BOM dropped.
+    rawBody = new TextDecoder().decode(bytes)
   } catch (err) {
     console.warn('[callback] failed to read raw body', err)
     return NextResponse.json(
